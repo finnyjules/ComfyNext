@@ -597,7 +597,9 @@ try:
         if deleted:
             logging.info("[Compositor] motion cleanup: deleted %d superseded bake frames", deleted)
         return web.json_response({"deleted": deleted, "skipped": skipped})
-except ImportError:
+except Exception:  # noqa: BLE001
     # Running outside the ComfyUI server (e.g. unit tests importing the node
-    # module directly) — the route simply isn't registered.
+    # module directly) — the route simply isn't registered. Broad on purpose:
+    # under pytest `from server import PromptServer` can succeed while
+    # PromptServer.instance is unset (AttributeError, not ImportError).
     pass

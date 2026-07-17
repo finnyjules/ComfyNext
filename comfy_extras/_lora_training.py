@@ -170,5 +170,5 @@ try:
 
     _register_routes()
 
-except ImportError:
+except Exception:  # noqa: BLE001 — outside the server, PromptServer.instance may be unset (AttributeError)
     pass
