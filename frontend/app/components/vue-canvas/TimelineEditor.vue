@@ -3,7 +3,7 @@ import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import {
   X, Play, Pause, SkipBack, SkipForward, ChevronsLeft, ChevronsRight,
   RotateCw, Undo2, Redo2, Plus, Trash2, Scissors, Volume2, VolumeX, Eye, EyeOff,
-  Lock, Unlock, Film, Music, ImageIcon, Type, Cpu, Diamond,
+  Lock, Unlock, Film, Music, ImageIcon, Type, Cpu, Diamond, Magnet,
 } from 'lucide-vue-next'
 import { useTimelineStore } from '~/composables/useTimelineStore'
 import { useAssetLibrary } from '~/composables/useAssetLibrary'
@@ -74,6 +74,8 @@ onMounted(async () => {
   await loadInputFiles()
   engine.start()
   window.addEventListener('keydown', handleKeydown, true)
+  window.addEventListener('keydown', onKeyToggle)
+  window.addEventListener('keyup', onKeyToggle)
   window.addEventListener('pointermove', onPointerMove)
   window.addEventListener('pointerup', onPointerUp)
   window.addEventListener('pointermove', onGlobalPointerMove)
@@ -104,6 +106,8 @@ onUnmounted(() => {
   engine.destroy()
   store.unbind()
   window.removeEventListener('keydown', handleKeydown, true)
+  window.removeEventListener('keydown', onKeyToggle)
+  window.removeEventListener('keyup', onKeyToggle)
   window.removeEventListener('pointermove', onPointerMove)
   window.removeEventListener('pointerup', onPointerUp)
   window.removeEventListener('pointermove', onGlobalPointerMove)
@@ -208,7 +212,7 @@ function inputFilenameFromUrl(url: string): string | null {
 // WebGL preview engine (Phase 1 M3): opt-in via
 //   localStorage.setItem('sailor:Engine.WebGLPreview', 'true')
 // Falls back to the Canvas2D engine when WebGL2 is unavailable.
-const { getLocalSetting } = useLocalSettings()
+const { getLocalSetting, setLocalSetting } = useLocalSettings()
 const wantGl = getLocalSetting('Engine.WebGLPreview') === 'true'
 const useGl = wantGl && webglPreviewSupported()
 if (wantGl && !useGl) console.warn('TimelineEditor: WebGL preview flag set but WebGL2 unavailable — Canvas2D fallback')
@@ -529,6 +533,16 @@ function onClipClick(clipId: string, e: MouseEvent) {
 
 const SNAP_PX = 8
 
+// Snapping toggle (persisted). Alt/Option held during a drag inverts it
+// (NLE convention: snap on → Alt frees; snap off → Alt snaps).
+const snapEnabled = ref(getLocalSetting('Timeline.Snap') !== 'false')
+function toggleSnap() {
+  snapEnabled.value = !snapEnabled.value
+  setLocalSetting('Timeline.Snap', String(snapEnabled.value))
+}
+const altHeld = ref(false)
+function onKeyToggle(e: KeyboardEvent) { altHeld.value = e.altKey }
+
 const drag = ref<null | {
   clipId: string
   trackId: string
@@ -560,6 +574,8 @@ function buildSnapTargets(excludeClipId: string | null): number[] {
 }
 
 function snapFrame(rawFrame: number, excludeClipId: string | null): number {
+  const active = snapEnabled.value !== altHeld.value   // XOR: Alt inverts
+  if (!active) { snapGuideFrame.value = null; return rawFrame }
   const targets = buildSnapTargets(excludeClipId)
   const thresholdFrames = SNAP_PX / pxPerFrame.value
   let best = rawFrame
@@ -1946,6 +1962,10 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
             <button class="px-2 h-6 rounded hover:bg-white/10 text-white/60 hover:text-white text-[10px] tabular-nums" :title="`Current: ${pxPerFrame.toFixed(2)} px/frame`" @click="zoomFit()">{{ Math.round(pxPerFrame * 100) / 100 }}x</button>
             <button class="size-6 flex items-center justify-center rounded hover:bg-white/10 text-white/60 hover:text-white text-sm" title="Zoom in" @click="zoomIn()">+</button>
             <button class="px-2 h-6 rounded hover:bg-white/10 text-white/60 hover:text-white text-[10px]" title="Fit timeline to width" @click="zoomFit()">Fit</button>
+            <button class="size-6 flex items-center justify-center rounded transition-colors ml-1"
+              :class="snapEnabled ? 'bg-white/15 text-white' : 'hover:bg-white/10 text-white/40'"
+              :title="snapEnabled ? 'Snapping on (Alt bypasses)' : 'Snapping off (Alt snaps)'"
+              @click="toggleSnap"><Magnet class="size-3.5" /></button>
           </div>
 
           <div class="ml-auto flex items-center gap-2">
