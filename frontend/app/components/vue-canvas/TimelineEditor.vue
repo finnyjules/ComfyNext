@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import {
   X, Play, Pause, SkipBack, SkipForward, ChevronsLeft, ChevronsRight,
-  RotateCw, Undo2, Redo2, Plus, Trash2, Scissors, Volume2, Eye, EyeOff,
+  RotateCw, Undo2, Redo2, Plus, Trash2, Scissors, Volume2, VolumeX, Eye, EyeOff,
   Lock, Unlock, Film, Music, ImageIcon, Type, Cpu, Diamond,
 } from 'lucide-vue-next'
 import { useTimelineStore } from '~/composables/useTimelineStore'
@@ -20,6 +20,7 @@ import { resolveClipSource } from '~~/shared/timeline/resolveClipSource'
 import { computeLeftTrim, clampLengthToSource } from '~~/shared/timeline/trim'
 import MotionClipInspector from '~/components/vue-canvas/timeline/MotionClipInspector.vue'
 import KeyframeDock from '~/components/vue-canvas/timeline/KeyframeDock.vue'
+import TimelineContextMenu, { type MenuItem } from '~/components/vue-canvas/timeline/TimelineContextMenu.vue'
 
 const props = defineProps<{
   nodeId: string
@@ -1122,6 +1123,87 @@ function pasteAndSelect(frame: number) {
   }
 }
 
+// -- Context menus (clip / lane / track header) ------------------------------
+
+const ctxMenu = ref<null | { x: number; y: number; items: (MenuItem | 'sep')[] }>(null)
+
+function clipMenuItems(clipId: string): (MenuItem | 'sep')[] {
+  const clip = findClip(clipId)
+  const insidePlayhead = !!clip
+    && store.playheadFrame.value > clip.start_frame
+    && store.playheadFrame.value < clip.start_frame + clip.length
+  const ids = selectedClipIds.value.has(clipId) ? [...selectedClipIds.value] : [clipId]
+  return [
+    { label: 'Split at playhead', shortcut: 'S', disabled: !insidePlayhead, action: () => store.splitAtPlayhead(clipId) },
+    { label: 'Duplicate', shortcut: '⌘D', action: () => { const n = store.duplicateClips(ids); selectedClipIds.value = new Set(n); store.selectedClipId.value = n[n.length - 1] ?? null } },
+    'sep',
+    { label: 'Copy', shortcut: '⌘C', action: () => store.copyClips(ids) },
+    { label: 'Paste', shortcut: '⌘V', disabled: !store.hasClipboard.value, action: () => pasteAndSelect(store.playheadFrame.value) },
+    'sep',
+    { label: 'Delete', shortcut: '⌫', danger: true, action: () => { const del = new Set(ids); store.mutate(s => { for (const t of s.tracks) t.clips = t.clips.filter(c => !del.has(c.id)) }); clearSelection() } },
+    { label: 'Ripple delete', shortcut: '⌘⌫', danger: true, action: () => { store.rippleDelete(clipId); clearSelection() } },
+  ]
+}
+
+function laneMenuItems(trackId: string, frame: number): (MenuItem | 'sep')[] {
+  return [
+    { label: 'Paste here', shortcut: '⌘V', disabled: !store.hasClipboard.value, action: () => pasteAndSelect(frame) },
+    'sep',
+    { label: 'Add video track', action: () => store.addTrack('video') },
+    { label: 'Add audio track', action: () => store.addTrack('audio') },
+    'sep',
+    deleteTrackItem(trackId),
+  ]
+}
+
+function headerMenuItems(trackId: string): (MenuItem | 'sep')[] {
+  return [
+    { label: 'Rename', action: () => { renamingTrackId.value = trackId } },
+    'sep',
+    deleteTrackItem(trackId),
+  ]
+}
+
+function deleteTrackItem(trackId: string): MenuItem {
+  const track = store.state.value.tracks.find(t => t.id === trackId)
+  const lastOfKind = !!track && store.state.value.tracks.filter(t => t.kind === track.kind).length <= 1
+  return {
+    label: 'Delete track', danger: true, disabled: lastOfKind,
+    action: () => {
+      if (!track) return
+      if (track.clips.length && !window.confirm(`Delete "${track.name}" and its ${track.clips.length} clip${track.clips.length === 1 ? '' : 's'}?`)) return
+      store.removeTrack(trackId)
+    },
+  }
+}
+
+function onClipContextMenu(clipId: string, e: MouseEvent) {
+  e.preventDefault(); e.stopPropagation()
+  if (!selectedClipIds.value.has(clipId)) selectOnly(clipId)
+  ctxMenu.value = { x: e.clientX, y: e.clientY, items: clipMenuItems(clipId) }
+}
+
+function onLaneContextMenu(trackId: string, e: MouseEvent) {
+  e.preventDefault()
+  const rect = stripRef.value!.getBoundingClientRect()
+  const frame = Math.max(0, Math.round(pxToFrames(e.clientX - rect.left)))
+  ctxMenu.value = { x: e.clientX, y: e.clientY, items: laneMenuItems(trackId, frame) }
+}
+
+function onHeaderContextMenu(trackId: string, e: MouseEvent) {
+  e.preventDefault()
+  ctxMenu.value = { x: e.clientX, y: e.clientY, items: headerMenuItems(trackId) }
+}
+
+// -- Track rename --
+
+const renamingTrackId = ref<string | null>(null)
+function commitTrackName(trackId: string, name: string) {
+  const trimmed = name.trim()
+  if (trimmed) store.mutate(s => { const t = s.tracks.find(t2 => t2.id === trackId); if (t) t.name = trimmed })
+  renamingTrackId.value = null
+}
+
 // -- Helpers --
 
 const selectedClipData = computed(() => store.selectedClip.value)
@@ -1776,14 +1858,23 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
               :class="reorderingTrackId === track.id ? 'bg-white/[0.06] z-10' : ''"
               :style="{ height: trackHeight(track) + 'px' }"
               @pointerdown="(e) => onTrackReorderStart(track.id, e)"
+              @contextmenu="(e) => onHeaderContextMenu(track.id, e)"
             >
               <component :is="track.kind === 'audio' ? Music : Film" class="size-3" :class="trackColor(tIdx).text" />
-              <span class="text-[11px] truncate flex-1" :class="trackColor(tIdx).text">{{ track.name }}</span>
+              <input v-if="renamingTrackId === track.id"
+                class="flex-1 min-w-0 bg-[#1a1a1a] border border-white/20 rounded px-1 py-0.5 text-[11px] text-white/90 outline-none"
+                :value="track.name" autofocus
+                @pointerdown.stop
+                @keydown.enter="(e) => commitTrackName(track.id, (e.target as HTMLInputElement).value)"
+                @keydown.escape="renamingTrackId = null"
+                @blur="(e) => commitTrackName(track.id, (e.target as HTMLInputElement).value)" />
+              <span v-else class="text-[11px] truncate flex-1" :class="trackColor(tIdx).text"
+                @dblclick="renamingTrackId = track.id">{{ track.name }}</span>
               <button class="size-4 flex items-center justify-center rounded hover:bg-white/10"
                 :title="track.muted ? 'Unmute' : 'Mute'"
                 @pointerdown.stop
                 @click.stop="store.mutate(s => { const t = s.tracks.find(t2 => t2.id === track.id); if (t) t.muted = !t.muted })">
-                <component :is="track.muted ? EyeOff : Eye" class="size-2.5 text-white/40" />
+                <component :is="track.kind === 'audio' ? (track.muted ? VolumeX : Volume2) : (track.muted ? EyeOff : Eye)" class="size-2.5 text-white/40" />
               </button>
               <button class="size-4 flex items-center justify-center rounded hover:bg-white/10"
                 :title="track.locked ? 'Unlock' : 'Lock'"
@@ -1849,6 +1940,7 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
               @dragover="(e) => onTrackDragOver(track.id, e)"
               @dragleave="onTrackDragLeave"
               @drop="(e) => onTrackDrop(track.id, e)"
+              @contextmenu="(e) => onLaneContextMenu(track.id, e)"
             >
               <div
                 v-for="clip in track.clips"
@@ -1866,6 +1958,7 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
                 }"
                 @pointerdown="(e) => onClipPointerDown(clip.id, track.id, 'move', e)"
                 @click.stop
+                @contextmenu="(e) => onClipContextMenu(clip.id, e)"
               >
                 <!-- Filmstrip backdrop (video/image clips) -->
                 <div
@@ -1973,6 +2066,9 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
       <!-- Trim HUD bubble -->
       <div v-if="trimHud" class="fixed z-[140] px-2 py-1 rounded bg-black/85 border border-white/15 text-[10px] text-white/90 tabular-nums pointer-events-none"
         :style="{ left: trimHud.x + 'px', top: trimHud.y + 'px' }">{{ trimHud.text }}</div>
+
+      <!-- Context menu -->
+      <TimelineContextMenu v-if="ctxMenu" v-bind="ctxMenu" @close="ctxMenu = null" />
     </div>
   </div>
 </template>
