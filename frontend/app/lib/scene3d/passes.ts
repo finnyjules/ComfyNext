@@ -57,6 +57,7 @@ export async function renderPasses(engine: SceneEngine, doc: SceneDoc):
   const prevBg = scene.background
   const prevOverride = scene.overrideMaterial
   const prevGrid = engine.grid.visible
+  const prevGround = engine.shadowGround.visible
   engine.grid.visible = false
   // Editor-only helpers (the TransformControls gizmo) live in the same scene;
   // hide them so an active selection's gizmo never bleeds into the baked passes
@@ -67,10 +68,18 @@ export async function renderPasses(engine: SceneEngine, doc: SceneDoc):
   let dmat: THREE.ShaderMaterial | null = null
   let nmat: THREE.MeshNormalMaterial | null = null
   try {
-    // Beauty — scene as styled. Transparent background stays transparent (alpha).
+    // Beauty — scene as styled, with the same filmic tone mapping + contact
+    // shadow as the live viewport. Transparent background stays transparent.
+    renderer.toneMapping = THREE.ACESFilmicToneMapping
+    renderer.toneMappingExposure = 1.1
     scene.background = doc.background === 'transparent' ? null : new THREE.Color(doc.background)
     renderer.render(scene, camera)
     const beauty = canvas.toDataURL('image/png')
+
+    // Data passes must be raw: tone mapping would corrupt the normal colours and
+    // depth ramp, and the shadow catcher would render as a floor in both maps.
+    renderer.toneMapping = THREE.NoToneMapping
+    engine.shadowGround.visible = false
 
     // Depth — custom near-white ramp fitted to the visible objects.
     const bounds = new THREE.Box3()
@@ -96,6 +105,7 @@ export async function renderPasses(engine: SceneEngine, doc: SceneDoc):
     scene.overrideMaterial = prevOverride
     scene.background = prevBg
     engine.grid.visible = prevGrid
+    engine.shadowGround.visible = prevGround
     for (const h of helpers) h.visible = true
     dmat?.dispose()
     nmat?.dispose()

@@ -49,6 +49,10 @@ export class SceneEngine {
   readonly camera: THREE.PerspectiveCamera
   readonly objectRoots = new Map<string, THREE.Object3D>()
   readonly grid: THREE.GridHelper
+  // Transparent shadow-catcher plane at y=0: gives objects a soft contact shadow
+  // in the beauty render. Public so the bake can hide it for the depth/normal
+  // passes (it must not appear as a floor in the ControlNet maps).
+  readonly shadowGround: THREE.Mesh
   private sun: THREE.DirectionalLight
   private ambient: THREE.AmbientLight
   private envTarget: THREE.WebGLRenderTarget | null = null
@@ -62,6 +66,10 @@ export class SceneEngine {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio ?? 1, 2))
     this.renderer.shadowMap.enabled = true
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
+    // Filmic tone mapping lifts the flat clay look into a studio render (applied
+    // to the beauty pass only — the depth/normal passes reset this, see passes.ts).
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping
+    this.renderer.toneMappingExposure = 1.1
     this.scene = new THREE.Scene()
     this.camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 200)
     const pmrem = new THREE.PMREMGenerator(this.renderer)
@@ -71,9 +79,24 @@ export class SceneEngine {
     this.sun = new THREE.DirectionalLight(0xffffff, 1.4)
     this.sun.castShadow = true
     this.sun.shadow.mapSize.set(2048, 2048)
+    // Fit the shadow frustum to our small scenes and soften/de-acne the shadow.
+    this.sun.shadow.camera.near = 0.5
+    this.sun.shadow.camera.far = 40
+    this.sun.shadow.camera.left = this.sun.shadow.camera.bottom = -8
+    this.sun.shadow.camera.right = this.sun.shadow.camera.top = 8
+    this.sun.shadow.bias = -0.0002
+    this.sun.shadow.normalBias = 0.02
+    this.sun.shadow.radius = 3
     this.ambient = new THREE.AmbientLight(0xffffff, 0.5)
     this.grid = new THREE.GridHelper(20, 40, 0x3a3f4a, 0x262a33)
-    this.scene.add(this.sun, this.ambient, this.grid)
+    this.shadowGround = new THREE.Mesh(
+      new THREE.PlaneGeometry(60, 60),
+      new THREE.ShadowMaterial({ opacity: 0.32 }),
+    )
+    this.shadowGround.rotation.x = -Math.PI / 2
+    this.shadowGround.position.y = -0.005 // just under y=0 so it never z-fights the grid
+    this.shadowGround.receiveShadow = true
+    this.scene.add(this.sun, this.ambient, this.grid, this.shadowGround)
   }
 
   setSize(width: number, height: number): void {
@@ -177,6 +200,8 @@ export class SceneEngine {
     this.grid.geometry.dispose()
     const gridMats = Array.isArray(this.grid.material) ? this.grid.material : [this.grid.material]
     gridMats.forEach((m) => m.dispose())
+    this.shadowGround.geometry.dispose()
+    ;(this.shadowGround.material as THREE.Material).dispose()
     this.envTarget?.dispose()
     this.renderer.dispose()
   }
