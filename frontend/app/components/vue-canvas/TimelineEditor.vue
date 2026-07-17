@@ -657,12 +657,54 @@ function onPlayheadPointerDown(e: PointerEvent) {
   ;(e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId)
 }
 
+// Empty-strip drags draw a marquee; the ruler owns playhead scrubbing.
+const marquee = ref<null | { x0: number; y0: number; x1: number; y1: number }>(null)
+
 function onStripPointerDown(e: PointerEvent) {
-  if (e.target !== e.currentTarget && !(e.target as HTMLElement).classList.contains('strip-bg')) return
-  onPlayheadPointerDown(e)
+  // Accept the strip background AND empty lane area (clips stopPropagation).
+  const t = e.target as HTMLElement
+  const isBg = e.target === e.currentTarget || t.classList.contains('strip-bg') || t.dataset?.lane != null
+  if (!isBg) return
+  if (e.button !== 0) return
+  const rect = stripRef.value!.getBoundingClientRect()
+  const x = e.clientX - rect.left
+  const y = e.clientY - rect.top
+  if (y <= RULER_HEIGHT) { onPlayheadPointerDown(e); return }
+  marquee.value = { x0: x, y0: y, x1: x, y1: y }
+  ;(e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId)
+}
+
+function applyMarqueeSelection() {
+  const m = marquee.value
+  if (!m) return
+  const fA = pxToFrames(Math.min(m.x0, m.x1))
+  const fB = pxToFrames(Math.max(m.x0, m.x1))
+  const yA = Math.min(m.y0, m.y1)
+  const yB = Math.max(m.y0, m.y1)
+  const picked = new Set<string>()
+  let top = RULER_HEIGHT
+  for (const track of store.state.value.tracks) {
+    const h = trackHeight(track)
+    const laneHit = top < yB && top + h > yA
+    if (laneHit && !track.locked) {
+      for (const clip of track.clips) {
+        if (clip.start_frame < fB && clip.start_frame + clip.length > fA) picked.add(clip.id)
+      }
+    }
+    top += h
+  }
+  selectedClipIds.value = picked
+  store.selectedClipId.value = picked.size ? [...picked][picked.size - 1]! : null
 }
 
 function onPointerMove(e: PointerEvent) {
+  if (marquee.value) {
+    const rect = stripRef.value!.getBoundingClientRect()
+    marquee.value.x1 = e.clientX - rect.left
+    marquee.value.y1 = e.clientY - rect.top
+    applyMarqueeSelection()
+    return
+  }
   if (kfDrag.value) {
     const clip = findClip(kfDrag.value.clipId)
     if (!clip) return
@@ -751,6 +793,13 @@ function onPointerMove(e: PointerEvent) {
 }
 
 function onPointerUp() {
+  if (marquee.value) {
+    const m = marquee.value
+    const moved = Math.abs(m.x1 - m.x0) > 3 || Math.abs(m.y1 - m.y0) > 3
+    if (!moved) clearSelection()          // plain click on empty area = deselect
+    marquee.value = null
+    return
+  }
   if (kfDrag.value) {
     // A click (no drag) parks the playhead on the keyframe.
     if (!kfDrag.value.moved) {
@@ -1094,6 +1143,17 @@ function handleKeydown(e: KeyboardEvent) {
   }
   if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) { e.preventDefault(); store.undo(); return }
   if ((e.metaKey || e.ctrlKey) && e.key === 'z' && e.shiftKey) { e.preventDefault(); store.redo(); return }
+  if ((e.metaKey || e.ctrlKey) && e.key === 'a') {
+    e.preventDefault()
+    const all = new Set<string>()
+    for (const track of store.state.value.tracks) {
+      if (track.locked) continue
+      for (const clip of track.clips) all.add(clip.id)
+    }
+    selectedClipIds.value = all
+    store.selectedClipId.value = all.size ? [...all][all.size - 1]! : null
+    return
+  }
   if ((e.metaKey || e.ctrlKey) && e.key === 'c') {
     e.preventDefault()
     if (selectedClipIds.value.size) store.copyClips(selectedClipIds.value)
@@ -1898,18 +1958,19 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
             @pointerdown="onStripPointerDown"
             @wheel="onStripWheel"
           >
-            <!-- Ruler with time labels -->
-            <div class="relative border-b border-white/10 pointer-events-none"
-                 :style="{ height: RULER_HEIGHT + 'px' }">
+            <!-- Ruler with time labels — owns playhead scrubbing -->
+            <div class="relative border-b border-white/10 cursor-col-resize"
+                 :style="{ height: RULER_HEIGHT + 'px' }"
+                 @pointerdown="onPlayheadPointerDown">
               <template v-for="t in ticks" :key="`ruler-${t.frame}`">
                 <div
-                  class="absolute top-0 border-l"
+                  class="absolute top-0 border-l pointer-events-none"
                   :class="t.major ? 'h-3 border-white/30' : 'h-1.5 border-white/15'"
                   :style="{ left: framesToPx(t.frame) + 'px' }"
                 />
                 <div
                   v-if="t.major && t.label"
-                  class="absolute top-2.5 text-[9px] text-white/50 tabular-nums px-0.5"
+                  class="absolute top-2.5 text-[9px] text-white/50 tabular-nums px-0.5 pointer-events-none"
                   :style="{ left: (framesToPx(t.frame) + 2) + 'px' }"
                 >{{ t.label }}</div>
               </template>
@@ -1931,6 +1992,7 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
             <div
               v-for="(track, tIdx) in store.state.value.tracks"
               :key="track.id"
+              data-lane
               class="relative border-b border-white/5"
               :class="[
                 dragTargetTrackId === track.id ? 'bg-white/[0.04]' : '',
@@ -2025,6 +2087,16 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
                 </div>
               </div>
             </div>
+
+            <!-- Marquee selection rectangle -->
+            <div v-if="marquee"
+              class="absolute z-[5] border border-white/50 bg-white/10 pointer-events-none"
+              :style="{
+                left: Math.min(marquee.x0, marquee.x1) + 'px',
+                top: Math.min(marquee.y0, marquee.y1) + 'px',
+                width: Math.abs(marquee.x1 - marquee.x0) + 'px',
+                height: Math.abs(marquee.y1 - marquee.y0) + 'px',
+              }" />
 
             <!-- Snap guideline (during clip drag) -->
             <div
