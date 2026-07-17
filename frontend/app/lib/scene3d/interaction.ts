@@ -17,6 +17,11 @@ export class SceneInteraction {
   private raycaster = new THREE.Raycaster()
   private selectedId: string | null = null
   private downAt: [number, number] | null = null
+  // Latched from 'dragging-changed': the gizmo's own pointerup listener runs
+  // before ours (registered earlier on the same element) and resets
+  // gizmo.dragging, so onUp must consult this latch instead. Cleared a
+  // microtask after drag end so the in-flight pointerup still sees it.
+  private gizmoDragged = false
 
   constructor(
     private engine: SceneEngine,
@@ -31,7 +36,11 @@ export class SceneInteraction {
     this.orbit.enableDamping = true
     this.orbit.addEventListener('change', () => callbacks.onCameraChange?.())
     this.gizmo = new TransformControls(engine.camera, domElement)
-    this.gizmo.addEventListener('dragging-changed', (e) => { this.orbit.enabled = !e.value })
+    this.gizmo.addEventListener('dragging-changed', (e) => {
+      this.orbit.enabled = !e.value
+      if (e.value) this.gizmoDragged = true
+      else queueMicrotask(() => { this.gizmoDragged = false })
+    })
     this.gizmo.addEventListener('objectChange', () => this.emitTransform())
     // three 0.171 TransformControls extends Controls (not Object3D); its visual
     // representation is the helper root returned by getHelper().
@@ -40,14 +49,18 @@ export class SceneInteraction {
     domElement.addEventListener('pointerup', this.onUp)
   }
 
-  private onDown = (e: PointerEvent) => { this.downAt = [e.clientX, e.clientY] }
+  private onDown = (e: PointerEvent) => {
+    if (e.button !== 0) return
+    this.downAt = [e.clientX, e.clientY]
+  }
 
   private onUp = (e: PointerEvent) => {
     // Only treat as a click if the pointer didn't drag (orbit/gizmo own drags).
+    if (e.button !== 0) return
     if (!this.downAt) return
     const [dx, dy] = [e.clientX - this.downAt[0], e.clientY - this.downAt[1]]
     this.downAt = null
-    if (Math.hypot(dx, dy) > 4 || this.gizmo.dragging) return
+    if (Math.hypot(dx, dy) > 4 || this.gizmoDragged) return
     const rect = this.domElement.getBoundingClientRect()
     const ndc = new THREE.Vector2(
       ((e.clientX - rect.left) / rect.width) * 2 - 1,
@@ -96,6 +109,8 @@ export class SceneInteraction {
     this.domElement.removeEventListener('pointerdown', this.onDown)
     this.domElement.removeEventListener('pointerup', this.onUp)
     this.gizmo.detach()
+    // dispose() frees child geometry/materials but does not unparent _root.
+    this.engine.scene.remove(this.gizmo.getHelper())
     this.gizmo.dispose()
     this.orbit.dispose()
   }
