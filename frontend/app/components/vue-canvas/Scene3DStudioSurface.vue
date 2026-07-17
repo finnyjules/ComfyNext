@@ -134,11 +134,17 @@ onMounted(() => {
     if (r && engine) engine.setSize(r.width, r.height)
   })
   ro.observe(viewportEl.value)
-  window.addEventListener('keydown', onKey)
+  // Capture phase: StudioModalShell (a child, so its onMounted runs first)
+  // registered its Escape→close keydown on window (bubble) BEFORE ours, and
+  // stopPropagation can't stop already-queued same-node listeners. Capturing
+  // lets Esc-with-selection deselect first and suppress the shell's close via
+  // stopImmediatePropagation + preventDefault (the shell also early-returns on
+  // e.defaultPrevented). Same technique as StudioColor's popover.
+  window.addEventListener('keydown', onKey, true)
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener('keydown', onKey)
+  window.removeEventListener('keydown', onKey, true)
   cancelAnimationFrame(raf)
   ro?.disconnect()
   interaction?.dispose()
@@ -156,7 +162,19 @@ function onKey(e: KeyboardEvent) {
   if (e.key === 'w') gizmoMode.value = 'translate'
   else if (e.key === 'e') gizmoMode.value = 'rotate'
   else if (e.key === 'r') gizmoMode.value = 'scale'
-  else if (e.key === 'Escape') selectedId.value = null
+  else if (e.key === 'Escape') {
+    // An open StudioColor popover owns Escape (its own capture listener closes
+    // it); it registered after us so we'd fire first — yield to it.
+    if (document.querySelector('[data-studio-color-pop]')) return
+    if (selectedId.value) {
+      // Deselect only: preventDefault + stopImmediatePropagation keep the
+      // shell's window keydown (and anything else) from closing the modal.
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      selectedId.value = null
+    }
+    // No selection → fall through untouched; the shell's Escape closes.
+  }
   else if (e.key === 'Backspace' && selectedId.value) removeObject(selectedId.value)
 }
 
@@ -193,6 +211,8 @@ function duplicateObject(id: string) {
   })
   doc.objects.push(copy)
   selectedId.value = copy.id
+  // Same eager warm-up as addGlb so a failing GLB source flags the duplicate too.
+  if (copy.kind === 'glb') loadGlb(copy.url).catch(() => { glbError[copy.id] = true })
 }
 
 function setCameraFromView() {
@@ -203,16 +223,30 @@ function setCameraFromView() {
 
 // ── Bake ──────────────────────────────────────────────────────────────────────
 const inpaint = useInpaint()
+const bakeError = ref('')
 async function bake(): Promise<void> {
   if (!engine || baking.value) return
   baking.value = true
+  bakeError.value = ''
   try {
     const passes = await renderPasses(engine, doc)
-    setWidget('beauty_image', await inpaint.uploadDataUrl(passes.beauty, `scene3d_beauty_${props.nodeId}`))
-    setWidget('depth_image', await inpaint.uploadDataUrl(passes.depth, `scene3d_depth_${props.nodeId}`))
-    setWidget('normal_image', await inpaint.uploadDataUrl(passes.normal, `scene3d_normal_${props.nodeId}`))
+    // Upload all three passes BEFORE touching any widget so a mid-bake failure
+    // never leaves a mismatched pass set (e.g. fresh beauty + stale depth).
+    const [beauty, depth, normal] = await Promise.all([
+      inpaint.uploadDataUrl(passes.beauty, `scene3d_beauty_${props.nodeId}`),
+      inpaint.uploadDataUrl(passes.depth, `scene3d_depth_${props.nodeId}`),
+      inpaint.uploadDataUrl(passes.normal, `scene3d_normal_${props.nodeId}`),
+    ])
+    setWidget('beauty_image', beauty)
+    setWidget('depth_image', depth)
+    setWidget('normal_image', normal)
     setWidget('scene_state', serializeDoc(doc))
     dirty.value = false
+  } catch (e) {
+    // Swallow (no rethrow): the Bake button gets an inline error instead of an
+    // unhandled rejection, and onClose's auto-bake can never block closing.
+    console.error('[scene3d-studio] bake failed', e)
+    bakeError.value = 'Bake failed — retry'
   } finally {
     baking.value = false
   }
@@ -220,6 +254,8 @@ async function bake(): Promise<void> {
 
 async function onClose() {
   setWidget('scene_state', serializeDoc(doc)) // scene always persists, baked or not
+  // bake() never throws (errors land in bakeError), so close always proceeds —
+  // a failed auto-bake loses nothing since scene_state is already written.
   if (dirty.value && doc.objects.length && engine) await bake()
   emit('close')
 }
@@ -327,7 +363,8 @@ async function onClose() {
           {{ baking ? 'Baking…' : 'Bake' }}
         </span>
       </StudioButton>
-      <span v-if="dirty && !baking" class="text-xs text-amber-400/80">unbaked changes</span>
+      <span v-if="bakeError && !baking" class="text-xs text-red-400/90">{{ bakeError }}</span>
+      <span v-else-if="dirty && !baking" class="text-xs text-amber-400/80">unbaked changes</span>
     </template>
   </StudioModalShell>
 </template>
