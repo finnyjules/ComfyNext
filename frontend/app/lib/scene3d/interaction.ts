@@ -19,8 +19,10 @@ export class SceneInteraction {
   private downAt: [number, number] | null = null
   // Latched from 'dragging-changed': the gizmo's own pointerup listener runs
   // before ours (registered earlier on the same element) and resets
-  // gizmo.dragging, so onUp must consult this latch instead. Cleared a
-  // microtask after drag end so the in-flight pointerup still sees it.
+  // gizmo.dragging, so onUp must consult this latch instead. Set on drag
+  // start, consumed (read + cleared) inside onUp — a deferred clear wouldn't
+  // survive the microtask checkpoint browsers run between listeners on
+  // trusted events.
   private gizmoDragged = false
 
   constructor(
@@ -39,7 +41,6 @@ export class SceneInteraction {
     this.gizmo.addEventListener('dragging-changed', (e) => {
       this.orbit.enabled = !e.value
       if (e.value) this.gizmoDragged = true
-      else queueMicrotask(() => { this.gizmoDragged = false })
     })
     this.gizmo.addEventListener('objectChange', () => this.emitTransform())
     // three 0.171 TransformControls extends Controls (not Object3D); its visual
@@ -52,6 +53,9 @@ export class SceneInteraction {
   private onDown = (e: PointerEvent) => {
     if (e.button !== 0) return
     this.downAt = [e.clientX, e.clientY]
+    // NOTE: do not reset gizmoDragged here — the gizmo's earlier-registered
+    // pointerdown listener has already latched it for handle grabs, and the
+    // element's setPointerCapture guarantees onUp always fires to consume it.
   }
 
   private onUp = (e: PointerEvent) => {
@@ -60,7 +64,9 @@ export class SceneInteraction {
     if (!this.downAt) return
     const [dx, dy] = [e.clientX - this.downAt[0], e.clientY - this.downAt[1]]
     this.downAt = null
-    if (Math.hypot(dx, dy) > 4 || this.gizmoDragged) return
+    const wasGizmoDrag = this.gizmoDragged
+    this.gizmoDragged = false
+    if (Math.hypot(dx, dy) > 4 || wasGizmoDrag) return
     const rect = this.domElement.getBoundingClientRect()
     const ndc = new THREE.Vector2(
       ((e.clientX - rect.left) / rect.width) * 2 - 1,
