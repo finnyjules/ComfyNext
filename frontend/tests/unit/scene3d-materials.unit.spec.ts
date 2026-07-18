@@ -45,11 +45,17 @@ describe('scene3d materials factory', () => {
     expect((m.userData.gradUniforms as any).uAxis.value).toBe(2)
   })
 
-  it('switches gradient shading smooth↔faceted in place via the uFacet uniform', () => {
-    const m = materialFor(base({ type: 'gradient' }))
-    expect((m.userData.gradUniforms as any).uFacet.value).toBe(0)
-    expect(updateMaterial(m, base({ type: 'gradient', gradientShading: 'faceted' }))).toBe(true)
-    expect((m.userData.gradUniforms as any).uFacet.value).toBe(1)
+  it('rebuilds the gradient when crossing the smooth↔facet program boundary', () => {
+    const m = materialFor(base({ type: 'gradient' })) // smooth program
+    expect(updateMaterial(m, base({ type: 'gradient', gradientShading: 'faceted' }))).toBe(false)
+    expect(updateMaterial(m, base({ type: 'gradient', gradientShading: 'prismatic' }))).toBe(false)
+  })
+
+  it('switches faceted↔prismatic in place via the uMode uniform', () => {
+    const m = materialFor(base({ type: 'gradient', gradientShading: 'faceted' }))
+    expect((m.userData.gradUniforms as any).uMode.value).toBe(1)
+    expect(updateMaterial(m, base({ type: 'gradient', gradientShading: 'prismatic' }))).toBe(true)
+    expect((m.userData.gradUniforms as any).uMode.value).toBe(2)
   })
 
   it('updates fresnel rim uniforms in place through userData', () => {

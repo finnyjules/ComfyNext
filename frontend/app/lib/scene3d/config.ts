@@ -26,8 +26,10 @@ export interface SceneMaterial {
   fresnelPower?: number
   gradientB?: string
   gradientAxis?: 'x' | 'y' | 'z'
-  /** smooth = per-pixel ramp; faceted = one flat ramp tone per facet (low-poly look). */
-  gradientShading?: 'smooth' | 'faceted'
+  /** smooth = one ramp across the object; faceted = one flat ramp tone per facet
+   *  (low-poly look); prismatic = the full ramp runs across EACH facet
+   *  individually (ShapeStudio's cut-gem shimmer). */
+  gradientShading?: 'smooth' | 'faceted' | 'prismatic'
   image?: string
 }
 
@@ -166,7 +168,7 @@ export function parseDoc(json: string): SceneDoc {
     if (typeof m?.fresnelPower === 'number') out.fresnelPower = num(m.fresnelPower, MATERIAL_DEFAULTS.fresnelPower)
     if (typeof m?.gradientB === 'string') out.gradientB = m.gradientB
     if (m?.gradientAxis === 'x' || m?.gradientAxis === 'y' || m?.gradientAxis === 'z') out.gradientAxis = m.gradientAxis
-    if (m?.gradientShading === 'smooth' || m?.gradientShading === 'faceted') out.gradientShading = m.gradientShading
+    if (m?.gradientShading === 'smooth' || m?.gradientShading === 'faceted' || m?.gradientShading === 'prismatic') out.gradientShading = m.gradientShading
     if (typeof m?.image === 'string') out.image = m.image
     return out
   }

@@ -126,28 +126,64 @@ const FRESNEL_FRAG_BODY = /* glsl */ `#include <emissivemap_fragment>
   totalEmissiveRadiance += uRim * rim;
 }`
 
-// Gradient: object-space colour ramp driving the albedo. `vGradFlat` is a
-// `flat` varying — for the faceted mode each triangle takes its provoking
-// vertex's value, giving one flat ramp tone per facet (low-poly look). Three's
-// GLSL3 prefix turns `varying` into in/out, and the `flat` qualifier rides
-// along verbatim.
-const GRADIENT_VERT_DECL = /* glsl */ `#include <common>
-varying vec3 vGradPos;
-flat varying vec3 vGradFlat;`
-const GRADIENT_VERT_BODY = /* glsl */ `#include <begin_vertex>
-vGradPos = position;
-vGradFlat = position;`
-const GRADIENT_FRAG_DECL = /* glsl */ `#include <common>
+// Gradient: object-space colour ramp driving the albedo. Two program variants:
+//  - smooth: one ramp across the whole object (per-pixel, object bbox range).
+//  - facet:  runs on the engine's flat-shaded geometry variant, which carries
+//    per-face extent attributes (aFaceMin/aFaceMax). uMode picks between
+//    faceted (1: one flat tone per facet, sampled at the provoking vertex) and
+//    prismatic (2: the FULL ramp swept across each facet individually — the
+//    ShapeStudio cut-gem look). `flat` varyings ride through three's GLSL3
+//    prefix (`varying` → in/out) verbatim.
+const GRADIENT_SMOOTH_VERT_DECL = /* glsl */ `#include <common>
+varying vec3 vGradPos;`
+const GRADIENT_SMOOTH_VERT_BODY = /* glsl */ `#include <begin_vertex>
+vGradPos = position;`
+const GRADIENT_SMOOTH_FRAG_DECL = /* glsl */ `#include <common>
 uniform vec3 uColorA; uniform vec3 uColorB;
-uniform vec3 uBoxMin; uniform vec3 uBoxMax; uniform int uAxis; uniform float uFacet;
-varying vec3 vGradPos;
-flat varying vec3 vGradFlat;`
-const GRADIENT_FRAG_BODY = /* glsl */ `#include <color_fragment>
+uniform vec3 uBoxMin; uniform vec3 uBoxMax; uniform int uAxis;
+varying vec3 vGradPos;`
+const GRADIENT_SMOOTH_FRAG_BODY = /* glsl */ `#include <color_fragment>
 {
-  vec3 gp  = mix(vGradPos, vGradFlat, uFacet);
-  float p  = uAxis == 0 ? gp.x       : (uAxis == 1 ? gp.y       : gp.z);
+  float p  = uAxis == 0 ? vGradPos.x : (uAxis == 1 ? vGradPos.y : vGradPos.z);
   float lo = uAxis == 0 ? uBoxMin.x  : (uAxis == 1 ? uBoxMin.y  : uBoxMin.z);
   float hi = uAxis == 0 ? uBoxMax.x  : (uAxis == 1 ? uBoxMax.y  : uBoxMax.z);
+  float t = clamp((p - lo) / max(hi - lo, 1e-5), 0.0, 1.0);
+  diffuseColor.rgb = mix(uColorA, uColorB, t);
+}`
+
+const GRADIENT_FACET_VERT_DECL = /* glsl */ `#include <common>
+attribute vec3 aFaceMin;
+attribute vec3 aFaceMax;
+varying vec3 vGradPos;
+flat varying vec3 vGradFlat;
+flat varying vec3 vFaceMin;
+flat varying vec3 vFaceMax;`
+const GRADIENT_FACET_VERT_BODY = /* glsl */ `#include <begin_vertex>
+vGradPos = position;
+vGradFlat = position;
+vFaceMin = aFaceMin;
+vFaceMax = aFaceMax;`
+const GRADIENT_FACET_FRAG_DECL = /* glsl */ `#include <common>
+uniform vec3 uColorA; uniform vec3 uColorB;
+uniform vec3 uBoxMin; uniform vec3 uBoxMax; uniform int uAxis; uniform int uMode;
+varying vec3 vGradPos;
+flat varying vec3 vGradFlat;
+flat varying vec3 vFaceMin;
+flat varying vec3 vFaceMax;`
+const GRADIENT_FACET_FRAG_BODY = /* glsl */ `#include <color_fragment>
+{
+  float p; float lo; float hi;
+  if (uMode == 2) {
+    // Prismatic: normalise within THIS face's own extent → full ramp per facet.
+    p  = uAxis == 0 ? vGradPos.x : (uAxis == 1 ? vGradPos.y : vGradPos.z);
+    lo = uAxis == 0 ? vFaceMin.x : (uAxis == 1 ? vFaceMin.y : vFaceMin.z);
+    hi = uAxis == 0 ? vFaceMax.x : (uAxis == 1 ? vFaceMax.y : vFaceMax.z);
+  } else {
+    // Faceted: one flat tone per face, sampled at the provoking vertex.
+    p  = uAxis == 0 ? vGradFlat.x : (uAxis == 1 ? vGradFlat.y : vGradFlat.z);
+    lo = uAxis == 0 ? uBoxMin.x   : (uAxis == 1 ? uBoxMin.y   : uBoxMin.z);
+    hi = uAxis == 0 ? uBoxMax.x   : (uAxis == 1 ? uBoxMax.y   : uBoxMax.z);
+  }
   float t = clamp((p - lo) / max(hi - lo, 1e-5), 0.0, 1.0);
   diffuseColor.rgb = mix(uColorA, uColorB, t);
 }`
@@ -212,29 +248,35 @@ export function materialFor(mat: SceneMaterial, geometry?: THREE.BufferGeometry)
       // Uniform objects live outside the compile closure: onBeforeCompile wires
       // these same objects into the program, so updateMaterial can mutate
       // .value at any time (before or after first compile) and it just works.
-      const gradUniforms = {
+      const shading = mat.gradientShading ?? MATERIAL_DEFAULTS.gradientShading
+      // Program split: 'smooth' runs on plain geometry; 'faceted'/'prismatic'
+      // share the facet program, which reads the engine's per-face extent
+      // attributes (aFaceMin/aFaceMax on the flat-shaded geometry variant) and
+      // switches between them with the uMode uniform (in-place). Crossing the
+      // smooth↔facet boundary rebuilds via identityKey.
+      const facetProgram = shading !== 'smooth'
+      const gradUniforms: Record<string, { value: unknown }> = {
         uColorA: { value: new THREE.Color(mat.color) },
         uColorB: { value: new THREE.Color(mat.gradientB ?? MATERIAL_DEFAULTS.gradientB) },
         uBoxMin: { value: boxMin },
         uBoxMax: { value: boxMax },
         uAxis: { value: AXIS_INDEX[mat.gradientAxis ?? MATERIAL_DEFAULTS.gradientAxis] },
-        // 0 = smooth per-pixel ramp; 1 = flat per-facet tone (low-poly look).
-        uFacet: { value: (mat.gradientShading ?? MATERIAL_DEFAULTS.gradientShading) === 'faceted' ? 1 : 0 },
       }
+      if (facetProgram) gradUniforms.uMode = { value: shading === 'prismatic' ? 2 : 1 }
       const g = new THREE.MeshStandardMaterial({ roughness: mat.roughness, metalness: mat.metalness })
       g.onBeforeCompile = (shader) => {
         Object.assign(shader.uniforms, gradUniforms)
         shader.vertexShader = shader.vertexShader
-          .replace('#include <common>', GRADIENT_VERT_DECL)
-          .replace('#include <begin_vertex>', GRADIENT_VERT_BODY)
+          .replace('#include <common>', facetProgram ? GRADIENT_FACET_VERT_DECL : GRADIENT_SMOOTH_VERT_DECL)
+          .replace('#include <begin_vertex>', facetProgram ? GRADIENT_FACET_VERT_BODY : GRADIENT_SMOOTH_VERT_BODY)
         shader.fragmentShader = shader.fragmentShader
-          .replace('#include <common>', GRADIENT_FRAG_DECL)
-          .replace('#include <color_fragment>', GRADIENT_FRAG_BODY)
+          .replace('#include <common>', facetProgram ? GRADIENT_FACET_FRAG_DECL : GRADIENT_SMOOTH_FRAG_DECL)
+          .replace('#include <color_fragment>', facetProgram ? GRADIENT_FACET_FRAG_BODY : GRADIENT_SMOOTH_FRAG_BODY)
       }
-      // All gradient materials share one program (uniforms differ per material);
-      // without this key, three would reuse the plain-standard program and skip
-      // our injection — or recompile per material.
-      g.customProgramCacheKey = () => 'scene3d-gradient'
+      // Same-variant gradient materials share one program (uniforms differ per
+      // material); without a key, three would reuse the plain-standard program
+      // and skip our injection — or recompile per material.
+      g.customProgramCacheKey = () => (facetProgram ? 'scene3d-gradient-facet' : 'scene3d-gradient-smooth')
       g.userData.gradUniforms = gradUniforms
       m = g
       break
@@ -268,6 +310,10 @@ function identityKey(mat: SceneMaterial): string {
     case 'toon': return `toon:${mat.toonSteps ?? MATERIAL_DEFAULTS.toonSteps}`
     case 'matcap': return `matcap:${mat.matcap ?? MATERIAL_DEFAULTS.matcap}`
     case 'image': return `image:${mat.image ?? ''}`
+    // Program variant boundary: smooth vs facet (faceted/prismatic share the
+    // facet program and switch via the uMode uniform in place).
+    case 'gradient':
+      return `gradient:${(mat.gradientShading ?? MATERIAL_DEFAULTS.gradientShading) === 'smooth' ? 'smooth' : 'facet'}`
     default: return mat.type
   }
 }
@@ -306,14 +352,16 @@ export function updateMaterial(m: THREE.Material, mat: SceneMaterial): boolean {
     case 'gradient': {
       // Lit gradient: the ramp lives in injected uniforms (userData.gradUniforms),
       // shared by reference with the compiled program — mutate and done.
+      // (identityKey already forced a rebuild if the smooth↔facet program
+      // boundary was crossed, so uMode only exists when it's mutable.)
       const u = m.userData.gradUniforms as {
         uColorA: { value: THREE.Color }; uColorB: { value: THREE.Color }
-        uAxis: { value: number }; uFacet: { value: number }
+        uAxis: { value: number }; uMode?: { value: number }
       }
       u.uColorA.value.set(mat.color)
       u.uColorB.value.set(mat.gradientB ?? MATERIAL_DEFAULTS.gradientB)
       u.uAxis.value = AXIS_INDEX[mat.gradientAxis ?? MATERIAL_DEFAULTS.gradientAxis]
-      u.uFacet.value = (mat.gradientShading ?? MATERIAL_DEFAULTS.gradientShading) === 'faceted' ? 1 : 0
+      if (u.uMode) u.uMode.value = (mat.gradientShading ?? MATERIAL_DEFAULTS.gradientShading) === 'prismatic' ? 2 : 1
       return true
     }
     case 'image': {

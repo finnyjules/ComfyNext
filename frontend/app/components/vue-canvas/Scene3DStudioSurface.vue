@@ -693,7 +693,7 @@ function onClose() {
           </div>
           <div>
             <label class="mb-1 block text-[11px] text-white/55">Shading</label>
-            <StudioSegmented v-model="matGradientShading" :options="['smooth', 'faceted']" />
+            <StudioSegmented v-model="matGradientShading" :options="['smooth', 'faceted', 'prismatic']" />
           </div>
         </template>
 

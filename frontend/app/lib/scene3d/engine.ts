@@ -35,6 +35,32 @@ function geometryFor(kind: PrimitiveKind): THREE.BufferGeometry {
   }
 }
 
+/** Bake each triangle's own bounding extent into per-vertex attributes
+ *  (aFaceMin/aFaceMax, same value on all 3 verts of a face). The facet
+ *  gradient program reads them to run the full ramp across each face
+ *  individually (prismatic mode). Requires non-indexed geometry. */
+function addFaceExtentAttributes(geo: THREE.BufferGeometry): void {
+  const pos = geo.getAttribute('position') as THREE.BufferAttribute
+  const n = pos.count
+  const min = new Float32Array(n * 3)
+  const max = new Float32Array(n * 3)
+  for (let v = 0; v < n; v += 3) {
+    for (let axis = 0; axis < 3; axis++) {
+      const a = pos.getComponent(v, axis)
+      const b = pos.getComponent(v + 1, axis)
+      const c = pos.getComponent(v + 2, axis)
+      const lo = Math.min(a, b, c)
+      const hi = Math.max(a, b, c)
+      for (let k = 0; k < 3; k++) {
+        min[(v + k) * 3 + axis] = lo
+        max[(v + k) * 3 + axis] = hi
+      }
+    }
+  }
+  geo.setAttribute('aFaceMin', new THREE.BufferAttribute(min, 3))
+  geo.setAttribute('aFaceMax', new THREE.BufferAttribute(max, 3))
+}
+
 // Preset → environment intensity + sun softness. Sun angle/intensity stay
 // user-controlled; presets shape the fill character around it.
 const PRESETS: Record<LightingPreset, { envIntensity: number; shadow: boolean }> = {
@@ -183,11 +209,12 @@ export class SceneEngine {
     root.scale.set(...obj.scale)
     if (obj.kind === 'primitive') {
       const mesh = root as THREE.Mesh
-      // Faceted gradients pair the flat per-facet ramp with flat-shaded geometry
-      // (non-indexed + per-face normals) for the full low-poly look; switching
-      // back restores the smooth original from the geometry factory.
+      // Faceted/prismatic gradients pair their per-facet ramps with flat-shaded
+      // geometry (non-indexed + per-face normals) plus per-face extent
+      // attributes (aFaceMin/aFaceMax — the facet shader's sampling range);
+      // switching back restores the smooth original from the geometry factory.
       const wantFacet = obj.material.type === 'gradient' &&
-        (obj.material.gradientShading ?? 'smooth') === 'faceted'
+        (obj.material.gradientShading ?? 'smooth') !== 'smooth'
       const variant = wantFacet ? 'facet' : 'smooth'
       if (mesh.userData.geoVariant !== variant) {
         mesh.geometry.dispose()
@@ -195,6 +222,7 @@ export class SceneEngine {
         if (wantFacet) {
           if (geo.index) geo = geo.toNonIndexed()
           geo.computeVertexNormals()
+          addFaceExtentAttributes(geo)
         }
         mesh.geometry = geo
         mesh.userData.geoVariant = variant
