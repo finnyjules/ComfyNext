@@ -41,13 +41,12 @@ const depthMaterial = () => new THREE.ShaderMaterial({
 export async function renderPasses(engine: SceneEngine, doc: SceneDoc):
   Promise<{ beauty: string; depth: string; normal: string }> {
   const { width, height } = doc.output
-  const canvas = document.createElement('canvas')
-  canvas.width = width; canvas.height = height
-  const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, preserveDrawingBuffer: true })
-  renderer.setSize(width, height, false)
-  renderer.setPixelRatio(1)
-  renderer.shadowMap.enabled = true
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap
+  // Bake with the SAME renderer the viewport uses, so the beauty inherits its
+  // exact tone mapping / colour space and matches the modal 1:1. (A separate
+  // renderer drifted — e.g. it force-applied ACES while the live renderer's tone
+  // mapping had been reset by PMREM env generation — making the export darker.)
+  const renderer = engine.renderer
+  const canvas = renderer.domElement as HTMLCanvasElement
 
   // Bake from the LIVE viewport camera so the export matches exactly what the
   // user is looking at (same angle → same shading). Only the aspect is
@@ -61,6 +60,12 @@ export async function renderPasses(engine: SceneEngine, doc: SceneDoc):
   const prevOverride = scene.overrideMaterial
   const prevGrid = engine.grid.visible
   const prevGround = engine.shadowGround.visible
+  const prevSize = renderer.getSize(new THREE.Vector2())
+  const prevPixelRatio = renderer.getPixelRatio()
+  const prevToneMapping = renderer.toneMapping
+  // Render at exactly the output resolution (restored in finally).
+  renderer.setPixelRatio(1)
+  renderer.setSize(width, height, false)
   engine.grid.visible = false
   // Editor-only helpers (the TransformControls gizmo) live in the same scene;
   // hide them so an active selection's gizmo never bleeds into the baked passes
@@ -71,10 +76,8 @@ export async function renderPasses(engine: SceneEngine, doc: SceneDoc):
   let dmat: THREE.ShaderMaterial | null = null
   let nmat: THREE.MeshNormalMaterial | null = null
   try {
-    // Beauty — scene as styled, with the same filmic tone mapping + contact
-    // shadow as the live viewport. Transparent background stays transparent.
-    renderer.toneMapping = THREE.ACESFilmicToneMapping
-    renderer.toneMappingExposure = 1.1
+    // Beauty — inherit the viewport's exact renderer state (tone mapping, colour
+    // space). Transparent background stays transparent.
     scene.background = doc.background === 'transparent' ? null : new THREE.Color(doc.background)
     renderer.render(scene, camera)
     const beauty = canvas.toDataURL('image/png')
@@ -110,11 +113,12 @@ export async function renderPasses(engine: SceneEngine, doc: SceneDoc):
     engine.grid.visible = prevGrid
     engine.shadowGround.visible = prevGround
     for (const h of helpers) h.visible = true
+    // Restore the shared live renderer (do NOT dispose it — the viewport keeps
+    // using it). The rAF loop re-renders the viewport at this size next frame.
+    renderer.toneMapping = prevToneMapping
+    renderer.setPixelRatio(prevPixelRatio)
+    renderer.setSize(prevSize.x, prevSize.y, false)
     dmat?.dispose()
     nmat?.dispose()
-    renderer.dispose()
-    // dispose() alone never releases the GL context; without this, repeated
-    // bakes on fresh detached canvases exhaust the browser's context cap.
-    renderer.forceContextLoss()
   }
 }
