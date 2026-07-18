@@ -213,10 +213,16 @@ function onPromptFocus() {
 </script>
 
 <template>
-  <div v-if="ready" class="flex flex-col gap-2">
+  <!-- pointer-events: the ROOT is click-through and each interactive child
+       re-enables events. The bar overlays the canvas (bottom-centre stack in
+       default.vue), so any non-interactive chrome — the AI-setup notice, gaps —
+       must not swallow canvas gestures underneath (e.g. wiring from a node
+       handle that Fit View parked behind the bar). -->
+  <div v-if="ready" class="pointer-events-none flex flex-col gap-2">
+    <!-- (Teleports to body — unaffected by the root's pointer-events-none.) -->
     <ImageSearchPickerModal :open="searchOpen" :query="searchQuery" @close="searchOpen = false" @done="onSearchDone" />
     <!-- Results expand upward, above the input -->
-    <div v-if="hasResult" class="relative max-h-[52vh] overflow-y-auto rounded-[12px] border border-[#2a2a2a] bg-[#1a1a1a]/95 p-3 shadow-xl backdrop-blur-md">
+    <div v-if="hasResult" class="pointer-events-auto relative max-h-[52vh] overflow-y-auto rounded-[12px] border border-[#2a2a2a] bg-[#1a1a1a]/95 p-3 shadow-xl backdrop-blur-md">
       <!-- Slow glimm sweep over the thinking card while the agent works. Persistently
            mounted (active gated reactively) and painted ON TOP via z-10 so the screen
            blend reads over the card. -->
@@ -255,7 +261,7 @@ function onPromptFocus() {
          reads as AI-generated here). Rendered outside the collapsible result
          card because a sketch response never sets `answer`, so the card
          itself can be fully collapsed while this chip still needs to show. -->
-    <div v-if="(lastSketchPhrase && !hasProposal) || (hasProposal && lastSubmitted)" class="flex flex-wrap gap-1.5 px-1">
+    <div v-if="(lastSketchPhrase && !hasProposal) || (hasProposal && lastSubmitted)" class="pointer-events-auto flex flex-wrap gap-1.5 px-1">
       <button
         v-if="lastSketchPhrase && !hasProposal" type="button"
         class="rounded-full border border-dashed border-white/20 px-2.5 py-1 text-[10.5px] text-white/50 transition hover:border-white/40 hover:text-white/75"
@@ -273,7 +279,7 @@ function onPromptFocus() {
     </p>
 
     <!-- Input bar — dark box with a pastel ring that fades in when active -->
-    <div class="prompt-field flex items-center gap-2.5 rounded-[12px] px-3.5 py-3.5 shadow-lg">
+    <div class="prompt-field pointer-events-auto flex items-center gap-2.5 rounded-[12px] px-3.5 py-3.5 shadow-lg">
       <Sparkles class="size-4 shrink-0 text-white/45" />
       <input
         v-model="phrase" :disabled="busy" type="text"

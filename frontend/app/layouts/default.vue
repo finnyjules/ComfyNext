@@ -4003,15 +4003,18 @@ function dismissRunResult() {
         <!-- Bottom-centre stack: the agent prompt sits above the toolbar and is
              sized to match it (the toolbar is the intrinsic-width child; the
              prompt is w-full). Only on project tabs. -->
+        <!-- pointer-events: the stack overlays the canvas — the wrapper (and the
+             gaps between its children) must not swallow canvas gestures; each
+             child re-enables its own events (the prompt bar does so internally). -->
         <div
           v-if="activeTab.type === 'project'"
-          class="absolute bottom-3 left-1/2 -translate-x-1/2 z-40 flex flex-col items-center gap-3"
+          class="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 z-40 flex flex-col items-center gap-3"
         >
           <AgentCanvasPromptBar v-if="vueNodesEnabled" :vue-canvas="vueCanvasRef" class="w-0 min-w-full" />
 
           <!-- Floating toolbar -->
           <div
-            class="flex items-center gap-1 bg-[#1a1a1a]/90 rounded-[12px] p-1 border border-[#2a2a2a] shadow-lg"
+            class="pointer-events-auto flex items-center gap-1 bg-[#1a1a1a]/90 rounded-[12px] p-1 border border-[#2a2a2a] shadow-lg"
           >
           <template v-for="(item) in sidebarItems" :key="item.label">
             <div
