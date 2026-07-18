@@ -4,6 +4,9 @@
 // carries the variable glyph (promote/manage) in the same row.
 import { scrubValue } from '~/lib/studio/scrub'
 import VariableGlyph from '~/components/vue-canvas/studio/VariableGlyph.vue'
+// Tooltip via reka-ui primitives (portal-based) so the popover escapes the
+// studio section cards' overflow:hidden — matches the codebase tooltip stack.
+import { TooltipProvider, TooltipRoot, TooltipTrigger, TooltipPortal, TooltipContent } from 'reka-ui'
 
 const model = defineModel<number>({ required: true })
 const props = defineProps<{
@@ -15,6 +18,7 @@ const props = defineProps<{
   bound?: string | null
   bindable?: boolean
   scrubPx?: number
+  hint?: string
 }>()
 const emit = defineEmits<{ (e: 'promote'): void; (e: 'menu', event: MouseEvent): void }>()
 
@@ -45,7 +49,24 @@ function onScrubDown(e: PointerEvent) {
 <template>
   <div class="group">
     <div v-if="label" class="mb-1.5 flex items-center justify-between">
-      <span class="text-[11px] text-white/55">{{ label }}</span>
+      <TooltipProvider v-if="hint" :delay-duration="200">
+        <TooltipRoot>
+          <TooltipTrigger as-child>
+            <span
+              class="cursor-help text-[11px] text-white/55 underline decoration-dotted decoration-white/25 underline-offset-2"
+            >{{ label }}</span>
+          </TooltipTrigger>
+          <TooltipPortal>
+            <TooltipContent
+              side="top"
+              :side-offset="6"
+              :collision-padding="8"
+              class="pointer-events-none z-[200] max-w-[220px] rounded-md border border-white/10 bg-[#1b1b1f] px-2 py-1 text-[11px] leading-snug text-white/85 shadow-lg shadow-black/40"
+            >{{ hint }}</TooltipContent>
+          </TooltipPortal>
+        </TooltipRoot>
+      </TooltipProvider>
+      <span v-else class="text-[11px] text-white/55">{{ label }}</span>
       <div class="flex items-center gap-1.5">
         <span
           v-if="bound"

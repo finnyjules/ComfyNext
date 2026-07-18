@@ -636,17 +636,17 @@ function onClose() {
                 <span class="text-[11px] text-white/55">Color</span>
                 <StudioColor v-model="matColor" />
               </div>
-              <StudioSlider v-model="matRoughness" label="Roughness" :min="0" :max="1" :step="0.01" />
-              <StudioSlider v-model="matMetalness" label="Metalness" :min="0" :max="1" :step="0.01" />
+              <StudioSlider v-model="matRoughness" label="Roughness" hint="How matte or glossy the surface is" :min="0" :max="1" :step="0.01" />
+              <StudioSlider v-model="matMetalness" label="Metalness" hint="Blends between plastic-like and metal reflections" :min="0" :max="1" :step="0.01" />
             </div>
           </div>
 
           <details class="group">
             <summary class="flex cursor-pointer select-none items-center gap-1.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 list-none hover:text-white/60 [&::-webkit-details-marker]:hidden"><span class="inline-block text-white/30 transition-transform group-open:rotate-90">›</span>Coat &amp; sheen</summary>
             <div class="space-y-3 pt-1">
-              <StudioSlider v-model="matClearcoat" label="Clearcoat" :min="0" :max="1" :step="0.01" />
-              <StudioSlider v-model="matClearcoatRoughness" label="Coat roughness" :min="0" :max="1" :step="0.01" />
-              <StudioSlider v-model="matSheen" label="Sheen" :min="0" :max="1" :step="0.01" />
+              <StudioSlider v-model="matClearcoat" label="Clearcoat" hint="Adds a thin glossy varnish layer on top" :min="0" :max="1" :step="0.01" />
+              <StudioSlider v-model="matClearcoatRoughness" label="Coat roughness" hint="How blurred or sharp that varnish coat looks" :min="0" :max="1" :step="0.01" />
+              <StudioSlider v-model="matSheen" label="Sheen" hint="Soft fabric-like edge highlight" :min="0" :max="1" :step="0.01" />
               <div class="flex items-center justify-between">
                 <span class="text-[11px] text-white/55">Sheen colour</span>
                 <StudioColor v-model="matSheenColor" />
@@ -661,38 +661,38 @@ function onClose() {
                 <span class="text-[11px] text-white/55">Emissive</span>
                 <StudioColor v-model="matEmissive" />
               </div>
-              <StudioSlider v-model="matEmissiveIntensity" label="Intensity" :min="0" :max="5" :step="0.05" />
+              <StudioSlider v-model="matEmissiveIntensity" label="Intensity" hint="How brightly the material glows on its own" :min="0" :max="5" :step="0.05" />
             </div>
           </details>
 
           <details class="group" :open="transparencyOpen" @toggle="transparencyOpen = ($event.target as HTMLDetailsElement).open">
             <summary class="flex cursor-pointer select-none items-center gap-1.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 list-none hover:text-white/60 [&::-webkit-details-marker]:hidden"><span class="inline-block text-white/30 transition-transform group-open:rotate-90">›</span>Transparency</summary>
             <div class="space-y-3 pt-1">
-              <StudioSlider v-model="matOpacity" label="Opacity" :min="0" :max="1" :step="0.01" />
-              <StudioSlider v-model="matTransmission" label="Transmission" :min="0" :max="1" :step="0.01" />
-              <StudioSlider v-model="matIor" label="IOR" :min="1" :max="2.33" :step="0.01" />
-              <StudioSlider v-model="matThickness" label="Thickness" :min="0" :max="2" :step="0.05" />
-              <StudioSlider v-model="matDispersion" label="Dispersion" :min="0" :max="5" :step="0.05" />
+              <StudioSlider v-model="matOpacity" label="Opacity" hint="How see-through the whole surface is" :min="0" :max="1" :step="0.01" />
+              <StudioSlider v-model="matTransmission" label="Transmission" hint="Lets light pass through, like glass" :min="0" :max="1" :step="0.01" />
+              <StudioSlider v-model="matIor" label="IOR" hint="How strongly light bends passing through" :min="1" :max="2.33" :step="0.01" />
+              <StudioSlider v-model="matThickness" label="Thickness" hint="How solid the glass feels as light travels in" :min="0" :max="2" :step="0.05" />
+              <StudioSlider v-model="matDispersion" label="Dispersion" hint="Splits refracted light into rainbow fringes" :min="0" :max="5" :step="0.05" />
               <div class="flex items-center justify-between">
                 <span class="text-[11px] text-white/55">Attenuation</span>
                 <StudioColor v-model="matAttenuationColor" />
               </div>
-              <StudioSlider v-model="matAttenuationDistance" label="Attenuation dist" :min="0" :max="10" :step="0.1" />
+              <StudioSlider v-model="matAttenuationDistance" label="Attenuation dist" hint="How deep light travels before tinting (0 = off)" :min="0" :max="10" :step="0.1" />
             </div>
           </details>
 
           <details class="group">
             <summary class="flex cursor-pointer select-none items-center gap-1.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 list-none hover:text-white/60 [&::-webkit-details-marker]:hidden"><span class="inline-block text-white/30 transition-transform group-open:rotate-90">›</span>Iridescence</summary>
             <div class="space-y-3 pt-1">
-              <StudioSlider v-model="matIridescence" label="Amount" :min="0" :max="1" :step="0.01" />
-              <StudioSlider v-model="matIridescenceIOR" label="IOR" :min="1" :max="2.33" :step="0.01" />
+              <StudioSlider v-model="matIridescence" label="Amount" hint="Strength of the soap-bubble colour shift" :min="0" :max="1" :step="0.01" />
+              <StudioSlider v-model="matIridescenceIOR" label="IOR" hint="Tunes which colours the bubble film shifts to" :min="1" :max="2.33" :step="0.01" />
             </div>
           </details>
 
           <details class="group">
             <summary class="flex cursor-pointer select-none items-center gap-1.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 list-none hover:text-white/60 [&::-webkit-details-marker]:hidden"><span class="inline-block text-white/30 transition-transform group-open:rotate-90">›</span>Reflection</summary>
             <div class="space-y-3 pt-1">
-              <StudioSlider v-model="matEnvMapIntensity" label="Intensity" :min="0" :max="3" :step="0.05" />
+              <StudioSlider v-model="matEnvMapIntensity" label="Intensity" hint="How strongly reflections from the surroundings show" :min="0" :max="3" :step="0.05" />
             </div>
           </details>
         </template>
@@ -703,7 +703,7 @@ function onClose() {
             <span class="text-[11px] text-white/55">Color</span>
             <StudioColor v-model="matColor" />
           </div>
-          <StudioSlider v-model="matToonSteps" label="Steps" :min="2" :max="5" :step="1" />
+          <StudioSlider v-model="matToonSteps" label="Steps" hint="Number of flat cel-shading bands" :min="2" :max="5" :step="1" />
         </template>
 
         <!-- matcap -->
@@ -731,7 +731,7 @@ function onClose() {
             <span class="text-[11px] text-white/55">Rim colour</span>
             <StudioColor v-model="matFresnelColor" />
           </div>
-          <StudioSlider v-model="matFresnelPower" label="Power" :min="1" :max="8" :step="0.1" />
+          <StudioSlider v-model="matFresnelPower" label="Power" hint="How tightly the rim glow hugs the edges" :min="1" :max="8" :step="0.1" />
         </template>
 
         <!-- gradient -->
@@ -770,8 +770,8 @@ function onClose() {
           </div>
           <p v-if="texUploadError[selected.id] || (selected.material.image && texLoadError[selected.material.image])"
             class="text-[11px] text-red-400/90">texture failed</p>
-          <StudioSlider v-model="matRoughness" label="Roughness" :min="0" :max="1" :step="0.01" />
-          <StudioSlider v-model="matMetalness" label="Metalness" :min="0" :max="1" :step="0.01" />
+          <StudioSlider v-model="matRoughness" label="Roughness" hint="How matte or glossy the surface is" :min="0" :max="1" :step="0.01" />
+          <StudioSlider v-model="matMetalness" label="Metalness" hint="Blends between plastic-like and metal reflections" :min="0" :max="1" :step="0.01" />
         </template>
 
         <div>
@@ -801,7 +801,7 @@ function onClose() {
       </StudioSection>
 
       <StudioSection title="Camera">
-        <StudioSlider v-model="doc.camera.fov" label="FOV" :min="15" :max="100" :step="1" />
+        <StudioSlider v-model="doc.camera.fov" label="FOV" hint="Camera field of view — how wide the lens sees" :min="15" :max="100" :step="1" />
         <div>
           <label class="mb-1 block text-[11px] text-white/55">Output</label>
           <StudioSegmented v-model="outputProxy" :options="OUTPUT_OPTIONS" />
@@ -813,10 +813,10 @@ function onClose() {
           <label class="mb-1 block text-[11px] text-white/55">Preset</label>
           <StudioSegmented v-model="lightingPresetProxy" :options="LIGHTING_PRESETS" />
         </div>
-        <StudioSlider v-model="doc.lighting.sunAzimuth" label="Sun azimuth" :min="0" :max="360" :step="1" />
-        <StudioSlider v-model="doc.lighting.sunElevation" label="Sun elevation" :min="5" :max="90" :step="1" />
-        <StudioSlider v-model="doc.lighting.sunIntensity" label="Sun intensity" :min="0" :max="3" :step="0.05" />
-        <StudioSlider v-model="doc.lighting.ambient" label="Ambient" :min="0" :max="2" :step="0.05" />
+        <StudioSlider v-model="doc.lighting.sunAzimuth" label="Sun azimuth" hint="Compass direction the sunlight comes from" :min="0" :max="360" :step="1" />
+        <StudioSlider v-model="doc.lighting.sunElevation" label="Sun elevation" hint="How high the sun sits above the horizon" :min="5" :max="90" :step="1" />
+        <StudioSlider v-model="doc.lighting.sunIntensity" label="Sun intensity" hint="How bright the main sunlight is" :min="0" :max="3" :step="0.05" />
+        <StudioSlider v-model="doc.lighting.ambient" label="Ambient" hint="Soft fill light that lifts the shadows" :min="0" :max="2" :step="0.05" />
       </StudioSection>
 
       <StudioSection title="Background">
