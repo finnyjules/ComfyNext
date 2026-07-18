@@ -1,7 +1,7 @@
 // Scene document model for the 3D Studio. This is the single source of truth:
 // the editor mutates a SceneDoc, the engine renders from it, and serializeDoc's
 // output is what the Scene3DStudio node stores in its `scene_state` widget.
-import { sanitizeParams } from '~/lib/scene3d/primParams'
+import { sanitizeParams, sanitizeModifiers } from '~/lib/scene3d/primParams'
 
 export type PrimitiveKind =
   | 'box' | 'sphere' | 'cylinder' | 'cone' | 'torus' | 'plane'
@@ -64,6 +64,9 @@ export interface PrimitiveObject extends SceneObjectBase {
   /** Geometry parameters keyed by ParamSpec.key (primParams.ts). Absent means
    *  every default, which reproduces the pre-parametric geometry. */
   params?: Record<string, number>
+  /** Deformations applied on top of the built geometry, keyed by
+   *  MODIFIER_SPECS.key (primParams.ts). Absent means undeformed. */
+  modifiers?: Record<string, number>
 }
 export interface GlbObject extends SceneObjectBase { kind: 'glb'; url: string }
 export type SceneObject = PrimitiveObject | GlbObject
@@ -235,7 +238,12 @@ export function parseDoc(json: string): SceneDoc {
         if (o.kind === 'glb' && typeof o.url === 'string') return [{ ...common, kind: 'glb', url: o.url }]
         if (o.kind === 'primitive' && PRIMITIVE_KINDS.includes(o.primitive)) {
           const params = sanitizeParams(o.primitive, o.params)
-          return [{ ...common, kind: 'primitive', primitive: o.primitive, ...(params ? { params } : {}) }]
+          const modifiers = sanitizeModifiers(o.modifiers)
+          return [{
+            ...common, kind: 'primitive', primitive: o.primitive,
+            ...(params ? { params } : {}),
+            ...(modifiers ? { modifiers } : {}),
+          }]
         }
         return []
       })

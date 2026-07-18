@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { PRIMITIVE_PARAMS, paramValue, sanitizeParams } from '~/lib/scene3d/primParams'
+import { PRIMITIVE_PARAMS, paramValue, sanitizeParams, MODIFIER_SPECS, modifierValue, resolveParam, sanitizeBag } from '~/lib/scene3d/primParams'
 import { PRIMITIVE_KINDS } from '~/lib/scene3d/config'
 
 describe('scene3d primitive params', () => {
@@ -59,5 +59,58 @@ describe('scene3d primitive params', () => {
     expect(spec.min).toBe(0)
     expect(spec.max).toBe(1)
     expect(spec.default).toBe(0)
+  })
+})
+
+describe('scene3d modifier specs', () => {
+  it('describes every modifier with a hint, a sane range and a unique key', () => {
+    const keys = MODIFIER_SPECS.map((s) => s.key)
+    expect(new Set(keys).size).toBe(keys.length)
+    for (const s of MODIFIER_SPECS) {
+      expect(s.hint.length, `${s.key} needs a tooltip hint`).toBeGreaterThan(0)
+      expect(s.min).toBeLessThan(s.max)
+      expect(s.step).toBeGreaterThan(0)
+      expect(s.default).toBeGreaterThanOrEqual(s.min)
+      expect(s.default).toBeLessThanOrEqual(s.max)
+      if (s.control === 'options') {
+        expect(s.options, `${s.key} needs options`).toBeTruthy()
+        expect(s.options!.length).toBeGreaterThan(1)
+        // options are stored as an index, so the range must cover them exactly
+        expect(s.min).toBe(0)
+        expect(s.max).toBe(s.options!.length - 1)
+      }
+    }
+  })
+
+  it('defaults every modifier to its identity so a fresh object is undeformed', () => {
+    for (const key of ['subdivide', 'taper', 'twist', 'bend', 'noise']) {
+      expect(modifierValue(undefined, key), `${key} must default to 0`).toBe(0)
+    }
+    expect(modifierValue(undefined, 'arrayCount')).toBe(1)
+  })
+
+  it('covers the documented modifier set', () => {
+    expect(MODIFIER_SPECS.map((s) => s.key)).toEqual([
+      'subdivide',
+      'taper', 'taperAxis',
+      'twist', 'twistAxis',
+      'bend', 'bendAxis',
+      'noise', 'noiseScale', 'noiseSeed',
+      'arrayCount', 'arrayMode', 'arrayOffsetX', 'arrayOffsetY', 'arrayOffsetZ', 'arrayRadius', 'arrayAxis',
+    ])
+  })
+
+  it('resolves and sanitizes modifier bags like param bags', () => {
+    expect(modifierValue({ twist: 90 }, 'twist')).toBe(90)
+    expect(modifierValue({ twist: 9999 }, 'twist')).toBe(360)
+    expect(sanitizeBag(MODIFIER_SPECS, { twist: 90, nope: 1 })).toEqual({ twist: 90 })
+    expect(sanitizeBag(MODIFIER_SPECS, {})).toBeUndefined()
+  })
+
+  it('keeps the generic resolver and the param-specific wrapper in agreement', () => {
+    expect(resolveParam(PRIMITIVE_PARAMS.sphere, { detail: 12 }, 'detail'))
+      .toBe(paramValue('sphere', { detail: 12 }, 'detail'))
+    expect(sanitizeBag(PRIMITIVE_PARAMS.sphere, { detail: 12, nope: 1 }))
+      .toEqual(sanitizeParams('sphere', { detail: 12, nope: 1 }))
   })
 })

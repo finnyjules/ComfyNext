@@ -122,6 +122,19 @@ describe('scene3d config', () => {
     expect((back.objects[2] as any).params).toBeUndefined()
   })
 
+  it('round-trips modifiers and drops junk ones', () => {
+    const doc = defaultDoc()
+    const o = createPrimitive('box', doc.objects)
+    o.modifiers = { twist: 120, subdivide: 2, arrayCount: 4 }
+    doc.objects.push(o)
+    expect(parseDoc(serializeDoc(doc))).toEqual(doc)
+
+    const raw = JSON.parse(serializeDoc(doc))
+    raw.objects[0].modifiers = { twist: 120, bogus: 7, bend: 9999 }
+    const back = parseDoc(JSON.stringify(raw))
+    expect((back.objects[0] as any).modifiers).toEqual({ twist: 120, bend: 180 })
+  })
+
   it('menu groups cover every primitive kind exactly once, in canonical order', () => {
     const menuKinds = PRIM_GROUPS.flatMap((g) => g.kinds.map((k) => k.kind))
     expect(menuKinds).toEqual([...PRIMITIVE_KINDS])
