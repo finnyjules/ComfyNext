@@ -12,7 +12,7 @@
 // through string proxies because StudioSegmented/StudioSelect models are `string`.
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import {
-  Box, Camera, Plus, Trash2, Copy, Eye, EyeOff, Loader2, Upload, RotateCcw,
+  Box, Plus, Trash2, Copy, Eye, EyeOff, Loader2, Upload, RotateCcw,
 } from 'lucide-vue-next'
 import {
   parseDoc, serializeDoc, createPrimitive, createGlbObject,
@@ -353,10 +353,14 @@ async function onGlbFilePicked(e: Event) {
   }
 }
 
-function setCameraFromView() {
+// Persist the live viewport camera into the doc so it serializes with the scene
+// (reopening restores your exact view). Called before every serialize/bake — the
+// bake itself renders from the live engine camera, so what you see is what exports.
+function syncDocCamera() {
   if (!engine || !interaction) return
   doc.camera.position = engine.camera.position.toArray() as [number, number, number]
   doc.camera.target = interaction.orbit.target.toArray() as [number, number, number]
+  doc.camera.fov = engine.camera.fov
 }
 
 // ── Bake ──────────────────────────────────────────────────────────────────────
@@ -365,6 +369,7 @@ async function bake(): Promise<void> {
   if (!engine || baking.value) return
   baking.value = true
   bakeError.value = ''
+  syncDocCamera() // persist the live view before it serializes into scene_state
   try {
     const passes = await renderPasses(engine, doc)
     // Upload all three passes BEFORE touching any widget so a mid-bake failure
@@ -393,6 +398,7 @@ async function bake(): Promise<void> {
 // checkpoint work and keep editing; the node's output images are unchanged
 // until an explicit Export.
 function saveScene() {
+  syncDocCamera()
   setWidget('scene_state', serializeDoc(doc))
   savedFlash.value = true
   if (savedTimer) clearTimeout(savedTimer)
@@ -418,6 +424,7 @@ async function exportToCanvas() {
 // Esc / ✕: persist the scene (implicit save) and leave — export is explicit now,
 // so closing never re-renders.
 function onClose() {
+  syncDocCamera()
   setWidget('scene_state', serializeDoc(doc))
   emit('close')
 }
@@ -431,7 +438,9 @@ function onClose() {
         <div v-else class="flex h-full items-center justify-center text-sm text-white/50">
           WebGL is unavailable — the 3D Studio needs a WebGL-capable browser.
         </div>
-        <!-- Overlay toolbar: gizmo mode · snap · set camera.
+        <!-- Overlay toolbar: gizmo mode · snap. (No "Set camera" — the export now
+             always renders from your live view, so the framing is committed
+             automatically on Save/Export.)
              @pointerdown.stop: these overlays sit inside the viewport element that
              OrbitControls binds to. Without this, a press on a button bubbles to
              OrbitControls, which setPointerCapture()s the pointer on the viewport —
@@ -446,8 +455,6 @@ function onClose() {
           <button type="button" class="rounded px-2 py-1 text-xs"
             :class="snap ? 'bg-white/25 text-white' : 'bg-white/10 text-white/70 hover:bg-white/15'"
             @click="snap = !snap">snap</button>
-          <button type="button" class="flex items-center gap-1 rounded bg-white/10 px-2 py-1 text-xs text-white hover:bg-white/15"
-            @click="setCameraFromView"><Camera class="h-3.5 w-3.5" /> Set camera</button>
         </div>
 
         <!-- Bottom add-toolbar (Grid editor pill style): + Primitive menu · Upload GLB -->

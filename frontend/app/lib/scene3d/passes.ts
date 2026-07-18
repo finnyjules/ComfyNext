@@ -49,9 +49,12 @@ export async function renderPasses(engine: SceneEngine, doc: SceneDoc):
   renderer.shadowMap.enabled = true
   renderer.shadowMap.type = THREE.PCFSoftShadowMap
 
-  const camera = new THREE.PerspectiveCamera(doc.camera.fov, width / height, 0.1, 200)
-  camera.position.set(...doc.camera.position)
-  camera.lookAt(...doc.camera.target)
+  // Bake from the LIVE viewport camera so the export matches exactly what the
+  // user is looking at (same angle → same shading). Only the aspect is
+  // overridden to the square/portrait output ratio.
+  const camera = engine.camera.clone() as THREE.PerspectiveCamera
+  camera.aspect = width / height
+  camera.updateProjectionMatrix()
 
   const scene = engine.scene
   const prevBg = scene.background
