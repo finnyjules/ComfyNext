@@ -16,9 +16,10 @@ import {
 } from 'lucide-vue-next'
 import {
   parseDoc, serializeDoc, createPrimitive, createGlbObject,
-  LIGHTING_PRESETS,
-  type SceneDoc, type SceneObject, type PrimitiveKind,
+  LIGHTING_PRESETS, MATERIAL_TYPES, MATERIAL_DEFAULTS,
+  type SceneDoc, type SceneObject, type PrimitiveKind, type MaterialType,
 } from '~/lib/scene3d/config'
+import { MATCAP_IDS, matcapThumb, onTextureError } from '~/lib/scene3d/materials'
 import { PRIM_GROUPS } from '~/lib/scene3d/primGroups'
 import { SceneEngine } from '~/lib/scene3d/engine'
 import { SceneInteraction, type GizmoMode } from '~/lib/scene3d/interaction'
@@ -32,6 +33,7 @@ import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
 import StudioSlider from '~/components/vue-canvas/studio/StudioSlider.vue'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
 import StudioSegmented from '~/components/vue-canvas/studio/StudioSegmented.vue'
+import StudioSelect from '~/components/vue-canvas/studio/StudioSelect.vue'
 import StudioSwitch from '~/components/vue-canvas/studio/StudioSwitch.vue'
 
 const props = withDefaults(defineProps<{ nodeId: string; nodes?: any[]; edges?: any[] }>(), {
@@ -132,6 +134,65 @@ const bgColorProxy = computed<string>({
 const matColor = computed<string>({ get: () => selected.value?.material.color ?? '#9aa3af', set: (v) => { if (selected.value) selected.value.material.color = v } })
 const matRoughness = computed<number>({ get: () => selected.value?.material.roughness ?? 0.6, set: (v) => { if (selected.value) selected.value.material.roughness = v } })
 const matMetalness = computed<number>({ get: () => selected.value?.material.metalness ?? 0, set: (v) => { if (selected.value) selected.value.material.metalness = v } })
+
+// Material type + per-type params. Proxies fall back to MATERIAL_DEFAULTS so
+// sliders always have a number; the doc only records what the user touches.
+const matType = computed<MaterialType>({
+  get: () => selected.value?.material.type ?? 'standard',
+  set: (v) => { if (selected.value) selected.value.material.type = v },
+})
+function matParam<K extends keyof typeof MATERIAL_DEFAULTS>(key: K) {
+  return computed<any>({
+    get: () => (selected.value?.material as any)?.[key] ?? MATERIAL_DEFAULTS[key],
+    set: (v) => { if (selected.value) (selected.value.material as any)[key] = v },
+  })
+}
+const matToonSteps = matParam('toonSteps')
+const matMatcap = matParam('matcap')
+const matIor = matParam('ior')
+const matTransmission = matParam('transmission')
+const matThickness = matParam('thickness')
+const matFresnelColor = matParam('fresnelColor')
+const matFresnelPower = matParam('fresnelPower')
+const matGradientB = matParam('gradientB')
+const matGradientAxis = matParam('gradientAxis')
+
+// Image-material upload: file → dataURL → ComfyUI input dir → material.image.
+const texFileInput = ref<HTMLInputElement | null>(null)
+const texUploading = ref(false)
+const texError = reactive<Record<string, boolean>>({})
+function triggerTexUpload() { texFileInput.value?.click() }
+// Same-origin /view URL for an uploaded input-dir file (used by the image preview).
+function texViewUrl(filename: string) {
+  return `/view?${new URLSearchParams({ filename, type: 'input' }).toString()}`
+}
+async function onTexFilePicked(e: Event) {
+  const file = (e.target as HTMLInputElement).files?.[0]
+  ;(e.target as HTMLInputElement).value = ''
+  if (!file || !selected.value) return
+  texUploading.value = true
+  try {
+    const dataUrl = await new Promise<string>((res, rej) => {
+      const r = new FileReader()
+      r.onload = () => res(String(r.result))
+      r.onerror = () => rej(new Error('read failed'))
+      r.readAsDataURL(file)
+    })
+    const filename = await inpaint.uploadDataUrl(dataUrl, `scene3d_tex_${props.nodeId}`)
+    delete texError[filename]
+    selected.value.material.image = filename
+  } catch {
+    if (selected.value?.material.image) texError[selected.value.material.image] = true
+    else texError[''] = true
+  } finally {
+    texUploading.value = false
+  }
+}
+// Engine-side texture load failures (e.g. restored doc referencing a deleted
+// file) surface the same inline note.
+let offTexError: (() => void) | null = null
+onMounted(() => { offTexError = onTextureError((f) => { texError[f] = true }) })
+onBeforeUnmount(() => { offTexError?.() })
 
 // Numeric transform fields (per-axis) — position/scale stored & shown raw, rotation
 // stored in radians but edited in degrees. Setters replace the whole array so the
@@ -542,12 +603,105 @@ function onClose() {
 
     <template #controls>
       <StudioSection v-if="selected" title="Selection">
-        <div v-if="selectedIsPrimitive" class="flex items-center justify-between">
-          <span class="text-[11px] text-white/55">Color</span>
-          <StudioColor v-model="matColor" />
+        <div v-if="selectedIsPrimitive">
+          <label class="mb-1 block text-[11px] text-white/55">Material</label>
+          <StudioSelect v-model="matType" :options="MATERIAL_TYPES" />
         </div>
-        <StudioSlider v-if="selectedIsPrimitive" v-model="matRoughness" label="Roughness" :min="0" :max="1" :step="0.01" />
-        <StudioSlider v-if="selectedIsPrimitive" v-model="matMetalness" label="Metalness" :min="0" :max="1" :step="0.01" />
+
+        <!-- standard -->
+        <template v-if="selectedIsPrimitive && matType === 'standard'">
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] text-white/55">Color</span>
+            <StudioColor v-model="matColor" />
+          </div>
+          <StudioSlider v-model="matRoughness" label="Roughness" :min="0" :max="1" :step="0.01" />
+          <StudioSlider v-model="matMetalness" label="Metalness" :min="0" :max="1" :step="0.01" />
+        </template>
+
+        <!-- toon -->
+        <template v-else-if="selectedIsPrimitive && matType === 'toon'">
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] text-white/55">Color</span>
+            <StudioColor v-model="matColor" />
+          </div>
+          <StudioSlider v-model="matToonSteps" label="Steps" :min="2" :max="5" :step="1" />
+        </template>
+
+        <!-- matcap -->
+        <template v-else-if="selectedIsPrimitive && matType === 'matcap'">
+          <div>
+            <label class="mb-1 block text-[11px] text-white/55">Matcap</label>
+            <div class="flex items-center gap-1.5">
+              <button v-for="id in MATCAP_IDS" :key="id" type="button" :title="id"
+                class="size-8 overflow-hidden rounded-full border transition-colors"
+                :class="matMatcap === id ? 'border-white/80' : 'border-white/15 hover:border-white/40'"
+                @click="matMatcap = id">
+                <img :src="matcapThumb(id)" class="size-full" alt="" />
+              </button>
+            </div>
+          </div>
+        </template>
+
+        <!-- glass -->
+        <template v-else-if="selectedIsPrimitive && matType === 'glass'">
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] text-white/55">Color</span>
+            <StudioColor v-model="matColor" />
+          </div>
+          <StudioSlider v-model="matRoughness" label="Roughness" :min="0" :max="0.5" :step="0.01" />
+          <StudioSlider v-model="matIor" label="IOR" :min="1" :max="2.33" :step="0.01" />
+          <StudioSlider v-model="matTransmission" label="Transmission" :min="0" :max="1" :step="0.01" />
+          <StudioSlider v-model="matThickness" label="Thickness" :min="0" :max="2" :step="0.05" />
+        </template>
+
+        <!-- fresnel -->
+        <template v-else-if="selectedIsPrimitive && matType === 'fresnel'">
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] text-white/55">Color</span>
+            <StudioColor v-model="matColor" />
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] text-white/55">Rim colour</span>
+            <StudioColor v-model="matFresnelColor" />
+          </div>
+          <StudioSlider v-model="matFresnelPower" label="Power" :min="1" :max="8" :step="0.1" />
+        </template>
+
+        <!-- gradient -->
+        <template v-else-if="selectedIsPrimitive && matType === 'gradient'">
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] text-white/55">Color</span>
+            <StudioColor v-model="matColor" />
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] text-white/55">Color B</span>
+            <StudioColor v-model="matGradientB" />
+          </div>
+          <div>
+            <label class="mb-1 block text-[11px] text-white/55">Axis</label>
+            <StudioSegmented v-model="matGradientAxis" :options="['x', 'y', 'z']" />
+          </div>
+        </template>
+
+        <!-- image -->
+        <template v-else-if="selectedIsPrimitive && matType === 'image'">
+          <input ref="texFileInput" type="file" accept="image/*" class="hidden" @change="onTexFilePicked" />
+          <div class="flex items-center gap-2">
+            <img v-if="selected.material.image" class="size-12 rounded object-cover"
+              :src="texViewUrl(selected.material.image)" alt="" />
+            <StudioButton :disabled="texUploading" @click="triggerTexUpload">
+              <span class="flex items-center gap-1.5">
+                <Loader2 v-if="texUploading" class="h-3.5 w-3.5 animate-spin" />
+                <Upload v-else class="h-3.5 w-3.5" />
+                {{ texUploading ? 'Uploading…' : selected.material.image ? 'Replace image' : 'Upload image' }}
+              </span>
+            </StudioButton>
+          </div>
+          <p v-if="texError[selected.material.image ?? '']" class="text-[11px] text-red-400/90">texture failed</p>
+          <StudioSlider v-model="matRoughness" label="Roughness" :min="0" :max="1" :step="0.01" />
+          <StudioSlider v-model="matMetalness" label="Metalness" :min="0" :max="1" :step="0.01" />
+        </template>
+
         <div>
           <label class="mb-1 block text-[11px] text-white/55">Position</label>
           <div class="grid grid-cols-3 gap-1.5">
