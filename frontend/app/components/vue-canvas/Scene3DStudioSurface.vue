@@ -22,7 +22,7 @@ import {
 import { MATCAP_IDS, matcapThumb, onTextureError } from '~/lib/scene3d/materials'
 import { PRIM_GROUPS } from '~/lib/scene3d/primGroups'
 import { SceneEngine } from '~/lib/scene3d/engine'
-import { SceneInteraction, type GizmoMode } from '~/lib/scene3d/interaction'
+import { SceneInteraction } from '~/lib/scene3d/interaction'
 import { loadGlb, GLB_SIZE_CAP_BYTES } from '~/lib/scene3d/glb'
 import { renderPasses } from '~/lib/scene3d/passes'
 import { detectWebGL } from '~/lib/spacetype/webgl'
@@ -55,7 +55,6 @@ const doc = reactive<SceneDoc>(parseDoc(widgetStr('scene_state')))
 const selectedId = ref<string | null>(null)
 const selected = computed<SceneObject | null>(() => doc.objects.find((o) => o.id === selectedId.value) ?? null)
 const selectedIsPrimitive = computed(() => selected.value?.kind === 'primitive')
-const gizmoMode = ref<GizmoMode>('translate')
 const snap = ref(false)
 const dirty = ref(false)      // doc changed since last bake
 const baking = ref(false)
@@ -300,20 +299,15 @@ onBeforeUnmount(() => {
 // changes" indicator isn't masked by an old red "Bake failed — retry".
 watch(doc, () => { dirty.value = true; bakeError.value = ''; engine?.syncFromDoc(doc) }, { deep: true })
 watch(selectedId, (id) => interaction?.select(id))
-watch(gizmoMode, (m) => interaction?.setMode(m))
 watch(snap, (s) => interaction?.setSnap(s))
 
 function onKey(e: KeyboardEvent) {
-  // Never hijack modified chords (Cmd+R reload, Ctrl/Alt combos) into gizmo shortcuts.
+  // Never hijack modified chords (Cmd+R reload, Ctrl/Alt combos).
   if (e.metaKey || e.ctrlKey || e.altKey) return
   const tag = (e.target as HTMLElement)?.tagName
   if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable) return
-  // Case-insensitive so CapsLock / Shift still trigger W/E/R.
-  const k = e.key.toLowerCase()
-  if (k === 'w') gizmoMode.value = 'translate'
-  else if (k === 'e') gizmoMode.value = 'rotate'
-  else if (k === 'r') gizmoMode.value = 'scale'
-  else if (e.key === 'Escape') {
+  // (No W/E/R mode shortcuts — the combined gizmo moves/rotates/scales at once.)
+  if (e.key === 'Escape') {
     // Open primitive menu owns Esc: close it, never the modal.
     if (primMenuOpen.value) {
       e.preventDefault()
@@ -509,20 +503,15 @@ function onClose() {
         <div v-else class="flex h-full items-center justify-center text-sm text-white/50">
           WebGL is unavailable — the 3D Studio needs a WebGL-capable browser.
         </div>
-        <!-- Overlay toolbar: gizmo mode · snap. (No "Set camera" — the export now
-             always renders from your live view, so the framing is committed
-             automatically on Save/Export.)
+        <!-- Overlay toolbar: snap only — the combined gizmo (Spline-style) moves,
+             rotates, and scales without mode switching, so no mode buttons.
+             (No "Set camera" either — the export always renders your live view.)
              @pointerdown.stop: these overlays sit inside the viewport element that
              OrbitControls binds to. Without this, a press on a button bubbles to
              OrbitControls, which setPointerCapture()s the pointer on the viewport —
              retargeting pointerup/click to the viewport so the button's @click never
              fires (and a stray orbit-drag starts). Stop it at the overlay boundary. -->
         <div v-if="webglOk" class="absolute left-3 top-3 flex items-center gap-2 rounded-lg bg-black/60 p-1.5 backdrop-blur" @pointerdown.stop>
-          <div class="flex overflow-hidden rounded bg-white/10 text-xs text-white">
-            <button v-for="m in (['translate', 'rotate', 'scale'] as const)" :key="m" type="button"
-              class="px-2 py-1 capitalize" :class="gizmoMode === m ? 'bg-white/25' : 'hover:bg-white/15'"
-              @click="gizmoMode = m">{{ m === 'translate' ? 'move' : m }}</button>
-          </div>
           <button type="button" class="rounded px-2 py-1 text-xs"
             :class="snap ? 'bg-white/25 text-white' : 'bg-white/10 text-white/70 hover:bg-white/15'"
             @click="snap = !snap">snap</button>
