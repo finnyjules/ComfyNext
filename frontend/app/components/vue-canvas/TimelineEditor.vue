@@ -1654,6 +1654,13 @@ function inputThumbUrl(filename: string): string {
   return `/sailor/input_thumbnail?filename=${encodeURIComponent(filename)}`
 }
 
+// Media kind from a raw input filename (imported assets carry .kind already).
+function inputFileKind(filename: string): 'video' | 'audio' | 'image' {
+  if (/\.(mp4|mov|webm|mxf|m4v)$/i.test(filename)) return 'video'
+  if (/\.(mp3|wav|flac|m4a|ogg|aac)$/i.test(filename)) return 'audio'
+  return 'image'
+}
+
 function hideBrokenThumb(e: Event) {
   ;(e.target as HTMLImageElement).style.display = 'none'
 }
@@ -1830,10 +1837,11 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
                 @click="addFileToTimeline(file)"
               >
                 <div class="relative h-8 w-14 shrink-0 rounded overflow-hidden bg-white/5 flex items-center justify-center">
-                  <Film class="size-3 text-white/25" />
+                  <component :is="clipIcon(inputFileKind(file.filename))" class="size-3 text-white/25" />
                   <img class="absolute inset-0 h-full w-full object-cover" loading="lazy" draggable="false"
                     :src="inputThumbUrl(file.filename)" alt="" @error="hideBrokenThumb" />
                 </div>
+                <component :is="clipIcon(inputFileKind(file.filename))" class="size-3 text-white/40 shrink-0" />
                 <span class="truncate">{{ file.filename }}</span>
               </div>
               <div v-if="!visibleInputFiles.length" class="text-xs text-white/30 px-2 py-4 italic">
@@ -1864,6 +1872,7 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
                   <img v-if="assetThumb(asset.id)" class="absolute inset-0 h-full w-full object-cover" draggable="false"
                     :src="assetThumb(asset.id)!" alt="" />
                 </div>
+                <component :is="clipIcon(asset.kind)" class="size-3 text-white/40 shrink-0" />
                 <span class="truncate flex-1">{{ asset.name }}</span>
                 <!-- In-use dot when this asset is on the timeline -->
                 <span
