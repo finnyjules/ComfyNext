@@ -170,6 +170,13 @@ const matIridescence = matParam('iridescence')
 const matIridescenceIOR = matParam('iridescenceIOR')
 const matEnvMapIntensity = matParam('envMapIntensity')
 
+// Transparency group defaults open for glass. StudioSection's isOpen/@toggle
+// pattern, scoped to the one sub-group with a dynamic default: the watch
+// re-applies the default on material-type switches, @toggle keeps user toggles
+// from being clobbered by later re-renders.
+const transparencyOpen = ref(matType.value === 'glass')
+watch(matType, (t) => { transparencyOpen.value = t === 'glass' })
+
 // Image-material upload: file → dataURL → ComfyUI input dir → material.image.
 // State is scoped to the object the upload was started FOR (not "whatever is
 // selected when it finishes"): texUploading holds that object's id so the
@@ -635,7 +642,7 @@ function onClose() {
           </div>
 
           <details class="group">
-            <summary class="cursor-pointer select-none py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 hover:text-white/60">Coat &amp; sheen</summary>
+            <summary class="flex cursor-pointer select-none items-center gap-1.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 list-none hover:text-white/60 [&::-webkit-details-marker]:hidden"><span class="inline-block text-white/30 transition-transform group-open:rotate-90">›</span>Coat &amp; sheen</summary>
             <div class="space-y-3 pt-1">
               <StudioSlider v-model="matClearcoat" label="Clearcoat" :min="0" :max="1" :step="0.01" />
               <StudioSlider v-model="matClearcoatRoughness" label="Coat roughness" :min="0" :max="1" :step="0.01" />
@@ -648,7 +655,7 @@ function onClose() {
           </details>
 
           <details class="group">
-            <summary class="cursor-pointer select-none py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 hover:text-white/60">Glow</summary>
+            <summary class="flex cursor-pointer select-none items-center gap-1.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 list-none hover:text-white/60 [&::-webkit-details-marker]:hidden"><span class="inline-block text-white/30 transition-transform group-open:rotate-90">›</span>Glow</summary>
             <div class="space-y-3 pt-1">
               <div class="flex items-center justify-between">
                 <span class="text-[11px] text-white/55">Emissive</span>
@@ -658,8 +665,8 @@ function onClose() {
             </div>
           </details>
 
-          <details class="group" :open="matType === 'glass'">
-            <summary class="cursor-pointer select-none py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 hover:text-white/60">Transparency</summary>
+          <details class="group" :open="transparencyOpen" @toggle="transparencyOpen = ($event.target as HTMLDetailsElement).open">
+            <summary class="flex cursor-pointer select-none items-center gap-1.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 list-none hover:text-white/60 [&::-webkit-details-marker]:hidden"><span class="inline-block text-white/30 transition-transform group-open:rotate-90">›</span>Transparency</summary>
             <div class="space-y-3 pt-1">
               <StudioSlider v-model="matOpacity" label="Opacity" :min="0" :max="1" :step="0.01" />
               <StudioSlider v-model="matTransmission" label="Transmission" :min="0" :max="1" :step="0.01" />
@@ -675,7 +682,7 @@ function onClose() {
           </details>
 
           <details class="group">
-            <summary class="cursor-pointer select-none py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 hover:text-white/60">Iridescence</summary>
+            <summary class="flex cursor-pointer select-none items-center gap-1.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 list-none hover:text-white/60 [&::-webkit-details-marker]:hidden"><span class="inline-block text-white/30 transition-transform group-open:rotate-90">›</span>Iridescence</summary>
             <div class="space-y-3 pt-1">
               <StudioSlider v-model="matIridescence" label="Amount" :min="0" :max="1" :step="0.01" />
               <StudioSlider v-model="matIridescenceIOR" label="IOR" :min="1" :max="2.33" :step="0.01" />
@@ -683,7 +690,7 @@ function onClose() {
           </details>
 
           <details class="group">
-            <summary class="cursor-pointer select-none py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 hover:text-white/60">Reflection</summary>
+            <summary class="flex cursor-pointer select-none items-center gap-1.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 list-none hover:text-white/60 [&::-webkit-details-marker]:hidden"><span class="inline-block text-white/30 transition-transform group-open:rotate-90">›</span>Reflection</summary>
             <div class="space-y-3 pt-1">
               <StudioSlider v-model="matEnvMapIntensity" label="Intensity" :min="0" :max="3" :step="0.05" />
             </div>
