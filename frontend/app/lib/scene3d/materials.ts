@@ -130,24 +130,27 @@ const FRESNEL_FRAG = /* glsl */ `
     #include <colorspace_fragment>
   }`
 
-const GRADIENT_VERT = /* glsl */ `
-  varying vec3 vPos;
-  void main() {
-    vPos = position;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-  }`
-const GRADIENT_FRAG = /* glsl */ `
-  uniform vec3 uColorA; uniform vec3 uColorB;
-  uniform vec3 uBoxMin; uniform vec3 uBoxMax; uniform int uAxis;
-  varying vec3 vPos;
-  void main() {
-    float p   = uAxis == 0 ? vPos.x    : (uAxis == 1 ? vPos.y    : vPos.z);
-    float lo  = uAxis == 0 ? uBoxMin.x : (uAxis == 1 ? uBoxMin.y : uBoxMin.z);
-    float hi  = uAxis == 0 ? uBoxMax.x : (uAxis == 1 ? uBoxMax.y : uBoxMax.z);
-    float t = clamp((p - lo) / max(hi - lo, 1e-5), 0.0, 1.0);
-    gl_FragColor = vec4(mix(uColorA, uColorB, t), 1.0);
-    #include <colorspace_fragment>
-  }`
+// Gradient is NOT a flat unlit shader (that would flatten the surface — no
+// facets, no shadows). Like Spline's gradient layer over lighting, it drives
+// the ALBEDO of a standard lit material: onBeforeCompile injects an
+// object-space colour ramp into diffuseColor, and the full standard lighting
+// pipeline (sun, env, shadows, tone mapping) applies on top.
+const GRADIENT_VERT_DECL = /* glsl */ `#include <common>
+varying vec3 vGradPos;`
+const GRADIENT_VERT_BODY = /* glsl */ `#include <begin_vertex>
+vGradPos = position;`
+const GRADIENT_FRAG_DECL = /* glsl */ `#include <common>
+uniform vec3 uColorA; uniform vec3 uColorB;
+uniform vec3 uBoxMin; uniform vec3 uBoxMax; uniform int uAxis;
+varying vec3 vGradPos;`
+const GRADIENT_FRAG_BODY = /* glsl */ `#include <color_fragment>
+{
+  float p  = uAxis == 0 ? vGradPos.x : (uAxis == 1 ? vGradPos.y : vGradPos.z);
+  float lo = uAxis == 0 ? uBoxMin.x  : (uAxis == 1 ? uBoxMin.y  : uBoxMin.z);
+  float hi = uAxis == 0 ? uBoxMax.x  : (uAxis == 1 ? uBoxMax.y  : uBoxMax.z);
+  float t = clamp((p - lo) / max(hi - lo, 1e-5), 0.0, 1.0);
+  diffuseColor.rgb = mix(uColorA, uColorB, t);
+}`
 
 const AXIS_INDEX = { x: 0, y: 1, z: 2 } as const
 
@@ -200,17 +203,32 @@ export function materialFor(mat: SceneMaterial, geometry?: THREE.BufferGeometry)
         if (!geometry.boundingBox) geometry.computeBoundingBox()
         if (geometry.boundingBox) { boxMin = geometry.boundingBox.min.clone(); boxMax = geometry.boundingBox.max.clone() }
       }
-      m = new THREE.ShaderMaterial({
-        uniforms: {
-          uColorA: { value: new THREE.Color(mat.color) },
-          uColorB: { value: new THREE.Color(mat.gradientB ?? MATERIAL_DEFAULTS.gradientB) },
-          uBoxMin: { value: boxMin },
-          uBoxMax: { value: boxMax },
-          uAxis: { value: AXIS_INDEX[mat.gradientAxis ?? MATERIAL_DEFAULTS.gradientAxis] },
-        },
-        vertexShader: GRADIENT_VERT,
-        fragmentShader: GRADIENT_FRAG,
-      })
+      // Uniform objects live outside the compile closure: onBeforeCompile wires
+      // these same objects into the program, so updateMaterial can mutate
+      // .value at any time (before or after first compile) and it just works.
+      const gradUniforms = {
+        uColorA: { value: new THREE.Color(mat.color) },
+        uColorB: { value: new THREE.Color(mat.gradientB ?? MATERIAL_DEFAULTS.gradientB) },
+        uBoxMin: { value: boxMin },
+        uBoxMax: { value: boxMax },
+        uAxis: { value: AXIS_INDEX[mat.gradientAxis ?? MATERIAL_DEFAULTS.gradientAxis] },
+      }
+      const g = new THREE.MeshStandardMaterial({ roughness: mat.roughness, metalness: mat.metalness })
+      g.onBeforeCompile = (shader) => {
+        Object.assign(shader.uniforms, gradUniforms)
+        shader.vertexShader = shader.vertexShader
+          .replace('#include <common>', GRADIENT_VERT_DECL)
+          .replace('#include <begin_vertex>', GRADIENT_VERT_BODY)
+        shader.fragmentShader = shader.fragmentShader
+          .replace('#include <common>', GRADIENT_FRAG_DECL)
+          .replace('#include <color_fragment>', GRADIENT_FRAG_BODY)
+      }
+      // All gradient materials share one program (uniforms differ per material);
+      // without this key, three would reuse the plain-standard program and skip
+      // our injection — or recompile per material.
+      g.customProgramCacheKey = () => 'scene3d-gradient'
+      g.userData.gradUniforms = gradUniforms
+      m = g
       break
     }
     case 'image': {
@@ -276,10 +294,14 @@ export function updateMaterial(m: THREE.Material, mat: SceneMaterial): boolean {
       return true
     }
     case 'gradient': {
-      const u = (m as THREE.ShaderMaterial).uniforms
-      u.uColorA!.value.set(mat.color)
-      u.uColorB!.value.set(mat.gradientB ?? MATERIAL_DEFAULTS.gradientB)
-      u.uAxis!.value = AXIS_INDEX[mat.gradientAxis ?? MATERIAL_DEFAULTS.gradientAxis]
+      // Lit gradient: the ramp lives in injected uniforms (userData.gradUniforms),
+      // shared by reference with the compiled program — mutate and done.
+      const u = m.userData.gradUniforms as {
+        uColorA: { value: THREE.Color }; uColorB: { value: THREE.Color }; uAxis: { value: number }
+      }
+      u.uColorA.value.set(mat.color)
+      u.uColorB.value.set(mat.gradientB ?? MATERIAL_DEFAULTS.gradientB)
+      u.uAxis.value = AXIS_INDEX[mat.gradientAxis ?? MATERIAL_DEFAULTS.gradientAxis]
       return true
     }
     case 'image': {

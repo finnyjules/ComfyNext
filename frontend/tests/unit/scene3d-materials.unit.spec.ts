@@ -13,7 +13,9 @@ describe('scene3d materials factory', () => {
     expect(materialFor(base({ type: 'matcap' }))).toBeInstanceOf(THREE.MeshMatcapMaterial)
     expect(materialFor(base({ type: 'glass' }))).toBeInstanceOf(THREE.MeshPhysicalMaterial)
     expect(materialFor(base({ type: 'fresnel' }))).toBeInstanceOf(THREE.ShaderMaterial)
-    expect(materialFor(base({ type: 'gradient' }))).toBeInstanceOf(THREE.ShaderMaterial)
+    // Gradient is a LIT standard material (ramp injected into diffuseColor via
+    // onBeforeCompile) — an unlit ShaderMaterial would flatten the surface.
+    expect(materialFor(base({ type: 'gradient' }))).toBeInstanceOf(THREE.MeshStandardMaterial)
     expect(materialFor(base({ type: 'image' }))).toBeInstanceOf(THREE.MeshStandardMaterial)
   })
 
@@ -34,6 +36,12 @@ describe('scene3d materials factory', () => {
     const m = materialFor(base({ type: 'glass' }))
     expect(updateMaterial(m, base({ type: 'glass', ior: 2.0, thickness: 1.5 }))).toBe(true)
     expect((m as THREE.MeshPhysicalMaterial).ior).toBe(2.0)
+  })
+
+  it('updates gradient uniforms in place through userData', () => {
+    const m = materialFor(base({ type: 'gradient' }))
+    expect(updateMaterial(m, base({ type: 'gradient', gradientB: '#112233', gradientAxis: 'z' }))).toBe(true)
+    expect((m.userData.gradUniforms as any).uAxis.value).toBe(2)
   })
 
   it('exposes the five matcap ids', () => {
