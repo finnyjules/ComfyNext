@@ -97,7 +97,49 @@ describe('scene3d modifier specs', () => {
       'bend', 'bendAxis',
       'noise', 'noiseScale', 'noiseSeed',
       'cloneCount', 'cloneMode', 'cloneOffsetX', 'cloneOffsetY', 'cloneOffsetZ', 'cloneRadius', 'cloneAxis',
+      'cloneCountX', 'cloneCountY', 'cloneCountZ',
+      'cloneSpacingX', 'cloneSpacingY', 'cloneSpacingZ',
+      'cloneStepRotX', 'cloneStepRotY', 'cloneStepRotZ', 'cloneStepScale',
     ])
+  })
+
+  it('appends grid to cloneMode so saved linear/radial indices still resolve', () => {
+    const spec = MODIFIER_SPECS.find((s) => s.key === 'cloneMode')!
+    // The stored value is the option INDEX: linear and radial must keep 0 and 1.
+    expect(spec.options).toEqual(['linear', 'radial', 'grid'])
+    expect(spec.min).toBe(0)
+    expect(spec.max).toBe(2)
+    expect(spec.default).toBe(0)
+    expect(modifierValue({ cloneMode: 0 }, 'cloneMode')).toBe(0)
+    expect(modifierValue({ cloneMode: 1 }, 'cloneMode')).toBe(1)
+    expect(modifierValue({ cloneMode: 2 }, 'cloneMode')).toBe(2)
+  })
+
+  it('gives the grid and step transforms the documented ranges and defaults', () => {
+    const spec = (key: string) => MODIFIER_SPECS.find((s) => s.key === key)!
+    for (const [key, def] of [['cloneCountX', 3], ['cloneCountY', 1], ['cloneCountZ', 3]] as const) {
+      expect(spec(key).min).toBe(1)
+      expect(spec(key).max).toBe(5)
+      expect(spec(key).step).toBe(1)
+      expect(spec(key).default).toBe(def)
+    }
+    for (const key of ['cloneSpacingX', 'cloneSpacingY', 'cloneSpacingZ']) {
+      expect(spec(key).min).toBe(0)
+      expect(spec(key).max).toBe(4)
+      expect(spec(key).step).toBe(0.05)
+      expect(spec(key).default).toBe(1.2)
+    }
+    // Step transforms default to identity so they never disturb an old scene.
+    for (const key of ['cloneStepRotX', 'cloneStepRotY', 'cloneStepRotZ']) {
+      expect(spec(key).min).toBe(-180)
+      expect(spec(key).max).toBe(180)
+      expect(spec(key).step).toBe(1)
+      expect(spec(key).default).toBe(0)
+    }
+    expect(spec('cloneStepScale').min).toBe(0.5)
+    expect(spec('cloneStepScale').max).toBe(1.5)
+    expect(spec('cloneStepScale').step).toBe(0.01)
+    expect(spec('cloneStepScale').default).toBe(1)
   })
 
   it('still loads scenes saved with the legacy array* modifier keys', () => {

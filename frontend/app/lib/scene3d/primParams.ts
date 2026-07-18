@@ -177,12 +177,31 @@ export const MODIFIER_SPECS: ParamSpec[] = [
   // section now and is meant to accumulate more clone options — an arrayCount
   // sitting beside a future cloneMode/cloneStep* would be inconsistent from day one.
   { key: 'cloneCount', label: 'Count', hint: 'How many copies of the shape to repeat', min: 1, max: 12, step: 1, default: 1 },
-  { key: 'cloneMode', label: 'Mode', hint: 'Repeat in a straight line or around a circle', min: 0, max: 1, step: 1, default: 0, control: 'options', options: ['linear', 'radial'] },
+  // 'grid' is APPENDED, never inserted: the stored value is the option index, so
+  // reordering would silently remap every saved scene.
+  { key: 'cloneMode', label: 'Mode', hint: 'Repeat in a line, around a circle, or across a grid', min: 0, max: 2, step: 1, default: 0, control: 'options', options: ['linear', 'radial', 'grid'] },
   { key: 'cloneOffsetX', label: 'Offset X', hint: 'Gap between copies along X', min: -3, max: 3, step: 0.05, default: 1.2 },
   { key: 'cloneOffsetY', label: 'Offset Y', hint: 'Gap between copies along Y', min: -3, max: 3, step: 0.05, default: 0 },
   { key: 'cloneOffsetZ', label: 'Offset Z', hint: 'Gap between copies along Z', min: -3, max: 3, step: 0.05, default: 0 },
   { key: 'cloneRadius', label: 'Radius', hint: 'How far each copy sits from the centre', min: 0, max: 5, step: 0.05, default: 1.5 },
   axisSpec('cloneAxis', 'Around', 'The axis the copies are arranged around', 1),
+
+  // Grid mode keys. Deliberately separate from cloneOffset*, whose defaults are
+  // (1.2, 0, 0) and would stack a grid on top of itself in Y and Z. The defaults
+  // here are non-identity on purpose — picking grid mode should show a floor
+  // grid straight away — which is safe because they only apply in grid mode.
+  { key: 'cloneCountX', label: 'Columns', hint: 'How many copies across X', min: 1, max: 5, step: 1, default: 3 },
+  { key: 'cloneCountY', label: 'Rows', hint: 'How many copies up Y', min: 1, max: 5, step: 1, default: 1 },
+  { key: 'cloneCountZ', label: 'Layers', hint: 'How many copies deep in Z', min: 1, max: 5, step: 1, default: 3 },
+  { key: 'cloneSpacingX', label: 'Spacing X', hint: 'Gap between grid columns', min: 0, max: 4, step: 0.05, default: 1.2 },
+  { key: 'cloneSpacingY', label: 'Spacing Y', hint: 'Gap between grid rows', min: 0, max: 4, step: 0.05, default: 1.2 },
+  { key: 'cloneSpacingZ', label: 'Spacing Z', hint: 'Gap between grid layers', min: 0, max: 4, step: 0.05, default: 1.2 },
+
+  // Step transforms accumulate across copies and apply in every mode.
+  { key: 'cloneStepRotX', label: 'Step rotate X', hint: 'Extra X rotation added to each successive copy', min: -180, max: 180, step: 1, default: 0 },
+  { key: 'cloneStepRotY', label: 'Step rotate Y', hint: 'Extra Y rotation added to each successive copy', min: -180, max: 180, step: 1, default: 0 },
+  { key: 'cloneStepRotZ', label: 'Step rotate Z', hint: 'Extra Z rotation added to each successive copy', min: -180, max: 180, step: 1, default: 0 },
+  { key: 'cloneStepScale', label: 'Step scale', hint: 'Each copy is scaled by this much again — below 1 shrinks away, above 1 grows', min: 0.5, max: 1.5, step: 0.01, default: 1 },
 ]
 
 export function modifierValue(modifiers: Record<string, number> | undefined, key: string): number {

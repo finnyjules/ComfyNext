@@ -15,10 +15,22 @@ import { modifierValue } from '~/lib/scene3d/primParams'
  *  is never reduced; subdivision stops early instead. */
 const VERTEX_BUDGET = 300_000
 
+/** Total copies the cloner will produce for these settings. Linear and radial
+ *  are driven by cloneCount; grid multiplies its three axis counts. */
+export function totalClones(modifiers: Record<string, number> | undefined): number {
+  const m = (k: string) => modifierValue(modifiers, k)
+  if (Math.round(m('cloneMode')) === 2) {
+    return Math.round(m('cloneCountX')) * Math.round(m('cloneCountY')) * Math.round(m('cloneCountZ'))
+  }
+  return Math.round(m('cloneCount'))
+}
+
 export function hasModifiers(modifiers: Record<string, number> | undefined): boolean {
   if (!modifiers) return false
   const m = (k: string) => modifierValue(modifiers, k)
-  return m('taper') !== 0 || m('twist') !== 0 || m('bend') !== 0 || m('noise') !== 0 || m('cloneCount') > 1
+  // The cloner is active when it produces more than one copy, which lets grid
+  // mode switch on from its own counts without touching cloneCount.
+  return m('taper') !== 0 || m('twist') !== 0 || m('bend') !== 0 || m('noise') !== 0 || totalClones(modifiers) > 1
 }
 
 // --- deterministic 3D value noise (no dependency, stable across runs) --------
@@ -163,31 +175,63 @@ function applyNoise(geo: THREE.BufferGeometry, amount: number, scale: number, se
   pos.needsUpdate = true
 }
 
-function applyCloner(
-  geo: THREE.BufferGeometry,
-  count: number,
-  radial: boolean,
-  offset: [number, number, number],
-  radius: number,
-  axis: number,
-): THREE.BufferGeometry {
+interface ClonerSettings {
+  /** 0 linear, 1 radial, 2 grid. */
+  mode: number
+  offset: [number, number, number]
+  radius: number
+  axis: number
+  gridCount: [number, number, number]
+  spacing: [number, number, number]
+  /** Per-copy rotation step in degrees, accumulated linearly. */
+  stepRot: [number, number, number]
+  /** Per-copy uniform scale factor, accumulated geometrically. */
+  stepScale: number
+}
+
+/** Copy `i` gets `place(i) . rotationStep(i) . scaleStep(i)`, so each copy spins
+ *  and shrinks about its own origin and is only then placed. With the default
+ *  step values both step matrices are exactly the identity, which makes the
+ *  product bit-identical to the pre-step placement matrix. */
+function applyCloner(geo: THREE.BufferGeometry, total: number, s: ClonerSettings): THREE.BufferGeometry {
   const copies: THREE.BufferGeometry[] = []
   const m = new THREE.Matrix4()
   const spin = new THREE.Matrix4()
-  const axisVec = new THREE.Vector3(axis === 0 ? 1 : 0, axis === 1 ? 1 : 0, axis === 2 ? 1 : 0)
-  const radialDir = (axis + 1) % 3
-  for (let i = 0; i < count; i++) {
+  const rot = new THREE.Matrix4()
+  const scl = new THREE.Matrix4()
+  const euler = new THREE.Euler()
+  const axisVec = new THREE.Vector3(s.axis === 0 ? 1 : 0, s.axis === 1 ? 1 : 0, s.axis === 2 ? 1 : 0)
+  const radialDir = (s.axis + 1) % 3
+  const [nx, ny] = s.gridCount
+  const rad = (deg: number) => (deg * Math.PI) / 180
+  for (let i = 0; i < total; i++) {
     const copy = geo.clone()
-    if (radial) {
-      const ang = (i / count) * Math.PI * 2
+    if (s.mode === 1) {
+      const ang = (i / total) * Math.PI * 2
       const out = new THREE.Vector3()
-      out.setComponent(radialDir, radius)
+      out.setComponent(radialDir, s.radius)
       m.makeTranslation(out.x, out.y, out.z)
       spin.makeRotationAxis(axisVec, ang)
-      copy.applyMatrix4(spin.multiply(m))
+      m.copy(spin.multiply(m))
+    } else if (s.mode === 2) {
+      // The grid is centred on the origin rather than growing away from it, so
+      // adding a column keeps the object where the user put it.
+      const ix = i % nx
+      const iy = Math.floor(i / nx) % ny
+      const iz = Math.floor(i / (nx * ny))
+      m.makeTranslation(
+        (ix - (s.gridCount[0] - 1) / 2) * s.spacing[0],
+        (iy - (s.gridCount[1] - 1) / 2) * s.spacing[1],
+        (iz - (s.gridCount[2] - 1) / 2) * s.spacing[2],
+      )
     } else {
-      copy.applyMatrix4(m.makeTranslation(offset[0] * i, offset[1] * i, offset[2] * i))
+      m.makeTranslation(s.offset[0] * i, s.offset[1] * i, s.offset[2] * i)
     }
+    euler.set(rad(s.stepRot[0]) * i, rad(s.stepRot[1]) * i, rad(s.stepRot[2]) * i)
+    rot.makeRotationFromEuler(euler)
+    const k = s.stepScale ** i
+    scl.makeScale(k, k, k)
+    copy.applyMatrix4(m.multiply(rot).multiply(scl))
     copies.push(copy)
   }
   const merged = mergeGeometries(copies)
@@ -207,7 +251,7 @@ export function applyModifiers(
   const m = (k: string) => modifierValue(modifiers, k)
 
   const taper = m('taper'), twist = m('twist'), bend = m('bend'), noise = m('noise')
-  const count = Math.round(m('cloneCount'))
+  const count = totalClones(modifiers)
   const deforms = taper !== 0 || twist !== 0 || bend !== 0 || noise !== 0
 
   let out = geo.clone()
@@ -237,14 +281,16 @@ export function applyModifiers(
   }
 
   if (count > 1) {
-    const cloned = applyCloner(
-      out,
-      count,
-      Math.round(m('cloneMode')) === 1,
-      [m('cloneOffsetX'), m('cloneOffsetY'), m('cloneOffsetZ')],
-      m('cloneRadius'),
-      Math.round(m('cloneAxis')),
-    )
+    const cloned = applyCloner(out, count, {
+      mode: Math.round(m('cloneMode')),
+      offset: [m('cloneOffsetX'), m('cloneOffsetY'), m('cloneOffsetZ')],
+      radius: m('cloneRadius'),
+      axis: Math.round(m('cloneAxis')),
+      gridCount: [Math.round(m('cloneCountX')), Math.round(m('cloneCountY')), Math.round(m('cloneCountZ'))],
+      spacing: [m('cloneSpacingX'), m('cloneSpacingY'), m('cloneSpacingZ')],
+      stepRot: [m('cloneStepRotX'), m('cloneStepRotY'), m('cloneStepRotZ')],
+      stepScale: m('cloneStepScale'),
+    })
     out.dispose()
     out = cloned
     out.computeBoundingBox()
