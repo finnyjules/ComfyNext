@@ -103,6 +103,25 @@ describe('scene3d config', () => {
     expect(parseDoc(serializeDoc(doc))).toEqual(doc)
   })
 
+  it('round-trips primitive geometry params and drops junk ones', () => {
+    const doc = defaultDoc()
+    const sphere = createPrimitive('sphere', doc.objects)
+    sphere.params = { detail: 12, arc: 180 }
+    doc.objects.push(sphere)
+    const box = createPrimitive('box', doc.objects)
+    box.params = { cornerRadius: 0.2, cornerSides: 4 }
+    doc.objects.push(box)
+    const plain = createPrimitive('cone', doc.objects)
+    doc.objects.push(plain)
+    expect(parseDoc(serializeDoc(doc))).toEqual(doc)
+
+    const raw = JSON.parse(serializeDoc(doc))
+    raw.objects[0].params = { detail: 12, bogus: 5, arc: 9999 }
+    const back = parseDoc(JSON.stringify(raw))
+    expect((back.objects[0] as any).params).toEqual({ detail: 12, arc: 360 })
+    expect((back.objects[2] as any).params).toBeUndefined()
+  })
+
   it('menu groups cover every primitive kind exactly once, in canonical order', () => {
     const menuKinds = PRIM_GROUPS.flatMap((g) => g.kinds.map((k) => k.kind))
     expect(menuKinds).toEqual([...PRIMITIVE_KINDS])
