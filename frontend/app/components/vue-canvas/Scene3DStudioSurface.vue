@@ -22,7 +22,7 @@ import {
 import { MATCAP_IDS, matcapThumb, onTextureError } from '~/lib/scene3d/materials'
 import { PRIM_GROUPS } from '~/lib/scene3d/primGroups'
 import { SceneEngine, baseSizeFor } from '~/lib/scene3d/engine'
-import { PRIMITIVE_PARAMS, paramValue } from '~/lib/scene3d/primParams'
+import { PRIMITIVE_PARAMS, paramValue, MODIFIER_SPECS, modifierValue } from '~/lib/scene3d/primParams'
 import { SceneInteraction } from '~/lib/scene3d/interaction'
 import { loadGlb, GLB_SIZE_CAP_BYTES } from '~/lib/scene3d/glb'
 import { renderPasses } from '~/lib/scene3d/passes'
@@ -273,13 +273,51 @@ function setParam(key: string, v: number): void {
   o.params[key] = v
 }
 
+// Modifier bag: same schema-driven read/write shape as geometry params, but the
+// specs are shared across every primitive kind rather than keyed by kind.
+function modOf(key: string): number {
+  const o = selected.value
+  return o && o.kind === 'primitive' ? modifierValue(o.modifiers, key) : 0
+}
+function setMod(key: string, v: number): void {
+  const o = selected.value
+  if (!o || o.kind !== 'primitive') return
+  if (!o.modifiers) o.modifiers = {}
+  o.modifiers[key] = v
+}
+const modSpec = (key: string) => MODIFIER_SPECS.find((s) => s.key === key)!
+// Option controls store the option's index; the segmented control speaks labels.
+function optionOf(key: string): string {
+  const spec = modSpec(key)
+  return spec.options![Math.round(modOf(key))] ?? spec.options![0]!
+}
+function setOption(key: string, label: string): void {
+  const i = modSpec(key).options!.indexOf(label)
+  if (i >= 0) setMod(key, i)
+}
+const arrayIsRadial = computed(() => Math.round(modOf('arrayMode')) === 1)
+// Modifier controls, grouped for the panel. Array's offset/radius keys are
+// swapped by mode, so that group is computed rather than a static list.
+const MODIFIER_GROUPS = computed(() => [
+  { label: 'Taper', keys: ['taper', 'taperAxis'] },
+  { label: 'Twist', keys: ['twist', 'twistAxis'] },
+  { label: 'Bend', keys: ['bend', 'bendAxis'] },
+  { label: 'Noise', keys: ['noise', 'noiseScale', 'noiseSeed'] },
+  {
+    label: 'Array',
+    keys: arrayIsRadial.value
+      ? ['arrayCount', 'arrayMode', 'arrayRadius', 'arrayAxis']
+      : ['arrayCount', 'arrayMode', 'arrayOffsetX', 'arrayOffsetY', 'arrayOffsetZ'],
+  },
+])
+
 // Size = scale expressed in scene units. Base dimensions come from the geometry
 // itself (rebuilt from the doc, so they follow parameter changes — a fatter torus
 // tube is a bigger torus). GLBs fall back to the engine's measured bounds.
 const baseSize = computed<[number, number, number]>(() => {
   const o = selected.value
   if (!o) return [1, 1, 1]
-  if (o.kind === 'primitive') return baseSizeFor(o.primitive, o.params)
+  if (o.kind === 'primitive') return baseSizeFor(o.primitive, o.params, o.modifiers)
   return engine?.baseSizeOf(o.id) ?? [1, 1, 1]
 })
 function sizeAxis(i: 0 | 1 | 2, scl: { value: number }) {
@@ -427,6 +465,7 @@ function duplicateObject(id: string) {
     // Geometry params travel with the copy, cloned not aliased — a shared bag
     // would make both objects' shapes move together on any later edit.
     ...(src.kind === 'primitive' && src.params ? { params: { ...src.params } } : {}),
+    ...(src.kind === 'primitive' && src.modifiers ? { modifiers: { ...src.modifiers } } : {}),
   })
   doc.objects.push(copy)
   selectedId.value = copy.id
@@ -851,6 +890,46 @@ function onClose() {
                 @update:model-value="(v: number) => setParam(spec.key, v)"
               />
             </template>
+          </div>
+        </details>
+
+        <!-- Modifiers: a peer of Geometry (same plain details, no card chrome),
+             collapsed by default — these deform the built geometry. -->
+        <details v-if="selectedIsPrimitive" class="group">
+          <summary class="flex cursor-pointer select-none items-center gap-1.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 list-none hover:text-white/60 [&::-webkit-details-marker]:hidden"><span class="inline-block text-white/30 transition-transform group-open:rotate-90">›</span>Modifiers</summary>
+          <div class="space-y-3 pt-1">
+            <StudioSlider
+              :model-value="modOf('subdivide')"
+              :label="modSpec('subdivide').label"
+              :hint="modSpec('subdivide').hint"
+              :min="modSpec('subdivide').min"
+              :max="modSpec('subdivide').max"
+              :step="modSpec('subdivide').step"
+              @update:model-value="(v: number) => setMod('subdivide', v)"
+            />
+            <div v-for="group in MODIFIER_GROUPS" :key="group.label" class="space-y-2">
+              <div class="pt-1 text-[10px] uppercase tracking-[0.12em] text-white/25">{{ group.label }}</div>
+              <template v-for="key in group.keys" :key="key">
+                <div v-if="modSpec(key).control === 'options'">
+                  <label class="mb-1 block text-[11px] text-white/55" :title="modSpec(key).hint">{{ modSpec(key).label }}</label>
+                  <StudioSegmented
+                    :model-value="optionOf(key)"
+                    :options="modSpec(key).options!"
+                    @update:model-value="(v: string) => setOption(key, v)"
+                  />
+                </div>
+                <StudioSlider
+                  v-else
+                  :model-value="modOf(key)"
+                  :label="modSpec(key).label"
+                  :hint="modSpec(key).hint"
+                  :min="modSpec(key).min"
+                  :max="modSpec(key).max"
+                  :step="modSpec(key).step"
+                  @update:model-value="(v: number) => setMod(key, v)"
+                />
+              </template>
+            </div>
           </div>
         </details>
 
