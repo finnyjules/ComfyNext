@@ -8,7 +8,8 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
 import type { SceneDoc, SceneObject, Vec3, LightingPreset, PrimitiveKind, PrimitiveObject } from './config'
 import { loadGlb } from './glb'
 import { materialFor, updateMaterial, disposeMaterial } from './materials'
-import { PRIMITIVE_PARAMS, paramValue } from '~/lib/scene3d/primParams'
+import { applyModifiers } from '~/lib/scene3d/modifiers'
+import { PRIMITIVE_PARAMS, paramValue, MODIFIER_SPECS, modifierValue } from '~/lib/scene3d/primParams'
 
 /** Unit vector toward the sun for azimuth (deg, around Y) / elevation (deg above horizon). */
 export function sunDirection(azimuthDeg: number, elevationDeg: number): Vec3 {
@@ -63,10 +64,15 @@ export function geometryFor(kind: PrimitiveKind, params?: Record<string, number>
   }
 }
 
-/** Unscaled bounding dimensions of a primitive at the given params — the Size
- *  row multiplies these by the object's scale. Pure: builds, measures, disposes. */
-export function baseSizeFor(kind: PrimitiveKind, params?: Record<string, number>): [number, number, number] {
-  const geo = geometryFor(kind, params)
+/** Unscaled bounding dimensions of a primitive at the given params and
+ *  modifiers — the Size row multiplies these by the object's scale, so an array
+ *  or a bend must widen it. Pure: builds, measures, disposes. */
+export function baseSizeFor(
+  kind: PrimitiveKind,
+  params?: Record<string, number>,
+  modifiers?: Record<string, number>,
+): [number, number, number] {
+  const geo = buildGeometry(kind, params, modifiers, 'smooth')
   geo.computeBoundingBox()
   const b = geo.boundingBox!
   const size: [number, number, number] = [b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z]
@@ -75,10 +81,12 @@ export function baseSizeFor(kind: PrimitiveKind, params?: Record<string, number>
 }
 
 /** Stable geometry signature: kind + every declared param in table order +
- *  the shading variant. Changing it swaps mesh.geometry in place. */
+ *  every modifier in spec order + the shading variant. Changing any of them
+ *  swaps mesh.geometry in place. */
 function geoKeyFor(obj: PrimitiveObject, variant: 'smooth' | 'facet'): string {
   const vals = PRIMITIVE_PARAMS[obj.primitive].map((s) => paramValue(obj.primitive, obj.params, s.key))
-  return `${obj.primitive}|${vals.join(',')}|${variant}`
+  const mods = MODIFIER_SPECS.map((s) => modifierValue(obj.modifiers, s.key))
+  return `${obj.primitive}|${vals.join(',')}|${mods.join(',')}|${variant}`
 }
 
 /** Bake each triangle's own bounding extent into per-vertex attributes
@@ -113,14 +121,19 @@ function addFaceExtentAttributes(geo: THREE.BufferGeometry): void {
 export function buildGeometry(
   kind: PrimitiveKind,
   params: Record<string, number> | undefined,
+  modifiers: Record<string, number> | undefined,
   variant: 'smooth' | 'facet',
 ): THREE.BufferGeometry {
-  let geo = geometryFor(kind, params)
-  if (variant === 'facet') {
-    if (geo.index) geo = geo.toNonIndexed()
-    geo.computeVertexNormals()
-    addFaceExtentAttributes(geo)
-  }
+  const base = geometryFor(kind, params)
+  // applyModifiers returns the SAME object when nothing is set (and never
+  // disposes its input), so only free the base when it produced a new one.
+  const shaped = applyModifiers(base, modifiers)
+  if (shaped !== base) base.dispose()
+  if (variant !== 'facet') return shaped
+  let geo = shaped
+  if (geo.index) { const flat = geo.toNonIndexed(); geo.dispose(); geo = flat }
+  geo.computeVertexNormals()
+  addFaceExtentAttributes(geo)
   return geo
 }
 
@@ -242,7 +255,7 @@ export class SceneEngine {
     }
     if (!root) {
       if (obj.kind === 'primitive') {
-        const geo = geometryFor(obj.primitive, obj.params)
+        const geo = buildGeometry(obj.primitive, obj.params, obj.modifiers, 'smooth')
         const mat = materialFor(obj.material, geo)
         // Flat shapes must be visible from both sides (plane was previously
         // invisible from below; ring inherits the fix) — for every material type.
@@ -285,7 +298,7 @@ export class SceneEngine {
       // in-place update path) and the transform untouched.
       if (mesh.userData.geoKey !== geoKey) {
         mesh.geometry.dispose()
-        mesh.geometry = buildGeometry(obj.primitive, obj.params, variant)
+        mesh.geometry = buildGeometry(obj.primitive, obj.params, obj.modifiers, variant)
         mesh.userData.geoKey = geoKey
       }
       const current = mesh.material as THREE.Material

@@ -117,7 +117,7 @@ describe('scene3d parametric geometry', () => {
 
 describe('scene3d facet geometry variant', () => {
   it('leaves the smooth variant untouched', () => {
-    const geo = buildGeometry('box', { cornerRadius: 0.2 }, 'smooth')
+    const geo = buildGeometry('box', { cornerRadius: 0.2 }, undefined, 'smooth')
     expect(geo.getAttribute('aFaceMin')).toBeUndefined()
     expect(geo.getAttribute('aFaceMax')).toBeUndefined()
   })
@@ -132,7 +132,7 @@ describe('scene3d facet geometry variant', () => {
     ['torus', { tube: 0.3, detail: 24 }],
     ['sphere', { detail: 12 }],
   ] as const)('bakes face extents after a %s param rebuild', (kind, params) => {
-    const geo = buildGeometry(kind, params as Record<string, number>, 'facet')
+    const geo = buildGeometry(kind, params as Record<string, number>, undefined, 'facet')
     const pos = geo.getAttribute('position')
     const min = geo.getAttribute('aFaceMin')
     const max = geo.getAttribute('aFaceMax')
@@ -162,11 +162,38 @@ describe('scene3d facet geometry variant', () => {
 
   it('tracks the param change in the baked extents', () => {
     const spanX = (p: Record<string, number>): number => {
-      const a = buildGeometry('torus', p, 'facet').getAttribute('aFaceMax')
+      const a = buildGeometry('torus', p, undefined, 'facet').getAttribute('aFaceMax')
       let m = -Infinity
       for (let i = 0; i < a.count; i++) m = Math.max(m, a.getComponent(i, 0))
       return m
     }
     expect(spanX({ tube: 0.4 })).toBeGreaterThan(spanX({ tube: 0.05 }))
+  })
+})
+
+describe('scene3d engine modifier integration', () => {
+  it('builds undeformed geometry when no modifiers are set', () => {
+    const plain = buildGeometry('box', undefined, undefined, 'smooth')
+    const alsoPlain = buildGeometry('box', undefined, {}, 'smooth')
+    expect(alsoPlain.getAttribute('position').count).toBe(plain.getAttribute('position').count)
+  })
+
+  it('applies modifiers to the built geometry', () => {
+    const plain = buildGeometry('box', undefined, undefined, 'smooth')
+    const arrayed = buildGeometry('box', undefined, { arrayCount: 3 }, 'smooth')
+    expect(arrayed.getAttribute('position').count).toBe(plain.getAttribute('position').count * 3)
+  })
+
+  it('still produces face extents for the faceted variant after deformation', () => {
+    const g = buildGeometry('box', undefined, { twist: 90, subdivide: 1 }, 'facet')
+    expect(g.getAttribute('aFaceMin')).toBeTruthy()
+    expect(g.getAttribute('aFaceMax')).toBeTruthy()
+    expect(g.getAttribute('aFaceMin').count).toBe(g.getAttribute('position').count)
+  })
+
+  it('reports base size including modifiers', () => {
+    const plain = baseSizeFor('box')
+    const arrayed = baseSizeFor('box', undefined, { arrayCount: 3, arrayOffsetX: 2 })
+    expect(arrayed[0]).toBeGreaterThan(plain[0])
   })
 })
