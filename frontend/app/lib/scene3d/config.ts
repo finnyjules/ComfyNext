@@ -9,7 +9,25 @@ export type PrimitiveKind =
   | 'torusKnot' | 'ring'
 export type Vec3 = [number, number, number]
 
-export interface SceneMaterial { color: string; roughness: number; metalness: number }
+export type MaterialType = 'standard' | 'toon' | 'matcap' | 'glass' | 'fresnel' | 'gradient' | 'image'
+export const MATERIAL_TYPES: MaterialType[] = ['standard', 'toon', 'matcap', 'glass', 'fresnel', 'gradient', 'image']
+
+export interface SceneMaterial {
+  type: MaterialType
+  color: string
+  roughness: number
+  metalness: number
+  toonSteps?: number
+  matcap?: string
+  ior?: number
+  transmission?: number
+  thickness?: number
+  fresnelColor?: string
+  fresnelPower?: number
+  gradientB?: string
+  gradientAxis?: 'x' | 'y' | 'z'
+  image?: string
+}
 
 export interface SceneObjectBase {
   id: string
@@ -51,7 +69,21 @@ export const PRIMITIVE_KINDS: PrimitiveKind[] = [
 ]
 export const LIGHTING_PRESETS: LightingPreset[] = ['studio', 'soft', 'dramatic', 'flat']
 
-const DEFAULT_MATERIAL: SceneMaterial = { color: '#9aa3af', roughness: 0.6, metalness: 0.0 }
+const DEFAULT_MATERIAL: SceneMaterial = { type: 'standard', color: '#9aa3af', roughness: 0.6, metalness: 0.0 }
+
+/** Per-type parameter defaults — the single source of truth shared by the
+ *  material factory (materials.ts) and the Selection UI's proxies. */
+export const MATERIAL_DEFAULTS = {
+  toonSteps: 3,
+  matcap: 'chrome',
+  ior: 1.5,
+  transmission: 1,
+  thickness: 0.5,
+  fresnelColor: '#8ab4ff',
+  fresnelPower: 3,
+  gradientB: '#1c2740',
+  gradientAxis: 'y' as const,
+}
 
 export function defaultDoc(): SceneDoc {
   return {
@@ -111,6 +143,29 @@ export function parseDoc(json: string): SceneDoc {
   if (!raw || typeof raw !== 'object' || raw.version !== 1) return d
   const vec3 = (v: any, fb: Vec3): Vec3 =>
     Array.isArray(v) && v.length === 3 && v.every((n) => typeof n === 'number') ? [v[0] as number, v[1] as number, v[2] as number] : fb
+  const str = (v: any, fb: string): string => (typeof v === 'string' ? v : fb)
+  const num = (v: any, fb: number): number => (typeof v === 'number' && Number.isFinite(v) ? v : fb)
+  const parseMaterial = (m: any): SceneMaterial => {
+    const out: SceneMaterial = {
+      type: MATERIAL_TYPES.includes(m?.type) ? m.type : 'standard',
+      color: str(m?.color, DEFAULT_MATERIAL.color),
+      roughness: num(m?.roughness, DEFAULT_MATERIAL.roughness),
+      metalness: num(m?.metalness, DEFAULT_MATERIAL.metalness),
+    }
+    // Optional per-type params: copy only when present AND valid, so absent
+    // fields stay absent (keeps serialize→parse round-trips exact).
+    if (typeof m?.toonSteps === 'number') out.toonSteps = num(m.toonSteps, MATERIAL_DEFAULTS.toonSteps)
+    if (typeof m?.matcap === 'string') out.matcap = m.matcap
+    if (typeof m?.ior === 'number') out.ior = num(m.ior, MATERIAL_DEFAULTS.ior)
+    if (typeof m?.transmission === 'number') out.transmission = num(m.transmission, MATERIAL_DEFAULTS.transmission)
+    if (typeof m?.thickness === 'number') out.thickness = num(m.thickness, MATERIAL_DEFAULTS.thickness)
+    if (typeof m?.fresnelColor === 'string') out.fresnelColor = m.fresnelColor
+    if (typeof m?.fresnelPower === 'number') out.fresnelPower = num(m.fresnelPower, MATERIAL_DEFAULTS.fresnelPower)
+    if (typeof m?.gradientB === 'string') out.gradientB = m.gradientB
+    if (m?.gradientAxis === 'x' || m?.gradientAxis === 'y' || m?.gradientAxis === 'z') out.gradientAxis = m.gradientAxis
+    if (typeof m?.image === 'string') out.image = m.image
+    return out
+  }
   const objects: SceneObject[] = Array.isArray(raw.objects)
     ? raw.objects.flatMap((o: any): SceneObject[] => {
         if (!o || typeof o.id !== 'string') return []
@@ -121,11 +176,7 @@ export function parseDoc(json: string): SceneDoc {
           position: vec3(o.position, [0, 0, 0]),
           rotation: vec3(o.rotation, [0, 0, 0]),
           scale: vec3(o.scale, [1, 1, 1]),
-          material: {
-            color: typeof o.material?.color === 'string' ? o.material.color : DEFAULT_MATERIAL.color,
-            roughness: typeof o.material?.roughness === 'number' ? o.material.roughness : DEFAULT_MATERIAL.roughness,
-            metalness: typeof o.material?.metalness === 'number' ? o.material.metalness : DEFAULT_MATERIAL.metalness,
-          },
+          material: parseMaterial(o.material),
         }
         if (o.kind === 'glb' && typeof o.url === 'string') return [{ ...common, kind: 'glb', url: o.url }]
         if (o.kind === 'primitive' && PRIMITIVE_KINDS.includes(o.primitive)) {
