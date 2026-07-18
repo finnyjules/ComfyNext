@@ -7,8 +7,11 @@ test.describe('Timeline editor', () => {
     await openBlankWorkflow(page)
     await openTimelineEditor(page)
     // Asset rows are fetched async; wait for at least one to land before tests
-    // probe the list. Tests that genuinely need ≥2 use their own gate.
+    // probe the list. A BLANK workflow references no media, so the Project tab
+    // starts empty — reveal the full input/ listing like a user would.
     const editor = timelineEditorOverlay(page)
+    const showAll = editor.getByText(/Show \d+ more from other projects/)
+    await showAll.click({ timeout: 15_000 })
     await expect(editor.locator('[data-testid="asset-row"]').first()).toBeVisible({ timeout: 15_000 })
   })
 
@@ -17,8 +20,8 @@ test.describe('Timeline editor', () => {
     await expect(editor.getByText('Timeline Editor')).toBeVisible()
     // Tabs
     await expect(editor.getByRole('button', { name: /AI Ports/ })).toBeVisible()
-    await expect(editor.getByRole('button', { name: 'Browse' })).toBeVisible()
-    await expect(editor.getByRole('button', { name: 'Library' })).toBeVisible()
+    await expect(editor.getByRole('button', { name: 'Project', exact: true })).toBeVisible()
+    await expect(editor.getByRole('button', { name: 'Imported', exact: true })).toBeVisible()
     // Zoom controls
     await expect(editor.getByRole('button', { name: 'Fit' })).toBeVisible()
     // Keyboard hint strip

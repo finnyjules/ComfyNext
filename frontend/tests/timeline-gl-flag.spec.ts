@@ -26,8 +26,10 @@ test.describe('Timeline editor — WebGL engine default', () => {
     const canvas = editor.locator('canvas[data-engine="webgl"]')
     await expect(canvas).toBeVisible({ timeout: 10_000 })
 
-    // Add a clip the same way the Canvas2D suite does: wait for the async
-    // asset list, click the first video file row (skip if input/ has none).
+    // Add a clip the same way the Canvas2D suite does: reveal the full file
+    // listing (a blank workflow's Project tab is empty), then click the first
+    // video file row (skip if input/ has none).
+    await editor.getByText(/Show \d+ more from other projects/).click({ timeout: 15_000 })
     await expect(editor.locator('[data-testid="asset-row"]').first()).toBeVisible({ timeout: 15_000 })
     const fileRow = editor.locator('[data-testid="asset-row"]', { hasText: /\.(mp4|mov|webm|mxf)/i }).first()
     if ((await fileRow.count()) === 0) {

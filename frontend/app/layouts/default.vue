@@ -1508,6 +1508,9 @@ const activeProjectDoc = computed<ProjectDoc | null>(() => {
 
 // Read-only registry for descendant node components (Tasks 8 & 9 inject this).
 provide('assetRegistry', computed<RefRegistry>(() => activeProjectDoc.value?.assetRegistry ?? {}))
+// Whole-doc read access for children that scope UI to "this project" (e.g. the
+// Timeline editor's Project media tab walks every canvas for referenced files).
+provide('projectDoc', activeProjectDoc)
 
 // Re-entrancy guard: a switch serializes the outgoing canvas, swaps the doc's
 // active id, and (in LiteGraph mode) pushes the target into the iframe. Block
