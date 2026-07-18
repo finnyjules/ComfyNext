@@ -4,9 +4,11 @@
 // grown to a multi-object scene.)
 import * as THREE from 'three'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
-import type { SceneDoc, SceneObject, Vec3, LightingPreset, PrimitiveKind } from './config'
+import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js'
+import type { SceneDoc, SceneObject, Vec3, LightingPreset, PrimitiveKind, PrimitiveObject } from './config'
 import { loadGlb } from './glb'
 import { materialFor, updateMaterial, disposeMaterial } from './materials'
+import { PRIMITIVE_PARAMS, paramValue } from '~/lib/scene3d/primParams'
 
 /** Unit vector toward the sun for azimuth (deg, around Y) / elevation (deg above horizon). */
 export function sunDirection(azimuthDeg: number, elevationDeg: number): Vec3 {
@@ -15,24 +17,68 @@ export function sunDirection(azimuthDeg: number, elevationDeg: number): Vec3 {
   return [Math.cos(el) * Math.sin(az), Math.sin(el), Math.cos(el) * Math.cos(az)]
 }
 
-function geometryFor(kind: PrimitiveKind): THREE.BufferGeometry {
+/** Build a primitive's geometry from its parameters. Defaults reproduce the
+ *  pre-parametric geometry exactly — the engine unit test pins that against the
+ *  original three.js calls. */
+export function geometryFor(kind: PrimitiveKind, params?: Record<string, number>): THREE.BufferGeometry {
+  const p = (key: string): number => paramValue(kind, params, key)
+  const rad = (deg: number): number => (deg * Math.PI) / 180
   switch (kind) {
-    case 'box': return new THREE.BoxGeometry(1, 1, 1)
-    case 'sphere': return new THREE.SphereGeometry(0.5, 48, 32)
-    case 'cylinder': return new THREE.CylinderGeometry(0.5, 0.5, 1, 48)
-    case 'cone': return new THREE.ConeGeometry(0.5, 1, 48)
-    case 'torus': return new THREE.TorusGeometry(0.5, 0.18, 24, 64)
-    case 'plane': return new THREE.PlaneGeometry(2, 2).rotateX(-Math.PI / 2)
-    case 'capsule': return new THREE.CapsuleGeometry(0.35, 0.5, 8, 24)
-    // 4-sided cone = pyramid; rotated so the square footprint is axis-aligned.
-    case 'pyramid': return new THREE.ConeGeometry(0.55, 1, 4, 1).rotateY(Math.PI / 4)
-    case 'prism': return new THREE.CylinderGeometry(0.5, 0.5, 1, 3)
-    case 'icosahedron': return new THREE.IcosahedronGeometry(0.55)
-    case 'octahedron': return new THREE.OctahedronGeometry(0.55)
-    case 'dodecahedron': return new THREE.DodecahedronGeometry(0.55)
-    case 'torusKnot': return new THREE.TorusKnotGeometry(0.4, 0.12, 128, 16)
-    case 'ring': return new THREE.RingGeometry(0.22, 0.5, 48).rotateX(-Math.PI / 2)
+    case 'box': {
+      const r = p('cornerRadius')
+      // RoundedBoxGeometry degenerates at radius 0, so a square box stays a BoxGeometry.
+      return r <= 0 ? new THREE.BoxGeometry(1, 1, 1) : new RoundedBoxGeometry(1, 1, 1, p('cornerSides'), r)
+    }
+    case 'sphere': {
+      const d = p('detail')
+      // Height segments track width at the original 32:48 ratio.
+      return new THREE.SphereGeometry(0.5, d, Math.max(2, Math.round((d * 2) / 3)), 0, rad(p('arc')), 0, rad(p('sweep')))
+    }
+    case 'cylinder':
+    case 'cone':
+      return new THREE.CylinderGeometry(
+        p('radiusTop'), p('radiusBottom'), 1, p('detail'), 1, p('openEnded') > 0.5, 0, rad(p('arc')),
+      )
+    case 'torus':
+      return new THREE.TorusGeometry(0.5, p('tube'), Math.max(3, Math.round(p('detail') * 0.375)), p('detail'), rad(p('arc')))
+    case 'plane':
+      return new THREE.PlaneGeometry(2, 2, p('detail'), p('detail')).rotateX(-Math.PI / 2)
+    case 'capsule': {
+      const d = p('detail')
+      return new THREE.CapsuleGeometry(p('radius'), p('length'), Math.max(2, Math.round(d / 3)), d)
+    }
+    // 4-sided cone = pyramid; the quarter turn keeps the square footprint
+    // axis-aligned and stays applied at every side count for continuity.
+    case 'pyramid':
+      return new THREE.CylinderGeometry(p('radiusTop'), 0.55, 1, p('detail'), 1).rotateY(Math.PI / 4)
+    case 'prism':
+      return new THREE.CylinderGeometry(p('radiusTop'), 0.5, 1, p('detail'))
+    case 'icosahedron': return new THREE.IcosahedronGeometry(0.55, p('detail'))
+    case 'octahedron': return new THREE.OctahedronGeometry(0.55, p('detail'))
+    case 'dodecahedron': return new THREE.DodecahedronGeometry(0.55, p('detail'))
+    case 'torusKnot':
+      return new THREE.TorusKnotGeometry(0.4, p('tube'), p('detail'), Math.max(3, Math.round(p('detail') / 8)), p('p'), p('q'))
+    case 'ring':
+      return new THREE.RingGeometry(p('innerRadius'), 0.5, p('detail'), 1, 0, rad(p('arc'))).rotateX(-Math.PI / 2)
   }
+}
+
+/** Unscaled bounding dimensions of a primitive at the given params — the Size
+ *  row multiplies these by the object's scale. Pure: builds, measures, disposes. */
+export function baseSizeFor(kind: PrimitiveKind, params?: Record<string, number>): [number, number, number] {
+  const geo = geometryFor(kind, params)
+  geo.computeBoundingBox()
+  const b = geo.boundingBox!
+  const size: [number, number, number] = [b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z]
+  geo.dispose()
+  return size
+}
+
+/** Stable geometry signature: kind + every declared param in table order +
+ *  the shading variant. Changing it swaps mesh.geometry in place. */
+function geoKeyFor(obj: PrimitiveObject, variant: 'smooth' | 'facet'): string {
+  const vals = PRIMITIVE_PARAMS[obj.primitive].map((s) => paramValue(obj.primitive, obj.params, s.key))
+  return `${obj.primitive}|${vals.join(',')}|${variant}`
 }
 
 /** Bake each triangle's own bounding extent into per-vertex attributes
@@ -179,13 +225,13 @@ export class SceneEngine {
     }
     if (!root) {
       if (obj.kind === 'primitive') {
-        const geo = geometryFor(obj.primitive)
+        const geo = geometryFor(obj.primitive, obj.params)
         const mat = materialFor(obj.material, geo)
         // Flat shapes must be visible from both sides (plane was previously
         // invisible from below; ring inherits the fix) — for every material type.
         if (obj.primitive === 'plane' || obj.primitive === 'ring') mat.side = THREE.DoubleSide
         const mesh = new THREE.Mesh(geo, mat)
-        mesh.userData.geoVariant = 'smooth' // faceted variant applied by the sync below
+        mesh.userData.geoKey = geoKeyFor(obj, 'smooth') // facet variant applied by the sync below
         mesh.castShadow = mesh.receiveShadow = true
         root = mesh
       } else {
@@ -216,16 +262,20 @@ export class SceneEngine {
       const wantFacet = obj.material.type === 'gradient' &&
         (obj.material.gradientShading ?? 'smooth') !== 'smooth'
       const variant = wantFacet ? 'facet' : 'smooth'
-      if (mesh.userData.geoVariant !== variant) {
+      const geoKey = geoKeyFor(obj, variant)
+      // Geometry params and the shading variant share one key: either change
+      // swaps the geometry in place, leaving the material instance (and its
+      // in-place update path) and the transform untouched.
+      if (mesh.userData.geoKey !== geoKey) {
         mesh.geometry.dispose()
-        let geo = geometryFor(obj.primitive)
+        let geo = geometryFor(obj.primitive, obj.params)
         if (wantFacet) {
           if (geo.index) geo = geo.toNonIndexed()
           geo.computeVertexNormals()
           addFaceExtentAttributes(geo)
         }
         mesh.geometry = geo
-        mesh.userData.geoVariant = variant
+        mesh.userData.geoKey = geoKey
       }
       const current = mesh.material as THREE.Material
       if (!updateMaterial(current, obj.material)) {
@@ -235,7 +285,36 @@ export class SceneEngine {
         if (obj.primitive === 'plane' || obj.primitive === 'ring') fresh.side = THREE.DoubleSide
         mesh.material = fresh
       }
+      // A gradient bakes the geometry's bounding box into uBoxMin/uBoxMax so the
+      // ramp spans the shape exactly. Parameters move those bounds (a fatter
+      // tube, a longer capsule), so refresh the uniforms in place against the
+      // current geometry — mutating .value never rebuilds the material.
+      const gradUniforms = (mesh.material as THREE.Material).userData
+        ?.gradUniforms as Record<string, { value: unknown }> | undefined
+      if (gradUniforms) {
+        const geo = mesh.geometry
+        if (!geo.boundingBox) geo.computeBoundingBox()
+        if (geo.boundingBox) {
+          ;(gradUniforms.uBoxMin!.value as THREE.Vector3).copy(geo.boundingBox.min)
+          ;(gradUniforms.uBoxMax!.value as THREE.Vector3).copy(geo.boundingBox.max)
+        }
+      }
     }
+  }
+
+  /** Unscaled bounding dimensions of any object, primitives and GLBs alike.
+   *  Returns null while a GLB is still loading (its group is empty). */
+  baseSizeOf(id: string): [number, number, number] | null {
+    const root = this.objectRoots.get(id)
+    if (!root) return null
+    const box = new THREE.Box3().setFromObject(root)
+    if (box.isEmpty()) return null
+    const s = root.scale
+    return [
+      (box.max.x - box.min.x) / (s.x || 1),
+      (box.max.y - box.min.y) / (s.y || 1),
+      (box.max.z - box.min.z) / (s.z || 1),
+    ]
   }
 
   render(): void {
