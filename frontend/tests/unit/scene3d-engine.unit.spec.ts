@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import * as THREE from 'three'
-import { sunDirection, geometryFor, baseSizeFor } from '~/lib/scene3d/engine'
+import { sunDirection, geometryFor, baseSizeFor, buildGeometry } from '~/lib/scene3d/engine'
 import { PRIMITIVE_KINDS, type PrimitiveKind } from '~/lib/scene3d/config'
 import { PRIMITIVE_PARAMS } from '~/lib/scene3d/primParams'
 
@@ -112,5 +112,61 @@ describe('scene3d parametric geometry', () => {
     // A fatter tube makes the whole torus bigger, so Size must follow params.
     expect(baseSizeFor('torus', { tube: 0.4 })[0])
       .toBeGreaterThan(baseSizeFor('torus', { tube: 0.05 })[0])
+  })
+})
+
+describe('scene3d facet geometry variant', () => {
+  it('leaves the smooth variant untouched', () => {
+    const geo = buildGeometry('box', { cornerRadius: 0.2 }, 'smooth')
+    expect(geo.getAttribute('aFaceMin')).toBeUndefined()
+    expect(geo.getAttribute('aFaceMax')).toBeUndefined()
+  })
+
+  // The facet gradient reads aFaceMin/aFaceMax to ramp across each face. A
+  // PARAMETER edit rebuilds the geometry through this same step, so the
+  // attributes must come back on non-default params too — not just on a
+  // smooth↔facet flip.
+  it.each([
+    ['box', { cornerRadius: 0.25, cornerSides: 4 }],
+    ['prism', { detail: 6 }],
+    ['torus', { tube: 0.3, detail: 24 }],
+    ['sphere', { detail: 12 }],
+  ] as const)('bakes face extents after a %s param rebuild', (kind, params) => {
+    const geo = buildGeometry(kind, params as Record<string, number>, 'facet')
+    const pos = geo.getAttribute('position')
+    const min = geo.getAttribute('aFaceMin')
+    const max = geo.getAttribute('aFaceMax')
+
+    expect(geo.index).toBeNull() // facet variant is always non-indexed
+    expect(min.itemSize).toBe(3)
+    expect(max.itemSize).toBe(3)
+    expect(min.count).toBe(pos.count)
+    expect(max.count).toBe(pos.count)
+
+    for (let v = 0; v < pos.count; v += 3) {
+      for (let axis = 0; axis < 3; axis++) {
+        const lo = min.getComponent(v, axis)
+        const hi = max.getComponent(v, axis)
+        expect(lo).toBeLessThanOrEqual(hi)
+        // Same value on all 3 verts of the face, and it brackets each vertex.
+        for (let k = 0; k < 3; k++) {
+          expect(min.getComponent(v + k, axis)).toBe(lo)
+          expect(max.getComponent(v + k, axis)).toBe(hi)
+          const c = pos.getComponent(v + k, axis)
+          expect(c).toBeGreaterThanOrEqual(lo)
+          expect(c).toBeLessThanOrEqual(hi)
+        }
+      }
+    }
+  })
+
+  it('tracks the param change in the baked extents', () => {
+    const spanX = (p: Record<string, number>): number => {
+      const a = buildGeometry('torus', p, 'facet').getAttribute('aFaceMax')
+      let m = -Infinity
+      for (let i = 0; i < a.count; i++) m = Math.max(m, a.getComponent(i, 0))
+      return m
+    }
+    expect(spanX({ tube: 0.4 })).toBeGreaterThan(spanX({ tube: 0.05 }))
   })
 })

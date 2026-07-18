@@ -424,6 +424,9 @@ function duplicateObject(id: string) {
   Object.assign(copy, {
     position: [src.position[0] + 0.5, src.position[1], src.position[2] + 0.5],
     rotation: [...src.rotation], scale: [...src.scale], material: { ...src.material },
+    // Geometry params travel with the copy, cloned not aliased — a shared bag
+    // would make both objects' shapes move together on any later edit.
+    ...(src.kind === 'primitive' && src.params ? { params: { ...src.params } } : {}),
   })
   doc.objects.push(copy)
   selectedId.value = copy.id

@@ -107,6 +107,23 @@ function addFaceExtentAttributes(geo: THREE.BufferGeometry): void {
   geo.setAttribute('aFaceMax', new THREE.BufferAttribute(max, 3))
 }
 
+/** Geometry for a kind + params at a shading variant: the smooth factory output,
+ *  or its flat-shaded form (non-indexed, per-face normals, per-face extents) for
+ *  the faceted gradients. The single build step used by every geometry rebuild. */
+export function buildGeometry(
+  kind: PrimitiveKind,
+  params: Record<string, number> | undefined,
+  variant: 'smooth' | 'facet',
+): THREE.BufferGeometry {
+  let geo = geometryFor(kind, params)
+  if (variant === 'facet') {
+    if (geo.index) geo = geo.toNonIndexed()
+    geo.computeVertexNormals()
+    addFaceExtentAttributes(geo)
+  }
+  return geo
+}
+
 // Preset → environment intensity + sun softness. Sun angle/intensity stay
 // user-controlled; presets shape the fill character around it.
 const PRESETS: Record<LightingPreset, { envIntensity: number; shadow: boolean }> = {
@@ -268,13 +285,7 @@ export class SceneEngine {
       // in-place update path) and the transform untouched.
       if (mesh.userData.geoKey !== geoKey) {
         mesh.geometry.dispose()
-        let geo = geometryFor(obj.primitive, obj.params)
-        if (wantFacet) {
-          if (geo.index) geo = geo.toNonIndexed()
-          geo.computeVertexNormals()
-          addFaceExtentAttributes(geo)
-        }
-        mesh.geometry = geo
+        mesh.geometry = buildGeometry(obj.primitive, obj.params, variant)
         mesh.userData.geoKey = geoKey
       }
       const current = mesh.material as THREE.Material
