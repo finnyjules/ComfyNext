@@ -21,7 +21,8 @@ import {
 } from '~/lib/scene3d/config'
 import { MATCAP_IDS, matcapThumb, onTextureError } from '~/lib/scene3d/materials'
 import { PRIM_GROUPS } from '~/lib/scene3d/primGroups'
-import { SceneEngine } from '~/lib/scene3d/engine'
+import { SceneEngine, baseSizeFor } from '~/lib/scene3d/engine'
+import { PRIMITIVE_PARAMS, paramValue } from '~/lib/scene3d/primParams'
 import { SceneInteraction } from '~/lib/scene3d/interaction'
 import { loadGlb, GLB_SIZE_CAP_BYTES } from '~/lib/scene3d/glb'
 import { renderPasses } from '~/lib/scene3d/passes'
@@ -256,6 +257,49 @@ function rotField(axis: 0 | 1 | 2) {
 const posX = axisField('position', 0), posY = axisField('position', 1), posZ = axisField('position', 2)
 const rotX = rotField(0), rotY = rotField(1), rotZ = rotField(2)
 const sclX = axisField('scale', 0), sclY = axisField('scale', 1), sclZ = axisField('scale', 2)
+
+// Geometry params for the selected primitive. Reads resolve through the schema
+// (stored value clamped, else the spec default); writes create the params bag on
+// first touch. Always iterate PRIMITIVE_PARAMS[kind] — paramValue throws on a key
+// the kind doesn't declare. Toggles store 0 | 1 so params stays a flat number map.
+function paramOf(key: string): number {
+  const o = selected.value
+  return o && o.kind === 'primitive' ? paramValue(o.primitive, o.params, key) : 0
+}
+function setParam(key: string, v: number): void {
+  const o = selected.value
+  if (!o || o.kind !== 'primitive') return
+  if (!o.params) o.params = {}
+  o.params[key] = v
+}
+
+// Size = scale expressed in scene units. Base dimensions come from the geometry
+// itself (rebuilt from the doc, so they follow parameter changes — a fatter torus
+// tube is a bigger torus). GLBs fall back to the engine's measured bounds.
+const baseSize = computed<[number, number, number]>(() => {
+  const o = selected.value
+  if (!o) return [1, 1, 1]
+  if (o.kind === 'primitive') return baseSizeFor(o.primitive, o.params)
+  return engine?.baseSizeOf(o.id) ?? [1, 1, 1]
+})
+function sizeAxis(i: 0 | 1 | 2, scl: { value: number }) {
+  return computed<number>({
+    get: () => Math.round(scl.value * (baseSize.value[i] || 1) * 100) / 100,
+    set: (v: number) => {
+      const base = baseSize.value[i] || 1
+      if (!Number.isFinite(v) || !base) return
+      scl.value = v / base
+    },
+  })
+}
+// The Geometry panel's rows, straight from the schema — never a hand-written list.
+const geoSpecs = computed(() => {
+  const o = selected.value
+  return o && o.kind === 'primitive' ? PRIMITIVE_PARAMS[o.primitive] : []
+})
+const sizeX = sizeAxis(0, sclX)
+const sizeY = sizeAxis(1, sclY)
+const sizeZ = sizeAxis(2, sclZ)
 
 // ── Engine lifecycle ──────────────────────────────────────────────────────────
 const canvasEl = ref<HTMLCanvasElement | null>(null)
@@ -774,6 +818,36 @@ function onClose() {
           <StudioSlider v-model="matMetalness" label="Metalness" hint="Blends between plastic-like and metal reflections" :min="0" :max="1" :step="0.01" />
         </template>
 
+        <StudioSection v-if="geoSpecs.length" title="Geometry">
+          <div class="space-y-2.5">
+            <template v-for="spec in geoSpecs" :key="spec.key">
+              <label
+                v-if="spec.control === 'toggle'"
+                class="flex cursor-pointer items-center justify-between text-[11px] text-white/55"
+                :title="spec.hint"
+              >
+                <span>{{ spec.label }}</span>
+                <input
+                  type="checkbox"
+                  class="h-3.5 w-3.5 accent-white/70"
+                  :checked="paramOf(spec.key) > 0.5"
+                  @change="setParam(spec.key, ($event.target as HTMLInputElement).checked ? 1 : 0)"
+                />
+              </label>
+              <StudioSlider
+                v-else
+                :model-value="paramOf(spec.key)"
+                :label="spec.label"
+                :hint="spec.hint"
+                :min="spec.min"
+                :max="spec.max"
+                :step="spec.step"
+                @update:model-value="(v: number) => setParam(spec.key, v)"
+              />
+            </template>
+          </div>
+        </StudioSection>
+
         <div>
           <label class="mb-1 block text-[11px] text-white/55">Position</label>
           <div class="grid grid-cols-3 gap-1.5">
@@ -791,11 +865,11 @@ function onClose() {
           </div>
         </div>
         <div>
-          <label class="mb-1 block text-[11px] text-white/55">Scale</label>
+          <label class="mb-1 block text-[11px] text-white/55">Size</label>
           <div class="grid grid-cols-3 gap-1.5">
-            <input v-model.number="sclX" type="number" step="0.05" aria-label="Scale X" class="studio-num" />
-            <input v-model.number="sclY" type="number" step="0.05" aria-label="Scale Y" class="studio-num" />
-            <input v-model.number="sclZ" type="number" step="0.05" aria-label="Scale Z" class="studio-num" />
+            <input v-model.number="sizeX" type="number" step="0.05" aria-label="Size X" class="studio-num" />
+            <input v-model.number="sizeY" type="number" step="0.05" aria-label="Size Y" class="studio-num" />
+            <input v-model.number="sizeZ" type="number" step="0.05" aria-label="Size Z" class="studio-num" />
           </div>
         </div>
       </StudioSection>
