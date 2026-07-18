@@ -31,6 +31,21 @@ export interface SceneMaterial {
    *  individually (ShapeStudio's cut-gem shimmer). */
   gradientShading?: 'smooth' | 'faceted' | 'prismatic'
   image?: string
+  // physical surface (standard + glass; all optional, defaults render identical
+  // to the pre-physical look)
+  clearcoat?: number            // 0–1
+  clearcoatRoughness?: number   // 0–1
+  sheen?: number                // 0–1
+  sheenColor?: string
+  emissive?: string             // '#000000' = off
+  emissiveIntensity?: number    // 0–5
+  opacity?: number              // 0–1 (alpha translucency; <1 sets transparent)
+  dispersion?: number           // 0–5 (chromatic aberration in transmission)
+  attenuationColor?: string
+  attenuationDistance?: number  // 0 = off (maps to Infinity)
+  iridescence?: number          // 0–1
+  iridescenceIOR?: number       // 1–2.33
+  envMapIntensity?: number      // 0–3
 }
 
 export interface SceneObjectBase {
@@ -88,6 +103,19 @@ export const MATERIAL_DEFAULTS = {
   gradientB: '#1c2740',
   gradientAxis: 'y' as const,
   gradientShading: 'smooth' as const,
+  clearcoat: 0,
+  clearcoatRoughness: 0.1,
+  sheen: 0,
+  sheenColor: '#ffffff',
+  emissive: '#000000',
+  emissiveIntensity: 1,
+  opacity: 1,
+  dispersion: 0,
+  attenuationColor: '#ffffff',
+  attenuationDistance: 0,
+  iridescence: 0,
+  iridescenceIOR: 1.3,
+  envMapIntensity: 1,
 }
 
 export function defaultDoc(): SceneDoc {
@@ -170,6 +198,19 @@ export function parseDoc(json: string): SceneDoc {
     if (m?.gradientAxis === 'x' || m?.gradientAxis === 'y' || m?.gradientAxis === 'z') out.gradientAxis = m.gradientAxis
     if (m?.gradientShading === 'smooth' || m?.gradientShading === 'faceted' || m?.gradientShading === 'prismatic') out.gradientShading = m.gradientShading
     if (typeof m?.image === 'string') out.image = m.image
+    if (typeof m?.clearcoat === 'number') out.clearcoat = num(m.clearcoat, MATERIAL_DEFAULTS.clearcoat)
+    if (typeof m?.clearcoatRoughness === 'number') out.clearcoatRoughness = num(m.clearcoatRoughness, MATERIAL_DEFAULTS.clearcoatRoughness)
+    if (typeof m?.sheen === 'number') out.sheen = num(m.sheen, MATERIAL_DEFAULTS.sheen)
+    if (typeof m?.sheenColor === 'string') out.sheenColor = m.sheenColor
+    if (typeof m?.emissive === 'string') out.emissive = m.emissive
+    if (typeof m?.emissiveIntensity === 'number') out.emissiveIntensity = num(m.emissiveIntensity, MATERIAL_DEFAULTS.emissiveIntensity)
+    if (typeof m?.opacity === 'number') out.opacity = num(m.opacity, MATERIAL_DEFAULTS.opacity)
+    if (typeof m?.dispersion === 'number') out.dispersion = num(m.dispersion, MATERIAL_DEFAULTS.dispersion)
+    if (typeof m?.attenuationColor === 'string') out.attenuationColor = m.attenuationColor
+    if (typeof m?.attenuationDistance === 'number') out.attenuationDistance = num(m.attenuationDistance, MATERIAL_DEFAULTS.attenuationDistance)
+    if (typeof m?.iridescence === 'number') out.iridescence = num(m.iridescence, MATERIAL_DEFAULTS.iridescence)
+    if (typeof m?.iridescenceIOR === 'number') out.iridescenceIOR = num(m.iridescenceIOR, MATERIAL_DEFAULTS.iridescenceIOR)
+    if (typeof m?.envMapIntensity === 'number') out.envMapIntensity = num(m.envMapIntensity, MATERIAL_DEFAULTS.envMapIntensity)
     return out
   }
   const objects: SceneObject[] = Array.isArray(raw.objects)

@@ -90,6 +90,19 @@ describe('scene3d config', () => {
     expect((back.objects[0] as any).material.type).toBe('standard')
   })
 
+  it('round-trips every physical surface field', () => {
+    const doc = defaultDoc()
+    const o = createPrimitive('box', doc.objects)
+    Object.assign(o.material, {
+      clearcoat: 0.8, clearcoatRoughness: 0.2, sheen: 0.5, sheenColor: '#ffddee',
+      emissive: '#220044', emissiveIntensity: 2.5, opacity: 0.7, dispersion: 1.5,
+      attenuationColor: '#88ffcc', attenuationDistance: 2, iridescence: 0.9,
+      iridescenceIOR: 1.8, envMapIntensity: 2,
+    })
+    doc.objects.push(o)
+    expect(parseDoc(serializeDoc(doc))).toEqual(doc)
+  })
+
   it('menu groups cover every primitive kind exactly once, in canonical order', () => {
     const menuKinds = PRIM_GROUPS.flatMap((g) => g.kinds.map((k) => k.kind))
     expect(menuKinds).toEqual([...PRIMITIVE_KINDS])

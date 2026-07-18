@@ -9,6 +9,8 @@ const base = (patch: Partial<SceneMaterial> = {}): SceneMaterial =>
 describe('scene3d materials factory', () => {
   it('maps each type to the right THREE material class', () => {
     expect(materialFor(base())).toBeInstanceOf(THREE.MeshStandardMaterial)
+    // standard is a full physical surface now
+    expect(materialFor(base())).toBeInstanceOf(THREE.MeshPhysicalMaterial)
     expect(materialFor(base({ type: 'toon' }))).toBeInstanceOf(THREE.MeshToonMaterial)
     expect(materialFor(base({ type: 'matcap' }))).toBeInstanceOf(THREE.MeshMatcapMaterial)
     expect(materialFor(base({ type: 'glass' }))).toBeInstanceOf(THREE.MeshPhysicalMaterial)
@@ -62,6 +64,31 @@ describe('scene3d materials factory', () => {
     const m = materialFor(base({ type: 'fresnel' }))
     expect(updateMaterial(m, base({ type: 'fresnel', fresnelPower: 6.5 }))).toBe(true)
     expect((m.userData.fresnelUniforms as any).uPower.value).toBe(6.5)
+  })
+
+  it('updates physical params in place and recompiles only on define crossings', () => {
+    const m = materialFor(base()) as THREE.MeshPhysicalMaterial
+    const v0 = m.version
+    // plain param movement: no recompile
+    expect(updateMaterial(m, base({ clearcoatRoughness: 0.3, envMapIntensity: 2 }))).toBe(true)
+    expect(m.version).toBe(v0)
+    // crossing zero on a define-gated param: exactly one recompile
+    expect(updateMaterial(m, base({ transmission: 0.5 }))).toBe(true)
+    expect(m.version).toBe(v0 + 1)
+    // moving within the enabled range: no further recompile
+    expect(updateMaterial(m, base({ transmission: 0.7 }))).toBe(true)
+    expect(m.version).toBe(v0 + 1)
+    // opacity < 1 toggles transparent: recompile
+    expect(updateMaterial(m, base({ transmission: 0.7, opacity: 0.5 }))).toBe(true)
+    expect(m.version).toBe(v0 + 2)
+    expect(m.transparent).toBe(true)
+  })
+
+  it('maps attenuationDistance 0 to Infinity (off)', () => {
+    const m = materialFor(base({ attenuationDistance: 0 })) as THREE.MeshPhysicalMaterial
+    expect(m.attenuationDistance).toBe(Infinity)
+    const m2 = materialFor(base({ attenuationDistance: 2 })) as THREE.MeshPhysicalMaterial
+    expect(m2.attenuationDistance).toBe(2)
   })
 
   it('exposes the five matcap ids', () => {

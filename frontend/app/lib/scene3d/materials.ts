@@ -190,6 +190,34 @@ const GRADIENT_FACET_FRAG_BODY = /* glsl */ `#include <color_fragment>
 
 const AXIS_INDEX = { x: 0, y: 1, z: 2 } as const
 
+// ── Physical surface (standard + glass share one builder) ────────────────────
+/** Apply every physical-surface param from the doc onto a MeshPhysicalMaterial.
+ *  Shared by creation and in-place update so the two can never drift. */
+function applyPhysical(p: THREE.MeshPhysicalMaterial, mat: SceneMaterial): void {
+  const isGlass = mat.type === 'glass'
+  p.color.set(mat.color)
+  p.roughness = mat.roughness
+  p.metalness = mat.metalness
+  p.transmission = mat.transmission ?? (isGlass ? MATERIAL_DEFAULTS.transmission : 0)
+  p.ior = mat.ior ?? MATERIAL_DEFAULTS.ior
+  p.thickness = mat.thickness ?? MATERIAL_DEFAULTS.thickness
+  p.clearcoat = mat.clearcoat ?? MATERIAL_DEFAULTS.clearcoat
+  p.clearcoatRoughness = mat.clearcoatRoughness ?? MATERIAL_DEFAULTS.clearcoatRoughness
+  p.sheen = mat.sheen ?? MATERIAL_DEFAULTS.sheen
+  p.sheenColor.set(mat.sheenColor ?? MATERIAL_DEFAULTS.sheenColor)
+  p.emissive.set(mat.emissive ?? MATERIAL_DEFAULTS.emissive)
+  p.emissiveIntensity = mat.emissiveIntensity ?? MATERIAL_DEFAULTS.emissiveIntensity
+  p.opacity = mat.opacity ?? MATERIAL_DEFAULTS.opacity
+  p.transparent = p.opacity < 1
+  p.dispersion = mat.dispersion ?? MATERIAL_DEFAULTS.dispersion
+  p.attenuationColor.set(mat.attenuationColor ?? MATERIAL_DEFAULTS.attenuationColor)
+  const att = mat.attenuationDistance ?? MATERIAL_DEFAULTS.attenuationDistance
+  p.attenuationDistance = att > 0 ? att : Infinity
+  p.iridescence = mat.iridescence ?? MATERIAL_DEFAULTS.iridescence
+  p.iridescenceIOR = mat.iridescenceIOR ?? MATERIAL_DEFAULTS.iridescenceIOR
+  p.envMapIntensity = mat.envMapIntensity ?? MATERIAL_DEFAULTS.envMapIntensity
+}
+
 // ── Factory ──────────────────────────────────────────────────────────────────
 export function materialFor(mat: SceneMaterial, geometry?: THREE.BufferGeometry): THREE.Material {
   let m: THREE.Material
@@ -205,17 +233,6 @@ export function materialFor(mat: SceneMaterial, geometry?: THREE.BufferGeometry)
       const tex = getMatcap(mat.matcap ?? MATERIAL_DEFAULTS.matcap)
       if (tex) t.matcap = tex
       m = t
-      break
-    }
-    case 'glass': {
-      m = new THREE.MeshPhysicalMaterial({
-        color: mat.color,
-        roughness: mat.roughness,
-        metalness: 0,
-        transmission: mat.transmission ?? MATERIAL_DEFAULTS.transmission,
-        ior: mat.ior ?? MATERIAL_DEFAULTS.ior,
-        thickness: mat.thickness ?? MATERIAL_DEFAULTS.thickness,
-      })
       break
     }
     case 'fresnel': {
@@ -295,9 +312,14 @@ export function materialFor(mat: SceneMaterial, geometry?: THREE.BufferGeometry)
       m = t
       break
     }
+    case 'glass':
     case 'standard':
-    default:
-      m = new THREE.MeshStandardMaterial({ color: mat.color, roughness: mat.roughness, metalness: mat.metalness })
+    default: {
+      const p = new THREE.MeshPhysicalMaterial()
+      applyPhysical(p, mat)
+      m = p
+      break
+    }
   }
   m.userData.matType = mat.type
   m.userData.identity = identityKey(mat)
@@ -321,9 +343,19 @@ function identityKey(mat: SceneMaterial): string {
 export function updateMaterial(m: THREE.Material, mat: SceneMaterial): boolean {
   if (m.userData.matType !== mat.type || m.userData.identity !== identityKey(mat)) return false
   switch (mat.type) {
-    case 'standard': {
-      const s = m as THREE.MeshStandardMaterial
-      s.color.set(mat.color); s.roughness = mat.roughness; s.metalness = mat.metalness
+    case 'standard':
+    case 'glass': {
+      const p = m as THREE.MeshPhysicalMaterial
+      const wasTransparent = p.transparent
+      applyPhysical(p, mat)
+      // Recompile only on define-boundary crossings. three's MeshPhysicalMaterial
+      // setters self-recompile when a feature define toggles across zero
+      // (transmission/clearcoat/sheen/iridescence/dispersion), so we must NOT
+      // re-bump those. The one define-affecting property three does NOT manage is
+      // `transparent` (a base Material field, toggled here by opacity < 1), which
+      // swaps the render list — bump it ourselves. Plain slider movement within an
+      // enabled range never recompiles (per-tick jank).
+      if (p.transparent !== wasTransparent) p.needsUpdate = true
       return true
     }
     case 'toon': {
@@ -332,14 +364,6 @@ export function updateMaterial(m: THREE.Material, mat: SceneMaterial): boolean {
     }
     case 'matcap':
       return true // nothing tweakable in place; id changes rebuild via identity
-    case 'glass': {
-      const g = m as THREE.MeshPhysicalMaterial
-      g.color.set(mat.color); g.roughness = mat.roughness
-      g.ior = mat.ior ?? MATERIAL_DEFAULTS.ior
-      g.transmission = mat.transmission ?? MATERIAL_DEFAULTS.transmission
-      g.thickness = mat.thickness ?? MATERIAL_DEFAULTS.thickness
-      return true
-    }
     case 'fresnel': {
       // Lit fresnel: base colour on the material, rim/power in injected uniforms.
       const f = m as THREE.MeshStandardMaterial
