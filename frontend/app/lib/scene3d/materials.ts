@@ -111,41 +111,41 @@ function getImageTexture(filename: string): THREE.Texture | null {
   return t
 }
 
-// ── Fresnel / gradient shaders (unlit; colorspace-correct output) ────────────
-const FRESNEL_VERT = /* glsl */ `
-  varying vec3 vNormal;
-  varying vec3 vViewDir;
-  void main() {
-    vec4 mv = modelViewMatrix * vec4(position, 1.0);
-    vNormal = normalize(normalMatrix * normal);
-    vViewDir = normalize(-mv.xyz);
-    gl_Position = projectionMatrix * mv;
-  }`
-const FRESNEL_FRAG = /* glsl */ `
-  uniform vec3 uColor; uniform vec3 uRim; uniform float uPower;
-  varying vec3 vNormal; varying vec3 vViewDir;
-  void main() {
-    float rim = pow(1.0 - clamp(dot(normalize(vNormal), normalize(vViewDir)), 0.0, 1.0), uPower);
-    gl_FragColor = vec4(mix(uColor, uRim, rim), 1.0);
-    #include <colorspace_fragment>
-  }`
+// ── Fresnel / gradient: LIT materials (Spline-style layers over lighting) ────
+// Both are MeshStandardMaterials with onBeforeCompile injections, so the full
+// standard pipeline (sun, env, shadows, tone mapping) applies. An unlit
+// ShaderMaterial flattens the surface — that was the original gradient bug.
 
-// Gradient is NOT a flat unlit shader (that would flatten the surface — no
-// facets, no shadows). Like Spline's gradient layer over lighting, it drives
-// the ALBEDO of a standard lit material: onBeforeCompile injects an
-// object-space colour ramp into diffuseColor, and the full standard lighting
-// pipeline (sun, env, shadows, tone mapping) applies on top.
+// Fresnel: base colour is the lit albedo; the rim is added as emissive glow so
+// it reads over any lighting (like Spline's Fresnel layer).
+const FRESNEL_FRAG_DECL = /* glsl */ `#include <common>
+uniform vec3 uRim; uniform float uPower;`
+const FRESNEL_FRAG_BODY = /* glsl */ `#include <emissivemap_fragment>
+{
+  float rim = pow(1.0 - clamp(dot(normalize(normal), normalize(vViewPosition)), 0.0, 1.0), uPower);
+  totalEmissiveRadiance += uRim * rim;
+}`
+
+// Gradient: object-space colour ramp driving the albedo. `vGradFlat` is a
+// `flat` varying — for the faceted mode each triangle takes its provoking
+// vertex's value, giving one flat ramp tone per facet (low-poly look). Three's
+// GLSL3 prefix turns `varying` into in/out, and the `flat` qualifier rides
+// along verbatim.
 const GRADIENT_VERT_DECL = /* glsl */ `#include <common>
-varying vec3 vGradPos;`
+varying vec3 vGradPos;
+flat varying vec3 vGradFlat;`
 const GRADIENT_VERT_BODY = /* glsl */ `#include <begin_vertex>
-vGradPos = position;`
+vGradPos = position;
+vGradFlat = position;`
 const GRADIENT_FRAG_DECL = /* glsl */ `#include <common>
 uniform vec3 uColorA; uniform vec3 uColorB;
-uniform vec3 uBoxMin; uniform vec3 uBoxMax; uniform int uAxis;
-varying vec3 vGradPos;`
+uniform vec3 uBoxMin; uniform vec3 uBoxMax; uniform int uAxis; uniform float uFacet;
+varying vec3 vGradPos;
+flat varying vec3 vGradFlat;`
 const GRADIENT_FRAG_BODY = /* glsl */ `#include <color_fragment>
 {
-  float p  = uAxis == 0 ? vGradPos.x : (uAxis == 1 ? vGradPos.y : vGradPos.z);
+  vec3 gp  = mix(vGradPos, vGradFlat, uFacet);
+  float p  = uAxis == 0 ? gp.x       : (uAxis == 1 ? gp.y       : gp.z);
   float lo = uAxis == 0 ? uBoxMin.x  : (uAxis == 1 ? uBoxMin.y  : uBoxMin.z);
   float hi = uAxis == 0 ? uBoxMax.x  : (uAxis == 1 ? uBoxMax.y  : uBoxMax.z);
   float t = clamp((p - lo) / max(hi - lo, 1e-5), 0.0, 1.0);
@@ -183,15 +183,21 @@ export function materialFor(mat: SceneMaterial, geometry?: THREE.BufferGeometry)
       break
     }
     case 'fresnel': {
-      m = new THREE.ShaderMaterial({
-        uniforms: {
-          uColor: { value: new THREE.Color(mat.color) },
-          uRim: { value: new THREE.Color(mat.fresnelColor ?? MATERIAL_DEFAULTS.fresnelColor) },
-          uPower: { value: mat.fresnelPower ?? MATERIAL_DEFAULTS.fresnelPower },
-        },
-        vertexShader: FRESNEL_VERT,
-        fragmentShader: FRESNEL_FRAG,
-      })
+      // Lit fresnel: base colour is standard albedo, rim added as emissive.
+      const fresnelUniforms = {
+        uRim: { value: new THREE.Color(mat.fresnelColor ?? MATERIAL_DEFAULTS.fresnelColor) },
+        uPower: { value: mat.fresnelPower ?? MATERIAL_DEFAULTS.fresnelPower },
+      }
+      const f = new THREE.MeshStandardMaterial({ color: mat.color, roughness: mat.roughness, metalness: mat.metalness })
+      f.onBeforeCompile = (shader) => {
+        Object.assign(shader.uniforms, fresnelUniforms)
+        shader.fragmentShader = shader.fragmentShader
+          .replace('#include <common>', FRESNEL_FRAG_DECL)
+          .replace('#include <emissivemap_fragment>', FRESNEL_FRAG_BODY)
+      }
+      f.customProgramCacheKey = () => 'scene3d-fresnel'
+      f.userData.fresnelUniforms = fresnelUniforms
+      m = f
       break
     }
     case 'gradient': {
@@ -212,6 +218,8 @@ export function materialFor(mat: SceneMaterial, geometry?: THREE.BufferGeometry)
         uBoxMin: { value: boxMin },
         uBoxMax: { value: boxMax },
         uAxis: { value: AXIS_INDEX[mat.gradientAxis ?? MATERIAL_DEFAULTS.gradientAxis] },
+        // 0 = smooth per-pixel ramp; 1 = flat per-facet tone (low-poly look).
+        uFacet: { value: (mat.gradientShading ?? MATERIAL_DEFAULTS.gradientShading) === 'faceted' ? 1 : 0 },
       }
       const g = new THREE.MeshStandardMaterial({ roughness: mat.roughness, metalness: mat.metalness })
       g.onBeforeCompile = (shader) => {
@@ -287,21 +295,25 @@ export function updateMaterial(m: THREE.Material, mat: SceneMaterial): boolean {
       return true
     }
     case 'fresnel': {
-      const u = (m as THREE.ShaderMaterial).uniforms
-      u.uColor!.value.set(mat.color)
-      u.uRim!.value.set(mat.fresnelColor ?? MATERIAL_DEFAULTS.fresnelColor)
-      u.uPower!.value = mat.fresnelPower ?? MATERIAL_DEFAULTS.fresnelPower
+      // Lit fresnel: base colour on the material, rim/power in injected uniforms.
+      const f = m as THREE.MeshStandardMaterial
+      f.color.set(mat.color); f.roughness = mat.roughness; f.metalness = mat.metalness
+      const u = m.userData.fresnelUniforms as { uRim: { value: THREE.Color }; uPower: { value: number } }
+      u.uRim.value.set(mat.fresnelColor ?? MATERIAL_DEFAULTS.fresnelColor)
+      u.uPower.value = mat.fresnelPower ?? MATERIAL_DEFAULTS.fresnelPower
       return true
     }
     case 'gradient': {
       // Lit gradient: the ramp lives in injected uniforms (userData.gradUniforms),
       // shared by reference with the compiled program — mutate and done.
       const u = m.userData.gradUniforms as {
-        uColorA: { value: THREE.Color }; uColorB: { value: THREE.Color }; uAxis: { value: number }
+        uColorA: { value: THREE.Color }; uColorB: { value: THREE.Color }
+        uAxis: { value: number }; uFacet: { value: number }
       }
       u.uColorA.value.set(mat.color)
       u.uColorB.value.set(mat.gradientB ?? MATERIAL_DEFAULTS.gradientB)
       u.uAxis.value = AXIS_INDEX[mat.gradientAxis ?? MATERIAL_DEFAULTS.gradientAxis]
+      u.uFacet.value = (mat.gradientShading ?? MATERIAL_DEFAULTS.gradientShading) === 'faceted' ? 1 : 0
       return true
     }
     case 'image': {

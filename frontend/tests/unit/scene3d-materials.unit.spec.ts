@@ -12,7 +12,8 @@ describe('scene3d materials factory', () => {
     expect(materialFor(base({ type: 'toon' }))).toBeInstanceOf(THREE.MeshToonMaterial)
     expect(materialFor(base({ type: 'matcap' }))).toBeInstanceOf(THREE.MeshMatcapMaterial)
     expect(materialFor(base({ type: 'glass' }))).toBeInstanceOf(THREE.MeshPhysicalMaterial)
-    expect(materialFor(base({ type: 'fresnel' }))).toBeInstanceOf(THREE.ShaderMaterial)
+    // Fresnel is a LIT standard material (rim injected as emissive) — like gradient.
+    expect(materialFor(base({ type: 'fresnel' }))).toBeInstanceOf(THREE.MeshStandardMaterial)
     // Gradient is a LIT standard material (ramp injected into diffuseColor via
     // onBeforeCompile) — an unlit ShaderMaterial would flatten the surface.
     expect(materialFor(base({ type: 'gradient' }))).toBeInstanceOf(THREE.MeshStandardMaterial)
@@ -42,6 +43,19 @@ describe('scene3d materials factory', () => {
     const m = materialFor(base({ type: 'gradient' }))
     expect(updateMaterial(m, base({ type: 'gradient', gradientB: '#112233', gradientAxis: 'z' }))).toBe(true)
     expect((m.userData.gradUniforms as any).uAxis.value).toBe(2)
+  })
+
+  it('switches gradient shading smooth↔faceted in place via the uFacet uniform', () => {
+    const m = materialFor(base({ type: 'gradient' }))
+    expect((m.userData.gradUniforms as any).uFacet.value).toBe(0)
+    expect(updateMaterial(m, base({ type: 'gradient', gradientShading: 'faceted' }))).toBe(true)
+    expect((m.userData.gradUniforms as any).uFacet.value).toBe(1)
+  })
+
+  it('updates fresnel rim uniforms in place through userData', () => {
+    const m = materialFor(base({ type: 'fresnel' }))
+    expect(updateMaterial(m, base({ type: 'fresnel', fresnelPower: 6.5 }))).toBe(true)
+    expect((m.userData.fresnelUniforms as any).uPower.value).toBe(6.5)
   })
 
   it('exposes the five matcap ids', () => {

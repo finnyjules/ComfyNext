@@ -65,7 +65,7 @@ describe('scene3d config', () => {
     boxFor({ type: 'matcap', matcap: 'gold' })
     boxFor({ type: 'glass', ior: 1.8, transmission: 0.9, thickness: 1.2, roughness: 0.1 })
     boxFor({ type: 'fresnel', fresnelColor: '#ff00aa', fresnelPower: 5 })
-    boxFor({ type: 'gradient', gradientB: '#123456', gradientAxis: 'z' })
+    boxFor({ type: 'gradient', gradientB: '#123456', gradientAxis: 'z', gradientShading: 'faceted' })
     boxFor({ type: 'image', image: 'scene3d_tex_1.png' })
     expect(MATERIAL_TYPES).toHaveLength(7)
     const back = parseDoc(serializeDoc(doc))

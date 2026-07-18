@@ -159,6 +159,7 @@ export class SceneEngine {
         // invisible from below; ring inherits the fix) — for every material type.
         if (obj.primitive === 'plane' || obj.primitive === 'ring') mat.side = THREE.DoubleSide
         const mesh = new THREE.Mesh(geo, mat)
+        mesh.userData.geoVariant = 'smooth' // faceted variant applied by the sync below
         mesh.castShadow = mesh.receiveShadow = true
         root = mesh
       } else {
@@ -182,6 +183,22 @@ export class SceneEngine {
     root.scale.set(...obj.scale)
     if (obj.kind === 'primitive') {
       const mesh = root as THREE.Mesh
+      // Faceted gradients pair the flat per-facet ramp with flat-shaded geometry
+      // (non-indexed + per-face normals) for the full low-poly look; switching
+      // back restores the smooth original from the geometry factory.
+      const wantFacet = obj.material.type === 'gradient' &&
+        (obj.material.gradientShading ?? 'smooth') === 'faceted'
+      const variant = wantFacet ? 'facet' : 'smooth'
+      if (mesh.userData.geoVariant !== variant) {
+        mesh.geometry.dispose()
+        let geo = geometryFor(obj.primitive)
+        if (wantFacet) {
+          if (geo.index) geo = geo.toNonIndexed()
+          geo.computeVertexNormals()
+        }
+        mesh.geometry = geo
+        mesh.userData.geoVariant = variant
+      }
       const current = mesh.material as THREE.Material
       if (!updateMaterial(current, obj.material)) {
         // Type or texture identity changed — rebuild, preserving double-siding.

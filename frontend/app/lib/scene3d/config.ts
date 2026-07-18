@@ -26,6 +26,8 @@ export interface SceneMaterial {
   fresnelPower?: number
   gradientB?: string
   gradientAxis?: 'x' | 'y' | 'z'
+  /** smooth = per-pixel ramp; faceted = one flat ramp tone per facet (low-poly look). */
+  gradientShading?: 'smooth' | 'faceted'
   image?: string
 }
 
@@ -83,6 +85,7 @@ export const MATERIAL_DEFAULTS = {
   fresnelPower: 3,
   gradientB: '#1c2740',
   gradientAxis: 'y' as const,
+  gradientShading: 'smooth' as const,
 }
 
 export function defaultDoc(): SceneDoc {
@@ -163,6 +166,7 @@ export function parseDoc(json: string): SceneDoc {
     if (typeof m?.fresnelPower === 'number') out.fresnelPower = num(m.fresnelPower, MATERIAL_DEFAULTS.fresnelPower)
     if (typeof m?.gradientB === 'string') out.gradientB = m.gradientB
     if (m?.gradientAxis === 'x' || m?.gradientAxis === 'y' || m?.gradientAxis === 'z') out.gradientAxis = m.gradientAxis
+    if (m?.gradientShading === 'smooth' || m?.gradientShading === 'faceted') out.gradientShading = m.gradientShading
     if (typeof m?.image === 'string') out.image = m.image
     return out
   }

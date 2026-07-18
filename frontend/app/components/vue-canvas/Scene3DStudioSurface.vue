@@ -156,6 +156,7 @@ const matFresnelColor = matParam('fresnelColor')
 const matFresnelPower = matParam('fresnelPower')
 const matGradientB = matParam('gradientB')
 const matGradientAxis = matParam('gradientAxis')
+const matGradientShading = matParam('gradientShading')
 
 // Image-material upload: file → dataURL → ComfyUI input dir → material.image.
 // State is scoped to the object the upload was started FOR (not "whatever is
@@ -689,6 +690,10 @@ function onClose() {
           <div>
             <label class="mb-1 block text-[11px] text-white/55">Axis</label>
             <StudioSegmented v-model="matGradientAxis" :options="['x', 'y', 'z']" />
+          </div>
+          <div>
+            <label class="mb-1 block text-[11px] text-white/55">Shading</label>
+            <StudioSegmented v-model="matGradientShading" :options="['smooth', 'faceted']" />
           </div>
         </template>
 
