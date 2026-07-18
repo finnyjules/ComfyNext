@@ -6,6 +6,7 @@ import * as THREE from 'three'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import type { SceneDoc, SceneObject, Vec3, LightingPreset, PrimitiveKind } from './config'
 import { loadGlb } from './glb'
+import { materialFor, updateMaterial, disposeMaterial } from './materials'
 
 /** Unit vector toward the sun for azimuth (deg, around Y) / elevation (deg above horizon). */
 export function sunDirection(azimuthDeg: number, elevationDeg: number): Vec3 {
@@ -152,11 +153,12 @@ export class SceneEngine {
     }
     if (!root) {
       if (obj.kind === 'primitive') {
-        const mat = new THREE.MeshStandardMaterial()
+        const geo = geometryFor(obj.primitive)
+        const mat = materialFor(obj.material, geo)
         // Flat shapes must be visible from both sides (plane was previously
-        // invisible from below; ring inherits the fix).
+        // invisible from below; ring inherits the fix) — for every material type.
         if (obj.primitive === 'plane' || obj.primitive === 'ring') mat.side = THREE.DoubleSide
-        const mesh = new THREE.Mesh(geometryFor(obj.primitive), mat)
+        const mesh = new THREE.Mesh(geo, mat)
         mesh.castShadow = mesh.receiveShadow = true
         root = mesh
       } else {
@@ -179,10 +181,15 @@ export class SceneEngine {
     root.rotation.set(...obj.rotation)
     root.scale.set(...obj.scale)
     if (obj.kind === 'primitive') {
-      const mat = (root as THREE.Mesh).material as THREE.MeshStandardMaterial
-      mat.color.set(obj.material.color)
-      mat.roughness = obj.material.roughness
-      mat.metalness = obj.material.metalness
+      const mesh = root as THREE.Mesh
+      const current = mesh.material as THREE.Material
+      if (!updateMaterial(current, obj.material)) {
+        // Type or texture identity changed — rebuild, preserving double-siding.
+        disposeMaterial(current)
+        const fresh = materialFor(obj.material, mesh.geometry)
+        if (obj.primitive === 'plane' || obj.primitive === 'ring') fresh.side = THREE.DoubleSide
+        mesh.material = fresh
+      }
     }
   }
 
