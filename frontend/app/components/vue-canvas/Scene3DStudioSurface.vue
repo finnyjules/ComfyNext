@@ -818,8 +818,11 @@ function onClose() {
           <StudioSlider v-model="matMetalness" label="Metalness" hint="Blends between plastic-like and metal reflections" :min="0" :max="1" :step="0.01" />
         </template>
 
-        <StudioSection v-if="geoSpecs.length" title="Geometry">
-          <div class="space-y-2.5">
+        <!-- Geometry: a peer of the material sub-groups (plain details, no card
+             chrome), but open by default — these are the shape's primary knobs. -->
+        <details v-if="geoSpecs.length" class="group" open>
+          <summary class="flex cursor-pointer select-none items-center gap-1.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 list-none hover:text-white/60 [&::-webkit-details-marker]:hidden"><span class="inline-block text-white/30 transition-transform group-open:rotate-90">›</span>Geometry</summary>
+          <div class="space-y-3 pt-1">
             <template v-for="spec in geoSpecs" :key="spec.key">
               <label
                 v-if="spec.control === 'toggle'"
@@ -846,7 +849,7 @@ function onClose() {
               />
             </template>
           </div>
-        </StudioSection>
+        </details>
 
         <div>
           <label class="mb-1 block text-[11px] text-white/55">Position</label>
