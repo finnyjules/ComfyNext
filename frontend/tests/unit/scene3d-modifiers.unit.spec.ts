@@ -29,9 +29,9 @@ describe('scene3d modifiers', () => {
   it('detects whether anything is set', () => {
     expect(hasModifiers(undefined)).toBe(false)
     expect(hasModifiers({})).toBe(false)
-    expect(hasModifiers({ twist: 0, arrayCount: 1 })).toBe(false)
+    expect(hasModifiers({ twist: 0, cloneCount: 1 })).toBe(false)
     expect(hasModifiers({ twist: 45 })).toBe(true)
-    expect(hasModifiers({ arrayCount: 3 })).toBe(true)
+    expect(hasModifiers({ cloneCount: 3 })).toBe(true)
     expect(hasModifiers({ noise: 0.1 })).toBe(true)
   })
 
@@ -115,15 +115,15 @@ describe('scene3d modifiers', () => {
   })
 
   it('repeats linearly with even spacing', () => {
-    const one = applyModifiers(box(), { arrayCount: 1 })
-    const four = applyModifiers(box(), { arrayCount: 4, arrayOffsetX: 2, arrayOffsetY: 0, arrayOffsetZ: 0 })
+    const one = applyModifiers(box(), { cloneCount: 1 })
+    const four = applyModifiers(box(), { cloneCount: 4, cloneOffsetX: 2, cloneOffsetY: 0, cloneOffsetZ: 0 })
     expect(verts(four)).toBe(verts(one === box() ? box() : one) * 4)
     // Four boxes spaced 2 apart span 3 gaps plus the box itself.
     expect(sizeOf(four)[0]).toBeCloseTo(7, 4)
   })
 
   it('repeats radially on a circle of the given radius', () => {
-    const g = applyModifiers(box(), { arrayCount: 6, arrayMode: 1, arrayRadius: 2, arrayAxis: 1 })
+    const g = applyModifiers(box(), { cloneCount: 6, cloneMode: 1, cloneRadius: 2, cloneAxis: 1 })
     const [w, , d] = sizeOf(g)
     // Copies sit on a radius-2 circle, so the ring spans about 4 plus a box.
     expect(w).toBeGreaterThan(4)
@@ -131,8 +131,8 @@ describe('scene3d modifiers', () => {
     expect(w).toBeLessThan(6)
   })
 
-  it('honours the array count exactly while capping subdivision', () => {
-    // A dense sphere with heavy subdivision and a big array must not explode:
+  it('honours the clone count exactly while capping subdivision', () => {
+    // A dense sphere with heavy subdivision and a big clone set must not explode:
     // the count is exact, the subdivision is what gets cut back.
     const src = new THREE.SphereGeometry(0.5, 64, 48)
     const base = verts(applyModifiers(new THREE.SphereGeometry(0.5, 64, 48), { twist: 1 }))
@@ -140,7 +140,7 @@ describe('scene3d modifiers', () => {
     // so the single-copy geometry to compare against is the subdivide-1 one —
     // `base` (no subdivision at all) is not a divisor of the result.
     const single = verts(applyModifiers(new THREE.SphereGeometry(0.5, 64, 48), { twist: 1, subdivide: 1 }))
-    const g = applyModifiers(src, { twist: 1, subdivide: 3, arrayCount: 12 })
+    const g = applyModifiers(src, { twist: 1, subdivide: 3, cloneCount: 12 })
     expect(verts(g)).toBe(single * 12)   // all 12 copies, subdivision cut to 1
     expect(single).toBeGreaterThan(base) // subdivision did run, just not 3 times
     expect(verts(g)).toBeLessThan(400_000)

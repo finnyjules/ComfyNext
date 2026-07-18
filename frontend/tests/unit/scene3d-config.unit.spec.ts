@@ -125,7 +125,7 @@ describe('scene3d config', () => {
   it('round-trips modifiers and drops junk ones', () => {
     const doc = defaultDoc()
     const o = createPrimitive('box', doc.objects)
-    o.modifiers = { twist: 120, subdivide: 2, arrayCount: 4 }
+    o.modifiers = { twist: 120, subdivide: 2, cloneCount: 4 }
     doc.objects.push(o)
     expect(parseDoc(serializeDoc(doc))).toEqual(doc)
 

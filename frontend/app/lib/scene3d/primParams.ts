@@ -173,19 +173,45 @@ export const MODIFIER_SPECS: ParamSpec[] = [
   { key: 'noiseScale', label: 'Noise scale', hint: 'Size of the lumps — higher means finer detail', min: 0.5, max: 8, step: 0.1, default: 2 },
   { key: 'noiseSeed', label: 'Noise seed', hint: 'Shuffles the lumps into a different arrangement', min: 0, max: 99, step: 1, default: 0 },
 
-  { key: 'arrayCount', label: 'Count', hint: 'How many copies of the shape to repeat', min: 1, max: 12, step: 1, default: 1 },
-  { key: 'arrayMode', label: 'Mode', hint: 'Repeat in a straight line or around a circle', min: 0, max: 1, step: 1, default: 0, control: 'options', options: ['linear', 'radial'] },
-  { key: 'arrayOffsetX', label: 'Offset X', hint: 'Gap between copies along X', min: -3, max: 3, step: 0.05, default: 1.2 },
-  { key: 'arrayOffsetY', label: 'Offset Y', hint: 'Gap between copies along Y', min: -3, max: 3, step: 0.05, default: 0 },
-  { key: 'arrayOffsetZ', label: 'Offset Z', hint: 'Gap between copies along Z', min: -3, max: 3, step: 0.05, default: 0 },
-  { key: 'arrayRadius', label: 'Radius', hint: 'How far each copy sits from the centre', min: 0, max: 5, step: 0.05, default: 1.5 },
-  axisSpec('arrayAxis', 'Around', 'The axis the copies are arranged around', 1),
+  // Cloner keys. Named clone* rather than array* because this is its own panel
+  // section now and is meant to accumulate more clone options — an arrayCount
+  // sitting beside a future cloneMode/cloneStep* would be inconsistent from day one.
+  { key: 'cloneCount', label: 'Count', hint: 'How many copies of the shape to repeat', min: 1, max: 12, step: 1, default: 1 },
+  { key: 'cloneMode', label: 'Mode', hint: 'Repeat in a straight line or around a circle', min: 0, max: 1, step: 1, default: 0, control: 'options', options: ['linear', 'radial'] },
+  { key: 'cloneOffsetX', label: 'Offset X', hint: 'Gap between copies along X', min: -3, max: 3, step: 0.05, default: 1.2 },
+  { key: 'cloneOffsetY', label: 'Offset Y', hint: 'Gap between copies along Y', min: -3, max: 3, step: 0.05, default: 0 },
+  { key: 'cloneOffsetZ', label: 'Offset Z', hint: 'Gap between copies along Z', min: -3, max: 3, step: 0.05, default: 0 },
+  { key: 'cloneRadius', label: 'Radius', hint: 'How far each copy sits from the centre', min: 0, max: 5, step: 0.05, default: 1.5 },
+  axisSpec('cloneAxis', 'Around', 'The axis the copies are arranged around', 1),
 ]
 
 export function modifierValue(modifiers: Record<string, number> | undefined, key: string): number {
   return resolveParam(MODIFIER_SPECS, modifiers, key)
 }
 
+// Scenes saved before the Array controls became the Cloner section (2026-07-18)
+// used array* keys. Remap on load; this can be deleted once those are gone.
+const LEGACY_MODIFIER_KEYS: Record<string, string> = {
+  arrayCount: 'cloneCount', arrayMode: 'cloneMode', arrayOffsetX: 'cloneOffsetX',
+  arrayOffsetY: 'cloneOffsetY', arrayOffsetZ: 'cloneOffsetZ',
+  arrayRadius: 'cloneRadius', arrayAxis: 'cloneAxis',
+}
+
 export function sanitizeModifiers(raw: unknown): Record<string, number> | undefined {
+  // The legacy remap lives here, not in sanitizeBag — that stays schema-pure.
+  if (raw && typeof raw === 'object') {
+    const src = raw as Record<string, unknown>
+    const legacy = Object.keys(LEGACY_MODIFIER_KEYS).filter((k) => k in src)
+    if (legacy.length > 0) {
+      const migrated: Record<string, unknown> = { ...src }
+      for (const old of legacy) {
+        delete migrated[old]
+        // A value already stored under the new key wins over the stale one.
+        const next = LEGACY_MODIFIER_KEYS[old]!
+        if (!(next in migrated)) migrated[next] = src[old]
+      }
+      return sanitizeBag(MODIFIER_SPECS, migrated)
+    }
+  }
   return sanitizeBag(MODIFIER_SPECS, raw)
 }

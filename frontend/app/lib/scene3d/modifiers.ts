@@ -6,19 +6,19 @@
 // gizmo), bounding boxes, shadows and the gradient bbox uniforms all read real
 // geometry too.
 //
-// Stage order is fixed: subdivide → taper → twist → bend → noise → array.
+// Stage order is fixed: subdivide → taper → twist → bend → noise → cloner.
 import * as THREE from 'three'
 import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { modifierValue } from '~/lib/scene3d/primParams'
 
-/** Rough ceiling for the final merged geometry. arrayCount is user-visible so it
+/** Rough ceiling for the final merged geometry. cloneCount is user-visible so it
  *  is never reduced; subdivision stops early instead. */
 const VERTEX_BUDGET = 300_000
 
 export function hasModifiers(modifiers: Record<string, number> | undefined): boolean {
   if (!modifiers) return false
   const m = (k: string) => modifierValue(modifiers, k)
-  return m('taper') !== 0 || m('twist') !== 0 || m('bend') !== 0 || m('noise') !== 0 || m('arrayCount') > 1
+  return m('taper') !== 0 || m('twist') !== 0 || m('bend') !== 0 || m('noise') !== 0 || m('cloneCount') > 1
 }
 
 // --- deterministic 3D value noise (no dependency, stable across runs) --------
@@ -163,7 +163,7 @@ function applyNoise(geo: THREE.BufferGeometry, amount: number, scale: number, se
   pos.needsUpdate = true
 }
 
-function applyArray(
+function applyCloner(
   geo: THREE.BufferGeometry,
   count: number,
   radial: boolean,
@@ -207,13 +207,13 @@ export function applyModifiers(
   const m = (k: string) => modifierValue(modifiers, k)
 
   const taper = m('taper'), twist = m('twist'), bend = m('bend'), noise = m('noise')
-  const count = Math.round(m('arrayCount'))
+  const count = Math.round(m('cloneCount'))
   const deforms = taper !== 0 || twist !== 0 || bend !== 0 || noise !== 0
 
   let out = geo.clone()
 
   // Subdivision only earns its vertices when something deforms them, and it
-  // yields to the budget so a dense shape in a big array cannot freeze the app.
+  // yields to the budget so a dense shape in a big clone set cannot freeze the app.
   if (deforms) {
     const iterations = Math.round(m('subdivide'))
     const ceiling = VERTEX_BUDGET / Math.max(1, count)
@@ -237,16 +237,16 @@ export function applyModifiers(
   }
 
   if (count > 1) {
-    const arrayed = applyArray(
+    const cloned = applyCloner(
       out,
       count,
-      Math.round(m('arrayMode')) === 1,
-      [m('arrayOffsetX'), m('arrayOffsetY'), m('arrayOffsetZ')],
-      m('arrayRadius'),
-      Math.round(m('arrayAxis')),
+      Math.round(m('cloneMode')) === 1,
+      [m('cloneOffsetX'), m('cloneOffsetY'), m('cloneOffsetZ')],
+      m('cloneRadius'),
+      Math.round(m('cloneAxis')),
     )
     out.dispose()
-    out = arrayed
+    out = cloned
     out.computeBoundingBox()
     out.computeBoundingSphere()
   }

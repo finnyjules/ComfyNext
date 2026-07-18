@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { PRIMITIVE_PARAMS, paramValue, sanitizeParams, MODIFIER_SPECS, modifierValue, resolveParam, sanitizeBag } from '~/lib/scene3d/primParams'
+import { PRIMITIVE_PARAMS, paramValue, sanitizeParams, MODIFIER_SPECS, modifierValue, resolveParam, sanitizeBag, sanitizeModifiers } from '~/lib/scene3d/primParams'
 import { PRIMITIVE_KINDS } from '~/lib/scene3d/config'
 
 describe('scene3d primitive params', () => {
@@ -86,7 +86,7 @@ describe('scene3d modifier specs', () => {
     for (const key of ['subdivide', 'taper', 'twist', 'bend', 'noise']) {
       expect(modifierValue(undefined, key), `${key} must default to 0`).toBe(0)
     }
-    expect(modifierValue(undefined, 'arrayCount')).toBe(1)
+    expect(modifierValue(undefined, 'cloneCount')).toBe(1)
   })
 
   it('covers the documented modifier set', () => {
@@ -96,8 +96,24 @@ describe('scene3d modifier specs', () => {
       'twist', 'twistAxis',
       'bend', 'bendAxis',
       'noise', 'noiseScale', 'noiseSeed',
-      'arrayCount', 'arrayMode', 'arrayOffsetX', 'arrayOffsetY', 'arrayOffsetZ', 'arrayRadius', 'arrayAxis',
+      'cloneCount', 'cloneMode', 'cloneOffsetX', 'cloneOffsetY', 'cloneOffsetZ', 'cloneRadius', 'cloneAxis',
     ])
+  })
+
+  it('still loads scenes saved with the legacy array* modifier keys', () => {
+    expect(sanitizeModifiers({ arrayCount: 4 })).toEqual({ cloneCount: 4 })
+    expect(sanitizeModifiers({
+      arrayCount: 6, arrayMode: 1, arrayOffsetX: 2, arrayOffsetY: 1, arrayOffsetZ: -1,
+      arrayRadius: 3, arrayAxis: 2,
+    })).toEqual({
+      cloneCount: 6, cloneMode: 1, cloneOffsetX: 2, cloneOffsetY: 1, cloneOffsetZ: -1,
+      cloneRadius: 3, cloneAxis: 2,
+    })
+    // Mixed bags keep the new key's value, and non-legacy keys are untouched.
+    expect(sanitizeModifiers({ arrayCount: 4, cloneCount: 7, twist: 90 }))
+      .toEqual({ twist: 90, cloneCount: 7 })
+    // sanitizeBag itself stays schema-pure — it knows nothing about the remap.
+    expect(sanitizeBag(MODIFIER_SPECS, { arrayCount: 4 })).toBeUndefined()
   })
 
   it('resolves and sanitizes modifier bags like param bags', () => {

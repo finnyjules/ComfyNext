@@ -295,21 +295,22 @@ function setOption(key: string, label: string): void {
   const i = modSpec(key).options!.indexOf(label)
   if (i >= 0) setMod(key, i)
 }
-const arrayIsRadial = computed(() => Math.round(modOf('arrayMode')) === 1)
-// Modifier controls, grouped for the panel. Array's offset/radius keys are
-// swapped by mode, so that group is computed rather than a static list.
+const cloneIsRadial = computed(() => Math.round(modOf('cloneMode')) === 1)
+// Modifier controls, grouped for the panel. The Cloner lives in its own
+// top-level section (below), so it is not one of these groups.
 const MODIFIER_GROUPS = computed(() => [
   { label: 'Taper', keys: ['taper', 'taperAxis'] },
   { label: 'Twist', keys: ['twist', 'twistAxis'] },
   { label: 'Bend', keys: ['bend', 'bendAxis'] },
   { label: 'Noise', keys: ['noise', 'noiseScale', 'noiseSeed'] },
-  {
-    label: 'Array',
-    keys: arrayIsRadial.value
-      ? ['arrayCount', 'arrayMode', 'arrayRadius', 'arrayAxis']
-      : ['arrayCount', 'arrayMode', 'arrayOffsetX', 'arrayOffsetY', 'arrayOffsetZ'],
-  },
 ])
+// Cloner keys: the offset/radius set is swapped by mode, so this is computed
+// rather than a static list. Flat — the section has no inner micro-labels.
+const CLONER_KEYS = computed(() =>
+  cloneIsRadial.value
+    ? ['cloneCount', 'cloneMode', 'cloneRadius', 'cloneAxis']
+    : ['cloneCount', 'cloneMode', 'cloneOffsetX', 'cloneOffsetY', 'cloneOffsetZ'],
+)
 
 // Size = scale expressed in scene units. Base dimensions come from the geometry
 // itself (rebuilt from the doc, so they follow parameter changes — a fatter torus
@@ -930,6 +931,34 @@ function onClose() {
                 />
               </template>
             </div>
+          </div>
+        </details>
+
+        <!-- Cloner: a peer of Geometry and Modifiers, not a group inside them —
+             this section is meant to grow. Flat list, collapsed by default. -->
+        <details v-if="selectedIsPrimitive" class="group">
+          <summary class="flex cursor-pointer select-none items-center gap-1.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 list-none hover:text-white/60 [&::-webkit-details-marker]:hidden"><span class="inline-block text-white/30 transition-transform group-open:rotate-90">›</span>Cloner</summary>
+          <div class="space-y-3 pt-1">
+            <template v-for="key in CLONER_KEYS" :key="key">
+              <div v-if="modSpec(key).control === 'options'">
+                <label class="mb-1 block text-[11px] text-white/55" :title="modSpec(key).hint">{{ modSpec(key).label }}</label>
+                <StudioSegmented
+                  :model-value="optionOf(key)"
+                  :options="modSpec(key).options!"
+                  @update:model-value="(v: string) => setOption(key, v)"
+                />
+              </div>
+              <StudioSlider
+                v-else
+                :model-value="modOf(key)"
+                :label="modSpec(key).label"
+                :hint="modSpec(key).hint"
+                :min="modSpec(key).min"
+                :max="modSpec(key).max"
+                :step="modSpec(key).step"
+                @update:model-value="(v: number) => setMod(key, v)"
+              />
+            </template>
           </div>
         </details>
 

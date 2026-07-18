@@ -63,13 +63,13 @@ export function sanitizeBag(specs: ParamSpec[], raw: unknown): Record<string, nu
 | `noise` | slider | 0–0.5, step 0.005 | 0 | Noise — "Pushes the surface in and out for an organic, lumpy look" |
 | `noiseScale` | slider | 0.5–8, step 0.1 | 2 | Noise scale — "Size of the lumps — higher means finer detail" |
 | `noiseSeed` | slider | 0–99, step 1 | 0 | Noise seed — "Shuffles the lumps into a different arrangement" |
-| `arrayCount` | slider | 1–12, step 1 | 1 | Count — "How many copies of the shape to repeat" |
-| `arrayMode` | options | linear, radial | 0 (linear) | Mode — "Repeat in a straight line or around a circle" |
-| `arrayOffsetX` | slider | -3–3, step 0.05 | 1.2 | Offset X — "Gap between copies along X" |
-| `arrayOffsetY` | slider | -3–3, step 0.05 | 0 | Offset Y — "Gap between copies along Y" |
-| `arrayOffsetZ` | slider | -3–3, step 0.05 | 0 | Offset Z — "Gap between copies along Z" |
-| `arrayRadius` | slider | 0–5, step 0.05 | 1.5 | Radius — "How far each copy sits from the centre" |
-| `arrayAxis` | options | x,y,z | 1 (y) | Around — "The axis the copies are arranged around" |
+| `cloneCount` | slider | 1–12, step 1 | 1 | Count — "How many copies of the shape to repeat" |
+| `cloneMode` | options | linear, radial | 0 (linear) | Mode — "Repeat in a straight line or around a circle" |
+| `cloneOffsetX` | slider | -3–3, step 0.05 | 1.2 | Offset X — "Gap between copies along X" |
+| `cloneOffsetY` | slider | -3–3, step 0.05 | 0 | Offset Y — "Gap between copies along Y" |
+| `cloneOffsetZ` | slider | -3–3, step 0.05 | 0 | Offset Z — "Gap between copies along Z" |
+| `cloneRadius` | slider | 0–5, step 0.05 | 1.5 | Radius — "How far each copy sits from the centre" |
+| `cloneAxis` | options | x,y,z | 1 (y) | Around — "The axis the copies are arranged around" |
 
 ## The pipeline — `frontend/app/lib/scene3d/modifiers.ts`
 
@@ -86,7 +86,7 @@ on a non-indexed clone and disposes nothing it did not create — the caller own
 the input.
 
 `hasModifiers(modifiers)` is the cheap predicate: any of `subdivide`, `taper`,
-`twist`, `bend`, `noise` non-zero, or `arrayCount > 1`.
+`twist`, `bend`, `noise` non-zero, or `cloneCount > 1`.
 
 **Stages, in fixed order:**
 
@@ -108,13 +108,13 @@ the input.
    `noise · valueNoise(position · noiseScale + seedOffset)`, using a local
    deterministic 3D value noise (integer hash + smoothstep interpolation, no
    dependency). Same seed always produces the same shape.
-6. **Array** — `arrayCount` copies merged into one geometry. Linear mode offsets
+6. **Cloner** — `cloneCount` copies merged into one geometry. Linear mode offsets
    copy `i` by `i · (offsetX, offsetY, offsetZ)`. Radial mode places copy `i` at
-   angle `i · 360/count` around `arrayAxis` at distance `arrayRadius`, each copy
+   angle `i · 360/count` around `cloneAxis` at distance `cloneRadius`, each copy
    rotated to face outward. Count is always honoured exactly.
 
 **Vertex budget.** The subdivide stage stops early once the projected total
-(`vertexCount · 4 · arrayCount`) would exceed roughly 300 000 vertices, so a
+(`vertexCount · 4 · cloneCount`) would exceed roughly 300 000 vertices, so a
 high-detail sphere subdivides fewer times rather than freezing the editor. The
 number of iterations actually applied is not surfaced — the slider simply stops
 having an effect, which matches how detail sliders behave at their ceiling.
@@ -156,13 +156,21 @@ One new **Modifiers** `<details>` sub-group, a peer of Geometry and the material
 sub-groups, using the same uppercase-label-plus-chevron styling, **collapsed by
 default** (modifiers are secondary; Geometry stays open). Inside, a single
 Subdivide slider followed by five labelled mini-blocks — Taper, Twist, Bend,
-Noise, Array — using the existing micro-label style already used for Axis and
+Noise — using the existing micro-label style already used for Axis and
 Shading in this panel.
+
+The clone controls are **not** one of those groups. They are presented as their
+own **Cloner** `<details>` section, a peer of Geometry and Modifiers placed
+immediately after Modifiers and likewise collapsed by default, because the
+section is intended to grow with further clone options rather than stay a
+five-knob block inside Modifiers. It is a flat list — no inner micro-labels.
+That is also why the keys are named `clone*` rather than `array*`; scenes saved
+with the old `array*` names are remapped on load by `sanitizeModifiers`.
 
 Rendering is the same schema-driven `v-for` as Geometry, extended for the
 `options` control, which renders a `StudioSegmented` (props: `options: string[]`,
-string `v-model`) mapping index ↔ label. Array's offset sliders show only in
-linear mode; radius and axis only in radial.
+string `v-model`) mapping index ↔ label. The Cloner's offset sliders show only
+in linear mode; radius and axis only in radial.
 
 The section is shown for primitives only. Duplicating an object copies the
 modifier bag (the parametric-primitives fix taught us this the hard way).

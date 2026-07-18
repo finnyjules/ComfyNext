@@ -180,7 +180,7 @@ describe('scene3d engine modifier integration', () => {
 
   it('applies modifiers to the built geometry', () => {
     const plain = buildGeometry('box', undefined, undefined, 'smooth')
-    const arrayed = buildGeometry('box', undefined, { arrayCount: 3 }, 'smooth')
+    const arrayed = buildGeometry('box', undefined, { cloneCount: 3 }, 'smooth')
     expect(arrayed.getAttribute('position').count).toBe(plain.getAttribute('position').count * 3)
   })
 
@@ -193,7 +193,7 @@ describe('scene3d engine modifier integration', () => {
 
   it('reports base size including modifiers', () => {
     const plain = baseSizeFor('box')
-    const arrayed = baseSizeFor('box', undefined, { arrayCount: 3, arrayOffsetX: 2 })
+    const arrayed = baseSizeFor('box', undefined, { cloneCount: 3, cloneOffsetX: 2 })
     expect(arrayed[0]).toBeGreaterThan(plain[0])
   })
 })
