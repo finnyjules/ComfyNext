@@ -86,16 +86,25 @@ export function onTextureError(cb: (filename: string) => void): () => void {
   errorSubs.add(cb)
   return () => errorSubs.delete(cb)
 }
+/** Materials currently holding an image texture — used to drop `map` on load failure. */
+const imageMaterials = new Set<THREE.MeshStandardMaterial>()
 function getImageTexture(filename: string): THREE.Texture | null {
   if (!hasDOM || !filename) return null
   let t = imageCache.get(filename)
   if (!t) {
-    t = new THREE.TextureLoader().load(
+    const tex = new THREE.TextureLoader().load(
       `/view?${new URLSearchParams({ filename, type: 'input' })}`,
       undefined,
       undefined,
-      () => { imageCache.delete(filename); errorSubs.forEach((cb) => cb(filename)) },
+      () => {
+        imageCache.delete(filename)
+        errorSubs.forEach((cb) => cb(filename))
+        imageMaterials.forEach((mat) => {
+          if (mat.map === tex) { mat.map = null; mat.needsUpdate = true }
+        })
+      },
     )
+    t = tex
     t.colorSpace = THREE.SRGBColorSpace
     imageCache.set(filename, t)
   }
@@ -214,6 +223,7 @@ export function materialFor(mat: SceneMaterial, geometry?: THREE.BufferGeometry)
       })
       const tex = getImageTexture(mat.image ?? '')
       if (tex) t.map = tex
+      imageMaterials.add(t)
       m = t
       break
     }
@@ -285,6 +295,7 @@ export function disposeMaterial(m: THREE.Material): void {
   // Dispose textures the material exclusively owns. Matcaps are shared
   // module-lifetime singletons — skip them.
   if ((m as THREE.MeshToonMaterial).isMaterial && (m as any).gradientMap) (m as any).gradientMap.dispose()
+  if (m.userData.matType === 'image') imageMaterials.delete(m as THREE.MeshStandardMaterial)
   const map = (m as THREE.MeshStandardMaterial).map
   if (map) { map.dispose(); if (m.userData.identity?.startsWith('image:')) imageCache.delete(m.userData.identity.slice(6)) }
   m.dispose()
