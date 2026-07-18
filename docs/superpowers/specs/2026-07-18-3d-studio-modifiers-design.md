@@ -113,13 +113,23 @@ the input.
    angle `i · 360/count` around `arrayAxis` at distance `arrayRadius`, each copy
    rotated to face outward. Count is always honoured exactly.
 
-**Vertex budget.** The final merged geometry is capped at roughly 300 000
-vertices. Because array count is user-visible it is never reduced; instead the
-subdivide stage stops early once the projected total
-(`vertexCount · 4 · arrayCount`) would exceed the budget. A high-detail sphere
-therefore subdivides fewer times rather than freezing the editor. The number of
-iterations actually applied is not surfaced in the UI — the slider simply stops
+**Vertex budget.** The subdivide stage stops early once the projected total
+(`vertexCount · 4 · arrayCount`) would exceed roughly 300 000 vertices, so a
+high-detail sphere subdivides fewer times rather than freezing the editor. The
+number of iterations actually applied is not surfaced — the slider simply stops
 having an effect, which matches how detail sliders behave at their ceiling.
+
+This bounds *subdivision only*, not the final geometry. Both of the other terms,
+primitive detail and array count, are user-visible values shown on their own
+sliders, and silently reducing either would mean the readout lies about what is
+rendered — so neither yields to the budget. The product is therefore bounded
+only by the parameter ranges: the reachable worst case is a torus knot at detail
+256 repeated twelve times, at 589 824 vertices and roughly 58 ms per rebuild
+(~28 MB), which makes modifier sliders visibly chug while staying stable and
+leak-free. Every other combination measured is comfortably interactive — the
+same knot at its default detail is 147 000 vertices and about 14 ms. If that
+ceiling ever needs lowering, the honest fix is to narrow the detail range for
+the densest primitives, not to silently override what a slider reads.
 
 **Normals.** After any deforming stage the pipeline calls
 `computeVertexNormals()`. The caller's facet variant treatment (`toNonIndexed` +

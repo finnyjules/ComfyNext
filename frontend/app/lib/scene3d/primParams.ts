@@ -17,7 +17,9 @@ export interface ParamSpec {
   /** 'toggle' renders a checkbox storing 0 | 1; 'options' renders a segmented
    *  control storing the option's index. Both keep bags a flat number map. */
   control?: 'slider' | 'toggle' | 'options'
-  /** Required when control === 'options'; min/max must span its indices. */
+  /** Required when control === 'options'; min/max must span its indices.
+   *  The stored value is the INDEX, so this order is a persistence contract:
+   *  reordering it silently remaps every saved scene. Append, never reorder. */
   options?: string[]
 }
 
