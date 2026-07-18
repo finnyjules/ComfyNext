@@ -108,10 +108,12 @@ const drag = ref<Drag | null>(null)
 
 function onTransformDown(frame: number, e: PointerEvent) {
   e.stopPropagation()
+  store.beginGesture()   // one undo step per retime drag
   drag.value = { kind: 'transform', fromFrame: frame, startX: e.clientX, startFrame: frame }
 }
 function onAxisDown(tag: string, t: number, e: PointerEvent) {
   e.stopPropagation()
+  store.beginGesture()
   drag.value = { kind: 'axis', tag, fromT: t, startX: e.clientX, startFrame: Math.round(t * clip.value!.length) }
 }
 function onMove(e: PointerEvent) {
@@ -135,7 +137,7 @@ function onMove(e: PointerEvent) {
     }
   }
 }
-function onUp() { drag.value = null }
+function onUp() { drag.value = null; store.endGesture() }
 onMounted(() => { window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp) })
 onBeforeUnmount(() => { window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp) })
 </script>
@@ -155,12 +157,15 @@ onBeforeUnmount(() => { window.removeEventListener('pointermove', onMove); windo
       </div>
     </div>
     <div class="flex-1 overflow-y-auto">
+      <!-- Two-column anatomy matching the timeline: a w-36 label column (same
+           width as the track headers) and a rail whose x=0 is the STRIP's x=0 —
+           so framesToPx() lands diamonds exactly under the ruler ticks and
+           playhead above. -->
       <!-- Transform group (single lane: keyframes are 5-tuple snapshots) -->
       <div class="px-3 pt-1.5 text-[9px] uppercase tracking-[0.08em] text-white/35">Transform</div>
-      <!-- Lane height h-6 gives a bit more room for the cluster buttons -->
-      <div class="relative h-6 mx-3 border-b border-white/5">
-        <!-- Control cluster: ◀ ◆-toggle ▶ + label; occupies left-0 → left-32 (~128px) -->
-        <div class="absolute left-0 top-0.5 flex items-center gap-1">
+      <div class="flex h-6 border-b border-white/5">
+        <!-- Control cluster: ◀ ◆-toggle ▶ + label, aligned with track headers -->
+        <div class="w-36 shrink-0 px-2 flex items-center gap-1 border-r border-white/10">
           <button class="text-white/40 hover:text-white text-[10px] px-0.5" @click="navTransform(-1)">◀</button>
           <button
             class="size-2.5 rotate-45 border"
@@ -168,22 +173,28 @@ onBeforeUnmount(() => { window.removeEventListener('pointermove', onMove); windo
             @click="toggleTransformKf()"
           />
           <button class="text-white/40 hover:text-white text-[10px] px-0.5" @click="navTransform(1)">▶</button>
-          <span class="text-[10px] text-white/55 ml-1">Transform</span>
+          <span class="text-[10px] text-white/55 ml-1 truncate">Transform</span>
         </div>
-        <!-- Track line starts at left-32 (same offset as cluster width) -->
-        <div class="absolute left-32 right-3 top-3 h-px bg-white/10" />
-        <div
-          v-for="kf in transformKfs" :key="`tf-${kf.frame}`"
-          class="absolute top-1.5 size-2 rotate-45 bg-white border border-black/50 -translate-x-1/2 cursor-grab"
-          :style="{ left: framesToPx(clip.start_frame + kf.frame) + 'px' }"
-          @pointerdown.stop="(e) => onTransformDown(kf.frame, e)"
-        />
+        <!-- Rail — shares the strip's frame→px mapping -->
+        <div class="relative flex-1 overflow-hidden">
+          <div class="absolute top-0 bottom-0 bg-white/[0.05]"
+            :style="{ left: framesToPx(clip.start_frame) + 'px', width: (clip.length * pxPerFrame) + 'px' }" />
+          <div class="absolute inset-x-0 top-3 h-px bg-white/10" />
+          <div class="absolute top-0 bottom-0 w-px bg-yellow-400/50 pointer-events-none"
+            :style="{ left: framesToPx(store.playheadFrame.value) + 'px' }" />
+          <div
+            v-for="kf in transformKfs" :key="`tf-${kf.frame}`"
+            class="absolute top-1.5 size-2 rotate-45 bg-white border border-black/50 -translate-x-1/2 cursor-grab"
+            :style="{ left: framesToPx(clip.start_frame + kf.frame) + 'px' }"
+            @pointerdown.stop="(e) => onTransformDown(kf.frame, e)"
+          />
+        </div>
       </div>
       <!-- Axes group (one lane per font axis) -->
       <div class="px-3 pt-1.5 text-[9px] uppercase tracking-[0.08em] text-white/35">Axes</div>
-      <div v-for="ax in axes" :key="ax.tag" class="relative h-6 mx-3 border-b border-white/5">
+      <div v-for="ax in axes" :key="ax.tag" class="flex h-6 border-b border-white/5">
         <!-- Control cluster for this axis lane -->
-        <div class="absolute left-0 top-0.5 flex items-center gap-1">
+        <div class="w-36 shrink-0 px-2 flex items-center gap-1 border-r border-white/10">
           <button class="text-white/40 hover:text-white text-[10px] px-0.5" @click="navAxis(ax.tag, -1)">◀</button>
           <button
             class="size-2.5 rotate-45 border"
@@ -191,16 +202,22 @@ onBeforeUnmount(() => { window.removeEventListener('pointermove', onMove); windo
             @click="toggleAxisKf(ax.tag, ax.default)"
           />
           <button class="text-white/40 hover:text-white text-[10px] px-0.5" @click="navAxis(ax.tag, 1)">▶</button>
-          <span class="text-[10px] text-white/55 ml-1">{{ ax.label }}</span>
+          <span class="text-[10px] text-white/55 ml-1 truncate">{{ ax.label }}</span>
         </div>
-        <!-- Track line starts at left-32 to clear the cluster -->
-        <div class="absolute left-32 right-3 top-3 h-px bg-white/10" />
-        <div
-          v-for="kf in axisKfsFor(ax.tag)" :key="`${ax.tag}-${kf.t}`"
-          class="absolute top-1.5 size-2 rotate-45 bg-white/80 border border-black/50 -translate-x-1/2 cursor-grab"
-          :style="{ left: framesToPx(tToFrame(kf.t)) + 'px' }"
-          @pointerdown.stop="(e) => { onAxisDown(ax.tag, kf.t, e); store.selectedClipId.value = clip!.id; store.selectedAxisKeyframeT.value = kf.t }"
-        />
+        <!-- Rail — shares the strip's frame→px mapping -->
+        <div class="relative flex-1 overflow-hidden">
+          <div class="absolute top-0 bottom-0 bg-white/[0.05]"
+            :style="{ left: framesToPx(clip.start_frame) + 'px', width: (clip.length * pxPerFrame) + 'px' }" />
+          <div class="absolute inset-x-0 top-3 h-px bg-white/10" />
+          <div class="absolute top-0 bottom-0 w-px bg-yellow-400/50 pointer-events-none"
+            :style="{ left: framesToPx(store.playheadFrame.value) + 'px' }" />
+          <div
+            v-for="kf in axisKfsFor(ax.tag)" :key="`${ax.tag}-${kf.t}`"
+            class="absolute top-1.5 size-2 rotate-45 bg-white/80 border border-black/50 -translate-x-1/2 cursor-grab"
+            :style="{ left: framesToPx(tToFrame(kf.t)) + 'px' }"
+            @pointerdown.stop="(e) => { onAxisDown(ax.tag, kf.t, e); store.selectedClipId.value = clip!.id; store.selectedAxisKeyframeT.value = kf.t }"
+          />
+        </div>
       </div>
     </div>
   </div>
