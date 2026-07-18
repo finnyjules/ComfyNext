@@ -60,6 +60,10 @@ export class SceneInteraction {
   // survive the microtask checkpoint browsers run between listeners on
   // trusted events.
   private gizmoDragged = false
+  // Shift while dragging a scale dot = uniform scale: the dragged axis's ratio
+  // (vs the scale recorded at drag start) is applied to all three axes.
+  private shiftDown = false
+  private scaleDragStart: THREE.Vector3 | null = null
 
   constructor(
     private engine: SceneEngine,
@@ -98,6 +102,8 @@ export class SceneInteraction {
         this.orbit.enabled = !e.value
         if (e.value) {
           this.gizmoDragged = true
+          // Uniform-scale support: remember where the scale started.
+          if (mode === 'scale') this.scaleDragStart = tc.object?.scale.clone() ?? null
           // Mutual exclusion: several instances can raycast-hit overlapping
           // pickers in the same pointerdown (each would then process the whole
           // drag → simultaneous translate+scale). The first to start dragging
@@ -105,10 +111,27 @@ export class SceneInteraction {
           // their enabled-guard makes their later pointerdown listeners bail.
           for (const other of this.gizmos) if (other !== tc && !other.dragging) other.enabled = false
         } else {
+          if (mode === 'scale') this.scaleDragStart = null
           for (const other of this.gizmos) other.enabled = true
         }
       })
-      tc.addEventListener('objectChange', () => this.emitTransform())
+      tc.addEventListener('objectChange', () => {
+        // Shift + scale-dot drag → uniform: three has just set ONE axis to
+        // start·ratio (it recomputes from the drag start every pointermove, so
+        // overwriting here never corrupts the next move). Spread that ratio.
+        if (mode === 'scale' && this.shiftDown && this.scaleDragStart && tc.object) {
+          const s = tc.object.scale
+          const start = this.scaleDragStart
+          let ratio = 1
+          let best = 0
+          for (const axis of ['x', 'y', 'z'] as const) {
+            const r = start[axis] !== 0 ? s[axis] / start[axis] : 1
+            if (Math.abs(r - 1) > best) { best = Math.abs(r - 1); ratio = r }
+          }
+          s.set(start.x * ratio, start.y * ratio, start.z * ratio)
+        }
+        this.emitTransform()
+      })
       // three 0.171 TransformControls extends Controls (not Object3D); its
       // visual representation is the helper root returned by getHelper().
       // Tag it so the bake (renderPasses) can hide it — the gizmo shares
@@ -121,10 +144,22 @@ export class SceneInteraction {
     }
 
     domElement.addEventListener('pointerdown', this.onDown)
+    domElement.addEventListener('pointermove', this.onMove)
     domElement.addEventListener('pointerup', this.onUp)
   }
 
+  // Shift state rides on the pointer events (works for real keyboards AND
+  // synthetic modifier-annotated drags; keydown tracking would miss the
+  // latter). During an active gizmo drag, a modifier-less move can never turn
+  // Shift OFF — synthetic drags annotate only pointerdown/up, and the drag's
+  // starting state should govern. Pressing Shift mid-drag still engages live.
+  private onMove = (e: PointerEvent) => {
+    const dragging = this.gizmos.some((g) => g.dragging)
+    if (!dragging || e.shiftKey) this.shiftDown = e.shiftKey
+  }
+
   private onDown = (e: PointerEvent) => {
+    this.shiftDown = e.shiftKey
     if (e.button !== 0) return
     this.downAt = [e.clientX, e.clientY]
     // NOTE: do not reset gizmoDragged here — the gizmos' earlier-registered
@@ -189,6 +224,7 @@ export class SceneInteraction {
 
   dispose(): void {
     this.domElement.removeEventListener('pointerdown', this.onDown)
+    this.domElement.removeEventListener('pointermove', this.onMove)
     this.domElement.removeEventListener('pointerup', this.onUp)
     for (const tc of this.gizmos) {
       tc.detach()
