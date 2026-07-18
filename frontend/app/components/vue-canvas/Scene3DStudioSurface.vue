@@ -325,7 +325,11 @@ const CLONER_STEP_KEYS = ['cloneStepRotX', 'cloneStepRotY', 'cloneStepRotZ', 'cl
 // Cost readout. The philosophy here is disclose, don't clamp: detail and counts
 // are user-visible slider values, so silently reducing them would make the
 // readout lie. Instead the totals are shown while dragging.
-const AMBER_VERTS = 500_000
+// Measured on this machine: rebuilds are synchronous and roughly linear in
+// vertex count — ~390ms/tick at 274k, ~1080ms at 1.1M. The warning has to land
+// before the drag starts hurting, so it trips at 200k rather than at the point
+// where it is already unusable.
+const AMBER_VERTS = 200_000
 const cloneCost = computed(() => {
   const o = selected.value
   if (!o || o.kind !== 'primitive') return null
