@@ -156,6 +156,19 @@ const matFresnelPower = matParam('fresnelPower')
 const matGradientB = matParam('gradientB')
 const matGradientAxis = matParam('gradientAxis')
 const matGradientShading = matParam('gradientShading')
+const matClearcoat = matParam('clearcoat')
+const matClearcoatRoughness = matParam('clearcoatRoughness')
+const matSheen = matParam('sheen')
+const matSheenColor = matParam('sheenColor')
+const matEmissive = matParam('emissive')
+const matEmissiveIntensity = matParam('emissiveIntensity')
+const matOpacity = matParam('opacity')
+const matDispersion = matParam('dispersion')
+const matAttenuationColor = matParam('attenuationColor')
+const matAttenuationDistance = matParam('attenuationDistance')
+const matIridescence = matParam('iridescence')
+const matIridescenceIOR = matParam('iridescenceIOR')
+const matEnvMapIntensity = matParam('envMapIntensity')
 
 // Image-material upload: file → dataURL → ComfyUI input dir → material.image.
 // State is scoped to the object the upload was started FOR (not "whatever is
@@ -607,14 +620,74 @@ function onClose() {
           <StudioSelect v-model="matType" :options="MATERIAL_TYPES" />
         </div>
 
-        <!-- standard -->
-        <template v-if="selectedIsPrimitive && matType === 'standard'">
-          <div class="flex items-center justify-between">
-            <span class="text-[11px] text-white/55">Color</span>
-            <StudioColor v-model="matColor" />
+        <!-- physical surface: standard + glass share the grouped panel -->
+        <template v-if="selectedIsPrimitive && (matType === 'standard' || matType === 'glass')">
+          <div>
+            <p class="mb-1.5 text-[10px] uppercase tracking-[0.12em] text-white/35">Surface</p>
+            <div class="space-y-3">
+              <div class="flex items-center justify-between">
+                <span class="text-[11px] text-white/55">Color</span>
+                <StudioColor v-model="matColor" />
+              </div>
+              <StudioSlider v-model="matRoughness" label="Roughness" :min="0" :max="1" :step="0.01" />
+              <StudioSlider v-model="matMetalness" label="Metalness" :min="0" :max="1" :step="0.01" />
+            </div>
           </div>
-          <StudioSlider v-model="matRoughness" label="Roughness" :min="0" :max="1" :step="0.01" />
-          <StudioSlider v-model="matMetalness" label="Metalness" :min="0" :max="1" :step="0.01" />
+
+          <details class="group">
+            <summary class="cursor-pointer select-none py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 hover:text-white/60">Coat &amp; sheen</summary>
+            <div class="space-y-3 pt-1">
+              <StudioSlider v-model="matClearcoat" label="Clearcoat" :min="0" :max="1" :step="0.01" />
+              <StudioSlider v-model="matClearcoatRoughness" label="Coat roughness" :min="0" :max="1" :step="0.01" />
+              <StudioSlider v-model="matSheen" label="Sheen" :min="0" :max="1" :step="0.01" />
+              <div class="flex items-center justify-between">
+                <span class="text-[11px] text-white/55">Sheen colour</span>
+                <StudioColor v-model="matSheenColor" />
+              </div>
+            </div>
+          </details>
+
+          <details class="group">
+            <summary class="cursor-pointer select-none py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 hover:text-white/60">Glow</summary>
+            <div class="space-y-3 pt-1">
+              <div class="flex items-center justify-between">
+                <span class="text-[11px] text-white/55">Emissive</span>
+                <StudioColor v-model="matEmissive" />
+              </div>
+              <StudioSlider v-model="matEmissiveIntensity" label="Intensity" :min="0" :max="5" :step="0.05" />
+            </div>
+          </details>
+
+          <details class="group" :open="matType === 'glass'">
+            <summary class="cursor-pointer select-none py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 hover:text-white/60">Transparency</summary>
+            <div class="space-y-3 pt-1">
+              <StudioSlider v-model="matOpacity" label="Opacity" :min="0" :max="1" :step="0.01" />
+              <StudioSlider v-model="matTransmission" label="Transmission" :min="0" :max="1" :step="0.01" />
+              <StudioSlider v-model="matIor" label="IOR" :min="1" :max="2.33" :step="0.01" />
+              <StudioSlider v-model="matThickness" label="Thickness" :min="0" :max="2" :step="0.05" />
+              <StudioSlider v-model="matDispersion" label="Dispersion" :min="0" :max="5" :step="0.05" />
+              <div class="flex items-center justify-between">
+                <span class="text-[11px] text-white/55">Attenuation</span>
+                <StudioColor v-model="matAttenuationColor" />
+              </div>
+              <StudioSlider v-model="matAttenuationDistance" label="Attenuation dist" :min="0" :max="10" :step="0.1" />
+            </div>
+          </details>
+
+          <details class="group">
+            <summary class="cursor-pointer select-none py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 hover:text-white/60">Iridescence</summary>
+            <div class="space-y-3 pt-1">
+              <StudioSlider v-model="matIridescence" label="Amount" :min="0" :max="1" :step="0.01" />
+              <StudioSlider v-model="matIridescenceIOR" label="IOR" :min="1" :max="2.33" :step="0.01" />
+            </div>
+          </details>
+
+          <details class="group">
+            <summary class="cursor-pointer select-none py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 hover:text-white/60">Reflection</summary>
+            <div class="space-y-3 pt-1">
+              <StudioSlider v-model="matEnvMapIntensity" label="Intensity" :min="0" :max="3" :step="0.05" />
+            </div>
+          </details>
         </template>
 
         <!-- toon -->
@@ -639,18 +712,6 @@ function onClose() {
               </button>
             </div>
           </div>
-        </template>
-
-        <!-- glass -->
-        <template v-else-if="selectedIsPrimitive && matType === 'glass'">
-          <div class="flex items-center justify-between">
-            <span class="text-[11px] text-white/55">Color</span>
-            <StudioColor v-model="matColor" />
-          </div>
-          <StudioSlider v-model="matRoughness" label="Roughness" :min="0" :max="0.5" :step="0.01" />
-          <StudioSlider v-model="matIor" label="IOR" :min="1" :max="2.33" :step="0.01" />
-          <StudioSlider v-model="matTransmission" label="Transmission" :min="0" :max="1" :step="0.01" />
-          <StudioSlider v-model="matThickness" label="Thickness" :min="0" :max="2" :step="0.05" />
         </template>
 
         <!-- fresnel -->
