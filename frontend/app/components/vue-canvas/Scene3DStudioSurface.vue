@@ -158,9 +158,15 @@ const matGradientB = matParam('gradientB')
 const matGradientAxis = matParam('gradientAxis')
 
 // Image-material upload: file → dataURL → ComfyUI input dir → material.image.
+// State is scoped to the object the upload was started FOR (not "whatever is
+// selected when it finishes"): texUploading holds that object's id so the
+// spinner only shows on it, and upload failures are keyed by object id
+// (texUploadError) while engine-side load failures stay keyed by filename
+// (texLoadError) — a failed replace must not smear the old, still-working file.
 const texFileInput = ref<HTMLInputElement | null>(null)
-const texUploading = ref(false)
-const texError = reactive<Record<string, boolean>>({})
+const texUploading = ref<string | null>(null)
+const texUploadError = reactive<Record<string, boolean>>({})
+const texLoadError = reactive<Record<string, boolean>>({})
 function triggerTexUpload() { texFileInput.value?.click() }
 // Same-origin /view URL for an uploaded input-dir file (used by the image preview).
 function texViewUrl(filename: string) {
@@ -169,8 +175,12 @@ function texViewUrl(filename: string) {
 async function onTexFilePicked(e: Event) {
   const file = (e.target as HTMLInputElement).files?.[0]
   ;(e.target as HTMLInputElement).value = ''
-  if (!file || !selected.value) return
-  texUploading.value = true
+  // Capture the target BEFORE any await: reselecting mid-upload must not land
+  // the texture (or the error) on the newly selected object.
+  const target = selected.value
+  if (!file || !target || target.kind !== 'primitive') return
+  texUploading.value = target.id
+  delete texUploadError[target.id]
   try {
     const dataUrl = await new Promise<string>((res, rej) => {
       const r = new FileReader()
@@ -179,19 +189,18 @@ async function onTexFilePicked(e: Event) {
       r.readAsDataURL(file)
     })
     const filename = await inpaint.uploadDataUrl(dataUrl, `scene3d_tex_${props.nodeId}`)
-    delete texError[filename]
-    selected.value.material.image = filename
+    delete texLoadError[filename]
+    target.material.image = filename
   } catch {
-    if (selected.value?.material.image) texError[selected.value.material.image] = true
-    else texError[''] = true
+    texUploadError[target.id] = true
   } finally {
-    texUploading.value = false
+    if (texUploading.value === target.id) texUploading.value = null
   }
 }
 // Engine-side texture load failures (e.g. restored doc referencing a deleted
-// file) surface the same inline note.
+// file) surface the same inline note, keyed by filename.
 let offTexError: (() => void) | null = null
-onMounted(() => { offTexError = onTextureError((f) => { texError[f] = true }) })
+onMounted(() => { offTexError = onTextureError((f) => { texLoadError[f] = true }) })
 onBeforeUnmount(() => { offTexError?.() })
 
 // Numeric transform fields (per-axis) — position/scale stored & shown raw, rotation
@@ -689,15 +698,16 @@ function onClose() {
           <div class="flex items-center gap-2">
             <img v-if="selected.material.image" class="size-12 rounded object-cover"
               :src="texViewUrl(selected.material.image)" alt="" />
-            <StudioButton :disabled="texUploading" @click="triggerTexUpload">
+            <StudioButton :disabled="texUploading === selected.id" @click="triggerTexUpload">
               <span class="flex items-center gap-1.5">
-                <Loader2 v-if="texUploading" class="h-3.5 w-3.5 animate-spin" />
+                <Loader2 v-if="texUploading === selected.id" class="h-3.5 w-3.5 animate-spin" />
                 <Upload v-else class="h-3.5 w-3.5" />
-                {{ texUploading ? 'Uploading…' : selected.material.image ? 'Replace image' : 'Upload image' }}
+                {{ texUploading === selected.id ? 'Uploading…' : selected.material.image ? 'Replace image' : 'Upload image' }}
               </span>
             </StudioButton>
           </div>
-          <p v-if="texError[selected.material.image ?? '']" class="text-[11px] text-red-400/90">texture failed</p>
+          <p v-if="texUploadError[selected.id] || (selected.material.image && texLoadError[selected.material.image])"
+            class="text-[11px] text-red-400/90">texture failed</p>
           <StudioSlider v-model="matRoughness" label="Roughness" :min="0" :max="1" :step="0.01" />
           <StudioSlider v-model="matMetalness" label="Metalness" :min="0" :max="1" :step="0.01" />
         </template>
