@@ -1660,10 +1660,12 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
 
 <template>
   <div
-    class="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center"
+    class="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
     @click.self="emit('close')"
   >
-    <div class="w-full h-full bg-[#0a0a0a] flex flex-col text-white/85 overflow-hidden">
+    <!-- Extra-wide modal (not full-bleed): caps at 1780px so ultrawide monitors
+         keep some canvas visible behind the backdrop; near-full on laptops. -->
+    <div class="w-[min(1780px,100%)] h-[min(1040px,100%)] bg-[#0a0a0a] flex flex-col text-white/85 overflow-hidden rounded-xl border border-white/10 shadow-2xl">
 
       <!-- Top bar -->
       <div class="flex items-center gap-3 px-4 h-10 border-b border-white/10 shrink-0">
