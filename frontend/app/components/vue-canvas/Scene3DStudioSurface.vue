@@ -21,7 +21,8 @@ import {
 } from '~/lib/scene3d/config'
 import { MATCAP_IDS, matcapThumb, onTextureError } from '~/lib/scene3d/materials'
 import { PRIM_GROUPS } from '~/lib/scene3d/primGroups'
-import { SceneEngine, baseSizeFor } from '~/lib/scene3d/engine'
+import { SceneEngine, baseSizeFor, baseVertexCountFor } from '~/lib/scene3d/engine'
+import { totalClones } from '~/lib/scene3d/modifiers'
 import { PRIMITIVE_PARAMS, paramValue, MODIFIER_SPECS, modifierValue } from '~/lib/scene3d/primParams'
 import { SceneInteraction } from '~/lib/scene3d/interaction'
 import { loadGlb, GLB_SIZE_CAP_BYTES } from '~/lib/scene3d/glb'
@@ -295,7 +296,7 @@ function setOption(key: string, label: string): void {
   const i = modSpec(key).options!.indexOf(label)
   if (i >= 0) setMod(key, i)
 }
-const cloneIsRadial = computed(() => Math.round(modOf('cloneMode')) === 1)
+const cloneMode = computed(() => Math.round(modOf('cloneMode')))
 // Modifier controls, grouped for the panel. The Cloner lives in its own
 // top-level section (below), so it is not one of these groups.
 const MODIFIER_GROUPS = computed(() => [
@@ -304,13 +305,42 @@ const MODIFIER_GROUPS = computed(() => [
   { label: 'Bend', keys: ['bend', 'bendAxis'] },
   { label: 'Noise', keys: ['noise', 'noiseScale', 'noiseSeed'] },
 ])
-// Cloner keys: the offset/radius set is swapped by mode, so this is computed
-// rather than a static list. Flat — the section has no inner micro-labels.
-const CLONER_KEYS = computed(() =>
-  cloneIsRadial.value
-    ? ['cloneCount', 'cloneMode', 'cloneRadius', 'cloneAxis']
-    : ['cloneCount', 'cloneMode', 'cloneOffsetX', 'cloneOffsetY', 'cloneOffsetZ'],
-)
+// Cloner keys: the placement controls are swapped by mode, so this is computed
+// rather than a static list. Grid drops `cloneCount` entirely — its three axis
+// counts replace it (and `totalClones` reads them instead).
+const CLONER_KEYS = computed(() => {
+  if (cloneMode.value === 1) return ['cloneCount', 'cloneMode', 'cloneRadius', 'cloneAxis']
+  if (cloneMode.value === 2)
+    return [
+      'cloneMode',
+      'cloneCountX', 'cloneCountY', 'cloneCountZ',
+      'cloneSpacingX', 'cloneSpacingY', 'cloneSpacingZ',
+    ]
+  return ['cloneCount', 'cloneMode', 'cloneOffsetX', 'cloneOffsetY', 'cloneOffsetZ']
+})
+// Step transforms accumulate across copies and apply in every mode, so they sit
+// below the mode-specific controls under their own micro-label.
+const CLONER_STEP_KEYS = ['cloneStepRotX', 'cloneStepRotY', 'cloneStepRotZ', 'cloneStepScale']
+
+// Cost readout. The philosophy here is disclose, don't clamp: detail and counts
+// are user-visible slider values, so silently reducing them would make the
+// readout lie. Instead the totals are shown while dragging.
+const AMBER_VERTS = 500_000
+const cloneCost = computed(() => {
+  const o = selected.value
+  if (!o || o.kind !== 'primitive') return null
+  const copies = totalClones(o.modifiers)
+  if (copies <= 1) return null
+  const verts = baseVertexCountFor(o.primitive, o.params, o.modifiers) * copies
+  return { copies, verts, heavy: verts > AMBER_VERTS }
+})
+/** Compact vertex figure: 4200 → "4.2k", 331_000 → "331k", 1_060_000 → "1.1M". */
+function compactCount(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 10_000) return `${Math.round(n / 1000)}k`
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`
+  return String(n)
+}
 
 // Size = scale expressed in scene units. Base dimensions come from the geometry
 // itself (rebuilt from the doc, so they follow parameter changes — a fatter torus
@@ -959,6 +989,33 @@ function onClose() {
                 @update:model-value="(v: number) => setMod(key, v)"
               />
             </template>
+
+            <!-- Step transforms accumulate across copies in every mode, so they
+                 are their own block below the mode-specific placement controls. -->
+            <div class="space-y-2">
+              <div class="pt-1 text-[10px] uppercase tracking-[0.12em] text-white/25">Step</div>
+              <StudioSlider
+                v-for="key in CLONER_STEP_KEYS"
+                :key="key"
+                :model-value="modOf(key)"
+                :label="modSpec(key).label"
+                :hint="modSpec(key).hint"
+                :min="modSpec(key).min"
+                :max="modSpec(key).max"
+                :step="modSpec(key).step"
+                @update:model-value="(v: number) => setMod(key, v)"
+              />
+            </div>
+
+            <!-- Cost disclosure: what this clone set actually costs, live while
+                 dragging. Amber past the point where rebuilds start to hitch. -->
+            <div
+              v-if="cloneCost"
+              class="pt-0.5 text-[10px] tabular-nums"
+              :class="cloneCost.heavy ? 'text-amber-400/80' : 'text-white/35'"
+            >
+              {{ cloneCost.copies }} copies · ~{{ compactCount(cloneCost.verts) }} verts
+            </div>
           </div>
         </details>
 

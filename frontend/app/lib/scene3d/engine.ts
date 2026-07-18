@@ -80,6 +80,28 @@ export function baseSizeFor(
   return size
 }
 
+/** Vertex count of ONE copy — the shaped geometry with the cloner suppressed.
+ *  Subdivision changes the count, so the deformers have to run; the cloner does
+ *  not, so it is forced off and the caller multiplies by `totalClones` instead.
+ *  That keeps this at the cost of a single copy on every slider tick rather than
+ *  a whole clone set. Pure: builds, counts, disposes.
+ *
+ *  Note this is an upper bound at the extremes: `applyModifiers` shrinks the
+ *  subdivision ceiling as the clone count grows, so a budget-clamped clone set
+ *  can end up below the reported figure. Over-reporting is the safe direction
+ *  for a cost warning. */
+export function baseVertexCountFor(
+  kind: PrimitiveKind,
+  params?: Record<string, number>,
+  modifiers?: Record<string, number>,
+): number {
+  const single = { ...(modifiers ?? {}), cloneCount: 1, cloneCountX: 1, cloneCountY: 1, cloneCountZ: 1 }
+  const geo = buildGeometry(kind, params, single, 'smooth')
+  const n = geo.getAttribute('position')?.count ?? 0
+  geo.dispose()
+  return n
+}
+
 /** Stable geometry signature: kind + every declared param in table order +
  *  every modifier in spec order + the shading variant. Changing any of them
  *  swaps mesh.geometry in place. */
