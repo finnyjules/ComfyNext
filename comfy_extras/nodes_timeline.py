@@ -1951,6 +1951,40 @@ try:
         except Exception:
             return []
 
+    @PromptServer.instance.routes.get("/sailor/input_thumbnail")
+    async def _input_thumbnail_route(request):
+        """One small PNG thumbnail for a file in input/, addressable by its
+        listing filename so <img loading="lazy"> can fetch rows on demand.
+        Disk-cached by (filename, mtime); audio/undecodable files 404 and the
+        client keeps its icon fallback."""
+        import base64
+        import hashlib
+
+        filename = request.query.get("filename", "")
+        input_dir = os.path.abspath(folder_paths.get_input_directory())
+        p = os.path.abspath(os.path.normpath(os.path.join(input_dir, filename)))
+        if not filename or not p.startswith(input_dir + os.sep) or not os.path.isfile(p):
+            return web.Response(status=404)
+
+        key = hashlib.sha1(f"{filename}:{int(os.path.getmtime(p))}".encode()).hexdigest()
+        cache_png = os.path.join(_thumb_cache_dir(), f"input_{key}.png")
+        if not os.path.exists(cache_png):
+            loop = asyncio.get_event_loop()
+            thumbs = await loop.run_in_executor(None, _gen_thumbnails, p, 1)
+            if not thumbs:
+                return web.Response(status=404)
+            try:
+                with open(cache_png, "wb") as f:
+                    f.write(base64.b64decode(thumbs[0].split(",", 1)[1]))
+            except Exception:
+                return web.Response(status=404)
+        with open(cache_png, "rb") as f:
+            body = f.read()
+        # mtime is baked into the cache key server-side; input files are
+        # practically immutable, so let the browser cache hard for a day.
+        return web.Response(body=body, content_type="image/png",
+                            headers={"Cache-Control": "max-age=86400"})
+
     @PromptServer.instance.routes.get("/sailor/asset_thumbnails")
     async def _asset_thumbs_route(request):
         asset_id = request.query.get("asset_id")

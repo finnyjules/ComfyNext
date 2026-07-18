@@ -1641,6 +1641,23 @@ function clipThumbs(clip: Clip): string[] {
   return getThumbs(id, clipFilmstripCount(clip)) ?? []
 }
 
+// One-frame thumb for an IMPORTED asset (client-cached via useClipPreview).
+function assetThumb(assetId: string): string | null {
+  void thumbVersion.value  // reactivity
+  return getThumbs(assetId, 1)?.[0] ?? null
+}
+
+// Raw input-file rows fetch straight from the PNG endpoint — loading="lazy"
+// on the <img> means only on-screen rows hit the server (the show-all list
+// can be thousands of files).
+function inputThumbUrl(filename: string): string {
+  return `/sailor/input_thumbnail?filename=${encodeURIComponent(filename)}`
+}
+
+function hideBrokenThumb(e: Event) {
+  ;(e.target as HTMLImageElement).style.display = 'none'
+}
+
 const WAVEFORM_BUCKETS = 256
 function clipWaveform(clip: Clip): number[] | null {
   void waveVersion.value
@@ -1812,7 +1829,11 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
                 @dragstart="(e) => onAssetDragStart({ kind: 'input-file', path: file.path, filename: file.filename }, e)"
                 @click="addFileToTimeline(file)"
               >
-                <Film class="size-3 text-white/40 shrink-0" />
+                <div class="relative h-8 w-14 shrink-0 rounded overflow-hidden bg-white/5 flex items-center justify-center">
+                  <Film class="size-3 text-white/25" />
+                  <img class="absolute inset-0 h-full w-full object-cover" loading="lazy" draggable="false"
+                    :src="inputThumbUrl(file.filename)" alt="" @error="hideBrokenThumb" />
+                </div>
                 <span class="truncate">{{ file.filename }}</span>
               </div>
               <div v-if="!visibleInputFiles.length" class="text-xs text-white/30 px-2 py-4 italic">
@@ -1838,7 +1859,11 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
                 :title="asset.name"
                 @dragstart="(e) => onAssetDragStart({ kind: 'library', asset_id: asset.id }, e)"
               >
-                <component :is="clipIcon(asset.kind)" class="size-3 text-white/40 shrink-0" />
+                <div class="relative h-8 w-14 shrink-0 rounded overflow-hidden bg-white/5 flex items-center justify-center">
+                  <component :is="clipIcon(asset.kind)" class="size-3 text-white/25" />
+                  <img v-if="assetThumb(asset.id)" class="absolute inset-0 h-full w-full object-cover" draggable="false"
+                    :src="assetThumb(asset.id)!" alt="" />
+                </div>
                 <span class="truncate flex-1">{{ asset.name }}</span>
                 <!-- In-use dot when this asset is on the timeline -->
                 <span
