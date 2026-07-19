@@ -1,6 +1,7 @@
 import type { SpaceTypeEffect } from '../effect'
 import { ribbonEffect } from './ribbon'
 import { stripesEffect } from './stripes'
+import { tickerEffect } from './ticker'
 import { cylinderEffect } from './cylinder'
 import { fieldEffect } from './field'
 import { coilEffect } from './coil'
@@ -28,6 +29,7 @@ import { shutterEffect } from './shutter'
 export const SPACE_TYPE_EFFECTS: SpaceTypeEffect[] = [
   ribbonEffect,
   stripesEffect,
+  tickerEffect,
   cylinderEffect,
   fieldEffect,
   coilEffect,
