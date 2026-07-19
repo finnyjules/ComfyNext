@@ -44,6 +44,24 @@ describe('buildTickerGeometryData', () => {
     expect(g.indices.length).toBe(10 * 6)
   })
 
+  it('pins the normal DIRECTION, not just band width — a sign flip would invert every scene', () => {
+    // On a rising centreline (amplitude>0, freq 1 at t≈0 the slope is +), the in-plane normal
+    // (-ty, tx) points up-and-left. Vert a = centre + normal*half, vert b = centre - normal*half.
+    // With a purely magnitude-based test a flipped normal (a/b swapped) passes; this does not.
+    const g = buildTickerGeometryData({ ...base, amplitude: 5, frequency: 1, segments: 200 })
+    // Sample near t=0 where dy/dt > 0: vert a must sit ABOVE the centreline, vert b BELOW.
+    const i = 2 // a few samples in, still on the rising edge
+    const ay = g.positions[(i * 2) * 3 + 1]!
+    const by = g.positions[(i * 2 + 1) * 3 + 1]!
+    const centreY = (ay + by) / 2
+    expect(ay).toBeGreaterThan(centreY)   // +normal vertex is the upper edge
+    expect(by).toBeLessThan(centreY)      // -normal vertex is the lower edge
+    // And the normal leans left (−x) on a rising slope: the +normal vert is left of the −normal one.
+    const ax = g.positions[(i * 2) * 3]!
+    const bx = g.positions[(i * 2 + 1) * 3]!
+    expect(ax).toBeLessThan(bx)
+  })
+
   it('is flat in Z — the band lives in the XY plane', () => {
     const g = buildTickerGeometryData({ ...base, amplitude: 6 })
     for (let i = 2; i < g.positions.length; i += 3) expect(g.positions[i]).toBe(0)

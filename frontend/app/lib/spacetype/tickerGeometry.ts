@@ -97,30 +97,14 @@ function sampleCentreline(p: TickerGeoParams): Centreline {
 }
 
 export function buildTickerGeometryData(p: TickerGeoParams): TickerGeoData {
-  const { n, pts, cum, arcLength, normalAt } = sampleCentreline(p)
-  const uRepeatEffective = p.uRepeat * (arcLength / Math.max(1e-6, p.length))
-
-  const verts = (n + 1) * 2
+  const cl = sampleCentreline(p)
+  const verts = (cl.n + 1) * 2
   const positions = new Float32Array(verts * 3)
   const uvs = new Float32Array(verts * 2)
-  const half = p.height / 2
-  const nrm = { x: 0, y: 0 }
-
-  for (let i = 0; i <= n; i++) {
-    // In-plane normal — this is what keeps band width constant around bends.
-    normalAt(i, nrm)
-    const nx = nrm.x * half
-    const ny = nrm.y * half
-
-    const c = pts[i]!
-    const a = i * 2, b = i * 2 + 1
-    positions[a * 3] = c.x + nx; positions[a * 3 + 1] = c.y + ny; positions[a * 3 + 2] = 0
-    positions[b * 3] = c.x - nx; positions[b * 3 + 1] = c.y - ny; positions[b * 3 + 2] = 0
-
-    const u = (cum[i]! / Math.max(1e-9, arcLength)) * uRepeatEffective
-    uvs[a * 2] = u; uvs[a * 2 + 1] = 1
-    uvs[b * 2] = u; uvs[b * 2 + 1] = 0
-  }
+  // The vertex/UV math lives in writeBandVertices so the per-frame rebake path
+  // (rebakeTickerRow) produces byte-identical output without a second implementation.
+  const uRepeatEffective = writeBandVertices(cl, p, positions, uvs)
+  const n = cl.n
 
   const indices = new Uint32Array(n * 6)
   for (let i = 0; i < n; i++) {
@@ -130,7 +114,31 @@ export function buildTickerGeometryData(p: TickerGeoParams): TickerGeoData {
     indices[o + 3] = c; indices[o + 4] = b; indices[o + 5] = d
   }
 
-  return { positions, uvs, indices, arcLength, uRepeatEffective }
+  return { positions, uvs, indices, arcLength: cl.arcLength, uRepeatEffective }
+}
+
+/** Write the band's two edge verts + arc-length UVs per sample into caller-owned buffers.
+ *  Returns uRepeatEffective (arc-length-scaled) so the caller can cache it. Shared by the initial
+ *  build and the per-frame rebake — one implementation, so they cannot drift. */
+function writeBandVertices(cl: Centreline, p: TickerGeoParams, positions: Float32Array, uvs: Float32Array): number {
+  const { n, pts, cum, arcLength, normalAt } = cl
+  const uRepeatEffective = p.uRepeat * (arcLength / Math.max(1e-6, p.length))
+  const half = p.height / 2
+  const nrm = { x: 0, y: 0 }
+  for (let i = 0; i <= n; i++) {
+    // In-plane normal — this is what keeps band width constant around bends.
+    normalAt(i, nrm)
+    const nx = nrm.x * half
+    const ny = nrm.y * half
+    const c = pts[i]!
+    const a = i * 2, b = i * 2 + 1
+    positions[a * 3] = c.x + nx; positions[a * 3 + 1] = c.y + ny; positions[a * 3 + 2] = 0
+    positions[b * 3] = c.x - nx; positions[b * 3 + 1] = c.y - ny; positions[b * 3 + 2] = 0
+    const u = (cum[i]! / Math.max(1e-9, arcLength)) * uRepeatEffective
+    uvs[a * 2] = u; uvs[a * 2 + 1] = 1
+    uvs[b * 2] = u; uvs[b * 2 + 1] = 0
+  }
+  return uRepeatEffective
 }
 
 /**
@@ -167,31 +175,10 @@ export function buildTickerStrokeData(p: TickerGeoParams, strokeWidth: number): 
   // degenerate one to the scene graph.
   if (w === 0) return { positions: new Float32Array(0), indices: new Uint32Array(0) }
 
-  const { n, pts, normalAt } = sampleCentreline(p)
-  const half = p.height / 2
-  // Clamp the half-width to the band half-height. Past that the inner rail vertex (half - hw)
-  // would cross the centreline, inverting the quad's winding and self-overlapping the stroke —
-  // reachable at the thinnest band (0.3) with the widest stroke (0.4). Clamped, the inner edge
-  // lands at worst exactly on the centreline.
-  const hw = Math.min(w / 2, half)
+  const cl = sampleCentreline(p)
+  const n = cl.n
   const positions = new Float32Array((n + 1) * 4 * 3)
-  const nrm = { x: 0, y: 0 }
-
-  for (let i = 0; i <= n; i++) {
-    normalAt(i, nrm)
-    const c = pts[i]!
-    const base = i * 4
-    // Each rail is CENTRED on its edge (half ± hw), so the stroke sits on the boundary rather
-    // than inflating the silhouette.
-    const offsets = [half + hw, half - hw, -(half - hw), -(half + hw)]
-    for (let k = 0; k < 4; k++) {
-      const o = offsets[k]!
-      const v = (base + k) * 3
-      positions[v] = c.x + nrm.x * o
-      positions[v + 1] = c.y + nrm.y * o
-      positions[v + 2] = STROKE_Z
-    }
-  }
+  writeStrokeVertices(cl, p, w, positions)
 
   // Two quads per segment (one per rail), 6 indices each.
   const indices = new Uint32Array(n * 12)
@@ -207,6 +194,55 @@ export function buildTickerStrokeData(p: TickerGeoParams, strokeWidth: number): 
   }
 
   return { positions, indices }
+}
+
+/** Write the two rails' four verts per sample into a caller-owned buffer. Shared by the initial
+ *  build and the per-frame rebake so they cannot drift. Assumes w > 0 (the caller gates on it). */
+function writeStrokeVertices(cl: Centreline, p: TickerGeoParams, w: number, positions: Float32Array): void {
+  const { n, pts, normalAt } = cl
+  const half = p.height / 2
+  // Clamp the half-width to the band half-height. Past that the inner rail vertex (half - hw)
+  // would cross the centreline, inverting the quad's winding and self-overlapping the stroke —
+  // reachable at the thinnest band (0.3) with the widest stroke (0.4). Clamped, the inner edge
+  // lands at worst exactly on the centreline.
+  const hw = Math.min(w / 2, half)
+  const nrm = { x: 0, y: 0 }
+  for (let i = 0; i <= n; i++) {
+    normalAt(i, nrm)
+    const c = pts[i]!
+    const base = i * 4
+    // Each rail is CENTRED on its edge (half ± hw), so the stroke sits on the boundary rather
+    // than inflating the silhouette.
+    const offsets = [half + hw, half - hw, -(half - hw), -(half + hw)]
+    for (let k = 0; k < 4; k++) {
+      const o = offsets[k]!
+      const v = (base + k) * 3
+      positions[v] = c.x + nrm.x * o
+      positions[v + 1] = c.y + nrm.y * o
+      positions[v + 2] = STROKE_Z
+    }
+  }
+}
+
+/**
+ * Per-frame rebake for a travelling wave: samples the centreline ONCE and writes the band's
+ * positions + UVs and (optionally) the stroke's positions into caller-owned buffers.
+ *
+ * The hot-path alternative — calling buildTickerGeometryData and buildTickerStrokeData
+ * back-to-back — samples the centreline twice and allocates two index buffers per frame that the
+ * caller immediately discards (index topology is phase-invariant). This shares the one sample and
+ * touches no index memory. Runs per row, per frame, only while the wave moves.
+ */
+export function rebakeTickerRow(
+  p: TickerGeoParams,
+  strokeWidth: number,
+  bandPositions: Float32Array,
+  bandUvs: Float32Array,
+  strokePositions: Float32Array | null,
+): void {
+  const cl = sampleCentreline(p)
+  writeBandVertices(cl, p, bandPositions, bandUvs)
+  if (strokePositions && strokeWidth > 0) writeStrokeVertices(cl, p, strokeWidth, strokePositions)
 }
 
 /** Per-row placement: centred Y stack, phase offset, alternating scroll direction.

@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
-import { buildTickerGeometryData, buildTickerStrokeData, tickerRow, type TickerGeoParams } from '../tickerGeometry'
+import { buildTickerGeometryData, buildTickerStrokeData, rebakeTickerRow, tickerRow, type TickerGeoParams } from '../tickerGeometry'
 import { loopTiles, scrollOffset, textVariantForBand } from '../ribbonGeometry'
 import { parseFills, fillShaderTexture, fillTiling, fillTextColor, fillAlpha, fillTextAlpha } from '../fills'
 import { stripAlpha, parseHexA } from '~/lib/color/convert'
@@ -276,28 +276,29 @@ export const tickerEffect: SpaceTypeEffect = {
       // settling back to rest, leaving update() impure in t01 (see effect.ts's contract).
       const phase = waveSpeed !== 0 ? r.rowPhase + waveSpeed * t01 * TAU : r.rowPhase
       if (phase !== r.bakedPhase) {
-        const next = buildTickerGeometryData({ ...r.geoParams, phase })
-        ;(r.posAttr.array as Float32Array).set(next.positions)
+        // One centreline sample writes band positions + UVs and (in lockstep) the stroke rails, in
+        // place — no fresh BufferAttributes, no index buffers. The rails MUST re-bake with the band
+        // or they drift off its edge as the wave travels.
+        //
+        // UVs are re-baked too: u_i = cum_i * uRepeat / length, so a travelling wave redistributes
+        // u by CURRENT arc length — leaving them stale would let glyphs breathe and creep,
+        // defeating the constant-glyph-size guarantee this effect exists for. The total u RANGE
+        // drifts with arc length, but scroll and loopRates deliberately keep using the cached
+        // build-time uRepeatEffective, so the only effect is a slight change in how much text is
+        // truncated at the band's END — where glyphs already scroll out of view. The loop stays
+        // seamless because loopRates reports waveSpeed and loop.ts renders enough loops that the
+        // slider's 0.05 step completes whole cycles — NOT because t01 0 and 1 coincide, which only
+        // holds for an integer waveSpeed.
+        rebakeTickerRow(
+          { ...r.geoParams, phase },
+          strokeWidth,
+          r.posAttr.array as Float32Array,
+          r.uvAttr.array as Float32Array,
+          r.strokePosAttr ? (r.strokePosAttr.array as Float32Array) : null,
+        )
         r.posAttr.needsUpdate = true
-        // UVs must be re-baked too. u_i = cum_i * uRepeat / length, so a travelling wave
-        // redistributes u by CURRENT arc length — leaving them stale would let glyphs breathe
-        // and creep, defeating the constant-glyph-size guarantee this effect exists for.
-        // The total u RANGE drifts with arc length, but scroll and loopRates deliberately keep
-        // using the cached build-time uRepeatEffective, so the only effect is a slight change in
-        // how much text is truncated at the band's END — where glyphs already scroll out of view.
-        // The loop stays seamless because loopRates reports waveSpeed, and loop.ts's
-        // loopMultiplier renders enough loops (searching k up to 60) that even the slider's
-        // 0.05 step completes whole cycles — NOT because t01 0 and 1 coincide, which only holds
-        // for an integer waveSpeed.
-        ;(r.uvAttr.array as Float32Array).set(next.uvs)
         r.uvAttr.needsUpdate = true
-        // Rails ride the same centreline, so they must re-bake in lockstep or they drift off the
-        // band's edge as the wave travels.
-        if (r.strokePosAttr) {
-          const sg = buildTickerStrokeData({ ...r.geoParams, phase }, strokeWidth)
-          ;(r.strokePosAttr.array as Float32Array).set(sg.positions)
-          r.strokePosAttr.needsUpdate = true
-        }
+        if (r.strokePosAttr) r.strokePosAttr.needsUpdate = true
         r.bakedPhase = phase
       }
     }
