@@ -60,11 +60,13 @@ export function paintPrimaryColor(p: unknown, fallback = '#000000'): string {
   return fallback
 }
 
-/** Parse a `#rrggbb` hex to raw sRGB bytes (canvas is sRGB — do NOT go through THREE.Color,
- *  whose components are linear-light and would write the wrong bytes). */
+/** Parse a `#rrggbb` (or `#rrggbbaa`) hex to raw sRGB bytes (canvas is sRGB — do NOT go
+ *  through THREE.Color, whose components are linear-light and would write the wrong bytes).
+ *  8-digit input has its alpha pair stripped first — bit-shifting the full 32-bit value would
+ *  overflow to the wrong bytes rather than the rgb component. */
 export function hexBytes(hex: string): [number, number, number] {
   const h = hex.replace('#', '')
-  const s = h.length === 3 ? h.split('').map(ch => ch + ch).join('') : h
+  const s = h.length === 3 ? h.split('').map(ch => ch + ch).join('') : h.length === 8 ? h.slice(0, 6) : h
   const n = parseInt(s, 16)
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
 }

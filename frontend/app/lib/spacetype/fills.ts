@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { type Fill, hexBytes, patternImageData, ombrePicker } from './fillTile'
+import { parseHexA, stripAlpha } from '~/lib/color/convert'
 
 /**
  * GPU/THREE fill builders. The CPU fill model (Fill, FILL_TYPES, parsing) and the 2D-canvas
@@ -12,9 +13,16 @@ export {
   hexBytes, patternImageData, ombrePicker, fillTileCanvas,
 } from './fillTile'
 
-/** The fill's primary colour — used for solid fills and for cross-row gradient-mode lerps. */
+/** The fill's primary colour — used for solid fills and for cross-row gradient-mode lerps.
+ *  Alpha is stripped: THREE.Color has no alpha channel and silently renders 8-digit hex black.
+ *  Read the alpha separately with fillAlpha(). */
 export function fillPrimary(three: typeof THREE, fill: Fill): THREE.Color {
-  return new three.Color(fill.a)
+  return new three.Color(stripAlpha(fill.a))
+}
+
+/** The fill's alpha, 0–1. Legacy 6-digit fills are fully opaque. */
+export function fillAlpha(fill: Fill): number {
+  return parseHexA(fill.a).alpha
 }
 
 // Textures are cached by (type|a|b) so repeated slots/rebuilds reuse one GPU texture. Module
