@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import { buildTickerGeometryData, tickerRow, type TickerGeoParams } from '../tickerGeometry'
 import { loopTiles, scrollOffset, textVariantForBand } from '../ribbonGeometry'
-import { parseFills, fillShaderTexture, fillTiling, fillTextColor, fillAlpha } from '../fills'
+import { parseFills, fillShaderTexture, fillTiling, fillTextColor, fillAlpha, fillTextAlpha } from '../fills'
 import { defaultFillsFor } from '../palette'
 
 const TAU = Math.PI * 2
@@ -94,25 +94,30 @@ function bandMaterial(
   tiling: number,
   textColor: THREE.Color,
   alpha: number,
+  textAlpha: number,
   uFillScroll: { value: number },
 ): THREE.MeshBasicMaterial {
   const mat = new three.MeshBasicMaterial({
     map,
     side: three.DoubleSide,
     transparent: true,
-    opacity: alpha,
-    depthWrite: alpha >= 1,
+    opacity: 1,
+    // Opaque only when BOTH the band and the type are fully opaque; otherwise this mesh has to
+    // blend against whatever is behind it.
+    depthWrite: alpha >= 1 && textAlpha >= 1,
   })
   const uFillTex = { value: fillTex }
   const uFillTiling = { value: tiling }
   const uTextColor = { value: textColor }
   const uBandAlpha = { value: alpha }
+  const uTextAlpha = { value: textAlpha }
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uFillTex = uFillTex
     shader.uniforms.uFillTiling = uFillTiling
     shader.uniforms.uTextColor = uTextColor
     shader.uniforms.uFillScroll = uFillScroll
     shader.uniforms.uBandAlpha = uBandAlpha
+    shader.uniforms.uTextAlpha = uTextAlpha
     // Raw uv → the fill is pinned across the band height; the x scroll is added in the fragment.
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec2 vRawUv;')
@@ -122,12 +127,15 @@ function bandMaterial(
     // alphas. vMapUv carries the text texture's scrolled/atlas-offset uv.
     // uFillTex is tagged SRGBColorSpace → the GPU returns linear, so NO manual decode here.
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform sampler2D uFillTex;\nuniform float uFillTiling;\nuniform vec3 uTextColor;\nuniform float uFillScroll;\nuniform float uBandAlpha;\nvarying vec2 vRawUv;')
+      .replace('#include <common>', '#include <common>\nuniform sampler2D uFillTex;\nuniform float uFillTiling;\nuniform vec3 uTextColor;\nuniform float uFillScroll;\nuniform float uBandAlpha;\nuniform float uTextAlpha;\nvarying vec2 vRawUv;')
       // The band's RGB is weighted by its OWN alpha, so an invisible band contributes no colour.
       // A plain mix() would leave a halo of band fill ringing the type at antialiased glyph edges
       // (cov ~0.5) in the alpha-0 text-only mode — exactly the mode the transparency work is for.
-      // Reduces to the naive form when uBandAlpha is 1: bandW = 1-cov, a = 1, rgb = mix(fill, text, cov).
-      .replace('#include <map_fragment>', '{ float cov = texture2D(map, vMapUv).a; vec2 fuv = vRawUv * uFillTiling + vec2(uFillScroll, 0.0); vec3 fillCol = texture2D(uFillTex, fuv).rgb; float bandW = uBandAlpha * (1.0 - cov); float a = bandW + cov; diffuseColor = vec4((fillCol * bandW + uTextColor * cov) / max(a, 1e-4), a); }')
+      // The band's RGB is weighted by its own alpha and the glyphs' by theirs, so an invisible
+      // band contributes no colour and text alpha is honoured independently.
+      // Reduces to the naive form at uBandAlpha = uTextAlpha = 1: bandW = 1-cov, ta = cov, a = 1,
+      // rgb = mix(fillCol, uTextColor, cov).
+      .replace('#include <map_fragment>', '{ float cov = texture2D(map, vMapUv).a; vec2 fuv = vRawUv * uFillTiling + vec2(uFillScroll, 0.0); vec3 fillCol = texture2D(uFillTex, fuv).rgb; float ta = uTextAlpha * cov; float bandW = uBandAlpha * (1.0 - cov); float a = bandW + ta; diffuseColor = vec4((fillCol * bandW + uTextColor * ta) / max(a, 1e-4), a); }')
   }
   return mat
 }
@@ -191,6 +199,7 @@ export const tickerEffect: SpaceTypeEffect = {
         fillTiling(fill),
         fillTextColor(three, fill),
         fillAlpha(fill),
+        fillTextAlpha(fill),
         uFillScroll,
       )
 
@@ -245,7 +254,10 @@ export const tickerEffect: SpaceTypeEffect = {
         // The total u RANGE drifts with arc length, but scroll and loopRates deliberately keep
         // using the cached build-time uRepeatEffective, so the only effect is a slight change in
         // how much text is truncated at the band's END — where glyphs already scroll out of view.
-        // The loop stays seamless because t01 0 and 1 give the same phase, hence the same UVs.
+        // The loop stays seamless because loopRates reports waveSpeed, and loop.ts's
+        // loopMultiplier renders enough loops (searching k up to 60) that even the slider's
+        // 0.05 step completes whole cycles — NOT because t01 0 and 1 coincide, which only holds
+        // for an integer waveSpeed.
         ;(r.uvAttr.array as Float32Array).set(next.uvs)
         r.uvAttr.needsUpdate = true
         r.bakedPhase = phase

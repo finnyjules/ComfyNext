@@ -18,7 +18,7 @@ describe('fillAlpha', () => {
 })
 
 describe('fillPrimary', () => {
-  it('ignores alpha and returns the rgb — THREE.Color renders 8-digit hex as black', () => {
+  it('ignores alpha and returns the rgb — THREE.Color renders 8-digit hex as white', () => {
     const withA = fillPrimary(THREE, solid('#ff000080'))
     const without = fillPrimary(THREE, solid('#ff0000'))
     expect(withA.getHex()).toBe(without.getHex())
@@ -60,25 +60,16 @@ describe('fillTextAlpha', () => {
 // test locks the invariant structurally instead of enumerating today's call sites, so a future
 // effect (or a future edit to an existing one) can't reintroduce the bug unnoticed.
 //
-// This is a source-text scan, not a runtime check, so it can't know which identifiers actually
-// hold an unstripped colour. A plain "does the argument text mention params./p./Color" heuristic
-// has a proven false-negative: a colour stashed in a short/abbreviated local (`strokeCol`, `tc`,
-// `darkHex`, ...) doesn't textually mention any of those, so the naive trigger goes blind at
-// exactly the point where a `.set(strokeCol)` call is otherwise indistinguishable from a safe one.
-// This was NOT hypothetical — `contour.ts`/`tunnel.ts` (`strokeCol`) and `streamer.ts` (`tc`) all
-// shipped the unstripped-alpha bug past the naive scan; only a manual trace caught them.
+// This is a source-text scan (deliberately regex-based, not a full AST parse), so it cannot know
+// which identifiers actually hold an unstripped colour. That makes the DEFAULT the whole design
+// question, and this scan FAILS CLOSED: a site is an offender unless it can be shown safe. See
+// isSafeColorArg below for why — two earlier prove-it's-tainted versions both shipped real bugs.
 //
-// So this scan does a (deliberately lightweight, regex-based — not a full AST parse) local taint
-// propagation per file:
-//   - an identifier is TAINTED if its `const`/`let` initializer references `params.`/`p.`, is a hex
-//     string literal, or references another tainted identifier — iterated to a fixed point so
-//     taint flows through short alias chains (`const a = params.x; const b = a; ... .set(b)`).
-//   - an identifier is SAFE if its initializer already routes through `stripAlpha`/`fillPrimary`/
-//     `fillTextColor` — that neutralizes taint even though the initializer *also* mentions
-//     `params.` (e.g. `const strokeCol = stripAlpha(String(params.strokeColor ?? '#000'))`).
-// A THREE.Color construction/mutation is then flagged when its argument text is tainted — either
-// directly (mentions params./p./Color, same as before) or via a tainted local — and is not itself
-// wrapped in stripAlpha/fillPrimary/fillTextColor and does not reference a SAFE local.
+// It still runs a local taint propagation per file, but only to widen what counts as SAFE:
+//   - an identifier is SAFE if its `const`/`let` initializer routes through `stripAlpha`/
+//     `fillPrimary`/`fillTextColor`, so `const c = stripAlpha(params.x); ... .set(c)` passes.
+//   - TAINTED is retained for diagnostics and alias tracking, but no longer gates the verdict:
+//     an argument the scan cannot positively clear is flagged regardless.
 function walkTsFiles(dir: string): string[] {
   const out: string[] = []
   for (const entry of readdirSync(dir, { withFileTypes: true })) {

@@ -14,7 +14,7 @@ export {
 } from './fillTile'
 
 /** The fill's primary colour — used for solid fills and for cross-row gradient-mode lerps.
- *  Alpha is stripped: THREE.Color has no alpha channel and silently renders 8-digit hex black.
+ *  Alpha is stripped: THREE.Color has no alpha channel and silently renders 8-digit hex WHITE.
  *  Read the alpha separately with fillAlpha(). */
 export function fillPrimary(three: typeof THREE, fill: Fill): THREE.Color {
   return new three.Color(stripAlpha(fill.a))

@@ -114,7 +114,8 @@ export function withAlpha(hex: string, alpha: number): string {
   return base + Math.round(clamped * 255).toString(16).padStart(2, '0')
 }
 
-/** Drop any alpha — THREE.Color cannot parse 8-digit hex and silently renders black. */
+/** Drop any alpha — THREE.Color cannot parse 8-digit hex. It does not throw: it warns to the
+ *  console and silently resolves to WHITE, so an unstripped colour blows out rather than darkens. */
 export function stripAlpha(hex: string): string {
   return parseHexA(hex).hex
 }
