@@ -1,25 +1,13 @@
 import { ribbonEffect, buildRibbonLabel } from './effects/ribbon'
-import { defaultsFromControls, type Params } from './effect'
+import { defaultsFromControls } from './effect'
 import { VARIABLE_FONTS } from '~/data/variable-fonts'
-import type { PostSettings } from './post'
+import type { SpaceTypeState } from '~~/shared/spacetype/state'
+
+export type { SpaceTypeState } from '~~/shared/spacetype/state'
 
 // Shared Space Type editor/node state. The modal (SpaceTypeSurface) keeps its
 // own inline copy of this logic; this module exists so the node card preview
 // can rebuild the same scene from the saved config without duplicating it.
-export interface SpaceTypeState {
-  effectId: string
-  params: Params
-  gradientStops: { color: string; on: boolean }[]
-  fps: number
-  loopDuration: number
-  dimsKey: string
-  transparent: boolean
-  bgColor: string
-  post?: PostSettings
-  projection?: 'perspective' | 'isometric'
-  panX?: number
-  panY?: number
-}
 
 export const DIMS: Record<string, [number, number]> = {
   '1920 × 1080 (16:9)': [1920, 1080],

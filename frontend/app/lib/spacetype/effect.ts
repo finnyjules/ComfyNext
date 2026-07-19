@@ -1,7 +1,7 @@
 import type * as THREE from 'three'
+import type { ParamValue, Params } from '~~/shared/spacetype/state'
 
-export type ParamValue = number | string | boolean
-export type Params = Record<string, ParamValue>
+export type { ParamValue, Params } from '~~/shared/spacetype/state'
 
 /** Optional metadata any control kind may carry. `hint` is a short semantic
  *  description used by the AI control copilot (and doubles as tooltip text).
@@ -57,6 +57,8 @@ export interface BuildEnv { width: number; height: number; axes?: Record<string,
 export interface SpaceTypeEffect {
   id: string
   label: string
+  /** Hidden effects stay registered (saved configs still resolve) but don't appear in the picker. */
+  hidden?: boolean
   controls: ControlSpec[]
   /** Build the scene root. Called when the effect or any structural param changes. */
   buildScene(three: typeof THREE, params: Params, textTexture: THREE.Texture, env?: BuildEnv): THREE.Object3D

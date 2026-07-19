@@ -3,6 +3,9 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js'
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
+import type { PostSettings } from '~~/shared/spacetype/state'
+
+export type { PostSettings } from '~~/shared/spacetype/state'
 
 /**
  * Shared post-processing for the whole Space Type suite. A Three EffectComposer wraps the engine's
@@ -11,13 +14,6 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
  * live preview and exports (bake just reads the canvas). When everything is off the engine bypasses
  * this entirely (see postEnabled), so there's zero overhead and byte-identical output.
  */
-export interface PostSettings {
-  bloom: boolean; bloomStrength: number; bloomRadius: number; bloomThreshold: number
-  color: boolean; exposure: number; contrast: number; saturation: number; hue: number
-  chroma: boolean; chromaAmount: number
-  blur: boolean; blurAmount: number
-}
-
 export const DEFAULT_POST: PostSettings = {
   bloom: false, bloomStrength: 0.6, bloomRadius: 0.4, bloomThreshold: 0.8,
   color: false, exposure: 1, contrast: 1, saturation: 1, hue: 0,

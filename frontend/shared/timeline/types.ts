@@ -1,3 +1,5 @@
+import type { SpaceTypeState } from '../spacetype/state'
+
 export type BlendMode =
   | 'normal' | 'multiply' | 'screen' | 'overlay'
   | 'soft_light' | 'hard_light' | 'difference'
@@ -287,7 +289,31 @@ export interface MotionClip extends BaseClip {
   motion_bake?: MotionBake
 }
 
-export type Clip = VideoClip | ImageClip | AudioClip | TextClip | WorkflowClip | TitleClip | LowerThirdClip | CaptionClip | MotionClip
+/** A Space Type effect rendered live by the three.js engine. Carries a full
+ *  snapshot of the studio state so EditState stays self-contained — the Python
+ *  renderer sees this JSON with no access to the node canvas.
+ *
+ *  Time is scene-owned: the source is `state.loopDuration * state.fps` frames,
+ *  and `in_frame`/`length`/`speed`/`reverse` window into it exactly as for video.
+ *  With `loop` (default true) the source tiles past its end, since every effect
+ *  is pure in normalized time. */
+export interface SpaceTypeClip extends BaseClip {
+  kind: 'spacetype'
+  state: SpaceTypeState
+  /** Tile the source past its end instead of holding the last frame. Default true. */
+  loop?: boolean
+  /** Advisory provenance for the "sync from node" affordance. NEVER read by
+   *  rendering or export — a missing node or stale key degrades to a plain
+   *  snapshot with no error. */
+  origin?: {
+    node_id: string
+    state_key: string
+  }
+  /** Cached export bake (populated at render). Always `external: true`. */
+  spacetype_bake?: MotionBake
+}
+
+export type Clip = VideoClip | ImageClip | AudioClip | TextClip | WorkflowClip | TitleClip | LowerThirdClip | CaptionClip | MotionClip | SpaceTypeClip
 
 export interface Asset {
   id: string
