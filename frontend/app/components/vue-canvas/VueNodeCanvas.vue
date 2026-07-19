@@ -40,7 +40,7 @@ import { promoteLayoutElement } from '~/lib/collection/layoutBinding'
 import { promoteControl } from '~/composables/useStudioVarBindings'
 import type { StudioControlDesc } from '~/lib/collection/studioBindables'
 import { migrateEditState } from '~~/shared/timeline/types'
-import { useTimelineStore } from '~/composables/useTimelineStore'
+import { useTimelineStore, addSpaceTypeClipToEditState } from '~/composables/useTimelineStore'
 import type { SpaceTypeState } from '~/lib/spacetype/state'
 import { useNodeSearch } from '~/composables/useNodeSearch'
 import { useNodeClipboard } from '~/composables/useNodeClipboard'
@@ -3068,6 +3068,59 @@ watch(edges, () => syncAllShotDirectorCasts(), { deep: true })
 // wildcard output into the artifact's primary input (Image=`images`, Video=`source`).
 // The artifact still shows its file via the widget regardless of the edge — this
 // link is visual only (SpaceType has no backend and never executes).
+/** Send a Space Type studio snapshot to a Timeline node as a live clip.
+ *
+ *  Targeting, in order: the node a Timeline editor is currently open on; else a
+ *  selected Timeline node; else the only one on the canvas. With several and no
+ *  hint, we ask rather than guess — sending to an arbitrary timeline is worse
+ *  than doing nothing.
+ *
+ *  Two write paths, and the distinction matters: useTimelineStore's `state` is a
+ *  module-level singleton that bind() replaces wholesale when an editor opens.
+ *  So we mutate the store ONLY for the node it is bound to (otherwise our clip
+ *  is discarded on the next open, or persisted onto the wrong node), and write
+ *  the target's persisted edit_state directly in every other case. */
+function sendSpaceTypeToTimeline(state: SpaceTypeState, sourceNodeId: string) {
+  const timelines = (nodes.value as any[]).filter(n => n.data?.nodeType === 'Timeline')
+  if (!timelines.length) {
+    toast.error('No Timeline node', { description: 'Add a Timeline node to send this clip to.' })
+    return
+  }
+
+  const store = useTimelineStore()
+  const bound = store.boundNodeId()
+  const selected = timelines.filter(n => n.selected)
+
+  const target =
+    (bound && timelines.find(n => n.id === bound)) ||
+    (selected.length === 1 ? selected[0] : null) ||
+    (timelines.length === 1 ? timelines[0] : null)
+
+  if (!target) {
+    toast.error('Which timeline?', {
+      description: `${timelines.length} Timeline nodes — select one, or open its editor, then send again.`,
+    })
+    return
+  }
+
+  // Bound node: the live editor's in-memory state is authoritative, so route
+  // through the store (which persists via syncToWidget on the same tick).
+  if (bound === target.id) {
+    const track = store.state.value.tracks.find(t => t.kind === 'video')
+    if (!track) { toast.error('No video track', { description: 'This timeline has no video track.' }); return }
+    store.addSpaceTypeClip(track.id, store.playheadFrame.value ?? 0, state, sourceNodeId)
+    toast.success('Sent to timeline')
+    return
+  }
+
+  // Unbound node: read / modify / write its persisted edit_state.
+  if (!target.data.properties) target.data.properties = {}
+  const result = addSpaceTypeClipToEditState(target.data.properties.edit_state, state, sourceNodeId, 0)
+  if (!result) { toast.error('No video track', { description: 'This timeline has no video track.' }); return }
+  target.data.properties.edit_state = result.json
+  toast.success('Sent to timeline', { description: 'Open the Timeline node to see the clip.' })
+}
+
 function handleSpaceTypeOutput(e: Event) {
   const detail = (e as CustomEvent<{ sourceNodeId: string; nodeType: string; widgetOverrides?: Record<string, unknown>; state?: SpaceTypeState }>).detail
   // "Send to timeline" (Type Studio): snapshot the studio state onto a new
@@ -3075,11 +3128,7 @@ function handleSpaceTypeOutput(e: Event) {
   // new canvas node like the Image/Video branches below.
   if (detail.nodeType === 'TimelineClip') {
     if (!detail.state) { console.warn('spaceTypeOutput: TimelineClip dispatched with no state'); return }
-    const timelineStore = useTimelineStore()
-    const track = timelineStore.state.value.tracks.find(t => t.kind === 'video')
-    if (!track) { console.warn('spaceTypeOutput: no video track to receive the clip'); return }
-    const start = timelineStore.playheadFrame?.value ?? 0
-    timelineStore.addSpaceTypeClip(track.id, start, detail.state, detail.sourceNodeId)
+    sendSpaceTypeToTimeline(detail.state, detail.sourceNodeId)
     return
   }
   const src = (nodes.value as any[]).find((n) => n.id === detail.sourceNodeId)

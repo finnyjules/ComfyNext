@@ -10,6 +10,43 @@ import type { SpaceTypeState } from '~/lib/spacetype/state'
 
 const MAX_UNDO = 100
 
+/** Add a Space Type clip to a Timeline node's PERSISTED edit_state, without
+ *  going through the singleton store.
+ *
+ *  Why this exists: `state` in this module is a single module-level ref shared
+ *  by whichever Timeline editor is mounted, and `bind()` replaces it wholesale
+ *  on open. So adding a clip to the in-memory store while no editor is bound —
+ *  or while an editor is bound to a DIFFERENT node — is silently thrown away.
+ *  This function reads, migrates, mutates and returns the JSON for one specific
+ *  node instead, so "send to timeline" works with no timeline open and targets
+ *  the node the user actually meant.
+ *
+ *  Pure: takes and returns data, touches no module state. Returns null when the
+ *  edit state has no video track to receive the clip. */
+export function addSpaceTypeClipToEditState(
+  rawEditState: unknown,
+  spaceTypeState: SpaceTypeState,
+  originNodeId: string,
+  startFrame = 0,
+): { json: string; clip: SpaceTypeClip } | null {
+  let edit: EditState
+  try {
+    const parsed = rawEditState
+      ? JSON.parse(typeof rawEditState === 'string' ? rawEditState : JSON.stringify(rawEditState))
+      : null
+    edit = (parsed && migrateEditState(parsed)) || createDefaultEditState()
+  } catch {
+    edit = createDefaultEditState()
+  }
+
+  const track = edit.tracks.find(t => t.kind === 'video')
+  if (!track) return null
+
+  const clip = createSpaceTypeClip({ startFrame, state: spaceTypeState, originNodeId })
+  track.clips.push(clip)
+  return { json: JSON.stringify(edit), clip }
+}
+
 const state = ref<EditState>(createDefaultEditState())
 const undoStack = ref<string[]>([])
 const redoStack = ref<string[]>([])
@@ -101,6 +138,18 @@ export function useTimelineStore() {
     _nodeId = null
     _getValue = null
     _setValue = null
+  }
+
+  /** Which Timeline node this singleton store is currently editing, or null when
+   *  no Timeline editor is mounted.
+   *
+   *  Callers that want to add a clip must branch on this. The store's `state` is
+   *  module-level and `bind()` REPLACES it wholesale, so mutating `state` while
+   *  unbound is silently discarded the next time any editor opens. Write through
+   *  the store only for the bound node; use addSpaceTypeClipToEditState() to
+   *  reach any other Timeline node's persisted edit_state directly. */
+  function boundNodeId(): string | null {
+    return _nodeId
   }
 
   // -- Mutations (all push undo + sync) --
@@ -442,6 +491,8 @@ export function useTimelineStore() {
     pasteClips,
     duplicateClips,
     hasClipboard: computed(() => clipboard.value.length > 0),
+
+    boundNodeId,
 
     addTrack,
     removeTrack,
