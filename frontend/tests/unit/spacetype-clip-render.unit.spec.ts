@@ -61,7 +61,7 @@ import { structuralKey, acquireSpaceTypeEngine, getSpaceTypeEngine, releaseSpace
 import { SpaceTypeEngine } from '../../app/lib/spacetype/engine'
 import { defaultSpaceTypeState } from '../../app/lib/spacetype/state'
 import { createSpaceTypeClip } from '../../app/composables/timelineSpaceTypeClip'
-import { sourceT01, drawSpaceTypeClip } from '../../app/lib/engine/spaceTypeClipRenderer'
+import { sourceT01, drawSpaceTypeClip, renderSpaceTypeClipToCanvas } from '../../app/lib/engine/spaceTypeClipRenderer'
 import { getEffect, __registerEffect, __clearEffects } from '../../app/lib/spacetype/effects/index'
 
 /** A fake canvas good enough for document.createElement('canvas'): tracks width/height
@@ -286,5 +286,40 @@ describe('drawSpaceTypeClip aspect-fit (Finding 2)', () => {
     expect(dy).toBeGreaterThan(0)
 
     releaseSpaceTypeEngine(handle)
+  })
+})
+
+/** A null handle is a legitimate state, not a caller error: acquireSpaceTypeEngine()
+ *  returns null when WebGL2 is permanently unavailable. Both entry points must accept
+ *  it and draw nothing.
+ *
+ *  These deliberately do NOT mock spaceTypeEnginePool — they exercise the real
+ *  getSpaceTypeEngine path, which previously threw on `liveHandles.has(handle.id)`
+ *  when handle was null. The mocked guard in spacetype-canvas2d-branch.unit.spec.ts
+ *  could not have caught that. */
+describe('null handle tolerance (unmocked pool)', () => {
+  it('renderSpaceTypeClipToCanvas returns null instead of throwing', () => {
+    const clip = createSpaceTypeClip({ startFrame: 0, state: defaultSpaceTypeState() })
+    let out: HTMLCanvasElement | null | undefined
+    expect(() => { out = renderSpaceTypeClipToCanvas(null, clip, 0, 30) }).not.toThrow()
+    expect(out).toBeNull()
+  })
+
+  it('drawSpaceTypeClip draws nothing and does not throw', () => {
+    const clip = createSpaceTypeClip({ startFrame: 0, state: defaultSpaceTypeState() })
+    const drawImage = vi.fn()
+    const ctx = { drawImage } as unknown as CanvasRenderingContext2D
+    expect(() => drawSpaceTypeClip(null, ctx, clip, 0, 1920, 1080, 30)).not.toThrow()
+    expect(drawImage).not.toHaveBeenCalled()
+  })
+
+  it('tolerates a null handle on every frame of a scrub, not just frame 0', () => {
+    const clip = createSpaceTypeClip({ startFrame: 0, state: defaultSpaceTypeState(), length: 600 })
+    const drawImage = vi.fn()
+    const ctx = { drawImage } as unknown as CanvasRenderingContext2D
+    expect(() => {
+      for (const f of [0, 45, 179, 180, 300, 599]) drawSpaceTypeClip(null, ctx, clip, f, 1920, 1080, 30)
+    }).not.toThrow()
+    expect(drawImage).not.toHaveBeenCalled()
   })
 })

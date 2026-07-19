@@ -7,7 +7,12 @@
  *  Callers must hold a `SpaceTypeEngineHandle` acquired from
  *  spaceTypeEnginePool.ts (see that file's ownership contract) — acquire it
  *  once at construction, release it once at disposal, and pass it into
- *  renderSpaceTypeClipToCanvas/drawSpaceTypeClip on every frame. */
+ *  renderSpaceTypeClipToCanvas/drawSpaceTypeClip on every frame.
+ *
+ *  A null handle is legitimate, not a caller error: acquireSpaceTypeEngine()
+ *  returns null when WebGL2 is permanently unavailable. Both functions accept
+ *  it and draw nothing, so callers can pass the handle straight through without
+ *  their own guard. */
 import type { SpaceTypeClip } from '~~/shared/timeline/types'
 import { getEffect } from '~/lib/spacetype/effects/index'
 import { texOptsFromState, dimsFromKey } from '~/lib/spacetype/state'
@@ -28,16 +33,18 @@ export function sourceT01(clip: SpaceTypeClip, localFrame: number): number {
 }
 
 /** Render the clip at a clip-local frame into the shared engine's canvas.
- *  Returns null when the engine is unavailable (no WebGL2, or transiently
- *  unavailable this frame) — callers draw nothing rather than failing.
- *  `handle` must already be acquired (see spaceTypeEnginePool.ts); this
- *  function only calls getSpaceTypeEngine(), never acquire/release. */
+ *  Returns null when the engine is unavailable — a null handle (WebGL2
+ *  permanently absent), or transiently unavailable this frame — so callers
+ *  draw nothing rather than failing.
+ *  A non-null `handle` must already be acquired (see spaceTypeEnginePool.ts);
+ *  this function only calls getSpaceTypeEngine(), never acquire/release. */
 export function renderSpaceTypeClipToCanvas(
-  handle: SpaceTypeEngineHandle,
+  handle: SpaceTypeEngineHandle | null,
   clip: SpaceTypeClip,
   localFrame: number,
   _fps: number,
 ): HTMLCanvasElement | null {
+  if (!handle) return null
   const [W, H] = dimsFromKey(clip.state.dimsKey)
   const engine = getSpaceTypeEngine(handle, W, H)
   if (!engine) return null
@@ -63,7 +70,7 @@ export function renderSpaceTypeClipToCanvas(
  *  clip kind. The clip's own dimensions (from dimsKey) need not match the project
  *  canvas, so a naive full-rect stretch would visibly squash the output. */
 export function drawSpaceTypeClip(
-  handle: SpaceTypeEngineHandle,
+  handle: SpaceTypeEngineHandle | null,
   ctx: CanvasRenderingContext2D,
   clip: SpaceTypeClip,
   localFrame: number,

@@ -188,10 +188,9 @@ export function usePlaybackEngine(
           ctx.save()
           ctx.globalCompositeOperation = CANVAS_BLEND[clip.blend ?? 'normal'] ?? 'source-over'
           ctx.globalAlpha = clip.opacity ?? 1
-          // drawSpaceTypeClip's current signature requires a non-null handle;
-          // acquireSpaceTypeEngine() returns null only when WebGL2 is
-          // permanently unavailable, in which case we correctly draw nothing.
-          if (spaceTypeHandle) drawSpaceTypeClip(spaceTypeHandle, ctx, clip as SpaceTypeClip, localFrame, cw, ch, fps)
+          // A null handle (WebGL2 permanently unavailable) is passed straight
+          // through — drawSpaceTypeClip accepts it and draws nothing.
+          drawSpaceTypeClip(spaceTypeHandle, ctx, clip as SpaceTypeClip, localFrame, cw, ch, fps)
           ctx.restore()
           continue
         }
