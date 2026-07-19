@@ -1,4 +1,8 @@
 import * as THREE from 'three'
+// StudioColor can emit 8-digit #rrggbbaa. THREE.Color has no alpha channel and renders
+// 8-digit hex as WHITE (console warning, no throw), so picker colours are stripped to 6
+// digits here — surfaces without transparency degrade to opaque rather than going white.
+import { stripAlpha } from '~/lib/color/convert'
 import { buildGeometry } from './geometry'
 import { applyVertexColors, vertexRampT, rampHexes } from './color'
 import { makeOmbreMaterial } from './ombre'
@@ -76,13 +80,13 @@ export class ShapeEngine {
       const tex = buildSurfaceTexture(config)
       mat = tex
         ? new THREE.MeshBasicMaterial({ map: tex })
-        : new THREE.MeshBasicMaterial({ color: new THREE.Color(config.fill.a) })
+        : new THREE.MeshBasicMaterial({ color: new THREE.Color(stripAlpha(config.fill.a)) })
     }
     this.mesh = new THREE.Mesh(geo, mat)
     this.scene.add(this.mesh)
     // background
     if (config.style.background === 'transparent') this.scene.background = null
-    else this.scene.background = new THREE.Color(config.style.background)
+    else this.scene.background = new THREE.Color(stripAlpha(config.style.background))
   }
 
   render(orbit: { yaw: number; pitch: number; zoom: number }): void {

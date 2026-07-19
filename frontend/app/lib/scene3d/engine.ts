@@ -3,6 +3,10 @@
 // the document into the Three graph. (Same philosophy as shapefx/engine.ts,
 // grown to a multi-object scene.)
 import * as THREE from 'three'
+// StudioColor can emit 8-digit #rrggbbaa. THREE.Color has no alpha channel and renders
+// 8-digit hex as WHITE (console warning, no throw), so picker colours are stripped to 6
+// digits here — surfaces without transparency degrade to opaque rather than going white.
+import { stripAlpha } from '~/lib/color/convert'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js'
 import type { SceneDoc, SceneObject, Vec3, LightingPreset, PrimitiveKind, PrimitiveObject } from './config'
@@ -264,7 +268,7 @@ export class SceneEngine {
     this.sun.castShadow = preset.shadow
     this.ambient.intensity = doc.lighting.ambient
     this.scene.environmentIntensity = preset.envIntensity
-    this.scene.background = doc.background === 'transparent' ? null : new THREE.Color(doc.background)
+    this.scene.background = doc.background === 'transparent' ? null : new THREE.Color(stripAlpha(doc.background))
     this.camera.fov = doc.camera.fov
     this.camera.updateProjectionMatrix()
   }

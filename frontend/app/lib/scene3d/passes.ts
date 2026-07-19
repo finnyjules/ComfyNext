@@ -5,6 +5,10 @@
 // Depth convention: near = white, far = black, background = black (ControlNet
 // style), with near/far fitted to the scene bounds so the ramp is well spread.
 import * as THREE from 'three'
+// StudioColor can emit 8-digit #rrggbbaa. THREE.Color has no alpha channel and renders
+// 8-digit hex as WHITE (console warning, no throw), so picker colours are stripped to 6
+// digits here — surfaces without transparency degrade to opaque rather than going white.
+import { stripAlpha } from '~/lib/color/convert'
 import type { SceneDoc } from './config'
 import type { SceneEngine } from './engine'
 
@@ -78,7 +82,7 @@ export async function renderPasses(engine: SceneEngine, doc: SceneDoc):
   try {
     // Beauty — inherit the viewport's exact renderer state (tone mapping, colour
     // space). Transparent background stays transparent.
-    scene.background = doc.background === 'transparent' ? null : new THREE.Color(doc.background)
+    scene.background = doc.background === 'transparent' ? null : new THREE.Color(stripAlpha(doc.background))
     renderer.render(scene, camera)
     const beauty = canvas.toDataURL('image/png')
 

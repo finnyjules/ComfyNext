@@ -6,6 +6,11 @@
 // environments (vitest) those degrade to null/'' while the material classes and
 // update logic stay fully testable.
 import * as THREE from 'three'
+// Every colour below comes from a StudioColor picker, which can emit 8-digit #rrggbbaa.
+// THREE.Color has no alpha channel and renders 8-digit hex as WHITE (a console warning, no
+// throw), so each one is stripped to 6 digits — an effect that doesn't implement transparency
+// degrades to opaque rather than turning the object white.
+import { stripAlpha } from '~/lib/color/convert'
 import {
   MATERIAL_DEFAULTS, gradientAngles, gradientDirection, gradientStopsOf,
   type GradientStop, type SceneMaterial,
@@ -229,7 +234,7 @@ export function buildRampTexture(stops: GradientStop[]): THREE.DataTexture {
   // getHex(SRGBColorSpace) undoes three's sRGB→linear ingest, giving back the
   // authored 8-bit channels; the texture's colorSpace re-decodes them on sample.
   const srgb = [...stops].sort((a, b) => a.pos - b.pos).map((s) => {
-    const hex = new THREE.Color(s.color).getHex(THREE.SRGBColorSpace)
+    const hex = new THREE.Color(stripAlpha(s.color)).getHex(THREE.SRGBColorSpace)
     return { pos: s.pos, r: (hex >> 16) & 255, g: (hex >> 8) & 255, b: hex & 255 }
   })
   const data = new Uint8Array(RAMP_WIDTH * 4)
@@ -270,7 +275,7 @@ function rampSignature(stops: GradientStop[]): string {
  *  Shared by creation and in-place update so the two can never drift. */
 function applyPhysical(p: THREE.MeshPhysicalMaterial, mat: SceneMaterial): void {
   const isGlass = mat.type === 'glass'
-  p.color.set(mat.color)
+  p.color.set(stripAlpha(mat.color))
   p.roughness = mat.roughness
   p.metalness = mat.metalness
   p.transmission = mat.transmission ?? (isGlass ? MATERIAL_DEFAULTS.transmission : 0)
@@ -279,13 +284,13 @@ function applyPhysical(p: THREE.MeshPhysicalMaterial, mat: SceneMaterial): void 
   p.clearcoat = mat.clearcoat ?? MATERIAL_DEFAULTS.clearcoat
   p.clearcoatRoughness = mat.clearcoatRoughness ?? MATERIAL_DEFAULTS.clearcoatRoughness
   p.sheen = mat.sheen ?? MATERIAL_DEFAULTS.sheen
-  p.sheenColor.set(mat.sheenColor ?? MATERIAL_DEFAULTS.sheenColor)
-  p.emissive.set(mat.emissive ?? MATERIAL_DEFAULTS.emissive)
+  p.sheenColor.set(stripAlpha(mat.sheenColor ?? MATERIAL_DEFAULTS.sheenColor))
+  p.emissive.set(stripAlpha(mat.emissive ?? MATERIAL_DEFAULTS.emissive))
   p.emissiveIntensity = mat.emissiveIntensity ?? MATERIAL_DEFAULTS.emissiveIntensity
   p.opacity = mat.opacity ?? MATERIAL_DEFAULTS.opacity
   p.transparent = p.opacity < 1
   p.dispersion = mat.dispersion ?? MATERIAL_DEFAULTS.dispersion
-  p.attenuationColor.set(mat.attenuationColor ?? MATERIAL_DEFAULTS.attenuationColor)
+  p.attenuationColor.set(stripAlpha(mat.attenuationColor ?? MATERIAL_DEFAULTS.attenuationColor))
   const att = mat.attenuationDistance ?? MATERIAL_DEFAULTS.attenuationDistance
   p.attenuationDistance = att > 0 ? att : Infinity
   p.iridescence = mat.iridescence ?? MATERIAL_DEFAULTS.iridescence
@@ -313,7 +318,7 @@ export function materialFor(mat: SceneMaterial, geometry?: THREE.BufferGeometry)
     case 'fresnel': {
       // Lit fresnel: base colour is standard albedo, rim added as emissive.
       const fresnelUniforms = {
-        uRim: { value: new THREE.Color(mat.fresnelColor ?? MATERIAL_DEFAULTS.fresnelColor) },
+        uRim: { value: new THREE.Color(stripAlpha(mat.fresnelColor ?? MATERIAL_DEFAULTS.fresnelColor)) },
         uPower: { value: mat.fresnelPower ?? MATERIAL_DEFAULTS.fresnelPower },
       }
       const f = new THREE.MeshStandardMaterial({ color: mat.color, roughness: mat.roughness, metalness: mat.metalness })
@@ -439,7 +444,7 @@ export function updateMaterial(m: THREE.Material, mat: SceneMaterial): boolean {
       return true
     }
     case 'toon': {
-      (m as THREE.MeshToonMaterial).color.set(mat.color)
+      (m as THREE.MeshToonMaterial).color.set(stripAlpha(mat.color))
       return true
     }
     case 'matcap':
@@ -447,9 +452,9 @@ export function updateMaterial(m: THREE.Material, mat: SceneMaterial): boolean {
     case 'fresnel': {
       // Lit fresnel: base colour on the material, rim/power in injected uniforms.
       const f = m as THREE.MeshStandardMaterial
-      f.color.set(mat.color); f.roughness = mat.roughness; f.metalness = mat.metalness
+      f.color.set(stripAlpha(mat.color)); f.roughness = mat.roughness; f.metalness = mat.metalness
       const u = m.userData.fresnelUniforms as { uRim: { value: THREE.Color }; uPower: { value: number } }
-      u.uRim.value.set(mat.fresnelColor ?? MATERIAL_DEFAULTS.fresnelColor)
+      u.uRim.value.set(stripAlpha(mat.fresnelColor ?? MATERIAL_DEFAULTS.fresnelColor))
       u.uPower.value = mat.fresnelPower ?? MATERIAL_DEFAULTS.fresnelPower
       return true
     }
