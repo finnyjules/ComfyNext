@@ -16,8 +16,8 @@ import {
 } from 'lucide-vue-next'
 import {
   parseDoc, serializeDoc, createPrimitive, createGlbObject,
-  LIGHTING_PRESETS, MATERIAL_TYPES, MATERIAL_DEFAULTS,
-  type SceneDoc, type SceneObject, type PrimitiveKind, type MaterialType,
+  LIGHTING_PRESETS, MATERIAL_TYPES, MATERIAL_DEFAULTS, gradientAngles, gradientStopsOf,
+  type SceneDoc, type SceneObject, type PrimitiveKind, type MaterialType, type GradientStop,
 } from '~/lib/scene3d/config'
 import { MATCAP_IDS, matcapThumb, onTextureError } from '~/lib/scene3d/materials'
 import { PRIM_GROUPS } from '~/lib/scene3d/primGroups'
@@ -37,6 +37,7 @@ import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
 import StudioSegmented from '~/components/vue-canvas/studio/StudioSegmented.vue'
 import StudioSelect from '~/components/vue-canvas/studio/StudioSelect.vue'
 import StudioSwitch from '~/components/vue-canvas/studio/StudioSwitch.vue'
+import StudioGradientRamp from '~/components/vue-canvas/studio/StudioGradientRamp.vue'
 
 const props = withDefaults(defineProps<{ nodeId: string; nodes?: any[]; edges?: any[] }>(), {
   nodes: () => [], edges: () => [],
@@ -155,9 +156,42 @@ const matTransmission = matParam('transmission')
 const matThickness = matParam('thickness')
 const matFresnelColor = matParam('fresnelColor')
 const matFresnelPower = matParam('fresnelPower')
-const matGradientB = matParam('gradientB')
-const matGradientAxis = matParam('gradientAxis')
 const matGradientShading = matParam('gradientShading')
+const matGradientType = matParam('gradientType')
+const matGradientOffset = matParam('gradientOffset')
+const matGradientSpread = matParam('gradientSpread')
+
+// Direction angles read through gradientAngles() so an untouched material still
+// reflects its legacy `gradientAxis` seed; writing always stores explicit angles.
+function angleProxy(key: 'yaw' | 'pitch') {
+  return computed<number>({
+    get: () => (selected.value ? gradientAngles(selected.value.material)[key] : MATERIAL_DEFAULTS[key === 'yaw' ? 'gradientYaw' : 'gradientPitch']),
+    set: (v) => { if (selected.value) selected.value.material[key === 'yaw' ? 'gradientYaw' : 'gradientPitch'] = v },
+  })
+}
+const matGradientYaw = angleProxy('yaw')
+const matGradientPitch = angleProxy('pitch')
+
+// The X/Y/Z presets must write the ANGLES, not `gradientAxis` — once explicit
+// angles exist on the material the axis field is only a seed and would look dead.
+const AXIS_PRESETS = { x: { yaw: 90, pitch: 0 }, y: { yaw: 0, pitch: 90 }, z: { yaw: 0, pitch: 0 } } as const
+function applyAxisPreset(axis: 'x' | 'y' | 'z') {
+  if (!selected.value) return
+  const p = AXIS_PRESETS[axis]
+  selected.value.material.gradientYaw = p.yaw
+  selected.value.material.gradientPitch = p.pitch
+}
+function isAxisPreset(axis: 'x' | 'y' | 'z') {
+  const p = AXIS_PRESETS[axis]
+  return matGradientYaw.value === p.yaw && matGradientPitch.value === p.pitch
+}
+
+// Stops: read through gradientStopsOf() so an untouched material shows the pair
+// synthesized from `color` + `gradientB`; the array materializes on first edit.
+const matGradientStops = computed<GradientStop[]>({
+  get: () => (selected.value ? gradientStopsOf(selected.value.material) : []),
+  set: (v) => { if (selected.value) selected.value.material.gradientStops = v },
+})
 const matClearcoat = matParam('clearcoat')
 const matClearcoatRoughness = matParam('clearcoatRoughness')
 const matSheen = matParam('sheen')
@@ -890,18 +924,26 @@ function onClose() {
 
         <!-- gradient -->
         <template v-else-if="selectedIsPrimitive && matType === 'gradient'">
-          <div class="flex items-center justify-between">
-            <span class="text-[11px] text-white/55">Color</span>
-            <StudioColor v-model="matColor" />
-          </div>
-          <div class="flex items-center justify-between">
-            <span class="text-[11px] text-white/55">Color B</span>
-            <StudioColor v-model="matGradientB" />
-          </div>
+          <StudioGradientRamp v-model="matGradientStops" />
           <div>
-            <label class="mb-1 block text-[11px] text-white/55">Axis</label>
-            <StudioSegmented v-model="matGradientAxis" :options="['x', 'y', 'z']" />
+            <label class="mb-1 block text-[11px] text-white/55">Type</label>
+            <StudioSegmented v-model="matGradientType" :options="['linear', 'radial']" />
           </div>
+          <div v-if="matGradientType === 'linear'" class="space-y-3">
+            <div>
+              <label class="mb-1 block text-[11px] text-white/55">Direction</label>
+              <div class="flex items-center gap-1.5">
+                <button v-for="ax in (['x', 'y', 'z'] as const)" :key="ax" type="button"
+                  class="flex-1 rounded-md border px-2 py-1 text-[11px] uppercase transition-colors"
+                  :class="isAxisPreset(ax) ? 'border-white/70 bg-white/[0.10] text-white' : 'border-white/[0.10] bg-white/[0.04] text-white/55 hover:text-white/85'"
+                  @click="applyAxisPreset(ax)">{{ ax }}</button>
+              </div>
+            </div>
+            <StudioSlider v-model="matGradientYaw" label="Yaw" hint="Ramp direction around the Y axis" :min="0" :max="360" :step="1" />
+            <StudioSlider v-model="matGradientPitch" label="Pitch" hint="Ramp direction elevation, up or down" :min="-90" :max="90" :step="1" />
+          </div>
+          <StudioSlider v-model="matGradientOffset" label="Offset" hint="Slides the ramp along its direction" :min="-1" :max="1" :step="0.01" />
+          <StudioSlider v-model="matGradientSpread" label="Spread" hint="Compresses (&lt;1) or stretches (&gt;1) the ramp" :min="0.1" :max="3" :step="0.01" />
           <div>
             <label class="mb-1 block text-[11px] text-white/55">Shading</label>
             <StudioSegmented v-model="matGradientShading" :options="['smooth', 'faceted', 'prismatic']" />
