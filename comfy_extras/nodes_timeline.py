@@ -94,6 +94,24 @@ def _check_decode_budget(v, clip_name: str,
             "GetVideoComponents with a downscale before the Timeline.")
 
 
+def spacetype_source_index(local_frame: int, baked_count: int, loop: bool) -> int:
+    """Map a clip-local frame onto the baked Space Type cycle.
+
+    The browser bakes ONE seamless cycle (k whole loops), not the whole clip,
+    so a long clip tiles into a short bake. With loop off, hold the last frame
+    — matching how a motion clip runs out.
+
+    This is the Python twin of sourceT01() in
+    frontend/app/lib/engine/spaceTypeClipRenderer.ts: both must map the same
+    local frame to the same phase, or the export drifts from the live preview.
+    The golden test covers a frame pair one loop apart to catch that."""
+    if baked_count <= 0:
+        return 0
+    if loop:
+        return local_frame % baked_count
+    return max(0, min(local_frame, baked_count - 1))
+
+
 def _source_frame_at(clip: dict, local_f: int) -> int:
     """Timeline→source frame mapping — the Python twin of
     frontend/shared/timeline/sourceFrame.ts (formulas pinned in types.ts):
@@ -1038,6 +1056,8 @@ def _adapt_edit_state(state: dict) -> dict:
                 "text":        clip.get("text"),
                 "keyframes":   clip.get("keyframes"),
                 "motion_frames": clip.get("motion_frames"),
+                "spacetype_frames": clip.get("spacetype_frames"),
+                "spacetype_loop": clip.get("spacetype_loop", True),
             })
 
     if audio_path:
@@ -1103,6 +1123,34 @@ def _prepare_render_clips(state: dict) -> list[dict]:
                 padding=float(t.get("padding", 0.06)),
                 line_spacing=float(t.get("line_spacing", 1.2)),
             )
+            entry["duration"] = None
+            clips.append(entry)
+            continue
+
+        if kind == "spacetype":
+            # Baked alpha PNG sequence from the browser's three.js engine — but
+            # unlike motion, only ONE seamless cycle is baked (k whole loops),
+            # not the whole clip, so a 6s loop on a 60s clip is 180 files rather
+            # than 1800. render_frame_np tiles it via spacetype_source_index.
+            frames = c.get("spacetype_frames") or []
+            resolved = []
+            for fn in frames:
+                p = fn if os.path.isabs(fn) else os.path.join(folder_paths.get_input_directory(), fn)
+                if os.path.exists(p):
+                    resolved.append(p)
+            if not resolved:
+                logging.warning(
+                    "timeline: spacetype clip @frame %s has no baked frames (stale/un-baked) — skipping",
+                    c.get("start_frame", "?"),
+                )
+                continue
+            if len(resolved) < len(frames):
+                logging.warning(
+                    "timeline: spacetype clip @frame %s baked %d/%d frames — the cycle will tile short",
+                    c.get("start_frame", "?"), len(resolved), len(frames),
+                )
+            entry["frame_paths"] = resolved
+            entry["spacetype_loop"] = bool(c.get("spacetype_loop", True))
             entry["duration"] = None
             clips.append(entry)
             continue
@@ -1190,6 +1238,11 @@ def render_frame_np(state: dict, clips: list[dict], f: int) -> np.ndarray:
             idx = local_f if local_f < len(fp) else len(fp) - 1
             with PILImage.open(fp[idx]) as _mf:
                 src_pil = _mf.convert("RGBA")  # forces decode + releases the fd; alpha preserved below
+        elif L["kind"] == "spacetype":
+            fp = L["frame_paths"]
+            idx = spacetype_source_index(local_f, len(fp), L.get("spacetype_loop", True))
+            with PILImage.open(fp[idx]) as _sf:
+                src_pil = _sf.convert("RGBA")  # alpha preserved below, same as motion
         else:  # video
             vs = L["stream"]
             container = L["container"]
