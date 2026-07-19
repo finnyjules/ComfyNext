@@ -88,3 +88,32 @@ export function hexToOklch(hex: string): [number, number, number] {
 export function oklchToHex(L: number, C: number, H: number): string {
   return rgbToHex(...oklchToRgb(L, C, H))
 }
+
+/** True when `s` is a complete 8-digit hex colour with alpha (`#` optional). */
+export function isHexA(s: string): boolean {
+  return /^#?[0-9a-fA-F]{8}$/.test(String(s).trim())
+}
+
+/** Split any hex form into an opaque 6-digit hex plus a 0–1 alpha.
+ *  6-digit input is fully opaque; garbage falls back to opaque black. */
+export function parseHexA(hex: string): { hex: string; alpha: number } {
+  const x = String(hex).trim().replace(/^#/, '')
+  if (/^[0-9a-fA-F]{8}$/.test(x)) {
+    return { hex: '#' + x.slice(0, 6).toLowerCase(), alpha: parseInt(x.slice(6, 8), 16) / 255 }
+  }
+  return { hex: clampHex(x), alpha: 1 }
+}
+
+/** Attach alpha to a hex colour. Emits 6-digit when fully opaque so saved scenes
+ *  stay in the legacy form and diffs stay small. Any alpha already on `hex` is replaced. */
+export function withAlpha(hex: string, alpha: number): string {
+  const base = parseHexA(hex).hex
+  const a = Math.max(0, Math.min(1, Number(alpha)))
+  if (a >= 1) return base
+  return base + Math.round(a * 255).toString(16).padStart(2, '0')
+}
+
+/** Drop any alpha — THREE.Color cannot parse 8-digit hex and silently renders black. */
+export function stripAlpha(hex: string): string {
+  return parseHexA(hex).hex
+}
