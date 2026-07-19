@@ -14,7 +14,7 @@ import { isIdentityFilters } from '~~/shared/timeline/filters'
 // 0.5 px off a true center; PIL BILINEAR resampling ≠ GPU linear filtering on
 // rotated/scaled edges.
 
-const RENDERABLE_KINDS = new Set(['image', 'video', 'title', 'lower_third', 'motion'])
+const RENDERABLE_KINDS = new Set(['image', 'video', 'title', 'lower_third', 'motion', 'spacetype'])
 
 export interface DrawEntry {
   clipId: string

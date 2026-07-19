@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { resolutionPlanFor } from '../../app/lib/engine/webglPreviewRenderer'
+import { createSpaceTypeClip } from '../../app/composables/timelineSpaceTypeClip'
+import { defaultSpaceTypeState } from '../../app/lib/spacetype/state'
 
 // The pure decision table: clip + resolved preview → which source kind loads.
 describe('resolutionPlanFor', () => {
@@ -20,5 +22,18 @@ describe('resolutionPlanFor', () => {
   it('unsupported / unresolved → null', () => {
     expect(resolutionPlanFor({ ...base, kind: 'text' } as any, null)).toBeNull()
     expect(resolutionPlanFor({ ...base, kind: 'video' } as any, null)).toBeNull()
+  })
+})
+
+describe('resolutionPlanFor — spacetype', () => {
+  it('short-circuits to the spacetype plan with no preview', () => {
+    const clip = createSpaceTypeClip({ startFrame: 0, state: defaultSpaceTypeState() })
+    expect(resolutionPlanFor(clip, null)).toEqual({ kind: 'spacetype' })
+  })
+
+  it('ignores any resolved preview for a spacetype clip', () => {
+    const clip = createSpaceTypeClip({ startFrame: 0, state: defaultSpaceTypeState() })
+    const preview = { kind: 'image' as const, url: 'stale.png' }
+    expect(resolutionPlanFor(clip, preview)).toEqual({ kind: 'spacetype' })
   })
 })

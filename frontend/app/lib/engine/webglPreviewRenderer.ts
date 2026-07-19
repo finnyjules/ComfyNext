@@ -1,4 +1,4 @@
-import type { EditState, Clip } from '~~/shared/timeline/types'
+import type { EditState, Clip, SpaceTypeClip } from '~~/shared/timeline/types'
 import type { PreviewRenderer } from '~~/shared/timeline/previewRenderer'
 import type { ClipPreview } from '~/composables/usePlaybackEngine'
 import { buildDrawList, hexToRgb } from './compositor'
@@ -6,6 +6,7 @@ import { GlRenderer } from './gl/glRenderer'
 import { ImageSource } from './sources/imageSource'
 import { SequenceSource } from './sources/sequenceSource'
 import { TextCanvasSource } from './sources/textCanvasSource'
+import { SpaceTypeSource } from './sources/spaceTypeSource'
 import { WebCodecsSource, UnsupportedSourceError } from './sources/webCodecsSource'
 import { VideoElementSource } from './sources/videoElementSource'
 import type { FrameSource } from './sources/frameSource'
@@ -19,12 +20,14 @@ export type ResolutionPlan =
   | { kind: 'video'; url: string }
   | { kind: 'sequence'; urls: string[] }
   | { kind: 'text' }
+  | { kind: 'spacetype' }
   | null
 
 /** Pure decision table: which source loads for a clip given its resolved
  *  preview. Exported for unit tests. */
 export function resolutionPlanFor(clip: Clip, preview: ClipPreview | null): ResolutionPlan {
   if (TextCanvasSource.supports(clip)) return { kind: 'text' }
+  if (SpaceTypeSource.supports(clip)) return { kind: 'spacetype' }
   if (!preview) return null
   if (preview.kind === 'sequence' && preview.urls?.length) return { kind: 'sequence', urls: preview.urls }
   if (preview.kind === 'image') return { kind: 'image', url: preview.url }
@@ -112,6 +115,8 @@ export class WebGLPreviewRenderer implements PreviewRenderer {
     switch (plan.kind) {
       case 'text':
         return new TextCanvasSource(clip as any, W, H, fps)
+      case 'spacetype':
+        return new SpaceTypeSource(clip as SpaceTypeClip, fps)
       case 'image':
         return ImageSource.load(plan.url)
       case 'sequence':
