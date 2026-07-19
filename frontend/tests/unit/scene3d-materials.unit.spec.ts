@@ -159,6 +159,30 @@ describe('scene3d gradient ramp LUT', () => {
     for (const i of [192, 220, 255]) expect(texel(t, i)).toEqual([0, 0, 255])
   })
 
+  // The ramp editor deliberately leaves its working array unsorted while a stop
+  // is being dragged (sorting live would make the handle jump under the cursor),
+  // and that array reaches buildRampTexture on every pointermove. An unsorted
+  // array must therefore produce exactly the LUT its sorted equivalent does —
+  // otherwise every frame of a stop crossing a neighbour renders a glitched ramp.
+  it('is order-independent: unsorted stops build the same LUT as sorted', () => {
+    const sorted = [
+      { pos: 0, color: '#ff0000' },
+      { pos: 0.4, color: '#00ff00' },
+      { pos: 0.85, color: '#0000ff' },
+    ]
+    // Mid-crossing orderings: the middle stop dragged below the first, and past the last.
+    const shuffles = [
+      [sorted[1]!, sorted[0]!, sorted[2]!],
+      [sorted[0]!, sorted[2]!, sorted[1]!],
+      [sorted[2]!, sorted[1]!, sorted[0]!],
+    ]
+    const expected = (buildRampTexture(sorted).image.data as Uint8Array)
+    for (const s of shuffles) {
+      expect(Array.from(buildRampTexture(s).image.data as Uint8Array))
+        .toEqual(Array.from(expected))
+    }
+  })
+
   it('reproduces the legacy two-colour endpoints from color + gradientB', () => {
     const t = buildRampTexture([
       { pos: 0, color: '#9aa3af' }, { pos: 1, color: MATERIAL_DEFAULTS.gradientB },

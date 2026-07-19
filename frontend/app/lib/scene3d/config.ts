@@ -192,7 +192,13 @@ export function gradientDirection(yaw: number, pitch: number): [number, number, 
 }
 
 /** The ramp's stops: the stored array when present, else the synthesized pair
- *  built from the legacy `color` + `gradientB` fields. */
+ *  built from the legacy `color` + `gradientB` fields.
+ *
+ *  Returns the stored array BY REFERENCE, deliberately, and does not sort: this
+ *  is the ramp editor's model source, and the editor keeps its working array
+ *  unsorted mid-drag so the dragged handle tracks the cursor instead of jumping
+ *  when it crosses a neighbour. Sorting here would fight that. The render path
+ *  is protected instead — `buildRampTexture` sorts its own copy. */
 export function gradientStopsOf(mat: SceneMaterial): GradientStop[] {
   if (mat.gradientStops && mat.gradientStops.length >= GRADIENT_STOPS_MIN) return mat.gradientStops
   return [

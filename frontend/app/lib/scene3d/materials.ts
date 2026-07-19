@@ -216,11 +216,19 @@ const RAMP_WIDTH = 256
 /** Build the 256×1 sRGB LUT the gradient shader samples. Colours interpolate in
  *  sRGB between adjacent stops — the same space a CSS `linear-gradient` uses, so
  *  the ramp editor's preview and the rendered object agree. Beyond the outermost
- *  stops the edge colour floods. Stops must be sorted by `pos`. */
+ *  stops the edge colour floods.
+ *
+ *  Input need NOT be sorted: the endpoint flood and the monotonic `seg` walk
+ *  below both assume ascending `pos`, so an unsorted array would render a
+ *  glitched ramp. The ramp editor deliberately keeps its working array
+ *  unsorted mid-drag (sorting live would make the dragged handle jump under
+ *  the cursor), and that array reaches here on every pointermove. Sorting a
+ *  copy here — at most 8 entries — makes this self-defending rather than
+ *  leaving a precondition every future caller has to remember. */
 export function buildRampTexture(stops: GradientStop[]): THREE.DataTexture {
   // getHex(SRGBColorSpace) undoes three's sRGB→linear ingest, giving back the
   // authored 8-bit channels; the texture's colorSpace re-decodes them on sample.
-  const srgb = stops.map((s) => {
+  const srgb = [...stops].sort((a, b) => a.pos - b.pos).map((s) => {
     const hex = new THREE.Color(s.color).getHex(THREE.SRGBColorSpace)
     return { pos: s.pos, r: (hex >> 16) & 255, g: (hex >> 8) & 255, b: hex & 255 }
   })
