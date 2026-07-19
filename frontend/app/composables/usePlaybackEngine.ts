@@ -1,9 +1,11 @@
 import { ref, watch, onMounted, onUnmounted, type Ref } from 'vue'
-import type { EditState, Clip, Track, BlendMode, TitleClip, LowerThirdClip, MotionClip } from '~~/shared/timeline/types'
+import type { EditState, Clip, Track, BlendMode, TitleClip, LowerThirdClip, MotionClip, SpaceTypeClip } from '~~/shared/timeline/types'
 import { computeTotalFrames } from '~~/shared/timeline/types'
 import { interpolateClipAt } from '~~/shared/timeline/interpolate'
 import { renderTitleClip, renderLowerThirdClip } from '~/composables/useAnimatedTextRenderer'
 import { renderMotionClip } from '~/lib/engine/motionClipRenderer'
+import { drawSpaceTypeClip } from '~/lib/engine/spaceTypeClipRenderer'
+import { acquireSpaceTypeEngine, releaseSpaceTypeEngine, type SpaceTypeEngineHandle } from '~/lib/engine/spaceTypeEnginePool'
 import { ensureMotionFonts } from '~/composables/useTemplateFonts'
 
 const CANVAS_BLEND: Record<string, GlobalCompositeOperation> = {
@@ -46,6 +48,14 @@ export function usePlaybackEngine(
 ) {
   const media = new Map<string, MediaEntry>()
   let rafId: number | null = null
+  // Acquired lazily, the first time a 'spacetype' clip is actually encountered
+  // (see the branch in drawFrame below) — a timeline with none never touches
+  // WebGL. Per the ownership contract at the top of spaceTypeEnginePool.ts,
+  // this composable instance acquires exactly once and releases exactly once,
+  // in destroy() (this composable has no onUnmounted of its own; teardown is
+  // the caller invoking the returned destroy(), itself called from that
+  // caller's onUnmounted — see TimelineEditor.vue).
+  let spaceTypeHandle: SpaceTypeEngineHandle | null = null
 
   function ensureMedia(clip: Clip): MediaEntry | null {
     const existing = media.get(clip.id)
@@ -172,6 +182,19 @@ export function usePlaybackEngine(
           ctx.restore()
           continue
         }
+        if (clip.kind === 'spacetype') {
+          if (!spaceTypeHandle) spaceTypeHandle = acquireSpaceTypeEngine()
+          const localFrame = (currentSec - startSec) * fps
+          ctx.save()
+          ctx.globalCompositeOperation = CANVAS_BLEND[clip.blend ?? 'normal'] ?? 'source-over'
+          ctx.globalAlpha = clip.opacity ?? 1
+          // drawSpaceTypeClip's current signature requires a non-null handle;
+          // acquireSpaceTypeEngine() returns null only when WebGL2 is
+          // permanently unavailable, in which case we correctly draw nothing.
+          if (spaceTypeHandle) drawSpaceTypeClip(spaceTypeHandle, ctx, clip as SpaceTypeClip, localFrame, cw, ch, fps)
+          ctx.restore()
+          continue
+        }
 
         const entry = ensureMedia(clip)
         if (!entry) continue
@@ -290,6 +313,11 @@ export function usePlaybackEngine(
       }
     }
     media.clear()
+    // Release exactly once, mirroring the single lazy acquire above. This
+    // composable declares no onUnmounted of its own — destroy() IS its
+    // teardown, called by the consumer's onUnmounted (see TimelineEditor.vue).
+    releaseSpaceTypeEngine(spaceTypeHandle)
+    spaceTypeHandle = null
   }
 
   watch(() => state.value.tracks, () => {
