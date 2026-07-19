@@ -12,19 +12,15 @@
  *  projection, pan and the gradient — see bakeCfg. */
 import type { SpaceTypeClip, MotionBake } from '~~/shared/timeline/types'
 import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
-import { getEffect } from '~/lib/spacetype/effects/index'
-import { loopMultiplier } from '~/lib/spacetype/loop'
 import { dimsFromKey } from '~/lib/spacetype/state'
 import { spaceTypeSourceFrameCount } from '~/composables/timelineSpaceTypeClip'
-import { renderSpaceTypeClipToCanvas } from './spaceTypeClipRenderer'
+import { renderSpaceTypeClipToCanvas, spaceTypeLoopMultiplier } from './spaceTypeClipRenderer'
 import { acquireSpaceTypeEngine, releaseSpaceTypeEngine } from './spaceTypeEnginePool'
 
-/** k, the number of loops needed for every motion rate to close cleanly. */
-export function spaceTypeLoopMultiplier(clip: SpaceTypeClip): number {
-  const effect = getEffect(clip.state.effectId)
-  const rates = effect.loopRates?.(clip.state.params) ?? []
-  return loopMultiplier(rates)
-}
+// spaceTypeLoopMultiplier now lives in spaceTypeClipRenderer.ts (re-exported
+// here for existing importers) so sourceT01 (preview) and this bake share the
+// exact same k — see that file's docstring on why the two must not drift.
+export { spaceTypeLoopMultiplier }
 
 /** Frames in one seamless bake cycle (k whole loops). */
 export function spaceTypeBakeFrameCount(clip: SpaceTypeClip): number {

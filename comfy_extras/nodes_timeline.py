@@ -94,8 +94,9 @@ def _check_decode_budget(v, clip_name: str,
             "GetVideoComponents with a downscale before the Timeline.")
 
 
-def spacetype_source_index(local_frame: int, baked_count: int, loop: bool) -> int:
-    """Map a clip-local frame onto the baked Space Type cycle.
+def spacetype_source_index(local_frame: int, baked_count: int, loop: bool, in_frame: int = 0) -> int:
+    """Map a clip-local frame onto the baked Space Type cycle, honouring the
+    clip's in-point the same way the browser does.
 
     The browser bakes ONE seamless cycle (k whole loops), not the whole clip,
     so a long clip tiles into a short bake. With loop off, hold the last frame
@@ -103,13 +104,17 @@ def spacetype_source_index(local_frame: int, baked_count: int, loop: bool) -> in
 
     This is the Python twin of sourceT01() in
     frontend/app/lib/engine/spaceTypeClipRenderer.ts: both must map the same
-    local frame to the same phase, or the export drifts from the live preview.
-    The golden test covers a frame pair one loop apart to catch that."""
+    (in_frame, local_frame) pair to the same phase, or the export drifts from
+    the live preview. `in_frame` defaults to 0 so existing bake-domain callers
+    (which already pre-add it, or intentionally pass a trim-free view — see
+    spaceTypeClipBake.ts's `{...clip, in_frame: 0}`) are unaffected. The golden
+    test covers a frame pair one loop apart to catch drift."""
     if baked_count <= 0:
         return 0
+    raw = in_frame + local_frame
     if loop:
-        return local_frame % baked_count
-    return max(0, min(local_frame, baked_count - 1))
+        return raw % baked_count
+    return max(0, min(raw, baked_count - 1))
 
 
 def _source_frame_at(clip: dict, local_f: int) -> int:
@@ -1240,7 +1245,7 @@ def render_frame_np(state: dict, clips: list[dict], f: int) -> np.ndarray:
                 src_pil = _mf.convert("RGBA")  # forces decode + releases the fd; alpha preserved below
         elif L["kind"] == "spacetype":
             fp = L["frame_paths"]
-            idx = spacetype_source_index(local_f, len(fp), L.get("spacetype_loop", True))
+            idx = spacetype_source_index(local_f, len(fp), L.get("spacetype_loop", True), in_frame=L.get("in_frame", 0))
             with PILImage.open(fp[idx]) as _sf:
                 src_pil = _sf.convert("RGBA")  # alpha preserved below, same as motion
         else:  # video

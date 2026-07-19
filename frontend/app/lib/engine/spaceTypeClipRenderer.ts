@@ -15,21 +15,43 @@
  *  their own guard. */
 import type { SpaceTypeClip } from '~~/shared/timeline/types'
 import { getEffect } from '~/lib/spacetype/effects/index'
+import { loopMultiplier } from '~/lib/spacetype/loop'
 import { texOptsFromState, dimsFromKey } from '~/lib/spacetype/state'
 import { spaceTypeSourceFrameCount } from '~/composables/timelineSpaceTypeClip'
 import { getSpaceTypeEngine, structuralKey, type SpaceTypeEngineHandle } from './spaceTypeEnginePool'
 
-/** Clip-local frame → normalized loop time, honouring in_frame and looping.
- *  Pure: the same frame always yields the same t01, which is what makes random
- *  access scrubbing correct. */
+/** k, the number of loops needed for every motion rate to close cleanly.
+ *  Shared by sourceT01 (below, drives live preview) and spaceTypeClipBake.ts
+ *  (drives the export bake) so the two time models cannot drift — both must
+ *  agree on where one seamless cycle ends. */
+export function spaceTypeLoopMultiplier(clip: SpaceTypeClip): number {
+  const effect = getEffect(clip.state.effectId)
+  const rates = effect.loopRates?.(clip.state.params) ?? []
+  return loopMultiplier(rates)
+}
+
+/** Clip-local frame → loop-cycle time, honouring in_frame and looping.
+ *
+ *  The clip's true seamless cycle is k WHOLE LOOPS (k = spaceTypeLoopMultiplier),
+ *  not one loop — wrapping the raw frame at T (one loop's frame count) would
+ *  silently replay loop 1 forever for any effect with k > 1 (e.g. an off-grid
+ *  spin/wave rate). So we wrap the raw frame at k·T frames, THEN divide by T:
+ *  the result ranges over [0, k), matching what engine.renderFrameAt expects
+ *  for a multi-loop cycle (see its docstring — t01 may exceed 1). At k = 1
+ *  this reduces exactly to wrapping at T, i.e. today's behaviour, unchanged.
+ *
+ *  Pure: the same (clip, frame) pair always yields the same t01, which is
+ *  what makes random-access scrubbing correct. */
 export function sourceT01(clip: SpaceTypeClip, localFrame: number): number {
-  const total = spaceTypeSourceFrameCount(clip)
+  const T = spaceTypeSourceFrameCount(clip)
+  const k = spaceTypeLoopMultiplier(clip)
+  const cycle = T * k
   const raw = (clip.in_frame ?? 0) + localFrame
   const loop = clip.loop !== false
   const f = loop
-    ? ((raw % total) + total) % total
-    : Math.min(Math.max(0, raw), total - 1)
-  return f / total
+    ? ((raw % cycle) + cycle) % cycle
+    : Math.min(Math.max(0, raw), cycle - 1)
+  return f / T
 }
 
 /** Render the clip at a clip-local frame into the shared engine's canvas.
