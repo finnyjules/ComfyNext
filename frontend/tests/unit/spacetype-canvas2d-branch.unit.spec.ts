@@ -18,6 +18,9 @@ vi.mock('../../app/lib/engine/spaceTypeEnginePool', () => ({
   acquireSpaceTypeEngine,
   getSpaceTypeEngine: () => null,          // simulate no engine for this frame
   releaseSpaceTypeEngine,
+  // No resetSpaceTypeEnginePool() runs in this mocked suite, so an acquired
+  // handle never dies out from under a consumer — always live.
+  isSpaceTypeEngineHandleLive: () => true,
   structuralKey: () => 'k',
 }))
 

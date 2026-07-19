@@ -57,18 +57,33 @@ vi.mock('../../app/lib/spacetype/effects/index', () => {
   }
 })
 
-import { structuralKey, acquireSpaceTypeEngine, getSpaceTypeEngine, releaseSpaceTypeEngine, resetSpaceTypeEnginePool, spaceTypeEngineAvailable } from '../../app/lib/engine/spaceTypeEnginePool'
+import { structuralKey, acquireSpaceTypeEngine, getSpaceTypeEngine, releaseSpaceTypeEngine, resetSpaceTypeEnginePool, spaceTypeEngineAvailable, isSpaceTypeEngineHandleLive } from '../../app/lib/engine/spaceTypeEnginePool'
 import { SpaceTypeEngine } from '../../app/lib/spacetype/engine'
 import { defaultSpaceTypeState } from '../../app/lib/spacetype/state'
 import { createSpaceTypeClip } from '../../app/composables/timelineSpaceTypeClip'
 import { sourceT01, drawSpaceTypeClip, renderSpaceTypeClipToCanvas } from '../../app/lib/engine/spaceTypeClipRenderer'
 import { getEffect, __registerEffect, __clearEffects } from '../../app/lib/spacetype/effects/index'
+import { SpaceTypeSource } from '../../app/lib/engine/sources/spaceTypeSource'
 
 /** A fake canvas good enough for document.createElement('canvas'): tracks width/height
- *  (so the pool's resize-detection works) and answers getContext('webgl2') truthily so
- *  spaceTypeEngineAvailable() reports WebGL2 as supported. */
+ *  (so the pool's resize-detection works), answers getContext('webgl2') truthily so
+ *  spaceTypeEngineAvailable() reports WebGL2 as supported, and supports
+ *  addEventListener/__dispatch so context-loss recovery tests can register the pool's
+ *  real 'webglcontextlost' listener and fire it, like a real lost-context event would. */
 function fakeCanvas() {
-  return { width: 0, height: 0, getContext: () => ({}) } as unknown as HTMLCanvasElement
+  const listeners = new Map<string, Array<() => void>>()
+  return {
+    width: 0,
+    height: 0,
+    getContext: () => ({}),
+    addEventListener: (type: string, cb: () => void) => {
+      const arr = listeners.get(type) ?? []
+      arr.push(cb)
+      listeners.set(type, arr)
+    },
+    removeEventListener: () => {},
+    __dispatch: (type: string) => { (listeners.get(type) ?? []).forEach(cb => cb()) },
+  } as unknown as HTMLCanvasElement & { __dispatch: (type: string) => void }
 }
 
 describe('structuralKey', () => {
@@ -286,6 +301,98 @@ describe('drawSpaceTypeClip aspect-fit (Finding 2)', () => {
     expect(dy).toBeGreaterThan(0)
 
     releaseSpaceTypeEngine(handle)
+  })
+})
+
+describe('spaceTypeEnginePool context-loss recovery (item 1)', () => {
+  let lastCanvas: ReturnType<typeof fakeCanvas> | null = null
+
+  beforeEach(() => {
+    lastCanvas = null
+    vi.stubGlobal('document', {
+      createElement: () => {
+        lastCanvas = fakeCanvas()
+        return lastCanvas
+      },
+    })
+    resetSpaceTypeEnginePool()
+  })
+  afterEach(() => {
+    resetSpaceTypeEnginePool()
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('a webglcontextlost event fired on the pooled canvas resets the pool', () => {
+    const handle = acquireSpaceTypeEngine()!
+    expect(getSpaceTypeEngine(handle, 100, 100)).toBeTruthy() // constructs the engine + its canvas
+    expect(lastCanvas).toBeTruthy()
+    expect(isSpaceTypeEngineHandleLive(handle)).toBe(true)
+
+    // Simulate the browser firing a real context-loss event on the canvas the
+    // pool is using — not calling resetSpaceTypeEnginePool() directly, so this
+    // test actually exercises the addEventListener wiring, not just the reset
+    // function in isolation.
+    lastCanvas!.__dispatch('webglcontextlost')
+
+    // The reset invalidated the pre-loss handle — see ownership contract item 4.
+    expect(isSpaceTypeEngineHandleLive(handle)).toBe(false)
+    expect(getSpaceTypeEngine(handle, 100, 100)).toBeNull()
+  })
+
+  it('a consumer holding a handle across a context loss can render again afterwards', async () => {
+    const clip = createSpaceTypeClip({ startFrame: 0, state: defaultSpaceTypeState() })
+    const source = new SpaceTypeSource(clip, 30)
+
+    const frame1 = await source.getFrame(0)
+    expect(frame1).toBeTruthy()
+    // SpaceTypeSource only ever falls back to its transparent placeholder canvas
+    // when rendering fails; it stays null once a real render has succeeded, so
+    // this is a strong sentinel that frame1 came from the actual engine.
+    expect((source as any).fallback).toBeNull()
+
+    // A context loss the consumer did not initiate (independent of the wiring
+    // covered by the previous test — this one isolates consumer-side self-healing).
+    resetSpaceTypeEnginePool()
+    expect(isSpaceTypeEngineHandleLive((source as any).handle)).toBe(false) // dead, per the contract
+
+    // The meaningful assertion: rendering resumes on the very next frame, not
+    // merely that resetSpaceTypeEnginePool() ran.
+    const frame2 = await source.getFrame(1)
+    expect(frame2).toBeTruthy()
+    expect((source as any).fallback).toBeNull() // still never fell back — recovery worked
+    expect(isSpaceTypeEngineHandleLive((source as any).handle)).toBe(true) // holds a fresh, live handle
+
+    source.dispose()
+  })
+})
+
+describe('spaceTypeEnginePool permanent-unavailability diagnostic (item 2)', () => {
+  beforeEach(() => {
+    resetSpaceTypeEnginePool()
+  })
+  afterEach(() => {
+    resetSpaceTypeEnginePool()
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('warns once, naming Space Type and WebGL2, when the capability is permanently absent — not per frame', () => {
+    vi.stubGlobal('document', { createElement: () => ({ width: 0, height: 0, getContext: () => null }) })
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const handle = acquireSpaceTypeEngine()!
+
+    // Three separate "rendered frames" against a browser with no WebGL2 at all —
+    // the kind of hammering a 60fps render loop would do.
+    expect(getSpaceTypeEngine(handle, 100, 100)).toBeNull()
+    expect(getSpaceTypeEngine(handle, 100, 100)).toBeNull()
+    expect(getSpaceTypeEngine(handle, 100, 100)).toBeNull()
+
+    const diagnostic = warnSpy.mock.calls.filter(args => {
+      const msg = String(args[0] ?? '')
+      return msg.includes('Space Type') && msg.toLowerCase().includes('webgl2')
+    })
+    expect(diagnostic.length).toBe(1) // one-time, not once per frame
   })
 })
 

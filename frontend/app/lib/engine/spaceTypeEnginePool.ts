@@ -32,12 +32,23 @@
  *  mid-render) and never after (nothing left to hold it open).
  *
  *   4. `resetSpaceTypeEnginePool()` (for context-loss recovery) invalidates
- *      EVERY outstanding handle. Handle ids are never reused, so a pre-reset
- *      handle is simply dead: `getSpaceTypeEngine` returns null for it forever
- *      and `releaseSpaceTypeEngine` is a no-op — safe, no leak, no double-free,
- *      but also never self-healing. A consumer that starts getting null after
- *      previously succeeding must release its old handle and acquire a fresh
- *      one; nothing will do that for it.
+ *      EVERY outstanding handle immediately. Handle ids are never reused, so a
+ *      pre-reset handle is simply dead from that point on: `getSpaceTypeEngine`
+ *      returns null for it forever and `releaseSpaceTypeEngine` is a no-op —
+ *      safe, no leak, no double-free. A `webglcontextlost` listener on the
+ *      pooled canvas (attached in `ensureEngine`) calls this automatically, so
+ *      a lost context does not leave every Space Type clip permanently blank.
+ *
+ *      A reset alone does not make rendering resume, though — every live
+ *      handle is now dead, and nothing re-acquires on a dead handle's behalf.
+ *      Self-healing is therefore the CONSUMER's job: a consumer that holds a
+ *      handle across many frames (SpaceTypeSource, the Canvas2D branch in
+ *      usePlaybackEngine.ts) calls `isSpaceTypeEngineHandleLive(handle)`; once
+ *      that reports false it releases the dead handle (a no-op — it's already
+ *      gone) and calls `acquireSpaceTypeEngine()` again for a fresh one, same
+ *      as it did at construction. This bookkeeping lives entirely in
+ *      acquire/release territory — `getSpaceTypeEngine` itself still never
+ *      touches the refcount (item 3) and does not auto-reacquire.
  *
  *  Do not go back to acquiring per render call. That was the shape of the bug
  *  this file was rewritten to fix: refs grew without bound as frames rendered
@@ -60,6 +71,12 @@ let nextHandleId = 1
  *  all (the capability probe failed). That is a permanent condition for the
  *  session — retrying construction can never succeed, so we stop trying. */
 let capabilityUnavailable = false
+
+/** Guards the one-time console.warn when capabilityUnavailable latches — see
+ *  ensureEngine. Without this, every consumer's per-frame getSpaceTypeEngine()
+ *  call would silently return null forever with zero explanation in the
+ *  console, on exactly the machines the Canvas2D fallback exists to serve. */
+let warnedCapabilityUnavailable = false
 
 /** Transient construction failures (e.g. "too many WebGL contexts" — an
  *  EXPECTED scenario given the ~8-16 browser cap this whole pool exists to
@@ -93,7 +110,14 @@ function ensureEngine(width: number, height: number): SpaceTypeEngine | null {
   if (capabilityUnavailable) return null
   if (!engine) {
     if (Date.now() < nextConstructRetryAt) return null
-    if (!spaceTypeEngineAvailable()) { capabilityUnavailable = true; return null }
+    if (!spaceTypeEngineAvailable()) {
+      capabilityUnavailable = true
+      if (!warnedCapabilityUnavailable) {
+        warnedCapabilityUnavailable = true
+        console.warn('spaceTypeEnginePool: WebGL2 is not available in this browser — Space Type clips will render blank (Canvas2D fallback has no GPU compositor to draw them with). This is a permanent condition for this session.')
+      }
+      return null
+    }
     try {
       const c = document.createElement('canvas')
       c.width = width
@@ -104,6 +128,15 @@ function ensureEngine(width: number, height: number): SpaceTypeEngine | null {
         alpha: true, bgColor: '#000000',
       })
       canvas = c
+      // three.js does not auto-recover a lost WebGL context. Rather than try to
+      // restore IN PLACE, abandon this canvas/context entirely and reset the
+      // pool: the next ensureEngine() call (driven by a live consumer noticing
+      // its handle died — see isSpaceTypeEngineHandleLive and contract item 4)
+      // constructs a brand-new engine on a brand-new canvas/context.
+      canvas.addEventListener?.('webglcontextlost', () => {
+        console.warn('spaceTypeEnginePool: WebGL context lost — resetting the shared engine; Space Type clips recover on the next frame')
+        resetSpaceTypeEnginePool()
+      })
     } catch (e) {
       console.warn('spaceTypeEnginePool: engine construction failed — will retry later (expected under WebGL context pressure)', e)
       engine = null
@@ -138,10 +171,29 @@ export function acquireSpaceTypeEngine(): SpaceTypeEngineHandle | null {
  *  Does NOT touch the refcount — call this as many times as you like per
  *  handle. Never throws: returns null when the engine is unavailable this
  *  frame (no WebGL2, construction still cooling down after a transient
- *  failure, or resize threw), or when `handle` is not currently live. */
+ *  failure, or resize threw), or when `handle` is not currently live (e.g. a
+ *  resetSpaceTypeEnginePool() invalidated it — see isSpaceTypeEngineHandleLive
+ *  for how a long-lived consumer tells that case apart from a same-frame
+ *  transient failure and recovers). */
 export function getSpaceTypeEngine(handle: SpaceTypeEngineHandle, width: number, height: number): SpaceTypeEngine | null {
   if (!liveHandles.has(handle.id)) return null
   return ensureEngine(width, height)
+}
+
+/** True if `handle` is still a live consumer of the pool: acquired and not yet
+ *  released, and not invalidated by a resetSpaceTypeEnginePool() call (e.g. a
+ *  WebGL context loss) since it was acquired.
+ *
+ *  A consumer that holds a handle across many frames uses this to tell "my
+ *  handle died out from under me — a reset happened" (isSpaceTypeEngineHandleLive
+ *  goes false) apart from "the engine just isn't ready THIS frame" (the handle
+ *  stays live; getSpaceTypeEngine returns null but will likely succeed again
+ *  next frame without any action). Only the first case calls for
+ *  self-healing — release the dead handle (a no-op, it's already gone) and
+ *  acquireSpaceTypeEngine() again — and only the CONSUMER does that, never
+ *  getSpaceTypeEngine itself (item 3: rendering never touches the refcount). */
+export function isSpaceTypeEngineHandleLive(handle: SpaceTypeEngineHandle | null | undefined): boolean {
+  return !!handle && liveHandles.has(handle.id)
 }
 
 /** Release a consumer's ownership. Idempotent: releasing the same handle
@@ -166,6 +218,7 @@ export function resetSpaceTypeEnginePool(): void {
   canvas = null
   liveHandles = new Set()
   capabilityUnavailable = false
+  warnedCapabilityUnavailable = false
   nextConstructRetryAt = 0
 }
 

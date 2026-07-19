@@ -9,7 +9,7 @@
 import type { Clip, SpaceTypeClip } from '~~/shared/timeline/types'
 import { dimsFromKey } from '~/lib/spacetype/state'
 import { renderSpaceTypeClipToCanvas } from '~/lib/engine/spaceTypeClipRenderer'
-import { acquireSpaceTypeEngine, releaseSpaceTypeEngine, type SpaceTypeEngineHandle } from '~/lib/engine/spaceTypeEnginePool'
+import { acquireSpaceTypeEngine, releaseSpaceTypeEngine, isSpaceTypeEngineHandleLive, type SpaceTypeEngineHandle } from '~/lib/engine/spaceTypeEnginePool'
 import type { FrameSource } from './frameSource'
 
 export class SpaceTypeSource implements FrameSource {
@@ -37,6 +37,14 @@ export class SpaceTypeSource implements FrameSource {
   get height(): number { return this.h }
 
   async getFrame(n: number): Promise<TexImageSource> {
+    // A live pool reset (WebGL context loss) invalidates whatever handle we
+    // acquired at construction — see spaceTypeEnginePool.ts's ownership
+    // contract, item 4. Self-heal here rather than staying blank forever:
+    // release the dead handle (a no-op, it's already gone) and re-acquire.
+    if (this.handle && !isSpaceTypeEngineHandleLive(this.handle)) {
+      releaseSpaceTypeEngine(this.handle)
+      this.handle = acquireSpaceTypeEngine()
+    }
     const canvas = this.handle && renderSpaceTypeClipToCanvas(this.handle, this.clip, n, this.fps)
     if (canvas) return canvas
     // No WebGL2, or a render error: emit a transparent frame so one bad clip

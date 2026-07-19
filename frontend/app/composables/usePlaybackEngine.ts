@@ -5,7 +5,7 @@ import { interpolateClipAt } from '~~/shared/timeline/interpolate'
 import { renderTitleClip, renderLowerThirdClip } from '~/composables/useAnimatedTextRenderer'
 import { renderMotionClip } from '~/lib/engine/motionClipRenderer'
 import { drawSpaceTypeClip } from '~/lib/engine/spaceTypeClipRenderer'
-import { acquireSpaceTypeEngine, releaseSpaceTypeEngine, type SpaceTypeEngineHandle } from '~/lib/engine/spaceTypeEnginePool'
+import { acquireSpaceTypeEngine, releaseSpaceTypeEngine, isSpaceTypeEngineHandleLive, type SpaceTypeEngineHandle } from '~/lib/engine/spaceTypeEnginePool'
 import { ensureMotionFonts } from '~/composables/useTemplateFonts'
 
 const CANVAS_BLEND: Record<string, GlobalCompositeOperation> = {
@@ -183,7 +183,15 @@ export function usePlaybackEngine(
           continue
         }
         if (clip.kind === 'spacetype') {
-          if (!spaceTypeHandle) spaceTypeHandle = acquireSpaceTypeEngine()
+          // A live pool reset (WebGL context loss) invalidates whatever handle
+          // we acquired earlier — see spaceTypeEnginePool.ts's ownership
+          // contract, item 4. Self-heal rather than staying blank forever:
+          // release the dead handle (a no-op if it's already gone) and
+          // re-acquire, same as the lazy first-acquire below.
+          if (!spaceTypeHandle || !isSpaceTypeEngineHandleLive(spaceTypeHandle)) {
+            if (spaceTypeHandle) releaseSpaceTypeEngine(spaceTypeHandle)
+            spaceTypeHandle = acquireSpaceTypeEngine()
+          }
           const localFrame = (currentSec - startSec) * fps
           ctx.save()
           ctx.globalCompositeOperation = CANVAS_BLEND[clip.blend ?? 'normal'] ?? 'source-over'
