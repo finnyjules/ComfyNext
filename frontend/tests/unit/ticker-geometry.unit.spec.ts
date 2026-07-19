@@ -11,7 +11,7 @@ describe('tickerPoint', () => {
     expect(tickerPoint(1, base).x).toBeCloseTo(50, 6)
   })
   it('is flat when amplitude is zero', () => {
-    expect(tickerPoint(0.37, base).y).toBe(0)
+    expect(tickerPoint(0.37, base).y).toBeCloseTo(0, 12)
   })
   it('waves with amplitude and frequency', () => {
     const p = { ...base, amplitude: 5, frequency: 1 }
@@ -77,18 +77,22 @@ describe('buildTickerGeometryData', () => {
 
   it('emits monotonically increasing u', () => {
     const g = buildTickerGeometryData({ ...base, amplitude: 6 })
-    for (let i = 2; i < g.uvs.length; i += 4) expect(g.uvs[i]).toBeGreaterThan(g.uvs[i - 4])
+    for (let i = 4; i < g.uvs.length; i += 4) expect(g.uvs[i]).toBeGreaterThan(g.uvs[i - 4])
   })
 
   it('spaces u uniformly in ARC LENGTH, not in t — the anti-distortion property', () => {
     const g = buildTickerGeometryData({ ...base, amplitude: 6, segments: 600 })
-    const n = g.positions.length / 3
+    const sampleCount = g.positions.length / 6 // two verts per sample, 3 floats per vert
+    const centreline = (s: number) => ({
+      x: (g.positions[(2 * s) * 3] + g.positions[(2 * s + 1) * 3]) / 2,
+      y: (g.positions[(2 * s) * 3 + 1] + g.positions[(2 * s + 1) * 3 + 1]) / 2,
+    })
     let minR = Infinity, maxR = -Infinity
-    for (let i = 0; i < n - 2; i += 2) {
-      const dx = g.positions[(i + 2) * 3] - g.positions[i * 3]
-      const dy = g.positions[(i + 2) * 3 + 1] - g.positions[i * 3 + 1]
-      const seg = Math.hypot(dx, dy)
-      const du = g.uvs[(i + 2) * 2] - g.uvs[i * 2]
+    for (let s = 0; s < sampleCount - 1; s++) {
+      const p0 = centreline(s)
+      const p1 = centreline(s + 1)
+      const seg = Math.hypot(p1.x - p0.x, p1.y - p0.y)
+      const du = g.uvs[(2 * (s + 1)) * 2] - g.uvs[(2 * s) * 2]
       const ratio = du / seg
       if (ratio < minR) minR = ratio
       if (ratio > maxR) maxR = ratio
