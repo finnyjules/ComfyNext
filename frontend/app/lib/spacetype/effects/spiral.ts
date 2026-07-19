@@ -5,6 +5,7 @@ import { parseFills, fillShaderTexture, fillTiling, SRGB_TO_LINEAR_GLSL } from '
 import { defaultFillsFor } from '../palette'
 import { resolveFontFamily } from '~/data/google-fonts'
 import { buildSpiralGeometry } from '../spiralGeometry'
+import { stripAlpha } from '~/lib/color/convert'
 
 /**
  * SPIRAL (a.k.a. SPRING) — text wound as an edge-wound helix "slinky", inspired by
@@ -137,7 +138,7 @@ function makeFaceMaterial(three: typeof THREE, o: FaceOpts): THREE.ShaderMateria
       uGradRepeat: { value: o.gradRepeat },
       uText: { value: o.textTex },
       uHasText: { value: o.hasText },
-      uTextColor: { value: new three.Color(o.textColor) },
+      uTextColor: { value: new three.Color(stripAlpha(o.textColor)) },
       uTextRepeat: { value: o.textRepeat },
       uNoStripes: { value: o.noStripes },
       uTextFlip: { value: o.textFlip },
@@ -298,7 +299,7 @@ export const spiralEffect: SpaceTypeEffect = {
     const turnsPerLoop = Math.max(0, Math.round(n(params, 'speed')))
     const dir = String(params.spinDir ?? 'down') === 'up' ? -1 : 1
     state.spin.rotation.y = dir * t01 * turnsPerLoop * Math.PI * 2
-    state.front.uniforms.uTextColor!.value.set(String(params.textColor ?? '#ffffff'))
+    state.front.uniforms.uTextColor!.value.set(stripAlpha(String(params.textColor ?? '#ffffff')))
     state.front.uniforms.uNoStripes!.value = String(params.frontMode ?? 'text on band') === 'text only' ? 1 : 0
   },
 }

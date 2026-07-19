@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import { easeSpacing, rampScalar, driftQ, wrapFade, perspScale } from '../echoMath'
+import { stripAlpha } from '~/lib/color/convert'
 
 /**
  * ECHO — one string duplicated into a stack of copies ("a pile of papers").
@@ -166,7 +167,7 @@ export const echoEffect: SpaceTypeEffect = {
     for (let i = 0; i < total; i++) {
       const grp = new three.Group()
 
-      const cardMat = new three.MeshBasicMaterial({ color: new three.Color(String(params.cardColor)), side: three.DoubleSide })
+      const cardMat = new three.MeshBasicMaterial({ color: new three.Color(stripAlpha(String(params.cardColor))), side: three.DoubleSide })
       const card = new three.Mesh(new three.PlaneGeometry(1, 1), cardMat)
 
       const ink = makeInk(three, textTexture)
@@ -197,15 +198,15 @@ export const echoEffect: SpaceTypeEffect = {
     const curve = n(params, 'spacingCurve')
     const layout = String(params.layout)
     const padX = n(params, 'cardPadX'), padY = n(params, 'cardPadY')
-    const cardColor = new THREE.Color(String(params.cardColor))
+    const cardColor = new THREE.Color(stripAlpha(String(params.cardColor)))
     const cardOpacity = n(params, 'cardOpacity')
     const showBox = String(params.showBox) === 'on'
     const baseOnTop = String(params.zOrder) === 'base'
     const drift = Math.max(0, Math.round(n(params, 'driftSpeed')))
     const frac = drift > 0 ? (t01 * drift) % 1 : 0
 
-    const baseColor = new THREE.Color(String(params.baseColor))
-    const endColor = new THREE.Color(String(params.endColor))
+    const baseColor = new THREE.Color(stripAlpha(String(params.baseColor)))
+    const endColor = new THREE.Color(stripAlpha(String(params.endColor)))
     const baseOp = n(params, 'baseOpacity'), endOp = n(params, 'endOpacity')
     const baseStroke = n(params, 'baseStroke'), endStroke = n(params, 'endStroke')
     const baseScale = n(params, 'baseScale'), endScale = n(params, 'endScale')

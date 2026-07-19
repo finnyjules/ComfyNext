@@ -3,6 +3,7 @@ import type { Params, SpaceTypeEffect } from './effect'
 import type { TextTextureOptions } from './textTexture'
 import { makeTextTexture } from './textTexture'
 import { PostChain, DEFAULT_POST, postEnabled, type PostSettings } from './post'
+import { stripAlpha } from '~/lib/color/convert'
 
 export interface EngineOptions {
   effect: SpaceTypeEffect
@@ -99,7 +100,7 @@ export class SpaceTypeEngine {
       this.scene.background = null
       this.renderer.setClearColor(0x000000, 0)
     } else {
-      const c = new THREE.Color(this.opts.bgColor)
+      const c = new THREE.Color(stripAlpha(this.opts.bgColor))
       this.scene.background = c
       this.renderer.setClearColor(c, 1)
     }

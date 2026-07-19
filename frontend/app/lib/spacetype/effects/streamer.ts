@@ -5,6 +5,7 @@ import { parseFills, fillShaderTexture, fillTiling, SRGB_TO_LINEAR_GLSL } from '
 import { defaultFillsFor } from '../palette'
 import { resolveFontFamily } from '~/data/google-fonts'
 import { buildStreamerGeometry, buildRowLengths, serpentineVariedPoint, minimalRowPeriod } from '../streamerLayout'
+import { stripAlpha } from '~/lib/color/convert'
 
 /**
  * STREAMER — an open serpentine ribbon: long straight rows joined by 180° half-circle arcs,
@@ -142,13 +143,13 @@ function makeFaceMaterial(three: typeof THREE, o: FaceOpts): THREE.ShaderMateria
       uTile: { value: new three.Vector2(o.tile[0], o.tile[1]) },
       uText: { value: o.textTex },
       uHasText: { value: o.hasText },
-      uTextColor: { value: new three.Color(o.textColor) },
+      uTextColor: { value: new three.Color(stripAlpha(o.textColor)) },
       uScroll: { value: 0 },
       uTextRepeat: { value: o.textRepeat },
       uNoStripes: { value: o.noStripes },
       uStroke: { value: o.stroke },
       uStrokeU: { value: o.strokeU },
-      uStrokeColor: { value: new three.Color(o.strokeColor) },
+      uStrokeColor: { value: new three.Color(stripAlpha(o.strokeColor)) },
     },
   })
 }
@@ -288,7 +289,7 @@ export const streamerEffect: SpaceTypeEffect = {
     const backMat = makeFaceMaterial(three, {
       side: three.BackSide, faceTex: back.tex, gradMode: back.gradMode, tile: back.tile,
       textTex, hasText: 0, textColor: '#000000', textRepeat: 1, noStripes: 0,
-      stroke: strokeWidth, strokeU, strokeColor: String(params.backStrokeColor ?? '#000000'),
+      stroke: strokeWidth, strokeU, strokeColor: stripAlpha(String(params.backStrokeColor ?? '#000000')),
     })
 
     // Tie the text repeat to the geometry: fit a whole number of string-units into the period (so
@@ -319,8 +320,8 @@ export const streamerEffect: SpaceTypeEffect = {
 
       const frontMat = makeFaceMaterial(three, {
         side: three.FrontSide, faceTex: front.tex, gradMode: front.gradMode, tile: front.tile,
-        textTex, hasText: 1, textColor: String(params.textColor), textRepeat, noStripes,
-        stroke: strokeWidth, strokeU, strokeColor: String(params.frontStrokeColor ?? '#000000'),
+        textTex, hasText: 1, textColor: stripAlpha(String(params.textColor)), textRepeat, noStripes,
+        stroke: strokeWidth, strokeU, strokeColor: stripAlpha(String(params.frontStrokeColor ?? '#000000')),
       })
 
       const sub = new three.Group()
@@ -382,7 +383,7 @@ export const streamerEffect: SpaceTypeEffect = {
     // fractional part but is negligible at the slow end where the whole advance is tiny.
     const pct = Math.max(0, n(params, 'speed')) / 100
     const base = pct === 0 ? 0 : t01 * pct * state.periodArc
-    const tc = String(params.textColor)
+    const tc = stripAlpha(String(params.textColor))
     const ns = String(params.noStripes) === 'on' ? 1 : 0
     for (const inst of state.instances) {
       const s0 = base + inst.phase   // constant phase keeps the loop seamless, staggers the ribbons

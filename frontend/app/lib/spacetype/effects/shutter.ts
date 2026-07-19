@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import { parseFills, fillAtlasTexture, serializeFills, DEFAULT_FILL, SRGB_TO_LINEAR_GLSL } from '../fills'
 import { hash11, parseEase, holdFraction, sceneBlend } from '../motion'
+import { stripAlpha } from '~/lib/color/convert'
 
 /**
  * Shutter — geometric "speed lines" sliced typography.
@@ -201,7 +202,7 @@ export const shutterEffect: SpaceTypeEffect = {
 
     // Full-field background behind every word so the poster reads as one continuous colour
     // (the line gaps between words show this, not the studio backdrop).
-    const bgMat = new three.MeshBasicMaterial({ color: new three.Color(String(params.bgColor)) })
+    const bgMat = new three.MeshBasicMaterial({ color: new three.Color(stripAlpha(String(params.bgColor))) })
     const bgMesh = new three.Mesh(new three.PlaneGeometry(60, 60), bgMat)
     bgMesh.position.z = -0.5
     root.add(bgMesh)
@@ -218,14 +219,14 @@ export const shutterEffect: SpaceTypeEffect = {
         side: three.DoubleSide,
         uniforms: {
           uText: { value: tex },
-          uBg: { value: new three.Color(String(params.bgColor)) },
+          uBg: { value: new three.Color(stripAlpha(String(params.bgColor))) },
           uWf: { value: wf }, uVMid: { value: vmid }, uVH: { value: inkVH },
           uCopies: { value: 4 }, uSpacing: { value: 0.02 }, uStripes: { value: 22 },
           uThickA: { value: 0.32 }, uThickB: { value: 0.86 }, uProgress: { value: 1 },
           uColorMode: { value: 0 },
-          uTextColor: { value: new three.Color(String(params.textColor)) },
-          uPalA: { value: new three.Color(String(params.paletteA)) },
-          uPalB: { value: new three.Color(String(params.paletteB)) },
+          uTextColor: { value: new three.Color(stripAlpha(String(params.textColor))) },
+          uPalA: { value: new three.Color(stripAlpha(String(params.paletteA))) },
+          uPalB: { value: new three.Color(stripAlpha(String(params.paletteB))) },
           uFill: { value: fillTex }, uFillCount: { value: fillCount }, uFillTiling: { value: 1 },
         },
         vertexShader: VERT,
@@ -274,11 +275,11 @@ export const shutterEffect: SpaceTypeEffect = {
       u.uThickB!.value = thickB
       u.uProgress!.value = prog
       u.uColorMode!.value = mode
-      ;(u.uTextColor!.value as THREE.Color).set(String(params.textColor))
-      ;(u.uPalA!.value as THREE.Color).set(String(params.paletteA))
-      ;(u.uPalB!.value as THREE.Color).set(String(params.paletteB))
-      ;(u.uBg!.value as THREE.Color).set(String(params.bgColor))
+      ;(u.uTextColor!.value as THREE.Color).set(stripAlpha(String(params.textColor)))
+      ;(u.uPalA!.value as THREE.Color).set(stripAlpha(String(params.paletteA)))
+      ;(u.uPalB!.value as THREE.Color).set(stripAlpha(String(params.paletteB)))
+      ;(u.uBg!.value as THREE.Color).set(stripAlpha(String(params.bgColor)))
     }
-    s.bg.color.set(String(params.bgColor))
+    s.bg.color.set(stripAlpha(String(params.bgColor)))
   },
 }

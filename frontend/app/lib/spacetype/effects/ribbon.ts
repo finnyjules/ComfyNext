@@ -4,6 +4,7 @@ import { buildRibbonGeometryData, ribbonInstance, scrollOffset, textVariantForBa
 import { buildRibbonLabel } from '../ribbonMath'
 import { parseFills, fillShaderTexture, fillTiling, fillTextColor } from '../fills'
 import { defaultFillsFor } from '../palette'
+import { stripAlpha } from '~/lib/color/convert'
 
 const controls: ControlSpec[] = [
   { key: 'text', label: 'Text', kind: 'textList', default: 'Sailor', group: 'Type' },
@@ -150,7 +151,7 @@ export const ribbonEffect: SpaceTypeEffect = {
       const uFillScroll = { value: 0 }
       const frontMat = frontMaterial(three, tex, fillShaderTexture(three, fill), fillTiling(fill), fillTextColor(three, fill), uFillScroll, params)
       const backMat = new three.MeshBasicMaterial({
-        color: new three.Color(String(params.bSideColor)),
+        color: new three.Color(stripAlpha(String(params.bSideColor))),
         side: three.BackSide,
       })
 

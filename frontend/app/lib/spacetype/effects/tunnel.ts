@@ -4,6 +4,7 @@ import { parseFills, fillShaderTexture, fillTiling, fillTextColor, SRGB_TO_LINEA
 import { defaultFillsFor } from '../palette'
 import { resolveFontFamily } from '~/data/google-fonts'
 import { buildTunnelRing } from '../tunnelGeometry'
+import { stripAlpha } from '~/lib/color/convert'
 
 /**
  * TUNNEL — an infinite text tunnel (a swept-ring take on spacetypegenerator.com/layers; see the
@@ -251,7 +252,7 @@ function layoutTunnel(t01: number, params: Params): void {
 
   const vx = offX * OFFSET_WORLD, vy = offY * OFFSET_WORLD   // world position the tunnel converges to
   const strokeW = Math.max(0, n(params, 'strokeWidth'))
-  const strokeCol = String(params.strokeColor ?? '#000000')
+  const strokeCol = stripAlpha(String(params.strokeColor ?? '#000000'))
   // Perspective → shrink ratio (flat 0.95 → deep 0.63); Depth → Z spacing; Shadow → deepest darkness.
   const ratio = 0.95 - Math.min(100, Math.max(0, n(params, 'perspective'))) / 100 * 0.32
   const zStep = Math.max(0, n(params, 'depth'))

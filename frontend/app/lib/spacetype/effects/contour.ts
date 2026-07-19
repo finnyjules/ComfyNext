@@ -4,6 +4,7 @@ import { parseFills, fillShaderTexture, fillTiling, fillTextColor, SRGB_TO_LINEA
 import { defaultFillsFor } from '../palette'
 import { resolveFontFamily } from '~/data/google-fonts'
 import { frameEdgeSpecs } from '../contourFrame'
+import { stripAlpha } from '~/lib/color/convert'
 
 /**
  * CONTOUR — the faithful spacetypegenerator.com/layers clone (sibling to ./tunnel, which uses a
@@ -253,7 +254,7 @@ function layout(t01: number, params: Params): void {
   const flowDir = String(params.flowDir ?? 'clockwise') === 'counter' ? -1 : 1
   const scroll = flowDir * t01 * Math.max(0, Math.round(n(params, 'flowSpeed')))
   const strokeW = Math.max(0, n(params, 'strokeWidth'))
-  const strokeCol = String(params.strokeColor ?? '#000000')
+  const strokeCol = stripAlpha(String(params.strokeColor ?? '#000000'))
   // Perspective → geometric shrink ratio (flat 0.95 → deep 0.63); Depth → Z spacing; Shadow → how
   // dark the deepest frame goes. All live (read per frame, no rebuild).
   const ratio = 0.95 - Math.min(100, Math.max(0, n(params, 'perspective'))) / 100 * 0.32

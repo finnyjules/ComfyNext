@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
+import { stripAlpha } from '~/lib/color/convert'
 
 /**
  * Slit Scan — time-displacement typography.
@@ -217,8 +218,8 @@ export const slitScanEffect: SpaceTypeEffect = {
       side: three.DoubleSide,
       uniforms: {
         uText: { value: tex },
-        uTextColor: { value: new three.Color(String(params.textColor)) },
-        uBg: { value: new three.Color(String(params.bgColor)) },
+        uTextColor: { value: new three.Color(stripAlpha(String(params.textColor))) },
+        uBg: { value: new three.Color(stripAlpha(String(params.bgColor))) },
         uVMid: { value: inkVMid }, uVH: { value: inkVH }, uN: { value: numTexts },
         uWfArr: { value: wfArr }, uHSArr: { value: hsArr },
         uTileX: { value: tileX }, uTileY: { value: tileY },
@@ -269,7 +270,7 @@ export const slitScanEffect: SpaceTypeEffect = {
     u.uBandSpeed2!.value = Math.max(0, Math.round(num2('ssBandSpeed2', n(params, 'ssBandSpeed'))))
     u.uSpeedMode2!.value = String(params.ssSpeedMode2 ?? params.ssSpeedMode) === 'progressive' ? 1 : 0
     u.uEase2!.value = Math.min(1, Math.max(0, num2('ssEase2', n(params, 'ssEase'))))
-    ;(u.uTextColor!.value as THREE.Color).set(String(params.textColor))
-    ;(u.uBg!.value as THREE.Color).set(String(params.bgColor))
+    ;(u.uTextColor!.value as THREE.Color).set(stripAlpha(String(params.textColor)))
+    ;(u.uBg!.value as THREE.Color).set(stripAlpha(String(params.bgColor)))
   },
 }

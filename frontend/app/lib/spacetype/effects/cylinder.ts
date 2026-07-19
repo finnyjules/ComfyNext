@@ -5,6 +5,7 @@ import { resolveFontFamily, fontHasWeightAxis } from '~/data/google-fonts'
 import { parseFills, fillShaderTexture, fillIsTextured, fillTiling, fillPrimary } from '../fills'
 import { defaultFillsFor } from '../palette'
 import { textVariantForBand } from '../ribbonGeometry'
+import { stripAlpha } from '~/lib/color/convert'
 
 /**
  * CYLINDER — per-character ring (source-matched to spacetypegenerator.com/cylinder).
@@ -186,7 +187,7 @@ export const cylinderEffect: SpaceTypeEffect = {
     // BackSide quad (same geometry + glyph alphaMap, tinted `backColor`) fills the faces seen
     // from behind through the cylinder. Parented to the front mesh, so update()'s transform is
     // inherited for free — no extra per-frame work, one extra draw per glyph.
-    const backColor = new three.Color(String(params.backColor ?? '#101014'))
+    const backColor = new three.Color(stripAlpha(String(params.backColor ?? '#101014')))
 
     // Even angular distribution: glyphs are spread UNIFORMLY around the full ring by
     // index (gi/nGlyphs · 2π), NOT proportional to glyph width (matches STG). Each ring's

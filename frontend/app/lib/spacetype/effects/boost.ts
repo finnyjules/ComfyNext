@@ -8,6 +8,7 @@ import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import { ombreSideTexture } from '../fills'
 import { vessellColorsFor } from '../palette'
+import { stripAlpha } from '~/lib/color/convert'
 // Typeface fonts ship with three and import synchronously (no runtime TTF parsing).
 import helvetikerBold from 'three/examples/fonts/helvetiker_bold.typeface.json'
 import optimerBold from 'three/examples/fonts/optimer_bold.typeface.json'
@@ -243,7 +244,7 @@ function gridTexture(three: typeof THREE, cell: string, line: string): THREE.Tex
 function noiseTexture(three: typeof THREE, darkHex: string, lightHex: string): THREE.Texture {
   const key = `${darkHex}|${lightHex}`
   const hit = _noiseCache.get(key); if (hit) return hit
-  const dark = new three.Color(darkHex), light = new three.Color(lightHex)
+  const dark = new three.Color(stripAlpha(darkHex)), light = new three.Color(stripAlpha(lightHex))
   // Lower-res grain (chunkier texels) so it survives minification on the steep side walls
   // instead of averaging out to a flat mid-tone.
   const N = 64
@@ -392,7 +393,7 @@ export const boostEffect: SpaceTypeEffect = {
     const persp = Math.min(0.92, Math.max(0, n(params, 'extrudePerspective') / 100))
     const vx = n(params, 'convergeX') * 6, vy = n(params, 'convergeY') * 6   // convergence point (world)
     const centerGlow = Math.min(1, Math.max(0, n(params, 'centerGlow') / 100))
-    const centerColor = new three.Color(String(params.centerColor))
+    const centerColor = new three.Color(stripAlpha(String(params.centerColor)))
     const arcAmt = n(params, 'arc')
 
     const lines = String(params.text ?? '').split('\n')
@@ -401,9 +402,9 @@ export const boostEffect: SpaceTypeEffect = {
     const paletteCount = Math.max(1, Math.min(6, Math.floor(n(params, 'paletteCount'))))
     const palette = [
       params.boostColor1, params.boostColor2, params.boostColor3, params.boostColor4, params.boostColor5, params.boostColor6,
-    ].slice(0, paletteCount).map(c => new three.Color(String(c)))
-    const faceColor = new three.Color(String(params.faceColor))
-    const sideSolid = new three.Color(String(params.sideColor))
+    ].slice(0, paletteCount).map(c => new three.Color(stripAlpha(String(c))))
+    const faceColor = new three.Color(stripAlpha(String(params.faceColor)))
+    const sideSolid = new three.Color(stripAlpha(String(params.sideColor)))
     const sideMode = String(params.sideMode)
     const depthBands = Math.max(2, Math.floor(n(params, 'depthBands')))
     const gridCell = String(params.gridCell), gridLine = String(params.gridLine)
@@ -445,7 +446,7 @@ export const boostEffect: SpaceTypeEffect = {
     const lit = String(params.shadows) === 'lit'
     const MatClass = lit ? three.MeshLambertMaterial : three.MeshBasicMaterial
     const strokeOn = String(params.stroke) === 'on'
-    const strokeColor = new three.Color(String(params.strokeColor))
+    const strokeColor = new three.Color(stripAlpha(String(params.strokeColor)))
     const strokeWidth = Math.max(0.002, n(params, 'strokeWidth'))
 
     const blockH = (usable.length - 1) * leading

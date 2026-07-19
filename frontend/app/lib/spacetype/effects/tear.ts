@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
+import { stripAlpha } from '~/lib/color/convert'
 
 /**
  * Tear — a sliced / fluted-glass displacement effect.
@@ -115,8 +116,8 @@ export const tearEffect: SpaceTypeEffect = {
       side: three.DoubleSide,
       uniforms: {
         uText: { value: tex },
-        uTextColor: { value: new three.Color(String(params.textColor)) },
-        uBg: { value: new three.Color(String(params.bgColor)) },
+        uTextColor: { value: new three.Color(stripAlpha(String(params.textColor))) },
+        uBg: { value: new three.Color(stripAlpha(String(params.bgColor))) },
         uWf: { value: wf }, uVMid: { value: inkVMid }, uVH: { value: inkVH },
         uAmount: { value: 0.05 }, uFreq: { value: 12 }, uPhase: { value: 0 },
         uSpeed: { value: 2 }, uTime: { value: 0 },
@@ -148,7 +149,7 @@ export const tearEffect: SpaceTypeEffect = {
     u.uEdge!.value = Math.max(0, n(params, 'tearEdge'))
     u.uOverlap!.value = Math.max(0, n(params, 'tearOverlap'))
     u.uSlant!.value = n(params, 'tearSlant')
-    ;(u.uTextColor!.value as THREE.Color).set(String(params.textColor))
-    ;(u.uBg!.value as THREE.Color).set(String(params.bgColor))
+    ;(u.uTextColor!.value as THREE.Color).set(stripAlpha(String(params.textColor)))
+    ;(u.uBg!.value as THREE.Color).set(stripAlpha(String(params.bgColor)))
   },
 }

@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { stripAlpha } from '~/lib/color/convert'
 
 /**
  * String effect texture tiles (STG /string textures.js).
@@ -64,8 +65,8 @@ function lerpKnots(knots: string[], t: number): string {
   const seg = 1 / (c.length - 1)
   const i = Math.min(c.length - 2, Math.floor(t / seg))
   const local = (t - i * seg) / seg
-  const a = new THREE.Color(c[i]!)
-  const b = new THREE.Color(c[i + 1]!)
+  const a = new THREE.Color(stripAlpha(c[i]!))
+  const b = new THREE.Color(stripAlpha(c[i + 1]!))
   const r = a.clone().lerp(b, Math.max(0, Math.min(1, local)))
   return `#${r.getHexString()}`
 }
