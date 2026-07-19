@@ -1,0 +1,102 @@
+// frontend/app/lib/engine/spaceTypeClipBake.ts
+/** Bake a Space Type clip to PNG frames for the Python export path, which
+ *  cannot run three.js.
+ *
+ *  We bake ONE seamless cycle — k loops, where k comes from loopMultiplier so
+ *  every motion rate completes whole cycles — and let the exporter tile it. A
+ *  6s loop on a 60s clip is 180 frames, not 1800.
+ *
+ *  The cache key deliberately EXCLUDES clip placement, trim, opacity and
+ *  keyframes: those composite at export time, so moving or fading a clip must
+ *  not invalidate the bake. It deliberately INCLUDES post-processing,
+ *  projection, pan and the gradient — see bakeCfg. */
+import type { SpaceTypeClip, MotionBake } from '~~/shared/timeline/types'
+import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
+import { getEffect } from '~/lib/spacetype/effects/index'
+import { loopMultiplier } from '~/lib/spacetype/loop'
+import { dimsFromKey } from '~/lib/spacetype/state'
+import { spaceTypeSourceFrameCount } from '~/composables/timelineSpaceTypeClip'
+import { renderSpaceTypeClipToCanvas } from './spaceTypeClipRenderer'
+import { acquireSpaceTypeEngine, releaseSpaceTypeEngine } from './spaceTypeEnginePool'
+
+/** k, the number of loops needed for every motion rate to close cleanly. */
+export function spaceTypeLoopMultiplier(clip: SpaceTypeClip): number {
+  const effect = getEffect(clip.state.effectId)
+  const rates = effect.loopRates?.(clip.state.params) ?? []
+  return loopMultiplier(rates)
+}
+
+/** Frames in one seamless bake cycle (k whole loops). */
+export function spaceTypeBakeFrameCount(clip: SpaceTypeClip): number {
+  return spaceTypeSourceFrameCount(clip) * spaceTypeLoopMultiplier(clip)
+}
+
+/** The hashed bake input.
+ *
+ *  post / projection / pan / gradient MUST be in here. `spaceTypeSourceKey`'s
+ *  own SourceKeyInput omits them, which is fine for the studio's mp4 button
+ *  (it always re-bakes) but wrong here: this bake is cached and skipped on a
+ *  key match, so a user who changed bloom, exposure or pan would export stale
+ *  frames showing the OLD look, silently. Folding them into the hashed params
+ *  bag is the cheapest correct fix — the key is opaque, so extra entries only
+ *  ever cause a (correct) re-bake. */
+export function bakeCfg(clip: SpaceTypeClip) {
+  const [W, H] = dimsFromKey(clip.state.dimsKey)
+  const k = spaceTypeLoopMultiplier(clip)
+  return {
+    effectId: clip.state.effectId,
+    params: {
+      ...clip.state.params,
+      __post: JSON.stringify(clip.state.post ?? null),
+      __projection: clip.state.projection ?? 'perspective',
+      __pan: `${clip.state.panX ?? 0},${clip.state.panY ?? 0}`,
+      __gradient: JSON.stringify(clip.state.gradientStops ?? []),
+    },
+    fps: clip.state.fps,
+    loopDuration: clip.state.loopDuration * k,   // k loops in one bake
+    W,
+    H,
+    alpha: clip.state.transparent,
+    bgColor: clip.state.bgColor,
+  }
+}
+
+async function canvasToPngBlob(canvas: HTMLCanvasElement): Promise<Blob> {
+  return await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob(
+      b => b ? resolve(b) : reject(new Error('space type bake: toBlob returned null')),
+      'image/png',
+    )
+  })
+}
+
+/** Bake if missing or stale. Returns a MotionBake with external: true, so the
+ *  export-side skip in TimelineEditor leaves these frames alone (they were not
+ *  produced from a MotionClip text layer). */
+export async function ensureSpaceTypeClipBake(
+  clip: SpaceTypeClip,
+  onProgress?: (done: number, total: number) => void,
+): Promise<MotionBake> {
+  const cfg = bakeCfg(clip)
+  // Acquire ONCE for the whole bake, release in `finally` — never per frame.
+  // See the ownership contract at the top of spaceTypeEnginePool.ts.
+  const handle = acquireSpaceTypeEngine()
+  if (!handle) throw new Error(`space type bake: no WebGL2 — cannot bake clip ${clip.id}`)
+  try {
+    const bake = await ensureSpaceTypeBake(cfg, clip.spacetype_bake, {
+      renderFrame: async (index: number) => {
+        // A bake index is a SOURCE index, not a clip-local one: baking through
+        // the clip's own trim would shift every frame by in_frame and desync
+        // the export from the live preview.
+        const src = { ...clip, in_frame: 0, loop: true } as SpaceTypeClip
+        const canvas = renderSpaceTypeClipToCanvas(handle, src, index, clip.state.fps)
+        if (!canvas) throw new Error(`space type bake: engine unavailable at frame ${index} of clip ${clip.id}`)
+        return await canvasToPngBlob(canvas)
+      },
+      onProgress,
+    })
+    return { ...bake, external: true }
+  } finally {
+    releaseSpaceTypeEngine(handle)
+  }
+}
