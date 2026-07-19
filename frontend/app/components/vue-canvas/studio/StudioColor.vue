@@ -4,7 +4,7 @@
 // Teleported to <body> + fixed-positioned so it escapes the section cards' overflow:hidden.
 import { ref, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { Pipette } from 'lucide-vue-next'
-import { clampHex, isHex, hexToRgb, rgbToHex, rgbToHsv, hsvToRgb, rgbToOklch, oklchToRgb } from './color'
+import { clampHex, isHex, isHexA, parseHexA, withAlpha, hexToRgb, rgbToHex, rgbToHsv, hsvToRgb, rgbToOklch, oklchToRgb } from './color'
 
 const model = defineModel<string>({ required: true })
 
@@ -12,14 +12,38 @@ const open = ref(false)
 const trigger = ref<HTMLElement | null>(null)
 const popStyle = ref<Record<string, string>>({})
 const h = ref(0), s = ref(0), v = ref(0)
+// Alpha rides alongside the hue/sat/val trio. The model may be 6-digit (opaque, the legacy
+// form) or 8-digit; `base` is always the 6-digit part, because every colour-math helper below
+// runs through clampHex, which rejects 8-digit and would silently return black.
+const alpha = ref(1)
+const base = computed(() => parseHexA(model.value).hex)
+/** Write a 6-digit hex back to the model with the current alpha re-applied.
+ *  withAlpha emits 6-digit when alpha is 1, so opaque colours stay byte-identical to before. */
+function emit(hex6: string) { model.value = withAlpha(hex6, alpha.value) }
+
+// A checkerboard behind any swatch, so a translucent colour reads as translucent.
+const CHECKER = 'background-image:linear-gradient(45deg,#555 25%,transparent 25%),linear-gradient(-45deg,#555 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#555 75%),linear-gradient(-45deg,transparent 75%,#555 75%);background-size:8px 8px;background-position:0 0,0 4px,4px -4px,-4px 0px;background-color:#888'
 const MODES = ['hex', 'rgb', 'oklch'] as const
 const mode = ref<typeof MODES[number]>('hex')
 
 const inputCls = 'w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-1.5 py-1 text-center font-mono text-xs text-white/85 outline-none focus-visible:ring-2 focus-visible:ring-white/20'
 
 const hueColor = computed(() => { const [r, g, b] = hsvToRgb(h.value, 1, 1); return rgbToHex(r, g, b) })
-function pushModel() { const [r, g, b] = hsvToRgb(h.value, s.value, v.value); model.value = rgbToHex(r, g, b) }
-function syncFromModel() { const [r, g, b] = hexToRgb(model.value); const [hh, ss, vv] = rgbToHsv(r, g, b); h.value = hh; s.value = ss; v.value = vv }
+function pushModel() { const [r, g, b] = hsvToRgb(h.value, s.value, v.value); emit(rgbToHex(r, g, b)) }
+/** Sync the h/s/v/alpha refs from an EXPLICIT colour rather than re-reading the model.
+ *  Callers that just wrote to `model` must use this: `model` is a defineModel, so reading it
+ *  back in the same tick can still return the pre-assignment value, which would clobber the
+ *  alpha that was just set. (Observed live: typing an 8-digit hex snapped alpha to 0.) */
+function syncFrom(hex6: string, a: number) {
+  alpha.value = a
+  const [r, g, b] = hexToRgb(hex6); const [hh, ss, vv] = rgbToHsv(r, g, b); h.value = hh; s.value = ss; v.value = vv
+}
+function syncFromModel() { const { hex, alpha: a } = parseHexA(model.value); syncFrom(hex, a) }
+/** 0–100 proxy for the alpha slider. Re-emits the current colour at the new alpha. */
+const alphaPct = computed({
+  get: () => Math.round(alpha.value * 100),
+  set: (val: number) => { alpha.value = Math.min(1, Math.max(0, (Number(val) || 0) / 100)); emit(base.value) },
+})
 
 // The hex field is a DRAFT while you type. Committing per keystroke would run
 // clampHex mid-entry, and clampHex turns anything incomplete into #000000 — so
@@ -33,19 +57,21 @@ function onHexInput(e: Event) { hexDraft.value = (e.target as HTMLInputElement).
 function commitHex() {
   const draft = hexDraft.value
   hexDraft.value = null
-  if (draft === null || !isHex(draft)) return
-  model.value = clampHex(draft)
-  syncFromModel()
+  if (draft === null) return
+  // 8-digit is accepted so alpha can be typed directly; it carries its own alpha, so it is
+  // written through verbatim rather than having the slider's current alpha re-applied.
+  if (isHexA(draft)) { const { hex, alpha: a } = parseHexA(draft); model.value = withAlpha(hex, a); syncFrom(hex, a) }
+  else if (isHex(draft)) { const hex = clampHex(draft); emit(hex); syncFrom(hex, alpha.value) }
 }
 
 // RGB channel proxies (0–255).
 function rgbChannel(i: number) {
   return computed({
-    get: () => hexToRgb(model.value)[i]!,
+    get: () => hexToRgb(base.value)[i]!,
     set: (val: number) => {
-      const c = hexToRgb(model.value)
+      const c = hexToRgb(base.value)
       c[i] = Math.min(255, Math.max(0, Math.round(Number(val) || 0)))
-      model.value = rgbToHex(c[0], c[1], c[2]); syncFromModel()
+      const hex = rgbToHex(c[0], c[1], c[2]); emit(hex); syncFrom(hex, alpha.value)
     },
   })
 }
@@ -55,12 +81,12 @@ const rCh = rgbChannel(0), gCh = rgbChannel(1), bCh = rgbChannel(2)
 const round = (n: number, d: number) => { const p = 10 ** d; return Math.round(n * p) / p }
 function oklchChannel(i: number, decimals: number) {
   return computed({
-    get: () => round(rgbToOklch(...hexToRgb(model.value))[i]!, decimals),
+    get: () => round(rgbToOklch(...hexToRgb(base.value))[i]!, decimals),
     set: (val: number) => {
-      const o = rgbToOklch(...hexToRgb(model.value))
+      const o = rgbToOklch(...hexToRgb(base.value))
       o[i] = Math.max(0, Number(val) || 0)
       const [r, g, b] = oklchToRgb(o[0], o[1], o[2])
-      model.value = rgbToHex(r, g, b); syncFromModel()
+      const hex = rgbToHex(r, g, b); emit(hex); syncFrom(hex, alpha.value)
     },
   })
 }
@@ -71,7 +97,7 @@ onMounted(() => { hasEyeDropper.value = typeof window !== 'undefined' && 'EyeDro
 async function pickEye() {
   try {
     const res = await new (window as unknown as { EyeDropper: new () => { open(): Promise<{ sRGBHex: string }> } }).EyeDropper().open()
-    if (res?.sRGBHex) { model.value = clampHex(res.sRGBHex); syncFromModel() }
+    if (res?.sRGBHex) { const hex = clampHex(res.sRGBHex); emit(hex); syncFrom(hex, alpha.value) }
   } catch { /* cancelled */ }
 }
 
@@ -143,8 +169,10 @@ function dragHue(e: PointerEvent) {
 
 <template>
   <button ref="trigger" type="button" @click="open ? close() : openPicker()"
-          class="h-7 w-7 shrink-0 rounded-md border border-white/15"
-          :style="{ background: model }" :aria-label="`Color ${model}`"></button>
+          class="relative h-7 w-7 shrink-0 overflow-hidden rounded-md border border-white/15"
+          :style="CHECKER" :aria-label="`Color ${model}`">
+    <span class="absolute inset-0" :style="{ background: model }"></span>
+  </button>
 
   <Teleport to="body">
     <div v-if="open" data-studio-color-pop :style="popStyle"
@@ -161,12 +189,26 @@ function dragHue(e: PointerEvent) {
         <span class="pointer-events-none absolute top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow"
               :style="{ left: `${h / 360 * 100}%`, background: hueColor }"></span>
       </div>
+      <!-- Alpha track: the colour ramped to fully transparent, over a checkerboard. -->
+      <div class="relative mb-2.5 h-3 w-full rounded-full" :style="CHECKER">
+        <div class="absolute inset-0 rounded-full"
+             :style="{ background: `linear-gradient(to right, ${base}00, ${base})` }"></div>
+        <input v-model.number="alphaPct" type="range" min="0" max="100" step="1"
+               aria-label="Alpha"
+               class="absolute inset-0 h-full w-full cursor-pointer appearance-none bg-transparent" />
+        <span class="pointer-events-none absolute top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow"
+              :style="{ left: `${alphaPct}%` }"></span>
+      </div>
       <div class="mb-2 flex items-center gap-1.5">
         <button v-if="hasEyeDropper" type="button" @click="pickEye" aria-label="Pick color from screen"
                 class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-white/[0.08] bg-white/[0.04] text-white/70 hover:text-white">
           <Pipette class="h-3.5 w-3.5" />
         </button>
-        <span class="h-7 w-7 shrink-0 rounded-md border border-white/10" :style="{ background: model }"></span>
+        <button type="button" @click="alphaPct = 0" aria-label="Make transparent"
+                class="shrink-0 rounded-md border border-white/[0.08] bg-white/[0.04] px-1.5 py-1 text-[10px] text-white/55 hover:text-white">Clear</button>
+        <span class="relative h-7 w-7 shrink-0 overflow-hidden rounded-md border border-white/10" :style="CHECKER">
+          <span class="absolute inset-0" :style="{ background: model }"></span>
+        </span>
         <div class="flex flex-1 rounded-md bg-white/[0.05] p-0.5">
           <button v-for="mo in MODES" :key="mo" type="button" @click="mode = mo"
                   class="flex-1 rounded px-1 py-1 text-[10px] uppercase transition-colors"
