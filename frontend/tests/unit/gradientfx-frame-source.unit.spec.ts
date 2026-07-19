@@ -68,4 +68,61 @@ describe('makeGradientFrameSource', () => {
     speed = 70
     expect(src.duration).toBe(6)
   })
+
+  it('reports the config duration when motion tracks AND flow.speed > 0 are both present', () => {
+    const src = makeGradientFrameSource({
+      getConfig: () => cfg({
+        motion: { tracks: [{ path: 'flow.angle' }], duration: 5, fps: 24, size: 1080 },
+        flow: { speed: 50 },
+      }),
+      render: () => ({} as any),
+    })
+    expect(src.duration).toBe(5)
+    expect(src.fps).toBe(24)
+  })
+
+  it('reports width as motion.size', () => {
+    const src = makeGradientFrameSource({ getConfig: () => cfg(), render: () => ({} as any) })
+    expect(src.width).toBe(1080)
+  })
+
+  it('reports height aspect-corrected for a non-square aspect', () => {
+    const src = makeGradientFrameSource({
+      getConfig: () => cfg({ canvas: { aspect: '16:9' }, motion: { tracks: [], duration: 6, fps: 30, size: 1080 } }),
+      render: () => ({} as any),
+    })
+    // 1080 / (16/9) = 607.5, rounded to 608 -- must NOT equal width (the square-forcing bug).
+    expect(src.height).toBe(608)
+    expect(src.width).toBe(1080)
+  })
+
+  it('reports height equal to width for a square aspect', () => {
+    const src = makeGradientFrameSource({
+      getConfig: () => cfg({ canvas: { aspect: '1:1' } }),
+      render: () => ({} as any),
+    })
+    expect(src.height).toBe(src.width)
+  })
+
+  it('width/height are lazy getters that reflect config edits between reads', () => {
+    let aspect = '16:9'
+    const src = makeGradientFrameSource({
+      getConfig: () => cfg({ canvas: { aspect } }),
+      render: () => ({} as any),
+    })
+    expect(src.height).toBe(608)
+    aspect = '1:1'
+    expect(src.height).toBe(1080)
+  })
+
+  it('does not throw and yields a finite positive height when canvas.aspect is missing', () => {
+    const src = makeGradientFrameSource({
+      getConfig: () => cfg({ canvas: {} }),
+      render: () => ({} as any),
+    })
+    let height: number = NaN
+    expect(() => { height = src.height }).not.toThrow()
+    expect(Number.isFinite(height)).toBe(true)
+    expect(height).toBeGreaterThan(0)
+  })
 })

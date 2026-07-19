@@ -6,6 +6,7 @@
 // `render` is injected so this stays unit-testable with no WebGL context.
 
 import type { StudioFrameSource } from '~/lib/studio/frameSource'
+import { aspectRatio } from '~/lib/gradientfx/types'
 
 export interface GradientFrameDeps {
   getConfig: () => any
@@ -34,7 +35,14 @@ export function makeGradientFrameSource(deps: GradientFrameDeps): StudioFrameSou
     get duration() { return clock().duration },
     get fps() { return clock().fps },
     get width() { return deps.getConfig()?.motion?.size ?? 1080 },
-    get height() { return deps.getConfig()?.motion?.size ?? 1080 },
+    // aspectRatio() takes a string and calls .split on it — cfg.canvas may be
+    // partial/absent on a fresh or migrating config, so guard the argument
+    // (not just the result) before it ever reaches that call.
+    get height() {
+      const size = deps.getConfig()?.motion?.size ?? 1080
+      const ar = aspectRatio(deps.getConfig()?.canvas?.aspect ?? '1:1') || 1
+      return Math.max(1, Math.round(size / ar))
+    },
     getFrame: async (t01, w, h) => {
       const cfg = deps.getConfig()
       // The registry speaks normalized 0..1; the renderer takes absolute seconds.
