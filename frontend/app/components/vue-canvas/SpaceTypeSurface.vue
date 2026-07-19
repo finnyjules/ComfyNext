@@ -40,6 +40,8 @@ import { typeCompatible } from '~/lib/collection/bindables'
 import { addSweepRows } from '~/lib/collection/model'
 import { COLLECTION_PROP, VARS_TYPE, type CollectionColumn, type CollectionData } from '~/lib/collection/types'
 import { registerStudioParamBaker, unregisterStudioParamBaker } from '~/lib/studio/cascade'
+import { registerStudioFrameSource, unregisterStudioFrameSource } from '~/lib/studio/frameSource'
+import { makeSpaceTypeFrameSource } from '~/lib/spacetype/frameSource'
 import { effectiveColumns, makeLookupResolver } from '~/lib/collection/lookup'
 import SweepPopover from '~/components/vue-canvas/studio/SweepPopover.vue'
 
@@ -693,11 +695,23 @@ onMounted(async () => {
   rebuild()
   startPreview()
   registerStudioParamBaker(props.nodeId, renderBlobWithOverrides)
+  // Published only once the engine exists — the WebGL bail-out above returns
+  // early, so an unavailable engine simply never registers and downstream
+  // consumers fall through to this studio's baked artifact instead.
+  registerStudioFrameSource(props.nodeId, makeSpaceTypeFrameSource({
+    getClock: () => ({ duration: loopDuration.value, fps: fps.value, width: W.value, height: H.value }),
+    renderAt: (t01) => {
+      if (!engine || !canvas.value) return null
+      engine.renderFrameAt(t01, params)
+      return canvas.value
+    },
+  }))
 })
 
 onBeforeUnmount(() => {
   saveConfig(); if (rebuildRaf) cancelAnimationFrame(rebuildRaf); stopPreview(); engine?.dispose(); engine = null
   unregisterStudioParamBaker(props.nodeId)
+  unregisterStudioFrameSource(props.nodeId)
 })
 
 // Global view keys are live for every effect (camera/scene transform read per frame).
