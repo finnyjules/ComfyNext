@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import { parseFills, fillPrimary, fillTextColor } from '../fills'
 import { defaultFillsFor } from '../palette'
+import { stripAlpha } from '~/lib/color/convert'
 import { resolveFontFamily, fontHasWeightAxis } from '~/data/google-fonts'
 import { charDeform, TAU, type DeformParams } from '../elasticDeform'
 
@@ -235,7 +236,10 @@ export const elasticEffect: SpaceTypeEffect = {
     state.uniforms.uPoly.value = n(params, 'polygonal')
     state.uniforms.uWarpScale.value = n(params, 'warpScale')
     const fill = parseFills(params.fills)[0]!
-    state.uniforms.uFillColor.value.set(fillPrimary(THREE, fill))
-    state.uniforms.uTextColor.value.set(fillTextColor(THREE, fill))
+    // .set() accepts a hex string directly — avoids allocating a throwaway THREE.Color every
+    // frame just to copy its r/g/b into the existing uniform and discard it (fillPrimary/
+    // fillTextColor are still used at construction time above, where a real Color is needed).
+    state.uniforms.uFillColor.value.set(stripAlpha(fill.a))
+    state.uniforms.uTextColor.value.set(stripAlpha(fill.textColor))
   },
 }
