@@ -61,9 +61,25 @@ text rides the path and rotates with the tangent instead of being distorted by i
 
 ### Known consequences
 
-- **Arc length exceeds straight-line length** as amplitude rises. Hold glyph size
-  constant and scale `uRepeat` with arc length, so increasing the wave adds text
-  repeats rather than distorting glyphs.
+- **Arc length exceeds straight-line length** as amplitude rises — roughly +30% at
+  high amplitude and frequency. Hold glyph size constant and scale `uRepeat` with
+  arc length, so increasing the wave adds text repeats rather than resizing glyphs.
+
+  `uRepeat` is deliberately left **fractional**; do not round it. Because `u` runs
+  0 → `uRepeat` monotonically from one end of the band to the other, the fractional
+  remainder is a partial copy truncated at the band's end — where glyphs are already
+  scrolling out of view — not a discontinuity mid-band. Rounding to whole repeats
+  would require a compensating glyph-size nudge, which pops visibly as the rounded
+  count ticks over while dragging the wave slider.
+
+  This holds only for an **open** band. If a closed-ring band mode is ever added,
+  the two ends meet and a fractional `uRepeat` becomes a visible hard seam; that
+  mode would need whole-repeat quantization.
+
+  The rejected alternative — holding the repeat count fixed and letting glyphs
+  scale — makes glyph size *grow* with wave amplitude (a longer path gives each
+  glyph more room), coupling the wave and type-size controls. Rejected for that
+  coupling, not for the scale direction.
 - **Self-intersection** occurs at high `amplitude * frequency` on tight bends.
   Clamp the amplitude/frequency product. Do not build a miter-joint solver.
 
