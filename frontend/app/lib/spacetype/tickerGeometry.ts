@@ -61,7 +61,7 @@ export function buildTickerGeometryData(p: TickerGeoParams): TickerGeoData {
   for (let i = 0; i <= n; i++) {
     const c = tickerPoint(i / n, q)
     pts.push(c)
-    if (i > 0) cum[i] = cum[i - 1] + Math.hypot(c.x - pts[i - 1]!.x, c.y - pts[i - 1]!.y)
+    if (i > 0) cum[i] = cum[i - 1]! + Math.hypot(c.x - pts[i - 1]!.x, c.y - pts[i - 1]!.y)
   }
   const arcLength = cum[n]!
   const uRepeatEffective = p.uRepeat * (arcLength / Math.max(1e-6, p.length))
