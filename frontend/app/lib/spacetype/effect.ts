@@ -57,6 +57,8 @@ export interface BuildEnv { width: number; height: number; axes?: Record<string,
 export interface SpaceTypeEffect {
   id: string
   label: string
+  /** Hidden effects stay registered (saved configs still resolve) but don't appear in the picker. */
+  hidden?: boolean
   controls: ControlSpec[]
   /** Build the scene root. Called when the effect or any structural param changes. */
   buildScene(three: typeof THREE, params: Params, textTexture: THREE.Texture, env?: BuildEnv): THREE.Object3D
