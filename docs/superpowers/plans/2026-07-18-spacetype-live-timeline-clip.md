@@ -27,12 +27,20 @@
 ### Task 1: The `spacetype` clip kind
 
 **Files:**
+- Create: `frontend/shared/spacetype/state.ts` (the serialization-boundary types, moved out of app)
+- Modify: `frontend/app/lib/spacetype/state.ts` (re-export `SpaceTypeState` from shared)
+- Modify: `frontend/app/lib/spacetype/effect.ts` (re-export `Params` from shared)
+- Modify: `frontend/app/lib/spacetype/post.ts` (re-export `PostSettings` from shared)
 - Modify: `frontend/shared/timeline/types.ts` (add `SpaceTypeClip`, extend the `Clip` union)
 - Create: `frontend/app/composables/timelineSpaceTypeClip.ts`
 - Create: `frontend/tests/unit/spacetype-clip-types.unit.spec.ts`
 
 **Interfaces:**
-- Consumes: `BaseClip`, `MotionBake` from `shared/timeline/types.ts`; `SpaceTypeState` and `defaultSpaceTypeState()` from `app/lib/spacetype/state.ts`; `spaceTypeSourceKey` from `app/lib/spacetype/sourceKey.ts`.
+- Consumes: `BaseClip`, `MotionBake` from `shared/timeline/types.ts`; `defaultSpaceTypeState()` from `app/lib/spacetype/state.ts`; `spaceTypeSourceKey` from `app/lib/spacetype/sourceKey.ts`.
+
+> **Why the type moves to `shared/` first.** `frontend/shared/` currently has **zero** imports from `app/` — verified by grep, the invariant holds across the whole directory. `SpaceTypeClip.state` crosses the serialization boundary (it is sent to the Python renderer as JSON), so its type belongs in `shared/`, not behind an `app → shared` back-edge. This matters concretely: the ledger records a pre-existing Nitro resolve failure in `shared/timeline/interpolate.ts`, and adding the first `shared → app` dependency edge into that file family is not a risk worth taking for a type alias.
+>
+> The move is clean because `SpaceTypeState`, `Params`, and `PostSettings` are all plain structural types — booleans, numbers, strings, and a small object array. **No three.js type crosses into `shared/`.** Verify this before and after: `grep -rn "three" frontend/shared/` must stay empty.
 - Produces, relied on by every later task:
   - `interface SpaceTypeClip extends BaseClip` with `kind: 'spacetype'`, `state: SpaceTypeState`, `loop?: boolean`, `origin?: { node_id: string; state_key: string }`, `spacetype_bake?: MotionBake`
   - `Clip` union gains `| SpaceTypeClip`
@@ -118,7 +126,73 @@ describe('spaceTypeClipIsStale', () => {
 Run: `cd frontend && npx vitest run tests/unit/spacetype-clip-types.unit.spec.ts`
 Expected: FAIL — `Failed to resolve import "../../app/composables/timelineSpaceTypeClip"`
 
-- [ ] **Step 3: Add the type**
+- [ ] **Step 3: Move the boundary types into `shared/`**
+
+Create `frontend/shared/spacetype/state.ts`:
+
+```ts
+// frontend/shared/spacetype/state.ts
+/** Space Type types that cross the serialization boundary.
+ *
+ *  These live in shared/ (not app/) because SpaceTypeClip.state is part of
+ *  EditState, which is sent to the Python renderer as JSON. shared/ must never
+ *  import from app/ — that invariant holds across this whole directory and the
+ *  Nitro build is already fragile here.
+ *
+ *  All three types are plain structural data. Nothing from three.js belongs in
+ *  this file, ever. */
+
+export type ParamValue = number | string | boolean
+export type Params = Record<string, ParamValue>
+
+export interface PostSettings {
+  bloom: boolean; bloomStrength: number; bloomRadius: number; bloomThreshold: number
+  color: boolean; exposure: number; contrast: number; saturation: number; hue: number
+  chroma: boolean; chromaAmount: number
+  blur: boolean; blurAmount: number
+}
+
+export interface SpaceTypeState {
+  effectId: string
+  params: Params
+  gradientStops: { color: string; on: boolean }[]
+  fps: number
+  loopDuration: number
+  dimsKey: string
+  transparent: boolean
+  bgColor: string
+  post?: PostSettings
+  projection?: 'perspective' | 'isometric'
+  panX?: number
+  panY?: number
+}
+```
+
+Now delete the three declarations from their current homes and re-export instead, so every existing importer keeps working unchanged:
+
+- `frontend/app/lib/spacetype/effect.ts` — delete the `ParamValue` and `Params` declarations (currently lines 3-4), add at the top:
+  ```ts
+  export type { ParamValue, Params } from '~~/shared/spacetype/state'
+  ```
+- `frontend/app/lib/spacetype/post.ts` — delete the `PostSettings` interface (currently lines 14-19), add at the top:
+  ```ts
+  export type { PostSettings } from '~~/shared/spacetype/state'
+  ```
+  `DEFAULT_POST` and `postEnabled` stay in `post.ts` — only the type moves.
+- `frontend/app/lib/spacetype/state.ts` — delete the `SpaceTypeState` interface (currently lines 9-22), add beside the existing imports:
+  ```ts
+  export type { SpaceTypeState } from '~~/shared/spacetype/state'
+  ```
+  Everything else in `state.ts` (`DIMS`, `defaultSpaceTypeState`, `dimsFromKey`, `ensureSpaceTypeFont`, `texOptsFromState`) stays put — those are app-side and pull in `~/data/variable-fonts` and the ribbon effect.
+
+Verify the boundary held:
+
+```bash
+cd frontend && grep -rn "three" shared/ ; grep -rn "\.\./\.\./app\|from '~/" shared/
+```
+Both must print nothing.
+
+- [ ] **Step 4: Add the clip type**
 
 In `frontend/shared/timeline/types.ts`, immediately after the `MotionClip` interface (currently ends at line 288):
 
@@ -148,10 +222,10 @@ export interface SpaceTypeClip extends BaseClip {
 }
 ```
 
-Add the import at the top of `types.ts` (this is `shared/`, so use a relative path consistent with the file's existing imports — if `types.ts` has no app imports yet, add):
+Add the import at the top of `types.ts` — a `shared → shared` import, which is why Step 3 came first:
 
 ```ts
-import type { SpaceTypeState } from '../../app/lib/spacetype/state'
+import type { SpaceTypeState } from '../spacetype/state'
 ```
 
 Extend the union at `types.ts:290`:
@@ -160,7 +234,7 @@ Extend the union at `types.ts:290`:
 export type Clip = VideoClip | ImageClip | AudioClip | TextClip | WorkflowClip | TitleClip | LowerThirdClip | CaptionClip | MotionClip | SpaceTypeClip
 ```
 
-- [ ] **Step 4: Write the factory**
+- [ ] **Step 5: Write the factory**
 
 Create `frontend/app/composables/timelineSpaceTypeClip.ts`:
 
@@ -170,7 +244,7 @@ Create `frontend/app/composables/timelineSpaceTypeClip.ts`:
  *  a deep copy of the studio state — see the "snapshot with explicit sync"
  *  decision in the design doc. */
 import type { SpaceTypeClip } from '~~/shared/timeline/types'
-import type { SpaceTypeState } from '~/lib/spacetype/state'
+import type { SpaceTypeState } from '~~/shared/spacetype/state'
 import { spaceTypeSourceKey } from '~/lib/spacetype/sourceKey'
 import { dimsFromKey } from '~/lib/spacetype/state'
 
@@ -232,22 +306,26 @@ export function spaceTypeClipIsStale(clip: SpaceTypeClip, nodeState: SpaceTypeSt
 }
 ```
 
-- [ ] **Step 5: Run the test to verify it passes**
+- [ ] **Step 6: Run the test to verify it passes**
 
 Run: `cd frontend && npx vitest run tests/unit/spacetype-clip-types.unit.spec.ts`
 Expected: PASS, 8 tests.
 
-- [ ] **Step 6: Verify no existing test regressed**
+- [ ] **Step 7: Verify no existing test regressed**
 
-Run: `cd frontend && npx vitest run tests/unit/timeline-types.unit.spec.ts tests/unit/motion-clip-types.unit.spec.ts && npx vue-tsc --noEmit | grep -iE 'spacetype|timeline'`
-Expected: tests PASS; the grep prints nothing.
+The type move in Step 3 touches every Space Type importer, so run the whole Space Type suite, not just the timeline specs:
 
-- [ ] **Step 7: Commit**
+Run: `cd frontend && npx vitest run tests/unit/spacetype-*.unit.spec.ts tests/unit/timeline-types.unit.spec.ts tests/unit/motion-clip-types.unit.spec.ts && npx vue-tsc --noEmit | grep -iE 'spacetype|timeline'`
+Expected: all PASS; the grep prints nothing.
+
+- [ ] **Step 8: Commit**
 
 ```bash
-git add frontend/shared/timeline/types.ts frontend/app/composables/timelineSpaceTypeClip.ts frontend/tests/unit/spacetype-clip-types.unit.spec.ts
+git add frontend/shared/spacetype/state.ts frontend/shared/timeline/types.ts frontend/app/lib/spacetype/state.ts frontend/app/lib/spacetype/effect.ts frontend/app/lib/spacetype/post.ts frontend/app/composables/timelineSpaceTypeClip.ts frontend/tests/unit/spacetype-clip-types.unit.spec.ts
 git commit -m "feat(timeline): SpaceTypeClip kind + factory
 
+Moves SpaceTypeState/Params/PostSettings to shared/, where the
+serialization boundary lives — shared/ must never import from app/.
 Scene-owned time, state snapshotted by value, advisory origin for the
 sync-from-node affordance."
 ```
@@ -1515,44 +1593,47 @@ browser did not bake."
 **Files:**
 - Modify: `frontend/app/components/vue-canvas/TimelineEditor.vue` (block export without WebGL2; surface the degraded state)
 - Modify: `frontend/app/lib/engine/spaceTypeEnginePool.ts` (context-loss recovery)
-- Create: `frontend/tests/unit/spacetype-clip-purity.unit.spec.ts`
-- Modify: `frontend/tests/timeline-golden.spec.ts`
+- Modify: `frontend/tests/timeline-golden.spec.ts` (purity guard + baked/live parity)
 
 **Interfaces:**
 - Consumes: everything above.
 - Produces: no new API. This task makes the failure modes match the spec's error table.
 
-- [ ] **Step 1: Write the purity test**
+- [ ] **Step 1: Write the purity test as a real pixel comparison**
 
-This guards the property the entire design rests on. Create `frontend/tests/unit/spacetype-clip-purity.unit.spec.ts`:
+Purity in `t01` is the property the whole design rests on: timeline scrubbing is random-access, so an effect that accumulates state across `update()` calls would render differently forwards and backwards.
+
+**This cannot be tested in vitest.** Asserting `update()` merely does not throw would be a test whose green light means nothing — `update()` mutates a scene graph that needs a real GL context to observe. So the purity guard lives in the Playwright golden suite, where a context exists.
+
+Add to `frontend/tests/timeline-golden.spec.ts` (match the file's existing harness names — the shape below is illustrative of the assertion, not of its exact helpers):
 
 ```ts
-import { describe, it, expect } from 'vitest'
-import { SPACE_TYPE_EFFECTS } from '../../app/lib/spacetype/effects/index'
-import { defaultsFromControls } from '../../app/lib/spacetype/effect'
+test('spacetype: seeking backward renders identically to seeking forward', async ({ page }) => {
+  const state = editState({
+    canvas: { width: 960, height: 540, fps: 30, bg_color: '#000000' },
+    tracks: [{ id: 'v1', kind: 'video', clips: [spaceTypeClipFixture({ startFrame: 0, length: 180 })] }],
+  })
 
-/** Every effect must be pure in t01: update(t) must depend only on t, never on
- *  the sequence of previous calls. Timeline scrubbing is random-access, so an
- *  effect that accumulates state would render differently forwards and
- *  backwards — the single most damaging bug this design could acquire. */
-describe('effect purity in t01', () => {
-  for (const effect of SPACE_TYPE_EFFECTS) {
-    it(`${effect.id} declares no mutable module state across update() calls`, () => {
-      const params = defaultsFromControls(effect.controls)
-      // update() mutates the built scene graph; without a GL context we assert
-      // the weaker but still meaningful contract: update never throws for any
-      // t01 in [0,1], in any order, and reports no accumulated error.
-      const ts = [0, 0.25, 0.5, 0.75, 1, 0.5, 0.25, 0]
-      expect(() => { for (const t of ts) effect.update(t, params) }).not.toThrow()
-    })
+  const probe = [0, 45, 90, 135]
+  const forward: Buffer[] = []
+  for (const f of probe) forward.push(await renderWithGl(page, state, f))
+
+  // Same frames, reverse order — a stateful effect diverges here.
+  const backward: Buffer[] = []
+  for (const f of [...probe].reverse()) backward.unshift(await renderWithGl(page, state, f))
+
+  for (let i = 0; i < probe.length; i++) {
+    expect(rmse(forward[i]!, backward[i]!), `frame ${probe[i]} differs by seek direction`).toBe(0)
   }
 })
 ```
 
+RMSE of exactly `0` is deliberate — this is the same effect at the same `t01` in the same context, so anything above zero is accumulated state, not tolerance.
+
 - [ ] **Step 2: Run it**
 
-Run: `cd frontend && npx vitest run tests/unit/spacetype-clip-purity.unit.spec.ts`
-Expected: PASS for effects that tolerate `update()` before `buildScene()`. Any effect that throws is revealing a real coupling — fix the effect to no-op when unbuilt rather than weakening the test.
+Run: `cd frontend && npx playwright test tests/timeline-golden.spec.ts -g "seeking backward"`
+Expected: PASS. A failure names the frame and means a real effect is stateful — fix the effect, never loosen the assertion to a tolerance.
 
 - [ ] **Step 3: Add context-loss recovery**
 
@@ -1634,7 +1715,7 @@ This is the step that proves the feature, not the tests. Start the dev servers (
 - [ ] **Step 8: Commit**
 
 ```bash
-git add frontend/app/lib/engine/spaceTypeEnginePool.ts frontend/app/components/vue-canvas/TimelineEditor.vue frontend/tests/unit/spacetype-clip-purity.unit.spec.ts frontend/tests/timeline-golden.spec.ts
+git add frontend/app/lib/engine/spaceTypeEnginePool.ts frontend/app/components/vue-canvas/TimelineEditor.vue frontend/tests/timeline-golden.spec.ts frontend/tests/timeline-golden.spec.ts
 git commit -m "feat(timeline): Space Type error handling, purity guard, golden parity
 
 Context-loss recovery, export blocked (not silently broken) without
