@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { buildDrawList, hexToRgb } from '../../app/lib/engine/compositor'
 import { migrateEditState } from '../../shared/timeline/types'
+import { createSpaceTypeClip } from '../../app/composables/timelineSpaceTypeClip'
+import { defaultSpaceTypeState } from '../../app/lib/spacetype/state'
 
 const fixturesDir = fileURLToPath(new URL('../../../tests-unit/timeline_fixtures', import.meta.url))
 
@@ -171,5 +173,25 @@ describe('buildDrawList — title/lower_third admission', () => {
       ] }],
     })!
     expect(buildDrawList(state, 5, new Map())).toEqual([])
+  })
+})
+
+describe('buildDrawList — spacetype admission', () => {
+  // Regression guard: RENDERABLE_KINDS in compositor.ts must include 'spacetype', or a
+  // Space Type timeline clip loads its source fine and silently renders nothing. This
+  // clip has a dims entry registered (unlike the 'still skips unsupported kinds' case
+  // above), so the ONLY thing that can exclude it from the draw list is the kind check —
+  // an empty result here can only mean RENDERABLE_KINDS regressed.
+  it('admits spacetype clips with registered dims', () => {
+    const spacetypeClip = createSpaceTypeClip({ startFrame: 0, state: defaultSpaceTypeState() })
+    const state = migrateEditState({
+      version: 2,
+      canvas: { width: 640, height: 360, fps: 30, bg_color: '#000000' },
+      total_frames: 20, transitions: [],
+      tracks: [{ id: 't', kind: 'video', name: 'V', muted: false, locked: false, clips: [spacetypeClip] }],
+    })!
+    const dims = new Map([[spacetypeClip.id, { w: 960, h: 540 }]]) // matches defaultSpaceTypeState's dimsKey
+    const list = buildDrawList(state, 0, dims)
+    expect(list.map(e => e.clipId)).toEqual([spacetypeClip.id])
   })
 })
