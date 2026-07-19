@@ -108,9 +108,10 @@ export function parseHexA(hex: string): { hex: string; alpha: number } {
  *  stay in the legacy form and diffs stay small. Any alpha already on `hex` is replaced. */
 export function withAlpha(hex: string, alpha: number): string {
   const base = parseHexA(hex).hex
-  const a = Math.max(0, Math.min(1, Number(alpha)))
-  if (a >= 1) return base
-  return base + Math.round(a * 255).toString(16).padStart(2, '0')
+  const a = Number(alpha)
+  const clamped = !isFinite(a) ? 1 : Math.max(0, Math.min(1, a))
+  if (clamped >= 1) return base
+  return base + Math.round(clamped * 255).toString(16).padStart(2, '0')
 }
 
 /** Drop any alpha — THREE.Color cannot parse 8-digit hex and silently renders black. */

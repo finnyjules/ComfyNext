@@ -54,6 +54,10 @@ describe('withAlpha', () => {
   it('ignores alpha already present on the input', () => {
     expect(withAlpha('#3366ff00', 1)).toBe('#3366ff')
   })
+  it('treats a non-finite alpha as opaque rather than emitting NaN', () => {
+    expect(withAlpha('#3366ff', NaN)).toBe('#3366ff')
+    expect(withAlpha('#3366ff', undefined as unknown as number)).toBe('#3366ff')
+  })
 })
 
 describe('stripAlpha', () => {
