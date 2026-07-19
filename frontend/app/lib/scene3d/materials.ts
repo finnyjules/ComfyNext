@@ -6,7 +6,10 @@
 // environments (vitest) those degrade to null/'' while the material classes and
 // update logic stay fully testable.
 import * as THREE from 'three'
-import { MATERIAL_DEFAULTS, type SceneMaterial } from './config'
+import {
+  MATERIAL_DEFAULTS, gradientAngles, gradientDirection, gradientStopsOf,
+  type GradientStop, type SceneMaterial,
+} from './config'
 
 const hasDOM = typeof document !== 'undefined'
 
@@ -138,17 +141,42 @@ const GRADIENT_SMOOTH_VERT_DECL = /* glsl */ `#include <common>
 varying vec3 vGradPos;`
 const GRADIENT_SMOOTH_VERT_BODY = /* glsl */ `#include <begin_vertex>
 vGradPos = position;`
+// Shared ramp maths. `t` is normalised over the bounding box *projected onto the
+// ramp direction*: r = dot(|dir|, halfExtent) is the box's half-width along dir,
+// so t = (dot(p - centre, dir) + r) / 2r spans exactly 0..1 across the shape.
+// For a unit axis this is algebraically identical to the old per-axis
+// (p - lo) / (hi - lo) — numerator and denominator both, guard included — so the
+// x/y/z presets reproduce the previous look bit for bit.
+const GRADIENT_RAMP_FN = /* glsl */ `
+float gradT(vec3 p, vec3 bmin, vec3 bmax) {
+  vec3 centre = (bmin + bmax) * 0.5;
+  vec3 halfExt = (bmax - bmin) * 0.5;
+  float t;
+  if (uType == 1) {
+    t = length(p - centre) / max(length(halfExt), 1e-5);
+  } else {
+    float r = dot(abs(uDir), halfExt);
+    t = (dot(p - centre, uDir) + r) / max(2.0 * r, 1e-5);
+  }
+  return clamp(t, 0.0, 1.0);
+}
+vec3 gradSample(float t) {
+  return texture2D(uRamp, vec2(clamp((t - 0.5) / uSpread + 0.5 - uOffset, 0.0, 1.0), 0.5)).rgb;
+}`
+
+const GRADIENT_UNIFORM_DECL = /* glsl */ `
+uniform sampler2D uRamp;
+uniform vec3 uBoxMin; uniform vec3 uBoxMax;
+uniform vec3 uDir; uniform int uType;
+uniform float uOffset; uniform float uSpread;`
+
 const GRADIENT_SMOOTH_FRAG_DECL = /* glsl */ `#include <common>
-uniform vec3 uColorA; uniform vec3 uColorB;
-uniform vec3 uBoxMin; uniform vec3 uBoxMax; uniform int uAxis;
-varying vec3 vGradPos;`
+${GRADIENT_UNIFORM_DECL}
+varying vec3 vGradPos;
+${GRADIENT_RAMP_FN}`
 const GRADIENT_SMOOTH_FRAG_BODY = /* glsl */ `#include <color_fragment>
 {
-  float p  = uAxis == 0 ? vGradPos.x : (uAxis == 1 ? vGradPos.y : vGradPos.z);
-  float lo = uAxis == 0 ? uBoxMin.x  : (uAxis == 1 ? uBoxMin.y  : uBoxMin.z);
-  float hi = uAxis == 0 ? uBoxMax.x  : (uAxis == 1 ? uBoxMax.y  : uBoxMax.z);
-  float t = clamp((p - lo) / max(hi - lo, 1e-5), 0.0, 1.0);
-  diffuseColor.rgb = mix(uColorA, uColorB, t);
+  diffuseColor.rgb = gradSample(gradT(vGradPos, uBoxMin, uBoxMax));
 }`
 
 const GRADIENT_FACET_VERT_DECL = /* glsl */ `#include <common>
@@ -164,31 +192,70 @@ vGradFlat = position;
 vFaceMin = aFaceMin;
 vFaceMax = aFaceMax;`
 const GRADIENT_FACET_FRAG_DECL = /* glsl */ `#include <common>
-uniform vec3 uColorA; uniform vec3 uColorB;
-uniform vec3 uBoxMin; uniform vec3 uBoxMax; uniform int uAxis; uniform int uMode;
+${GRADIENT_UNIFORM_DECL}
+uniform int uMode;
 varying vec3 vGradPos;
 flat varying vec3 vGradFlat;
 flat varying vec3 vFaceMin;
-flat varying vec3 vFaceMax;`
+flat varying vec3 vFaceMax;
+${GRADIENT_RAMP_FN}`
 const GRADIENT_FACET_FRAG_BODY = /* glsl */ `#include <color_fragment>
 {
-  float p; float lo; float hi;
-  if (uMode == 2) {
-    // Prismatic: normalise within THIS face's own extent → full ramp per facet.
-    p  = uAxis == 0 ? vGradPos.x : (uAxis == 1 ? vGradPos.y : vGradPos.z);
-    lo = uAxis == 0 ? vFaceMin.x : (uAxis == 1 ? vFaceMin.y : vFaceMin.z);
-    hi = uAxis == 0 ? vFaceMax.x : (uAxis == 1 ? vFaceMax.y : vFaceMax.z);
-  } else {
-    // Faceted: one flat tone per face, sampled at the provoking vertex.
-    p  = uAxis == 0 ? vGradFlat.x : (uAxis == 1 ? vGradFlat.y : vGradFlat.z);
-    lo = uAxis == 0 ? uBoxMin.x   : (uAxis == 1 ? uBoxMin.y   : uBoxMin.z);
-    hi = uAxis == 0 ? uBoxMax.x   : (uAxis == 1 ? uBoxMax.y   : uBoxMax.z);
-  }
-  float t = clamp((p - lo) / max(hi - lo, 1e-5), 0.0, 1.0);
-  diffuseColor.rgb = mix(uColorA, uColorB, t);
+  // Prismatic (2): normalise within THIS face's own extent → the full ramp per
+  // facet. Faceted (1): one flat tone per face, sampled at the provoking vertex
+  // against the whole-object box. Both project the same way.
+  float t = uMode == 2
+    ? gradT(vGradPos, vFaceMin, vFaceMax)
+    : gradT(vGradFlat, uBoxMin, uBoxMax);
+  diffuseColor.rgb = gradSample(t);
 }`
 
-const AXIS_INDEX = { x: 0, y: 1, z: 2 } as const
+// ── Gradient ramp LUT ────────────────────────────────────────────────────────
+const RAMP_WIDTH = 256
+
+/** Build the 256×1 sRGB LUT the gradient shader samples. Colours interpolate in
+ *  sRGB between adjacent stops — the same space a CSS `linear-gradient` uses, so
+ *  the ramp editor's preview and the rendered object agree. Beyond the outermost
+ *  stops the edge colour floods. Stops must be sorted by `pos`. */
+export function buildRampTexture(stops: GradientStop[]): THREE.DataTexture {
+  // getHex(SRGBColorSpace) undoes three's sRGB→linear ingest, giving back the
+  // authored 8-bit channels; the texture's colorSpace re-decodes them on sample.
+  const srgb = stops.map((s) => {
+    const hex = new THREE.Color(s.color).getHex(THREE.SRGBColorSpace)
+    return { pos: s.pos, r: (hex >> 16) & 255, g: (hex >> 8) & 255, b: hex & 255 }
+  })
+  const data = new Uint8Array(RAMP_WIDTH * 4)
+  const first = srgb[0]!
+  const last = srgb[srgb.length - 1]!
+  let seg = 0
+  for (let i = 0; i < RAMP_WIDTH; i++) {
+    const x = i / (RAMP_WIDTH - 1)
+    let r: number, g: number, b: number
+    if (x <= first.pos) { r = first.r; g = first.g; b = first.b }
+    else if (x >= last.pos) { r = last.r; g = last.g; b = last.b }
+    else {
+      while (seg < srgb.length - 2 && x > srgb[seg + 1]!.pos) seg++
+      const a = srgb[seg]!, c = srgb[seg + 1]!
+      const span = c.pos - a.pos
+      const f = span > 0 ? (x - a.pos) / span : 1
+      r = a.r + (c.r - a.r) * f
+      g = a.g + (c.g - a.g) * f
+      b = a.b + (c.b - a.b) * f
+    }
+    data.set([Math.round(r), Math.round(g), Math.round(b), 255], i * 4)
+  }
+  const t = new THREE.DataTexture(data, RAMP_WIDTH, 1, THREE.RGBAFormat)
+  t.colorSpace = THREE.SRGBColorSpace
+  t.magFilter = t.minFilter = THREE.LinearFilter
+  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping
+  t.needsUpdate = true
+  return t
+}
+
+/** Cheap change detector: the LUT is rebuilt only when this string moves. */
+function rampSignature(stops: GradientStop[]): string {
+  return stops.map((s) => `${s.pos}:${s.color}`).join('|')
+}
 
 // ── Physical surface (standard + glass share one builder) ────────────────────
 /** Apply every physical-surface param from the doc onto a MeshPhysicalMaterial.
@@ -272,12 +339,16 @@ export function materialFor(mat: SceneMaterial, geometry?: THREE.BufferGeometry)
       // switches between them with the uMode uniform (in-place). Crossing the
       // smooth↔facet boundary rebuilds via identityKey.
       const facetProgram = shading !== 'smooth'
+      const stops = gradientStopsOf(mat)
+      const { yaw, pitch } = gradientAngles(mat)
       const gradUniforms: Record<string, { value: unknown }> = {
-        uColorA: { value: new THREE.Color(mat.color) },
-        uColorB: { value: new THREE.Color(mat.gradientB ?? MATERIAL_DEFAULTS.gradientB) },
+        uRamp: { value: buildRampTexture(stops) },
         uBoxMin: { value: boxMin },
         uBoxMax: { value: boxMax },
-        uAxis: { value: AXIS_INDEX[mat.gradientAxis ?? MATERIAL_DEFAULTS.gradientAxis] },
+        uDir: { value: new THREE.Vector3(...gradientDirection(yaw, pitch)) },
+        uType: { value: (mat.gradientType ?? MATERIAL_DEFAULTS.gradientType) === 'radial' ? 1 : 0 },
+        uOffset: { value: mat.gradientOffset ?? MATERIAL_DEFAULTS.gradientOffset },
+        uSpread: { value: mat.gradientSpread ?? MATERIAL_DEFAULTS.gradientSpread },
       }
       if (facetProgram) gradUniforms.uMode = { value: shading === 'prismatic' ? 2 : 1 }
       const g = new THREE.MeshStandardMaterial({ roughness: mat.roughness, metalness: mat.metalness })
@@ -295,6 +366,7 @@ export function materialFor(mat: SceneMaterial, geometry?: THREE.BufferGeometry)
       // and skip our injection — or recompile per material.
       g.customProgramCacheKey = () => (facetProgram ? 'scene3d-gradient-facet' : 'scene3d-gradient-smooth')
       g.userData.gradUniforms = gradUniforms
+      g.userData.rampSig = rampSignature(stops)
       m = g
       break
     }
@@ -379,12 +451,24 @@ export function updateMaterial(m: THREE.Material, mat: SceneMaterial): boolean {
       // (identityKey already forced a rebuild if the smooth↔facet program
       // boundary was crossed, so uMode only exists when it's mutable.)
       const u = m.userData.gradUniforms as {
-        uColorA: { value: THREE.Color }; uColorB: { value: THREE.Color }
-        uAxis: { value: number }; uMode?: { value: number }
+        uRamp: { value: THREE.DataTexture }
+        uDir: { value: THREE.Vector3 }
+        uType: { value: number }; uOffset: { value: number }; uSpread: { value: number }
+        uMode?: { value: number }
       }
-      u.uColorA.value.set(mat.color)
-      u.uColorB.value.set(mat.gradientB ?? MATERIAL_DEFAULTS.gradientB)
-      u.uAxis.value = AXIS_INDEX[mat.gradientAxis ?? MATERIAL_DEFAULTS.gradientAxis]
+      // The LUT is the only expensive part — rebuild it only when the stops
+      // actually moved, and dispose the texture we're replacing.
+      const sig = rampSignature(gradientStopsOf(mat))
+      if (sig !== m.userData.rampSig) {
+        u.uRamp.value?.dispose()
+        u.uRamp.value = buildRampTexture(gradientStopsOf(mat))
+        m.userData.rampSig = sig
+      }
+      const { yaw, pitch } = gradientAngles(mat)
+      u.uDir.value.set(...gradientDirection(yaw, pitch))
+      u.uType.value = (mat.gradientType ?? MATERIAL_DEFAULTS.gradientType) === 'radial' ? 1 : 0
+      u.uOffset.value = mat.gradientOffset ?? MATERIAL_DEFAULTS.gradientOffset
+      u.uSpread.value = mat.gradientSpread ?? MATERIAL_DEFAULTS.gradientSpread
       if (u.uMode) u.uMode.value = (mat.gradientShading ?? MATERIAL_DEFAULTS.gradientShading) === 'prismatic' ? 2 : 1
       return true
     }
@@ -402,6 +486,9 @@ export function disposeMaterial(m: THREE.Material): void {
   // module-lifetime singletons — skip them.
   if ((m as THREE.MeshToonMaterial).isMaterial && (m as any).gradientMap) (m as any).gradientMap.dispose()
   if (m.userData.matType === 'image') imageMaterials.delete(m as THREE.MeshStandardMaterial)
+  // The gradient ramp LUT is owned by exactly one material.
+  const ramp = (m.userData.gradUniforms as { uRamp?: { value?: THREE.Texture } } | undefined)?.uRamp?.value
+  if (ramp) ramp.dispose()
   const map = (m as THREE.MeshStandardMaterial).map
   if (map) { map.dispose(); if (m.userData.identity?.startsWith('image:')) imageCache.delete(m.userData.identity.slice(6)) }
   m.dispose()

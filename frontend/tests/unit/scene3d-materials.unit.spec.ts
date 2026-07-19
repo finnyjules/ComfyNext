@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import * as THREE from 'three'
-import { materialFor, updateMaterial, MATCAP_IDS } from '~/lib/scene3d/materials'
-import type { SceneMaterial } from '~/lib/scene3d/config'
+import { materialFor, updateMaterial, disposeMaterial, buildRampTexture, MATCAP_IDS } from '~/lib/scene3d/materials'
+import { gradientAngles, gradientDirection, MATERIAL_DEFAULTS, type GradientStop, type SceneMaterial } from '~/lib/scene3d/config'
 
 const base = (patch: Partial<SceneMaterial> = {}): SceneMaterial =>
   ({ type: 'standard', color: '#9aa3af', roughness: 0.6, metalness: 0, ...patch })
@@ -44,7 +44,8 @@ describe('scene3d materials factory', () => {
   it('updates gradient uniforms in place through userData', () => {
     const m = materialFor(base({ type: 'gradient' }))
     expect(updateMaterial(m, base({ type: 'gradient', gradientB: '#112233', gradientAxis: 'z' }))).toBe(true)
-    expect((m.userData.gradUniforms as any).uAxis.value).toBe(2)
+    // The axis is now expressed as a direction vector (z preset → +Z).
+    expect((m.userData.gradUniforms as any).uDir.value.toArray()).toEqual([0, 0, 1])
   })
 
   it('rebuilds the gradient when crossing the smooth↔facet program boundary', () => {
@@ -93,5 +94,225 @@ describe('scene3d materials factory', () => {
 
   it('exposes the five matcap ids', () => {
     expect(MATCAP_IDS).toEqual(['chrome', 'clay', 'pearl', 'gold', 'carbon'])
+  })
+})
+
+// ── Gradient ramp: LUT, uniforms, and the projection-equivalence proof ───────
+
+const gmat = (patch: Partial<SceneMaterial> = {}): SceneMaterial =>
+  ({ type: 'gradient', color: '#9aa3af', roughness: 0.6, metalness: 0, ...patch })
+
+const texel = (t: THREE.DataTexture, i: number): [number, number, number] => {
+  const d = t.image.data as Uint8Array
+  return [d[i * 4]!, d[i * 4 + 1]!, d[i * 4 + 2]!]
+}
+const uniforms = (m: THREE.Material) => m.userData.gradUniforms as Record<string, { value: any }>
+
+describe('scene3d gradient ramp LUT', () => {
+  it('is a 256x1 sRGB clamped texture ready to upload', () => {
+    const t = buildRampTexture([{ pos: 0, color: '#000000' }, { pos: 1, color: '#ffffff' }])
+    expect(t.image.width).toBe(256)
+    expect(t.image.height).toBe(1)
+    expect((t.image.data as Uint8Array).length).toBe(256 * 4)
+    expect(t.colorSpace).toBe(THREE.SRGBColorSpace)
+    expect(t.magFilter).toBe(THREE.LinearFilter)
+    expect(t.minFilter).toBe(THREE.LinearFilter)
+    expect(t.wrapS).toBe(THREE.ClampToEdgeWrapping)
+    expect(t.wrapT).toBe(THREE.ClampToEdgeWrapping)
+    // `needsUpdate` is a write-only setter on THREE.Texture (it bumps .version
+    // and reads back undefined), so the observable effect is the version bump.
+    expect(t.version).toBeGreaterThan(0)
+  })
+
+  it('places the endpoint colours at the endpoint texels', () => {
+    const t = buildRampTexture([{ pos: 0, color: '#ff0000' }, { pos: 1, color: '#0000ff' }])
+    expect(texel(t, 0)).toEqual([255, 0, 0])
+    expect(texel(t, 255)).toEqual([0, 0, 255])
+    // alpha is opaque throughout
+    expect((t.image.data as Uint8Array)[3]).toBe(255)
+  })
+
+  it('interpolates in sRGB between adjacent stops (matches a CSS gradient)', () => {
+    const t = buildRampTexture([{ pos: 0, color: '#000000' }, { pos: 1, color: '#ffffff' }])
+    // texel 128 sits at x = 128/255, so the sRGB-space value is 128 exactly.
+    expect(texel(t, 128)).toEqual([128, 128, 128])
+    // A linear-space blend would land near 188 — assert we are NOT doing that.
+    expect(texel(t, 128)[0]).not.toBe(188)
+  })
+
+  it('interpolates within the correct segment of a multi-stop ramp', () => {
+    const t = buildRampTexture([
+      { pos: 0, color: '#000000' }, { pos: 0.5, color: '#ff0000' }, { pos: 1, color: '#00ff00' },
+    ])
+    // x = 128/255 ≈ 0.50196 → just past the middle stop, so essentially red.
+    expect(texel(t, 128)[0]).toBeGreaterThan(250)
+    // Quarter point of the first segment: half way from black to red.
+    expect(texel(t, 64)).toEqual([128, 0, 0])           // x = 64/255 → f = 0.50196
+    // Three-quarter point: half way from red to green.
+    expect(texel(t, 191)).toEqual([128, 127, 0])        // x = 191/255 → f = 0.49804
+  })
+
+  it('floods the edge colour beyond the outermost stops', () => {
+    const t = buildRampTexture([{ pos: 0.25, color: '#ff0000' }, { pos: 0.75, color: '#0000ff' }])
+    for (const i of [0, 32, 63]) expect(texel(t, i)).toEqual([255, 0, 0])
+    expect(texel(t, 64)).toEqual([255, 0, 0])           // x = 0.25098, first texel past the stop
+    for (const i of [192, 220, 255]) expect(texel(t, i)).toEqual([0, 0, 255])
+  })
+
+  it('reproduces the legacy two-colour endpoints from color + gradientB', () => {
+    const t = buildRampTexture([
+      { pos: 0, color: '#9aa3af' }, { pos: 1, color: MATERIAL_DEFAULTS.gradientB },
+    ])
+    expect(texel(t, 0)).toEqual([0x9a, 0xa3, 0xaf])
+    expect(texel(t, 255)).toEqual([0x1c, 0x27, 0x40])
+  })
+})
+
+describe('scene3d gradient uniforms', () => {
+  it('seeds direction, type, offset and spread from the document', () => {
+    const m = materialFor(gmat({ gradientType: 'radial', gradientOffset: 0.3, gradientSpread: 2 }))
+    const u = uniforms(m)
+    expect(u.uType!.value).toBe(1)
+    expect(u.uOffset!.value).toBe(0.3)
+    expect(u.uSpread!.value).toBe(2)
+    expect(u.uRamp!.value).toBeInstanceOf(THREE.DataTexture)
+    // default axis 'y' → +Y
+    expect(u.uDir!.value.toArray()).toEqual([0, 1, 0])
+  })
+
+  it('defaults to a linear ramp with no offset and unit spread', () => {
+    const u = uniforms(materialFor(gmat()))
+    expect(u.uType!.value).toBe(0)
+    expect(u.uOffset!.value).toBe(0)
+    expect(u.uSpread!.value).toBe(1)
+  })
+
+  it('updates direction, type, offset and spread without rebuilding the LUT', () => {
+    const m = materialFor(gmat())
+    const lut = uniforms(m).uRamp!.value as THREE.DataTexture
+    let disposed = false
+    lut.addEventListener('dispose', () => { disposed = true })
+
+    expect(updateMaterial(m, gmat({
+      gradientYaw: 45, gradientPitch: 10, gradientType: 'radial',
+      gradientOffset: -0.4, gradientSpread: 0.5,
+    }))).toBe(true)
+
+    const u = uniforms(m)
+    expect(u.uRamp!.value).toBe(lut)          // same texture object
+    expect(disposed).toBe(false)
+    expect(u.uType!.value).toBe(1)
+    expect(u.uOffset!.value).toBe(-0.4)
+    expect(u.uSpread!.value).toBe(0.5)
+    expect(u.uDir!.value.toArray()).toEqual(gradientDirection(45, 10))
+  })
+
+  it('swaps and disposes the LUT only when the stops actually change', () => {
+    const m = materialFor(gmat())
+    const first = uniforms(m).uRamp!.value as THREE.DataTexture
+    let disposed = 0
+    first.addEventListener('dispose', () => { disposed++ })
+
+    // Same synthesized stops → no rebuild.
+    expect(updateMaterial(m, gmat({ gradientOffset: 0.2 }))).toBe(true)
+    expect(uniforms(m).uRamp!.value).toBe(first)
+    expect(disposed).toBe(0)
+
+    // Colour change moves the synthesized pair → rebuild + dispose the old one.
+    expect(updateMaterial(m, gmat({ color: '#ff0000' }))).toBe(true)
+    const second = uniforms(m).uRamp!.value as THREE.DataTexture
+    expect(second).not.toBe(first)
+    expect(disposed).toBe(1)
+    expect(texel(second, 0)).toEqual([255, 0, 0])
+
+    // Explicit stops change → another rebuild.
+    const stops: GradientStop[] = [
+      { pos: 0, color: '#ff0000' }, { pos: 0.5, color: '#00ff00' }, { pos: 1, color: '#0000ff' },
+    ]
+    expect(updateMaterial(m, gmat({ color: '#ff0000', gradientStops: stops }))).toBe(true)
+    expect(uniforms(m).uRamp!.value).not.toBe(second)
+    // ...but re-applying the identical stops does not.
+    const third = uniforms(m).uRamp!.value
+    expect(updateMaterial(m, gmat({ color: '#ff0000', gradientStops: stops.map((s) => ({ ...s })) }))).toBe(true)
+    expect(uniforms(m).uRamp!.value).toBe(third)
+  })
+
+  it('never rebuilds the material for stops, direction, type, offset or spread', () => {
+    const m = materialFor(gmat())
+    const identity = m.userData.identity
+    expect(updateMaterial(m, gmat({
+      gradientStops: [{ pos: 0, color: '#123456' }, { pos: 1, color: '#654321' }],
+      gradientType: 'radial', gradientYaw: 12, gradientPitch: 34,
+      gradientOffset: 0.9, gradientSpread: 2.5,
+    }))).toBe(true)
+    expect(m.userData.identity).toBe(identity)
+  })
+
+  it('disposes the ramp texture with the material', () => {
+    const m = materialFor(gmat())
+    let disposed = false
+    ;(uniforms(m).uRamp!.value as THREE.DataTexture).addEventListener('dispose', () => { disposed = true })
+    disposeMaterial(m)
+    expect(disposed).toBe(true)
+  })
+})
+
+// The default look must not change: the projected-AABB `t` has to reduce to the
+// old per-axis formula for each of x/y/z, not merely approximate it. Both
+// formulas are ported verbatim from the GLSL so the maths can be checked
+// without a GL context.
+describe('scene3d gradient projection equivalence', () => {
+  type V3 = [number, number, number]
+  const clamp01 = (v: number) => Math.min(1, Math.max(0, v))
+
+  /** The formula the shader used before this change. */
+  const oldT = (p: V3, bmin: V3, bmax: V3, axis: 0 | 1 | 2): number =>
+    clamp01((p[axis] - bmin[axis]) / Math.max(bmax[axis] - bmin[axis], 1e-5))
+
+  /** The formula the shader uses now (linear branch of gradT). */
+  const newT = (p: V3, bmin: V3, bmax: V3, dir: V3): number => {
+    const centre = bmin.map((v, i) => (v + bmax[i]!) * 0.5) as V3
+    const halfExt = bmin.map((v, i) => (bmax[i]! - v) * 0.5) as V3
+    const r = dir.reduce((a, d, i) => a + Math.abs(d) * halfExt[i]!, 0)
+    const proj = p.reduce((a, v, i) => a + (v - centre[i]!) * dir[i]!, 0)
+    return clamp01((proj + r) / Math.max(2 * r, 1e-5))
+  }
+
+  const AXES = [['x', 0], ['y', 1], ['z', 2]] as const
+  const BOXES: Array<[V3, V3]> = [
+    [[-0.55, -0.55, -0.55], [0.55, 0.55, 0.55]],   // the factory's fallback envelope
+    [[-1, -0.5, -2], [1, 0.5, 2]],                  // asymmetric extents
+    [[0.25, -3, 1], [2.75, 4, 1.5]],                // off-centre, mixed signs
+    [[-1, 0, -1], [1, 0, 1]],                       // degenerate on Y (guard path)
+  ]
+  const POINTS: V3[] = [
+    [0, 0, 0], [-0.55, -0.55, -0.55], [0.55, 0.55, 0.55],
+    [0.1, -0.2, 0.3], [1, 0.5, 2], [-3, 7, -0.25], [0.25, 4, 1.5], [2.75, -3, 1],
+  ]
+
+  for (const [axis, index] of AXES) {
+    it(`reproduces the per-axis formula exactly for ${axis}`, () => {
+      const { yaw, pitch } = gradientAngles(gmat({ gradientAxis: axis }))
+      const dir = gradientDirection(yaw, pitch) as V3
+      for (const [bmin, bmax] of BOXES) {
+        for (const p of POINTS) {
+          // toBe, not toBeCloseTo: any drift here is a real visual change.
+          expect(newT(p, bmin, bmax, dir)).toBe(oldT(p, bmin, bmax, index))
+        }
+      }
+    })
+  }
+
+  it('radial spans the bounding radius from the centre', () => {
+    const radialT = (p: V3, bmin: V3, bmax: V3): number => {
+      const centre = bmin.map((v, i) => (v + bmax[i]!) * 0.5) as V3
+      const halfExt = bmin.map((v, i) => (bmax[i]! - v) * 0.5) as V3
+      const d = Math.hypot(...p.map((v, i) => v - centre[i]!))
+      return clamp01(d / Math.max(Math.hypot(...halfExt), 1e-5))
+    }
+    const bmin: V3 = [-1, -1, -1], bmax: V3 = [1, 1, 1]
+    expect(radialT([0, 0, 0], bmin, bmax)).toBe(0)                 // centre
+    expect(radialT([1, 1, 1], bmin, bmax)).toBe(1)                 // corner = radius
+    expect(radialT([1, 0, 0], bmin, bmax)).toBeCloseTo(1 / Math.sqrt(3), 12)
   })
 })

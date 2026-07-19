@@ -13,6 +13,13 @@ export type Vec3 = [number, number, number]
 export type MaterialType = 'standard' | 'toon' | 'matcap' | 'glass' | 'fresnel' | 'gradient' | 'image'
 export const MATERIAL_TYPES: MaterialType[] = ['standard', 'toon', 'matcap', 'glass', 'fresnel', 'gradient', 'image']
 
+/** One stop of the gradient ramp. `pos` is 0..1 along the ramp direction. */
+export interface GradientStop { pos: number; color: string }
+
+/** Ramp bounds: fewer than MIN or more than MAX stops is rejected by parsing. */
+export const GRADIENT_STOPS_MIN = 2
+export const GRADIENT_STOPS_MAX = 8
+
 export interface SceneMaterial {
   type: MaterialType
   color: string
@@ -31,6 +38,16 @@ export interface SceneMaterial {
    *  (low-poly look); prismatic = the full ramp runs across EACH facet
    *  individually (ShapeStudio's cut-gem shimmer). */
   gradientShading?: 'smooth' | 'faceted' | 'prismatic'
+  /** Multi-stop ramp, 2–8 entries sorted by `pos`. Absent synthesizes the
+   *  two-stop pair [color, gradientB] — so old documents render identically. */
+  gradientStops?: GradientStop[]
+  gradientType?: 'linear' | 'radial'
+  /** Ramp direction as yaw (around Y, degrees) + pitch (elevation, degrees).
+   *  Absent derives from `gradientAxis`, so the axis stays a live preset. */
+  gradientYaw?: number
+  gradientPitch?: number
+  gradientOffset?: number   // -1..1, slides the ramp along the direction
+  gradientSpread?: number   // 0.1..3, compresses (<1) / stretches (>1)
   image?: string
   // physical surface (standard + glass; all optional, defaults render identical
   // to the pre-physical look)
@@ -113,6 +130,12 @@ export const MATERIAL_DEFAULTS = {
   gradientB: '#1c2740',
   gradientAxis: 'y' as const,
   gradientShading: 'smooth' as const,
+  gradientType: 'linear' as const,
+  // Yaw/pitch defaults are the angles derived from the default axis ('y').
+  gradientYaw: 0,
+  gradientPitch: 90,
+  gradientOffset: 0,
+  gradientSpread: 1,
   clearcoat: 0,
   clearcoatRoughness: 0.1,
   sheen: 0,
@@ -126,6 +149,56 @@ export const MATERIAL_DEFAULTS = {
   iridescence: 0,
   iridescenceIOR: 1.3,
   envMapIntensity: 1,
+}
+
+// ── Gradient derivations (shared by the material factory and the Selection UI,
+// so the editor and the render can never disagree) ───────────────────────────
+
+/** Axis → (yaw, pitch) preset. Chosen so the projected-AABB `t` in the shader
+ *  reduces exactly to the old per-axis formula for each of x/y/z. */
+const AXIS_ANGLES = {
+  x: { yaw: 90, pitch: 0 },
+  y: { yaw: 0, pitch: 90 },
+  z: { yaw: 0, pitch: 0 },
+} as const
+
+/** The ramp direction angles: the stored pair when present, else derived from
+ *  `gradientAxis` (which therefore keeps working as a preset on old docs). */
+export function gradientAngles(mat: SceneMaterial): { yaw: number; pitch: number } {
+  const preset = AXIS_ANGLES[mat.gradientAxis ?? MATERIAL_DEFAULTS.gradientAxis]
+  return {
+    yaw: typeof mat.gradientYaw === 'number' ? mat.gradientYaw : preset.yaw,
+    pitch: typeof mat.gradientPitch === 'number' ? mat.gradientPitch : preset.pitch,
+  }
+}
+
+// Degree-exact sin/cos: Math.sin(Math.PI/2 * n) leaks ~1e-16 error at the
+// quadrants, which would make the projected form only *approximately* reduce to
+// the per-axis formula. Snapping the quadrants makes the axis presets exact.
+function sinDeg(deg: number): number {
+  const m = ((deg % 360) + 360) % 360
+  if (m === 0 || m === 180) return 0
+  if (m === 90) return 1
+  if (m === 270) return -1
+  return Math.sin((m * Math.PI) / 180)
+}
+const cosDeg = (deg: number): number => sinDeg(deg + 90)
+
+/** Unit direction for a yaw/pitch pair. yaw 0 / pitch 0 → +Z, yaw 90 → +X,
+ *  pitch 90 → +Y — matching AXIS_ANGLES above. */
+export function gradientDirection(yaw: number, pitch: number): [number, number, number] {
+  const cp = cosDeg(pitch)
+  return [cp * sinDeg(yaw), sinDeg(pitch), cp * cosDeg(yaw)]
+}
+
+/** The ramp's stops: the stored array when present, else the synthesized pair
+ *  built from the legacy `color` + `gradientB` fields. */
+export function gradientStopsOf(mat: SceneMaterial): GradientStop[] {
+  if (mat.gradientStops && mat.gradientStops.length >= GRADIENT_STOPS_MIN) return mat.gradientStops
+  return [
+    { pos: 0, color: mat.color },
+    { pos: 1, color: mat.gradientB ?? MATERIAL_DEFAULTS.gradientB },
+  ]
 }
 
 export function defaultDoc(): SceneDoc {
@@ -207,6 +280,20 @@ export function parseDoc(json: string): SceneDoc {
     if (typeof m?.gradientB === 'string') out.gradientB = m.gradientB
     if (m?.gradientAxis === 'x' || m?.gradientAxis === 'y' || m?.gradientAxis === 'z') out.gradientAxis = m.gradientAxis
     if (m?.gradientShading === 'smooth' || m?.gradientShading === 'faceted' || m?.gradientShading === 'prismatic') out.gradientShading = m.gradientShading
+    // Stops: clamp positions, sort, and drop the whole array unless 2–8 valid
+    // entries survive — a dropped array falls back to the synthesized pair.
+    if (Array.isArray(m?.gradientStops) && m.gradientStops.length <= GRADIENT_STOPS_MAX) {
+      const stops: GradientStop[] = m.gradientStops
+        .filter((s: any) => s && typeof s.pos === 'number' && Number.isFinite(s.pos) && typeof s.color === 'string')
+        .map((s: any) => ({ pos: Math.min(1, Math.max(0, s.pos)), color: s.color as string }))
+        .sort((a: GradientStop, b: GradientStop) => a.pos - b.pos)
+      if (stops.length >= GRADIENT_STOPS_MIN && stops.length <= GRADIENT_STOPS_MAX) out.gradientStops = stops
+    }
+    if (m?.gradientType === 'linear' || m?.gradientType === 'radial') out.gradientType = m.gradientType
+    if (typeof m?.gradientYaw === 'number') out.gradientYaw = num(m.gradientYaw, MATERIAL_DEFAULTS.gradientYaw)
+    if (typeof m?.gradientPitch === 'number') out.gradientPitch = num(m.gradientPitch, MATERIAL_DEFAULTS.gradientPitch)
+    if (typeof m?.gradientOffset === 'number') out.gradientOffset = num(m.gradientOffset, MATERIAL_DEFAULTS.gradientOffset)
+    if (typeof m?.gradientSpread === 'number') out.gradientSpread = num(m.gradientSpread, MATERIAL_DEFAULTS.gradientSpread)
     if (typeof m?.image === 'string') out.image = m.image
     if (typeof m?.clearcoat === 'number') out.clearcoat = num(m.clearcoat, MATERIAL_DEFAULTS.clearcoat)
     if (typeof m?.clearcoatRoughness === 'number') out.clearcoatRoughness = num(m.clearcoatRoughness, MATERIAL_DEFAULTS.clearcoatRoughness)

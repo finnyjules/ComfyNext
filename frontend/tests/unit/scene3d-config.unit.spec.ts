@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import {
   defaultDoc, createPrimitive, createGlbObject, serializeDoc, parseDoc, PRIMITIVE_KINDS, MATERIAL_TYPES,
+  gradientAngles, gradientDirection, gradientStopsOf, MATERIAL_DEFAULTS,
+  type GradientStop, type SceneMaterial,
 } from '~/lib/scene3d/config'
 import { PRIM_GROUPS } from '~/lib/scene3d/primGroups'
 
@@ -138,5 +140,142 @@ describe('scene3d config', () => {
   it('menu groups cover every primitive kind exactly once, in canonical order', () => {
     const menuKinds = PRIM_GROUPS.flatMap((g) => g.kinds.map((k) => k.kind))
     expect(menuKinds).toEqual([...PRIMITIVE_KINDS])
+  })
+})
+
+// ── Gradient ramp model ──────────────────────────────────────────────────────
+
+const gmat = (patch: Partial<SceneMaterial> = {}): SceneMaterial =>
+  ({ type: 'gradient', color: '#9aa3af', roughness: 0.6, metalness: 0, ...patch })
+
+/** Parse one material through a full doc round-trip. */
+function reparse(mat: SceneMaterial): SceneMaterial {
+  const doc = defaultDoc()
+  const o = createPrimitive('box', doc.objects)
+  o.material = mat
+  doc.objects.push(o)
+  return parseDoc(serializeDoc(doc)).objects[0]!.material
+}
+
+/** Same, but starting from arbitrary (possibly malformed) raw material JSON. */
+function reparseRaw(raw: any): SceneMaterial {
+  const doc = defaultDoc()
+  doc.objects.push(createPrimitive('box', doc.objects))
+  const json: any = JSON.parse(serializeDoc(doc))
+  json.objects[0].material = raw
+  return parseDoc(JSON.stringify(json)).objects[0]!.material
+}
+
+describe('scene3d gradient ramp model', () => {
+  it('round-trips stops and every new gradient field exactly', () => {
+    const mat = gmat({
+      gradientStops: [{ pos: 0, color: '#ff0000' }, { pos: 0.4, color: '#00ff00' }, { pos: 1, color: '#0000ff' }],
+      gradientType: 'radial', gradientYaw: 37.5, gradientPitch: -12,
+      gradientOffset: -0.25, gradientSpread: 1.75,
+    })
+    expect(reparse(mat)).toEqual(mat)
+  })
+
+  it('leaves absent gradient fields absent (round-trips stay exact)', () => {
+    const back = reparse(gmat())
+    expect('gradientStops' in back).toBe(false)
+    expect('gradientType' in back).toBe(false)
+    expect('gradientYaw' in back).toBe(false)
+    expect('gradientPitch' in back).toBe(false)
+    expect('gradientOffset' in back).toBe(false)
+    expect('gradientSpread' in back).toBe(false)
+  })
+
+  it('clamps out-of-range stop positions and sorts unsorted input', () => {
+    const back = reparseRaw({
+      ...gmat(),
+      gradientStops: [{ pos: 1.8, color: '#111111' }, { pos: -3, color: '#222222' }, { pos: 0.5, color: '#333333' }],
+    })
+    expect(back.gradientStops).toEqual([
+      { pos: 0, color: '#222222' }, { pos: 0.5, color: '#333333' }, { pos: 1, color: '#111111' },
+    ])
+  })
+
+  it('drops the array when fewer than two valid stops survive', () => {
+    expect(reparseRaw({ ...gmat(), gradientStops: [{ pos: 0, color: '#fff' }] }).gradientStops).toBeUndefined()
+    expect(reparseRaw({ ...gmat(), gradientStops: [] }).gradientStops).toBeUndefined()
+    // one malformed entry drops that entry, leaving only one valid → array dropped
+    expect(reparseRaw({
+      ...gmat(),
+      gradientStops: [{ pos: 0, color: '#fff' }, { pos: 'x', color: '#000' }],
+    }).gradientStops).toBeUndefined()
+  })
+
+  it('drops the array when more than eight stops are given', () => {
+    const nine = Array.from({ length: 9 }, (_, i) => ({ pos: i / 8, color: '#ffffff' }))
+    expect(reparseRaw({ ...gmat(), gradientStops: nine }).gradientStops).toBeUndefined()
+    const eight = nine.slice(0, 8)
+    expect(reparseRaw({ ...gmat(), gradientStops: eight }).gradientStops).toHaveLength(8)
+  })
+
+  it('drops malformed entries and keeps the rest when two or more survive', () => {
+    const back = reparseRaw({
+      ...gmat(),
+      gradientStops: [
+        { pos: 0, color: '#ff0000' },
+        null,
+        { pos: 0.5 },                      // no colour
+        { color: '#00ff00' },              // no pos
+        { pos: NaN, color: '#123456' },    // non-finite
+        { pos: 1, color: '#0000ff' },
+      ],
+    })
+    expect(back.gradientStops).toEqual([{ pos: 0, color: '#ff0000' }, { pos: 1, color: '#0000ff' }])
+  })
+
+  it('drops a non-array gradientStops without touching other fields', () => {
+    const back = reparseRaw({ ...gmat({ gradientType: 'radial' }), gradientStops: 'nope' })
+    expect(back.gradientStops).toBeUndefined()
+    expect(back.gradientType).toBe('radial')
+  })
+
+  it('rejects an unknown gradientType', () => {
+    expect(reparseRaw({ ...gmat(), gradientType: 'conic' }).gradientType).toBeUndefined()
+  })
+
+  it('gradientStopsOf synthesizes the legacy two-colour pair when absent', () => {
+    expect(gradientStopsOf(gmat({ color: '#abcdef' }))).toEqual([
+      { pos: 0, color: '#abcdef' }, { pos: 1, color: MATERIAL_DEFAULTS.gradientB },
+    ])
+    expect(gradientStopsOf(gmat({ color: '#abcdef', gradientB: '#001122' }))).toEqual([
+      { pos: 0, color: '#abcdef' }, { pos: 1, color: '#001122' },
+    ])
+    const stops: GradientStop[] = [{ pos: 0, color: '#000' }, { pos: 1, color: '#fff' }]
+    expect(gradientStopsOf(gmat({ gradientStops: stops }))).toBe(stops)
+  })
+
+  it('gradientAngles derives from the axis and defers to stored angles', () => {
+    expect(gradientAngles(gmat({ gradientAxis: 'x' }))).toEqual({ yaw: 90, pitch: 0 })
+    expect(gradientAngles(gmat({ gradientAxis: 'y' }))).toEqual({ yaw: 0, pitch: 90 })
+    expect(gradientAngles(gmat({ gradientAxis: 'z' }))).toEqual({ yaw: 0, pitch: 0 })
+    // absent axis falls back to the default axis ('y')
+    expect(gradientAngles(gmat())).toEqual({ yaw: 0, pitch: 90 })
+    // stored angles win, including 0 (which must not be treated as absent)
+    expect(gradientAngles(gmat({ gradientAxis: 'x', gradientYaw: 0, gradientPitch: 0 })))
+      .toEqual({ yaw: 0, pitch: 0 })
+  })
+
+  it('maps the axis presets to exact unit direction vectors', () => {
+    const dirOf = (axis: 'x' | 'y' | 'z') => {
+      const { yaw, pitch } = gradientAngles(gmat({ gradientAxis: axis }))
+      return gradientDirection(yaw, pitch)
+    }
+    // Exact, not approximate — see the projection-equivalence test in
+    // scene3d-materials for why the zeros must be true zeros.
+    expect(dirOf('x')).toEqual([1, 0, 0])
+    expect(dirOf('y')).toEqual([0, 1, 0])
+    expect(dirOf('z')).toEqual([0, 0, 1])
+  })
+
+  it('produces unit-length directions for arbitrary angles', () => {
+    for (const [yaw, pitch] of [[33, 17], [-120, -45], [200, 89], [0, 0]] as const) {
+      const [x, y, z] = gradientDirection(yaw, pitch)
+      expect(Math.hypot(x, y, z)).toBeCloseTo(1, 12)
+    }
   })
 })
