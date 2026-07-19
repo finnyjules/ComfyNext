@@ -2,6 +2,7 @@ import { ref, watch, onMounted, onUnmounted, type Ref } from 'vue'
 import type { EditState, Clip, Track, BlendMode, TitleClip, LowerThirdClip, MotionClip, SpaceTypeClip } from '~~/shared/timeline/types'
 import { computeTotalFrames } from '~~/shared/timeline/types'
 import { interpolateClipAt } from '~~/shared/timeline/interpolate'
+import { sourceFrameAt } from '~~/shared/timeline/sourceFrame'
 import { renderTitleClip, renderLowerThirdClip } from '~/composables/useAnimatedTextRenderer'
 import { renderMotionClip } from '~/lib/engine/motionClipRenderer'
 import { drawSpaceTypeClip } from '~/lib/engine/spaceTypeClipRenderer'
@@ -193,12 +194,19 @@ export function usePlaybackEngine(
             spaceTypeHandle = acquireSpaceTypeEngine()
           }
           const localFrame = (currentSec - startSec) * fps
+          // buildDrawList (the WebGL compositor) maps clip-local → source frame
+          // via sourceFrameAt before a FrameSource ever sees it — the SAME shared
+          // helper is used here so this Canvas2D fallback agrees with the WebGL
+          // path on in_frame/speed/reverse instead of hand-rolling its own
+          // (previously incomplete — see spaceTypeClipRenderer.ts's sourceT01
+          // doc comment) mapping.
+          const sourceFrame = sourceFrameAt(clip, localFrame)
           ctx.save()
           ctx.globalCompositeOperation = CANVAS_BLEND[clip.blend ?? 'normal'] ?? 'source-over'
           ctx.globalAlpha = clip.opacity ?? 1
           // A null handle (WebGL2 permanently unavailable) is passed straight
           // through — drawSpaceTypeClip accepts it and draws nothing.
-          drawSpaceTypeClip(spaceTypeHandle, ctx, clip as SpaceTypeClip, localFrame, cw, ch, fps)
+          drawSpaceTypeClip(spaceTypeHandle, ctx, clip as SpaceTypeClip, sourceFrame, cw, ch, fps)
           ctx.restore()
           continue
         }

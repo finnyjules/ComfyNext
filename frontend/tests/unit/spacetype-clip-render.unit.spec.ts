@@ -64,6 +64,8 @@ import { createSpaceTypeClip } from '../../app/composables/timelineSpaceTypeClip
 import { sourceT01, drawSpaceTypeClip, renderSpaceTypeClipToCanvas } from '../../app/lib/engine/spaceTypeClipRenderer'
 import { getEffect, __registerEffect, __clearEffects } from '../../app/lib/spacetype/effects/index'
 import { SpaceTypeSource } from '../../app/lib/engine/sources/spaceTypeSource'
+import { buildDrawList } from '../../app/lib/engine/compositor'
+import { EDIT_STATE_VERSION, type EditState, type SpaceTypeClip } from '../../shared/timeline/types'
 
 /** A fake canvas good enough for document.createElement('canvas'): tracks width/height
  *  (so the pool's resize-detection works), answers getContext('webgl2') truthily so
@@ -156,9 +158,18 @@ describe('sourceT01', () => {
     expect(sourceT01(clip, 400)).toBeCloseTo(last)
   })
 
-  it('respects in_frame as an offset into the source', () => {
+  // Was 'respects in_frame as an offset into the source', asserting
+  // sourceT01(clip, 0) === 0.5 for an in_frame:90 clip — i.e. that sourceT01
+  // itself adds clip.in_frame to its argument. That is Critical 1's bug: the
+  // WebGL path's argument is ALREADY source-mapped (sourceFrameAt has already
+  // added in_frame) by the time it reaches here, so sourceT01 adding it again
+  // double-counted the trim. The corrected contract: sourceT01 takes a source
+  // frame and must NOT read clip.in_frame at all — the caller (sourceFrameAt)
+  // is solely responsible for folding it in, once.
+  it('does not read clip.in_frame — the caller must pre-fold it into the source frame it passes in', () => {
     const clip = { ...createSpaceTypeClip({ startFrame: 0, state }), in_frame: 90 }
-    expect(sourceT01(clip, 0)).toBeCloseTo(0.5)
+    expect(sourceT01(clip, 0)).toBeCloseTo(0) // in_frame ignored, not added
+    expect(sourceT01(clip, 90)).toBeCloseTo(0.5) // caller pre-added in_frame itself
   })
 
   it('is pure — the same frame yields the same t01 regardless of call order', () => {
@@ -267,6 +278,76 @@ describe('spaceTypeEnginePool failure classification (Finding 4)', () => {
     const engine = getSpaceTypeEngine(handle, 100, 100)
     expect(engine).toBeTruthy() // succeeds once the transient pressure has eased
     expect(three.__getConstructAttempts()).toBe(attemptsBefore + 2)
+  })
+})
+
+// Critical 1 regression, driven through the REAL compositor path rather than
+// sourceT01 in isolation — the isolated unit tests above (and the old
+// "respects in_frame" test they replaced) are exactly what let the double-
+// apply bug ship. This exercises the actual production chain: buildDrawList
+// (sourceFrameAt) -> SpaceTypeSource.getFrame -> renderSpaceTypeClipToCanvas
+// -> sourceT01 -> engine.renderFrameAt(t01, ...). Only SpaceTypeEngine's WebGL
+// renderer is faked (via the module-level 'three' mock at the top of this
+// file, reused from the pool-ownership tests above) — nothing in the chain
+// under test is mocked, so a regression here would reproduce the bug end to
+// end, not just at the sourceT01 call site.
+describe('Space Type in_frame: compositor path (Critical 1 — was double-applied in WebGL, dropped in Canvas2D)', () => {
+  beforeEach(() => {
+    vi.stubGlobal('document', { createElement: () => fakeCanvas() })
+    resetSpaceTypeEnginePool()
+  })
+  afterEach(() => {
+    resetSpaceTypeEnginePool()
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  function editStateFor(clip: SpaceTypeClip): EditState {
+    return {
+      version: EDIT_STATE_VERSION,
+      canvas: { width: 100, height: 100, fps: 30, bg_color: '#000000' },
+      tracks: [{ id: 't1', kind: 'video', name: 'V1', muted: false, locked: false, clips: [clip] }],
+      transitions: [],
+      total_frames: 9999,
+    }
+  }
+
+  it('buildDrawList -> SpaceTypeSource.getFrame -> sourceT01: a trimmed clip at local frame 0 renders the same t01 as an untrimmed clip at local frame N — not 2N', async () => {
+    const renderFrameAtSpy = vi.spyOn(SpaceTypeEngine.prototype, 'renderFrameAt')
+    const state = defaultSpaceTypeState() // 30fps, 6s loop => T = 180 source frames
+    const T = 180
+    const N = 40
+
+    // Trimmed clip: in_frame N, evaluated at its own local frame 0.
+    const trimmed = { ...createSpaceTypeClip({ startFrame: 0, state, length: 9999 }), in_frame: N } as SpaceTypeClip
+    const dims = new Map([[trimmed.id, { w: 100, h: 100 }]])
+    const entries = buildDrawList(editStateFor(trimmed), 0, dims)
+    expect(entries).toHaveLength(1)
+    // buildDrawList already source-maps via sourceFrameAt — the FrameSource contract.
+    expect(entries[0]!.sourceFrame).toBe(N)
+
+    const trimmedSource = new SpaceTypeSource(trimmed, 30)
+    await trimmedSource.getFrame(entries[0]!.sourceFrame)
+    expect(renderFrameAtSpy).toHaveBeenCalledTimes(1)
+    const trimmedT01 = renderFrameAtSpy.mock.calls[0]![0]
+    trimmedSource.dispose()
+
+    // Untrimmed clip (in_frame 0), evaluated directly at source frame N — the
+    // "same content" comparison point per the bug report.
+    renderFrameAtSpy.mockClear()
+    const untrimmed = createSpaceTypeClip({ startFrame: 0, state, length: 9999 })
+    const untrimmedSource = new SpaceTypeSource(untrimmed, 30)
+    await untrimmedSource.getFrame(N)
+    expect(renderFrameAtSpy).toHaveBeenCalledTimes(1)
+    const untrimmedT01 = renderFrameAtSpy.mock.calls[0]![0]
+    untrimmedSource.dispose()
+
+    expect(trimmedT01).toBeCloseTo(N / T, 10)
+    expect(trimmedT01).toBeCloseTo(untrimmedT01, 10)
+    // The regression this guards against: double-applying in_frame would feed
+    // the engine source frame 2N (80) instead of N (40) — a materially
+    // different, and wrong, t01.
+    expect(trimmedT01).not.toBeCloseTo((2 * N) / T, 5)
   })
 })
 

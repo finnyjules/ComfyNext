@@ -105,10 +105,16 @@ def spacetype_source_index(local_frame: int, baked_count: int, loop: bool, in_fr
     This is the Python twin of sourceT01() in
     frontend/app/lib/engine/spaceTypeClipRenderer.ts: both must map the same
     (in_frame, local_frame) pair to the same phase, or the export drifts from
-    the live preview. `in_frame` defaults to 0 so existing bake-domain callers
-    (which already pre-add it, or intentionally pass a trim-free view — see
-    spaceTypeClipBake.ts's `{...clip, in_frame: 0}`) are unaffected. The golden
-    test covers a frame pair one loop apart to catch drift."""
+    the live preview. Note the two are NOT parameter-for-parameter identical:
+    this function takes a clip-local frame and applies in_frame itself (once,
+    here); sourceT01's `sourceFrame` argument is expected pre-source-mapped by
+    its caller (sourceFrameAt in the browser) and does not read clip.in_frame
+    at all — folding it in here AND there was Critical 1's double-apply bug.
+    `in_frame` defaults to 0 so existing bake-domain callers (which intentionally
+    pass a trim-free view — see spaceTypeClipBake.ts's `{...clip, loop: true}`,
+    which no longer needs to force in_frame:0 either, since sourceT01 doesn't
+    read it) are unaffected. The golden test covers a frame pair one loop apart
+    to catch drift."""
     if baked_count <= 0:
         return 0
     raw = in_frame + local_frame

@@ -81,10 +81,12 @@ export async function ensureSpaceTypeClipBake(
   try {
     const bake = await ensureSpaceTypeBake(cfg, clip.spacetype_bake, {
       renderFrame: async (index: number) => {
-        // A bake index is a SOURCE index, not a clip-local one: baking through
-        // the clip's own trim would shift every frame by in_frame and desync
-        // the export from the live preview.
-        const src = { ...clip, in_frame: 0, loop: true } as SpaceTypeClip
+        // A bake index IS a source frame (0..k*T-1) — sourceT01 no longer reads
+        // clip.in_frame at all (see its doc comment), so cloning with in_frame:0
+        // would be dead weight now; only `loop: true` still needs forcing, so a
+        // clip authored with loop:false doesn't clamp mid-cycle while baking the
+        // one full seamless cycle the export tiles from.
+        const src = { ...clip, loop: true } as SpaceTypeClip
         const canvas = renderSpaceTypeClipToCanvas(handle, src, index, clip.state.fps)
         if (!canvas) throw new Error(`space type bake: engine unavailable at frame ${index} of clip ${clip.id}`)
         return await canvasToPngBlob(canvas)

@@ -23,13 +23,19 @@ vi.mock('../../app/lib/spacetype/effects/index', () => {
 // ensureSpaceTypeClipBake actually feeds the renderer, while sourceT01 and
 // spaceTypeLoopMultiplier stay the REAL implementations (spread from
 // importOriginal) — those are exactly the functions Critical 1 fixed.
-const capturedRenderCalls: Array<{ localFrame: number; inFrame: number; loop: boolean }> = []
+//
+// Field renamed from `localFrame` to `sourceFrame`: a bake index IS a source
+// frame (0..k*T-1), and renderSpaceTypeClipToCanvas's 3rd parameter is named
+// that post-fix too — sourceT01 (which this receives) no longer reads
+// clip.in_frame, so `inFrame` is captured only for the "loop forced true"
+// assertion below, not for any in_frame-offset math.
+const capturedRenderCalls: Array<{ sourceFrame: number; inFrame: number; loop: boolean }> = []
 vi.mock('../../app/lib/engine/spaceTypeClipRenderer', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../app/lib/engine/spaceTypeClipRenderer')>()
   return {
     ...actual,
-    renderSpaceTypeClipToCanvas: (_handle: unknown, clip: any, localFrame: number) => {
-      capturedRenderCalls.push({ localFrame, inFrame: clip.in_frame ?? 0, loop: clip.loop !== false })
+    renderSpaceTypeClipToCanvas: (_handle: unknown, clip: any, sourceFrame: number) => {
+      capturedRenderCalls.push({ sourceFrame, inFrame: clip.in_frame ?? 0, loop: clip.loop !== false })
       return { toBlob: (cb: (b: Blob | null) => void) => cb(new Blob(['x'])) } as unknown as HTMLCanvasElement
     },
   }
@@ -182,15 +188,26 @@ describe('sourceT01 multi-loop content advance (Critical 1)', () => {
     expect(sourceT01(clip, 359)).toBeCloseTo(179 / 180, 10)
   })
 
-  it('honours in_frame before wrapping, and (loop:false) clamps to the last frame of k·T, not of T', () => {
+  // Was 'honours in_frame before wrapping...', asserting sourceT01(looping, 100)
+  // (with clip.in_frame:40) === 140/T — i.e. that sourceT01 itself adds
+  // clip.in_frame to its argument. That IS Critical 1's bug: the WebGL path's
+  // argument is already source-mapped (sourceFrameAt already added in_frame)
+  // by the time it reaches sourceT01, so adding it again here double-counted
+  // the trim. Corrected contract: sourceT01 must NOT read clip.in_frame at
+  // all — the caller folds it in exactly once, before calling here.
+  it('does not honour clip.in_frame — the caller pre-folds it into the source frame — and (loop:false) clamps to the last frame of k·T, not of T', () => {
     __registerEffect({ id: 'thirdrate2', label: 'thirdrate2', controls: [], buildScene: () => ({}), update: () => {}, loopRates: () => [1 / 3] })
     const base = createSpaceTypeClip({ startFrame: 0, state: { ...st(), effectId: 'thirdrate2' } as any, length: 9999 })
     const T = 180
     const k = 3
 
     const looping = { ...base, in_frame: 40, loop: true }
-    expect(sourceT01(looping, 100)).toBeCloseTo(140 / T, 10)
-    expect(sourceT01(looping, 500)).toBeCloseTo(0, 10) // 40 + 500 = 540 = k*T, wraps exactly
+    expect(sourceT01(looping, 100)).toBeCloseTo(100 / T, 10) // in_frame ignored, NOT added
+    expect(sourceT01(looping, 100)).toBe(sourceT01({ ...looping, in_frame: 0 }, 100)) // truly inert
+
+    // Given a pre-folded source frame (in_frame 40 + local 100 = 140), wraps as before.
+    expect(sourceT01(looping, 140)).toBeCloseTo(140 / T, 10)
+    expect(sourceT01(looping, 540)).toBeCloseTo(0, 10) // 40 + 500 = 540 = k*T, wraps exactly
 
     const held = { ...base, in_frame: 0, loop: false }
     // A clamp to T-1 (the old, wrong modulus) would freeze this effect mid-cycle
@@ -202,12 +219,12 @@ describe('sourceT01 multi-loop content advance (Critical 1)', () => {
 /** Integration check: drives the REAL ensureSpaceTypeClipBake / bakeCfg /
  *  spaceTypeLoopMultiplier orchestration (only the WebGL render call and the
  *  network upload are stubbed — see the vi.mock calls above) and captures
- *  every (localFrame) the pipeline hands to the renderer, reconstructing the
+ *  every (sourceFrame) the pipeline hands to the renderer, reconstructing the
  *  t01 each one implies via the real sourceT01. This is the "spy across a
  *  k>1 bake" the review asked for: it proves the ACTUAL bake loop — not just
  *  sourceT01 in isolation — walks the full unwrapped k*T range. */
 describe('ensureSpaceTypeClipBake drives the renderer across the full k*T range (Critical 1, integration)', () => {
-  it('renders every source-domain frame exactly once, on a trim-free/looping view, with advancing t01', async () => {
+  it('renders every source-domain frame exactly once, on a looping view, with advancing t01', async () => {
     capturedRenderCalls.length = 0
     __registerEffect({ id: 'bakerate', label: 'bakerate', controls: [], buildScene: () => ({}), update: () => {}, loopRates: () => [1 / 3] })
     const clip = createSpaceTypeClip({ startFrame: 0, state: { ...st(), effectId: 'bakerate' } as any, length: 9999 })
@@ -218,13 +235,16 @@ describe('ensureSpaceTypeClipBake drives the renderer across the full k*T range 
     await ensureSpaceTypeClipBake(clip)
 
     expect(capturedRenderCalls.length).toBe(k * T)
-    expect(capturedRenderCalls.map(c => c.localFrame)).toEqual(Array.from({ length: k * T }, (_, i) => i))
-    // The bake deliberately renders a trim-free view (in_frame forced to 0,
-    // loop forced on) — the trim applies at export time, never baked in.
+    expect(capturedRenderCalls.map(c => c.sourceFrame)).toEqual(Array.from({ length: k * T }, (_, i) => i))
+    // The bake always forces loop:true (a clip authored with loop:false must not
+    // clamp mid-cycle while baking the one full seamless cycle export tiles
+    // from). It no longer needs to force in_frame:0 — sourceT01 doesn't read
+    // clip.in_frame at all post-fix, so it's inert either way; this clip's
+    // in_frame is 0 only because createSpaceTypeClip defaults it to 0.
     expect(capturedRenderCalls.every(c => c.inFrame === 0 && c.loop === true)).toBe(true)
 
-    const src = { ...clip, in_frame: 0, loop: true }
-    const t01s = capturedRenderCalls.map(c => sourceT01(src, c.localFrame))
+    const src = { ...clip, loop: true }
+    const t01s = capturedRenderCalls.map(c => sourceT01(src, c.sourceFrame))
     for (let i = 1; i < t01s.length; i++) expect(t01s[i]).toBeGreaterThan(t01s[i - 1])
     expect(t01s[T]).toBeCloseTo(1, 10)
     expect(Math.max(...t01s)).toBeGreaterThan(1)
@@ -236,7 +256,16 @@ describe('ensureSpaceTypeClipBake drives the renderer across the full k*T range 
  *  indexing the k*T baked PNGs) map the same (in_frame, local_frame) pair to
  *  the same phase — idx = round(t01 * T). Critical 1 (unwrap at k*T) and
  *  Critical 2 (apply in_frame) both feed this table; a drift in either would
- *  fail it. */
+ *  fail it.
+ *
+ *  Re-derived for Critical 1's fix (sourceT01 no longer reads clip.in_frame —
+ *  see its doc comment): the (T, k, in_frame, local_frame, loop) -> expected_idx
+ *  values are UNCHANGED from before, because Python's spacetype_source_index
+ *  always computed `raw = in_frame + local_frame` itself, on a clip-local
+ *  frame — it never had Critical 1's double-apply bug. Only the JS call
+ *  convention changes: the test now performs that same single addition BEFORE
+ *  calling sourceT01 (mirroring what sourceFrameAt does in production),
+ *  instead of relying on sourceT01 to do it internally. */
 const TWIN_CASES: Array<[string, number, number, number, number, boolean, number]> = [
   // label,               T,   k, in_frame, local_frame, loop,  expected_idx
   ['start',               180, 3, 0,        0,           true,  0],
@@ -252,16 +281,18 @@ const TWIN_CASES: Array<[string, number, number, number, number, boolean, number
 ]
 
 describe('sourceT01 / spacetype_source_index twin table (Critical 1 + 2)', () => {
-  it('sourceT01(clip, local) * T matches the Python baked-frame index for every case', () => {
+  it('sourceT01(clip, in_frame + local) * T matches the Python baked-frame index for every case', () => {
     __registerEffect({ id: 'twintest', label: 'twintest', controls: [], buildScene: () => ({}), update: () => {}, loopRates: () => [1 / 3] })
     for (const [label, T, k, inFrame, localFrame, loop, expectedIdx] of TWIN_CASES) {
       const clip = {
         ...createSpaceTypeClip({ startFrame: 0, state: { ...st(), effectId: 'twintest' } as any, length: 9999 }),
-        in_frame: inFrame,
         loop,
       }
       expect(spaceTypeLoopMultiplier(clip), label).toBe(k)
-      const t01 = sourceT01(clip, localFrame)
+      // The single point where in_frame gets folded in — production does this
+      // via sourceFrameAt (shared/timeline/sourceFrame.ts), not inside sourceT01.
+      const sourceFrame = inFrame + localFrame
+      const t01 = sourceT01(clip, sourceFrame)
       expect(Math.round(t01 * T), label).toBe(expectedIdx)
     }
   })
