@@ -12,6 +12,8 @@ import { usePlaybackEngineGL, webglPreviewSupported } from '~/composables/usePla
 import { useLocalSettings } from '~/composables/useLocalSettings'
 import { useClipPreview } from '~/composables/useClipPreview'
 import { ensureMotionBake } from '~/lib/engine/motionClipBake'
+import { ensureSpaceTypeClipBake } from '~/lib/engine/spaceTypeClipBake'
+import { spaceTypeEngineAvailable } from '~/lib/engine/spaceTypeEnginePool'
 import { ensureMotionFonts } from '~/composables/useTemplateFonts'
 import type { Clip, Track, BlendMode, MotionClip, SpaceTypeClip, Transition, TransitionKind } from '~~/shared/timeline/types'
 import { computeTotalFrames } from '~~/shared/timeline/types'
@@ -1059,6 +1061,11 @@ const isRendering = ref(false)
 const renderResult = ref<null | { url: string; filename: string }>(null)
 const renderError = ref<string | null>(null)
 const renderProgress = ref<{ current: number; total: number } | null>(null)
+/** Which half of an export is running. Space Type clips bake in the browser
+ *  before the server renders, and that bake is slow enough to look like a hang
+ *  — so the button must say which phase the bar is measuring, or it fills to
+ *  100% twice with no explanation. */
+const renderPhase = ref<'baking' | 'rendering' | null>(null)
 
 async function renderViaFFmpeg() {
   if (isRendering.value) return
@@ -1093,6 +1100,36 @@ async function renderViaFFmpeg() {
     }
   }
 
+  // Space Type clips render live in the browser but Python can't run three.js,
+  // so bake one seamless cycle per clip. Unlike Motion (Canvas2D text, ~instant)
+  // a supersampled three.js bake is slow enough that a silent stall reads as a
+  // hang — hence the per-frame progress into the same status the render uses.
+  const spaceTypeClips = es.tracks.flatMap(t => t.clips).filter(c => c.kind === 'spacetype') as SpaceTypeClip[]
+  if (spaceTypeClips.length && !spaceTypeEngineAvailable()) {
+    isRendering.value = false
+    renderError.value = 'This timeline has Space Type clips, which need WebGL2 to render. Export is unavailable in this browser.'
+    return
+  }
+  if (spaceTypeClips.length) renderPhase.value = 'baking'
+  for (let i = 0; i < spaceTypeClips.length; i++) {
+    const clip = spaceTypeClips[i]!
+    try {
+      clip.spacetype_bake = await ensureSpaceTypeClipBake(clip, (done, total) => {
+        // Progress across ALL Space Type clips, so the bar advances once rather
+        // than resetting per clip.
+        renderProgress.value = { current: i * total + done, total: spaceTypeClips.length * total }
+      })
+    } catch (err: any) {
+      isRendering.value = false
+      renderPhase.value = null
+      renderProgress.value = null
+      renderError.value = `Space Type bake failed: ${err?.message ?? err}`
+      return
+    }
+  }
+  renderPhase.value = 'rendering'
+  renderProgress.value = null
+
   const payload: any = JSON.parse(JSON.stringify(es))
   for (const track of payload.tracks) {
     for (const clip of track.clips) {
@@ -1101,6 +1138,10 @@ async function renderViaFFmpeg() {
         if (asset) clip.path = asset.path
       } else if (clip.kind === 'motion') {
         clip.motion_frames = clip.motion_bake?.frames ?? []
+      } else if (clip.kind === 'spacetype') {
+        // One seamless cycle; the exporter tiles it across the clip length.
+        clip.spacetype_frames = clip.spacetype_bake?.frames ?? []
+        clip.spacetype_loop = clip.loop !== false
       } else if (clip.kind === 'workflow') {
         // A clip fed by a wired node. If that node resolves to a real input/
         // file (LoadVideo / Video / LoadImage / Image), render it as a normal
@@ -1158,6 +1199,7 @@ async function renderViaFFmpeg() {
   } finally {
     isRendering.value = false
     renderProgress.value = null
+    renderPhase.value = null
   }
 }
 
@@ -1772,7 +1814,9 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
             <span class="relative">
               {{
                 isRendering
-                  ? (renderProgress ? `${Math.round(renderProgress.current / Math.max(1, renderProgress.total) * 100)}%` : 'Rendering…')
+                  ? (renderPhase === 'baking'
+                      ? (renderProgress ? `Baking ${Math.round(renderProgress.current / Math.max(1, renderProgress.total) * 100)}%` : 'Baking…')
+                      : (renderProgress ? `${Math.round(renderProgress.current / Math.max(1, renderProgress.total) * 100)}%` : 'Rendering…'))
                   : (renderResult ? 'Re-render' : 'Export')
               }}
             </span>
