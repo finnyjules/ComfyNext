@@ -6,6 +6,8 @@ import { gradientFx } from '~/lib/gradientfx/renderer'
 import { defaultConfig } from '~/lib/gradientfx/randomize'
 import { aspectRatio, type GradientConfig } from '~/lib/gradientfx/types'
 import { registerStudioBaker, unregisterStudioBaker } from '~/lib/studio/cascade'
+import { registerStudioFrameSource, unregisterStudioFrameSource } from '~/lib/studio/frameSource'
+import { makeGradientFrameSource } from '~/lib/gradientfx/frameSource'
 import StudioRenderButton from '~/components/vue-canvas/StudioRenderButton.vue'
 
 // Gradient Studio — a frontend-only config node (no backend class_type, never
@@ -80,8 +82,17 @@ async function bakeOutput(): Promise<Blob | null> {
   return await gradientFx.renderToBlob(config.value, BAKE_W, Math.max(1, Math.round(BAKE_W / ar)), 0)
 }
 
-onMounted(() => { startLoop(); registerStudioBaker(props.id, bakeOutput) })
-onBeforeUnmount(() => { cancelAnimationFrame(raf); unregisterStudioBaker(props.id) })
+onMounted(() => {
+  startLoop(); registerStudioBaker(props.id, bakeOutput)
+  registerStudioFrameSource(props.id, makeGradientFrameSource({
+    getConfig: () => config.value,
+    render: (cfg, w, h, time) => gradientFx.render(cfg, w, h, time),
+  }))
+})
+onBeforeUnmount(() => {
+  cancelAnimationFrame(raf); unregisterStudioBaker(props.id)
+  unregisterStudioFrameSource(props.id)
+})
 
 // Re-render when the saved config changes (editor writes back live). Debounced.
 let timer: ReturnType<typeof setTimeout> | null = null
