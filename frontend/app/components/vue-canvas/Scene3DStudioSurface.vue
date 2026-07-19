@@ -338,6 +338,27 @@ const cloneCost = computed(() => {
   const verts = baseVertexCountFor(o.primitive, o.params, o.modifiers) * copies
   return { copies, verts, heavy: verts > AMBER_VERTS }
 })
+// Heavy-drag deferral. A rebuild at 300k+ verts blocks the main thread long
+// enough that the slider itself stops tracking the pointer, so for the duration
+// of a drag on a heavy object the engine skips geometry rebuilds and catches up
+// once on release. Nothing is clamped: the released value is what gets built.
+// Heaviness is sampled once at pointerdown so a drag never changes mode midway.
+const deferringGeometry = ref(false)
+function onControlsPointerDown() {
+  if (!engine || deferringGeometry.value || !cloneCost.value?.heavy) return
+  deferringGeometry.value = true
+  engine.deferGeometry = true
+}
+// On window, not the panel: the pointer routinely leaves the controls column
+// mid-drag, and a missed release would leave the viewport permanently stale.
+function onGeometryDragRelease() {
+  if (!deferringGeometry.value) return
+  deferringGeometry.value = false
+  if (!engine) return
+  engine.deferGeometry = false
+  engine.syncFromDoc(doc) // one rebuild, at the final slider values
+}
+
 /** Compact vertex figure: 4200 → "4.2k", 331_000 → "331k", 1_060_000 → "1.1M". */
 function compactCount(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
@@ -349,11 +370,19 @@ function compactCount(n: number): string {
 // Size = scale expressed in scene units. Base dimensions come from the geometry
 // itself (rebuilt from the doc, so they follow parameter changes — a fatter torus
 // tube is a bigger torus). GLBs fall back to the engine's measured bounds.
+// Measuring a primitive means BUILDING it (with the cloner — an array really is
+// wider), so this is as expensive as the engine's own rebuild. It therefore
+// freezes with the mesh during a deferred drag: the Size row shows what is on
+// screen, and both catch up together on release.
+let lastBaseSize: [number, number, number] = [1, 1, 1]
 const baseSize = computed<[number, number, number]>(() => {
   const o = selected.value
   if (!o) return [1, 1, 1]
-  if (o.kind === 'primitive') return baseSizeFor(o.primitive, o.params, o.modifiers)
-  return engine?.baseSizeOf(o.id) ?? [1, 1, 1]
+  if (deferringGeometry.value) return lastBaseSize
+  lastBaseSize = o.kind === 'primitive'
+    ? baseSizeFor(o.primitive, o.params, o.modifiers)
+    : engine?.baseSizeOf(o.id) ?? [1, 1, 1]
+  return lastBaseSize
 })
 function sizeAxis(i: 0 | 1 | 2, scl: { value: number }) {
   return computed<number>({
@@ -421,10 +450,14 @@ onMounted(() => {
   // stopImmediatePropagation + preventDefault (the shell also early-returns on
   // e.defaultPrevented). Same technique as StudioColor's popover.
   window.addEventListener('keydown', onKey, true)
+  window.addEventListener('pointerup', onGeometryDragRelease)
+  window.addEventListener('pointercancel', onGeometryDragRelease)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKey, true)
+  window.removeEventListener('pointerup', onGeometryDragRelease)
+  window.removeEventListener('pointercancel', onGeometryDragRelease)
   window.removeEventListener('pointerdown', onPrimMenuOutside, true)
   cancelAnimationFrame(raf)
   ro?.disconnect()
@@ -742,7 +775,7 @@ function onClose() {
     </template>
 
     <template #controls>
-      <StudioSection v-if="selected" title="Selection">
+      <StudioSection v-if="selected" title="Selection" @pointerdown.capture="onControlsPointerDown">
         <div v-if="selectedIsPrimitive">
           <label class="mb-1 block text-[11px] text-white/55">Material</label>
           <StudioSelect v-model="matType" :options="MATERIAL_TYPES" />
@@ -1018,7 +1051,7 @@ function onClose() {
               class="pt-0.5 text-[10px] tabular-nums"
               :class="cloneCost.heavy ? 'text-amber-400/80' : 'text-white/35'"
             >
-              {{ cloneCost.copies }} copies · ~{{ compactCount(cloneCost.verts) }} verts
+              {{ cloneCost.copies }} copies · ~{{ compactCount(cloneCost.verts) }} verts<template v-if="deferringGeometry"> · updates on release</template>
             </div>
           </div>
         </details>

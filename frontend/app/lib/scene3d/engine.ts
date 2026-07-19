@@ -183,6 +183,13 @@ export class SceneEngine {
   private envTarget: THREE.WebGLRenderTarget | null = null
   private glbTokens = new Map<string, number>() // id → load generation (drop stale async loads)
   private token = 0
+  /** While true, syncObject skips geometry rebuilds for existing meshes (the
+   *  stored geoKey is deliberately left stale, so the very next sync with the
+   *  flag cleared rebuilds once at the final values). Transforms, visibility and
+   *  materials keep syncing normally. The surface raises this for the duration of
+   *  a slider drag on a heavy clone set, where a synchronous rebuild per tick
+   *  costs hundreds of milliseconds. */
+  deferGeometry = false
 
   constructor(canvas: HTMLCanvasElement, width: number, height: number) {
     // preserveDrawingBuffer so toDataURL works for bakes (shapefx pattern).
@@ -318,7 +325,9 @@ export class SceneEngine {
       // Geometry params and the shading variant share one key: either change
       // swaps the geometry in place, leaving the material instance (and its
       // in-place update path) and the transform untouched.
-      if (mesh.userData.geoKey !== geoKey) {
+      // NB: while deferred, geoKey is intentionally NOT stamped — leaving it
+      // stale is what makes the deferred rebuild happen on release.
+      if (mesh.userData.geoKey !== geoKey && !this.deferGeometry) {
         mesh.geometry.dispose()
         mesh.geometry = buildGeometry(obj.primitive, obj.params, obj.modifiers, variant)
         mesh.userData.geoKey = geoKey

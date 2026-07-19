@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import * as THREE from 'three'
-import { sunDirection, geometryFor, baseSizeFor, buildGeometry } from '~/lib/scene3d/engine'
-import { PRIMITIVE_KINDS, type PrimitiveKind } from '~/lib/scene3d/config'
+import { sunDirection, geometryFor, baseSizeFor, buildGeometry, SceneEngine } from '~/lib/scene3d/engine'
+import { PRIMITIVE_KINDS, createPrimitive, type PrimitiveKind, type PrimitiveObject } from '~/lib/scene3d/config'
 import { PRIMITIVE_PARAMS } from '~/lib/scene3d/primParams'
 
 describe('scene3d sun direction', () => {
@@ -195,5 +195,81 @@ describe('scene3d engine modifier integration', () => {
     const plain = baseSizeFor('box')
     const arrayed = baseSizeFor('box', undefined, { cloneCount: 3, cloneOffsetX: 2 })
     expect(arrayed[0]).toBeGreaterThan(plain[0])
+  })
+})
+
+// syncObject needs a live WebGL context to reach through SceneEngine's
+// constructor (WebGLRenderer + PMREM), which jsdom has no way to provide. The
+// method itself only touches objectRoots / scene / glbTokens, so the deferral
+// behaviour is exercised against a stand-in `this` — the real prototype method,
+// no reimplementation.
+describe('scene3d engine deferred geometry', () => {
+  const objectFor = (detail: number): PrimitiveObject => ({
+    ...createPrimitive('sphere', []),
+    params: { detail },
+    modifiers: { cloneCountX: 3, cloneCountY: 3, cloneCountZ: 3 },
+  })
+  const makeHost = () => ({
+    objectRoots: new Map<string, THREE.Object3D>(),
+    glbTokens: new Map<string, number>(),
+    token: 0,
+    deferGeometry: false,
+    scene: { add() {}, remove() {} },
+  })
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const sync = (host: any, obj: PrimitiveObject) => (SceneEngine.prototype as any).syncObject.call(host, obj)
+
+  it('rebuilds geometry on a param change when not deferring', () => {
+    const host = makeHost()
+    const obj = objectFor(16)
+    sync(host, obj)
+    const mesh = host.objectRoots.get(obj.id) as THREE.Mesh
+    const before = mesh.geometry.getAttribute('position').count
+    sync(host, { ...obj, params: { detail: 48 } })
+    expect(mesh.geometry.getAttribute('position').count).not.toBe(before)
+  })
+
+  it('skips the rebuild while deferring, and leaves the stale key so release catches up', () => {
+    const host = makeHost()
+    const obj = objectFor(16)
+    sync(host, obj)
+    const mesh = host.objectRoots.get(obj.id) as THREE.Mesh
+    const before = mesh.geometry.getAttribute('position').count
+    const keyBefore = mesh.userData.geoKey
+
+    host.deferGeometry = true
+    sync(host, { ...obj, params: { detail: 32 } })
+    sync(host, { ...obj, params: { detail: 48 } })
+    expect(mesh.geometry.getAttribute('position').count).toBe(before)
+    expect(mesh.userData.geoKey).toBe(keyBefore) // stale on purpose
+
+    host.deferGeometry = false
+    sync(host, { ...obj, params: { detail: 48 } })
+    const finalCount = mesh.geometry.getAttribute('position').count
+    expect(finalCount).not.toBe(before)
+    // The catch-up build matches the final slider value exactly, not an
+    // intermediate one from during the drag.
+    expect(finalCount).toBe(
+      buildGeometry('sphere', { detail: 48 }, obj.modifiers, 'smooth').getAttribute('position').count,
+    )
+  })
+
+  it('keeps transform, visibility and material live while deferring', () => {
+    const host = makeHost()
+    const obj = objectFor(16)
+    sync(host, obj)
+    const mesh = host.objectRoots.get(obj.id) as THREE.Mesh
+
+    host.deferGeometry = true
+    sync(host, {
+      ...obj,
+      params: { detail: 48 },
+      position: [1, 2, 3],
+      visible: false,
+      material: { ...obj.material, color: '#ff0000' },
+    })
+    expect(mesh.position.toArray()).toEqual([1, 2, 3])
+    expect(mesh.visible).toBe(false)
+    expect((mesh.material as THREE.MeshPhysicalMaterial).color.getHexString()).toBe('ff0000')
   })
 })
