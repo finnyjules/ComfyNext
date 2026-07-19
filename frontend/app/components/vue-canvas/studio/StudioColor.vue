@@ -4,7 +4,7 @@
 // Teleported to <body> + fixed-positioned so it escapes the section cards' overflow:hidden.
 import { ref, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { Pipette } from 'lucide-vue-next'
-import { clampHex, hexToRgb, rgbToHex, rgbToHsv, hsvToRgb, rgbToOklch, oklchToRgb } from './color'
+import { clampHex, isHex, hexToRgb, rgbToHex, rgbToHsv, hsvToRgb, rgbToOklch, oklchToRgb } from './color'
 
 const model = defineModel<string>({ required: true })
 
@@ -21,10 +21,22 @@ const hueColor = computed(() => { const [r, g, b] = hsvToRgb(h.value, 1, 1); ret
 function pushModel() { const [r, g, b] = hsvToRgb(h.value, s.value, v.value); model.value = rgbToHex(r, g, b) }
 function syncFromModel() { const [r, g, b] = hexToRgb(model.value); const [hh, ss, vv] = rgbToHsv(r, g, b); h.value = hh; s.value = ss; v.value = vv }
 
-const hexField = computed({
-  get: () => model.value,
-  set: (val: string) => { model.value = clampHex(val); syncFromModel() },
-})
+// The hex field is a DRAFT while you type. Committing per keystroke would run
+// clampHex mid-entry, and clampHex turns anything incomplete into #000000 — so
+// "#1a2b3c" was destroyed (and the colour blackened) at the first character.
+// null means "not editing", and the field mirrors the model.
+const hexDraft = ref<string | null>(null)
+const hexValue = computed(() => hexDraft.value ?? model.value)
+function onHexInput(e: Event) { hexDraft.value = (e.target as HTMLInputElement).value }
+/** Blur/Enter: apply a complete hex, otherwise drop the draft and snap back to
+ *  the model. Never writes a clamped partial value. */
+function commitHex() {
+  const draft = hexDraft.value
+  hexDraft.value = null
+  if (draft === null || !isHex(draft)) return
+  model.value = clampHex(draft)
+  syncFromModel()
+}
 
 // RGB channel proxies (0–255).
 function rgbChannel(i: number) {
@@ -74,6 +86,7 @@ function reposition() {
   popStyle.value = { left: `${Math.max(8, left)}px`, top: `${top}px`, width: `${W}px` }
 }
 function openPicker() {
+  hexDraft.value = null // never reopen showing a draft abandoned by an Escape
   syncFromModel(); open.value = true
   nextTick(reposition)
   window.addEventListener('scroll', reposition, true)
@@ -86,6 +99,7 @@ function openPicker() {
 }
 function close() {
   open.value = false
+  hexDraft.value = null // Escape unmounts the input without a blur, so drop the draft
   window.removeEventListener('scroll', reposition, true)
   window.removeEventListener('resize', reposition)
   window.removeEventListener('pointerdown', onOutside, true)
@@ -159,7 +173,8 @@ function dragHue(e: PointerEvent) {
                   :class="mode === mo ? 'bg-white text-neutral-900' : 'text-white/55 hover:text-white/80'">{{ mo }}</button>
         </div>
       </div>
-      <input v-if="mode === 'hex'" v-model="hexField" spellcheck="false" :class="inputCls" />
+      <input v-if="mode === 'hex'" :value="hexValue" @input="onHexInput" @blur="commitHex"
+             @keydown.enter.prevent="commitHex" spellcheck="false" :class="inputCls" />
       <div v-else-if="mode === 'rgb'" class="grid grid-cols-3 gap-1.5">
         <div><input v-model.number="rCh" type="number" min="0" max="255" :class="inputCls" /><div class="mt-0.5 text-center text-[10px] text-white/35">R</div></div>
         <div><input v-model.number="gCh" type="number" min="0" max="255" :class="inputCls" /><div class="mt-0.5 text-center text-[10px] text-white/35">G</div></div>

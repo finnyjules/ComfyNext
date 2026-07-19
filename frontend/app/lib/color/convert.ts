@@ -8,6 +8,14 @@ export function clampHex(hex: string): string {
   return /^[0-9a-fA-F]{6}$/.test(x) ? '#' + x.toLowerCase() : '#000000'
 }
 
+/** True when `s` is a complete hex colour (3 or 6 digits, `#` optional).
+ *  clampHex silently turns anything else into black, which is destructive for a
+ *  half-typed value — so callers that accept typed input test with this first
+ *  and reject rather than clamp. */
+export function isHex(s: string): boolean {
+  return /^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(String(s).trim())
+}
+
 export function hexToRgb(hex: string): [number, number, number] {
   const x = clampHex(hex).slice(1)
   return [parseInt(x.slice(0, 2), 16), parseInt(x.slice(2, 4), 16), parseInt(x.slice(4, 6), 16)]
