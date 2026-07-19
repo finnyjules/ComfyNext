@@ -2,12 +2,17 @@
 /** The single Space Type draw used by BOTH compositors — the WebGL source and
  *  the Canvas2D fallback — mirroring motionClipRenderer.ts. One implementation,
  *  two consumers: the reason renderMotionClip is the one render path in this
- *  codebase that has not drifted across surfaces. */
+ *  codebase that has not drifted across surfaces.
+ *
+ *  Callers must hold a `SpaceTypeEngineHandle` acquired from
+ *  spaceTypeEnginePool.ts (see that file's ownership contract) — acquire it
+ *  once at construction, release it once at disposal, and pass it into
+ *  renderSpaceTypeClipToCanvas/drawSpaceTypeClip on every frame. */
 import type { SpaceTypeClip } from '~~/shared/timeline/types'
 import { getEffect } from '~/lib/spacetype/effects/index'
 import { texOptsFromState, dimsFromKey } from '~/lib/spacetype/state'
 import { spaceTypeSourceFrameCount } from '~/composables/timelineSpaceTypeClip'
-import { acquireSpaceTypeEngine, structuralKey } from './spaceTypeEnginePool'
+import { getSpaceTypeEngine, structuralKey, type SpaceTypeEngineHandle } from './spaceTypeEnginePool'
 
 /** Clip-local frame → normalized loop time, honouring in_frame and looping.
  *  Pure: the same frame always yields the same t01, which is what makes random
@@ -23,15 +28,18 @@ export function sourceT01(clip: SpaceTypeClip, localFrame: number): number {
 }
 
 /** Render the clip at a clip-local frame into the shared engine's canvas.
- *  Returns null when the engine is unavailable (no WebGL2) — callers draw
- *  nothing rather than failing. */
+ *  Returns null when the engine is unavailable (no WebGL2, or transiently
+ *  unavailable this frame) — callers draw nothing rather than failing.
+ *  `handle` must already be acquired (see spaceTypeEnginePool.ts); this
+ *  function only calls getSpaceTypeEngine(), never acquire/release. */
 export function renderSpaceTypeClipToCanvas(
+  handle: SpaceTypeEngineHandle,
   clip: SpaceTypeClip,
   localFrame: number,
   _fps: number,
 ): HTMLCanvasElement | null {
   const [W, H] = dimsFromKey(clip.state.dimsKey)
-  const engine = acquireSpaceTypeEngine(W, H)
+  const engine = getSpaceTypeEngine(handle, W, H)
   if (!engine) return null
 
   const effect = getEffect(clip.state.effectId)
@@ -50,10 +58,12 @@ export function renderSpaceTypeClipToCanvas(
   return engine.renderer.domElement
 }
 
-/** Canvas2D-path draw: render, then blit the engine canvas aspect-fit into ctx.
- *  A WebGL canvas is a valid drawImage source, which is why one engine serves
- *  both compositors. */
+/** Canvas2D-path draw: render, then blit the engine canvas aspect-fit (letterboxed,
+ *  centered) into ctx — matching how usePlaybackEngine.ts aspect-fits every other
+ *  clip kind. The clip's own dimensions (from dimsKey) need not match the project
+ *  canvas, so a naive full-rect stretch would visibly squash the output. */
 export function drawSpaceTypeClip(
+  handle: SpaceTypeEngineHandle,
   ctx: CanvasRenderingContext2D,
   clip: SpaceTypeClip,
   localFrame: number,
@@ -61,7 +71,25 @@ export function drawSpaceTypeClip(
   canvasH: number,
   fps: number,
 ): void {
-  const src = renderSpaceTypeClipToCanvas(clip, localFrame, fps)
+  const src = renderSpaceTypeClipToCanvas(handle, clip, localFrame, fps)
   if (!src) return
-  ctx.drawImage(src, 0, 0, canvasW, canvasH)
+  const sw = src.width, sh = src.height
+  if (!sw || !sh || !canvasW || !canvasH) return
+
+  const cAspect = canvasW / canvasH
+  const sAspect = sw / sh
+  let dw: number, dh: number
+  if (sAspect > cAspect) {
+    dw = canvasW
+    dh = canvasW / sAspect
+  } else {
+    dh = canvasH
+    dw = canvasH * sAspect
+  }
+  const dx = (canvasW - dw) / 2
+  const dy = (canvasH - dh) / 2
+
+  try {
+    ctx.drawImage(src, dx, dy, dw, dh)
+  } catch { /* best-effort, matches other clip-kind draw paths */ }
 }
