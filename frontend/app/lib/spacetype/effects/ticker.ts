@@ -1,8 +1,9 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
-import { buildTickerGeometryData, tickerRow, type TickerGeoParams } from '../tickerGeometry'
+import { buildTickerGeometryData, buildTickerStrokeData, tickerRow, type TickerGeoParams } from '../tickerGeometry'
 import { loopTiles, scrollOffset, textVariantForBand } from '../ribbonGeometry'
 import { parseFills, fillShaderTexture, fillTiling, fillTextColor, fillAlpha, fillTextAlpha } from '../fills'
+import { stripAlpha, parseHexA } from '~/lib/color/convert'
 import { defaultFillsFor } from '../palette'
 
 const TAU = Math.PI * 2
@@ -34,6 +35,9 @@ const controls: ControlSpec[] = [
   { key: 'waveFrequency', label: 'Wave freq', kind: 'slider', min: 0.5, max: 5, step: 0.1, default: 1.5, group: 'Wave' },
   { key: 'waveSpeed', label: 'Wave speed', kind: 'slider', min: 0, max: 3, step: 0.05, default: 0, group: 'Wave' },
   { key: 'speed', label: 'Speed', kind: 'slider', min: 0, max: 3, step: 0.05, default: 0.6, group: 'Motion' },
+  // Rails along the band's two long edges. Default 0 (off) so existing scenes are unchanged.
+  { key: 'strokeWidth', label: 'Stroke', kind: 'slider', min: 0, max: 0.4, step: 0.01, default: 0, group: 'Stroke' },
+  { key: 'strokeColor', label: 'Stroke color', kind: 'color', default: '#000000', group: 'Stroke' },
   // Seeded 'ticker', not 'ribbon': tests/unit/spacetype-palette.unit.spec.ts holds every effect's
   // fillList default to defaultFillsFor(n, <that effect's own id>).
   { key: 'fills', label: 'Fills', kind: 'fillList', default: defaultFillsFor(1, 'ticker'), group: 'Color' },
@@ -54,6 +58,8 @@ let rows: {
   geoParams: TickerGeoParams
   posAttr: THREE.BufferAttribute
   uvAttr: THREE.BufferAttribute
+  /** Null when strokeWidth is 0 — no stroke mesh is built at all. */
+  strokePosAttr: THREE.BufferAttribute | null
   /** Phase last written into the buffers, so a wave that stops can be settled back to rest. */
   bakedPhase: number
   uFillScroll: { value: number }
@@ -159,6 +165,8 @@ export const tickerEffect: SpaceTypeEffect = {
     // Multiple texts → N-row atlas; row i shows row i%N via the texture's V transform.
     const numTexts = Math.max(1, Math.floor(Number(textTexture.userData?.numTexts ?? 1)))
     const fills = parseFills(params.fills)
+    const strokeWidth = n(params, 'strokeWidth')
+    const strokeAlpha = parseHexA(String(params.strokeColor)).alpha
 
     for (let i = 0; i < count; i++) {
       const row = tickerRow(i, {
@@ -203,6 +211,27 @@ export const tickerEffect: SpaceTypeEffect = {
         uFillScroll,
       )
 
+      // Rails: a separate mesh so the band keeps its own textured material. Skipped entirely at
+      // width 0 rather than added as degenerate geometry.
+      let strokePosAttr: THREE.BufferAttribute | null = null
+      if (strokeWidth > 0) {
+        const sg = buildTickerStrokeData(geoParams, strokeWidth)
+        const sGeo = new three.BufferGeometry()
+        strokePosAttr = new three.BufferAttribute(sg.positions, 3)
+        sGeo.setAttribute('position', strokePosAttr)
+        sGeo.setIndex(new three.BufferAttribute(sg.indices, 1))
+        const sMat = new three.MeshBasicMaterial({
+          color: new three.Color(stripAlpha(String(params.strokeColor))),
+          side: three.DoubleSide,
+          transparent: strokeAlpha < 1,
+          opacity: strokeAlpha,
+          depthWrite: strokeAlpha >= 1,
+        })
+        const sMesh = new three.Mesh(sGeo, sMat)
+        sMesh.position.y = row.y
+        root.add(sMesh)
+      }
+
       const mesh = new three.Mesh(bufferGeo, mat)
       // Register the cloned texture so disposeRoot() frees it on rebuild.
       mesh.userData.tex = tex
@@ -217,6 +246,7 @@ export const tickerEffect: SpaceTypeEffect = {
         geoParams,
         posAttr,
         uvAttr,
+        strokePosAttr,
         bakedPhase: row.phase,
         uFillScroll,
       })
@@ -228,6 +258,7 @@ export const tickerEffect: SpaceTypeEffect = {
   update(t01, params) {
     const speed = n(params, 'speed')
     const waveSpeed = n(params, 'waveSpeed')
+    const strokeWidth = n(params, 'strokeWidth')
     for (const r of rows) {
       // Text marquees along the band; a whole number of tiles per loop keeps it seamless.
       // uRepeatEffective (not uRepeat) so a waved band scrolls at the same GLYPH pace as a flat one.
@@ -260,6 +291,13 @@ export const tickerEffect: SpaceTypeEffect = {
         // for an integer waveSpeed.
         ;(r.uvAttr.array as Float32Array).set(next.uvs)
         r.uvAttr.needsUpdate = true
+        // Rails ride the same centreline, so they must re-bake in lockstep or they drift off the
+        // band's edge as the wave travels.
+        if (r.strokePosAttr) {
+          const sg = buildTickerStrokeData({ ...r.geoParams, phase }, strokeWidth)
+          ;(r.strokePosAttr.array as Float32Array).set(sg.positions)
+          r.strokePosAttr.needsUpdate = true
+        }
         r.bakedPhase = phase
       }
     }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { tickerPoint, maxAmplitude, buildTickerGeometryData, type TickerGeoParams } from '~/lib/spacetype/tickerGeometry'
+import { tickerPoint, maxAmplitude, buildTickerGeometryData, buildTickerStrokeData, STROKE_Z, type TickerGeoParams } from '~/lib/spacetype/tickerGeometry'
 
 const base: TickerGeoParams = {
   segments: 240, length: 100, amplitude: 0, frequency: 2, phase: 0, height: 10, uRepeat: 4,
@@ -111,5 +111,74 @@ describe('buildTickerGeometryData', () => {
     const g = buildTickerGeometryData(wild)
     const capped = buildTickerGeometryData({ ...wild, amplitude: maxAmplitude(wild.frequency, wild.length, wild.height) })
     expect(g.arcLength).toBeCloseTo(capped.arcLength, 6)
+  })
+})
+
+describe('buildTickerStrokeData', () => {
+  // 4 verts per sample: outerA, outerB, innerA, innerB. Two independent rails, one per long edge.
+  const W = 0.4
+
+  it('is empty at zero width — no stroke mesh should be built at all', () => {
+    const s = buildTickerStrokeData({ ...base, segments: 10 }, 0)
+    expect(s.positions.length).toBe(0)
+    expect(s.indices.length).toBe(0)
+  })
+
+  it('emits four verts per sample and twelve indices per segment', () => {
+    const s = buildTickerStrokeData({ ...base, segments: 10 }, W)
+    expect(s.positions.length).toBe(11 * 4 * 3)
+    expect(s.indices.length).toBe(10 * 12)
+  })
+
+  it('holds rail width constant around bends', () => {
+    const s = buildTickerStrokeData({ ...base, amplitude: 6, segments: 400 }, W)
+    const n = s.positions.length / 3
+    for (let i = 0; i < n; i += 4) {
+      const outer = Math.hypot(
+        s.positions[i * 3] - s.positions[(i + 1) * 3],
+        s.positions[i * 3 + 1] - s.positions[(i + 1) * 3 + 1],
+      )
+      const inner = Math.hypot(
+        s.positions[(i + 2) * 3] - s.positions[(i + 3) * 3],
+        s.positions[(i + 2) * 3 + 1] - s.positions[(i + 3) * 3 + 1],
+      )
+      expect(outer).toBeCloseTo(W, 5)
+      expect(inner).toBeCloseTo(W, 5)
+    }
+  })
+
+  it('centres each rail exactly on the band edge — rails cannot drift off the band', () => {
+    const p = { ...base, amplitude: 6, segments: 300 }
+    const band = buildTickerGeometryData(p)
+    const s = buildTickerStrokeData(p, W)
+    const samples = s.positions.length / 3 / 4
+    for (let i = 0; i < samples; i++) {
+      const b = i * 4, g = i * 2
+      // Rail centre = midpoint of its two verts; band edge = the band's own vert for that side.
+      for (const [r0, r1, edge] of [[b, b + 1, g], [b + 2, b + 3, g + 1]] as const) {
+        const cx = (s.positions[r0 * 3]! + s.positions[r1 * 3]!) / 2
+        const cy = (s.positions[r0 * 3 + 1]! + s.positions[r1 * 3 + 1]!) / 2
+        expect(cx).toBeCloseTo(band.positions[edge * 3]!, 5)
+        expect(cy).toBeCloseTo(band.positions[edge * 3 + 1]!, 5)
+      }
+    }
+  })
+
+  it('sits in a single plane just in front of the band, to avoid z-fighting', () => {
+    const s = buildTickerStrokeData({ ...base, amplitude: 6 }, W)
+    const band = buildTickerGeometryData({ ...base, amplitude: 6 })
+    for (let i = 2; i < s.positions.length; i += 3) {
+      // toBeCloseTo, not toBe: Float32Array cannot hold 0.001 exactly.
+      expect(s.positions[i]).toBeCloseTo(STROKE_Z, 9)
+    }
+    expect(STROKE_Z).toBeGreaterThan(band.positions[2]!)
+    expect(STROKE_Z).toBeLessThan(0.01)
+  })
+
+  it('clamps amplitude identically to the band, so the two cannot diverge', () => {
+    const wild = { ...base, amplitude: 1e6, segments: 200 }
+    const a = buildTickerStrokeData(wild, W)
+    const b = buildTickerStrokeData({ ...wild, amplitude: maxAmplitude(wild.frequency, wild.length, wild.height) }, W)
+    for (let i = 0; i < a.positions.length; i++) expect(a.positions[i]).toBeCloseTo(b.positions[i]!, 5)
   })
 })

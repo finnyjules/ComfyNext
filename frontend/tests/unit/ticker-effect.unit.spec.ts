@@ -91,6 +91,35 @@ function firstGeo(root: THREE.Object3D): THREE.BufferGeometry {
   return mesh.geometry as THREE.BufferGeometry
 }
 
+describe('ticker band stroke', () => {
+  const meshCount = (root: THREE.Object3D) => root.children.filter(c => (c as THREE.Mesh).isMesh).length
+
+  it('builds no stroke mesh at all at width 0', () => {
+    const { root } = build({ rowCount: 2, strokeWidth: 0 })
+    expect(meshCount(root)).toBe(2)          // two bands, nothing else
+  })
+
+  it('adds one stroke mesh per row once width is non-zero', () => {
+    const { root } = build({ rowCount: 2, strokeWidth: 0.2 })
+    expect(meshCount(root)).toBe(4)          // two bands + two rail meshes
+  })
+
+  it('keeps stroke width structural — it changes geometry, so it must force a rebuild', () => {
+    expect(tickerEffect.liveKeys).not.toContain('strokeWidth')
+  })
+
+  it('re-bakes the rails with the band as a travelling wave advances', () => {
+    const { params, root } = build({ rowCount: 1, strokeWidth: 0.2, waveAmplitude: 2, waveSpeed: 1 })
+    const stroke = root.children.filter(c => (c as THREE.Mesh).isMesh)
+      .map(c => (c as THREE.Mesh).geometry as THREE.BufferGeometry)
+      .find(g => !g.getAttribute('uv'))!     // the rail mesh is the one without UVs
+    tickerEffect.update(0, params)
+    const at0 = Float32Array.from(stroke.getAttribute('position').array as Float32Array)
+    tickerEffect.update(0.25, params)
+    expect(Array.from(stroke.getAttribute('position').array as Float32Array)).not.toEqual(Array.from(at0))
+  })
+})
+
 describe('ticker wave rebuild', () => {
   it('leaves geometry untouched across frames when the wave is still', () => {
     const { params, root } = build({ waveAmplitude: 2, waveSpeed: 0 })
