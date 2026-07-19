@@ -91,14 +91,27 @@ getStudioFrameSource(nodeId)
 
 `StudioBaker` stays as-is for the still case. This is additive.
 
-Space Type registers a `StudioFrameSource` backed by `engine.renderFrameAt`.
+**Two producers already fit this shape, which is the main evidence the seam is right:**
+
+- **Gradient Studio** — `gradientFx.render(cfg, width, height, time)`
+  (`frontend/app/lib/gradientfx/renderer.ts:142`) already returns an `HTMLCanvasElement`.
+  This *is* the interface; the adapter is a parameter reorder. It is animated two
+  independent ways: motion tracks via its own `applyMotion`
+  (`frontend/app/lib/gradientfx/motion.ts:62`), and `flow.speed` — a continuous
+  domain-warp churn that loops seamlessly by construction (`renderer.ts:234-245`), using
+  `motion.duration` as its loop length.
+- **Space Type** — `engine.renderFrameAt(t01, params)` (`SpaceTypeSurface.vue:598`) draws
+  into a bound canvas rather than returning one, so its adapter renders then hands back
+  the engine's canvas.
+
+Note both already carry `motion: { duration, fps }` in their configs, so the clock rule
+below has a real value to read in both cases.
 
 **A source with `duration <= 0` is a still.** Shader Studio pulls a single frame at
 `t01 = 0`, does not start an animated preview loop, and falls back to its own `motion`
-settings for export length. Studios that are not animated (Gradient Studio today) may
-therefore either register a `duration: 0` source — gaining arbitrary-resolution pulls
-without implying motion — or register nothing and resolve via the artifact path. Both are
-valid; neither is required for this change to land.
+settings for export length. This covers a studio configured with no motion tracks and zero
+flow speed, and any future non-animated producer. A studio that registers nothing at all
+resolves via the artifact path instead — both are valid.
 
 ### Source resolution order in Shader Studio
 
@@ -228,8 +241,12 @@ raising any resolution ceiling.
 - `generateImage` from a chained node still produces a single correct frame.
 - Existing 3-node topology (Space Type → Image artifact → Shader Studio) still works
   unchanged — this is the main regression risk.
-- Gradient Studio (non-animated) → Shader Studio still produces a still.
-- Space Type's own bake/export path unaffected.
+- Gradient Studio → Shader Studio with `flow.speed > 0`: the shaded output churns, and the
+  export loops seamlessly (phase 0 == phase 1) as the gradient renderer guarantees on its
+  own. A seam here would mean the clock rule is misreading `motion.duration`.
+- Gradient Studio with no motion tracks and `flow.speed === 0` → still image, no preview
+  loop started.
+- Space Type's and Gradient Studio's own bake/export paths unaffected.
 
 ## Risks
 
