@@ -26,6 +26,10 @@ export interface EngineOptions {
 const ORTHO_HALF_H = Math.tan((45 / 2) * Math.PI / 180) * 14
 const ISO_EYE = new THREE.Vector3(0, 0, 20)
 
+/** Resident built scene roots. Bounds GPU memory when a timeline holds many
+ *  distinct Space Type clips; a miss costs one buildScene(), not correctness. */
+export const ROOT_CACHE_LIMIT = 8
+
 export class SpaceTypeEngine {
   readonly renderer: THREE.WebGLRenderer
   readonly scene: THREE.Scene
@@ -33,6 +37,9 @@ export class SpaceTypeEngine {
   private orthoCam: THREE.OrthographicCamera
   private effect: SpaceTypeEffect
   private root: THREE.Object3D | null = null
+  /** key → built root. Insertion order is LRU order (re-inserted on hit). */
+  private rootCache = new Map<string, THREE.Object3D>()
+  private activeKey: string | null = null
   private textTex: THREE.Texture | null = null
   private opts: EngineOptions
   private post: PostSettings = DEFAULT_POST
@@ -188,6 +195,64 @@ export class SpaceTypeEngine {
     }
   }
 
+  /** Test/debug observability for the pooling invariant. */
+  get cachedRootCount(): number { return this.rootCache.size }
+
+  /** Make the root for `key` the active one, building it only on a miss.
+   *  Unlike build(), previously built roots are retained and swapped in, so
+   *  alternating between clips costs a scene-graph swap rather than a rebuild. */
+  buildKeyed(key: string, effect: SpaceTypeEffect, params: Params, texOpts: TextTextureOptions): void {
+    if (this.activeKey === key && this.rootCache.has(key)) {
+      this.effect = effect
+      return
+    }
+
+    // Detach whatever is currently mounted; it stays alive in the cache.
+    if (this.root) this.scene.remove(this.root)
+
+    const hit = this.rootCache.get(key)
+    if (hit) {
+      this.rootCache.delete(key)   // re-insert to move to MRU position
+      this.rootCache.set(key, hit)
+      this.effect = effect
+      this.root = hit
+      this.scene.add(hit)
+      this.activeKey = key
+      return
+    }
+
+    this.effect = effect
+    this.root = null              // build() must not dispose a cached root
+    this.build(params, texOpts)
+    if (this.root) {
+      this.rootCache.set(key, this.root)
+      this.activeKey = key
+      this.evictRoots()
+    }
+  }
+
+  private evictRoots(): void {
+    while (this.rootCache.size > ROOT_CACHE_LIMIT) {
+      const oldest = this.rootCache.keys().next().value as string | undefined
+      if (oldest === undefined) break
+      const obj = this.rootCache.get(oldest)!
+      this.rootCache.delete(oldest)
+      if (obj === this.root) continue          // never evict the mounted root
+      this.scene.remove(obj)
+      disposeObject3D(obj)
+    }
+  }
+
+  clearRootCache(): void {
+    for (const [, obj] of this.rootCache) {
+      if (obj === this.root) continue
+      this.scene.remove(obj)
+      disposeObject3D(obj)
+    }
+    this.rootCache.clear()
+    this.activeKey = null
+  }
+
   /** Total frames in one loop. */
   get frameCount(): number { return Math.max(1, Math.round(this.opts.fps * this.opts.loopDuration)) }
 
@@ -248,6 +313,7 @@ export class SpaceTypeEngine {
   }
 
   dispose(): void {
+    this.clearRootCache()
     this.disposeRoot()
     this.postChain?.dispose()
     // Free the underlying WebGL context promptly (renderer.dispose alone leaves it
@@ -255,4 +321,15 @@ export class SpaceTypeEngine {
     this.renderer.forceContextLoss()
     this.renderer.dispose()
   }
+}
+
+/** Release GPU resources for an object graph that is no longer cached. */
+function disposeObject3D(obj: THREE.Object3D): void {
+  obj.traverse((child) => {
+    const mesh = child as THREE.Mesh
+    if (mesh.geometry) mesh.geometry.dispose()
+    const mat = mesh.material as THREE.Material | THREE.Material[] | undefined
+    if (Array.isArray(mat)) mat.forEach(m => m.dispose())
+    else if (mat) mat.dispose()
+  })
 }
