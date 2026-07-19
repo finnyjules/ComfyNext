@@ -207,8 +207,15 @@ export class SpaceTypeEngine {
       return
     }
 
-    // Detach whatever is currently mounted; it stays alive in the cache.
-    if (this.root) this.scene.remove(this.root)
+    // Detach whatever is currently mounted; it stays alive in the cache. Also invalidate
+    // activeKey right away: build() below swallows exceptions internally, and if it fails
+    // this.root stays null, so activeKey must not keep naming a key whose root we just
+    // detached — otherwise a later buildKeyed() for that same (still-cached) key would
+    // hit the fast path above and return without ever re-mounting anything.
+    if (this.root) {
+      this.scene.remove(this.root)
+      this.activeKey = null
+    }
 
     const hit = this.rootCache.get(key)
     if (hit) {
@@ -243,14 +250,19 @@ export class SpaceTypeEngine {
     }
   }
 
+  /** Drop every cached root, including the mounted one. Fully disposes GPU resources —
+   *  callers do not need to follow this with dispose() or disposeRoot() to avoid a leak;
+   *  disposeRoot() is idempotent (no-ops once this.root is null), so dispose() calling
+   *  both in sequence stays safe rather than double-disposing. */
   clearRootCache(): void {
     for (const [, obj] of this.rootCache) {
-      if (obj === this.root) continue
+      if (obj === this.root) continue   // disposed below, via disposeRoot()
       this.scene.remove(obj)
       disposeObject3D(obj)
     }
     this.rootCache.clear()
     this.activeKey = null
+    this.disposeRoot()
   }
 
   /** Total frames in one loop. */

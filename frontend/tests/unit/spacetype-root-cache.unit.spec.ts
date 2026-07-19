@@ -38,6 +38,18 @@ function fakeEffect(id: string, onBuild: () => void): SpaceTypeEffect {
   }
 }
 
+/** An effect whose buildScene() always throws — used to exercise build()'s internal
+ *  catch (it never lets exceptions escape) and the resulting failed-build state. */
+function throwingEffect(id: string): SpaceTypeEffect {
+  return {
+    id,
+    label: id,
+    controls: [],
+    buildScene: () => { throw new Error(`${id} build failed`) },
+    update: () => {},
+  }
+}
+
 function engine() {
   const canvas = { width: 64, height: 64, getContext: () => ({}) } as unknown as HTMLCanvasElement
   return new SpaceTypeEngine(canvas, {
@@ -76,7 +88,7 @@ describe('SpaceTypeEngine root cache', () => {
     expect(e.cachedRootCount).toBe(2)
   })
 
-  it('evicts least-recently-used past the limit', () => {
+  it('caps cache size at the limit and evicts the oldest key first', () => {
     const e = engine()
     for (let i = 0; i < ROOT_CACHE_LIMIT + 1; i++) e.buildKeyed(`k${i}`, eff(`e${i}`), {}, TEX)
     expect(e.cachedRootCount).toBe(ROOT_CACHE_LIMIT)
@@ -104,5 +116,57 @@ describe('SpaceTypeEngine root cache', () => {
     expect(e.cachedRootCount).toBe(0)
     e.buildKeyed('k1', eff('a'), {}, TEX)
     expect(builds.a).toBe(2)
+  })
+
+  // Regression (Finding 1): a failed build used to leave `activeKey` pointing at a key
+  // whose root had already been detached from the scene. A later buildKeyed() for that
+  // same (still-cached) key then hit the fast path and returned without re-mounting
+  // anything, leaving the canvas permanently blank.
+  it('remounts the previous key after a failed build instead of staying blank', () => {
+    const e = engine()
+    e.buildKeyed('k1', eff('a'), {}, TEX)
+    expect(e.scene.children.length).toBe(1)
+
+    // Switching to a key whose effect throws during buildScene: build() swallows the
+    // exception internally, so nothing new gets mounted — but k1 was already detached.
+    e.buildKeyed('k2', throwingEffect('bad'), {}, TEX)
+    expect(e.scene.children.length).toBe(0)
+
+    // k1 is still resident in the cache; switching back to it must remount it rather
+    // than short-circuiting on a stale activeKey.
+    e.buildKeyed('k1', eff('a'), {}, TEX)
+    expect(e.scene.children.length).toBe(1)
+    expect(builds.a).toBe(1) // reused the cached root, did not rebuild
+  })
+
+  // Regression (Finding 2): clearRootCache() skips disposing the mounted root, assuming
+  // dispose() immediately follows and handles it. Called standalone, that skip becomes a
+  // leak: the mounted root is dropped from the cache without being disposed, and a later
+  // buildKeyed() for a different key overwrites `this.root`, dropping the last reference
+  // to its geometry/material without ever calling .dispose() on them.
+  it('disposes the mounted root when clearRootCache is called standalone', () => {
+    const e = engine()
+    // buildScene returns a real Mesh (not a bare Object3D) so disposeRoot's traversal
+    // (which gates disposal on `mesh.isMesh`) actually has geometry/material to dispose.
+    const meshEffect: SpaceTypeEffect = {
+      id: 'mesh', label: 'mesh', controls: [],
+      buildScene: (three) => new three.Mesh(new three.BoxGeometry(1, 1, 1), new three.MeshBasicMaterial()),
+      update: () => {},
+    }
+    e.buildKeyed('k1', meshEffect, {}, TEX)
+    const mounted = e.scene.children[0] as THREE.Mesh
+    const disposeSpy = vi.spyOn(mounted.geometry, 'dispose')
+
+    e.clearRootCache()
+
+    expect(disposeSpy).toHaveBeenCalled()
+    // State must stay coherent: nothing mounted, nothing cached, no dangling activeKey.
+    expect(e.scene.children.length).toBe(0)
+    expect(e.cachedRootCount).toBe(0)
+
+    // Switching to a new key afterwards must not attempt to touch the already-disposed
+    // former root (e.g. double-remove/double-dispose it).
+    expect(() => e.buildKeyed('k2', eff('b'), {}, TEX)).not.toThrow()
+    expect(builds.b).toBe(1)
   })
 })
