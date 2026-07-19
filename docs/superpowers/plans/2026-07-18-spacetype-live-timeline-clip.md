@@ -927,7 +927,7 @@ Create `frontend/app/lib/engine/sources/spaceTypeSource.ts`:
 import type { Clip, SpaceTypeClip } from '~~/shared/timeline/types'
 import { dimsFromKey } from '~/lib/spacetype/state'
 import { renderSpaceTypeClipToCanvas } from '~/lib/engine/spaceTypeClipRenderer'
-import { releaseSpaceTypeEngine } from '~/lib/engine/spaceTypeEnginePool'
+import { acquireSpaceTypeEngine, releaseSpaceTypeEngine, type SpaceTypeEngineHandle } from '~/lib/engine/spaceTypeEnginePool'
 import type { FrameSource } from './frameSource'
 
 export class SpaceTypeSource implements FrameSource {
@@ -935,11 +935,16 @@ export class SpaceTypeSource implements FrameSource {
   private h: number
   private fallback: HTMLCanvasElement | null = null
   private released = false
+  private handle: SpaceTypeEngineHandle | null
 
   constructor(private clip: SpaceTypeClip, private fps: number) {
     const [W, H] = dimsFromKey(clip.state.dimsKey)
     this.w = W
     this.h = H
+    // Acquire ONCE per source, at construction — never per frame. See the
+    // ownership contract at the top of spaceTypeEnginePool.ts. Null means
+    // WebGL2 is permanently unavailable; getFrame then emits transparent.
+    this.handle = acquireSpaceTypeEngine()
   }
 
   static supports(clip: Clip): clip is SpaceTypeClip {
@@ -950,7 +955,7 @@ export class SpaceTypeSource implements FrameSource {
   get height(): number { return this.h }
 
   async getFrame(n: number): Promise<TexImageSource> {
-    const canvas = renderSpaceTypeClipToCanvas(this.clip, n, this.fps)
+    const canvas = this.handle && renderSpaceTypeClipToCanvas(this.handle, this.clip, n, this.fps)
     if (canvas) return canvas
     // No WebGL2, or a render error: emit a transparent frame so one bad clip
     // never fails the whole composite.
@@ -965,7 +970,8 @@ export class SpaceTypeSource implements FrameSource {
   dispose(): void {
     if (this.released) return
     this.released = true
-    releaseSpaceTypeEngine()
+    releaseSpaceTypeEngine(this.handle)
+    this.handle = null
     if (this.fallback) {
       this.fallback.width = 0
       this.fallback.height = 0
@@ -1063,17 +1069,26 @@ import { createSpaceTypeClip } from '../../app/composables/timelineSpaceTypeClip
 import { defaultSpaceTypeState } from '../../app/lib/spacetype/state'
 
 vi.mock('../../app/lib/engine/spaceTypeEnginePool', () => ({
-  acquireSpaceTypeEngine: () => null,     // simulate no WebGL2
+  acquireSpaceTypeEngine: () => ({ id: 1 }),
+  getSpaceTypeEngine: () => null,          // simulate no engine for this frame
   releaseSpaceTypeEngine: () => {},
   structuralKey: () => 'k',
 }))
 
-describe('drawSpaceTypeClip without WebGL2', () => {
+describe('drawSpaceTypeClip when the engine is unavailable', () => {
   it('draws nothing and does not throw', () => {
     const clip = createSpaceTypeClip({ startFrame: 0, state: defaultSpaceTypeState() })
     const drawImage = vi.fn()
     const ctx = { drawImage } as unknown as CanvasRenderingContext2D
-    expect(() => drawSpaceTypeClip(ctx, clip, 0, 1920, 1080, 30)).not.toThrow()
+    expect(() => drawSpaceTypeClip({ id: 1 }, ctx, clip, 0, 1920, 1080, 30)).not.toThrow()
+    expect(drawImage).not.toHaveBeenCalled()
+  })
+
+  it('draws nothing when the handle itself is null', () => {
+    const clip = createSpaceTypeClip({ startFrame: 0, state: defaultSpaceTypeState() })
+    const drawImage = vi.fn()
+    const ctx = { drawImage } as unknown as CanvasRenderingContext2D
+    expect(() => drawSpaceTypeClip(null, ctx, clip, 0, 1920, 1080, 30)).not.toThrow()
     expect(drawImage).not.toHaveBeenCalled()
   })
 })
@@ -1100,13 +1115,37 @@ Insert this block at line 174 — immediately after the `clip.kind === 'motion'`
           ctx.save()
           ctx.globalCompositeOperation = CANVAS_BLEND[clip.blend ?? 'normal'] ?? 'source-over'
           ctx.globalAlpha = clip.opacity ?? 1
-          drawSpaceTypeClip(ctx, clip as SpaceTypeClip, localFrame, cw, ch, fps)
+          drawSpaceTypeClip(spaceTypeHandle, ctx, clip as SpaceTypeClip, localFrame, cw, ch, fps)
           ctx.restore()
           continue
         }
 ```
 
 This fits the existing synchronous shape: `renderFrameAt` is a synchronous three.js render, and `drawImage` of a WebGL canvas is synchronous, so the branch completes within one rAF tick like its neighbours.
+
+**The handle.** Per the ownership contract at the top of `spaceTypeEnginePool.ts`, this composable acquires ONCE for its lifetime — never per frame. Add near the composable's other module-scope state:
+
+```ts
+let spaceTypeHandle: SpaceTypeEngineHandle | null = null
+```
+
+Acquire lazily the first time a `spacetype` clip is actually encountered (so a timeline with none never touches WebGL at all), and release in the composable's existing `onUnmounted`:
+
+```ts
+        if (clip.kind === 'spacetype') {
+          if (!spaceTypeHandle) spaceTypeHandle = acquireSpaceTypeEngine()
+          ...
+```
+
+```ts
+  onUnmounted(() => {
+    releaseSpaceTypeEngine(spaceTypeHandle)
+    spaceTypeHandle = null
+    // ...existing teardown
+  })
+```
+
+Read the composable's existing `onUnmounted` before editing and add to it rather than declaring a second one.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -1390,6 +1429,7 @@ import { loopMultiplier } from '~/lib/spacetype/loop'
 import { dimsFromKey } from '~/lib/spacetype/state'
 import { spaceTypeSourceFrameCount } from '~/composables/timelineSpaceTypeClip'
 import { renderSpaceTypeClipToCanvas } from './spaceTypeClipRenderer'
+import { acquireSpaceTypeEngine, releaseSpaceTypeEngine } from './spaceTypeEnginePool'
 
 /** k, the number of loops needed for every motion rate to close cleanly. */
 export function spaceTypeLoopMultiplier(clip: SpaceTypeClip): number {
@@ -1402,12 +1442,26 @@ export function spaceTypeBakeFrameCount(clip: SpaceTypeClip): number {
   return spaceTypeSourceFrameCount(clip) * spaceTypeLoopMultiplier(clip)
 }
 
+/** MUST include post, projection and pan.
+ *
+ *  `spaceTypeSourceKey`'s own `SourceKeyInput` omits them, which is fine for
+ *  the studio's mp4 button (it always re-bakes) but WRONG here: the bake is
+ *  cached and skipped on a key match, so a user who changes bloom, exposure or
+ *  pan would export stale frames showing the OLD post-processing, silently.
+ *  Folding them into the hashed `params` bag is the cheapest correct fix — the
+ *  key is opaque, so extra entries only ever cause a (correct) re-bake. */
 function bakeCfg(clip: SpaceTypeClip) {
   const [W, H] = dimsFromKey(clip.state.dimsKey)
   const k = spaceTypeLoopMultiplier(clip)
   return {
     effectId: clip.state.effectId,
-    params: clip.state.params,
+    params: {
+      ...clip.state.params,
+      __post: JSON.stringify(clip.state.post ?? null),
+      __projection: clip.state.projection ?? 'perspective',
+      __pan: `${clip.state.panX ?? 0},${clip.state.panY ?? 0}`,
+      __gradient: JSON.stringify(clip.state.gradientStops ?? []),
+    },
     fps: clip.state.fps,
     loopDuration: clip.state.loopDuration * k,   // k loops in one bake
     W,
@@ -1430,26 +1484,30 @@ export async function ensureSpaceTypeClipBake(
   onProgress?: (done: number, total: number) => void,
 ): Promise<MotionBake> {
   const cfg = bakeCfg(clip)
-  const bake = await ensureSpaceTypeBake(cfg, clip.spacetype_bake, {
-    renderFrame: async (index: number) => {
-      const canvas = renderSpaceTypeClipToCanvas(clip, index, clip.state.fps)
-      if (!canvas) throw new Error(`space type bake: no WebGL2 — cannot bake clip ${clip.id}`)
-      return await canvasToPngBlob(canvas)
-    },
-    onProgress,
-  })
-  return { ...bake, external: true }
+  // Acquire ONCE for the whole bake, release in `finally` — never per frame.
+  // See the ownership contract at the top of spaceTypeEnginePool.ts.
+  const handle = acquireSpaceTypeEngine()
+  if (!handle) throw new Error(`space type bake: no WebGL2 — cannot bake clip ${clip.id}`)
+  try {
+    const bake = await ensureSpaceTypeBake(cfg, clip.spacetype_bake, {
+      renderFrame: async (index: number) => {
+        const src = { ...clip, in_frame: 0, loop: true } as SpaceTypeClip
+        const canvas = renderSpaceTypeClipToCanvas(handle, src, index, clip.state.fps)
+        if (!canvas) throw new Error(`space type bake: engine unavailable at frame ${index} of clip ${clip.id}`)
+        return await canvasToPngBlob(canvas)
+      },
+      onProgress,
+    })
+    return { ...bake, external: true }
+  } finally {
+    releaseSpaceTypeEngine(handle)
+  }
 }
 ```
 
-**Note on `renderFrame(index)`:** the bake walks `0 … k*sourceFrames-1`, and `sourceT01` applies `in_frame` and modulo. Since a bake index is a *source* index, not a clip-local one, pass a trim-free view of the clip:
+**Why `renderFrame` passes a trim-free clip:** the bake walks `0 … k*sourceFrames-1`, and `sourceT01` applies `in_frame` and the loop modulo. A bake index is a *source* index, not a clip-local one, so the `{ ...clip, in_frame: 0, loop: true }` view above is required — baking through the clip's own trim would shift every frame by `in_frame` and desync the export from the live preview.
 
-```ts
-      const src = { ...clip, in_frame: 0, loop: true } as SpaceTypeClip
-      const canvas = renderSpaceTypeClipToCanvas(src, index, clip.state.fps)
-```
-
-Use this form in `renderFrame` rather than the simpler one above.
+Add a test pinning this: a clip with `in_frame: 40` must bake the same frames as the same clip with `in_frame: 0`.
 
 - [ ] **Step 4: Wire the pre-export loop**
 

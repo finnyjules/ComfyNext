@@ -31,6 +31,14 @@
  *  last live handle releases — never before (another consumer may still be
  *  mid-render) and never after (nothing left to hold it open).
  *
+ *   4. `resetSpaceTypeEnginePool()` (for context-loss recovery) invalidates
+ *      EVERY outstanding handle. Handle ids are never reused, so a pre-reset
+ *      handle is simply dead: `getSpaceTypeEngine` returns null for it forever
+ *      and `releaseSpaceTypeEngine` is a no-op — safe, no leak, no double-free,
+ *      but also never self-healing. A consumer that starts getting null after
+ *      previously succeeding must release its old handle and acquire a fresh
+ *      one; nothing will do that for it.
+ *
  *  Do not go back to acquiring per render call. That was the shape of the bug
  *  this file was rewritten to fix: refs grew without bound as frames rendered
  *  (the engine, and its WebGL context, were never freed for the rest of the
