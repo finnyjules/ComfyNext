@@ -14,9 +14,6 @@ import * as THREE from 'three'
 // @ts-expect-error — three vendors this lib without type declarations.
 import opentype from 'three/examples/jsm/libs/opentype.module.js'
 
-import { DEFAULT_CONFIG } from '~/lib/shapefx/config'
-import { gemPoints } from '~/lib/shapefx/points'
-
 // ---------------------------------------------------------------------------
 // Types
 //
@@ -247,11 +244,19 @@ function assemble(contours: Contour[]): THREE.Shape[] {
   return shapes.map((s) => s.shape)
 }
 
+/**
+ * Divisions per curve when flattening to measure the bounding box. The box is
+ * only as accurate as this sampling, and a shape profile has few, large curves
+ * (unlike a glyph's many small ones), so this needs to be generous — at 12 a
+ * filleted polygon centred to only ~1e-4.
+ */
+const CENTRE_SAMPLES = 64
+
 /** Recentre every shape (and its holes) on the combined bounding box. */
 function centre(shapes: THREE.Shape[]): void {
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
   for (const s of shapes) {
-    for (const p of s.getPoints(12)) {
+    for (const p of s.getPoints(CENTRE_SAMPLES)) {
       minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x)
       minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y)
     }
@@ -322,55 +327,96 @@ export function textOutline(
 // Shape
 // ---------------------------------------------------------------------------
 
-const SHAPE_MIN_SIDES = 3
-const SHAPE_MAX_SIDES = 64
+export const SHAPE_MIN_SIDES = 3
+export const SHAPE_MAX_SIDES = 24
+
+/** Deepest a star point may cut, so `star: 1` stays a shape rather than a spike. */
+const STAR_MAX_DEPTH = 0.9
+/** Below this a fillet is treated as absent, keeping the polygon exactly N segments. */
+const FILLET_EPS = 1e-9
+
+const clamp01 = (v: number) => (Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0)
 
 /**
- * A gem-style silhouette from Shape Studio's own point source.
+ * A parametric 2D profile — a regular polygon, optionally starred and filleted.
  *
- * `gemPoints` returns a seeded 3D cloud; we read its XY as a radial profile —
- * sort the points by angle and lay one vertex per side around the circle, so
- * the outline has exactly `sides` segments and is deterministic in `sides`.
+ * Fully deterministic: no RNG anywhere, so identical arguments always produce
+ * an identical contour.
  *
- * `roundness` (0–1) blends each radius toward the mean, so 0 is a jagged gem
- * profile and 1 is a clean circle.
+ * - `sides` (3–24): polygon vertex count, first vertex pointing straight up.
+ * - `roundness` (0–1): corner fillet. The fillet inset is
+ *   `roundness × half the SHORTEST edge`, so at 1 the tangent points meet at
+ *   the edge midpoints — as round as the polygon allows (a hexagon at 1
+ *   approaches a circle) — and the contour can never self-intersect, because
+ *   no edge is ever consumed by more than its own length.
+ * - `star` (0–1): alternate vertices pull in toward the centre by this
+ *   fraction, turning an N-gon into an N-pointed star. 0 leaves the plain
+ *   polygon (and only N vertices at all).
+ *
+ * Wound counter-clockwise, so the signed area is positive and matches the
+ * solid convention used by `textOutline`. Centred on its bounding box.
  */
-export function shapeOutline(sides: number, roundness: number): THREE.Shape[] {
+export function shapeOutline(sides: number, roundness: number, star = 0): THREE.Shape[] {
   const n = Math.min(
     SHAPE_MAX_SIDES,
     Math.max(SHAPE_MIN_SIDES, Number.isFinite(sides) ? Math.round(sides) : SHAPE_MIN_SIDES),
   )
-  const r = Number.isFinite(roundness) ? Math.min(1, Math.max(0, roundness)) : 0
+  const r = clamp01(roundness)
+  const s = clamp01(star)
 
-  const config = {
-    ...DEFAULT_CONFIG,
-    shape: { ...DEFAULT_CONFIG.shape, vertices: n },
+  // Vertices, CCW from straight up. A star interleaves an inner vertex between
+  // every pair of outer ones, so it has 2n vertices; a plain polygon has n.
+  const points: THREE.Vector2[] = []
+  const starred = s > 0
+  const count = starred ? n * 2 : n
+  const innerRadius = 1 - s * STAR_MAX_DEPTH
+  for (let i = 0; i < count; i++) {
+    const angle = Math.PI / 2 + (i / count) * Math.PI * 2
+    const radius = starred && i % 2 === 1 ? innerRadius : 1
+    points.push(new THREE.Vector2(Math.cos(angle) * radius, Math.sin(angle) * radius))
   }
-  const cloud = gemPoints(config)
 
-  // Radial profile: one radius per side, taken from the cloud in angle order.
-  const radii = cloud
-    .map((p) => ({ angle: Math.atan2(p[1]!, p[0]!), radius: Math.hypot(p[0]!, p[1]!) }))
-    .sort((a, b) => a.angle - b.angle)
-    .map((p) => p.radius)
-
-  // gemPoints clamps to 4..64, so pad or trim to exactly `n` samples.
-  const samples: number[] = []
-  for (let i = 0; i < n; i++) samples.push(radii[i % radii.length] ?? 1)
-
-  const mean = samples.reduce((a, b) => a + b, 0) / samples.length || 1
-  const blended = samples.map((v) => (v + (mean - v) * r) / mean)
+  // Fillet inset: half the shortest edge at roundness 1. Using the SHORTEST
+  // edge globally is what guarantees 2·inset never exceeds any single edge.
+  let shortestEdge = Infinity
+  for (let i = 0; i < count; i++) {
+    shortestEdge = Math.min(shortestEdge, points[i]!.distanceTo(points[(i + 1) % count]!))
+  }
+  const inset = r * 0.5 * shortestEdge
 
   const shape = new THREE.Shape()
-  for (let i = 0; i < n; i++) {
-    const a = (i / n) * Math.PI * 2
-    const rad = blended[i]!
-    const x = Math.cos(a) * rad
-    const y = Math.sin(a) * rad
-    if (i === 0) shape.moveTo(x, y)
-    else shape.lineTo(x, y)
+
+  if (inset < FILLET_EPS) {
+    // Sharp polygon: exactly `count` straight segments.
+    shape.moveTo(points[0]!.x, points[0]!.y)
+    for (let i = 1; i < count; i++) shape.lineTo(points[i]!.x, points[i]!.y)
+    shape.closePath()
+  } else {
+    // Per corner: walk in to the entry tangent, then arc across the corner via
+    // a quadratic whose control point is the original vertex.
+    const entry: THREE.Vector2[] = []
+    const exit: THREE.Vector2[] = []
+    for (let i = 0; i < count; i++) {
+      const prev = points[(i - 1 + count) % count]!
+      const cur = points[i]!
+      const next = points[(i + 1) % count]!
+      const inDir = new THREE.Vector2().subVectors(cur, prev).normalize()
+      const outDir = new THREE.Vector2().subVectors(next, cur).normalize()
+      entry.push(new THREE.Vector2().copy(cur).addScaledVector(inDir, -inset))
+      exit.push(new THREE.Vector2().copy(cur).addScaledVector(outDir, inset))
+    }
+
+    shape.moveTo(exit[0]!.x, exit[0]!.y)
+    for (let k = 1; k <= count; k++) {
+      const i = k % count
+      const from = exit[(i - 1 + count) % count]!
+      // At roundness 1 the tangent points coincide, so skip the null segment
+      // rather than emitting a zero-length curve for the triangulator.
+      if (from.distanceTo(entry[i]!) > FILLET_EPS) shape.lineTo(entry[i]!.x, entry[i]!.y)
+      shape.quadraticCurveTo(points[i]!.x, points[i]!.y, exit[i]!.x, exit[i]!.y)
+    }
+    shape.closePath()
   }
-  shape.closePath()
 
   const shapes = [shape]
   centre(shapes)
