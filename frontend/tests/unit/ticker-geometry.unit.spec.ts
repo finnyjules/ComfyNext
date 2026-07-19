@@ -175,6 +175,28 @@ describe('buildTickerStrokeData', () => {
     expect(STROKE_Z).toBeLessThan(0.01)
   })
 
+  it('clamps rail half-width to the band half-height so the inner rail never inverts', () => {
+    // Thinnest band (height 0.3 → half 0.15) with the widest stroke (0.4 → hw 0.2) would put the
+    // inner edge at half - hw = -0.05, crossing the centreline. Clamped, it lands at exactly 0.
+    const thin = { ...base, height: 0.3, amplitude: 0, segments: 4 }
+    const s = buildTickerStrokeData(thin, 0.4)
+    const half = 0.15
+    const samples = s.positions.length / 3 / 4
+    for (let i = 0; i < samples; i++) {
+      const b = i * 4
+      // innerA is vert index 2, at offset -(half - hw). With hw clamped to half it must be >= 0
+      // (never negative), i.e. the inner rail stays on the band side of the centreline.
+      const innerAoffsetSign = s.positions[(b + 2) * 3 + 1]! // amplitude 0 ⇒ normal is +y, offset = y
+      expect(innerAoffsetSign).toBeGreaterThanOrEqual(-1e-6)
+      // Rail width still exactly the clamped stroke (2*half = 0.3), constant.
+      const outer = Math.hypot(
+        s.positions[b * 3]! - s.positions[(b + 1) * 3]!,
+        s.positions[b * 3 + 1]! - s.positions[(b + 1) * 3 + 1]!,
+      )
+      expect(outer).toBeCloseTo(2 * half, 5)
+    }
+  })
+
   it('clamps amplitude identically to the band, so the two cannot diverge', () => {
     const wild = { ...base, amplitude: 1e6, segments: 200 }
     const a = buildTickerStrokeData(wild, W)

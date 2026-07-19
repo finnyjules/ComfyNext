@@ -169,7 +169,11 @@ export function buildTickerStrokeData(p: TickerGeoParams, strokeWidth: number): 
 
   const { n, pts, normalAt } = sampleCentreline(p)
   const half = p.height / 2
-  const hw = w / 2
+  // Clamp the half-width to the band half-height. Past that the inner rail vertex (half - hw)
+  // would cross the centreline, inverting the quad's winding and self-overlapping the stroke —
+  // reachable at the thinnest band (0.3) with the widest stroke (0.4). Clamped, the inner edge
+  // lands at worst exactly on the centreline.
+  const hw = Math.min(w / 2, half)
   const positions = new Float32Array((n + 1) * 4 * 3)
   const nrm = { x: 0, y: 0 }
 
