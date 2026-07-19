@@ -53,6 +53,9 @@ let rows: {
   rowPhase: number
   geoParams: TickerGeoParams
   posAttr: THREE.BufferAttribute
+  uvAttr: THREE.BufferAttribute
+  /** Phase last written into the buffers, so a wave that stops can be settled back to rest. */
+  bakedPhase: number
   uFillScroll: { value: number }
 }[] = []
 
@@ -120,7 +123,11 @@ function bandMaterial(
     // uFillTex is tagged SRGBColorSpace → the GPU returns linear, so NO manual decode here.
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', '#include <common>\nuniform sampler2D uFillTex;\nuniform float uFillTiling;\nuniform vec3 uTextColor;\nuniform float uFillScroll;\nuniform float uBandAlpha;\nvarying vec2 vRawUv;')
-      .replace('#include <map_fragment>', '{ float cov = texture2D(map, vMapUv).a; vec2 fuv = vRawUv * uFillTiling + vec2(uFillScroll, 0.0); vec3 fillCol = texture2D(uFillTex, fuv).rgb; diffuseColor = vec4(mix(fillCol, uTextColor, cov), mix(uBandAlpha, 1.0, cov)); }')
+      // The band's RGB is weighted by its OWN alpha, so an invisible band contributes no colour.
+      // A plain mix() would leave a halo of band fill ringing the type at antialiased glyph edges
+      // (cov ~0.5) in the alpha-0 text-only mode — exactly the mode the transparency work is for.
+      // Reduces to the naive form when uBandAlpha is 1: bandW = 1-cov, a = 1, rgb = mix(fill, text, cov).
+      .replace('#include <map_fragment>', '{ float cov = texture2D(map, vMapUv).a; vec2 fuv = vRawUv * uFillTiling + vec2(uFillScroll, 0.0); vec3 fillCol = texture2D(uFillTex, fuv).rgb; float bandW = uBandAlpha * (1.0 - cov); float a = bandW + cov; diffuseColor = vec4((fillCol * bandW + uTextColor * cov) / max(a, 1e-4), a); }')
   }
   return mat
 }
@@ -158,10 +165,12 @@ export const tickerEffect: SpaceTypeEffect = {
 
       const bufferGeo = new three.BufferGeometry()
       const posAttr = new three.BufferAttribute(geo.positions, 3)
+      const uvAttr = new three.BufferAttribute(geo.uvs, 2)
       bufferGeo.setAttribute('position', posAttr)
-      bufferGeo.setAttribute('uv', new three.BufferAttribute(geo.uvs, 2))
+      bufferGeo.setAttribute('uv', uvAttr)
       bufferGeo.setIndex(new three.BufferAttribute(geo.indices, 1))
-      bufferGeo.computeVertexNormals()
+      // No computeVertexNormals: MeshBasicMaterial ignores normals, and they would go stale
+      // after every per-frame re-bake anyway.
 
       // Independent scroll per row ⇒ clone the shared text texture.
       const tex = textTexture.clone()
@@ -198,6 +207,8 @@ export const tickerEffect: SpaceTypeEffect = {
         rowPhase: row.phase,
         geoParams,
         posAttr,
+        uvAttr,
+        bakedPhase: row.phase,
         uFillScroll,
       })
     }
@@ -215,15 +226,29 @@ export const tickerEffect: SpaceTypeEffect = {
       // Grid/noise fill drifts with the text (same offset ⇒ same direction & pace).
       r.uFillScroll.value = r.tex.offset.x
 
-      // A travelling wave deforms the centreline, so the positions must be re-baked each frame —
+      // A travelling wave deforms the centreline, so the geometry must be re-baked each frame —
       // but ONLY when the wave is actually moving. At waveSpeed 0 (the default) the band is static
-      // and this whole branch is skipped. The rebuilt positions are copied INTO the existing
-      // attribute buffer rather than swapped for a fresh BufferAttribute, so the GPU buffer and the
-      // effect's own allocations stay put across frames.
-      if (waveSpeed !== 0) {
-        const next = buildTickerGeometryData({ ...r.geoParams, phase: r.rowPhase + waveSpeed * t01 * TAU })
+      // and no rebuild happens at all. Buffers are written IN PLACE rather than swapped for fresh
+      // BufferAttributes, so the GPU buffers and our own allocations stay put across frames.
+      //
+      // waveSpeed is a liveKey, so dragging it to 0 does NOT rebuild the scene. Without the
+      // bakedPhase check the geometry would freeze at whatever phase was last written instead of
+      // settling back to rest, leaving update() impure in t01 (see effect.ts's contract).
+      const phase = waveSpeed !== 0 ? r.rowPhase + waveSpeed * t01 * TAU : r.rowPhase
+      if (phase !== r.bakedPhase) {
+        const next = buildTickerGeometryData({ ...r.geoParams, phase })
         ;(r.posAttr.array as Float32Array).set(next.positions)
         r.posAttr.needsUpdate = true
+        // UVs must be re-baked too. u_i = cum_i * uRepeat / length, so a travelling wave
+        // redistributes u by CURRENT arc length — leaving them stale would let glyphs breathe
+        // and creep, defeating the constant-glyph-size guarantee this effect exists for.
+        // The total u RANGE drifts with arc length, but scroll and loopRates deliberately keep
+        // using the cached build-time uRepeatEffective, so the only effect is a slight change in
+        // how much text is truncated at the band's END — where glyphs already scroll out of view.
+        // The loop stays seamless because t01 0 and 1 give the same phase, hence the same UVs.
+        ;(r.uvAttr.array as Float32Array).set(next.uvs)
+        r.uvAttr.needsUpdate = true
+        r.bakedPhase = phase
       }
     }
   },

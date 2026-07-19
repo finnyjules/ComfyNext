@@ -1,8 +1,9 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeAll } from 'vitest'
 import { tickerEffect } from '~/lib/spacetype/effects/ticker'
 import { getEffect, SPACE_TYPE_EFFECTS } from '~/lib/spacetype/effects'
 import { SPACE_TYPE_SECTIONS } from '~/lib/spacetype/sections'
-import { defaultsFromControls } from '~/lib/spacetype/effect'
+import { defaultsFromControls, type Params } from '~/lib/spacetype/effect'
+import * as THREE from 'three'
 
 describe('ticker registration', () => {
   it('is registered and resolvable by id', () => {
@@ -53,5 +54,92 @@ describe('ticker loopRates', () => {
     const moving = tickerEffect.loopRates!({ ...d, waveSpeed: 3 })
     expect(moving).toContain(3)
     expect(still).not.toContain(3)
+  })
+})
+
+// ─── Per-frame wave rebuild ────────────────────────────────────────────────────
+// buildScene/update run against real three with no GL context: BufferGeometry and materials
+// are plain data until upload, and onBeforeCompile only fires at draw time. So the geometry
+// contract below is fully testable headless. The SHADER behaviour (the glyph-fringing fix)
+// is NOT reachable here and is left to the runtime pass.
+
+// fillShaderTexture paints a 1x1 swatch on a canvas; the suite runs in the node environment,
+// so stub just the surface it touches rather than pulling in jsdom for two method calls.
+beforeAll(() => {
+  if (typeof globalThis.document === 'undefined') {
+    ;(globalThis as unknown as { document: unknown }).document = {
+      createElement: () => ({
+        width: 0,
+        height: 0,
+        getContext: () => ({ fillStyle: '', fillRect: () => {} }),
+      }),
+    }
+  }
+})
+
+function build(overrides: Partial<Params> = {}) {
+  const params = { ...defaultsFromControls(tickerEffect.controls), ...overrides } as Params
+  const tex = new THREE.Texture()
+  tex.userData.uRepeat = Number(params.textRepeat)
+  tex.userData.numTexts = 1
+  const root = tickerEffect.buildScene(THREE, params, tex)
+  return { params, root }
+}
+
+function firstGeo(root: THREE.Object3D): THREE.BufferGeometry {
+  const mesh = root.children.find(c => (c as THREE.Mesh).isMesh) as THREE.Mesh
+  return mesh.geometry as THREE.BufferGeometry
+}
+
+describe('ticker wave rebuild', () => {
+  it('leaves geometry untouched across frames when the wave is still', () => {
+    const { params, root } = build({ waveAmplitude: 2, waveSpeed: 0 })
+    const geo = firstGeo(root)
+    const before = Float32Array.from(geo.getAttribute('position').array as Float32Array)
+    tickerEffect.update(0.37, params)
+    expect(Array.from(geo.getAttribute('position').array as Float32Array)).toEqual(Array.from(before))
+  })
+
+  it('re-bakes positions as a travelling wave advances', () => {
+    const { params, root } = build({ waveAmplitude: 2, waveSpeed: 1 })
+    const geo = firstGeo(root)
+    tickerEffect.update(0, params)
+    const at0 = Float32Array.from(geo.getAttribute('position').array as Float32Array)
+    tickerEffect.update(0.25, params)
+    expect(Array.from(geo.getAttribute('position').array as Float32Array)).not.toEqual(Array.from(at0))
+  })
+
+  it('re-bakes UVs alongside positions, so glyphs cannot breathe through a moving wave', () => {
+    const { params, root } = build({ waveAmplitude: 2, waveSpeed: 1 })
+    const geo = firstGeo(root)
+    tickerEffect.update(0, params)
+    const uv0 = Float32Array.from(geo.getAttribute('uv').array as Float32Array)
+    tickerEffect.update(0.25, params)
+    expect(Array.from(geo.getAttribute('uv').array as Float32Array)).not.toEqual(Array.from(uv0))
+  })
+
+  it('settles back to the resting phase when waveSpeed returns to 0', () => {
+    // waveSpeed is a liveKey, so dragging it to 0 does NOT rebuild the scene. Without an
+    // explicit settle the band would freeze at whatever phase was last written.
+    const { params, root } = build({ waveAmplitude: 2, waveSpeed: 1 })
+    const geo = firstGeo(root)
+    tickerEffect.update(0, params)
+    const rest = Float32Array.from(geo.getAttribute('position').array as Float32Array)
+    tickerEffect.update(0.3, params)
+    expect(Array.from(geo.getAttribute('position').array as Float32Array)).not.toEqual(Array.from(rest))
+    tickerEffect.update(0.3, { ...params, waveSpeed: 0 })
+    const settled = geo.getAttribute('position').array as Float32Array
+    for (let i = 0; i < rest.length; i++) expect(settled[i]).toBeCloseTo(rest[i]!, 5)
+  })
+
+  it('is pure in t01 — the same frame renders identically twice', () => {
+    const { params, root } = build({ waveAmplitude: 2, waveSpeed: 1 })
+    const geo = firstGeo(root)
+    tickerEffect.update(0.42, params)
+    const a = Float32Array.from(geo.getAttribute('position').array as Float32Array)
+    tickerEffect.update(0.11, params)
+    tickerEffect.update(0.42, params)
+    const b = geo.getAttribute('position').array as Float32Array
+    for (let i = 0; i < a.length; i++) expect(b[i]).toBeCloseTo(a[i]!, 5)
   })
 })
