@@ -9,6 +9,7 @@ import { parseFills, serializeFills, FILL_TYPES, type Fill, type FillType } from
 import { SpaceTypeEngine } from '~/lib/spacetype/engine'
 import { detectWebGL } from '~/lib/spacetype/webgl'
 import { DEFAULT_POST, type PostSettings } from '~/lib/spacetype/post'
+import type { SpaceTypeState } from '~/lib/spacetype/state'
 import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
 import { loopMultiplier } from '~/lib/spacetype/loop'
 import { loadGoogleCatalog, googleFontCssUrl, googleAxisList, resolveFontFamily, fontHasWeightAxis, type GoogleFont } from '~/data/google-fonts'
@@ -958,6 +959,31 @@ async function generateImage() {
   }
 }
 
+// "Send to timeline": snapshot the studio's current state onto a new
+// SpaceTypeClip via VueNodeCanvas's handleSpaceTypeOutput. Unlike
+// generateImage/generateVideo this does NOT closeEditor() — sending is meant
+// to be repeatable while iterating (send, tweak, send again, or use the
+// timeline inspector's "Sync from node" once a clip already exists).
+function sendToTimeline() {
+  const snapshot: SpaceTypeState = {
+    effectId: effectId.value,
+    params: { ...params },
+    gradientStops: gradientStops.map(s => ({ ...s })),
+    post: { ...post },
+    fps: fps.value,
+    loopDuration: loopDuration.value,
+    dimsKey: dimsKey.value,
+    transparent: transparent.value,
+    bgColor: bgColor.value,
+    projection: projection.value,
+    panX: panX.value,
+    panY: panY.value,
+  }
+  window.dispatchEvent(new CustomEvent('sailor:spaceTypeOutput', {
+    detail: { sourceNodeId: props.nodeId, nodeType: 'TimelineClip', state: snapshot },
+  }))
+}
+
 async function generateVideo() {
   if (!engine) return
   baking.value = true
@@ -1027,6 +1053,9 @@ async function generateVideo() {
       </StudioButton>
       <StudioButton variant="secondary" :disabled="baking" @click="generateVideo">
         {{ baking ? 'Generating…' : 'Generate as video' }}
+      </StudioButton>
+      <StudioButton variant="subtle" :disabled="baking" @click="sendToTimeline">
+        Send to timeline
       </StudioButton>
     </template>
     <template #controls>

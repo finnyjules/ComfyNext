@@ -13,13 +13,15 @@ import { useLocalSettings } from '~/composables/useLocalSettings'
 import { useClipPreview } from '~/composables/useClipPreview'
 import { ensureMotionBake } from '~/lib/engine/motionClipBake'
 import { ensureMotionFonts } from '~/composables/useTemplateFonts'
-import type { Clip, Track, BlendMode, MotionClip, Transition, TransitionKind } from '~~/shared/timeline/types'
+import type { Clip, Track, BlendMode, MotionClip, SpaceTypeClip, Transition, TransitionKind } from '~~/shared/timeline/types'
 import { computeTotalFrames } from '~~/shared/timeline/types'
 import { interpolateClipAt } from '~~/shared/timeline/interpolate'
 import { resolveClipSource } from '~~/shared/timeline/resolveClipSource'
 import { computeLeftTrim, clampLengthToSource } from '~~/shared/timeline/trim'
 import { collectProjectMediaFilenames } from '~/lib/timeline/projectMedia'
+import type { SpaceTypeState } from '~/lib/spacetype/state'
 import MotionClipInspector from '~/components/vue-canvas/timeline/MotionClipInspector.vue'
+import SpaceTypeClipInspector from '~/components/vue-canvas/timeline/SpaceTypeClipInspector.vue'
 import KeyframeDock from '~/components/vue-canvas/timeline/KeyframeDock.vue'
 import TimelineContextMenu, { type MenuItem } from '~/components/vue-canvas/timeline/TimelineContextMenu.vue'
 
@@ -1485,6 +1487,22 @@ const selectedClipData = computed(() => store.selectedClip.value)
 const selectedMotionClip = computed<MotionClip | null>(() =>
   selectedClipData.value?.kind === 'motion' ? selectedClipData.value : null)
 
+// Narrowed to a Space Type clip for the sync-from-node inspector (null otherwise).
+const selectedSpaceTypeClip = computed<SpaceTypeClip | null>(() =>
+  selectedClipData.value?.kind === 'spacetype' ? selectedClipData.value : null)
+
+// Current state of the clip's origin node, resolved by id against the live node
+// canvas. `origin` is advisory (Task 6 design): a missing id or a deleted node
+// both degrade to null — never an error — so the inspector simply omits the
+// sync affordance instead of surfacing a warning.
+const spaceTypeOriginNodeState = computed<SpaceTypeState | null>(() => {
+  const nodeId = selectedSpaceTypeClip.value?.origin?.node_id
+  if (!nodeId) return null
+  const node = props.nodes.find((n: any) => n.id === nodeId)
+  const cfg = node?.data?.properties?.sailor_spaceType
+  return cfg && typeof cfg === 'object' ? (cfg as SpaceTypeState) : null
+})
+
 function clipIcon(kind: string) {
   if (kind === 'video') return Film
   if (kind === 'audio') return Music
@@ -1924,6 +1942,14 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
               :clip="selectedMotionClip"
               class="pb-2 border-b border-white/5"
               @update="p => store.updateClip(selectedMotionClip!.id, p)"
+            />
+
+            <SpaceTypeClipInspector
+              v-if="selectedSpaceTypeClip"
+              :clip="selectedSpaceTypeClip"
+              :node-state="spaceTypeOriginNodeState"
+              class="pb-2 border-b border-white/5"
+              @sync="clipId => store.syncSpaceTypeClipFromNode(clipId, spaceTypeOriginNodeState!)"
             />
 
             <div class="grid grid-cols-2 gap-2">

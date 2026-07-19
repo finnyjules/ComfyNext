@@ -40,6 +40,8 @@ import { promoteLayoutElement } from '~/lib/collection/layoutBinding'
 import { promoteControl } from '~/composables/useStudioVarBindings'
 import type { StudioControlDesc } from '~/lib/collection/studioBindables'
 import { migrateEditState } from '~~/shared/timeline/types'
+import { useTimelineStore } from '~/composables/useTimelineStore'
+import type { SpaceTypeState } from '~/lib/spacetype/state'
 import { useNodeSearch } from '~/composables/useNodeSearch'
 import { useNodeClipboard } from '~/composables/useNodeClipboard'
 import { buildTake, appendTake, takeHasContent, tagTakeFromRunMeta } from '~/composables/useTakes'
@@ -3067,7 +3069,19 @@ watch(edges, () => syncAllShotDirectorCasts(), { deep: true })
 // The artifact still shows its file via the widget regardless of the edge — this
 // link is visual only (SpaceType has no backend and never executes).
 function handleSpaceTypeOutput(e: Event) {
-  const detail = (e as CustomEvent<{ sourceNodeId: string; nodeType: string; widgetOverrides?: Record<string, unknown> }>).detail
+  const detail = (e as CustomEvent<{ sourceNodeId: string; nodeType: string; widgetOverrides?: Record<string, unknown>; state?: SpaceTypeState }>).detail
+  // "Send to timeline" (Type Studio): snapshot the studio state onto a new
+  // SpaceTypeClip on the shared timeline store, rather than materializing a
+  // new canvas node like the Image/Video branches below.
+  if (detail.nodeType === 'TimelineClip') {
+    if (!detail.state) { console.warn('spaceTypeOutput: TimelineClip dispatched with no state'); return }
+    const timelineStore = useTimelineStore()
+    const track = timelineStore.state.value.tracks.find(t => t.kind === 'video')
+    if (!track) { console.warn('spaceTypeOutput: no video track to receive the clip'); return }
+    const start = timelineStore.playheadFrame?.value ?? 0
+    timelineStore.addSpaceTypeClip(track.id, start, detail.state, detail.sourceNodeId)
+    return
+  }
   const src = (nodes.value as any[]).find((n) => n.id === detail.sourceNodeId)
   const pos = src
     ? { x: (src.position?.x ?? 0) + (src.data?.size?.[0] ?? 240) + 80, y: src.position?.y ?? 0 }

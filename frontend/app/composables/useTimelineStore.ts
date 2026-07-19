@@ -1,10 +1,12 @@
 import { ref, computed, watch } from 'vue'
-import type { EditState, Track, Clip, Asset, Keyframe, MotionClip, Transition } from '~~/shared/timeline/types'
+import type { EditState, Track, Clip, Asset, Keyframe, MotionClip, SpaceTypeClip, Transition } from '~~/shared/timeline/types'
 // (Track is used by the clipboard's kind-based paste routing.)
 import { createDefaultEditState, computeTotalFrames, migrateEditState } from '~~/shared/timeline/types'
 import type { ClipTransform } from '~~/shared/timeline/interpolate'
 import { applyCommand, type TimelineCommand } from '~~/shared/timeline/commands'
 import { createMotionClip } from '~/composables/timelineMotionClip'
+import { createSpaceTypeClip, spaceTypeStateKey } from '~/composables/timelineSpaceTypeClip'
+import type { SpaceTypeState } from '~/lib/spacetype/state'
 
 const MAX_UNDO = 100
 
@@ -178,6 +180,24 @@ export function useTimelineStore() {
     addClip(trackId, clip)
     selectedClipId.value = clip.id
     return clip
+  }
+
+  function addSpaceTypeClip(trackId: string, startFrame: number, state: SpaceTypeState, originNodeId?: string) {
+    const clip = createSpaceTypeClip({ startFrame, state, originNodeId })
+    addClip(trackId, clip)
+    selectedClipId.value = clip.id
+    return clip
+  }
+
+  /** Adopt the origin node's current state. Placement and trim are preserved —
+   *  only the source content changes, which drops the bake by hash mismatch. */
+  function syncSpaceTypeClipFromNode(clipId: string, nodeState: SpaceTypeState) {
+    const clip = state.value.tracks.flatMap(t => t.clips).find(c => c.id === clipId) as SpaceTypeClip | undefined
+    if (!clip || clip.kind !== 'spacetype' || !clip.origin) return
+    updateClip(clipId, {
+      state: JSON.parse(JSON.stringify(nodeState)),
+      origin: { node_id: clip.origin.node_id, state_key: spaceTypeStateKey(nodeState) },
+    } as Partial<Clip>)
   }
 
   function removeClip(clipId: string) {
@@ -427,6 +447,8 @@ export function useTimelineStore() {
     removeTrack,
     addClip,
     addMotionClip,
+    addSpaceTypeClip,
+    syncSpaceTypeClipFromNode,
     removeClip,
     updateClip,
     moveClip,
