@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import { layoutChars } from '../charLayout'
 import { resolveFontFamily, fontHasWeightAxis } from '~/data/google-fonts'
-import { parseFills, fillShaderTexture, fillIsTextured, fillTiling } from '../fills'
+import { parseFills, fillShaderTexture, fillIsTextured, fillTiling, fillPrimary } from '../fills'
 import { defaultFillsFor } from '../palette'
 import { textVariantForBand } from '../ribbonGeometry'
 
@@ -31,7 +31,7 @@ import { textVariantForBand } from '../ribbonGeometry'
 
 const controls: ControlSpec[] = [
   // TYPE — shared text controls.
-  { key: 'text', label: 'Text', kind: 'textList', default: 'SPACE TYPE', group: 'Type' },
+  { key: 'text', label: 'Text', kind: 'textList', default: 'Sailor', group: 'Type' },
   { key: 'font', label: 'Font', kind: 'font', default: 'Inter', group: 'Type' },
   { key: 'typeXScale', label: 'Type X-Scale', kind: 'slider', min: 0.3, max: 3, step: 0.05, default: 1, group: 'Type' },
   { key: 'typeYScale', label: 'Type Y-Scale', kind: 'slider', min: 40, max: 320, step: 2, default: 160, group: 'Type' },
@@ -221,7 +221,7 @@ export const cylinderEffect: SpaceTypeEffect = {
           // `alphaMap` (shape) with the fill texture as `map` (tiled per glyph).
           const mat = (fillTextured && fillMap)
             ? new three.MeshBasicMaterial({ map: fillMap, alphaMap: layout.texture, transparent: true, alphaTest: 0.5, side: three.FrontSide })
-            : new three.MeshBasicMaterial({ map: layout.texture, color: new three.Color(fill.a), transparent: true, alphaTest: 0.5, side: three.FrontSide })
+            : new three.MeshBasicMaterial({ map: layout.texture, color: fillPrimary(three, fill), transparent: true, alphaTest: 0.5, side: three.FrontSide })
           const mesh = new three.Mesh(geo, mat)
           mesh.castShadow = true
           mesh.receiveShadow = true

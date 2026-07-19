@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
-import { parseFills, fillShaderTexture, fillTiling } from '../fills'
+import { parseFills, fillShaderTexture, fillTiling, fillTextColor } from '../fills'
 import { defaultFillsFor } from '../palette'
 
 /**
@@ -18,7 +18,7 @@ import { defaultFillsFor } from '../palette'
  */
 
 const controls: ControlSpec[] = [
-  { key: 'text', label: 'Text', kind: 'textList', default: 'SPACE TYPE', group: 'Type' },
+  { key: 'text', label: 'Text', kind: 'textList', default: 'Sailor', group: 'Type' },
   { key: 'font', label: 'Font', kind: 'font', default: 'Inter', group: 'Type' },
   { key: 'typeHeight', label: 'Type height', kind: 'slider', min: 40, max: 320, step: 2, default: 180, group: 'Type' },
   { key: 'tracking', label: 'Tracking', kind: 'slider', min: -20, max: 80, step: 1, default: 0, group: 'Type' },
@@ -194,7 +194,7 @@ export const fieldEffect: SpaceTypeEffect = {
 
     const numTexts = Math.max(1, Math.floor(Number(textTexture.userData?.numTexts ?? 1)))
     const fill = fills[0]!
-    const mat = frontMaterial(three, tex, fillShaderTexture(three, fill), fillTiling(fill), new three.Color(fill.textColor), params, numTexts, wu)
+    const mat = frontMaterial(three, tex, fillShaderTexture(three, fill), fillTiling(fill), fillTextColor(three, fill), params, numTexts, wu)
 
     const mesh = new three.Mesh(geo, mat)
     mesh.userData.tex = tex

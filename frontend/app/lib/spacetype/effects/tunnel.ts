@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect, BuildEnv } from '../effect'
-import { parseFills, fillShaderTexture, fillTiling, SRGB_TO_LINEAR_GLSL } from '../fills'
+import { parseFills, fillShaderTexture, fillTiling, fillTextColor, SRGB_TO_LINEAR_GLSL } from '../fills'
 import { defaultFillsFor } from '../palette'
 import { resolveFontFamily } from '~/data/google-fonts'
 import { buildTunnelRing } from '../tunnelGeometry'
@@ -193,7 +193,7 @@ export const tunnelEffect: SpaceTypeEffect = {
           uFillGrad: { value: fill.type === 'gradient' ? 1 : 0 },
           uText: { value: ti.tex },
           uTextRepeat: { value: repeatFor(ti.texW) },
-          uTextColor: { value: new three.Color(fill.textColor) },
+          uTextColor: { value: fillTextColor(three, fill) },
           uAlpha: { value: 1 },
           uTextFlip: { value: 1 },
           uStroke: { value: 0 },

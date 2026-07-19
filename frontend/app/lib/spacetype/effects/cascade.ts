@@ -3,7 +3,7 @@ import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import { resolveFontFamily, fontHasWeightAxis } from '~/data/google-fonts'
 import { layoutChars } from '../charLayout'
 import { shapedSin } from '../ribbonGeometry'
-import { parseFills, fillPrimary, fillTexture, fillIsTextured } from '../fills'
+import { parseFills, fillPrimary, fillTextColor, fillTexture, fillIsTextured } from '../fills'
 import { defaultFillsFor } from '../palette'
 
 /**
@@ -140,7 +140,7 @@ export const cascadeEffect: SpaceTypeEffect = {
     const fills = parseFills(params.fills)
     const pc = fills.length
     const primaries = fills.map(f => fillPrimary(three, f))
-    const textColors = fills.map(f => new three.Color(f.textColor))
+    const textColors = fills.map(f => fillTextColor(three, f))
 
     const rowIndexOf = (r: number) => (r < rows ? r : (2 * rows - 1 - r))
     const slotOf = (rowIdx: number) => ((rowIdx % pc) + pc) % pc
@@ -197,7 +197,7 @@ export const cascadeEffect: SpaceTypeEffect = {
         const tex = fillTexture(three, fills[slot]!)
         const mat = tex
           ? new three.MeshBasicMaterial({ map: tex, side: three.DoubleSide })
-          : new three.MeshBasicMaterial({ color: new three.Color(fills[slot]!.a), side: three.DoubleSide })
+          : new three.MeshBasicMaterial({ color: fillPrimary(three, fills[slot]!), side: three.DoubleSide })
         const im = new three.InstancedMesh(new three.PlaneGeometry(1, 1), mat, count)
         im.frustumCulled = false
         ribbonSlotMeshes[slot] = im

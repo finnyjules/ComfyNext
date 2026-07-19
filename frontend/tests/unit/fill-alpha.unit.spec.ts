@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import * as THREE from 'three'
-import { fillPrimary, fillAlpha } from '~/lib/spacetype/fills'
+import { fillPrimary, fillAlpha, fillTextColor, fillTextAlpha } from '~/lib/spacetype/fills'
 import { hexBytes, DEFAULT_FILL, type Fill } from '~/lib/spacetype/fillTile'
 
 const solid = (a: string): Fill => ({ ...DEFAULT_FILL, type: 'solid', a })
@@ -27,5 +27,23 @@ describe('fillPrimary', () => {
 describe('hexBytes', () => {
   it('returns rgb bytes for 8-digit input rather than falling back to black', () => {
     expect(Array.from(hexBytes('#ff000080')).slice(0, 3)).toEqual([255, 0, 0])
+  })
+})
+
+describe('fillTextColor', () => {
+  it('ignores alpha and returns the rgb — THREE.Color renders 8-digit hex as white', () => {
+    const withA = fillTextColor(THREE, { ...DEFAULT_FILL, textColor: '#ff000080' })
+    const without = fillTextColor(THREE, { ...DEFAULT_FILL, textColor: '#ff0000' })
+    expect(withA.getHex()).toBe(without.getHex())
+    expect(withA.getHex()).toBe(0xff0000)
+  })
+})
+
+describe('fillTextAlpha', () => {
+  it('is 1 for a legacy 6-digit textColor', () => {
+    expect(fillTextAlpha({ ...DEFAULT_FILL, textColor: '#ff0000' })).toBe(1)
+  })
+  it('reads alpha from an 8-digit textColor', () => {
+    expect(fillTextAlpha({ ...DEFAULT_FILL, textColor: '#ff000080' })).toBeCloseTo(0.502, 3)
   })
 })

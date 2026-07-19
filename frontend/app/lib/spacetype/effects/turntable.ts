@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
-import { parseFills, fillShaderTexture, fillTiling } from '../fills'
+import { parseFills, fillShaderTexture, fillTiling, fillTextColor } from '../fills'
 import { defaultFillsFor } from '../palette'
 
 /**
@@ -113,7 +113,7 @@ export const turntableEffect: SpaceTypeEffect = {
           uAtlas: { value: atlas },
           uFill: { value: fillShaderTexture(three, fill) },
           uFillTiling: { value: fillTiling(fill) },
-          uTextColor: { value: new three.Color(fill.textColor) },
+          uTextColor: { value: fillTextColor(three, fill) },
           uRadius: { value: radius }, uCols: { value: 1.5 }, uRows: { value: 7 },
           uBand: { value: k }, uRingsN: { value: rings },
           uSpeed: { value: 2 }, uGradient: { value: 1.5 }, uDir: { value: 1 },

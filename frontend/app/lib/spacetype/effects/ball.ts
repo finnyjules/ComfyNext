@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
-import { parseFills, fillShaderTexture, fillTiling } from '../fills'
+import { parseFills, fillShaderTexture, fillTiling, fillTextColor } from '../fills'
 import { defaultFillsFor } from '../palette'
 
 /**
@@ -144,7 +144,7 @@ export const ballEffect: SpaceTypeEffect = {
       const fillScale = fill.type === 'gradient'
         ? new three.Vector2(tiling, tiling)
         : new three.Vector2(tiling, tiling * aspect)
-      const mat = panelMaterial(three, tex, fillTex, fillScale, new three.Color(fill.textColor), lit)
+      const mat = panelMaterial(three, tex, fillTex, fillScale, fillTextColor(three, fill), lit)
       const mesh = new three.Mesh(geo, mat)
       mesh.userData.tex = tex   // so disposeRoot() frees the cloned text texture on rebuild
       spinGroup.add(mesh)

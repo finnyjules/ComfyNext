@@ -2,11 +2,11 @@ import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import { buildRibbonGeometryData, ribbonInstance, scrollOffset, textVariantForBand } from '../ribbonGeometry'
 import { buildRibbonLabel } from '../ribbonMath'
-import { parseFills, fillShaderTexture, fillTiling } from '../fills'
+import { parseFills, fillShaderTexture, fillTiling, fillTextColor } from '../fills'
 import { defaultFillsFor } from '../palette'
 
 const controls: ControlSpec[] = [
-  { key: 'text', label: 'Text', kind: 'textList', default: 'SPACE TYPE', group: 'Type' },
+  { key: 'text', label: 'Text', kind: 'textList', default: 'Sailor', group: 'Type' },
   { key: 'font', label: 'Font', kind: 'font', default: 'Inter', group: 'Type' },
   { key: 'typeHeight', label: 'Type height', kind: 'slider', min: 40, max: 320, step: 2, default: 180, group: 'Type' },
   { key: 'tracking', label: 'Tracking', kind: 'slider', min: -20, max: 80, step: 1, default: 0, group: 'Type' },
@@ -148,7 +148,7 @@ export const ribbonEffect: SpaceTypeEffect = {
 
       const fill = fills[i % fills.length]!
       const uFillScroll = { value: 0 }
-      const frontMat = frontMaterial(three, tex, fillShaderTexture(three, fill), fillTiling(fill), new three.Color(fill.textColor), uFillScroll, params)
+      const frontMat = frontMaterial(three, tex, fillShaderTexture(three, fill), fillTiling(fill), fillTextColor(three, fill), uFillScroll, params)
       const backMat = new three.MeshBasicMaterial({
         color: new three.Color(String(params.bSideColor)),
         side: three.BackSide,

@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import { layoutChars } from '../charLayout'
 import { resolveFontFamily, fontHasWeightAxis } from '~/data/google-fonts'
-import { parseFills, fillShaderTexture, fillTiling, hexBytes, type Fill } from '../fills'
+import { parseFills, fillShaderTexture, fillTiling, fillTextColor, hexBytes, type Fill } from '../fills'
 import { defaultFillsFor } from '../palette'
 
 /**
@@ -139,7 +139,7 @@ export const onionburstEffect: SpaceTypeEffect = {
             uFillTex: { value: fillTex }, uFillTiling: { value: fillTiling(fill) },
             uU0: { value: g.u0 }, uU1: { value: g.u1 },
             uArc: { value: arc }, uLen: { value: len }, uRepeat: { value: repeat },
-            uText: { value: new three.Color(fill.textColor) },
+            uText: { value: fillTextColor(three, fill) },
           },
           vertexShader: 'varying vec3 vPos; void main(){ vPos = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
           fragmentShader: [

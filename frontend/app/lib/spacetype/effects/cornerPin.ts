@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
-import { parseFills, serializeFills, fillShaderTexture, fillTiling, SRGB_TO_LINEAR_GLSL, type Fill } from '../fills'
+import { parseFills, serializeFills, fillShaderTexture, fillTiling, fillTextColor, SRGB_TO_LINEAR_GLSL, type Fill } from '../fills'
 
 // Default per-band fills: the signature dark/cream 2-tone (band 0 dark+cream text, band 1 inverted),
 // cycled across however many bands. Each entry can be changed to ombre/grid/gradient/etc. in the panel.
@@ -270,7 +270,7 @@ function makeBlock(three: typeof THREE, tex: THREE.Texture, box: InkBox, fill: F
     side: three.DoubleSide,
     uniforms: {
       uText: { value: tex },
-      uTextColor: { value: new three.Color(fill.textColor) },
+      uTextColor: { value: fillTextColor(three, fill) },
       // fillShaderTexture returns a module-cached texture (never disposed here — don't put it in
       // userData.tex or the engine's rebuild dispose would free a shared singleton).
       uFill: { value: fillShaderTexture(three, fill) },

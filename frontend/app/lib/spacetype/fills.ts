@@ -25,6 +25,18 @@ export function fillAlpha(fill: Fill): number {
   return parseHexA(fill.a).alpha
 }
 
+/** The fill's TEXT colour as a THREE.Color. Alpha is stripped for the same reason as
+ *  fillPrimary: THREE.Color has no alpha channel and renders 8-digit hex as white.
+ *  Read the alpha separately with fillTextAlpha(). */
+export function fillTextColor(three: typeof THREE, fill: Fill): THREE.Color {
+  return new three.Color(stripAlpha(fill.textColor))
+}
+
+/** The alpha of the fill's text colour, 0–1. Legacy 6-digit values are fully opaque. */
+export function fillTextAlpha(fill: Fill): number {
+  return parseHexA(fill.textColor).alpha
+}
+
 // Textures are cached by (type|a|b) so repeated slots/rebuilds reuse one GPU texture. Module
 // singletons (never disposed) — the set of distinct fills in a doc is tiny.
 const _cache = new Map<string, THREE.Texture>()

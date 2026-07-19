@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
-import { parseFills } from '../fills'
+import { parseFills, fillPrimary, fillTextColor } from '../fills'
 import { defaultFillsFor } from '../palette'
 import { resolveFontFamily, fontHasWeightAxis } from '~/data/google-fonts'
 import { charDeform, TAU, type DeformParams } from '../elasticDeform'
@@ -168,6 +168,7 @@ let state: State | null = null
 export const elasticEffect: SpaceTypeEffect = {
   id: 'elastic',
   label: 'Elastic',
+  hidden: true,
   controls,
 
   buildScene(three, params, _textTexture) {
@@ -188,8 +189,8 @@ export const elasticEffect: SpaceTypeEffect = {
     const fill = parseFills(params.fills)[0]!
     const uniforms = {
       uMatte: { value: tex as THREE.Texture },
-      uFillColor: { value: new three.Color(fill.a) },
-      uTextColor: { value: new three.Color(fill.textColor) },
+      uFillColor: { value: fillPrimary(three, fill) },
+      uTextColor: { value: fillTextColor(three, fill) },
       uTime: { value: 0 },
       uWarp: { value: n(params, 'warp') },
       uPoly: { value: n(params, 'polygonal') },
@@ -234,7 +235,7 @@ export const elasticEffect: SpaceTypeEffect = {
     state.uniforms.uPoly.value = n(params, 'polygonal')
     state.uniforms.uWarpScale.value = n(params, 'warpScale')
     const fill = parseFills(params.fills)[0]!
-    state.uniforms.uFillColor.value.set(fill.a)
-    state.uniforms.uTextColor.value.set(fill.textColor)
+    state.uniforms.uFillColor.value.set(fillPrimary(THREE, fill))
+    state.uniforms.uTextColor.value.set(fillTextColor(THREE, fill))
   },
 }

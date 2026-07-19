@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import { resolveFontFamily, fontHasWeightAxis } from '~/data/google-fonts'
 import { shapedSin } from '../ribbonGeometry'
-import { parseFills, fillAtlasTexture, type Fill } from '../fills'
+import { parseFills, fillAtlasTexture, fillTextColor, type Fill } from '../fills'
 import { defaultFillsFor } from '../palette'
 
 /**
@@ -206,7 +206,7 @@ function frontMaterial(
   const paletteCount = Math.max(1, fills.length)
   const uFillAtlas = { value: fillAtlas }
   const uTextColors = { value: Array.from({ length: 5 }, (_, i) => {
-    const c = new three.Color(fills[Math.min(i, fills.length - 1)]!.textColor)
+    const c = fillTextColor(three, fills[Math.min(i, fills.length - 1)]!)
     return new three.Vector3(c.r, c.g, c.b)
   }) }
   const uPaletteCount = { value: paletteCount }

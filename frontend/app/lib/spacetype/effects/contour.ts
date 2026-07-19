@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect, BuildEnv } from '../effect'
-import { parseFills, fillShaderTexture, fillTiling, SRGB_TO_LINEAR_GLSL } from '../fills'
+import { parseFills, fillShaderTexture, fillTiling, fillTextColor, SRGB_TO_LINEAR_GLSL } from '../fills'
 import { defaultFillsFor } from '../palette'
 import { resolveFontFamily } from '~/data/google-fonts'
 import { frameEdgeSpecs } from '../contourFrame'
@@ -176,7 +176,7 @@ export const contourEffect: SpaceTypeEffect = {
       const faceTex = fillShaderTexture(three, fill)
       const tileBase = fillTiling(fill)
       const fillGrad = fill.type === 'gradient' ? 1 : 0
-      const textColor = new three.Color(fill.textColor)
+      const textColor = fillTextColor(three, fill)
       const edges: Edge[] = []
       for (const spec of specs) {
         const aspect = spec.orient === 'h' ? aspectH : aspectV
