@@ -12,6 +12,15 @@ import { stripAlpha } from '~/lib/color/convert'
 import type { SceneDoc } from './config'
 import type { SceneEngine } from './engine'
 
+// Editor-only helpers (TransformControls gizmo, light pick markers) can live
+// nested under an object root (e.g. a light group), not just as direct scene
+// children — traverse the whole tree so a nested marker is still caught.
+export function collectEditorHelpers(scene: THREE.Object3D): THREE.Object3D[] {
+  const out: THREE.Object3D[] = []
+  scene.traverse((o) => { if (o.userData.isGizmoHelper && o.visible) out.push(o) })
+  return out
+}
+
 export function fitNearFar(bounds: THREE.Box3, camPos: THREE.Vector3): { near: number; far: number } {
   if (bounds.isEmpty()) return { near: 0.1, far: 100 }
   const sphere = bounds.getBoundingSphere(new THREE.Sphere())
@@ -75,7 +84,7 @@ export async function renderPasses(engine: SceneEngine, doc: SceneDoc):
   // hide them so an active selection's gizmo never bleeds into the baked passes
   // — otherwise its arrows show in beauty and register as fake geometry in the
   // depth/normal ControlNet maps.
-  const helpers = engine.scene.children.filter((c) => c.userData.isGizmoHelper && c.visible)
+  const helpers = collectEditorHelpers(engine.scene)
   for (const h of helpers) h.visible = false
   let dmat: THREE.ShaderMaterial | null = null
   let nmat: THREE.MeshNormalMaterial | null = null
@@ -93,7 +102,10 @@ export async function renderPasses(engine: SceneEngine, doc: SceneDoc):
 
     // Depth — custom near-white ramp fitted to the visible objects.
     const bounds = new THREE.Box3()
-    for (const root of engine.objectRoots.values()) if (root.visible) bounds.expandByObject(root)
+    for (const root of engine.objectRoots.values()) {
+      if (!root.visible || root.userData.isLight) continue
+      bounds.expandByObject(root)
+    }
     const { near, far } = fitNearFar(bounds, camera.position)
     dmat = depthMaterial()
     dmat.uniforms.uNear!.value = near

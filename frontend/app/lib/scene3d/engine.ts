@@ -376,6 +376,15 @@ export class SceneEngine {
           light.target.position.set(0, 0, -1)
           group.add(light.target)
         }
+        // A bare light has no raycastable geometry and is invisible in the
+        // viewport — give it a small color-tinted sphere as both the visible
+        // stand-in and the reliable click target. Excluded from export passes
+        // via isGizmoHelper (see passes.ts collectEditorHelpers).
+        const markerMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(stripAlpha(obj.color)), toneMapped: false })
+        const marker = new THREE.Mesh(new THREE.SphereGeometry(0.12, 16, 12), markerMat)
+        marker.userData.isGizmoHelper = true
+        group.add(marker)
+        group.userData.marker = marker
         root = group
         root.userData.isLight = true
       }
@@ -435,6 +444,8 @@ export class SceneEngine {
       const color = new THREE.Color(stripAlpha(obj.color))
       light.color.copy(color)
       light.intensity = obj.intensity
+      const marker = root.userData.marker as THREE.Mesh | undefined
+      if (marker) (marker.material as THREE.MeshBasicMaterial).color.copy(color)
       if (light instanceof THREE.PointLight || light instanceof THREE.SpotLight) {
         light.distance = obj.distance ?? 0
         light.decay = obj.decay ?? LIGHT_DEFAULTS.decay
@@ -487,9 +498,9 @@ export class SceneEngine {
   }
 }
 
-// Light groups carry no geometry/material today, so this is a safe no-op for
-// them — but Task 3's pick-marker/helper meshes attach here too, and those
-// WILL need disposing once they land.
+// Light groups have no geometry/material of their own, but the pick-marker
+// Mesh added under each light group (Task 3) IS caught here — traverse finds
+// it and disposes its geometry/material like any other mesh.
 function disposeTree(root: THREE.Object3D): void {
   root.traverse((c) => {
     const m = c as THREE.Mesh

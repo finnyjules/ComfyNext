@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import * as THREE from 'three'
-import { fitNearFar } from '~/lib/scene3d/passes'
+import { fitNearFar, collectEditorHelpers } from '~/lib/scene3d/passes'
 
 describe('scene3d depth range fitting', () => {
   it('brackets the scene bounds from the camera', () => {
@@ -19,5 +19,18 @@ describe('scene3d depth range fitting', () => {
     const p = new THREE.Vector3(0, 0, 0)
     const { near, far } = fitNearFar(new THREE.Box3(p.clone(), p.clone()), new THREE.Vector3(0, 0, 5))
     expect(far).toBeGreaterThan(near)
+  })
+})
+
+describe('collectEditorHelpers', () => {
+  it('collects editor helpers nested under a light group (not just direct children)', () => {
+    const scene = new THREE.Scene()
+    const group = new THREE.Group(); group.userData.isLight = true
+    const marker = new THREE.Mesh(new THREE.SphereGeometry(0.1), new THREE.MeshBasicMaterial())
+    marker.userData.isGizmoHelper = true
+    group.add(marker)
+    scene.add(group)
+    const found = collectEditorHelpers(scene)
+    expect(found).toContain(marker)
   })
 })
