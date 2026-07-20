@@ -26,11 +26,13 @@ const props = defineProps<{
   brandKitId?: string | null
   brandKitName?: string | null
   brandSwatches?: string[]
+  deliverablesCount?: number
 }>()
 const emit = defineEmits<{
   renameProject: [name: string]
   switchCanvas: [canvasId: string]
   addCanvas: []
+  showDeliverables: []
   renameCanvas: [canvasId: string, name: string]
   deleteCanvas: [canvasId: string]
   restore: [body: any]
@@ -221,6 +223,16 @@ watch(() => props.projectId, (id) => {
             <Pencil class="size-3 text-white/50" />
           </button>
         </div>
+
+        <!-- Deliverables (pinned project view, not a canvas) -->
+        <button
+          class="mb-1 flex w-full items-center gap-2 rounded-md px-1.5 py-1.5 text-left hover:bg-white/[0.04]"
+          @click="emit('showDeliverables')"
+        >
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" class="text-emerald-400/80"><path d="M20 7L9 18l-5-5" /></svg>
+          <span class="flex-1 text-xs text-white/80">Ready to deliver</span>
+          <span v-if="deliverablesCount" class="font-mono text-[10px] text-white/40">{{ deliverablesCount }}</span>
+        </button>
 
         <!-- Canvases -->
         <div class="px-2 pt-2 pb-1">

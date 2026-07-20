@@ -1511,13 +1511,27 @@ provide('assetRegistry', computed<RefRegistry>(() => activeProjectDoc.value?.ass
 // Whole-doc read access for children that scope UI to "this project" (e.g. the
 // Timeline editor's Project media tab walks every canvas for referenced files).
 provide('projectDoc', activeProjectDoc)
+// Persist callback for the Deliverables page (mirrors the durable-version save
+// other project-doc mutators use below).
+provide('persistDeliverables', () => { persistWorkflows(); const t = activeTab.value; if (t.type === 'project' && activeProjectDoc.value) saveDurableVersion(t, activeProjectDoc.value) })
 
 // Re-entrancy guard: a switch serializes the outgoing canvas, swaps the doc's
 // active id, and (in LiteGraph mode) pushes the target into the iframe. Block
 // further switches until that completes so two rapid clicks can't interleave.
 const canvasSwitching = ref(false)
 
+// Project view mode: 'canvas' shows the node graph, 'deliverables' shows the
+// pinned "Ready to deliver" page over it (see ProjectMenu's pinned entry).
+const projectView = ref<'canvas' | 'deliverables'>('canvas')
+function showDeliverables() { projectView.value = 'deliverables' }
+function onOpenDeliverableInCanvas(nodeId: string) {
+  projectView.value = 'canvas'
+  // Best-effort focus; reuse existing node-focus if present, else no-op.
+  window.dispatchEvent(new CustomEvent('sailor:focusNode', { detail: { nodeId } }))
+}
+
 async function switchProjectCanvas(canvasId: string) {
+  projectView.value = 'canvas'
   const tab = activeTab.value
   if (tab.type !== 'project' || canvasSwitching.value) return
   const doc = toProjectDoc(savedWorkflows[tab.id])
@@ -3748,6 +3762,14 @@ function dismissRunResult() {
             />
             <ExplainOverlay :vue-canvas="vueCanvasRef" />
           </div>
+          <!-- Ready to deliver: pinned project view, swapped in over the
+               canvas (see ProjectMenu's pinned entry / projectView ref). -->
+          <VueCanvasDeliverablesPage
+            v-if="activeTab.type === 'project' && projectView === 'deliverables'"
+            class="absolute inset-0 z-30"
+            :project-name="activeTab.label || 'Untitled project'"
+            @open-in-canvas="onOpenDeliverableInCanvas"
+          />
           <!-- Native Nodes sidebar (overlays canvas from left) -->
           <Transition
             enter-active-class="transition-transform duration-300 ease-out"
@@ -3890,6 +3912,7 @@ function dismissRunResult() {
           :brand-kit-id="activeProjectDoc?.brandKitId ?? null"
           :brand-kit-name="brandKitName"
           :brand-swatches="brandSwatches"
+          :deliverables-count="activeProjectDoc?.deliverables?.length ?? 0"
           @set-brand-kit="setBrandKit"
           @rename-project="renameActiveProject"
           @switch-canvas="switchProjectCanvas"
@@ -3897,6 +3920,7 @@ function dismissRunResult() {
           @rename-canvas="renameProjectCanvas"
           @delete-canvas="deleteProjectCanvas"
           @restore="onRestoreVersion"
+          @show-deliverables="showDeliverables"
         />
 
         <!-- Slate gallery: pick a Kinetic Slate template, fill its slots, and
