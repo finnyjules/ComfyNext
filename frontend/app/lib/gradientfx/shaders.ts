@@ -3,6 +3,8 @@
 // bar-depth field + gradient ramp, then blends the layers over the background
 // and adds relief + grain. GLSL ES 3.00 (WebGL2).
 
+import { BLEND_LAYERS_GLSL } from '~/lib/studio/blend'
+
 export const GRADIENT_VS = `#version 300 es
 out vec2 v_texCoord;
 void main() {
@@ -533,16 +535,7 @@ float bandHeight(int i, vec2 q) {
   return f * ridge;
 }
 
-vec3 blendLayers(vec3 base, vec3 src, float mode) {
-  int m = int(mode + 0.5);
-  if (m == 1) return max(base, src);
-  if (m == 2) return 1.0 - (1.0 - base) * (1.0 - src);
-  if (m == 3) return min(base + src, vec3(1.0));
-  if (m == 4) return base * src;
-  if (m == 5) return min(base, src);
-  if (m == 6) return mix(2.0 * base * src, 1.0 - 2.0 * (1.0 - base) * (1.0 - src), step(0.5, base));
-  return src; // normal
-}
+${BLEND_LAYERS_GLSL}
 
 void main() {
   vec2 p = v_texCoord;

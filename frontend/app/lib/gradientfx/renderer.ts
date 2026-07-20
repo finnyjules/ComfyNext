@@ -9,15 +9,15 @@ import { buildRampLut } from './ramp'
 import { hexToRgb } from './ramp'
 import { BLUR_FS, GRADIENT_FS, GRADIENT_VS } from './shaders'
 import { aspectRatio, canvasCenter, flowConfig, lightVector, reliefLight,
-  type BlendKind, type Direction, type FocusConfig, type GradientConfig,
+  type Direction, type FocusConfig, type GradientConfig,
   type LayoutKind, type MappingKind } from './types'
+import { BLEND_IDX } from '~/lib/studio/blend'
 
 const FOCUS_IDX: Record<FocusConfig['shape'], number> = { off: 0, radial: 1, linear: 2 }
 /** Blur amount 0..1 → max kernel radius as a fraction of the min canvas dimension. */
 const MAX_BLUR_FRAC = 0.12
 
 const DIR_IDX: Record<Direction, number> = { up: 0, right: 1, down: 2, left: 3 }
-const BLEND_IDX: Record<BlendKind, number> = { normal: 0, lighten: 1, screen: 2, add: 3, multiply: 4, darken: 5, overlay: 6 }
 const MAP_IDX: Record<MappingKind, number> = { across: 0, perbar: 1, field: 2 }
 const LAYOUT_IDX: Record<LayoutKind, number> = { linear: 0, radial: 1, orbit: 2, stack: 3, liquid: 4, mesh: 5 }
 

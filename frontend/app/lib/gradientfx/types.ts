@@ -4,6 +4,8 @@
 // the same seed + locks) reproduces an identical image.
 
 import { defaultMesh } from './mesh'
+import type { BlendKind } from '~/lib/studio/blend'
+export { type BlendKind, BLEND_MODES } from '~/lib/studio/blend'
 
 export type LayoutKind = 'linear' | 'radial' | 'orbit' | 'stack' | 'liquid' | 'mesh'
 export type ShapeKind = 'bands' | 'pyramid' | 'wave' | 'noise'
@@ -12,7 +14,6 @@ export type MappingKind = 'across' | 'perbar' | 'field'
 export type Direction = 'up' | 'right' | 'down' | 'left'
 export type MirrorKind = 'none' | 'horizontal' | 'vertical' | 'both'
 export type GradientDir = 'vertical' | 'horizontal'
-export type BlendKind = 'normal' | 'lighten' | 'screen' | 'add' | 'multiply' | 'darken' | 'overlay'
 
 export interface ColorStop {
   /** Hex color, e.g. "#ff3b3b". */
@@ -246,7 +247,6 @@ export interface GradientConfig {
 }
 
 export const ASPECTS = ['14:9', '16:9', '9:16', '1:1', '4:5', '3:2', '21:9'] as const
-export const BLEND_MODES: BlendKind[] = ['normal', 'lighten', 'screen', 'add', 'multiply', 'darken', 'overlay']
 export const SHAPE_KINDS: ShapeKind[] = ['bands', 'wave', 'noise', 'pyramid']
 export const LAYOUTS: LayoutKind[] = ['linear', 'radial', 'orbit', 'stack', 'liquid', 'mesh']
 export const RING_SHAPES: RingShape[] = ['circle', 'diamond', 'square']
