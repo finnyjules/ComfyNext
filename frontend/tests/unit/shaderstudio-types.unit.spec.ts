@@ -5,7 +5,7 @@ import { cloneConfig, defaultConfig, outputDims } from '~/lib/shaderstudio/types
 describe('shaderstudio types', () => {
   it('defaultConfig is a passthrough (no effect, all passes disabled)', () => {
     const c = defaultConfig()
-    expect(c.effect.id).toBe('')
+    expect(c.effects[0]!.id).toBe('')
     expect(c.duotone.enabled).toBe(false)
     expect(c.adjust.enabled).toBe(false)
     expect(c.post.blur.enabled).toBe(false)
@@ -18,9 +18,9 @@ describe('shaderstudio types', () => {
     const a = defaultConfig()
     const b = cloneConfig(a)
     b.adjust.exposure = 1.5
-    b.effect.params.foo = 2
+    b.effects[0]!.params.foo = 2
     expect(a.adjust.exposure).toBe(0)
-    expect(a.effect.params.foo).toBeUndefined()
+    expect(a.effects[0]!.params.foo).toBeUndefined()
   })
 
   it('outputDims caps the long edge and preserves aspect', () => {

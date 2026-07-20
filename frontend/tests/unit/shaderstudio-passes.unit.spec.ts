@@ -11,16 +11,20 @@ const fakeEffect: EffectDef = {
   source: 'EFFECT_SRC',
 }
 
+// composePasses now takes a resolveDef: (id) => EffectDef | null. For configs with no
+// enabled effect the loop never calls it, so `() => null` is a safe stand-in there.
+const noDef = () => null
+
 describe('composePasses', () => {
   it('returns [] when nothing is enabled and no effect picked', () => {
-    const c = defaultConfig() // effect.id '' , all passes disabled
-    expect(composePasses(c, null, 0)).toEqual([])
+    const c = defaultConfig() // effects[0].id '' , all stages disabled
+    expect(composePasses(c, noDef, 0)).toEqual([])
   })
 
   it('includes the effect pass with resolved uniforms when enabled', () => {
     const c = defaultConfig()
-    c.effect = { id: 'halftone', params: { u_size: 6 }, enabled: true }
-    const passes = composePasses(c, fakeEffect, 0.5)
+    c.effects = [{ layerId: 'L0', id: 'halftone', params: { u_size: 6 }, enabled: true, blend: 'normal', opacity: 1 }]
+    const passes = composePasses(c, () => fakeEffect, 0.5)
     expect(passes).toHaveLength(1)
     expect(passes[0]!.id).toBe('halftone')
     expect(passes[0]!.uniforms.u_size).toBe(6)
@@ -34,7 +38,7 @@ describe('composePasses', () => {
     c.adjust.enabled = true
     c.post.blur.enabled = true
     c.post.chromatic.enabled = true
-    const passes = composePasses(c, null, 0) // no effect
+    const passes = composePasses(c, noDef, 0) // no effect
     expect(passes.map(p => p.id)).toEqual(['studio:duotone', 'studio:adjust', 'studio:blur', 'studio:chromatic'])
     const duo = passes[0]!
     expect(duo.uniforms.u_ink_r).toBe(0)
@@ -45,7 +49,7 @@ describe('composePasses', () => {
     const c = defaultConfig()
     c.post.chromatic.enabled = true
     c.post.bloom = { enabled: true, threshold: 0.6, intensity: 1.2, radius: 80 }
-    const passes = composePasses(c, null, 0)
+    const passes = composePasses(c, noDef, 0)
     expect(passes.map(p => p.id)).toEqual(['studio:chromatic', 'studio:bloom'])
     const bloom = passes[passes.length - 1]!
     expect(bloom.uniforms.u_threshold).toBe(0.6)
@@ -60,7 +64,7 @@ describe('composePasses', () => {
       { pos: 0, color: '#000000' },
       { pos: 0.5, color: '#ff0000' },
     ] }
-    const passes = composePasses(c, null, 0)
+    const passes = composePasses(c, noDef, 0)
     expect(passes.map(p => p.id)).toEqual(['studio:gradientMap'])
     const u = passes[0]!.uniforms
     expect(u.u_gm_n).toBe(3)
@@ -77,16 +81,16 @@ describe('composePasses', () => {
   it('caps the gradient map at 8 stops', () => {
     const c = defaultConfig()
     ;(c as any).gradientMap = { enabled: true, mix: 1, stops: Array.from({ length: 12 }, (_, i) => ({ pos: i / 11, color: '#808080' })) }
-    const passes = composePasses(c, null, 0)
+    const passes = composePasses(c, noDef, 0)
     expect(passes[0]!.uniforms.u_gm_n).toBe(8)
     expect(passes[0]!.uniforms['u_gm_pos[8]']).toBeUndefined()
   })
 
   it('expands a multi-pass effect into N passes', () => {
     const c = defaultConfig()
-    c.effect = { id: 'bloom', params: {}, enabled: true }
+    c.effects = [{ layerId: 'L0', id: 'bloom', params: {}, enabled: true, blend: 'normal', opacity: 1 }]
     const bloom: EffectDef = { ...fakeEffect, id: 'bloom', passes: 3, params: [] }
-    const passes = composePasses(c, bloom, 0)
+    const passes = composePasses(c, () => bloom, 0)
     expect(passes).toHaveLength(3)
     expect(passes.every(p => p.id === 'bloom')).toBe(true)
   })

@@ -64,8 +64,8 @@ describe('shaderAgentControls', () => {
   it('surfaces float uniforms but skips enum uniforms', () => {
     const cfg = shaderDefault()
     const ctrls = shaderAgentControls(cfg, effect)
-    expect(ctrls.some(c => c.key === 'effect.params.u_intensity')).toBe(true)
-    expect(ctrls.some(c => c.key === 'effect.params.u_shape')).toBe(false)
+    expect(ctrls.some(c => c.key === 'effects.0.params.u_intensity')).toBe(true)
+    expect(ctrls.some(c => c.key === 'effects.0.params.u_shape')).toBe(false)
   })
   it('offers a stage’s controls only when that stage is enabled', () => {
     const cfg = shaderDefault()
