@@ -168,7 +168,7 @@ const axisSpec = (key: string, label: string, hint: string, def: number): ParamS
   ({ key, label, hint, min: 0, max: 2, step: 1, default: def, control: 'options', options: ['x', 'y', 'z'] })
 
 export const MODIFIER_SPECS: ParamSpec[] = [
-  { key: 'subdivide', label: 'Subdivide', hint: 'Splits each face into smaller ones so bends and twists stay smooth', min: 0, max: 3, step: 1, default: 0 },
+  { key: 'subdivide', label: 'Subdivide', hint: 'Splits each face into smaller ones so bends, twists and jitter stay detailed', min: 0, max: 8, step: 1, default: 0 },
 
   { key: 'taper', label: 'Taper', hint: 'Narrows or widens the shape toward one end', min: -1, max: 1, step: 0.01, default: 0 },
   axisSpec('taperAxis', 'Taper axis', 'Which direction the taper runs along', 1),
@@ -182,6 +182,11 @@ export const MODIFIER_SPECS: ParamSpec[] = [
   { key: 'noise', label: 'Noise', hint: 'Pushes the surface in and out for an organic, lumpy look', min: 0, max: 0.5, step: 0.005, default: 0 },
   { key: 'noiseScale', label: 'Noise scale', hint: 'Size of the lumps — higher means finer detail', min: 0.5, max: 8, step: 0.1, default: 2 },
   { key: 'noiseSeed', label: 'Noise seed', hint: 'Shuffles the lumps into a different arrangement', min: 0, max: 99, step: 1, default: 0 },
+
+  { key: 'jitter', label: 'Jitter', hint: 'Randomly offsets each vertex for a faceted, crystalline look — pair with Subdivide and flat shading', min: 0, max: 0.5, step: 0.005, default: 0 },
+  // options are stored as an index — append only, never reorder.
+  { key: 'jitterMode', label: 'Jitter mode', hint: 'Random scatters vertices into chaotic gems; Along normal pushes them in and out for spikes', min: 0, max: 1, step: 1, default: 0, control: 'options', options: ['random', 'normal'] },
+  { key: 'jitterSeed', label: 'Jitter seed', hint: 'Shuffles the jitter into a different arrangement', min: 0, max: 99, step: 1, default: 0 },
 
   // Cloner keys. Named clone* rather than array* because this is its own panel
   // section now and is meant to accumulate more clone options — an arrayCount

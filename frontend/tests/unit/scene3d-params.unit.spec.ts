@@ -106,11 +106,25 @@ describe('scene3d modifier specs', () => {
       'twist', 'twistAxis',
       'bend', 'bendAxis',
       'noise', 'noiseScale', 'noiseSeed',
+      'jitter', 'jitterMode', 'jitterSeed',
       'cloneCount', 'cloneMode', 'cloneOffsetX', 'cloneOffsetY', 'cloneOffsetZ', 'cloneRadius', 'cloneAxis',
       'cloneCountX', 'cloneCountY', 'cloneCountZ',
       'cloneSpacingX', 'cloneSpacingY', 'cloneSpacingZ',
       'cloneStepRotX', 'cloneStepRotY', 'cloneStepRotZ', 'cloneStepScale',
     ])
+  })
+
+  it('adds a jitter modifier and a deeper subdivide cap', () => {
+    const spec = (key: string) => MODIFIER_SPECS.find((s) => s.key === key)!
+    expect(spec('jitter').default).toBe(0)
+    expect(spec('jitter').max).toBe(0.5)
+    expect(spec('jitterMode').control).toBe('options')
+    expect(spec('jitterMode').options).toEqual(['random', 'normal'])
+    expect(spec('jitterMode').min).toBe(0)
+    expect(spec('jitterMode').max).toBe(1)
+    expect(spec('jitterSeed').max).toBe(99)
+    expect(spec('subdivide').max).toBe(8)
+    expect(modifierValue(undefined, 'jitter')).toBe(0)
   })
 
   it('appends grid to cloneMode so saved linear/radial indices still resolve', () => {
