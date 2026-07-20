@@ -180,8 +180,25 @@ onMounted(async () => {
 // from the frame source's renderAt, so nothing is created until a downstream
 // consumer actually pulls. `headlessDirty` defers geometry rebuilds to the next
 // pull instead of rebuilding an offscreen engine per config keystroke.
+/** Drop the headless engine so the next ensureHeadless rebuilds it from scratch. */
+function dropHeadless() {
+  try { headlessEngine?.dispose() } catch { /* already gone */ }
+  headlessEngine = null
+  headlessCanvas = null
+  headlessDirty = true
+}
+
 function ensureHeadless(w: number, h: number): SpaceTypeEngine | null {
   if (!detectWebGL()) return null
+  // Recover from a lost WebGL context. Opening the modal adds a THIRD Space Type
+  // engine (card + headless + modal); the browser can evict the headless one's
+  // context, and THREE does not auto-restore it. Without this, the frame source
+  // returned a dead canvas forever (Type Studio froze in a downstream Frame after
+  // any modal edit, until a full page reload). Detect the loss and rebuild fresh.
+  if (headlessEngine) {
+    const gl = headlessEngine.renderer.getContext() as WebGLRenderingContext | null
+    if (!gl || gl.isContextLost()) dropHeadless()
+  }
   if (!headlessEngine) {
     headlessCanvas = document.createElement('canvas')
     const s = state.value
@@ -199,17 +216,27 @@ function ensureHeadless(w: number, h: number): SpaceTypeEngine | null {
     void ensureSpaceTypeFont(String(s.params.font)).then(() => { headlessDirty = true })
   }
   if (headlessDirty) {
-    const s = state.value
-    headlessEngine.setSize(w, h)   // BEFORE build — geometry layout reads the size
-    headlessEngine.setBackground(s.transparent, s.bgColor)
-    headlessEngine.setProjection(s.projection ?? 'perspective')
-    headlessEngine.setPost({ ...(s.post ?? DEFAULT_POST) })
-    headlessEngine.setPan(s.panX ?? 0, s.panY ?? 0)
-    headlessEngine.setFps(s.fps)
-    headlessEngine.setLoopDuration(s.loopDuration)
-    headlessEngine.setEffect(getEffect(s.effectId))
-    headlessEngine.build(s.params, texOptsFromState(s))
-    headlessDirty = false
+    try {
+      const s = state.value
+      headlessEngine.setSize(w, h)   // BEFORE build — geometry layout reads the size
+      headlessEngine.setBackground(s.transparent, s.bgColor)
+      headlessEngine.setProjection(s.projection ?? 'perspective')
+      headlessEngine.setPost({ ...(s.post ?? DEFAULT_POST) })
+      headlessEngine.setPan(s.panX ?? 0, s.panY ?? 0)
+      headlessEngine.setFps(s.fps)
+      headlessEngine.setLoopDuration(s.loopDuration)
+      headlessEngine.setEffect(getEffect(s.effectId))
+      headlessEngine.build(s.params, texOptsFromState(s))
+      headlessDirty = false
+    } catch (e) {
+      // A rebuild that throws (e.g. context lost mid-build) leaves the engine broken
+      // AND headlessDirty stuck true — so it would retry-and-fail forever. Drop it so
+      // the next pull recreates a fresh engine (a full reload proved the same config
+      // builds fine on a fresh engine).
+      console.warn('[space-type] headless rebuild failed — recreating on next pull', e)
+      dropHeadless()
+      return null
+    }
   }
   return headlessEngine
 }
