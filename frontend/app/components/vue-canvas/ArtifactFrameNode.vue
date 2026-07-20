@@ -15,6 +15,7 @@ import StudioRenderButton from '~/components/vue-canvas/StudioRenderButton.vue'
 import { registerStudioBaker, unregisterStudioBaker } from '~/lib/studio/cascade'
 import { resolveWiredSourceKind } from '~/lib/studio/frameResolve'
 import { frameSourceEpoch, type StudioFrameSource } from '~/lib/studio/frameSource'
+import { deriveMasterClock, slotPhase01 } from '~/lib/compositor/masterClock'
 
 // The "Frame" — the Compositor as a first-class artboard artifact. Shows its
 // live composite (wired layers from `data.images` + a live local-layer overlay),
@@ -194,7 +195,7 @@ const wiredImages = ref<Record<string, HTMLImageElement | HTMLCanvasElement>>({}
 // animated per-frame pull is the follow-on increment.
 watch(() => wiredLayers.value.map(l => l.url).join('|') + '|' + frameSourceEpoch.value, () => {
   for (const l of wiredLayers.value) {
-    if (l.live) { void pullLiveStill(l); continue }
+    if (l.live) { void pullLiveFrame(l, 0); continue }
     if (wiredImages.value[l.url]) continue
     const im = new Image()
     im.onload = () => {
@@ -206,18 +207,23 @@ watch(() => wiredLayers.value.map(l => l.url).join('|') + '|' + frameSourceEpoch
   }
 }, { immediate: true })
 
-// Pull a live studio slot's current frame and COPY it into a canvas we own — the
-// source reuses its canvas across getFrame calls, so we must not hold its buffer.
-async function pullLiveStill(l: WiredLayer) {
+// Pull a live studio slot's frame at normalized time t01 and COPY it into a canvas we
+// OWN — the source reuses its canvas across getFrame calls, so we must not hold its
+// buffer. The owned canvas is created once per slot and drawn into in place on every
+// pull, so per-frame animation doesn't churn the reactive wiredImages map (only the
+// first pull / a size change reassigns it; the animation loop calls renderStack itself).
+async function pullLiveFrame(l: WiredLayer, t01: number) {
   const src = l.live!
   const w = Math.max(1, src.width || 1024), h = Math.max(1, src.height || 1024)
   try {
-    const surface = await src.getFrame(0, w, h)
-    const cv = document.createElement('canvas')
-    cv.width = w; cv.height = h
+    const surface = await src.getFrame(t01, w, h)
+    let cv = wiredImages.value[l.url]
+    if (!(cv instanceof HTMLCanvasElement) || cv.width !== w || cv.height !== h) {
+      cv = document.createElement('canvas'); cv.width = w; cv.height = h
+      wiredDims.value = { ...wiredDims.value, [l.url]: { w, h } }
+      wiredImages.value = { ...wiredImages.value, [l.url]: cv }
+    }
     cv.getContext('2d')!.drawImage(surface as CanvasImageSource, 0, 0, w, h)
-    wiredDims.value = { ...wiredDims.value, [l.url]: { w, h } }
-    wiredImages.value = { ...wiredImages.value, [l.url]: cv }
   } catch (e) { console.warn('[Frame] live slot pull failed for', l.url, e) }
 }
 
@@ -463,6 +469,40 @@ function renderStack() {
   paintLayerStack(ctx, W, H, buildStackItems(), editor.localLayers.value, l => l.id === editor.editingId.value,
     undefined, undefined, wiredTreatments.value, editor.background.value, editor.localGroups.value)
 }
+
+// ── Live animation loop ──────────────────────────────────────────────────────
+// The Frame owns one master timeline derived from its live slots (longest duration,
+// max fps), or the config override. Each animated slot plays at its native speed and
+// loops within it. Runs a rAF loop only when a slot is actually animated; otherwise
+// the static watch-driven render below is unchanged.
+const MAX_LIVE_SLOTS = 8   // soft cap on concurrently-animated slots (perf bound)
+const masterClock = computed(() => deriveMasterClock(
+  wiredLayers.value.filter(l => l.live).map(l => ({ duration: l.live!.duration, fps: l.live!.fps })),
+  (props.data.properties as any)?.sailor_frame?.clock ?? null))
+const hasAnimatedSlot = computed(() => wiredLayers.value.some(l => l.live && l.live.duration > 0))
+let animRaf = 0, animStart = 0, animInFlight = false, cappedWarned = false
+function animateFrame(ts: number) {
+  if (!animStart) animStart = ts
+  const mc = masterClock.value
+  // getFrame is async — skip a tick rather than queue, so a slow slot lowers the frame
+  // rate instead of piling up. Draws land in owned canvases; then renderStack paints.
+  if (!animInFlight && mc && mc.duration > 0) {
+    animInFlight = true
+    const t = ((ts - animStart) / 1000) % mc.duration
+    let animated = wiredLayers.value.filter(l => l.live && l.live.duration > 0)
+    if (animated.length > MAX_LIVE_SLOTS) {
+      if (!cappedWarned) { console.warn(`[Frame] ${animated.length} animated slots > cap ${MAX_LIVE_SLOTS}; extras shown as stills`); cappedWarned = true }
+      animated = animated.slice(0, MAX_LIVE_SLOTS)
+    }
+    Promise.all(animated.map(l => pullLiveFrame(l, slotPhase01(t, l.live!.duration))))
+      .then(() => renderStack())
+      .finally(() => { animInFlight = false })
+  }
+  animRaf = requestAnimationFrame(animateFrame)
+}
+function startAnim() { cancelAnimationFrame(animRaf); animStart = 0; animInFlight = false; if (hasAnimatedSlot.value) animRaf = requestAnimationFrame(animateFrame) }
+function stopAnim() { cancelAnimationFrame(animRaf); animRaf = 0 }
+watch(hasAnimatedSlot, startAnim)
 // Declared BEFORE the `{ immediate: true }` watch below — that watch's getter reads
 // wiredTreatments during setup, so a later `const` would throw a TDZ ReferenceError
 // (which cascaded into VueFlow and broke adding any node).
@@ -540,8 +580,8 @@ async function bakeOutput(): Promise<Blob | null> {
   if (!cv) return null
   return await new Promise<Blob | null>(res => cv.toBlob(b => res(b), 'image/png'))
 }
-onMounted(() => registerStudioBaker(props.id, bakeOutput))
-onBeforeUnmount(() => unregisterStudioBaker(props.id))
+onMounted(() => { registerStudioBaker(props.id, bakeOutput); startAnim() })
+onBeforeUnmount(() => { unregisterStudioBaker(props.id); stopAnim() })
 
 // Record the baked composite as a project asset so saved frames show up in the
 // Assets panel — same treatment as generator outputs. Best-effort: never blocks
