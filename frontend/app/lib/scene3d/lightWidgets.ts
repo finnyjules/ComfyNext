@@ -17,6 +17,18 @@ function intensityRadius(intensity: number): number {
   return 0.25 + Math.min(1.5, Math.log2(1 + Math.max(0, intensity)) * 0.18)
 }
 
+/** A closed ring of `segments` points at `radius` in the local XY plane — no
+ *  center vertex (CircleGeometry's center makes a LineLoop draw spokes). */
+function ringLoop(radius: number, segments: number, mat: THREE.LineBasicMaterial): THREE.LineLoop {
+  const pts: number[] = []
+  for (let i = 0; i < segments; i++) {
+    const th = (i / segments) * Math.PI * 2
+    pts.push(Math.cos(th) * radius, Math.sin(th) * radius, 0)
+  }
+  const geo = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(pts, 3))
+  return new THREE.LineLoop(geo, mat)
+}
+
 export function buildLightWidget(obj: LightObject): THREE.Group {
   const group = new THREE.Group()
   group.userData.isGizmoHelper = true
@@ -25,21 +37,13 @@ export function buildLightWidget(obj: LightObject): THREE.Group {
 
   // Intensity ring (faces local +Z, i.e. toward the marker), radius by intensity.
   const rr = intensityRadius(obj.intensity)
-  const ring = new THREE.LineLoop(new THREE.CircleGeometry(rr, 40), lineMat(color))
-  // CircleGeometry includes a center vertex at index 0; drop it for a clean loop.
-  ring.geometry.deleteAttribute('normal'); ring.geometry.deleteAttribute('uv')
-  const pos = ring.geometry.getAttribute('position')
-  const loop = new Float32Array((pos.count - 1) * 3)
-  for (let i = 1; i < pos.count; i++) { loop[(i - 1) * 3] = pos.getX(i); loop[(i - 1) * 3 + 1] = pos.getY(i); loop[(i - 1) * 3 + 2] = pos.getZ(i) }
-  ring.geometry.setAttribute('position', new THREE.BufferAttribute(loop, 3))
-  ring.geometry.setDrawRange(0, pos.count - 1)
+  const ring = ringLoop(rr, 40, lineMat(color))
   group.add(ring)
 
   if (obj.light === 'point') {
     // Falloff sphere (three great circles) + short rays.
     for (let a = 0; a < 3; a++) {
-      const c = new THREE.LineLoop(new THREE.CircleGeometry(range, 48), lineMat(color, 0.35))
-      c.geometry.deleteAttribute('normal'); c.geometry.deleteAttribute('uv')
+      const c = ringLoop(range, 48, lineMat(color, 0.35))
       if (a === 1) c.rotation.x = Math.PI / 2
       if (a === 2) c.rotation.y = Math.PI / 2
       group.add(c)

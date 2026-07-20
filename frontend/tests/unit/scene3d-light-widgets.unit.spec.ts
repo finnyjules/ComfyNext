@@ -37,4 +37,20 @@ describe('buildLightWidget', () => {
     setWidgetSelected(w, true)
     expect(() => disposeWidget(w)).not.toThrow()
   })
+
+  it('point light falloff rings are clean loops, not spokes (no vertex at local origin)', () => {
+    const w = buildLightWidget(createLight('point', []))
+    let loopCount = 0
+    w.traverse((o) => {
+      if (o.type !== 'LineLoop') return
+      loopCount++
+      const geo = (o as THREE.LineLoop).geometry
+      const pos = geo.getAttribute('position')
+      for (let i = 0; i < pos.count; i++) {
+        const v = new THREE.Vector3().fromBufferAttribute(pos, i)
+        expect(v.length()).toBeGreaterThan(0.01)
+      }
+    })
+    expect(loopCount).toBeGreaterThan(0)
+  })
 })
