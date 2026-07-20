@@ -3,7 +3,16 @@
 // stacks shader passes over an input image. Persisted at
 // node.data.properties.sailor_shaderStudio.
 
+import type { BlendKind } from '~/lib/studio/blend'
+
 export type EasingKind = 'linear' | 'pingpong' | 'easeinout'
+
+/** Max number of effect layers stackable in effects[]. */
+export const LAYER_MAX = 6
+
+let _lid = 0
+/** Deterministic-safe stable layer id (module counter + timestamp; no Math.random). */
+export function newLayerId(): string { return `L${(_lid++).toString(36)}${Date.now().toString(36)}` }
 
 export interface StudioSource {
   kind: 'none' | 'upload' | 'asset'
@@ -21,6 +30,12 @@ export interface StudioEffect {
   enabled: boolean
   /** ASCII effect, "Custom" shape: characters the user rasterizes into glyphs. */
   customChars?: string
+  /** how this layer composites over layers beneath it. */
+  blend: BlendKind
+  /** [0,1] layer opacity. */
+  opacity: number
+  /** stable per-layer id (identity for reorder + motion binding); distinct from the catalog `id`. */
+  layerId: string
 }
 
 export interface StudioDuotone {
@@ -100,7 +115,10 @@ export interface ShaderStudioConfig {
   source: StudioSource
   /** long-edge cap (px) for preview/export sizing. */
   resolution: number
+  /** @deprecated — removed in the reader switch; use effects[] */
   effect: StudioEffect
+  /** stacked effect layers (replaces the single `effect` field; max LAYER_MAX). */
+  effects: StudioEffect[]
   duotone: StudioDuotone
   gradientMap: StudioGradientMap
   adjust: StudioAdjust
@@ -110,10 +128,11 @@ export interface ShaderStudioConfig {
 
 export function defaultConfig(): ShaderStudioConfig {
   return {
-    version: 1,
+    version: 2,
     source: { kind: 'none' },
     resolution: 1536,
-    effect: { id: '', params: {}, enabled: true, customChars: '' },
+    effect: { id: '', params: {}, enabled: true, customChars: '', blend: 'normal', opacity: 1, layerId: newLayerId() },
+    effects: [{ layerId: newLayerId(), id: '', params: {}, enabled: true, blend: 'normal', opacity: 1 }],
     duotone: { enabled: false, ink: '#1a1a2e', paper: '#f5f5f5' },
     gradientMap: {
       enabled: false, mix: 1,

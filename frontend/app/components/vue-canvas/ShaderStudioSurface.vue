@@ -319,7 +319,7 @@ function renderThumb(def: EffectDef): string {
 }
 function ensureThumb(def: EffectDef | null | undefined) { if (!def || thumbCache[def.id]) return; const t = renderThumb(def); if (t) { thumbCache[def.id] = t; thumbs.value = { ...thumbCache } } }
 function openPicker() { pickerSearch.value = ''; pickerFilter.value = 'all'; pickerOpen.value = true; for (const def of catalog.value?.effects ?? []) if (!def.generative) ensureThumb(def) }
-function pickEffect(id: string) { config.value.effect = { id, params: {}, enabled: true, customChars: '' }; pickerOpen.value = false; renderFrame(0) }
+function pickEffect(id: string) { config.value.effect = { id, params: {}, enabled: true, customChars: '', blend: config.value.effect.blend, opacity: config.value.effect.opacity, layerId: config.value.effect.layerId }; pickerOpen.value = false; renderFrame(0) }
 const currentThumb = computed(() => (effectDef.value ? thumbs.value[effectDef.value.id] ?? '' : ''))
 
 // ── duotone / adjust presets ────────────────────────────────────────────────
