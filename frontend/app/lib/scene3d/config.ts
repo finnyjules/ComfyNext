@@ -86,7 +86,23 @@ export interface PrimitiveObject extends SceneObjectBase {
   modifiers?: Record<string, number>
 }
 export interface GlbObject extends SceneObjectBase { kind: 'glb'; url: string }
-export type SceneObject = PrimitiveObject | GlbObject
+
+export type LightKind = 'point' | 'spot' | 'rect'
+export interface LightObject extends SceneObjectBase {
+  kind: 'light'
+  light: LightKind
+  color: string
+  intensity: number
+  distance?: number   // point/spot range, 0 = infinite
+  decay?: number      // point/spot falloff
+  angle?: number      // spot cone half-angle (radians)
+  penumbra?: number   // spot edge softness 0–1
+  width?: number      // rect
+  height?: number     // rect
+  castShadow?: boolean // point/spot only
+}
+
+export type SceneObject = PrimitiveObject | GlbObject | LightObject
 
 export type LightingPreset = 'studio' | 'soft' | 'dramatic' | 'flat'
 export interface SceneLighting {
@@ -114,6 +130,12 @@ export const PRIMITIVE_KINDS: PrimitiveKind[] = [
   'torusKnot', 'ring',
 ]
 export const LIGHTING_PRESETS: LightingPreset[] = ['studio', 'soft', 'dramatic', 'flat']
+
+export const LIGHT_KINDS: LightKind[] = ['point', 'spot', 'rect']
+export const LIGHT_DEFAULTS = {
+  color: '#ffffff', intensity: 8, distance: 0, decay: 2,
+  angle: Math.PI / 6, penumbra: 0.3, width: 2, height: 2, castShadow: false,
+} as const
 
 const DEFAULT_MATERIAL: SceneMaterial = { type: 'standard', color: '#9aa3af', roughness: 0.6, metalness: 0.0 }
 
@@ -251,6 +273,20 @@ export function createGlbObject(url: string, existing: SceneObject[]): GlbObject
   }
 }
 
+export function createLight(kind: LightKind, existing: SceneObject[]): LightObject {
+  const label = kind === 'rect' ? 'Area light' : kind === 'spot' ? 'Spot light' : 'Point light'
+  return {
+    id: newId(), name: numberedName(label, existing), kind: 'light', light: kind,
+    visible: true, position: [2.5, 3, 2.5], rotation: [0, 0, 0], scale: [1, 1, 1],
+    material: { ...DEFAULT_MATERIAL }, // dummy, never rendered; kept for type uniformity
+    color: LIGHT_DEFAULTS.color, intensity: LIGHT_DEFAULTS.intensity,
+    distance: LIGHT_DEFAULTS.distance, decay: LIGHT_DEFAULTS.decay,
+    angle: LIGHT_DEFAULTS.angle, penumbra: LIGHT_DEFAULTS.penumbra,
+    width: LIGHT_DEFAULTS.width, height: LIGHT_DEFAULTS.height,
+    castShadow: LIGHT_DEFAULTS.castShadow,
+  }
+}
+
 export function serializeDoc(doc: SceneDoc): string {
   return JSON.stringify(doc)
 }
@@ -329,6 +365,20 @@ export function parseDoc(json: string): SceneDoc {
           material: parseMaterial(o.material),
         }
         if (o.kind === 'glb' && typeof o.url === 'string') return [{ ...common, kind: 'glb', url: o.url }]
+        if (o.kind === 'light' && LIGHT_KINDS.includes(o.light)) {
+          return [{
+            ...common, kind: 'light' as const, light: o.light,
+            color: str(o.color, LIGHT_DEFAULTS.color),
+            intensity: num(o.intensity, LIGHT_DEFAULTS.intensity),
+            distance: num(o.distance, LIGHT_DEFAULTS.distance),
+            decay: num(o.decay, LIGHT_DEFAULTS.decay),
+            angle: num(o.angle, LIGHT_DEFAULTS.angle),
+            penumbra: num(o.penumbra, LIGHT_DEFAULTS.penumbra),
+            width: num(o.width, LIGHT_DEFAULTS.width),
+            height: num(o.height, LIGHT_DEFAULTS.height),
+            castShadow: o.castShadow === true,
+          }]
+        }
         if (o.kind === 'primitive' && PRIMITIVE_KINDS.includes(o.primitive)) {
           const params = sanitizeParams(o.primitive, o.params)
           const modifiers = sanitizeModifiers(o.modifiers)

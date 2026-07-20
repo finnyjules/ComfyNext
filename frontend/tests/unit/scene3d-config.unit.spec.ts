@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   defaultDoc, createPrimitive, createGlbObject, serializeDoc, parseDoc, PRIMITIVE_KINDS, MATERIAL_TYPES,
   gradientAngles, gradientDirection, gradientStopsOf, MATERIAL_DEFAULTS,
+  createLight, LIGHT_KINDS, LIGHT_DEFAULTS,
   type GradientStop, type SceneMaterial,
 } from '~/lib/scene3d/config'
 import { PRIM_GROUPS } from '~/lib/scene3d/primGroups'
@@ -277,5 +278,48 @@ describe('scene3d gradient ramp model', () => {
       const [x, y, z] = gradientDirection(yaw, pitch)
       expect(Math.hypot(x, y, z)).toBeCloseTo(1, 12)
     }
+  })
+})
+
+// ── Lights ────────────────────────────────────────────────────────────────
+
+describe('scene3d lights model', () => {
+  it('creates each light kind with sane defaults and a unique id/name', () => {
+    for (const kind of LIGHT_KINDS) {
+      const l = createLight(kind, [])
+      expect(l.kind).toBe('light')
+      expect(l.light).toBe(kind)
+      expect(l.id).toMatch(/^obj_/)
+      expect(typeof l.name).toBe('string')
+      expect(l.color).toBe(LIGHT_DEFAULTS.color)
+      expect(l.intensity).toBeGreaterThan(0)
+      // dummy material present (type uniformity), position off the origin
+      expect(l.material).toBeTruthy()
+      expect(l.position.some((c) => c !== 0)).toBe(true)
+    }
+  })
+
+  it('numbers duplicate light names', () => {
+    const a = createLight('point', [])
+    const b = createLight('point', [a])
+    expect(b.name).not.toBe(a.name)
+  })
+
+  it('round-trips a light through parse/serialize with clamped fields', () => {
+    const l = createLight('spot', [])
+    l.intensity = 5; l.angle = 0.7; l.penumbra = 0.5; l.color = '#ff8800'; l.castShadow = true
+    const doc = { ...defaultDoc(), objects: [l] }
+    const back = parseDoc(serializeDoc(doc))
+    const r = back.objects[0] as any
+    expect(r.kind).toBe('light')
+    expect(r.light).toBe('spot')
+    expect(r.intensity).toBe(5)
+    expect(r.color).toBe('#ff8800')
+    expect(r.castShadow).toBe(true)
+  })
+
+  it('drops an unknown light kind and keeps old docs unchanged', () => {
+    const doc = parseDoc(JSON.stringify({ version: 1, objects: [{ kind: 'light', light: 'laser', id: 'x', name: 'x' }] }))
+    expect(doc.objects.length).toBe(0)
   })
 })
