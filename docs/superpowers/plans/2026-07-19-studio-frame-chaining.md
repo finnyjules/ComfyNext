@@ -933,7 +933,12 @@ async function renderFrame(t01: number) {
     // cfg.motion.duration, so passing upstream-derived seconds against our own
     // (different) duration would run every track at the wrong rate.
     const cfg = animated.value ? applyMotion(motionConfigFor(config.value, dur), t) : config.value
-    const passes = composePasses(cfg, effectDef(cfg.effect.id), t)
+    // REBASE (2026-07-19): Shader Studio moved from a single `config.effect` to
+    // an `effects[]` stack, and composePasses' 2nd arg is now a RESOLVER function
+    // `(id) => EffectDef | null`, not a resolved def. Pass `effectDef` (the fn)
+    // directly and never reference `cfg.effect.id`. This line is unchanged from
+    // the current committed file — do not "fix" it back to the old shape.
+    const passes = composePasses(cfg, effectDef, t)
     el.getContext('2d')!.drawImage(shaderFx.render(passes, base, w, h), 0, 0)
     glError.value = null
   } catch (e: any) { glError.value = String(e?.message ?? e) }
@@ -1001,7 +1006,8 @@ async function bakeOutput(): Promise<Blob | null> {
   try {
     const { w, h } = outputDims(src.width, src.height, config.value.resolution || 1536, { upscale: true })
     const base = await src.getFrame(0, w, h)
-    const out = shaderFx.render(composePasses(config.value, effectDef(config.value.effect.id), 0), base, w, h)
+    // REBASE (2026-07-19): resolver-fn form, effects[] stack — see the renderFrame note.
+    const out = shaderFx.render(composePasses(config.value, effectDef, 0), base, w, h)
     return await new Promise<Blob | null>(res => out.toBlob(b => res(b), 'image/png'))
   } finally {
     startLoop()
@@ -1100,7 +1106,10 @@ async function renderFrame(t01: number) {
     // See Task 5: applyMotion divides by cfg.motion.duration, so the config must
     // carry the governing clock or tracks run at the wrong rate.
     const cfg = animated.value ? applyMotion(motionConfigFor(config.value, dur), t) : config.value
-    const passes = composePasses(cfg, effectDef.value, t, texBundle(effectDef.value))
+    // REBASE (2026-07-19): effects[] stack — 2nd arg is a resolver fn, 4th is a
+    // per-layer texFor. Match the current committed call exactly; only `cfg` and
+    // `t` change here relative to the pre-frame-chaining file.
+    const passes = composePasses(cfg, id => catalog.value?.effects.find(e => e.id === id) ?? null, t, (def, layer) => texBundle(def, layer))
     el.getContext('2d')!.drawImage(shaderFx.render(passes, base, w, h), 0, 0)
     glError.value = null
   } catch (e: any) { glError.value = String(e?.message ?? e) }
@@ -1138,7 +1147,7 @@ async function renderBlob(t01: number): Promise<Blob> {
   const t = t01 * dur
   const cfg = animated.value ? applyMotion(motionConfigFor(config.value, dur), t) : config.value
   const base = await src.getFrame(t01, w, h)
-  shaderFx.render(composePasses(cfg, effectDef.value, t, texBundle(effectDef.value)), base, w, h)
+  shaderFx.render(composePasses(cfg, id => catalog.value?.effects.find(e => e.id === id) ?? null, t, (def, layer) => texBundle(def, layer)), base, w, h)
   const c = shaderFx.outputCanvas!
   return await new Promise<Blob>((res, rej) => c.toBlob(b => (b ? res(b) : rej(new Error('toBlob failed'))), 'image/png'))
 }
