@@ -704,7 +704,7 @@ function onClose() {
 </script>
 
 <template>
-  <StudioModalShell title="3D Studio" wide @close="onClose">
+  <StudioModalShell title="3D Studio" @close="onClose">
     <template #preview>
       <div ref="viewportEl" class="relative h-full w-full min-h-0">
         <canvas v-if="webglOk" ref="canvasEl" class="h-full w-full" />
@@ -731,7 +731,7 @@ function onClose() {
           <div class="relative flex items-center gap-1 rounded-[12px] border border-[#2a2a2a] bg-[#1a1a1a]/95 p-1.5 shadow-lg">
             <button
               type="button"
-              class="flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[12px] transition-colors cursor-pointer"
+              class="flex h-8 items-center gap-1.5 rounded px-2.5 text-[12px] transition-colors cursor-pointer"
               :class="primMenuOpen ? 'bg-white/15 text-white' : 'text-white/70 hover:bg-white/10 hover:text-white'"
               @click="primMenuOpen = !primMenuOpen"
             >
@@ -741,7 +741,7 @@ function onClose() {
             <button
               type="button"
               :disabled="uploading"
-              class="flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[12px] text-white/70 transition-colors hover:bg-white/10 hover:text-white cursor-pointer disabled:opacity-50"
+              class="flex h-8 items-center gap-1.5 rounded px-2.5 text-[12px] text-white/70 transition-colors hover:bg-white/10 hover:text-white cursor-pointer disabled:opacity-50"
               @click="triggerGlbUpload"
             >
               <Loader2 v-if="uploading" class="size-4 animate-spin" />
@@ -761,7 +761,7 @@ function onClose() {
                     v-for="p in group.kinds"
                     :key="p.kind"
                     type="button"
-                    class="flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] text-white/80 transition-colors hover:bg-white/10 hover:text-white cursor-pointer"
+                    class="flex items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-white/80 transition-colors hover:bg-white/10 hover:text-white cursor-pointer"
                     @click="pickPrimitive(p.kind)"
                   >
                     <component :is="p.icon" class="size-4 shrink-0 opacity-70" />
@@ -934,7 +934,7 @@ function onClose() {
               <label class="mb-1 block text-[11px] text-white/55">Direction</label>
               <div class="flex items-center gap-1.5">
                 <button v-for="ax in (['x', 'y', 'z'] as const)" :key="ax" type="button"
-                  class="flex-1 rounded-md border px-2 py-1 text-[11px] uppercase transition-colors"
+                  class="flex-1 rounded border px-2 py-1 text-[11px] uppercase transition-colors"
                   :class="isAxisPreset(ax) ? 'border-white/70 bg-white/[0.10] text-white' : 'border-white/[0.10] bg-white/[0.04] text-white/55 hover:text-white/85'"
                   @click="applyAxisPreset(ax)">{{ ax }}</button>
               </div>
