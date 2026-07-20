@@ -1,7 +1,20 @@
-# Scene3D — edge rounding for cylinder, cone, prism, pyramid
+# Scene3D — geometry enhancements: edge rounding + crystallize
 
 **Date:** 2026-07-20
 **Status:** Design approved, awaiting spec review
+
+Two related geometry features for the 3D Studio, brainstormed together:
+
+- **Feature 1 — edge rounding** for `cylinder`, `cone`, `prism`, `pyramid`.
+- **Feature 2 — crystallize**: a `jitter` modifier plus a deeper `subdivide` cap, for
+  faceted crystal/gem shapes.
+
+They touch overlapping files (`primParams.ts`, and the geometry/modifier pipeline) and are
+small, so they share one spec and one implementation plan.
+
+---
+
+# Feature 1 — edge rounding for cylinder, cone, prism, pyramid
 
 ## Problem
 
@@ -107,7 +120,7 @@ Append `...corner()` to the `cylinder`, `cone`, `prism`, and `pyramid` spec list
 `PRIMITIVE_PARAMS`. (Box keeps its own inline rows — its hint wording differs slightly and
 it's already shipped; not worth churning.)
 
-## Files touched
+## Files touched (Feature 1)
 
 1. **`frontend/app/lib/scene3d/primParams.ts`**
    - Add the `corner()` builder; append its two rows to `cylinder`, `cone`, `prism`,
@@ -124,7 +137,7 @@ it's already shipped; not worth churning.)
 Everything downstream (`modifiers`, shading variants in `buildGeometry`, the outline pass
 in `outlines.ts`) already flows through `geometryFor`, so no other code changes.
 
-## Testing
+## Testing (Feature 1)
 
 Unit tests for the two helpers (`engine` or a new `roundedGeometry.test.ts`):
 
@@ -139,9 +152,128 @@ Unit tests for the two helpers (`engine` or a new `roundedGeometry.test.ts`):
   `PRIMITIVE_PARAMS` is actually consumed by `geometryFor` (guards against a spec row that
   no builder reads).
 
+---
+
+# Feature 2 — crystallize (jitter modifier + deeper subdivision)
+
+## Problem
+
+Users want faceted, crystal/gem shapes. The pipeline already has a `subdivide` modifier and
+a `noise` modifier, but neither produces crystals:
+
+- `noise` displaces each vertex along its normal using **smooth, continuous value-noise**
+  → neighbouring vertices move together → organic rolling lumps, the opposite of a crystal.
+- `subdivide` (capped at 3) splits triangles but, on its own, is only a smoothing aid for
+  the deform stages.
+
+Crystals need the *other* kind of displacement: **per-vertex random jitter** (uncorrelated
+between neighbours) so faces split into sharp angular facets, plus enough subdivision to
+give those facets density, viewed with flat shading.
+
+## Goals
+
+- Add a **`jitter`** modifier that randomly displaces vertices for a faceted look.
+- Two modes (segmented toggle): scatter each vertex in a random direction, or push it
+  in/out along its normal.
+- A seed to reshuffle the arrangement.
+- Raise the `subdivide` cap so low-poly bases can reach high facet density.
+- Reuse the existing subdivision + flat-shading machinery — no new subdivision code.
+
+## Non-goals / accepted tradeoffs
+
+- No new "flat shading" control — the studio already has a per-object shading toggle; the
+  crystal recipe is *jitter + subdivide + flat shading*, surfaced via the `jitter` hint.
+- `jitter` is intentionally distinct from `noise` (kept as a separate modifier), because the
+  two produce opposite looks (angular vs organic) and users may want both.
+
+## Approach
+
+### The `jitter` modifier
+
+New rows in `MODIFIER_SPECS` (`primParams.ts`), placed next to `noise`:
+
+```ts
+{ key: 'jitter', label: 'Jitter', hint: 'Randomly offsets each vertex for a faceted, crystalline look — pair with Subdivide and flat shading', min: 0, max: 0.5, step: 0.005, default: 0 },
+{ key: 'jitterMode', label: 'Jitter mode', hint: 'Random scatters vertices into chaotic gems; Along normal pushes them in/out for spikes', min: 0, max: 1, step: 1, default: 0, control: 'options', options: ['random', 'normal'] },
+{ key: 'jitterSeed', label: 'Jitter seed', hint: 'Shuffles the jitter into a different arrangement', min: 0, max: 99, step: 1, default: 0 },
+```
+
+`options: ['random', 'normal']` is a persistence contract (stored value is the index) —
+append-only, never reorder.
+
+### `applyJitter` (modifiers.ts)
+
+Per-vertex deterministic displacement, keyed on the vertex's **quantized position** (not its
+index), so vertices coincident in space hash identically and move together — the mesh stays
+welded/watertight, it just facets. Reuses the existing `hash3`:
+
+- **random mode:** offset `= (h(seed), h(seed+1), h(seed+2)) · amount`, each `h ∈ [-1, 1]`
+  from `hash3` on the quantized position → a random offset per vertex.
+- **normal mode:** offset `= normal · h(seed) · amount`, `h ∈ [-1, 1]` → random in/out along
+  the surface normal. Computes vertex normals first if absent (like `applyNoise`).
+
+Because it hashes raw per-vertex values (no smoothing/interpolation), neighbours are
+uncorrelated → sharp facets. Contrast with `valueNoise`, which interpolates between lattice
+points → smooth.
+
+### Pipeline integration
+
+- `hasModifiers`: add `|| m('jitter') !== 0`.
+- `deforms` gate: add `|| jitter !== 0`. **This is what makes subdivision "just work"** — with
+  `jitter` counted as a deform, the existing subdivide loop activates when jitter is on, no
+  new subdivision code.
+- Stage order becomes: `subdivide → taper → twist → bend → noise → jitter → cloner`.
+  `applyJitter` runs on real CPU vertices; the existing post-deform `computeVertexNormals`
+  then recomputes facet normals.
+
+### Deeper subdivision
+
+Raise `subdivide`'s `max` from **3 to 8** in `MODIFIER_SPECS`. No other change: the existing
+`VERTEX_BUDGET` guard (300k ÷ clone count, checked before each iteration) already caps
+runaway, so the higher ceiling only benefits low-poly bases (box, icosahedron) that have
+headroom; dense bases (sphere) still stop at ~3–4 rounds on their own. Heavy rebuilds already
+defer to pointer-release via the existing `deferGeometry` path.
+
+## Panel
+
+`Scene3DStudioSurface.vue` renders modifiers from `MODIFIER_GROUPS`. Add one entry:
+
+```ts
+{ label: 'Jitter', keys: ['jitter', 'jitterMode', 'jitterSeed'] },
+```
+
+The `subdivide` slider already reads its `min`/`max`/`step` from the spec, so the raised cap
+needs no panel edit. No other UI changes — sliders and the mode segmented control render
+generically.
+
+## Files touched (Feature 2)
+
+1. **`frontend/app/lib/scene3d/primParams.ts`** — three `jitter*` rows in `MODIFIER_SPECS`;
+   change `subdivide.max` 3 → 8.
+2. **`frontend/app/lib/scene3d/modifiers.ts`** — `applyJitter` helper; add `jitter` to
+   `hasModifiers` and the `deforms` gate; call it after `noise` in `applyModifiers`.
+3. **`frontend/app/components/vue-canvas/Scene3DStudioSurface.vue`** — one `MODIFIER_GROUPS`
+   entry.
+
+## Testing (Feature 2)
+
+- **Determinism:** same `(amount, mode, seed)` → identical positions; changing `seed`
+  changes them.
+- **Watertight:** two vertices at the same position receive the same offset (welded mesh
+  stays closed).
+- **Normal mode:** produces no NaN/Inf; computes vertex normals when absent.
+- **Gate:** `hasModifiers` and `deforms` become true when only `jitter` is set, and the
+  subdivide loop runs (facet count increases) with jitter alone.
+- **Budget:** `subdivide = 8` on a dense base still respects `VERTEX_BUDGET` (stops early,
+  no freeze).
+
+---
+
 ## Persistence & compatibility
 
-`cornerRadius`/`cornerSides` are plain numbers stored in the primitive's `params` bag, the
-same shape `sanitizeParams` already round-trips. Scenes saved before this change simply
-lack the keys → `resolveParam` returns the `0` default → identical geometry. No migration
-needed.
+`cornerRadius`/`cornerSides` are plain numbers stored in the primitive's `params` bag, and
+`jitter`/`jitterMode`/`jitterSeed` are plain numbers in the `modifiers` bag — the same shapes
+`sanitizeParams` / `sanitizeModifiers` already round-trip. Scenes saved before this change
+simply lack the keys → `resolveParam` returns each default (`0`) → identical geometry. The
+raised `subdivide.max` only widens the clamp range, so any previously stored value stays
+valid. No migration needed.
