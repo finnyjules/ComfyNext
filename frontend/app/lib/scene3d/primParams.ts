@@ -37,6 +37,12 @@ const radiusTop = (def: number): ParamSpec =>
   ({ key: 'radiusTop', label: 'Top radius', hint: 'Width of the top face — 0 comes to a point', min: 0, max: 1, step: 0.01, default: def })
 const openEnded = (): ParamSpec =>
   ({ key: 'openEnded', label: 'Open ended', hint: 'Removes the end caps, leaving a hollow tube', min: 0, max: 1, step: 1, default: 0, control: 'toggle' })
+// Box-style edge rounding, shared by cylinder/cone (rim) and prism/pyramid
+// (vertical + rim). cornerRadius 0 falls back to the un-rounded geometry.
+const corner = (): ParamSpec[] => [
+  { key: 'cornerRadius', label: 'Corner', hint: 'Rounds off the edges — 0 keeps them sharp', min: 0, max: 0.49, step: 0.01, default: 0 },
+  { key: 'cornerSides', label: 'Corner sides', hint: 'How smooth each rounded edge looks', min: 1, max: 8, step: 1, default: 2 },
+]
 
 export const PRIMITIVE_PARAMS: Record<PrimitiveKind, ParamSpec[]> = {
   // BoxGeometry(1, 1, 1) at cornerRadius 0
@@ -57,6 +63,7 @@ export const PRIMITIVE_PARAMS: Record<PrimitiveKind, ParamSpec[]> = {
     { key: 'radiusBottom', label: 'Bottom radius', hint: 'Width of the bottom face', min: 0, max: 1, step: 0.01, default: 0.5 },
     arc(),
     openEnded(),
+    ...corner(),
   ],
   // ConeGeometry(0.5, 1, 48) === CylinderGeometry(0, 0.5, 1, 48)
   cone: [
@@ -65,6 +72,7 @@ export const PRIMITIVE_PARAMS: Record<PrimitiveKind, ParamSpec[]> = {
     { key: 'radiusBottom', label: 'Bottom radius', hint: 'Width of the bottom face', min: 0, max: 1, step: 0.01, default: 0.5 },
     arc(),
     openEnded(),
+    ...corner(),
   ],
   // TorusGeometry(0.5, 0.18, 24, 64)
   torus: [
@@ -84,11 +92,13 @@ export const PRIMITIVE_PARAMS: Record<PrimitiveKind, ParamSpec[]> = {
   pyramid: [
     { key: 'detail', label: 'Detail', hint: 'Number of sides in the base — 4 is a classic pyramid', min: 3, max: 12, step: 1, default: 4 },
     radiusTop(0),
+    ...corner(),
   ],
   // CylinderGeometry(0.5, 0.5, 1, 3)
   prism: [
     { key: 'detail', label: 'Detail', hint: 'Number of sides — 3 is a triangular prism, 6 a hexagonal one', min: 3, max: 24, step: 1, default: 3 },
     radiusTop(0.5),
+    ...corner(),
   ],
   // IcosahedronGeometry(0.55)
   icosahedron: [subdivision()],
