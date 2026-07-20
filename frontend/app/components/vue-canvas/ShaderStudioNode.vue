@@ -9,7 +9,8 @@ import type { ShaderFxCatalog, EffectDef } from '~/lib/shaderfx/types'
 import { composePasses } from '~/lib/shaderstudio/passes'
 import { migrateShaderConfig } from '~/lib/shaderstudio/migrate'
 import { applyMotion } from '~/lib/shaderstudio/motion'
-import { loadImage, resolveWiredInput } from '~/lib/shaderstudio/source'
+import { makeImageSource, makeLiveSource, motionConfigFor, resolveSourceKind, type ResolvedSource } from '~/lib/shaderstudio/resolve'
+import { loadImage } from '~/lib/shaderstudio/source'
 import { hydrateConfig, outputDims, type ShaderStudioConfig } from '~/lib/shaderstudio/types'
 import { registerStudioBaker, unregisterStudioBaker } from '~/lib/studio/cascade'
 import StudioRenderButton from '~/components/vue-canvas/StudioRenderButton.vue'
@@ -31,68 +32,124 @@ const animated = computed(() => (config.value.motion?.tracks?.length ?? 0) > 0)
 const canvasEl = ref<HTMLCanvasElement | null>(null)
 const glError = ref<string | null>(null)
 const catalog = ref<ShaderFxCatalog | null>(null)
-const baseImage = ref<HTMLImageElement | null>(null)
+const resolved = ref<ResolvedSource | null>(null)
+// Template-compat alias: the card's placeholder text still keys off a single
+// "do we have something to show" value. Kept as a computed (not a ref) purely
+// so the <template> — owned by a parallel session's port migration in this
+// same file — doesn't need to change from `v-if="!baseImage"`.
+const baseImage = computed(() => resolved.value)
 
-const wiredUrl = computed(() =>
-  resolveWiredInput(props.id, injectedNodes?.value ?? [], injectedEdges?.value ?? []))
-const sourceUrl = computed(() => wiredUrl.value ?? config.value.source.dataUrl
-  ?? (config.value.source.asset ? `/view?${new URLSearchParams({ filename: config.value.source.asset, type: 'input' })}` : null))
+// Descriptor first (pure), then load if it is a file. Recomputes when the graph
+// changes, so rewiring the input updates the card without a manual refresh.
+const sourceKind = computed(() =>
+  resolveSourceKind(props.id, injectedNodes?.value ?? [], injectedEdges?.value ?? []))
 
-watch(sourceUrl, async (url) => {
-  baseImage.value = null
+const ownSourceUrl = computed(() => config.value.source.dataUrl
+  ?? (config.value.source.asset
+    ? `/view?${new URLSearchParams({ filename: config.value.source.asset, type: 'input' })}`
+    : null))
+
+/** Animate when EITHER our own tracks run or the source itself moves. */
+const sourceAnimated = computed(() => (resolved.value?.duration ?? 0) > 0)
+const shouldLoop = computed(() => animated.value || sourceAnimated.value)
+// Declared here (ahead of loop()/startLoop() below) because the immediate watch
+// just below can call startLoop() synchronously during setup — e.g. a graph
+// loaded with a live upstream studio already wired in. `let`/`const` bindings
+// are in the temporal dead zone until their statement runs, unlike the hoisted
+// `function` declarations, so this order is load-bearing, not stylistic.
+let raf = 0, start = 0, inFlight = false
+
+watch([sourceKind, ownSourceUrl], async ([kind, ownUrl]) => {
+  resolved.value = null
+  if (kind?.kind === 'live') { resolved.value = makeLiveSource(kind.source); startLoop(); return }
+  const url = kind?.kind === 'url' ? kind.url : ownUrl
   if (!url) { renderFrame(0); return }
-  try { baseImage.value = await loadImage(url); renderFrame(0) } catch { baseImage.value = null }
+  try {
+    resolved.value = makeImageSource(await loadImage(url))
+    startLoop()
+  } catch { resolved.value = null }
 }, { immediate: true })
 
 function effectDef(id: string): EffectDef | null {
   return catalog.value?.effects.find(e => e.id === id) ?? null
 }
 
-function renderFrame(t: number) {
+async function renderFrame(t01: number) {
   const el = canvasEl.value
   if (!el) return
-  const base = baseImage.value
-  if (!base) { el.width = PREVIEW_W; el.height = Math.round(PREVIEW_W * 9 / 16); el.getContext('2d')!.clearRect(0, 0, el.width, el.height); return }
-  const { w, h } = outputDims(base.naturalWidth, base.naturalHeight, PREVIEW_W)
+  const src = resolved.value
+  if (!src) {
+    el.width = PREVIEW_W; el.height = Math.round(PREVIEW_W * 9 / 16)
+    el.getContext('2d')!.clearRect(0, 0, el.width, el.height)
+    return
+  }
+  const { w, h } = outputDims(src.width, src.height, PREVIEW_W)
   if (el.width !== w || el.height !== h) { el.width = w; el.height = h }
   try {
-    const cfg = animated.value ? applyMotion(config.value, t) : config.value
+    const base = await src.getFrame(t01, w, h)
+    // The clock is normalized, but motion tracks and u_time are in seconds.
+    const dur = clockDuration()
+    const t = t01 * dur
+    // motionConfigFor is REQUIRED, not cosmetic: applyMotion divides by
+    // cfg.motion.duration, so passing upstream-derived seconds against our own
+    // (different) duration would run every track at the wrong rate.
+    const cfg = animated.value ? applyMotion(motionConfigFor(config.value, dur), t) : config.value
+    // REBASE (2026-07-19): Shader Studio moved from a single `config.effect` to
+    // an `effects[]` stack, and composePasses' 2nd arg is now a RESOLVER function
+    // `(id) => EffectDef | null`, not a resolved def. Pass `effectDef` (the fn)
+    // directly and never reference `cfg.effect.id`. This line is unchanged from
+    // the current committed file — do not "fix" it back to the old shape.
     const passes = composePasses(cfg, effectDef, t)
     el.getContext('2d')!.drawImage(shaderFx.render(passes, base, w, h), 0, 0)
     glError.value = null
   } catch (e: any) { glError.value = String(e?.message ?? e) }
 }
 
-let raf = 0, start = 0
+/** Seconds per loop — the upstream source's clock when it has one, else our own. */
+function clockDuration(): number {
+  const src = resolved.value
+  if (src && src.duration > 0) return src.duration
+  return Math.max(0.1, config.value.motion?.duration ?? 4)
+}
+
 function loop(ts: number) {
   if (!start) start = ts
-  const dur = Math.max(0.1, config.value.motion?.duration ?? 4)
-  renderFrame(((ts - start) / 1000) % dur)
+  // getFrame is async; skip a tick rather than queueing, so a slow upstream
+  // degrades to a lower frame rate instead of unbounded lag.
+  if (!inFlight) {
+    inFlight = true
+    const dur = clockDuration()
+    void renderFrame((((ts - start) / 1000) % dur) / dur).finally(() => { inFlight = false })
+  }
   raf = requestAnimationFrame(loop)
 }
 function startLoop() {
-  cancelAnimationFrame(raf); start = 0
-  if (animated.value) raf = requestAnimationFrame(loop)
-  else renderFrame(0)
+  cancelAnimationFrame(raf); start = 0; inFlight = false
+  if (shouldLoop.value) raf = requestAnimationFrame(loop)
+  else void renderFrame(0)
 }
 
 // Headless full-res bake for the render cascade — same pipeline as the thumbnail,
 // at output resolution, with the input re-resolved fresh (picks up an upstream
 // studio's just-published output during a cascade).
 async function bakeOutput(): Promise<Blob | null> {
-  // Prefer the freshly-resolved wired input (so a cascade picks up an upstream
-  // studio's just-published output); fall back to the already-loaded preview image
-  // (proven valid — it's what the thumbnail renders) so the bake never no-ops.
-  let base: HTMLImageElement | null = null
-  const url = sourceUrl.value
-  if (url) { try { base = await loadImage(url) } catch { /* fall through */ } }
-  if (!base) base = baseImage.value
-  if (!base) { console.warn('[shader-studio] bake: no input image for', props.id); return null }
-  cancelAnimationFrame(raf)   // pause the preview so it can't overwrite the shared output canvas
+  let src = resolved.value
+  // Re-resolve so a cascade picks up an upstream studio's just-published output;
+  // fall back to the already-resolved source so the bake never no-ops.
+  const kind = sourceKind.value
+  if (kind?.kind === 'live') src = makeLiveSource(kind.source)
+  else {
+    const url = kind?.kind === 'url' ? kind.url : ownSourceUrl.value
+    if (url) { try { src = makeImageSource(await loadImage(url)) } catch { /* keep previous */ } }
+  }
+  if (!src) { console.warn('[shader-studio] bake: no input for', props.id); return null }
+  cancelAnimationFrame(raf)   // pause preview so it can't overwrite the shared output canvas
   try {
-    const { w, h } = outputDims(base.naturalWidth, base.naturalHeight, config.value.resolution || 1536, { upscale: true })
+    const { w, h } = outputDims(src.width, src.height, config.value.resolution || 1536, { upscale: true })
+    const base = await src.getFrame(0, w, h)
+    // REBASE (2026-07-19): resolver-fn form, effects[] stack — see the renderFrame note.
     const out = shaderFx.render(composePasses(config.value, effectDef, 0), base, w, h)
-    return await new Promise<Blob | null>(res => out.toBlob(b => res(b), 'image/png', 0.95))
+    return await new Promise<Blob | null>(res => out.toBlob(b => res(b), 'image/png'))
   } finally {
     startLoop()
   }
@@ -107,7 +164,7 @@ onBeforeUnmount(() => { cancelAnimationFrame(raf); unregisterStudioBaker(props.i
 
 let timer: ReturnType<typeof setTimeout> | null = null
 watch(config, () => { if (timer) clearTimeout(timer); timer = setTimeout(startLoop, 60) }, { deep: true })
-watch(animated, startLoop)
+watch(shouldLoop, startLoop)
 
 function openEditor() {
   window.dispatchEvent(new CustomEvent('sailor:openShaderStudio', { detail: { nodeId: props.id } }))
