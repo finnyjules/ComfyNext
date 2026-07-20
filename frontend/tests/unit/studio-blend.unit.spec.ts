@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { BLEND_MODES, BLEND_IDX, BLEND_LAYERS_GLSL } from './blend'
+import { BLEND_MODES, BLEND_IDX, BLEND_LAYERS_GLSL } from '~/lib/studio/blend'
 
 describe('studio blend module', () => {
   it('maps every mode to a stable index', () => {
