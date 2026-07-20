@@ -21,8 +21,10 @@ function togglePick(id: string) {
   const s = new Set(picked.value); s.has(id) ? s.delete(id) : s.add(id); picked.value = s
 }
 function clearPick() { picked.value = new Set() }
+const pickedSingleIds = computed(() =>
+  dl.items.value.filter(i => picked.value.has(i.id) && i.kind === 'single').map(i => i.id))
 function groupPicked() {
-  dl.groupItems([...picked.value].filter(id => dl.items.value.find(i => i.id === id)?.kind === 'single'))
+  dl.groupItems(pickedSingleIds.value)
   clearPick()
 }
 
@@ -80,7 +82,7 @@ function onDragEnd() {
 
     <div v-if="picked.size" class="mx-auto mb-1 flex max-w-[1180px] items-center gap-3.5 px-8">
       <span class="inline-flex items-center gap-2 rounded-[10px] border border-white/13 bg-[#191b1f] px-3 py-1.5 text-[13px]"><b class="font-mono text-[#4f8cff]">{{ picked.size }}</b> selected</span>
-      <button v-if="picked.size >= 2" class="rounded-lg bg-[#4f8cff] px-2.5 py-1.5 text-[12.5px] font-semibold text-[#0a1120]" @click="groupPicked">Group into set</button>
+      <button v-if="pickedSingleIds.length >= 2" class="rounded-lg bg-[#4f8cff] px-2.5 py-1.5 text-[12.5px] font-semibold text-[#0a1120]" @click="groupPicked">Group into set</button>
       <button class="text-[12.5px] text-white/32" @click="clearPick">Clear</button>
     </div>
 

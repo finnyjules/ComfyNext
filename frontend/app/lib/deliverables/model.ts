@@ -31,16 +31,12 @@ export function isPresent(list: DeliverableItem[], ref: ArtifactRef): boolean {
   )
 }
 
-export function addSingle(list: DeliverableItem[], ref: ArtifactRef, name: string): DeliverableItem[] {
+export function addSingle(
+  list: DeliverableItem[], ref: ArtifactRef, name: string, makeId: () => string,
+): DeliverableItem[] {
   if (isPresent(list, ref)) return list
-  const id = makeDeliverableId(list.length + 1 + Math.floor(performanceNow()))
-  return [...list, { id, kind: 'single', name: nameFor(ref, name), ref }]
+  return [...list, { id: makeId(), kind: 'single', name: nameFor(ref, name), ref }]
 }
-
-// Deterministic-enough monotonic-ish counter without Date.now in pure code paths
-// that tests call; real callers pass explicit ids where determinism matters.
-let _tick = 0
-function performanceNow(): number { return (_tick += 1) }
 
 export function rename(list: DeliverableItem[], id: string, name: string): DeliverableItem[] {
   if (!list.some(i => i.id === id)) return list
@@ -114,7 +110,7 @@ export function dissolveIfUnderTwo(item: DeliverableItem): DeliverableItem {
 }
 
 export function removeFromSet(
-  list: DeliverableItem[], setId: string, memberIndex: number, _makeId: () => string,
+  list: DeliverableItem[], setId: string, memberIndex: number,
 ): DeliverableItem[] {
   const idx = list.findIndex(i => i.id === setId && i.kind === 'set')
   const target = list[idx]

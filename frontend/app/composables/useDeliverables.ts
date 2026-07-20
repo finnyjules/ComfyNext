@@ -23,7 +23,7 @@ export function useDeliverables(docRef: Ref<ProjectDoc | null>, persist: () => v
     if (!docRef.value) return false
     const cur = items.value
     if (isPresent(cur, ref)) return false
-    commit(addSingle(cur, ref, name))
+    commit(addSingle(cur, ref, name, mkId))
     return true
   }
   const isReady = (ref: ArtifactRef) => isPresent(items.value, ref)
@@ -36,7 +36,7 @@ export function useDeliverables(docRef: Ref<ProjectDoc | null>, persist: () => v
   const moveWithinSet = (id: string, from: number, to: number) =>
     commit(reorderWithinSet(items.value, id, from, to))
   const removeSetMember = (setId: string, index: number) =>
-    commit(removeFromSet(items.value, setId, index, mkId))
+    commit(removeFromSet(items.value, setId, index))
 
   return {
     items, count, markReady, isReady, renameItem, removeItem, moveItem,
