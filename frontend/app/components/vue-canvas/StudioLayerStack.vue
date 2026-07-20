@@ -23,7 +23,9 @@ function onDrop(to: number) {
 </script>
 
 <template>
-  <div class="flex h-full min-h-0 flex-col">
+  <!-- Panel surface — matches the Frame compositor / Smart Layout layer panels
+       (rounded card with its own border + fill) rather than floating on the modal. -->
+  <div class="flex h-full min-h-0 flex-col rounded-xl border border-white/[0.06] bg-[#121212] p-2.5">
     <div class="mb-2 flex items-center justify-between">
       <span class="text-xs font-medium text-white/70">Layers</span>
       <button v-if="layers.length < max" aria-label="Add layer"
