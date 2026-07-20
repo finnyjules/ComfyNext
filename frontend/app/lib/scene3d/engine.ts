@@ -9,6 +9,7 @@ import * as THREE from 'three'
 import { stripAlpha } from '~/lib/color/convert'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js'
+import { roundedLatheGeometry, roundedPolyGeometry } from '~/lib/scene3d/roundedGeometry'
 import type { SceneDoc, SceneObject, Vec3, LightingPreset, PrimitiveKind, PrimitiveObject } from './config'
 import { loadGlb } from './glb'
 import { materialFor, updateMaterial, disposeMaterial } from './materials'
@@ -40,10 +41,16 @@ export function geometryFor(kind: PrimitiveKind, params?: Record<string, number>
       return new THREE.SphereGeometry(0.5, d, Math.max(2, Math.round((d * 2) / 3)), 0, rad(p('arc')), 0, rad(p('sweep')))
     }
     case 'cylinder':
-    case 'cone':
+    case 'cone': {
+      const cr = p('cornerRadius')
+      // Rounding needs a cap to round against, so an open-ended tube stays plain.
+      if (cr > 0 && p('openEnded') <= 0.5) {
+        return roundedLatheGeometry(p('radiusTop'), p('radiusBottom'), cr, p('cornerSides'), p('detail'), rad(p('arc')))
+      }
       return new THREE.CylinderGeometry(
         p('radiusTop'), p('radiusBottom'), 1, p('detail'), 1, p('openEnded') > 0.5, 0, rad(p('arc')),
       )
+    }
     case 'torus':
       return new THREE.TorusGeometry(0.5, p('tube'), Math.max(3, Math.round(p('detail') * 0.375)), p('detail'), rad(p('arc')))
     case 'plane':
@@ -54,10 +61,18 @@ export function geometryFor(kind: PrimitiveKind, params?: Record<string, number>
     }
     // 4-sided cone = pyramid; the quarter turn keeps the square footprint
     // axis-aligned and stays applied at every side count for continuity.
-    case 'pyramid':
+    case 'pyramid': {
+      const cr = p('cornerRadius')
+      // Rounding drops the taper (and the apex): a rounded pyramid is a rounded
+      // 4-gon prism. baseAngle keeps the square footprint axis-aligned.
+      if (cr > 0) return roundedPolyGeometry(p('detail'), 0.55, cr, p('cornerSides'), Math.PI / 2 + Math.PI / 4)
       return new THREE.CylinderGeometry(p('radiusTop'), 0.55, 1, p('detail'), 1).rotateY(Math.PI / 4)
-    case 'prism':
+    }
+    case 'prism': {
+      const cr = p('cornerRadius')
+      if (cr > 0) return roundedPolyGeometry(p('detail'), 0.5, cr, p('cornerSides'), Math.PI / 2)
       return new THREE.CylinderGeometry(p('radiusTop'), 0.5, 1, p('detail'))
+    }
     case 'icosahedron': return new THREE.IcosahedronGeometry(0.55, p('detail'))
     case 'octahedron': return new THREE.OctahedronGeometry(0.55, p('detail'))
     case 'dodecahedron': return new THREE.DodecahedronGeometry(0.55, p('detail'))

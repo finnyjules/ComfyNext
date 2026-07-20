@@ -113,6 +113,29 @@ describe('scene3d parametric geometry', () => {
     expect(baseSizeFor('torus', { tube: 0.4 })[0])
       .toBeGreaterThan(baseSizeFor('torus', { tube: 0.05 })[0])
   })
+
+  it('rounds the rim of a cylinder and keeps its footprint', () => {
+    const plain = geometryFor('cylinder')
+    const round = geometryFor('cylinder', { cornerRadius: 0.2, cornerSides: 3 })
+    expect(round.getAttribute('position').count).not.toBe(plain.getAttribute('position').count)
+    const [w, h, d] = sizeOf(round)
+    expect(h).toBeLessThanOrEqual(1.0001)
+    expect(Math.max(w, d)).toBeCloseTo(1, 1)
+  })
+
+  it('rounds the edges of a prism into a valid faceted solid', () => {
+    const round = geometryFor('prism', { detail: 6, cornerRadius: 0.15, cornerSides: 3 })
+    expect(round.getAttribute('position').count).toBeGreaterThan(0)
+    expect(sizeOf(round)[1]).toBeCloseTo(1, 1)
+  })
+
+  it('keeps cylinder/cone/prism/pyramid identical at cornerRadius 0', () => {
+    for (const kind of ['cylinder', 'cone', 'prism', 'pyramid'] as const) {
+      const a = geometryFor(kind).getAttribute('position').count
+      const b = geometryFor(kind, { cornerRadius: 0 }).getAttribute('position').count
+      expect(b, kind).toBe(a)
+    }
+  })
 })
 
 describe('scene3d facet geometry variant', () => {
