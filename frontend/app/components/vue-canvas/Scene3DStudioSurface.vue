@@ -12,12 +12,12 @@
 // through string proxies because StudioSegmented/StudioSelect models are `string`.
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import {
-  Box, Plus, Trash2, Copy, Eye, EyeOff, Loader2, Upload, RotateCcw,
+  Box, Plus, Trash2, Copy, Eye, EyeOff, Loader2, Upload, RotateCcw, Lightbulb,
 } from 'lucide-vue-next'
 import {
-  parseDoc, serializeDoc, createPrimitive, createGlbObject,
-  LIGHTING_PRESETS, MATERIAL_TYPES, MATERIAL_DEFAULTS, gradientAngles, gradientStopsOf,
-  type SceneDoc, type SceneObject, type PrimitiveKind, type MaterialType, type GradientStop,
+  parseDoc, serializeDoc, createPrimitive, createGlbObject, createLight,
+  LIGHTING_PRESETS, MATERIAL_TYPES, MATERIAL_DEFAULTS, LIGHT_KINDS, LIGHT_DEFAULTS, gradientAngles, gradientStopsOf,
+  type SceneDoc, type SceneObject, type PrimitiveKind, type MaterialType, type GradientStop, type LightKind, type LightObject,
 } from '~/lib/scene3d/config'
 import { MATCAP_IDS, matcapThumb, onTextureError } from '~/lib/scene3d/materials'
 import { PRIM_GROUPS } from '~/lib/scene3d/primGroups'
@@ -58,6 +58,8 @@ const doc = reactive<SceneDoc>(parseDoc(widgetStr('scene_state')))
 const selectedId = ref<string | null>(null)
 const selected = computed<SceneObject | null>(() => doc.objects.find((o) => o.id === selectedId.value) ?? null)
 const selectedIsPrimitive = computed(() => selected.value?.kind === 'primitive')
+const selectedIsLight = computed(() => selected.value?.kind === 'light')
+const selectedLight = computed<LightObject | null>(() => (selected.value?.kind === 'light' ? selected.value : null))
 const snap = ref(false)
 const dirty = ref(false)      // doc changed since last bake
 const baking = ref(false)
@@ -85,6 +87,18 @@ function onPrimMenuOutside(e: PointerEvent) {
 watch(primMenuOpen, (open) => {
   if (open) window.addEventListener('pointerdown', onPrimMenuOutside, true)
   else window.removeEventListener('pointerdown', onPrimMenuOutside, true)
+})
+
+// ── Add-light menu ──────────────────────────────────────────────────────────
+const lightMenuOpen = ref(false)
+const LIGHT_KIND_LABELS: Record<LightKind, string> = { point: 'Point', spot: 'Spot', rect: 'Area' }
+
+function onLightMenuOutside(e: PointerEvent) {
+  if (!(e.target as HTMLElement)?.closest?.('[data-prim-menu]')) lightMenuOpen.value = false
+}
+watch(lightMenuOpen, (open) => {
+  if (open) window.addEventListener('pointerdown', onLightMenuOutside, true)
+  else window.removeEventListener('pointerdown', onLightMenuOutside, true)
 })
 
 // Wired glb_url (from a Model3D / Text node), if any — offered as an import
@@ -205,6 +219,25 @@ const matAttenuationDistance = matParam('attenuationDistance')
 const matIridescence = matParam('iridescence')
 const matIridescenceIOR = matParam('iridescenceIOR')
 const matEnvMapIntensity = matParam('envMapIntensity')
+
+// Light field proxies — same shape as matParam, but the fields live flat on the
+// LightObject itself (not nested under .material). Falls back to LIGHT_DEFAULTS
+// so sliders always have a number even before the selected light's field is touched.
+function lightParam<K extends keyof typeof LIGHT_DEFAULTS>(key: K) {
+  return computed<any>({
+    get: () => (selectedLight.value as any)?.[key] ?? LIGHT_DEFAULTS[key],
+    set: (v) => { if (selectedLight.value) (selectedLight.value as any)[key] = v },
+  })
+}
+const lightColor = lightParam('color')
+const lightIntensity = lightParam('intensity')
+const lightDistance = lightParam('distance')
+const lightDecay = lightParam('decay')
+const lightAngle = lightParam('angle')
+const lightPenumbra = lightParam('penumbra')
+const lightWidth = lightParam('width')
+const lightHeight = lightParam('height')
+const lightCastShadow = lightParam('castShadow')
 
 // Transparency group defaults open for glass. StudioSection's isOpen/@toggle
 // pattern, scoped to the one sub-group with a dynamic default: the watch
@@ -513,11 +546,12 @@ function onKey(e: KeyboardEvent) {
   if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable) return
   // (No W/E/R mode shortcuts — the combined gizmo moves/rotates/scales at once.)
   if (e.key === 'Escape') {
-    // Open primitive menu owns Esc: close it, never the modal.
-    if (primMenuOpen.value) {
+    // Open primitive/light menu owns Esc: close it, never the modal.
+    if (primMenuOpen.value || lightMenuOpen.value) {
       e.preventDefault()
       e.stopImmediatePropagation()
       primMenuOpen.value = false
+      lightMenuOpen.value = false
       return
     }
     // An open StudioColor popover owns Escape (its own capture listener closes
@@ -541,6 +575,18 @@ function addPrimitive(kind: PrimitiveKind) {
   doc.objects.push(o)
   selectedId.value = o.id
 }
+// Scenes render every light as a real Three.js light — an unbounded count would
+// tank frame time, so the UI caps additions rather than letting the doc silently
+// grow into something the engine chokes on.
+const MAX_LIGHTS = 8
+function addLight(kind: LightKind) {
+  const count = doc.objects.filter((o) => o.kind === 'light').length
+  if (count >= MAX_LIGHTS) { console.warn(`[scene3d-studio] light cap reached (${MAX_LIGHTS})`); return }
+  const o = createLight(kind, doc.objects)
+  doc.objects.push(o)
+  selectedId.value = o.id
+  lightMenuOpen.value = false
+}
 function addGlb(url: string) {
   if (!url) return
   const o = createGlbObject(url, doc.objects)
@@ -559,9 +605,9 @@ function removeObject(id: string) {
 function duplicateObject(id: string) {
   const src = doc.objects.find((o) => o.id === id)
   if (!src) return
-  const copy = src.kind === 'primitive'
-    ? createPrimitive(src.primitive, doc.objects)
-    : createGlbObject(src.url, doc.objects)
+  const copy = src.kind === 'primitive' ? createPrimitive(src.primitive, doc.objects)
+    : src.kind === 'glb' ? createGlbObject(src.url, doc.objects)
+    : createLight(src.light, doc.objects)
   Object.assign(copy, {
     position: [src.position[0] + 0.5, src.position[1], src.position[2] + 0.5],
     rotation: [...src.rotation], scale: [...src.scale], material: { ...src.material },
@@ -569,6 +615,12 @@ function duplicateObject(id: string) {
     // would make both objects' shapes move together on any later edit.
     ...(src.kind === 'primitive' && src.params ? { params: { ...src.params } } : {}),
     ...(src.kind === 'primitive' && src.modifiers ? { modifiers: { ...src.modifiers } } : {}),
+    // Light fields likewise travel with the copy — same discriminated-union
+    // shape as material/params above, just flat on the object instead of nested.
+    ...(src.kind === 'light' ? {
+      color: src.color, intensity: src.intensity, distance: src.distance, decay: src.decay,
+      angle: src.angle, penumbra: src.penumbra, width: src.width, height: src.height, castShadow: src.castShadow,
+    } : {}),
   })
   doc.objects.push(copy)
   selectedId.value = copy.id
@@ -749,6 +801,15 @@ function onClose() {
               <Upload v-else class="size-4" />
               {{ uploading ? 'Uploading…' : 'Upload GLB' }}
             </button>
+            <div class="mx-0.5 h-5 w-px bg-white/10" />
+            <button
+              type="button"
+              class="flex h-8 items-center gap-1.5 rounded px-2.5 text-[12px] transition-colors cursor-pointer"
+              :class="lightMenuOpen ? 'bg-white/15 text-white' : 'text-white/70 hover:bg-white/10 hover:text-white'"
+              @click="primMenuOpen = false; lightMenuOpen = !lightMenuOpen"
+            >
+              <Lightbulb class="size-4" /> Light
+            </button>
 
             <!-- Primitive menu: popup card above the button (Brand-panel mechanic) -->
             <div
@@ -771,6 +832,24 @@ function onClose() {
                 </div>
               </div>
             </div>
+
+            <!-- Light menu: same popup mechanic as the primitive menu, right-aligned
+                 above its trigger since it's the last button in the pill. -->
+            <div
+              v-if="lightMenuOpen"
+              class="absolute bottom-full right-0 z-30 mb-2 w-36 rounded-lg border border-white/10 bg-[#161616] p-2 shadow-2xl"
+            >
+              <button
+                v-for="k in LIGHT_KINDS"
+                :key="k"
+                type="button"
+                class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-white/80 transition-colors hover:bg-white/10 hover:text-white cursor-pointer"
+                @click="addLight(k)"
+              >
+                <Lightbulb class="size-4 shrink-0 opacity-70" />
+                {{ LIGHT_KIND_LABELS[k] }}
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -789,7 +868,7 @@ function onClose() {
             class="group flex items-center gap-2 rounded px-2 py-1 text-xs"
             :class="o.id === selectedId ? 'bg-white/15' : 'hover:bg-white/5'"
             @click="selectedId = o.id">
-            <Box class="h-3.5 w-3.5 shrink-0 opacity-60" />
+            <component :is="o.kind === 'light' ? Lightbulb : Box" class="h-3.5 w-3.5 shrink-0 opacity-60" />
             <span class="flex-1 truncate" :class="glbError[o.id] ? 'text-red-400' : ''">{{ o.name }}</span>
             <button v-if="glbError[o.id]" type="button" class="text-red-400 opacity-90 hover:opacity-100"
               title="Load failed — retry" @click.stop="retryGlb(o.id)"><RotateCcw class="h-3.5 w-3.5" /></button>
@@ -1099,6 +1178,40 @@ function onClose() {
           </div>
         </details>
 
+        <!-- Light controls: a peer of the material sub-groups above, gated on
+             selectedIsLight (not selectedIsPrimitive) since lights aren't primitives. -->
+        <template v-if="selectedIsLight">
+          <div>
+            <p class="mb-1.5 text-[10px] uppercase tracking-[0.12em] text-white/35">Light</p>
+            <div class="space-y-3">
+              <div class="flex items-center justify-between">
+                <span class="text-[11px] text-white/55">Color</span>
+                <StudioColor v-model="lightColor" />
+              </div>
+              <StudioSlider v-model="lightIntensity" label="Intensity" hint="Brightness of this light" :min="0" :max="20" :step="0.1" />
+
+              <template v-if="selectedLight?.light === 'point' || selectedLight?.light === 'spot'">
+                <StudioSlider v-model="lightDistance" label="Distance" hint="How far the light reaches — 0 means infinite" :min="0" :max="30" :step="0.5" />
+                <StudioSlider v-model="lightDecay" label="Decay" hint="How quickly the light fades over distance" :min="0" :max="3" :step="0.1" />
+                <div class="flex items-center justify-between">
+                  <span class="text-[11px] text-white/55">Cast shadow</span>
+                  <StudioSwitch v-model="lightCastShadow" />
+                </div>
+              </template>
+
+              <template v-if="selectedLight?.light === 'spot'">
+                <StudioSlider v-model="lightAngle" label="Angle" hint="Cone half-angle of the spot beam" :min="0.05" :max="1.4" :step="0.01" />
+                <StudioSlider v-model="lightPenumbra" label="Penumbra" hint="Softness of the spot beam's edge" :min="0" :max="1" :step="0.05" />
+              </template>
+
+              <template v-if="selectedLight?.light === 'rect'">
+                <StudioSlider v-model="lightWidth" label="Width" hint="Width of the area light panel" :min="0.2" :max="10" :step="0.1" />
+                <StudioSlider v-model="lightHeight" label="Height" hint="Height of the area light panel" :min="0.2" :max="10" :step="0.1" />
+              </template>
+            </div>
+          </div>
+        </template>
+
         <div>
           <label class="mb-1 block text-[11px] text-white/55">Position</label>
           <div class="grid grid-cols-3 gap-1.5">
@@ -1115,7 +1228,7 @@ function onClose() {
             <input v-model.number="rotZ" type="number" step="1" aria-label="Rotation Z" class="studio-num" />
           </div>
         </div>
-        <div>
+        <div v-if="selected && !selectedIsLight">
           <label class="mb-1 block text-[11px] text-white/55">Size</label>
           <div class="grid grid-cols-3 gap-1.5">
             <input v-model.number="sizeX" type="number" step="0.05" aria-label="Size X" class="studio-num" />
