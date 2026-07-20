@@ -13,6 +13,8 @@ import { DEFAULT_POST } from '~/lib/spacetype/post'
 import { loadSpaceDefaults, spaceDefaultFor } from '~/composables/useSpaceDefaults'
 import { applySceneToState } from '~/lib/spacetype/scene'
 import { registerStudioBaker, unregisterStudioBaker } from '~/lib/studio/cascade'
+import { registerStudioFrameSource, unregisterStudioFrameSource } from '~/lib/studio/frameSource'
+import { makeSpaceTypeFrameSource } from '~/lib/spacetype/frameSource'
 import StudioRenderButton from '~/components/vue-canvas/StudioRenderButton.vue'
 
 // Space Type — a frontend-only config node for the client-side Three.js ribbon
@@ -56,6 +58,14 @@ const canvasEl = ref<HTMLCanvasElement | null>(null)
 const previewH = ref(previewHeight(state.value))
 // Engine is a plain (non-reactive) handle — never wrap a WebGL renderer in a Vue proxy.
 let engine: SpaceTypeEngine | null = null
+// A SECOND engine, separate from the card-preview `engine`, dedicated to the
+// cross-studio frame source. Lazily created on first pull (ensureHeadless), so a
+// Space Type node with no live downstream consumer never pays the extra WebGL
+// context. Its own offscreen canvas — never the card's — so the two never fight
+// over one canvas at different frame indices (which would ghost the card).
+let headlessEngine: SpaceTypeEngine | null = null
+let headlessCanvas: HTMLCanvasElement | null = null
+let headlessDirty = true   // config changed since the last headless build
 let raf = 0
 let previewStart = 0
 const renderError = ref<string | null>(null)
@@ -135,6 +145,27 @@ onMounted(async () => {
   await ensureSpaceTypeFont(String(s.params.font))
   rebuild()
   registerStudioBaker(props.id, bakeOutput)
+  // Modal-independent live frame source: a directly-wired downstream Shader Studio
+  // pulls frames from here even when this node's editor is closed. Uses its OWN
+  // lazily-created headless engine (ensureHeadless), not the card-preview `engine`.
+  // renderAt honors the requested w/h, so a chained export is full-resolution.
+  registerStudioFrameSource(props.id, makeSpaceTypeFrameSource({
+    getClock: () => {
+      const s = state.value
+      const [cw, ch] = dimsFromKey(s.dimsKey)
+      return { duration: s.loopDuration, fps: s.fps, width: cw, height: ch }
+    },
+    renderAt: (t01, w, h) => {
+      const eng = ensureHeadless()
+      if (!eng || !headlessCanvas) return null
+      const s = state.value
+      eng.setSize(w, h)
+      const total = Math.max(1, Math.round(s.fps * s.loopDuration))
+      const frame = ((Math.round(t01 * total) % total) + total) % total
+      eng.renderFrame(frame, s.params)
+      return headlessCanvas
+    },
+  }))
   io = new IntersectionObserver(([entry]) => { gate.visible = !!entry?.isIntersecting; applyGate() }, { threshold: 0.01 })
   if (canvasEl.value?.parentElement) io.observe(canvasEl.value.parentElement)
   onVisibility = () => { gate.tabActive = !document.hidden; applyGate() }
@@ -145,6 +176,37 @@ onMounted(async () => {
   window.addEventListener('sailor:closeSpaceType', onClose as EventListener)
   applyGate()
 })
+
+// Lazily build (and keep in sync) the dedicated frame-source engine. Called only
+// from the frame source's renderAt, so nothing is created until a downstream
+// consumer actually pulls. `headlessDirty` defers geometry rebuilds to the next
+// pull instead of rebuilding an offscreen engine per config keystroke.
+function ensureHeadless(): SpaceTypeEngine | null {
+  if (!detectWebGL()) return null
+  if (!headlessEngine) {
+    headlessCanvas = document.createElement('canvas')
+    const s = state.value
+    headlessEngine = new SpaceTypeEngine(headlessCanvas, {
+      effect: getEffect(s.effectId), width: PREVIEW_W, height: previewH.value,
+      fps: s.fps, loopDuration: s.loopDuration, alpha: s.transparent, bgColor: s.bgColor,
+      projection: s.projection ?? 'perspective',
+    })
+    headlessDirty = true
+  }
+  if (headlessDirty) {
+    const s = state.value
+    headlessEngine.setBackground(s.transparent, s.bgColor)
+    headlessEngine.setProjection(s.projection ?? 'perspective')
+    headlessEngine.setPost({ ...(s.post ?? DEFAULT_POST) })
+    headlessEngine.setPan(s.panX ?? 0, s.panY ?? 0)
+    headlessEngine.setFps(s.fps)
+    headlessEngine.setLoopDuration(s.loopDuration)
+    headlessEngine.setEffect(getEffect(s.effectId))
+    headlessEngine.build(s.params, texOptsFromState(s))
+    headlessDirty = false
+  }
+  return headlessEngine
+}
 
 // Headless full-res frame for the render cascade (generative — no input). Renders
 // frame 0 at the configured output dims, then restores the live preview.
@@ -177,8 +239,12 @@ onBeforeUnmount(() => {
   if (onOpen) window.removeEventListener('sailor:openSpaceType', onOpen as EventListener)
   if (onClose) window.removeEventListener('sailor:closeSpaceType', onClose as EventListener)
   unregisterStudioBaker(props.id)
+  unregisterStudioFrameSource(props.id)
   engine?.dispose()
   engine = null
+  headlessEngine?.dispose()
+  headlessEngine = null
+  headlessCanvas = null
 })
 
 // The modal writes config back to node.data.properties on edits — rebuild the
@@ -187,6 +253,7 @@ onBeforeUnmount(() => {
 let rebuildTimer: ReturnType<typeof setTimeout> | null = null
 watch(state, (s) => {
   if (rebuildTimer) clearTimeout(rebuildTimer)
+  headlessDirty = true   // next frame-source pull rebuilds the (lazy) headless engine
   rebuildTimer = setTimeout(async () => {
     rebuildTimer = null
     if (!engine) return
