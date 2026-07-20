@@ -9,8 +9,10 @@ import * as THREE from 'three'
 import { stripAlpha } from '~/lib/color/convert'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js'
+import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js'
 import { roundedLatheGeometry, roundedPolyGeometry, roundedHullGeometry } from '~/lib/scene3d/roundedGeometry'
-import type { SceneDoc, SceneObject, Vec3, LightingPreset, PrimitiveKind, PrimitiveObject } from './config'
+import type { SceneDoc, SceneObject, Vec3, LightingPreset, PrimitiveKind, PrimitiveObject, LightObject } from './config'
+import { LIGHT_DEFAULTS } from './config'
 import { loadGlb } from './glb'
 import { materialFor, updateMaterial, disposeMaterial } from './materials'
 import { applyModifiers } from '~/lib/scene3d/modifiers'
@@ -102,6 +104,23 @@ export function geometryFor(kind: PrimitiveKind, params?: Record<string, number>
     case 'ring':
       return new THREE.RingGeometry(p('innerRadius'), 0.5, p('detail'), 1, 0, rad(p('arc'))).rotateX(-Math.PI / 2)
   }
+}
+
+/** Build the THREE light for a LightObject (color/intensity/type params applied;
+ *  position/rotation/shadow handled by the caller in syncObject). Pure + testable. */
+export function lightFor(obj: LightObject): THREE.Light {
+  const color = new THREE.Color(stripAlpha(obj.color))
+  const intensity = obj.intensity
+  if (obj.light === 'rect') {
+    const l = new THREE.RectAreaLight(color, intensity, obj.width ?? LIGHT_DEFAULTS.width, obj.height ?? LIGHT_DEFAULTS.height)
+    return l
+  }
+  if (obj.light === 'spot') {
+    const l = new THREE.SpotLight(color, intensity, obj.distance ?? 0, obj.angle ?? LIGHT_DEFAULTS.angle, obj.penumbra ?? LIGHT_DEFAULTS.penumbra, obj.decay ?? LIGHT_DEFAULTS.decay)
+    return l
+  }
+  const l = new THREE.PointLight(color, intensity, obj.distance ?? 0, obj.decay ?? LIGHT_DEFAULTS.decay)
+  return l
 }
 
 /** Unscaled bounding dimensions of a primitive at the given params and
@@ -242,6 +261,9 @@ export class SceneEngine {
     // to the beauty pass only — the depth/normal passes reset this, see passes.ts).
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
     this.renderer.toneMappingExposure = 1.1
+    // RectAreaLight needs its LTC lookup textures initialized once; guarded because
+    // it touches WebGL state and the engine unit tests construct without a GL context.
+    try { RectAreaLightUniformsLib.init() } catch { /* no GL context (unit tests) */ }
     this.scene = new THREE.Scene()
     this.camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 200)
     const pmrem = new THREE.PMREMGenerator(this.renderer)
@@ -313,7 +335,9 @@ export class SceneEngine {
     // Source signature: if a doc mutation retyped this id in place (kind,
     // primitive shape, or GLB url), tear down the old asset and rebuild —
     // otherwise the diff would keep rendering the stale one.
-    const sourceKey = obj.kind === 'primitive' ? `primitive:${obj.primitive}` : `glb:${obj.url}`
+    const sourceKey = obj.kind === 'primitive' ? `primitive:${obj.primitive}`
+      : obj.kind === 'glb' ? `glb:${obj.url}`
+      : `light:${obj.light}`
     let root = this.objectRoots.get(obj.id)
     if (root && root.userData.sourceKey !== sourceKey) {
       this.scene.remove(root)
@@ -333,7 +357,7 @@ export class SceneEngine {
         mesh.userData.geoKey = geoKeyFor(obj, 'smooth') // facet variant applied by the sync below
         mesh.castShadow = mesh.receiveShadow = true
         root = mesh
-      } else {
+      } else if (obj.kind === 'glb') {
         root = new THREE.Group() // placeholder while the GLB loads
         const tok = ++this.token
         this.glbTokens.set(obj.id, tok)
@@ -342,6 +366,18 @@ export class SceneEngine {
           g.traverse((c) => { if ((c as THREE.Mesh).isMesh) { c.castShadow = c.receiveShadow = true } })
           root!.add(g)
         }).catch(() => { /* surface shows the error state; the group stays empty */ })
+      } else {
+        const group = new THREE.Group()
+        const light = lightFor(obj)
+        group.add(light)
+        group.userData.light = light
+        if (light instanceof THREE.SpotLight) {
+          // Spot aims at a target offset along the group's local -Z; keep target in the group.
+          light.target.position.set(0, 0, -1)
+          group.add(light.target)
+        }
+        root = group
+        root.userData.isLight = true
       }
       root.userData.sceneId = obj.id
       root.userData.sourceKey = sourceKey
@@ -394,6 +430,24 @@ export class SceneEngine {
           ;(gradUniforms.uBoxMax!.value as THREE.Vector3).copy(geo.boundingBox.max)
         }
       }
+    } else if (obj.kind === 'light') {
+      const light = root.userData.light as THREE.Light
+      const color = new THREE.Color(stripAlpha(obj.color))
+      light.color.copy(color)
+      light.intensity = obj.intensity
+      if (light instanceof THREE.PointLight || light instanceof THREE.SpotLight) {
+        light.distance = obj.distance ?? 0
+        light.decay = obj.decay ?? LIGHT_DEFAULTS.decay
+        light.castShadow = obj.castShadow === true
+      }
+      if (light instanceof THREE.SpotLight) {
+        light.angle = obj.angle ?? LIGHT_DEFAULTS.angle
+        light.penumbra = obj.penumbra ?? LIGHT_DEFAULTS.penumbra
+      }
+      if (light instanceof THREE.RectAreaLight) {
+        light.width = obj.width ?? LIGHT_DEFAULTS.width
+        light.height = obj.height ?? LIGHT_DEFAULTS.height
+      }
     }
   }
 
@@ -433,6 +487,9 @@ export class SceneEngine {
   }
 }
 
+// Light groups carry no geometry/material today, so this is a safe no-op for
+// them — but Task 3's pick-marker/helper meshes attach here too, and those
+// WILL need disposing once they land.
 function disposeTree(root: THREE.Object3D): void {
   root.traverse((c) => {
     const m = c as THREE.Mesh

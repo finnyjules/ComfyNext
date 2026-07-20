@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import * as THREE from 'three'
-import { sunDirection, geometryFor, baseSizeFor, buildGeometry, SceneEngine } from '~/lib/scene3d/engine'
-import { PRIMITIVE_KINDS, createPrimitive, type PrimitiveKind, type PrimitiveObject } from '~/lib/scene3d/config'
+import { sunDirection, geometryFor, baseSizeFor, buildGeometry, lightFor, SceneEngine } from '~/lib/scene3d/engine'
+import { PRIMITIVE_KINDS, createPrimitive, createLight, type PrimitiveKind, type PrimitiveObject } from '~/lib/scene3d/config'
 import { PRIMITIVE_PARAMS } from '~/lib/scene3d/primParams'
 
 describe('scene3d sun direction', () => {
@@ -320,5 +320,26 @@ describe('scene3d engine deferred geometry', () => {
     expect(mesh.position.toArray()).toEqual([1, 2, 3])
     expect(mesh.visible).toBe(false)
     expect((mesh.material as THREE.MeshPhysicalMaterial).color.getHexString()).toBe('ff0000')
+  })
+})
+
+describe('scene3d light factory', () => {
+  it('maps each light kind to the right THREE light with its params', () => {
+    const point = lightFor(createLight('point', []))
+    expect(point).toBeInstanceOf(THREE.PointLight)
+    const spotObj = createLight('spot', []); spotObj.angle = 0.5; spotObj.penumbra = 0.4
+    const spot = lightFor(spotObj) as THREE.SpotLight
+    expect(spot).toBeInstanceOf(THREE.SpotLight)
+    expect(spot.angle).toBeCloseTo(0.5)
+    expect(spot.penumbra).toBeCloseTo(0.4)
+    const rect = lightFor(createLight('rect', []))
+    expect(rect).toBeInstanceOf(THREE.RectAreaLight)
+  })
+
+  it('applies color and intensity', () => {
+    const o = createLight('point', []); o.color = '#ff0000'; o.intensity = 3.5
+    const l = lightFor(o) as THREE.PointLight
+    expect(l.color.getHexString()).toBe('ff0000')
+    expect(l.intensity).toBe(3.5)
   })
 })
