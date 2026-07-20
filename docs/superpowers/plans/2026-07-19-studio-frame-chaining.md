@@ -1271,6 +1271,154 @@ git commit -m "fix(studio-cascade): publish into directly-wired downstream studi
 
 ---
 
+### Task 8: Space Type node registers a live frame source (modal-independent)
+
+**Added 2026-07-19 after the whole-feature review.** Space Type only registered its
+frame source from the modal surface (Task 4), so a direct Space Type → Shader wire went
+blank whenever the Space Type editor was closed — its live source vanished and the direct
+wire has no artifact to fall back to. This task lets the always-mounted **node** publish a
+live frame source.
+
+**Key fact discovered in review:** `SpaceTypeNode.vue` already owns a live `SpaceTypeEngine`
+(`:58,:130`) driving the card preview, plus a headless `bakeOutput` (`:151`). So the node is
+NOT engine-less. But the frame source must NOT reuse the card's preview engine: the card's
+own rAF loop and a downstream consumer's pulls would both drive one canvas at different
+frames, ghosting the card. The frame source gets its **own** engine, created **lazily** on
+first pull so the extra WebGL context only exists for Space Type nodes actually feeding a
+live consumer.
+
+**Files:**
+- Modify: `frontend/app/components/vue-canvas/SpaceTypeNode.vue`
+
+**Interfaces:**
+- Consumes: `registerStudioFrameSource` / `unregisterStudioFrameSource` (`~/lib/studio/frameSource`), `makeSpaceTypeFrameSource` (`~/lib/spacetype/frameSource`, from Task 4), `SpaceTypeEngine`, `getEffect`, `dimsFromKey`, `texOptsFromState`, `ensureSpaceTypeFont` (all already imported or trivially importable in this file).
+- Produces: nothing consumed by later tasks.
+
+- [ ] **Step 1: Add a lazily-created headless engine + a state-change flag**
+
+Near the existing `let engine` declaration, add a second, independent engine handle and its
+offscreen canvas, plus a dirty flag so the headless engine only rebuilds geometry when the
+config actually changed (not every pulled frame):
+
+```ts
+// A SECOND engine, separate from the card-preview `engine`, dedicated to the
+// cross-studio frame source. Lazily created on first pull (ensureHeadless), so a
+// Space Type node with no live downstream consumer never pays the extra WebGL
+// context. Its own offscreen canvas — never the card's — so the two never fight.
+let headlessEngine: SpaceTypeEngine | null = null
+let headlessCanvas: HTMLCanvasElement | null = null
+let headlessDirty = true   // config changed since the last headless build
+
+function ensureHeadless(): SpaceTypeEngine | null {
+  if (!detectWebGL()) return null
+  if (!headlessEngine) {
+    headlessCanvas = document.createElement('canvas')
+    const s = state.value
+    headlessEngine = new SpaceTypeEngine(headlessCanvas, {
+      effect: getEffect(s.effectId), width: PREVIEW_W, height: previewH.value,
+      fps: s.fps, loopDuration: s.loopDuration, alpha: s.transparent, bgColor: s.bgColor,
+      projection: s.projection ?? 'perspective',
+    })
+    headlessDirty = true
+  }
+  if (headlessDirty) {
+    const s = state.value
+    headlessEngine.setBackground(s.transparent, s.bgColor)
+    headlessEngine.setProjection(s.projection ?? 'perspective')
+    headlessEngine.setPost({ ...(s.post ?? DEFAULT_POST) })
+    headlessEngine.setPan(s.panX ?? 0, s.panY ?? 0)
+    headlessEngine.setFps(s.fps)
+    headlessEngine.setLoopDuration(s.loopDuration)
+    headlessEngine.setEffect(getEffect(s.effectId))
+    headlessEngine.build(s.params, texOptsFromState(s))
+    headlessDirty = false
+  }
+  return headlessEngine
+}
+```
+
+- [ ] **Step 2: Register the frame source in `onMounted`, alongside `registerStudioBaker`**
+
+Reuse the Task 4 adapter. `renderAt` honors the requested `w`/`h` (unlike the modal path),
+so a chained Space Type exports at full resolution:
+
+```ts
+  registerStudioFrameSource(props.id, makeSpaceTypeFrameSource({
+    getClock: () => {
+      const s = state.value
+      const [cw, ch] = dimsFromKey(s.dimsKey)
+      return { duration: s.loopDuration, fps: s.fps, width: cw, height: ch }
+    },
+    renderAt: (t01, w, h) => {
+      const eng = ensureHeadless()
+      if (!eng || !headlessCanvas) return null
+      const s = state.value
+      eng.setSize(w, h)
+      const total = Math.max(1, Math.round(s.fps * s.loopDuration))
+      const frame = ((Math.round(t01 * total) % total) + total) % total
+      eng.renderFrame(frame, s.params)
+      return headlessCanvas
+    },
+  }))
+```
+
+Add the imports at the top of `<script setup>`:
+
+```ts
+import { registerStudioFrameSource, unregisterStudioFrameSource } from '~/lib/studio/frameSource'
+import { makeSpaceTypeFrameSource } from '~/lib/spacetype/frameSource'
+```
+
+- [ ] **Step 3: Mark the headless engine dirty when the config changes**
+
+In the existing deep `watch(state, ...)` debounced handler (the one that rebuilds the card
+preview), also flip the flag so the next pull rebuilds the headless engine:
+
+```ts
+    headlessDirty = true
+```
+
+Do NOT rebuild the headless engine eagerly here — it may not exist yet (no consumer), and a
+config burst shouldn't rebuild an offscreen engine per keystroke. The flag defers the rebuild
+to the next actual `renderAt`.
+
+- [ ] **Step 4: Dispose the headless engine in `onBeforeUnmount`**
+
+Alongside `unregisterStudioFrameSource(props.id)` and the existing `engine?.dispose()`:
+
+```ts
+  unregisterStudioFrameSource(props.id)
+  headlessEngine?.dispose()
+  headlessEngine = null
+  headlessCanvas = null
+```
+
+- [ ] **Step 5: Compile-check**
+
+Run: `curl -s "http://127.0.0.1:58689/_nuxt/@fs/Users/julien/Documents/GitHub/Sailor/frontend/app/components/vue-canvas/SpaceTypeNode.vue" -o /dev/null -w "%{http_code}\n"`
+Expected: `200`.
+
+- [ ] **Step 6: Verify manually in the app**
+
+1. **The headline fix:** Space Type → Shader Studio, wired directly, **Space Type editor never opened**. The Shader card must render the Space Type output (animating). Before this task it showed "Connect or add an image".
+2. **No card ghosting:** while the above is live, the Space Type card's OWN preview must animate smoothly — no doubled/jittering frames from the two engines fighting (they don't share a canvas, so this should be clean).
+3. **Full-res export:** Generate Video from the chained Shader at 2048/4096 — the Space Type content must be sharp, not upscaled from preview size (renderAt honors w/h).
+4. **No-consumer cost:** a lone Space Type node (nothing wired to it) must never create the headless engine — confirm via a `console.count` in `ensureHeadless` during dev, or reason from the code that `ensureHeadless` is only called from `renderAt`.
+5. **Regression:** Space Type's own card preview, Edit modal, and Render-to-artifact all still work.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add frontend/app/components/vue-canvas/SpaceTypeNode.vue
+git commit -m "feat(spacetype): register a modal-independent live frame source from the node"
+```
+
+Note: `SpaceTypeNode.vue` may carry a parallel session's uncommitted template migration —
+if so, stage only the script hunks (hand-built patch + `git apply --cached`), as with the
+other consumer tasks.
+
+---
+
 ## Verification (whole feature)
 
 After Task 7, run the full checklist from the spec's Testing section in one pass — regressions first, because they are the real risk:
