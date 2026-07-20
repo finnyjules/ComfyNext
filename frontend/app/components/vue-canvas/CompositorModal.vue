@@ -33,6 +33,7 @@ import { useRegionFx } from '~/composables/useRegionFx'
 import type { Cloner } from '~/composables/useCloner'
 import { resolveWiredSourceKind } from '~/lib/studio/frameResolve'
 import { frameSourceEpoch, type StudioFrameSource } from '~/lib/studio/frameSource'
+import { deriveMasterClock, slotPhase01 } from '~/lib/compositor/masterClock'
 import { DEFAULT_FRAME_MOTION, type FrameMotion } from '~/lib/motion/types'
 import '~/lib/motion/paint' // registers the motion painter for paintLayerStack(t)
 import { bakeAndUpload, motionSourceKey, type MotionParams } from '~/lib/motion/bake'
@@ -1189,24 +1190,58 @@ const wiredImageEls = ref<Record<number, HTMLImageElement | HTMLCanvasElement>>(
 function onWiredImageReady(slot: number, img: HTMLImageElement) {
   if (img.complete && img.naturalWidth) wiredImageEls.value = { ...wiredImageEls.value, [slot]: img }
 }
-// A live studio slot has no <img> to @load — pull its current frame and COPY it into a
-// canvas we own (the source reuses its buffer across getFrame calls). Re-runs on wiring
-// and frameSourceEpoch so a late-registering studio appears. Still-only for now.
-watch(() => layers.value.map(l => l.live ? `L${l.slot}` : l.url).join('|') + '|' + frameSourceEpoch.value, async () => {
-  for (const l of layers.value) {
-    if (!l.live) continue
-    const src = l.live
-    const w = Math.max(1, src.width || 1024), h = Math.max(1, src.height || 1024)
-    try {
-      const surface = await src.getFrame(0, w, h)
-      const cv = document.createElement('canvas')
-      cv.width = w; cv.height = h
-      cv.getContext('2d')!.drawImage(surface as CanvasImageSource, 0, 0, w, h)
+// A live studio slot has no <img> to @load — pull its frame at normalized time t01 and
+// COPY it into a canvas we OWN (the source reuses its buffer). The owned canvas is created
+// once per slot and drawn into in place, so per-frame animation doesn't churn the reactive
+// map (only first pull / size change reassigns it; the loop calls renderStack itself).
+async function pullLiveFrameModal(l: Layer, t01: number) {
+  const src = l.live!
+  const w = Math.max(1, src.width || 1024), h = Math.max(1, src.height || 1024)
+  try {
+    const surface = await src.getFrame(t01, w, h)
+    let cv = wiredImageEls.value[l.slot]
+    if (!(cv instanceof HTMLCanvasElement) || cv.width !== w || cv.height !== h) {
+      cv = document.createElement('canvas'); cv.width = w; cv.height = h
       naturalDims.value = { ...naturalDims.value, [l.slot]: { w, h } }
       wiredImageEls.value = { ...wiredImageEls.value, [l.slot]: cv }
-    } catch (e) { console.warn('[Compositor] live slot pull failed for slot', l.slot, e) }
-  }
+    }
+    cv.getContext('2d')!.drawImage(surface as CanvasImageSource, 0, 0, w, h)
+  } catch (e) { console.warn('[Compositor] live slot pull failed for slot', l.slot, e) }
+}
+// Initial / still pull, re-run on wiring + frameSourceEpoch so a late-registering studio appears.
+watch(() => layers.value.map(l => l.live ? `L${l.slot}` : l.url).join('|') + '|' + frameSourceEpoch.value, () => {
+  for (const l of layers.value) if (l.live) void pullLiveFrameModal(l, 0)
 }, { immediate: true })
+
+// ── Live animation loop (mirrors the Frame node card) ────────────────────────
+const MAX_LIVE_SLOTS = 8
+const liveMasterClock = computed(() => deriveMasterClock(
+  layers.value.filter(l => l.live).map(l => ({ duration: l.live!.duration, fps: l.live!.fps })),
+  ((compositor.value?.data?.properties as any)?.sailor_frame?.clock) ?? null))
+const hasAnimatedSlot = computed(() => layers.value.some(l => l.live && l.live.duration > 0))
+let liveRaf = 0, liveStart = 0, liveInFlight = false, liveCapWarned = false
+function liveFrameTick(ts: number) {
+  if (!liveStart) liveStart = ts
+  const mc = liveMasterClock.value
+  if (!liveInFlight && mc && mc.duration > 0) {
+    liveInFlight = true
+    const t = ((ts - liveStart) / 1000) % mc.duration
+    let animated = layers.value.filter(l => l.live && l.live.duration > 0)
+    if (animated.length > MAX_LIVE_SLOTS) {
+      if (!liveCapWarned) { console.warn(`[Compositor] ${animated.length} animated slots > cap ${MAX_LIVE_SLOTS}; extras shown as stills`); liveCapWarned = true }
+      animated = animated.slice(0, MAX_LIVE_SLOTS)
+    }
+    Promise.all(animated.map(l => pullLiveFrameModal(l, slotPhase01(t, l.live!.duration))))
+      .then(() => renderStack())
+      .finally(() => { liveInFlight = false })
+  }
+  liveRaf = requestAnimationFrame(liveFrameTick)
+}
+function startLive() { cancelAnimationFrame(liveRaf); liveStart = 0; liveInFlight = false; if (hasAnimatedSlot.value) liveRaf = requestAnimationFrame(liveFrameTick) }
+function stopLive() { cancelAnimationFrame(liveRaf); liveRaf = 0 }
+watch(hasAnimatedSlot, startLive)
+onMounted(startLive)
+onBeforeUnmount(stopLive)
 function drawWiredLayer(ctx: CanvasRenderingContext2D, layer: Layer, W: number, H: number) {
   drawWiredImageLayer(ctx, wiredImageEls.value[layer.slot], layer, W, H)
 }
