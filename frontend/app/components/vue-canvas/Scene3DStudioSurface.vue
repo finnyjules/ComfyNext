@@ -536,7 +536,7 @@ onBeforeUnmount(() => {
 // Any edit re-dirties and clears a stale bake failure so the amber "unbaked
 // changes" indicator isn't masked by an old red "Bake failed — retry".
 watch(doc, () => { dirty.value = true; bakeError.value = ''; engine?.syncFromDoc(doc) }, { deep: true })
-watch(selectedId, (id) => interaction?.select(id))
+watch(selectedId, (id) => interaction?.select(id, doc.objects.find((o) => o.id === id)?.kind === 'light'))
 watch(snap, (s) => interaction?.setSnap(s))
 
 function onKey(e: KeyboardEvent) {
@@ -786,7 +786,7 @@ function onClose() {
               type="button"
               class="flex h-8 items-center gap-1.5 rounded px-2.5 text-[12px] transition-colors cursor-pointer"
               :class="primMenuOpen ? 'bg-white/15 text-white' : 'text-white/70 hover:bg-white/10 hover:text-white'"
-              @click="primMenuOpen = !primMenuOpen"
+              @click="lightMenuOpen = false; primMenuOpen = !primMenuOpen"
             >
               <Plus class="size-4" /> Primitive
             </button>

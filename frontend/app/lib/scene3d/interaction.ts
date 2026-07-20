@@ -98,6 +98,10 @@ export class SceneInteraction {
       tc.setMode(mode)
       tc.size = size
       pruneGizmo(tc, mode, keep)
+      // TransformControls extends Controls (not Object3D — see note below), so
+      // it has no userData; tag it via a cast so `select` can identify which
+      // pruned instance is the scale one without a parallel lookup structure.
+      ;(tc as unknown as { userData: Record<string, unknown> }).userData = { mode }
       tc.addEventListener('dragging-changed', (e) => {
         this.orbit.enabled = !e.value
         if (e.value) {
@@ -213,12 +217,17 @@ export class SceneInteraction {
     }
   }
 
-  select(id: string | null): void {
+  select(id: string | null, isLight = false): void {
     this.selectedId = id
     const root = id ? this.engine.objectRoots.get(id) : undefined
     for (const tc of this.gizmos) {
-      if (root) tc.attach(root)
-      else tc.detach()
+      const mode = (tc as unknown as { userData: Record<string, unknown> }).userData.mode
+      if (root) {
+        if (isLight && mode === 'scale') tc.detach()
+        else tc.attach(root)
+      } else {
+        tc.detach()
+      }
     }
   }
 
