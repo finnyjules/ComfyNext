@@ -11,6 +11,7 @@
 // live in surrounding markup (mirrors ShapeStudioSurface.vue). Enum-union fields go
 // through string proxies because StudioSegmented/StudioSelect models are `string`.
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import * as THREE from 'three'
 import {
   Box, Plus, Trash2, Copy, Eye, EyeOff, Loader2, Upload, RotateCcw, Lightbulb,
 } from 'lucide-vue-next'
@@ -480,6 +481,29 @@ let interaction: SceneInteraction | null = null
 let raf = 0
 let ro: ResizeObserver | null = null
 
+// Light View HTML labels: a chip per light (color dot + name + live intensity)
+// at its projected screen position. Reprojected every frame in the rAF loop
+// since the camera orbits — cheap for the ≤MAX_LIGHTS-sized array.
+const lightLabels = ref<{ id: string; name: string; intensity: number; color: string; x: number; y: number; show: boolean }[]>([])
+function updateLightLabels() {
+  if (!lightView.value || !engine || !viewportEl.value) { lightLabels.value = []; return }
+  const rect = viewportEl.value.getBoundingClientRect()
+  const w = rect.width, h = rect.height
+  lightLabels.value = doc.objects.filter((o) => o.kind === 'light').map((o) => {
+    const light = o as LightObject
+    const ndc = new THREE.Vector3(...light.position).project(engine!.camera)
+    return {
+      id: light.id,
+      name: light.name,
+      intensity: light.intensity,
+      color: light.color,
+      x: (ndc.x * 0.5 + 0.5) * w,
+      y: (-ndc.y * 0.5 + 0.5) * h,
+      show: ndc.z < 1,
+    }
+  })
+}
+
 onMounted(() => {
   webglOk.value = detectWebGL()
   if (!webglOk.value || !canvasEl.value || !viewportEl.value) return
@@ -504,6 +528,7 @@ onMounted(() => {
   const loop = () => {
     interaction?.orbit.update()
     engine?.render()
+    updateLightLabels()
     raf = requestAnimationFrame(loop)
   }
   raf = requestAnimationFrame(loop)
@@ -870,6 +895,23 @@ function onClose() {
                 {{ LIGHT_KIND_LABELS[k] }}
               </button>
             </div>
+          </div>
+        </div>
+
+        <!-- Light View labels: HTML chips (color dot + name + live intensity) at
+             each light's projected screen position. pointer-events-none root so
+             the viewport stays orbit/select-driven; @pointerdown.stop guards the
+             (empty) root anyway, matching the other overlay containers here. -->
+        <div class="pointer-events-none absolute inset-0" @pointerdown.stop>
+          <div
+            v-for="l in lightLabels"
+            :key="l.id"
+            v-show="l.show"
+            class="absolute flex -translate-x-1/2 -translate-y-1/2 items-center gap-1.5 rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white"
+            :style="{ left: l.x + 'px', top: l.y + 'px' }"
+          >
+            <span class="size-2 shrink-0 rounded-full" :style="{ background: l.color }" />
+            {{ l.name }} · {{ l.intensity.toFixed(1) }}
           </div>
         </div>
       </div>
