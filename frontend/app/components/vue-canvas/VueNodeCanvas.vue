@@ -3571,9 +3571,12 @@ function publishStudioOutput(studioId: string, filename: string) {
     // if it later feeds another node, resolveSrcUrl would hand that node THIS
     // upstream's file instead of the studio's own render. So skip the stamp, but it
     // must still count as a target so the fallback above doesn't spawn a stray node.
-    // NOT artifact-frame: isStudioNode is also true for Frames (they bake client-side),
-    // but a Frame is data.images-driven and DOES need the stamp — exclude it here.
     if (isStudioNode(art) && !isArtifactNode(art)) continue
+    // A Frame is also skipped: its data.images IS its own composite output, and it
+    // composites its wired slots itself (reading an upstream studio live via the
+    // shared resolver). Stamping the studio's file here overwrites the composite —
+    // the clobber bug where a studio wired to a Frame replaced the Frame's output.
+    if (String(art.type) === 'artifact-frame') continue
     if (!art.data) art.data = {}
     art.data.images = [url]
     // Also stamp the `image` widget so a card with an upstream link still shows the new file.
