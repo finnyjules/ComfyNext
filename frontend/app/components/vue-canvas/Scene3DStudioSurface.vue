@@ -61,6 +61,7 @@ const selectedIsPrimitive = computed(() => selected.value?.kind === 'primitive')
 const selectedIsLight = computed(() => selected.value?.kind === 'light')
 const selectedLight = computed<LightObject | null>(() => (selected.value?.kind === 'light' ? selected.value : null))
 const snap = ref(false)
+const lightView = ref(false)  // clay + light-widget preview mode (Task 1/3 engine support)
 const dirty = ref(false)      // doc changed since last bake
 const baking = ref(false)
 const bakeError = ref('')       // last export failure message (inline "retry")
@@ -536,8 +537,12 @@ onBeforeUnmount(() => {
 // Any edit re-dirties and clears a stale bake failure so the amber "unbaked
 // changes" indicator isn't masked by an old red "Bake failed — retry".
 watch(doc, () => { dirty.value = true; bakeError.value = ''; engine?.syncFromDoc(doc) }, { deep: true })
-watch(selectedId, (id) => interaction?.select(id, doc.objects.find((o) => o.id === id)?.kind === 'light'))
+watch(selectedId, (id) => {
+  interaction?.select(id, doc.objects.find((o) => o.id === id)?.kind === 'light')
+  engine?.setSelected(id)
+})
 watch(snap, (s) => interaction?.setSnap(s))
+watch(lightView, (on) => engine?.setLightView(on))
 
 function onKey(e: KeyboardEvent) {
   // Never hijack modified chords (Cmd+R reload, Ctrl/Alt combos).
@@ -586,6 +591,9 @@ function addLight(kind: LightKind) {
   doc.objects.push(o)
   selectedId.value = o.id
   lightMenuOpen.value = false
+  // First light in the scene: auto-enter Light View so its widget is visible
+  // immediately instead of leaving the user to find the toggle.
+  if (doc.objects.filter((obj) => obj.kind === 'light').length === 1) lightView.value = true
 }
 function addGlb(url: string) {
   if (!url) return
@@ -696,20 +704,29 @@ async function bake(): Promise<void> {
   baking.value = true
   bakeError.value = ''
   syncDocCamera() // persist the live view before it serializes into scene_state
+  // Light View swaps in clay + widgets for the live preview, but export must
+  // always render the real materials — force it off for the passes, then
+  // restore whatever the user had regardless of success or failure.
+  const wasLightView = lightView.value
+  if (wasLightView) engine?.setLightView(false)
   try {
-    const passes = await renderPasses(engine, doc)
-    // Upload all three passes BEFORE touching any widget so a mid-bake failure
-    // never leaves a mismatched pass set (e.g. fresh beauty + stale depth).
-    const [beauty, depth, normal] = await Promise.all([
-      inpaint.uploadDataUrl(passes.beauty, `scene3d_beauty_${props.nodeId}`),
-      inpaint.uploadDataUrl(passes.depth, `scene3d_depth_${props.nodeId}`),
-      inpaint.uploadDataUrl(passes.normal, `scene3d_normal_${props.nodeId}`),
-    ])
-    setWidget('beauty_image', beauty)
-    setWidget('depth_image', depth)
-    setWidget('normal_image', normal)
-    setWidget('scene_state', serializeDoc(doc))
-    dirty.value = false
+    try {
+      const passes = await renderPasses(engine, doc)
+      // Upload all three passes BEFORE touching any widget so a mid-bake failure
+      // never leaves a mismatched pass set (e.g. fresh beauty + stale depth).
+      const [beauty, depth, normal] = await Promise.all([
+        inpaint.uploadDataUrl(passes.beauty, `scene3d_beauty_${props.nodeId}`),
+        inpaint.uploadDataUrl(passes.depth, `scene3d_depth_${props.nodeId}`),
+        inpaint.uploadDataUrl(passes.normal, `scene3d_normal_${props.nodeId}`),
+      ])
+      setWidget('beauty_image', beauty)
+      setWidget('depth_image', depth)
+      setWidget('normal_image', normal)
+      setWidget('scene_state', serializeDoc(doc))
+      dirty.value = false
+    } finally {
+      if (wasLightView) engine?.setLightView(true)
+    }
   } catch (e) {
     // Swallow (no rethrow): the Bake button gets an inline error instead of an
     // unhandled rejection, and onClose's auto-bake can never block closing.
@@ -776,6 +793,9 @@ function onClose() {
           <button type="button" class="rounded px-2 py-1 text-xs"
             :class="snap ? 'bg-white/25 text-white' : 'bg-white/10 text-white/70 hover:bg-white/15'"
             @click="snap = !snap">snap</button>
+          <button type="button" class="flex items-center gap-1 rounded px-2 py-1 text-xs"
+            :class="lightView ? 'bg-white/25 text-white' : 'bg-white/10 text-white/70 hover:bg-white/15'"
+            @click="lightView = !lightView"><Lightbulb class="size-3.5" /> Light</button>
         </div>
 
         <!-- Bottom add-toolbar (Grid editor pill style): + Primitive menu · Upload GLB -->
