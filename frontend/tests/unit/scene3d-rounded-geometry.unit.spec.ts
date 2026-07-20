@@ -156,20 +156,45 @@ describe('roundedHullGeometry', () => {
     expect(g.boundingSphere!.radius).toBeCloseTo(r0, 2)
   })
 
-  it('keeps some faces flat (offset-face triangles share an exact normal)', () => {
+  it('preserves the base face directions as flat regions', () => {
     const base = new THREE.DodecahedronGeometry(0.55)
-    const g = roundedHullGeometry(base, 0.06, 2)
-    const nrm = g.getAttribute('normal')
-    // count triangles whose 3 vertices share an identical normal (a flat facet)
-    let flatTris = 0
-    for (let t = 0; t < nrm.count; t += 3) {
-      const same =
-        nrm.getX(t) === nrm.getX(t + 1) && nrm.getX(t + 1) === nrm.getX(t + 2) &&
-        nrm.getY(t) === nrm.getY(t + 1) && nrm.getY(t + 1) === nrm.getY(t + 2) &&
-        nrm.getZ(t) === nrm.getZ(t + 1) && nrm.getZ(t + 1) === nrm.getZ(t + 2)
-      if (same) flatTris++
+    // distinct base face normals
+    const bpos = base.getAttribute('position')
+    const bidx = base.index
+    const triN = bidx ? bidx.count / 3 : bpos.count / 3
+    const bAt = (i: number) => new THREE.Vector3().fromBufferAttribute(bpos, bidx ? bidx.getX(i) : i)
+    const baseNormals: THREE.Vector3[] = []
+    for (let t = 0; t < triN; t++) {
+      const a = bAt(t * 3), b = bAt(t * 3 + 1), c = bAt(t * 3 + 2)
+      const n = new THREE.Vector3().crossVectors(b.clone().sub(a), c.clone().sub(a)).normalize()
+      if (!baseNormals.some((m) => m.dot(n) > 0.999)) baseNormals.push(n)
     }
-    expect(flatTris).toBeGreaterThan(0)
+    expect(baseNormals.length).toBe(12) // a dodecahedron has 12 faces
+
+    const g = roundedHullGeometry(base, 0.05, 2)
+    // per-hull-triangle: face normal + area; accumulate area aligned to each base normal
+    const gpos = g.getAttribute('position')
+    const alignedArea = new Array(baseNormals.length).fill(0)
+    let totalArea = 0
+    for (let t = 0; t < gpos.count; t += 3) {
+      const a = new THREE.Vector3().fromBufferAttribute(gpos, t)
+      const b = new THREE.Vector3().fromBufferAttribute(gpos, t + 1)
+      const c = new THREE.Vector3().fromBufferAttribute(gpos, t + 2)
+      const cross = new THREE.Vector3().crossVectors(b.clone().sub(a), c.clone().sub(a))
+      const area = cross.length() * 0.5
+      totalArea += area
+      if (area < 1e-9) continue
+      const n = cross.normalize()
+      for (let k = 0; k < baseNormals.length; k++) {
+        if (n.dot(baseNormals[k]!) > 0.999) { alignedArea[k] += area; break }
+      }
+    }
+    // every base face direction must show up as a real flat region on the hull...
+    const represented = alignedArea.filter((x) => x > 1e-4).length
+    expect(represented).toBe(12)
+    // ...and the flat faces must dominate at this small radius (not slivers)
+    const flatFraction = alignedArea.reduce((s, x) => s + x, 0) / totalArea
+    expect(flatFraction).toBeGreaterThan(0.4)
   })
 
   it('stays finite at the extreme radius and lowest corner sides', () => {
