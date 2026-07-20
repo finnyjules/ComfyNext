@@ -7,6 +7,9 @@ import { defaultMesh } from './mesh'
 import type { BlendKind } from '~/lib/studio/blend'
 export { type BlendKind, BLEND_MODES } from '~/lib/studio/blend'
 
+/** Maximum number of stacked layers the render core composites. */
+export const LAYER_MAX = 6
+
 export type LayoutKind = 'linear' | 'radial' | 'orbit' | 'stack' | 'liquid' | 'mesh'
 export type ShapeKind = 'bands' | 'pyramid' | 'wave' | 'noise'
 export type RingShape = 'circle' | 'diamond' | 'square'
@@ -235,7 +238,7 @@ export interface GradientConfig {
   seed: string
   canvas: CanvasConfig
   relief: ReliefConfig
-  /** 1 or 2 layers. */
+  /** 1..LAYER_MAX layers. */
   layers: LayerConfig[]
   motion: MotionConfig
   /** Field lock flags (lock keys: 'aspect','layout','colors','structure',…). */

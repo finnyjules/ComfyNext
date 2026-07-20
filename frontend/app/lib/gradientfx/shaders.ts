@@ -14,6 +14,7 @@ void main() {
 }`
 
 export const GRADIENT_FS = `#version 300 es
+#define LAYER_MAX 6
 precision highp float;
 
 in vec2 v_texCoord;
@@ -33,29 +34,30 @@ uniform float u_grainDeferred; // 1 = skip grain here; the blur post-pass applie
 uniform float u_relief;
 uniform vec3  u_light;         // normalized light dir (x,y in screen plane, z toward viewer)
 uniform vec2  u_center;        // radial/orbit origin offset
-uniform float u_layerCount;    // 1 or 2
+uniform float u_layerCount;    // 1..LAYER_MAX
 
-// Per-layer params (index 0,1).
-uniform float u_count[2];
-uniform float u_dir[2];        // 0 up,1 right,2 down,3 left
-uniform float u_mirrorH[2];    // fold the image in X
-uniform float u_mirrorV[2];    // fold the image in Y
-uniform float u_gradHoriz[2];  // 1 = gradient ramp runs horizontally, 0 = vertically
-uniform float u_gap[2];
-uniform float u_rounding[2];
-uniform float u_mapping[2];    // 0 across,1 perbar,2 field
-uniform float u_steps[2];
-uniform float u_hueDrift[2];
-uniform float u_hueRotate[2];
-uniform float u_sweep[2];      // radial sweep, fraction 0..1
-uniform float u_scrub[2];
-uniform float u_blend[2];      // 0 normal,1 lighten,2 screen,3 add,4 multiply,5 darken,6 overlay
-uniform float u_opacity[2];
-uniform float u_crisp[2];      // 1 = crisp bands (sharp seams), 0 = soft-blended columns
-uniform float u_rotStep[2];    // stack: gradient rotation per ring, radians
-uniform float u_pivot[2];      // stack: per-ring center orbit, 0..1
-uniform float u_ringScale[2];  // stack: disc size multiplier (1 = touches edges, >1 fills frame)
-uniform float u_ringShape[2];  // stack: 0 circle, 1 diamond, 2 square
+// Per-layer params (index 0..LAYER_MAX-1).
+uniform float u_count[LAYER_MAX];
+uniform float u_dir[LAYER_MAX];        // 0 up,1 right,2 down,3 left
+uniform float u_mirrorH[LAYER_MAX];    // fold the image in X
+uniform float u_mirrorV[LAYER_MAX];    // fold the image in Y
+uniform float u_gradHoriz[LAYER_MAX];  // 1 = gradient ramp runs horizontally, 0 = vertically
+uniform float u_gap[LAYER_MAX];
+uniform float u_rounding[LAYER_MAX];
+uniform float u_mapping[LAYER_MAX];    // 0 across,1 perbar,2 field
+uniform float u_steps[LAYER_MAX];
+uniform float u_hueDrift[LAYER_MAX];
+uniform float u_hueRotate[LAYER_MAX];
+uniform float u_sweep[LAYER_MAX];      // radial sweep, fraction 0..1
+uniform float u_scrub[LAYER_MAX];
+uniform float u_blend[LAYER_MAX];      // 0 normal,1 lighten,2 screen,3 add,4 multiply,5 darken,6 overlay
+uniform float u_opacity[LAYER_MAX];
+uniform float u_crisp[LAYER_MAX];      // 1 = crisp bands (sharp seams), 0 = soft-blended columns
+uniform float u_rotStep[LAYER_MAX];    // stack: gradient rotation per ring, radians
+uniform float u_pivot[LAYER_MAX];      // stack: per-ring center orbit, 0..1
+uniform float u_ringScale[LAYER_MAX];  // stack: disc size multiplier (1 = touches edges, >1 fills frame)
+uniform float u_ringShape[LAYER_MAX];  // stack: 0 circle, 1 diamond, 2 square
+uniform float u_fieldW[LAYER_MAX];     // field texel width per layer (for coord scaling)
 
 uniform float u_flowAngle;       // degrees — liquid base gradient dir
 uniform float u_flowScale;       // warp noise frequency
@@ -88,10 +90,8 @@ uniform float u_meshRadius;      // Gaussian bleed radius
 uniform float u_meshContrast;    // 0 = smooth blend, 1 = crisp Voronoi cells
 uniform float u_meshBlur;        // post-blur radius (screen-space); 0 = sharp
 
-uniform sampler2D u_field0;
-uniform sampler2D u_field1;
-uniform sampler2D u_ramp0;
-uniform sampler2D u_ramp1;
+uniform sampler2DArray u_fields;
+uniform sampler2DArray u_ramps;
 
 const float PI = 3.14159265359;
 const float TAU = 6.28318530718;
@@ -223,12 +223,13 @@ vec3 rotateHue(vec3 col, float deg) {
 // is identical to texture(), but it stays well-defined when sampled from the relief
 // height function, which runs in non-uniform control flow.
 float sampleField(int i, float x) {
-  return i == 0 ? textureLod(u_field0, vec2(clamp(x, 0.0, 1.0), 0.5), 0.0).r
-                : textureLod(u_field1, vec2(clamp(x, 0.0, 1.0), 0.5), 0.0).r;
+  // Field is stored left-aligned in a 256-wide array layer; scale the sample coord
+  // by u_fieldW[i]/256 so texel centers still return exact bar values (see renderer).
+  float sx = clamp(x, 0.0, 1.0) * (u_fieldW[i] / 256.0);
+  return textureLod(u_fields, vec3(sx, 0.5, float(i)), 0.0).r;
 }
 vec3 sampleRamp(int i, float t) {
-  return i == 0 ? textureLod(u_ramp0, vec2(clamp(t, 0.0, 1.0), 0.5), 0.0).rgb
-                : textureLod(u_ramp1, vec2(clamp(t, 0.0, 1.0), 0.5), 0.0).rgb;
+  return textureLod(u_ramps, vec3(clamp(t, 0.0, 1.0), 0.5, float(i)), 0.0).rgb;
 }
 
 float quantize(float t, float steps) {
@@ -545,18 +546,21 @@ void main() {
   // warp returns p (already in [0,1]) so the clamp is a no-op — existing gradients
   // stay byte-identical.
   vec2 pw = clamp(applyFlow(p), 0.0, 1.0);
+
   vec3 col = u_bg;
-
-  vec4 l0 = computeLayer(0, pw);
-  col = mix(col, l0.rgb, l0.a);
-  float cover = l0.a;
-
-  if (u_layerCount > 1.5) {
-    vec4 l1 = computeLayer(1, pw);
-    vec3 blended = blendLayers(col, l1.rgb, u_blend[1]);
-    float a = l1.a * u_opacity[1];
-    col = mix(col, blended, a);
-    cover = max(cover, a);
+  float cover = 0.0;
+  for (int i = 0; i < LAYER_MAX; i++) {
+    if (float(i) > u_layerCount - 0.5) break;
+    vec4 li = computeLayer(i, pw);
+    if (i == 0) {
+      col = mix(col, li.rgb, li.a);
+      cover = li.a;
+    } else {
+      vec3 b = blendLayers(col, li.rgb, u_blend[i]);
+      float a = li.a * u_opacity[i];
+      col = mix(col, b, a);
+      cover = max(cover, a);
+    }
   }
 
   // 3D relief: light the band/ring height-field of layer 0 (the primary structure).

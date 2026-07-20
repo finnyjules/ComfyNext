@@ -8,7 +8,7 @@ import { applyMotion } from './motion'
 import { buildRampLut } from './ramp'
 import { hexToRgb } from './ramp'
 import { BLUR_FS, GRADIENT_FS, GRADIENT_VS } from './shaders'
-import { aspectRatio, canvasCenter, flowConfig, lightVector, reliefLight,
+import { aspectRatio, canvasCenter, flowConfig, lightVector, reliefLight, LAYER_MAX,
   type Direction, type FocusConfig, type GradientConfig,
   type LayoutKind, type MappingKind } from './types'
 import { BLEND_IDX } from '~/lib/studio/blend'
@@ -26,8 +26,11 @@ class GradientFxRenderer {
   private gl: WebGL2RenderingContext | null = null
   private prog: WebGLProgram | null = null
   private blurProg: WebGLProgram | null = null
-  private fieldTex: (WebGLTexture | null)[] = [null, null]
-  private rampTex: (WebGLTexture | null)[] = [null, null]
+  // Per-layer fields/ramps as 2D array textures (one array layer per gradient layer),
+  // sized 256 × 1 × LAYER_MAX. GLSL ES can't index a sampler[] by a loop variable, so
+  // the composite loop reads them as sampler2DArray.
+  private fieldArrayTex: WebGLTexture | null = null
+  private rampArrayTex: WebGLTexture | null = null
   // Offscreen target for the soft-focus post pass (allocated on first blur; resized with the canvas).
   private fbo: WebGLFramebuffer | null = null
   private sceneTex: WebGLTexture | null = null
@@ -41,7 +44,19 @@ class GradientFxRenderer {
       if (!this.gl) throw new Error('WebGL2 unavailable')
       this.prog = this.compile(this.gl, GRADIENT_FS)
       this.blurProg = this.compile(this.gl, BLUR_FS)
-      for (let i = 0; i < 2; i++) { this.fieldTex[i] = this.gl.createTexture(); this.rampTex[i] = this.gl.createTexture() }
+      const g = this.gl
+      const mk = (internal: number) => {
+        const t = g.createTexture()
+        g.bindTexture(g.TEXTURE_2D_ARRAY, t)
+        g.texStorage3D(g.TEXTURE_2D_ARRAY, 1, internal, 256, 1, LAYER_MAX)
+        g.texParameteri(g.TEXTURE_2D_ARRAY, g.TEXTURE_MIN_FILTER, g.LINEAR)
+        g.texParameteri(g.TEXTURE_2D_ARRAY, g.TEXTURE_MAG_FILTER, g.LINEAR)
+        g.texParameteri(g.TEXTURE_2D_ARRAY, g.TEXTURE_WRAP_S, g.CLAMP_TO_EDGE)
+        g.texParameteri(g.TEXTURE_2D_ARRAY, g.TEXTURE_WRAP_T, g.CLAMP_TO_EDGE)
+        return t
+      }
+      this.fieldArrayTex = mk(g.R8)
+      this.rampArrayTex = mk(g.RGBA8)
     }
     const gl = this.gl
     if (this.canvas!.width !== width || this.canvas!.height !== height) {
@@ -70,8 +85,8 @@ class GradientFxRenderer {
   }
 
   /** (Re)allocate the offscreen colour target used by the soft-focus post pass.
-   *  Binds on a SCRATCH unit (4) — never 0–3, which the main shader samples for its
-   *  field/ramp textures. If the scene texture were bound to unit 0 (u_field0) it
+   *  Binds on a SCRATCH unit (4) — never 0/1, which the main shader samples for its
+   *  field/ramp array textures. If the scene texture were bound to unit 0 (u_fields) it
    *  would be sampled while ALSO being the FBO's colour attachment during pass 1 —
    *  a texture feedback loop that drivers render as pure black. */
   private ensureSceneTarget(gl: WebGL2RenderingContext, width: number, height: number) {
@@ -114,28 +129,26 @@ class GradientFxRenderer {
     gl.drawArrays(gl.TRIANGLES, 0, 3)
   }
 
-  private uploadField(gl: WebGL2RenderingContext, slot: number, data: Float32Array) {
-    const bytes = new Uint8Array(data.length)
-    for (let i = 0; i < data.length; i++) bytes[i] = Math.round(Math.max(0, Math.min(1, data[i]!)) * 255)
-    gl.activeTexture(gl.TEXTURE0 + slot)
-    gl.bindTexture(gl.TEXTURE_2D, this.fieldTex[slot]!)
+  private uploadField(gl: WebGL2RenderingContext, layer: number, data: Float32Array) {
+    // Left-aligned in the 256-wide array layer; the shader scales sample coords by
+    // u_fieldW/256. Replicate the last value into one guard texel past the data (when
+    // width < 256) so LINEAR filtering past the last texel centre stays flat instead of
+    // interpolating into texStorage3D's zero fill — this keeps the neighbour sample that
+    // clamps to x=1.0 byte-identical to the old per-slot (edge-clamped) texture.
+    const w = data.length
+    const padW = Math.min(w + 1, 256)
+    const bytes = new Uint8Array(padW)
+    for (let i = 0; i < w; i++) bytes[i] = Math.round(Math.max(0, Math.min(1, data[i]!)) * 255)
+    if (padW > w) bytes[w] = bytes[w - 1]!
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.fieldArrayTex!)
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1)
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, data.length, 1, 0, gl.RED, gl.UNSIGNED_BYTE, bytes)
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+    gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, layer, padW, 1, 1, gl.RED, gl.UNSIGNED_BYTE, bytes)
   }
 
-  private uploadRamp(gl: WebGL2RenderingContext, slot: number, lut: Uint8Array) {
-    gl.activeTexture(gl.TEXTURE0 + 2 + slot)
-    gl.bindTexture(gl.TEXTURE_2D, this.rampTex[slot]!)
+  private uploadRamp(gl: WebGL2RenderingContext, layer: number, lut: Uint8Array) {
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.rampArrayTex!)
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4)
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, lut.length / 4, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, lut)
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+    gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, layer, lut.length / 4, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, lut)
   }
 
   /** Render `cfg` at `time` seconds into the shared canvas; returns it. */
@@ -145,8 +158,12 @@ class GradientFxRenderer {
     const prog = this.prog!
     gl.useProgram(prog)
 
-    const layers = c.layers.slice(0, 2)
-    const arr = (vals: number[]) => new Float32Array([vals[0] ?? 0, vals[1] ?? vals[0] ?? 0])
+    const layers = c.layers.slice(0, LAYER_MAX)
+    const arr = (vals: number[]) => {
+      const out = new Float32Array(LAYER_MAX)
+      for (let i = 0; i < LAYER_MAX; i++) out[i] = vals[i] ?? vals[0] ?? 0
+      return out
+    }
     const u = (name: string) => gl.getUniformLocation(prog, name)
 
     // Per-layer textures + uniform arrays.
@@ -154,11 +171,14 @@ class GradientFxRenderer {
     const rounding: number[] = [], mapping: number[] = [], steps: number[] = [], hueDrift: number[] = []
     const hueRotate: number[] = [], sweep: number[] = [], scrub: number[] = [], blend: number[] = [], opacity: number[] = []
     const crisp: number[] = [], rotStep: number[] = [], pivot: number[] = [], ringScale: number[] = [], ringShape: number[] = []
-    for (let i = 0; i < 2; i++) {
+    const fieldW: number[] = []
+    for (let i = 0; i < layers.length; i++) {
       const L = layers[i] ?? layers[0]!
       const s = L.shape, col = L.color
-      this.uploadField(gl, i, buildField(s, c.seed + ':' + i))
+      const fieldData = buildField(s, c.seed + ':' + i)
+      this.uploadField(gl, i, fieldData)
       this.uploadRamp(gl, i, buildRampLut(col.stops))
+      fieldW.push(fieldData.length)
       crisp.push(s.type === 'bands' ? 1 : 0)
       counts.push(Math.max(1, Math.round(s.count)))
       dir.push(DIR_IDX[s.direction] ?? 2)
@@ -181,10 +201,12 @@ class GradientFxRenderer {
       ringShape.push(s.ringShape === 'square' ? 2 : s.ringShape === 'diamond' ? 1 : 0)
     }
 
-    gl.uniform1i(u('u_field0'), 0)
-    gl.uniform1i(u('u_field1'), 1)
-    gl.uniform1i(u('u_ramp0'), 2)
-    gl.uniform1i(u('u_ramp1'), 3)
+    gl.activeTexture(gl.TEXTURE0)
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.fieldArrayTex)
+    gl.uniform1i(u('u_fields'), 0)
+    gl.activeTexture(gl.TEXTURE1)
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.rampArrayTex)
+    gl.uniform1i(u('u_ramps'), 1)
 
     gl.uniform2f(u('u_resolution'), width, height)
     gl.uniform1f(u('u_aspect'), aspectRatio(c.canvas.aspect))
@@ -304,6 +326,7 @@ class GradientFxRenderer {
     gl.uniform1fv(u('u_pivot'), arr(pivot))
     gl.uniform1fv(u('u_ringScale'), arr(ringScale))
     gl.uniform1fv(u('u_ringShape'), arr(ringShape))
+    gl.uniform1fv(u('u_fieldW'), arr(fieldW))
 
     gl.viewport(0, 0, width, height)
     gl.disable(gl.BLEND)
