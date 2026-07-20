@@ -117,6 +117,9 @@ export interface LayerConfig {
   opacity: number
   shape: ShapeConfig
   color: ColorConfig
+  /** Visibility (persisted). Absent/true = shown; false = skipped by the renderer.
+   *  Independent of opacity, so a hidden layer keeps its opacity for when re-shown. */
+  enabled?: boolean
   /** Mesh-layout points (only layer 0, only when canvas.layout === 'mesh'). */
   mesh?: MeshConfig
 }

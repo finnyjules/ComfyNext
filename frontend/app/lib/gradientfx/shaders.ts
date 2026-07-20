@@ -53,6 +53,7 @@ uniform float u_sweep[LAYER_MAX];      // radial sweep, fraction 0..1
 uniform float u_scrub[LAYER_MAX];
 uniform float u_blend[LAYER_MAX];      // 0 normal,1 lighten,2 screen,3 add,4 multiply,5 darken,6 overlay
 uniform float u_opacity[LAYER_MAX];
+uniform float u_enabled[LAYER_MAX];    // 1 = layer visible, 0 = disabled (skipped)
 uniform float u_crisp[LAYER_MAX];      // 1 = crisp bands (sharp seams), 0 = soft-blended columns
 uniform float u_rotStep[LAYER_MAX];    // stack: gradient rotation per ring, radians
 uniform float u_pivot[LAYER_MAX];      // stack: per-ring center orbit, 0..1
@@ -548,14 +549,21 @@ void main() {
   // stay byte-identical.
   vec2 pw = clamp(applyFlow(p), 0.0, 1.0);
 
+  // Composite the enabled layers in order. A disabled layer (u_enabled 0) is
+  // skipped entirely; the FIRST enabled layer becomes the base (composited over
+  // the background with no opacity), the rest blend over it — so disabling layer 0
+  // promotes the next enabled layer to base, matching the shader studio's chain.
   vec3 col = u_bg;
   float cover = 0.0;
+  bool baseDone = false;
   for (int i = 0; i < LAYER_MAX; i++) {
     if (float(i) > u_layerCount - 0.5) break;
+    if (u_enabled[i] < 0.5) continue;
     vec4 li = computeLayer(i, pw);
-    if (i == 0) {
+    if (!baseDone) {
       col = mix(col, li.rgb, li.a);
       cover = li.a;
+      baseDone = true;
     } else {
       vec3 b = blendLayers(col, li.rgb, u_blend[i]);
       float a = li.a * u_opacity[i];
@@ -567,7 +575,7 @@ void main() {
   // 3D relief: light the band/ring height-field of layer 0 (the primary structure).
   // Finite-difference normal from bandHeight, Lambert-shaded against u_light. Sidesteps
   // dFdx, which is undefined here because bandHeight early-returns at the mask edges.
-  if (u_relief > 0.001 && u_layout < 3.5) {
+  if (u_relief > 0.001 && u_layout < 3.5 && u_enabled[0] > 0.5) {
     float e = 1.5 / u_resolution.y;            // ~1.5px step in normalized units
     float h  = bandHeight(0, p);
     float hx = bandHeight(0, p + vec2(e, 0.0));

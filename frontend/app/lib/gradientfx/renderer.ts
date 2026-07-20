@@ -171,7 +171,7 @@ class GradientFxRenderer {
     const rounding: number[] = [], mapping: number[] = [], steps: number[] = [], hueDrift: number[] = []
     const hueRotate: number[] = [], sweep: number[] = [], scrub: number[] = [], blend: number[] = [], opacity: number[] = []
     const crisp: number[] = [], rotStep: number[] = [], pivot: number[] = [], ringScale: number[] = [], ringShape: number[] = []
-    const fieldW: number[] = []
+    const fieldW: number[] = [], enabled: number[] = []
     for (let i = 0; i < layers.length; i++) {
       const L = layers[i] ?? layers[0]!
       const s = L.shape, col = L.color
@@ -195,6 +195,7 @@ class GradientFxRenderer {
       scrub.push(s.scrub)
       blend.push(BLEND_IDX[L.blend] ?? 0)
       opacity.push(L.opacity)
+      enabled.push(L.enabled === false ? 0 : 1)
       rotStep.push((s.rotStep ?? 0) * Math.PI / 180)  // deg → rad
       pivot.push(s.pivot ?? 0)
       ringScale.push(s.ringScale ?? 1)
@@ -321,6 +322,7 @@ class GradientFxRenderer {
     gl.uniform1fv(u('u_scrub'), arr(scrub))
     gl.uniform1fv(u('u_blend'), arr(blend))
     gl.uniform1fv(u('u_opacity'), arr(opacity))
+    gl.uniform1fv(u('u_enabled'), arr(enabled))
     gl.uniform1fv(u('u_crisp'), arr(crisp))
     gl.uniform1fv(u('u_rotStep'), arr(rotStep))
     gl.uniform1fv(u('u_pivot'), arr(pivot))
