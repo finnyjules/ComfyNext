@@ -9,7 +9,7 @@ import * as THREE from 'three'
 import { stripAlpha } from '~/lib/color/convert'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js'
-import { roundedLatheGeometry, roundedPolyGeometry } from '~/lib/scene3d/roundedGeometry'
+import { roundedLatheGeometry, roundedPolyGeometry, roundedHullGeometry } from '~/lib/scene3d/roundedGeometry'
 import type { SceneDoc, SceneObject, Vec3, LightingPreset, PrimitiveKind, PrimitiveObject } from './config'
 import { loadGlb } from './glb'
 import { materialFor, updateMaterial, disposeMaterial } from './materials'
@@ -73,9 +73,30 @@ export function geometryFor(kind: PrimitiveKind, params?: Record<string, number>
       if (cr > 0) return roundedPolyGeometry(p('detail'), 0.5, cr, p('cornerSides'), Math.PI / 2)
       return new THREE.CylinderGeometry(p('radiusTop'), 0.5, 1, p('detail'))
     }
-    case 'icosahedron': return new THREE.IcosahedronGeometry(0.55, p('detail'))
-    case 'octahedron': return new THREE.OctahedronGeometry(0.55, p('detail'))
-    case 'dodecahedron': return new THREE.DodecahedronGeometry(0.55, p('detail'))
+    case 'icosahedron': {
+      const base = new THREE.IcosahedronGeometry(0.55, p('detail'))
+      const cr = p('cornerRadius')
+      if (cr <= 0) return base
+      const hull = roundedHullGeometry(base, cr, p('cornerSides'))
+      base.dispose()
+      return hull
+    }
+    case 'octahedron': {
+      const base = new THREE.OctahedronGeometry(0.55, p('detail'))
+      const cr = p('cornerRadius')
+      if (cr <= 0) return base
+      const hull = roundedHullGeometry(base, cr, p('cornerSides'))
+      base.dispose()
+      return hull
+    }
+    case 'dodecahedron': {
+      const base = new THREE.DodecahedronGeometry(0.55, p('detail'))
+      const cr = p('cornerRadius')
+      if (cr <= 0) return base
+      const hull = roundedHullGeometry(base, cr, p('cornerSides'))
+      base.dispose()
+      return hull
+    }
     case 'torusKnot':
       return new THREE.TorusKnotGeometry(0.4, p('tube'), p('detail'), Math.max(3, Math.round(p('detail') / 8)), p('p'), p('q'))
     case 'ring':

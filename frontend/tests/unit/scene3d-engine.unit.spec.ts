@@ -136,6 +136,26 @@ describe('scene3d parametric geometry', () => {
       expect(b, kind).toBe(a)
     }
   })
+
+  it('rounds the polyhedra edges and preserves their footprint', () => {
+    for (const kind of ['icosahedron', 'octahedron', 'dodecahedron'] as const) {
+      const plain = geometryFor(kind)
+      const round = geometryFor(kind, { cornerRadius: 0.15, cornerSides: 3 })
+      expect(round.getAttribute('position').count, kind).toBeGreaterThan(0)
+      expect(round.getAttribute('uv'), `${kind} uv`).toBeTruthy()
+      // size preserved within a small tolerance
+      plain.computeBoundingSphere(); round.computeBoundingSphere()
+      expect(round.boundingSphere!.radius, kind).toBeCloseTo(plain.boundingSphere!.radius, 1)
+    }
+  })
+
+  it('keeps the polyhedra identical at cornerRadius 0', () => {
+    for (const kind of ['icosahedron', 'octahedron', 'dodecahedron'] as const) {
+      const a = geometryFor(kind).getAttribute('position').count
+      const b = geometryFor(kind, { cornerRadius: 0 }).getAttribute('position').count
+      expect(b, kind).toBe(a)
+    }
+  })
 })
 
 describe('scene3d facet geometry variant', () => {
