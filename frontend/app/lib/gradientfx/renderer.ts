@@ -236,12 +236,18 @@ class GradientFxRenderer {
     const speed = fl.speed ?? 0
     let a1x = 0, a1y = 0, a2x = 0, a2y = 0, animAmt = 0
     if (speed > 0) {
-      const cycles = Math.max(1, Math.round(speed / 20))     // 1..5 loops per clip
+      // Cycle count must stay integral for the loop to close, so 1 loop per clip is
+      // the hard floor — the low end is made slow by shrinking the churn amplitude
+      // instead. Quadratic easing keeps 1..20 a barely-there drift while the top of
+      // the range stays as energetic as before.
+      const s = speed / 100
+      const ease = s * s
+      const cycles = Math.max(1, Math.round(speed / 34))     // 1..3 loops per clip
       const ang = loopPhase * Math.PI * 2 * cycles
-      const rad = 0.3 + (speed / 100) * 0.8                  // churn radius in noise space
+      const rad = 0.02 + ease * 1.08                         // churn radius in noise space
       a1x = Math.cos(ang) * rad; a1y = Math.sin(ang) * rad
       a2x = Math.cos(ang + 2.0944) * rad; a2y = Math.sin(ang + 2.0944) * rad // +120°
-      animAmt = 0.5 + (speed / 100) * 0.9                    // fold-field churn strength
+      animAmt = 0.04 + ease * 1.36                           // fold-field churn strength
     }
     gl.uniform2f(u('u_flowAnim1'), a1x, a1y)
     gl.uniform2f(u('u_flowAnim2'), a2x, a2y)
@@ -258,7 +264,10 @@ class GradientFxRenderer {
       const pts = (m?.points && m.points.length >= 2) ? m.points : buildMeshPoints(6, L0.color.stops, c.seed)
       meshRadius = 0.18 + ((m?.softness ?? 55) / 100) * 0.55
       meshContrast = (m?.contrast ?? 0) / 100
-      meshBlur = ((m?.blur ?? 0) / 100) * 0.09
+      // Radius in mesh-field units (points live in 0..1), so 0.34 averages over a
+      // third of the canvas at full blur. The field is already Gaussian-smooth, so a
+      // small radius reads as no change at all — it needs to be this wide to register.
+      meshBlur = ((m?.blur ?? 0) / 100) * 0.34
       const drift = (m?.drift ?? 0) / 100
       const xy = driftedMeshPositions(pts, drift, loopPhase, c.seed)
       meshCount = Math.min(MESH_MAX_POINTS, pts.length)

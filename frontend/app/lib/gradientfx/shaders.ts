@@ -267,12 +267,22 @@ vec4 computeLayer(int i, vec2 p) {
   if (u_layout > 4.5) {
     vec3 mcol;
     if (u_meshBlur > 0.0001) {
+      // Three rings, each rotated a third of a step off the last, so the taps spiral
+      // instead of lining up into 8 lobes at wide radii. Ring radii are spaced by
+      // sqrt to keep the sample density roughly even across the disc.
+      // Per-pixel rotation of the whole pattern: on a high-contrast (near-Voronoi)
+      // field a fixed tap set steps in discrete jumps and reads as radial spokes.
+      // Jittering turns that banding into fine noise the grain pass hides.
+      float jit = hashGrain(gl_FragCoord.xy) * TAU;
       vec3 sum = meshColorAt(p); float wsum = 1.0;
       for (int t = 0; t < 8; t++) {
-        float a = float(t) / 8.0 * TAU;
-        vec2 dir = vec2(cos(a), sin(a)); dir.x /= u_aspect;
-        sum += meshColorAt(p + dir * u_meshBlur);        wsum += 1.0;
-        sum += meshColorAt(p + dir * u_meshBlur * 0.5);  wsum += 1.0;
+        float a = float(t) / 8.0 * TAU + jit;
+        for (int r = 0; r < 3; r++) {
+          float rf = sqrt((float(r) + 1.0) / 3.0);
+          float ao = a + float(r) / 24.0 * TAU;
+          vec2 dir = vec2(cos(ao), sin(ao)); dir.x /= u_aspect;
+          sum += meshColorAt(p + dir * u_meshBlur * rf); wsum += 1.0;
+        }
       }
       mcol = sum / wsum;
     } else {
