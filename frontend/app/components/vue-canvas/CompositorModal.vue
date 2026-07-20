@@ -31,6 +31,8 @@ import { useInpaint, loadImage, capDims, imageToDataUrl, cleanCutoutAlpha } from
 import { useLayerImageEdit } from '~/composables/useLayerImageEdit'
 import { useRegionFx } from '~/composables/useRegionFx'
 import type { Cloner } from '~/composables/useCloner'
+import { resolveWiredSourceKind } from '~/lib/studio/frameResolve'
+import { frameSourceEpoch, type StudioFrameSource } from '~/lib/studio/frameSource'
 import { DEFAULT_FRAME_MOTION, type FrameMotion } from '~/lib/motion/types'
 import '~/lib/motion/paint' // registers the motion painter for paintLayerStack(t)
 import { bakeAndUpload, motionSourceKey, type MotionParams } from '~/lib/motion/bake'
@@ -94,29 +96,14 @@ const frameName = computed(() => {
   return (d?.title || d?.subgraphName || 'Frame') as string
 })
 
-// Multi-output sources (e.g. Split photo into layers: subject=0, background=1)
-// mirror ui images in output-slot order, so the wire's source handle picks
-// which image this layer shows.
-function srcOutputIndex(edge: any): number {
-  const m = /^output-(\d+)$/.exec(edge?.sourceHandle ?? '')
-  return m ? Number(m[1]) : 0
-}
-function getNodeImageUrl(node: any, edge?: any): string | null {
-  if (node?.data?.images?.length) {
-    const i = srcOutputIndex(edge)
-    return node.data.images[i] ?? node.data.images[0]
-  }
-  if (node?.data?.nodeType === 'LoadImage' && node?.data?.widgetsValues?.[0]) {
-    const filename = node.data.widgetsValues[0]
-    return `/view?${new URLSearchParams({ filename, type: 'input' })}`
-  }
-  return null
-}
-
 // ── Wired image layers (connected to the Compositor's slots) ────────────────
 interface Layer {
   slot: number
+  // Draw/cache key. Real /view URL for a baked image; synthetic `live:<slot>` for a
+  // live studio slot, whose frame source is in `live` (pulled as a still — the
+  // animated loop is a follow-on).
   url: string
+  live?: StudioFrameSource
   x: number; y: number
   rotation: number; scale: number
   opacity: number; blend: string
@@ -124,6 +111,7 @@ interface Layer {
 }
 
 const layers = computed<Layer[]>(() => {
+  frameSourceEpoch.value  // re-resolve when a studio (un)registers its frame source
   const node = compositor.value
   if (!node) return []
   const defs = node.data.widgetDefs as any[]
@@ -132,16 +120,14 @@ const layers = computed<Layer[]>(() => {
   const out: Layer[] = []
   // Keep in sync with `_MAX_LAYERS` in comfy_extras/nodes_compositor.py.
   for (let i = 1; i <= 16; i++) {
-    const edge = props.edges.find((e: any) =>
-      e.target === props.nodeId && e.targetHandle === `input-${i - 1}`)
-    if (!edge) continue
-    const source = props.nodes.find((n: any) => n.id === edge.source)
-    if (!source) continue
-    const url = getNodeImageUrl(source, edge)
-    if (!url) continue
+    const kind = resolveWiredSourceKind(String(props.nodeId), `input-${i - 1}`, props.nodes, props.edges)
+    if (!kind) continue
+    const live = kind.kind === 'live' ? kind.source : undefined
+    const url = kind.kind === 'url' ? kind.url : `live:${i}`
     out.push({
       slot: i,
       url,
+      live,
       x: wv[widgetIdx(`layer${i}_x`)] ?? 0,
       y: wv[widgetIdx(`layer${i}_y`)] ?? 0,
       rotation: wv[widgetIdx(`layer${i}_rotation`)] ?? 0,
@@ -1199,10 +1185,28 @@ const editingStyle = computed(() => {
 // One canvas draws everything interleaved by the unified stackKeys, so a local
 // shape can sit below a wired image. Wired drawing uses the shared
 // `drawWiredImageLayer` so the node and modal render pixel-identically.
-const wiredImageEls = ref<Record<number, HTMLImageElement>>({})
+const wiredImageEls = ref<Record<number, HTMLImageElement | HTMLCanvasElement>>({})
 function onWiredImageReady(slot: number, img: HTMLImageElement) {
   if (img.complete && img.naturalWidth) wiredImageEls.value = { ...wiredImageEls.value, [slot]: img }
 }
+// A live studio slot has no <img> to @load — pull its current frame and COPY it into a
+// canvas we own (the source reuses its buffer across getFrame calls). Re-runs on wiring
+// and frameSourceEpoch so a late-registering studio appears. Still-only for now.
+watch(() => layers.value.map(l => l.live ? `L${l.slot}` : l.url).join('|') + '|' + frameSourceEpoch.value, async () => {
+  for (const l of layers.value) {
+    if (!l.live) continue
+    const src = l.live
+    const w = Math.max(1, src.width || 1024), h = Math.max(1, src.height || 1024)
+    try {
+      const surface = await src.getFrame(0, w, h)
+      const cv = document.createElement('canvas')
+      cv.width = w; cv.height = h
+      cv.getContext('2d')!.drawImage(surface as CanvasImageSource, 0, 0, w, h)
+      naturalDims.value = { ...naturalDims.value, [l.slot]: { w, h } }
+      wiredImageEls.value = { ...wiredImageEls.value, [l.slot]: cv }
+    } catch (e) { console.warn('[Compositor] live slot pull failed for slot', l.slot, e) }
+  }
+}, { immediate: true })
 function drawWiredLayer(ctx: CanvasRenderingContext2D, layer: Layer, W: number, H: number) {
   drawWiredImageLayer(ctx, wiredImageEls.value[layer.slot], layer, W, H)
 }
@@ -2385,10 +2389,12 @@ onUnmounted(() => {
       >
         <!-- Invisible <img> elements: kept for @load (natural dims) and pointer interaction.
              The unified stack canvas below handles all visual rendering. -->
+        <!-- Live studio slots have no real URL — use a transparent 1×1 so the pointer
+             target still exists; their pixels + dims come from the live-pull watch. -->
         <img
           v-for="layer in layers"
           :key="layer.slot"
-          :src="layer.url"
+          :src="layer.live ? 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==' : layer.url"
           draggable="false"
           class="absolute inset-0 w-full h-full object-contain origin-center select-none touch-none"
           :style="{
@@ -2397,7 +2403,7 @@ onUnmounted(() => {
             cursor: drag?.type === 'move' && drag.slot === layer.slot ? 'grabbing' : 'grab',
             zIndex: 10,
           }"
-          @load="(e: Event) => { onImageLoad(layer.slot, e); onWiredImageReady(layer.slot, e.target as HTMLImageElement) }"
+          @load="(e: Event) => { if (!layer.live) { onImageLoad(layer.slot, e); onWiredImageReady(layer.slot, e.target as HTMLImageElement) } }"
           @pointerdown="onLayerPointerDown(layer.slot, $event)"
         />
 
