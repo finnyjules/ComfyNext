@@ -18,11 +18,12 @@ function slider(key: string, label: string, min: number, max: number, step: numb
 export function shaderAgentControls(cfg: ShaderStudioConfig, effectDef: EffectDef | null): ControlSpec[] {
   const out: ControlSpec[] = []
 
-  // Active effect's float knobs (the heart of the stylize stage)
-  if (cfg.effect.enabled && effectDef) {
+  // Active effect's float knobs (the heart of the stylize stage). Task 6 renders
+  // the first layer; full multi-effect tune wiring is Task 7.
+  if (cfg.effects[0]?.enabled && effectDef) {
     for (const p of effectDef.params) {
       if (p.type !== 'float') continue // enum uniforms are structural, not a tune
-      out.push(slider(`effect.params.${p.uniform}`, p.label, p.min ?? 0, p.max ?? 1, p.step ?? 0.01, 'Effect'))
+      out.push(slider(`effects.0.params.${p.uniform}`, p.label, p.min ?? 0, p.max ?? 1, p.step ?? 0.01, 'Effect'))
     }
   }
 

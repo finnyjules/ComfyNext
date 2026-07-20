@@ -11,8 +11,8 @@ describe('shader config migration', () => {
     expect(out.effects[0]!.opacity).toBe(1)
     expect(out.effects[0]!.layerId).toMatch(/.+/)
     expect(out.version).toBe(2)
-    // NOTE: `effect` is intentionally KEPT in Task 5 (readers still use it); Task 6
-    // switches readers to `effects` and only then deletes `effect`.
+    // Task 6 cutover: readers now use `effects[]`, so the legacy field is dropped.
+    expect((out as any).effect).toBeUndefined()
   })
   it('passes through an already-migrated config untouched', () => {
     const cur = { version: 2, effects: [{ id: 'x', params: {}, enabled: true, blend: 'screen', opacity: 0.5, layerId: 'a' }] }

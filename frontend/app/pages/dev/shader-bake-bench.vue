@@ -51,7 +51,7 @@ import { defaultConfig } from '~/lib/shaderstudio/types'
 // loaded-up studio config (6 passes) without needing the effect catalog.
 function benchConfig() {
   const c = defaultConfig()
-  c.effect.enabled = false
+  c.effects[0]!.enabled = false
   c.duotone.enabled = true
   c.gradientMap.enabled = true
   c.adjust.enabled = true
@@ -115,7 +115,7 @@ async function run() {
   try {
     for (const res of RESOLUTIONS) {
       const src = makeSource(Math.min(res, 2048))
-      const passes = composePasses(cfg, null, 0)
+      const passes = composePasses(cfg, () => null, 0)
 
       for (const f of FORMATS) {
         status.value = `${res}px ${f.name}…`

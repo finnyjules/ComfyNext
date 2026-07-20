@@ -7,6 +7,7 @@ import { fetchShaderFxCatalog } from '~/lib/shaderfx/catalog'
 import { shaderFx } from '~/lib/shaderfx/renderer'
 import type { ShaderFxCatalog, EffectDef } from '~/lib/shaderfx/types'
 import { composePasses } from '~/lib/shaderstudio/passes'
+import { migrateShaderConfig } from '~/lib/shaderstudio/migrate'
 import { applyMotion } from '~/lib/shaderstudio/motion'
 import { loadImage, resolveWiredInput } from '~/lib/shaderstudio/source'
 import { hydrateConfig, outputDims, type ShaderStudioConfig } from '~/lib/shaderstudio/types'
@@ -23,7 +24,7 @@ const injectedEdges = inject<any>('vueFlowEdges', null)
 const injectedNodes = inject<any>('vueFlowNodes', null)
 
 const config = computed<ShaderStudioConfig>(
-  () => hydrateConfig(props.data?.properties?.sailor_shaderStudio),
+  () => hydrateConfig(migrateShaderConfig(props.data?.properties?.sailor_shaderStudio)),
 )
 const animated = computed(() => (config.value.motion?.tracks?.length ?? 0) > 0)
 
@@ -56,7 +57,7 @@ function renderFrame(t: number) {
   if (el.width !== w || el.height !== h) { el.width = w; el.height = h }
   try {
     const cfg = animated.value ? applyMotion(config.value, t) : config.value
-    const passes = composePasses(cfg, effectDef(cfg.effect.id), t)
+    const passes = composePasses(cfg, effectDef, t)
     el.getContext('2d')!.drawImage(shaderFx.render(passes, base, w, h), 0, 0)
     glError.value = null
   } catch (e: any) { glError.value = String(e?.message ?? e) }
@@ -90,7 +91,7 @@ async function bakeOutput(): Promise<Blob | null> {
   cancelAnimationFrame(raf)   // pause the preview so it can't overwrite the shared output canvas
   try {
     const { w, h } = outputDims(base.naturalWidth, base.naturalHeight, config.value.resolution || 1536, { upscale: true })
-    const out = shaderFx.render(composePasses(config.value, effectDef(config.value.effect.id), 0), base, w, h)
+    const out = shaderFx.render(composePasses(config.value, effectDef, 0), base, w, h)
     return await new Promise<Blob | null>(res => out.toBlob(b => res(b), 'image/png', 0.95))
   } finally {
     startLoop()
@@ -141,7 +142,7 @@ const varsInputIndex = computed(() =>
     <div class="flex items-center gap-2 border-b border-white/10 px-3 py-2">
       <Sparkles class="h-3.5 w-3.5 text-white/70" />
       <span class="text-xs font-medium text-white/80">Shader Studio</span>
-      <span class="ml-auto truncate text-[10px] uppercase tracking-wide text-white/40">{{ config.effect.id || 'no effect' }}</span>
+      <span class="ml-auto truncate text-[10px] uppercase tracking-wide text-white/40">{{ config.effects[0]?.id || 'no effect' }}</span>
     </div>
 
     <div class="flex items-center justify-center bg-neutral-950 aspect-video">

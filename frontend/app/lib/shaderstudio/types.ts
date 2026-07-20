@@ -93,7 +93,7 @@ export interface StudioPost {
 }
 
 export interface MotionTrack {
-  /** dotted config path to a numeric leaf, e.g. 'adjust.exposure', 'effect.params.u_size'. */
+  /** dotted config path to a numeric leaf, e.g. 'adjust.exposure', 'effects.0.params.u_size'. */
   path: string
   from: number
   to: number
@@ -115,9 +115,7 @@ export interface ShaderStudioConfig {
   source: StudioSource
   /** long-edge cap (px) for preview/export sizing. */
   resolution: number
-  /** @deprecated — removed in the reader switch; use effects[] */
-  effect: StudioEffect
-  /** stacked effect layers (replaces the single `effect` field; max LAYER_MAX). */
+  /** stacked effect layers (max LAYER_MAX). */
   effects: StudioEffect[]
   duotone: StudioDuotone
   gradientMap: StudioGradientMap
@@ -131,8 +129,7 @@ export function defaultConfig(): ShaderStudioConfig {
     version: 2,
     source: { kind: 'none' },
     resolution: 1536,
-    effect: { id: '', params: {}, enabled: true, customChars: '', blend: 'normal', opacity: 1, layerId: newLayerId() },
-    effects: [{ layerId: newLayerId(), id: '', params: {}, enabled: true, blend: 'normal', opacity: 1 }],
+    effects: [{ layerId: newLayerId(), id: '', params: {}, enabled: true, customChars: '', blend: 'normal', opacity: 1 }],
     duotone: { enabled: false, ink: '#1a1a2e', paper: '#f5f5f5' },
     gradientMap: {
       enabled: false, mix: 1,

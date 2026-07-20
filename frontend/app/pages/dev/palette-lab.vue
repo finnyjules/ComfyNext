@@ -29,7 +29,7 @@ function renderGM() {
     bx.fillStyle = g; bx.fillRect(0, 0, W, H)
     const cfg = defaultConfig()
     cfg.gradientMap.enabled = true; cfg.gradientMap.stops = stops.value; cfg.gradientMap.mix = 1
-    const out = shaderFx.render(composePasses(cfg, null, 0), base, W, H)
+    const out = shaderFx.render(composePasses(cfg, () => null, 0), base, W, H)
     const cv = gmCanvas.value!; cv.width = W; cv.height = H
     cv.getContext('2d')!.drawImage(out, 0, 0)
     gmError.value = ''

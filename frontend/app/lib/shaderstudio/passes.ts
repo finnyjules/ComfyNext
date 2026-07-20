@@ -6,6 +6,7 @@
 import { resolveUniforms } from '~/lib/shaderfx/params'
 import { expandPasses, type ShaderPass, type Uniforms } from '~/lib/shaderfx/renderer'
 import type { EffectDef } from '~/lib/shaderfx/types'
+import { BLEND_IDX } from '~/lib/studio/blend'
 import { ADJUST_FS, BLOOM_FS, CHROMATIC_FS, DUOTONE_FS, GRADIENT_MAP_FS, LENS_BLUR_FS } from './glsl'
 import type { ShaderStudioConfig } from './types'
 
@@ -22,26 +23,42 @@ export interface EffectTextureBundle {
 }
 
 /**
- * @param cfg     studio config (already motion-applied for the frame, if animating)
- * @param effect  EffectDef for cfg.effect.id, or null if none / not loaded
- * @param t       time in seconds (drives u_time for animated effects)
- * @param tex     resolved effect textures + extra uniforms (browser-side; {} in tests)
+ * @param cfg        studio config (already motion-applied for the frame, if animating)
+ * @param resolveDef resolves a catalog effect id → EffectDef (or null if not loaded)
+ * @param t          time in seconds (drives u_time for animated effects)
+ * @param texFor     resolves an effect's textures + extra uniforms (browser-side; {} in tests)
  */
 export function composePasses(
   cfg: ShaderStudioConfig,
-  effect: EffectDef | null,
+  resolveDef: (id: string) => EffectDef | null,
   t: number,
-  tex: EffectTextureBundle = { sources: {}, uniforms: {} },
+  texFor: (def: EffectDef | null) => EffectTextureBundle = () => ({ sources: {}, uniforms: {} }),
 ): ShaderPass[] {
   const out: ShaderPass[] = []
 
-  // 1. Stylized effect (reuse shaderfx; expand multi-pass)
-  if (cfg.effect.enabled && cfg.effect.id && effect) {
+  // 1. Stylized effect stack (chain; each layer composites over its input by blend+opacity)
+  for (const layer of cfg.effects) {
+    if (!layer.enabled || !layer.id) continue
+    const def = resolveDef(layer.id)
+    if (!def) continue
+    const tex = texFor(def)
     const uniforms: Uniforms = {
-      ...resolveUniforms(effect, cfg.effect.params),
+      ...resolveUniforms(def, layer.params),
       u_time: t, u_seed: 42, u_hasInput: 1, ...tex.uniforms,
     }
-    out.push(...expandPasses(effect.id, effect.source, uniforms, tex.sources, effect.passes ?? 1))
+    const needsComposite = layer.blend !== 'normal' || layer.opacity < 0.999
+    const expanded = expandPasses(def.id, def.source, uniforms, tex.sources, def.passes ?? 1)
+    if (needsComposite && out.length > 0) {
+      // snapshot the layer input before the effect runs, then composite over it
+      expanded[0] = { ...expanded[0]!, snapshot: true }
+      out.push(...expanded)
+      out.push({
+        id: 'studio:composite', source: '', uniforms: {},
+        composite: { blendIdx: BLEND_IDX[layer.blend], opacity: layer.opacity },
+      })
+    } else {
+      out.push(...expanded)
+    }
   }
 
   // 2. Duotone

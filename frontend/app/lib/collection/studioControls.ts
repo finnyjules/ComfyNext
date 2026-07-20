@@ -72,7 +72,7 @@ async function shaderControls(node: any): Promise<StudioControlDesc[]> {
   ])
   const saved = node?.data?.properties?.sailor_shaderStudio
   const config = saved && typeof saved === 'object' ? hydrateConfig(saved) : defaultConfig()
-  const effectDef = config.effect?.id ? await getEffect(config.effect.id) : null
+  const effectDef = config.effects[0]?.id ? await getEffect(config.effects[0].id) : null
   return mapAll(shaderAgentControls(config, effectDef))
 }
 

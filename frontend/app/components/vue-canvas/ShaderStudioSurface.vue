@@ -16,10 +16,11 @@ import { resolveUniforms } from '~/lib/shaderfx/params'
 import { shaderFx } from '~/lib/shaderfx/renderer'
 import type { EffectDef, ShaderFxCatalog } from '~/lib/shaderfx/types'
 import { composePasses, type EffectTextureBundle } from '~/lib/shaderstudio/passes'
+import { migrateShaderConfig } from '~/lib/shaderstudio/migrate'
 import { ANIMATABLE, applyMotion } from '~/lib/shaderstudio/motion'
 import { ADJUST_PRESETS, applyAdjustPreset } from '~/lib/shaderstudio/presets'
 import { loadImage } from '~/lib/shaderstudio/source'
-import { cloneConfig, defaultConfig, hydrateConfig, outputDims, type MotionTrack, type ShaderStudioConfig } from '~/lib/shaderstudio/types'
+import { cloneConfig, defaultConfig, hydrateConfig, newLayerId, outputDims, type MotionTrack, type ShaderStudioConfig } from '~/lib/shaderstudio/types'
 import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
 import { useStudioAgent } from '~/composables/useStudioAgent'
 import { useStudioVarBindings } from '~/composables/useStudioVarBindings'
@@ -55,10 +56,12 @@ const bakeMsg = ref('')
 // to the user's chosen resolution separately.
 const PREVIEW_MAX_W = 1600
 
+// Active layer — Task 6 renders the first effect; full multi-effect UI is Task 7.
+const activeEffect = computed(() => config.value.effects[0]!)
 const effectDef = computed<EffectDef | null>(
-  () => catalog.value?.effects.find(e => e.id === config.value.effect.id) ?? null)
+  () => catalog.value?.effects.find(e => e.id === config.value.effects[0]?.id) ?? null)
 const effectUniforms = computed(() =>
-  effectDef.value ? resolveUniforms(effectDef.value, config.value.effect.params) : {})
+  effectDef.value ? resolveUniforms(effectDef.value, config.value.effects[0]?.params ?? {}) : {})
 
 // In-product agent — "tune" the shader in natural language (Phase 1). The nested
 // `config` is bridged to a flat Params; only the controls for currently-enabled
@@ -223,7 +226,7 @@ function texBundle(def: EffectDef | null): EffectTextureBundle {
   }
   // ASCII "Custom" shape (u_shape == 14) → bind the runtime glyph atlas.
   if (def.id === 'ascii_dither' && Math.round(effectUniforms.value['u_shape'] ?? 0) === 14) {
-    sources['u_customGlyphs'] = buildCustomAtlas(config.value.effect.customChars ?? '')
+    sources['u_customGlyphs'] = buildCustomAtlas(config.value.effects[0]?.customChars ?? '')
   }
   return { sources, uniforms }
 }
@@ -239,7 +242,7 @@ function renderFrame(t: number) {
   if (el.width !== w || el.height !== h) { el.width = w; el.height = h }
   try {
     const cfg = animated.value ? applyMotion(config.value, t) : config.value
-    const passes = composePasses(cfg, effectDef.value, t, texBundle(effectDef.value))
+    const passes = composePasses(cfg, id => catalog.value?.effects.find(e => e.id === id) ?? null, t, def => texBundle(def))
     el.getContext('2d')!.drawImage(shaderFx.render(passes, base, w, h), 0, 0)
     glError.value = null
   } catch (e: any) { glError.value = String(e?.message ?? e) }
@@ -319,7 +322,7 @@ function renderThumb(def: EffectDef): string {
 }
 function ensureThumb(def: EffectDef | null | undefined) { if (!def || thumbCache[def.id]) return; const t = renderThumb(def); if (t) { thumbCache[def.id] = t; thumbs.value = { ...thumbCache } } }
 function openPicker() { pickerSearch.value = ''; pickerFilter.value = 'all'; pickerOpen.value = true; for (const def of catalog.value?.effects ?? []) if (!def.generative) ensureThumb(def) }
-function pickEffect(id: string) { config.value.effect = { id, params: {}, enabled: true, customChars: '', blend: config.value.effect.blend, opacity: config.value.effect.opacity, layerId: config.value.effect.layerId }; pickerOpen.value = false; renderFrame(0) }
+function pickEffect(id: string) { const prev = config.value.effects[0]; config.value.effects[0] = { id, params: {}, enabled: true, customChars: '', blend: prev?.blend ?? 'normal', opacity: prev?.opacity ?? 1, layerId: prev?.layerId ?? newLayerId() }; pickerOpen.value = false; renderFrame(0) }
 const currentThumb = computed(() => (effectDef.value ? thumbs.value[effectDef.value.id] ?? '' : ''))
 
 // ── duotone / adjust presets ────────────────────────────────────────────────
@@ -355,7 +358,7 @@ const animatablePaths = computed(() => [
   ...ANIMATABLE,
   ...(effectDef.value?.params ?? [])
     .filter(p => p.type !== 'enum')
-    .map(p => ({ path: `effect.params.${p.uniform}`, label: `Effect · ${p.label}`, min: p.min ?? 0, max: p.max ?? 1 })),
+    .map(p => ({ path: `effects.0.params.${p.uniform}`, label: `Effect · ${p.label}`, min: p.min ?? 0, max: p.max ?? 1 })),
 ])
 function addTrack() {
   const a = animatablePaths.value[0]!
@@ -364,7 +367,7 @@ function addTrack() {
 function removeTrack(i: number) { config.value.motion.tracks.splice(i, 1) }
 
 // ── persistence ────────────────────────────────────────────────────────────────
-function loadConfig() { const c = currentNode()?.data?.properties?.sailor_shaderStudio; if (c && typeof c === 'object') config.value = hydrateConfig(c) }
+function loadConfig() { const c = currentNode()?.data?.properties?.sailor_shaderStudio; if (c && typeof c === 'object') config.value = hydrateConfig(migrateShaderConfig(c)) }
 function saveConfig() { const n = currentNode(); if (!n) return; n.data ||= {}; n.data.properties ||= {}; n.data.properties.sailor_shaderStudio = cloneConfig(config.value) }
 function closeEditor() { try { saveConfig() } catch (e) { console.error('[shader-studio] saveConfig failed', e) } emit('close') }
 
@@ -373,7 +376,7 @@ async function renderBlob(t: number): Promise<Blob> {
   const base = baseImage.value!
   const { w, h } = outputDims(base.naturalWidth, base.naturalHeight, config.value.resolution, { upscale: true })
   const cfg = animated.value ? applyMotion(config.value, t) : config.value
-  shaderFx.render(composePasses(cfg, effectDef.value, t, texBundle(effectDef.value)), base, w, h)
+  shaderFx.render(composePasses(cfg, id => catalog.value?.effects.find(e => e.id === id) ?? null, t, def => texBundle(def)), base, w, h)
   const c = shaderFx.outputCanvas!
   return await new Promise<Blob>((res, rej) => c.toBlob(b => (b ? res(b) : rej(new Error('toBlob failed'))), 'image/png', 0.95))
 }
@@ -467,7 +470,7 @@ onMounted(async () => {
 })
 onBeforeUnmount(() => { saveConfig(); stopPreview(); unregisterStudioParamBaker(props.nodeId) })
 
-function setParam(uniform: string, value: number) { config.value.effect.params = { ...config.value.effect.params, [uniform]: value } }
+function setParam(uniform: string, value: number) { const e = config.value.effects[0]; if (e) e.params = { ...e.params, [uniform]: value } }
 </script>
 
 <template>
@@ -506,7 +509,7 @@ function setParam(uniform: string, value: number) { config.value.effect.params =
 
       <!-- Stylized Effects -->
       <StudioSection title="Stylized Effects">
-        <template #badge><StudioSwitch v-model="config.effect.enabled" /></template>
+        <template #badge><StudioSwitch v-model="activeEffect.enabled" /></template>
         <button class="mb-2 flex w-full items-center gap-2 rounded border border-white/10 bg-white/[0.04] px-2 py-1.5 text-left hover:bg-white/[0.08]" @click="openPicker">
           <span class="size-5 overflow-hidden rounded bg-white/[0.06]"><img v-if="currentThumb" :src="currentThumb" class="h-full w-full object-cover" /></span>
           <span class="min-w-0 flex-1 truncate text-[11px] text-white/90">{{ effectDef?.name ?? 'Pick an effect' }}</span>
@@ -532,7 +535,7 @@ function setParam(uniform: string, value: number) { config.value.effect.params =
           <div v-if="effectDef?.id === 'ascii_dither' && p.uniform === 'u_shape' && Math.round(effectUniforms[p.uniform] ?? 0) === 14" class="mb-2">
             <label class="mb-0.5 block text-[11px] text-white/40">Characters (sorted by density)</label>
             <input
-              v-model="config.effect.customChars" type="text" spellcheck="false" placeholder=" .:-=+*#%@"
+              v-model="activeEffect.customChars" type="text" spellcheck="false" placeholder=" .:-=+*#%@"
               class="w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 font-mono text-xs tracking-wider"
             />
           </div>
@@ -657,7 +660,7 @@ function setParam(uniform: string, value: number) { config.value.effect.params =
   </StudioModalShell>
 
   <CatalogModal :open="pickerOpen" title="Shader Effects" subtitle="Pick an effect to apply"
-    :items="pickerItems" :selected-id="config.effect.id" :filters="pickerFilters" :active-filter-id="pickerFilter" :search-query="pickerSearch"
+    :items="pickerItems" :selected-id="activeEffect.id" :filters="pickerFilters" :active-filter-id="pickerFilter" :search-query="pickerSearch"
     search-placeholder="Search effects…" confirm-label="Use effect" empty-message="No effects match your search."
     @close="pickerOpen = false" @confirm="pickEffect(($event as EffectDef).id)" @update:active-filter-id="pickerFilter = $event" @update:search-query="pickerSearch = $event">
     <template #card="{ item }">

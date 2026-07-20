@@ -1,6 +1,8 @@
 // Singleton WebGL2 renderer for ShaderEffect previews.
 // One GL context app-wide (browsers cap ~8-16); callers drawImage() the returned canvas.
 
+import { BLEND_LAYERS_GLSL } from '~/lib/studio/blend'
+
 export type Uniforms = Record<string, number>
 
 export interface ShaderPass {
@@ -10,6 +12,10 @@ export interface ShaderPass {
   source: string
   uniforms: Uniforms
   textures?: Record<string, TexImageSource>
+  /** Copy the current accumulated image into the hold buffer BEFORE this pass runs. */
+  snapshot?: boolean
+  /** Composite this pass's output over the held image via blendLayers. */
+  composite?: { blendIdx: number; opacity: number }
 }
 
 /** Expand one effect into N ping-pong passes (u_pass / u_passCount set per pass). */
@@ -49,13 +55,33 @@ in vec2 v_texCoord;
 layout(location = 0) out vec4 fragColor0;
 void main() { fragColor0 = texture(u_image0, v_texCoord); }`
 
+// Composite pass: blend this layer's output (u_image0) over the held input
+// (u_below) via the shared blendLayers vocabulary, then mix by opacity.
+const COMPOSITE_FS = `#version 300 es
+precision highp float;
+in vec2 v_texCoord; out vec4 fragColor;
+uniform sampler2D u_image0; uniform sampler2D u_below;
+uniform float u_blend; uniform float u_opacity;
+${BLEND_LAYERS_GLSL}
+void main() {
+  vec3 below = texture(u_below, v_texCoord).rgb;
+  vec3 above = texture(u_image0, v_texCoord).rgb;
+  vec3 b = blendLayers(below, above, u_blend);
+  fragColor = vec4(mix(below, b, clamp(u_opacity, 0.0, 1.0)), 1.0);
+}`
+
 class ShaderFxRenderer {
   private canvas: HTMLCanvasElement | null = null
   private gl: WebGL2RenderingContext | null = null
   private programs = new Map<string, { source: string; prog: WebGLProgram }>()
   private blit: WebGLProgram | null = null
+  private composite: WebGLProgram | null = null
   private fboTex: (WebGLTexture | null)[] = [null, null]
   private fbos: (WebGLFramebuffer | null)[] = [null, null]
+  // Third off-band buffer: holds the snapshot of a layer's input so a composite
+  // pass can blend the layer's output back over what was beneath it.
+  private holdTex: WebGLTexture | null = null
+  private holdFbo: WebGLFramebuffer | null = null
   private fboSize = [0, 0]
   private baseTex: WebGLTexture | null = null
   private baseSize = [0, 0]
@@ -93,6 +119,23 @@ class ShaderFxRenderer {
         gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0)
         this.fboTex[i] = tex
         this.fbos[i] = fbo
+      }
+      // Hold buffer (same storage as the ping-pong pair) for composite snapshots.
+      if (this.holdTex) gl.deleteTexture(this.holdTex)
+      if (this.holdFbo) gl.deleteFramebuffer(this.holdFbo)
+      {
+        const tex = gl.createTexture()
+        gl.bindTexture(gl.TEXTURE_2D, tex)
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null)
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+        const fbo = gl.createFramebuffer()
+        gl.bindFramebuffer(gl.FRAMEBUFFER, fbo)
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0)
+        this.holdTex = tex
+        this.holdFbo = fbo
       }
       this.fboSize = [width, height]
     }
@@ -167,6 +210,49 @@ class ShaderFxRenderer {
     let readTex = this.baseTex!
     for (let i = 0; i < passes.length; i++) {
       const pass = passes[i]!
+
+      // Snapshot the current accumulated image into the hold buffer BEFORE this
+      // pass runs, so a later composite pass can blend over the layer's input.
+      if (pass.snapshot) {
+        if (!this.blit) this.blit = this.program('__blit__', BLIT_FS)
+        gl.useProgram(this.blit)
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this.holdFbo ?? null)
+        gl.viewport(0, 0, width, height)
+        gl.disable(gl.BLEND)
+        gl.activeTexture(gl.TEXTURE0)
+        gl.bindTexture(gl.TEXTURE_2D, readTex)
+        const hloc = gl.getUniformLocation(this.blit, 'u_image0')
+        if (hloc) gl.uniform1i(hloc, 0)
+        gl.drawArrays(gl.TRIANGLES, 0, 3)
+      }
+
+      // Composite pass: blend this pass's input (readTex = the layer output) over
+      // the held image via the composite program. Its `source` is ignored.
+      if (pass.composite) {
+        if (!this.composite) this.composite = this.program('__composite__', COMPOSITE_FS)
+        gl.useProgram(this.composite)
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbos[i % 2] ?? null)
+        gl.viewport(0, 0, width, height)
+        gl.disable(gl.BLEND)
+        gl.activeTexture(gl.TEXTURE0)
+        gl.bindTexture(gl.TEXTURE_2D, readTex)
+        const aLoc = gl.getUniformLocation(this.composite, 'u_image0')
+        if (aLoc) gl.uniform1i(aLoc, 0)
+        gl.activeTexture(gl.TEXTURE1)
+        gl.bindTexture(gl.TEXTURE_2D, this.holdTex)
+        const bLoc = gl.getUniformLocation(this.composite, 'u_below')
+        if (bLoc) gl.uniform1i(bLoc, 1)
+        const blLoc = gl.getUniformLocation(this.composite, 'u_blend')
+        if (blLoc) gl.uniform1f(blLoc, pass.composite.blendIdx)
+        const opLoc = gl.getUniformLocation(this.composite, 'u_opacity')
+        if (opLoc) gl.uniform1f(opLoc, pass.composite.opacity)
+        gl.clearColor(0, 0, 0, 0)
+        gl.clear(gl.COLOR_BUFFER_BIT)
+        gl.drawArrays(gl.TRIANGLES, 0, 3)
+        readTex = this.fboTex[i % 2]!
+        continue
+      }
+
       const prog = this.program(pass.id, pass.source)
       gl.useProgram(prog)
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbos[i % 2] ?? null)

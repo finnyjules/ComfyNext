@@ -341,7 +341,7 @@ export async function tuneShaderNode(node: any, request: string, apiKey: string)
     read: async (n) => {
       const saved = n?.data?.properties?.sailor_shaderStudio
       const config: ShaderStudioConfig = saved && typeof saved === 'object' ? hydrateShaderConfig(saved) : defaultShaderConfig()
-      const effectDef = config.effect?.id ? await getEffect(config.effect.id) : null
+      const effectDef = config.effects[0]?.id ? await getEffect(config.effects[0].id) : null
       return { config, controls: shaderAgentControls(config, effectDef) }
     },
     params: (config) => makeConfigParams(() => config),
