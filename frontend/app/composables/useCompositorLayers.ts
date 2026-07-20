@@ -1441,13 +1441,19 @@ export interface WiredTransform {
  */
 export function drawWiredImageLayer(
   ctx: CanvasRenderingContext2D,
-  img: HTMLImageElement | undefined | null,
+  // Accepts a canvas too: a live studio slot supplies its frame as a canvas, which
+  // has width/height but no naturalWidth/complete. Image behaviour is unchanged.
+  img: HTMLImageElement | HTMLCanvasElement | undefined | null,
   layer: WiredTransform,
   W: number,
   H: number,
 ) {
-  if (!img || !img.complete || !img.naturalWidth) return
-  const cAspect = W / H, iAspect = img.naturalWidth / img.naturalHeight
+  if (!img) return
+  const iw = 'naturalWidth' in img ? img.naturalWidth : img.width
+  const ih = 'naturalHeight' in img ? img.naturalHeight : img.height
+  if (!iw || !ih) return
+  if ('complete' in img && !img.complete) return   // undecoded <img> — skip, as before
+  const cAspect = W / H, iAspect = iw / ih
   let fitW: number, fitH: number
   if (iAspect > cAspect) { fitW = W; fitH = W / iAspect } else { fitH = H; fitW = H * iAspect }
   const op = WIRED_BLEND_OP[layer.blend] ?? 'source-over'
