@@ -101,11 +101,11 @@ export const PRIMITIVE_PARAMS: Record<PrimitiveKind, ParamSpec[]> = {
     ...corner(),
   ],
   // IcosahedronGeometry(0.55)
-  icosahedron: [subdivision()],
+  icosahedron: [subdivision(), ...corner()],
   // OctahedronGeometry(0.55)
-  octahedron: [subdivision()],
+  octahedron: [subdivision(), ...corner()],
   // DodecahedronGeometry(0.55)
-  dodecahedron: [subdivision()],
+  dodecahedron: [subdivision(), ...corner()],
   // TorusKnotGeometry(0.4, 0.12, 128, 16) — p and q default to 2 and 3
   torusKnot: [
     detail(32, 256, 128),

@@ -70,6 +70,16 @@ describe('scene3d primitive params', () => {
       expect(paramValue(kind, undefined, 'cornerSides')).toBe(2)
     }
   })
+
+  it('gives the convex polyhedra a corner radius', () => {
+    for (const kind of ['icosahedron', 'octahedron', 'dodecahedron'] as const) {
+      const keys = PRIMITIVE_PARAMS[kind].map((s) => s.key)
+      expect(keys, `${kind} missing cornerRadius`).toContain('cornerRadius')
+      expect(keys, `${kind} missing cornerSides`).toContain('cornerSides')
+      expect(paramValue(kind, undefined, 'cornerRadius')).toBe(0)
+      expect(paramValue(kind, undefined, 'cornerSides')).toBe(2)
+    }
+  })
 })
 
 describe('scene3d modifier specs', () => {
