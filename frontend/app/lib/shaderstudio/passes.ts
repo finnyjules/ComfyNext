@@ -8,7 +8,7 @@ import { expandPasses, type ShaderPass, type Uniforms } from '~/lib/shaderfx/ren
 import type { EffectDef } from '~/lib/shaderfx/types'
 import { BLEND_IDX } from '~/lib/studio/blend'
 import { ADJUST_FS, BLOOM_FS, CHROMATIC_FS, DUOTONE_FS, GRADIENT_MAP_FS, LENS_BLUR_FS } from './glsl'
-import type { ShaderStudioConfig } from './types'
+import type { ShaderStudioConfig, StudioEffect } from './types'
 
 /** Hex (#rrggbb) → {r,g,b} in 0..1. */
 function hexRgb(hex: string): { r: number; g: number; b: number } {
@@ -26,13 +26,16 @@ export interface EffectTextureBundle {
  * @param cfg        studio config (already motion-applied for the frame, if animating)
  * @param resolveDef resolves a catalog effect id → EffectDef (or null if not loaded)
  * @param t          time in seconds (drives u_time for animated effects)
- * @param texFor     resolves an effect's textures + extra uniforms (browser-side; {} in tests)
+ * @param texFor     resolves an effect's textures + extra uniforms for a specific
+ *                   stacked layer (browser-side; {} in tests). Receives the layer so
+ *                   per-layer data (e.g. the ASCII "Custom" glyph atlas) is resolved
+ *                   from the layer being composited, not the active one.
  */
 export function composePasses(
   cfg: ShaderStudioConfig,
   resolveDef: (id: string) => EffectDef | null,
   t: number,
-  texFor: (def: EffectDef | null) => EffectTextureBundle = () => ({ sources: {}, uniforms: {} }),
+  texFor: (def: EffectDef | null, layer: StudioEffect) => EffectTextureBundle = () => ({ sources: {}, uniforms: {} }),
 ): ShaderPass[] {
   const out: ShaderPass[] = []
 
@@ -41,7 +44,7 @@ export function composePasses(
     if (!layer.enabled || !layer.id) continue
     const def = resolveDef(layer.id)
     if (!def) continue
-    const tex = texFor(def)
+    const tex = texFor(def, layer)
     const uniforms: Uniforms = {
       ...resolveUniforms(def, layer.params),
       u_time: t, u_seed: 42, u_hasInput: 1, ...tex.uniforms,

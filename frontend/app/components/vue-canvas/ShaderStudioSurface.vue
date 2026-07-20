@@ -224,7 +224,9 @@ function buildCustomAtlas(raw: string): HTMLCanvasElement {
   if (customAtlasCache.size > 16) customAtlasCache.delete(customAtlasCache.keys().next().value!)
   return atlas
 }
-function texBundle(def: EffectDef | null): EffectTextureBundle {
+// `layer` is the specific stacked effect being composited; omitted only by the
+// catalog thumbnail renderer, which previews a def with default params.
+function texBundle(def: EffectDef | null, layer?: StudioEffect): EffectTextureBundle {
   const sources: Record<string, TexImageSource> = {}
   const uniforms: Record<string, number> = {}
   if (!def) return { sources, uniforms }
@@ -234,9 +236,12 @@ function texBundle(def: EffectDef | null): EffectTextureBundle {
     else if (!img) { const el = new Image(); el.onload = () => renderFrame(0); el.src = assetUrl(t.file, t.v); textureImages.set(t.file, el) }
     for (const [k, v] of Object.entries(t.extraUniforms ?? {})) uniforms[k] = v
   }
-  // ASCII "Custom" shape (u_shape == 14) → bind the runtime glyph atlas.
-  if (def.id === 'ascii_dither' && Math.round(effectUniforms.value['u_shape'] ?? 0) === 14) {
-    sources['u_customGlyphs'] = buildCustomAtlas(activeEffectCfg.value?.customChars ?? '')
+  // ASCII "Custom" shape (u_shape == 14) → bind the runtime glyph atlas. Resolve the
+  // shape AND the glyph chars from THIS layer (not the active one) so a stacked or
+  // non-active ASCII effect composites its own glyphs.
+  const shape = layer?.params['u_shape'] ?? def.params.find(p => p.uniform === 'u_shape')?.default ?? 0
+  if (def.id === 'ascii_dither' && Math.round(shape) === 14) {
+    sources['u_customGlyphs'] = buildCustomAtlas(layer?.customChars ?? '')
   }
   return { sources, uniforms }
 }
@@ -252,7 +257,7 @@ function renderFrame(t: number) {
   if (el.width !== w || el.height !== h) { el.width = w; el.height = h }
   try {
     const cfg = animated.value ? applyMotion(config.value, t) : config.value
-    const passes = composePasses(cfg, id => catalog.value?.effects.find(e => e.id === id) ?? null, t, def => texBundle(def))
+    const passes = composePasses(cfg, id => catalog.value?.effects.find(e => e.id === id) ?? null, t, (def, layer) => texBundle(def, layer))
     el.getContext('2d')!.drawImage(shaderFx.render(passes, base, w, h), 0, 0)
     glError.value = null
   } catch (e: any) { glError.value = String(e?.message ?? e) }
@@ -392,7 +397,7 @@ async function renderBlob(t: number): Promise<Blob> {
   const base = baseImage.value!
   const { w, h } = outputDims(base.naturalWidth, base.naturalHeight, config.value.resolution, { upscale: true })
   const cfg = animated.value ? applyMotion(config.value, t) : config.value
-  shaderFx.render(composePasses(cfg, id => catalog.value?.effects.find(e => e.id === id) ?? null, t, def => texBundle(def)), base, w, h)
+  shaderFx.render(composePasses(cfg, id => catalog.value?.effects.find(e => e.id === id) ?? null, t, (def, layer) => texBundle(def, layer)), base, w, h)
   const c = shaderFx.outputCanvas!
   return await new Promise<Blob>((res, rej) => c.toBlob(b => (b ? res(b) : rej(new Error('toBlob failed'))), 'image/png', 0.95))
 }
