@@ -9,12 +9,15 @@ import type { DeliverableItem } from '~/lib/deliverables/model'
 import DeliverableTile from './DeliverableTile.vue'
 import DeliverableSetOverlay from './DeliverableSetOverlay.vue'
 
-defineProps<{ projectName: string }>()
+const props = defineProps<{ projectName: string; api?: ReturnType<typeof useDeliverables> }>()
 const emit = defineEmits<{ openInCanvas: [nodeId: string] }>()
 
+// Prefer the single shared instance passed by default.vue (its persist is wired
+// to the real autosave). Only fall back to a self-built instance — via inject —
+// if no api was passed, so edits still function in isolation/tests.
 const docRef = inject<Ref<ProjectDoc | null>>('projectDoc', ref(null))
 const persist = inject<() => void>('persistDeliverables', () => {})
-const dl = useDeliverables(docRef, persist)
+const dl = props.api ?? useDeliverables(docRef, persist)
 
 const picked = ref<Set<string>>(new Set())
 function togglePick(id: string) {

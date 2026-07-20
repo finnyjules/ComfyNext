@@ -3798,6 +3798,7 @@ function dismissRunResult() {
             v-if="activeTab.type === 'project' && projectView === 'deliverables'"
             class="absolute inset-0 z-30"
             :project-name="activeTab.label || 'Untitled project'"
+            :api="deliverablesApi"
             @open-in-canvas="onOpenDeliverableInCanvas"
           />
           <!-- Native Nodes sidebar (overlays canvas from left) -->
