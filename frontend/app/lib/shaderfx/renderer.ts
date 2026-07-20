@@ -14,6 +14,14 @@ export interface ShaderPass {
   textures?: Record<string, TexImageSource>
   /** Copy the current accumulated image into the hold buffer BEFORE this pass runs. */
   snapshot?: boolean
+  /**
+   * Capture the current accumulated image as THIS layer's source BEFORE this pass
+   * runs, and bind it to `u_source` for this pass onward. Set on the first pass of
+   * every stacked (non-base) layer so effects that composite over `u_source`
+   * (bloom/glow/tilt_shift) build on the layer beneath them, not the original
+   * image. Absent on the base layer, whose source stays the original `baseTex`.
+   */
+  captureSource?: boolean
   /** Composite this pass's output over the held image via blendLayers. */
   composite?: { blendIdx: number; opacity: number }
 }
@@ -82,6 +90,11 @@ class ShaderFxRenderer {
   // pass can blend the layer's output back over what was beneath it.
   private holdTex: WebGLTexture | null = null
   private holdFbo: WebGLFramebuffer | null = null
+  // Per-layer source buffer: the accumulated image entering the current stacked
+  // layer, bound to u_source so u_source-sampling effects composite over the layer
+  // beneath rather than the original image (see ShaderPass.captureSource).
+  private layerSrcTex: WebGLTexture | null = null
+  private layerSrcFbo: WebGLFramebuffer | null = null
   private fboSize = [0, 0]
   private baseTex: WebGLTexture | null = null
   private baseSize = [0, 0]
@@ -136,6 +149,23 @@ class ShaderFxRenderer {
         gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0)
         this.holdTex = tex
         this.holdFbo = fbo
+      }
+      // Layer-source buffer (same storage) — holds the input to the current stacked layer.
+      if (this.layerSrcTex) gl.deleteTexture(this.layerSrcTex)
+      if (this.layerSrcFbo) gl.deleteFramebuffer(this.layerSrcFbo)
+      {
+        const tex = gl.createTexture()
+        gl.bindTexture(gl.TEXTURE_2D, tex)
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null)
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+        const fbo = gl.createFramebuffer()
+        gl.bindFramebuffer(gl.FRAMEBUFFER, fbo)
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0)
+        this.layerSrcTex = tex
+        this.layerSrcFbo = fbo
       }
       this.fboSize = [width, height]
     }
@@ -208,8 +238,28 @@ class ShaderFxRenderer {
     this.baseSize = [bw, bh]
 
     let readTex = this.baseTex!
+    // u_source = the current layer's input. Starts as the original base (correct for
+    // the base layer); each stacked layer's first pass re-captures it (captureSource).
+    let sourceTex = this.baseTex!
     for (let i = 0; i < passes.length; i++) {
       const pass = passes[i]!
+
+      // Capture this stacked layer's input as its source, so u_source-sampling
+      // effects (bloom/glow/tilt_shift) composite over the layer beneath, not the
+      // original image. Must run before the pass, and before snapshot (both blit).
+      if (pass.captureSource) {
+        if (!this.blit) this.blit = this.program('__blit__', BLIT_FS)
+        gl.useProgram(this.blit)
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this.layerSrcFbo ?? null)
+        gl.viewport(0, 0, width, height)
+        gl.disable(gl.BLEND)
+        gl.activeTexture(gl.TEXTURE0)
+        gl.bindTexture(gl.TEXTURE_2D, readTex)
+        const sloc = gl.getUniformLocation(this.blit, 'u_image0')
+        if (sloc) gl.uniform1i(sloc, 0)
+        gl.drawArrays(gl.TRIANGLES, 0, 3)
+        sourceTex = this.layerSrcTex!
+      }
 
       // Snapshot the current accumulated image into the hold buffer BEFORE this
       // pass runs, so a later composite pass can blend over the layer's input.
@@ -264,9 +314,10 @@ class ShaderFxRenderer {
       const imgLoc = gl.getUniformLocation(prog, 'u_image0')
       if (imgLoc) gl.uniform1i(imgLoc, 0)
 
-      // u_source = the original input, available to every pass (e.g. bloom composite)
+      // u_source = the current layer's input (base image for the base layer, the
+      // image beneath for a stacked layer — see captureSource above).
       gl.activeTexture(gl.TEXTURE1)
-      gl.bindTexture(gl.TEXTURE_2D, this.baseTex!)
+      gl.bindTexture(gl.TEXTURE_2D, sourceTex)
       const srcLoc = gl.getUniformLocation(prog, 'u_source')
       if (srcLoc) gl.uniform1i(srcLoc, 1)
 

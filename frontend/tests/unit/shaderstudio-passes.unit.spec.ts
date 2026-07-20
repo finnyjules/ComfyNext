@@ -94,4 +94,51 @@ describe('composePasses', () => {
     expect(passes).toHaveLength(3)
     expect(passes.every(p => p.id === 'bloom')).toBe(true)
   })
+
+  // The base layer keeps u_source = original image (captureSource absent), so
+  // u_source-sampling effects (bloom/glow/tilt_shift) composite over the source —
+  // the pre-stacking behaviour, byte-identical for a single-effect doc.
+  it('does not mark the base layer to capture its source', () => {
+    const c = defaultConfig()
+    c.effects = [{ layerId: 'L0', id: 'bloom', params: {}, enabled: true, blend: 'normal', opacity: 1 }]
+    const bloom: EffectDef = { ...fakeEffect, id: 'bloom', passes: 2, params: [] }
+    const passes = composePasses(c, () => bloom, 0)
+    expect(passes.every(p => !p.captureSource)).toBe(true)
+  })
+
+  // A stacked layer captures the image beneath it as u_source, so a bloom/glow/
+  // tilt_shift layer builds on the layer below rather than the original image —
+  // the fix for "the top shader doesn't apply to the shader underneath".
+  it('marks a stacked layer to capture its source, on its first pass only', () => {
+    const c = defaultConfig()
+    c.effects = [
+      { layerId: 'L0', id: 'halftone', params: {}, enabled: true, blend: 'normal', opacity: 1 },
+      { layerId: 'L1', id: 'bloom', params: {}, enabled: true, blend: 'normal', opacity: 1 },
+    ]
+    const resolve = (id: string): EffectDef | null =>
+      id === 'bloom' ? { ...fakeEffect, id: 'bloom', passes: 2, params: [] } : fakeEffect
+    const passes = composePasses(c, resolve, 0)
+    // base halftone pass + 2 bloom passes = 3
+    expect(passes).toHaveLength(3)
+    expect(passes[0]!.captureSource).toBeFalsy()          // base layer
+    expect(passes[1]!.captureSource).toBe(true)           // stacked layer, first pass
+    expect(passes[2]!.captureSource).toBeFalsy()          // stacked layer, later pass
+  })
+
+  // captureSource is orthogonal to compositing: a stacked layer with a non-normal
+  // blend both captures its source AND snapshots for the composite pass.
+  it('sets both captureSource and snapshot on a stacked non-normal layer', () => {
+    const c = defaultConfig()
+    c.effects = [
+      { layerId: 'L0', id: 'halftone', params: {}, enabled: true, blend: 'normal', opacity: 1 },
+      { layerId: 'L1', id: 'bloom', params: {}, enabled: true, blend: 'screen', opacity: 0.5 },
+    ]
+    const resolve = (id: string): EffectDef | null =>
+      id === 'bloom' ? { ...fakeEffect, id: 'bloom', passes: 1, params: [] } : fakeEffect
+    const passes = composePasses(c, resolve, 0)
+    // base + bloom + composite = 3
+    expect(passes.map(p => p.id)).toEqual(['halftone', 'bloom', 'studio:composite'])
+    expect(passes[1]!.captureSource).toBe(true)
+    expect(passes[1]!.snapshot).toBe(true)
+  })
 })

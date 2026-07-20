@@ -51,7 +51,12 @@ export function composePasses(
     }
     const needsComposite = layer.blend !== 'normal' || layer.opacity < 0.999
     const expanded = expandPasses(def.id, def.source, uniforms, tex.sources, def.passes ?? 1)
-    if (needsComposite && out.length > 0) {
+    // A stacked layer (anything already beneath it) captures its input as u_source,
+    // so u_source-sampling effects (bloom/glow/tilt_shift) build on the layer below
+    // rather than the original image. The base layer keeps the original source.
+    const stacked = out.length > 0
+    if (stacked) expanded[0] = { ...expanded[0]!, captureSource: true }
+    if (needsComposite && stacked) {
       // snapshot the layer input before the effect runs, then composite over it
       expanded[0] = { ...expanded[0]!, snapshot: true }
       out.push(...expanded)

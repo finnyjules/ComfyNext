@@ -36,7 +36,21 @@ async function renderJob(job: HarnessJob): Promise<string> {
   return canvas.toDataURL('image/png')
 }
 
+// Render hand-built passes directly (for verifying the layer-source / captureSource
+// path). base is a solid-color dataURL; returns the center pixel [r,g,b,a] 0..255.
+async function renderPassesProbe(passes: any[], baseDataUrl: string, w: number, h: number): Promise<number[]> {
+  const base = await loadImage(baseDataUrl)
+  const glCanvas = shaderFx.render(passes, base, w, h)
+  // shaderFx's canvas is WebGL — copy into a 2D canvas to sample a pixel.
+  const probe = document.createElement('canvas'); probe.width = w; probe.height = h
+  const ctx = probe.getContext('2d')!
+  ctx.drawImage(glCanvas, 0, 0)
+  const px = ctx.getImageData(Math.floor(w / 2), Math.floor(h / 2), 1, 1).data
+  return [px[0]!, px[1]!, px[2]!, px[3]!]
+}
+
 if (import.meta.client) {
   ;(window as any).__renderShaderFx = renderJob
+  ;(window as any).__renderPassesProbe = renderPassesProbe
 }
 </script>
