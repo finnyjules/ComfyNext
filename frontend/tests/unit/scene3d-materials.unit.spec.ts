@@ -41,6 +41,25 @@ describe('scene3d materials factory', () => {
     expect((m as THREE.MeshPhysicalMaterial).ior).toBe(2.0)
   })
 
+  it('renders transmissive surfaces double-sided so the interior is visible', () => {
+    // Glass defaults to full transmission → double-sided, so refraction reaches
+    // the object's own back walls / interior facets (a solid gem, not a shell).
+    expect((materialFor(base({ type: 'glass' })) as THREE.MeshPhysicalMaterial).side).toBe(THREE.DoubleSide)
+    // An opaque standard surface stays single-sided.
+    expect((materialFor(base()) as THREE.MeshPhysicalMaterial).side).toBe(THREE.FrontSide)
+    // A standard surface with transmission dialed up also goes double-sided.
+    expect((materialFor(base({ transmission: 0.6 })) as THREE.MeshPhysicalMaterial).side).toBe(THREE.DoubleSide)
+  })
+
+  it('flips side and recompiles when transmission crosses zero', () => {
+    const m = materialFor(base()) as THREE.MeshPhysicalMaterial
+    expect(m.side).toBe(THREE.FrontSide)
+    const v0 = m.version
+    expect(updateMaterial(m, base({ transmission: 0.8 }))).toBe(true)
+    expect(m.side).toBe(THREE.DoubleSide)
+    expect(m.version).toBeGreaterThan(v0) // the side define changed → recompile
+  })
+
   it('updates gradient uniforms in place through userData', () => {
     const m = materialFor(base({ type: 'gradient' }))
     expect(updateMaterial(m, base({ type: 'gradient', gradientB: '#112233', gradientAxis: 'z' }))).toBe(true)

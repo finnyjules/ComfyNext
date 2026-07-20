@@ -281,6 +281,11 @@ function applyPhysical(p: THREE.MeshPhysicalMaterial, mat: SceneMaterial): void 
   p.transmission = mat.transmission ?? (isGlass ? MATERIAL_DEFAULTS.transmission : 0)
   p.ior = mat.ior ?? MATERIAL_DEFAULTS.ior
   p.thickness = mat.thickness ?? MATERIAL_DEFAULTS.thickness
+  // Transmissive surfaces render double-sided so refraction reaches the object's
+  // own back walls and interior facets — a solid glass gem rather than a hollow
+  // shell. Opaque surfaces stay single-sided (alpha opacity is a flat front-face
+  // fade by design; Transmission is the physical see-through path).
+  p.side = p.transmission > 0 ? THREE.DoubleSide : THREE.FrontSide
   p.clearcoat = mat.clearcoat ?? MATERIAL_DEFAULTS.clearcoat
   p.clearcoatRoughness = mat.clearcoatRoughness ?? MATERIAL_DEFAULTS.clearcoatRoughness
   p.sheen = mat.sheen ?? MATERIAL_DEFAULTS.sheen
@@ -441,6 +446,10 @@ export function updateMaterial(m: THREE.Material, mat: SceneMaterial): boolean {
       // swaps the render list — bump it ourselves. Plain slider movement within an
       // enabled range never recompiles (per-tick jank).
       if (p.transparent !== wasTransparent) p.needsUpdate = true
+      // NB: `side` (set in applyPhysical) flips DoubleSide↔FrontSide exactly as
+      // transmission crosses zero — the same crossing at which three's transmission
+      // setter self-recompiles — so that recompile already picks up the new side
+      // define. No extra needsUpdate bump here, or the crossing would recompile twice.
       return true
     }
     case 'toon': {
