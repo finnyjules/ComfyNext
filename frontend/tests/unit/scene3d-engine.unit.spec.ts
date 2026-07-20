@@ -143,6 +143,12 @@ describe('scene3d parametric geometry', () => {
       const round = geometryFor(kind, { cornerRadius: 0.15, cornerSides: 3 })
       expect(round.getAttribute('position').count, kind).toBeGreaterThan(0)
       expect(round.getAttribute('uv'), `${kind} uv`).toBeTruthy()
+      // The rounded hull is a convex hull with flat faces + rounded edges/corners,
+      // which produces substantially more triangles than the plain polyhedron. If
+      // the rounding wiring were absent (factory falling back to the plain
+      // geometry at cornerRadius > 0), this would fail.
+      expect(round.getAttribute('position').count, `${kind} should have more geometry when rounded`)
+        .toBeGreaterThan(plain.getAttribute('position').count)
       // size preserved within a small tolerance
       plain.computeBoundingSphere(); round.computeBoundingSphere()
       expect(round.boundingSphere!.radius, kind).toBeCloseTo(plain.boundingSphere!.radius, 1)
