@@ -2,6 +2,7 @@
 // keep that file focused. cornerRadius 0 never reaches here — the factory falls
 // back to the plain three.js primitive — so these always round something.
 import * as THREE from 'three'
+import { ConvexGeometry } from 'three/examples/jsm/geometries/ConvexGeometry.js'
 
 /** 2D fillet of corner B in the polyline A-B-C: a tangent arc of radius r with
  *  `segments` spans, ordered from the A-side tangent to the C-side tangent.
@@ -125,5 +126,94 @@ export function roundedPolyGeometry(
   geo.rotateX(-Math.PI / 2)   // extrude axis Z becomes height Y
   geo.center()                // recentre height on the origin
   geo.computeVertexNormals()  // ExtrudeGeometry does not compute smooth normals
+  return geo
+}
+
+/** Spherical UV projection — ConvexGeometry sets position+normal but no uv, and
+ *  the plain polyhedra have uvs, so textured materials need this to keep working. */
+export function addSphericalUV(geo: THREE.BufferGeometry): void {
+  const pos = geo.getAttribute('position') as THREE.BufferAttribute
+  const uv: number[] = []
+  const v = new THREE.Vector3()
+  for (let i = 0; i < pos.count; i++) {
+    v.fromBufferAttribute(pos, i).normalize()
+    const u = 0.5 + Math.atan2(v.z, v.x) / (Math.PI * 2)
+    const w = 0.5 - Math.asin(Math.min(1, Math.max(-1, v.y))) / Math.PI
+    uv.push(u, w)
+  }
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2))
+}
+
+/** Spherical interpolation of two unit vectors. */
+function slerpDir(u: THREE.Vector3, w: THREE.Vector3, t: number): THREE.Vector3 {
+  const dot = Math.min(1, Math.max(-1, u.dot(w)))
+  const om = Math.acos(dot)
+  if (om < 1e-4) return u.clone()
+  const s = Math.sin(om)
+  return u.clone().multiplyScalar(Math.sin((1 - t) * om) / s)
+    .add(w.clone().multiplyScalar(Math.sin(t * om) / s)).normalize()
+}
+
+/** Round a CONVEX polyhedron's edges/corners by a convex offset: the Minkowski sum
+ *  of the solid with a sphere of radius `cornerRadius`, approximated as the convex
+ *  hull of per-vertex sample clouds. Faces stay flat (offset-face points), edges and
+ *  corners round (arc samples). Result is scaled back to the base's bounding size so
+ *  dragging Corner doesn't balloon the shape. Does not dispose `base`. */
+export function roundedHullGeometry(
+  base: THREE.BufferGeometry, cornerRadius: number, cornerSides: number,
+): THREE.BufferGeometry {
+  const pos = base.getAttribute('position') as THREE.BufferAttribute
+  const index = base.index
+  const triCount = index ? index.count / 3 : pos.count / 3
+  const vAt = (i: number): THREE.Vector3 =>
+    new THREE.Vector3().fromBufferAttribute(pos, index ? index.getX(i) : i)
+
+  // Unique vertices keyed on quantised position, each with its incident face normals.
+  const key = (p: THREE.Vector3): string =>
+    `${Math.round(p.x * 1e4)},${Math.round(p.y * 1e4)},${Math.round(p.z * 1e4)}`
+  const verts = new Map<string, { p: THREE.Vector3, normals: THREE.Vector3[] }>()
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3()
+  const ab = new THREE.Vector3(), ac = new THREE.Vector3(), n = new THREE.Vector3()
+  for (let t = 0; t < triCount; t++) {
+    a.copy(vAt(t * 3)); b.copy(vAt(t * 3 + 1)); c.copy(vAt(t * 3 + 2))
+    n.crossVectors(ab.subVectors(b, a), ac.subVectors(c, a)).normalize()
+    for (const p of [a, b, c]) {
+      const k = key(p)
+      let e = verts.get(k)
+      if (!e) { e = { p: p.clone(), normals: [] }; verts.set(k, e) }
+      // dedupe near-parallel normals so a vertex keeps one entry per distinct face plane
+      if (!e.normals.some((m) => m.dot(n) > 0.9999)) e.normals.push(n.clone())
+    }
+  }
+
+  const steps = Math.max(1, Math.round(cornerSides))
+  const points: THREE.Vector3[] = []
+  for (const { p, normals } of verts.values()) {
+    const dirs: THREE.Vector3[] = normals.map((m) => m.clone()) // flat faces
+    for (let i = 0; i < normals.length; i++) {
+      for (let j = i + 1; j < normals.length; j++) {
+        for (let s = 1; s <= steps; s++) {
+          dirs.push(slerpDir(normals[i]!, normals[j]!, s / (steps + 1))) // rounded edges
+        }
+      }
+    }
+    if (normals.length > 0) {
+      const avg = new THREE.Vector3()
+      for (const m of normals) avg.add(m)
+      if (avg.lengthSq() > 1e-8) dirs.push(avg.normalize()) // corner cap
+    }
+    for (const d of dirs) points.push(p.clone().addScaledVector(d, cornerRadius))
+  }
+
+  const geo = new ConvexGeometry(points)
+
+  // Preserve the base's overall size — the offset grows it by ~cornerRadius.
+  base.computeBoundingSphere()
+  geo.computeBoundingSphere()
+  const r0 = base.boundingSphere!.radius
+  const r1 = geo.boundingSphere!.radius
+  if (r1 > 1e-6) geo.scale(r0 / r1, r0 / r1, r0 / r1)
+
+  addSphericalUV(geo)
   return geo
 }

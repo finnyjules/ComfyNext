@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import * as THREE from 'three'
-import { roundedLatheGeometry, roundedPolyGeometry } from '~/lib/scene3d/roundedGeometry'
+import { roundedLatheGeometry, roundedPolyGeometry, roundedHullGeometry } from '~/lib/scene3d/roundedGeometry'
 
 const finite = (g: THREE.BufferGeometry): boolean => {
   const a = g.getAttribute('position')
@@ -127,5 +127,62 @@ describe('roundedPolyGeometry', () => {
     const [w, , d] = size(g)
     expect(w).toBeLessThanOrEqual(1.02)
     expect(d).toBeLessThanOrEqual(1.02)
+  })
+})
+
+describe('roundedHullGeometry', () => {
+  const bases = () => ({
+    icosahedron: new THREE.IcosahedronGeometry(0.55),
+    octahedron: new THREE.OctahedronGeometry(0.55),
+    dodecahedron: new THREE.DodecahedronGeometry(0.55),
+  })
+
+  it('builds a valid rounded hull with normals and uv for each polyhedron', () => {
+    for (const [name, base] of Object.entries(bases())) {
+      const g = roundedHullGeometry(base, 0.12, 3)
+      expect(g.getAttribute('position').count, name).toBeGreaterThan(0)
+      expect(g.getAttribute('normal'), name).toBeTruthy()
+      expect(g.getAttribute('uv'), name).toBeTruthy()
+      expect(finite(g), name).toBe(true)
+    }
+  })
+
+  it('preserves the base bounding size (does not balloon)', () => {
+    const base = new THREE.IcosahedronGeometry(0.55)
+    base.computeBoundingSphere()
+    const r0 = base.boundingSphere!.radius
+    const g = roundedHullGeometry(base, 0.2, 3)
+    g.computeBoundingSphere()
+    expect(g.boundingSphere!.radius).toBeCloseTo(r0, 2)
+  })
+
+  it('keeps some faces flat (offset-face triangles share an exact normal)', () => {
+    const base = new THREE.DodecahedronGeometry(0.55)
+    const g = roundedHullGeometry(base, 0.06, 2)
+    const nrm = g.getAttribute('normal')
+    // count triangles whose 3 vertices share an identical normal (a flat facet)
+    let flatTris = 0
+    for (let t = 0; t < nrm.count; t += 3) {
+      const same =
+        nrm.getX(t) === nrm.getX(t + 1) && nrm.getX(t + 1) === nrm.getX(t + 2) &&
+        nrm.getY(t) === nrm.getY(t + 1) && nrm.getY(t + 1) === nrm.getY(t + 2) &&
+        nrm.getZ(t) === nrm.getZ(t + 1) && nrm.getZ(t + 1) === nrm.getZ(t + 2)
+      if (same) flatTris++
+    }
+    expect(flatTris).toBeGreaterThan(0)
+  })
+
+  it('stays finite at the extreme radius and lowest corner sides', () => {
+    const base = new THREE.OctahedronGeometry(0.55)
+    const g = roundedHullGeometry(base, 0.49, 1)
+    expect(g.getAttribute('position').count).toBeGreaterThan(0)
+    expect(finite(g)).toBe(true)
+  })
+
+  it('adds vertices as corner sides rises (smoother arcs)', () => {
+    const base = new THREE.IcosahedronGeometry(0.55)
+    const coarse = roundedHullGeometry(base, 0.2, 1).getAttribute('position').count
+    const smooth = roundedHullGeometry(base, 0.2, 8).getAttribute('position').count
+    expect(smooth).toBeGreaterThan(coarse)
   })
 })
