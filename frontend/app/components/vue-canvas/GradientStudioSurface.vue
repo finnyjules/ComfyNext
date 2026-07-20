@@ -291,23 +291,45 @@ function previewDims() {
 
 // Screen box of the canvas (relative to the preview container), so the mesh drag
 // handles overlay exactly on top of it.
-// Preview zoom (visual scale of the canvas). 1 = 100%; clamped 25%..400%.
+// Preview zoom (visual scale of the canvas) + pan offset. 1 = 100%, 25%..400%.
+// When zoomed in, scrolling over the preview pans (translate) the scaled canvas;
+// pan is clamped so the canvas can't be scrolled entirely out of view.
 const zoom = ref(1)
-function zoomBy(f: number) { zoom.value = Math.min(4, Math.max(0.25, Math.round(zoom.value * f * 100) / 100)) }
+const pan = reactive({ x: 0, y: 0 })
+function clampPan() {
+  const el = canvas.value
+  if (!el) { pan.x = 0; pan.y = 0; return }
+  const maxX = Math.max(0, (el.clientWidth * (zoom.value - 1)) / 2)
+  const maxY = Math.max(0, (el.clientHeight * (zoom.value - 1)) / 2)
+  pan.x = Math.min(maxX, Math.max(-maxX, pan.x))
+  pan.y = Math.min(maxY, Math.max(-maxY, pan.y))
+}
+function zoomBy(f: number) {
+  zoom.value = Math.min(4, Math.max(0.25, Math.round(zoom.value * f * 100) / 100))
+  clampPan()
+}
+function resetZoom() { zoom.value = 1; pan.x = 0; pan.y = 0 }
+function onPreviewWheel(e: WheelEvent) {
+  if (zoom.value <= 1) return           // 100% or below: leave normal scroll alone
+  e.preventDefault()
+  pan.x -= e.deltaX
+  pan.y -= e.deltaY
+  clampPan()
+}
 
 const meshOverlay = ref({ left: 0, top: 0, w: 0, h: 0 })
 function syncOverlay() {
   const el = canvas.value
   if (!el) return
-  // The canvas is CSS-scaled about its centre; scale the mesh overlay the same way
-  // (offsetLeft/clientWidth are layout values that ignore the transform) so the
-  // drag handles stay aligned with the zoomed canvas.
+  // The canvas is CSS-scaled about its centre then panned; move+scale the mesh
+  // overlay the same way (offsetLeft/clientWidth are layout values that ignore the
+  // transform) so the drag handles stay aligned with the zoomed/panned canvas.
   const z = zoom.value
   const w = el.clientWidth * z, h = el.clientHeight * z
   const cx = el.offsetLeft + el.clientWidth / 2, cy = el.offsetTop + el.clientHeight / 2
-  meshOverlay.value = { left: cx - w / 2, top: cy - h / 2, w, h }
+  meshOverlay.value = { left: cx - w / 2 + pan.x, top: cy - h / 2 + pan.y, w, h }
 }
-watch(zoom, syncOverlay)
+watch([zoom, pan], syncOverlay, { deep: true })
 
 function renderFrame(t: number) {
   const el = canvas.value
@@ -711,9 +733,9 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
     </template>
 
     <template #preview>
-      <div class="relative flex h-full w-full items-center justify-center overflow-hidden">
+      <div class="relative flex h-full w-full items-center justify-center overflow-hidden" @wheel="onPreviewWheel">
         <canvas ref="canvas" class="max-h-full max-w-full rounded-lg shadow-2xl"
-                :style="{ transform: `scale(${zoom})` }" />
+                :style="{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }" />
         <!-- Mesh drag handles: one per color point, overlaid exactly on the canvas.
              z-30 lifts the handles above the floating randomize toolbar so points near
              the top stay grabbable; the container is pointer-events-none so the toolbar
@@ -732,7 +754,7 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
           <button class="rounded p-1.5 text-white/70 transition hover:bg-white/10 hover:text-white disabled:opacity-30" title="Zoom out" :disabled="zoom <= 0.25" @click="zoomBy(1 / 1.25)">
             <Minus class="h-3.5 w-3.5" />
           </button>
-          <button class="min-w-[3.25rem] rounded px-1 py-1 text-center text-xs tabular-nums text-white/70 transition hover:bg-white/10 hover:text-white" title="Reset to 100%" @click="zoom = 1">
+          <button class="min-w-[3.25rem] rounded px-1 py-1 text-center text-xs tabular-nums text-white/70 transition hover:bg-white/10 hover:text-white" title="Reset to 100%" @click="resetZoom">
             {{ Math.round(zoom * 100) }}%
           </button>
           <button class="rounded p-1.5 text-white/70 transition hover:bg-white/10 hover:text-white disabled:opacity-30" title="Zoom in" :disabled="zoom >= 4" @click="zoomBy(1.25)">
