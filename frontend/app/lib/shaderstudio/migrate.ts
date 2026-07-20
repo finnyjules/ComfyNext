@@ -20,5 +20,11 @@ export function migrateShaderConfig(raw: any): ShaderStudioConfig {
   // Readers now use `effects[]` exclusively (Task 6 cutover); drop the legacy field.
   delete cfg.effect
   cfg.version = 2
+  // Motion tracks recorded before the effects[] cutover point at the old single-
+  // effect path (`effect.params.*`); rewrite them at the wrapped layer's new
+  // address (`effects.0.params.*`) so pre-existing animations keep working.
+  for (const tr of cfg.motion?.tracks ?? []) {
+    if (typeof tr.path === 'string' && tr.path.startsWith('effect.params.')) tr.path = tr.path.replace('effect.params.', 'effects.0.params.')
+  }
   return cfg as ShaderStudioConfig
 }

@@ -9,21 +9,25 @@ import type { ShaderStudioConfig } from './types'
  *  - a stage's controls are only exposed when that stage is enabled (tune adjusts
  *    what's visible; the user toggles stages on/off);
  *  - the active effect's own float uniforms are surfaced dynamically under
- *    `effect.params.<uniform>` (enum uniforms are structural, so skipped).
+ *    `effects.<activeEffect>.params.<uniform>` (enum uniforms are structural,
+ *    so skipped).
  */
 function slider(key: string, label: string, min: number, max: number, step: number, group: string, hint?: string): ControlSpec {
   return { key, label, kind: 'slider', min, max, step, default: 0, group, ...(hint ? { hint } : {}) }
 }
 
-export function shaderAgentControls(cfg: ShaderStudioConfig, effectDef: EffectDef | null): ControlSpec[] {
+/** `activeEffect` defaults to 0 for callers that only ever look at the base layer
+ *  (e.g. the Collections bind-menu snapshot in `studioControls.ts`). */
+export function shaderAgentControls(cfg: ShaderStudioConfig, effectDef: EffectDef | null, activeEffect = 0): ControlSpec[] {
   const out: ControlSpec[] = []
 
-  // Active effect's float knobs (the heart of the stylize stage). Task 6 renders
-  // the first layer; full multi-effect tune wiring is Task 7.
-  if (cfg.effects[0]?.enabled && effectDef) {
+  // Active effect's float knobs (the heart of the stylize stage) — scoped to
+  // whichever layer is selected in the aside StudioLayerStack.
+  const active = cfg.effects[activeEffect]
+  if (active?.enabled && effectDef) {
     for (const p of effectDef.params) {
       if (p.type !== 'float') continue // enum uniforms are structural, not a tune
-      out.push(slider(`effects.0.params.${p.uniform}`, p.label, p.min ?? 0, p.max ?? 1, p.step ?? 0.01, 'Effect'))
+      out.push(slider(`effects.${activeEffect}.params.${p.uniform}`, p.label, p.min ?? 0, p.max ?? 1, p.step ?? 0.01, 'Effect'))
     }
   }
 

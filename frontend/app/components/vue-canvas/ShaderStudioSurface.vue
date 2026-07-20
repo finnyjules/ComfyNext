@@ -1,10 +1,11 @@
 <!-- frontend/app/components/vue-canvas/ShaderStudioSurface.vue -->
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
 import { ChevronRight, Plus, Trash2 } from 'lucide-vue-next'
 import CatalogModal from '~/components/CatalogModal.vue'
 import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
+import StudioLayerStack from '~/components/vue-canvas/StudioLayerStack.vue'
 import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
 import StudioSwitch from '~/components/vue-canvas/studio/StudioSwitch.vue'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
@@ -20,7 +21,8 @@ import { migrateShaderConfig } from '~/lib/shaderstudio/migrate'
 import { ANIMATABLE, applyMotion } from '~/lib/shaderstudio/motion'
 import { ADJUST_PRESETS, applyAdjustPreset } from '~/lib/shaderstudio/presets'
 import { loadImage } from '~/lib/shaderstudio/source'
-import { cloneConfig, defaultConfig, hydrateConfig, newLayerId, outputDims, type MotionTrack, type ShaderStudioConfig } from '~/lib/shaderstudio/types'
+import { BLEND_MODES } from '~/lib/studio/blend'
+import { cloneConfig, defaultConfig, hydrateConfig, LAYER_MAX, newLayerId, outputDims, type MotionTrack, type ShaderStudioConfig, type StudioEffect } from '~/lib/shaderstudio/types'
 import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
 import { useStudioAgent } from '~/composables/useStudioAgent'
 import { useStudioVarBindings } from '~/composables/useStudioVarBindings'
@@ -56,19 +58,27 @@ const bakeMsg = ref('')
 // to the user's chosen resolution separately.
 const PREVIEW_MAX_W = 1600
 
-// Active layer — Task 6 renders the first effect; full multi-effect UI is Task 7.
-const activeEffect = computed(() => config.value.effects[0]!)
+// Active effect — selected via the aside StudioLayerStack. The Stylized Effects
+// section (picker/params/blend/opacity) and the agent tuner are both scoped to
+// this index; motion tracks address a specific effect by dotted path
+// (`effects.<idx>.params.<uniform>`), remapped on add/remove/reorder below.
+const activeEffect = ref(0)
+const activeEffectCfg = computed<StudioEffect>(() => config.value.effects[activeEffect.value] ?? config.value.effects[0]!)
 const effectDef = computed<EffectDef | null>(
-  () => catalog.value?.effects.find(e => e.id === config.value.effects[0]?.id) ?? null)
+  () => catalog.value?.effects.find(e => e.id === activeEffectCfg.value?.id) ?? null)
 const effectUniforms = computed(() =>
-  effectDef.value ? resolveUniforms(effectDef.value, config.value.effects[0]?.params ?? {}) : {})
+  effectDef.value ? resolveUniforms(effectDef.value, activeEffectCfg.value?.params ?? {}) : {})
+/** Aside layer-stack label: the catalog def's display name, or 'Empty' if unpicked. */
+function effectLabel(e: StudioEffect): string {
+  return catalog.value?.effects.find(d => d.id === e.id)?.name ?? 'Empty'
+}
 
 // In-product agent — "tune" the shader in natural language (Phase 1). The nested
 // `config` is bridged to a flat Params; only the controls for currently-enabled
 // stages (plus the active effect's float uniforms) are offered to the model.
 const { getLocalSetting } = useLocalSettings()
-const agentParams = makeConfigParams(() => config.value)
-const activeAgentControls = computed(() => shaderAgentControls(config.value, effectDef.value))
+const agentParams = makeConfigParams(() => config.value, () => activeEffect.value)
+const activeAgentControls = computed(() => shaderAgentControls(config.value, effectDef.value, activeEffect.value))
 // The shell renders the prompt + results from this object (see StudioModalShell).
 const shaderAgent = useStudioAgent({
   controls: () => activeAgentControls.value, params: agentParams, label: () => 'Shader studio',
@@ -226,7 +236,7 @@ function texBundle(def: EffectDef | null): EffectTextureBundle {
   }
   // ASCII "Custom" shape (u_shape == 14) → bind the runtime glyph atlas.
   if (def.id === 'ascii_dither' && Math.round(effectUniforms.value['u_shape'] ?? 0) === 14) {
-    sources['u_customGlyphs'] = buildCustomAtlas(config.value.effects[0]?.customChars ?? '')
+    sources['u_customGlyphs'] = buildCustomAtlas(activeEffectCfg.value?.customChars ?? '')
   }
   return { sources, uniforms }
 }
@@ -322,7 +332,13 @@ function renderThumb(def: EffectDef): string {
 }
 function ensureThumb(def: EffectDef | null | undefined) { if (!def || thumbCache[def.id]) return; const t = renderThumb(def); if (t) { thumbCache[def.id] = t; thumbs.value = { ...thumbCache } } }
 function openPicker() { pickerSearch.value = ''; pickerFilter.value = 'all'; pickerOpen.value = true; for (const def of catalog.value?.effects ?? []) if (!def.generative) ensureThumb(def) }
-function pickEffect(id: string) { const prev = config.value.effects[0]; config.value.effects[0] = { id, params: {}, enabled: true, customChars: '', blend: prev?.blend ?? 'normal', opacity: prev?.opacity ?? 1, layerId: prev?.layerId ?? newLayerId() }; pickerOpen.value = false; renderFrame(0) }
+function pickEffect(id: string) {
+  // Preserve layerId/blend/opacity/enabled (and motion-track addressing, which
+  // targets this effect by array index); only the id/params/customChars reset.
+  config.value.effects[activeEffect.value] = { ...config.value.effects[activeEffect.value]!, id, params: {}, customChars: '' }
+  pickerOpen.value = false
+  renderFrame(0)
+}
 const currentThumb = computed(() => (effectDef.value ? thumbs.value[effectDef.value.id] ?? '' : ''))
 
 // ── duotone / adjust presets ────────────────────────────────────────────────
@@ -358,7 +374,7 @@ const animatablePaths = computed(() => [
   ...ANIMATABLE,
   ...(effectDef.value?.params ?? [])
     .filter(p => p.type !== 'enum')
-    .map(p => ({ path: `effects.0.params.${p.uniform}`, label: `Effect · ${p.label}`, min: p.min ?? 0, max: p.max ?? 1 })),
+    .map(p => ({ path: `effects.${activeEffect.value}.params.${p.uniform}`, label: `Effect · ${p.label}`, min: p.min ?? 0, max: p.max ?? 1 })),
 ])
 function addTrack() {
   const a = animatablePaths.value[0]!
@@ -470,7 +486,78 @@ onMounted(async () => {
 })
 onBeforeUnmount(() => { saveConfig(); stopPreview(); unregisterStudioParamBaker(props.nodeId) })
 
-function setParam(uniform: string, value: number) { const e = config.value.effects[0]; if (e) e.params = { ...e.params, [uniform]: value } }
+function setParam(uniform: string, value: number) { const e = activeEffectCfg.value; if (e) e.params = { ...e.params, [uniform]: value } }
+
+// ── effect stack (aside StudioLayerStack) ───────────────────────────────────
+function addEffect() {
+  if (config.value.effects.length >= LAYER_MAX) return
+  config.value.effects.push({ layerId: newLayerId(), id: '', params: {}, enabled: true, blend: 'normal', opacity: 1 })
+  activeEffect.value = config.value.effects.length - 1
+}
+function removeEffect(i: number) {
+  if (config.value.effects.length <= 1) return
+  config.value.effects.splice(i, 1)
+  remapEffectTracks('remove', i)
+  activeEffect.value = Math.min(activeEffect.value, config.value.effects.length - 1)
+}
+function duplicateEffect(i: number) {
+  if (config.value.effects.length >= LAYER_MAX) return
+  const clone = { ...structuredClone(toRaw(config.value.effects[i]!)), layerId: newLayerId() }
+  config.value.effects.splice(i + 1, 0, clone)
+  remapEffectTracks('insert', i + 1)
+  activeEffect.value = i + 1
+}
+function reorderEffect(from: number, to: number) {
+  const [m] = config.value.effects.splice(from, 1)
+  config.value.effects.splice(to, 0, m!)
+  remapEffectTracks('move', from, to)
+  activeEffect.value = to
+}
+function toggleEffect(i: number) { const e = config.value.effects[i]!; e.enabled = !e.enabled }
+
+// Rewrites motion track `path`s of the form `effects.<idx>.params.<uniform>` to
+// follow an effect through add/remove/reorder — mirrors gradientfx/motion.ts's
+// `remapTracksOnReorder`/`dropTracksForLayer`, adapted to path-string addressing
+// (shader tracks target an arbitrary dotted leaf, not just a layer's shape param).
+const EFFECT_PATH_RE = /^effects\.(\d+)\.params\.(.+)$/
+function remapEffectTracks(kind: 'move' | 'insert' | 'remove', a: number, b?: number): void {
+  const rewrite = (idx: number, rest: string) => `effects.${idx}.params.${rest}`
+  if (kind === 'remove') {
+    config.value.motion.tracks = config.value.motion.tracks
+      .filter((t) => { const m = EFFECT_PATH_RE.exec(t.path); return !m || Number(m[1]) !== a })
+      .map((t) => {
+        const m = EFFECT_PATH_RE.exec(t.path)
+        if (!m) return t
+        const idx = Number(m[1])
+        return idx > a ? { ...t, path: rewrite(idx - 1, m[2]!) } : t
+      })
+    return
+  }
+  if (kind === 'insert') {
+    for (const t of config.value.motion.tracks) {
+      const m = EFFECT_PATH_RE.exec(t.path)
+      if (!m) continue
+      const idx = Number(m[1])
+      if (idx >= a) t.path = rewrite(idx + 1, m[2]!)
+    }
+    return
+  }
+  // move: same swap math as gradientfx/motion.ts's remapTracksOnReorder.
+  const from = a, to = b!
+  const move = (l: number): number => {
+    if (l === from) return to
+    if (from < to && l > from && l <= to) return l - 1
+    if (from > to && l >= to && l < from) return l + 1
+    return l
+  }
+  for (const t of config.value.motion.tracks) {
+    const m = EFFECT_PATH_RE.exec(t.path)
+    if (!m) continue
+    const idx = Number(m[1])
+    const ni = move(idx)
+    if (ni !== idx) t.path = rewrite(ni, m[2]!)
+  }
+}
 </script>
 
 <template>
@@ -480,6 +567,15 @@ function setParam(uniform: string, value: number) { const e = config.value.effec
     agent-placeholder="Describe the look — e.g. punchier, warmer, more glow…"
     @close="closeEditor"
   >
+    <template #aside>
+      <StudioLayerStack
+        :layers="config.effects.map((e, i) => ({ label: effectLabel(e), enabled: e.enabled }))"
+        :active-index="activeEffect" :max="LAYER_MAX"
+        @select="activeEffect = $event"
+        @add="addEffect" @remove="removeEffect" @duplicate="duplicateEffect"
+        @reorder="reorderEffect" @toggle="toggleEffect" />
+    </template>
+
     <template #preview>
       <div class="relative flex h-full w-full items-center justify-center">
         <canvas ref="canvas" class="max-h-full max-w-full rounded-lg shadow-2xl" />
@@ -509,7 +605,7 @@ function setParam(uniform: string, value: number) { const e = config.value.effec
 
       <!-- Stylized Effects -->
       <StudioSection title="Stylized Effects">
-        <template #badge><StudioSwitch v-model="activeEffect.enabled" /></template>
+        <template #badge><StudioSwitch v-model="activeEffectCfg.enabled" /></template>
         <button class="mb-2 flex w-full items-center gap-2 rounded border border-white/10 bg-white/[0.04] px-2 py-1.5 text-left hover:bg-white/[0.08]" @click="openPicker">
           <span class="size-5 overflow-hidden rounded bg-white/[0.06]"><img v-if="currentThumb" :src="currentThumb" class="h-full w-full object-cover" /></span>
           <span class="min-w-0 flex-1 truncate text-[11px] text-white/90">{{ effectDef?.name ?? 'Pick an effect' }}</span>
@@ -535,11 +631,23 @@ function setParam(uniform: string, value: number) { const e = config.value.effec
           <div v-if="effectDef?.id === 'ascii_dither' && p.uniform === 'u_shape' && Math.round(effectUniforms[p.uniform] ?? 0) === 14" class="mb-2">
             <label class="mb-0.5 block text-[11px] text-white/40">Characters (sorted by density)</label>
             <input
-              v-model="activeEffect.customChars" type="text" spellcheck="false" placeholder=" .:-=+*#%@"
+              v-model="activeEffectCfg.customChars" type="text" spellcheck="false" placeholder=" .:-=+*#%@"
               class="w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 font-mono text-xs tracking-wider"
             />
           </div>
         </div>
+        <!-- Blend/opacity for the active non-base effect — effect 0 is the base
+             layer (chains straight from the source), matching the gradient studio. -->
+        <template v-if="activeEffect > 0">
+          <label class="mb-0.5 block text-[11px] text-white/60">Blend</label>
+          <select v-model="activeEffectCfg.blend" class="mb-2 w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-xs capitalize">
+            <option v-for="b in BLEND_MODES" :key="b" :value="b">{{ b }}</option>
+          </select>
+          <label class="mb-0.5 flex justify-between text-[11px] text-white/60">
+            <span>Opacity</span><span class="text-white/40">{{ activeEffectCfg.opacity.toFixed(2) }}</span>
+          </label>
+          <input v-model.number="activeEffectCfg.opacity" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range w-full" />
+        </template>
       </StudioSection>
 
       <!-- Duotone -->
@@ -660,7 +768,7 @@ function setParam(uniform: string, value: number) { const e = config.value.effec
   </StudioModalShell>
 
   <CatalogModal :open="pickerOpen" title="Shader Effects" subtitle="Pick an effect to apply"
-    :items="pickerItems" :selected-id="activeEffect.id" :filters="pickerFilters" :active-filter-id="pickerFilter" :search-query="pickerSearch"
+    :items="pickerItems" :selected-id="activeEffectCfg.id" :filters="pickerFilters" :active-filter-id="pickerFilter" :search-query="pickerSearch"
     search-placeholder="Search effects…" confirm-label="Use effect" empty-message="No effects match your search."
     @close="pickerOpen = false" @confirm="pickEffect(($event as EffectDef).id)" @update:active-filter-id="pickerFilter = $event" @update:search-query="pickerSearch = $event">
     <template #card="{ item }">

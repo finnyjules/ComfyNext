@@ -19,4 +19,18 @@ describe('shader config migration', () => {
     const out = migrateShaderConfig(cur)
     expect(out.effects[0]!.blend).toBe('screen')
   })
+  it('rewrites legacy effect.params.* motion track paths to effects.0.params.*', () => {
+    const legacy = {
+      version: 1,
+      effect: { id: 'halftone', params: { u_size: 4 }, enabled: true },
+      motion: { duration: 4, fps: 30, tracks: [
+        { path: 'effect.params.u_size', from: 0, to: 1, easing: 'linear', loops: 1, delay: 0, hold: 0, cycleOffset: 0 },
+        { path: 'adjust.exposure', from: 0, to: 1, easing: 'linear', loops: 1, delay: 0, hold: 0, cycleOffset: 0 },
+      ] },
+    }
+    const out = migrateShaderConfig(legacy)
+    expect(out.motion.tracks[0]!.path).toBe('effects.0.params.u_size')
+    // Non-effect paths are left alone.
+    expect(out.motion.tracks[1]!.path).toBe('adjust.exposure')
+  })
 })
