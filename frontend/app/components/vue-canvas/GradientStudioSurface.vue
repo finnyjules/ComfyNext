@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, toRaw, watch } from 'vue'
-import { Dices, Disc3, Droplets, Grid3x3, Lock, Palette, Plus, Shapes, Sparkles, Trash2, Unlock } from 'lucide-vue-next'
+import { Dices, Lock, Minus, Plus, Trash2, Unlock } from 'lucide-vue-next'
 import { gradientFx } from '~/lib/gradientfx/renderer'
 import { LIQUID_PRESETS, buildConfig, defaultConfig, liquidConfig, liquidPresetConfig, meshConfig, reroll, rippleConfig, stackConfig, type RerollScope } from '~/lib/gradientfx/randomize'
 import { MESH_MAX_POINTS, buildMeshPoints, defaultMesh } from '~/lib/gradientfx/mesh'
@@ -291,12 +291,23 @@ function previewDims() {
 
 // Screen box of the canvas (relative to the preview container), so the mesh drag
 // handles overlay exactly on top of it.
+// Preview zoom (visual scale of the canvas). 1 = 100%; clamped 25%..400%.
+const zoom = ref(1)
+function zoomBy(f: number) { zoom.value = Math.min(4, Math.max(0.25, Math.round(zoom.value * f * 100) / 100)) }
+
 const meshOverlay = ref({ left: 0, top: 0, w: 0, h: 0 })
 function syncOverlay() {
   const el = canvas.value
   if (!el) return
-  meshOverlay.value = { left: el.offsetLeft, top: el.offsetTop, w: el.clientWidth, h: el.clientHeight }
+  // The canvas is CSS-scaled about its centre; scale the mesh overlay the same way
+  // (offsetLeft/clientWidth are layout values that ignore the transform) so the
+  // drag handles stay aligned with the zoomed canvas.
+  const z = zoom.value
+  const w = el.clientWidth * z, h = el.clientHeight * z
+  const cx = el.offsetLeft + el.clientWidth / 2, cy = el.offsetTop + el.clientHeight / 2
+  meshOverlay.value = { left: cx - w / 2, top: cy - h / 2, w, h }
 }
+watch(zoom, syncOverlay)
 
 function renderFrame(t: number) {
   const el = canvas.value
@@ -372,8 +383,6 @@ function randomize(scope: RerollScope) {
   config.value = reroll(config.value, scope, randomSeed())
   pushRoll(config.value)
 }
-function restoreRoll(r: Roll) { config.value = cloneConfig(r.cfg) }
-function clearRolls() { rolls.splice(0, rolls.length) }
 
 // Preset: the 3D-embossed rainbow orbit (the reference look).
 function applyRipple() {
@@ -702,8 +711,9 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
     </template>
 
     <template #preview>
-      <div class="relative flex h-full w-full items-center justify-center">
-        <canvas ref="canvas" class="max-h-full max-w-full rounded-lg shadow-2xl" />
+      <div class="relative flex h-full w-full items-center justify-center overflow-hidden">
+        <canvas ref="canvas" class="max-h-full max-w-full rounded-lg shadow-2xl"
+                :style="{ transform: `scale(${zoom})` }" />
         <!-- Mesh drag handles: one per color point, overlaid exactly on the canvas.
              z-30 lifts the handles above the floating randomize toolbar so points near
              the top stay grabbable; the container is pointer-events-none so the toolbar
@@ -716,29 +726,17 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
                   :style="{ left: pt.x * 100 + '%', top: pt.y * 100 + '%', background: pt.color }"
                   :title="`Point ${i + 1} — drag to move`"
                   @pointerdown="onHandleDown(i, $event)" /></div>
-        <!-- Floating randomize toolbar -->
-        <div class="absolute left-1/2 top-3 flex -translate-x-1/2 items-center gap-1 rounded-lg border border-white/10 bg-neutral-900/80 p-1 shadow-lg backdrop-blur">
-          <button class="flex items-center gap-1.5 rounded-md bg-white/90 px-3 py-1.5 text-xs font-semibold text-black transition hover:bg-white" @click="randomize('all')">
-            <Dices class="h-3.5 w-3.5" /> Randomize <span class="text-black/40">Space</span>
+        <!-- Zoom controls (default z: the pointer-events-none mesh-handle overlay
+             above lets clicks fall through here, and handles stay grabbable). -->
+        <div class="absolute left-1/2 top-3 flex -translate-x-1/2 items-center gap-0.5 rounded-lg border border-white/10 bg-neutral-900/80 p-0.5 shadow-lg backdrop-blur">
+          <button class="rounded p-1.5 text-white/70 transition hover:bg-white/10 hover:text-white disabled:opacity-30" title="Zoom out" :disabled="zoom <= 0.25" @click="zoomBy(1 / 1.25)">
+            <Minus class="h-3.5 w-3.5" />
           </button>
-          <button class="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs text-white/80 transition hover:bg-white/10" @click="randomize('colors')">
-            <Palette class="h-3.5 w-3.5" /> Colors <span class="text-white/30">C</span>
+          <button class="min-w-[3.25rem] rounded px-1 py-1 text-center text-xs tabular-nums text-white/70 transition hover:bg-white/10 hover:text-white" title="Reset to 100%" @click="zoom = 1">
+            {{ Math.round(zoom * 100) }}%
           </button>
-          <button class="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs text-white/80 transition hover:bg-white/10" @click="randomize('structure')">
-            <Shapes class="h-3.5 w-3.5" /> Structure <span class="text-white/30">S</span>
-          </button>
-          <div class="mx-0.5 h-5 w-px bg-white/10" />
-          <button class="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs text-white/80 transition hover:bg-white/10" title="Apply the 3D rainbow-ripple preset" @click="applyRipple">
-            <Sparkles class="h-3.5 w-3.5" /> Ripple
-          </button>
-          <button class="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs text-white/80 transition hover:bg-white/10" title="Apply the stacked rotated-circles preset" @click="applyStack">
-            <Disc3 class="h-3.5 w-3.5" /> Stack
-          </button>
-          <button class="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs text-white/80 transition hover:bg-white/10" title="Apply the warm marble liquid flow preset" @click="applyLiquid">
-            <Droplets class="h-3.5 w-3.5" /> Liquid
-          </button>
-          <button class="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs text-white/80 transition hover:bg-white/10" title="Apply the soft point-mesh preset" @click="applyMesh">
-            <Grid3x3 class="h-3.5 w-3.5" /> Mesh
+          <button class="rounded p-1.5 text-white/70 transition hover:bg-white/10 hover:text-white disabled:opacity-30" title="Zoom in" :disabled="zoom >= 4" @click="zoomBy(1.25)">
+            <Plus class="h-3.5 w-3.5" />
           </button>
         </div>
       </div>
@@ -1170,21 +1168,6 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
           </div>
         </div>
         <div class="mt-1 text-[10px] text-white/30">{{ Math.round(config.motion.fps * config.motion.duration) }} frames</div>
-      </StudioSection>
-
-      <!-- Rolls -->
-      <StudioSection title="Rolls" :open="false">
-        <template #badge>
-          <button v-if="rolls.length" class="normal-case text-white/40 hover:text-white/80" @click.stop="clearRolls">Clear · {{ rolls.length }}</button>
-        </template>
-        <p v-if="!rolls.length" class="text-[11px] text-white/30">Hit Space — every roll lands here.</p>
-        <div v-else class="grid grid-cols-3 gap-1.5">
-          <button v-for="(r, i) in rolls" :key="i" class="overflow-hidden rounded border border-white/10 transition hover:border-white/40"
-                  :class="{ 'ring-1 ring-white/60': r.seed === config.seed }" :title="r.seed" @click="restoreRoll(r)">
-            <img v-if="r.thumb" :src="r.thumb" class="block aspect-video w-full object-cover" />
-            <div v-else class="aspect-video w-full bg-white/5" />
-          </button>
-        </div>
       </StudioSection>
 
       <!-- Export -->
