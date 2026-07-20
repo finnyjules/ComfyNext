@@ -40,8 +40,6 @@ import { typeCompatible } from '~/lib/collection/bindables'
 import { addSweepRows } from '~/lib/collection/model'
 import { COLLECTION_PROP, VARS_TYPE, type CollectionColumn, type CollectionData } from '~/lib/collection/types'
 import { registerStudioParamBaker, unregisterStudioParamBaker } from '~/lib/studio/cascade'
-import { registerStudioFrameSource, unregisterStudioFrameSource } from '~/lib/studio/frameSource'
-import { makeSpaceTypeFrameSource } from '~/lib/spacetype/frameSource'
 import { effectiveColumns, makeLookupResolver } from '~/lib/collection/lookup'
 import SweepPopover from '~/components/vue-canvas/studio/SweepPopover.vue'
 
@@ -695,23 +693,17 @@ onMounted(async () => {
   rebuild()
   startPreview()
   registerStudioParamBaker(props.nodeId, renderBlobWithOverrides)
-  // Published only once the engine exists — the WebGL bail-out above returns
-  // early, so an unavailable engine simply never registers and downstream
-  // consumers fall through to this studio's baked artifact instead.
-  registerStudioFrameSource(props.nodeId, makeSpaceTypeFrameSource({
-    getClock: () => ({ duration: loopDuration.value, fps: fps.value, width: W.value, height: H.value }),
-    renderAt: (t01) => {
-      if (!engine || !canvas.value) return null
-      engine.renderFrameAt(t01, params)
-      return canvas.value
-    },
-  }))
+  // NOTE: the live frame source for this node is registered by SpaceTypeNode.vue
+  // (the always-mounted node), NOT here. The node stays mounted while this modal
+  // is open, so its headless frame source covers downstream consumers in every
+  // state. Registering here too would collide on the same node id and — worse —
+  // this modal's unregister-on-close would delete the node's registration,
+  // blanking a direct Space Type → Shader wire after one open/close.
 })
 
 onBeforeUnmount(() => {
   saveConfig(); if (rebuildRaf) cancelAnimationFrame(rebuildRaf); stopPreview(); engine?.dispose(); engine = null
   unregisterStudioParamBaker(props.nodeId)
-  unregisterStudioFrameSource(props.nodeId)
 })
 
 // Global view keys are live for every effect (camera/scene transform read per frame).
@@ -1241,7 +1233,7 @@ async function generateVideo() {
                     </div>
                   </div>
                   <button type="button" @click="addFill"
-                          class="w-full rounded-lg border border-dashed border-white/15 py-1.5 text-[11px] text-white/50 hover:border-white/30 hover:text-white/80">+ Add fill</button>
+                          class="w-full rounded border border-dashed border-white/15 py-1.5 text-[11px] text-white/50 hover:border-white/30 hover:text-white/80">+ Add fill</button>
                   <p class="text-[10px] leading-relaxed text-white/35">Fills apply top-to-bottom and repeat if there are more slots than fills. <span class="text-white/50">Text</span> is the type colour for that fill.</p>
                 </div>
               </template>

@@ -156,10 +156,10 @@ onMounted(async () => {
       return { duration: s.loopDuration, fps: s.fps, width: cw, height: ch }
     },
     renderAt: (t01, w, h) => {
-      const eng = ensureHeadless()
+      const eng = ensureHeadless(w, h)
       if (!eng || !headlessCanvas) return null
       const s = state.value
-      eng.setSize(w, h)
+      eng.setSize(w, h)   // covers a scale change between pulls (same aspect, no rebuild)
       const total = Math.max(1, Math.round(s.fps * s.loopDuration))
       const frame = ((Math.round(t01 * total) % total) + total) % total
       eng.renderFrame(frame, s.params)
@@ -181,20 +181,27 @@ onMounted(async () => {
 // from the frame source's renderAt, so nothing is created until a downstream
 // consumer actually pulls. `headlessDirty` defers geometry rebuilds to the next
 // pull instead of rebuilding an offscreen engine per config keystroke.
-function ensureHeadless(): SpaceTypeEngine | null {
+function ensureHeadless(w: number, h: number): SpaceTypeEngine | null {
   if (!detectWebGL()) return null
   if (!headlessEngine) {
     headlessCanvas = document.createElement('canvas')
     const s = state.value
+    // Construct at the requested size, not the preview size: aspect-dependent
+    // effects (string/contour/tunnel/…) read env.width/height at BUILD time.
     headlessEngine = new SpaceTypeEngine(headlessCanvas, {
-      effect: getEffect(s.effectId), width: PREVIEW_W, height: previewH.value,
+      effect: getEffect(s.effectId), width: w, height: h,
       fps: s.fps, loopDuration: s.loopDuration, alpha: s.transparent, bgColor: s.bgColor,
       projection: s.projection ?? 'perspective',
     })
     headlessDirty = true
+    // Card mount usually primes the font first (shared global cache), but if a pull
+    // races ahead, force one rebuild once the font resolves so text isn't baked with
+    // a fallback face. Config-driven font changes are primed by the card's own await.
+    void ensureSpaceTypeFont(String(s.params.font)).then(() => { headlessDirty = true })
   }
   if (headlessDirty) {
     const s = state.value
+    headlessEngine.setSize(w, h)   // BEFORE build — geometry layout reads the size
     headlessEngine.setBackground(s.transparent, s.bgColor)
     headlessEngine.setProjection(s.projection ?? 'perspective')
     headlessEngine.setPost({ ...(s.post ?? DEFAULT_POST) })
