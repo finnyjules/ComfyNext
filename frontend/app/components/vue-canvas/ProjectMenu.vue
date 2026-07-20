@@ -230,7 +230,7 @@ watch(() => props.projectId, (id) => {
           @click="emit('showDeliverables')"
         >
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" class="text-emerald-400/80"><path d="M20 7L9 18l-5-5" /></svg>
-          <span class="flex-1 text-xs text-white/80">Ready to deliver</span>
+          <span class="flex-1 text-xs text-white/80">Deliverables</span>
           <span v-if="deliverablesCount" class="font-mono text-[10px] text-white/40">{{ deliverablesCount }}</span>
         </button>
 

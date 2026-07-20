@@ -69,14 +69,14 @@ function onDragEnd() {
 <template>
   <div class="h-full w-full overflow-auto bg-[#121316] text-[#eceef2]">
     <div class="sticky top-0 z-20 flex items-center gap-4 border-b border-white/7 bg-[#121316]/85 px-8 py-3.5 backdrop-blur">
-      <span class="text-[13px] text-white/40">{{ projectName }} · Ready to deliver</span>
+      <span class="text-[13px] text-white/40">{{ projectName }} · Deliverables</span>
       <div class="flex-1" />
       <button class="rounded-lg border border-white/13 px-3 py-1.5 text-[13px] text-white/70 hover:text-white" @click="downloadAll">Download all</button>
       <button class="cursor-default rounded-lg border border-white/7 px-3 py-1.5 text-[13px] text-white/40" disabled title="Coming soon">Share <span class="ml-1 font-mono text-[9px] uppercase tracking-wider text-white/30">soon</span></button>
     </div>
 
     <div class="mx-auto max-w-[1180px] px-8 pb-6 pt-10">
-      <h1 class="text-[26px] font-semibold tracking-tight">Ready to deliver</h1>
+      <h1 class="text-[26px] font-semibold tracking-tight">Deliverables</h1>
       <p class="mt-2 max-w-[56ch] text-[14px] leading-relaxed text-white/32">Artifacts you marked ready. Name them, group them into sets, and drag to arrange. Download any one, a set, or everything as a zip.</p>
     </div>
 
