@@ -1222,7 +1222,7 @@ git commit -m "feat(shader-studio): drive modal preview and export from the sour
 
 - [ ] **Step 1: Widen the target filter**
 
-Add `isStudioNode` to the existing `~/lib/studio/cascade` import in `VueNodeCanvas.vue`, then replace the filter on line 3696:
+Add `isStudioNode` and `isArtifactNode` to the existing `~/lib/studio/cascade` import in `VueNodeCanvas.vue`, then replace the filter on line 3696:
 
 ```ts
     .filter((n): n is any => !!n && (
@@ -1239,7 +1239,9 @@ A studio node has no `images` array or `image` widget to stamp — it re-resolve
     // A downstream studio re-resolves its own input from the graph (live frame
     // source, or this artifact's file) — there is nothing to stamp on it, and it
     // must still count as a target so the fallback does not spawn a stray node.
-    if (isStudioNode(art)) continue
+    // NOT artifact-frame: isStudioNode is also true for Frames (they bake
+    // client-side), but a Frame is data.images-driven and DOES need the stamp.
+    if (isStudioNode(art) && !isArtifactNode(art)) continue
     if (!art.data) art.data = {}
     art.data.images = [url]
     // Also stamp the `image` widget so a card with an upstream link still shows the new file.
