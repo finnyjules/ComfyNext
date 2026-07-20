@@ -13,6 +13,8 @@ import type { Cloner } from '~/composables/useCloner'
 import CompositorInlineToolbar from '~/components/vue-canvas/CompositorInlineToolbar.vue'
 import StudioRenderButton from '~/components/vue-canvas/StudioRenderButton.vue'
 import { registerStudioBaker, unregisterStudioBaker } from '~/lib/studio/cascade'
+import { resolveWiredSourceKind } from '~/lib/studio/frameResolve'
+import { frameSourceEpoch, type StudioFrameSource } from '~/lib/studio/frameSource'
 
 // The "Frame" — the Compositor as a first-class artboard artifact. Shows its
 // live composite (wired layers from `data.images` + a live local-layer overlay),
@@ -152,44 +154,16 @@ function handleTop(idx: number, count: number): string {
   return `calc(${pad}px + ${(idx / (count - 1)) * 100}% - ${(pad * 2 * idx) / (count - 1)}px)`
 }
 
-// Read an upstream node's widget value by name (widgetDefs[i] ↔ widgetsValues[i]).
-function srcWidgetVal(src: any, name: string): string | null {
-  const defs = src?.data?.widgetDefs
-  const vals = src?.data?.widgetsValues
-  if (!Array.isArray(defs) || !Array.isArray(vals)) return null
-  const i = defs.findIndex((w: any) => w?.name === name)
-  return i >= 0 ? (vals[i] || null) : null
-}
-// Multi-output sources (e.g. Split photo into layers: subject=0, background=1)
-// mirror ui images in output-slot order, so the wire's source handle picks
-// which image this layer shows.
-function srcOutputIndex(edge: any): number {
-  const m = /^output-(\d+)$/.exec(edge?.sourceHandle ?? '')
-  return m ? Number(m[1]) : 0
-}
-function resolveSrcUrl(src: any, edge?: any): string | null {
-  if (src?.data?.images?.length) {
-    const i = srcOutputIndex(edge)
-    return src.data.images[i] ?? src.data.images[0]
-  }
-  if (src?.data?.nodeType === 'LoadImage' && src?.data?.widgetsValues?.[0]) {
-    return `/view?${new URLSearchParams({ filename: src.data.widgetsValues[0], type: 'input' })}`
-  }
-  // An `Image` artifact node (pasted/uploaded image) before it has executed: its
-  // filename lives in the `image` widget (by name), with data.images still empty.
-  if (src?.data?.nodeType === 'Image') {
-    const file = srcWidgetVal(src, 'image')
-    if (file) return `/view?${new URLSearchParams({ filename: file, type: 'input' })}`
-  }
-  return null
-}
 function wiredOpacity(slot: number): number {
   const i = widgetIdx(`layer${slot + 1}_opacity`)
   if (i < 0) return 1
   const v = Number(props.data.widgetsValues?.[i])
   return Number.isFinite(v) ? clamp(v, 0, 1) : 1
 }
-interface WiredLayer { slot: number; url: string; x: number; y: number; rotation: number; scale: number; opacity: number; blend: string; cloner?: Cloner }
+// `url` is the draw/cache KEY for a layer. For a baked image it is the real /view
+// URL; for a live studio slot it is a synthetic `live:<slot>` key and `live` holds
+// the frame source (pulled once as a still — the animated loop is a follow-on).
+interface WiredLayer { slot: number; url: string; live?: StudioFrameSource; x: number; y: number; rotation: number; scale: number; opacity: number; blend: string; cloner?: Cloner }
 function wiredCloner(slot: number): Cloner | undefined {
   // Editor state on a node property (1-based slot, like layer{i}_cloner), mirrored
   // from the Compositor modal — not the widget (which only exists post-restart).
@@ -197,26 +171,30 @@ function wiredCloner(slot: number): Cloner | undefined {
   return map?.[slot + 1] as Cloner | undefined
 }
 const wiredLayers = computed<WiredLayer[]>(() => {
+  frameSourceEpoch.value  // re-resolve when a studio (un)registers its frame source
   const edges = injectedEdges?.value ?? []
   const nodes = injectedNodes?.value ?? []
   const out: WiredLayer[] = []
   for (let s = 0; s < 16; s++) {
     if (!slotConnected(s)) continue
-    const edge = edges.find((e: any) => e.target === props.id && e.targetHandle === `input-${s}`)
-    if (!edge) continue
-    const src = nodes.find((n: any) => n.id === edge.source)
-    const url = resolveSrcUrl(src, edge)
-    if (!url) continue
-    out.push({ slot: s, url, x: layerTf(s, 'x'), y: layerTf(s, 'y'), rotation: layerTf(s, 'rotation'), scale: layerTf(s, 'scale'), opacity: wiredOpacity(s), blend: blendOf(s), cloner: wiredCloner(s) })
+    const kind = resolveWiredSourceKind(String(props.id), `input-${s}`, nodes, edges)
+    if (!kind) continue
+    const common = { slot: s, x: layerTf(s, 'x'), y: layerTf(s, 'y'), rotation: layerTf(s, 'rotation'), scale: layerTf(s, 'scale'), opacity: wiredOpacity(s), blend: blendOf(s), cloner: wiredCloner(s) }
+    if (kind.kind === 'live') out.push({ ...common, url: `live:${s}`, live: kind.source })
+    else out.push({ ...common, url: kind.url })
   }
   return out
 })
 // Natural dimensions + decoded bitmap per wired image. Dims drive aspect-fit
 // hit-testing; the bitmap is painted into the unified stack canvas.
 const wiredDims = ref<Record<string, { w: number; h: number }>>({})
-const wiredImages = ref<Record<string, HTMLImageElement>>({})
-watch(() => wiredLayers.value.map(l => l.url).join('|'), () => {
+const wiredImages = ref<Record<string, HTMLImageElement | HTMLCanvasElement>>({})
+// Re-run on wiring changes AND on frameSourceEpoch, so a live slot that registers
+// late (or re-registers) gets pulled. Live slots pull once as a still here; the
+// animated per-frame pull is the follow-on increment.
+watch(() => wiredLayers.value.map(l => l.url).join('|') + '|' + frameSourceEpoch.value, () => {
   for (const l of wiredLayers.value) {
+    if (l.live) { void pullLiveStill(l); continue }
     if (wiredImages.value[l.url]) continue
     const im = new Image()
     im.onload = () => {
@@ -227,6 +205,21 @@ watch(() => wiredLayers.value.map(l => l.url).join('|'), () => {
     im.src = l.url
   }
 }, { immediate: true })
+
+// Pull a live studio slot's current frame and COPY it into a canvas we own — the
+// source reuses its canvas across getFrame calls, so we must not hold its buffer.
+async function pullLiveStill(l: WiredLayer) {
+  const src = l.live!
+  const w = Math.max(1, src.width || 1024), h = Math.max(1, src.height || 1024)
+  try {
+    const surface = await src.getFrame(0, w, h)
+    const cv = document.createElement('canvas')
+    cv.width = w; cv.height = h
+    cv.getContext('2d')!.drawImage(surface as CanvasImageSource, 0, 0, w, h)
+    wiredDims.value = { ...wiredDims.value, [l.url]: { w, h } }
+    wiredImages.value = { ...wiredImages.value, [l.url]: cv }
+  } catch (e) { console.warn('[Frame] live slot pull failed for', l.url, e) }
+}
 
 // Rendered geometry of a wired layer in artboard (box) coords — mirrors the
 // backend/preview: aspect-fit into the canvas, then translate + scale + rotate.
