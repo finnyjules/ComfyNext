@@ -323,6 +323,37 @@ describe('scene3d engine deferred geometry', () => {
   })
 })
 
+describe('scene3d engine light view clay mode', () => {
+  const makeHost = () => ({
+    objectRoots: new Map<string, THREE.Object3D>(),
+    glbTokens: new Map<string, number>(),
+    token: 0,
+    deferGeometry: false,
+    lightView: false,
+    clay: new THREE.MeshStandardMaterial(),
+    scene: { add() {}, remove() {} },
+  })
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const sync = (host: any, obj: PrimitiveObject) => (SceneEngine.prototype as any).syncObject.call(host, obj)
+
+  it('swaps object meshes to clay in Light View and restores on exit', () => {
+    const host = makeHost() as any
+    host.lightView = false
+    host.clay = new THREE.MeshStandardMaterial()
+    const obj = { ...createPrimitive('box', []) }
+    sync(host, obj)
+    const mesh = host.objectRoots.get(obj.id) as THREE.Mesh
+    const real = mesh.material
+    expect(real).not.toBe(host.clay)
+    host.lightView = true
+    sync(host, obj)
+    expect(mesh.material).toBe(host.clay)
+    host.lightView = false
+    sync(host, obj)
+    expect(mesh.material).not.toBe(host.clay)
+  })
+})
+
 describe('scene3d light factory', () => {
   it('maps each light kind to the right THREE light with its params', () => {
     const point = lightFor(createLight('point', []))

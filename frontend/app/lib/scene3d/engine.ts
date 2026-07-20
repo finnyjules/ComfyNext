@@ -218,6 +218,19 @@ export function buildGeometry(
   return geo
 }
 
+/** Swaps every mesh under a GLB root to the shared clay material in Light
+ *  View, restoring each mesh's own material otherwise. Each mesh's original
+ *  material is captured into userData.realMaterial the first time it's seen,
+ *  so repeated toggles/re-syncs never lose track of the real one. */
+function applyLightViewToGlb(root: THREE.Object3D, on: boolean, clay: THREE.Material): void {
+  root.traverse((c) => {
+    const m = c as THREE.Mesh
+    if (!m.isMesh) return
+    if (m.userData.realMaterial === undefined) m.userData.realMaterial = m.material
+    m.material = on ? clay : m.userData.realMaterial
+  })
+}
+
 // Preset → environment intensity + sun softness. Sun angle/intensity stay
 // user-controlled; presets shape the fill character around it.
 const PRESETS: Record<LightingPreset, { envIntensity: number; shadow: boolean }> = {
@@ -249,6 +262,14 @@ export class SceneEngine {
    *  a slider drag on a heavy clone set, where a synchronous rebuild per tick
    *  costs hundreds of milliseconds. */
   deferGeometry = false
+  /** Light View render mode: object meshes get a shared clay material instead
+   *  of their real one. Real materials keep building/updating underneath so
+   *  toggling off restores them exactly. */
+  lightView = false
+  private selectedId: string | null = null
+  private lastDoc: SceneDoc | null = null
+  /** Shared clay material for Light View — built once, swapped onto meshes. */
+  readonly clay = new THREE.MeshStandardMaterial({ color: 0x9aa0a6, roughness: 0.85, metalness: 0 })
 
   constructor(canvas: HTMLCanvasElement, width: number, height: number) {
     // preserveDrawingBuffer so toDataURL works for bakes (shapefx pattern).
@@ -306,7 +327,23 @@ export class SceneEngine {
     this.camera.updateProjectionMatrix()
   }
 
+  setLightView(on: boolean): void {
+    if (this.lightView === on) return
+    this.lightView = on
+    for (const obj of this.lastDoc?.objects ?? []) this.syncObject(obj) // re-apply materials/visibility
+    this.updateLightWidgets() // no-op until Task 3; safe to call
+  }
+
+  setSelected(id: string | null): void {
+    this.selectedId = id
+    this.updateLightWidgets()
+  }
+
+  /** Stub — Task 3 fills this in (light gizmo visibility/sizing in Light View). */
+  private updateLightWidgets(): void {}
+
   syncFromDoc(doc: SceneDoc): void {
+    this.lastDoc = doc
     // Remove three-roots whose doc object is gone.
     const live = new Set(doc.objects.map((o) => o.id))
     for (const [id, root] of this.objectRoots) {
@@ -353,7 +390,8 @@ export class SceneEngine {
         // Flat shapes must be visible from both sides (plane was previously
         // invisible from below; ring inherits the fix) — for every material type.
         if (obj.primitive === 'plane' || obj.primitive === 'ring') mat.side = THREE.DoubleSide
-        const mesh = new THREE.Mesh(geo, mat)
+        const mesh = new THREE.Mesh(geo, this.lightView ? this.clay : mat)
+        mesh.userData.realMaterial = mat
         mesh.userData.geoKey = geoKeyFor(obj, 'smooth') // facet variant applied by the sync below
         mesh.castShadow = mesh.receiveShadow = true
         root = mesh
@@ -364,6 +402,7 @@ export class SceneEngine {
         loadGlb(obj.url).then((g) => {
           if (this.glbTokens.get(obj.id) !== tok) return // stale (object deleted/replaced)
           g.traverse((c) => { if ((c as THREE.Mesh).isMesh) { c.castShadow = c.receiveShadow = true } })
+          applyLightViewToGlb(g, this.lightView, this.clay)
           root!.add(g)
         }).catch(() => { /* surface shows the error state; the group stays empty */ })
       } else {
@@ -417,19 +456,25 @@ export class SceneEngine {
         mesh.geometry = buildGeometry(obj.primitive, obj.params, obj.modifiers, variant)
         mesh.userData.geoKey = geoKey
       }
-      const current = mesh.material as THREE.Material
+      // The real material is tracked separately from mesh.material — in Light
+      // View mesh.material is the shared clay swap, but the real material
+      // still gets built/updated underneath so exiting Light View restores it.
+      const current = (mesh.userData.realMaterial as THREE.Material | undefined) ?? (mesh.material as THREE.Material)
+      let real = current
       if (!updateMaterial(current, obj.material)) {
         // Type or texture identity changed — rebuild, preserving double-siding.
         disposeMaterial(current)
         const fresh = materialFor(obj.material, mesh.geometry)
         if (obj.primitive === 'plane' || obj.primitive === 'ring') fresh.side = THREE.DoubleSide
-        mesh.material = fresh
+        real = fresh
       }
+      mesh.userData.realMaterial = real
+      mesh.material = this.lightView ? this.clay : real
       // A gradient bakes the geometry's bounding box into uBoxMin/uBoxMax so the
       // ramp spans the shape exactly. Parameters move those bounds (a fatter
       // tube, a longer capsule), so refresh the uniforms in place against the
       // current geometry — mutating .value never rebuilds the material.
-      const gradUniforms = (mesh.material as THREE.Material).userData
+      const gradUniforms = real.userData
         ?.gradUniforms as Record<string, { value: unknown }> | undefined
       if (gradUniforms) {
         const geo = mesh.geometry
@@ -439,6 +484,8 @@ export class SceneEngine {
           ;(gradUniforms.uBoxMax!.value as THREE.Vector3).copy(geo.boundingBox.max)
         }
       }
+    } else if (obj.kind === 'glb') {
+      applyLightViewToGlb(root, this.lightView, this.clay)
     } else if (obj.kind === 'light') {
       const light = root.userData.light as THREE.Light
       const color = new THREE.Color(stripAlpha(obj.color))
