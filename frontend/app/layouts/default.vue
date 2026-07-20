@@ -1545,7 +1545,9 @@ function resolveOutputRef(nodeId: string, output: any): import('~/lib/deliverabl
   const f = String(output.filename)
   const media = /\.(mp4|webm|mov|mkv|m4v)$/i.test(f) ? 'video'
     : /\.(mp3|wav|flac|ogg|m4a|aac)$/i.test(f) ? 'audio' : 'image'
-  const viewType = output.type === 'input' ? 'input' : 'output'
+  // Preserve the node's actual /view serve type — 'temp' (live-preview / result
+  // unique frames captured as takes) and 'input' must survive, or the tile 404s.
+  const viewType = (output.type === 'input' || output.type === 'temp') ? output.type : 'output'
   return { filename: f, subfolder: output.subfolder || '', media, viewType, sourceNodeId: nodeId }
 }
 

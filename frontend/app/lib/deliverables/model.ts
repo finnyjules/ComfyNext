@@ -2,9 +2,11 @@ export interface ArtifactRef {
   filename: string
   subfolder: string
   media: 'image' | 'video' | 'audio'
-  /** Which /view folder serves the file. Defaults to 'output'; some artifact
-   *  nodes display an 'input'-served file (uploads, persisted widget values). */
-  viewType?: 'input' | 'output'
+  /** Which /view folder serves the file. Defaults to 'output'. Some artifact
+   *  nodes display an 'input'-served file (uploads, persisted widget values), or
+   *  a 'temp'-served one (live-preview / result-node unique frames captured as
+   *  takes). Must match the node's own display URL or the thumbnail 404s. */
+  viewType?: 'input' | 'output' | 'temp'
   sourceNodeId?: string | null
   meta?: { w?: number; h?: number; durationMs?: number; ext?: string }
 }
