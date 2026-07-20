@@ -92,7 +92,7 @@ import { materializeCast } from '~/lib/shotdirector/cast'
 import { viewRefUrl, uploadRefFile } from '~/lib/shotdirector/refUpload'
 import { coverFirstRefs } from '~/composables/useCharacters'
 import { upstreamSeedScope } from '~/lib/artifact/nextSteps'
-import { runStudioCascade, planStudiosToBakeForRun, hasStudioBaker, type CascadeDeps } from '~/lib/studio/cascade'
+import { runStudioCascade, planStudiosToBakeForRun, hasStudioBaker, isStudioNode, type CascadeDeps } from '~/lib/studio/cascade'
 import SubgraphIONode from '~/components/vue-canvas/SubgraphIONode.vue'
 import SubgraphBreadcrumb from '~/components/vue-canvas/SubgraphBreadcrumb.vue'
 import PortIntentPopover from '~/components/vue-canvas/PortIntentPopover.vue'
@@ -3557,13 +3557,19 @@ function publishStudioOutput(studioId: string, filename: string) {
   const targets = (edges.value as any[])
     .filter(e => String(e.source) === String(studioId) && (e.sourceHandle === 'output-0' || !e.sourceHandle))
     .map(e => (nodes.value as any[]).find(n => String(n.id) === String(e.target)))
-    .filter((n): n is any => !!n && (n.data?.nodeType === 'Image' || String(n.type).startsWith('artifact-')))
+    .filter((n): n is any => !!n && (
+      n.data?.nodeType === 'Image' || String(n.type).startsWith('artifact-') || isStudioNode(n)
+    ))
   if (!targets.length) {
     // No artifact yet — reuse the studio-output handler to create + wire one.
     window.dispatchEvent(new CustomEvent('sailor:spaceTypeOutput', { detail: { sourceNodeId: studioId, nodeType: 'Image', widgetOverrides: { image: filename } } }))
     return
   }
   for (const art of targets) {
+    // A downstream studio re-resolves its own input from the graph (live frame
+    // source, or this artifact's file) — there is nothing to stamp on it, and it
+    // must still count as a target so the fallback above does not spawn a stray node.
+    if (isStudioNode(art)) continue
     if (!art.data) art.data = {}
     art.data.images = [url]
     // Also stamp the `image` widget so a card with an upstream link still shows the new file.
