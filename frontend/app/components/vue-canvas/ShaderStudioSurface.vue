@@ -86,7 +86,7 @@ const shaderAgent = useStudioAgent({
   apiKey: () => getLocalSetting('Sailor.AI.AnthropicApiKey') ?? '',
   // Force a fresh synchronous render of the current config to the preview canvas,
   // then export it for the agent's visual self-review.
-  render: () => { renderFrame(0); return canvas.value?.toDataURL('image/png') ?? null },
+  render: async () => { await renderFrame(0); return canvas.value?.toDataURL('image/png') ?? null },
 })
 
 // Collections variable binding (Slice 2a, Task 7a) — same recipe as Gradient Studio
@@ -466,6 +466,12 @@ async function renderBlob(t01: number): Promise<Blob> {
 // same as Gradient's `renderToBlob`, so no `nextTick`/rAF wait is needed
 // between the override-write and the capture call.
 async function renderBlobWithOverrides(overrides: Record<string, string | number>): Promise<Blob | null> {
+  // Guard the shared shaderFx canvas the same way generateImage/generateVideo
+  // do: a straggling async preview renderFrame bails right after its await if
+  // baking.value is set, so it can't corrupt the bake this function performs
+  // for a collection sweep. Set before the (synchronous) snapshot loop so no
+  // window exists where a resumed preview frame could slip in.
+  baking.value = true
   const keys = Object.keys(overrides)
   const snapshot = new Map<string, string | number | undefined>()
   for (const key of keys) snapshot.set(key, agentParams[key] as string | number | undefined)
@@ -480,6 +486,7 @@ async function renderBlobWithOverrides(overrides: Record<string, string | number
       const prev = snapshot.get(key)
       if (prev !== undefined) agentParams[key] = prev
     }
+    baking.value = false
   }
 }
 

@@ -20,7 +20,7 @@ import type { SurfaceSnapshot } from '~/lib/agent/commandSurface'
 /** opts.render returns a PNG data URL of the current studio canvas (enables the
  *  visual self-review pass); opts.apiKey is the Anthropic key for that pass. Both
  *  optional — omit them and the agent is tune-only (no review). */
-export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Params; label: () => string; render?: () => string | null; apiKey?: () => string; tier?: string; guidance?: () => string }) {
+export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Params; label: () => string; render?: () => string | null | Promise<string | null>; apiKey?: () => string; tier?: string; guidance?: () => string }) {
   const { requestPatch } = useVibeControl()
   const busy = ref(false)
   const error = ref('')
@@ -65,7 +65,7 @@ export function useStudioAgent(opts: { controls: () => ControlSpec[]; params: Pa
     if (!opts.render || !opts.apiKey) return
     reviewing.value = true
     try {
-      const image = opts.render()
+      const image = await opts.render()
       if (!image) return
       const described = describeControls(opts.controls(), opts.params)
       const snapshot: SurfaceSnapshot = {
