@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import * as THREE from 'three'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { applyModifiers, hasModifiers, totalClones } from '~/lib/scene3d/modifiers'
+import { geometryFor } from '~/lib/scene3d/engine'
 
 const box = () => new THREE.BoxGeometry(1, 1, 1)
 const sizeOf = (g: THREE.BufferGeometry): [number, number, number] => {
@@ -300,5 +301,37 @@ describe('scene3d modifiers', () => {
     applyModifiers(g, { twist: 90, subdivide: 1 })
     expect(verts(g)).toBe(before)
     expect(g.getAttribute('position')).toBeTruthy()
+  })
+})
+
+describe('scene3d jitter modifier', () => {
+  const posOf = (g: THREE.BufferGeometry) => (g.getAttribute('position').array as Float32Array).slice()
+
+  it('is inert at jitter 0 and active above it', () => {
+    expect(hasModifiers({ jitter: 0 })).toBe(false)
+    expect(hasModifiers({ jitter: 0.1 })).toBe(true)
+  })
+
+  it('moves vertices deterministically for a given seed', () => {
+    const src = geometryFor('box')
+    const a = applyModifiers(src.clone(), { jitter: 0.2, jitterSeed: 1 })
+    const b = applyModifiers(src.clone(), { jitter: 0.2, jitterSeed: 1 })
+    const c = applyModifiers(src.clone(), { jitter: 0.2, jitterSeed: 2 })
+    expect(Array.from(posOf(a))).toEqual(Array.from(posOf(b)))          // same seed → identical
+    expect(Array.from(posOf(a))).not.toEqual(Array.from(posOf(c)))      // seed changes it
+  })
+
+  it('produces only finite positions in both modes', () => {
+    for (const jitterMode of [0, 1]) {
+      const g = applyModifiers(geometryFor('icosahedron', { detail: 1 }), { jitter: 0.3, jitterMode, subdivide: 2 })
+      const arr = g.getAttribute('position').array as Float32Array
+      for (let i = 0; i < arr.length; i++) expect(Number.isFinite(arr[i])).toBe(true)
+    }
+  })
+
+  it('subdivides when only jitter is set (jitter counts as a deform)', () => {
+    const plain = geometryFor('box')
+    const jittered = applyModifiers(geometryFor('box'), { jitter: 0.1, subdivide: 2 })
+    expect(jittered.getAttribute('position').count).toBeGreaterThan(plain.getAttribute('position').count)
   })
 })

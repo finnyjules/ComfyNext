@@ -6,7 +6,7 @@
 // gizmo), bounding boxes, shadows and the gradient bbox uniforms all read real
 // geometry too.
 //
-// Stage order is fixed: subdivide → taper → twist → bend → noise → cloner.
+// Stage order is fixed: subdivide → taper → twist → bend → noise → jitter → cloner.
 import * as THREE from 'three'
 import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { modifierValue } from '~/lib/scene3d/primParams'
@@ -30,7 +30,7 @@ export function hasModifiers(modifiers: Record<string, number> | undefined): boo
   const m = (k: string) => modifierValue(modifiers, k)
   // The cloner is active when it produces more than one copy, which lets grid
   // mode switch on from its own counts without touching cloneCount.
-  return m('taper') !== 0 || m('twist') !== 0 || m('bend') !== 0 || m('noise') !== 0 || totalClones(modifiers) > 1
+  return m('taper') !== 0 || m('twist') !== 0 || m('bend') !== 0 || m('noise') !== 0 || m('jitter') !== 0 || totalClones(modifiers) > 1
 }
 
 // --- deterministic 3D value noise (no dependency, stable across runs) --------
@@ -175,6 +175,33 @@ function applyNoise(geo: THREE.BufferGeometry, amount: number, scale: number, se
   pos.needsUpdate = true
 }
 
+/** Per-vertex random displacement keyed on the (quantised) vertex position, so
+ *  coincident/welded vertices move together and the mesh stays watertight — it
+ *  just facets. Unlike valueNoise this does NOT interpolate, so neighbours are
+ *  uncorrelated: sharp, crystalline facets rather than smooth lumps.
+ *  mode 0 = random 3D direction; mode 1 = along the vertex normal. */
+function applyJitter(geo: THREE.BufferGeometry, amount: number, mode: number, seed: number): void {
+  if (mode === 1 && !geo.getAttribute('normal')) geo.computeVertexNormals()
+  const pos = geo.getAttribute('position') as THREE.BufferAttribute
+  const nrm = geo.getAttribute('normal') as THREE.BufferAttribute | undefined
+  const Q = 4096 // quantisation: near-identical floats hash identically
+  const q = (n: number) => Math.round(n * Q)
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i)
+    const qx = q(x), qy = q(y), qz = q(z)
+    if (mode === 1 && nrm) {
+      const d = (hash3(qx, qy, qz, seed) * 2 - 1) * amount
+      pos.setXYZ(i, x + nrm.getX(i) * d, y + nrm.getY(i) * d, z + nrm.getZ(i) * d)
+    } else {
+      const dx = (hash3(qx, qy, qz, seed) * 2 - 1) * amount
+      const dy = (hash3(qx, qy, qz, seed + 1) * 2 - 1) * amount
+      const dz = (hash3(qx, qy, qz, seed + 2) * 2 - 1) * amount
+      pos.setXYZ(i, x + dx, y + dy, z + dz)
+    }
+  }
+  pos.needsUpdate = true
+}
+
 interface ClonerSettings {
   /** 0 linear, 1 radial, 2 grid. */
   mode: number
@@ -250,9 +277,9 @@ export function applyModifiers(
   if (!hasModifiers(modifiers)) return geo
   const m = (k: string) => modifierValue(modifiers, k)
 
-  const taper = m('taper'), twist = m('twist'), bend = m('bend'), noise = m('noise')
+  const taper = m('taper'), twist = m('twist'), bend = m('bend'), noise = m('noise'), jitter = m('jitter')
   const count = totalClones(modifiers)
-  const deforms = taper !== 0 || twist !== 0 || bend !== 0 || noise !== 0
+  const deforms = taper !== 0 || twist !== 0 || bend !== 0 || noise !== 0 || jitter !== 0
 
   let out = geo.clone()
 
@@ -273,6 +300,7 @@ export function applyModifiers(
   if (twist !== 0) applyTwist(out, twist, Math.round(m('twistAxis')))
   if (bend !== 0) applyBend(out, bend, Math.round(m('bendAxis')))
   if (noise !== 0) applyNoise(out, noise, m('noiseScale'), Math.round(m('noiseSeed')))
+  if (jitter !== 0) applyJitter(out, jitter, Math.round(m('jitterMode')), Math.round(m('jitterSeed')))
 
   if (deforms) {
     out.computeVertexNormals()
