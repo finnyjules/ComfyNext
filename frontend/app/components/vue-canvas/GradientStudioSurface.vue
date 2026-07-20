@@ -30,7 +30,7 @@ import { effectiveColumns, makeLookupResolver } from '~/lib/collection/lookup'
 import SweepPopover from '~/components/vue-canvas/studio/SweepPopover.vue'
 import {
   ASPECTS, BLEND_MODES, DEFAULT_FOCUS, DIRECTIONS, GRADIENT_DIRS, LAYER_MAX, LAYOUTS, MAPPINGS, MIRROR_KINDS, RING_SHAPES, SHAPE_KINDS,
-  aspectRatio, cloneConfig, ensureConfigDefaults, type GradientConfig, type LayoutKind, type MeshConfig, type ShapeKind,
+  aspectRatio, cloneConfig, ensureConfigDefaults, type GradientConfig, type LayerConfig, type LayoutKind, type MeshConfig, type ShapeKind,
 } from '~/lib/gradientfx/types'
 
 const props = defineProps<{ nodeId: string; nodes: any[]; edges?: any[] }>()
@@ -432,7 +432,6 @@ function removeLayer(i: number) {
   if (config.value.layers.length <= 1) return
   config.value.layers.splice(i, 1)
   config.value.motion.tracks = dropTracksForLayer(config.value.motion.tracks, i)
-  disabledOpacity.delete(i)
   activeLayer.value = Math.min(activeLayer.value, config.value.layers.length - 1)
 }
 // Shift motion tracks up when a layer is inserted at index `at` (duplicate).
@@ -455,15 +454,24 @@ function reorderLayer(from: number, to: number) {
 
 // Layer enable/disable modeled as opacity (LayerConfig has no `enabled` field): a
 // disabled layer's opacity is zeroed and its prior value remembered so toggling
-// back restores it. Layer 0 (base) is unaffected by opacity in the shader, so
-// toggling it visually does nothing — acceptable per the design brief.
-const disabledOpacity = new Map<number, number>()
-function layerEnabled(i: number) { return !disabledOpacity.has(i) }
+// back restores it. Keyed by the layer OBJECT (not its array index) via a WeakMap,
+// so the remembered value follows the layer through reorder/duplicate/remove with
+// no index bookkeeping — a duplicated clone is a new object (starts enabled) and a
+// removed layer's entry is GC'd. Layer 0 (base) is unaffected by opacity in the
+// shader, so toggling it visually does nothing — acceptable per the design brief.
+const disabledOpacity = new WeakMap<LayerConfig, number>()
+function layerEnabled(i: number) {
+  const L = config.value.layers[i]
+  return !L || !disabledOpacity.has(L)
+}
 function toggleLayer(i: number) {
   const L = config.value.layers[i]!
-  if (disabledOpacity.has(i)) { L.opacity = disabledOpacity.get(i)!; disabledOpacity.delete(i) }
-  else { disabledOpacity.set(i, L.opacity); L.opacity = 0 }
-  onEdit('layer.opacity', L.opacity)
+  if (disabledOpacity.has(L)) { L.opacity = disabledOpacity.get(L)!; disabledOpacity.delete(L) }
+  else { disabledOpacity.set(L, L.opacity); L.opacity = 0 }
+  // Only mirror into the var-binding when toggling the ACTIVE layer — the
+  // `layer.opacity` binding resolves against activeLayer, so writing a different
+  // layer's value here would cross-wire a bound Collection cell.
+  if (i === activeLayer.value) onEdit('layer.opacity', L.opacity)
 }
 
 // ── color stops ─────────────────────────────────────────────────────────────

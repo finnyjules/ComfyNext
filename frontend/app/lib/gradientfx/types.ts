@@ -184,7 +184,7 @@ export interface FlowConfig {
 export type EasingKind = 'linear' | 'pingpong' | 'easeinout'
 
 export interface MotionTrack {
-  /** Which layer the param belongs to (0 or 1). */
+  /** Which layer the param belongs to (0..LAYER_MAX-1). */
   layer: number
   /** Animatable param key — see ANIMATABLE in motion.ts. */
   param: string
