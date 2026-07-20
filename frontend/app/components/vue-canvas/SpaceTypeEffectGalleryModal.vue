@@ -14,9 +14,10 @@ onMounted(async () => { thumbs.value = await loadEffectThumbnails() })
 
 const searchQuery = ref('')
 const draftId = ref(props.selectedId)
+const visibleEffects = SPACE_TYPE_EFFECTS.filter(e => !e.hidden)
 const items = computed(() => {
   const q = searchQuery.value.trim().toLowerCase()
-  return SPACE_TYPE_EFFECTS
+  return visibleEffects
     .map(e => ({ id: e.id, label: e.label }))
     .filter(e => !q || e.label.toLowerCase().includes(q))
 })
@@ -26,7 +27,7 @@ const items = computed(() => {
   <CatalogModal
     :open="true"
     title="Pick an effect"
-    :subtitle="`${SPACE_TYPE_EFFECTS.length} effects`"
+    :subtitle="`${visibleEffects.length} effects`"
     :items="items"
     :selected-id="draftId"
     :search-query="searchQuery"

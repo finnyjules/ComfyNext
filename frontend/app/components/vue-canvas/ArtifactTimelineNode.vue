@@ -1,8 +1,14 @@
 <script setup lang="ts">
-import { Handle, Position } from '@vue-flow/core'
 import { Loader2, RefreshCw, Pencil, Clapperboard } from 'lucide-vue-next'
 import { getTypeColor } from '~/composables/useVueNodes'
+import { useNodePortSync } from '~/composables/useNodePortSync'
 import { migrateEditState } from '~~/shared/timeline/types'
+
+// This card grows when clips connect, which moves its handles. Vue Flow caches
+// handle geometry at mount, so without this refresh its edges stay pinned to
+// where the ports were before the growth.
+const portSyncRoot = ref<HTMLElement | null>(null)
+useNodePortSync(portSyncRoot)
 
 // The "Timeline" as a first-class artifact card — same visual language as the
 // Frame / Image / Video artifacts. Edge-mounted round handles, a tight dark
@@ -29,7 +35,6 @@ const MAX_CLIPS = 16
 const isMuted = computed(() => props.data.mode === 2)
 const isBypassed = computed(() => props.data.mode === 4)
 const imageColor = computed(() => getTypeColor('IMAGE'))
-const videoColor = computed(() => getTypeColor('VIDEO'))
 const injectedEdges = inject<any>('vueFlowEdges', null)
 
 function clamp(v: number, lo: number, hi: number) { return Math.max(lo, Math.min(hi, v)) }
@@ -58,11 +63,6 @@ const clipSlots = computed<number[]>(() => {
   if (next < MAX_CLIPS) slots.push(next)
   return slots
 })
-function handleTop(idx: number, count: number): string {
-  if (count <= 1) return '50%'
-  const pad = 14
-  return `calc(${pad}px + ${(idx / (count - 1)) * 100}% - ${(pad * 2 * idx) / (count - 1)}px)`
-}
 
 // ── Header summary (prefer the editor's edit_state; fall back to widgets) ─────
 const editState = computed<any>(() => {
@@ -124,6 +124,7 @@ function runThisNode() {
 
 <template>
   <div
+    ref="portSyncRoot"
     class="artifact-timeline relative select-none"
     :class="{ 'artifact-timeline--muted': isMuted, 'artifact-timeline--bypassed': isBypassed }"
     :style="{ width: nodeW + 'px', '--port-color': imageColor } as any"
@@ -131,26 +132,19 @@ function runThisNode() {
   >
     <VueCanvasNodeReadyBadge :node-id="id" />
     <!-- Clip inputs (left, grow-on-connect) -->
-    <Handle
-      v-for="(slot, i) in clipSlots" :key="slot" :id="`input-${slot}`"
-      type="target" :position="Position.Left"
-      class="!w-3 !h-3 !rounded-full !border-2 !bg-[#1a1a1a]"
-      :style="{ borderColor: imageColor, top: handleTop(i, clipSlots.length) }"
+    <VueCanvasNodePort
+      v-for="(slot, i) in clipSlots" :id="`input-${slot}`" :key="slot"
+      type="target" side="left" :index="i" data-type="IMAGE" label="clip"
     />
-    <!-- Outputs (right): frames (IMAGE) + video (VIDEO). With only one output
-         (stale saved data) frames stays centered at 50% as before. -->
-    <Handle
-      :id="`output-${framesOutIdx}`" type="source" :position="Position.Right"
-      title="frames"
-      class="!w-3 !h-3 !rounded-full !border-2 !bg-[#1a1a1a]"
-      :style="{ borderColor: imageColor, top: videoOutIdx >= 0 ? '38%' : '50%' }"
+    <!-- Outputs (right): frames (IMAGE) + video (VIDEO). -->
+    <VueCanvasNodePort
+      :id="`output-${framesOutIdx}`" type="source" side="right"
+      :index="0" data-type="IMAGE" label="frames"
     />
-    <Handle
+    <VueCanvasNodePort
       v-if="videoOutIdx >= 0"
-      :id="`output-${videoOutIdx}`" type="source" :position="Position.Right"
-      title="video"
-      class="!w-3 !h-3 !rounded-full !border-2 !bg-[#1a1a1a]"
-      :style="{ borderColor: videoColor, top: '62%' }"
+      :id="`output-${videoOutIdx}`" type="source" side="right"
+      :index="1" data-type="VIDEO" label="video"
     />
 
     <div
@@ -174,7 +168,7 @@ function runThisNode() {
       <!-- Footer: open editor + run -->
       <div class="flex items-center gap-1.5 px-2 py-1.5 border-t border-white/5">
         <button
-          class="nopan nodrag flex-1 h-6 rounded-md bg-white/[0.06] hover:bg-white/[0.12] text-white/70 hover:text-white/90 text-[11px] flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+          class="nopan nodrag flex-1 h-6 rounded bg-white/[0.06] hover:bg-white/[0.12] text-white/70 hover:text-white/90 text-[11px] flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
           title="Open the full multi-track editor"
           @click.stop="openEditor"
         >

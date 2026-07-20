@@ -515,7 +515,7 @@ const canvasImages = computed<Array<{ url: string; label?: string }>>(() => {
     <div class="relative w-full max-w-[1440px] h-[88vh] flex rounded-2xl border border-white/10 bg-[#0e0e10] overflow-hidden shadow-[0_24px_80px_rgba(0,0,0,0.6)]">
     <!-- Close button — Escape also works -->
     <button
-      class="absolute top-3 right-3 z-10 size-8 rounded-md bg-white/[0.06] hover:bg-white/[0.12] flex items-center justify-center text-white/70 hover:text-white transition-colors cursor-pointer"
+      class="absolute top-3 right-3 z-10 size-8 rounded bg-white/[0.06] hover:bg-white/[0.12] flex items-center justify-center text-white/70 hover:text-white transition-colors cursor-pointer"
       title="Close (Esc)"
       @click="emit('close')"
     >
@@ -558,14 +558,14 @@ const canvasImages = computed<Array<{ url: string; label?: string }>>(() => {
     >
       <template #topbar-end>
         <button
-          class="h-8 px-2.5 rounded-md bg-white/[0.04] hover:bg-white/[0.08] text-[12px] text-white/70 transition-colors cursor-pointer"
+          class="h-8 px-2.5 rounded bg-white/[0.04] hover:bg-white/[0.08] text-[12px] text-white/70 transition-colors cursor-pointer"
           title="Render every combination of formats × bound variables"
           @click="openBatchExport"
         >
           Batch export
         </button>
         <button
-          class="h-8 px-2.5 rounded-md bg-white/[0.04] hover:bg-white/[0.08] text-[12px] text-white/50 transition-colors cursor-pointer"
+          class="h-8 px-2.5 rounded bg-white/[0.04] hover:bg-white/[0.08] text-[12px] text-white/50 transition-colors cursor-pointer"
           title="Edit the raw layout JSON (escape hatch)"
           @click="showJsonView"
         >
@@ -600,19 +600,19 @@ const canvasImages = computed<Array<{ url: string; label?: string }>>(() => {
         />
         <div class="px-4 py-3 border-t border-white/[0.06] flex items-center gap-2">
           <button
-            class="px-3 h-8 rounded-md bg-white/[0.06] hover:bg-white/[0.12] text-xs text-white/80 transition-colors cursor-pointer"
+            class="px-3 h-8 rounded bg-white/[0.06] hover:bg-white/[0.12] text-xs text-white/80 transition-colors cursor-pointer"
             @click="showVisualView"
           >
             Back to visual
           </button>
           <button
-            class="px-3 h-8 rounded-md bg-white/[0.06] hover:bg-white/[0.12] text-xs text-white/80 transition-colors cursor-pointer"
+            class="px-3 h-8 rounded bg-white/[0.06] hover:bg-white/[0.12] text-xs text-white/80 transition-colors cursor-pointer"
             @click="applyV2Draft"
           >
             Apply to previews
           </button>
           <button
-            class="px-3 h-8 rounded-md bg-action/20 hover:bg-action/30 text-xs text-[#c9d6ff] transition-colors cursor-pointer"
+            class="px-3 h-8 rounded bg-action/20 hover:bg-action/30 text-xs text-[#c9d6ff] transition-colors cursor-pointer"
             @click="saveV2"
           >
             Save to node

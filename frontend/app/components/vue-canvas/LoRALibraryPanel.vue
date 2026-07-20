@@ -16,6 +16,7 @@ import {
   ArrowUpRight,
   Drama,
   LayoutGrid,
+  Settings2,
 } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 
@@ -270,6 +271,15 @@ function clearSearch() {
           <LayoutGrid class="size-3.5" />
           Browse
         </button>
+        <NuxtLink
+          to="/dev/style-publisher"
+          target="_blank"
+          class="flex items-center gap-1 px-2 h-6 rounded text-xs text-white/60 hover:bg-white/10 hover:text-white/90"
+          title="Manage & publish styles (Style Publisher)"
+        >
+          <Settings2 class="size-3.5" />
+          Manage
+        </NuxtLink>
         <button
           class="flex items-center justify-center size-6 rounded hover:bg-white/10 transition-colors cursor-pointer"
           @click="$emit('close')"
@@ -325,7 +335,7 @@ function clearSearch() {
           <button
             v-for="l in visibleLocal"
             :key="l.filename"
-            class="group relative rounded-lg border border-white/[0.08] hover:border-white/20 transition-colors cursor-pointer overflow-hidden aspect-[4/3] text-left"
+            class="group relative rounded border border-white/[0.08] hover:border-white/20 transition-colors cursor-pointer overflow-hidden aspect-[4/3] text-left"
             :title="l.aesthetic ? `Add ${l.name}\n\nStyle profile (added to prompt):\n${l.aesthetic}` : `Add ${l.name}`"
             @click="useLocalLora(l)"
           >
@@ -345,7 +355,7 @@ function clearSearch() {
             </div>
             <!-- Hover action: promote to a character -->
             <button
-              class="absolute top-1.5 right-1.5 size-6 rounded-md bg-black/55 hover:bg-white/15 backdrop-blur-sm flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-100"
+              class="absolute top-1.5 right-1.5 size-6 rounded bg-black/55 hover:bg-white/15 backdrop-blur-sm flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-100"
               :title="`Make &quot;${l.name}&quot; a character`"
               :disabled="promoting.has(l.filename)"
               @click="markAsCharacter(l, $event)"
@@ -436,14 +446,14 @@ function clearSearch() {
         <!-- Top-right actions: HF link, copy path -->
         <div class="absolute top-1.5 right-1.5 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
           <button
-            class="size-6 rounded-md bg-black/50 hover:bg-black/80 backdrop-blur-sm flex items-center justify-center"
+            class="size-6 rounded bg-black/50 hover:bg-black/80 backdrop-blur-sm flex items-center justify-center"
             title="Copy HF path"
             @click="copyHfPath(entry, $event)"
           >
             <Copy class="size-3 text-white/85" />
           </button>
           <button
-            class="size-6 rounded-md bg-black/50 hover:bg-black/80 backdrop-blur-sm flex items-center justify-center"
+            class="size-6 rounded bg-black/50 hover:bg-black/80 backdrop-blur-sm flex items-center justify-center"
             title="Open on HuggingFace"
             @click="openHfPage(entry, $event)"
           >

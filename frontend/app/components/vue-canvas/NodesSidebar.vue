@@ -235,10 +235,10 @@ function onNodeDragStart(nodeName: string, event: DragEvent) {
             class="bg-transparent text-xs text-white placeholder-white/30 outline-none w-full"
           />
         </div>
-        <button class="p-1.5 rounded-lg bg-[#1e1e1e] border border-[#2a2a2a] text-white/40 hover:text-white/70 transition-colors cursor-pointer">
+        <button class="p-1.5 rounded bg-[#1e1e1e] border border-[#2a2a2a] text-white/40 hover:text-white/70 transition-colors cursor-pointer">
           <ArrowUpDown class="size-3.5" />
         </button>
-        <button class="p-1.5 rounded-lg bg-[#1e1e1e] border border-[#2a2a2a] text-white/40 hover:text-white/70 transition-colors cursor-pointer">
+        <button class="p-1.5 rounded bg-[#1e1e1e] border border-[#2a2a2a] text-white/40 hover:text-white/70 transition-colors cursor-pointer">
           <SlidersHorizontal class="size-3.5" />
         </button>
       </div>
@@ -247,14 +247,14 @@ function onNodeDragStart(nodeName: string, event: DragEvent) {
     <!-- Tabs -->
     <div class="flex items-center gap-1 px-3 py-2 border-b border-[#2a2a2a] shrink-0">
       <button
-        class="px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer"
+        class="px-3 py-1.5 rounded text-xs font-medium transition-colors cursor-pointer"
         :class="activeTab === 'all' ? 'bg-white/10 text-white' : 'text-white/50 hover:text-white/70'"
         @click="activeTab = 'all'"
       >
         All
       </button>
       <button
-        class="px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer"
+        class="px-3 py-1.5 rounded text-xs font-medium transition-colors cursor-pointer"
         :class="activeTab === 'blueprints' ? 'bg-white/10 text-white' : 'text-white/50 hover:text-white/70'"
         @click="activeTab = 'blueprints'"
       >

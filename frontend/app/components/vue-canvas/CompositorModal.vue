@@ -45,7 +45,7 @@ import { VARIABLE_FONTS } from '~/data/variable-fonts'
 import type { GoogleFont } from '~/data/google-fonts'
 import { KINETIC_ENABLED } from '~/lib/kineticEnabled'
 import { defaultExpressiveParams, type ExpressiveParams } from '~~/shared/text-layout/expressive'
-import { PenTool, FileUp, Sparkles, Wand2, Undo2, Redo2, ChevronRight, ChevronDown, GripVertical, Play, Palette, Check, Dices } from 'lucide-vue-next'
+import { PenTool, FileUp, Sparkles, Wand2, Undo2, Redo2, ChevronRight, ChevronDown, GripVertical, Play, Palette, Check, RefreshCw } from 'lucide-vue-next'
 import type { ComputedRef } from 'vue'
 import type { BrandKit } from '~~/shared/brand/types'
 import { brandSwatches } from '~~/shared/brand/resolve'
@@ -2464,7 +2464,7 @@ onUnmounted(() => {
           @pointerdown.stop @click.stop
         >
           <button class="flex items-center justify-center size-8 rounded-[8px] hover:bg-white/10 text-white/80 cursor-pointer disabled:opacity-40 disabled:cursor-default" title="Cancel" :disabled="inpaint.busy.value" @click="cancelObject"><X class="size-4" /></button>
-          <button class="flex items-center justify-center size-8 rounded-[8px] hover:bg-white/10 text-white/80 cursor-pointer disabled:opacity-40 disabled:cursor-default" title="Re-roll" :disabled="inpaint.busy.value" @click="rerollObject"><Dices class="size-4" :class="inpaint.busy.value ? 'animate-spin' : ''" /></button>
+          <button class="flex items-center justify-center size-8 rounded-[8px] hover:bg-white/10 text-white/80 cursor-pointer disabled:opacity-40 disabled:cursor-default" title="Re-render" :disabled="inpaint.busy.value" @click="rerollObject"><RefreshCw class="size-4" :class="inpaint.busy.value ? 'animate-spin' : ''" /></button>
           <button class="flex items-center justify-center size-8 rounded-[8px] bg-white text-neutral-900 hover:bg-white/90 cursor-pointer disabled:opacity-40 disabled:cursor-default" title="Confirm" :disabled="inpaint.busy.value" @click="confirmObject"><Check class="size-4" /></button>
         </div>
 
@@ -2676,20 +2676,20 @@ onUnmounted(() => {
         @pointerdown.stop
       >
         <button v-for="a in ALIGN_BTNS" :key="a.mode"
-          class="flex items-center justify-center size-7 rounded-md hover:bg-white/12 text-white/80 cursor-pointer disabled:opacity-25"
+          class="flex items-center justify-center size-7 rounded hover:bg-white/12 text-white/80 cursor-pointer disabled:opacity-25"
           :disabled="(a.mode === 'hdist' || a.mode === 'vdist') && selectedCount < 3"
           :title="a.title" @click="alignSelected(a.mode)">
           <component :is="a.icon" class="size-4" />
         </button>
         <div class="w-px h-5 bg-white/10 mx-0.5" />
-        <button class="flex items-center justify-center size-7 rounded-md hover:bg-white/12 text-white/80 cursor-pointer disabled:opacity-25"
+        <button class="flex items-center justify-center size-7 rounded hover:bg-white/12 text-white/80 cursor-pointer disabled:opacity-25"
           :disabled="!canGroup" title="Group (⌘G)" @click="groupSelected"><Group class="size-4" /></button>
-        <button class="flex items-center justify-center size-7 rounded-md hover:bg-white/12 text-white/80 cursor-pointer disabled:opacity-25"
+        <button class="flex items-center justify-center size-7 rounded hover:bg-white/12 text-white/80 cursor-pointer disabled:opacity-25"
           :disabled="!canUngroup" title="Ungroup (⌘⇧G)" @click="ungroupSelected"><Ungroup class="size-4" /></button>
         <template v-if="selectedPathCount >= 2">
           <div class="w-px h-5 bg-white/10 mx-0.5" />
           <button v-for="b in BOOL_OPS" :key="b.op"
-            class="h-7 px-2 rounded-md bg-white/[0.06] hover:bg-white/12 text-[11px] text-white/85 cursor-pointer"
+            class="h-7 px-2 rounded bg-white/[0.06] hover:bg-white/12 text-[11px] text-white/85 cursor-pointer"
             @click="applyBoolean(b.op)">{{ b.label }}</button>
         </template>
       </div>
@@ -2732,7 +2732,7 @@ onUnmounted(() => {
             <option value="linocut">Linocut</option>
           </select>
           <button
-            class="flex-1 h-7 rounded-md bg-white hover:bg-white/90 text-neutral-900 text-[12px] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-default"
+            class="flex-1 h-7 rounded bg-white hover:bg-white/90 text-neutral-900 text-[12px] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-default"
             :disabled="aiBusy || !aiPrompt.trim()"
             @click="runGenerate"
           >{{ aiBusy ? 'Generating…' : 'Generate' }}</button>
@@ -2744,12 +2744,12 @@ onUnmounted(() => {
           </div>
           <div v-if="vectorizableUrl" class="flex items-center gap-1.5">
             <button
-              class="flex-1 h-7 rounded-md bg-white/10 hover:bg-white/15 text-[12px] cursor-pointer disabled:opacity-40"
+              class="flex-1 h-7 rounded bg-white/10 hover:bg-white/15 text-[12px] cursor-pointer disabled:opacity-40"
               :disabled="aiBusy" title="Free local VTracer"
               @click="runVectorize('local')"
             >{{ aiBusy ? '…' : 'Trace (free)' }}</button>
             <button
-              class="flex-1 h-7 rounded-md bg-white/10 hover:bg-white/15 text-[12px] cursor-pointer disabled:opacity-40"
+              class="flex-1 h-7 rounded bg-white/10 hover:bg-white/15 text-[12px] cursor-pointer disabled:opacity-40"
               :disabled="aiBusy" title="Recraft — higher fidelity, paid"
               @click="runVectorize('recraft')"
             >Recraft</button>
@@ -2764,13 +2764,13 @@ onUnmounted(() => {
       <!-- Zoom control (bottom-left of the stage). Scroll to pan, ⌘/pinch to zoom,
            space-drag to pan; these buttons + the % (reset) cover mouse users. -->
       <div class="absolute bottom-4 left-4 z-20 flex items-center gap-0.5 rounded-[10px] border border-[#2a2a2a] bg-[#1a1a1a]/95 p-1 shadow-lg pointer-events-auto">
-        <button class="flex items-center justify-center size-7 rounded-md hover:bg-white/10 text-white/80 cursor-pointer" title="Zoom out (⌘−)" @click="zoomBy(1 / 1.2)">
+        <button class="flex items-center justify-center size-7 rounded hover:bg-white/10 text-white/80 cursor-pointer" title="Zoom out (⌘−)" @click="zoomBy(1 / 1.2)">
           <Minus class="size-4" />
         </button>
-        <button class="h-7 min-w-[46px] px-1 rounded-md hover:bg-white/10 text-white/80 cursor-pointer text-[11px] tabular-nums" title="Reset zoom (⌘0)" @click="resetView">
+        <button class="h-7 min-w-[46px] px-1 rounded hover:bg-white/10 text-white/80 cursor-pointer text-[11px] tabular-nums" title="Reset zoom (⌘0)" @click="resetView">
           {{ Math.round(view.scale * 100) }}%
         </button>
-        <button class="flex items-center justify-center size-7 rounded-md hover:bg-white/10 text-white/80 cursor-pointer" title="Zoom in (⌘+)" @click="zoomBy(1.2)">
+        <button class="flex items-center justify-center size-7 rounded hover:bg-white/10 text-white/80 cursor-pointer" title="Zoom in (⌘+)" @click="zoomBy(1.2)">
           <Plus class="size-4" />
         </button>
       </div>
@@ -2787,52 +2787,52 @@ onUnmounted(() => {
       <!-- Toolbar -->
       <div class="pointer-events-auto flex items-center gap-1 bg-[#1a1a1a]/95 rounded-[12px] p-1.5 border border-[#2a2a2a] shadow-lg">
         <button
-          class="flex items-center justify-center size-8 rounded-md cursor-pointer"
+          class="flex items-center justify-center size-8 rounded cursor-pointer"
           :class="isSelectTool ? 'bg-white text-neutral-900' : 'hover:bg-white/10 text-white/80'"
           title="Select (V)" @click="selectTool">
           <MousePointer2 class="size-4" />
         </button>
         <div class="w-px h-5 bg-white/10 mx-0.5" />
-        <button class="flex items-center justify-center size-8 rounded-md cursor-pointer disabled:opacity-30 hover:bg-white/10 text-white/80"
+        <button class="flex items-center justify-center size-8 rounded cursor-pointer disabled:opacity-30 hover:bg-white/10 text-white/80"
           title="Undo (⌘Z)" :disabled="!canUndo" @click="undo">
           <Undo2 class="size-4" />
         </button>
-        <button class="flex items-center justify-center size-8 rounded-md cursor-pointer disabled:opacity-30 hover:bg-white/10 text-white/80"
+        <button class="flex items-center justify-center size-8 rounded cursor-pointer disabled:opacity-30 hover:bg-white/10 text-white/80"
           title="Redo (⌘⇧Z)" :disabled="!canRedo" @click="redo">
           <Redo2 class="size-4" />
         </button>
         <div class="w-px h-5 bg-white/10 mx-0.5" />
-        <button class="flex items-center justify-center size-8 rounded-md hover:bg-white/10 text-white/80 cursor-pointer" title="Add text" @click="addText">
+        <button class="flex items-center justify-center size-8 rounded hover:bg-white/10 text-white/80 cursor-pointer" title="Add text" @click="addText">
           <Type class="size-4" />
         </button>
-        <button class="flex items-center justify-center size-8 rounded-md hover:bg-white/10 text-white/80 cursor-pointer" title="Add rectangle" @click="addRect">
+        <button class="flex items-center justify-center size-8 rounded hover:bg-white/10 text-white/80 cursor-pointer" title="Add rectangle" @click="addRect">
           <Square class="size-4" />
         </button>
-        <button class="flex items-center justify-center size-8 rounded-md hover:bg-white/10 text-white/80 cursor-pointer" title="Add ellipse" @click="addEllipse">
+        <button class="flex items-center justify-center size-8 rounded hover:bg-white/10 text-white/80 cursor-pointer" title="Add ellipse" @click="addEllipse">
           <Circle class="size-4" />
         </button>
-        <button class="flex items-center justify-center size-8 rounded-md hover:bg-white/10 text-white/80 cursor-pointer" title="Add line" @click="addLine">
+        <button class="flex items-center justify-center size-8 rounded hover:bg-white/10 text-white/80 cursor-pointer" title="Add line" @click="addLine">
           <Minus class="size-4" />
         </button>
-        <button class="flex items-center justify-center size-8 rounded-md hover:bg-white/10 text-white/80 cursor-pointer" title="Add polygon" @click="addPolygon">
+        <button class="flex items-center justify-center size-8 rounded hover:bg-white/10 text-white/80 cursor-pointer" title="Add polygon" @click="addPolygon">
           <Hexagon class="size-4" />
         </button>
-        <button class="flex items-center justify-center size-8 rounded-md hover:bg-white/10 text-white/80 cursor-pointer" title="Add star" @click="addStar">
+        <button class="flex items-center justify-center size-8 rounded hover:bg-white/10 text-white/80 cursor-pointer" title="Add star" @click="addStar">
           <Star class="size-4" />
         </button>
         <button
-          class="flex items-center justify-center size-8 rounded-md cursor-pointer"
+          class="flex items-center justify-center size-8 rounded cursor-pointer"
           :class="pen.active.value ? 'bg-white text-neutral-900' : 'hover:bg-white/10 text-white/80'"
           title="Pen — click to add points, drag for curves, click the first point or Enter to finish, Esc to cancel"
           @click="togglePen"
         >
           <PenTool class="size-4" />
         </button>
-        <button class="flex items-center justify-center size-8 rounded-md hover:bg-white/10 text-white/80 cursor-pointer" title="Import SVG" @click="triggerImportSvg">
+        <button class="flex items-center justify-center size-8 rounded hover:bg-white/10 text-white/80 cursor-pointer" title="Import SVG" @click="triggerImportSvg">
           <FileUp class="size-4" />
         </button>
         <button
-          class="flex items-center justify-center size-8 rounded-md cursor-pointer"
+          class="flex items-center justify-center size-8 rounded cursor-pointer"
           :class="aiOpen ? 'bg-white text-neutral-900' : 'hover:bg-white/10 text-white/80'"
           title="AI vector — generate from text or vectorize a selected image"
           @click="aiOpen = !aiOpen"
@@ -2840,20 +2840,20 @@ onUnmounted(() => {
           <Sparkles class="size-4" />
         </button>
         <button
-          class="flex items-center justify-center size-8 rounded-md cursor-pointer"
+          class="flex items-center justify-center size-8 rounded cursor-pointer"
           :class="genActive ? 'bg-white text-neutral-900' : 'hover:bg-white/10 text-white/80'"
           title="Generate in region — mark an area (box, brush, or shape) and regenerate just that part of an image"
           @click="toggleGenMode"
         >
           <Wand2 class="size-4" />
         </button>
-        <button class="flex items-center justify-center size-8 rounded-md hover:bg-white/10 text-white/80 cursor-pointer" title="Add image" @click="triggerAddImage">
+        <button class="flex items-center justify-center size-8 rounded hover:bg-white/10 text-white/80 cursor-pointer" title="Add image" @click="triggerAddImage">
           <ImageIcon class="size-4" />
         </button>
         <BrandImagePicker @add="(name, aspect) => addImageFromName(name, aspect)" />
         <button
           v-if="KINETIC_ENABLED"
-          class="flex items-center justify-center size-8 rounded-md cursor-pointer"
+          class="flex items-center justify-center size-8 rounded cursor-pointer"
           :class="previewT != null ? 'bg-action text-white' : 'hover:bg-white/10 text-white/80'"
           title="Motion — preview layer animations on the kinetic timeline"
           @click="previewT == null ? scrubTo(0) : exitMotionPreview()"
@@ -2861,7 +2861,7 @@ onUnmounted(() => {
           <Play class="size-4" />
         </button>
         <button
-          class="flex items-center justify-center size-8 rounded-md cursor-pointer"
+          class="flex items-center justify-center size-8 rounded cursor-pointer"
           :class="brandOpen ? 'bg-white text-neutral-900' : 'hover:bg-white/10 text-white/80'"
           title="Brand — pick the project's active brand kit"
           @click="brandOpen = !brandOpen"
@@ -2869,7 +2869,7 @@ onUnmounted(() => {
           <Palette class="size-4" />
         </button>
         <button v-if="isDev && KINETIC_ENABLED"
-          class="flex items-center justify-center h-8 px-2 rounded-md hover:bg-white/10 text-white/80 cursor-pointer text-[11px] whitespace-nowrap"
+          class="flex items-center justify-center h-8 px-2 rounded hover:bg-white/10 text-white/80 cursor-pointer text-[11px] whitespace-nowrap"
           title="Dev: load the LIV-style slate acceptance fixture"
           @click="loadSlateFixture"
         >
@@ -2885,7 +2885,7 @@ onUnmounted(() => {
     <div class="absolute top-4 right-4 z-30 flex items-center gap-2">
       <span v-if="renderError" class="text-[11px] text-rose-400 max-w-[200px] truncate" :title="renderError">{{ renderError }}</span>
       <button
-        class="h-8 px-3 rounded-md text-[12px] font-medium flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+        class="h-8 px-3 rounded text-[12px] font-medium flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
         :class="renderStale ? 'bg-white hover:bg-white/90 text-neutral-900' : 'bg-white/[0.06] hover:bg-white/12 text-white/85'"
         :disabled="rendering || baking"
         :title="renderStale ? 'Frame output is out of date — click to render' : 'Frame output is up to date'"
@@ -2975,7 +2975,7 @@ onUnmounted(() => {
               <div class="panel-label mb-2">Model</div>
               <div class="relative">
                 <button
-                  class="w-full h-9 px-3 rounded-md bg-white/[0.06] hover:bg-white/12 text-[12px] flex items-center justify-between gap-2 cursor-pointer"
+                  class="w-full h-9 px-3 rounded bg-white/[0.06] hover:bg-white/12 text-[12px] flex items-center justify-between gap-2 cursor-pointer"
                   @click="modelPickerOpen = !modelPickerOpen">
                   <span class="truncate text-left">{{ currentModel.name }}</span>
                   <ChevronDown class="size-3.5 text-white/40 shrink-0 transition-transform" :class="modelPickerOpen ? 'rotate-180' : ''" />
@@ -3004,7 +3004,7 @@ onUnmounted(() => {
               <div class="panel-label mb-2">Style</div>
               <div class="relative">
                 <button
-                  class="w-full h-9 px-3 rounded-md bg-white/[0.06] hover:bg-white/12 text-[12px] flex items-center gap-2 cursor-pointer"
+                  class="w-full h-9 px-3 rounded bg-white/[0.06] hover:bg-white/12 text-[12px] flex items-center gap-2 cursor-pointer"
                   @click="stylePickerOpen = !stylePickerOpen">
                   <img v-if="genStyle?.coverUrl" :src="genStyle.coverUrl" class="size-5 rounded object-cover ring-1 ring-white/10" />
                   <span class="truncate text-left flex-1">{{ genStyle ? genStyle.name : 'None' }}</span>
@@ -3050,7 +3050,7 @@ onUnmounted(() => {
               <span class="text-[10px] text-white/50 w-8 text-right tabular-nums">{{ genBrush }}</span>
             </div>
             <button v-else-if="genTool === 'shape'"
-              class="w-full h-7 mt-2 rounded-md bg-white/10 hover:bg-white/15 text-[12px] cursor-pointer disabled:opacity-40 disabled:cursor-default"
+              class="w-full h-7 mt-2 rounded bg-white/10 hover:bg-white/15 text-[12px] cursor-pointer disabled:opacity-40 disabled:cursor-default"
               :disabled="!genShapeCandidate" @click="genUseShape"
             >{{ genShapeCandidate ? 'Use selected shape →' : 'Select a shape/path first' }}</button>
             <p v-else class="text-[10px] text-white/35 mt-2">Drag a box over the canvas.</p>
@@ -3071,11 +3071,11 @@ onUnmounted(() => {
 
           <div class="flex items-center gap-1.5">
             <button
-              class="h-8 px-2.5 rounded-md bg-white/[0.06] hover:bg-white/12 text-[11px] cursor-pointer disabled:opacity-30 disabled:cursor-default"
+              class="h-8 px-2.5 rounded bg-white/[0.06] hover:bg-white/12 text-[11px] cursor-pointer disabled:opacity-30 disabled:cursor-default"
               :disabled="!genHasMask" title="Clear region" @click="clearGenMask"
             >Clear</button>
             <button
-              class="gen-pastel flex-1 h-8 rounded-md text-neutral-900 text-[12px] font-semibold cursor-pointer disabled:opacity-40 disabled:cursor-default"
+              class="gen-pastel flex-1 h-8 rounded text-neutral-900 text-[12px] font-semibold cursor-pointer disabled:opacity-40 disabled:cursor-default"
               :disabled="inpaint.busy.value || !genHasMask"
               @click="runRegionFill"
             >{{ inpaint.busy.value ? 'Generating…' : 'Generate' }}</button>
@@ -3253,7 +3253,7 @@ onUnmounted(() => {
                 <button
                   class="w-full flex items-center justify-center gap-1.5 bg-white/[0.04] border border-white/[0.06] rounded py-1.5 text-xs text-white/80 hover:text-white"
                   @click="rerollExpressive(selectedLocal)">
-                  <Dices class="size-3.5" /> Reroll
+                  <RefreshCw class="size-3.5" /> Re-render
                 </button>
               </div>
             </div>
@@ -3833,7 +3833,7 @@ onUnmounted(() => {
               <button
                 class="w-full flex items-center justify-center gap-1.5 bg-white/[0.04] border border-white/[0.06] rounded py-1.5 text-xs text-white/80 hover:text-white"
                 @click="rerollGroupExpressive(soleSelectedGroup!)">
-                <Dices class="size-3.5" /> Reroll
+                <RefreshCw class="size-3.5" /> Re-render
               </button>
             </div>
           </div>

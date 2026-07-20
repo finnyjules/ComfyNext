@@ -429,6 +429,7 @@ function onPickImage(url: string) {
       >
         <div class="flex-1 min-h-0 overflow-y-auto">
           <TemplatesFormatList />
+          <TemplatesVariablesPanel />
           <div class="border-t border-white/[0.06]" />
           <TemplatesLayersPanel />
         </div>

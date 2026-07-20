@@ -236,7 +236,7 @@ class FaceSwapNode(IO.ComfyNode):
         masks_out = torch.stack(out_masks, dim=0)
         return IO.NodeOutput(
             frames_out, masks_out,
-            ui=save_live_preview(frames_out, str(cls.hidden.unique_id)),
+            ui=save_live_preview(frames_out, str(cls.hidden.unique_id), unique=True),
         )
 
 

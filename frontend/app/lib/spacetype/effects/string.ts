@@ -23,7 +23,7 @@ const MIX_ORDER: TextureMode[] = ['text', 'grad1', 'stripes', 'grad2']
 
 const controls: ControlSpec[] = [
   { key: 'path', label: 'Path', kind: 'path', default: '', group: 'Path' },
-  { key: 'text', label: 'Text', kind: 'textList', default: 'SPACE TYPE', group: 'Type' },
+  { key: 'text', label: 'Text', kind: 'textList', default: 'Sailor', group: 'Type' },
   { key: 'font', label: 'Font', kind: 'font', default: 'Anton', group: 'Type' },
   { key: 'typeWeight', label: 'Type weight', kind: 'slider', min: 100, max: 900, step: 10, default: 700, group: 'Type' },
   { key: 'typeSize', label: 'Type size', kind: 'slider', min: 30, max: 140, step: 2, default: 70, group: 'Type' },

@@ -86,21 +86,21 @@ function thumb(t: Take): string | null {
         >
           <button
             v-if="t.draft || props.sketch"
-            class="size-4 rounded-sm flex items-center justify-center text-white/70 hover:text-action"
+            class="size-4 rounded flex items-center justify-center text-white/70 hover:text-action"
             :title="props.sketch ? 'Promote — spawn the full generator beside this sketch' : 'Promote to full quality'"
             @click.stop="emit('promote', t.id)"
           >
             <ArrowUpToLine class="size-3" />
           </button>
           <button
-            class="size-4 rounded-sm flex items-center justify-center text-white/70 hover:text-amber-300"
+            class="size-4 rounded flex items-center justify-center text-white/70 hover:text-amber-300"
             :title="t.pinned ? 'Unpin' : 'Pin to library'"
             @click.stop="emit('pin', t.id)"
           >
             <Star class="size-3" :class="{ 'fill-amber-300 text-amber-300': t.pinned }" />
           </button>
           <button
-            class="size-4 rounded-sm flex items-center justify-center text-white/70 hover:text-red-400"
+            class="size-4 rounded flex items-center justify-center text-white/70 hover:text-red-400"
             title="Discard take"
             @click.stop="emit('discard', t.id)"
           >
@@ -111,7 +111,7 @@ function thumb(t: Take): string | null {
 
       <button
         v-if="takes.length"
-        class="shrink-0 size-12 rounded-md flex items-center justify-center ring-1 ring-white/10 text-white/50 hover:text-white hover:ring-white/30 cursor-pointer"
+        class="shrink-0 size-12 rounded flex items-center justify-center ring-1 ring-white/10 text-white/50 hover:text-white hover:ring-white/30 cursor-pointer"
         title="Open Light Table (compare takes)"
         @click.stop="emit('expand')"
       >

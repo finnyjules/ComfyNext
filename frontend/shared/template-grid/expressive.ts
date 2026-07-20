@@ -1,13 +1,13 @@
 /** Smart Layout adapter for the expressive text engine.
  *
- * Uses the CHAR_W estimate (word.length × fontSize × CHAR_W) as the measure —
- * the SAME basis the fit/wrap estimate uses — so the editor DOM and the Satori
- * export position words identically. Consistency across the two surfaces matters
- * more than per-glyph accuracy (a deliberately-random layout tolerates drift),
- * which is exactly the philosophy in `./text`.
+ * Uses the shared per-glyph estimate (`estimateWordEm`) as the measure, so the
+ * editor DOM and the Satori export position words identically. The estimate is
+ * deliberately never-narrow (per-char max across the curated fonts): a narrow
+ * measure lets the engine anchor a word so close to the right edge that its
+ * real glyphs escape the box and overflow:hidden clips them mid-letter.
  */
 
-import { CHAR_W } from './text'
+import { estimateWordEm } from './text'
 import { layoutExpressive, type ExpressiveLayout, type ExpressiveParams } from '../text-layout/expressive'
 import type { GridExpressiveParams, WordNudge } from './types'
 
@@ -28,7 +28,7 @@ export function gridExpressiveLayout(opts: {
     boxWidth: opts.boxWidth,
     boxHeight: opts.boxHeight,
     lineHeight: opts.fontSize * opts.lineHeight,
-    measure: (word) => word.length * opts.fontSize * CHAR_W,
+    measure: (word) => estimateWordEm(word) * opts.fontSize,
     params: opts.params,
     justifyX: opts.justifyX,
     justifyY: opts.justifyY,

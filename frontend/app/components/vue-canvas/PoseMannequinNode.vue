@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Handle, Position, useHandleConnections } from '@vue-flow/core'
-import { Dices, Image, Loader2, PersonStanding, Play, Wand2 } from 'lucide-vue-next'
+import { RefreshCw, Image, Loader2, PersonStanding, Play, Wand2 } from 'lucide-vue-next'
 import { getTypeColor } from '~/composables/useVueNodes'
 
 // Pose Mannequin artifact node. Shows ONLY the posed mannequin render (the gray
@@ -88,7 +88,7 @@ function runThisNode() {
   if (isMuted.value || isBypassed.value || props.data.running || !canGenerate.value) return
   window.dispatchEvent(new CustomEvent('sailor:poseGenerate', { detail: { nodeId: props.id } }))
 }
-// Header ⚄ Re-roll: re-pose again for a fresh variation, reusing cached upstream.
+// Header ↻ Re-render: re-pose again for a fresh variation, reusing cached upstream.
 function rerollThisNode() {
   if (isMuted.value || isBypassed.value || props.data.running || !canGenerate.value) return
   window.dispatchEvent(new CustomEvent('sailor:poseGenerate', { detail: { nodeId: props.id, rerollScope: 'self' } }))
@@ -157,20 +157,20 @@ function openEditor() {
       <!-- Re-pose again: a fresh variation reusing cached upstream -->
       <button
         v-if="!isMuted && !isBypassed"
-        class="nopan nodrag shrink-0 size-5 rounded-md flex items-center justify-center transition-colors cursor-pointer"
+        class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center transition-colors cursor-pointer"
         :class="(data.running || !canGenerate)
           ? 'text-white/25 cursor-not-allowed'
           : 'text-white/55 hover:text-white/90 hover:bg-white/10'"
         :disabled="data.running || !canGenerate"
-        title="Re-pose again — a fresh variation reusing the same inputs"
+        title="Re-render — a fresh pose reusing the same inputs"
         @click.stop="rerollThisNode"
       >
-        <Dices class="size-3" />
+        <RefreshCw class="size-3" />
       </button>
       <!-- Generate / run this node -->
       <button
         v-if="!isMuted && !isBypassed"
-        class="nopan nodrag shrink-0 size-5 rounded-md flex items-center justify-center transition-colors cursor-pointer"
+        class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center transition-colors cursor-pointer"
         :class="data.running
           ? 'text-action bg-action/15'
           : !canGenerate
@@ -233,7 +233,7 @@ function openEditor() {
            header ▶ (run) control, like a regular node. -->
       <div v-if="poseSource === 'mannequin'" class="flex items-center gap-1.5 px-2 py-1.5 border-t border-white/5">
         <button
-          class="nopan nodrag flex-1 h-7 rounded-md bg-white/10 hover:bg-white/15 border border-white/10 text-white/90 text-[11px] font-medium flex items-center justify-center gap-1.5 cursor-pointer"
+          class="nopan nodrag flex-1 h-7 rounded bg-white/10 hover:bg-white/15 border border-white/10 text-white/90 text-[11px] font-medium flex items-center justify-center gap-1.5 cursor-pointer"
           title="Open the 3D pose editor" @click.stop="openEditor">
           <Wand2 class="size-3.5" /> {{ hasPose ? 'Edit pose' : 'Pose & Generate' }}
         </button>

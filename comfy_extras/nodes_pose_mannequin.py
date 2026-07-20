@@ -127,7 +127,7 @@ class PoseMannequinNode(IO.ComfyNode):
         else:
             baked = _load_input_image(result_image)
             if baked is not None:
-                return IO.NodeOutput(baked, ui=save_live_preview(baked, uid))
+                return IO.NodeOutput(baked, ui=save_live_preview(baked, uid, unique=True))
             cond = _load_input_image(pose_cond_image) or _load_input_image(mannequin_image)
             if character is not None and cond is not None:
                 return await _generate(pose_instruction("mannequin", prompt, ""),

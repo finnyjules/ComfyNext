@@ -2,13 +2,13 @@ import { describe, it, expect } from 'vitest'
 import { planSketchCardsAt, sketchPadCardId } from '~/lib/sketch/planSketchCardsAt'
 
 describe('planSketchCardsAt', () => {
-  it('lays a 2x2 grid with slot 0 at the anchor', () => {
+  it('stacks the options vertically with slot 0 at the anchor', () => {
     const plans = planSketchCardsAt({ x: 100, y: 50 }, ['a', 'b', 'c', 'd'], [])
     expect(plans.map(p => p.position)).toEqual([
       { x: 100, y: 50 },        // slot 0
-      { x: 324, y: 50 },        // slot 1: +224 (200+24)
-      { x: 100, y: 274 },       // slot 2
-      { x: 324, y: 274 },       // slot 3
+      { x: 100, y: 274 },       // slot 1: +224 (200+24)
+      { x: 100, y: 498 },       // slot 2
+      { x: 100, y: 722 },       // slot 3
     ])
     expect(plans.map(p => p.id)).toEqual([
       sketchPadCardId(0), sketchPadCardId(1), sketchPadCardId(2), sketchPadCardId(3),

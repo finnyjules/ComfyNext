@@ -145,7 +145,7 @@ class ShaderEffect(IO.ComfyNode):
         ]
         outs = render_effect(eff.source, w, h, jobs, extra_textures=textures, passes=eff.passes)
         out = torch.from_numpy(np.stack([o[..., :3] for o in outs])).clamp(0, 1)
-        return IO.NodeOutput(out, ui=save_live_preview(out, str(cls.hidden.unique_id)))
+        return IO.NodeOutput(out, ui=save_live_preview(out, str(cls.hidden.unique_id), unique=True))
 
 
 class ShaderEffectsExtension(ComfyExtension):

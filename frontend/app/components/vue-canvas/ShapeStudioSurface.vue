@@ -366,7 +366,7 @@ async function onImportFile(e: Event) {
       <span class="flex-1" />
       <button
         type="button"
-        class="rounded-lg bg-action px-3.5 py-1.5 text-[12px] font-medium text-white transition enabled:hover:bg-action/85 disabled:cursor-not-allowed disabled:opacity-40"
+        class="rounded bg-action px-3.5 py-1.5 text-[12px] font-medium text-white transition enabled:hover:bg-action/85 disabled:cursor-not-allowed disabled:opacity-40"
         :disabled="!webglOk || exporting"
         @click="exportPng"
       >
@@ -382,7 +382,7 @@ async function onImportFile(e: Event) {
         </div>
         <button
           type="button"
-          class="flex items-center gap-1.5 rounded-md bg-action px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-action/85"
+          class="flex items-center gap-1.5 rounded bg-action px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-action/85"
           @click="rerollConfig"
         >
           <Dices class="h-3.5 w-3.5" /> Re-roll

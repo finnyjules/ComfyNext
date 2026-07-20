@@ -76,7 +76,7 @@ const PACING: Pacing[] = ['slow', 'smooth', 'gradual', 'gentle']
           v-for="t in SHOT_ORDER" :key="t"
           type="button"
           :title="SHOT_TYPE_PHRASE[t]"
-          class="group flex flex-col items-center gap-1 rounded-md border py-1.5 transition-colors"
+          class="group flex flex-col items-center gap-1 rounded border py-1.5 transition-colors"
           :class="shotType === t ? 'border-white/35 bg-white/10' : 'border-white/10 bg-white/[0.02] hover:border-white/20 hover:bg-white/[0.05]'"
           @click="emit('update:shotType', t)"
         >
@@ -106,7 +106,7 @@ const PACING: Pacing[] = ['slow', 'smooth', 'gradual', 'gentle']
               v-for="m in g.moves" :key="m"
               type="button"
               :title="CAMERA_MOVE_PHRASE[m]"
-              class="flex min-w-[58px] flex-1 flex-col items-center gap-1 rounded-md border py-1.5 transition-colors"
+              class="flex min-w-[58px] flex-1 flex-col items-center gap-1 rounded border py-1.5 transition-colors"
               :class="move === m
                 ? 'border-white/35 bg-white/10 text-white/90'
                 : 'border-white/10 bg-white/[0.02] text-white/40 hover:border-white/20 hover:bg-white/[0.05] hover:text-white/70'"
@@ -127,7 +127,7 @@ const PACING: Pacing[] = ['slow', 'smooth', 'gradual', 'gentle']
         <button
           v-for="dir in moveDirs" :key="dir"
           type="button"
-          class="flex flex-1 items-center justify-center gap-1 rounded-md border py-1.5 text-[10px] transition-colors"
+          class="flex flex-1 items-center justify-center gap-1 rounded border py-1.5 text-[10px] transition-colors"
           :class="activeDir === dir
             ? 'border-white/35 bg-white/10 text-white/90'
             : 'border-white/10 text-white/40 hover:border-white/20 hover:text-white/70'"

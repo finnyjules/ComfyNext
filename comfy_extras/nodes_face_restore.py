@@ -254,7 +254,7 @@ class FaceRestoreNode(IO.ComfyNode):
         frames_out = torch.stack(out_frames, dim=0)
         return IO.NodeOutput(
             frames_out, torch.stack(out_masks, dim=0),
-            ui=save_live_preview(frames_out, str(cls.hidden.unique_id)),
+            ui=save_live_preview(frames_out, str(cls.hidden.unique_id), unique=True),
         )
 
 

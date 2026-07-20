@@ -270,7 +270,7 @@ watch(state, (s) => {
   }, 80)
 }, { deep: true })
 
-const text = computed(() => String(state.value.params.text ?? 'SPACE TYPE'))
+const text = computed(() => String(state.value.params.text ?? 'Sailor'))
 
 // Index of the optional `vars` input a Collection's VARS output wires into.
 // Rendering its Handle (below) is what lets that edge anchor and survive reload.

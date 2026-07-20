@@ -2,6 +2,7 @@ import type { Node, Edge } from '@vue-flow/core'
 import { assembleWorkflowLinks, repairInvalidNodeIds, seedHasControlWidget } from '~/composables/useFilteredPrompt'
 import { schemaOutputsFromInfo, syncNodeOutputsWithSchema } from '~/utils/syncNodeOutputs'
 import { ensureVarsInput } from '~/lib/collection/varsInput'
+import { stashTakesIntoProperties, restoreTakesFromProperties } from '~/lib/canvas/persistTakes'
 
 // LiteGraph workflow format
 export interface LiteGraphNode {
@@ -48,6 +49,11 @@ export const TYPE_COLORS: Record<string, string> = {
   CONDITIONING: '#fbbf24', // Amber
   MASK: '#34d399',        // Emerald
   CHARACTER: '#f59e0b',   // Amber (cast character reference)
+  // A Collection's variable bundle. Studio nodes used to hardcode this pink on
+  // the handle itself, which is why the same colour could mean "vars" on one
+  // node and nothing in particular on another. NOTE: shares AUDIO's pink —
+  // worth separating if the two ever appear on the same node.
+  VARS: '#f472b6',        // Pink
   // Scalar types
   INT: '#94a3b8',         // Slate
   FLOAT: '#94a3b8',       // Slate
@@ -445,6 +451,14 @@ export function useVueNodes(opts: { groupsBridge?: GroupsBridge; annotationsBrid
           previewData.text = stashedPreview.text
         }
       }
+      // Rehydrate the stashed filmstrip (takes + active pick) — see the stash
+      // in convertToLiteGraph. Restored after sailor_preview so takes/activeTakeId
+      // land alongside the preview-derived images.
+      const stashedTakes = restoreTakesFromProperties(lgNode.properties as any)
+      if (stashedTakes) {
+        previewData.takes = stashedTakes.takes
+        previewData.activeTakeId = stashedTakes.activeTakeId
+      }
 
       return {
         id: String(lgNode.id),
@@ -528,6 +542,10 @@ export function useVueNodes(opts: { groupsBridge?: GroupsBridge; annotationsBrid
       if (Object.keys(preview).length) {
         properties = { ...(d.properties || {}), sailor_preview: preview }
       }
+      // Filmstrip: stash takes + the user's pick alongside the preview — the
+      // curated field mapping below would otherwise drop them on every save,
+      // wiping filmstrips on reload. (Restored in convertFromLiteGraph.)
+      properties = stashTakesIntoProperties(d, properties)
       return {
         id: Number(n.id),
         type: d.nodeType,

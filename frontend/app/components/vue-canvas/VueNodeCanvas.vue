@@ -6,6 +6,8 @@ import { toast } from 'vue-sonner'
 import { ARTIFACT_NODE_COMPONENTS, ARTIFACT_NODE_FOR_OUTPUT, fetchObjectInfo, getVueFlowType, getWidgetDefs, isSubgraphType, subgraphToLiteGraph, useVueNodes } from '~/composables/useVueNodes'
 import { useSubgraphNavigation } from '~/composables/useSubgraphNavigation'
 import { matchStylesInText, type CanvasSnapshot, type StyleLite } from '~/lib/agent/surfaces/canvas'
+import { planFrameFromSelection, MAX_FRAME_LAYERS } from '~/lib/canvas/combineFrame'
+import { computeRunLeafIds } from '~/lib/canvas/runLeaves'
 import type { Command } from '~/lib/agent/commandSurface'
 import { buildCatalog, type CatalogEntry } from '~/lib/portIntentCatalog'
 import { isTypeCompatible, linkInputPorts, outputPorts, type NodeTypeLite } from '~/lib/portIntent'
@@ -14,6 +16,7 @@ import { capabilityBoosts, capabilityKeywords, capabilityNodeTypes, studioNodeTy
 import { studioTunerFor } from '~/lib/agent/studioTune'
 import type { ProposedChange } from '~/composables/useLayoutAgent'
 import { useAgentActivity } from '~/composables/useAgentActivity'
+import { registerWireDrag } from '~/composables/useWireDrag'
 import AgentSweep from '~/components/agent/AgentSweep.vue'
 import { useCanvasHistory } from '~/composables/useCanvasHistory'
 import { useCanvasGroups, GROUP_COLORS, type CanvasGroup } from '~/composables/useCanvasGroups'
@@ -44,12 +47,14 @@ import { useTimelineStore, addSpaceTypeClipToEditState } from '~/composables/use
 import type { SpaceTypeState } from '~/lib/spacetype/state'
 import { useNodeSearch } from '~/composables/useNodeSearch'
 import { useNodeClipboard } from '~/composables/useNodeClipboard'
-import { buildTake, appendTake, takeHasContent, tagTakeFromRunMeta } from '~/composables/useTakes'
+import { buildTake, appendTake, refreshTakeDisplay, takeHasContent, tagTakeFromRunMeta } from '~/composables/useTakes'
+import { LIVE_PREVIEW_NODE_TYPES } from '~/lib/livePreviewNodes'
 import { draftMetaFor, consumePendingPromote } from '~/lib/draft/runMeta'
 import { getRun } from '~/lib/graph/runRegistry'
 import { nodeGenParams } from '~/lib/artifact/takeProvenance'
 import { planSketchCardsAt, SKETCH_PAD_ID, CARD_SIZE as SKETCH_CARD_SIZE, GAP as SKETCH_CARD_GAP } from '~/lib/sketch/planSketchCardsAt'
 import { sketchPadPromptOverrides } from '~/lib/sketch/sketchPadPrompt'
+import { cleanSketchPrompt } from '~/lib/sketch/sketchIntent'
 import { sketchPromoteOverridesFromProps } from '~/lib/draft/sketchPromote'
 import { stripSketchProperties, vacateSketchSlot } from '~/lib/draft/keepSketchCard'
 import { annotatedImageValueFromViewUrl } from '~/lib/promoteTempImages'
@@ -196,6 +201,12 @@ function applyPendingTakesForDisplayedCanvas() {
   for (const { nodeId, take } of pending) {
     const target = (nodes.value as any[]).find((n: any) => n.id === nodeId)
     if (target) {
+      // Scrub-preview node: display-only refresh, no take (same exclusion as
+      // the live 'executed' path — see LIVE_PREVIEW_NODE_TYPES).
+      if (LIVE_PREVIEW_NODE_TYPES.has(String(target.data?.nodeType))) {
+        target.data = refreshTakeDisplay({ ...target.data }, take)
+        continue
+      }
       take.params = { ...(take.params ?? {}), ...nodeGenParams(target) } // provenance for breeding
       const tagged = tagTakeFromRunMeta(take, String(target.id), { draftMetaFor, consumePendingPromote })
       target.data = appendTake({ ...target.data }, tagged)
@@ -976,11 +987,22 @@ annotationsBridge.export = () => annotationsExportToExtra()
 // data (e.g. MaskExtractor showing its source image as a fallback preview).
 provide('vueFlowNodes', nodes)
 provide('vueFlowEdges', edges)
+// The active run's OUTPUT nodes — run members with no downstream node also in
+// the run. Artifact cards use this to keep generation FX (img-fx churn, glimm
+// sweep) off intermediate/input cards: only the run's terminal results churn.
+// Empty when no run is tracked (legacy paths) — consumers treat empty as
+// "no filtering" so those paths keep their old behavior.
+const runLeafNodeIds = computed(() => computeRunLeafIds(activeRunNodeIds.value, edges.value as any[]))
+provide('runLeafNodeIds', runLeafNodeIds)
 const {
   onConnect, addEdges, fitView, zoomIn: vfZoomIn, zoomOut: vfZoomOut,
   project, removeNodes, removeEdges, viewport: vfViewport, onNodeDragStop, onNodeDrag,
   onConnectStart, onConnectEnd,
 } = useVueFlow()
+
+// Ports label themselves while a compatible wire is being dragged. Bound once,
+// here, because there is one canvas and every port reads the same drag.
+registerWireDrag()
 
 // Sketch pad (prompt-bar sketching): one disposable 2×2 pad per canvas. Anchor
 // + card ids persist across re-sketches so refresh overwrites the same slots.
@@ -1006,16 +1028,23 @@ function sketchPadAnchor(): { x: number, y: number } {
     ? { x: rect.width / 2, y: rect.height / 2 }
     : { x: window.innerWidth / 2, y: window.innerHeight / 2 }
   const c = project(centerScreen)
-  // 2×2 pad is ~424×424; offset so the grid is roughly centered on the viewport.
-  let p = { x: c.x - 212, y: c.y - 212 }
-  const PAD_W = 460, PAD_H = 460, NUDGE = 240
+  const step = SKETCH_CARD_SIZE + SKETCH_CARD_GAP
+  const stackH = 4 * step - SKETCH_CARD_GAP
+  // Vertical stack: one column, centered horizontally on the viewport, the
+  // 4-tall run centered on the viewport centre (it overflows a short viewport —
+  // the canvas is pannable).
+  let p = { x: c.x - SKETCH_CARD_SIZE / 2, y: c.y - stackH / 2 }
+  const PAD_W = SKETCH_CARD_SIZE + 80, PAD_H = stackH + 80
   const occupied = (q: { x: number, y: number }) => (nodes.value as any[]).some((n: any) => {
-    if (n?.data?.properties?.sketchPad) return false
+    const pr = n?.data?.properties
+    if (pr?.sketchPad || pr?.sketchWarm || pr?.sketchSink) return false
     const nx = n.position?.x ?? 0, ny = n.position?.y ?? 0
     return Math.abs(nx - q.x) < PAD_W && Math.abs(ny - q.y) < PAD_H
   })
   let guard = 0
-  while (occupied(p) && guard++ < 40) p = { x: p.x, y: p.y + NUDGE }
+  // Nudge to a NEW COLUMN (rightward) when occupied — a tall stack clears a
+  // neighbour faster sideways than by pushing further down.
+  while (occupied(p) && guard++ < 40) p = { x: p.x + step, y: p.y }
   return p
 }
 
@@ -1064,7 +1093,13 @@ function scheduleSnapshot() {
   }, 350)
 }
 
-watch([nodes, edges], scheduleSnapshot, { deep: true })
+watch([nodes, edges], () => {
+  scheduleSnapshot()
+  // Signal the layout that the canvas changed — it debounces this into a
+  // continuous autosave (sessionStorage + durable mirror). Fired from the same
+  // deep watch as undo-history so the two "something changed" notions can't drift.
+  window.dispatchEvent(new CustomEvent('sailor:canvasDirty'))
+}, { deep: true })
 
 // Sync node `hidden` flag with collapsed-group membership. Vue Flow honors
 // `hidden: true` by removing the node from layout AND auto-hiding any edges
@@ -1453,6 +1488,11 @@ function handleHistoryKey(e: KeyboardEvent) {
 const isHandMode = computed(() => props.activeTool === 'hand')
 const panOnDrag = computed(() => isHandMode.value)          // hand: left-click pans; select: false
 const selectionKeyCode = computed(() => isHandMode.value ? null : true) // select: enable drag-selection; hand: disable
+// Additive multi-select: Shift+click (requested) PLUS the OS default (Cmd on
+// mac / Ctrl on win). Vue Flow appends to the selection while ANY listed key is
+// held; a key that isn't used on a given OS simply never fires. No platform
+// detection needed — listing all three is harmless and covers every case.
+const multiSelectionKeyCode = ['Shift', 'Meta', 'Control']
 
 // Subgraph navigation
 const { isInsideSubgraph, breadcrumbs, enterSubgraph, exitToLevel, saveCurrentSubgraph, reset: resetNav } = useSubgraphNavigation()
@@ -2351,6 +2391,48 @@ async function handleEditAsFrame(e: Event) {
   }
 }
 
+// Combine a multi-selection of image nodes into one Frame (Compositor): mint a
+// Compositor to the right of the selection and wire each image's output into
+// layer1..N as a stacked layer. The Frame lands on the graph selected but does
+// NOT auto-open the editor — double-click / Edit when ready to arrange.
+// The image-only filtering, position, layer ordering and 16-layer cap live in
+// the pure `planFrameFromSelection` (unit-tested); this just mints + wires.
+async function combineIntoFrame(ids: string[]) {
+  const sel = (nodes.value as any[]).filter((n: any) => ids.includes(n.id))
+  const plan = planFrameFromSelection(sel)
+  if (!plan.canCombine) return
+  if (!objectInfo.value['Compositor']) await fetchObjectInfo()
+  if (!objectInfo.value['Compositor']) return
+
+  const frame = createNodeData('Compositor', plan.position)
+  const frameProps = (frame.data.properties ||= {}) as Record<string, any>
+  // Stack the wired layers bottom-to-top in plan order (layer1 at the bottom).
+  frameProps.sailor_stackOrder = plan.layers.map((_, i) => `w:${i + 1}`)
+  nodes.value.push(frame as any)
+
+  plan.layers.forEach((layer, i) => {
+    const inputName = `layer${i + 1}`
+    const idx = (frame.data.inputs as any[]).findIndex((inp: any) => inp.name === inputName)
+    if (idx < 0) return
+    edges.value.push({
+      id: `e-frame-${frame.id}-${inputName}`,
+      source: layer.id,
+      sourceHandle: `output-${layer.outputIndex}`,
+      target: frame.id,
+      targetHandle: `input-${idx}`,
+      type: 'comfy',
+      data: { dataType: 'IMAGE' },
+    } as any)
+  })
+
+  selectNode(frame.id)
+  if (plan.skipped > 0) {
+    toast.info(`A Frame holds ${MAX_FRAME_LAYERS} layers`, {
+      description: `Combined the first ${plan.layers.length}; skipped ${plan.skipped}.`,
+    })
+  }
+}
+
 // Subgraph navigation: double-click to enter
 function handleNodeDoubleClick({ node }: { node: any }) {
   if (!node.data?.isSubgraph || !node.data?.subgraphId) return
@@ -2526,7 +2608,8 @@ function handleBridgeMessage(event: MessageEvent) {
     if (props.displayedCanvasId != null && runCanvasId !== props.displayedCanvasId) {
       if (evt === 'executed' && nodeId && event.data.output) {
         const take = takeFromExecutedEvent(event)
-        if (take) {
+        // Frozen loader re-emission — not a generation; never a take.
+        if (take && !frozenRunNodeIds.value.has(String(nodeId))) {
           ;(pendingTakesByCanvas[runCanvasId] ||= []).push({ nodeId: String(nodeId), take })
         }
       }
@@ -2537,7 +2620,8 @@ function handleBridgeMessage(event: MessageEvent) {
     // No per-run canvasId available yet: use the legacy tab-level scope prop.
     if (evt === 'executed' && nodeId && event.data.output && props.runningCanvasId) {
       const take = takeFromExecutedEvent(event)
-      if (take) {
+      // Frozen loader re-emission — not a generation; never a take.
+      if (take && !frozenRunNodeIds.value.has(String(nodeId))) {
         ;(pendingTakesByCanvas[props.runningCanvasId] ||= []).push({ nodeId: String(nodeId), take })
       }
     }
@@ -2577,7 +2661,15 @@ function handleBridgeMessage(event: MessageEvent) {
     if (nodeId) {
       const target = (nodes.value as any[]).find((n: any) => n.id === String(nodeId))
       if (target) {
-        target.data = { ...target.data, running: true, error: false }
+        // A sketch-output card is a finished pick (an image LOADER), not a
+        // generator — never show it "running". When it's pulled into a Develop
+        // run as the edit node's source it loads briefly, and marking it running
+        // latches the reveal/dither FX onto a card that yields no fresh image, so
+        // the FX never tears down (mosaic forever). The backend still loads it
+        // (free); we just don't paint a generating state on it.
+        if (!(target.data?.properties as any)?.sketchOutput) {
+          target.data = { ...target.data, running: true, error: false }
+        }
         // Light outgoing edges from this node — but only the ones whose
         // target is part of the current run set. A generator fanned out
         // to multiple sinks where only one is targeted should only
@@ -2631,6 +2723,21 @@ function handleBridgeMessage(event: MessageEvent) {
           // requirement): its result is a duplicate of the pad's own executed
           // batch — discard it so it never double-materializes the grid.
           if (target?.data?.properties?.sketchSink === true) return
+          // Frozen-for-this-run artifact (auto-freeze / user lock): it executed
+          // as a passthrough LOADER feeding its held file, not as a generator.
+          // Appending its re-emission would activate a junk take pointing at
+          // the fixed-name temp preview and clobber the user's filmstrip pick
+          // (same guard class as sketchWarm/sketchSink above).
+          if (frozenRunNodeIds.value.has(String(target.id))) return
+          // Scrub-preview node (Blur, AdjustCurves, … — auto-runs on every
+          // widget tweak): its emissions all alias ONE fixed-name temp file,
+          // so a filmstrip of them is an illusion — picking an older take
+          // shows stale browser-cached pixels while downstream runs read the
+          // newest content. Refresh the display, capture no take.
+          if (LIVE_PREVIEW_NODE_TYPES.has(String(target.data?.nodeType))) {
+            target.data = refreshTakeDisplay({ ...target.data }, take)
+            return
+          }
           // Provenance: remember HOW this result was made (prompt/seed/model/…) so
           // a later "breed from this take" can perturb around it. (Direction Loop.)
           take.params = { ...(take.params ?? {}), ...nodeGenParams(target) }
@@ -2729,7 +2836,25 @@ function handleBridgeMessage(event: MessageEvent) {
     // run finished.
     // Drop the captured run set once NO runs remain — while a sibling run is
     // still in flight its edge-filtering set stays useful.
-    if (runningNodeByPrompt.size === 0) activeRunNodeIds.value = new Set()
+    if (runningNodeByPrompt.size === 0) {
+      activeRunNodeIds.value = new Set()
+      // Watchdog: with nothing in flight, NO node/edge may keep a running
+      // flag. The per-prompt clears above only touch the registry's CURRENT
+      // node, so a glow lit by a straggler 'executing' (after a run's first
+      // completion), a duplicate-completion race, or an HMR that dropped the
+      // registry mid-run stays latched forever — and a latched flag keeps the
+      // generation FX (dither churn / glimm sweep) running on an idle card.
+      // Safe here by construction: the registry is empty, so there is no
+      // sibling run whose glow this could extinguish.
+      for (const n of nodes.value as any[]) {
+        if (n.data?.running || n.data?.progress) {
+          n.data = { ...n.data, running: false, progress: undefined }
+        }
+      }
+      for (const e of edges.value as any[]) {
+        if (e.data?.running) e.data = { ...e.data, running: false }
+      }
+    }
     // Part C: drop the cached canvas for this finished run. Guarded on the FIRST
     // complete's presence in runningNodeByPrompt would race the duplicate
     // complete (each run fires execution_complete twice); instead we delete
@@ -3223,10 +3348,13 @@ function materializeSketchCardsAt(
   const plans = planSketchCardsAt(anchor, slotImages, sketchPad.cardIds)
   const ids: string[] = []
   for (const plan of plans) {
-    ids[plan.slot] = plan.id
     const imageWidgetValue = plan.image ? annotatedImageValueFromViewUrl(plan.image) : null
-    const existing = (nodes.value as any[]).find((n: any) => n.id === plan.id)
+    // A reuse slot keys off the numeric id stored in sketchPad.cardIds; a fresh
+    // slot's plan.id is only a deterministic string placeholder and never
+    // matches a live node (so it always falls through to the create branch).
+    const existing = plan.reuse ? (nodes.value as any[]).find((n: any) => n.id === plan.id) : null
     if (existing) {
+      ids[plan.slot] = existing.id
       existing.data = {
         ...existing.data,
         images: plan.image ? [plan.image] : existing.data.images,
@@ -3252,8 +3380,11 @@ function materializeSketchCardsAt(
       sketchSeed: sketchPad.seed,
       sketchLoading: !!opts.loading,
     })
-    node.id = plan.id
+    // Keep createNodeData's NUMERIC id. A string id (sketch-out-…) serializes to
+    // NaN in convertToLiteGraph, which drops the card — and any wire FROM it,
+    // e.g. "Refine…" → EditImageNode.input_image — out of the run graph.
     node.data = { ...node.data, images: plan.image ? [plan.image] : [] }
+    ids[plan.slot] = node.id
     ;(nodes.value as any[]).push(node)
   }
   sketchPad.cardIds = ids
@@ -3262,7 +3393,9 @@ function materializeSketchCardsAt(
 
 /** Prompt-bar entry: render 4 cheap Schnell options for `prompt` at the pad. */
 async function startSketch(prompt: string): Promise<void> {
-  const clean = prompt.trim()
+  // Strip the draft/command wrapper ("sketch me a…") so the image is of the
+  // SUBJECT, not a literal pencil sketch — the fast-path hands us raw text.
+  const clean = cleanSketchPrompt(prompt.trim())
   if (!clean) return
   sketchPad.prompt = clean
   sketchPad.seed = Math.floor(Math.random() * 2_147_483_647)
@@ -3399,9 +3532,12 @@ function keepSketchCard(cardId: string): void {
   }
 
   const step = SKETCH_CARD_SIZE + SKETCH_CARD_GAP
+  // Kept cards lift OUT of the stack into a parallel column to its left,
+  // stacking downward as you keep more — so the sketch stack stays clear to
+  // refresh and your keepers accumulate beside it.
   const position = {
-    x: sketchPad.anchor.x + sketchPad.keptCount * step,
-    y: sketchPad.anchor.y - (SKETCH_CARD_SIZE + SKETCH_CARD_GAP + 40),
+    x: sketchPad.anchor.x - (SKETCH_CARD_SIZE + SKETCH_CARD_GAP + 40),
+    y: sketchPad.anchor.y + sketchPad.keptCount * step,
   }
   sketchPad.keptCount++
 
@@ -6022,9 +6158,19 @@ function actionPinResultToCanvas(nodeId: string) {
 
 function selectionMenuItems(): MenuItem[] {
   const ids = getSelectedNodeIds()
-  return [
+  const items: MenuItem[] = [
     { label: `Run Selection (${ids.length})`, icon: Play, action: () => emitRunFiltered(ids) },
     { divider: true },
+  ]
+  // Offer "Combine into Frame" only when the selection has 2+ image-output nodes.
+  const sel = (nodes.value as any[]).filter((n: any) => ids.includes(n.id))
+  if (planFrameFromSelection(sel).canCombine) {
+    items.push(
+      { label: 'Combine into Frame', icon: Frame, action: () => combineIntoFrame(ids) },
+      { divider: true },
+    )
+  }
+  items.push(
     { label: 'Group Selection', icon: Group, action: () => actionGroupSelection() },
     { divider: true },
     { label: 'Bypass', icon: Ban, action: () => toggleMode(ids, 4) },
@@ -6032,7 +6178,8 @@ function selectionMenuItems(): MenuItem[] {
     { divider: true },
     { label: 'Duplicate', icon: Copy, action: () => duplicateNodes(ids) },
     { label: 'Delete', icon: Trash2, danger: true, action: () => deleteNodes(ids) },
-  ]
+  )
+  return items
 }
 
 function edgeMenuItems(edgeId: string): MenuItem[] {
@@ -6236,6 +6383,24 @@ function handleArrowContextMenu(arrowId: string, x: number, y: number) {
 // where only one is targeted should only light that path.
 const activeRunNodeIds = ref<Set<string>>(new Set())
 
+// Nodes frozen for the in-flight run (auto-freeze + user locks). A frozen
+// artifact executes as a passthrough LOADER — it feeds its held file — so its
+// `executed` re-emission is NOT a new generation. Captured at submission
+// (getWorkflow / getFilteredWorkflow) and consulted by the take-capture sites:
+// appending such an emission as a take would activate it (appendTake activates
+// what it appends) and clobber the user's filmstrip pick with the fixed-name
+// temp preview (`live_preview_img_<id>.png`) — whose CONTENT is overwritten by
+// every later run. That was the "re-rolling Blend Scene reset all my artifacts
+// to the last generation" bug: pick → clobbered pointer → next freeze feeds
+// the overwritten file.
+const frozenRunNodeIds = ref<Set<string>>(new Set())
+
+function userLockedNodeIds(): string[] {
+  return (nodes.value as any[])
+    .filter((n: any) => n?.data?.properties?.locked)
+    .map((n: any) => String(n.id))
+}
+
 function captureActiveRunFromTargets(targetIds: string[]) {
   if (!targetIds.length) {
     // Global Run — every non-muted node is part of the active run.
@@ -6320,9 +6485,14 @@ function upstreamArtifactsWithResults(targetIds: string[]): Set<number> {
 
 function getFilteredWorkflow(
   targetIds: string[],
-  opts: { rerollScope?: 'self' | 'variation'; direction?: 'downstream' } = {},
+  opts: { rerollScope?: 'self' | 'variation'; direction?: 'downstream'; live?: boolean } = {},
 ) {
   // Seed policy:
+  //  • live (auto-run from a live-preview node) = randomize NOTHING. Live runs
+  //    fire on every widget/connection tweak; re-rolling would mutate upstream
+  //    generators' live seeds — regenerating (and re-billing) images the user
+  //    never asked to change, and re-tripping the live-run widget watch (loop).
+  //    Same guarantee the full-graph live path gets via getWorkflow({reroll:false}).
   //  • 'downstream' (run here → end) = randomize NOTHING. The point is to push
   //    this node's CURRENT result through the rest of the graph, so neither it
   //    nor anything else should regenerate.
@@ -6332,7 +6502,7 @@ function getFilteredWorkflow(
   //    producers' seeds, stopping at artifacts that hold a result (those get
   //    auto-frozen below) — the producing generator re-runs with a fresh seed.
   //  • default (rebuild from start → here) = randomize every seed in the graph.
-  const seedScope = opts.direction === 'downstream'
+  const seedScope = (opts.live || opts.direction === 'downstream')
     ? new Set<string>()
     : opts.rerollScope === 'self'
       ? new Set(targetIds)
@@ -6352,9 +6522,17 @@ function getFilteredWorkflow(
   // re-execute (and re-bill) the chain that made them. Auto-freeze UPSTREAM
   // artifact nodes that already hold a result so they feed it like a locked node —
   // no manual lock needed. Skipped for a full "rebuild from start" (default scope).
-  const autoFreeze = (targetIds.length && (opts.rerollScope === 'self' || opts.rerollScope === 'variation' || opts.direction === 'downstream'))
+  // Live runs freeze too: an auto-run from a layout tweak must never re-execute
+  // the paid chain that made its inputs — even against a cold post-restart cache.
+  const autoFreeze = (targetIds.length && (opts.live || opts.rerollScope === 'self' || opts.rerollScope === 'variation' || opts.direction === 'downstream'))
     ? upstreamArtifactsWithResults(targetIds)
     : undefined
+  // Record the run's full frozen set (auto-freeze + user locks) so the take
+  // machinery can ignore these nodes' loader re-emissions — see frozenRunNodeIds.
+  frozenRunNodeIds.value = new Set([
+    ...(autoFreeze ? [...autoFreeze].map(String) : []),
+    ...userLockedNodeIds(),
+  ])
   // Then locks drop upstream links so collectKeepSet walks a graph where
   // locked artifacts look like leaves.
   const unlocked = applyArtifactLocks(aligned, nodes.value as any[], autoFreeze)
@@ -6765,8 +6943,17 @@ defineExpose({
     // Live-preview runs pass reroll:false — re-rolling a seed mutates the live
     // widget state, which re-trips the live-run watch and loops forever (any
     // live-preview node with a seed, e.g. Caustics). A normal Run re-rolls.
-    if (opts?.reroll !== false) randomizeSeedsOnLiveState()
-    captureActiveRunFromTargets([])
+    // reroll:false also marks a PERSISTENCE snapshot (autosave/tab switch) —
+    // those must not touch the run-tracking sets below: a snapshot firing
+    // mid-run would blow activeRunNodeIds out to "everything" (breaking edge
+    // glow filtering and the FX leaf gate) and reset frozenRunNodeIds
+    // (re-enabling the frozen-loader take clobber for the in-flight run).
+    if (opts?.reroll !== false) {
+      randomizeSeedsOnLiveState()
+      captureActiveRunFromTargets([])
+      // Full-graph run: only user-locked artifacts execute as loader leaves.
+      frozenRunNodeIds.value = new Set(userLockedNodeIds())
+    }
     const wf = getWorkflowWithSubgraphs()
     if (!wf) return wf
     // A hidden sketch pad must never run on a whole-canvas Run (only via its own
@@ -6891,6 +7078,7 @@ defineExpose({
       :default-edge-options="defaultEdgeOptions"
       :pan-on-drag="panOnDrag"
       :selection-key-code="selectionKeyCode"
+      :multi-selection-key-code="multiSelectionKeyCode"
       pan-on-scroll
       :zoom-on-pinch="true"
       :zoom-on-scroll="true"

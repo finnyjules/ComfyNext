@@ -54,7 +54,7 @@ function pickVariant(c: CharacterClient, variantId: string) {
       <div class="grid grid-cols-3 gap-2 overflow-y-auto">
         <div v-for="c in visible" :key="c.slug" class="contents">
           <button
-            class="group rounded-lg border border-white/10 bg-white/[0.03] p-2 text-left hover:border-white/25"
+            class="group rounded border border-white/10 bg-white/[0.03] p-2 text-left hover:border-white/25"
             :class="{ 'border-white/30': expandedSlug === c.slug }"
             @click="onCardClick(c)"
           >

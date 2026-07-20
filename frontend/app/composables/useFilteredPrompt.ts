@@ -125,22 +125,44 @@ export function healDanglingLinks(workflow: any): DanglingLinkReport[] {
 
   const healGraph = (graph: any) => {
     if (!graph?.nodes) return
+    const nodeIds = new Set<number>()
+    for (const n of graph.nodes) nodeIds.add(Number(n.id))
+    // A subgraph body wires its I/O through synthetic boundary nodes whose ids
+    // (default -10 inputNode / -20 outputNode) live OUTSIDE `nodes`. Seed them so
+    // a legitimate boundary link (origin_id -10 / target_id -20) is NOT mistaken
+    // for a dangling origin and nulled — which would sever the subgraph's inputs.
+    if (graph.inputNode || graph.outputNode) {
+      nodeIds.add(Number(graph.inputNode?.id ?? -10))
+      nodeIds.add(Number(graph.outputNode?.id ?? -20))
+      nodeIds.add(-10); nodeIds.add(-20)
+    }
     const linkIds = new Set<number>()
+    const originByLink = new Map<number, number>() // link id → origin node id
     for (const l of graph.links || []) {
-      if (Array.isArray(l) && l.length) linkIds.add(Number(l[0]))
-      else if (l && typeof l === 'object' && 'id' in l) linkIds.add(Number(l.id))
+      if (Array.isArray(l) && l.length) { linkIds.add(Number(l[0])); originByLink.set(Number(l[0]), Number(l[1])) }
+      else if (l && typeof l === 'object' && 'id' in l) { linkIds.add(Number(l.id)); originByLink.set(Number(l.id), Number(l.origin_id)) }
     }
     for (const node of graph.nodes) {
       const inputs = node?.inputs
       for (let s = 0; s < (inputs?.length || 0); s++) {
         const inp = inputs[s]
-        if (inp && inp.link != null && !linkIds.has(Number(inp.link))) {
+        if (!inp || inp.link == null) continue
+        const lid = Number(inp.link)
+        // Two ways an input can't resolve, both fatal at graphToPrompt:
+        //   1. the link id isn't in links[] ("No link found in parent graph"), or
+        //   2. the link IS in links[] but its origin node was deleted — a
+        //      re-splice minted a new upstream id and left this tuple pointing at
+        //      the gone node. litegraph's resolveInput does getNodeById(origin)
+        //      and throws InvalidLinkError "No input node found for id [N] slot
+        //      [S]". Membership-of-link-id alone misses this; check the endpoint.
+        const originMissing = originByLink.has(lid) && !nodeIds.has(originByLink.get(lid)!)
+        if (!linkIds.has(lid) || originMissing) {
           report.push({
             nodeId: node.id,
             nodeType: String(node.type ?? ''),
             slot: s,
             inputName: String(inp.name ?? ''),
-            linkId: Number(inp.link),
+            linkId: lid,
           })
           inp.link = null
         }
@@ -154,9 +176,19 @@ export function healDanglingLinks(workflow: any): DanglingLinkReport[] {
   }
 
   healGraph(workflow)
+  // Subgraph bodies. The PRODUCTION shape is `{ subgraphs: [...] }` (see
+  // useSubgraphNavigation/useVueNodes); a bare array of definitions and a plain
+  // object-map are also accepted for older data / other call sites. The previous
+  // code only handled the array/object-map forms, so `Object.values({subgraphs})`
+  // yielded `[subgraphsArray]` and healGraph(array) bailed — subgraph bodies were
+  // silently never healed in production. Descend into `.subgraphs` explicitly.
   const defs = workflow.definitions
-  if (Array.isArray(defs)) for (const d of defs) healGraph(d)
-  else if (defs && typeof defs === 'object') for (const d of Object.values(defs)) healGraph(d)
+  const defList: any[] = Array.isArray(defs)
+    ? defs
+    : Array.isArray(defs?.subgraphs)
+      ? defs.subgraphs
+      : (defs && typeof defs === 'object') ? Object.values(defs) : []
+  for (const d of defList) healGraph(d)
   return report
 }
 

@@ -78,6 +78,17 @@ def first_fal_image_url(result: dict) -> str:
     return url
 
 
+def all_fal_image_urls(result: dict) -> list[str]:
+    """Every image URL from an fal image result, in order — the batch-aware
+    counterpart of first_fal_image_url (num_images>1 returns N images)."""
+    images = (result or {}).get("images") or []
+    return [
+        img["url"]
+        for img in images
+        if isinstance(img, dict) and isinstance(img.get("url"), str)
+    ]
+
+
 async def run_fal_prediction(
     app: str, fn: str, input_dict: dict, *, poll_deadline_sec: int = 900,
 ) -> dict:

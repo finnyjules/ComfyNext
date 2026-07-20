@@ -1,9 +1,9 @@
 /**
- * Anchor-based sketch grid — the prompt-bar sketch flow has NO source node, so
- * the 2×2 pad is placed at an explicit viewport-derived top-left instead of
- * "right of a node". Geometry mirrors planSketchCards.ts (same card size/gap) so
- * kept cards are indistinguishable from node-spawned ones. (spec:
- * 2026-07-12-sketch-from-the-prompt-bar-design.md §2)
+ * Anchor-based sketch stack — the prompt-bar sketch flow has NO source node, so
+ * the pad is placed at an explicit viewport-derived top-left instead of "right
+ * of a node". The 4 options stack VERTICALLY (one column) at the anchor. Card
+ * size/gap mirror planSketchCards.ts so kept cards are indistinguishable from
+ * node-spawned ones. (spec: 2026-07-12-sketch-from-the-prompt-bar-design.md §2)
  */
 import type { SketchCardPlan } from './planSketchCards'
 
@@ -33,9 +33,8 @@ export function planSketchCardsAt(
 ): SketchCardPlan[] {
   const step = CARD_SIZE + GAP
   return images.slice(0, MAX_CARDS).map((image, slot) => {
-    const col = slot % 2
-    const row = slot < 2 ? 0 : 1
-    const position = { x: anchor.x + col * step, y: anchor.y + row * step }
+    // Vertical stack: one column, each option below the last.
+    const position = { x: anchor.x, y: anchor.y + slot * step }
     const existing = existingCardIds[slot]
     const reuse = !!existing
     const id = reuse ? existing : sketchPadCardId(slot)

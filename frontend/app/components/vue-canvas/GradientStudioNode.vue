@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Handle, Position } from '@vue-flow/core'
 import { Pencil, Sparkles } from 'lucide-vue-next'
 import { gradientFx } from '~/lib/gradientfx/renderer'
 import { defaultConfig } from '~/lib/gradientfx/randomize'
@@ -113,26 +112,28 @@ const varsInputIndex = computed(() =>
 </script>
 
 <template>
-  <div
-    class="relative w-[220px] overflow-hidden rounded-xl border border-white/10 bg-neutral-900 text-white shadow-lg"
-    @dblclick.stop="openEditor"
-  >
-    <!-- Variables input: a Collection's VARS output wires here. Rendering this Handle
-         lets the VARS edge anchor so it survives reload (fixes edge-lost-on-restart). -->
-    <Handle
+  <!-- Ports live outside the card: the card clips its own content
+       (overflow-hidden), which would otherwise cut the dots and their hit
+       areas in half. As siblings they also tuck in behind it. -->
+  <div class="relative w-fit">
+    <!-- Variables input: a Collection's VARS output wires here. Rendering this
+         port lets the VARS edge anchor so it survives reload. -->
+    <VueCanvasNodePort
       v-if="varsInputIndex >= 0"
-      :id="`input-${varsInputIndex}`" type="target" :position="Position.Left"
-      class="!h-3 !w-3 !rounded-full !border-2 !border-[#f472b6]/60 !bg-[#1a1a1a]"
-      :style="{ top: '50%' }"
+      :id="`input-${varsInputIndex}`" type="target" side="left" :index="0"
+      data-type="VARS" label="variables"
     />
 
     <!-- Output handle: anchors the provenance edge to a generated Image/Video node. -->
-    <Handle
-      id="output-0" type="source" :position="Position.Right"
-      class="!h-3 !w-3 !rounded-full !border-2 !border-white/30 !bg-[#1a1a1a]"
-      :style="{ top: '50%' }"
+    <VueCanvasNodePort
+      id="output-0" type="source" side="right" :index="0"
+      data-type="IMAGE" label="image"
     />
 
+  <div
+    class="relative z-10 w-[220px] overflow-hidden rounded-xl border border-white/10 bg-neutral-900 text-white shadow-lg"
+    @dblclick.stop="openEditor"
+  >
     <!-- Header -->
     <div class="flex items-center gap-2 border-b border-white/10 px-3 py-2">
       <Sparkles class="h-3.5 w-3.5 text-white/70" />
@@ -156,5 +157,6 @@ const varsInputIndex = computed(() =>
       </button>
       <StudioRenderButton class="flex-1" :node-id="id" :busy="!!data?.studioBusy" />
     </div>
+  </div>
   </div>
 </template>

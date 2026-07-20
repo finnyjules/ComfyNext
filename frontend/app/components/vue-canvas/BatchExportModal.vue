@@ -197,7 +197,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
       <div class="flex items-center gap-2 px-4 h-12 border-b border-white/[0.08] shrink-0">
         <Grid3X3 class="size-4 text-white/60" />
         <p class="text-sm text-white/90">Batch export · {{ layoutName }}</p>
-        <button class="ml-auto size-7 rounded-md hover:bg-white/10 flex items-center justify-center text-white/60 cursor-pointer" :disabled="running" @click="emit('close')">
+        <button class="ml-auto size-7 rounded hover:bg-white/10 flex items-center justify-center text-white/60 cursor-pointer" :disabled="running" @click="emit('close')">
           <X class="size-4" />
         </button>
       </div>
@@ -208,7 +208,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
           <div class="flex flex-wrap gap-1.5">
             <button
               v-for="v in pool.values" :key="v.value"
-              class="cursor-pointer rounded-md border transition-colors"
+              class="cursor-pointer rounded border transition-colors"
               :class="[
                 pool.kind === 'image' ? 'p-0.5' : 'px-2 py-1 text-xs',
                 selected[pool.key]?.has(v.value)
@@ -241,9 +241,9 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
       <div class="px-4 h-14 border-t border-white/[0.08] flex items-center gap-3 shrink-0">
         <p class="text-xs text-white/60">{{ countLine }}</p>
         <div class="ml-auto flex items-center gap-2">
-          <button v-if="running" class="h-8 px-3 rounded-md bg-white/10 text-xs text-white/80 cursor-pointer" @click="cancel">Cancel</button>
+          <button v-if="running" class="h-8 px-3 rounded bg-white/10 text-xs text-white/80 cursor-pointer" @click="cancel">Cancel</button>
           <button
-            class="h-8 px-4 rounded-md bg-action text-white text-xs font-medium cursor-pointer disabled:opacity-40 disabled:cursor-default flex items-center gap-1.5"
+            class="h-8 px-4 rounded bg-action text-white text-xs font-medium cursor-pointer disabled:opacity-40 disabled:cursor-default flex items-center gap-1.5"
             :disabled="!canGenerate"
             @click="generate"
           >

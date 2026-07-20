@@ -15,28 +15,47 @@ from PIL import Image as PILImage
 import folder_paths
 
 
-def save_live_preview(image_tensor: torch.Tensor, node_id: str) -> dict:
+# Monotonic suffix for unique-mode previews. Per-process; temp/ is wiped on
+# restart, so a reset counter can't collide with a previous session's files.
+_unique_seq = 0
+
+
+def save_live_preview(image_tensor: torch.Tensor, node_id: str, unique: bool = False) -> dict:
     """Save a live-preview image and return the UI dict expected by ComfyUI.
 
-    The filename is deterministic (`live_preview_<node_id>.png`), so each new
-    run for the same node overwrites the previous file. The frontend appends a
-    cache-buster query param so the browser still refetches.
+    By default the filename is deterministic (`live_preview_<node_id>.png`), so
+    each new run for the same node overwrites the previous file — right for
+    scrub-style previews (slider drags) where temp/ must stay bounded. The
+    frontend appends a cache-buster query param so the browser still refetches.
+
+    Pass `unique=True` for RESULT emissions the frontend captures as takes
+    (e.g. the Image artifact's RGBA cutout preview): takes must reference
+    immutable files. With the fixed name, every take aliases one mutable file —
+    the filmstrip pick becomes a browser-cache illusion and downstream runs
+    read the newest pixels instead of the picked ones.
     """
     temp_dir = folder_paths.get_temp_directory()
     os.makedirs(temp_dir, exist_ok=True)
+
+    if unique:
+        global _unique_seq
+        _unique_seq += 1
+        filename = f"live_preview_{node_id}_{_unique_seq:05d}.png"
+    else:
+        filename = f"live_preview_{node_id}.png"
 
     # Show the first image in the batch.
     img = image_tensor[0] if image_tensor.ndim == 4 else image_tensor
     arr = np.clip(255.0 * img.cpu().numpy(), 0, 255).astype(np.uint8)
     PILImage.fromarray(arr).save(
-        os.path.join(temp_dir, f"live_preview_{node_id}.png"),
+        os.path.join(temp_dir, filename),
         "PNG",
         compress_level=1,
     )
 
     return {
         "images": [
-            {"filename": f"live_preview_{node_id}.png", "subfolder": "", "type": "temp"}
+            {"filename": filename, "subfolder": "", "type": "temp"}
         ],
         "animated": (False,),
     }

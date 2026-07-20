@@ -69,8 +69,31 @@ async function resumeGate(action: 'continue' | 'redo' | 'restart') {
 </script>
 
 <template>
+  <!-- Ports sit outside the card so its background occludes their inner half. -->
+  <div class="relative w-fit">
+    <VueCanvasNodePort
+      v-for="(port, i) in data.inputs"
+      :id="`input-${i}`"
+      :key="`in-${i}`"
+      type="target"
+      side="left"
+      :index="i"
+      :data-type="port.type"
+      :label="port.name"
+    />
+    <VueCanvasNodePort
+      v-for="(port, i) in data.outputs"
+      :id="`output-${i}`"
+      :key="`out-${i}`"
+      type="source"
+      side="right"
+      :index="i"
+      :data-type="port.type"
+      :label="port.name"
+    />
+
   <div
-    class="gate-node rounded-xl border border-white/10 w-[260px] select-none backdrop-blur-sm"
+    class="gate-node relative z-10 rounded-xl border border-white/10 w-[260px] select-none backdrop-blur-sm"
     :class="{
       'ring-2 ring-red-500': data.error,
       'opacity-60': isBypassed,
@@ -90,33 +113,9 @@ async function resumeGate(action: 'continue' | 'redo' | 'restart') {
       <span class="text-xs font-semibold text-white/90 truncate flex-1">{{ data.title || 'Gate' }}</span>
     </div>
 
-    <!-- Ports section (matches ComfyNode) -->
-    <div class="py-2 flex flex-col gap-0.5 bg-black/15 shadow-[inset_0_1px_2px_rgba(0,0,0,0.15)] relative">
-      <div
-        v-for="i in Math.max(data.inputs.length, data.outputs.length)"
-        :key="i"
-        class="flex items-center justify-between"
-      >
-        <VueCanvasComfyNodePort
-          v-if="data.inputs[i - 1]"
-          :id="`input-${i - 1}`"
-          type="target"
-          position="left"
-          :data-type="data.inputs[i - 1].type"
-          :label="data.inputs[i - 1].name"
-        />
-        <span v-else class="flex-1" />
-        <VueCanvasComfyNodePort
-          v-if="data.outputs[i - 1]"
-          :id="`output-${i - 1}`"
-          type="source"
-          position="right"
-          :data-type="data.outputs[i - 1].type"
-          :label="data.outputs[i - 1].name"
-        />
-        <span v-else class="flex-1" />
-      </div>
 
+    <!-- Pass-through strip: the line the gate interrupts, plus its state. -->
+    <div class="relative h-12">
       <!-- Horizontal line from input to output -->
       <div class="absolute inset-x-0 top-1/2 h-px bg-white/10" />
       <!-- Live status indicator overlaid on the line -->
@@ -179,6 +178,7 @@ async function resumeGate(action: 'continue' | 'redo' | 'restart') {
         </button>
       </div>
     </div>
+  </div>
   </div>
 </template>
 

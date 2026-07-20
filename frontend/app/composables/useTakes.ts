@@ -120,6 +120,25 @@ export function projectTake<T extends TakeBearingData>(data: T, take: Take | nul
   }
 }
 
+/**
+ * Mirror an emission onto the display fields WITHOUT capturing it as a take.
+ * For scrub-preview nodes (Blur, AdjustCurves, … — the LIVE_PREVIEW_NODE_TYPES
+ * set): they re-run on every widget tweak and write one fixed-name temp file
+ * per node, so capturing each emission as a take builds a filmstrip of aliases
+ * to a single mutable file — picking an older take shows stale browser-cached
+ * pixels while downstream runs read the newest content. Pure; leaves `takes`
+ * and `activeTakeId` untouched.
+ */
+export function refreshTakeDisplay<T extends TakeBearingData>(data: T, take: Take): T {
+  return {
+    ...data,
+    images: take.images,
+    audios: take.audios,
+    text: take.text,
+    animated: take.animated,
+  }
+}
+
 /** Upper bound on retained takes per node (drops oldest UNPINNED past this). */
 export const MAX_TAKES = 30
 

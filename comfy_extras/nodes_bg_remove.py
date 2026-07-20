@@ -143,7 +143,7 @@ class BackgroundRemoveNode(IO.ComfyNode):
         return IO.NodeOutput(
             torch.stack(out_frames, dim=0),
             torch.stack(out_masks, dim=0),
-            ui=save_live_preview(torch.stack(preview_frames, dim=0), str(cls.hidden.unique_id)),
+            ui=save_live_preview(torch.stack(preview_frames, dim=0), str(cls.hidden.unique_id), unique=True),
         )
 
 

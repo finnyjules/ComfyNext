@@ -68,7 +68,7 @@ function openTable() {
     </div>
     <div class="px-2 pb-2">
       <button
-        class="w-full h-7 rounded-md text-[11px] bg-white/5 hover:bg-white/10 border border-white/10"
+        class="w-full h-7 rounded text-[11px] bg-white/5 hover:bg-white/10 border border-white/10"
         @click.stop="openTable"
       >Open table</button>
     </div>

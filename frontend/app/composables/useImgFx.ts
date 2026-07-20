@@ -103,7 +103,13 @@ export function useImgFx() {
     disposed = false   // reusable across generations — a prior dispose() must NOT latch us off
     const name = opts.preset ?? DEFAULT_PRESET
     const theme: PresetTheme = opts.theme ?? 'dark'
-    const mode = PRESETS[name].modes[theme]
+    // Flip the churn's horizontal drift so the mosaic travels left→right. The
+    // shader drifts the field by vec2(cos(dir), sin(dir))·t, so at the preset's
+    // direction the pattern reads right→left; mirroring across the vertical axis
+    // (180 − dir) negates only the horizontal component and leaves any vertical
+    // drift intact.
+    const base = PRESETS[name].modes[theme]
+    const mode = { ...base, direction: 180 - base.direction }
     cardBgColor = mode.cardBg
     normalMode = mode
     boilSeedMode = { ...mode, revealConfig: { ...mode.revealConfig, duration: 0.12, pixDuration: 0.12 } }

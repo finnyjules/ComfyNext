@@ -50,7 +50,13 @@ const sourceUrl = computed<string | null>(() => {
   if (loadedUrl.value) return loadedUrl.value
   const n = node.value
   if (!n) return null
-  // Wired upstream image?
+  // The node's own image FIRST — this is the selected take. Selecting a take in
+  // the filmstrip projects it onto data.images (projectTake), so images[0] is
+  // exactly what the node's preview shows. Prefer it over the upstream generator,
+  // whose data.images[0] stays pinned to its LATEST run and ignores the user's
+  // take selection. (Mirrors ArtifactImageNode's own `imageUrl` ordering.)
+  if (n.data?.images?.length) return n.data.images[0]
+  // No own image yet (e.g. wired but not run) → fall back to the upstream image.
   const inIdx = inputIdx('images')
   if (inIdx >= 0) {
     const edge = props.edges.find((e: any) => e.target === props.nodeId && e.targetHandle === `input-${inIdx}`)
@@ -60,8 +66,6 @@ const sourceUrl = computed<string | null>(() => {
       if (u) return u
     }
   }
-  // The node's own image.
-  if (n.data?.images?.length) return n.data.images[0]
   const wi = widgetIdx('image')
   const fn = wi >= 0 ? n.data?.widgetsValues?.[wi] : ''
   if (fn) return `/view?${new URLSearchParams({ filename: String(fn), type: 'input' })}`
@@ -529,7 +533,7 @@ onBeforeUnmount(() => {
           <button class="flex items-center justify-center size-7 rounded bg-white/5 hover:bg-white/10 cursor-pointer disabled:opacity-30 disabled:cursor-default" title="Undo (⌘Z)" aria-label="Undo" :disabled="!brush.canUndo.value" @click="brush.undo()"><Undo2 class="size-4" /></button>
           <button class="flex items-center justify-center size-7 rounded bg-white/5 hover:bg-white/10 cursor-pointer disabled:opacity-30 disabled:cursor-default" title="Redo (⌘⇧Z)" aria-label="Redo" :disabled="!brush.canRedo.value" @click="brush.redo()"><Redo2 class="size-4" /></button>
         </div>
-        <button class="absolute top-4 right-4 z-10 flex items-center justify-center size-8 rounded-md bg-white/5 hover:bg-white/10 cursor-pointer" title="Close (Esc)" @click="emit('close')">
+        <button class="absolute top-4 right-4 z-10 flex items-center justify-center size-8 rounded bg-white/5 hover:bg-white/10 cursor-pointer" title="Close (Esc)" @click="emit('close')">
           <X class="size-4" />
         </button>
 
@@ -645,9 +649,9 @@ onBeforeUnmount(() => {
             <p v-else class="text-[10px] text-white/35 mt-3.5">Click an object to auto-select it.</p>
 
             <div class="flex items-center gap-1.5 mt-3.5">
-              <button class="h-7 px-2 rounded-md flex items-center gap-1 text-[11px] cursor-pointer transition-colors" :class="brush.inverted.value ? 'bg-amber-400/90 text-neutral-900' : 'bg-white/[0.06] text-white/70 hover:bg-white/12'" title="Invert: keep the painted area, change everything else" @click="brush.toggleInvert()"><FlipHorizontal2 class="size-3.5" /> Invert</button>
-              <button class="h-7 px-2 rounded-md flex items-center gap-1 text-[11px] cursor-pointer transition-colors" :class="maskOnly ? 'bg-white/20 text-white' : 'bg-white/[0.06] text-white/70 hover:bg-white/12'" title="Show only the mask (hide the photo)" @click="maskOnly = !maskOnly"><component :is="maskOnly ? EyeOff : Eye" class="size-3.5" /> Mask</button>
-              <button class="ml-auto h-7 px-2 rounded-md bg-white/[0.06] text-white/70 hover:bg-white/12 text-[11px] cursor-pointer transition-colors" title="Clear region" @click="clearMask()">Clear</button>
+              <button class="h-7 px-2 rounded flex items-center gap-1 text-[11px] cursor-pointer transition-colors" :class="brush.inverted.value ? 'bg-amber-400/90 text-neutral-900' : 'bg-white/[0.06] text-white/70 hover:bg-white/12'" title="Invert: keep the painted area, change everything else" @click="brush.toggleInvert()"><FlipHorizontal2 class="size-3.5" /> Invert</button>
+              <button class="h-7 px-2 rounded flex items-center gap-1 text-[11px] cursor-pointer transition-colors" :class="maskOnly ? 'bg-white/20 text-white' : 'bg-white/[0.06] text-white/70 hover:bg-white/12'" title="Show only the mask (hide the photo)" @click="maskOnly = !maskOnly"><component :is="maskOnly ? EyeOff : Eye" class="size-3.5" /> Mask</button>
+              <button class="ml-auto h-7 px-2 rounded bg-white/[0.06] text-white/70 hover:bg-white/12 text-[11px] cursor-pointer transition-colors" title="Clear region" @click="clearMask()">Clear</button>
             </div>
           </div>
 
@@ -698,7 +702,7 @@ onBeforeUnmount(() => {
             <div v-if="intent === 'recolor' && hasRegion" class="flex items-center gap-1.5 flex-wrap mb-2.5">
               <span class="text-[10px] text-white/40 select-none">Recolor to</span>
               <button v-for="s in recolorSwatches" :key="s.hex"
-                      class="size-6 rounded-md border border-white/15 cursor-pointer hover:scale-110 transition-transform"
+                      class="size-6 rounded border border-white/15 cursor-pointer hover:scale-110 transition-transform"
                       :style="{ background: s.hex }" :title="`${s.label} ${s.hex}`"
                       :disabled="inpaint.busy.value"
                       @click="runRecolor(s.label, s.hex)" />
@@ -709,8 +713,8 @@ onBeforeUnmount(() => {
               </label>
             </div>
             <div class="flex items-center gap-1.5">
-              <button v-if="mode === 'mask'" class="h-8 px-2.5 rounded-md bg-white/[0.06] hover:bg-white/12 text-[11px] cursor-pointer disabled:opacity-30 disabled:cursor-default" :disabled="inpaint.busy.value || !sourceImg || !hasRegion" title="Remove what's under the mask" @click="runInpaint(true)">Remove</button>
-              <button class="gen-pastel flex-1 h-8 rounded-md text-neutral-900 text-[12px] font-semibold cursor-pointer disabled:opacity-40 disabled:cursor-default" :disabled="inpaint.busy.value || !sourceImg || (mode === 'mask' && !hasRegion)" @click="runInpaint(false)">
+              <button v-if="mode === 'mask'" class="h-8 px-2.5 rounded bg-white/[0.06] hover:bg-white/12 text-[11px] cursor-pointer disabled:opacity-30 disabled:cursor-default" :disabled="inpaint.busy.value || !sourceImg || !hasRegion" title="Remove what's under the mask" @click="runInpaint(true)">Remove</button>
+              <button class="gen-pastel flex-1 h-8 rounded text-neutral-900 text-[12px] font-semibold cursor-pointer disabled:opacity-40 disabled:cursor-default" :disabled="inpaint.busy.value || !sourceImg || (mode === 'mask' && !hasRegion)" @click="runInpaint(false)">
                 {{ inpaint.busy.value ? 'Generating…' : (history.length ? 'Regenerate' : 'Generate') }}
               </button>
             </div>
@@ -718,7 +722,7 @@ onBeforeUnmount(() => {
             <!-- Apply the result showing on the canvas back onto the node. Appears
                  once a result exists so the save action isn't buried in History. -->
             <button v-if="lastResult"
-              class="mt-1.5 w-full h-8 rounded-md bg-action hover:bg-action/85 text-white text-[12px] font-semibold cursor-pointer transition-colors"
+              class="mt-1.5 w-full h-8 rounded bg-action hover:bg-action/85 text-white text-[12px] font-semibold cursor-pointer transition-colors"
               title="Apply the result shown on the canvas to the node"
               @click="applyResult">
               Apply to canvas
@@ -734,7 +738,7 @@ onBeforeUnmount(() => {
             </div>
             <div class="grid grid-cols-4 gap-2">
               <button v-for="item in history" :key="item.id"
-                class="relative group rounded-md overflow-hidden border cursor-pointer"
+                class="relative group rounded overflow-hidden border cursor-pointer"
                 :class="previewResult === item.url ? 'border-white/90 ring-1 ring-white/30' : 'border-white/10 hover:border-white/40'"
                 :title="item.prompt || (item.mode === 'describe' ? 'described edit' : 'inpaint')"
                 @mouseenter="previewResult = item.url" @mouseleave="previewResult = lastResult" @click="acceptInpaint(item.url)">

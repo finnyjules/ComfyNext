@@ -109,6 +109,9 @@ const autoReviewTimers = new Map<string, ReturnType<typeof setTimeout>>()
 function onAutoReview(e: Event) {
   const { nodeId, takeId } = (e as CustomEvent).detail || {}
   if (!nodeId || !takeId || !ready.value) return
+  // Opt-in only: skip the post-generation critique unless the user turned it on
+  // in Settings → AI. Off by default (unset === off).
+  if (getLocalSetting('Sailor.AI.AutoReview') !== 'true') return
   const id = String(nodeId)
   if (reviewedTakes.get(id) === String(takeId)) return
   clearTimeout(autoReviewTimers.get(id))

@@ -2527,7 +2527,7 @@ const assetTab = ref<'ports' | 'files' | 'library'>(portBindings.value.length > 
               <button
                 v-for="j in junctionsFor(track)"
                 :key="`jx-${j.fromId}-${j.toId}`"
-                class="absolute z-[6] size-4 rounded-sm border flex items-center justify-center text-[9px] leading-none transition-colors"
+                class="absolute z-[6] size-4 rounded border flex items-center justify-center text-[9px] leading-none transition-colors"
                 :class="j.transition
                   ? 'bg-fuchsia-500/80 border-fuchsia-200/80 text-white'
                   : 'bg-black/70 border-white/25 text-white/40 hover:border-white/60 hover:text-white/80'"

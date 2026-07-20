@@ -284,7 +284,7 @@ watch(() => props.projectId, (id) => {
             </button>
           </div>
           <button
-            class="flex items-center gap-2 w-full rounded-lg px-2 py-1.5 text-xs text-white/50 hover:text-white hover:bg-white/[0.04] transition-colors cursor-pointer disabled:opacity-50"
+            class="flex items-center gap-2 w-full rounded px-2 py-1.5 text-xs text-white/50 hover:text-white hover:bg-white/[0.04] transition-colors cursor-pointer disabled:opacity-50"
             :disabled="switching || !doc"
             @click="emit('addCanvas')"
           >
@@ -296,7 +296,7 @@ watch(() => props.projectId, (id) => {
         <!-- Brand -->
         <div class="border-t border-white/[0.06] px-2 pt-2 pb-2">
           <button
-            class="w-full flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 hover:bg-white/[0.04] transition-colors cursor-pointer text-left"
+            class="w-full flex items-center justify-between gap-2 rounded px-2 py-1.5 hover:bg-white/[0.04] transition-colors cursor-pointer text-left"
             @click.stop="brandOpen = !brandOpen"
           >
             <span class="flex items-center gap-2 min-w-0">

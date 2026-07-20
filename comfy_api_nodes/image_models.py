@@ -36,6 +36,20 @@ class ImageModel:
     replicate_slug: str
     aspect_ratios: list[str]
     build_input: ModelInputBuilder
+    # Optional cross-provider backup. When BOTH are set, GenerateImageNode fails
+    # over to fal if the Replicate dispatch throws (see _run_prediction retries
+    # first, then this). `fal_slug` is the full fal endpoint id (e.g.
+    # "fal-ai/flux-pro/v1.1"); `fal_build_input` shapes the *fal* request, which
+    # uses a different schema than Replicate (image_size enums, not "16:9").
+    # Only models with an EXACT fal equivalent are mapped — a v5 model must not
+    # silently degrade to fal's v4.
+    fal_slug: str | None = None
+    fal_build_input: ModelInputBuilder | None = None
+    # Which provider GenerateImageNode dispatches to FIRST. "fal" is used for the
+    # shared models where fal is measurably faster/steadier than Replicate (whose
+    # cold-boot + E9828 capacity failures cost 15s–3.5min); the other provider is
+    # always the automatic backup. Ignored unless the model is fal-mapped.
+    primary: str = "replicate"
 
 
 # ---------- Advanced bag helpers --------------------------------------------
@@ -622,23 +636,205 @@ def _b_reve_create(prompt: str, ar: str, seed: int, adv: dict) -> dict:
     return inp
 
 
+# ---------- fal backup builders ---------------------------------------------
+#
+# fal reuses the same shared params (prompt, aspect_ratio, seed, advanced bag)
+# but a *different* input schema than Replicate. Most fal image models size the
+# output via an `image_size` enum rather than an aspect-ratio string, so map our
+# ratios to the closest of fal's six presets (custom {width,height} is possible
+# but the presets keep parity with what the user picked). Only the handful of
+# models with an exact fal counterpart get a builder here — see the fleet-wide
+# note on ImageModel. fal endpoints/schemas verified against fal's live OpenAPI.
+
+_FAL_IMAGE_SIZE_BY_AR: dict[str, str] = {
+    "1:1": "square_hd",
+    "4:3": "landscape_4_3",
+    "3:4": "portrait_4_3",
+    "16:9": "landscape_16_9",
+    "9:16": "portrait_16_9",
+    # Ratios fal has no exact preset for → nearest-orientation preset.
+    "3:2": "landscape_4_3",
+    "5:4": "landscape_4_3",
+    "16:10": "landscape_16_9",
+    "21:9": "landscape_16_9",
+    "2:1": "landscape_16_9",
+    "2:3": "portrait_4_3",
+    "4:5": "portrait_4_3",
+    "10:16": "portrait_16_9",
+    "9:21": "portrait_16_9",
+    "1:2": "portrait_16_9",
+}
+
+
+def _fal_image_size(ar: str) -> str:
+    """Map one of our aspect-ratio strings to fal's `image_size` enum."""
+    return _FAL_IMAGE_SIZE_BY_AR.get(ar, "square_hd")
+
+
+def _fal_flux_schnell(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    # fal-ai/flux/schnell — same BFL model as Replicate black-forest-labs/
+    # flux-schnell (the highest-traffic model, and the one E9828 hit hardest).
+    # Replicate's num_outputs batch → fal's num_images (both cap at 4), so the
+    # sketch preset's multi-image path survives the fallback.
+    inp = {
+        "prompt": prompt,
+        "image_size": _fal_image_size(ar),
+        "num_inference_steps": _opt_int(adv, "num_inference_steps", 4),
+        "num_images": max(1, min(4, _opt_int(adv, "num_outputs", 1))),
+        "output_format": _opt_str(adv, "output_format", "png"),
+    }
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
+def _fal_flux_pro_v11(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    # fal-ai/flux-pro/v1.1 — same underlying BFL model as Replicate flux-1.1-pro.
+    # safety_tolerance here is a STRING "1".."6" (Replicate takes an int).
+    tol = _opt_int(adv, "safety_tolerance", 2)
+    tol = min(6, max(1, tol))
+    inp = {
+        "prompt": prompt,
+        "image_size": _fal_image_size(ar),
+        "num_images": 1,
+        "output_format": _opt_str(adv, "output_format", "png"),
+        "safety_tolerance": str(tol),
+    }
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
+# Replicate ideogram `style_type` values → fal ideogram `style` enum.
+_FAL_IDEOGRAM_STYLE = {
+    "Auto": "AUTO", "General": "GENERAL", "Realistic": "REALISTIC", "Design": "DESIGN",
+}
+
+
+def _make_fal_ideogram_v3(rendering_speed: str) -> ModelInputBuilder:
+    """One fal endpoint (fal-ai/ideogram/v3) fronts all three Replicate tiers;
+    the quality/balanced/turbo split maps to fal's `rendering_speed`."""
+    def _build(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+        inp = {
+            "prompt": prompt,
+            "image_size": _fal_image_size(ar),
+            "rendering_speed": rendering_speed,  # TURBO | BALANCED | QUALITY
+            "num_images": 1,
+            # Replicate magic_prompt Auto/On → fal expand_prompt True; Off → False.
+            "expand_prompt": _opt_str(adv, "magic_prompt", "Auto").lower() != "off",
+        }
+        style = _opt_str(adv, "style_type", "None")
+        if style in _FAL_IDEOGRAM_STYLE:
+            inp["style"] = _FAL_IDEOGRAM_STYLE[style]
+        _maybe_set_seed(inp, seed)
+        return inp
+    return _build
+
+
+def _fal_output_format(adv: dict, default: str = "png") -> str:
+    """Replicate uses 'jpg'; fal's enum is jpeg/png/webp. Normalize."""
+    v = _opt_str(adv, "output_format", default)
+    return "jpeg" if v == "jpg" else v
+
+
+def _fal_nano_banana_2(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    # fal-ai/nano-banana-2 — same Gemini 3.1 Flash Image model as Replicate
+    # google/nano-banana-2. fal takes our aspect-ratio strings natively
+    # (including the 4:1/1:8 extremes), so no image_size mapping needed.
+    res = _opt_str(adv, "resolution", "1K")
+    if res not in ("0.5K", "1K", "2K", "4K"):
+        res = "1K"
+    inp = {
+        "prompt": prompt,
+        "aspect_ratio": _ar_or(_NANO_BANANA_AR, ar),
+        "resolution": res,
+        "num_images": 1,
+        "output_format": _fal_output_format(adv),
+        # Replicate's google_search knob ≙ fal's enable_web_search.
+        "enable_web_search": _opt_bool(adv, "google_search", False),
+    }
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
+def _fal_nano_banana_pro(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    # google/nano-banana-pro on fal — aspect-ratio enum matches ours exactly.
+    # Replicate's safety_filter_level has no fal equivalent (fal uses numeric
+    # safety_tolerance); leave fal's default rather than guess a mapping.
+    res = _opt_str(adv, "resolution", "2K")
+    if res not in ("1K", "2K", "4K"):
+        res = "2K"
+    inp = {
+        "prompt": prompt,
+        "aspect_ratio": _ar_or(_NANO_BANANA_PRO_AR, ar),
+        "resolution": res,
+        "num_images": 1,
+        "output_format": _fal_output_format(adv),
+    }
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
+def _fal_seedream_5_pro(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    # bytedance/seedream/v5/pro/text-to-image (no fal-ai/ prefix). fal sizes via
+    # image_size presets; the user's explicit aspect ratio wins over the 1K/2K
+    # advanced knob. NOTE: no seed parameter on this fal endpoint — generation is
+    # stochastic per call (seed only appears in the output).
+    return {
+        "prompt": prompt,
+        "image_size": _fal_image_size(ar),
+        "num_images": 1,
+        "output_format": _fal_output_format(adv),
+    }
+
+
+def _fal_seedream_5_lite(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    # fal-ai/bytedance/seedream/v5/lite/text-to-image. Replicate's batch knobs
+    # (sequential_image_generation auto + max_images ≤15) map to fal's
+    # max_images (≤6). No seed parameter here either.
+    inp = {
+        "prompt": prompt,
+        "image_size": _fal_image_size(ar),
+        "num_images": 1,
+        "max_images": 1,
+    }
+    if _opt_str(adv, "sequential_image_generation", "disabled") == "auto":
+        inp["max_images"] = max(1, min(6, _opt_int(adv, "max_images", 1)))
+    return inp
+
+
+def _fal_seedream_v4(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    # fal-ai/bytedance/seedream/v4/text-to-image — exact counterpart of Replicate
+    # bytedance/seedream-4.
+    inp = {
+        "prompt": prompt,
+        "image_size": _fal_image_size(ar),
+        "num_images": 1,
+        "max_images": 1,
+    }
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
 # ---------- Catalog (mirrors image-models.ts order) -------------------------
 
 MODELS: list[ImageModel] = [
     # BFL ---------------------------------------------------------------------
-    ImageModel("flux-1.1-pro",       "Flux 1.1 Pro",        "BFL", "black-forest-labs/flux-1.1-pro",       sorted(_FLUX_PRO_AR),  _b_flux_1_1_pro),
+    ImageModel("flux-1.1-pro",       "Flux 1.1 Pro",        "BFL", "black-forest-labs/flux-1.1-pro",       sorted(_FLUX_PRO_AR),  _b_flux_1_1_pro,
+               fal_slug="fal-ai/flux-pro/v1.1", fal_build_input=_fal_flux_pro_v11, primary="fal"),
     ImageModel("flux-1.1-pro-ultra", "Flux 1.1 Pro Ultra",  "BFL", "black-forest-labs/flux-1.1-pro-ultra", sorted(_FLUX_ULTRA_AR), _b_flux_1_1_pro_ultra),
     ImageModel("flux-pro",           "Flux Pro",            "BFL", "black-forest-labs/flux-pro",           sorted(_FLUX_PRO_AR),  _b_flux_pro),
     ImageModel("flux-dev",           "Flux Dev",            "BFL", "black-forest-labs/flux-dev",           sorted(_FLUX_DEV_AR),  _b_flux_dev),
-    ImageModel("flux-schnell",       "Flux Schnell",        "BFL", "black-forest-labs/flux-schnell",       sorted(_FLUX_DEV_AR),  _b_flux_schnell),
+    ImageModel("flux-schnell",       "Flux Schnell",        "BFL", "black-forest-labs/flux-schnell",       sorted(_FLUX_DEV_AR),  _b_flux_schnell,
+               fal_slug="fal-ai/flux/schnell", fal_build_input=_fal_flux_schnell, primary="fal"),
     ImageModel("flux-2-max",         "Flux 2 Max",          "BFL", "black-forest-labs/flux-2-max",         sorted(_FLUX_2_AR),    _b_flux_2_max),
     ImageModel("flux-2-pro",         "Flux 2 Pro",          "BFL", "black-forest-labs/flux-2-pro",         sorted(_FLUX_2_AR),    _b_flux_2_pro),
     ImageModel("flux-2-flex",        "Flux 2 Flex",         "BFL", "black-forest-labs/flux-2-flex",        sorted(_FLUX_2_AR),    _b_flux_2_flex),
     ImageModel("flux-2-klein-4b",    "Flux 2 Klein 4B",     "BFL", "black-forest-labs/flux-2-klein-4b",    sorted(_FLUX_KLEIN_AR), _b_flux_2_klein),
 
     # Google ------------------------------------------------------------------
-    ImageModel("nano-banana-pro",    "Nano Banana Pro",     "Google", "google/nano-banana-pro",            sorted(_NANO_BANANA_PRO_AR), _b_nano_banana_pro),
-    ImageModel("nano-banana-2",      "Nano Banana 2",       "Google", "google/nano-banana-2",              sorted(_NANO_BANANA_AR),     _b_nano_banana_2),
+    ImageModel("nano-banana-pro",    "Nano Banana Pro",     "Google", "google/nano-banana-pro",            sorted(_NANO_BANANA_PRO_AR), _b_nano_banana_pro,
+               fal_slug="google/nano-banana-pro", fal_build_input=_fal_nano_banana_pro, primary="fal"),
+    ImageModel("nano-banana-2",      "Nano Banana 2",       "Google", "google/nano-banana-2",              sorted(_NANO_BANANA_AR),     _b_nano_banana_2,
+               fal_slug="fal-ai/nano-banana-2", fal_build_input=_fal_nano_banana_2, primary="fal"),
     ImageModel("imagen-4-ultra",     "Imagen 4 Ultra",      "Google", "google/imagen-4-ultra",             sorted(_GOOGLE_AR),          _b_imagen_generic),
     ImageModel("imagen-4",           "Imagen 4",            "Google", "google/imagen-4",                   sorted(_GOOGLE_AR),          _b_imagen_generic),
     ImageModel("imagen-4-fast",      "Imagen 4 Fast",       "Google", "google/imagen-4-fast",              sorted(_GOOGLE_AR),          _b_imagen_generic),
@@ -646,17 +842,23 @@ MODELS: list[ImageModel] = [
     ImageModel("imagen-3-fast",      "Imagen 3 Fast",       "Google", "google/imagen-3-fast",              sorted(_GOOGLE_AR),          _b_imagen_generic),
 
     # Ideogram ----------------------------------------------------------------
-    ImageModel("ideogram-v3-quality",  "Ideogram V3 Quality",  "Ideogram", "ideogram-ai/ideogram-v3-quality",  sorted(_IDEOGRAM_V3_AR), _b_ideogram_v3),
-    ImageModel("ideogram-v3-balanced", "Ideogram V3 Balanced", "Ideogram", "ideogram-ai/ideogram-v3-balanced", sorted(_IDEOGRAM_V3_AR), _b_ideogram_v3),
-    ImageModel("ideogram-v3-turbo",    "Ideogram V3 Turbo",    "Ideogram", "ideogram-ai/ideogram-v3-turbo",    sorted(_IDEOGRAM_V3_AR), _b_ideogram_v3),
+    ImageModel("ideogram-v3-quality",  "Ideogram V3 Quality",  "Ideogram", "ideogram-ai/ideogram-v3-quality",  sorted(_IDEOGRAM_V3_AR), _b_ideogram_v3,
+               fal_slug="fal-ai/ideogram/v3", fal_build_input=_make_fal_ideogram_v3("QUALITY"), primary="fal"),
+    ImageModel("ideogram-v3-balanced", "Ideogram V3 Balanced", "Ideogram", "ideogram-ai/ideogram-v3-balanced", sorted(_IDEOGRAM_V3_AR), _b_ideogram_v3,
+               fal_slug="fal-ai/ideogram/v3", fal_build_input=_make_fal_ideogram_v3("BALANCED"), primary="fal"),
+    ImageModel("ideogram-v3-turbo",    "Ideogram V3 Turbo",    "Ideogram", "ideogram-ai/ideogram-v3-turbo",    sorted(_IDEOGRAM_V3_AR), _b_ideogram_v3,
+               fal_slug="fal-ai/ideogram/v3", fal_build_input=_make_fal_ideogram_v3("TURBO"), primary="fal"),
     ImageModel("ideogram-v2",          "Ideogram V2",          "Ideogram", "ideogram-ai/ideogram-v2",          sorted(_IDEOGRAM_V2_AR), _b_ideogram_v2),
     ImageModel("ideogram-v2a-turbo",   "Ideogram V2A Turbo",   "Ideogram", "ideogram-ai/ideogram-v2a-turbo",   sorted(_IDEOGRAM_V2_AR), _b_ideogram_v2),
 
     # ByteDance ---------------------------------------------------------------
-    ImageModel("seedream-5-pro",     "Seedream 5 Pro",      "ByteDance", "bytedance/seedream-5-pro",        sorted(_SEEDREAM_AR), _b_seedream_5_pro),
-    ImageModel("seedream-5-lite",    "Seedream 5 Lite",     "ByteDance", "bytedance/seedream-5-lite",       sorted(_SEEDREAM_AR), _b_seedream_5_lite),
+    ImageModel("seedream-5-pro",     "Seedream 5 Pro",      "ByteDance", "bytedance/seedream-5-pro",        sorted(_SEEDREAM_AR), _b_seedream_5_pro,
+               fal_slug="bytedance/seedream/v5/pro/text-to-image", fal_build_input=_fal_seedream_5_pro, primary="fal"),
+    ImageModel("seedream-5-lite",    "Seedream 5 Lite",     "ByteDance", "bytedance/seedream-5-lite",       sorted(_SEEDREAM_AR), _b_seedream_5_lite,
+               fal_slug="fal-ai/bytedance/seedream/v5/lite/text-to-image", fal_build_input=_fal_seedream_5_lite, primary="fal"),
     ImageModel("seedream-4.5",       "Seedream 4.5",        "ByteDance", "bytedance/seedream-4.5",          sorted(_SEEDREAM_AR), _b_seedream_45),
-    ImageModel("seedream-4",         "Seedream 4",          "ByteDance", "bytedance/seedream-4",            sorted(_SEEDREAM_AR), _b_seedream_4),
+    ImageModel("seedream-4",         "Seedream 4",          "ByteDance", "bytedance/seedream-4",            sorted(_SEEDREAM_AR), _b_seedream_4,
+               fal_slug="fal-ai/bytedance/seedream/v4/text-to-image", fal_build_input=_fal_seedream_v4, primary="fal"),
     ImageModel("seedream-3",         "Seedream 3",          "ByteDance", "bytedance/seedream-3",            sorted(_SEEDREAM_AR), _b_seedream_3),
 
     # Recraft -----------------------------------------------------------------
@@ -719,4 +921,4 @@ ALL_ASPECT_RATIOS: list[str] = sorted(
 # Default model id surfaced on a freshly-dropped node. Pick the safest
 # general-purpose model so users get a reasonable first result with no
 # configuration.
-DEFAULT_MODEL_ID: str = "flux-1.1-pro"
+DEFAULT_MODEL_ID: str = "flux-2-pro"

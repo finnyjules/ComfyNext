@@ -771,7 +771,7 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
       <StudioButton variant="secondary" :disabled="baking" @click="generateVideo">
         {{ baking ? (bakeMsg || 'Working…') : 'Generate as video' }}
       </StudioButton>
-      <button class="ml-1 rounded-md px-2 py-1 text-xs text-white/45 hover:text-white/80 hover:bg-white/[0.06] transition"
+      <button class="ml-1 rounded px-2 py-1 text-xs text-white/45 hover:text-white/80 hover:bg-white/[0.06] transition"
               title="Copy this gradient's config JSON (for teaching the agent)" @click="copyConfig">
         {{ copied ? '✓ Copied' : 'Copy config' }}
       </button>
@@ -1205,7 +1205,7 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
                   @click="exportResW = r.w">{{ r.label }}</button>
         </div>
         <div class="text-[10px] text-white/30">{{ exportDims.w }} × {{ exportDims.h }} · {{ exportFormat.toUpperCase() }}</div>
-        <button class="w-full rounded-lg bg-white/10 px-3 py-2 text-xs text-white/80 transition hover:bg-white/20" @click="downloadExport">
+        <button class="w-full rounded bg-white/10 px-3 py-2 text-xs text-white/80 transition hover:bg-white/20" @click="downloadExport">
           Export {{ exportFormat.toUpperCase() }} <span class="text-white/30">E</span>
         </button>
       </StudioSection>

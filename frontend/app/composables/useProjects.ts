@@ -81,9 +81,22 @@ export function useProjects() {
     projectName?: string,
   ): Promise<string | null> {
     try {
+      // Serialize once so we can decide on `keepalive`: it lets the request
+      // survive the page unloading (saveVersion fires from beforeunload, where
+      // a plain fetch is routinely killed mid-flight — the durable copy then
+      // silently lags behind what the user last saw). Browsers cap in-flight
+      // keepalive bodies at ~64 KiB and REJECT larger ones outright, so big
+      // docs post without it (the debounced continuous autosave usually
+      // persisted those moments earlier anyway).
+      const raw = JSON.stringify({ projectName, version })
       const res = await $fetch<{ id: string }>(
         `/sailor/projects/${encodeURIComponent(uuid)}/versions`,
-        { method: 'POST', body: { projectName, version } },
+        {
+          method: 'POST',
+          body: raw,
+          headers: { 'content-type': 'application/json' },
+          keepalive: raw.length < 60_000,
+        },
       )
       return res.id ?? null
     } catch (e) {

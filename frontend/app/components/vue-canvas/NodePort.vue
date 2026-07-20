@@ -1,0 +1,136 @@
+<script setup lang="ts">
+/**
+ * The one port primitive, shared by every node type.
+ *
+ * Ports sit outside the content flow and are centred on the node's vertical
+ * midpoint, so they cost zero vertical hierarchy — title and content lead on
+ * every node. Placement comes from `portLayout`, never a per-node offset.
+ *
+ * Render this as a SIBLING of the node card inside a relative wrapper, not as a
+ * child of the card: the card's opaque background then occludes each dot's inner
+ * half so it reads as tucked in behind the node.
+ *
+ * The visible dot is a plain span — dark fill, type-coloured ring, matching the
+ * treatment artifact nodes already used. The Vue Flow <Handle> is a larger
+ * invisible hit target laid over it, which keeps the dot small and the grab area
+ * generous, and works with the canvas-wide rule that strips handle chrome.
+ */
+import { Handle, Position } from '@vue-flow/core'
+import { getTypeColor } from '~/composables/useVueNodes'
+import { portOffset } from '~/lib/canvas/portLayout'
+import { useWireDrag } from '~/composables/useWireDrag'
+
+const props = defineProps<{
+  id: string
+  type: 'source' | 'target'
+  side: 'left' | 'right'
+  dataType: string
+  label: string
+  /** Position within this edge's stack — 0 sits at the node's centre. */
+  index: number
+  tooltip?: string
+}>()
+
+const { isDragging, draggingType } = useWireDrag()
+
+const color = computed(() => getTypeColor(props.dataType))
+const handlePosition = computed(() =>
+  props.side === 'left' ? Position.Left : Position.Right,
+)
+const offset = computed(() => portOffset(props.index))
+
+/**
+ * Half the 16px hit target. The wrapper is positioned with `top` arithmetic
+ * rather than a translate on purpose: a transform would make this element a
+ * stacking context, trapping the Handle underneath the card along with the dot.
+ */
+const HIT_HALF = 8
+
+/** A drag we can't type (artifact/studio handles) dims nothing. */
+const compatible = computed(() =>
+  !isDragging.value || !draggingType.value || draggingType.value === props.dataType,
+)
+const dimmed = computed(() => isDragging.value && !compatible.value)
+/** Labels appear on hover, and on every compatible port during a wire drag. */
+const forceLabel = computed(() => isDragging.value && compatible.value && !!draggingType.value)
+
+function toTitleCase(str: string): string {
+  return str
+    .split(/[_\s]+/)
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ')
+}
+const displayLabel = computed(() => toTitleCase(props.label))
+</script>
+
+<template>
+  <div
+    class="node-port absolute size-4 transition-opacity duration-150"
+    :class="[
+      side === 'left' ? '-left-2' : '-right-2',
+      dimmed ? 'opacity-25' : 'opacity-100',
+    ]"
+    :style="{ top: `calc(50% - ${HIT_HALF}px + ${offset}px)` }"
+  >
+    <!-- Visible dot: dark fill, type-coloured ring. Never the hit target. -->
+    <span
+      class="node-port__dot pointer-events-none absolute left-1/2 top-1/2 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 bg-[#1a1a1a] transition-shadow duration-150"
+      :style="{
+        borderColor: color,
+        boxShadow: forceLabel ? `0 0 0 3px ${color}44` : undefined,
+      }"
+    />
+
+    <!-- Label: hover-revealed, or forced while dragging a compatible wire. It
+         extends away from the card, so unlike the dot it is never occluded. -->
+    <span
+      class="node-port__label pointer-events-none absolute top-1/2 -translate-y-1/2 whitespace-nowrap rounded border border-white/10 bg-[#12141a] px-1.5 py-0.5 text-[9px] leading-none transition-opacity duration-150"
+      :class="[
+        side === 'left' ? 'right-5' : 'left-5',
+        forceLabel ? 'opacity-100' : 'opacity-0',
+      ]"
+      :style="{ color }"
+    >{{ displayLabel }}</span>
+
+    <!-- The hit target. Positioned with INLINE styles, not classes: Vue Flow
+         ships its own `.vue-flow__handle-{left,right}` rules (right: 0 plus a
+         translate) that outrank Tailwind's `!` utilities, which left the handle
+         offset from the dot you can see — so a drag grabbed the card and moved
+         the node instead of starting a wire. Inline styles win outright. -->
+    <Handle
+      :id="id"
+      :type="type"
+      :position="handlePosition"
+      class="!rounded-full !border-none !bg-transparent"
+      :style="{
+        position: 'absolute',
+        inset: '0',
+        top: '0',
+        left: '0',
+        right: 'auto',
+        bottom: 'auto',
+        width: '100%',
+        height: '100%',
+        minWidth: '0',
+        minHeight: '0',
+        transform: 'none',
+        // Above the card, unlike the dot. The dot is meant to look tucked in
+        // behind the node; the grab area must not be — with the hit target
+        // half-covered, a drag from the inner half moved the node instead.
+        zIndex: 20,
+      }"
+      :title="tooltip || displayLabel"
+    />
+  </div>
+</template>
+
+<style scoped>
+/* Hover reveals the label. Kept in CSS rather than JS so it costs no reactivity
+   on a canvas that can hold hundreds of ports. */
+.node-port:hover .node-port__label {
+  opacity: 1;
+}
+.node-port:hover .node-port__dot {
+  box-shadow: 0 0 0 3px rgb(255 255 255 / 0.15);
+}
+</style>

@@ -274,7 +274,7 @@ function onCardLeave() {
             v-for="item in section.items"
             :key="item.nodeType"
             draggable="true"
-            class="relative group flex flex-col items-center justify-center gap-2.5 aspect-square rounded-md bg-white/[0.025] hover:bg-white/[0.08] border border-white/[0.04] hover:border-white/10 transition-colors cursor-grab active:cursor-grabbing p-2"
+            class="relative group flex flex-col items-center justify-center gap-2.5 aspect-square rounded bg-white/[0.025] hover:bg-white/[0.08] border border-white/[0.04] hover:border-white/10 transition-colors cursor-grab active:cursor-grabbing p-2"
             :title="isModelMissing(item) ? 'Click to download model weights, then add' : 'Click to add, or drag onto the canvas'"
             @click="handleAdd(item)"
             @dragstart="(e) => onCardDragStart(e, item)"

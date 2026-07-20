@@ -443,7 +443,7 @@ class CompositorNode(IO.ComfyNode):
                 protect = torch.stack(alphas, dim=0).amax(dim=0, keepdim=True)  # [1,H,W]
                 protect = protect.clamp(0.0, 1.0).to(batch.dtype)
                 return IO.NodeOutput(batch, protect, video,
-                                     ui=save_live_preview(batch[:1], str(cls.hidden.unique_id)))
+                                     ui=save_live_preview(batch[:1], str(cls.hidden.unique_id), unique=True))
 
         # Gather provided layers in order. Unconnected slots return None and
         # are skipped — the composite uses only the layers that have an image.
@@ -537,7 +537,7 @@ class CompositorNode(IO.ComfyNode):
         # Static composites still emit a video output — a 1-frame video of the
         # composite — so downstream VIDEO consumers can wire unconditionally.
         return IO.NodeOutput(out, protect_mask, _video_from(out, 1),
-                             ui=save_live_preview(out, str(cls.hidden.unique_id)))
+                             ui=save_live_preview(out, str(cls.hidden.unique_id), unique=True))
 
 
 class CompositorExtension(ComfyExtension):

@@ -321,8 +321,13 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
+  <!-- Ports sit outside the card so its background occludes their inner half. -->
+  <div class="relative w-fit">
+    <VueCanvasNodePort :id="`input-${imageInIdx}`" type="target" side="left" :index="0" :data-type="'IMAGE'" label="image" />
+    <VueCanvasNodePort :id="`output-${imageOutIdx}`" type="source" side="right" :index="0" :data-type="'IMAGE'" label="image" />
+
   <div
-    class="shader-effect-node relative rounded-xl border w-[288px] select-none backdrop-blur-sm"
+    class="shader-effect-node relative z-10 rounded-xl border w-[288px] select-none backdrop-blur-sm"
     :class="[
       data.error ? 'border-red-500 ring-2 ring-red-500' : 'border-white/10',
       { 'opacity-45 grayscale': isMuted, 'opacity-85': isBypassed },
@@ -340,7 +345,7 @@ onBeforeUnmount(() => {
       <Sparkles class="size-4 shrink-0 text-white/70" :stroke-width="1.75" />
       <span class="text-xs font-semibold text-white/90 truncate flex-1">{{ effectDef?.name || 'Shader Effect' }}</span>
       <button
-        class="nopan nodrag shrink-0 size-5 rounded-md flex items-center justify-center text-white/55 hover:text-white/85 hover:bg-white/[0.08] transition-colors cursor-pointer"
+        class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center text-white/55 hover:text-white/85 hover:bg-white/[0.08] transition-colors cursor-pointer"
         :title="playing ? 'Pause preview' : 'Play preview'" @click.stop="playing = !playing"
       >
         <Pause v-if="playing" class="size-3" />
@@ -348,13 +353,6 @@ onBeforeUnmount(() => {
       </button>
     </div>
 
-    <!-- Ports: image in (left) + image out (right), same row -->
-    <div class="py-2 flex flex-col gap-0.5 bg-black/15 shadow-[inset_0_1px_2px_rgba(0,0,0,0.15)]">
-      <div class="flex items-center justify-between">
-        <VueCanvasComfyNodePort :id="`input-${imageInIdx}`" type="target" position="left" :data-type="'IMAGE'" label="image" />
-        <VueCanvasComfyNodePort :id="`output-${imageOutIdx}`" type="source" position="right" :data-type="'IMAGE'" label="image" />
-      </div>
-    </div>
 
     <!-- Live preview (full-bleed band) -->
     <div class="relative border-t border-[#2a2a2a]">
@@ -467,6 +465,7 @@ onBeforeUnmount(() => {
         </div>
       </template>
     </CatalogModal>
+  </div>
   </div>
 </template>
 

@@ -731,7 +731,7 @@ async function onHeaderFilesChange(colKey: string, e: Event) {
 
         <button
           v-if="!running"
-          class="flex items-center gap-1.5 px-3 h-7 rounded-md text-[11px] font-medium bg-action/15 text-action transition hover:bg-action/25 disabled:opacity-40 disabled:cursor-not-allowed"
+          class="flex items-center gap-1.5 px-3 h-7 rounded text-[11px] font-medium bg-action/15 text-action transition hover:bg-action/25 disabled:opacity-40 disabled:cursor-not-allowed"
           :disabled="!generateN"
           @click="openConfirm"
         >
@@ -752,7 +752,7 @@ async function onHeaderFilesChange(colKey: string, e: Event) {
           <div class="flex justify-end gap-2 mt-3">
             <button class="drawer-btn" @click="confirmOpen = false">Cancel</button>
             <button
-              class="flex items-center gap-1.5 px-3 h-7 rounded-md text-[11px] font-medium bg-action/15 text-action transition hover:bg-action/25"
+              class="flex items-center gap-1.5 px-3 h-7 rounded text-[11px] font-medium bg-action/15 text-action transition hover:bg-action/25"
               @click="confirmGenerate"
             >
               <Play class="size-3.5" /> Generate

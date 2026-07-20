@@ -97,7 +97,7 @@ function create() {
               <p class="text-[11px] text-white/45 mt-0.5 truncate">Pick a motion slate, fill the slots, and drop an editable Frame on the canvas.</p>
             </div>
             <button
-              class="shrink-0 size-7 rounded-md hover:bg-white/10 flex items-center justify-center text-white/60 hover:text-white/90 cursor-pointer transition-colors"
+              class="shrink-0 size-7 rounded hover:bg-white/10 flex items-center justify-center text-white/60 hover:text-white/90 cursor-pointer transition-colors"
               title="Close (Esc)"
               @click="emit('close')"
             >
@@ -113,7 +113,7 @@ function create() {
                 <button
                   v-for="t in SLATE_TEMPLATES"
                   :key="t.id"
-                  class="text-left rounded-lg border overflow-hidden transition-colors cursor-pointer"
+                  class="text-left rounded border overflow-hidden transition-colors cursor-pointer"
                   :class="selectedId === t.id
                     ? 'border-white/30 bg-white/[0.06]'
                     : 'border-white/10 bg-white/[0.02] hover:bg-white/[0.05] hover:border-white/20'"
@@ -171,7 +171,7 @@ function create() {
               <!-- Footer action -->
               <div class="px-5 py-3 border-t border-white/[0.06] flex justify-end">
                 <button
-                  class="inline-flex items-center gap-1.5 h-8 px-3.5 rounded-md text-xs font-medium bg-white text-black hover:bg-white/90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
+                  class="inline-flex items-center gap-1.5 h-8 px-3.5 rounded text-xs font-medium bg-white text-black hover:bg-white/90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
                   :disabled="!selected"
                   @click="create"
                 >

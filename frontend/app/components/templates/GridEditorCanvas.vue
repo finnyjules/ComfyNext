@@ -343,8 +343,8 @@ function editTextStyle(r: ResolvedElement): Record<string, string | number> {
   }
 }
 
-// Expressive text: per-word placement from the shared engine (same CHAR_W
-// estimate the Satori export uses, so the editor matches the render).
+// Expressive text: per-word placement from the shared engine (same per-glyph
+// width estimate the Satori export uses, so the editor matches the render).
 function expressiveWords(r: ResolvedElement): Array<{ text: string; x: number; y: number }> {
   const el = r.el
   if (el.type !== 'text' || !el.style?.expressive) return []

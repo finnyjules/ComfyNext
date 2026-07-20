@@ -1076,23 +1076,23 @@ async function generateVideo() {
       <div class="rounded-lg border border-white/[0.07] bg-white/[0.03] px-3 py-2.5">
           <label class="mb-1 block text-[11px] text-white/50">Effect</label>
           <button type="button" @click="showEffectGallery = true"
-                  class="flex w-full items-center justify-between rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1.5 text-xs text-white/85 hover:border-white/25">
+                  class="flex w-full items-center justify-between rounded border border-white/[0.08] bg-white/[0.04] px-2 py-1.5 text-xs text-white/85 hover:border-white/25">
             <span class="truncate">{{ effect.label }}</span>
             <span class="ml-2 shrink-0 text-white/40">▾</span>
           </button>
           <div class="mt-2 flex items-center justify-between">
             <button type="button" @click="applyEffectDefaults"
-                    class="rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-[11px] text-white/70 hover:border-white/25">
+                    class="rounded border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-[11px] text-white/70 hover:border-white/25">
               Reset to defaults
             </button>
             <button type="button" @click="makeAsDefault" :disabled="savingDefault"
-                    class="rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-[11px] text-white/70 hover:border-white/25 disabled:opacity-40">
+                    class="rounded border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-[11px] text-white/70 hover:border-white/25 disabled:opacity-40">
               {{ savingDefault ? 'Saving…' : 'Make as default' }}
             </button>
           </div>
           <div v-if="SHOW_THUMB_CAPTURE" class="mt-2 flex justify-end">
             <button v-if="SHOW_THUMB_CAPTURE" type="button" @click="captureThumbnail" :disabled="capturingThumb"
-                    class="rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-[11px] text-white/70 hover:border-white/25 disabled:opacity-40">
+                    class="rounded border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-[11px] text-white/70 hover:border-white/25 disabled:opacity-40">
               {{ capturingThumb ? 'Capturing…' : 'Capture thumbnail' }}
             </button>
           </div>
@@ -1190,7 +1190,7 @@ async function generateVideo() {
                       <StudioSelect class="flex-1" :options="FILL_TYPES" :model-value="f.type"
                                     @update:model-value="(v: string) => f.type = v as FillType" />
                       <button v-if="fills.length > 1" type="button" @click="removeFill(i)" aria-label="Remove fill"
-                              class="shrink-0 rounded-md p-1 text-white/30 hover:bg-white/10 hover:text-rose-300">
+                              class="shrink-0 rounded p-1 text-white/30 hover:bg-white/10 hover:text-rose-300">
                         <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></svg>
                       </button>
                     </div>
@@ -1271,7 +1271,7 @@ async function generateVideo() {
                            class="w-full flex-1 rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1" />
                     <button type="button" title="Suggest fonts from a description"
                             :disabled="fontSuggestLoading" @click="runFontSuggest"
-                            class="shrink-0 whitespace-nowrap rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 hover:border-white/25 disabled:opacity-40">✨ Ask AI</button>
+                            class="shrink-0 whitespace-nowrap rounded border border-white/[0.08] bg-white/[0.04] px-2 py-1 hover:border-white/25 disabled:opacity-40">✨ Ask AI</button>
                   </div>
                   <label class="mb-1 flex items-center justify-between px-1 py-0.5 text-[11px] text-white/55">
                     <span>Variable fonts only</span>

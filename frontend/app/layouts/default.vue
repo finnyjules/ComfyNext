@@ -1715,6 +1715,24 @@ function autosaveCurrentWorkflow() {
   }
 }
 
+// Continuous autosave: the canvas dispatches `sailor:canvasDirty` on every
+// nodes/edges mutation (same deep watch as undo-history); we debounce that into
+// a full autosave — snapshot → sessionStorage → durable mirror — so a crash,
+// killed dev server, or skipped beforeunload loses at most a few seconds of
+// work instead of everything since the last tab switch. Runs through
+// snapshotActiveCanvasIntoDoc's guards, so mid-load/mid-apply states still
+// refuse to clobber, and getWorkflow({reroll:false}) never touches seeds or
+// the run-tracking sets.
+const AUTOSAVE_DEBOUNCE_MS = 3000
+let autosaveDebounceTimer: ReturnType<typeof setTimeout> | null = null
+function onCanvasDirty() {
+  if (autosaveDebounceTimer) clearTimeout(autosaveDebounceTimer)
+  autosaveDebounceTimer = setTimeout(() => {
+    autosaveDebounceTimer = null
+    autosaveCurrentWorkflow()
+  }, AUTOSAVE_DEBOUNCE_MS)
+}
+
 // Prompts queued by live-run should not surface "started" / "completed" toasts
 // or the canvas status bar — slider drags would flicker that surface dozens of
 // times a second. The bridge synthesizes execution_complete without a prompt_id,
@@ -1802,22 +1820,32 @@ function armQueueWatchdog(tabId: string) {
   }, QUEUE_WATCHDOG_MS)
 }
 
-function handleLiveRun() {
+function handleLiveRun(e: Event) {
+  // Live preview runs are SCOPED to the node that asked for them. targetIds
+  // routes through getFilteredWorkflow (upstream keep-set; unchanged upstream
+  // cache-hits on the backend). Passing undefined here runs the FULL graph —
+  // that made "connect an edge into SmartLayout" re-execute every generator on
+  // the canvas, so an id-less event now refuses to run instead of running all.
+  const nodeId = (e as CustomEvent).detail?.nodeId
+  if (!nodeId) { console.warn('[LiveRun] dropped: no nodeId on sailor:liveRun'); return }
   pendingLiveRuns.value++
   // Safety: drop the counter if no execution_start arrives (e.g. queue rejected the prompt).
   if (pendingLiveRunsResetTimer) clearTimeout(pendingLiveRunsResetTimer)
   pendingLiveRunsResetTimer = setTimeout(() => { pendingLiveRuns.value = 0 }, 10000)
-  runVueWorkflow(undefined, { live: true })
+  runVueWorkflow([String(nodeId)], { live: true })
 }
 
 onMounted(() => {
   window.addEventListener('beforeunload', autosaveCurrentWorkflow)
+  window.addEventListener('sailor:canvasDirty', onCanvasDirty)
   window.addEventListener('sailor:liveRun', handleLiveRun)
 })
 
 onUnmounted(() => {
   window.removeEventListener('beforeunload', autosaveCurrentWorkflow)
+  window.removeEventListener('sailor:canvasDirty', onCanvasDirty)
   window.removeEventListener('sailor:liveRun', handleLiveRun)
+  if (autosaveDebounceTimer) { clearTimeout(autosaveDebounceTimer); autosaveDebounceTimer = null }
 })
 let sharedIframeReady = false
 // True while a workflow is being pushed into the canvas (incl. waiting for the

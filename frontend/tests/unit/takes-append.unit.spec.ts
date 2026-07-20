@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { appendTake } from '~/composables/useTakes'
+import { appendTake, refreshTakeDisplay } from '~/composables/useTakes'
 
 // A take as built from an `executed` event. `sig` is the output's filename
 // signature; live-preview generators reuse a FIXED filename, so re-rolls share a
@@ -30,5 +30,32 @@ describe('appendTake — re-roll accumulation', () => {
     data = appendTake(data, mk('a', null, 'preview.png'))
     data = appendTake(data, mk('b', null, 'preview.png'))
     expect(data.takes).toHaveLength(1)
+  })
+})
+
+describe('refreshTakeDisplay — scrub-preview emissions (no take capture)', () => {
+  // Live-preview nodes (Blur, AdjustCurves, …) re-run on every widget tweak
+  // and write ONE fixed-name temp file per node. Capturing those emissions as
+  // takes built a filmstrip of aliases to a single mutable file — picking an
+  // older take showed stale browser-cached pixels while downstream runs read
+  // the newest content. For these nodes the display refreshes; no take.
+  it('mirrors the emission onto the display fields', () => {
+    const next = refreshTakeDisplay({ images: ['/view?f=old'] } as any, mk('a', 'run-1', 'p.png') as any)
+    expect(next.images).toEqual(['/view?f=a'])
+  })
+
+  it('leaves takes and the active pick untouched', () => {
+    const prior = { takes: [mk('kept', 'run-0', 'p.png')], activeTakeId: 'kept', images: ['/view?f=kept'] }
+    const next = refreshTakeDisplay(prior as any, mk('b', 'run-2', 'p.png') as any)
+    expect(next.takes).toHaveLength(1)
+    expect(next.takes![0]!.id).toBe('kept')
+    expect(next.activeTakeId).toBe('kept')
+    expect(next.images).toEqual(['/view?f=b'])
+  })
+
+  it('is pure: the input object is not mutated', () => {
+    const prior: any = { images: ['/view?f=old'], takes: [] }
+    refreshTakeDisplay(prior, mk('c', 'run-3', 'p.png') as any)
+    expect(prior.images).toEqual(['/view?f=old'])
   })
 })

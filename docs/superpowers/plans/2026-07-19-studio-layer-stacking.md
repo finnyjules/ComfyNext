@@ -16,7 +16,7 @@
 - **Layer 0 is the base** in both studios — composited directly over background (gradient) / source (shader); its blend/opacity controls are hidden.
 - **Relief keeps lighting gradient layer 0 only** — do not generalize `bandHeight(0, …)`.
 - **GLSL program changes require a full page reload** (not HMR) to rebuild — always reload before judging a shader change in a harness.
-- **Test reality:** the repo has vitest + playwright configured but zero existing tests; verification is harness-driven. Use vitest ONLY for the pure-logic units flagged below; verify GL/UI via the dev labs + typecheck + Vite compile-check.
+- **Test reality:** the repo runs vitest via `npx vitest run` with `include: ['tests/unit/**/*.unit.spec.ts']`. ALL new unit tests MUST live in `frontend/tests/unit/<name>.unit.spec.ts` and import source via the `~/` alias (= `frontend/app`). Co-located `app/lib/*.test.ts` files are NOT picked up — never use that location. The suite currently has ~6 pre-existing failing files from the dirty parallel tree; "no new failures" means that count does not rise. Verify GL/UI via the dev labs + typecheck + Vite compile-check.
 - **Typecheck baseline:** ~328 pre-existing errors. "No new errors" means the count does not rise.
 - **Commit hygiene:** stage only the files listed per task (`git add <exact paths>`); never `git stash`; commit directly on the working branch.
 
@@ -26,10 +26,11 @@
 
 **New files:**
 - `frontend/app/lib/studio/blend.ts` — shared `BlendKind`, `BLEND_MODES`, `BLEND_IDX`, `BLEND_LAYERS_GLSL`.
-- `frontend/app/lib/studio/blend.test.ts` — vitest unit test for the blend module.
+- `frontend/tests/unit/studio-blend.unit.spec.ts` — vitest unit test for the blend module.
 - `frontend/app/components/vue-canvas/StudioLayerStack.vue` — shared aside layer-list component.
 - `frontend/app/lib/shaderstudio/migrate.ts` — `effect → effects[]` migration.
-- `frontend/app/lib/shaderstudio/migrate.test.ts` — vitest unit test for the migration.
+- `frontend/tests/unit/shaderstudio-migrate.unit.spec.ts` — vitest unit test for the migration.
+- `frontend/tests/unit/gradientfx-motion-remap.unit.spec.ts` — vitest unit test for gradient track remap.
 - `frontend/app/pages/dev/shader-studio-lab.vue` — modal harness for the shader studio.
 
 **Modified files:**
@@ -50,7 +51,7 @@
 
 **Files:**
 - Create: `frontend/app/lib/studio/blend.ts`
-- Create: `frontend/app/lib/studio/blend.test.ts`
+- Create: `frontend/tests/unit/studio-blend.unit.spec.ts`
 - Modify: `frontend/app/lib/gradientfx/types.ts` (re-export `BlendKind`, `BLEND_MODES`)
 - Modify: `frontend/app/lib/gradientfx/renderer.ts:20` (import `BLEND_IDX` from shared)
 - Modify: `frontend/app/lib/gradientfx/shaders.ts:536-545` (inject shared GLSL snippet)
@@ -64,11 +65,11 @@
 
 - [ ] **Step 1: Write the failing test**
 
-Create `frontend/app/lib/studio/blend.test.ts`:
+Create `frontend/tests/unit/studio-blend.unit.spec.ts`:
 
 ```ts
 import { describe, it, expect } from 'vitest'
-import { BLEND_MODES, BLEND_IDX, BLEND_LAYERS_GLSL } from './blend'
+import { BLEND_MODES, BLEND_IDX, BLEND_LAYERS_GLSL } from '~/lib/studio/blend'
 
 describe('studio blend module', () => {
   it('maps every mode to a stable index', () => {
@@ -87,7 +88,7 @@ describe('studio blend module', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd frontend && npx vitest run app/lib/studio/blend.test.ts`
+Run: `cd frontend && npx vitest run studio-blend`
 Expected: FAIL — cannot resolve `./blend`.
 
 - [ ] **Step 3: Write the module**
@@ -124,7 +125,7 @@ vec3 blendLayers(vec3 base, vec3 src, float mode) {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd frontend && npx vitest run app/lib/studio/blend.test.ts`
+Run: `cd frontend && npx vitest run studio-blend`
 Expected: PASS (3 tests).
 
 - [ ] **Step 5: Re-export from gradientfx/types.ts and remove the local duplicate**
@@ -161,7 +162,7 @@ Then the Vite compile-check on the touched modules (fetch each through the dev s
 - [ ] **Step 9: Commit**
 
 ```bash
-git add frontend/app/lib/studio/blend.ts frontend/app/lib/studio/blend.test.ts \
+git add frontend/app/lib/studio/blend.ts frontend/tests/unit/studio-blend.unit.spec.ts \
         frontend/app/lib/gradientfx/types.ts frontend/app/lib/gradientfx/renderer.ts \
         frontend/app/lib/gradientfx/shaders.ts
 git commit -m "refactor(studio): extract shared blend module"
@@ -465,10 +466,10 @@ git commit -m "feat(gradient): render N layers via sampler2DArray fields/ramps"
 
 - [ ] **Step 1: Add motion track remap helpers (with test)**
 
-Create `frontend/app/lib/gradientfx/motion.test.ts`:
+Create `frontend/tests/unit/gradientfx-motion-remap.unit.spec.ts`:
 ```ts
 import { describe, it, expect } from 'vitest'
-import { remapTracksOnReorder, dropTracksForLayer } from './motion'
+import { remapTracksOnReorder, dropTracksForLayer } from '~/lib/gradientfx/motion'
 
 const mk = (layer: number) => ({ layer, param: 'phase', from: 0, to: 1, easing: 'linear' as const, loops: 1, hold: 0, cycleOffset: 0, delay: 0 })
 
@@ -491,7 +492,7 @@ describe('gradient motion track remap', () => {
 })
 ```
 
-Run: `cd frontend && npx vitest run app/lib/gradientfx/motion.test.ts` → FAIL (functions undefined).
+Run: `cd frontend && npx vitest run gradientfx-motion-remap` → FAIL (functions undefined).
 
 Add to `frontend/app/lib/gradientfx/motion.ts`:
 ```ts
@@ -589,7 +590,7 @@ Screenshot the 4–6 layer state as proof.
 
 ```bash
 git add frontend/app/components/vue-canvas/GradientStudioSurface.vue \
-        frontend/app/lib/gradientfx/motion.ts frontend/app/lib/gradientfx/motion.test.ts
+        frontend/app/lib/gradientfx/motion.ts frontend/tests/unit/gradientfx-motion-remap.unit.spec.ts
 git commit -m "feat(gradient): N-layer stack UI in the aside panel"
 ```
 
@@ -600,7 +601,7 @@ git commit -m "feat(gradient): N-layer stack UI in the aside panel"
 **Files:**
 - Modify: `frontend/app/lib/shaderstudio/types.ts` (`StudioEffect` fields, `effects[]`, `version`, `LAYER_MAX`)
 - Create: `frontend/app/lib/shaderstudio/migrate.ts`
-- Create: `frontend/app/lib/shaderstudio/migrate.test.ts`
+- Create: `frontend/tests/unit/shaderstudio-migrate.unit.spec.ts`
 
 **Interfaces:**
 - Consumes: `BlendKind`, `BLEND_MODES` (Task 1).
@@ -611,10 +612,10 @@ git commit -m "feat(gradient): N-layer stack UI in the aside panel"
 
 - [ ] **Step 1: Write the migration test**
 
-Create `frontend/app/lib/shaderstudio/migrate.test.ts`:
+Create `frontend/tests/unit/shaderstudio-migrate.unit.spec.ts`:
 ```ts
 import { describe, it, expect } from 'vitest'
-import { migrateShaderConfig } from './migrate'
+import { migrateShaderConfig } from '~/lib/shaderstudio/migrate'
 
 describe('shader config migration', () => {
   it('wraps a legacy single effect into effects[]', () => {
@@ -625,8 +626,9 @@ describe('shader config migration', () => {
     expect(out.effects[0]!.blend).toBe('normal')
     expect(out.effects[0]!.opacity).toBe(1)
     expect(out.effects[0]!.layerId).toMatch(/.+/)
-    expect((out as any).effect).toBeUndefined()
     expect(out.version).toBe(2)
+    // NOTE: `effect` is intentionally KEPT in Task 5 (readers still use it); Task 6
+    // switches readers to `effects` and only then deletes `effect`.
   })
   it('passes through an already-migrated config untouched', () => {
     const cur = { version: 2, effects: [{ id: 'x', params: {}, enabled: true, blend: 'screen', opacity: 0.5, layerId: 'a' }] }
@@ -636,7 +638,7 @@ describe('shader config migration', () => {
 })
 ```
 
-Run: `cd frontend && npx vitest run app/lib/shaderstudio/migrate.test.ts` → FAIL.
+Run: `cd frontend && npx vitest run shaderstudio-migrate` → FAIL.
 
 - [ ] **Step 2: Update the types**
 
@@ -658,7 +660,7 @@ export interface StudioEffect {
   customChars?: string
 }
 ```
-In `ShaderStudioConfig` (lines 98-109): replace `effect: StudioEffect` with `effects: StudioEffect[]`; bump the `version` default. Update `defaults` (lines 111-137): `effects: [{ layerId: newLayerId(), id: '', params: {}, enabled: true, blend: 'normal', opacity: 1 }]`. Add a tiny id generator (seed-free, avoids `Math.random` in render paths — use a module counter):
+In `ShaderStudioConfig` (lines 98-109): **ADD** `effects: StudioEffect[]` as a NEW field, and KEEP the existing `effect: StudioEffect` field (mark it `/** @deprecated — removed in the reader switch; use effects[] */`). This is additive so `passes.ts`/Surface/Node readers that still use `cfg.effect` keep compiling — Task 6 switches them to `effects` and only then removes `effect`. Bump the `version` default. Update `defaults` (lines 111-137): keep the existing `effect: {...}` default AND add `effects: [{ layerId: newLayerId(), id: '', params: {}, enabled: true, blend: 'normal', opacity: 1 }]`. Add a tiny id generator (seed-free, avoids `Math.random` in render paths — use a module counter):
 ```ts
 let _lid = 0
 export function newLayerId(): string { return `L${(_lid++).toString(36)}${Date.now().toString(36)}` }
@@ -682,7 +684,8 @@ export function migrateShaderConfig(raw: any): ShaderStudioConfig {
       : { layerId: newLayerId(), id: '', params: {}, enabled: true, blend: 'normal', opacity: 1 }
     cfg.effects = [eff]
   }
-  delete cfg.effect
+  // NOTE: `effect` is intentionally NOT deleted here — readers still use it until
+  // Task 6 switches them. Task 6 adds `delete cfg.effect` and removes the field.
   cfg.version = 2
   return cfg as ShaderStudioConfig
 }
@@ -690,18 +693,15 @@ export function migrateShaderConfig(raw: any): ShaderStudioConfig {
 
 Run the test → PASS.
 
-- [ ] **Step 4: Call the migration on load**
+- [ ] **Step 4: Typecheck + commit (stays green — additive)**
 
-In `ShaderStudioSurface.vue` and `ShaderStudioNode.vue` where the persisted blob is read into `config`/`cfg` (Surface ~line 367-368; Node ~line 32-37), pass it through `migrateShaderConfig(...)` before merging over defaults. (Do NOT yet touch the render calls — that's Task 6.) This step will produce a temporary typecheck break on `cfg.effect` references in `passes.ts`/callers; that is expected and fixed in Task 6. To keep this task independently green, guard those references with `(cfg as any).effect` ONLY if needed, or land Steps 4 here and Task 6 together. **Right-sizing note:** if the typecheck cannot be green between Task 5 and Task 6, merge them — do not commit a red typecheck.
-
-- [ ] **Step 5: Typecheck + commit**
-
-Because `.effect` readers still exist until Task 6, run the typecheck; if the only new errors are the known `.effect` references that Task 6 removes, proceed to Task 6 and commit them together. Otherwise:
+Because the change is additive (`effect` kept, `effects` added, no readers touched, migration NOT wired yet), the typecheck must stay at baseline. Run `cd frontend && npx vue-tsc --noEmit 2>&1 | grep -c error` — no rise. Then:
 ```bash
 git add frontend/app/lib/shaderstudio/types.ts frontend/app/lib/shaderstudio/migrate.ts \
-        frontend/app/lib/shaderstudio/migrate.test.ts
-git commit -m "feat(shader): effects[] config shape + v2 migration"
+        frontend/tests/unit/shaderstudio-migrate.unit.spec.ts
+git commit -m "feat(shader): additive effects[] config shape + v2 migration"
 ```
+(Wiring `migrateShaderConfig` into the Surface/Node load path happens in Task 6, together with the reader switch, so there is never a red typecheck.)
 
 ---
 
@@ -794,11 +794,16 @@ export function composePasses(
 ```
 Keep the rest (duotone → post) verbatim. Note: the composite pass's `source` is ignored — the renderer selects its composite program when `composite` is set. Adjust the renderer to key off `pass.composite` rather than compiling `pass.source` for those.
 
-- [ ] **Step 3: Update both callers**
+- [ ] **Step 3: Switch readers to `effects`, wire migration, remove the deprecated `effect` field**
 
-- `ShaderStudioSurface.vue` line 242: `composePasses(cfg, (id) => catalog.value?.effects.find(e => e.id === id) ?? null, t, (def) => texBundle(def))`.
-- `ShaderStudioNode.vue` lines 58 & 92: same, using the local `effectDef` function: `composePasses(cfg, effectDef, t)`.
-- Remove the now-unused single `effectDef` computed's exclusive use if appropriate; the picker still uses the active layer's def (Task 7).
+This is where the additive Task 5 becomes a clean cutover — do it all in one commit so the typecheck goes red→green within this task only.
+- **Migration:** in `migrate.ts`, add `delete cfg.effect` after building `cfg.effects` (now safe — readers no longer use it).
+- **Type:** in `shaderstudio/types.ts`, remove the deprecated `effect: StudioEffect` field and its default from `defaults`.
+- **Load path:** in `ShaderStudioSurface.vue` (~line 367-368) and `ShaderStudioNode.vue` (~line 32-37), pass the persisted blob through `migrateShaderConfig(...)` before merging over defaults, so old single-`effect` docs load as `effects[]`.
+- **Callers:**
+  - `ShaderStudioSurface.vue` line 242: `composePasses(cfg, (id) => catalog.value?.effects.find(e => e.id === id) ?? null, t, (def) => texBundle(def))`.
+  - `ShaderStudioNode.vue` lines 58 & 92: same, using the local `effectDef` function: `composePasses(cfg, effectDef, t)`.
+- Fix any remaining `cfg.effect` references (Surface's `effectDef` computed, `setEffect`, param loop) to read `cfg.effects[activeEffect]` — but the full active-effect UI is Task 7; here just make it compile by reading `cfg.effects[0]` where a single effect was assumed, leaving the multi-effect UI wiring to Task 7. Confirm `grep -rn "\.effect\b" frontend/app/lib/shaderstudio frontend/app/components/vue-canvas/ShaderStudio*` returns no stale singular `.effect` reader.
 
 - [ ] **Step 4: Create the shader studio lab harness**
 
@@ -840,7 +845,7 @@ git add frontend/app/lib/shaderfx/renderer.ts frontend/app/lib/shaderstudio/pass
         frontend/app/components/vue-canvas/ShaderStudioNode.vue \
         frontend/app/pages/dev/shader-studio-lab.vue \
         frontend/app/lib/shaderstudio/types.ts frontend/app/lib/shaderstudio/migrate.ts \
-        frontend/app/lib/shaderstudio/migrate.test.ts
+        frontend/tests/unit/shaderstudio-migrate.unit.spec.ts
 git commit -m "feat(shader): N-effect chain with per-layer blend + opacity"
 ```
 
@@ -920,7 +925,7 @@ for (const tr of cfg.motion?.tracks ?? []) {
   if (typeof tr.path === 'string' && tr.path.startsWith('effect.params.')) tr.path = tr.path.replace('effect.params.', 'effects.0.params.')
 }
 ```
-Extend `migrate.test.ts` with a case asserting this rewrite.
+Extend `frontend/tests/unit/shaderstudio-migrate.unit.spec.ts` with a case asserting this rewrite.
 
 - [ ] **Step 6: Typecheck + verify in the shader lab**
 
@@ -935,7 +940,7 @@ Screenshot the multi-effect state.
 
 ```bash
 git add frontend/app/components/vue-canvas/ShaderStudioSurface.vue \
-        frontend/app/lib/shaderstudio/migrate.ts frontend/app/lib/shaderstudio/migrate.test.ts
+        frontend/app/lib/shaderstudio/migrate.ts frontend/tests/unit/shaderstudio-migrate.unit.spec.ts
 git commit -m "feat(shader): N-effect stack UI in the aside panel"
 ```
 
@@ -958,7 +963,7 @@ If you lack a saved node, construct the legacy blob by hand and inject it into a
 - [ ] **Step 3: Full unit suite + typecheck**
 
 ```bash
-cd frontend && npx vitest run app/lib/studio app/lib/gradientfx app/lib/shaderstudio
+cd frontend && npx vitest run studio-blend gradientfx-motion-remap shaderstudio-migrate
 npx vue-tsc --noEmit 2>&1 | grep -c error
 ```
 Expected: all unit tests pass; error count ≤ baseline.

@@ -131,7 +131,7 @@ class UpscaleNode(IO.ComfyNode):
         frames_out = torch.stack(out_frames, dim=0)
         return IO.NodeOutput(
             frames_out,
-            ui=save_live_preview(frames_out, str(cls.hidden.unique_id)),
+            ui=save_live_preview(frames_out, str(cls.hidden.unique_id), unique=True),
         )
 
 

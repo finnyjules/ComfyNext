@@ -539,7 +539,7 @@ const hasBothSources = computed(() => !!clipA.value && !!clipB.value)
           </div>
         </div>
         <button
-          class="flex items-center justify-center size-7 rounded-md hover:bg-white/10 transition-colors cursor-pointer"
+          class="flex items-center justify-center size-7 rounded hover:bg-white/10 transition-colors cursor-pointer"
           title="Close (Esc)"
           @click="emit('close')"
         >
@@ -707,7 +707,7 @@ const hasBothSources = computed(() => !!clipA.value && !!clipB.value)
             <button
               v-for="c in CURVES"
               :key="c"
-              class="flex flex-col items-center p-2 rounded-md cursor-pointer transition-colors group"
+              class="flex flex-col items-center p-2 rounded cursor-pointer transition-colors group"
               :class="curve === c
                 ? 'bg-white/15 ring-1 ring-white/30'
                 : 'bg-white/[0.04] hover:bg-white/[0.08] ring-1 ring-transparent'"

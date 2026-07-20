@@ -151,7 +151,13 @@ class Image(SaveImage):
             output_mask = (1.0 - output_image[..., 3]).clamp(0.0, 1.0)
             key = "".join(c if c.isalnum() else "_"
                           for c in str(unique_id or loaded_file or "img"))
-            ui = save_live_preview(output_image.float().cpu(), f"img_{key}")
+            # unique=True: this emission is a RESULT the frontend captures as a
+            # take, so it must reference an immutable file. A fixed name here
+            # made every take of a cutout artifact alias one mutable temp file:
+            # picking an older take showed stale browser-cached pixels while
+            # downstream runs (Frame → Blend Scene) silently read the newest
+            # content ("Blend Scene doesn't get the right input image").
+            ui = save_live_preview(output_image.float().cpu(), f"img_{key}", unique=True)
         else:
             ui = self._preview_to_temp(output_image, prompt, extra_pnginfo)["ui"]
 

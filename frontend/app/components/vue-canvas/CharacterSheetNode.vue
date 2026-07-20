@@ -431,7 +431,7 @@ function resetToNewSheet() {
           <button
             v-else-if="shot.dataUrl && !shot.loading"
             class="absolute inset-0 hidden items-center justify-center bg-black/50 group-hover:flex"
-            title="Re-roll this shot"
+            title="Re-render this shot"
             @click.stop="reroll(i)"
           >
             <RefreshCcw class="h-3.5 w-3.5 text-white/85" />

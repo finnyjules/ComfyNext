@@ -412,7 +412,7 @@ onBeforeUnmount(() => {
       <!-- 3D stage -->
       <div class="flex-1 relative bg-[#0d0d0f]">
         <div ref="stageRef" class="absolute inset-0" />
-        <button class="absolute top-4 right-4 z-10 flex items-center justify-center size-8 rounded-md bg-white/5 hover:bg-white/10 cursor-pointer" title="Close (Esc)" @click="emit('close')">
+        <button class="absolute top-4 right-4 z-10 flex items-center justify-center size-8 rounded bg-white/5 hover:bg-white/10 cursor-pointer" title="Close (Esc)" @click="emit('close')">
           <X class="size-4" />
         </button>
         <div v-if="!ready" class="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -451,9 +451,9 @@ onBeforeUnmount(() => {
             <label class="text-[10px] uppercase tracking-wide text-white/40">Preset</label>
             <div class="mt-1 flex flex-wrap gap-1.5">
               <button v-for="name in presetNames" :key="name"
-                class="h-7 px-2.5 rounded-md bg-white/[0.06] hover:bg-white/[0.12] text-[11px] cursor-pointer"
+                class="h-7 px-2.5 rounded bg-white/[0.06] hover:bg-white/[0.12] text-[11px] cursor-pointer"
                 @click="applyPreset(name)">{{ name }}</button>
-              <button class="h-7 px-2.5 rounded-md bg-white/[0.06] hover:bg-white/[0.12] text-[11px] cursor-pointer flex items-center gap-1"
+              <button class="h-7 px-2.5 rounded bg-white/[0.06] hover:bg-white/[0.12] text-[11px] cursor-pointer flex items-center gap-1"
                 title="Reset to stand" @click="resetPose"><RotateCcw class="size-3" /> Reset</button>
             </div>
           </div>
@@ -467,18 +467,18 @@ onBeforeUnmount(() => {
 
           <!-- Actions -->
           <div class="flex items-center gap-1.5">
-            <button class="flex-1 h-9 rounded-md bg-white hover:bg-white/90 text-neutral-900 text-[12px] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-default flex items-center justify-center gap-1.5"
+            <button class="flex-1 h-9 rounded bg-white hover:bg-white/90 text-neutral-900 text-[12px] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-default flex items-center justify-center gap-1.5"
               :disabled="inpaint.busy.value || !ready || !characterUrl" @click="generate">
               <Loader2 v-if="inpaint.busy.value" class="size-4 animate-spin" />
               <Wand2 v-else class="size-4" />
               {{ inpaint.busy.value ? 'Generating…' : (results.length ? 'Regenerate' : 'Generate') }}
             </button>
-            <button class="h-9 px-3 rounded-md bg-white/10 hover:bg-white/15 text-[12px] cursor-pointer disabled:opacity-40"
+            <button class="h-9 px-3 rounded bg-white/10 hover:bg-white/15 text-[12px] cursor-pointer disabled:opacity-40"
               :disabled="!ready || multiBusy" title="Save the pose without generating" @click="savePoseOnly">Save pose</button>
           </div>
 
           <!-- Multi-view (3D character sheet) -->
-          <button class="h-9 w-full rounded-md bg-white/[0.06] hover:bg-white/[0.12] border border-white/10 text-[12px] cursor-pointer disabled:opacity-40 disabled:cursor-default flex items-center justify-center gap-1.5"
+          <button class="h-9 w-full rounded bg-white/[0.06] hover:bg-white/[0.12] border border-white/10 text-[12px] cursor-pointer disabled:opacity-40 disabled:cursor-default flex items-center justify-center gap-1.5"
             :disabled="inpaint.busy.value || multiBusy || !ready || !characterUrl"
             :title="`Generate front/right/back/left views of the character for image-to-3D (${MULTI_VIEWS.length} generations). Tip: start from A-pose or T-pose.`"
             @click="generateMultiView">
@@ -493,7 +493,7 @@ onBeforeUnmount(() => {
             <div class="mb-2 text-[11px] uppercase tracking-wide text-white/40">Pick a result</div>
             <div class="grid grid-cols-2 gap-2">
               <button v-for="(img, i) in results" :key="i"
-                class="relative group rounded-md overflow-hidden border border-white/10 hover:border-white/40 cursor-pointer"
+                class="relative group rounded overflow-hidden border border-white/10 hover:border-white/40 cursor-pointer"
                 @click="applyResult(img)">
                 <img :src="img" class="w-full aspect-[3/4] object-cover" draggable="false" />
                 <span class="absolute inset-x-0 bottom-0 py-0.5 text-center text-[10px] bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center gap-1"><Check class="size-3" /> Use this</span>

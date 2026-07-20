@@ -6,7 +6,7 @@
  * chosen *inside* the editor (the Outputs rail), not on the node face — the
  * node just opens the editor and shows what's designed.
  */
-import { LayoutTemplate } from 'lucide-vue-next'
+import { Grid3X3, LayoutTemplate } from 'lucide-vue-next'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useNode, useVueFlow } from '@vue-flow/core'
 import { VAR_PREVIEW_PROP, BINDINGS_PROP } from '~/lib/collection/types'
@@ -130,20 +130,34 @@ onBeforeUnmount(() => {
       :src="previewUrl"
       class="w-full rounded-md border border-white/10 mb-1"
     />
-    <!-- Design / Edit layout (hero) -->
+    <!-- Layout actions. Designed: Edit (secondary) + Batch export (white
+         primary — the produce-deliverables action). Empty: one hero to start
+         designing; there's nothing to batch yet. Both buttons share h-8 so
+         they read as a matched pair. -->
+    <template v-if="elementCount">
+      <button
+        class="flex items-center justify-center gap-1.5 w-full h-8 rounded bg-white/[0.06] hover:bg-white/[0.1] text-white/70 hover:text-white text-xs transition-colors cursor-pointer border border-white/10"
+        @click="emit('edit')"
+      >
+        <LayoutTemplate class="size-3.5" />
+        Edit layout
+      </button>
+      <!-- Batch export — cartesian render across formats × bound variables. -->
+      <button
+        class="flex items-center justify-center gap-1.5 w-full h-8 rounded bg-white/90 hover:bg-white text-neutral-900 text-xs font-medium transition-[transform,background-color] active:scale-[0.98] cursor-pointer"
+        @click="emit('batch')"
+      >
+        <Grid3X3 class="size-3.5" />
+        Batch export
+      </button>
+    </template>
     <button
-      class="flex items-center justify-center gap-1.5 w-full h-9 rounded-md bg-action/15 hover:bg-action/25 text-[#c9d6ff] hover:text-white text-xs transition-colors cursor-pointer border border-action/20"
+      v-else
+      class="flex items-center justify-center gap-1.5 w-full h-8 rounded bg-white/90 hover:bg-white text-neutral-900 text-xs font-medium transition-[transform,background-color] active:scale-[0.98] cursor-pointer"
       @click="emit('edit')"
     >
       <LayoutTemplate class="size-3.5" />
-      {{ elementCount ? 'Edit layout' : 'Design layout' }}
-    </button>
-    <!-- Batch export — cartesian render across formats × bound variables -->
-    <button
-      class="flex items-center justify-center gap-1.5 w-full h-7 rounded-md bg-white/[0.06] hover:bg-white/[0.1] text-white/70 hover:text-white text-[11px] transition-colors cursor-pointer border border-white/10"
-      @click="emit('batch')"
-    >
-      Batch export
+      Design layout
     </button>
     <div class="text-[10px] text-white/35 text-center leading-snug">
       <template v-if="elementCount">

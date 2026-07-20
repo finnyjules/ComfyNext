@@ -53,7 +53,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
         <p class="text-sm text-white/90">{{ payload.layoutName || 'Batch export' }}</p>
         <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-white/10 text-white/60">{{ payload.items.length }} outputs</span>
         <button
-          class="ml-auto flex items-center gap-1.5 h-7 px-2.5 rounded-md bg-white/10 hover:bg-white/15 text-xs text-white/85 cursor-pointer disabled:opacity-50"
+          class="ml-auto flex items-center gap-1.5 h-7 px-2.5 rounded bg-white/10 hover:bg-white/15 text-xs text-white/85 cursor-pointer disabled:opacity-50"
           :disabled="zipping"
           @click="downloadZip"
         >
@@ -61,7 +61,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
           <Download v-else class="size-3.5" />
           Download all (ZIP)
         </button>
-        <button class="size-7 rounded-md hover:bg-white/10 flex items-center justify-center text-white/60 cursor-pointer" @click="emit('close')">
+        <button class="size-7 rounded hover:bg-white/10 flex items-center justify-center text-white/60 cursor-pointer" @click="emit('close')">
           <X class="size-4" />
         </button>
       </div>

@@ -65,7 +65,7 @@ const blendModeOptions = computed<string[]>(() => getDef('blend_mode')?.options 
         <div class="text-[10px] uppercase tracking-[0.12em] text-white/40 mt-0.5">ASCII options</div>
       </div>
       <button
-        class="flex items-center justify-center size-7 rounded-md hover:bg-white/10 transition-colors cursor-pointer"
+        class="flex items-center justify-center size-7 rounded hover:bg-white/10 transition-colors cursor-pointer"
         title="Close (Esc)"
         @click="emit('close')"
       >

@@ -351,7 +351,7 @@ function v2ElementNode(r: ResolvedElement, props: RenderProps, brand: RenderBran
         letterSpacing: s.letterSpacing != null ? `${s.letterSpacing}px` : undefined,
       }
       // Expressive: place each word absolutely from the shared engine. Uses the
-      // same CHAR_W estimate as the editor, so export matches the editor.
+      // same per-glyph width estimate as the editor, so export matches the editor.
       if (s.expressive) {
         const lay = gridExpressiveLayout({
           content: r.text!.content, fontSize: r.text!.fontSize,

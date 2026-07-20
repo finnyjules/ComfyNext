@@ -455,13 +455,13 @@ function patchDialogue(i: number, patch: { speaker?: string; line?: string }) {
             <div class="flex items-center gap-0 border-b border-white/[0.08] p-1">
               <button
                 type="button"
-                class="flex-1 rounded-md py-1.5 text-[11px] font-medium transition-colors"
+                class="flex-1 rounded py-1.5 text-[11px] font-medium transition-colors"
                 :class="sheet.mode === 'reference' ? 'bg-white/10 text-white' : 'text-white/40 hover:text-white/70'"
                 @click="update(s => ({ ...s, mode: 'reference' }))"
               >Reference</button>
               <button
                 type="button"
-                class="flex-1 rounded-md py-1.5 text-[11px] font-medium transition-colors"
+                class="flex-1 rounded py-1.5 text-[11px] font-medium transition-colors"
                 :class="sheet.mode === 'firstLastFrame' ? 'bg-white/10 text-white' : 'text-white/40 hover:text-white/70'"
                 @click="update(s => ({ ...s, mode: 'firstLastFrame' }))"
               >First / Last frame</button>
@@ -1022,7 +1022,7 @@ function patchDialogue(i: number, patch: { speaker?: string; line?: string }) {
           <div v-if="sheet.mode === 'reference'" class="flex flex-col gap-1">
             <button
               type="button"
-              class="gen-pastel flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-[11px] font-medium text-neutral-900 transition disabled:opacity-40 disabled:cursor-not-allowed"
+              class="gen-pastel flex items-center justify-center gap-1.5 rounded px-3 py-1.5 text-[11px] font-medium text-neutral-900 transition disabled:opacity-40 disabled:cursor-not-allowed"
               :class="{ 'animate-pulse': previewBusy }"
               :disabled="previewBusy || !canPreview"
               title="Generate a photoreal preview frame from the same references Seedance uses"
@@ -1067,7 +1067,7 @@ function patchDialogue(i: number, patch: { speaker?: string; line?: string }) {
             <div class="flex gap-1.5">
               <button
                 type="button"
-                class="flex flex-1 items-center justify-center gap-1.5 rounded-md border px-2 py-1.5 text-[11px] transition-colors"
+                class="flex flex-1 items-center justify-center gap-1.5 rounded border px-2 py-1.5 text-[11px] transition-colors"
                 :class="copiedPrompt
                   ? 'border-action/40 bg-action/10 text-action'
                   : 'border-white/10 text-white/50 hover:border-white/20 hover:text-white/80'"
@@ -1079,7 +1079,7 @@ function patchDialogue(i: number, patch: { speaker?: string; line?: string }) {
               </button>
               <button
                 type="button"
-                class="flex flex-1 items-center justify-center gap-1.5 rounded-md border px-2 py-1.5 text-[11px] transition-colors"
+                class="flex flex-1 items-center justify-center gap-1.5 rounded border px-2 py-1.5 text-[11px] transition-colors"
                 :class="copiedJson
                   ? 'border-action/40 bg-action/10 text-action'
                   : 'border-white/10 text-white/50 hover:border-white/20 hover:text-white/80'"

@@ -325,7 +325,7 @@ async function saveEdit(item: LoraItem) {
           <Sparkles class="size-6 text-white/20" />
           <button
             v-if="(item as LoraItem).canGenerateCover"
-            class="absolute inset-x-1.5 bottom-1.5 h-6 rounded-md bg-black/50 hover:bg-black/70 backdrop-blur-sm text-[9px] text-white/85 transition-colors cursor-pointer flex items-center justify-center gap-1"
+            class="absolute inset-x-1.5 bottom-1.5 h-6 rounded bg-black/50 hover:bg-black/70 backdrop-blur-sm text-[9px] text-white/85 transition-colors cursor-pointer flex items-center justify-center gap-1"
             title="Run this Style once (~$0.04) to make a preview"
             @click="(e: MouseEvent) => generateCover(item as LoraItem, e)"
           >
@@ -365,7 +365,7 @@ async function saveEdit(item: LoraItem) {
             <p class="text-[10.5px] text-white/40 leading-snug">No preview yet.</p>
             <button
               v-if="(item as LoraItem).canGenerateCover"
-              class="inline-flex items-center gap-1.5 h-7 px-3 rounded-md bg-white/[0.08] hover:bg-white/[0.14] text-[11px] text-white/85 transition-colors cursor-pointer"
+              class="inline-flex items-center gap-1.5 h-7 px-3 rounded bg-white/[0.08] hover:bg-white/[0.14] text-[11px] text-white/85 transition-colors cursor-pointer"
               title="Runs this Style once on Replicate (~$0.04) and caches the result"
               @click="generateCover(item as LoraItem)"
             >
@@ -377,7 +377,7 @@ async function saveEdit(item: LoraItem) {
           <!-- Has a cover → refresh affordance (only while editing) -->
           <button
             v-else-if="editing && (item as LoraItem).canGenerateCover"
-            class="absolute bottom-2 right-2 inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md bg-black/55 hover:bg-black/75 backdrop-blur-sm text-[11px] text-white/85 transition-colors cursor-pointer"
+            class="absolute bottom-2 right-2 inline-flex items-center gap-1.5 h-7 px-2.5 rounded bg-black/55 hover:bg-black/75 backdrop-blur-sm text-[11px] text-white/85 transition-colors cursor-pointer"
             title="Regenerate this preview — runs the Style once on Replicate (~$0.04)"
             @click="generateCover(item as LoraItem)"
           >
@@ -403,7 +403,7 @@ async function saveEdit(item: LoraItem) {
           <!-- House items have no local .json sidecar to PATCH — no Edit affordance. -->
           <button
             v-if="!editing && !(item as LoraItem).houseStyle"
-            class="shrink-0 inline-flex items-center gap-1 h-7 px-2 rounded-md bg-white/[0.06] hover:bg-white/[0.12] text-[11px] text-white/70 hover:text-white transition-colors cursor-pointer"
+            class="shrink-0 inline-flex items-center gap-1 h-7 px-2 rounded bg-white/[0.06] hover:bg-white/[0.12] text-[11px] text-white/70 hover:text-white transition-colors cursor-pointer"
             title="Edit name, trigger and aesthetic"
             @click="startEdit(item as LoraItem)"
           >
@@ -446,7 +446,7 @@ async function saveEdit(item: LoraItem) {
         <!-- Edit actions -->
         <div v-if="editing" class="flex items-center gap-2 pt-1">
           <button
-            class="inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-white text-[#0a0a0a] text-[12px] font-medium hover:bg-white/90 transition-colors cursor-pointer disabled:opacity-50"
+            class="inline-flex items-center gap-1.5 h-8 px-3 rounded bg-white text-[#0a0a0a] text-[12px] font-medium hover:bg-white/90 transition-colors cursor-pointer disabled:opacity-50"
             :disabled="saving"
             @click="saveEdit(item as LoraItem)"
           >
@@ -454,7 +454,7 @@ async function saveEdit(item: LoraItem) {
             Save
           </button>
           <button
-            class="inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-white/[0.06] hover:bg-white/[0.12] text-[12px] text-white/80 transition-colors cursor-pointer disabled:opacity-50"
+            class="inline-flex items-center gap-1.5 h-8 px-3 rounded bg-white/[0.06] hover:bg-white/[0.12] text-[12px] text-white/80 transition-colors cursor-pointer disabled:opacity-50"
             :disabled="saving"
             @click="cancelEdit"
           >

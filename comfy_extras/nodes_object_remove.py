@@ -60,7 +60,7 @@ class ObjectRemoveNode(IO.ComfyNode):
         frames_out = lama_inpaint(frames, mask, grow=int(mask_grow))
         return IO.NodeOutput(
             frames_out,
-            ui=save_live_preview(frames_out, str(cls.hidden.unique_id)),
+            ui=save_live_preview(frames_out, str(cls.hidden.unique_id), unique=True),
         )
 
 

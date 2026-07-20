@@ -97,6 +97,35 @@ REPLICATE_API_BASE = "https://api.replicate.com/v1"
 _DEFAULT_POLL_DEADLINE_SEC = 5 * 60      # most image gen finishes well under this
 _VIDEO_POLL_DEADLINE_SEC = 30 * 60       # Kling can take several minutes
 
+# How many EXTRA times to re-run a prediction that terminates `failed` with a
+# transient *platform* error (see `_is_transient_replicate_error`). 2 → up to 3
+# total attempts. Failed predictions aren't billed by Replicate, so re-running
+# them is cost-safe; this only trades a little latency (on the failing path) for
+# not surfacing Replicate's intermittent Director hiccups 1:1 to the user.
+_TRANSIENT_FAIL_RETRIES = 2
+
+# Substrings (matched case-insensitively against Replicate's `error` field) that
+# mark a failure as Replicate's own infrastructure choking *after* the prediction
+# was accepted — as opposed to a genuine, deterministic failure (invalid input,
+# NSFW rejection, model ValueError) that would just fail again on retry. Kept
+# deliberately narrow so we never loop on a user-side error.
+_TRANSIENT_REPLICATE_ERROR_MARKERS = (
+    "unexpected error handling prediction",  # the E9828 message
+    "e9828",
+    "prediction interrupted",
+    "internal error",
+    "please try again",
+)
+
+
+def _is_transient_replicate_error(msg: str | None) -> bool:
+    """True when a `failed` Replicate prediction looks like a retryable
+    platform-side error rather than a deterministic input/model failure."""
+    if not msg:
+        return False
+    m = msg.lower()
+    return any(marker in m for marker in _TRANSIENT_REPLICATE_ERROR_MARKERS)
+
 
 # ---------- Auth / LoRA refs / output parsing -------------------------------
 #
@@ -201,53 +230,75 @@ async def _run_prediction(
         raise RuntimeError("rate-limited; gave up after retries")
 
     async with aiohttp.ClientSession() as session:
-        # Try model-aliased endpoint first (works for official models).
-        url_aliased = f"{REPLICATE_API_BASE}/models/{model}/predictions"
-        try:
-            pred = await _post_create(session, url_aliased, {"input": input_dict})
-        except RuntimeError as e:
-            if "HTTP 404" not in str(e):
-                raise
-            # Fall back: look up latest_version, POST to /v1/predictions.
-            async with session.get(
-                f"{REPLICATE_API_BASE}/models/{model}", headers=headers,
-            ) as r:
-                if r.status != 200:
-                    raise RuntimeError(
-                        f"Could not look up {model}: HTTP {r.status} — {await r.text()}"
-                    ) from e
-                model_info = await r.json()
-            version_id = (model_info.get("latest_version") or {}).get("id")
-            if not version_id:
-                raise RuntimeError(f"No latest_version for {model}") from e
-            pred = await _post_create(
-                session,
-                f"{REPLICATE_API_BASE}/predictions",
-                {"version": version_id, "input": input_dict},
-            )
-        prediction_id = pred["id"]
+        # Re-run the whole create→poll cycle on a transient platform failure
+        # (E9828 & friends). `canceled`, deterministic model errors, timeouts
+        # and create-time errors all bail immediately — see below.
+        for attempt in range(_TRANSIENT_FAIL_RETRIES + 1):
+            # Try model-aliased endpoint first (works for official models).
+            url_aliased = f"{REPLICATE_API_BASE}/models/{model}/predictions"
+            try:
+                pred = await _post_create(session, url_aliased, {"input": input_dict})
+            except RuntimeError as e:
+                if "HTTP 404" not in str(e):
+                    raise
+                # Fall back: look up latest_version, POST to /v1/predictions.
+                async with session.get(
+                    f"{REPLICATE_API_BASE}/models/{model}", headers=headers,
+                ) as r:
+                    if r.status != 200:
+                        raise RuntimeError(
+                            f"Could not look up {model}: HTTP {r.status} — {await r.text()}"
+                        ) from e
+                    model_info = await r.json()
+                version_id = (model_info.get("latest_version") or {}).get("id")
+                if not version_id:
+                    raise RuntimeError(f"No latest_version for {model}") from e
+                pred = await _post_create(
+                    session,
+                    f"{REPLICATE_API_BASE}/predictions",
+                    {"version": version_id, "input": input_dict},
+                )
+            prediction_id = pred["id"]
 
-        # Poll until done. starting → processing → succeeded/failed/canceled.
-        deadline = time.time() + poll_deadline_sec
-        while time.time() < deadline:
-            await asyncio.sleep(1.5)
-            async with session.get(
-                f"{REPLICATE_API_BASE}/predictions/{prediction_id}",
-                headers=headers,
-            ) as r:
-                if r.status != 200:
-                    continue
-                pred = await r.json()
-            status = pred.get("status")
-            if status == "succeeded":
-                return pred
-            if status in ("failed", "canceled"):
-                err = pred.get("error") or f"prediction {status}"
-                raise RuntimeError(f"Replicate: {err}")
+            # Poll until done. starting → processing → succeeded/failed/canceled.
+            deadline = time.time() + poll_deadline_sec
+            while time.time() < deadline:
+                await asyncio.sleep(1.5)
+                async with session.get(
+                    f"{REPLICATE_API_BASE}/predictions/{prediction_id}",
+                    headers=headers,
+                ) as r:
+                    if r.status != 200:
+                        continue
+                    pred = await r.json()
+                status = pred.get("status")
+                if status == "succeeded":
+                    return pred
+                if status in ("failed", "canceled"):
+                    err = pred.get("error") or f"prediction {status}"
+                    # Retry only Replicate-side transient failures, and only if
+                    # attempts remain. `canceled` and genuine model/input errors
+                    # fall through and raise immediately.
+                    if attempt < _TRANSIENT_FAIL_RETRIES and _is_transient_replicate_error(err):
+                        backoff = 2.0 * (attempt + 1)
+                        print(
+                            f"[Replicate] transient failure (model={model} "
+                            f"id={prediction_id}): {err!r} — retrying in {backoff:.0f}s "
+                            f"(attempt {attempt + 2}/{_TRANSIENT_FAIL_RETRIES + 1})",
+                            flush=True,
+                        )
+                        await asyncio.sleep(backoff)
+                        break  # → next attempt in the retry loop
+                    raise RuntimeError(f"Replicate: {err}")
+            else:
+                # while-loop fell through without break → polling deadline hit.
+                raise RuntimeError(
+                    f"Replicate prediction timed out after {poll_deadline_sec}s "
+                    f"(id={prediction_id})"
+                )
 
-    raise RuntimeError(
-        f"Replicate prediction timed out after {poll_deadline_sec}s (id={prediction_id})"
-    )
+    # Exhausted retries on transient failures.
+    raise RuntimeError(f"Replicate: {pred.get('error') or 'prediction failed'}")
 
 
 # Max number of EXTRA Nano Banana attempts when an illustration restyle washes
@@ -931,6 +982,31 @@ async def _run_fal_kontext(
     if seed and seed > 0:
         inp["seed"] = seed
     result = await fal_refs.run_fal_prediction("fal-ai/flux-pro/kontext", "", inp)
+    return fal_refs.first_fal_image_url(result)
+
+
+async def _run_fal_flux2_edit(
+    image_data_urls: list[str], prompt: str, *,
+    output_format: str = "png",
+    seed: int = 0,
+) -> str:
+    """Run fal-ai/flux-2-pro/edit (image edit, up to 9 reference images) and
+    return the output image URL.
+
+    Unlike flux-pro/kontext, the source is an `image_urls` ARRAY (not a single
+    `image_url`); `image_size` defaults to "auto" — which matches the input — so
+    it is omitted here. Output is `images[0].url`, same as kontext.
+    """
+    from comfy_api_nodes import fal_refs
+
+    inp: dict = {
+        "prompt": prompt,
+        "image_urls": list(image_data_urls),
+        "output_format": "jpeg" if output_format in ("jpg", "jpeg") else "png",
+    }
+    if seed and seed > 0:
+        inp["seed"] = seed
+    result = await fal_refs.run_fal_prediction("fal-ai/flux-2-pro/edit", "", inp)
     return fal_refs.first_fal_image_url(result)
 
 
@@ -2061,6 +2137,86 @@ from comfy_api_nodes.image_models import (
 _IMAGE_GEN_MODEL_IDS = [m.id for m in _IMAGE_MODELS]
 
 
+def _fal_available(spec) -> bool:
+    """True when this model has an exact fal counterpart AND a fal token exists.
+    A fal-primary model gracefully collapses to Replicate-only when fal isn't
+    configured (no misleading 'fal failed: no token' in the error path)."""
+    if not (spec.fal_slug and spec.fal_build_input):
+        return False
+    try:
+        from comfy_api_nodes import fal_refs
+        fal_refs.get_fal_token()  # raises if unconfigured
+        return True
+    except Exception:
+        return False
+
+
+def _provider_order(spec) -> list[str]:
+    """Providers to try, in order. fal is only ever included when it's actually
+    available; `spec.primary` decides which of the two goes first."""
+    if not _fal_available(spec):
+        return ["replicate"]
+    return ["fal", "replicate"] if getattr(spec, "primary", "replicate") == "fal" else ["replicate", "fal"]
+
+
+async def _replicate_image_urls(spec, prompt, aspect_ratio, seed, advanced) -> list:
+    input_dict = spec.build_input(prompt, aspect_ratio, int(seed or 0), advanced)
+    print(
+        f"[GenerateImage] replicate model={spec.id!r} slug={spec.replicate_slug!r} "
+        f"input_keys={list(input_dict)} advanced={advanced}",
+        flush=True,
+    )
+    pred = await _run_prediction(spec.replicate_slug, input_dict)
+    # num_outputs>1 (sketch preset) makes Replicate return `output` as a list of
+    # N urls in ONE prediction; num_outputs=1 may still come back as a bare
+    # string. _all_output_urls normalizes both to a list.
+    urls = _all_output_urls(pred)
+    if not urls:
+        raise RuntimeError(f"Replicate returned no output (status={pred.get('status')})")
+    return urls
+
+
+async def _fal_image_urls(spec, prompt, aspect_ratio, seed, advanced) -> list:
+    from comfy_api_nodes import fal_refs
+    fal_input = spec.fal_build_input(prompt, aspect_ratio, int(seed or 0), advanced)
+    print(
+        f"[GenerateImage] fal model={spec.id!r} endpoint={spec.fal_slug!r} "
+        f"input_keys={list(fal_input)}",
+        flush=True,
+    )
+    # Bound the wait: a stuck/queued fal job shouldn't block the fallover to the
+    # other provider for the default 15 minutes. 300s covers the slowest measured
+    # endpoint (Seedream 5 Pro's reasoning pass: ~140s) with margin; the fast
+    # models (schnell ~2s, flux-pro ~8s) never get near it.
+    result = await fal_refs.run_fal_prediction(spec.fal_slug, "", fal_input, poll_deadline_sec=300)
+    urls = fal_refs.all_fal_image_urls(result)
+    if not urls:
+        raise RuntimeError(f"fal returned no image (endpoint={spec.fal_slug})")
+    return urls
+
+
+async def _dispatch_image(spec, prompt, aspect_ratio, seed, advanced) -> list:
+    """Run the model on its primary provider, falling over to the other on ANY
+    failure. Returns output image URLs. Raises a combined error only if EVERY
+    available provider fails."""
+    runners = {"replicate": _replicate_image_urls, "fal": _fal_image_urls}
+    order = _provider_order(spec)
+    errors: list[str] = []
+    for prov in order:
+        try:
+            return await runners[prov](spec, prompt, aspect_ratio, seed, advanced)
+        except Exception as e:
+            errors.append(f"{prov}: {e}")
+            # Only worth announcing a fallover when another provider remains.
+            if prov != order[-1]:
+                print(
+                    f"[GenerateImage] {prov} failed ({e}); falling over to "
+                    f"{order[order.index(prov) + 1]}",
+                    flush=True,
+                )
+    raise RuntimeError("Image generation failed — " + "; ".join(errors))
+
+
 class GenerateImageNode(IO.ComfyNode):
     @classmethod
     def define_schema(cls):
@@ -2135,25 +2291,13 @@ class GenerateImageNode(IO.ComfyNode):
         except json.JSONDecodeError:
             advanced = {}
 
-        input_dict = spec.build_input(prompt, aspect_ratio, int(seed or 0), advanced)
-        # Audit trail — surfaces which model the dispatch actually picked,
-        # so a "reve output doesn't look like reve" complaint can be confirmed
-        # or ruled out by reading the console.
-        print(
-            f"[GenerateImage] model={model!r} slug={spec.replicate_slug!r} "
-            f"input_keys={list(input_dict)} advanced={advanced}",
-            flush=True,
-        )
-        pred = await _run_prediction(spec.replicate_slug, input_dict)
-        # num_outputs>1 (sketch preset) makes Replicate return `output` as a
-        # list of N urls in ONE prediction; num_outputs=1 may still come back
-        # as a bare string. _all_output_urls normalizes both to a list, so
-        # num_outputs=1 -> 1 url -> a batch of 1 -> byte-identical to the old
-        # single-tensor behavior. save_generation_output already loops over a
-        # batched [N,H,W,C] tensor and emits one ui file per image.
-        urls = _all_output_urls(pred)
-        if not urls:
-            raise RuntimeError(f"Replicate returned no output (status={pred.get('status')})")
+        # Dispatch to the model's primary provider, falling over to the other on
+        # ANY failure (Replicate's E9828/cold-boot is provider-specific, so the
+        # backup provider sidesteps it). fal-primary models with no fal token
+        # collapse to Replicate-only. See _dispatch_image / _provider_order.
+        # _all_output_urls handles num_outputs>1 (sketch preset) as a batch, so
+        # save_generation_output emits one ui file per image either way.
+        urls = await _dispatch_image(spec, prompt, aspect_ratio, seed, advanced)
         tensor = torch.cat(
             [await download_url_to_image_tensor(u, cls=cls) for u in urls], dim=0
         )
@@ -2166,8 +2310,9 @@ class GenerateImageNode(IO.ComfyNode):
 
 # Nano Banana 2 (google/nano-banana-2, Gemini 3.1 Flash Image) is the default —
 # it follows natural-language edit instructions noticeably better than Flux
-# Kontext. Flux Kontext Pro stays available for its aspect-ratio / safety dials.
-_IMAGE_EDIT_MODELS = ["Nano Banana 2", "Flux Kontext Pro"]
+# Kontext. Flux Kontext Pro stays available for its aspect-ratio / safety dials;
+# Flux 2 Pro is the newest BFL editor (sharper detail, keeps input aspect).
+_IMAGE_EDIT_MODELS = ["Nano Banana 2", "Flux Kontext Pro", "Flux 2 Pro"]
 
 
 class EditImageNode(IO.ComfyNode):
@@ -2180,7 +2325,8 @@ class EditImageNode(IO.ComfyNode):
             description=(
                 "Image editing via natural language — 'remove the background', "
                 "'make her hair blue', 'add a cat'. Nano Banana 2 (best instruction "
-                "following) or Flux Kontext Pro. ~$0.04–0.05 per edit."
+                "following), Flux Kontext Pro or Flux 2 Pro (newest, sharper). "
+                "~$0.04–0.05 per edit."
             ),
             inputs=[
                 IO.Combo.Input("model", options=_IMAGE_EDIT_MODELS, default="Nano Banana 2"),
@@ -2190,7 +2336,7 @@ class EditImageNode(IO.ComfyNode):
                 IO.Combo.Input("aspect_ratio", options=_FLUX_KONTEXT_ASPECT_RATIOS,
                                default="match_input_image",
                                tooltip="Output aspect ratio. Flux Kontext only — Nano Banana 2 "
-                                       "keeps the input's aspect ratio."),
+                                       "and Flux 2 Pro keep the input's aspect ratio."),
                 IO.Combo.Input("resolution", options=["1K", "2K", "4K"], default="1K", advanced=True,
                                tooltip="Output resolution for Nano Banana 2 — higher costs more. "
                                        "Ignored by Flux Kontext."),
@@ -2224,6 +2370,12 @@ class EditImageNode(IO.ComfyNode):
                 input_dict["seed"] = seed
             pred = await _run_prediction("google/nano-banana-2", input_dict)
             url = _first_output_url(pred)
+        elif model == "Flux 2 Pro":
+            # flux-2-pro/edit takes an image_urls array and sizes to "auto"
+            # (matches the input), so the Kontext-only aspect/safety dials are N/A.
+            url = await _run_fal_flux2_edit(
+                [data_url], prompt, output_format=output_format, seed=seed,
+            )
         else:  # Flux Kontext Pro
             url = await _run_fal_kontext(
                 data_url, prompt, aspect_ratio=aspect_ratio,
@@ -2302,7 +2454,7 @@ class GenerateFromReferencesNode(IO.ComfyNode):
 # Use case: Blend Scene — harmonize a composite into one cohesive photo
 # =============================================================================
 
-_BLEND_SCENE_MODELS = ["Flux Kontext Pro", "Nano Banana"]
+_BLEND_SCENE_MODELS = ["Flux Kontext Pro", "Flux 2 Pro", "Nano Banana"]
 
 # The instruction is assembled from the always-on base sentence plus one clause
 # per enabled toggle. A user-supplied `prompt` (advanced) overrides the whole thing.
@@ -2351,8 +2503,8 @@ class BlendSceneNode(IO.ComfyNode):
             description=(
                 "Harmonize a composite (background + cutout elements) into one "
                 "cohesive photo — unified lighting/color and realistic contact "
-                "shadows. Flux Kontext (faithful) or Nano Banana (more dramatic). "
-                "~$0.04 per blend."
+                "shadows. Flux Kontext (faithful), Flux 2 Pro (newest, sharper) "
+                "or Nano Banana (more dramatic). ~$0.04 per blend."
             ),
             inputs=[
                 IO.Combo.Input("model", options=_BLEND_SCENE_MODELS, default="Flux Kontext Pro"),
@@ -2393,11 +2545,15 @@ class BlendSceneNode(IO.ComfyNode):
         data_url = _image_tensor_to_data_url(image)
 
         # Each model takes a different schema. Nano Banana stays on Replicate;
-        # Flux Kontext goes to fal (~2× cheaper).
+        # Flux Kontext and Flux 2 Pro go to fal (~2× cheaper than Replicate).
         if model == "Nano Banana":
             input_dict = {"prompt": instruction, "image_input": [data_url]}
             pred = await _run_prediction("google/nano-banana", input_dict)
             url = _first_output_url(pred)
+        elif model == "Flux 2 Pro":
+            url = await _run_fal_flux2_edit(
+                [data_url], instruction, output_format=output_format, seed=seed,
+            )
         else:  # Flux Kontext Pro
             url = await _run_fal_kontext(
                 data_url, instruction, output_format=output_format, seed=seed,
@@ -2958,6 +3114,10 @@ class RotateCameraNode(IO.ComfyNode):
             ],
             outputs=[IO.Image.Output()],
             price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.04,"format":{"approximate":true}}'),
+            # Terminal effect (self-saves via save_generation_output) — flag as an
+            # output node so ComfyUI doesn't prune it when it feeds a non-output
+            # compute node. See RemoveBackgroundNode for the same fix.
+            is_output_node=True,
         )
 
     @classmethod
@@ -3734,6 +3894,11 @@ class RemoveBackgroundNode(IO.ComfyNode):
             ],
             outputs=[IO.Image.Output()],
             price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.001,"format":{"approximate":true}}'),
+            # Terminal effect node: it saves its own preview (execute returns
+            # save_generation_output), so flag it as an output node. Otherwise
+            # ComfyUI prunes it when its only consumer is a non-output compute
+            # node (e.g. a downstream Inpaint), and it silently produces nothing.
+            is_output_node=True,
         )
 
     @classmethod
@@ -3765,6 +3930,10 @@ class RestorePhotoNode(IO.ComfyNode):
             ],
             outputs=[IO.Image.Output()],
             price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.04}'),
+            # Terminal effect (self-saves via save_generation_output) — flag as an
+            # output node so ComfyUI doesn't prune it when it feeds a non-output
+            # compute node. See RemoveBackgroundNode for the same fix.
+            is_output_node=True,
         )
 
     @classmethod
@@ -3958,6 +4127,10 @@ class SplitPhotoLayersNode(IO.ComfyNode):
                 IO.Image.Output(display_name="background"),  # opaque clean plate
             ],
             price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.01,"format":{"approximate":true}}'),
+            # Terminal effect (self-saves via save_generation_output) — flag as an
+            # output node so ComfyUI doesn't prune it when it feeds a non-output
+            # compute node. See RemoveBackgroundNode for the same fix.
+            is_output_node=True,
         )
 
     @classmethod

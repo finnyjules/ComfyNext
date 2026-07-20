@@ -1,9 +1,13 @@
 <script setup lang="ts">
-import { ChevronDown, ChevronLeft, ChevronRight, Dices, Download, Frame, Layers, Loader2, Lock, LockOpen, Play, Sparkles, SkipBack, SkipForward, SlidersHorizontal, Upload } from 'lucide-vue-next'
+import { ChevronDown, ChevronLeft, ChevronRight, Download, Frame, Layers, Loader2, Lock, LockOpen, Play, Sparkles, SkipBack, SkipForward, SlidersHorizontal, Upload, RefreshCw } from 'lucide-vue-next'
 import { getTypeColor, getInputTooltip } from '~/composables/useVueNodes'
 import { useAgentActivity } from '~/composables/useAgentActivity'
 import { useDirectExecutionEnabled } from '~/composables/useDirectExecutionEnabled'
 import { getPartnerIcon } from '~/lib/partnerIcons'
+import { nodeTier } from '~/lib/canvas/nodeTier'
+import { minHeightForPorts } from '~/lib/canvas/portLayout'
+import { useNodePortSync } from '~/composables/useNodePortSync'
+import { LIVE_PREVIEW_NODE_TYPES } from '~/lib/livePreviewNodes'
 import { allowedAspectRatios, allowedDurations, modelSupportsSeed } from '~/lib/videoModelAdapt'
 import { TOOLBOX_NODE_ICONS } from '~/data/toolbox-items'
 import { getGeneratorIcon } from '~/data/generator-icons'
@@ -147,13 +151,13 @@ const showRunButton = computed(() => {
 
 // --- Per-node run control (footer split button) ---------------------------
 // One primary action — run THIS node, upstream cached — that reads as "Play"
-// before the first run and "Re-roll" after. A caret opens the two scope
+// before the first run and "Re-render" after. A caret opens the two scope
 // variants. All three dispatch the same `sailor:runFiltered` event the old
 // two buttons did; only the `detail` differs.
 const runMenuOpen = ref(false)
 const runMenuRoot = ref<HTMLElement | null>(null)
 // Optimistic "has been played": flips on the first run click so the label
-// switches to Re-roll immediately, OR derives from an existing result so a
+// switches to Re-render immediately, OR derives from an existing result so a
 // reloaded graph that already produced output reads correctly.
 const playedOnce = ref(false)
 const hasRun = computed(() =>
@@ -262,68 +266,9 @@ function branchFromTake(takeId: string) {
 }
 
 // Live-preview node types: auto-run on widget change (debounced) so the
-// preview image refreshes without the user clicking Run.
-const LIVE_PREVIEW_NODES = new Set([
-  // Tone
-  'AdjustBrightnessContrast', 'AdjustExposure', 'AdjustCurves', 'AdjustLevels',
-  'AdjustShadowsHighlights', 'AdjustVignette', 'AdjustGlow',
-  // Color
-  'AdjustColor', 'AdjustTemperature', 'AdjustVibrance', 'AdjustColorBalance',
-  'AdjustBlackWhite', 'AdjustPhotoFilter', 'AdjustGradientMap', 'AdjustChannelMixer',
-  'AdjustInvert', 'AdjustPosterize', 'AdjustThreshold',
-  // Sharpen & noise
-  'Sharpen', 'AddNoise', 'Denoise',
-  // Blur
-  'Blur',
-  // Geometry
-  'CropImage', 'ResizeImage', 'RotateImage', 'FlipImage',
-  // Distortion
-  'Pinch', 'Twirl', 'Wave', 'LensCorrection',
-  // Stylize
-  'Pixelate', 'FindEdges', 'Emboss', 'HighPass',
-  // Composite (multi-image)
-  'Blend', 'ApplyMask', 'ThresholdMask', 'ColorRangeMask',
-  'MatteGrowShrink', 'MergeAlpha', 'MaskByText', 'MaskExtractor',
-  // Shader-style
-  'ChromaticAberration', 'Halftone', 'CRT', 'Bokeh',
-  'Kuwahara', 'CrossHatch', 'Dither', 'Ascii',
-  'PerlinNoise', 'Voronoi', 'GradientGenerator',
-  'Kaleidoscope', 'PolarCoords', 'Glitch', 'Fisheye',
-  'Duotone', 'SplitToning',
-  'GodRays', 'LensFlare', 'LightLeak', 'FilmGrain',
-  // Round 3
-  'ReactionDiffusion', 'Fractal',
-  'TiltShift', 'FrequencySeparation', 'PaletteQuantize',
-  'HeightmapRelief', 'Caustics', 'Blinds',
-  // Unicorn batch
-  'GradientMap', 'Posterize', 'Outline', 'Mirror', 'Hologram',
-  'Stipple', 'Sparkle', 'TwoDLight', 'FlowField',
-  // Video effects
-  'FrameTrail', 'TemporalMotionBlur', 'SlitScan', 'TimeDisplacement',
-  'VideoReverse', 'VideoTrim', 'VideoCrossfade', 'AnimatedNoise',
-  // Video pro
-  'SpeedRamp', 'KenBurns', 'AspectConvert', 'ChromaKey', 'CaptionTrack',
-  'LUT', 'ThreeWayCC', 'AudioWaveform', 'Transition', 'Stabilize',
-  // Timeline edits client-side via the modal (canvas + <video>); the backend
-  // renderer only runs on explicit Render or when downstream consumers need it.
-  // Compositor also renders client-side.
-  // SmartLayout — render service is local (Nuxt /api/templates/render),
-  // typical layouts complete in under a second. Re-renders one image per
-  // aspect on each change; shorten `aspects` to "1x1" while editing if you
-  // want faster turnaround.
-  'SmartLayout',
-  // Depth-based lens / DoF (auto-reruns; depth is cached so reruns are render-only)
-  'LensBlur',
-  // NOTE: LensReframe is intentionally NOT here — it regenerates via a paid cloud
-  // image model (nano-banana-2), so it runs only on explicit Run, not on every tweak.
-])
-
-// Nodes that suppress the big inline result preview in the node body: the
-// result is consumed downstream and the node is tall enough already (e.g. the
-// Relight node, whose light gimbal makes it very tall). The image still flows
-// through the output to downstream nodes, and the run button + takes strip are
-// unaffected.
-const NODES_WITHOUT_INLINE_PREVIEW = new Set(['RelightNode'])
+// preview image refreshes without the user clicking Run. Shared with the
+// take-capture exclusion in VueNodeCanvas — see lib/livePreviewNodes.ts.
+const LIVE_PREVIEW_NODES = LIVE_PREVIEW_NODE_TYPES
 
 // Video nodes: hide the seed widget (and its hidden control companion) when
 // the selected model's API takes no seed (registry flag supportsSeed — e.g.
@@ -529,6 +474,17 @@ const collapsedGroups = ref(new Set<string>([
   ...Array.from({ length: 15 }, (_, i) => `Layer ${i + 2}`),
 ]))
 
+// Visual tier: content-carrying nodes dominate, pass-through utilities recede.
+// Drives port placement, width and opacity so a reroute stops competing with a
+// generator for attention.
+const tier = computed(() => nodeTier(props.data.nodeType))
+const isRecessiveNode = computed(() => tier.value === 'recessive')
+
+// Centred ports move whenever the node's height changes, so Vue Flow's cached
+// handle geometry has to be refreshed or edges stay pinned to stale positions.
+const portSyncRoot = ref<HTMLElement | null>(null)
+useNodePortSync(portSyncRoot)
+
 // "Grow as you connect" node types — the canvas shows only the slots in use
 // plus one trailing empty slot ready to catch the next connection. The Python
 // schema declares a generous static cap (Compositor: 16, SmartLayout: 8);
@@ -597,6 +553,20 @@ const visibleInputIndices = computed<number[]>(() => {
   // Compositor: single grow group covering all inputs.
   return visibleInGroup(all)
 })
+
+// Resolved input slots for the port loop. Pairing each index with its slot here
+// keeps the template from indexing into a possibly-sparse array.
+const visiblePorts = computed(() =>
+  visibleInputIndices.value
+    .map(idx => ({ idx, slot: props.data.inputs[idx] }))
+    .filter((p): p is { idx: number; slot: NonNullable<typeof p.slot> } => !!p.slot),
+)
+
+// Ports are absolutely positioned, so a short node with many of them would let
+// the last dots hang past its bottom edge. Floor the node's height instead.
+const portsMinHeight = computed(() =>
+  minHeightForPorts(Math.max(visibleInputIndices.value.length, props.data.outputs.length)),
+)
 
 // The grouped widgets to actually render. For Compositor the layer index
 // embedded in the title ("Layer 3") is matched against the highest visible
@@ -790,7 +760,11 @@ function scheduleLiveRun() {
 
   if (liveRunTimer) clearTimeout(liveRunTimer)
   liveRunTimer = setTimeout(() => {
-    window.dispatchEvent(new CustomEvent('sailor:liveRun'))
+    // Carry the node id so the handler can run JUST this node (+ upstream
+    // keep-set, which cache-hits when unchanged). An id-less liveRun used to
+    // fall through to runVueWorkflow(undefined) — a FULL-graph run, so merely
+    // wiring an input into a live-preview node re-executed the entire canvas.
+    window.dispatchEvent(new CustomEvent('sailor:liveRun', { detail: { nodeId: props.id } }))
   }, 150)
 }
 // JSON-stringifying the watch source so Vue compares with `===` instead of
@@ -1222,12 +1196,6 @@ async function downloadCarouselImage(url: string, label: string) {
   }
 }
 
-async function downloadAllCarouselImages(urls: string[]) {
-  for (let i = 0; i < urls.length; i++) {
-    await downloadCarouselImage(urls[i]!, carouselLabel(urls[i]!, i))
-  }
-}
-
 watch(previewImages, (urls) => {
   if (!urls || !urls.length) {
     displayedImages.value = []
@@ -1256,14 +1224,45 @@ watch(previewImages, (urls) => {
 </script>
 
 <template>
+  <!-- Positioning wrapper. Ports are siblings of the card rather than children
+       so the card's opaque background occludes each dot's inner half and the
+       ports read as tucked in behind the node — a child can't paint behind its
+       own parent's background. The card keeps every bit of its own chrome. -->
+  <div ref="portSyncRoot" class="relative w-fit">
+    <VueCanvasNodePort
+      v-for="(port, i) in visiblePorts"
+      :id="`input-${port.idx}`"
+      :key="`in-${port.idx}`"
+      type="target"
+      side="left"
+      :index="i"
+      :data-type="port.slot.type"
+      :label="port.slot.name"
+      :tooltip="getInputTooltip(data.nodeType, port.slot.name)"
+    />
+    <VueCanvasNodePort
+      v-for="(output, i) in data.outputs"
+      :id="`output-${i}`"
+      :key="`out-${i}`"
+      type="source"
+      side="right"
+      :index="i"
+      :data-type="output.type"
+      :label="output.name"
+    />
+
   <div
-    class="comfy-node relative rounded-xl border w-[260px] select-none backdrop-blur-sm"
+    class="comfy-node relative z-10 rounded-xl border select-none backdrop-blur-sm transition-opacity duration-150"
     :class="{
       'comfy-node--muted': isMuted,
       'comfy-node--bypassed': isBypassed,
       'ring-2 ring-red-500': data.error,
       'border-white/30': data.isSubgraph,
       'border-white/10': !data.isSubgraph,
+      // Dominant: full width and weight. Recessive: narrower and dimmed until
+      // you actually look at it, so utilities stop competing with the work.
+      'w-[260px]': !isRecessiveNode,
+      'w-[208px] opacity-70 hover:opacity-100': isRecessiveNode,
     }"
     :data-running="data.running || undefined"
     :data-mode="data.mode || 0"
@@ -1273,6 +1272,8 @@ watch(previewImages, (urls) => {
         : 'linear-gradient(180deg, #252525 0%, #1e1e1e 100%)',
       '--border-color-left': borderColorLeft,
       '--border-color-right': borderColorRight,
+      // Short nodes with many ports must still enclose their own dots.
+      minHeight: `${portsMinHeight}px`,
     } as any"
   >
     <!-- Agent "scanning" overlay — runs while the agent reviews THIS node. -->
@@ -1314,7 +1315,7 @@ watch(previewImages, (urls) => {
            state with the inspector's seed widget. -->
       <button
         v-if="hasSeed"
-        class="nopan nodrag shrink-0 size-5 rounded-md flex items-center justify-center transition-colors cursor-pointer"
+        class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center transition-colors cursor-pointer"
         :class="seedLocked
           ? 'text-amber-300 bg-amber-400/15'
           : 'text-white/40 hover:text-white/80 hover:bg-white/[0.08]'"
@@ -1329,7 +1330,7 @@ watch(previewImages, (urls) => {
            (run→look→fix, on-demand). Only once there's an output to judge. -->
       <button
         v-if="data.images?.length"
-        class="nopan nodrag shrink-0 size-5 rounded-md flex items-center justify-center text-white/40 hover:text-white/80 hover:bg-white/[0.08] transition-colors cursor-pointer"
+        class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center text-white/40 hover:text-white/80 hover:bg-white/[0.08] transition-colors cursor-pointer"
         title="Critique result — look at the output and suggest fixes"
         @click.stop="critiqueResult"
       >
@@ -1339,7 +1340,7 @@ watch(previewImages, (urls) => {
            mechanical params (seed / aspect / advanced). Only when it has some. -->
       <button
         v-if="hasInspectorSettings"
-        class="nopan nodrag shrink-0 size-5 rounded-md flex items-center justify-center text-white/40 hover:text-white/80 hover:bg-white/[0.08] transition-colors cursor-pointer"
+        class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center text-white/40 hover:text-white/80 hover:bg-white/[0.08] transition-colors cursor-pointer"
         title="Node settings"
         @click.stop="openInspector"
       >
@@ -1367,37 +1368,6 @@ watch(previewImages, (urls) => {
       {{ data.errorMessage }}
     </div>
 
-    <!-- Ports: inputs left, outputs right, same row.
-         For dynamic-grow nodes (Compositor, SmartLayout) we iterate over
-         visibleInputIndices so non-contiguous "always show + grow group"
-         layouts (SmartLayout) render correctly. -->
-    <div class="py-2 flex flex-col gap-0.5 bg-black/15 shadow-[inset_0_1px_2px_rgba(0,0,0,0.15)]">
-      <div
-        v-for="i in Math.max(visibleInputIndices.length, data.outputs.length)"
-        :key="i"
-        class="flex items-center justify-between"
-      >
-        <VueCanvasComfyNodePort
-          v-if="visibleInputIndices[i - 1] !== undefined"
-          :id="`input-${visibleInputIndices[i - 1]}`"
-          type="target"
-          position="left"
-          :data-type="data.inputs[visibleInputIndices[i - 1]].type"
-          :label="data.inputs[visibleInputIndices[i - 1]].name"
-          :tooltip="getInputTooltip(data.nodeType, data.inputs[visibleInputIndices[i - 1]].name)"
-        />
-        <span v-else class="flex-1" />
-        <VueCanvasComfyNodePort
-          v-if="data.outputs[i - 1]"
-          :id="`output-${i - 1}`"
-          type="source"
-          position="right"
-          :data-type="data.outputs[i - 1].type"
-          :label="data.outputs[i - 1].name"
-        />
-        <span v-else class="flex-1" />
-      </div>
-    </div>
 
     <!-- Outpaint zone preview: original image inside the expanded canvas,
          new area hatched. OutpaintImageNode only. Pure HTML/CSS so it never
@@ -1425,7 +1395,7 @@ watch(previewImages, (urls) => {
     <!-- Edit as Frame: hand the split layers to a Frame artifact -->
     <div v-if="showEditAsFrame" class="border-t border-[#2a2a2a] px-2 py-1.5">
       <button
-        class="w-full flex items-center justify-center gap-1.5 rounded-md py-1.5 text-[11px] font-medium transition-colors"
+        class="w-full flex items-center justify-center gap-1.5 rounded py-1.5 text-[11px] font-medium transition-colors"
         :class="editAsFrameReady
           ? 'bg-white/[0.07] hover:bg-white/[0.14] text-white/85 cursor-pointer'
           : 'bg-white/[0.03] text-white/30 cursor-not-allowed'"
@@ -1584,7 +1554,7 @@ watch(previewImages, (urls) => {
     <!-- Compositor: open the editor modal -->
     <div v-if="data.nodeType === 'Compositor'" class="px-2 pb-2 nopan nodrag">
       <button
-        class="flex items-center justify-center gap-1.5 w-full h-7 rounded-md bg-white/[0.06] hover:bg-white/[0.1] text-white/70 hover:text-white/90 text-xs transition-colors cursor-pointer border border-white/10"
+        class="flex items-center justify-center gap-1.5 w-full h-7 rounded bg-white/[0.06] hover:bg-white/[0.1] text-white/70 hover:text-white/90 text-xs transition-colors cursor-pointer border border-white/10"
         @click="openCompositorEditor"
       >
         Open editor
@@ -1594,7 +1564,7 @@ watch(previewImages, (urls) => {
     <!-- Ascii: open the glyph-dither options panel -->
     <div v-if="data.nodeType === 'Ascii'" class="px-2 pb-2 nopan nodrag">
       <button
-        class="flex items-center justify-center gap-1.5 w-full h-7 rounded-md bg-white/[0.06] hover:bg-white/[0.1] text-white/70 hover:text-white/90 text-xs transition-colors cursor-pointer border border-white/10"
+        class="flex items-center justify-center gap-1.5 w-full h-7 rounded bg-white/[0.06] hover:bg-white/[0.1] text-white/70 hover:text-white/90 text-xs transition-colors cursor-pointer border border-white/10"
         @click="openAsciiOptions"
       >
         More options
@@ -1604,7 +1574,7 @@ watch(previewImages, (urls) => {
     <!-- Crossfade: open the visual editor modal -->
     <div v-if="data.nodeType === 'VideoCrossfade'" class="px-2 pb-2 nopan nodrag">
       <button
-        class="flex items-center justify-center gap-1.5 w-full h-7 rounded-md bg-white/[0.06] hover:bg-white/[0.1] text-white/70 hover:text-white/90 text-xs transition-colors cursor-pointer border border-white/10"
+        class="flex items-center justify-center gap-1.5 w-full h-7 rounded bg-white/[0.06] hover:bg-white/[0.1] text-white/70 hover:text-white/90 text-xs transition-colors cursor-pointer border border-white/10"
         @click="openCrossfadeEditor"
       >
         Open editor
@@ -1630,7 +1600,7 @@ watch(previewImages, (urls) => {
         @change="handleUpload"
       />
       <button
-        class="flex items-center justify-center gap-1.5 w-full h-7 rounded-md bg-white/[0.05] hover:bg-white/[0.1] border border-white/10 text-xs text-white/80 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-wait"
+        class="flex items-center justify-center gap-1.5 w-full h-7 rounded bg-white/[0.05] hover:bg-white/[0.1] border border-white/10 text-xs text-white/80 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-wait"
         :disabled="uploading"
         @click="fileInputRef?.click()"
       >
@@ -1679,7 +1649,7 @@ watch(previewImages, (urls) => {
         />
         <!-- Download current -->
         <button
-          class="absolute top-1.5 right-1.5 size-7 rounded-md bg-black/55 hover:bg-black/75 backdrop-blur-sm text-white/85 hover:text-white flex items-center justify-center transition-colors cursor-pointer"
+          class="absolute top-1.5 right-1.5 size-7 rounded bg-black/55 hover:bg-black/75 backdrop-blur-sm text-white/85 hover:text-white flex items-center justify-center transition-colors cursor-pointer"
           title="Download this image"
           @click.stop="downloadCarouselImage(
             displayedImages[Math.min(carouselIndex, displayedImages.length - 1)]!,
@@ -1706,7 +1676,10 @@ watch(previewImages, (urls) => {
           </button>
         </template>
       </div>
-      <!-- Bottom strip: dots (jump to image) + active label + "Save all" -->
+      <!-- Bottom strip: dots (jump to image) + active label. Getting every
+           format at once lives on "Batch export" (the node body); this strip
+           just navigates + labels the previews. Single images download via the
+           per-image button top-right of the preview. -->
       <div v-if="displayedImages.length > 1" class="mt-2 flex items-center gap-2">
         <div class="flex items-center gap-1">
           <button
@@ -1725,20 +1698,11 @@ watch(previewImages, (urls) => {
           <span class="text-white/25">·</span>
           {{ Math.min(carouselIndex, displayedImages.length - 1) + 1 }}/{{ displayedImages.length }}
         </span>
-        <span class="flex-1" />
-        <button
-          class="h-6 px-2 rounded text-[10px] text-white/65 hover:text-white bg-white/[0.06] hover:bg-white/[0.12] transition-colors cursor-pointer flex items-center gap-1"
-          title="Download all aspects as PNGs"
-          @click.stop="downloadAllCarouselImages(displayedImages)"
-        >
-          <Download class="size-3" />
-          Save all
-        </button>
       </div>
     </div>
 
     <!-- Media previews (images or video) -->
-    <div v-else-if="displayedImages.length && !NODES_WITHOUT_INLINE_PREVIEW.has(data.nodeType)" class="border-t border-[#2a2a2a] p-2">
+    <div v-else-if="displayedImages.length" class="border-t border-[#2a2a2a] p-2">
       <!-- Collapse toggle: hide the result to declutter; dims stay as a hint. -->
       <button
         class="nopan nodrag w-full flex items-center gap-1 mb-1.5 text-[10px] uppercase tracking-[0.08em] text-white/45 hover:text-white/75 cursor-pointer transition-colors"
@@ -1836,13 +1800,13 @@ watch(previewImages, (urls) => {
     />
 
     <!-- Per-node run control (footer): one split button. The main face runs
-         THIS node with upstream cached (Play → Re-roll after first run); the
+         THIS node with upstream cached (Play → Re-render after first run); the
          caret opens the two scope variants. See playThisNode / runFromStart /
          runDownstream. -->
     <div v-if="showRunButton" ref="runMenuRoot" class="relative px-2.5 pb-2.5 pt-1">
       <div class="flex items-stretch gap-px">
         <button
-          class="nopan nodrag flex-1 h-8 rounded-l-lg flex items-center justify-center gap-1.5 text-[11px] font-medium transition-[transform,background-color,color] active:scale-[0.96] cursor-pointer"
+          class="nopan nodrag flex-1 h-8 rounded-l flex items-center justify-center gap-1.5 text-[11px] font-medium transition-[transform,background-color,color] active:scale-[0.96] cursor-pointer"
           :class="(isMuted || isBypassed)
             ? 'bg-white/[0.04] text-white/25 cursor-not-allowed active:scale-100'
             : data.running
@@ -1852,18 +1816,18 @@ watch(previewImages, (urls) => {
           :title="isMuted ? 'Node is muted'
             : isBypassed ? 'Node is bypassed'
             : data.running ? 'Running…'
-            : hasRun ? 'Re-run this node — new seed, everything upstream stays cached'
+            : hasRun ? 'Re-render this node — new seed, everything upstream stays cached'
             : 'Run this node — upstream stays cached'"
           @click.stop="playThisNode"
         >
           <Loader2 v-if="data.running" class="size-3 animate-spin" />
-          <Dices v-else-if="hasRun" class="size-3" />
+          <RefreshCw v-else-if="hasRun" class="size-3" />
           <Play v-else class="size-3" />
-          <span>{{ data.running ? 'Running…' : hasRun ? 'Re-roll' : 'Play' }}</span>
+          <span>{{ data.running ? 'Running…' : hasRun ? 'Re-render' : 'Play' }}</span>
         </button>
         <button
           aria-label="Run scope options"
-          class="nopan nodrag w-8 h-8 rounded-r-lg flex items-center justify-center transition-colors cursor-pointer"
+          class="nopan nodrag w-8 h-8 rounded-r flex items-center justify-center transition-colors cursor-pointer"
           :class="(isMuted || isBypassed || data.running)
             ? 'bg-white/[0.04] text-white/25 cursor-not-allowed'
             : 'bg-white/90 text-neutral-900 hover:bg-white'"
@@ -1880,16 +1844,16 @@ watch(previewImages, (urls) => {
         class="absolute left-2.5 right-2.5 bottom-full mb-1 z-50 rounded-lg border border-white/10 bg-neutral-900/95 backdrop-blur-md p-1 shadow-xl"
       >
         <button class="nopan nodrag w-full text-left rounded px-2 py-1.5 flex gap-2 items-start hover:bg-white/[0.06] cursor-pointer" @click.stop="playThisNode">
-          <Dices class="size-3.5 mt-0.5 text-white/80 shrink-0" />
+          <RefreshCw class="size-3.5 mt-0.5 text-white/80 shrink-0" />
           <span class="min-w-0">
             <span class="block text-[11px] font-medium text-white/90">Run this node</span>
-            <span class="block text-[10px] text-white/45 leading-snug">Re-roll this node, upstream stays cached</span>
+            <span class="block text-[10px] text-white/45 leading-snug">Re-render this node, upstream stays cached</span>
           </span>
         </button>
         <button v-if="directExecutionEnabled" class="nopan nodrag w-full text-left rounded px-2 py-1.5 flex gap-2 items-start hover:bg-white/[0.06] cursor-pointer" @click.stop="rerollTakesParallel">
           <Layers class="size-3.5 mt-0.5 text-white/80 shrink-0" />
           <span class="min-w-0">
-            <span class="block text-[11px] font-medium text-white/90">Re-roll ×4 (parallel)</span>
+            <span class="block text-[11px] font-medium text-white/90">Re-render ×4 (parallel)</span>
             <span class="block text-[10px] text-white/45 leading-snug">Four fresh takes at once across the cloud pool</span>
           </span>
         </button>
@@ -1909,6 +1873,7 @@ watch(previewImages, (urls) => {
         </button>
       </div>
     </div>
+  </div>
   </div>
 </template>
 

@@ -213,7 +213,7 @@ function humanizeSyncMode(m: string): string {
               <button
                 v-for="c in characters" :key="c.slug"
                 type="button"
-                class="group flex flex-col items-center gap-1 rounded-md border p-1.5 transition-colors"
+                class="group flex flex-col items-center gap-1 rounded border p-1.5 transition-colors"
                 :class="sheet.face.characterSlug === c.slug
                   ? 'border-white/30 bg-white/10'
                   : 'border-white/[0.08] hover:border-white/20 hover:bg-white/[0.04]'"
@@ -416,14 +416,14 @@ function humanizeSyncMode(m: string): string {
         <span class="mr-auto text-[11px] text-white/30" title="Both engines bill about $1 per 30 seconds of output">~$1 / 30s</span>
         <button
           type="button"
-          class="rounded-md border border-white/10 px-3 py-1.5 text-[12px] text-white/70 transition enabled:hover:border-white/25 enabled:hover:text-white/90 disabled:cursor-not-allowed disabled:opacity-40"
+          class="rounded border border-white/10 px-3 py-1.5 text-[12px] text-white/70 transition enabled:hover:border-white/25 enabled:hover:text-white/90 disabled:cursor-not-allowed disabled:opacity-40"
           :disabled="hasError"
           title="Regenerate — a fresh voice + take"
           @click="onGenerate"
         >New take</button>
         <button
           type="button"
-          class="rounded-md bg-action px-3.5 py-1.5 text-[12px] font-medium text-white transition enabled:hover:bg-action/85 disabled:cursor-not-allowed disabled:opacity-40"
+          class="rounded bg-action px-3.5 py-1.5 text-[12px] font-medium text-white transition enabled:hover:bg-action/85 disabled:cursor-not-allowed disabled:opacity-40"
           :disabled="hasError"
           @click="onGenerate"
         >Generate</button>

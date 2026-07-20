@@ -58,7 +58,7 @@ function getAccentColor(node: any) {
       <button
         v-for="tab in (['parameters', 'nodes', 'settings'] as const)"
         :key="tab"
-        class="px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer"
+        class="px-3 py-1.5 rounded text-xs font-medium transition-colors cursor-pointer"
         :class="activeTab === tab
           ? 'bg-white/10 text-white'
           : 'text-white/50 hover:text-white/70 hover:bg-white/5'"

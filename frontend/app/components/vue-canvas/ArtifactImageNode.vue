@@ -7,6 +7,7 @@ import { useAgentActivity } from '~/composables/useAgentActivity'
 import { useImgFx } from '~/composables/useImgFx'
 import TakesStrip from '~/components/vue-canvas/TakesStrip.vue'
 import LightTableModal from '~/components/vue-canvas/LightTableModal.vue'
+import RefNameDialog from '~/components/vue-canvas/RefNameDialog.vue'
 import { useNextStepsStrip, type FixChip } from '~/composables/useNextStepsStrip'
 import { projectTake, discardOthers, type Take } from '~/composables/useTakes'
 import { uploadRefFile } from '~/lib/shotdirector/refUpload'
@@ -55,6 +56,8 @@ const isAnalyzing = computed(() => analyzingNodeIds.value.has(props.id))
 // Vue Flow injects nodes/edges so we can ask "is anything wired to my image
 // input right now?" — `inputs[i].link` lags behind in-session connections.
 const injectedEdges = inject<any>('vueFlowEdges', null)
+// Leaves (terminal outputs) of the active run — see VueNodeCanvas' provide.
+const injectedRunLeaves = inject<any>('runLeafNodeIds', null)
 
 // Port indices by name — robust against schema reordering.
 function inputIdx(name: string): number {
@@ -92,6 +95,19 @@ const hasUpstream = computed(() => {
 // edge with running=true means the node feeding us is mid-generation. Also true
 // if this node itself is executing (output sinks that run).
 const upstreamRunning = computed(() => {
+  // Generation FX (the img-fx churn/dither AND the glimm sweep) belong on the
+  // run's OUTPUT nodes only — never on cards that merely FEED the running node.
+  // Two gates:
+  //  1. hasUpstream — a pure source card (uploaded image) still gets an
+  //     'executing' event (ComfyUI loads it) but produces no fresh result.
+  //  2. runLeafNodeIds — an INTERMEDIATE result (e.g. BlendScene's output
+  //     feeding Relight while Relight runs) is inside the run's keep-set and
+  //     its upstream may re-execute, but it isn't the run's terminal output;
+  //     churning it reads as "this image is being replaced" when it isn't.
+  //     Empty set = no run tracking (legacy path) → no filtering, old behavior.
+  if (!hasUpstream.value) return false
+  const leaves = injectedRunLeaves?.value
+  if (leaves && leaves.size && !leaves.has(String(props.id))) return false
   if (props.data.running) return true
   const edges = injectedEdges?.value ?? []
   return edges.some((e: any) => e.target === props.id && e.data?.running)
@@ -434,25 +450,20 @@ function spawnUpscale() { spliceEffect('UpscaleImageNode', { run: true, branch: 
 function spawnRelight() { spliceEffect('RelightNode', { focus: true, branch: true }) }
 function spawnLensReframe() { spliceEffect('LensReframe', { focus: true, branch: true }) }
 
-// ── Sketch-output card actions (spec 2026-07-08-sketch-node-refinement.md,
-// Change 4) ──────────────────────────────────────────────────────────────
-// Sketch cards (data.properties.sketchOutput) get their own primary action:
-// Enhance forces the Clarity engine (philz1337x/clarity-upscaler via
-// EnhanceDetailNode's "Creative" combo value — see ENHANCE_ENGINES in
-// comfy_api_nodes/replicate_refs.py) so "make this exact image real" always
-// resolves to the super-res path, regardless of EnhanceDetailNode's own
-// schema default. Promote is handled by VueNodeCanvas — the pad is transient
-// (no persistent source node to resolve a take from), so VueNodeCanvas builds
-// overrides from THIS card's own provenance props (sketchPrompt/sketchSeed);
-// this only dispatches the event with the clicked card's id.
+// ── Sketch-output card actions ─────────────────────────────────────────────
+// A sketch option gets two actions: Keep (pin it) and "Refine…". Refine
+// is the "what do I do with this after" answer — it feeds THIS exact image into
+// the Nano Banana img2img editor (EditImageNode), so the composition you liked
+// is preserved while the render is upgraded to something finished/detailed.
+// (This replaces the old Enhance+Promote pair: Enhance only upscaled in-style,
+// and Promote re-rolled the prompt on a different model — throwing away the very
+// pixels you picked.) Spawned focused, never auto-run: the user aims, then pays.
 const isSketchOutput = computed(() => !!(props.data.properties as any)?.sketchOutput)
-function spawnEnhanceClarity() {
-  spliceEffect('EnhanceDetailNode', { focus: true, branch: true }, { model: 'Creative' })
-}
-function promoteSketchOutput() {
-  window.dispatchEvent(new CustomEvent('sailor:promoteSketchOutput', {
-    detail: { cardId: props.id },
-  }))
+function spawnDevelop() {
+  spliceEffect('EditImageNode', { focus: true, branch: true }, {
+    model: 'Nano Banana 2',
+    prompt: 'Turn this rough into a polished, finished, highly detailed image — keep the same composition and subject.',
+  })
 }
 // Keep: pin this option — VueNodeCanvas strips its sketch identity so it
 // becomes an ordinary Image card and its slot frees for the next sketch.
@@ -509,6 +520,37 @@ async function saveAsCharacter() {
     toast.error(`Couldn't save ${name} as a character — try again`)
   } finally {
     savingAsCharacter.value = false
+  }
+}
+
+// `@` promote — name the currently-displayed image as a reusable @ref (see
+// docs/superpowers/specs/2026-07-06-named-image-references-design.md). The
+// registered filename must live in the ComfyUI *input* dir so downstream
+// consumers (bind-by-name image widgets, materialized Reference nodes) can load
+// it, so we upload the displayed image the same way saveAsCharacter does and
+// register the returned input-dir filename. The layout (default.vue) owns the
+// registry write via the `sailor:createRef` event, keeping this node decoupled
+// from the project doc.
+const refDialogOpen = ref(false)
+const creatingRef = ref(false)
+function openRefDialog() { if (displayedUrl.value) refDialogOpen.value = true }
+async function onRefConfirm(name: string, text: string) {
+  refDialogOpen.value = false
+  const src = displayedUrl.value
+  if (!src) return
+  creatingRef.value = true
+  try {
+    const blob = await (await fetch(src)).blob()
+    const refUrl = await uploadRefFile(new File([blob], `${name}.png`, { type: blob.type || 'image/png' }))
+    const filename = new URLSearchParams(refUrl.split('?')[1]).get('filename')!
+    window.dispatchEvent(new CustomEvent('sailor:createRef', {
+      detail: { name, entry: { filename, text: text || undefined } },
+    }))
+  } catch (e) {
+    console.warn('[createRef]', e)
+    toast.error(`Couldn't create @${name} — try again`)
+  } finally {
+    creatingRef.value = false
   }
 }
 
@@ -734,11 +776,6 @@ watch(() => props.data.takes?.length ?? 0, (now, before) => {
   }
 })
 const fixChipsForMe = computed(() => nextSteps.fixes.value?.nodeId === props.id ? nextSteps.fixes.value.chips : [])
-// The Edit / Next buttons fade in on hover, and stay while a menu is open or an
-// AI fix is pending (so a fresh critique result is never missed).
-const controlsVisible = computed(() =>
-  hovered.value || editMenuOpen.value || nextMenuOpen.value || fixChipsForMe.value.length > 0,
-)
 function applyFix(chip: FixChip) {
   editMenuOpen.value = false
   chip.apply()
@@ -846,7 +883,7 @@ const promoteUsdLabel = computed(() => {
            doesn't fight the big upload/render targets). -->
       <button
         v-if="showUpload || showRender"
-        class="nopan nodrag absolute top-1 left-1 z-10 flex items-center gap-1 h-6 px-1.5 rounded-md bg-black/50 hover:bg-black/70 text-white/55 hover:text-white/70 text-[10px] transition-colors cursor-pointer"
+        class="nopan nodrag absolute top-1 left-1 z-10 flex items-center gap-1 h-6 px-1.5 rounded bg-black/50 hover:bg-black/70 text-white/55 hover:text-white/70 text-[10px] transition-colors cursor-pointer"
         title="Inpaint — paint a region and describe the change"
         @click.stop="openInpaint"
       >
@@ -855,20 +892,141 @@ const promoteUsdLabel = computed(() => {
 
       <!-- IMAGE PRESENT -->
       <template v-if="displayedUrl">
-        <!-- Hover-revealed action buttons (top-right). EDIT refines this image;
-             NEXT transforms it into something new. Clear of the right-edge
-             output handle (vertical centre). Each opens a teleported side menu;
-             the row fades in on node hover (and stays while a menu is open or an
-             AI fix is pending). -->
+        <!-- Chrome toolbar, overlaid on the top of the image and revealed
+             on hover. Kept off the resting card so the image itself is the
+             only thing competing for attention. Lock state is NOT hidden
+             here — it changes what Run does, so it also shows as a badge. -->
         <div
-          class="nopan nodrag absolute top-1 right-1 z-30 flex items-center gap-1 transition-opacity duration-150"
-          :class="controlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'"
+          class="nopan nodrag absolute inset-x-0 top-0 z-30 flex items-center gap-1.5 px-2 py-1.5 bg-gradient-to-b from-black/70 to-transparent transition-opacity duration-150"
+          :class="hovered ? 'opacity-100' : 'opacity-0 pointer-events-none'"
         >
-          <!-- EDIT — fix / refine the current iteration -->
-          <div ref="editMenuRef" class="relative">
+          <span class="truncate flex-1 text-[10px] tabular-nums text-white/80 drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
+            {{ dims || (hasUpstream ? 'Preview' : 'Image') }}
+          </span>
+          <button
+            v-if="canReplace"
+            class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center text-white/45 hover:text-white/85 hover:bg-white/[0.08] transition-colors cursor-pointer disabled:opacity-50"
+            :disabled="uploading"
+            title="Replace image"
+            @click.stop="triggerUpload"
+          >
+            <Loader2 v-if="uploading" class="size-3 animate-spin" />
+            <Upload v-else class="size-2.5" />
+          </button>
+          <button
+            class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center text-white/45 hover:text-white/85 hover:bg-white/[0.08] transition-colors cursor-pointer"
+            title="Download"
+            @click.stop="downloadImage"
+          >
+            <Download class="size-2.5" />
+          </button>
+          <button
+            class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center transition-colors cursor-pointer disabled:opacity-50"
+            :class="isLocked
+              ? 'text-amber-300 bg-amber-500/15 hover:bg-amber-500/25'
+              : 'text-white/45 hover:text-white/85 hover:bg-white/[0.08]'"
+            :disabled="locking"
+            :title="isLocked ? 'Locked — pinned, upstream will be skipped on next Run. Click to unlock.' : 'Lock — pin this image so upstream generators don\'t re-run.'"
+            @click.stop="isLocked ? unlockArtifact() : lockArtifact()"
+          >
+            <Loader2 v-if="locking" class="size-3 animate-spin" />
+            <Lock v-else-if="isLocked" class="size-2.5" />
+            <LockOpen v-else class="size-2.5" />
+          </button>
+          <button
+            class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center text-white/45 hover:text-white/85 hover:bg-white/[0.08] transition-colors cursor-pointer disabled:opacity-50"
+            :disabled="data.running || isMuted || isBypassed"
+            :title="data.running ? 'Running…' : 'Re-render'"
+            @click.stop="runThisNode"
+          >
+            <Loader2 v-if="data.running" class="size-3 animate-spin" />
+            <RefreshCw v-else class="size-3" />
+          </button>
+          <button
+            class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center text-white/45 hover:text-white/85 hover:bg-white/[0.08] transition-colors cursor-pointer disabled:opacity-50"
+            :disabled="savingAsCharacter"
+            title="Save as character"
+            @click.stop="saveAsCharacter"
+          >
+            <Loader2 v-if="savingAsCharacter" class="size-3 animate-spin" />
+            <Drama v-else class="size-3" />
+          </button>
+          <button
+            v-if="displayedUrl"
+            class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center text-white/45 hover:text-white/85 hover:bg-white/[0.08] transition-colors cursor-pointer disabled:opacity-50"
+            :disabled="creatingRef"
+            title="Name as reusable reference (@)"
+            @click.stop="openRefDialog"
+          >
+            <Loader2 v-if="creatingRef" class="size-3 animate-spin" />
+            <span v-else class="text-xs font-bold leading-none" style="color: var(--var-accent-text)">@</span>
+          </button>
+        </div>
+        <!-- Persistent lock badge: the toggle lives in the hover toolbar,
+             but a pinned card must read as pinned without hovering it. -->
+        <div
+          v-if="isLocked"
+          class="pointer-events-none absolute top-1.5 left-1.5 z-20 flex items-center gap-1 rounded bg-amber-500/20 border border-amber-400/30 px-1.5 py-0.5 text-[9px] font-medium text-amber-200 backdrop-blur-sm"
+        >
+          <Lock class="size-2.5" /> Locked
+        </div>
+        <!-- Main image -->
+        <img
+          :src="displayedUrl"
+          class="block w-full max-h-[280px] object-contain bg-black/50"
+          loading="lazy"
+        />
+      </template>
+
+      <!-- UPLOAD EMPTY STATE — no upstream, no file yet -->
+      <template v-else-if="showUpload">
+        <!-- Upload affordance — no nopan/nodrag so click-in-place opens
+             the file picker but click-and-drag moves the card. -->
+        <button
+          class="w-full aspect-square flex flex-col items-center justify-center gap-2 text-white/45 hover:text-white/85 hover:bg-white/[0.04] transition-colors cursor-pointer disabled:opacity-50"
+          :disabled="uploading"
+          @click="triggerUpload"
+        >
+          <Loader2 v-if="uploading" class="size-7 animate-spin" />
+          <ImagePlus v-else class="size-7" :stroke-width="1.5" />
+          <span class="text-[11px]">{{ uploading ? 'Uploading…' : 'Drop or click an image' }}</span>
+        </button>
+      </template>
+
+      <!-- RENDER STATE — upstream wired, waiting on an execution -->
+      <template v-else-if="showRender">
+        <div class="aspect-square flex flex-col items-center justify-center gap-2 text-white/35 px-4">
+          <ImageIcon class="size-7" :stroke-width="1.5" />
+          <template v-if="data.running">
+            <Loader2 class="size-4 animate-spin text-white/55" />
+            <span class="text-[11px] text-white/55">Rendering…</span>
+          </template>
+          <template v-else>
             <button
-              class="gen-pastel flex items-center gap-1 h-6 px-2.5 rounded-md text-[9px] font-medium text-neutral-900 cursor-pointer backdrop-blur-sm transition-[filter] duration-200 ease-out"
-              style="--gen-pastel: linear-gradient(90deg, rgba(255,214,231,.55), rgba(207,232,255,.55), rgba(214,255,224,.55), rgba(255,244,204,.55), rgba(231,214,255,.55), rgba(255,214,231,.55));"
+              class="nopan nodrag mt-1 flex items-center gap-1.5 px-3 h-7 rounded bg-white/[0.08] hover:bg-white/[0.15] text-white/75 hover:text-white text-[11px] transition-colors cursor-pointer disabled:opacity-50"
+              :disabled="isMuted || isBypassed"
+              @click.stop="runThisNode"
+            >
+              <Play class="size-2.5" fill="currentColor" />
+              Render
+            </button>
+          </template>
+        </div>
+      </template>
+      </div><!-- /media stage -->
+
+      <!-- Footer toolbar — OUTSIDE the media stage, so the churn/reveal effect
+           covers only the image and never these controls. -->
+      <template v-if="displayedUrl">
+        <!-- Primary actions, below the image. EDIT refines this image;
+             NEXT turns it into something new. Always visible and styled
+             like the Edit/Render footer on studio nodes — these are the
+             card's main affordances, not chrome to hide behind a hover. -->
+        <div class="nopan nodrag flex items-center gap-1.5 px-2 py-2 border-t border-white/5">
+          <!-- EDIT — fix / refine the current iteration -->
+          <div ref="editMenuRef" class="relative flex-1">
+            <button
+              class="w-full flex items-center justify-center gap-1.5 rounded bg-white/10 hover:bg-white/20 px-2.5 py-1.5 text-[11px] font-medium text-white/80 hover:text-white transition-colors cursor-pointer"
               title="Edit — refine this image"
               @click.stop="editMenuOpen = !editMenuOpen"
             >
@@ -952,7 +1110,7 @@ const promoteUsdLabel = computed(() => {
               <input v-model="textReplace" placeholder="Replace with…" spellcheck="false"
                      class="h-7 px-2 rounded bg-white/[0.06] border border-white/10 text-[11px] text-white/85 outline-none focus:border-white/25"
                      @keydown.enter.prevent="runTextEdit" />
-              <button class="gen-pastel h-7 rounded-md text-neutral-900 text-[11px] font-semibold cursor-pointer disabled:opacity-40"
+              <button class="gen-pastel h-7 rounded text-neutral-900 text-[11px] font-semibold cursor-pointer disabled:opacity-40"
                       :disabled="!textFind.trim() || !textReplace.trim()" @click="runTextEdit">
                 Replace text · ~$0.05
               </button>
@@ -960,14 +1118,13 @@ const promoteUsdLabel = computed(() => {
           </Teleport>
 
           <!-- NEXT — transform into something new -->
-          <div ref="nextMenuRef" class="relative">
+          <div ref="nextMenuRef" class="relative flex-1">
             <button
-              class="gen-pastel flex items-center gap-1 h-6 px-2.5 rounded-md text-[9px] font-medium text-neutral-900 cursor-pointer backdrop-blur-sm transition-[filter] duration-200 ease-out"
-              style="--gen-pastel: linear-gradient(90deg, rgba(255,214,231,.55), rgba(207,232,255,.55), rgba(214,255,224,.55), rgba(255,244,204,.55), rgba(231,214,255,.55), rgba(255,214,231,.55));"
-              title="Next — turn this into something new"
+              class="w-full flex items-center justify-center gap-1.5 rounded bg-white/10 hover:bg-white/20 px-2.5 py-1.5 text-[11px] font-medium text-white/80 hover:text-white transition-colors cursor-pointer"
+              title="Develop — turn this into something new"
               @click.stop="nextMenuOpen = !nextMenuOpen"
             >
-              <ArrowRight class="size-3" /> Next…
+              <ArrowRight class="size-3" /> Develop…
             </button>
             <Teleport to="body">
             <div
@@ -998,137 +1155,31 @@ const promoteUsdLabel = computed(() => {
             </Teleport>
           </div>
         </div>
-        <!-- Main image -->
-        <img
-          :src="displayedUrl"
-          class="block w-full max-h-[280px] object-contain bg-black/50"
-          loading="lazy"
-        />
-      </template>
-
-      <!-- UPLOAD EMPTY STATE — no upstream, no file yet -->
-      <template v-else-if="showUpload">
-        <!-- Upload affordance — no nopan/nodrag so click-in-place opens
-             the file picker but click-and-drag moves the card. -->
-        <button
-          class="w-full aspect-square flex flex-col items-center justify-center gap-2 text-white/45 hover:text-white/85 hover:bg-white/[0.04] transition-colors cursor-pointer disabled:opacity-50"
-          :disabled="uploading"
-          @click="triggerUpload"
-        >
-          <Loader2 v-if="uploading" class="size-7 animate-spin" />
-          <ImagePlus v-else class="size-7" :stroke-width="1.5" />
-          <span class="text-[11px]">{{ uploading ? 'Uploading…' : 'Drop or click an image' }}</span>
-        </button>
-      </template>
-
-      <!-- RENDER STATE — upstream wired, waiting on an execution -->
-      <template v-else-if="showRender">
-        <div class="aspect-square flex flex-col items-center justify-center gap-2 text-white/35 px-4">
-          <ImageIcon class="size-7" :stroke-width="1.5" />
-          <template v-if="data.running">
-            <Loader2 class="size-4 animate-spin text-white/55" />
-            <span class="text-[11px] text-white/55">Rendering…</span>
-          </template>
-          <template v-else>
-            <button
-              class="nopan nodrag mt-1 flex items-center gap-1.5 px-3 h-7 rounded-md bg-white/[0.08] hover:bg-white/[0.15] text-white/75 hover:text-white text-[11px] transition-colors cursor-pointer disabled:opacity-50"
-              :disabled="isMuted || isBypassed"
-              @click.stop="runThisNode"
-            >
-              <Play class="size-2.5" fill="currentColor" />
-              Render
-            </button>
-          </template>
-        </div>
-      </template>
-      </div><!-- /media stage -->
-
-      <!-- Footer toolbar — OUTSIDE the media stage, so the churn/reveal effect
-           covers only the image and never these controls. -->
-      <template v-if="displayedUrl">
-        <!-- Sketch-output card actions (spec 2026-07-08-sketch-node-refinement.md,
-             Change 4): Enhance primary (make THIS image real), Promote secondary
-             (re-render the idea fresh). Strictly gated on properties.sketchOutput
-             so ordinary Image cards are byte-identical. -->
+        <!-- Sketch-option actions: Keep (pin it) + Refine… (img2img the
+             picked image into a finished render, keeping composition). Strictly
+             gated on properties.sketchOutput so ordinary Image cards are
+             byte-identical. -->
         <div v-if="isSketchOutput" class="nopan nodrag flex items-center gap-1.5 px-2 py-1.5 border-t border-white/5">
           <button
-            class="flex-1 h-6 rounded-md text-[10px] font-semibold text-white bg-action hover:bg-action/85 transition-colors cursor-pointer"
+            class="flex-1 h-6 rounded text-[10px] font-semibold text-white/70 hover:text-white border border-white/15 hover:border-white/25 transition-colors cursor-pointer"
             title="Keep this option — it becomes a regular Image card"
             @click.stop="keepSketchCard"
           >
             Keep
           </button>
           <button
-            class="h-6 px-2 rounded-md text-[10px] font-semibold text-neutral-900 bg-white/90 hover:bg-white transition-colors cursor-pointer"
-            title="Make this exact image real (high-res)"
-            @click.stop="spawnEnhanceClarity"
+            class="flex-[1.4] h-6 px-2 rounded text-[10px] font-semibold text-neutral-900 bg-white/90 hover:bg-white transition-colors cursor-pointer"
+            title="Turn this rough into a finished, detailed image — keeps the composition"
+            @click.stop="spawnDevelop"
           >
-            Enhance
-          </button>
-          <button
-            class="h-6 px-2 rounded-md text-[10px] font-medium text-white/60 hover:text-white/90 border border-white/15 hover:border-white/25 transition-colors cursor-pointer"
-            title="Re-render the idea fresh at full quality"
-            @click.stop="promoteSketchOutput"
-          >
-            Promote
-          </button>
-        </div>
-        <!-- Footer: dimensions + actions. -->
-        <div class="flex items-center gap-1.5 px-2 py-1.5 border-t border-white/5">
-          <span class="truncate flex-1 text-[10px] tabular-nums text-white/55">
-            {{ dims || (hasUpstream ? 'Preview' : 'Image') }}
-          </span>
-          <button
-            v-if="canReplace"
-            class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center text-white/45 hover:text-white/85 hover:bg-white/[0.08] transition-colors cursor-pointer disabled:opacity-50"
-            :disabled="uploading"
-            title="Replace image"
-            @click.stop="triggerUpload"
-          >
-            <Loader2 v-if="uploading" class="size-3 animate-spin" />
-            <Upload v-else class="size-2.5" />
-          </button>
-          <button
-            class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center text-white/45 hover:text-white/85 hover:bg-white/[0.08] transition-colors cursor-pointer"
-            title="Download"
-            @click.stop="downloadImage"
-          >
-            <Download class="size-2.5" />
-          </button>
-          <button
-            class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center transition-colors cursor-pointer disabled:opacity-50"
-            :class="isLocked
-              ? 'text-amber-300 bg-amber-500/15 hover:bg-amber-500/25'
-              : 'text-white/45 hover:text-white/85 hover:bg-white/[0.08]'"
-            :disabled="locking"
-            :title="isLocked ? 'Locked — pinned, upstream will be skipped on next Run. Click to unlock.' : 'Lock — pin this image so upstream generators don\'t re-run.'"
-            @click.stop="isLocked ? unlockArtifact() : lockArtifact()"
-          >
-            <Loader2 v-if="locking" class="size-3 animate-spin" />
-            <Lock v-else-if="isLocked" class="size-2.5" />
-            <LockOpen v-else class="size-2.5" />
-          </button>
-          <button
-            class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center text-white/45 hover:text-white/85 hover:bg-white/[0.08] transition-colors cursor-pointer disabled:opacity-50"
-            :disabled="data.running || isMuted || isBypassed"
-            :title="data.running ? 'Running…' : 'Re-render'"
-            @click.stop="runThisNode"
-          >
-            <Loader2 v-if="data.running" class="size-3 animate-spin" />
-            <RefreshCw v-else class="size-3" />
-          </button>
-          <button
-            class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center text-white/45 hover:text-white/85 hover:bg-white/[0.08] transition-colors cursor-pointer disabled:opacity-50"
-            :disabled="savingAsCharacter"
-            title="Save as character"
-            @click.stop="saveAsCharacter"
-          >
-            <Loader2 v-if="savingAsCharacter" class="size-3 animate-spin" />
-            <Drama v-else class="size-3" />
+            Refine…
           </button>
         </div>
       </template>
     </div>
+
+    <!-- Name-as-reference dialog (self-teleports to <body>). -->
+    <RefNameDialog :open="refDialogOpen" @confirm="onRefConfirm" @cancel="refDialogOpen = false" />
 
     <!-- Takes strip (flag-gated): switch / pin / discard this node's results -->
     <TakesStrip

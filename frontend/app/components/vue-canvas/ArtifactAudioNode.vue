@@ -290,7 +290,7 @@ async function downloadAudio() {
           </template>
           <template v-else>
             <button
-              class="nopan nodrag mt-1 flex items-center gap-1.5 px-3 h-7 rounded-md bg-white/[0.08] hover:bg-white/[0.15] text-white/75 hover:text-white text-[11px] transition-colors cursor-pointer disabled:opacity-50"
+              class="nopan nodrag mt-1 flex items-center gap-1.5 px-3 h-7 rounded bg-white/[0.08] hover:bg-white/[0.15] text-white/75 hover:text-white text-[11px] transition-colors cursor-pointer disabled:opacity-50"
               :disabled="isMuted || isBypassed"
               @click.stop="runThisNode"
             >

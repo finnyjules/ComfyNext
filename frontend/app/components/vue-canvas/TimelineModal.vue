@@ -736,7 +736,7 @@ function colorFor(slot: number) {
         <!-- Center: canvas preview -->
         <div ref="canvasContainerRef" class="flex-1 relative flex items-center justify-center overflow-hidden bg-[#080808]">
           <button
-            class="absolute top-4 right-4 z-10 flex items-center justify-center size-8 rounded-md bg-white/5 hover:bg-white/10 transition-colors cursor-pointer"
+            class="absolute top-4 right-4 z-10 flex items-center justify-center size-8 rounded bg-white/5 hover:bg-white/10 transition-colors cursor-pointer"
             title="Close (Esc)"
             @click="emit('close')"
           >

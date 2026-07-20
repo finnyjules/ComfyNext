@@ -34,7 +34,7 @@ export const ACTION_CATALOG: Record<string, ActionEntry> = {
   FluxMultiLoRARemoteNode: { useCase: 'Generate with two LoRAs',      model: 'Flux Dev + 2 LoRAs',                       intent: 'create' },
   TextEffectNode:        { useCase: 'Render a text effect',           model: 'Typographic art gallery',                  intent: 'create' },
   // -- Image · edit -----------------------------------------------------------
-  EditImageNode:         { useCase: 'Edit an image',                  model: 'Nano Banana 2 / Flux Kontext',             intent: 'edit', source: 'image' },
+  EditImageNode:         { useCase: 'Edit an image',                  model: 'Nano Banana 2 / Flux Kontext / Flux 2 Pro', intent: 'edit', source: 'image' },
   RestyleFromImageNode:  { useCase: 'Restyle from an image',          model: 'Nano Banana / IP-Adapter',                 intent: 'edit' },
   RestyleWithLoRANode:   { useCase: 'Restyle with your style',        model: 'Moondream + Flux LoRA + Nano Banana 2',    intent: 'edit' },
   PersonSwap:            { useCase: 'Swap a person',                  model: 'Nano Banana 2',                            intent: 'edit' },
@@ -46,7 +46,7 @@ export const ACTION_CATALOG: Record<string, ActionEntry> = {
   LayerizeGraphicNode:   { useCase: 'Layerize a graphic',             model: 'Ideogram Layerize',                        intent: 'edit' },
   SplitPhotoLayersNode:  { useCase: 'Split photo into layers',        model: 'BG Remover + LaMa / Bria Eraser',          intent: 'edit' },
   OutpaintImageNode:     { useCase: 'Expand / outpaint an image',     model: 'Flux Fill / Bria Expand',                  intent: 'edit' },
-  BlendSceneNode:        { useCase: 'Blend a composite into a scene', model: 'Flux Kontext Pro / Nano Banana',           intent: 'edit' },
+  BlendSceneNode:        { useCase: 'Blend a composite into a scene', model: 'Flux Kontext Pro / Flux 2 Pro / Nano Banana', intent: 'edit' },
   SwapProductNode:       { useCase: 'Swap a product into a scene', model: 'Nano Banana 2',                            intent: 'edit' },
   SwapBackgroundNode:    { useCase: 'Swap the background behind a product', model: 'Nano Banana 2', intent: 'edit' },
   RotateCameraNode:      { useCase: 'Rotate the camera',              model: 'Qwen-Image-Edit-Plus',                     intent: 'edit' },

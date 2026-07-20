@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { getTypeColor } from '~/composables/useVueNodes'
+import { minHeightForPorts } from '~/lib/canvas/portLayout'
 
 const props = defineProps<{
   id: string
@@ -12,12 +13,33 @@ const props = defineProps<{
     size?: [number, number]
   }
 }>()
+
+const portsMinHeight = computed(() =>
+  minHeightForPorts(props.data.isInput ? props.data.outputs.length : props.data.inputs.length),
+)
 </script>
 
 <template>
+  <!-- Ports sit outside the card so its background occludes their inner half.
+       An input boundary exposes outputs and vice versa: data flows OUT from an
+       input boundary INTO the subgraph. -->
+  <div class="relative w-fit">
+    <VueCanvasNodePort
+      v-for="(port, i) in (data.isInput ? data.outputs : data.inputs)"
+      :id="data.isInput ? `output-${i}` : `input-${i}`"
+      :key="`port-${i}`"
+      :type="data.isInput ? 'source' : 'target'"
+      :side="data.isInput ? 'right' : 'left'"
+      :index="i"
+      :data-type="port.type"
+      :label="port.name"
+    />
+
   <div
-    class="subgraph-io rounded-xl border border-white/30 select-none backdrop-blur-sm min-w-[180px]"
+    class="subgraph-io relative z-10 rounded-xl border border-white/30 select-none backdrop-blur-sm min-w-[180px]"
     :style="{
+      // Absolutely positioned ports can't hold the node open themselves.
+      minHeight: `${portsMinHeight}px`,
       background: data.isInput
         ? 'linear-gradient(180deg, rgba(255,255,255,0.06) 0%, rgba(30,30,30,0.95) 100%)'
         : 'linear-gradient(180deg, rgba(255,255,255,0.06) 0%, rgba(30,30,30,0.95) 100%)',
@@ -37,33 +59,9 @@ const props = defineProps<{
       </span>
     </div>
 
-    <!-- Ports -->
-    <div class="py-2 flex flex-col gap-0.5">
-      <!-- Input node shows output ports (data flows OUT from this boundary INTO the subgraph) -->
-      <template v-if="data.isInput">
-        <VueCanvasComfyNodePort
-          v-for="(port, i) in data.outputs"
-          :key="i"
-          :id="`output-${i}`"
-          type="source"
-          position="right"
-          :data-type="port.type"
-          :label="port.name"
-        />
-      </template>
-      <!-- Output node shows input ports (data flows IN from subgraph INTO this boundary) -->
-      <template v-else>
-        <VueCanvasComfyNodePort
-          v-for="(port, i) in data.inputs"
-          :key="i"
-          :id="`input-${i}`"
-          type="target"
-          position="left"
-          :data-type="port.type"
-          :label="port.name"
-        />
-      </template>
-    </div>
+    <!-- Spacer: reserves the vertical room the centred port stack needs. -->
+    <div class="py-2" />
+  </div>
   </div>
 </template>
 

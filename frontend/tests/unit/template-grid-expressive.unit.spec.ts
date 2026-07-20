@@ -1,21 +1,63 @@
 import { describe, expect, it } from 'vitest'
 import { gridExpressiveLayout, expressiveVOffset, mergeExpressivePatch } from '~~/shared/template-grid/expressive'
+import { estimateWordEm } from '~~/shared/template-grid/text'
 import type { ExpressiveParams } from '~~/shared/text-layout/expressive'
 
 function params(p: Partial<ExpressiveParams> = {}): ExpressiveParams {
   return { wordsPerLine: 1, placement: 'random', jitterX: 0, jitterY: 0, seed: 1, ...p }
 }
 
+describe('estimateWordEm — per-glyph width estimate', () => {
+  // Ground-truth widths below were measured in Chrome (canvas measureText at
+  // 100px) across the curated families (Inter, Space Grotesk, Playfair
+  // Display, Bebas Neue, Anton) × weights 400/700. The estimate must never
+  // under-measure any of them: an under-measured word gets edge-anchored too
+  // far right and its glyphs clip at the element box ("the text is cut off").
+  it('covers wide-glyph words the flat 0.55 average under-measured', () => {
+    // Real 'new': Inter 1.974em, Space Grotesk 1.996em. Flat estimate was
+    // 3 × 0.55 = 1.65em → placed ~26px too far right at 80px font → clipped.
+    expect(estimateWordEm('new')).toBeGreaterThanOrEqual(1.996)
+    // …but not wastefully wide (would visibly inset justified lines).
+    expect(estimateWordEm('new')).toBeLessThanOrEqual(2.3)
+  })
+
+  it('covers wide caps', () => {
+    expect(estimateWordEm('WOW')).toBeGreaterThanOrEqual(2.735) // Inter real
+  })
+
+  it('covers Bebas small-caps rendering of narrow lowercase', () => {
+    // Bebas renders lowercase as small caps: its real 'ill' is 0.88em.
+    expect(estimateWordEm('ill')).toBeGreaterThanOrEqual(0.88)
+    // Flat estimate said 1.65em — twice the real width.
+    expect(estimateWordEm('ill')).toBeLessThanOrEqual(1.1)
+  })
+
+  it('falls back to the base letter for accented characters', () => {
+    expect(estimateWordEm('éé')).toBeCloseTo(estimateWordEm('ee'), 5)
+  })
+})
+
 describe('gridExpressiveLayout', () => {
-  it('uses the CHAR_W estimate so editor and export agree (word width = len·fontSize·0.55)', () => {
-    // 'edges', 2 words, jitter 0: word 0 → x 0; word 1 → x = boxWidth - w1.
-    // 'right' = 5 chars → 5 * 20 * 0.55 = 55px wide → x = 300 - 55 = 245.
+  it('an edge-anchored wide word keeps its REAL width inside the box (no clip)', () => {
+    // The exact regression: "A new kind of skincare is coming" at 80px with
+    // edge placement put 'new' at boxWidth − 132 (flat estimate) while the
+    // real glyphs span ~158px → 26px clipped by overflow:hidden.
+    const lay = gridExpressiveLayout({
+      content: 'left new', fontSize: 80, boxWidth: 800, lineHeight: 1.1,
+      params: params({ placement: 'edges', wordsPerLine: 2 }),
+    })
+    const REAL_NEW = 1.996 * 80 // widest curated rendering (Space Grotesk)
+    expect(lay.words[1]!.x + REAL_NEW).toBeLessThanOrEqual(800 + 1e-6)
+  })
+
+  it('edge placement snaps word 0 to x=0 and word 1 flush to its estimated width', () => {
     const lay = gridExpressiveLayout({
       content: 'left right', fontSize: 20, boxWidth: 300, lineHeight: 1.2,
       params: params({ placement: 'edges', wordsPerLine: 2 }),
     })
     expect(lay.words[0]!.x).toBeCloseTo(0)
-    expect(lay.words[1]!.x).toBeCloseTo(245)
+    expect(lay.words[1]!.x).toBeCloseTo(300 - estimateWordEm('right') * 20)
+    expect(lay.words[1]!.x).toBeCloseTo(300 - lay.words[1]!.w)
   })
 
   it('derives line band height from fontSize × lineHeight', () => {
@@ -60,8 +102,8 @@ describe('word nudges', () => {
     const lay = nudged({ 0: { dx: -5, dy: -5 }, 1: { dx: 5, dy: 5 } })
     expect(lay.words[0]!.x).toBe(0)
     expect(lay.words[0]!.y).toBe(0)
-    // maxLeft = boxWidth - wordWidth ('beta' = 4 × 20 × 0.55 = 44 → 256)
-    expect(lay.words[1]!.x).toBeCloseTo(256)
+    // maxLeft = boxWidth - the word's estimated width
+    expect(lay.words[1]!.x).toBeCloseTo(300 - estimateWordEm('beta') * 20)
     // y max = boxHeight - lineBand = 400 - 30 = 370
     expect(lay.words[1]!.y).toBeCloseTo(370)
   })

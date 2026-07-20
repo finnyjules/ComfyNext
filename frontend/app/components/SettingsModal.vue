@@ -130,6 +130,7 @@ const settingsByCategory: Record<string, SettingDef[]> = {
     { id: 'Comfy.PromptFilename', label: 'Prompt for filename when saving', type: 'toggle' },
   ],
   ai: [
+    { id: 'Sailor.AI.AutoReview', label: 'Auto-review results', type: 'toggle', local: true, description: 'After each paid generation, critique the result against your prompt and suggest fixes as chips. Off by default — each review is an extra AI call.' },
     { id: 'Sailor.AI.AnthropicApiKey', label: 'Anthropic API key', type: 'text', local: true, description: 'Optional — AI assist uses the app’s built-in key. Paste your own to override; it stays in this browser and is sent only with your requests.' },
     { id: 'Sailor.AI.BraveApiKey', label: 'Brave Search API key', type: 'text', local: true, description: 'Powers the agent’s web image search (“find me a picture of…”). Free tier at brave.com/search/api. Stored in this browser and sent directly to Brave — never kept on a server.' },
     { id: 'replicateToken', label: 'Replicate API token', type: 'secret', description: 'Powers cloud LoRA training, vectorize, background removal and other Replicate features. Stored on this machine (frontend/.data); paste a new value to replace, clear the field to remove.' },
@@ -182,6 +183,8 @@ interface SecretStatus { set: boolean, masked: string | null, source: 'settings'
 const serverSecrets = ref<Record<string, SecretStatus>>({})
 const secretDrafts = ref<Record<string, string>>({})
 const secretSaved = ref<Record<string, boolean>>({})
+// Same transient "Saved ✓" flash for local (localStorage) token/key inputs.
+const localSaved = ref<Record<string, boolean>>({})
 
 async function fetchSecretsStatus() {
   try {
@@ -227,6 +230,8 @@ function getSettingValue(id: string, fallback?: any) {
 function saveLocalSetting(id: string, value: string) {
   localSettingsCache.value[id] = value
   setLocalSetting(id, value)
+  localSaved.value[id] = true
+  setTimeout(() => { localSaved.value[id] = false }, 2000)
 }
 
 function handleToggle(setting: SettingDef) {
@@ -395,8 +400,9 @@ function handleSelectChange(setting: SettingDef, rawValue: string) {
                   />
                 </div>
 
-                <!-- Text -->
-                <div v-else-if="setting.type === 'text'" class="shrink-0">
+                <!-- Text (local token / key) -->
+                <div v-else-if="setting.type === 'text'" class="flex items-center gap-2 shrink-0">
+                  <span v-if="localSaved[setting.id]" class="text-[11px] text-emerald-400">Saved ✓</span>
                   <input
                     type="password"
                     class="w-52 bg-[#2a2a2a] border border-[#3a3a3a] rounded-lg px-3 py-1.5 text-xs text-white/80 focus:outline-none focus:border-white/30 font-mono"

@@ -249,6 +249,42 @@ describe('healDanglingLinks', () => {
     expect(wf.nodes[0].outputs[0].links).toEqual([5])
   })
 
+  it('nulls an input whose link EXISTS but points to a deleted origin node', () => {
+    // The InvalidLinkError case: a node re-splice minted a new origin id, but the
+    // input keeps a link tuple whose origin node (1783974714869) is gone. The
+    // link id (5) is still present in links[], so the id-membership check alone
+    // passes it through — then litegraph's resolveInput follows it to the missing
+    // node and throws "No input node found for id [..] slot [0] images".
+    const wf = {
+      nodes: [
+        { id: 2, type: 'Inpaint', inputs: [{ name: 'images', type: 'IMAGE', link: 5 }], outputs: [] },
+      ],
+      links: [[5, 1783974714869, 0, 2, 0, 'IMAGE']], // link 5 present, origin node absent
+    }
+    const report = healDanglingLinks(wf)
+
+    expect(report).toEqual([
+      { nodeId: 2, nodeType: 'Inpaint', slot: 0, inputName: 'images', linkId: 5 },
+    ])
+    expect(wf.nodes[0].inputs[0].link).toBeNull()
+  })
+
+  it('nulls a deleted-origin input inside subgraph definitions too', () => {
+    const wf = {
+      nodes: [],
+      links: [],
+      definitions: [
+        {
+          nodes: [{ id: 3, type: 'Image', inputs: [{ name: 'images', type: 'IMAGE', link: 8 }], outputs: [] }],
+          links: [[8, 99999, 0, 3, 0, 'IMAGE']], // origin node 99999 absent from this subgraph
+        },
+      ],
+    }
+    const report = healDanglingLinks(wf)
+    expect(report).toHaveLength(1)
+    expect(wf.definitions[0].nodes[0].inputs[0].link).toBeNull()
+  })
+
   it('heals dangling links inside subgraph definitions too', () => {
     const wf = {
       nodes: [],
@@ -260,6 +296,60 @@ describe('healDanglingLinks', () => {
     const report = healDanglingLinks(wf)
     expect(report).toHaveLength(1)
     expect(wf.definitions[0].nodes[0].inputs[0].link).toBeNull()
+  })
+
+  // Production definitions shape is `{ subgraphs: [...] }` — NOT a bare array.
+  // (Confirmed by flatten-subgraphs fixture + useSubgraphNavigation/useVueNodes.)
+  it('heals a deleted-origin body link in the production `{ subgraphs: [...] }` shape', () => {
+    const wf = {
+      nodes: [],
+      links: [],
+      definitions: {
+        subgraphs: [
+          {
+            id: 'sg-1',
+            name: 'Inpaint',
+            inputNode: { id: -10 },
+            outputNode: { id: -20 },
+            // body node 23's IMAGE input points at link 36 whose origin (24) was deleted
+            nodes: [
+              { id: 23, type: 'GLSLShader', inputs: [{ name: 'images', type: 'IMAGE', link: 36 }], outputs: [] },
+            ],
+            links: [[36, 24, 0, 23, 0, 'IMAGE']], // origin node 24 absent from nodes
+          },
+        ],
+      },
+    }
+    const report = healDanglingLinks(wf)
+    expect(report).toHaveLength(1)
+    expect(wf.definitions.subgraphs[0].nodes[0].inputs[0].link).toBeNull()
+  })
+
+  it('does NOT sever a subgraph boundary link (origin_id -10 / target_id -20)', () => {
+    const wf = {
+      nodes: [],
+      links: [],
+      definitions: {
+        subgraphs: [
+          {
+            id: 'sg-1',
+            name: 'Inpaint',
+            inputNode: { id: -10 }, // boundary input node lives OUTSIDE `nodes`
+            outputNode: { id: -20 },
+            nodes: [
+              { id: 23, type: 'GLSLShader', inputs: [{ name: 'images', type: 'IMAGE', link: 34 }], outputs: [{ name: 'IMAGE', type: 'IMAGE', links: [35] }] },
+            ],
+            links: [
+              [34, -10, 0, 23, 0, 'IMAGE'], // boundary input → body: LEGIT, must survive
+              [35, 23, 0, -20, 0, 'IMAGE'], // body → boundary output: LEGIT
+            ],
+          },
+        ],
+      },
+    }
+    const report = healDanglingLinks(wf)
+    expect(report).toHaveLength(0)
+    expect(wf.definitions.subgraphs[0].nodes[0].inputs[0].link).toBe(34)
   })
 })
 
