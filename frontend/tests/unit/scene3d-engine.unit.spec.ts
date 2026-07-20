@@ -352,6 +352,32 @@ describe('scene3d engine light view clay mode', () => {
     sync(host, obj)
     expect(mesh.material).not.toBe(host.clay)
   })
+
+  it('attaches a Light-View widget to a light root, shown only in Light View', () => {
+    const host = makeHost() as any
+    host.lightView = true
+    host.clay = new THREE.MeshStandardMaterial()
+    host.selectedId = null
+    const obj = createLight('spot', [])
+    ;(SceneEngine.prototype as any).syncObject.call(host, obj)
+    const root = host.objectRoots.get(obj.id) as THREE.Object3D
+    const widget = root.children.find((c: THREE.Object3D) => c.userData.isGizmoHelper && c.type === 'Group')
+    expect(widget).toBeTruthy()
+    expect(widget!.visible).toBe(true)
+  })
+
+  it('hides the Light-View widget when Light View is off', () => {
+    const host = makeHost() as any
+    host.lightView = false
+    host.clay = new THREE.MeshStandardMaterial()
+    host.selectedId = null
+    const obj = createLight('point', [])
+    ;(SceneEngine.prototype as any).syncObject.call(host, obj)
+    const root = host.objectRoots.get(obj.id) as THREE.Object3D
+    const widget = root.children.find((c: THREE.Object3D) => c.userData.isGizmoHelper && c.type === 'Group')
+    expect(widget).toBeTruthy()
+    expect(widget!.visible).toBe(false)
+  })
 })
 
 describe('scene3d light factory', () => {

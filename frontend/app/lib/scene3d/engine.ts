@@ -17,6 +17,7 @@ import { loadGlb } from './glb'
 import { materialFor, updateMaterial, disposeMaterial } from './materials'
 import { applyModifiers } from '~/lib/scene3d/modifiers'
 import { PRIMITIVE_PARAMS, paramValue, MODIFIER_SPECS, modifierValue } from '~/lib/scene3d/primParams'
+import { buildLightWidget, setWidgetSelected, disposeWidget } from '~/lib/scene3d/lightWidgets'
 
 /** Unit vector toward the sun for azimuth (deg, around Y) / elevation (deg above horizon). */
 export function sunDirection(azimuthDeg: number, elevationDeg: number): Vec3 {
@@ -339,8 +340,17 @@ export class SceneEngine {
     this.updateLightWidgets()
   }
 
-  /** Stub — Task 3 fills this in (light gizmo visibility/sizing in Light View). */
-  private updateLightWidgets(): void {}
+  /** Refreshes visibility (Light View on/off) and selected-opacity for every
+   *  light's widget, without rebuilding them (cheap enough to call on every
+   *  selection change). */
+  private updateLightWidgets(): void {
+    for (const root of this.objectRoots.values()) {
+      const widget = root.userData.widget as THREE.Group | undefined
+      if (!widget) continue
+      widget.visible = this.lightView
+      setWidgetSelected(widget, root.userData.sceneId === this.selectedId)
+    }
+  }
 
   syncFromDoc(doc: SceneDoc): void {
     this.lastDoc = doc
@@ -506,6 +516,17 @@ export class SceneEngine {
         light.width = obj.width ?? LIGHT_DEFAULTS.width
         light.height = obj.height ?? LIGHT_DEFAULTS.height
       }
+      // Light-View widget: rebuilt on every sync (cheap at ≤8 lights) so it
+      // always reflects the current color/intensity/range/angle. Lives as a
+      // child of the light root, so it inherits the light's transform and is
+      // excluded from export by the recursive isGizmoHelper filter.
+      const existingWidget = root.userData.widget as THREE.Group | undefined
+      if (existingWidget) { disposeWidget(existingWidget); root.remove(existingWidget) }
+      const widget = buildLightWidget(obj)
+      root.add(widget)
+      root.userData.widget = widget
+      widget.visible = this.lightView
+      setWidgetSelected(widget, obj.id === this.selectedId)
     }
   }
 
@@ -546,12 +567,15 @@ export class SceneEngine {
 }
 
 // Light groups have no geometry/material of their own, but the pick-marker
-// Mesh added under each light group (Task 3) IS caught here — traverse finds
-// it and disposes its geometry/material like any other mesh.
+// Mesh added under each light group IS caught here — traverse finds it and
+// disposes its geometry/material like any other mesh. The Light-View widget
+// (Task 3) is mostly Line/LineSegments/LineLoop, not Mesh — isLine covers all
+// three (LineSegments and LineLoop both extend Line) so they're disposed here
+// too, alongside the ArrowHelper's cone (a Mesh) and shaft (a Line).
 function disposeTree(root: THREE.Object3D): void {
   root.traverse((c) => {
-    const m = c as THREE.Mesh
-    if (m.isMesh) {
+    const m = c as THREE.Mesh | THREE.Line
+    if ((m as THREE.Mesh).isMesh || (m as THREE.Line).isLine) {
       m.geometry?.dispose()
       const mats = Array.isArray(m.material) ? m.material : [m.material]
       mats.forEach((x) => {
