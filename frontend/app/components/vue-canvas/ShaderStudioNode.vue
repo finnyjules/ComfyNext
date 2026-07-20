@@ -58,6 +58,11 @@ const shouldLoop = computed(() => animated.value || sourceAnimated.value)
 // are in the temporal dead zone until their statement runs, unlike the hoisted
 // `function` declarations, so this order is load-bearing, not stylistic.
 let raf = 0, start = 0, inFlight = false
+// Set while bakeOutput holds the shared shaderFx canvas. renderFrame is async now
+// (it awaits getFrame), so a preview frame suspended at its await can resume mid-bake
+// and overwrite the canvas between bake's render() and its toBlob() read — corrupting
+// the blob. cancelAnimationFrame only stops FUTURE scheduling, not an in-flight frame.
+let baking = false
 
 watch([sourceKind, ownSourceUrl], async ([kind, ownUrl]) => {
   resolved.value = null
@@ -87,6 +92,9 @@ async function renderFrame(t01: number) {
   if (el.width !== w || el.height !== h) { el.width = w; el.height = h }
   try {
     const base = await src.getFrame(t01, w, h)
+    // A bake may have started while this frame was suspended at the await above —
+    // bail before touching the shared canvas so we can't corrupt the baked blob.
+    if (baking) return
     // The clock is normalized, but motion tracks and u_time are in seconds.
     const dur = clockDuration()
     const t = t01 * dur
@@ -133,24 +141,30 @@ function startLoop() {
 // at output resolution, with the input re-resolved fresh (picks up an upstream
 // studio's just-published output during a cascade).
 async function bakeOutput(): Promise<Blob | null> {
-  let src = resolved.value
-  // Re-resolve so a cascade picks up an upstream studio's just-published output;
-  // fall back to the already-resolved source so the bake never no-ops.
-  const kind = sourceKind.value
-  if (kind?.kind === 'live') src = makeLiveSource(kind.source)
-  else {
-    const url = kind?.kind === 'url' ? kind.url : ownSourceUrl.value
-    if (url) { try { src = makeImageSource(await loadImage(url)) } catch { /* keep previous */ } }
-  }
-  if (!src) { console.warn('[shader-studio] bake: no input for', props.id); return null }
-  cancelAnimationFrame(raf)   // pause preview so it can't overwrite the shared output canvas
+  // `baking` (set before any await) makes an in-flight preview frame bail; the
+  // cancelAnimationFrame stops FUTURE ones. Both are needed — see `let baking`.
+  // The whole body is inside try/finally so `baking` is always cleared and the
+  // preview always restarts, even on the no-input early return.
+  baking = true
+  cancelAnimationFrame(raf)
   try {
+    let src = resolved.value
+    // Re-resolve so a cascade picks up an upstream studio's just-published output;
+    // fall back to the already-resolved source so the bake never no-ops.
+    const kind = sourceKind.value
+    if (kind?.kind === 'live') src = makeLiveSource(kind.source)
+    else {
+      const url = kind?.kind === 'url' ? kind.url : ownSourceUrl.value
+      if (url) { try { src = makeImageSource(await loadImage(url)) } catch { /* keep previous */ } }
+    }
+    if (!src) { console.warn('[shader-studio] bake: no input for', props.id); return null }
     const { w, h } = outputDims(src.width, src.height, config.value.resolution || 1536, { upscale: true })
     const base = await src.getFrame(0, w, h)
     // REBASE (2026-07-19): resolver-fn form, effects[] stack — see the renderFrame note.
     const out = shaderFx.render(composePasses(config.value, effectDef, 0), base, w, h)
     return await new Promise<Blob | null>(res => out.toBlob(b => res(b), 'image/png'))
   } finally {
+    baking = false
     startLoop()
   }
 }
