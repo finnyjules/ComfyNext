@@ -73,3 +73,19 @@ export function applyMotion(cfg: GradientConfig, t: number): GradientConfig {
 function clamp01(v: number): number {
   return v < 0 ? 0 : v > 1 ? 1 : v
 }
+
+/** Mutate tracks so `track.layer` follows a layer moved from index `from` to `to`. */
+export function remapTracksOnReorder(tracks: MotionTrack[], from: number, to: number): void {
+  const move = (l: number): number => {
+    if (l === from) return to
+    if (from < to && l > from && l <= to) return l - 1
+    if (from > to && l >= to && l < from) return l + 1
+    return l
+  }
+  for (const t of tracks) t.layer = move(t.layer)
+}
+
+/** Return tracks with those on `removed` dropped and higher indices decremented. */
+export function dropTracksForLayer(tracks: MotionTrack[], removed: number): MotionTrack[] {
+  return tracks.filter(t => t.layer !== removed).map(t => ({ ...t, layer: t.layer > removed ? t.layer - 1 : t.layer }))
+}
