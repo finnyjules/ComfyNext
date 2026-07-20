@@ -598,7 +598,51 @@ async function recordFrameToAssets(blob: Blob) {
   }
 }
 
+// Composite the full stack at master time `t` (seconds): pull every animated slot to
+// its phase for `t`, then paint. Used by the video export so each baked frame reflects
+// that instant of the animation.
+async function renderCompositeAtTime(t: number): Promise<HTMLCanvasElement | null> {
+  const animated = wiredLayers.value.filter(l => l.live && l.live.duration > 0)
+  await Promise.all(animated.map(l => pullLiveFrame(l, slotPhase01(t, l.live!.duration))))
+  return exportCompositeCanvas()
+}
+
+// Export an animated Frame as an mp4 (reuses the studios' bake→encode pipeline). Renders
+// N frames over the master clock, encodes server-side, downloads the file, and records it
+// to Assets. The live preview loop is paused during the bake so it can't interleave pulls.
+async function downloadVideo() {
+  const mc = masterClock.value
+  if (!mc || mc.duration <= 0) return
+  stopAnim()
+  try {
+    const first = await renderCompositeAtTime(0)
+    if (!first) return
+    const W = first.width, H = first.height
+    const total = Math.max(1, Math.round(mc.fps * mc.duration))
+    const { ensureSpaceTypeBake } = await import('~/lib/spacetype/bake')
+    const bakeCfg = { fps: mc.fps, loopDuration: mc.duration, W, H, seed: 'frame', sig: JSON.stringify({ id: props.id, n: total, w: W, h: H }) }
+    const bake = await ensureSpaceTypeBake(bakeCfg as any, undefined, {
+      renderFrame: async (i) => {
+        const cv = await renderCompositeAtTime(i / mc.fps)
+        return await new Promise<Blob>((res, rej) => cv ? cv.toBlob(b => b ? res(b) : rej(new Error('toBlob failed')), 'image/png') : rej(new Error('no composite')))
+      },
+    })
+    const res = await fetch('/sailor/spacetype_encode', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ frames: bake.frames, fps: mc.fps, width: W, height: H }) })
+    const data = await res.json().catch(() => ({}))
+    if (!data.filename) { console.error('[Frame] video encode failed', data); return }
+    await recordAsset(activeTab.value?.projectUuid, 'video', data.filename)
+    const vres = await fetch(`/view?${new URLSearchParams({ filename: data.filename, type: 'input' })}`)
+    const blob = await vres.blob()
+    const obj = URL.createObjectURL(blob)
+    const a = document.createElement('a'); a.href = obj; a.download = `frame-${props.id}.mp4`
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(obj)
+  } catch (err) { console.error('[Frame] video export failed:', err) }
+  finally { startAnim() }
+}
+
 async function downloadImage() {
+  // An animated Frame downloads as a video over its master clock.
+  if (hasAnimatedSlot.value) { await downloadVideo(); return }
   const triggerDownload = (obj: string) => {
     const a = document.createElement('a'); a.href = obj; a.download = `frame-${props.id}.png`
     document.body.appendChild(a); a.click(); a.remove()
