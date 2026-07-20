@@ -334,4 +334,53 @@ describe('scene3d jitter modifier', () => {
     const jittered = applyModifiers(geometryFor('box'), { jitter: 0.1, subdivide: 2 })
     expect(jittered.getAttribute('position').count).toBeGreaterThan(plain.getAttribute('position').count)
   })
+
+  it('moves coincident vertices together (watertight)', () => {
+    const src = geometryFor('box')
+    const out = applyModifiers(src.clone(), { jitter: 0.2, jitterSeed: 7 })
+
+    // Group indices of a fresh, unjittered box by their original position, so
+    // the grouping is independent of whatever `out` did to them.
+    const original = geometryFor('box')
+    const origPos = original.getAttribute('position')
+    const key = (x: number, y: number, z: number) =>
+      `${x.toFixed(4)},${y.toFixed(4)},${z.toFixed(4)}`
+    const groups = new Map<string, number[]>()
+    for (let i = 0; i < origPos.count; i++) {
+      const k = key(origPos.getX(i), origPos.getY(i), origPos.getZ(i))
+      const list = groups.get(k) ?? []
+      list.push(i)
+      groups.set(k, list)
+    }
+
+    const outPos = out.getAttribute('position')
+    expect(outPos.count).toBe(origPos.count) // jitter alone does not re-index or subdivide
+
+    let sawSharedGroup = false
+    let sawMovement = false
+    for (const indices of groups.values()) {
+      if (indices.length >= 2) {
+        sawSharedGroup = true
+        const [first, ...rest] = indices
+        const fx = outPos.getX(first!), fy = outPos.getY(first!), fz = outPos.getZ(first!)
+        for (const idx of rest) {
+          expect(outPos.getX(idx)).toBe(fx)
+          expect(outPos.getY(idx)).toBe(fy)
+          expect(outPos.getZ(idx)).toBe(fz)
+        }
+      }
+      const i0 = indices[0]!
+      if (
+        outPos.getX(i0) !== origPos.getX(i0) ||
+        outPos.getY(i0) !== origPos.getY(i0) ||
+        outPos.getZ(i0) !== origPos.getZ(i0)
+      ) {
+        sawMovement = true
+      }
+    }
+
+    // A box's 24 position entries collapse to 8 unique corners, so this must hold.
+    expect(sawSharedGroup).toBe(true)
+    expect(sawMovement).toBe(true)
+  })
 })
