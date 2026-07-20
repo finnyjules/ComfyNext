@@ -74,14 +74,25 @@ export function roundedPolyGeometry(
   const edge = 2 * radius * Math.sin(Math.PI / n)
   // Vertical-edge fillet and rim bevel must both fit inside the inradius or the
   // extrude self-intersects; clamp conservatively so extreme sliders stay valid.
-  const rc = Math.min(cornerRadius, edge * 0.49, inradius * 0.6)
-  const bevel = Math.min(cornerRadius, 0.49, Math.max(0, inradius - rc) * 0.9)
+  const rcNominal = Math.min(cornerRadius, edge * 0.49, inradius * 0.6)
+  const bevel = Math.min(cornerRadius, 0.49, Math.max(0, inradius - rcNominal) * 0.9)
   const sidesSeg = Math.max(1, Math.round(cornerSides))
+
+  // The bevel must offset OUTWARD (ExtrudeGeometry's default) — that's the only
+  // direction verified crossing-free for the rim ring at low side counts; an
+  // inward offset folds the ring into a bowtie. So the base contour is shrunk
+  // by `bevel` up front: the outward bevel then brings the vertical wall back
+  // out to the nominal radius (baseR + bevel = radius), and the flat cap sits
+  // inset at baseR as a proper rounded rim.
+  const baseR = Math.max(1e-3, radius - bevel)
+  const baseInradius = baseR * Math.cos(Math.PI / n)
+  const baseEdge = 2 * baseR * Math.sin(Math.PI / n)
+  const rc = Math.min(cornerRadius, baseEdge * 0.49, baseInradius * 0.6)
 
   const corners: THREE.Vector2[] = []
   for (let k = 0; k < n; k++) {
     const a = baseAngle + (k / n) * Math.PI * 2
-    corners.push(new THREE.Vector2(Math.cos(a) * radius, Math.sin(a) * radius))
+    corners.push(new THREE.Vector2(Math.cos(a) * baseR, Math.sin(a) * baseR))
   }
   const shape = new THREE.Shape()
   for (let k = 0; k < n; k++) {
@@ -105,9 +116,9 @@ export function roundedPolyGeometry(
     bevelSegments: sidesSeg,
     bevelSize: bevel,
     bevelThickness: bevel,
-    bevelOffset: -bevel,       // ExtrudeGeometry's bevel offsets outward by default;
-                                // pull it back so the rounded rim stays inside the
-                                // shape's own silhouette instead of ballooning past it
+    // bevelOffset left at its default (0 → outward). See the baseR comment above:
+    // shrinking the base contour is what keeps the outward bevel at the nominal
+    // radius instead of ballooning past it.
     curveSegments: sidesSeg,
     steps: 1,
   })

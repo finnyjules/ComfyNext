@@ -73,4 +73,59 @@ describe('roundedPolyGeometry', () => {
     expect(g.getAttribute('position').count).toBeGreaterThan(0)
     expect(finite(g)).toBe(true)
   })
+
+  /** Every side/rim triangle's face normal must point away from the Y axis
+   *  (outward), not inward. A self-intersecting bevel ring (a folded bowtie)
+   *  produces triangles whose normals point back toward the axis (dot with
+   *  the outward radial direction near -1); this catches that regression. */
+  const assertRimFacesOutward = (g: THREE.BufferGeometry) => {
+    const geo = g.index ? g.toNonIndexed() : g
+    const pos = geo.getAttribute('position')
+    const pA = new THREE.Vector3(), pB = new THREE.Vector3(), pC = new THREE.Vector3()
+    const eAB = new THREE.Vector3(), eAC = new THREE.Vector3(), normal = new THREE.Vector3()
+    const centroid = new THREE.Vector3(), rad = new THREE.Vector3()
+    let checked = 0
+    for (let i = 0; i < pos.count; i += 3) {
+      pA.fromBufferAttribute(pos, i)
+      pB.fromBufferAttribute(pos, i + 1)
+      pC.fromBufferAttribute(pos, i + 2)
+      eAB.subVectors(pB, pA)
+      eAC.subVectors(pC, pA)
+      normal.crossVectors(eAB, eAC).normalize()
+      if (normal.lengthSq() === 0 || Number.isNaN(normal.x)) continue
+      if (Math.abs(normal.y) >= 0.8) continue // cap/near-cap face, skip
+      centroid.set((pA.x + pB.x + pC.x) / 3, (pA.y + pB.y + pC.y) / 3, (pA.z + pB.z + pC.z) / 3)
+      rad.set(centroid.x, 0, centroid.z)
+      if (rad.lengthSq() < 1e-8) continue // on-axis, no meaningful radial direction
+      rad.normalize()
+      checked++
+      expect(normal.dot(rad)).toBeGreaterThan(-0.05)
+    }
+    expect(checked).toBeGreaterThan(0)
+  }
+
+  // cornerSides=1 (the lowest/coarsest bevel segmentation, same "extreme" style
+  // as the lathe tests above) is what actually exposes the fold: with a finer
+  // bevelSegments count the same self-intersecting ring can hide within the
+  // sampled triangles even though the ring is still folded.
+  it.each([
+    [3, 0.5, 0.2],
+    [3, 0.5, 0.49],
+    [3, 0.5, 0.05],   // reliably folds under the old inward bevelOffset
+    [4, 0.5, 0.2],
+    [4, 0.5, 0.49],
+    [6, 0.5, 0.2],    // reliably folds under the old inward bevelOffset
+    [6, 0.5, 0.49],   // reliably folds under the old inward bevelOffset
+    [4, 0.55, 0.2],   // pyramid case
+  ])('keeps every side/rim face pointing outward (sides=%d, radius=%d, cornerRadius=%d)', (sides, radius, cornerRadius) => {
+    const g = roundedPolyGeometry(sides, radius, cornerRadius, 1, Math.PI / 2)
+    assertRimFacesOutward(g)
+  })
+
+  it('does not inflate the hex prism width past the nominal radius', () => {
+    const g = roundedPolyGeometry(6, 0.5, 0.15, 3, Math.PI / 2)
+    const [w, , d] = size(g)
+    expect(w).toBeLessThanOrEqual(1.02)
+    expect(d).toBeLessThanOrEqual(1.02)
+  })
 })
