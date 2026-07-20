@@ -24,9 +24,9 @@ function onDrop(to: number) {
 
 <template>
   <!-- Panel surface — matches the right-column StudioSection cards (frosted
-       translucent fill + hairline border), and hugs its content top-aligned so it
-       reads as a card in the same family, not a heavy full-height box. -->
-  <div class="flex min-h-0 max-h-full flex-col self-start rounded-lg border border-white/[0.10] bg-white/[0.04] p-2.5">
+       translucent fill + hairline border), filling the aside column like the Frame
+       compositor / Smart Layout layer panels. -->
+  <div class="flex h-full w-full min-h-0 flex-col rounded-lg border border-white/[0.10] bg-white/[0.04] p-2.5">
     <div class="mb-2 flex items-center justify-between">
       <span class="text-[11px] font-medium text-white/50">Layers</span>
       <button v-if="layers.length < max" aria-label="Add layer"
