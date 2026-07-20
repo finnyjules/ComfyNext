@@ -2903,6 +2903,15 @@ function handleOpenSpaceType(e: Event) {
   const detail = (e as CustomEvent).detail
   if (detail?.nodeId) spaceTypeOpenForId.value = String(detail.nodeId)
 }
+// Close the Space Type modal. Done in a method, not an inline template handler, because
+// `window` is NOT in a Vue template's expression scope — the old inline
+// `window.dispatchEvent(...)` threw "undefined.dispatchEvent", which aborted before the
+// event fired. That left the node's gate.editing stuck true, so the card (and its downstream
+// Frame) froze until a full reload. The dispatch tells SpaceTypeNode to resume its preview.
+function closeSpaceTypeEditor() {
+  spaceTypeOpenForId.value = null
+  window.dispatchEvent(new CustomEvent('sailor:closeSpaceType'))
+}
 
 // Gradient Studio editor open-state (same pattern as Space Type).
 const gradientStudioOpenForId = ref<string | null>(null)
@@ -7308,7 +7317,7 @@ defineExpose({
         :node-id="spaceTypeOpenForId"
         :nodes="nodes as any[]"
         :edges="edges as any[]"
-        @close="spaceTypeOpenForId = null; window.dispatchEvent(new CustomEvent('sailor:closeSpaceType'))"
+        @close="closeSpaceTypeEditor"
       />
     </Teleport>
 
