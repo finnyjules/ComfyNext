@@ -17,7 +17,7 @@ import {
 } from 'lucide-vue-next'
 import {
   parseDoc, serializeDoc, createPrimitive, createGlbObject, createLight,
-  LIGHTING_PRESETS, MATERIAL_TYPES, MATERIAL_DEFAULTS, LIGHT_KINDS, LIGHT_DEFAULTS, gradientAngles, gradientStopsOf,
+  LIGHTING_PRESETS, MATERIAL_TYPES, MATERIAL_DEFAULTS, LIGHT_KINDS, LIGHT_DEFAULTS, lightIntensityMax, gradientAngles, gradientStopsOf,
   type SceneDoc, type SceneObject, type PrimitiveKind, type MaterialType, type GradientStop, type LightKind, type LightObject,
 } from '~/lib/scene3d/config'
 import { MATCAP_IDS, matcapThumb, onTextureError } from '~/lib/scene3d/materials'
@@ -233,6 +233,9 @@ function lightParam<K extends keyof typeof LIGHT_DEFAULTS>(key: K) {
 }
 const lightColor = lightParam('color')
 const lightIntensity = lightParam('intensity')
+// Point/spot are physical (candela, inverse-square), so their useful range runs
+// far higher than an area light's — scale the slider ceiling to the light kind.
+const lightIntensityMaxValue = computed(() => lightIntensityMax(selectedLight.value?.light ?? 'point'))
 const lightDistance = lightParam('distance')
 const lightDecay = lightParam('decay')
 const lightAngle = lightParam('angle')
@@ -1250,7 +1253,7 @@ function onClose() {
                 <span class="text-[11px] text-white/55">Color</span>
                 <StudioColor v-model="lightColor" />
               </div>
-              <StudioSlider v-model="lightIntensity" label="Intensity" hint="Brightness of this light" :min="0" :max="20" :step="0.1" />
+              <StudioSlider v-model="lightIntensity" label="Intensity" hint="Brightness of this light — point/spot use physical falloff, so they scale much higher" :min="0" :max="lightIntensityMaxValue" :step="1" />
 
               <template v-if="selectedLight?.light === 'point' || selectedLight?.light === 'spot'">
                 <StudioSlider v-model="lightDistance" label="Distance" hint="How far the light reaches — 0 means infinite" :min="0" :max="30" :step="0.5" />

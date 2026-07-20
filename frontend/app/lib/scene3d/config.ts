@@ -137,6 +137,17 @@ export const LIGHT_DEFAULTS = {
   angle: Math.PI / 6, penumbra: 0.3, width: 2, height: 2, castShadow: false,
 } as const
 
+// Point/spot lights are physical (candela, inverse-square decay), so they need
+// much larger intensities than a directional/area light to read bright at a
+// normal distance. Per-kind spawn defaults + slider ceilings keep each type in a
+// range that feels right instead of a shared scale where point/spot stay faint.
+export function lightIntensityDefault(kind: LightKind): number {
+  return kind === 'rect' ? 8 : 80
+}
+export function lightIntensityMax(kind: LightKind): number {
+  return kind === 'rect' ? 60 : 600
+}
+
 const DEFAULT_MATERIAL: SceneMaterial = { type: 'standard', color: '#9aa3af', roughness: 0.6, metalness: 0.0 }
 
 /** Per-type parameter defaults — the single source of truth shared by the
@@ -279,7 +290,7 @@ export function createLight(kind: LightKind, existing: SceneObject[]): LightObje
     id: newId(), name: numberedName(label, existing), kind: 'light', light: kind,
     visible: true, position: [2.5, 3, 2.5], rotation: [0, 0, 0], scale: [1, 1, 1],
     material: { ...DEFAULT_MATERIAL }, // dummy, never rendered; kept for type uniformity
-    color: LIGHT_DEFAULTS.color, intensity: LIGHT_DEFAULTS.intensity,
+    color: LIGHT_DEFAULTS.color, intensity: lightIntensityDefault(kind),
     distance: LIGHT_DEFAULTS.distance, decay: LIGHT_DEFAULTS.decay,
     angle: LIGHT_DEFAULTS.angle, penumbra: LIGHT_DEFAULTS.penumbra,
     width: LIGHT_DEFAULTS.width, height: LIGHT_DEFAULTS.height,

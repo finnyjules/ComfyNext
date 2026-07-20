@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   defaultDoc, createPrimitive, createGlbObject, serializeDoc, parseDoc, PRIMITIVE_KINDS, MATERIAL_TYPES,
   gradientAngles, gradientDirection, gradientStopsOf, MATERIAL_DEFAULTS,
-  createLight, LIGHT_KINDS, LIGHT_DEFAULTS,
+  createLight, LIGHT_KINDS, LIGHT_DEFAULTS, lightIntensityDefault, lightIntensityMax,
   type GradientStop, type SceneMaterial,
 } from '~/lib/scene3d/config'
 import { PRIM_GROUPS } from '~/lib/scene3d/primGroups'
@@ -297,6 +297,16 @@ describe('scene3d lights model', () => {
       expect(l.material).toBeTruthy()
       expect(l.position.some((c) => c !== 0)).toBe(true)
     }
+  })
+
+  it('scales point/spot intensity higher than area (physical candela falloff)', () => {
+    // point/spot use inverse-square decay, so they need far larger values than a
+    // no-decay area light to read bright — spawn defaults and slider ceilings reflect that.
+    expect(lightIntensityDefault('point')).toBeGreaterThan(lightIntensityDefault('rect'))
+    expect(lightIntensityDefault('spot')).toBeGreaterThan(lightIntensityDefault('rect'))
+    expect(lightIntensityMax('point')).toBeGreaterThan(lightIntensityMax('rect'))
+    expect(createLight('spot', []).intensity).toBe(lightIntensityDefault('spot'))
+    expect(createLight('rect', []).intensity).toBe(lightIntensityDefault('rect'))
   })
 
   it('numbers duplicate light names', () => {
