@@ -47,3 +47,30 @@ describe('roundedLatheGeometry', () => {
     expect(plain.getAttribute('position').count).toBeGreaterThan(0)
   })
 })
+
+describe('roundedPolyGeometry', () => {
+  it('builds a valid rounded hexagonal prism with normals and uv', () => {
+    const g = roundedPolyGeometry(6, 0.5, 0.15, 3, Math.PI / 2)
+    expect(g.getAttribute('position').count).toBeGreaterThan(0)
+    expect(g.getAttribute('normal')).toBeTruthy()
+    expect(g.getAttribute('uv')).toBeTruthy()
+    expect(finite(g)).toBe(true)
+    const [w, h, d] = size(g)
+    expect(h).toBeCloseTo(1, 2)                 // unit height on Y
+    expect(w).toBeLessThanOrEqual(1.05)
+    expect(d).toBeLessThanOrEqual(1.05)
+  })
+
+  it('stays finite for a triangular prism at the extreme corner radius', () => {
+    const g = roundedPolyGeometry(3, 0.5, 0.49, 8, Math.PI / 2)
+    expect(g.getAttribute('position').count).toBeGreaterThan(0)
+    expect(finite(g)).toBe(true)
+    expect(size(g)[1]).toBeCloseTo(1, 2)
+  })
+
+  it('handles a 4-sided pyramid base angle without NaNs', () => {
+    const g = roundedPolyGeometry(4, 0.55, 0.2, 4, Math.PI / 2 + Math.PI / 4)
+    expect(g.getAttribute('position').count).toBeGreaterThan(0)
+    expect(finite(g)).toBe(true)
+  })
+})

@@ -61,3 +61,58 @@ export function roundedLatheGeometry(
   pts.push(topAxis)
   return new THREE.LatheGeometry(pts, Math.max(3, Math.round(radialSegments)), 0, phiLength)
 }
+
+/** A straight n-gon prism with rounded vertical edges (rounded-corner 2D shape)
+ *  and a rounded rim (extrude bevel). Taper is intentionally dropped: rounding
+ *  wins, so a rounded pyramid reads as a rounded prism. Centred on the origin,
+ *  height 1 on Y. baseAngle sets the first corner's angle in the XZ footprint. */
+export function roundedPolyGeometry(
+  sides: number, radius: number, cornerRadius: number, cornerSides: number, baseAngle: number,
+): THREE.BufferGeometry {
+  const n = Math.max(3, Math.round(sides))
+  const inradius = radius * Math.cos(Math.PI / n)
+  const edge = 2 * radius * Math.sin(Math.PI / n)
+  // Vertical-edge fillet and rim bevel must both fit inside the inradius or the
+  // extrude self-intersects; clamp conservatively so extreme sliders stay valid.
+  const rc = Math.min(cornerRadius, edge * 0.49, inradius * 0.6)
+  const bevel = Math.min(cornerRadius, 0.49, Math.max(0, inradius - rc) * 0.9)
+  const sidesSeg = Math.max(1, Math.round(cornerSides))
+
+  const corners: THREE.Vector2[] = []
+  for (let k = 0; k < n; k++) {
+    const a = baseAngle + (k / n) * Math.PI * 2
+    corners.push(new THREE.Vector2(Math.cos(a) * radius, Math.sin(a) * radius))
+  }
+  const shape = new THREE.Shape()
+  for (let k = 0; k < n; k++) {
+    const cur = corners[k]!
+    const prev = corners[(k - 1 + n) % n]!
+    const next = corners[(k + 1) % n]!
+    const toPrev = new THREE.Vector2().subVectors(prev, cur).normalize()
+    const toNext = new THREE.Vector2().subVectors(next, cur).normalize()
+    const t1 = new THREE.Vector2().copy(cur).addScaledVector(toPrev, rc)
+    const t2 = new THREE.Vector2().copy(cur).addScaledVector(toNext, rc)
+    if (k === 0) shape.moveTo(t1.x, t1.y)
+    else shape.lineTo(t1.x, t1.y)
+    if (rc > 1e-4) shape.quadraticCurveTo(cur.x, cur.y, t2.x, t2.y)
+  }
+  shape.closePath()
+
+  const depth = Math.max(1e-3, 1 - 2 * bevel)
+  const geo = new THREE.ExtrudeGeometry(shape, {
+    depth,
+    bevelEnabled: bevel > 1e-4,
+    bevelSegments: sidesSeg,
+    bevelSize: bevel,
+    bevelThickness: bevel,
+    bevelOffset: -bevel,       // ExtrudeGeometry's bevel offsets outward by default;
+                                // pull it back so the rounded rim stays inside the
+                                // shape's own silhouette instead of ballooning past it
+    curveSegments: sidesSeg,
+    steps: 1,
+  })
+  geo.rotateX(-Math.PI / 2)   // extrude axis Z becomes height Y
+  geo.center()                // recentre height on the origin
+  geo.computeVertexNormals()  // ExtrudeGeometry does not compute smooth normals
+  return geo
+}
