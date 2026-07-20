@@ -1,14 +1,15 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { Dices, Disc3, Droplets, Grid3x3, Lock, Palette, Plus, Shapes, Sparkles, Trash2, Unlock, X } from 'lucide-vue-next'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, toRaw, watch } from 'vue'
+import { Dices, Disc3, Droplets, Grid3x3, Lock, Palette, Plus, Shapes, Sparkles, Trash2, Unlock } from 'lucide-vue-next'
 import { gradientFx } from '~/lib/gradientfx/renderer'
 import { LIQUID_PRESETS, buildConfig, defaultConfig, liquidConfig, liquidPresetConfig, meshConfig, reroll, rippleConfig, stackConfig, type RerollScope } from '~/lib/gradientfx/randomize'
 import { MESH_MAX_POINTS, buildMeshPoints, defaultMesh } from '~/lib/gradientfx/mesh'
 import { randomSeed } from '~/lib/gradientfx/rng'
 import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
-import { ANIMATABLE } from '~/lib/gradientfx/motion'
+import { ANIMATABLE, dropTracksForLayer, remapTracksOnReorder } from '~/lib/gradientfx/motion'
 import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
+import StudioLayerStack from '~/components/vue-canvas/StudioLayerStack.vue'
 import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
 import BindableRow from '~/components/vue-canvas/studio/BindableRow.vue'
@@ -28,7 +29,7 @@ import { registerStudioParamBaker, unregisterStudioParamBaker } from '~/lib/stud
 import { effectiveColumns, makeLookupResolver } from '~/lib/collection/lookup'
 import SweepPopover from '~/components/vue-canvas/studio/SweepPopover.vue'
 import {
-  ASPECTS, BLEND_MODES, DEFAULT_FOCUS, DIRECTIONS, GRADIENT_DIRS, LAYOUTS, MAPPINGS, MIRROR_KINDS, RING_SHAPES, SHAPE_KINDS,
+  ASPECTS, BLEND_MODES, DEFAULT_FOCUS, DIRECTIONS, GRADIENT_DIRS, LAYER_MAX, LAYOUTS, MAPPINGS, MIRROR_KINDS, RING_SHAPES, SHAPE_KINDS,
   aspectRatio, cloneConfig, ensureConfigDefaults, type GradientConfig, type LayoutKind, type MeshConfig, type ShapeKind,
 } from '~/lib/gradientfx/types'
 
@@ -418,7 +419,7 @@ const locked = (key: string) => !!config.value.locks?.[key]
 
 // ── layers ──────────────────────────────────────────────────────────────────
 function addLayer() {
-  if (config.value.layers.length >= 2) return
+  if (config.value.layers.length >= LAYER_MAX) return
   const extra = buildConfig(randomSeed()).layers[0]!
   // Normal blend at partial opacity so the new layer is immediately visible over
   // layer 1 (a random dark palette under 'lighten' looked invisible — its controls
@@ -430,7 +431,39 @@ function addLayer() {
 function removeLayer(i: number) {
   if (config.value.layers.length <= 1) return
   config.value.layers.splice(i, 1)
+  config.value.motion.tracks = dropTracksForLayer(config.value.motion.tracks, i)
+  disabledOpacity.delete(i)
   activeLayer.value = Math.min(activeLayer.value, config.value.layers.length - 1)
+}
+// Shift motion tracks up when a layer is inserted at index `at` (duplicate).
+function remapTracksInsert(at: number) {
+  for (const t of config.value.motion.tracks) if (t.layer >= at) t.layer += 1
+}
+function duplicateLayer(i: number) {
+  if (config.value.layers.length >= LAYER_MAX) return
+  const clone = structuredClone(toRaw(config.value.layers[i]!))
+  config.value.layers.splice(i + 1, 0, clone)
+  remapTracksInsert(i + 1)
+  activeLayer.value = i + 1
+}
+function reorderLayer(from: number, to: number) {
+  const [moved] = config.value.layers.splice(from, 1)
+  config.value.layers.splice(to, 0, moved!)
+  remapTracksOnReorder(config.value.motion.tracks, from, to)
+  activeLayer.value = to
+}
+
+// Layer enable/disable modeled as opacity (LayerConfig has no `enabled` field): a
+// disabled layer's opacity is zeroed and its prior value remembered so toggling
+// back restores it. Layer 0 (base) is unaffected by opacity in the shader, so
+// toggling it visually does nothing — acceptable per the design brief.
+const disabledOpacity = new Map<number, number>()
+function layerEnabled(i: number) { return !disabledOpacity.has(i) }
+function toggleLayer(i: number) {
+  const L = config.value.layers[i]!
+  if (disabledOpacity.has(i)) { L.opacity = disabledOpacity.get(i)!; disabledOpacity.delete(i) }
+  else { disabledOpacity.set(i, L.opacity); L.opacity = 0 }
+  onEdit('layer.opacity', L.opacity)
 }
 
 // ── color stops ─────────────────────────────────────────────────────────────
@@ -661,6 +694,15 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
     agent-placeholder="Describe the look — e.g. warmer, more liquid, calmer…"
     @close="closeEditor"
   >
+    <template #aside>
+      <StudioLayerStack
+        :layers="config.layers.map((l, i) => ({ label: `Layer ${i + 1}`, enabled: layerEnabled(i) }))"
+        :active-index="activeLayer" :max="LAYER_MAX"
+        @select="activeLayer = $event"
+        @add="addLayer" @remove="removeLayer" @duplicate="duplicateLayer"
+        @reorder="reorderLayer" @toggle="toggleLayer" />
+    </template>
+
     <template #preview>
       <div class="relative flex h-full w-full items-center justify-center">
         <canvas ref="canvas" class="max-h-full max-w-full rounded-lg shadow-2xl" />
@@ -952,15 +994,9 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
         </template>
       </StudioSection>
 
-      <!-- Layers -->
-      <StudioSection title="Layers" :open="false">
-        <div class="mb-2 flex gap-1">
-          <button v-for="(_, i) in config.layers" :key="i" class="flex-1 rounded px-2 py-1 text-xs transition"
-                  :class="activeLayer === i ? 'bg-white/20 text-white' : 'bg-white/[0.04] text-white/55 hover:bg-white/10'"
-                  @click="activeLayer = i">{{ i + 1 }}</button>
-          <button v-if="config.layers.length < 2" class="rounded bg-white/[0.04] px-2 py-1 text-white/55 hover:bg-white/10" @click="addLayer"><Plus class="h-3.5 w-3.5" /></button>
-          <button v-if="config.layers.length > 1" class="rounded bg-white/[0.04] px-2 py-1 text-white/55 hover:bg-white/10" @click="removeLayer(activeLayer)"><X class="h-3.5 w-3.5" /></button>
-        </div>
+      <!-- Layer (blend/opacity for the active non-base layer; add/remove/reorder/select
+           now live in the aside StudioLayerStack) -->
+      <StudioSection title="Layer" :open="false">
         <template v-if="activeLayer > 0">
           <BindableRow control-key="layer.blend" label="Blend" kind="select" :options="[...BLEND_MODES]" :bound="boundColumnFor('layer.blend')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
             <label class="mb-1 block text-xs text-white/60">Blend</label>
