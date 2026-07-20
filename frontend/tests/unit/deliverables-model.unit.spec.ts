@@ -1,0 +1,76 @@
+import { describe, it, expect } from 'vitest'
+import {
+  addSingle, group, ungroup, rename, remove, reorder, reorderWithinSet,
+  removeFromSet, dissolveIfUnderTwo, isPresent, refKey, makeDeliverableId,
+  type ArtifactRef, type DeliverableItem,
+} from '~/lib/deliverables/model'
+
+const ref = (f: string, sub = ''): ArtifactRef => ({ filename: f, subfolder: sub, media: 'image' })
+let seq = 0
+const mk = () => makeDeliverableId(++seq)
+
+describe('deliverables model', () => {
+  it('addSingle appends and defaults name from filename', () => {
+    const list = addSingle([], ref('hero.png'), '')
+    expect(list).toHaveLength(1)
+    expect(list[0]).toMatchObject({ kind: 'single', name: 'hero.png' })
+  })
+
+  it('addSingle is a no-op for an already-present ref (same subfolder+filename)', () => {
+    const a = addSingle([], ref('hero.png', 'out'), 'Hero')
+    const b = addSingle(a, ref('hero.png', 'out'), 'Hero again')
+    expect(b).toBe(a) // unchanged reference
+  })
+
+  it('isPresent detects refs inside sets', () => {
+    let list = addSingle([], ref('a.png'), 'A')
+    list = addSingle(list, ref('b.png'), 'B')
+    list = group(list, [list[0]!.id, list[1]!.id], 'Set', mk)
+    expect(isPresent(list, ref('a.png'))).toBe(true)
+    expect(isPresent(list, ref('c.png'))).toBe(false)
+  })
+
+  it('group collects singles into a set at the first member position and requires >=2', () => {
+    let list = addSingle([], ref('a.png'), 'A')
+    list = addSingle(list, ref('b.png'), 'B')
+    const one = group(list, [list[0]!.id], 'Solo', mk)
+    expect(one).toBe(list) // <2 valid singles → unchanged
+    const set = group(list, [list[0]!.id, list[1]!.id], 'Pair', mk)
+    expect(set).toHaveLength(1)
+    expect(set[0]).toMatchObject({ kind: 'set', name: 'Pair' })
+    expect((set[0] as any).items.map((r: ArtifactRef) => r.filename)).toEqual(['a.png', 'b.png'])
+  })
+
+  it('ungroup restores members as top-level singles at the set position', () => {
+    let list = addSingle([], ref('a.png'), 'A')
+    list = addSingle(list, ref('b.png'), 'B')
+    list = group(list, [list[0]!.id, list[1]!.id], 'Pair', mk)
+    const flat = ungroup(list, list[0]!.id)
+    expect(flat).toHaveLength(2)
+    expect(flat.every(i => i.kind === 'single')).toBe(true)
+  })
+
+  it('removeFromSet dissolves a set that drops to one member', () => {
+    let list = addSingle([], ref('a.png'), 'A')
+    list = addSingle(list, ref('b.png'), 'B')
+    list = group(list, [list[0]!.id, list[1]!.id], 'Pair', mk)
+    const after = removeFromSet(list, list[0]!.id, 1, mk)
+    expect(after).toHaveLength(1)
+    expect(after[0]!.kind).toBe('single')
+  })
+
+  it('reorder moves an item', () => {
+    let list = addSingle([], ref('a.png'), 'A')
+    list = addSingle(list, ref('b.png'), 'B')
+    const moved = reorder(list, 0, 1)
+    expect(moved.map(i => i.name)).toEqual(['B', 'A'])
+  })
+
+  it('rename and remove are pure', () => {
+    const list = addSingle([], ref('a.png'), 'A')
+    const renamed = rename(list, list[0]!.id, 'Zed')
+    expect(renamed[0]!.name).toBe('Zed')
+    expect(list[0]!.name).toBe('A') // original untouched
+    expect(remove(renamed, renamed[0]!.id)).toHaveLength(0)
+  })
+})
