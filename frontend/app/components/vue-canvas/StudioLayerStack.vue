@@ -23,11 +23,12 @@ function onDrop(to: number) {
 </script>
 
 <template>
-  <!-- Panel surface — matches the Frame compositor / Smart Layout layer panels
-       (rounded card with its own border + fill) rather than floating on the modal. -->
-  <div class="flex h-full min-h-0 flex-col rounded-xl border border-white/[0.06] bg-[#121212] p-2.5">
+  <!-- Panel surface — matches the right-column StudioSection cards (frosted
+       translucent fill + hairline border), and hugs its content top-aligned so it
+       reads as a card in the same family, not a heavy full-height box. -->
+  <div class="flex min-h-0 max-h-full flex-col self-start rounded-lg border border-white/[0.10] bg-white/[0.04] p-2.5">
     <div class="mb-2 flex items-center justify-between">
-      <span class="text-xs font-medium text-white/70">Layers</span>
+      <span class="text-[11px] font-medium text-white/50">Layers</span>
       <button v-if="layers.length < max" aria-label="Add layer"
               class="rounded bg-white/[0.06] p-1 text-white/60 hover:text-white" @click="emit('add')">
         <Plus class="h-3.5 w-3.5" />
