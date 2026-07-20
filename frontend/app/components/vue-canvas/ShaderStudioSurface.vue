@@ -20,6 +20,7 @@ import { composePasses, type EffectTextureBundle } from '~/lib/shaderstudio/pass
 import { migrateShaderConfig } from '~/lib/shaderstudio/migrate'
 import { ANIMATABLE, applyMotion } from '~/lib/shaderstudio/motion'
 import { ADJUST_PRESETS, applyAdjustPreset } from '~/lib/shaderstudio/presets'
+import { exportClock, makeImageSource, makeLiveSource, motionConfigFor, resolveSourceKind, type ResolvedSource } from '~/lib/shaderstudio/resolve'
 import { loadImage } from '~/lib/shaderstudio/source'
 import { BLEND_MODES } from '~/lib/studio/blend'
 import { cloneConfig, defaultConfig, hydrateConfig, LAYER_MAX, newLayerId, outputDims, type MotionTrack, type ShaderStudioConfig, type StudioEffect } from '~/lib/shaderstudio/types'
@@ -47,7 +48,7 @@ function currentNode() { return props.nodes.find((n: any) => n.id === props.node
 
 const config = ref<ShaderStudioConfig>(defaultConfig())
 const catalog = ref<ShaderFxCatalog | null>(null)
-const baseImage = ref<HTMLImageElement | null>(null)
+const resolved = ref<ResolvedSource | null>(null)
 const canvas = ref<HTMLCanvasElement | null>(null)
 const glError = ref<string | null>(null)
 const baking = ref(false)
@@ -248,39 +249,85 @@ function texBundle(def: EffectDef | null, layer?: StudioEffect): EffectTextureBu
 
 // ── preview ──────────────────────────────────────────────────────────────────
 const animated = computed(() => (config.value.motion?.tracks?.length ?? 0) > 0)
-function renderFrame(t: number) {
+/** Animate when EITHER our own tracks run or the source itself moves (mirrors ShaderStudioNode). */
+const sourceAnimated = computed(() => (resolved.value?.duration ?? 0) > 0)
+const shouldLoop = computed(() => animated.value || sourceAnimated.value)
+
+/** Seconds per loop — the upstream source's clock when it has one, else our own. */
+function clockDuration(): number {
+  const src = resolved.value
+  if (src && src.duration > 0) return src.duration
+  return Math.max(0.1, config.value.motion.duration)
+}
+
+async function renderFrame(t01: number) {
   const el = canvas.value
   if (!el) return
-  const base = baseImage.value
-  if (!base) return
-  const { w, h } = outputDims(base.naturalWidth, base.naturalHeight, PREVIEW_MAX_W)
+  const src = resolved.value
+  if (!src) return
+  const { w, h } = outputDims(src.width, src.height, PREVIEW_MAX_W)
   if (el.width !== w || el.height !== h) { el.width = w; el.height = h }
   try {
-    const cfg = animated.value ? applyMotion(config.value, t) : config.value
+    const base = await src.getFrame(t01, w, h)
+    // A bake (generateImage/generateVideo) may have started while this frame was
+    // suspended at the await above — bail before touching the shared shaderFx
+    // canvas so a resumed preview frame can't corrupt the export's toBlob read.
+    if (baking.value) return
+    // The clock is normalized 0..1, but motion tracks and u_time run in seconds.
+    const dur = clockDuration()
+    const t = t01 * dur
+    // motionConfigFor is REQUIRED, not cosmetic: applyMotion divides by
+    // cfg.motion.duration, so passing upstream-derived seconds against our own
+    // (different) duration would run every track at the wrong rate.
+    const cfg = animated.value ? applyMotion(motionConfigFor(config.value, dur), t) : config.value
     const passes = composePasses(cfg, id => catalog.value?.effects.find(e => e.id === id) ?? null, t, (def, layer) => texBundle(def, layer))
     el.getContext('2d')!.drawImage(shaderFx.render(passes, base, w, h), 0, 0)
     glError.value = null
   } catch (e: any) { glError.value = String(e?.message ?? e) }
 }
 
-let raf = 0, start = 0
+let raf = 0, start = 0, inFlight = false
 function loop(ts: number) {
   if (!start) start = ts
-  renderFrame(((ts - start) / 1000) % Math.max(0.1, config.value.motion.duration))
+  // getFrame is async; skip a tick rather than queueing, so a slow upstream
+  // degrades to a lower frame rate instead of unbounded lag.
+  if (!inFlight) {
+    inFlight = true
+    const dur = clockDuration()
+    void renderFrame((((ts - start) / 1000) % dur) / dur).finally(() => { inFlight = false })
+  }
   raf = requestAnimationFrame(loop)
 }
-function startPreview() { cancelAnimationFrame(raf); start = 0; if (animated.value) raf = requestAnimationFrame(loop); else renderFrame(0) }
-function stopPreview() { cancelAnimationFrame(raf); raf = 0 }
-watch(config, () => { if (!animated.value) renderFrame(0) }, { deep: true })
-watch(animated, startPreview)
+function startPreview() {
+  cancelAnimationFrame(raf); start = 0; inFlight = false
+  if (shouldLoop.value) raf = requestAnimationFrame(loop)
+  else void renderFrame(0)
+}
+function stopPreview() { cancelAnimationFrame(raf); raf = 0; inFlight = false }
+watch(config, () => { if (!shouldLoop.value) void renderFrame(0) }, { deep: true })
+watch(shouldLoop, startPreview)
 
 // ── source loading ────────────────────────────────────────────────────────────
-const sourceUrl = computed(() => props.wiredUrl ?? config.value.source.dataUrl
-  ?? (config.value.source.asset ? `/view?${new URLSearchParams({ filename: config.value.source.asset, type: 'input' })}` : null))
-watch(sourceUrl, async (url) => {
-  baseImage.value = null
+// Descriptor first (pure), then load if it is a file — mirrors ShaderStudioNode's
+// resolution so the card and modal never disagree about what's wired in. A live
+// upstream studio (e.g. Gradient Studio with flow.speed > 0) wins over the node's
+// own file-based fallbacks. `wiredUrl` is intentionally NOT consulted here — it
+// was the old image-only resolution and is null for a live upstream studio.
+const sourceKind = computed(() =>
+  resolveSourceKind(props.nodeId, props.nodes ?? [], props.edges ?? []))
+
+const ownSourceUrl = computed(() => config.value.source.dataUrl
+  ?? (config.value.source.asset
+    ? `/view?${new URLSearchParams({ filename: config.value.source.asset, type: 'input' })}`
+    : null))
+
+watch([sourceKind, ownSourceUrl], async ([kind, ownUrl]) => {
+  resolved.value = null
+  if (kind?.kind === 'live') { resolved.value = makeLiveSource(kind.source); startPreview(); return }
+  const url = kind?.kind === 'url' ? kind.url : ownUrl
   if (!url) return
-  try { baseImage.value = await loadImage(url); startPreview() } catch { glError.value = 'Could not load source image' }
+  try { resolved.value = makeImageSource(await loadImage(url)); startPreview() }
+  catch { glError.value = 'Could not load source image' }
 }, { immediate: true })
 
 function onUpload(ev: Event) {
@@ -393,10 +440,13 @@ function saveConfig() { const n = currentNode(); if (!n) return; n.data ||= {}; 
 function closeEditor() { try { saveConfig() } catch (e) { console.error('[shader-studio] saveConfig failed', e) } emit('close') }
 
 // ── outputs (mirror Gradient Studio) ───────────────────────────────────────────
-async function renderBlob(t: number): Promise<Blob> {
-  const base = baseImage.value!
-  const { w, h } = outputDims(base.naturalWidth, base.naturalHeight, config.value.resolution, { upscale: true })
-  const cfg = animated.value ? applyMotion(config.value, t) : config.value
+async function renderBlob(t01: number): Promise<Blob> {
+  const src = resolved.value!
+  const { w, h } = outputDims(src.width, src.height, config.value.resolution, { upscale: true })
+  const dur = clockDuration()
+  const t = t01 * dur
+  const cfg = animated.value ? applyMotion(motionConfigFor(config.value, dur), t) : config.value
+  const base = await src.getFrame(t01, w, h)
   shaderFx.render(composePasses(cfg, id => catalog.value?.effects.find(e => e.id === id) ?? null, t, (def, layer) => texBundle(def, layer)), base, w, h)
   const c = shaderFx.outputCanvas!
   return await new Promise<Blob>((res, rej) => c.toBlob(b => (b ? res(b) : rej(new Error('toBlob failed'))), 'image/png', 0.95))
@@ -434,7 +484,7 @@ async function renderBlobWithOverrides(overrides: Record<string, string | number
 }
 
 async function generateImage() {
-  if (!baseImage.value) { bakeMsg.value = 'Add a source first'; return }
+  if (!resolved.value) { bakeMsg.value = 'Add a source first'; return }
   baking.value = true; bakeMsg.value = 'Rendering…'; stopPreview()
   try {
     const blob = await renderBlob(0)
@@ -451,19 +501,25 @@ async function generateImage() {
 }
 
 async function generateVideo() {
-  if (!baseImage.value) { bakeMsg.value = 'Add a source first'; return }
+  if (!resolved.value) { bakeMsg.value = 'Add a source first'; return }
   baking.value = true; stopPreview()
   try {
-    const base = baseImage.value
-    const m = config.value.motion
-    const { w, h } = outputDims(base.naturalWidth, base.naturalHeight, config.value.resolution, { upscale: true })
-    const total = Math.max(1, Math.round(m.fps * m.duration))
-    const bakeCfg = { fps: m.fps, loopDuration: m.duration, W: w, H: h, seed: 'shader', sig: JSON.stringify(config.value) }
+    const src = resolved.value!
+    // Whoever supplies the frames owns the clock: an animated upstream (e.g. a
+    // Gradient Studio loop) overrides our own duration/fps; a still source
+    // leaves our own Motion controls in charge. See resolve.ts's exportClock.
+    const clock = exportClock(src, config.value.motion.duration, config.value.motion.fps)
+    const { w, h } = outputDims(src.width, src.height, config.value.resolution, { upscale: true })
+    const total = Math.max(1, Math.round(clock.fps * clock.duration))
+    const bakeCfg = { fps: clock.fps, loopDuration: clock.duration, W: w, H: h, seed: 'shader', sig: JSON.stringify(config.value) }
     const bake = await ensureSpaceTypeBake(bakeCfg as any, undefined, {
-      renderFrame: async (i) => { bakeMsg.value = `Baking ${i + 1}/${total}`; return await renderBlob(i / m.fps) },
+      // Normalized (i / total), not i / fps: renderBlob now takes 0..1 so the
+      // last frame lands just before the loop point instead of duplicating
+      // frame 0 — this is what keeps a seamless upstream loop closing on itself.
+      renderFrame: async (i) => { bakeMsg.value = `Baking ${i + 1}/${total}`; return await renderBlob(i / total) },
     })
     bakeMsg.value = 'Encoding…'
-    const res = await fetch('/sailor/spacetype_encode', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ frames: bake.frames, fps: m.fps, width: w, height: h }) })
+    const res = await fetch('/sailor/spacetype_encode', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ frames: bake.frames, fps: clock.fps, width: w, height: h }) })
     const data = await res.json().catch(() => ({}))
     if (data.filename) {
       await recordAsset(activeTab.value?.projectUuid, 'video', data.filename)
@@ -479,10 +535,20 @@ const RESOLUTIONS = [1024, 1536, 2048, 4096]
 // Live readout of the baked output size (the preview is a fixed-size proxy, so
 // this is the only place the resolution choice is visible before exporting).
 const outputSizeLabel = computed(() => {
-  const base = baseImage.value
-  if (!base) return null
-  const { w, h } = outputDims(base.naturalWidth, base.naturalHeight, config.value.resolution, { upscale: true })
+  const src = resolved.value
+  if (!src) return null
+  const { w, h } = outputDims(src.width, src.height, config.value.resolution, { upscale: true })
   return `${w} × ${h}`
+})
+
+// Derived export clock, shown beside the Motion duration/fps controls when a
+// live upstream studio is driving the loop (those controls are disabled then —
+// see the Motion section below and exportClock in resolve.ts).
+const clockLabel = computed(() => {
+  const src = resolved.value
+  if (!src || src.duration <= 0) return null
+  const frames = Math.max(1, Math.round(src.fps * src.duration))
+  return `${src.duration.toFixed(1)}s · ${frames} frames — from upstream`
 })
 
 onMounted(async () => {
@@ -589,7 +655,7 @@ function remapEffectTracks(kind: 'move' | 'insert' | 'remove', a: number, b?: nu
           class="nopan nodrag absolute size-3 -ml-1.5 -mt-1.5 cursor-move rounded-full border-2 border-white bg-black/30"
           :style="{ left: `${config.post.blur.focusX * 100}%`, top: `${config.post.blur.focusY * 100}%` }"
           @pointerdown="onFocusDown" @pointermove="onFocusMove" @pointerup="onFocusUp" />
-        <span v-if="!baseImage" class="absolute text-xs text-white/40">Add a source image to begin</span>
+        <span v-if="!resolved" class="absolute text-xs text-white/40">Add a source image to begin</span>
       </div>
     </template>
 
@@ -752,6 +818,7 @@ function remapEffectTracks(kind: 'move' | 'insert' | 'remove', a: number, b?: nu
 
       <StudioSection title="Motion" :open="false">
         <template #badge><button class="flex items-center gap-1 normal-case text-white/40 hover:text-white" @click.stop="addTrack"><Plus class="h-3 w-3" /> Track</button></template>
+        <p v-if="clockLabel" class="mb-2 text-[11px] text-white/40">{{ clockLabel }}</p>
         <p v-if="!config.motion.tracks.length" class="text-[11px] text-white/30">Add a track to animate a parameter and export video.</p>
         <div v-for="(tk, i) in config.motion.tracks" :key="i" class="mb-2 rounded border border-white/10 p-2">
           <div class="mb-1 flex items-center gap-1">
@@ -765,8 +832,8 @@ function remapEffectTracks(kind: 'move' | 'insert' | 'remove', a: number, b?: nu
           </div>
         </div>
         <div class="mt-2 grid grid-cols-2 gap-2">
-          <div><label class="mb-1 flex justify-between text-[11px] text-white/60"><span>Duration</span><span class="text-white/40">{{ config.motion.duration }}s</span></label><input v-studio-reset v-model.number="config.motion.duration" type="range" min="1" max="12" step="0.5" class="studio-range w-full" /></div>
-          <div><label class="mb-1 block text-[11px] text-white/60">FPS</label><select v-model.number="config.motion.fps" class="w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-1 py-0.5 text-[11px]"><option :value="24">24</option><option :value="30">30</option><option :value="60">60</option></select></div>
+          <div><label class="mb-1 flex justify-between text-[11px] text-white/60"><span>Duration</span><span class="text-white/40">{{ config.motion.duration }}s</span></label><input v-studio-reset v-model.number="config.motion.duration" type="range" min="1" max="12" step="0.5" class="studio-range w-full disabled:cursor-not-allowed disabled:opacity-40" :disabled="sourceAnimated" /></div>
+          <div><label class="mb-1 block text-[11px] text-white/60">FPS</label><select v-model.number="config.motion.fps" class="w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-1 py-0.5 text-[11px] disabled:cursor-not-allowed disabled:opacity-40" :disabled="sourceAnimated"><option :value="24">24</option><option :value="30">30</option><option :value="60">60</option></select></div>
         </div>
       </StudioSection>
     </template>
