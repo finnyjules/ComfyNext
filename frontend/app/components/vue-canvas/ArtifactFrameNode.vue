@@ -223,7 +223,9 @@ async function pullLiveFrame(l: WiredLayer, t01: number) {
       wiredDims.value = { ...wiredDims.value, [l.url]: { w, h } }
       wiredImages.value = { ...wiredImages.value, [l.url]: cv }
     }
-    cv.getContext('2d')!.drawImage(surface as CanvasImageSource, 0, 0, w, h)
+    const ctx = cv.getContext('2d')!
+    ctx.clearRect(0, 0, w, h)   // transparent studios (e.g. Type Studio) would otherwise stack frames
+    ctx.drawImage(surface as CanvasImageSource, 0, 0, w, h)
   } catch (e) { console.warn('[Frame] live slot pull failed for', l.url, e) }
 }
 

@@ -1205,7 +1205,9 @@ async function pullLiveFrameModal(l: Layer, t01: number) {
       naturalDims.value = { ...naturalDims.value, [l.slot]: { w, h } }
       wiredImageEls.value = { ...wiredImageEls.value, [l.slot]: cv }
     }
-    cv.getContext('2d')!.drawImage(surface as CanvasImageSource, 0, 0, w, h)
+    const ctx = cv.getContext('2d')!
+    ctx.clearRect(0, 0, w, h)   // transparent studios (e.g. Type Studio) would otherwise stack frames
+    ctx.drawImage(surface as CanvasImageSource, 0, 0, w, h)
   } catch (e) { console.warn('[Compositor] live slot pull failed for slot', l.slot, e) }
 }
 // Initial / still pull, re-run on wiring + frameSourceEpoch so a late-registering studio appears.
