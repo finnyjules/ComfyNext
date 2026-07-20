@@ -9,6 +9,7 @@ import {
   Sparkle, ImagePlus, Brush, Music, Mic, ChevronDown, Palette,
 } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
+import { useDeliverables } from '~/composables/useDeliverables'
 import { peekPendingPromote } from '~/lib/draft/runMeta'
 import { applyPendingPromotes } from '~/lib/draft/promote'
 import { healDanglingLinks, stripVarsLinks, collectKeepSet, collectKeepSetDownstream } from '~/composables/useFilteredPrompt'
@@ -1358,6 +1359,7 @@ onMounted(() => {
   window.addEventListener('sailor:reloadCanvas', forceReloadCanvas)
   window.addEventListener('sailor:openActions', handleOpenActions)
   window.addEventListener('sailor:createRef', onCreateRef)
+  window.addEventListener('sailor:markReady', handleMarkReady)
   runEstimateTimer = setInterval(updateRunEstimate, 2000)
   // Escape hatch: force-reload the embedded ComfyUI canvas from the console
   // (`__reloadCanvas()`) when its node schema goes stale after a backend change.
@@ -1373,6 +1375,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('sailor:reloadCanvas', forceReloadCanvas)
   window.removeEventListener('sailor:openActions', handleOpenActions)
   window.removeEventListener('sailor:createRef', onCreateRef)
+  window.removeEventListener('sailor:markReady', handleMarkReady)
   if (runEstimateTimer) clearInterval(runEstimateTimer)
   stopHealthPoll()
 })
@@ -1513,7 +1516,34 @@ provide('assetRegistry', computed<RefRegistry>(() => activeProjectDoc.value?.ass
 provide('projectDoc', activeProjectDoc)
 // Persist callback for the Deliverables page (mirrors the durable-version save
 // other project-doc mutators use below).
-provide('persistDeliverables', () => { persistWorkflows(); const t = activeTab.value; if (t.type === 'project' && activeProjectDoc.value) saveDurableVersion(t, activeProjectDoc.value) })
+function persistDeliverablesDoc() {
+  persistWorkflows()
+  const t = activeTab.value
+  if (t.type === 'project' && activeProjectDoc.value) saveDurableVersion(t, activeProjectDoc.value)
+}
+provide('persistDeliverables', persistDeliverablesDoc)
+
+// "Mark ready" (node context menu) → append the node's rendered output to the
+// project's deliverables (curation shelf). Same persist body as the
+// Deliverables page above, so both paths stay in sync.
+const deliverablesApi = useDeliverables(activeProjectDoc, persistDeliverablesDoc)
+
+function resolveOutputRef(nodeId: string, output: any): import('~/lib/deliverables/model').ArtifactRef | null {
+  if (!output?.filename || (output.type && output.type !== 'output')) return null
+  const f = String(output.filename)
+  const media = /\.(mp4|webm|mov|mkv|m4v)$/i.test(f) ? 'video'
+    : /\.(mp3|wav|flac|ogg|m4a|aac)$/i.test(f) ? 'audio' : 'image'
+  return { filename: f, subfolder: output.subfolder || '', media, sourceNodeId: nodeId }
+}
+
+function handleMarkReady(e: Event) {
+  const { nodeId, output } = (e as CustomEvent).detail ?? {}
+  if (nodeId == null) return
+  const ref = resolveOutputRef(String(nodeId), output)
+  if (!ref) { toast.error('No output to mark ready yet — run this node first'); return }
+  const added = deliverablesApi.markReady(ref, ref.filename)
+  toast[added ? 'success' : 'info'](added ? 'Marked ready' : 'Already in deliverables')
+}
 
 // Re-entrancy guard: a switch serializes the outgoing canvas, swaps the doc's
 // active id, and (in LiteGraph mode) pushes the target into the iframe. Block

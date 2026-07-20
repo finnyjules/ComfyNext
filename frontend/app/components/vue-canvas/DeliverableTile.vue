@@ -15,6 +15,7 @@ const cover = computed<ArtifactRef>(() =>
 const isVideo = computed(() => cover.value.media === 'video')
 const setCount = computed(() => (props.item.kind === 'set' ? props.item.items.length : 0))
 
+const broken = ref(false)
 const editing = ref(false)
 const draft = ref(props.item.name)
 function commit() { editing.value = false; if (draft.value.trim() && draft.value !== props.item.name) emit('rename', draft.value.trim()) }
@@ -27,7 +28,16 @@ function commit() { editing.value = false; if (draft.value.trim() && draft.value
         class="frame relative overflow-hidden rounded-xl border aspect-square transition"
         :class="picked ? 'border-[#4f8cff] shadow-[0_0_0_1px_#4f8cff]' : 'border-white/[0.07] group-hover:border-white/[0.13]'"
       >
-        <img :src="viewUrl(cover)" :alt="item.name" class="h-full w-full object-cover" loading="lazy" draggable="false" />
+        <img
+          v-if="!broken"
+          :src="viewUrl(cover)" :alt="item.name"
+          class="h-full w-full object-cover" loading="lazy" draggable="false"
+          @error="broken = true"
+        />
+        <div v-else class="flex h-full w-full flex-col items-center justify-center gap-1 bg-[#0d0e11] text-white/35">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 3l18 18M21 15V5a2 2 0 0 0-2-2H9" /><path d="M3 7v12a2 2 0 0 0 2 2h12" /></svg>
+          <span class="font-mono text-[10px]">unavailable</span>
+        </div>
         <div v-if="isVideo" class="pointer-events-none absolute inset-0 flex items-center justify-center">
           <div class="flex h-11 w-11 items-center justify-center rounded-full border border-white/13 bg-black/40 backdrop-blur">
             <svg viewBox="0 0 24 24" width="18" height="18" fill="#fff"><path d="M8 5v14l11-7z" /></svg>

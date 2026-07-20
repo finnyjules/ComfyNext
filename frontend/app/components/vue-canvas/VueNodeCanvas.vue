@@ -108,7 +108,7 @@ import PinImageAnnotationView from '~/components/vue-canvas/PinImageAnnotation.v
 import PinResultAnnotationView from '~/components/vue-canvas/PinResultAnnotation.vue'
 import ArrowsLayer, { type ResolvedArrow } from '~/components/vue-canvas/ArrowsLayer.vue'
 import CanvasContextMenu, { type MenuItem } from '~/components/vue-canvas/CanvasContextMenu.vue'
-import { Play, EyeOff, Ban, Copy, Trash2, Group, SquareDashedMousePointer, Palette, Edit3, Frame, PlusSquare, Boxes, ChevronsUpDown, ChevronsDownUp, Lock, Unlock, Flag, StickyNote, ListChecks, Image as ImageIcon, ArrowRight } from 'lucide-vue-next'
+import { Play, EyeOff, Ban, Copy, Trash2, Group, SquareDashedMousePointer, Palette, Edit3, Frame, PlusSquare, Boxes, ChevronsUpDown, ChevronsDownUp, Lock, Unlock, Flag, StickyNote, ListChecks, Image as ImageIcon, ArrowRight, Check } from 'lucide-vue-next'
 import { useBlockLibrary } from '~/composables/useBlockLibrary'
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
@@ -5901,6 +5901,12 @@ function promptImagePin(x: number, y: number) {
   input.click()
 }
 
+/** First rendered output descriptor of a node, if any (image/gif/video/audio). */
+function firstNodeOutput(node: any): { filename: string; subfolder?: string; type?: string } | null {
+  const o = node?.data?.images?.[0] ?? node?.data?.gifs?.[0] ?? node?.data?.video?.[0] ?? node?.data?.audio?.[0]
+  return o?.filename ? o : null
+}
+
 function nodeMenuItems(nodeId: string): MenuItem[] {
   const node = (nodes.value as any[]).find(n => n.id === nodeId)
   const mode = node?.data?.mode ?? 0
@@ -5921,6 +5927,18 @@ function nodeMenuItems(nodeId: string): MenuItem[] {
       action: () => actionPinResultToCanvas(nodeId),
     })
     items.push({ divider: true })
+  }
+  // Mark an artifact's rendered output as "ready to deliver" (curation shelf).
+  if (typeof node?.type === 'string' && node.type.startsWith('artifact-') && node.type !== 'artifact-text') {
+    const output = firstNodeOutput(node)
+    if (output) {
+      items.push({
+        label: 'Mark ready',
+        icon: Check,
+        action: () => window.dispatchEvent(new CustomEvent('sailor:markReady', { detail: { nodeId, output } })),
+      })
+      items.push({ divider: true })
+    }
   }
   items.push(
     { label: 'Duplicate', icon: Copy, action: () => duplicateNodes([nodeId]) },
