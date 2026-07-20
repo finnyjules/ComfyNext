@@ -16,6 +16,7 @@ void main() {
 export const GRADIENT_FS = `#version 300 es
 #define LAYER_MAX 6
 precision highp float;
+precision highp sampler2DArray;   // ES 3.00 has no default precision for array samplers
 
 in vec2 v_texCoord;
 out vec4 fragColor;
