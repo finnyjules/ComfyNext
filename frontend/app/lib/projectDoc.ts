@@ -21,6 +21,9 @@ export interface ProjectDoc {
   brandKitId?: string | null
   /** Project-scoped named image references (`@refs`): handle → { filename, text? }. */
   assetRegistry?: import('./refs/registry').RefRegistry
+  /** Ordered delivery shelf (Ready to deliver). Array order == display order.
+   *  Absent ⇒ treat as []. References existing on-disk output files only. */
+  deliverables?: import('./deliverables/model').DeliverableItem[]
 }
 
 export const BLANK_WORKFLOW = { last_node_id: 0, last_link_id: 0, nodes: [], links: [], groups: [], config: {}, extra: {}, version: 0.4 }

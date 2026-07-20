@@ -73,4 +73,39 @@ describe('deliverables model', () => {
     expect(list[0]!.name).toBe('A') // original untouched
     expect(remove(renamed, renamed[0]!.id)).toHaveLength(0)
   })
+
+  it('reorderWithinSet reorders members correctly', () => {
+    let list = addSingle([], ref('a.png'), 'A')
+    list = addSingle(list, ref('b.png'), 'B')
+    list = addSingle(list, ref('c.png'), 'C')
+    list = group(list, [list[0]!.id, list[1]!.id, list[2]!.id], 'Trio', mk)
+    const setId = list[0]!.id
+    const moved = reorderWithinSet(list, setId, 0, 2)
+    expect((moved[0] as any).items.map((r: ArtifactRef) => r.filename)).toEqual(['b.png', 'c.png', 'a.png'])
+  })
+
+  it('rename with an unknown id returns the same list reference', () => {
+    const list = addSingle([], ref('a.png'), 'A')
+    expect(rename(list, 'unknown-id', 'x')).toBe(list)
+  })
+
+  it('reorderWithinSet with from === to returns the same list reference', () => {
+    let list = addSingle([], ref('a.png'), 'A')
+    list = addSingle(list, ref('b.png'), 'B')
+    list = group(list, [list[0]!.id, list[1]!.id], 'Pair', mk)
+    const setId = list[0]!.id
+    expect(reorderWithinSet(list, setId, 0, 0)).toBe(list)
+  })
+
+  it('reorderWithinSet with an unknown set id returns the same list reference', () => {
+    let list = addSingle([], ref('a.png'), 'A')
+    list = addSingle(list, ref('b.png'), 'B')
+    list = group(list, [list[0]!.id, list[1]!.id], 'Pair', mk)
+    expect(reorderWithinSet(list, 'unknown-set', 0, 1)).toBe(list)
+  })
+
+  it('removeFromSet with an unknown set id returns the same list reference', () => {
+    const list = addSingle([], ref('a.png'), 'A')
+    expect(removeFromSet(list, 'unknown-set', 0, mk)).toBe(list)
+  })
 })

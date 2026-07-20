@@ -43,10 +43,12 @@ let _tick = 0
 function performanceNow(): number { return (_tick += 1) }
 
 export function rename(list: DeliverableItem[], id: string, name: string): DeliverableItem[] {
+  if (!list.some(i => i.id === id)) return list
   return list.map(i => (i.id === id ? { ...i, name } : i))
 }
 
 export function remove(list: DeliverableItem[], id: string): DeliverableItem[] {
+  if (!list.some(i => i.id === id)) return list
   return list.filter(i => i.id !== id)
 }
 
@@ -91,14 +93,16 @@ export function ungroup(list: DeliverableItem[], id: string): DeliverableItem[] 
 export function reorderWithinSet(
   list: DeliverableItem[], id: string, from: number, to: number,
 ): DeliverableItem[] {
-  return list.map(i => {
-    if (i.id !== id || i.kind !== 'set') return i
-    if (from === to || from < 0 || to < 0 || from >= i.items.length || to >= i.items.length) return i
-    const items = [...i.items]
-    const [m] = items.splice(from, 1)
-    items.splice(to, 0, m!)
-    return { ...i, items }
-  })
+  const idx = list.findIndex(i => i.id === id && i.kind === 'set')
+  const target = list[idx]
+  if (idx === -1 || !target || target.kind !== 'set') return list
+  if (from === to || from < 0 || to < 0 || from >= target.items.length || to >= target.items.length) return list
+  const items = [...target.items]
+  const [m] = items.splice(from, 1)
+  items.splice(to, 0, m!)
+  const next = [...list]
+  next.splice(idx, 1, { ...target, items })
+  return next
 }
 
 export function dissolveIfUnderTwo(item: DeliverableItem): DeliverableItem {
@@ -112,9 +116,12 @@ export function dissolveIfUnderTwo(item: DeliverableItem): DeliverableItem {
 export function removeFromSet(
   list: DeliverableItem[], setId: string, memberIndex: number, _makeId: () => string,
 ): DeliverableItem[] {
-  return list.map(i => {
-    if (i.id !== setId || i.kind !== 'set') return i
-    const items = i.items.filter((_, n) => n !== memberIndex)
-    return dissolveIfUnderTwo({ ...i, items })
-  })
+  const idx = list.findIndex(i => i.id === setId && i.kind === 'set')
+  const target = list[idx]
+  if (idx === -1 || !target || target.kind !== 'set') return list
+  if (memberIndex < 0 || memberIndex >= target.items.length) return list
+  const items = target.items.filter((_, n) => n !== memberIndex)
+  const next = [...list]
+  next.splice(idx, 1, dissolveIfUnderTwo({ ...target, items }))
+  return next
 }
