@@ -338,6 +338,7 @@ const MODIFIER_GROUPS = computed(() => [
   { label: 'Twist', keys: ['twist', 'twistAxis'] },
   { label: 'Bend', keys: ['bend', 'bendAxis'] },
   { label: 'Noise', keys: ['noise', 'noiseScale', 'noiseSeed'] },
+  { label: 'Jitter', keys: ['jitter', 'jitterMode', 'jitterSeed'] },
 ])
 // Cloner keys: the placement controls are swapped by mode, so this is computed
 // rather than a static list. Grid drops `cloneCount` entirely — its three axis
