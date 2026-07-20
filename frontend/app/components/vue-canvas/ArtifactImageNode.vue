@@ -768,6 +768,7 @@ const promoteUsdLabel = computed(() => {
     @dragover="onDragOver"
     @drop="onDrop"
   >
+    <VueCanvasNodeReadyBadge :node-id="id" />
     <!-- Primary IMAGE input — vertically centered on the image frame.
          Conditionally rendered so empty Image nodes don't dangle a port. -->
     <Handle

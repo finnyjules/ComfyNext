@@ -162,6 +162,7 @@ onBeforeUnmount(() => {
     :style="{ '--port-color': stringColor } as any"
     :data-running="data.running || undefined"
   >
+    <VueCanvasNodeReadyBadge :node-id="id" />
     <Handle :id="`input-${glbInIdx}`" type="target" :position="Position.Left"
       class="!w-3 !h-3 !rounded-full !border-2 !bg-[#1a1a1a]" :style="{ borderColor: stringColor, top: '50%' }" />
     <Handle :id="`output-${glbOutIdx}`" type="source" :position="Position.Right"

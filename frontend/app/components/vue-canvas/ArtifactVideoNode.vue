@@ -192,6 +192,7 @@ async function downloadVideo() {
     @dragover="onDragOver"
     @drop="onDrop"
   >
+    <VueCanvasNodeReadyBadge :node-id="id" />
     <Handle
       v-if="sourceInputIdx >= 0"
       :id="`input-${sourceInputIdx}`"

@@ -701,6 +701,7 @@ onUnmounted(() => {
     :data-running="data.running || undefined"
     @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop"
   >
+    <VueCanvasNodeReadyBadge :node-id="id" />
     <Handle
       v-for="(slot, i) in layerSlots" :key="slot" :id="`input-${slot}`"
       type="target" :position="Position.Left"

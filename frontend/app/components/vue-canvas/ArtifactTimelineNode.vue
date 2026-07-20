@@ -129,6 +129,7 @@ function runThisNode() {
     :style="{ width: nodeW + 'px', '--port-color': imageColor } as any"
     :data-running="data.running || undefined"
   >
+    <VueCanvasNodeReadyBadge :node-id="id" />
     <!-- Clip inputs (left, grow-on-connect) -->
     <Handle
       v-for="(slot, i) in clipSlots" :key="slot" :id="`input-${slot}`"

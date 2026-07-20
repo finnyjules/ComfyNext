@@ -1528,6 +1528,18 @@ provide('persistDeliverables', persistDeliverablesDoc)
 // Deliverables page above, so both paths stay in sync.
 const deliverablesApi = useDeliverables(activeProjectDoc, persistDeliverablesDoc)
 
+// Node ids whose output is currently marked ready → drives the on-canvas ready
+// indicator (NodeReadyBadge), injected by every artifact node component.
+const readyNodeIds = computed(() => {
+  const s = new Set<string>()
+  for (const it of (activeProjectDoc.value?.deliverables ?? [])) {
+    if (it.kind === 'single') { if (it.ref.sourceNodeId != null) s.add(String(it.ref.sourceNodeId)) }
+    else for (const r of it.items) if (r.sourceNodeId != null) s.add(String(r.sourceNodeId))
+  }
+  return s
+})
+provide('readyNodeIds', readyNodeIds)
+
 function resolveOutputRef(nodeId: string, output: any): import('~/lib/deliverables/model').ArtifactRef | null {
   if (!output?.filename) return null
   const f = String(output.filename)
