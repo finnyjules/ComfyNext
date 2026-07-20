@@ -10,6 +10,7 @@ import { composePasses } from '~/lib/shaderstudio/passes'
 import { migrateShaderConfig } from '~/lib/shaderstudio/migrate'
 import { applyMotion } from '~/lib/shaderstudio/motion'
 import { makeImageSource, makeLiveSource, motionConfigFor, resolveSourceKind, type ResolvedSource } from '~/lib/shaderstudio/resolve'
+import { frameSourceEpoch } from '~/lib/studio/frameSource'
 import { loadImage } from '~/lib/shaderstudio/source'
 import { hydrateConfig, outputDims, type ShaderStudioConfig } from '~/lib/shaderstudio/types'
 import { registerStudioBaker, unregisterStudioBaker } from '~/lib/studio/cascade'
@@ -41,8 +42,10 @@ const baseImage = computed(() => resolved.value)
 
 // Descriptor first (pure), then load if it is a file. Recomputes when the graph
 // changes, so rewiring the input updates the card without a manual refresh.
-const sourceKind = computed(() =>
-  resolveSourceKind(props.id, injectedNodes?.value ?? [], injectedEdges?.value ?? []))
+const sourceKind = computed(() => {
+  frameSourceEpoch.value  // re-resolve when any studio (un)registers a frame source
+  return resolveSourceKind(props.id, injectedNodes?.value ?? [], injectedEdges?.value ?? [])
+})
 
 const ownSourceUrl = computed(() => config.value.source.dataUrl
   ?? (config.value.source.asset

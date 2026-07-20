@@ -21,6 +21,7 @@ import { migrateShaderConfig } from '~/lib/shaderstudio/migrate'
 import { ANIMATABLE, applyMotion } from '~/lib/shaderstudio/motion'
 import { ADJUST_PRESETS, applyAdjustPreset } from '~/lib/shaderstudio/presets'
 import { exportClock, makeImageSource, makeLiveSource, motionConfigFor, resolveSourceKind, type ResolvedSource } from '~/lib/shaderstudio/resolve'
+import { frameSourceEpoch } from '~/lib/studio/frameSource'
 import { loadImage } from '~/lib/shaderstudio/source'
 import { BLEND_MODES } from '~/lib/studio/blend'
 import { cloneConfig, defaultConfig, hydrateConfig, LAYER_MAX, newLayerId, outputDims, type MotionTrack, type ShaderStudioConfig, type StudioEffect } from '~/lib/shaderstudio/types'
@@ -313,8 +314,10 @@ watch(shouldLoop, startPreview)
 // upstream studio (e.g. Gradient Studio with flow.speed > 0) wins over the node's
 // own file-based fallbacks. `wiredUrl` is intentionally NOT consulted here — it
 // was the old image-only resolution and is null for a live upstream studio.
-const sourceKind = computed(() =>
-  resolveSourceKind(props.nodeId, props.nodes ?? [], props.edges ?? []))
+const sourceKind = computed(() => {
+  frameSourceEpoch.value  // re-resolve when any studio (un)registers a frame source
+  return resolveSourceKind(props.nodeId, props.nodes ?? [], props.edges ?? [])
+})
 
 const ownSourceUrl = computed(() => config.value.source.dataUrl
   ?? (config.value.source.asset

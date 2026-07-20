@@ -4,6 +4,8 @@
 // than waiting for a baked file. Sibling of cascade.ts's StudioBaker registry,
 // which stays as-is for the single-still bake path.
 
+import { ref } from 'vue'
+
 /**
  * A studio's live frame puller.
  *
@@ -25,12 +27,21 @@ export interface StudioFrameSource {
 
 const _frameSources = new Map<string, StudioFrameSource>()
 
+// The Map is not reactive, and a frame source is registered from a studio's
+// onMounted — often AFTER a downstream consumer has already resolved its input.
+// This epoch is bumped on every registration change so a consumer's `sourceKind`
+// computed can depend on it and re-resolve, catching a source that registered
+// after the consumer first evaluated (the mount-order race that left a wired
+// Shader Studio card blank while its modal — opened later — resolved fine).
+export const frameSourceEpoch = ref(0)
+
 export function registerStudioFrameSource(id: string, src: StudioFrameSource): void {
   _frameSources.set(id, src)
+  frameSourceEpoch.value++
 }
 
 export function unregisterStudioFrameSource(id: string): void {
-  _frameSources.delete(id)
+  if (_frameSources.delete(id)) frameSourceEpoch.value++
 }
 
 export function getStudioFrameSource(id: string): StudioFrameSource | undefined {

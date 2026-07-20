@@ -1,5 +1,7 @@
+import { computed } from 'vue'
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
+  frameSourceEpoch,
   getStudioFrameSource,
   isAnimatedSource,
   registerStudioFrameSource,
@@ -24,6 +26,39 @@ describe('studio frame-source registry', () => {
 
   it('returns undefined for an unregistered id', () => {
     expect(getStudioFrameSource('a')).toBeUndefined()
+  })
+
+  // The epoch is the reactive signal that lets a consumer's computed re-resolve
+  // when a source registers after the consumer first evaluated (mount-order race).
+  it('bumps the epoch on register and on real unregister', () => {
+    const before = frameSourceEpoch.value
+    registerStudioFrameSource('a', stub())
+    expect(frameSourceEpoch.value).toBe(before + 1)
+    unregisterStudioFrameSource('a')
+    expect(frameSourceEpoch.value).toBe(before + 2)
+  })
+
+  it('does not bump the epoch when unregistering an absent id', () => {
+    unregisterStudioFrameSource('a') // ensure absent (beforeEach also clears)
+    const before = frameSourceEpoch.value
+    unregisterStudioFrameSource('a')
+    expect(frameSourceEpoch.value).toBe(before)
+  })
+
+  // The exact root-cause fix: a computed that resolves a frame source AND reads the
+  // epoch must re-evaluate when the source registers AFTER the computed first ran —
+  // the case that left a wired card blank because the registry Map isn't reactive.
+  it('re-evaluates an epoch-dependent computed when a source registers late', () => {
+    const resolvedDuration = computed(() => {
+      frameSourceEpoch.value                       // reactive dep, as the consumers use it
+      return getStudioFrameSource('a')?.duration ?? null
+    })
+    // First evaluation: nothing registered yet (the mount-order race).
+    expect(resolvedDuration.value).toBeNull()
+    // Source registers late…
+    registerStudioFrameSource('a', stub({ duration: 7 }))
+    // …and the computed re-resolves instead of staying null.
+    expect(resolvedDuration.value).toBe(7)
   })
 
   it('returns the registered source', () => {
