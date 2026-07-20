@@ -69,7 +69,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
       <div class="flex min-h-0 flex-1 gap-4 p-4">
         <!-- Optional dedicated panel column (e.g. 3D Studio's object list), on the
              left of the preview — mirrors the Smart Layout / Frame layers panel. -->
-        <div v-if="$slots.aside" class="flex w-56 shrink-0 min-h-0"><slot name="aside" /></div>
+        <div v-if="$slots.aside" class="flex w-72 shrink-0 min-h-0"><slot name="aside" /></div>
         <div class="flex min-h-0 flex-1 flex-col">
           <div class="flex min-h-0 flex-1 items-center justify-center"><slot name="preview" /></div>
           <!-- Agent prompt: bare (no container), docked under the preview — mirrors
