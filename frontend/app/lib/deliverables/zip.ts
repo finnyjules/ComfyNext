@@ -4,7 +4,7 @@ import type { ArtifactRef, DeliverableItem } from './model'
 export interface ZipEntry { path: string; ref: ArtifactRef }
 
 export function viewUrl(ref: ArtifactRef): string {
-  return `/view?${new URLSearchParams({ filename: ref.filename, subfolder: ref.subfolder, type: 'output' })}`
+  return `/view?${new URLSearchParams({ filename: ref.filename, subfolder: ref.subfolder, type: ref.viewType || 'output' })}`
 }
 
 export function sanitize(name: string): string {

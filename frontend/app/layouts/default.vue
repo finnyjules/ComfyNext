@@ -1529,11 +1529,12 @@ provide('persistDeliverables', persistDeliverablesDoc)
 const deliverablesApi = useDeliverables(activeProjectDoc, persistDeliverablesDoc)
 
 function resolveOutputRef(nodeId: string, output: any): import('~/lib/deliverables/model').ArtifactRef | null {
-  if (!output?.filename || (output.type && output.type !== 'output')) return null
+  if (!output?.filename) return null
   const f = String(output.filename)
   const media = /\.(mp4|webm|mov|mkv|m4v)$/i.test(f) ? 'video'
     : /\.(mp3|wav|flac|ogg|m4a|aac)$/i.test(f) ? 'audio' : 'image'
-  return { filename: f, subfolder: output.subfolder || '', media, sourceNodeId: nodeId }
+  const viewType = output.type === 'input' ? 'input' : 'output'
+  return { filename: f, subfolder: output.subfolder || '', media, viewType, sourceNodeId: nodeId }
 }
 
 function handleMarkReady(e: Event) {

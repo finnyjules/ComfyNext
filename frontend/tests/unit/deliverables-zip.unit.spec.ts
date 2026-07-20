@@ -9,6 +9,10 @@ describe('deliverables zip planner', () => {
     expect(viewUrl(ref('a.png'))).toBe('/view?filename=a.png&subfolder=out&type=output')
   })
 
+  it('viewUrl honors an input-served ref', () => {
+    expect(viewUrl({ ...ref('a.png'), viewType: 'input' })).toBe('/view?filename=a.png&subfolder=out&type=input')
+  })
+
   it('planZip roots singles and subfolders set members in order', () => {
     const list: DeliverableItem[] = [
       { id: '1', kind: 'single', name: 'Hero', ref: ref('hero.png') },

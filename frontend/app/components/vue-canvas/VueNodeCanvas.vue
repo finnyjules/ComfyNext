@@ -5901,10 +5901,28 @@ function promptImagePin(x: number, y: number) {
   input.click()
 }
 
-/** First rendered output descriptor of a node, if any (image/gif/video/audio). */
+/** The on-disk file a node currently displays, as a deliverable source.
+ *  `data.images[0]` (etc.) are `/view?…` URL strings — not objects — so parse
+ *  filename/subfolder/type out of the query. Falls back to the persisted widget
+ *  filename (loaded projects). Returns null for transient blob:/data: images. */
 function firstNodeOutput(node: any): { filename: string; subfolder?: string; type?: string } | null {
-  const o = node?.data?.images?.[0] ?? node?.data?.gifs?.[0] ?? node?.data?.video?.[0] ?? node?.data?.audio?.[0]
-  return o?.filename ? o : null
+  const d = node?.data
+  if (!d) return null
+  let raw: any = d.images?.[0] ?? d.gifs?.[0] ?? d.video?.[0] ?? d.audio?.[0]
+  if (!raw && d.widgetsValues?.[0]) {
+    raw = `/view?${new URLSearchParams({ filename: String(d.widgetsValues[0]), type: 'input' })}`
+  }
+  if (!raw) return null
+  if (typeof raw === 'object') {
+    return raw.filename ? { filename: raw.filename, subfolder: raw.subfolder || '', type: raw.type || 'output' } : null
+  }
+  if (typeof raw !== 'string') return null
+  const qi = raw.indexOf('?')
+  if (qi === -1) return null // blob:/data: URL — not a referenceable on-disk file
+  const p = new URLSearchParams(raw.slice(qi + 1))
+  const filename = p.get('filename')
+  if (!filename) return null
+  return { filename, subfolder: p.get('subfolder') || '', type: p.get('type') || 'output' }
 }
 
 function nodeMenuItems(nodeId: string): MenuItem[] {
