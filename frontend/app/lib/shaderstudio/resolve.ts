@@ -6,8 +6,8 @@
 // Priority: live upstream studio → artifact file → the node's own config source.
 // The artifact path is unchanged; it is now one branch rather than the only one.
 
-import { resolveWiredInput } from '~/lib/shaderstudio/source'
-import { getStudioFrameSource, type StudioFrameSource } from '~/lib/studio/frameSource'
+import { resolveWiredSourceKind } from '~/lib/studio/frameResolve'
+import type { StudioFrameSource } from '~/lib/studio/frameSource'
 
 /** A source normalized so callers never branch on where the pixels came from. */
 export interface ResolvedSource {
@@ -33,17 +33,9 @@ export type SourceKind =
  * unit-tested in a node environment.
  */
 export function resolveSourceKind(nodeId: string, nodes: any[], edges: any[]): SourceKind | null {
-  const edge = edges.find((e: any) => String(e.target) === String(nodeId) && e.targetHandle === 'input-0')
-  if (edge) {
-    // A live upstream studio wins: it renders at any size and any time, so it is
-    // strictly better than that studio's last baked file.
-    const live = getStudioFrameSource(String(edge.source))
-    if (live) return { kind: 'live', source: live }
-  }
-  // No live source (unmounted studio, or a plain artifact node) — fall through to
-  // the existing file resolution, which also handles LoadImage / Image artifacts.
-  const url = resolveWiredInput(nodeId, nodes, edges)
-  return url ? { kind: 'url', url } : null
+  // Delegates to the shared studio-aware resolver (the single copy the Frame uses
+  // too). Shader input is always input-0; live upstream studio wins over a baked URL.
+  return resolveWiredSourceKind(nodeId, 'input-0', nodes, edges)
 }
 
 export function makeLiveSource(src: StudioFrameSource): ResolvedSource {
