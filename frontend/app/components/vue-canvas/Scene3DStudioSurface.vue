@@ -13,7 +13,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import * as THREE from 'three'
 import {
-  Box, Plus, Trash2, Copy, Eye, EyeOff, Loader2, Upload, RotateCcw, Lightbulb,
+  Box, Plus, Trash2, Copy, Eye, EyeOff, Loader2, Upload, RotateCcw, Lightbulb, Sparkles, Shuffle,
 } from 'lucide-vue-next'
 import {
   parseDoc, serializeDoc, createPrimitive, createGlbObject, createLight,
@@ -27,6 +27,7 @@ import { totalClones } from '~/lib/scene3d/modifiers'
 import { PRIMITIVE_PARAMS, paramValue, MODIFIER_SPECS, modifierValue } from '~/lib/scene3d/primParams'
 import { SceneInteraction } from '~/lib/scene3d/interaction'
 import { loadGlb, GLB_SIZE_CAP_BYTES } from '~/lib/scene3d/glb'
+import { fitGlbGroup } from '~/lib/scene3d/fitGlb'
 import { renderPasses } from '~/lib/scene3d/passes'
 import { detectWebGL } from '~/lib/spacetype/webgl'
 import { useInpaint } from '~/composables/useInpaint'
@@ -102,6 +103,73 @@ watch(lightMenuOpen, (open) => {
   if (open) window.addEventListener('pointerdown', onLightMenuOutside, true)
   else window.removeEventListener('pointerdown', onLightMenuOutside, true)
 })
+
+// ── Generate panel (text → image review → make 3D → insert) ────────────────
+const GEN_3D_MODELS = ['hunyuan3d-v2', 'trellis-2', 'tripo-v2.5', 'triposr']
+const genOpen = ref(false)
+const genPrompt = ref('')
+const genImageUrl = ref<string | null>(null)
+const genSeed = ref(0)
+const gen3dModel = ref('hunyuan3d-v2')
+const genTextured = ref(false)
+const genStage = ref<'idle' | 'image' | 'review' | 'making' | 'error'>('idle')
+const genError = ref('')
+
+function onGenMenuOutside(e: PointerEvent) {
+  if (!(e.target as HTMLElement)?.closest?.('[data-prim-menu]')) genOpen.value = false
+}
+watch(genOpen, (open) => {
+  if (open) window.addEventListener('pointerdown', onGenMenuOutside, true)
+  else window.removeEventListener('pointerdown', onGenMenuOutside, true)
+})
+
+async function genImage() {
+  genStage.value = 'image'
+  genError.value = ''
+  try {
+    const r = await $fetch('/api/scene3d/gen-image', { method: 'POST', body: { prompt: genPrompt.value, seed: genSeed.value } })
+    genImageUrl.value = r.imageUrl
+    genSeed.value = r.seed
+    genStage.value = 'review'
+  } catch (err) {
+    console.error('[scene3d-studio] gen-image failed', err)
+    genError.value = 'Image generation failed — try again.'
+    genStage.value = 'error'
+  }
+}
+function reroll() {
+  genSeed.value = Math.floor(Math.random() * 2e9)
+  genImage()
+}
+// Make 3D: fal image→3D, then insert the result with the auto-fit BAKED INTO
+// the object's own transform (position/scale) rather than applied generically
+// in loadGlb/addGlb — that would re-scale every GLB, including ones already
+// placed and sized in saved scenes. Mirrors addGlb's create+push+warm-up shape.
+async function make3d() {
+  if (!genImageUrl.value) return
+  genStage.value = 'making'
+  genError.value = ''
+  try {
+    const r = await $fetch('/api/scene3d/gen-3d', {
+      method: 'POST',
+      body: { imageUrl: genImageUrl.value, model: gen3dModel.value, textured: genTextured.value },
+    })
+    const group = await loadGlb(r.glbUrl)
+    fitGlbGroup(group)
+    const o = createGlbObject(r.glbUrl, doc.objects)
+    o.position = [group.position.x, group.position.y, group.position.z]
+    o.scale = [group.scale.x, group.scale.y, group.scale.z]
+    doc.objects.push(o)
+    selectedId.value = o.id
+    genOpen.value = false
+    genStage.value = 'idle'
+    genImageUrl.value = null
+  } catch (err) {
+    console.error('[scene3d-studio] gen-3d failed', err)
+    genError.value = '3D generation failed — try again.'
+    genStage.value = 'error'
+  }
+}
 
 // Wired glb_url (from a Model3D / Text node), if any — offered as an import
 // shortcut. glb_url is a STRING *widget*, so it never appears in data.inputs
@@ -556,6 +624,8 @@ onBeforeUnmount(() => {
   window.removeEventListener('pointerup', onGeometryDragRelease)
   window.removeEventListener('pointercancel', onGeometryDragRelease)
   window.removeEventListener('pointerdown', onPrimMenuOutside, true)
+  window.removeEventListener('pointerdown', onLightMenuOutside, true)
+  window.removeEventListener('pointerdown', onGenMenuOutside, true)
   cancelAnimationFrame(raf)
   ro?.disconnect()
   interaction?.dispose()
@@ -579,12 +649,13 @@ function onKey(e: KeyboardEvent) {
   if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable) return
   // (No W/E/R mode shortcuts — the combined gizmo moves/rotates/scales at once.)
   if (e.key === 'Escape') {
-    // Open primitive/light menu owns Esc: close it, never the modal.
-    if (primMenuOpen.value || lightMenuOpen.value) {
+    // Open primitive/light/generate menu owns Esc: close it, never the modal.
+    if (primMenuOpen.value || lightMenuOpen.value || genOpen.value) {
       e.preventDefault()
       e.stopImmediatePropagation()
       primMenuOpen.value = false
       lightMenuOpen.value = false
+      genOpen.value = false
       return
     }
     // An open StudioColor popover owns Escape (its own capture listener closes
@@ -834,7 +905,7 @@ function onClose() {
               type="button"
               class="flex h-8 items-center gap-1.5 rounded px-2.5 text-[12px] transition-colors cursor-pointer"
               :class="primMenuOpen ? 'bg-white/15 text-white' : 'text-white/70 hover:bg-white/10 hover:text-white'"
-              @click="lightMenuOpen = false; primMenuOpen = !primMenuOpen"
+              @click="lightMenuOpen = false; genOpen = false; primMenuOpen = !primMenuOpen"
             >
               <Plus class="size-4" /> Primitive
             </button>
@@ -854,9 +925,18 @@ function onClose() {
               type="button"
               class="flex h-8 items-center gap-1.5 rounded px-2.5 text-[12px] transition-colors cursor-pointer"
               :class="lightMenuOpen ? 'bg-white/15 text-white' : 'text-white/70 hover:bg-white/10 hover:text-white'"
-              @click="primMenuOpen = false; lightMenuOpen = !lightMenuOpen"
+              @click="primMenuOpen = false; genOpen = false; lightMenuOpen = !lightMenuOpen"
             >
               <Lightbulb class="size-4" /> Light
+            </button>
+            <div class="mx-0.5 h-5 w-px bg-white/10" />
+            <button
+              type="button"
+              class="flex h-8 items-center gap-1.5 rounded px-2.5 text-[12px] transition-colors cursor-pointer"
+              :class="genOpen ? 'bg-white/15 text-white' : 'text-white/70 hover:bg-white/10 hover:text-white'"
+              @click="primMenuOpen = false; lightMenuOpen = false; genOpen = !genOpen"
+            >
+              <Sparkles class="size-4" /> Generate
             </button>
 
             <!-- Primitive menu: popup card above the button (Brand-panel mechanic) -->
@@ -897,6 +977,65 @@ function onClose() {
                 <Lightbulb class="size-4 shrink-0 opacity-70" />
                 {{ LIGHT_KIND_LABELS[k] }}
               </button>
+            </div>
+
+            <!-- Generate menu: text → image review → make 3D. Same popup mechanic
+                 as the primitive/light menus, right-aligned above its trigger. -->
+            <div
+              v-if="genOpen"
+              class="absolute bottom-full right-0 z-30 mb-2 w-72 rounded-lg border border-white/10 bg-[#161616] p-3 shadow-2xl"
+            >
+              <p class="mb-1.5 text-[10px] uppercase tracking-[0.12em] text-white/35">Generate 3D model</p>
+              <textarea
+                v-model="genPrompt"
+                rows="2"
+                placeholder="A weathered leather armchair…"
+                class="mb-2 w-full resize-none rounded border border-white/10 bg-white/[0.04] px-2 py-1.5 text-[12px] text-white/85 placeholder:text-white/30 outline-none focus:border-white/25"
+              />
+              <StudioButton
+                variant="primary"
+                :disabled="!genPrompt.trim() || genStage === 'image' || genStage === 'making'"
+                @click="genImage"
+              >
+                <span class="flex items-center gap-1.5">
+                  <Loader2 v-if="genStage === 'image'" class="h-3.5 w-3.5 animate-spin" />
+                  <Sparkles v-else class="h-3.5 w-3.5" />
+                  {{ genStage === 'image' ? 'Generating image…' : 'Generate' }}
+                </span>
+              </StudioButton>
+
+              <template v-if="genStage === 'review' || (genImageUrl && genStage === 'making')">
+                <div class="mt-3 space-y-2">
+                  <img :src="genImageUrl!" alt="" class="h-32 w-full rounded object-cover" />
+                  <div class="flex items-center gap-1.5">
+                    <StudioButton variant="secondary" :disabled="genStage === 'making'" @click="reroll">
+                      <span class="flex items-center gap-1.5"><Shuffle class="h-3.5 w-3.5" /> Re-roll</span>
+                    </StudioButton>
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-[11px] text-white/55">3D model</label>
+                    <select
+                      v-model="gen3dModel"
+                      class="w-full rounded border border-white/10 bg-white/[0.04] px-2 py-1.5 text-[12px] text-white/85 outline-none focus:border-white/25"
+                    >
+                      <option v-for="m in GEN_3D_MODELS" :key="m" :value="m">{{ m }}</option>
+                    </select>
+                  </div>
+                  <label class="flex cursor-pointer items-center justify-between text-[11px] text-white/55">
+                    <span>Textured</span>
+                    <input v-model="genTextured" type="checkbox" class="h-3.5 w-3.5 accent-white/70" />
+                  </label>
+                  <StudioButton variant="primary" :disabled="genStage === 'making'" @click="make3d">
+                    <span class="flex items-center gap-1.5">
+                      <Loader2 v-if="genStage === 'making'" class="h-3.5 w-3.5 animate-spin" />
+                      <Box v-else class="h-3.5 w-3.5" />
+                      {{ genStage === 'making' ? 'Making 3D…' : 'Make 3D' }}
+                    </span>
+                  </StudioButton>
+                </div>
+              </template>
+
+              <p v-if="genStage === 'error' && genError" class="mt-2 text-[11px] text-red-400/90">{{ genError }}</p>
             </div>
           </div>
         </div>
