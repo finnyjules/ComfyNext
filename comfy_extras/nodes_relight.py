@@ -82,8 +82,8 @@ class RelightNode(IO.ComfyNode):
 
         # Lazy import: avoids comfy_extras/comfy_api_nodes load-order coupling.
         from comfy_api_nodes.nodes_replicate import (
-            _run_prediction, _image_tensor_to_data_url,
-            _first_output_url, download_url_to_image_tensor,
+            _run_nano_banana_edit, _image_tensor_to_data_url,
+            download_url_to_image_tensor,
         )
 
         image_input = [_image_tensor_to_data_url(image)]
@@ -99,14 +99,10 @@ class RelightNode(IO.ComfyNode):
             f"preset={preset!r} keep_bg={bool(keep_background)} ref={reference is not None}",
             flush=True,
         )
-        input_dict = {
-            "prompt": prompt,
-            "image_input": image_input,
-            "resolution": "1K",
-            "output_format": "png",
-        }
-        pred = await _run_prediction("google/nano-banana-2", input_dict)
-        result = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
+        # fal-first (routes around Replicate's project-scoped Gemini 404), then
+        # fal Nano Banana Pro, then Replicate. See _run_nano_banana_edit.
+        url = await _run_nano_banana_edit(image_input, prompt, resolution="1K", output_format="png")
+        result = await download_url_to_image_tensor(url, cls=cls)
         # Durable output so the relit result is recorded as an asset (the blank
         # guard above stays a temp preview — no asset for a no-op run).
         return IO.NodeOutput(result, ui=save_generation_output(result, "relight"))
