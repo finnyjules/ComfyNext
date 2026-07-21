@@ -1010,6 +1010,98 @@ async def _run_fal_flux2_edit(
     return fal_refs.first_fal_image_url(result)
 
 
+async def _run_fal_nano_banana_edit(
+    image_urls: list[str], prompt: str, *,
+    model: str = "fal-ai/nano-banana-2/edit",
+    resolution: str = "1K",
+    output_format: str = "png",
+    seed: int = 0,
+) -> str:
+    """Run Google Nano Banana image-edit on fal and return the output image URL.
+
+    fal reaches Google through its OWN Vertex project, so it routes around the
+    project-scoped `gemini-3.1-flash-image-preview` 404 that currently breaks
+    Replicate's google/nano-banana-2 (whose error names Replicate's
+    `replicate-prod-imagen-access` GCP project). Same model, live account.
+
+    fal's dialect: the sources go in an `image_urls` ARRAY (public http OR data
+    URLs both work); `output_format` is `jpeg`/`png`/`webp` (map our `jpg`);
+    output is `images[0].url`.
+    """
+    from comfy_api_nodes import fal_refs
+
+    inp: dict = {
+        "prompt": prompt,
+        "image_urls": list(image_urls),
+        "output_format": "jpeg" if output_format in ("jpg", "jpeg") else output_format,
+        "resolution": resolution,
+        "num_images": 1,
+    }
+    if seed and seed > 0:
+        inp["seed"] = int(seed) & 0xFFFFFFFF
+    result = await fal_refs.run_fal_prediction(model, "", inp)
+    return fal_refs.first_fal_image_url(result)
+
+
+async def _run_nano_banana_edit(
+    image_urls: list[str], prompt: str, *,
+    resolution: str = "1K",
+    output_format: str = "png",
+    seed: int = 0,
+) -> str:
+    """Nano Banana image-edit with provider failover: fal first (its Google
+    access dodges Replicate's project-scoped preview-model 404), then fal's Nano
+    Banana Pro (a different, live Gemini model), then Replicate as a last resort
+    so a fal outage still degrades to the original path. Shared by RestyleWithLoRA
+    and EditImageNode's "Nano Banana 2" option."""
+    fal_chain = [
+        ("fal-ai/nano-banana-2/edit", "fal nano-banana-2"),
+        ("fal-ai/nano-banana-pro/edit", "fal nano-banana-pro"),
+    ]
+    # Only try fal when a token is configured; otherwise go straight to Replicate.
+    fal_ok = False
+    try:
+        from comfy_api_nodes import fal_refs
+        fal_refs.get_fal_token()
+        fal_ok = True
+    except Exception:
+        fal_ok = False
+    last_fal_err = "fal not configured" if not fal_ok else None
+    if fal_ok:
+        for app, label in fal_chain:
+            try:
+                url = await _run_fal_nano_banana_edit(
+                    image_urls, prompt, model=app,
+                    resolution=resolution, output_format=output_format, seed=seed,
+                )
+                if url:
+                    return url
+            except Exception as err:
+                last_fal_err = f"{label}: {err}"
+                print(f"[nano-banana-edit] {label} failed, trying next: {err}")
+
+    # Last resort: Replicate google/nano-banana-2 (currently the broken path, but
+    # kept so a fal outage still has a route and it recovers on its own). Fold the
+    # last fal error into any failure here so a dual-outage doesn't look like a
+    # Replicate-only problem.
+    nb_input: dict = {
+        "prompt": prompt,
+        "image_input": list(image_urls),
+        "output_format": output_format,
+        "resolution": resolution,
+    }
+    if seed and seed > 0:
+        nb_input["seed"] = int(seed) & 0xFFFFFFFF
+    try:
+        pred = await _run_prediction("google/nano-banana-2", nb_input)
+        url = _first_output_url(pred)
+    except Exception as rep_err:
+        raise RuntimeError(f"nano-banana edit failed on fal ({last_fal_err}) and Replicate ({rep_err})") from rep_err
+    if not url:
+        raise RuntimeError(f"nano-banana edit returned no image (fal: {last_fal_err}; Replicate returned empty)")
+    return url
+
+
 class FluxKontextRemoteNode(IO.ComfyNode):
     @classmethod
     def define_schema(cls):
@@ -2356,20 +2448,17 @@ class EditImageNode(IO.ComfyNode):
                       safety_tolerance, prompt_upsampling, output_format):
         data_url = _image_tensor_to_data_url(input_image)
 
-        # Each model speaks a different dialect. Nano Banana stays on Replicate
-        # (Google-rate passthrough, cheaper there); Flux Kontext goes to fal (~2×
-        # cheaper than Replicate's flux-kontext-pro).
+        # Each model speaks a different dialect. Nano Banana goes fal-first (fal's
+        # Google access dodges Replicate's project-scoped Gemini 404), with a
+        # Replicate fallback; Flux Kontext goes to fal (~2× cheaper than
+        # Replicate's flux-kontext-pro).
         if model == "Nano Banana 2":
-            input_dict = {
-                "prompt": prompt,
-                "image_input": [data_url],
-                "resolution": resolution,
-                "output_format": output_format,
-            }
-            if seed and seed > 0:
-                input_dict["seed"] = seed
-            pred = await _run_prediction("google/nano-banana-2", input_dict)
-            url = _first_output_url(pred)
+            # Prefer fal (routes around Replicate's project-scoped Gemini 404);
+            # falls back to fal Nano Banana Pro, then Replicate.
+            url = await _run_nano_banana_edit(
+                [data_url], prompt,
+                resolution=resolution, output_format=output_format, seed=seed,
+            )
         elif model == "Flux 2 Pro":
             # flux-2-pro/edit takes an image_urls array and sizes to "auto"
             # (matches the input), so the Kontext-only aspect/safety dials are N/A.
@@ -2883,18 +2972,16 @@ class RestyleWithLoRANode(IO.ComfyNode):
                 instruction = base_instruction
                 if attempt > 0:
                     instruction = base_instruction + RESTYLE_ANTIPHOTO_RETRY
-                nb_input = {
-                    "prompt": instruction,
-                    "image_input": [content_url, style_url],
-                    "output_format": output_format,
-                    "resolution": resolution,
-                    # Deterministic per-attempt variation: same base seed always
-                    # replays the same sequence of re-rolls (and same result).
-                    # Masked to uint32 so a near-max seed can't overflow the range.
-                    "seed": (int(seed) + attempt) & 0xFFFFFFFF,
-                }
-                nb_pred = await _run_prediction("google/nano-banana-2", nb_input)
-                best_url = _first_output_url(nb_pred)
+                # Prefer fal for the transfer (its Google access dodges
+                # Replicate's project-scoped Gemini 404); falls back to fal Nano
+                # Banana Pro, then Replicate. Deterministic per-attempt variation:
+                # same base seed always replays the same sequence of re-rolls.
+                # Masked to uint32 so a near-max seed can't overflow the range.
+                best_url = await _run_nano_banana_edit(
+                    [content_url, style_url], instruction,
+                    resolution=resolution, output_format=output_format,
+                    seed=(int(seed) + attempt) & 0xFFFFFFFF,
+                )
                 # Photo target → NB2's first answer is what we want. Illustration
                 # target → only accept once the output is still illustrated.
                 if ref_style != "illustration":
