@@ -347,6 +347,28 @@ describe('scene3d motion — defaults/templates', () => {
 })
 
 import { sceneHasMotion } from '~/lib/scene3d/motion/render'
+import { makeScene3DFrameSource } from '~/lib/scene3d/motion/frameSource'
+
+describe('scene3d motion — frame source factory', () => {
+  const fakeCanvas = { width: 8, height: 8 } as unknown as HTMLCanvasElement
+  it('reflects the live clock via getters', () => {
+    let clock = { duration: 4, fps: 30, width: 512, height: 512 }
+    const src = makeScene3DFrameSource({ getClock: () => clock, renderAt: () => fakeCanvas })
+    expect(src.duration).toBe(4)
+    clock = { duration: 6, fps: 24, width: 256, height: 256 }
+    expect(src.duration).toBe(6)
+    expect(src.fps).toBe(24)
+    expect(src.width).toBe(256)
+  })
+  it('getFrame returns the rendered surface', async () => {
+    const src = makeScene3DFrameSource({ getClock: () => ({ duration: 4, fps: 30, width: 8, height: 8 }), renderAt: () => fakeCanvas })
+    expect(await src.getFrame(0.5, 8, 8)).toBe(fakeCanvas)
+  })
+  it('getFrame throws when renderer not ready', async () => {
+    const src = makeScene3DFrameSource({ getClock: () => ({ duration: 4, fps: 30, width: 8, height: 8 }), renderAt: () => null })
+    await expect(src.getFrame(0, 8, 8)).rejects.toThrow()
+  })
+})
 
 describe('scene3d motion — sceneHasMotion', () => {
   it('false for a motion-less scene', () => {
