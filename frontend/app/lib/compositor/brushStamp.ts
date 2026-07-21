@@ -11,6 +11,17 @@ export interface PaintStroke {
   erase: boolean                     // erase strokes carve alpha back out
 }
 
+/**
+ * Convert a SCREEN-normalized pointer coord (`nx` = x/rectW, `ny` = y/rectH, both
+ * in [0..1] of the artboard rect) into the WIDTH-normalized space strokes are
+ * stored in (both axes ÷ artboard width). Only Y changes: a screen fraction of
+ * HEIGHT becomes a fraction of WIDTH by scaling by the aspect (h/w). On a square
+ * artboard (w===h) Y is unchanged; on a 2:1 landscape ny=1 maps to y=0.5.
+ */
+export function toWidthNorm(nx: number, ny: number, w: number, h: number): { x: number; y: number } {
+  return { x: nx, y: ny * (h / w) }
+}
+
 /** Catmull-Rom resample: smooth a polyline through its points. Endpoints are kept
  *  exactly; interior gets `samples` interpolated points per segment. */
 export function smoothPoints(points: { x: number; y: number }[], samples = 8): { x: number; y: number }[] {

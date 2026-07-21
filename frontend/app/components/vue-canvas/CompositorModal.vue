@@ -25,7 +25,7 @@ import AgentProgress from '~/components/agent/AgentProgress.vue'
 import AgentSweep from '~/components/agent/AgentSweep.vue'
 import { useVectorPen, buildPathLayerFromAnchors } from '~/composables/useVectorPen'
 import { useBrushPaint } from '~/composables/useBrushPaint'
-import { stampStrokes } from '~/lib/compositor/brushStamp'
+import { stampStrokes, toWidthNorm } from '~/lib/compositor/brushStamp'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
 import { useVectorNodeEdit } from '~/composables/useVectorNodeEdit'
 import { generateVectorFromText, vectorizeImage, urlToDataUrl } from '~/composables/useVectorAi'
@@ -1978,7 +1978,11 @@ function onBrushPointerDown(e: PointerEvent) {
   const p = clientToNorm(e); if (!p) return
   e.preventDefault(); e.stopPropagation()
   canvasRef.value?.setPointerCapture?.(e.pointerId)
-  brush.beginStroke(p.nx, p.ny, canvasDisplay.w)
+  // clientToNorm returns ny as a fraction of HEIGHT; strokes are stored
+  // width-normalized, so rescale Y by the aspect before handing to the engine.
+  // The cursor ring keeps the SCREEN-normalized coord (its template scales by H).
+  const wn = toWidthNorm(p.nx, p.ny, canvasDisplay.w, canvasDisplay.h)
+  brush.beginStroke(wn.x, wn.y, canvasDisplay.w)
   brush.cursor.value = { x: p.nx, y: p.ny }
   renderStack() // show the live stroke immediately (see Task 4 overlay hook)
 }
@@ -1986,7 +1990,8 @@ function onBrushPointerMove(e: PointerEvent) {
   const p = clientToNorm(e); if (!p) return
   brush.cursor.value = { x: p.nx, y: p.ny }
   if (!brush.hasLiveStroke.value) return
-  brush.extendStroke(p.nx, p.ny)
+  const wn = toWidthNorm(p.nx, p.ny, canvasDisplay.w, canvasDisplay.h)
+  brush.extendStroke(wn.x, wn.y)
   renderStack()
 }
 function onBrushPointerUp() {
@@ -2001,6 +2006,9 @@ function onBrushPointerUp() {
     return
   }
   const existing = activeBrushLayer()
+  // An erase-only first stroke has nothing to carve — don't spawn an empty,
+  // invisible brush layer (FIX #8). Only guard when there's no layer to append to.
+  if (!existing && s.erase) return
   const aspect = canvasDisplay.h / Math.max(1, canvasDisplay.w)
   if (existing) {
     setLocal(existing.id, { strokes: [...existing.strokes, s] })
@@ -3269,6 +3277,8 @@ onUnmounted(() => {
               :class="brush.mode.value === m ? 'bg-white text-neutral-900 font-medium' : 'text-white/70 hover:bg-white/10'"
               @click="brush.mode.value = (m as any)">{{ m }}</button>
           </div>
+          <p v-if="brush.mode.value === 'mask' && !(selectedLocal && selectedLocal.kind !== 'brush')"
+            class="text-[10px] text-white/40 mb-2 leading-snug">Select a layer to mask</p>
           <div v-if="brush.mode.value === 'paint'" class="flex items-center gap-2 mb-2">
             <span class="text-[10px] text-white/40 w-9 shrink-0">Color</span>
             <StudioColor :model-value="brush.color.value" @update:model-value="(v: string) => brush.color.value = v" />

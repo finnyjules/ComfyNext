@@ -864,10 +864,13 @@ function paintLayerCropped(ctx: CanvasRenderingContext2D, layer: LocalLayer, W: 
  * pixels as the layer), then composited in device space. Mirrors the
  * drawLocalLayer / drawItemMasked layer-mask recipe exactly.
  *
- * Semantics: base 'visible' → fill white (fully shown), erase strokes cut holes
- * (destination-out) and non-erase strokes are white-on-white no-ops → "brush
- * hides, eraser un-hides". base 'hidden' → start transparent, non-erase strokes
- * paint white (reveal) → invert.
+ * Semantics ("brush HIDES, eraser RESTORES" — the inverse of a paint layer, so a
+ * mask stroke reads oppositely to a paint stroke): base 'visible' → fill white
+ * (fully shown), then a PLAIN stroke carves a hole (destination-out, hides the
+ * layer) and an ERASE stroke paints white back (restores visibility). This is
+ * achieved by flipping each stroke's `erase` flag before stampStrokes, whose
+ * carve/paint logic then does exactly that. base 'hidden' (not surfaced in v1) →
+ * start transparent, plain strokes paint white (reveal) — normal stampStrokes.
  */
 function applyStrokeMask(ctx: CanvasRenderingContext2D, layer: LocalLayer, W: number, H: number) {
   const t = ctx.getTransform()
@@ -877,14 +880,21 @@ function applyStrokeMask(ctx: CanvasRenderingContext2D, layer: LocalLayer, W: nu
   const mctx = mask.getContext('2d')
   if (!mctx) return
   mctx.setTransform(t)
-  if ((layer.maskBase ?? 'visible') === 'visible') {
-    // Fully visible everywhere; erase strokes below carve holes.
-    mctx.fillStyle = '#fff'
-    mctx.fillRect(0, 0, W, H)
-  }
+  const strokes = layer.maskStrokes ?? []
   // `base = W`: strokes are normalized to the artboard width, which is W logical
   // px in this transform space (mirrors renderStack's stampStrokes call).
-  stampStrokes(mctx, layer.maskStrokes ?? [], W, () => document.createElement('canvas'))
+  if ((layer.maskBase ?? 'visible') === 'visible') {
+    // Fully visible everywhere; a plain brush stroke carves a hole (hide) and an
+    // eraser stroke paints white back (restore). Invert `erase` so stampStrokes'
+    // destination-out carve fires for plain strokes and its white paint for erase.
+    mctx.fillStyle = '#fff'
+    mctx.fillRect(0, 0, W, H)
+    const inverted = strokes.map(s => ({ ...s, erase: !s.erase }))
+    stampStrokes(mctx, inverted, W, () => document.createElement('canvas'))
+  } else {
+    // base 'hidden': start transparent, plain strokes reveal (paint white).
+    stampStrokes(mctx, strokes, W, () => document.createElement('canvas'))
+  }
   ctx.save()
   ctx.setTransform(1, 0, 0, 1, 0, 0) // device space — matches the layer's pixels
   ctx.globalCompositeOperation = 'destination-in'
@@ -1121,19 +1131,26 @@ function drawLayerContent(ctx: CanvasRenderingContext2D, layer: LocalLayer, W: n
     if (!layer.strokes.length) return
     const w = Math.max(1, Math.round(layer.w * W))
     const h = Math.max(1, Math.round(layer.h * W))
-    const off = document.createElement('canvas'); off.width = w; off.height = h
+    // Rasterize at DEVICE resolution so the committed layer stays crisp on retina
+    // (dpr>1) — matching the device-sized live overlay. `ctx` is DPR-scaled, so the
+    // final drawImage at LOGICAL w×h renders the hi-res offscreen 1:1. Export runs
+    // at dpr≈1 with a large W, so it's unaffected.
+    const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1
+    const dw = Math.max(1, Math.round(w * dpr))
+    const dh = Math.max(1, Math.round(h * dpr))
+    const off = document.createElement('canvas'); off.width = dw; off.height = dh
     const octx = off.getContext('2d'); if (!octx) return
-    // Strokes are width-normalized; `base = w` maps them into this offscreen (w == W when layer.w == 1).
-    stampStrokes(octx, layer.strokes, w, () => document.createElement('canvas'))
+    // Strokes are width-normalized; `base = w * dpr` scales them up to the device offscreen.
+    stampStrokes(octx, layer.strokes, w * dpr, () => document.createElement('canvas'))
     if (hasPaint(layer.fill)) {
       octx.save()
-      octx.translate(w / 2, h / 2)               // center so resolvePaint's gradient/pattern lines up
+      octx.translate(dw / 2, dh / 2)             // center so resolvePaint's gradient/pattern lines up
       octx.globalCompositeOperation = 'source-in' // keep fill only where strokes painted
-      octx.fillStyle = resolvePaint(octx, layer.fill, { w, h })
-      octx.fillRect(-w / 2, -h / 2, w, h)
+      octx.fillStyle = resolvePaint(octx, layer.fill, { w: dw, h: dh })
+      octx.fillRect(-dw / 2, -dh / 2, dw, dh)
       octx.restore()
     }
-    ctx.drawImage(off, -w / 2, -h / 2, w, h)
+    ctx.drawImage(off, -w / 2, -h / 2, w, h)     // logical size; DPR-scaled ctx makes it 1:1 crisp
   }
 }
 

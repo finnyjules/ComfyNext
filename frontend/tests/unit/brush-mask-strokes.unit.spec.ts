@@ -144,4 +144,36 @@ describe('brush mask-mode stroke masking', () => {
     drawLocalLayer(main, layer, W, H)
     expect(ops.some(o => o.composite === 'destination-in')).toBe(false)
   })
+
+  // FIX #2: mask strokes are the INVERSE of paint strokes — a PLAIN (non-erase)
+  // mask stroke HIDES the layer, so it must carve the mask via destination-out
+  // (not be a white-on-white no-op). The outer destination-in isolation still holds.
+  it('a plain mask stroke carves the mask via destination-out (brush HIDES)', () => {
+    const layer = createRectLayer({ fill: '#22d3ee' })
+    ;(layer as any).maskStrokes = [stroke({ erase: false })]
+    const main = recordingCtx('main')
+    drawLocalLayer(main, layer, W, H)
+    // The plain stroke rasterizes as a destination-out carve on the mask offscreen.
+    const carve = ops.filter(o => o.composite === 'destination-out' && PRIMITIVE_DRAWS.has(o.op))
+    expect(carve.length).toBeGreaterThan(0)
+    // …and the mask is still isolated onto the layer with a single destination-in drawImage.
+    const underDestIn = ops.filter(o => o.composite === 'destination-in')
+    expect(underDestIn.length).toBe(1)
+    expect(underDestIn[0].op).toBe('drawImage')
+  })
+
+  // An ERASE mask stroke RESTORES visibility → it paints white (source-over),
+  // never carves. So no destination-out primitive draw should appear for it.
+  it('an erase mask stroke restores (paints white, no destination-out carve)', () => {
+    const layer = createRectLayer({ fill: '#22d3ee' })
+    ;(layer as any).maskStrokes = [stroke({ erase: true })]
+    const main = recordingCtx('main')
+    drawLocalLayer(main, layer, W, H)
+    const carve = ops.filter(o => o.composite === 'destination-out' && PRIMITIVE_DRAWS.has(o.op))
+    expect(carve).toEqual([])
+    // The isolation composite is still exactly one destination-in drawImage.
+    const underDestIn = ops.filter(o => o.composite === 'destination-in')
+    expect(underDestIn.length).toBe(1)
+    expect(underDestIn[0].op).toBe('drawImage')
+  })
 })
