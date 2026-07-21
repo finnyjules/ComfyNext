@@ -226,19 +226,20 @@ export function stackConfig(seed = randomSeed()): GradientConfig {
 export function liquidConfig(seed = randomSeed()): GradientConfig {
   return {
     seed,
-    canvas: { aspect: '1:1', layout: 'liquid', margin: 0, innerRadius: 0, background: '#0e0a1e', center: { ...DEFAULT_CENTER } },
-    relief: { grain: 0.18, relief: 0, light: { ...DEFAULT_LIGHT } },
-    flow: { angle: 45, noiseScale: 3.5, intensity: 72, distortion: 80, detail: 2, depth: 60, highlights: 50, shadows: 55, foldScale: 60 },
+    canvas: { aspect: '16:9', layout: 'liquid', margin: 0, innerRadius: 0.4, background: '#000000', center: { ...DEFAULT_CENTER } },
+    relief: { grain: 1, relief: 0, light: { ...DEFAULT_LIGHT } },
+    flow: { angle: 45, noiseScale: 0.9, intensity: 100, distortion: 94, detail: 1, depth: 32, highlights: 0, shadows: 0, foldScale: 0, speed: 25, gloss: 0, veins: 0, veinScale: 35, ripple: 0, refract: 47, viscosity: 100, swirl: 50 },
     layers: [
       {
         blend: 'normal', opacity: 1,
         // Shape is unused by the liquid layout but kept so the layer schema stays complete.
-        shape: { type: 'bands', count: 12, minDepth: 0, curveExp: 1, jitter: 0, peaks: 3, phase: 0, detail: 4, sweep: 360, scrub: 0, gap: 0, rounding: 0, direction: 'up', mirror: 'none', valley: 0.5 },
-        color: { stops: [{ color: '#ff7a3d', pos: 0 }, { color: '#f6c39b', pos: 0.25 }, { color: '#f5a6cd', pos: 0.5 }, { color: '#2b3a55', pos: 0.75 }, { color: '#171327', pos: 1 }], gradientDir: 'vertical', mapping: 'field', steps: 0, hueDrift: 0, hueRotate: 0 },
+        shape: { type: 'bands', count: 20, minDepth: 0, curveExp: 1, jitter: 0, peaks: 3, phase: 0, detail: 4, sweep: 360, scrub: 0, gap: 0, rounding: 0, direction: 'up', mirror: 'none', valley: 0.5 },
+        color: { stops: [{ color: '#311a2a', pos: 0 }, { color: '#c026d3', pos: 0.4 }, { color: '#ff7d46', pos: 0.64 }, { color: '#f1ddac', pos: 1 }], gradientDir: 'vertical', mapping: 'field', steps: 0, hueDrift: 0, hueRotate: 0 },
       },
     ],
     motion: { tracks: [], duration: 4, fps: 30, size: 1080 },
     locks: {},
+    focus: { blur: 100, shape: 'off', x: 0, y: 0, radius: 0.25, softness: 40, angle: 0 },
   }
 }
 
