@@ -345,3 +345,26 @@ describe('scene3d motion — defaults/templates', () => {
     expect(doc.objects[1]!.motion).toBeUndefined()
   })
 })
+
+import { sceneHasMotion } from '~/lib/scene3d/motion/render'
+
+describe('scene3d motion — sceneHasMotion', () => {
+  it('false for a motion-less scene', () => {
+    const doc = defaultDoc(); doc.objects.push(createPrimitive('box', doc.objects))
+    expect(sceneHasMotion(doc)).toBe(false)
+  })
+  it('true when an object loops', () => {
+    const doc = defaultDoc(); const b = createPrimitive('box', doc.objects)
+    b.motion = { loop: { kind: 'spin', speed: 1, amount: 1 } }; doc.objects.push(b)
+    expect(sceneHasMotion(doc)).toBe(true)
+  })
+  it('true when camera moves', () => {
+    const doc = defaultDoc(); doc.camera.motion = { preset: 'orbit', speed: 1, amount: 1 }
+    expect(sceneHasMotion(doc)).toBe(true)
+  })
+  it('loop kind none does not count', () => {
+    const doc = defaultDoc(); const b = createPrimitive('box', doc.objects)
+    b.motion = { loop: { kind: 'none', speed: 1, amount: 1 } }; doc.objects.push(b)
+    expect(sceneHasMotion(doc)).toBe(false)
+  })
+})

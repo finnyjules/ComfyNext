@@ -549,6 +549,26 @@ export class SceneEngine {
     this.renderer.render(this.scene, this.camera)
   }
 
+  /** Set per-object opacity for a motion frame. Ids not in `map` are forced opaque.
+   *  Traverses each root's meshes; toggles material.transparent so fades render. */
+  applyObjectOpacities(map: Record<string, number>): void {
+    for (const [id, root] of this.objectRoots) {
+      const o = map[id] ?? 1
+      root.traverse((n) => {
+        const mesh = n as THREE.Mesh
+        const mat = mesh.material as THREE.Material | THREE.Material[] | undefined
+        if (!mat) return
+        const mats = Array.isArray(mat) ? mat : [mat]
+        for (const m of mats) {
+          const mm = m as THREE.Material & { opacity?: number; transparent?: boolean }
+          mm.opacity = o
+          mm.transparent = o < 1
+          mm.needsUpdate = true
+        }
+      })
+    }
+  }
+
   dispose(): void {
     // Invalidate pending GLB loads first: their .then() checks glbTokens, so
     // clearing makes any in-flight load bail instead of attaching to a
