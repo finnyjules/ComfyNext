@@ -62,6 +62,7 @@ const selected = computed<SceneObject | null>(() => doc.objects.find((o) => o.id
 const selectedIsPrimitive = computed(() => selected.value?.kind === 'primitive')
 const selectedIsLight = computed(() => selected.value?.kind === 'light')
 const selectedLight = computed<LightObject | null>(() => (selected.value?.kind === 'light' ? selected.value : null))
+const activeTab = ref<'build' | 'motion'>('build')  // inspector tab: Build (existing sections) vs Motion (Task 5)
 const snap = ref(false)
 const lightView = ref(false)  // clay + light-widget preview mode (Task 1/3 engine support)
 const dirty = ref(false)      // doc changed since last bake
@@ -1093,6 +1094,16 @@ function onClose() {
     </template>
 
     <template #controls>
+      <div class="mb-2 flex gap-1 rounded-lg bg-white/[0.04] p-1 text-[11px]">
+        <button type="button" class="nodrag flex-1 rounded px-2 py-1"
+                :class="activeTab === 'build' ? 'bg-white/15 text-white' : 'text-white/55 hover:text-white/80'"
+                @click="activeTab = 'build'">Build</button>
+        <button type="button" class="nodrag flex-1 rounded px-2 py-1"
+                :class="activeTab === 'motion' ? 'bg-white/15 text-white' : 'text-white/55 hover:text-white/80'"
+                @click="activeTab = 'motion'">Motion</button>
+      </div>
+
+      <template v-if="activeTab === 'build'">
       <StudioSection v-if="selected" title="Selection" @pointerdown.capture="onControlsPointerDown">
         <div v-if="selectedIsPrimitive">
           <label class="mb-1 block text-[11px] text-white/55">Material</label>
@@ -1471,6 +1482,10 @@ function onClose() {
           <StudioColor v-model="bgColorProxy" />
         </div>
       </StudioSection>
+      </template>
+      <template v-else>
+        <!-- Motion panel: Task 5 -->
+      </template>
 
       <!-- Sticky action footer: Save + Export, pinned to the bottom-right of the
            inspector column. mt-auto pins it to the bottom when the column is short;
