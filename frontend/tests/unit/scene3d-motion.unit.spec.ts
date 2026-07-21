@@ -37,4 +37,33 @@ describe('scene3d motion — config parse', () => {
     const round = parseDoc(JSON.stringify(raw))
     expect(round.objects[0]!.motion).toBeUndefined()
   })
+
+  it('absent motion key round-trips to defaults, objects unchanged', () => {
+    const doc = defaultDoc()
+    const obj = createPrimitive('box', doc.objects)
+    obj.position = [1, 2, 3]
+    doc.objects.push(obj)
+    const raw = JSON.parse(serializeDoc(doc))
+    delete raw.motion
+    const round = parseDoc(JSON.stringify(raw))
+    expect(round.motion).toEqual(DEFAULT_SCENE_MOTION)
+    expect(round.objects[0]!.position).toEqual([1, 2, 3])
+    expect(round.objects[0]!.motion).toBeUndefined()
+  })
+
+  it('malformed scene motion falls back to defaults without throwing', () => {
+    const doc = defaultDoc()
+    const raw = JSON.parse(serializeDoc(doc))
+    raw.motion = 'garbage'
+    const round = parseDoc(JSON.stringify(raw))
+    expect(round.motion).toEqual(DEFAULT_SCENE_MOTION)
+  })
+
+  it('malformed camera motion drops to undefined', () => {
+    const doc = defaultDoc()
+    const raw = JSON.parse(serializeDoc(doc))
+    raw.camera.motion = { preset: 'not-a-preset' }
+    const round = parseDoc(JSON.stringify(raw))
+    expect(round.camera.motion).toBeUndefined()
+  })
 })
