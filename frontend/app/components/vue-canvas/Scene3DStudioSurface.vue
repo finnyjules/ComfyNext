@@ -30,10 +30,11 @@ import { loadGlb, GLB_SIZE_CAP_BYTES } from '~/lib/scene3d/glb'
 import { fitGlbGroup } from '~/lib/scene3d/fitGlb'
 import { renderPasses } from '~/lib/scene3d/passes'
 import { SCENE_TEMPLATES, animateSceneDefaults } from '~/lib/scene3d/motion/defaults'
-import { LOOP_OPTIONS, IN_OPTIONS, OUT_OPTIONS, CAMERA_OPTIONS, setObjectLoop, setObjectTransition } from '~/lib/scene3d/motion/panel'
+import { LOOP_OPTIONS, IN_OPTIONS, OUT_OPTIONS, CAMERA_OPTIONS, setObjectLoop, setObjectTransition, setObjectDirection } from '~/lib/scene3d/motion/panel'
 import { sceneHasMotion, renderMotionFrame } from '~/lib/scene3d/motion/render'
 import { applyMotionToDoc } from '~/lib/scene3d/motion/apply'
-import type { LoopKind, TransitionPreset, CameraMotion } from '~/lib/scene3d/motion/types'
+import { EASE_PRESETS, presetKeyForEaseRef, easeRefForPresetKey, easeRefToCurveString, curveStringToEaseRef } from '~/lib/scene3d/motion/easePresets'
+import type { LoopKind, TransitionPreset, CameraMotion, Direction } from '~/lib/scene3d/motion/types'
 import { detectWebGL } from '~/lib/spacetype/webgl'
 import { useInpaint } from '~/composables/useInpaint'
 import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
@@ -45,6 +46,8 @@ import StudioSegmented from '~/components/vue-canvas/studio/StudioSegmented.vue'
 import StudioSelect from '~/components/vue-canvas/studio/StudioSelect.vue'
 import StudioSwitch from '~/components/vue-canvas/studio/StudioSwitch.vue'
 import StudioGradientRamp from '~/components/vue-canvas/studio/StudioGradientRamp.vue'
+import Scene3DMotionTimeline from '~/components/vue-canvas/Scene3DMotionTimeline.vue'
+import CurveEditor from '~/components/vue-canvas/CurveEditor.vue'
 
 const props = withDefaults(defineProps<{ nodeId: string; nodes?: any[]; edges?: any[] }>(), {
   nodes: () => [], edges: () => [],
@@ -78,6 +81,30 @@ const motionOn = computed({
   },
 })
 function applyTemplate(name: 'showcase' | 'reveal' | 'loop') { SCENE_TEMPLATES[name](doc) }
+
+const DIRECTION_OPTIONS: Direction[] = ['left', 'right', 'top', 'bottom']
+// Ease picker options: preset KEYS (StudioSelect displays/binds the string key itself) + 'custom'.
+const EASE_KEY_OPTIONS: string[] = [...EASE_PRESETS.map((p) => p.key), 'custom']
+
+// Ease picker proxy for a transition slot ('in'|'out') on the currently selected object.
+function easeKey(slot: 'in' | 'out'): string {
+  const t = selected.value?.motion?.[slot]
+  return t ? presetKeyForEaseRef(t.ease) : 'ease-out'
+}
+function setEaseKey(slot: 'in' | 'out', key: string) {
+  const t = selected.value?.motion?.[slot]
+  if (!t || key === 'custom') return
+  t.ease = easeRefForPresetKey(key)
+}
+function curveProxy(slot: 'in' | 'out'): string | null {
+  const t = selected.value?.motion?.[slot]
+  if (!t) return null
+  return easeRefToCurveString(t.ease)
+}
+function setCurve(slot: 'in' | 'out', v: string) {
+  const t = selected.value?.motion?.[slot]
+  if (t) t.ease = curveStringToEaseRef(v)
+}
 
 // ── Transport / playback (Task 6) ────────────────────────────────────────────
 const playing = ref(false)
@@ -1589,10 +1616,13 @@ function onClose() {
           <template v-if="motionOn">
             <StudioSlider v-model="doc.motion.duration" label="Duration (s)" :min="1" :max="12" :step="0.5" />
             <StudioSlider v-model="doc.motion.fps" label="FPS" :min="12" :max="60" :step="1" />
-            <div class="flex gap-1">
-              <StudioButton class="flex-1" @click="applyTemplate('showcase')">Showcase</StudioButton>
-              <StudioButton class="flex-1" @click="applyTemplate('reveal')">Reveal</StudioButton>
-              <StudioButton class="flex-1" @click="applyTemplate('loop')">Loop</StudioButton>
+            <div class="grid grid-cols-3 gap-1">
+              <button v-for="key in (['showcase', 'reveal', 'loop'] as const)" :key="key" type="button"
+                      class="nodrag rounded-lg border border-white/10 bg-white/[0.04] px-2 py-2 text-[11px] text-white/70 hover:bg-white/10"
+                      :class="{ 'border-sky-400/60 text-white': doc.motion.template === key }"
+                      @click="applyTemplate(key)">
+                {{ key === 'showcase' ? 'Showcase' : key === 'reveal' ? 'Reveal' : 'Loop' }}
+              </button>
             </div>
             <div>
               <label class="mb-1 block text-[11px] text-white/55">Camera</label>
@@ -1613,12 +1643,45 @@ function onClose() {
             <StudioSelect :model-value="selected.motion?.in?.preset ?? 'none'" :options="IN_OPTIONS"
               @update:model-value="(v: string) => setObjectTransition(selected!, 'in', v as TransitionPreset | 'none')" />
           </div>
+          <template v-if="selected?.motion?.in">
+            <div v-if="['move', 'rise'].includes(selected.motion.in.preset)">
+              <label class="mb-1 block text-[11px] text-white/55">In direction</label>
+              <StudioSelect :model-value="selected.motion.in.direction ?? 'left'" :options="DIRECTION_OPTIONS"
+                @update:model-value="(v: string) => setObjectDirection(selected!, 'in', v as Direction)" />
+            </div>
+            <div>
+              <label class="mb-1 block text-[11px] text-white/55">In ease</label>
+              <StudioSelect :model-value="easeKey('in')" :options="EASE_KEY_OPTIONS"
+                @update:model-value="(v: string) => setEaseKey('in', v)" />
+              <CurveEditor v-if="curveProxy('in') !== null" class="mt-1"
+                :model-value="curveProxy('in')!" @update:model-value="(v: string) => setCurve('in', v)" />
+            </div>
+          </template>
           <div>
             <label class="mb-1 block text-[11px] text-white/55">Out</label>
             <StudioSelect :model-value="selected.motion?.out?.preset ?? 'none'" :options="OUT_OPTIONS"
               @update:model-value="(v: string) => setObjectTransition(selected!, 'out', v as TransitionPreset | 'none')" />
           </div>
+          <template v-if="selected?.motion?.out">
+            <div v-if="['move', 'rise'].includes(selected.motion.out.preset)">
+              <label class="mb-1 block text-[11px] text-white/55">Out direction</label>
+              <StudioSelect :model-value="selected.motion.out.direction ?? 'left'" :options="DIRECTION_OPTIONS"
+                @update:model-value="(v: string) => setObjectDirection(selected!, 'out', v as Direction)" />
+            </div>
+            <div>
+              <label class="mb-1 block text-[11px] text-white/55">Out ease</label>
+              <StudioSelect :model-value="easeKey('out')" :options="EASE_KEY_OPTIONS"
+                @update:model-value="(v: string) => setEaseKey('out', v)" />
+              <CurveEditor v-if="curveProxy('out') !== null" class="mt-1"
+                :model-value="curveProxy('out')!" @update:model-value="(v: string) => setCurve('out', v)" />
+            </div>
+          </template>
         </StudioSection>
+
+        <div v-if="motionOn" class="mt-2">
+          <Scene3DMotionTimeline :doc="doc" :selected-id="selectedId" :playhead="playhead"
+            @select="(id: string) => (selectedId = id)" />
+        </div>
       </template>
 
       <!-- Sticky action footer: Save + Export, pinned to the bottom-right of the
