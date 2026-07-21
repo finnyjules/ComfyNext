@@ -1414,18 +1414,18 @@ function onGlobalKey(e: KeyboardEvent) {
     e.preventDefault()
     return
   }
-  // Cmd/Ctrl+C copies the selected node(s); Cmd/Ctrl+V pastes at the cursor.
-  // Guarded so real text copy/paste in fields (and copying a text selection)
-  // still works. Handled here, before the modifier-return below.
+  // Cmd/Ctrl+C copies the selected node(s). Guarded so real text copy in
+  // fields (and copying a text selection) still works.
   const mod = e.metaKey || e.ctrlKey
   if (mod && (e.key === 'c' || e.key === 'C') && !isTypingTarget() && !hasTextSelection()) {
     if (copySelection()) e.preventDefault()
     return
   }
-  if (mod && (e.key === 'v' || e.key === 'V') && !isTypingTarget()) {
-    if (pasteClipboard()) e.preventDefault()
-    return
-  }
+  // NOTE: Cmd/Ctrl+V is deliberately NOT handled here. Node paste lives in
+  // handlePaste (the native `paste` event) so that an OS-clipboard image — a
+  // pasted screenshot — always takes priority over a stale node in the in-app
+  // copy buffer. Calling preventDefault() on the keydown here would suppress
+  // the paste event entirely and block image paste (see handlePaste).
   // The rest are creation shortcuts — skip when typing or when modifier keys
   // are held (Cmd/Ctrl combos belong to undo/redo etc.).
   if (isTypingTarget()) return
@@ -4345,7 +4345,17 @@ async function handlePaste(e: ClipboardEvent) {
     const f = e.clipboardData.files[0]
     if (f.type.startsWith('image/')) imageFile = f
   }
-  if (!imageFile) return
+  if (!imageFile) {
+    // No OS-clipboard image → fall back to in-app node paste (Cmd+V of copied
+    // canvas nodes). This lives here, on the paste event, rather than on the
+    // Cmd+V keydown so a pasted screenshot always wins: previously the keydown
+    // pasted the buffered node and preventDefault'd, which suppressed this
+    // event and silently dropped the image. pasteClipboard() is a no-op (returns
+    // false) when the buffer is empty, so a plain paste with nothing to do falls
+    // through harmlessly.
+    if (pasteClipboard()) e.preventDefault()
+    return
+  }
 
   e.preventDefault()
 
