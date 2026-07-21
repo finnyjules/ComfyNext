@@ -67,3 +67,27 @@ describe('scene3d motion — config parse', () => {
     expect(round.camera.motion).toBeUndefined()
   })
 })
+
+describe('scene3d motion — resolveEaseRef', () => {
+  it('bezier endpoints anchored', async () => {
+    const { resolveEaseRef } = await import('~/lib/scene3d/motion/ease')
+    const f = resolveEaseRef({ kind: 'bezier', cps: [0.34, 1.56, 0.64, 1] })
+    expect(f(0)).toBeCloseTo(0, 6)
+    expect(f(1)).toBeCloseTo(1, 6)
+    expect(f(0.5)).toBeGreaterThan(0.5) // ease-out-ish region
+  })
+  it('bezier overshoot exceeds 1 mid-curve', async () => {
+    const { resolveEaseRef } = await import('~/lib/scene3d/motion/ease')
+    const f = resolveEaseRef({ kind: 'bezier', cps: [0.34, 1.56, 0.64, 1] })
+    const peak = Math.max(...Array.from({ length: 19 }, (_, i) => f((i + 1) / 20)))
+    expect(peak).toBeGreaterThan(1)
+  })
+  it('named procedural resolves and anchors', async () => {
+    const { resolveEaseRef } = await import('~/lib/scene3d/motion/ease')
+    for (const name of ['bounce', 'elastic', 'spring'] as const) {
+      const f = resolveEaseRef({ kind: 'named', name })
+      expect(f(0)).toBeCloseTo(0, 4)
+      expect(f(1)).toBeCloseTo(1, 4)
+    }
+  })
+})
