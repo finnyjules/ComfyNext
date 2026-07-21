@@ -32,6 +32,7 @@ import { renderPasses } from '~/lib/scene3d/passes'
 import { SCENE_TEMPLATES, animateSceneDefaults } from '~/lib/scene3d/motion/defaults'
 import { LOOP_OPTIONS, IN_OPTIONS, OUT_OPTIONS, CAMERA_OPTIONS, setObjectLoop, setObjectTransition } from '~/lib/scene3d/motion/panel'
 import { sceneHasMotion } from '~/lib/scene3d/motion/render'
+import { applyMotionToDoc } from '~/lib/scene3d/motion/apply'
 import type { LoopKind, TransitionPreset, CameraMotion } from '~/lib/scene3d/motion/types'
 import { detectWebGL } from '~/lib/spacetype/webgl'
 import { useInpaint } from '~/composables/useInpaint'
@@ -77,6 +78,22 @@ const motionOn = computed({
   },
 })
 function applyTemplate(name: 'showcase' | 'reveal' | 'loop') { SCENE_TEMPLATES[name](doc) }
+
+// ── Transport / playback (Task 6) ────────────────────────────────────────────
+const playing = ref(false)
+const playhead = ref(0)     // seconds
+let playStart = 0           // performance.now anchor
+function togglePlay() {
+  if (!sceneHasMotion(doc)) return
+  playing.value = !playing.value
+  if (playing.value) playStart = performance.now() - playhead.value * 1000
+}
+// Stub — replaced by Task 7 (export video).
+function exportVideo() {}
+watch(playing, (v) => {
+  if (!v && engine) { engine.syncFromDoc(doc); engine.applyObjectOpacities({}) }
+})
+
 const snap = ref(false)
 const lightView = ref(false)  // clay + light-widget preview mode (Task 1/3 engine support)
 const dirty = ref(false)      // doc changed since last bake
@@ -612,9 +629,26 @@ onMounted(() => {
     if (o.kind === 'glb') loadGlb(o.url).catch(() => { glbError[o.id] = true })
   }
   const loop = () => {
-    interaction?.orbit.update()
-    engine?.render()
-    updateLightLabels()
+    if (playing.value && engine) {
+      const dur = doc.motion.duration
+      const elapsed = (performance.now() - playStart) / 1000
+      playhead.value = doc.motion.loop ? elapsed % dur : Math.min(elapsed, dur)
+      const t01 = dur > 0 ? playhead.value / dur : 0
+      const { doc: sampled, opacities } = applyMotionToDoc(doc, t01)
+      // Lock orbit while the camera is animated so it can't fight the motion.
+      if (interaction) interaction.orbit.enabled = !(doc.camera.motion && doc.camera.motion.preset !== 'none')
+      engine.syncFromDoc(sampled)
+      engine.applyCameraFromDoc(sampled)
+      engine.applyObjectOpacities(opacities)
+      interaction?.orbit.update()
+      engine.render()
+      updateLightLabels()
+    } else {
+      if (interaction) interaction.orbit.enabled = true
+      interaction?.orbit.update()
+      engine?.render()
+      updateLightLabels()
+    }
     raf = requestAnimationFrame(loop)
   }
   raf = requestAnimationFrame(loop)
@@ -1108,6 +1142,13 @@ function onClose() {
     </template>
 
     <template #controls>
+      <div v-if="activeTab === 'motion'" class="mb-2 flex items-center gap-2 text-[11px] text-white/60">
+        <StudioButton @click="togglePlay">{{ playing ? 'Pause' : 'Play' }}</StudioButton>
+        <span class="tabular-nums">{{ playhead.toFixed(2) }} / {{ doc.motion.duration.toFixed(1) }}s</span>
+        <div class="flex-1"></div>
+        <StudioButton @click="exportVideo">Export video</StudioButton>
+      </div>
+
       <div class="mb-2 flex gap-1 rounded-lg bg-white/[0.04] p-1 text-[11px]">
         <button type="button" class="nodrag flex-1 rounded px-2 py-1"
                 :class="activeTab === 'build' ? 'bg-white/15 text-white' : 'text-white/55 hover:text-white/80'"
