@@ -36,7 +36,7 @@ export function applyMotionToDoc(
   return { doc: out, opacities }
 }
 
-/** rotate `pos` around `target` about world-Y by `yaw`, then add a local push delta. */
+/** rotate `pos` around `target` about world-Y by `yaw`, then add a world-space push delta. */
 function orbitAround(pos: Vec3, target: Vec3, yaw: number, push: Vec3): Vec3 {
   const dx = pos[0] - target[0], dz = pos[2] - target[2]
   const c = Math.cos(yaw), s = Math.sin(yaw)

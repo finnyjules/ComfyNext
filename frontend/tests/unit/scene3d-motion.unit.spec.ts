@@ -252,4 +252,48 @@ describe('scene3d motion — applyMotionToDoc', () => {
     doc.objects.push(box); doc.motion = { duration: 4, fps: 30, loop: true }
     expect(applyMotionToDoc(doc, 0).opacities[box.id]).toBeCloseTo(0, 5)
   })
+  it('camera orbit: position rotates around target, radius preserved', () => {
+    const doc = defaultDoc()
+    doc.camera.position = [0, 0, 5]
+    doc.camera.target = [0, 0, 0]
+    doc.camera.motion = { preset: 'orbit', speed: 1, amount: 1 }
+    doc.motion = { duration: 4, fps: 30, loop: true }
+
+    // At t01=0, position unchanged
+    const pos0 = applyMotionToDoc(doc, 0).doc.camera.position
+    expect(pos0[0]).toBeCloseTo(0, 5)
+    expect(pos0[1]).toBeCloseTo(0, 5)
+    expect(pos0[2]).toBeCloseTo(5, 5)
+
+    // At t01=0.25 (quarter orbit, yaw=π/2), position rotates to [-5, 0, 0]
+    const pos25 = applyMotionToDoc(doc, 0.25).doc.camera.position
+    expect(pos25[0]).toBeCloseTo(-5, 5)
+    expect(pos25[1]).toBeCloseTo(0, 5)
+    expect(pos25[2]).toBeCloseTo(0, 5)
+
+    // Radius preserved throughout
+    const radius0 = Math.hypot(pos0[0], pos0[2])
+    const radius25 = Math.hypot(pos25[0], pos25[2])
+    expect(radius0).toBeCloseTo(5, 5)
+    expect(radius25).toBeCloseTo(5, 5)
+  })
+  it('camera push: position moves along target-to-camera axis with sine envelope', () => {
+    const doc = defaultDoc()
+    doc.camera.position = [0, 0, 5]
+    doc.camera.target = [0, 0, 0]
+    doc.camera.motion = { preset: 'push', speed: 1, amount: 1 }
+    doc.motion = { duration: 4, fps: 30, loop: true }
+
+    // At t01=0, push envelope is 0 (sin(0)=0)
+    const pos0 = applyMotionToDoc(doc, 0).doc.camera.position
+    expect(pos0[0]).toBeCloseTo(0, 5)
+    expect(pos0[1]).toBeCloseTo(0, 5)
+    expect(pos0[2]).toBeCloseTo(5, 5)
+
+    // At t01=0.5 (peak), push envelope is sin(π/2)*0.15 = 0.15
+    const pos50 = applyMotionToDoc(doc, 0.5).doc.camera.position
+    expect(pos50[0]).toBeCloseTo(0, 5)
+    expect(pos50[1]).toBeCloseTo(0, 5)
+    expect(pos50[2]).toBeCloseTo(4.85, 5)
+  })
 })
