@@ -1853,9 +1853,11 @@ async function handleApplyEffect(e: Event) {
 interface DroppedAsset { kind: 'image' | 'video' | 'audio'; filename: string; subfolder?: string; type?: string }
 
 function assetViewUrl(a: DroppedAsset): string {
+  // No cache-buster: asset-panel files are static, and this matches the panel's
+  // own viewUrl() byte-for-byte so the node's preview reuses the thumbnail the
+  // browser already cached — the image shows instantly instead of re-downloading.
   const p = new URLSearchParams({ filename: a.filename, type: a.type || 'output' })
   if (a.subfolder) p.set('subfolder', a.subfolder)
-  p.set('t', String(Date.now()))
   return `/view?${p}`
 }
 
@@ -1895,9 +1897,22 @@ async function addAssetNodeData(a: DroppedAsset, position: { x: number, y: numbe
   // into the input folder first so the artifact loads them natively.
   const { nodeType, widget } = ASSET_ARTIFACT_SPEC[a.kind]
   if (!objectInfo.value[nodeType]) await fetchObjectInfo()
-  const inputName = await ensureInputFilename(a)
-  const node = createNodeData(nodeType, position, { [widget]: inputName }) as any
-  if (a.kind === 'image') node.data.images = [assetViewUrl(a)] // instant thumbnail
+  // Input assets are already loadable; output/temp ones need copying into the input
+  // folder first. Do that copy in the BACKGROUND so the node lands on the canvas
+  // instantly (showing its cached preview) instead of after the upload round-trip —
+  // the filename widget is filled in when the copy resolves.
+  const node = createNodeData(nodeType, position, { [widget]: a.type === 'input' ? a.filename : '' }) as any
+  if (a.kind === 'image') node.data.images = [assetViewUrl(a)] // instant, cache-hit preview
+  if (a.type !== 'input') {
+    ensureInputFilename(a).then((inputName) => {
+      // Mutate the LIVE node in nodes.value (a reactive proxy), not the raw object
+      // captured here — a direct mutation of the raw object wouldn't trigger Vue.
+      const live = nodes.value.find((n) => n.id === node.id)
+      if (!live) return
+      const idx = (live.data.widgetDefs as { name: string }[]).findIndex((w) => w.name === widget)
+      if (idx >= 0) live.data.widgetsValues[idx] = inputName
+    }).catch((err) => console.error('[asset→artifact] background copy to input failed:', err))
+  }
   return node
 }
 
