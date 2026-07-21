@@ -25,6 +25,8 @@ import AgentProgress from '~/components/agent/AgentProgress.vue'
 import AgentSweep from '~/components/agent/AgentSweep.vue'
 import { useVectorPen, buildPathLayerFromAnchors } from '~/composables/useVectorPen'
 import { useBrushPaint } from '~/composables/useBrushPaint'
+import { stampStrokes } from '~/lib/compositor/brushStamp'
+import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
 import { useVectorNodeEdit } from '~/composables/useVectorNodeEdit'
 import { generateVectorFromText, vectorizeImage, urlToDataUrl } from '~/composables/useVectorAi'
 import { imageLayerUrl } from '~/composables/useCompositorLayers'
@@ -49,7 +51,7 @@ import { VARIABLE_FONTS } from '~/data/variable-fonts'
 import type { GoogleFont } from '~/data/google-fonts'
 import { KINETIC_ENABLED } from '~/lib/kineticEnabled'
 import { defaultExpressiveParams, type ExpressiveParams } from '~~/shared/text-layout/expressive'
-import { PenTool, FileUp, Sparkles, Wand2, Undo2, Redo2, ChevronRight, ChevronDown, GripVertical, Play, Palette, Check, RefreshCw } from 'lucide-vue-next'
+import { PenTool, Brush, FileUp, Sparkles, Wand2, Undo2, Redo2, ChevronRight, ChevronDown, GripVertical, Play, Palette, Check, RefreshCw } from 'lucide-vue-next'
 import type { ComputedRef } from 'vue'
 import type { BrandKit } from '~~/shared/brand/types'
 import { brandSwatches } from '~~/shared/brand/resolve'
@@ -439,7 +441,7 @@ function finishPen() {
   pen.setActive(false)
   if (layer) addPathLayers([layer])
 }
-function togglePen() { pen.setActive(!pen.active.value); if (pen.active.value) { selectLocal(null); exitNodeEdit() } }
+function togglePen() { pen.setActive(!pen.active.value); if (pen.active.value) { selectLocal(null); exitNodeEdit(); brush.setActive(false) } }
 // Return to the default Select tool: leave pen/node-edit/generate modes.
 function selectTool() {
   if (pen.active.value) pen.setActive(false)
@@ -460,6 +462,8 @@ function toggleDistort() {
 // ── Brush: freehand paint tool (mutually exclusive with pen/node/gen/distort) ─
 function toggleBrush() {
   brush.setActive(!brush.active.value)
+  // Start a fresh paint layer each activation rather than silently reusing a prior one.
+  brushLayerId = null
   if (brush.active.value) { pen.setActive(false); exitNodeEdit(); if (genActive.value) exitGenMode(); distortTool.value = false; selectLocal(null) }
 }
 function normCp(cp: unknown): CornerPin {
@@ -1575,6 +1579,23 @@ function renderStack() {
     l.id === editingId.value || (nodeEdit.active.value && l.id === nodeEdit.layerId.value),
     previewT.value ?? undefined, previewT.value != null ? motionDoc.value : undefined,
     wiredTreatments.value, background.value, localGroups.value)
+  // Live brush stroke preview (paint mode): stamp onto the same ctx with the brush color.
+  const ls = brush.active.value && brush.mode.value === 'paint' ? brush.liveStroke() : null
+  if (ls && ls.points.length) {
+    const off = document.createElement('canvas'); off.width = cv.width; off.height = cv.height
+    const octx = off.getContext('2d')
+    if (octx) {
+      octx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      stampStrokes(octx, [ls], W, () => document.createElement('canvas'))
+      octx.setTransform(1, 0, 0, 1, 0, 0)
+      octx.globalCompositeOperation = 'source-in'
+      octx.fillStyle = ls.erase ? 'rgba(255,255,255,0.5)' : brush.color.value
+      octx.fillRect(0, 0, off.width, off.height)
+      ctx.setTransform(1, 0, 0, 1, 0, 0)
+      ctx.drawImage(off, 0, 0)
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    }
+  }
 }
 watch(
   () => [
@@ -1932,6 +1953,7 @@ function enterGenMode() {
   const sel = selectedLocal.value?.kind === 'image' ? selectedLocal.value.id : null
   selectTool(); exitNodeEdit()
   if (pen.active.value) pen.setActive(false)
+  brush.setActive(false)
   aiOpen.value = false
   genActive.value = true
   genTargetId.value = sel
@@ -2469,14 +2491,14 @@ onUnmounted(() => {
         ref="canvasRef"
         class="absolute inset-0 bg-[#1a1a1a] rounded-md overflow-hidden ring-1 ring-white/5 transition-shadow"
         :class="[
-          (pen.active.value || nodeEdit.active.value || (genActive && genTool === 'box')) ? 'cursor-crosshair' : (genActive && genTool === 'brush') ? 'cursor-none' : '',
+          (pen.active.value || nodeEdit.active.value || (genActive && genTool === 'box')) ? 'cursor-crosshair' : ((genActive && genTool === 'brush') || brush.active.value) ? 'cursor-none' : '',
           dropActive ? '!ring-2 !ring-white/70' : '',
         ]"
         @click="onCanvasClick"
         @pointerdown.capture="onCanvasPointerDownCapture"
         @pointermove="onCanvasPointerMoveCapture"
         @pointerup="onCanvasPointerUpCapture"
-        @pointerleave="genCursor.on = false"
+        @pointerleave="genCursor.on = false; brush.cursor.value = null"
         @dblclick.capture="onCanvasDblClickCapture"
       >
         <!-- Invisible <img> elements: kept for @load (natural dims) and pointer interaction.
@@ -2546,11 +2568,17 @@ onUnmounted(() => {
             maskRepeat: 'no-repeat', WebkitMaskRepeat: 'no-repeat',
           }"
         />
-        <!-- Brush cursor ring -->
+        <!-- Brush cursor ring (gen region) -->
         <div
           v-if="genActive && genTool === 'brush' && genCursor.on"
           class="absolute pointer-events-none rounded-full border border-white/90 bg-white/10"
           :style="{ left: (genCursor.x - genBrush / 2) + 'px', top: (genCursor.y - genBrush / 2) + 'px', width: genBrush + 'px', height: genBrush + 'px', zIndex: 30 }"
+        />
+        <!-- Brush cursor ring (freehand paint) -->
+        <div
+          v-if="brush.active.value && brush.cursor.value"
+          class="absolute pointer-events-none rounded-full border border-white/90 bg-white/10"
+          :style="{ left: (brush.cursor.value.x * canvasDisplay.w - brush.sizePx.value / 2) + 'px', top: (brush.cursor.value.y * canvasDisplay.h - brush.sizePx.value / 2) + 'px', width: brush.sizePx.value + 'px', height: brush.sizePx.value + 'px', zIndex: 30 }"
         />
 
         <!-- Generated-object mini toolbar: cancel / re-roll / confirm -->
@@ -2926,6 +2954,13 @@ onUnmounted(() => {
         >
           <PenTool class="size-4" />
         </button>
+        <button
+          class="flex items-center justify-center size-8 rounded cursor-pointer"
+          :class="brush.active.value ? 'bg-white text-neutral-900' : 'hover:bg-white/10 text-white/80'"
+          title="Brush — paint a freehand region (B)"
+          @click="toggleBrush">
+          <Brush class="size-4" />
+        </button>
         <button class="flex items-center justify-center size-8 rounded hover:bg-white/10 text-white/80 cursor-pointer" title="Import SVG" @click="triggerImportSvg">
           <FileUp class="size-4" />
         </button>
@@ -3180,6 +3215,45 @@ onUnmounted(() => {
           </div>
           <p v-if="!genHasMask" class="text-[10px] text-white/30 -mt-1">Mark a region on the canvas to enable Generate.</p>
           <div v-if="inpaint.error.value" class="text-[11px] text-rose-400">{{ inpaint.error.value }}</div>
+        </div>
+      </template>
+
+      <!-- Brush tool options (freehand paint) -->
+      <template v-else-if="brush.active.value">
+        <div class="px-4 py-3 border-b border-white/10 flex items-center gap-2">
+          <Brush class="size-3.5 text-white/70" />
+          <span class="text-sm font-medium">Brush</span>
+          <button class="ml-auto text-white/40 hover:text-white/80 p-1" title="Done (B)" @click="toggleBrush"><X class="size-3.5" /></button>
+        </div>
+        <div class="p-5 flex flex-col flex-1 min-h-0 overflow-y-auto">
+          <div class="flex items-center gap-1 p-0.5 rounded-md bg-white/[0.05] mb-2">
+            <button v-for="m in ['paint','mask']" :key="m" class="flex-1 h-7 rounded text-[11px] capitalize cursor-pointer"
+              :class="brush.mode.value === m ? 'bg-white text-neutral-900 font-medium' : 'text-white/70 hover:bg-white/10'"
+              @click="brush.mode.value = (m as any)">{{ m }}</button>
+          </div>
+          <div v-if="brush.mode.value === 'paint'" class="flex items-center gap-2 mb-2">
+            <span class="text-[10px] text-white/40 w-9 shrink-0">Color</span>
+            <StudioColor :model-value="brush.color.value" @update:model-value="(v: string) => brush.color.value = v" />
+          </div>
+          <div class="flex items-center gap-2 mb-2">
+            <span class="text-[10px] text-white/40 w-9 shrink-0">Size</span>
+            <input type="range" min="2" max="240" step="1" v-model.number="brush.sizePx.value" class="flex-1 accent-white cursor-pointer" />
+            <span class="text-[10px] text-white/50 w-8 text-right tabular-nums">{{ brush.sizePx.value }}</span>
+          </div>
+          <div class="flex items-center gap-2 mb-2">
+            <span class="text-[10px] text-white/40 w-9 shrink-0">Flow</span>
+            <input type="range" min="0.05" max="1" step="0.05" v-model.number="brush.opacity.value" class="flex-1 accent-white cursor-pointer" />
+            <span class="text-[10px] text-white/50 w-8 text-right tabular-nums">{{ Math.round(brush.opacity.value * 100) }}</span>
+          </div>
+          <div class="flex items-center gap-2 mb-2">
+            <span class="text-[10px] text-white/40 w-9 shrink-0">Soft</span>
+            <input type="range" min="0" max="1" step="0.05" :value="1 - brush.hardness.value"
+              @input="brush.hardness.value = 1 - Number(($event.target as HTMLInputElement).value)" class="flex-1 accent-white cursor-pointer" />
+            <span class="text-[10px] text-white/50 w-8 text-right tabular-nums">{{ Math.round((1 - brush.hardness.value) * 100) }}</span>
+          </div>
+          <button class="w-full h-7 rounded text-[11px] cursor-pointer"
+            :class="brush.eraser.value ? 'bg-white text-neutral-900' : 'bg-white/[0.05] text-white/70 hover:bg-white/10'"
+            @click="brush.eraser.value = !brush.eraser.value">{{ brush.eraser.value ? 'Eraser on' : 'Eraser' }}</button>
         </div>
       </template>
 
@@ -3485,6 +3559,15 @@ onUnmounted(() => {
               <div class="panel-label mb-1.5">Stroke</div>
               <FillControl allow-none :model-value="(selectedLocal as any).stroke"
                 @update:model-value="(v: any) => setLocal(selectedLocal!.id, { stroke: v })" />
+            </div>
+          </template>
+
+          <!-- Brush (freehand paint) controls: the stroke region takes any Paint fill -->
+          <template v-if="selectedLocal.kind === 'brush'">
+            <div>
+              <div class="panel-label mb-1.5">Fill</div>
+              <FillControl :model-value="(selectedLocal as any).fill"
+                @update:model-value="(v: any) => setLocal(selectedLocal!.id, { fill: v })" />
             </div>
           </template>
 
