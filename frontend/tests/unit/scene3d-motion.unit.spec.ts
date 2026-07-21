@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { parseDoc, serializeDoc, defaultDoc, createPrimitive } from '~/lib/scene3d/config'
 import type { ObjectMotion } from '~/lib/scene3d/motion/types'
 import { DEFAULT_SCENE_MOTION } from '~/lib/scene3d/motion/types'
+import { evaluateObjectMotion, evaluateCameraMotion } from '~/lib/scene3d/motion/evaluate'
 
 describe('scene3d motion — config parse', () => {
   it('defaults scene motion when absent', () => {
@@ -135,5 +136,42 @@ describe('scene3d motion — transitions', () => {
     const { directionVector } = await import('~/lib/scene3d/motion/presets')
     expect(directionVector('right', 3)).toEqual([3, 0, 0])
     expect(directionVector('top', 3)).toEqual([0, 3, 0])
+  })
+})
+
+describe('scene3d motion — evaluateObjectMotion', () => {
+  const D = 4
+  it('undefined motion = identity', () => {
+    const s = evaluateObjectMotion(undefined, 1.3, D)
+    expect(s.dPosition).toEqual([0, 0, 0]); expect(s.scaleMul).toEqual([1, 1, 1]); expect(s.opacity).toBe(1)
+  })
+  it('pure loop only closes: sample(0) ~= sample(D)', () => {
+    const m: ObjectMotion = { loop: { kind: 'bob', speed: 1, amount: 1 } }
+    const a = evaluateObjectMotion(m, 0, D), b = evaluateObjectMotion(m, D, D)
+    expect(a.dPosition[1]).toBeCloseTo(b.dPosition[1], 6)
+  })
+  it('fade-in: opacity 0 at t=0, 1 after in.duration', () => {
+    const m: ObjectMotion = { in: { preset: 'fade', duration: 1, ease: { kind: 'bezier', cps: [0, 0, 1, 1] } } }
+    expect(evaluateObjectMotion(m, 0, D).opacity).toBeCloseTo(0, 5)
+    expect(evaluateObjectMotion(m, 1, D).opacity).toBeCloseTo(1, 5)
+    expect(evaluateObjectMotion(m, 2.5, D).opacity).toBeCloseTo(1, 5)
+  })
+  it('offset holds the in-start until offset time', () => {
+    const m: ObjectMotion = { in: { preset: 'fade', duration: 1, ease: { kind: 'bezier', cps: [0, 0, 1, 1] } }, offset: 1 }
+    expect(evaluateObjectMotion(m, 0.5, D).opacity).toBeCloseTo(0, 5) // still pre-roll
+    expect(evaluateObjectMotion(m, 2, D).opacity).toBeCloseTo(1, 5)   // finished by offset+dur
+  })
+  it('fade-out: opacity 1 mid, 0 at end', () => {
+    const m: ObjectMotion = { out: { preset: 'fade', duration: 1, ease: { kind: 'bezier', cps: [0, 0, 1, 1] } } }
+    expect(evaluateObjectMotion(m, 2, D).opacity).toBeCloseTo(1, 5)
+    expect(evaluateObjectMotion(m, D, D).opacity).toBeCloseTo(0, 5)
+  })
+})
+
+describe('scene3d motion — evaluateCameraMotion', () => {
+  it('orbit yaw closes', () => {
+    expect(evaluateCameraMotion({ preset: 'orbit', speed: 1, amount: 1 }, 0).dTargetYaw).toBeCloseTo(0, 6)
+    const end = evaluateCameraMotion({ preset: 'orbit', speed: 1, amount: 1 }, 1).dTargetYaw
+    expect(((end % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)).toBeCloseTo(0, 5)
   })
 })
