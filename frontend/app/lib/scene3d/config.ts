@@ -123,6 +123,7 @@ export interface SceneDoc {
   camera: SceneCamera
   lighting: SceneLighting
   background: string
+  showFloor: boolean   // grid + shadow-catcher ground; false = clean floating look (viewport + render)
   output: { width: number; height: number }
   motion: SceneMotion
 }
@@ -256,6 +257,7 @@ export function defaultDoc(): SceneDoc {
     camera: { position: [4, 3, 6], target: [0, 0.5, 0], fov: 45 },
     lighting: { preset: 'studio', sunAzimuth: 35, sunElevation: 55, sunIntensity: 1.4, ambient: 0.5 },
     background: '#1b1e24',
+    showFloor: true,
     output: { width: 1024, height: 1024 },
     motion: { ...DEFAULT_SCENE_MOTION },
   }
@@ -472,6 +474,7 @@ export function parseDoc(json: string): SceneDoc {
       ambient: typeof raw.lighting?.ambient === 'number' ? raw.lighting.ambient : d.lighting.ambient,
     },
     background: typeof raw.background === 'string' ? raw.background : d.background,
+    showFloor: raw.showFloor !== false,   // default true; only an explicit false hides the floor
     output: {
       width: typeof raw.output?.width === 'number' ? raw.output.width : d.output.width,
       height: typeof raw.output?.height === 'number' ? raw.output.height : d.output.height,

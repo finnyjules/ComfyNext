@@ -490,3 +490,14 @@ describe('scene3d motion — ease presets + CurveEditor bridge', () => {
     expect(easeRefToCurveString({ kind: 'named', name: 'bounce' })).toBeNull()
   })
 })
+
+describe('scene3d — showFloor parse (backward-compat)', () => {
+  it('defaults floor ON for old docs without the key', () => {
+    const raw = JSON.parse(serializeDoc(defaultDoc())); delete raw.showFloor
+    expect(parseDoc(JSON.stringify(raw)).showFloor).toBe(true)
+  })
+  it('round-trips an explicit false', () => {
+    const doc = defaultDoc(); doc.showFloor = false
+    expect(parseDoc(serializeDoc(doc)).showFloor).toBe(false)
+  })
+})

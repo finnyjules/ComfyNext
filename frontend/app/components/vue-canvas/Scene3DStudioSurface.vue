@@ -1610,6 +1610,10 @@ function onClose() {
 
       <StudioSection title="Background">
         <div class="flex items-center justify-between">
+          <span class="text-[11px] text-white/55">Floor</span>
+          <StudioSwitch v-model="doc.showFloor" />
+        </div>
+        <div class="flex items-center justify-between">
           <span class="text-[11px] text-white/55">Transparent</span>
           <StudioSwitch v-model="bgTransparent" />
         </div>

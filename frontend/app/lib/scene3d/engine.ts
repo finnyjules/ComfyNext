@@ -374,6 +374,11 @@ export class SceneEngine {
     this.ambient.intensity = doc.lighting.ambient
     this.scene.environmentIntensity = preset.envIntensity
     this.scene.background = doc.background === 'transparent' ? null : new THREE.Color(stripAlpha(doc.background))
+    // Floor = the reference grid + the shadow-catcher ground. Off ⇒ a clean floating
+    // look in the viewport AND the beauty bake (renderPasses keeps the grid hidden and
+    // renders beauty with the ground's current visibility, so this carries into export).
+    this.grid.visible = doc.showFloor
+    this.shadowGround.visible = doc.showFloor
     this.camera.fov = doc.camera.fov
     this.camera.updateProjectionMatrix()
   }
