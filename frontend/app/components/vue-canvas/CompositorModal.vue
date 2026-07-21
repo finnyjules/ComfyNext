@@ -25,7 +25,7 @@ import AgentProgress from '~/components/agent/AgentProgress.vue'
 import AgentSweep from '~/components/agent/AgentSweep.vue'
 import { useVectorPen, buildPathLayerFromAnchors } from '~/composables/useVectorPen'
 import { useBrushPaint } from '~/composables/useBrushPaint'
-import { stampStrokes, toWidthNorm } from '~/lib/compositor/brushStamp'
+import { toWidthNorm } from '~/lib/compositor/brushStamp'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
 import { useVectorNodeEdit } from '~/composables/useVectorNodeEdit'
 import { generateVectorFromText, vectorizeImage, urlToDataUrl } from '~/composables/useVectorAi'
@@ -1575,27 +1575,30 @@ function renderStack() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.clearRect(0, 0, W, H)
   const items = buildStackItems()
+  // Live brush stroke preview (paint mode): fold the in-progress stroke into the
+  // layer actually being drawn, so the preview MATCHES the committed result — an
+  // eraser stroke subtracts in real time (destination-out within the layer), and a
+  // paint stroke previews through the layer's real fill (gradient/pattern), not a
+  // flat blob. New-layer strokes get a transient top layer with the brush colour.
+  const ls = brush.active.value && brush.mode.value === 'paint' ? brush.liveStroke() : null
+  if (ls && ls.points.length) {
+    const target = activeBrushLayer()
+    if (target) {
+      const idx = items.findIndex(it => it.type === 'local' && it.layer.id === target.id)
+      if (idx >= 0) {
+        const it = items[idx] as Extract<StackItem, { type: 'local' }>
+        items[idx] = { ...it, layer: { ...it.layer, strokes: [...(it.layer as BrushLayer).strokes, ls] } as LocalLayer }
+      }
+    } else {
+      const aspect = canvasDisplay.h / Math.max(1, canvasDisplay.w)
+      const tmp = createBrushLayer({ strokes: [ls], fill: brush.color.value, h: aspect })
+      items.push({ type: 'local', key: `l:${tmp.id}`, layer: tmp })
+    }
+  }
   paintLayerStack(ctx, W, H, items, localLayers.value as LocalLayer[], l =>
     l.id === editingId.value || (nodeEdit.active.value && l.id === nodeEdit.layerId.value),
     previewT.value ?? undefined, previewT.value != null ? motionDoc.value : undefined,
     wiredTreatments.value, background.value, localGroups.value)
-  // Live brush stroke preview (paint mode): stamp onto the same ctx with the brush color.
-  const ls = brush.active.value && brush.mode.value === 'paint' ? brush.liveStroke() : null
-  if (ls && ls.points.length) {
-    const off = document.createElement('canvas'); off.width = cv.width; off.height = cv.height
-    const octx = off.getContext('2d')
-    if (octx) {
-      octx.setTransform(dpr, 0, 0, dpr, 0, 0)
-      stampStrokes(octx, [ls], W, () => document.createElement('canvas'))
-      octx.setTransform(1, 0, 0, 1, 0, 0)
-      octx.globalCompositeOperation = 'source-in'
-      octx.fillStyle = ls.erase ? 'rgba(255,255,255,0.5)' : brush.color.value
-      octx.fillRect(0, 0, off.width, off.height)
-      ctx.setTransform(1, 0, 0, 1, 0, 0)
-      ctx.drawImage(off, 0, 0)
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    }
-  }
 }
 watch(
   () => [
@@ -3224,7 +3227,7 @@ onUnmounted(() => {
                 @click="genTool = t">{{ t }}</button>
             </div>
             <div v-if="genTool === 'brush'" class="flex items-center gap-2 mt-2">
-              <span class="text-[10px] text-white/40 w-9 shrink-0">Brush</span>
+              <span class="text-[10px] text-white/40 w-12 shrink-0">Brush</span>
               <input type="range" min="8" max="240" step="2" v-model.number="genBrush" class="flex-1 accent-white cursor-pointer" />
               <span class="text-[10px] text-white/50 w-8 text-right tabular-nums">{{ genBrush }}</span>
             </div>
@@ -3280,21 +3283,21 @@ onUnmounted(() => {
           <p v-if="brush.mode.value === 'mask' && !(selectedLocal && selectedLocal.kind !== 'brush')"
             class="text-[10px] text-white/40 mb-2 leading-snug">Select a layer to mask</p>
           <div v-if="brush.mode.value === 'paint'" class="flex items-center gap-2 mb-2">
-            <span class="text-[10px] text-white/40 w-9 shrink-0">Color</span>
+            <span class="text-[10px] text-white/40 w-12 shrink-0">Color</span>
             <StudioColor :model-value="brush.color.value" @update:model-value="(v: string) => brush.color.value = v" />
           </div>
           <div class="flex items-center gap-2 mb-2">
-            <span class="text-[10px] text-white/40 w-9 shrink-0">Size</span>
+            <span class="text-[10px] text-white/40 w-12 shrink-0">Size</span>
             <input type="range" min="2" max="240" step="1" v-model.number="brush.sizePx.value" class="flex-1 accent-white cursor-pointer" />
             <span class="text-[10px] text-white/50 w-8 text-right tabular-nums">{{ brush.sizePx.value }}</span>
           </div>
           <div class="flex items-center gap-2 mb-2">
-            <span class="text-[10px] text-white/40 w-9 shrink-0">Flow</span>
+            <span class="text-[10px] text-white/40 w-12 shrink-0">Opacity</span>
             <input type="range" min="0.05" max="1" step="0.05" v-model.number="brush.opacity.value" class="flex-1 accent-white cursor-pointer" />
             <span class="text-[10px] text-white/50 w-8 text-right tabular-nums">{{ Math.round(brush.opacity.value * 100) }}</span>
           </div>
           <div class="flex items-center gap-2 mb-2">
-            <span class="text-[10px] text-white/40 w-9 shrink-0">Soft</span>
+            <span class="text-[10px] text-white/40 w-12 shrink-0">Soft</span>
             <input type="range" min="0" max="1" step="0.05" :value="1 - brush.hardness.value"
               @input="brush.hardness.value = 1 - Number(($event.target as HTMLInputElement).value)" class="flex-1 accent-white cursor-pointer" />
             <span class="text-[10px] text-white/50 w-8 text-right tabular-nums">{{ Math.round((1 - brush.hardness.value) * 100) }}</span>
