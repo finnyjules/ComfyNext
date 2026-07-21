@@ -170,6 +170,7 @@ describe('scene3d motion — evaluateObjectMotion', () => {
   it('zero-duration in: held at in-start during pre-roll, snaps home once offset arrives', () => {
     const m: ObjectMotion = { in: { preset: 'fade', duration: 0, ease: { kind: 'bezier', cps: [0, 0, 1, 1] } }, offset: 2 }
     expect(evaluateObjectMotion(m, 0, D).opacity).toBeCloseTo(0, 5)   // pre-roll: held at in-start
+    expect(evaluateObjectMotion(m, 2, D).opacity).toBeCloseTo(1, 6)   // exact boundary: tSec === offset, instant entrance happens
     expect(evaluateObjectMotion(m, 3, D).opacity).toBeCloseTo(1, 5)   // instant entrance already happened
   })
   it('combine: loop + in position is additive (bob + move)', () => {
@@ -182,14 +183,21 @@ describe('scene3d motion — evaluateObjectMotion', () => {
     expect(s.dPosition[1]).toBeGreaterThan(0)  // bob loop contributes on y at the same instant
   })
   it('combine: loop + in scale is multiplicative (pulse + scale-in)', () => {
-    const loopOnly: ObjectMotion = { loop: { kind: 'pulse', speed: 1, amount: 1 } }
-    const both: ObjectMotion = {
-      loop: { kind: 'pulse', speed: 1, amount: 1 },
-      in: { preset: 'scale', duration: 1, ease: { kind: 'bezier', cps: [0, 0, 1, 1] } },
-    }
-    const pulseOnly = evaluateObjectMotion(loopOnly, 0.5, D).scaleMul[0]
-    const combined = evaluateObjectMotion(both, 0.5, D).scaleMul[0]
-    expect(combined).toBeLessThan(pulseOnly) // scale-in multiplies (not replaces/adds) the loop's scale
+    const tSec = 0.5 // strictly inside in-region with duration=1
+    const pulse = { kind: 'pulse', speed: 1, amount: 1 } as const
+    const scale = { preset: 'scale', duration: 1, ease: { kind: 'bezier', cps: [0, 0, 1, 1] } } as const
+
+    // Evaluate each component independently
+    const pulseOnly = evaluateObjectMotion({ loop: pulse }, tSec, D).scaleMul[0]
+    const scaleInOnly = evaluateObjectMotion({ in: scale }, tSec, D).scaleMul[0]
+
+    // Evaluate both together
+    const combined = evaluateObjectMotion({ loop: pulse, in: scale }, tSec, D).scaleMul[0]
+
+    // Scale-in should multiply (not replace) the loop's scale
+    expect(combined).toBeCloseTo(pulseOnly * scaleInOnly, 6) // exact-product assertion guards multiplicative combine
+    expect(scaleInOnly).toBeLessThan(1) // scale-in is meaningful at mid-progress
+    expect(scaleInOnly).not.toBe(1) // ensure scaleInOnly !== 1 for distinctness
   })
   it('no double-easing: non-identity ease is applied exactly once', () => {
     const ease = { kind: 'bezier' as const, cps: [0, 0, 0.58, 1] as [number, number, number, number] }
