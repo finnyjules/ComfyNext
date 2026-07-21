@@ -91,3 +91,49 @@ describe('scene3d motion — resolveEaseRef', () => {
     }
   })
 })
+
+describe('scene3d motion — loop presets close seamlessly', () => {
+  const kinds = ['spin', 'bob', 'pulse', 'orbit', 'sway', 'tumble'] as const
+  for (const kind of kinds) {
+    it(`${kind} identity-equivalent at t=0 and t=1`, async () => {
+      const { evaluateLoop } = await import('~/lib/scene3d/motion/presets')
+      const a = evaluateLoop({ kind, speed: 2, amount: 1 }, 0)
+      const b = evaluateLoop({ kind, speed: 2, amount: 1 }, 1)
+      // positions & scale return exactly; rotations return mod 2π
+      expect(a.dPosition.map(v => +v.toFixed(6))).toEqual(b.dPosition.map(v => +v.toFixed(6)))
+      expect(a.scaleMul.map(v => +v.toFixed(6))).toEqual(b.scaleMul.map(v => +v.toFixed(6)))
+      const wrap = (r: number) => +(((r % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)).toFixed(5)
+      expect(a.dRotation.map(wrap)).toEqual(b.dRotation.map(wrap))
+    })
+  }
+  it('none is identity', async () => {
+    const { evaluateLoop } = await import('~/lib/scene3d/motion/presets')
+    expect(evaluateLoop({ kind: 'none', speed: 1, amount: 1 }, 0.37).dPosition).toEqual([0, 0, 0])
+  })
+})
+
+describe('scene3d motion — transitions', () => {
+  it('move-in travels from offset to home', async () => {
+    const { evaluateTransition, MOVE_DIST } = await import('~/lib/scene3d/motion/presets')
+    const start = evaluateTransition('move', 'left', 0, 'in')
+    const end = evaluateTransition('move', 'left', 1, 'in')
+    expect(start.dPosition![0]).toBeCloseTo(-MOVE_DIST, 6)
+    expect(end.dPosition![0]).toBeCloseTo(0, 6)
+  })
+  it('fade-in ramps opacity 0→1; fade-out 1→0', async () => {
+    const { evaluateTransition } = await import('~/lib/scene3d/motion/presets')
+    expect(evaluateTransition('fade', undefined, 0, 'in').opacity).toBeCloseTo(0, 6)
+    expect(evaluateTransition('fade', undefined, 1, 'in').opacity).toBeCloseTo(1, 6)
+    expect(evaluateTransition('fade', undefined, 1, 'out').opacity).toBeCloseTo(0, 6)
+  })
+  it('pop overshoots scale above 1 mid-progress', async () => {
+    const { evaluateTransition } = await import('~/lib/scene3d/motion/presets')
+    const mid = evaluateTransition('pop', undefined, 0.7, 'in')
+    expect(mid.scaleMul![0]).toBeGreaterThan(1)
+  })
+  it('directionVector maps axes', async () => {
+    const { directionVector } = await import('~/lib/scene3d/motion/presets')
+    expect(directionVector('right', 3)).toEqual([3, 0, 0])
+    expect(directionVector('top', 3)).toEqual([0, 3, 0])
+  })
+})
