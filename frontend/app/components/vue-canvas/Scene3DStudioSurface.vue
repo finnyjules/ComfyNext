@@ -31,7 +31,7 @@ import { fitGlbGroup } from '~/lib/scene3d/fitGlb'
 import { renderPasses } from '~/lib/scene3d/passes'
 import { SCENE_TEMPLATES, animateSceneDefaults } from '~/lib/scene3d/motion/defaults'
 import { LOOP_OPTIONS, IN_OPTIONS, OUT_OPTIONS, CAMERA_OPTIONS, setObjectLoop, setObjectTransition } from '~/lib/scene3d/motion/panel'
-import { sceneHasMotion } from '~/lib/scene3d/motion/render'
+import { sceneHasMotion, renderMotionFrame } from '~/lib/scene3d/motion/render'
 import { applyMotionToDoc } from '~/lib/scene3d/motion/apply'
 import type { LoopKind, TransitionPreset, CameraMotion } from '~/lib/scene3d/motion/types'
 import { detectWebGL } from '~/lib/spacetype/webgl'
@@ -88,8 +88,50 @@ function togglePlay() {
   playing.value = !playing.value
   if (playing.value) playStart = performance.now() - playhead.value * 1000
 }
-// Stub — replaced by Task 7 (export video).
-function exportVideo() {}
+// Export the Motion timeline as an mp4 (reuses the studios' bake→encode pipeline —
+// same renderMotionFrame path the live preview uses, so the clip matches playback
+// exactly). Renders N = fps*duration frames off-screen at the output resolution,
+// bakes/encodes server-side, downloads the file. Playback is paused for the duration
+// so it can't interleave renders with the export loop.
+// NOTE: no tab store here (unlike ArtifactFrameNode), so this does not record the
+// export to the Assets panel — follow-up for 2b if that's wanted from this surface.
+async function exportVideo() {
+  if (!engine || !sceneHasMotion(doc)) return
+  const wasPlaying = playing.value; playing.value = false
+  try {
+    const W = doc.output.width, H = doc.output.height
+    const fps = doc.motion.fps, dur = doc.motion.duration
+    const total = Math.max(1, Math.round(fps * dur))
+    engine.setSize(W, H)
+    const { ensureSpaceTypeBake } = await import('~/lib/spacetype/bake')
+    const cfg = { fps, loopDuration: dur, W, H, seed: 'scene3d', sig: JSON.stringify({ id: props.nodeId, n: total, w: W, h: H, s: serializeDoc(doc) }) }
+    const bake = await ensureSpaceTypeBake(cfg as any, undefined, {
+      renderFrame: async (i) => {
+        const cv = renderMotionFrame(engine!, doc, total > 1 ? i / total : 0)
+        return await new Promise<Blob>((res, rej) => cv.toBlob(b => b ? res(b) : rej(new Error('toBlob failed')), 'image/png'))
+      },
+    })
+    const res = await fetch('/sailor/spacetype_encode', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ frames: bake.frames, fps, width: W, height: H }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!data.filename) { bakeError.value = 'Video encode failed'; return }
+    const vres = await fetch(`/view?${new URLSearchParams({ filename: data.filename, type: 'input' })}`)
+    const blob = await vres.blob()
+    const obj = URL.createObjectURL(blob)
+    const a = document.createElement('a'); a.href = obj; a.download = `scene3d-${props.nodeId}.mp4`
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(obj)
+  } catch (err) {
+    bakeError.value = 'Video export failed'
+    console.error('[Scene3D] video export failed:', err)
+  } finally {
+    // restore the viewport render size and Build pose
+    engine?.setSize(canvasEl.value?.clientWidth ?? doc.output.width, canvasEl.value?.clientHeight ?? doc.output.height)
+    engine?.syncFromDoc(doc); engine?.applyObjectOpacities({})
+    playing.value = wasPlaying
+  }
+}
 watch(playing, (v) => {
   if (!v && engine) { engine.syncFromDoc(doc); engine.applyObjectOpacities({}) }
 })
