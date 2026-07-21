@@ -7,7 +7,7 @@ import {
   Hexagon, Star,
 } from 'lucide-vue-next'
 import {
-  type TextLayer, type RectLayer, type EllipseLayer, type LocalLayer, type StackItem, type CornerPin, type BrushLayer,
+  type TextLayer, type RectLayer, type EllipseLayer, type LocalLayer, type StackItem, type CornerPin, type BrushLayer, type Paint,
   drawLocalLayer, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages, paintLayerStack, layerMaskRef, localLayerBox, createBrushLayer,
 } from '~/composables/useCompositorLayers'
 import { readWiredTreatments, setWiredMask, setWiredMaskShowSource, maskCandidateKeys } from '~/composables/useWiredTreatments'
@@ -45,6 +45,7 @@ import MotionTransport from '~/components/vue-canvas/compositor/MotionTransport.
 import LayerMotionPanel from '~/components/vue-canvas/compositor/LayerMotionPanel.vue'
 import CompositorClonerPanel from '~/components/vue-canvas/compositor/CompositorClonerPanel.vue'
 import FillControl from '~/components/vue-canvas/compositor/FillControl.vue'
+import FillSwatch from '~/components/vue-canvas/compositor/FillSwatch.vue'
 import { paintPrimaryColor } from '~/lib/spacetype/fillTile'
 import FontPicker from '~/components/vue-canvas/widgets/FontPicker.vue'
 import { VARIABLE_FONTS } from '~/data/variable-fonts'
@@ -2315,6 +2316,14 @@ function kindIcon(kind: string) {
     : kind === 'polygon' ? Hexagon : kind === 'star' ? Star
     : kind === 'brush' ? Brush : Minus
 }
+// A layer's fill Paint for the layer-list swatch, or null for kinds without a
+// meaningful fill (image = its own pixels, line = a stroke). Falls back to the
+// kind icon when null.
+function rowFill(layer: LocalLayer): Paint | null {
+  if (layer.kind === 'image' || layer.kind === 'line') return null
+  const f = (layer as { fill?: Paint }).fill
+  return f && f !== 'none' && f !== '' ? f : null
+}
 
 // ── Add an image layer from the toolbar ─────────────────────────────────────
 const imageInputRef = ref<HTMLInputElement | null>(null)
@@ -2430,6 +2439,8 @@ onUnmounted(() => {
               <!-- Icon -->
               <Group v-if="row.kind === 'group'" class="size-3.5 text-white/60 shrink-0" />
               <ImageIcon v-else-if="row.kind === 'wired'" class="size-3.5 text-white/60 shrink-0" />
+              <!-- Fill swatch (so a layer's colour/gradient/pattern is identifiable at a glance), else the kind icon -->
+              <FillSwatch v-else-if="rowFill(row.layer)" :paint="rowFill(row.layer)!" :size="row.kind === 'child' ? 12 : 14" />
               <component v-else :is="kindIcon(row.layer.kind)"
                 :class="row.kind === 'child' ? 'size-3 text-white/45 shrink-0' : 'size-3.5 text-white/60 shrink-0'" />
               <!-- Label / rename input -->

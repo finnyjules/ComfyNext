@@ -169,7 +169,7 @@ function dragHue(e: PointerEvent) {
 
 <template>
   <button ref="trigger" type="button" @click="open ? close() : openPicker()"
-          class="relative h-7 w-7 shrink-0 overflow-hidden rounded-md border border-white/15"
+          class="relative h-7 w-7 shrink-0 overflow-hidden rounded-[5px] border border-white/15 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/30"
           :style="CHECKER" :aria-label="`Color ${model}`">
     <span class="absolute inset-0" :style="{ background: model }"></span>
   </button>
