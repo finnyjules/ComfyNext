@@ -370,6 +370,31 @@ describe('scene3d motion — frame source factory', () => {
   })
 })
 
+import { setObjectLoop, setObjectTransition, LOOP_OPTIONS } from '~/lib/scene3d/motion/panel'
+
+describe('scene3d motion — panel helpers', () => {
+  it('setObjectLoop assigns and clears', () => {
+    const o = createPrimitive('box', defaultDoc().objects)
+    setObjectLoop(o, 'spin')
+    expect(o.motion?.loop?.kind).toBe('spin')
+    setObjectLoop(o, 'none')
+    expect(o.motion?.loop).toBeUndefined()
+  })
+  it('setObjectTransition assigns in/out with a default ease', () => {
+    const o = createPrimitive('box', defaultDoc().objects)
+    setObjectTransition(o, 'in', 'fade')
+    expect(o.motion?.in?.preset).toBe('fade')
+    expect(o.motion?.in?.ease.kind).toBe('bezier')
+    setObjectTransition(o, 'in', 'none' as any)
+    expect(o.motion?.in).toBeUndefined()
+  })
+  it('LOOP_OPTIONS includes none + the shipped kinds', () => {
+    expect(LOOP_OPTIONS).toContain('none')
+    expect(LOOP_OPTIONS).toContain('spin')
+    expect(LOOP_OPTIONS).toContain('orbit')
+  })
+})
+
 describe('scene3d motion — sceneHasMotion', () => {
   it('false for a motion-less scene', () => {
     const doc = defaultDoc(); doc.objects.push(createPrimitive('box', doc.objects))

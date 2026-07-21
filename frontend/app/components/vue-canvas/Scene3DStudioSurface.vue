@@ -29,6 +29,10 @@ import { SceneInteraction } from '~/lib/scene3d/interaction'
 import { loadGlb, GLB_SIZE_CAP_BYTES } from '~/lib/scene3d/glb'
 import { fitGlbGroup } from '~/lib/scene3d/fitGlb'
 import { renderPasses } from '~/lib/scene3d/passes'
+import { SCENE_TEMPLATES, animateSceneDefaults } from '~/lib/scene3d/motion/defaults'
+import { LOOP_OPTIONS, IN_OPTIONS, OUT_OPTIONS, CAMERA_OPTIONS, setObjectLoop, setObjectTransition } from '~/lib/scene3d/motion/panel'
+import { sceneHasMotion } from '~/lib/scene3d/motion/render'
+import type { LoopKind, TransitionPreset, CameraMotion } from '~/lib/scene3d/motion/types'
 import { detectWebGL } from '~/lib/spacetype/webgl'
 import { useInpaint } from '~/composables/useInpaint'
 import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
@@ -63,6 +67,16 @@ const selectedIsPrimitive = computed(() => selected.value?.kind === 'primitive')
 const selectedIsLight = computed(() => selected.value?.kind === 'light')
 const selectedLight = computed<LightObject | null>(() => (selected.value?.kind === 'light' ? selected.value : null))
 const activeTab = ref<'build' | 'motion'>('build')  // inspector tab: Build (existing sections) vs Motion (Task 5)
+
+// ── Motion panel state (Task 5) ──────────────────────────────────────────────
+const motionOn = computed({
+  get: () => sceneHasMotion(doc),
+  set: (on: boolean) => {
+    if (on) animateSceneDefaults(doc)
+    else { doc.objects.forEach((o) => (o.motion = undefined)); doc.camera.motion = undefined }
+  },
+})
+function applyTemplate(name: 'showcase' | 'reveal' | 'loop') { SCENE_TEMPLATES[name](doc) }
 const snap = ref(false)
 const lightView = ref(false)  // clay + light-widget preview mode (Task 1/3 engine support)
 const dirty = ref(false)      // doc changed since last bake
@@ -1484,7 +1498,44 @@ function onClose() {
       </StudioSection>
       </template>
       <template v-else>
-        <!-- Motion panel: Task 5 -->
+        <StudioSection title="Motion">
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] text-white/55">Animate scene</span>
+            <StudioSwitch v-model="motionOn" />
+          </div>
+          <template v-if="motionOn">
+            <StudioSlider v-model="doc.motion.duration" label="Duration (s)" :min="1" :max="12" :step="0.5" />
+            <StudioSlider v-model="doc.motion.fps" label="FPS" :min="12" :max="60" :step="1" />
+            <div class="flex gap-1">
+              <StudioButton class="flex-1" @click="applyTemplate('showcase')">Showcase</StudioButton>
+              <StudioButton class="flex-1" @click="applyTemplate('reveal')">Reveal</StudioButton>
+              <StudioButton class="flex-1" @click="applyTemplate('loop')">Loop</StudioButton>
+            </div>
+            <div>
+              <label class="mb-1 block text-[11px] text-white/55">Camera</label>
+              <StudioSelect :model-value="doc.camera.motion?.preset ?? 'none'" :options="CAMERA_OPTIONS"
+                @update:model-value="(v: string) => doc.camera.motion = v === 'none' ? undefined : { preset: v as CameraMotion['preset'], speed: 1, amount: 1 }" />
+            </div>
+          </template>
+        </StudioSection>
+
+        <StudioSection v-if="motionOn && selected" title="Object motion">
+          <div>
+            <label class="mb-1 block text-[11px] text-white/55">Loop</label>
+            <StudioSelect :model-value="selected.motion?.loop?.kind ?? 'none'" :options="LOOP_OPTIONS"
+              @update:model-value="(v: string) => setObjectLoop(selected!, v as LoopKind)" />
+          </div>
+          <div>
+            <label class="mb-1 block text-[11px] text-white/55">In</label>
+            <StudioSelect :model-value="selected.motion?.in?.preset ?? 'none'" :options="IN_OPTIONS"
+              @update:model-value="(v: string) => setObjectTransition(selected!, 'in', v as TransitionPreset | 'none')" />
+          </div>
+          <div>
+            <label class="mb-1 block text-[11px] text-white/55">Out</label>
+            <StudioSelect :model-value="selected.motion?.out?.preset ?? 'none'" :options="OUT_OPTIONS"
+              @update:model-value="(v: string) => setObjectTransition(selected!, 'out', v as TransitionPreset | 'none')" />
+          </div>
+        </StudioSection>
       </template>
 
       <!-- Sticky action footer: Save + Export, pinned to the bottom-right of the
