@@ -2,6 +2,8 @@
 // the editor mutates a SceneDoc, the engine renders from it, and serializeDoc's
 // output is what the Scene3DStudio node stores in its `scene_state` widget.
 import { sanitizeParams, sanitizeModifiers } from '~/lib/scene3d/primParams'
+import type { ObjectMotion, CameraMotion, SceneMotion, LoopKind, TransitionPreset, Direction, EaseRef, TransitionSpec } from '~/lib/scene3d/motion/types'
+import { DEFAULT_SCENE_MOTION } from '~/lib/scene3d/motion/types'
 
 export type PrimitiveKind =
   | 'box' | 'sphere' | 'cylinder' | 'cone' | 'torus' | 'plane'
@@ -74,6 +76,7 @@ export interface SceneObjectBase {
   rotation: Vec3   // euler radians, XYZ order
   scale: Vec3
   material: SceneMaterial
+  motion?: ObjectMotion
 }
 export interface PrimitiveObject extends SceneObjectBase {
   kind: 'primitive'
@@ -112,7 +115,7 @@ export interface SceneLighting {
   sunIntensity: number
   ambient: number
 }
-export interface SceneCamera { position: Vec3; target: Vec3; fov: number }
+export interface SceneCamera { position: Vec3; target: Vec3; fov: number; motion?: CameraMotion }
 
 export interface SceneDoc {
   version: 1
@@ -121,6 +124,7 @@ export interface SceneDoc {
   lighting: SceneLighting
   background: string
   output: { width: number; height: number }
+  motion: SceneMotion
 }
 
 export const PRIMITIVE_KINDS: PrimitiveKind[] = [
@@ -130,6 +134,11 @@ export const PRIMITIVE_KINDS: PrimitiveKind[] = [
   'torusKnot', 'ring',
 ]
 export const LIGHTING_PRESETS: LightingPreset[] = ['studio', 'soft', 'dramatic', 'flat']
+
+const LOOP_KINDS: LoopKind[] = ['none', 'spin', 'bob', 'pulse', 'orbit', 'sway', 'tumble']
+const TRANSITION_PRESETS: TransitionPreset[] = ['move', 'rise', 'scale', 'fade', 'pop']
+const DIRECTIONS: Direction[] = ['left', 'right', 'top', 'bottom']
+const CAMERA_PRESETS: CameraMotion['preset'][] = ['none', 'orbit', 'push', 'sway']
 
 export const LIGHT_KINDS: LightKind[] = ['point', 'spot', 'rect']
 export const LIGHT_DEFAULTS = {
@@ -248,6 +257,7 @@ export function defaultDoc(): SceneDoc {
     lighting: { preset: 'studio', sunAzimuth: 35, sunElevation: 55, sunIntensity: 1.4, ambient: 0.5 },
     background: '#1b1e24',
     output: { width: 1024, height: 1024 },
+    motion: { ...DEFAULT_SCENE_MOTION },
   }
 }
 
@@ -314,6 +324,48 @@ export function parseDoc(json: string): SceneDoc {
     Array.isArray(v) && v.length === 3 && v.every((n) => typeof n === 'number') ? [v[0] as number, v[1] as number, v[2] as number] : fb
   const str = (v: any, fb: string): string => (typeof v === 'string' ? v : fb)
   const num = (v: any, fb: number): number => (typeof v === 'number' && Number.isFinite(v) ? v : fb)
+  const parseEaseRef = (raw: any): EaseRef => {
+    if (raw && raw.kind === 'named' && (raw.name === 'bounce' || raw.name === 'elastic' || raw.name === 'spring')) {
+      return { kind: 'named', name: raw.name }
+    }
+    const c = raw?.cps
+    if (raw?.kind === 'bezier' && Array.isArray(c) && c.length === 4 && c.every((n: unknown) => typeof n === 'number')) {
+      return { kind: 'bezier', cps: c as [number, number, number, number] }
+    }
+    return { kind: 'bezier', cps: [0.42, 0, 0.58, 1] }
+  }
+  const parseTransition = (raw: any): TransitionSpec | undefined => {
+    if (!raw || !TRANSITION_PRESETS.includes(raw.preset)) return undefined
+    const spec: TransitionSpec = { preset: raw.preset, duration: num(raw.duration, 0.6), ease: parseEaseRef(raw.ease) }
+    if (DIRECTIONS.includes(raw.direction)) spec.direction = raw.direction
+    return spec
+  }
+  const parseObjectMotion = (raw: any): ObjectMotion | undefined => {
+    if (!raw || typeof raw !== 'object') return undefined
+    const m: ObjectMotion = {}
+    if (raw.loop && LOOP_KINDS.includes(raw.loop.kind)) {
+      m.loop = { kind: raw.loop.kind, speed: num(raw.loop.speed, 1), amount: num(raw.loop.amount, 1) }
+      if (typeof raw.loop.phase === 'number') m.loop.phase = raw.loop.phase
+    }
+    const mIn = parseTransition(raw.in); if (mIn) m.in = mIn
+    const mOut = parseTransition(raw.out); if (mOut) m.out = mOut
+    if (typeof raw.offset === 'number') m.offset = raw.offset
+    return Object.keys(m).length ? m : undefined
+  }
+  const parseSceneMotion = (raw: any): SceneMotion => {
+    if (!raw || typeof raw !== 'object') return { ...DEFAULT_SCENE_MOTION }
+    const m: SceneMotion = {
+      duration: num(raw.duration, DEFAULT_SCENE_MOTION.duration),
+      fps: num(raw.fps, DEFAULT_SCENE_MOTION.fps),
+      loop: raw.loop !== false,
+    }
+    if (typeof raw.template === 'string') m.template = raw.template
+    return m
+  }
+  const parseCameraMotion = (raw: any): CameraMotion | undefined => {
+    if (!raw || !CAMERA_PRESETS.includes(raw.preset)) return undefined
+    return { preset: raw.preset, speed: num(raw.speed, 1), amount: num(raw.amount, 1) }
+  }
   const parseMaterial = (m: any): SceneMaterial => {
     const out: SceneMaterial = {
       type: MATERIAL_TYPES.includes(m?.type) ? m.type : 'standard',
@@ -366,6 +418,7 @@ export function parseDoc(json: string): SceneDoc {
   const objects: SceneObject[] = Array.isArray(raw.objects)
     ? raw.objects.flatMap((o: any): SceneObject[] => {
         if (!o || typeof o.id !== 'string') return []
+        const om = parseObjectMotion(o.motion)
         const common: SceneObjectBase = {
           id: o.id,
           name: typeof o.name === 'string' ? o.name : 'Object',
@@ -374,6 +427,7 @@ export function parseDoc(json: string): SceneDoc {
           rotation: vec3(o.rotation, [0, 0, 0]),
           scale: vec3(o.scale, [1, 1, 1]),
           material: parseMaterial(o.material),
+          ...(om ? { motion: om } : {}),
         }
         if (o.kind === 'glb' && typeof o.url === 'string') return [{ ...common, kind: 'glb', url: o.url }]
         if (o.kind === 'light' && LIGHT_KINDS.includes(o.light)) {
@@ -402,7 +456,7 @@ export function parseDoc(json: string): SceneDoc {
         return []
       })
     : []
-  return {
+  const doc: SceneDoc = {
     version: 1,
     objects,
     camera: {
@@ -422,5 +476,9 @@ export function parseDoc(json: string): SceneDoc {
       width: typeof raw.output?.width === 'number' ? raw.output.width : d.output.width,
       height: typeof raw.output?.height === 'number' ? raw.output.height : d.output.height,
     },
+    motion: parseSceneMotion(raw.motion),
   }
+  const cm = parseCameraMotion(raw.camera?.motion)
+  if (cm) doc.camera.motion = cm
+  return doc
 }
