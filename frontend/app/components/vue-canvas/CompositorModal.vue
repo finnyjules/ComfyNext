@@ -462,9 +462,17 @@ function toggleDistort() {
 // ── Brush: freehand paint tool (mutually exclusive with pen/node/gen/distort) ─
 function toggleBrush() {
   brush.setActive(!brush.active.value)
-  // Start a fresh paint layer each activation rather than silently reusing a prior one.
-  brushLayerId = null
-  if (brush.active.value) { pen.setActive(false); exitNodeEdit(); if (genActive.value) exitGenMode(); distortTool.value = false; selectLocal(null) }
+  if (brush.active.value) {
+    pen.setActive(false); exitNodeEdit(); if (genActive.value) exitGenMode(); distortTool.value = false
+    // If a brush layer is already selected, keep it as the paint target so you can
+    // KEEP EDITING it (add/erase more strokes). Otherwise start a fresh layer.
+    // (You can also retarget while painting by clicking a brush layer in the panel.)
+    const sel = selectedLocal.value
+    if (sel && sel.kind === 'brush') brushLayerId = sel.id
+    else { selectLocal(null); brushLayerId = null }
+  } else {
+    brushLayerId = null
+  }
 }
 function normCp(cp: unknown): CornerPin {
   const c = (cp ?? {}) as any
