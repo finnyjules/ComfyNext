@@ -24,14 +24,14 @@ export function evaluateObjectMotion(
   if (motion.in) {
     const inEnd = offset + motion.in.duration
     if (tSec <= inEnd) {
-      const p = motion.in.duration > 0 ? clamp01((tSec - offset) / motion.in.duration) : 1
+      const p = motion.in.duration > 0 ? clamp01((tSec - offset) / motion.in.duration) : (tSec < offset ? 0 : 1)
       trans = evaluateTransition(motion.in.preset, motion.in.direction, resolveEaseRef(motion.in.ease)(p), 'in')
     }
   }
   if (!trans && motion.out) {
     const outStart = duration - motion.out.duration
     if (tSec >= outStart) {
-      const p = motion.out.duration > 0 ? clamp01((tSec - outStart) / motion.out.duration) : 1
+      const p = motion.out.duration > 0 ? clamp01((tSec - outStart) / motion.out.duration) : (tSec >= duration ? 1 : 0)
       trans = evaluateTransition(motion.out.preset, motion.out.direction, resolveEaseRef(motion.out.ease)(p), 'out')
     }
   }

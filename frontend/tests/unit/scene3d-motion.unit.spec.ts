@@ -3,6 +3,7 @@ import { parseDoc, serializeDoc, defaultDoc, createPrimitive } from '~/lib/scene
 import type { ObjectMotion } from '~/lib/scene3d/motion/types'
 import { DEFAULT_SCENE_MOTION } from '~/lib/scene3d/motion/types'
 import { evaluateObjectMotion, evaluateCameraMotion } from '~/lib/scene3d/motion/evaluate'
+import { resolveEaseRef } from '~/lib/scene3d/motion/ease'
 
 describe('scene3d motion — config parse', () => {
   it('defaults scene motion when absent', () => {
@@ -165,6 +166,36 @@ describe('scene3d motion — evaluateObjectMotion', () => {
     const m: ObjectMotion = { out: { preset: 'fade', duration: 1, ease: { kind: 'bezier', cps: [0, 0, 1, 1] } } }
     expect(evaluateObjectMotion(m, 2, D).opacity).toBeCloseTo(1, 5)
     expect(evaluateObjectMotion(m, D, D).opacity).toBeCloseTo(0, 5)
+  })
+  it('zero-duration in: held at in-start during pre-roll, snaps home once offset arrives', () => {
+    const m: ObjectMotion = { in: { preset: 'fade', duration: 0, ease: { kind: 'bezier', cps: [0, 0, 1, 1] } }, offset: 2 }
+    expect(evaluateObjectMotion(m, 0, D).opacity).toBeCloseTo(0, 5)   // pre-roll: held at in-start
+    expect(evaluateObjectMotion(m, 3, D).opacity).toBeCloseTo(1, 5)   // instant entrance already happened
+  })
+  it('combine: loop + in position is additive (bob + move)', () => {
+    const m: ObjectMotion = {
+      loop: { kind: 'bob', speed: 1, amount: 1 },
+      in: { preset: 'move', direction: 'left', duration: 1, ease: { kind: 'bezier', cps: [0, 0, 1, 1] } },
+    }
+    const s = evaluateObjectMotion(m, 0.5, D)
+    expect(s.dPosition[0]).toBeLessThan(0)     // unfinished move-in still offset on x
+    expect(s.dPosition[1]).toBeGreaterThan(0)  // bob loop contributes on y at the same instant
+  })
+  it('combine: loop + in scale is multiplicative (pulse + scale-in)', () => {
+    const loopOnly: ObjectMotion = { loop: { kind: 'pulse', speed: 1, amount: 1 } }
+    const both: ObjectMotion = {
+      loop: { kind: 'pulse', speed: 1, amount: 1 },
+      in: { preset: 'scale', duration: 1, ease: { kind: 'bezier', cps: [0, 0, 1, 1] } },
+    }
+    const pulseOnly = evaluateObjectMotion(loopOnly, 0.5, D).scaleMul[0]
+    const combined = evaluateObjectMotion(both, 0.5, D).scaleMul[0]
+    expect(combined).toBeLessThan(pulseOnly) // scale-in multiplies (not replaces/adds) the loop's scale
+  })
+  it('no double-easing: non-identity ease is applied exactly once', () => {
+    const ease = { kind: 'bezier' as const, cps: [0, 0, 0.58, 1] as [number, number, number, number] }
+    const m: ObjectMotion = { in: { preset: 'fade', duration: 2, ease } }
+    const expected = resolveEaseRef(ease)(0.5) // single application of the ease curve at p=0.5
+    expect(evaluateObjectMotion(m, 1, D).opacity).toBeCloseTo(expected, 6)
   })
 })
 
