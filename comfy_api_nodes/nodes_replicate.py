@@ -1093,10 +1093,10 @@ async def _run_nano_banana_edit(
                 last_fal_err = f"{label}: {err}"
                 print(f"[nano-banana-edit] {label} failed, trying next: {err}")
 
-    # Last resort: Replicate google/nano-banana-2 (currently the broken path, but
-    # kept so a fal outage still has a route and it recovers on its own). Fold the
-    # last fal error into any failure here so a dual-outage doesn't look like a
-    # Replicate-only problem.
+    # Last resort: the requested model on Replicate (currently the broken path for
+    # nano-banana-2, but kept so a fal outage still has a route and it recovers on
+    # its own). Fold the last fal error into any failure here so a dual-outage
+    # doesn't look like a Replicate-only problem.
     nb_input: dict = {
         "prompt": prompt,
         "image_input": list(image_urls),
@@ -1106,13 +1106,37 @@ async def _run_nano_banana_edit(
     if seed and seed > 0:
         nb_input["seed"] = int(seed) & 0xFFFFFFFF
     try:
-        pred = await _run_prediction("google/nano-banana-2", nb_input)
+        pred = await _run_prediction(replicate_slug, nb_input)
         url = _first_output_url(pred)
     except Exception as rep_err:
         raise RuntimeError(f"nano-banana edit failed on fal ({last_fal_err}) and Replicate ({rep_err})") from rep_err
     if not url:
         raise RuntimeError(f"nano-banana edit returned no image (fal: {last_fal_err}; Replicate returned empty)")
     return url
+
+
+async def _run_image_edit_prediction(replicate_slug: str, input_dict: dict) -> str:
+    """Run one image-edit prediction with provider failover, returning the output
+    image URL. When `replicate_slug` has a fal twin (see _NANO_BANANA_FAL_EDIT),
+    route fal-first via _run_nano_banana_edit — dodging Replicate's project-scoped
+    Gemini 404 — with Replicate as the fallback; every other slug runs straight on
+    Replicate. This is the single seam the input-dict-driven edit nodes go through,
+    so registering a new model→fal mapping wires failover everywhere at once.
+
+    The input_dict is the Replicate-shaped dict a model's build_input produced;
+    for fal we read `image_input` / `resolution` / `output_format` / `seed` back
+    out of it (the keys every Nano Banana builder emits)."""
+    if replicate_slug in _NANO_BANANA_FAL_EDIT:
+        return await _run_nano_banana_edit(
+            list(input_dict.get("image_input") or []),
+            input_dict.get("prompt", ""),
+            replicate_slug=replicate_slug,
+            resolution=input_dict.get("resolution", "1K"),
+            output_format=input_dict.get("output_format", "png"),
+            seed=int(input_dict.get("seed") or 0),
+        )
+    pred = await _run_prediction(replicate_slug, input_dict)
+    return _first_output_url(pred)
 
 
 class FluxKontextRemoteNode(IO.ComfyNode):
@@ -2545,21 +2569,13 @@ class GenerateFromReferencesNode(IO.ComfyNode):
         image_urls = [_image_tensor_to_data_url(t) for t in refs]
 
         spec = _IMAGE_EDIT_MODELS_BY_ID[model]
-        if spec.replicate_slug in _NANO_BANANA_FAL_EDIT:
-            # Route Nano Banana around Replicate's project-scoped Gemini 404
-            # (fal-first, Replicate fallback). Other models (Seedream) stay on
-            # Replicate. See _run_nano_banana_edit.
-            resolution = size if size in ("1K", "2K", "4K") else "2K"
-            url = await _run_nano_banana_edit(
-                image_urls, prompt, replicate_slug=spec.replicate_slug,
-                resolution=resolution, output_format="png", seed=int(seed or 0),
-            )
-            tensor = await download_url_to_image_tensor(url, cls=cls)
-        else:
-            adv = {"size": size, "aspect_ratio": aspect_ratio}
-            input_dict = spec.build_input(prompt, image_urls, int(seed or 0), adv)
-            pred = await _run_prediction(spec.replicate_slug, input_dict)
-            tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
+        adv = {"size": size, "aspect_ratio": aspect_ratio}
+        input_dict = spec.build_input(prompt, image_urls, int(seed or 0), adv)
+        # Nano Banana routes fal-first (Replicate's Gemini 404); Seedream stays on
+        # Replicate. build_input already clamped size→resolution. See
+        # _run_image_edit_prediction.
+        url = await _run_image_edit_prediction(spec.replicate_slug, input_dict)
+        tensor = await download_url_to_image_tensor(url, cls=cls)
         return IO.NodeOutput(tensor, ui=save_generation_output(tensor, "generate_from_references"))
 
 
@@ -2812,20 +2828,10 @@ class RestyleFromImageNode(IO.ComfyNode):
                 input_dict["seed"] = seed
             slug = "fofr/style-transfer"
 
-        if slug in _NANO_BANANA_FAL_EDIT:
-            # Route Nano Banana 2 / Pro around Replicate's project-scoped Gemini
-            # 404 (fal-first, Replicate fallback). The original google/nano-banana
-            # and fofr/style-transfer stay on Replicate. See _run_nano_banana_edit.
-            url = await _run_nano_banana_edit(
-                input_dict["image_input"], input_dict["prompt"],
-                replicate_slug=slug,
-                resolution=input_dict.get("resolution", "1K"),
-                output_format=input_dict.get("output_format", "png"),
-                seed=int(seed or 0),
-            )
-        else:
-            pred = await _run_prediction(slug, input_dict)
-            url = _first_output_url(pred)
+        # Nano Banana 2 / Pro route fal-first (Replicate's Gemini 404); the
+        # original google/nano-banana and fofr/style-transfer stay on Replicate.
+        # See _run_image_edit_prediction.
+        url = await _run_image_edit_prediction(slug, input_dict)
         result = await download_url_to_image_tensor(url, cls=cls)
         return IO.NodeOutput(
             result,
@@ -3270,8 +3276,8 @@ class RotateCameraNode(IO.ComfyNode):
             f"phrase={phrase!r} slug={spec.replicate_slug!r}",
             flush=True,
         )
-        pred = await _run_prediction(spec.replicate_slug, input_dict)
-        tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
+        url = await _run_image_edit_prediction(spec.replicate_slug, input_dict)
+        tensor = await download_url_to_image_tensor(url, cls=cls)
         return IO.NodeOutput(tensor, ui=save_generation_output(tensor, "rotate_camera"))
 
 
