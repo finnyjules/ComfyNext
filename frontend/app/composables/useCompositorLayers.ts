@@ -13,7 +13,7 @@
  * One renderer (`drawLocalLayer`) draws to any 2D context at any resolution.
  */
 
-export type LocalLayerKind = 'text' | 'rect' | 'ellipse' | 'line' | 'path' | 'image' | 'polygon' | 'star'
+export type LocalLayerKind = 'text' | 'rect' | 'ellipse' | 'line' | 'path' | 'image' | 'polygon' | 'star' | 'brush'
 
 // ── Motion painter indirection ───────────────────────────────────────────────
 // paintLayerStack(t) needs the motion module, but motion/paint.ts imports
@@ -31,6 +31,7 @@ import { drawQuadWarp, type Quad } from '~/lib/compositor/warp'
 import { polygonPathData, starPathData } from '~/lib/compositor/polygonGeometry'
 import { resolveGroupCascade, type LayerGroup } from '~/lib/compositor/layerGroups'
 import { layoutExpressive, type ExpressiveParams } from '~~/shared/text-layout/expressive'
+import { type PaintStroke, stampStrokes } from '~/lib/compositor/brushStamp'
 
 // Throwaway 2D context used only for text measurement (localLayerBox mutates the
 // ctx font), so it never touches a real render target.
@@ -285,7 +286,20 @@ export interface StarLayer extends LayerCommon {
   fill: Paint; stroke: Paint; strokeWidth: number
 }
 
-export type LocalLayer = TextLayer | RectLayer | EllipseLayer | LineLayer | ImageLayer | PathLayer | PolygonLayer | StarLayer
+export interface BrushLayer extends LayerCommon {
+  kind: 'brush'
+  strokes: PaintStroke[]
+  fill: Paint            // region fill — full FillControl set; '' / 'none' = no fill
+  stroke?: Paint         // optional outline of the painted silhouette
+  strokeWidth?: number   // normalized to width
+  w: number              // full-artboard bounds; 1 = artboard width
+  h: number              // aspect (artboardH / artboardW)
+}
+
+export type LocalLayer = TextLayer | RectLayer | EllipseLayer | LineLayer | ImageLayer | PathLayer | PolygonLayer | StarLayer | BrushLayer
+
+// Re-export so consumers of local layers can import the stroke type from one place.
+export type { PaintStroke } from '~/lib/compositor/brushStamp'
 
 let _idSeq = 0
 function newId(): string {
@@ -484,6 +498,15 @@ export function createImageLayer(filename: string, aspect = 1, partial: Partial<
     id: newId(), kind: 'image',
     x: 0.5, y: 0.5, rotation: 0, opacity: 1,
     filename, w, h: w / (aspect || 1),
+    ...partial,
+  }
+}
+
+export function createBrushLayer(partial: Partial<BrushLayer> = {}): BrushLayer {
+  return {
+    id: newId(), kind: 'brush',
+    x: 0.5, y: 0.5, rotation: 0, opacity: 1,
+    w: 1, h: 1, strokes: [], fill: '#3b82f6', stroke: '', strokeWidth: 0,
     ...partial,
   }
 }
@@ -1016,6 +1039,23 @@ function drawLayerContent(ctx: CanvasRenderingContext2D, layer: LocalLayer, W: n
       ctx.fillStyle = 'rgba(255,255,255,0.06)'
       ctx.fillRect(-w / 2, -h / 2, w, h)
     }
+  } else if (layer.kind === 'brush') {
+    if (!layer.strokes.length) return
+    const w = Math.max(1, Math.round(layer.w * W))
+    const h = Math.max(1, Math.round(layer.h * W))
+    const off = document.createElement('canvas'); off.width = w; off.height = h
+    const octx = off.getContext('2d'); if (!octx) return
+    // Strokes are width-normalized; `base = w` maps them into this offscreen (w == W when layer.w == 1).
+    stampStrokes(octx, layer.strokes, w, () => document.createElement('canvas'))
+    if (hasPaint(layer.fill)) {
+      octx.save()
+      octx.translate(w / 2, h / 2)               // center so resolvePaint's gradient/pattern lines up
+      octx.globalCompositeOperation = 'source-in' // keep fill only where strokes painted
+      octx.fillStyle = resolvePaint(octx, layer.fill, { w, h })
+      octx.fillRect(-w / 2, -h / 2, w, h)
+      octx.restore()
+    }
+    ctx.drawImage(off, -w / 2, -h / 2, w, h)
   }
 }
 
