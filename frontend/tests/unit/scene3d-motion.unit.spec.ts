@@ -5,6 +5,7 @@ import { DEFAULT_SCENE_MOTION } from '~/lib/scene3d/motion/types'
 import { evaluateObjectMotion, evaluateCameraMotion } from '~/lib/scene3d/motion/evaluate'
 import { resolveEaseRef } from '~/lib/scene3d/motion/ease'
 import { applyMotionToDoc } from '~/lib/scene3d/motion/apply'
+import { animateSceneDefaults, SCENE_TEMPLATES } from '~/lib/scene3d/motion/defaults'
 
 describe('scene3d motion — config parse', () => {
   it('defaults scene motion when absent', () => {
@@ -295,5 +296,35 @@ describe('scene3d motion — applyMotionToDoc', () => {
     expect(pos50[0]).toBeCloseTo(0, 5)
     expect(pos50[1]).toBeCloseTo(0, 5)
     expect(pos50[2]).toBeCloseTo(4.85, 5)
+  })
+})
+
+describe('scene3d motion — defaults/templates', () => {
+  function scene(n: number) {
+    const doc = defaultDoc()
+    for (let i = 0; i < n; i++) { const b = createPrimitive('box', doc.objects); doc.objects.push(b) }
+    return doc
+  }
+  it('animateSceneDefaults staggers offsets and drifts phases', () => {
+    const doc = scene(3); animateSceneDefaults(doc)
+    const offs = doc.objects.map(o => o.motion?.offset ?? 0)
+    expect(offs[0]!).toBeLessThan(offs[1]!)
+    expect(offs[1]!).toBeLessThan(offs[2]!)
+    const phases = doc.objects.map(o => o.motion?.loop?.phase ?? 0)
+    expect(new Set(phases).size).toBeGreaterThan(1) // not all identical
+    expect(doc.camera.motion?.preset).toBeDefined()
+  })
+  it('loop template gives no in/out (seamless)', () => {
+    const doc = scene(2); SCENE_TEMPLATES.loop(doc)
+    expect(doc.objects[0]!.motion?.in).toBeUndefined()
+    expect(doc.objects[0]!.motion?.loop).toBeDefined()
+  })
+  it('skips lights', () => {
+    const doc = defaultDoc()
+    const box = createPrimitive('box', doc.objects); doc.objects.push(box)
+    // simulate a light object shape
+    doc.objects.push({ ...box, id: 'L1', kind: 'light', light: 'point', color: '#fff', intensity: 1 } as any)
+    animateSceneDefaults(doc)
+    expect(doc.objects[1]!.motion).toBeUndefined()
   })
 })
