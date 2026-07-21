@@ -323,6 +323,33 @@ const {
   hud,
 } = editor
 
+// Normalize brush layers to a tight box: brush strokes are stored in absolute
+// artboard coords, and a layer's x/y/w/h should equal their bounds so the render
+// centres them in place and selection/handles hug the marks. Layers painted before
+// the tight-box change kept a full-artboard box (x/y=0.5, w=1); re-derive it here.
+// Idempotent (eps-guarded) so it runs once per stale layer and never loops; a
+// correctly-boxed new layer matches its bounds and is skipped.
+watch(
+  () => localLayers.value.filter(l => l.kind === 'brush')
+    .map(l => `${l.id}:${(l as BrushLayer).strokes.length}`).join(',') + `|${canvasDisplay.w}x${canvasDisplay.h}`,
+  () => {
+    if (!localLayers.value.some(l => l.kind === 'brush')) return
+    const aspect = canvasDisplay.h / Math.max(1, canvasDisplay.w)
+    let changed = false
+    const next = localLayers.value.map((l) => {
+      if (l.kind !== 'brush' || !(l as BrushLayer).strokes.length) return l
+      const bl = l as BrushLayer
+      const box = brushBoxFromStrokes(bl.strokes, aspect)
+      if (Math.abs(bl.x - box.x) < 1e-4 && Math.abs(bl.y - box.y) < 1e-4
+        && Math.abs(bl.w - box.w) < 1e-4 && Math.abs(bl.h - box.h) < 1e-4) return l
+      changed = true
+      return { ...bl, ...box }
+    })
+    if (changed) commit(next as LocalLayer[])
+  },
+  { immediate: true },
+)
+
 // In-product agent (Phase 2, 2nd home) — drives the frame through the Compositor
 // command surface. Bridges to the local-layer editor: read layers + background;
 // write via commit (+ setBackground when it changes).

@@ -748,6 +748,14 @@ export function localLayerBox(
     const s = (layer.scale || 1) * W
     return { w: Math.max(layer.bbox.w * s, 4), h: Math.max(layer.bbox.h * s, 4) }
   }
+  if (layer.kind === 'brush') {
+    // Size the selection box from the painted bounds LIVE, so it hugs the marks
+    // regardless of the layer's stored w/h (which may be stale full-frame values).
+    // The box is centred at the layer's x/y, which is exactly where the render
+    // centres the strokes' bounds — so it wraps the rendered marks precisely.
+    const b = strokeBounds((layer as BrushLayer).strokes)
+    return { w: Math.max(4, (b.maxX - b.minX) * W), h: Math.max(4, (b.maxY - b.minY) * W) }
+  }
   return { w: (layer as RectLayer).w * W, h: (layer as RectLayer).h * W }
 }
 
