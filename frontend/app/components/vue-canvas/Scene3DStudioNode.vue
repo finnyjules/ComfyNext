@@ -114,7 +114,7 @@ watch(sceneDoc, syncRegistration, { immediate: true, deep: true })
 
 onBeforeUnmount(() => {
   if (registered) unregisterStudioFrameSource(props.id)
-  headlessEngine?.renderer.dispose()
+  headlessEngine?.dispose()
   headlessEngine = null
   headlessCanvas = null
 })
