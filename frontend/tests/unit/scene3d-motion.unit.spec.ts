@@ -370,6 +370,42 @@ describe('scene3d motion — frame source factory', () => {
   })
 })
 
+import { bandSegments, resizeTransition, setClipOffset, snapSeconds } from '~/lib/scene3d/motion/timeline'
+
+const E = { kind: 'bezier' as const, cps: [0, 0, 1, 1] as [number, number, number, number] }
+
+describe('scene3d motion — band math', () => {
+  it('loop fills the remainder', () => {
+    const m: ObjectMotion = { in: { preset: 'fade', duration: 1, ease: E }, out: { preset: 'fade', duration: 1, ease: E } }
+    const s = bandSegments(m, 4)
+    expect(s.inFrac).toBeCloseTo(0.25, 6)
+    expect(s.outFrac).toBeCloseTo(0.25, 6)
+    expect(s.loopFrac).toBeCloseTo(0.5, 6)
+    expect(s.offsetFrac).toBeCloseTo(0, 6)
+  })
+  it('offset eats into the loop', () => {
+    const m: ObjectMotion = { in: { preset: 'fade', duration: 1, ease: E }, offset: 1 }
+    const s = bandSegments(m, 4)
+    expect(s.offsetFrac).toBeCloseTo(0.25, 6)
+    expect(s.inFrac).toBeCloseTo(0.25, 6)
+    expect(s.loopFrac).toBeCloseTo(0.5, 6)
+  })
+  it('resizeTransition clamps against the other slot + offset', () => {
+    const m: ObjectMotion = { in: { preset: 'fade', duration: 1, ease: E }, out: { preset: 'fade', duration: 1, ease: E }, offset: 0.5 }
+    resizeTransition(m, 'in', 100, 4) // absurd → clamp to 4 - 0.5 - 1 = 2.5
+    expect(m.in!.duration).toBeCloseTo(2.5, 6)
+  })
+  it('setClipOffset clamps to leave room for in+out', () => {
+    const m: ObjectMotion = { in: { preset: 'fade', duration: 1, ease: E }, out: { preset: 'fade', duration: 1, ease: E } }
+    setClipOffset(m, 100, 4) // clamp to 4 - 2 = 2
+    expect(m.offset).toBeCloseTo(2, 6)
+  })
+  it('snapSeconds snaps within eps only', () => {
+    expect(snapSeconds(1.02, [0, 1, 2], 0.08)).toBe(1)
+    expect(snapSeconds(1.4, [0, 1, 2], 0.08)).toBe(1.4)
+  })
+})
+
 import { setObjectLoop, setObjectTransition, LOOP_OPTIONS } from '~/lib/scene3d/motion/panel'
 
 describe('scene3d motion — panel helpers', () => {
