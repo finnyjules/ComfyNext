@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { smoothPoints, strokeRadiusPx, stampStrokes, type PaintStroke } from '~/lib/compositor/brushStamp'
+import { smoothPoints, strokeRadiusPx, stampStrokes, strokeBounds, brushBoxFromStrokes, type PaintStroke } from '~/lib/compositor/brushStamp'
 
 const stroke = (p: Partial<PaintStroke> = {}): PaintStroke =>
   ({ points: [{ x: 0.1, y: 0.1 }, { x: 0.2, y: 0.2 }], radius: 0.05, hardness: 1, opacity: 1, erase: false, ...p })
@@ -45,6 +45,32 @@ function recCtx() {
   }
   return { ctx: ctx as unknown as CanvasRenderingContext2D, ops }
 }
+
+describe('strokeBounds', () => {
+  const s = (p: Partial<PaintStroke> = {}): PaintStroke =>
+    ({ points: [{ x: 0.2, y: 0.2 }, { x: 0.4, y: 0.4 }], radius: 0.05, hardness: 1, opacity: 1, erase: false, ...p })
+  const near = (b: { minX: number; minY: number; maxX: number; maxY: number }, e: number[]) => {
+    expect(b.minX).toBeCloseTo(e[0]!, 6); expect(b.minY).toBeCloseTo(e[1]!, 6)
+    expect(b.maxX).toBeCloseTo(e[2]!, 6); expect(b.maxY).toBeCloseTo(e[3]!, 6)
+  }
+  it('expands each stroke by its radius', () => near(strokeBounds([s()]), [0.15, 0.15, 0.45, 0.45]))
+  it('unions multiple strokes', () => near(strokeBounds([s(), s({ points: [{ x: 0.8, y: 0.1 }], radius: 0.1 })]), [0.15, 0.0, 0.9, 0.45]))
+  it('empty → zero box', () => expect(strokeBounds([])).toEqual({ minX: 0, minY: 0, maxX: 0, maxY: 0 }))
+})
+
+describe('brushBoxFromStrokes', () => {
+  const s = (p: Partial<PaintStroke> = {}): PaintStroke =>
+    ({ points: [{ x: 0.2, y: 0.2 }, { x: 0.4, y: 0.4 }], radius: 0.05, hardness: 1, opacity: 1, erase: false, ...p })
+  const near = (box: { x: number; y: number; w: number; h: number }, e: number[]) => {
+    expect(box.x).toBeCloseTo(e[0]!, 6); expect(box.y).toBeCloseTo(e[1]!, 6)
+    expect(box.w).toBeCloseTo(e[2]!, 6); expect(box.h).toBeCloseTo(e[3]!, 6)
+  }
+  // bounds = 0.15..0.45 on both axes → w=h=0.3, center=0.3 (width-normalized)
+  it('square artboard: y unchanged', () => near(brushBoxFromStrokes([s()], 1), [0.3, 0.3, 0.3, 0.3]))
+  // center-y is 0.3 of WIDTH; on a 2:1 landscape (H = 0.5·W) that is 0.6 of HEIGHT
+  it('landscape (aspect 0.5): y scaled up to fraction-of-height', () => near(brushBoxFromStrokes([s()], 0.5), [0.3, 0.6, 0.3, 0.3]))
+  it('portrait (aspect 2): y scaled down', () => near(brushBoxFromStrokes([s()], 2), [0.3, 0.15, 0.3, 0.3]))
+})
 
 describe('stampStrokes composite recipe', () => {
   const s = (p: Partial<PaintStroke> = {}): PaintStroke =>

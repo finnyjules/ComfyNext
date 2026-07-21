@@ -31,7 +31,7 @@ import { drawQuadWarp, type Quad } from '~/lib/compositor/warp'
 import { polygonPathData, starPathData } from '~/lib/compositor/polygonGeometry'
 import { resolveGroupCascade, type LayerGroup } from '~/lib/compositor/layerGroups'
 import { layoutExpressive, type ExpressiveParams } from '~~/shared/text-layout/expressive'
-import { type PaintStroke, stampStrokes } from '~/lib/compositor/brushStamp'
+import { type PaintStroke, stampStrokes, strokeBounds } from '~/lib/compositor/brushStamp'
 
 // Throwaway 2D context used only for text measurement (localLayerBox mutates the
 // ctx font), so it never touches a real render target.
@@ -1129,19 +1129,23 @@ function drawLayerContent(ctx: CanvasRenderingContext2D, layer: LocalLayer, W: n
     }
   } else if (layer.kind === 'brush') {
     if (!layer.strokes.length) return
-    const w = Math.max(1, Math.round(layer.w * W))
-    const h = Math.max(1, Math.round(layer.h * W))
-    // Rasterize at DEVICE resolution so the committed layer stays crisp on retina
-    // (dpr>1) — matching the device-sized live overlay. `ctx` is DPR-scaled, so the
-    // final drawImage at LOGICAL w×h renders the hi-res offscreen 1:1. Export runs
-    // at dpr≈1 with a large W, so it's unaffected.
+    // Size the offscreen to the painted BOUNDS (a tight box), not the whole artboard,
+    // so the layer's box/selection hug the marks. Strokes are width-normalized; shift
+    // the offscreen so the bounds' top-left maps to (0,0). Rasterize at DEVICE
+    // resolution (dpr) so the committed layer stays crisp on retina — `ctx` is
+    // DPR-scaled, so the final drawImage at LOGICAL size renders the hi-res offscreen 1:1.
+    const b = strokeBounds(layer.strokes)
+    const w = Math.max(1, Math.round((b.maxX - b.minX) * W))
+    const h = Math.max(1, Math.round((b.maxY - b.minY) * W))
     const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1
     const dw = Math.max(1, Math.round(w * dpr))
     const dh = Math.max(1, Math.round(h * dpr))
     const off = document.createElement('canvas'); off.width = dw; off.height = dh
     const octx = off.getContext('2d'); if (!octx) return
-    // Strokes are width-normalized; `base = w * dpr` scales them up to the device offscreen.
-    stampStrokes(octx, layer.strokes, w * dpr)
+    octx.save()
+    octx.translate(-b.minX * W * dpr, -b.minY * W * dpr) // bounds' top-left → offscreen origin
+    stampStrokes(octx, layer.strokes, W * dpr)           // base = artboard-width scale
+    octx.restore()
     if (hasPaint(layer.fill)) {
       octx.save()
       octx.translate(dw / 2, dh / 2)             // center so resolvePaint's gradient/pattern lines up
@@ -1150,7 +1154,8 @@ function drawLayerContent(ctx: CanvasRenderingContext2D, layer: LocalLayer, W: n
       octx.fillRect(-dw / 2, -dh / 2, dw, dh)
       octx.restore()
     }
-    ctx.drawImage(off, -w / 2, -h / 2, w, h)     // logical size; DPR-scaled ctx makes it 1:1 crisp
+    // Centered at the layer origin, which the caller placed at the bounds' centre.
+    ctx.drawImage(off, -w / 2, -h / 2, w, h)
   }
 }
 

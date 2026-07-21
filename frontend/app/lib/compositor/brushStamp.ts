@@ -53,6 +53,34 @@ export function strokeRadiusPx(stroke: PaintStroke, base: number): number {
   return Math.max(0.5, stroke.radius * base)
 }
 
+/** Tight bounds of all strokes in WIDTH-normalized artboard coords, expanded by each
+ *  stroke's radius so the painted marks sit fully inside. Empty → a zero box at origin. */
+export function strokeBounds(strokes: PaintStroke[]): { minX: number; minY: number; maxX: number; maxY: number } {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  for (const s of strokes) {
+    const r = Math.max(0, s.radius)
+    for (const p of s.points) {
+      if (p.x - r < minX) minX = p.x - r
+      if (p.y - r < minY) minY = p.y - r
+      if (p.x + r > maxX) maxX = p.x + r
+      if (p.y + r > maxY) maxY = p.y + r
+    }
+  }
+  if (!Number.isFinite(minX)) return { minX: 0, minY: 0, maxX: 0, maxY: 0 }
+  return { minX, minY, maxX, maxY }
+}
+
+/** Derive a brush layer's placement box from its strokes. `w`/`h` are width-normalized
+ *  (like every shape layer); `x` is a fraction of WIDTH and `y` a fraction of HEIGHT
+ *  (the layer-position convention — `applyXform` translates to `x*W, y*H`). Strokes are
+ *  width-normalized on both axes, so `y` is converted by the aspect (H/W). */
+export function brushBoxFromStrokes(strokes: PaintStroke[], aspect: number): { x: number; y: number; w: number; h: number } {
+  const b = strokeBounds(strokes)
+  const w = Math.max(1e-4, b.maxX - b.minX)
+  const h = Math.max(1e-4, b.maxY - b.minY)
+  return { x: (b.minX + b.maxX) / 2, y: ((b.minY + b.maxY) / 2) / Math.max(1e-6, aspect), w, h }
+}
+
 /** Stamp ONE stroke as a run of round dabs along its (smoothed) path. The CALLER
  *  sets `ctx.globalAlpha` (= the stroke's flow) and the composite op; because each
  *  dab is a separate fill at that alpha, overlapping dabs BUILD UP toward opaque —

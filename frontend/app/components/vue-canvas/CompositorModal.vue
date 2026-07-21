@@ -25,7 +25,7 @@ import AgentProgress from '~/components/agent/AgentProgress.vue'
 import AgentSweep from '~/components/agent/AgentSweep.vue'
 import { useVectorPen, buildPathLayerFromAnchors } from '~/composables/useVectorPen'
 import { useBrushPaint } from '~/composables/useBrushPaint'
-import { toWidthNorm } from '~/lib/compositor/brushStamp'
+import { toWidthNorm, brushBoxFromStrokes } from '~/lib/compositor/brushStamp'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
 import { useVectorNodeEdit } from '~/composables/useVectorNodeEdit'
 import { generateVectorFromText, vectorizeImage, urlToDataUrl } from '~/composables/useVectorAi'
@@ -1591,16 +1591,19 @@ function renderStack() {
   // flat blob. New-layer strokes get a transient top layer with the brush colour.
   const ls = brush.active.value && brush.mode.value === 'paint' ? brush.liveStroke() : null
   if (ls && ls.points.length) {
+    const aspect = canvasDisplay.h / Math.max(1, canvasDisplay.w)
     const target = activeBrushLayer()
     if (target) {
       const idx = items.findIndex(it => it.type === 'local' && it.layer.id === target.id)
       if (idx >= 0) {
         const it = items[idx] as Extract<StackItem, { type: 'local' }>
-        items[idx] = { ...it, layer: { ...it.layer, strokes: [...(it.layer as BrushLayer).strokes, ls] } as LocalLayer }
+        const strokes = [...(it.layer as BrushLayer).strokes, ls]
+        // Re-fit the box so the preview renders at the same place it will commit to.
+        items[idx] = { ...it, layer: { ...it.layer, strokes, ...brushBoxFromStrokes(strokes, aspect) } as LocalLayer }
       }
     } else {
-      const aspect = canvasDisplay.h / Math.max(1, canvasDisplay.w)
-      const tmp = createBrushLayer({ strokes: [ls], fill: brush.color.value, h: aspect })
+      const strokes = [ls]
+      const tmp = createBrushLayer({ strokes, fill: brush.color.value, ...brushBoxFromStrokes(strokes, aspect) })
       items.push({ type: 'local', key: `l:${tmp.id}`, layer: tmp })
     }
   }
@@ -2023,10 +2026,13 @@ function onBrushPointerUp() {
   if (!existing && s.erase) return
   const aspect = canvasDisplay.h / Math.max(1, canvasDisplay.w)
   if (existing) {
-    setLocal(existing.id, { strokes: [...existing.strokes, s] })
+    const strokes = [...existing.strokes, s]
+    // Re-fit the layer box to the painted bounds so selection/handles hug the marks.
+    setLocal(existing.id, { strokes, ...brushBoxFromStrokes(strokes, aspect) })
     brushLayerId = existing.id
   } else {
-    const layer = createBrushLayer({ strokes: [s], fill: brush.color.value, h: aspect })
+    const strokes = [s]
+    const layer = createBrushLayer({ strokes, fill: brush.color.value, ...brushBoxFromStrokes(strokes, aspect) })
     addLocal(layer)            // records history + selects
     brushLayerId = layer.id
   }
