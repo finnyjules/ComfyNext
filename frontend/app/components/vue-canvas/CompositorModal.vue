@@ -7,8 +7,8 @@ import {
   Hexagon, Star,
 } from 'lucide-vue-next'
 import {
-  type TextLayer, type RectLayer, type EllipseLayer, type LocalLayer, type StackItem, type CornerPin,
-  drawLocalLayer, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages, paintLayerStack, layerMaskRef, localLayerBox,
+  type TextLayer, type RectLayer, type EllipseLayer, type LocalLayer, type StackItem, type CornerPin, type BrushLayer,
+  drawLocalLayer, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages, paintLayerStack, layerMaskRef, localLayerBox, createBrushLayer,
 } from '~/composables/useCompositorLayers'
 import { readWiredTreatments, setWiredMask, setWiredMaskShowSource, maskCandidateKeys } from '~/composables/useWiredTreatments'
 import { useLocalLayerEditor, resizableKind } from '~/composables/useLocalLayerEditor'
@@ -24,6 +24,7 @@ import AgentProposal from '~/components/agent/AgentProposal.vue'
 import AgentProgress from '~/components/agent/AgentProgress.vue'
 import AgentSweep from '~/components/agent/AgentSweep.vue'
 import { useVectorPen, buildPathLayerFromAnchors } from '~/composables/useVectorPen'
+import { useBrushPaint } from '~/composables/useBrushPaint'
 import { useVectorNodeEdit } from '~/composables/useVectorNodeEdit'
 import { generateVectorFromText, vectorizeImage, urlToDataUrl } from '~/composables/useVectorAi'
 import { imageLayerUrl } from '~/composables/useCompositorLayers'
@@ -413,6 +414,7 @@ async function deleteNodeAnchor() {
 
 // ── Pen tool + SVG import ────────────────────────────────────────────────────
 const pen = useVectorPen()
+const brush = useBrushPaint()
 const PEN_STYLE = { fill: '#3b82f6', stroke: '', strokeWidth: 0 }
 
 function clientToNorm(e: PointerEvent | MouseEvent) {
@@ -444,7 +446,7 @@ function selectTool() {
   if (nodeEdit.active.value) exitNodeEdit()
   if (genActive.value) exitGenMode()
 }
-const isSelectTool = computed(() => !pen.active.value && !nodeEdit.active.value && !genActive.value)
+const isSelectTool = computed(() => !pen.active.value && !nodeEdit.active.value && !genActive.value && !brush.active.value)
 
 /** True when an image layer has an active tint fill (shows blend + opacity). */
 function hasTint(l: any): boolean { const t = l?.tint; return !!t && t !== 'none' && t !== '' }
@@ -453,7 +455,12 @@ function hasTint(l: any): boolean { const t = l?.tint; return !!t && t !== 'none
 const distortTool = ref(false)
 function toggleDistort() {
   distortTool.value = !distortTool.value
-  if (distortTool.value) { pen.setActive(false); exitNodeEdit(); if (genActive.value) exitGenMode() }
+  if (distortTool.value) { pen.setActive(false); exitNodeEdit(); if (genActive.value) exitGenMode(); brush.setActive(false) }
+}
+// ── Brush: freehand paint tool (mutually exclusive with pen/node/gen/distort) ─
+function toggleBrush() {
+  brush.setActive(!brush.active.value)
+  if (brush.active.value) { pen.setActive(false); exitNodeEdit(); if (genActive.value) exitGenMode(); distortTool.value = false; selectLocal(null) }
 }
 function normCp(cp: unknown): CornerPin {
   const c = (cp ?? {}) as any
@@ -619,6 +626,11 @@ function onKeydown(e: KeyboardEvent) {
   if ((e.key === 'v' || e.key === 'V') && !e.metaKey && !e.ctrlKey && !editingId.value) {
     const tag = (e.target as HTMLElement)?.tagName
     if (tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') { selectTool(); return }
+  }
+  // B → toggle the freehand Brush tool (when not typing in a field).
+  if ((e.key === 'b' || e.key === 'B') && !e.metaKey && !e.ctrlKey && !editingId.value) {
+    const tag = (e.target as HTMLElement)?.tagName
+    if (tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') { toggleBrush(); return }
   }
   // Node edit: Esc/Enter exit, Delete removes the selected anchor.
   if (nodeEdit.active.value) {
@@ -1089,6 +1101,7 @@ function onCanvasPointerDownCapture(e: PointerEvent) {
   // Generate mode: brush/box paint the region; shape mode falls through so a
   // shape can still be selected (then promoted via "Use shape").
   if (genActive.value && (genTool.value === 'brush' || genTool.value === 'box')) { onGenPointerDown(e); return }
+  if (brush.active.value) { onBrushPointerDown(e); return } // brush mode owns the canvas
   if (pen.active.value) { onPenPointerDown(e); return } // pen mode owns the canvas
   if (nodeEdit.active.value) { onNodePointerDown(e); return } // node edit owns the canvas
   if ((e.target as HTMLElement)?.closest?.('[data-handle]')) return // a handle's own drag
@@ -1118,12 +1131,14 @@ function onCanvasPointerMoveCapture(e: PointerEvent) {
     if (genDraw.value) { onGenPointerMove(e); return }
     if (genTool.value === 'brush' || genTool.value === 'box') return
   }
+  if (brush.active.value) { onBrushPointerMove(e); return }
   if (pen.active.value) onPenPointerMove(e)
   else if (nodeEdit.active.value) onNodePointerMove(e)
   else if (marquee.value) { const p = clientToNorm(e); if (p) moveMarquee(p.nx, p.ny) }
 }
 function onCanvasPointerUpCapture(e: PointerEvent) {
   if (genActive.value && genDraw.value) { onGenPointerUp(e); return }
+  if (brush.active.value) { onBrushPointerUp(); return }
   if (pen.active.value) onPenPointerUp()
   else if (nodeEdit.active.value) onNodePointerUp()
   else if (marquee.value) endMarquee(e.shiftKey)
@@ -1147,6 +1162,7 @@ function onCanvasDblClickCapture(e: MouseEvent) {
 // shape we just selected on pointer-down.
 let lastDownHitLayer = false
 function onCanvasClick(e: MouseEvent) {
+  if (brush.active.value) return // brush owns the canvas
   if (genActive.value && genTool.value !== 'shape') return // region-paint owns the canvas
   if (lastDownHitLayer) { lastDownHitLayer = false; return }
   if (e.target === canvasRef.value) { selectedSlot.value = null; selectLocal(null) }
@@ -1154,6 +1170,7 @@ function onCanvasClick(e: MouseEvent) {
 // Click in the empty stage gutter (outside the artboard) → deselect. A pan that
 // ends on the gutter also fires a click here, so swallow it.
 function onStageBackgroundClick(e: MouseEvent) {
+  if (brush.active.value) return // brush owns the canvas
   if (genActive.value && genTool.value !== 'shape') return
   if (didPan) { didPan = false; return }
   if (e.target === stageBoxRef.value || e.target === stageWrapRef.value) {
@@ -1925,6 +1942,44 @@ function enterGenMode() {
 }
 function exitGenMode() { genActive.value = false; genCursor.on = false; clearGenMask(); genResult.value = null }
 function toggleGenMode() { genActive.value ? exitGenMode() : enterGenMode() }
+
+// ── Brush painting: freehand strokes commit to a BrushLayer via the editor ────
+// The brush layer strokes land on. Reuse the selected brush layer, else create one.
+let brushLayerId: string | null = null
+function activeBrushLayer(): BrushLayer | null {
+  const sel = selectedLocal.value
+  if (sel && sel.kind === 'brush') return sel as BrushLayer
+  if (brushLayerId) { const l = localLayers.value.find(x => x.id === brushLayerId); if (l && l.kind === 'brush') return l as BrushLayer }
+  return null
+}
+function onBrushPointerDown(e: PointerEvent) {
+  const p = clientToNorm(e); if (!p) return
+  e.preventDefault(); e.stopPropagation()
+  canvasRef.value?.setPointerCapture?.(e.pointerId)
+  brush.beginStroke(p.nx, p.ny, canvasDisplay.w)
+  brush.cursor.value = { x: p.nx, y: p.ny }
+  renderStack() // show the live stroke immediately (see Task 4 overlay hook)
+}
+function onBrushPointerMove(e: PointerEvent) {
+  const p = clientToNorm(e); if (!p) return
+  brush.cursor.value = { x: p.nx, y: p.ny }
+  if (!brush.hasLiveStroke.value) return
+  brush.extendStroke(p.nx, p.ny)
+  renderStack()
+}
+function onBrushPointerUp() {
+  const s = brush.endStroke(); if (!s) { return }
+  const existing = activeBrushLayer()
+  const aspect = canvasDisplay.h / Math.max(1, canvasDisplay.w)
+  if (existing) {
+    setLocal(existing.id, { strokes: [...existing.strokes, s] })
+    brushLayerId = existing.id
+  } else {
+    const layer = createBrushLayer({ strokes: [s], fill: brush.color.value, h: aspect })
+    addLocal(layer)            // records history + selects
+    brushLayerId = layer.id
+  }
+}
 
 // ── Region painting (all tools write into the one artboard-space mask) ───────
 const genDraw = ref<{ tool: GenTool; x0: number; y0: number; lx: number; ly: number } | null>(null)
