@@ -406,7 +406,7 @@ describe('scene3d motion — band math', () => {
   })
 })
 
-import { setObjectLoop, setObjectTransition, LOOP_OPTIONS } from '~/lib/scene3d/motion/panel'
+import { setObjectLoop, setObjectTransition, LOOP_OPTIONS, setObjectDirection } from '~/lib/scene3d/motion/panel'
 
 describe('scene3d motion — panel helpers', () => {
   it('setObjectLoop assigns and clears', () => {
@@ -428,6 +428,20 @@ describe('scene3d motion — panel helpers', () => {
     expect(LOOP_OPTIONS).toContain('none')
     expect(LOOP_OPTIONS).toContain('spin')
     expect(LOOP_OPTIONS).toContain('orbit')
+  })
+})
+
+describe('scene3d motion — direction helper', () => {
+  it('sets direction on an existing transition', () => {
+    const o = createPrimitive('box', defaultDoc().objects)
+    setObjectTransition(o, 'in', 'move')
+    setObjectDirection(o, 'in', 'right')
+    expect(o.motion?.in?.direction).toBe('right')
+  })
+  it('no-ops when the slot is unset', () => {
+    const o = createPrimitive('box', defaultDoc().objects)
+    setObjectDirection(o, 'in', 'left')
+    expect(o.motion).toBeUndefined()
   })
 })
 

@@ -2,7 +2,7 @@
 // StudioSelect binds `options: string[]` via `defineModel<string>` (plain value,
 // capitalized for display by the component itself) — NOT `{value,label}` pairs.
 import type { SceneObject } from '~/lib/scene3d/config'
-import type { LoopKind, TransitionPreset, CameraMotion } from './types'
+import type { LoopKind, TransitionPreset, CameraMotion, Direction } from './types'
 
 export const LOOP_OPTIONS: LoopKind[] = ['none', 'spin', 'bob', 'pulse', 'orbit', 'sway', 'tumble']
 export const IN_OPTIONS: (TransitionPreset | 'none')[] = ['none', 'move', 'rise', 'scale', 'fade', 'pop']
@@ -39,4 +39,9 @@ export function setObjectTransition(obj: SceneObject, slot: 'in' | 'out', preset
     return
   }
   m[slot] = { preset, duration: 0.6, ease: DEFAULT_EASE }
+}
+
+export function setObjectDirection(obj: SceneObject, slot: 'in' | 'out', dir: Direction) {
+  const t = obj.motion?.[slot]; if (!t) return
+  t.direction = dir
 }
