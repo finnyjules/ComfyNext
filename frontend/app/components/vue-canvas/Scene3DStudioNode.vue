@@ -4,10 +4,15 @@
 // from the persisted `beauty_image` widget (no ephemeral output event needed)
 // and "Edit" opens Scene3DStudioSurface, which writes the bakes back into the
 // widgets that execute() replays on Run.
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, watch } from 'vue'
 import { Handle, Position } from '@vue-flow/core'
 import { Box, Pencil } from 'lucide-vue-next'
 import { getTypeColor } from '~/composables/useVueNodes'
+import { parseDoc } from '~/lib/scene3d/config'
+import { SceneEngine } from '~/lib/scene3d/engine'
+import { sceneHasMotion, renderMotionFrame } from '~/lib/scene3d/motion/render'
+import { makeScene3DFrameSource } from '~/lib/scene3d/motion/frameSource'
+import { registerStudioFrameSource, unregisterStudioFrameSource } from '~/lib/studio/frameSource'
 
 const props = defineProps<{
   id: string
@@ -59,6 +64,60 @@ const outputPorts = computed(() => {
 function openEditor() {
   window.dispatchEvent(new CustomEvent('sailor:openScene3DStudio', { detail: { nodeId: props.id } }))
 }
+
+// Reactive scene doc — re-parses whenever the widget changes (edits made in the
+// Scene3DStudioSurface modal write back into `scene_state`).
+const sceneDoc = computed(() => parseDoc(widgetStr('scene_state')))
+
+// Modal-independent live frame source: a directly-wired downstream Frame pulls
+// frames from here even when this node's editor is closed. Lazily builds a
+// headless SceneEngine ONLY when the scene actually has motion, so an idle 3D
+// node wired to a Frame stays a still and never opens a WebGL context.
+let headlessCanvas: HTMLCanvasElement | null = null
+let headlessEngine: SceneEngine | null = null
+let registered = false
+
+function ensureHeadless(w: number, h: number): SceneEngine | null {
+  if (typeof document === 'undefined') return null
+  if (!headlessCanvas) headlessCanvas = document.createElement('canvas')
+  if (!headlessEngine) {
+    try { headlessEngine = new SceneEngine(headlessCanvas, w, h) }
+    catch { headlessEngine = null; return null }
+  }
+  headlessEngine.setSize(w, h)
+  return headlessEngine
+}
+
+function syncRegistration() {
+  const doc = sceneDoc.value
+  const animated = sceneHasMotion(doc)
+  if (animated && !registered) {
+    registerStudioFrameSource(props.id, makeScene3DFrameSource({
+      getClock: () => {
+        const d = sceneDoc.value
+        return { duration: d.motion.duration, fps: d.motion.fps, width: d.output.width, height: d.output.height }
+      },
+      renderAt: (t01, w, h) => {
+        const eng = ensureHeadless(w, h)
+        if (!eng) return null
+        return renderMotionFrame(eng, sceneDoc.value, t01)
+      },
+    }))
+    registered = true
+  } else if (!animated && registered) {
+    unregisterStudioFrameSource(props.id)
+    registered = false
+  }
+}
+
+watch(sceneDoc, syncRegistration, { immediate: true, deep: true })
+
+onBeforeUnmount(() => {
+  if (registered) unregisterStudioFrameSource(props.id)
+  headlessEngine?.renderer.dispose()
+  headlessEngine = null
+  headlessCanvas = null
+})
 </script>
 
 <template>
