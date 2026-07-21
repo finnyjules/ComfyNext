@@ -890,10 +890,10 @@ function applyStrokeMask(ctx: CanvasRenderingContext2D, layer: LocalLayer, W: nu
     mctx.fillStyle = '#fff'
     mctx.fillRect(0, 0, W, H)
     const inverted = strokes.map(s => ({ ...s, erase: !s.erase }))
-    stampStrokes(mctx, inverted, W, () => document.createElement('canvas'))
+    stampStrokes(mctx, inverted, W)
   } else {
     // base 'hidden': start transparent, plain strokes reveal (paint white).
-    stampStrokes(mctx, strokes, W, () => document.createElement('canvas'))
+    stampStrokes(mctx, strokes, W)
   }
   ctx.save()
   ctx.setTransform(1, 0, 0, 1, 0, 0) // device space — matches the layer's pixels
@@ -1141,7 +1141,7 @@ function drawLayerContent(ctx: CanvasRenderingContext2D, layer: LocalLayer, W: n
     const off = document.createElement('canvas'); off.width = dw; off.height = dh
     const octx = off.getContext('2d'); if (!octx) return
     // Strokes are width-normalized; `base = w * dpr` scales them up to the device offscreen.
-    stampStrokes(octx, layer.strokes, w * dpr, () => document.createElement('canvas'))
+    stampStrokes(octx, layer.strokes, w * dpr)
     if (hasPaint(layer.fill)) {
       octx.save()
       octx.translate(dw / 2, dh / 2)             // center so resolvePaint's gradient/pattern lines up

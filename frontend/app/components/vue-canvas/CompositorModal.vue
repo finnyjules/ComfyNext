@@ -3292,7 +3292,7 @@ onUnmounted(() => {
             <span class="text-[10px] text-white/50 w-8 text-right tabular-nums">{{ brush.sizePx.value }}</span>
           </div>
           <div class="flex items-center gap-2 mb-2">
-            <span class="text-[10px] text-white/40 w-12 shrink-0">Opacity</span>
+            <span class="text-[10px] text-white/40 w-12 shrink-0">Flow</span>
             <input type="range" min="0.05" max="1" step="0.05" v-model.number="brush.opacity.value" class="flex-1 accent-white cursor-pointer" />
             <span class="text-[10px] text-white/50 w-8 text-right tabular-nums">{{ Math.round(brush.opacity.value * 100) }}</span>
           </div>

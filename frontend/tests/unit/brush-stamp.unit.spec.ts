@@ -50,41 +50,28 @@ describe('stampStrokes composite recipe', () => {
   const s = (p: Partial<PaintStroke> = {}): PaintStroke =>
     ({ points: [{ x: 0.2, y: 0.2 }, { x: 0.4, y: 0.4 }], radius: 0.05, hardness: 1, opacity: 0.5, erase: false, ...p })
 
-  it('erase strokes carve with destination-out', () => {
+  it('erase strokes carve with destination-out at the flow rate', () => {
     const { ctx, ops } = recCtx()
-    // Erase never touches makeCanvas — it draws destination-out straight onto
-    // the main ctx — so a canvas-shaped stub with no getContext is enough to
-    // prove that path is never taken.
-    stampStrokes(ctx, [s({ erase: true, opacity: 0.8 })], 100, () => recCtx().ctx.canvas as unknown as HTMLCanvasElement)
+    stampStrokes(ctx, [s({ erase: true, opacity: 0.8 })], 100)
     expect(ops.length).toBeGreaterThan(0)
     expect(ops.every(o => o.composite === 'destination-out')).toBe(true)
     expect(ops.every(o => o.alpha === 0.8)).toBe(true)
   })
 
-  it('paint strokes render to a temp canvas at full alpha, then composite it at stroke opacity', () => {
+  it('paint strokes deposit dabs source-over at flow (build-up), never via a temp composite', () => {
     const { ctx, ops } = recCtx()
-    const temps: ReturnType<typeof recCtx>[] = []
-    const make = () => {
-      const rec = recCtx()
-      temps.push(rec)
-      return Object.assign(rec.ctx.canvas as object, { getContext: () => rec.ctx }) as unknown as HTMLCanvasElement
-    }
-    stampStrokes(ctx, [s({ opacity: 0.5 })], 100, make)
+    stampStrokes(ctx, [s({ opacity: 0.5 })], 100)
 
-    // The temp canvas received the actual paint (fill/stroke) at full alpha —
-    // stroke opacity is applied only when compositing the temp back, not baked
-    // into the stamp itself (so a self-overlapping stroke stays uniform).
-    expect(temps).toHaveLength(1)
-    const tempOps = temps[0]!.ops
-    expect(tempOps.length).toBeGreaterThan(0)
-    expect(tempOps.every(o => o.alpha === 1)).toBe(true)
-
-    // The main ctx only sees one drawImage of that temp, at the stroke's
-    // opacity and normal (source-over) blending.
-    const draw = ops.find(o => o.op === 'drawImage')
-    expect(draw).toBeTruthy()
-    expect(draw?.alpha).toBe(0.5)
-    expect(draw?.composite).toBe('source-over')
-    expect(ops.some(o => o.op === 'fill' || o.op === 'stroke')).toBe(false)
+    // Build-up mechanism: the stroke is laid down as MANY overlapping dab fills,
+    // each composited source-over at the stroke's flow (0.5). Because the dabs
+    // overlap, source-over accumulates their alpha — a self-overlapping stroke and
+    // repeated passes darken toward opaque (Photoshop "Flow"), rather than clamping
+    // to a flat per-stroke opacity via a single temp drawImage.
+    const fills = ops.filter(o => o.op === 'fill')
+    expect(fills.length).toBeGreaterThan(1)
+    expect(fills.every(o => o.composite === 'source-over')).toBe(true)
+    expect(fills.every(o => o.alpha === 0.5)).toBe(true)
+    // No temp-canvas composite path any more.
+    expect(ops.some(o => o.op === 'drawImage')).toBe(false)
   })
 })

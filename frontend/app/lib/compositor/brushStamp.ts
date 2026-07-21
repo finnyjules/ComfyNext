@@ -7,8 +7,8 @@ export interface PaintStroke {
   points: { x: number; y: number }[] // width-normalized (both axes ÷ artboard width)
   radius: number                     // width-normalized brush radius
   hardness: number                   // 1 = hard edge … 0 = fully soft
-  opacity: number                    // 0..1 per-stroke flow
-  erase: boolean                     // erase strokes carve alpha back out
+  opacity: number                    // 0..1 FLOW: paint deposited per dab; overlapping dabs build up toward opaque
+  erase: boolean                     // erase strokes carve alpha back out (at the same flow rate)
 }
 
 /**
@@ -53,66 +53,60 @@ export function strokeRadiusPx(stroke: PaintStroke, base: number): number {
   return Math.max(0.5, stroke.radius * base)
 }
 
-/** Paint ONE stroke as white alpha at full opacity. Hard = round polyline + dot
- *  caps; soft = overlapping radial-gradient stamps (solid core to `hardness`). */
+/** Stamp ONE stroke as a run of round dabs along its (smoothed) path. The CALLER
+ *  sets `ctx.globalAlpha` (= the stroke's flow) and the composite op; because each
+ *  dab is a separate fill at that alpha, overlapping dabs BUILD UP toward opaque —
+ *  low flow deposits little per pass and darkens where the stroke overlaps itself
+ *  or is painted over again (Photoshop "Flow"). Dab spacing is a quarter-radius so
+ *  a single pass stays continuous. Hard = solid discs; soft = radial-gradient discs
+ *  (solid core out to `hardness`, fading to transparent at the edge). */
 export function drawStrokeAlpha(ctx: CanvasRenderingContext2D, stroke: PaintStroke, base: number): void {
-  const pts = smoothPoints(stroke.points, stroke.hardness >= 0.999 ? 4 : 8)
+  const hard = stroke.hardness >= 0.999
+  const pts = smoothPoints(stroke.points, hard ? 4 : 8)
   if (!pts.length) return
   const r = strokeRadiusPx(stroke, base)
+  const inner = Math.max(0, Math.min(0.95, stroke.hardness))
+  const step = Math.max(1, r * 0.25) // < radius so consecutive dabs stay continuous
   ctx.save()
-  ctx.lineCap = 'round'; ctx.lineJoin = 'round'
-  if (stroke.hardness >= 0.999) {
-    ctx.fillStyle = '#fff'; ctx.strokeStyle = '#fff'
-    for (const p of pts) { ctx.beginPath(); ctx.arc(p.x * base, p.y * base, r, 0, Math.PI * 2); ctx.fill() }
-    if (pts.length > 1) {
-      ctx.lineWidth = r * 2
-      ctx.beginPath(); ctx.moveTo(pts[0]!.x * base, pts[0]!.y * base)
-      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i]!.x * base, pts[i]!.y * base)
-      ctx.stroke()
-    }
-  } else {
-    const inner = Math.max(0, Math.min(0.95, stroke.hardness))
-    const step = Math.max(1, r * 0.35)
-    const stamp = (x: number, y: number) => {
+  const dab = (x: number, y: number) => {
+    if (hard) {
+      ctx.fillStyle = '#fff'
+    } else {
       const g = ctx.createRadialGradient(x, y, r * inner, x, y, r)
       g.addColorStop(0, '#fff'); g.addColorStop(inner, '#fff'); g.addColorStop(1, 'rgba(255,255,255,0)')
-      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill()
+      ctx.fillStyle = g
     }
-    let prev = pts[0]!
-    stamp(prev.x * base, prev.y * base)
-    for (let i = 1; i < pts.length; i++) {
-      const p = pts[i]!
-      const dx = (p.x - prev.x) * base, dy = (p.y - prev.y) * base
-      const dist = Math.hypot(dx, dy)
-      const steps = Math.max(1, Math.floor(dist / step))
-      for (let s = 1; s <= steps; s++) stamp((prev.x * base) + (dx * s) / steps, (prev.y * base) + (dy * s) / steps)
-      prev = p
-    }
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill()
+  }
+  let prev = pts[0]!
+  dab(prev.x * base, prev.y * base)
+  for (let i = 1; i < pts.length; i++) {
+    const p = pts[i]!
+    const dx = (p.x - prev.x) * base, dy = (p.y - prev.y) * base
+    const dist = Math.hypot(dx, dy)
+    const steps = Math.max(1, Math.floor(dist / step))
+    for (let s = 1; s <= steps; s++) dab((prev.x * base) + (dx * s) / steps, (prev.y * base) + (dy * s) / steps)
+    prev = p
   }
   ctx.restore()
 }
 
-/** Composite all strokes onto `ctx`. Each paint stroke renders to its own temp
- *  canvas at full alpha, then composites at its `opacity` so a self-overlapping
- *  stroke stays uniform. Erase strokes carve directly with destination-out. */
+/** Composite all strokes onto `ctx`, in order. A non-erase stroke deposits paint
+ *  with `source-over` at its `opacity` (= flow) PER DAB, so a stroke that overlaps
+ *  itself — and successive strokes over the same area — build up toward opaque
+ *  instead of clamping to a flat per-stroke alpha. Erase strokes carve with
+ *  `destination-out` at the same flow rate. */
 export function stampStrokes(
   ctx: CanvasRenderingContext2D,
   strokes: PaintStroke[],
   base: number,
-  makeCanvas: () => HTMLCanvasElement,
 ): void {
-  const w = ctx.canvas.width, h = ctx.canvas.height
   for (const s of strokes) {
     if (!s.points.length) continue
-    if (s.erase) {
-      ctx.save(); ctx.globalCompositeOperation = 'destination-out'; ctx.globalAlpha = Math.max(0, Math.min(1, s.opacity))
-      drawStrokeAlpha(ctx, s, base); ctx.restore()
-      continue
-    }
-    const tmp = makeCanvas(); tmp.width = w; tmp.height = h
-    const tctx = tmp.getContext('2d'); if (!tctx) continue
-    drawStrokeAlpha(tctx, s, base)
-    ctx.save(); ctx.globalAlpha = Math.max(0, Math.min(1, s.opacity)); ctx.globalCompositeOperation = 'source-over'
-    ctx.drawImage(tmp, 0, 0); ctx.restore()
+    ctx.save()
+    ctx.globalCompositeOperation = s.erase ? 'destination-out' : 'source-over'
+    ctx.globalAlpha = Math.max(0, Math.min(1, s.opacity))
+    drawStrokeAlpha(ctx, s, base)
+    ctx.restore()
   }
 }
