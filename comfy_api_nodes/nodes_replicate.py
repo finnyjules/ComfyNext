@@ -1043,21 +1043,34 @@ async def _run_fal_nano_banana_edit(
     return fal_refs.first_fal_image_url(result)
 
 
+# Replicate Nano Banana slug → its fal image-edit endpoint. fal reaches Google
+# through its OWN project, so these route around Replicate's project-scoped
+# gemini-3.1-flash-image-preview 404. The original google/nano-banana (Gemini 2.5)
+# is deliberately absent: it isn't affected and has a resolution-422 quirk, so it
+# stays on Replicate.
+_NANO_BANANA_FAL_EDIT = {
+    "google/nano-banana-2": "fal-ai/nano-banana-2/edit",
+    "google/nano-banana-pro": "fal-ai/nano-banana-pro/edit",
+}
+
+
 async def _run_nano_banana_edit(
     image_urls: list[str], prompt: str, *,
+    replicate_slug: str = "google/nano-banana-2",
     resolution: str = "1K",
     output_format: str = "png",
     seed: int = 0,
 ) -> str:
-    """Nano Banana image-edit with provider failover: fal first (its Google
-    access dodges Replicate's project-scoped preview-model 404), then fal's Nano
-    Banana Pro (a different, live Gemini model), then Replicate as a last resort
-    so a fal outage still degrades to the original path. Shared by RestyleWithLoRA
-    and EditImageNode's "Nano Banana 2" option."""
-    fal_chain = [
-        ("fal-ai/nano-banana-2/edit", "fal nano-banana-2"),
-        ("fal-ai/nano-banana-pro/edit", "fal nano-banana-pro"),
-    ]
+    """Nano Banana image-edit, fal-first per model with failover: the fal endpoint
+    matching `replicate_slug` first (fal's Google access dodges Replicate's
+    project-scoped preview-model 404), then fal Nano Banana Pro (a different, live
+    Gemini model), then Replicate as a last resort so a fal outage still degrades
+    to the original path. Shared by every Nano-Banana image-edit node."""
+    fal_primary = _NANO_BANANA_FAL_EDIT.get(replicate_slug, "fal-ai/nano-banana-2/edit")
+    fal_chain = [(fal_primary, f"fal {replicate_slug}")]
+    _pro = "fal-ai/nano-banana-pro/edit"
+    if fal_primary != _pro:
+        fal_chain.append((_pro, "fal nano-banana-pro"))
     # Only try fal when a token is configured; otherwise go straight to Replicate.
     fal_ok = False
     try:
@@ -2532,10 +2545,21 @@ class GenerateFromReferencesNode(IO.ComfyNode):
         image_urls = [_image_tensor_to_data_url(t) for t in refs]
 
         spec = _IMAGE_EDIT_MODELS_BY_ID[model]
-        adv = {"size": size, "aspect_ratio": aspect_ratio}
-        input_dict = spec.build_input(prompt, image_urls, int(seed or 0), adv)
-        pred = await _run_prediction(spec.replicate_slug, input_dict)
-        tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
+        if spec.replicate_slug in _NANO_BANANA_FAL_EDIT:
+            # Route Nano Banana around Replicate's project-scoped Gemini 404
+            # (fal-first, Replicate fallback). Other models (Seedream) stay on
+            # Replicate. See _run_nano_banana_edit.
+            resolution = size if size in ("1K", "2K", "4K") else "2K"
+            url = await _run_nano_banana_edit(
+                image_urls, prompt, replicate_slug=spec.replicate_slug,
+                resolution=resolution, output_format="png", seed=int(seed or 0),
+            )
+            tensor = await download_url_to_image_tensor(url, cls=cls)
+        else:
+            adv = {"size": size, "aspect_ratio": aspect_ratio}
+            input_dict = spec.build_input(prompt, image_urls, int(seed or 0), adv)
+            pred = await _run_prediction(spec.replicate_slug, input_dict)
+            tensor = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
         return IO.NodeOutput(tensor, ui=save_generation_output(tensor, "generate_from_references"))
 
 
@@ -2788,8 +2812,21 @@ class RestyleFromImageNode(IO.ComfyNode):
                 input_dict["seed"] = seed
             slug = "fofr/style-transfer"
 
-        pred = await _run_prediction(slug, input_dict)
-        result = await download_url_to_image_tensor(_first_output_url(pred), cls=cls)
+        if slug in _NANO_BANANA_FAL_EDIT:
+            # Route Nano Banana 2 / Pro around Replicate's project-scoped Gemini
+            # 404 (fal-first, Replicate fallback). The original google/nano-banana
+            # and fofr/style-transfer stay on Replicate. See _run_nano_banana_edit.
+            url = await _run_nano_banana_edit(
+                input_dict["image_input"], input_dict["prompt"],
+                replicate_slug=slug,
+                resolution=input_dict.get("resolution", "1K"),
+                output_format=input_dict.get("output_format", "png"),
+                seed=int(seed or 0),
+            )
+        else:
+            pred = await _run_prediction(slug, input_dict)
+            url = _first_output_url(pred)
+        result = await download_url_to_image_tensor(url, cls=cls)
         return IO.NodeOutput(
             result,
             ui=save_generation_output(result, "restyle"),
