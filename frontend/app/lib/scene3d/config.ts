@@ -345,11 +345,11 @@ export function parseDoc(json: string): SceneDoc {
     const m: ObjectMotion = {}
     if (raw.loop && LOOP_KINDS.includes(raw.loop.kind)) {
       m.loop = { kind: raw.loop.kind, speed: num(raw.loop.speed, 1), amount: num(raw.loop.amount, 1) }
-      if (typeof raw.loop.phase === 'number') m.loop.phase = raw.loop.phase
+      if (typeof raw.loop.phase === 'number') m.loop.phase = num(raw.loop.phase, 0)
     }
     const mIn = parseTransition(raw.in); if (mIn) m.in = mIn
     const mOut = parseTransition(raw.out); if (mOut) m.out = mOut
-    if (typeof raw.offset === 'number') m.offset = raw.offset
+    if (typeof raw.offset === 'number') m.offset = num(raw.offset, 0)
     return Object.keys(m).length ? m : undefined
   }
   const parseSceneMotion = (raw: any): SceneMotion => {

@@ -70,6 +70,23 @@ describe('scene3d motion — config parse', () => {
     const round = parseDoc(JSON.stringify(raw))
     expect(round.camera.motion).toBeUndefined()
   })
+
+  it('guards phase/offset parse against NaN', () => {
+    const doc = defaultDoc()
+    const obj = createPrimitive('box', doc.objects)
+    obj.motion = { loop: { kind: 'spin', speed: 1, amount: 1 }, offset: 0.2 }
+    doc.objects.push(obj)
+    const raw = JSON.parse(serializeDoc(doc))
+    // Corrupt motion values
+    raw.objects[0].motion.offset = null
+    raw.objects[0].motion.loop.phase = 'x'
+    const round = parseDoc(JSON.stringify(raw))
+    // Assert neither value is NaN (each is undefined or finite)
+    const offset = round.objects[0]!.motion?.offset
+    const phase = round.objects[0]!.motion?.loop?.phase
+    expect(offset === undefined || Number.isFinite(offset)).toBe(true)
+    expect(phase === undefined || Number.isFinite(phase)).toBe(true)
+  })
 })
 
 describe('scene3d motion — resolveEaseRef', () => {

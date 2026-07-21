@@ -40,6 +40,3 @@ export interface MotionSample {
   scaleMul: Vec3
   opacity: number
 }
-export const IDENTITY_SAMPLE: MotionSample = {
-  dPosition: [0, 0, 0], dRotation: [0, 0, 0], scaleMul: [1, 1, 1], opacity: 1,
-}
