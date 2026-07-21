@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Handle, Position } from '@vue-flow/core'
-import { Upload, Loader2, Image as ImageIcon, ImagePlus, Play, Download, RefreshCw, Lock, LockOpen, Eraser, Brush, Sparkles, Pencil, Wand2, Drama, Gem, ZoomIn, Lamp, Aperture, Shuffle, Clapperboard, ArrowRight, Scissors, Palette, Type } from 'lucide-vue-next'
+import { Upload, Loader2, Image as ImageIcon, ImagePlus, Play, Download, RefreshCw, Lock, LockOpen, Eraser, Brush, Sparkles, Pencil, Wand2, Drama, Gem, ZoomIn, Lamp, Aperture, Shuffle, Clapperboard, ArrowRight, Scissors, Palette, Paintbrush, Type } from 'lucide-vue-next'
 import { onClickOutside } from '@vueuse/core'
 import { getTypeColor } from '~/composables/useVueNodes'
 import { useAgentActivity } from '~/composables/useAgentActivity'
@@ -449,6 +449,12 @@ function spawnEnhanceDetail() { spliceEffect('EnhanceDetailNode', { focus: true,
 function spawnUpscale() { spliceEffect('UpscaleImageNode', { run: true, branch: true }) }
 function spawnRelight() { spliceEffect('RelightNode', { focus: true, branch: true }) }
 function spawnLensReframe() { spliceEffect('LensReframe', { focus: true, branch: true }) }
+
+// Restyle in one of the user's OWN trained style LoRAs: branch a
+// RestyleWithLoRANode off this image, focused but UN-RUN so the user picks
+// their style from the LoRA gallery (the node's lora_picker widget) and pays
+// on their own trigger. Captions internally — no prompt widget to fill.
+function spawnRestyleWithLoRA() { spliceEffect('RestyleWithLoRANode', { focus: true, branch: true }) }
 
 // ── Sketch-output card actions ─────────────────────────────────────────────
 // A sketch option gets two actions: Keep (pin it) and "Refine…". Refine
@@ -1077,6 +1083,10 @@ const promoteUsdLabel = computed(() => {
               <button class="edit-menu-item" @click.stop="runAction(editWithNanoBanana)">
                 <Wand2 class="size-3 shrink-0" /> Edit (Nano Banana)
                 <span class="edit-menu-hint">{{ ACTION_HINTS['nano-banana'] }}</span>
+              </button>
+              <button class="edit-menu-item" @click.stop="runAction(spawnRestyleWithLoRA)">
+                <Paintbrush class="size-3 shrink-0" /> Restyle…
+                <span class="edit-menu-hint">your style LoRA</span>
               </button>
               <button v-if="data.images?.length" class="edit-menu-item" @click.stop="runAction(critiqueResult)">
                 <Sparkles class="size-3 shrink-0" /> Fix
