@@ -1996,7 +1996,7 @@ function onBrushPointerUp() {
   if (brush.mode.value === 'mask') {
     const sel = selectedLocal.value
     if (sel && sel.kind !== 'brush') {
-      setLocal(sel.id, { maskStrokes: [...((sel as any).maskStrokes ?? []), s] } as any)
+      setLocal(sel.id, { maskStrokes: [...(sel.maskStrokes ?? []), s] })
     }
     return
   }
@@ -2305,6 +2305,33 @@ async function onAddImageFile(e: Event) {
   const file = input.files?.[0]
   input.value = ''
   if (file) { try { await addImageFromFile(file) } catch (err) { console.error('[Compositor] add image failed:', err) } }
+}
+
+// ── Fill a brush layer with an image ────────────────────────────────────────
+// Reuses the add-image flow, then clips the freshly-added image to the brush
+// layer's painted silhouette via maskedByKey (+ maskShowSource=false) so the
+// image shows ONLY through the painted shape.
+const brushFillInputRef = ref<HTMLInputElement | null>(null)
+const pendingBrushFillId = ref<string | null>(null)
+function triggerBrushFillImage(brushId: string) {
+  pendingBrushFillId.value = brushId
+  brushFillInputRef.value?.click()
+}
+async function onBrushFillImageFile(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  const brushId = pendingBrushFillId.value
+  pendingBrushFillId.value = null
+  if (!file || !brushId) return
+  try {
+    const before = new Set(localLayers.value.map(l => l.id))
+    await addImageFromFile(file)   // appends + selects the new image layer
+    const img = localLayers.value.find(l => l.kind === 'image' && !before.has(l.id))
+    if (img) setLocal(img.id, { maskedByKey: localKey(brushId), maskShowSource: false })
+  } catch (err) {
+    console.error('[Compositor] fill brush with image failed:', err)
+  }
 }
 
 function handleKeydown(e: KeyboardEvent) {
@@ -3019,6 +3046,7 @@ onUnmounted(() => {
           Slate fixture
         </button>
         <input ref="imageInputRef" type="file" accept="image/*" class="hidden" @change="onAddImageFile" />
+        <input ref="brushFillInputRef" type="file" accept="image/*" class="hidden" @change="onBrushFillImageFile" />
         <input ref="svgInputRef" type="file" accept=".svg,image/svg+xml" class="hidden" @change="onImportSvgFile" />
       </div>
       </div>
@@ -3578,6 +3606,14 @@ onUnmounted(() => {
               <div class="panel-label mb-1.5">Fill</div>
               <FillControl :model-value="(selectedLocal as any).fill"
                 @update:model-value="(v: any) => setLocal(selectedLocal!.id, { fill: v })" />
+              <button
+                class="mt-2 w-full flex items-center justify-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/70 hover:text-white/90 cursor-pointer transition-colors"
+                title="Fill the painted shape with an image"
+                @click="triggerBrushFillImage(selectedLocal!.id)"
+              >
+                <ImageIcon class="size-3.5" />
+                Fill with image…
+              </button>
             </div>
           </template>
 
