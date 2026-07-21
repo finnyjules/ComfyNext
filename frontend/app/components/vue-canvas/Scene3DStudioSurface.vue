@@ -1015,8 +1015,27 @@ function onClose() {
             @click="lightView = !lightView"><Lightbulb class="size-3.5" /> Light</button>
         </div>
 
-        <!-- Bottom add-toolbar (Grid editor pill style): + Primitive menu · Upload GLB -->
-        <div v-if="webglOk" class="absolute bottom-3 left-1/2 -translate-x-1/2 z-10" data-prim-menu @pointerdown.stop>
+        <!-- Motion timeline panel: docks full-width over the add-toolbar's spot in
+             Motion mode (a timeline wants horizontal room — the narrow right panel
+             cramped it). Transport header + the band tracks, video-editor style. -->
+        <div v-if="webglOk && activeTab === 'motion'"
+             class="absolute inset-x-3 bottom-3 z-10 rounded-[12px] border border-[#2a2a2a] bg-[#1a1a1a]/95 p-2.5 shadow-lg" @pointerdown.stop>
+          <div class="mb-2 flex items-center gap-2 text-[11px] text-white/60">
+            <StudioButton @click="togglePlay">{{ playing ? 'Pause' : 'Play' }}</StudioButton>
+            <span class="tabular-nums">{{ playhead.toFixed(2) }} / {{ doc.motion.duration.toFixed(1) }}s</span>
+            <div class="flex-1"></div>
+            <StudioButton @click="exportVideo">Export video</StudioButton>
+          </div>
+          <div v-if="motionOn" class="max-h-[32vh] overflow-y-auto pr-1">
+            <Scene3DMotionTimeline :doc="doc" :selected-id="selectedId" :playhead="playhead"
+              @select="(id: string) => (selectedId = id)" />
+          </div>
+          <p v-else class="py-1.5 text-center text-[11px] text-white/40">Turn on “Animate scene” to add motion.</p>
+        </div>
+
+        <!-- Bottom add-toolbar (Grid editor pill style): + Primitive menu · Upload GLB.
+             Hidden in Motion mode — the timeline panel above takes its place. -->
+        <div v-if="webglOk && activeTab !== 'motion'" class="absolute bottom-3 left-1/2 -translate-x-1/2 z-10" data-prim-menu @pointerdown.stop>
           <p v-if="uploadError" class="mb-2 text-center text-[11px] text-red-400/90">{{ uploadError }}</p>
           <div class="relative flex items-center gap-1 rounded-[12px] border border-[#2a2a2a] bg-[#1a1a1a]/95 p-1.5 shadow-lg">
             <button
@@ -1211,13 +1230,6 @@ function onClose() {
     </template>
 
     <template #controls>
-      <div v-if="activeTab === 'motion'" class="mb-2 flex items-center gap-2 text-[11px] text-white/60">
-        <StudioButton @click="togglePlay">{{ playing ? 'Pause' : 'Play' }}</StudioButton>
-        <span class="tabular-nums">{{ playhead.toFixed(2) }} / {{ doc.motion.duration.toFixed(1) }}s</span>
-        <div class="flex-1"></div>
-        <StudioButton @click="exportVideo">Export video</StudioButton>
-      </div>
-
       <div class="mb-2 flex gap-1 rounded-lg bg-white/[0.04] p-1 text-[11px]">
         <button type="button" class="nodrag flex-1 rounded px-2 py-1"
                 :class="activeTab === 'build' ? 'bg-white/15 text-white' : 'text-white/55 hover:text-white/80'"
@@ -1678,10 +1690,6 @@ function onClose() {
           </template>
         </StudioSection>
 
-        <div v-if="motionOn" class="mt-2">
-          <Scene3DMotionTimeline :doc="doc" :selected-id="selectedId" :playhead="playhead"
-            @select="(id: string) => (selectedId = id)" />
-        </div>
       </template>
 
       <!-- Sticky action footer: Save + Export, pinned to the bottom-right of the
