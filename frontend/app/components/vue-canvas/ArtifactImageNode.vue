@@ -300,10 +300,15 @@ const filenameLabel = computed<string | null>(() => {
   return null
 })
 
+// Loading state: we HAVE a source (e.g. an asset just tapped onto the canvas, or a
+// take switch) but the preload above hasn't committed displayedUrl yet — the full
+// image is still downloading. Show a spinner instead of the empty upload affordance,
+// which otherwise flashes for however long the fetch takes (seconds, for big files).
+const loadingImage = computed(() => !!imageUrl.value && !displayedUrl.value)
 // Empty state: no image, no upstream — show upload affordance.
 // Waiting state: upstream wired, no image yet — show render button.
-const showUpload = computed(() => !displayedUrl.value && !hasUpstream.value)
-const showRender = computed(() => !displayedUrl.value && hasUpstream.value)
+const showUpload = computed(() => !displayedUrl.value && !hasUpstream.value && !loadingImage.value)
+const showRender = computed(() => !displayedUrl.value && hasUpstream.value && !loadingImage.value)
 
 // Upload — same /upload/image endpoint everything else uses.
 const fileInputRef = ref<HTMLInputElement | null>(null)
@@ -982,6 +987,16 @@ const promoteUsdLabel = computed(() => {
           class="block w-full max-h-[280px] object-contain bg-black/50"
           loading="lazy"
         />
+      </template>
+
+      <!-- LOADING STATE — a source is set but the full image is still downloading
+           (e.g. an asset just added from the panel: it's copied to the input folder
+           and the full-res /view fetch can take a few seconds). -->
+      <template v-else-if="loadingImage">
+        <div class="aspect-square flex flex-col items-center justify-center gap-2 text-white/45">
+          <Loader2 class="size-7 animate-spin" :stroke-width="1.5" />
+          <span class="text-[11px]">Loading…</span>
+        </div>
       </template>
 
       <!-- UPLOAD EMPTY STATE — no upstream, no file yet -->
