@@ -109,7 +109,7 @@ const GEN_3D_MODELS = ['hunyuan3d-v2', 'trellis-2', 'tripo-v2.5', 'triposr']
 const genOpen = ref(false)
 const genPrompt = ref('')
 const genImageUrl = ref<string | null>(null)
-const genSeed = ref(0)
+const genSeed = ref(Math.floor(Math.random() * 2e9))
 const gen3dModel = ref('hunyuan3d-v2')
 const genTextured = ref(false)
 const genStage = ref<'idle' | 'image' | 'review' | 'making' | 'error'>('idle')
@@ -1004,7 +1004,7 @@ function onClose() {
                 </span>
               </StudioButton>
 
-              <template v-if="genStage === 'review' || (genImageUrl && genStage === 'making')">
+              <template v-if="genImageUrl && genStage !== 'idle'">
                 <div class="mt-3 space-y-2">
                   <img :src="genImageUrl!" alt="" class="h-32 w-full rounded object-cover" />
                   <div class="flex items-center gap-1.5">
