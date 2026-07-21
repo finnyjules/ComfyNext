@@ -1991,6 +1991,15 @@ function onBrushPointerMove(e: PointerEvent) {
 }
 function onBrushPointerUp() {
   const s = brush.endStroke(); if (!s) { return }
+  // Mask mode: paint the freehand stroke as visibility onto the selected layer
+  // (destination-in at render time). Needs a selected non-brush target; else no-op.
+  if (brush.mode.value === 'mask') {
+    const sel = selectedLocal.value
+    if (sel && sel.kind !== 'brush') {
+      setLocal(sel.id, { maskStrokes: [...((sel as any).maskStrokes ?? []), s] } as any)
+    }
+    return
+  }
   const existing = activeBrushLayer()
   const aspect = canvasDisplay.h / Math.max(1, canvasDisplay.w)
   if (existing) {

@@ -157,6 +157,14 @@ interface LayerCommon {
   maskedById?: string     // DEPRECATED legacy local-only ref; read via layerMaskRef()
   maskedByKey?: string     // clipped by another layer's silhouette; a StackKey ('w:<slot>'|'l:<id>')
   maskShowSource?: boolean // when true, the mask source also renders normally at its z-position
+  /** Freehand visibility painted on THIS layer (brush "Mask mode"). Strokes are
+   *  width-normalized to the artboard and applied `destination-in` when the layer
+   *  renders. Absent/empty ⇒ no stroke mask. */
+  maskStrokes?: import('~/lib/compositor/brushStamp').PaintStroke[]
+  /** Base visibility the stroke mask starts from. 'visible' (default): fully
+   *  shown, erase strokes cut holes (brush hides, eraser un-hides). 'hidden':
+   *  fully clipped, non-erase strokes reveal (invert). */
+  maskBase?: 'visible' | 'hidden'
   /** Linked cloner: stamp this layer N times (linear/grid/radial) with falloff.
    *  Absent/disabled ⇒ a single instance, i.e. today's behavior. */
   cloner?: Cloner
@@ -828,9 +836,15 @@ export function drawLayerSilhouette(ctx: CanvasRenderingContext2D, item: StackIt
   drawLocalLayerSelf(ctx, ghost, W, H)
 }
 
+// True when a layer carries a freehand visibility mask (brush "Mask mode").
+function hasStrokeMask(layer: LocalLayer): boolean {
+  return (layer.maskStrokes?.length ?? 0) > 0 || layer.maskBase === 'hidden'
+}
+
 // A layer's own paint, including its crop (rect/ellipse) region — but NOT any
-// layer-mask, which drawLocalLayer applies around this.
-function drawLocalLayerSelf(ctx: CanvasRenderingContext2D, layer: LocalLayer, W: number, H: number, opacityMul = 1) {
+// stroke mask (applied around this by drawLocalLayerSelf) or layer-mask (applied
+// by drawLocalLayer).
+function paintLayerCropped(ctx: CanvasRenderingContext2D, layer: LocalLayer, W: number, H: number, opacityMul: number) {
   if (layer.mask) {
     ctx.save()
     applyMaskClip(ctx, layer.mask, W, H)
@@ -839,6 +853,70 @@ function drawLocalLayerSelf(ctx: CanvasRenderingContext2D, layer: LocalLayer, W:
   } else {
     paintLayer(ctx, layer, W, H, opacityMul)
   }
+}
+
+/**
+ * Clip a layer's already-rendered pixels to its freehand visibility mask
+ * (`maskStrokes` + `maskBase`), applied `destination-in`. `ctx` holds the
+ * layer's pixels rendered through the current transform `t` on a device-sized
+ * offscreen; the mask is built on its OWN device-sized offscreen through the
+ * SAME `t` (so a stroke normalized to the artboard lands on the same device
+ * pixels as the layer), then composited in device space. Mirrors the
+ * drawLocalLayer / drawItemMasked layer-mask recipe exactly.
+ *
+ * Semantics: base 'visible' → fill white (fully shown), erase strokes cut holes
+ * (destination-out) and non-erase strokes are white-on-white no-ops → "brush
+ * hides, eraser un-hides". base 'hidden' → start transparent, non-erase strokes
+ * paint white (reveal) → invert.
+ */
+function applyStrokeMask(ctx: CanvasRenderingContext2D, layer: LocalLayer, W: number, H: number) {
+  const t = ctx.getTransform()
+  const dev = ctx.canvas
+  const mask = document.createElement('canvas')
+  mask.width = Math.max(1, dev.width); mask.height = Math.max(1, dev.height)
+  const mctx = mask.getContext('2d')
+  if (!mctx) return
+  mctx.setTransform(t)
+  if ((layer.maskBase ?? 'visible') === 'visible') {
+    // Fully visible everywhere; erase strokes below carve holes.
+    mctx.fillStyle = '#fff'
+    mctx.fillRect(0, 0, W, H)
+  }
+  // `base = W`: strokes are normalized to the artboard width, which is W logical
+  // px in this transform space (mirrors renderStack's stampStrokes call).
+  stampStrokes(mctx, layer.maskStrokes ?? [], W, () => document.createElement('canvas'))
+  ctx.save()
+  ctx.setTransform(1, 0, 0, 1, 0, 0) // device space — matches the layer's pixels
+  ctx.globalCompositeOperation = 'destination-in'
+  ctx.drawImage(mask, 0, 0)
+  ctx.restore()
+}
+
+// A layer's own paint including its crop AND its freehand stroke mask — but NOT
+// any layer-mask, which drawLocalLayer applies around this.
+function drawLocalLayerSelf(ctx: CanvasRenderingContext2D, layer: LocalLayer, W: number, H: number, opacityMul = 1) {
+  if (!hasStrokeMask(layer)) {
+    paintLayerCropped(ctx, layer, W, H, opacityMul)
+    return
+  }
+  // Stroke mask: isolate the layer on a device-sized offscreen so destination-in
+  // clips ONLY this layer (not the shared context), apply the mask, then stamp
+  // back with the layer's blend (a no-op inside the transparent offscreen, so it
+  // takes effect here against the real backdrop). Same recipe as the layer-mask.
+  const t = ctx.getTransform()
+  const dev = ctx.canvas
+  const off = document.createElement('canvas')
+  off.width = Math.max(1, dev.width); off.height = Math.max(1, dev.height)
+  const octx = off.getContext('2d')
+  if (!octx) { paintLayerCropped(ctx, layer, W, H, opacityMul); return }
+  octx.setTransform(t)
+  paintLayerCropped(octx, layer, W, H, opacityMul)
+  applyStrokeMask(octx, layer, W, H)
+  ctx.save()
+  ctx.setTransform(1, 0, 0, 1, 0, 0) // device-space stamp
+  ctx.globalCompositeOperation = localBlendOp(layer)
+  ctx.drawImage(off, 0, 0)
+  ctx.restore()
 }
 
 /** A local layer's blend mode → canvas composite op ('normal' = source-over). */
