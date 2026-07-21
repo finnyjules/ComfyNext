@@ -402,7 +402,18 @@ function isFrameWidget(name: string): boolean {
   return FRAME_WIDGET_NAMES.has(name)
 }
 
+// Per-node label overrides, where the humanized widget name is unclear or
+// collides with another control on the same node. Scoped by nodeType so a
+// same-named widget elsewhere (e.g. Magnific's own style_strength) is untouched.
+const LABEL_OVERRIDES: Record<string, Record<string, string>> = {
+  // Restyle has two "strength" sliders; the LoRA card owns "Style strength", so
+  // the img2img knob becomes "Transformation" (higher = bolder, looser structure).
+  RestyleWithLoRANode: { style_strength: 'Transformation' },
+}
+
 function formatLabel(name: string): string {
+  const override = LABEL_OVERRIDES[props.nodeType ?? '']?.[name]
+  if (override) return override
   const pretty = name
     .split(/[_\s]+/)
     .map((word, i) => i === 0

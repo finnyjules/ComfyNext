@@ -32,6 +32,12 @@ defineEmits<{
 const hasScale = computed(() => props.scaleMax != null)
 // Trim trailing zeros: 1 → "1", 0.9 → "0.9", 1.05 → "1.05".
 const fmtScale = computed(() => String(parseFloat(Number(props.scaleValue ?? 1).toFixed(2))))
+// Name the folded scale by what it drives, so it reads clearly (and stops
+// colliding with the node's other "strength" sliders) instead of a bare "strength".
+const scaleLabel = computed(() =>
+  props.kind === 'character' ? 'Character strength'
+  : props.kind === 'style' ? 'Style strength'
+  : 'Strength')
 
 // Noun shown on the button + used to title the gallery. A 'character' picker
 // (e.g. the multi-LoRA node's slot A) browses your characters, not your styles.
@@ -90,21 +96,23 @@ function openGallery() {
       <ChevronRight class="size-3.5 text-white/30 group-hover:text-white/55 shrink-0 transition-colors" />
     </button>
 
-    <!-- Folded strength slider -->
-    <div v-if="hasScale" class="flex items-center gap-2 px-2 pb-1.5 pt-0.5">
-      <span class="text-[8px] uppercase tracking-[0.06em] text-white/30 shrink-0">strength</span>
-      <input
-        type="range"
-        class="lora-strength nopan nodrag nowheel flex-1 min-w-0"
-        :min="scaleMin ?? 0"
-        :max="scaleMax ?? 1.5"
-        :step="scaleStep ?? 0.05"
-        :value="scaleValue ?? 1"
-        @input="$emit('update:scale', Number(($event.target as HTMLInputElement).value))"
-        @mousedown.stop
-        @click.stop
-      />
-      <span class="text-[9.5px] tabular-nums text-white/70 shrink-0 w-7 text-right">{{ fmtScale }}</span>
+    <!-- Folded strength slider — labelled above, like the node's other sliders. -->
+    <div v-if="hasScale" class="px-2 pb-1.5 pt-1">
+      <div class="text-[9px] text-muted-foreground tracking-normal mb-0.5">{{ scaleLabel }}</div>
+      <div class="flex items-center gap-2">
+        <input
+          type="range"
+          class="lora-strength nopan nodrag nowheel flex-1 min-w-0"
+          :min="scaleMin ?? 0"
+          :max="scaleMax ?? 1.5"
+          :step="scaleStep ?? 0.05"
+          :value="scaleValue ?? 1"
+          @input="$emit('update:scale', Number(($event.target as HTMLInputElement).value))"
+          @mousedown.stop
+          @click.stop
+        />
+        <span class="text-[9.5px] tabular-nums text-white/70 shrink-0 w-7 text-right">{{ fmtScale }}</span>
+      </div>
     </div>
   </div>
 </template>
