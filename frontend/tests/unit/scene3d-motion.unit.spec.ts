@@ -4,6 +4,7 @@ import type { ObjectMotion } from '~/lib/scene3d/motion/types'
 import { DEFAULT_SCENE_MOTION } from '~/lib/scene3d/motion/types'
 import { evaluateObjectMotion, evaluateCameraMotion } from '~/lib/scene3d/motion/evaluate'
 import { resolveEaseRef } from '~/lib/scene3d/motion/ease'
+import { applyMotionToDoc } from '~/lib/scene3d/motion/apply'
 
 describe('scene3d motion — config parse', () => {
   it('defaults scene motion when absent', () => {
@@ -212,5 +213,43 @@ describe('scene3d motion — evaluateCameraMotion', () => {
     expect(evaluateCameraMotion({ preset: 'orbit', speed: 1, amount: 1 }, 0).dTargetYaw).toBeCloseTo(0, 6)
     const end = evaluateCameraMotion({ preset: 'orbit', speed: 1, amount: 1 }, 1).dTargetYaw
     expect(((end % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)).toBeCloseTo(0, 5)
+  })
+})
+
+describe('scene3d motion — applyMotionToDoc', () => {
+  it('no motion → doc transforms unchanged and input not mutated', () => {
+    const doc = defaultDoc()
+    const box = createPrimitive('box', doc.objects); box.position = [1, 2, 3]; doc.objects.push(box)
+    const before = JSON.stringify(doc)
+    const { doc: out, opacities } = applyMotionToDoc(doc, 0.5)
+    expect(out.objects[0]!.position).toEqual([1, 2, 3])
+    expect(opacities).toEqual({})
+    expect(JSON.stringify(doc)).toBe(before) // input untouched
+  })
+  it('composes loop delta onto home position', () => {
+    const doc = defaultDoc()
+    const box = createPrimitive('box', doc.objects); box.position = [0, 5, 0]
+    box.motion = { loop: { kind: 'bob', speed: 1, amount: 2 } }; doc.objects.push(box)
+    doc.motion = { duration: 4, fps: 30, loop: true }
+    const quarter = applyMotionToDoc(doc, 0.25).doc.objects[0]!.position
+    expect(quarter[1]).toBeGreaterThan(5) // bob peak above home mid-cycle
+    const zero = applyMotionToDoc(doc, 0).doc.objects[0]!.position
+    expect(zero[1]).toBeCloseTo(5, 6) // returns home at loop start
+  })
+  it('pure-loop scene: frame 0 == frame 1 (seamless)', () => {
+    const doc = defaultDoc()
+    const box = createPrimitive('box', doc.objects)
+    box.motion = { loop: { kind: 'orbit', speed: 2, amount: 1 } }; doc.objects.push(box)
+    doc.motion = { duration: 4, fps: 30, loop: true }
+    const a = applyMotionToDoc(doc, 0).doc.objects[0]!.position.map(v => +v.toFixed(6))
+    const b = applyMotionToDoc(doc, 1).doc.objects[0]!.position.map(v => +v.toFixed(6))
+    expect(a).toEqual(b)
+  })
+  it('reports opacity for fading object', () => {
+    const doc = defaultDoc()
+    const box = createPrimitive('box', doc.objects)
+    box.motion = { in: { preset: 'fade', duration: 1, ease: { kind: 'bezier', cps: [0, 0, 1, 1] } } }
+    doc.objects.push(box); doc.motion = { duration: 4, fps: 30, loop: true }
+    expect(applyMotionToDoc(doc, 0).opacities[box.id]).toBeCloseTo(0, 5)
   })
 })
