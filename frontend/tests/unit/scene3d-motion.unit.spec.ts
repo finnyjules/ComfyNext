@@ -451,3 +451,28 @@ describe('scene3d motion — sceneHasMotion', () => {
     expect(sceneHasMotion(doc)).toBe(false)
   })
 })
+
+import {
+  EASE_PRESETS, presetKeyForEaseRef, easeRefForPresetKey, easeRefToCurveString, curveStringToEaseRef,
+} from '~/lib/scene3d/motion/easePresets'
+
+describe('scene3d motion — ease presets + CurveEditor bridge', () => {
+  it('smooth presets are editable, procedural are not', () => {
+    const back = EASE_PRESETS.find(p => p.key === 'back')!
+    const bounce = EASE_PRESETS.find(p => p.key === 'bounce')!
+    expect(back.editable).toBe(true); expect(back.ease.kind).toBe('bezier')
+    expect(bounce.editable).toBe(false); expect(bounce.ease.kind).toBe('named')
+  })
+  it('presetKeyForEaseRef matches a known tuple and falls back to custom', () => {
+    const easeOut = easeRefForPresetKey('ease-out')
+    expect(presetKeyForEaseRef(easeOut)).toBe('ease-out')
+    expect(presetKeyForEaseRef({ kind: 'bezier', cps: [0.11, 0.22, 0.33, 0.44] })).toBe('custom')
+    expect(presetKeyForEaseRef({ kind: 'named', name: 'spring' })).toBe('spring')
+  })
+  it('bridge round-trips a bezier and nulls a procedural', () => {
+    const s = easeRefToCurveString({ kind: 'bezier', cps: [0.1, 0.2, 0.3, 0.4] })
+    expect(s).toBe('[0.1,0.2,0.3,0.4]')
+    expect(curveStringToEaseRef(s!)).toEqual({ kind: 'bezier', cps: [0.1, 0.2, 0.3, 0.4] })
+    expect(easeRefToCurveString({ kind: 'named', name: 'bounce' })).toBeNull()
+  })
+})
