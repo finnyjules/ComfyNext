@@ -360,21 +360,21 @@ const placeholder = (() => { const c = document.createElement('canvas'); c.width
     g.drawImage(img, (img.width - sw) / 2, (img.height - sh) / 2, sw, sh, 0, 0, 192, 108)
     for (const k of Object.keys(thumbCache)) delete thumbCache[k]  // bust stale gradient thumbs
     thumbs.value = {}
-    if (pickerOpen.value) for (const def of catalog.value?.effects ?? []) if (!def.generative) ensureThumb(def)
+    if (pickerOpen.value) for (const def of catalog.value?.effects ?? []) ensureThumb(def)
     if (effectDef.value) ensureThumb(effectDef.value)
   }
   img.src = '/finn_shader.png'
 })()
 const pickerFilters = computed(() => {
   const counts = new Map<string, number>()
-  for (const e of catalog.value?.effects ?? []) if (!e.generative) counts.set(e.category, (counts.get(e.category) ?? 0) + 1)
-  const total = (catalog.value?.effects ?? []).filter(e => !e.generative).length
+  for (const e of catalog.value?.effects ?? []) counts.set(e.category, (counts.get(e.category) ?? 0) + 1)
+  const total = (catalog.value?.effects ?? []).length
   return [{ id: 'all', label: 'All', count: total }, ...[...counts].map(([id, count]) => ({ id, label: titleCase(id), count }))]
 })
 const pickerItems = computed<EffectDef[]>(() => {
   const q = pickerSearch.value.trim().toLowerCase()
-  return (catalog.value?.effects ?? []).filter(e => !e.generative
-    && (pickerFilter.value === 'all' || e.category === pickerFilter.value)
+  return (catalog.value?.effects ?? []).filter(e =>
+    (pickerFilter.value === 'all' || e.category === pickerFilter.value)
     && (!q || e.name.toLowerCase().includes(q) || e.category.toLowerCase().includes(q)))
 })
 function renderThumb(def: EffectDef): string {
@@ -386,7 +386,7 @@ function renderThumb(def: EffectDef): string {
   } catch { return '' }
 }
 function ensureThumb(def: EffectDef | null | undefined) { if (!def || thumbCache[def.id]) return; const t = renderThumb(def); if (t) { thumbCache[def.id] = t; thumbs.value = { ...thumbCache } } }
-function openPicker() { pickerSearch.value = ''; pickerFilter.value = 'all'; pickerOpen.value = true; for (const def of catalog.value?.effects ?? []) if (!def.generative) ensureThumb(def) }
+function openPicker() { pickerSearch.value = ''; pickerFilter.value = 'all'; pickerOpen.value = true; for (const def of catalog.value?.effects ?? []) ensureThumb(def) }
 function pickEffect(id: string) {
   // Preserve layerId/blend/opacity/enabled (and motion-track addressing, which
   // targets this effect by array index); only the id/params/customChars reset.
