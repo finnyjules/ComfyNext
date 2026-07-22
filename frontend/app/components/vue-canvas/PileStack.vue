@@ -56,7 +56,7 @@ const peeks = computed(() => props.images.slice(1, 3))
       <!-- top-right rail: count badge with the caller's actions stacked under it -->
       <div class="absolute -top-2 -right-2 flex flex-col items-center gap-1.5 nopan nodrag">
         <span
-          v-if="images.length"
+          v-if="images.length && !loading"
           class="min-w-6 h-6 px-1.5 rounded-full bg-action text-white text-[11px] font-semibold flex items-center justify-center shadow-md"
         >
           {{ images.length }}

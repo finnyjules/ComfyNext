@@ -31,6 +31,17 @@ const itemW = computed(() => stackItemWidth(props.origin.width))
 const itemEls = ref<HTMLElement[]>([])
 const closing = ref(false)
 
+// The :ref callback only fires with an element (the null-on-unmount call is
+// skipped by its `if (el)` guard), so a re-roll landing FEWER items would
+// strand detached elements in the array and inflate the close-stagger math.
+// Reset before each re-render of the slot list; live refs repopulate.
+watch(() => slots.value.length, () => { itemEls.value = [] })
+
+/** The refs that are actually in the document right now. */
+function liveItemEls(): HTMLElement[] {
+  return itemEls.value.filter(el => el && el.isConnected)
+}
+
 function toOrigin(el: HTMLElement): string {
   const r = el.getBoundingClientRect()
   const s = r.width ? props.origin.width / r.width : 1
@@ -39,7 +50,7 @@ function toOrigin(el: HTMLElement): string {
 
 onMounted(async () => {
   await nextTick()
-  const els = itemEls.value.filter(Boolean)
+  const els = liveItemEls()
   for (const el of els) {
     el.style.transform = toOrigin(el)
     el.style.opacity = '0.5'
@@ -55,7 +66,7 @@ onMounted(async () => {
 function requestClose() {
   if (closing.value) return
   closing.value = true
-  const els = itemEls.value.filter(Boolean)
+  const els = liveItemEls()
   els.forEach((el, i) => {
     el.style.transition = `transform 200ms cubic-bezier(.4,0,.8,.4) ${(els.length - 1 - i) * 30}ms, opacity 180ms ease ${(els.length - 1 - i) * 30}ms`
     el.style.transform = toOrigin(el)
@@ -77,7 +88,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
         :key="i"
         :ref="el => { if (el) itemEls[i] = el as HTMLElement }"
         class="group relative shrink-0"
-        :style="{ width: itemW + 'px' }"
+        :style="{ width: itemW + 'px', transformOrigin: 'top left' }"
       >
         <template v-if="item">
           <img :src="item.image" class="block w-full rounded-lg border border-white/20 shadow-xl" draggable="false">

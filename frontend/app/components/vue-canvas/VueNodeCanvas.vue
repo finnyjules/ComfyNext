@@ -54,7 +54,7 @@ import { getRun } from '~/lib/graph/runRegistry'
 import { nodeGenParams } from '~/lib/artifact/takeProvenance'
 import { sketchPadPromptOverrides } from '~/lib/sketch/sketchPadPrompt'
 import { cleanSketchPrompt } from '~/lib/sketch/sketchIntent'
-import { SKETCH_PROP, buildSketchPilePayload, refreshSketchPile, keptCardPosition, type SketchPilePayload } from '~/lib/sketch/sketchPile'
+import { SKETCH_PROP, buildSketchPilePayload, refreshSketchPile, planKeptCard, type SketchPilePayload } from '~/lib/sketch/sketchPile'
 import { annotatedImageValueFromViewUrl } from '~/lib/promoteTempImages'
 import ComfyNode from '~/components/vue-canvas/ComfyNode.vue'
 import ComfyNoteNode from '~/components/vue-canvas/ComfyNoteNode.vue'
@@ -4230,16 +4230,18 @@ const sketchStackCanReroll = computed<boolean>(() => {
 function keepSketchStackItem(index: number): any | null {
   const pile = sketchStackPile()
   const payload = pile?.data?.properties?.[SKETCH_PROP] as SketchPilePayload | undefined
-  const item = payload?.items?.[index]
-  if (!pile || !payload || !item) return null
-  const imageWidgetValue = annotatedImageValueFromViewUrl(item.image)
-  const card = createNodeData('Image', keptCardPosition(pile.position, payload.keptCount),
+  if (!pile || !payload) return null
+  const plan = planKeptCard(pile.position, payload, index)
+  if (!plan) return null
+  const imageWidgetValue = annotatedImageValueFromViewUrl(plan.image)
+  // No propertyOverrides on purpose — planKeptCard's contract is a PLAIN card.
+  const card = createNodeData(plan.nodeType, plan.position,
     imageWidgetValue ? { image: imageWidgetValue } : undefined)
-  card.data = { ...card.data, images: [item.image] }
+  card.data = { ...card.data, images: [plan.image] }
   ;(nodes.value as any[]).push(card)
   pile.data = {
     ...pile.data,
-    properties: { ...pile.data.properties, [SKETCH_PROP]: { ...payload, keptCount: payload.keptCount + 1 } },
+    properties: { ...pile.data.properties, [SKETCH_PROP]: { ...payload, keptCount: plan.nextKeptCount } },
   }
   return card
 }

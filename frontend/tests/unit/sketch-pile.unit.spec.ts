@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  buildSketchPilePayload, refreshSketchPile, stackItemWidth, keptCardPosition,
+  buildSketchPilePayload, refreshSketchPile, stackItemWidth, keptCardPosition, planKeptCard,
   SKETCH_PROP, MAX_SKETCH_ITEMS, STACK_ITEM_MIN_W, STACK_ITEM_MAX_W, KEEP_CARD_SIZE, KEEP_GAP,
 } from '~/lib/sketch/sketchPile'
 
@@ -76,5 +76,30 @@ describe('keptCardPosition', () => {
 describe('SKETCH_PROP', () => {
   it('is the documented property key', () => {
     expect(SKETCH_PROP).toBe('sailor_sketch')
+  })
+})
+
+describe('planKeptCard', () => {
+  const pile = { x: 1000, y: 500 }
+  const payload = { ...buildSketchPilePayload({ prompt: 'x', seed: 1, sourceNodeId: '3', images: ['a', 'b'] }), keptCount: 1 }
+
+  it('plans a PLAIN Image card (no sketch properties) at the keeper-column slot', () => {
+    const plan = planKeptCard(pile, payload, 1)
+    expect(plan).toEqual({
+      nodeType: 'Image',
+      image: 'b',
+      position: keptCardPosition(pile, 1), // uses the CURRENT keptCount slot
+      nextKeptCount: 2,
+    })
+    // A plain card by construction: the plan carries no properties bag at all,
+    // so the impure half can't accidentally stamp sketch identity onto it.
+    expect('properties' in (plan as any)).toBe(false)
+  })
+
+  it('returns null for an out-of-range or missing item', () => {
+    expect(planKeptCard(pile, payload, 5)).toBeNull()
+    expect(planKeptCard(pile, payload, -1)).toBeNull()
+    const empty = buildSketchPilePayload({ prompt: 'x', seed: 1, sourceNodeId: '3', loading: true })
+    expect(planKeptCard(pile, empty, 0)).toBeNull()
   })
 })

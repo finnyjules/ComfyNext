@@ -77,3 +77,28 @@ export function keptCardPosition(pile: { x: number, y: number }, keptIndex: numb
     y: pile.y + keptIndex * (KEEP_CARD_SIZE + KEEP_GAP),
   }
 }
+
+export interface KeptCardPlan {
+  nodeType: 'Image'
+  image: string
+  position: { x: number, y: number }
+  nextKeptCount: number
+}
+
+/** Pure half of "Keep as image": which image, where, and the bumped counter.
+ *  Deliberately carries NO properties bag — a kept card is a plain Image card
+ *  by construction, so the impure side can't stamp sketch identity onto it. */
+export function planKeptCard(
+  pile: { x: number, y: number },
+  payload: SketchPilePayload,
+  index: number,
+): KeptCardPlan | null {
+  const item = payload.items[index]
+  if (!item) return null
+  return {
+    nodeType: 'Image',
+    image: item.image,
+    position: keptCardPosition(pile, payload.keptCount),
+    nextKeptCount: payload.keptCount + 1,
+  }
+}
