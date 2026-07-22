@@ -365,6 +365,18 @@ const placeholder = (() => { const c = document.createElement('canvas'); c.width
   }
   img.src = '/finn_shader.png'
 })()
+// Picker sections: image-transforming families first, generators last as
+// their own shelf. Items are sorted in this order so keyboard nav follows
+// the visual grouping.
+const SHADER_SECTIONS = [
+  { id: 'distortion', label: 'Distortion' },
+  { id: 'stylize', label: 'Stylize' },
+  { id: 'color', label: 'Color' },
+  { id: 'lens', label: 'Lens' },
+  { id: 'blur', label: 'Blur' },
+  { id: 'glow', label: 'Glow' },
+  { id: 'generative', label: 'Generative' },
+]
 const pickerFilters = computed(() => {
   const counts = new Map<string, number>()
   for (const e of catalog.value?.effects ?? []) counts.set(e.category, (counts.get(e.category) ?? 0) + 1)
@@ -376,6 +388,9 @@ const pickerItems = computed<EffectDef[]>(() => {
   return (catalog.value?.effects ?? []).filter(e =>
     (pickerFilter.value === 'all' || e.category === pickerFilter.value)
     && (!q || e.name.toLowerCase().includes(q) || e.category.toLowerCase().includes(q)))
+    .sort((a, b) =>
+      SHADER_SECTIONS.findIndex(s => s.id === a.category)
+      - SHADER_SECTIONS.findIndex(s => s.id === b.category))
 })
 function renderThumb(def: EffectDef): string {
   const b = texBundle(def)
@@ -851,6 +866,7 @@ function remapEffectTracks(kind: 'move' | 'insert' | 'remove', a: number, b?: nu
 
   <CatalogModal :open="pickerOpen" title="Shader Effects" subtitle="Pick an effect to apply"
     :items="pickerItems" :selected-id="activeEffectCfg.id" :filters="pickerFilters" :active-filter-id="pickerFilter" :search-query="pickerSearch"
+    :sections="SHADER_SECTIONS" :section-of="(e: any) => e.category"
     search-placeholder="Search effects…" confirm-label="Use effect" empty-message="No effects match your search."
     @close="pickerOpen = false" @confirm="pickEffect(($event as EffectDef).id)" @update:active-filter-id="pickerFilter = $event" @update:search-query="pickerSearch = $event">
     <template #card="{ item }">

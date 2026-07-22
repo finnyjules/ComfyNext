@@ -14,6 +14,7 @@
  * Future targets: LoRA picker, block templates, font picker, asset library.
  */
 import { Search, X, Check } from 'lucide-vue-next'
+import { groupBySections, type CatalogSection } from '~/lib/catalogSections'
 
 interface FilterTag {
   id: string
@@ -33,6 +34,11 @@ const props = defineProps<{
   searchPlaceholder?: string
   confirmLabel?: string           // defaults to "Use this"
   emptyMessage?: string
+  /** Opt-in sectioned grid: ordered headers + item→section mapping. Absent ⇒
+   *  today's flat grid. Callers should pass `items` ordered section-by-section
+   *  so arrow-key nav (flat index based) follows the visual order. */
+  sections?: CatalogSection[]
+  sectionOf?: (item: T) => string
 }>()
 
 const emit = defineEmits<{
@@ -75,6 +81,16 @@ watch(() => props.items, (items) => {
 const focusedItem = computed<T | null>(() =>
   props.items.find(i => i.id === focusedId.value) ?? null,
 )
+
+// Opt-in sectioned grid. Falls back to one anonymous unlabeled group so the
+// template only has a single per-group loop to maintain (no duplicated card
+// markup between "flat" and "sectioned" rendering paths).
+const grouped = computed(() => {
+  if (props.sections?.length && props.sectionOf) {
+    return groupBySections(props.items, props.sections, props.sectionOf)
+  }
+  return [{ id: '__all', label: '', items: props.items }]
+})
 
 function focusItem(item: T) {
   focusedId.value = item.id
@@ -199,30 +215,41 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
               >
                 {{ emptyMessage ?? 'Nothing matches your filters.' }}
               </div>
-              <div
-                v-else
-                class="grid gap-3"
-                style="grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));"
-              >
-                <button
-                  v-for="item in items"
-                  :key="item.id"
-                  class="group relative flex flex-col items-stretch text-left rounded-lg overflow-hidden border transition-all cursor-pointer"
-                  :class="focusedId === item.id
-                    ? 'border-white/30 ring-1 ring-white/20 bg-white/[0.04]'
-                    : 'border-white/[0.06] hover:border-white/15 bg-white/[0.015] hover:bg-white/[0.035]'"
-                  @click="focusItem(item)"
-                  @dblclick="confirmFocused"
-                >
-                  <slot name="card" :item="item" :focused="focusedId === item.id" />
-                  <!-- Selected mark when item.id matches the OUT-OF-MODAL selection -->
-                  <span
-                    v-if="selectedId === item.id"
-                    class="absolute top-2 left-2 inline-flex items-center gap-1 text-[9px] uppercase tracking-[0.1em] font-semibold text-white/80 bg-white/15 border border-white/30 rounded px-1.5 py-0.5 backdrop-blur-sm"
+              <div v-else class="flex flex-col gap-5">
+                <section v-for="g in grouped" :key="g.id">
+                  <div
+                    v-if="g.label"
+                    class="flex items-center gap-2.5 mb-2.5"
                   >
-                    <Check class="size-2.5" /> Current
-                  </span>
-                </button>
+                    <span class="text-[10px] uppercase tracking-[0.14em] font-semibold text-white/45">{{ g.label }}</span>
+                    <span class="text-[10px] text-white/25 tabular-nums">{{ g.items.length }}</span>
+                    <div class="flex-1 h-px bg-white/[0.06]" />
+                  </div>
+                  <div
+                    class="grid gap-3"
+                    style="grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));"
+                  >
+                    <button
+                      v-for="item in g.items"
+                      :key="item.id"
+                      class="group relative flex flex-col items-stretch text-left rounded-lg overflow-hidden border transition-all cursor-pointer"
+                      :class="focusedId === item.id
+                        ? 'border-white/30 ring-1 ring-white/20 bg-white/[0.04]'
+                        : 'border-white/[0.06] hover:border-white/15 bg-white/[0.015] hover:bg-white/[0.035]'"
+                      @click="focusItem(item)"
+                      @dblclick="confirmFocused"
+                    >
+                      <slot name="card" :item="item" :focused="focusedId === item.id" />
+                      <!-- Selected mark when item.id matches the OUT-OF-MODAL selection -->
+                      <span
+                        v-if="selectedId === item.id"
+                        class="absolute top-2 left-2 inline-flex items-center gap-1 text-[9px] uppercase tracking-[0.1em] font-semibold text-white/80 bg-white/15 border border-white/30 rounded px-1.5 py-0.5 backdrop-blur-sm"
+                      >
+                        <Check class="size-2.5" /> Current
+                      </span>
+                    </button>
+                  </div>
+                </section>
               </div>
             </div>
 
