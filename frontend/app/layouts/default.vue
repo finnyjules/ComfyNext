@@ -34,6 +34,7 @@ import { tallyReplicateUsd } from '~/lib/graph/runCost'
 import { summarizeNodeErrors } from '~/lib/validationErrors'
 import { promoteTempImageInputs } from '~/lib/promoteTempImages'
 import { extractOutputFiles, type GenOutput, type GenerationRecord } from '~/lib/generations'
+import { extractCoverImages } from '~/lib/projectCover'
 import {
   BLANK_WORKFLOW, activeCanvasOf, docHasContent, isProjectDoc,
   makeBlankWorkflow, makeCanvasId, nextCanvasName, pickNewerDoc, stampDocForSave, toProjectDoc,
@@ -1489,6 +1490,20 @@ function warnStaleSaveRejected() {
 //   release  → closeProjectTab (last tab for a uuid releases leadership)
 const leadership = useProjectLeadership()
 
+// Stamp doc-derived preview images (studio bakes, Frame composites — see
+// ~/lib/projectCover) onto the project's cover so All Projects can show
+// content for projects that never ran a paid render. Deduped per uuid so the
+// 3 s debounced autosave doesn't re-PUT an unchanged cover every burst.
+const lastSentCoverByProject = new Map<string, string>()
+function stampProjectCover(uuid: string, doc: any) {
+  const cover = extractCoverImages(doc)
+  if (!cover.length) return
+  const key = JSON.stringify(cover)
+  if (lastSentCoverByProject.get(uuid) === key) return
+  lastSentCoverByProject.set(uuid, key)
+  useProjects().setProjectCover(uuid, cover)
+}
+
 function saveDurableVersion(tab: any, doc: any) {
   // Fire-and-forget wrapper — the save paths that must await the network
   // round-trip (takeover flush) call saveDurableVersionAsync directly.
@@ -1511,7 +1526,10 @@ async function saveDurableVersionAsync(tab: any, doc: any): Promise<void> {
   const id = await useProjects().saveVersion(tab.projectUuid, { id: 'current', name, workflow: doc }, name)
   if (id === 'stale') warnStaleSaveRejected()
   else if (!id) warnAutosaveFailure('The durable server copy of this project isn’t updating.')
-  else leadership.notifySaved(tab.projectUuid, (doc as any)?.savedAt)
+  else {
+    leadership.notifySaved(tab.projectUuid, (doc as any)?.savedAt)
+    stampProjectCover(tab.projectUuid, doc)
+  }
 }
 
 // Takeover flush: another window asked to become leader. We are STILL the
