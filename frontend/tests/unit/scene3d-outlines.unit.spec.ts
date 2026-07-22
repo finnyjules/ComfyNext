@@ -8,6 +8,9 @@ import {
   AVAILABLE_FONTS,
   loadFont,
   fontCacheGet,
+  fontSourceUrl,
+  fontDisplayName,
+  parseGoogleFontValue,
   textOutline,
   shapeOutline,
   type Font,
@@ -293,6 +296,69 @@ describe('shapeOutline', () => {
       expect(Math.abs((coarse.minX + coarse.maxX) / 2)).toBeLessThan(1e-4)
       expect(Math.abs((coarse.minY + coarse.maxY) / 2)).toBeLessThan(1e-4)
     }
+  })
+})
+
+describe('parseGoogleFontValue', () => {
+  it('splits family and weight off a `google:Family@weight` value', () => {
+    expect(parseGoogleFontValue('google:Inter@700')).toEqual({ family: 'Inter', weight: 700 })
+  })
+
+  it('omits weight entirely when the value has no `@weight` suffix', () => {
+    expect(parseGoogleFontValue('google:Inter')).toEqual({ family: 'Inter' })
+  })
+
+  it('returns null for a non-google value', () => {
+    expect(parseGoogleFontValue('/fonts/ABCROM-Bold.otf')).toBeNull()
+  })
+
+  it('returns null for an empty family', () => {
+    expect(parseGoogleFontValue('google:')).toBeNull()
+  })
+
+  it('omits weight but keeps the family on a malformed weight suffix', () => {
+    expect(parseGoogleFontValue('google:Inter@abc')).toEqual({ family: 'Inter' })
+  })
+
+  it('omits weight on an empty weight suffix (bare trailing @)', () => {
+    expect(parseGoogleFontValue('google:Inter@')).toEqual({ family: 'Inter' })
+  })
+
+  it('keeps spaces in a multi-word family untouched (encoding happens downstream)', () => {
+    expect(parseGoogleFontValue('google:Playfair Display@700')).toEqual({
+      family: 'Playfair Display',
+      weight: 700,
+    })
+  })
+})
+
+describe('fontSourceUrl', () => {
+  it('passes a local /fonts/ url through unchanged', () => {
+    expect(fontSourceUrl('/fonts/ABCROM-Bold.otf')).toBe('/fonts/ABCROM-Bold.otf')
+  })
+
+  it('maps a bare google: family to the proxy route with no weight param', () => {
+    expect(fontSourceUrl('google:Inter')).toBe('/api/scene3d/google-font-file?family=Inter')
+  })
+
+  it('maps a google: family+weight to the proxy route, spaces as `+`', () => {
+    expect(fontSourceUrl('google:Playfair Display@700')).toBe(
+      '/api/scene3d/google-font-file?family=Playfair+Display&weight=700',
+    )
+  })
+})
+
+describe('fontDisplayName', () => {
+  it('resolves a known local url to its AVAILABLE_FONTS label', () => {
+    expect(fontDisplayName('/fonts/ABCROM-Bold.otf')).toBe('ABC ROM Bold')
+  })
+
+  it('falls back to the basename for an unknown local url', () => {
+    expect(fontDisplayName('/fonts/Whatever-X.otf')).toBe('Whatever-X.otf')
+  })
+
+  it('resolves a google: value to its bare family name, ignoring weight', () => {
+    expect(fontDisplayName('google:Inter@700')).toBe('Inter')
   })
 })
 

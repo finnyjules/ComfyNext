@@ -75,6 +75,11 @@ const resolved = new Map<string, Font>()
 export function loadFont(url: string): Promise<Font> {
   let p = pending.get(url)
   if (!p) {
+    // The cache stays keyed by the RAW value (this `url` argument) — a plain
+    // path, or a `google:Family@weight` token. `fontSourceUrl` only comes into
+    // play for the actual network fetch below, so `google:Inter` and
+    // `google:Inter@700` are distinct cache entries, matching the distinct
+    // geometries a weight change produces.
     p = fetchAndParse(url)
     // Don't cache failures — a retry should actually retry.
     p.catch(() => pending.delete(url))
@@ -93,10 +98,60 @@ export function fontCacheGet(url: string): Font | null {
 }
 
 async function fetchAndParse(url: string): Promise<Font> {
-  const res = await fetch(url)
+  const res = await fetch(fontSourceUrl(url))
   if (!res.ok) throw new Error(`font fetch failed: ${res.status}`)
   const buf = await res.arrayBuffer()
   return opentype.parse(buf) as Font
+}
+
+// ---------------------------------------------------------------------------
+// Google Fonts scheme
+//
+// A font value is either a local path (`/fonts/X.otf`, served straight from
+// public/) or a `google:Family` / `google:Family@weight` token. The token
+// never touches the network directly — `fontSourceUrl` turns it into a call
+// against our own server proxy (Task 1's `/api/scene3d/google-font-file`),
+// which does the fonts.googleapis.com round-trip and hands back a raw,
+// opentype-parseable TTF. Weight defaults server-side, so we omit the param
+// entirely rather than hardcode 400 twice.
+// ---------------------------------------------------------------------------
+
+const GOOGLE_PREFIX = 'google:'
+
+/** Split a `google:Family` / `google:Family@weight` value into its parts. */
+export function parseGoogleFontValue(value: string): { family: string; weight?: number } | null {
+  if (!value.startsWith(GOOGLE_PREFIX)) return null
+  const rest = value.slice(GOOGLE_PREFIX.length)
+  const at = rest.indexOf('@')
+  const family = (at === -1 ? rest : rest.slice(0, at)).trim()
+  if (!family) return null
+  if (at === -1) return { family }
+
+  // A malformed or empty weight suffix (`@abc`, bare trailing `@`) falls back
+  // to "no weight" rather than failing outright — the family is still usable.
+  const weightRaw = rest.slice(at + 1).trim()
+  const weight = weightRaw === '' ? NaN : Number(weightRaw)
+  return Number.isFinite(weight) ? { family, weight: Math.round(weight) } : { family }
+}
+
+/** A local path passes through untouched; a `google:` value hits our proxy. */
+export function fontSourceUrl(value: string): string {
+  const parsed = parseGoogleFontValue(value)
+  if (!parsed) return value
+  // css2 convention (matched server-side): spaces become `+`, not %20.
+  const familyParam = parsed.family.replace(/\s+/g, '+')
+  const weightParam = parsed.weight !== undefined ? `&weight=${parsed.weight}` : ''
+  return `/api/scene3d/google-font-file?family=${familyParam}${weightParam}`
+}
+
+/** Human-readable label for a font value, for UI display. */
+export function fontDisplayName(value: string): string {
+  const parsed = parseGoogleFontValue(value)
+  if (parsed) return parsed.family
+  const known = AVAILABLE_FONTS.find((f) => f.url === value)
+  if (known) return known.label
+  // Unrecognised local url: fall back to the filename rather than the full path.
+  return value.split('/').pop() || value
 }
 
 // ---------------------------------------------------------------------------
