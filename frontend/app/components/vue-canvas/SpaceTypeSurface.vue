@@ -14,6 +14,7 @@ import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
 import { loopMultiplier } from '~/lib/spacetype/loop'
 import { loadGoogleCatalog, googleFontCssUrl, googleAxisList, resolveFontFamily, fontHasWeightAxis, type GoogleFont } from '~/data/google-fonts'
 import type { GradientStop } from '~/lib/spacetype/gradient'
+import FontPicker from '~/components/vue-canvas/FontPicker.vue'
 import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
 import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
@@ -414,42 +415,20 @@ const gradientStops = reactive<GradientStop[]>([
 ])
 
 // Full Google Fonts catalog (~1900 families), fetched once via the shared proxy and
-// used to populate the searchable font picker + decide weight-axis availability.
+// used to decide weight-axis availability (FontPicker owns its own copy for the
+// searchable dropdown; loadGoogleCatalog is module-cached so this is a no-op refetch).
 const fontCatalog = ref<GoogleFont[]>([])
 loadGoogleCatalog().then((c) => { fontCatalog.value = c })
 
-// Custom searchable font dropdown (a native <select> can't show 1900 options nicely,
-// and a datalist has no visible affordance). Open/close + live filter, capped for perf.
-const fontPickerOpen = ref(false)
-const fontSearch = ref('')
-const variableOnly = ref(false)
-// A font is variable when it has a registered axis with an actual range (max > min).
-const isVar = (f: GoogleFont) => f.axes.some(a => a.max > a.min)
-const varAxes = (f: GoogleFont) => f.axes.filter(a => a.max > a.min).map(a => a.tag).join(' ')
-const filteredFonts = computed(() => {
-  const q = fontSearch.value.trim().toLowerCase()
-  let list = fontCatalog.value
-  if (variableOnly.value) list = list.filter(isVar)
-  const matched = q ? list.filter(f => f.family.toLowerCase().includes(q)) : list
-  return matched.slice(0, 120)
-})
 function selectFont(key: string, family: string) {
   ;(params as Record<string, unknown>)[key] = family
-  fontPickerOpen.value = false
-  fontSearch.value = ''
   onEdit(key, family)
 }
-
-// ✨ Describe-a-font search: type a description ("fonts like the Knicks logo"),
-// an LLM suggests real Google families (grounded against fontCatalog), shown atop
-// the literal list. Faces are loaded so each suggestion row previews in-face.
-const { suggestions: fontSuggestions, loading: fontSuggestLoading, error: fontSuggestError, hasRun: fontSuggestRan, suggest: runFontSuggestApi, clear: clearFontSuggest } = useFontSuggest()
-const { ensure: ensureFontFace } = useGoogleFontPreview()
-function runFontSuggest() { runFontSuggestApi(fontSearch.value) }
-watch(fontSuggestions, (list) => { for (const s of list) ensureFontFace(s.family) })
-watch(fontSearch, () => { if (fontSuggestRan.value) clearFontSuggest() })
-// Reset suggestions whenever the picker closes so a stale list doesn't reappear.
-watch(fontPickerOpen, (open) => { if (!open && fontSuggestRan.value) clearFontSuggest() })
+// FontPicker emits a discriminated payload; Type Studio only ever passes Google
+// families through (no `pinned` prop), so the pinned branch never fires here.
+function onFontSelect(key: string, payload: { kind: 'google'; family: string } | { kind: 'pinned'; value: string }) {
+  if (payload.kind === 'google') selectFont(key, payload.family)
+}
 // Whether the currently-selected font has a continuous Weight axis (variable font).
 // Drives the Type-weight slider's visibility (hidden for static families).
 const fontIsVariable = computed(() => {
@@ -1259,55 +1238,7 @@ async function generateVideo() {
                             :options="c.options ?? []" :model-value="String(params[c.key])"
                             @update:model-value="(v: string) => { params[c.key] = v; rebuild(); onEdit(c.key, v) }" />
               <template v-else-if="c.kind === 'font'">
-                <button type="button" @click="fontPickerOpen = !fontPickerOpen"
-                        class="flex w-full items-center justify-between rounded bg-white/10 px-2 py-1 text-left">
-                  <span class="truncate">{{ params[c.key] || 'Select font…' }}</span>
-                  <span class="ml-2 shrink-0 text-white/40">{{ fontPickerOpen ? '▴' : '▾' }}</span>
-                </button>
-                <div v-if="fontPickerOpen" class="mt-1 rounded bg-black/40 p-1">
-                  <div class="mb-1 flex items-center gap-1">
-                    <input v-model="fontSearch" placeholder="Search or describe fonts…" autofocus
-                           @keydown.enter.prevent="runFontSuggest"
-                           class="w-full flex-1 rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1" />
-                    <button type="button" title="Suggest fonts from a description"
-                            :disabled="fontSuggestLoading" @click="runFontSuggest"
-                            class="shrink-0 whitespace-nowrap rounded border border-white/[0.08] bg-white/[0.04] px-2 py-1 hover:border-white/25 disabled:opacity-40">✨ Ask AI</button>
-                  </div>
-                  <label class="mb-1 flex items-center justify-between px-1 py-0.5 text-[11px] text-white/55">
-                    <span>Variable fonts only</span>
-                    <StudioSwitch v-model="variableOnly" />
-                  </label>
-                  <!-- ✨ Suggested (from a description) -->
-                  <div v-if="fontSuggestLoading || fontSuggestError || fontSuggestions.length || fontSuggestRan" class="mb-1">
-                    <p class="px-2 pb-0.5 pt-1 text-[10px] uppercase tracking-wider text-white/40">✨ Suggested</p>
-                    <p v-if="fontSuggestLoading" class="px-2 py-1 text-white/40">Finding fonts…</p>
-                    <p v-else-if="fontSuggestError" class="px-2 py-1 text-white/40">{{ fontSuggestError }}</p>
-                    <p v-else-if="!fontSuggestions.length" class="px-2 py-1 text-white/40">No matches — try describing the style differently.</p>
-                    <button v-for="s in fontSuggestions" :key="'s' + s.family" type="button"
-                            @click="selectFont(c.key, s.family)"
-                            class="flex w-full items-center gap-2 rounded px-2 py-1 text-left hover:bg-white/10"
-                            :class="{ 'bg-white/15': params[c.key] === s.family }">
-                      <span class="min-w-0 flex-1">
-                        <span class="block truncate" :style="{ fontFamily: s.family }">{{ s.family }}</span>
-                        <span class="block truncate text-[10px] text-white/40">{{ s.reason }}</span>
-                      </span>
-                      <span class="ml-auto shrink-0 text-[9px] uppercase tracking-wide text-white/40">{{ s.category }}</span>
-                    </button>
-                    <div class="mx-2 my-1 border-t border-white/10" />
-                  </div>
-                  <div class="max-h-48 overflow-y-auto">
-                    <button v-for="f in filteredFonts" :key="f.family" type="button"
-                            @click="selectFont(c.key, f.family)"
-                            class="flex w-full items-center gap-2 rounded px-2 py-1 text-left hover:bg-white/10"
-                            :class="{ 'bg-white/15': params[c.key] === f.family }">
-                      <span class="truncate">{{ f.family }}</span>
-                      <span v-if="isVar(f)" :title="`Variable axes: ${varAxes(f)}`"
-                            class="ml-auto shrink-0 rounded bg-white/15 px-1 py-px text-[9px] font-medium uppercase tracking-wide text-white/70">var</span>
-                    </button>
-                    <p v-if="!fontCatalog.length" class="px-2 py-1 text-white/40">Loading fonts…</p>
-                    <p v-else-if="!filteredFonts.length" class="px-2 py-1 text-white/40">No matches</p>
-                  </div>
-                </div>
+                <FontPicker :model-value="String(params[c.key])" @select="(p) => onFontSelect(c.key, p)" />
                 <div v-if="varAxisList.length" class="mt-2 space-y-2.5">
                   <StudioSlider v-for="a in varAxisList" :key="a.tag"
                                 :model-value="fontAxes[a.tag] ?? a.default" @update:model-value="(v: number) => { fontAxes[a.tag] = v }"
