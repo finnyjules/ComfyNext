@@ -4,6 +4,7 @@
 import { sanitizeParams, sanitizeModifiers } from '~/lib/scene3d/primParams'
 import type { ObjectMotion, CameraMotion, SceneMotion, LoopKind, TransitionPreset, Direction, EaseRef, TransitionSpec } from '~/lib/scene3d/motion/types'
 import { DEFAULT_SCENE_MOTION } from '~/lib/scene3d/motion/types'
+import { DEFAULT_POST, type PostSettings } from '~/lib/spacetype/post'
 
 export type PrimitiveKind =
   | 'box' | 'sphere' | 'cylinder' | 'cone' | 'torus' | 'plane'
@@ -124,6 +125,7 @@ export interface SceneDoc {
   lighting: SceneLighting
   background: string
   showFloor: boolean   // grid + shadow-catcher ground; false = clean floating look (viewport + render)
+  post: PostSettings   // shared post-processing chain (bloom/colour/chroma/lens blur) — see lib/spacetype/post.ts
   output: { width: number; height: number }
   motion: SceneMotion
 }
@@ -258,6 +260,7 @@ export function defaultDoc(): SceneDoc {
     lighting: { preset: 'studio', sunAzimuth: 35, sunElevation: 55, sunIntensity: 1.4, ambient: 0.5 },
     background: '#1b1e24',
     showFloor: true,
+    post: { ...DEFAULT_POST },
     output: { width: 1024, height: 1024 },
     motion: { ...DEFAULT_SCENE_MOTION },
   }
@@ -368,6 +371,28 @@ export function parseDoc(json: string): SceneDoc {
     if (!raw || !CAMERA_PRESETS.includes(raw.preset)) return undefined
     return { preset: raw.preset, speed: num(raw.speed, 1), amount: num(raw.amount, 1) }
   }
+  // Tolerant merge over DEFAULT_POST: every field validated individually, so a
+  // partially-valid or absent `post` (old scene_state) still yields a fully
+  // populated, correctly-typed PostSettings rather than dropping the section.
+  const parsePost = (raw: any): PostSettings => {
+    const p = raw && typeof raw === 'object' ? raw : {}
+    const bool = (v: any, fb: boolean): boolean => (typeof v === 'boolean' ? v : fb)
+    return {
+      bloom: bool(p.bloom, DEFAULT_POST.bloom),
+      bloomStrength: num(p.bloomStrength, DEFAULT_POST.bloomStrength),
+      bloomRadius: num(p.bloomRadius, DEFAULT_POST.bloomRadius),
+      bloomThreshold: num(p.bloomThreshold, DEFAULT_POST.bloomThreshold),
+      color: bool(p.color, DEFAULT_POST.color),
+      exposure: num(p.exposure, DEFAULT_POST.exposure),
+      contrast: num(p.contrast, DEFAULT_POST.contrast),
+      saturation: num(p.saturation, DEFAULT_POST.saturation),
+      hue: num(p.hue, DEFAULT_POST.hue),
+      chroma: bool(p.chroma, DEFAULT_POST.chroma),
+      chromaAmount: num(p.chromaAmount, DEFAULT_POST.chromaAmount),
+      blur: bool(p.blur, DEFAULT_POST.blur),
+      blurAmount: num(p.blurAmount, DEFAULT_POST.blurAmount),
+    }
+  }
   const parseMaterial = (m: any): SceneMaterial => {
     const out: SceneMaterial = {
       type: MATERIAL_TYPES.includes(m?.type) ? m.type : 'standard',
@@ -475,6 +500,7 @@ export function parseDoc(json: string): SceneDoc {
     },
     background: typeof raw.background === 'string' ? raw.background : d.background,
     showFloor: raw.showFloor !== false,   // default true; only an explicit false hides the floor
+    post: parsePost(raw.post),
     output: {
       width: typeof raw.output?.width === 'number' ? raw.output.width : d.output.width,
       height: typeof raw.output?.height === 'number' ? raw.output.height : d.output.height,

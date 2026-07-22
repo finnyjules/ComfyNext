@@ -92,7 +92,7 @@ export async function renderPasses(engine: SceneEngine, doc: SceneDoc):
     // Beauty — inherit the viewport's exact renderer state (tone mapping, colour
     // space). Transparent background stays transparent.
     scene.background = doc.background === 'transparent' ? null : new THREE.Color(stripAlpha(doc.background))
-    renderer.render(scene, camera)
+    engine.renderWithPost(scene, camera, doc.post)
     const beauty = canvas.toDataURL('image/png')
 
     // Data passes must be raw: tone mapping would corrupt the normal colours and

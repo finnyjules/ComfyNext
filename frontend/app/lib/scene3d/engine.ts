@@ -18,6 +18,7 @@ import { materialFor, updateMaterial, disposeMaterial } from './materials'
 import { applyModifiers } from '~/lib/scene3d/modifiers'
 import { PRIMITIVE_PARAMS, paramValue, MODIFIER_SPECS, modifierValue } from '~/lib/scene3d/primParams'
 import { buildLightWidget, setWidgetSelected, disposeWidget } from '~/lib/scene3d/lightWidgets'
+import { PostChain, postEnabled, DEFAULT_POST, type PostSettings } from '~/lib/spacetype/post'
 
 /** Unit vector toward the sun for azimuth (deg, around Y) / elevation (deg above horizon). */
 export function sunDirection(azimuthDeg: number, elevationDeg: number): Vec3 {
@@ -269,6 +270,9 @@ export class SceneEngine {
   lightView = false
   private selectedId: string | null = null
   private lastDoc: SceneDoc | null = null
+  private postChain: PostChain | null = null
+  private postW = 0
+  private postH = 0
   /** Shared clay material for Light View — built once, swapped onto meshes. */
   readonly clay = new THREE.MeshStandardMaterial({ color: 0x9aa0a6, roughness: 0.85, metalness: 0 })
 
@@ -551,7 +555,19 @@ export class SceneEngine {
   }
 
   render(): void {
-    this.renderer.render(this.scene, this.camera)
+    this.renderWithPost(this.scene, this.camera, this.lastDoc?.post ?? DEFAULT_POST)
+  }
+
+  /** Render `scene` through the shared PostChain when any effect is on, else a direct
+   *  render. Lazily builds the chain and re-sizes it to match the current renderer, so it
+   *  works for the viewport AND the output-resolution bake (bloom/grade land in exports). */
+  renderWithPost(scene: THREE.Scene, camera: THREE.Camera, post: PostSettings): void {
+    if (!postEnabled(post)) { this.renderer.render(scene, camera); return }
+    const s = this.renderer.getSize(new THREE.Vector2())
+    if (!this.postChain) { this.postChain = new PostChain(this.renderer, scene, camera, s.x, s.y); this.postW = s.x; this.postH = s.y }
+    else if (this.postW !== s.x || this.postH !== s.y) { this.postChain.setSize(s.x, s.y); this.postW = s.x; this.postH = s.y }
+    this.postChain.setSettings(post)
+    this.postChain.render(scene, camera)
   }
 
   /** Set per-object opacity for a motion frame. Ids not in `map` are forced opaque.
@@ -587,6 +603,8 @@ export class SceneEngine {
     this.shadowGround.geometry.dispose()
     ;(this.shadowGround.material as THREE.Material).dispose()
     this.envTarget?.dispose()
+    this.postChain?.dispose()
+    this.postChain = null
     this.renderer.dispose()
   }
 }

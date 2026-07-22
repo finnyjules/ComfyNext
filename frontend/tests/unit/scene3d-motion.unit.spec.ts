@@ -6,6 +6,7 @@ import { evaluateObjectMotion, evaluateCameraMotion } from '~/lib/scene3d/motion
 import { resolveEaseRef } from '~/lib/scene3d/motion/ease'
 import { applyMotionToDoc } from '~/lib/scene3d/motion/apply'
 import { animateSceneDefaults, SCENE_TEMPLATES } from '~/lib/scene3d/motion/defaults'
+import { DEFAULT_POST } from '~/lib/spacetype/post'
 
 describe('scene3d motion — config parse', () => {
   it('defaults scene motion when absent', () => {
@@ -499,5 +500,20 @@ describe('scene3d — showFloor parse (backward-compat)', () => {
   it('round-trips an explicit false', () => {
     const doc = defaultDoc(); doc.showFloor = false
     expect(parseDoc(serializeDoc(doc)).showFloor).toBe(false)
+  })
+})
+
+describe('scene3d — post parse', () => {
+  it('defaults to DEFAULT_POST for old docs without the key', () => {
+    const raw = JSON.parse(serializeDoc(defaultDoc())); delete raw.post
+    expect(parseDoc(JSON.stringify(raw)).post).toEqual(DEFAULT_POST)
+  })
+  it('round-trips explicit post settings', () => {
+    const doc = defaultDoc()
+    doc.post = { ...DEFAULT_POST, bloom: true, bloomStrength: 1.2 }
+    const round = parseDoc(serializeDoc(doc))
+    expect(round.post.bloom).toBe(true)
+    expect(round.post.bloomStrength).toBe(1.2)
+    expect(round.post).toEqual({ ...DEFAULT_POST, bloom: true, bloomStrength: 1.2 })
   })
 })

@@ -1625,6 +1625,44 @@ function onClose() {
           <StudioColor v-model="bgColorProxy" />
         </div>
       </StudioSection>
+
+      <!-- Shared post-processing — reuses Space Type's PostChain (bloom, colour
+           grade, chromatic aberration, lens blur). Applies to the viewport AND
+           the beauty bake (see passes.ts). -->
+      <StudioSection title="Effects">
+        <div class="flex items-center justify-between">
+          <span class="text-[11px] text-white/55">Bloom</span>
+          <StudioSwitch v-model="doc.post.bloom" />
+        </div>
+        <template v-if="doc.post.bloom">
+          <StudioSlider v-model="doc.post.bloomStrength" label="Strength" hint="How strong the glow is" :min="0" :max="3" :step="0.05" />
+          <StudioSlider v-model="doc.post.bloomRadius" label="Radius" hint="How far the glow spreads" :min="0" :max="1" :step="0.05" />
+          <StudioSlider v-model="doc.post.bloomThreshold" label="Threshold" hint="How bright a pixel must be before it blooms" :min="0" :max="1" :step="0.05" />
+        </template>
+
+        <div class="flex items-center justify-between">
+          <span class="text-[11px] text-white/55">Color</span>
+          <StudioSwitch v-model="doc.post.color" />
+        </div>
+        <template v-if="doc.post.color">
+          <StudioSlider v-model="doc.post.exposure" label="Exposure" hint="Overall brightness" :min="0.2" :max="2" :step="0.05" />
+          <StudioSlider v-model="doc.post.contrast" label="Contrast" hint="Difference between darks and lights" :min="0" :max="2" :step="0.05" />
+          <StudioSlider v-model="doc.post.saturation" label="Saturation" hint="How vivid the colours are" :min="0" :max="2" :step="0.05" />
+          <StudioSlider v-model="doc.post.hue" label="Hue" hint="Rotates every colour around the wheel" :min="-3.14" :max="3.14" :step="0.05" />
+        </template>
+
+        <div class="flex items-center justify-between">
+          <span class="text-[11px] text-white/55">Chroma</span>
+          <StudioSwitch v-model="doc.post.chroma" />
+        </div>
+        <StudioSlider v-if="doc.post.chroma" v-model="doc.post.chromaAmount" label="Amount" hint="Colour fringing at the edges" :min="0" :max="1.5" :step="0.02" />
+
+        <div class="flex items-center justify-between">
+          <span class="text-[11px] text-white/55">Lens blur</span>
+          <StudioSwitch v-model="doc.post.blur" />
+        </div>
+        <StudioSlider v-if="doc.post.blur" v-model="doc.post.blurAmount" label="Amount" hint="Soft bokeh-style blur" :min="0" :max="0.04" :step="0.002" />
+      </StudioSection>
       </template>
       <template v-else>
         <StudioSection title="Motion">
