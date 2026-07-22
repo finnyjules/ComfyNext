@@ -103,7 +103,7 @@ import SubgraphBreadcrumb from '~/components/vue-canvas/SubgraphBreadcrumb.vue'
 import PortIntentPopover from '~/components/vue-canvas/PortIntentPopover.vue'
 import LookupMatchPicker from '~/components/vue-canvas/LookupMatchPicker.vue'
 import type { PortAnchor } from '~/lib/portIntent'
-import { schemaOutputsFromInfo, syncNodeOutputsWithSchema } from '~/utils/syncNodeOutputs'
+import { schemaInputsFromInfo, schemaOutputsFromInfo, syncNodeInputsWithSchema, syncNodeOutputsWithSchema } from '~/utils/syncNodeOutputs'
 import { bestPortPair, findCompatiblePortIndex, typesCompatible } from '~/utils/portTypes'
 import { usePortIntent } from '~/composables/usePortIntent'
 import CanvasGroupView from '~/components/vue-canvas/CanvasGroup.vue'
@@ -2024,10 +2024,12 @@ watch(objectInfo, (info) => {
       if (defs.length) updates.widgetDefs = defs
     }
 
-    // Sync outputs from object_info if the node has fewer outputs than defined
-    // (append-only: existing outputs keep their link data and indices)
+    // Sync ports from object_info if the node has fewer than defined
+    // (append-only: existing ports keep their link data and indices)
     const synced = syncNodeOutputsWithSchema(n.data.outputs, schemaOutputsFromInfo(nodeInfo))
     if (synced) updates.outputs = synced
+    const syncedIn = syncNodeInputsWithSchema(n.data.inputs, schemaInputsFromInfo(nodeInfo))
+    if (syncedIn) updates.inputs = syncedIn
 
     if (!n.data.category && nodeInfo.category) {
       updates.category = nodeInfo.category
@@ -4249,26 +4251,52 @@ function keepSketchStackItem(index: number): any | null {
   return card
 }
 
-/** Develop = today's card "Refine…" verbatim: the picked image lands as a
- *  keeper card, then an EditImageNode (Nano Banana 2) is spliced from it —
- *  focused, branched, NEVER auto-run. Closes the overlay. */
-function developSketchStackItem(index: number) {
-  const card = keepSketchStackItem(index)
-  if (!card) return
+/** Develop: the picked image lands as a plain Image card in clear space
+ *  right of the pile, an EditImageNode (Nano Banana 2) is spliced from it —
+ *  branched, NEVER auto-run — and the camera travels to the pair. Closes
+ *  the overlay. */
+async function developSketchStackItem(index: number) {
+  const pile = sketchStackPile()
+  const payload = pile?.data?.properties?.[SKETCH_PROP] as SketchPilePayload | undefined
+  const item = payload?.items?.[index]
+  if (!pile || !payload || !item) return
+  // Clear space for the card + its editor as ONE pair: spliceAfterNode puts
+  // the editor at card.x + 360, so both slots must be free — the old keeper-
+  // column placement (left of the pile) landed the editor exactly on top of
+  // the pile. Slide down the column right of the pile, then start another.
+  const occupiedAt = (q: { x: number, y: number }) => (nodes.value as any[]).some((n: any) => {
+    if (n.id === pile.id || n.hidden) return false
+    const nx = n.position?.x ?? 0, ny = n.position?.y ?? 0
+    return Math.abs(nx - q.x) < 360 && Math.abs(ny - q.y) < 320
+  })
+  const pairFree = (q: { x: number, y: number }) => !occupiedAt(q) && !occupiedAt({ x: q.x + 360, y: q.y })
+  let p = { x: pile.position.x + 300, y: pile.position.y }
+  let guard = 0
+  while (!pairFree(p) && guard++ < 40) p = { x: p.x, y: p.y + 230 }
+  if (!pairFree(p)) p = { x: pile.position.x + 1060, y: pile.position.y }
+
+  const imageWidgetValue = annotatedImageValueFromViewUrl(item.image)
+  const card = createNodeData('Image', p, imageWidgetValue ? { image: imageWidgetValue } : undefined)
+  card.data = { ...card.data, images: [item.image] }
+  ;(nodes.value as any[]).push(card)
   sketchStackForId.value = null
-  window.dispatchEvent(new CustomEvent('sailor:applyEffect', {
-    detail: {
-      nodeId: card.id,
-      nodeType: 'EditImageNode',
-      output: 'IMAGE',
-      branch: true,
-      focus: true,
-      widgetOverrides: {
-        model: 'Nano Banana 2',
-        prompt: 'Turn this rough into a polished, finished, highly detailed image — keep the same composition and subject.',
-      },
-    },
-  }))
+  await nextTick()
+  // Splice directly (not via sailor:applyEffect) so we get the editor's id
+  // back and can travel the camera to the PAIR, not just the editor.
+  const editorId = await spliceAfterNode(String(card.id), 'EditImageNode', 'IMAGE', {
+    model: 'Nano Banana 2',
+    prompt: 'Turn this rough into a polished, finished, highly detailed image — keep the same composition and subject.',
+  }, { branch: true })
+  // Vue Flow measures new nodes via ResizeObserver AFTER they render; a
+  // fitView issued before that sees 0×0 dimensions and silently no-ops.
+  // Wait (bounded) until both nodes carry real dimensions, then travel.
+  const targets = (editorId ? [card.id, editorId] : [card.id]).map(String)
+  for (let i = 0; i < 20; i++) {
+    const picked = (nodes.value as any[]).filter((n: any) => targets.includes(String(n.id)))
+    if (picked.length === targets.length && picked.every((n: any) => (n.dimensions?.width ?? 0) > 0)) break
+    await new Promise<void>(r => requestAnimationFrame(() => r()))
+  }
+  fitView({ nodes: targets, padding: 0.4, duration: 300 })
 }
 
 /** Re-roll the whole batch: fresh seed onto the payload's source generator +
