@@ -461,27 +461,6 @@ function spawnLensReframe() { spliceEffect('LensReframe', { focus: true, branch:
 // on their own trigger. Captions internally — no prompt widget to fill.
 function spawnRestyleWithLoRA() { spliceEffect('RestyleWithLoRANode', { focus: true, branch: true }) }
 
-// ── Sketch-output card actions ─────────────────────────────────────────────
-// A sketch option gets two actions: Keep (pin it) and "Refine…". Refine
-// is the "what do I do with this after" answer — it feeds THIS exact image into
-// the Nano Banana img2img editor (EditImageNode), so the composition you liked
-// is preserved while the render is upgraded to something finished/detailed.
-// (This replaces the old Enhance+Promote pair: Enhance only upscaled in-style,
-// and Promote re-rolled the prompt on a different model — throwing away the very
-// pixels you picked.) Spawned focused, never auto-run: the user aims, then pays.
-const isSketchOutput = computed(() => !!(props.data.properties as any)?.sketchOutput)
-function spawnDevelop() {
-  spliceEffect('EditImageNode', { focus: true, branch: true }, {
-    model: 'Nano Banana 2',
-    prompt: 'Turn this rough into a polished, finished, highly detailed image — keep the same composition and subject.',
-  })
-}
-// Keep: pin this option — VueNodeCanvas strips its sketch identity so it
-// becomes an ordinary Image card and its slot frees for the next sketch.
-function keepSketchCard() {
-  window.dispatchEvent(new CustomEvent('sailor:keepSketchCard', { detail: { cardId: props.id } }))
-}
-
 // Variations ×4: sequential re-runs of the producing generator with fresh
 // seeds; results accumulate in the Takes strip. Needs something upstream to
 // re-run, hence the hasUpstream gate (mirrored as a disabled menu row).
@@ -874,14 +853,6 @@ const promoteUsdLabel = computed(() => {
       />
       <!-- Agent "scanning" overlay — runs while the agent reviews THIS node. -->
       <VueCanvasAgentScanOverlay :active="isAnalyzing" />
-      <!-- Prompt-bar sketch skeleton — dashed NEUTRAL shimmer on the pad's
-           optimistic cards until the real Schnell image lands. The reuse pass in
-           materializeSketchCardsAt clears sketchLoading. Never pastel/purple. -->
-      <div
-        v-if="(data.properties as any)?.sketchLoading"
-        class="sketch-skeleton absolute inset-0 z-30"
-        aria-label="Sketching…"
-      />
       <!-- File picker — always mounted so Replace works in any state. -->
       <input
         ref="fileInputRef"
@@ -1180,26 +1151,6 @@ const promoteUsdLabel = computed(() => {
             </Teleport>
           </div>
         </div>
-        <!-- Sketch-option actions: Keep (pin it) + Refine… (img2img the
-             picked image into a finished render, keeping composition). Strictly
-             gated on properties.sketchOutput so ordinary Image cards are
-             byte-identical. -->
-        <div v-if="isSketchOutput" class="nopan nodrag flex items-center gap-1.5 px-2 py-1.5 border-t border-white/5">
-          <button
-            class="flex-1 h-6 rounded text-[10px] font-semibold text-white/70 hover:text-white border border-white/15 hover:border-white/25 transition-colors cursor-pointer"
-            title="Keep this option — it becomes a regular Image card"
-            @click.stop="keepSketchCard"
-          >
-            Keep
-          </button>
-          <button
-            class="flex-[1.4] h-6 px-2 rounded text-[10px] font-semibold text-neutral-900 bg-white/90 hover:bg-white transition-colors cursor-pointer"
-            title="Turn this rough into a finished, detailed image — keeps the composition"
-            @click.stop="spawnDevelop"
-          >
-            Refine…
-          </button>
-        </div>
       </template>
     </div>
 
@@ -1254,22 +1205,6 @@ const promoteUsdLabel = computed(() => {
 </template>
 
 <style scoped>
-/* Prompt-bar sketch skeleton — dashed NEUTRAL shimmer (house draft token; never
-   pastel/purple). A dark neutral base hides the underlying empty/upload state so
-   the optimistic card reads as "sketching", not "drop an image here". */
-.sketch-skeleton {
-  border: 1.5px dashed rgba(255, 255, 255, 0.45);
-  border-radius: inherit;
-  background:
-    linear-gradient(100deg, rgba(255, 255, 255, 0.04) 30%, rgba(255, 255, 255, 0.12) 50%, rgba(255, 255, 255, 0.04) 70%),
-    rgba(20, 20, 22, 0.88);
-  background-size: 200% 100%, 100% 100%;
-  animation: sketch-shimmer 1.1s linear infinite;
-}
-@keyframes sketch-shimmer {
-  from { background-position: 200% 0, 0 0; }
-  to { background-position: -200% 0, 0 0; }
-}
 .artifact-image[data-running] .artifact-frame {
   box-shadow:
     0 0 0 2px var(--port-color, #fff),
