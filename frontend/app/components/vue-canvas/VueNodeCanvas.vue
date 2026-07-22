@@ -54,7 +54,8 @@ import { getRun } from '~/lib/graph/runRegistry'
 import { nodeGenParams } from '~/lib/artifact/takeProvenance'
 import { sketchPadPromptOverrides } from '~/lib/sketch/sketchPadPrompt'
 import { cleanSketchPrompt } from '~/lib/sketch/sketchIntent'
-import { SKETCH_PROP, buildSketchPilePayload, refreshSketchPile, type SketchPilePayload } from '~/lib/sketch/sketchPile'
+import { SKETCH_PROP, buildSketchPilePayload, refreshSketchPile, keptCardPosition, type SketchPilePayload } from '~/lib/sketch/sketchPile'
+import { annotatedImageValueFromViewUrl } from '~/lib/promoteTempImages'
 import ComfyNode from '~/components/vue-canvas/ComfyNode.vue'
 import ComfyNoteNode from '~/components/vue-canvas/ComfyNoteNode.vue'
 import ComfyEdge from '~/components/vue-canvas/ComfyEdge.vue'
@@ -4185,6 +4186,99 @@ function handleBatchSpawn(payload: BatchGridPayload) {
   nodes.value.push(gridNode)
 }
 
+// Sketch stack overlay — canvas-owned (same convention as the BatchGrid
+// gallery). Opened by sailor:openSketchStack from the pile node; the payload
+// computed stays live off the node so a re-roll's items swap in place.
+const sketchStackForId = ref<string | null>(null)
+const sketchStackOrigin = ref<{ x: number, y: number, width: number, height: number } | null>(null)
+
+function handleOpenSketchStack(e: Event) {
+  const detail = (e as CustomEvent<{ nodeId?: string }>).detail
+  if (!detail?.nodeId) return
+  // Morph origin: the pile COVER's rendered rect (includes canvas zoom — the
+  // stack items render at this same width, so the morph is translate-only).
+  const el = document.querySelector(
+    `.vue-flow__node[data-id="${detail.nodeId}"] img, .vue-flow__node[data-id="${detail.nodeId}"] .pile-skeleton`,
+  ) as HTMLElement | null
+  const r = el?.getBoundingClientRect()
+  sketchStackOrigin.value = r
+    ? { x: r.left, y: r.top, width: r.width, height: r.height }
+    : { x: window.innerWidth / 2 - 100, y: window.innerHeight / 2 - 75, width: 200, height: 150 }
+  sketchStackForId.value = String(detail.nodeId)
+}
+
+function sketchStackPile(): any | null {
+  if (!sketchStackForId.value) return null
+  return (nodes.value as any[]).find((n: any) => String(n.id) === sketchStackForId.value) ?? null
+}
+const sketchStackPayload = computed<SketchPilePayload | null>(() => {
+  if (!sketchStackForId.value) return null
+  const n = (nodes.value as any[]).find((x: any) => String(x.id) === sketchStackForId.value)
+  return n?.data?.properties?.[SKETCH_PROP] ?? null
+})
+
+/** Keep item `index` as an ordinary Image card in the keeper column left of
+ *  the pile. Returns the created card (Develop wires its finisher from it). */
+function keepSketchStackItem(index: number): any | null {
+  const pile = sketchStackPile()
+  const payload = pile?.data?.properties?.[SKETCH_PROP] as SketchPilePayload | undefined
+  const item = payload?.items?.[index]
+  if (!pile || !payload || !item) return null
+  const imageWidgetValue = annotatedImageValueFromViewUrl(item.image)
+  const card = createNodeData('Image', keptCardPosition(pile.position, payload.keptCount),
+    imageWidgetValue ? { image: imageWidgetValue } : undefined)
+  card.data = { ...card.data, images: [item.image] }
+  ;(nodes.value as any[]).push(card)
+  pile.data = {
+    ...pile.data,
+    properties: { ...pile.data.properties, [SKETCH_PROP]: { ...payload, keptCount: payload.keptCount + 1 } },
+  }
+  return card
+}
+
+/** Develop = today's card "Refine…" verbatim: the picked image lands as a
+ *  keeper card, then an EditImageNode (Nano Banana 2) is spliced from it —
+ *  focused, branched, NEVER auto-run. Closes the overlay. */
+function developSketchStackItem(index: number) {
+  const card = keepSketchStackItem(index)
+  if (!card) return
+  sketchStackForId.value = null
+  window.dispatchEvent(new CustomEvent('sailor:applyEffect', {
+    detail: {
+      nodeId: card.id,
+      nodeType: 'EditImageNode',
+      output: 'IMAGE',
+      branch: true,
+      focus: true,
+      widgetOverrides: {
+        model: 'Nano Banana 2',
+        prompt: 'Turn this rough into a polished, finished, highly detailed image — keep the same composition and subject.',
+      },
+    },
+  }))
+}
+
+/** Re-roll the whole batch: fresh seed onto the payload's source generator +
+ *  the same scoped run both flows already use. The executed handler routes the
+ *  new batch back into this pile (pad branch or sketch-node branch). */
+function rerollSketchStack() {
+  const pile = sketchStackPile()
+  const payload = pile?.data?.properties?.[SKETCH_PROP] as SketchPilePayload | undefined
+  if (!pile || !payload) return
+  const src = (nodes.value as any[]).find((n: any) => String(n.id) === payload.sourceNodeId)
+  if (!src) return
+  const seed = Math.floor(Math.random() * 2_147_483_647)
+  applyWidgetOverridesTo(src, { seed })
+  if (src.data?.properties?.sketchPad === true) sketchPad.seed = seed // keep pad bookkeeping coherent
+  pile.data = {
+    ...pile.data,
+    properties: { ...pile.data.properties, [SKETCH_PROP]: { ...payload, seed, loading: true } },
+  }
+  window.dispatchEvent(new CustomEvent('sailor:runFiltered', {
+    detail: { targetIds: [src.id], direction: 'self', skipCostConfirm: true },
+  }))
+}
+
 // Model gallery modal state — opened by the WidgetModelPicker launcher on
 // generator nodes. Each gallery has its own open-state ref so two distinct
 // modals (image vs video) don't share mount lifecycle; the dispatcher reads
@@ -4416,6 +4510,7 @@ onMounted(() => {
   window.addEventListener('sailor:openSmartLayout', handleOpenSmartLayout)
   window.addEventListener('sailor:openBatchExport', handleOpenBatchExport)
   window.addEventListener('sailor:openBatchGallery', handleOpenBatchGallery)
+  window.addEventListener('sailor:openSketchStack', handleOpenSketchStack)
   window.addEventListener('sailor:openModelGallery', handleOpenModelGallery)
   window.addEventListener('sailor:openLoraGallery', handleOpenLoraGallery)
   window.addEventListener('sailor:openVoiceGallery', handleOpenVoiceGallery)
@@ -4477,6 +4572,7 @@ onUnmounted(() => {
   window.removeEventListener('sailor:openSmartLayout', handleOpenSmartLayout)
   window.removeEventListener('sailor:openBatchExport', handleOpenBatchExport)
   window.removeEventListener('sailor:openBatchGallery', handleOpenBatchGallery)
+  window.removeEventListener('sailor:openSketchStack', handleOpenSketchStack)
   window.removeEventListener('sailor:openModelGallery', handleOpenModelGallery)
   window.removeEventListener('sailor:openLoraGallery', handleOpenLoraGallery)
   window.removeEventListener('sailor:openVoiceGallery', handleOpenVoiceGallery)
@@ -7449,6 +7545,17 @@ defineExpose({
         @close="batchGalleryForId = null"
       />
     </Teleport>
+
+    <!-- Sketch stack overlay (canvas-owned; opened by sailor:openSketchStack) -->
+    <VueCanvasSketchStackOverlay
+      v-if="sketchStackPayload && sketchStackOrigin"
+      :payload="sketchStackPayload"
+      :origin="sketchStackOrigin"
+      @develop="developSketchStackItem"
+      @keep="keepSketchStackItem"
+      @reroll="rerollSketchStack"
+      @close="sketchStackForId = null"
+    />
 
     <!-- Model gallery (image generator model picker) -->
     <VueCanvasModelGalleryModal
