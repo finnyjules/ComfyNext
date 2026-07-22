@@ -2758,6 +2758,12 @@ function handleBridgeMessage(event: MessageEvent) {
             materializeSketchPileAt(sketchPad.anchor, tagged.images) // real pass, replaces the skeleton pile
             return
           }
+          // Sketch NODE (properties.sketch — the node-search preset): its
+          // batch also presents as a pile beside the node. The take was
+          // already appended above; this only adds the choose-one surface.
+          if (target?.data?.properties?.sketch === true && tagged.images && tagged.images.length > 1) {
+            materializeSketchPileBeside(target, tagged.images, take.params ?? {})
+          }
         }
       }
     }
@@ -3370,6 +3376,33 @@ function materializeSketchPileAt(
   // Keep createNodeData's numeric id (string ids serialize to NaN and drop).
   ;(nodes.value as any[]).push(node)
   sketchPad.pileNodeId = node.id
+}
+
+/** Sketch NODE flow: a visible sketch generator's multi-image batch presents
+ *  as a pile to its right (the choose-one surface). The node's own take/
+ *  filmstrip append stays untouched — provenance and Light Table keep working.
+ *  Re-runs refresh the same pile (found by payload.sourceNodeId). */
+function materializeSketchPileBeside(source: any, images: string[], params: Record<string, unknown> = {}): void {
+  const prompt = typeof params.prompt === 'string' ? params.prompt : ''
+  const seed = typeof params.seed === 'number' ? params.seed : 0
+  const existing = (nodes.value as any[]).find(
+    (n: any) => n?.data?.properties?.[SKETCH_PROP]?.sourceNodeId === String(source.id))
+  if (existing) {
+    const prev = existing.data.properties[SKETCH_PROP] as SketchPilePayload
+    existing.data = {
+      ...existing.data,
+      properties: { ...existing.data.properties, [SKETCH_PROP]: refreshSketchPile(prev, { images, prompt, seed }) },
+    }
+    return
+  }
+  const pos = {
+    x: (source.position?.x ?? 0) + (source.data?.size?.[0] ?? 240) + 80,
+    y: source.position?.y ?? 0,
+  }
+  const node = createNodeData('SketchPile', pos, undefined, {
+    [SKETCH_PROP]: buildSketchPilePayload({ prompt, seed, sourceNodeId: String(source.id), images }),
+  })
+  ;(nodes.value as any[]).push(node)
 }
 
 /** Prompt-bar entry: render 4 cheap Schnell options for `prompt` at the pad. */
