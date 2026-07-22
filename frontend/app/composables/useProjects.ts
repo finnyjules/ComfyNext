@@ -74,12 +74,16 @@ export function useProjects() {
     }
   }
 
-  /** Snapshot the whole project as a new version; auto-creates the project. */
+  /** Snapshot the whole project as a new version; auto-creates the project.
+   *  Returns the version id on success, 'stale' when the backend rejected a
+   *  rolling `current` write because the stored copy carries a NEWER
+   *  workflow.savedAt (HTTP 409 — another window saved more recently; this
+   *  window's content must not clobber it), or null for any other failure. */
   async function saveVersion(
     uuid: string,
     version: Partial<ProjectVersion>,
     projectName?: string,
-  ): Promise<string | null> {
+  ): Promise<string | 'stale' | null> {
     try {
       // Serialize once so we can decide on `keepalive`: it lets the request
       // survive the page unloading (saveVersion fires from beforeunload, where
@@ -99,7 +103,14 @@ export function useProjects() {
         },
       )
       return res.id ?? null
-    } catch (e) {
+    } catch (e: any) {
+      // 409 = stale-save rejection (workflow.savedAt older than stored) —
+      // distinct from ordinary failures so callers can tell the user to
+      // reload rather than retoast a generic autosave warning.
+      if (e?.statusCode === 409 || e?.status === 409 || e?.response?.status === 409) {
+        console.warn('[useProjects] saveVersion rejected as stale:', e?.data ?? e)
+        return 'stale'
+      }
       console.warn('[useProjects] saveVersion failed:', e)
       return null
     }

@@ -36,7 +36,7 @@ import { promoteTempImageInputs } from '~/lib/promoteTempImages'
 import { extractOutputFiles, type GenOutput, type GenerationRecord } from '~/lib/generations'
 import {
   BLANK_WORKFLOW, activeCanvasOf, docHasContent, isProjectDoc,
-  makeBlankWorkflow, makeCanvasId, nextCanvasName, pickNewerDoc, toProjectDoc,
+  makeBlankWorkflow, makeCanvasId, nextCanvasName, pickNewerDoc, stampDocForSave, toProjectDoc,
   type ProjectCanvas, type ProjectDoc,
 } from '~/lib/projectDoc'
 import { setRef, type RefRegistry } from '~/lib/refs/registry'
@@ -1346,6 +1346,7 @@ function onCreateRef(e: Event) {
   const { name, entry } = (e as CustomEvent).detail || {}
   if (!name || !entry?.filename || !activeProjectDoc.value) return
   activeProjectDoc.value.assetRegistry = setRef(activeProjectDoc.value.assetRegistry ?? {}, name, entry)
+  markDocEdited()
   persistWorkflows()
   toast.success(`Reference @${name} created`)
 }
@@ -1411,6 +1412,17 @@ function loadPersistedWorkflows(): Record<string, any> {
 
 const savedWorkflows = reactive<Record<string, any>>(loadPersistedWorkflows()) // tabId → ProjectDoc
 
+// tabId → ms of the last USER EDIT made in THIS window. savedAt must track
+// content freshness, not serialization time — a stale window re-serializing
+// old content must not re-label it as newest (see stampDocForSave). Every
+// doc-level mutation site calls markDocEdited; snapshot time only ever copies
+// this stamp forward, monotonically.
+const docEditedAt: Record<string, number> = {}
+function markDocEdited(tabId?: string) {
+  const id = tabId ?? activeTab.value?.id
+  if (id) docEditedAt[id] = Date.now()
+}
+
 // The workflow the Vue canvas should display: the active canvas of the active
 // tab's doc. Switching canvases (or restoring a version) swaps this to a new
 // object reference, which is what VueNodeCanvas's prop watch keys on.
@@ -1451,13 +1463,29 @@ function persistWorkflows() {
 // switch. Uses a single rolling "current" version id per project, so repeated
 // saves update in place instead of piling up versions. The body is the whole
 // ProjectDoc (every canvas) — the backend treats it as opaque JSON.
+// Stale-save rejections (409) get their own throttled toast, separate from the
+// generic autosave-failure one: the remedy is different (reload this window,
+// not "free up storage"), and sharing warnAutosaveFailure's throttle stamp
+// could let one warning mask the other.
+let lastStaleSaveToastAt = 0
+function warnStaleSaveRejected() {
+  const now = Date.now()
+  if (now - lastStaleSaveToastAt < AUTOSAVE_TOAST_THROTTLE_MS) return
+  lastStaleSaveToastAt = now
+  toast.warning('Didn’t save — a newer version exists', {
+    description: 'Another window saved this project more recently. Reload this window to continue from the latest version.',
+  })
+}
+
 function saveDurableVersion(tab: any, doc: any) {
   if (!tab?.projectUuid || !docHasContent(doc)) return
   const name = tab.label || 'Untitled project'
-  // saveVersion never throws — null means the save failed. Still
+  // saveVersion never throws — 'stale' means the backend refused to let this
+  // window overwrite a newer copy; null means the save failed outright. Still
   // fire-and-forget, but no longer silent.
   useProjects().saveVersion(tab.projectUuid, { id: 'current', name, workflow: doc }, name).then((id) => {
-    if (!id) warnAutosaveFailure('The durable server copy of this project isn’t updating.')
+    if (id === 'stale') warnStaleSaveRejected()
+    else if (!id) warnAutosaveFailure('The durable server copy of this project isn’t updating.')
   })
 }
 
@@ -1489,10 +1517,14 @@ function snapshotActiveCanvasIntoDoc(tabId: string): ProjectDoc | null {
   if (hasSnapshot) {
     const raw = toRaw(doc)
     activeCanvasOf(raw).workflow = snapshot
-    // Recency stamp — loadWorkflowForTab compares it against the durable
-    // copy's stamp so a stale store can't shadow a fresher one.
-    raw.savedAt = Date.now()
   }
+  // Recency stamp — loadWorkflowForTab compares it against the durable copy's
+  // stamp so a stale store can't shadow a fresher one. Stamped from the last
+  // EDIT in this window (monotonic, never Date.now() at serialization time),
+  // so a stale window can't launder old content as newest. Runs outside the
+  // hasSnapshot branch: doc-only mutations (refs, deliverables, brand kit)
+  // deserve the stamp even when the canvas snapshot was refused/empty.
+  stampDocForSave(toRaw(doc), docEditedAt[tabId])
   return doc
 }
 
@@ -1521,6 +1553,7 @@ function onRestoreVersion(body: any) {
   if (!tab || !docHasContent(body)) return
   const doc = toProjectDoc(body)
   doc.savedAt = Date.now() // an explicit restore becomes the newest state
+  markDocEdited(tab.id) // keep docEditedAt coherent with the explicit stamp
   savedWorkflows[tab.id] = doc
   persistWorkflows()
   if (!vueNodesEnabled.value) {
@@ -1545,6 +1578,7 @@ provide('projectDoc', activeProjectDoc)
 // Persist callback for the Deliverables page (mirrors the durable-version save
 // other project-doc mutators use below).
 function persistDeliverablesDoc() {
+  markDocEdited() // deliverables mutations change persisted doc content
   persistWorkflows()
   const t = activeTab.value
   if (t.type === 'project' && activeProjectDoc.value) saveDurableVersion(t, activeProjectDoc.value)
@@ -1629,6 +1663,7 @@ async function switchProjectCanvas(canvasId: string) {
       doc.activeCanvasId = canvasId
       await sendLoadWorkflow(JSON.parse(JSON.stringify(target.workflow || BLANK_WORKFLOW)))
     }
+    markDocEdited(tab.id) // the switch itself changes persisted doc content
     persistWorkflows()
     saveDurableVersion(tab, doc)
   } finally {
@@ -1643,6 +1678,7 @@ async function addProjectCanvas() {
   savedWorkflows[tab.id] = doc
   const canvas: ProjectCanvas = { id: makeCanvasId(), name: nextCanvasName(doc), workflow: makeBlankWorkflow() }
   doc.canvases.push(canvas)
+  markDocEdited(tab.id)
   await switchProjectCanvas(canvas.id)
 }
 
@@ -1651,6 +1687,7 @@ function renameProjectCanvas(canvasId: string, name: string) {
   const canvas = doc?.canvases.find((c) => c.id === canvasId)
   if (!canvas || !name.trim()) return
   canvas.name = name.trim()
+  markDocEdited()
   persistWorkflows()
 }
 
@@ -1669,6 +1706,7 @@ async function deleteProjectCanvas(canvasId: string) {
   }
   const at = doc.canvases.findIndex((c) => c.id === canvasId)
   if (at !== -1) doc.canvases.splice(at, 1)
+  markDocEdited(tab.id)
   persistWorkflows()
   saveDurableVersion(tab, doc)
 }
@@ -1687,6 +1725,7 @@ function setBrandKit(id: string | null) {
   const doc = toProjectDoc(savedWorkflows[tab.id])
   savedWorkflows[tab.id] = doc
   doc.brandKitId = id
+  markDocEdited(tab.id)
   persistWorkflows()
   saveDurableVersion(tab, doc)
 }
@@ -1754,6 +1793,10 @@ function autosaveCurrentWorkflow() {
 const AUTOSAVE_DEBOUNCE_MS = 3000
 let autosaveDebounceTimer: ReturnType<typeof setTimeout> | null = null
 function onCanvasDirty() {
+  // Record the edit NOW (not after the debounce): canvasDirty only fires for
+  // real canvas mutations of the active tab (suppressed while a workflow is
+  // being applied), so this is the canonical "user touched the canvas" signal.
+  markDocEdited()
   if (autosaveDebounceTimer) clearTimeout(autosaveDebounceTimer)
   autosaveDebounceTimer = setTimeout(() => {
     autosaveDebounceTimer = null
@@ -2293,6 +2336,7 @@ async function loadWorkflowForTab(tab: any) {
 function handleLoadTabWorkflow(e: Event) {
   const { tabId, workflow } = (e as CustomEvent).detail
   savedWorkflows[tabId] = toProjectDoc(workflow)
+  markDocEdited(tabId) // user loaded fresh content into this tab
   persistWorkflows()
   // This tab now has real content — never treat it as a "fresh blank project"
   // (would otherwise pop the Get Started modal over the loaded workflow).

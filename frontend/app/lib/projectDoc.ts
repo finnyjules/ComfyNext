@@ -87,6 +87,25 @@ export function pickNewerDoc(sessionDoc: any, durableDoc: any): { doc: any; sour
     : { doc: sessionDoc, source: 'session' }
 }
 
+/** Bump doc.savedAt to lastEditAt, monotonically.
+ *
+ *  savedAt must track content FRESHNESS, not serialization time. Stamping
+ *  Date.now() on every snapshot let a stale browser window "launder" old
+ *  content: re-serializing a 2-hour-old doc re-labeled it as newest, so the
+ *  load-time recency guard (pickNewerDoc) and the backend's stale-write
+ *  rejection both waved it through — clobbering fresh work from another
+ *  window. Instead, callers record WHEN the user last edited the doc and pass
+ *  that here at save time:
+ *    - lastEditAt is a number and newer than the current stamp (or the doc is
+ *      unstamped) → savedAt becomes lastEditAt;
+ *    - otherwise savedAt is left untouched — never lowered, and never minted
+ *      fresh for content this window didn't edit. */
+export function stampDocForSave(doc: ProjectDoc, lastEditAt: number | null | undefined): void {
+  if (typeof lastEditAt !== 'number') return
+  if (typeof doc.savedAt === 'number' && lastEditAt <= doc.savedAt) return
+  doc.savedAt = lastEditAt
+}
+
 /** Next available "Canvas N" name that doesn't collide with existing ones. */
 export function nextCanvasName(doc: ProjectDoc): string {
   let n = doc.canvases.length + 1

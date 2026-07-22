@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { pickNewerDoc, toProjectDoc, makeBlankWorkflow } from '~/lib/projectDoc'
+import { pickNewerDoc, stampDocForSave, toProjectDoc, makeBlankWorkflow } from '~/lib/projectDoc'
 
 /** A one-canvas doc with real content, optionally stamped. */
 function docWith(savedAt?: number) {
@@ -47,5 +47,39 @@ describe('pickNewerDoc', () => {
 
   it('returns the session side when both are empty', () => {
     expect(pickNewerDoc(null, null).source).toBe('session')
+  })
+})
+
+describe('stampDocForSave', () => {
+  it('bumps savedAt when lastEditAt is newer than the existing stamp', () => {
+    const doc = docWith(1000)
+    stampDocForSave(doc, 2000)
+    expect(doc.savedAt).toBe(2000)
+  })
+
+  it('sets savedAt when the doc has no stamp and lastEditAt is a number', () => {
+    const doc = docWith()
+    stampDocForSave(doc, 1500)
+    expect(doc.savedAt).toBe(1500)
+  })
+
+  it('never lowers savedAt when lastEditAt is older than the stamp', () => {
+    const doc = docWith(3000)
+    stampDocForSave(doc, 2000)
+    expect(doc.savedAt).toBe(3000)
+  })
+
+  it('leaves savedAt untouched when lastEditAt is null/undefined — the laundering case', () => {
+    // A window that never edited the doc must not mint a fresh stamp at
+    // serialization time, or 2-hour-old content gets re-labeled as newest.
+    const doc = docWith(1000)
+    stampDocForSave(doc, null)
+    expect(doc.savedAt).toBe(1000)
+    stampDocForSave(doc, undefined)
+    expect(doc.savedAt).toBe(1000)
+
+    const unstamped = docWith()
+    stampDocForSave(unstamped, undefined)
+    expect(unstamped.savedAt).toBeUndefined()
   })
 })
