@@ -18,10 +18,11 @@ A new **frontend-only** Vue Flow node, `SketchPileNode.vue`, holding its data in
 interface SketchPilePayload {
   prompt: string        // the distilled subject prompt for the whole batch
   seed: number          // the batch's shared seed (one prediction → one seed)
-  aspect_ratio?: string
-  sourceNodeId?: string // Sketch-node flow: the generator to re-run on re-roll
+  sourceNodeId: string  // the generator to re-run on re-roll — the hidden pad
+                        // node (prompt-bar flow) or the Sketch node itself
   items: { image: string }[]  // up to 4 /view URLs, batch order
   loading?: boolean     // skeleton state while a (re-)sketch is in flight
+  keptCount: number     // kept/developed cards placed so far (keeper-column march)
 }
 ```
 
@@ -39,9 +40,9 @@ Per-item prompt/seed props are unnecessary: a batch of 4 comes from one predicti
 - **The expansion is the feature:** on open, the overlay measures the pile node's projected screen rect (Vue Flow viewport transform) and the item images animate from that origin to their slots in a **vertical stack** — transform transition, slight stagger, quick ease (~200ms per house motion). Close reverses the morph back into the pile.
 - **Stack layout:** one column; each image renders at **the same on-screen size it has on the canvas** (the pile's rendered size at the current viewport zoom), so the expansion is a pure translate morph — no scaling between pile and stack. Clamped to a sane floor/ceiling (~120–320px cover width) so extreme zoom levels stay usable; the column scrolls when the stack exceeds the viewport. Hover reveals the actions.
 - **Per-image actions:**
-  - **Develop** (primary) — the existing sketch-promote move: closes the overlay and spawns the full finisher generator **beside the pile node** via `sailor:spawnBeside`, with `sketchPromoteOverridesFromProps`-shape overrides built from the payload (`prompt`, `seed` locked, `aspect_ratio`; `model` never copied — schema default). Never auto-runs (standing rule).
-  - **Keep as image** (secondary, subtle) — creates an ordinary `ArtifactImageNode` beside the pile holding that image, no sketch properties. Free, no generation. Overlay stays open.
-- **Footer: Re-roll all 4** — same prompt, **fresh seed**; the stack items swap to shimmer placeholders in place (overlay stays open), the pile underneath enters `loading`, and the new batch replaces `items` when it lands.
+  - **Develop** (primary) — today's card "Refine…" semantics, verbatim: the picked image first lands as an ordinary Image card beside the pile (it needs a real node to wire from), then an **`EditImageNode` (model `Nano Banana 2`)** is spawned wired from that card via the existing `sailor:applyEffect` splice path (`output: 'IMAGE'`, `branch: true`, `focus: true`) with the polish prompt `"Turn this rough into a polished, finished, highly detailed image — keep the same composition and subject."`. Focused, **never auto-run** (standing rule). Closes the overlay. This preserves the exact pixels the user picked — no prompt/seed re-render.
+  - **Keep as image** (secondary, subtle) — creates an ordinary Image card beside the pile holding that image, no sketch properties, no editor. Free, no generation. Overlay stays open. Kept/developed cards march down a keeper column to the pile's left (`keptCount`).
+- **Footer: Re-roll all 4** — patch a **fresh seed** onto `sourceNodeId`'s seed widget and re-dispatch the scoped run (`sailor:runFiltered`, `direction: 'self'`, `skipCostConfirm`), exactly one mechanism for both flows. The stack items swap to shimmer placeholders in place (overlay stays open), the pile underneath enters `loading`, and the new batch replaces `items` when it lands.
 
 ### 3. Flow wiring
 
@@ -54,7 +55,8 @@ Per-item prompt/seed props are unnecessary: a batch of 4 comes from one predicti
 ### 4. Retirements (the payoff deletions)
 
 - `planSketchCardsAt` slot/hole positional-id machinery, `sketchPad.cardIds`/`keptCount` bookkeeping, and `materializeSketchCardsAt`'s multi-card create/reuse branches collapse into "write one pile payload".
-- `keepSketchCard.ts` (`stripSketchProperties` / `vacateSketchSlot`) and the per-card Keep/Refine footer + dashed-ring + `sketchLoading` skeleton on `ArtifactImageNode.vue` are deleted. Saved canvases holding old sketch cards degrade gracefully: their `sketchOutput`/`sketchPrompt` properties become inert and the cards render as ordinary images.
+- `keepSketchCard.ts` (`stripSketchProperties` / `vacateSketchSlot`) + the `sailor:keepSketchCard` handler, and the per-card Keep/Refine footer + `sketchLoading` skeleton on `ArtifactImageNode.vue` are deleted. Saved canvases holding old sketch cards degrade gracefully: their `sketchOutput`/`sketchPrompt` properties become inert and the cards render as ordinary images.
+- `handlePromoteSketchOutput` + `sketchPromoteOverridesFromProps` (the pad-card prompt/seed promote — already superseded on the cards by Refine) are deleted. `sketchPromoteOverridesFor` (the take-based Sketch-node Promote on the takes strip / Light Table) **stays** — takes are untouched by this design.
 - `planSketchCards.ts` (the never-wired 2×2 grid planner) and its tests are deleted outright.
 
 ## Out of scope
@@ -66,6 +68,6 @@ Per-item prompt/seed props are unnecessary: a batch of 4 comes from one predicti
 
 ## Testing
 
-- **Unit:** SketchPile payload build/refresh from an executed batch (pad + node flows, including re-roll replacing items and preserving node id); develop-override builder from payload (prompt/seed-locked/aspect, no model); keep-as-image node construction (plain image, no sketch props); `PileStack` extraction keeps BatchGridNode rendering (existing behavior pinned).
+- **Unit:** SketchPile payload build/refresh from an executed batch (pad + node flows, including re-roll replacing items and preserving node id); stack item sizing clamp; keeper-column placement math; keep-as-image node construction (plain image, no sketch props).
 - **Browser (free/local):** prompt-bar sketch → one shimmer pile appears (not 4 cards); pile click → overlay morph → stack; Escape collapses back; Keep-as-image drops a plain card beside the pile.
 - **Paid-render (owed to the user, per standing checklist):** real batch fills the pile; Develop spawns the seeded finisher beside it; Re-roll refreshes all 4 in the open overlay; Sketch-node run materializes/refreshes the pile beside the node.
