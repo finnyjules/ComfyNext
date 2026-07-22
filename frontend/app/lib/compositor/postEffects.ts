@@ -144,3 +144,169 @@ export function vignetteStops(size: number, softness: number): { inner: number; 
   const outer = Math.min(1.5, inner + Math.max(0.02, clamp01(softness)))
   return { inner, outer }
 }
+
+// ── Canvas chain (appended to frontend/app/lib/compositor/postEffects.ts) ────
+
+function mkCanvas(w: number, h: number): HTMLCanvasElement {
+  const c = document.createElement('canvas')
+  c.width = Math.max(1, Math.round(w))
+  c.height = Math.max(1, Math.round(h))
+  return c
+}
+function cloneCanvas(src: HTMLCanvasElement): HTMLCanvasElement {
+  const c = mkCanvas(src.width, src.height)
+  c.getContext('2d')?.drawImage(src, 0, 0)
+  return c
+}
+
+// Cached 128×128 mid-gray noise tile. Fixed seed: grain must be identical
+// across renders/bakes (motion frames would shimmer otherwise).
+let _grainTile: HTMLCanvasElement | null = null
+export function grainTile(): HTMLCanvasElement {
+  if (_grainTile) return _grainTile
+  const N = 128
+  const c = mkCanvas(N, N)
+  const ctx = c.getContext('2d')!
+  const img = ctx.createImageData(N, N)
+  const bytes = noiseBytes(0x5a1108, N * N)
+  for (let i = 0; i < N * N; i++) {
+    const v = bytes[i]!
+    img.data[i * 4] = v; img.data[i * 4 + 1] = v; img.data[i * 4 + 2] = v; img.data[i * 4 + 3] = 255
+  }
+  ctx.putImageData(img, 0, 0)
+  _grainTile = c
+  return c
+}
+
+/**
+ * Apply the visible chain effects to an offscreen canvas, in the fixed order
+ * adjust → duotone → bloom → vignette → grain. Mutates `off` in place; every
+ * op runs in identity transform space (the caller's ctx transform is preserved).
+ * `opts.W` = logical canvas width (normalized params scale by it);
+ * `opts.scale` = device px per logical px (default 1 — pass the ctx transform's
+ * `.a` when `off` is a device-resolution snapshot).
+ */
+export function applyEffectChain(
+  off: HTMLCanvasElement,
+  effects: PostEffect[],
+  opts: { W: number; scale?: number },
+): void {
+  const fx = effects.filter(e => e.visible)
+  if (!fx.length) return
+  const ctx = off.getContext('2d')
+  if (!ctx) return
+  const scale = opts.scale ?? 1
+  const find = <T extends PostEffect>(t: T['type']) => fx.find((e): e is T => e.type === t)
+
+  const adjust = find<AdjustEffect>('adjust')
+  if (adjust) {
+    const f = adjustFilterString(adjust)
+    if (f) {
+      const src = cloneCanvas(off)
+      ctx.save()
+      ctx.setTransform(1, 0, 0, 1, 0, 0)
+      ctx.clearRect(0, 0, off.width, off.height)
+      ctx.filter = f
+      ctx.drawImage(src, 0, 0)
+      ctx.restore()
+    }
+  }
+
+  const duotone = find<DuotoneEffect>('duotone')
+  if (duotone && duotone.mix > 0) {
+    const img = ctx.getImageData(0, 0, off.width, off.height)
+    duotoneInPlace(img.data, hexToRgb(duotone.shadows), hexToRgb(duotone.highlights), duotone.mix)
+    ctx.save()
+    ctx.setTransform(1, 0, 0, 1, 0, 0)
+    ctx.putImageData(img, 0, 0)
+    ctx.restore()
+  }
+
+  const bloom = find<BloomEffect>('bloom')
+  if (bloom && bloom.intensity > 0 && bloom.radius > 0) {
+    const bp = cloneCanvas(off)
+    const bctx = bp.getContext('2d')
+    if (bctx) {
+      const img = bctx.getImageData(0, 0, bp.width, bp.height)
+      brightPassInPlace(img.data, bloom.threshold)
+      bctx.putImageData(img, 0, 0)
+      const blurred = mkCanvas(off.width, off.height)
+      const blctx = blurred.getContext('2d')
+      if (blctx) {
+        blctx.filter = `blur(${Math.max(0, bloom.radius * opts.W * scale)}px)`
+        blctx.drawImage(bp, 0, 0)
+        blctx.filter = 'none'
+        ctx.save()
+        ctx.setTransform(1, 0, 0, 1, 0, 0)
+        ctx.globalCompositeOperation = 'lighter'
+        const k = Math.min(2, Math.max(0, bloom.intensity))
+        ctx.globalAlpha = Math.min(1, k)
+        ctx.drawImage(blurred, 0, 0)
+        if (k > 1) { ctx.globalAlpha = k - 1; ctx.drawImage(blurred, 0, 0) }
+        ctx.restore()
+      }
+    }
+  }
+
+  const vignette = find<VignetteEffect>('vignette')
+  if (vignette && vignette.amount > 0) {
+    const w = off.width, h = off.height
+    const R = Math.hypot(w, h) / 2
+    const { inner, outer } = vignetteStops(vignette.size, vignette.softness)
+    ctx.save()
+    ctx.setTransform(1, 0, 0, 1, 0, 0)
+    // source-atop = clip to existing alpha, so a per-layer vignette never
+    // halos beyond the silhouette (doc snapshots are opaque where content is).
+    ctx.globalCompositeOperation = 'source-atop'
+    const g = ctx.createRadialGradient(w / 2, h / 2, inner * R, w / 2, h / 2, outer * R)
+    g.addColorStop(0, 'rgba(0,0,0,0)')
+    g.addColorStop(1, `rgba(0,0,0,${Math.min(1, Math.max(0, vignette.amount))})`)
+    ctx.fillStyle = g
+    ctx.fillRect(0, 0, w, h)
+    ctx.restore()
+  }
+
+  const grain = find<GrainEffect>('grain')
+  if (grain && grain.amount > 0) {
+    const gc = mkCanvas(off.width, off.height)
+    const gctx = gc.getContext('2d')
+    if (gctx) {
+      const pat = gctx.createPattern(grainTile(), 'repeat')
+      if (pat) {
+        const s = Math.max(1, grain.size) * scale
+        gctx.save()
+        gctx.scale(s, s)
+        gctx.fillStyle = pat
+        gctx.fillRect(0, 0, gc.width / s, gc.height / s)
+        gctx.restore()
+        gctx.globalCompositeOperation = 'destination-in'
+        gctx.drawImage(off, 0, 0) // clip noise to the layer/content alpha
+        ctx.save()
+        ctx.setTransform(1, 0, 0, 1, 0, 0)
+        ctx.globalCompositeOperation = 'overlay'
+        ctx.globalAlpha = Math.min(1, Math.max(0, grain.amount))
+        ctx.drawImage(gc, 0, 0)
+        ctx.restore()
+      }
+    }
+  }
+}
+
+/**
+ * Doc-level post pass: snapshot the device canvas, run the chain on it, stamp
+ * it back in identity space. Called by paintLayerStack when `post` is active.
+ */
+export function applyStackPost(ctx: CanvasRenderingContext2D, post: PostEffect[], W: number): void {
+  const dev = ctx.canvas
+  const t = ctx.getTransform()
+  const snap = mkCanvas(dev.width, dev.height)
+  const sctx = snap.getContext('2d')
+  if (!sctx) return
+  sctx.drawImage(dev, 0, 0)
+  applyEffectChain(snap, post, { W, scale: t.a || 1 })
+  ctx.save()
+  ctx.setTransform(1, 0, 0, 1, 0, 0)
+  ctx.clearRect(0, 0, dev.width, dev.height)
+  ctx.drawImage(snap, 0, 0)
+  ctx.restore()
+}

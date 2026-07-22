@@ -32,6 +32,11 @@ import { polygonPathData, starPathData } from '~/lib/compositor/polygonGeometry'
 import { resolveGroupCascade, type LayerGroup } from '~/lib/compositor/layerGroups'
 import { layoutExpressive, type ExpressiveParams } from '~~/shared/text-layout/expressive'
 import { type PaintStroke, stampStrokes, strokeBounds } from '~/lib/compositor/brushStamp'
+import {
+  applyEffectChain, applyStackPost, chainActive, isChainEffect,
+  type AdjustEffect, type BloomEffect, type DuotoneEffect, type GrainEffect,
+  type PostEffect, type VignetteEffect,
+} from '~/lib/compositor/postEffects'
 
 // Throwaway 2D context used only for text measurement (localLayerBox mutates the
 // ctx font), so it never touches a real render target.
@@ -105,7 +110,10 @@ export interface BackgroundBlurEffect {
   radius: number  // blur radius, normalized to canvas width
   visible: boolean
 }
-export type LayerEffect = DropShadowEffect | LayerBlurEffect | InnerShadowEffect | BackgroundBlurEffect
+export type { AdjustEffect, BloomEffect, DuotoneEffect, GrainEffect, PostEffect, VignetteEffect }
+export type LayerEffect =
+  | DropShadowEffect | LayerBlurEffect | InnerShadowEffect | BackgroundBlurEffect
+  | AdjustEffect | BloomEffect | GrainEffect | VignetteEffect | DuotoneEffect
 
 // Clip mask: the layer is clipped to a rect/ellipse region in CANVAS space
 // (axis-aligned, normalized like everything else). For local layers this is
@@ -993,6 +1001,7 @@ function paintLayer(
   const shadow = fx.find((e): e is DropShadowEffect => e.type === 'drop_shadow')
   const blur = fx.find((e): e is LayerBlurEffect => e.type === 'layer_blur')
   const inner = fx.find((e): e is InnerShadowEffect => e.type === 'inner_shadow')
+  const chain = fx.filter(isChainEffect) as PostEffect[]
   // (background_blur is a stack-level effect — paintLayerStack applies it
   // against the backdrop before this layer paints.)
 
@@ -1046,7 +1055,7 @@ function paintLayer(
     // composite it with inner shadow / drop shadow / blur. Works identically for
     // text, shapes, vectors and images, and because bakeOverlay() renders through
     // here the effects are baked into generation exactly as previewed.
-    if (shadow || blur || inner) {
+    if (shadow || blur || inner || chain.length) {
       const off = document.createElement('canvas')
       off.width = Math.max(1, Math.round(W))
       off.height = Math.max(1, Math.round(H))
@@ -1055,6 +1064,7 @@ function paintLayer(
         applyXform(octx, lx, ly, lrot, ls)
         drawContent(octx)
         if (inner) compositeInnerShadow(off, inner, W)
+        if (chain.length) applyEffectChain(off, chain, { W })
         ctx.save()
         ctx.globalAlpha = lop
         ctx.globalCompositeOperation = blendOp
@@ -1408,6 +1418,9 @@ export function paintLayerStack(
   background?: Paint,
   /** Nested-group registry (Task 1). Absent ⇒ no cascade, byte-identical to before. */
   groups?: LayerGroup[],
+  /** Doc-level post-processing chain, applied to the finished composite.
+   *  Absent/empty ⇒ byte-identical output. */
+  post?: PostEffect[],
 ) {
   // Background fill — the bottom-most thing in the frame, baked into output.
   if (hasPaint(background)) {
@@ -1497,6 +1510,8 @@ export function paintLayerStack(
       drawLocalLayer(ctx, layer, W, H, maskItem?.type === 'local' ? maskItem.layer : null, opacityMul)
     }
   }
+
+  if (post && chainActive(post)) applyStackPost(ctx, post, W)
 }
 
 /**
