@@ -95,15 +95,16 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
           <!-- hover actions — mirrors the retired card footer: Keep outline,
                Develop solid-white primary (never emerald: no spend here) -->
           <div class="absolute inset-x-0 bottom-0 p-2 flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity bg-gradient-to-t from-black/60 to-transparent rounded-b-lg">
+            <!-- Same button idiom as the studio node footers (Edit / Render). -->
             <button
-              class="flex-1 h-7 rounded text-[11px] font-semibold text-white/80 hover:text-white border border-white/25 hover:border-white/40 bg-black/30 transition-colors cursor-pointer"
+              class="flex flex-1 items-center justify-center rounded bg-white/10 px-2.5 py-1.5 text-[11px] text-white/80 transition hover:bg-white/20 cursor-pointer"
               title="Keep this option — it lands beside the pile as a regular Image card"
               @click.stop="emit('keep', i)"
             >
-              Keep as image
+              Keep
             </button>
             <button
-              class="flex-[1.4] h-7 px-2 rounded text-[11px] font-semibold text-neutral-900 bg-white/90 hover:bg-white transition-colors cursor-pointer"
+              class="flex flex-[1.4] items-center justify-center rounded bg-white/90 px-2 py-1.5 text-[11px] font-medium text-neutral-900 transition hover:bg-white cursor-pointer"
               title="Turn this rough into a finished, detailed image — keeps the composition"
               @click.stop="emit('develop', i)"
             >
