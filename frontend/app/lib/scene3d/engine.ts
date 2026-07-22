@@ -698,6 +698,26 @@ export class SceneEngine {
     }
   }
 
+  /** Heals every `text` mesh stuck on the placeholder cube after a font URL
+   *  that previously FAILED to load succeeds on a later retry. loadFont
+   *  doesn't cache failures, so the engine itself never retries — the retry
+   *  is the Surface's font watch calling loadFont(url) again on a later
+   *  effect run. That watch has no reach into the mesh (it only owns the
+   *  Size row's fontGen bump), so nothing here clears the stale geoKey on
+   *  success unless this is called too. Same re-sync move as the in-flight
+   *  token's `.then()` above: clear geoKey (so syncObject's key comparison
+   *  can't no-op) and re-apply against the LATEST stamped object, not
+   *  whatever was selected when the retry started. */
+  refreshTextGeometry(fontUrl: string): void {
+    for (const root of this.objectRoots.values()) {
+      const obj = root.userData.primObj as PrimitiveObject | undefined
+      if (!obj || obj.primitive !== 'text') continue
+      if ((obj.content?.font ?? DEFAULT_FONT_URL) !== fontUrl) continue
+      root.userData.geoKey = undefined
+      this.syncObject(obj)
+    }
+  }
+
   /** Unscaled bounding dimensions of any object, primitives and GLBs alike.
    *  Returns null while a GLB is still loading (its group is empty). */
   baseSizeOf(id: string): [number, number, number] | null {

@@ -658,6 +658,8 @@ describe('scene3d engine text font async re-sync', () => {
     geometryForObject: (SceneEngine.prototype as any).geometryForObject,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     syncObject: (SceneEngine.prototype as any).syncObject,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    refreshTextGeometry: (SceneEngine.prototype as any).refreshTextGeometry,
     token: 0,
     deferGeometry: false,
     lightView: false,
@@ -666,6 +668,8 @@ describe('scene3d engine text font async re-sync', () => {
   })
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const sync = (host: any, obj: PrimitiveObject) => (SceneEngine.prototype as any).syncObject.call(host, obj)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const refresh = (host: any, url: string) => (SceneEngine.prototype as any).refreshTextGeometry.call(host, url)
 
   it('shows the placeholder immediately, then swaps in the real glyph geometry once the font resolves', async () => {
     const host = makeHost() as any
@@ -721,5 +725,43 @@ describe('scene3d engine text font async re-sync', () => {
     await expect(loadFont(url)).resolves.toBeTruthy()
 
     vi.unstubAllGlobals()
+  })
+
+  // Task 5's Final-review follow-up: loadFont doesn't cache failures, so a
+  // font that failed once and later resolves is never retried by the engine
+  // itself — the Surface's font watch calling loadFont(url) again on a later
+  // effect run IS the retry, and refreshTextGeometry is what it must call to
+  // heal the mesh (the engine has no other way back in).
+  it('refreshTextGeometry heals a placeholder mesh once a previously-failed font resolves', async () => {
+    const host = makeHost() as any
+    const url = '/fonts/__engine-refresh-test.otf'
+    const obj: PrimitiveObject = { ...createPrimitive('text', []), content: { text: 'Hi', font: url } }
+
+    // First sync: the font has never been fetched, so this is a cache miss —
+    // geometryForObject draws the placeholder and kicks off its own
+    // loadFont(url), which fails (no fetch stub yet).
+    sync(host, obj)
+    const mesh = host.objectRoots.get(obj.id) as THREE.Mesh
+    const placeholderCount = mesh.geometry.getAttribute('position').count
+    await expect(loadFont(url)).rejects.toThrow() // same in-flight rejection, dedup'd by url
+    // The mesh is still the placeholder — nothing in the engine retries on its own.
+    expect(mesh.geometry.getAttribute('position').count).toBe(placeholderCount)
+
+    // Retry succeeds this time (loadFont doesn't cache the failure, so a
+    // fresh fetch attempt is made) — mirrors the Surface's font watch firing
+    // again and its loadFont(url) call landing.
+    const bytes = readFileSync(fontPath('fonts/ABCROM-Bold.otf'))
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+    })))
+    await loadFont(url)
+    vi.unstubAllGlobals()
+
+    // Bumping fontGen alone (the Surface's own success handler) wouldn't
+    // touch mesh.geometry — refreshTextGeometry is the piece that does.
+    refresh(host, url)
+    expect(mesh.geometry.getAttribute('position').count).not.toBe(placeholderCount)
   })
 })

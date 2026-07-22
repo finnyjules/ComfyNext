@@ -12,6 +12,7 @@ import {
   shapeOutline,
   type Font,
 } from '~/lib/scene3d/outlines'
+import { DEFAULT_FONT_URL } from '~/lib/scene3d/config'
 
 // vitest runs in node, so parse a real .otf off disk rather than fetching.
 const fontPath = (rel: string) => fileURLToPath(new URL(`../../public/${rel}`, import.meta.url))
@@ -49,6 +50,13 @@ describe('AVAILABLE_FONTS', () => {
     expect(new Set(AVAILABLE_FONTS.map((f) => f.url)).size).toBe(AVAILABLE_FONTS.length)
     // every listed font resolves to a file that actually parses
     for (const f of AVAILABLE_FONTS) expect(() => parseFont(f.url.slice(1))).not.toThrow()
+  })
+
+  // config.ts duplicates this URL as a literal (importing outlines.ts there
+  // would drag three + the vendored opentype module into config's import
+  // graph) — this pins the two from drifting apart silently.
+  it('matches the literal config.ts duplicates as DEFAULT_FONT_URL', () => {
+    expect(DEFAULT_FONT_URL).toBe(AVAILABLE_FONTS[0]!.url)
   })
 })
 

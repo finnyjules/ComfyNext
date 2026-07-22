@@ -694,7 +694,23 @@ const fontGen = ref(0)
 watch(() => selectedText.value?.content?.font, (url) => {
   fontError.value = false
   if (!url) return
-  loadFont(url).then(() => { fontError.value = false; fontGen.value++ }).catch(() => { fontError.value = true })
+  loadFont(url).then(() => {
+    // The selection (or its font) may have moved on while this load was in
+    // flight — a stale success must not clear today's error or refresh a
+    // mesh that isn't even showing this font anymore.
+    if (selectedText.value?.content?.font !== url) return
+    fontError.value = false
+    fontGen.value++
+    // loadFont doesn't cache failures, so a failed load never gets retried by
+    // the engine itself — this watch firing again (on an unrelated doc edit,
+    // a Retry click, whatever) IS the retry. On success, heal the mesh that's
+    // been stuck on the placeholder cube since the failure, not just the Size
+    // row (fontGen only re-measures; it doesn't touch geometry).
+    engine?.refreshTextGeometry(url)
+  }).catch(() => {
+    if (selectedText.value?.content?.font !== url) return
+    fontError.value = true
+  })
 }, { immediate: true })
 const sizeX = sizeAxis(0, sclX)
 const sizeY = sizeAxis(1, sclY)

@@ -202,6 +202,15 @@ describe('scene3d config', () => {
     const back = parseDoc(JSON.stringify(raw))
     expect('content' in back.objects[0]!).toBe(false)
   })
+
+  it('keeps the valid field of a mixed-validity content object and drops only the invalid one', () => {
+    const doc = defaultDoc()
+    doc.objects.push(createPrimitive('text', doc.objects))
+    const raw: any = JSON.parse(serializeDoc(doc))
+    raw.objects[0].content = { text: 'Hi', font: {} }
+    const back = parseDoc(JSON.stringify(raw))
+    expect((back.objects[0] as any).content).toEqual({ text: 'Hi' })
+  })
 })
 
 // ── Gradient ramp model ──────────────────────────────────────────────────────
