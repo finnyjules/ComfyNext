@@ -23,11 +23,9 @@ const { aiAvailable } = useAiStatus()
 const ready = computed(() => typeof props.vueCanvas?.agentSnapshot === 'function' && typeof props.vueCanvas?.agentPreview === 'function')
 
 // Misfire correction: auto-detect occasionally routes a phrase to the wrong
-// intent. `lastSketchPhrase` is set when the sketch pad fires (offers "edit
-// instead?"); `lastSubmitted` is the raw text of the last user submission
-// (offers "…or sketch it?" once a proposal shows up for it). Both reset at
+// intent. `lastSubmitted` is the raw text of the last user submission
+// (offers "…or sketch it?" once a proposal shows up for it). Reset at
 // the top of every new submission — see `go()`.
-const lastSketchPhrase = ref('')
 const lastSubmitted = ref('')
 // Fast-path dedupe (Task 7, spec §6 lever 1): true when `go()` fast-pathed
 // straight to `startSketch` THIS submit tick. If the classifier later resolves
@@ -64,21 +62,16 @@ const {
   // takes over (search → select → import as Image nodes).
   searchImages: (query: string) => { searchQuery.value = query; searchOpen.value = true },
   // A typed image idea → the model emits `sketch` and the pad renders 4 options.
-  // Remember the phrase so a misfire chip can offer "edit the canvas instead?"
-  // (the sketch response never sets `answer`, so this is the only trace of it).
   // Dedupe against the fast-path via the `fastPathFired` latch (not a prompt
   // equality check — the classifier's distilled prompt can legitimately differ
   // from the raw text it fast-pathed): if the fast-path already fired this
-  // submit tick, consume the latch and skip the redundant dispatch — just
-  // (re-)arm the misfire chip.
+  // submit tick, consume the latch and skip the redundant dispatch.
   sketchIdea: (prompt: string) => {
     if (fastPathFired.value) {
       fastPathFired.value = false
-      lastSketchPhrase.value = prompt
       return
     }
     if (ready.value) props.vueCanvas.startSketch?.(prompt)
-    lastSketchPhrase.value = prompt
   },
 })
 
@@ -162,17 +155,15 @@ const phrase = ref('')
 function go() {
   const p = phrase.value.trim()
   if (!p || busy.value) return
-  lastSketchPhrase.value = '' // a fresh ask supersedes any pending sketch-misfire chip
   lastSubmitted.value = p
   fastPathFired.value = false // clear the fast-path dedupe latch for this new submit
   // Fast-path (Task 7, spec §6 lever 1): a high-confidence image idea fires
   // the sketch pad IMMEDIATELY, without waiting for the LLM classifier. The
-  // classifier still runs below — its result only arms the "edit instead?"
-  // misfire chip (the sketchIdea handler consumes fastPathFired so a
-  // classifier `sketch` for the same submit doesn't double-dispatch).
+  // classifier still runs below (the sketchIdea handler consumes
+  // fastPathFired so a classifier `sketch` for the same submit doesn't
+  // double-dispatch).
   const graphEmpty = (props.vueCanvas?.getNodes?.() ?? []).length === 0
   if (ready.value && looksLikeImageIdea(p, graphEmpty)) {
-    lastSketchPhrase.value = p
     fastPathFired.value = true
     props.vueCanvas.startSketch?.(p)
   }
@@ -181,15 +172,7 @@ function go() {
 }
 const hasResult = computed(() => busy.value || reviewing.value || hasProposal.value || !!answer.value || !!error.value)
 
-// Misfire correction handlers — one-tap flips between the two routes.
-// "Sketched this · edit the canvas instead?": re-run the same idea as a
-// forced EDIT so the classifier can't route it to `sketch` again.
-function forceEdit() {
-  const p = lastSketchPhrase.value
-  if (!p) return
-  lastSketchPhrase.value = ''
-  ask(`Treat this strictly as a canvas EDIT instruction, not an image idea to sketch. Do NOT emit a sketch command: ${p}`)
-}
+// Misfire correction handler.
 // "…or sketch it?": hand the last submitted text straight to the sketch pad
 // and drop the (mis-proposed) edit.
 function sketchInstead() {
@@ -259,19 +242,12 @@ function onPromptFocus() {
       </template>
     </div>
 
-    <!-- Misfire correction chips — auto-detect guessed the wrong intent.
+    <!-- Misfire correction chip — auto-detect guessed the wrong intent.
          Dashed NEUTRAL affordance (draft/sketch token; never pastel — pastel
-         reads as AI-generated here). Rendered outside the collapsible result
-         card because a sketch response never sets `answer`, so the card
-         itself can be fully collapsed while this chip still needs to show. -->
-    <div v-if="(lastSketchPhrase && !hasProposal) || (hasProposal && lastSubmitted)" class="pointer-events-auto flex flex-wrap gap-1.5 px-1">
+         reads as AI-generated here). -->
+    <div v-if="hasProposal && lastSubmitted" class="pointer-events-auto flex flex-wrap gap-1.5 px-1">
       <button
-        v-if="lastSketchPhrase && !hasProposal" type="button"
-        class="rounded-full border border-dashed border-white/20 px-2.5 py-1 text-[10.5px] text-white/50 transition hover:border-white/40 hover:text-white/75"
-        @click="forceEdit"
-      >Sketched this · edit the canvas instead?</button>
-      <button
-        v-if="hasProposal && lastSubmitted" type="button"
+        type="button"
         class="rounded-full border border-dashed border-white/20 px-2.5 py-1 text-[10.5px] text-white/50 transition hover:border-white/40 hover:text-white/75"
         @click="sketchInstead"
       >…or sketch it?</button>
