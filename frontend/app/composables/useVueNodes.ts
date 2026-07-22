@@ -214,6 +214,9 @@ export const ARTIFACT_NODE_COMPONENTS: Record<string, string> = {
   // BatchGrid: frontend-only results deck from Smart Layout batch export —
   // no backend class_type; holds rendered output URLs in properties.
   BatchGrid: 'batch-grid',
+  // SketchPile: frontend-only sketch results deck — no backend class_type;
+  // holds the batch's /view URLs + provenance in properties.sailor_sketch.
+  SketchPile: 'sketch-pile',
 }
 
 // Reverse mapping: when a node has a dangling output of one of these types,

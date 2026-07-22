@@ -85,6 +85,7 @@ import CharacterNode from '~/components/vue-canvas/CharacterNode.vue'
 import CharacterSheetNode from '~/components/vue-canvas/CharacterSheetNode.vue'
 import CollectionNode from './CollectionNode.vue'
 import BatchGridNode from './BatchGridNode.vue'
+import SketchPileNode from './SketchPileNode.vue'
 import ReferenceNode from '~/components/vue-canvas/ReferenceNode.vue'
 import { buildFilmShotPatch, findShotTarget } from '~/lib/shotdirector/dispatch'
 import { hydrateShotSheet, addRef } from '~/lib/shotdirector/hydrate'
@@ -257,6 +258,7 @@ const nodeTypes = {
   'collection': markRaw(CollectionNode),
   'reference': markRaw(ReferenceNode),
   'batch-grid': markRaw(BatchGridNode),
+  'sketch-pile': markRaw(SketchPileNode),
 } as NodeTypesObject
 const edgeTypes = { comfy: markRaw(ComfyEdge) } as EdgeTypesObject
 const defaultEdgeOptions = { type: 'comfy' }
