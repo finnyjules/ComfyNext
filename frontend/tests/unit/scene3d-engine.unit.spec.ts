@@ -1,8 +1,22 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import * as THREE from 'three'
-import { sunDirection, geometryFor, baseSizeFor, buildGeometry, lightFor, SceneEngine } from '~/lib/scene3d/engine'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+// @ts-expect-error — three vendors this lib without type declarations.
+import opentype from 'three/examples/jsm/libs/opentype.module.js'
+import { sunDirection, geometryFor, geoKeyFor, baseSizeFor, buildGeometry, lightFor, SceneEngine } from '~/lib/scene3d/engine'
 import { PRIMITIVE_KINDS, createPrimitive, createLight, createGlbObject, type PrimitiveKind, type PrimitiveObject, type GlbObject } from '~/lib/scene3d/config'
 import { PRIMITIVE_PARAMS } from '~/lib/scene3d/primParams'
+import { loadFont, type Font } from '~/lib/scene3d/outlines'
+
+// vitest runs in node, so parse a real .otf off disk rather than fetching —
+// same approach as scene3d-outlines.unit.spec.ts.
+const fontPath = (rel: string) => fileURLToPath(new URL(`../../public/${rel}`, import.meta.url))
+function parseFont(rel: string): Font {
+  const buf = readFileSync(fontPath(rel))
+  return opentype.parse(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)) as Font
+}
+const TEST_FONT = parseFont('fonts/ABCROM-Bold.otf')
 
 describe('scene3d sun direction', () => {
   it('points straight up at 90° elevation', () => {
@@ -26,7 +40,9 @@ const sizeOf = (g: THREE.BufferGeometry): [number, number, number] => {
 describe('scene3d parametric geometry', () => {
   // The pre-parametric calls are the oracle: at default params the factory must
   // still produce exactly these meshes, so old scenes render unchanged.
-  const ORIGINALS: Record<PrimitiveKind, () => THREE.BufferGeometry> = {
+  // 'text'/'shape' are brand-new extruded kinds with no pre-parametric fixed
+  // geometry to pin against — they're covered by their own describe block below.
+  const ORIGINALS: Partial<Record<PrimitiveKind, () => THREE.BufferGeometry>> = {
     box: () => new THREE.BoxGeometry(1, 1, 1),
     sphere: () => new THREE.SphereGeometry(0.5, 48, 32),
     cylinder: () => new THREE.CylinderGeometry(0.5, 0.5, 1, 48),
@@ -44,9 +60,9 @@ describe('scene3d parametric geometry', () => {
   }
 
   it('reproduces the pre-parametric geometry at default params', () => {
-    for (const kind of PRIMITIVE_KINDS) {
+    for (const kind of Object.keys(ORIGINALS) as PrimitiveKind[]) {
       const got = geometryFor(kind)
-      const want = ORIGINALS[kind]()
+      const want = ORIGINALS[kind]!()
       expect(got.getAttribute('position').count, `${kind} vertex count`)
         .toBe(want.getAttribute('position').count)
       const [gx, gy, gz] = sizeOf(got)
@@ -261,6 +277,11 @@ describe('scene3d engine deferred geometry', () => {
   const makeHost = () => ({
     objectRoots: new Map<string, THREE.Object3D>(),
     glbTokens: new Map<string, number>(),
+    fontTokens: new Map<string, number>(),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    geometryForObject: (SceneEngine.prototype as any).geometryForObject,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    syncObject: (SceneEngine.prototype as any).syncObject,
     token: 0,
     deferGeometry: false,
     scene: { add() {}, remove() {} },
@@ -327,6 +348,11 @@ describe('scene3d engine light view clay mode', () => {
   const makeHost = () => ({
     objectRoots: new Map<string, THREE.Object3D>(),
     glbTokens: new Map<string, number>(),
+    fontTokens: new Map<string, number>(),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    geometryForObject: (SceneEngine.prototype as any).geometryForObject,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    syncObject: (SceneEngine.prototype as any).syncObject,
     token: 0,
     deferGeometry: false,
     lightView: false,
@@ -384,6 +410,11 @@ describe('scene3d engine GLB material override', () => {
   const makeHost = () => ({
     objectRoots: new Map<string, THREE.Object3D>(),
     glbTokens: new Map<string, number>(),
+    fontTokens: new Map<string, number>(),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    geometryForObject: (SceneEngine.prototype as any).geometryForObject,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    syncObject: (SceneEngine.prototype as any).syncObject,
     token: 0,
     deferGeometry: false,
     lightView: false,
@@ -502,5 +533,157 @@ describe('scene3d light factory', () => {
     const l = lightFor(o) as THREE.PointLight
     expect(l.color.getHexString()).toBe('ff0000')
     expect(l.intensity).toBe(3.5)
+  })
+})
+
+describe('scene3d text/shape geometry', () => {
+  it('extrudes real glyph geometry from a resolved font, matching the depth param', () => {
+    const geo = geometryFor('text', { depth: 0.4, bevel: 0, size: 1, letterSpacing: 0 }, { text: 'A', font: '/fonts/ABCROM-Bold.otf' }, TEST_FONT)
+    expect(geo.getAttribute('position').count).toBeGreaterThan(0)
+    const [, , d] = sizeOf(geo)
+    expect(d).toBeCloseTo(0.4, 2)
+  })
+
+  it('falls back to the small placeholder box without a resolved font', () => {
+    const withFont = geometryFor('text', { depth: 0.4 }, { text: 'A', font: '/fonts/ABCROM-Bold.otf' }, TEST_FONT)
+    const noFont = geometryFor('text', { depth: 0.4 }, { text: 'A', font: '/fonts/ABCROM-Bold.otf' }, null)
+    expect(noFont.getAttribute('position').count).toBeGreaterThan(0)
+    // The placeholder is a fixed small cube, not the real (much larger, and
+    // depth-param-driven) extruded glyph geometry.
+    expect(noFont.getAttribute('position').count).not.toBe(withFont.getAttribute('position').count)
+    const [w, h, d] = sizeOf(noFont)
+    expect(w).toBeCloseTo(h, 5)
+    expect(d).toBeCloseTo(w, 5) // a cube, not shaped by the depth param
+    expect(d).not.toBeCloseTo(0.4, 2)
+  })
+
+  it('also falls back to the placeholder for empty text, even with a resolved font', () => {
+    const geo = geometryFor('text', {}, { text: '', font: '/fonts/ABCROM-Bold.otf' }, TEST_FONT)
+    expect(geo.getAttribute('position').count).toBeGreaterThan(0) // still a valid, buildable mesh
+  })
+
+  it('extrudes real polygon geometry for shape, matching the depth param', () => {
+    const geo = geometryFor('shape', { depth: 0.35, bevel: 0, sides: 6, roundness: 0, star: 0 })
+    expect(geo.getAttribute('position').count).toBeGreaterThan(0)
+    const [, , d] = sizeOf(geo)
+    expect(d).toBeCloseTo(0.35, 2)
+  })
+})
+
+describe('scene3d geoKeyFor', () => {
+  it('changes when content.text changes', () => {
+    const obj = createPrimitive('text', [])
+    const a = geoKeyFor(obj, 'smooth')
+    const b = geoKeyFor({ ...obj, content: { ...obj.content, text: 'Something else' } }, 'smooth')
+    expect(b).not.toBe(a)
+  })
+
+  it('changes when content.font changes', () => {
+    const obj = createPrimitive('text', [])
+    const a = geoKeyFor(obj, 'smooth')
+    const b = geoKeyFor({ ...obj, content: { ...obj.content, font: '/fonts/NeueMontreal/PPNeueMontreal-Regular.otf' } }, 'smooth')
+    expect(b).not.toBe(a)
+  })
+
+  it('still changes on a geometry param edit, same as every other kind', () => {
+    const obj = createPrimitive('text', [])
+    const a = geoKeyFor(obj, 'smooth')
+    const b = geoKeyFor({ ...obj, params: { ...obj.params, depth: 0.9 } }, 'smooth')
+    expect(b).not.toBe(a)
+  })
+
+  it('is unchanged by fields unrelated to geometry (name, position, visibility)', () => {
+    const obj = createPrimitive('text', [])
+    const a = geoKeyFor(obj, 'smooth')
+    const b = geoKeyFor({ ...obj, name: 'Renamed', position: [1, 2, 3], visible: false }, 'smooth')
+    expect(b).toBe(a)
+  })
+
+  it('is unaffected by content for a kind that never carries any (no gratuitous invalidation)', () => {
+    const box = createPrimitive('box', [])
+    const a = geoKeyFor(box, 'smooth')
+    const b = geoKeyFor({ ...box }, 'smooth')
+    expect(b).toBe(a)
+    expect(box.content).toBeUndefined()
+  })
+})
+
+// The font-load path mirrors the GLB path's placeholder/token/re-sync
+// machinery exactly (see the GLB material-override describe block above),
+// but for `text` the async result must land as mesh.geometry itself, not a
+// grafted child — so the round trip goes through syncObject end-to-end
+// rather than a pure function.
+describe('scene3d engine text font async re-sync', () => {
+  const makeHost = () => ({
+    objectRoots: new Map<string, THREE.Object3D>(),
+    glbTokens: new Map<string, number>(),
+    fontTokens: new Map<string, number>(),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    geometryForObject: (SceneEngine.prototype as any).geometryForObject,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    syncObject: (SceneEngine.prototype as any).syncObject,
+    token: 0,
+    deferGeometry: false,
+    lightView: false,
+    clay: new THREE.MeshStandardMaterial(),
+    scene: { add() {}, remove() {} },
+  })
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const sync = (host: any, obj: PrimitiveObject) => (SceneEngine.prototype as any).syncObject.call(host, obj)
+
+  it('shows the placeholder immediately, then swaps in the real glyph geometry once the font resolves', async () => {
+    const host = makeHost() as any
+    const bytes = readFileSync(fontPath('fonts/ABCROM-Bold.otf'))
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    // A URL unique to this test so it never hits another spec's cached entry
+    // (outlines.ts's font cache is module-level and persists for the run).
+    const url = '/fonts/__engine-resync-test-a.otf'
+    const obj: PrimitiveObject = { ...createPrimitive('text', []), content: { text: 'Hi', font: url } }
+
+    sync(host, obj)
+    const mesh = host.objectRoots.get(obj.id) as THREE.Mesh
+    const placeholderCount = mesh.geometry.getAttribute('position').count
+    expect(placeholderCount).toBeGreaterThan(0)
+
+    // Awaiting the SAME url resolves the identical in-flight promise the
+    // engine's own loadFont(url) call kicked off (loadFont dedupes by url) —
+    // by the time it settles here, the engine's own .then (attached first)
+    // has already run and rebuilt the mesh's geometry in place.
+    await loadFont(url)
+
+    expect(mesh.geometry.getAttribute('position').count).not.toBe(placeholderCount)
+    expect(host.fontTokens.has(obj.id)).toBe(false) // resolved: no load left in flight
+
+    vi.unstubAllGlobals()
+  })
+
+  it('drops a stale font resolution when the object is removed before it resolves', async () => {
+    const host = makeHost() as any
+    const bytes = readFileSync(fontPath('fonts/ABCROM-Bold.otf'))
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const url = '/fonts/__engine-resync-test-b.otf'
+    const obj: PrimitiveObject = { ...createPrimitive('text', []), content: { text: 'Hi', font: url } }
+
+    sync(host, obj)
+    // Mirrors syncFromDoc's teardown-on-removal cleanup.
+    host.objectRoots.delete(obj.id)
+    host.fontTokens.delete(obj.id)
+
+    // Must not throw despite the root being gone by the time the load settles.
+    await expect(loadFont(url)).resolves.toBeTruthy()
+
+    vi.unstubAllGlobals()
   })
 })

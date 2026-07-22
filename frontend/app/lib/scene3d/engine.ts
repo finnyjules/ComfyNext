@@ -11,9 +11,10 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js'
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js'
 import { roundedLatheGeometry, roundedPolyGeometry, roundedHullGeometry } from '~/lib/scene3d/roundedGeometry'
-import type { SceneDoc, SceneObject, SceneMaterial, Vec3, LightingPreset, PrimitiveKind, PrimitiveObject, GlbObject, LightObject } from './config'
-import { LIGHT_DEFAULTS } from './config'
+import type { SceneDoc, SceneObject, SceneMaterial, Vec3, LightingPreset, PrimitiveKind, PrimitiveObject, PrimitiveContent, GlbObject, LightObject } from './config'
+import { LIGHT_DEFAULTS, DEFAULT_FONT_URL } from './config'
 import { loadGlb } from './glb'
+import { loadFont, fontCacheGet, textOutline, shapeOutline, type Font } from '~/lib/scene3d/outlines'
 import { materialFor, updateMaterial, disposeMaterial } from './materials'
 import { applyModifiers } from '~/lib/scene3d/modifiers'
 import { PRIMITIVE_PARAMS, paramValue, MODIFIER_SPECS, modifierValue } from '~/lib/scene3d/primParams'
@@ -27,10 +28,58 @@ export function sunDirection(azimuthDeg: number, elevationDeg: number): Vec3 {
   return [Math.cos(el) * Math.sin(az), Math.sin(el), Math.cos(el) * Math.cos(az)]
 }
 
+/** Side of the small placeholder cube stood in for `text` while its font is
+ *  still loading (or when the content resolves to no shapes at all, e.g. an
+ *  empty string). Mirrors the GLB path's empty-group placeholder — a visible,
+ *  disposable stand-in the async load replaces once it resolves. */
+const TEXT_PLACEHOLDER_SIZE = 0.3
+function extrudePlaceholderGeometry(): THREE.BufferGeometry {
+  return new THREE.BoxGeometry(TEXT_PLACEHOLDER_SIZE, TEXT_PLACEHOLDER_SIZE, TEXT_PLACEHOLDER_SIZE)
+}
+
+// `shape`'s params carry no curveSegments knob (its profile is a handful of
+// large arcs, not glyph curves) — this is three's own ExtrudeGeometry default,
+// kept as a named constant rather than relying on the implicit default.
+const SHAPE_CURVE_SEGMENTS = 12
+
+/** Extrude a 2D outline into the shared `text`/`shape` solid: depth + optional
+ *  bevel, then recentred on its own bounding box like every other primitive. */
+function extrudeShapes(
+  shapes: THREE.Shape[],
+  depth: number,
+  bevel: number,
+  bevelSegments: number,
+  curveSegments: number,
+): THREE.BufferGeometry {
+  const geo = new THREE.ExtrudeGeometry(shapes, {
+    depth,
+    bevelEnabled: bevel > 0,
+    bevelThickness: bevel,
+    bevelSize: bevel,
+    bevelSegments,
+    curveSegments,
+  })
+  geo.computeBoundingBox()
+  const b = geo.boundingBox
+  if (b) geo.translate(-(b.min.x + b.max.x) / 2, -(b.min.y + b.max.y) / 2, -(b.min.z + b.max.z) / 2)
+  return geo
+}
+
 /** Build a primitive's geometry from its parameters. Defaults reproduce the
  *  pre-parametric geometry exactly — the engine unit test pins that against the
- *  original three.js calls. */
-export function geometryFor(kind: PrimitiveKind, params?: Record<string, number>): THREE.BufferGeometry {
+ *  original three.js calls.
+ *
+ *  `text` additionally needs a resolved `font` — this stays synchronous, so the
+ *  caller (syncObject) resolves the font via outlines.ts's sync cache peek and
+ *  passes it in; a cache miss (still loading) or empty content falls back to
+ *  the placeholder cube. `shape` needs no external resource and always builds
+ *  its real geometry. */
+export function geometryFor(
+  kind: PrimitiveKind,
+  params?: Record<string, number>,
+  content?: PrimitiveContent,
+  font?: Font | null,
+): THREE.BufferGeometry {
   const p = (key: string): number => paramValue(kind, params, key)
   const rad = (deg: number): number => (deg * Math.PI) / 180
   switch (kind) {
@@ -105,6 +154,16 @@ export function geometryFor(kind: PrimitiveKind, params?: Record<string, number>
       return new THREE.TorusKnotGeometry(0.4, p('tube'), p('detail'), Math.max(3, Math.round(p('detail') / 8)), p('p'), p('q'))
     case 'ring':
       return new THREE.RingGeometry(p('innerRadius'), 0.5, p('detail'), 1, 0, rad(p('arc'))).rotateX(-Math.PI / 2)
+    case 'text': {
+      const shapes = font ? textOutline(content?.text ?? '', font, { size: p('size'), letterSpacing: p('letterSpacing') }) : []
+      if (!shapes.length) return extrudePlaceholderGeometry()
+      return extrudeShapes(shapes, p('depth'), p('bevel'), p('bevelSegments'), p('curveSegments'))
+    }
+    case 'shape': {
+      const shapes = shapeOutline(p('sides'), p('roundness'), p('star'))
+      if (!shapes.length) return extrudePlaceholderGeometry()
+      return extrudeShapes(shapes, p('depth'), p('bevel'), p('bevelSegments'), SHAPE_CURVE_SEGMENTS)
+    }
   }
 }
 
@@ -164,12 +223,15 @@ export function baseVertexCountFor(
 }
 
 /** Stable geometry signature: kind + every declared param in table order +
- *  every modifier in spec order + the shading variant. Changing any of them
- *  swaps mesh.geometry in place. */
-function geoKeyFor(obj: PrimitiveObject, variant: 'smooth' | 'facet'): string {
+ *  every modifier in spec order + the non-geometric content bag (text/font,
+ *  `text`-only — always absent for every other kind) + the shading variant.
+ *  Changing any of them swaps mesh.geometry in place. Exported so it's unit
+ *  testable directly, independent of a live SceneEngine/GL context. */
+export function geoKeyFor(obj: PrimitiveObject, variant: 'smooth' | 'facet'): string {
   const vals = PRIMITIVE_PARAMS[obj.primitive].map((s) => paramValue(obj.primitive, obj.params, s.key))
   const mods = MODIFIER_SPECS.map((s) => modifierValue(obj.modifiers, s.key))
-  return `${obj.primitive}|${vals.join(',')}|${mods.join(',')}|${variant}`
+  const content = obj.content ? JSON.stringify(obj.content) : ''
+  return `${obj.primitive}|${vals.join(',')}|${mods.join(',')}|${variant}|${content}`
 }
 
 /** Bake each triangle's own bounding extent into per-vertex attributes
@@ -206,8 +268,10 @@ export function buildGeometry(
   params: Record<string, number> | undefined,
   modifiers: Record<string, number> | undefined,
   variant: 'smooth' | 'facet',
+  content?: PrimitiveContent,
+  font?: Font | null,
 ): THREE.BufferGeometry {
-  const base = geometryFor(kind, params)
+  const base = geometryFor(kind, params, content, font)
   // applyModifiers returns the SAME object when nothing is set (and never
   // disposes its input), so only free the base when it produced a new one.
   const shaped = applyModifiers(base, modifiers)
@@ -291,6 +355,7 @@ export class SceneEngine {
   private ambient: THREE.AmbientLight
   private envTarget: THREE.WebGLRenderTarget | null = null
   private glbTokens = new Map<string, number>() // id → load generation (drop stale async loads)
+  private fontTokens = new Map<string, number>() // id → font-load generation, same drop-stale contract as glbTokens
   private token = 0
   /** While true, syncObject skips geometry rebuilds for existing meshes (the
    *  stored geoKey is deliberately left stale, so the very next sync with the
@@ -401,6 +466,7 @@ export class SceneEngine {
         disposeTree(root)
         this.objectRoots.delete(id)
         this.glbTokens.delete(id)
+        this.fontTokens.delete(id)
       }
     }
     for (const obj of doc.objects) this.syncObject(obj)
@@ -422,6 +488,41 @@ export class SceneEngine {
     this.camera.updateProjectionMatrix()
   }
 
+  /** Resolves a primitive's geometry, handling `text`'s async font dependency.
+   *  A cache hit builds the real geometry directly. A miss builds the
+   *  placeholder cube AND kicks off `loadFont`, guarded by a per-object token
+   *  (mirrors `glbTokens`'s "placeholder until load, re-sync on completion,
+   *  drop stale loads" contract exactly): on resolution, a stale check drops
+   *  superseded/removed/retyped objects, then the object's geoKey is cleared
+   *  so the next sync rebuilds even though params/content didn't change —
+   *  geoKey only tracks the DOC's fields, not font-load state — and a full
+   *  syncObject re-applies against the latest stamped object state. */
+  private geometryForObject(obj: PrimitiveObject, variant: 'smooth' | 'facet'): THREE.BufferGeometry {
+    let font: Font | null = null
+    if (obj.primitive === 'text') {
+      const url = obj.content?.font ?? DEFAULT_FONT_URL
+      font = fontCacheGet(url)
+      if (font) {
+        // Whatever load was previously in flight for this object no longer
+        // matters — drop its token so a late resolution can't force a
+        // spurious rebuild against a font this object no longer wants.
+        this.fontTokens.delete(obj.id)
+      } else {
+        const tok = ++this.token
+        this.fontTokens.set(obj.id, tok)
+        loadFont(url).then(() => {
+          if (this.fontTokens.get(obj.id) !== tok) return // stale
+          const root = this.objectRoots.get(obj.id)
+          if (!root) return // removed while loading
+          const latest = (root.userData.primObj as PrimitiveObject | undefined) ?? obj
+          root.userData.geoKey = undefined
+          this.syncObject(latest)
+        }).catch(() => { /* keep the placeholder; Task 5 surfaces the error state */ })
+      }
+    }
+    return buildGeometry(obj.primitive, obj.params, obj.modifiers, variant, obj.content, font)
+  }
+
   private syncObject(obj: SceneObject): void {
     // Source signature: if a doc mutation retyped this id in place (kind,
     // primitive shape, or GLB url), tear down the old asset and rebuild —
@@ -435,11 +536,12 @@ export class SceneEngine {
       disposeTree(root)
       this.objectRoots.delete(obj.id)
       this.glbTokens.delete(obj.id)
+      this.fontTokens.delete(obj.id)
       root = undefined
     }
     if (!root) {
       if (obj.kind === 'primitive') {
-        const geo = buildGeometry(obj.primitive, obj.params, obj.modifiers, 'smooth')
+        const geo = this.geometryForObject(obj, 'smooth')
         const mat = materialFor(obj.material, geo)
         // Flat shapes must be visible from both sides (plane was previously
         // invisible from below; ring inherits the fix) — for every material type.
@@ -495,6 +597,11 @@ export class SceneEngine {
     root.scale.set(...obj.scale)
     if (obj.kind === 'primitive') {
       const mesh = root as THREE.Mesh
+      // Stamped every sync so a font load that resolves after later syncs
+      // already ran (see geometryForObject above) can re-apply against the
+      // LATEST object state rather than the one captured when the load
+      // started — same trick as the GLB path's root.userData.glbObj.
+      mesh.userData.primObj = obj
       // Faceted/prismatic gradients pair their per-facet ramps with flat-shaded
       // geometry (non-indexed + per-face normals) plus per-face extent
       // attributes (aFaceMin/aFaceMax — the facet shader's sampling range);
@@ -510,7 +617,7 @@ export class SceneEngine {
       // stale is what makes the deferred rebuild happen on release.
       if (mesh.userData.geoKey !== geoKey && !this.deferGeometry) {
         mesh.geometry.dispose()
-        mesh.geometry = buildGeometry(obj.primitive, obj.params, obj.modifiers, variant)
+        mesh.geometry = this.geometryForObject(obj, variant)
         mesh.userData.geoKey = geoKey
       }
       // The real material is tracked separately from mesh.material — in Light
@@ -630,10 +737,11 @@ export class SceneEngine {
   }
 
   dispose(): void {
-    // Invalidate pending GLB loads first: their .then() checks glbTokens, so
-    // clearing makes any in-flight load bail instead of attaching to a
-    // disposed root.
+    // Invalidate pending GLB/font loads first: their .then() checks these
+    // token maps, so clearing makes any in-flight load bail instead of
+    // attaching to a disposed root.
     this.glbTokens.clear()
+    this.fontTokens.clear()
     for (const root of this.objectRoots.values()) disposeTree(root)
     this.objectRoots.clear()
     this.grid.geometry.dispose()
