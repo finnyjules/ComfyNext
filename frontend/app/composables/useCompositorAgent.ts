@@ -158,7 +158,7 @@ export function useCompositorAgent(opts: { getState: () => CompositorState; setS
       const ctx = canvas.getContext('2d')
       if (!ctx) return null
       const items = (state.layers as LocalLayer[]).map(l => ({ type: 'local' as const, key: `l:${l.id}`, layer: l }))
-      paintLayerStack(ctx, W, H, items, state.layers as LocalLayer[], undefined, undefined, undefined, undefined, state.background)
+      paintLayerStack(ctx, W, H, items, state.layers as LocalLayer[], undefined, undefined, undefined, undefined, state.background, undefined, state.postEffects)
       return canvas.toDataURL('image/png')
     } catch { return null }
   }

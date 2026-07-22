@@ -12,10 +12,13 @@ import type { LocalLayer, LocalLayerKind, Paint, TextLayer } from '~/composables
 import type { Command, CommandResult, CommandSpec, SurfaceSnapshot } from '~/lib/agent/commandSurface'
 import { contrastRatio, parseColor, type LayoutIssue } from '~/lib/agent/verify'
 import { SWISS_LIMITS } from '~/lib/agent/designPrinciples'
+import { defaultPostEffect, POST_EFFECT_DEFAULTS, POST_FX_PARAM_CLAMP, type PostEffect } from '~/lib/compositor/postEffects'
 
 export interface CompositorState {
   layers: LocalLayer[]
   background?: Paint
+  /** Doc-level post-processing chain (whole-frame grade/bloom/grain/…). */
+  postEffects?: PostEffect[]
   /** Active brand kit's named palette — context only (compositor paints are
    *  literal hexes; the model translates "viridian" → its hex). */
   brandPalette?: { name: string; hex: string }[]
@@ -43,6 +46,27 @@ function paintLabel(p: Paint | undefined): string {
 const clamp = (v: unknown, lo: number, hi: number, fallback: number): number => {
   const n = typeof v === 'number' ? v : Number(v)
   return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : fallback
+}
+
+/** Merge model-provided effect params over current/defaults with clamps; null = invalid type. */
+function sanitizePostEffect(raw: unknown, cur?: PostEffect): PostEffect | null {
+  const r = (raw ?? {}) as Record<string, unknown>
+  const type = r.type as PostEffect['type']
+  if (!type || !(type in POST_EFFECT_DEFAULTS)) return null
+  const base: Record<string, unknown> = { ...defaultPostEffect(type), ...(cur ? clone(cur) : {}) }
+  const clamps = POST_FX_PARAM_CLAMP[type] ?? {}
+  for (const [k, v] of Object.entries(r)) {
+    if (k === 'type' || k === 'visible') continue
+    if (k in clamps && typeof v === 'number' && Number.isFinite(v)) {
+      const [lo, hi] = clamps[k]!
+      base[k] = Math.min(hi, Math.max(lo, v))
+    } else if (type === 'duotone' && (k === 'shadows' || k === 'highlights')
+      && typeof v === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(v)) {
+      base[k] = v
+    }
+  }
+  base.visible = true
+  return base as unknown as PostEffect
 }
 
 /** Which field carries the FILL paint for each layer kind (null = no fill). */
@@ -83,6 +107,8 @@ const COMPOSITOR_COMMANDS: CommandSpec[] = [
   { op: 'generateImage', hint: 'Generate a PHOTOGRAPHIC/illustrative AI image and add it as a layer — "generate a picture of a dog", "add a city photo". Not for gradients/colours (use setBackground/setFill). args: { prompt (vivid), aspectRatio? }.' },
   { op: 'removeImageBackground', hint: 'Cut out the subject of an existing IMAGE layer (transparent background). target = image layer id.' },
   { op: 'editImage', hint: 'Edit an existing IMAGE layer from an instruction (Flux Kontext) — "make it brighter", "change the sky". target = image layer id; args: { instruction }.' },
+  { op: 'setLayerEffect', hint: 'Add/update/remove a post-processing effect ON ONE LAYER. target = layer id; args: { effect: { type: "adjust"|"bloom"|"grain"|"vignette"|"duotone", ...params }, remove? }. adjust (colour grade): brightness/contrast/saturation 0..2 (1 = neutral), hue -180..180. bloom (glow from bright areas): threshold 0..1, radius ~0.02, intensity 0..2. grain (film noise): amount 0..1, size 1..8. vignette (darkened edges): amount/size/softness 0..1. duotone (two-colour map): shadows "#RRGGBB", highlights "#RRGGBB", mix 0..1. Omitted params keep their current value. remove:true deletes that effect type. This is what "make the logo glow", "desaturate the photo" mean.' },
+  { op: 'setPostEffect', hint: 'Add/update/remove a post-processing effect on the WHOLE FRAME — applied after all layers composite. Same args and effect vocabulary as setLayerEffect (no target). This is what "make the whole thing warmer", "add film grain", "give it a vignette", "cinematic colour grade" mean.' },
 ]
 
 function findLayer(s: CompositorState, id?: string): LocalLayer | undefined {
@@ -97,6 +123,7 @@ export function describeCompositor(state: CompositorState): SurfaceSnapshot {
     const cur: Record<string, unknown> = { x: l.x, y: l.y, opacity: l.opacity }
     if (l.rotation) cur.rotation = l.rotation
     if (l.blend && l.blend !== 'normal') cur.blend = l.blend
+    if (l.effects?.length) cur.effects = l.effects.filter(e => e.visible).map(e => e.type).join(', ')
     if (l.kind === 'text') {
       cur.text = l.text; cur.fontFamily = l.fontFamily; cur.fontWeight = l.fontWeight
       cur.fontSize = l.fontSize; cur.color = paintLabel(l.color); cur.align = l.align; cur.lineHeight = l.lineHeight
@@ -116,6 +143,7 @@ export function describeCompositor(state: CompositorState): SurfaceSnapshot {
     type: 'document',
     current: {
       background: paintLabel(state.background),
+      postEffects: state.postEffects?.filter(e => e.visible).map(e => e.type).join(', ') || 'none',
       // The frame is a unit square in normalized coords: x/y/sizes are 0..1.
       coordinateSpace: 'normalized 0..1 (0,0 = top-left, 0.5,0.5 = centre)',
       ...(state.brandPalette?.length
@@ -141,7 +169,7 @@ function defaultLayer(kind: LocalLayerKind, id: string): Record<string, unknown>
  *  Pure — the input is never mutated. */
 export function applyCompositorCommand(input: CompositorState, cmd: Command): CommandResult<CompositorState> {
   const state = clone(input)
-  const snapshot = (): Command => ({ op: 'restore', args: { layers: clone(input.layers), background: clone(input.background) } })
+  const snapshot = (): Command => ({ op: 'restore', args: { layers: clone(input.layers), background: clone(input.background), postEffects: clone(input.postEffects) } })
 
   switch (cmd.op) {
     case 'setLayerProps': {
@@ -257,10 +285,36 @@ export function applyCompositorCommand(input: CompositorState, cmd: Command): Co
       ;(layer as unknown as Record<string, unknown>).filename = filename
       return { ok: true, template: state, inverse: snapshot() }
     }
+    case 'setLayerEffect': {
+      const layer = findLayer(state, cmd.target)
+      if (!layer) return { ok: false, reason: 'invalid', detail: `no layer '${String(cmd.target)}'` }
+      const raw = cmd.args?.effect as Record<string, unknown> | undefined
+      const type = raw?.type as string | undefined
+      if (!type || !(type in POST_EFFECT_DEFAULTS)) return { ok: false, reason: 'invalid', detail: `effect.type must be one of ${Object.keys(POST_EFFECT_DEFAULTS).join('|')}` }
+      const others = (layer.effects ?? []).filter(e => e.type !== type)
+      if (cmd.args?.remove === true) { layer.effects = others; return { ok: true, template: state, inverse: snapshot() } }
+      const cur = (layer.effects ?? []).find(e => e.type === type) as PostEffect | undefined
+      const next = sanitizePostEffect(raw, cur)
+      if (!next) return { ok: false, reason: 'invalid', detail: 'invalid effect' }
+      layer.effects = [...others, next]
+      return { ok: true, template: state, inverse: snapshot() }
+    }
+    case 'setPostEffect': {
+      const raw = cmd.args?.effect as Record<string, unknown> | undefined
+      const type = raw?.type as string | undefined
+      if (!type || !(type in POST_EFFECT_DEFAULTS)) return { ok: false, reason: 'invalid', detail: `effect.type must be one of ${Object.keys(POST_EFFECT_DEFAULTS).join('|')}` }
+      const others = (state.postEffects ?? []).filter(e => e.type !== type)
+      if (cmd.args?.remove === true) return { ok: true, template: { ...state, postEffects: others }, inverse: snapshot() }
+      const cur = (state.postEffects ?? []).find(e => e.type === type)
+      const next = sanitizePostEffect(raw, cur)
+      if (!next) return { ok: false, reason: 'invalid', detail: 'invalid effect' }
+      return { ok: true, template: { ...state, postEffects: [...others, next] }, inverse: snapshot() }
+    }
     case 'restore': {
       const next: CompositorState = { ...state }
       if ('layers' in (cmd.args ?? {})) next.layers = clone(cmd.args!.layers as LocalLayer[])
       if ('background' in (cmd.args ?? {})) next.background = clone(cmd.args!.background as Paint | undefined)
+      if ('postEffects' in (cmd.args ?? {})) next.postEffects = clone(cmd.args!.postEffects as PostEffect[] | undefined)
       return { ok: true, template: next, inverse: snapshot() }
     }
     default:

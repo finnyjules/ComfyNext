@@ -365,9 +365,14 @@ const {
   getState: () => ({
     layers: localLayers.value,
     background: background.value,
+    postEffects: postEffects.value,
     brandPalette: brandSwatches(projectBrand?.activeKit.value),
   }),
-  setState: (s) => { commit(s.layers); if (s.background !== background.value) setBackground(s.background) },
+  setState: (s) => {
+    commit(s.layers)
+    if (s.background !== background.value) setBackground(s.background)
+    if (JSON.stringify(s.postEffects ?? []) !== JSON.stringify(postEffects.value)) setPostEffects(s.postEffects ?? [])
+  },
   apiKey: () => getLocalSetting('Sailor.AI.AnthropicApiKey') ?? '',
   dims: () => ({ w: canvasDisplay.w, h: canvasDisplay.h }),
 })

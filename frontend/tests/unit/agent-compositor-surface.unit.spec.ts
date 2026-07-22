@@ -167,3 +167,60 @@ describe('hardening', () => {
     expect((r.template.layers[1] as { radius: number }).radius).toBe(0.05)
   })
 })
+
+describe('post-processing effect commands', () => {
+  const baseState = (): CompositorState => ({
+    layers: [{ id: 't1', kind: 'text', x: 0.5, y: 0.5, rotation: 0, opacity: 1, text: 'Hi', fontFamily: 'Inter', fontWeight: 400, fontSize: 0.1, color: '#fff', align: 'center', lineHeight: 1.1, strokeColor: '', strokeWidth: 0 }] as LocalLayer[],
+  })
+
+  it('setLayerEffect adds a bloom with clamped params', () => {
+    const r = applyCompositorCommand(baseState(), {
+      op: 'setLayerEffect', target: 't1',
+      args: { effect: { type: 'bloom', intensity: 99, threshold: -3 } },
+    })
+    expect(r.ok).toBe(true); if (!r.ok) return
+    const fx = (r.template.layers[0] as any).effects.find((e: any) => e.type === 'bloom')
+    expect(fx.intensity).toBe(2)   // clamped to POST_FX_PARAM_CLAMP
+    expect(fx.threshold).toBe(0)
+    expect(fx.radius).toBe(0.02)   // default filled in
+    expect(fx.visible).toBe(true)
+  })
+
+  it('setLayerEffect merges onto an existing effect and remove deletes it', () => {
+    const s = baseState()
+    ;(s.layers[0] as any).effects = [{ type: 'adjust', brightness: 1.4, contrast: 1, saturation: 1, hue: 0, visible: true }]
+    const r1 = applyCompositorCommand(s, { op: 'setLayerEffect', target: 't1', args: { effect: { type: 'adjust', hue: 30 } } })
+    expect(r1.ok).toBe(true); if (!r1.ok) return
+    const merged = (r1.template.layers[0] as any).effects.find((e: any) => e.type === 'adjust')
+    expect(merged.brightness).toBe(1.4) // untouched param survives
+    expect(merged.hue).toBe(30)
+    const r2 = applyCompositorCommand(r1.template, { op: 'setLayerEffect', target: 't1', args: { effect: { type: 'adjust' }, remove: true } })
+    expect(r2.ok).toBe(true); if (!r2.ok) return
+    expect((r2.template.layers[0] as any).effects.some((e: any) => e.type === 'adjust')).toBe(false)
+  })
+
+  it('setLayerEffect rejects unknown types and missing layers', () => {
+    expect(applyCompositorCommand(baseState(), { op: 'setLayerEffect', target: 't1', args: { effect: { type: 'sparkle' } } }).ok).toBe(false)
+    expect(applyCompositorCommand(baseState(), { op: 'setLayerEffect', target: 'nope', args: { effect: { type: 'bloom' } } }).ok).toBe(false)
+  })
+
+  it('setPostEffect writes the doc-level chain and restore round-trips it', () => {
+    const r = applyCompositorCommand(baseState(), { op: 'setPostEffect', args: { effect: { type: 'grain', amount: 0.5 } } })
+    expect(r.ok).toBe(true); if (!r.ok) return
+    expect((r.template as any).postEffects[0]).toMatchObject({ type: 'grain', amount: 0.5 })
+    // the inverse restores the (empty) original doc chain
+    const undone = applyCompositorCommand(r.template, r.inverse)
+    expect(undone.ok).toBe(true); if (!undone.ok) return
+    expect(((undone.template as any).postEffects ?? []).length).toBe(0)
+  })
+
+  it('duotone colours accept hex strings only', () => {
+    const r = applyCompositorCommand(baseState(), {
+      op: 'setPostEffect', args: { effect: { type: 'duotone', shadows: '#102030', highlights: 'javascript:alert(1)' } },
+    })
+    expect(r.ok).toBe(true); if (!r.ok) return
+    const d = (r.template as any).postEffects.find((e: any) => e.type === 'duotone')
+    expect(d.shadows).toBe('#102030')
+    expect(d.highlights).toBe('#ffe8d6') // invalid input → default kept
+  })
+})
