@@ -159,6 +159,28 @@ BACKUP_MIN_INTERVAL_MS = 10 * 60 * 1000
 BACKUP_KEEP = 20
 
 
+class StaleRollingWriteError(Exception):
+    """Invariant: a rolling-current write must carry a doc savedAt >= the stored
+    one — a stale window may not clobber a fresher save. Missing stamps on
+    either side pass (legacy docs must keep saving)."""
+
+    def __init__(self, stored_saved_at: int):
+        super().__init__(f"stale rolling write: stored savedAt {stored_saved_at} is newer")
+        self.stored_saved_at = stored_saved_at
+
+
+def _doc_saved_at(version: dict) -> int | None:
+    """The client recency stamp at version["workflow"]["savedAt"], or None."""
+    workflow = version.get("workflow") if isinstance(version, dict) else None
+    if not isinstance(workflow, dict):
+        return None
+    saved_at = workflow.get("savedAt")
+    # bool is a subclass of int — exclude it explicitly.
+    if isinstance(saved_at, bool) or not isinstance(saved_at, (int, float)):
+        return None
+    return int(saved_at)
+
+
 def _archive_rolling_version(root: str, uuid: str, project: dict, *, now: int) -> None:
     """Archive the current rolling body into the project's index (mutated in
     place; caller persists). Best-effort: any failure skips the backup, never
@@ -208,6 +230,11 @@ def write_version(root: str, uuid: str, version: dict, *, now: int = 0) -> dict:
     if not _is_safe_id(vid):
         raise ValueError("invalid version id")
     if vid == ROLLING_VERSION_ID:
+        old = _read_json(_version_file(root, uuid, ROLLING_VERSION_ID))
+        old_saved_at = _doc_saved_at(old) if isinstance(old, dict) else None
+        new_saved_at = _doc_saved_at(version)
+        if old_saved_at is not None and new_saved_at is not None and new_saved_at < old_saved_at:
+            raise StaleRollingWriteError(old_saved_at)
         _archive_rolling_version(root, uuid, project, now=now)
     _atomic_write_json(_version_file(root, uuid, vid), version)
     meta = {
@@ -479,6 +506,8 @@ try:
         version.setdefault("parentId", None)
         try:
             write_version(_root(), uid, version, now=now)
+        except StaleRollingWriteError as e:
+            return web.json_response({"error": "stale", "storedSavedAt": e.stored_saved_at}, status=409)
         except (KeyError, ValueError) as e:
             return web.json_response({"error": str(e)}, status=400)
         return web.json_response({"id": version["id"]})

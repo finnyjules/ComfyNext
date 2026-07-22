@@ -214,6 +214,91 @@ def test_named_versions_never_backed_up_or_pruned(root):
 
 
 # --------------------------------------------------------------------------- #
+# Rolling-version stale-write guard (optimistic concurrency on savedAt)
+# --------------------------------------------------------------------------- #
+
+def _write_current_stamped(root, uuid, created_at, saved_at, marker="x"):
+    """One client autosave of 'current' whose doc carries a savedAt stamp."""
+    P.write_version(root, uuid, {
+        "id": "current", "name": "Proj", "createdAt": created_at,
+        "workflow": {"nodes": [marker], "savedAt": saved_at},
+    }, now=created_at)
+
+
+def _all_files(root):
+    out = []
+    for dirpath, _dirs, files in os.walk(root):
+        out += [os.path.join(dirpath, f) for f in files]
+    return sorted(out)
+
+
+def test_stale_rolling_write_rejected_and_nothing_mutated(root):
+    P.ensure_project(root, "p", now=1)
+    _write_current_stamped(root, "p", 10, 2000, marker="fresh")
+    body_before = P.read_version(root, "p", "current")
+    index_before = P.read_project(root, "p")["versionIndex"]
+    files_before = _all_files(root)
+    with pytest.raises(P.StaleRollingWriteError) as exc:
+        _write_current_stamped(root, "p", 20, 1000, marker="stale")
+    assert exc.value.stored_saved_at == 2000
+    # current.json untouched.
+    assert P.read_version(root, "p", "current") == body_before
+    # versionIndex untouched.
+    assert P.read_project(root, "p")["versionIndex"] == index_before
+    # No new backup (or any other) file was created.
+    assert _all_files(root) == files_before
+
+
+def test_newer_rolling_write_allowed(root):
+    P.ensure_project(root, "p", now=1)
+    _write_current_stamped(root, "p", 10, 2000, marker="old")
+    _write_current_stamped(root, "p", 20, 3000, marker="new")
+    assert P.read_version(root, "p", "current")["workflow"]["nodes"] == ["new"]
+
+
+def test_equal_stamp_rolling_write_allowed(root):
+    P.ensure_project(root, "p", now=1)
+    _write_current_stamped(root, "p", 10, 2000, marker="a")
+    _write_current_stamped(root, "p", 20, 2000, marker="b")
+    assert P.read_version(root, "p", "current")["workflow"]["nodes"] == ["b"]
+
+
+def test_unstamped_incoming_over_stamped_stored_allowed(root):
+    # Legacy clients (no savedAt) must keep saving.
+    P.ensure_project(root, "p", now=1)
+    _write_current_stamped(root, "p", 10, 2000, marker="stamped")
+    P.write_version(root, "p", {
+        "id": "current", "createdAt": 20,
+        "workflow": {"nodes": ["nostamp"]},
+    }, now=20)
+    assert P.read_version(root, "p", "current")["workflow"]["nodes"] == ["nostamp"]
+    # Also when the workflow body isn't a dict at all.
+    P.write_version(root, "p", {"id": "current", "createdAt": 30, "workflow": None}, now=30)
+    assert P.read_version(root, "p", "current")["workflow"] is None
+
+
+def test_stamped_incoming_over_unstamped_stored_allowed(root):
+    P.ensure_project(root, "p", now=1)
+    P.write_version(root, "p", {
+        "id": "current", "createdAt": 10,
+        "workflow": {"nodes": ["legacy"]},
+    }, now=10)
+    _write_current_stamped(root, "p", 20, 1, marker="stamped")
+    assert P.read_version(root, "p", "current")["workflow"]["nodes"] == ["stamped"]
+
+
+def test_named_versions_bypass_stale_guard(root):
+    P.ensure_project(root, "p", now=1)
+    _write_current_stamped(root, "p", 10, 2000, marker="fresh")
+    # An old stamp on a NAMED version id is fine — only "current" is guarded.
+    P.write_version(root, "p", {
+        "id": "v_x", "name": "Snapshot", "createdAt": 20,
+        "workflow": {"nodes": ["snap"], "savedAt": 1000},
+    }, now=20)
+    assert P.read_version(root, "p", "v_x")["workflow"]["nodes"] == ["snap"]
+
+
+# --------------------------------------------------------------------------- #
 # Safety & robustness
 # --------------------------------------------------------------------------- #
 
