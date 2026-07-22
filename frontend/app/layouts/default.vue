@@ -1477,17 +1477,104 @@ function warnStaleSaveRejected() {
   })
 }
 
+// ── One editing window per project (leader election) ───────────────────────
+// Exactly one window may edit/save a given project at a time; other windows
+// showing it are read-only mirrors (ProjectFollowerOverlay in the template)
+// that refresh as the leader saves. Wiring, all in this file:
+//   claim    → loadWorkflowForTab (a tab finishing its load claims its uuid)
+//   gate     → saveDurableVersionAsync refuses to write unless leader
+//   notify   → saveDurableVersionAsync broadcasts each successful save
+//   flush    → onFlushRequested (takeover: old leader saves before demoting)
+//   refresh  → onRemoteSaved (debounced) + the promotion watcher below
+//   release  → closeProjectTab (last tab for a uuid releases leadership)
+const leadership = useProjectLeadership()
+
 function saveDurableVersion(tab: any, doc: any) {
+  // Fire-and-forget wrapper — the save paths that must await the network
+  // round-trip (takeover flush) call saveDurableVersionAsync directly.
+  void saveDurableVersionAsync(tab, doc)
+}
+
+async function saveDurableVersionAsync(tab: any, doc: any): Promise<void> {
   if (!tab?.projectUuid || !docHasContent(doc)) return
+  // Leadership gate — follower windows never write the durable copy. This
+  // single gate covers tab-switch saves, the 3s dirty autosave, beforeunload
+  // and closeProjectTab. NOTE: a takeover flush runs while this window is
+  // STILL leader, so the gate never blocks the handoff save.
+  if (!leadership.isLeader(tab.projectUuid)) {
+    console.debug('[leader] skipped durable save (follower window):', tab.projectUuid)
+    return
+  }
   const name = tab.label || 'Untitled project'
   // saveVersion never throws — 'stale' means the backend refused to let this
-  // window overwrite a newer copy; null means the save failed outright. Still
-  // fire-and-forget, but no longer silent.
-  useProjects().saveVersion(tab.projectUuid, { id: 'current', name, workflow: doc }, name).then((id) => {
-    if (id === 'stale') warnStaleSaveRejected()
-    else if (!id) warnAutosaveFailure('The durable server copy of this project isn’t updating.')
-  })
+  // window overwrite a newer copy; null means the save failed outright.
+  const id = await useProjects().saveVersion(tab.projectUuid, { id: 'current', name, workflow: doc }, name)
+  if (id === 'stale') warnStaleSaveRejected()
+  else if (!id) warnAutosaveFailure('The durable server copy of this project isn’t updating.')
+  else leadership.notifySaved(tab.projectUuid, (doc as any)?.savedAt)
 }
+
+// Takeover flush: another window asked to become leader. We are STILL the
+// leader here — snapshot the live canvas (only the active tab has unsaved
+// on-screen state) and AWAIT the durable save so the handoff is loss-proof.
+// The engine caps a hung flush at ~1.5s on the requester side.
+leadership.onFlushRequested(async (uuid: string) => {
+  const active = activeTab.value
+  if (active?.type === 'project' && active.projectUuid === uuid) {
+    snapshotActiveCanvasIntoDoc(active.id)
+  }
+  const tab = tabs.value.find((t: any) => t.type === 'project' && t.projectUuid === uuid)
+  const doc = tab ? savedWorkflows[tab.id] : null
+  if (tab && doc && docHasContent(doc)) {
+    await saveDurableVersionAsync(tab, doc)
+  }
+})
+
+// Refetch the durable copy and replace this window's session doc outright.
+// Follower windows hold no local edits by construction (saves are gated,
+// onCanvasDirty short-circuits), so replacing is correct — and we deliberately
+// do NOT markDocEdited or re-stamp: the fetched doc keeps its own savedAt.
+async function refreshDocFromDurable(uuid: string) {
+  const tab = tabs.value.find((t: any) => t.type === 'project' && t.projectUuid === uuid)
+  if (!tab) return
+  const loaded = await useProjects().loadProject(uuid)
+  const body = loaded?.currentVersion?.workflow || null
+  if (!docHasContent(body)) return
+  savedWorkflows[tab.id] = toProjectDoc(body)
+  persistWorkflows()
+}
+
+// Follower live mirror: the leader broadcast a save — debounce (per uuid) and
+// refetch, so this window tracks the leader without hammering the API during
+// keystroke-burst autosaves.
+const REMOTE_REFRESH_DEBOUNCE_MS = 1500
+const remoteRefreshTimers: Record<string, ReturnType<typeof setTimeout>> = {}
+leadership.onRemoteSaved((uuid: string) => {
+  if (leadership.isLeader(uuid)) return
+  if (!tabs.value.some((t: any) => t.type === 'project' && t.projectUuid === uuid)) return
+  if (remoteRefreshTimers[uuid]) clearTimeout(remoteRefreshTimers[uuid])
+  remoteRefreshTimers[uuid] = setTimeout(() => {
+    delete remoteRefreshTimers[uuid]
+    if (leadership.isLeader(uuid)) return // promoted meanwhile — watcher below refreshed
+    refreshDocFromDurable(uuid)
+  }, REMOTE_REFRESH_DEBOUNCE_MS)
+})
+
+// Promotion refresh: follower → leader (takeover completed, or a dead leader's
+// pings stopped and we won re-election). Refresh once, immediately, so the new
+// leader starts editing from the flushed latest state; the follower overlay
+// disappears on its own via role reactivity.
+watch(() => ({ ...leadership.roles }), (now, prev) => {
+  for (const [uuid, role] of Object.entries(now)) {
+    if (role === 'leader' && prev?.[uuid] === 'follower') {
+      if (remoteRefreshTimers[uuid]) {
+        clearTimeout(remoteRefreshTimers[uuid])
+        delete remoteRefreshTimers[uuid]
+      }
+      refreshDocFromDurable(uuid)
+    }
+  }
+})
 
 // Snapshot the live canvas into its slot in the tab's doc. The single choke
 // point for "what's on screen → what's saved":
@@ -1538,6 +1625,11 @@ function closeProjectTab(tab: any) {
   if (doc && docHasContent(doc)) saveDurableVersion(tab, doc)
   delete savedWorkflows[tab.id]
   persistWorkflows()
+  // Release editing leadership when the LAST open tab for this project goes —
+  // a follower window can then promote without waiting out the ping timeout.
+  if (tab.projectUuid && !tabs.value.some((t: any) => t.id !== tab.id && t.projectUuid === tab.projectUuid)) {
+    leadership.release(tab.projectUuid)
+  }
   closeTab(tab.id)
 }
 
@@ -1793,6 +1885,11 @@ function autosaveCurrentWorkflow() {
 const AUTOSAVE_DEBOUNCE_MS = 3000
 let autosaveDebounceTimer: ReturnType<typeof setTimeout> | null = null
 function onCanvasDirty() {
+  // Follower windows are read-only mirrors: the overlay swallows pointer
+  // events, but stray keyboard-driven canvas mutations could still land here.
+  // Don't even schedule the autosave (saves are leader-gated anyway).
+  const t = activeTab.value
+  if (t?.type === 'project' && t.projectUuid && leadership.roleOf(t.projectUuid) === 'follower') return
   // Record the edit NOW (not after the debounce): canvasDirty only fires for
   // real canvas mutations of the active tab (suppressed while a workflow is
   // being applied), so this is the canonical "user touched the canvas" signal.
@@ -2330,6 +2427,12 @@ async function loadWorkflowForTab(tab: any) {
   }
   currentProjectTabId = tab.id
   persistWorkflows()
+  // Claim editing leadership for this project (resolves to leader/follower in
+  // ~400ms; 'claiming' meanwhile shows nothing). Guarded so revisiting an
+  // already-led tab doesn't re-run an election.
+  if (tab.projectUuid && leadership.roleOf(tab.projectUuid) !== 'leader') {
+    leadership.claim(tab.projectUuid)
+  }
 }
 
 // Handle workflow loaded from community template
@@ -3934,6 +4037,13 @@ function dismissRunResult() {
             :project-name="activeTab.label || 'Untitled project'"
             :api="deliverablesApi"
             @open-in-canvas="onOpenDeliverableInCanvas"
+          />
+          <!-- Read-only scrim when another window leads this project. Covers
+               the canvas area only (tab bar stays clickable); the component
+               renders nothing unless the role is 'follower'. -->
+          <ProjectFollowerOverlay
+            v-if="activeTab.type === 'project' && activeTab.projectUuid"
+            :project-uuid="activeTab.projectUuid"
           />
           <!-- Native Nodes sidebar (overlays canvas from left) -->
           <Transition
