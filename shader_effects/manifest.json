@@ -2808,6 +2808,62 @@
           "step": 0.01
         }
       ]
+    },
+    {
+      "id": "fbm_warp",
+      "name": "FBM Warp",
+      "category": "distortion",
+      "animated": true,
+      "passes": 1,
+      "centerParam": null,
+      "textures": [],
+      "params": [
+        {
+          "uniform": "u_amount",
+          "label": "Amount",
+          "type": "float",
+          "min": 0.0,
+          "max": 0.5,
+          "default": 0.12,
+          "step": 0.005
+        },
+        {
+          "uniform": "u_scale",
+          "label": "Scale",
+          "type": "float",
+          "min": 0.5,
+          "max": 8.0,
+          "default": 3.0,
+          "step": 0.25
+        },
+        {
+          "uniform": "u_warp",
+          "label": "Warp",
+          "type": "float",
+          "min": 0.0,
+          "max": 4.0,
+          "default": 2.0,
+          "step": 0.1
+        },
+        {
+          "uniform": "u_detail",
+          "label": "Detail",
+          "type": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.5,
+          "step": 0.05
+        },
+        {
+          "uniform": "u_speed",
+          "label": "Speed",
+          "type": "float",
+          "min": 0.0,
+          "max": 3.0,
+          "default": 0.6,
+          "step": 0.05
+        }
+      ]
     }
   ]
 }
