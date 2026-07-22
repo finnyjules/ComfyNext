@@ -10,12 +10,14 @@
  *
  * See docs/plans/2026-06-02-phase0-project-persistence-spec.md.
  */
-import type { GenerationRecord } from '~/lib/generations'
+import type { GenerationRecord, GenOutput } from '~/lib/generations'
 
 export interface ProjectMeta {
   uuid: string
   name: string | null
-  cover: string | null
+  // Preview images stamped from the saved doc (studio/Frame renders); the
+  // string form never shipped but stays tolerated in old project.json files.
+  cover: GenOutput[] | string | null
   updatedAt: number | null
 }
 
@@ -39,7 +41,7 @@ export interface VersionMeta {
 export interface Project {
   uuid: string
   name: string
-  cover: string | null
+  cover: GenOutput[] | string | null
   createdAt: number
   updatedAt: number
   currentVersionId: string | null
@@ -136,6 +138,16 @@ export function useProjects() {
     }
   }
 
+  /** Stamp the project's preview images (derived from the saved doc — see
+   *  ~/lib/projectCover). Fire-and-forget safe: failures only warn. */
+  async function setProjectCover(uuid: string, cover: GenOutput[]): Promise<void> {
+    try {
+      await $fetch(`/sailor/projects/${encodeURIComponent(uuid)}`, { method: 'PUT', body: { cover } })
+    } catch (e) {
+      console.warn('[useProjects] setProjectCover failed:', e)
+    }
+  }
+
   async function deleteProject(uuid: string): Promise<void> {
     try {
       await $fetch(`/sailor/projects/${encodeURIComponent(uuid)}`, { method: 'DELETE' })
@@ -184,5 +196,5 @@ export function useProjects() {
     }
   }
 
-  return { listProjects, loadProject, saveVersion, loadVersion, renameProject, deleteProject, saveGeneration, listGenerations, fetchSpendSummary }
+  return { listProjects, loadProject, saveVersion, loadVersion, renameProject, setProjectCover, deleteProject, saveGeneration, listGenerations, fetchSpendSummary }
 }
