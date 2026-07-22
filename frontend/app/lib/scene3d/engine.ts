@@ -11,7 +11,7 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js'
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js'
 import { roundedLatheGeometry, roundedPolyGeometry, roundedHullGeometry } from '~/lib/scene3d/roundedGeometry'
-import type { SceneDoc, SceneObject, Vec3, LightingPreset, PrimitiveKind, PrimitiveObject, LightObject } from './config'
+import type { SceneDoc, SceneObject, SceneMaterial, Vec3, LightingPreset, PrimitiveKind, PrimitiveObject, GlbObject, LightObject } from './config'
 import { LIGHT_DEFAULTS } from './config'
 import { loadGlb } from './glb'
 import { materialFor, updateMaterial, disposeMaterial } from './materials'
@@ -220,16 +220,51 @@ export function buildGeometry(
   return geo
 }
 
-/** Swaps every mesh under a GLB root to the shared clay material in Light
- *  View, restoring each mesh's own material otherwise. Each mesh's original
- *  material is captured into userData.realMaterial the first time it's seen,
- *  so repeated toggles/re-syncs never lose track of the real one. */
-function applyLightViewToGlb(root: THREE.Object3D, on: boolean, clay: THREE.Material): void {
+/** Applies a GLB root's mesh materials for the current object + view state.
+ *  Each mesh's baked material is captured into userData.origMaterial the first
+ *  time it's seen, so repeated toggles/re-syncs never lose track of it. With
+ *  materialOverride on, a per-mesh studio material is built from obj.material —
+ *  per mesh (not shared) so gradient bbox uniforms fit each geometry — and
+ *  updated in place while its type holds, same as the primitive path. Off
+ *  restores the baked material and frees the override. Light View swaps the
+ *  shared clay on top without losing either. */
+function syncGlbMaterials(root: THREE.Object3D, obj: GlbObject, lightView: boolean, clay: THREE.Material): void {
+  const override = obj.materialOverride === true
+  // Faceted/prismatic gradient shading samples per-face extent attributes
+  // (aFaceMin/aFaceMax) that only primitive geometry bakes — imported meshes
+  // fall back to the smooth ramp.
+  const mat: SceneMaterial = override && (obj.material.gradientShading ?? 'smooth') !== 'smooth'
+    ? { ...obj.material, gradientShading: 'smooth' }
+    : obj.material
   root.traverse((c) => {
     const m = c as THREE.Mesh
     if (!m.isMesh) return
-    if (m.userData.realMaterial === undefined) m.userData.realMaterial = m.material
-    m.material = on ? clay : m.userData.realMaterial
+    if (m.userData.origMaterial === undefined) m.userData.origMaterial = m.material
+    if (override) {
+      let ov = m.userData.overrideMaterial as THREE.Material | undefined
+      if (!ov || !updateMaterial(ov, mat)) {
+        if (ov) disposeMaterial(ov)
+        ov = materialFor(mat, m.geometry)
+        m.userData.overrideMaterial = ov
+      }
+      // Same in-place bbox refresh as the primitive path: a gradient spans the
+      // geometry exactly, and mutating .value never rebuilds the material.
+      const gradUniforms = ov.userData?.gradUniforms as Record<string, { value: unknown }> | undefined
+      if (gradUniforms) {
+        const geo = m.geometry
+        if (!geo.boundingBox) geo.computeBoundingBox()
+        if (geo.boundingBox) {
+          ;(gradUniforms.uBoxMin!.value as THREE.Vector3).copy(geo.boundingBox.min)
+          ;(gradUniforms.uBoxMax!.value as THREE.Vector3).copy(geo.boundingBox.max)
+        }
+      }
+      m.userData.realMaterial = ov
+    } else {
+      const ov = m.userData.overrideMaterial as THREE.Material | undefined
+      if (ov) { disposeMaterial(ov); delete m.userData.overrideMaterial }
+      m.userData.realMaterial = m.userData.origMaterial
+    }
+    m.material = lightView ? clay : (m.userData.realMaterial as THREE.Material)
   })
 }
 
@@ -421,8 +456,11 @@ export class SceneEngine {
         loadGlb(obj.url).then((g) => {
           if (this.glbTokens.get(obj.id) !== tok) return // stale (object deleted/replaced)
           g.traverse((c) => { if ((c as THREE.Mesh).isMesh) { c.castShadow = c.receiveShadow = true } })
-          applyLightViewToGlb(g, this.lightView, this.clay)
           root!.add(g)
+          // The load can finish after later syncs already ran against the empty
+          // placeholder — apply against the LATEST object state (stamped on the
+          // root each sync), not the one captured when the load started.
+          syncGlbMaterials(root!, (root!.userData.glbObj as GlbObject | undefined) ?? obj, this.lightView, this.clay)
         }).catch(() => { /* surface shows the error state; the group stays empty */ })
       } else {
         const group = new THREE.Group()
@@ -504,7 +542,8 @@ export class SceneEngine {
         }
       }
     } else if (obj.kind === 'glb') {
-      applyLightViewToGlb(root, this.lightView, this.clay)
+      root.userData.glbObj = obj
+      syncGlbMaterials(root, obj, this.lightView, this.clay)
     } else if (obj.kind === 'light') {
       const light = root.userData.light as THREE.Light
       const color = new THREE.Color(stripAlpha(obj.color))
@@ -620,7 +659,14 @@ function disposeTree(root: THREE.Object3D): void {
     const m = c as THREE.Mesh | THREE.Line
     if ((m as THREE.Mesh).isMesh || (m as THREE.Line).isLine) {
       m.geometry?.dispose()
-      const mats = Array.isArray(m.material) ? m.material : [m.material]
+      // Materials parked in userData while another renders in their place —
+      // the baked GLB material under an active override, the real material
+      // under the Light-View clay — must be freed too, or their GPU textures
+      // leak. The Set dedupes them against the currently-mounted material.
+      const mats = [...new Set([
+        ...(Array.isArray(m.material) ? m.material : [m.material]),
+        m.userData?.origMaterial, m.userData?.overrideMaterial, m.userData?.realMaterial,
+      ])].filter((x): x is THREE.Material => x instanceof THREE.Material)
       mats.forEach((x) => {
         if (!x) return
         // GLB materials own GPU textures (map, normalMap, roughnessMap, ...).

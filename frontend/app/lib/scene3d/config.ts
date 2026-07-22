@@ -89,7 +89,13 @@ export interface PrimitiveObject extends SceneObjectBase {
    *  MODIFIER_SPECS.key (primParams.ts). Absent means undeformed. */
   modifiers?: Record<string, number>
 }
-export interface GlbObject extends SceneObjectBase { kind: 'glb'; url: string }
+export interface GlbObject extends SceneObjectBase {
+  kind: 'glb'
+  url: string
+  /** Replace the file's baked materials with the object's `material` (which
+   *  otherwise sits unused on GLBs). Absent = off, keeping the imported look. */
+  materialOverride?: boolean
+}
 
 export type LightKind = 'point' | 'spot' | 'rect'
 export interface LightObject extends SceneObjectBase {
@@ -295,7 +301,7 @@ export function createGlbObject(url: string, existing: SceneObject[]): GlbObject
     kind: 'glb', url,
     id: newId(), name: numberedName(base, existing), visible: true,
     position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1],
-    material: { ...DEFAULT_MATERIAL }, // GLBs keep their own materials; kept for type uniformity
+    material: { ...DEFAULT_MATERIAL }, // rendered only when materialOverride is on; otherwise the GLB keeps its own
   }
 }
 
@@ -456,7 +462,9 @@ export function parseDoc(json: string): SceneDoc {
           material: parseMaterial(o.material),
           ...(om ? { motion: om } : {}),
         }
-        if (o.kind === 'glb' && typeof o.url === 'string') return [{ ...common, kind: 'glb', url: o.url }]
+        if (o.kind === 'glb' && typeof o.url === 'string') {
+          return [{ ...common, kind: 'glb', url: o.url, ...(o.materialOverride === true ? { materialOverride: true } : {}) }]
+        }
         if (o.kind === 'light' && LIGHT_KINDS.includes(o.light)) {
           return [{
             ...common, kind: 'light' as const, light: o.light,

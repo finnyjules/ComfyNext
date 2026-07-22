@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import * as THREE from 'three'
 import { sunDirection, geometryFor, baseSizeFor, buildGeometry, lightFor, SceneEngine } from '~/lib/scene3d/engine'
-import { PRIMITIVE_KINDS, createPrimitive, createLight, type PrimitiveKind, type PrimitiveObject } from '~/lib/scene3d/config'
+import { PRIMITIVE_KINDS, createPrimitive, createLight, createGlbObject, type PrimitiveKind, type PrimitiveObject, type GlbObject } from '~/lib/scene3d/config'
 import { PRIMITIVE_PARAMS } from '~/lib/scene3d/primParams'
 
 describe('scene3d sun direction', () => {
@@ -377,6 +377,110 @@ describe('scene3d engine light view clay mode', () => {
     const widget = root.children.find((c: THREE.Object3D) => c.userData.isGizmoHelper && c.type === 'Group')
     expect(widget).toBeTruthy()
     expect(widget!.visible).toBe(false)
+  })
+})
+
+describe('scene3d engine GLB material override', () => {
+  const makeHost = () => ({
+    objectRoots: new Map<string, THREE.Object3D>(),
+    glbTokens: new Map<string, number>(),
+    token: 0,
+    deferGeometry: false,
+    lightView: false,
+    clay: new THREE.MeshStandardMaterial(),
+    scene: { add() {}, remove() {} },
+  })
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const sync = (host: any, obj: GlbObject) => (SceneEngine.prototype as any).syncObject.call(host, obj)
+  // Sync once to create the placeholder root (the async GLB fetch fails fast and
+  // is swallowed), then graft a mesh under it — the same shape a finished load
+  // leaves behind, minus the network.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const loadedGlb = (host: any) => {
+    const obj = createGlbObject('http://127.0.0.1:1/m.glb', [])
+    sync(host, obj)
+    const root = host.objectRoots.get(obj.id) as THREE.Object3D
+    const baked = new THREE.MeshStandardMaterial({ color: '#00ff00' })
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), baked)
+    root.add(mesh)
+    return { obj, root, mesh, baked }
+  }
+
+  it('keeps the baked material when the override is off', () => {
+    const host = makeHost()
+    const { obj, mesh, baked } = loadedGlb(host)
+    sync(host, obj)
+    expect(mesh.material).toBe(baked)
+  })
+
+  it('swaps meshes to a studio material when the override is on', () => {
+    const host = makeHost()
+    const { obj, mesh, baked } = loadedGlb(host)
+    obj.materialOverride = true
+    obj.material.color = '#ff0000'
+    sync(host, obj)
+    expect(mesh.material).not.toBe(baked)
+    expect((mesh.material as THREE.MeshPhysicalMaterial).color.getHexString()).toBe('ff0000')
+  })
+
+  it('updates the override in place on a parameter edit', () => {
+    const host = makeHost()
+    const { obj, mesh } = loadedGlb(host)
+    obj.materialOverride = true
+    sync(host, obj)
+    const first = mesh.material
+    obj.material.color = '#0000ff'
+    sync(host, obj)
+    expect(mesh.material).toBe(first) // same instance, mutated
+    expect((mesh.material as THREE.MeshPhysicalMaterial).color.getHexString()).toBe('0000ff')
+  })
+
+  it('rebuilds the override on a material type change', () => {
+    const host = makeHost()
+    const { obj, mesh } = loadedGlb(host)
+    obj.materialOverride = true
+    sync(host, obj)
+    obj.material.type = 'toon'
+    sync(host, obj)
+    expect((mesh.material as THREE.Material).type).toBe('MeshToonMaterial')
+  })
+
+  it('restores the baked material when the override is turned off', () => {
+    const host = makeHost()
+    const { obj, mesh, baked } = loadedGlb(host)
+    obj.materialOverride = true
+    sync(host, obj)
+    expect(mesh.material).not.toBe(baked)
+    obj.materialOverride = false
+    sync(host, obj)
+    expect(mesh.material).toBe(baked)
+  })
+
+  it('disposes the baked material on teardown even while the override renders', () => {
+    const host = makeHost()
+    const { obj, baked } = loadedGlb(host)
+    obj.materialOverride = true
+    sync(host, obj)
+    let disposed = false
+    baked.addEventListener('dispose', () => { disposed = true })
+    // A url change retypes the source in place → the old root is torn down.
+    sync(host, { ...obj, url: 'http://127.0.0.1:1/other.glb' })
+    expect(disposed).toBe(true)
+  })
+
+  it('layers Light View clay over the override and restores it on exit', () => {
+    const host = makeHost() as ReturnType<typeof makeHost> & { lightView: boolean }
+    const { obj, mesh, baked } = loadedGlb(host)
+    obj.materialOverride = true
+    sync(host, obj)
+    const override = mesh.material
+    host.lightView = true
+    sync(host, obj)
+    expect(mesh.material).toBe(host.clay)
+    host.lightView = false
+    sync(host, obj)
+    expect(mesh.material).toBe(override)
+    expect(mesh.material).not.toBe(baked)
   })
 })
 

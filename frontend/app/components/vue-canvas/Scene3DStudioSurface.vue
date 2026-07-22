@@ -68,6 +68,14 @@ const doc = reactive<SceneDoc>(parseDoc(widgetStr('scene_state')))
 const selectedId = ref<string | null>(null)
 const selected = computed<SceneObject | null>(() => doc.objects.find((o) => o.id === selectedId.value) ?? null)
 const selectedIsPrimitive = computed(() => selected.value?.kind === 'primitive')
+const selectedIsGlb = computed(() => selected.value?.kind === 'glb')
+// GLBs render their imported materials until the override switch is on; the
+// material editor's controls only appear (and bind) when they'd have an effect.
+const matOverride = computed<boolean>({
+  get: () => selected.value?.kind === 'glb' && selected.value.materialOverride === true,
+  set: (v) => { const o = selected.value; if (o?.kind === 'glb') o.materialOverride = v },
+})
+const matEditable = computed(() => selectedIsPrimitive.value || matOverride.value)
 const selectedIsLight = computed(() => selected.value?.kind === 'light')
 const selectedLight = computed<LightObject | null>(() => (selected.value?.kind === 'light' ? selected.value : null))
 const activeTab = ref<'build' | 'motion'>('build')  // inspector tab: Build (existing sections) vs Motion (Task 5)
@@ -441,7 +449,7 @@ async function onTexFilePicked(e: Event) {
   // Capture the target BEFORE any await: reselecting mid-upload must not land
   // the texture (or the error) on the newly selected object.
   const target = selected.value
-  if (!file || !target || target.kind !== 'primitive') return
+  if (!file || !target || target.kind === 'light') return
   texUploading.value = target.id
   delete texUploadError[target.id]
   try {
@@ -901,6 +909,7 @@ function duplicateObject(id: string) {
     // would make both objects' shapes move together on any later edit.
     ...(src.kind === 'primitive' && src.params ? { params: { ...src.params } } : {}),
     ...(src.kind === 'primitive' && src.modifiers ? { modifiers: { ...src.modifiers } } : {}),
+    ...(src.kind === 'glb' && src.materialOverride ? { materialOverride: true } : {}),
     // Light fields likewise travel with the copy — same discriminated-union
     // shape as material/params above, just flat on the object instead of nested.
     ...(src.kind === 'light' ? {
@@ -928,6 +937,7 @@ function retryGlb(id: string) {
     name: o.name, visible: o.visible,
     position: [...o.position], rotation: [...o.rotation], scale: [...o.scale],
     material: { ...o.material },
+    ...(o.materialOverride ? { materialOverride: true } : {}),
   })
   doc.objects.splice(idx, 1, fresh)
   if (selectedId.value === id) selectedId.value = fresh.id
@@ -1455,14 +1465,23 @@ function onClose() {
         </details>
       </StudioSection>
 
-      <StudioSection v-if="selected && selectedIsPrimitive" title="Material" @pointerdown.capture="onControlsPointerDown">
-        <div v-if="selectedIsPrimitive">
+      <StudioSection v-if="selected && (selectedIsPrimitive || selectedIsGlb)" title="Material" @pointerdown.capture="onControlsPointerDown">
+        <!-- Imported models keep their baked materials until overridden. -->
+        <div v-if="selectedIsGlb" class="flex items-center justify-between">
+          <div>
+            <span class="text-[11px] text-white/55">Override materials</span>
+            <p class="text-[10px] text-white/35">Replace the model's built-in look</p>
+          </div>
+          <StudioSwitch v-model="matOverride" />
+        </div>
+
+        <div v-if="matEditable">
           <label class="mb-1 block text-[11px] text-white/55">Material</label>
           <StudioSelect v-model="matType" :options="MATERIAL_TYPES" />
         </div>
 
         <!-- physical surface: standard + glass share the grouped panel -->
-        <template v-if="selectedIsPrimitive && (matType === 'standard' || matType === 'glass')">
+        <template v-if="matEditable && (matType === 'standard' || matType === 'glass')">
           <div>
             <p class="mb-1.5 text-[10px] uppercase tracking-[0.12em] text-white/35">Surface</p>
             <div class="space-y-3">
@@ -1532,7 +1551,7 @@ function onClose() {
         </template>
 
         <!-- toon -->
-        <template v-else-if="selectedIsPrimitive && matType === 'toon'">
+        <template v-else-if="matEditable && matType === 'toon'">
           <div class="flex items-center justify-between">
             <span class="text-[11px] text-white/55">Color</span>
             <StudioColor v-model="matColor" />
@@ -1541,7 +1560,7 @@ function onClose() {
         </template>
 
         <!-- matcap -->
-        <template v-else-if="selectedIsPrimitive && matType === 'matcap'">
+        <template v-else-if="matEditable && matType === 'matcap'">
           <div>
             <label class="mb-1 block text-[11px] text-white/55">Matcap</label>
             <div class="flex items-center gap-1.5">
@@ -1556,7 +1575,7 @@ function onClose() {
         </template>
 
         <!-- fresnel -->
-        <template v-else-if="selectedIsPrimitive && matType === 'fresnel'">
+        <template v-else-if="matEditable && matType === 'fresnel'">
           <div class="flex items-center justify-between">
             <span class="text-[11px] text-white/55">Color</span>
             <StudioColor v-model="matColor" />
@@ -1569,7 +1588,7 @@ function onClose() {
         </template>
 
         <!-- gradient -->
-        <template v-else-if="selectedIsPrimitive && matType === 'gradient'">
+        <template v-else-if="matEditable && matType === 'gradient'">
           <StudioGradientRamp v-model="matGradientStops" />
           <div>
             <label class="mb-1 block text-[11px] text-white/55">Type</label>
@@ -1590,14 +1609,16 @@ function onClose() {
           </div>
           <StudioSlider v-model="matGradientOffset" label="Offset" hint="Slides the ramp along its direction" :min="-1" :max="1" :step="0.01" />
           <StudioSlider v-model="matGradientSpread" label="Spread" hint="Compresses (&lt;1) or stretches (&gt;1) the ramp" :min="0.1" :max="3" :step="0.01" />
-          <div>
+          <!-- Faceted/prismatic shading needs the per-face extent attributes only
+               primitive geometry bakes; imported GLB meshes always ramp smooth. -->
+          <div v-if="selectedIsPrimitive">
             <label class="mb-1 block text-[11px] text-white/55">Shading</label>
             <StudioSegmented v-model="matGradientShading" :options="['smooth', 'faceted', 'prismatic']" />
           </div>
         </template>
 
         <!-- image -->
-        <template v-else-if="selectedIsPrimitive && matType === 'image'">
+        <template v-else-if="matEditable && matType === 'image'">
           <input ref="texFileInput" type="file" accept="image/*" class="hidden" @change="onTexFilePicked" />
           <div class="flex items-center gap-2">
             <img v-if="selected.material.image" class="size-12 rounded object-cover"

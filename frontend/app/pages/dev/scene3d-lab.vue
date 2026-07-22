@@ -9,13 +9,28 @@ import Scene3DStudioSurface from '~/components/vue-canvas/Scene3DStudioSurface.v
 
 const open = ref(true)
 const widgetNames = ['scene_state', 'beauty_image', 'depth_image', 'normal_image', 'glb_url']
+// ?glb=<file in ComfyUI's input dir> seeds the scene with that model (e.g.
+// ?glb=Duck.glb), so the GLB import / material-override path can be smoked
+// without wiring a canvas or clicking through an upload.
+const glbFile = useRoute().query.glb
+const seed = typeof glbFile === 'string' && glbFile
+  ? JSON.stringify({
+      version: 1,
+      objects: [{
+        id: 'lab-glb', kind: 'glb', name: glbFile, visible: true,
+        url: `/view?${new URLSearchParams({ filename: glbFile, type: 'input' })}`,
+        position: [0, 0.5, 0], rotation: [0, 0, 0], scale: [1, 1, 1],
+        material: { type: 'standard', color: '#9aa3af', roughness: 0.6, metalness: 0 },
+      }],
+    })
+  : ''
 const nodes = reactive([{
   id: 'lab-1',
   type: 'scene3d-studio',
   data: {
     nodeType: 'Scene3DStudio',
     widgetDefs: widgetNames.map((name) => ({ name })),
-    widgetsValues: ['', '', '', '', ''],
+    widgetsValues: [seed, '', '', '', ''],
     inputs: [{ name: 'glb_url', type: 'STRING', link: null }],
   },
 }])

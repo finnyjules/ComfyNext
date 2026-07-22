@@ -16,6 +16,28 @@ describe('scene3d config', () => {
     expect(back).toEqual(doc)
   })
 
+  it('round-trips the GLB material override flag', () => {
+    const doc = defaultDoc()
+    const glb = createGlbObject('https://example.com/m.glb', doc.objects)
+    glb.materialOverride = true
+    glb.material.color = '#ff0000'
+    doc.objects.push(glb)
+    const back = parseDoc(serializeDoc(doc))
+    expect(back).toEqual(doc)
+    expect((back.objects[0] as { materialOverride?: boolean }).materialOverride).toBe(true)
+  })
+
+  it('leaves an absent override flag absent and drops junk values', () => {
+    const doc = defaultDoc()
+    doc.objects.push(createGlbObject('https://example.com/m.glb', doc.objects))
+    const back = parseDoc(serializeDoc(doc))
+    expect('materialOverride' in back.objects[0]!).toBe(false)
+
+    const raw = JSON.parse(serializeDoc(doc))
+    raw.objects[0].materialOverride = 'yes'
+    expect('materialOverride' in parseDoc(JSON.stringify(raw)).objects[0]!).toBe(false)
+  })
+
   it('parses empty/garbage input to the default document', () => {
     expect(parseDoc('')).toEqual(defaultDoc())
     expect(parseDoc('{not json')).toEqual(defaultDoc())
