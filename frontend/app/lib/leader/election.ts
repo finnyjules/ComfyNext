@@ -103,7 +103,9 @@ export function createElection(opts: ElectionOptions) {
     pingTimeoutMs = 12000,
   } = opts
 
-  const states = new Map<string, ProjectState>()
+  // globalThis.Map, NOT bare `Map` — Nuxt auto-imports shadow it with the
+  // lucide-vue-next icon in SSR, and "Map is not a constructor" 500s the app.
+  const states = new globalThis.Map<string, ProjectState>()
 
   function freshState(): ProjectState {
     return { role: 'follower', claimTs: 0, takeoverPending: false, releasing: false }
