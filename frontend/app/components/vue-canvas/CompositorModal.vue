@@ -46,6 +46,8 @@ import LayerMotionPanel from '~/components/vue-canvas/compositor/LayerMotionPane
 import CompositorClonerPanel from '~/components/vue-canvas/compositor/CompositorClonerPanel.vue'
 import FillControl from '~/components/vue-canvas/compositor/FillControl.vue'
 import FillSwatch from '~/components/vue-canvas/compositor/FillSwatch.vue'
+import PostEffectsControls from '~/components/vue-canvas/PostEffectsControls.vue'
+import { isChainEffect } from '~/lib/compositor/postEffects'
 import { paintPrimaryColor } from '~/lib/spacetype/fillTile'
 import FontPicker from '~/components/vue-canvas/widgets/FontPicker.vue'
 import { VARIABLE_FONTS } from '~/data/variable-fonts'
@@ -2627,6 +2629,7 @@ onUnmounted(() => {
         <!-- Unified stack canvas: wired + local layers in z-order (WYSIWYG) -->
         <canvas
           ref="overlayCanvas"
+          data-testid="compositor-stack-canvas"
           class="absolute inset-0 pointer-events-none"
           :style="{ width: canvasDisplay.w + 'px', height: canvasDisplay.h + 'px' }"
         />
@@ -3910,6 +3913,11 @@ onUnmounted(() => {
             </div>
           </div>
 
+          <!-- Post-processing (adjust / bloom / grain / vignette / duotone) -->
+          <PostEffectsControls class="mt-3"
+            :effects="(((selectedLocal as any).effects || []).filter(isChainEffect) as any)"
+            @update="(fx: any[]) => setLocal(selectedLocal!.id, { effects: [...((selectedLocal as any).effects || []).filter((e: any) => !isChainEffect(e)), ...fx] } as any)" />
+
           <!-- Layer mask: clip this layer to another layer's silhouette (cross-source) -->
           <div class="mt-3">
             <div class="panel-label mb-1.5">Mask</div>
@@ -4081,6 +4089,12 @@ onUnmounted(() => {
             <FillControl allow-none :model-value="background"
               @update:model-value="(v: any) => setBackground(v)" />
             <p class="mt-1.5 text-[10px] text-white/30 leading-snug">Fills behind every layer and bakes into the frame. An opaque generated image will sit on top of it.</p>
+          </div>
+          <!-- Whole-frame post-processing (after all layers composite) -->
+          <div class="border-t border-white/[0.06] pt-3">
+            <div class="panel-label mb-1.5">Post-processing</div>
+            <p class="text-[10px] text-white/30 leading-snug mb-2">Grades the whole frame after all layers composite — bakes into renders, exports and motion stills.</p>
+            <PostEffectsControls :effects="postEffects" @update="(fx: any[]) => setPostEffects(fx as any)" />
           </div>
           <!-- Expressive arrange (a whole group is selected) -->
           <div v-if="soleSelectedGroup" class="border-t border-white/[0.06] pt-3">
