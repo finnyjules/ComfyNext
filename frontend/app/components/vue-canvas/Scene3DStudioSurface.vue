@@ -1241,6 +1241,164 @@ function onClose() {
 
       <template v-if="activeTab === 'build'">
       <StudioSection v-if="selected" title="Selection" @pointerdown.capture="onControlsPointerDown">
+        <details class="group" open>
+          <summary class="flex cursor-pointer select-none items-center gap-1.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 list-none hover:text-white/60 [&::-webkit-details-marker]:hidden"><span class="inline-block text-white/30 transition-transform group-open:rotate-90">›</span>Transform</summary>
+          <div class="space-y-3 pt-1">
+            <div>
+              <label class="mb-1 block text-[11px] text-white/55">Position</label>
+              <div class="grid grid-cols-3 gap-1.5">
+                <input v-model.number="posX" type="number" step="0.1" aria-label="Position X" class="studio-num" />
+                <input v-model.number="posY" type="number" step="0.1" aria-label="Position Y" class="studio-num" />
+                <input v-model.number="posZ" type="number" step="0.1" aria-label="Position Z" class="studio-num" />
+              </div>
+            </div>
+            <div>
+              <label class="mb-1 block text-[11px] text-white/55">Rotation°</label>
+              <div class="grid grid-cols-3 gap-1.5">
+                <input v-model.number="rotX" type="number" step="1" aria-label="Rotation X" class="studio-num" />
+                <input v-model.number="rotY" type="number" step="1" aria-label="Rotation Y" class="studio-num" />
+                <input v-model.number="rotZ" type="number" step="1" aria-label="Rotation Z" class="studio-num" />
+              </div>
+            </div>
+            <div v-if="selected && !selectedIsLight">
+              <label class="mb-1 block text-[11px] text-white/55">Size</label>
+              <div class="grid grid-cols-3 gap-1.5">
+                <input v-model.number="sizeX" type="number" step="0.05" aria-label="Size X" class="studio-num" />
+                <input v-model.number="sizeY" type="number" step="0.05" aria-label="Size Y" class="studio-num" />
+                <input v-model.number="sizeZ" type="number" step="0.05" aria-label="Size Z" class="studio-num" />
+              </div>
+            </div>
+          </div>
+        </details>
+
+        <!-- Geometry: a peer of the material sub-groups (plain details, no card
+             chrome), but open by default — these are the shape's primary knobs. -->
+        <details v-if="geoSpecs.length" class="group" open>
+          <summary class="flex cursor-pointer select-none items-center gap-1.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 list-none hover:text-white/60 [&::-webkit-details-marker]:hidden"><span class="inline-block text-white/30 transition-transform group-open:rotate-90">›</span>Geometry</summary>
+          <div class="space-y-3 pt-1">
+            <template v-for="spec in geoSpecs" :key="spec.key">
+              <label
+                v-if="spec.control === 'toggle'"
+                class="flex cursor-pointer items-center justify-between text-[11px] text-white/55"
+                :title="spec.hint"
+              >
+                <span>{{ spec.label }}</span>
+                <input
+                  type="checkbox"
+                  class="h-3.5 w-3.5 accent-white/70"
+                  :checked="paramOf(spec.key) > 0.5"
+                  @change="setParam(spec.key, ($event.target as HTMLInputElement).checked ? 1 : 0)"
+                />
+              </label>
+              <StudioSlider
+                v-else
+                :model-value="paramOf(spec.key)"
+                :label="spec.label"
+                :hint="spec.hint"
+                :min="spec.min"
+                :max="spec.max"
+                :step="spec.step"
+                @update:model-value="(v: number) => setParam(spec.key, v)"
+              />
+            </template>
+          </div>
+        </details>
+
+        <!-- Modifiers: a peer of Geometry (same plain details, no card chrome),
+             collapsed by default — these deform the built geometry. -->
+        <details v-if="selectedIsPrimitive" class="group">
+          <summary class="flex cursor-pointer select-none items-center gap-1.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 list-none hover:text-white/60 [&::-webkit-details-marker]:hidden"><span class="inline-block text-white/30 transition-transform group-open:rotate-90">›</span>Modifiers</summary>
+          <div class="space-y-3 pt-1">
+            <StudioSlider
+              :model-value="modOf('subdivide')"
+              :label="modSpec('subdivide').label"
+              :hint="modSpec('subdivide').hint"
+              :min="modSpec('subdivide').min"
+              :max="modSpec('subdivide').max"
+              :step="modSpec('subdivide').step"
+              @update:model-value="(v: number) => setMod('subdivide', v)"
+            />
+            <div v-for="group in MODIFIER_GROUPS" :key="group.label" class="space-y-2">
+              <div class="pt-1 text-[10px] uppercase tracking-[0.12em] text-white/25">{{ group.label }}</div>
+              <template v-for="key in group.keys" :key="key">
+                <div v-if="modSpec(key).control === 'options'">
+                  <label class="mb-1 block text-[11px] text-white/55" :title="modSpec(key).hint">{{ modSpec(key).label }}</label>
+                  <StudioSegmented
+                    :model-value="optionOf(key)"
+                    :options="modSpec(key).options!"
+                    @update:model-value="(v: string) => setOption(key, v)"
+                  />
+                </div>
+                <StudioSlider
+                  v-else
+                  :model-value="modOf(key)"
+                  :label="modSpec(key).label"
+                  :hint="modSpec(key).hint"
+                  :min="modSpec(key).min"
+                  :max="modSpec(key).max"
+                  :step="modSpec(key).step"
+                  @update:model-value="(v: number) => setMod(key, v)"
+                />
+              </template>
+            </div>
+          </div>
+        </details>
+
+        <!-- Cloner: a peer of Geometry and Modifiers, not a group inside them —
+             this section is meant to grow. Flat list, collapsed by default. -->
+        <details v-if="selectedIsPrimitive" class="group">
+          <summary class="flex cursor-pointer select-none items-center gap-1.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 list-none hover:text-white/60 [&::-webkit-details-marker]:hidden"><span class="inline-block text-white/30 transition-transform group-open:rotate-90">›</span>Cloner</summary>
+          <div class="space-y-3 pt-1">
+            <template v-for="key in CLONER_KEYS" :key="key">
+              <div v-if="modSpec(key).control === 'options'">
+                <label class="mb-1 block text-[11px] text-white/55" :title="modSpec(key).hint">{{ modSpec(key).label }}</label>
+                <StudioSegmented
+                  :model-value="optionOf(key)"
+                  :options="modSpec(key).options!"
+                  @update:model-value="(v: string) => setOption(key, v)"
+                />
+              </div>
+              <StudioSlider
+                v-else
+                :model-value="modOf(key)"
+                :label="modSpec(key).label"
+                :hint="modSpec(key).hint"
+                :min="modSpec(key).min"
+                :max="modSpec(key).max"
+                :step="modSpec(key).step"
+                @update:model-value="(v: number) => setMod(key, v)"
+              />
+            </template>
+
+            <!-- Step transforms accumulate across copies in every mode, so they
+                 are their own block below the mode-specific placement controls. -->
+            <div class="space-y-2">
+              <div class="pt-1 text-[10px] uppercase tracking-[0.12em] text-white/25">Step</div>
+              <StudioSlider
+                v-for="key in CLONER_STEP_KEYS"
+                :key="key"
+                :model-value="modOf(key)"
+                :label="modSpec(key).label"
+                :hint="modSpec(key).hint"
+                :min="modSpec(key).min"
+                :max="modSpec(key).max"
+                :step="modSpec(key).step"
+                @update:model-value="(v: number) => setMod(key, v)"
+              />
+            </div>
+
+            <!-- Cost disclosure: what this clone set actually costs, live while
+                 dragging. Amber past the point where rebuilds start to hitch. -->
+            <div
+              v-if="cloneCost"
+              class="pt-0.5 text-[10px] tabular-nums"
+              :class="cloneCost.heavy ? 'text-amber-400/80' : 'text-white/35'"
+            >
+              {{ cloneCost.copies }} copies · ~{{ compactCount(cloneCost.verts) }} verts<template v-if="deferringGeometry"> · updates on release</template>
+            </div>
+          </div>
+        </details>
+
         <div v-if="selectedIsPrimitive">
           <label class="mb-1 block text-[11px] text-white/55">Material</label>
           <StudioSelect v-model="matType" :options="MATERIAL_TYPES" />
@@ -1401,134 +1559,6 @@ function onClose() {
           <StudioSlider v-model="matMetalness" label="Metalness" hint="Blends between plastic-like and metal reflections" :min="0" :max="1" :step="0.01" />
         </template>
 
-        <!-- Geometry: a peer of the material sub-groups (plain details, no card
-             chrome), but open by default — these are the shape's primary knobs. -->
-        <details v-if="geoSpecs.length" class="group" open>
-          <summary class="flex cursor-pointer select-none items-center gap-1.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 list-none hover:text-white/60 [&::-webkit-details-marker]:hidden"><span class="inline-block text-white/30 transition-transform group-open:rotate-90">›</span>Geometry</summary>
-          <div class="space-y-3 pt-1">
-            <template v-for="spec in geoSpecs" :key="spec.key">
-              <label
-                v-if="spec.control === 'toggle'"
-                class="flex cursor-pointer items-center justify-between text-[11px] text-white/55"
-                :title="spec.hint"
-              >
-                <span>{{ spec.label }}</span>
-                <input
-                  type="checkbox"
-                  class="h-3.5 w-3.5 accent-white/70"
-                  :checked="paramOf(spec.key) > 0.5"
-                  @change="setParam(spec.key, ($event.target as HTMLInputElement).checked ? 1 : 0)"
-                />
-              </label>
-              <StudioSlider
-                v-else
-                :model-value="paramOf(spec.key)"
-                :label="spec.label"
-                :hint="spec.hint"
-                :min="spec.min"
-                :max="spec.max"
-                :step="spec.step"
-                @update:model-value="(v: number) => setParam(spec.key, v)"
-              />
-            </template>
-          </div>
-        </details>
-
-        <!-- Modifiers: a peer of Geometry (same plain details, no card chrome),
-             collapsed by default — these deform the built geometry. -->
-        <details v-if="selectedIsPrimitive" class="group">
-          <summary class="flex cursor-pointer select-none items-center gap-1.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 list-none hover:text-white/60 [&::-webkit-details-marker]:hidden"><span class="inline-block text-white/30 transition-transform group-open:rotate-90">›</span>Modifiers</summary>
-          <div class="space-y-3 pt-1">
-            <StudioSlider
-              :model-value="modOf('subdivide')"
-              :label="modSpec('subdivide').label"
-              :hint="modSpec('subdivide').hint"
-              :min="modSpec('subdivide').min"
-              :max="modSpec('subdivide').max"
-              :step="modSpec('subdivide').step"
-              @update:model-value="(v: number) => setMod('subdivide', v)"
-            />
-            <div v-for="group in MODIFIER_GROUPS" :key="group.label" class="space-y-2">
-              <div class="pt-1 text-[10px] uppercase tracking-[0.12em] text-white/25">{{ group.label }}</div>
-              <template v-for="key in group.keys" :key="key">
-                <div v-if="modSpec(key).control === 'options'">
-                  <label class="mb-1 block text-[11px] text-white/55" :title="modSpec(key).hint">{{ modSpec(key).label }}</label>
-                  <StudioSegmented
-                    :model-value="optionOf(key)"
-                    :options="modSpec(key).options!"
-                    @update:model-value="(v: string) => setOption(key, v)"
-                  />
-                </div>
-                <StudioSlider
-                  v-else
-                  :model-value="modOf(key)"
-                  :label="modSpec(key).label"
-                  :hint="modSpec(key).hint"
-                  :min="modSpec(key).min"
-                  :max="modSpec(key).max"
-                  :step="modSpec(key).step"
-                  @update:model-value="(v: number) => setMod(key, v)"
-                />
-              </template>
-            </div>
-          </div>
-        </details>
-
-        <!-- Cloner: a peer of Geometry and Modifiers, not a group inside them —
-             this section is meant to grow. Flat list, collapsed by default. -->
-        <details v-if="selectedIsPrimitive" class="group">
-          <summary class="flex cursor-pointer select-none items-center gap-1.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 list-none hover:text-white/60 [&::-webkit-details-marker]:hidden"><span class="inline-block text-white/30 transition-transform group-open:rotate-90">›</span>Cloner</summary>
-          <div class="space-y-3 pt-1">
-            <template v-for="key in CLONER_KEYS" :key="key">
-              <div v-if="modSpec(key).control === 'options'">
-                <label class="mb-1 block text-[11px] text-white/55" :title="modSpec(key).hint">{{ modSpec(key).label }}</label>
-                <StudioSegmented
-                  :model-value="optionOf(key)"
-                  :options="modSpec(key).options!"
-                  @update:model-value="(v: string) => setOption(key, v)"
-                />
-              </div>
-              <StudioSlider
-                v-else
-                :model-value="modOf(key)"
-                :label="modSpec(key).label"
-                :hint="modSpec(key).hint"
-                :min="modSpec(key).min"
-                :max="modSpec(key).max"
-                :step="modSpec(key).step"
-                @update:model-value="(v: number) => setMod(key, v)"
-              />
-            </template>
-
-            <!-- Step transforms accumulate across copies in every mode, so they
-                 are their own block below the mode-specific placement controls. -->
-            <div class="space-y-2">
-              <div class="pt-1 text-[10px] uppercase tracking-[0.12em] text-white/25">Step</div>
-              <StudioSlider
-                v-for="key in CLONER_STEP_KEYS"
-                :key="key"
-                :model-value="modOf(key)"
-                :label="modSpec(key).label"
-                :hint="modSpec(key).hint"
-                :min="modSpec(key).min"
-                :max="modSpec(key).max"
-                :step="modSpec(key).step"
-                @update:model-value="(v: number) => setMod(key, v)"
-              />
-            </div>
-
-            <!-- Cost disclosure: what this clone set actually costs, live while
-                 dragging. Amber past the point where rebuilds start to hitch. -->
-            <div
-              v-if="cloneCost"
-              class="pt-0.5 text-[10px] tabular-nums"
-              :class="cloneCost.heavy ? 'text-amber-400/80' : 'text-white/35'"
-            >
-              {{ cloneCost.copies }} copies · ~{{ compactCount(cloneCost.verts) }} verts<template v-if="deferringGeometry"> · updates on release</template>
-            </div>
-          </div>
-        </details>
-
         <!-- Light controls: a peer of the material sub-groups above, gated on
              selectedIsLight (not selectedIsPrimitive) since lights aren't primitives. -->
         <template v-if="selectedIsLight">
@@ -1562,31 +1592,6 @@ function onClose() {
             </div>
           </div>
         </template>
-
-        <div>
-          <label class="mb-1 block text-[11px] text-white/55">Position</label>
-          <div class="grid grid-cols-3 gap-1.5">
-            <input v-model.number="posX" type="number" step="0.1" aria-label="Position X" class="studio-num" />
-            <input v-model.number="posY" type="number" step="0.1" aria-label="Position Y" class="studio-num" />
-            <input v-model.number="posZ" type="number" step="0.1" aria-label="Position Z" class="studio-num" />
-          </div>
-        </div>
-        <div>
-          <label class="mb-1 block text-[11px] text-white/55">Rotation°</label>
-          <div class="grid grid-cols-3 gap-1.5">
-            <input v-model.number="rotX" type="number" step="1" aria-label="Rotation X" class="studio-num" />
-            <input v-model.number="rotY" type="number" step="1" aria-label="Rotation Y" class="studio-num" />
-            <input v-model.number="rotZ" type="number" step="1" aria-label="Rotation Z" class="studio-num" />
-          </div>
-        </div>
-        <div v-if="selected && !selectedIsLight">
-          <label class="mb-1 block text-[11px] text-white/55">Size</label>
-          <div class="grid grid-cols-3 gap-1.5">
-            <input v-model.number="sizeX" type="number" step="0.05" aria-label="Size X" class="studio-num" />
-            <input v-model.number="sizeY" type="number" step="0.05" aria-label="Size Y" class="studio-num" />
-            <input v-model.number="sizeZ" type="number" step="0.05" aria-label="Size Z" class="studio-num" />
-          </div>
-        </div>
       </StudioSection>
 
       <StudioSection title="Camera">
