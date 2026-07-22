@@ -38,7 +38,7 @@ const peeks = computed(() => props.images.slice(1, 3))
         <!-- cover — never cropped -->
         <img
           :src="images[0]"
-          :class="['relative block max-w-full max-h-[190px] w-auto h-auto rounded-lg border shadow-xl',
+          :class="['pile-cover relative block max-w-full max-h-[190px] w-auto h-auto rounded-lg border shadow-xl',
                    dashed ? 'border-dashed' : '',
                    selected ? 'border-action ring-2 ring-action/40' : (dashed ? 'border-white/30' : 'border-white/20')]"
           :style="{ transform: `rotate(${tilt(0) / 3}deg)` }"

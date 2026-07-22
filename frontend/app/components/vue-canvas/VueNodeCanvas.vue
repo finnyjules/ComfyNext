@@ -4198,7 +4198,7 @@ function handleOpenSketchStack(e: Event) {
   // Morph origin: the pile COVER's rendered rect (includes canvas zoom — the
   // stack items render at this same width, so the morph is translate-only).
   const el = document.querySelector(
-    `.vue-flow__node[data-id="${detail.nodeId}"] img, .vue-flow__node[data-id="${detail.nodeId}"] .pile-skeleton`,
+    `.vue-flow__node[data-id="${detail.nodeId}"] .pile-cover, .vue-flow__node[data-id="${detail.nodeId}"] .pile-skeleton`,
   ) as HTMLElement | null
   const r = el?.getBoundingClientRect()
   sketchStackOrigin.value = r
