@@ -37,7 +37,7 @@ Per-item prompt/seed props are unnecessary: a batch of 4 comes from one predicti
 
 - **Canvas dims** (same scrim treatment as BatchGridModal), Escape / click-outside closes.
 - **The expansion is the feature:** on open, the overlay measures the pile node's projected screen rect (Vue Flow viewport transform) and the item images animate from that origin to their slots in a **vertical stack** — transform transition, slight stagger, quick ease (~200ms per house motion). Close reverses the morph back into the pile.
-- **Stack layout:** one column, images large (bounded by viewport height /4 minus gaps; the column scrolls if aspect ratios demand it), hover reveals the actions.
+- **Stack layout:** one column; each image renders at **the same on-screen size it has on the canvas** (the pile's rendered size at the current viewport zoom), so the expansion is a pure translate morph — no scaling between pile and stack. Clamped to a sane floor/ceiling (~120–320px cover width) so extreme zoom levels stay usable; the column scrolls when the stack exceeds the viewport. Hover reveals the actions.
 - **Per-image actions:**
   - **Develop** (primary) — the existing sketch-promote move: closes the overlay and spawns the full finisher generator **beside the pile node** via `sailor:spawnBeside`, with `sketchPromoteOverridesFromProps`-shape overrides built from the payload (`prompt`, `seed` locked, `aspect_ratio`; `model` never copied — schema default). Never auto-runs (standing rule).
   - **Keep as image** (secondary, subtle) — creates an ordinary `ArtifactImageNode` beside the pile holding that image, no sketch properties. Free, no generation. Overlay stays open.
