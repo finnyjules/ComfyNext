@@ -134,6 +134,28 @@ input[type="range"]:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 4px rgba
   to { --sweep-angle: 360deg; }
 }
 
+/* Generating-skeleton ring — a rotating translucent gradient stroke (reuses
+   --sweep-angle/border-sweep from the running-node sweep). Apply to a rounded,
+   positioned element: the beam runs along its border box over a faint constant
+   ring, so the edge never fully disappears between passes. */
+.gen-stroke { position: relative; }
+.gen-stroke::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.5px;
+  background:
+    conic-gradient(from var(--sweep-angle), transparent 0%, rgba(255, 255, 255, 0.55) 10%, rgba(255, 255, 255, 0.15) 28%, transparent 45%),
+    linear-gradient(rgba(255, 255, 255, 0.10) 0 0);
+  -webkit-mask: linear-gradient(white 0 0) content-box, linear-gradient(white 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(white 0 0) content-box, linear-gradient(white 0 0);
+  mask-composite: exclude;
+  animation: border-sweep 1.8s linear infinite;
+  pointer-events: none;
+}
+
 /* Running edge flowing dashes */
 @keyframes edge-flow {
   from { stroke-dashoffset: 12; }

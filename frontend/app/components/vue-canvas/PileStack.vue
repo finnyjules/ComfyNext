@@ -47,7 +47,7 @@ const peeks = computed(() => props.images.slice(1, 3))
       </template>
       <div
         v-else-if="loading"
-        class="pile-skeleton relative w-[190px] h-[150px] rounded-lg"
+        class="pile-skeleton gen-stroke relative w-[190px] h-[150px] rounded-lg"
         aria-label="Sketching…"
       />
       <div v-else class="relative w-[190px] h-[150px] rounded-lg bg-white/[0.05] border border-dashed border-white/15 flex items-center justify-center text-white/30 text-xs">
@@ -68,10 +68,9 @@ const peeks = computed(() => props.images.slice(1, 3))
 </template>
 
 <style scoped>
-/* Dashed NEUTRAL shimmer — the house draft token (never pastel/purple).
-   Mirrors the retired ArtifactImageNode sketch-skeleton treatment. */
+/* NEUTRAL shimmer fill (never pastel/purple); the stroke is the shared
+   .gen-stroke rotating translucent gradient ring (main.css). */
 .pile-skeleton {
-  border: 1.5px dashed rgba(255, 255, 255, 0.25);
   background: linear-gradient(100deg, rgba(255,255,255,.04) 40%, rgba(255,255,255,.10) 50%, rgba(255,255,255,.04) 60%);
   background-size: 200% 100%;
   animation: pile-shimmer 1.1s linear infinite;

@@ -111,7 +111,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
             </button>
           </div>
         </template>
-        <div v-else class="stack-skeleton w-full rounded-lg" :style="{ height: Math.round(itemW * 0.75) + 'px' }" aria-label="Sketching…" />
+        <div v-else class="stack-skeleton gen-stroke w-full rounded-lg" :style="{ height: Math.round(itemW * 0.75) + 'px' }" aria-label="Sketching…" />
       </div>
 
       <div class="shrink-0 flex items-center gap-2 mt-2 nopan">
@@ -139,9 +139,9 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
 </template>
 
 <style scoped>
-/* Same dashed neutral shimmer as the pile skeleton (house draft token). */
+/* Same neutral shimmer fill as the pile skeleton; the stroke is the shared
+   .gen-stroke rotating translucent gradient ring (main.css). */
 .stack-skeleton {
-  border: 1.5px dashed rgba(255, 255, 255, 0.25);
   background: linear-gradient(100deg, rgba(255,255,255,.04) 40%, rgba(255,255,255,.10) 50%, rgba(255,255,255,.04) 60%);
   background-size: 200% 100%;
   animation: stack-shimmer 1.1s linear infinite;
