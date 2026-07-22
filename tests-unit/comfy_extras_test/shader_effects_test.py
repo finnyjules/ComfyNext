@@ -301,3 +301,39 @@ def test_render_effect_u_source_persists():
     outs = render_effect(_SOURCE_FRAG, 16, 16, [{"image": img, "uniforms": {}}], passes=2)
     # pass1 reads u_source (original 0.4), not the black pass0 output
     assert np.abs(outs[0][..., :3] - 0.4).max() < 2.0 / 255.0
+
+
+_FLAG_BAND = 8  # pixels sampled at each edge; s stays < 0.04 there so env ~ 0
+
+
+def _flag_edge_diffs(anchor, anchored_band, free_band):
+    """Render `flag` on the 256 fixture and return (anchored, free) mean abs diffs."""
+    from PIL import Image
+
+    golden_dir = os.path.join(os.path.dirname(__file__), "..", "shaderfx_golden")
+    fixture = np.asarray(
+        Image.open(os.path.join(golden_dir, "fixture_256.png")).convert("RGB"),
+        dtype=np.float32) / 255.0
+    eff = load_catalog(refresh=True).effects["flag"]
+    uniforms = resolve_params(eff, json.dumps({"u_anchor": anchor}))
+    jobs = [{"image": fixture, "uniforms": {**uniforms, "u_time": 0.7, "u_seed": 42.0}}]
+    out = render_effect(eff.source, 256, 256, jobs, passes=eff.passes)[0][..., :3]
+    diff = np.abs(out - fixture)
+    return float(diff[anchored_band].mean()), float(diff[free_band].mean())
+
+
+@pytest.mark.parametrize("anchor,anchored_band,free_band", [
+    pytest.param(3, np.s_[:_FLAG_BAND, :], np.s_[-_FLAG_BAND:, :], id="top"),
+    pytest.param(4, np.s_[-_FLAG_BAND:, :], np.s_[:_FLAG_BAND, :], id="bottom"),
+    pytest.param(1, np.s_[:, :_FLAG_BAND], np.s_[:, -_FLAG_BAND:], id="left"),
+    pytest.param(2, np.s_[:, -_FLAG_BAND:], np.s_[:, :_FLAG_BAND], id="right"),
+])
+def test_flag_anchor_pins_the_anchored_edge(anchor, anchored_band, free_band):
+    """Regression for 2cd3ee3bd: the pipeline y-flip (img[::-1] on upload and
+    readback) had Top/Bottom anchors inverted. Output rows are image-convention
+    (row 0 = visual top), so anchor=Top must leave the TOP rows undistorted and
+    displace the bottom; the golden gate only bakes the default anchor (Left)
+    and would not catch this reappearing."""
+    anchored, free = _flag_edge_diffs(anchor, anchored_band, free_band)
+    assert anchored < 0.005, f"anchored edge moved: mean diff {anchored:.5f}"
+    assert free > 0.01, f"free edge barely moved: mean diff {free:.5f}"
