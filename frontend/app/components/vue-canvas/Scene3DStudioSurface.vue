@@ -10,7 +10,7 @@
 // carries a `label` prop — the others take just `options`/nothing, so their labels
 // live in surrounding markup (mirrors ShapeStudioSurface.vue). Enum-union fields go
 // through string proxies because StudioSegmented/StudioSelect models are `string`.
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import * as THREE from 'three'
 import {
   Box, Plus, Trash2, Copy, Eye, EyeOff, Loader2, Upload, RotateCcw, Lightbulb, Sparkles, Shuffle,
@@ -752,7 +752,7 @@ onBeforeUnmount(() => {
 
 // Any edit re-dirties and clears a stale bake failure so the amber "unbaked
 // changes" indicator isn't masked by an old red "Bake failed — retry".
-watch(doc, () => { dirty.value = true; bakeError.value = ''; engine?.syncFromDoc(doc) }, { deep: true })
+watch(doc, () => { dirty.value = true; bakeError.value = ''; engine?.syncFromDoc(doc); scheduleHistory() }, { deep: true })
 watch(selectedId, (id) => {
   interaction?.select(id, doc.objects.find((o) => o.id === id)?.kind === 'light')
   engine?.setSelected(id)
@@ -760,11 +760,72 @@ watch(selectedId, (id) => {
 watch(snap, (s) => interaction?.setSnap(s))
 watch(lightView, (on) => engine?.setLightView(on))
 
+// ── Undo / redo ──────────────────────────────────────────────────────────────
+// History is a stack of serialized doc snapshots, coalesced by a short debounce so
+// a whole slider drag collapses into ONE step. A restore mutates the doc in place;
+// `restoring` suppresses the history push that its own change would otherwise queue.
+const undoStack: string[] = []
+const redoStack: string[] = []
+let lastSnapshot = serializeDoc(doc)
+let restoring = false
+let histTimer: ReturnType<typeof setTimeout> | null = null
+function commitHistory() {
+  histTimer = null
+  const cur = serializeDoc(doc)
+  if (cur === lastSnapshot) return
+  undoStack.push(lastSnapshot)
+  if (undoStack.length > 100) undoStack.shift()
+  redoStack.length = 0
+  lastSnapshot = cur
+}
+function scheduleHistory() {
+  if (restoring) return
+  if (histTimer) clearTimeout(histTimer)
+  histTimer = setTimeout(commitHistory, 350)
+}
+function applySnapshot(snap: string) {
+  const p = parseDoc(snap)
+  restoring = true
+  doc.objects = p.objects
+  doc.camera = p.camera
+  doc.lighting = p.lighting
+  doc.background = p.background
+  doc.showFloor = p.showFloor
+  doc.post = p.post
+  doc.output = p.output
+  doc.motion = p.motion
+  // A restored snapshot may not contain the selected object anymore.
+  if (selectedId.value && !doc.objects.some((o) => o.id === selectedId.value)) selectedId.value = null
+  lastSnapshot = snap
+  nextTick(() => { restoring = false })
+}
+function undo() {
+  if (histTimer) { clearTimeout(histTimer); commitHistory() } // flush a pending in-progress edit first
+  const snap = undoStack.pop()
+  if (snap === undefined) return
+  redoStack.push(serializeDoc(doc))
+  applySnapshot(snap)
+}
+function redo() {
+  const snap = redoStack.pop()
+  if (snap === undefined) return
+  undoStack.push(serializeDoc(doc))
+  applySnapshot(snap)
+}
+
 function onKey(e: KeyboardEvent) {
-  // Never hijack modified chords (Cmd+R reload, Ctrl/Alt combos).
-  if (e.metaKey || e.ctrlKey || e.altKey) return
   const tag = (e.target as HTMLElement)?.tagName
-  if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable) return
+  const inField = tag === 'INPUT' || tag === 'TEXTAREA' || !!(e.target as HTMLElement)?.isContentEditable
+  // Own Cmd/Ctrl+Z (Shift = redo; Cmd+Y = redo) so the canvas graph's undo doesn't
+  // fire while the studio is open. Skipped while typing in a field (its native undo wins).
+  if ((e.metaKey || e.ctrlKey) && !e.altKey && !inField) {
+    const k = e.key.toLowerCase()
+    if (k === 'z') { e.preventDefault(); e.stopImmediatePropagation(); if (e.shiftKey) redo(); else undo(); return }
+    if (k === 'y') { e.preventDefault(); e.stopImmediatePropagation(); redo(); return }
+  }
+  // Never hijack other modified chords (Cmd+R reload, Ctrl/Alt combos).
+  if (e.metaKey || e.ctrlKey || e.altKey) return
+  if (inField) return
   // (No W/E/R mode shortcuts — the combined gizmo moves/rotates/scales at once.)
   if (e.key === 'Escape') {
     // Open primitive/light/generate menu owns Esc: close it, never the modal.
