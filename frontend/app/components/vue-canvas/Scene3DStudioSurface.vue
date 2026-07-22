@@ -628,6 +628,7 @@ function compactCount(n: number): string {
 // screen, and both catch up together on release.
 let lastBaseSize: [number, number, number] = [1, 1, 1]
 const baseSize = computed<[number, number, number]>(() => {
+  void fontGen.value // font loads aren't reactive; this re-measures when a font resolves
   const o = selected.value
   if (!o) return [1, 1, 1]
   if (deferringGeometry.value) return lastBaseSize
@@ -687,10 +688,13 @@ const fontLabel = computed<string>({
 // loadFont caches by url, so switching back to an already-resolved font never
 // re-fetches; a resolved load always clears the flag.
 const fontError = ref(false)
+// Bumped on a successful load so `baseSize` (which peeks the font cache but
+// isn't reactive to it) re-measures once the font resolves.
+const fontGen = ref(0)
 watch(() => selectedText.value?.content?.font, (url) => {
   fontError.value = false
   if (!url) return
-  loadFont(url).then(() => { fontError.value = false }).catch(() => { fontError.value = true })
+  loadFont(url).then(() => { fontError.value = false; fontGen.value++ }).catch(() => { fontError.value = true })
 }, { immediate: true })
 const sizeX = sizeAxis(0, sclX)
 const sizeY = sizeAxis(1, sclY)
