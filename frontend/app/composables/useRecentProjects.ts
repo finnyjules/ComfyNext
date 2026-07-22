@@ -1,4 +1,5 @@
-import { historyEntryToRecord } from '~/lib/generations'
+import { historyEntryToRecord, type GenOutput } from '~/lib/generations'
+import { buildPreviewImages } from '~/lib/projectCover'
 
 export interface RecentProject {
   workflowId: string
@@ -76,13 +77,25 @@ export function useRecentProjects() {
       await Promise.all(durable.map(async (d) => {
         durableIds.add(d.uuid)
         const gens = await listGenerations(d.uuid)
-        const images: { filename: string; subfolder: string; type: string }[] = []
+        // Paid renders (type 'output') headline the card; studio/Frame assets
+        // recorded as generations (type 'input' — recordAsset) fill behind
+        // them, and the doc-derived cover (stamped at save time) is the last
+        // resort so pure-studio projects aren't blank.
+        const outputImages: GenOutput[] = []
+        const inputAssets: GenOutput[] = []
         for (const g of gens) {
           if (g.promptId) recordedPromptIds.add(g.promptId)
           for (const o of g.outputs || []) {
-            if (o.kind === 'image' && o.type === 'output' && images.length < 3) images.push(o)
+            if (o.kind !== 'image') continue
+            if (o.type === 'output') { if (outputImages.length < 3) outputImages.push(o) }
+            else if (inputAssets.length < 3) inputAssets.push(o)
           }
         }
+        const cover: GenOutput[] = Array.isArray(d.cover)
+          ? d.cover.filter((c): c is GenOutput => !!c && typeof c.filename === 'string')
+              .map((c) => ({ kind: c.kind || 'image', filename: c.filename, subfolder: c.subfolder || '', type: c.type || 'input' }))
+          : []
+        const images = buildPreviewImages([outputImages, inputAssets, cover])
         projects.push({
           workflowId: d.uuid,
           name: d.name || savedNames[d.uuid] || 'Untitled project',
