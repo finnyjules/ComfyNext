@@ -98,6 +98,7 @@ import { viewRefUrl, uploadRefFile } from '~/lib/shotdirector/refUpload'
 import { coverFirstRefs } from '~/composables/useCharacters'
 import { upstreamSeedScope } from '~/lib/artifact/nextSteps'
 import { runStudioCascade, planStudiosToBakeForRun, hasStudioBaker, isStudioNode, isArtifactNode, type CascadeDeps } from '~/lib/studio/cascade'
+import { getScene3DRebaker } from '~/lib/scene3d/rebake'
 import SubgraphIONode from '~/components/vue-canvas/SubgraphIONode.vue'
 import SubgraphBreadcrumb from '~/components/vue-canvas/SubgraphBreadcrumb.vue'
 import PortIntentPopover from '~/components/vue-canvas/PortIntentPopover.vue'
@@ -3685,7 +3686,27 @@ async function studioCascadeDeps(): Promise<CascadeDeps> {
 async function handleStudioRender(e: Event) {
   const detail = (e as CustomEvent<{ sourceNodeId: string; scope?: 'self' | 'upstream' | 'downstream' }>).detail
   if (!detail?.sourceNodeId) return
-  await runStudioCascade(detail.sourceNodeId, detail.scope ?? 'self', await studioCascadeDeps())
+  const scope = detail.scope ?? 'self'
+  const node = (nodes.value as any[]).find(n => String(n.id) === String(detail.sourceNodeId))
+  // 3D Studio is a REAL backend node with no server-side renderer: re-bake its
+  // three passes client-side (updating the widgets the card + a Run replay), then
+  // hand off to the normal downstream backend run so wired consumers get the
+  // fresh files. It never goes through the frontend studio cascade.
+  if (node?.data?.nodeType === 'Scene3DStudio') {
+    const rebake = getScene3DRebaker(detail.sourceNodeId)
+    if (rebake) {
+      const deps = await studioCascadeDeps()
+      deps.setBusy?.(detail.sourceNodeId, true)
+      try { await rebake() }
+      catch (err) { console.error('[scene3d-render] rebake failed', err) }
+      finally { deps.setBusy?.(detail.sourceNodeId, false) }
+    }
+    if (scope !== 'upstream') {
+      window.dispatchEvent(new CustomEvent('sailor:runFiltered', { detail: { targetIds: [detail.sourceNodeId], direction: 'downstream' } }))
+    }
+    return
+  }
+  await runStudioCascade(detail.sourceNodeId, scope, await studioCascadeDeps())
 }
 
 // Bake+publish every studio upstream of a run's targets BEFORE it submits.
