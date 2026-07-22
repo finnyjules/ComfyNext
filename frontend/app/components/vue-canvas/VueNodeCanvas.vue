@@ -3308,11 +3308,11 @@ function handleSpaceTypeOutput(e: Event) {
   }
 }
 
-// Sketch node "Promote": spawn the full generator beside the sketch, seeded
-// with the promoted take's prompt/seed/aspect (sketchPromoteOverridesFor).
-// Placement mirrors handleSpaceTypeOutput; unlike that handler this draws NO
-// edge (the sketch and the finisher are independent, unwired generators) and
-// never auto-runs — the user aims the finisher, then runs it themselves.
+// sailor:spawnBeside: spawn a node beside a source node, with optional
+// widget/property/data overrides from the event detail. Placement mirrors
+// handleSpaceTypeOutput; unlike that handler this draws NO edge (the spawned
+// node is an independent, unwired sibling) and never auto-runs — the user
+// aims it, then runs it themselves.
 function handleSpawnBeside(e: Event) {
   const detail = (e as CustomEvent<{
     sourceNodeId: string
