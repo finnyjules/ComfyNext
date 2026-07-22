@@ -1494,7 +1494,7 @@ const leadership = useProjectLeadership()
 // ~/lib/projectCover) onto the project's cover so All Projects can show
 // content for projects that never ran a paid render. Deduped per uuid so the
 // 3 s debounced autosave doesn't re-PUT an unchanged cover every burst.
-const lastSentCoverByProject = new Map<string, string>()
+const lastSentCoverByProject = new globalThis.Map<string, string>()
 function stampProjectCover(uuid: string, doc: any) {
   const cover = extractCoverImages(doc)
   if (!cover.length) return
