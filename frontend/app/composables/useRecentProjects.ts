@@ -87,12 +87,12 @@ export function useRecentProjects() {
           if (g.promptId) recordedPromptIds.add(g.promptId)
           for (const o of g.outputs || []) {
             if (o.kind !== 'image') continue
-            if (o.type === 'output') { if (outputImages.length < 3) outputImages.push(o) }
-            else if (inputAssets.length < 3) inputAssets.push(o)
+            if (o.type === 'output') outputImages.push(o)
+            else inputAssets.push(o)
           }
         }
         const cover: GenOutput[] = Array.isArray(d.cover)
-          ? d.cover.filter((c): c is GenOutput => !!c && typeof c.filename === 'string')
+          ? d.cover.filter((c): c is GenOutput => !!c && typeof c.filename === 'string' && (!c.kind || c.kind === 'image'))
               .map((c) => ({ kind: c.kind || 'image', filename: c.filename, subfolder: c.subfolder || '', type: c.type || 'input' }))
           : []
         const images = buildPreviewImages([outputImages, inputAssets, cover])
