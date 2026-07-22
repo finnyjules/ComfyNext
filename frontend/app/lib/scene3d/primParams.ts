@@ -119,6 +119,24 @@ export const PRIMITIVE_PARAMS: Record<PrimitiveKind, ParamSpec[]> = {
     { key: 'innerRadius', label: 'Inner radius', hint: 'Size of the hole in the middle', min: 0, max: 0.49, step: 0.01, default: 0.22 },
     arc(),
   ],
+  // Extruded text from an OpenType font
+  text: [
+    { key: 'size', label: 'Size', hint: 'Overall scale of the text', min: 0.1, max: 2, step: 0.05, default: 0.5 },
+    { key: 'depth', label: 'Depth', hint: 'How far the text extrudes in 3D space', min: 0, max: 1, step: 0.01, default: 0.2 },
+    { key: 'bevel', label: 'Bevel', hint: 'Rounds off the edges for a smoother look', min: 0, max: 0.1, step: 0.005, default: 0.01 },
+    { key: 'bevelSegments', label: 'Bevel segments', hint: 'How smooth each beveled edge looks', min: 1, max: 5, step: 1, default: 2 },
+    { key: 'letterSpacing', label: 'Letter spacing', hint: 'Gap between individual characters', min: -0.1, max: 0.5, step: 0.01, default: 0 },
+    { key: 'curveSegments', label: 'Curve segments', hint: 'How detailed the letter curves appear', min: 2, max: 12, step: 1, default: 6 },
+  ],
+  // Extruded polygon shape
+  shape: [
+    { key: 'depth', label: 'Depth', hint: 'How far the shape extrudes in 3D space', min: 0, max: 1, step: 0.01, default: 0.2 },
+    { key: 'bevel', label: 'Bevel', hint: 'Rounds off the edges for a smoother look', min: 0, max: 0.1, step: 0.005, default: 0.01 },
+    { key: 'bevelSegments', label: 'Bevel segments', hint: 'How smooth each beveled edge looks', min: 1, max: 5, step: 1, default: 2 },
+    { key: 'sides', label: 'Sides', hint: 'Number of sides in the shape — 3 is a triangle, 6 a hexagon', min: 3, max: 24, step: 1, default: 6 },
+    { key: 'roundness', label: 'Roundness', hint: 'Curves the corners inward slightly for a softer look', min: 0, max: 1, step: 0.01, default: 0.3 },
+    { key: 'star', label: 'Star', hint: 'Pull alternate points inward into a star', min: 0, max: 1, step: 0.01, default: 0 },
+  ],
 }
 
 /** Resolve one value from a spec list: a stored value clamped to its range,
