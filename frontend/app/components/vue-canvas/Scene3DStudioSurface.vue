@@ -22,7 +22,9 @@ import {
   type SceneDoc, type SceneObject, type PrimitiveObject, type PrimitiveKind, type MaterialType, type GradientStop, type LightKind, type LightObject,
 } from '~/lib/scene3d/config'
 import { MATCAP_IDS, matcapThumb, onTextureError } from '~/lib/scene3d/materials'
-import { AVAILABLE_FONTS, loadFont } from '~/lib/scene3d/outlines'
+import { AVAILABLE_FONTS, loadFont, fontDisplayName, parseGoogleFontValue } from '~/lib/scene3d/outlines'
+import { loadGoogleCatalog, type GoogleFont } from '~/data/google-fonts'
+import FontPicker from '~/components/vue-canvas/FontPicker.vue'
 import { PRIM_GROUPS } from '~/lib/scene3d/primGroups'
 import { SceneEngine, baseSizeFor, baseVertexCountFor } from '~/lib/scene3d/engine'
 import { totalClones } from '~/lib/scene3d/modifiers'
@@ -669,18 +671,47 @@ const textValue = computed<string>({
     else o.content = { text: v, font: DEFAULT_FONT_URL } // defensive: content is always seeded by createPrimitive
   },
 })
-const FONT_LABELS = AVAILABLE_FONTS.map((f) => f.label)
-const fontLabel = computed<string>({
-  get: () => {
-    const url = selectedText.value?.content?.font ?? DEFAULT_FONT_URL
-    return AVAILABLE_FONTS.find((f) => f.url === url)?.label ?? FONT_LABELS[0]!
-  },
-  set: (label) => {
+// FontPicker emits a discriminated payload (mirrors SpaceTypeSurface's usage):
+// a pinned pick is one of our local AVAILABLE_FONTS urls (today's behavior,
+// unchanged); a google pick writes the bare `google:Family` token — no weight
+// suffix on first pick, matching the plan.
+function onFontPick(payload: { kind: 'google'; family: string } | { kind: 'pinned'; value: string }) {
+  const o = selectedText.value
+  if (!o) return
+  const font = payload.kind === 'pinned' ? payload.value : `google:${payload.family}`
+  if (o.content) o.content.font = font
+  else o.content = { text: 'Text', font }
+}
+// Local copy of the Google Fonts catalog, used only to resolve the selected
+// family's available weights for the Weight select below (FontPicker owns its
+// own copy for the searchable dropdown; loadGoogleCatalog is module-cached so
+// this is a no-op refetch, same pattern as SpaceTypeSurface).
+const fontCatalog = ref<GoogleFont[]>([])
+loadGoogleCatalog().then((c) => { fontCatalog.value = c })
+// Non-null only when the selected text's font is a `google:` token — drives
+// the Weight select's visibility (hidden for local fonts).
+const selectedGoogleFont = computed(() => {
+  const font = selectedText.value?.content?.font
+  return font ? parseGoogleFontValue(font) : null
+})
+// The family's catalog weights, or [400] until the catalog resolves (or if
+// the family isn't found in it).
+const fontWeightOptions = computed<string[]>(() => {
+  const parsed = selectedGoogleFont.value
+  if (!parsed) return []
+  const entry = fontCatalog.value.find((f) => f.family === parsed.family)
+  const weights = entry?.weights.length ? entry.weights : [400]
+  return weights.map(String)
+})
+const fontWeight = computed<string>({
+  get: () => String(selectedGoogleFont.value?.weight ?? 400),
+  set: (w) => {
     const o = selectedText.value
-    const f = AVAILABLE_FONTS.find((f) => f.label === label)
-    if (!o || !f) return
-    if (o.content) o.content.font = f.url
-    else o.content = { text: 'Text', font: f.url }
+    const parsed = selectedGoogleFont.value
+    if (!o || !parsed) return
+    const font = `google:${parsed.family}@${w}`
+    if (o.content) o.content.font = font
+    else o.content = { text: 'Text', font }
   },
 })
 // Inline load-error line, mirroring the GLB list's glbError convention but kept
@@ -1411,8 +1442,17 @@ function onClose() {
           </div>
           <div>
             <label class="mb-1 block text-[11px] text-white/55">Font</label>
-            <StudioSelect v-model="fontLabel" :options="FONT_LABELS" />
+            <FontPicker
+              :model-value="fontDisplayName(selectedText?.content?.font ?? DEFAULT_FONT_URL)"
+              :pinned="AVAILABLE_FONTS.map((f) => ({ label: f.label, value: f.url }))"
+              :show-variable-toggle="false"
+              @select="onFontPick"
+            />
             <p v-if="fontError" class="mt-1 text-[11px] text-red-400">Font failed to load — showing placeholder.</p>
+          </div>
+          <div v-if="selectedGoogleFont">
+            <label class="mb-1 block text-[11px] text-white/55">Weight</label>
+            <StudioSelect v-model="fontWeight" :options="fontWeightOptions" />
           </div>
         </div>
 
