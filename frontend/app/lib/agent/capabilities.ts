@@ -292,9 +292,12 @@ const STUDIOS: AgentCapability[] = [
     intents: ['compose a frame', 'create a frame', 'add this to a frame', 'put the image in a frame', 'place it on an artboard', 'new artboard', 'layout layers', 'combine these into one image', 'merge images into a composition', 'overlay images', 'stack layers', 'add text over the image', 'add a caption', 'put a logo on this', 'arrange elements on a canvas', 'draw a shape on top', 'add a vector', 'design a composite',
       // Solid/coloured frame background (the backdrop behind the layers) — NOT a
       // gradient. Owns "make the background blue" once it's in a frame.
-      'solid background colour', 'solid background color', 'blue background', 'coloured background', 'colored background', 'set the background colour', 'set the background color', 'make the background blue', 'fill the background with a colour', 'put it on a coloured background', 'give it a solid background', 'frame background colour', 'backdrop colour behind the layers',
-      'add film grain', 'vignette', 'colour grade the frame', 'color grade the frame',
-      'make it glow', 'bloom effect', 'duotone the image', 'desaturate it', 'make it warmer'] },
+      'solid background colour', 'solid background color', 'blue background', 'coloured background', 'colored background', 'set the background colour', 'set the background color', 'make the background blue', 'fill the background with a colour', 'put it on a coloured background', 'frame background colour', 'backdrop colour behind the layers',
+      // Post-fx on the FRAME (the composited whole) — "the frame"/"the composite"
+      // suffix keeps these from colliding with ShaderStudio's bare per-image shader
+      // vocabulary ('vignette', 'bloom glow', 'duotone') and GradientStudio's.
+      'add film grain to the frame', 'add a vignette to the frame', 'colour grade the frame', 'color grade the frame',
+      'add a bloom to the frame', 'duotone the composited frame', 'desaturate the frame', 'warm up the frame\'s colours'] },
   { nodeType: 'SmartLayout', kind: 'studio', frontendOnly: false, title: 'Smart Layout', summary: 'Format-aware Swiss/International-style auto-layout — design once, reflow to many ad aspect ratios; brand-themed.', inputs: [{ name: 'image_layer_1', type: 'IMAGE' }, { name: 'text_layer_1', type: 'STRING' }], outputs: [{ name: 'images', type: 'IMAGE' }],
     intents: ['make a poster layout', 'design a layout', 'auto-layout', 'arrange into a composition', 'create an ad layout', 'social media post layout', 'lay this out nicely', 'arrange text and images', 'make a flyer', 'design a banner', 'multi-format layout', 'resize this design to other formats', 'adapt to story or square', 'swiss design poster', 'grid layout', 'headline and body layout', 'brand-styled layout'] },
   {
