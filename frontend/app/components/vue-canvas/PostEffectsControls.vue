@@ -19,7 +19,7 @@ const SECTIONS: SectionSpec[] = [
   ] },
   { type: 'bloom', label: 'Bloom', params: [
     { key: 'threshold', label: 'Threshold', min: 0, max: 1, step: 0.01 },
-    { key: 'radius', label: 'Radius', min: 0, max: 0.2, step: 0.002 },
+    { key: 'radius', label: 'Radius', min: 0, max: 0.5, step: 0.005 },
     { key: 'intensity', label: 'Intensity', min: 0, max: 2, step: 0.01 },
   ] },
   { type: 'grain', label: 'Grain', params: [
