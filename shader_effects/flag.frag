@@ -43,10 +43,10 @@ void main() {
     float s, across;
     vec2 dispAxis, windAxis;
     if (anchor == 3 || anchor == 4) {
-        s = (anchor == 3) ? uv.y : 1.0 - uv.y;
+        s = (anchor == 3) ? 1.0 - uv.y : uv.y;
         across = uv.x;
         dispAxis = vec2(1.0, 0.0);
-        windAxis = (anchor == 3) ? vec2(0.0, 1.0) : vec2(0.0, -1.0);
+        windAxis = (anchor == 3) ? vec2(0.0, -1.0) : vec2(0.0, 1.0);
     } else {
         s = (anchor == 2) ? 1.0 - uv.x : uv.x;
         across = uv.y;
