@@ -52,12 +52,9 @@ import { LIVE_PREVIEW_NODE_TYPES } from '~/lib/livePreviewNodes'
 import { draftMetaFor, consumePendingPromote } from '~/lib/draft/runMeta'
 import { getRun } from '~/lib/graph/runRegistry'
 import { nodeGenParams } from '~/lib/artifact/takeProvenance'
-import { planSketchCardsAt, SKETCH_PAD_ID, CARD_SIZE as SKETCH_CARD_SIZE, GAP as SKETCH_CARD_GAP } from '~/lib/sketch/planSketchCardsAt'
 import { sketchPadPromptOverrides } from '~/lib/sketch/sketchPadPrompt'
 import { cleanSketchPrompt } from '~/lib/sketch/sketchIntent'
-import { sketchPromoteOverridesFromProps } from '~/lib/draft/sketchPromote'
-import { stripSketchProperties, vacateSketchSlot } from '~/lib/draft/keepSketchCard'
-import { annotatedImageValueFromViewUrl } from '~/lib/promoteTempImages'
+import { SKETCH_PROP, buildSketchPilePayload, refreshSketchPile, type SketchPilePayload } from '~/lib/sketch/sketchPile'
 import ComfyNode from '~/components/vue-canvas/ComfyNode.vue'
 import ComfyNoteNode from '~/components/vue-canvas/ComfyNoteNode.vue'
 import ComfyEdge from '~/components/vue-canvas/ComfyEdge.vue'
@@ -1007,19 +1004,15 @@ const {
 // here, because there is one canvas and every port reads the same drag.
 registerWireDrag()
 
-// Sketch pad (prompt-bar sketching): one disposable 2×2 pad per canvas. Anchor
-// + card ids persist across re-sketches so refresh overwrites the same slots.
+// Sketch pad (prompt-bar sketching): one disposable hidden generator node per
+// canvas, feeding one visible SketchPile node. Anchor persists across
+// re-sketches so refresh overwrites the same pile.
 // padNodeId is the transient GENERATOR node's NATURAL numeric id (minted by
 // createNodeData, same convention as every other runnable node) — the run
-// pipeline serializes node ids through Number() when building a workflow, so a
-// string id like SKETCH_PAD_ID would come out NaN and be dropped. SKETCH_PAD_ID
-// stays reserved for the (string-id, never-run) leaf card namespace only.
-// keptCount: how many pad cards have been "kept" (lifted out above the grid,
-// see keepSketchCard) since the pad's anchor was last (re-)established. Reset
-// alongside the anchor so a fresh session's kept cards start back at the
-// anchor's x-origin instead of drifting rightward forever.
-const sketchPad = reactive<{ anchor: { x: number, y: number } | null, cardIds: (string | null)[], seed: number, prompt: string, promptId: string | null, padNodeId: string | number | null, keptCount: number }>(
-  { anchor: null, cardIds: [], seed: 0, prompt: '', promptId: null, padNodeId: null, keptCount: 0 },
+// pipeline serializes node ids through Number() when building a workflow.
+// pileNodeId is the SketchPile node's numeric id, used by re-roll (Task 6).
+const sketchPad = reactive<{ anchor: { x: number, y: number } | null, seed: number, prompt: string, promptId: string | null, padNodeId: string | number | null, pileNodeId: string | number | null }>(
+  { anchor: null, seed: 0, prompt: '', promptId: null, padNodeId: null, pileNodeId: null },
 )
 
 /** Viewport center in graph coords, nudged to the nearest clear spot so the pad
@@ -1031,23 +1024,18 @@ function sketchPadAnchor(): { x: number, y: number } {
     ? { x: rect.width / 2, y: rect.height / 2 }
     : { x: window.innerWidth / 2, y: window.innerHeight / 2 }
   const c = project(centerScreen)
-  const step = SKETCH_CARD_SIZE + SKETCH_CARD_GAP
-  const stackH = 4 * step - SKETCH_CARD_GAP
-  // Vertical stack: one column, centered horizontally on the viewport, the
-  // 4-tall run centered on the viewport centre (it overflows a short viewport —
-  // the canvas is pannable).
-  let p = { x: c.x - SKETCH_CARD_SIZE / 2, y: c.y - stackH / 2 }
-  const PAD_W = SKETCH_CARD_SIZE + 80, PAD_H = stackH + 80
+  const PILE_W = 220, PILE_H = 190
+  // Center the pile on the viewport centre.
+  let p = { x: c.x - PILE_W / 2, y: c.y - PILE_H / 2 }
+  const PAD_W = PILE_W + 80, PAD_H = PILE_H + 80
   const occupied = (q: { x: number, y: number }) => (nodes.value as any[]).some((n: any) => {
     const pr = n?.data?.properties
-    if (pr?.sketchPad || pr?.sketchWarm || pr?.sketchSink) return false
+    if (pr?.sketchPad || pr?.sketchWarm || pr?.sketchSink || pr?.[SKETCH_PROP]) return false
     const nx = n.position?.x ?? 0, ny = n.position?.y ?? 0
     return Math.abs(nx - q.x) < PAD_W && Math.abs(ny - q.y) < PAD_H
   })
   let guard = 0
-  // Nudge to a NEW COLUMN (rightward) when occupied — a tall stack clears a
-  // neighbour faster sideways than by pushing further down.
-  while (occupied(p) && guard++ < 40) p = { x: p.x + step, y: p.y }
+  while (occupied(p) && guard++ < 40) p = { x: p.x + PILE_W + 40, y: p.y }
   return p
 }
 
@@ -2761,14 +2749,13 @@ function handleBridgeMessage(event: MessageEvent) {
           take.params = { ...(take.params ?? {}), ...nodeGenParams(target) }
           const tagged = tagTakeFromRunMeta(take, String(target.id), { draftMetaFor, consumePendingPromote })
           target.data = appendTake({ ...target.data }, tagged)
-          // Prompt-bar sketch pad: the transient hidden pad's batch is spread to
-          // the 4 anchor cards (replacing the optimistic skeleton) via the
-          // source-node-decoupled materializer. Routed by the pad's
-          // properties.sketchPad marker (id-agnostic — the pad's numeric id is
-          // minted per-canvas, not the SKETCH_PAD_ID string) BEFORE the legacy
-          // sketch-node fan-out below (Task 8 retires that branch).
+          // Prompt-bar sketch pad: the transient hidden pad's batch lands in the
+          // ONE pile node (replacing the optimistic skeleton pile), not 4 anchor
+          // cards. Routed by the pad's properties.sketchPad marker (id-agnostic —
+          // the pad's numeric id is minted per-canvas, not a fixed string) BEFORE
+          // the legacy sketch-node fan-out below (Task 8 retires that branch).
           if (target?.data?.properties?.sketchPad === true && tagged.images && tagged.images.length > 1 && sketchPad.anchor) {
-            materializeSketchCardsAt(sketchPad.anchor, tagged.images) // real pass, replaces the skeleton
+            materializeSketchPileAt(sketchPad.anchor, tagged.images) // real pass, replaces the skeleton pile
             return
           }
         }
@@ -3339,17 +3326,6 @@ function handleSpawnBeside(e: Event) {
   nextTick(() => fitView({ nodes: [node.id], padding: 0.5, duration: 250 }))
 }
 
-/** Write an image-widget value onto an Image card node in-place. Shared by the
- *  prompt-bar (`materializeSketchCardsAt`) materializer so the widget-patch
- *  logic stays in one place. */
-function patchImageWidget(node: any, value: unknown) {
-  const wi = node.data?.widgetDefs?.findIndex((w: any) => w.name === 'image') ?? -1
-  if (wi < 0) return
-  const wv = Array.isArray(node.data.widgetsValues) ? [...node.data.widgetsValues] : []
-  wv[wi] = value
-  node.data.widgetsValues = wv
-}
-
 /** Apply a name→value widget bundle onto an EXISTING node in-place (mirrors the
  *  widget-def-index mapping createNodeData does at creation). Used to refresh the
  *  transient sketch pad's prompt/seed on a re-sketch without minting a new node. */
@@ -3363,59 +3339,37 @@ function applyWidgetOverridesTo(node: any, overrides: Record<string, unknown>) {
   node.data = { ...node.data, widgetsValues: wv }
 }
 
-/** Place/refresh the 4 pad cards at `anchor`. `images` may be [] for the skeleton
- *  pass (loading shimmer). Reuses ids from sketchPad.cardIds so re-sketches
- *  overwrite the same slots. Returns the card ids in slot order. */
-function materializeSketchCardsAt(
+/** Create-or-refresh the prompt-bar sketch pile at `anchor`. `images` may be []
+ *  for the skeleton pass (loading shimmer). One node, one payload — replaces
+ *  the retired 4-card slot machinery. */
+function materializeSketchPileAt(
   anchor: { x: number, y: number },
   images: string[],
   opts: { loading?: boolean } = {},
-): string[] {
-  const slotImages = images.length ? images : ['', '', '', '']
-  const plans = planSketchCardsAt(anchor, slotImages, sketchPad.cardIds)
-  const ids: string[] = []
-  for (const plan of plans) {
-    const imageWidgetValue = plan.image ? annotatedImageValueFromViewUrl(plan.image) : null
-    // A reuse slot keys off the numeric id stored in sketchPad.cardIds; a fresh
-    // slot's plan.id is only a deterministic string placeholder and never
-    // matches a live node (so it always falls through to the create branch).
-    const existing = plan.reuse ? (nodes.value as any[]).find((n: any) => n.id === plan.id) : null
-    if (existing) {
-      ids[plan.slot] = existing.id
-      existing.data = {
-        ...existing.data,
-        images: plan.image ? [plan.image] : existing.data.images,
-        properties: {
-          ...existing.data.properties,
-          // Refresh card-local provenance on every re-sketch of this slot —
-          // Promote (handlePromoteSketchOutput) reads sketchPrompt/sketchSeed
-          // straight off the card, so a reused slot must never carry a STALE
-          // prompt/seed from a prior sketch. Mirrors the create branch below.
-          sketchPrompt: sketchPad.prompt,
-          sketchSeed: sketchPad.seed,
-          sketchLoading: !!opts.loading,
-        },
-      }
-      if (imageWidgetValue) patchImageWidget(existing, imageWidgetValue)
-      continue
-    }
-    const node = createNodeData('Image', plan.position, imageWidgetValue ? { image: imageWidgetValue } : undefined, {
-      sketchOutput: true,
-      sketchSourceId: SKETCH_PAD_ID,
-      sketchSlot: plan.slot,
-      sketchPrompt: sketchPad.prompt,
-      sketchSeed: sketchPad.seed,
-      sketchLoading: !!opts.loading,
-    })
-    // Keep createNodeData's NUMERIC id. A string id (sketch-out-…) serializes to
-    // NaN in convertToLiteGraph, which drops the card — and any wire FROM it,
-    // e.g. "Refine…" → EditImageNode.input_image — out of the run graph.
-    node.data = { ...node.data, images: plan.image ? [plan.image] : [] }
-    ids[plan.slot] = node.id
-    ;(nodes.value as any[]).push(node)
+): void {
+  const existing = sketchPad.pileNodeId != null
+    ? (nodes.value as any[]).find((n: any) => n.id === sketchPad.pileNodeId)
+    : null
+  if (existing) {
+    const prev = existing.data?.properties?.[SKETCH_PROP] as SketchPilePayload | undefined
+    const next = prev
+      ? refreshSketchPile(prev, { images, prompt: sketchPad.prompt, seed: sketchPad.seed, loading: opts.loading })
+      : buildSketchPilePayload({ prompt: sketchPad.prompt, seed: sketchPad.seed, sourceNodeId: String(sketchPad.padNodeId ?? ''), images, loading: opts.loading })
+    existing.data = { ...existing.data, properties: { ...existing.data.properties, [SKETCH_PROP]: next } }
+    return
   }
-  sketchPad.cardIds = ids
-  return ids
+  const node = createNodeData('SketchPile', anchor, undefined, {
+    [SKETCH_PROP]: buildSketchPilePayload({
+      prompt: sketchPad.prompt,
+      seed: sketchPad.seed,
+      sourceNodeId: String(sketchPad.padNodeId ?? ''),
+      images,
+      loading: opts.loading,
+    }),
+  })
+  // Keep createNodeData's numeric id (string ids serialize to NaN and drop).
+  ;(nodes.value as any[]).push(node)
+  sketchPad.pileNodeId = node.id
 }
 
 /** Prompt-bar entry: render 4 cheap Schnell options for `prompt` at the pad. */
@@ -3428,15 +3382,11 @@ async function startSketch(prompt: string): Promise<void> {
   sketchPad.seed = Math.floor(Math.random() * 2_147_483_647)
   if (!sketchPad.anchor) {
     sketchPad.anchor = sketchPadAnchor()
-    sketchPad.keptCount = 0
   }
 
-  // Lever 1 — optimistic skeleton: 4 shimmer cards appear immediately.
-  materializeSketchCardsAt(sketchPad.anchor, [], { loading: true })
-
   // Transient hidden pad node drives the proven dispatch pipeline. Reused by
-  // its stored NUMERIC id (sketchPad.padNodeId), not by the SKETCH_PAD_ID
-  // string constant — that constant is reserved for the leaf card namespace.
+  // its stored NUMERIC id (sketchPad.padNodeId). Created BEFORE the skeleton
+  // pile — the pile's payload needs sourceNodeId = String(sketchPad.padNodeId).
   const { widgetOverrides, propertyOverrides } = sketchPadPromptOverrides(clean, sketchPad.seed)
   let pad = sketchPad.padNodeId != null
     ? (nodes.value as any[]).find((n: any) => n.id === sketchPad.padNodeId) as any
@@ -3452,6 +3402,10 @@ async function startSketch(prompt: string): Promise<void> {
     applyWidgetOverridesTo(pad, widgetOverrides)
     pad.position = sketchPad.anchor
   }
+
+  // Lever 1 — optimistic skeleton: a single shimmering pile appears immediately.
+  materializeSketchPileAt(sketchPad.anchor, [], { loading: true })
+
   await nextTick()
   // Scoped run of just the pad node (never the whole graph). skipCostConfirm:
   // sketches are the cheap tier; the meter still bills normally.
@@ -3499,94 +3453,6 @@ async function warmSketch(): Promise<void> {
   }
   await nextTick()
   window.dispatchEvent(new CustomEvent('sailor:runFiltered', { detail: { targetIds: [warmPadNodeId], direction: 'self', skipCostConfirm: true } }))
-}
-
-// Sketch-output card "Promote" (spec 2026-07-10-copy-assistant-declunk-design.md,
-// Task 9): re-render the CLICKED CARD's idea at full quality. The pad is
-// transient/hidden (no persistent source node to resolve an active take
-// from — a pad card's `sketchSourceId` is the constant SKETCH_PAD_ID, not a
-// real node id), so this builds overrides straight from the card's OWN
-// provenance properties (`sketchPrompt`/`sketchSeed`, stamped by
-// `materializeSketchCardsAt` on both the create and reuse branches) via
-// sketchPromoteOverridesFromProps, then spawns via the same sailor:spawnBeside
-// path handleSpawnBeside already serves (focused, no run, no edge — model is
-// left at the finisher default, never copied from the sketch's Schnell lock).
-function handlePromoteSketchOutput(e: Event) {
-  const detail = (e as CustomEvent<{ cardId?: string }>).detail
-  const cardId = detail?.cardId
-  if (!cardId) return
-  const card = (nodes.value as any[]).find((n) => n.id === cardId)
-  if (!card) return
-  const built = sketchPromoteOverridesFromProps(card.data?.properties ?? {})
-  if (!built) return
-  window.dispatchEvent(new CustomEvent('sailor:spawnBeside', {
-    detail: {
-      sourceNodeId: card.id,
-      nodeType: 'GenerateImageNode',
-      widgetOverrides: built.widgetOverrides,
-      propertyOverrides: built.propertyOverrides,
-    },
-  }))
-}
-
-/** "Keep" a pad card: it becomes an ordinary Image card and drops out of the
- *  pad's refresh set, freeing its slot for the next sketch. Pad cards are
- *  unwired leaf nodes, so no edge fix-up is needed. Three correctness
- *  requirements (spec 2026-07-10-copy-assistant-declunk-design.md, Task 5):
- *   1. Vacate the slot as a HOLE (cardIds[slot] = null via vacateSketchSlot),
- *      never reindex by filtering the id out of cardIds — filtering shifts
- *      every LATER slot's id down by one, breaking planSketchCardsAt's
- *      positional slot→id mapping.
- *   2. Shed the deterministic `sketch-out-sketch-pad-<slot>` id so a later
- *      re-sketch's fresh card for the freed slot can never collide with this
- *      now-independent card — re-minted via VueFlow's remove+add path (never
- *      mutate a mounted node's `id` in place; that desyncs VueFlow's internal
- *      node lookup). createNodeData mints the fresh id (mintNodeId, the same
- *      minter every other node-creation path uses).
- *   3. Lift the kept card OUT of the pad grid — a row directly above the
- *      anchor, marching rightward per keep (sketchPad.keptCount) — so it
- *      never collides with the next sketch's fresh card at the same slot
- *      position. Uses the pad's own CARD_SIZE/GAP geometry so the kept card's
- *      footprint matches the grid exactly. */
-function keepSketchCard(cardId: string): void {
-  const card = (nodes.value as any[]).find((n: any) => n.id === cardId) as any
-  if (!card || !sketchPad.anchor) return
-  const slot = card.data?.properties?.sketchSlot
-  const strippedProps = stripSketchProperties(card.data?.properties)
-
-  if (typeof slot === 'number') {
-    sketchPad.cardIds = vacateSketchSlot(sketchPad.cardIds, slot, cardId)
-  }
-
-  const step = SKETCH_CARD_SIZE + SKETCH_CARD_GAP
-  // Kept cards lift OUT of the stack into a parallel column to its left,
-  // stacking downward as you keep more — so the sketch stack stays clear to
-  // refresh and your keepers accumulate beside it.
-  const position = {
-    x: sketchPad.anchor.x - (SKETCH_CARD_SIZE + SKETCH_CARD_GAP + 40),
-    y: sketchPad.anchor.y + sketchPad.keptCount * step,
-  }
-  sketchPad.keptCount++
-
-  // Capture the image payload before the old node is removed.
-  const wi = card.data?.widgetDefs?.findIndex((w: any) => w.name === 'image') ?? -1
-  const imageWidgetValue = wi >= 0 ? card.data?.widgetsValues?.[wi] : undefined
-  const images = card.data?.images
-
-  removeNodes([cardId])
-
-  const kept = createNodeData(
-    'Image',
-    position,
-    imageWidgetValue != null ? { image: imageWidgetValue } : undefined,
-    strippedProps,
-  )
-  kept.data = { ...kept.data, images: images ? [...images] : [] }
-  ;(nodes.value as any[]).push(kept)
-}
-function handleKeepSketchCard(e: Event) {
-  const cardId = (e as CustomEvent<{ cardId?: string }>).detail?.cardId
-  if (cardId) keepSketchCard(cardId)
 }
 
 // Character Library panel "Use in image": ready characters (linked LoRA) get a
@@ -4529,8 +4395,6 @@ onMounted(() => {
   window.addEventListener('sailor:applyEffect', handleApplyEffect)
   window.addEventListener('sailor:animateArtifact', handleAnimateArtifact)
   window.addEventListener('sailor:spawnBeside', handleSpawnBeside)
-  window.addEventListener('sailor:promoteSketchOutput', handlePromoteSketchOutput)
-  window.addEventListener('sailor:keepSketchCard', handleKeepSketchCard)
   window.addEventListener('paste', handlePaste)
   window.addEventListener('keydown', handleHistoryKey)
   // Fetch object_info on mount so widget defs are available
@@ -4592,8 +4456,6 @@ onUnmounted(() => {
   window.removeEventListener('sailor:applyEffect', handleApplyEffect)
   window.removeEventListener('sailor:animateArtifact', handleAnimateArtifact)
   window.removeEventListener('sailor:spawnBeside', handleSpawnBeside)
-  window.removeEventListener('sailor:promoteSketchOutput', handlePromoteSketchOutput)
-  window.removeEventListener('sailor:keepSketchCard', handleKeepSketchCard)
   window.removeEventListener('paste', handlePaste)
   window.removeEventListener('keydown', handleHistoryKey)
   // Revoke any held blob URLs from the client-side compositor previews.
@@ -6741,7 +6603,7 @@ function materializeAutoImageSinks(targetIds: string[]): string[] {
     // ComfyUI rejects the run ("Prompt has no outputs"). So they get an auto-sink
     // like any generator — but a HIDDEN one (marked `sketchSink`) so no visible
     // card lands. The pad's own executed event still carries the batch that
-    // materializeSketchCardsAt spreads into the grid; the sink just satisfies
+    // materializeSketchPileAt writes into the pile; the sink just satisfies
     // validation and saves the files.
     const hiddenSketchSource = !!(src.data?.properties?.sketchPad || src.data?.properties?.sketchWarm)
 
@@ -7015,9 +6877,9 @@ defineExpose({
     if (!wf) return wf
     // A hidden sketch pad must never run on a whole-canvas Run (only via its own
     // scoped startSketch dispatch) and must stay out of persisted docs — it is
-    // disposable plumbing. The scoped runFiltered([SKETCH_PAD_ID]) path uses
-    // getFilteredWorkflow, so this full-graph-only filter never strips a targeted
-    // pad run. (Unwired, so removing it orphans no links.) The speculative-warm
+    // disposable plumbing. The scoped runFiltered([sketchPad.padNodeId]) path
+    // uses getFilteredWorkflow, so this full-graph-only filter never strips a
+    // targeted pad run. (Unwired, so removing it orphans no links.) The speculative-warm
     // node (`sketchWarm`, Task 7) is the same kind of disposable plumbing —
     // strip it too so it never persists into a saved doc or rides a full Run.
     // Their hidden auto-created sinks (`sketchSink`) are the same disposable
@@ -7072,7 +6934,6 @@ defineExpose({
   isApplyingWorkflow: () => applyingWorkflow.value,
   startSketch,
   warmSketch,
-  keepSketchCard,
   zoomIn: () => vfZoomIn(),
   zoomOut: () => vfZoomOut(),
   fitView: () => fitView({ padding: 0.2 }),
