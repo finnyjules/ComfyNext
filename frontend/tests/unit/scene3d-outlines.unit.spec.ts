@@ -346,6 +346,10 @@ describe('fontSourceUrl', () => {
       '/api/scene3d/google-font-file?family=Playfair+Display&weight=700',
     )
   })
+
+  it('percent-encodes special characters in a family, keeping spaces as `+`', () => {
+    expect(fontSourceUrl('google:A&B')).toBe('/api/scene3d/google-font-file?family=A%26B')
+  })
 })
 
 describe('fontDisplayName', () => {

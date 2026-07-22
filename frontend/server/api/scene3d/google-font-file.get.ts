@@ -52,22 +52,27 @@ export default defineEventHandler(async (event) => {
     return cached.buf
   }
 
-  // css2 convention: spaces in family names become `+` (not %20).
-  const familyParam = family.replace(/\s+/g, '+')
+  // css2 convention: spaces in family names become `+` (not %20). Percent-encode
+  // everything else first so a stray `&`/`#` in a family value can't inject
+  // extra query params into the upstream request.
+  const familyParam = encodeURIComponent(family).replace(/%20/g, '+')
   const cssUrl = `https://fonts.googleapis.com/css2?family=${familyParam}:wght@${weight}&display=swap`
 
   let css: string
   try {
-    const r = await fetch(cssUrl, { headers: { 'User-Agent': CURL_UA } })
+    const r = await fetch(cssUrl, { headers: { 'User-Agent': CURL_UA }, signal: AbortSignal.timeout(10_000) })
     if (!r.ok) {
       if (r.status === 400 || r.status === 404) {
-        throw createError({ statusCode: 404, message: 'Unknown Google font family' })
+        throw createError({ statusCode: 404, message: 'Unknown font family or unsupported weight' })
       }
       throw createError({ statusCode: 502, message: `Google Fonts css2 returned ${r.status}` })
     }
     css = await r.text()
   } catch (err: any) {
     if (err?.statusCode) throw err
+    if (err?.name === 'AbortError' || err?.name === 'TimeoutError') {
+      throw createError({ statusCode: 502, message: 'Google Fonts timed out' })
+    }
     throw createError({ statusCode: 502, message: `Couldn't reach Google Fonts: ${err?.message ?? err}` })
   }
 
@@ -79,11 +84,14 @@ export default defineEventHandler(async (event) => {
 
   let buf: Buffer
   try {
-    const r = await fetch(ttfUrl)
+    const r = await fetch(ttfUrl, { signal: AbortSignal.timeout(10_000) })
     if (!r.ok) throw createError({ statusCode: 502, message: `Font binary fetch returned ${r.status}` })
     buf = Buffer.from(await r.arrayBuffer())
   } catch (err: any) {
     if (err?.statusCode) throw err
+    if (err?.name === 'AbortError' || err?.name === 'TimeoutError') {
+      throw createError({ statusCode: 502, message: 'Google Fonts timed out' })
+    }
     throw createError({ statusCode: 502, message: `Couldn't fetch font binary: ${err?.message ?? err}` })
   }
 

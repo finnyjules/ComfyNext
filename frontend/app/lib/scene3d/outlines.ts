@@ -138,8 +138,10 @@ export function parseGoogleFontValue(value: string): { family: string; weight?: 
 export function fontSourceUrl(value: string): string {
   const parsed = parseGoogleFontValue(value)
   if (!parsed) return value
-  // css2 convention (matched server-side): spaces become `+`, not %20.
-  const familyParam = parsed.family.replace(/\s+/g, '+')
+  // css2 convention (matched server-side): spaces become `+`, not %20 — but
+  // percent-encode everything else first so an arbitrary family string (e.g.
+  // containing `&` or `#`) can't inject extra query params.
+  const familyParam = encodeURIComponent(parsed.family).replace(/%20/g, '+')
   const weightParam = parsed.weight !== undefined ? `&weight=${parsed.weight}` : ''
   return `/api/scene3d/google-font-file?family=${familyParam}${weightParam}`
 }

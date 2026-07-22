@@ -678,7 +678,19 @@ const textValue = computed<string>({
 function onFontPick(payload: { kind: 'google'; family: string } | { kind: 'pinned'; value: string }) {
   const o = selectedText.value
   if (!o) return
-  const font = payload.kind === 'pinned' ? payload.value : `google:${payload.family}`
+  let font: string
+  if (payload.kind === 'pinned') {
+    font = payload.value
+  } else {
+    // Weights are per-family: re-picking the SAME family (e.g. from the
+    // catalog dropdown after already having chosen a weight) keeps that
+    // weight instead of silently resetting it to the default; picking a
+    // DIFFERENT family still resets, since its weight has no meaning there.
+    const existing = parseGoogleFontValue(o.content?.font ?? '')
+    font = existing && existing.family === payload.family && existing.weight !== undefined
+      ? `google:${payload.family}@${existing.weight}`
+      : `google:${payload.family}`
+  }
   if (o.content) o.content.font = font
   else o.content = { text: 'Text', font }
 }
