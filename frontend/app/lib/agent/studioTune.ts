@@ -52,6 +52,7 @@ function readState(node: any): CompositorState {
   return {
     layers: JSON.parse(JSON.stringify(props.sailor_localLayers ?? [])),
     background: props.sailor_localBg,
+    postEffects: JSON.parse(JSON.stringify((props as any).sailor_localFx ?? [])),
   }
 }
 /** Write a CompositorState back onto the node — mirrors useLocalLayerEditor's
@@ -62,6 +63,8 @@ function writeState(node: any, s: CompositorState) {
   const bg = s.background
   if (bg === undefined || bg === 'none' || bg === '') delete node.data.properties.sailor_localBg
   else node.data.properties.sailor_localBg = bg
+  if (s.postEffects?.length) node.data.properties.sailor_localFx = s.postEffects
+  else delete node.data.properties.sailor_localFx
 }
 
 /** The unified wired+local z-order (`sailor_stackOrder`, bottom→top, keys

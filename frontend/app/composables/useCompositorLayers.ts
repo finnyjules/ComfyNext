@@ -1001,7 +1001,7 @@ function paintLayer(
   const shadow = fx.find((e): e is DropShadowEffect => e.type === 'drop_shadow')
   const blur = fx.find((e): e is LayerBlurEffect => e.type === 'layer_blur')
   const inner = fx.find((e): e is InnerShadowEffect => e.type === 'inner_shadow')
-  const chain = fx.filter(isChainEffect) as PostEffect[]
+  const chain = fx.filter(isChainEffect)
   // (background_blur is a stack-level effect — paintLayerStack applies it
   // against the backdrop before this layer paints.)
 

@@ -61,7 +61,7 @@ function sanitizePostEffect(raw: unknown, cur?: PostEffect): PostEffect | null {
       const [lo, hi] = clamps[k]!
       base[k] = Math.min(hi, Math.max(lo, v))
     } else if (type === 'duotone' && (k === 'shadows' || k === 'highlights')
-      && typeof v === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(v)) {
+      && typeof v === 'string' && /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(v)) {
       base[k] = v
     }
   }
@@ -381,6 +381,16 @@ export function summarizeCompositorChange(state: CompositorState, cmd: Command):
     case 'generateImage': return { label: 'Add image', before: '', after: String(a.prompt ?? 'generated') }
     case 'removeImageBackground': return { label: name, before: '', after: 'cut out' }
     case 'editImage': return { label: name, before: '', after: String(a.instruction ?? 'edited') }
+    case 'setLayerEffect': {
+      const type = String((a.effect as Record<string, unknown> | undefined)?.type ?? '')
+      const had = !!layer?.effects?.some(e => e.type === type)
+      return { label: `${type} effect (layer ${name || String(cmd.target ?? '')})`, before: had ? type : 'none', after: a.remove === true ? 'removed' : 'updated' }
+    }
+    case 'setPostEffect': {
+      const type = String((a.effect as Record<string, unknown> | undefined)?.type ?? '')
+      const had = !!state.postEffects?.some(e => e.type === type)
+      return { label: `${type} effect (frame)`, before: had ? type : 'none', after: a.remove === true ? 'removed' : 'updated' }
+    }
     default: return { label: cmd.op, before: '', after: a ? JSON.stringify(a) : '' }
   }
 }

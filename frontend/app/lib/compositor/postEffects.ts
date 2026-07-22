@@ -66,7 +66,7 @@ export const POST_FX_PARAM_CLAMP: Record<string, Record<string, [number, number]
 }
 
 const CHAIN_TYPES = new Set<string>(['adjust', 'duotone', 'bloom', 'vignette', 'grain'])
-export const isChainEffect = (e: { type: string }): boolean => CHAIN_TYPES.has(e.type)
+export const isChainEffect = (e: { type: string }): e is PostEffect => CHAIN_TYPES.has(e.type)
 export const chainActive = (effects?: { type: string; visible?: boolean }[]): boolean =>
   !!effects?.some(e => e.visible !== false && CHAIN_TYPES.has(e.type))
 

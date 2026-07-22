@@ -223,4 +223,13 @@ describe('post-processing effect commands', () => {
     expect(d.shadows).toBe('#102030')
     expect(d.highlights).toBe('#ffe8d6') // invalid input → default kept
   })
+
+  it('duotone rejects a malformed hex length (not 3/6/8 digits)', () => {
+    const r = applyCompositorCommand(baseState(), {
+      op: 'setPostEffect', args: { effect: { type: 'duotone', shadows: '#12345' } },
+    })
+    expect(r.ok).toBe(true); if (!r.ok) return
+    const d = (r.template as any).postEffects.find((e: any) => e.type === 'duotone')
+    expect(d.shadows).toBe('#1a1a40') // invalid 5-char hex → default kept
+  })
 })
