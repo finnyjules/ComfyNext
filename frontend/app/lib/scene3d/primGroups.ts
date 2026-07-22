@@ -3,7 +3,7 @@
 import type { Component } from 'vue'
 import {
   Box, Circle, Cylinder, Cone, Torus, Square, Pill, Pyramid, Triangle, Gem, Diamond,
-  Hexagon, CircleDashed, Infinity as InfinityIcon,
+  Hexagon, CircleDashed, Infinity as InfinityIcon, Type,
 } from 'lucide-vue-next'
 import type { PrimitiveKind } from './config'
 
@@ -34,5 +34,9 @@ export const PRIM_GROUPS: { label: string; kinds: PrimGroupItem[] }[] = [
   { label: 'Decorative', kinds: [
     { kind: 'torusKnot', label: 'Torus knot', icon: InfinityIcon },
     { kind: 'ring', label: 'Ring', icon: CircleDashed },
+  ] },
+  { label: 'Text & Shape', kinds: [
+    { kind: 'text', label: 'Text', icon: Type },
+    { kind: 'shape', label: 'Shape', icon: Hexagon },
   ] },
 ]

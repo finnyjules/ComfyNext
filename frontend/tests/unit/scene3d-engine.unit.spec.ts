@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 // @ts-expect-error — three vendors this lib without type declarations.
 import opentype from 'three/examples/jsm/libs/opentype.module.js'
-import { sunDirection, geometryFor, geoKeyFor, baseSizeFor, buildGeometry, lightFor, SceneEngine } from '~/lib/scene3d/engine'
+import { sunDirection, geometryFor, geoKeyFor, baseSizeFor, baseVertexCountFor, buildGeometry, lightFor, SceneEngine } from '~/lib/scene3d/engine'
 import { PRIMITIVE_KINDS, createPrimitive, createLight, createGlbObject, type PrimitiveKind, type PrimitiveObject, type GlbObject } from '~/lib/scene3d/config'
 import { PRIMITIVE_PARAMS } from '~/lib/scene3d/primParams'
 import { loadFont, type Font } from '~/lib/scene3d/outlines'
@@ -260,6 +260,42 @@ describe('scene3d engine modifier integration', () => {
     const plain = baseSizeFor('box')
     const arrayed = baseSizeFor('box', undefined, { cloneCount: 3, cloneOffsetX: 2 })
     expect(arrayed[0]).toBeGreaterThan(plain[0])
+  })
+
+  // Task 4 shipped `text` resolving through geometryFor's font-cache peek, but
+  // baseSizeFor/baseVertexCountFor never threaded `content` through to it — so
+  // the Size row and the clone-cost warning kept measuring the 0.3 placeholder
+  // cube for text objects even once the real font had resolved. This pins the
+  // fix: same fontCacheGet(content.font) peek as geometryForObject, seeded here
+  // by awaiting loadFont(url) directly (outlines.ts's cache is module-level).
+  it("measures a text object's real glyph geometry once its font resolves, not the 0.3 placeholder", async () => {
+    const bytes = readFileSync(fontPath('fonts/ABCROM-Bold.otf'))
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    // Unique url so this never rides another spec's already-resolved cache entry.
+    const url = '/fonts/__engine-basesize-test.otf'
+    const content = { text: 'Hi', font: url }
+
+    // Unresolved (cache miss): both helpers fall back to the placeholder cube.
+    const [pw, ph, pd] = baseSizeFor('text', undefined, undefined, content)
+    expect(pw).toBeCloseTo(0.3)
+    expect(ph).toBeCloseTo(0.3)
+    expect(pd).toBeCloseTo(0.3)
+    const placeholderVerts = baseVertexCountFor('text', undefined, undefined, content)
+
+    await loadFont(url) // seeds outlines.ts's resolved-font cache synchronously peekable via fontCacheGet
+
+    const [w, h] = baseSizeFor('text', undefined, undefined, content)
+    expect(w).not.toBeCloseTo(0.3)
+    expect(h).not.toBeCloseTo(0.3)
+    expect(baseVertexCountFor('text', undefined, undefined, content)).not.toBe(placeholderVerts)
+
+    vi.unstubAllGlobals()
   })
 })
 

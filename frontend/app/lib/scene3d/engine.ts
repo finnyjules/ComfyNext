@@ -186,13 +186,20 @@ export function lightFor(obj: LightObject): THREE.Light {
 
 /** Unscaled bounding dimensions of a primitive at the given params and
  *  modifiers — the Size row multiplies these by the object's scale, so an array
- *  or a bend must widen it. Pure: builds, measures, disposes. */
+ *  or a bend must widen it. Pure: builds, measures, disposes.
+ *
+ *  `content` carries `text`'s font reference; a resolved font (already in the
+ *  sync cache) measures the real glyph geometry, a miss falls back to the
+ *  0.3 placeholder cube exactly like the engine's own render path — transient
+ *  and acceptable since the async load re-syncs shortly after. */
 export function baseSizeFor(
   kind: PrimitiveKind,
   params?: Record<string, number>,
   modifiers?: Record<string, number>,
+  content?: PrimitiveContent,
 ): [number, number, number] {
-  const geo = buildGeometry(kind, params, modifiers, 'smooth')
+  const font = kind === 'text' ? fontCacheGet(content?.font ?? DEFAULT_FONT_URL) : null
+  const geo = buildGeometry(kind, params, modifiers, 'smooth', content, font)
   geo.computeBoundingBox()
   const b = geo.boundingBox!
   const size: [number, number, number] = [b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z]
@@ -209,14 +216,20 @@ export function baseSizeFor(
  *  Note this is an upper bound at the extremes: `applyModifiers` shrinks the
  *  subdivision ceiling as the clone count grows, so a budget-clamped clone set
  *  can end up below the reported figure. Over-reporting is the safe direction
- *  for a cost warning. */
+ *  for a cost warning.
+ *
+ *  Same `content`/font-cache peek as `baseSizeFor` — without it a `text`
+ *  object's clone-cost warning was counting the 0.3 placeholder cube's
+ *  vertices instead of the real glyph geometry. */
 export function baseVertexCountFor(
   kind: PrimitiveKind,
   params?: Record<string, number>,
   modifiers?: Record<string, number>,
+  content?: PrimitiveContent,
 ): number {
   const single = { ...(modifiers ?? {}), cloneCount: 1, cloneCountX: 1, cloneCountY: 1, cloneCountZ: 1 }
-  const geo = buildGeometry(kind, params, single, 'smooth')
+  const font = kind === 'text' ? fontCacheGet(content?.font ?? DEFAULT_FONT_URL) : null
+  const geo = buildGeometry(kind, params, single, 'smooth', content, font)
   const n = geo.getAttribute('position')?.count ?? 0
   geo.dispose()
   return n

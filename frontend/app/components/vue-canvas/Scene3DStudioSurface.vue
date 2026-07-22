@@ -18,9 +18,11 @@ import {
 import {
   parseDoc, serializeDoc, createPrimitive, createGlbObject, createLight,
   LIGHTING_PRESETS, MATERIAL_TYPES, MATERIAL_DEFAULTS, LIGHT_KINDS, LIGHT_DEFAULTS, lightIntensityMax, gradientAngles, gradientStopsOf,
-  type SceneDoc, type SceneObject, type PrimitiveKind, type MaterialType, type GradientStop, type LightKind, type LightObject,
+  DEFAULT_FONT_URL,
+  type SceneDoc, type SceneObject, type PrimitiveObject, type PrimitiveKind, type MaterialType, type GradientStop, type LightKind, type LightObject,
 } from '~/lib/scene3d/config'
 import { MATCAP_IDS, matcapThumb, onTextureError } from '~/lib/scene3d/materials'
+import { AVAILABLE_FONTS, loadFont } from '~/lib/scene3d/outlines'
 import { PRIM_GROUPS } from '~/lib/scene3d/primGroups'
 import { SceneEngine, baseSizeFor, baseVertexCountFor } from '~/lib/scene3d/engine'
 import { totalClones } from '~/lib/scene3d/modifiers'
@@ -585,7 +587,7 @@ const cloneCost = computed(() => {
   if (!o || o.kind !== 'primitive') return null
   const copies = totalClones(o.modifiers)
   if (copies <= 1) return null
-  const verts = baseVertexCountFor(o.primitive, o.params, o.modifiers) * copies
+  const verts = baseVertexCountFor(o.primitive, o.params, o.modifiers, o.content) * copies
   return { copies, verts, heavy: verts > AMBER_VERTS }
 })
 // Heavy-drag deferral. A rebuild at 300k+ verts blocks the main thread long
@@ -630,7 +632,7 @@ const baseSize = computed<[number, number, number]>(() => {
   if (!o) return [1, 1, 1]
   if (deferringGeometry.value) return lastBaseSize
   lastBaseSize = o.kind === 'primitive'
-    ? baseSizeFor(o.primitive, o.params, o.modifiers)
+    ? baseSizeFor(o.primitive, o.params, o.modifiers, o.content)
     : engine?.baseSizeOf(o.id) ?? [1, 1, 1]
   return lastBaseSize
 })
@@ -649,6 +651,47 @@ const geoSpecs = computed(() => {
   const o = selected.value
   return o && o.kind === 'primitive' ? PRIMITIVE_PARAMS[o.primitive] : []
 })
+
+// ── Text primitive controls (Geometry panel, above the schema-driven sliders) ──
+// Not schema-driven like the sliders above: `content` only exists on `text`
+// objects and holds a string + a font URL, not a numeric param.
+const selectedText = computed<PrimitiveObject | null>(() => {
+  const o = selected.value
+  return o && o.kind === 'primitive' && o.primitive === 'text' ? o : null
+})
+const textValue = computed<string>({
+  get: () => selectedText.value?.content?.text ?? '',
+  set: (v) => {
+    const o = selectedText.value
+    if (!o) return
+    if (o.content) o.content.text = v
+    else o.content = { text: v, font: DEFAULT_FONT_URL } // defensive: content is always seeded by createPrimitive
+  },
+})
+const FONT_LABELS = AVAILABLE_FONTS.map((f) => f.label)
+const fontLabel = computed<string>({
+  get: () => {
+    const url = selectedText.value?.content?.font ?? DEFAULT_FONT_URL
+    return AVAILABLE_FONTS.find((f) => f.url === url)?.label ?? FONT_LABELS[0]!
+  },
+  set: (label) => {
+    const o = selectedText.value
+    const f = AVAILABLE_FONTS.find((f) => f.label === label)
+    if (!o || !f) return
+    if (o.content) o.content.font = f.url
+    else o.content = { text: 'Text', font: f.url }
+  },
+})
+// Inline load-error line, mirroring the GLB list's glbError convention but kept
+// local (no id-keyed map needed — only the selected object's font is shown).
+// loadFont caches by url, so switching back to an already-resolved font never
+// re-fetches; a resolved load always clears the flag.
+const fontError = ref(false)
+watch(() => selectedText.value?.content?.font, (url) => {
+  fontError.value = false
+  if (!url) return
+  loadFont(url).then(() => { fontError.value = false }).catch(() => { fontError.value = true })
+}, { immediate: true })
 const sizeX = sizeAxis(0, sclX)
 const sizeY = sizeAxis(1, sclY)
 const sizeZ = sizeAxis(2, sclZ)
@@ -1339,6 +1382,20 @@ function onClose() {
       </StudioSection>
 
       <StudioSection v-if="selectedIsPrimitive" title="Geometry" @pointerdown.capture="onControlsPointerDown">
+        <!-- Text controls: not schema-driven (content is {text?,font?}, only
+             carried by `text` objects) — sit above the generated sliders. -->
+        <div v-if="selectedText" class="space-y-3 pt-1">
+          <div>
+            <label class="mb-1 block text-[11px] text-white/55">Text</label>
+            <input v-model="textValue" type="text" aria-label="Text content" class="studio-num" style="text-align: left" />
+          </div>
+          <div>
+            <label class="mb-1 block text-[11px] text-white/55">Font</label>
+            <StudioSelect v-model="fontLabel" :options="FONT_LABELS" />
+            <p v-if="fontError" class="mt-1 text-[11px] text-red-400">Font failed to load — showing placeholder.</p>
+          </div>
+        </div>
+
         <!-- Geometry: a peer of the material sub-groups (plain details, no card
              chrome), but open by default — these are the shape's primary knobs. -->
         <div v-if="geoSpecs.length" class="space-y-3 pt-1">
