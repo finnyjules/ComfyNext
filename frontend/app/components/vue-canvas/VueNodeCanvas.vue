@@ -7546,16 +7546,20 @@ defineExpose({
       />
     </Teleport>
 
-    <!-- Sketch stack overlay (canvas-owned; opened by sailor:openSketchStack) -->
-    <VueCanvasSketchStackOverlay
-      v-if="sketchStackPayload && sketchStackOrigin"
-      :payload="sketchStackPayload"
-      :origin="sketchStackOrigin"
-      @develop="developSketchStackItem"
-      @keep="keepSketchStackItem"
-      @reroll="rerollSketchStack"
-      @close="sketchStackForId = null"
-    />
+    <!-- Sketch stack overlay (canvas-owned; opened by sailor:openSketchStack).
+         Teleported like the BatchGrid gallery so the prompt bar / toolbar
+         (later fixed elements in the canvas tree) can't paint over it. -->
+    <Teleport to="body">
+      <VueCanvasSketchStackOverlay
+        v-if="sketchStackPayload && sketchStackOrigin"
+        :payload="sketchStackPayload"
+        :origin="sketchStackOrigin"
+        @develop="developSketchStackItem"
+        @keep="keepSketchStackItem"
+        @reroll="rerollSketchStack"
+        @close="sketchStackForId = null"
+      />
+    </Teleport>
 
     <!-- Model gallery (image generator model picker) -->
     <VueCanvasModelGalleryModal
