@@ -1240,69 +1240,63 @@ function onClose() {
       </div>
 
       <template v-if="activeTab === 'build'">
-      <StudioSection v-if="selected" title="Selection" @pointerdown.capture="onControlsPointerDown">
-        <details class="group" open>
-          <summary class="flex cursor-pointer select-none items-center gap-1.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 list-none hover:text-white/60 [&::-webkit-details-marker]:hidden"><span class="inline-block text-white/30 transition-transform group-open:rotate-90">›</span>Transform</summary>
-          <div class="space-y-3 pt-1">
-            <div>
-              <label class="mb-1 block text-[11px] text-white/55">Position</label>
-              <div class="grid grid-cols-3 gap-1.5">
-                <input v-model.number="posX" type="number" step="0.1" aria-label="Position X" class="studio-num" />
-                <input v-model.number="posY" type="number" step="0.1" aria-label="Position Y" class="studio-num" />
-                <input v-model.number="posZ" type="number" step="0.1" aria-label="Position Z" class="studio-num" />
-              </div>
-            </div>
-            <div>
-              <label class="mb-1 block text-[11px] text-white/55">Rotation°</label>
-              <div class="grid grid-cols-3 gap-1.5">
-                <input v-model.number="rotX" type="number" step="1" aria-label="Rotation X" class="studio-num" />
-                <input v-model.number="rotY" type="number" step="1" aria-label="Rotation Y" class="studio-num" />
-                <input v-model.number="rotZ" type="number" step="1" aria-label="Rotation Z" class="studio-num" />
-              </div>
-            </div>
-            <div v-if="selected && !selectedIsLight">
-              <label class="mb-1 block text-[11px] text-white/55">Size</label>
-              <div class="grid grid-cols-3 gap-1.5">
-                <input v-model.number="sizeX" type="number" step="0.05" aria-label="Size X" class="studio-num" />
-                <input v-model.number="sizeY" type="number" step="0.05" aria-label="Size Y" class="studio-num" />
-                <input v-model.number="sizeZ" type="number" step="0.05" aria-label="Size Z" class="studio-num" />
-              </div>
-            </div>
+      <StudioSection v-if="selected" title="Transform" @pointerdown.capture="onControlsPointerDown">
+        <div>
+          <label class="mb-1 block text-[11px] text-white/55">Position</label>
+          <div class="grid grid-cols-3 gap-1.5">
+            <input v-model.number="posX" type="number" step="0.1" aria-label="Position X" class="studio-num" />
+            <input v-model.number="posY" type="number" step="0.1" aria-label="Position Y" class="studio-num" />
+            <input v-model.number="posZ" type="number" step="0.1" aria-label="Position Z" class="studio-num" />
           </div>
-        </details>
+        </div>
+        <div>
+          <label class="mb-1 block text-[11px] text-white/55">Rotation°</label>
+          <div class="grid grid-cols-3 gap-1.5">
+            <input v-model.number="rotX" type="number" step="1" aria-label="Rotation X" class="studio-num" />
+            <input v-model.number="rotY" type="number" step="1" aria-label="Rotation Y" class="studio-num" />
+            <input v-model.number="rotZ" type="number" step="1" aria-label="Rotation Z" class="studio-num" />
+          </div>
+        </div>
+        <div v-if="selected && !selectedIsLight">
+          <label class="mb-1 block text-[11px] text-white/55">Size</label>
+          <div class="grid grid-cols-3 gap-1.5">
+            <input v-model.number="sizeX" type="number" step="0.05" aria-label="Size X" class="studio-num" />
+            <input v-model.number="sizeY" type="number" step="0.05" aria-label="Size Y" class="studio-num" />
+            <input v-model.number="sizeZ" type="number" step="0.05" aria-label="Size Z" class="studio-num" />
+          </div>
+        </div>
+      </StudioSection>
 
+      <StudioSection v-if="selectedIsPrimitive" title="Geometry" @pointerdown.capture="onControlsPointerDown">
         <!-- Geometry: a peer of the material sub-groups (plain details, no card
              chrome), but open by default — these are the shape's primary knobs. -->
-        <details v-if="geoSpecs.length" class="group" open>
-          <summary class="flex cursor-pointer select-none items-center gap-1.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 list-none hover:text-white/60 [&::-webkit-details-marker]:hidden"><span class="inline-block text-white/30 transition-transform group-open:rotate-90">›</span>Geometry</summary>
-          <div class="space-y-3 pt-1">
-            <template v-for="spec in geoSpecs" :key="spec.key">
-              <label
-                v-if="spec.control === 'toggle'"
-                class="flex cursor-pointer items-center justify-between text-[11px] text-white/55"
-                :title="spec.hint"
-              >
-                <span>{{ spec.label }}</span>
-                <input
-                  type="checkbox"
-                  class="h-3.5 w-3.5 accent-white/70"
-                  :checked="paramOf(spec.key) > 0.5"
-                  @change="setParam(spec.key, ($event.target as HTMLInputElement).checked ? 1 : 0)"
-                />
-              </label>
-              <StudioSlider
-                v-else
-                :model-value="paramOf(spec.key)"
-                :label="spec.label"
-                :hint="spec.hint"
-                :min="spec.min"
-                :max="spec.max"
-                :step="spec.step"
-                @update:model-value="(v: number) => setParam(spec.key, v)"
+        <div v-if="geoSpecs.length" class="space-y-3 pt-1">
+          <template v-for="spec in geoSpecs" :key="spec.key">
+            <label
+              v-if="spec.control === 'toggle'"
+              class="flex cursor-pointer items-center justify-between text-[11px] text-white/55"
+              :title="spec.hint"
+            >
+              <span>{{ spec.label }}</span>
+              <input
+                type="checkbox"
+                class="h-3.5 w-3.5 accent-white/70"
+                :checked="paramOf(spec.key) > 0.5"
+                @change="setParam(spec.key, ($event.target as HTMLInputElement).checked ? 1 : 0)"
               />
-            </template>
-          </div>
-        </details>
+            </label>
+            <StudioSlider
+              v-else
+              :model-value="paramOf(spec.key)"
+              :label="spec.label"
+              :hint="spec.hint"
+              :min="spec.min"
+              :max="spec.max"
+              :step="spec.step"
+              @update:model-value="(v: number) => setParam(spec.key, v)"
+            />
+          </template>
+        </div>
 
         <!-- Modifiers: a peer of Geometry (same plain details, no card chrome),
              collapsed by default — these deform the built geometry. -->
@@ -1398,7 +1392,9 @@ function onClose() {
             </div>
           </div>
         </details>
+      </StudioSection>
 
+      <StudioSection v-if="selected && selectedIsPrimitive" title="Material" @pointerdown.capture="onControlsPointerDown">
         <div v-if="selectedIsPrimitive">
           <label class="mb-1 block text-[11px] text-white/55">Material</label>
           <StudioSelect v-model="matType" :options="MATERIAL_TYPES" />
@@ -1558,7 +1554,9 @@ function onClose() {
           <StudioSlider v-model="matRoughness" label="Roughness" hint="How matte or glossy the surface is" :min="0" :max="1" :step="0.01" />
           <StudioSlider v-model="matMetalness" label="Metalness" hint="Blends between plastic-like and metal reflections" :min="0" :max="1" :step="0.01" />
         </template>
+      </StudioSection>
 
+      <StudioSection v-if="selectedIsLight" title="Light" @pointerdown.capture="onControlsPointerDown">
         <!-- Light controls: a peer of the material sub-groups above, gated on
              selectedIsLight (not selectedIsPrimitive) since lights aren't primitives. -->
         <template v-if="selectedIsLight">
