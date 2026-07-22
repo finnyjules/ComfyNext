@@ -469,7 +469,7 @@ function renderStack() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.clearRect(0, 0, W, H)
   paintLayerStack(ctx, W, H, buildStackItems(), editor.localLayers.value, l => l.id === editor.editingId.value,
-    undefined, undefined, wiredTreatments.value, editor.background.value, editor.localGroups.value)
+    undefined, undefined, wiredTreatments.value, editor.background.value, editor.localGroups.value, editor.postEffects.value)
 }
 
 // ── Live animation loop ──────────────────────────────────────────────────────
@@ -518,6 +518,7 @@ watch(
     JSON.stringify([...hiddenWiredSet.value]),
     JSON.stringify(wiredTreatments.value),
     JSON.stringify(editor.background.value ?? null),
+    JSON.stringify(editor.postEffects.value ?? []),
     JSON.stringify(editor.localGroups.value),
   ] as const,
   async () => {
@@ -570,7 +571,7 @@ function exportCompositeCanvas(): HTMLCanvasElement | null {
   // Route through the same masked renderer as the preview (no editing-skip — an
   // export includes every visible layer), so silhouette masks apply on download.
   paintLayerStack(ctx, W, H, buildStackItems(), editor.localLayers.value,
-    undefined, undefined, undefined, wiredTreatments.value, editor.background.value, editor.localGroups.value)
+    undefined, undefined, undefined, wiredTreatments.value, editor.background.value, editor.localGroups.value, editor.postEffects.value)
   return cv
 }
 

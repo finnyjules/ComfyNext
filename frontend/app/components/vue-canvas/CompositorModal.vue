@@ -312,6 +312,7 @@ const {
   addText, addRect, addEllipse, addLine, addPolygon, addStar, addImageFromFile, addImageFromName,
   addPathLayers, addPathFromSvg, deleteLayers,
   background, setBackground,
+  postEffects, setPostEffects,
   undo, redo, canUndo, canRedo,
   selectedIds, selectedLayers, toggleSelect, applyBoolean, alignSelected, recordHistory, commit, handleEditorKey,
   selectionBox, selectionHandles, startGroupResize,
@@ -1478,7 +1479,7 @@ function renderSceneForHarmonize(): { canvas: HTMLCanvasElement; W: number; H: n
   canvas.height = H
   const ctx = canvas.getContext('2d')!
   paintLayerStack(ctx, W, H, buildStackItems(), localLayers.value as LocalLayer[],
-    undefined, undefined, undefined, wiredTreatments.value, background.value, localGroups.value)
+    undefined, undefined, undefined, wiredTreatments.value, background.value, localGroups.value, postEffects.value)
   return { canvas, W, H }
 }
 
@@ -1534,6 +1535,7 @@ function staticSourceKey(): string {
   const s = JSON.stringify({
     local: localLayers.value, order: stackKeys.value,
     treatments: wiredTreatments.value, wired: layers.value, W, H,
+    fx: postEffects.value,
   })
   let h = 0x811c9dc5
   for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) }
@@ -1553,7 +1555,7 @@ async function renderStaticComposite(W: number, H: number): Promise<Blob | null>
   await ensureLayerImages(localLayers.value as LocalLayer[])
   await ensureLayerFonts(localLayers.value as LocalLayer[], W)
   paintLayerStack(ctx, W, H, buildStackItems(), localLayers.value as LocalLayer[],
-    undefined, undefined, undefined, wiredTreatments.value, background.value, localGroups.value)
+    undefined, undefined, undefined, wiredTreatments.value, background.value, localGroups.value, postEffects.value)
   return await new Promise<Blob | null>(resolve => off.toBlob(b => resolve(b), 'image/png'))
 }
 
@@ -1637,7 +1639,7 @@ function renderStack() {
   paintLayerStack(ctx, W, H, items, localLayers.value as LocalLayer[], l =>
     l.id === editingId.value || (nodeEdit.active.value && l.id === nodeEdit.layerId.value),
     previewT.value ?? undefined, previewT.value != null ? motionDoc.value : undefined,
-    wiredTreatments.value, background.value, localGroups.value)
+    wiredTreatments.value, background.value, localGroups.value, postEffects.value)
 }
 watch(
   () => [
@@ -1649,6 +1651,7 @@ watch(
     JSON.stringify(readSlotArr('sailor_hiddenWired')),
     JSON.stringify(wiredTreatments.value),
     JSON.stringify(background.value),
+    JSON.stringify(postEffects.value),
     JSON.stringify(localGroups.value),
   ] as const,
   async () => {

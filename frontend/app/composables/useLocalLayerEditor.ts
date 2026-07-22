@@ -10,6 +10,7 @@
  */
 import {
   type LocalLayer, type TextLayer, type RectLayer, type LineLayer, type PathLayer, type Paint,
+  type PostEffect,
   createTextLayer, createRectLayer, createEllipseLayer, createLineLayer, createImageLayer,
   createPolygonLayer, createStarLayer,
   localLayerBox, shapeToPathLayer,
@@ -110,16 +111,28 @@ export function useLocalLayerEditor(opts: EditorOpts) {
   }
   function setBackground(p: Paint | undefined) { recordHistory(); writeBg(p) }
 
+  // Doc-level post-processing chain (adjust/bloom/grain/vignette/duotone over
+  // the finished composite). Persisted like the background: on node properties.
+  const postEffects = computed<PostEffect[]>(() =>
+    ((node()?.data?.properties as any)?.sailor_localFx as PostEffect[]) ?? [])
+  function writeFx(fx: PostEffect[] | undefined) {
+    const n = node(); if (!n) return
+    if (!n.data.properties) n.data.properties = {}
+    if (!fx || !fx.length) delete (n.data.properties as any).sailor_localFx
+    else (n.data.properties as any).sailor_localFx = fx
+  }
+  function setPostEffects(fx: PostEffect[]) { recordHistory(); writeFx(fx) }
+
   // ── Undo / redo (snapshot history over local layers + z-order) ──────────────
   // The editor is the single mutation choke point, so one history stack here
   // covers every vector edit. Discrete ops record before mutating; a drag
   // records once at pointer-down (coalesced) so it's a single undo step.
-  type Snapshot = { layers: LocalLayer[]; order: string[]; bg: Paint | undefined; groups: LayerGroup[] }
+  type Snapshot = { layers: LocalLayer[]; order: string[]; bg: Paint | undefined; fx: PostEffect[]; groups: LayerGroup[] }
   const HISTORY_CAP = 120
   const _past = ref<Snapshot[]>([])
   const _future = ref<Snapshot[]>([])
-  function snapshot(): Snapshot { return { layers: JSON.parse(JSON.stringify(localLayers.value)), order: [...readOrder()], bg: background.value, groups: JSON.parse(JSON.stringify(localGroups.value)) } }
-  function restore(s: Snapshot) { commit(s.layers); writeOrder([...s.order]); writeBg(s.bg); writeGroups([...s.groups]) }
+  function snapshot(): Snapshot { return { layers: JSON.parse(JSON.stringify(localLayers.value)), order: [...readOrder()], bg: background.value, fx: JSON.parse(JSON.stringify(postEffects.value)), groups: JSON.parse(JSON.stringify(localGroups.value)) } }
+  function restore(s: Snapshot) { commit(s.layers); writeOrder([...s.order]); writeBg(s.bg); writeFx(s.fx?.length ? s.fx : undefined); writeGroups([...s.groups]) }
   function recordHistory() {
     _past.value.push(snapshot())
     if (_past.value.length > HISTORY_CAP) _past.value.shift()
@@ -731,6 +744,7 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     addText, addRect, addEllipse, addLine, addPolygon, addStar, addImageFromFile, addImageFromName,
     addPathLayers, addPathFromSvg, deleteLayers, commit, recordHistory,
     background, setBackground,
+    postEffects, setPostEffects,
     undo, redo, canUndo, canRedo,
     selectedIds, selectedLayers, toggleSelect, applyBoolean, alignSelected, nudgeSelection, duplicateSelection, handleEditorKey,
     copySelection, pasteClipboard,
