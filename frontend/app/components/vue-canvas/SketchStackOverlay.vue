@@ -13,6 +13,10 @@ const props = defineProps<{
   payload: SketchPilePayload
   /** The pile cover's screen rect at open time (the morph origin). */
   origin: { x: number, y: number, width: number, height: number }
+  /** False when the payload's source generator no longer exists (a pad-flow
+   *  pile after reload — the hidden pad is stripped from saved docs). Honest
+   *  refusal beats a button that silently does nothing. */
+  canReroll: boolean
 }>()
 const emit = defineEmits<{ develop: [index: number], keep: [index: number], reroll: [], close: [] }>()
 
@@ -101,9 +105,11 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
 
       <div class="shrink-0 flex items-center gap-2 mt-2 nopan">
         <button
-          class="flex items-center gap-1.5 h-8 px-3 rounded-md bg-white/10 hover:bg-white/15 border border-white/15 text-xs text-white/85 transition-colors cursor-pointer disabled:opacity-50"
-          :disabled="loading"
-          title="Re-roll all 4 — same idea, fresh seed"
+          class="flex items-center gap-1.5 h-8 px-3 rounded-md bg-white/10 hover:bg-white/15 border border-white/15 text-xs text-white/85 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-default"
+          :disabled="loading || !canReroll"
+          :title="canReroll
+            ? 'Re-roll all 4 — same idea, fresh seed'
+            : 'Re-roll unavailable — this pile\'s sketch generator is gone (saved docs drop it). Sketch again from the prompt bar.'"
           @click.stop="emit('reroll')"
         >
           <RefreshCw class="size-3.5" :class="loading ? 'animate-spin' : ''" />

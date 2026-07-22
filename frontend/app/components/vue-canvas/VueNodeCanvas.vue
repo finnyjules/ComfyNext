@@ -4216,6 +4216,14 @@ const sketchStackPayload = computed<SketchPilePayload | null>(() => {
   const n = (nodes.value as any[]).find((x: any) => String(x.id) === sketchStackForId.value)
   return n?.data?.properties?.[SKETCH_PROP] ?? null
 })
+// Re-roll needs the payload's source generator to still exist. A pad-flow
+// pile loses its hidden pad on save/reload (getWorkflow strips it), so the
+// overlay disables the button instead of letting it silently no-op.
+const sketchStackCanReroll = computed<boolean>(() => {
+  const srcId = sketchStackPayload.value?.sourceNodeId
+  if (!srcId) return false
+  return (nodes.value as any[]).some((n: any) => String(n.id) === srcId)
+})
 
 /** Keep item `index` as an ordinary Image card in the keeper column left of
  *  the pile. Returns the created card (Develop wires its finisher from it). */
@@ -7554,6 +7562,7 @@ defineExpose({
         v-if="sketchStackPayload && sketchStackOrigin"
         :payload="sketchStackPayload"
         :origin="sketchStackOrigin"
+        :can-reroll="sketchStackCanReroll"
         @develop="developSketchStackItem"
         @keep="keepSketchStackItem"
         @reroll="rerollSketchStack"
