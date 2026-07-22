@@ -11,7 +11,13 @@ export type PrimitiveKind =
   | 'capsule' | 'pyramid' | 'prism'
   | 'icosahedron' | 'octahedron' | 'dodecahedron'
   | 'torusKnot' | 'ring'
+  | 'text' | 'shape'
 export type Vec3 = [number, number, number]
+
+// Mirrors AVAILABLE_FONTS[0].url in outlines.ts. Duplicated as a literal rather
+// than imported: outlines.ts pulls in three + the vendored opentype module, and
+// importing it here would drag all of three into config's import graph.
+export const DEFAULT_FONT_URL = '/fonts/ABCROM-Bold.otf'
 
 export type MaterialType = 'standard' | 'toon' | 'matcap' | 'glass' | 'fresnel' | 'gradient' | 'image'
 export const MATERIAL_TYPES: MaterialType[] = ['standard', 'toon', 'matcap', 'glass', 'fresnel', 'gradient', 'image']
@@ -79,6 +85,11 @@ export interface SceneObjectBase {
   material: SceneMaterial
   motion?: ObjectMotion
 }
+/** Content for the `text` primitive (the `shape` primitive is params-only —
+ *  its geometry is fully parametric, see primParams.ts). Absent `font` falls
+ *  back to the engine's first available font. */
+export interface PrimitiveContent { text?: string; font?: string }
+
 export interface PrimitiveObject extends SceneObjectBase {
   kind: 'primitive'
   primitive: PrimitiveKind
@@ -88,6 +99,9 @@ export interface PrimitiveObject extends SceneObjectBase {
   /** Deformations applied on top of the built geometry, keyed by
    *  MODIFIER_SPECS.key (primParams.ts). Absent means undeformed. */
   modifiers?: Record<string, number>
+  /** Non-geometric source content — currently only the `text` primitive's
+   *  string + font. Absent for every other kind. */
+  content?: PrimitiveContent
 }
 export interface GlbObject extends SceneObjectBase {
   kind: 'glb'
@@ -136,11 +150,14 @@ export interface SceneDoc {
   motion: SceneMotion
 }
 
+// Append, never reorder: stored indices are a persistence contract, and a
+// PRIM_GROUPS drift test (scene3d-config.unit.spec.ts) asserts canonical order.
 export const PRIMITIVE_KINDS: PrimitiveKind[] = [
   'box', 'sphere', 'cylinder', 'cone', 'torus', 'plane',
   'capsule', 'pyramid', 'prism',
   'icosahedron', 'octahedron', 'dodecahedron',
   'torusKnot', 'ring',
+  'text', 'shape',
 ]
 export const LIGHTING_PRESETS: LightingPreset[] = ['studio', 'soft', 'dramatic', 'flat']
 
@@ -287,12 +304,16 @@ function numberedName(base: string, existing: SceneObject[]): string {
 
 export function createPrimitive(kind: PrimitiveKind, existing: SceneObject[]): PrimitiveObject {
   const base = kind.charAt(0).toUpperCase() + kind.slice(1)
-  return {
+  const obj: PrimitiveObject = {
     kind: 'primitive', primitive: kind,
     id: newId(), name: numberedName(base, existing), visible: true,
     position: [0, 0.5, 0], rotation: [0, 0, 0], scale: [1, 1, 1],
     material: { ...DEFAULT_MATERIAL },
   }
+  // 'shape' is params-only (sides/roundness/star numeric params in
+  // primParams.ts) — no content to seed, like every other primitive.
+  if (kind === 'text') obj.content = { text: 'Text', font: DEFAULT_FONT_URL }
+  return obj
 }
 
 export function createGlbObject(url: string, existing: SceneObject[]): GlbObject {
@@ -448,6 +469,16 @@ export function parseDoc(json: string): SceneDoc {
     if (typeof m?.envMapIntensity === 'number') out.envMapIntensity = num(m.envMapIntensity, MATERIAL_DEFAULTS.envMapIntensity)
     return out
   }
+  // Tolerant content parse: any non-string/unknown field in a stored doc is
+  // simply dropped; an empty result collapses to `undefined` so round-trips
+  // through parseDoc(serializeDoc(doc)) stay exact for kinds without content.
+  const parseContent = (raw: any): PrimitiveContent | undefined => {
+    if (!raw || typeof raw !== 'object') return undefined
+    const c: PrimitiveContent = {}
+    if (typeof raw.text === 'string') c.text = raw.text
+    if (typeof raw.font === 'string') c.font = raw.font
+    return Object.keys(c).length ? c : undefined
+  }
   const objects: SceneObject[] = Array.isArray(raw.objects)
     ? raw.objects.flatMap((o: any): SceneObject[] => {
         if (!o || typeof o.id !== 'string') return []
@@ -482,10 +513,12 @@ export function parseDoc(json: string): SceneDoc {
         if (o.kind === 'primitive' && PRIMITIVE_KINDS.includes(o.primitive)) {
           const params = sanitizeParams(o.primitive, o.params)
           const modifiers = sanitizeModifiers(o.modifiers)
+          const content = parseContent(o.content)
           return [{
             ...common, kind: 'primitive', primitive: o.primitive,
             ...(params ? { params } : {}),
             ...(modifiers ? { modifiers } : {}),
+            ...(content ? { content } : {}),
           }]
         }
         return []

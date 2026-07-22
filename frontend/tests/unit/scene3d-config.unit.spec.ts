@@ -3,6 +3,7 @@ import {
   defaultDoc, createPrimitive, createGlbObject, serializeDoc, parseDoc, PRIMITIVE_KINDS, MATERIAL_TYPES,
   gradientAngles, gradientDirection, gradientStopsOf, MATERIAL_DEFAULTS,
   createLight, LIGHT_KINDS, LIGHT_DEFAULTS, lightIntensityDefault, lightIntensityMax,
+  DEFAULT_FONT_URL,
   type GradientStop, type SceneMaterial,
 } from '~/lib/scene3d/config'
 import { PRIM_GROUPS } from '~/lib/scene3d/primGroups'
@@ -63,7 +64,7 @@ describe('scene3d config', () => {
   it('round-trips a document containing every primitive kind', () => {
     const doc = defaultDoc()
     for (const kind of PRIMITIVE_KINDS) doc.objects.push(createPrimitive(kind, doc.objects))
-    expect(PRIMITIVE_KINDS).toHaveLength(14)
+    expect(PRIMITIVE_KINDS).toHaveLength(16)
     const back = parseDoc(serializeDoc(doc))
     expect(back).toEqual(doc)
     expect(back.objects.map((o) => (o as any).primitive)).toEqual([...PRIMITIVE_KINDS])
@@ -163,6 +164,43 @@ describe('scene3d config', () => {
   it('menu groups cover every primitive kind exactly once, in canonical order', () => {
     const menuKinds = PRIM_GROUPS.flatMap((g) => g.kinds.map((k) => k.kind))
     expect(menuKinds).toEqual([...PRIMITIVE_KINDS])
+  })
+
+  it('includes text and shape in PRIMITIVE_KINDS, appended last', () => {
+    expect(PRIMITIVE_KINDS).toContain('text')
+    expect(PRIMITIVE_KINDS).toContain('shape')
+    expect(PRIMITIVE_KINDS.slice(-2)).toEqual(['text', 'shape'])
+  })
+
+  it('seeds content only for the text primitive; shape is params-only', () => {
+    const text = createPrimitive('text', [])
+    expect(text.kind).toBe('primitive')
+    expect(text.primitive).toBe('text')
+    expect(text.content).toEqual({ text: 'Text', font: DEFAULT_FONT_URL })
+
+    const shape = createPrimitive('shape', [])
+    expect(shape.kind).toBe('primitive')
+    expect(shape.primitive).toBe('shape')
+    expect('content' in shape).toBe(false)
+  })
+
+  it('round-trips a text primitive\'s content through serialize/parse', () => {
+    const doc = defaultDoc()
+    const t = createPrimitive('text', doc.objects)
+    t.content = { text: 'Hi', font: '/fonts/x.otf' }
+    doc.objects.push(t)
+    const back = parseDoc(serializeDoc(doc))
+    expect(back).toEqual(doc)
+    expect((back.objects[0] as any).content).toEqual({ text: 'Hi', font: '/fonts/x.otf' })
+  })
+
+  it('drops malformed content fields, dropping the whole property when it ends empty', () => {
+    const doc = defaultDoc()
+    doc.objects.push(createPrimitive('text', doc.objects))
+    const raw: any = JSON.parse(serializeDoc(doc))
+    raw.objects[0].content = { text: 5, font: {} }
+    const back = parseDoc(JSON.stringify(raw))
+    expect('content' in back.objects[0]!).toBe(false)
   })
 })
 
