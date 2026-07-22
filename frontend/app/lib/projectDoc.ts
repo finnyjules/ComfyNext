@@ -24,6 +24,12 @@ export interface ProjectDoc {
   /** Ordered delivery shelf (Ready to deliver). Array order == display order.
    *  Absent ⇒ treat as []. References existing on-disk output files only. */
   deliverables?: import('./deliverables/model').DeliverableItem[]
+  /** Client save stamp (ms epoch), written on every successful canvas
+   *  snapshot. Lets load-time code compare the sessionStorage copy against
+   *  the durable server copy and keep the newer one — the two stores can
+   *  silently diverge (quota-failed session writes, parallel windows).
+   *  Absent ⇒ legacy doc of unknown age. */
+  savedAt?: number
 }
 
 export const BLANK_WORKFLOW = { last_node_id: 0, last_link_id: 0, nodes: [], links: [], groups: [], config: {}, extra: {}, version: 0.4 }
@@ -58,6 +64,27 @@ export function activeCanvasOf(doc: ProjectDoc): ProjectCanvas {
 export function docHasContent(x: any): boolean {
   if (isProjectDoc(x)) return x.canvases.some((c) => (c.workflow?.nodes?.length ?? 0) > 0)
   return (x?.nodes?.length ?? 0) > 0
+}
+
+/** Decide which copy of a project doc to trust on load: the in-session
+ *  sessionStorage copy or the durable server copy. Rules, in order:
+ *    - an empty/missing side loses to one with content (both empty → session);
+ *    - a session doc with content but no savedAt stamp is legacy (unknown
+ *      age) and is never replaced — swapping a fresh-but-unstamped session
+ *      copy for an older durable one is exactly the loss this guards against;
+ *    - otherwise the durable copy wins only when STRICTLY newer (ties keep
+ *      session, matching pre-guard behavior). */
+export function pickNewerDoc(sessionDoc: any, durableDoc: any): { doc: any; source: 'session' | 'durable' } {
+  const sessionHas = !!sessionDoc && docHasContent(sessionDoc)
+  const durableHas = !!durableDoc && docHasContent(durableDoc)
+  if (!sessionHas) return durableHas ? { doc: durableDoc, source: 'durable' } : { doc: sessionDoc, source: 'session' }
+  if (!durableHas) return { doc: sessionDoc, source: 'session' }
+  const sessionStamp = typeof sessionDoc.savedAt === 'number' ? sessionDoc.savedAt : null
+  if (sessionStamp === null) return { doc: sessionDoc, source: 'session' }
+  const durableStamp = typeof durableDoc.savedAt === 'number' ? durableDoc.savedAt : 0
+  return durableStamp > sessionStamp
+    ? { doc: durableDoc, source: 'durable' }
+    : { doc: sessionDoc, source: 'session' }
 }
 
 /** Next available "Canvas N" name that doesn't collide with existing ones. */

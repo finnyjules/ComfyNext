@@ -36,7 +36,7 @@ import { promoteTempImageInputs } from '~/lib/promoteTempImages'
 import { extractOutputFiles, type GenOutput, type GenerationRecord } from '~/lib/generations'
 import {
   BLANK_WORKFLOW, activeCanvasOf, docHasContent, isProjectDoc,
-  makeBlankWorkflow, makeCanvasId, nextCanvasName, toProjectDoc,
+  makeBlankWorkflow, makeCanvasId, nextCanvasName, pickNewerDoc, toProjectDoc,
   type ProjectCanvas, type ProjectDoc,
 } from '~/lib/projectDoc'
 import { setRef, type RefRegistry } from '~/lib/refs/registry'
@@ -1420,12 +1420,28 @@ const activeTabWorkflow = computed(() => {
   return isProjectDoc(doc) ? activeCanvasOf(doc).workflow : doc
 })
 
+// Persistence failures used to be swallowed silently — a full sessionStorage
+// quota froze autosave with zero signal while the card thumbnails kept
+// updating, so the user only found out after losing work to a reload.
+// Surface failures, throttled: the 3 s debounce would otherwise re-toast on
+// every keystroke burst.
+const AUTOSAVE_TOAST_THROTTLE_MS = 60_000
+let lastAutosaveToastAt = 0
+function warnAutosaveFailure(description: string, err?: unknown) {
+  if (err !== undefined) console.error('[Sailor] autosave persistence failed:', err)
+  const now = Date.now()
+  if (now - lastAutosaveToastAt < AUTOSAVE_TOAST_THROTTLE_MS) return
+  lastAutosaveToastAt = now
+  toast.error('Autosave isn’t saving', { description })
+}
+const SESSION_SAVE_FAILED_MSG = 'Browser storage write failed (possibly full). Your latest changes may not survive a reload.'
+
 function persistWorkflows() {
   if (import.meta.server) return
   try {
     sessionStorage.setItem(WORKFLOWS_STORAGE_KEY, JSON.stringify(savedWorkflows))
   }
-  catch {}
+  catch (err) { warnAutosaveFailure(SESSION_SAVE_FAILED_MSG, err) }
 }
 
 // Phase 0 (3a): mirror the session snapshot into a durable server-side Project
@@ -1438,7 +1454,11 @@ function persistWorkflows() {
 function saveDurableVersion(tab: any, doc: any) {
   if (!tab?.projectUuid || !docHasContent(doc)) return
   const name = tab.label || 'Untitled project'
-  useProjects().saveVersion(tab.projectUuid, { id: 'current', name, workflow: doc }, name)
+  // saveVersion never throws — null means the save failed. Still
+  // fire-and-forget, but no longer silent.
+  useProjects().saveVersion(tab.projectUuid, { id: 'current', name, workflow: doc }, name).then((id) => {
+    if (!id) warnAutosaveFailure('The durable server copy of this project isn’t updating.')
+  })
 }
 
 // Snapshot the live canvas into its slot in the tab's doc. The single choke
@@ -1466,7 +1486,13 @@ function snapshotActiveCanvasIntoDoc(tabId: string): ProjectDoc | null {
   if (!savedWorkflows[tabId] && !hasSnapshot) return null
   const doc = toProjectDoc(savedWorkflows[tabId])
   savedWorkflows[tabId] = doc
-  if (hasSnapshot) activeCanvasOf(toRaw(doc)).workflow = snapshot
+  if (hasSnapshot) {
+    const raw = toRaw(doc)
+    activeCanvasOf(raw).workflow = snapshot
+    // Recency stamp — loadWorkflowForTab compares it against the durable
+    // copy's stamp so a stale store can't shadow a fresher one.
+    raw.savedAt = Date.now()
+  }
   return doc
 }
 
@@ -1493,7 +1519,9 @@ function closeProjectTab(tab: any) {
 function onRestoreVersion(body: any) {
   const tab = activeTab.value
   if (!tab || !docHasContent(body)) return
-  savedWorkflows[tab.id] = toProjectDoc(body)
+  const doc = toProjectDoc(body)
+  doc.savedAt = Date.now() // an explicit restore becomes the newest state
+  savedWorkflows[tab.id] = doc
   persistWorkflows()
   if (!vueNodesEnabled.value) {
     sendLoadWorkflow(JSON.parse(JSON.stringify(activeCanvasOf(savedWorkflows[tab.id]).workflow)))
@@ -1709,7 +1737,7 @@ function autosaveCurrentWorkflow() {
     const doc = snapshotActiveCanvasIntoDoc(tab.id)
     if (doc && docHasContent(doc)) {
       try { sessionStorage.setItem(WORKFLOWS_STORAGE_KEY, JSON.stringify(toRaw(savedWorkflows))) }
-      catch {}
+      catch (err) { warnAutosaveFailure(SESSION_SAVE_FAILED_MSG, err) }
       saveDurableVersion(tab, doc)
     }
   }
@@ -2222,6 +2250,25 @@ async function loadWorkflowForTab(tab: any) {
       // savedWorkflows is reactive, so reading back yields a proxy.
       if (docHasContent(body) && toRaw(savedWorkflows[tab.id]) === placeholder) {
         savedWorkflows[tab.id] = toProjectDoc(body)
+      }
+    }
+    else if (tab.projectUuid) {
+      // Recency guard: sessionStorage survives an in-tab reload but can go
+      // silently stale (quota-failed writes, a parallel window) while the
+      // durable rolling version kept advancing. Loading the stale copy and
+      // letting autosave mirror it back would clobber the fresher durable one
+      // — so fetch the durable copy too and keep whichever doc carries the
+      // newer savedAt stamp. Identity check mirrors the placeholder guard
+      // above: if something replaced the doc while we fetched, that state is
+      // newer than either copy and must not be overwritten.
+      const before = toRaw(savedWorkflows[tab.id])
+      const loaded = await useProjects().loadProject(tab.projectUuid)
+      const durableBody = loaded?.currentVersion?.workflow || null
+      const durableDoc = durableBody ? toProjectDoc(durableBody) : null
+      if (durableDoc && toRaw(savedWorkflows[tab.id]) === before) {
+        if (pickNewerDoc(saved, durableDoc).source === 'durable') {
+          savedWorkflows[tab.id] = durableDoc
+        }
       }
     }
   }

@@ -115,6 +115,105 @@ def test_read_version_missing_returns_none(root):
 
 
 # --------------------------------------------------------------------------- #
+# Rolling-version auto backups
+# --------------------------------------------------------------------------- #
+
+def _write_current(root, uuid, created_at, marker):
+    """Simulate one client autosave of the rolling 'current' version."""
+    P.write_version(root, uuid, {
+        "id": "current", "name": "Proj", "createdAt": created_at,
+        "workflow": {"nodes": [marker]},
+    }, now=created_at)
+
+
+def _backup_metas(root, uuid):
+    proj = P.read_project(root, uuid)
+    return [m for m in proj["versionIndex"] if str(m["id"]).startswith("b_")]
+
+
+def test_first_current_write_creates_no_backup(root):
+    P.ensure_project(root, "p", now=1)
+    _write_current(root, "p", 10, "a")
+    proj = P.read_project(root, "p")
+    assert [m["id"] for m in proj["versionIndex"]] == ["current"]
+
+
+def test_rewrite_of_current_archives_old_body(root):
+    P.ensure_project(root, "p", now=1)
+    _write_current(root, "p", 1000, "old")
+    _write_current(root, "p", 1000 + P.BACKUP_MIN_INTERVAL_MS + 1, "new")
+    metas = _backup_metas(root, "p")
+    assert len(metas) == 1
+    meta = metas[0]
+    assert meta["id"] == "b_1000"
+    assert P._is_safe_id(meta["id"])
+    assert meta["name"] == "Auto backup"
+    assert meta["createdAt"] == 1000  # when that state was saved, not archive time
+    assert meta["parentId"] == "current"
+    # Backup body is the pre-overwrite content, retrievable via read_version.
+    body = P.read_version(root, "p", "b_1000")
+    assert body["workflow"] == {"nodes": ["old"]}
+    assert body["id"] == "b_1000"
+    assert body["name"] == "Auto backup"
+    # The rolling save itself behaves exactly as before.
+    proj = P.read_project(root, "p")
+    assert proj["currentVersionId"] == "current"
+    assert P.read_version(root, "p", "current")["workflow"] == {"nodes": ["new"]}
+
+
+def test_rapid_rewrites_are_throttled_to_one_backup(root):
+    P.ensure_project(root, "p", now=1)
+    _write_current(root, "p", 1000, "a")
+    _write_current(root, "p", 2000, "b")  # archives the state from t=1000
+    _write_current(root, "p", 3000, "c")  # t=2000 state is <10 min after b_1000 → skipped
+    assert [m["id"] for m in _backup_metas(root, "p")] == ["b_1000"]
+
+
+def test_backup_resumes_after_interval_gap(root):
+    P.ensure_project(root, "p", now=1)
+    _write_current(root, "p", 1000, "a")
+    _write_current(root, "p", 2000, "b")  # archives b_1000
+    late = 1000 + P.BACKUP_MIN_INTERVAL_MS + 1
+    _write_current(root, "p", late, "c")       # old state (t=2000) still too close to b_1000
+    _write_current(root, "p", late + 1000, "d")  # old state (t=late) is >10 min past b_1000 → archived
+    assert [m["id"] for m in _backup_metas(root, "p")] == ["b_1000", f"b_{late}"]
+
+
+def test_backups_pruned_to_cap_newest_kept(root):
+    P.ensure_project(root, "p", now=1)
+    step = P.BACKUP_MIN_INTERVAL_MS + 1000
+    times = [(i + 1) * step for i in range(P.BACKUP_KEEP + 6)]
+    for i, t in enumerate(times):
+        _write_current(root, "p", t, i)
+    metas = _backup_metas(root, "p")
+    assert len(metas) == P.BACKUP_KEEP
+    # Newest BACKUP_KEEP archived states survive; the oldest were pruned.
+    archived = times[:-1]  # every write except the last got archived on the next write
+    expected = [f"b_{t}" for t in archived[-P.BACKUP_KEEP:]]
+    assert sorted(m["id"] for m in metas) == sorted(expected)
+    # Pruned backups are gone from disk too.
+    for t in archived[: -P.BACKUP_KEEP]:
+        assert P.read_version(root, "p", f"b_{t}") is None
+    # Kept ones remain readable.
+    assert P.read_version(root, "p", expected[-1]) is not None
+
+
+def test_named_versions_never_backed_up_or_pruned(root):
+    P.ensure_project(root, "p", now=1)
+    P.write_version(root, "p", {"id": "v_keep", "name": "Milestone", "createdAt": 5, "workflow": {"nodes": ["m"]}}, now=5)
+    step = P.BACKUP_MIN_INTERVAL_MS + 1000
+    for i in range(P.BACKUP_KEEP + 6):
+        _write_current(root, "p", (i + 1) * step, i)
+    proj = P.read_project(root, "p")
+    ids = [m["id"] for m in proj["versionIndex"]]
+    assert "v_keep" in ids  # named snapshot survives backup pruning
+    assert P.read_version(root, "p", "v_keep")["workflow"] == {"nodes": ["m"]}
+    # Rewriting a NAMED id in place (rename flows) creates no backup.
+    P.write_version(root, "p", {"id": "v_keep", "name": "Renamed", "createdAt": 6, "workflow": {"nodes": ["m"]}}, now=6)
+    assert len(_backup_metas(root, "p")) == P.BACKUP_KEEP  # unchanged
+
+
+# --------------------------------------------------------------------------- #
 # Safety & robustness
 # --------------------------------------------------------------------------- #
 

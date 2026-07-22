@@ -145,6 +145,58 @@ def ensure_project(root: str, uuid: str, *, name: str = "Untitled project", now:
     return write_project(root, project)
 
 
+# The rolling autosave overwrites versions/current.json in place, so a stale
+# client saving after a fresh one silently destroys the only durable copy of
+# the newer graph. Before each overwrite of ROLLING_VERSION_ID we archive the
+# outgoing body as an immutable `b_<createdAt>` backup version — spaced at
+# least BACKUP_MIN_INTERVAL_MS apart (state-time, not wall-time) so the 3 s
+# debounced autosave doesn't spray one per keystroke burst, and pruned to the
+# newest BACKUP_KEEP. Backups live in the normal versionIndex (parentId
+# "current"), so the existing version menu restores them with no UI changes.
+ROLLING_VERSION_ID = "current"
+BACKUP_PREFIX = "b_"
+BACKUP_MIN_INTERVAL_MS = 10 * 60 * 1000
+BACKUP_KEEP = 20
+
+
+def _archive_rolling_version(root: str, uuid: str, project: dict, *, now: int) -> None:
+    """Archive the current rolling body into the project's index (mutated in
+    place; caller persists). Best-effort: any failure skips the backup, never
+    the save itself."""
+    try:
+        old = _read_json(_version_file(root, uuid, ROLLING_VERSION_ID))
+        if not isinstance(old, dict):
+            return
+        old_ts = old.get("createdAt") or now
+        index = list(project.get("versionIndex", []))
+        backup_ts = [m.get("createdAt") or 0 for m in index
+                     if str(m.get("id", "")).startswith(BACKUP_PREFIX)]
+        if backup_ts and old_ts - max(backup_ts) <= BACKUP_MIN_INTERVAL_MS:
+            return
+        bid = f"{BACKUP_PREFIX}{old_ts}"
+        if not _is_safe_id(bid):
+            return
+        body = dict(old)
+        body["id"] = bid
+        body["name"] = "Auto backup"
+        _atomic_write_json(_version_file(root, uuid, bid), body)
+        index = [m for m in index if m.get("id") != bid]
+        index.append({"id": bid, "name": "Auto backup", "createdAt": old_ts,
+                      "parentId": ROLLING_VERSION_ID})
+        backups = sorted(
+            (m for m in index if str(m.get("id", "")).startswith(BACKUP_PREFIX)),
+            key=lambda m: m.get("createdAt") or 0, reverse=True)
+        for meta in backups[BACKUP_KEEP:]:
+            index = [m for m in index if m.get("id") != meta["id"]]
+            try:
+                os.remove(_version_file(root, uuid, meta["id"]))
+            except OSError:
+                pass
+        project["versionIndex"] = index
+    except OSError:
+        pass
+
+
 def write_version(root: str, uuid: str, version: dict, *, now: int = 0) -> dict:
     """Persist a ProjectVersion body, append it to the project's index, and make
     it current. Returns the updated project. Raises KeyError if the project
@@ -155,6 +207,8 @@ def write_version(root: str, uuid: str, version: dict, *, now: int = 0) -> dict:
     vid = version.get("id")
     if not _is_safe_id(vid):
         raise ValueError("invalid version id")
+    if vid == ROLLING_VERSION_ID:
+        _archive_rolling_version(root, uuid, project, now=now)
     _atomic_write_json(_version_file(root, uuid, vid), version)
     meta = {
         "id": vid,

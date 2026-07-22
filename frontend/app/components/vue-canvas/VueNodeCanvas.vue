@@ -1090,7 +1090,10 @@ watch([nodes, edges], () => {
   // Signal the layout that the canvas changed — it debounces this into a
   // continuous autosave (sessionStorage + durable mirror). Fired from the same
   // deep watch as undo-history so the two "something changed" notions can't drift.
-  window.dispatchEvent(new CustomEvent('sailor:canvasDirty'))
+  // Skipped while a workflow prop is being applied: programmatic application is
+  // not a user edit, and dirtying here re-arms the autosave right after load —
+  // which is how a just-loaded stale doc got mirrored over the durable copy.
+  if (!applyingWorkflow.value) window.dispatchEvent(new CustomEvent('sailor:canvasDirty'))
 }, { deep: true })
 
 // Sync node `hidden` flag with collapsed-group membership. Vue Flow honors
