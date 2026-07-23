@@ -486,7 +486,7 @@ function finishPen() {
   pen.setActive(false)
   if (layer) addPathLayers([layer])
 }
-function togglePen() { pen.setActive(!pen.active.value); if (pen.active.value) { selectLocal(null); exitNodeEdit(); brush.setActive(false) } }
+function togglePen() { if (smartActive.value) exitSmartMode(); pen.setActive(!pen.active.value); if (pen.active.value) { selectLocal(null); exitNodeEdit(); brush.setActive(false) } }
 // Return to the default Select tool: leave pen/node-edit/generate modes.
 function selectTool() {
   if (pen.active.value) pen.setActive(false)
@@ -501,11 +501,13 @@ function hasTint(l: any): boolean { const t = l?.tint; return !!t && t !== 'none
 // ── Distort: slant (skew) + corner-pin / perspective ─────────────────────────
 const distortTool = ref(false)
 function toggleDistort() {
+  if (smartActive.value) exitSmartMode()
   distortTool.value = !distortTool.value
   if (distortTool.value) { pen.setActive(false); exitNodeEdit(); if (genActive.value) exitGenMode(); brush.setActive(false) }
 }
 // ── Brush: freehand paint tool (mutually exclusive with pen/node/gen/distort) ─
 function toggleBrush() {
+  if (smartActive.value) exitSmartMode()
   brush.setActive(!brush.active.value)
   if (brush.active.value) {
     pen.setActive(false); exitNodeEdit(); if (genActive.value) exitGenMode(); distortTool.value = false
@@ -2105,6 +2107,7 @@ const genShapeCandidate = computed(() => {
 })
 
 function enterGenMode() {
+  if (smartActive.value) exitSmartMode()
   // Lock the target to the selected image (if any) at the moment we enter;
   // nothing selected → new image.
   const sel = selectedLocal.value?.kind === 'image' ? selectedLocal.value.id : null
@@ -2458,7 +2461,7 @@ const smartTarget = computed<any | null>(() =>
 
 // Source capture: the target layer's pixels at capped resolution + the
 // artboard→image affine, cached for the whole mode session.
-type SmartCapture = { img: HTMLImageElement; capW: number; capH: number; dataUrl: string; affine: Affine }
+type SmartCapture = { img: HTMLImageElement; capW: number; capH: number; dataUrl: string }
 let smartCapture: SmartCapture | null = null
 async function ensureSmartCapture(): Promise<SmartCapture | null> {
   if (smartCapture) return smartCapture
@@ -2469,9 +2472,17 @@ async function ensureSmartCapture(): Promise<SmartCapture | null> {
   smartCapture = {
     img, capW, capH,
     dataUrl: imageToDataUrl(img, capW, capH),
-    affine: layerAffine(layer, canvasDisplay.w, canvasDisplay.h, capW, capH),
   }
   return smartCapture
+}
+
+// Affine is computed LIVE (not cached in SmartCapture): the target layer can
+// be nudged mid-session, and image space is layer-intrinsic — recomputing
+// keeps the selection glued to the layer wherever it moves.
+function smartAffine(): Affine | null {
+  const layer = smartTarget.value
+  if (!layer || !smartCapture) return null
+  return layerAffine(layer, canvasDisplay.w, canvasDisplay.h, smartCapture.capW, smartCapture.capH)
 }
 
 // Raw scribble, ARTBOARD px (overlay + API-failure fallback). White = selected.
@@ -2492,14 +2503,17 @@ function smartProjCanvas(): HTMLCanvasElement | null {
   if (smartProjCache) return smartProjCache
   const W = Math.max(1, Math.round(canvasDisplay.w)), H = Math.max(1, Math.round(canvasDisplay.h))
   if (smartRefinedCanvas && smartCapture) {
-    const c = document.createElement('canvas'); c.width = W; c.height = H
-    const ctx = c.getContext('2d')!
-    const m = invertAffine(smartCapture.affine)   // image px → artboard px
-    ctx.setTransform(m.a, m.b, m.c, m.d, m.e, m.f)
-    ctx.drawImage(smartRefinedCanvas, 0, 0)
-    ctx.setTransform(1, 0, 0, 1, 0, 0)
-    smartProjCache = c
-    return c
+    const aff = smartAffine()
+    if (aff) {
+      const c = document.createElement('canvas'); c.width = W; c.height = H
+      const ctx = c.getContext('2d')!
+      const m = invertAffine(aff)   // image px → artboard px
+      ctx.setTransform(m.a, m.b, m.c, m.d, m.e, m.f)
+      ctx.drawImage(smartRefinedCanvas, 0, 0)
+      ctx.setTransform(1, 0, 0, 1, 0, 0)
+      smartProjCache = c
+      return c
+    }
   }
   if (smartHasScribble.value && smartScribbleCanvas) { smartProjCache = smartScribbleCanvas; return smartScribbleCanvas }
   return null
@@ -2585,9 +2599,10 @@ async function onSmartPointerUp(e: PointerEvent) {
   smartDraw.value = null
   smartInvalidateProjection()
   const cap = await ensureSmartCapture(); if (!cap) return
+  const aff = smartAffine(); if (!aff) return
   const label = d.sub ? 0 : 1
   const imgPts: SamPoint[] = samplePointsFromStroke(d.pts)
-    .map(pt => applyAffine(cap.affine, pt))
+    .map(pt => applyAffine(aff, pt))
     .filter(pt => pt.x >= 0 && pt.y >= 0 && pt.x < cap.capW && pt.y < cap.capH)
     .map(pt => ({ x: pt.x, y: pt.y, label: label as 0 | 1 }))
   if (!imgPts.length) return   // scribble entirely off the target layer
