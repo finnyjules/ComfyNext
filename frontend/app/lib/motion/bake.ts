@@ -12,7 +12,12 @@ import './paint' // ensure the motion painter is registered
 import { uploadFrameBatch } from '~/composables/useKineticRenderer'
 import type { FrameMotion } from './types'
 
-/** FNV-1a over the JSON of everything that affects baked pixels. */
+/**
+ * FNV-1a over the JSON of everything that affects baked pixels.
+ * NOTE: live-slot visual state (wired studio content) is NOT part of this key —
+ * only localLayers+motion+W+H are hashed. So editing a studio wired into this
+ * frame doesn't flip motionStale. Accepted blind spot, not fixed here.
+ */
 export function motionSourceKey(
   localLayers: LocalLayer[],
   motion: FrameMotion,
@@ -42,6 +47,10 @@ export async function bakeMotionFrames(
   H: number,
   motion: FrameMotion,
   onProgress?: (done: number, total: number) => void,
+  // Optional hook run before each frame is painted, so the caller can pull
+  // time-parameterized wired sources (live studio slots) to frame time t
+  // before the stack is painted.
+  prepareFrame?: (t: number) => Promise<void>,
 ): Promise<Blob[]> {
   await ensureLayerFonts(localLayers, W)
   await ensureLayerImages(localLayers)
@@ -59,6 +68,7 @@ export async function bakeMotionFrames(
   const blobs: Blob[] = []
   for (let i = 0; i < total; i++) {
     const t = i / motion.fps
+    if (prepareFrame) await prepareFrame(t)
     ctx.setTransform(1, 0, 0, 1, 0, 0)
     ctx.clearRect(0, 0, canvas.width, canvas.height) // transparent background
     paintLayerStack(ctx, canvas.width, canvas.height, items, frozenLayers, undefined, t, motion)
@@ -77,8 +87,9 @@ export async function bakeAndUpload(
   H: number,
   motion: FrameMotion,
   onProgress?: (done: number, total: number) => void,
+  prepareFrame?: (t: number) => Promise<void>,
 ): Promise<MotionParams> {
-  const blobs = await bakeMotionFrames(buildItems, localLayers, W, H, motion, onProgress)
+  const blobs = await bakeMotionFrames(buildItems, localLayers, W, H, motion, onProgress, prepareFrame)
   const rendered = await uploadFrameBatch(blobs, 'slate')
   if (rendered.length !== blobs.length) {
     throw new Error(`motion bake: uploaded ${rendered.length}/${blobs.length} frames — retry`)

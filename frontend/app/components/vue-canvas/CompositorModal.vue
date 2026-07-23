@@ -1523,7 +1523,7 @@ const motionStale = computed(() => {
   return stored.source_key !== motionSourceKey(localLayers.value as LocalLayer[], motionDoc.value, W, H)
 })
 
-async function bakeMotion() {
+async function bakeMotion(motionOverride?: FrameMotion) {
   if (baking.value) return
   const node = compositor.value
   if (!node) return
@@ -1531,12 +1531,18 @@ async function bakeMotion() {
   bakeProgress.value = 0
   bakeError.value = ''
   pause() // don't fight the rAF preview loop for the layer state
+  stopLive() // don't let the live studio RAF race the bake's per-frame pulls
   try {
     const { W, H } = bakeSize()
+    const motion = motionOverride ?? motionDoc.value
     const previousFrames = storedMotionParams.value?.rendered ?? []
     const params = await bakeAndUpload(
-      () => buildStackItems(), localLayers.value as LocalLayer[], W, H, motionDoc.value,
+      () => buildStackItems(), localLayers.value as LocalLayer[], W, H, motion,
       (done, total) => { bakeProgress.value = done / total },
+      async (t) => {
+        const animated = layers.value.filter(l => l.live && l.live.duration > 0)
+        await Promise.all(animated.map(l => pullLiveFrameModal(l, slotPhase01(t, l.live!.duration))))
+      },
     )
     const p = (node.data.properties ||= {})
     p.sailor_motionParams = params
@@ -1555,6 +1561,7 @@ async function bakeMotion() {
     bakeError.value = err?.message || 'Motion bake failed'
   } finally {
     baking.value = false
+    startLive()
   }
 }
 
@@ -1589,8 +1596,10 @@ async function renderStaticComposite(W: number, H: number): Promise<Blob | null>
   return await new Promise<Blob | null>(resolve => off.toBlob(b => resolve(b), 'image/png'))
 }
 
-// True when any local layer carries a motion window — gates "Generate as video".
-const hasMotion = computed(() => localLayers.value.some((l: any) => l.animation))
+// True when any local layer carries a motion window OR a wired studio slot is
+// animated — gates "Generate as video". hasAnimatedSlot is defined above
+// (~line 1292), before this computed, so it can be referenced directly.
+const hasMotion = computed(() => localLayers.value.some((l: any) => l.animation) || hasAnimatedSlot.value)
 
 // ── outputs (mirror Gradient Studio's generateImage/generateVideo idiom) ────
 async function generateImage() {
@@ -1628,12 +1637,22 @@ async function generateVideo() {
   encoding.value = true
   renderError.value = ''
   try {
-    await bakeMotion()
+    // No local layer carries motion, but a wired studio does — fall back to
+    // the studios' own master clock (duration/fps) so the video loops on
+    // their natural timing with zero configuration from the user.
+    const hasLocalAnimation = localLayers.value.some((l: any) => l.animation)
+    const effectiveMotion: FrameMotion = (!hasLocalAnimation && liveMasterClock.value)
+      ? { ...motionDoc.value, duration: liveMasterClock.value.duration, fps: liveMasterClock.value.fps }
+      : motionDoc.value
+    await bakeMotion(effectiveMotion)
     if (bakeError.value) { renderError.value = bakeError.value; return }
     const { W, H } = bakeSize()
+    // Use the fps actually baked (carried on storedMotionParams), not motionDoc,
+    // so the encode matches the effective motion used above.
+    const fps = storedMotionParams.value?.fps ?? motionDoc.value.fps
     const res = await fetch('/sailor/spacetype_encode', {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ frames: storedMotionParams.value!.rendered, fps: motionDoc.value.fps, width: W, height: H }),
+      body: JSON.stringify({ frames: storedMotionParams.value!.rendered, fps, width: W, height: H }),
     })
     const data = await res.json().catch(() => ({}))
     if (data.filename) {
@@ -4240,7 +4259,7 @@ onUnmounted(() => {
         <button
           class="h-8 px-3 rounded text-[12px] font-medium flex items-center gap-1.5 cursor-pointer disabled:opacity-50 bg-white/[0.06] hover:bg-white/12 text-white/85"
           :disabled="rendering || baking || encoding || !hasMotion"
-          :title="hasMotion ? 'Bake the motion timeline and generate a video artifact' : 'Add motion to a layer first (Motion tab)'"
+          :title="hasMotion ? 'Bake the motion timeline and generate a video artifact' : 'Add motion to a layer (Motion tab) or wire an animated studio'"
           @click="generateVideo">
           {{ baking ? `Baking ${Math.round((bakeProgress ?? 0) * 100)}%` : encoding ? 'Encoding…' : 'Generate as video' }}
         </button>
