@@ -55,8 +55,16 @@ export function layerWindow(
 // OUT: e is the eased progress 0→1 (0 = at rest, 1 = fully gone).
 // LOOP: fn(phase, i) with phase = ((tIn - i·stagger) / duration) mod 1.
 
-type UnitEval = (e: number, i: number, n: number) => UnitState
+type UnitEval = (e: number, i: number, n: number, params: Record<string, number>) => UnitState
 const u = (p: Partial<UnitState>): UnitState => ({ ...IDENTITY_UNIT, ...p })
+
+/** Per-preset param defaults — the single source of truth. The catalog's
+ *  param schemas (data/kinetic-presets.ts) read their defaults from here. */
+export const PRESET_PARAM_DEFAULTS: Record<string, Record<string, number>> = {}
+
+export function resolveParams(spec: LayerAnimSpec): Record<string, number> {
+  return { ...(PRESET_PARAM_DEFAULTS[spec.presetId] ?? {}), ...(spec.params ?? {}) }
+}
 
 const IN_EVAL: Record<string, { fn: UnitEval; ease: string }> = {
   'appear':       { ease: 'none',            fn: e => u({ opacity: e > 0 ? 1 : 0 }) },
@@ -101,7 +109,7 @@ const OUT_EVAL: Record<string, { fn: UnitEval; ease: string }> = {
 }
 
 // Loop: fn(phase 0..1, i) — periodic by construction (sin/cos of 2π·phase).
-type LoopEval = (phase: number, i: number, n: number) => UnitState
+type LoopEval = (phase: number, i: number, n: number, params: Record<string, number>) => UnitState
 const TWO_PI = Math.PI * 2
 const LOOP_EVAL: Record<string, LoopEval> = {
   'wave':      (p) => u({ dy: -0.25 * Math.sin(p * TWO_PI) }),
@@ -150,7 +158,8 @@ function evalSpecUnits(
 ): UnitState[] {
   const entry = table[spec.presetId] ?? fallback
   const ease = resolveEase(spec.ease ?? entry.ease)
-  return Array.from({ length: n }, (_, i) => entry.fn(ease(unitProgress(tPhase, spec, i, n)), i, n))
+  const params = resolveParams(spec)
+  return Array.from({ length: n }, (_, i) => entry.fn(ease(unitProgress(tPhase, spec, i, n)), i, n, params))
 }
 
 export function evaluateKeyframes(kfs: LayerKeyframe[], t: number): UnitState {
@@ -211,10 +220,11 @@ export function evaluateAnimation(
     const stagger = Math.max(0, anim.loop.stagger ?? 0.04)
     const loopFn = LOOP_EVAL[anim.loop.presetId]
     if (loopFn) {
+      const params = resolveParams(anim.loop)
       const loopT = tIn - inDur   // phase 0 at loop start ⇒ seamless in→loop handoff
       units = Array.from({ length: n }, (_, i) => {
         const phase = (((loopT - i * stagger) / cycle) % 1 + 1) % 1
-        return loopFn(phase, i, n)
+        return loopFn(phase, i, n, params)
       })
     }
   }

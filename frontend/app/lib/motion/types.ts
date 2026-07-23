@@ -15,6 +15,9 @@ export interface LayerAnimSpec {
   duration: number      // seconds the in/out phase takes (loop: cycle length)
   stagger?: number      // seconds between units (chars); default 0.04
   ease?: string         // GSAP-style ease name; preset default when absent
+  /** Per-preset knob values (Jitter-style). Absent keys fall back to the
+   *  preset's defaults (PRESET_PARAM_DEFAULTS in evaluate.ts). Numeric only. */
+  params?: Record<string, number>
 }
 
 /** Transform/opacity keyframe, seconds relative to the layer's offset.
