@@ -2850,7 +2850,9 @@ function handleKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') {
     if (editingId.value) { endEdit(); return }
     if (typing) return
-    if (smartActive.value) { exitSmartMode(); return }
+    // Mid-action Escape would LOOK like a cancel while the in-flight upload
+    // still lands afterwards — ignore exits until the action settles.
+    if (smartActive.value) { if (!smartActionBusy.value) exitSmartMode(); return }
     if (genActive.value) { exitGenMode(); return }
     emit('close')
     return
@@ -3858,7 +3860,7 @@ onUnmounted(() => {
         <div class="px-4 py-3 border-b border-white/10 flex items-center gap-2">
           <Lasso class="size-3.5 text-white/70" />
           <span class="text-sm font-medium">Smart select</span>
-          <button class="ml-auto text-white/40 hover:text-white/80 p-1" title="Done (Esc)" @click="exitSmartMode"><X class="size-3.5" /></button>
+          <button class="ml-auto text-white/40 hover:text-white/80 p-1 disabled:opacity-40 disabled:cursor-default" title="Done (Esc)" :disabled="smartActionBusy" @click="exitSmartMode"><X class="size-3.5" /></button>
         </div>
         <div class="p-5 flex flex-col gap-4 flex-1 min-h-0 overflow-y-auto">
           <p class="text-[11px] text-white/45 leading-snug">
