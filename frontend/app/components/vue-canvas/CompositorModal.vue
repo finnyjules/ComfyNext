@@ -1717,14 +1717,26 @@ const wiredTreatments = computed(() => readWiredTreatments(compositor.value))
 // hidden, in the wired image's pixel space (see drawWiredImageLayer).
 const wiredMaskEls = ref<Record<number, HTMLImageElement | null>>({})
 watch(wiredTreatments, (tr) => {
+  const liveSlots = new Set<number>()
   for (const [key, t] of Object.entries(tr)) {
     const m = /^w:(\d+)$/.exec(key); if (!m) continue
     const slot = Number(m[1]); const url = (t as any).maskUrl as string | undefined
     if (!url) { if (wiredMaskEls.value[slot]) { const n = { ...wiredMaskEls.value }; delete n[slot]; wiredMaskEls.value = n } continue }
+    liveSlots.add(slot)
     const cur = wiredMaskEls.value[slot]
     if (cur && cur.dataset.url === url) continue
     const im = new Image(); im.onload = () => { im.dataset.url = url; wiredMaskEls.value = { ...wiredMaskEls.value, [slot]: im }; renderStack() }
     im.src = url
+  }
+  // Prune cache entries whose treatment key vanished entirely (e.g. Clear mask
+  // drops the `w:<slot>` entry rather than leaving maskUrl empty) — otherwise
+  // the loop above never revisits that slot and a stale decoded mask lingers.
+  const stale = Object.keys(wiredMaskEls.value).map(Number).filter(slot => !liveSlots.has(slot))
+  if (stale.length) {
+    const n = { ...wiredMaskEls.value }
+    for (const slot of stale) delete n[slot]
+    wiredMaskEls.value = n
+    renderStack()
   }
 }, { deep: true, immediate: true })
 
@@ -2161,6 +2173,17 @@ function selectedWiredImage(): { slot: number; el: HTMLImageElement | HTMLCanvas
   if (slot == null) return null
   const el = wiredImageEls.value[slot]
   return el ? { slot, el } : null
+}
+// Current wired mask URL for a slot (if any) — gates the "Clear mask"
+// affordance in the Smart select and Brush→Mask panels.
+function wiredMaskUrlFor(slot: number): string | undefined {
+  return wiredTreatments.value[`w:${slot}`]?.maskUrl
+}
+// Recovery path for the non-undoable wired mask (see the note near
+// smartHideWired): drops the slot's maskUrl treatment and re-renders.
+function clearWiredMask(slot: number) {
+  setWiredMaskUrl(compositor.value, slot, '')
+  renderStack()
 }
 function compositorLayer(slot: number): Layer | undefined {
   return layers.value.find(l => l.slot === slot)
@@ -2917,8 +2940,11 @@ async function smartBakeHole() {
 // Wired equivalent of smartBakeHole: a wired image's source pixels aren't
 // editable (they live in the graph), so "removing" the selection means OR-ing
 // the selection silhouette into the slot's existing visibility mask instead of
-// baking a hole into new pixels — non-destructive, undo-able via the normal
-// wiredTreatments write path (same as the brush-mask flow above).
+// baking a hole into new pixels — non-destructive, BUT NOT undo-able: wired
+// masks live in node properties (sailor_wiredTreatments), which are NOT in the
+// local-layer undo history (same as maskedByKey) — so this hide can't be
+// Cmd+Z'd. Recovery is the "Clear mask" affordance (see clearWiredMask below)
+// or brush Mask-mode erase. Cut out's extracted layer IS undoable independently.
 async function smartHideWired(slot: number, capW: number, capH: number, silhouette: HTMLCanvasElement) {
   const c = document.createElement('canvas'); c.width = capW; c.height = capH
   const ctx = c.getContext('2d')!
@@ -4123,6 +4149,12 @@ onUnmounted(() => {
             class="h-8 px-2.5 rounded bg-white/[0.06] hover:bg-white/12 text-[11px] cursor-pointer disabled:opacity-30 disabled:cursor-default self-start"
             :disabled="!smartBnd || smartActionBusy" @click="enterSmartMode()"
           >Clear selection</button>
+          <button
+            v-if="smartTargetRef?.type === 'wired' && wiredMaskUrlFor(smartTargetRef.slot)"
+            class="h-8 px-2.5 rounded bg-white/[0.06] hover:bg-white/12 text-[11px] cursor-pointer disabled:opacity-30 disabled:cursor-default self-start"
+            :disabled="smartActionBusy" data-testid="wired-clear-mask"
+            title="Remove this slot's wired visibility mask" @click="clearWiredMask(smartTargetRef.slot)"
+          >Clear mask</button>
         </div>
       </template>
 
@@ -4141,6 +4173,12 @@ onUnmounted(() => {
           </div>
           <p v-if="brush.mode.value === 'mask' && !((selectedLocal && selectedLocal.kind !== 'brush') || selectedWiredImage())"
             class="text-[10px] text-white/40 mb-2 leading-snug">Select a layer to mask</p>
+          <button
+            v-if="brush.mode.value === 'mask' && selectedWiredImage() && wiredMaskUrlFor(selectedWiredImage()!.slot)"
+            class="h-7 px-2.5 rounded bg-white/[0.06] hover:bg-white/12 text-[11px] cursor-pointer self-start mb-2"
+            data-testid="wired-clear-mask"
+            title="Remove this slot's wired visibility mask" @click="clearWiredMask(selectedWiredImage()!.slot)"
+          >Clear mask</button>
           <div v-if="brush.mode.value === 'paint'" class="flex items-center gap-2 mb-2">
             <span class="text-[10px] text-white/40 w-12 shrink-0">Color</span>
             <StudioColor :model-value="brush.color.value" @update:model-value="(v: string) => brush.color.value = v" />
