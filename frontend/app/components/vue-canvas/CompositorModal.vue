@@ -48,13 +48,17 @@ import FillControl from '~/components/vue-canvas/compositor/FillControl.vue'
 import FillSwatch from '~/components/vue-canvas/compositor/FillSwatch.vue'
 import PostEffectsControls from '~/components/vue-canvas/PostEffectsControls.vue'
 import { isChainEffect } from '~/lib/compositor/postEffects'
+import {
+  samplePointsFromStroke, layerAffine, invertAffine, applyAffine,
+  luminanceToAlpha, alphaBounds, type Affine, type BBox, type Pt, type SamPoint,
+} from '~/lib/compositor/smartSelect'
 import { paintPrimaryColor } from '~/lib/spacetype/fillTile'
 import FontPicker from '~/components/vue-canvas/widgets/FontPicker.vue'
 import { VARIABLE_FONTS } from '~/data/variable-fonts'
 import type { GoogleFont } from '~/data/google-fonts'
 import { KINETIC_ENABLED } from '~/lib/kineticEnabled'
 import { defaultExpressiveParams, type ExpressiveParams } from '~~/shared/text-layout/expressive'
-import { PenTool, Brush, FileUp, Sparkles, Wand2, Undo2, Redo2, ChevronRight, ChevronDown, GripVertical, Play, Palette, Check, RefreshCw } from 'lucide-vue-next'
+import { PenTool, Brush, FileUp, Sparkles, Wand2, Lasso, Undo2, Redo2, ChevronRight, ChevronDown, GripVertical, Play, Palette, Check, RefreshCw } from 'lucide-vue-next'
 import type { ComputedRef } from 'vue'
 import type { BrandKit } from '~~/shared/brand/types'
 import { brandSwatches } from '~~/shared/brand/resolve'
@@ -1151,6 +1155,8 @@ function onCanvasPointerDownCapture(e: PointerEvent) {
   // The generated-object mini toolbar lives inside the canvas — let its buttons
   // receive the click instead of starting a region draw / deselecting.
   if ((e.target as HTMLElement)?.closest?.('[data-gen-bar]')) return
+  if ((e.target as HTMLElement)?.closest?.('[data-smart-bar]')) return
+  if (smartActive.value) { onSmartPointerDown(e); return } // smart select owns the canvas
   // Generate mode: brush/box paint the region; shape mode falls through so a
   // shape can still be selected (then promoted via "Use shape").
   if (genActive.value && (genTool.value === 'brush' || genTool.value === 'box')) { onGenPointerDown(e); return }
@@ -1178,6 +1184,7 @@ function onCanvasPointerDownCapture(e: PointerEvent) {
   }
 }
 function onCanvasPointerMoveCapture(e: PointerEvent) {
+  if (smartActive.value) { onSmartPointerMove(e); return }
   if (genActive.value) {
     if (genTool.value === 'brush') { const p = genPointFromEvent(e); if (p) { genCursor.x = p.x; genCursor.y = p.y; genCursor.on = true } }
     if (genDraw.value) { onGenPointerMove(e); return }
@@ -1189,6 +1196,7 @@ function onCanvasPointerMoveCapture(e: PointerEvent) {
   else if (marquee.value) { const p = clientToNorm(e); if (p) moveMarquee(p.nx, p.ny) }
 }
 function onCanvasPointerUpCapture(e: PointerEvent) {
+  if (smartActive.value) { void onSmartPointerUp(e); return }
   if (genActive.value && genDraw.value) { onGenPointerUp(e); return }
   if (brush.active.value) { onBrushPointerUp(); return }
   if (pen.active.value) onPenPointerUp()
@@ -1215,6 +1223,7 @@ function onCanvasDblClickCapture(e: MouseEvent) {
 let lastDownHitLayer = false
 function onCanvasClick(e: MouseEvent) {
   if (brush.active.value) return // brush owns the canvas
+  if (smartActive.value) return // smart select owns the canvas
   if (genActive.value && genTool.value !== 'shape') return // region-paint owns the canvas
   if (lastDownHitLayer) { lastDownHitLayer = false; return }
   if (e.target === canvasRef.value) { selectedSlot.value = null; selectLocal(null) }
@@ -1223,6 +1232,7 @@ function onCanvasClick(e: MouseEvent) {
 // ends on the gutter also fires a click here, so swallow it.
 function onStageBackgroundClick(e: MouseEvent) {
   if (brush.active.value) return // brush owns the canvas
+  if (smartActive.value) return // smart select owns the canvas
   if (genActive.value && genTool.value !== 'shape') return
   if (didPan) { didPan = false; return }
   if (e.target === stageBoxRef.value || e.target === stageWrapRef.value) {
@@ -2425,6 +2435,201 @@ async function runRegionFill() {
   }
 }
 
+// ── Smart select: scribble → SAM-refined selection ───────────────────────────
+// Roughly brush over an object on the SELECTED image layer; the scribble is
+// sampled into SAM point prompts (in the layer's own pixel space, via the same
+// artboard→image affine as runRegionFill) and the returned silhouette becomes
+// the active selection. Alt-scribble subtracts (label 0). If the API fails the
+// raw scribble IS the selection — every action still works (spec requirement).
+const smart = useSmartSelect({ segment: (image, points) => inpaint.segmentPoints(image, points) })
+const smartActive = ref(false)
+const smartBrush = ref(48)                     // brush diameter, artboard px
+const smartTargetId = ref<string | null>(null)
+const smartCursor = reactive({ x: -999, y: -999, on: false })
+const smartVersion = ref(0)                    // bump → regionFx rebuild
+const smartBnd = ref<BBox | null>(null)        // selection bbox, ARTBOARD px (action bar anchor)
+const smartHasScribble = ref(false)
+
+const smartTarget = computed<any | null>(() =>
+  smartTargetId.value
+    ? localLayers.value.find((l: any) => l.id === smartTargetId.value && l.kind === 'image') ?? null
+    : null,
+)
+
+// Source capture: the target layer's pixels at capped resolution + the
+// artboard→image affine, cached for the whole mode session.
+type SmartCapture = { img: HTMLImageElement; capW: number; capH: number; dataUrl: string; affine: Affine }
+let smartCapture: SmartCapture | null = null
+async function ensureSmartCapture(): Promise<SmartCapture | null> {
+  if (smartCapture) return smartCapture
+  const layer = smartTarget.value
+  if (!layer) return null
+  const img = await loadImage(imageLayerUrl(layer.filename))
+  const { w: capW, h: capH } = capDims(img.naturalWidth || 1024, img.naturalHeight || 1024)
+  smartCapture = {
+    img, capW, capH,
+    dataUrl: imageToDataUrl(img, capW, capH),
+    affine: layerAffine(layer, canvasDisplay.w, canvasDisplay.h, capW, capH),
+  }
+  return smartCapture
+}
+
+// Raw scribble, ARTBOARD px (overlay + API-failure fallback). White = selected.
+let smartScribbleCanvas: HTMLCanvasElement | null = null
+function smartScribbleCtx(): CanvasRenderingContext2D | null {
+  const W = Math.max(1, Math.round(canvasDisplay.w)), H = Math.max(1, Math.round(canvasDisplay.h))
+  if (!smartScribbleCanvas) smartScribbleCanvas = document.createElement('canvas')
+  if (smartScribbleCanvas.width !== W || smartScribbleCanvas.height !== H) { smartScribbleCanvas.width = W; smartScribbleCanvas.height = H }
+  return smartScribbleCanvas.getContext('2d')
+}
+
+// Refined SAM mask, IMAGE space (capW×capH), white-on-transparent alpha.
+let smartRefinedCanvas: HTMLCanvasElement | null = null
+// Artboard-space projection of the active selection (refined if present, else
+// scribble) — what the overlay shows and what Generate fill consumes.
+let smartProjCache: HTMLCanvasElement | null = null
+function smartProjCanvas(): HTMLCanvasElement | null {
+  if (smartProjCache) return smartProjCache
+  const W = Math.max(1, Math.round(canvasDisplay.w)), H = Math.max(1, Math.round(canvasDisplay.h))
+  if (smartRefinedCanvas && smartCapture) {
+    const c = document.createElement('canvas'); c.width = W; c.height = H
+    const ctx = c.getContext('2d')!
+    const m = invertAffine(smartCapture.affine)   // image px → artboard px
+    ctx.setTransform(m.a, m.b, m.c, m.d, m.e, m.f)
+    ctx.drawImage(smartRefinedCanvas, 0, 0)
+    ctx.setTransform(1, 0, 0, 1, 0, 0)
+    smartProjCache = c
+    return c
+  }
+  if (smartHasScribble.value && smartScribbleCanvas) { smartProjCache = smartScribbleCanvas; return smartScribbleCanvas }
+  return null
+}
+// `light` skips the getImageData bbox scan — used on every pointer-move, where
+// a full-canvas readback per event would jank; the bbox refreshes on stroke end.
+function smartInvalidateProjection(light = false) {
+  smartProjCache = null
+  if (!light) {
+    const proj = smartProjCanvas()
+    smartBnd.value = proj
+      ? alphaBounds(proj.getContext('2d')!.getImageData(0, 0, proj.width, proj.height).data, proj.width, proj.height)
+      : null
+  }
+  smartVersion.value++
+}
+
+function enterSmartMode() {
+  const sel = selectedLocal.value?.kind === 'image' ? selectedLocal.value.id : null
+  if (!sel) return
+  selectTool(); exitNodeEdit()
+  if (pen.active.value) pen.setActive(false)
+  brush.setActive(false)
+  aiOpen.value = false
+  if (genActive.value) exitGenMode()
+  smartActive.value = true
+  smartTargetId.value = sel
+  smart.reset()
+  smartCapture = null
+  smartRefinedCanvas = null
+  smartHasScribble.value = false
+  const ctx = smartScribbleCtx()
+  if (ctx && smartScribbleCanvas) ctx.clearRect(0, 0, smartScribbleCanvas.width, smartScribbleCanvas.height)
+  smartInvalidateProjection()
+  void ensureSmartCapture()   // warm the capture so the first stroke refines fast
+}
+function exitSmartMode() {
+  smartActive.value = false
+  smartCursor.on = false
+  smartTargetId.value = null
+  smart.reset()
+  smartCapture = null
+  smartRefinedCanvas = null
+  smartHasScribble.value = false
+  smartProjCache = null
+  smartBnd.value = null
+}
+function toggleSmartMode() { smartActive.value ? exitSmartMode() : enterSmartMode() }
+
+// Pointer handling: record the raw polyline (for point sampling) and paint the
+// scribble (white; Alt = erase) for the overlay/fallback.
+const smartDraw = ref<{ sub: boolean; pts: Pt[]; lx: number; ly: number } | null>(null)
+function onSmartPointerDown(e: PointerEvent) {
+  const p = genPointFromEvent(e); if (!p) return
+  e.preventDefault(); e.stopPropagation()
+  canvasRef.value?.setPointerCapture?.(e.pointerId)
+  smartDraw.value = { sub: e.altKey, pts: [{ x: p.x, y: p.y }], lx: p.x, ly: p.y }
+  smartStrokeTo(p.x, p.y)
+}
+function smartStrokeTo(x: number, y: number) {
+  const d = smartDraw.value
+  const ctx = smartScribbleCtx(); if (!ctx || !d) return
+  ctx.globalCompositeOperation = d.sub ? 'destination-out' : 'source-over'
+  ctx.fillStyle = '#fff'; ctx.strokeStyle = '#fff'
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.lineWidth = smartBrush.value
+  ctx.beginPath(); ctx.moveTo(d.lx, d.ly); ctx.lineTo(x, y); ctx.stroke()
+  ctx.beginPath(); ctx.arc(x, y, smartBrush.value / 2, 0, Math.PI * 2); ctx.fill()
+  ctx.globalCompositeOperation = 'source-over'
+  if (!d.sub) smartHasScribble.value = true
+}
+function onSmartPointerMove(e: PointerEvent) {
+  const p = genPointFromEvent(e); if (!p) return
+  smartCursor.x = p.x; smartCursor.y = p.y; smartCursor.on = true
+  const d = smartDraw.value; if (!d) return
+  e.preventDefault(); e.stopPropagation()
+  smartStrokeTo(p.x, p.y)
+  d.pts.push({ x: p.x, y: p.y }); d.lx = p.x; d.ly = p.y
+  smartInvalidateProjection(true)
+}
+async function onSmartPointerUp(e: PointerEvent) {
+  const d = smartDraw.value; if (!d) return
+  e.preventDefault(); e.stopPropagation()
+  smartDraw.value = null
+  smartInvalidateProjection()
+  const cap = await ensureSmartCapture(); if (!cap) return
+  const label = d.sub ? 0 : 1
+  const imgPts: SamPoint[] = samplePointsFromStroke(d.pts)
+    .map(pt => applyAffine(cap.affine, pt))
+    .filter(pt => pt.x >= 0 && pt.y >= 0 && pt.x < cap.capW && pt.y < cap.capH)
+    .map(pt => ({ x: pt.x, y: pt.y, label: label as 0 | 1 }))
+  if (!imgPts.length) return   // scribble entirely off the target layer
+  smart.addPoints(imgPts)
+  await smart.refine(cap.dataUrl)
+}
+
+// Refined mask arrived → normalize (SAM returns opaque white-on-black; we
+// composite by ALPHA) into image space and re-project.
+watch(() => smart.maskUrl.value, async (url) => {
+  if (!url || !smartCapture) { smartRefinedCanvas = null; smartInvalidateProjection(); return }
+  try {
+    const img = await loadImage(url)
+    const c = document.createElement('canvas')
+    c.width = smartCapture.capW; c.height = smartCapture.capH
+    const ctx = c.getContext('2d')!
+    ctx.drawImage(img, 0, 0, c.width, c.height)
+    const id = ctx.getImageData(0, 0, c.width, c.height)
+    luminanceToAlpha(id.data)
+    ctx.putImageData(id, 0, 0)
+    smartRefinedCanvas = c
+  } catch {
+    smartRefinedCanvas = null   // unloadable mask → scribble fallback
+  }
+  smartInvalidateProjection()
+})
+
+// Overlay: a second useRegionFx instance over the smart canvases (gen and
+// smart modes are mutually exclusive, but each keeps its own canvas pair).
+const smartOverlayCanvas = ref<HTMLCanvasElement | null>(null)
+const smartSweepCanvas = ref<HTMLCanvasElement | null>(null)
+const smartFx = useRegionFx({
+  overlay: smartOverlayCanvas,
+  sweep: smartSweepCanvas,
+  getMask: () => smartProjCanvas(),
+  getDims: () => canvasDisplay,
+  busy: () => smart.busy.value,
+})
+const { sweepMaskUrl: smartSweepMaskUrl } = smartFx
+watch(smartActive, (on) => { on ? smartFx.start() : smartFx.stop() })
+watch([smartVersion, () => canvasDisplay.w, () => canvasDisplay.h], () => smartFx.rebuild())
+
 // Cloud background removal — replace an image layer with its transparent cutout.
 // Delegates to useLayerImageEdit (shared with Task 9's Harmonize) so the
 // swap always happens through one setLocal call (one undo step).
@@ -2506,12 +2711,13 @@ function handleKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') {
     if (editingId.value) { endEdit(); return }
     if (typing) return
+    if (smartActive.value) { exitSmartMode(); return }
     if (genActive.value) { exitGenMode(); return }
     emit('close')
     return
   }
   // Don't delete the target layer while painting a generative-fill region.
-  if ((e.key === 'Delete' || e.key === 'Backspace') && selectedLocalId.value && !typing && !genActive.value) {
+  if ((e.key === 'Delete' || e.key === 'Backspace') && selectedLocalId.value && !typing && !genActive.value && !smartActive.value) {
     e.preventDefault()
     deleteLocal(selectedLocalId.value)
   }
@@ -2696,14 +2902,14 @@ onUnmounted(() => {
         ref="canvasRef"
         class="absolute inset-0 bg-[#1a1a1a] rounded-md overflow-hidden ring-1 ring-white/5 transition-shadow"
         :class="[
-          (pen.active.value || nodeEdit.active.value || (genActive && genTool === 'box')) ? 'cursor-crosshair' : ((genActive && genTool === 'brush') || brush.active.value) ? 'cursor-none' : '',
+          (pen.active.value || nodeEdit.active.value || (genActive && genTool === 'box')) ? 'cursor-crosshair' : ((genActive && genTool === 'brush') || brush.active.value || smartActive) ? 'cursor-none' : '',
           dropActive ? '!ring-2 !ring-white/70' : '',
         ]"
         @click="onCanvasClick"
         @pointerdown.capture="onCanvasPointerDownCapture"
         @pointermove="onCanvasPointerMoveCapture"
         @pointerup="onCanvasPointerUpCapture"
-        @pointerleave="genCursor.on = false; brush.cursor.value = null"
+        @pointerleave="genCursor.on = false; smartCursor.on = false; brush.cursor.value = null"
         @dblclick.capture="onCanvasDblClickCapture"
       >
         <!-- Invisible <img> elements: kept for @load (natural dims) and pointer interaction.
@@ -2757,6 +2963,34 @@ onUnmounted(() => {
             maskSize: '100% 100%', WebkitMaskSize: '100% 100%',
             maskRepeat: 'no-repeat', WebkitMaskRepeat: 'no-repeat',
           }"
+        />
+        <!-- Smart-select overlay (tinted selection preview) + busy sweep -->
+        <canvas
+          v-show="smartActive"
+          ref="smartOverlayCanvas"
+          class="absolute inset-0 pointer-events-none"
+          :style="{ width: canvasDisplay.w + 'px', height: canvasDisplay.h + 'px', opacity: 0.9 }"
+        />
+        <canvas
+          v-show="smartActive"
+          ref="smartSweepCanvas"
+          class="absolute inset-0 pointer-events-none"
+          :style="{
+            width: canvasDisplay.w + 'px',
+            height: canvasDisplay.h + 'px',
+            opacity: smart.busy.value ? 1 : 0,
+            transition: 'opacity 240ms ease',
+            maskImage: smartSweepMaskUrl ? `url(${smartSweepMaskUrl})` : 'none',
+            WebkitMaskImage: smartSweepMaskUrl ? `url(${smartSweepMaskUrl})` : 'none',
+            maskSize: '100% 100%', WebkitMaskSize: '100% 100%',
+            maskRepeat: 'no-repeat', WebkitMaskRepeat: 'no-repeat',
+          }"
+        />
+        <!-- Brush cursor ring (smart select) -->
+        <div
+          v-if="smartActive && smartCursor.on"
+          class="absolute pointer-events-none rounded-full border border-white/90 bg-white/10"
+          :style="{ left: (smartCursor.x - smartBrush / 2) + 'px', top: (smartCursor.y - smartBrush / 2) + 'px', width: smartBrush + 'px', height: smartBrush + 'px', zIndex: 30 }"
         />
         <!-- Brush cursor ring (gen region) -->
         <div
@@ -3170,6 +3404,16 @@ onUnmounted(() => {
         >
           <Wand2 class="size-4" />
         </button>
+        <button
+          class="flex items-center justify-center size-8 rounded cursor-pointer disabled:opacity-30 disabled:cursor-default"
+          :class="smartActive ? 'bg-white text-neutral-900' : 'hover:bg-white/10 text-white/80'"
+          :disabled="!smartActive && selectedLocal?.kind !== 'image'"
+          :title="selectedLocal?.kind === 'image' || smartActive ? 'Smart select — scribble over an object, AI refines the selection' : 'Smart select — select an image layer first'"
+          data-testid="smart-select-toggle"
+          @click="toggleSmartMode"
+        >
+          <Lasso class="size-4" />
+        </button>
         <button class="flex items-center justify-center size-8 rounded hover:bg-white/10 text-white/80 cursor-pointer" title="Add image" @click="triggerAddImage">
           <ImageIcon class="size-4" />
         </button>
@@ -3442,6 +3686,36 @@ onUnmounted(() => {
                 @change="setMotion({ loop: ($event.target as HTMLInputElement).checked })">
             </label>
           </div>
+        </div>
+      </template>
+
+      <!-- Smart select options -->
+      <template v-else-if="smartActive">
+        <div class="px-4 py-3 border-b border-white/10 flex items-center gap-2">
+          <Lasso class="size-3.5 text-white/70" />
+          <span class="text-sm font-medium">Smart select</span>
+          <button class="ml-auto text-white/40 hover:text-white/80 p-1" title="Done (Esc)" @click="exitSmartMode"><X class="size-3.5" /></button>
+        </div>
+        <div class="p-5 flex flex-col gap-4 flex-1 min-h-0 overflow-y-auto">
+          <p class="text-[11px] text-white/45 leading-snug">
+            Scribble roughly over an object on <span class="text-white/70">{{ smartTarget ? 'the selected image' : 'an image layer' }}</span> —
+            the selection snaps to it. Hold <kbd class="px-1 rounded bg-white/10">Alt</kbd> to subtract.
+          </p>
+          <div class="flex items-center gap-2">
+            <span class="text-[10px] text-white/40 w-12 shrink-0">Brush</span>
+            <input type="range" min="8" max="240" step="2" v-model.number="smartBrush" class="flex-1 accent-white cursor-pointer" />
+            <span class="text-[10px] text-white/50 w-8 text-right tabular-nums">{{ smartBrush }}</span>
+          </div>
+          <div class="text-[11px]" :class="smart.failed.value ? 'text-amber-400' : 'text-white/40'">
+            <template v-if="smart.busy.value">Refining selection…</template>
+            <template v-else-if="smart.failed.value">Smart refine unavailable — using your scribble.</template>
+            <template v-else-if="smart.maskUrl.value">Selection refined. Scribble to add, Alt-scribble to subtract.</template>
+            <template v-else-if="smartHasScribble">Using your scribble as the selection.</template>
+          </div>
+          <button
+            class="h-8 px-2.5 rounded bg-white/[0.06] hover:bg-white/12 text-[11px] cursor-pointer disabled:opacity-30 disabled:cursor-default self-start"
+            :disabled="!smartBnd" @click="enterSmartMode()"
+          >Clear selection</button>
         </div>
       </template>
 
