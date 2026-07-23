@@ -6,7 +6,7 @@
  *
  * Rules:
  *  - refine() during a flight queues exactly ONE trailing re-run (latest points).
- *  - a failed refine sets failed=true and clears maskUrl — the caller falls
+ *  - a failed refine sets failed=true and clears maskUrls — the caller falls
  *    back to using the raw scribble as the selection (hard spec requirement).
  *  - reset() invalidates any in-flight response (session counter).
  */
@@ -14,13 +14,13 @@ import { ref } from 'vue'
 import type { SamPoint } from '~/lib/compositor/smartSelect'
 
 export interface SmartSelectDeps {
-  segment: (image: string, points: SamPoint[]) => Promise<string>
+  segment: (image: string, points: SamPoint[]) => Promise<string[]>
 }
 
 export function useSmartSelect(deps: SmartSelectDeps) {
   const points = ref<SamPoint[]>([])
   const busy = ref(false)
-  const maskUrl = ref<string | null>(null)
+  const maskUrls = ref<string[] | null>(null)
   const failed = ref(false)
   let queued: string | null = null // image for the queued trailing re-run
   let session = 0
@@ -32,7 +32,7 @@ export function useSmartSelect(deps: SmartSelectDeps) {
   function reset() {
     session++
     points.value = []
-    maskUrl.value = null
+    maskUrls.value = null
     failed.value = false
     busy.value = false
     queued = null
@@ -44,13 +44,13 @@ export function useSmartSelect(deps: SmartSelectDeps) {
     const mySession = session
     busy.value = true
     try {
-      const mask = await deps.segment(image, points.value)
+      const masks = await deps.segment(image, points.value)
       if (mySession !== session) return
-      maskUrl.value = mask
+      maskUrls.value = masks
       failed.value = false
     } catch {
       if (mySession !== session) return
-      maskUrl.value = null
+      maskUrls.value = null
       failed.value = true
     } finally {
       if (mySession === session) {
@@ -62,5 +62,5 @@ export function useSmartSelect(deps: SmartSelectDeps) {
     }
   }
 
-  return { points, busy, maskUrl, failed, addPoints, refine, reset }
+  return { points, busy, maskUrls, failed, addPoints, refine, reset }
 }

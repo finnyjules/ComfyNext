@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   samplePointsFromStroke, layerAffine, invertAffine, applyAffine,
-  luminanceToAlpha, alphaBounds, cutoutPlacement, type Pt,
+  luminanceToAlpha, alphaBounds, cutoutPlacement, pickSamMask, type Pt, type MaskCandidate,
 } from '~/lib/compositor/smartSelect'
 
 describe('samplePointsFromStroke', () => {
@@ -95,5 +95,58 @@ describe('cutoutPlacement', () => {
     expect(p.y).toBeCloseTo(325 / 800, 6)
     expect(p.w).toBeCloseTo(0.2, 6)
     expect(p.h).toBeCloseTo(0.15, 6)
+  })
+})
+
+describe('pickSamMask', () => {
+  /** Build a tiny opaque RGBA mask; `isWhite(x,y)` decides white vs black per pixel. */
+  function mkMask(w: number, h: number, whitePixels: Array<[number, number]> | ((x: number, y: number) => boolean)): MaskCandidate {
+    const data = new Uint8ClampedArray(w * h * 4)
+    const isWhite = typeof whitePixels === 'function'
+      ? whitePixels
+      : (x: number, y: number) => whitePixels.some(([wx, wy]) => wx === x && wy === y)
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const o = (y * w + x) * 4
+      const white = isWhite(x, y)
+      data[o] = white ? 255 : 0
+      data[o + 1] = white ? 255 : 0
+      data[o + 2] = white ? 255 : 0
+      data[o + 3] = 255
+    }
+    return { data, w, h }
+  }
+
+  it('picks the largest QUALIFYING candidate, rejecting a near-full "inverse" whose hole misses the points', () => {
+    // Mimics the probe: mask_0 ~86% white (inverse-ish, point lands in its black
+    // hole), mask_1 ~12-16% white (exactly the blob, contains the point),
+    // mask_2 <1% white (point neighborhood only). Expect mask_1 to win.
+    const w = 10, h = 10
+    const inverse = mkMask(w, h, (x, y) => !(x >= 4 && x <= 6 && y >= 4 && y <= 6))
+    const medium = mkMask(w, h, (x, y) => x >= 3 && x <= 6 && y >= 3 && y <= 6)
+    const dot = mkMask(w, h, [[5, 5]])
+    const idx = pickSamMask([inverse, medium, dot], [{ x: 5, y: 5 }], w, h)
+    expect(idx).toBe(1)
+  })
+
+  it('returns -1 when the prompt points land off every candidate', () => {
+    const w = 10, h = 10
+    const a = mkMask(w, h, [[1, 1]])
+    const b = mkMask(w, h, [[2, 2]])
+    const idx = pickSamMask([a, b], [{ x: 9, y: 9 }], w, h)
+    expect(idx).toBe(-1)
+  })
+
+  it('returns -1 for empty fgPoints', () => {
+    const w = 10, h = 10
+    const a = mkMask(w, h, (x, y) => x >= 3 && x <= 6 && y >= 3 && y <= 6)
+    expect(pickSamMask([a], [], w, h)).toBe(-1)
+  })
+
+  it('maps points fractionally when a candidate has a different resolution than the prompt image', () => {
+    // Prompt image is 10x10; point (5,5) is the exact center (fraction 0.5,0.5).
+    // Candidate is 20x20 — the same fractional center is pixel (10,10).
+    const cand = mkMask(20, 20, (x, y) => x >= 6 && x <= 14 && y >= 6 && y <= 14)
+    const idx = pickSamMask([cand], [{ x: 5, y: 5 }], 10, 10)
+    expect(idx).toBe(0)
   })
 })

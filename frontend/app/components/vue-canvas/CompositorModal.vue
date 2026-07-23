@@ -50,7 +50,8 @@ import PostEffectsControls from '~/components/vue-canvas/PostEffectsControls.vue
 import { isChainEffect } from '~/lib/compositor/postEffects'
 import {
   samplePointsFromStroke, layerAffine, invertAffine, applyAffine,
-  luminanceToAlpha, alphaBounds, cutoutPlacement, type Affine, type BBox, type Pt, type SamPoint,
+  luminanceToAlpha, alphaBounds, cutoutPlacement, pickSamMask,
+  type Affine, type BBox, type Pt, type SamPoint, type MaskCandidate,
 } from '~/lib/compositor/smartSelect'
 import { paintPrimaryColor } from '~/lib/spacetype/fillTile'
 import FontPicker from '~/components/vue-canvas/widgets/FontPicker.vue'
@@ -2610,22 +2611,45 @@ async function onSmartPointerUp(e: PointerEvent) {
   await smart.refine(cap.dataUrl)
 }
 
-// Refined mask arrived → normalize (SAM returns opaque white-on-black; we
-// composite by ALPHA) into image space and re-project.
-watch(() => smart.maskUrl.value, async (url) => {
-  if (!url || !smartCapture) { smartRefinedCanvas = null; smartInvalidateProjection(); return }
+// Refined candidate masks arrived → meta/sam-2 returns SEVERAL binary
+// individual_masks candidates for one point prompt (subpart/part/whole);
+// pick the one that actually contains the foreground prompt points, then
+// normalize it (SAM returns opaque white-on-black; we composite by ALPHA)
+// into image space and re-project.
+watch(() => smart.maskUrls.value, async (urls) => {
+  if (!urls?.length || !smartCapture) { smartRefinedCanvas = null; smartInvalidateProjection(); return }
   try {
-    const img = await loadImage(url)
-    const c = document.createElement('canvas')
-    c.width = smartCapture.capW; c.height = smartCapture.capH
-    const ctx = c.getContext('2d')!
-    ctx.drawImage(img, 0, 0, c.width, c.height)
-    const id = ctx.getImageData(0, 0, c.width, c.height)
-    luminanceToAlpha(id.data)
-    ctx.putImageData(id, 0, 0)
-    smartRefinedCanvas = c
+    const cap = smartCapture
+    const imgs = await Promise.all(urls.slice(0, 4).map(u => loadImage(u)))
+    const candidates: MaskCandidate[] = imgs.map(img => {
+      const c = document.createElement('canvas')
+      c.width = img.naturalWidth || 1; c.height = img.naturalHeight || 1
+      const ctx = c.getContext('2d')!
+      ctx.drawImage(img, 0, 0)
+      const id = ctx.getImageData(0, 0, c.width, c.height)
+      return { data: id.data, w: c.width, h: c.height }
+    })
+    const fg = smart.points.value.filter(p => p.label === 1)
+    const idx = pickSamMask(candidates, fg, cap.capW, cap.capH)
+    if (idx < 0) {
+      // No candidate qualifies (e.g. every mask misses the prompt points) —
+      // leave smartRefinedCanvas null so the raw scribble stays the selection.
+      // This is silent on purpose: the API call itself succeeded, so we do
+      // NOT set smart.failed (that's reserved for actual request failures).
+      smartRefinedCanvas = null
+    } else {
+      const win = imgs[idx]!
+      const c = document.createElement('canvas')
+      c.width = cap.capW; c.height = cap.capH
+      const ctx = c.getContext('2d')!
+      ctx.drawImage(win, 0, 0, c.width, c.height)
+      const id = ctx.getImageData(0, 0, c.width, c.height)
+      luminanceToAlpha(id.data)
+      ctx.putImageData(id, 0, 0)
+      smartRefinedCanvas = c
+    }
   } catch {
-    smartRefinedCanvas = null   // unloadable mask → scribble fallback
+    smartRefinedCanvas = null   // unloadable mask(s) → scribble fallback
   }
   smartInvalidateProjection()
 })
@@ -3875,7 +3899,7 @@ onUnmounted(() => {
           <div class="text-[11px]" :class="smart.failed.value ? 'text-amber-400' : 'text-white/40'">
             <template v-if="smart.busy.value">Refining selection…</template>
             <template v-else-if="smart.failed.value">Smart refine unavailable — using your scribble.</template>
-            <template v-else-if="smart.maskUrl.value">Selection refined. Scribble to add, Alt-scribble to subtract.</template>
+            <template v-else-if="smart.maskUrls.value?.length">Selection refined. Scribble to add, Alt-scribble to subtract.</template>
             <template v-else-if="smartHasScribble">Using your scribble as the selection.</template>
           </div>
           <button
