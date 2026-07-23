@@ -2909,7 +2909,7 @@ onUnmounted(() => {
       <!-- Multi-select bar: align/distribute (any ≥2) + booleans (≥2 paths) -->
       <div
         v-if="selectedCount >= 2 && !nodeEdit.active.value"
-        class="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-[#1a1a1a]/95 rounded-[10px] p-1 border border-[#2a2a2a] shadow-lg"
+        class="absolute top-[60px] left-1/2 -translate-x-1/2 flex items-center gap-1 bg-[#1a1a1a]/95 rounded-[10px] p-1 border border-[#2a2a2a] shadow-lg"
         @pointerdown.stop
       >
         <button v-for="a in ALIGN_BTNS" :key="a.mode"
@@ -2932,7 +2932,7 @@ onUnmounted(() => {
       </div>
       <div
         v-else-if="nodeEdit.active.value"
-        class="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-white/15 rounded-[10px] px-3 py-1.5 border border-white/20 shadow-lg text-[11px] text-white/80"
+        class="absolute top-[60px] left-1/2 -translate-x-1/2 flex items-center gap-2 bg-white/15 rounded-[10px] px-3 py-1.5 border border-white/20 shadow-lg text-[11px] text-white/80"
         @pointerdown.stop
       >
         Editing path nodes — drag points & handles · Del removes a point ·
@@ -2998,9 +2998,9 @@ onUnmounted(() => {
       </div>
       </Transition>
 
-      <!-- Zoom control (bottom-left of the stage). Scroll to pan, ⌘/pinch to zoom,
+      <!-- Zoom control (top-center of the stage). Scroll to pan, ⌘/pinch to zoom,
            space-drag to pan; these buttons + the % (reset) cover mouse users. -->
-      <div class="absolute bottom-4 left-4 z-20 flex items-center gap-0.5 rounded-[10px] border border-[#2a2a2a] bg-[#1a1a1a]/95 p-1 shadow-lg pointer-events-auto">
+      <div class="absolute top-4 left-1/2 -translate-x-1/2 z-20 flex items-center gap-0.5 rounded-[10px] border border-[#2a2a2a] bg-[#1a1a1a]/95 p-1 shadow-lg pointer-events-auto">
         <button class="flex items-center justify-center size-7 rounded hover:bg-white/10 text-white/80 cursor-pointer" title="Zoom out (⌘−)" @click="zoomBy(1 / 1.2)">
           <Minus class="size-4" />
         </button>
@@ -3126,18 +3126,8 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- Floating top-right: Render + esc/close (studio chrome) -->
+    <!-- Floating top-right: esc/close (studio chrome) -->
     <div class="absolute top-4 right-4 z-30 flex items-center gap-2">
-      <span v-if="renderError" class="text-[11px] text-rose-400 max-w-[200px] truncate" :title="renderError">{{ renderError }}</span>
-      <button
-        class="h-8 px-3 rounded text-[12px] font-medium flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-        :class="renderStale ? 'bg-white hover:bg-white/90 text-neutral-900' : 'bg-white/[0.06] hover:bg-white/12 text-white/85'"
-        :disabled="rendering || baking"
-        :title="renderStale ? 'Frame output is out of date — click to render' : 'Frame output is up to date'"
-        @click="renderFrame">
-        <Play class="size-3" />
-        {{ rendering ? 'Rendering…' : (renderStale ? 'Render' : 'Rendered') }}
-      </button>
       <span class="rounded border border-white/10 px-1.5 py-0.5 text-[11px] text-white/30 select-none">esc</span>
       <button type="button" aria-label="Close" title="Close (Esc)"
         class="text-white/45 transition-colors hover:text-white/80 text-base leading-none px-1 cursor-pointer"
@@ -4156,6 +4146,21 @@ onUnmounted(() => {
           </p>
         </div>
       </template>
+
+      <!-- Sticky footer: Render — renders & saves the frame output. Sits outside
+           every template branch so it stays pinned bottom-right in all panel states. -->
+      <div class="mt-auto shrink-0 border-t border-white/10 p-3 flex items-center justify-end gap-2">
+        <span v-if="renderError" class="text-[11px] text-rose-400 min-w-0 flex-1 truncate" :title="renderError">{{ renderError }}</span>
+        <button
+          class="h-8 px-3 rounded text-[12px] font-medium flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+          :class="renderStale ? 'bg-white hover:bg-white/90 text-neutral-900' : 'bg-white/[0.06] hover:bg-white/12 text-white/85'"
+          :disabled="rendering || baking"
+          :title="renderStale ? 'Frame output is out of date — click to render' : 'Frame output is up to date'"
+          @click="renderFrame">
+          <Play class="size-3" />
+          {{ rendering ? 'Rendering…' : (renderStale ? 'Render' : 'Rendered') }}
+        </button>
+      </div>
     </div>
     </div>
   </div>
