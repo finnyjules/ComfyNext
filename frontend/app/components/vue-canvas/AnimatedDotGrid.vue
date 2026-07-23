@@ -30,13 +30,13 @@ interface Spark { gx: number; gy: number; dx: number; dy: number; p: number; spe
 let sparks: Spark[] = []
 let sparkHue = 0 // global flowing offset so the rainbow drifts over time
 const TRAIL_LEN = 64 // points of history → a long comet
-const DIRS: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1]]
 function spawnSpark(gxMin: number, gxMax: number, gyMin: number, gyMax: number): Spark {
-  const d = DIRS[Math.floor(Math.random() * 4)]!
   return {
     gx: gxMin + Math.floor(Math.random() * (gxMax - gxMin + 1)),
     gy: gyMin + Math.floor(Math.random() * (gyMax - gyMin + 1)),
-    dx: d[0], dy: d[1], p: Math.random(), speed: 0.13 + Math.random() * 0.1,
+    // All sparks travel LEFT → RIGHT only — reads as one calm directional
+    // current instead of synapses firing every which way.
+    dx: 1, dy: 0, p: Math.random(), speed: 0.13 + Math.random() * 0.1,
     // Each spark fades on its own clock: in fast, out at a randomized (faster)
     // rate so they wink out individually rather than the whole field dimming.
     hueBase: Math.random() * 360, fade: 0, fadeRate: 0.13 + Math.random() * 0.12, trail: [],
@@ -126,7 +126,8 @@ function draw() {
   const gyMin = Math.floor((0 - offsetY) / g) - 1
   const gyMax = Math.ceil((h - offsetY) / g) + 1
   if (props.thinking && !sparks.length) {
-    const n = Math.min(22, Math.max(10, Math.round((gxMax - gxMin) / 4)))
+    // Toned down: roughly half the old population.
+    const n = Math.min(12, Math.max(5, Math.round((gxMax - gxMin) / 8)))
     sparks = Array.from({ length: n }, () => spawnSpark(gxMin, gxMax, gyMin, gyMax))
   }
   if (sparks.length) {
@@ -155,9 +156,10 @@ function draw() {
         const t = i / s.trail.length // 0 tail → 1 head
         const hue = (sparkHue + s.hueBase + i * 7) % 360
         // Steep (quadratic) falloff so the tail fades out fast behind the head;
-        // × s.fade so this spark eases in/out on its own.
-        ctx.strokeStyle = `hsla(${hue}, 75%, 82%, ${(0.9 * t * t * s.fade).toFixed(3)})`
-        ctx.lineWidth = 0.4 + 2.6 * t * t
+        // × s.fade so this spark eases in/out on its own. Kept deliberately
+        // faint — a background current, not a light show.
+        ctx.strokeStyle = `hsla(${hue}, 60%, 82%, ${(0.5 * t * t * s.fade).toFixed(3)})`
+        ctx.lineWidth = 0.4 + 1.8 * t * t
         ctx.beginPath()
         ctx.moveTo(offsetX + a.wx * g, offsetY + a.wy * g)
         ctx.lineTo(offsetX + b.wx * g, offsetY + b.wy * g)
@@ -167,8 +169,8 @@ function draw() {
       const head = s.trail[s.trail.length - 1]!
       const headHue = (sparkHue + s.hueBase + s.trail.length * 7) % 360
       ctx.beginPath()
-      ctx.arc(offsetX + head.wx * g, offsetY + head.wy * g, 2.2, 0, Math.PI * 2)
-      ctx.fillStyle = `hsla(${headHue}, 80%, 90%, ${(0.95 * s.fade).toFixed(3)})`
+      ctx.arc(offsetX + head.wx * g, offsetY + head.wy * g, 1.7, 0, Math.PI * 2)
+      ctx.fillStyle = `hsla(${headHue}, 65%, 88%, ${(0.6 * s.fade).toFixed(3)})`
       ctx.fill()
     }
     // Release sparks that have individually faded out (only once thinking stops).
