@@ -20,6 +20,18 @@ const a2 = createRectLayer({ id: 'a2', x: 0.3, y: 0.9, w: 0.2, h: 0.03, fill: '#
 const b1 = createTextLayer({ id: 'b1', text: 'Subtitle', x: 0.7, y: 0.85, fontSize: 0.04 } as any)
 ;(a1 as any).groupId = 'A'; (a2 as any).groupId = 'A'; (b1 as any).groupId = 'B'
 
+// Motion fixtures: exercise in/loop/out, the window, and a utility preset.
+;(plain as any).animation = {
+  offset: 0.3, duration: 3,
+  in: { presetId: 'slide-up', duration: 0.6, stagger: 0.03 },
+  loop: { presetId: 'float', duration: 1.6, stagger: 0.04 },
+  out: { presetId: 'fade-out', duration: 0.5, stagger: 0.02 },
+}
+;(tracked as any).animation = {
+  offset: 0,
+  loop: { presetId: 'wiggle', duration: 2, stagger: 0, params: { amplitude: 0.2, cycles: 2 } },
+}
+
 const node = reactive({
   id: 'n1',
   data: {
