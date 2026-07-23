@@ -81,6 +81,10 @@ export const PRESET_PARAM_DEFAULTS: Record<string, Record<string, number>> = {
   'card-flip-v':     { overshoot: 1 },
   'card-flip-h-out': { overshoot: 1 },
   'card-flip-v-out': { overshoot: 1 },
+  'inward-echoes':   { copies: 3, scaleStep: 0.35, fade: 0.55 },
+  'grid-scroll-x':   { tiles: 2, gap: 1.5 },
+  'grid-scroll-y':   { tiles: 2, gap: 1.5 },
+  'noise-tile':      { tiles: 1, flicker: 1 },
 }
 
 export function resolveParams(spec: LayerAnimSpec): Record<string, number> {
@@ -171,6 +175,57 @@ const LOOP_EVAL: Record<string, LoopEval> = {
       dy: amp * 0.35 * wob(ph2),
       rotation: amp * 40 * wob(ph3) * 0.5,
     })
+  },
+  // Echo treadmill: copy j sits at cyclic depth q(p) = (j + 1 − p) mod count.
+  // As p advances every copy drifts one depth-step inward per cycle; at the
+  // wrap the innermost copy relabels to the outermost (which is nearly
+  // invisible via fade^depth), so the SET of copies is identical at p=0 and
+  // p→1 — seamless loop by relabeling, verified element-wise after the sort.
+  'inward-echoes': (p, _i, _n, prm) => {
+    const count = Math.max(1, Math.round(prm.copies ?? 3))
+    const step = prm.scaleStep ?? 0.35
+    const fade = prm.fade ?? 0.55
+    const copies: UnitCopy[] = Array.from({ length: count }, (_, j) => {
+      const q = ((j + 1 - p) % count + count) % count   // continuous cyclic depth
+      return { dx: 0, dy: 0, scale: 1 + step * q, opacity: fade ** (q + 1) }
+    }).sort((a, b) => b.scale - a.scale)                 // draw far echoes first
+    return u({ copies })
+  },
+  // Marquee treadmill: base slides one gap per cycle; a static ring of ±tiles
+  // copies hides the wrap jump.
+  'grid-scroll-x': (p, _i, _n, prm) => {
+    const tiles = Math.max(1, Math.round(prm.tiles ?? 2))
+    const gap = prm.gap ?? 1.5
+    const copies: UnitCopy[] = []
+    for (let j = -tiles; j <= tiles; j++) {
+      if (j !== 0) copies.push({ dx: j * gap, dy: 0, scale: 1, opacity: 1 })
+    }
+    return u({ dx: -p * gap, copies })
+  },
+  'grid-scroll-y': (p, _i, _n, prm) => {
+    const tiles = Math.max(1, Math.round(prm.tiles ?? 2))
+    const gap = prm.gap ?? 1.5
+    const copies: UnitCopy[] = []
+    for (let j = -tiles; j <= tiles; j++) {
+      if (j !== 0) copies.push({ dx: 0, dy: j * gap, scale: 1, opacity: 1 })
+    }
+    return u({ dy: -p * gap, copies })
+  },
+  // Static (2t+1)² grid; each cell flickers on its own seeded phase.
+  'noise-tile': (p, _i, _n, prm) => {
+    const t = Math.max(1, Math.round(prm.tiles ?? 1))
+    const flicker = prm.flicker ?? 1
+    const gap = 1.3
+    const copies: UnitCopy[] = []
+    for (let gy = -t; gy <= t; gy++) {
+      for (let gx = -t; gx <= t; gx++) {
+        if (gx === 0 && gy === 0) continue
+        const idx = (gy + t) * (2 * t + 1) + (gx + t)
+        const tw = 0.5 + 0.5 * Math.sin(TWO_PI * (p + seeded(idx, 7)))
+        copies.push({ dx: gx * gap, dy: gy * gap, scale: 1, opacity: Math.max(0.1, 1 - flicker * tw) })
+      }
+    }
+    return u({ copies })
   },
 }
 

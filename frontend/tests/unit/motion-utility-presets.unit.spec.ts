@@ -56,3 +56,55 @@ describe('card flips', () => {
     expect(st.scaleX).toBeUndefined()
   })
 })
+
+describe('inward-echoes', () => {
+  const spec = { presetId: 'inward-echoes', duration: 2 }
+  it('emits the configured number of copies, far echoes first (draw order)', () => {
+    const st = loopAt({ ...spec, params: { copies: 3, scaleStep: 0.4, fade: 0.6 } }, 0.5)[0]
+    expect(st.copies).toHaveLength(3)
+    const scales = st.copies!.map(c => c.scale)
+    expect(scales.every(s => s >= 1)).toBe(true)
+    expect([...scales].sort((a, b) => b - a)).toEqual(scales)   // sorted far→near
+  })
+  it('treadmills seamlessly: the copy SET at phase 0 == phase 1 (elements relabel)', () => {
+    const a = loopAt(spec, 0)[0].copies!            // both arrays are sorted far→near,
+    const b = loopAt(spec, 2 - 1e-9)[0].copies!     // so element-wise compare == set compare
+    a.forEach((c, j) => {
+      expect(b[j].scale).toBeCloseTo(c.scale, 3)
+      expect(b[j].opacity).toBeCloseTo(c.opacity, 3)
+    })
+  })
+})
+
+describe('grid-scroll', () => {
+  it('x-variant scrolls the base and rings it with static-offset copies', () => {
+    const st = loopAt({ presetId: 'grid-scroll-x', duration: 2, params: { tiles: 2, gap: 1.5 } }, 0.5)[0]
+    expect(st.dx).toBeCloseTo(-0.25 * 1.5)          // phase 0.25 × gap, leftward
+    expect(st.copies).toHaveLength(4)                // j = -2,-1,1,2
+    expect(st.copies![0].dx).toBeCloseTo(-2 * 1.5)
+    expect(st.copies!.every(c => c.dy === 0)).toBe(true)
+  })
+  it('y-variant moves dy instead', () => {
+    const st = loopAt({ presetId: 'grid-scroll-y', duration: 2, params: { tiles: 1, gap: 1.5 } }, 0.5)[0]
+    expect(st.dy).toBeCloseTo(-0.25 * 1.5)
+    expect(st.dx).toBe(0)
+    expect(st.copies!.every(c => c.dx === 0)).toBe(true)
+  })
+  it('wraps seamlessly across the cycle boundary', () => {
+    const spec = { presetId: 'grid-scroll-x', duration: 2, params: { tiles: 1, gap: 1 } }
+    const before = loopAt(spec, 2 - 1e-6)[0]
+    // At wrap, base jumps back one gap — with a ±1-tile ring the visual set is identical.
+    expect(before.dx).toBeCloseTo(-1, 2)
+    expect(loopAt(spec, 0)[0].dx).toBeCloseTo(0, 5)
+  })
+})
+
+describe('noise-tile', () => {
+  it('lays a (2t+1)² grid of copies with deterministic flicker', () => {
+    const st = loopAt({ presetId: 'noise-tile', duration: 2, params: { tiles: 1, flicker: 1 } }, 0.3)[0]
+    expect(st.copies).toHaveLength(8)   // 3×3 minus the base cell
+    const again = loopAt({ presetId: 'noise-tile', duration: 2, params: { tiles: 1, flicker: 1 } }, 0.3)[0]
+    expect(st.copies).toEqual(again.copies)
+    expect(st.copies!.some((c, j) => j > 0 && c.opacity !== st.copies![0].opacity)).toBe(true)
+  })
+})
