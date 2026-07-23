@@ -1,7 +1,8 @@
 <script setup lang="ts">
 /** Jitter-style preset gallery: grouped sections, 2-up cards with live
  *  thumbnails, a disabled "Custom" tail card (the property-keyframe milestone's
- *  entry point). Teleported to body so the inspector's overflow doesn't clip it. */
+ *  entry point). Teleported to body so the inspector's overflow doesn't clip it.
+ *  Must stack above CompositorModal's z-[100] context (z-[110] backdrop, z-[111] panel). */
 import { SUPPORTED_IN_IDS, SUPPORTED_OUT_IDS, SUPPORTED_LOOP_IDS } from '~/lib/motion/evaluate'
 import { KINETIC_PRESETS_BY_ID, KINETIC_GROUP_LABELS, type KineticGroup } from '~/data/kinetic-presets'
 import PresetThumb from '~/components/vue-canvas/compositor/PresetThumb.vue'
@@ -46,8 +47,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 <template>
   <Teleport to="body">
     <!-- click-away backdrop -->
-    <div class="fixed inset-0 z-[70]" @pointerdown="emit('close')" />
-    <div class="fixed z-[71] w-72 max-h-[420px] flex flex-col rounded-xl border border-white/10 bg-[#141416]/98 shadow-2xl"
+    <div class="fixed inset-0 z-[110]" @pointerdown="emit('close')" />
+    <div class="fixed z-[111] w-72 max-h-[420px] flex flex-col rounded-xl border border-white/10 bg-[#141416]/98 shadow-2xl"
       :style="style" @pointerdown.stop>
       <div class="flex items-center justify-between px-3 py-2 border-b border-white/10">
         <span class="text-[11px] uppercase tracking-[0.12em] text-white/50">{{ slotKind }} presets</span>
