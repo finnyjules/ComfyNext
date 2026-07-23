@@ -481,7 +481,11 @@ try:
             project["name"] = body["name"]
         if "cover" in body:
             project["cover"] = body["cover"]
-        project["updatedAt"] = _now_ms()
+        # Cover-only PUTs (lazy backfill stamping) must not bump updatedAt —
+        # the Home/All-Projects lists sort by it, and a passive backfill would
+        # teleport dormant projects to the top as fake activity.
+        if set(body.keys()) - {"cover"}:
+            project["updatedAt"] = _now_ms()
         write_project(_root(), project)
         return web.json_response({"project": project})
 

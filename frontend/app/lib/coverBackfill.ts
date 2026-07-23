@@ -6,6 +6,7 @@
  * module holds the testable parts: which cards qualify, and a small
  * concurrency gate so scrolling a 200-card grid can't burst version fetches.
  */
+import type { GenOutput } from '~/lib/generations'
 
 /** A card qualifies when it has no images and its id is a real server uuid —
  *  history-fingerprint cards (comma-joined class types, pre-uuid runs) have
@@ -38,4 +39,24 @@ export function createTaskQueue(maxConcurrent: number) {
     get activeCount() { return active },
     get pendingCount() { return pending.length },
   }
+}
+
+/** Old docs can reference input files that were since pruned (live_preview_*
+ *  temp uploads especially). Never paint or stamp a dead reference — a broken
+ *  tile is worse than "No preview". fetchFn is injectable for tests. */
+export async function filterToExistingImages(
+  images: GenOutput[],
+  fetchFn: typeof fetch = fetch,
+): Promise<GenOutput[]> {
+  const checks = await Promise.all(images.map(async (img) => {
+    try {
+      const params = new URLSearchParams({ filename: img.filename, type: img.type })
+      if (img.subfolder) params.set('subfolder', img.subfolder)
+      const res = await fetchFn(`/view?${params}`, { method: 'HEAD' })
+      return res.ok ? img : null
+    } catch {
+      return null
+    }
+  }))
+  return checks.filter((i): i is GenOutput => i !== null)
 }

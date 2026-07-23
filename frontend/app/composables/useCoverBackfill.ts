@@ -9,7 +9,7 @@
  * the shared card state, and stamp the cover server-side so the next grid
  * load needs no doc fetch.
  */
-import { isBackfillCandidate, createTaskQueue } from '~/lib/coverBackfill'
+import { isBackfillCandidate, createTaskQueue, filterToExistingImages } from '~/lib/coverBackfill'
 import { extractCoverImages } from '~/lib/projectCover'
 import type { RecentProject } from '~/composables/useRecentProjects'
 
@@ -28,7 +28,7 @@ export function useCoverBackfill() {
     const { loadVersion, setProjectCover } = useProjects()
     const version = await loadVersion(project.workflowId, 'current')
     if (!version?.workflow) return
-    const cover = extractCoverImages(version.workflow)
+    const cover = await filterToExistingImages(extractCoverImages(version.workflow))
     if (!cover.length) return
     useRecentProjects().applyBackfilledImages(project.workflowId, cover)
     // Stamp server-side (fire-and-forget — setProjectCover swallows errors)

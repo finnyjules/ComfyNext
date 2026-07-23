@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isBackfillCandidate, createTaskQueue } from '~/lib/coverBackfill'
+import { isBackfillCandidate, createTaskQueue, filterToExistingImages } from '~/lib/coverBackfill'
 
 describe('isBackfillCandidate', () => {
   it('accepts a uuid card with no images', () => {
@@ -67,5 +67,24 @@ describe('createTaskQueue', () => {
     await macrotaskFlush()
     expect(started).toEqual([0, 1])
     expect(queue.activeCount).toBe(0)
+  })
+})
+
+describe('filterToExistingImages', () => {
+  const img = (filename: string): any => ({ kind: 'image', filename, subfolder: '', type: 'input' })
+  it('keeps only images whose HEAD check succeeds, preserving order', async () => {
+    const fetchFn = (async (url: string) => ({ ok: !String(url).includes('dead') })) as unknown as typeof fetch
+    const out = await filterToExistingImages([img('a.png'), img('dead.png'), img('b.png')], fetchFn)
+    expect(out.map((o: any) => o.filename)).toEqual(['a.png', 'b.png'])
+  })
+  it('treats a thrown fetch as missing', async () => {
+    const fetchFn = (async () => { throw new Error('network') }) as unknown as typeof fetch
+    expect(await filterToExistingImages([img('a.png')], fetchFn)).toEqual([])
+  })
+  it('sends subfolder when present', async () => {
+    const seen: string[] = []
+    const fetchFn = (async (url: string) => { seen.push(String(url)); return { ok: true } }) as unknown as typeof fetch
+    await filterToExistingImages([{ kind: 'image', filename: 'a.png', subfolder: 'sub', type: 'input' } as any], fetchFn)
+    expect(seen[0]).toContain('subfolder=sub')
   })
 })
