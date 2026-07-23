@@ -87,4 +87,10 @@ describe('filterToExistingImages', () => {
     await filterToExistingImages([{ kind: 'image', filename: 'a.png', subfolder: 'sub', type: 'input' } as any], fetchFn)
     expect(seen[0]).toContain('subfolder=sub')
   })
+  it('resolves empty input to empty without calling fetch (all-nodes-deleted path)', async () => {
+    let called = 0
+    const fetchFn = (async () => { called++; return { ok: true } }) as unknown as typeof fetch
+    expect(await filterToExistingImages([], fetchFn)).toEqual([])
+    expect(called).toBe(0)
+  })
 })

@@ -35,6 +35,7 @@ import { summarizeNodeErrors } from '~/lib/validationErrors'
 import { promoteTempImageInputs } from '~/lib/promoteTempImages'
 import { extractOutputFiles, type GenOutput, type GenerationRecord } from '~/lib/generations'
 import { extractCoverImages } from '~/lib/projectCover'
+import { filterToExistingImages } from '~/lib/coverBackfill'
 import {
   BLANK_WORKFLOW, activeCanvasOf, docHasContent, isProjectDoc,
   makeBlankWorkflow, makeCanvasId, nextCanvasName, pickNewerDoc, stampDocForSave, toProjectDoc,
@@ -1492,12 +1493,15 @@ const leadership = useProjectLeadership()
 
 // Stamp doc-derived preview images (studio bakes, Frame composites — see
 // ~/lib/projectCover) onto the project's cover so All Projects can show
-// content for projects that never ran a paid render. Deduped per uuid so the
-// 3 s debounced autosave doesn't re-PUT an unchanged cover every burst.
+// content for projects that never ran a paid render. Candidates are
+// HEAD-verified (old docs can reference pruned input files) and an EMPTY
+// result is stamped too — deleting every studio/Frame node must clear the
+// stale cover, not preserve it. Deduped per uuid so the 3 s debounced
+// autosave doesn't re-PUT an unchanged value every burst; cover-only PUTs
+// don't bump updatedAt server-side, so stamping never reorders the grid.
 const lastSentCoverByProject = new globalThis.Map<string, string>()
-function stampProjectCover(uuid: string, doc: any) {
-  const cover = extractCoverImages(doc)
-  if (!cover.length) return
+async function stampProjectCover(uuid: string, doc: any) {
+  const cover = await filterToExistingImages(extractCoverImages(doc))
   const key = JSON.stringify(cover)
   if (lastSentCoverByProject.get(uuid) === key) return
   lastSentCoverByProject.set(uuid, key)
@@ -1528,7 +1532,7 @@ async function saveDurableVersionAsync(tab: any, doc: any): Promise<void> {
   else if (!id) warnAutosaveFailure('The durable server copy of this project isn’t updating.')
   else {
     leadership.notifySaved(tab.projectUuid, (doc as any)?.savedAt)
-    stampProjectCover(tab.projectUuid, doc)
+    void stampProjectCover(tab.projectUuid, doc)
   }
 }
 
