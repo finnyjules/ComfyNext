@@ -1500,12 +1500,18 @@ const leadership = useProjectLeadership()
 // autosave doesn't re-PUT an unchanged value every burst; cover-only PUTs
 // don't bump updatedAt server-side, so stamping never reorders the grid.
 const lastSentCoverByProject = new globalThis.Map<string, string>()
+const coverStampSeq = new globalThis.Map<string, number>()
 async function stampProjectCover(uuid: string, doc: any) {
+  // Newest call wins: if another save for this uuid started while our HEAD
+  // checks were in flight, drop this (older) stamp instead of racing its PUT.
+  const seq = (coverStampSeq.get(uuid) ?? 0) + 1
+  coverStampSeq.set(uuid, seq)
   const cover = await filterToExistingImages(extractCoverImages(doc))
+  if (coverStampSeq.get(uuid) !== seq) return
   const key = JSON.stringify(cover)
   if (lastSentCoverByProject.get(uuid) === key) return
   lastSentCoverByProject.set(uuid, key)
-  useProjects().setProjectCover(uuid, cover)
+  void useProjects().setProjectCover(uuid, cover)
 }
 
 function saveDurableVersion(tab: any, doc: any) {
