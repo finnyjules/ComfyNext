@@ -517,7 +517,11 @@ function toggleBrush() {
     // (You can also retarget while painting by clicking a brush layer in the panel.)
     const sel = selectedLocal.value
     if (sel && sel.kind === 'brush') brushLayerId = sel.id
-    else { selectLocal(null); brushLayerId = null }
+    // Keep a non-brush layer selected so it can be the Mask-mode target
+    // (mask strokes write maskStrokes onto selectedLocal — deselecting here
+    // silently broke masking). Paint mode is unaffected: activeBrushLayer()
+    // returns null for a non-brush selection, so it still starts a fresh layer.
+    else brushLayerId = null
   } else {
     brushLayerId = null
   }
@@ -2904,7 +2908,7 @@ function handleKeydown(e: KeyboardEvent) {
     return
   }
   // Don't delete the target layer while painting a generative-fill region.
-  if ((e.key === 'Delete' || e.key === 'Backspace') && selectedLocalId.value && !typing && !genActive.value && !smartActive.value) {
+  if ((e.key === 'Delete' || e.key === 'Backspace') && selectedLocalId.value && !typing && !genActive.value && !smartActive.value && !brush.active.value) {
     e.preventDefault()
     deleteLocal(selectedLocalId.value)
   }
@@ -3311,7 +3315,7 @@ onUnmounted(() => {
 
         <!-- Image-layer selection / handles -->
         <svg
-          v-if="handlePositions"
+          v-if="handlePositions && !brush.active.value"
           class="absolute inset-0 w-full h-full pointer-events-none overflow-visible"
           :viewBox="`0 0 ${canvasDisplay.w} ${canvasDisplay.h}`"
         >
@@ -3325,7 +3329,7 @@ onUnmounted(() => {
             stroke="#facc15" stroke-width="2" vector-effect="non-scaling-stroke"
           />
         </svg>
-        <template v-if="handlePositions">
+        <template v-if="handlePositions && !brush.active.value">
           <div
             v-for="corner in ['tl', 'tr', 'br', 'bl']"
             :key="corner"
@@ -3344,7 +3348,7 @@ onUnmounted(() => {
 
         <!-- Local-layer selection / handles (single selection only — multi-select uses the group box below) -->
         <svg
-          v-if="localHandlePositions && selectedIds.size <= 1 && !editingId && !genActive"
+          v-if="localHandlePositions && selectedIds.size <= 1 && !editingId && !genActive && !brush.active.value"
           class="absolute inset-0 w-full h-full pointer-events-none overflow-visible"
           :viewBox="`0 0 ${canvasDisplay.w} ${canvasDisplay.h}`"
         >
@@ -3358,7 +3362,7 @@ onUnmounted(() => {
             stroke="#ffffff" stroke-width="2" vector-effect="non-scaling-stroke"
           />
         </svg>
-        <template v-if="localHandlePositions && selectedIds.size <= 1 && !editingId && !genActive">
+        <template v-if="localHandlePositions && selectedIds.size <= 1 && !editingId && !genActive && !brush.active.value">
           <div
             v-for="corner in (['tl', 'tr', 'br', 'bl'] as const)"
             :key="'l-' + corner"
