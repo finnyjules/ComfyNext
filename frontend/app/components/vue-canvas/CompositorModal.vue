@@ -50,9 +50,10 @@ import PostEffectsControls from '~/components/vue-canvas/PostEffectsControls.vue
 import { isChainEffect } from '~/lib/compositor/postEffects'
 import {
   samplePointsFromStroke, layerAffine, invertAffine, applyAffine, wiredImageAffine,
-  luminanceToAlpha, alphaBounds, cutoutPlacement, pickSamSegments,
+  luminanceToAlpha, alphaBounds, cutoutPlacement, wiredCutoutPlacement, pickSamSegments,
   type Affine, type BBox, type Pt, type SamPoint, type MaskCandidate,
 } from '~/lib/compositor/smartSelect'
+import { toast } from 'vue-sonner'
 import { paintPrimaryColor } from '~/lib/spacetype/fillTile'
 import FontPicker from '~/components/vue-canvas/widgets/FontPicker.vue'
 import { VARIABLE_FONTS } from '~/data/variable-fonts'
@@ -2552,15 +2553,66 @@ const smartTarget = computed<any | null>(() =>
     ? localLayers.value.find((l: any) => l.id === smartTargetId.value && l.kind === 'image') ?? null
     : null,
 )
+// A selected wired image, captured (slot) at enterSmartMode the same way the
+// local path captures smartTargetId — a live re-lookup of the element so it
+// tracks the slot's current frame even if it changes mid-session.
+const smartWiredSlot = ref<number | null>(null)
 
-// Source capture: the target layer's pixels at capped resolution + the
-// artboard→image affine, cached for the whole mode session.
-type SmartCapture = { img: HTMLImageElement; capW: number; capH: number; dataUrl: string }
+// Unified smart-select target: the local layer path above stays exactly as it
+// was (smartTarget/smartTargetId untouched); this generalizes on top of it so
+// capture/affine/placement can branch once instead of re-deriving "which kind
+// of target" everywhere.
+type SmartTarget = { type: 'local'; layer: any } | { type: 'wired'; slot: number; el: HTMLImageElement | HTMLCanvasElement }
+const smartTargetRef = computed<SmartTarget | null>(() => {
+  if (smartTarget.value) return { type: 'local', layer: smartTarget.value }
+  if (smartWiredSlot.value != null) {
+    const el = wiredImageEls.value[smartWiredSlot.value]
+    return el ? { type: 'wired', slot: smartWiredSlot.value, el } : null
+  }
+  return null
+})
+function elDims(el: HTMLImageElement | HTMLCanvasElement): { iw: number; ih: number } {
+  return {
+    iw: ('naturalWidth' in el ? el.naturalWidth : el.width) || 1,
+    ih: ('naturalHeight' in el ? el.naturalHeight : el.height) || 1,
+  }
+}
+// The wired target's live transform (compositorLayer, defaulted) + native dims —
+// shared by the capture/affine/placement branches below.
+function smartWiredEntry(target: { slot: number; el: HTMLImageElement | HTMLCanvasElement }) {
+  const { iw, ih } = elDims(target.el)
+  const l = compositorLayer(target.slot)
+  return { layer: { x: l?.x ?? 0, y: l?.y ?? 0, scale: l?.scale ?? 1, rotation: l?.rotation ?? 0 }, iw, ih }
+}
+
+// Source capture: the target's pixels at capped resolution + the artboard→image
+// affine, cached for the whole mode session. `img` (local, from imageLayerUrl)
+// or `el` (wired, drawn from the live element) — smartCaptureSource() picks
+// whichever is set so downstream extraction doesn't care which target kind it is.
+type SmartCapture = { img?: HTMLImageElement; el?: HTMLCanvasElement; capW: number; capH: number; dataUrl: string }
+function smartCaptureSource(cap: SmartCapture): CanvasImageSource { return (cap.img ?? cap.el)! }
 let smartCapture: SmartCapture | null = null
 async function ensureSmartCapture(): Promise<SmartCapture | null> {
   if (smartCapture) return smartCapture
-  const layer = smartTarget.value
-  if (!layer) return null
+  const target = smartTargetRef.value
+  if (!target) return null
+  if (target.type === 'wired') {
+    try {
+      const { iw, ih } = elDims(target.el)
+      const { w: capW, h: capH } = capDims(iw, ih)
+      const c = document.createElement('canvas'); c.width = capW; c.height = capH
+      c.getContext('2d')!.drawImage(target.el, 0, 0, capW, capH)
+      const dataUrl = c.toDataURL('image/png')   // may throw on a tainted (cross-origin) source
+      smartCapture = { el: c, capW, capH, dataUrl }
+    } catch (err) {
+      console.error('[smart select] wired capture failed', err)
+      toast("Can't read this image's pixels — try adding it directly")
+      exitSmartMode(true)
+      return null
+    }
+    return smartCapture
+  }
+  const layer = target.layer
   const img = await loadImage(imageLayerUrl(layer.filename))
   const { w: capW, h: capH } = capDims(img.naturalWidth || 1024, img.naturalHeight || 1024)
   smartCapture = {
@@ -2574,9 +2626,13 @@ async function ensureSmartCapture(): Promise<SmartCapture | null> {
 // be nudged mid-session, and image space is layer-intrinsic — recomputing
 // keeps the selection glued to the layer wherever it moves.
 function smartAffine(): Affine | null {
-  const layer = smartTarget.value
-  if (!layer || !smartCapture) return null
-  return layerAffine(layer, canvasDisplay.w, canvasDisplay.h, smartCapture.capW, smartCapture.capH)
+  const target = smartTargetRef.value
+  if (!target || !smartCapture) return null
+  if (target.type === 'wired') {
+    const { layer, iw, ih } = smartWiredEntry(target)
+    return wiredImageAffine(layer, canvasDisplay.w, canvasDisplay.h, iw, ih, smartCapture.capW, smartCapture.capH)
+  }
+  return layerAffine(target.layer, canvasDisplay.w, canvasDisplay.h, smartCapture.capW, smartCapture.capH)
 }
 
 // Raw scribble, ARTBOARD px (overlay + API-failure fallback). White = selected.
@@ -2627,7 +2683,8 @@ function smartInvalidateProjection(light = false) {
 
 function enterSmartMode() {
   const sel = selectedLocal.value?.kind === 'image' ? selectedLocal.value.id : null
-  if (!sel) return
+  const wired = !sel ? selectedWiredImage() : null
+  if (!sel && !wired) return
   selectTool(); exitNodeEdit()
   if (pen.active.value) pen.setActive(false)
   brush.setActive(false)
@@ -2635,6 +2692,7 @@ function enterSmartMode() {
   if (genActive.value) exitGenMode()
   smartActive.value = true
   smartTargetId.value = sel
+  smartWiredSlot.value = wired ? wired.slot : null
   smart.reset()
   smartCapture = null
   smartRefinedCanvas = null
@@ -2653,6 +2711,7 @@ function exitSmartMode(force = false) {
   smartActive.value = false
   smartCursor.on = false
   smartTargetId.value = null
+  smartWiredSlot.value = null
   smart.reset()
   smartCapture = null
   smartRefinedCanvas = null
@@ -2809,7 +2868,7 @@ function smartExtract(): { canvas: HTMLCanvasElement; bbox: BBox } | null {
   if (!cap || !mask) return null
   const c = document.createElement('canvas'); c.width = cap.capW; c.height = cap.capH
   const ctx = c.getContext('2d')!
-  ctx.drawImage(cap.img, 0, 0, cap.capW, cap.capH)
+  ctx.drawImage(smartCaptureSource(cap), 0, 0, cap.capW, cap.capH)
   ctx.globalCompositeOperation = 'destination-in'
   ctx.drawImage(mask, 0, 0)
   ctx.globalCompositeOperation = 'source-over'
@@ -2825,20 +2884,29 @@ function cropToDataUrl(src: HTMLCanvasElement, bbox: BBox): string {
 }
 
 // Upload a crop and add it as a layer placed exactly over its source pixels.
+// Placement is a local-vs-wired branch: cutoutPlacement (layerAffine's inverse)
+// for a local source layer, wiredCutoutPlacement (wiredImageAffine's inverse)
+// for a wired one — both map the crop bbox (capped image px) → artboard.
 async function smartAddCropAsLayer(src: HTMLCanvasElement, bbox: BBox, nameHint: string) {
-  const cap = smartCapture!; const layer = smartTarget.value!
+  const cap = smartCapture!; const target = smartTargetRef.value!
   const name = await inpaint.uploadDataUrl(cropToDataUrl(src, bbox), nameHint)
-  const place = cutoutPlacement(bbox, layer, cap.capW, cap.capH, canvasDisplay.w, canvasDisplay.h)
+  const place = target.type === 'wired'
+    ? (() => {
+        const { layer, iw, ih } = smartWiredEntry(target)
+        return wiredCutoutPlacement(bbox, layer, iw, ih, cap.capW, cap.capH, canvasDisplay.w, canvasDisplay.h)
+      })()
+    : cutoutPlacement(bbox, target.layer, cap.capW, cap.capH, canvasDisplay.w, canvasDisplay.h)
   const aspect = (bbox.maxX - bbox.minX + 1) / (bbox.maxY - bbox.minY + 1)
   addImageFromName(name, aspect, place as any)   // records history + selects
 }
 
 // Bake the inverse of the mask into the source layer (remove selected pixels).
+// Local-only — Cut out / Delete are guarded to no-op for a wired target (W6).
 async function smartBakeHole() {
   const cap = smartCapture!; const layer = smartTarget.value!; const mask = smartImageMask()!
   const c = document.createElement('canvas'); c.width = cap.capW; c.height = cap.capH
   const ctx = c.getContext('2d')!
-  ctx.drawImage(cap.img, 0, 0, cap.capW, cap.capH)
+  ctx.drawImage(smartCaptureSource(cap), 0, 0, cap.capW, cap.capH)
   ctx.globalCompositeOperation = 'destination-out'
   ctx.drawImage(mask, 0, 0)
   ctx.globalCompositeOperation = 'source-over'
@@ -2849,7 +2917,7 @@ async function smartBakeHole() {
 // Guard wrapper: every action needs a ready selection + capture, sets busy,
 // logs failures, and (unless told otherwise) leaves smart mode when done.
 async function smartAction(fn: () => Promise<void>, opts: { exit?: boolean } = {}) {
-  if (!smartSelectionReady.value || smartActionBusy.value || !smartCapture || !smartTarget.value) return
+  if (!smartSelectionReady.value || smartActionBusy.value || !smartCapture || !smartTargetRef.value) return
   smartActionBusy.value = true
   try {
     await fn()
@@ -2874,6 +2942,7 @@ function smartNewLayer() {
 // the layer add, then the source swap).
 function smartCutOut() {
   return smartAction(async () => {
+    if (smartTargetRef.value?.type === 'wired') return // W6: wired cut-out lands separately
     const ex = smartExtract(); if (!ex) return
     await smartAddCropAsLayer(ex.canvas, ex.bbox, 'smartcut')
     await smartBakeHole()
@@ -2882,7 +2951,10 @@ function smartCutOut() {
 // Delete — punch the selection out of the source (transparent hole; Generate
 // fill is the content-aware alternative).
 function smartDelete() {
-  return smartAction(() => smartBakeHole())
+  return smartAction(async () => {
+    if (smartTargetRef.value?.type === 'wired') return // W6: wired delete lands separately
+    await smartBakeHole()
+  })
 }
 // Use as mask — add the silhouette as a white stencil layer other layers can
 // clip by via the existing Layer-mask (maskedByKey) picker.
@@ -2898,6 +2970,7 @@ function smartUseAsMask() {
 // region and let its prompt/Generate flow take over (target = same layer).
 function smartGenerateFill() {
   return smartAction(async () => {
+    if (smartTargetRef.value?.type === 'wired') return // W6: wired generate-fill lands separately
     const proj = smartProjCanvas(); if (!proj) return
     const snapshot = document.createElement('canvas')
     snapshot.width = proj.width; snapshot.height = proj.height
@@ -3712,8 +3785,8 @@ onUnmounted(() => {
         <button
           class="flex items-center justify-center size-8 rounded cursor-pointer disabled:opacity-30 disabled:cursor-default"
           :class="smartActive ? 'bg-white text-neutral-900' : 'hover:bg-white/10 text-white/80'"
-          :disabled="!smartActive && selectedLocal?.kind !== 'image'"
-          :title="selectedLocal?.kind === 'image' || smartActive ? 'Smart select — scribble over an object, AI refines the selection' : 'Smart select — select an image layer first'"
+          :disabled="!smartActive && selectedLocal?.kind !== 'image' && !selectedWiredImage()"
+          :title="selectedLocal?.kind === 'image' || selectedWiredImage() || smartActive ? 'Smart select — scribble over an object, AI refines the selection' : 'Smart select — select an image layer first'"
           data-testid="smart-select-toggle"
           @click="toggleSmartMode"
         >
@@ -4003,7 +4076,7 @@ onUnmounted(() => {
         </div>
         <div class="p-5 flex flex-col gap-4 flex-1 min-h-0 overflow-y-auto">
           <p class="text-[11px] text-white/45 leading-snug">
-            Scribble roughly over an object on <span class="text-white/70">{{ smartTarget ? 'the selected image' : 'an image layer' }}</span> —
+            Scribble roughly over an object on <span class="text-white/70">{{ smartTargetRef ? 'the selected image' : 'an image layer' }}</span> —
             the selection snaps to it. Hold <kbd class="px-1 rounded bg-white/10">Alt</kbd> to subtract.
           </p>
           <div class="flex items-center gap-2">

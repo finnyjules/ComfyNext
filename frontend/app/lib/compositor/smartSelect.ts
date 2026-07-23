@@ -226,3 +226,29 @@ export function wiredImageAffine(
   const Ff = cy + s * (sin * boxOffX + cos * boxOffY)
   return invertAffine({ a: Fa, b: Fb, c: Fc, d: Fd, e: Fe, f: Ff })
 }
+
+/** wiredCutoutPlacement's counterpart to cutoutPlacement: where an image-space
+ *  bbox (in the wired image's capped px) lands on the artboard when extracted
+ *  as its own local layer. Mirrors cutoutPlacement's math via wiredImageAffine's
+ *  inverse instead of layerAffine's — center comes straight from the inverse
+ *  affine (cap px → artboard px), and size follows the same fit-contain box
+ *  (fitW×fitH, scaled by the wired layer's `scale`) that wiredImageAffine used
+ *  to build the forward mapping. Keeps the source rotation. */
+export function wiredCutoutPlacement(
+  bbox: BBox, layer: WiredXform, iw: number, ih: number, capW: number, capH: number, W: number, H: number,
+): { x: number; y: number; w: number; h: number; rotation: number } {
+  const inv = invertAffine(wiredImageAffine(layer, W, H, iw, ih, capW, capH))
+  const center = applyAffine(inv, { x: (bbox.minX + bbox.maxX + 1) / 2, y: (bbox.minY + bbox.maxY + 1) / 2 })
+  const cropW = bbox.maxX - bbox.minX + 1, cropH = bbox.maxY - bbox.minY + 1
+  const cAspect = W / H, iAspect = iw / (ih || 1)
+  let fitW: number, fitH: number
+  if (iAspect > cAspect) { fitW = W; fitH = W / iAspect } else { fitH = H; fitW = H * iAspect }
+  const s = layer.scale || 1e-6
+  return {
+    x: center.x / W,
+    y: center.y / H,
+    w: (cropW / capW) * fitW * s / W,
+    h: (cropH / capH) * fitH * s / W,
+    rotation: layer.rotation || 0,
+  }
+}

@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import {
   samplePointsFromStroke, layerAffine, invertAffine, applyAffine,
-  luminanceToAlpha, alphaBounds, cutoutPlacement, pickSamSegments, wiredImageAffine, type Pt, type MaskCandidate,
+  luminanceToAlpha, alphaBounds, cutoutPlacement, pickSamSegments, wiredImageAffine, wiredCutoutPlacement,
+  type Pt, type MaskCandidate, type WiredXform,
 } from '~/lib/compositor/smartSelect'
 
 describe('samplePointsFromStroke', () => {
@@ -199,5 +200,19 @@ describe('wiredImageAffine', () => {
     const p = applyAffine(m, { x: 500, y: 400 })
     expect(p.x).toBeCloseTo(256, 4)
     expect(p.y).toBeCloseTo(512, 4)
+  })
+})
+
+describe('wiredCutoutPlacement', () => {
+  it('a full-image bbox reproduces the wired image\'s own placement', () => {
+    // Same setup as wiredImageAffine's tests: 1000×800 artboard, image 1600×1200
+    // (iAspect 1.333 > cAspect 1.25 → fitW=1000, fitH=750), capped 1024×768.
+    const layer: WiredXform = { x: 0.1, y: -0.05, scale: 1.2, rotation: 15 }
+    const p = wiredCutoutPlacement({ minX: 0, minY: 0, maxX: 1023, maxY: 767 }, layer, 1600, 1200, 1024, 768, 1000, 800)
+    expect(p.x).toBeCloseTo(0.5 + layer.x, 6)
+    expect(p.y).toBeCloseTo(0.5 + layer.y, 6)
+    expect(p.w).toBeCloseTo(1000 * layer.scale / 1000, 6) // fitW=1000
+    expect(p.h).toBeCloseTo(750 * layer.scale / 1000, 6)  // fitH=750
+    expect(p.rotation).toBe(15)
   })
 })
