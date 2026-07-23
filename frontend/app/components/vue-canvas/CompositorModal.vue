@@ -41,7 +41,7 @@ import { DEFAULT_FRAME_MOTION, type FrameMotion } from '~/lib/motion/types'
 import '~/lib/motion/paint' // registers the motion painter for paintLayerStack(t)
 import { bakeAndUpload, motionSourceKey, type MotionParams } from '~/lib/motion/bake'
 import { createSlateFixtureLayers, SLATE_FIXTURE_MOTION } from '~/data/dev-slate-fixture'
-import MotionTransport from '~/components/vue-canvas/compositor/MotionTransport.vue'
+import CompositorMotionTimeline from '~/components/vue-canvas/compositor/CompositorMotionTimeline.vue'
 import LayerMotionPanel from '~/components/vue-canvas/compositor/LayerMotionPanel.vue'
 import CompositorClonerPanel from '~/components/vue-canvas/compositor/CompositorClonerPanel.vue'
 import FillControl from '~/components/vue-canvas/compositor/FillControl.vue'
@@ -1381,6 +1381,14 @@ function setMotion(patch: Partial<FrameMotion>) {
     renderStack()
   }
 }
+// The docked timeline mutates layer.animation in place during a drag, then
+// emits 'commit' (no payload) on pointerup. `commit()` from the local-layer
+// editor takes the next array — re-assigning the same (already-mutated)
+// reference persists it; recordHistory() snapshots for undo/redo.
+function commitMotionTimeline() {
+  recordHistory()
+  commit(localLayers.value)
+}
 
 const previewT = ref<number | null>(null)
 const playing = ref(false)
@@ -2648,22 +2656,6 @@ onUnmounted(() => {
           :style="{ width: canvasDisplay.w + 'px', height: canvasDisplay.h + 'px' }"
         />
 
-        <!-- Motion preview transport (play/scrub the kinetic timeline) -->
-        <MotionTransport
-          v-if="previewT != null"
-          data-motion-transport
-          class="absolute bottom-3 left-1/2 -translate-x-1/2 z-20"
-          :motion="motionDoc" :t="previewT" :playing="playing"
-          :baking="baking" :bake-progress="bakeProgress" :stale="motionStale"
-          @play="play" @pause="pause" @scrub="scrubTo" @exit="exitMotionPreview" @bake="bakeMotion"
-          @update:motion="setMotion"
-          @click.stop @pointerdown.stop @pointerup.stop @dblclick.stop
-        />
-        <div
-          v-if="previewT != null && bakeError"
-          class="absolute bottom-14 left-1/2 -translate-x-1/2 z-20 px-2 py-1 rounded bg-[#111111]/95 border border-rose-500/30 text-[11px] text-rose-400"
-        >{{ bakeError }}</div>
-
         <!-- Generative-fill region overlay (tinted mask preview) -->
         <canvas
           v-show="genActive"
@@ -3123,6 +3115,19 @@ onUnmounted(() => {
         <input ref="brushFillInputRef" type="file" accept="image/*" class="hidden" @change="onBrushFillImageFile" />
         <input ref="svgInputRef" type="file" accept=".svg,image/svg+xml" class="hidden" @change="onImportSvgFile" />
       </div>
+      </div>
+
+      <!-- Docked motion timeline (replaces the agent bar + toolbar in Motion mode) -->
+      <div v-if="inspectorTab === 'motion'" class="absolute inset-x-4 bottom-4 z-20 pointer-events-auto max-h-[36vh] overflow-y-auto"
+        @pointerdown.stop @click.stop @dblclick.stop>
+        <CompositorMotionTimeline
+          :layers="localLayers" :selected-id="selectedLocal?.id ?? null"
+          :motion="motionDoc" :t="previewT" :playing="playing"
+          :baking="baking" :bake-progress="bakeProgress" :stale="motionStale" :bake-error="bakeError"
+          @select="(id: string) => selectLocal(id)"
+          @play="play" @pause="pause" @scrub="scrubTo" @bake="bakeMotion"
+          @update:motion="setMotion" @commit="commitMotionTimeline"
+        />
       </div>
     </div>
 
