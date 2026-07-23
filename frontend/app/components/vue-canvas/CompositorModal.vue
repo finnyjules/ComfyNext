@@ -2901,7 +2901,7 @@ async function smartAddCropAsLayer(src: HTMLCanvasElement, bbox: BBox, nameHint:
 }
 
 // Bake the inverse of the mask into the source layer (remove selected pixels).
-// Local-only — Cut out / Delete are guarded to no-op for a wired target (W6).
+// Local-only — Cut out / Delete branch to smartHideWired below for a wired target.
 async function smartBakeHole() {
   const cap = smartCapture!; const layer = smartTarget.value!; const mask = smartImageMask()!
   const c = document.createElement('canvas'); c.width = cap.capW; c.height = cap.capH
@@ -2912,6 +2912,23 @@ async function smartBakeHole() {
   ctx.globalCompositeOperation = 'source-over'
   const name = await inpaint.uploadDataUrl(c.toDataURL('image/png'), 'smarthole')
   setLocal(layer.id, { filename: name })
+}
+
+// Wired equivalent of smartBakeHole: a wired image's source pixels aren't
+// editable (they live in the graph), so "removing" the selection means OR-ing
+// the selection silhouette into the slot's existing visibility mask instead of
+// baking a hole into new pixels — non-destructive, undo-able via the normal
+// wiredTreatments write path (same as the brush-mask flow above).
+async function smartHideWired(slot: number, capW: number, capH: number, silhouette: HTMLCanvasElement) {
+  const c = document.createElement('canvas'); c.width = capW; c.height = capH
+  const ctx = c.getContext('2d')!
+  const existing = wiredTreatments.value[`w:${slot}`]?.maskUrl
+  if (existing) { try { ctx.drawImage(await loadImage(existing), 0, 0, capW, capH) } catch { /* start fresh */ } }
+  // silhouette is white-on-transparent where selected → draw it in as-is
+  // (source-over) so it unions with the existing mask; white = hidden.
+  ctx.drawImage(silhouette, 0, 0, capW, capH)
+  setWiredMaskUrl(compositor.value, slot, c.toDataURL('image/png'))
+  renderStack()
 }
 
 // Guard wrapper: every action needs a ready selection + capture, sets busy,
@@ -2942,17 +2959,28 @@ function smartNewLayer() {
 // the layer add, then the source swap).
 function smartCutOut() {
   return smartAction(async () => {
-    if (smartTargetRef.value?.type === 'wired') return // W6: wired cut-out lands separately
     const ex = smartExtract(); if (!ex) return
     await smartAddCropAsLayer(ex.canvas, ex.bbox, 'smartcut')
+    const target = smartTargetRef.value
+    if (target?.type === 'wired') {
+      const cap = smartCapture!; const mask = smartImageMask(); if (!mask) return
+      await smartHideWired(target.slot, cap.capW, cap.capH, mask)
+      return
+    }
     await smartBakeHole()
   })
 }
-// Delete — punch the selection out of the source (transparent hole; Generate
-// fill is the content-aware alternative).
+// Delete — remove the selection from the source: bakes a transparent hole for
+// a local layer, or non-destructively hides the region for a wired image
+// (Generate fill is the content-aware alternative, local-only for now).
 function smartDelete() {
   return smartAction(async () => {
-    if (smartTargetRef.value?.type === 'wired') return // W6: wired delete lands separately
+    const target = smartTargetRef.value
+    if (target?.type === 'wired') {
+      const cap = smartCapture!; const mask = smartImageMask(); if (!mask) return
+      await smartHideWired(target.slot, cap.capW, cap.capH, mask)
+      return
+    }
     await smartBakeHole()
   })
 }
@@ -3385,7 +3413,8 @@ onUnmounted(() => {
           <button class="h-8 px-2 rounded-[8px] hover:bg-white/10 text-white/80 text-[11px] cursor-pointer disabled:opacity-40 disabled:cursor-default whitespace-nowrap"
             :disabled="!smartSelectionReady || smartActionBusy" title="Lift the selection to a new layer and remove it from the source"
             data-testid="smart-action-cut-out" @click="smartCutOut">Cut out</button>
-          <button class="h-8 px-2 rounded-[8px] hover:bg-white/10 text-white/80 text-[11px] cursor-pointer disabled:opacity-40 disabled:cursor-default whitespace-nowrap"
+          <!-- wired generate-fill deferred (W6) -->
+          <button v-if="smartTargetRef?.type !== 'wired'" class="h-8 px-2 rounded-[8px] hover:bg-white/10 text-white/80 text-[11px] cursor-pointer disabled:opacity-40 disabled:cursor-default whitespace-nowrap"
             :disabled="!smartSelectionReady || smartActionBusy" title="Regenerate the selected area with a prompt (Generate mode)"
             data-testid="smart-action-generate-fill" @click="smartGenerateFill">Generate fill</button>
           <button class="h-8 px-2 rounded-[8px] hover:bg-white/10 text-white/80 text-[11px] cursor-pointer disabled:opacity-40 disabled:cursor-default whitespace-nowrap"
