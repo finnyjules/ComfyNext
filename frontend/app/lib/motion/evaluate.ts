@@ -13,13 +13,28 @@
 import type { LayerAnimation, LayerAnimSpec, LayerKeyframe, FrameMotion } from './types'
 import { resolveEase, easeInOutQuad, linear } from './easing'
 
+/** One extra draw of the unit, composed with the base sample's transform.
+ *  dx/dy in UNIT-BOX HEIGHTS like UnitState. Used for echo trails and tiling. */
+export interface UnitCopy {
+  dx: number
+  dy: number
+  scale: number       // multiplicative with the base sample's scale
+  opacity: number     // multiplicative with the base sample's opacity
+  rotation?: number   // degrees, additive
+}
+
 export interface UnitState {
   dx: number; dy: number          // unit-box heights
   scale: number                   // multiplicative
+  /** Non-uniform scale (flip squash). Multiplied with `scale`; absent = 1. */
+  scaleX?: number
+  scaleY?: number
   rotation: number                // degrees, additive
   opacity: number                 // 0..1 multiplicative
   /** Clip the unit's box: fraction hidden from one side (mask presets). */
   clip?: { side: 'top' | 'bottom' | 'left' | 'right'; amount: number }
+  /** Extra draws of this unit (echoes/tiles); painter draws base then copies. */
+  copies?: UnitCopy[]
 }
 
 export interface LayerMotionState {
