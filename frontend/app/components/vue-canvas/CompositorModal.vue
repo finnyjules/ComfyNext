@@ -1516,11 +1516,28 @@ const storedMotionParams = computed<MotionParams | null>(() => {
   const p = compositor.value?.data?.properties as Record<string, any> | undefined
   return (p?.sailor_motionParams as MotionParams | undefined) ?? null
 })
+
+// ── One source of truth for "what motion would a bake use right now" ───────
+// When no local layer animates AND the user has never touched the frame's own
+// timing (sailor_motion is unset), a wired studio's natural clock — not the
+// 4s/30fps default — is the honest answer. The moment the user sets anything
+// via setMotion(), sailor_motion becomes explicit and wins everywhere.
+const hasLocalAnims = computed(() => localLayers.value.some((l: any) => l.animation))
+const hasStoredMotion = computed(() => {
+  const p = compositor.value?.data?.properties as Record<string, any> | undefined
+  return p?.sailor_motion != null
+})
+const effectiveMotion = computed<FrameMotion>(() => {
+  const mc = liveMasterClock.value
+  return (!hasLocalAnims.value && !hasStoredMotion.value && mc)
+    ? { ...motionDoc.value, duration: mc.duration, fps: mc.fps }
+    : motionDoc.value
+})
 const motionStale = computed(() => {
   const stored = storedMotionParams.value
   if (!stored) return false
   const { W, H } = bakeSize()
-  return stored.source_key !== motionSourceKey(localLayers.value as LocalLayer[], motionDoc.value, W, H)
+  return stored.source_key !== motionSourceKey(localLayers.value as LocalLayer[], effectiveMotion.value, W, H)
 })
 
 async function bakeMotion(motionOverride?: FrameMotion) {
@@ -1534,7 +1551,7 @@ async function bakeMotion(motionOverride?: FrameMotion) {
   stopLive() // don't let the live studio RAF race the bake's per-frame pulls
   try {
     const { W, H } = bakeSize()
-    const motion = motionOverride ?? motionDoc.value
+    const motion = motionOverride ?? effectiveMotion.value
     const previousFrames = storedMotionParams.value?.rendered ?? []
     const params = await bakeAndUpload(
       () => buildStackItems(), localLayers.value as LocalLayer[], W, H, motion,
@@ -1637,14 +1654,11 @@ async function generateVideo() {
   encoding.value = true
   renderError.value = ''
   try {
-    // No local layer carries motion, but a wired studio does — fall back to
-    // the studios' own master clock (duration/fps) so the video loops on
-    // their natural timing with zero configuration from the user.
-    const hasLocalAnimation = localLayers.value.some((l: any) => l.animation)
-    const effectiveMotion: FrameMotion = (!hasLocalAnimation && liveMasterClock.value)
-      ? { ...motionDoc.value, duration: liveMasterClock.value.duration, fps: liveMasterClock.value.fps }
-      : motionDoc.value
-    await bakeMotion(effectiveMotion)
+    // bakeMotion() with no override defaults to effectiveMotion — which already
+    // falls back to a wired studio's own master clock (duration/fps) when no
+    // local layer animates and the user hasn't set explicit frame timing, so
+    // the video loops on the studios' natural timing with zero configuration.
+    await bakeMotion()
     if (bakeError.value) { renderError.value = bakeError.value; return }
     const { W, H } = bakeSize()
     // Use the fps actually baked (carried on storedMotionParams), not motionDoc,
@@ -3186,7 +3200,7 @@ onUnmounted(() => {
         @pointerdown.stop @click.stop @dblclick.stop>
         <CompositorMotionTimeline
           :layers="localLayers" :selected-id="selectedLocal?.id ?? null"
-          :motion="motionDoc" :t="previewT" :playing="playing"
+          :motion="effectiveMotion" :t="previewT" :playing="playing"
           :baking="baking" :bake-progress="bakeProgress" :stale="motionStale" :bake-error="bakeError"
           @select="(id: string) => selectLocal(id)"
           @play="play" @pause="pause" @scrub="scrubTo" @bake="bakeMotion"
@@ -3414,17 +3428,17 @@ onUnmounted(() => {
           <div v-else class="flex flex-col gap-3 text-xs text-white/55">
             <p class="text-white/40 italic">Select a layer to animate it, or set the frame's timing below.</p>
             <label class="flex items-center justify-between gap-2">Duration (s)
-              <input type="number" min="0.5" max="60" step="0.5" :value="motionDoc.duration"
+              <input type="number" min="0.5" max="60" step="0.5" :value="effectiveMotion.duration"
                 class="w-16 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-1 py-0.5 text-white/90 outline-none"
                 @change="setMotion({ duration: Math.max(0.5, Number(($event.target as HTMLInputElement).value) || 4) })">
             </label>
             <label class="flex items-center justify-between gap-2">FPS
-              <input type="number" min="1" max="60" step="1" :value="motionDoc.fps"
+              <input type="number" min="1" max="60" step="1" :value="effectiveMotion.fps"
                 class="w-16 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-1 py-0.5 text-white/90 outline-none"
                 @change="setMotion({ fps: Math.max(1, Math.min(60, Number(($event.target as HTMLInputElement).value) || 30)) })">
             </label>
             <label class="flex items-center justify-between gap-2">Loop playback
-              <input type="checkbox" class="accent-white/80" :checked="motionDoc.loop ?? false"
+              <input type="checkbox" class="accent-white/80" :checked="effectiveMotion.loop ?? false"
                 @change="setMotion({ loop: ($event.target as HTMLInputElement).checked })">
             </label>
           </div>
