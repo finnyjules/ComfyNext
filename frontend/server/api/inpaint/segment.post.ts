@@ -1,3 +1,5 @@
+import { buildSamInput, type SamRequestBody } from '../../utils/samInput'
+
 /**
  * POST /api/inpaint/segment  (v3 click-to-select)
  *
@@ -6,41 +8,28 @@
  * that straight into the FLUX Fill mask. Saves hand-painting around objects.
  *
  * Body:
- *   image  string  data URL (or public http URL) of the source image
- *   xPx    number  click X in the source image's pixel space
- *   yPx    number  click Y in the source image's pixel space
+ *   image   string  data URL (or public http URL) of the source image
+ *   xPx     number  click X in the source image's pixel space (legacy single point)
+ *   yPx     number  click Y in the source image's pixel space (legacy single point)
+ *   points  {x,y,label}[]  optional multi-point prompt (smart select); label 1 =
+ *           foreground, 0 = background. Non-empty points wins over xPx/yPx.
  *
  * Returns: { mask: string }  — a data URL, WHITE = selected (inpaint), BLACK = keep.
  *
  * NOTE: SAM model refs on Replicate change and vary by account access. The model
- * and its input mapping are isolated in SAM_MODEL / buildInput below — if your
+ * and its input mapping are isolated in SAM_MODEL / buildSamInput below — if your
  * account uses a different point-prompt SAM, adjust just those two. The client
  * (useInpaint.segment) falls back to manual brushing if this route errors, so an
  * unconfigured model degrades gracefully rather than blocking inpainting.
  */
 const SAM_MODEL = 'meta/sam-2'
 
-interface Body { image?: string; xPx?: number; yPx?: number }
-
-/** Map our request to the SAM model's expected input. Kept separate so swapping
- *  models is a one-spot change. Point-prompt SAMs accept a click coordinate; we
- *  also pass label 1 (foreground). */
-function buildInput(body: Body): Record<string, unknown> {
-  return {
-    image: body.image,
-    // Common point-prompt convention: arrays of [x, y] and matching labels.
-    points_per_side: undefined,
-    point_coords: [[Math.round(body.xPx ?? 0), Math.round(body.yPx ?? 0)]],
-    point_labels: [1],
-  }
-}
-
 export default defineEventHandler(async (event) => {
   const token = requireReplicateToken()
-  const body = await readBody<Body>(event)
+  const body = await readBody<SamRequestBody>(event)
   if (!body?.image) throw createError({ statusCode: 400, message: 'image is required' })
 
-  const input = buildInput(body)
+  const input = buildSamInput(body)
   // Strip undefined keys so we never send fields the model rejects.
   for (const k of Object.keys(input)) if (input[k] === undefined) delete input[k]
 
