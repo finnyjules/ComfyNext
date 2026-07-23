@@ -487,7 +487,7 @@ function finishPen() {
   pen.setActive(false)
   if (layer) addPathLayers([layer])
 }
-function togglePen() { if (smartActive.value) exitSmartMode(); pen.setActive(!pen.active.value); if (pen.active.value) { selectLocal(null); exitNodeEdit(); brush.setActive(false) } }
+function togglePen() { if (smartActive.value) { if (smartActionBusy.value) return; exitSmartMode() }; pen.setActive(!pen.active.value); if (pen.active.value) { selectLocal(null); exitNodeEdit(); brush.setActive(false) } }
 // Return to the default Select tool: leave pen/node-edit/generate modes.
 function selectTool() {
   if (pen.active.value) pen.setActive(false)
@@ -502,13 +502,13 @@ function hasTint(l: any): boolean { const t = l?.tint; return !!t && t !== 'none
 // ── Distort: slant (skew) + corner-pin / perspective ─────────────────────────
 const distortTool = ref(false)
 function toggleDistort() {
-  if (smartActive.value) exitSmartMode()
+  if (smartActive.value) { if (smartActionBusy.value) return; exitSmartMode() }
   distortTool.value = !distortTool.value
   if (distortTool.value) { pen.setActive(false); exitNodeEdit(); if (genActive.value) exitGenMode(); brush.setActive(false) }
 }
 // ── Brush: freehand paint tool (mutually exclusive with pen/node/gen/distort) ─
 function toggleBrush() {
-  if (smartActive.value) exitSmartMode()
+  if (smartActive.value) { if (smartActionBusy.value) return; exitSmartMode() }
   brush.setActive(!brush.active.value)
   if (brush.active.value) {
     pen.setActive(false); exitNodeEdit(); if (genActive.value) exitGenMode(); distortTool.value = false
@@ -2108,7 +2108,7 @@ const genShapeCandidate = computed(() => {
 })
 
 function enterGenMode() {
-  if (smartActive.value) exitSmartMode()
+  if (smartActive.value) { if (smartActionBusy.value) return; exitSmartMode() }
   // Lock the target to the selected image (if any) at the moment we enter;
   // nothing selected → new image.
   const sel = selectedLocal.value?.kind === 'image' ? selectedLocal.value.id : null
@@ -2552,7 +2552,11 @@ function enterSmartMode() {
   smartInvalidateProjection()
   void ensureSmartCapture()   // warm the capture so the first stroke refines fast
 }
-function exitSmartMode() {
+function exitSmartMode(force = false) {
+  // Mid-action exits look like a cancel while the in-flight upload still
+  // lands afterwards (and Cut out would TypeError on the nulled capture) —
+  // only the action pipeline itself may exit while one is running.
+  if (smartActionBusy.value && !force) return
   smartActive.value = false
   smartCursor.on = false
   smartTargetId.value = null
@@ -2756,7 +2760,9 @@ async function smartAction(fn: () => Promise<void>, opts: { exit?: boolean } = {
   smartActionBusy.value = true
   try {
     await fn()
-    if (opts.exit !== false) exitSmartMode()
+    // smartActionBusy is still true here (finally clears it below) — this is
+    // the action pipeline's own exit, so it must force past the busy guard.
+    if (opts.exit !== false) exitSmartMode(true)
   } catch (err) {
     console.error('[smart select]', err)
   } finally {
@@ -2803,7 +2809,7 @@ function smartGenerateFill() {
     const snapshot = document.createElement('canvas')
     snapshot.width = proj.width; snapshot.height = proj.height
     snapshot.getContext('2d')!.drawImage(proj, 0, 0)
-    exitSmartMode()                          // clears smart state (proj is snapshotted)
+    exitSmartMode(true)                      // clears smart state (proj is snapshotted)
     enterGenMode()                           // locks target to the still-selected image
     const ctx = genMaskCtx()
     if (ctx) { ctx.drawImage(snapshot, 0, 0); genHasMask.value = true; genVersion.value++ }
@@ -2891,9 +2897,8 @@ function handleKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') {
     if (editingId.value) { endEdit(); return }
     if (typing) return
-    // Mid-action Escape would LOOK like a cancel while the in-flight upload
-    // still lands afterwards — ignore exits until the action settles.
-    if (smartActive.value) { if (!smartActionBusy.value) exitSmartMode(); return }
+    // The busy guard now lives inside exitSmartMode itself.
+    if (smartActive.value) { exitSmartMode(); return }
     if (genActive.value) { exitGenMode(); return }
     emit('close')
     return
@@ -3921,7 +3926,7 @@ onUnmounted(() => {
           </div>
           <button
             class="h-8 px-2.5 rounded bg-white/[0.06] hover:bg-white/12 text-[11px] cursor-pointer disabled:opacity-30 disabled:cursor-default self-start"
-            :disabled="!smartBnd" @click="enterSmartMode()"
+            :disabled="!smartBnd || smartActionBusy" @click="enterSmartMode()"
           >Clear selection</button>
         </div>
       </template>

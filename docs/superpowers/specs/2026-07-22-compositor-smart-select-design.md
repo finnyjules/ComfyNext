@@ -70,3 +70,12 @@ Extraction ("New layer"/"Cut out") writes the masked pixels to a data URL/blob a
 - Unit: point sampling from strokes (spread, min-distance, arc-length coverage); mask compositing (add/subtract accumulation, inverse-bake); image-space ↔ artboard-space mapping through a layer transform.
 - Server: `segment.post.ts` body handling — multi-point mapping, single-point back-compat, undefined-key stripping.
 - E2E hand-check in the running app: scribble → refined overlay; each of the five actions; Alt-subtract; API-failure fallback (kill key) keeps the scribble usable.
+
+## Amendments (2026-07-23, post-implementation)
+
+Live verification against the real Replicate deployment changed the mask architecture and two behaviors; the shipped design is:
+
+- **The deployed `meta/sam-2` is the AUTOMATIC (segment-everything) variant** — its input schema has no point prompts (they are sent but ignored), `combined_mask` is a visualization (source image + colored overlay, unusable as a mask), and `individual_masks` are binary masks of EVERY segment in the image. The client therefore assigns each foreground scribble point the smallest segment containing it (segments covering >50% of the image are unassignable — background sheets), unions the winners, and Alt-points subtract their segments. Candidates are fetched once per image and cached: repeat strokes re-pick locally with no API call. Objects covering more than half the frame fall back to the raw scribble by design.
+- **Use as mask** ships as a visible white stencil layer the user wires via the existing Layer-mask picker — not auto-wired `maskedByKey` (the spec's "hidden by default" clause applies once a consumer layer picks it, per the standard mask flow).
+- **Cut out** is two history entries (layer add, then source swap), not one.
+- The legacy single-point `/api/inpaint/segment` path (Inpaint modal click-to-select) still returns the combined visualization — pre-existing upstream breakage, out of scope here; follow-up planned.
