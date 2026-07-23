@@ -184,6 +184,17 @@ export function useRecentProjects() {
     }
   }
 
+  // Write-through for the lazy cover backfill (useCoverBackfill): update the
+  // blank card in BOTH shared lists so the grid and the Home row repaint.
+  // Guarded to blank cards only — a race with a real fetch never downgrades
+  // generation thumbnails to doc-derived ones.
+  function applyBackfilledImages(workflowId: string, images: RecentProject['images']) {
+    for (const list of [recentProjects.value, allProjects.value]) {
+      const project = list.find((p) => p.workflowId === workflowId)
+      if (project && project.images.length === 0) project.images = images
+    }
+  }
+
   return {
     recentProjects,
     allProjects,
@@ -193,5 +204,6 @@ export function useRecentProjects() {
     fetchRecentProjects,
     refresh,
     setProjectName,
+    applyBackfilledImages,
   }
 }

@@ -5,6 +5,8 @@ import type { RecentProject } from '~/composables/useRecentProjects'
 const { allProjects, loading, thumbnailUrl, timeAgo, refresh } = useRecentProjects()
 const { isPinned, isHidden, togglePin, hide, unhide } = useProjectPrefs()
 const { tabs, openTab, setActiveTab } = useTabs()
+const { observeCard, disconnect } = useCoverBackfill()
+onBeforeUnmount(disconnect)
 
 // Re-fetch on open so a just-saved/renamed project shows up (the list is otherwise
 // cached and would miss work done since it was first loaded).
@@ -141,6 +143,7 @@ function openProject(project: RecentProject) {
         v-for="project in filtered"
         :key="project.workflowId"
         class="cursor-pointer group"
+        :ref="(el) => observeCard(el as unknown as Element | null, project)"
         @click="openProject(project)"
       >
         <!-- Thumbnail mosaic -->
