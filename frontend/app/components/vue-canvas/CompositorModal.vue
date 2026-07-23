@@ -50,7 +50,7 @@ import PostEffectsControls from '~/components/vue-canvas/PostEffectsControls.vue
 import { isChainEffect } from '~/lib/compositor/postEffects'
 import {
   samplePointsFromStroke, layerAffine, invertAffine, applyAffine,
-  luminanceToAlpha, alphaBounds, type Affine, type BBox, type Pt, type SamPoint,
+  luminanceToAlpha, alphaBounds, cutoutPlacement, type Affine, type BBox, type Pt, type SamPoint,
 } from '~/lib/compositor/smartSelect'
 import { paintPrimaryColor } from '~/lib/spacetype/fillTile'
 import FontPicker from '~/components/vue-canvas/widgets/FontPicker.vue'
@@ -2645,6 +2645,130 @@ const { sweepMaskUrl: smartSweepMaskUrl } = smartFx
 watch(smartActive, (on) => { on ? smartFx.start() : smartFx.stop() })
 watch([smartVersion, () => canvasDisplay.w, () => canvasDisplay.h], () => smartFx.rebuild())
 
+// ── Smart-select actions ──────────────────────────────────────────────────────
+// All actions consume the IMAGE-space mask: the refined SAM mask, or (fallback)
+// the scribble projected into image space through the artboard→image affine.
+const smartActionBusy = ref(false)
+const smartSelectionReady = computed(() => !!smartBnd.value && !smart.busy.value)
+
+function smartImageMask(): HTMLCanvasElement | null {
+  if (smartRefinedCanvas) return smartRefinedCanvas
+  if (!smartCapture || !smartHasScribble.value || !smartScribbleCanvas) return null
+  const c = document.createElement('canvas')
+  c.width = smartCapture.capW; c.height = smartCapture.capH
+  const ctx = c.getContext('2d')!
+  const m = smartAffine()
+  if (!m) return null
+  ctx.setTransform(m.a, m.b, m.c, m.d, m.e, m.f)
+  ctx.drawImage(smartScribbleCanvas, 0, 0)
+  ctx.setTransform(1, 0, 0, 1, 0, 0)
+  return c
+}
+
+// Masked source pixels (image space) + their tight bbox, or null if empty.
+function smartExtract(): { canvas: HTMLCanvasElement; bbox: BBox } | null {
+  const cap = smartCapture; const mask = smartImageMask()
+  if (!cap || !mask) return null
+  const c = document.createElement('canvas'); c.width = cap.capW; c.height = cap.capH
+  const ctx = c.getContext('2d')!
+  ctx.drawImage(cap.img, 0, 0, cap.capW, cap.capH)
+  ctx.globalCompositeOperation = 'destination-in'
+  ctx.drawImage(mask, 0, 0)
+  ctx.globalCompositeOperation = 'source-over'
+  const bbox = alphaBounds(ctx.getImageData(0, 0, cap.capW, cap.capH).data, cap.capW, cap.capH)
+  return bbox ? { canvas: c, bbox } : null
+}
+
+function cropToDataUrl(src: HTMLCanvasElement, bbox: BBox): string {
+  const w = bbox.maxX - bbox.minX + 1, h = bbox.maxY - bbox.minY + 1
+  const c = document.createElement('canvas'); c.width = w; c.height = h
+  c.getContext('2d')!.drawImage(src, bbox.minX, bbox.minY, w, h, 0, 0, w, h)
+  return c.toDataURL('image/png')
+}
+
+// Upload a crop and add it as a layer placed exactly over its source pixels.
+async function smartAddCropAsLayer(src: HTMLCanvasElement, bbox: BBox, nameHint: string) {
+  const cap = smartCapture!; const layer = smartTarget.value!
+  const name = await inpaint.uploadDataUrl(cropToDataUrl(src, bbox), nameHint)
+  const place = cutoutPlacement(bbox, layer, cap.capW, cap.capH, canvasDisplay.w, canvasDisplay.h)
+  const aspect = (bbox.maxX - bbox.minX + 1) / (bbox.maxY - bbox.minY + 1)
+  addImageFromName(name, aspect, place as any)   // records history + selects
+}
+
+// Bake the inverse of the mask into the source layer (remove selected pixels).
+async function smartBakeHole() {
+  const cap = smartCapture!; const layer = smartTarget.value!; const mask = smartImageMask()!
+  const c = document.createElement('canvas'); c.width = cap.capW; c.height = cap.capH
+  const ctx = c.getContext('2d')!
+  ctx.drawImage(cap.img, 0, 0, cap.capW, cap.capH)
+  ctx.globalCompositeOperation = 'destination-out'
+  ctx.drawImage(mask, 0, 0)
+  ctx.globalCompositeOperation = 'source-over'
+  const name = await inpaint.uploadDataUrl(c.toDataURL('image/png'), 'smarthole')
+  setLocal(layer.id, { filename: name })
+}
+
+// Guard wrapper: every action needs a ready selection + capture, sets busy,
+// logs failures, and (unless told otherwise) leaves smart mode when done.
+async function smartAction(fn: () => Promise<void>, opts: { exit?: boolean } = {}) {
+  if (!smartSelectionReady.value || smartActionBusy.value || !smartCapture || !smartTarget.value) return
+  smartActionBusy.value = true
+  try {
+    await fn()
+    if (opts.exit !== false) exitSmartMode()
+  } catch (err) {
+    console.error('[smart select]', err)
+  } finally {
+    smartActionBusy.value = false
+  }
+}
+
+// New layer — non-destructive copy of the selection.
+function smartNewLayer() {
+  return smartAction(async () => {
+    const ex = smartExtract(); if (!ex) return
+    await smartAddCropAsLayer(ex.canvas, ex.bbox, 'smartcut')
+  })
+}
+// Cut out — copy to a new layer AND remove from the source (two undo steps:
+// the layer add, then the source swap).
+function smartCutOut() {
+  return smartAction(async () => {
+    const ex = smartExtract(); if (!ex) return
+    await smartAddCropAsLayer(ex.canvas, ex.bbox, 'smartcut')
+    await smartBakeHole()
+  })
+}
+// Delete — punch the selection out of the source (transparent hole; Generate
+// fill is the content-aware alternative).
+function smartDelete() {
+  return smartAction(() => smartBakeHole())
+}
+// Use as mask — add the silhouette as a white stencil layer other layers can
+// clip by via the existing Layer-mask (maskedByKey) picker.
+function smartUseAsMask() {
+  return smartAction(async () => {
+    const mask = smartImageMask(); if (!mask) return
+    const bbox = alphaBounds(mask.getContext('2d')!.getImageData(0, 0, mask.width, mask.height).data, mask.width, mask.height)
+    if (!bbox) return
+    await smartAddCropAsLayer(mask, bbox, 'smartmask')
+  })
+}
+// Generate fill — hand the artboard-space selection to Generate mode as its
+// region and let its prompt/Generate flow take over (target = same layer).
+function smartGenerateFill() {
+  return smartAction(async () => {
+    const proj = smartProjCanvas(); if (!proj) return
+    const snapshot = document.createElement('canvas')
+    snapshot.width = proj.width; snapshot.height = proj.height
+    snapshot.getContext('2d')!.drawImage(proj, 0, 0)
+    exitSmartMode()                          // clears smart state (proj is snapshotted)
+    enterGenMode()                           // locks target to the still-selected image
+    const ctx = genMaskCtx()
+    if (ctx) { ctx.drawImage(snapshot, 0, 0); genHasMask.value = true; genVersion.value++ }
+  }, { exit: false })
+}
+
 // Cloud background removal — replace an image layer with its transparent cutout.
 // Delegates to useLayerImageEdit (shared with Task 9's Harmonize) so the
 // swap always happens through one setLocal call (one undo step).
@@ -3031,6 +3155,31 @@ onUnmounted(() => {
           <button class="flex items-center justify-center size-8 rounded-[8px] hover:bg-white/10 text-white/80 cursor-pointer disabled:opacity-40 disabled:cursor-default" title="Cancel" :disabled="inpaint.busy.value" @click="cancelObject"><X class="size-4" /></button>
           <button class="flex items-center justify-center size-8 rounded-[8px] hover:bg-white/10 text-white/80 cursor-pointer disabled:opacity-40 disabled:cursor-default" title="Re-render" :disabled="inpaint.busy.value" @click="rerollObject"><RefreshCw class="size-4" :class="inpaint.busy.value ? 'animate-spin' : ''" /></button>
           <button class="flex items-center justify-center size-8 rounded-[8px] bg-white text-neutral-900 hover:bg-white/90 cursor-pointer disabled:opacity-40 disabled:cursor-default" title="Confirm" :disabled="inpaint.busy.value" @click="confirmObject"><Check class="size-4" /></button>
+        </div>
+
+        <!-- Smart-select action bar -->
+        <div
+          v-if="smartActive && smartBnd"
+          data-smart-bar
+          class="absolute z-40 -translate-x-1/2 flex items-center gap-0.5 bg-[#1a1a1a]/95 backdrop-blur-sm rounded-[10px] p-1 border border-[#2a2a2a] shadow-lg"
+          :style="{ left: Math.min(Math.max((smartBnd.minX + smartBnd.maxX) / 2, 130), canvasDisplay.w - 130) + 'px', top: Math.min(smartBnd.maxY + 12, canvasDisplay.h - 44) + 'px' }"
+          @pointerdown.stop @click.stop
+        >
+          <button class="h-8 px-2 rounded-[8px] hover:bg-white/10 text-white/80 text-[11px] cursor-pointer disabled:opacity-40 disabled:cursor-default whitespace-nowrap"
+            :disabled="!smartSelectionReady || smartActionBusy" title="Copy the selection to a new layer (source untouched)"
+            data-testid="smart-action-new-layer" @click="smartNewLayer">New layer</button>
+          <button class="h-8 px-2 rounded-[8px] hover:bg-white/10 text-white/80 text-[11px] cursor-pointer disabled:opacity-40 disabled:cursor-default whitespace-nowrap"
+            :disabled="!smartSelectionReady || smartActionBusy" title="Lift the selection to a new layer and remove it from the source"
+            data-testid="smart-action-cut-out" @click="smartCutOut">Cut out</button>
+          <button class="h-8 px-2 rounded-[8px] hover:bg-white/10 text-white/80 text-[11px] cursor-pointer disabled:opacity-40 disabled:cursor-default whitespace-nowrap"
+            :disabled="!smartSelectionReady || smartActionBusy" title="Regenerate the selected area with a prompt (Generate mode)"
+            data-testid="smart-action-generate-fill" @click="smartGenerateFill">Generate fill</button>
+          <button class="h-8 px-2 rounded-[8px] hover:bg-white/10 text-white/80 text-[11px] cursor-pointer disabled:opacity-40 disabled:cursor-default whitespace-nowrap"
+            :disabled="!smartSelectionReady || smartActionBusy" title="Add the silhouette as a stencil layer for Layer mask clipping"
+            data-testid="smart-action-use-as-mask" @click="smartUseAsMask">Use as mask</button>
+          <button class="h-8 px-2 rounded-[8px] hover:bg-white/10 text-rose-300/90 text-[11px] cursor-pointer disabled:opacity-40 disabled:cursor-default whitespace-nowrap"
+            :disabled="!smartSelectionReady || smartActionBusy" title="Erase the selection from the layer (transparent hole)"
+            data-testid="smart-action-delete" @click="smartDelete">Delete</button>
         </div>
 
         <!-- Multi-select outlines (when 2+ layers selected) -->
