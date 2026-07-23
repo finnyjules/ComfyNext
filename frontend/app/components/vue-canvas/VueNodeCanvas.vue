@@ -4252,7 +4252,8 @@ function keepSketchStackItem(index: number): any | null {
 }
 
 /** Develop: the picked image lands as a plain Image card in clear space
- *  right of the pile, an EditImageNode (Nano Banana 2) is spliced from it —
+ *  right of the pile, a DevelopImageNode (the dedicated resolution-only
+ *  finisher; polish prompt lives in the backend) is spliced from it —
  *  branched, NEVER auto-run — and the camera travels to the pair. Closes
  *  the overlay. */
 async function developSketchStackItem(index: number) {
@@ -4283,10 +4284,9 @@ async function developSketchStackItem(index: number) {
   await nextTick()
   // Splice directly (not via sailor:applyEffect) so we get the editor's id
   // back and can travel the camera to the PAIR, not just the editor.
-  const editorId = await spliceAfterNode(String(card.id), 'EditImageNode', 'IMAGE', {
-    model: 'Nano Banana 2',
-    prompt: 'Turn this rough into a polished, finished, highly detailed image — keep the same composition and subject.',
-  }, { branch: true })
+  // DevelopImageNode is the dedicated one-dial node (resolution only) — the
+  // polish instruction is baked into the backend, not exposed as a prompt.
+  const editorId = await spliceAfterNode(String(card.id), 'DevelopImageNode', 'IMAGE', undefined, { branch: true })
   // Vue Flow measures new nodes via ResizeObserver AFTER they render; a
   // fitView issued before that sees 0×0 dimensions and silently no-ops.
   // Wait (bounded) until both nodes carry real dimensions, then travel.

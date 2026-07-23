@@ -2514,6 +2514,52 @@ class EditImageNode(IO.ComfyNode):
 
 
 # =============================================================================
+# Use case: Develop a sketch — one-tap "make this rough real" (the sketch
+# pile's Develop action). Exactly EditImageNode's Nano Banana 2 path with the
+# polish instruction baked in; the only dial the card shows is resolution.
+# =============================================================================
+
+_DEVELOP_PROMPT = (
+    "Turn this rough into a polished, finished, highly detailed image — "
+    "keep the same composition and subject."
+)
+
+
+class DevelopImageNode(IO.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="DevelopImageNode",
+            display_name="Develop",
+            category="api node/image/Replicate",
+            description=(
+                "Develop a rough or sketch into a finished, detailed image — "
+                "keeps the composition and subject, upgrades the rendering "
+                "(Nano Banana 2). ~$0.05 per image."
+            ),
+            inputs=[
+                IO.Image.Input("input_image", tooltip="The rough/sketch to develop."),
+                IO.Combo.Input("resolution", options=["1K", "2K", "4K"], default="1K",
+                               tooltip="Output resolution — higher costs more."),
+                IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFF, advanced=True,
+                             tooltip="0 = random."),
+            ],
+            outputs=[IO.Image.Output()],
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.05,"format":{"approximate":true}}'),
+        )
+
+    @classmethod
+    async def execute(cls, input_image, resolution, seed):
+        url = await _run_nano_banana_edit(
+            [_image_tensor_to_data_url(input_image)], _DEVELOP_PROMPT,
+            replicate_slug="google/nano-banana-2",
+            resolution=resolution, output_format="png", seed=seed,
+        )
+        tensor = await download_url_to_image_tensor(url, cls=cls)
+        return IO.NodeOutput(tensor, ui=save_generation_output(tensor, "edit_image"))
+
+
+# =============================================================================
 # Use case: Generate from references — compose a new image from up to 6
 # reference images + a prompt. Backed by the image_edit_models dispatcher
 # (REFERENCE_MODEL_IDS), so adding a multi-reference model is one catalog entry.
@@ -5760,6 +5806,7 @@ class ReplicateExtension(ComfyExtension):
             # Image — manipulation
             GenerateFromReferencesNode, # Generate from references · Seedream 5 Pro/Lite / Nano Banana 2
             EditImageNode,              # Edit an image · Flux Kontext
+            DevelopImageNode,           # Develop · sketch → finished (Nano Banana 2)
             BlendSceneNode,             # Blend Scene · Flux Kontext / Nano Banana
             RestyleFromImageNode,       # Restyle from Image · Nano Banana / IP-Adapter
             RestyleWithLoRANode,        # Restyle an Image · Style LoRA — describe→flux-lora→nano-banana
