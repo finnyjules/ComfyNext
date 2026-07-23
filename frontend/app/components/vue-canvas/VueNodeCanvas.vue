@@ -4506,6 +4506,8 @@ onMounted(() => {
   window.addEventListener('sailor:addAnnotation', handleAddAnnotationEvent)
   window.addEventListener('message', handleBridgeMessage)
   window.addEventListener('sailor:openCompositor', handleOpenCompositor)
+  // Frame Compositor output is generic (sourceNodeId/nodeType/widgetOverrides) — reuse the Space Type handler.
+  window.addEventListener('sailor:compositorOutput', handleSpaceTypeOutput)
   window.addEventListener('sailor:openSpaceType', handleOpenSpaceType)
   window.addEventListener('sailor:spaceTypeOutput', handleSpaceTypeOutput)
   window.addEventListener('sailor:openGradientStudio', handleOpenGradientStudio)
@@ -4575,6 +4577,7 @@ onUnmounted(() => {
   window.removeEventListener('sailor:addAnnotation', handleAddAnnotationEvent)
   window.removeEventListener('message', handleBridgeMessage)
   window.removeEventListener('sailor:openCompositor', handleOpenCompositor)
+  window.removeEventListener('sailor:compositorOutput', handleSpaceTypeOutput)
   window.removeEventListener('sailor:openSpaceType', handleOpenSpaceType)
   window.removeEventListener('sailor:openGradientStudio', handleOpenGradientStudio)
   window.removeEventListener('sailor:gradientStudioOutput', handleSpaceTypeOutput)

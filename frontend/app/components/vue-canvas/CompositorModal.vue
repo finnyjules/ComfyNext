@@ -75,6 +75,11 @@ const emit = defineEmits<{ close: [] }>()
 
 const { ensure: ensureGoogleFont } = useGoogleFontPreview()
 
+// Record generated stills/videos as the current project's assets (Assets panel)
+// — mirrors GradientStudioSurface's "outputs" idiom exactly.
+const { recordAsset } = useProjectGenerations()
+const { activeTab } = useTabs()
+
 const PROPS_PER_LAYER = ['x', 'y', 'rotation', 'scale', 'opacity', 'blend'] as const
 const BLEND_MODES = ['normal', 'multiply', 'screen', 'overlay', 'soft_light',
                      'hard_light', 'difference', 'lighten', 'darken', 'add']
@@ -1583,29 +1588,65 @@ async function renderStaticComposite(W: number, H: number): Promise<Blob | null>
   return await new Promise<Blob | null>(resolve => off.toBlob(b => resolve(b), 'image/png'))
 }
 
-async function renderFrame() {
+// True when any local layer carries a motion window — gates "Generate as video".
+const hasMotion = computed(() => localLayers.value.some((l: any) => l.animation))
+
+// ── outputs (mirror Gradient Studio's generateImage/generateVideo idiom) ────
+async function generateImage() {
   const node = compositor.value
   if (!node || rendering.value) return
-  if (previewT.value != null) { await bakeMotion(); return } // motion frame → existing bake path
   rendering.value = true
   renderError.value = ''
   try {
     const { W, H } = bakeSize()
     const blob = await renderStaticComposite(W, H)
     if (!blob) return
-    const file = new File([blob], `sailor_frame_${node.id}_${Date.now()}.png`, { type: 'image/png' })
-    const fd = new FormData(); fd.append('image', file); fd.append('overwrite', 'true')
-    const res = await fetch('/upload/image', { method: 'POST', body: fd })
-    if (!res.ok) throw new Error(await res.text() || `upload ${res.status}`)
-    const name = (await res.json())?.name || file.name
-    const p = (node.data.properties ||= {})
-    p.sailor_renderKey = staticSourceKey()
-    node.data.images = [`/view?${new URLSearchParams({ filename: name, type: 'input' })}`]
+    const { uploadFrameBatch } = await import('~/composables/useKineticRenderer')
+    const [filename] = await uploadFrameBatch([blob], 'frame_img')
+    if (filename) {
+      const p = (node.data.properties ||= {})
+      p.sailor_renderKey = staticSourceKey()
+      node.data.images = [`/view?${new URLSearchParams({ filename, type: 'input' })}`]
+      await recordAsset(activeTab.value?.projectUuid, 'image', filename)
+      window.dispatchEvent(new CustomEvent('sailor:compositorOutput', {
+        detail: { sourceNodeId: node.id, nodeType: 'Image', widgetOverrides: { image: filename } },
+      }))
+      emit('close')
+    }
   } catch (err: any) {
-    console.error('[compositor render]', err)
+    console.error('[compositor generate]', err)
     renderError.value = err?.message || 'Render failed'
   } finally {
     rendering.value = false
+  }
+}
+
+async function generateVideo() {
+  const node = compositor.value
+  if (!node || rendering.value || baking.value || !hasMotion.value) return
+  renderError.value = ''
+  try {
+    await bakeMotion()
+    if (bakeError.value) { renderError.value = bakeError.value; return }
+    const { W, H } = bakeSize()
+    const res = await fetch('/sailor/spacetype_encode', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ frames: storedMotionParams.value!.rendered, fps: motionDoc.value.fps, width: W, height: H }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (data.filename) {
+      await recordAsset(activeTab.value?.projectUuid, 'video', data.filename)
+      window.dispatchEvent(new CustomEvent('sailor:compositorOutput', {
+        detail: { sourceNodeId: node.id, nodeType: 'Video', widgetOverrides: { file: data.filename } },
+      }))
+      emit('close')
+    } else {
+      renderError.value = 'Encode failed — restart ComfyUI to load the encoder.'
+      console.error('[compositor generate] encode failed', data)
+    }
+  } catch (err: any) {
+    console.error('[compositor generate]', err)
+    renderError.value = err?.message || 'Video generate failed'
   }
 }
 
@@ -4186,18 +4227,26 @@ onUnmounted(() => {
         </div>
       </template>
 
-      <!-- Sticky footer: Render — renders & saves the frame output. Sits outside
-           every template branch so it stays pinned bottom-right in all panel states. -->
+      <!-- Sticky footer: Generate as image / Generate as video — renders & records
+           artifacts (mirrors the Gradient/Shader/Space Type studio idiom). Sits
+           outside every template branch so it stays pinned bottom-right in all
+           panel states. -->
       <div class="mt-auto shrink-0 border-t border-white/10 p-3 flex items-center justify-end gap-2">
         <span v-if="renderError" class="text-[11px] text-rose-400 min-w-0 flex-1 truncate" :title="renderError">{{ renderError }}</span>
         <button
-          class="h-8 px-3 rounded text-[12px] font-medium flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-          :class="renderStale ? 'bg-white hover:bg-white/90 text-neutral-900' : 'bg-white/[0.06] hover:bg-white/12 text-white/85'"
+          class="h-8 px-3 rounded text-[12px] font-medium flex items-center gap-1.5 cursor-pointer disabled:opacity-50 bg-white/[0.06] hover:bg-white/12 text-white/85"
+          :disabled="rendering || baking || !hasMotion"
+          :title="hasMotion ? 'Bake the motion timeline and generate a video artifact' : 'Add motion to a layer first (Motion tab)'"
+          @click="generateVideo">
+          {{ baking ? `Baking ${Math.round((bakeProgress ?? 0) * 100)}%` : 'Generate as video' }}
+        </button>
+        <button
+          class="h-8 px-3 rounded text-[12px] font-medium flex items-center gap-1.5 cursor-pointer disabled:opacity-50 bg-white hover:bg-white/90 text-neutral-900"
           :disabled="rendering || baking"
-          :title="renderStale ? 'Frame output is out of date — click to render' : 'Frame output is up to date'"
-          @click="renderFrame">
+          title="Render the frame and generate an image artifact"
+          @click="generateImage">
           <Play class="size-3" />
-          {{ rendering ? 'Rendering…' : (renderStale ? 'Render' : 'Rendered') }}
+          {{ rendering ? 'Rendering…' : 'Generate as image' }}
         </button>
       </div>
     </div>
