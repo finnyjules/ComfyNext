@@ -132,7 +132,7 @@ export function buildPreview(
     opts,
   }
 
-  preset.build(ctx)
+  preset.build?.(ctx)
 
   return {
     timeline: tl,

@@ -11,12 +11,14 @@
  * as section headers within the tab.
  */
 
+import { PRESET_PARAM_DEFAULTS } from '~/lib/motion/evaluate'
+
 export type KineticCategory = 'in' | 'out' | 'loop'
 
 export type KineticGroup =
   | 'appear' | 'slide' | 'scale' | 'blur' | 'rotate'
   | 'mask' | 'glitch' | 'text' | 'physics'
-  | 'oscillate' | 'pulse' | 'color'
+  | 'oscillate' | 'pulse' | 'color' | 'utility'
   // (slide, scale, blur, rotate, glitch also used by loop presets)
 
 export interface KineticBuildContext {
@@ -43,8 +45,26 @@ export interface KineticPreset {
   group: KineticGroup
   /** Which split level this preset primarily animates. */
   splitLevel: 'chars' | 'words' | 'lines'
-  /** Build the GSAP timeline. */
-  build: (ctx: KineticBuildContext) => void
+  /** Build the GSAP timeline. Optional — canvas-native presets (utility
+   *  group) are evaluated directly by lib/motion/evaluate.ts and have no
+   *  GSAP builder; that path is legacy slate-only. */
+  build?: (ctx: KineticBuildContext) => void
+  /** Jitter-style per-preset knobs, shown in the picker when present. */
+  params?: KineticParamSpec[]
+}
+
+/** Jitter-style per-preset knob. Defaults live in PRESET_PARAM_DEFAULTS
+ *  (lib/motion/evaluate.ts) — the engine is the source of truth. */
+export interface KineticParamSpec {
+  key: string
+  label: string
+  min: number
+  max: number
+  step: number
+}
+
+export function presetParamDefault(presetId: string, key: string): number {
+  return PRESET_PARAM_DEFAULTS[presetId]?.[key] ?? 0
 }
 
 export const DEFAULT_KINETIC_OPTS: KineticOpts = {
@@ -117,6 +137,12 @@ const IN_PRESETS: KineticPreset[] = [
     build({ tl, chars, opts }) { tl.from(chars, { opacity: 0, duration: 0.01, stagger: opts.stagger * 2 }) } },
   { id: 'scramble-in', label: 'Scramble Decode', pitch: 'Random chars resolve to text', category: 'in', group: 'text', splitLevel: 'chars',
     build({ tl, chars, opts }) { chars.forEach((char, i) => { const original = char.textContent || ''; tl.from(char, { opacity: 0, duration: 0.05 }, i * opts.stagger); tl.to(char, { duration: opts.duration * 0.4, scrambleText: { text: original, chars: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%', speed: 0.6 } }, i * opts.stagger + 0.05) }) } },
+
+  // Utility (canvas-native; no GSAP builder)
+  { id: 'card-flip-h', label: 'Card Flip H', pitch: 'Horizontal card-flip reveal', category: 'in', group: 'utility', splitLevel: 'chars',
+    params: [{ key: 'overshoot', label: 'Overshoot', min: 0, max: 2, step: 0.1 }] },
+  { id: 'card-flip-v', label: 'Card Flip V', pitch: 'Vertical card-flip reveal', category: 'in', group: 'utility', splitLevel: 'chars',
+    params: [{ key: 'overshoot', label: 'Overshoot', min: 0, max: 2, step: 0.1 }] },
 ]
 
 // ── OUT (exit) — mirrors every IN preset ────────────────────────────────────
@@ -183,6 +209,12 @@ const OUT_PRESETS: KineticPreset[] = [
     build({ tl, chars, opts }) { tl.to([...chars].reverse(), { opacity: 0, duration: 0.01, stagger: opts.stagger * 2 }) } },
   { id: 'scramble-out', label: 'Scramble Out', pitch: 'Dissolves into random chars', category: 'out', group: 'text', splitLevel: 'chars',
     build({ tl, chars, opts }) { chars.forEach((char, i) => { tl.to(char, { duration: opts.duration * 0.4, scrambleText: { text: ' ', chars: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%', speed: 0.4 } }, i * opts.stagger); tl.to(char, { opacity: 0, duration: 0.1 }, i * opts.stagger + opts.duration * 0.35) }) } },
+
+  // Utility
+  { id: 'card-flip-h-out', label: 'Card Flip H', pitch: 'Horizontal card-flip exit', category: 'out', group: 'utility', splitLevel: 'chars',
+    params: [{ key: 'overshoot', label: 'Overshoot', min: 0, max: 2, step: 0.1 }] },
+  { id: 'card-flip-v-out', label: 'Card Flip V', pitch: 'Vertical card-flip exit', category: 'out', group: 'utility', splitLevel: 'chars',
+    params: [{ key: 'overshoot', label: 'Overshoot', min: 0, max: 2, step: 0.1 }] },
 ]
 
 // ── LOOP ─────────────────────────────────────────────────────────────────────
@@ -245,6 +277,34 @@ const LOOP_PRESETS: KineticPreset[] = [
     build({ tl, container, opts }) { tl.fromTo(container, { x: '100%' }, { x: '-100%', duration: opts.duration * 2, ease: 'none', repeat: -1 }) } },
   { id: 'shuffle', label: 'Shuffle', pitch: 'Chars swap positions randomly', category: 'loop', group: 'slide', splitLevel: 'chars',
     build({ tl, chars, opts }) { chars.forEach((char, i) => { const dir = i % 2 === 0 ? 1 : -1; tl.to(char, { x: dir * 12, duration: opts.duration * 0.2, ease: 'power2.inOut', repeat: -1, yoyo: true, delay: i * opts.stagger * 2 }, 0) }) } },
+
+  // Utility
+  { id: 'wiggle', label: 'Wiggle', pitch: 'Organic positional jitter', category: 'loop', group: 'utility', splitLevel: 'chars',
+    params: [
+      { key: 'amplitude', label: 'Amplitude', min: 0.02, max: 0.5, step: 0.01 },
+      { key: 'cycles', label: 'Speed', min: 1, max: 6, step: 1 },
+    ] },
+  { id: 'inward-echoes', label: 'Inward Echoes', pitch: 'Echo trail collapsing inward', category: 'loop', group: 'utility', splitLevel: 'lines',
+    params: [
+      { key: 'copies', label: 'Copies', min: 1, max: 6, step: 1 },
+      { key: 'scaleStep', label: 'Spread', min: 0.1, max: 0.8, step: 0.05 },
+      { key: 'fade', label: 'Fade', min: 0.2, max: 0.9, step: 0.05 },
+    ] },
+  { id: 'grid-scroll-x', label: 'Grid Scroll X', pitch: 'Tiled horizontal marquee', category: 'loop', group: 'utility', splitLevel: 'lines',
+    params: [
+      { key: 'tiles', label: 'Tiles', min: 1, max: 4, step: 1 },
+      { key: 'gap', label: 'Gap', min: 1, max: 3, step: 0.1 },
+    ] },
+  { id: 'grid-scroll-y', label: 'Grid Scroll Y', pitch: 'Tiled vertical marquee', category: 'loop', group: 'utility', splitLevel: 'lines',
+    params: [
+      { key: 'tiles', label: 'Tiles', min: 1, max: 4, step: 1 },
+      { key: 'gap', label: 'Gap', min: 1, max: 3, step: 0.1 },
+    ] },
+  { id: 'noise-tile', label: 'Noise Tile', pitch: 'Flickering tile grid', category: 'loop', group: 'utility', splitLevel: 'lines',
+    params: [
+      { key: 'tiles', label: 'Tiles', min: 1, max: 3, step: 1 },
+      { key: 'flicker', label: 'Flicker', min: 0.2, max: 1, step: 0.05 },
+    ] },
 ]
 
 // ── Combined ────────────────────────────────────────────────────────────────
@@ -276,6 +336,7 @@ export const KINETIC_GROUP_LABELS: Record<KineticGroup, string> = {
   oscillate: 'Oscillate',
   pulse: 'Pulse',
   color: 'Color',
+  utility: 'Utility',
 }
 
 /** Available GSAP ease presets for the dropdown. */
