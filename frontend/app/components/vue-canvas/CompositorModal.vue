@@ -1418,6 +1418,15 @@ function exitMotionPreview() {
   renderStack()
 }
 
+// ── Design | Motion inspector tabs (3D Studio Build|Motion idiom) ───────────
+// Motion active ⇔ motion mode: the docked timeline replaces the bottom
+// toolbar cluster and the inspector shows animation controls.
+const inspectorTab = ref<'design' | 'motion'>('design')
+watch(inspectorTab, (tab) => {
+  if (tab === 'motion') { if (previewT.value == null) scrubTo(0) }
+  else exitMotionPreview()
+})
+
 // Dev-only: load the LIV-style slate fixture (acceptance choreography for the
 // motion engine). Uses addLocal so history/persistence behave like hand-adds.
 const isDev = import.meta.dev
@@ -2641,7 +2650,7 @@ onUnmounted(() => {
 
         <!-- Motion preview transport (play/scrub the kinetic timeline) -->
         <MotionTransport
-          v-if="KINETIC_ENABLED && previewT != null"
+          v-if="previewT != null"
           data-motion-transport
           class="absolute bottom-3 left-1/2 -translate-x-1/2 z-20"
           :motion="motionDoc" :t="previewT" :playing="playing"
@@ -3015,7 +3024,7 @@ onUnmounted(() => {
       <!-- Bottom cluster: agent command bar + toolbar. The column is bottom-anchored
            and shrink-wraps to the toolbar's width (its widest child), so the bare
            prompt above stretches to exactly match the toolbar. -->
-      <div class="absolute bottom-4 flex flex-col items-stretch gap-2 pointer-events-none">
+      <div v-if="inspectorTab !== 'motion'" class="absolute bottom-4 flex flex-col items-stretch gap-2 pointer-events-none">
       <!-- Agent command bar — bare prompt; its progress + proposal render in the
            right inspector (see the Assistant takeover branch). -->
       <div class="pointer-events-auto">
@@ -3096,15 +3105,6 @@ onUnmounted(() => {
         </button>
         <BrandImagePicker @add="(name, aspect) => addImageFromName(name, aspect)" />
         <button
-          v-if="KINETIC_ENABLED"
-          class="flex items-center justify-center size-8 rounded cursor-pointer"
-          :class="previewT != null ? 'bg-action text-white' : 'hover:bg-white/10 text-white/80'"
-          title="Motion — preview layer animations on the kinetic timeline"
-          @click="previewT == null ? scrubTo(0) : exitMotionPreview()"
-        >
-          <Play class="size-4" />
-        </button>
-        <button
           class="flex items-center justify-center size-8 rounded cursor-pointer"
           :class="brandOpen ? 'bg-white text-neutral-900' : 'hover:bg-white/10 text-white/80'"
           title="Brand — pick the project's active brand kit"
@@ -3136,6 +3136,17 @@ onUnmounted(() => {
 
     <!-- Right sidebar: floating glass properties panel -->
     <div class="glass-panel absolute top-16 right-4 bottom-4 z-20 w-72 flex flex-col rounded-xl border border-white/10 bg-[#0e0e10]/80 backdrop-blur-md shadow-2xl overflow-hidden">
+      <!-- Design | Motion tabs (hidden while the Assistant takes the panel over) -->
+      <div v-if="!caPanelActive" class="shrink-0 px-3 pt-3">
+        <div class="flex gap-1 rounded-lg bg-white/[0.04] p-1 text-[11px]">
+          <button type="button" class="flex-1 rounded px-2 py-1 cursor-pointer"
+                  :class="inspectorTab === 'design' ? 'bg-white/15 text-white' : 'text-white/55 hover:text-white/80'"
+                  @click="inspectorTab = 'design'">Design</button>
+          <button type="button" class="flex-1 rounded px-2 py-1 cursor-pointer"
+                  :class="inspectorTab === 'motion' ? 'bg-white/15 text-white' : 'text-white/55 hover:text-white/80'"
+                  @click="inspectorTab = 'motion'">Motion</button>
+        </div>
+      </div>
       <!-- Assistant: the agent's progress / proposed changes take over the inspector. -->
       <template v-if="caPanelActive">
         <div class="px-4 py-3 border-b border-white/10 flex items-center gap-2">
@@ -3963,9 +3974,9 @@ onUnmounted(() => {
             @update="(cl) => setLocal(selectedLocal!.id, { cloner: cl } as any)"
           />
 
-          <!-- Animation (kinetic motion presets, previewed via the Motion toolbar button) -->
+          <!-- Animation (kinetic motion presets, previewed via the Design | Motion tabs) -->
           <LayerMotionPanel
-            v-if="KINETIC_ENABLED"
+            v-if="inspectorTab === 'motion'"
             class="mt-3"
             :animation="(selectedLocal as any).animation"
             @update="(a) => setLocal(selectedLocal!.id, { animation: a } as any)"
