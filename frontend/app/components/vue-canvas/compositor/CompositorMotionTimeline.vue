@@ -85,7 +85,12 @@ function startDrag(e: PointerEvent, l: LocalLayer, mode: 'offset' | 'in' | 'out'
     let next = startVal + (mode === 'out' ? -ds : ds)   // out divider grows leftward
     if (mode === 'offset') { next = snapSeconds(next, snaps); setClipOffset(anim, next, dur.value) }
     else if (mode === 'end') { next = snapSeconds(anim.offset + next, snaps) - anim.offset; setWindowDuration(anim, next, dur.value) }
-    else resizeTransition(anim, mode, next, dur.value)
+    else if (mode === 'in') { next = snapSeconds(anim.offset + next, snaps) - anim.offset; resizeTransition(anim, mode, next, dur.value) }
+    else if (mode === 'out') {
+      const wEnd = windowSeconds(anim, dur.value).end
+      next = wEnd - snapSeconds(wEnd - next, snaps)
+      resizeTransition(anim, mode, next, dur.value)
+    }
   }
   const up = () => {
     window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up)
@@ -133,7 +138,9 @@ function resetWindowEnd(l: LocalLayer) {
       </button>
     </div>
 
-    <!-- Ruler + playhead + rows share one horizontal scale via the grid column -->
+    <!-- Ruler + playhead + rows share one horizontal scale via the grid column;
+         only this block scrolls — the transport row above stays pinned. -->
+    <div class="max-h-[32vh] overflow-y-auto">
     <div class="grid grid-cols-[96px_1fr] gap-x-2">
       <div /><!-- ruler spacer over labels -->
       <div ref="rulerEl" class="relative h-4 cursor-ew-resize select-none" @pointerdown.stop.prevent="onRulerDown">
@@ -177,6 +184,7 @@ function resetWindowEnd(l: LocalLayer) {
             :style="{ left: pct(Math.min(1, (t ?? 0) / motion.duration)) }" />
         </div>
       </template>
+    </div>
     </div>
   </div>
 </template>

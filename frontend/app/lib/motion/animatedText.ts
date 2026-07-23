@@ -113,7 +113,12 @@ export function drawAnimatedTextLayer(
     }
     ctx.translate(cell.x + st.dx * cell.h, cell.y + st.dy * cell.h)
     if (st.rotation) ctx.rotate((st.rotation * Math.PI) / 180)
-    if (st.scale !== 1) ctx.scale(Math.max(0.001, st.scale), Math.max(0.001, st.scale))
+    if (st.scale !== 1 || st.scaleX != null || st.scaleY != null) {
+      ctx.scale(
+        Math.max(0.001, st.scale * (st.scaleX ?? 1)),
+        Math.max(0.001, st.scale * (st.scaleY ?? 1)),
+      )
+    }
     ctx.fillStyle = paintPrimaryColor(layer.color, '#ffffff')
     if (strokeOn) ctx.strokeText(cell.char, 0, 0)
     ctx.fillText(cell.char, 0, 0)

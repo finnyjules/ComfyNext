@@ -1153,7 +1153,6 @@ function onCanvasPointerDownCapture(e: PointerEvent) {
   if (pen.active.value) { onPenPointerDown(e); return } // pen mode owns the canvas
   if (nodeEdit.active.value) { onNodePointerDown(e); return } // node edit owns the canvas
   if ((e.target as HTMLElement)?.closest?.('[data-handle]')) return // a handle's own drag
-  if ((e.target as HTMLElement)?.closest?.('[data-motion-transport]')) return // transport owns its events
   const key = hitTopStackKey(e.clientX, e.clientY)
   const res = key ? resolveStackKey(key) : null
   if (res?.type === 'wired') {
@@ -3119,7 +3118,7 @@ onUnmounted(() => {
       </div>
 
       <!-- Docked motion timeline (replaces the agent bar + toolbar in Motion mode) -->
-      <div v-if="inspectorTab === 'motion'" class="absolute inset-x-4 bottom-4 z-20 pointer-events-auto max-h-[36vh] overflow-y-auto"
+      <div v-if="inspectorTab === 'motion'" class="absolute inset-x-4 bottom-4 z-20 pointer-events-auto"
         @pointerdown.stop @click.stop @dblclick.stop>
         <CompositorMotionTimeline
           :layers="localLayers" :selected-id="selectedLocal?.id ?? null"
@@ -3345,6 +3344,7 @@ onUnmounted(() => {
         <div class="p-4 flex-1 min-h-0 overflow-y-auto">
           <MotionLayerEditor v-if="selectedLocal"
             :animation="(selectedLocal as any).animation" :frame-duration="motionDoc.duration"
+            :layer-kind="selectedLocal.kind"
             @update="(a) => setLocal(selectedLocal!.id, { animation: a } as any)"
           />
           <div v-else class="flex flex-col gap-3 text-xs text-white/55">

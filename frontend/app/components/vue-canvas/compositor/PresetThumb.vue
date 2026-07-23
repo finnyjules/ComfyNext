@@ -3,7 +3,6 @@
  *  tiny canvas — previews are true to the engine, not canned GIFs. 2s cycle:
  *  in-presets play then hold; out-presets hold then play; loops run 1.5s cycles. */
 import { evaluateAnimation } from '~/lib/motion/evaluate'
-import type { LayerAnimation } from '~/lib/motion/types'
 import { registerThumb } from '~/lib/motion/thumbClock'
 
 const props = defineProps<{

@@ -8,7 +8,7 @@ import MotionPresetPicker from '~/components/vue-canvas/compositor/MotionPresetP
 import PresetThumb from '~/components/vue-canvas/compositor/PresetThumb.vue'
 import { X } from 'lucide-vue-next'
 
-const props = defineProps<{ animation: LayerAnimation | undefined; frameDuration: number }>()
+const props = defineProps<{ animation: LayerAnimation | undefined; frameDuration: number; layerKind?: string }>()
 const emit = defineEmits<{ update: [anim: LayerAnimation | undefined] }>()
 
 const SLOTS = ['in', 'loop', 'out'] as const
@@ -92,7 +92,7 @@ const paramValue = (spec: LayerAnimSpec, key: string) => spec.params?.[key] ?? p
               class="w-14 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-1 py-0.5 text-white/90 outline-none"
               @change="patchSpecNum(slot, 'duration', Math.max(0.1, Number(($event.target as HTMLInputElement).value) || 0.8))">
           </label>
-          <label class="flex items-center gap-1">stagger
+          <label v-if="layerKind === 'text'" class="flex items-center gap-1">stagger
             <input type="number" min="0" step="0.01" :value="animation[slot]!.stagger ?? 0.04"
               class="w-14 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-1 py-0.5 text-white/90 outline-none"
               @change="patchSpecNum(slot, 'stagger', Math.max(0, Number(($event.target as HTMLInputElement).value) || 0))">
@@ -110,6 +110,7 @@ const paramValue = (spec: LayerAnimSpec, key: string) => spec.params?.[key] ?? p
 
     <MotionPresetPicker v-if="pickerFor"
       :slot-kind="pickerFor" :current-id="animation?.[pickerFor]?.presetId ?? null" :anchor-rect="pickerAnchor"
+      :layer-kind="layerKind"
       @pick="(id: string) => assign(pickerFor!, id)" @clear="clearSlot(pickerFor!)" @close="pickerFor = null" />
   </div>
 </template>

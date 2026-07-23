@@ -12,11 +12,18 @@ const props = defineProps<{
   slotKind: 'in' | 'out' | 'loop'
   currentId: string | null
   anchorRect: { top: number; left: number; width: number } | null
+  layerKind?: string
 }>()
 const emit = defineEmits<{ pick: [id: string]; clear: []; close: [] }>()
 
-const ids = computed(() =>
-  props.slotKind === 'in' ? SUPPORTED_IN_IDS : props.slotKind === 'out' ? SUPPORTED_OUT_IDS : SUPPORTED_LOOP_IDS)
+// v1 limitation: copy-based presets (echoes/tiles) draw extra whole-unit
+// copies, which per-char text animation can't express — hidden for text layers.
+const COPY_BASED_IDS = new Set(['inward-echoes', 'grid-scroll-x', 'grid-scroll-y', 'noise-tile'])
+
+const ids = computed(() => {
+  const base = props.slotKind === 'in' ? SUPPORTED_IN_IDS : props.slotKind === 'out' ? SUPPORTED_OUT_IDS : SUPPORTED_LOOP_IDS
+  return props.layerKind === 'text' ? base.filter(id => !COPY_BASED_IDS.has(id)) : base
+})
 
 /** Group ids by catalog group; uncataloged ids (e.g. 'marquee') land in 'other'. */
 const sections = computed(() => {
