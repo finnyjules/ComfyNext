@@ -104,6 +104,7 @@ const showRender = computed(() => !videoUrl.value && hasUpstream.value)
 
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const uploading = ref(false)
+const hovered = ref(false)
 
 async function uploadFile(file: File) {
   uploading.value = true
@@ -191,6 +192,8 @@ async function downloadVideo() {
     :style="{ '--port-color': videoColor } as any"
     @dragover="onDragOver"
     @drop="onDrop"
+    @mouseenter="hovered = true"
+    @mouseleave="hovered = false"
   >
     <VueCanvasNodeReadyBadge :node-id="id" />
     <Handle
@@ -223,16 +226,14 @@ async function downloadVideo() {
         @change="onFileChange"
       />
       <template v-if="videoUrl">
-        <video
-          :src="videoUrl"
-          class="block w-full max-h-[280px] object-contain bg-black"
-          controls
-          preload="metadata"
-          playsinline
-          @loadedmetadata="onVideoMeta"
-        />
-        <div class="flex items-center gap-1.5 px-2 py-1.5 border-t border-white/5">
-          <span class="truncate flex-1 text-[10px] tabular-nums text-white/55">
+        <!-- Chrome toolbar, overlaid on the top of the video and revealed
+             on hover — same idiom as ArtifactImageNode so the two artifact
+             cards read identically. -->
+        <div
+          class="nopan nodrag absolute inset-x-0 top-0 z-30 flex items-center gap-1.5 px-2 py-1.5 bg-gradient-to-b from-black/70 to-transparent transition-opacity duration-150"
+          :class="hovered ? 'opacity-100' : 'opacity-0 pointer-events-none'"
+        >
+          <span class="truncate flex-1 text-[10px] tabular-nums text-white/80 drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
             {{ meta || (hasUpstream ? 'Video (upstream)' : 'Video') }}
           </span>
           <button
@@ -262,6 +263,14 @@ async function downloadVideo() {
             <RefreshCw v-else class="size-3" />
           </button>
         </div>
+        <video
+          :src="videoUrl"
+          class="block w-full max-h-[280px] object-contain bg-black"
+          controls
+          preload="metadata"
+          playsinline
+          @loadedmetadata="onVideoMeta"
+        />
       </template>
 
       <template v-else-if="showUpload">
