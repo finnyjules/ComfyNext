@@ -56,3 +56,16 @@ it('effect ids are unique', () => {
   const ids = SPACE_TYPE_EFFECTS.map(e => e.id)
   expect(new Set(ids).size).toBe(ids.length)
 })
+
+// The array IS the panel's display order (framing → content → shape → finish → motion → export).
+// 'Camera' is surface-injected (no effect declares it); 'Motion' renders on the Motion tab.
+it('panel order: framing → content → shape → finish → motion → output', () => {
+  expect([...SPACE_TYPE_SECTIONS]).toEqual([
+    'Camera', 'Transform',
+    'Type', 'Color', 'Stroke',
+    'Path', 'Layout', 'Stack', 'Stretch', 'Skew', 'Warp', 'Ribbon', 'Spiral', 'Slice', 'Wave', 'Glitch', 'Doodles',
+    'Layers', 'Occlusion', 'Look', 'Style', 'Blend', 'Shadow',
+    'Motion',
+    'Output',
+  ])
+})
