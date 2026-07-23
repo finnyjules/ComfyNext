@@ -4453,6 +4453,8 @@ async function handlePaste(e: ClipboardEvent) {
     uploadedName = data?.name || renamed.name
   } catch (err: any) {
     console.error('[paste] upload failed:', err)
+    // Silent returns read as "paste is broken" — say what actually happened.
+    toast.error('Couldn’t paste the image', { description: 'Uploading it to the backend failed — is ComfyUI running?' })
     return
   }
 
@@ -5824,6 +5826,14 @@ function copySelection(): boolean {
       data: ed.data ? JSON.parse(JSON.stringify(ed.data)) : undefined,
     }))
   nodeClipboard.write({ nodes: clipNodes, edges: clipEdges })
+  // Claim the OS clipboard too (like any app's Copy). Without this, an OLD
+  // screenshot on the OS clipboard outranks this fresh node copy forever —
+  // handlePaste prefers OS images by design, so Cmd+V would keep pasting the
+  // stale image instead of the node. Writing text evicts the image; a
+  // screenshot taken AFTER this copy overwrites it and rightfully wins.
+  // Best-effort: clipboard access can be denied — the in-app buffer above is
+  // the source of truth either way.
+  try { navigator.clipboard?.writeText('⎘ Sailor nodes — paste on the canvas') } catch { /* non-secure context */ }
   return true
 }
 
@@ -7702,6 +7712,15 @@ defineExpose({
 .vue-node-canvas .vue-flow__node.selected .artifact-text,
 .vue-node-canvas .vue-flow__node.selected .artifact-frame-node,
 .vue-node-canvas .vue-flow__node.selected .artifact-timeline {
+  outline: 2px solid var(--action);
+  outline-offset: 3px;
+  border-radius: 12px;
+}
+
+/* Studio cards (Type/Gradient/Shader/Shape/Texture/3D/Lip-Sync/Shot Director)
+   share the .studio-node root class for the same reason: without it they
+   selected on click but showed no ring. */
+.vue-node-canvas .vue-flow__node.selected .studio-node {
   outline: 2px solid var(--action);
   outline-offset: 3px;
   border-radius: 12px;
