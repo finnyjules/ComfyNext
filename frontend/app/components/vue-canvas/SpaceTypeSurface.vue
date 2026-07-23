@@ -244,7 +244,7 @@ const SECTION_ORDER = SPACE_TYPE_SECTIONS
 // Sections that should start collapsed; everything else starts open. 'Post' is a
 // surface-injected section (not in SPACE_TYPE_SECTIONS) rendered as a standalone card.
 const DEFAULT_COLLAPSED = new Set([
-  'Layout', 'Skew', 'Warp', 'Stroke', 'Doodles', 'Shadow', 'Wave', 'Motion', 'Transform', 'Post', 'Output',
+  'Layout', 'Skew', 'Warp', 'Stroke', 'Doodles', 'Shadow', 'Wave', 'Motion', 'Transform', 'Post', 'Output', 'Camera',
 ])
 const openSections = reactive<Record<string, boolean>>(
   Object.fromEntries([...SPACE_TYPE_SECTIONS, 'Post'].map(name => [name, !DEFAULT_COLLAPSED.has(name)])),
@@ -252,6 +252,17 @@ const openSections = reactive<Record<string, boolean>>(
 const sections = computed(() =>
   SECTION_ORDER.map(name => ({ name, controls: effect.value.controls.filter(c => c.group === name) })),
 )
+
+// Inspector tabs — Design (everything) vs Motion (the effect's Motion-group controls),
+// matching 3D Studio's Build|Motion split. Motion sections render open, not collapsible.
+const inspectorTab = ref<'design' | 'motion'>('design')
+const motionControlCount = computed(() => effect.value.controls.filter(c => c.group === 'Motion').length)
+function sectionVisible(section: { name: string; controls: ControlSpec[] }): boolean {
+  if (inspectorTab.value === 'motion') return section.name === 'Motion' && section.controls.length > 0
+  if (section.name === 'Motion') return false
+  if (section.name === 'Camera') return !frontLocked.value
+  return section.controls.length > 0 || section.name === 'Color' || section.name === 'Output'
+}
 
 /** A control may declare `showIf` to appear only when another param matches (e.g. a second axis's
  *  controls that only apply in a 'crosshatch' mode). Reactive via `params`. */
@@ -649,6 +660,41 @@ function saveConfig() {
   }
 }
 
+// Sticky footer: explicit Save (with a transient flash) + a Render menu. Closing the
+// studio still auto-saves (closeEditor → saveConfig) — Save is for checkpointing mid-edit.
+const savedFlash = ref(false)
+let savedFlashTimer: ReturnType<typeof setTimeout> | undefined
+function saveNow() {
+  saveConfig()
+  savedFlash.value = true
+  clearTimeout(savedFlashTimer)
+  savedFlashTimer = setTimeout(() => { savedFlash.value = false }, 1500)
+}
+
+const renderMenuOpen = ref(false)
+// Capture-phase so Escape closes the menu INSTEAD of the studio: StudioModalShell's own
+// window keydown listener bails when defaultPrevented is set.
+function onRenderMenuKeydown(e: KeyboardEvent) {
+  if (e.key !== 'Escape') return
+  e.preventDefault(); e.stopPropagation()
+  renderMenuOpen.value = false
+}
+function onRenderMenuPointerdown() { renderMenuOpen.value = false }
+watch(renderMenuOpen, (open) => {
+  if (open) {
+    window.addEventListener('keydown', onRenderMenuKeydown, { capture: true })
+    window.addEventListener('pointerdown', onRenderMenuPointerdown)
+  } else {
+    window.removeEventListener('keydown', onRenderMenuKeydown, { capture: true })
+    window.removeEventListener('pointerdown', onRenderMenuPointerdown)
+  }
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onRenderMenuKeydown, { capture: true })
+  window.removeEventListener('pointerdown', onRenderMenuPointerdown)
+  clearTimeout(savedFlashTimer)
+})
+
 function closeEditor() { saveConfig(); emit('close') }
 
 onMounted(async () => {
@@ -1032,17 +1078,6 @@ async function generateVideo() {
         />
       </div>
     </template>
-    <template #actions>
-      <StudioButton variant="primary" :disabled="baking" @click="generateImage">
-        {{ baking ? 'Generating…' : 'Generate as image' }}
-      </StudioButton>
-      <StudioButton variant="secondary" :disabled="baking" @click="generateVideo">
-        {{ baking ? 'Generating…' : 'Generate as video' }}
-      </StudioButton>
-      <StudioButton variant="subtle" :disabled="baking" @click="sendToTimeline">
-        Send to timeline
-      </StudioButton>
-    </template>
     <template #controls>
       <VibeControlBar
         :busy="vibeBusy"
@@ -1052,7 +1087,18 @@ async function generateVideo() {
         @revert="onVibeRevert"
         @focus-control="onVibeFocus"
       />
-      <div class="rounded-lg border border-white/[0.07] bg-white/[0.03] px-3 py-2.5">
+      <div class="flex shrink-0 gap-1 rounded-lg bg-white/[0.04] p-1 text-[11px]">
+        <button type="button" class="flex-1 rounded px-2 py-1"
+                :class="inspectorTab === 'design' ? 'bg-white/15 text-white' : 'text-white/55 hover:text-white/80'"
+                @click="inspectorTab = 'design'">Design</button>
+        <button type="button" class="flex-1 rounded px-2 py-1"
+                :class="inspectorTab === 'motion' ? 'bg-white/15 text-white' : 'text-white/55 hover:text-white/80'"
+                @click="inspectorTab = 'motion'">Motion</button>
+      </div>
+      <p v-if="inspectorTab === 'motion' && !motionControlCount" class="px-1 pt-2 text-[11px] text-white/40">
+        This effect has no motion parameters.
+      </p>
+      <div v-show="inspectorTab === 'design'" class="rounded-lg border border-white/[0.07] bg-white/[0.03] px-3 py-2.5">
           <label class="mb-1 block text-[11px] text-white/50">Effect</label>
           <button type="button" @click="showEffectGallery = true"
                   class="flex w-full items-center justify-between rounded border border-white/[0.08] bg-white/[0.04] px-2 py-1.5 text-xs text-white/85 hover:border-white/25">
@@ -1075,27 +1121,12 @@ async function generateVideo() {
               {{ capturingThumb ? 'Capturing…' : 'Capture thumbnail' }}
             </button>
           </div>
-          <template v-if="!frontLocked">
-            <label class="mb-1 mt-2.5 block text-[11px] text-white/50">Projection</label>
-            <select v-model="projection" class="w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1.5 text-xs text-white/85">
-              <option value="perspective" class="bg-neutral-900">Perspective</option>
-              <option value="isometric" class="bg-neutral-900">Isometric</option>
-            </select>
-            <label class="mb-1.5 mt-2.5 flex justify-between text-[11px] text-white/50">
-              <span>Pan X</span><span class="font-mono text-white/80">{{ panX.toFixed(2) }}</span>
-            </label>
-            <input v-model.number="panX" type="range" min="-1" max="1" step="0.01" v-studio-reset class="studio-range w-full" />
-            <label class="mb-1.5 mt-2.5 flex justify-between text-[11px] text-white/50">
-              <span>Pan Y</span><span class="font-mono text-white/80">{{ panY.toFixed(2) }}</span>
-            </label>
-            <input v-model.number="panY" type="range" min="-1" max="1" step="0.01" v-studio-reset class="studio-range w-full" />
-          </template>
         </div>
         <StudioSection
           v-for="section in sections" :key="section.name"
-          v-show="section.controls.length || section.name === 'Color' || section.name === 'Output'"
+          v-show="sectionVisible(section)"
           :title="section.name"
-          :open="openSections[section.name]"
+          :open="(section.name === 'Motion' && inspectorTab === 'motion') || openSections[section.name]"
         >
           <div class="space-y-3">
             <div
@@ -1248,6 +1279,28 @@ async function generateVideo() {
               </template>
             </div>
 
+            <template v-if="section.name === 'Camera'">
+              <div data-control class="text-xs">
+                <label class="mb-1 block text-[11px] text-white/50">Projection</label>
+                <select v-model="projection" class="w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1.5 text-xs text-white/85">
+                  <option value="perspective" class="bg-neutral-900">Perspective</option>
+                  <option value="isometric" class="bg-neutral-900">Isometric</option>
+                </select>
+              </div>
+              <div data-control class="text-xs">
+                <label class="mb-1.5 flex justify-between text-[11px] text-white/50">
+                  <span>Pan X</span><span class="font-mono text-white/80">{{ panX.toFixed(2) }}</span>
+                </label>
+                <input v-model.number="panX" type="range" min="-1" max="1" step="0.01" v-studio-reset class="studio-range w-full" />
+              </div>
+              <div data-control class="text-xs">
+                <label class="mb-1.5 flex justify-between text-[11px] text-white/50">
+                  <span>Pan Y</span><span class="font-mono text-white/80">{{ panY.toFixed(2) }}</span>
+                </label>
+                <input v-model.number="panY" type="range" min="-1" max="1" step="0.01" v-studio-reset class="studio-range w-full" />
+              </div>
+            </template>
+
             <template v-if="section.name === 'Output'">
               <div data-control class="text-xs">
                 <label class="mb-1 block text-white/60">Dimensions</label>
@@ -1291,7 +1344,7 @@ async function generateVideo() {
         </StudioSection>
 
         <!-- Shared post-processing — applies to every effect, live + in exports. -->
-        <StudioSection title="Post" :open="openSections.Post">
+        <StudioSection v-show="inspectorTab === 'design'" title="Post" :open="openSections.Post">
           <div class="space-y-3">
             <label data-control class="flex items-center justify-between text-xs text-white/70">
               <span>Bloom</span><StudioSwitch v-model="post.bloom" />
@@ -1332,6 +1385,28 @@ async function generateVideo() {
               <input type="range" min="0" max="0.04" step="0.002" v-studio-reset v-model.number="post.blurAmount" class="studio-range w-full" /></div>
           </div>
         </StudioSection>
+
+        <!-- Sticky action footer: Save + Render, pinned bottom-right of the inspector column
+             (3D Studio pattern). mt-auto pins it when the column is short; sticky bottom-0
+             keeps it visible once the column scrolls. Visible on both inspector tabs. -->
+        <div class="sticky bottom-0 z-10 mt-auto border-t border-white/10 bg-[#0e0e10] pb-1 pt-2">
+          <p v-if="savedFlash" class="mb-1.5 text-right text-xs text-emerald-400/80">Saved ✓</p>
+          <div class="relative flex items-center justify-end gap-2">
+            <StudioButton variant="secondary" :disabled="baking" @click="saveNow">Save</StudioButton>
+            <StudioButton variant="primary" :disabled="baking" @pointerdown.stop @click="renderMenuOpen = !renderMenuOpen">
+              {{ baking ? 'Generating…' : 'Render ▾' }}
+            </StudioButton>
+            <div v-if="renderMenuOpen" @pointerdown.stop
+                 class="absolute bottom-full right-0 z-20 mb-1.5 w-44 overflow-hidden rounded-lg border border-white/10 bg-[#1a1a1e] py-1 shadow-xl">
+              <button type="button" class="block w-full px-3 py-1.5 text-left text-xs text-white/85 hover:bg-white/10"
+                      @click="renderMenuOpen = false; generateImage()">Render as image</button>
+              <button type="button" class="block w-full px-3 py-1.5 text-left text-xs text-white/85 hover:bg-white/10"
+                      @click="renderMenuOpen = false; generateVideo()">Render as video</button>
+              <button type="button" class="block w-full px-3 py-1.5 text-left text-xs text-white/85 hover:bg-white/10"
+                      @click="renderMenuOpen = false; sendToTimeline()">Send to timeline</button>
+            </div>
+          </div>
+        </div>
     </template>
   </StudioModalShell>
   <SpaceTypeEffectGalleryModal
