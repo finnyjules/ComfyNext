@@ -134,8 +134,14 @@ function onVibeRevert() {
 }
 
 function onVibeFocus(path: string) {
-  const el = document.querySelector(`[data-control-key="${path}"]`)
-  el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  // Motion controls live on the Motion inspector tab (v-show'd away on Design) — flip
+  // to the right tab first or the scroll silently no-ops on a hidden section.
+  const group = effect.value.controls.find(c => c.key === path)?.group
+  inspectorTab.value = group === 'Motion' ? 'motion' : 'design'
+  nextTick(() => {
+    const el = document.querySelector(`[data-control-key="${path}"]`)
+    el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  })
 }
 
 const loopDuration = ref(6)
