@@ -53,7 +53,7 @@ Pinned to the bottom of the controls column, visible on both tabs — same const
 
 ### 4. Error handling
 
-- Render/bake errors surface in the footer status line (replacing the transient saved flash), mirroring 3D Studio's `bakeError` placement.
+- Render/bake errors keep their existing surfaces (the preview-overlay `renderError` banner; the video-encode alert). The footer status line shows only the "Saved ✓" flash — Type Studio has no `bakeError`-style ref to mirror, and duplicating the preview banner in the footer would be noise.
 - The Render menu closes on selection, Escape, or outside click; Escape must not also close the studio when the menu is open (stop propagation, matching the existing modal Escape handling).
 
 ## Testing
