@@ -311,6 +311,17 @@ export function useInpaint() {
     return res.mask
   }
 
+  /** Multi-point SAM prompt (smart select): points are in the source image's
+   *  pixel space; label 1 = foreground, 0 = background/subtract. Returns a
+   *  mask data URL, white = selected. */
+  async function segmentPoints(image: string, points: { x: number; y: number; label: 0 | 1 }[]): Promise<string> {
+    const res = await $fetch<{ mask: string }>('/api/inpaint/segment', {
+      method: 'POST',
+      body: { image, points },
+    })
+    return res.mask
+  }
+
   /** Upload a data-URL image into ComfyUI's input dir; returns its filename.
    *  Mirrors useLocalLayerEditor.addImageFromFile's upload path. */
   async function uploadDataUrl(dataUrl: string, nameHint = 'inpaint'): Promise<string> {
@@ -323,5 +334,5 @@ export function useInpaint() {
     return (await res.json())?.name || safe
   }
 
-  return { busy, error, results, fluxFill, kontext, segment, text2img, loraGen, nanoGen, pose, removeBackground, uploadDataUrl }
+  return { busy, error, results, fluxFill, kontext, segment, segmentPoints, text2img, loraGen, nanoGen, pose, removeBackground, uploadDataUrl }
 }
