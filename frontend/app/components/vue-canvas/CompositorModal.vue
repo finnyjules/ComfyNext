@@ -42,7 +42,7 @@ import '~/lib/motion/paint' // registers the motion painter for paintLayerStack(
 import { bakeAndUpload, motionSourceKey, type MotionParams } from '~/lib/motion/bake'
 import { createSlateFixtureLayers, SLATE_FIXTURE_MOTION } from '~/data/dev-slate-fixture'
 import CompositorMotionTimeline from '~/components/vue-canvas/compositor/CompositorMotionTimeline.vue'
-import LayerMotionPanel from '~/components/vue-canvas/compositor/LayerMotionPanel.vue'
+import MotionLayerEditor from '~/components/vue-canvas/compositor/MotionLayerEditor.vue'
 import CompositorClonerPanel from '~/components/vue-canvas/compositor/CompositorClonerPanel.vue'
 import FillControl from '~/components/vue-canvas/compositor/FillControl.vue'
 import FillSwatch from '~/components/vue-canvas/compositor/FillSwatch.vue'
@@ -3337,6 +3337,36 @@ onUnmounted(() => {
         </div>
       </template>
 
+      <template v-else-if="inspectorTab === 'motion'">
+        <div class="px-4 py-3 border-b border-white/10 flex items-center gap-2">
+          <Play class="size-3.5 text-white/70" />
+          <span class="text-sm font-medium">{{ selectedLocal ? 'Layer motion' : 'Frame motion' }}</span>
+        </div>
+        <div class="p-4 flex-1 min-h-0 overflow-y-auto">
+          <MotionLayerEditor v-if="selectedLocal"
+            :animation="(selectedLocal as any).animation" :frame-duration="motionDoc.duration"
+            @update="(a) => setLocal(selectedLocal!.id, { animation: a } as any)"
+          />
+          <div v-else class="flex flex-col gap-3 text-xs text-white/55">
+            <p class="text-white/40 italic">Select a layer to animate it, or set the frame's timing below.</p>
+            <label class="flex items-center justify-between gap-2">Duration (s)
+              <input type="number" min="0.5" max="60" step="0.5" :value="motionDoc.duration"
+                class="w-16 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-1 py-0.5 text-white/90 outline-none"
+                @change="setMotion({ duration: Math.max(0.5, Number(($event.target as HTMLInputElement).value) || 4) })">
+            </label>
+            <label class="flex items-center justify-between gap-2">FPS
+              <input type="number" min="1" max="60" step="1" :value="motionDoc.fps"
+                class="w-16 bg-[#1a1a1a] border border-[#2a2a2a] rounded px-1 py-0.5 text-white/90 outline-none"
+                @change="setMotion({ fps: Math.max(1, Math.min(60, Number(($event.target as HTMLInputElement).value) || 30)) })">
+            </label>
+            <label class="flex items-center justify-between gap-2">Loop playback
+              <input type="checkbox" class="accent-white/80" :checked="motionDoc.loop ?? false"
+                @change="setMotion({ loop: ($event.target as HTMLInputElement).checked })">
+            </label>
+          </div>
+        </div>
+      </template>
+
       <!-- Brush tool options (freehand paint) -->
       <template v-else-if="brush.active.value">
         <div class="px-4 py-3 border-b border-white/10 flex items-center gap-2">
@@ -3978,14 +4008,6 @@ onUnmounted(() => {
             class="mt-1"
             :cloner="(selectedLocal as any).cloner"
             @update="(cl) => setLocal(selectedLocal!.id, { cloner: cl } as any)"
-          />
-
-          <!-- Animation (kinetic motion presets, previewed via the Design | Motion tabs) -->
-          <LayerMotionPanel
-            v-if="inspectorTab === 'motion'"
-            class="mt-3"
-            :animation="(selectedLocal as any).animation"
-            @update="(a) => setLocal(selectedLocal!.id, { animation: a } as any)"
           />
 
           <!-- Image AI actions -->
