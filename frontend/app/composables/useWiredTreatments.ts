@@ -4,7 +4,7 @@
  * mirrors how sailor_stackOrder lives in node.data.properties. Pure helpers so
  * the logic is unit-testable outside the SFC.
  */
-export interface WiredTreatment { maskedByKey?: string; showSource?: boolean }
+export interface WiredTreatment { maskedByKey?: string; showSource?: boolean; maskUrl?: string }
 export type WiredTreatments = Record<string, WiredTreatment>
 
 export function readWiredTreatments(node: any): WiredTreatments {
@@ -43,6 +43,22 @@ export function setWiredMaskShowSource(node: any, slot: number, show: boolean) {
   } else {
     const t = { ...cur[key] }
     delete t.showSource
+    if (Object.keys(t).length) cur[key] = t
+    else delete cur[key]
+  }
+  writeWiredTreatments(node, cur)
+}
+
+/** Set/clear the per-slot raster visibility mask (data URL, white = hidden).
+ *  Empty url clears the field, dropping the entry if nothing else remains. */
+export function setWiredMaskUrl(node: any, slot: number, url: string) {
+  const key = `w:${slot}`
+  const cur = { ...readWiredTreatments(node) }
+  if (url) {
+    cur[key] = { ...cur[key], maskUrl: url }
+  } else {
+    const t = { ...cur[key] }
+    delete t.maskUrl
     if (Object.keys(t).length) cur[key] = t
     else delete cur[key]
   }

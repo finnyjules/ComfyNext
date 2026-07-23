@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { planWiredMaskJobs } from '~/composables/wiredMaskPlan'
+import { setWiredMaskUrl, readWiredTreatments } from '~/composables/useWiredTreatments'
 
 describe('planWiredMaskJobs', () => {
   it('yields a job for a masked, connected slot', () => {
@@ -44,5 +45,32 @@ describe('planWiredMaskJobs', () => {
       [1, 2],
     )
     expect(jobs).toEqual([{ contentSlot: 1, sourceKey: 'w:2', showSource: false }])
+  })
+})
+
+describe('setWiredMaskUrl', () => {
+  const mkNode = () => ({ data: { properties: {} as any } })
+  it('sets a maskUrl on the slot key', () => {
+    const n = mkNode()
+    setWiredMaskUrl(n, 2, 'data:img/png;base64,AAAA')
+    expect(readWiredTreatments(n)['w:2']).toEqual({ maskUrl: 'data:img/png;base64,AAAA' })
+  })
+  it('preserves an existing maskedByKey on the same slot', () => {
+    const n = mkNode()
+    n.data.properties.sailor_wiredTreatments = { 'w:1': { maskedByKey: 'l:x', showSource: true } }
+    setWiredMaskUrl(n, 1, 'data:MASK')
+    expect(readWiredTreatments(n)['w:1']).toEqual({ maskedByKey: 'l:x', showSource: true, maskUrl: 'data:MASK' })
+  })
+  it('clears maskUrl and drops the entry when empty', () => {
+    const n = mkNode()
+    n.data.properties.sailor_wiredTreatments = { 'w:1': { maskUrl: 'data:MASK' } }
+    setWiredMaskUrl(n, 1, '')
+    expect(readWiredTreatments(n)['w:1']).toBeUndefined()
+  })
+  it('clears maskUrl but keeps the entry when other fields remain', () => {
+    const n = mkNode()
+    n.data.properties.sailor_wiredTreatments = { 'w:1': { maskUrl: 'data:MASK', maskedByKey: 'l:x' } }
+    setWiredMaskUrl(n, 1, '')
+    expect(readWiredTreatments(n)['w:1']).toEqual({ maskedByKey: 'l:x' })
   })
 })
