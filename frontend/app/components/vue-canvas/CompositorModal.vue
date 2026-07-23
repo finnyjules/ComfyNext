@@ -1331,7 +1331,7 @@ watch(hasAnimatedSlot, startLive)
 onMounted(startLive)
 onBeforeUnmount(stopLive)
 function drawWiredLayer(ctx: CanvasRenderingContext2D, layer: Layer, W: number, H: number) {
-  drawWiredImageLayer(ctx, wiredImageEls.value[layer.slot], layer, W, H)
+  drawWiredImageLayer(ctx, wiredImageEls.value[layer.slot], layer, W, H, wiredMaskEls.value[layer.slot] ?? null)
 }
 
 // ── Per-layer visibility & lock ──────────────────────────────────────────────
@@ -1705,6 +1705,21 @@ async function generateVideo() {
 }
 
 const wiredTreatments = computed(() => readWiredTreatments(compositor.value))
+
+// Decoded per-slot visibility masks, kept in sync with `wiredTreatments`. White =
+// hidden, in the wired image's pixel space (see drawWiredImageLayer).
+const wiredMaskEls = ref<Record<number, HTMLImageElement | null>>({})
+watch(wiredTreatments, (tr) => {
+  for (const [key, t] of Object.entries(tr)) {
+    const m = /^w:(\d+)$/.exec(key); if (!m) continue
+    const slot = Number(m[1]); const url = (t as any).maskUrl as string | undefined
+    if (!url) { if (wiredMaskEls.value[slot]) { const n = { ...wiredMaskEls.value }; delete n[slot]; wiredMaskEls.value = n } continue }
+    const cur = wiredMaskEls.value[slot]
+    if (cur && cur.dataset.url === url) continue
+    const im = new Image(); im.onload = () => { im.dataset.url = url; wiredMaskEls.value = { ...wiredMaskEls.value, [slot]: im }; renderStack() }
+    im.src = url
+  }
+}, { deep: true, immediate: true })
 
 // One StackItem builder shared by the live preview AND the motion bake, so the
 // baked frames render exactly what the editor shows (wired layers included).

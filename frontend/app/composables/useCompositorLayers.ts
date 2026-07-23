@@ -1610,12 +1610,28 @@ export function drawWiredImageLayer(
   layer: WiredTransform,
   W: number,
   H: number,
+  maskImg?: HTMLImageElement | HTMLCanvasElement | null,   // white = hidden, image pixel space
 ) {
   if (!img) return
   const iw = 'naturalWidth' in img ? img.naturalWidth : img.width
   const ih = 'naturalHeight' in img ? img.naturalHeight : img.height
   if (!iw || !ih) return
   if ('complete' in img && !img.complete) return   // undecoded <img> — skip, as before
+  // Apply the per-slot visibility mask ONCE (destination-out by the mask's alpha),
+  // then the cloner loop draws the masked pixels exactly as it drew the plain image.
+  let src: HTMLImageElement | HTMLCanvasElement = img
+  const mReady = maskImg && (!('complete' in maskImg) || maskImg.complete)
+    && (('naturalWidth' in maskImg ? maskImg.naturalWidth : maskImg.width) > 0)
+  if (mReady) {
+    const off = document.createElement('canvas'); off.width = iw; off.height = ih
+    const octx = off.getContext('2d')
+    if (octx) {
+      octx.drawImage(img, 0, 0, iw, ih)
+      octx.globalCompositeOperation = 'destination-out'
+      octx.drawImage(maskImg as CanvasImageSource, 0, 0, iw, ih)
+      src = off
+    }
+  }
   const cAspect = W / H, iAspect = iw / ih
   let fitW: number, fitH: number
   if (iAspect > cAspect) { fitW = W; fitH = W / iAspect } else { fitH = H; fitW = H * iAspect }
@@ -1630,7 +1646,7 @@ export function drawWiredImageLayer(
     const rot = layer.rotation + c.drot
     if (rot) ctx.rotate((rot * Math.PI) / 180)
     ctx.scale(layer.scale * c.dscale, layer.scale * c.dscale)
-    ctx.drawImage(img, -fitW / 2, -fitH / 2, fitW, fitH)
+    ctx.drawImage(src, -fitW / 2, -fitH / 2, fitW, fitH)
     ctx.restore()
   }
 }

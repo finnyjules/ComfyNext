@@ -441,7 +441,7 @@ function moveSelectedZ(dir: number) {
 // actual image) so the node and the Compositor modal render pixel-identically.
 // `wiredGeom` is kept only for hit-testing / handle placement.
 function drawWiredLayer(ctx: CanvasRenderingContext2D, l: WiredLayer, W: number, H: number) {
-  drawWiredImageLayer(ctx, wiredImages.value[l.url], l, W, H)
+  drawWiredImageLayer(ctx, wiredImages.value[l.url], l, W, H, wiredMasks.value[l.url] ?? null)
 }
 // Shared by the live preview AND the export/download so masking and z-order are
 // applied identically (drawn in logical W×H coords; export scales the ctx up).
@@ -509,6 +509,28 @@ watch(hasAnimatedSlot, startAnim)
 // wiredTreatments during setup, so a later `const` would throw a TDZ ReferenceError
 // (which cascaded into VueFlow and broke adding any node).
 const wiredTreatments = computed(() => readWiredTreatments({ data: props.data }))
+// Decoded per-slot visibility masks, kept in sync with `wiredTreatments`. This
+// file's wired-image cache (`wiredImages`) is keyed by `url` (not slot, since a
+// live studio slot's key is synthetic `live:<slot>` while a baked slot's key is
+// its real /view URL) — so the mask cache mirrors that and is keyed by url too,
+// resolved from `w:<slot+1>` via the same `wiredLayers`/slot mapping `resolveKey`
+// uses. White = hidden, in the wired image's pixel space (see drawWiredImageLayer).
+const wiredMasks = ref<Record<string, HTMLImageElement | null>>({})
+watch(wiredTreatments, (tr) => {
+  const urlBySlot = new Map(wiredLayers.value.map(l => [l.slot, l.url]))
+  for (const [key, t] of Object.entries(tr)) {
+    const m = /^w:(\d+)$/.exec(key); if (!m) continue
+    const slot = Number(m[1]) - 1 // persisted keys are 1-based (layerN), same as resolveKey
+    const url = urlBySlot.get(slot)
+    if (!url) continue
+    const maskUrl = (t as any).maskUrl as string | undefined
+    if (!maskUrl) { if (wiredMasks.value[url]) { const n = { ...wiredMasks.value }; delete n[url]; wiredMasks.value = n } continue }
+    const cur = wiredMasks.value[url]
+    if (cur && cur.dataset.url === maskUrl) continue
+    const im = new Image(); im.onload = () => { im.dataset.url = maskUrl; wiredMasks.value = { ...wiredMasks.value, [url]: im }; renderStack() }
+    im.src = maskUrl
+  }
+}, { deep: true, immediate: true })
 watch(
   () => [
     JSON.stringify(editor.localLayers.value), editor.editingId.value,
