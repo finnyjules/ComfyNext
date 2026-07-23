@@ -1403,7 +1403,7 @@ let playStartT = 0
 
 function tickPlayback(now: number) {
   if (!playing.value) return
-  const t = (playStartT + (now - playStartWall) / 1000) % motionDoc.value.duration
+  const t = (playStartT + (now - playStartWall) / 1000) % effectiveMotion.value.duration
   previewT.value = t
   renderStack()
   rafId = requestAnimationFrame(tickPlayback)
@@ -1421,7 +1421,7 @@ function pause() {
 }
 function scrubTo(t: number) {
   pause()
-  previewT.value = Math.max(0, Math.min(motionDoc.value.duration, t))
+  previewT.value = Math.max(0, Math.min(effectiveMotion.value.duration, t))
   renderStack()
 }
 function exitMotionPreview() {
@@ -3421,7 +3421,7 @@ onUnmounted(() => {
         </div>
         <div class="p-4 flex-1 min-h-0 overflow-y-auto">
           <MotionLayerEditor v-if="selectedLocal"
-            :animation="(selectedLocal as any).animation" :frame-duration="motionDoc.duration"
+            :animation="(selectedLocal as any).animation" :frame-duration="effectiveMotion.duration"
             :layer-kind="selectedLocal.kind"
             @update="(a) => setLocal(selectedLocal!.id, { animation: a } as any)"
           />
