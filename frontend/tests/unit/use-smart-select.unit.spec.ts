@@ -25,7 +25,7 @@ describe('useSmartSelect', () => {
     expect(s.failed.value).toBe(false)
   })
 
-  it('collapses refines during flight into ONE trailing re-run with the latest points', async () => {
+  it('collapses refines during flight, but the queued re-run is same-image so it hits the cache (no 2nd call)', async () => {
     const { calls, segment } = deferredSegment()
     const s = useSmartSelect({ segment })
     s.addPoints([{ x: 1, y: 1, label: 1 }])
@@ -37,11 +37,29 @@ describe('useSmartSelect', () => {
     expect(calls.length).toBe(1)
     calls[0]!.resolve(['data:mask1'])
     await p1; await tick()
-    expect(calls.length).toBe(2)              // exactly one queued re-run
-    expect(calls[1]!.points.length).toBe(3)   // with all accumulated points
-    calls[1]!.resolve(['data:mask2'])
-    await tick()
-    expect(s.maskUrls.value).toEqual(['data:mask2'])
+    // The queued re-run is for the SAME image — the API output doesn't depend
+    // on points, so it hits the per-image cache instead of firing a 2nd call.
+    expect(calls.length).toBe(1)
+    expect(s.maskUrls.value).toEqual(['data:mask1'])
+  })
+
+  it('caches candidates per image: same image after success skips the call, a different image refetches', async () => {
+    const { calls, segment } = deferredSegment()
+    const s = useSmartSelect({ segment })
+    s.addPoints([{ x: 1, y: 1, label: 1 }])
+    const p1 = s.refine('img-a')
+    calls[0]!.resolve(['data:mask-a'])
+    await p1
+
+    await s.refine('img-a')
+    expect(calls.length).toBe(1)
+    expect(s.maskUrls.value).toEqual(['data:mask-a'])
+
+    const p2 = s.refine('img-b')
+    expect(calls.length).toBe(2)
+    calls[1]!.resolve(['data:mask-b'])
+    await p2
+    expect(s.maskUrls.value).toEqual(['data:mask-b'])
   })
 
   it('failure sets failed and clears maskUrl (fallback-to-scribble)', async () => {

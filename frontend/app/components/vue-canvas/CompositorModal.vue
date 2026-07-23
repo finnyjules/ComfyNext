@@ -50,7 +50,7 @@ import PostEffectsControls from '~/components/vue-canvas/PostEffectsControls.vue
 import { isChainEffect } from '~/lib/compositor/postEffects'
 import {
   samplePointsFromStroke, layerAffine, invertAffine, applyAffine,
-  luminanceToAlpha, alphaBounds, cutoutPlacement, pickSamMask,
+  luminanceToAlpha, alphaBounds, cutoutPlacement, pickSamSegments,
   type Affine, type BBox, type Pt, type SamPoint, type MaskCandidate,
 } from '~/lib/compositor/smartSelect'
 import { paintPrimaryColor } from '~/lib/spacetype/fillTile'
@@ -2545,6 +2545,7 @@ function enterSmartMode() {
   smart.reset()
   smartCapture = null
   smartRefinedCanvas = null
+  smartCandCache = null
   smartHasScribble.value = false
   const ctx = smartScribbleCtx()
   if (ctx && smartScribbleCanvas) ctx.clearRect(0, 0, smartScribbleCanvas.width, smartScribbleCanvas.height)
@@ -2558,6 +2559,7 @@ function exitSmartMode() {
   smart.reset()
   smartCapture = null
   smartRefinedCanvas = null
+  smartCandCache = null
   smartHasScribble.value = false
   smartProjCache = null
   smartBnd.value = null
@@ -2611,41 +2613,56 @@ async function onSmartPointerUp(e: PointerEvent) {
   await smart.refine(cap.dataUrl)
 }
 
-// Refined candidate masks arrived → meta/sam-2 returns SEVERAL binary
-// individual_masks candidates for one point prompt (subpart/part/whole);
-// pick the one that actually contains the foreground prompt points, then
-// normalize it (SAM returns opaque white-on-black; we composite by ALPHA)
-// into image space and re-project.
-watch(() => smart.maskUrls.value, async (urls) => {
+// Refined candidate masks arrived, or the prompt points changed → this SAM
+// deployment is segment-everything (individual_masks = EVERY segment in the
+// image, independent of the points). Each foreground point claims the
+// smallest segment containing it, background points subtract theirs, and the
+// winners union into the refined mask (pickSamSegments). Candidates are
+// decoded once per urls array — a points-only change just re-picks from the
+// cached decode, no re-fetch/re-decode.
+let smartCandCache: { key: string; cands: MaskCandidate[]; imgs: HTMLImageElement[] } | null = null
+watch([() => smart.maskUrls.value, () => smart.points.value], async ([urls]) => {
   if (!urls?.length || !smartCapture) { smartRefinedCanvas = null; smartInvalidateProjection(); return }
   try {
     const cap = smartCapture
-    const imgs = await Promise.all(urls.slice(0, 4).map(u => loadImage(u)))
-    const candidates: MaskCandidate[] = imgs.map(img => {
-      const c = document.createElement('canvas')
-      c.width = img.naturalWidth || 1; c.height = img.naturalHeight || 1
-      const ctx = c.getContext('2d')!
-      ctx.drawImage(img, 0, 0)
-      const id = ctx.getImageData(0, 0, c.width, c.height)
-      return { data: id.data, w: c.width, h: c.height }
-    })
+    const key = urls.join('|')
+    if (!smartCandCache || smartCandCache.key !== key) {
+      const imgs = await Promise.all(urls.slice(0, 12).map(u => loadImage(u)))
+      const cands: MaskCandidate[] = imgs.map(img => {
+        const c = document.createElement('canvas')
+        c.width = img.naturalWidth || 1; c.height = img.naturalHeight || 1
+        const ctx = c.getContext('2d')!
+        ctx.drawImage(img, 0, 0)
+        const id = ctx.getImageData(0, 0, c.width, c.height)
+        return { data: id.data, w: c.width, h: c.height }
+      })
+      smartCandCache = { key, cands, imgs }
+    }
+    const { cands, imgs } = smartCandCache
     const fg = smart.points.value.filter(p => p.label === 1)
-    const idx = pickSamMask(candidates, fg, cap.capW, cap.capH)
-    if (idx < 0) {
-      // No candidate qualifies (e.g. every mask misses the prompt points) —
-      // leave smartRefinedCanvas null so the raw scribble stays the selection.
-      // This is silent on purpose: the API call itself succeeded, so we do
-      // NOT set smart.failed (that's reserved for actual request failures).
+    const bg = smart.points.value.filter(p => p.label === 0)
+    const idxs = pickSamSegments(cands, fg, bg, cap.capW, cap.capH)
+    if (!idxs.length) {
+      // No segment qualifies for the current points — leave smartRefinedCanvas
+      // null so the raw scribble stays the selection. This is silent on
+      // purpose: the API call itself succeeded, so we do NOT set smart.failed
+      // (that's reserved for actual request failures).
       smartRefinedCanvas = null
     } else {
-      const win = imgs[idx]!
       const c = document.createElement('canvas')
       c.width = cap.capW; c.height = cap.capH
       const ctx = c.getContext('2d')!
-      ctx.drawImage(win, 0, 0, c.width, c.height)
-      const id = ctx.getImageData(0, 0, c.width, c.height)
-      luminanceToAlpha(id.data)
-      ctx.putImageData(id, 0, 0)
+      for (const idx of idxs) {
+        const win = imgs[idx]!
+        const t = document.createElement('canvas')
+        t.width = cap.capW; t.height = cap.capH
+        const tctx = t.getContext('2d')!
+        tctx.drawImage(win, 0, 0, t.width, t.height)
+        const id = tctx.getImageData(0, 0, t.width, t.height)
+        luminanceToAlpha(id.data)
+        tctx.putImageData(id, 0, 0)
+        ctx.drawImage(t, 0, 0)   // source-over unions the alphas
+      }
       smartRefinedCanvas = c
     }
   } catch {

@@ -105,26 +105,28 @@ export function alphaBounds(data: Uint8ClampedArray, w: number, h: number, thres
 
 export interface MaskCandidate { data: Uint8ClampedArray; w: number; h: number }
 
-/** Pick the best SAM candidate mask: the LARGEST one that actually contains
- *  the foreground prompt points as white (SAM multimask returns subpart/part/
- *  whole — the scribble marks the whole object) while rejecting degenerate
- *  near-full-image masks (inverse/background candidates). Points are in the
+/** Assign each foreground point to the SMALLEST segment that contains it
+ *  (segment-everything returns background/object/part segments — smallest
+ *  containing = most specific), union the winners, and subtract the segments
+ *  claimed the same way by background (label-0) points. Segments covering
+ *  more than maxWhiteFrac of the image (default 0.5) are never assignable —
+ *  that excludes background sheets, so a stray point off the object is simply
+ *  ignored rather than selecting the whole background. Points are in the
  *  space of the image SENT to SAM; candidates may differ in resolution, so
- *  containment samples at the point's fractional position. Returns the index
- *  into `candidates`, or -1 if none qualifies. */
-export function pickSamMask(
+ *  containment samples at the point's fractional position. Returns the sorted
+ *  candidate indices to UNION, empty if nothing qualifies. */
+export function pickSamSegments(
   candidates: MaskCandidate[],
   fgPoints: Pt[],
+  bgPoints: Pt[],
   imgW: number,
   imgH: number,
-  opts: { minPointHit?: number; maxWhiteFrac?: number } = {},
-): number {
-  const minPointHit = opts.minPointHit ?? 0.7
-  const maxWhiteFrac = opts.maxWhiteFrac ?? 0.92
-  if (!fgPoints.length) return -1
+  opts: { maxWhiteFrac?: number } = {},
+): number[] {
+  const maxWhiteFrac = opts.maxWhiteFrac ?? 0.5
 
-  let bestIdx = -1
-  let bestWhiteFrac = -1
+  const whiteFracs: number[] = []
+  const isWhiteByCand: Uint8Array[] = []
   for (let i = 0; i < candidates.length; i++) {
     const { data, w, h } = candidates[i]!
     const total = w * h
@@ -136,24 +138,42 @@ export function pickSamMask(
       const a = data[o + 3]! / 255
       if (lum * a > 127) { isWhite[p] = 1; whiteCount++ }
     }
-    const whiteFrac = total > 0 ? whiteCount / total : 0
-
-    let hits = 0
-    for (const pt of fgPoints) {
-      let px = Math.round((pt.x / imgW) * w)
-      let py = Math.round((pt.y / imgH) * h)
-      if (px < 0) px = 0; if (px >= w) px = w - 1
-      if (py < 0) py = 0; if (py >= h) py = h - 1
-      if (isWhite[py * w + px]) hits++
-    }
-    const pointHit = hits / fgPoints.length
-
-    if (pointHit >= minPointHit && whiteFrac <= maxWhiteFrac && whiteFrac > bestWhiteFrac) {
-      bestWhiteFrac = whiteFrac
-      bestIdx = i
-    }
+    whiteFracs.push(total > 0 ? whiteCount / total : 0)
+    isWhiteByCand.push(isWhite)
   }
-  return bestIdx
+
+  const hits = (pt: Pt, i: number): boolean => {
+    const { w, h } = candidates[i]!
+    let px = Math.round((pt.x / imgW) * w)
+    let py = Math.round((pt.y / imgH) * h)
+    if (px < 0) px = 0; if (px >= w) px = w - 1
+    if (py < 0) py = 0; if (py >= h) py = h - 1
+    return isWhiteByCand[i]![py * w + px] === 1
+  }
+
+  // Smallest qualifying (whiteFrac ≤ max) candidate that contains the point;
+  // lower index wins ties (strict-less comparison, scanned in index order).
+  const smallestFor = (pt: Pt): number => {
+    let best = -1
+    let bestFrac = Infinity
+    for (let i = 0; i < candidates.length; i++) {
+      if (whiteFracs[i]! > maxWhiteFrac) continue
+      if (!hits(pt, i)) continue
+      if (whiteFracs[i]! < bestFrac) { bestFrac = whiteFracs[i]!; best = i }
+    }
+    return best
+  }
+
+  const winners = new Set<number>()
+  for (const pt of fgPoints) {
+    const idx = smallestFor(pt)
+    if (idx >= 0) winners.add(idx)
+  }
+  for (const pt of bgPoints) {
+    const idx = smallestFor(pt)
+    if (idx >= 0) winners.delete(idx)
+  }
+  return Array.from(winners).sort((a, b) => a - b)
 }
 
 /** Layer-model transform for a crop of the source image: where an image-space

@@ -18,12 +18,15 @@ import { buildSamInput, type SamRequestBody } from '../../utils/samInput'
  *   { mask: string }              — legacy single-point path (xPx/yPx, no points):
  *                                    one data URL, WHITE = selected, BLACK = keep.
  *   { mask: string, masks: string[] } — multi-point (smart-select) path: `masks`
- *                                    holds up to 4 candidate data URLs (SAM-2's
- *                                    individual_masks — combined_mask is a
- *                                    visualization, not usable as a mask). The
- *                                    client picks the candidate that actually
- *                                    contains the prompt points (see
- *                                    lib/compositor/smartSelect.pickSamMask).
+ *                                    holds up to 12 candidate data URLs — SAM-2's
+ *                                    individual_masks, i.e. EVERY segment found in
+ *                                    the image (combined_mask is a colored
+ *                                    visualization, never usable as a mask, and is
+ *                                    used only as a last-resort fallback when
+ *                                    individual_masks is missing/empty). The client
+ *                                    assigns each prompt point to its own segment
+ *                                    and unions the winners (see
+ *                                    lib/compositor/smartSelect.pickSamSegments).
  *                                    `mask` is `masks[0]` for back-compat.
  *
  * NOTE: SAM model refs on Replicate change and vary by account access. The model
@@ -31,6 +34,15 @@ import { buildSamInput, type SamRequestBody } from '../../utils/samInput'
  * account uses a different point-prompt SAM, adjust just those two. The client
  * (useInpaint.segment) falls back to manual brushing if this route errors, so an
  * unconfigured model degrades gracefully rather than blocking inpainting.
+ *
+ * The currently deployed SAM_MODEL (meta/sam-2) is the AUTOMATIC
+ * segment-everything variant on Replicate: its input schema has no point
+ * prompts, so point_coords/point_labels built above are silently ignored by
+ * the model (harmless to still send — and correct again if a promptable SAM
+ * deployment is swapped in later via SAM_MODEL). individual_masks is the full
+ * set of segments the model found (background/object/part), independent of
+ * any points; client-side per-point assignment is what makes the prompt
+ * points matter (verified live).
  */
 const SAM_MODEL = 'meta/sam-2'
 
@@ -47,11 +59,13 @@ export default defineEventHandler(async (event) => {
   const o = (out && typeof out === 'object') ? (out as any) : null
 
   if (body.points?.length) {
-    // Smart-select multi-point path: meta/sam-2 returns SEVERAL binary
-    // individual_masks candidates for one point prompt (subpart/part/whole);
-    // combined_mask is a visualization, not usable as a mask. Collect every
-    // individual_masks URL, then the legacy single-URL resolution as a
-    // trailing fallback, and let the client pick the right one (pickSamMask).
+    // Smart-select multi-point path: this SAM deployment is segment-everything
+    // (see header note) — individual_masks is EVERY segment found, regardless
+    // of the points sent. Candidates are individual_masks ONLY; the legacy
+    // single-URL resolution (combined_mask etc.) is used ONLY when
+    // individual_masks is missing/empty — never appended alongside real
+    // segments (the combined_mask visualization poisoned picking when mixed
+    // in as a fallback candidate; verified live).
     const candidateUrls: string[] = []
     if (o && Array.isArray(o.individual_masks)) {
       for (const m of o.individual_masks) {
@@ -59,11 +73,13 @@ export default defineEventHandler(async (event) => {
         if (u) candidateUrls.push(u)
       }
     }
-    const fallbackUrl = firstOutputUrl(out) || (o && (firstOutputUrl(o.combined_mask) || firstOutputUrl(o.masks))) || null
-    if (fallbackUrl && !candidateUrls.includes(fallbackUrl)) candidateUrls.push(fallbackUrl)
+    if (!candidateUrls.length) {
+      const fallbackUrl = firstOutputUrl(out) || (o && (firstOutputUrl(o.combined_mask) || firstOutputUrl(o.masks))) || null
+      if (fallbackUrl) candidateUrls.push(fallbackUrl)
+    }
     if (!candidateUrls.length) throw createError({ statusCode: 502, message: 'Segmentation returned no mask' })
 
-    const masks = await Promise.all(candidateUrls.slice(0, 4).map(u => fetchAsDataUrl(u)))
+    const masks = await Promise.all(candidateUrls.slice(0, 12).map(u => fetchAsDataUrl(u)))
     return { mask: masks[0]!, masks }
   }
 
