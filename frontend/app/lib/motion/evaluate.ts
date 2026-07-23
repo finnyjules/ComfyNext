@@ -75,7 +75,13 @@ const u = (p: Partial<UnitState>): UnitState => ({ ...IDENTITY_UNIT, ...p })
 
 /** Per-preset param defaults — the single source of truth. The catalog's
  *  param schemas (data/kinetic-presets.ts) read their defaults from here. */
-export const PRESET_PARAM_DEFAULTS: Record<string, Record<string, number>> = {}
+export const PRESET_PARAM_DEFAULTS: Record<string, Record<string, number>> = {
+  'wiggle':          { amplitude: 0.15, cycles: 2 },
+  'card-flip-h':     { overshoot: 1 },
+  'card-flip-v':     { overshoot: 1 },
+  'card-flip-h-out': { overshoot: 1 },
+  'card-flip-v-out': { overshoot: 1 },
+}
 
 export function resolveParams(spec: LayerAnimSpec): Record<string, number> {
   return { ...(PRESET_PARAM_DEFAULTS[spec.presetId] ?? {}), ...(spec.params ?? {}) }
@@ -100,6 +106,14 @@ const IN_EVAL: Record<string, { fn: UnitEval; ease: string }> = {
     dy: (seeded(i, 2) - 0.5) * 0.4 * (1 - e),
     opacity: e > 0 ? 1 : 0,
   }) },
+  'card-flip-h': { ease: 'power2.out', fn: (e, _i, _n, p) => u({
+    scaleX: Math.max(0.001, e + (p.overshoot ?? 1) * 0.2 * Math.sin(e * Math.PI)),
+    opacity: Math.min(1, e * 3),
+  }) },
+  'card-flip-v': { ease: 'power2.out', fn: (e, _i, _n, p) => u({
+    scaleY: Math.max(0.001, e + (p.overshoot ?? 1) * 0.2 * Math.sin(e * Math.PI)),
+    opacity: Math.min(1, e * 3),
+  }) },
 }
 
 const OUT_EVAL: Record<string, { fn: UnitEval; ease: string }> = {
@@ -121,6 +135,14 @@ const OUT_EVAL: Record<string, { fn: UnitEval; ease: string }> = {
     dy: (seeded(i, 4) - 0.5) * 0.4 * e,
     opacity: 1 - e,
   }) },
+  'card-flip-h-out': { ease: 'power2.in', fn: (e, _i, _n, p) => u({
+    scaleX: Math.max(0.001, (1 - e) + (p.overshoot ?? 1) * 0.2 * Math.sin((1 - e) * Math.PI)),
+    opacity: Math.min(1, (1 - e) * 3),
+  }) },
+  'card-flip-v-out': { ease: 'power2.in', fn: (e, _i, _n, p) => u({
+    scaleY: Math.max(0.001, (1 - e) + (p.overshoot ?? 1) * 0.2 * Math.sin((1 - e) * Math.PI)),
+    opacity: Math.min(1, (1 - e) * 3),
+  }) },
 }
 
 // Loop: fn(phase 0..1, i) — periodic by construction (sin/cos of 2π·phase).
@@ -139,6 +161,17 @@ const LOOP_EVAL: Record<string, LoopEval> = {
     return u({ dx: (seeded(i * 131 + tick, 5) - 0.5) * 0.12, dy: (seeded(i * 131 + tick, 6) - 0.5) * 0.06 })
   },
   'marquee':   (p) => u({ dx: (1 - 2 * p) * 2 }), // +2 → −2 sweep in unit-box heights (the layer's own box drives the distance)
+  'wiggle': (p, i, _n, prm) => {
+    const amp = prm.amplitude ?? 0.15
+    const k = Math.max(1, Math.round(prm.cycles ?? 2))
+    const ph1 = seeded(i, 11) * TWO_PI, ph2 = seeded(i, 12) * TWO_PI, ph3 = seeded(i, 13) * TWO_PI
+    const wob = (phase: number) => Math.sin(k * p * TWO_PI + phase) + 0.5 * Math.sin(2 * k * p * TWO_PI + phase * 1.7)
+    return u({
+      dx: amp * 0.35 * wob(ph1),
+      dy: amp * 0.35 * wob(ph2),
+      rotation: amp * 40 * wob(ph3) * 0.5,
+    })
+  },
 }
 
 export const SUPPORTED_IN_IDS = Object.keys(IN_EVAL)
