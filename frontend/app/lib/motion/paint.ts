@@ -31,6 +31,16 @@ export function identityState(): LayerMotionState {
   return { visible: true, layer: IDENTITY_UNIT }
 }
 
+/** Width-normalized height of the layer's unit box (the spatial unit presets
+ *  move in). Shared by composeEffectiveLayer and the copies painter. */
+function layerBoxH(layer: LocalLayer): number {
+  return 'h' in layer && typeof (layer as { h?: number }).h === 'number'
+    ? (layer as { h: number }).h
+    : 'bbox' in layer
+    ? (layer as { bbox: { h: number }; scale?: number }).bbox.h * ((layer as { scale?: number }).scale || 1)
+    : layer.kind === 'text' ? (layer as TextLayer).fontSize : 0.1
+}
+
 /** Fold whole-layer motion into a layer clone (transform + opacity).
  *  Keyframe (state.layer) dx/dy are canvas-normalized; per-unit dx/dy for
  *  NON-text layers use the layer's own box height (width-normalized, like all
@@ -38,11 +48,7 @@ export function identityState(): LayerMotionState {
  *  consumed ×H by the renderer, so dy converts via W/H to stay aspect-true. */
 export function composeEffectiveLayer(layer: LocalLayer, st: LayerMotionState, W: number, H: number): LocalLayer {
   const whole = st.units && st.units.length === 1 ? st.units[0] : null
-  const boxH = 'h' in layer && typeof (layer as { h?: number }).h === 'number'
-    ? (layer as { h: number }).h
-    : 'bbox' in layer
-    ? (layer as { bbox: { h: number }; scale?: number }).bbox.h * ((layer as { scale?: number }).scale || 1)
-    : layer.kind === 'text' ? (layer as TextLayer).fontSize : 0.1
+  const boxH = layerBoxH(layer)
   const k = st.layer
   const dx = k.dx + (whole ? whole.dx * boxH : 0)
   const dy = k.dy + (whole ? whole.dy * boxH * (W / H) : 0) // boxH is width-normalized; y is consumed ×H
@@ -98,11 +104,13 @@ export function drawLayerWithMotion(
     needsClipRestore = true
   }
   const scale = motionScale(st)
-  const needScale = Math.abs(scale - 1) > 1e-4
+  const sx = scale * (whole?.scaleX ?? 1)
+  const sy = scale * (whole?.scaleY ?? 1)
+  const needScale = Math.abs(sx - 1) > 1e-4 || Math.abs(sy - 1) > 1e-4
   if (needScale) {
     ctx.save()
     ctx.translate(eff.x * W, eff.y * H)
-    ctx.scale(Math.max(0.001, scale), Math.max(0.001, scale))
+    ctx.scale(Math.max(0.001, sx), Math.max(0.001, sy))
     ctx.translate(-eff.x * W, -eff.y * H)
   }
   // At-rest units are the FROZEN IDENTITY_UNIT by reference (hold phase and
@@ -117,6 +125,37 @@ export function drawLayerWithMotion(
     drawAnimatedTextLayer(ctx, eff as TextLayer, W, H, st.units)
   } else {
     drawLocalLayer(ctx, eff, W, H, effMask)
+  }
+  // Copy passes (echo trails, tiling): each copy re-draws the effective layer
+  // offset/scaled/faded relative to it. dx/dy are unit-box heights; boxH is
+  // width-normalized so both axes convert via ×boxH×W px (see
+  // composeEffectiveLayer's dy note — y positions are consumed ×H, so the
+  // canvas-normalized dy is boxH·(W/H)·copy.dy, i.e. dyPx = copy.dy·boxH·W).
+  if (whole?.copies?.length && eff.kind !== 'text') {
+    const boxH = layerBoxH(layer)
+    for (const copy of whole.copies) {
+      ctx.save()
+      ctx.globalAlpha *= Math.max(0, Math.min(1, copy.opacity))
+      ctx.translate(eff.x * W, eff.y * H)
+      if (copy.rotation) ctx.rotate((copy.rotation * Math.PI) / 180)
+      ctx.scale(Math.max(0.001, copy.scale), Math.max(0.001, copy.scale))
+      ctx.translate(-eff.x * W, -eff.y * H)
+      const shifted = { ...eff, x: eff.x + copy.dx * boxH, y: eff.y + copy.dy * boxH * (W / H) }
+      drawLocalLayer(ctx, shifted, W, H, effMask)
+      ctx.restore()
+    }
+  } else if (whole?.copies?.length && eff.kind === 'text' && (!st.units || st.units.length === 1)) {
+    // Whole-layer text (single unit) gets copies too; per-char text does not (v1).
+    const boxH = layerBoxH(layer)
+    for (const copy of whole.copies) {
+      ctx.save()
+      ctx.globalAlpha *= Math.max(0, Math.min(1, copy.opacity))
+      ctx.translate(eff.x * W, eff.y * H)
+      ctx.scale(Math.max(0.001, copy.scale), Math.max(0.001, copy.scale))
+      ctx.translate(-eff.x * W, -eff.y * H)
+      drawLocalLayer(ctx, { ...eff, x: eff.x + copy.dx * boxH, y: eff.y + copy.dy * boxH * (W / H) }, W, H, effMask)
+      ctx.restore()
+    }
   }
   if (needScale) ctx.restore()
   if (needsClipRestore) ctx.restore()
