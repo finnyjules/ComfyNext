@@ -1575,6 +1575,7 @@ const lastRenderKey = computed<string | null>(() =>
 const renderStale = computed(() => lastRenderKey.value !== staticSourceKey())
 const rendering = ref(false)
 const renderError = ref('')
+const encoding = ref(false)
 
 // Render the static unified stack to a PNG blob at W×H (no motion, no preview skip).
 async function renderStaticComposite(W: number, H: number): Promise<Blob | null> {
@@ -1594,7 +1595,7 @@ const hasMotion = computed(() => localLayers.value.some((l: any) => l.animation)
 // ── outputs (mirror Gradient Studio's generateImage/generateVideo idiom) ────
 async function generateImage() {
   const node = compositor.value
-  if (!node || rendering.value) return
+  if (!node || rendering.value || baking.value || encoding.value) return
   rendering.value = true
   renderError.value = ''
   try {
@@ -1623,7 +1624,8 @@ async function generateImage() {
 
 async function generateVideo() {
   const node = compositor.value
-  if (!node || rendering.value || baking.value || !hasMotion.value) return
+  if (!node || rendering.value || baking.value || encoding.value || !hasMotion.value) return
+  encoding.value = true
   renderError.value = ''
   try {
     await bakeMotion()
@@ -1647,6 +1649,8 @@ async function generateVideo() {
   } catch (err: any) {
     console.error('[compositor generate]', err)
     renderError.value = err?.message || 'Video generate failed'
+  } finally {
+    encoding.value = false
   }
 }
 
@@ -4235,14 +4239,14 @@ onUnmounted(() => {
         <span v-if="renderError" class="text-[11px] text-rose-400 min-w-0 flex-1 truncate" :title="renderError">{{ renderError }}</span>
         <button
           class="h-8 px-3 rounded text-[12px] font-medium flex items-center gap-1.5 cursor-pointer disabled:opacity-50 bg-white/[0.06] hover:bg-white/12 text-white/85"
-          :disabled="rendering || baking || !hasMotion"
+          :disabled="rendering || baking || encoding || !hasMotion"
           :title="hasMotion ? 'Bake the motion timeline and generate a video artifact' : 'Add motion to a layer first (Motion tab)'"
           @click="generateVideo">
-          {{ baking ? `Baking ${Math.round((bakeProgress ?? 0) * 100)}%` : 'Generate as video' }}
+          {{ baking ? `Baking ${Math.round((bakeProgress ?? 0) * 100)}%` : encoding ? 'Encoding…' : 'Generate as video' }}
         </button>
         <button
           class="h-8 px-3 rounded text-[12px] font-medium flex items-center gap-1.5 cursor-pointer disabled:opacity-50 bg-white hover:bg-white/90 text-neutral-900"
-          :disabled="rendering || baking"
+          :disabled="rendering || baking || encoding"
           title="Render the frame and generate an image artifact"
           @click="generateImage">
           <Play class="size-3" />
