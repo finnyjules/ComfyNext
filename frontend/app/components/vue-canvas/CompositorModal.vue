@@ -10,7 +10,7 @@ import {
   type TextLayer, type RectLayer, type EllipseLayer, type LocalLayer, type StackItem, type CornerPin, type BrushLayer, type Paint,
   drawLocalLayer, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages, paintLayerStack, layerMaskRef, localLayerBox, createBrushLayer,
 } from '~/composables/useCompositorLayers'
-import { readWiredTreatments, setWiredMask, setWiredMaskShowSource, maskCandidateKeys } from '~/composables/useWiredTreatments'
+import { readWiredTreatments, setWiredMask, setWiredMaskShowSource, setWiredMaskUrl, maskCandidateKeys } from '~/composables/useWiredTreatments'
 import { useLocalLayerEditor, resizableKind } from '~/composables/useLocalLayerEditor'
 import {
   allGroupIds, childGroupIds, layersInGroup, groupDisplayName, isDescendantOrSelf,
@@ -25,7 +25,7 @@ import AgentProgress from '~/components/agent/AgentProgress.vue'
 import AgentSweep from '~/components/agent/AgentSweep.vue'
 import { useVectorPen, buildPathLayerFromAnchors } from '~/composables/useVectorPen'
 import { useBrushPaint } from '~/composables/useBrushPaint'
-import { toWidthNorm, brushBoxFromStrokes } from '~/lib/compositor/brushStamp'
+import { toWidthNorm, brushBoxFromStrokes, strokeRadiusPx, type PaintStroke } from '~/lib/compositor/brushStamp'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
 import { useVectorNodeEdit } from '~/composables/useVectorNodeEdit'
 import { generateVectorFromText, vectorizeImage, urlToDataUrl } from '~/composables/useVectorAi'
@@ -49,7 +49,7 @@ import FillSwatch from '~/components/vue-canvas/compositor/FillSwatch.vue'
 import PostEffectsControls from '~/components/vue-canvas/PostEffectsControls.vue'
 import { isChainEffect } from '~/lib/compositor/postEffects'
 import {
-  samplePointsFromStroke, layerAffine, invertAffine, applyAffine,
+  samplePointsFromStroke, layerAffine, invertAffine, applyAffine, wiredImageAffine,
   luminanceToAlpha, alphaBounds, cutoutPlacement, pickSamSegments,
   type Affine, type BBox, type Pt, type SamPoint, type MaskCandidate,
 } from '~/lib/compositor/smartSelect'
@@ -748,7 +748,13 @@ const selectedSlot = ref<number | null>(null)
 const selected = computed(() => layers.value.find(l => l.slot === selectedSlot.value) ?? null)
 function selectImage(slot: number) { selectedSlot.value = slot }
 watch(selectedLocalId, (id) => { if (id != null) selectedSlot.value = null })
-watch(selectedSlot, (s) => { if (s != null) selectLocal(null) })
+// Any slot change (including deselect) invalidates the live brush-mask canvas —
+// it's seeded per-slot from that slot's maskUrl and must not be reused stale.
+watch(selectedSlot, (s) => { wiredBrushMask = null; if (s != null) selectLocal(null) })
+// Leaving Brush entirely, or flipping to Paint mode, also drops the live mask
+// canvas so re-entering Mask mode re-seeds it from the persisted maskUrl.
+watch(brush.active, (on) => { if (!on) wiredBrushMask = null })
+watch(brush.mode, (m) => { if (m === 'paint') wiredBrushMask = null })
 
 // ── Unified z-order stack (mirrors ArtifactFrameNode's model) ───────────────
 // Keys: `w:<slot>` for a wired image, `l:<id>` for a local layer. Persisted on
@@ -1205,7 +1211,7 @@ function onCanvasPointerMoveCapture(e: PointerEvent) {
 function onCanvasPointerUpCapture(e: PointerEvent) {
   if (smartActive.value) { void onSmartPointerUp(e); return }
   if (genActive.value && genDraw.value) { onGenPointerUp(e); return }
-  if (brush.active.value) { onBrushPointerUp(); return }
+  if (brush.active.value) { void onBrushPointerUp(); return }
   if (pen.active.value) onPenPointerUp()
   else if (nodeEdit.active.value) onNodePointerUp()
   else if (marquee.value) endMarquee(e.shiftKey)
@@ -2145,6 +2151,55 @@ function enterGenMode() {
 function exitGenMode() { genActive.value = false; genCursor.on = false; clearGenMask(); genResult.value = null }
 function toggleGenMode() { genActive.value ? exitGenMode() : enterGenMode() }
 
+// ── Wired-image mask target: resolves a selected wired image + its live,
+// per-slot brush-mask canvas (capped image px), used by Brush Mask mode below. ─
+// The wired image slot currently eligible as a brush mask target (a selected
+// wired image with a ready element), else null.
+function selectedWiredImage(): { slot: number; el: HTMLImageElement | HTMLCanvasElement } | null {
+  const slot = selectedSlot.value
+  if (slot == null) return null
+  const el = wiredImageEls.value[slot]
+  return el ? { slot, el } : null
+}
+function compositorLayer(slot: number): Layer | undefined {
+  return layers.value.find(l => l.slot === slot)
+}
+// Live per-slot mask canvas (capped image px) seeded from the slot's maskUrl.
+// Reset (see the selectedSlot/brush watchers above) whenever the target slot,
+// or brush activation, changes — so a stale slot's canvas is never reused.
+let wiredBrushMask: { slot: number; canvas: HTMLCanvasElement } | null = null
+async function ensureWiredBrushMask(slot: number, el: HTMLImageElement | HTMLCanvasElement): Promise<HTMLCanvasElement> {
+  if (wiredBrushMask?.slot === slot) return wiredBrushMask.canvas
+  const iw = ('naturalWidth' in el ? el.naturalWidth : el.width) || 1
+  const ih = ('naturalHeight' in el ? el.naturalHeight : el.height) || 1
+  const { w: capW, h: capH } = capDims(iw, ih)
+  const c = document.createElement('canvas'); c.width = capW; c.height = capH
+  const existing = wiredTreatments.value[`w:${slot}`]?.maskUrl
+  if (existing) { try { const im = await loadImage(existing); c.getContext('2d')!.drawImage(im, 0, 0, capW, capH) } catch { /* start empty */ } }
+  wiredBrushMask = { slot, canvas: c }
+  return c
+}
+// Paint a width-normalized brush stroke into a wired image's mask canvas
+// (image px). Plain stroke → WHITE (hide); erase stroke → destination-out
+// (restore). `artW` is the artboard width the stroke's points/radius are
+// normalized against (canvasDisplay.w); `aff` maps artboard px → image px.
+function stampWidthNormStrokeToMask(mctx: CanvasRenderingContext2D, s: PaintStroke, aff: Affine, artW: number) {
+  const pts = s.points.map(p => applyAffine(aff, { x: p.x * artW, y: p.y * artW /* width-normalized: both axes ÷ artboard width */ }))
+  if (!pts.length) return
+  // width-normalized radius → artboard px (strokeRadiusPx) → image px, scaled
+  // by the affine's uniform scale factor (|aff| via a/b since rotation preserves length).
+  const scale = Math.hypot(aff.a, aff.b)
+  const r = strokeRadiusPx(s, artW) * scale
+  mctx.save()
+  mctx.globalCompositeOperation = s.erase ? 'destination-out' : 'source-over'
+  mctx.fillStyle = '#fff'; mctx.strokeStyle = '#fff'; mctx.lineCap = 'round'; mctx.lineJoin = 'round'; mctx.lineWidth = r * 2
+  mctx.beginPath(); mctx.moveTo(pts[0]!.x, pts[0]!.y)
+  for (const p of pts.slice(1)) mctx.lineTo(p.x, p.y)
+  mctx.stroke()
+  for (const p of pts) { mctx.beginPath(); mctx.arc(p.x, p.y, r, 0, Math.PI * 2); mctx.fill() }
+  mctx.restore()
+}
+
 // ── Brush painting: freehand strokes commit to a BrushLayer via the editor ────
 // The brush layer strokes land on. Reuse the selected brush layer, else create one.
 let brushLayerId: string | null = null
@@ -2174,11 +2229,30 @@ function onBrushPointerMove(e: PointerEvent) {
   brush.extendStroke(wn.x, wn.y)
   renderStack()
 }
-function onBrushPointerUp() {
+async function onBrushPointerUp() {
   const s = brush.endStroke(); if (!s) { return }
   // Mask mode: paint the freehand stroke as visibility onto the selected layer
-  // (destination-in at render time). Needs a selected non-brush target; else no-op.
+  // (destination-in at render time for local layers; via maskUrl for wired
+  // images). Needs a selected non-brush target; else no-op.
   if (brush.mode.value === 'mask') {
+    const wired = selectedWiredImage()
+    if (wired) {
+      const el = wired.el
+      const iw = ('naturalWidth' in el ? el.naturalWidth : el.width) || 1
+      const ih = ('naturalHeight' in el ? el.naturalHeight : el.height) || 1
+      const { w: capW, h: capH } = capDims(iw, ih)
+      const canvas = await ensureWiredBrushMask(wired.slot, el)
+      const mctx = canvas.getContext('2d')!
+      const layer = compositorLayer(wired.slot)
+      const aff = wiredImageAffine(
+        { x: layer?.x ?? 0, y: layer?.y ?? 0, scale: layer?.scale ?? 1, rotation: layer?.rotation ?? 0 },
+        canvasDisplay.w, canvasDisplay.h, iw, ih, capW, capH,
+      )
+      stampWidthNormStrokeToMask(mctx, s, aff, canvasDisplay.w)
+      setWiredMaskUrl(compositor.value, wired.slot, canvas.toDataURL('image/png'))
+      renderStack()
+      return
+    }
     const sel = selectedLocal.value
     if (sel && sel.kind !== 'brush') {
       setLocal(sel.id, { maskStrokes: [...(sel.maskStrokes ?? []), s] })
@@ -3963,7 +4037,7 @@ onUnmounted(() => {
               :class="brush.mode.value === m ? 'bg-white text-neutral-900 font-medium' : 'text-white/70 hover:bg-white/10'"
               @click="brush.mode.value = (m as any)">{{ m }}</button>
           </div>
-          <p v-if="brush.mode.value === 'mask' && !(selectedLocal && selectedLocal.kind !== 'brush')"
+          <p v-if="brush.mode.value === 'mask' && !((selectedLocal && selectedLocal.kind !== 'brush') || selectedWiredImage())"
             class="text-[10px] text-white/40 mb-2 leading-snug">Select a layer to mask</p>
           <div v-if="brush.mode.value === 'paint'" class="flex items-center gap-2 mb-2">
             <span class="text-[10px] text-white/40 w-12 shrink-0">Color</span>
