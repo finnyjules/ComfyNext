@@ -1384,9 +1384,10 @@ function setMotion(patch: Partial<FrameMotion>) {
 // The docked timeline mutates layer.animation in place during a drag, then
 // emits 'commit' (no payload) on pointerup. `commit()` from the local-layer
 // editor takes the next array — re-assigning the same (already-mutated)
-// reference persists it; recordHistory() snapshots for undo/redo.
+// reference persists it. The timeline emits 'beforeChange' (wired to
+// recordHistory below) before the first mutation of each drag, so the undo
+// snapshot captures the pre-edit state.
 function commitMotionTimeline() {
-  recordHistory()
   commit(localLayers.value)
 }
 
@@ -3126,7 +3127,7 @@ onUnmounted(() => {
           :baking="baking" :bake-progress="bakeProgress" :stale="motionStale" :bake-error="bakeError"
           @select="(id: string) => selectLocal(id)"
           @play="play" @pause="pause" @scrub="scrubTo" @bake="bakeMotion"
-          @update:motion="setMotion" @commit="commitMotionTimeline"
+          @update:motion="setMotion" @commit="commitMotionTimeline" @before-change="recordHistory"
         />
       </div>
     </div>

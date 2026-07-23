@@ -30,6 +30,7 @@ const emit = defineEmits<{
   'update:motion': [patch: Partial<FrameMotion>]
   bake: []
   commit: []
+  beforeChange: []
 }>()
 
 const dur = computed(() => props.motion.duration)
@@ -39,10 +40,15 @@ const rowLabel = (l: LocalLayer) =>
 const seg = (l: LocalLayer) => bandSegments(l.animation, dur.value)
 
 function addMotion(l: LocalLayer) {
+  emit('beforeChange')
   if (!l.animation) l.animation = createLayerAnimation()
   emit('select', l.id)
   emit('commit')
 }
+
+// ── Drag listener cleanup: guards against the panel unmounting mid-drag ─────
+let activeCleanup: (() => void) | null = null
+onScopeDispose(() => activeCleanup?.())
 
 // ── Ruler scrub ──────────────────────────────────────────────────────────────
 const rulerEl = ref<HTMLElement | null>(null)
@@ -54,13 +60,15 @@ function onRulerDown(e: PointerEvent) {
   emit('pause')
   emit('scrub', rulerT(e))
   const move = (ev: PointerEvent) => emit('scrub', rulerT(ev))
-  const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up) }
+  const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); activeCleanup = null }
+  activeCleanup = up
   window.addEventListener('pointermove', move)
   window.addEventListener('pointerup', up)
 }
 
 // ── Band drags: 'offset' | 'in' | 'out' | 'end' ─────────────────────────────
 function startDrag(e: PointerEvent, l: LocalLayer, mode: 'offset' | 'in' | 'out' | 'end') {
+  emit('beforeChange')
   const anim = l.animation
   if (!anim) return
   emit('select', l.id)
@@ -81,13 +89,16 @@ function startDrag(e: PointerEvent, l: LocalLayer, mode: 'offset' | 'in' | 'out'
   }
   const up = () => {
     window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up)
+    activeCleanup = null
     emit('commit')
   }
+  activeCleanup = up
   window.addEventListener('pointermove', move)
   window.addEventListener('pointerup', up)
 }
 function resetWindowEnd(l: LocalLayer) {
   if (!l.animation) return
+  emit('beforeChange')
   l.animation.duration = undefined
   emit('commit')
 }
