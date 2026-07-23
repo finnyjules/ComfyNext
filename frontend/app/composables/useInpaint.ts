@@ -313,8 +313,9 @@ export function useInpaint() {
 
   /** Multi-point SAM prompt (smart select): points are in the source image's
    *  pixel space; label 1 = foreground, 0 = background/subtract. Returns SAM's
-   *  candidate mask data URLs (white = selected); the caller picks the one
-   *  that actually contains the prompt points (see pickSamMask). */
+   *  candidate mask data URLs (white = selected) — every segment in the image;
+   *  the caller assigns each point to its own segment and unions the winners
+   *  (see pickSamSegments). */
   async function segmentPoints(image: string, points: { x: number; y: number; label: 0 | 1 }[]): Promise<string[]> {
     const res = await $fetch<{ mask: string; masks?: string[] }>('/api/inpaint/segment', {
       method: 'POST',
