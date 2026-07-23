@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   samplePointsFromStroke, layerAffine, invertAffine, applyAffine,
-  luminanceToAlpha, alphaBounds, cutoutPlacement, pickSamSegments, type Pt, type MaskCandidate,
+  luminanceToAlpha, alphaBounds, cutoutPlacement, pickSamSegments, wiredImageAffine, type Pt, type MaskCandidate,
 } from '~/lib/compositor/smartSelect'
 
 describe('samplePointsFromStroke', () => {
@@ -167,5 +167,37 @@ describe('pickSamSegments', () => {
     const cand = mkMask(20, 20, (x, y) => x >= 6 && x <= 14 && y >= 6 && y <= 14)
     const idxs = pickSamSegments([cand], [{ x: 5, y: 5 }], [], 10, 10)
     expect(idxs).toEqual([0])
+  })
+})
+
+describe('wiredImageAffine', () => {
+  // 1000×800 artboard, image 1600×1200 (iAspect 1.333 > cAspect 1.25 → fitW=1000, fitH=750),
+  // centered (x=0,y=0), scale 1, no rotation, capped to 1024×768.
+  const base = { x: 0, y: 0, scale: 1, rotation: 0 }
+  it('maps the image center to the capped-image center', () => {
+    const m = wiredImageAffine(base, 1000, 800, 1600, 1200, 1024, 768)
+    const p = applyAffine(m, { x: 500, y: 400 }) // artboard center
+    expect(p.x).toBeCloseTo(512, 4)
+    expect(p.y).toBeCloseTo(384, 4)
+  })
+  it('maps the fit-box top-left corner to capped-image (0,0)', () => {
+    const m = wiredImageAffine(base, 1000, 800, 1600, 1200, 1024, 768)
+    // fitW=1000,fitH=750 centered → top-left at artboard (500-500, 400-375) = (0, 25)
+    const p = applyAffine(m, { x: 0, y: 25 })
+    expect(p.x).toBeCloseTo(0, 3)
+    expect(p.y).toBeCloseTo(0, 3)
+  })
+  it('round-trips through the inverse', () => {
+    const m = wiredImageAffine({ x: 0.1, y: -0.2, scale: 1.3, rotation: 22 }, 1000, 800, 1600, 1200, 1024, 768)
+    const q = applyAffine(invertAffine(m), applyAffine(m, { x: 321, y: 234 }))
+    expect(q.x).toBeCloseTo(321, 3)
+    expect(q.y).toBeCloseTo(234, 3)
+  })
+  it('handles the tall-image fit branch (iAspect < cAspect)', () => {
+    // image 600×1200 (iAspect .5 < 1.25) → fitH=800, fitW=400; centered.
+    const m = wiredImageAffine(base, 1000, 800, 600, 1200, 512, 1024)
+    const p = applyAffine(m, { x: 500, y: 400 })
+    expect(p.x).toBeCloseTo(256, 4)
+    expect(p.y).toBeCloseTo(512, 4)
   })
 })

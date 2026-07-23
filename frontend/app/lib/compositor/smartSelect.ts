@@ -193,3 +193,36 @@ export function cutoutPlacement(
     rotation: layer.rotation || 0,
   }
 }
+
+export interface WiredXform { x: number; y: number; scale: number; rotation: number }
+
+/** Artboard px → a wired image's CAPPED pixel space, matching drawWiredImageLayer's
+ *  fit-contain → translate → rotate → scale chain (useCompositorLayers.ts). The
+ *  native image (iw×ih) fills a fitW×fitH box; we map that box onto capW×capH. */
+export function wiredImageAffine(
+  layer: WiredXform, W: number, H: number, iw: number, ih: number, capW: number, capH: number,
+): Affine {
+  const cAspect = W / H, iAspect = iw / (ih || 1)
+  let fitW: number, fitH: number
+  if (iAspect > cAspect) { fitW = W; fitH = W / iAspect } else { fitH = H; fitW = H * iAspect }
+  // Compose forward (image-cap px → artboard px), then invert.
+  // image-cap (0..capW,0..capH) → box (−fitW/2..fitW/2): bx = (cxp/capW − 0.5)·fitW
+  // → scale · rotate · translate(center).
+  const th = (layer.rotation * Math.PI) / 180
+  const cos = Math.cos(th), sin = Math.sin(th)
+  const s = layer.scale || 1e-6
+  const cx = W / 2 + layer.x * W, cy = H / 2 + layer.y * H
+  // Forward matrix F (cap px → artboard px):
+  //   v = box(cap);  box_x = (capx/capW − .5)·fitW,  box_y = (capy/capH − .5)·fitH
+  //   then p = center + s·R·box
+  // a·capx + c·capy + e  with box linear in cap → fold constants.
+  const kx = fitW / capW, ky = fitH / capH
+  // box = [kx·capx − fitW/2, ky·capy − fitH/2]
+  // R·box scaled by s, plus center:
+  const Fa = s * cos * kx,  Fc = -s * sin * ky
+  const Fb = s * sin * kx,  Fd = s * cos * ky
+  const boxOffX = -fitW / 2, boxOffY = -fitH / 2
+  const Fe = cx + s * (cos * boxOffX - sin * boxOffY)
+  const Ff = cy + s * (sin * boxOffX + cos * boxOffY)
+  return invertAffine({ a: Fa, b: Fb, c: Fc, d: Fd, e: Fe, f: Ff })
+}
