@@ -90,6 +90,11 @@ describe('setWindowDuration', () => {
     setWindowDuration(a, 0.2, 4)
     expect(a.duration).toBeCloseTo(1)
   })
+  it('frame containment beats the in+out floor when they conflict', () => {
+    const a = anim({ offset: 3.5, in: { presetId: 'fade-in', duration: 0.5 }, out: { presetId: 'fade-out', duration: 0.5 } })
+    setWindowDuration(a, 0.2, 4)        // maxDur = 0.5 < minDur = 1
+    expect(a.duration).toBeCloseTo(0.5) // stored duration never exceeds the frame
+  })
 })
 
 describe('snapSeconds', () => {

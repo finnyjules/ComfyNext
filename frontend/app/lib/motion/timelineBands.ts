@@ -50,7 +50,7 @@ export function setWindowDuration(anim: LayerAnimation, newSec: number, frameDur
   const maxDur = Math.max(BAND_MIN, frameDur - start)
   if (newSec >= maxDur - 1e-6) { anim.duration = undefined; return }
   const minDur = Math.max(BAND_MIN, (anim.in?.duration ?? 0) + (anim.out?.duration ?? 0))
-  anim.duration = clamp(newSec, minDur, maxDur)
+  anim.duration = clamp(newSec, Math.min(minDur, maxDur), maxDur)
 }
 
 export function snapSeconds(sec: number, targets: number[], epsSec = 0.08): number {
