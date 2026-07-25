@@ -17,7 +17,7 @@ import {
   reparentGroup as reparentGroupOp, directLayerIds, upsertGroup,
 } from '~/lib/compositor/layerGroups'
 import { arrangeMembers, unionBBoxPx } from '~/lib/compositor/expressiveArrange'
-import { insertStackKeyAbove } from '~/lib/compositor/wiredSlots'
+import { insertStackKeyAbove, pruneWiredSlotFlags } from '~/lib/compositor/wiredSlots'
 import { defaultExpressiveBoxParams, type ExpressiveBoxParams } from '~~/shared/text-layout/boxes'
 import { useCompositorAgent } from '~/composables/useCompositorAgent'
 import AgentBar from '~/components/agent/AgentBar.vue'
@@ -1358,6 +1358,21 @@ function writeSlotArr(propKey: string, arr: number[]) {
 }
 const hiddenWired = computed(() => new Set(readSlotArr('sailor_hiddenWired')))
 const lockedWired = computed(() => new Set(readSlotArr('sailor_lockedWired')))
+// Drop hidden/locked flags for slots that no longer have a wire. Slots come
+// from EDGES only (see the `layers` computed), so an absent slot is genuinely
+// gone — there's no load-time window where a legitimately hidden slot looks
+// absent. Without this, hiding a slot and unplugging it leaves a stale entry
+// and the NEXT image wired into that port renders invisible.
+watch(layers, (ls) => {
+  // `layers` is [] while the node is still resolving — pruning then would wipe
+  // every flag, so require a resolved compositor node first.
+  if (!compositor.value) return
+  const live = ls.map(l => l.slot)
+  for (const key of ['sailor_hiddenWired', 'sailor_lockedWired'] as const) {
+    const pruned = pruneWiredSlotFlags(readSlotArr(key), live)
+    if (pruned) writeSlotArr(key, pruned)   // null ⇒ unchanged, skip the write
+  }
+}, { immediate: true })
 function toggleWiredFlag(propKey: 'sailor_hiddenWired' | 'sailor_lockedWired', slot: number) {
   const cur = readSlotArr(propKey)
   writeSlotArr(propKey, cur.includes(slot) ? cur.filter(s => s !== slot) : [...cur, slot])
