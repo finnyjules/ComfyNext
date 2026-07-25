@@ -4,6 +4,10 @@
 
 Three acts. Each is sequenced because it de-risks the next.
 
+**Product wedge (from the demand evidence):** motion. Making designed/generated content *move — controllably, on-brand, at multiple sizes* — is the loudest verified demand signal and where incumbents are weakest. When a studio or capability can be prioritized by whether it sharpens the motion wedge, it should be.
+
+**The bar everything is measured against:** reliability. 62% of designers name inconsistent output as their #1 reason AI tools don't stick. Sailor's procedural substrate is deterministic *by construction* — that's the edge — but the agent driving it is where inconsistency creeps back in. Every act below is only "done" if the agent drives it *reliably*, not just plausibly.
+
 ---
 
 ## Act 1 — The Factory
