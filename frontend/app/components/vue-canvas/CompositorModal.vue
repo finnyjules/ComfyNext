@@ -4,7 +4,7 @@ import {
   Type, Square, Circle, Minus, Plus, Trash2,
   AlignLeft, AlignCenter, AlignRight, AlignJustify, Bold, ArrowUp, ArrowDown, Lock, LockOpen,
   Eye, EyeOff, Underline, Strikethrough, CaseUpper, CaseLower, CaseSensitive,
-  Hexagon, Star,
+  Hexagon, Star, Copy,
 } from 'lucide-vue-next'
 import {
   type TextLayer, type RectLayer, type EllipseLayer, type LocalLayer, type StackItem, type CornerPin, type BrushLayer, type Paint,
@@ -17,6 +17,7 @@ import {
   reparentGroup as reparentGroupOp, directLayerIds, upsertGroup,
 } from '~/lib/compositor/layerGroups'
 import { arrangeMembers, unionBBoxPx } from '~/lib/compositor/expressiveArrange'
+import { insertStackKeyAbove } from '~/lib/compositor/wiredSlots'
 import { defaultExpressiveBoxParams, type ExpressiveBoxParams } from '~~/shared/text-layout/boxes'
 import { useCompositorAgent } from '~/composables/useCompositorAgent'
 import AgentBar from '~/components/agent/AgentBar.vue'
@@ -1361,6 +1362,19 @@ function toggleWiredFlag(propKey: 'sailor_hiddenWired' | 'sailor_lockedWired', s
   const cur = readSlotArr(propKey)
   writeSlotArr(propKey, cur.includes(slot) ? cur.filter(s => s !== slot) : [...cur, slot])
 }
+/** Set (not toggle) a wired slot's hidden flag. */
+function setWiredHidden(slot: number, hidden: boolean) {
+  const cur = readSlotArr('sailor_hiddenWired')
+  if (cur.includes(slot) === hidden) return
+  writeSlotArr('sailor_hiddenWired', hidden ? [...cur, slot] : cur.filter(s => s !== slot))
+}
+/** Persist a full bottom→top stack order. */
+function writeStackOrder(arr: StackKey[]) {
+  const node = compositor.value
+  if (!node) return
+  if (!node.data.properties) node.data.properties = {}
+  ;(node.data.properties as any).sailor_stackOrder = arr
+}
 function rowHidden(row: any): boolean {
   if (row.kind === 'wired') return hiddenWired.value.has(row.slot)
   return row.layer ? row.layer.visible === false : false
@@ -2184,6 +2198,75 @@ function wiredMaskUrlFor(slot: number): string | undefined {
 function clearWiredMask(slot: number) {
   setWiredMaskUrl(compositor.value, slot, '')
   renderStack()
+}
+// ── Copy a wired image into the frame ───────────────────────────────────────
+// Bakes what you SEE for a wired slot (source pixels + any painted/smart-select
+// mask) into a normal local image layer at the same z-position, transform,
+// opacity and blend — then hides the wired slot so you see one image, not two.
+// The frame then owns the image: it survives unplugging the wire and supports
+// every local-layer feature (Generate fill, destructive edits, …).
+const copyingSlot = ref<number | null>(null)
+async function copyWiredIntoFrame(slot: number) {
+  if (copyingSlot.value != null) return
+  const layer = layers.value.find(l => l.slot === slot)
+  const el = wiredImageEls.value[slot]
+  const iw = el ? (('naturalWidth' in el ? el.naturalWidth : el.width) || 0) : 0
+  const ih = el ? (('naturalHeight' in el ? el.naturalHeight : el.height) || 0) : 0
+  if (!layer || !el || !iw || !ih) { toast('That layer’s image isn’t ready yet'); return }
+  copyingSlot.value = slot
+  try {
+    // 1. Bake: native-resolution source with the slot's visibility mask applied
+    //    (destination-out — same polarity drawWiredImageLayer uses).
+    const c = document.createElement('canvas'); c.width = iw; c.height = ih
+    const ctx = c.getContext('2d')!
+    ctx.drawImage(el, 0, 0, iw, ih)
+    const tr = wiredTreatments.value[`w:${slot}`]
+    if (tr?.maskUrl) {
+      try {
+        const mi = await loadImage(tr.maskUrl)
+        ctx.globalCompositeOperation = 'destination-out'
+        ctx.drawImage(mi, 0, 0, iw, ih)
+        ctx.globalCompositeOperation = 'source-over'
+      } catch { /* unreadable mask → copy the image unmasked rather than failing */ }
+    }
+    let dataUrl: string
+    try { dataUrl = c.toDataURL('image/png') }
+    catch (err) {
+      console.error('[Compositor] copy into frame: pixel read failed', err)
+      toast('Can’t read this image’s pixels')
+      return
+    }
+    const name = await inpaint.uploadDataUrl(dataUrl, 'framecopy')
+    // 2. Place it exactly where the wired image sits. A full-image bbox makes
+    //    wiredCutoutPlacement reproduce the wired transform (its own unit test).
+    const place = wiredCutoutPlacement(
+      { minX: 0, minY: 0, maxX: iw - 1, maxY: ih - 1 },
+      { x: layer.x, y: layer.y, scale: layer.scale, rotation: layer.rotation },
+      iw, ih, iw, ih, canvasDisplay.w, canvasDisplay.h,
+    )
+    const before = new Set(localLayers.value.map(l => l.id))
+    addImageFromName(name, iw / ih, {
+      ...place,
+      opacity: layer.opacity,
+      blend: layer.blend,
+      // A wired image clipped by another layer's silhouette stays clipped —
+      // carried as the same treatment rather than baked into the pixels.
+      ...(tr?.maskedByKey ? { maskedByKey: tr.maskedByKey, maskShowSource: tr.showSource || undefined } : {}),
+    } as any)
+    const added = localLayers.value.find(l => !before.has(l.id))
+    // 3. Hold the wired slot's z-position (else the copy jumps to the top).
+    if (added) writeStackOrder(insertStackKeyAbove(stackKeys.value, localKey(added.id), wiredKey(slot)) as StackKey[])
+    // 4. Hide the now-redundant wired slot — only after the copy landed, so a
+    //    failed upload never leaves an empty frame.
+    setWiredHidden(slot, true)
+    if (layer.cloner?.enabled) toast('Copied the base image — cloner repeats aren’t carried over.')
+    renderStack()
+  } catch (err) {
+    console.error('[Compositor] copy into frame failed:', err)
+    toast('Could not copy that layer into the frame')
+  } finally {
+    copyingSlot.value = null
+  }
 }
 function compositorLayer(slot: number): Layer | undefined {
   return layers.value.find(l => l.slot === slot)
@@ -3277,6 +3360,15 @@ onUnmounted(() => {
                 :title="rowHidden(row) ? 'Show' : 'Hide'"
                 @click.stop="toggleRowHidden(row)">
                 <component :is="rowHidden(row) ? EyeOff : Eye" class="size-3.5" />
+              </button>
+              <!-- Copy a wired image into the frame: bake a local copy, hide the wire -->
+              <button v-if="row.kind === 'wired'"
+                class="transition cursor-pointer opacity-0 group-hover/row:opacity-100 text-white/40 hover:text-white/80 disabled:opacity-30 disabled:cursor-default"
+                :disabled="copyingSlot != null"
+                title="Copy into frame — bakes a local copy and hides the wired layer (not undoable; use Show to restore)"
+                data-testid="wired-copy-into-frame"
+                @click.stop="copyWiredIntoFrame(row.slot)">
+                <Copy class="size-3.5" />
               </button>
               <!-- Group opacity (compact hover-reveal slider; cascades to descendants) -->
               <input v-if="row.kind === 'group'"
