@@ -24,6 +24,36 @@ export function pruneWiredSlotFlags(flags: number[], liveSlots: number[]): numbe
 }
 
 /**
+ * Drop entries of a slot-keyed record whose slot no longer has a wire. Returns
+ * `null` when nothing changed, so callers skip a redundant node write.
+ *
+ * `parseSlot` maps a record key to its slot number, or null when the key isn't
+ * slot-shaped — unrecognized keys are KEPT (conservative: never discard state
+ * this function doesn't understand).
+ *
+ * Same trap `pruneWiredSlotFlags` fixes for hidden/locked flags: without this,
+ * a stale mask or cloner on a freed slot is inherited by the next image wired
+ * into that port, rendering invisible or half-erased.
+ */
+export function pruneSlotKeyedRecord<T>(
+  rec: Record<string, T>,
+  liveSlots: number[],
+  parseSlot: (key: string) => number | null,
+): Record<string, T> | null {
+  const keys = Object.keys(rec)
+  if (!keys.length) return null
+  const live = new Set(liveSlots)
+  const next: Record<string, T> = {}
+  let changed = false
+  for (const key of keys) {
+    const slot = parseSlot(key)
+    if (slot !== null && !live.has(slot)) { changed = true; continue }
+    next[key] = rec[key] as T
+  }
+  return changed ? next : null
+}
+
+/**
  * Place `key` directly above `anchor` in a bottom→top stack order. Used when a
  * wired layer is copied into the frame: the copy must hold the wired slot's
  * z-position instead of jumping to the top of the stack.

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { pruneWiredSlotFlags, insertStackKeyAbove } from '~/lib/compositor/wiredSlots'
+import { pruneWiredSlotFlags, insertStackKeyAbove, pruneSlotKeyedRecord } from '~/lib/compositor/wiredSlots'
 
 describe('pruneWiredSlotFlags', () => {
   it('drops flags for slots that no longer have a wire', () => {
@@ -34,5 +34,43 @@ describe('insertStackKeyAbove', () => {
     const order = ['w:1', 'w:2']
     insertStackKeyAbove(order, 'l:new', 'w:1')
     expect(order).toEqual(['w:1', 'w:2'])
+  })
+})
+
+describe('pruneSlotKeyedRecord', () => {
+  const parseW = (key: string) => {
+    const m = /^w:(\d+)$/.exec(key)
+    return m ? Number(m[1]) : null
+  }
+  const parseBare = (key: string) => (/^\d+$/.test(key) ? Number(key) : null)
+
+  it("drops a w:<slot> entry whose slot isn't live, keeps live ones", () => {
+    const rec = { 'w:1': { maskUrl: 'a' }, 'w:2': { maskUrl: 'b' } }
+    expect(pruneSlotKeyedRecord(rec, [1], parseW)).toEqual({ 'w:1': { maskUrl: 'a' } })
+  })
+
+  it('returns null when every entry is live (no write)', () => {
+    const rec = { 'w:1': { maskUrl: 'a' } }
+    expect(pruneSlotKeyedRecord(rec, [1, 2], parseW)).toBeNull()
+  })
+
+  it('returns null for an empty record', () => {
+    expect(pruneSlotKeyedRecord({}, [1], parseW)).toBeNull()
+  })
+
+  it("keeps keys that parseSlot doesn't recognize (e.g. a junk key)", () => {
+    const rec = { 'w:1': { maskUrl: 'a' }, junk: { maskUrl: 'z' } }
+    expect(pruneSlotKeyedRecord(rec, [], parseW)).toEqual({ junk: { maskUrl: 'z' } })
+  })
+
+  it('does not mutate the input object', () => {
+    const rec = { 'w:1': { maskUrl: 'a' }, 'w:2': { maskUrl: 'b' } }
+    pruneSlotKeyedRecord(rec, [1], parseW)
+    expect(rec).toEqual({ 'w:1': { maskUrl: 'a' }, 'w:2': { maskUrl: 'b' } })
+  })
+
+  it('works with a bare-number key parser (the cloners case)', () => {
+    const rec = { '1': { seed: 1 }, '2': { seed: 2 } }
+    expect(pruneSlotKeyedRecord(rec, [2], parseBare)).toEqual({ '2': { seed: 2 } })
   })
 })

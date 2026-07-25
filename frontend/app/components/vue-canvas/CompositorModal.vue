@@ -17,7 +17,7 @@ import {
   reparentGroup as reparentGroupOp, directLayerIds, upsertGroup,
 } from '~/lib/compositor/layerGroups'
 import { arrangeMembers, unionBBoxPx } from '~/lib/compositor/expressiveArrange'
-import { insertStackKeyAbove, pruneWiredSlotFlags } from '~/lib/compositor/wiredSlots'
+import { insertStackKeyAbove, pruneWiredSlotFlags, pruneSlotKeyedRecord } from '~/lib/compositor/wiredSlots'
 import { defaultExpressiveBoxParams, type ExpressiveBoxParams } from '~~/shared/text-layout/boxes'
 import { useCompositorAgent } from '~/composables/useCompositorAgent'
 import AgentBar from '~/components/agent/AgentBar.vue'
@@ -1371,6 +1371,19 @@ watch(layers, (ls) => {
   for (const key of ['sailor_hiddenWired', 'sailor_lockedWired'] as const) {
     const pruned = pruneWiredSlotFlags(readSlotArr(key), live)
     if (pruned) writeSlotArr(key, pruned)   // null ⇒ unchanged, skip the write
+  }
+  // Same trap for the sibling slot-keyed state: a stale mask/cloner would be
+  // inherited by the NEXT image wired into that port (invisible or half-erased).
+  const props = (compositor.value.data.properties ?? {}) as any
+  const treatments = props.sailor_wiredTreatments as Record<string, unknown> | undefined
+  if (treatments) {
+    const next = pruneSlotKeyedRecord(treatments, live, k => { const m = /^w:(\d+)$/.exec(k); return m ? Number(m[1]) : null })
+    if (next) props.sailor_wiredTreatments = next
+  }
+  const cloners = props.sailor_wiredCloners as Record<string, unknown> | undefined
+  if (cloners) {
+    const next = pruneSlotKeyedRecord(cloners, live, k => (/^\d+$/.test(k) ? Number(k) : null))
+    if (next) props.sailor_wiredCloners = next
   }
 }, { immediate: true })
 function toggleWiredFlag(propKey: 'sailor_hiddenWired' | 'sailor_lockedWired', slot: number) {
