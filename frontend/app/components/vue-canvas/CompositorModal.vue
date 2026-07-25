@@ -3129,9 +3129,50 @@ function handleKeydown(e: KeyboardEvent) {
     deleteLocal(selectedLocalId.value)
   }
 }
-onMounted(() => window.addEventListener('keydown', handleKeydown))
+// ── Paste an image into the frame ───────────────────────────────────────────
+// Cmd/Ctrl+V with an image on the clipboard adds it as a local image layer via
+// the SAME path as drag-drop (addImageFromFile), so upload, history and
+// selection behave identically. Registered in the CAPTURE phase on purpose:
+// VueNodeCanvas listens for 'paste' on window in the bubble phase and would
+// otherwise turn the image into a standalone Image node on the graph. Capture
+// runs first, and stopImmediatePropagation keeps that handler from firing.
+function isEditablePasteTarget(n: EventTarget | null): boolean {
+  const el = n instanceof Element ? n : null
+  if (!el) return false
+  const sel = 'input, textarea, select, [contenteditable=""], [contenteditable="true"]'
+  return el.matches(sel) || !!el.closest(sel)
+}
+function clipboardImageFile(e: ClipboardEvent): File | null {
+  for (const it of Array.from(e.clipboardData?.items ?? [])) {
+    if (it.kind === 'file' && it.type.startsWith('image/')) {
+      const f = it.getAsFile()
+      if (f) return f
+    }
+  }
+  const f0 = e.clipboardData?.files?.[0]
+  return f0 && f0.type.startsWith('image/') ? f0 : null
+}
+async function onModalPaste(e: ClipboardEvent) {
+  // Never hijack a real text paste (agent prompt bar, layer rename, text edit).
+  if (isEditablePasteTarget(e.target) || isEditablePasteTarget(document.activeElement)) return
+  const file = clipboardImageFile(e)
+  if (!file) return   // nothing for us — let normal paste (incl. node paste) proceed
+  e.preventDefault()
+  e.stopImmediatePropagation()
+  try {
+    await addImageFromFile(file)
+  } catch (err) {
+    console.error('[Compositor] paste image failed:', err)
+    toast('Could not paste that image')
+  }
+}
+onMounted(() => {
+  window.addEventListener('keydown', handleKeydown)
+  window.addEventListener('paste', onModalPaste, true)   // capture — see onModalPaste
+})
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKeydown)
+  window.removeEventListener('paste', onModalPaste, true)
   detachPointerListeners()
   pause()
 })
