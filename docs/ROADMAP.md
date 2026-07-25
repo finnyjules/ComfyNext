@@ -38,14 +38,15 @@ Ordered cheapest-stressor first. The full candidate list, with cost estimates, l
 
 ---
 
-## Act 3 — Reach & Delivery
+## Act 3 — Reach, Delivery & Distribution
 
-**Goal:** pay down the two debts the factory doesn't fix by itself.
+**Goal:** pay down the debts the factory doesn't fix by itself, plus close the one strategic gap the mid-2026 landscape exposed.
 
 - **Agent reach:** retrofit control descriptors across the existing surfaces the agent can't see — Scene3D (4.3k lines, agent-invisible today), Shape, Shot Director, Timeline, LipSync. Target: every surface in [STATE.md](STATE.md) shows agent-legible ✅.
 - **Delivery spine:** one render/export path. Today: four independent export paths, JSZip implemented twice, ~40 ad-hoc `a.download` handlers, and a "Ready to deliver" shelf that only re-packages existing files. WebCodecs is the likely backbone and doubles as a new-tech absorption.
+- **Distribution / shareable artifacts *(new — landscape-driven)*:** Sailor has no sharing story. The mid-2026 research found shareable workflow artifacts becoming the category's distribution moat — Figma opened Community publishing for Weave workflows. Sailor's equivalent is the studio, the taste profile, and the sweep: things worth sharing that also pull others into the tool. Scope is TBD; the point is that "an island with no export-to-community path" is now a named risk, not an oversight.
 
-**Done when:** the agent can drive any surface, and any artifact can be rendered + delivered through one pipeline.
+**Done when:** the agent can drive any surface, any artifact renders + delivers through one pipeline, and at least one Sailor-native artifact (a studio preset, a taste profile) is shareable.
 
 ---
 
