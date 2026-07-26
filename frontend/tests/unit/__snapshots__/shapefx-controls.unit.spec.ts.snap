@@ -285,6 +285,7 @@ exports[`shapeAgentControls > is a characterization snapshot for both fill modes
       "checkerboard",
       "stripes",
       "qr",
+      "shader",
     ],
   },
   {
