@@ -11,7 +11,7 @@ import { makeConfigParams } from '~/lib/agent/configParams'
 import { makeRng, mulberry32, xmur3 } from '~/lib/gradientfx/rng'
 import { buildField } from '~/lib/gradientfx/field'
 import { buildRampLut, hexToRgb, hslToRgb, rgbToHsl } from '~/lib/gradientfx/ramp'
-import { buildConfig, defaultConfig, liquidConfig, reroll, rippleConfig, stackConfig } from '~/lib/gradientfx/randomize'
+import { LIQUID_PRESETS, buildConfig, defaultConfig, liquidConfig, liquidPresetConfig, reroll, rippleConfig, stackConfig } from '~/lib/gradientfx/randomize'
 import { applyMotion, trackValue } from '~/lib/gradientfx/motion'
 import type { MotionTrack, ShapeConfig } from '~/lib/gradientfx/types'
 
@@ -165,6 +165,30 @@ describe('gradientfx liquid randomize', () => {
     const c = liquidConfig('#lq')
     expect(c.canvas.layout).toBe('liquid')
     expect(c.flow!.intensity).toBeGreaterThan(0)
+  })
+  it('liquidConfig opens on the authored lit-refractive look, not a flat max warp', () => {
+    // These are hand-picked values, not derived from anything, so pin the ones that
+    // define the look — a silent drift here changes what every new liquid gradient
+    // starts as, which is invisible until someone notices the default got worse.
+    const c = liquidConfig('#lq')
+    expect(c.flow!.refract).toBe(92)      // bends the ramp through the folds
+    expect(c.flow!.depth).toBe(8)         // form comes from lighting, not displacement
+    expect(c.flow!.highlights).toBe(63)
+    expect(c.flow!.shadows).toBe(55)
+    expect(c.relief.grain).toBe(0.95)
+    expect(c.focus!.blur).toBe(64)
+    expect(c.layers[0]!.color.stops.map(s => s.color))
+      .toEqual(['#f9d9f0', '#c026d3', '#960d32', '#fb7f09'])
+  })
+  it('liquidConfig still varies by seed, so reroll is not a no-op', () => {
+    expect(liquidConfig('#a').seed).not.toBe(liquidConfig('#b').seed)
+  })
+  it('the five liquid look presets are unaffected by the liquid default', () => {
+    // liquidPresetConfig builds its own object from DEFAULT_FLOW + LIQUID_LOOKS, so
+    // marble/oil/ink/lava/satin must not inherit the authored default's flow values.
+    for (const name of LIQUID_PRESETS) {
+      expect(liquidPresetConfig(name, '#p').flow!.refract, name).not.toBe(92)
+    }
   })
   it('defaultConfig carries a no-op flow block', () => {
     expect(defaultConfig('#d').flow!.intensity).toBe(0)

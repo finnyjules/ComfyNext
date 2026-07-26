@@ -227,19 +227,22 @@ export function liquidConfig(seed = randomSeed()): GradientConfig {
   return {
     seed,
     canvas: { aspect: '16:9', layout: 'liquid', margin: 0, innerRadius: 0.4, background: '#000000', center: { ...DEFAULT_CENTER } },
-    relief: { grain: 1, relief: 0, light: { ...DEFAULT_LIGHT } },
-    flow: { angle: 45, noiseScale: 0.9, intensity: 100, distortion: 94, detail: 1, depth: 32, highlights: 0, shadows: 0, foldScale: 0, speed: 25, gloss: 0, veins: 0, veinScale: 35, ripple: 0, refract: 47, viscosity: 100, swirl: 50 },
+    relief: { grain: 0.95, relief: 0, light: { ...DEFAULT_LIGHT } },
+    // Authored default (not derived): a lit, refractive surface rather than the flat
+    // max-intensity warp this used to open on. Depth is low with highlights/shadows
+    // carrying the form, and heavy refract bends the ramp through the folds.
+    flow: { angle: 45, noiseScale: 4, intensity: 76, distortion: 50, detail: 2, depth: 8, highlights: 63, shadows: 55, foldScale: 14, speed: 33, gloss: 27, veins: 11, veinScale: 68, ripple: 0, refract: 92, viscosity: 63, swirl: 42 },
     layers: [
       {
         blend: 'normal', opacity: 1,
         // Shape is unused by the liquid layout but kept so the layer schema stays complete.
         shape: { type: 'bands', count: 20, minDepth: 0, curveExp: 1, jitter: 0, peaks: 3, phase: 0, detail: 4, sweep: 360, scrub: 0, gap: 0, rounding: 0, direction: 'up', mirror: 'none', valley: 0.5 },
-        color: { stops: [{ color: '#311a2a', pos: 0 }, { color: '#c026d3', pos: 0.4 }, { color: '#ff7d46', pos: 0.64 }, { color: '#f1ddac', pos: 1 }], gradientDir: 'vertical', mapping: 'field', steps: 0, hueDrift: 0, hueRotate: 0 },
+        color: { stops: [{ color: '#f9d9f0', pos: 0 }, { color: '#c026d3', pos: 0.4 }, { color: '#960d32', pos: 0.64 }, { color: '#fb7f09', pos: 1 }], gradientDir: 'vertical', mapping: 'field', steps: 0, hueDrift: 0, hueRotate: 0 },
       },
     ],
     motion: { tracks: [], duration: 4, fps: 30, size: 1080 },
     locks: {},
-    focus: { blur: 100, shape: 'off', x: 0, y: 0, radius: 0.25, softness: 40, angle: 0 },
+    focus: { blur: 64, shape: 'off', x: 0, y: 0, radius: 0.25, softness: 40, angle: 0 },
   }
 }
 
