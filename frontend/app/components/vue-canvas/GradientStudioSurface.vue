@@ -6,7 +6,7 @@ import { LIQUID_PRESETS, buildConfig, defaultConfig, liquidConfig, liquidPresetC
 import { MESH_MAX_POINTS, buildMeshPoints, defaultMesh } from '~/lib/gradientfx/mesh'
 import { randomSeed } from '~/lib/gradientfx/rng'
 import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
-import { ANIMATABLE, dropTracksForLayer, remapTracksOnReorder } from '~/lib/gradientfx/motion'
+import { animatableTargets, dropTracksForLayer, remapTracksOnReorder } from '~/lib/gradientfx/motion'
 import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
 import StudioLayerStack from '~/components/vue-canvas/StudioLayerStack.vue'
@@ -46,6 +46,7 @@ function currentNode() { return props.nodes.find((n: any) => n.id === props.node
 const config = ref<GradientConfig>(defaultConfig('#default0'))
 const activeLayer = ref(0)
 const layer = computed(() => config.value.layers[activeLayer.value] ?? config.value.layers[0]!)
+const animatable = computed(() => animatableTargets(config.value))
 const isRadial = computed(() => config.value.canvas.layout === 'radial' || config.value.canvas.layout === 'orbit')
 const isStack = computed(() => config.value.canvas.layout === 'stack')
 const isLiquid = computed(() => config.value.canvas.layout === 'liquid')
@@ -467,7 +468,12 @@ function removeLayer(i: number) {
 }
 // Shift motion tracks up when a layer is inserted at index `at` (duplicate).
 function remapTracksInsert(at: number) {
-  for (const t of config.value.motion.tracks) if (t.layer >= at) t.layer += 1
+  for (const t of config.value.motion.tracks) {
+    const m = /^layers\.(\d+)\./.exec(t.path ?? '')
+    if (m && Number(m[1]) >= at) {
+      t.path = t.path!.replace(/^layers\.\d+\./, `layers.${Number(m[1]) + 1}.`)
+    }
+  }
 }
 function duplicateLayer(i: number) {
   if (config.value.layers.length >= LAYER_MAX) return
@@ -479,7 +485,7 @@ function duplicateLayer(i: number) {
 function reorderLayer(from: number, to: number) {
   const [moved] = config.value.layers.splice(from, 1)
   config.value.layers.splice(to, 0, moved!)
-  remapTracksOnReorder(config.value.motion.tracks, from, to)
+  config.value.motion.tracks = remapTracksOnReorder(config.value.motion.tracks, from, to)
   activeLayer.value = to
 }
 
@@ -512,10 +518,13 @@ function applyPaletteStops(stops: { pos: number; color: string }[]) {
 
 // ── motion tracks ─────────────────────────────────────────────────────────────
 function addTrack() {
+  const a = animatable.value[0]
+  if (!a) return
   config.value.motion.tracks.push({
-    layer: activeLayer.value, param: 'phase', from: 0, to: 1,
-    easing: 'pingpong', loops: 1, hold: 0, cycleOffset: 0, delay: 0,
+    path: a.path, from: a.min, to: a.max,
+    easing: 'linear', loops: 1, hold: 0, cycleOffset: 0, delay: 0,
   })
+  onEdit('motion.tracks', config.value.motion.tracks.length)
 }
 function removeTrack(i: number) { config.value.motion.tracks.splice(i, 1) }
 
@@ -1155,11 +1164,8 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
         <p v-if="!config.motion.tracks.length" class="text-[11px] text-white/30">Add a track to animate a parameter and export video.</p>
         <div v-for="(tk, i) in config.motion.tracks" :key="i" class="mb-2 rounded border border-white/10 p-2">
           <div class="mb-1 flex items-center gap-1">
-            <select v-model.number="tk.layer" class="rounded-md border border-white/[0.08] bg-white/[0.04] px-1 py-0.5 text-[11px]">
-              <option v-for="(_, li) in config.layers" :key="li" :value="li">L{{ li + 1 }}</option>
-            </select>
-            <select v-model="tk.param" class="min-w-0 flex-1 rounded-md border border-white/[0.08] bg-white/[0.04] px-1 py-0.5 text-[11px]">
-              <option v-for="p in ANIMATABLE" :key="p.key" :value="p.key">{{ p.label }}</option>
+            <select v-model="tk.path" class="min-w-0 flex-1 rounded-md border border-white/[0.08] bg-white/[0.04] px-1 py-0.5 text-[11px]">
+              <option v-for="a in animatable" :key="a.path" :value="a.path">{{ a.label }}</option>
             </select>
             <button class="text-white/30 hover:text-white/70" @click="removeTrack(i)"><Trash2 class="h-3 w-3" /></button>
           </div>
