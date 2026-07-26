@@ -1,11 +1,14 @@
 <template>
   <div class="bench">
-    <h1>Shader fill readback bench (Task 0)</h1>
+    <h1>Shader fill readback bench (Task 3: field renderer)</h1>
     <p class="note">
-      Reproduces the real cross-context handoff a shader fill needs: shaderFx renders each
-      field into its own WebGL2 context, gets blitted with <code>drawImage</code> into a 2D
-      canvas, then re-uploaded as a <code>THREE.CanvasTexture</code> on a quad in a SEPARATE
-      three.js renderer. Answers "how many live 512² fields can we afford per frame?"
+      Drives <code>beginFieldFrame</code> + <code>resolveField</code> (<code>~/lib/shaderfill/field</code>)
+      instead of calling shaderFx directly — the same descriptor-batched cache every real
+      surface will go through. shaderFx renders a field into its own WebGL2 context,
+      field.ts blits it into a per-descriptor 2D canvas (cached by <code>fieldKey</code>),
+      which gets re-blitted here into a <code>THREE.CanvasTexture</code> on a quad in a
+      SEPARATE three.js renderer. Answers both "how many live 512² fields can we afford
+      per frame?" and "does the cache actually collapse identical descriptors to one render?"
     </p>
 
     <div class="controls">
@@ -18,7 +21,7 @@
         >{{ n }}</button>
         <span class="hint">(0 = vsync baseline, no shader work)</span>
       </div>
-      <label class="group"><input v-model="distinct" type="checkbox"> distinct descriptors (vary u_seed per field)</label>
+      <label class="group"><input v-model="distinct" type="checkbox"> distinct descriptors (vary the effect's first param per field)</label>
       <span class="status">{{ status }}</span>
     </div>
 
@@ -49,6 +52,15 @@
       </span>
     </div>
 
+    <p class="pass-note">
+      Batching proof — the load-bearing claim of the whole design — is exposed as
+      <code>window.__benchBatch()</code>: it renders 8 fields with identical descriptors
+      and 8 with distinct ones (clearing the field cache between), and returns the
+      actual <code>shaderFx.render</code> count for each via field.ts's
+      <code>fieldStats()</code>. Identical must collapse to 1 render regardless of count;
+      distinct must issue 8. Not wired to a button — console/controller only.
+    </p>
+
     <p v-if="sweepError" class="sweep-error">sweep error: {{ sweepError }}</p>
 
     <table v-if="sweepRows && sweepRows.length" class="sweep-table">
@@ -72,10 +84,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as THREE from 'three'
-import { expandPasses, shaderFx } from '~/lib/shaderfx/renderer'
 import { fetchShaderFxCatalog } from '~/lib/shaderfx/catalog'
-import { resolveUniforms } from '~/lib/shaderfx/params'
-import { DEFAULT_FILL, fillTileBox } from '~/lib/spacetype/fillTile'
+import { DEFAULT_FILL, fillTileBox, type Fill, type ShaderSpec } from '~/lib/spacetype/fillTile'
+import { beginFieldFrame, resolveField, clearFieldCache, fieldStats, type FieldRequest } from '~/lib/shaderfill/field'
 import type { EffectDef } from '~/lib/shaderfx/types'
 
 definePageMeta({ layout: false })
@@ -122,7 +133,11 @@ const verdictText = computed(() => {
 const canvasEl = ref<HTMLCanvasElement | null>(null)
 
 let effectDef: EffectDef | null = null
-let baseFill: HTMLCanvasElement | null = null
+// The shader's input is now a Fill DESCRIPTOR, not a pre-built canvas — resolveField
+// rasterises it itself (via fillTileBox/effectiveTileFill) per field, same as any
+// real shader-fill consumer. Same convention as before: a static gradient tile.
+const baseFillSpec: Fill = { ...DEFAULT_FILL, type: 'gradient' }
+const BENCH_FPS = 60
 
 let renderer: THREE.WebGLRenderer | null = null
 let scene: THREE.Scene | null = null
@@ -216,9 +231,30 @@ function buildFieldStates(): void {
   }
 }
 
+/** Which param to vary for "distinct descriptors", and how: the effect's FIRST
+ *  declared param, spread across its declared range (or cycled through its enum
+ *  options). Generic over whichever effect the catalog resolves to — not hardcoded
+ *  to fbm_warp's `amount` — so this still produces genuinely different descriptors
+ *  if PREFERRED_EFFECT_ID falls back to a different generative effect. Returns {}
+ *  (every field keys identically) when `distinct` is off, or the effect has no
+ *  params to vary. */
+function paramOverridesForIndex(i: number, count: number): Record<string, number> {
+  if (!effectDef || !effectDef.params.length) return {}
+  const p = effectDef.params[0]!
+  const key = p.uniform.startsWith('u_') ? p.uniform.slice(2) : p.uniform
+  if (p.type === 'enum' && p.options?.length) return { [key]: p.options[i % p.options.length]!.value }
+  const lo = p.min ?? 0, hi = p.max ?? (p.default + 1)
+  return { [key]: lo + (hi - lo) * (i / Math.max(1, count - 1)) }
+}
+
+function specForField(i: number): ShaderSpec {
+  const params = distinct.value ? paramOverridesForIndex(i, MAX_FIELDS) : {}
+  return { effectId: effectDef!.id, params, anchor: 'object', speed: 1, input: baseFillSpec }
+}
+
 function loop(now: number): void {
   raf = requestAnimationFrame(loop)
-  if (!effectDef || !baseFill || !renderer || !scene || !camera) return
+  if (!effectDef || !renderer || !scene || !camera) return
 
   // Wall-clock rAF-to-rAF delta — the ONLY honest frame-cost signal. Both
   // shaderFx.render() and drawImage() submit GPU work asynchronously, so timing
@@ -236,23 +272,20 @@ function loop(now: number): void {
   const n = fieldsCount.value
   let blitAccum = 0
 
-  for (let i = 0; i < n; i++) {
-    // Same uniforms for every field (identical), or a per-field u_seed offset
-    // (distinct) — this is the knob that will later prove/disprove batching.
-    const seed = distinct.value ? 42 + i * 7 : 42
-    const uniforms = {
-      ...resolveUniforms(effectDef, {}),
-      u_time: timeSec,
-      u_seed: seed,
-      u_hasInput: 1,
-    }
-    const passes = expandPasses(effectDef.id, effectDef.source, uniforms, {}, effectDef.passes ?? 1)
-    const rendered = shaderFx.render(passes, baseFill, FIELD_SIZE, FIELD_SIZE)
+  // One beginFieldFrame call per rendered frame, covering every field this frame
+  // wants — this is what lets the live/frozen ceiling apply per-frame rather than
+  // per-field. Identical descriptors collapse to one key regardless of `n`.
+  const requests: FieldRequest[] = Array.from({ length: n }, (_, i) => ({
+    spec: specForField(i), w: FIELD_SIZE, h: FIELD_SIZE, t: timeSec, fps: BENCH_FPS,
+  }))
+  beginFieldFrame(requests)
 
+  for (let i = 0; i < n; i++) {
+    const out = resolveField(requests[i]!)
     const st = fieldStates[i]
-    if (!st) continue
+    if (!st || !out) continue
     const tb0 = performance.now()
-    st.ctx2d.drawImage(rendered, 0, 0)
+    st.ctx2d.drawImage(out, 0, 0)
     blitAccum += performance.now() - tb0
     st.texture.needsUpdate = true
     st.mesh.rotation.y += 0.012
@@ -310,11 +343,9 @@ const sweepError = ref('')
 /** Guarded, synchronous-per-iteration sweep. Returns rows in FIELD_OPTIONS order
  *  (0 first, so its msPerIteration is available as the baseline for the rest). */
 async function runSweep(): Promise<SweepRow[] | { error: string }> {
-  if (!effectDef || !baseFill || !renderer || !scene || !camera || fieldStates.length < MAX_FIELDS) {
+  if (!effectDef || !renderer || !scene || !camera || fieldStates.length < MAX_FIELDS) {
     return { error: 'not ready' }
   }
-  const def = effectDef
-  const base = baseFill
   const rendererInst = renderer
   const sceneInst = scene
   const cameraInst = camera
@@ -334,21 +365,17 @@ async function runSweep(): Promise<SweepRow[] | { error: string }> {
       let blitAccum = 0
       const timeSec = t0 / 1000
 
-      for (let i = 0; i < n; i++) {
-        const seed = distinct.value ? 42 + i * 7 : 42
-        const uniforms = {
-          ...resolveUniforms(def, {}),
-          u_time: timeSec,
-          u_seed: seed,
-          u_hasInput: 1,
-        }
-        const passes = expandPasses(def.id, def.source, uniforms, {}, def.passes ?? 1)
-        const rendered = shaderFx.render(passes, base, FIELD_SIZE, FIELD_SIZE)
+      const requests: FieldRequest[] = Array.from({ length: n }, (_, i) => ({
+        spec: specForField(i), w: FIELD_SIZE, h: FIELD_SIZE, t: timeSec, fps: BENCH_FPS,
+      }))
+      beginFieldFrame(requests)
 
+      for (let i = 0; i < n; i++) {
+        const out = resolveField(requests[i]!)
         const st = fieldStates[i]
-        if (!st) continue
+        if (!st || !out) continue
         const tb0 = performance.now()
-        st.ctx2d.drawImage(rendered, 0, 0)
+        st.ctx2d.drawImage(out, 0, 0)
         // Force the 2D canvas to actually materialise the blit now — otherwise
         // this drawImage is just another async submission and we're back to
         // measuring nothing.
@@ -387,18 +414,25 @@ async function runSweep(): Promise<SweepRow[] | { error: string }> {
  *
  * The sweep's cost is dominated by the blit, and a blit of a BLANK canvas costs
  * exactly as much as a blit of a real one. So the timings alone cannot tell a
- * working pipeline from one where shaderFx silently produced nothing. This runs
- * a single field and reports pixel statistics for both the shader output and the
- * 2D canvas it was blitted into — non-zero `spread` on both means real work.
+ * working pipeline from one where resolveField silently produced nothing. This runs
+ * a single field through resolveField and reports pixel statistics for both the
+ * input fill it rasterised and the 2D canvas it was blitted into — non-zero
+ * `spread` on both means real work.
  */
 function runProbe(): unknown {
-  const def = effectDef, base = baseFill, st = fieldStates[0]
-  if (!def || !base || !st) return { error: 'not ready' }
+  const def = effectDef, st = fieldStates[0]
+  if (!def || !st) return { error: 'not ready' }
 
-  const uniforms = { ...resolveUniforms(def, {}), u_time: 1.234, u_seed: 42, u_hasInput: 1 }
-  const passes = expandPasses(def.id, def.source, uniforms, {}, def.passes ?? 1)
-  const rendered = shaderFx.render(passes, base, FIELD_SIZE, FIELD_SIZE)
-  st.ctx2d.drawImage(rendered, 0, 0)
+  clearFieldCache()
+  const req: FieldRequest = { spec: specForField(0), w: FIELD_SIZE, h: FIELD_SIZE, t: 1.234, fps: BENCH_FPS }
+  beginFieldFrame([req])
+  const out = resolveField(req)
+  if (!out) return { error: 'resolveField returned null' }
+  st.ctx2d.drawImage(out, 0, 0)
+
+  // Independently rebuild the same input tile resolveField rasterised internally,
+  // purely for this probe's own reporting (resolveField doesn't expose it).
+  const inputTile = fillTileBox(baseFillSpec, FIELD_SIZE, FIELD_SIZE)
 
   const stats = (c: HTMLCanvasElement, label: string) => {
     const x = c.getContext('2d')
@@ -415,8 +449,47 @@ function runProbe(): unknown {
 
   return {
     effect: def.id,
-    inputFill: stats(base as HTMLCanvasElement, 'input fill (shader source)'),
+    inputFill: stats(inputTile, 'input fill (shader source)'),
     blitted: stats(st.canvas2d, 'field canvas (after blit)'),
+  }
+}
+
+/**
+ * Batching proof (controller verification — the load-bearing claim of the whole
+ * design). Renders N fields with IDENTICAL descriptors and N with DISTINCT
+ * descriptors, and reports how many `shaderFx.render` calls each actually issued
+ * (via field.ts's `fieldStats()` counter). Identical descriptors must collapse to
+ * exactly one render no matter how large N is; distinct descriptors must each
+ * render once. Clears the cache before/between/after so the counts aren't polluted
+ * by whatever the on-screen loop or a prior sweep already cached.
+ */
+function runBatch(): unknown {
+  if (!effectDef) return { error: 'not ready' }
+  const n = MAX_FIELDS
+  const t = 0.5
+  const mk = (params: Record<string, number>): FieldRequest => ({
+    spec: { effectId: effectDef!.id, params, anchor: 'object', speed: 1, input: baseFillSpec },
+    w: FIELD_SIZE, h: FIELD_SIZE, t, fps: BENCH_FPS,
+  })
+
+  clearFieldCache()
+  const identicalReqs = Array.from({ length: n }, () => mk({}))
+  beginFieldFrame(identicalReqs)
+  for (const r of identicalReqs) resolveField(r)
+  const identicalRenders = fieldStats().renders
+
+  clearFieldCache()
+  const distinctReqs = Array.from({ length: n }, (_, i) => mk(paramOverridesForIndex(i, n)))
+  beginFieldFrame(distinctReqs)
+  for (const r of distinctReqs) resolveField(r)
+  const distinctRenders = fieldStats().renders
+
+  clearFieldCache()
+  return {
+    n,
+    identicalRenders,   // must be 1 regardless of n
+    distinctRenders,    // must equal n
+    pass: identicalRenders === 1 && distinctRenders === n,
   }
 }
 
@@ -448,10 +521,6 @@ onMounted(async () => {
     effectId.value = effectDef.id
     status.value = ''
 
-    // Synthetic input: a gradient fill tile, same convention as the future shader-fill
-    // pipeline (fillTileBox → shaderFx.render base). Static — only u_time animates.
-    baseFill = fillTileBox({ ...DEFAULT_FILL, type: 'gradient' }, FIELD_SIZE, FIELD_SIZE)
-
     if (!canvasEl.value) {
       status.value = 'canvas ref missing — cannot init renderer'
       return
@@ -472,6 +541,7 @@ onMounted(async () => {
     // rAF loop below never ticks.
     ;(window as any).__benchSweep = runSweep
     ;(window as any).__benchProbe = runProbe
+    ;(window as any).__benchBatch = runBatch
 
     startedAt = performance.now()
     raf = requestAnimationFrame(loop)
@@ -487,6 +557,8 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   delete (window as any).__benchSweep
   delete (window as any).__benchProbe
+  delete (window as any).__benchBatch
+  clearFieldCache()
   if (raf) cancelAnimationFrame(raf)
   raf = 0
   for (const st of fieldStates) {

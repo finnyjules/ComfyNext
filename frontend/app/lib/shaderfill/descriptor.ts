@@ -4,6 +4,7 @@
  * the node environment; all rendering lives in ./field.ts.
  */
 import type { Fill, ShaderSpec } from '~/lib/spacetype/fillTile'
+import type { EffectDef } from '~/lib/shaderfx/types'
 
 /** Measured, not guessed: a live 512² field costs ~1.25ms typically / ~3.6ms worst-observed,
  *  almost entirely readback. At the worst case, 4 fields is ~14ms — under half a 30fps frame,
@@ -53,6 +54,42 @@ export function fieldKey(spec: ShaderSpec, w: number, h: number, tq: number): st
   const t = spec.speed === 0 ? 'static' : tq
   return encode([spec.effectId, paramsKey(spec.params), spec.anchor, spec.speed,
                  inputKey(spec.input), w, h, t])
+}
+
+/** The catalog stores each param's uniform name WITH the `u_` prefix already applied
+ *  (e.g. `"uniform": "u_amount"` in shader_effects/manifest.json) — see EffectParamDef
+ *  in ~/lib/shaderfx/types. ShaderSpec.params (and the Task 8 control schema, addressed
+ *  as `fill.shader.p.<key>`) is keyed WITHOUT that prefix, so this strips it back off. */
+function unprefixedKey(uniform: string): string {
+  return uniform.startsWith('u_') ? uniform.slice(2) : uniform
+}
+
+/** Resolve a shader spec's raw params against an effect's declared defaults: every
+ *  param the effect declares gets a value (the override if present, finite, and (for
+ *  enums) one of its declared option values — otherwise the default), clamped to the
+ *  param's min/max. Any key in `params` the effect doesn't declare is dropped.
+ *
+ *  MUST run before `fieldKey` — an empty `params: {}` and a `params: { amount: 0.12 }`
+ *  where 0.12 IS `amount`'s default render identical pixels but would key differently
+ *  under the raw params, silently halving the batching hit rate (ten shapes sharing a
+ *  fill would key as two groups instead of one). Feed the SAME resolved object to both
+ *  `fieldKey` and the uniform upload, not the raw `spec.params` to one and this to the
+ *  other — that would just move the mismatch rather than closing it. Pure (no catalog
+ *  access of its own): the caller resolves `effect` and passes it in. */
+export function resolveEffectParams(effect: EffectDef, params: Record<string, number>): Record<string, number> {
+  const out: Record<string, number> = {}
+  for (const p of effect.params) {
+    const key = unprefixedKey(p.uniform)
+    const raw = params[key]
+    if (p.type === 'enum') {
+      const values = (p.options ?? []).map(o => o.value)
+      out[key] = typeof raw === 'number' && values.includes(raw) ? raw : p.default
+    } else {
+      const v = typeof raw === 'number' && Number.isFinite(raw) ? raw : p.default
+      out[key] = Math.min(Math.max(v, p.min ?? -Infinity), p.max ?? Infinity)
+    }
+  }
+  return out
 }
 
 /** Split distinct field keys into those rendered live and those frozen at t=0.

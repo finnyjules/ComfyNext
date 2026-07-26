@@ -1,8 +1,23 @@
 import { describe, it, expect } from 'vitest'
 import { DEFAULT_FILL, DEFAULT_SHADER_SPEC, type ShaderSpec } from '~/lib/spacetype/fillTile'
-import { quantizeTime, fieldKey, planFields, LIVE_FIELD_CEILING } from '~/lib/shaderfill/descriptor'
+import { quantizeTime, fieldKey, planFields, resolveEffectParams, LIVE_FIELD_CEILING } from '~/lib/shaderfill/descriptor'
+import type { EffectDef } from '~/lib/shaderfx/types'
 
 const spec = (o: Partial<ShaderSpec> = {}): ShaderSpec => ({ ...DEFAULT_SHADER_SPEC, ...o })
+
+// Mirrors the real catalog's convention (shader_effects/manifest.json): `uniform`
+// carries the `u_` prefix already; ShaderSpec.params does not.
+const fakeEffect = (overrides: Partial<EffectDef> = {}): EffectDef => ({
+  id: 'fbm_warp', name: 'FBM Warp', category: 'distortion', animated: true, passes: 1,
+  centerParam: null, textures: [],
+  params: [
+    { uniform: 'u_amount', label: 'Amount', type: 'float', min: 0, max: 0.5, default: 0.12, step: 0.005 },
+    { uniform: 'u_scale', label: 'Scale', type: 'float', min: 0.5, max: 8, default: 3, step: 0.25 },
+    { uniform: 'u_mode', label: 'Mode', type: 'enum', default: 0, options: [{ label: 'A', value: 0 }, { label: 'B', value: 1 }] },
+  ],
+  source: '',
+  ...overrides,
+})
 
 describe('quantizeTime', () => {
   it('snaps to the host frame interval', () => {
@@ -82,6 +97,45 @@ describe('fieldKey', () => {
     const withNaN = fieldKey(spec({ params: { p: NaN } }), 512, 512, 0)
     const withNull = fieldKey(spec({ params: { p: null as unknown as number } }), 512, 512, 0)
     expect(withNaN).not.toBe(withNull)
+  })
+})
+
+describe('resolveEffectParams', () => {
+  it('applies defaults for every declared param when overrides is empty', () => {
+    expect(resolveEffectParams(fakeEffect(), {})).toEqual({ amount: 0.12, scale: 3, mode: 0 })
+  })
+
+  it('lets a valid override win over the default', () => {
+    expect(resolveEffectParams(fakeEffect(), { amount: 0.4 })).toEqual({ amount: 0.4, scale: 3, mode: 0 })
+  })
+
+  it('drops keys the effect does not declare', () => {
+    expect(resolveEffectParams(fakeEffect(), { amount: 0.4, notAParam: 999 })).toEqual({ amount: 0.4, scale: 3, mode: 0 })
+  })
+
+  it('clamps an out-of-range float override to min/max', () => {
+    expect(resolveEffectParams(fakeEffect(), { amount: 99 }).amount).toBe(0.5)
+    expect(resolveEffectParams(fakeEffect(), { amount: -99 }).amount).toBe(0)
+  })
+
+  it('falls back to default for an enum override that is not a declared option value', () => {
+    expect(resolveEffectParams(fakeEffect(), { mode: 7 }).mode).toBe(0)
+    expect(resolveEffectParams(fakeEffect(), { mode: 1 }).mode).toBe(1)
+  })
+
+  it('falls back to default for a non-finite override — Infinity is not clamped, it is rejected', () => {
+    expect(resolveEffectParams(fakeEffect(), { amount: NaN }).amount).toBe(0.12)
+    expect(resolveEffectParams(fakeEffect(), { amount: Infinity }).amount).toBe(0.12)
+  })
+
+  it('the whole point: an empty params object and one that repeats the defaults must key identically', () => {
+    const effect = fakeEffect()
+    const empty = resolveEffectParams(effect, {})
+    const explicit = resolveEffectParams(effect, { amount: 0.12, scale: 3, mode: 0 })
+    expect(explicit).toEqual(empty)
+    const keyA = fieldKey(spec({ params: empty }), 512, 512, 0.5)
+    const keyB = fieldKey(spec({ params: explicit }), 512, 512, 0.5)
+    expect(keyA).toBe(keyB)
   })
 })
 
