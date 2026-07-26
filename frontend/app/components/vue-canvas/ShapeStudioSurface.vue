@@ -209,32 +209,9 @@ const bgColorProxy = computed({
   set: (v: string) => { config.value.style.background = v; lastBgColor.value = v },
 })
 
-// ── grain overlay (CSS, NOT baked by the engine) ────────────────────────────────────────
-// A tiled feTurbulence noise data-URI, opacity-driven by config.style.grain/100, laid over
-// the canvas via `mix-blend-mode: overlay`. previewBox tracks the canvas's on-screen CSS
-// box every frame (same technique as Gradient's mesh-handle overlay) so the noise div lines
-// up exactly regardless of the preview's dpr-scaled backing size.
-const NOISE_BG = 'url("data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'160\' height=\'160\'><filter id=\'n\'><feTurbulence type=\'fractalNoise\' baseFrequency=\'0.85\' numOctaves=\'2\' stitchTiles=\'stitch\'/></filter><rect width=\'100%25\' height=\'100%25\' filter=\'url(%23n)\'/></svg>")'
-const previewBox = ref({ left: 0, top: 0, w: 0, h: 0 })
-const grainStyle = computed(() => ({
-  opacity: String(config.value.style.grain / 100),
-  backgroundImage: NOISE_BG,
-  backgroundSize: '160px 160px',
-  mixBlendMode: 'overlay' as const,
-  left: `${previewBox.value.left}px`, top: `${previewBox.value.top}px`,
-  width: `${previewBox.value.w}px`, height: `${previewBox.value.h}px`,
-}))
-
-// ── distortion (CSS/SVG filter, also NOT baked by the engine) ──────────────────────────
-// Documented choice: an SVG feDisplacementMap filter (feTurbulence noise as the
-// displacement source) applied to the canvas via CSS `filter: url(#...)`, scaled by
-// config.style.distortion/100. This gives a genuine warped-glass look with no engine
-// changes, unlike a plain CSS `filter: blur()` stand-in which wouldn't read as "distortion"
-// at all. Skipped entirely (filter: none) at distortion=0 so there's no per-frame SVG
-// filter cost when unused.
-const distortFilterId = computed(() => `shape-distort-${String(props.nodeId).replace(/[^a-zA-Z0-9_-]/g, '_')}`)
-const distortionScale = computed(() => (config.value.style.distortion / 100) * 45)
-const distortionFilter = computed(() => (config.value.style.distortion > 0 ? `url(#${distortFilterId.value})` : 'none'))
+// Grain and distortion are baked by ShapeEngine's post pass (see lib/shapefx/post.ts) —
+// no CSS/SVG overlay here. The two sliders below just write into config.style, same as
+// every other param.
 
 // ── preview: engine mount + rAF loop + orbit ────────────────────────────────────────────
 const canvas = ref<HTMLCanvasElement | null>(null)
@@ -300,7 +277,6 @@ function frame() {
     if (hasShaderFill) engine.refreshShaderFields((performance.now() - mountedAt) / 1000)
     frozenFieldCount.value = hasShaderFill ? engine.frozenFieldCount : 0
     engine.render(orbit)
-    previewBox.value = { left: el.offsetLeft, top: el.offsetTop, w: el.clientWidth, h: el.clientHeight }
   }
   raf = requestAnimationFrame(frame)
 }
@@ -459,14 +435,8 @@ async function onImportFile(e: Event) {
         <canvas
           ref="canvas"
           class="max-h-full max-w-full touch-none rounded-lg shadow-2xl"
-          :style="{ filter: distortionFilter }"
           @pointerdown="onPointerDown"
           @wheel.prevent="onWheel"
-        />
-        <div
-          v-if="config.style.grain > 0"
-          class="pointer-events-none absolute rounded-lg"
-          :style="grainStyle"
         />
         <div v-if="!webglOk" class="absolute inset-0 flex items-center justify-center text-xs text-white/50">
           3D preview unavailable on this device.
@@ -476,15 +446,6 @@ async function onImportFile(e: Event) {
           {{ frozenFieldCount }} shader fill{{ frozenFieldCount > 1 ? 's' : '' }} frozen — too many live shader
           fields at once (limit {{ LIVE_FIELD_CEILING }}). Remove a shader fill for full motion.
         </div>
-        <!-- 0×0 SVG host for the distortion filter primitive — not rendered itself. -->
-        <svg width="0" height="0" style="position: absolute">
-          <defs>
-            <filter :id="distortFilterId">
-              <feTurbulence type="fractalNoise" baseFrequency="0.012" numOctaves="2" seed="7" result="noise" />
-              <feDisplacementMap in="SourceGraphic" in2="noise" :scale="distortionScale" xChannelSelector="R" yChannelSelector="G" />
-            </filter>
-          </defs>
-        </svg>
       </div>
     </template>
     <template #actions>

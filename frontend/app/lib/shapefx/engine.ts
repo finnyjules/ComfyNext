@@ -8,6 +8,8 @@ import { applyVertexColors, vertexRampT, rampHexes } from './color'
 import { makeOmbreMaterial } from './ombre'
 import { buildSurfaceTexture } from './surface'
 import { withShaderFillContext, clearShaderFillOwner, refreshLiveShaderFills } from '~/lib/spacetype/fills'
+import { hashSeed } from '~/lib/spacetype/rng'
+import { postNeeded, POST_VERT, POST_FRAG } from './post'
 import type { ShapeConfig } from './config'
 
 // Ortho frustum half-height chosen so a unit-ish shape frames nicely at z=6.
@@ -33,6 +35,13 @@ export class ShapeEngine {
   private w: number
   private h: number
   private _frozenFieldCount = 0
+  // Lazily-built post-processing pass (grain + distortion) — see ensurePost(). Only
+  // allocated the first time a config actually needs it (postNeeded), so a plain shape
+  // with both sliders at 0 never pays for a render target or a second draw call.
+  private rt: THREE.WebGLRenderTarget | null = null
+  private postScene: THREE.Scene | null = null
+  private postCam: THREE.OrthographicCamera | null = null
+  private postMat: THREE.ShaderMaterial | null = null
   /** Non-zero when one or more shader-fill fields exceeded LIVE_FIELD_CEILING on the last
    *  refreshShaderFields() call and are showing a frozen (t=0) snapshot instead of animating.
    *  Mirrors SpaceTypeEngine.frozenFieldCount — same "no silent caps" design rule applies to
@@ -65,6 +74,67 @@ export class ShapeEngine {
     this.perspCam.aspect = a; this.perspCam.updateProjectionMatrix()
     this.orthoCam.left = -ORTHO_HALF_H * a; this.orthoCam.right = ORTHO_HALF_H * a
     this.orthoCam.updateProjectionMatrix()
+    this.rt?.setSize(width, height)
+  }
+
+  /** Lazily build the fullscreen-quad post pass (render target + ortho cam + shader
+   *  material) the first time a config actually needs it. RGBAFormat (three's default) is
+   *  required so transparent renders survive the round-trip — do not narrow to RGBFormat. */
+  private ensurePost(): void {
+    if (this.rt) return
+    this.rt = new THREE.WebGLRenderTarget(this.w, this.h)
+    this.postScene = new THREE.Scene()
+    this.postCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1)
+    this.postMat = new THREE.ShaderMaterial({
+      vertexShader: POST_VERT,
+      fragmentShader: POST_FRAG,
+      // Direct overwrite of the destination buffer — the shader computes the final RGBA
+      // (including alpha) itself, so GPU blending must stay off or fractional-alpha edge
+      // pixels would get blended against the framebuffer instead of written straight.
+      depthTest: false,
+      depthWrite: false,
+      uniforms: {
+        uScene: { value: null },
+        uGrain: { value: 0 },
+        uDistort: { value: 0 },
+        uResolution: { value: new THREE.Vector2(this.w, this.h) },
+        uSeed: { value: 0 },
+      },
+    })
+    const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.postMat)
+    this.postScene.add(quad)
+  }
+
+  /** The one call site that draws the 3D scene — used both for the direct-to-canvas skip
+   *  path and for rendering into the offscreen target ahead of the post pass, so there is
+   *  exactly one `renderer.render(scene, cam)` call in this file. */
+  private renderScene(): void {
+    this.renderer.render(this.scene, this.cam)
+  }
+
+  /** The single place the scene reaches pixels. `render()` and `frameToBlob()` both call
+   *  this, so the preview and every bake apply exactly the same post chain. */
+  private drawFrame(): void {
+    const cfg = this.config
+    if (!cfg || !postNeeded(cfg)) {
+      this.renderer.setRenderTarget(null)
+      this.renderScene()
+      return
+    }
+    this.ensurePost()
+    this.renderer.setRenderTarget(this.rt)
+    this.renderer.clear()
+    this.renderScene()
+    this.renderer.setRenderTarget(null)
+    const u = this.postMat!.uniforms
+    u.uScene!.value = this.rt!.texture
+    u.uGrain!.value = (cfg.style.grain ?? 0) / 100
+    u.uDistort!.value = (cfg.style.distortion ?? 0) / 100
+    u.uResolution!.value.set(this.w, this.h)
+    // Stable per-shape seed (derived from the config's seed string) so the grain pattern
+    // doesn't jump between renders/bakes of the same shape.
+    u.uSeed!.value = hashSeed(cfg.seed) % 1000
+    this.renderer.render(this.postScene!, this.postCam!)
   }
 
   private disposeMesh(): void {
@@ -139,7 +209,7 @@ export class ShapeEngine {
     const z = CAM_Z / Math.max(0.2, orbit.zoom)
     this.perspCam.position.z = z
     this.orthoCam.position.z = z
-    this.renderer.render(this.scene, this.cam)
+    this.drawFrame()
   }
 
   /** Render at an optional target size and read back a PNG blob, then restore the preview size. */
@@ -148,7 +218,7 @@ export class ShapeEngine {
     const tw = w ?? ow, th = h ?? oh
     const resized = (ow !== tw || oh !== th)
     if (resized) this.setSize(tw, th)
-    this.renderer.render(this.scene, this.cam)
+    this.drawFrame()
     const blob: Blob = await new Promise((res, rej) =>
       this.renderer.domElement.toBlob(b => (b ? res(b) : rej(new Error('toBlob failed'))), 'image/png'))
     if (resized) this.setSize(ow, oh)         // restore the true original preview size
@@ -159,6 +229,13 @@ export class ShapeEngine {
     this.disposeMesh()
     if (this.scene.background instanceof THREE.Color) this.scene.background = null
     clearShaderFillOwner(this.id)
+    this.rt?.dispose()
+    this.postScene?.traverse(obj => {
+      const mesh = obj as THREE.Mesh
+      if (mesh.geometry) mesh.geometry.dispose()
+    })
+    this.postMat?.dispose()
+    this.rt = null; this.postScene = null; this.postCam = null; this.postMat = null
     this.renderer.dispose()
   }
 }
