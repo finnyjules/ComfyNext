@@ -11,7 +11,7 @@ import { effectiveTileFill, fillTileBox, type ShaderSpec } from '~/lib/spacetype
 import { shaderFx, expandPasses, type Uniforms } from '~/lib/shaderfx/renderer'
 import { getEffectSync } from '~/lib/shaderfx/catalog'
 import type { EffectDef } from '~/lib/shaderfx/types'
-import { fieldKey, quantizeTime, planFields, resolveEffectParams, LIVE_FIELD_CEILING } from './descriptor'
+import { fieldKey, quantizeTime, planFields, resolveEffectParams, inputKey, LIVE_FIELD_CEILING } from './descriptor'
 
 export interface FieldRequest {
   spec: ShaderSpec; w: number; h: number; t: number; fps: number
@@ -21,8 +21,14 @@ export interface FieldRequest {
 
 /** Cumulative counters for the cache, reset by `clearFieldCache`. `renders` is the
  *  number of times `shaderFx.render` actually ran — the number that proves (or
- *  disproves) batching, since a cache hit costs zero GPU work. */
-export interface FieldStats { renders: number; hits: number; misses: number }
+ *  disproves) batching, since a cache hit costs zero GPU work. `tileHits`/`tileMisses`
+ *  are the SEPARATE input-tile cache (see `tileCache` below) — an animated field's
+ *  OWN key changes every frame (so `hits`/`misses` above are dominated by misses for
+ *  live fields by construction), but its `spec.input` is almost always unchanged
+ *  frame to frame, so `tileHits` should be high even when `hits` is near zero. A low
+ *  `tileHits` rate on an animated field is the signal that the input-tile cache isn't
+ *  doing its job (e.g. a caller mutating `spec.input` needlessly every frame). */
+export interface FieldStats { renders: number; hits: number; misses: number; tileHits: number; tileMisses: number }
 
 /**
  * Sized as a small multiple of LIVE_FIELD_CEILING rather than a bare number, so the
@@ -67,7 +73,99 @@ function fieldSize(req: FieldRequest): { w: number; h: number } {
 
 const cache = new Map<string, HTMLCanvasElement>()
 let liveKeys = new Set<string>()
-let stats: FieldStats = { renders: 0, hits: 0, misses: 0 }
+let stats: FieldStats = { renders: 0, hits: 0, misses: 0, tileHits: 0, tileMisses: 0 }
+
+/**
+ * Recycled OUTPUT canvases (the 2D canvas each cache MISS blits `shaderFx`'s result
+ * into — see `resolveField`), returned here by `cache`'s LRU eviction instead of being
+ * dropped. An animated field misses `cache` every frame by construction (its key
+ * changes every quantized time step), so without this every live field allocated a
+ * fresh `document.createElement('canvas')` 30-60x/second — one of the two per-miss
+ * allocations that made the field-module path ~4x more expensive than Task 0's direct
+ * `shaderFx` path measured (the other was re-rasterising the input tile, see
+ * `tileCache` below). Bounded to CACHE_MAX so combined pool+cache memory stays the
+ * same documented order of magnitude as `cache` alone — the pool can only ever hold
+ * canvases `cache` itself evicted, so it never grows unboundedly on its own, but the
+ * cap guards against transient bursts where eviction outpaces reuse. */
+const canvasPool: HTMLCanvasElement[] = []
+const POOL_MAX = CACHE_MAX
+
+/** Reuse a pooled canvas of MATCHING size if one exists (a mismatched size gets no
+ *  benefit from reuse — resizing a canvas reallocates its backing bitmap exactly like
+ *  `document.createElement` would), else allocate fresh. Reused canvases are reset via
+ *  the `width` re-assignment below, NOT `clearRect`: per the HTML canvas spec, setting
+ *  `.width` — even to its current value — always discards and reallocates the bitmap,
+ *  which is a stronger guarantee than `clearRect` (also resets any 2D context state
+ *  left over from whatever last drew into it). This MUST run before this canvas is
+ *  reused for a different descriptor — skipping it would let one field's pixels leak
+ *  into another's output, the same silent-wrong-pixels class this feature has hit
+ *  three times already (see the Task 3 report). Verified live via
+ *  `window.__benchPoolCheck()` on the bench page (needs a DOM, not unit-testable). */
+function acquireCanvas(w: number, h: number): HTMLCanvasElement {
+  for (let i = canvasPool.length - 1; i >= 0; i--) {
+    const c = canvasPool[i]!
+    if (c.width === w && c.height === h) {
+      canvasPool.splice(i, 1)
+      c.width = w // reassignment (even to the same value) resets the bitmap — see doc above
+      return c
+    }
+  }
+  const c = document.createElement('canvas')
+  c.width = w; c.height = h
+  return c
+}
+
+function releaseCanvas(c: HTMLCanvasElement): void {
+  if (canvasPool.length < POOL_MAX) canvasPool.push(c)
+}
+
+/**
+ * Cache of the RASTERISED INPUT TILE (`fillTileBox(effectiveTileFill(spec.input), w,
+ * h)`), keyed on the input fill + size — deliberately NOT on time, effect, params, or
+ * anchor, unlike `cache` above. `spec.input` is time-invariant: an animated field's
+ * `t` changes every frame but its input fill almost never does, yet without this it
+ * was being fully re-rasterised on the CPU every single frame regardless — the bigger
+ * of the two per-miss allocations behind the ~4x regression this fixes (see
+ * `canvasPool` above for the other). Built once per distinct (input, size) pair and
+ * reused for the entire animation, across every consumer sharing that input — the
+ * same batching principle `cache`/`fieldKey` apply to the full render, just applied
+ * one layer down to the part that's actually constant.
+ *
+ * Sized the same as `cache` for the same reason (a small multiple of
+ * LIVE_FIELD_CEILING, same memory-order-of-magnitude justification) — see CACHE_MAX
+ * above for the full reasoning, which applies here unchanged.
+ */
+const tileCache = new Map<string, HTMLCanvasElement>()
+const TILE_CACHE_MAX = CACHE_MAX
+
+/** `inputKey(input)` always returns a well-formed JSON array string ending in `]`
+ *  (see descriptor.ts) — no valid JSON array output can have trailing characters, so
+ *  appending a fixed `#WxH` suffix after it can never collide with a differently
+ *  shaped input producing the same composite string, without needing `encode()`'s
+ *  full array-position disambiguation here too. */
+function tileKey(input: ShaderSpec['input'], w: number, h: number): string {
+  return `${inputKey(input)}#${w}x${h}`
+}
+
+function getInputTile(input: ShaderSpec['input'], w: number, h: number): HTMLCanvasElement {
+  const key = tileKey(input, w, h)
+  const hit = tileCache.get(key)
+  if (hit) { stats.tileHits++; return hit }
+  stats.tileMisses++
+  // The shader's input image is the nested fill, rasterised on the CPU. Depth-1
+  // nesting is enforced only at the normalizeFill/parseFills boundary, not in the
+  // type system — a hand-constructed spec can still carry a shader fill as its
+  // input, so unwrap defensively via effectiveTileFill rather than reading `input`
+  // directly (see fillTile.ts). NOTE: `tileKey` above already keys on the SAME
+  // unwrap via `inputKey`, so key and cached content agree by construction.
+  const tile = fillTileBox(effectiveTileFill(input), w, h)
+  if (tileCache.size >= TILE_CACHE_MAX) {
+    const oldest = tileCache.keys().next().value
+    if (oldest) tileCache.delete(oldest)
+  }
+  tileCache.set(key, tile)
+  return tile
+}
 
 /**
  * Resolve the effect def and a params-NORMALIZED copy of `spec` together, so every
@@ -110,12 +208,10 @@ export function resolveField(req: FieldRequest): HTMLCanvasElement | null {
 
   if (!effect) return null                        // caller falls back to the input fill
 
-  // The shader's input image is the nested fill, rasterised on the CPU. Depth-1
-  // nesting is enforced only at the normalizeFill/parseFills boundary, not in the
-  // type system — a hand-constructed spec can still carry a shader fill as its
-  // input, so unwrap defensively via effectiveTileFill rather than reading
-  // spec.input directly (see fillTile.ts).
-  const base = fillTileBox(effectiveTileFill(spec.input), w, h)
+  // The input tile is time-invariant (spec.input doesn't change as the field
+  // animates) — cached separately from the full render, keyed on input+size only,
+  // not on time/effect/params. See `getInputTile`/`tileCache` above.
+  const base = getInputTile(spec.input, w, h)
   const t = spec.speed === 0 ? 0 : tq * spec.speed
   // spec.params is already the full resolved set (defaults + valid overrides, unknown
   // keys dropped) from `resolve()` above — just reapply the `u_` uniform prefix.
@@ -130,13 +226,21 @@ export function resolveField(req: FieldRequest): HTMLCanvasElement | null {
   } catch {
     return null                                    // context loss -> input fill
   }
-  const out = document.createElement('canvas')
-  out.width = w; out.height = h
+  // Reuse a recycled output canvas rather than allocating fresh every miss (an
+  // animated field misses every frame by construction) — see `acquireCanvas`.
+  const out = acquireCanvas(w, h)
   out.getContext('2d')!.drawImage(rendered, 0, 0)    // must precede the next shaderFx call
 
   if (cache.size >= CACHE_MAX) {
     const oldest = cache.keys().next().value          // Map preserves insertion order
-    if (oldest) cache.delete(oldest)
+    if (oldest) {
+      const evicted = cache.get(oldest)
+      cache.delete(oldest)
+      // Return the evicted canvas to the pool instead of dropping it — this is the
+      // other half of what makes acquireCanvas() above a real recycling loop rather
+      // than just moving the allocation from "every miss" to "every eviction".
+      if (evicted) releaseCanvas(evicted)
+    }
   }
   cache.set(key, out)
   return out
@@ -144,11 +248,16 @@ export function resolveField(req: FieldRequest): HTMLCanvasElement | null {
 
 export function clearFieldCache(): void {
   cache.clear()
+  tileCache.clear()
+  canvasPool.length = 0
   liveKeys = new Set()
-  stats = { renders: 0, hits: 0, misses: 0 }
+  stats = { renders: 0, hits: 0, misses: 0, tileHits: 0, tileMisses: 0 }
 }
 
-/** Cumulative render/hit/miss counts since the last `clearFieldCache()` — proves (in
- *  the bench's `__benchBatch()` hook, and in production debugging) that identical
- *  descriptors collapse to one render regardless of how many consumers ask for them. */
+/** Cumulative counts since the last `clearFieldCache()`. `renders`/`hits`/`misses`
+ *  prove (in the bench's `__benchBatch()` hook, and in production debugging) that
+ *  identical descriptors collapse to one render regardless of how many consumers ask
+ *  for them. `tileHits`/`tileMisses` are the separate input-tile cache (see
+ *  `getInputTile`) — the evidence that an animated field's time-invariant input is
+ *  actually being reused across frames instead of re-rasterised on every one. */
 export function fieldStats(): FieldStats { return { ...stats } }

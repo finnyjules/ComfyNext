@@ -49,7 +49,7 @@ function encode(parts: unknown[]): string {
  *  uses makes key and render agree by construction: whatever fill effectiveTileFill
  *  resolves to is never itself shader-typed (see its own doc in fillTile.ts), so once
  *  unwrapped there is no `.shader` left to lose. */
-function inputKey(f: Fill): string {
+export function inputKey(f: Fill): string {
   const eff = effectiveTileFill(f)
   return encode([eff.type, eff.a, eff.b, eff.angle, eff.density])
 }

@@ -70,15 +70,33 @@
       cache path specifically, not by riding along on the identical-`t` case). Counts come from
       field.ts's <code>fieldStats()</code>. Not wired to a button — console/controller only.
       Raw cumulative counts are also exposed directly as <code>window.__benchFieldStats()</code>
-      → <code>{ renders, hits, misses }</code>, for inspecting cache behaviour mid-session
-      without running a full sweep or batch.
+      → <code>{ renders, hits, misses, tileHits, tileMisses }</code>, for inspecting cache
+      behaviour mid-session without running a full sweep or batch. <code>tileHits</code>/
+      <code>tileMisses</code> are the SEPARATE input-tile cache (keyed on the input fill + size,
+      not time) — the evidence that an animated field's time-invariant input is rasterised once
+      per (input, size) and reused across every frame and every consumer sharing it, instead of
+      being re-rasterised on the CPU every single frame.
+    </p>
+
+    <p class="pass-note">
+      Canvas-pool safety proof is exposed as <code>window.__benchPoolCheck()</code>: renders one
+      descriptor, forces 39 more DISTINCT ones through (guaranteeing the first gets evicted and
+      its output canvas recycled into the pool for later reuse), then renders the FIRST descriptor
+      again. A deterministic shader with fixed params/time must produce bit-identical pixels both
+      times — if a recycled canvas leaked stale content from whatever it held in between, this
+      would fail. Also asserts the second render was a genuine cache MISS (not a lucky un-evicted
+      hit), so the check proves what it claims to. Needs a DOM (canvas pixel readback), so it is
+      bench-verified rather than unit-tested.
     </p>
 
     <p v-if="sweepError" class="sweep-error">sweep error: {{ sweepError }}</p>
 
     <table v-if="sweepRows && sweepRows.length" class="sweep-table">
       <thead>
-        <tr><th>fields</th><th>mode</th><th>ms / iteration</th><th>ms / field</th><th>ms / render</th><th>blit ms</th><th>renders</th></tr>
+        <tr>
+          <th>fields</th><th>mode</th><th>ms / iteration</th><th>ms / field</th><th>ms / render</th>
+          <th>blit ms</th><th>renders</th><th>tile hits</th><th>tile misses</th>
+        </tr>
       </thead>
       <tbody>
         <tr v-for="r in sweepRows" :key="r.fields">
@@ -89,6 +107,8 @@
           <td>{{ r.msPerRender.toFixed(2) }}</td>
           <td>{{ r.blitMs.toFixed(2) }}</td>
           <td>{{ r.renders }}</td>
+          <td>{{ r.tileHits }}</td>
+          <td>{{ r.tileMisses }}</td>
         </tr>
       </tbody>
     </table>
@@ -360,7 +380,18 @@ function loop(now: number): void {
  *  produced a given row, so a caller who didn't also check the on-page checkbox
  *  (which the headless hook doesn't read unless told to) could silently read the
  *  batched 'shared' numbers while believing they were the animated worst case. */
-interface SweepRow { fields: number; mode: 'distinct' | 'shared'; msPerIteration: number; msPerField: number; msPerRender: number; blitMs: number; renders: number }
+interface SweepRow {
+  fields: number; mode: 'distinct' | 'shared'
+  msPerIteration: number; msPerField: number; msPerRender: number; blitMs: number
+  renders: number
+  /** field.ts's SEPARATE input-tile cache (keyed on input+size, not time) — the
+   *  evidence that an animated field's time-invariant `spec.input` is being
+   *  rasterised once and reused, not re-rasterised every frame. Every field in this
+   *  bench shares one `baseFillSpec`, so `tileHits` should approach
+   *  `fields * timedIterations - 1` (every request after the very first hits) even
+   *  in 'distinct' mode, where `renders` itself scales with `fields`. */
+  tileHits: number; tileMisses: number
+}
 
 interface SweepOptions {
   /** Defaults to the on-page "distinct descriptors" checkbox when omitted, so the
@@ -428,14 +459,21 @@ async function runSweep(opts: SweepOptions = {}): Promise<SweepRow[] | { error: 
     clearFieldCache()
     const iterMs: number[] = []
     const blitMsArr: number[] = []
-    // Snapshot fieldStats().renders at the warmup/timed boundary so the reported
-    // `renders` covers exactly the same population as msPerIteration/blitMs (the
-    // post-warmup iterations only) — a row's renders and its timings can never
-    // silently refer to different work.
+    // Snapshot fieldStats() at the warmup/timed boundary so every reported count
+    // covers exactly the same population as msPerIteration/blitMs (the post-warmup
+    // iterations only) — a row's counts and its timings can never silently refer to
+    // different work.
     let rendersAtTimedStart = 0
+    let tileHitsAtTimedStart = 0
+    let tileMissesAtTimedStart = 0
 
     for (let iter = 0; iter < SWEEP_ITERATIONS; iter++) {
-      if (iter === SWEEP_WARMUP) rendersAtTimedStart = fieldStats().renders
+      if (iter === SWEEP_WARMUP) {
+        const s = fieldStats()
+        rendersAtTimedStart = s.renders
+        tileHitsAtTimedStart = s.tileHits
+        tileMissesAtTimedStart = s.tileMisses
+      }
 
       // Everything inside this loop body is synchronous — no await — so the
       // timer below reflects real work, not event-loop scheduling.
@@ -477,12 +515,15 @@ async function runSweep(opts: SweepOptions = {}): Promise<SweepRow[] | { error: 
     const blitMs = avg(blitMsArr)
     if (n === 0) baselineMs = msPerIteration
     const msPerField = n === 0 ? 0 : (msPerIteration - baselineMs) / n
-    const renders = fieldStats().renders - rendersAtTimedStart
+    const finalStats = fieldStats()
+    const renders = finalStats.renders - rendersAtTimedStart
+    const tileHits = finalStats.tileHits - tileHitsAtTimedStart
+    const tileMisses = finalStats.tileMisses - tileMissesAtTimedStart
     // Total timed wall-ms (not the baseline-subtracted delta msPerField uses) divided
     // by the actual render count — checkbox/regime-independent, unlike msPerField.
     const totalTimedMs = iterMs.reduce((a, b) => a + b, 0)
     const msPerRender = renders > 0 ? totalTimedMs / renders : 0
-    rows.push({ fields: n, mode, msPerIteration, msPerField, msPerRender, blitMs, renders })
+    rows.push({ fields: n, mode, msPerIteration, msPerField, msPerRender, blitMs, renders, tileHits, tileMisses })
 
     // Yield ONLY between field counts (never inside the timed region above) so a
     // ~5-20s sweep doesn't block the page/tab for one long uninterrupted stretch.
@@ -595,6 +636,81 @@ function runBatch(): unknown {
   }
 }
 
+/** Sparse, deterministic pixel sample for comparing two renders without paying for a
+ *  full getImageData compare — prime stride so it doesn't alias any regular pattern
+ *  the shader might produce. Same technique as runProbe's `stats()` sampling below. */
+function samplePixels(c: HTMLCanvasElement): number[] {
+  const ctx = c.getContext('2d')!
+  const d = ctx.getImageData(0, 0, c.width, c.height).data
+  const out: number[] = []
+  for (let i = 0; i < d.length; i += 4 * 977) out.push(d[i]!, d[i + 1]!, d[i + 2]!, d[i + 3]!)
+  return out
+}
+
+/**
+ * Canvas-pool safety proof (controller verification — field.ts's `acquireCanvas`
+ * reuses evicted output canvases rather than allocating fresh on every cache miss;
+ * a recycled canvas that isn't fully cleared before reuse would silently show one
+ * field's pixels for a different descriptor, the same wrong-pixels class this
+ * feature has hit before). Needs a DOM (canvas pixel readback) — not unit-testable,
+ * verified here instead.
+ *
+ * 40 requests (field.ts's CACHE_MAX is documented as LIVE_FIELD_CEILING*8 = 32, so
+ * 40 distinct descriptors guarantees several evictions) all called directly against
+ * `resolveField` with NO `beginFieldFrame` in between — `clearFieldCache()` resets
+ * `liveKeys` to empty, and `resolveField` treats an empty `liveKeys` as "everything
+ * is live" (see field.ts), so this bypasses the live/frozen ceiling entirely and just
+ * stresses the cache+pool mechanism directly.
+ *
+ * Descriptor 0 is rendered, then 39 DISTINCT others push it out of the cache (its
+ * canvas gets returned to the pool), then descriptor 0 is rendered again. Two
+ * independent renders of the identical descriptor+time, through a deterministic
+ * shader (fixed u_seed, fixed params/time), MUST be pixel-identical — if the second
+ * render reused a pooled canvas that wasn't cleared, the sample would show whatever
+ * churned through it last instead.
+ */
+function runPoolCheck(): unknown {
+  if (!effectDef) return { error: 'not ready' }
+  clearFieldCache()
+
+  const n = 40
+  const t = 0.5
+  const mkReq = (i: number): FieldRequest => ({
+    spec: { effectId: effectDef!.id, params: paramOverridesForIndex(i, n), anchor: 'object', speed: 1, input: baseFillSpec },
+    w: FIELD_SIZE, h: FIELD_SIZE, t, fps: BENCH_FPS,
+  })
+
+  const first = resolveField(mkReq(0))
+  if (!first) return { error: 'resolveField returned null on first render' }
+  const firstPixels = samplePixels(first)
+
+  const rendersAfterFirst = fieldStats().renders
+  // Churn: n-1 more distinct descriptors — guaranteed > CACHE_MAX (32), so
+  // descriptor 0 (the FIRST inserted) is evicted and its canvas recycled.
+  for (let i = 1; i < n; i++) resolveField(mkReq(i))
+  const rendersAfterChurn = fieldStats().renders
+
+  const second = resolveField(mkReq(0))
+  if (!second) return { error: 'resolveField returned null on second render' }
+  const rendersAfterSecond = fieldStats().renders
+  // Must be a genuine cache MISS — if `renders` didn't increase here, descriptor 0
+  // was never evicted and this check proves nothing about pool safety.
+  const wasEvicted = rendersAfterSecond > rendersAfterChurn
+
+  const secondPixels = samplePixels(second)
+  const pixelsMatch = firstPixels.length === secondPixels.length
+    && firstPixels.every((v, idx) => v === secondPixels[idx])
+
+  clearFieldCache()
+  return {
+    n,
+    rendersAfterFirst, rendersAfterChurn, rendersAfterSecond,
+    wasEvicted,     // must be true, or this check didn't actually exercise the pool
+    pixelsMatch,    // the actual pool-safety proof
+    pass: wasEvicted && pixelsMatch,
+  }
+}
+
 async function onRunSweepClick(): Promise<void> {
   sweepRunning.value = true
   sweepError.value = ''
@@ -649,6 +765,7 @@ onMounted(async () => {
     // values) so cache behaviour can be inspected from the console mid-session,
     // e.g. between manual control changes, without needing a whole sweep/batch run.
     ;(window as any).__benchFieldStats = fieldStats
+    ;(window as any).__benchPoolCheck = runPoolCheck
 
     startedAt = performance.now()
     raf = requestAnimationFrame(loop)
@@ -666,6 +783,7 @@ onBeforeUnmount(() => {
   delete (window as any).__benchProbe
   delete (window as any).__benchBatch
   delete (window as any).__benchFieldStats
+  delete (window as any).__benchPoolCheck
   clearFieldCache()
   if (raf) cancelAnimationFrame(raf)
   raf = 0
