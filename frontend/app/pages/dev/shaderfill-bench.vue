@@ -47,25 +47,35 @@
       <button class="run-sweep" :disabled="sweepRunning" @click="onRunSweepClick">{{ sweepRunning ? 'sweeping…' : 'Run sweep' }}</button>
       <span class="hint">
         rAF/vsync-independent path — 60 forced-sync iterations per field count (10 discarded as
-        warmup), works even when this pane is hidden/backgrounded. Same thing is exposed as
+        warmup), works even when this pane is hidden/backgrounded. `t` advances one host frame
+        per iteration, so every iteration lands on a fresh cache bucket and must re-render (a
+        static `t` would cache-hit after iteration 1 and measure lookups, not GPU cost). Each
+        row's <code>renders</code> column is the actual <code>shaderFx.render</code> count for
+        its timed iterations, from field.ts's <code>fieldStats()</code> — check "distinct
+        descriptors" above to reproduce Task 0's per-field GPU cost (identical descriptors
+        legitimately batch to 1 render/iteration regardless of field count, which is correct
+        but a different measurement). Same thing is exposed as
         <code>window.__benchSweep()</code> for a caller that can't rely on rAF ticking at all.
       </span>
     </div>
 
     <p class="pass-note">
       Batching proof — the load-bearing claim of the whole design — is exposed as
-      <code>window.__benchBatch()</code>: it renders 8 fields with identical descriptors
-      and 8 with distinct ones (clearing the field cache between), and returns the
-      actual <code>shaderFx.render</code> count for each via field.ts's
-      <code>fieldStats()</code>. Identical must collapse to 1 render regardless of count;
-      distinct must issue 8. Not wired to a button — console/controller only.
+      <code>window.__benchBatch()</code>: renders 8 fields with identical descriptors (must
+      collapse to 1 render), 8 with distinct ones (must issue 8), and 8 with an identical
+      SPEED:0 descriptor at 8 DIFFERENT times (must also collapse to 1 — proves the frozen-field
+      cache path specifically, not by riding along on the identical-`t` case). Counts come from
+      field.ts's <code>fieldStats()</code>. Not wired to a button — console/controller only.
+      Raw cumulative counts are also exposed directly as <code>window.__benchFieldStats()</code>
+      → <code>{ renders, hits, misses }</code>, for inspecting cache behaviour mid-session
+      without running a full sweep or batch.
     </p>
 
     <p v-if="sweepError" class="sweep-error">sweep error: {{ sweepError }}</p>
 
     <table v-if="sweepRows && sweepRows.length" class="sweep-table">
       <thead>
-        <tr><th>fields</th><th>ms / iteration</th><th>ms / field</th><th>blit ms</th></tr>
+        <tr><th>fields</th><th>ms / iteration</th><th>ms / field</th><th>blit ms</th><th>renders</th></tr>
       </thead>
       <tbody>
         <tr v-for="r in sweepRows" :key="r.fields">
@@ -73,6 +83,7 @@
           <td>{{ r.msPerIteration.toFixed(2) }}</td>
           <td>{{ r.msPerField.toFixed(2) }}</td>
           <td>{{ r.blitMs.toFixed(2) }}</td>
+          <td>{{ r.renders }}</td>
         </tr>
       </tbody>
     </table>
@@ -331,7 +342,7 @@ function loop(now: number): void {
 // completed work, not submission — the same trap the CPU-submit timer fell into),
 // and return the numbers as a value instead of rendering them to the DOM.
 
-interface SweepRow { fields: number; msPerIteration: number; msPerField: number; blitMs: number }
+interface SweepRow { fields: number; msPerIteration: number; msPerField: number; blitMs: number; renders: number }
 
 const SWEEP_ITERATIONS = 60
 const SWEEP_WARMUP = 10
@@ -340,8 +351,29 @@ const sweepRows = ref<SweepRow[] | null>(null)
 const sweepRunning = ref(false)
 const sweepError = ref('')
 
-/** Guarded, synchronous-per-iteration sweep. Returns rows in FIELD_OPTIONS order
- *  (0 first, so its msPerIteration is available as the baseline for the rest). */
+/**
+ * Guarded, synchronous-per-iteration sweep. Returns rows in FIELD_OPTIONS order
+ * (0 first, so its msPerIteration is available as the baseline for the rest).
+ *
+ * `t` MUST advance one host frame (1/BENCH_FPS) per iteration, not sit still. An
+ * earlier version used `t0 / 1000` (wall time at measurement start) as `t`, which on
+ * a synchronous, no-await loop barely moves between iterations — after iteration 1
+ * every `resolveField` call landed on the SAME quantized time bucket as the one
+ * before it, so every iteration from #2 onward was a cache HIT, not a render. That
+ * reported ~0.1ms/field (a cache lookup) instead of the ~1.2-3.6ms/field a genuinely
+ * animated field costs (Task 0's number, which this sweep exists to reproduce and
+ * which LIVE_FIELD_CEILING in descriptor.ts is calibrated against). Advancing `t`
+ * deterministically by the frame interval reproduces the real animated case: every
+ * iteration is a fresh `quantizeTime` bucket, so every iteration must re-render.
+ *
+ * The field cache is cleared once at the START of each field-count block (not inside
+ * the timed loop — that would reintroduce shader-compile jitter the warmup exists to
+ * absorb; clearing only drops cache entries + counters, not compiled GL programs).
+ * Without this, every block replays the exact same `t` sequence (0, 1/60, 2/60, ...)
+ * as every other block, so block N's iteration K would cache-HIT on block (N-1)'s
+ * identical (spec, t) pair left in the cache — silently making later rows look
+ * cheaper than they are.
+ */
 async function runSweep(): Promise<SweepRow[] | { error: string }> {
   if (!effectDef || !renderer || !scene || !camera || fieldStates.length < MAX_FIELDS) {
     return { error: 'not ready' }
@@ -355,15 +387,23 @@ async function runSweep(): Promise<SweepRow[] | { error: string }> {
   let baselineMs = 0
 
   for (const n of FIELD_OPTIONS) {
+    clearFieldCache()
     const iterMs: number[] = []
     const blitMsArr: number[] = []
+    // Snapshot fieldStats().renders at the warmup/timed boundary so the reported
+    // `renders` covers exactly the same population as msPerIteration/blitMs (the
+    // post-warmup iterations only) — a row's renders and its timings can never
+    // silently refer to different work.
+    let rendersAtTimedStart = 0
 
     for (let iter = 0; iter < SWEEP_ITERATIONS; iter++) {
+      if (iter === SWEEP_WARMUP) rendersAtTimedStart = fieldStats().renders
+
       // Everything inside this loop body is synchronous — no await — so the
       // timer below reflects real work, not event-loop scheduling.
       const t0 = performance.now()
       let blitAccum = 0
-      const timeSec = t0 / 1000
+      const timeSec = iter / BENCH_FPS
 
       const requests: FieldRequest[] = Array.from({ length: n }, (_, i) => ({
         spec: specForField(i), w: FIELD_SIZE, h: FIELD_SIZE, t: timeSec, fps: BENCH_FPS,
@@ -399,7 +439,8 @@ async function runSweep(): Promise<SweepRow[] | { error: string }> {
     const blitMs = avg(blitMsArr)
     if (n === 0) baselineMs = msPerIteration
     const msPerField = n === 0 ? 0 : (msPerIteration - baselineMs) / n
-    rows.push({ fields: n, msPerIteration, msPerField, blitMs })
+    const renders = fieldStats().renders - rendersAtTimedStart
+    rows.push({ fields: n, msPerIteration, msPerField, blitMs, renders })
 
     // Yield ONLY between field counts (never inside the timed region above) so a
     // ~5-20s sweep doesn't block the page/tab for one long uninterrupted stretch.
@@ -456,20 +497,29 @@ function runProbe(): unknown {
 
 /**
  * Batching proof (controller verification — the load-bearing claim of the whole
- * design). Renders N fields with IDENTICAL descriptors and N with DISTINCT
- * descriptors, and reports how many `shaderFx.render` calls each actually issued
- * (via field.ts's `fieldStats()` counter). Identical descriptors must collapse to
- * exactly one render no matter how large N is; distinct descriptors must each
- * render once. Clears the cache before/between/after so the counts aren't polluted
- * by whatever the on-screen loop or a prior sweep already cached.
+ * design). Three cases, each isolated by a `clearFieldCache()` so their render
+ * counts (via field.ts's `fieldStats()`) can't cross-contaminate:
+ *
+ *  1. IDENTICAL descriptors, same `t` — N consumers sharing one shader fill at one
+ *     moment in time. Must collapse to exactly 1 render no matter how large N is.
+ *  2. DISTINCT descriptors, same `t` — N genuinely different fields. Must issue N
+ *     renders — proves the cache isn't over-collapsing unrelated requests too.
+ *  3. IDENTICAL (frozen, speed:0) descriptor, N DIFFERENT `t` values — a single
+ *     shader fill with `speed: 0`, requested at N different moments (e.g. N frames
+ *     of an animation, or N shapes each polling at a slightly different time). Must
+ *     ALSO collapse to 1 render, because fieldKey drops time entirely when
+ *     speed === 0 (descriptor.ts) — this is the "genuinely cached, not by accident"
+ *     case: unlike case 1, the requests here are NOT identical (their `t` differs),
+ *     so this demonstrates the frozen-field cache path specifically rather than
+ *     riding along on case 1's same-t coincidence.
  */
 function runBatch(): unknown {
   if (!effectDef) return { error: 'not ready' }
   const n = MAX_FIELDS
   const t = 0.5
-  const mk = (params: Record<string, number>): FieldRequest => ({
-    spec: { effectId: effectDef!.id, params, anchor: 'object', speed: 1, input: baseFillSpec },
-    w: FIELD_SIZE, h: FIELD_SIZE, t, fps: BENCH_FPS,
+  const mk = (params: Record<string, number>, speed = 1, tOverride = t): FieldRequest => ({
+    spec: { effectId: effectDef!.id, params, anchor: 'object', speed, input: baseFillSpec },
+    w: FIELD_SIZE, h: FIELD_SIZE, t: tOverride, fps: BENCH_FPS,
   })
 
   clearFieldCache()
@@ -485,11 +535,21 @@ function runBatch(): unknown {
   const distinctRenders = fieldStats().renders
 
   clearFieldCache()
+  // Same descriptor every time EXCEPT `t`, which is different for every request —
+  // if this collapses to 1 render it can only be because speed:0 made fieldKey
+  // ignore `t`, not because the requests happened to be identical.
+  const frozenReqs = Array.from({ length: n }, (_, i) => mk({}, 0, i * 0.37))
+  beginFieldFrame(frozenReqs)
+  for (const r of frozenReqs) resolveField(r)
+  const frozenRenders = fieldStats().renders
+
+  clearFieldCache()
   return {
     n,
-    identicalRenders,   // must be 1 regardless of n
-    distinctRenders,    // must equal n
-    pass: identicalRenders === 1 && distinctRenders === n,
+    identicalRenders,   // must be 1 regardless of n (same descriptor, same t)
+    distinctRenders,    // must equal n (n genuinely distinct descriptors)
+    frozenRenders,      // must be 1 (same descriptor, speed:0, n DIFFERENT t values)
+    pass: identicalRenders === 1 && distinctRenders === n && frozenRenders === 1,
   }
 }
 
@@ -542,6 +602,11 @@ onMounted(async () => {
     ;(window as any).__benchSweep = runSweep
     ;(window as any).__benchProbe = runProbe
     ;(window as any).__benchBatch = runBatch
+    // Raw cumulative { renders, hits, misses } since the last clearFieldCache() —
+    // exposed directly (not just baked into __benchSweep/__benchBatch's return
+    // values) so cache behaviour can be inspected from the console mid-session,
+    // e.g. between manual control changes, without needing a whole sweep/batch run.
+    ;(window as any).__benchFieldStats = fieldStats
 
     startedAt = performance.now()
     raf = requestAnimationFrame(loop)
@@ -558,6 +623,7 @@ onBeforeUnmount(() => {
   delete (window as any).__benchSweep
   delete (window as any).__benchProbe
   delete (window as any).__benchBatch
+  delete (window as any).__benchFieldStats
   clearFieldCache()
   if (raf) cancelAnimationFrame(raf)
   raf = 0
