@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
-import { parseFills, fillShaderTexture, fillTiling, fillTextColor } from '../fills'
+import { parseFills, fillShaderTexture, fillTiling, fillTextColor, fillAnchor, fillScreenSize } from '../fills'
 import { defaultFillsFor } from '../palette'
 
 /**
@@ -61,6 +61,7 @@ function panelMaterial(
   textMap: THREE.Texture,
   fillTex: THREE.Texture,
   fillScale: THREE.Vector2,
+  anchor: number,
   textColor: THREE.Color,
   lit: boolean,
 ): THREE.Material {
@@ -69,16 +70,18 @@ function panelMaterial(
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uFillTex = { value: fillTex }
     shader.uniforms.uFillScale = { value: fillScale }
+    shader.uniforms.uFillAnchor = { value: anchor }
+    shader.uniforms.uFillScreen = { value: new three.Vector2(...fillScreenSize()) }
     shader.uniforms.uTextColor = { value: textColor }
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec2 vRawUv;')
       .replace('#include <uv_vertex>', '#include <uv_vertex>\nvRawUv = uv;')
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform sampler2D uFillTex;\nuniform vec2 uFillScale;\nuniform vec3 uTextColor;\nvarying vec2 vRawUv;')
+      .replace('#include <common>', '#include <common>\nuniform sampler2D uFillTex;\nuniform vec2 uFillScale;\nuniform float uFillAnchor;\nuniform vec2 uFillScreen;\nuniform vec3 uTextColor;\nvarying vec2 vRawUv;')
       // uFillTex is SRGB-tagged → texture2D returns linear (no manual decode), same as stripes.
       // uFillScale carries the wedge aspect (V scaled by height:width) so patterns read square
       // instead of vertically stretched. map_fragment leaves glyph coverage in diffuseColor.a.
-      .replace('#include <map_fragment>', '#include <map_fragment>\n{ vec3 panel = texture2D(uFillTex, vRawUv * uFillScale).rgb; diffuseColor = vec4(mix(panel, uTextColor, diffuseColor.a), 1.0); }')
+      .replace('#include <map_fragment>', '#include <map_fragment>\n{ vec2 fuv = uFillAnchor > 0.5 ? gl_FragCoord.xy / uFillScreen : vRawUv * uFillScale; vec3 panel = texture2D(uFillTex, fuv).rgb; diffuseColor = vec4(mix(panel, uTextColor, diffuseColor.a), 1.0); }')
   }
   return mat
 }
@@ -144,7 +147,7 @@ export const ballEffect: SpaceTypeEffect = {
       const fillScale = fill.type === 'gradient'
         ? new three.Vector2(tiling, tiling)
         : new three.Vector2(tiling, tiling * aspect)
-      const mat = panelMaterial(three, tex, fillTex, fillScale, fillTextColor(three, fill), lit)
+      const mat = panelMaterial(three, tex, fillTex, fillScale, fillAnchor(fill), fillTextColor(three, fill), lit)
       const mesh = new three.Mesh(geo, mat)
       mesh.userData.tex = tex   // so disposeRoot() frees the cloned text texture on rebuild
       spinGroup.add(mesh)

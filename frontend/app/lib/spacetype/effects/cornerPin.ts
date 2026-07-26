@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
-import { parseFills, serializeFills, fillShaderTexture, fillTiling, fillTextColor, SRGB_TO_LINEAR_GLSL, type Fill } from '../fills'
+import { parseFills, serializeFills, fillShaderTexture, fillTiling, fillTextColor, SRGB_TO_LINEAR_GLSL, fillAnchor, fillScreenSize, type Fill } from '../fills'
 
 // Default per-band fills: the signature dark/cream 2-tone (band 0 dark+cream text, band 1 inverted),
 // cycled across however many bands. Each entry can be changed to ombre/grid/gradient/etc. in the panel.
@@ -158,6 +158,7 @@ const FRAG = [
   'varying vec3 vUVQ;',
   'uniform sampler2D uText; uniform vec3 uTextColor;',
   'uniform sampler2D uFill; uniform float uFillTiling;',   // this band\'s background fill (pattern) + tiling
+  'uniform float uFillAnchor; uniform vec2 uFillScreen;',   // 0=object(glyph UV) 1=frame(screen space)
   SRGB_TO_LINEAR_GLSL,                                     // stLin() — fill texture is sampled raw (sRGB)
   // True inked-pixel bounds of THIS word in the atlas (U: left/right, V: mid/height) — measured by
   // scanning alpha, so the quad maps EXACTLY to the visible glyphs (flush left+right, no advance slack).
@@ -176,7 +177,8 @@ const FRAG = [
   // Perspective-correct UV: divide the interpolated homogeneous texcoord by its q weight.
   '  vec2 uv = vUVQ.xy / max(vUVQ.z, 1e-4);',
   // Background fill sampled across the (corner-pinned) band so the pattern warps WITH the text.
-  '  vec3 bg = stLin(texture2D(uFill, fract(uv * uFillTiling)).rgb);',
+  '  vec2 fillUv = uFillAnchor > 0.5 ? gl_FragCoord.xy / uFillScreen : fract(uv * uFillTiling);',
+  '  vec3 bg = stLin(texture2D(uFill, fillUv).rgb);',
   '  float a = inkA(uv);',
   '  vec3 col = mix(bg, uTextColor, a);',
   '  gl_FragColor = vec4(pow(clamp(col, 0.0, 1.0), vec3(0.4545)), 1.0);',
@@ -275,6 +277,8 @@ function makeBlock(three: typeof THREE, tex: THREE.Texture, box: InkBox, fill: F
       // userData.tex or the engine's rebuild dispose would free a shared singleton).
       uFill: { value: fillShaderTexture(three, fill) },
       uFillTiling: { value: fillTiling(fill) },
+      uFillAnchor: { value: fillAnchor(fill) },
+      uFillScreen: { value: new three.Vector2(...fillScreenSize()) },
       uInkL: { value: box.inkL }, uInkR: { value: box.inkR },
       uVMid: { value: box.vMid }, uVH: { value: box.vH },
       uVLo: { value: box.vLo }, uVHi: { value: box.vHi },

@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
-import { parseFills, fillPrimary, fillTextColor } from '../fills'
+import { parseFills, fillPrimary, fillTextColor, fillAnchor, fillScreenSize } from '../fills'
 import { defaultFillsFor } from '../palette'
 import { stripAlpha } from '~/lib/color/convert'
 import { resolveFontFamily, fontHasWeightAxis } from '~/data/google-fonts'
@@ -46,6 +46,11 @@ const VERT = 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionM
 const FRAG = [
   'precision highp float;',
   'uniform sampler2D uMatte; uniform vec3 uFillColor; uniform vec3 uTextColor;',
+  // uFillAnchor/uFillScreen: declared for convention consistency with every other uFill-
+  // sampling effect, but genuinely UNUSED here — this effect's fill is a flat uFillColor
+  // (see fillPrimary below), never a sampled texture/field, so there is no UV space for
+  // an anchor to switch between. Kept as a documented no-op rather than a silent omission.
+  'uniform float uFillAnchor; uniform vec2 uFillScreen;',
   'uniform float uTime, uWarp, uPoly, uWarpScale;',
   'varying vec2 vUv;',
   'float wv(float p, float poly){ float s = sin(p); float t = 0.63661977 * asin(clamp(sin(p), -1.0, 1.0)); return mix(s, t, poly); }',
@@ -153,6 +158,8 @@ interface State {
   uniforms: {
     uMatte: { value: THREE.Texture }
     uFillColor: { value: THREE.Color }
+    uFillAnchor: { value: number }
+    uFillScreen: { value: THREE.Vector2 }
     uTextColor: { value: THREE.Color }
     uTime: { value: number }
     uWarp: { value: number }
@@ -191,6 +198,8 @@ export const elasticEffect: SpaceTypeEffect = {
     const uniforms = {
       uMatte: { value: tex as THREE.Texture },
       uFillColor: { value: fillPrimary(three, fill) },
+      uFillAnchor: { value: fillAnchor(fill) },
+      uFillScreen: { value: new three.Vector2(...fillScreenSize()) },
       uTextColor: { value: fillTextColor(three, fill) },
       uTime: { value: 0 },
       uWarp: { value: n(params, 'warp') },

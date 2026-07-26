@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import { buildRibbonGeometryData, ribbonInstance, scrollOffset, textVariantForBand } from '../ribbonGeometry'
-import { parseFills, fillShaderTexture, fillTiling, fillTextColor } from '../fills'
+import { parseFills, fillShaderTexture, fillTiling, fillTextColor, fillAnchor, fillScreenSize } from '../fills'
 import { defaultFillsFor } from '../palette'
 import { stripAlpha } from '~/lib/color/convert'
 
@@ -63,6 +63,7 @@ function stripeFrontMaterial(
   map: THREE.Texture,
   fillTex: THREE.Texture,
   tiling: number,
+  anchor: number,
   textColor: THREE.Color,
   uFillScroll: { value: number },
   params: Params,
@@ -74,11 +75,15 @@ function stripeFrontMaterial(
   // alpha) composites the per-band text colour on top.
   const uFillTex = { value: fillTex }
   const uFillTiling = { value: tiling }
+  const uFillAnchor = { value: anchor }
+  const uFillScreen = { value: new three.Vector2(...fillScreenSize()) }
   const uTextColor = { value: textColor }
   const uShadowStrength = { value: String(params.shadows) === 'on' ? n(params, 'shadowStrength') : 0 }
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uFillTex = uFillTex
     shader.uniforms.uFillTiling = uFillTiling
+    shader.uniforms.uFillAnchor = uFillAnchor
+    shader.uniforms.uFillScreen = uFillScreen
     shader.uniforms.uTextColor = uTextColor
     shader.uniforms.uFillScroll = uFillScroll
     shader.uniforms.uShadowStrength = uShadowStrength
@@ -88,10 +93,10 @@ function stripeFrontMaterial(
       .replace('#include <uv_vertex>', '#include <uv_vertex>\nvRawUv = uv;')
     // Inject shadowmask_pars_fragment after shadowmap_pars_fragment (getShadowMask deps ready).
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform sampler2D uFillTex;\nuniform float uFillTiling;\nuniform vec3 uTextColor;\nuniform float uFillScroll;\nuniform float uShadowStrength;\nvarying vec2 vRawUv;')
+      .replace('#include <common>', '#include <common>\nuniform sampler2D uFillTex;\nuniform float uFillTiling;\nuniform float uFillAnchor;\nuniform vec2 uFillScreen;\nuniform vec3 uTextColor;\nuniform float uFillScroll;\nuniform float uShadowStrength;\nvarying vec2 vRawUv;')
       .replace('#include <shadowmap_pars_fragment>', '#include <shadowmap_pars_fragment>\n#include <shadowmask_pars_fragment>')
       // uFillTex is tagged SRGBColorSpace → the GPU returns linear, so NO manual decode here.
-      .replace('#include <map_fragment>', '#include <map_fragment>\n{ vec2 fuv = vRawUv * uFillTiling + vec2(uFillScroll, 0.0); vec3 fill = texture2D(uFillTex, fuv).rgb; diffuseColor = vec4(mix(fill, uTextColor, diffuseColor.a), 1.0); }')
+      .replace('#include <map_fragment>', '#include <map_fragment>\n{ vec2 fuv = uFillAnchor > 0.5 ? gl_FragCoord.xy / uFillScreen : vRawUv * uFillTiling + vec2(uFillScroll, 0.0); vec3 fill = texture2D(uFillTex, fuv).rgb; diffuseColor = vec4(mix(fill, uTextColor, diffuseColor.a), 1.0); }')
       .replace('#include <opaque_fragment>', 'gl_FragColor = vec4( diffuseColor.rgb * mix(1.0 - uShadowStrength, 1.0, getShadowMask()), 1.0 );')
   }
   return mat
@@ -153,7 +158,7 @@ export const stripesEffect: SpaceTypeEffect = {
       const fill = fills[i % fills.length]!
       const fillTex = fillShaderTexture(three, fill)
       const uFillScroll = { value: 0 }
-      const frontMat = stripeFrontMaterial(three, tex, fillTex, fillTiling(fill), fillTextColor(three, fill), uFillScroll, params)
+      const frontMat = stripeFrontMaterial(three, tex, fillTex, fillTiling(fill), fillAnchor(fill), fillTextColor(three, fill), uFillScroll, params)
       const backMat = new three.MeshBasicMaterial({
         color: new three.Color(stripAlpha(String(params.bSideColor))),
         side: three.BackSide,

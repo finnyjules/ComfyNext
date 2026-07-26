@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
-import { parseFills, fillShaderTexture, fillTiling, fillTextColor } from '../fills'
+import { parseFills, fillShaderTexture, fillTiling, fillTextColor, fillAnchor, fillScreenSize } from '../fills'
 import { defaultFillsFor } from '../palette'
 
 /**
@@ -54,6 +54,7 @@ const FRAG = [
   'varying vec2 vPos;',
   'uniform sampler2D uAtlas; uniform sampler2D uFill;',
   'uniform float uFillTiling; uniform vec3 uTextColor;',
+  'uniform float uFillAnchor; uniform vec2 uFillScreen;',   // 0=object(glyph UV) 1=frame(screen space)
   'uniform float uRadius; uniform float uCols; uniform float uRows;',
   'uniform float uBand; uniform float uRingsN;',
   'uniform float uSpeed; uniform float uGradient; uniform float uDir; uniform float uTime; uniform float uTwist;',
@@ -73,7 +74,8 @@ const FRAG = [
   '  float bandInner = k / uRingsN, bandOuter = (k + 1.0) / uRingsN;',
   '  float fv = clamp((r - bandInner) / max(1e-4, bandOuter - bandInner), 0.0, 1.0);',
   '  float fu = (theta + PI) / (2.0 * PI);',
-  '  vec3 fillc = texture2D(uFill, vec2(fu, fv) * uFillTiling).rgb;', // SRGB-tagged → returns linear
+  '  vec2 fillUv = uFillAnchor > 0.5 ? gl_FragCoord.xy / uFillScreen : vec2(fu, fv) * uFillTiling;',
+  '  vec3 fillc = texture2D(uFill, fillUv).rgb;', // SRGB-tagged → returns linear
   '  vec3 col = mix(fillc, uTextColor, a);',
   '  gl_FragColor = vec4(pow(clamp(col, 0.0, 1.0), vec3(0.4545)), 1.0);', // linear→sRGB (ShaderMaterial)
   '}',
@@ -113,6 +115,8 @@ export const turntableEffect: SpaceTypeEffect = {
           uAtlas: { value: atlas },
           uFill: { value: fillShaderTexture(three, fill) },
           uFillTiling: { value: fillTiling(fill) },
+          uFillAnchor: { value: fillAnchor(fill) },
+          uFillScreen: { value: new three.Vector2(...fillScreenSize()) },
           uTextColor: { value: fillTextColor(three, fill) },
           uRadius: { value: radius }, uCols: { value: 1.5 }, uRows: { value: 7 },
           uBand: { value: k }, uRingsN: { value: rings },

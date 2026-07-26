@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import { layoutChars } from '../charLayout'
 import { resolveFontFamily, fontHasWeightAxis } from '~/data/google-fonts'
-import { parseFills, fillShaderTexture, fillTiling, fillTextColor, hexBytes, type Fill } from '../fills'
+import { parseFills, fillShaderTexture, fillTiling, fillTextColor, hexBytes, fillAnchor, fillScreenSize, type Fill } from '../fills'
 import { defaultFillsFor } from '../palette'
 
 /**
@@ -137,6 +137,7 @@ export const onionburstEffect: SpaceTypeEffect = {
           uniforms: {
             uAtlas: { value: layout.texture },
             uFillTex: { value: fillTex }, uFillTiling: { value: fillTiling(fill) },
+            uFillAnchor: { value: fillAnchor(fill) }, uFillScreen: { value: new three.Vector2(...fillScreenSize()) },
             uU0: { value: g.u0 }, uU1: { value: g.u1 },
             uArc: { value: arc }, uLen: { value: len }, uRepeat: { value: repeat },
             uText: { value: fillTextColor(three, fill) },
@@ -146,12 +147,14 @@ export const onionburstEffect: SpaceTypeEffect = {
             'precision highp float;',
             'varying vec3 vPos;',
             'uniform sampler2D uAtlas; uniform sampler2D uFillTex; uniform float uFillTiling;',
+            'uniform float uFillAnchor; uniform vec2 uFillScreen;',   // 0=object(glyph UV) 1=frame(screen space)
             'uniform float uU0; uniform float uU1; uniform float uArc; uniform float uLen; uniform float uRepeat; uniform vec3 uText;',
             'const float PI = 3.14159265;',
             'void main(){',
             '  float theta = atan(vPos.z, vPos.y);',
             '  float fv = clamp(vPos.x / uLen + 0.5, 0.0, 1.0);',
-            '  vec3 fillc = texture2D(uFillTex, vec2((theta + PI) / (2.0 * PI), fv) * uFillTiling).rgb;', // GPU sRGB->linear
+            '  vec2 fillUv = uFillAnchor > 0.5 ? gl_FragCoord.xy / uFillScreen : vec2((theta + PI) / (2.0 * PI), fv) * uFillTiling;',
+            '  vec3 fillc = texture2D(uFillTex, fillUv).rgb;', // GPU sRGB->linear
             '  float a = 0.0;',
             // Tile the glyph uRepeat times around the circumference: fold theta into equal
             // segments, clamp the glyph arc to a segment so copies do not overlap.

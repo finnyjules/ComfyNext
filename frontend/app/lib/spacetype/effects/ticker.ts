@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import { buildTickerGeometryData, buildTickerStrokeData, rebakeTickerRow, tickerRow, type TickerGeoParams } from '../tickerGeometry'
 import { loopTiles, scrollOffset, textVariantForBand } from '../ribbonGeometry'
-import { parseFills, fillShaderTexture, fillTiling, fillTextColor, fillAlpha, fillTextAlpha } from '../fills'
+import { parseFills, fillShaderTexture, fillTiling, fillTextColor, fillAlpha, fillTextAlpha, fillAnchor, fillScreenSize } from '../fills'
 import { stripAlpha, parseHexA } from '~/lib/color/convert'
 import { defaultFillsFor } from '../palette'
 
@@ -98,6 +98,7 @@ function bandMaterial(
   map: THREE.Texture,
   fillTex: THREE.Texture,
   tiling: number,
+  anchor: number,
   textColor: THREE.Color,
   alpha: number,
   textAlpha: number,
@@ -114,12 +115,16 @@ function bandMaterial(
   })
   const uFillTex = { value: fillTex }
   const uFillTiling = { value: tiling }
+  const uFillAnchor = { value: anchor }
+  const uFillScreen = { value: new three.Vector2(...fillScreenSize()) }
   const uTextColor = { value: textColor }
   const uBandAlpha = { value: alpha }
   const uTextAlpha = { value: textAlpha }
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uFillTex = uFillTex
     shader.uniforms.uFillTiling = uFillTiling
+    shader.uniforms.uFillAnchor = uFillAnchor
+    shader.uniforms.uFillScreen = uFillScreen
     shader.uniforms.uTextColor = uTextColor
     shader.uniforms.uFillScroll = uFillScroll
     shader.uniforms.uBandAlpha = uBandAlpha
@@ -133,7 +138,7 @@ function bandMaterial(
     // alphas. vMapUv carries the text texture's scrolled/atlas-offset uv.
     // uFillTex is tagged SRGBColorSpace → the GPU returns linear, so NO manual decode here.
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform sampler2D uFillTex;\nuniform float uFillTiling;\nuniform vec3 uTextColor;\nuniform float uFillScroll;\nuniform float uBandAlpha;\nuniform float uTextAlpha;\nvarying vec2 vRawUv;')
+      .replace('#include <common>', '#include <common>\nuniform sampler2D uFillTex;\nuniform float uFillTiling;\nuniform float uFillAnchor;\nuniform vec2 uFillScreen;\nuniform vec3 uTextColor;\nuniform float uFillScroll;\nuniform float uBandAlpha;\nuniform float uTextAlpha;\nvarying vec2 vRawUv;')
       // The band's RGB is weighted by its OWN alpha, so an invisible band contributes no colour.
       // A plain mix() would leave a halo of band fill ringing the type at antialiased glyph edges
       // (cov ~0.5) in the alpha-0 text-only mode — exactly the mode the transparency work is for.
@@ -141,7 +146,7 @@ function bandMaterial(
       // band contributes no colour and text alpha is honoured independently.
       // Reduces to the naive form at uBandAlpha = uTextAlpha = 1: bandW = 1-cov, ta = cov, a = 1,
       // rgb = mix(fillCol, uTextColor, cov).
-      .replace('#include <map_fragment>', '{ float cov = texture2D(map, vMapUv).a; vec2 fuv = vRawUv * uFillTiling + vec2(uFillScroll, 0.0); vec3 fillCol = texture2D(uFillTex, fuv).rgb; float ta = uTextAlpha * cov; float bandW = uBandAlpha * (1.0 - cov); float a = bandW + ta; diffuseColor = vec4((fillCol * bandW + uTextColor * ta) / max(a, 1e-4), a); }')
+      .replace('#include <map_fragment>', '{ float cov = texture2D(map, vMapUv).a; vec2 fuv = uFillAnchor > 0.5 ? gl_FragCoord.xy / uFillScreen : vRawUv * uFillTiling + vec2(uFillScroll, 0.0); vec3 fillCol = texture2D(uFillTex, fuv).rgb; float ta = uTextAlpha * cov; float bandW = uBandAlpha * (1.0 - cov); float a = bandW + ta; diffuseColor = vec4((fillCol * bandW + uTextColor * ta) / max(a, 1e-4), a); }')
   }
   return mat
 }
@@ -205,6 +210,7 @@ export const tickerEffect: SpaceTypeEffect = {
         tex,
         fillShaderTexture(three, fill),
         fillTiling(fill),
+        fillAnchor(fill),
         fillTextColor(three, fill),
         fillAlpha(fill),
         fillTextAlpha(fill),

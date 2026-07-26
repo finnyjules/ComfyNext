@@ -40,6 +40,28 @@ export function fillTextAlpha(fill: Fill): number {
   return parseHexA(fill.textColor).alpha
 }
 
+// ── Fill anchor (Task 5) ─────────────────────────────────────────────────────────────────
+// Every uFill-sampling effect binds `uFillAnchor`/`uFillScreen` from these two helpers — the
+// single central source, so no effect invents its own default or reads `fill.shader.anchor`
+// directly. `uFillAnchor` picks the fill's UV space in the shader: 0 = object (glyph UV, the
+// existing `uv * uFillTiling` behaviour), 1 = frame (screen space, `gl_FragCoord / uFillScreen`
+// — the field stays fixed while the glyphs move over it). Only a shader fill actually carries
+// an anchor (`ShaderSpec.anchor`); every other fill type has no field to detach from, so it's
+// always object-anchored (0) regardless of anchor's stale/absent value.
+
+/** 0 = object anchor, 1 = frame anchor — bind directly to a material's `uFillAnchor` uniform. */
+export function fillAnchor(fill: Fill): number {
+  return fillIsShader(fill) && fill.shader.anchor === 'frame' ? 1 : 0
+}
+
+/** The render-target resolution (pixels) for the shader-fill build CURRENTLY in progress —
+ *  bind directly to a material's `uFillScreen` uniform. Only meaningful while `buildScene`/
+ *  `setConfig` runs inside `withShaderFillContext` (see below); outside that window (should
+ *  not happen on the real Space Type/Shape Studio paths) it falls back to `FALLBACK_FIELD_PX`. */
+export function fillScreenSize(): [number, number] {
+  return [_activeContext.w, _activeContext.h]
+}
+
 // Textures are cached by (type|a|b) so repeated slots/rebuilds reuse one GPU texture. Module
 // singletons (never disposed) — the set of distinct fills in a doc is tiny.
 const _cache = new Map<string, THREE.Texture>()

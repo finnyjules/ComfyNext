@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect, BuildEnv } from '../effect'
-import { parseFills, fillShaderTexture, fillTiling, fillTextColor, SRGB_TO_LINEAR_GLSL } from '../fills'
+import { parseFills, fillShaderTexture, fillTiling, fillTextColor, SRGB_TO_LINEAR_GLSL, fillAnchor, fillScreenSize } from '../fills'
 import { defaultFillsFor } from '../palette'
 import { resolveFontFamily } from '~/data/google-fonts'
 import { buildTunnelRing } from '../tunnelGeometry'
@@ -61,12 +61,14 @@ const VERT = [
 const FRAG = [
   'precision highp float;',
   'uniform sampler2D uFill; uniform vec2 uFillTile; uniform float uFillGrad;',
+  'uniform float uFillAnchor; uniform vec2 uFillScreen;',   // 0=object(glyph UV) 1=frame(screen space)
   'uniform sampler2D uText; uniform float uTextRepeat; uniform vec3 uTextColor; uniform float uAlpha; uniform float uTextFlip;',
   'uniform float uStroke; uniform vec3 uStrokeColor; uniform float uShade;',
   'varying vec2 vUv;',
   SRGB_TO_LINEAR_GLSL,
   'void main(){',
-  '  vec3 base = (uFillGrad > 0.5) ? stLin(texture2D(uFill, vec2(0.5, vUv.y)).rgb) : stLin(texture2D(uFill, vUv * uFillTile).rgb);',
+  '  vec2 fillUv = uFillAnchor > 0.5 ? gl_FragCoord.xy / uFillScreen : vUv * uFillTile;',
+  '  vec3 base = (uFillGrad > 0.5) ? stLin(texture2D(uFill, vec2(0.5, vUv.y)).rgb) : stLin(texture2D(uFill, fillUv).rgb);',
   // Outline: paint the stroke colour within uStroke of either long (inner/outer) ring edge.
   '  if (uStroke > 0.0 && min(vUv.y, 1.0 - vUv.y) < uStroke) base = uStrokeColor;',
   '  float a = texture2D(uText, vec2(uTextFlip * vUv.x * uTextRepeat, vUv.y)).a;',
@@ -192,6 +194,8 @@ export const tunnelEffect: SpaceTypeEffect = {
           uFill: { value: faceTex },
           uFillTile: { value: new three.Vector2(tileBase * Math.max(1, ringAspect), tileBase) },
           uFillGrad: { value: fill.type === 'gradient' ? 1 : 0 },
+          uFillAnchor: { value: fillAnchor(fill) },
+          uFillScreen: { value: new three.Vector2(...fillScreenSize()) },
           uText: { value: ti.tex },
           uTextRepeat: { value: repeatFor(ti.texW) },
           uTextColor: { value: fillTextColor(three, fill) },

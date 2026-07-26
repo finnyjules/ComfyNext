@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
-import { parseFills, fillShaderTexture, fillTiling } from '../fills'
+import { parseFills, fillShaderTexture, fillTiling, fillAnchor, fillScreenSize } from '../fills'
 import { defaultFillsFor } from '../palette'
 
 /**
@@ -76,6 +76,8 @@ export const meltEffect: SpaceTypeEffect = {
 
     const uFillTex = { value: fillTex }
     const uFillTiling = { value: fillTiling(fill) }
+    const uFillAnchor = { value: fillAnchor(fill) }
+    const uFillScreen = { value: new three.Vector2(...fillScreenSize()) }
     const uAnchor = { value: anchor }
     const uCut = { value: n(params, 'cut') }
     const uStreak = { value: n(params, 'streak') }
@@ -95,6 +97,8 @@ export const meltEffect: SpaceTypeEffect = {
     mat.onBeforeCompile = (shader) => {
       shader.uniforms.uFillTex = uFillTex
       shader.uniforms.uFillTiling = uFillTiling
+      shader.uniforms.uFillAnchor = uFillAnchor
+      shader.uniforms.uFillScreen = uFillScreen
       shader.uniforms.uAnchor = uAnchor
       shader.uniforms.uCut = uCut
       shader.uniforms.uStreak = uStreak
@@ -114,6 +118,7 @@ export const meltEffect: SpaceTypeEffect = {
         .replace('#include <common>', [
           '#include <common>',
           'uniform sampler2D uFillTex; uniform float uFillTiling;',
+          'uniform float uFillAnchor; uniform vec2 uFillScreen;',   // 0=object(glyph UV) 1=frame(screen space)
           'uniform float uAnchor; uniform float uCut; uniform float uStreak;',
           'uniform float uAmp; uniform float uWaveCount; uniform float uColTwist; uniform float uTime;',
           'uniform float uWaveVary; uniform float uGeo; uniform float uSteps; uniform float uGrit; uniform float uGritScale;',
@@ -164,7 +169,8 @@ export const meltEffect: SpaceTypeEffect = {
           '  float sv = sv0 + (float(k) - 2.0) * 0.05 * smearAmt + gy;',
           '  g = max(g, meltA(map, vec2(su, clamp(sv, 0.0, 1.0))));',
           '}',
-          'vec3 fillRGB = texture2D(uFillTex, vRawUv * uFillTiling).rgb;',
+          'vec2 fillUv = uFillAnchor > 0.5 ? gl_FragCoord.xy / uFillScreen : vRawUv * uFillTiling;',
+          'vec3 fillRGB = texture2D(uFillTex, fillUv).rgb;',
           'diffuseColor = vec4(fillRGB, g);',
         ].join('\n'))
     }

@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
-import { parseFills, fillAtlasTexture, serializeFills, DEFAULT_FILL, SRGB_TO_LINEAR_GLSL } from '../fills'
+import { parseFills, fillAtlasTexture, serializeFills, DEFAULT_FILL, SRGB_TO_LINEAR_GLSL, fillAnchor, fillScreenSize } from '../fills'
 import { hash11, parseEase, holdFraction, sceneBlend } from '../motion'
 import { stripAlpha } from '~/lib/color/convert'
 
@@ -108,6 +108,7 @@ const FRAG = [
   'uniform float uThickA; uniform float uThickB; uniform float uProgress;',
   'uniform float uColorMode; uniform vec3 uTextColor; uniform vec3 uPalA; uniform vec3 uPalB;',
   'uniform sampler2D uFill; uniform float uFillCount; uniform float uFillTiling;',
+  'uniform float uFillAnchor; uniform vec2 uFillScreen;',   // 0=object(glyph UV) 1=frame(screen space)
   SRGB_TO_LINEAR_GLSL,
   // Centre this word's glyphs in the plane (roomy in x for the nudge, tight in y so lines stack close).
   'float inkA(vec2 p){',
@@ -131,7 +132,8 @@ const FRAG = [
   '  if (uColorMode < 0.5) return uTextColor;',
   '  if (uColorMode < 1.5) return mix(uPalA, uPalB, t);',
   '  float band = mod(kf, uFillCount);',
-  '  vec2 fuv = vec2(fract(uv.x * uFillTiling), (band + clamp(uv.y, 0.0, 1.0)) / uFillCount);',
+  '  vec2 fillUv = uFillAnchor > 0.5 ? gl_FragCoord.xy / uFillScreen : vec2(fract(uv.x * uFillTiling), clamp(uv.y, 0.0, 1.0));',
+  '  vec2 fuv = vec2(fillUv.x, (band + fillUv.y) / uFillCount);',
   '  return stLin(texture2D(uFill, fuv).rgb);',
   '}',
   'const int MAX_LAYERS = ' + MAX_LAYERS + ';',
@@ -228,6 +230,7 @@ export const shutterEffect: SpaceTypeEffect = {
           uPalA: { value: new three.Color(stripAlpha(String(params.paletteA))) },
           uPalB: { value: new three.Color(stripAlpha(String(params.paletteB))) },
           uFill: { value: fillTex }, uFillCount: { value: fillCount }, uFillTiling: { value: 1 },
+          uFillAnchor: { value: fillAnchor(fills[0]!) }, uFillScreen: { value: new three.Vector2(...fillScreenSize()) },
         },
         vertexShader: VERT,
         fragmentShader: FRAG,

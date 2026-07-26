@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import { resolveFontFamily, fontHasWeightAxis } from '~/data/google-fonts'
 import { shapedSin } from '../ribbonGeometry'
-import { parseFills, fillAtlasTexture, fillTextColor, type Fill } from '../fills'
+import { parseFills, fillAtlasTexture, fillTextColor, fillAnchor, fillScreenSize, type Fill } from '../fills'
 import { defaultFillsFor } from '../palette'
 
 /**
@@ -205,6 +205,8 @@ function frontMaterial(
   // text colour (padded to 5). Both indexed by segment slot.
   const paletteCount = Math.max(1, fills.length)
   const uFillAtlas = { value: fillAtlas }
+  const uFillAnchor = { value: fillAnchor(fills[0]!) }
+  const uFillScreen = { value: new three.Vector2(...fillScreenSize()) }
   const uTextColors = { value: Array.from({ length: 5 }, (_, i) => {
     const c = fillTextColor(three, fills[Math.min(i, fills.length - 1)]!)
     return new three.Vector3(c.r, c.g, c.b)
@@ -218,6 +220,8 @@ function frontMaterial(
   const uShadowStrength = { value: String(params.shadows) === 'on' ? n(params, 'shadowStrength') : 0 }
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uFillAtlas = uFillAtlas
+    shader.uniforms.uFillAnchor = uFillAnchor
+    shader.uniforms.uFillScreen = uFillScreen
     shader.uniforms.uTextColors = uTextColors
     shader.uniforms.uPaletteCount = uPaletteCount
     shader.uniforms.uNumTexts = uNumTexts
@@ -235,6 +239,7 @@ function frontMaterial(
       .replace('#include <common>', [
         '#include <common>',
         'uniform sampler2D uFillAtlas;',
+        'uniform float uFillAnchor; uniform vec2 uFillScreen;',   // 0=object(glyph UV) 1=frame(screen space)
         'uniform vec3 uTextColors[5];',
         'uniform float uPaletteCount;',
         'uniform float uNumTexts;',
@@ -258,7 +263,8 @@ function frontMaterial(
         // Ribbon fill = sample this segment's atlas band (slot + localV)/count; localU tiles
         // the band along the segment. Text colour = this segment's flat fill text colour.
         'float coilSlot = mod(segf, uPaletteCount);',
-        'vec3 ribbonCol = texture2D(uFillAtlas, vec2(fract(vU), (coilSlot + vV) / uPaletteCount)).rgb;',
+        'vec2 fillUv = uFillAnchor > 0.5 ? gl_FragCoord.xy / uFillScreen : vec2(fract(vU), clamp(vV, 0.0, 1.0));',
+        'vec3 ribbonCol = texture2D(uFillAtlas, vec2(fillUv.x, (coilSlot + fillUv.y) / uPaletteCount)).rgb;',
         'vec3 textCol = coilText(mod(segf, uPaletteCount));',
         // The rounded fill boundary shifts each colour BLOCK back by the cap bulge. Inset
         // the word by uTextLead on the leading side and uTextTrail + 2·vHalfU on the

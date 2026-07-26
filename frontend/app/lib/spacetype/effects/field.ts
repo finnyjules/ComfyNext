@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
-import { parseFills, fillShaderTexture, fillTiling, fillTextColor } from '../fills'
+import { parseFills, fillShaderTexture, fillTiling, fillTextColor, fillAnchor, fillScreenSize } from '../fills'
 import { defaultFillsFor } from '../palette'
 
 /**
@@ -70,6 +70,7 @@ function frontMaterial(
   map: THREE.Texture,
   fillTex: THREE.Texture,
   tiling: number,
+  anchor: number,
   textColor: THREE.Color,
   params: Params,
   numTexts: number,
@@ -88,6 +89,8 @@ function frontMaterial(
   const mat = new three.MeshLambertMaterial({ map, side: three.DoubleSide })
   const uFillTex = { value: fillTex }
   const uFillTiling = { value: tiling }
+  const uFillAnchor = { value: anchor }
+  const uFillScreen = { value: new three.Vector2(...fillScreenSize()) }
   const uTextColor = { value: textColor }
   const uNumTexts = { value: Math.max(1, Math.round(numTexts)) }
   const uRows = { value: Math.max(1, Math.floor(n(params, 'rows'))) }
@@ -95,6 +98,8 @@ function frontMaterial(
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uFillTex = uFillTex
     shader.uniforms.uFillTiling = uFillTiling
+    shader.uniforms.uFillAnchor = uFillAnchor
+    shader.uniforms.uFillScreen = uFillScreen
     shader.uniforms.uTextColor = uTextColor
     shader.uniforms.uNumTexts = uNumTexts
     shader.uniforms.uShadowStrength = uShadowStrength
@@ -131,7 +136,7 @@ function frontMaterial(
         'transformed.y += sin(px + py + t + uYOffset) * uAmpY;',
       ].join('\n'))
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform sampler2D uFillTex;\nuniform float uFillTiling;\nuniform vec3 uTextColor;\nuniform float uNumTexts;\nuniform float uRows;\nuniform float uShadowStrength;\nvarying vec2 vRawUv;')
+      .replace('#include <common>', '#include <common>\nuniform sampler2D uFillTex;\nuniform float uFillTiling;\nuniform float uFillAnchor;\nuniform vec2 uFillScreen;\nuniform vec3 uTextColor;\nuniform float uNumTexts;\nuniform float uRows;\nuniform float uShadowStrength;\nvarying vec2 vRawUv;')
       .replace('#include <shadowmap_pars_fragment>', '#include <shadowmap_pars_fragment>\n#include <shadowmask_pars_fragment>')
       // Alternate texts: each grid tile shows one of the N atlas rows. Count rows from the TOP
       // ((uRows-1-ftRow)) so the FIRST string lands on the top row — matches the band effects'
@@ -141,7 +146,8 @@ function frontMaterial(
         'float ftVariant = mod(ftCol + (uRows - 1.0 - ftRow), uNumTexts);',
         'vec2 ftUv = vec2(fract(vMapUv.x), (ftVariant + fract(vMapUv.y)) / uNumTexts);',
         'vec4 ftTex = texture2D(map, ftUv);',
-        'vec3 fill = texture2D(uFillTex, vRawUv * uFillTiling).rgb;',
+        'vec2 fillUv = uFillAnchor > 0.5 ? gl_FragCoord.xy / uFillScreen : vRawUv * uFillTiling;',
+        'vec3 fill = texture2D(uFillTex, fillUv).rgb;',
         'diffuseColor = vec4(mix(fill, uTextColor, ftTex.a), 1.0);',
       ].join('\n'))
       .replace('#include <opaque_fragment>', 'gl_FragColor = vec4( diffuseColor.rgb * mix(1.0 - uShadowStrength, 1.0, getShadowMask()), 1.0 );')
@@ -194,7 +200,7 @@ export const fieldEffect: SpaceTypeEffect = {
 
     const numTexts = Math.max(1, Math.floor(Number(textTexture.userData?.numTexts ?? 1)))
     const fill = fills[0]!
-    const mat = frontMaterial(three, tex, fillShaderTexture(three, fill), fillTiling(fill), fillTextColor(three, fill), params, numTexts, wu)
+    const mat = frontMaterial(three, tex, fillShaderTexture(three, fill), fillTiling(fill), fillAnchor(fill), fillTextColor(three, fill), params, numTexts, wu)
 
     const mesh = new three.Mesh(geo, mat)
     mesh.userData.tex = tex
