@@ -7453,6 +7453,7 @@ defineExpose({
         v-if="shapeStudioOpenForId"
         :node-id="shapeStudioOpenForId"
         :nodes="nodes as any[]"
+        :edges="edges as any[]"
         @close="shapeStudioOpenForId = null"
       />
     </Teleport>

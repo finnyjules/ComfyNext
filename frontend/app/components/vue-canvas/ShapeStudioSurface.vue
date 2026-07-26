@@ -25,13 +25,26 @@ import StudioSwitch from '~/components/vue-canvas/studio/StudioSwitch.vue'
 import StudioSegmented from '~/components/vue-canvas/studio/StudioSegmented.vue'
 import StudioSelect from '~/components/vue-canvas/studio/StudioSelect.vue'
 import FillSwatch from '~/components/vue-canvas/studio/FillSwatch.vue'
+import CanvasContextMenu, { type MenuItem } from '~/components/vue-canvas/CanvasContextMenu.vue'
+import SweepPopover from '~/components/vue-canvas/studio/SweepPopover.vue'
+import { useStudioAgent } from '~/composables/useStudioAgent'
+import { useStudioVarBindings } from '~/composables/useStudioVarBindings'
+import { makeConfigParams } from '~/lib/agent/configParams'
+import { shapeAgentControls, SHAPE_GUIDANCE } from '~/lib/shapefx/agentControls'
+import { controlsForStudio } from '~/lib/collection/studioControls'
+import type { StudioControlDesc } from '~/lib/collection/studioBindables'
+import { controlKindToVariableType } from '~/lib/collection/studioBindables'
+import { typeCompatible } from '~/lib/collection/bindables'
+import { addSweepRows } from '~/lib/collection/model'
+import { COLLECTION_PROP, VARS_TYPE, type CollectionColumn, type CollectionData } from '~/lib/collection/types'
+import { effectiveColumns, makeLookupResolver } from '~/lib/collection/lookup'
 
 // `nodes` is optional (defaults to []) so this surface can be smoke-tested standalone
 // (see the dev lab page) before Task 10 wires it into VueNodeCanvas the way every other
 // studio surface is wired — as `nodeId` + the live `nodes` array so the editor can find
 // and persist onto its own node (`currentNode()` below, same pattern as Gradient/Space
 // Type/Shader/Texture/LipSync). Without `nodes`, load/save just no-op.
-const props = withDefaults(defineProps<{ nodeId: string; nodes?: any[] }>(), { nodes: () => [] })
+const props = withDefaults(defineProps<{ nodeId: string; nodes?: any[]; edges?: any[] }>(), { nodes: () => [] })
 const emit = defineEmits<{ (e: 'close'): void }>()
 
 // Record generated stills as the current project's assets (Assets panel) — identical
@@ -81,6 +94,135 @@ function saveConfig() {
 function closeEditor() {
   try { saveConfig() } catch (e) { console.error('[shape-studio] saveConfig failed', e) }
   emit('close')
+}
+
+// ── in-product agent — "tune" the shape in natural language, following
+// GradientStudioSurface's useStudioAgent wiring exactly. Shape has no
+// per-layer state, so the second arg to makeConfigParams is a constant.
+const { getLocalSetting } = useLocalSettings()
+const agentParams = makeConfigParams(() => config.value, () => 0)
+const activeAgentControls = computed(() => shapeAgentControls(config.value))
+const shapeAgent = useStudioAgent({
+  controls: () => activeAgentControls.value, params: agentParams, label: () => 'Shape studio',
+  apiKey: () => getLocalSetting('Sailor.AI.AnthropicApiKey') ?? '',
+  guidance: () => SHAPE_GUIDANCE,
+})
+
+// ── Collections variable binding (Slice 2a) — same recipe as Gradient/Texture.
+// `studioControls` mirrors what the agent tuner already offers (via
+// `controlsForStudio`, loaded once since the composable wants a synchronous
+// accessor) purely for the bind-menu's control descriptions (label/kind/min/
+// max/step), matched by dotted key against SHAPE_CONTROLS.
+const studioControls = ref<StudioControlDesc[]>([])
+onMounted(async () => { studioControls.value = await controlsForStudio(currentNode()) })
+
+// The SAME dotted-path proxy the canvas agent tuner reads/writes — reused here
+// so onEdit/promote/unbind's "live value" reads and applyParam's writes
+// address identical keys. Writing through this proxy mutates `config`
+// directly, so the surface's existing `deep` watcher on `config` re-renders
+// the preview — no extra watcher needed.
+const paramsProxy = makeConfigParams(() => config.value, () => 0)
+const { boundColumnFor, onEdit, promote, unbind } = useStudioVarBindings(
+  props.nodeId,
+  () => studioControls.value,
+  (key, value) => { paramsProxy[key] = value },
+  { nodes: () => props.nodes ?? [], edges: () => props.edges ?? [] },
+)
+
+// Wired collection lookup (studio -> collection) for the "Bind to" submenu.
+const wiredColumns = computed<CollectionColumn[]>(() => {
+  const edgeList = props.edges ?? []
+  const edge = edgeList.find((e: any) => String(e.target) === String(props.nodeId) && e?.data?.dataType === VARS_TYPE)
+  if (!edge) return []
+  const colNode = (props.nodes ?? []).find((n: any) => String(n.id) === String(edge.source))
+  const c = colNode?.data?.properties?.[COLLECTION_PROP]
+  if (!c) return []
+  return effectiveColumns(c, makeLookupResolver(props.nodes ?? []))
+})
+
+// Wired collection NODE (not just its columns) — the sweep flow needs to
+// mutate the actual CollectionData object once the popover's Apply fires.
+function findWiredCollectionNode(): any | null {
+  const edgeList = props.edges ?? []
+  const edge = edgeList.find((e: any) => String(e.target) === String(props.nodeId) && e?.data?.dataType === VARS_TYPE)
+  if (!edge) return null
+  return (props.nodes ?? []).find((n: any) => String(n.id) === String(edge.source)) ?? null
+}
+
+// Wired collection node id — shared by the var-menu's "Go to collection"
+// item and the FillSwatch "edit in table" click (mirrors Texture/Space Type's
+// goToCollection helper; Shape's fill.a/fill.b swatches need it since
+// FillSwatch's bound state renders an "edit" affordance).
+function wiredCollectionNodeId(): string | null {
+  const edgeList = props.edges ?? []
+  const edge = edgeList.find((ed: any) => String(ed.target) === String(props.nodeId) && ed?.data?.dataType === VARS_TYPE)
+  return edge ? String(edge.source) : null
+}
+function goToCollection() {
+  const nodeId = wiredCollectionNodeId()
+  if (nodeId) window.dispatchEvent(new CustomEvent('sailor:openCollection', { detail: { nodeId } }))
+}
+
+// Sweep popover state — opened from the "Sweep…" chip menu item on a bound
+// control; on Apply, turns the entered values into sweep rows on the wired
+// collection and hands off to the drawer + a follow-up run event (copied
+// verbatim from GradientStudioSurface.vue).
+const sweepPopover = ref<{ control: StudioControlDesc; anchor: { x: number; y: number } } | null>(null)
+function applySweep(values: (string | number)[]) {
+  const control = sweepPopover.value?.control
+  sweepPopover.value = null
+  if (!control) return
+  const colNode = findWiredCollectionNode()
+  const collection = colNode?.data?.properties?.[COLLECTION_PROP] as CollectionData | undefined
+  if (!colNode || !collection) return
+  const columnKey = boundColumnFor(control.key)
+  if (!columnKey) return
+
+  const added = addSweepRows(collection, columnKey, values)
+  window.dispatchEvent(new CustomEvent('sailor:openCollection', { detail: { nodeId: String(colNode.id) } }))
+  window.dispatchEvent(new CustomEvent('sailor:runSweepRows', {
+    detail: { collectionNodeId: String(colNode.id), rowIds: added.map(r => r.id), targetNodeId: props.nodeId },
+  }))
+}
+
+// Copied verbatim from GradientStudioSurface.vue's openVarMenu (Texture's copy
+// is byte-identical too, so this is a third, known-stable instance of the
+// same block — not a new invention).
+const varMenu = ref<{ x: number; y: number; items: MenuItem[] } | null>(null)
+function openVarMenu(e: MouseEvent, control: StudioControlDesc) {
+  const type = controlKindToVariableType(control.kind)
+  if (type === null) return
+  const liveValue = paramsProxy[control.key] as string | number
+  const bound = boundColumnFor(control.key)
+  const items: MenuItem[] = []
+  if (!bound) {
+    items.push({ label: 'Turn into variable', action: () => promote(control, liveValue) })
+    const compatCols = wiredColumns.value.filter(col => typeCompatible(type, col.type))
+    if (compatCols.length) {
+      items.push({
+        label: 'Bind to',
+        children: compatCols.map(col => ({
+          label: col.label,
+          action: () => window.dispatchEvent(new CustomEvent('sailor:bindControl', {
+            detail: { nodeId: props.nodeId, path: `params.${control.key}`, columnKey: col.key },
+          })),
+        })),
+      })
+    }
+  } else {
+    items.push({
+      label: 'Go to collection',
+      action: () => {
+        const edgeList = props.edges ?? []
+        const edge = edgeList.find((ed: any) => String(ed.target) === String(props.nodeId) && ed?.data?.dataType === VARS_TYPE)
+        if (edge) window.dispatchEvent(new CustomEvent('sailor:openCollection', { detail: { nodeId: String(edge.source) } }))
+      },
+    })
+    items.push({ label: 'Sweep…', action: () => { sweepPopover.value = { control, anchor: { x: e.clientX, y: e.clientY } } } })
+    items.push({ divider: true })
+    items.push({ label: 'Unbind', action: () => unbind(control.key, liveValue) })
+  }
+  varMenu.value = { x: e.clientX, y: e.clientY, items }
 }
 
 // ── enum fields → string proxies ────────────────────────────────────────────────────────
@@ -340,7 +482,12 @@ async function onImportFile(e: Event) {
 </script>
 
 <template>
-  <StudioModalShell title="Shape studio" @close="closeEditor">
+  <StudioModalShell
+    title="Shape studio"
+    :agent="shapeAgent"
+    agent-placeholder="Describe the shape — e.g. more faceted, warmer palette, sharper edges…"
+    @close="closeEditor"
+  >
     <template #preview>
       <div class="relative flex h-full w-full items-center justify-center">
         <canvas
@@ -422,15 +569,51 @@ async function onImportFile(e: Event) {
             <label class="mb-1 block text-[11px] text-white/55">Primitive</label>
             <StudioSelect v-model="primitiveProxy" :options="PRIMITIVE_OPTIONS" />
           </div>
-          <StudioSlider v-model="config.shape.density" label="Density" :min="0" :max="4" :step="1" :default="DEFAULT_CONFIG.shape.density" />
+          <StudioSlider
+            :model-value="config.shape.density" label="Density" :min="0" :max="4" :step="1" :default="DEFAULT_CONFIG.shape.density"
+            :bindable="true" :bound="boundColumnFor('shape.density')"
+            @update:model-value="(v: number) => { config.shape.density = v; onEdit('shape.density', v) }"
+            @promote="promote({ key: 'shape.density', label: 'Density', kind: 'slider', min: 0, max: 4, step: 1 }, config.shape.density)"
+            @menu="(e: MouseEvent) => openVarMenu(e, { key: 'shape.density', label: 'Density', kind: 'slider', min: 0, max: 4, step: 1 })"
+          />
         </template>
         <template v-else>
-          <StudioSlider v-model="config.shape.vertices" label="Vertices" :min="4" :max="40" :step="1" :default="DEFAULT_CONFIG.shape.vertices" />
-          <StudioSlider v-model="config.shape.depth" label="Depth" :min="0.2" :max="2" :step="0.05" :default="DEFAULT_CONFIG.shape.depth" />
-          <StudioSlider v-model="config.shape.spread" label="Spread" :min="0.1" :max="1" :step="0.05" :default="DEFAULT_CONFIG.shape.spread" />
+          <StudioSlider
+            :model-value="config.shape.vertices" label="Vertices" :min="4" :max="40" :step="1" :default="DEFAULT_CONFIG.shape.vertices"
+            :bindable="true" :bound="boundColumnFor('shape.vertices')"
+            @update:model-value="(v: number) => { config.shape.vertices = v; onEdit('shape.vertices', v) }"
+            @promote="promote({ key: 'shape.vertices', label: 'Vertices', kind: 'slider', min: 4, max: 40, step: 1 }, config.shape.vertices)"
+            @menu="(e: MouseEvent) => openVarMenu(e, { key: 'shape.vertices', label: 'Vertices', kind: 'slider', min: 4, max: 40, step: 1 })"
+          />
+          <StudioSlider
+            :model-value="config.shape.depth" label="Depth" :min="0.2" :max="2" :step="0.05" :default="DEFAULT_CONFIG.shape.depth"
+            :bindable="true" :bound="boundColumnFor('shape.depth')"
+            @update:model-value="(v: number) => { config.shape.depth = v; onEdit('shape.depth', v) }"
+            @promote="promote({ key: 'shape.depth', label: 'Depth', kind: 'slider', min: 0.2, max: 2, step: 0.05 }, config.shape.depth)"
+            @menu="(e: MouseEvent) => openVarMenu(e, { key: 'shape.depth', label: 'Depth', kind: 'slider', min: 0.2, max: 2, step: 0.05 })"
+          />
+          <StudioSlider
+            :model-value="config.shape.spread" label="Spread" :min="0.1" :max="1" :step="0.05" :default="DEFAULT_CONFIG.shape.spread"
+            :bindable="true" :bound="boundColumnFor('shape.spread')"
+            @update:model-value="(v: number) => { config.shape.spread = v; onEdit('shape.spread', v) }"
+            @promote="promote({ key: 'shape.spread', label: 'Spread', kind: 'slider', min: 0.1, max: 1, step: 0.05 }, config.shape.spread)"
+            @menu="(e: MouseEvent) => openVarMenu(e, { key: 'shape.spread', label: 'Spread', kind: 'slider', min: 0.1, max: 1, step: 0.05 })"
+          />
         </template>
-        <StudioSlider v-model="config.shape.jitter" label="Jitter" :min="0" :max="100" :step="1" :default="DEFAULT_CONFIG.shape.jitter" />
-        <StudioSlider v-model="config.shape.scale" label="Scale" :min="0.25" :max="3" :step="0.05" :default="DEFAULT_CONFIG.shape.scale" />
+        <StudioSlider
+          :model-value="config.shape.jitter" label="Jitter" :min="0" :max="100" :step="1" :default="DEFAULT_CONFIG.shape.jitter"
+          :bindable="true" :bound="boundColumnFor('shape.jitter')"
+          @update:model-value="(v: number) => { config.shape.jitter = v; onEdit('shape.jitter', v) }"
+          @promote="promote({ key: 'shape.jitter', label: 'Jitter', kind: 'slider', min: 0, max: 100, step: 1 }, config.shape.jitter)"
+          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'shape.jitter', label: 'Jitter', kind: 'slider', min: 0, max: 100, step: 1 })"
+        />
+        <StudioSlider
+          :model-value="config.shape.scale" label="Scale" :min="0.25" :max="3" :step="0.05" :default="DEFAULT_CONFIG.shape.scale"
+          :bindable="true" :bound="boundColumnFor('shape.scale')"
+          @update:model-value="(v: number) => { config.shape.scale = v; onEdit('shape.scale', v) }"
+          @promote="promote({ key: 'shape.scale', label: 'Scale', kind: 'slider', min: 0.25, max: 3, step: 0.05 }, config.shape.scale)"
+          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'shape.scale', label: 'Scale', kind: 'slider', min: 0.25, max: 3, step: 0.05 })"
+        />
         <div>
           <label class="mb-1 block text-[11px] text-white/55">Projection</label>
           <StudioSegmented v-model="projectionProxy" :options="['orthographic', 'perspective']" />
@@ -459,9 +642,27 @@ async function onImportFile(e: Event) {
             >{{ HARMONY_LABELS[h] }}</button>
           </div>
         </div>
-        <StudioSlider v-model="config.palette.baseHue" label="Hue" :min="0" :max="360" :step="1" :default="DEFAULT_CONFIG.palette.baseHue" />
-        <StudioSlider v-model="config.palette.saturation" label="Saturation" :min="0" :max="100" :step="1" :default="DEFAULT_CONFIG.palette.saturation" />
-        <StudioSlider v-model="config.palette.lightness" label="Lightness" :min="0" :max="100" :step="1" :default="DEFAULT_CONFIG.palette.lightness" />
+        <StudioSlider
+          :model-value="config.palette.baseHue" label="Hue" :min="0" :max="360" :step="1" :default="DEFAULT_CONFIG.palette.baseHue"
+          :bindable="true" :bound="boundColumnFor('palette.baseHue')"
+          @update:model-value="(v: number) => { config.palette.baseHue = v; onEdit('palette.baseHue', v) }"
+          @promote="promote({ key: 'palette.baseHue', label: 'Hue', kind: 'slider', min: 0, max: 360, step: 1 }, config.palette.baseHue)"
+          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'palette.baseHue', label: 'Hue', kind: 'slider', min: 0, max: 360, step: 1 })"
+        />
+        <StudioSlider
+          :model-value="config.palette.saturation" label="Saturation" :min="0" :max="100" :step="1" :default="DEFAULT_CONFIG.palette.saturation"
+          :bindable="true" :bound="boundColumnFor('palette.saturation')"
+          @update:model-value="(v: number) => { config.palette.saturation = v; onEdit('palette.saturation', v) }"
+          @promote="promote({ key: 'palette.saturation', label: 'Saturation', kind: 'slider', min: 0, max: 100, step: 1 }, config.palette.saturation)"
+          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'palette.saturation', label: 'Saturation', kind: 'slider', min: 0, max: 100, step: 1 })"
+        />
+        <StudioSlider
+          :model-value="config.palette.lightness" label="Lightness" :min="0" :max="100" :step="1" :default="DEFAULT_CONFIG.palette.lightness"
+          :bindable="true" :bound="boundColumnFor('palette.lightness')"
+          @update:model-value="(v: number) => { config.palette.lightness = v; onEdit('palette.lightness', v) }"
+          @promote="promote({ key: 'palette.lightness', label: 'Lightness', kind: 'slider', min: 0, max: 100, step: 1 }, config.palette.lightness)"
+          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'palette.lightness', label: 'Lightness', kind: 'slider', min: 0, max: 100, step: 1 })"
+        />
         <div>
           <label class="mb-1 block text-[11px] text-white/55">Preview</label>
           <div class="h-4 rounded" :style="{ background: paletteRampCss }" />
@@ -491,11 +692,38 @@ async function onImportFile(e: Event) {
           <StudioSelect v-model="fillTypeProxy" :options="FILL_TYPES" />
         </div>
         <div class="flex gap-4">
-          <FillSwatch label="Color 1" :color="config.fill.a" :bound="null" @update:color="(v: string) => (config.fill.a = v)" />
-          <FillSwatch v-if="fillNeedsB" label="Color 2" :color="config.fill.b" :bound="null" @update:color="(v: string) => (config.fill.b = v)" />
+          <FillSwatch
+            label="Color 1" :color="config.fill.a" :bound="boundColumnFor('fill.a')"
+            @update:color="(v: string) => { config.fill.a = v; onEdit('fill.a', v) }"
+            @promote="promote({ key: 'fill.a', label: 'Color 1', kind: 'color' }, config.fill.a)"
+            @menu="(e: MouseEvent) => openVarMenu(e, { key: 'fill.a', label: 'Color 1', kind: 'color' })"
+            @edit="goToCollection"
+          />
+          <FillSwatch
+            v-if="fillNeedsB"
+            label="Color 2" :color="config.fill.b" :bound="boundColumnFor('fill.b')"
+            @update:color="(v: string) => { config.fill.b = v; onEdit('fill.b', v) }"
+            @promote="promote({ key: 'fill.b', label: 'Color 2', kind: 'color' }, config.fill.b)"
+            @menu="(e: MouseEvent) => openVarMenu(e, { key: 'fill.b', label: 'Color 2', kind: 'color' })"
+            @edit="goToCollection"
+          />
         </div>
-        <StudioSlider v-if="fillHasAngle" v-model="config.fill.angle" label="Angle" :min="0" :max="360" :step="1" :default="DEFAULT_CONFIG.fill.angle" />
-        <StudioSlider v-if="fillHasDensity" v-model="config.fill.density" label="Density" :min="2" :max="32" :step="1" :default="DEFAULT_CONFIG.fill.density" />
+        <StudioSlider
+          v-if="fillHasAngle"
+          :model-value="config.fill.angle" label="Angle" :min="0" :max="360" :step="1" :default="DEFAULT_CONFIG.fill.angle"
+          :bindable="true" :bound="boundColumnFor('fill.angle')"
+          @update:model-value="(v: number) => { config.fill.angle = v; onEdit('fill.angle', v) }"
+          @promote="promote({ key: 'fill.angle', label: 'Angle', kind: 'slider', min: 0, max: 360, step: 1 }, config.fill.angle)"
+          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'fill.angle', label: 'Angle', kind: 'slider', min: 0, max: 360, step: 1 })"
+        />
+        <StudioSlider
+          v-if="fillHasDensity"
+          :model-value="config.fill.density" label="Density" :min="2" :max="32" :step="1" :default="DEFAULT_CONFIG.fill.density"
+          :bindable="true" :bound="boundColumnFor('fill.density')"
+          @update:model-value="(v: number) => { config.fill.density = v; onEdit('fill.density', v) }"
+          @promote="promote({ key: 'fill.density', label: 'Density', kind: 'slider', min: 2, max: 32, step: 1 }, config.fill.density)"
+          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'fill.density', label: 'Density', kind: 'slider', min: 2, max: 32, step: 1 })"
+        />
       </StudioSection>
 
       <!-- Style -->
@@ -505,8 +733,20 @@ async function onImportFile(e: Event) {
             <component :is="locked('style') ? Lock : Unlock" class="h-3 w-3" />
           </button>
         </template>
-        <StudioSlider v-model="config.style.grain" label="Grain" :min="0" :max="100" :step="1" :default="DEFAULT_CONFIG.style.grain" />
-        <StudioSlider v-model="config.style.distortion" label="Distortion" :min="0" :max="100" :step="1" :default="DEFAULT_CONFIG.style.distortion" />
+        <StudioSlider
+          :model-value="config.style.grain" label="Grain" :min="0" :max="100" :step="1" :default="DEFAULT_CONFIG.style.grain"
+          :bindable="true" :bound="boundColumnFor('style.grain')"
+          @update:model-value="(v: number) => { config.style.grain = v; onEdit('style.grain', v) }"
+          @promote="promote({ key: 'style.grain', label: 'Grain', kind: 'slider', min: 0, max: 100, step: 1 }, config.style.grain)"
+          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'style.grain', label: 'Grain', kind: 'slider', min: 0, max: 100, step: 1 })"
+        />
+        <StudioSlider
+          :model-value="config.style.distortion" label="Distortion" :min="0" :max="100" :step="1" :default="DEFAULT_CONFIG.style.distortion"
+          :bindable="true" :bound="boundColumnFor('style.distortion')"
+          @update:model-value="(v: number) => { config.style.distortion = v; onEdit('style.distortion', v) }"
+          @promote="promote({ key: 'style.distortion', label: 'Distortion', kind: 'slider', min: 0, max: 100, step: 1 }, config.style.distortion)"
+          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'style.distortion', label: 'Distortion', kind: 'slider', min: 0, max: 100, step: 1 })"
+        />
         <div class="flex items-center justify-between">
           <span class="text-[11px] text-white/55">Transparent background</span>
           <StudioSwitch v-model="bgTransparent" />
@@ -538,4 +778,18 @@ async function onImportFile(e: Event) {
       </StudioSection>
     </template>
   </StudioModalShell>
+  <CanvasContextMenu
+    v-if="varMenu"
+    :x="varMenu.x"
+    :y="varMenu.y"
+    :items="varMenu.items"
+    @close="varMenu = null"
+  />
+  <SweepPopover
+    v-if="sweepPopover"
+    :control="sweepPopover.control"
+    :anchor="sweepPopover.anchor"
+    @apply="applySweep"
+    @close="sweepPopover = null"
+  />
 </template>
