@@ -43,6 +43,30 @@ describe('fieldKey', () => {
     const frozen = spec({ speed: 0 })
     expect(fieldKey(frozen, 512, 512, 0)).toBe(fieldKey(frozen, 512, 512, 99))
   })
+
+  it('does not collide on unescaped separators in param keys — "x=1,y":2 vs x:1,y:2', () => {
+    const a = fieldKey(spec({ params: { 'x=1,y': 2 } }), 512, 512, 0)
+    const b = fieldKey(spec({ params: { x: 1, y: 2 } }), 512, 512, 0)
+    expect(a).not.toBe(b)
+  })
+
+  it('does not let a "|" in effectId masquerade as the effectId/params boundary', () => {
+    // Under a naive `[effectId, paramsKey, ...].join('|')`, effectId 'foo|a=1' with no
+    // params previously produced the SAME string as effectId 'foo' with params {a: 1}.
+    const a = fieldKey(spec({ effectId: 'foo|a=1', params: {} }), 512, 512, 0.5)
+    const b = fieldKey(spec({ effectId: 'foo', params: { a: 1 } }), 512, 512, 0.5)
+    expect(a).not.toBe(b)
+  })
+
+  it('does not let a "|" in Fill.a/b masquerade as the input-field boundary', () => {
+    // Under a naive `${type}|${a}|${b}|...` join, a='foo|bar',b='baz' previously
+    // produced the SAME string as a='foo', b='bar|baz'.
+    const fillA = { ...DEFAULT_FILL, type: 'gradient' as const, a: 'foo|bar', b: 'baz' }
+    const fillB = { ...DEFAULT_FILL, type: 'gradient' as const, a: 'foo', b: 'bar|baz' }
+    const a = fieldKey(spec({ input: fillA }), 512, 512, 0)
+    const b = fieldKey(spec({ input: fillB }), 512, 512, 0)
+    expect(a).not.toBe(b)
+  })
 })
 
 describe('planFields', () => {

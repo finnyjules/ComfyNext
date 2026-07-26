@@ -18,20 +18,32 @@ export function quantizeTime(t: number, fps: number): number {
   return Math.floor(t * f) / f
 }
 
-function inputKey(f: Fill): string {
-  return `${f.type}|${f.a}|${f.b}|${f.angle}|${f.density}`
+/** JSON-encode the component values as an array rather than joining with a delimiter
+ *  character — free-form strings (effectId, Fill.a/b, param names) can themselves
+ *  contain any delimiter we'd choose, and a hand-rolled join collides silently when
+ *  they do. JSON.stringify escapes embedded quotes/brackets, so array position — not
+ *  a character that might appear inside a field — is what disambiguates components. */
+function encode(parts: unknown[]): string {
+  return JSON.stringify(parts)
 }
 
+function inputKey(f: Fill): string {
+  return encode([f.type, f.a, f.b, f.angle, f.density])
+}
+
+/** Sorted [key, value] pairs, not a hand-joined string — sorting normalises order
+ *  (so param order doesn't matter) while `encode` keeps arbitrary key text, including
+ *  '=' or ',', from bleeding into neighbouring pairs. */
 function paramsKey(p: Record<string, number>): string {
-  return Object.keys(p).sort().map(k => `${k}=${p[k]}`).join(',')
+  return encode(Object.keys(p).sort().map(k => [k, p[k]]))
 }
 
 /** Fields are keyed by DESCRIPTOR, not by consumer. That is the whole batching rule:
  *  ten shapes sharing one shader fill produce one key and therefore one render. */
 export function fieldKey(spec: ShaderSpec, w: number, h: number, tq: number): string {
-  const t = spec.speed === 0 ? 'static' : String(tq)
-  return [spec.effectId, paramsKey(spec.params), spec.anchor, spec.speed,
-          inputKey(spec.input), `${w}x${h}`, t].join('|')
+  const t = spec.speed === 0 ? 'static' : tq
+  return encode([spec.effectId, paramsKey(spec.params), spec.anchor, spec.speed,
+                 inputKey(spec.input), w, h, t])
 }
 
 /** Split distinct field keys into those rendered live and those frozen at t=0.
