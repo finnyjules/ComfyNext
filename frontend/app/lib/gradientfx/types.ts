@@ -343,6 +343,11 @@ export function migrateMotionTracks(cfg: GradientConfig): GradientConfig {
     if (typeof tr.path === 'string' && tr.path) continue
     if (typeof tr.layer === 'number' && typeof tr.param === 'string') {
       tr.path = `layers.${tr.layer}.shape.${tr.param}`
+      // Drop the legacy fields once migrated: leaving them alongside `path`
+      // would silently mis-target if a future rollback re-reads `layer`/`param`
+      // instead of `path` while the layer order has since changed.
+      delete tr.layer
+      delete tr.param
     }
   }
   return cfg

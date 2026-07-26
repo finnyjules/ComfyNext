@@ -6,7 +6,7 @@ import { LIQUID_PRESETS, buildConfig, defaultConfig, liquidConfig, liquidPresetC
 import { MESH_MAX_POINTS, buildMeshPoints, defaultMesh } from '~/lib/gradientfx/mesh'
 import { randomSeed } from '~/lib/gradientfx/rng'
 import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
-import { animatableTargets, dropTracksForLayer, remapTracksOnReorder } from '~/lib/gradientfx/motion'
+import { animatableTargets, dropTracksForLayer, remapTracksOnInsert, remapTracksOnReorder } from '~/lib/gradientfx/motion'
 import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
 import StudioLayerStack from '~/components/vue-canvas/StudioLayerStack.vue'
@@ -466,20 +466,11 @@ function removeLayer(i: number) {
   config.value.motion.tracks = dropTracksForLayer(config.value.motion.tracks, i)
   activeLayer.value = Math.min(activeLayer.value, config.value.layers.length - 1)
 }
-// Shift motion tracks up when a layer is inserted at index `at` (duplicate).
-function remapTracksInsert(at: number) {
-  for (const t of config.value.motion.tracks) {
-    const m = /^layers\.(\d+)\./.exec(t.path ?? '')
-    if (m && Number(m[1]) >= at) {
-      t.path = t.path!.replace(/^layers\.\d+\./, `layers.${Number(m[1]) + 1}.`)
-    }
-  }
-}
 function duplicateLayer(i: number) {
   if (config.value.layers.length >= LAYER_MAX) return
   const clone = structuredClone(toRaw(config.value.layers[i]!))
   config.value.layers.splice(i + 1, 0, clone)
-  remapTracksInsert(i + 1)
+  config.value.motion.tracks = remapTracksOnInsert(config.value.motion.tracks, i + 1)
   activeLayer.value = i + 1
 }
 function reorderLayer(from: number, to: number) {
@@ -518,11 +509,13 @@ function applyPaletteStops(stops: { pos: number; color: string }[]) {
 
 // ── motion tracks ─────────────────────────────────────────────────────────────
 function addTrack() {
-  const a = animatable.value[0]
+  const a = animatable.value.find(t => /\.shape\.phase$/.test(t.path)) ?? animatable.value[0]
   if (!a) return
   config.value.motion.tracks.push({
     path: a.path, from: a.min, to: a.max,
-    easing: 'linear', loops: 1, hold: 0, cycleOffset: 0, delay: 0,
+    // pingpong loops seamlessly (frame 0 == frame N) — this section exports
+    // looping video, so a linear default would hard-cut at the loop boundary.
+    easing: 'pingpong', loops: 1, hold: 0, cycleOffset: 0, delay: 0,
   })
   onEdit('motion.tracks', config.value.motion.tracks.length)
 }
@@ -1165,6 +1158,7 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
         <div v-for="(tk, i) in config.motion.tracks" :key="i" class="mb-2 rounded border border-white/10 p-2">
           <div class="mb-1 flex items-center gap-1">
             <select v-model="tk.path" class="min-w-0 flex-1 rounded-md border border-white/[0.08] bg-white/[0.04] px-1 py-0.5 text-[11px]">
+              <option v-if="tk.path && !animatable.some(a => a.path === tk.path)" :value="tk.path">{{ tk.path }}</option>
               <option v-for="a in animatable" :key="a.path" :value="a.path">{{ a.label }}</option>
             </select>
             <button class="text-white/30 hover:text-white/70" @click="removeTrack(i)"><Trash2 class="h-3 w-3" /></button>

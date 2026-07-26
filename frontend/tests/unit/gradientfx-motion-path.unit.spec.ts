@@ -70,6 +70,17 @@ describe('animatableTargets', () => {
     expect(paths).not.toContain('canvas.background')
     expect(paths).not.toContain('canvas.layout')
   })
+
+  // Both `agent` and `animatable` are opt-OUT (see controls.ts's doc comment),
+  // so a new slider silently joins both vocabularies by default. The agent
+  // side is pinned by gradientfx-controls.unit.spec.ts's frozen snapshot; this
+  // pins the motion side the same way so a schema edit that silently adds or
+  // removes a motion target fails loudly here instead of shipping unnoticed.
+  it('pins the default config\'s animatable target set', () => {
+    const paths = animatableTargets(cfg()).map((t) => t.path)
+    expect(paths.length).toBe(30)
+    expect(paths).toMatchSnapshot()
+  })
 })
 
 const track = (over: any = {}) => ({
@@ -126,6 +137,19 @@ describe('legacy track migration', () => {
     const out: any = ensureConfigDefaults(c)
     expect(out.motion.tracks[0].path).toBe('layers.0.shape.count')
     expect(out.motion.tracks[1].path).toBe('layers.1.shape.phase')
+  })
+
+  it('strips the legacy layer/param fields once migrated', () => {
+    const c: any = cfg()
+    c.motion.tracks = [
+      { layer: 0, param: 'count', from: 2, to: 8, easing: 'linear', loops: 1, hold: 0, cycleOffset: 0, delay: 0 },
+    ]
+    const out: any = ensureConfigDefaults(c)
+    expect(out.motion.tracks[0].path).toBe('layers.0.shape.count')
+    expect(out.motion.tracks[0].layer).toBeUndefined()
+    expect(out.motion.tracks[0].param).toBeUndefined()
+    expect('layer' in out.motion.tracks[0]).toBe(false)
+    expect('param' in out.motion.tracks[0]).toBe(false)
   })
 
   it('leaves already-migrated tracks untouched', () => {

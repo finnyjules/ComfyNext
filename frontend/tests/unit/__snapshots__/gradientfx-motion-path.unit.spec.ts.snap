@@ -1,0 +1,36 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`animatableTargets > pins the default config's animatable target set 1`] = `
+[
+  "canvas.margin",
+  "flow.angle",
+  "flow.noiseScale",
+  "flow.intensity",
+  "flow.distortion",
+  "flow.detail",
+  "flow.swirl",
+  "flow.speed",
+  "layers.0.shape.phase",
+  "layers.0.shape.scrub",
+  "layers.0.shape.peaks",
+  "layers.0.shape.count",
+  "layers.0.shape.minDepth",
+  "layers.0.shape.curveExp",
+  "layers.0.shape.jitter",
+  "layers.0.shape.sweep",
+  "layers.0.shape.gap",
+  "layers.0.shape.rounding",
+  "layers.0.shape.valley",
+  "relief.grain",
+  "relief.relief",
+  "layers.0.opacity",
+  "layers.0.color.steps",
+  "layers.0.color.hueDrift",
+  "layers.0.color.hueRotate",
+  "focus.blur",
+  "focus.radius",
+  "focus.softness",
+  "focus.x",
+  "focus.y",
+]
+`;

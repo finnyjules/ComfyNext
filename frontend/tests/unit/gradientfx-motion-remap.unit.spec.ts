@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { remapTracksOnReorder, dropTracksForLayer } from '../../app/lib/gradientfx/motion'
+import { remapTracksOnReorder, dropTracksForLayer, remapTracksOnInsert } from '../../app/lib/gradientfx/motion'
 
 const t = (path: string) => ({
   path, from: 0, to: 1, easing: 'linear' as const,
@@ -18,6 +18,21 @@ describe('remapTracksOnReorder', () => {
   })
   it('leaves non-layer paths untouched', () => {
     expect(remapTracksOnReorder([t('relief.grain')], 0, 2)[0]!.path).toBe('relief.grain')
+  })
+})
+
+describe('remapTracksOnInsert', () => {
+  it('shifts a track at the insert point up one layer', () => {
+    expect(remapTracksOnInsert([t('layers.1.shape.count')], 1)[0]!.path).toBe('layers.2.shape.count')
+  })
+  it('shifts a track above the insert point up one layer', () => {
+    expect(remapTracksOnInsert([t('layers.2.shape.count')], 1)[0]!.path).toBe('layers.3.shape.count')
+  })
+  it('leaves a track below the insert point untouched', () => {
+    expect(remapTracksOnInsert([t('layers.0.shape.count')], 1)[0]!.path).toBe('layers.0.shape.count')
+  })
+  it('leaves non-layer paths untouched', () => {
+    expect(remapTracksOnInsert([t('relief.grain')], 1)[0]!.path).toBe('relief.grain')
   })
 })
 

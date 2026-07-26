@@ -9,10 +9,15 @@ import { GRADIENT_PRESET_NAMES } from './presets'
  * from it and `motion.ts` derives animatable targets from it. The inspector UI
  * will derive from it in a follow-on change; today it is still hand-written.
  *
- * It is a SUPERSET — each consumer opts in. `agent: false` withholds a control
- * from the agent (used for the Shape block, which the agent has never seen);
- * `animatable: false` withholds a slider from motion. That way adding a control
- * here can never silently change another capability.
+ * It is a SUPERSET, but each consumer is opt-OUT, not opt-in: a new slider is
+ * agent-visible and motion-animatable by default. `agent: false` withholds a
+ * control from the agent (used for the Shape block, which the agent has never
+ * seen); `animatable: false` withholds a slider from motion. So adding a
+ * control here silently grants it to BOTH capabilities unless you opt it out
+ * of one. The agent side is guarded against surprise grants by frozen
+ * characterization snapshots (gradientfx-controls.unit.spec.ts.snap); the
+ * motion side is pinned the same way by gradientfx-motion-path.unit.spec.ts's
+ * animatable-target-set snapshot.
  *
  * Keys are FROZEN: persisted Collection bindings are `params.<key>`, and
  * GRADIENT_GUIDANCE names keys in prose.
@@ -84,12 +89,14 @@ export const GRADIENT_CONTROLS: GradientControl[] = [
   slider('layer.mesh.blur', 'Blur', 0, 100, 1, 'Mesh', undefined, { when: isMesh }),
   slider('layer.mesh.drift', 'Drift', 0, 100, 1, 'Mesh', undefined, { when: isMesh }),
 
-  // --- Shape: previously ORPHANED. Present in the surface and in the legacy
-  //     ANIMATABLE list, but never in the agent vocabulary. Declared here with
-  //     `agent: false` so motion can derive from them without changing the
-  //     agent's snapshot. Exposing them to the agent is a deliberate later step.
-  //     Ranges are the legacy ANIMATABLE ranges (motion.ts:8-20), which for
-  //     `sweep` and `count` intentionally differ from the UI slider bounds.
+  // --- Shape: previously ORPHANED. Present in the surface, but never in the
+  //     agent vocabulary. Declared here with `agent: false` so motion can
+  //     derive from them without changing the agent's snapshot. Exposing them
+  //     to the agent is a deliberate later step.
+  //     Ranges mirror the surface's Shape sliders, except `sweep`, whose
+  //     animation range intentionally exceeds the UI slider bound (see the
+  //     `animatable` override below), and `count`, which the surface caps
+  //     lower for the stack layout (40) than the range declared here (64).
   slider('layer.shape.phase', 'Wave phase', 0, 1, 0.01, 'Shape', undefined, { agent: false, when: isBanded }),
   slider('layer.shape.scrub', 'Scrub / rotate', 0, 1, 0.01, 'Shape', undefined, { agent: false, when: isBanded }),
   slider('layer.shape.peaks', 'Peaks', 1, 12, 1, 'Shape', undefined, { agent: false, when: isBanded }),

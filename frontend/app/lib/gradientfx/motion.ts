@@ -6,21 +6,6 @@ import { cloneConfig, type EasingKind, type GradientConfig, type MotionTrack } f
 import { visibleGradientControls } from './controls'
 import { getByPath, setByPath } from '~/lib/studio/path'
 
-/** Animatable per-layer shape params (label → ShapeConfig key). */
-export const ANIMATABLE: { key: string; label: string; min: number; max: number }[] = [
-  { key: 'phase', label: 'Wave phase', min: 0, max: 1 },
-  { key: 'scrub', label: 'Scrub / rotate', min: 0, max: 1 },
-  { key: 'peaks', label: 'Peaks', min: 1, max: 12 },
-  { key: 'count', label: 'Count', min: 2, max: 64 },
-  { key: 'minDepth', label: 'Min depth', min: 0, max: 1 },
-  { key: 'curveExp', label: 'Curve exponent', min: 0.2, max: 3 },
-  { key: 'jitter', label: 'Jitter', min: 0, max: 1 },
-  { key: 'sweep', label: 'Sweep', min: 0, max: 360 },
-  { key: 'gap', label: 'Gap', min: 0, max: 1 },
-  { key: 'rounding', label: 'Rounding', min: 0, max: 1 },
-  { key: 'valley', label: 'Valley position', min: 0, max: 1 },
-]
-
 export interface AnimatableTarget { path: string; label: string; min: number; max: number }
 
 /**
@@ -152,4 +137,13 @@ export function dropTracksForLayer(tracks: MotionTrack[], removed: number): Moti
     out.push(i > removed ? { ...tr, path: withLayerIndex(tr.path!, i - 1) } : tr)
   }
   return out
+}
+
+/** Shift track paths up one layer when a new layer is inserted at `at`. */
+export function remapTracksOnInsert(tracks: MotionTrack[], at: number): MotionTrack[] {
+  return tracks.map((tr) => {
+    const i = layerIndexOf(tr.path)
+    if (i === null || i < at) return tr
+    return { ...tr, path: withLayerIndex(tr.path!, i + 1) }
+  })
 }
