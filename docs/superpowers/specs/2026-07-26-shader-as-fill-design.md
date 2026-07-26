@@ -119,10 +119,39 @@ animated fill would miss every frame and evict every other layer's tile on the w
 | Frames | `useCompositorLayers.ts:610` `resolveFill()` | new branch → field canvas → `createPattern` + `DOMMatrix` |
 | Scene3D | `scene3d/materials.ts:391` `materialFor()` | new material case → `t.map` = field texture, plus `updateMaterial()` |
 
-Shape Studio costing nothing is the factory result — evidence that the single door is real.
 Scene3D costing something is the *more interesting* result: it does not consume `Fill` or
 `FILL_TYPES` at all, so it proves the reusable unit is the **field module**, not the fill
 vocabulary. Two different reuse seams sharing one core.
+
+> **CORRECTED 2026-07-26 — "Shape Studio costs nothing" was wrong, and the way it was wrong
+> matters more than the correction.**
+>
+> Shape Studio cost **three small changes**, not zero: `SurfaceFill` (`shapefx/config.ts:54`)
+> is a *narrower* type than `Fill`, and `toFill()` (`shapefx/surface.ts:11`) rebuilds a `Fill`
+> field by field — so `shader` was silently dropped, and `shader` was also missing from the
+> persistence whitelist. The fix was one schema field, one propagation line, one whitelist
+> entry.
+>
+> **The single door is real only for surfaces that consume `Fill` directly.** Wherever a
+> surface keeps its own projection of a fill, adding a fill type costs a few lines there too.
+> That is still cheap and still supports the thesis — the seam held, the work was trivial — but
+> the honest claim is "nearly free where a surface reuses `Fill`, plus a line per surface that
+> re-models it", not "free".
+>
+> **Why it looked like a pass: the graceful fallback disguised the failure.** A shader fill
+> whose spec cannot be read degrades to rendering its input fill — the safety behaviour
+> deliberately built in Task 1. So selecting "shader" in Shape Studio rendered a plausible
+> gradient, and visual inspection read that as success. It was the fallback working perfectly,
+> hiding the fact that the shader path was never reached.
+>
+> **Generalise this: on any feature with graceful degradation, "I looked at it and it worked"
+> is not evidence.** A verification must distinguish *working* from *falling back* — assert the
+> renderer was actually invoked, or diff pixels across time (a static image proves the field
+> never animated). The eventual proof here was 10,131 of 16,384 sampled pixels differing
+> between t=0 and t=2.5.
+>
+> Still missing in Shape Studio: any picker UI for choosing the effect and params. The fill
+> type is selectable and the data now flows and persists, but authoring it is Task 9's job.
 
 ### 4. Anchor is a transform, not a renderer
 
