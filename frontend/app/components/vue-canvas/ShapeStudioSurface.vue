@@ -38,6 +38,7 @@ import { typeCompatible } from '~/lib/collection/bindables'
 import { addSweepRows } from '~/lib/collection/model'
 import { COLLECTION_PROP, VARS_TYPE, type CollectionColumn, type CollectionData } from '~/lib/collection/types'
 import { effectiveColumns, makeLookupResolver } from '~/lib/collection/lookup'
+import { registerStudioParamBaker, unregisterStudioParamBaker } from '~/lib/studio/cascade'
 
 // `nodes` is optional (defaults to []) so this surface can be smoke-tested standalone
 // (see the dev lab page) before Task 10 wires it into VueNodeCanvas the way every other
@@ -408,6 +409,7 @@ function onWheel(e: WheelEvent) {
 }
 
 onMounted(() => {
+  registerStudioParamBaker(props.nodeId, renderBlobWithOverrides)
   if (!detectWebGL()) { webglOk.value = false; return }
   const { w, h } = previewDims()
   engine = new ShapeEngine(canvas.value!, w, h)
@@ -422,6 +424,7 @@ onBeforeUnmount(() => {
   if (actionErrorTimer) clearTimeout(actionErrorTimer)
   engine?.dispose()
   engine = null
+  unregisterStudioParamBaker(props.nodeId)
 })
 
 // ── outputs (mirror Gradient/Space Type's image path exactly) ──────────────────────────
@@ -450,6 +453,43 @@ async function exportPng() {
   } finally {
     exporting.value = false
     raf = requestAnimationFrame(frame)
+  }
+}
+
+// Studio param-baker (Collection sweeps) — bakes ONE frame with a set of `params.*`
+// overrides applied (one row of a collection sweep/generate run), without disturbing
+// the studio's live on-screen config: snapshot the current value of every overridden
+// key via the same dotted-path proxy the agent tuner/var-bindings paths use
+// (`paramsProxy`), write the overrides through that same proxy (mutating the shared
+// reactive `config` — identical to a user edit), render one full-res frame through a
+// short-lived offscreen ShapeEngine (the same one-shot new-engine → setConfig →
+// render(orbit) → frameToBlob → dispose pattern ShapeStudioNode.vue's bakeOutput
+// uses for its own cascade baker, kept separate from the live preview `engine` so
+// this never fights the rAF loop's render/resize), then restore the snapshot in
+// `finally` regardless of success/failure — the restore is what stops a sweep from
+// permanently mutating the user's config.
+async function renderBlobWithOverrides(overrides: Record<string, string | number>): Promise<Blob | null> {
+  if (!detectWebGL()) return null
+  const keys = Object.keys(overrides)
+  const snapshot = new Map<string, string | number | undefined>()
+  for (const key of keys) snapshot.set(key, paramsProxy[key] as string | number | undefined)
+  let offEngine: ShapeEngine | null = null
+  try {
+    for (const key of keys) paramsProxy[key] = overrides[key]!
+    const w = canvasW.value, h = canvasH.value
+    offEngine = new ShapeEngine(document.createElement('canvas'), w, h)
+    offEngine.setConfig(config.value)
+    offEngine.render(orbit)
+    return await offEngine.frameToBlob(w, h)
+  } catch (e) {
+    console.error('[shape-studio] param-baker render failed', e)
+    return null
+  } finally {
+    offEngine?.dispose()
+    for (const key of keys) {
+      const prev = snapshot.get(key)
+      if (prev !== undefined) paramsProxy[key] = prev
+    }
   }
 }
 
