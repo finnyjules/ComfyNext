@@ -1,0 +1,89 @@
+import { describe, it, expect } from 'vitest'
+import { SHAPE_CONTROLS, SHAPE_SECTIONS, visibleShapeControls } from '../../app/lib/shapefx/controls'
+import { DEFAULT_CONFIG, mergeConfig } from '../../app/lib/shapefx/config'
+import { makeConfigParams } from '../../app/lib/agent/configParams'
+
+const cfg = (over: any = {}): any => mergeConfig({ ...structuredClone(DEFAULT_CONFIG), ...over })
+
+describe('SHAPE_CONTROLS integrity', () => {
+  it('has unique keys', () => {
+    const keys = SHAPE_CONTROLS.map((c) => c.key)
+    expect(new Set(keys).size).toBe(keys.length)
+  })
+
+  it('every control belongs to a declared section', () => {
+    for (const c of SHAPE_CONTROLS) {
+      expect(SHAPE_SECTIONS, `${c.key} group "${c.group}"`).toContain(c.group)
+    }
+  })
+
+  it('every select default is one of its own options', () => {
+    for (const c of SHAPE_CONTROLS) {
+      if (c.kind !== 'select') continue
+      expect(c.options, `${c.key}`).toContain(c.default)
+    }
+  })
+
+  it('every slider default sits inside its own range', () => {
+    for (const c of SHAPE_CONTROLS) {
+      if (c.kind !== 'slider') continue
+      expect(c.default, `${c.key} default`).toBeGreaterThanOrEqual(c.min)
+      expect(c.default, `${c.key} default`).toBeLessThanOrEqual(c.max)
+      expect(c.max, `${c.key} range`).toBeGreaterThan(c.min)
+    }
+  })
+
+  it('every key resolves against a real config leaf', () => {
+    // The whole point of dotted keys: the agent writes through makeConfigParams.
+    // A key that does not resolve is a control the agent can never actually set.
+    const c = cfg()
+    const params = makeConfigParams(() => c, () => 0)
+    const unresolved = SHAPE_CONTROLS.map((s) => s.key).filter((k) => params[k] === undefined)
+    expect(unresolved).toEqual([])
+  })
+
+  it('every slider default equals the value DEFAULT_CONFIG actually ships', () => {
+    // Guards the schema against drifting from the real defaults, which is what
+    // v-studio-reset double-click restores to.
+    const c = cfg()
+    const params = makeConfigParams(() => c, () => 0)
+    for (const s of SHAPE_CONTROLS) {
+      if (s.kind !== 'slider') continue
+      expect(params[s.key], `${s.key}`).toBe(s.default)
+    }
+  })
+})
+
+describe('visibleShapeControls follows the surface predicates', () => {
+  it('offers primitive controls in primitive mode and gem controls in gem mode', () => {
+    const prim = visibleShapeControls(cfg({ shape: { ...DEFAULT_CONFIG.shape, mode: 'primitive' } })).map((c) => c.key)
+    expect(prim).toContain('shape.primitive')
+    expect(prim).toContain('shape.density')
+    expect(prim).not.toContain('shape.vertices')
+
+    const gem = visibleShapeControls(cfg({ shape: { ...DEFAULT_CONFIG.shape, mode: 'gem' } })).map((c) => c.key)
+    expect(gem).toContain('shape.vertices')
+    expect(gem).toContain('shape.depth')
+    expect(gem).not.toContain('shape.density')
+  })
+
+  it('offers palette controls for facets and fill controls for surface, never both', () => {
+    const facets = visibleShapeControls(cfg({ fillMode: 'facets' })).map((c) => c.key)
+    expect(facets).toContain('palette.harmony')
+    expect(facets.some((k) => k.startsWith('fill.'))).toBe(false)
+
+    const surface = visibleShapeControls(cfg({ fillMode: 'surface' })).map((c) => c.key)
+    expect(surface).toContain('fill.type')
+    expect(surface.some((k) => k.startsWith('palette.'))).toBe(false)
+  })
+
+  it('withholds palette.direction when coloring is scatter', () => {
+    const keys = visibleShapeControls(cfg({ fillMode: 'facets', palette: { ...DEFAULT_CONFIG.palette, coloring: 'scatter' } })).map((c) => c.key)
+    expect(keys).not.toContain('palette.direction')
+  })
+
+  it('returns only members of SHAPE_CONTROLS', () => {
+    const all = new Set(SHAPE_CONTROLS.map((c) => c.key))
+    for (const c of visibleShapeControls(cfg())) expect(all.has(c.key), c.key).toBe(true)
+  })
+})
