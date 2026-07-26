@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { gradientAgentControls } from '../../app/lib/gradientfx/agentControls'
 import { defaultConfig } from '../../app/lib/gradientfx/randomize'
 import { makeConfigParams } from '../../app/lib/agent/configParams'
+import { ensureConfigDefaults } from '~/lib/gradientfx/types'
 
 /**
  * Characterization tests. These pin the CURRENT output of gradientAgentControls
@@ -23,7 +24,11 @@ import { makeConfigParams } from '../../app/lib/agent/configParams'
 function cfgWithLayout(layout: string) {
   const c: any = defaultConfig()
   c.canvas.layout = layout
-  return c
+  // Match how the app actually loads a config: loadConfig() always normalizes
+  // through ensureConfigDefaults, which backfills focus/center/light/flow and
+  // (for mesh layouts) layer 0's mesh points. Characterizing an un-normalized
+  // config would pin behavior that never occurs at runtime.
+  return ensureConfigDefaults(c)
 }
 
 const LAYOUTS_UNDER_TEST = ['linear', 'radial', 'orbit', 'liquid', 'mesh'] as const
@@ -66,16 +71,7 @@ describe('gradientAgentControls characterization', () => {
 
 describe('gradientAgentControls integrity', () => {
   for (const layout of LAYOUTS_UNDER_TEST) {
-    // TODO(factory): pre-existing unresolved keys — gradientAgentControls()
-    // unconditionally emits focus.* and (for mesh) layer.mesh.* controls, but
-    // defaultConfig() from randomize.ts leaves `focus` undefined and never
-    // populates layer 0's `mesh` block (only ensureConfigDefaults()/meshConfig()
-    // backfill those). Against a raw defaultConfig() the resolved-unresolved
-    // sets are:
-    //   linear/radial/orbit/liquid: ["focus.blur","focus.shape","focus.radius","focus.softness","focus.x","focus.y"]
-    //   mesh: ["layer.mesh.softness","layer.mesh.contrast","layer.mesh.blur","layer.mesh.drift","focus.blur","focus.shape","focus.radius","focus.softness","focus.x","focus.y"]
-    // Not fixed here — this task only characterizes existing behaviour.
-    it.skip(`every emitted key resolves against a real config leaf for layout=${layout}`, () => {
+    it(`every emitted key resolves against a real config leaf for layout=${layout}`, () => {
       const cfg = cfgWithLayout(layout)
       const params = makeConfigParams(() => cfg, () => 0)
       const unresolved = gradientAgentControls(cfg)
