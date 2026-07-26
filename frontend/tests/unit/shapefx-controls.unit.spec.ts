@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { SHAPE_CONTROLS, SHAPE_SECTIONS, visibleShapeControls } from '../../app/lib/shapefx/controls'
 import { DEFAULT_CONFIG, mergeConfig } from '../../app/lib/shapefx/config'
 import { makeConfigParams } from '../../app/lib/agent/configParams'
+import { shapeAgentControls, SHAPE_GUIDANCE } from '../../app/lib/shapefx/agentControls'
 
 const cfg = (over: any = {}): any => mergeConfig({ ...structuredClone(DEFAULT_CONFIG), ...over })
 
@@ -96,5 +97,37 @@ describe('the primitive list cannot drift from the config', () => {
     const spec = SHAPE_CONTROLS.find((c) => c.key === 'shape.primitive')!
     expect(spec.kind).toBe('select')
     expect((spec as any).options).toEqual([...PRIMS])
+  })
+})
+
+describe('shapeAgentControls', () => {
+  it('emits plain ControlSpecs with no schema-only fields leaking', () => {
+    for (const c of shapeAgentControls(cfg())) {
+      expect(c, c.key).not.toHaveProperty('when')
+      expect(c, c.key).not.toHaveProperty('agent')
+      expect(c, c.key).not.toHaveProperty('animatable')
+    }
+  })
+
+  it('tracks the layout predicates', () => {
+    const facets = shapeAgentControls(cfg({ fillMode: 'facets' })).map((c) => c.key)
+    const surface = shapeAgentControls(cfg({ fillMode: 'surface' })).map((c) => c.key)
+    expect(facets).toContain('palette.baseHue')
+    expect(surface).toContain('fill.type')
+    expect(facets).not.toEqual(surface)
+  })
+
+  it('is a characterization snapshot for both fill modes', () => {
+    expect(shapeAgentControls(cfg({ fillMode: 'facets' }))).toMatchSnapshot()
+    expect(shapeAgentControls(cfg({ fillMode: 'surface' }))).toMatchSnapshot()
+  })
+
+  it('guidance names only keys that exist in the schema', () => {
+    // The guidance is prose fed to the model; a stale key name silently teaches it
+    // to set something that will be dropped by validatePatch.
+    const keys = new Set(SHAPE_CONTROLS.map((c) => c.key))
+    for (const m of SHAPE_GUIDANCE.matchAll(/\b(?:shape|palette|fill|style)\.[a-zA-Z.]+/g)) {
+      expect(keys.has(m[0]), `guidance names unknown key ${m[0]}`).toBe(true)
+    }
   })
 })
