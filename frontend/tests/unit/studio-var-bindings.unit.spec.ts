@@ -108,3 +108,41 @@ describe('boundColumnLabel', () => {
     expect(boundColumnLabel(nodes, edges, '2', bindings, 'flow.intensity')).toBe('intensity')
   })
 })
+
+describe('a swept column key round-trips through resolution', () => {
+  it('resolves swept cells written under the column KEY, and misses under the LABEL', async () => {
+    // Regression: applySweep passed boundColumnFor() — the display LABEL — into
+    // addSweepRows, which writes row.values[thatString]. resolveBindings reads
+    // row.values[column.key]. keyFromLabel lowercases and underscores, so "Jitter"
+    // became key "jitter": every swept row missed and fell back to lastLiteral,
+    // and a sweep silently baked N identical frames. All five studio surfaces
+    // shared the copied bug.
+    const { addColumn, addSweepRows } = await import('~/lib/collection/model')
+    const { resolveBindings } = await import('~/lib/collection/resolve')
+
+    const make = () => ({ id: 'c1', columns: [] as any[], rows: [{ id: 'r0', values: {} }], previewRow: 0 }) as any
+    const path = 'params.shape.jitter'
+
+    const good: any = make()
+    const col = addColumn(good, 'Jitter', 'number')
+    expect(col.key).toBe('jitter')
+    expect(col.label).toBe('Jitter')
+    expect(col.key).not.toBe(col.label) // the whole trap in one line
+
+    const bindings: any = { [path]: { collectionId: 'c1', columnKey: col.key } }
+
+    // Correct: rows keyed by col.key resolve to the distinct swept values.
+    addSweepRows(good, col.key, [0, 50, 100])
+    const resolved = good.rows.slice(1).map((_r: any, i: number) =>
+      resolveBindings(good, bindings, i + 1).values[path])
+    expect(resolved).toEqual([0, 50, 100])
+
+    // The old behaviour: rows keyed by the LABEL resolve to nothing.
+    const bad: any = make()
+    addColumn(bad, 'Jitter', 'number')
+    addSweepRows(bad, 'Jitter', [0, 50, 100])
+    const missed = bad.rows.slice(1).map((_r: any, i: number) =>
+      resolveBindings(bad, bindings, i + 1).values[path])
+    expect(missed).toEqual([undefined, undefined, undefined])
+  })
+})

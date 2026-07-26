@@ -123,7 +123,7 @@ onMounted(async () => { studioControls.value = await controlsForStudio(currentNo
 // directly, so the surface's existing `deep` watcher on `config` re-renders
 // the preview — no extra watcher needed.
 const paramsProxy = makeConfigParams(() => config.value, () => 0)
-const { boundColumnFor, onEdit, promote, unbind } = useStudioVarBindings(
+const { boundColumnFor, boundColumnKeyFor, onEdit, promote, unbind } = useStudioVarBindings(
   props.nodeId,
   () => studioControls.value,
   (key, value) => { paramsProxy[key] = value },
@@ -176,7 +176,7 @@ function applySweep(values: (string | number)[]) {
   const colNode = findWiredCollectionNode()
   const collection = colNode?.data?.properties?.[COLLECTION_PROP] as CollectionData | undefined
   if (!colNode || !collection) return
-  const columnKey = boundColumnFor(control.key)
+  const columnKey = boundColumnKeyFor(control.key)
   if (!columnKey) return
 
   const added = addSweepRows(collection, columnKey, values)

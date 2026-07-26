@@ -104,7 +104,7 @@ const shaderAgent = useStudioAgent({
 const studioControls = ref<StudioControlDesc[]>([])
 onMounted(async () => { studioControls.value = await controlsForStudio(currentNode()) })
 
-const { boundColumnFor, onEdit, promote, unbind } = useStudioVarBindings(
+const { boundColumnFor, boundColumnKeyFor, onEdit, promote, unbind } = useStudioVarBindings(
   props.nodeId,
   () => studioControls.value,
   (key, value) => { agentParams[key] = value },
@@ -143,7 +143,7 @@ function applySweep(values: (string | number)[]) {
   const colNode = findWiredCollectionNode()
   const collection = colNode?.data?.properties?.[COLLECTION_PROP] as CollectionData | undefined
   if (!colNode || !collection) return
-  const columnKey = boundColumnFor(control.key)
+  const columnKey = boundColumnKeyFor(control.key)
   if (!columnKey) return
 
   const added = addSweepRows(collection, columnKey, values)

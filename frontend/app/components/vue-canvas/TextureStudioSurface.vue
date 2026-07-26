@@ -186,7 +186,7 @@ function currentNode() { return props.nodes.find((n: any) => n.id === props.node
 const studioControls = ref<StudioControlDesc[]>([])
 onMounted(async () => { studioControls.value = await controlsForStudio(currentNode()) })
 
-const { boundColumnFor, onEdit, promote, unbind } = useStudioVarBindings(
+const { boundColumnFor, boundColumnKeyFor, onEdit, promote, unbind } = useStudioVarBindings(
   props.nodeId,
   () => studioControls.value,
   (key, value) => { (params as Record<string, unknown>)[key] = value; onParam() },
@@ -225,7 +225,7 @@ function applySweep(values: (string | number)[]) {
   const colNode = findWiredCollectionNode()
   const collection = colNode?.data?.properties?.[COLLECTION_PROP] as CollectionData | undefined
   if (!colNode || !collection) return
-  const columnKey = boundColumnFor(control.key)
+  const columnKey = boundColumnKeyFor(control.key)
   if (!columnKey) return
 
   const added = addSweepRows(collection, columnKey, values)

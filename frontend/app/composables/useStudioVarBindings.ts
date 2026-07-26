@@ -225,6 +225,19 @@ export function useStudioVarBindings(
     return boundColumnLabel(nodes(), edges(), nodeId, bindings.value, controlKey)
   }
 
+  /**
+   * The bound column's KEY (its stable id), not its display label.
+   *
+   * Use this anywhere a column key is required — writing sweep rows, reading
+   * row values. `boundColumnFor` deliberately returns the human LABEL for
+   * display, and the two differ as soon as a label has a capital or a space
+   * (keyFromLabel lowercases and underscores it), so passing a label where a
+   * key belongs silently writes a cell nothing ever reads back.
+   */
+  function boundColumnKeyFor(controlKey: string): string | null {
+    return bindings.value[`params.${controlKey}`]?.columnKey ?? null
+  }
+
   function onEdit(controlKey: string, value: string | number): boolean {
     // Apply-driven control updates (the watch below pushing a resolved
     // preview value onto the control) are not user edits — writing them
@@ -287,5 +300,5 @@ export function useStudioVarBindings(
     { deep: true },
   )
 
-  return { bindings, boundColumnFor, onEdit, promote, unbind }
+  return { bindings, boundColumnFor, boundColumnKeyFor, onEdit, promote, unbind }
 }
