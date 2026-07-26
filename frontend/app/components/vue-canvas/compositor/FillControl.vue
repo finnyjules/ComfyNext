@@ -52,10 +52,13 @@ const grad = ref<Gradient>(toGrad(props.modelValue, fill))
 watch(() => props.modelValue, (v) => { Object.assign(fill, toFill(v)); grad.value = toGrad(v, fill); drawPreview() })
 
 /** Editable Fill → the Paint we emit (solid → hex, patterns → Fill object). Gradient
- *  is emitted from `grad` (the native multi-stop Gradient), not collapsed here. */
+ *  is emitted from `grad` (the native multi-stop Gradient), not collapsed here.
+ *  Spreads `f` rather than listing fields — a shader fill's `.shader` spec (or any
+ *  field added later) must survive round-tripping through this control, not be
+ *  silently dropped by an incomplete field list (see Task 6's known-blocker note). */
 function paintFromFill(f: Fill): Paint {
   if (f.type === 'solid') return f.a
-  return { type: f.type, a: f.a, b: f.b, textColor: f.textColor, angle: f.angle, density: f.density }
+  return { ...f }
 }
 function push() {
   if (!isNone.value) emit('update:modelValue', fill.type === 'gradient' ? grad.value : paintFromFill(fill))

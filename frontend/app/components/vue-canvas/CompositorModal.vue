@@ -39,6 +39,7 @@ import { resolveWiredSourceKind } from '~/lib/studio/frameResolve'
 import { frameSourceEpoch, type StudioFrameSource } from '~/lib/studio/frameSource'
 import { deriveMasterClock, slotPhase01 } from '~/lib/compositor/masterClock'
 import { DEFAULT_FRAME_MOTION, type FrameMotion } from '~/lib/motion/types'
+import { LIVE_FIELD_CEILING } from '~/lib/shaderfill/descriptor'
 import '~/lib/motion/paint' // registers the motion painter for paintLayerStack(t)
 import { bakeAndUpload, motionSourceKey, type MotionParams } from '~/lib/motion/bake'
 import { createSlateFixtureLayers, SLATE_FIXTURE_MOTION } from '~/data/dev-slate-fixture'
@@ -1797,6 +1798,11 @@ function buildStackItems(): StackItem[] {
 }
 
 const overlayCanvas = ref<HTMLCanvasElement | null>(null)
+// Task 6: beginFieldFrame's live-field ceiling is applied once per paintLayerStack
+// call (this frame's own shader fills, never pooled with an open Space Type/Shape
+// Studio node — see useCompositorLayers.ts's doc on _fieldCtx). Surfaced here so a
+// capped frame never animates silently, matching Space Type/Shape Studio's own hint.
+const shaderFieldsFrozen = ref(0)
 function renderStack() {
   const cv = overlayCanvas.value
   if (!cv) return
@@ -1831,10 +1837,11 @@ function renderStack() {
       items.push({ type: 'local', key: `l:${tmp.id}`, layer: tmp })
     }
   }
-  paintLayerStack(ctx, W, H, items, localLayers.value as LocalLayer[], l =>
+  const { frozenCount } = paintLayerStack(ctx, W, H, items, localLayers.value as LocalLayer[], l =>
     l.id === editingId.value || (nodeEdit.active.value && l.id === nodeEdit.layerId.value),
     previewT.value ?? undefined, previewT.value != null ? motionDoc.value : undefined,
     wiredTreatments.value, background.value, localGroups.value, postEffects.value)
+  shaderFieldsFrozen.value = frozenCount
 }
 watch(
   () => [
@@ -3507,6 +3514,15 @@ onUnmounted(() => {
           class="absolute inset-0 pointer-events-none"
           :style="{ width: canvasDisplay.w + 'px', height: canvasDisplay.h + 'px' }"
         />
+
+        <!-- Shader-fill live-field ceiling hint (Task 6) — never truncate silently,
+             same wording as Space Type / Shape Studio's own hint. -->
+        <div v-if="shaderFieldsFrozen > 0"
+             data-testid="compositor-shader-fields-frozen-hint"
+             class="pointer-events-none absolute inset-x-3 bottom-3 rounded-md border border-amber-400/30 bg-black/70 px-3 py-2 text-[11px] text-amber-200/90">
+          {{ shaderFieldsFrozen }} shader fill{{ shaderFieldsFrozen > 1 ? 's' : '' }} frozen — too many live shader
+          fields at once (limit {{ LIVE_FIELD_CEILING }}). Remove a shader fill for full motion.
+        </div>
 
         <!-- Generative-fill region overlay (tinted mask preview) -->
         <canvas
