@@ -104,14 +104,37 @@ export const SHADER_FILL_CONTROLS: ControlSpec[] = [
  * become selects.
  *
  * Enum params carry `{ label, value: number }` options (see EffectParamDef in
- * ~/lib/shaderfx/types), but ControlSpec's `select` kind only has a flat
- * `options: string[]` — no separate label/value pair. Every other `select` control
- * in this codebase (canvas.layout, layer.blend, ...) stores the option text itself
- * as the value, so there is no existing convention for a numeric-valued enum. This
- * uses each option's LABEL as both the displayed and stored string, matching that
- * convention — resolving a label back to the effect's numeric uniform value for the
- * actual GL uniform upload is a rendering-side concern (resolveEffectParams already
- * validates numeric overrides against `p.options`), not this function's.
+ * ~/lib/shaderfx/types), but `ShaderSpec.params` is `Record<string, number>` —
+ * `resolveEffectParams` (./descriptor.ts) only ever accepts a NUMBER for an enum
+ * key (`typeof raw === 'number' && values.includes(raw)`), falling back to
+ * `p.default` otherwise. An earlier version of this function stored each option's
+ * LABEL (a string) here, which fails that check on every write and silently pins
+ * the param at its default forever — a bug caught in review before anything
+ * shipped on top of it (would have been the write-domain twin of the `.p.` vs
+ * `.params.` key bug above: two representations of one identity disagreeing,
+ * this time about what the value MEANS rather than which path it's at).
+ *
+ * Fixed by storing each option's numeric VALUE (as the string ControlSpec's
+ * `select` kind requires — see below) instead of its label, so `Number(...)` on
+ * whatever gets written reproduces the exact number `resolveEffectParams` expects,
+ * with no lookup table standing between the two.
+ *
+ * Known, stated gap (not solved here): this drops the per-option DISPLAY label.
+ * `ControlSpec`'s `select` kind is `{ options: string[]; default: string }` with
+ * no parallel value/label channel, and neither does anything downstream of it —
+ * `lib/spacetype/controlDescriptor.ts`'s `DescribedControl`/`validatePatch` treat
+ * `options` as opaque strings compared by string equality, and
+ * `StudioSelect.vue` renders each option string as both `<option value>` AND its
+ * own label text. Every other `select` in this codebase (`canvas.layout`,
+ * `layer.blend`, `shape.primitive`, ...) is unaffected because its domain values
+ * already ARE readable words — this is the first select whose domain is numeric
+ * and whose labels are a separate concept. Widening `select` to carry per-option
+ * labels (e.g. an optional parallel array, or `{value,label}` pairs) would fix
+ * the UI but touches every existing consumer of `kind: 'select'`, not just this
+ * one; left as a decision for whoever builds the inspector (Task 9) rather than
+ * done unilaterally here. Until then, an enum-typed derived control renders as
+ * raw numeric choices ("0", "1", ...), not the effect's friendly option names —
+ * correct, not pretty.
  */
 export function derivedShaderFillControls(effect: EffectDef, prefix: string): ControlSpec[] {
   const out: ControlSpec[] = []
@@ -119,9 +142,14 @@ export function derivedShaderFillControls(effect: EffectDef, prefix: string): Co
     const key = `${prefix}.params.${unprefixedKey(p.uniform)}`
     if (p.type === 'enum') {
       const options = p.options ?? []
-      const labels = options.map((o) => o.label)
-      const defaultLabel = options.find((o) => o.value === p.default)?.label ?? labels[0] ?? ''
-      out.push({ key, label: p.label, kind: 'select', options: labels, default: defaultLabel, group: 'Effect' })
+      out.push({
+        key,
+        label: p.label,
+        kind: 'select',
+        options: options.map((o) => String(o.value)),
+        default: String(p.default),
+        group: 'Effect',
+      })
     } else {
       out.push({
         key,
