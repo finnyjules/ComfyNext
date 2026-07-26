@@ -91,11 +91,26 @@ export function applyMotion(cfg: GradientConfig, t: number): GradientConfig {
   if (!cfg.motion?.tracks?.length) return cfg
   const out = cloneConfig(cfg)
   for (const track of cfg.motion.tracks) {
-    const path = track.path
+    // Legacy {layer, param} tracks reach this function un-migrated: ensureConfigDefaults
+    // only runs on the editor-open path, while the node card, the headless bake and the
+    // studio frame source all render straight from the saved blob. Resolving the legacy
+    // shape here keeps saved animations working on every path.
+    const path = track.path ?? (
+      typeof track.layer === 'number' && typeof track.param === 'string'
+        ? `layers.${track.layer}.shape.${track.param}`
+        : undefined
+    )
     if (!path) continue
-    // Only write where a leaf already exists — an unresolvable path must not
-    // fabricate structure the renderer would then read as real config.
-    if (getByPath(out, path) === undefined) continue
+    // Guard on the PARENT container existing, not the leaf — some animatable
+    // params (e.g. flow.swirl) are optional and not backfilled by
+    // ensureConfigDefaults, so a valid target may genuinely have no leaf yet.
+    // We still must not fabricate structure the renderer would read as real
+    // config, so an absent/non-object parent (e.g. `layers.5.shape.count` on
+    // a shorter config, or a bogus path) is skipped.
+    const lastDot = path.lastIndexOf('.')
+    const parentPath = lastDot === -1 ? '' : path.slice(0, lastDot)
+    const parent = parentPath ? getByPath(out, parentPath) : out
+    if (typeof parent !== 'object' || parent === null) continue
     setByPath(out, path, trackValue(track, t, cfg.motion.duration))
   }
   return out

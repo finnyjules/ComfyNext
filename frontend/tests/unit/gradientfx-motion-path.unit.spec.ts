@@ -140,4 +140,43 @@ describe('legacy track migration', () => {
     c.motion.tracks = [{ layer: 0, param: 'count', from: 0, to: 10, easing: 'linear', loops: 1, hold: 0, cycleOffset: 0, delay: 0 }]
     expect((applyMotion(ensureConfigDefaults(c), 1) as any).layers[0].shape.count).toBe(10)
   })
+
+  it('animates a legacy {layer, param} track with no migration step at all', () => {
+    // Regression test for the CRITICAL finding: ensureConfigDefaults only runs
+    // on the editor-open path. The node card, headless bake, and studio frame
+    // source all render straight from the saved blob, so applyMotion itself
+    // must tolerate un-migrated tracks.
+    const c: any = cfg()
+    c.motion.duration = 1
+    c.motion.tracks = [{ layer: 0, param: 'count', from: 0, to: 10, easing: 'linear', loops: 1, hold: 0, cycleOffset: 0, delay: 0 }]
+    expect((applyMotion(c, 1) as any).layers[0].shape.count).toBe(10)
+  })
+})
+
+describe('applyMotion parent-container guard', () => {
+  it('animates an optional-but-real leaf even when unset', () => {
+    const c: any = cfg()
+    c.motion.duration = 1
+    delete c.flow.swirl
+    c.motion.tracks = [track({ path: 'flow.swirl', from: 0, to: 50 })]
+    expect((applyMotion(c, 1) as any).flow.swirl).toBe(50)
+  })
+
+  it('skips a path whose parent container does not exist, without throwing', () => {
+    const c: any = cfg()
+    c.motion.duration = 1
+    c.layers = [c.layers[0]]
+    c.motion.tracks = [track({ path: 'layers.5.shape.count' })]
+    expect(() => applyMotion(c, 1)).not.toThrow()
+    const out: any = applyMotion(c, 1)
+    expect(out.layers[5]).toBeUndefined()
+  })
+
+  it('skips a completely bogus path', () => {
+    const c: any = cfg()
+    c.motion.duration = 1
+    c.motion.tracks = [track({ path: 'nope.does.not.exist' })]
+    const out: any = applyMotion(c, 1)
+    expect(out.nope).toBeUndefined()
+  })
 })
