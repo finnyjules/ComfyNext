@@ -55,6 +55,13 @@ const isMesh = computed(() => config.value.canvas.layout === 'mesh')
 // Layers are named for what they are ("Wave", "Bands"), not their position, so a
 // reorder moves a recognisable name instead of renumbering the whole stack.
 const layerNames = computed(() => layerLabels(config.value))
+
+// Inspector tabs — Design (everything that shapes the still frame) vs Motion (tracks
+// + timing), matching Space Type and 3D Studio. Export stays on Design: it writes a
+// still, while Motion owns the animation the Render footer bakes to video.
+const inspectorTab = ref<'design' | 'motion'>('design')
+const onDesign = computed(() => inspectorTab.value === 'design')
+const onMotion = computed(() => inspectorTab.value === 'motion')
 // Focus (soft-focus/DoF) is an optional, additive config. Guarantee it exists on
 // the current config so the Focus section's v-models are always non-null — presets
 // replace the whole config and defaultConfig() omits it. Runs before render.
@@ -785,8 +792,20 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
     </template>
 
     <template #controls>
+      <!-- Design | Motion — same split as Space Type and 3D Studio. -->
+      <div class="flex shrink-0 gap-1 rounded-lg bg-white/[0.04] p-1 text-[11px]">
+        <button type="button" class="flex-1 rounded px-2 py-1"
+                :class="onDesign ? 'bg-white/15 text-white' : 'text-white/55 hover:text-white/80'"
+                @click="inspectorTab = 'design'">Design</button>
+        <button type="button" class="flex-1 rounded px-2 py-1"
+                :class="onMotion ? 'bg-white/15 text-white' : 'text-white/55 hover:text-white/80'"
+                @click="inspectorTab = 'motion'">
+          Motion<span v-if="config.motion.tracks.length" class="ml-1 text-white/40">{{ config.motion.tracks.length }}</span>
+        </button>
+      </div>
+
       <!-- Canvas -->
-      <StudioSection title="Canvas" badge="both layers">
+      <StudioSection v-show="onDesign" title="Canvas" badge="both layers">
         <BindableRow control-key="canvas.aspect" label="Aspect ratio" kind="select" :bound="boundColumnFor('canvas.aspect')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
           <label class="mb-1 flex items-center justify-between text-xs text-white/60">
             <span>Aspect ratio</span>
@@ -833,7 +852,7 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
       </StudioSection>
 
       <!-- Flow (domain warp — distorts every layout; the heart of the liquid look) -->
-      <StudioSection title="Flow" badge="all layouts" :open="isLiquid || isMesh">
+      <StudioSection v-show="onDesign" title="Flow" badge="all layouts" :open="isLiquid || isMesh">
         <p class="mb-2 text-[11px] leading-snug text-white/40">Warps the gradient into liquid swirls. At 0 intensity the gradient is undistorted.</p>
         <BindableRow control-key="flow.angle" label="Flow angle" kind="slider" :min="0" :max="360" :step="1" :bound="boundColumnFor('flow.angle')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
           <label class="mb-1 flex justify-between text-xs text-white/60"><span>Angle</span><span class="text-white/40">{{ Math.round(config.flow!.angle) }}°</span></label>
@@ -867,7 +886,7 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
       </StudioSection>
 
       <!-- Depth & Light (liquid fold shading only) -->
-      <StudioSection v-if="isLiquid" title="Depth & light" badge="liquid">
+      <StudioSection v-show="onDesign" v-if="isLiquid" title="Depth & light" badge="liquid">
         <label class="mb-1 block text-xs text-white/60">Presets</label>
         <div class="mb-3 grid grid-cols-3 gap-1">
           <button v-for="p in LIQUID_PRESETS" :key="p" class="rounded bg-white/[0.04] px-1 py-1 text-[11px] capitalize text-white/60 transition hover:bg-white/10 hover:text-white"
@@ -896,7 +915,7 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
       </StudioSection>
 
       <!-- Liquid surface (turns the smoky warp into flowing fluid) -->
-      <StudioSection v-if="isLiquid" title="Liquid surface" badge="liquid" :open="true">
+      <StudioSection v-show="onDesign" v-if="isLiquid" title="Liquid surface" badge="liquid" :open="true">
         <p class="mb-2 text-[11px] leading-snug text-white/40">Push the smoky warp toward real fluid — marbled veins, a wet rippling skin, glassy refraction, and viscosity.</p>
         <BindableRow control-key="flow.veins" label="Veins" kind="slider" :min="0" :max="100" :step="1" :bound="boundColumnFor('flow.veins')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
           <label class="mb-1 flex justify-between text-xs text-white/60"><span>Veins</span><span class="text-white/40">{{ Math.round(flowVeins) || 'smooth' }}</span></label>
@@ -921,7 +940,7 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
       </StudioSection>
 
       <!-- Mesh (soft point-mesh gradient) -->
-      <StudioSection v-if="isMesh" title="Mesh" badge="layer 1" :open="true">
+      <StudioSection v-show="onDesign" v-if="isMesh" title="Mesh" badge="layer 1" :open="true">
         <p class="mb-2 text-[11px] leading-snug text-white/40">Drag the dots on the preview to move points. Colours come from the palette below — scatter re-samples them.</p>
         <div class="mb-2 space-y-1">
           <div v-for="(pt, i) in mesh.points" :key="i" class="flex items-center gap-1.5">
@@ -957,7 +976,7 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
       <!-- Relief & grain. Relief + its light only shade the band/ring HEIGHT field (linear/
            radial/orbit/stack); liquid uses flow.depth and mesh has no relief — so on those
            only Grain applies, and the section slims to "Grain". -->
-      <StudioSection :title="(isLiquid || isMesh) ? 'Grain' : 'Relief & grain'" :open="false">
+      <StudioSection v-show="onDesign" :title="(isLiquid || isMesh) ? 'Grain' : 'Relief & grain'" :open="false">
         <BindableRow control-key="relief.grain" label="Grain" kind="slider" :min="0" :max="1" :step="0.01" :bound="boundColumnFor('relief.grain')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
           <label class="mb-1 flex justify-between text-xs text-white/60"><span>Grain</span><span class="text-white/40">{{ config.relief.grain.toFixed(2) }}</span></label>
           <input v-model.number="config.relief.grain" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range w-full" :class="(!isLiquid && !isMesh) ? 'mb-2' : ''" @input="onEdit('relief.grain', config.relief.grain)" />
@@ -979,7 +998,7 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
       </StudioSection>
 
       <!-- Focus / soft-focus DoF -->
-      <StudioSection v-if="config.focus" title="Focus" badge="both layers" :open="false">
+      <StudioSection v-show="onDesign" v-if="config.focus" title="Focus" badge="both layers" :open="false">
         <BindableRow control-key="focus.blur" label="Blur" kind="slider" :min="0" :max="100" :step="1" :bound="boundColumnFor('focus.blur')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
           <label class="mb-1 flex justify-between text-xs text-white/60"><span>Blur</span><span class="text-white/40">{{ config.focus.blur }}</span></label>
           <input v-model.number="config.focus.blur" type="range" min="0" max="100" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('focus.blur', config.focus.blur)" />
@@ -1020,7 +1039,7 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
 
       <!-- Layer (blend/opacity for the active non-base layer; add/remove/reorder/select
            now live in the aside StudioLayerStack) -->
-      <StudioSection title="Layer" :open="false">
+      <StudioSection v-show="onDesign" title="Layer" :open="false">
         <template v-if="activeLayer > 0">
           <BindableRow control-key="layer.blend" label="Blend" kind="select" :options="[...BLEND_MODES]" :bound="boundColumnFor('layer.blend')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
             <label class="mb-1 block text-xs text-white/60">Blend</label>
@@ -1036,7 +1055,7 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
       </StudioSection>
 
       <!-- Shape -->
-      <StudioSection v-if="!isLiquid && !isMesh" title="Shape" :badge="`Layer ${activeLayer + 1}`">
+      <StudioSection v-show="onDesign" v-if="!isLiquid && !isMesh" title="Shape" :badge="layerNames[activeLayer] ?? `Layer ${activeLayer + 1}`">
         <div v-if="!isStack" class="mb-2 grid grid-cols-4 gap-1">
           <button v-for="s in SHAPE_KINDS" :key="s" class="rounded px-1 py-1 text-[11px] capitalize transition"
                   :class="layer.shape.type === s ? 'bg-white/20 text-white' : 'bg-white/[0.04] text-white/55 hover:bg-white/10'"
@@ -1109,7 +1128,7 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
       </StudioSection>
 
       <!-- Color -->
-      <StudioSection title="Color" :badge="isMesh ? 'mesh palette' : `Layer ${activeLayer + 1}`">
+      <StudioSection v-show="onDesign" title="Color" :badge="isMesh ? 'mesh palette' : (layerNames[activeLayer] ?? `Layer ${activeLayer + 1}`)">
         <p v-if="isMesh" class="mb-2 text-[11px] leading-snug text-white/40">The palette mesh points are sampled from when you scatter or randomize colours.</p>
         <div class="mb-2 space-y-1">
           <div v-for="(stop, i) in layer.color.stops" :key="i" class="flex items-center gap-1.5">
@@ -1154,7 +1173,7 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
       </StudioSection>
 
       <!-- Motion -->
-      <StudioSection title="Motion" :open="false">
+      <StudioSection v-show="onMotion" title="Motion" :open="onMotion">
         <template #badge>
           <button class="flex items-center gap-1 normal-case text-white/40 hover:text-white" @click.stop="addTrack"><Plus class="h-3 w-3" /> Track</button>
         </template>
@@ -1197,7 +1216,7 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
       </StudioSection>
 
       <!-- Export -->
-      <StudioSection title="Export" :open="false">
+      <StudioSection v-show="onDesign" title="Export" :open="false">
         <div class="grid grid-cols-2 gap-1.5">
           <button v-for="f in (['png', 'jpg'] as const)" :key="f" class="rounded border px-2 py-1.5 text-xs transition"
                   :class="exportFormat === f ? 'border-white/30 bg-white/15 text-white' : 'border-white/10 bg-white/[0.04] text-white/60 hover:bg-white/[0.08]'"
