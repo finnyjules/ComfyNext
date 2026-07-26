@@ -72,19 +72,30 @@ let _activeContext: ShaderFillBuildContext = { ownerId: UNOWNED, w: FALLBACK_FIE
  * in scope — knows which engine is asking without threading an `ownerId` parameter through
  * every one of their `fillShaderTexture()`/`fillTexture()` call sites.
  *
- * Safe specifically BECAUSE `buildScene`/`setConfig` are synchronous (no `await` anywhere in
- * any current implementation): JS is single-threaded, so nothing can run between the `set` and
- * the matching `restore` below and observe or clobber the wrong owner — two engines' builds can
- * never interleave. Restores the PREVIOUS context (not a hardcoded UNOWNED) so a build
- * triggered from inside another build's call stack — if that were ever to happen — nests
- * correctly rather than leaking the inner owner out to the outer one's remaining work. If a
- * `buildScene` ever needs to become async, this whole scheme must move to real parameter
- * threading instead — it would silently break here.
+ * Safe ONLY BECAUSE `buildScene`/`setConfig` are synchronous (no `await` anywhere in either
+ * current implementation — see the comment at each call site): JS is single-threaded, so as
+ * long as that holds, nothing can run between the `set` below and the matching `restore` and
+ * observe or clobber the wrong owner — two engines' builds can never interleave. This is a load-
+ * bearing assumption, not just an optimisation: if it silently broke (a `buildScene` gaining an
+ * `await`), fields would get attributed to whichever build happens to still be active, with no
+ * error — exactly this feature's recurring failure mode, arriving by a new route. So this
+ * throws on RE-ENTRY instead of nesting/queueing: a caller entering while another owner's
+ * context is still active means the synchronous assumption already broke, and that must fail
+ * loudly at the moment it breaks, not degrade into silent misattribution. If `buildScene` ever
+ * needs to become async, this whole scheme must be replaced with real ownerId parameter-
+ * threading through `shaderFieldTexture`'s callers instead.
  */
 export function withShaderFillContext<T>(ctx: ShaderFillBuildContext, fn: () => T): T {
-  const prev = _activeContext
+  if (_activeContext.ownerId !== UNOWNED) {
+    throw new Error(
+      `withShaderFillContext: re-entered for owner "${ctx.ownerId}" while owner ` +
+      `"${_activeContext.ownerId}"'s build is still in progress. This means a build ` +
+      `(SpaceTypeEngine.build() / ShapeEngine.setConfig()) is no longer synchronous — see this ` +
+      `function's doc comment.`,
+    )
+  }
   _activeContext = ctx
-  try { return fn() } finally { _activeContext = prev }
+  try { return fn() } finally { _activeContext = { ownerId: UNOWNED, w: FALLBACK_FIELD_PX, h: FALLBACK_FIELD_PX, bake: false } }
 }
 
 interface LiveShaderFillEntry { tex: THREE.CanvasTexture; spec: ShaderSpec; ownerId: string }

@@ -81,8 +81,12 @@ export function normalizeFill(f: unknown, depth = 0): Fill {
 }
 
 /** Coerce an unknown value into a valid ShaderSpec, recursing into `input` at `depth + 1`
- *  so the depth-1 guard in normalizeFill applies to it. */
-function normalizeShaderSpec(s: unknown, depth: number): ShaderSpec {
+ *  so the depth-1 guard in normalizeFill applies to it. Exported so other config schemas that
+ *  carry a bare `ShaderSpec` (not wrapped in a full `Fill`) — e.g. `shapefx/config.ts`'s
+ *  `SurfaceFill.shader` — can reuse the same sanitizing/defaulting logic `normalizeFill` uses
+ *  for its own `shader` field, rather than a second hand-rolled copy. Call with `depth: 0` at
+ *  the top level. */
+export function normalizeShaderSpec(s: unknown, depth: number): ShaderSpec {
   const o = (s ?? {}) as Record<string, unknown>
   const params: Record<string, number> = {}
   if (o.params && typeof o.params === 'object') {

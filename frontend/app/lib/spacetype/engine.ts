@@ -215,7 +215,10 @@ export class SpaceTypeEngine {
       this.textTex = tex
       // Scope any shader fill this build resolves (fillShaderTexture/fillTexture, called deep
       // inside buildScene by whichever effect module) to THIS engine instance — see
-      // withShaderFillContext's doc in fills.ts. buildScene is synchronous, so this is safe.
+      // withShaderFillContext's doc in fills.ts. This MUST stay synchronous (no `await`
+      // anywhere in this method or in any effect's buildScene) — withShaderFillContext's
+      // re-entrancy guard throws if two builds ever overlap, which is exactly what an
+      // `async build()` would risk.
       this.root = withShaderFillContext(
         { ownerId: this.id, w: this.opts.width, h: this.opts.height, bake: this._bake },
         () => this.effect.buildScene(THREE, params, tex, { width: this.opts.width, height: this.opts.height, axes: texOpts.axes }),

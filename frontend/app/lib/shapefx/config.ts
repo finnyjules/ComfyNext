@@ -1,5 +1,5 @@
 import type { HarmonyType } from '../color/harmony'
-import type { FillType } from '../spacetype/fillTile'
+import { normalizeShaderSpec, type FillType, type ShaderSpec } from '../spacetype/fillTile'
 
 export type ShapeMode = 'primitive' | 'gem'
 export type PrimitiveKind =
@@ -57,6 +57,17 @@ export interface SurfaceFill {
   b: string
   angle: number
   density: number
+  /** Only meaningful when `type === 'shader'`. Discovered gap (fixed alongside the shader-fill
+   *  animation wiring): this field did not exist until now, and `toFill()` in `surface.ts` had
+   *  nothing to read even when a caller forced `type: 'shader'` through the picker — so
+   *  selecting "shader" in Shape Studio's Fill type dropdown silently degraded to the default
+   *  shader input (a plain gradient), never actually reaching the shader renderer, and could
+   *  not survive a save/reload either (`shader` wasn't in `FILLTYPES`'s mergeConfig whitelist).
+   *  Still no dedicated effect/params PICKER UI for this field (unlike Space Type's fill-swatch
+   *  editor) — that remains a separate, larger feature. This is the minimum plumbing needed for
+   *  a `ShaderSpec` attached to a Shape Studio fill (via Import Settings JSON, var-bindings, or
+   *  a future picker) to actually reach the renderer and persist. */
+  shader?: ShaderSpec
 }
 
 export interface ShapeConfig {
@@ -99,7 +110,7 @@ const PROJ = ['orthographic', 'perspective'] as const
 const LEGACY_COLORING: Record<string, ColoringMode> = { facet: 'scatter', depth: 'faceted', height: 'faceted' }
 const LEGACY_DIRECTION: Record<string, ColorDirection> = { depth: 'depth', height: 'vertical' }
 const HARMONIES = ['monochromatic', 'complementary', 'split-complementary', 'analogous', 'accented-analogous', 'triadic', 'tetradic', 'compound'] as const
-const FILLTYPES = ['solid', 'gradient', 'ombre', 'grid', 'noise', 'checkerboard', 'stripes', 'qr'] as const
+const FILLTYPES = ['solid', 'gradient', 'ombre', 'grid', 'noise', 'checkerboard', 'stripes', 'qr', 'shader'] as const
 
 /** Deep-merge an untrusted parsed value over DEFAULT_CONFIG so partial/old/junk configs stay safe. */
 export function mergeConfig(raw: unknown): ShapeConfig {
@@ -132,13 +143,19 @@ export function mergeConfig(raw: unknown): ShapeConfig {
       coloring: oneOf(pa.coloring, COLORINGS, LEGACY_COLORING[pa.rule] ?? d.palette.coloring),
       direction: oneOf(pa.direction, DIRECTIONS, LEGACY_DIRECTION[pa.rule] ?? d.palette.direction),
     },
-    fill: {
-      type: oneOf(fi.type, FILLTYPES, d.fill.type),
-      a: str(fi.a, d.fill.a),
-      b: str(fi.b, d.fill.b),
-      angle: num(fi.angle, d.fill.angle),
-      density: num(fi.density, d.fill.density),
-    },
+    fill: (() => {
+      const fillType = oneOf(fi.type, FILLTYPES, d.fill.type)
+      return {
+        type: fillType,
+        a: str(fi.a, d.fill.a),
+        b: str(fi.b, d.fill.b),
+        angle: num(fi.angle, d.fill.angle),
+        density: num(fi.density, d.fill.density),
+        // A spec on a non-shader fill is dropped, same rule normalizeFill's own shader
+        // branch follows — reuses its sanitizer rather than a second hand-rolled one.
+        shader: fillType === 'shader' ? normalizeShaderSpec(fi.shader, 0) : undefined,
+      }
+    })(),
     style: {
       grain: num(st.grain, d.style.grain),
       distortion: num(st.distortion, d.style.distortion),

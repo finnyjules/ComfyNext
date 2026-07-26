@@ -9,6 +9,8 @@
 import { ref, reactive, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { Dices, Lock, Unlock } from 'lucide-vue-next'
 import { ShapeEngine } from '~/lib/shapefx/engine'
+import { configHasShaderFill } from '~/lib/shapefx/surface'
+import { LIVE_FIELD_CEILING } from '~/lib/shaderfill/descriptor'
 import { DEFAULT_CONFIG, mergeConfig, type ShapeConfig } from '~/lib/shapefx/config'
 import { reroll } from '~/lib/shapefx/randomize'
 import { paletteFor } from '~/lib/shapefx/color'
@@ -252,6 +254,14 @@ let engine: ShapeEngine | null = null
 let raf = 0
 let rebuildRaf = 0
 let lastW = 0, lastH = 0
+// Wall-clock start of this surface's rAF loop — Shape Studio has no timeline/loop-duration of
+// its own (unlike Space Type), so a shader fill's live field animates off elapsed real time
+// rather than a normalised t01. Set once in onMounted, read every frame() tick.
+let mountedAt = 0
+// Frozen-field hint, mirroring SpaceTypeSurface.vue's frozenFieldCount exactly (same design
+// rule: no silent caps on any surface). Reset to 0 whenever the config has no shader fill so
+// it doesn't show a stale count after switching the fill away from shader.
+const frozenFieldCount = ref(0)
 // Hydrate the camera from the persisted view (falls back to the default framing).
 // Keep these defaults in sync with ShapeStudioNode's DEFAULT_ORBIT.
 const orbit = reactive({
@@ -282,6 +292,13 @@ function frame() {
     el.style.width = `${cssW}px`
     el.style.height = `${cssH}px`
     if (w !== lastW || h !== lastH) { engine.setSize(w, h); lastW = w; lastH = h }
+    // Only touch the shader-fill refresh path when the CURRENT config actually has one — see
+    // ShapeEngine.refreshShaderFields's doc: this isn't needed for correctness (an owner with
+    // no cached fields is a cheap no-op), it's so a plain-fill Shape node's frame loop doesn't
+    // start paying new per-frame cost it never paid before.
+    const hasShaderFill = configHasShaderFill(config.value)
+    if (hasShaderFill) engine.refreshShaderFields((performance.now() - mountedAt) / 1000)
+    frozenFieldCount.value = hasShaderFill ? engine.frozenFieldCount : 0
     engine.render(orbit)
     previewBox.value = { left: el.offsetLeft, top: el.offsetTop, w: el.clientWidth, h: el.clientHeight }
   }
@@ -322,6 +339,7 @@ onMounted(() => {
   const { w, h } = previewDims()
   engine = new ShapeEngine(canvas.value!, w, h)
   lastW = w; lastH = h
+  mountedAt = performance.now()
   engine.setConfig(config.value)
   raf = requestAnimationFrame(frame)
 })
@@ -452,6 +470,11 @@ async function onImportFile(e: Event) {
         />
         <div v-if="!webglOk" class="absolute inset-0 flex items-center justify-center text-xs text-white/50">
           3D preview unavailable on this device.
+        </div>
+        <div v-else-if="frozenFieldCount > 0"
+             class="pointer-events-none absolute inset-x-3 bottom-3 rounded-md border border-amber-400/30 bg-black/70 px-3 py-2 text-[11px] text-amber-200/90">
+          {{ frozenFieldCount }} shader fill{{ frozenFieldCount > 1 ? 's' : '' }} frozen — too many live shader
+          fields at once (limit {{ LIVE_FIELD_CEILING }}). Remove a shader fill for full motion.
         </div>
         <!-- 0×0 SVG host for the distortion filter primitive — not rendered itself. -->
         <svg width="0" height="0" style="position: absolute">

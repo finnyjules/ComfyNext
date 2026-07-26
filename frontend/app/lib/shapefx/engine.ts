@@ -7,7 +7,7 @@ import { buildGeometry } from './geometry'
 import { applyVertexColors, vertexRampT, rampHexes } from './color'
 import { makeOmbreMaterial } from './ombre'
 import { buildSurfaceTexture } from './surface'
-import { withShaderFillContext, clearShaderFillOwner } from '~/lib/spacetype/fills'
+import { withShaderFillContext, clearShaderFillOwner, refreshLiveShaderFills } from '~/lib/spacetype/fills'
 import type { ShapeConfig } from './config'
 
 // Ortho frustum half-height chosen so a unit-ish shape frames nicely at z=6.
@@ -32,6 +32,12 @@ export class ShapeEngine {
   private config: ShapeConfig | null = null
   private w: number
   private h: number
+  private _frozenFieldCount = 0
+  /** Non-zero when one or more shader-fill fields exceeded LIVE_FIELD_CEILING on the last
+   *  refreshShaderFields() call and are showing a frozen (t=0) snapshot instead of animating.
+   *  Mirrors SpaceTypeEngine.frozenFieldCount — same "no silent caps" design rule applies to
+   *  every surface, not just Space Type. */
+  get frozenFieldCount(): number { return this._frozenFieldCount }
 
   constructor(canvas: HTMLCanvasElement, width: number, height: number) {
     this.w = width; this.h = height
@@ -89,7 +95,9 @@ export class ShapeEngine {
     } else {
       // Scope any shader fill this resolves to THIS engine instance — see
       // SpaceTypeEngine.build()'s identical use of withShaderFillContext for the full
-      // rationale. setConfig is synchronous, so this is safe.
+      // rationale. setConfig MUST stay synchronous (no `await` anywhere in this method or
+      // buildSurfaceTexture) — withShaderFillContext's re-entrancy guard throws if two
+      // builds ever overlap, which is exactly what an `async setConfig` would risk.
       const tex = withShaderFillContext(
         { ownerId: this.id, w: this.w, h: this.h, bake: false },
         () => buildSurfaceTexture(config),
@@ -103,6 +111,21 @@ export class ShapeEngine {
     // background
     if (config.style.background === 'transparent') this.scene.background = null
     else this.scene.background = new THREE.Color(stripAlpha(config.style.background))
+  }
+
+  /** Advance this engine's live shader-fill field(s) to `elapsedSec` — wall-clock seconds
+   *  since the surface mounted. Shape Studio has no timeline/loop-duration of its own (unlike
+   *  SpaceTypeEngine, which derives shader time from t01 * loopDuration — see
+   *  SpaceTypeEngine.renderFrameAt), so elapsed real time is the only clock available here.
+   *  Call once per host frame, BEFORE render(), same contract as
+   *  SpaceTypeEngine.renderFrameAt's refreshLiveShaderFills call.
+   *
+   *  Callers should only call this when the CURRENT config actually has a shader fill (see
+   *  `configHasShaderFill` in ./surface) — not because this is unsafe to call otherwise (an
+   *  owner with no cached fields is a cheap no-op inside refreshLiveShaderFills), but so a
+   *  plain-fill Shape node's per-frame loop doesn't do new work it never did before. */
+  refreshShaderFields(elapsedSec: number): void {
+    this._frozenFieldCount = refreshLiveShaderFills(this.id, elapsedSec, 30, this.w, this.h, false).frozenCount
   }
 
   render(orbit: { yaw: number; pitch: number; zoom: number }): void {
