@@ -3,6 +3,7 @@
 // frame normally — preview and bake share this path, so they always match.
 
 import { cloneConfig, type EasingKind, type GradientConfig, type MotionTrack } from './types'
+import { visibleGradientControls } from './controls'
 
 /** Animatable per-layer shape params (label → ShapeConfig key). */
 export const ANIMATABLE: { key: string; label: string; min: number; max: number }[] = [
@@ -18,6 +19,33 @@ export const ANIMATABLE: { key: string; label: string; min: number; max: number 
   { key: 'rounding', label: 'Rounding', min: 0, max: 1 },
   { key: 'valley', label: 'Valley position', min: 0, max: 1 },
 ]
+
+export interface AnimatableTarget { path: string; label: string; min: number; max: number }
+
+/**
+ * Motion targets derived from GRADIENT_CONTROLS rather than hand-listed.
+ * Layer-relative keys (`layer.shape.count`) expand to one absolute path per
+ * layer (`layers.0.shape.count`, ...), mirroring how ShaderStudioSurface builds
+ * `animatablePaths` from its effect manifest.
+ */
+export function animatableTargets(cfg: GradientConfig): AnimatableTarget[] {
+  const out: AnimatableTarget[] = []
+  for (const c of visibleGradientControls(cfg)) {
+    if (c.kind !== 'slider') continue
+    const flag = (c as any).animatable
+    if (flag === false) continue
+    const range = flag && typeof flag === 'object' ? flag : { min: c.min, max: c.max }
+    if (c.key.startsWith('layer.')) {
+      const rest = c.key.slice('layer.'.length)
+      cfg.layers.forEach((_l, i) => {
+        out.push({ path: `layers.${i}.${rest}`, label: `Layer ${i + 1} · ${c.label}`, ...range })
+      })
+    } else {
+      out.push({ path: c.key, label: c.label, ...range })
+    }
+  }
+  return out
+}
 
 function ease(p: number, kind: EasingKind): number {
   const t = clamp01(p)
