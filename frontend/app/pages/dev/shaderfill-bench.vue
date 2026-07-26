@@ -16,6 +16,7 @@
           :class="{ active: fieldsCount === n }"
           @click="fieldsCount = n"
         >{{ n }}</button>
+        <span class="hint">(0 = vsync baseline, no shader work)</span>
       </div>
       <label class="group"><input v-model="distinct" type="checkbox"> distinct descriptors (vary u_seed per field)</label>
       <span class="status">{{ status }}</span>
@@ -23,14 +24,20 @@
 
     <div class="stats">
       <div class="stat"><span class="k">effect</span><span class="v">{{ effectId || '—' }}</span></div>
-      <div class="stat"><span class="k">frame (120f avg)</span><span class="v">{{ stats.frameMs.toFixed(2) }} ms</span></div>
+      <div class="stat"><span class="k">frame (wall, 120f avg)</span><span class="v">{{ stats.wallMs.toFixed(2) }} ms</span></div>
+      <div class="stat"><span class="k">cpu submit (120f avg)</span><span class="v">{{ stats.cpuMs.toFixed(2) }} ms</span></div>
       <div class="stat"><span class="k">blit (120f avg)</span><span class="v">{{ stats.blitMs.toFixed(2) }} ms</span></div>
-      <div class="stat"><span class="k">fps</span><span class="v" :class="{ bad: stats.fps > 0 && stats.fps < 30 }">{{ stats.fps.toFixed(1) }}</span></div>
+      <div class="stat"><span class="k">fps (wall)</span><span class="v" :class="{ bad: stats.fps > 0 && stats.fps < 30 }">{{ stats.fps.toFixed(1) }}</span></div>
     </div>
 
+    <p class="verdict">{{ verdictText }}</p>
+
     <p class="pass-note">
-      Pass condition (Task 0 spec): 2 distinct 512² fields sustain ≥30fps with total frame time
-      under 33ms. Read the numbers above at fields=2 with "distinct descriptors" checked.
+      Pass condition (Task 0 spec): 2 distinct 512² fields sustain ≥30fps with total wall frame
+      time under 33ms. Load starts at fields=0 to capture the vsync baseline automatically; then
+      switch to fields=2 with "distinct descriptors" checked and read the wall fps / verdict above.
+      Wait ~1s after any control change — the first 60 frames are discarded while shaders
+      compile and FBOs allocate.
     </p>
 
     <canvas ref="canvasEl" :width="CANVAS_W" :height="CANVAS_H" class="stage" />
@@ -38,7 +45,7 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as THREE from 'three'
 import { expandPasses, shaderFx } from '~/lib/shaderfx/renderer'
 import { fetchShaderFxCatalog } from '~/lib/shaderfx/catalog'
@@ -54,17 +61,38 @@ definePageMeta({ layout: false })
 const PREFERRED_EFFECT_ID = 'fbm_warp'
 
 const FIELD_SIZE = 512
-const FIELD_OPTIONS = [1, 2, 4, 8] as const
+const FIELD_OPTIONS = [0, 1, 2, 4, 8] as const
 const MAX_FIELDS = 8
 const FRAME_WINDOW = 120
+// Frames to discard after any control change (fields/distinct) before averaging —
+// shader compile + FBO allocation on the first frames otherwise swamp the signal
+// (a switch to N=1 could read as costlier than N=2 purely from warm-up jitter).
+const WARMUP_FRAMES = 60
 const CANVAS_W = 960
 const CANVAS_H = 480
 
-const fieldsCount = ref<number>(1)
+// Bench starts at fields=0 on load specifically so the vsync-ceiling baseline for
+// THIS display gets captured automatically before any shader work runs — without
+// it, "60fps at 8 fields" is ambiguous between "plenty of headroom" and "exactly
+// saturated" (see verdictText below).
+const fieldsCount = ref<number>(0)
 const distinct = ref(false)
 const status = ref('loading catalog…')
 const effectId = ref('')
-const stats = ref({ frameMs: 0, blitMs: 0, fps: 0 })
+const stats = ref({ cpuMs: 0, blitMs: 0, wallMs: 0, fps: 0 })
+/** Wall fps at fields=0, captured once (the first time the rolling window fills at
+ *  fields=0 post-warmup). Never recaptured — later 0-field visits don't overwrite it. */
+const baselineFps = ref<number | null>(null)
+
+const verdictText = computed(() => {
+  if (baselineFps.value == null) return 'measuring fields=0 baseline…'
+  const fps = stats.value.fps
+  if (fps <= 0) return 'measuring…'
+  const ratio = fps / baselineFps.value
+  return ratio >= 0.9
+    ? `vsync-capped (headroom) — ${fps.toFixed(1)} fps vs ${baselineFps.value.toFixed(1)} fps baseline`
+    : `GPU-bound: ${fps.toFixed(1)} fps — baseline ${baselineFps.value.toFixed(1)} fps`
+})
 
 const canvasEl = ref<HTMLCanvasElement | null>(null)
 
@@ -85,8 +113,17 @@ interface FieldState {
 }
 const fieldStates: FieldState[] = []
 
+// CPU-submit timing (command-submission cost — how long shaderFx.render/drawImage
+// take to RETURN, not how long the GPU takes to finish). Useful for telling "we're
+// submitting too much work" apart from "the GPU can't keep up", but both render()
+// and drawImage() are async on the GPU side, so this must NOT drive fps.
 const frameTimes: number[] = []
 const blitTimes: number[] = []
+// Wall-clock rAF-to-rAF deltas — the only honest frame-cost signal, since the
+// browser can't start the next frame until the current one's GPU work is done.
+const wallTimes: number[] = []
+let lastNow: number | null = null
+let warmupRemaining = WARMUP_FRAMES
 
 function pushRolling(arr: number[], v: number): void {
   arr.push(v)
@@ -99,6 +136,18 @@ function avg(arr: number[]): number {
   for (const v of arr) sum += v
   return sum / arr.length
 }
+
+/** Discard the rolling windows and restart the warm-up count — called on load and
+ *  after any fields/distinct change, so shader-compile/FBO-alloc jitter from the
+ *  first frames never pollutes the averages. */
+function resetWarmup(): void {
+  warmupRemaining = WARMUP_FRAMES
+  frameTimes.length = 0
+  blitTimes.length = 0
+  wallTimes.length = 0
+}
+
+watch([fieldsCount, distinct], () => resetWarmup())
 
 /** Arrange up to 8 quads in a 4-wide grid, hide the rest. */
 function layoutFields(): void {
@@ -140,6 +189,17 @@ function loop(now: number): void {
   raf = requestAnimationFrame(loop)
   if (!effectDef || !baseFill || !renderer || !scene || !camera) return
 
+  // Wall-clock rAF-to-rAF delta — the ONLY honest frame-cost signal. Both
+  // shaderFx.render() and drawImage() submit GPU work asynchronously, so timing
+  // around them (below) measures command submission, not frame cost. The browser
+  // can't schedule the next rAF until the current frame's GPU work is actually
+  // done, so if GPU work exceeds budget, this delta is what stretches.
+  if (lastNow != null) {
+    const wallDelta = now - lastNow
+    if (warmupRemaining <= 0) pushRolling(wallTimes, wallDelta)
+  }
+  lastNow = now
+
   const t0 = performance.now()
   const timeSec = (now - startedAt) / 1000
   const n = fieldsCount.value
@@ -169,14 +229,32 @@ function loop(now: number): void {
 
   renderer.render(scene, camera)
 
-  const frameMs = performance.now() - t0
-  pushRolling(frameTimes, frameMs)
-  pushRolling(blitTimes, blitAccum)
-  const frameAvg = avg(frameTimes)
+  // CPU submit time only — how long it took shaderFx.render/drawImage to RETURN,
+  // not how long the GPU took to finish. Still useful for isolating "we're
+  // submitting too much work" from "the GPU can't keep up", but must not drive fps.
+  const cpuMs = performance.now() - t0
+
+  if (warmupRemaining > 0) {
+    warmupRemaining--
+  } else {
+    pushRolling(frameTimes, cpuMs)
+    pushRolling(blitTimes, blitAccum)
+  }
+
+  const wallAvg = avg(wallTimes)
+  const wallFps = wallAvg > 0 ? 1000 / wallAvg : 0
   stats.value = {
-    frameMs: frameAvg,
+    cpuMs: avg(frameTimes),
     blitMs: avg(blitTimes),
-    fps: frameAvg > 0 ? 1000 / frameAvg : 0,
+    wallMs: wallAvg,
+    fps: wallFps,
+  }
+
+  // Capture the fields=0 vsync-ceiling baseline exactly once — the first time the
+  // wall-clock window fills post-warmup while fields=0. Never recaptured after
+  // that, even if the user revisits fields=0 later.
+  if (baselineFps.value == null && fieldsCount.value === 0 && warmupRemaining <= 0 && wallTimes.length >= FRAME_WINDOW) {
+    baselineFps.value = wallFps
   }
 }
 
@@ -238,6 +316,7 @@ h1 { font-size: 15px; margin: 0 0 4px }
 .controls { display: flex; gap: 20px; align-items: center; margin-bottom: 12px; flex-wrap: wrap }
 .group { display: flex; gap: 6px; align-items: center }
 .label { color: #999 }
+.hint { color: #666; font-size: 11px }
 button { background: #222; color: #ddd; border: 1px solid #444; padding: 4px 10px; cursor: pointer; font: inherit }
 button.active { background: #2a5; color: #000; border-color: #2a5; font-weight: 700 }
 .status { color: #fa0 }
@@ -246,6 +325,7 @@ button.active { background: #2a5; color: #000; border-color: #2a5; font-weight: 
 .stat .k { color: #888; font-size: 10px; text-transform: uppercase; letter-spacing: .04em }
 .stat .v { color: #fff; font-size: 16px; font-weight: 700 }
 .stat .v.bad { color: #f66 }
+.verdict { color: #fd0; font-weight: 700; margin: 0 0 10px }
 .pass-note { color: #9c9; max-width: 80ch; line-height: 1.5; margin: 0 0 14px }
 .stage { display: block; background: #000; border: 1px solid #333 }
 code { color: #9cf }
