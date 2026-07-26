@@ -21,6 +21,22 @@ export function gradientAgentControls(
     .map(({ when, agent, animatable, ...spec }) => spec as ControlSpec)
 }
 
+// Shader-fill controls (Task 8, ~/lib/shaderfill/controls.ts) are NOT wired in here,
+// and that is deliberate, not an oversight — same spirit as Scene3D's exclusion in
+// the same task. Unlike Shape Studio's `SurfaceFill.shader?: ShaderSpec`
+// (`~/lib/shapefx/config.ts`), `GradientConfig` (types.ts, this directory) carries
+// no `Fill`/`ShaderSpec`/shader-fill concept anywhere — every colour in this studio
+// is a flat hex string (`ColorStop.color`, `MeshPoint.color`), never a `Fill`. None
+// of this feature's earlier tasks (0-7: the Fill model, the field descriptor/
+// renderer, Space Type + Shape Studio, frame anchor, the Compositor, Scene3D) ever
+// touched `gradientfx`, so there is no shader-fill config field on GradientConfig
+// to bind `fill.shader.*` controls to. Appending them here would offer the agent
+// (and motion) three keys that `makeConfigParams`'s dotted-path writer would
+// happily create as dead, never-rendered properties on the config object — exactly
+// the "silently wrong" class this codebase's shader-fill work goes out of its way
+// to avoid elsewhere (see descriptor.ts's `resolveEffectParams` doc). If Gradient
+// Studio later gains a shader-fill layer, this is the file to revisit.
+
 /**
  * Domain guidance injected into the /api/vibe prompt for the gradient (both the
  * canvas tuner and the in-studio copilot pass it). Teaches the model how the
