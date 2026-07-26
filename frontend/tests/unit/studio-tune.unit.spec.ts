@@ -196,3 +196,20 @@ describe('tuneShapeNode', () => {
     expect(controls.length).toBeGreaterThan(0)
   })
 })
+
+describe('every registered studio tuner is discoverable by the model', () => {
+  it('names each STUDIO_TUNERS key in the canvas tuneNode hint', async () => {
+    // Registering a tuner is only half the job: the canvas agent picks tuneNode
+    // targets from the prose hint, so a studio absent from that sentence is
+    // wired but unreachable — the model never learns it can be tuned.
+    const { STUDIO_TUNERS } = await import('~/lib/agent/studioTune')
+    const { describeCanvas } = await import('~/lib/agent/surfaces/canvas')
+    // Read the hint from what the model is actually handed, not from a module const.
+    const surface = describeCanvas({ nodes: [], edges: [] })
+    const hint = surface.commands.find((c) => c.op === 'tuneNode')?.hint ?? ''
+    expect(hint, 'tuneNode op not found in the canvas surface').not.toBe('')
+    for (const nodeType of Object.keys(STUDIO_TUNERS)) {
+      expect(hint, `${nodeType} is registered but not named in the tuneNode hint`).toContain(`"${nodeType}"`)
+    }
+  })
+})
