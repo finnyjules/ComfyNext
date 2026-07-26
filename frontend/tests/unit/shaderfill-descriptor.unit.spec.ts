@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { DEFAULT_FILL, DEFAULT_SHADER_SPEC, type ShaderSpec } from '~/lib/spacetype/fillTile'
+import { DEFAULT_FILL, DEFAULT_SHADER_SPEC, type Fill, type ShaderSpec } from '~/lib/spacetype/fillTile'
 import { quantizeTime, fieldKey, planFields, resolveEffectParams, LIVE_FIELD_CEILING } from '~/lib/shaderfill/descriptor'
 import type { EffectDef } from '~/lib/shaderfx/types'
 
@@ -97,6 +97,34 @@ describe('fieldKey', () => {
     const withNaN = fieldKey(spec({ params: { p: NaN } }), 512, 512, 0)
     const withNull = fieldKey(spec({ params: { p: null as unknown as number } }), 512, 512, 0)
     expect(withNaN).not.toBe(withNull)
+  })
+
+  // Depth-1 nesting (a shader fill's `input` is never itself a shader fill) is
+  // enforced only at the normalizeFill/parseFills parse boundary, not in the type
+  // system — a hand-constructed ShaderSpec can still carry a shader-typed `input`.
+  // field.ts defends against that via `effectiveTileFill` before rasterising; the
+  // key must defend against the exact same thing, or two specs that render
+  // differently can key identically (silent wrong pixels via cache collision).
+  it('keys a shader-typed input by what effectiveTileFill actually unwraps it to — different nested content must key differently', () => {
+    const shaderInputA: Fill = {
+      ...DEFAULT_FILL, type: 'shader',
+      shader: { ...DEFAULT_SHADER_SPEC, input: { ...DEFAULT_FILL, type: 'gradient', a: '#111111', b: '#222222' } },
+    }
+    const shaderInputB: Fill = {
+      ...DEFAULT_FILL, type: 'shader',
+      shader: { ...DEFAULT_SHADER_SPEC, input: { ...DEFAULT_FILL, type: 'gradient', a: '#333333', b: '#444444' } },
+    }
+    const a = fieldKey(spec({ input: shaderInputA }), 512, 512, 0)
+    const b = fieldKey(spec({ input: shaderInputB }), 512, 512, 0)
+    expect(a).not.toBe(b)
+  })
+
+  it('keys a shader-typed input identically to the unwrapped equivalent, since that is what actually gets rendered', () => {
+    const unwrapped: Fill = { ...DEFAULT_FILL, type: 'grid', a: '#123456', b: '#654321', density: 5 }
+    const shaderTyped: Fill = { ...DEFAULT_FILL, type: 'shader', shader: { ...DEFAULT_SHADER_SPEC, input: unwrapped } }
+    const a = fieldKey(spec({ input: unwrapped }), 512, 512, 0)
+    const b = fieldKey(spec({ input: shaderTyped }), 512, 512, 0)
+    expect(a).toBe(b)
   })
 })
 

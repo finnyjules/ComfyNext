@@ -49,13 +49,16 @@
         rAF/vsync-independent path — 60 forced-sync iterations per field count (10 discarded as
         warmup), works even when this pane is hidden/backgrounded. `t` advances one host frame
         per iteration, so every iteration lands on a fresh cache bucket and must re-render (a
-        static `t` would cache-hit after iteration 1 and measure lookups, not GPU cost). Each
-        row's <code>renders</code> column is the actual <code>shaderFx.render</code> count for
-        its timed iterations, from field.ts's <code>fieldStats()</code> — check "distinct
-        descriptors" above to reproduce Task 0's per-field GPU cost (identical descriptors
-        legitimately batch to 1 render/iteration regardless of field count, which is correct
-        but a different measurement). Same thing is exposed as
-        <code>window.__benchSweep()</code> for a caller that can't rely on rAF ticking at all.
+        static `t` would cache-hit after iteration 1 and measure lookups, not GPU cost). Every
+        row is tagged <code>mode: 'distinct' | 'shared'</code> so a number is never read without
+        its regime, and carries the actual <code>renders</code> count for its timed iterations
+        (from field.ts's <code>fieldStats()</code>) plus <code>msPerRender</code> — total timed
+        time ÷ actual renders, which means the same thing in both regimes, unlike
+        <code>msPerField</code>. This button reads the checkbox above; headless callers pass the
+        regime explicitly — <code>window.__benchSweep({ distinct: true })</code> reproduces Task
+        0's per-field GPU cost, <code>{ distinct: false }</code> measures the batched/shared cost
+        (fields legitimately collapse toward 1 render/iteration), and a bare
+        <code>window.__benchSweep()</code> defaults to whatever this checkbox currently shows.
       </span>
     </div>
 
@@ -75,13 +78,15 @@
 
     <table v-if="sweepRows && sweepRows.length" class="sweep-table">
       <thead>
-        <tr><th>fields</th><th>ms / iteration</th><th>ms / field</th><th>blit ms</th><th>renders</th></tr>
+        <tr><th>fields</th><th>mode</th><th>ms / iteration</th><th>ms / field</th><th>ms / render</th><th>blit ms</th><th>renders</th></tr>
       </thead>
       <tbody>
         <tr v-for="r in sweepRows" :key="r.fields">
           <td>{{ r.fields }}</td>
+          <td>{{ r.mode }}</td>
           <td>{{ r.msPerIteration.toFixed(2) }}</td>
           <td>{{ r.msPerField.toFixed(2) }}</td>
+          <td>{{ r.msPerRender.toFixed(2) }}</td>
           <td>{{ r.blitMs.toFixed(2) }}</td>
           <td>{{ r.renders }}</td>
         </tr>
@@ -258,8 +263,12 @@ function paramOverridesForIndex(i: number, count: number): Record<string, number
   return { [key]: lo + (hi - lo) * (i / Math.max(1, count - 1)) }
 }
 
-function specForField(i: number): ShaderSpec {
-  const params = distinct.value ? paramOverridesForIndex(i, MAX_FIELDS) : {}
+/** `useDistinct` is an explicit parameter, not read from the reactive `distinct` ref
+ *  directly — `runSweep` needs to be callable with a regime that overrides whatever
+ *  the on-screen checkbox currently shows (see its `SweepOptions`), so every caller
+ *  states which regime it wants rather than this function guessing from UI state. */
+function specForField(i: number, useDistinct: boolean): ShaderSpec {
+  const params = useDistinct ? paramOverridesForIndex(i, MAX_FIELDS) : {}
   return { effectId: effectDef!.id, params, anchor: 'object', speed: 1, input: baseFillSpec }
 }
 
@@ -287,7 +296,7 @@ function loop(now: number): void {
   // wants — this is what lets the live/frozen ceiling apply per-frame rather than
   // per-field. Identical descriptors collapse to one key regardless of `n`.
   const requests: FieldRequest[] = Array.from({ length: n }, (_, i) => ({
-    spec: specForField(i), w: FIELD_SIZE, h: FIELD_SIZE, t: timeSec, fps: BENCH_FPS,
+    spec: specForField(i, distinct.value), w: FIELD_SIZE, h: FIELD_SIZE, t: timeSec, fps: BENCH_FPS,
   }))
   beginFieldFrame(requests)
 
@@ -342,7 +351,23 @@ function loop(now: number): void {
 // completed work, not submission — the same trap the CPU-submit timer fell into),
 // and return the numbers as a value instead of rendering them to the DOM.
 
-interface SweepRow { fields: number; msPerIteration: number; msPerField: number; blitMs: number; renders: number }
+/** 'distinct' = every field genuinely different (Task 0's own methodology — the
+ *  regime `LIVE_FIELD_CEILING` is calibrated against); 'shared' = every field the
+ *  same descriptor, so per-frame batching legitimately collapses them to far fewer
+ *  renders. Carried on every row so a number can never be read without its regime —
+ *  see the SweepOptions/mode fix in the Task 3 report addendum for why this exists:
+ *  `window.__benchSweep()` used to have no way to select or report which regime
+ *  produced a given row, so a caller who didn't also check the on-page checkbox
+ *  (which the headless hook doesn't read unless told to) could silently read the
+ *  batched 'shared' numbers while believing they were the animated worst case. */
+interface SweepRow { fields: number; mode: 'distinct' | 'shared'; msPerIteration: number; msPerField: number; msPerRender: number; blitMs: number; renders: number }
+
+interface SweepOptions {
+  /** Defaults to the on-page "distinct descriptors" checkbox when omitted, so the
+   *  existing "Run sweep" button's behaviour is unchanged. Pass explicitly for a
+   *  headless/programmatic call, where there is no checkbox to read. */
+  distinct?: boolean
+}
 
 const SWEEP_ITERATIONS = 60
 const SWEEP_WARMUP = 10
@@ -373,11 +398,24 @@ const sweepError = ref('')
  * as every other block, so block N's iteration K would cache-HIT on block (N-1)'s
  * identical (spec, t) pair left in the cache — silently making later rows look
  * cheaper than they are.
+ *
+ * Even with the above fixed, `renders` (and therefore `msPerField`) still depends on
+ * whether fields share one descriptor or are each distinct — that's a REAL
+ * difference, not a bug, but a caller who doesn't also know which regime produced a
+ * number can draw the wrong conclusion from it (this is exactly the failure the
+ * coordinator caught: the default 'shared' regime reads as "fills are ~4x cheaper
+ * than they are" if read as the animated worst case). So the regime is now an
+ * explicit parameter with every row tagged by `mode`, and `msPerRender` — total timed
+ * wall-ms divided by the ACTUAL render count — is reported alongside `msPerField`
+ * specifically because it means the same thing in both regimes, where `msPerField`
+ * does not (it silently changes meaning as `renders` diverges from `fields`).
  */
-async function runSweep(): Promise<SweepRow[] | { error: string }> {
+async function runSweep(opts: SweepOptions = {}): Promise<SweepRow[] | { error: string }> {
   if (!effectDef || !renderer || !scene || !camera || fieldStates.length < MAX_FIELDS) {
     return { error: 'not ready' }
   }
+  const useDistinct = opts.distinct ?? distinct.value
+  const mode: SweepRow['mode'] = useDistinct ? 'distinct' : 'shared'
   const rendererInst = renderer
   const sceneInst = scene
   const cameraInst = camera
@@ -406,7 +444,7 @@ async function runSweep(): Promise<SweepRow[] | { error: string }> {
       const timeSec = iter / BENCH_FPS
 
       const requests: FieldRequest[] = Array.from({ length: n }, (_, i) => ({
-        spec: specForField(i), w: FIELD_SIZE, h: FIELD_SIZE, t: timeSec, fps: BENCH_FPS,
+        spec: specForField(i, useDistinct), w: FIELD_SIZE, h: FIELD_SIZE, t: timeSec, fps: BENCH_FPS,
       }))
       beginFieldFrame(requests)
 
@@ -440,7 +478,11 @@ async function runSweep(): Promise<SweepRow[] | { error: string }> {
     if (n === 0) baselineMs = msPerIteration
     const msPerField = n === 0 ? 0 : (msPerIteration - baselineMs) / n
     const renders = fieldStats().renders - rendersAtTimedStart
-    rows.push({ fields: n, msPerIteration, msPerField, blitMs, renders })
+    // Total timed wall-ms (not the baseline-subtracted delta msPerField uses) divided
+    // by the actual render count — checkbox/regime-independent, unlike msPerField.
+    const totalTimedMs = iterMs.reduce((a, b) => a + b, 0)
+    const msPerRender = renders > 0 ? totalTimedMs / renders : 0
+    rows.push({ fields: n, mode, msPerIteration, msPerField, msPerRender, blitMs, renders })
 
     // Yield ONLY between field counts (never inside the timed region above) so a
     // ~5-20s sweep doesn't block the page/tab for one long uninterrupted stretch.
@@ -465,7 +507,7 @@ function runProbe(): unknown {
   if (!def || !st) return { error: 'not ready' }
 
   clearFieldCache()
-  const req: FieldRequest = { spec: specForField(0), w: FIELD_SIZE, h: FIELD_SIZE, t: 1.234, fps: BENCH_FPS }
+  const req: FieldRequest = { spec: specForField(0, distinct.value), w: FIELD_SIZE, h: FIELD_SIZE, t: 1.234, fps: BENCH_FPS }
   beginFieldFrame([req])
   const out = resolveField(req)
   if (!out) return { error: 'resolveField returned null' }

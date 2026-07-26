@@ -11,7 +11,7 @@ import { effectiveTileFill, fillTileBox, type ShaderSpec } from '~/lib/spacetype
 import { shaderFx, expandPasses, type Uniforms } from '~/lib/shaderfx/renderer'
 import { getEffectSync } from '~/lib/shaderfx/catalog'
 import type { EffectDef } from '~/lib/shaderfx/types'
-import { fieldKey, quantizeTime, planFields, resolveEffectParams } from './descriptor'
+import { fieldKey, quantizeTime, planFields, resolveEffectParams, LIVE_FIELD_CEILING } from './descriptor'
 
 export interface FieldRequest {
   spec: ShaderSpec; w: number; h: number; t: number; fps: number
@@ -24,7 +24,36 @@ export interface FieldRequest {
  *  disproves) batching, since a cache hit costs zero GPU work. */
 export interface FieldStats { renders: number; hits: number; misses: number }
 
-const CACHE_MAX = 32
+/**
+ * Sized as a small multiple of LIVE_FIELD_CEILING rather than a bare number, so the
+ * two stay related if the ceiling is ever retuned. This cache's durable beneficiaries
+ * are FROZEN (`speed: 0`) fields and OVER-CEILING fields — the ones `resolveField`
+ * pins to a stable `t=0` fallback key (see `planFields`/the `key` fallback below) —
+ * because those are the only entries that survive more than one animation frame;
+ * an animated, under-ceiling field gets a brand-new key every quantized time step and
+ * misses the cache by construction. Up to LIVE_FIELD_CEILING live fields each insert
+ * one such never-repeating entry per frame, competing for this cache's slots against
+ * the durable ones, so sizing it as `LIVE_FIELD_CEILING × N` gives the durable
+ * entries roughly N frames of live churn before an LRU eviction can reach them — not
+ * a guarantee (see below), just headroom. `8` is not a measurement like
+ * LIVE_FIELD_CEILING itself is; it is small enough that the memory bound below stays
+ * modest and large enough to not evict everything on the very next frame.
+ *
+ * Memory: CACHE_MAX × 512² × 4 bytes (RGBA8, the live-clamp size — see LIVE_FIELD_PX)
+ * ≈ 33 MB at the current 32, retained on this module-level singleton that every
+ * studio surface will eventually share. That budget, not a round number, is the
+ * actual ceiling on how large this should get without deliberately re-budgeting it.
+ *
+ * This is NOT a guarantee that a frozen/over-ceiling entry survives indefinitely:
+ * the field-count=8 sweep in the Task 3 report shows this cache already imperfectly
+ * defending even that narrower job — 4 live fields churning through a 32-slot LRU
+ * evict the 4 frozen fallback entries roughly every 8 iterations, forcing periodic
+ * re-renders of work that is architecturally supposed to be free. Raising the
+ * multiplier would help that specific case but is a real memory/eviction trade-off,
+ * not a bug fix — left as-is per review (this cache is reviewed and works; changing
+ * its behaviour needs its own measurement, the way LIVE_FIELD_CEILING got one).
+ */
+const CACHE_MAX = LIVE_FIELD_CEILING * 8
 /** Live fields are capped so an on-canvas node cannot ask for a 4K readback per frame.
  *  Bakes opt out via `bake: true` — same function, same time, different resolution,
  *  which is what keeps preview and bake from drifting. */
