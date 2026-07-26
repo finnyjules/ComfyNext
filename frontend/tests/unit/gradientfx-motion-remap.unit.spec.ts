@@ -1,22 +1,37 @@
 import { describe, it, expect } from 'vitest'
-import { remapTracksOnReorder, dropTracksForLayer } from '~/lib/gradientfx/motion'
+import { remapTracksOnReorder, dropTracksForLayer } from '../../app/lib/gradientfx/motion'
 
-const mk = (layer: number) => ({ layer, param: 'phase', from: 0, to: 1, easing: 'linear' as const, loops: 1, hold: 0, cycleOffset: 0, delay: 0 })
+const t = (path: string) => ({
+  path, from: 0, to: 1, easing: 'linear' as const,
+  loops: 1, hold: 0, cycleOffset: 0, delay: 0,
+})
 
-describe('gradient motion track remap', () => {
-  it('follows a layer moved from 2 to 0', () => {
-    const t = [mk(2)]
-    remapTracksOnReorder(t, 2, 0)
-    expect(t[0]!.layer).toBe(0)
+describe('remapTracksOnReorder', () => {
+  it('follows a layer moved down', () => {
+    expect(remapTracksOnReorder([t('layers.0.shape.count')], 0, 2)[0]!.path).toBe('layers.2.shape.count')
   })
-  it('shifts intermediate layers when reordering', () => {
-    const t = [mk(0), mk(1)]
-    remapTracksOnReorder(t, 0, 1) // layer 0 moves to slot 1; old layer 1 shifts to 0
-    expect(t.map(x => x.layer)).toEqual([1, 0])
+  it('shifts layers displaced by a downward move', () => {
+    expect(remapTracksOnReorder([t('layers.1.shape.count')], 0, 2)[0]!.path).toBe('layers.0.shape.count')
   })
-  it('drops tracks for a removed layer and renumbers higher ones', () => {
-    const t = [mk(0), mk(1), mk(2)]
-    const kept = dropTracksForLayer(t, 1)
-    expect(kept.map(x => x.layer)).toEqual([0, 1]) // layer 2 became 1
+  it('shifts layers displaced by an upward move', () => {
+    expect(remapTracksOnReorder([t('layers.1.shape.count')], 2, 0)[0]!.path).toBe('layers.2.shape.count')
+  })
+  it('leaves non-layer paths untouched', () => {
+    expect(remapTracksOnReorder([t('relief.grain')], 0, 2)[0]!.path).toBe('relief.grain')
+  })
+})
+
+describe('dropTracksForLayer', () => {
+  it('removes tracks targeting the deleted layer', () => {
+    expect(dropTracksForLayer([t('layers.1.shape.count')], 1)).toHaveLength(0)
+  })
+  it('decrements indices above the deleted layer', () => {
+    expect(dropTracksForLayer([t('layers.2.shape.count')], 1)[0]!.path).toBe('layers.1.shape.count')
+  })
+  it('leaves indices below the deleted layer alone', () => {
+    expect(dropTracksForLayer([t('layers.0.shape.count')], 1)[0]!.path).toBe('layers.0.shape.count')
+  })
+  it('keeps non-layer paths', () => {
+    expect(dropTracksForLayer([t('relief.grain')], 1)[0]!.path).toBe('relief.grain')
   })
 })

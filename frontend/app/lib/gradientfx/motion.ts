@@ -120,18 +120,36 @@ function clamp01(v: number): number {
   return v < 0 ? 0 : v > 1 ? 1 : v
 }
 
-/** Mutate tracks so `track.layer` follows a layer moved from index `from` to `to`. */
-export function remapTracksOnReorder(tracks: MotionTrack[], from: number, to: number): void {
-  const move = (l: number): number => {
-    if (l === from) return to
-    if (from < to && l > from && l <= to) return l - 1
-    if (from > to && l >= to && l < from) return l + 1
-    return l
-  }
-  for (const t of tracks) t.layer = move(t.layer)
+const LAYER_RE = /^layers\.(\d+)\./
+
+const layerIndexOf = (path: string | undefined): number | null => {
+  const m = LAYER_RE.exec(path ?? '')
+  return m ? Number(m[1]) : null
 }
 
-/** Return tracks with those on `removed` dropped and higher indices decremented. */
+const withLayerIndex = (path: string, i: number): string => path.replace(LAYER_RE, `layers.${i}.`)
+
+/** Return tracks with `path`'s `layers.N.` segment rewritten to follow a layer moved from `from` to `to`. */
+export function remapTracksOnReorder(tracks: MotionTrack[], from: number, to: number): MotionTrack[] {
+  return tracks.map((tr) => {
+    const i = layerIndexOf(tr.path)
+    if (i === null) return tr
+    let next = i
+    if (i === from) next = to
+    else if (from < i && i <= to) next = i - 1
+    else if (to <= i && i < from) next = i + 1
+    return next === i ? tr : { ...tr, path: withLayerIndex(tr.path!, next) }
+  })
+}
+
+/** Return tracks with those on `removed` dropped and higher `layers.N.` indices decremented. */
 export function dropTracksForLayer(tracks: MotionTrack[], removed: number): MotionTrack[] {
-  return tracks.filter(t => t.layer !== removed).map(t => ({ ...t, layer: t.layer > removed ? t.layer - 1 : t.layer }))
+  const out: MotionTrack[] = []
+  for (const tr of tracks) {
+    const i = layerIndexOf(tr.path)
+    if (i === null) { out.push(tr); continue }
+    if (i === removed) continue
+    out.push(i > removed ? { ...tr, path: withLayerIndex(tr.path!, i - 1) } : tr)
+  }
+  return out
 }
