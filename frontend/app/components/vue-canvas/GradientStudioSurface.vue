@@ -15,19 +15,15 @@ import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
 import BindableRow from '~/components/vue-canvas/studio/BindableRow.vue'
 import PalettePicker from '~/components/vue-canvas/studio/PalettePicker.vue'
-import CanvasContextMenu, { type MenuItem } from '~/components/vue-canvas/CanvasContextMenu.vue'
+import CanvasContextMenu from '~/components/vue-canvas/CanvasContextMenu.vue'
 import { useStudioAgent } from '~/composables/useStudioAgent'
 import { useStudioVarBindings } from '~/composables/useStudioVarBindings'
+import { useStudioVarMenu } from '~/composables/useStudioVarMenu'
 import { makeConfigParams } from '~/lib/agent/configParams'
 import { GRADIENT_GUIDANCE, gradientAgentControls } from '~/lib/gradientfx/agentControls'
 import { controlsForStudio } from '~/lib/collection/studioControls'
 import type { StudioControlDesc } from '~/lib/collection/studioBindables'
-import { controlKindToVariableType } from '~/lib/collection/studioBindables'
-import { typeCompatible } from '~/lib/collection/bindables'
-import { addSweepRows } from '~/lib/collection/model'
-import { COLLECTION_PROP, VARS_TYPE, type CollectionColumn, type CollectionData } from '~/lib/collection/types'
 import { registerStudioParamBaker, unregisterStudioParamBaker } from '~/lib/studio/cascade'
-import { effectiveColumns, makeLookupResolver } from '~/lib/collection/lookup'
 import SweepPopover from '~/components/vue-canvas/studio/SweepPopover.vue'
 import {
   ASPECTS, BLEND_MODES, DEFAULT_FOCUS, DIRECTIONS, GRADIENT_DIRS, LAYER_MAX, LAYOUTS, MAPPINGS, MIRROR_KINDS, RING_SHAPES, SHAPE_KINDS,
@@ -106,84 +102,13 @@ const { boundColumnFor, boundColumnKeyFor, onEdit, promote, unbind } = useStudio
   { nodes: () => props.nodes, edges: () => props.edges ?? [] },
 )
 
-// Wired collection lookup (studio -> collection) for the "Bind to" submenu.
-const wiredColumns = computed<CollectionColumn[]>(() => {
-  const edgeList = props.edges ?? []
-  const edge = edgeList.find((e: any) => String(e.target) === String(props.nodeId) && e?.data?.dataType === VARS_TYPE)
-  if (!edge) return []
-  const colNode = props.nodes.find((n: any) => String(n.id) === String(edge.source))
-  const c = colNode?.data?.properties?.[COLLECTION_PROP]
-  if (!c) return []
-  return effectiveColumns(c, makeLookupResolver(props.nodes))
+const { wiredColumns, sweepPopover, applySweep, varMenu, openVarMenu } = useStudioVarMenu({
+  nodeId: () => props.nodeId,
+  nodes: () => props.nodes,
+  edges: () => props.edges ?? [],
+  liveValue: (key) => paramsProxy[key] as string | number,
+  boundColumnFor, boundColumnKeyFor, promote, unbind,
 })
-
-// Wired collection NODE (not just its columns) — the sweep flow needs to
-// mutate the actual CollectionData object once the popover's Apply fires.
-function findWiredCollectionNode(): any | null {
-  const edgeList = props.edges ?? []
-  const edge = edgeList.find((e: any) => String(e.target) === String(props.nodeId) && e?.data?.dataType === VARS_TYPE)
-  if (!edge) return null
-  return props.nodes.find((n: any) => String(n.id) === String(edge.source)) ?? null
-}
-
-// Sweep popover state — opened from the "Sweep…" chip menu item on a bound
-// control; on Apply, turns the entered values into sweep rows on the wired
-// collection and hands off to the drawer + a follow-up run event (see
-// runSweepRows dispatch below and VueNodeCanvas's pending-sweep stash).
-const sweepPopover = ref<{ control: StudioControlDesc; anchor: { x: number; y: number } } | null>(null)
-function applySweep(values: (string | number)[]) {
-  const control = sweepPopover.value?.control
-  sweepPopover.value = null
-  if (!control) return
-  const colNode = findWiredCollectionNode()
-  const collection = colNode?.data?.properties?.[COLLECTION_PROP] as CollectionData | undefined
-  if (!colNode || !collection) return
-  const columnKey = boundColumnKeyFor(control.key)
-  if (!columnKey) return
-
-  const added = addSweepRows(collection, columnKey, values)
-  window.dispatchEvent(new CustomEvent('sailor:openCollection', { detail: { nodeId: String(colNode.id) } }))
-  window.dispatchEvent(new CustomEvent('sailor:runSweepRows', {
-    detail: { collectionNodeId: String(colNode.id), rowIds: added.map(r => r.id), targetNodeId: props.nodeId },
-  }))
-}
-
-const varMenu = ref<{ x: number; y: number; items: MenuItem[] } | null>(null)
-function openVarMenu(e: MouseEvent, control: StudioControlDesc) {
-  const type = controlKindToVariableType(control.kind)
-  if (type === null) return
-  const liveValue = paramsProxy[control.key] as string | number
-  const bound = boundColumnFor(control.key)
-  const items: MenuItem[] = []
-  if (!bound) {
-    items.push({ label: 'Turn into variable', action: () => promote(control, liveValue) })
-    const compatCols = wiredColumns.value.filter(col => typeCompatible(type, col.type))
-    if (compatCols.length) {
-      items.push({
-        label: 'Bind to',
-        children: compatCols.map(col => ({
-          label: col.label,
-          action: () => window.dispatchEvent(new CustomEvent('sailor:bindControl', {
-            detail: { nodeId: props.nodeId, path: `params.${control.key}`, columnKey: col.key },
-          })),
-        })),
-      })
-    }
-  } else {
-    items.push({
-      label: 'Go to collection',
-      action: () => {
-        const edgeList = props.edges ?? []
-        const edge = edgeList.find((ed: any) => String(ed.target) === String(props.nodeId) && ed?.data?.dataType === VARS_TYPE)
-        if (edge) window.dispatchEvent(new CustomEvent('sailor:openCollection', { detail: { nodeId: String(edge.source) } }))
-      },
-    })
-    items.push({ label: 'Sweep…', action: () => { sweepPopover.value = { control, anchor: { x: e.clientX, y: e.clientY } } } })
-    items.push({ divider: true })
-    items.push({ label: 'Unbind', action: () => unbind(control.key, liveValue) })
-  }
-  varMenu.value = { x: e.clientX, y: e.clientY, items }
-}
 
 // Render the current gradient to a PNG for the agent's visual self-review.
 function renderGradientForReview(): string | null {

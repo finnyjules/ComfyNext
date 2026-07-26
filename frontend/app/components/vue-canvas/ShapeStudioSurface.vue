@@ -25,19 +25,15 @@ import StudioSwitch from '~/components/vue-canvas/studio/StudioSwitch.vue'
 import StudioSegmented from '~/components/vue-canvas/studio/StudioSegmented.vue'
 import StudioSelect from '~/components/vue-canvas/studio/StudioSelect.vue'
 import FillSwatch from '~/components/vue-canvas/studio/FillSwatch.vue'
-import CanvasContextMenu, { type MenuItem } from '~/components/vue-canvas/CanvasContextMenu.vue'
+import CanvasContextMenu from '~/components/vue-canvas/CanvasContextMenu.vue'
 import SweepPopover from '~/components/vue-canvas/studio/SweepPopover.vue'
 import { useStudioAgent } from '~/composables/useStudioAgent'
 import { useStudioVarBindings } from '~/composables/useStudioVarBindings'
+import { useStudioVarMenu } from '~/composables/useStudioVarMenu'
 import { makeConfigParams } from '~/lib/agent/configParams'
 import { shapeAgentControls, SHAPE_GUIDANCE } from '~/lib/shapefx/agentControls'
 import { controlsForStudio } from '~/lib/collection/studioControls'
 import type { StudioControlDesc } from '~/lib/collection/studioBindables'
-import { controlKindToVariableType } from '~/lib/collection/studioBindables'
-import { typeCompatible } from '~/lib/collection/bindables'
-import { addSweepRows } from '~/lib/collection/model'
-import { COLLECTION_PROP, VARS_TYPE, type CollectionColumn, type CollectionData } from '~/lib/collection/types'
-import { effectiveColumns, makeLookupResolver } from '~/lib/collection/lookup'
 import { registerStudioParamBaker, unregisterStudioParamBaker } from '~/lib/studio/cascade'
 
 // `nodes` is optional (defaults to []) so this surface can be smoke-tested standalone
@@ -130,101 +126,13 @@ const { boundColumnFor, boundColumnKeyFor, onEdit, promote, unbind } = useStudio
   { nodes: () => props.nodes ?? [], edges: () => props.edges ?? [] },
 )
 
-// Wired collection lookup (studio -> collection) for the "Bind to" submenu.
-const wiredColumns = computed<CollectionColumn[]>(() => {
-  const edgeList = props.edges ?? []
-  const edge = edgeList.find((e: any) => String(e.target) === String(props.nodeId) && e?.data?.dataType === VARS_TYPE)
-  if (!edge) return []
-  const colNode = (props.nodes ?? []).find((n: any) => String(n.id) === String(edge.source))
-  const c = colNode?.data?.properties?.[COLLECTION_PROP]
-  if (!c) return []
-  return effectiveColumns(c, makeLookupResolver(props.nodes ?? []))
+const { wiredColumns, sweepPopover, applySweep, varMenu, openVarMenu, goToCollection } = useStudioVarMenu({
+  nodeId: () => props.nodeId,
+  nodes: () => props.nodes ?? [],
+  edges: () => props.edges ?? [],
+  liveValue: (key) => paramsProxy[key] as string | number,
+  boundColumnFor, boundColumnKeyFor, promote, unbind,
 })
-
-// Wired collection NODE (not just its columns) — the sweep flow needs to
-// mutate the actual CollectionData object once the popover's Apply fires.
-function findWiredCollectionNode(): any | null {
-  const edgeList = props.edges ?? []
-  const edge = edgeList.find((e: any) => String(e.target) === String(props.nodeId) && e?.data?.dataType === VARS_TYPE)
-  if (!edge) return null
-  return (props.nodes ?? []).find((n: any) => String(n.id) === String(edge.source)) ?? null
-}
-
-// Wired collection node id — shared by the var-menu's "Go to collection"
-// item and the FillSwatch "edit in table" click (mirrors Texture/Space Type's
-// goToCollection helper; Shape's fill.a/fill.b swatches need it since
-// FillSwatch's bound state renders an "edit" affordance).
-function wiredCollectionNodeId(): string | null {
-  const edgeList = props.edges ?? []
-  const edge = edgeList.find((ed: any) => String(ed.target) === String(props.nodeId) && ed?.data?.dataType === VARS_TYPE)
-  return edge ? String(edge.source) : null
-}
-function goToCollection() {
-  const nodeId = wiredCollectionNodeId()
-  if (nodeId) window.dispatchEvent(new CustomEvent('sailor:openCollection', { detail: { nodeId } }))
-}
-
-// Sweep popover state — opened from the "Sweep…" chip menu item on a bound
-// control; on Apply, turns the entered values into sweep rows on the wired
-// collection and hands off to the drawer + a follow-up run event (copied
-// verbatim from GradientStudioSurface.vue).
-const sweepPopover = ref<{ control: StudioControlDesc; anchor: { x: number; y: number } } | null>(null)
-function applySweep(values: (string | number)[]) {
-  const control = sweepPopover.value?.control
-  sweepPopover.value = null
-  if (!control) return
-  const colNode = findWiredCollectionNode()
-  const collection = colNode?.data?.properties?.[COLLECTION_PROP] as CollectionData | undefined
-  if (!colNode || !collection) return
-  const columnKey = boundColumnKeyFor(control.key)
-  if (!columnKey) return
-
-  const added = addSweepRows(collection, columnKey, values)
-  window.dispatchEvent(new CustomEvent('sailor:openCollection', { detail: { nodeId: String(colNode.id) } }))
-  window.dispatchEvent(new CustomEvent('sailor:runSweepRows', {
-    detail: { collectionNodeId: String(colNode.id), rowIds: added.map(r => r.id), targetNodeId: props.nodeId },
-  }))
-}
-
-// Copied verbatim from GradientStudioSurface.vue's openVarMenu (Texture's copy
-// is byte-identical too, so this is a third, known-stable instance of the
-// same block — not a new invention).
-const varMenu = ref<{ x: number; y: number; items: MenuItem[] } | null>(null)
-function openVarMenu(e: MouseEvent, control: StudioControlDesc) {
-  const type = controlKindToVariableType(control.kind)
-  if (type === null) return
-  const liveValue = paramsProxy[control.key] as string | number
-  const bound = boundColumnFor(control.key)
-  const items: MenuItem[] = []
-  if (!bound) {
-    items.push({ label: 'Turn into variable', action: () => promote(control, liveValue) })
-    const compatCols = wiredColumns.value.filter(col => typeCompatible(type, col.type))
-    if (compatCols.length) {
-      items.push({
-        label: 'Bind to',
-        children: compatCols.map(col => ({
-          label: col.label,
-          action: () => window.dispatchEvent(new CustomEvent('sailor:bindControl', {
-            detail: { nodeId: props.nodeId, path: `params.${control.key}`, columnKey: col.key },
-          })),
-        })),
-      })
-    }
-  } else {
-    items.push({
-      label: 'Go to collection',
-      action: () => {
-        const edgeList = props.edges ?? []
-        const edge = edgeList.find((ed: any) => String(ed.target) === String(props.nodeId) && ed?.data?.dataType === VARS_TYPE)
-        if (edge) window.dispatchEvent(new CustomEvent('sailor:openCollection', { detail: { nodeId: String(edge.source) } }))
-      },
-    })
-    items.push({ label: 'Sweep…', action: () => { sweepPopover.value = { control, anchor: { x: e.clientX, y: e.clientY } } } })
-    items.push({ divider: true })
-    items.push({ label: 'Unbind', action: () => unbind(control.key, liveValue) })
-  }
-  varMenu.value = { x: e.clientX, y: e.clientY, items }
-}
 
 // ── enum fields → string proxies ────────────────────────────────────────────────────────
 // StudioSelect/StudioSegmented's v-model is typed `string`; ShapeConfig's mode/primitive/
