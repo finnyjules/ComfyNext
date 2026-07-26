@@ -13,6 +13,20 @@ type ControlMeta = {
   hint?: string
   aiEditable?: boolean
   showIf?: { key: string; equals?: ParamValue; notEquals?: ParamValue }
+  /**
+   * Set false to declare a control in the schema while withholding it from the
+   * agent's vocabulary. Used for controls the agent has never been offered, so
+   * declaring them for motion/inspector purposes is not a silent expansion of
+   * what the model can change. Defaults to true.
+   */
+  agent?: boolean
+  /**
+   * Motion-track eligibility for numeric controls. Sliders are animatable by
+   * default; pass false to opt out, or an explicit range when animation should
+   * allow more than the UI slider does (e.g. layer.shape.sweep: slider 20..360,
+   * animation 0..360).
+   */
+  animatable?: boolean | { min: number; max: number }
 }
 
 export type ControlSpec = (
@@ -62,8 +76,13 @@ export interface SpaceTypeEffect {
   controls: ControlSpec[]
   /** Build the scene root. Called when the effect or any structural param changes. */
   buildScene(three: typeof THREE, params: Params, textTexture: THREE.Texture, env?: BuildEnv): THREE.Object3D
-  /** Advance the existing scene to normalized loop time t01. Pure in t01. */
-  update(t01: number, params: Params): void
+  /** Advance the existing scene to normalized loop time t01. Pure in t01.
+   *  `root` is the engine's currently-mounted scene root (the one this effect's buildScene
+   *  returned for this engine/key). Effects that keep per-scene state MUST stash it on
+   *  `root.userData` in buildScene and read it back from here — module-level state is shared
+   *  across concurrent engines (card preview + headless frame source) and cached roots, so it
+   *  freezes whichever surface didn't build last. Optional for effects that hold no state. */
+  update(t01: number, params: Params, root?: THREE.Object3D): void
   /** Keys read live in update() each frame (vertex/uniform/transform params). Changing one
    *  should NOT trigger a structural rebuild. Omit → every key is treated as structural. */
   liveKeys?: string[]

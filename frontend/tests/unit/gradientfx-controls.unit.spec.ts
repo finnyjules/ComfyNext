@@ -3,6 +3,7 @@ import { gradientAgentControls } from '../../app/lib/gradientfx/agentControls'
 import { defaultConfig } from '../../app/lib/gradientfx/randomize'
 import { makeConfigParams } from '../../app/lib/agent/configParams'
 import { ensureConfigDefaults } from '~/lib/gradientfx/types'
+import { GRADIENT_CONTROLS, GRADIENT_SECTIONS, visibleGradientControls } from '../../app/lib/gradientfx/controls'
 
 /**
  * Characterization tests. These pin the CURRENT output of gradientAgentControls
@@ -94,4 +95,48 @@ describe('gradientAgentControls integrity', () => {
       }
     })
   }
+})
+
+describe('GRADIENT_CONTROLS schema integrity', () => {
+  it('has unique keys', () => {
+    const keys = GRADIENT_CONTROLS.map((c) => c.key)
+    expect(new Set(keys).size).toBe(keys.length)
+  })
+
+  it('every control belongs to a declared section', () => {
+    for (const c of GRADIENT_CONTROLS) {
+      expect(GRADIENT_SECTIONS, `${c.key} group "${c.group}"`).toContain(c.group)
+    }
+  })
+
+  it('every select default is one of its own options', () => {
+    for (const c of GRADIENT_CONTROLS) {
+      if (c.kind !== 'select') continue
+      expect(c.options, `${c.key} options`).toContain(c.default)
+    }
+  })
+
+  it('every slider keeps the inert default of 0', () => {
+    for (const c of GRADIENT_CONTROLS) {
+      if (c.kind !== 'slider') continue
+      expect(c.default, `${c.key} default`).toBe(0)
+    }
+  })
+
+  it('visibleGradientControls only returns members of GRADIENT_CONTROLS or synthesized colour controls', () => {
+    // Colour controls have runtime cardinality (one per gradient stop / mesh point) and
+    // are deliberately NOT in the static GRADIENT_CONTROLS array — see the "Colours:
+    // runtime cardinality" comment in controls.ts. Allow that documented pattern through.
+    const all = new Set(GRADIENT_CONTROLS.map((c) => c.key))
+    const colourKey = /^layer\.(color\.stops|mesh\.points)\.\d+\.color$/
+    for (const c of visibleGradientControls(defaultConfig() as any)) {
+      expect(all.has(c.key) || colourKey.test(c.key), `${c.key} not in GRADIENT_CONTROLS`).toBe(true)
+    }
+  })
+
+  it('declares Shape controls that are withheld from the agent', () => {
+    const shape = GRADIENT_CONTROLS.filter((c) => c.group === 'Shape')
+    expect(shape.length).toBeGreaterThan(0)
+    for (const c of shape) expect((c as any).agent, `${c.key}`).toBe(false)
+  })
 })
