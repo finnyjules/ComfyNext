@@ -328,6 +328,25 @@ The user sees a gradient instead of a warped gradient — never an empty shape.
    Not indicated on this evidence: approach C. The readback is bounded, linear, and the gate
    passes 4.4×. C becomes the answer if a real surface in Task 4/6 confirms ~3.8 ms/render
    *without* the harness overhead, which would put a 4-field frame at half its budget on fills.
+
+   **MEASURED ON A REAL SURFACE (Task 4) — the harness was overstating, and the ceiling is
+   comfortable after all.** A live Space Type node, turntable effect, forced-sync measurement:
+
+   | shader fills on the node | cost per frame |
+   |---|---|
+   | 1 | **1.35 ms** |
+   | 2 | **2.99 ms** |
+
+   That is roughly **a third** of the bench's 3.2–4.1 ms per render, confirming the suspicion
+   that the harness's own N textured quads and N texture uploads — work no real surface does
+   per fill — were inflating the figure. At ~1.4 ms per fill, `LIVE_FIELD_CEILING = 4` costs
+   about 6 ms of a 33 ms frame rather than the 13–15 ms the bench implied. **The ceiling stays
+   at 4 and is no longer boundary-tight.** Approach C is not indicated; this closes that
+   question rather than deferring it again.
+
+   Prefer these numbers over the bench's when reasoning about cost. The bench remains the right
+   tool for *comparative* work (regimes, batching, cache behaviour) but overstates absolute
+   per-fill cost by roughly 3×.
 2. **The 28-shader `uFillAnchor` change** is the largest chunk. It is mechanical rather than a
    design problem, and is good parallel subagent work — but it is 28 files touching live visual
    output, so golden coverage matters before it starts.
