@@ -4,11 +4,15 @@
     <p class="note">
       Drives <code>beginFieldFrame</code> + <code>resolveField</code> (<code>~/lib/shaderfill/field</code>)
       instead of calling shaderFx directly — the same descriptor-batched cache every real
-      surface will go through. shaderFx renders a field into its own WebGL2 context,
-      field.ts blits it into a per-descriptor 2D canvas (cached by <code>fieldKey</code>),
-      which gets re-blitted here into a <code>THREE.CanvasTexture</code> on a quad in a
-      SEPARATE three.js renderer. Answers both "how many live 512² fields can we afford
-      per frame?" and "does the cache actually collapse identical descriptors to one render?"
+      surface will go through. shaderFx renders a field into its own WebGL2 context; field.ts
+      blits it ONCE into its own persistent, cached 2D canvas (by <code>fieldKey</code>) and
+      returns that canvas. This bench binds the returned canvas DIRECTLY as the
+      <code>THREE.CanvasTexture</code> image source on a quad in a SEPARATE three.js renderer —
+      no second copy. (An earlier revision copied it again into a bench-owned canvas first;
+      that measured as the dominant cost of a ~4x regression and was removed — see
+      <code>resolveField</code>'s ownership-contract doc in field.ts.) Answers both "how many
+      live 512² fields can we afford per frame?" and "does the cache actually collapse
+      identical descriptors to one render?"
     </p>
 
     <div class="controls">
@@ -29,7 +33,7 @@
       <div class="stat"><span class="k">effect</span><span class="v">{{ effectId || '—' }}</span></div>
       <div class="stat"><span class="k">frame (wall, 120f avg)</span><span class="v">{{ stats.wallMs.toFixed(2) }} ms</span></div>
       <div class="stat"><span class="k">cpu submit (120f avg)</span><span class="v">{{ stats.cpuMs.toFixed(2) }} ms</span></div>
-      <div class="stat"><span class="k">blit (120f avg)</span><span class="v">{{ stats.blitMs.toFixed(2) }} ms</span></div>
+      <div class="stat"><span class="k">bind (120f avg)</span><span class="v">{{ stats.bindMs.toFixed(2) }} ms</span></div>
       <div class="stat"><span class="k">fps (wall)</span><span class="v" :class="{ bad: stats.fps > 0 && stats.fps < 30 }">{{ stats.fps.toFixed(1) }}</span></div>
     </div>
 
@@ -49,15 +53,22 @@
         rAF/vsync-independent path — 60 forced-sync iterations per field count (10 discarded as
         warmup), works even when this pane is hidden/backgrounded. `t` advances one host frame
         per iteration, so every iteration lands on a fresh cache bucket and must re-render (a
-        static `t` would cache-hit after iteration 1 and measure lookups, not GPU cost). Every
-        row is tagged <code>mode: 'distinct' | 'shared'</code> so a number is never read without
-        its regime, and carries the actual <code>renders</code> count for its timed iterations
-        (from field.ts's <code>fieldStats()</code>) plus <code>msPerRender</code> — total timed
-        time ÷ actual renders, which means the same thing in both regimes, unlike
-        <code>msPerField</code>. This button reads the checkbox above; headless callers pass the
-        regime explicitly — <code>window.__benchSweep({ distinct: true })</code> reproduces Task
-        0's per-field GPU cost, <code>{ distinct: false }</code> measures the batched/shared cost
-        (fields legitimately collapse toward 1 render/iteration), and a bare
+        static `t` would cache-hit after iteration 1 and measure lookups, not GPU cost). Each
+        field's <code>resolveField</code> result is bound DIRECTLY as its texture's image source
+        (no intermediate copy — see the note above), then a single-pixel <code>getImageData</code>
+        readback on THAT SAME canvas forces it to materialise — necessary because shaderFx
+        renders on its own separate WebGL2 context, so this sweep's own
+        <code>gl.finish()</code> (which only syncs the THREE renderer's context) doesn't wait for
+        it by itself; skipping this was tried and measured a ~20x-too-fast, broken reading. Every
+        row is tagged
+        <code>mode: 'distinct' | 'shared'</code> so a number is never read without its regime,
+        and carries the actual <code>renders</code> count for its timed iterations (from
+        field.ts's <code>fieldStats()</code>) plus <code>msPerRender</code> — total timed time ÷
+        actual renders, which means the same thing in both regimes, unlike <code>msPerField</code>.
+        This button reads the checkbox above; headless callers pass the regime explicitly —
+        <code>window.__benchSweep({ distinct: true })</code> reproduces Task 0's per-field GPU
+        cost, <code>{ distinct: false }</code> measures the batched/shared cost (fields
+        legitimately collapse toward 1 render/iteration), and a bare
         <code>window.__benchSweep()</code> defaults to whatever this checkbox currently shows.
       </span>
     </div>
@@ -78,24 +89,13 @@
       being re-rasterised on the CPU every single frame.
     </p>
 
-    <p class="pass-note">
-      Canvas-pool safety proof is exposed as <code>window.__benchPoolCheck()</code>: renders one
-      descriptor, forces 39 more DISTINCT ones through (guaranteeing the first gets evicted and
-      its output canvas recycled into the pool for later reuse), then renders the FIRST descriptor
-      again. A deterministic shader with fixed params/time must produce bit-identical pixels both
-      times — if a recycled canvas leaked stale content from whatever it held in between, this
-      would fail. Also asserts the second render was a genuine cache MISS (not a lucky un-evicted
-      hit), so the check proves what it claims to. Needs a DOM (canvas pixel readback), so it is
-      bench-verified rather than unit-tested.
-    </p>
-
     <p v-if="sweepError" class="sweep-error">sweep error: {{ sweepError }}</p>
 
     <table v-if="sweepRows && sweepRows.length" class="sweep-table">
       <thead>
         <tr>
           <th>fields</th><th>mode</th><th>ms / iteration</th><th>ms / field</th><th>ms / render</th>
-          <th>blit ms</th><th>renders</th><th>tile hits</th><th>tile misses</th>
+          <th>bind ms</th><th>renders</th><th>tile hits</th><th>tile misses</th>
         </tr>
       </thead>
       <tbody>
@@ -105,7 +105,7 @@
           <td>{{ r.msPerIteration.toFixed(2) }}</td>
           <td>{{ r.msPerField.toFixed(2) }}</td>
           <td>{{ r.msPerRender.toFixed(2) }}</td>
-          <td>{{ r.blitMs.toFixed(2) }}</td>
+          <td>{{ r.bindMs.toFixed(2) }}</td>
           <td>{{ r.renders }}</td>
           <td>{{ r.tileHits }}</td>
           <td>{{ r.tileMisses }}</td>
@@ -151,7 +151,7 @@ const fieldsCount = ref<number>(0)
 const distinct = ref(false)
 const status = ref('loading catalog…')
 const effectId = ref('')
-const stats = ref({ cpuMs: 0, blitMs: 0, wallMs: 0, fps: 0 })
+const stats = ref({ cpuMs: 0, bindMs: 0, wallMs: 0, fps: 0 })
 /** Wall fps at fields=0, captured once (the first time the rolling window fills at
  *  fields=0 post-warmup). Never recaptured — later 0-field visits don't overwrite it. */
 const baselineFps = ref<number | null>(null)
@@ -182,19 +182,22 @@ let raf = 0
 let startedAt = 0
 
 interface FieldState {
-  canvas2d: HTMLCanvasElement
-  ctx2d: CanvasRenderingContext2D
   texture: THREE.CanvasTexture
   mesh: THREE.Mesh
 }
 const fieldStates: FieldState[] = []
 
-// CPU-submit timing (command-submission cost — how long shaderFx.render/drawImage
-// take to RETURN, not how long the GPU takes to finish). Useful for telling "we're
-// submitting too much work" apart from "the GPU can't keep up", but both render()
-// and drawImage() are async on the GPU side, so this must NOT drive fps.
+// CPU-submit timing (command-submission cost — how long shaderFx.render/the texture
+// assignment take to RETURN, not how long the GPU takes to finish). Useful for
+// telling "we're submitting too much work" apart from "the GPU can't keep up", but
+// render() is async on the GPU side, so this must NOT drive fps.
 const frameTimes: number[] = []
-const blitTimes: number[] = []
+// `bindTimes` used to time a drawImage+getImageData COPY into a bench-owned canvas
+// (measurement overhead, not architecture — see the top-of-page note). Now times
+// the trivial `texture.image = out; texture.needsUpdate = true` assignment, which
+// should be ~0 — kept as a metric specifically so that near-zero number is visible
+// and comparable against what copying used to cost.
+const bindTimes: number[] = []
 // Wall-clock rAF-to-rAF deltas — the only honest frame-cost signal, since the
 // browser can't start the next frame until the current one's GPU work is done.
 const wallTimes: number[] = []
@@ -219,7 +222,7 @@ function avg(arr: number[]): number {
 function resetWarmup(): void {
   warmupRemaining = WARMUP_FRAMES
   frameTimes.length = 0
-  blitTimes.length = 0
+  bindTimes.length = 0
   wallTimes.length = 0
 }
 
@@ -253,17 +256,18 @@ watch(fieldsCount, () => {
 
 function buildFieldStates(): void {
   for (let i = 0; i < MAX_FIELDS; i++) {
-    const c = document.createElement('canvas')
-    c.width = FIELD_SIZE
-    c.height = FIELD_SIZE
-    const ctx = c.getContext('2d')
-    if (!ctx) continue
-    const texture = new THREE.CanvasTexture(c)
+    // Tiny placeholder just to satisfy THREE.CanvasTexture's constructor — it never
+    // gets drawn into or displayed. Every real frame reassigns `.image` to whatever
+    // `resolveField` returns (see loop()/runSweep()) and sets `needsUpdate`, which is
+    // the production consumption pattern: bind field.ts's canvas directly, no copy.
+    const placeholder = document.createElement('canvas')
+    placeholder.width = 1; placeholder.height = 1
+    const texture = new THREE.CanvasTexture(placeholder)
     const mat = new THREE.MeshBasicMaterial({ map: texture })
     const geo = new THREE.PlaneGeometry(1, 1)
     const mesh = new THREE.Mesh(geo, mat)
     scene!.add(mesh)
-    fieldStates.push({ canvas2d: c, ctx2d: ctx, texture, mesh })
+    fieldStates.push({ texture, mesh })
   }
 }
 
@@ -296,11 +300,11 @@ function loop(now: number): void {
   raf = requestAnimationFrame(loop)
   if (!effectDef || !renderer || !scene || !camera) return
 
-  // Wall-clock rAF-to-rAF delta — the ONLY honest frame-cost signal. Both
-  // shaderFx.render() and drawImage() submit GPU work asynchronously, so timing
-  // around them (below) measures command submission, not frame cost. The browser
-  // can't schedule the next rAF until the current frame's GPU work is actually
-  // done, so if GPU work exceeds budget, this delta is what stretches.
+  // Wall-clock rAF-to-rAF delta — the ONLY honest frame-cost signal. shaderFx.render()
+  // submits GPU work asynchronously, so timing around it (below) measures command
+  // submission, not frame cost. The browser can't schedule the next rAF until the
+  // current frame's GPU work is actually done, so if GPU work exceeds budget, this
+  // delta is what stretches.
   if (lastNow != null) {
     const wallDelta = now - lastNow
     if (warmupRemaining <= 0) pushRolling(wallTimes, wallDelta)
@@ -310,7 +314,7 @@ function loop(now: number): void {
   const t0 = performance.now()
   const timeSec = (now - startedAt) / 1000
   const n = fieldsCount.value
-  let blitAccum = 0
+  let bindAccum = 0
 
   // One beginFieldFrame call per rendered frame, covering every field this frame
   // wants — this is what lets the live/frozen ceiling apply per-frame rather than
@@ -325,15 +329,25 @@ function loop(now: number): void {
     const st = fieldStates[i]
     if (!st || !out) continue
     const tb0 = performance.now()
-    st.ctx2d.drawImage(out, 0, 0)
-    blitAccum += performance.now() - tb0
+    // No copy: bind resolveField's canvas DIRECTLY as the texture's image source —
+    // see field.ts's resolveField ownership-contract doc. This IS the production
+    // consumption pattern — deliberately NO forced-sync readback here (unlike
+    // runSweep's benchmark-only equivalent below): forcing a synchronous GPU wait
+    // every live frame would slow down real interactive rendering for no reason a
+    // real consumer needs, since the browser's own pipeline/vsync handles
+    // presentation timing. So this stat (`bindMs` in the live panel) measures only
+    // the trivial property assignment and should read near-zero — it is NOT
+    // comparable to the sweep table's `bindMs` column, which deliberately includes
+    // a forced sync for honest measurement.
+    st.texture.image = out
     st.texture.needsUpdate = true
+    bindAccum += performance.now() - tb0
     st.mesh.rotation.y += 0.012
   }
 
   renderer.render(scene, camera)
 
-  // CPU submit time only — how long it took shaderFx.render/drawImage to RETURN,
+  // CPU submit time only — how long it took shaderFx.render/the bind loop to RETURN,
   // not how long the GPU took to finish. Still useful for isolating "we're
   // submitting too much work" from "the GPU can't keep up", but must not drive fps.
   const cpuMs = performance.now() - t0
@@ -342,14 +356,14 @@ function loop(now: number): void {
     warmupRemaining--
   } else {
     pushRolling(frameTimes, cpuMs)
-    pushRolling(blitTimes, blitAccum)
+    pushRolling(bindTimes, bindAccum)
   }
 
   const wallAvg = avg(wallTimes)
   const wallFps = wallAvg > 0 ? 1000 / wallAvg : 0
   stats.value = {
     cpuMs: avg(frameTimes),
-    blitMs: avg(blitTimes),
+    bindMs: avg(bindTimes),
     wallMs: wallAvg,
     fps: wallFps,
   }
@@ -382,7 +396,21 @@ function loop(now: number): void {
  *  batched 'shared' numbers while believing they were the animated worst case. */
 interface SweepRow {
   fields: number; mode: 'distinct' | 'shared'
-  msPerIteration: number; msPerField: number; msPerRender: number; blitMs: number
+  msPerIteration: number; msPerField: number; msPerRender: number
+  /** Time spent binding + forcing this field's result to materialise: the (trivial)
+   *  `texture.image = out; texture.needsUpdate = true` assignment, PLUS a
+   *  single-pixel `getImageData` readback on `out` itself (not a copy into a second
+   *  canvas — see the forced-sync comment where this is measured, in `runSweep`).
+   *  That readback is NOT optional: shaderFx renders on its own separate WebGL2
+   *  context, so this sweep's `gl.finish()` (which only syncs the THREE renderer's
+   *  own context) doesn't wait for it on its own — omitting the readback was tried
+   *  and measured a ~20x-too-fast, methodologically broken number. This is smaller
+   *  than what the OLD copy-into-a-second-canvas step cost (15-23ms at 4 fields,
+   *  ~68% of iteration time — see the Task 3 report's earlier addenda) but is NOT
+   *  ~0 either, unlike the live on-screen loop()'s equivalent stat (which skips this
+   *  forced sync entirely, matching what production actually does — see loop()'s
+   *  own comment). */
+  bindMs: number
   renders: number
   /** field.ts's SEPARATE input-tile cache (keyed on input+size, not time) — the
    *  evidence that an animated field's time-invariant `spec.input` is being
@@ -458,9 +486,9 @@ async function runSweep(opts: SweepOptions = {}): Promise<SweepRow[] | { error: 
   for (const n of FIELD_OPTIONS) {
     clearFieldCache()
     const iterMs: number[] = []
-    const blitMsArr: number[] = []
+    const bindMsArr: number[] = []
     // Snapshot fieldStats() at the warmup/timed boundary so every reported count
-    // covers exactly the same population as msPerIteration/blitMs (the post-warmup
+    // covers exactly the same population as msPerIteration/bindMs (the post-warmup
     // iterations only) — a row's counts and its timings can never silently refer to
     // different work.
     let rendersAtTimedStart = 0
@@ -478,7 +506,7 @@ async function runSweep(opts: SweepOptions = {}): Promise<SweepRow[] | { error: 
       // Everything inside this loop body is synchronous — no await — so the
       // timer below reflects real work, not event-loop scheduling.
       const t0 = performance.now()
-      let blitAccum = 0
+      let bindAccum = 0
       const timeSec = iter / BENCH_FPS
 
       const requests: FieldRequest[] = Array.from({ length: n }, (_, i) => ({
@@ -491,13 +519,29 @@ async function runSweep(opts: SweepOptions = {}): Promise<SweepRow[] | { error: 
         const st = fieldStates[i]
         if (!st || !out) continue
         const tb0 = performance.now()
-        st.ctx2d.drawImage(out, 0, 0)
-        // Force the 2D canvas to actually materialise the blit now — otherwise
-        // this drawImage is just another async submission and we're back to
-        // measuring nothing.
-        st.ctx2d.getImageData(0, 0, 1, 1)
-        blitAccum += performance.now() - tb0
+        // No copy: bind resolveField's canvas DIRECTLY as the texture's image
+        // source (the production consumption pattern — see resolveField's ownership
+        // doc). The read below is NOT a copy — no second canvas, no drawImage into a
+        // separate destination — it is a forced-materialise readback on `out` itself,
+        // and it is NOT optional measurement overhead:
+        //
+        // shaderFx renders on its OWN WebGL2 context, separate from this bench's
+        // THREE.WebGLRenderer context. `gl.finish()` below only blocks until commands
+        // submitted to the context it's called ON have completed — it has no
+        // visibility into shaderFx's separate context's queue. An earlier version of
+        // this fix dropped the forced sync entirely (reasoning that the texture
+        // upload inside renderer.render() would force resolution as a side effect),
+        // and measured ~0.25ms/render — a ~20x drop that turned out to be a false
+        // reading: the sweep was measuring command SUBMISSION, not completed work,
+        // the exact trap the file's own long-standing comments already warn about.
+        // Re-adding this single-pixel readback (on the canvas we already have, not a
+        // new one) forces shaderFx's context to actually finish before we time it,
+        // and the number came back up to something plausible. Confirmed via a live
+        // A/B on the running bench before keeping this — see the Task 3 report.
+        st.texture.image = out
         st.texture.needsUpdate = true
+        out.getContext('2d')!.getImageData(0, 0, 1, 1)
+        bindAccum += performance.now() - tb0
       }
 
       rendererInst.render(sceneInst, cameraInst)
@@ -507,12 +551,12 @@ async function runSweep(opts: SweepOptions = {}): Promise<SweepRow[] | { error: 
       const ms = performance.now() - t0
       if (iter >= SWEEP_WARMUP) {
         iterMs.push(ms)
-        blitMsArr.push(blitAccum)
+        bindMsArr.push(bindAccum)
       }
     }
 
     const msPerIteration = avg(iterMs)
-    const blitMs = avg(blitMsArr)
+    const bindMs = avg(bindMsArr)
     if (n === 0) baselineMs = msPerIteration
     const msPerField = n === 0 ? 0 : (msPerIteration - baselineMs) / n
     const finalStats = fieldStats()
@@ -523,7 +567,7 @@ async function runSweep(opts: SweepOptions = {}): Promise<SweepRow[] | { error: 
     // by the actual render count — checkbox/regime-independent, unlike msPerField.
     const totalTimedMs = iterMs.reduce((a, b) => a + b, 0)
     const msPerRender = renders > 0 ? totalTimedMs / renders : 0
-    rows.push({ fields: n, mode, msPerIteration, msPerField, msPerRender, blitMs, renders, tileHits, tileMisses })
+    rows.push({ fields: n, mode, msPerIteration, msPerField, msPerRender, bindMs, renders, tileHits, tileMisses })
 
     // Yield ONLY between field counts (never inside the timed region above) so a
     // ~5-20s sweep doesn't block the page/tab for one long uninterrupted stretch.
@@ -536,12 +580,12 @@ async function runSweep(opts: SweepOptions = {}): Promise<SweepRow[] | { error: 
 /**
  * Content probe (controller verification, not part of the benchmark).
  *
- * The sweep's cost is dominated by the blit, and a blit of a BLANK canvas costs
- * exactly as much as a blit of a real one. So the timings alone cannot tell a
- * working pipeline from one where resolveField silently produced nothing. This runs
- * a single field through resolveField and reports pixel statistics for both the
- * input fill it rasterised and the 2D canvas it was blitted into — non-zero
- * `spread` on both means real work.
+ * A blank canvas costs roughly as much to render/bind as a real one, so the timings
+ * alone cannot tell a working pipeline from one where resolveField silently produced
+ * nothing. This runs a single field through resolveField and reports pixel
+ * statistics for both the input fill it rasterised and the canvas it returned —
+ * inspected DIRECTLY, no copy (see the ownership-contract doc on resolveField) —
+ * non-zero `spread` on both means real work.
  */
 function runProbe(): unknown {
   const def = effectDef, st = fieldStates[0]
@@ -552,7 +596,6 @@ function runProbe(): unknown {
   beginFieldFrame([req])
   const out = resolveField(req)
   if (!out) return { error: 'resolveField returned null' }
-  st.ctx2d.drawImage(out, 0, 0)
 
   // Independently rebuild the same input tile resolveField rasterised internally,
   // purely for this probe's own reporting (resolveField doesn't expose it).
@@ -574,7 +617,7 @@ function runProbe(): unknown {
   return {
     effect: def.id,
     inputFill: stats(inputTile, 'input fill (shader source)'),
-    blitted: stats(st.canvas2d, 'field canvas (after blit)'),
+    field: stats(out, 'field canvas (resolveField result, direct — no copy)'),
   }
 }
 
@@ -636,80 +679,13 @@ function runBatch(): unknown {
   }
 }
 
-/** Sparse, deterministic pixel sample for comparing two renders without paying for a
- *  full getImageData compare — prime stride so it doesn't alias any regular pattern
- *  the shader might produce. Same technique as runProbe's `stats()` sampling below. */
-function samplePixels(c: HTMLCanvasElement): number[] {
-  const ctx = c.getContext('2d')!
-  const d = ctx.getImageData(0, 0, c.width, c.height).data
-  const out: number[] = []
-  for (let i = 0; i < d.length; i += 4 * 977) out.push(d[i]!, d[i + 1]!, d[i + 2]!, d[i + 3]!)
-  return out
-}
-
-/**
- * Canvas-pool safety proof (controller verification — field.ts's `acquireCanvas`
- * reuses evicted output canvases rather than allocating fresh on every cache miss;
- * a recycled canvas that isn't fully cleared before reuse would silently show one
- * field's pixels for a different descriptor, the same wrong-pixels class this
- * feature has hit before). Needs a DOM (canvas pixel readback) — not unit-testable,
- * verified here instead.
- *
- * 40 requests (field.ts's CACHE_MAX is documented as LIVE_FIELD_CEILING*8 = 32, so
- * 40 distinct descriptors guarantees several evictions) all called directly against
- * `resolveField` with NO `beginFieldFrame` in between — `clearFieldCache()` resets
- * `liveKeys` to empty, and `resolveField` treats an empty `liveKeys` as "everything
- * is live" (see field.ts), so this bypasses the live/frozen ceiling entirely and just
- * stresses the cache+pool mechanism directly.
- *
- * Descriptor 0 is rendered, then 39 DISTINCT others push it out of the cache (its
- * canvas gets returned to the pool), then descriptor 0 is rendered again. Two
- * independent renders of the identical descriptor+time, through a deterministic
- * shader (fixed u_seed, fixed params/time), MUST be pixel-identical — if the second
- * render reused a pooled canvas that wasn't cleared, the sample would show whatever
- * churned through it last instead.
- */
-function runPoolCheck(): unknown {
-  if (!effectDef) return { error: 'not ready' }
-  clearFieldCache()
-
-  const n = 40
-  const t = 0.5
-  const mkReq = (i: number): FieldRequest => ({
-    spec: { effectId: effectDef!.id, params: paramOverridesForIndex(i, n), anchor: 'object', speed: 1, input: baseFillSpec },
-    w: FIELD_SIZE, h: FIELD_SIZE, t, fps: BENCH_FPS,
-  })
-
-  const first = resolveField(mkReq(0))
-  if (!first) return { error: 'resolveField returned null on first render' }
-  const firstPixels = samplePixels(first)
-
-  const rendersAfterFirst = fieldStats().renders
-  // Churn: n-1 more distinct descriptors — guaranteed > CACHE_MAX (32), so
-  // descriptor 0 (the FIRST inserted) is evicted and its canvas recycled.
-  for (let i = 1; i < n; i++) resolveField(mkReq(i))
-  const rendersAfterChurn = fieldStats().renders
-
-  const second = resolveField(mkReq(0))
-  if (!second) return { error: 'resolveField returned null on second render' }
-  const rendersAfterSecond = fieldStats().renders
-  // Must be a genuine cache MISS — if `renders` didn't increase here, descriptor 0
-  // was never evicted and this check proves nothing about pool safety.
-  const wasEvicted = rendersAfterSecond > rendersAfterChurn
-
-  const secondPixels = samplePixels(second)
-  const pixelsMatch = firstPixels.length === secondPixels.length
-    && firstPixels.every((v, idx) => v === secondPixels[idx])
-
-  clearFieldCache()
-  return {
-    n,
-    rendersAfterFirst, rendersAfterChurn, rendersAfterSecond,
-    wasEvicted,     // must be true, or this check didn't actually exercise the pool
-    pixelsMatch,    // the actual pool-safety proof
-    pass: wasEvicted && pixelsMatch,
-  }
-}
+// `samplePixels`/`runPoolCheck` (and `window.__benchPoolCheck`) were removed along
+// with field.ts's output-canvas pool: the pool measured no benefit and made direct
+// texture binding unsafe (a consumer holding a reference across an LRU eviction
+// could have its texture silently start showing a different descriptor's pixels the
+// moment the recycled canvas got reused) — see field.ts's `resolveField` doc and the
+// Task 3 report's later addenda for the full history. Nothing pools evicted canvases
+// anymore, so there is nothing left for that check to exercise.
 
 async function onRunSweepClick(): Promise<void> {
   sweepRunning.value = true
@@ -765,7 +741,6 @@ onMounted(async () => {
     // values) so cache behaviour can be inspected from the console mid-session,
     // e.g. between manual control changes, without needing a whole sweep/batch run.
     ;(window as any).__benchFieldStats = fieldStats
-    ;(window as any).__benchPoolCheck = runPoolCheck
 
     startedAt = performance.now()
     raf = requestAnimationFrame(loop)
@@ -783,7 +758,6 @@ onBeforeUnmount(() => {
   delete (window as any).__benchProbe
   delete (window as any).__benchBatch
   delete (window as any).__benchFieldStats
-  delete (window as any).__benchPoolCheck
   clearFieldCache()
   if (raf) cancelAnimationFrame(raf)
   raf = 0

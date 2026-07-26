@@ -76,60 +76,17 @@ let liveKeys = new Set<string>()
 let stats: FieldStats = { renders: 0, hits: 0, misses: 0, tileHits: 0, tileMisses: 0 }
 
 /**
- * Recycled OUTPUT canvases (the 2D canvas each cache MISS blits `shaderFx`'s result
- * into — see `resolveField`), returned here by `cache`'s LRU eviction instead of being
- * dropped. An animated field misses `cache` every frame by construction (its key
- * changes every quantized time step), so without this every live field allocated a
- * fresh `document.createElement('canvas')` 30-60x/second — one of the two per-miss
- * allocations that made the field-module path ~4x more expensive than Task 0's direct
- * `shaderFx` path measured (the other was re-rasterising the input tile, see
- * `tileCache` below). Bounded to CACHE_MAX so combined pool+cache memory stays the
- * same documented order of magnitude as `cache` alone — the pool can only ever hold
- * canvases `cache` itself evicted, so it never grows unboundedly on its own, but the
- * cap guards against transient bursts where eviction outpaces reuse. */
-const canvasPool: HTMLCanvasElement[] = []
-const POOL_MAX = CACHE_MAX
-
-/** Reuse a pooled canvas of MATCHING size if one exists (a mismatched size gets no
- *  benefit from reuse — resizing a canvas reallocates its backing bitmap exactly like
- *  `document.createElement` would), else allocate fresh. Reused canvases are reset via
- *  the `width` re-assignment below, NOT `clearRect`: per the HTML canvas spec, setting
- *  `.width` — even to its current value — always discards and reallocates the bitmap,
- *  which is a stronger guarantee than `clearRect` (also resets any 2D context state
- *  left over from whatever last drew into it). This MUST run before this canvas is
- *  reused for a different descriptor — skipping it would let one field's pixels leak
- *  into another's output, the same silent-wrong-pixels class this feature has hit
- *  three times already (see the Task 3 report). Verified live via
- *  `window.__benchPoolCheck()` on the bench page (needs a DOM, not unit-testable). */
-function acquireCanvas(w: number, h: number): HTMLCanvasElement {
-  for (let i = canvasPool.length - 1; i >= 0; i--) {
-    const c = canvasPool[i]!
-    if (c.width === w && c.height === h) {
-      canvasPool.splice(i, 1)
-      c.width = w // reassignment (even to the same value) resets the bitmap — see doc above
-      return c
-    }
-  }
-  const c = document.createElement('canvas')
-  c.width = w; c.height = h
-  return c
-}
-
-function releaseCanvas(c: HTMLCanvasElement): void {
-  if (canvasPool.length < POOL_MAX) canvasPool.push(c)
-}
-
-/**
  * Cache of the RASTERISED INPUT TILE (`fillTileBox(effectiveTileFill(spec.input), w,
  * h)`), keyed on the input fill + size — deliberately NOT on time, effect, params, or
  * anchor, unlike `cache` above. `spec.input` is time-invariant: an animated field's
  * `t` changes every frame but its input fill almost never does, yet without this it
- * was being fully re-rasterised on the CPU every single frame regardless — the bigger
- * of the two per-miss allocations behind the ~4x regression this fixes (see
- * `canvasPool` above for the other). Built once per distinct (input, size) pair and
- * reused for the entire animation, across every consumer sharing that input — the
- * same batching principle `cache`/`fieldKey` apply to the full render, just applied
- * one layer down to the part that's actually constant.
+ * was being fully re-rasterised on the CPU every single frame regardless. Built once
+ * per distinct (input, size) pair and reused for the entire animation, across every
+ * consumer sharing that input — the same batching principle `cache`/`fieldKey` apply
+ * to the full render, just applied one layer down to the part that's actually
+ * constant. 100% hit rate in practice (see the Task 3 report's sweep numbers) — cheap
+ * and correct, kept even after the output-canvas pool (which measured zero benefit
+ * and was removed, see `resolveField`'s doc) was taken back out.
  *
  * Sized the same as `cache` for the same reason (a small multiple of
  * LIVE_FIELD_CEILING, same memory-order-of-magnitude justification) — see CACHE_MAX
@@ -195,6 +152,45 @@ export function beginFieldFrame(requests: FieldRequest[]): { frozenCount: number
   return { frozenCount: frozen.length }
 }
 
+/**
+ * Resolve a `FieldRequest` to pixels — the ONLY function in the product that turns a
+ * shader fill into a canvas. Returns `null` when the field can't be rendered (effect
+ * not loaded yet, or a WebGL context loss); callers fall back to the input fill.
+ *
+ * OWNERSHIP CONTRACT — read this before consuming the return value, and read it again
+ * before "optimizing" it (Tasks 4, 6, 7 all consume this; none should have to
+ * re-derive it, and getting it wrong is how the ~4x regression in the Task 3 report's
+ * later addenda happened):
+ *
+ *  - The returned `HTMLCanvasElement` is OWNED by this module's field cache. A
+ *    consumer may bind it DIRECTLY as a texture source (e.g. `new
+ *    THREE.CanvasTexture(out)`, or any other GPU upload that reads the canvas) —
+ *    that is the intended, cheap usage.
+ *  - It is NEVER mutated in place to hold a different descriptor's pixels. A cache
+ *    entry, once created, keeps its own canvas for its own key for as long as that
+ *    entry survives an LRU eviction; eviction removes the entry from `cache` and
+ *    stops handing that canvas out for NEW requests, but does not touch the canvas
+ *    itself. A consumer holding a reference from before an eviction keeps a
+ *    perfectly valid, unchanged canvas — normal GC semantics, nothing this module
+ *    does deliberately keeps it alive or recycles it out from under a holder.
+ *  - It remains valid for as long as the consumer holds a reference. Re-resolving
+ *    every frame (calling `resolveField` again with the same or updated `t`) is the
+ *    intended usage, not an escape hatch — for an animated field that's a fresh
+ *    canvas each frame by construction (see `cache`'s doc above); for a frozen or
+ *    cache-hit field it's the SAME canvas object returned again, cheaply.
+ *  - Consumers MUST NOT COPY it (`drawImage` into their own canvas, `getImageData`,
+ *    etc.) as a matter of course. This was tried (an earlier revision had every
+ *    consumer path implicitly copy through the bench's own display canvas) and
+ *    measured as the dominant cost in a ~4x regression against the direct-`shaderFx`
+ *    baseline — copying is exactly the overhead this module exists to let every
+ *    surface avoid paying independently. Bind it directly.
+ *  - A canvas POOL (recycling evicted output canvases for reuse) was tried and
+ *    removed: it measured no benefit, AND it made direct binding actively unsafe — a
+ *    consumer holding a reference across an eviction could have its texture start
+ *    showing a DIFFERENT descriptor's pixels the moment the recycled canvas got
+ *    reused, silently. Do not reintroduce pooling without re-solving that hazard;
+ *    see the Task 3 report for the full history.
+ */
 export function resolveField(req: FieldRequest): HTMLCanvasElement | null {
   const { w, h } = fieldSize(req)
   const { effect, spec } = resolve(req.spec)
@@ -226,21 +222,17 @@ export function resolveField(req: FieldRequest): HTMLCanvasElement | null {
   } catch {
     return null                                    // context loss -> input fill
   }
-  // Reuse a recycled output canvas rather than allocating fresh every miss (an
-  // animated field misses every frame by construction) — see `acquireCanvas`.
-  const out = acquireCanvas(w, h)
+  // A fresh canvas per miss, NOT pooled/recycled — see the ownership contract above.
+  // An evicted entry's canvas is simply dropped (left for GC); a consumer holding a
+  // reference to it keeps a valid, unchanged canvas, which is what makes direct
+  // texture binding safe.
+  const out = document.createElement('canvas')
+  out.width = w; out.height = h
   out.getContext('2d')!.drawImage(rendered, 0, 0)    // must precede the next shaderFx call
 
   if (cache.size >= CACHE_MAX) {
     const oldest = cache.keys().next().value          // Map preserves insertion order
-    if (oldest) {
-      const evicted = cache.get(oldest)
-      cache.delete(oldest)
-      // Return the evicted canvas to the pool instead of dropping it — this is the
-      // other half of what makes acquireCanvas() above a real recycling loop rather
-      // than just moving the allocation from "every miss" to "every eviction".
-      if (evicted) releaseCanvas(evicted)
-    }
+    if (oldest) cache.delete(oldest)
   }
   cache.set(key, out)
   return out
@@ -249,7 +241,6 @@ export function resolveField(req: FieldRequest): HTMLCanvasElement | null {
 export function clearFieldCache(): void {
   cache.clear()
   tileCache.clear()
-  canvasPool.length = 0
   liveKeys = new Set()
   stats = { renders: 0, hits: 0, misses: 0, tileHits: 0, tileMisses: 0 }
 }
