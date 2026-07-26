@@ -16,7 +16,7 @@ Legend: **bake** = render/export path · **motion** = animatable · **inspector*
 | Scene3D Studio | ✅ 3-pass + mp4 | ✅ own timeline | ✅ | ❌ | 4,258 |
 | Compositor / Frame | ✅ | ✅ motion clips | ✅ | ✅ commands | 1,667 (+1,041 motion) |
 | Timeline (NLE) | ✅ webm/mp4 + server | ✅ native | ✅ | ❌ | shared/timeline |
-| Gradient Studio | ✅ | ⚠️ 11 shape keys only | ✅ (hand-written) | ✅ descriptor | 2,620 |
+| Gradient Studio | ✅ | ✅ 30 targets, path-based | ✅ (hand-written) | ✅ descriptor | 2,620 |
 | Shader Studio | ✅ | ✅ path tracks | ✅ (data-driven) | ✅ descriptor | 806 + 63 effects |
 | Texture Studio | ✅ | ❌ | ✅ (data-driven) | ✅ commands | 2,041 |
 | Shape Studio | ✅ | ❌ | ✅ | ❌ | 761 |
@@ -31,14 +31,20 @@ Legend: **bake** = render/export path · **motion** = animatable · **inspector*
 | Inpaint / Region | ✅ backend | — | toolbar | ✅ ops | — |
 | Collection (sweeps) | — | — | ✅ | ✅ | backbone |
 
-## The factory metric (Act 1 baseline)
+## The factory metric (Act 1)
 
 Cost for one parameter to be inspectable + agent-drivable + animatable + sweepable:
 
 - **Shader Studio uniform: 1 declaration** (`shader_effects/manifest.json` entry) → all four generated.
-- **Gradient Studio param: 7 sites / 5 files**, range retyped 3×, animation **impossible** (`gradientfx/motion.ts` hardcodes shape keys).
+- **Gradient Studio param: was 7 sites / 5 files**, range retyped 3×, animation **impossible**.
 
-Convergence type already exists: `ControlSpec` (`lib/spacetype/effect.ts`). Sweeps already derive from agent lists (`lib/collection/studioControls.ts`). Missing from the schema: animatability metadata, path-based writes. Known misfits: Texture's colour-role system (`texturefx/roles.ts`), Space Type's scene-sequencing motion model.
+**Act 1, part 1 — LANDED 2026-07-25** (commits `341bbf81e`..`ce07eeaf2`). `lib/gradientfx/controls.ts` is now the single declarative `GRADIENT_CONTROLS` list, and **both** the agent vocabulary (`gradientAgentControls`) and the motion targets (`animatableTargets`) are *derived* from it. Motion moved from `{layer, param}` index targeting to dotted paths, with a migration for saved projects plus a fallback in `applyMotion` itself (the single render choke point, `renderer.ts:156`) so legacy tracks resolve on every path — node card, headless bake, and studio frame source all read the saved blob raw and never call `ensureConfigDefaults`.
+
+**Measured outcome: animatable Gradient parameters went from 11 → 30**, verified live in the running app. `relief.grain`, `focus.blur` and the whole `flow.*` block can animate for the first time.
+
+The schema is a **superset with per-consumer opt-in** (`agent: false` withholds from the agent, `animatable: false` from motion), so declaring a control can never silently widen another capability.
+
+Still to do in Act 1: the generic inspector renderer (Gradient still has 432 lines of hand-written markup), new `ControlSpec` kinds (`segmented`, `repeater`, `custom`), and exposing the 11 now-declared Shape controls to the agent. Known misfits remain: Texture's colour-role system (`texturefx/roles.ts`), Space Type's scene-sequencing motion model.
 
 ## Agent layer
 
