@@ -646,8 +646,13 @@ let _fieldCtx: ShaderFieldFrameCtx = { frameW: 1, frameH: 1, t: 0, fps: 30, base
  *  layer kind, e.g. brush's dpr-scaled bounds crop — to avoid the pre-pass asking
  *  beginFieldFrame for a DIFFERENT key than this function resolves, which would silently
  *  freeze an in-budget fill; see the git history of this comment for that exact bug).
- *  resolveField's own live-request clamp (LIVE_FIELD_PX, ~/lib/shaderfill/field.ts) is
- *  512, so requesting at/above that costs nothing extra even at full-res bake sizes. */
+ *  This is the size we ASK resolveField for, not necessarily the size we GET: it clamps
+ *  any live (non-bake) request to LIVE_FIELD_PX (512, ~/lib/shaderfill/field.ts) — so
+ *  every scale computation below reads the RETURNED canvas's own `.width`/`.height`,
+ *  never `fw`/`fh`. Getting that backwards (scaling by the request instead of the
+ *  clamped result) was a real, shipped bug: the pattern only covered the top-left
+ *  fraction of the box/frame that the clamp ratio implies, transparent beyond it —
+ *  see the git history of this comment. */
 const OBJECT_SHADER_FIELD_PX = 1024
 
 function resolveShaderFill(
@@ -666,11 +671,22 @@ function resolveShaderFill(
   if (!pat) return fill.a
   if (typeof DOMMatrix !== 'undefined' && pat.setTransform) {
     if (frame && _fieldCtx.base) {
+      // ctx.getTransform().inverse() never throws — a singular (zero-scale) matrix
+      // comes back as all-NaN, and setTransform silently no-ops on a non-finite
+      // matrix (leaving the pattern unpositioned), so this degrades gracefully on
+      // its own; the try/catch is just defensive, not load-bearing.
       try {
-        pat.setTransform(ctx.getTransform().inverse().multiply(_fieldCtx.base))
-      } catch { /* singular current transform (zero scale) — leave the pattern unpositioned rather than throw */ }
+        // The field was very likely rendered SMALLER than the frame (resolveField's
+        // live clamp) — canvas.width/height is the size we actually got, so an extra
+        // scale-up by frameW/canvas.width (etc.) stretches it back across the full
+        // frame instead of leaving it covering only a corner of it.
+        pat.setTransform(
+          ctx.getTransform().inverse().multiply(_fieldCtx.base)
+            .scaleSelf(_fieldCtx.frameW / canvas.width, _fieldCtx.frameH / canvas.height),
+        )
+      } catch { /* see comment above — not expected to fire */ }
     } else {
-      pat.setTransform(new DOMMatrix().translateSelf(-bw / 2, -bh / 2).scaleSelf(bw / fw, bh / fh))
+      pat.setTransform(new DOMMatrix().translateSelf(-bw / 2, -bh / 2).scaleSelf(bw / canvas.width, bh / canvas.height))
     }
   }
   return pat
