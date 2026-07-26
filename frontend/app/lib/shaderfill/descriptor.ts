@@ -86,11 +86,12 @@ export function specIdentityKey(spec: ShaderSpec): string {
 /** The catalog stores each param's uniform name WITH the `u_` prefix already applied
  *  (e.g. `"uniform": "u_amount"` in shader_effects/manifest.json) — see EffectParamDef
  *  in ~/lib/shaderfx/types. ShaderSpec.params (and the Task 8 control schema, addressed
- *  as `fill.shader.p.<key>`) is keyed WITHOUT that prefix, so this strips it back off.
- *  Exported (not just used internally) so `~/lib/shaderfill/controls.ts`'s
- *  `derivedShaderFillControls` builds its `fill.shader.p.<key>` keys from the SAME
- *  stripping rule `resolveEffectParams` uses to read `params` back — one definition of
- *  "the unprefixed name", not two that could drift. */
+ *  as `fill.shader.params.<key>` — the real ShaderSpec path, not a reserved namespace)
+ *  is keyed WITHOUT that prefix, so this strips it back off. Exported (not just used
+ *  internally) so `~/lib/shaderfill/controls.ts`'s `derivedShaderFillControls` builds
+ *  its `fill.shader.params.<key>` keys from the SAME stripping rule `resolveEffectParams`
+ *  uses to read `params` back — one definition of "the unprefixed name", not two that
+ *  could drift. */
 export function unprefixedKey(uniform: string): string {
   return uniform.startsWith('u_') ? uniform.slice(2) : uniform
 }

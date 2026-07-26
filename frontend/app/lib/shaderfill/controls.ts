@@ -20,31 +20,35 @@ import { unprefixedKey } from './descriptor'
  * a live `EffectDef` rather than declaring them) — is to split the vocabulary into
  * two tiers:
  *
- *   fill.shader.effectId   <- DECLARED here, frozen forever (SHADER_FILL_CONTROLS)
- *   fill.shader.anchor     <- DECLARED here, frozen forever (SHADER_FILL_CONTROLS)
- *   fill.shader.speed      <- DECLARED here, frozen forever (SHADER_FILL_CONTROLS)
- *   fill.shader.p.<paramId> <- DERIVED per effect (derivedShaderFillControls)
+ *   fill.shader.effectId        <- DECLARED here, frozen forever (SHADER_FILL_CONTROLS)
+ *   fill.shader.anchor          <- DECLARED here, frozen forever (SHADER_FILL_CONTROLS)
+ *   fill.shader.speed           <- DECLARED here, frozen forever (SHADER_FILL_CONTROLS)
+ *   fill.shader.params.<paramId> <- DERIVED per effect (derivedShaderFillControls)
  *
  * The three declared keys never change shape, so Collection bindings against them
- * are as safe as any hand-authored control. The derived `p.<paramId>` keys are
- * stable only PER EFFECT — switching `effectId` changes which `p.*` keys exist and
- * what they mean. That instability is inherent to what they represent (there is no
- * such thing as a frozen "segments" knob independent of which effect defines
- * "segments"), not a defect of this schema. A binding against `fill.shader.p.segments`
- * is only meaningful while `fill.shader.effectId` names an effect that HAS a
- * `segments` param; `resolveEffectParams` (./descriptor.ts) already drops any param
- * key an effect doesn't declare, so a stale binding degrades to "ignored", not
- * "wrong value applied".
+ * are as safe as any hand-authored control. The derived `params.<paramId>` keys are
+ * stable only PER EFFECT — switching `effectId` changes which `params.*` keys exist
+ * and what they mean. That instability is inherent to what they represent (there is
+ * no such thing as a frozen "segments" knob independent of which effect defines
+ * "segments"), not a defect of this schema. A binding against
+ * `fill.shader.params.segments` is only meaningful while `fill.shader.effectId`
+ * names an effect that HAS a `segments` param; `resolveEffectParams` (./descriptor.ts)
+ * already drops any param key an effect doesn't declare, so a stale binding degrades
+ * to "ignored", not "wrong value applied".
  *
- * Known gap, stated rather than silently left: the `.p.` namespace is the schema's
- * own address, not a literal object path. Real storage is `ShaderSpec.params.<key>`
- * (unprefixed — see `unprefixedKey` below), i.e. `fill.shader.params.<key>`, one
- * segment off from `fill.shader.p.<key>`. Naive dotted-path resolvers
- * (`lib/agent/configParams.ts`'s `makeConfigParams`, `lib/studio/path.ts`'s
- * `getByPath`/`setByPath`) do NOT special-case `.p.` → `.params.`, so writing
- * through this schema's keys via either today does not yet reach the real
- * `ShaderSpec.params` object. Closing that is a write-path resolver, which is a
- * separate task from declaring the vocabulary.
+ * "Declared vs. derived" is a property of HOW this list is built, not something
+ * that needs its own namespace segment in the key. `derivedShaderFillControls`
+ * addresses each param at `<prefix>.params.<paramId>` — the REAL path into a
+ * `ShaderSpec` (`params: Record<string, number>`, unprefixed — see `unprefixedKey`
+ * below). An earlier version of this file used a reserved `<prefix>.p.<paramId>`
+ * address instead, one segment off from where `ShaderSpec.params` actually lives.
+ * That bought nothing (declared-vs-derived was already true without it) and cost
+ * real correctness: `lib/agent/configParams.ts`'s `makeConfigParams` and
+ * `lib/studio/path.ts`'s `getByPath`/`setByPath` both do NAIVE dotted-path
+ * traversal — neither special-cases `.p.` → `.params.` — so a write through the old
+ * key created a phantom `fill.shader.p` object next to the real `fill.shader.params`
+ * and silently never reached the renderer. Addressing the real path means both
+ * resolvers get this right for free, with no remapping layer to keep in sync.
  */
 
 const GROUP = 'Shader'
@@ -93,8 +97,11 @@ export const SHADER_FILL_CONTROLS: ControlSpec[] = [
 
 /**
  * Build one ControlSpec per param the given catalog effect declares, addressed
- * under `<prefix>.p.<paramId>` (see the module doc above for why `.p.`, not
- * `.params.`). Float params become sliders; enum params become selects.
+ * under `<prefix>.params.<paramId>` — the REAL `ShaderSpec.params` path (see the
+ * module doc above), so a caller resolving these keys with a plain dotted-path
+ * walker (`makeConfigParams`, `getByPath`/`setByPath`) lands on the actual stored
+ * value with no translation layer. Float params become sliders; enum params
+ * become selects.
  *
  * Enum params carry `{ label, value: number }` options (see EffectParamDef in
  * ~/lib/shaderfx/types), but ControlSpec's `select` kind only has a flat
@@ -102,13 +109,14 @@ export const SHADER_FILL_CONTROLS: ControlSpec[] = [
  * in this codebase (canvas.layout, layer.blend, ...) stores the option text itself
  * as the value, so there is no existing convention for a numeric-valued enum. This
  * uses each option's LABEL as both the displayed and stored string, matching that
- * convention — resolving a label back to the effect's numeric uniform value is the
- * write-path resolver's job (see the module doc's "known gap"), not this function's.
+ * convention — resolving a label back to the effect's numeric uniform value for the
+ * actual GL uniform upload is a rendering-side concern (resolveEffectParams already
+ * validates numeric overrides against `p.options`), not this function's.
  */
 export function derivedShaderFillControls(effect: EffectDef, prefix: string): ControlSpec[] {
   const out: ControlSpec[] = []
   for (const p of effect.params) {
-    const key = `${prefix}.p.${unprefixedKey(p.uniform)}`
+    const key = `${prefix}.params.${unprefixedKey(p.uniform)}`
     if (p.type === 'enum') {
       const options = p.options ?? []
       const labels = options.map((o) => o.label)
