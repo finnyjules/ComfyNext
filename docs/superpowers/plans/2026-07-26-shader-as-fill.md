@@ -599,8 +599,17 @@ git commit -m "feat(shaderfill): Space Type + Shape Studio object-anchored shade
 ### Task 5: Frame anchor across the Space Type effect shaders
 
 **Files:**
-- Modify: ~28 files under `frontend/app/lib/spacetype/effects/*.ts` that declare `uFill`
+- Modify: the **14** files under `frontend/app/lib/spacetype/effects/` that declare `uFill` —
+  `ball.ts contour.ts cornerPin.ts coil.ts elastic.ts field.ts onionburst.ts shutter.ts ribbon.ts melt.ts ticker.ts stripes.ts tunnel.ts turntable.ts`
 - Modify: `frontend/app/lib/spacetype/fills.ts` (supply the two new uniforms)
+
+> **Corrected 2026-07-26:** an earlier draft said "~28 files". That conflated *effects using
+> `ShaderMaterial`* with *effects declaring `uFill`*. The binding number is **14**, verified by
+> `grep -l "uFill" *.ts`.
+
+> **⚠ All 14 of these files currently carry uncommitted changes from a parallel session.**
+> Stage **only your own hunks** — `git apply --cached` per-hunk, never `git add <file>`, never
+> `git stash`. Verify with `git diff --cached` before committing that no foreign hunk is staged.
 
 **Interfaces:**
 - Consumes: nothing new
