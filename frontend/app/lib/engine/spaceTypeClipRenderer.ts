@@ -71,12 +71,23 @@ export function sourceT01(clip: SpaceTypeClip, sourceFrame: number): number {
  *  handle (WebGL2 permanently absent), or transiently unavailable this frame
  *  — so callers draw nothing rather than failing.
  *  A non-null `handle` must already be acquired (see spaceTypeEnginePool.ts);
- *  this function only calls getSpaceTypeEngine(), never acquire/release. */
+ *  this function only calls getSpaceTypeEngine(), never acquire/release.
+ *
+ *  `bake` (default false — live preview/scrub) marks this call as producing FINAL export
+ *  output, so any shader fill on the clip renders at the clip's actual W×H unclamped instead
+ *  of the live-preview LIVE_FIELD_PX ceiling (see SpaceTypeEngine.setBake's doc). Safe to flip
+ *  per call even on this SHARED/pooled engine: the shader-field cache is keyed by descriptor
+ *  only (not size), and refreshLiveShaderFills re-requests every field at the CURRENT w/h/bake
+ *  on every call, so a clip whose root was built once in preview and later re-rendered here
+ *  with bake:true still gets a correctly full-resolution field, even though buildKeyed's
+ *  cache-hit path does not rebuild the scene (and so never re-invokes shaderFieldTexture) for
+ *  it — see fills.ts's refreshLiveShaderFills doc. spaceTypeClipBake.ts sets this true. */
 export function renderSpaceTypeClipToCanvas(
   handle: SpaceTypeEngineHandle | null,
   clip: SpaceTypeClip,
   sourceFrame: number,
   _fps: number,
+  bake = false,
 ): HTMLCanvasElement | null {
   if (!handle) return null
   const [W, H] = dimsFromKey(clip.state.dimsKey)
@@ -90,6 +101,7 @@ export function renderSpaceTypeClipToCanvas(
     engine.setFps(clip.state.fps)
     if (clip.state.projection) engine.setProjection(clip.state.projection)
     engine.setPan(clip.state.panX ?? 0, clip.state.panY ?? 0)
+    engine.setBake(bake)
     engine.buildKeyed(structuralKey(clip.state), effect, clip.state.params, texOptsFromState(clip.state))
     engine.renderFrameAt(sourceT01(clip, sourceFrame), clip.state.params)
   } catch (e) {

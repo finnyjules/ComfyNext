@@ -87,7 +87,10 @@ export async function ensureSpaceTypeClipBake(
         // clip authored with loop:false doesn't clamp mid-cycle while baking the
         // one full seamless cycle the export tiles from.
         const src = { ...clip, loop: true } as SpaceTypeClip
-        const canvas = renderSpaceTypeClipToCanvas(handle, src, index, clip.state.fps)
+        // bake:true — this produces the final exported PNG sequence, so any shader fill on
+        // the clip must render at full resolution, not the live-preview/scrub clamp. See
+        // renderSpaceTypeClipToCanvas's doc.
+        const canvas = renderSpaceTypeClipToCanvas(handle, src, index, clip.state.fps, true)
         if (!canvas) throw new Error(`space type bake: engine unavailable at frame ${index} of clip ${clip.id}`)
         return await canvasToPngBlob(canvas)
       },

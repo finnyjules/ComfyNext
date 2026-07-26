@@ -69,6 +69,20 @@ export function fieldKey(spec: ShaderSpec, w: number, h: number, tq: number): st
                  inputKey(spec.input), w, h, t])
 }
 
+/** The time/size-INVARIANT half of `fieldKey` — every component except `w`, `h`, `t`.
+ *  Names the descriptor itself, not one frame of it. `fields.ts` (Space Type/Shape
+ *  Studio's persistent `THREE.CanvasTexture` cache) needs an identity that does NOT
+ *  change as time advances — that texture OBJECT is held by a material for the life of
+ *  the fill, only its pixels change frame to frame — so `fieldKey` itself (which folds
+ *  `t` in) cannot serve as that cache's key. Shares `encode`/`paramsKey`/`inputKey` with
+ *  `fieldKey` rather than a hand-rolled second scheme, so the two can never silently
+ *  disagree about what "the same descriptor" means. `spec.params` MUST already be
+ *  resolved (see `resolveEffectParams`'s doc) before calling this, same precondition as
+ *  `fieldKey`. */
+export function specIdentityKey(spec: ShaderSpec): string {
+  return encode([spec.effectId, paramsKey(spec.params), spec.anchor, spec.speed, inputKey(spec.input)])
+}
+
 /** The catalog stores each param's uniform name WITH the `u_` prefix already applied
  *  (e.g. `"uniform": "u_amount"` in shader_effects/manifest.json) — see EffectParamDef
  *  in ~/lib/shaderfx/types. ShaderSpec.params (and the Task 8 control schema, addressed

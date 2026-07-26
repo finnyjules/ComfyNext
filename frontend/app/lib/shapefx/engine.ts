@@ -7,15 +7,25 @@ import { buildGeometry } from './geometry'
 import { applyVertexColors, vertexRampT, rampHexes } from './color'
 import { makeOmbreMaterial } from './ombre'
 import { buildSurfaceTexture } from './surface'
+import { withShaderFillContext, clearShaderFillOwner } from '~/lib/spacetype/fills'
 import type { ShapeConfig } from './config'
 
 // Ortho frustum half-height chosen so a unit-ish shape frames nicely at z=6.
 const ORTHO_HALF_H = 2.6
 const CAM_Z = 6
 
+/** Source of each engine's stable `id` — see ShapeEngine.id's doc. Separate counter from
+ *  SpaceTypeEngine's (different id namespace/prefix), so the two can never collide even
+ *  though they share fills.ts's owner-scoped shader field cache. */
+let _nextShapeEngineId = 1
+
 export class ShapeEngine {
   readonly renderer: THREE.WebGLRenderer
   readonly scene: THREE.Scene
+  /** Stable per-instance id, never reused — scopes this engine's shader fills in fills.ts's
+   *  owner-scoped cache (see SpaceTypeEngine.id's doc in ../spacetype/engine.ts for the full
+   *  rationale; identical mechanism, shared cache, distinct id namespace). */
+  readonly id: string = `shape${_nextShapeEngineId++}`
   private perspCam: THREE.PerspectiveCamera
   private orthoCam: THREE.OrthographicCamera
   private mesh: THREE.Mesh | null = null
@@ -77,7 +87,13 @@ export class ShapeEngine {
         mat = new THREE.MeshBasicMaterial({ vertexColors: true })
       }
     } else {
-      const tex = buildSurfaceTexture(config)
+      // Scope any shader fill this resolves to THIS engine instance — see
+      // SpaceTypeEngine.build()'s identical use of withShaderFillContext for the full
+      // rationale. setConfig is synchronous, so this is safe.
+      const tex = withShaderFillContext(
+        { ownerId: this.id, w: this.w, h: this.h, bake: false },
+        () => buildSurfaceTexture(config),
+      )
       mat = tex
         ? new THREE.MeshBasicMaterial({ map: tex })
         : new THREE.MeshBasicMaterial({ color: new THREE.Color(stripAlpha(config.fill.a)) })
@@ -119,6 +135,7 @@ export class ShapeEngine {
   dispose(): void {
     this.disposeMesh()
     if (this.scene.background instanceof THREE.Color) this.scene.background = null
+    clearShaderFillOwner(this.id)
     this.renderer.dispose()
   }
 }

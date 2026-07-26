@@ -2,6 +2,8 @@ import * as THREE from 'three'
 import { type Fill, type ShaderSpec, hexBytes, patternImageData, ombrePicker, fillIsShader, effectiveTileFill } from './fillTile'
 import { parseHexA, stripAlpha } from '~/lib/color/convert'
 import { resolveField, beginFieldFrame, type FieldRequest } from '~/lib/shaderfill/field'
+import { specIdentityKey, resolveEffectParams } from '~/lib/shaderfill/descriptor'
+import { getEffectSync } from '~/lib/shaderfx/catalog'
 
 /**
  * GPU/THREE fill builders. The CPU fill model (Fill, FILL_TYPES, parsing) and the 2D-canvas
@@ -43,23 +45,57 @@ export function fillTextAlpha(fill: Fill): number {
 const _cache = new Map<string, THREE.Texture>()
 
 // ── Shader (object-anchor) field textures ────────────────────────────────────────────────
-// Live shader fields render at this size — matches resolveField's own LIVE_FIELD_PX clamp
-// (see ~/lib/shaderfill/field.ts) exactly, and the descriptor.ts measurements this task's
-// report cites were taken at 512² too, so the numbers stay comparable.
-const SHADER_FIELD_PX = 512
+// Fallback field size used only when shaderFieldTexture is somehow called with no active
+// build context (see UNOWNED below) — should not happen on the real Space Type/Shape Studio
+// paths, which always run inside withShaderFillContext. Matches resolveField's own
+// LIVE_FIELD_PX ceiling (~/lib/shaderfill/field.ts).
+const FALLBACK_FIELD_PX = 512
 
-/** Small cap: unlike the other module caches in this file (static textures, "never disposed"
- *  because the set of distinct fills in a doc is tiny and costs nothing once built), each
- *  entry here costs a live GPU render every frame it's refreshed (see refreshLiveShaderFills
- *  below) for as long as it stays cached — an orphaned entry (fill deleted/changed) would
- *  otherwise keep competing for one of resolveField's LIVE_FIELD_CEILING live slots forever.
- *  Recency is refreshed only on genuine reuse (a material build asking for this fill again in
- *  shaderFieldTexture), NOT on every per-frame refresh — see the comment there. */
-const SHADER_FIELD_CACHE_MAX = 16
-interface LiveShaderFillEntry { tex: THREE.CanvasTexture; spec: ShaderSpec }
+const UNOWNED = '__unowned__'
+
+/** Identifies which `SpaceTypeEngine`/`ShapeEngine` instance a shader fill's texture belongs
+ *  to, plus the size/bake-mode that instance wants it rendered at. Review fix (Task 4): the
+ *  cache below used to be pooled globally across every open engine, so `refreshLiveShaderFills`
+ *  re-resolved EVERY node's fields on EVERY node's frame tick (multiplying GPU work by the
+ *  number of open engines) and `beginFieldFrame`'s LIVE_FIELD_CEILING was applied across all
+ *  of them by insertion order — a node could report "frozen" for fields it does not own, or
+ *  starve indefinitely behind an unrelated, possibly invisible node. Scoping by owner fixes
+ *  both: each engine only ever asks for its own fields, so the ceiling and the frozen count
+ *  are per-surface, matching `beginFieldFrame`'s own doc ("per surface per frame"). */
+interface ShaderFillBuildContext { ownerId: string; w: number; h: number; bake: boolean }
+let _activeContext: ShaderFillBuildContext = { ownerId: UNOWNED, w: FALLBACK_FIELD_PX, h: FALLBACK_FIELD_PX, bake: false }
+
+/**
+ * Run `fn` (a SYNCHRONOUS material-build call — `effect.buildScene()` / `ShapeEngine.setConfig()`)
+ * with `ctx` as the "current" shader-fill build context, so `shaderFieldTexture` — called deep
+ * inside `fn`, from any of the ~20 effect modules, none of which have an engine/owner reference
+ * in scope — knows which engine is asking without threading an `ownerId` parameter through
+ * every one of their `fillShaderTexture()`/`fillTexture()` call sites.
+ *
+ * Safe specifically BECAUSE `buildScene`/`setConfig` are synchronous (no `await` anywhere in
+ * any current implementation): JS is single-threaded, so nothing can run between the `set` and
+ * the matching `restore` below and observe or clobber the wrong owner — two engines' builds can
+ * never interleave. Restores the PREVIOUS context (not a hardcoded UNOWNED) so a build
+ * triggered from inside another build's call stack — if that were ever to happen — nests
+ * correctly rather than leaking the inner owner out to the outer one's remaining work. If a
+ * `buildScene` ever needs to become async, this whole scheme must move to real parameter
+ * threading instead — it would silently break here.
+ */
+export function withShaderFillContext<T>(ctx: ShaderFillBuildContext, fn: () => T): T {
+  const prev = _activeContext
+  _activeContext = ctx
+  try { return fn() } finally { _activeContext = prev }
+}
+
+interface LiveShaderFillEntry { tex: THREE.CanvasTexture; spec: ShaderSpec; ownerId: string }
+// No size cap (see clearShaderFillOwner) — unlike the other module caches in this file
+// (static textures, cheap to keep forever), each entry here costs a live GPU render every
+// frame it's refreshed, so a COUNT-based cap risks evicting a texture a material is still
+// showing (the review's second finding) while an orphaned owner is never evicted anyway,
+// since eviction only ever fires on a NEW insert. Bounding by explicit owner lifetime
+// instead — cleared in clearShaderFillOwner() when an engine disposes — keeps this
+// naturally small (live engines × fills per engine) without that hazard.
 const _shaderFieldCache = new Map<string, LiveShaderFillEntry>()
-
-function shaderFieldKey(spec: ShaderSpec): string { return JSON.stringify(spec) }
 
 /** Resolve a shader fill spec to its live field texture — the ONLY place Space Type/Shape
  *  Studio materials get a shader fill's `uFill` texture from. Reused across BOTH
@@ -71,16 +107,24 @@ function shaderFieldKey(spec: ShaderSpec): string { return JSON.stringify(spec) 
  *  when the field can't be produced yet (unknown effect not loaded, WebGL context loss) —
  *  resolveField returns null in both cases, and the user must see the input fill, never an
  *  empty/blank shape. No cache entry is made on a fallback, so the next per-frame refresh
- *  (or the next material rebuild) simply tries again rather than freezing on the fallback. */
+ *  (or the next material rebuild) simply tries again rather than freezing on the fallback.
+ *
+ *  Keys on the RESOLVED params (effect defaults applied, unknown keys dropped — same
+ *  precondition `fieldKey`/`specIdentityKey` document), not the raw authored `spec.params`:
+ *  otherwise `params: {}` and `params: { amount: <the effect's own default> }` — pixel
+ *  identical — would key as two different cache entries, and insertion order would make the
+ *  key unstable. When the effect isn't in the catalog yet, `resolveField` will itself return
+ *  null below (same "not loaded" gate), so keying on the raw spec in that narrow window never
+ *  produces a wrongly-deduplicated entry — it just never reaches the cache-insert line. */
 function shaderFieldTexture(three: typeof THREE, spec: ShaderSpec): THREE.Texture {
-  const key = shaderFieldKey(spec)
+  const ctx = _activeContext
+  const effect = getEffectSync(spec.effectId)
+  const resolvedSpec = effect ? { ...spec, params: resolveEffectParams(effect, spec.params) } : spec
+  const key = `${ctx.ownerId}::${specIdentityKey(resolvedSpec)}`
   const hit = _shaderFieldCache.get(key)
-  if (hit) {
-    _shaderFieldCache.delete(key); _shaderFieldCache.set(key, hit)   // MRU refresh — see cap doc above
-    return hit.tex
-  }
+  if (hit) return hit.tex
 
-  const canvas = resolveField({ spec, w: SHADER_FIELD_PX, h: SHADER_FIELD_PX, t: 0, fps: 30 })
+  const canvas = resolveField({ spec, w: ctx.w, h: ctx.h, t: 0, fps: 30, bake: ctx.bake })
   if (!canvas) {
     const inputFill = effectiveTileFill({ type: 'shader', a: '#ffffff', b: '#000000', textColor: '#ffffff', angle: 45, density: 8, shader: spec })
     return fillTexture(three, inputFill) ?? fillShaderTexture(three, inputFill)
@@ -91,29 +135,32 @@ function shaderFieldTexture(three: typeof THREE, spec: ShaderSpec): THREE.Textur
   tex.colorSpace = three.SRGBColorSpace
   tex.needsUpdate = true
 
-  if (_shaderFieldCache.size >= SHADER_FIELD_CACHE_MAX) {
-    const oldest = _shaderFieldCache.keys().next().value
-    if (oldest) _shaderFieldCache.delete(oldest)
-  }
-  _shaderFieldCache.set(key, { tex, spec })
+  _shaderFieldCache.set(key, { tex, spec: resolvedSpec, ownerId: ctx.ownerId })
   return tex
 }
 
-/** Advance every currently-cached shader-fill texture to time `t` (seconds), reusing each
+/** Advance every shader-fill texture OWNED BY `ownerId` to time `t` (seconds), reusing each
  *  entry's SAME THREE.CanvasTexture object — set `.image`/`needsUpdate` in place rather than
  *  allocating a new CanvasTexture per frame, per resolveField's ownership contract. Effects
  *  never call this themselves: they only hold the texture object `fillShaderTexture`/
  *  `fillTexture` handed them at build time (stashed in a material's `uFill` uniform); this is
  *  the ONE place that keeps it moving frame to frame, generically across every effect, with no
- *  per-effect changes needed. Call once per host frame, BEFORE the THREE render call — see
- *  SpaceTypeEngine.renderFrameAt.
+ *  per-effect changes needed. Call once per host frame, BEFORE the THREE render call, with the
+ *  CALLING engine's own id — see SpaceTypeEngine.renderFrameAt. Scoped to `ownerId` so
+ *  `beginFieldFrame`'s LIVE_FIELD_CEILING (and the frozen-field count it returns) applies PER
+ *  SURFACE, not pooled across every open engine (see ShaderFillBuildContext's doc).
+ *
+ *  `w`/`h`/`bake` size the request — pass the engine's actual output size and whether this
+ *  frame is a final export bake (unclamped) vs a live preview (clamped to
+ *  resolveField's LIVE_FIELD_PX), matching the preview/bake split `field.ts` documents.
  *
  *  Returns the frozen-field count from beginFieldFrame so the surface can show a hint when a
  *  fill is capped at a still frame instead of animating — never truncate silently. */
-export function refreshLiveShaderFills(t: number, fps = 30): { frozenCount: number } {
-  if (_shaderFieldCache.size === 0) return { frozenCount: 0 }
-  const entries = [..._shaderFieldCache.values()]
-  const requests: FieldRequest[] = entries.map(e => ({ spec: e.spec, w: SHADER_FIELD_PX, h: SHADER_FIELD_PX, t, fps }))
+export function refreshLiveShaderFills(ownerId: string, t: number, fps: number, w: number, h: number, bake: boolean): { frozenCount: number } {
+  const entries: LiveShaderFillEntry[] = []
+  for (const e of _shaderFieldCache.values()) if (e.ownerId === ownerId) entries.push(e)
+  if (entries.length === 0) return { frozenCount: 0 }
+  const requests: FieldRequest[] = entries.map(e => ({ spec: e.spec, w, h, t, fps, bake }))
   const { frozenCount } = beginFieldFrame(requests)
   for (let i = 0; i < entries.length; i++) {
     const canvas = resolveField(requests[i]!)
@@ -125,6 +172,23 @@ export function refreshLiveShaderFills(t: number, fps = 30): { frozenCount: numb
     }
   }
   return { frozenCount }
+}
+
+/** Drop every shader-fill texture owned by `ownerId`, disposing its GPU texture. Call when
+ *  the owning engine is disposed — see the ownership-scoping doc above. Not called on every
+ *  rebuild/effect switch (only on disposal): a `SpaceTypeEngine` pools built roots
+ *  (`ROOT_CACHE_LIMIT`, see engine.ts) and swaps a cached root back in WITHOUT calling
+ *  `buildScene`/`shaderFieldTexture` again, so clearing this owner's whole cache on every
+ *  rebuild would strand that cached root's materials with textures nothing refreshes anymore
+ *  the next time it's swapped back in. Left un-evicted between rebuilds, this owner's cache
+ *  stays bounded by "distinct shader fills across this engine's currently pooled roots" —
+ *  small by the same reasoning `ROOT_CACHE_LIMIT` relies on. */
+export function clearShaderFillOwner(ownerId: string): void {
+  for (const [key, entry] of _shaderFieldCache) {
+    if (entry.ownerId !== ownerId) continue
+    entry.tex.dispose()
+    _shaderFieldCache.delete(key)
+  }
 }
 
 /** Build (or fetch cached) the tiling texture for a fill. Returns null for `solid`. Shader

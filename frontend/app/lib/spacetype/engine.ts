@@ -4,7 +4,7 @@ import type { TextTextureOptions } from './textTexture'
 import { makeTextTexture } from './textTexture'
 import { PostChain, DEFAULT_POST, postEnabled, type PostSettings } from './post'
 import { stripAlpha } from '~/lib/color/convert'
-import { refreshLiveShaderFills } from './fills'
+import { refreshLiveShaderFills, withShaderFillContext, clearShaderFillOwner } from './fills'
 
 export interface EngineOptions {
   effect: SpaceTypeEffect
@@ -32,9 +32,19 @@ const ISO_EYE = new THREE.Vector3(0, 0, 20)
  *  distinct Space Type clips; a miss costs one buildScene(), not correctness. */
 export const ROOT_CACHE_LIMIT = 8
 
+/** Source of each engine's stable `id` — see the `id` field below and fills.ts's
+ *  ShaderFillBuildContext doc for why a stable per-instance id matters (scoping the shader
+ *  field cache/live-field ceiling to the engine that actually owns each fill). */
+let _nextEngineId = 1
+
 export class SpaceTypeEngine {
   readonly renderer: THREE.WebGLRenderer
   readonly scene: THREE.Scene
+  /** Stable per-instance id, never reused. Threads through fills.ts's owner-scoped shader
+   *  field cache (withShaderFillContext / refreshLiveShaderFills / clearShaderFillOwner) so
+   *  this engine's shader fills are never pooled with, starved by, or re-rendered on behalf
+   *  of another open Space Type engine. */
+  readonly id: string = `st${_nextEngineId++}`
   private perspCam: THREE.PerspectiveCamera
   private orthoCam: THREE.OrthographicCamera
   private effect: SpaceTypeEffect
@@ -57,6 +67,15 @@ export class SpaceTypeEngine {
    *  this is non-zero (see refreshLiveShaderFills in ./fills and beginFieldFrame's doc in
    *  ~/lib/shaderfill/field.ts). */
   get frozenFieldCount(): number { return this._frozenFieldCount }
+  /** True while this engine is producing FINAL export output (a bake), as opposed to an
+   *  interactive live preview. Threaded into shader-fill field requests so they render at
+   *  the engine's actual output size, unclamped, instead of the live-preview
+   *  LIVE_FIELD_PX ceiling — the preview/bake split `~/lib/shaderfill/field.ts` documents.
+   *  Toggle around a bake render call (see SpaceTypeSurface.vue's Render/Export buttons and
+   *  spaceTypeClipRenderer.ts's `bake` param); false is the correct default for the
+   *  interactive preview loop, which never sets it. */
+  private _bake = false
+  setBake(bake: boolean): void { this._bake = bake }
 
   constructor(canvas: HTMLCanvasElement, opts: EngineOptions) {
     this.opts = opts
@@ -194,7 +213,13 @@ export class SpaceTypeEngine {
       this.disposeRoot()
       const tex = makeTextTexture(texOpts)
       this.textTex = tex
-      this.root = this.effect.buildScene(THREE, params, tex, { width: this.opts.width, height: this.opts.height, axes: texOpts.axes })
+      // Scope any shader fill this build resolves (fillShaderTexture/fillTexture, called deep
+      // inside buildScene by whichever effect module) to THIS engine instance — see
+      // withShaderFillContext's doc in fills.ts. buildScene is synchronous, so this is safe.
+      this.root = withShaderFillContext(
+        { ownerId: this.id, w: this.opts.width, h: this.opts.height, bake: this._bake },
+        () => this.effect.buildScene(THREE, params, tex, { width: this.opts.width, height: this.opts.height, axes: texOpts.axes }),
+      )
       this.scene.add(this.root)
       this._lastError = null
       this._loggedError = false
@@ -303,7 +328,9 @@ export class SpaceTypeEngine {
       // at a given normalized position between preview and bake (same t01 -> same shader time),
       // consistent with resolveField's own preview/bake parity. Independent of the glyph motion
       // (t01) driving `this.effect.update` above — the field animates on its own clock.
-      this._frozenFieldCount = refreshLiveShaderFills(t01 * this.opts.loopDuration, this.opts.fps).frozenCount
+      this._frozenFieldCount = refreshLiveShaderFills(
+        this.id, t01 * this.opts.loopDuration, this.opts.fps, this.opts.width, this.opts.height, this._bake,
+      ).frozenCount
       if (postEnabled(this.post) && this.postChain) this.postChain.render(this.scene, this.activeCam)
       else this.renderer.render(this.scene, this.activeCam)
       this._lastError = null
@@ -343,6 +370,10 @@ export class SpaceTypeEngine {
     this.clearRootCache()
     this.disposeRoot()
     this.postChain?.dispose()
+    // Drop this engine's shader-fill textures too — every currently-pooled root is being
+    // disposed above (clearRootCache), so nothing is left that could need a swap-back-in
+    // refresh (see clearShaderFillOwner's doc for why this ISN'T also done on every rebuild).
+    clearShaderFillOwner(this.id)
     // Free the underlying WebGL context promptly (renderer.dispose alone leaves it
     // alive until GC — with one context per node that hits the browser's ~16 cap).
     this.renderer.forceContextLoss()

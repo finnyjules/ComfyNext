@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, onBeforeUnmount, computed, watch, nextTick } from 'vue'
+import { LIVE_FIELD_CEILING } from '~/lib/shaderfill/descriptor'
 import { buildRibbonLabel } from '~/lib/spacetype/effects/ribbon'
 import { getEffect } from '~/lib/spacetype/effects'
 import { ensureBoostFont } from '~/lib/spacetype/effects/boost'
@@ -936,6 +937,10 @@ async function renderBlobWithOverrides(rawOverrides: Record<string, string | num
   if (rebuildRaf) { cancelAnimationFrame(rebuildRaf); rebuildRaf = 0 }
   let userEditedDuringBake = false
   let unwatchGuard: () => void = () => {}
+  // Render shader fills at full output resolution, unclamped, for this capture — see
+  // engine.setBake's doc. Reset in `finally` so the live preview loop that resumes after
+  // this function returns isn't stuck rendering fields at bake resolution/cost.
+  engine.setBake(true)
   try {
     for (const key of keys) (params as Record<string, unknown>)[key] = overrides[key]!
     const baselineSig = structuralSignature()
@@ -953,6 +958,7 @@ async function renderBlobWithOverrides(rawOverrides: Record<string, string | num
     console.error('[space-type] param-baker render failed', e)
     return null
   } finally {
+    engine?.setBake(false)
     unwatchGuard()
     for (const key of keys) {
       if (snapshot.has(key)) (params as Record<string, unknown>)[key] = snapshot.get(key)
@@ -975,6 +981,8 @@ async function generateImage() {
   try {
     await ensureEffectFonts()
     engine.setSize(W.value * BAKE_SS, H.value * BAKE_SS)
+    // Full-resolution, unclamped shader fields for this capture — see engine.setBake's doc.
+    engine.setBake(true)
     rebuild()
     engine.renderFrame(0, params)
     const blob = await engine.frameToBlob(W.value, H.value)
@@ -997,6 +1005,7 @@ async function generateImage() {
       closeEditor()
     }
   } finally {
+    engine?.setBake(false)
     baking.value = false
     startPreview()
   }
@@ -1036,6 +1045,9 @@ async function generateVideo() {
     engine.setSize(W.value * BAKE_SS, H.value * BAKE_SS)
     engine.setFps(fps.value)
     engine.setLoopDuration(loopDuration.value)
+    // Full-resolution, unclamped shader fields for every exported frame — see
+    // engine.setBake's doc; every renderFrameAt call below inherits it.
+    engine.setBake(true)
     rebuild()
     const rates = seamlessLoop.value ? (effect.value.loopRates?.(params) ?? []) : []
     const k = loopMultiplier(rates)
@@ -1064,6 +1076,7 @@ async function generateVideo() {
       alert('Video encode failed — make sure ComfyUI was restarted to load the encoder. See console.')
     }
   } finally {
+    engine?.setBake(false)
     baking.value = false
     startPreview()
   }
@@ -1082,7 +1095,7 @@ async function generateVideo() {
         <div v-else-if="frozenFieldCount > 0"
              class="pointer-events-none absolute inset-x-3 bottom-3 rounded-md border border-amber-400/30 bg-black/70 px-3 py-2 text-[11px] text-amber-200/90">
           {{ frozenFieldCount }} shader fill{{ frozenFieldCount > 1 ? 's' : '' }} frozen — too many live shader
-          fields at once (limit 4). Remove a shader fill for full motion.
+          fields at once (limit {{ LIVE_FIELD_CEILING }}). Remove a shader fill for full motion.
         </div>
         <div v-if="!webglOk" class="absolute inset-0 flex items-center justify-center text-xs text-white/50">
           3D preview unavailable on this device.
