@@ -99,6 +99,26 @@ function refsIdent(text: string, name: string): boolean {
   return new RegExp(`\\b${name}\\b`).test(text)
 }
 
+/** True when `argsText` (the raw text between a call's parens) is a SINGLE top-level
+ *  argument — no comma outside any nested (), [], {}. `THREE.Color.prototype.set` takes
+ *  exactly one argument (a Color/hex/string); it is `setRGB`/the constructor that take
+ *  r,g,b separately. So on the SAME receiver shapes this scan matches (`.value.set(...)`,
+ *  `.color.set(...)`) a Vector2/Vector3/Euler `.set(x, y[, z])` or a `Map.set(key, val)`
+ *  is structurally distinguishable from a Color mutation by argument COUNT alone, with no
+ *  need to know what the receiver actually is — narrower than excluding a receiver name or
+ *  file, and it stays correct for any future non-Color `.set()` sharing this shape, not
+ *  just today's. (`new THREE.Color(r, g, b)` IS a valid 3-argument Color constructor call,
+ *  so this narrowing is intentionally NOT applied to the constructor scan below.) */
+function isSingleArgCall(argsText: string): boolean {
+  let depth = 0
+  for (const ch of argsText) {
+    if (ch === '(' || ch === '[' || ch === '{') depth++
+    else if (ch === ')' || ch === ']' || ch === '}') depth--
+    else if (ch === ',' && depth === 0) return false
+  }
+  return true
+}
+
 /** Local taint propagation for one file's source: which locals hold an unstripped colour
  *  (TAINTED) vs. which locals already had alpha stripped (SAFE). */
 function scanLocals(src: string): { tainted: Set<string>; safe: Set<string> } {
@@ -203,8 +223,12 @@ describe('THREE.Color alpha safety (static scan)', () => {
       const re = /(?:\.value|value\s+as\s+(?:THREE|three)\.Color\)|\.color)\.set(?:Style)?\(\s*([^)]*)\)/g
       let m: RegExpExecArray | null
       while ((m = re.exec(src))) {
-        sites++
         const arg = m[1]!
+        // A multi-argument `.set(...)` on this receiver shape is a Vector2/3/Euler `.set(x,y[,z])`
+        // or a `Map.set(key, val)`, never `THREE.Color.prototype.set` (single-argument only) — see
+        // isSingleArgCall's doc. Not a Color-mutation site at all, so it isn't counted or checked.
+        if (!isSingleArgCall(arg)) continue
+        sites++
         const entry = `${f.replace(LIB_ROOT, '')}: .set(${arg.trim()})`
         if (!isSafeColorArg(arg, locals) && !allowed(entry)) offenders.push(entry)
       }
