@@ -36,7 +36,7 @@ describe('Paint guards (resolvePaint dispatch)', () => {
 
 describe('fillTile model', () => {
   it('FILL_TYPES holds the full Type-Studio set', () => {
-    expect(FILL_TYPES).toEqual(['solid', 'gradient', 'ombre', 'grid', 'noise', 'checkerboard', 'stripes', 'qr'])
+    expect(FILL_TYPES).toEqual(['solid', 'gradient', 'ombre', 'grid', 'noise', 'checkerboard', 'stripes', 'qr', 'shader'])
   })
 
   it('normalizeFill fills defaults for junk input', () => {

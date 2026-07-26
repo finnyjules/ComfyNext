@@ -7,14 +7,34 @@
  * everything here, so Type Studio importers are unchanged.
  */
 
-export type FillType = 'solid' | 'gradient' | 'ombre' | 'grid' | 'noise' | 'checkerboard' | 'stripes' | 'qr'
+export type FillType = 'solid' | 'gradient' | 'ombre' | 'grid' | 'noise' | 'checkerboard' | 'stripes' | 'qr' | 'shader'
 /** `a`/`b` drive the slot's fill (stripe); `textColor` is the solid colour for type on that row.
  *  `angle` (degrees) applies to `stripes`/`gradient`/`ombre`; `density` controls cell/stripe count. */
-export interface Fill { type: FillType; a: string; b: string; textColor: string; angle: number; density: number }
+export interface Fill { type: FillType; a: string; b: string; textColor: string; angle: number; density: number; shader?: ShaderSpec }
+
+/** A shader fill runs `input` through a catalog effect. `input` is NEVER itself a shader
+ *  fill — depth-1 is enforced in normalizeFill, because unbounded nesting hangs the renderer. */
+export interface ShaderSpec {
+  effectId: string
+  params: Record<string, number>
+  anchor: 'object' | 'frame'
+  speed: number
+  input: Fill
+}
 
 /** All fill types, in picker order. SINGLE SOURCE OF TRUTH — imported by every fill dropdown. */
-export const FILL_TYPES: FillType[] = ['solid', 'gradient', 'ombre', 'grid', 'noise', 'checkerboard', 'stripes', 'qr']
+export const FILL_TYPES: FillType[] = ['solid', 'gradient', 'ombre', 'grid', 'noise', 'checkerboard', 'stripes', 'qr', 'shader']
 export const DEFAULT_FILL: Fill = { type: 'solid', a: '#ffffff', b: '#000000', textColor: '#ffffff', angle: 45, density: 8 }
+
+export const DEFAULT_SHADER_SPEC: ShaderSpec = {
+  effectId: 'fbm_warp', params: {}, anchor: 'object', speed: 1,
+  input: { type: 'gradient', a: '#ffffff', b: '#000000', textColor: '#ffffff', angle: 45, density: 8 },
+}
+
+/** True when `f` is a shader fill actually carrying a spec (vs. `type: 'shader'` with no spec yet). */
+export function fillIsShader(f: Fill): f is Fill & { shader: ShaderSpec } {
+  return f.type === 'shader' && !!f.shader
+}
 
 /** True when the fill needs a texture/pattern (anything but a flat colour). */
 export function fillIsTextured(fill: Fill): boolean { return fill.type !== 'solid' }
@@ -29,17 +49,41 @@ export function parseFills(raw: unknown): Fill[] {
   } catch { return [{ ...DEFAULT_FILL }] }
 }
 
-/** Coerce an unknown value into a valid Fill, filling defaults for missing/bad fields. */
-export function normalizeFill(f: unknown): Fill {
+/** Coerce an unknown value into a valid Fill, filling defaults for missing/bad fields.
+ *  `depth` tracks recursion into a shader fill's `input`: at depth 1 the `shader` type is
+ *  refused (collapsed to the default shader input's type), enforcing depth-1 nesting. */
+export function normalizeFill(f: unknown, depth = 0): Fill {
   const o = (f ?? {}) as Record<string, unknown>
-  const type = FILL_TYPES.includes(o.type as FillType) ? (o.type as FillType) : 'solid'
-  return {
+  let type = FILL_TYPES.includes(o.type as FillType) ? (o.type as FillType) : 'solid'
+  if (type === 'shader' && depth > 0) type = DEFAULT_SHADER_SPEC.input.type
+  const base: Fill = {
     type,
     a: typeof o.a === 'string' ? o.a : '#ffffff',
     b: typeof o.b === 'string' ? o.b : '#000000',
     textColor: typeof o.textColor === 'string' ? o.textColor : '#ffffff',
     angle: typeof o.angle === 'number' ? o.angle : 45,
     density: typeof o.density === 'number' ? o.density : 8,
+  }
+  if (type !== 'shader') return base            // a spec on a non-shader fill is dropped
+  return { ...base, shader: normalizeShaderSpec(o.shader, depth) }
+}
+
+/** Coerce an unknown value into a valid ShaderSpec, recursing into `input` at `depth + 1`
+ *  so the depth-1 guard in normalizeFill applies to it. */
+function normalizeShaderSpec(s: unknown, depth: number): ShaderSpec {
+  const o = (s ?? {}) as Record<string, unknown>
+  const params: Record<string, number> = {}
+  if (o.params && typeof o.params === 'object') {
+    for (const [k, v] of Object.entries(o.params as Record<string, unknown>)) {
+      if (typeof v === 'number' && Number.isFinite(v)) params[k] = v
+    }
+  }
+  return {
+    effectId: typeof o.effectId === 'string' && o.effectId ? o.effectId : DEFAULT_SHADER_SPEC.effectId,
+    params,
+    anchor: o.anchor === 'frame' ? 'frame' : 'object',
+    speed: typeof o.speed === 'number' ? o.speed : 1,
+    input: normalizeFill(o.input ?? DEFAULT_SHADER_SPEC.input, depth + 1),
   }
 }
 
