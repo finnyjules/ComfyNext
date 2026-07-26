@@ -52,7 +52,8 @@ const ASPECT_OPTIONS = Object.keys(ASPECTS)
 // blob if present, else DEFAULT_CONFIG. mergeConfig deep-defends against partial/old/junk
 // JSON (see Task 1's config.ts), so this is safe even if the shape schema grows later.
 const persisted = currentNode()?.data?.properties?.sailor_shapeStudio as
-  { config?: unknown; canvasW?: number; canvasH?: number; aspectKey?: string } | undefined
+  { config?: unknown; canvasW?: number; canvasH?: number; aspectKey?: string
+    orbit?: { yaw?: number; pitch?: number; zoom?: number } } | undefined
 
 const config = ref<ShapeConfig>(mergeConfig(persisted?.config))
 const aspectKey = ref<string>(persisted?.aspectKey && ASPECTS[persisted.aspectKey] ? persisted.aspectKey : '1:1')
@@ -71,6 +72,10 @@ function saveConfig() {
   n.data.properties.sailor_shapeStudio = {
     config: JSON.parse(JSON.stringify(config.value)),
     canvasW: canvasW.value, canvasH: canvasH.value, aspectKey: aspectKey.value,
+    // Persist the interactive camera so the node card's headless Render bakes at the
+    // SAME framing the user left the editor on (orbit lives outside ShapeConfig,
+    // alongside canvas dims, since it's view state not shape state).
+    orbit: { yaw: orbit.yaw, pitch: orbit.pitch, zoom: orbit.zoom },
   }
 }
 function closeEditor() {
@@ -196,7 +201,13 @@ let engine: ShapeEngine | null = null
 let raf = 0
 let rebuildRaf = 0
 let lastW = 0, lastH = 0
-const orbit = reactive({ yaw: 0.6, pitch: 0.32, zoom: 1 })
+// Hydrate the camera from the persisted view (falls back to the default framing).
+// Keep these defaults in sync with ShapeStudioNode's DEFAULT_ORBIT.
+const orbit = reactive({
+  yaw: persisted?.orbit?.yaw ?? 0.6,
+  pitch: persisted?.orbit?.pitch ?? 0.32,
+  zoom: persisted?.orbit?.zoom ?? 1,
+})
 const PREVIEW_MAX = 620
 
 function previewDims() {
