@@ -4,6 +4,7 @@ import type { TextTextureOptions } from './textTexture'
 import { makeTextTexture } from './textTexture'
 import { PostChain, DEFAULT_POST, postEnabled, type PostSettings } from './post'
 import { stripAlpha } from '~/lib/color/convert'
+import { refreshLiveShaderFills } from './fills'
 
 export interface EngineOptions {
   effect: SpaceTypeEffect
@@ -49,6 +50,13 @@ export class SpaceTypeEngine {
   /** Last build/render error (null when the most recent frame succeeded). */
   get lastError(): string | null { return this._lastError }
   private _loggedError = false
+  private _frozenFieldCount = 0
+  /** Non-zero when one or more shader-fill fields exceeded LIVE_FIELD_CEILING on the last
+   *  rendered frame and are showing a frozen (t=0) snapshot instead of animating. The design
+   *  forbids silently capping — a surface embedding this engine must show a visible hint when
+   *  this is non-zero (see refreshLiveShaderFills in ./fills and beginFieldFrame's doc in
+   *  ~/lib/shaderfill/field.ts). */
+  get frozenFieldCount(): number { return this._frozenFieldCount }
 
   constructor(canvas: HTMLCanvasElement, opts: EngineOptions) {
     this.opts = opts
@@ -290,6 +298,12 @@ export class SpaceTypeEngine {
         this.applyPan(this.perspCam)
       }
       this.effect.update(t01, params)
+      // Advance every live shader-fill field to this frame's time BEFORE the render call reads
+      // their textures. t01 * loopDuration gives real elapsed seconds within one loop, matching
+      // at a given normalized position between preview and bake (same t01 -> same shader time),
+      // consistent with resolveField's own preview/bake parity. Independent of the glyph motion
+      // (t01) driving `this.effect.update` above — the field animates on its own clock.
+      this._frozenFieldCount = refreshLiveShaderFills(t01 * this.opts.loopDuration, this.opts.fps).frozenCount
       if (postEnabled(this.post) && this.postChain) this.postChain.render(this.scene, this.activeCam)
       else this.renderer.render(this.scene, this.activeCam)
       this._lastError = null

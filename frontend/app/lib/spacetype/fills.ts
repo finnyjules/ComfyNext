@@ -1,6 +1,7 @@
 import * as THREE from 'three'
-import { type Fill, hexBytes, patternImageData, ombrePicker } from './fillTile'
+import { type Fill, type ShaderSpec, hexBytes, patternImageData, ombrePicker, fillIsShader, effectiveTileFill } from './fillTile'
 import { parseHexA, stripAlpha } from '~/lib/color/convert'
+import { resolveField, beginFieldFrame, type FieldRequest } from '~/lib/shaderfill/field'
 
 /**
  * GPU/THREE fill builders. The CPU fill model (Fill, FILL_TYPES, parsing) and the 2D-canvas
@@ -41,8 +42,98 @@ export function fillTextAlpha(fill: Fill): number {
 // singletons (never disposed) — the set of distinct fills in a doc is tiny.
 const _cache = new Map<string, THREE.Texture>()
 
-/** Build (or fetch cached) the tiling texture for a fill. Returns null for `solid`. */
+// ── Shader (object-anchor) field textures ────────────────────────────────────────────────
+// Live shader fields render at this size — matches resolveField's own LIVE_FIELD_PX clamp
+// (see ~/lib/shaderfill/field.ts) exactly, and the descriptor.ts measurements this task's
+// report cites were taken at 512² too, so the numbers stay comparable.
+const SHADER_FIELD_PX = 512
+
+/** Small cap: unlike the other module caches in this file (static textures, "never disposed"
+ *  because the set of distinct fills in a doc is tiny and costs nothing once built), each
+ *  entry here costs a live GPU render every frame it's refreshed (see refreshLiveShaderFills
+ *  below) for as long as it stays cached — an orphaned entry (fill deleted/changed) would
+ *  otherwise keep competing for one of resolveField's LIVE_FIELD_CEILING live slots forever.
+ *  Recency is refreshed only on genuine reuse (a material build asking for this fill again in
+ *  shaderFieldTexture), NOT on every per-frame refresh — see the comment there. */
+const SHADER_FIELD_CACHE_MAX = 16
+interface LiveShaderFillEntry { tex: THREE.CanvasTexture; spec: ShaderSpec }
+const _shaderFieldCache = new Map<string, LiveShaderFillEntry>()
+
+function shaderFieldKey(spec: ShaderSpec): string { return JSON.stringify(spec) }
+
+/** Resolve a shader fill spec to its live field texture — the ONLY place Space Type/Shape
+ *  Studio materials get a shader fill's `uFill` texture from. Reused across BOTH
+ *  `fillTexture` and `fillShaderTexture` (the latter delegates to the former for any
+ *  non-solid fill), so every consumer of either goes through here.
+ *
+ *  Binds resolveField's canvas DIRECTLY as the CanvasTexture source — never copied, per its
+ *  ownership contract (~/lib/shaderfill/field.ts). Falls back to the INPUT fill's own texture
+ *  when the field can't be produced yet (unknown effect not loaded, WebGL context loss) —
+ *  resolveField returns null in both cases, and the user must see the input fill, never an
+ *  empty/blank shape. No cache entry is made on a fallback, so the next per-frame refresh
+ *  (or the next material rebuild) simply tries again rather than freezing on the fallback. */
+function shaderFieldTexture(three: typeof THREE, spec: ShaderSpec): THREE.Texture {
+  const key = shaderFieldKey(spec)
+  const hit = _shaderFieldCache.get(key)
+  if (hit) {
+    _shaderFieldCache.delete(key); _shaderFieldCache.set(key, hit)   // MRU refresh — see cap doc above
+    return hit.tex
+  }
+
+  const canvas = resolveField({ spec, w: SHADER_FIELD_PX, h: SHADER_FIELD_PX, t: 0, fps: 30 })
+  if (!canvas) {
+    const inputFill = effectiveTileFill({ type: 'shader', a: '#ffffff', b: '#000000', textColor: '#ffffff', angle: 45, density: 8, shader: spec })
+    return fillTexture(three, inputFill) ?? fillShaderTexture(three, inputFill)
+  }
+
+  const tex = new three.CanvasTexture(canvas)
+  tex.wrapS = tex.wrapT = three.ClampToEdgeWrapping
+  tex.colorSpace = three.SRGBColorSpace
+  tex.needsUpdate = true
+
+  if (_shaderFieldCache.size >= SHADER_FIELD_CACHE_MAX) {
+    const oldest = _shaderFieldCache.keys().next().value
+    if (oldest) _shaderFieldCache.delete(oldest)
+  }
+  _shaderFieldCache.set(key, { tex, spec })
+  return tex
+}
+
+/** Advance every currently-cached shader-fill texture to time `t` (seconds), reusing each
+ *  entry's SAME THREE.CanvasTexture object — set `.image`/`needsUpdate` in place rather than
+ *  allocating a new CanvasTexture per frame, per resolveField's ownership contract. Effects
+ *  never call this themselves: they only hold the texture object `fillShaderTexture`/
+ *  `fillTexture` handed them at build time (stashed in a material's `uFill` uniform); this is
+ *  the ONE place that keeps it moving frame to frame, generically across every effect, with no
+ *  per-effect changes needed. Call once per host frame, BEFORE the THREE render call — see
+ *  SpaceTypeEngine.renderFrameAt.
+ *
+ *  Returns the frozen-field count from beginFieldFrame so the surface can show a hint when a
+ *  fill is capped at a still frame instead of animating — never truncate silently. */
+export function refreshLiveShaderFills(t: number, fps = 30): { frozenCount: number } {
+  if (_shaderFieldCache.size === 0) return { frozenCount: 0 }
+  const entries = [..._shaderFieldCache.values()]
+  const requests: FieldRequest[] = entries.map(e => ({ spec: e.spec, w: SHADER_FIELD_PX, h: SHADER_FIELD_PX, t, fps }))
+  const { frozenCount } = beginFieldFrame(requests)
+  for (let i = 0; i < entries.length; i++) {
+    const canvas = resolveField(requests[i]!)
+    if (!canvas) continue                          // keep showing the last good frame
+    const entry = entries[i]!
+    if (entry.tex.image !== canvas) {
+      entry.tex.image = canvas
+      entry.tex.needsUpdate = true
+    }
+  }
+  return { frozenCount }
+}
+
+/** Build (or fetch cached) the tiling texture for a fill. Returns null for `solid`. Shader
+ *  fills resolve through shaderFieldTexture (the live field, or a graceful fallback to the
+ *  input fill) — never through the switch below, which has no shader case and would
+ *  otherwise silently fall into the qr branch. */
 export function fillTexture(three: typeof THREE, fill: Fill): THREE.Texture | null {
+  if (fillIsShader(fill)) return shaderFieldTexture(three, fill.shader)
+  if (fill.type === 'shader') return fillTexture(three, effectiveTileFill(fill))   // no spec yet — degrade to input
   if (fill.type === 'solid') return null
   const key = `${fill.type}|${fill.a}|${fill.b}|${fill.angle}|${fill.density}`
   const hit = _cache.get(key)
@@ -72,7 +163,7 @@ export const SRGB_TO_LINEAR_GLSL =
 const _shaderCache = new Map<string, THREE.Texture>()
 
 export function fillShaderTexture(three: typeof THREE, fill: Fill): THREE.Texture {
-  if (fill.type !== 'solid') return fillTexture(three, fill)!   // gradient/grid/noise already textures
+  if (fill.type !== 'solid') return fillTexture(three, fill)!   // gradient/grid/noise/shader already textures
   const key = `solid|${fill.a}`
   const hit = _shaderCache.get(key)
   if (hit) return hit

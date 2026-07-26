@@ -243,6 +243,11 @@ let previewStart = 0
 const baking = ref(false)
 const renderError = ref<string | null>(null)
 const webglOk = ref(true)
+// Non-zero when the engine capped one or more shader fills at a frozen (t=0) snapshot
+// this frame because too many live fields were requested at once (LIVE_FIELD_CEILING,
+// see ~/lib/shaderfill/field.ts). The design forbids silently truncating — the user
+// must see why a shader fill stopped animating rather than assume it's broken.
+const frozenFieldCount = ref(0)
 
 // Collapsible control sections. Effect controls declare their `group`; surface-only
 // controls (gradient stops, loop, dimensions, transparent) are injected per section.
@@ -593,6 +598,7 @@ function startPreview() {
     previewT01 = frame / base
     engine?.renderFrameAt(previewT01, params)
     renderError.value = engine?.lastError ?? null
+    frozenFieldCount.value = engine?.frozenFieldCount ?? 0
     raf = requestAnimationFrame(tick)
   }
   raf = requestAnimationFrame(tick)
@@ -1072,6 +1078,11 @@ async function generateVideo() {
         <div v-if="renderError"
              class="pointer-events-none absolute inset-x-3 bottom-3 rounded-md border border-amber-400/30 bg-black/70 px-3 py-2 text-[11px] text-amber-200/90">
           Effect failed to render — adjust a parameter to recover.
+        </div>
+        <div v-else-if="frozenFieldCount > 0"
+             class="pointer-events-none absolute inset-x-3 bottom-3 rounded-md border border-amber-400/30 bg-black/70 px-3 py-2 text-[11px] text-amber-200/90">
+          {{ frozenFieldCount }} shader fill{{ frozenFieldCount > 1 ? 's' : '' }} frozen — too many live shader
+          fields at once (limit 4). Remove a shader fill for full motion.
         </div>
         <div v-if="!webglOk" class="absolute inset-0 flex items-center justify-center text-xs text-white/50">
           3D preview unavailable on this device.
