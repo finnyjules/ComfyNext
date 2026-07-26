@@ -12,14 +12,22 @@ import type { ComputedRef } from 'vue'
 import { ChevronDown, Dices } from 'lucide-vue-next'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
 import GradientEditor from '~/components/vue-canvas/compositor/GradientEditor.vue'
-import { type Fill, type FillType, FILL_TYPES, DEFAULT_FILL, fillTileCanvas } from '~/lib/spacetype/fillTile'
+import ShaderFillEditor from '~/components/vue-canvas/widgets/ShaderFillEditor.vue'
+import { type Fill, type FillType, type ShaderSpec, FILL_TYPES, DEFAULT_FILL, DEFAULT_SHADER_SPEC, fillTileCanvas } from '~/lib/spacetype/fillTile'
 import { rollPaintItem, gradientFromPaint } from '~/lib/compositor/fillPalette'
 import { type Paint, type Gradient, isFill, isGradient } from '~/composables/useCompositorLayers'
 import type { BrandKit } from '~~/shared/brand/types'
 import { brandSwatches as kitSwatches } from '~~/shared/brand/resolve'
 
-const props = withDefaults(defineProps<{ modelValue: Paint | undefined; allowNone?: boolean }>(), { allowNone: false })
+const props = withDefaults(defineProps<{ modelValue: Paint | undefined; allowNone?: boolean; nested?: boolean }>(), { allowNone: false, nested: false })
 const emit = defineEmits<{ 'update:modelValue': [Paint] }>()
+
+/** The type list this instance offers. `nested` is set on the fill editor that
+ *  ShaderFillEditor mounts for `spec.input` — excluding 'shader' there is the
+ *  depth-1 nesting guard (normalizeFill, fillTile.ts) made visible in the UI
+ *  rather than a user picking "shader" again and having it silently collapsed
+ *  on save. */
+const availableTypes = computed<FillType[]>(() => props.nested ? FILL_TYPES.filter((t) => t !== 'shader') : FILL_TYPES)
 
 const open = ref(false)
 const previewRef = ref<HTMLCanvasElement | null>(null)
@@ -68,9 +76,15 @@ function setType(t: FillType) {
   // Switching INTO gradient seeds it from the current colours; an authored gradient
   // is preserved while you stay on the gradient type.
   if (t === 'gradient' && fill.type !== 'gradient') grad.value = toGrad(undefined, fill)
+  // Switching INTO shader seeds a fresh spec (cloned — DEFAULT_SHADER_SPEC is a
+  // shared module constant, never mutated in place) so the editor has something
+  // real to bind to immediately, rather than relying on the `?? DEFAULT_SHADER_SPEC`
+  // fallback below until the user's first edit.
+  if (t === 'shader' && !fill.shader) fill.shader = structuredClone(DEFAULT_SHADER_SPEC)
   fill.type = t; push()
 }
 function onGrad(g: Gradient) { grad.value = g; push() }
+function onShaderSpec(spec: ShaderSpec) { fill.shader = spec; push() }
 
 // ── Shuffle: roll a tasteful fill from the Vessell palette (patterns + a few
 // brand gradients). A rolling counter seeds the pick so repeated clicks vary. ──
@@ -168,10 +182,12 @@ watch(grad, drawPreview, { deep: true })
 
       <select :value="fill.type" class="w-full rounded bg-white/10 px-2 py-1.5 text-xs text-white/90 outline-none capitalize cursor-pointer"
         @change="setType(($event.target as HTMLSelectElement).value as FillType)">
-        <option v-for="t in FILL_TYPES" :key="t" :value="t">{{ t }}</option>
+        <option v-for="t in availableTypes" :key="t" :value="t">{{ t }}</option>
       </select>
 
       <GradientEditor v-if="fill.type === 'gradient'" :model-value="grad" @update:model-value="onGrad" />
+
+      <ShaderFillEditor v-else-if="fill.type === 'shader'" :model-value="fill.shader ?? DEFAULT_SHADER_SPEC" @update:model-value="onShaderSpec" />
 
       <div v-else class="flex items-center gap-1.5">
         <span class="text-[9px] uppercase tracking-[0.1em] text-white/35 shrink-0">{{ needsB ? 'A' : 'Color' }}</span>

@@ -7,6 +7,8 @@ import { ensureBoostFont } from '~/lib/spacetype/effects/boost'
 import { defaultsFromControls, type Params, type ControlSpec } from '~/lib/spacetype/effect'
 import { SPACE_TYPE_SECTIONS } from '~/lib/spacetype/sections'
 import { parseFills, serializeFills, FILL_TYPES, type Fill, type FillType } from '~/lib/spacetype/fills'
+import { DEFAULT_SHADER_SPEC, type ShaderSpec } from '~/lib/spacetype/fillTile'
+import ShaderFillEditor from '~/components/vue-canvas/widgets/ShaderFillEditor.vue'
 import { SpaceTypeEngine } from '~/lib/spacetype/engine'
 import { detectWebGL } from '~/lib/spacetype/webgl'
 import { DEFAULT_POST, type PostSettings } from '~/lib/spacetype/post'
@@ -202,6 +204,13 @@ watch(fills, () => {
 }, { deep: true })
 function addFill() { fills.push({ type: 'solid', a: '#ffffff', b: '#000000', textColor: '#ffffff', angle: 45, density: 8 }) }
 function removeFill(i: number) { fills.splice(i, 1); if (!fills.length) addFill() }
+// Switching a fill INTO 'shader' seeds a fresh spec (cloned — DEFAULT_SHADER_SPEC is a
+// shared module constant, never mutated in place) so ShaderFillEditor has something real
+// to bind to immediately, rather than relying on its `?? DEFAULT_SHADER_SPEC` fallback.
+function setFillType(f: Fill, t: FillType) {
+  if (t === 'shader' && !f.shader) f.shader = structuredClone(DEFAULT_SHADER_SPEC)
+  f.type = t
+}
 // Which controls each fill type actually uses (so the editor only shows relevant ones).
 function fillNeedsB(f: Fill): boolean { return f.type !== 'solid' }                                  // second colour
 function fillHasAngle(f: Fill): boolean { return f.type === 'ombre' || f.type === 'stripes' }        // direction
@@ -1228,15 +1237,20 @@ async function generateVideo() {
                       </span>
                       <span class="w-3 shrink-0 text-center text-[10px] tabular-nums text-white/30">{{ i + 1 }}</span>
                       <StudioSelect class="flex-1" :options="FILL_TYPES" :model-value="f.type"
-                                    @update:model-value="(v: string) => f.type = v as FillType" />
+                                    @update:model-value="(v: string) => setFillType(f, v as FillType)" />
                       <button v-if="fills.length > 1" type="button" @click="removeFill(i)" aria-label="Remove fill"
                               class="shrink-0 rounded p-1 text-white/30 hover:bg-white/10 hover:text-rose-300">
                         <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></svg>
                       </button>
                     </div>
-                    <!-- colours: fill pair grouped left, text colour pushed right -->
+                    <!-- colours: fill pair grouped left, text colour pushed right. The A/B pair
+                         is meaningless for a shader fill (its look comes from the nested input
+                         fill below instead), so it's hidden rather than shown-but-inert; Text
+                         stays — it's an independent solid colour used by some effects regardless
+                         of the fill pattern (see Fill's own doc). -->
                     <div class="mt-2.5 flex items-end gap-2.5 pl-6">
                       <FillSwatch
+                        v-if="f.type !== 'shader'"
                         :label="fillNeedsB(f) ? 'Color 1' : 'Fill'"
                         :color="f.a"
                         :bound="boundColumnFor(swatchKey(i, 'a'))"
@@ -1246,7 +1260,7 @@ async function generateVideo() {
                         @edit="goToCollection"
                       />
                       <FillSwatch
-                        v-if="fillNeedsB(f)"
+                        v-if="f.type !== 'shader' && fillNeedsB(f)"
                         label="Color 2"
                         :color="f.b"
                         :bound="boundColumnFor(swatchKey(i, 'b'))"
@@ -1270,6 +1284,10 @@ async function generateVideo() {
                     <div v-if="fillHasAngle(f) || fillHasDensity(f)" class="mt-2.5 space-y-1.5 pl-6">
                       <StudioSlider v-if="fillHasAngle(f)" v-model="f.angle" :label="f.type === 'stripes' ? 'Angle' : 'Fade angle'" :min="0" :max="180" :step="5" />
                       <StudioSlider v-if="fillHasDensity(f)" v-model="f.density" label="Density" :min="1" :max="32" :step="1" />
+                    </div>
+                    <!-- shader fill: effect/params/anchor/speed + nested input fill -->
+                    <div v-if="f.type === 'shader'" class="mt-2.5 pl-6">
+                      <ShaderFillEditor :model-value="f.shader ?? DEFAULT_SHADER_SPEC" @update:model-value="(v: ShaderSpec) => { f.shader = v }" />
                     </div>
                   </div>
                   <button type="button" @click="addFill"

@@ -17,7 +17,8 @@ import { paletteFor } from '~/lib/shapefx/color'
 import { detectWebGL } from '~/lib/spacetype/webgl'
 import { HARMONY_TYPES, HARMONY_LABELS, toStops } from '~/lib/color/harmony'
 import { hexToOklch, oklchToHex } from '~/lib/color/convert'
-import { FILL_TYPES } from '~/lib/spacetype/fillTile'
+import { FILL_TYPES, DEFAULT_SHADER_SPEC, type ShaderSpec } from '~/lib/spacetype/fillTile'
+import ShaderFillEditor from '~/components/vue-canvas/widgets/ShaderFillEditor.vue'
 import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
 import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
@@ -149,7 +150,13 @@ const primitiveProxy = enumProxy(() => config.value.shape.primitive, v => { conf
 const projectionProxy = enumProxy(() => config.value.shape.projection, v => { config.value.shape.projection = v })
 const coloringProxy = enumProxy(() => config.value.palette.coloring, v => { config.value.palette.coloring = v })
 const directionProxy = enumProxy(() => config.value.palette.direction, v => { config.value.palette.direction = v })
-const fillTypeProxy = enumProxy(() => config.value.fill.type, v => { config.value.fill.type = v })
+const fillTypeProxy = enumProxy(() => config.value.fill.type, (v) => {
+  // Switching INTO shader seeds a fresh spec (cloned — DEFAULT_SHADER_SPEC is a shared
+  // module constant, never mutated in place) so ShaderFillEditor has something real to
+  // bind to immediately, rather than relying on its `?? DEFAULT_SHADER_SPEC` fallback.
+  if (v === 'shader' && !config.value.fill.shader) config.value.fill.shader = structuredClone(DEFAULT_SHADER_SPEC)
+  config.value.fill.type = v
+})
 const fillModeProxy = enumProxy(() => config.value.fillMode, v => { config.value.fillMode = v })
 
 const PRIMITIVE_OPTIONS = ['cube', 'sphere', 'cone', 'cylinder', 'prism', 'torus', 'icosahedron', 'octahedron']
@@ -623,7 +630,7 @@ async function onImportFile(e: Event) {
           <label class="mb-1 block text-[11px] text-white/55">Fill type</label>
           <StudioSelect v-model="fillTypeProxy" :options="FILL_TYPES" />
         </div>
-        <div class="flex gap-4">
+        <div v-if="config.fill.type !== 'shader'" class="flex gap-4">
           <FillSwatch
             label="Color 1" :color="config.fill.a" :bound="boundColumnFor('fill.a')"
             @update:color="(v: string) => { config.fill.a = v; onEdit('fill.a', v) }"
@@ -655,6 +662,14 @@ async function onImportFile(e: Event) {
           @update:model-value="(v: number) => { config.fill.density = v; onEdit('fill.density', v) }"
           @promote="promote({ key: 'fill.density', label: 'Density', kind: 'slider', min: 2, max: 32, step: 1 }, config.fill.density)"
           @menu="(e: MouseEvent) => openVarMenu(e, { key: 'fill.density', label: 'Density', kind: 'slider', min: 2, max: 32, step: 1 })"
+        />
+        <!-- shader fill: effect/params/anchor/speed + nested input fill. Hand-wired (no
+             var-binding integration yet) — the dynamically-keyed per-effect params don't
+             fit the fixed-field promote/bind system the sliders above use. -->
+        <ShaderFillEditor
+          v-if="config.fill.type === 'shader'"
+          :model-value="config.fill.shader ?? DEFAULT_SHADER_SPEC"
+          @update:model-value="(v: ShaderSpec) => { config.fill.shader = v }"
         />
       </StudioSection>
 

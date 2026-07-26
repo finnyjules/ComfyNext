@@ -1,0 +1,277 @@
+<script setup lang="ts">
+/**
+ * ShaderFillEditor — the authoring UI for a `ShaderSpec` (a `Fill` of type
+ * 'shader'). Four sections: an effect picker (the app's canonical CatalogModal,
+ * merging the live 63-effect catalog), the selected effect's own derived params
+ * (`derivedShaderFillControls`), an anchor toggle, a speed slider — then the one
+ * genuinely new piece, the NESTED INPUT FILL EDITOR: the same `FillControl` used
+ * everywhere else in the app, bound to `spec.input`, with `'shader'` excluded
+ * from its own type list (`nested` prop). That exclusion is the depth-1 nesting
+ * guard already enforced in `normalizeFill` (fillTile.ts) made visible in the
+ * UI, rather than a user picking "shader" again and having it silently
+ * collapsed on save.
+ *
+ * Hand-written, not derived from ControlSpec — this editor's layout is fixed
+ * (picker → params → anchor → speed → nested fill), matching the note at
+ * `~/lib/gradientfx/controls.ts:9-11` that ControlSpec is a description for
+ * OTHER consumers (agent config, var-bindings), not a template for generating
+ * inspector markup.
+ *
+ * Reused by every fill-picker call site (`grep -rl FILL_TYPES app`): Space
+ * Type's fill list, Shape Studio's surface fill, and the Compositor's
+ * `FillControl` itself (mounted internally there when `fill.type === 'shader'`).
+ */
+import { computed, onMounted, ref } from 'vue'
+import { ChevronRight, Sparkles } from 'lucide-vue-next'
+import CatalogModal from '~/components/CatalogModal.vue'
+import FillControl from '~/components/vue-canvas/compositor/FillControl.vue'
+import StudioSlider from '~/components/vue-canvas/studio/StudioSlider.vue'
+import StudioSegmented from '~/components/vue-canvas/studio/StudioSegmented.vue'
+import { type Fill, type ShaderSpec, DEFAULT_SHADER_SPEC } from '~/lib/spacetype/fillTile'
+import { type Paint, isGradient } from '~/composables/useCompositorLayers'
+import { fetchShaderFxCatalog } from '~/lib/shaderfx/catalog'
+import type { EffectDef, ShaderFxCatalog } from '~/lib/shaderfx/types'
+import { derivedShaderFillControls } from '~/lib/shaderfill/controls'
+import { unprefixedKey } from '~/lib/shaderfill/descriptor'
+
+const props = defineProps<{ modelValue: ShaderSpec }>()
+const emit = defineEmits<{ 'update:modelValue': [ShaderSpec] }>()
+
+/** Spread, never a listed-field rebuild — a `ShaderSpec` (or `Fill`) rebuilt by
+ *  listing fields has silently dropped one six times in this feature already
+ *  (see fillTile.ts / FillControl.vue's own notes on the same trap). */
+function patch(partial: Partial<ShaderSpec>) {
+  emit('update:modelValue', { ...props.modelValue, ...partial })
+}
+
+// ── Catalog ──────────────────────────────────────────────────────────────────
+const catalog = ref<ShaderFxCatalog | null>(null)
+onMounted(() => {
+  fetchShaderFxCatalog().then((c) => { catalog.value = c }).catch(() => { /* picker falls back to the raw id */ })
+})
+
+const effectDef = computed<EffectDef | null>(
+  () => catalog.value?.effects.find((e) => e.id === props.modelValue.effectId) ?? null,
+)
+
+function titleCase(s: string): string {
+  return s.replace(/(^|[_\s])(\w)/g, (_, sep, c) => (sep ? ' ' : '') + c.toUpperCase()).trim()
+}
+
+// ── Effect picker (CatalogModal, merged with the live catalog — SHADER_FILL_
+// CONTROLS.effectId declares options:[] on purpose; this is the caller that
+// merges in the live ids, per that control's own doc) ──────────────────────
+const pickerOpen = ref(false)
+const pickerSearch = ref('')
+const pickerFilter = ref('all')
+
+const pickerFilters = computed(() => {
+  const counts = new Map<string, number>()
+  for (const e of catalog.value?.effects ?? []) counts.set(e.category, (counts.get(e.category) ?? 0) + 1)
+  return [
+    { id: 'all', label: 'All', count: catalog.value?.effects.length ?? 0 },
+    ...[...counts].map(([id, count]) => ({ id, label: titleCase(id), count })),
+  ]
+})
+
+const pickerItems = computed<EffectDef[]>(() => {
+  const q = pickerSearch.value.trim().toLowerCase()
+  return (catalog.value?.effects ?? []).filter((e) =>
+    (pickerFilter.value === 'all' || e.category === pickerFilter.value)
+    && (!q || e.name.toLowerCase().includes(q) || e.category.toLowerCase().includes(q)))
+})
+
+function openPicker() {
+  pickerSearch.value = ''
+  pickerFilter.value = 'all'
+  pickerOpen.value = true
+}
+
+function pickEffect(id: string) {
+  // Params are per-effect (a different effect's param list means different
+  // keys/meanings) — reset rather than carry stale values across the switch,
+  // mirroring ShaderEffectNode's own pickEffect.
+  patch({ effectId: id, params: {} })
+  pickerOpen.value = false
+}
+
+// ── Derived per-effect params ────────────────────────────────────────────────
+// Prefix only shapes each control's `.key` (unused here beyond stripping back
+// off to the bare param id); it doesn't need to match where this ShaderSpec
+// actually lives in its host (Fill.shader vs Scene3D's bare material.shader).
+const PREFIX = 'fill.shader'
+const PARAM_PREFIX = `${PREFIX}.params.`
+
+interface ParamRow {
+  key: string
+  label: string
+  kind: 'slider' | 'select'
+  min?: number
+  max?: number
+  step?: number
+  default: number
+  options?: { value: number; label: string }[]
+}
+
+const paramRows = computed<ParamRow[]>(() => {
+  const eff = effectDef.value
+  if (!eff) return []
+  // derivedShaderFillControls only ever emits 'slider' or 'select' kinds (see its
+  // own source), but its return type is the full ControlSpec union (shared with
+  // every other control kind in the app) — flatMap + an explicit kind check on
+  // each branch narrows properly instead of asserting past the type checker.
+  return derivedShaderFillControls(eff, PREFIX).flatMap((c): ParamRow[] => {
+    const key = c.key.startsWith(PARAM_PREFIX) ? c.key.slice(PARAM_PREFIX.length) : c.key
+    if (c.kind === 'select') {
+      // The control's own `options` are stringified NUMBERS — the stored value
+      // domain (ShaderSpec.params is Record<string, number>; resolveEffectParams
+      // only ever accepts a number). Display labels aren't on the ControlSpec at
+      // all (`select` has no value/label channel — see controls.ts's documented
+      // gap); resolved here instead, from the live EffectDef's own option list,
+      // by matching back on the same unprefixedKey the control was built from.
+      const orig = eff.params.find((p) => unprefixedKey(p.uniform) === key)
+      return [{
+        key, label: c.label, kind: 'select', default: Number(c.default),
+        options: (orig?.options ?? []).map((o) => ({ value: o.value, label: o.label })),
+      }]
+    }
+    if (c.kind === 'slider') {
+      return [{ key, label: c.label, kind: 'slider', default: c.default, min: c.min, max: c.max, step: c.step }]
+    }
+    return []
+  })
+})
+
+function paramValue(row: ParamRow): number {
+  const raw = props.modelValue.params[row.key]
+  return typeof raw === 'number' && Number.isFinite(raw) ? raw : row.default
+}
+function setParam(key: string, v: number) {
+  patch({ params: { ...props.modelValue.params, [key]: v } })
+}
+
+// ── Anchor / speed ────────────────────────────────────────────────────────────
+const anchor = computed<string>({
+  get: () => props.modelValue.anchor,
+  set: (v) => patch({ anchor: v === 'frame' ? 'frame' : 'object' }),
+})
+const speed = computed<number>({
+  get: () => props.modelValue.speed,
+  set: (v) => patch({ speed: v }),
+})
+
+// ── Nested input fill ─────────────────────────────────────────────────────────
+// `Fill` is a member of compositor's `Paint` union, so it can be handed to
+// FillControl's modelValue directly on the read side; the write side has to
+// undo FillControl's own Paint-collapsing (solid -> hex string, gradient ->
+// multi-stop Gradient) back into the single-stop `Fill` shape `ShaderSpec.input`
+// requires. Mirrors FillControl's own toFill()/toGrad() adapters.
+function fillFromPaint(p: Paint): Fill {
+  if (typeof p === 'string') {
+    return { type: 'solid', a: p, b: '#000000', textColor: '#ffffff', angle: 45, density: 8 }
+  }
+  if (isGradient(p)) {
+    const stops = [...p.stops].sort((a, b) => a.offset - b.offset)
+    return {
+      type: 'gradient',
+      a: stops[0]?.color ?? '#ffffff',
+      b: stops[stops.length - 1]?.color ?? '#000000',
+      textColor: '#ffffff',
+      angle: (p as { angle?: number }).angle ?? 45,
+      density: 8,
+    }
+  }
+  // Already a Fill — spread (not a listed-field rebuild) so nothing it carries
+  // is lost. `nested` on the child FillControl keeps 'shader' out of its type
+  // list, so `p.type === 'shader'` shouldn't happen; guarded anyway rather than
+  // trusting that invariant to hold from every possible caller.
+  return { ...p, type: p.type === 'shader' ? 'gradient' : p.type }
+}
+function onInputChange(p: Paint) {
+  patch({ input: fillFromPaint(p) })
+}
+</script>
+
+<template>
+  <div class="space-y-2.5 rounded-lg border border-white/10 bg-white/[0.02] p-2.5">
+    <!-- Effect picker -->
+    <div>
+      <label class="mb-1 block text-[9px] uppercase tracking-[0.1em] text-white/35">Effect</label>
+      <button
+        type="button"
+        class="flex w-full cursor-pointer items-center gap-2 rounded border border-white/10 bg-white/[0.04] px-2 py-1.5 text-left transition-colors hover:border-white/20 hover:bg-white/[0.08]"
+        @click="openPicker"
+      >
+        <Sparkles class="size-3.5 shrink-0 text-white/60" :stroke-width="1.75" />
+        <span class="min-w-0 flex-1">
+          <span class="block truncate text-[11px] font-medium leading-tight text-white/90">{{ effectDef?.name ?? modelValue.effectId }}</span>
+          <span v-if="effectDef" class="block truncate text-[9px] uppercase leading-tight tracking-[0.06em] text-white/40">{{ titleCase(effectDef.category) }}</span>
+        </span>
+        <ChevronRight class="size-3.5 shrink-0 text-white/30" />
+      </button>
+    </div>
+
+    <!-- Effect params (derived per catalog effect) -->
+    <div v-for="row in paramRows" :key="row.key">
+      <template v-if="row.kind === 'select'">
+        <label class="mb-1 block text-[9px] uppercase tracking-[0.1em] text-white/35">{{ row.label }}</label>
+        <select
+          class="w-full cursor-pointer rounded bg-white/10 px-2 py-1.5 text-xs text-white/90 outline-none"
+          :value="String(paramValue(row))"
+          @change="setParam(row.key, Number(($event.target as HTMLSelectElement).value))"
+        >
+          <option v-for="o in row.options" :key="o.value" :value="o.value" class="bg-neutral-900">{{ o.label }}</option>
+        </select>
+      </template>
+      <StudioSlider
+        v-else
+        :model-value="paramValue(row)"
+        :label="row.label" :min="row.min ?? 0" :max="row.max ?? 1" :step="row.step ?? 0.01" :default="row.default"
+        @update:model-value="(v: number) => setParam(row.key, v)"
+      />
+    </div>
+
+    <!-- Anchor -->
+    <div>
+      <label class="mb-1 block text-[9px] uppercase tracking-[0.1em] text-white/35">Anchor</label>
+      <StudioSegmented v-model="anchor" :options="['object', 'frame']" />
+    </div>
+
+    <!-- Speed -->
+    <StudioSlider v-model="speed" label="Speed" :min="0" :max="4" :step="0.05" :default="DEFAULT_SHADER_SPEC.speed" />
+
+    <!-- Nested input fill: the recursive half, depth-limited to 1 via `nested`. -->
+    <div class="border-t border-white/10 pt-2.5">
+      <label class="mb-1.5 block text-[9px] uppercase tracking-[0.1em] text-white/35">Input fill</label>
+      <FillControl nested :model-value="modelValue.input" @update:model-value="onInputChange" />
+    </div>
+
+    <CatalogModal
+      :open="pickerOpen"
+      title="Shader Effects"
+      subtitle="Pick an effect for this fill"
+      :items="pickerItems"
+      :selected-id="modelValue.effectId"
+      :filters="pickerFilters"
+      :active-filter-id="pickerFilter"
+      :search-query="pickerSearch"
+      search-placeholder="Search effects…"
+      confirm-label="Use effect"
+      empty-message="No effects match your search."
+      @close="pickerOpen = false"
+      @confirm="pickEffect(($event as EffectDef).id)"
+      @update:active-filter-id="pickerFilter = $event"
+      @update:search-query="pickerSearch = $event"
+    >
+      <template #card="{ item }">
+        <div class="flex aspect-video items-center justify-center bg-white/[0.03]">
+          <Sparkles class="size-5 text-white/25" :stroke-width="1.5" />
+        </div>
+        <div class="px-2 py-1.5">
+          <div class="truncate text-[11px] text-white/85">{{ (item as EffectDef).name }}</div>
+          <div class="truncate text-[10px] capitalize text-white/35">{{ (item as EffectDef).category }}</div>
+        </div>
+      </template>
+    </CatalogModal>
+  </div>
+</template>
