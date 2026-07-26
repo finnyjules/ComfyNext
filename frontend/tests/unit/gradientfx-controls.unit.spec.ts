@@ -140,3 +140,26 @@ describe('GRADIENT_CONTROLS schema integrity', () => {
     for (const c of shape) expect((c as any).agent, `${c.key}`).toBe(false)
   })
 })
+
+describe('relief light is offered where it actually does something', () => {
+  // Ground truth is the shader: shaders.ts gates the u_light branch on
+  // `u_layout < 3.5` (linear/radial/orbit/stack), and the liquid branch is explicit
+  // that it uses "its own light, not u_light". The legacy agent builder had these
+  // under isLiquid — exactly inverted — so the agent was offered them where they do
+  // nothing and denied them where they work. This pins the corrected placement.
+  const lightKeys = ['relief.light.azimuth', 'relief.light.elevation']
+
+  for (const layout of ['linear', 'radial', 'orbit'] as const) {
+    it(`offers the light controls for the banded layout ${layout}`, () => {
+      const keys = gradientAgentControls(cfgWithLayout(layout)).map((c) => c.key)
+      for (const k of lightKeys) expect(keys, `${layout} / ${k}`).toContain(k)
+    })
+  }
+
+  for (const layout of ['liquid', 'mesh'] as const) {
+    it(`withholds the light controls for ${layout}, where u_light is unused`, () => {
+      const keys = gradientAgentControls(cfgWithLayout(layout)).map((c) => c.key)
+      for (const k of lightKeys) expect(keys, `${layout} / ${k}`).not.toContain(k)
+    })
+  }
+})

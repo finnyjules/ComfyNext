@@ -80,8 +80,6 @@ export const GRADIENT_CONTROLS: GradientControl[] = [
   slider('flow.ripple', 'Ripple', 0, 100, 1, 'Liquid', undefined, { when: isLiquid }),
   slider('flow.refract', 'Refraction', 0, 100, 1, 'Liquid', undefined, { when: isLiquid }),
   slider('flow.viscosity', 'Viscosity', 0, 100, 1, 'Liquid', undefined, { when: isLiquid }),
-  slider('relief.light.azimuth', 'Light angle', 0, 360, 1, 'Liquid', undefined, { when: isLiquid }),
-  slider('relief.light.elevation', 'Light height', 0, 90, 1, 'Liquid', undefined, { when: isLiquid }),
 
   // --- Mesh only ------------------------------------------------------------
   slider('layer.mesh.softness', 'Softness', 10, 100, 1, 'Mesh', undefined, { when: isMesh }),
@@ -102,17 +100,23 @@ export const GRADIENT_CONTROLS: GradientControl[] = [
   slider('layer.shape.peaks', 'Peaks', 1, 12, 1, 'Shape', undefined, { agent: false, when: isBanded }),
   slider('layer.shape.count', 'Count', 2, 64, 1, 'Shape', undefined, { agent: false, when: isBanded }),
   slider('layer.shape.minDepth', 'Min depth', 0, 1, 0.01, 'Shape', undefined, { agent: false, when: isBanded }),
-  slider('layer.shape.curveExp', 'Curve exponent', 0.2, 3, 0.01, 'Shape', undefined, { agent: false, when: isBanded }),
+  slider('layer.shape.curveExp', 'Curve exponent', 0.2, 3, 0.05, 'Shape', undefined, { agent: false, when: isBanded }),
   slider('layer.shape.jitter', 'Jitter', 0, 1, 0.01, 'Shape', undefined, { agent: false, when: isBanded }),
   // Slider bound is 20 but animation is allowed the full 0..360 — the one known
   // UI-vs-track divergence, declared once here instead of in two lists.
   slider('layer.shape.sweep', 'Sweep', 20, 360, 1, 'Shape', undefined, { agent: false, when: isBanded, animatable: { min: 0, max: 360 } }),
-  slider('layer.shape.gap', 'Gap', 0, 1, 0.01, 'Shape', undefined, { agent: false, when: isBanded }),
+  slider('layer.shape.gap', 'Gap', 0, 0.8, 0.01, 'Shape', undefined, { agent: false, when: isBanded, animatable: { min: 0, max: 1 } }),
   slider('layer.shape.rounding', 'Rounding', 0, 1, 0.01, 'Shape', undefined, { agent: false, when: isBanded }),
   slider('layer.shape.valley', 'Valley position', 0, 1, 0.01, 'Shape', undefined, { agent: false, when: isBanded }),
 
   // --- Relief ---------------------------------------------------------------
   slider('relief.grain', 'Grain', 0, 1, 0.01, 'Relief'),
+  // The relief light shades the band/ring height field only: shaders.ts gates u_light
+  // on `u_layout < 3.5`, and the liquid branch is explicit that it uses "its own light,
+  // not u_light". The legacy agent builder had these under isLiquid — exactly inverted —
+  // so the agent was offered them where they do nothing and denied them where they work.
+  slider('relief.light.azimuth', 'Light angle', 0, 360, 1, 'Relief', undefined, { when: isBanded }),
+  slider('relief.light.elevation', 'Light height', 0, 90, 1, 'Relief', undefined, { when: isBanded }),
   slider('relief.relief', 'Relief', 0, 1, 0.01, 'Relief', undefined, { when: isBanded }),
 
   // --- Layer ----------------------------------------------------------------

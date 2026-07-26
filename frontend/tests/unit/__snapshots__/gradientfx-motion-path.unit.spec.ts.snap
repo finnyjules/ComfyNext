@@ -22,6 +22,8 @@ exports[`animatableTargets > pins the default config's animatable target set 1`]
   "layers.0.shape.rounding",
   "layers.0.shape.valley",
   "relief.grain",
+  "relief.light.azimuth",
+  "relief.light.elevation",
   "relief.relief",
   "layers.0.opacity",
   "layers.0.color.steps",

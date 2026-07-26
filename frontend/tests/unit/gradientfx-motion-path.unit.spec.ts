@@ -78,7 +78,10 @@ describe('animatableTargets', () => {
   // removes a motion target fails loudly here instead of shipping unnoticed.
   it('pins the default config\'s animatable target set', () => {
     const paths = animatableTargets(cfg()).map((t) => t.path)
-    expect(paths.length).toBe(30)
+    // 32 since relief.light.azimuth/elevation moved from the liquid layout (where
+    // the shader ignores them) to the banded layouts (where they aim the relief
+    // light) — so the default linear config can now animate the light too.
+    expect(paths.length).toBe(32)
     expect(paths).toMatchSnapshot()
   })
 })
