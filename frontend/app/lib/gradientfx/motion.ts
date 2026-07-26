@@ -4,6 +4,7 @@
 
 import { cloneConfig, type EasingKind, type GradientConfig, type MotionTrack } from './types'
 import { visibleGradientControls } from './controls'
+import { layerLabels } from './layerLabel'
 import { getByPath, setByPath } from '~/lib/studio/path'
 
 export interface AnimatableTarget { path: string; label: string; min: number; max: number }
@@ -16,6 +17,10 @@ export interface AnimatableTarget { path: string; label: string; min: number; ma
  */
 export function animatableTargets(cfg: GradientConfig): AnimatableTarget[] {
   const out: AnimatableTarget[] = []
+  // Name layers by what they ARE ("Wave · Count"), not where they sit. A positional
+  // name renumbers on reorder, which made a track that had correctly followed its
+  // layer look like it had jumped to a different one.
+  const names = layerLabels(cfg)
   for (const c of visibleGradientControls(cfg)) {
     if (c.kind !== 'slider') continue
     const flag = (c as any).animatable
@@ -24,7 +29,7 @@ export function animatableTargets(cfg: GradientConfig): AnimatableTarget[] {
     if (c.key.startsWith('layer.')) {
       const rest = c.key.slice('layer.'.length)
       cfg.layers.forEach((_l, i) => {
-        out.push({ path: `layers.${i}.${rest}`, label: `Layer ${i + 1} · ${c.label}`, ...range })
+        out.push({ path: `layers.${i}.${rest}`, label: `${names[i] ?? `Layer ${i + 1}`} · ${c.label}`, ...range })
       })
     } else {
       out.push({ path: c.key, label: c.label, ...range })

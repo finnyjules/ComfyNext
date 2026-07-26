@@ -7,6 +7,7 @@ import { MESH_MAX_POINTS, buildMeshPoints, defaultMesh } from '~/lib/gradientfx/
 import { randomSeed } from '~/lib/gradientfx/rng'
 import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
 import { animatableTargets, dropTracksForLayer, remapTracksOnInsert, remapTracksOnReorder } from '~/lib/gradientfx/motion'
+import { layerLabels } from '~/lib/gradientfx/layerLabel'
 import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
 import StudioLayerStack from '~/components/vue-canvas/StudioLayerStack.vue'
@@ -51,6 +52,9 @@ const isRadial = computed(() => config.value.canvas.layout === 'radial' || confi
 const isStack = computed(() => config.value.canvas.layout === 'stack')
 const isLiquid = computed(() => config.value.canvas.layout === 'liquid')
 const isMesh = computed(() => config.value.canvas.layout === 'mesh')
+// Layers are named for what they are ("Wave", "Bands"), not their position, so a
+// reorder moves a recognisable name instead of renumbering the whole stack.
+const layerNames = computed(() => layerLabels(config.value))
 // Focus (soft-focus/DoF) is an optional, additive config. Guarantee it exists on
 // the current config so the Focus section's v-models are always non-null — presets
 // replace the whole config and defaultConfig() omits it. Runs before render.
@@ -727,7 +731,7 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
   >
     <template #aside>
       <StudioLayerStack
-        :layers="config.layers.map((l, i) => ({ label: `Layer ${i + 1}`, enabled: layerEnabled(i) }))"
+        :layers="config.layers.map((l, i) => ({ label: layerNames[i] ?? `Layer ${i + 1}`, enabled: layerEnabled(i) }))"
         :active-index="activeLayer" :max="LAYER_MAX"
         @select="activeLayer = $event"
         @add="addLayer" @remove="removeLayer" @duplicate="duplicateLayer"
