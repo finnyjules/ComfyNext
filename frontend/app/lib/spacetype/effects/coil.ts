@@ -263,7 +263,7 @@ function frontMaterial(
         // Ribbon fill = sample this segment's atlas band (slot + localV)/count; localU tiles
         // the band along the segment. Text colour = this segment's flat fill text colour.
         'float coilSlot = mod(segf, uPaletteCount);',
-        'vec2 fillUv = uFillAnchor > 0.5 ? gl_FragCoord.xy / uFillScreen : vec2(fract(vU), clamp(vV, 0.0, 1.0));',
+        'vec2 fillUv = uFillAnchor > 0.5 ? gl_FragCoord.xy / uFillScreen : vec2(fract(vU), vV);',
         'vec3 ribbonCol = texture2D(uFillAtlas, vec2(fillUv.x, (coilSlot + fillUv.y) / uPaletteCount)).rgb;',
         'vec3 textCol = coilText(mod(segf, uPaletteCount));',
         // The rounded fill boundary shifts each colour BLOCK back by the cap bulge. Inset
