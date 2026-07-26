@@ -5,6 +5,12 @@ import { sanitizeParams, sanitizeModifiers } from '~/lib/scene3d/primParams'
 import type { ObjectMotion, CameraMotion, SceneMotion, LoopKind, TransitionPreset, Direction, EaseRef, TransitionSpec } from '~/lib/scene3d/motion/types'
 import { DEFAULT_SCENE_MOTION } from '~/lib/scene3d/motion/types'
 import { DEFAULT_POST, type PostSettings } from '~/lib/spacetype/post'
+// Scene3D does not have (and does not want) its own fill vocabulary — a shaderFill material
+// carries the SAME ShaderSpec the shader-fill field module (~/lib/shaderfill/field.ts) already
+// understands, imported straight from Type Studio's CPU fill model. This is the one place
+// Scene3D reaches into ~/lib/spacetype: for the type + its tolerant parser, never for `Fill`/
+// `FILL_TYPES` — see materials.ts for how the field itself gets rendered onto a mesh.
+import { normalizeShaderSpec, DEFAULT_SHADER_SPEC, type ShaderSpec } from '~/lib/spacetype/fillTile'
 
 export type PrimitiveKind =
   | 'box' | 'sphere' | 'cylinder' | 'cone' | 'torus' | 'plane'
@@ -19,8 +25,8 @@ export type Vec3 = [number, number, number]
 // importing it here would drag all of three into config's import graph.
 export const DEFAULT_FONT_URL = '/fonts/ABCROM-Bold.otf'
 
-export type MaterialType = 'standard' | 'toon' | 'matcap' | 'glass' | 'fresnel' | 'gradient' | 'image'
-export const MATERIAL_TYPES: MaterialType[] = ['standard', 'toon', 'matcap', 'glass', 'fresnel', 'gradient', 'image']
+export type MaterialType = 'standard' | 'toon' | 'matcap' | 'glass' | 'fresnel' | 'gradient' | 'image' | 'shaderFill'
+export const MATERIAL_TYPES: MaterialType[] = ['standard', 'toon', 'matcap', 'glass', 'fresnel', 'gradient', 'image', 'shaderFill']
 
 /** One stop of the gradient ramp. `pos` is 0..1 along the ramp direction. */
 export interface GradientStop { pos: number; color: string }
@@ -58,6 +64,15 @@ export interface SceneMaterial {
   gradientOffset?: number   // -1..1, slides the ramp along the direction
   gradientSpread?: number   // 0.1..3, compresses (<1) / stretches (>1)
   image?: string
+  /** `shaderFill` only — a catalog effect run over `shader.input`, mapped through the mesh's
+   *  own UVs (object anchor). Frame anchor is out of scope for Scene3D: `shader.anchor` is
+   *  never read by the material factory, so a `frame`-anchored spec (e.g. hand-edited JSON, or
+   *  copied from a Type Studio/Shape Studio export) silently renders exactly like `object` —
+   *  see materials.ts. Absent until the user actually picks the shaderFill material type. */
+  shader?: ShaderSpec
+  /** `shaderFill` only — MeshBasicMaterial (flat, unshaded) when true, MeshStandardMaterial
+   *  (scene-lit) when false/absent. */
+  unlit?: boolean
   // physical surface (standard + glass; all optional, defaults render identical
   // to the pre-physical look)
   clearcoat?: number            // 0–1
@@ -127,6 +142,21 @@ export interface LightObject extends SceneObjectBase {
 }
 
 export type SceneObject = PrimitiveObject | GlbObject | LightObject
+
+/** True when any object in `doc` currently RENDERS a shaderFill material — a real ShaderSpec
+ *  attached, not just the bare type picked with nothing to render yet. The gate the Scene3D
+ *  surface's per-frame loop uses (mirrors `configHasShaderFill` in lib/shapefx/surface.ts) so
+ *  the shader-field refresh (beginFieldFrame + resolveField, a WebGL readback per live field)
+ *  never runs for an ordinary scene that doesn't use one. Lights never render `material`
+ *  (LIGHT_DEFAULTS carries a dummy `DEFAULT_MATERIAL`, see createLight) and a GLB's material
+ *  only applies with `materialOverride` on — both excluded. */
+export function sceneHasShaderFill(doc: SceneDoc): boolean {
+  return doc.objects.some((o) => {
+    if (o.kind === 'light') return false
+    if (o.kind === 'glb' && o.materialOverride !== true) return false
+    return o.material.type === 'shaderFill' && !!o.material.shader
+  })
+}
 
 export type LightingPreset = 'studio' | 'soft' | 'dramatic' | 'flat'
 export interface SceneLighting {
@@ -217,6 +247,8 @@ export const MATERIAL_DEFAULTS = {
   iridescence: 0,
   iridescenceIOR: 1.3,
   envMapIntensity: 1,
+  shader: DEFAULT_SHADER_SPEC,
+  unlit: false,
 }
 
 // ── Gradient derivations (shared by the material factory and the Selection UI,
@@ -467,6 +499,11 @@ export function parseDoc(json: string): SceneDoc {
     if (typeof m?.iridescence === 'number') out.iridescence = num(m.iridescence, MATERIAL_DEFAULTS.iridescence)
     if (typeof m?.iridescenceIOR === 'number') out.iridescenceIOR = num(m.iridescenceIOR, MATERIAL_DEFAULTS.iridescenceIOR)
     if (typeof m?.envMapIntensity === 'number') out.envMapIntensity = num(m.envMapIntensity, MATERIAL_DEFAULTS.envMapIntensity)
+    // normalizeShaderSpec is already tolerant of junk (falls back to DEFAULT_SHADER_SPEC's
+    // fields piecewise) — only gate on `m.shader` being present at all, same "copy only when
+    // present" rule as every other optional field above.
+    if (m?.shader && typeof m.shader === 'object') out.shader = normalizeShaderSpec(m.shader, 0)
+    if (typeof m?.unlit === 'boolean') out.unlit = m.unlit
     return out
   }
   // Tolerant content parse: any non-string/unknown field in a stored doc is

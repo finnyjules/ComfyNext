@@ -93,7 +93,14 @@ describe('scene3d config', () => {
     boxFor({ type: 'fresnel', fresnelColor: '#ff00aa', fresnelPower: 5 })
     boxFor({ type: 'gradient', gradientB: '#123456', gradientAxis: 'z', gradientShading: 'faceted' })
     boxFor({ type: 'image', image: 'scene3d_tex_1.png' })
-    expect(MATERIAL_TYPES).toHaveLength(7)
+    boxFor({
+      type: 'shaderFill', unlit: true,
+      shader: {
+        effectId: 'crystal_prism', params: { amount: 0.5 }, anchor: 'object', speed: 2,
+        input: { type: 'gradient', a: '#ff0000', b: '#00ff00', textColor: '#ffffff', angle: 10, density: 4 },
+      },
+    })
+    expect(MATERIAL_TYPES).toHaveLength(8)
     const back = parseDoc(serializeDoc(doc))
     expect(back).toEqual(doc)
   })

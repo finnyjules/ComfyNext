@@ -18,10 +18,14 @@ import {
 import {
   parseDoc, serializeDoc, createPrimitive, createGlbObject, createLight,
   LIGHTING_PRESETS, MATERIAL_TYPES, MATERIAL_DEFAULTS, LIGHT_KINDS, LIGHT_DEFAULTS, lightIntensityMax, gradientAngles, gradientStopsOf,
-  DEFAULT_FONT_URL,
+  DEFAULT_FONT_URL, sceneHasShaderFill,
   type SceneDoc, type SceneObject, type PrimitiveObject, type PrimitiveKind, type MaterialType, type GradientStop, type LightKind, type LightObject,
 } from '~/lib/scene3d/config'
 import { MATCAP_IDS, matcapThumb, onTextureError } from '~/lib/scene3d/materials'
+import { DEFAULT_SHADER_SPEC, type ShaderSpec } from '~/lib/spacetype/fillTile'
+import { fetchShaderFxCatalog } from '~/lib/shaderfx/catalog'
+import type { ShaderFxCatalog } from '~/lib/shaderfx/types'
+import { LIVE_FIELD_CEILING } from '~/lib/shaderfill/descriptor'
 import { AVAILABLE_FONTS, loadFont, fontDisplayName, parseGoogleFontValue } from '~/lib/scene3d/outlines'
 import { loadGoogleCatalog, type GoogleFont } from '~/data/google-fonts'
 import FontPicker from '~/components/vue-canvas/FontPicker.vue'
@@ -403,6 +407,38 @@ const matIridescence = matParam('iridescence')
 const matIridescenceIOR = matParam('iridescenceIOR')
 const matEnvMapIntensity = matParam('envMapIntensity')
 
+// ── shaderFill (object anchor only — Task 7) ─────────────────────────────────
+// Hand-wired: Scene3D has no control-schema/agent path (unlike Space Type/Shape Studio's
+// declarative control schema), so effect/speed/unlit/input-colour live here as plain proxies
+// rather than derived from a shared descriptor list. A known, deliberate gap — see the task
+// report.
+const matUnlit = matParam('unlit')
+const matShader = computed<ShaderSpec>({
+  get: () => selected.value?.material.shader ?? DEFAULT_SHADER_SPEC,
+  set: (v) => { if (selected.value) selected.value.material.shader = v },
+})
+const matShaderEffectId = computed<string>({
+  get: () => matShader.value.effectId,
+  set: (v) => { matShader.value = { ...matShader.value, effectId: v } },
+})
+const matShaderSpeed = computed<number>({
+  get: () => matShader.value.speed,
+  set: (v) => { matShader.value = { ...matShader.value, speed: v } },
+})
+const matShaderInputA = computed<string>({
+  get: () => matShader.value.input.a,
+  set: (v) => { matShader.value = { ...matShader.value, input: { ...matShader.value.input, a: v } } },
+})
+const matShaderInputB = computed<string>({
+  get: () => matShader.value.input.b,
+  set: (v) => { matShader.value = { ...matShader.value, input: { ...matShader.value.input, b: v } } },
+})
+// Catalog fetch mirrors ShaderStudioSurface/ShaderEffectNode's own `fetchShaderFxCatalog()`
+// call — cached module-wide (see catalog.ts), so this is a no-op if another surface already
+// pulled it this page load.
+const shaderCatalog = ref<ShaderFxCatalog | null>(null)
+const shaderEffectIds = computed(() => shaderCatalog.value?.effects.map((e) => e.id) ?? [DEFAULT_SHADER_SPEC.effectId])
+
 // Light field proxies — same shape as matParam, but the fields live flat on the
 // LightObject itself (not nested under .material). Falls back to LIGHT_DEFAULTS
 // so sliders always have a number even before the selected light's field is touched.
@@ -766,6 +802,14 @@ let engine: SceneEngine | null = null
 let interaction: SceneInteraction | null = null
 let raf = 0
 let ro: ResizeObserver | null = null
+// Wall-clock start of this surface's rAF loop — a shaderFill field's animation clock runs off
+// elapsed real time, same as ShapeStudioSurface.vue's `mountedAt` (Scene3D's own playhead
+// governs object motion, not this). Set once in onMounted, read every loop() tick.
+let scene3dMountedAt = 0
+// Frozen-field hint, mirroring ShapeStudioSurface.vue's frozenFieldCount exactly (same design
+// rule: no silent caps on any surface). Reset to 0 whenever the doc has no shaderFill material
+// so it doesn't show a stale count after switching a material away from shaderFill.
+const shaderFrozenCount = ref(0)
 
 // Light View HTML labels: a chip per light (color dot + name + live intensity)
 // at its projected screen position. Reprojected every frame in the rAF loop
@@ -805,6 +849,11 @@ onMounted(() => {
   })
   interaction.orbit.target.set(...doc.camera.target)
   engine.syncFromDoc(doc)
+  scene3dMountedAt = performance.now()
+  // Catalog fetch is cached module-wide (catalog.ts) — a no-op if another already-open
+  // studio surface pulled it this page load. Sync reads (getEffectSync, inside resolveField)
+  // work before this resolves too; they just render nothing until it does.
+  fetchShaderFxCatalog().then((c) => { shaderCatalog.value = c }).catch(() => { /* effect picker just stays on the default id */ })
   // Warm-up every restored GLB so a scene loaded from scene_state surfaces load
   // failures in the list too (the engine's own load leaves an empty group silently;
   // addGlb/duplicateObject only warm the ones created this session).
@@ -812,6 +861,16 @@ onMounted(() => {
     if (o.kind === 'glb') loadGlb(o.url).catch(() => { glbError[o.id] = true })
   }
   const loop = () => {
+    // Only touch the shader-field refresh path when the doc actually has a shaderFill
+    // material — see SceneEngine.refreshShaderFields's doc: this isn't needed for correctness
+    // (an owner with no shaderFill materials is a cheap no-op inside refreshSceneShaderFields),
+    // it's so an ordinary scene's frame loop never starts paying new per-frame cost it never
+    // paid before.
+    if (engine) {
+      const hasShaderFill = sceneHasShaderFill(doc)
+      if (hasShaderFill) engine.refreshShaderFields((performance.now() - scene3dMountedAt) / 1000)
+      shaderFrozenCount.value = hasShaderFill ? engine.frozenFieldCount : 0
+    }
     if (playing.value && engine) {
       const dur = doc.motion.duration
       const elapsed = (performance.now() - playStart) / 1000
@@ -1190,6 +1249,14 @@ function onClose() {
           <button type="button" class="flex items-center gap-1 rounded px-2 py-1 text-xs"
             :class="lightView ? 'bg-white/25 text-white' : 'bg-white/10 text-white/70 hover:bg-white/15'"
             @click="lightView = !lightView"><Lightbulb class="size-3.5" /> Light</button>
+        </div>
+
+        <!-- Shader-fill frozen hint: mirrors ShapeStudioSurface.vue's — no silent caps on any
+             surface. Opposite corner from the snap/light toolbar so the two never collide. -->
+        <div v-if="webglOk && shaderFrozenCount > 0"
+             class="pointer-events-none absolute right-3 top-3 rounded-md border border-amber-400/30 bg-black/70 px-3 py-2 text-[11px] text-amber-200/90">
+          {{ shaderFrozenCount }} shader fill{{ shaderFrozenCount > 1 ? 's' : '' }} frozen — too many live shader
+          fields at once (limit {{ LIVE_FIELD_CEILING }}). Remove a shader fill for full motion.
         </div>
 
         <!-- Motion timeline panel: docks full-width over the add-toolbar's spot in
@@ -1764,6 +1831,35 @@ function onClose() {
             class="text-[11px] text-red-400/90">texture failed</p>
           <StudioSlider v-model="matRoughness" label="Roughness" hint="How matte or glossy the surface is" :min="0" :max="1" :step="0.01" />
           <StudioSlider v-model="matMetalness" label="Metalness" hint="Blends between plastic-like and metal reflections" :min="0" :max="1" :step="0.01" />
+        </template>
+
+        <!-- shaderFill: a catalog effect wrapped onto the mesh's own UVs (object anchor only —
+             frame anchor needs shader injection, a later task). Hand-wired (no control-schema
+             UI here, unlike Space Type/Shape Studio — Scene3D has no agent-facing descriptor
+             list this could be generated from; see the task report). -->
+        <template v-else-if="matEditable && matType === 'shaderFill'">
+          <div>
+            <label class="mb-1 block text-[11px] text-white/55">Effect</label>
+            <StudioSelect v-model="matShaderEffectId" :options="shaderEffectIds" />
+          </div>
+          <StudioSlider v-model="matShaderSpeed" label="Speed" hint="How fast the field animates — 0 freezes it" :min="-3" :max="3" :step="0.1" />
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] text-white/55">Input colour 1</span>
+            <StudioColor v-model="matShaderInputA" />
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] text-white/55">Input colour 2</span>
+            <StudioColor v-model="matShaderInputB" />
+          </div>
+          <div class="flex items-center justify-between">
+            <div>
+              <span class="text-[11px] text-white/55">Unlit</span>
+              <p class="text-[10px] text-white/35">Glows flat instead of being shaded by scene lights</p>
+            </div>
+            <StudioSwitch v-model="matUnlit" />
+          </div>
+          <StudioSlider v-if="!matUnlit" v-model="matRoughness" label="Roughness" hint="How matte or glossy the surface is" :min="0" :max="1" :step="0.01" />
+          <StudioSlider v-if="!matUnlit" v-model="matMetalness" label="Metalness" hint="Blends between plastic-like and metal reflections" :min="0" :max="1" :step="0.01" />
         </template>
       </StudioSection>
 

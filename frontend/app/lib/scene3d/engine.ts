@@ -15,7 +15,7 @@ import type { SceneDoc, SceneObject, SceneMaterial, Vec3, LightingPreset, Primit
 import { LIGHT_DEFAULTS, DEFAULT_FONT_URL } from './config'
 import { loadGlb } from './glb'
 import { loadFont, fontCacheGet, textOutline, shapeOutline, type Font } from '~/lib/scene3d/outlines'
-import { materialFor, updateMaterial, disposeMaterial } from './materials'
+import { materialFor, updateMaterial, disposeMaterial, refreshSceneShaderFields } from './materials'
 import { applyModifiers } from '~/lib/scene3d/modifiers'
 import { PRIMITIVE_PARAMS, paramValue, MODIFIER_SPECS, modifierValue } from '~/lib/scene3d/primParams'
 import { buildLightWidget, setWidgetSelected, disposeWidget } from '~/lib/scene3d/lightWidgets'
@@ -305,7 +305,7 @@ export function buildGeometry(
  *  updated in place while its type holds, same as the primitive path. Off
  *  restores the baked material and frees the override. Light View swaps the
  *  shared clay on top without losing either. */
-function syncGlbMaterials(root: THREE.Object3D, obj: GlbObject, lightView: boolean, clay: THREE.Material): void {
+function syncGlbMaterials(root: THREE.Object3D, obj: GlbObject, lightView: boolean, clay: THREE.Material, ownerId: string): void {
   const override = obj.materialOverride === true
   // Faceted/prismatic gradient shading samples per-face extent attributes
   // (aFaceMin/aFaceMax) that only primitive geometry bakes — imported meshes
@@ -321,7 +321,7 @@ function syncGlbMaterials(root: THREE.Object3D, obj: GlbObject, lightView: boole
       let ov = m.userData.overrideMaterial as THREE.Material | undefined
       if (!ov || !updateMaterial(ov, mat)) {
         if (ov) disposeMaterial(ov)
-        ov = materialFor(mat, m.geometry)
+        ov = materialFor(mat, m.geometry, ownerId)
         m.userData.overrideMaterial = ov
       }
       // Same in-place bbox refresh as the primitive path: a gradient spans the
@@ -354,12 +354,21 @@ const PRESETS: Record<LightingPreset, { envIntensity: number; shadow: boolean }>
   flat: { envIntensity: 1.0, shadow: false },
 }
 
+/** Source of each engine's stable `id` — scopes this engine's shaderFill materials in
+ *  materials.ts's owner-scoped set (see `shaderFillMaterials`'s doc there). Own counter/
+ *  namespace: Scene3D's shader-field cache is a completely separate module-level Set from
+ *  ShapeEngine/SpaceTypeEngine's shared cache in ~/lib/spacetype/fills.ts, so there is no id
+ *  collision to guard against — just a stable, never-reused id per engine instance. */
+let _nextSceneEngineId = 1
+
 export class SceneEngine {
   readonly renderer: THREE.WebGLRenderer
   readonly scene: THREE.Scene
   readonly camera: THREE.PerspectiveCamera
   readonly objectRoots = new Map<string, THREE.Object3D>()
   readonly grid: THREE.GridHelper
+  /** Stable per-instance id, never reused — see `_nextSceneEngineId`'s doc above. */
+  readonly id: string = `scene3d${_nextSceneEngineId++}`
   // Transparent shadow-catcher plane at y=0: gives objects a soft contact shadow
   // in the beauty render. Public so the bake can hide it for the depth/normal
   // passes (it must not appear as a floor in the ControlNet maps).
@@ -386,6 +395,12 @@ export class SceneEngine {
   private postChain: PostChain | null = null
   private postW = 0
   private postH = 0
+  private _frozenFieldCount = 0
+  /** Non-zero when one or more shaderFill fields exceeded LIVE_FIELD_CEILING on the last
+   *  refreshShaderFields() call and are showing a frozen (t=0) snapshot instead of animating.
+   *  Mirrors ShapeEngine.frozenFieldCount — same "no silent caps" design rule applies to every
+   *  surface, not just Space Type/Shape Studio. */
+  get frozenFieldCount(): number { return this._frozenFieldCount }
   /** Shared clay material for Light View — built once, swapped onto meshes. */
   readonly clay = new THREE.MeshStandardMaterial({ color: 0x9aa0a6, roughness: 0.85, metalness: 0 })
 
@@ -555,7 +570,7 @@ export class SceneEngine {
     if (!root) {
       if (obj.kind === 'primitive') {
         const geo = this.geometryForObject(obj, 'smooth')
-        const mat = materialFor(obj.material, geo)
+        const mat = materialFor(obj.material, geo, this.id)
         // Flat shapes must be visible from both sides (plane was previously
         // invisible from below; ring inherits the fix) — for every material type.
         if (obj.primitive === 'plane' || obj.primitive === 'ring') mat.side = THREE.DoubleSide
@@ -575,7 +590,7 @@ export class SceneEngine {
           // The load can finish after later syncs already ran against the empty
           // placeholder — apply against the LATEST object state (stamped on the
           // root each sync), not the one captured when the load started.
-          syncGlbMaterials(root!, (root!.userData.glbObj as GlbObject | undefined) ?? obj, this.lightView, this.clay)
+          syncGlbMaterials(root!, (root!.userData.glbObj as GlbObject | undefined) ?? obj, this.lightView, this.clay, this.id)
         }).catch(() => { /* surface shows the error state; the group stays empty */ })
       } else {
         const group = new THREE.Group()
@@ -641,7 +656,7 @@ export class SceneEngine {
       if (!updateMaterial(current, obj.material)) {
         // Type or texture identity changed — rebuild, preserving double-siding.
         disposeMaterial(current)
-        const fresh = materialFor(obj.material, mesh.geometry)
+        const fresh = materialFor(obj.material, mesh.geometry, this.id)
         if (obj.primitive === 'plane' || obj.primitive === 'ring') fresh.side = THREE.DoubleSide
         real = fresh
       }
@@ -663,7 +678,7 @@ export class SceneEngine {
       }
     } else if (obj.kind === 'glb') {
       root.userData.glbObj = obj
-      syncGlbMaterials(root, obj, this.lightView, this.clay)
+      syncGlbMaterials(root, obj, this.lightView, this.clay, this.id)
     } else if (obj.kind === 'light') {
       const light = root.userData.light as THREE.Light
       const color = new THREE.Color(stripAlpha(obj.color))
@@ -731,6 +746,16 @@ export class SceneEngine {
       (box.max.y - box.min.y) / (s.y || 1),
       (box.max.z - box.min.z) / (s.z || 1),
     ]
+  }
+
+  /** Advance this engine's live shaderFill field(s) to `elapsedSec` — wall-clock seconds since
+   *  the surface mounted (Scene3D's own doc.motion/playhead governs OBJECT motion, not a
+   *  shaderFill's animation clock; matches ShapeEngine.refreshShaderFields, which has the same
+   *  "no engine-local clock of its own" shape). Call once per host frame, BEFORE render(), and
+   *  only when the CURRENT doc actually has a shaderFill material — see `sceneHasShaderFill` in
+   *  ./config — so a scene with no shaderFill never pays this per-frame cost. */
+  refreshShaderFields(elapsedSec: number): void {
+    this._frozenFieldCount = refreshSceneShaderFields(this.id, elapsedSec, 30).frozenCount
   }
 
   render(): void {

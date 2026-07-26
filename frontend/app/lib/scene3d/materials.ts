@@ -15,6 +15,15 @@ import {
   MATERIAL_DEFAULTS, gradientAngles, gradientDirection, gradientStopsOf,
   type GradientStop, type SceneMaterial,
 } from './config'
+// The field module — the ONLY place a ShaderSpec becomes pixels (see its ownership contract).
+// Scene3D is a second, independent consumer alongside Space Type/Shape Studio's
+// ~/lib/spacetype/fills.ts: it never routes through `Fill`/`FILL_TYPES` (SceneMaterial has no
+// such concept), just resolveField/beginFieldFrame directly, with its OWN per-engine ownership
+// scoping below (shaderFillMaterials + refreshSceneShaderFields) — deliberately not reusing
+// fills.ts's `_shaderFieldCache`/`withShaderFillContext`, so Scene3D's live-field ceiling and
+// frozen count can never pool with, or be walked by, Space Type's or the Compositor's.
+import { resolveField, beginFieldFrame, type FieldRequest } from '~/lib/shaderfill/field'
+import { DEFAULT_SHADER_SPEC, type ShaderSpec } from '~/lib/spacetype/fillTile'
 
 const hasDOM = typeof document !== 'undefined'
 
@@ -96,6 +105,27 @@ export function onTextureError(cb: (filename: string) => void): () => void {
 }
 /** Materials currently holding an image texture — used to drop `map` on load failure. */
 const imageMaterials = new Set<THREE.MeshStandardMaterial>()
+
+// ── Shader-fill field textures (object anchor only) ──────────────────────────
+// A live request is clamped to this square regardless of the mesh's actual screen size —
+// matches resolveField's own LIVE_FIELD_PX ceiling (~/lib/shaderfill/field.ts), so live
+// requests never get upscaled past what resolveField would hand back anyway.
+const SHADER_FIELD_PX = 512
+/** Placeholder ownerId for a `materialFor` call made with no engine in scope (unit tests,
+ *  stray callers) — every field built under it shares one bucket, same fallback shape as
+ *  fills.ts's UNOWNED. Real callers (SceneEngine) always pass their own stable `id`. */
+const UNOWNED_SCENE3D = '__scene3d_unowned__'
+
+/** Every live shaderFill material, across every open Scene3D engine — filtered by
+ *  `userData.shaderOwnerId` in `refreshSceneShaderFields` so each engine's live-field ceiling
+ *  and frozen count (via `beginFieldFrame`) apply per-engine, never pooled across engines and
+ *  never touching Space Type/Shape Studio's separate cache in ~/lib/spacetype/fills.ts. Each
+ *  entry also carries its current ShaderSpec in `userData.shaderSpec` (kept live by
+ *  `updateMaterial`, read every frame by the refresh below) and owns exactly one
+ *  THREE.CanvasTexture, reused for the material's whole lifetime — never reallocated per frame,
+ *  per resolveField's ownership contract (its canvas is bound directly as `.image`, never
+ *  copied). */
+const shaderFillMaterials = new Set<THREE.Material>()
 function getImageTexture(filename: string): THREE.Texture | null {
   if (!hasDOM || !filename) return null
   let t = imageCache.get(filename)
@@ -304,7 +334,11 @@ function applyPhysical(p: THREE.MeshPhysicalMaterial, mat: SceneMaterial): void 
 }
 
 // ── Factory ──────────────────────────────────────────────────────────────────
-export function materialFor(mat: SceneMaterial, geometry?: THREE.BufferGeometry): THREE.Material {
+/** `ownerId` scopes a `shaderFill` material's live field to the calling engine (see
+ *  `shaderFillMaterials`'s doc) — SceneEngine always passes its own stable `id`; callers with
+ *  no engine in scope (unit tests) fall back to a shared UNOWNED bucket. Ignored by every other
+ *  material type. */
+export function materialFor(mat: SceneMaterial, geometry?: THREE.BufferGeometry, ownerId: string = UNOWNED_SCENE3D): THREE.Material {
   let m: THREE.Material
   switch (mat.type) {
     case 'toon': {
@@ -402,6 +436,29 @@ export function materialFor(mat: SceneMaterial, geometry?: THREE.BufferGeometry)
       m = t
       break
     }
+    case 'shaderFill': {
+      // Object anchor only (Scene3D's whole scope — see the field's doc on SceneMaterial.shader
+      // in config.ts): `.map` samples through the mesh's own UV attribute exactly like `image`
+      // above, so `spec.anchor` is never read here — a `frame`-anchored spec (frame anchor needs
+      // onBeforeCompile screen-space injection, like `fresnel`'s rim above — a later task) just
+      // renders as `object`, silently and correctly per the brief.
+      const spec = mat.shader ?? DEFAULT_SHADER_SPEC
+      const canvas = resolveField({ spec, w: SHADER_FIELD_PX, h: SHADER_FIELD_PX, t: 0, fps: 30 })
+      const tex2 = canvas ? new THREE.CanvasTexture(canvas) : null
+      if (tex2) { tex2.colorSpace = THREE.SRGBColorSpace; tex2.wrapS = tex2.wrapT = THREE.ClampToEdgeWrapping }
+      const unlit = mat.unlit === true
+      // Unlit uses Basic so the field glows flat (no scene-light shading, the point of the
+      // toggle for a self-lit look); otherwise Standard so scene lights shade the field like
+      // any other surface.
+      const t: THREE.Material = unlit
+        ? new THREE.MeshBasicMaterial({ color: '#ffffff', map: tex2 })
+        : new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: mat.roughness, metalness: mat.metalness, map: tex2 })
+      t.userData.shaderSpec = spec
+      t.userData.shaderOwnerId = ownerId
+      shaderFillMaterials.add(t)
+      m = t
+      break
+    }
     case 'glass':
     case 'standard':
     default: {
@@ -422,6 +479,10 @@ function identityKey(mat: SceneMaterial): string {
     case 'toon': return `toon:${mat.toonSteps ?? MATERIAL_DEFAULTS.toonSteps}`
     case 'matcap': return `matcap:${mat.matcap ?? MATERIAL_DEFAULTS.matcap}`
     case 'image': return `image:${mat.image ?? ''}`
+    // `unlit` picks the THREE material CLASS (Basic vs Standard) — that boundary needs a
+    // rebuild; the effect/params/speed/input inside `shader` are refreshed in place every
+    // frame by refreshSceneShaderFields, never through this identity (see updateMaterial).
+    case 'shaderFill': return `shaderFill:${mat.unlit === true ? 1 : 0}`
     // Program variant boundary: smooth vs facet (faceted/prismatic share the
     // facet program and switch via the uMode uniform in place).
     case 'gradient':
@@ -499,6 +560,18 @@ export function updateMaterial(m: THREE.Material, mat: SceneMaterial): boolean {
       s.roughness = mat.roughness; s.metalness = mat.metalness
       return true
     }
+    case 'shaderFill': {
+      // Re-stamp the live spec so the NEXT refreshSceneShaderFields call (the surface's
+      // per-frame loop) picks up an effect/param/speed/input edit without a material rebuild —
+      // the identity boundary above is `unlit` only, so we're guaranteed still holding the
+      // right THREE class here. roughness/metalness only exist on the Standard (lit) variant.
+      m.userData.shaderSpec = mat.shader ?? DEFAULT_SHADER_SPEC
+      if (mat.unlit !== true) {
+        const s = m as THREE.MeshStandardMaterial
+        s.roughness = mat.roughness; s.metalness = mat.metalness
+      }
+      return true
+    }
   }
   return false
 }
@@ -508,10 +581,44 @@ export function disposeMaterial(m: THREE.Material): void {
   // module-lifetime singletons — skip them.
   if ((m as THREE.MeshToonMaterial).isMaterial && (m as any).gradientMap) (m as any).gradientMap.dispose()
   if (m.userData.matType === 'image') imageMaterials.delete(m as THREE.MeshStandardMaterial)
+  if (m.userData.matType === 'shaderFill') shaderFillMaterials.delete(m)
   // The gradient ramp LUT is owned by exactly one material.
   const ramp = (m.userData.gradUniforms as { uRamp?: { value?: THREE.Texture } } | undefined)?.uRamp?.value
   if (ramp) ramp.dispose()
   const map = (m as THREE.MeshStandardMaterial).map
   if (map) { map.dispose(); if (m.userData.identity?.startsWith('image:')) imageCache.delete(m.userData.identity.slice(6)) }
   m.dispose()
+}
+
+/** Advance every shaderFill material OWNED BY `ownerId` (one Scene3D engine instance) to time
+ *  `t` seconds, reusing each material's SAME `THREE.CanvasTexture` — set `.image`/`needsUpdate`
+ *  in place, never allocate a new CanvasTexture per frame, per resolveField's ownership
+ *  contract (~/lib/shaderfill/field.ts). Call once per host frame, BEFORE `engine.render()`,
+ *  and only when the current doc actually has a shaderFill material (see `sceneHasShaderFill`
+ *  in config.ts) — an owner with no shaderFill materials is a cheap no-op below regardless, this
+ *  is so an ordinary scene's frame loop never starts paying new per-frame cost it never paid.
+ *
+ *  Mirrors `refreshLiveShaderFills` in ~/lib/spacetype/fills.ts (same beginFieldFrame/
+ *  resolveField pairing, same "per-owner ceiling" shape) but is a SEPARATE cache/scope —
+ *  `beginFieldFrame` is called here with ONLY this owner's requests, so its LIVE_FIELD_CEILING
+ *  and the frozen count it returns apply per Scene3D engine, never pooled with (or walkable by)
+ *  Space Type's or the Compositor's fields, which live entirely in that other module.
+ *
+ *  Returns the frozen-field count so the surface can show a hint when a field is capped at a
+ *  still frame instead of animating — no silent caps, same rule as every other surface. */
+export function refreshSceneShaderFields(ownerId: string, t: number, fps: number, bake = false): { frozenCount: number } {
+  const entries: THREE.Material[] = []
+  for (const m of shaderFillMaterials) if (m.userData.shaderOwnerId === ownerId) entries.push(m)
+  if (entries.length === 0) return { frozenCount: 0 }
+  const requests: FieldRequest[] = entries.map((m) => ({
+    spec: m.userData.shaderSpec as ShaderSpec, w: SHADER_FIELD_PX, h: SHADER_FIELD_PX, t, fps, bake,
+  }))
+  const { frozenCount } = beginFieldFrame(requests)
+  for (let i = 0; i < entries.length; i++) {
+    const canvas = resolveField(requests[i]!)
+    if (!canvas) continue                          // keep showing the last good frame
+    const tex = (entries[i] as THREE.MeshStandardMaterial | THREE.MeshBasicMaterial).map as THREE.CanvasTexture | null
+    if (tex && tex.image !== canvas) { tex.image = canvas; tex.needsUpdate = true }
+  }
+  return { frozenCount }
 }
