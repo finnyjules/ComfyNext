@@ -3,9 +3,10 @@ import type { StudioControlDesc } from '~/lib/collection/studioBindables'
 import { controlKindToVariableType } from '~/lib/collection/studioBindables'
 import { typeCompatible } from '~/lib/collection/bindables'
 import { addSweepRows } from '~/lib/collection/model'
-import { COLLECTION_PROP, VARS_TYPE, type CollectionColumn, type CollectionData } from '~/lib/collection/types'
+import { COLLECTION_PROP, type CollectionColumn, type CollectionData } from '~/lib/collection/types'
 import { effectiveColumns, makeLookupResolver } from '~/lib/collection/lookup'
 import type { MenuItem } from '~/components/vue-canvas/CanvasContextMenu.vue'
+import { findWiredCollectionNode as sharedFindWiredCollectionNode } from '~/composables/useStudioVarBindings'
 
 /**
  * Collection variable-menu / sweep block shared by the studio surfaces
@@ -33,10 +34,7 @@ export function useStudioVarMenu(opts: {
 
   // Wired collection lookup (studio -> collection) for the "Bind to" submenu.
   const wiredColumns = computed<CollectionColumn[]>(() => {
-    const edgeList = edges()
-    const edge = edgeList.find((e: any) => String(e.target) === String(nodeId()) && e?.data?.dataType === VARS_TYPE)
-    if (!edge) return []
-    const colNode = nodes().find((n: any) => String(n.id) === String(edge.source))
+    const colNode = sharedFindWiredCollectionNode(nodes(), edges(), nodeId())
     const c = colNode?.data?.properties?.[COLLECTION_PROP]
     if (!c) return []
     return effectiveColumns(c, makeLookupResolver(nodes()))
@@ -45,24 +43,22 @@ export function useStudioVarMenu(opts: {
   // Wired collection NODE (not just its columns) — the sweep flow needs to
   // mutate the actual CollectionData object once the popover's Apply fires.
   //
-  // Kept as first-VARS-edge lookup with no collection-ownership filter, matching
-  // every surface's pre-extraction behaviour exactly. A shared collection-aware
-  // helper exists and is better (handles multiple/ambiguous wirings), but
-  // switching to it is a BEHAVIOUR CHANGE — follow-up, not part of this refactor.
+  // Uses the SHARED collection-aware lookup, not a first-VARS-edge scan. The four
+  // surfaces each carried a local copy that took whichever node sat at the end of
+  // the first VARS edge, whether or not it owned a collection — while promote,
+  // unbind and boundColumnFor all went through the shared helper. With more than
+  // one VARS edge (or a stale one), the two could resolve DIFFERENT nodes, so a
+  // binding made against collection X could have its sweep rows written into Y.
   function findWiredCollectionNode(): any | null {
-    const edgeList = edges()
-    const edge = edgeList.find((e: any) => String(e.target) === String(nodeId()) && e?.data?.dataType === VARS_TYPE)
-    if (!edge) return null
-    return nodes().find((n: any) => String(n.id) === String(edge.source)) ?? null
+    return sharedFindWiredCollectionNode(nodes(), edges(), nodeId()) ?? null
   }
 
   // Wired collection node id — shared by the var-menu's "Go to collection" item
   // and any surface-level "edit in table" affordance (Shape's FillSwatch,
   // Texture's bound-row button).
   function wiredCollectionNodeId(): string | null {
-    const edgeList = edges()
-    const edge = edgeList.find((ed: any) => String(ed.target) === String(nodeId()) && ed?.data?.dataType === VARS_TYPE)
-    return edge ? String(edge.source) : null
+    const node = sharedFindWiredCollectionNode(nodes(), edges(), nodeId())
+    return node ? String(node.id) : null
   }
   function goToCollection() {
     const id = wiredCollectionNodeId()

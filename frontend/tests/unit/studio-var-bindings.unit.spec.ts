@@ -146,3 +146,42 @@ describe('a swept column key round-trips through resolution', () => {
     expect(missed).toEqual([undefined, undefined, undefined])
   })
 })
+
+describe('wired-collection lookup is collection-aware, not first-edge', () => {
+  it('skips a VARS-wired node that owns no collection', async () => {
+    // The four studio surfaces each carried a local lookup that took whichever
+    // node sat at the end of the FIRST VARS edge, collection or not — while
+    // promote/unbind/boundColumnFor used this shared, collection-aware one. With
+    // two VARS edges the two disagreed, so a binding made against collection X
+    // could have its sweep rows written into node Y.
+    const { findWiredCollectionNode } = await import('~/composables/useStudioVarBindings')
+    const { COLLECTION_PROP } = await import('~/lib/collection/types')
+
+    const nodes = [
+      { id: 'plain', data: { properties: {} } },                                   // no collection
+      { id: 'coll', data: { properties: { [COLLECTION_PROP]: { id: 'c1', columns: [], rows: [] } } } },
+    ]
+    // 'plain' is FIRST in edge order — a first-edge scan would pick it.
+    const edges = [
+      { source: 'plain', target: 'studio', data: { dataType: 'VARS' } },
+      { source: 'coll', target: 'studio', data: { dataType: 'VARS' } },
+    ]
+
+    const found = findWiredCollectionNode(nodes, edges, 'studio')
+    expect(found?.id).toBe('coll')
+  })
+
+  it('honours collectionId when several wired nodes own collections', async () => {
+    const { findWiredCollectionNode } = await import('~/composables/useStudioVarBindings')
+    const { COLLECTION_PROP } = await import('~/lib/collection/types')
+    const nodes = [
+      { id: 'a', data: { properties: { [COLLECTION_PROP]: { id: 'c1', columns: [], rows: [] } } } },
+      { id: 'b', data: { properties: { [COLLECTION_PROP]: { id: 'c2', columns: [], rows: [] } } } },
+    ]
+    const edges = [
+      { source: 'a', target: 'studio', data: { dataType: 'VARS' } },
+      { source: 'b', target: 'studio', data: { dataType: 'VARS' } },
+    ]
+    expect(findWiredCollectionNode(nodes, edges, 'studio', 'c2')?.id).toBe('b')
+  })
+})
