@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   type Fill, FILL_TYPES, DEFAULT_FILL, DEFAULT_SHADER_SPEC,
-  normalizeFill, parseFills, fillIsShader,
+  normalizeFill, parseFills, serializeFills, fillIsShader, effectiveTileFill,
 } from '~/lib/spacetype/fillTile'
 
 const shaderFill = (over: Partial<Fill> = {}): Fill => ({
@@ -47,12 +47,43 @@ describe('shader fill model', () => {
     expect(n.shader!.params).toEqual({})
   })
 
-  it('round-trips through parseFills (the save/reload path)', () => {
+  it('coerces a non-finite speed (NaN/Infinity) to the default rather than letting it through', () => {
+    expect(normalizeFill({ type: 'shader', shader: { ...DEFAULT_SHADER_SPEC, speed: NaN } }).shader!.speed).toBe(1)
+    expect(normalizeFill({ type: 'shader', shader: { ...DEFAULT_SHADER_SPEC, speed: Infinity } }).shader!.speed).toBe(1)
+  })
+
+  it('round-trips through serializeFills/parseFills (the save/reload path)', () => {
     const original = shaderFill({
       shader: { effectId: 'kaleidoscope', params: { segments: 6 }, anchor: 'frame', speed: 0.5,
                 input: { ...DEFAULT_FILL, type: 'gradient', a: '#ff0000' } },
     })
-    const [back] = parseFills(JSON.stringify([original]))
+    const [back] = parseFills(serializeFills([original]))
     expect(back).toEqual(original)
+  })
+})
+
+describe('effectiveTileFill (graceful degradation for the CPU tile builders)', () => {
+  it('passes a non-shader fill through unchanged', () => {
+    const f: Fill = { ...DEFAULT_FILL, type: 'grid' }
+    expect(effectiveTileFill(f)).toBe(f)
+  })
+
+  it('resolves a shader fill to its input fill', () => {
+    const input: Fill = { ...DEFAULT_FILL, type: 'gradient', a: '#ff0000', b: '#00ff00' }
+    const f = shaderFill({ shader: { ...DEFAULT_SHADER_SPEC, input } })
+    expect(effectiveTileFill(f)).toEqual(input)
+  })
+
+  it('falls back to the default shader input when `shader` is absent, rather than throwing', () => {
+    const f: Fill = { ...DEFAULT_FILL, type: 'shader' } // shader missing
+    expect(() => effectiveTileFill(f)).not.toThrow()
+    expect(effectiveTileFill(f)).toEqual(DEFAULT_SHADER_SPEC.input)
+  })
+
+  it('never returns a shader-typed fill, even if a malformed input slipped past normalizeFill', () => {
+    const malformed = { ...DEFAULT_FILL, type: 'shader', shader: { ...DEFAULT_SHADER_SPEC } } as Fill
+    // simulate a bypass of the depth-1 guard: input is itself (bogusly) typed 'shader'
+    ;(malformed.shader as any).input = { ...DEFAULT_FILL, type: 'shader', shader: { ...DEFAULT_SHADER_SPEC } }
+    expect(effectiveTileFill(malformed).type).not.toBe('shader')
   })
 })

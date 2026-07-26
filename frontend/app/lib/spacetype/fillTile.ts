@@ -36,6 +36,18 @@ export function fillIsShader(f: Fill): f is Fill & { shader: ShaderSpec } {
   return f.type === 'shader' && !!f.shader
 }
 
+/** Resolve the fill that should actually be rasterised by the CPU tile builders below. The
+ *  shader renderer doesn't land until a later task, so — per spec — a shader fill degrades
+ *  gracefully to its `input` fill rather than an empty/arbitrary shape: the user sees a plain
+ *  gradient instead of a warped one, never nothing. Falls back to the default shader input if
+ *  `shader` is somehow absent, and cannot loop even on a malformed/miscoerced object, because
+ *  it only ever unwraps one level. */
+export function effectiveTileFill(fill: Fill): Fill {
+  if (fill.type !== 'shader') return fill
+  const input = fill.shader?.input ?? DEFAULT_SHADER_SPEC.input
+  return input.type === 'shader' ? DEFAULT_SHADER_SPEC.input : input
+}
+
 /** True when the fill needs a texture/pattern (anything but a flat colour). */
 export function fillIsTextured(fill: Fill): boolean { return fill.type !== 'solid' }
 
@@ -82,7 +94,7 @@ function normalizeShaderSpec(s: unknown, depth: number): ShaderSpec {
     effectId: typeof o.effectId === 'string' && o.effectId ? o.effectId : DEFAULT_SHADER_SPEC.effectId,
     params,
     anchor: o.anchor === 'frame' ? 'frame' : 'object',
-    speed: typeof o.speed === 'number' ? o.speed : 1,
+    speed: typeof o.speed === 'number' && Number.isFinite(o.speed) ? o.speed : 1,
     input: normalizeFill(o.input ?? DEFAULT_SHADER_SPEC.input, depth + 1),
   }
 }
@@ -146,9 +158,11 @@ export function patternImageData(w: number, h: number, colA: [number, number, nu
 /**
  * Build a tileable 2D canvas for a fill — the CPU companion to the THREE texture path.
  * `solid` returns a flat swatch; `gradient` a vertical A→B ramp; the rest reuse the same
- * pixel pickers as the GPU textures so the look matches.
+ * pixel pickers as the GPU textures so the look matches. `shader` has no CPU renderer yet,
+ * so it degrades to its `input` fill via `effectiveTileFill` (see there).
  */
-export function fillTileCanvas(fill: Fill, size = 128): HTMLCanvasElement {
+export function fillTileCanvas(fillIn: Fill, size = 128): HTMLCanvasElement {
+  const fill = effectiveTileFill(fillIn)
   const c = document.createElement('canvas'); c.width = size; c.height = size
   const ctx = c.getContext('2d')!
   if (fill.type === 'solid') { ctx.fillStyle = fill.a; ctx.fillRect(0, 0, size, size); return c }
@@ -188,9 +202,11 @@ export function fillTileCanvas(fill: Fill, size = 128): HTMLCanvasElement {
  * the fill stays CRISP (no upscaling a 128px tile) and patterns use SQUARE cells
  * (cell px = w/density, applied on both axes) so they never stretch on a non-square
  * shape. `gradient` honours `angle` here (the square `fillTileCanvas` is vertical-only);
- * `ombre` fades across the box at its angle. Used by the compositor's resolveFill.
+ * `ombre` fades across the box at its angle. `shader` degrades to its `input` fill, same as
+ * `fillTileCanvas` above. Used by the compositor's resolveFill.
  */
-export function fillTileBox(fill: Fill, w: number, h: number): HTMLCanvasElement {
+export function fillTileBox(fillIn: Fill, w: number, h: number): HTMLCanvasElement {
+  const fill = effectiveTileFill(fillIn)
   const W = Math.max(1, Math.round(w)), H = Math.max(1, Math.round(h))
   const c = document.createElement('canvas'); c.width = W; c.height = H
   const ctx = c.getContext('2d')!
