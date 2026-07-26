@@ -1,7 +1,7 @@
 import type { ControlSpec } from '~/lib/spacetype/effect'
 import { HARMONY_TYPES } from '~/lib/color/harmony'
 import { FILL_TYPES } from '~/lib/spacetype/fillTile'
-import { DEFAULT_CONFIG, type ShapeConfig } from './config'
+import { DEFAULT_CONFIG, PRIMS, type ShapeConfig } from './config'
 
 /**
  * The single declarative description of Shape Studio's parameters.
@@ -35,9 +35,8 @@ const fillHasAngle = (c: ShapeConfig) => c.fill.type === 'ombre' || c.fill.type 
 const fillHasDensity = (c: ShapeConfig) => ['grid', 'checkerboard', 'stripes', 'qr'].includes(c.fill.type)
 
 // Same primitive-kind literal PRIMITIVE_OPTIONS declares locally in
-// ShapeStudioSurface.vue (and config.ts's internal PRIMS) — no exported array
-// constant exists for this union, so it is spread here in the surface's order.
-const PRIMITIVE_KINDS = ['cube', 'sphere', 'cone', 'cylinder', 'prism', 'torus', 'icosahedron', 'octahedron']
+// Derived from config.ts's PRIMS so the two can never drift apart.
+const PRIMITIVE_KINDS = [...PRIMS]
 
 const slider = (
   key: string, label: string, min: number, max: number, step: number, group: string,

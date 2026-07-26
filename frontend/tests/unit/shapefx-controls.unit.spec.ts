@@ -87,3 +87,14 @@ describe('visibleShapeControls follows the surface predicates', () => {
     for (const c of visibleShapeControls(cfg())) expect(all.has(c.key), c.key).toBe(true)
   })
 })
+
+describe('the primitive list cannot drift from the config', () => {
+  it('offers exactly the primitives mergeConfig will accept', async () => {
+    // controls.ts derives its list from config.ts's PRIMS. If someone adds a 9th
+    // primitive, this stays green only because the schema picked it up too.
+    const { PRIMS } = await import('../../app/lib/shapefx/config')
+    const spec = SHAPE_CONTROLS.find((c) => c.key === 'shape.primitive')!
+    expect(spec.kind).toBe('select')
+    expect((spec as any).options).toEqual([...PRIMS])
+  })
+})

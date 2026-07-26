@@ -86,7 +86,9 @@ const oneOf = <T extends string>(v: unknown, allowed: readonly T[], d: T): T =>
 const bool = (v: unknown, d: boolean): boolean => (typeof v === 'boolean' ? v : d)
 
 const MODES = ['primitive', 'gem'] as const
-const PRIMS = ['cube', 'sphere', 'cone', 'cylinder', 'prism', 'torus', 'icosahedron', 'octahedron'] as const
+/** The primitive solids, in UI order. Exported so the control schema offers exactly
+ *  this set — a second hand-written copy would silently drop any new member. */
+export const PRIMS = ['cube', 'sphere', 'cone', 'cylinder', 'prism', 'torus', 'icosahedron', 'octahedron'] as const
 const FILLMODES = ['facets', 'surface'] as const
 const COLORINGS = ['prismatic', 'smooth', 'faceted', 'ombre', 'scatter'] as const
 const DIRECTIONS = ['vertical', 'depth', 'radial', 'angular'] as const
