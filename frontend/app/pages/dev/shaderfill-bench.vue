@@ -382,6 +382,44 @@ async function runSweep(): Promise<SweepRow[] | { error: string }> {
   return rows
 }
 
+/**
+ * Content probe (controller verification, not part of the benchmark).
+ *
+ * The sweep's cost is dominated by the blit, and a blit of a BLANK canvas costs
+ * exactly as much as a blit of a real one. So the timings alone cannot tell a
+ * working pipeline from one where shaderFx silently produced nothing. This runs
+ * a single field and reports pixel statistics for both the shader output and the
+ * 2D canvas it was blitted into — non-zero `spread` on both means real work.
+ */
+function runProbe(): unknown {
+  const def = effectDef, base = baseFill, st = fieldStates[0]
+  if (!def || !base || !st) return { error: 'not ready' }
+
+  const uniforms = { ...resolveUniforms(def, {}), u_time: 1.234, u_seed: 42, u_hasInput: 1 }
+  const passes = expandPasses(def.id, def.source, uniforms, {}, def.passes ?? 1)
+  const rendered = shaderFx.render(passes, base, FIELD_SIZE, FIELD_SIZE)
+  st.ctx2d.drawImage(rendered, 0, 0)
+
+  const stats = (c: HTMLCanvasElement, label: string) => {
+    const x = c.getContext('2d')
+    if (!x) return { label, err: 'no 2d context' }
+    const d = x.getImageData(0, 0, c.width, c.height).data
+    let mn = 255, mx = 0, sum = 0, n = 0, opaque = 0
+    for (let i = 0; i < d.length; i += 4 * 401) {
+      const v = d[i]!
+      mn = Math.min(mn, v); mx = Math.max(mx, v); sum += v; n++
+      if (d[i + 3]! > 0) opaque++
+    }
+    return { label, w: c.width, h: c.height, min: mn, max: mx, mean: +(sum / n).toFixed(1), spread: mx - mn, opaquePct: +(100 * opaque / n).toFixed(1) }
+  }
+
+  return {
+    effect: def.id,
+    inputFill: stats(base as HTMLCanvasElement, 'input fill (shader source)'),
+    blitted: stats(st.canvas2d, 'field canvas (after blit)'),
+  }
+}
+
 async function onRunSweepClick(): Promise<void> {
   sweepRunning.value = true
   sweepError.value = ''
@@ -433,6 +471,7 @@ onMounted(async () => {
     // exist. Callable straight from a hidden/backgrounded Browser pane, where the
     // rAF loop below never ticks.
     ;(window as any).__benchSweep = runSweep
+    ;(window as any).__benchProbe = runProbe
 
     startedAt = performance.now()
     raf = requestAnimationFrame(loop)
@@ -447,6 +486,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   delete (window as any).__benchSweep
+  delete (window as any).__benchProbe
   if (raf) cancelAnimationFrame(raf)
   raf = 0
   for (const st of fieldStates) {

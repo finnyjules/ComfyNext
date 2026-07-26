@@ -258,9 +258,41 @@ The user sees a gradient instead of a warped gradient — never an empty shape.
 
 ## Risks
 
-1. **The readback is unmeasured.** A half-day spike goes first in the implementation plan: can a
-   512² animated field hold 30fps alongside a Space Type render? If not, the batching assumption
-   is wrong and C moves back into act 1, roughly doubling it.
+1. ~~**The readback is unmeasured.**~~ **MEASURED 2026-07-26 — gate PASSED.** Bench at
+   `/dev/shaderfill-bench`, 60 forced-sync iterations per field count (`getImageData(0,0,1,1)`
+   after each blit, `gl.finish()` after each render), across a separate `THREE.WebGLRenderer`
+   so the real cross-context handoff is reproduced. Three sweeps:
+
+   | fields | run 1 | run 2 | run 3 | ms/field |
+   |---|---|---|---|---|
+   | 0 (baseline) | 0.09 ms | 0.02 ms | 0.02 ms | — |
+   | 1 | 1.97 ms | 3.46 ms | 1.65 ms | 1.6–3.4 |
+   | 2 | **2.96 ms** | **6.75 ms** | **2.82 ms** | 1.4–3.4 |
+   | 4 | 5.03 ms | 12.73 ms | 5.12 ms | 1.2–3.2 |
+   | 8 | 10.04 ms | 28.65 ms | 10.21 ms | 1.2–3.6 |
+
+   **Pass condition was 2 distinct 512² fields under 33 ms; observed 2.8–6.8 ms — a 5–12×
+   margin.** Cost is linear in field count and almost entirely the blit, as predicted. Runs 1
+   and 3 agree at ~1.25 ms/field; run 2 is a transient outlier (~3.4 ms/field) attributable to
+   GPU contention — duplicate dev servers and parallel sessions were live.
+
+   **This confirms `LIVE_FIELD_CEILING = 4` rather than raising it.** Against the *worst*
+   observed 3.6 ms/field, 4 fields costs ~14 ms — under half a 30 fps frame, leaving room for
+   the surface's own render. 8 fields would be 10 ms typical but **28.65 ms worst**, which
+   consumes nearly the entire frame budget on fills alone. The rule for re-deriving on other
+   hardware: keep live fields under one third of the 33 ms budget at the *worst* observed
+   per-field cost, not the median.
+
+   Verified by content probe (`window.__benchProbe()`) that the pipeline is not short-circuited:
+   the blitted canvas has full tonal spread (0–255), 100% opacity, and a mean that differs from
+   the input fill's, so the shader transforms rather than passes through. This mattered — the
+   cost is dominated by the blit, and a blit of a blank canvas costs exactly the same, so the
+   timings alone could not distinguish a working pipeline from a silently empty one.
+
+   Two false starts worth recording: the first bench timed CPU submission around asynchronous
+   GPU calls and derived fps as `1000/cpuMs`, reporting an impossible 0.09 ms readback; the
+   rAF-based rewrite that fixed it was unreadable because a hidden browser pane pauses
+   `requestAnimationFrame` entirely, so every readout sat at 0.00.
 2. **The 28-shader `uFillAnchor` change** is the largest chunk. It is mechanical rather than a
    design problem, and is good parallel subagent work — but it is 28 files touching live visual
    output, so golden coverage matters before it starts.
