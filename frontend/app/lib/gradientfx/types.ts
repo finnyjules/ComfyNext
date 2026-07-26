@@ -187,10 +187,12 @@ export interface FlowConfig {
 export type EasingKind = 'linear' | 'pingpong' | 'easeinout'
 
 export interface MotionTrack {
-  /** Which layer the param belongs to (0..LAYER_MAX-1). */
-  layer: number
-  /** Animatable param key — see ANIMATABLE in motion.ts. */
-  param: string
+  /** Absolute dotted path into GradientConfig, e.g. `layers.0.shape.count`. */
+  path?: string
+  /** @deprecated legacy targeting; migrated to `path` by ensureConfigDefaults */
+  layer?: number
+  /** @deprecated legacy targeting; migrated to `path` by ensureConfigDefaults */
+  param?: string
   from: number
   to: number
   easing: EasingKind
@@ -326,6 +328,22 @@ export function ensureConfigDefaults(cfg: GradientConfig): GradientConfig {
   // too, but backfilling here keeps the editor's bindings non-null).
   if (cfg.canvas.layout === 'mesh' && cfg.layers[0]?.color?.stops && !cfg.layers[0].mesh) {
     cfg.layers[0].mesh = defaultMesh(cfg.layers[0].color.stops, cfg.seed)
+  }
+  migrateMotionTracks(cfg)
+  return cfg
+}
+
+/**
+ * Rewrites pre-path motion tracks. Saved projects store `{ layer, param }`,
+ * which implicitly meant `layers[layer].shape[param]`. Mirrors
+ * shaderstudio/migrate.ts's effect-path rewrite.
+ */
+export function migrateMotionTracks(cfg: GradientConfig): GradientConfig {
+  for (const tr of cfg.motion?.tracks ?? []) {
+    if (typeof tr.path === 'string' && tr.path) continue
+    if (typeof tr.layer === 'number' && typeof tr.param === 'string') {
+      tr.path = `layers.${tr.layer}.shape.${tr.param}`
+    }
   }
   return cfg
 }

@@ -4,6 +4,7 @@
 
 import { cloneConfig, type EasingKind, type GradientConfig, type MotionTrack } from './types'
 import { visibleGradientControls } from './controls'
+import { getByPath, setByPath } from '~/lib/studio/path'
 
 /** Animatable per-layer shape params (label → ShapeConfig key). */
 export const ANIMATABLE: { key: string; label: string; min: number; max: number }[] = [
@@ -90,10 +91,12 @@ export function applyMotion(cfg: GradientConfig, t: number): GradientConfig {
   if (!cfg.motion?.tracks?.length) return cfg
   const out = cloneConfig(cfg)
   for (const track of cfg.motion.tracks) {
-    const layer = out.layers[track.layer]
-    if (!layer) continue
-    const v = trackValue(track, t, cfg.motion.duration)
-    ;(layer.shape as unknown as Record<string, number>)[track.param] = v
+    const path = track.path
+    if (!path) continue
+    // Only write where a leaf already exists — an unresolvable path must not
+    // fabricate structure the renderer would then read as real config.
+    if (getByPath(out, path) === undefined) continue
+    setByPath(out, path, trackValue(track, t, cfg.motion.duration))
   }
   return out
 }

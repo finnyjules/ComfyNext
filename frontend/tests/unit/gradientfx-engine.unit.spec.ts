@@ -151,7 +151,9 @@ describe('gradientfx motion', () => {
     expect(trackValue(track({ delay: 2 }), 1, 4)).toBe(0)
   })
   it('applyMotion overrides the targeted shape param without mutating the source', () => {
-    const cfg = { ...defaultConfig('#m'), motion: { tracks: [track({ param: 'phase', from: 0, to: 1 })], duration: 4, fps: 30, size: 1080 } }
+    // Targeting moved from {layer, param} to a dotted `path`; legacy saved docs
+    // are migrated on load by ensureConfigDefaults (see gradientfx-motion-path).
+    const cfg = { ...defaultConfig('#m'), motion: { tracks: [track({ path: 'layers.0.shape.phase', from: 0, to: 1 })], duration: 4, fps: 30, size: 1080 } }
     const framed = applyMotion(cfg, 4)
     expect(framed.layers[0]!.shape.phase).toBeCloseTo(1, 1)
     expect(cfg.layers[0]!.shape.phase).toBe(0) // original untouched

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { animatableTargets } from '../../app/lib/gradientfx/motion'
+import { animatableTargets, applyMotion } from '../../app/lib/gradientfx/motion'
 import { defaultConfig } from '../../app/lib/gradientfx/randomize'
 import { ensureConfigDefaults } from '../../app/lib/gradientfx/types'
 import { getByPath } from '../../app/lib/studio/path'
@@ -69,5 +69,75 @@ describe('animatableTargets', () => {
     const paths = animatableTargets(cfg()).map((t) => t.path)
     expect(paths).not.toContain('canvas.background')
     expect(paths).not.toContain('canvas.layout')
+  })
+})
+
+const track = (over: any = {}) => ({
+  path: 'layers.0.shape.count', from: 0, to: 10,
+  easing: 'linear', loops: 1, hold: 0, cycleOffset: 0, delay: 0, ...over,
+})
+
+describe('path-based applyMotion', () => {
+  it('writes the animated value at the track path', () => {
+    const c: any = cfg()
+    c.motion.duration = 1
+    c.motion.tracks = [track()]
+    expect((applyMotion(c, 1) as any).layers[0].shape.count).toBe(10)
+  })
+
+  it('does not mutate the input config', () => {
+    const c: any = cfg()
+    c.motion.duration = 1
+    c.motion.tracks = [track()]
+    const before = c.layers[0].shape.count
+    applyMotion(c, 1)
+    expect(c.layers[0].shape.count).toBe(before)
+  })
+
+  it('animates a non-shape path that was impossible before', () => {
+    const c: any = cfg()
+    c.motion.duration = 1
+    c.motion.tracks = [track({ path: 'relief.grain', from: 0, to: 1 })]
+    expect((applyMotion(c, 1) as any).relief.grain).toBe(1)
+  })
+
+  it('ignores an unresolvable path without fabricating structure', () => {
+    const c: any = cfg()
+    c.motion.duration = 1
+    c.motion.tracks = [track({ path: 'nope.does.not.exist' })]
+    expect((applyMotion(c, 1) as any).nope).toBeUndefined()
+  })
+
+  it('ignores a track with no path at all', () => {
+    const c: any = cfg()
+    c.motion.duration = 1
+    c.motion.tracks = [track({ path: undefined })]
+    expect(() => applyMotion(c, 1)).not.toThrow()
+  })
+})
+
+describe('legacy track migration', () => {
+  it('rewrites {layer, param} tracks to absolute paths', () => {
+    const c: any = cfg()
+    c.motion.tracks = [
+      { layer: 0, param: 'count', from: 2, to: 8, easing: 'linear', loops: 1, hold: 0, cycleOffset: 0, delay: 0 },
+      { layer: 1, param: 'phase', from: 0, to: 1, easing: 'linear', loops: 1, hold: 0, cycleOffset: 0, delay: 0 },
+    ]
+    const out: any = ensureConfigDefaults(c)
+    expect(out.motion.tracks[0].path).toBe('layers.0.shape.count')
+    expect(out.motion.tracks[1].path).toBe('layers.1.shape.phase')
+  })
+
+  it('leaves already-migrated tracks untouched', () => {
+    const c: any = cfg()
+    c.motion.tracks = [{ path: 'relief.grain', from: 0, to: 1, easing: 'linear', loops: 1, hold: 0, cycleOffset: 0, delay: 0 }]
+    expect((ensureConfigDefaults(c) as any).motion.tracks[0].path).toBe('relief.grain')
+  })
+
+  it('a migrated legacy track still animates', () => {
+    const c: any = cfg()
+    c.motion.duration = 1
+    c.motion.tracks = [{ layer: 0, param: 'count', from: 0, to: 10, easing: 'linear', loops: 1, hold: 0, cycleOffset: 0, delay: 0 }]
+    expect((applyMotion(ensureConfigDefaults(c), 1) as any).layers[0].shape.count).toBe(10)
   })
 })
