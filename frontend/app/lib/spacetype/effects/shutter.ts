@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
-import { parseFills, fillAtlasTexture, serializeFills, DEFAULT_FILL, SRGB_TO_LINEAR_GLSL, fillAnchor, fillScreenSize } from '../fills'
+import { parseFills, fillAtlasTexture, serializeFills, DEFAULT_FILL, SRGB_TO_LINEAR_GLSL, fillAnchor, fillScreenVec } from '../fills'
 import { hash11, parseEase, holdFraction, sceneBlend } from '../motion'
 import { stripAlpha } from '~/lib/color/convert'
 
@@ -230,7 +230,7 @@ export const shutterEffect: SpaceTypeEffect = {
           uPalA: { value: new three.Color(stripAlpha(String(params.paletteA))) },
           uPalB: { value: new three.Color(stripAlpha(String(params.paletteB))) },
           uFill: { value: fillTex }, uFillCount: { value: fillCount }, uFillTiling: { value: 1 },
-          uFillAnchor: { value: fillAnchor(fills[0]!) }, uFillScreen: { value: new three.Vector2(...fillScreenSize()) },
+          uFillAnchor: { value: fillAnchor(fills[0]!) }, uFillScreen: { value: fillScreenVec(three) },
         },
         vertexShader: VERT,
         fragmentShader: FRAG,

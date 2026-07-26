@@ -9,7 +9,7 @@
  */
 import { effectiveTileFill, fillTileBox, type ShaderSpec } from '~/lib/spacetype/fillTile'
 import { shaderFx, expandPasses, type Uniforms } from '~/lib/shaderfx/renderer'
-import { getEffectSync } from '~/lib/shaderfx/catalog'
+import { getEffectSync, fetchShaderFxCatalog } from '~/lib/shaderfx/catalog'
 import type { EffectDef } from '~/lib/shaderfx/types'
 import { fieldKey, quantizeTime, planFields, resolveEffectParams, inputKey, LIVE_FIELD_CEILING } from './descriptor'
 
@@ -129,6 +129,62 @@ function getInputTile(input: ShaderSpec['input'], w: number, h: number): HTMLCan
 }
 
 /**
+ * Self-heal for CRITICAL 1 of the final review: `getEffectSync` only ever returns
+ * non-null once SOMETHING on the page has awaited `fetchShaderFxCatalog()` — and
+ * the complete set of callers that do that is 4 studio Surface modals + the dev
+ * bench (see catalog.ts). No node card and no Compositor render path calls it, so
+ * a saved shader fill rendered by any OTHER host (a Frame card on reload, a
+ * one-shot Shape/Scene3D bake, …) fell back to its input fill FOREVER — nothing
+ * ever kicked the fetch, let alone retried it.
+ *
+ * Fix: every `resolve()` miss kicks `fetchShaderFxCatalog()` itself. Callers that
+ * already re-invoke `resolveField` every frame (Space Type's rAF preview, any live
+ * loop) self-heal for free the very next frame once the catalog lands — "no
+ * ordering dependency anywhere", per the review. Callers that render once and stop
+ * (ArtifactFrameNode's static renderStack, a one-shot bake) need an explicit nudge;
+ * `onFieldCatalogReady` below is that nudge, for the hosts that have no loop of
+ * their own to self-heal in.
+ *
+ * Deduped to a SINGLE in-flight promise (`_catalogRetry`): `resolve()` runs on
+ * every `resolveField`/`beginFieldFrame` call, which for a live field is every
+ * host frame, so calling `fetchShaderFxCatalog()` unconditionally would attach a
+ * new `.then` per frame and fire every subscriber once per attached `.then` when
+ * it finally resolves (fan-out, not a fix). `fetchShaderFxCatalog` itself already
+ * dedupes concurrent NETWORK requests (see catalog.ts's `promise`), but this local
+ * guard is still needed to dedupe the `.then`/subscriber-notify attachment here.
+ */
+let _catalogRetry: Promise<void> | null = null
+const _catalogReadySubs = new Set<() => void>()
+
+function kickCatalogFetch(): void {
+  if (_catalogRetry) return
+  try {
+    // fetchShaderFxCatalog uses Nuxt's auto-imported $fetch, which doesn't exist outside a
+    // Nuxt runtime context (e.g. a plain vitest unit test that imports this module directly)
+    // and throws SYNCHRONOUSLY (a ReferenceError, not a rejected promise) in that case.
+    // resolveField/resolve() must never throw — that's the whole point of this module's
+    // graceful fallback — so this guards the call the same way the `.catch` below guards an
+    // async rejection (a genuine fetch failure once $fetch does exist).
+    _catalogRetry = fetchShaderFxCatalog()
+      .then(() => { for (const cb of [..._catalogReadySubs]) cb() })
+      .catch(() => { /* transient failure — the NEXT miss retries, see the `finally` below */ })
+      .finally(() => { _catalogRetry = null })
+  } catch {
+    /* no fetch capability in this environment — every future miss just retries the same way */
+  }
+}
+
+/** Subscribe to be notified once (per successful catalog load) after a `resolveField`
+ *  miss kicked a retry that lands. For a host with no per-frame render loop of its own
+ *  (a static canvas, a one-shot bake) — a host that DOES already re-render every frame
+ *  (Space Type's preview rAF) doesn't need this, since its next `resolveField` call
+ *  simply succeeds once the catalog is cached. Returns an unsubscribe function. */
+export function onFieldCatalogReady(cb: () => void): () => void {
+  _catalogReadySubs.add(cb)
+  return () => { _catalogReadySubs.delete(cb) }
+}
+
+/**
  * Resolve the effect def and a params-NORMALIZED copy of `spec` together, so every
  * caller below keys and renders off the same resolved params (see descriptor.ts's
  * `resolveEffectParams` doc). Falls back to the raw, un-normalized spec when the
@@ -139,7 +195,7 @@ function getInputTile(input: ShaderSpec['input'], w: number, h: number): HTMLCan
  */
 function resolve(spec: ShaderSpec): { effect: EffectDef | null; spec: ShaderSpec } {
   const effect = getEffectSync(spec.effectId)
-  if (!effect) return { effect: null, spec }
+  if (!effect) { kickCatalogFetch(); return { effect: null, spec } }
   return { effect, spec: { ...spec, params: resolveEffectParams(effect, spec.params) } }
 }
 
@@ -156,8 +212,37 @@ function resolve(spec: ShaderSpec): { effect: EffectDef | null; spec: ShaderSpec
  *  any export of a scene with more than LIVE_FIELD_CEILING distinct shader-fill
  *  descriptors silently froze the 5th-and-beyond fill at t=0 — independent of tab
  *  visibility, a real correctness bug rather than a harness artefact. Fixed here
- *  (rather than in each of the four call sites) so every surface inherits the fix. */
+ *  (rather than in each of the four call sites) so every surface inherits the fix.
+ *
+ *  HOST-ISOLATION INVARIANT (Important 6 of the final review — read this before adding
+ *  a fifth host): this call and every `resolveField` call that consumes the `liveKeys`
+ *  it sets MUST run as ONE synchronous span, with NO interleaving `await`. `liveKeys`
+ *  is module-global, not scoped per host; if a host's `beginFieldFrame` → resolveField
+ *  loop is broken up by an `await`, a DIFFERENT host's `beginFieldFrame` call can land
+ *  in the gap, silently reassign `liveKeys` out from under the first host, and freeze
+ *  its fields at t=0 — the same failure class `withShaderFillContext` in
+ *  ~/lib/spacetype/fills.ts guards for the build-time context, just on the render-time
+ *  context instead. Every current caller (fills.ts's `refreshLiveShaderFills`,
+ *  materials.ts's `refreshSceneShaderFields`, useCompositorLayers.ts's
+ *  `paintLayerStack`) already satisfies this — none of those functions ever await
+ *  between this call and their last `resolveField` — and each MUST call
+ *  `endFieldFrame()` immediately after its loop so the guard below can detect a
+ *  violation instead of failing silently, the way `withShaderFillContext` throws on
+ *  re-entry rather than nesting/queueing. */
+let _frameOpen = false
+
 export function beginFieldFrame(requests: FieldRequest[]): { frozenCount: number } {
+  if (_frameOpen) {
+    throw new Error(
+      'beginFieldFrame: re-entered while a previous beginFieldFrame\'s resolveField loop ' +
+      'had not yet called endFieldFrame(). beginFieldFrame and the resolveField calls that ' +
+      'consume its liveKeys MUST run as one synchronous span with no interleaving await — ' +
+      'see this function\'s doc comment. A second host\'s beginFieldFrame landed inside that ' +
+      'span and would otherwise silently reassign liveKeys and freeze the first host\'s ' +
+      'fields at t=0.',
+    )
+  }
+  _frameOpen = true
   const liveCandidates: string[] = []
   const bakeKeys: string[] = []
   for (const r of requests) {
@@ -169,6 +254,14 @@ export function beginFieldFrame(requests: FieldRequest[]): { frozenCount: number
   const { live, frozen } = planFields(liveCandidates)
   liveKeys = new Set([...live, ...bakeKeys])
   return { frozenCount: frozen.length }
+}
+
+/** Close the synchronous span `beginFieldFrame` opened — call once, immediately after
+ *  the LAST `resolveField` call in this host's per-frame loop. See `beginFieldFrame`'s
+ *  host-isolation doc; skipping this call leaves `_frameOpen` stuck true and makes the
+ *  NEXT host's `beginFieldFrame` throw even though nothing actually overlapped. */
+export function endFieldFrame(): void {
+  _frameOpen = false
 }
 
 /**
@@ -270,6 +363,11 @@ export function clearFieldCache(): void {
   tileCache.clear()
   liveKeys = new Set()
   stats = { renders: 0, hits: 0, misses: 0, tileHits: 0, tileMisses: 0 }
+  // Test isolation: without this, a test that throws/returns before its matching
+  // endFieldFrame() (or simply doesn't model a full host loop) would leave a
+  // stuck `_frameOpen = true` that fails the NEXT test's first beginFieldFrame
+  // for a reason that has nothing to do with that test.
+  _frameOpen = false
 }
 
 /** Cumulative counts since the last `clearFieldCache()`. `renders`/`hits`/`misses`

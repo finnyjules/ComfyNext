@@ -27,7 +27,7 @@ import type { FrameMotion } from '~/lib/motion/types'
 import { axesToVariationSettings } from '~/lib/motion/axes'
 import { expandClones, type Cloner } from '~/composables/useCloner'
 import { type Fill, type ShaderSpec, fillTileBox, fillIsShader } from '~/lib/spacetype/fillTile'
-import { resolveField, beginFieldFrame, type FieldRequest } from '~/lib/shaderfill/field'
+import { resolveField, beginFieldFrame, endFieldFrame, type FieldRequest } from '~/lib/shaderfill/field'
 import { drawQuadWarp, type Quad } from '~/lib/compositor/warp'
 import { polygonPathData, starPathData } from '~/lib/compositor/polygonGeometry'
 import { resolveGroupCascade, type LayerGroup } from '~/lib/compositor/layerGroups'
@@ -1670,6 +1670,7 @@ export function paintLayerStack(
   }
 
   if (post && chainActive(post)) applyStackPost(ctx, post, W)
+  endFieldFrame()   // close the synchronous span beginFieldFrame opened — see its doc
   return { frozenCount }
 }
 

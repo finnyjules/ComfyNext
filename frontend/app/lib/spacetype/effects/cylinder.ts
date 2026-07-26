@@ -3,6 +3,7 @@ import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import { layoutChars } from '../charLayout'
 import { resolveFontFamily, fontHasWeightAxis } from '~/data/google-fonts'
 import { parseFills, fillShaderTexture, fillIsTextured, fillTiling, fillPrimary } from '../fills'
+import { fillIsShader } from '../fillTile'
 import { defaultFillsFor } from '../palette'
 import { textVariantForBand } from '../ribbonGeometry'
 import { stripAlpha } from '~/lib/color/convert'
@@ -139,14 +140,32 @@ export const cylinderEffect: SpaceTypeEffect = {
     // tint/texture via the material. (Cylinder uses the first fill in the list.)
     const fill = parseFills(params.fills)[0]!
     const fillTextured = fillIsTextured(fill)
-    // Clone the (module-cached) fill texture ONCE so we can set its per-glyph tiling without
-    // mutating the shared cache; register on root.userData for disposeRoot() to free it.
     let fillMap: THREE.Texture | null = null
     if (fillTextured) {
-      fillMap = fillShaderTexture(three, fill).clone()
-      fillMap.needsUpdate = true
-      fillMap.repeat.set(fillTiling(fill), fillTiling(fill))
-      root.userData.tex = fillMap
+      if (fillIsShader(fill)) {
+        // IMPORTANT 3 fix (final review): a shader fill's texture is ANIMATED — fills.ts's
+        // `refreshLiveShaderFills` mutates this exact cached Texture's `.image`/`.needsUpdate`
+        // in place every frame (per resolveField's ownership contract). `.clone()` below
+        // copies `.image` by reference at clone time only — a snapshot — so once the cache
+        // later reassigns the ORIGINAL's `.image` to a fresh per-frame canvas, the clone keeps
+        // pointing at the stale one and never advances past t=0, silently (no frozen-count
+        // hint, since the cache itself IS live — only this clone was stuck). `fillTiling()` is
+        // always 1 for a shader fill (it only varies for the static pattern fills in the else
+        // branch below), so there is no per-glyph tiling to protect by cloning here — sample
+        // the SAME registered texture the refresh loop updates. Do NOT stash it on
+        // `root.userData.tex`: fills.ts's owner-scoped cache (`clearShaderFillOwner`) owns this
+        // texture's disposal for the engine's whole lifetime, not this one root/rebuild.
+        fillMap = fillShaderTexture(three, fill)
+      } else {
+        // Clone the (module-cached) fill texture ONCE so we can set its per-glyph tiling
+        // without mutating the shared cache; register on root.userData for disposeRoot() to
+        // free it. Safe here (unlike the shader case above) because these pattern textures are
+        // static — nothing ever repoints `.image` on the cached original after this clone.
+        fillMap = fillShaderTexture(three, fill).clone()
+        fillMap.needsUpdate = true
+        fillMap.repeat.set(fillTiling(fill), fillTiling(fill))
+        root.userData.tex = fillMap
+      }
     }
 
     const family = resolveFontFamily(String(params.font))

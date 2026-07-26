@@ -4,7 +4,7 @@ import type { TextTextureOptions } from './textTexture'
 import { makeTextTexture } from './textTexture'
 import { PostChain, DEFAULT_POST, postEnabled, type PostSettings } from './post'
 import { stripAlpha } from '~/lib/color/convert'
-import { refreshLiveShaderFills, withShaderFillContext, clearShaderFillOwner } from './fills'
+import { refreshLiveShaderFills, withShaderFillContext, clearShaderFillOwner, updateLiveScreenSize } from './fills'
 
 export interface EngineOptions {
   effect: SpaceTypeEffect
@@ -326,6 +326,11 @@ export class SpaceTypeEngine {
         this.applyPan(this.perspCam)
       }
       this.effect.update(t01, params)
+      // Important 4 (final review): keep a frame-anchored fill's uFillScreen tracking the
+      // LIVE render size — setSize() below resizes without a rebuild, so without this the
+      // uniform stayed pinned to whatever size the field was built at (see fillScreenVec's
+      // doc). Cheap no-op for an owner with no frame-anchored fill.
+      updateLiveScreenSize(this.id, this.opts.width, this.opts.height)
       // Advance every live shader-fill field to this frame's time BEFORE the render call reads
       // their textures. t01 * loopDuration gives real elapsed seconds within one loop, matching
       // at a given normalized position between preview and bake (same t01 -> same shader time),

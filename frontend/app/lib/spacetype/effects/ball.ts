@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
-import { parseFills, fillShaderTexture, fillTiling, fillTextColor, fillAnchor, fillScreenSize } from '../fills'
+import { parseFills, fillShaderTexture, fillTiling, fillTextColor, fillAnchor, fillScreenVec } from '../fills'
 import { defaultFillsFor } from '../palette'
 
 /**
@@ -71,7 +71,7 @@ function panelMaterial(
     shader.uniforms.uFillTex = { value: fillTex }
     shader.uniforms.uFillScale = { value: fillScale }
     shader.uniforms.uFillAnchor = { value: anchor }
-    shader.uniforms.uFillScreen = { value: new three.Vector2(...fillScreenSize()) }
+    shader.uniforms.uFillScreen = { value: fillScreenVec(three) }
     shader.uniforms.uTextColor = { value: textColor }
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec2 vRawUv;')

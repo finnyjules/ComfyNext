@@ -22,7 +22,7 @@ import {
 // scoping below (shaderFillMaterials + refreshSceneShaderFields) — deliberately not reusing
 // fills.ts's `_shaderFieldCache`/`withShaderFillContext`, so Scene3D's live-field ceiling and
 // frozen count can never pool with, or be walked by, Space Type's or the Compositor's.
-import { resolveField, beginFieldFrame, type FieldRequest } from '~/lib/shaderfill/field'
+import { resolveField, beginFieldFrame, endFieldFrame, type FieldRequest } from '~/lib/shaderfill/field'
 import { DEFAULT_SHADER_SPEC, type ShaderSpec } from '~/lib/spacetype/fillTile'
 
 const hasDOM = typeof document !== 'undefined'
@@ -605,20 +605,48 @@ export function disposeMaterial(m: THREE.Material): void {
  *  Space Type's or the Compositor's fields, which live entirely in that other module.
  *
  *  Returns the frozen-field count so the surface can show a hint when a field is capped at a
- *  still frame instead of animating — no silent caps, same rule as every other surface. */
-export function refreshSceneShaderFields(ownerId: string, t: number, fps: number, bake = false): { frozenCount: number } {
+ *  still frame instead of animating — no silent caps, same rule as every other surface.
+ *
+ *  `bake`/`w`/`h` (Important 5 of the final review): a still export (renderPasses) wants the
+ *  ACTUAL output resolution, unclamped — before this, every caller left `bake` at its default
+ *  `false` and `w`/`h` at the fixed `SHADER_FIELD_PX` (== resolveField's own LIVE_FIELD_PX
+ *  clamp), so passing `bake: true` here was inert: `fieldSize()` in field.ts only skips its
+ *  clamp when `bake` is true AND w/h differ from the clamp size, and they never did. `w`/`h`
+ *  default to `SHADER_FIELD_PX` so every existing (live-preview) call site is unaffected. */
+export function refreshSceneShaderFields(
+  ownerId: string, t: number, fps: number, bake = false, w = SHADER_FIELD_PX, h = SHADER_FIELD_PX,
+): { frozenCount: number } {
   const entries: THREE.Material[] = []
   for (const m of shaderFillMaterials) if (m.userData.shaderOwnerId === ownerId) entries.push(m)
   if (entries.length === 0) return { frozenCount: 0 }
   const requests: FieldRequest[] = entries.map((m) => ({
-    spec: m.userData.shaderSpec as ShaderSpec, w: SHADER_FIELD_PX, h: SHADER_FIELD_PX, t, fps, bake,
+    spec: m.userData.shaderSpec as ShaderSpec, w, h, t, fps, bake,
   }))
   const { frozenCount } = beginFieldFrame(requests)
   for (let i = 0; i < entries.length; i++) {
     const canvas = resolveField(requests[i]!)
     if (!canvas) continue                          // keep showing the last good frame
-    const tex = (entries[i] as THREE.MeshStandardMaterial | THREE.MeshBasicMaterial).map as THREE.CanvasTexture | null
-    if (tex && tex.image !== canvas) { tex.image = canvas; tex.needsUpdate = true }
+    const mat = entries[i] as THREE.MeshStandardMaterial | THREE.MeshBasicMaterial
+    const tex = mat.map as THREE.CanvasTexture | null
+    if (tex) {
+      // CRITICAL 2 fix: the common case — a texture already exists (materialFor built it
+      // successfully), just repoint it at the newest canvas in place, per resolveField's
+      // ownership contract (bind directly, never copy).
+      if (tex.image !== canvas) { tex.image = canvas; tex.needsUpdate = true }
+    } else {
+      // materialFor's `tex2 = canvas ? new THREE.CanvasTexture(canvas) : null` raced the
+      // catalog fetch (or a transient WebGL failure) at material-creation time and got
+      // null — `.map` was left null FOREVER, because this branch used to be `if (tex &&
+      // ...)` and silently no-op on a null map. Heal it now that a canvas is available:
+      // create the texture the material creation call couldn't, so the object recovers
+      // without needing an unrelated edit (or an `unlit` toggle) to force a rebuild.
+      const newTex = new THREE.CanvasTexture(canvas)
+      newTex.colorSpace = THREE.SRGBColorSpace
+      newTex.wrapS = newTex.wrapT = THREE.ClampToEdgeWrapping
+      mat.map = newTex
+      mat.needsUpdate = true
+    }
   }
+  endFieldFrame()   // close the synchronous span beginFieldFrame opened — see its doc
   return { frozenCount }
 }

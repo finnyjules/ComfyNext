@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import { buildRibbonGeometryData, ribbonInstance, scrollOffset, textVariantForBand } from '../ribbonGeometry'
 import { buildRibbonLabel } from '../ribbonMath'
-import { parseFills, fillShaderTexture, fillTiling, fillTextColor, fillAnchor, fillScreenSize } from '../fills'
+import { parseFills, fillShaderTexture, fillTiling, fillTextColor, fillAnchor, fillScreenVec } from '../fills'
 import { defaultFillsFor } from '../palette'
 import { stripAlpha } from '~/lib/color/convert'
 
@@ -74,7 +74,7 @@ function frontMaterial(
   const uFillTex = { value: fillTex }
   const uFillTiling = { value: tiling }
   const uFillAnchor = { value: anchor }
-  const uFillScreen = { value: new three.Vector2(...fillScreenSize()) }
+  const uFillScreen = { value: fillScreenVec(three) }
   const uTextColor = { value: textColor }
   const uShadowStrength = { value: String(params.shadows) === 'on' ? n(params, 'shadowStrength') : 0 }
   mat.onBeforeCompile = (shader) => {

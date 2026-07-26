@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import { buildTickerGeometryData, buildTickerStrokeData, rebakeTickerRow, tickerRow, type TickerGeoParams } from '../tickerGeometry'
 import { loopTiles, scrollOffset, textVariantForBand } from '../ribbonGeometry'
-import { parseFills, fillShaderTexture, fillTiling, fillTextColor, fillAlpha, fillTextAlpha, fillAnchor, fillScreenSize } from '../fills'
+import { parseFills, fillShaderTexture, fillTiling, fillTextColor, fillAlpha, fillTextAlpha, fillAnchor, fillScreenVec } from '../fills'
 import { stripAlpha, parseHexA } from '~/lib/color/convert'
 import { defaultFillsFor } from '../palette'
 
@@ -116,7 +116,7 @@ function bandMaterial(
   const uFillTex = { value: fillTex }
   const uFillTiling = { value: tiling }
   const uFillAnchor = { value: anchor }
-  const uFillScreen = { value: new three.Vector2(...fillScreenSize()) }
+  const uFillScreen = { value: fillScreenVec(three) }
   const uTextColor = { value: textColor }
   const uBandAlpha = { value: alpha }
   const uTextAlpha = { value: textAlpha }

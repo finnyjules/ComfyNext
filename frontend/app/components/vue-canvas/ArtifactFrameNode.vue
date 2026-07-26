@@ -16,6 +16,7 @@ import { registerStudioBaker, unregisterStudioBaker } from '~/lib/studio/cascade
 import { resolveWiredSourceKind } from '~/lib/studio/frameResolve'
 import { frameSourceEpoch, type StudioFrameSource } from '~/lib/studio/frameSource'
 import { deriveMasterClock, slotPhase01 } from '~/lib/compositor/masterClock'
+import { onFieldCatalogReady } from '~/lib/shaderfill/field'
 
 // The "Frame" — the Compositor as a first-class artboard artifact. Shows its
 // live composite (wired layers from `data.images` + a live local-layer overlay),
@@ -617,8 +618,17 @@ async function bakeOutput(): Promise<Blob | null> {
   if (!cv) return null
   return await new Promise<Blob | null>(res => cv.toBlob(b => res(b), 'image/png'))
 }
+// CRITICAL 1 fix (final review): a shader fill in a static (no live/animated slot) Frame
+// only ever gets ONE renderStack() call — the `{ immediate: true }` watch above, which runs
+// at mount time. Nothing else re-renders this canvas afterward. If that first paintLayerStack
+// call raced `resolveField`'s catalog fetch (the normal case on a fresh reload — see
+// field.ts's doc), the fill fell back to its input gradient FOREVER: no node card, and no
+// Compositor render path, ever called `fetchShaderFxCatalog()` itself. field.ts now kicks that
+// fetch on every miss, but a host with no per-frame loop still needs an explicit nudge to
+// re-render once it lands — this is that nudge, for exactly this host.
+const unsubFieldCatalog = onFieldCatalogReady(() => renderStack())
 onMounted(() => { registerStudioBaker(props.id, bakeOutput); startAnim() })
-onBeforeUnmount(() => { unregisterStudioBaker(props.id); stopAnim() })
+onBeforeUnmount(() => { unregisterStudioBaker(props.id); stopAnim(); unsubFieldCatalog() })
 
 // Record the baked composite as a project asset so saved frames show up in the
 // Assets panel — same treatment as generator outputs. Best-effort: never blocks

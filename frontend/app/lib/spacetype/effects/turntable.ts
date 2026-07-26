@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
-import { parseFills, fillShaderTexture, fillTiling, fillTextColor, fillAnchor, fillScreenSize } from '../fills'
+import { parseFills, fillShaderTexture, fillTiling, fillTextColor, fillAnchor, fillScreenVec } from '../fills'
 import { defaultFillsFor } from '../palette'
 
 /**
@@ -116,7 +116,7 @@ export const turntableEffect: SpaceTypeEffect = {
           uFill: { value: fillShaderTexture(three, fill) },
           uFillTiling: { value: fillTiling(fill) },
           uFillAnchor: { value: fillAnchor(fill) },
-          uFillScreen: { value: new three.Vector2(...fillScreenSize()) },
+          uFillScreen: { value: fillScreenVec(three) },
           uTextColor: { value: fillTextColor(three, fill) },
           uRadius: { value: radius }, uCols: { value: 1.5 }, uRows: { value: 7 },
           uBand: { value: k }, uRingsN: { value: rings },

@@ -223,6 +223,12 @@ async function bakeOutput(): Promise<Blob | null> {
   stopPreview()
   try {
     await ensureSpaceTypeFont(String(s.params.font))
+    // Important 5 (final review): this IS an export (the studio render cascade), not the
+    // live preview — without setBake(true) a shader fill stayed clamped to the LIVE_FIELD_PX
+    // live-preview field size (engine.build's withShaderFillContext hardcoded `this._bake`,
+    // which was never set true anywhere), so every cascade bake rendered an upscaled 512²
+    // field instead of one built at the real (supersampled) output resolution.
+    engine.setBake(true)
     engine.setSize(cw * BAKE_SS, ch * BAKE_SS)
     engine.setBackground(s.transparent, s.bgColor)
     engine.setEffect(getEffect(s.effectId))
@@ -232,6 +238,7 @@ async function bakeOutput(): Promise<Blob | null> {
   } catch (e) {
     console.error('[space-type] bake failed', e); return null
   } finally {
+    engine.setBake(false)   // restore the live-preview clamp before rebuild() resumes it
     previewH.value = previewHeight(s)
     rebuild()
     applyGate()

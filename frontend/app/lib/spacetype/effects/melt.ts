@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
-import { parseFills, fillShaderTexture, fillTiling, fillAnchor, fillScreenSize } from '../fills'
+import { parseFills, fillShaderTexture, fillTiling, fillAnchor, fillScreenVec } from '../fills'
 import { defaultFillsFor } from '../palette'
 
 /**
@@ -77,7 +77,7 @@ export const meltEffect: SpaceTypeEffect = {
     const uFillTex = { value: fillTex }
     const uFillTiling = { value: fillTiling(fill) }
     const uFillAnchor = { value: fillAnchor(fill) }
-    const uFillScreen = { value: new three.Vector2(...fillScreenSize()) }
+    const uFillScreen = { value: fillScreenVec(three) }
     const uAnchor = { value: anchor }
     const uCut = { value: n(params, 'cut') }
     const uStreak = { value: n(params, 'streak') }

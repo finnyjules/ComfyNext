@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect, BuildEnv } from '../effect'
-import { parseFills, fillShaderTexture, fillTiling, fillTextColor, SRGB_TO_LINEAR_GLSL, fillAnchor, fillScreenSize } from '../fills'
+import { parseFills, fillShaderTexture, fillTiling, fillTextColor, SRGB_TO_LINEAR_GLSL, fillAnchor, fillScreenVec } from '../fills'
 import { defaultFillsFor } from '../palette'
 import { resolveFontFamily } from '~/data/google-fonts'
 import { frameEdgeSpecs } from '../contourFrame'
@@ -191,7 +191,7 @@ export const contourEffect: SpaceTypeEffect = {
             uFillTile: { value: new three.Vector2(tileBase * Math.max(1, aspect), tileBase) },
             uFillGrad: { value: fillGrad },
             uFillAnchor: { value: fillAnchor(fill) },
-            uFillScreen: { value: new three.Vector2(...fillScreenSize()) },
+            uFillScreen: { value: fillScreenVec(three) },
             uText: { value: ti.tex },
             uTextRepeat: { value: spec.orient === 'h' ? repeatH(ti.texW) : repeatV(ti.texW) },
             uTextColor: { value: textColor },

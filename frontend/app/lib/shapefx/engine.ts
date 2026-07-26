@@ -35,6 +35,15 @@ export class ShapeEngine {
   private w: number
   private h: number
   private _frozenFieldCount = 0
+  /** True while this engine is producing FINAL export output (a bake) rather than an
+   *  interactive live preview — threaded into `withShaderFillContext`/`refreshLiveShaderFills`
+   *  so a shader fill renders unclamped at the engine's actual output size instead of the
+   *  live-preview clamp (mirrors SpaceTypeEngine.setBake; see field.ts's preview/bake split).
+   *  Before this existed, `setConfig`/`refreshShaderFields` hardcoded `bake: false`
+   *  unconditionally, so NO Shape Studio export path could ever request an unclamped field —
+   *  wire this via `setBake(true)` around a bake render, `setBake(false)` after. */
+  private _bake = false
+  setBake(bake: boolean): void { this._bake = bake }
   // Lazily-built post-processing pass (grain + distortion) — see ensurePost(). Only
   // allocated the first time a config actually needs it (postNeeded), so a plain shape
   // with both sliders at 0 never pays for a render target or a second draw call.
@@ -169,7 +178,7 @@ export class ShapeEngine {
       // buildSurfaceTexture) — withShaderFillContext's re-entrancy guard throws if two
       // builds ever overlap, which is exactly what an `async setConfig` would risk.
       const tex = withShaderFillContext(
-        { ownerId: this.id, w: this.w, h: this.h, bake: false },
+        { ownerId: this.id, w: this.w, h: this.h, bake: this._bake },
         () => buildSurfaceTexture(config),
       )
       mat = tex
@@ -193,9 +202,15 @@ export class ShapeEngine {
    *  Callers should only call this when the CURRENT config actually has a shader fill (see
    *  `configHasShaderFill` in ./surface) — not because this is unsafe to call otherwise (an
    *  owner with no cached fields is a cheap no-op inside refreshLiveShaderFills), but so a
-   *  plain-fill Shape node's per-frame loop doesn't do new work it never did before. */
-  refreshShaderFields(elapsedSec: number): void {
-    this._frozenFieldCount = refreshLiveShaderFills(this.id, elapsedSec, 30, this.w, this.h, false).frozenCount
+   *  plain-fill Shape node's per-frame loop doesn't do new work it never did before.
+   *
+   *  `bake`/`w`/`h` (Important 5, final review): pass `bake: true` with the actual export
+   *  resolution before a still export's readback (see exportPng in ShapeStudioSurface.vue) so
+   *  the field renders unclamped at that size instead of the live-preview LIVE_FIELD_PX clamp.
+   *  Default to `this._bake`/`this.w`/`this.h` (the prior, implicit behaviour) so every
+   *  existing live-preview call site is unaffected. */
+  refreshShaderFields(elapsedSec: number, bake = this._bake, w = this.w, h = this.h): void {
+    this._frozenFieldCount = refreshLiveShaderFills(this.id, elapsedSec, 30, w, h, bake).frozenCount
   }
 
   render(orbit: { yaw: number; pitch: number; zoom: number }): void {

@@ -753,9 +753,15 @@ export class SceneEngine {
    *  shaderFill's animation clock; matches ShapeEngine.refreshShaderFields, which has the same
    *  "no engine-local clock of its own" shape). Call once per host frame, BEFORE render(), and
    *  only when the CURRENT doc actually has a shaderFill material — see `sceneHasShaderFill` in
-   *  ./config — so a scene with no shaderFill never pays this per-frame cost. */
-  refreshShaderFields(elapsedSec: number): void {
-    this._frozenFieldCount = refreshSceneShaderFields(this.id, elapsedSec, 30).frozenCount
+   *  ./config — so a scene with no shaderFill never pays this per-frame cost.
+   *
+   *  `bake`/`w`/`h` forward to `refreshSceneShaderFields` — pass `bake: true` with the doc's
+   *  actual output width/height for a still export (see passes.ts's `renderPasses`), so the
+   *  field renders unclamped at the real output resolution instead of the fixed live-preview
+   *  size. Defaults match the existing live-preview call (Scene3DStudioSurface/ShapeStudioSurface's
+   *  rAF loop), so every call site before this parameter existed is unaffected. */
+  refreshShaderFields(elapsedSec: number, bake = false, w?: number, h?: number): void {
+    this._frozenFieldCount = refreshSceneShaderFields(this.id, elapsedSec, 30, bake, w, h).frozenCount
   }
 
   render(): void {

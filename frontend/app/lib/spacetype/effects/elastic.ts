@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
-import { parseFills, fillPrimary, fillTextColor, fillAnchor, fillScreenSize } from '../fills'
+import { parseFills, fillPrimary, fillTextColor, fillAnchor, fillScreenVec } from '../fills'
 import { defaultFillsFor } from '../palette'
 import { stripAlpha } from '~/lib/color/convert'
 import { resolveFontFamily, fontHasWeightAxis } from '~/data/google-fonts'
@@ -199,7 +199,7 @@ export const elasticEffect: SpaceTypeEffect = {
       uMatte: { value: tex as THREE.Texture },
       uFillColor: { value: fillPrimary(three, fill) },
       uFillAnchor: { value: fillAnchor(fill) },
-      uFillScreen: { value: new three.Vector2(...fillScreenSize()) },
+      uFillScreen: { value: fillScreenVec(three) },
       uTextColor: { value: fillTextColor(three, fill) },
       uTime: { value: 0 },
       uWarp: { value: n(params, 'warp') },

@@ -78,6 +78,11 @@ async function bakeOutput(): Promise<Blob | null> {
   let engine: ShapeEngine | null = null
   try {
     engine = new ShapeEngine(canvas, w, h)
+    // Important 5 (final review): unclamp any shader fill to this bake's actual output size
+    // instead of the live-preview clamp — setConfig hardcoded `bake: false` until ShapeEngine
+    // grew a setBake() method for exactly this call. This is a throwaway engine (disposed in
+    // the finally below), so there's no live-preview state to restore afterward.
+    engine.setBake(true)
     engine.setConfig(cfg)
     engine.render(orbit)
     const out = await engine.frameToBlob(w, h)

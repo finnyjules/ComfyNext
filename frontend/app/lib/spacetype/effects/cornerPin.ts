@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
-import { parseFills, serializeFills, fillShaderTexture, fillTiling, fillTextColor, SRGB_TO_LINEAR_GLSL, fillAnchor, fillScreenSize, type Fill } from '../fills'
+import { parseFills, serializeFills, fillShaderTexture, fillTiling, fillTextColor, SRGB_TO_LINEAR_GLSL, fillAnchor, fillScreenVec, type Fill } from '../fills'
 
 // Default per-band fills: the signature dark/cream 2-tone (band 0 dark+cream text, band 1 inverted),
 // cycled across however many bands. Each entry can be changed to ombre/grid/gradient/etc. in the panel.
@@ -278,7 +278,7 @@ function makeBlock(three: typeof THREE, tex: THREE.Texture, box: InkBox, fill: F
       uFill: { value: fillShaderTexture(three, fill) },
       uFillTiling: { value: fillTiling(fill) },
       uFillAnchor: { value: fillAnchor(fill) },
-      uFillScreen: { value: new three.Vector2(...fillScreenSize()) },
+      uFillScreen: { value: fillScreenVec(three) },
       uInkL: { value: box.inkL }, uInkR: { value: box.inkR },
       uVMid: { value: box.vMid }, uVH: { value: box.vH },
       uVLo: { value: box.vLo }, uVHi: { value: box.vHi },

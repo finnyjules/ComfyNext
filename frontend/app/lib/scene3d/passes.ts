@@ -92,6 +92,13 @@ export async function renderPasses(engine: SceneEngine, doc: SceneDoc):
     // Beauty — inherit the viewport's exact renderer state (tone mapping, colour
     // space). Transparent background stays transparent.
     scene.background = doc.background === 'transparent' ? null : new THREE.Color(stripAlpha(doc.background))
+    // Important 5 (final review): a shaderFill material's field texture was never refreshed
+    // for this bake at all — materialFor's build-time resolveField call (t:0, fixed
+    // SHADER_FIELD_PX=512) is the only thing that ever populated it, so an export always
+    // rendered a stale/undersized field regardless of `doc.motion`'s playhead. Bake it fresh,
+    // unclamped, at the real output resolution — matches Space Type/Shape Studio's bake path
+    // (same function, different resolution, per field.ts's own doc).
+    engine.refreshShaderFields(0, true, width, height)
     engine.renderWithPost(scene, camera, doc.post)
     const beauty = canvas.toDataURL('image/png')
 

@@ -345,6 +345,14 @@ async function exportPng() {
   // the loop's own engine.render(orbit) can land mid-resize (same race Gradient/Space Type
   // avoid via stopPreview()/startPreview() around their bakes).
   if (raf) { cancelAnimationFrame(raf); raf = 0 }
+  // Important 5 (final review): unclamp a shader fill to the ACTUAL export resolution before
+  // reading back — without this, the live preview's LIVE_FIELD_PX-clamped field (whatever the
+  // frame loop last refreshed) just gets upscaled by the 3D render at the higher output size.
+  const hasShaderFill = configHasShaderFill(config.value)
+  if (hasShaderFill) {
+    engine.setBake(true)
+    engine.refreshShaderFields((performance.now() - mountedAt) / 1000, true, canvasW.value, canvasH.value)
+  }
   try {
     const blob = await engine.frameToBlob(canvasW.value, canvasH.value)
     const { uploadFrameBatch } = await import('~/composables/useKineticRenderer')
@@ -360,6 +368,7 @@ async function exportPng() {
     console.error('[shape-studio] export failed', e)
     setActionError('Export failed — please try again')
   } finally {
+    if (hasShaderFill) engine.setBake(false)   // restore the live-preview clamp for the resumed rAF loop
     exporting.value = false
     raf = requestAnimationFrame(frame)
   }
@@ -387,6 +396,9 @@ async function renderBlobWithOverrides(overrides: Record<string, string | number
     for (const key of keys) paramsProxy[key] = overrides[key]!
     const w = canvasW.value, h = canvasH.value
     offEngine = new ShapeEngine(document.createElement('canvas'), w, h)
+    // Important 5 (final review): this is a bake (a Collection sweep row), not a live
+    // preview — unclamp any shader fill to this throwaway engine's actual size.
+    offEngine.setBake(true)
     offEngine.setConfig(config.value)
     offEngine.render(orbit)
     return await offEngine.frameToBlob(w, h)

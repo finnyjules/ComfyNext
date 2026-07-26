@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { type Fill, type ShaderSpec, hexBytes, patternImageData, ombrePicker, fillIsShader, effectiveTileFill } from './fillTile'
 import { parseHexA, stripAlpha } from '~/lib/color/convert'
-import { resolveField, beginFieldFrame, type FieldRequest } from '~/lib/shaderfill/field'
+import { resolveField, beginFieldFrame, endFieldFrame, type FieldRequest } from '~/lib/shaderfill/field'
 import { specIdentityKey, resolveEffectParams } from '~/lib/shaderfill/descriptor'
 import { getEffectSync } from '~/lib/shaderfx/catalog'
 
@@ -54,12 +54,48 @@ export function fillAnchor(fill: Fill): number {
   return fillIsShader(fill) && fill.shader.anchor === 'frame' ? 1 : 0
 }
 
-/** The render-target resolution (pixels) for the shader-fill build CURRENTLY in progress —
- *  bind directly to a material's `uFillScreen` uniform. Only meaningful while `buildScene`/
- *  `setConfig` runs inside `withShaderFillContext` (see below); outside that window (should
- *  not happen on the real Space Type/Shape Studio paths) it falls back to `FALLBACK_FIELD_PX`. */
+/** The render-target resolution (pixels) for the shader-fill build CURRENTLY in progress.
+ *  Only meaningful while `buildScene`/`setConfig` runs inside `withShaderFillContext` (see
+ *  below); outside that window (should not happen on the real Space Type/Shape Studio paths)
+ *  it falls back to `FALLBACK_FIELD_PX`. Kept for callers that just want the raw numbers;
+ *  `fillScreenVec` below is what every `uFillScreen` uniform should actually bind to. */
 export function fillScreenSize(): [number, number] {
   return [_activeContext.w, _activeContext.h]
+}
+
+/**
+ * IMPORTANT 4 fix (final review): a frame-anchored fill's `uFillScreen` uniform used to be
+ * `new three.Vector2(...fillScreenSize())` — a plain VALUE snapshot of the size at BUILD time,
+ * baked once. `SpaceTypeEngine.setSize()` (engine.ts) deliberately resizes the renderer WITHOUT
+ * a rebuild (a cheap live-resize path), and `W`/`H` aren't part of the effect's rebuild key
+ * (`structuralSignature` in SpaceTypeSurface.vue), so a canvas resize left a frame-anchored
+ * field dividing `gl_FragCoord` by the OLD resolution — silently wrong (shifted/scaled field)
+ * until an unrelated edit happened to force a rebuild.
+ *
+ * Fix: every `uFillScreen` uniform for one owner now shares ONE mutable `THREE.Vector2`
+ * object (keyed by `_activeContext.ownerId`, so two open engines never share one) — `.value`
+ * IS that object, not a copy, so mutating its x/y later (via `updateLiveScreenSize` below)
+ * propagates to the shader on the very next render with no rebuild needed, the same way a
+ * `THREE.Texture`'s pixels can change in place without recompiling the material that samples
+ * it. Call this INSIDE `buildScene`/`setConfig` (same synchronous-build requirement
+ * `withShaderFillContext` already documents) — it reads `_activeContext` exactly like
+ * `fillScreenSize()` does. */
+const _liveScreenSizes = new Map<string, THREE.Vector2>()
+
+export function fillScreenVec(three: typeof THREE): THREE.Vector2 {
+  const id = _activeContext.ownerId
+  let v = _liveScreenSizes.get(id)
+  if (!v) { v = new three.Vector2(_activeContext.w, _activeContext.h); _liveScreenSizes.set(id, v) }
+  return v
+}
+
+/** Refresh `ownerId`'s live `uFillScreen` value in place — call once per host frame (e.g. from
+ *  `SpaceTypeEngine.renderFrameAt`, alongside `refreshLiveShaderFills`), passing the engine's
+ *  CURRENT output size. A cheap no-op for an owner that has never called `fillScreenVec` (no
+ *  frame-anchored fill exists for it), so an ordinary scene's frame loop pays nothing new. */
+export function updateLiveScreenSize(ownerId: string, w: number, h: number): void {
+  const v = _liveScreenSizes.get(ownerId)
+  if (v) v.set(w, h)
 }
 
 // Textures are cached by (type|a|b) so repeated slots/rebuilds reuse one GPU texture. Module
@@ -204,6 +240,7 @@ export function refreshLiveShaderFills(ownerId: string, t: number, fps: number, 
       entry.tex.needsUpdate = true
     }
   }
+  endFieldFrame()   // close the synchronous span beginFieldFrame opened — see its doc
   return { frozenCount }
 }
 
@@ -222,6 +259,7 @@ export function clearShaderFillOwner(ownerId: string): void {
     entry.tex.dispose()
     _shaderFieldCache.delete(key)
   }
+  _liveScreenSizes.delete(ownerId)   // see fillScreenVec's doc — one Vector2 per owner
 }
 
 /** Build (or fetch cached) the tiling texture for a fill. Returns null for `solid`. Shader
