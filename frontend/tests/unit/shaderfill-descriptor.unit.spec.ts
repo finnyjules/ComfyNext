@@ -51,10 +51,12 @@ describe('fieldKey', () => {
   })
 
   it('does not let a "|" in effectId masquerade as the effectId/params boundary', () => {
-    // Under a naive `[effectId, paramsKey, ...].join('|')`, effectId 'foo|a=1' with no
-    // params previously produced the SAME string as effectId 'foo' with params {a: 1}.
-    const a = fieldKey(spec({ effectId: 'foo|a=1', params: {} }), 512, 512, 0.5)
-    const b = fieldKey(spec({ effectId: 'foo', params: { a: 1 } }), 512, 512, 0.5)
+    // Under a naive `[effectId, paramsKey, ...].join('|')`, effectId 'a' with params
+    // {'b|c': 5} previously produced the SAME string ("a|b|c=5|...") as effectId 'a|b'
+    // with params {c: 5} — the '|' inside the param KEY shifted the boundary to land
+    // exactly where the effectId/paramsKey split would otherwise be.
+    const a = fieldKey(spec({ effectId: 'a', params: { 'b|c': 5 } }), 512, 512, 0.5)
+    const b = fieldKey(spec({ effectId: 'a|b', params: { c: 5 } }), 512, 512, 0.5)
     expect(a).not.toBe(b)
   })
 
@@ -66,6 +68,20 @@ describe('fieldKey', () => {
     const a = fieldKey(spec({ input: fillA }), 512, 512, 0)
     const b = fieldKey(spec({ input: fillB }), 512, 512, 0)
     expect(a).not.toBe(b)
+  })
+
+  it('keeps non-finite speeds distinct from each other and from a null param — plain JSON.stringify collapses NaN/Infinity/-Infinity to null', () => {
+    const nanSpeed = fieldKey(spec({ speed: NaN }), 512, 512, 0)
+    const posInfSpeed = fieldKey(spec({ speed: Infinity }), 512, 512, 0)
+    const negInfSpeed = fieldKey(spec({ speed: -Infinity }), 512, 512, 0)
+    const nullParam = fieldKey(spec({ params: { p: null as unknown as number } }), 512, 512, 0)
+    expect(new Set([nanSpeed, posInfSpeed, negInfSpeed, nullParam]).size).toBe(4)
+  })
+
+  it('keeps a NaN param value distinct from an explicit null param value', () => {
+    const withNaN = fieldKey(spec({ params: { p: NaN } }), 512, 512, 0)
+    const withNull = fieldKey(spec({ params: { p: null as unknown as number } }), 512, 512, 0)
+    expect(withNaN).not.toBe(withNull)
   })
 })
 

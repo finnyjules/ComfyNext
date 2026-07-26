@@ -22,9 +22,18 @@ export function quantizeTime(t: number, fps: number): number {
  *  character — free-form strings (effectId, Fill.a/b, param names) can themselves
  *  contain any delimiter we'd choose, and a hand-rolled join collides silently when
  *  they do. JSON.stringify escapes embedded quotes/brackets, so array position — not
- *  a character that might appear inside a field — is what disambiguates components. */
+ *  a character that might appear inside a field — is what disambiguates components.
+ *
+ *  Plain `JSON.stringify` collapses NaN/Infinity/-Infinity to `null`, which would
+ *  re-open the same collision class it closes (a NaN speed keying identically to an
+ *  Infinity speed, or a NaN param colliding with an explicit null one). The replacer
+ *  swaps each non-finite number for a distinct sentinel string BEFORE stringification
+ *  sees it, so they stay disambiguated the same way any other value is. */
 function encode(parts: unknown[]): string {
-  return JSON.stringify(parts)
+  return JSON.stringify(parts, (_key, value) =>
+    typeof value === 'number' && !Number.isFinite(value)
+      ? (Number.isNaN(value) ? 'NaN' : value > 0 ? 'Infinity' : '-Infinity')
+      : value)
 }
 
 function inputKey(f: Fill): string {
