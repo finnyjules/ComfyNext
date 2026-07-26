@@ -40,6 +40,31 @@
       compile and FBOs allocate.
     </p>
 
+    <div class="controls">
+      <button class="run-sweep" :disabled="sweepRunning" @click="onRunSweepClick">{{ sweepRunning ? 'sweeping…' : 'Run sweep' }}</button>
+      <span class="hint">
+        rAF/vsync-independent path — 60 forced-sync iterations per field count (10 discarded as
+        warmup), works even when this pane is hidden/backgrounded. Same thing is exposed as
+        <code>window.__benchSweep()</code> for a caller that can't rely on rAF ticking at all.
+      </span>
+    </div>
+
+    <p v-if="sweepError" class="sweep-error">sweep error: {{ sweepError }}</p>
+
+    <table v-if="sweepRows && sweepRows.length" class="sweep-table">
+      <thead>
+        <tr><th>fields</th><th>ms / iteration</th><th>ms / field</th><th>blit ms</th></tr>
+      </thead>
+      <tbody>
+        <tr v-for="r in sweepRows" :key="r.fields">
+          <td>{{ r.fields }}</td>
+          <td>{{ r.msPerIteration.toFixed(2) }}</td>
+          <td>{{ r.msPerField.toFixed(2) }}</td>
+          <td>{{ r.blitMs.toFixed(2) }}</td>
+        </tr>
+      </tbody>
+    </table>
+
     <canvas ref="canvasEl" :width="CANVAS_W" :height="CANVAS_H" class="stage" />
   </div>
 </template>
@@ -147,7 +172,11 @@ function resetWarmup(): void {
   wallTimes.length = 0
 }
 
-watch([fieldsCount, distinct], () => resetWarmup())
+// Defensive: a throw here would surface as an opaque "scheduler flush" warning and
+// silently break the fields/distinct controls (this watcher fires on every change).
+watch([fieldsCount, distinct], () => {
+  try { resetWarmup() } catch (e) { console.error('[shaderfill-bench] resetWarmup failed', e) }
+})
 
 /** Arrange up to 8 quads in a 4-wide grid, hide the rest. */
 function layoutFields(): void {
@@ -167,7 +196,9 @@ function layoutFields(): void {
   }
 }
 
-watch(fieldsCount, () => layoutFields())
+watch(fieldsCount, () => {
+  try { layoutFields() } catch (e) { console.error('[shaderfill-bench] layoutFields failed', e) }
+})
 
 function buildFieldStates(): void {
   for (let i = 0; i < MAX_FIELDS; i++) {
@@ -258,6 +289,114 @@ function loop(now: number): void {
   }
 }
 
+// --- rAF-independent sweep -------------------------------------------------
+// The on-screen loop() above depends on requestAnimationFrame, which browsers
+// pause in hidden/backgrounded tabs — a Browser pane driven headlessly may never
+// tick it at all, leaving every on-screen readout stuck at 0.00. This path takes
+// the alternative measurement directly: run the pipeline SWEEP_ITERATIONS times
+// per field count with an explicit GPU sync each iteration (so it measures
+// completed work, not submission — the same trap the CPU-submit timer fell into),
+// and return the numbers as a value instead of rendering them to the DOM.
+
+interface SweepRow { fields: number; msPerIteration: number; msPerField: number; blitMs: number }
+
+const SWEEP_ITERATIONS = 60
+const SWEEP_WARMUP = 10
+
+const sweepRows = ref<SweepRow[] | null>(null)
+const sweepRunning = ref(false)
+const sweepError = ref('')
+
+/** Guarded, synchronous-per-iteration sweep. Returns rows in FIELD_OPTIONS order
+ *  (0 first, so its msPerIteration is available as the baseline for the rest). */
+async function runSweep(): Promise<SweepRow[] | { error: string }> {
+  if (!effectDef || !baseFill || !renderer || !scene || !camera || fieldStates.length < MAX_FIELDS) {
+    return { error: 'not ready' }
+  }
+  const def = effectDef
+  const base = baseFill
+  const rendererInst = renderer
+  const sceneInst = scene
+  const cameraInst = camera
+  const gl = rendererInst.getContext()
+
+  const rows: SweepRow[] = []
+  let baselineMs = 0
+
+  for (const n of FIELD_OPTIONS) {
+    const iterMs: number[] = []
+    const blitMsArr: number[] = []
+
+    for (let iter = 0; iter < SWEEP_ITERATIONS; iter++) {
+      // Everything inside this loop body is synchronous — no await — so the
+      // timer below reflects real work, not event-loop scheduling.
+      const t0 = performance.now()
+      let blitAccum = 0
+      const timeSec = t0 / 1000
+
+      for (let i = 0; i < n; i++) {
+        const seed = distinct.value ? 42 + i * 7 : 42
+        const uniforms = {
+          ...resolveUniforms(def, {}),
+          u_time: timeSec,
+          u_seed: seed,
+          u_hasInput: 1,
+        }
+        const passes = expandPasses(def.id, def.source, uniforms, {}, def.passes ?? 1)
+        const rendered = shaderFx.render(passes, base, FIELD_SIZE, FIELD_SIZE)
+
+        const st = fieldStates[i]
+        if (!st) continue
+        const tb0 = performance.now()
+        st.ctx2d.drawImage(rendered, 0, 0)
+        // Force the 2D canvas to actually materialise the blit now — otherwise
+        // this drawImage is just another async submission and we're back to
+        // measuring nothing.
+        st.ctx2d.getImageData(0, 0, 1, 1)
+        blitAccum += performance.now() - tb0
+        st.texture.needsUpdate = true
+      }
+
+      rendererInst.render(sceneInst, cameraInst)
+      // Force a GPU sync so the timer reflects completed work, not submission.
+      gl.finish()
+
+      const ms = performance.now() - t0
+      if (iter >= SWEEP_WARMUP) {
+        iterMs.push(ms)
+        blitMsArr.push(blitAccum)
+      }
+    }
+
+    const msPerIteration = avg(iterMs)
+    const blitMs = avg(blitMsArr)
+    if (n === 0) baselineMs = msPerIteration
+    const msPerField = n === 0 ? 0 : (msPerIteration - baselineMs) / n
+    rows.push({ fields: n, msPerIteration, msPerField, blitMs })
+
+    // Yield ONLY between field counts (never inside the timed region above) so a
+    // ~5-20s sweep doesn't block the page/tab for one long uninterrupted stretch.
+    await new Promise(resolve => setTimeout(resolve, 0))
+  }
+
+  return rows
+}
+
+async function onRunSweepClick(): Promise<void> {
+  sweepRunning.value = true
+  sweepError.value = ''
+  try {
+    const res = await runSweep()
+    if ('error' in res) sweepError.value = res.error
+    else sweepRows.value = res
+  } catch (e) {
+    sweepError.value = String(e)
+    console.error('[shaderfill-bench] sweep failed', e)
+  } finally {
+    sweepRunning.value = false
+  }
+}
+
 onMounted(async () => {
   try {
     const catalog = await fetchShaderFxCatalog()
@@ -270,33 +409,44 @@ onMounted(async () => {
     }
     effectId.value = effectDef.id
     status.value = ''
+
+    // Synthetic input: a gradient fill tile, same convention as the future shader-fill
+    // pipeline (fillTileBox → shaderFx.render base). Static — only u_time animates.
+    baseFill = fillTileBox({ ...DEFAULT_FILL, type: 'gradient' }, FIELD_SIZE, FIELD_SIZE)
+
+    if (!canvasEl.value) {
+      status.value = 'canvas ref missing — cannot init renderer'
+      return
+    }
+    renderer = new THREE.WebGLRenderer({ canvas: canvasEl.value, antialias: true })
+    renderer.setSize(CANVAS_W, CANVAS_H, false)
+    scene = new THREE.Scene()
+    scene.background = new THREE.Color(0x111111)
+    camera = new THREE.OrthographicCamera(-3, 3, 1.5, -1.5, 0.1, 100)
+    camera.position.z = 5
+    camera.lookAt(0, 0, 0)
+
+    buildFieldStates()
+    layoutFields()
+
+    // Register the rAF-independent sweep once the renderer + fields it depends on
+    // exist. Callable straight from a hidden/backgrounded Browser pane, where the
+    // rAF loop below never ticks.
+    ;(window as any).__benchSweep = runSweep
+
+    startedAt = performance.now()
+    raf = requestAnimationFrame(loop)
   } catch (e) {
-    status.value = `catalog fetch failed: ${e}`
-    console.error('[shaderfill-bench]', e)
-    return
+    // Any init failure (catalog fetch, WebGL context creation, etc.) lands here
+    // instead of becoming an unhandled rejection out of an async onMounted —
+    // which Vue would otherwise only surface as an opaque scheduler-flush warning.
+    status.value = `init failed: ${e}`
+    console.error('[shaderfill-bench] init failed', e)
   }
-
-  // Synthetic input: a gradient fill tile, same convention as the future shader-fill
-  // pipeline (fillTileBox → shaderFx.render base). Static — only u_time animates.
-  baseFill = fillTileBox({ ...DEFAULT_FILL, type: 'gradient' }, FIELD_SIZE, FIELD_SIZE)
-
-  if (!canvasEl.value) return
-  renderer = new THREE.WebGLRenderer({ canvas: canvasEl.value, antialias: true })
-  renderer.setSize(CANVAS_W, CANVAS_H, false)
-  scene = new THREE.Scene()
-  scene.background = new THREE.Color(0x111111)
-  camera = new THREE.OrthographicCamera(-3, 3, 1.5, -1.5, 0.1, 100)
-  camera.position.z = 5
-  camera.lookAt(0, 0, 0)
-
-  buildFieldStates()
-  layoutFields()
-
-  startedAt = performance.now()
-  raf = requestAnimationFrame(loop)
 })
 
 onBeforeUnmount(() => {
+  delete (window as any).__benchSweep
   if (raf) cancelAnimationFrame(raf)
   raf = 0
   for (const st of fieldStates) {
@@ -327,6 +477,12 @@ button.active { background: #2a5; color: #000; border-color: #2a5; font-weight: 
 .stat .v.bad { color: #f66 }
 .verdict { color: #fd0; font-weight: 700; margin: 0 0 10px }
 .pass-note { color: #9c9; max-width: 80ch; line-height: 1.5; margin: 0 0 14px }
+button.run-sweep { background: #57a; color: #fff; border-color: #57a }
+button.run-sweep:disabled { background: #444; color: #888; border-color: #444 }
+.sweep-error { color: #f66; margin: 0 0 10px }
+.sweep-table { border-collapse: collapse; margin: 0 0 14px }
+.sweep-table th, .sweep-table td { border: 1px solid #333; padding: 3px 9px; text-align: right }
+.sweep-table th { background: #1c1c1c; color: #999; font-weight: 600 }
 .stage { display: block; background: #000; border: 1px solid #333 }
 code { color: #9cf }
 </style>
