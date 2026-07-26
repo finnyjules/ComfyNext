@@ -372,12 +372,19 @@ export function quantizeTime(t: number, fps: number): number {
   return Math.floor(t * f) / f
 }
 
+// ⚠ CORRECTED AFTER REVIEW — do not copy the naive version below into new code.
+// The originally-planned encoding joined with unescaped separators, so
+// `{ 'x=1,y': 2 }` and `{ x: 1, y: 2 }` produced an IDENTICAL key and one shape
+// silently rendered another's cached field. Use a delimiter-safe encoding
+// (JSON.stringify of a canonical structure) at all three sites — inputKey,
+// paramsKey, and the outer join. Params must still be sorted so ordering is
+// normalised, since order-independence is what makes batching work.
 function inputKey(f: Fill): string {
-  return `${f.type}|${f.a}|${f.b}|${f.angle}|${f.density}`
+  return `${f.type}|${f.a}|${f.b}|${f.angle}|${f.density}`   // ← unsafe, see above
 }
 
 function paramsKey(p: Record<string, number>): string {
-  return Object.keys(p).sort().map(k => `${k}=${p[k]}`).join(',')
+  return Object.keys(p).sort().map(k => `${k}=${p[k]}`).join(',')   // ← unsafe, see above
 }
 
 /** Fields are keyed by DESCRIPTOR, not by consumer. That is the whole batching rule:
@@ -531,6 +538,10 @@ Verified signatures this code depends on — do not guess at these:
 - The uniform trio every effect expects — `u_time`, `u_seed`, `u_hasInput` — matches how `lib/shaderstudio/passes.ts:34` composes its own passes. Follow that file rather than inventing a second convention.
 
 **Effect params are prefixed `u_` as uniforms but stored unprefixed as keys.** Keep `spec.params` unprefixed (that is what the control schema in Task 8 addresses as `fill.shader.p.<key>`) and prefix only at the uniform boundary, as above.
+
+**Normalise params against the effect's defaults BEFORE computing the field key.** `descriptor.ts` is pure and knows nothing about the catalog, so it cannot do this itself — but a spec with `params: {}` and one with `params: { segments: 6 }` where `6` *is* the default render identically while keying differently, which silently halves the batching hit rate. Resolve the full param set (defaults merged with overrides, unknown keys dropped — the same set you feed to the uniforms) and pass **that** to `fieldKey`, not the raw `spec.params`. Two consumers that render the same pixels must produce the same key.
+
+**Carry-forward from Task 1:** depth-1 nesting is enforced only at the `normalizeFill`/`parseFills` boundary, *not* in the type system. A hand-constructed `ShaderSpec` can still carry a shader fill as its `input`. `fillTile.ts` exports `effectiveTileFill(fill)` which defensively unwraps exactly one level and never returns a shader-typed fill — use it when rasterising the input rather than reading `spec.input` directly.
 
 - [ ] **Step 2: Point the bench at it**
 
