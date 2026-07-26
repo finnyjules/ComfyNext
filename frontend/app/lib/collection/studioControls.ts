@@ -85,6 +85,17 @@ async function textureControls(node: any): Promise<StudioControlDesc[]> {
   return mapAll(TEXTURE_CONTROLS as ControlSpec[])
 }
 
+/** Shape Studio: same config the canvas tuner reads (sailor_shapeStudio.config,
+ *  falling back to a fresh default config via mergeConfig). */
+async function shapeControls(node: any): Promise<StudioControlDesc[]> {
+  const [{ mergeConfig }, { shapeAgentControls }] = await Promise.all([
+    import('~/lib/shapefx/config'),
+    import('~/lib/shapefx/agentControls'),
+  ])
+  const config = mergeConfig(node?.data?.properties?.sailor_shapeStudio?.config)
+  return mapAll(shapeAgentControls(config))
+}
+
 /** Resolve the bindable control list for a studio node, keyed off
  *  `node.data.nodeType`. Returns [] for unknown/non-studio types. */
 export async function controlsForStudio(node: any): Promise<StudioControlDesc[]> {
@@ -93,6 +104,7 @@ export async function controlsForStudio(node: any): Promise<StudioControlDesc[]>
     case 'GradientStudio': return gradientControls(node)
     case 'ShaderStudio': return shaderControls(node)
     case 'TextureStudio': return textureControls(node)
+    case 'ShapeStudio': return shapeControls(node)
     default: return []
   }
 }

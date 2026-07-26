@@ -25,3 +25,20 @@ describe('mapControlSpecToDesc', () => {
     expect(mapControlSpecToDesc(spec)).toEqual({ key: 'label', label: 'Label', kind: 'text' })
   })
 })
+
+describe('ShapeStudio', () => {
+  it('resolves bindable controls for a ShapeStudio node', async () => {
+    const { controlsForStudio } = await import('~/lib/collection/studioControls')
+    const node: any = { data: { nodeType: 'ShapeStudio', properties: {} } }
+    const descs = await controlsForStudio(node)
+    expect(descs.length).toBeGreaterThan(0)
+    expect(descs.map((d) => d.key)).toContain('shape.jitter')
+  })
+
+  it('is a vars target, so the node renders its VARS input port', async () => {
+    // ShapeStudioNode.vue already computes varsInputIndex and renders the port
+    // v-if="varsInputIndex >= 0" — it was dead code until this registration.
+    const { VARS_TARGET_NODE_TYPES } = await import('~/lib/collection/varsInput')
+    expect(VARS_TARGET_NODE_TYPES.has('ShapeStudio')).toBe(true)
+  })
+})
