@@ -293,6 +293,41 @@ The user sees a gradient instead of a warped gradient — never an empty shape.
    GPU calls and derived fps as `1000/cpuMs`, reporting an impossible 0.09 ms readback; the
    rAF-based rewrite that fixed it was unreadable because a hidden browser pane pauses
    `requestAnimationFrame` entirely, so every readout sat at 0.00.
+
+   **RE-MEASURED 2026-07-26 through the real `resolveField` path (Task 3).** The figures above
+   were taken against a direct `shaderFx` harness. Measured through the actual field module,
+   with a consumer binding the returned canvas directly as a texture source (no copy):
+
+   | fields | ms/iteration | ms/render | renders |
+   |---|---|---|---|
+   | 1 | 3.52 ms | 3.52 | 50 |
+   | 2 | **7.55 ms** | 3.77 | 100 |
+   | 4 | 15.35 ms | 3.84 | 200 |
+   | 8 | 18.37 ms | 4.10 | 224 |
+
+   **Per-render cost is ~3.8 ms — roughly 3× the 1.25 ms typical above, and just above the
+   3.6 ms worst previously observed.** It is now essentially flat across field counts (16%
+   spread, versus 160% before the redundant-copy fix), which is the signal that the remaining
+   cost is per-render work rather than an accumulating overhead.
+
+   **The gate still passes with room: 2 fields = 7.55 ms against 33 ms, a 4.4× margin.**
+
+   `LIVE_FIELD_CEILING` stays 4 **but now sits at the boundary rather than comfortably inside
+   it** — 4 fields is 15.35 ms, just under half a 30 fps frame. Two reasons not to lower it to
+   3 yet: the bench renders N textured quads and performs N texture uploads *in the harness
+   itself*, which a real surface does not do per fill, so this figure overstates a real
+   consumer's cost by an unknown amount; and Tasks 4 and 6 measure against actual surfaces,
+   where that overhead disappears. **Re-derive the ceiling there, against a real consumer, not
+   against this harness.**
+
+   Three separate too-good-to-be-true numbers were traced to missing GPU syncs during this
+   work, the last being that `renderer.getContext().finish()` syncs only three.js's context and
+   **not** `shaderFx`'s separate one. Any future measurement here must force a readback on
+   `resolveField`'s own canvas, or it is timing command submission.
+
+   Not indicated on this evidence: approach C. The readback is bounded, linear, and the gate
+   passes 4.4×. C becomes the answer if a real surface in Task 4/6 confirms ~3.8 ms/render
+   *without* the harness overhead, which would put a 4-field frame at half its budget on fills.
 2. **The 28-shader `uFillAnchor` change** is the largest chunk. It is mechanical rather than a
    design problem, and is good parallel subagent work — but it is 28 files touching live visual
    output, so golden coverage matters before it starts.
