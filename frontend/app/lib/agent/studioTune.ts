@@ -38,6 +38,8 @@ import { buildGradientPreset } from '~/lib/gradientfx/presets'
 import { cloneConfig as cloneGradientConfig, type GradientConfig } from '~/lib/gradientfx/types'
 import { cloneConfig as cloneShaderConfig, defaultConfig as defaultShaderConfig, hydrateConfig as hydrateShaderConfig, type ShaderStudioConfig } from '~/lib/shaderstudio/types'
 import { shaderAgentControls } from '~/lib/shaderstudio/agentControls'
+import { mergeConfig as mergeShapeConfig } from '~/lib/shapefx/config'
+import { SHAPE_GUIDANCE, shapeAgentControls } from '~/lib/shapefx/agentControls'
 import { getEffect } from '~/lib/shaderfx/catalog'
 
 const MEDIA_OPS = new Set(['generateImage', 'editImage', 'removeImageBackground'])
@@ -354,6 +356,38 @@ export async function tuneShaderNode(node: any, request: string, apiKey: string)
   })
 }
 
+/**
+ * Shape Studio's persisted property is a WRAPPER — { config, canvasW, canvasH,
+ * aspectKey, orbit } — unlike gradient's bare config. `write` merges the tuned
+ * config back into the existing wrapper so canvas size and camera orbit survive.
+ */
+const shapeAdapter: PatchAdapter = {
+  read: (n: any) => {
+    const config = mergeShapeConfig(n?.data?.properties?.sailor_shapeStudio?.config)
+    return { config, controls: shapeAgentControls(config) }
+  },
+  params: (config: any) => makeConfigParams(() => config, () => 0),
+  write: (n: any, config: any) => {
+    if (!n.data) n.data = {}
+    if (!n.data.properties) n.data.properties = {}
+    const prev = n.data.properties.sailor_shapeStudio ?? {}
+    n.data.properties.sailor_shapeStudio = { ...prev, config: JSON.parse(JSON.stringify(config)) }
+  },
+  clone: (config: any) => JSON.parse(JSON.stringify(config)),
+  label: 'Shape studio',
+  guidance: SHAPE_GUIDANCE,
+}
+
+/** Exposed for tests only — the adapter is otherwise reached via the registry. */
+export const __shapeAdapterForTest = shapeAdapter
+
+/** Shape Studio: config lives nested under sailor_shapeStudio.config, alongside
+ *  canvas size + camera orbit that are NOT tune-adjustable — write must merge
+ *  back into the wrapper rather than replace it (see shapeAdapter above). */
+export async function tuneShapeNode(node: any, request: string, apiKey: string): Promise<TuneResult> {
+  return runParamPatch(node, request, apiKey, shapeAdapter)
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Registry — the canvas agent dispatches a tuneNode by the target's nodeType.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -365,6 +399,7 @@ export const STUDIO_TUNERS: Record<string, StudioTuner> = {
   SmartLayout: tuneSmartLayoutNode,
   GradientStudio: tuneGradientNode,
   ShaderStudio: tuneShaderNode,
+  ShapeStudio: tuneShapeNode,
 }
 
 /** The in-place tuner for a node type, or undefined if that node has no canvas

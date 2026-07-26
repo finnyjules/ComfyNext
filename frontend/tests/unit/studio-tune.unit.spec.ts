@@ -24,7 +24,7 @@ function node(nodeType: string, properties: Record<string, unknown> = {}): any {
 
 describe('studioTunerFor registry', () => {
   it('maps every canvas-tunable studio to a tuner', () => {
-    for (const t of ['Compositor', 'GradientStudio', 'ShaderStudio', 'TextureStudio', 'SmartLayout']) {
+    for (const t of ['Compositor', 'GradientStudio', 'ShaderStudio', 'TextureStudio', 'SmartLayout', 'ShapeStudio']) {
       expect(typeof studioTunerFor(t)).toBe('function')
       expect(STUDIO_TUNERS[t]).toBeTypeOf('function')
     }
@@ -159,5 +159,40 @@ describe('tuneShaderNode (param-patch)', () => {
     const res = await tuneShaderNode(n, 'noop', KEY)
     expect(res.ok).toBe(false)
     expect(n.data.properties.sailor_shaderStudio).toBeUndefined()
+  })
+})
+
+describe('tuneShapeNode', () => {
+  it('is registered for the ShapeStudio node type', async () => {
+    const { studioTunerFor } = await import('~/lib/agent/studioTune')
+    expect(studioTunerFor('ShapeStudio')).toBeTypeOf('function')
+  })
+
+  it('preserves the persisted wrapper when it writes back', async () => {
+    // sailor_shapeStudio is { config, canvasW, canvasH, aspectKey, orbit } — NOT a
+    // bare config like gradient's. Overwriting it with just the config would lose
+    // the user's canvas size and camera orbit.
+    const { __shapeAdapterForTest } = await import('~/lib/agent/studioTune')
+    const node: any = { data: { properties: { sailor_shapeStudio: {
+      config: { fillMode: 'facets' }, canvasW: 1920, canvasH: 1080, aspectKey: '16:9',
+      orbit: { yaw: 1, pitch: 2, zoom: 3 },
+    } } } }
+    const a = __shapeAdapterForTest
+    const cfg = await a.read(node)
+    a.write(node, cfg.config)
+    const saved = node.data.properties.sailor_shapeStudio
+    expect(saved.canvasW).toBe(1920)
+    expect(saved.canvasH).toBe(1080)
+    expect(saved.aspectKey).toBe('16:9')
+    expect(saved.orbit).toEqual({ yaw: 1, pitch: 2, zoom: 3 })
+    expect(saved.config).toBeDefined()
+  })
+
+  it('falls back to defaults when the node has never been opened', async () => {
+    const { __shapeAdapterForTest } = await import('~/lib/agent/studioTune')
+    const node: any = { data: { properties: {} } }
+    const { config, controls } = await __shapeAdapterForTest.read(node)
+    expect(config.fillMode).toBeDefined()
+    expect(controls.length).toBeGreaterThan(0)
   })
 })
