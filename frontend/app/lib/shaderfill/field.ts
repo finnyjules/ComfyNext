@@ -51,10 +51,14 @@ export interface FieldStats { renders: number; hits: number; misses: number; til
  * actual ceiling on how large this should get without deliberately re-budgeting it.
  *
  * This is NOT a guarantee that a frozen/over-ceiling entry survives indefinitely:
- * the field-count=8 sweep in the Task 3 report shows this cache already imperfectly
- * defending even that narrower job — 4 live fields churning through a 32-slot LRU
- * evict the 4 frozen fallback entries roughly every 8 iterations, forcing periodic
- * re-renders of work that is architecturally supposed to be free. Raising the
+ * the field-count=8 sweep in the Task 3 report showed this cache imperfectly
+ * defending even that narrower job — 4 live fields churning through the 32 slots
+ * evicted the 4 frozen fallback entries roughly every 8 iterations, forcing periodic
+ * re-renders of work that is architecturally supposed to be free. That measurement
+ * predates the recency refresh in `resolveField`: eviction was FIFO-by-insertion at
+ * the time, so a frozen entry aged out on a fixed schedule no matter how often it was
+ * read. It is now a true LRU, which should protect entries that are hit every frame —
+ * re-measure before citing that 224-vs-200 figure again. Raising the
  * multiplier would help that specific case but is a real memory/eviction trade-off,
  * not a bug fix — left as-is per review (this cache is reviewed and works; changing
  * its behaviour needs its own measurement, the way LIVE_FIELD_CEILING got one).
@@ -199,7 +203,15 @@ export function resolveField(req: FieldRequest): HTMLCanvasElement | null {
   // Not live this frame -> fall back to the frozen (t=0) variant of the same descriptor.
   const key = liveKeys.size === 0 || liveKeys.has(liveKey) ? liveKey : fieldKey(spec, w, h, 0)
   const hit = cache.get(key)
-  if (hit) { stats.hits++; return hit }
+  if (hit) {
+    stats.hits++
+    // Refresh recency so eviction is genuinely least-RECENTLY-used. Without this a
+    // Map is FIFO-by-insertion, which evicts frozen/over-ceiling entries even though
+    // they are read every single frame — precisely the entries this cache exists for.
+    // Re-inserting moves the key to the end of the iteration order.
+    cache.delete(key); cache.set(key, hit)
+    return hit
+  }
   stats.misses++
 
   if (!effect) return null                        // caller falls back to the input fill
