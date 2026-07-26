@@ -633,8 +633,8 @@ function fillTileCached(fill: Fill, tw: number, th: number): HTMLCanvasElement {
 // exactly the part contributed by the shape's own position/rotation, leaving every
 // primitive sampling the SAME field at the SAME frame-space location regardless of
 // where the shape sits — the field stays put; the shape moves over it.
-interface ShaderFieldFrameCtx { frameW: number; frameH: number; t: number; fps: number; base: DOMMatrix | null }
-let _fieldCtx: ShaderFieldFrameCtx = { frameW: 1, frameH: 1, t: 0, fps: 30, base: null }
+interface ShaderFieldFrameCtx { frameW: number; frameH: number; t: number; fps: number; base: DOMMatrix | null; bake: boolean }
+let _fieldCtx: ShaderFieldFrameCtx = { frameW: 1, frameH: 1, t: 0, fps: 30, base: null, bake: false }
 
 /** Object-anchor shader fields render at ONE fixed resolution and get STRETCHED into
  *  each shape's own box by the pattern's scale transform below — the same semantics as
@@ -665,7 +665,7 @@ function resolveShaderFill(
   const bw = Math.max(box.w, 1e-3), bh = Math.max(box.h, 1e-3)
   const fw = frame ? Math.max(1, Math.round(_fieldCtx.frameW)) : OBJECT_SHADER_FIELD_PX
   const fh = frame ? Math.max(1, Math.round(_fieldCtx.frameH)) : OBJECT_SHADER_FIELD_PX
-  const canvas = resolveField({ spec, w: fw, h: fh, t: _fieldCtx.t, fps: _fieldCtx.fps })
+  const canvas = resolveField({ spec, w: fw, h: fh, t: _fieldCtx.t, fps: _fieldCtx.fps, bake: _fieldCtx.bake })
   if (!canvas) return resolveFill(ctx, spec.input, box)   // graceful: the shader's own input fill
   const pat = ctx.createPattern(canvas, 'no-repeat')
   if (!pat) return fill.a
@@ -1522,14 +1522,14 @@ function layerPaints(layer: LocalLayer): Paint[] {
  *  resolveShaderFill sizes it at paint time (frame anchor → frame size; object anchor →
  *  the fixed OBJECT_SHADER_FIELD_PX) — see resolveShaderFill's doc for why the two must
  *  agree, and OBJECT_SHADER_FIELD_PX's doc for why object anchor doesn't need the box. */
-function addShaderFieldRequest(out: FieldRequest[], paint: Paint | undefined, W: number, H: number, t: number, fps: number) {
+function addShaderFieldRequest(out: FieldRequest[], paint: Paint | undefined, W: number, H: number, t: number, fps: number, bake: boolean) {
   if (!isFill(paint) || !fillIsShader(paint)) return
   const frame = paint.shader.anchor === 'frame'
   out.push({
     spec: paint.shader,
     w: frame ? Math.max(1, Math.round(W)) : OBJECT_SHADER_FIELD_PX,
     h: frame ? Math.max(1, Math.round(H)) : OBJECT_SHADER_FIELD_PX,
-    t, fps,
+    t, fps, bake,
   })
 }
 
@@ -1551,11 +1551,20 @@ export function paintLayerStack(
   /** Doc-level post-processing chain, applied to the finished composite.
    *  Absent/empty ⇒ byte-identical output. */
   post?: PostEffect[],
+  /** True for a final export/bake (Render, motion bake, Frame download/publish) —
+   *  opts shader-fill fields out of both the 512px live-preview clamp AND
+   *  LIVE_FIELD_CEILING (Task 10): a bake has no frame budget, so every distinct
+   *  descriptor renders at full resolution and stays live, however many there are.
+   *  False (the default) is the live-preview behaviour byte-identical to before this
+   *  param existed — every EXISTING positional call site is therefore unaffected;
+   *  only export call sites pass `true` explicitly. */
+  bake = false,
 ): { frozenCount: number } {
   const fieldT = t ?? 0, fieldFps = motion?.fps ?? 30
   _fieldCtx = {
     frameW: W, frameH: H, t: fieldT, fps: fieldFps,
     base: typeof ctx.getTransform === 'function' ? ctx.getTransform() : null,
+    bake,
   }
   // Task 6: one beginFieldFrame call per rendered frame, scoped to exactly the shader
   // fills THIS document's layers/background carry this pass — see the doc above
@@ -1565,9 +1574,9 @@ export function paintLayerStack(
   const shaderRequests: FieldRequest[] = []
   for (const it of items) {
     if (it.type !== 'local') continue
-    for (const p of layerPaints(it.layer)) addShaderFieldRequest(shaderRequests, p, W, H, fieldT, fieldFps)
+    for (const p of layerPaints(it.layer)) addShaderFieldRequest(shaderRequests, p, W, H, fieldT, fieldFps, bake)
   }
-  addShaderFieldRequest(shaderRequests, background, W, H, fieldT, fieldFps)
+  addShaderFieldRequest(shaderRequests, background, W, H, fieldT, fieldFps, bake)
   const { frozenCount } = beginFieldFrame(shaderRequests)
 
   // Background fill — the bottom-most thing in the frame, baked into output.
@@ -1727,8 +1736,10 @@ export function drawLocalLayers(
   layers: LocalLayer[],
   W: number,
   H: number,
+  bake = false,
 ) {
-  paintLayerStack(ctx, W, H, layers.map(l => ({ type: 'local' as const, key: `l:${l.id}`, layer: l })), layers)
+  paintLayerStack(ctx, W, H, layers.map(l => ({ type: 'local' as const, key: `l:${l.id}`, layer: l })), layers,
+    undefined, undefined, undefined, undefined, undefined, undefined, undefined, bake)
 }
 
 /** Blend-mode name → canvas composite op (shared by node + modal wired draws). */
@@ -1812,7 +1823,7 @@ export function bakeOverlay(layers: LocalLayer[], W: number, H: number): Promise
   canvas.height = Math.max(1, Math.round(H))
   const ctx = canvas.getContext('2d')!
   ctx.clearRect(0, 0, canvas.width, canvas.height) // stay transparent
-  drawLocalLayers(ctx, layers, canvas.width, canvas.height)
+  drawLocalLayers(ctx, layers, canvas.width, canvas.height, true) // export/bake: unclamped shader fields
   return new Promise((resolve) => canvas.toBlob(resolve, 'image/png'))
 }
 

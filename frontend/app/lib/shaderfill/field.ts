@@ -144,15 +144,30 @@ function resolve(spec: ShaderSpec): { effect: EffectDef | null; spec: ShaderSpec
 }
 
 /** Call once per host frame with every field the frame wants. Decides which stay live
- *  and which freeze, so the ceiling is applied per surface per frame. */
+ *  and which freeze, so the ceiling is applied per surface per frame.
+ *
+ *  LIVE_FIELD_CEILING exists to protect INTERACTIVE framerate (a 30fps preview budget
+ *  has no room for arbitrarily many live readbacks). A bake has no frame budget — it
+ *  is a one-shot export, not a loop competing for 33ms — so `req.bake` requests are
+ *  exempt from the ceiling entirely: every bake-requested descriptor stays live,
+ *  however many there are. Only non-bake requests are still subject to
+ *  `planFields`/LIVE_FIELD_CEILING. Before this split, a single mixed or bake-only
+ *  call still ran every descriptor (bake and live alike) through the SAME ceiling, so
+ *  any export of a scene with more than LIVE_FIELD_CEILING distinct shader-fill
+ *  descriptors silently froze the 5th-and-beyond fill at t=0 — independent of tab
+ *  visibility, a real correctness bug rather than a harness artefact. Fixed here
+ *  (rather than in each of the four call sites) so every surface inherits the fix. */
 export function beginFieldFrame(requests: FieldRequest[]): { frozenCount: number } {
-  const keys = requests.map((r) => {
+  const liveCandidates: string[] = []
+  const bakeKeys: string[] = []
+  for (const r of requests) {
     const { w, h } = fieldSize(r)
     const { spec } = resolve(r.spec)
-    return fieldKey(spec, w, h, quantizeTime(r.t, r.fps))
-  })
-  const { live, frozen } = planFields(keys)
-  liveKeys = new Set(live)
+    const key = fieldKey(spec, w, h, quantizeTime(r.t, r.fps))
+    ;(r.bake ? bakeKeys : liveCandidates).push(key)
+  }
+  const { live, frozen } = planFields(liveCandidates)
+  liveKeys = new Set([...live, ...bakeKeys])
   return { frozenCount: frozen.length }
 }
 

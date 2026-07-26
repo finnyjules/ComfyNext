@@ -71,7 +71,11 @@ export async function bakeMotionFrames(
     if (prepareFrame) await prepareFrame(t)
     ctx.setTransform(1, 0, 0, 1, 0, 0)
     ctx.clearRect(0, 0, canvas.width, canvas.height) // transparent background
-    paintLayerStack(ctx, canvas.width, canvas.height, items, frozenLayers, undefined, t, motion)
+    // bake=true (Task 10): this IS the final motion export — shader-fill fields must
+    // render unclamped (full res) and stay live past LIVE_FIELD_CEILING, matching the
+    // bake/preview split every other export path now honours.
+    paintLayerStack(ctx, canvas.width, canvas.height, items, frozenLayers, undefined, t, motion,
+      undefined, undefined, undefined, undefined, true)
     const blob = await new Promise<Blob | null>(r => canvas.toBlob(r, 'image/png'))
     if (!blob) throw new Error(`motion bake: frame ${i} produced no blob`)
     blobs.push(blob)

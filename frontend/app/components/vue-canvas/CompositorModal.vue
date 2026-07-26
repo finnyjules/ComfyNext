@@ -1574,8 +1574,10 @@ function renderSceneForHarmonize(): { canvas: HTMLCanvasElement; W: number; H: n
   canvas.width = W
   canvas.height = H
   const ctx = canvas.getContext('2d')!
+  // bake=true (Task 10): a Harmonize render is a final full-resolution export, not a
+  // live preview — shader-fill fields must render unclamped, same as Render/Export below.
   paintLayerStack(ctx, W, H, buildStackItems(), localLayers.value as LocalLayer[],
-    undefined, undefined, undefined, wiredTreatments.value, background.value, localGroups.value, postEffects.value)
+    undefined, undefined, undefined, wiredTreatments.value, background.value, localGroups.value, postEffects.value, true)
   return { canvas, W, H }
 }
 
@@ -1675,8 +1677,9 @@ async function renderStaticComposite(W: number, H: number): Promise<Blob | null>
   const ctx = off.getContext('2d'); if (!ctx) return null
   await ensureLayerImages(localLayers.value as LocalLayer[])
   await ensureLayerFonts(localLayers.value as LocalLayer[], W)
+  // bake=true (Task 10): the static Render/Export path — final output, not preview.
   paintLayerStack(ctx, W, H, buildStackItems(), localLayers.value as LocalLayer[],
-    undefined, undefined, undefined, wiredTreatments.value, background.value, localGroups.value, postEffects.value)
+    undefined, undefined, undefined, wiredTreatments.value, background.value, localGroups.value, postEffects.value, true)
   return await new Promise<Blob | null>(resolve => off.toBlob(b => resolve(b), 'image/png'))
 }
 

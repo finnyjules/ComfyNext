@@ -602,8 +602,10 @@ function exportCompositeCanvas(): HTMLCanvasElement | null {
   ctx.scale(sx, sy)  // draw in logical box coords; output is full resolution
   // Route through the same masked renderer as the preview (no editing-skip — an
   // export includes every visible layer), so silhouette masks apply on download.
+  // bake=true (Task 10): full-res download/publish, not the live preview — shader-fill
+  // fields must render unclamped and stay live past LIVE_FIELD_CEILING.
   paintLayerStack(ctx, W, H, buildStackItems(), editor.localLayers.value,
-    undefined, undefined, undefined, wiredTreatments.value, editor.background.value, editor.localGroups.value, editor.postEffects.value)
+    undefined, undefined, undefined, wiredTreatments.value, editor.background.value, editor.localGroups.value, editor.postEffects.value, true)
   return cv
 }
 

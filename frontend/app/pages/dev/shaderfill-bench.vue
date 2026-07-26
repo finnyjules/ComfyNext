@@ -123,6 +123,7 @@ import * as THREE from 'three'
 import { fetchShaderFxCatalog } from '~/lib/shaderfx/catalog'
 import { DEFAULT_FILL, fillTileBox, type Fill, type ShaderSpec } from '~/lib/spacetype/fillTile'
 import { beginFieldFrame, resolveField, clearFieldCache, fieldStats, type FieldRequest } from '~/lib/shaderfill/field'
+import { LIVE_FIELD_CEILING } from '~/lib/shaderfill/descriptor'
 import type { EffectDef } from '~/lib/shaderfx/types'
 
 definePageMeta({ layout: false })
@@ -679,6 +680,71 @@ function runBatch(): unknown {
   }
 }
 
+/**
+ * Bake-ceiling proof (Task 10 — a real correctness bug found in review). Before the
+ * fix, `beginFieldFrame` ran bake requests through the SAME `planFields`/
+ * LIVE_FIELD_CEILING as live ones, so any export of a scene with more than
+ * LIVE_FIELD_CEILING distinct shader-fill descriptors silently froze the 5th-and-
+ * beyond field at t=0 — independent of tab visibility, not a harness artefact.
+ *
+ * Builds `n` (> LIVE_FIELD_CEILING) genuinely distinct descriptors (different
+ * effect params per field, via `specForField(i, true)`, the same helper the
+ * distinct-mode sweep/batch use), resolves them at two different times under
+ * `bake: true`, and reduces each result canvas to a coarse pixel-mean sample. The
+ * ASSERTION that actually distinguishes "fixed" from "still broken" is per-field:
+ * every one of the `n` fields must produce a DIFFERENT mean at t=2.5 than at t=0 —
+ * not just the first LIVE_FIELD_CEILING. A same-descriptors control run with
+ * `bake: false` is included specifically so "everything changed" isn't vacuously
+ * true (e.g. because nothing in this build ever freezes): under live mode only the
+ * first LIVE_FIELD_CEILING fields should change; the rest must read IDENTICAL
+ * between the two times, proving the ceiling itself is real and it is bake
+ * specifically that is exempt from it, not that freezing never happens at all.
+ */
+function runBakeCeilingProof(): unknown {
+  if (!effectDef) return { error: 'not ready' }
+  const n = 6
+  const meanOf = (c: HTMLCanvasElement | null): number | null => {
+    if (!c) return null
+    const d = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data
+    let sum = 0, count = 0
+    for (let i = 0; i < d.length; i += 4 * 97) { sum += d[i]!; count++ }
+    return count > 0 ? +(sum / count).toFixed(3) : null
+  }
+  // i+1, not i: paramOverridesForIndex(0, ...) lands the effect's first param at its
+  // literal MIN (e.g. fbm_warp's `amount: 0`), which for a warp-amount-style param
+  // can legitimately make the field time-INVARIANT regardless of the ceiling fix —
+  // a confound, not a freeze. Starting at 1 keeps every field's param away from that
+  // edge so "did the pixels change" actually tests liveness, not a coincidence of
+  // which param value index 0 happens to draw.
+  const resolveAll = (bake: boolean, t: number): (number | null)[] => {
+    const reqs: FieldRequest[] = Array.from({ length: n }, (_, i) => ({
+      spec: specForField(i + 1, true), w: FIELD_SIZE, h: FIELD_SIZE, t, fps: BENCH_FPS, bake,
+    }))
+    beginFieldFrame(reqs)
+    return reqs.map(r => meanOf(resolveField(r)))
+  }
+
+  clearFieldCache()
+  const bakeAt0 = resolveAll(true, 0)
+  const bakeAt2 = resolveAll(true, 2.5)
+  const bakeChanged = bakeAt0.map((m, i) => m != null && bakeAt2[i] != null && m !== bakeAt2[i])
+
+  clearFieldCache()
+  const liveAt0 = resolveAll(false, 0)
+  const liveAt2 = resolveAll(false, 2.5)
+  const liveChanged = liveAt0.map((m, i) => m != null && liveAt2[i] != null && m !== liveAt2[i])
+
+  clearFieldCache()
+  return {
+    n, ceiling: LIVE_FIELD_CEILING,
+    bakeAt0, bakeAt2, bakeChanged,
+    liveAt0, liveAt2, liveChanged,
+    pass: bakeChanged.every(Boolean) &&
+      liveChanged.slice(0, LIVE_FIELD_CEILING).every(Boolean) &&
+      liveChanged.slice(LIVE_FIELD_CEILING).every(v => v === false),
+  }
+}
+
 // `samplePixels`/`runPoolCheck` (and `window.__benchPoolCheck`) were removed along
 // with field.ts's output-canvas pool: the pool measured no benefit and made direct
 // texture binding unsafe (a consumer holding a reference across an LRU eviction
@@ -736,6 +802,7 @@ onMounted(async () => {
     ;(window as any).__benchSweep = runSweep
     ;(window as any).__benchProbe = runProbe
     ;(window as any).__benchBatch = runBatch
+    ;(window as any).__benchBakeCeilingProof = runBakeCeilingProof
     // Raw cumulative { renders, hits, misses } since the last clearFieldCache() —
     // exposed directly (not just baked into __benchSweep/__benchBatch's return
     // values) so cache behaviour can be inspected from the console mid-session,
@@ -757,6 +824,7 @@ onBeforeUnmount(() => {
   delete (window as any).__benchSweep
   delete (window as any).__benchProbe
   delete (window as any).__benchBatch
+  delete (window as any).__benchBakeCeilingProof
   delete (window as any).__benchFieldStats
   clearFieldCache()
   if (raf) cancelAnimationFrame(raf)

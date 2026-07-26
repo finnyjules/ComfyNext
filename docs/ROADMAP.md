@@ -24,6 +24,8 @@ Why first: it changes the cost of everything after it. The pattern already exist
 
 **Done when:** a new studio built through the factory ships with inspector, agent controls, motion, and sweeps generated from a single declaration — and one legacy studio has been retrofitted to prove the schema fits real complexity.
 
+**Shader as Fill — LANDED 2026-07-26.** A third proof, and the one that stress-tests the factory hardest so far: it turns the 63-effect shader catalog into a legal `FillType`, multiplying it across every fillable surface (Space Type, Shape Studio, frames, Scene3D object-anchor) instead of adding one more surface. It is also the first place the control schema meets genuinely *dynamic* vocabulary — 63 effects, each with a different param list, can't use frozen `ControlSpec` keys the way Gradient/Shape do. The answer, **declare the frame, derive the contents** (three frozen keys — `effectId`/`anchor`/`speed` — plus per-effect derived `fill.shader.p.<paramId>` keys), is the pattern every future absorbed library with per-item variable schemas will need. Full report: `.superpowers/sdd/saf-task-10-report.md`; design: `docs/superpowers/specs/2026-07-26-shader-as-fill-design.md`.
+
 ---
 
 ## Act 2 — Absorption
