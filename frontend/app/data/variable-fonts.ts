@@ -10,6 +10,19 @@
  *
  * This is a LOCAL-render node — no AI, no cost. The widget rasterizes the
  * chosen font to a PNG client-side and the RenderType node loads it.
+ *
+ * `ttfPath` points at the same family's VARIABLE TTF inside the google/fonts
+ * repo, for Vector Type Studio (which needs real outlines, not CSS). It is a
+ * SEPARATE source from `cssUrl`: fonts.googleapis.com/css2 never serves the
+ * variable file — a curl UA gets static per-weight TTF cuts, a browser UA gets
+ * woff2 that is still one static instance split by unicode-range. See
+ * docs/superpowers/specs/2026-07-27-vector-type-studio-design.md.
+ *
+ * The axis list is baked into the repo FILENAME (`RobotoFlex[GRAD,XOPQ,…].ttf`)
+ * and cannot be derived by convention — every path below is curated and was
+ * verified against the repo listing + parsed with fontkit (2026-07-27).
+ * `server/api/fonts/variable.get.ts` resolves an id to this path; it never
+ * accepts a URL from the caller.
  */
 
 export interface FontAxis {
@@ -26,6 +39,9 @@ export interface VariableFont {
   label: string
   family: string       // CSS font-family name as Google serves it
   cssUrl: string       // Google Fonts CSS2 link with full axis ranges
+  /** Repo-relative path to the VARIABLE ttf in google/fonts, e.g.
+   *  `ofl/inter/Inter[opsz,wght].ttf`. Curated — never derived. */
+  ttfPath: string
   axes: FontAxis[]
   defaultSize: number  // px at the playground's reference canvas width
   category: 'sans' | 'serif' | 'display' | 'mono'
@@ -39,8 +55,11 @@ export const VARIABLE_FONTS: VariableFont[] = [
     id: 'inter',
     label: 'Inter',
     family: 'Inter',
-    cssUrl: 'https://fonts.googleapis.com/css2?family=Inter:slnt,wght@-10..0,100..900&display=swap',
-    axes: [W(100, 900, 700), { tag: 'slnt', label: 'Slant', min: -10, max: 0, default: 0, step: 1 }],
+    // Inter has no `slnt` axis (italics are a separate file). The old css2 URL
+    // asked for one and 400'd; the repo TTF carries opsz + wght only.
+    cssUrl: 'https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,100..900&display=swap',
+    ttfPath: 'ofl/inter/Inter[opsz,wght].ttf',
+    axes: [W(100, 900, 700), { tag: 'opsz', label: 'Optical size', min: 14, max: 32, default: 14, step: 1 }],
     defaultSize: 120,
     category: 'sans',
   },
@@ -49,6 +68,9 @@ export const VARIABLE_FONTS: VariableFont[] = [
     label: 'Roboto Flex',
     family: 'Roboto Flex',
     cssUrl: 'https://fonts.googleapis.com/css2?family=Roboto+Flex:opsz,slnt,wdth,wght@8..144,-10..0,25..151,100..1000&display=swap',
+    // 13 axes in the file; the playground curates the four legible ones. Vector
+    // Type reads the full set off the parsed font, not from here.
+    ttfPath: 'ofl/robotoflex/RobotoFlex[GRAD,XOPQ,XTRA,YOPQ,YTAS,YTDE,YTFI,YTLC,YTUC,opsz,slnt,wdth,wght].ttf',
     axes: [
       W(100, 1000, 700),
       { tag: 'wdth', label: 'Width', min: 25, max: 151, default: 100, step: 1 },
@@ -63,6 +85,7 @@ export const VARIABLE_FONTS: VariableFont[] = [
     label: 'Archivo',
     family: 'Archivo',
     cssUrl: 'https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&display=swap',
+    ttfPath: 'ofl/archivo/Archivo[wdth,wght].ttf',
     axes: [W(100, 900, 800), { tag: 'wdth', label: 'Width', min: 62, max: 125, default: 100, step: 1 }],
     defaultSize: 120,
     category: 'sans',
@@ -72,6 +95,7 @@ export const VARIABLE_FONTS: VariableFont[] = [
     label: 'Fraunces',
     family: 'Fraunces',
     cssUrl: 'https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght,SOFT,WONK@9..144,100..900,0..100,0..1&display=swap',
+    ttfPath: 'ofl/fraunces/Fraunces[SOFT,WONK,opsz,wght].ttf',
     axes: [
       W(100, 900, 600),
       { tag: 'opsz', label: 'Optical size', min: 9, max: 144, default: 80, step: 1 },
@@ -86,6 +110,7 @@ export const VARIABLE_FONTS: VariableFont[] = [
     label: 'Recursive',
     family: 'Recursive',
     cssUrl: 'https://fonts.googleapis.com/css2?family=Recursive:CASL,CRSV,MONO,slnt,wght@0..1,0..1,0..1,-15..0,300..1000&display=swap',
+    ttfPath: 'ofl/recursive/Recursive[CASL,CRSV,MONO,slnt,wght].ttf',
     axes: [
       W(300, 1000, 700),
       { tag: 'CASL', label: 'Casual', min: 0, max: 1, default: 0, step: 0.01 },
@@ -99,10 +124,13 @@ export const VARIABLE_FONTS: VariableFont[] = [
     id: 'bricolage',
     label: 'Bricolage Grotesque',
     family: 'Bricolage Grotesque',
-    cssUrl: 'https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@10..48,200..800&display=swap',
+    // The file's opsz range is 12–96, not 10–48; the old css2 URL asked for the
+    // wrong range and 400'd.
+    cssUrl: 'https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,200..800&display=swap',
+    ttfPath: 'ofl/bricolagegrotesque/BricolageGrotesque[opsz,wdth,wght].ttf',
     axes: [
       W(200, 800, 700),
-      { tag: 'opsz', label: 'Optical size', min: 10, max: 48, default: 36, step: 1 },
+      { tag: 'opsz', label: 'Optical size', min: 12, max: 96, default: 36, step: 1 },
     ],
     defaultSize: 120,
     category: 'display',
@@ -112,6 +140,7 @@ export const VARIABLE_FONTS: VariableFont[] = [
     label: 'Big Shoulders Display',
     family: 'Big Shoulders Display',
     cssUrl: 'https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@100..900&display=swap',
+    ttfPath: 'ofl/bigshouldersdisplay/BigShouldersDisplay[wght].ttf',
     axes: [W(100, 900, 800)],
     defaultSize: 150,
     category: 'display',
@@ -121,6 +150,7 @@ export const VARIABLE_FONTS: VariableFont[] = [
     label: 'Space Grotesk',
     family: 'Space Grotesk',
     cssUrl: 'https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300..700&display=swap',
+    ttfPath: 'ofl/spacegrotesk/SpaceGrotesk[wght].ttf',
     axes: [W(300, 700, 600)],
     defaultSize: 120,
     category: 'sans',
@@ -130,6 +160,7 @@ export const VARIABLE_FONTS: VariableFont[] = [
     label: 'Unbounded',
     family: 'Unbounded',
     cssUrl: 'https://fonts.googleapis.com/css2?family=Unbounded:wght@200..900&display=swap',
+    ttfPath: 'ofl/unbounded/Unbounded[wght].ttf',
     axes: [W(200, 900, 700)],
     defaultSize: 110,
     category: 'display',
@@ -139,6 +170,7 @@ export const VARIABLE_FONTS: VariableFont[] = [
     label: 'Source Serif 4',
     family: 'Source Serif 4',
     cssUrl: 'https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,200..900&display=swap',
+    ttfPath: 'ofl/sourceserif4/SourceSerif4[opsz,wght].ttf',
     axes: [
       W(200, 900, 600),
       { tag: 'opsz', label: 'Optical size', min: 8, max: 60, default: 40, step: 1 },
