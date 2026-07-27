@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { MotionClip, MotionTextLayer } from '~~/shared/timeline/types'
-import { SUPPORTED_IN_IDS, SUPPORTED_OUT_IDS, SUPPORTED_LOOP_IDS } from '~/lib/motion/evaluate'
+import { presetIdsFor } from '~/lib/motion/evaluate'
 import { VARIABLE_FONTS } from '~/data/variable-fonts'
 import { normalizeAxisKeyframes } from '~/lib/timeline/convertPresetToKeyframes'
 
@@ -28,6 +28,11 @@ function convertToKeyframes() {
 }
 
 const fontDef = () => VARIABLE_FONTS.find(f => f.family === L().fontFamily)
+
+// Motion clips render through drawAnimatedTextLayer, which reads no optional
+// UnitState field beyond clip/copies — no blur, no per-unit axes. So this
+// inspector declares nothing and gets the conservative preset set.
+const slotIds = (key: 'in' | 'out' | 'loop') => presetIdsFor(key)
 </script>
 
 <template>
@@ -119,7 +124,7 @@ const fontDef = () => VARIABLE_FONTS.find(f => f.family === L().fontFamily)
         >
           <option value="">none</option>
           <option
-            v-for="id in (key === 'in' ? SUPPORTED_IN_IDS : key === 'out' ? SUPPORTED_OUT_IDS : SUPPORTED_LOOP_IDS)"
+            v-for="id in slotIds(key)"
             :key="id"
             :value="id"
           >{{ id }}</option>

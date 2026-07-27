@@ -252,6 +252,85 @@ export const SUPPORTED_IN_IDS = Object.keys(IN_EVAL)
 export const SUPPORTED_OUT_IDS = Object.keys(OUT_EVAL)
 export const SUPPORTED_LOOP_IDS = Object.keys(LOOP_EVAL)
 
+// ── Preset capabilities ─────────────────────────────────────────────────────
+// One engine, several consumers, each able to render a different subset of
+// UnitState. A preset that emits an OPTIONAL field its consumer ignores does
+// not error — it silently does nothing it is named for (picking "Blur In" on a
+// Compositor layer used to give a plain fade). So the catalog says what each
+// preset REQUIRES, and each consumer says what it supports.
+//
+// The requirement list is DERIVED, not hand-written: every preset function is
+// probed across its whole range at module load and we record which optional
+// fields ever come back set. Adding a preset that emits `blur` therefore gates
+// itself — there is no second list to keep in sync.
+
+/** An optional UnitState field a consumer must implement to render a preset
+ *  faithfully. Core fields (dx/dy/scale/rotation/opacity/clip/copies) are
+ *  assumed of every consumer and are not capabilities. */
+export type PresetCapability = 'blur' | 'axes'
+
+/** The probe set IS the capability list — add a row and it flows everywhere. */
+const CAPABILITY_PROBES: ReadonlyArray<{ cap: PresetCapability; emits: (s: UnitState) => boolean }> = [
+  // 0 blur is "sharp", i.e. indistinguishable from not emitting blur at all, so
+  // a preset whose blur is 0 across its range needs nothing from the consumer.
+  { cap: 'blur', emits: s => typeof s.blur === 'number' && s.blur !== 0 },
+  { cap: 'axes', emits: s => !!s.axes && Object.keys(s.axes).length > 0 },
+]
+
+/** Every capability the engine currently knows about — what a fully-featured
+ *  consumer (Vector Type) passes. Derived from the probes, never re-typed. */
+export const ALL_PRESET_CAPABILITIES: readonly PresetCapability[] =
+  Object.freeze(CAPABILITY_PROBES.map(p => p.cap))
+
+/** Probe one preset fn over e/phase 0→1 (inclusive, both endpoints) for a few
+ *  unit indices, with the preset's own default params. Presets are pure and
+ *  cheap, so this is ~2k calls once at module load. */
+function deriveCapabilities(fn: UnitEval, presetId: string): PresetCapability[] {
+  const params = PRESET_PARAM_DEFAULTS[presetId] ?? {}
+  const found = new Set<PresetCapability>()
+  const STEPS = 40
+  for (const n of [1, 3]) {
+    for (let i = 0; i < n; i++) {
+      for (let k = 0; k <= STEPS; k++) {
+        const s = fn(k / STEPS, i, n, params)
+        for (const probe of CAPABILITY_PROBES) if (probe.emits(s)) found.add(probe.cap)
+      }
+    }
+  }
+  return CAPABILITY_PROBES.filter(p => found.has(p.cap)).map(p => p.cap)   // stable order
+}
+
+function collectCapabilities(): Record<string, readonly PresetCapability[]> {
+  const out: Record<string, PresetCapability[]> = {}
+  const add = (id: string, caps: PresetCapability[]) => {
+    const prev = out[id] ?? []
+    out[id] = [...new Set([...prev, ...caps])]   // union: same id in two tables
+  }
+  for (const [id, e] of Object.entries(IN_EVAL)) add(id, deriveCapabilities(e.fn, id))
+  for (const [id, e] of Object.entries(OUT_EVAL)) add(id, deriveCapabilities(e.fn, id))
+  for (const [id, fn] of Object.entries(LOOP_EVAL)) add(id, deriveCapabilities(fn, id))
+  return Object.freeze(out)
+}
+
+/** presetId → the capabilities its output requires of a consumer. Derived. */
+export const PRESET_CAPABILITIES: Readonly<Record<string, readonly PresetCapability[]>> = collectCapabilities()
+
+/** The ids in a slot's table that a consumer supporting `caps` can render
+ *  faithfully.
+ *
+ *  The default is the CONSERVATIVE set — a consumer that declares nothing gets
+ *  only presets that need nothing. Defaulting to "supports everything" is what
+ *  produced the original bug, and it fails silently; defaulting to nothing
+ *  fails visibly (a missing tile) and is trivially fixed by declaring. */
+export function presetIdsFor(
+  slot: 'in' | 'out' | 'loop',
+  caps: readonly PresetCapability[] = [],
+): string[] {
+  const have = new Set(caps)
+  const ids = slot === 'in' ? SUPPORTED_IN_IDS : slot === 'out' ? SUPPORTED_OUT_IDS : SUPPORTED_LOOP_IDS
+  return ids.filter(id => (PRESET_CAPABILITIES[id] ?? []).every(c => have.has(c)))
+}
+
 // ── Stagger window: unit i animates inside [i·stagger, i·stagger + unitDur] ──
 const MIN_UNIT_DUR = 0.05
 

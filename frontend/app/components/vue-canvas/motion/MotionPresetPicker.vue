@@ -3,7 +3,7 @@
  *  thumbnails, a disabled "Custom" tail card (the property-keyframe milestone's
  *  entry point). Teleported to body so the inspector's overflow doesn't clip it.
  *  Must stack above CompositorModal's z-[100] context (z-[110] backdrop, z-[111] panel). */
-import { SUPPORTED_IN_IDS, SUPPORTED_OUT_IDS, SUPPORTED_LOOP_IDS } from '~/lib/motion/evaluate'
+import { presetIdsFor, type PresetCapability } from '~/lib/motion/evaluate'
 import { KINETIC_PRESETS_BY_ID, KINETIC_GROUP_LABELS, type KineticGroup } from '~/data/kinetic-presets'
 import PresetThumb from '~/components/vue-canvas/motion/PresetThumb.vue'
 import { X } from 'lucide-vue-next'
@@ -13,6 +13,10 @@ const props = defineProps<{
   currentId: string | null
   anchorRect: { top: number; left: number; width: number } | null
   layerKind?: string
+  /** Optional UnitState fields THIS consumer can actually render. Omitted =
+   *  the conservative set (none), so a consumer that forgets to declare is
+   *  offered fewer presets rather than presets that silently do nothing. */
+  capabilities?: PresetCapability[]
 }>()
 const emit = defineEmits<{ pick: [id: string]; clear: []; close: [] }>()
 
@@ -20,8 +24,13 @@ const emit = defineEmits<{ pick: [id: string]; clear: []; close: [] }>()
 // copies, which per-char text animation can't express — hidden for text layers.
 const COPY_BASED_IDS = new Set(['inward-echoes', 'grid-scroll-x', 'grid-scroll-y', 'noise-tile'])
 
+// Presets the consumer can't render are HIDDEN, not disabled-with-a-reason:
+// there is no switch the user could flip to enable them (blur is a property of
+// the consuming renderer, not of the layer), so a permanently-dead tile is
+// clutter that invites "how do I turn this on?". It also matches how this
+// picker already treats COPY_BASED_IDS for text layers.
 const ids = computed(() => {
-  const base = props.slotKind === 'in' ? SUPPORTED_IN_IDS : props.slotKind === 'out' ? SUPPORTED_OUT_IDS : SUPPORTED_LOOP_IDS
+  const base = presetIdsFor(props.slotKind, props.capabilities)
   return props.layerKind === 'text' ? base.filter(id => !COPY_BASED_IDS.has(id)) : base
 })
 
@@ -73,7 +82,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
               class="group flex flex-col gap-1 rounded-lg border p-1.5 text-left cursor-pointer transition-colors"
               :class="id === currentId ? 'border-white/60 bg-white/[0.08]' : 'border-white/[0.07] bg-white/[0.03] hover:bg-white/[0.06]'"
               @click="emit('pick', id)">
-              <PresetThumb :preset-id="id" :slot-kind="slotKind" />
+              <PresetThumb :preset-id="id" :slot-kind="slotKind" :capabilities="capabilities" />
               <span class="text-[10.5px] truncate" :class="id === currentId ? 'text-white' : 'text-white/65'">{{ label(id) }}</span>
             </button>
             <!-- Custom: the property-keyframe milestone's visible entry point -->

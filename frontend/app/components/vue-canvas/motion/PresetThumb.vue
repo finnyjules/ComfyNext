@@ -2,13 +2,18 @@
 /** Live preset preview: loops the REAL evaluate() math on a sample card in a
  *  tiny canvas — previews are true to the engine, not canned GIFs. 2s cycle:
  *  in-presets play then hold; out-presets hold then play; loops run 1.5s cycles. */
-import { evaluateAnimation } from '~/lib/motion/evaluate'
+import { evaluateAnimation, type PresetCapability } from '~/lib/motion/evaluate'
 import { registerThumb } from '~/lib/motion/thumbClock'
 
 const props = defineProps<{
   presetId: string
   slotKind: 'in' | 'out' | 'loop'
   params?: Record<string, number>
+  /** What the CONSUMER this thumb stands for can render. The tile must promise
+   *  only what the real surface will do, so blur is drawn only when the
+   *  consumer supports it. Omitted = conservative (no blur), which is right for
+   *  the Compositor: its painters ignore UnitState.blur. */
+  capabilities?: PresetCapability[]
 }>()
 
 const W = 72, H = 54
@@ -36,8 +41,12 @@ function draw(clockSec: number) {
   const un = st.units?.[0] ?? { dx: 0, dy: 0, scale: 1, rotation: 0, opacity: 1 }
   const box = 20                                    // sample card px (the unit box)
   const cx = W / 2 + un.dx * box, cy = H / 2 + un.dy * box
+  // UnitState.blur is in unit-box heights (like dx/dy) → multiply by the box.
+  const blurPx = props.capabilities?.includes('blur') ? (un.blur ?? 0) * box : 0
   const drawCard = (dx: number, dy: number, s: number, alpha: number, rot = 0) => {
     c.save()
+    // Set before the transform so the radius stays in canvas px at any scale.
+    if (blurPx > 0.01) c.filter = `blur(${blurPx.toFixed(2)}px)`
     c.globalAlpha = Math.max(0, Math.min(1, alpha))
     c.translate(cx + dx * box, cy + dy * box)
     c.rotate(((un.rotation + rot) * Math.PI) / 180)
