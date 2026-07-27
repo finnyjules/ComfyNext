@@ -35,7 +35,16 @@ import { derivedShaderFillControls } from '~/lib/shaderfill/controls'
 import { unprefixedKey } from '~/lib/shaderfill/descriptor'
 import { retryFieldCatalog } from '~/lib/shaderfill/field'
 
-const props = defineProps<{ modelValue: ShaderSpec }>()
+const props = withDefaults(defineProps<{
+  modelValue: ShaderSpec
+  /** Space Type / Shape Studio anchor a shader fill to either the object's own UVs or the
+   *  containing frame; Scene3D has no frame to anchor to at all (materials.ts never reads
+   *  `spec.anchor` — see SceneMaterial.shader's own doc in config.ts). Offering the toggle
+   *  there would silently do nothing, which is worse than not offering it — Shape Studio
+   *  already has exactly that dead-toggle bug today. Defaults to shown so the three existing
+   *  hosts (Space Type, Shape Studio, Compositor) are unaffected. */
+  showAnchor?: boolean
+}>(), { showAnchor: true })
 const emit = defineEmits<{ 'update:modelValue': [ShaderSpec] }>()
 
 /** Spread, never a listed-field rebuild — a `ShaderSpec` (or `Fill`) rebuilt by
@@ -262,8 +271,9 @@ function onInputChange(p: Paint) {
       />
     </div>
 
-    <!-- Anchor -->
-    <div>
+    <!-- Anchor: hidden entirely (not disabled) when the host has no frame to anchor to —
+         see `showAnchor` doc above. -->
+    <div v-if="showAnchor">
       <label class="mb-1 block text-[9px] uppercase tracking-[0.1em] text-white/35">Anchor</label>
       <StudioSegmented v-model="anchor" :options="['object', 'frame']" />
     </div>

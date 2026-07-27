@@ -24,7 +24,6 @@ import {
 import { MATCAP_IDS, matcapThumb, onTextureError } from '~/lib/scene3d/materials'
 import { DEFAULT_SHADER_SPEC, type ShaderSpec } from '~/lib/spacetype/fillTile'
 import { fetchShaderFxCatalog } from '~/lib/shaderfx/catalog'
-import type { ShaderFxCatalog } from '~/lib/shaderfx/types'
 import { LIVE_FIELD_CEILING } from '~/lib/shaderfill/descriptor'
 import { AVAILABLE_FONTS, loadFont, fontDisplayName, parseGoogleFontValue } from '~/lib/scene3d/outlines'
 import { loadGoogleCatalog, type GoogleFont } from '~/data/google-fonts'
@@ -54,6 +53,7 @@ import StudioSegmented from '~/components/vue-canvas/studio/StudioSegmented.vue'
 import StudioSelect from '~/components/vue-canvas/studio/StudioSelect.vue'
 import StudioSwitch from '~/components/vue-canvas/studio/StudioSwitch.vue'
 import StudioGradientRamp from '~/components/vue-canvas/studio/StudioGradientRamp.vue'
+import ShaderFillEditor from '~/components/vue-canvas/widgets/ShaderFillEditor.vue'
 import Scene3DMotionTimeline from '~/components/vue-canvas/Scene3DMotionTimeline.vue'
 import CurveEditor from '~/components/vue-canvas/CurveEditor.vue'
 
@@ -417,27 +417,6 @@ const matShader = computed<ShaderSpec>({
   get: () => selected.value?.material.shader ?? DEFAULT_SHADER_SPEC,
   set: (v) => { if (selected.value) selected.value.material.shader = v },
 })
-const matShaderEffectId = computed<string>({
-  get: () => matShader.value.effectId,
-  set: (v) => { matShader.value = { ...matShader.value, effectId: v } },
-})
-const matShaderSpeed = computed<number>({
-  get: () => matShader.value.speed,
-  set: (v) => { matShader.value = { ...matShader.value, speed: v } },
-})
-const matShaderInputA = computed<string>({
-  get: () => matShader.value.input.a,
-  set: (v) => { matShader.value = { ...matShader.value, input: { ...matShader.value.input, a: v } } },
-})
-const matShaderInputB = computed<string>({
-  get: () => matShader.value.input.b,
-  set: (v) => { matShader.value = { ...matShader.value, input: { ...matShader.value.input, b: v } } },
-})
-// Catalog fetch mirrors ShaderStudioSurface/ShaderEffectNode's own `fetchShaderFxCatalog()`
-// call — cached module-wide (see catalog.ts), so this is a no-op if another surface already
-// pulled it this page load.
-const shaderCatalog = ref<ShaderFxCatalog | null>(null)
-const shaderEffectIds = computed(() => shaderCatalog.value?.effects.map((e) => e.id) ?? [DEFAULT_SHADER_SPEC.effectId])
 
 // Light field proxies — same shape as matParam, but the fields live flat on the
 // LightObject itself (not nested under .material). Falls back to LIGHT_DEFAULTS
@@ -851,9 +830,11 @@ onMounted(() => {
   engine.syncFromDoc(doc)
   scene3dMountedAt = performance.now()
   // Catalog fetch is cached module-wide (catalog.ts) — a no-op if another already-open
-  // studio surface pulled it this page load. Sync reads (getEffectSync, inside resolveField)
+  // studio surface pulled it this page load. Priming it here (rather than waiting for the
+  // material panel's ShaderFillEditor to mount) means it's usually already warm by the time
+  // a user picks the shaderFill material type. Sync reads (getEffectSync, inside resolveField)
   // work before this resolves too; they just render nothing until it does.
-  fetchShaderFxCatalog().then((c) => { shaderCatalog.value = c }).catch(() => { /* effect picker just stays on the default id */ })
+  fetchShaderFxCatalog().catch(() => { /* ShaderFillEditor's own picker falls back to the raw id and offers a Retry */ })
   // Warm-up every restored GLB so a scene loaded from scene_state surfaces load
   // failures in the list too (the engine's own load leaves an empty group silently;
   // addGlb/duplicateObject only warm the ones created this session).
@@ -1838,23 +1819,15 @@ function onClose() {
         </template>
 
         <!-- shaderFill: a catalog effect wrapped onto the mesh's own UVs (object anchor only —
-             frame anchor needs shader injection, a later task). Hand-wired (no control-schema
-             UI here, unlike Space Type/Shape Studio — Scene3D has no agent-facing descriptor
-             list this could be generated from; see the task report). -->
+             frame anchor is out of scope here entirely; materials.ts never reads `shader.anchor`,
+             see SceneMaterial.shader's doc in config.ts). The full editor (effect picker + derived
+             per-effect params + speed + nested input fill) — same component Space Type, Shape
+             Studio and the Compositor mount, bound straight to `matShader` since its ShaderSpec
+             shape already matches this editor's `modelValue` prop 1:1. `show-anchor="false"`
+             hides the anchor toggle rather than leaving it offered-but-inert (the bug Shape
+             Studio currently has). -->
         <template v-else-if="matEditable && matType === 'shaderFill'">
-          <div>
-            <label class="mb-1 block text-[11px] text-white/55">Effect</label>
-            <StudioSelect v-model="matShaderEffectId" :options="shaderEffectIds" />
-          </div>
-          <StudioSlider v-model="matShaderSpeed" label="Speed" hint="How fast the field animates — 0 freezes it" :min="-3" :max="3" :step="0.1" />
-          <div class="flex items-center justify-between">
-            <span class="text-[11px] text-white/55">Input colour 1</span>
-            <StudioColor v-model="matShaderInputA" />
-          </div>
-          <div class="flex items-center justify-between">
-            <span class="text-[11px] text-white/55">Input colour 2</span>
-            <StudioColor v-model="matShaderInputB" />
-          </div>
+          <ShaderFillEditor v-model="matShader" :show-anchor="false" />
           <div class="flex items-center justify-between">
             <div>
               <span class="text-[11px] text-white/55">Unlit</span>
