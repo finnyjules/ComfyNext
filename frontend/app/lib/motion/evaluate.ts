@@ -100,6 +100,11 @@ export function resolveParams(spec: LayerAnimSpec): Record<string, number> {
   return { ...(PRESET_PARAM_DEFAULTS[spec.presetId] ?? {}), ...(spec.params ?? {}) }
 }
 
+/** Peak blur for the blur presets, in UNIT-BOX HEIGHTS (see UnitState.blur):
+ *  0.12 ≈ 12px at a 100px em box, which is what the legacy CSS-filter builders
+ *  used at preview size — but proportional, so it holds at any type size. */
+const BLUR_MAX = 0.12
+
 const IN_EVAL: Record<string, { fn: UnitEval; ease: string }> = {
   'appear':       { ease: 'none',            fn: e => u({ opacity: e > 0 ? 1 : 0 }) },
   'fade-in':      { ease: 'power2.out',      fn: e => u({ opacity: e }) },
@@ -111,6 +116,9 @@ const IN_EVAL: Record<string, { fn: UnitEval; ease: string }> = {
   'mask-down':    { ease: 'power3.out',      fn: e => u({ dy: -(1 - e) * 0.25, clip: { side: 'bottom', amount: 1 - e } }) },
   'grow-in':      { ease: 'back.out(1.7)',   fn: e => u({ scale: Math.max(0.001, e), opacity: Math.min(1, e * 2) }) },
   'shrink-in':    { ease: 'power3.out',      fn: e => u({ scale: 2.5 - 1.5 * e, opacity: e }) },
+  // Blur decays to EXACTLY 0 at e === 1 — an entrance must end sharp.
+  'blur-in':       { ease: 'power2.out',     fn: e => u({ blur: BLUR_MAX * (1 - e), opacity: e }) },
+  'blur-slide-up': { ease: 'power2.out',     fn: e => u({ dy: (1 - e) * 0.5, blur: BLUR_MAX * (1 - e), opacity: e }) },
   'spin-in':      { ease: 'back.out(1.4)',   fn: e => u({ rotation: (1 - e) * 180, scale: Math.max(0.001, e), opacity: e }) },
   'elastic-drop': { ease: 'elastic.out(1, 0.3)', fn: e => u({ dy: -(1 - e) * 1.0, opacity: 1 }) },
   'typewriter':   { ease: 'none',            fn: e => u({ opacity: e > 0.01 ? 1 : 0 }) },
@@ -140,6 +148,8 @@ const OUT_EVAL: Record<string, { fn: UnitEval; ease: string }> = {
   'mask-out-down':   { ease: 'power3.in',     fn: e => u({ dy: e * 0.25, clip: { side: 'top', amount: e } }) },
   'shrink-out':      { ease: 'back.in(1.7)',  fn: e => u({ scale: Math.max(0.001, 1 - e), opacity: 1 - e }) },
   'grow-out':        { ease: 'power3.in',     fn: e => u({ scale: 1 + 1.5 * e, opacity: 1 - e }) },
+  // Mirror of blur-in: starts sharp, ends fully blurred as it fades out.
+  'blur-out':        { ease: 'power2.in',     fn: e => u({ blur: BLUR_MAX * e, opacity: 1 - e }) },
   'spin-out':        { ease: 'power3.in',     fn: e => u({ rotation: e * 180, scale: Math.max(0.001, 1 - e), opacity: 1 - e }) },
   'elastic-launch':  { ease: 'back.in(2)',    fn: e => u({ dy: -e * 1.0, opacity: 1 - e }) },
   'typewriter-out':  { ease: 'none',          fn: (_e, _i, _n) => u({ opacity: _e > 0.01 ? 0 : 1 }) },

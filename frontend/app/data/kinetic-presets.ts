@@ -45,9 +45,10 @@ export interface KineticPreset {
   group: KineticGroup
   /** Which split level this preset primarily animates. */
   splitLevel: 'chars' | 'words' | 'lines'
-  /** Build the GSAP timeline. Optional — canvas-native presets (utility
-   *  group) are evaluated directly by lib/motion/evaluate.ts and have no
-   *  GSAP builder; that path is legacy slate-only. */
+  /** Build the GSAP timeline. Optional — canvas-native presets (the utility
+   *  group, plus `blur-slide-up`) are evaluated directly by
+   *  lib/motion/evaluate.ts and have no GSAP builder; that path is legacy
+   *  slate-only. */
   build?: (ctx: KineticBuildContext) => void
   /** Jitter-style per-preset knobs, shown in the picker when present. */
   params?: KineticParamSpec[]
@@ -109,6 +110,8 @@ const IN_PRESETS: KineticPreset[] = [
     build({ tl, chars, opts }) { tl.from(chars, { filter: 'blur(12px)', opacity: 0, duration: opts.duration * 0.6, stagger: opts.stagger, ease: opts.ease }) } },
   { id: 'zoom-blur-in', label: 'Zoom Blur', pitch: 'Rush in from behind with blur', category: 'in', group: 'blur', splitLevel: 'chars',
     build({ tl, chars, opts }) { tl.from(chars, { scale: 3, filter: 'blur(8px)', opacity: 0, duration: opts.duration * 0.5, stagger: opts.stagger, ease: 'power3.out' }) } },
+  // Canvas-native (no GSAP builder): blur + rise, evaluated by IN_EVAL.
+  { id: 'blur-slide-up', label: 'Blur & Slide ↑', pitch: 'Rises from below into focus', category: 'in', group: 'blur', splitLevel: 'chars' },
 
   // Rotate
   { id: 'spin-in', label: 'Spin In', pitch: 'Each char rotates while appearing', category: 'in', group: 'rotate', splitLevel: 'chars',

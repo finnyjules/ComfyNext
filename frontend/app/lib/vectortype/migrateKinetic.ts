@@ -178,6 +178,7 @@ export const DROPPED_REASONS: Record<string, string> = {
   'mask-out-down': 'clip-path reveal — no per-glyph clipping',
   'blur-in': 'CSS blur filter — not a vector operation',
   'blur-out': 'CSS blur filter — not a vector operation',
+  'blur-slide-up': 'blur is not a glyph track field (and no legacy slate ever saved this id)',
   'zoom-blur-in': 'CSS blur filter — not a vector operation',
   'zoom-blur-out': 'CSS blur filter — not a vector operation',
   'focus-pull': 'CSS blur filter — not a vector operation',
