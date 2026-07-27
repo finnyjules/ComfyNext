@@ -47,7 +47,8 @@ function slider(
 export const GRADIENT_CONTROLS: GradientControl[] = [
   // --- Preset (agent-only macro; the surface has its own button row) --------
   { key: 'preset', label: 'Style preset', kind: 'select', options: [...GRADIENT_PRESET_NAMES], default: 'linear', group: 'Preset',
-    hint: 'The overall look. marble/oil/ink/lava/satin = liquid surfaces; ripple/stack = concentric; mesh = soft blobs; linear = simple ramp. Set this to establish a style, then override colours/blur/grain. Leave it alone when only ADJUSTING an existing gradient.' },
+    hint: 'The overall look. marble/oil/ink/lava/satin = liquid surfaces; ripple/stack = concentric; mesh = soft blobs; linear = simple ramp. Set this to establish a style, then override colours/blur/grain. Leave it alone when only ADJUSTING an existing gradient.',
+    summary: 1 },
 
   // --- Canvas --------------------------------------------------------------
   { key: 'canvas.aspect', label: 'Aspect ratio', kind: 'select', options: [...ASPECTS], default: '16:9', group: 'Canvas', hint: 'Output proportions' },
@@ -110,7 +111,7 @@ export const GRADIENT_CONTROLS: GradientControl[] = [
   slider('layer.shape.valley', 'Valley position', 0, 1, 0.01, 'Shape', undefined, { agent: false, when: isBanded }),
 
   // --- Relief ---------------------------------------------------------------
-  slider('relief.grain', 'Grain', 0, 1, 0.01, 'Relief'),
+  slider('relief.grain', 'Grain', 0, 1, 0.01, 'Relief', undefined, { summary: 2 }),
   // The relief light shades the band/ring height field only: shaders.ts gates u_light
   // on `u_layout < 3.5`, and the liquid branch is explicit that it uses "its own light,
   // not u_light". The legacy agent builder had these under isLiquid — exactly inverted —

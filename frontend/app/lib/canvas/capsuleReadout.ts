@@ -1,4 +1,5 @@
 import { fmtSec, elapsedSince } from '~/lib/canvas/elapsed'
+import type { ControlSpec } from '~/lib/spacetype/effect'
 
 // The one line of text under a capsule's name. It does double duty: settings
 // when the node is idle, status when it is not. That is what lets a capsule
@@ -41,6 +42,10 @@ export interface ReadoutInput {
   errorMessage?: string | null
   /** Injected for testability; defaults to the wall clock. */
   now?: number
+  /** Studio nodes: the surface's declared control list. */
+  controls?: ControlSpec[]
+  /** Studio nodes: the current config blob (properties.sailor_<studio>). */
+  config?: Record<string, unknown>
 }
 
 /** Render a raw value for display, or null if it has nothing to say. */
@@ -83,6 +88,25 @@ function fromWidgets(parts: ReadoutPart[], defs: WidgetDef[], values: unknown[])
   return out
 }
 
+function fromControls(controls: ControlSpec[], config: Record<string, unknown>): string[] {
+  const ranked = controls
+    .filter(c => typeof (c as { summary?: number }).summary === 'number')
+    .sort((a, b) => (a as { summary: number }).summary - (b as { summary: number }).summary)
+
+  const out: string[] = []
+  for (const c of ranked) {
+    if (out.length >= MAX_SUMMARY_PARTS) break
+    const raw = c.key in config ? config[c.key] : c.default
+    const shown = formatReadoutValue(raw)
+    if (shown === null) continue
+    // A select or text value names itself ("aurora"); a bare number does not,
+    // so it carries its label ("grain 0.18").
+    const selfDescribing = c.kind === 'select' || c.kind === 'text' || c.kind === 'font'
+    out.push(selfDescribing ? shown : `${c.label.toLowerCase()} ${shown}`)
+  }
+  return out
+}
+
 export function resolveReadout(input: ReadoutInput): string | null {
   // 1. Failure wins. It is the only thing you need to know.
   if (input.errorMessage) {
@@ -114,7 +138,12 @@ export function resolveReadout(input: ReadoutInput): string | null {
     return truncate(collapse(shown), rule.max)
   }
 
-  // 'controls' is wired in Task 3; 'none' and anything unrecognised fall
-  // through to silence rather than throwing.
+  if (rule.from === 'controls') {
+    const parts = fromControls(input.controls ?? [], input.config ?? {})
+    return parts.length ? parts.join(READOUT_SEPARATOR) : null
+  }
+
+  // 'none' and anything unrecognised fall through to silence rather than
+  // throwing.
   return null
 }

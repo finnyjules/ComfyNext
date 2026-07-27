@@ -27,6 +27,13 @@ type ControlMeta = {
    * animation 0..360).
    */
   animatable?: boolean | { min: number; max: number }
+  /**
+   * Rank in the collapsed node capsule's read-out line. The two lowest ranks
+   * render, in ascending order; absent means never shown. Opt-in like `agent`
+   * and `animatable`, so declaring a control can never silently widen what a
+   * capsule advertises.
+   */
+  summary?: number
 }
 
 export type ControlSpec = (

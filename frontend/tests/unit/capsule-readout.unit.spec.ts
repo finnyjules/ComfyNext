@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { resolveReadout, formatReadoutValue, READOUT_SEPARATOR } from '~/lib/canvas/capsuleReadout'
+import type { ControlSpec } from '~/lib/spacetype/effect'
 
 // Mirrors the real shape from useVueNodes.ts:441-443 — widgetDefs and
 // widgetsValues are POSITIONAL and index-aligned, and getWidgetDefs injects a
@@ -170,5 +171,67 @@ describe('resolveReadout — degrade to silence', () => {
 
   it('never throws on an unknown rule shape', () => {
     expect(resolveReadout({ rule: { from: 'wat' } as any })).toBeNull()
+  })
+})
+
+const GRADIENT_CONTROLS_SAMPLE: ControlSpec[] = [
+  { key: 'preset', label: 'Preset', kind: 'select', options: ['aurora', 'dusk'], default: 'aurora', group: 'Look', summary: 1 },
+  { key: 'grain', label: 'Grain', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0, group: 'Relief', summary: 2 },
+  { key: 'blur', label: 'Blur', kind: 'slider', min: 0, max: 100, step: 1, default: 0, group: 'Focus' },
+]
+
+describe('resolveReadout — controls rule', () => {
+  const base = {
+    rule: { from: 'controls' as const },
+    controls: GRADIENT_CONTROLS_SAMPLE,
+    config: { preset: 'aurora', grain: 0.18, blur: 34 },
+  }
+
+  it('renders a self-describing value bare and a numeric one labelled', () => {
+    // "aurora" says what it is; "0.18" does not, so it needs its label.
+    expect(resolveReadout(base)).toBe(`aurora${READOUT_SEPARATOR}grain 0.18`)
+  })
+
+  it('orders by summary rank, not declaration order', () => {
+    const reversed = [
+      { ...GRADIENT_CONTROLS_SAMPLE[0], summary: 2 },
+      { ...GRADIENT_CONTROLS_SAMPLE[1], summary: 1 },
+      GRADIENT_CONTROLS_SAMPLE[2],
+    ] as ControlSpec[]
+    expect(resolveReadout({ ...base, controls: reversed }))
+      .toBe(`grain 0.18${READOUT_SEPARATOR}aurora`)
+  })
+
+  it('ignores controls with no summary rank', () => {
+    expect(resolveReadout(base)).not.toContain('34')
+  })
+
+  it('caps at two even when three are ranked', () => {
+    const three = GRADIENT_CONTROLS_SAMPLE.map((c, i) => ({ ...c, summary: i + 1 })) as ControlSpec[]
+    expect(resolveReadout({ ...base, controls: three })!.split(READOUT_SEPARATOR)).toHaveLength(2)
+  })
+
+  it('falls back to the control default when config omits the key', () => {
+    expect(resolveReadout({ ...base, config: { grain: 0.18 } }))
+      .toBe(`aurora${READOUT_SEPARATOR}grain 0.18`)
+  })
+
+  it('returns null when nothing is ranked', () => {
+    const none = GRADIENT_CONTROLS_SAMPLE.map(c => ({ ...c, summary: undefined })) as ControlSpec[]
+    expect(resolveReadout({ ...base, controls: none })).toBeNull()
+  })
+
+  it('returns null with no controls supplied', () => {
+    expect(resolveReadout({ rule: { from: 'controls' } })).toBeNull()
+  })
+})
+
+describe('GRADIENT_CONTROLS summary declaration', () => {
+  it('ranks exactly two controls, at 1 and 2', async () => {
+    const { GRADIENT_CONTROLS } = await import('~/lib/gradientfx/controls')
+    const ranked = GRADIENT_CONTROLS
+      .filter((c: any) => typeof c.summary === 'number')
+      .sort((a: any, b: any) => a.summary - b.summary)
+    expect(ranked.map((c: any) => c.summary)).toEqual([1, 2])
   })
 })

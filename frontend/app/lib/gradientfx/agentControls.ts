@@ -18,7 +18,7 @@ export function gradientAgentControls(
 ): ControlSpec[] {
   return visibleGradientControls(cfg, opts)
     .filter((c) => (c as any).agent !== false)
-    .map(({ when, agent, animatable, ...spec }) => spec as ControlSpec)
+    .map(({ when, agent, animatable, summary, ...spec }) => spec as ControlSpec)
 }
 
 // Shader-fill controls (Task 8, ~/lib/shaderfill/controls.ts) are NOT wired in here,
