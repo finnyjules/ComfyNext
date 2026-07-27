@@ -9,7 +9,7 @@ import {
   paintLayerStack, ensureLayerFonts, ensureLayerImages,
 } from '~/composables/useCompositorLayers'
 import './paint' // ensure the motion painter is registered
-import { uploadFrameBatch } from '~/composables/useKineticRenderer'
+import { uploadFrameBatch } from '~/lib/studio/frameUpload'
 import type { FrameMotion } from './types'
 
 /**

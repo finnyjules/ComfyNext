@@ -438,7 +438,7 @@ async function generateImage() {
   baking.value = true; bakeMsg.value = 'Rendering…'; stopPreview()
   try {
     const blob = await renderBlob(0)
-    const { uploadFrameBatch } = await import('~/composables/useKineticRenderer')
+    const { uploadFrameBatch } = await import('~/lib/studio/frameUpload')
     const [filename] = await uploadFrameBatch([blob], 'shader_img')
     if (filename) {
       saveConfig()

@@ -1718,7 +1718,7 @@ async function generateImage() {
     const { W, H } = bakeSize()
     const blob = await renderStaticComposite(W, H)
     if (!blob) return
-    const { uploadFrameBatch } = await import('~/composables/useKineticRenderer')
+    const { uploadFrameBatch } = await import('~/lib/studio/frameUpload')
     const [filename] = await uploadFrameBatch([blob], 'frame_img')
     if (filename) {
       const p = (node.data.properties ||= {})

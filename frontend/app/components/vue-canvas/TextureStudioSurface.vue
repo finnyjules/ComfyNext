@@ -472,7 +472,7 @@ async function sendToCanvas() {
   baking.value = true; bakeMsg.value = 'Rendering…'
   try {
     const blob = await exportBlob()
-    const { uploadFrameBatch } = await import('~/composables/useKineticRenderer')
+    const { uploadFrameBatch } = await import('~/lib/studio/frameUpload')
     const [filename] = await uploadFrameBatch([blob], 'texture_img')
     if (filename) {
       saveParams()

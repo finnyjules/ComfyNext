@@ -510,7 +510,7 @@ async function generateImage() {
   try {
     const blob = await renderCurrentBlob()
     if (!blob) return
-    const { uploadFrameBatch } = await import('~/composables/useKineticRenderer')
+    const { uploadFrameBatch } = await import('~/lib/studio/frameUpload')
     const [filename] = await uploadFrameBatch([blob], 'gradient_img')
     if (filename) {
       const n = currentNode()

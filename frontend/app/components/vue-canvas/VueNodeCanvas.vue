@@ -3576,7 +3576,7 @@ function handleAddCharacterCastNode(e: Event) {
 // Side-effect deps for the studio cascade — shared by the footer Render button
 // (handleStudioRender) and the pre-run bake (bakeUpstreamStudios).
 async function studioCascadeDeps(): Promise<CascadeDeps> {
-  const { uploadFrameBatch } = await import('~/composables/useKineticRenderer')
+  const { uploadFrameBatch } = await import('~/lib/studio/frameUpload')
   return {
     getNodes: () => nodes.value as any[],
     getEdges: () => edges.value as any[],

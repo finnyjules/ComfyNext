@@ -60,7 +60,7 @@ export async function ensureMotionBake(
     return cached
   }
   const blobs = await bakeMotionClipFrames(clip, W, H, fps, onProgress)
-  const { uploadFrameBatch } = await import('~/composables/useKineticRenderer')
+  const { uploadFrameBatch } = await import('~/lib/studio/frameUpload')
   const frames = await uploadFrameBatch(blobs, 'motionclip')
   if (frames.length !== blobs.length) {
     throw new Error(`motion bake: uploaded ${frames.length}/${blobs.length} frames — retry`)

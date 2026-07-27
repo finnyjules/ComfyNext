@@ -665,7 +665,7 @@ const { recordAsset } = useProjectGenerations()
 const { activeTab } = useTabs()
 async function recordFrameToAssets(blob: Blob) {
   try {
-    const { uploadFrameBatch } = await import('~/composables/useKineticRenderer')
+    const { uploadFrameBatch } = await import('~/lib/studio/frameUpload')
     const [filename] = await uploadFrameBatch([blob], 'frame')
     if (filename) await recordAsset(activeTab.value?.projectUuid, 'image', filename)
   } catch (err) {

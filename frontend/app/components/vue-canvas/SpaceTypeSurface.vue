@@ -996,7 +996,7 @@ async function generateImage() {
     engine.renderFrame(0, params)
     const blob = await engine.frameToBlob(W.value, H.value)
     engine.setSize(W.value, H.value)
-    const { uploadFrameBatch } = await import('~/composables/useKineticRenderer')
+    const { uploadFrameBatch } = await import('~/lib/studio/frameUpload')
     const [filename] = await uploadFrameBatch([blob], 'spacetype_img')
     if (filename) {
       // Stash a thumbnail on the node so its card shows a preview.

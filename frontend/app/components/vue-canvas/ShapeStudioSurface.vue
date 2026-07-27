@@ -359,7 +359,7 @@ async function exportPng() {
   }
   try {
     const blob = await engine.frameToBlob(canvasW.value, canvasH.value)
-    const { uploadFrameBatch } = await import('~/composables/useKineticRenderer')
+    const { uploadFrameBatch } = await import('~/lib/studio/frameUpload')
     const [filename] = await uploadFrameBatch([blob], 'shape_img')
     if (filename) {
       await recordAsset(activeTab.value?.projectUuid, 'image', filename)

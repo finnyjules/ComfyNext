@@ -14,7 +14,7 @@ export const IMAGE_ACCEPT = 'image/*'
 
 /** Uploads a single file to ComfyUI's input dir (same `/upload/image` endpoint
  * as every other direct-upload path in the app — see `uploadFrameBatch` in
- * useKineticRenderer.ts) and returns its `/view` URL. Unlike `generate.ts`'s
+ * lib/studio/frameUpload.ts) and returns its `/view` URL. Unlike `generate.ts`'s
  * `uploadAndRegister`, this does NOT register an asset_import — cell uploads
  * are INPUTS the user is populating a collection with, not generator outputs
  * that belong in the Assets library. */

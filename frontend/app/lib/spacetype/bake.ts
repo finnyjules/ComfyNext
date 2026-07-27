@@ -35,7 +35,7 @@ export async function ensureSpaceTypeBake(
   }
 
   const upload = deps.upload ?? (async (b: Blob[]) => {
-    const { uploadFrameBatch } = await import('~/composables/useKineticRenderer')
+    const { uploadFrameBatch } = await import('~/lib/studio/frameUpload')
     return uploadFrameBatch(b, 'spacetype')
   })
   const frames = await upload(blobs)

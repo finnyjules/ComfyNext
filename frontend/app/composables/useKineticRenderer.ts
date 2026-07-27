@@ -22,6 +22,7 @@ import {
   type KineticBuildContext,
 } from '~/data/kinetic-presets'
 import { interpolateAxes, axesToVariationSettings, type AxisKeyframe } from '~/lib/motion/axes'
+import { uploadFrameBatch } from '~/lib/studio/frameUpload'
 
 // Re-exported so existing importers (KineticTypeModal, AxisKeyframeEditor,
 // WidgetKineticType) keep resolving AxisKeyframe from this module. The
@@ -393,37 +394,6 @@ export async function bakeFrames(
   document.body.removeChild(stage)
 
   return frames
-}
-
-/**
- * Upload a batch of frame blobs to the ComfyUI server.
- * Returns an array of filenames that the Python node can load.
- */
-export async function uploadFrameBatch(
-  frames: Blob[],
-  prefix: string = 'kinetic',
-): Promise<string[]> {
-  const filenames: string[] = []
-
-  for (let i = 0; i < frames.length; i++) {
-    const fd = new FormData()
-    const fname = `${prefix}_${Date.now()}_${String(i).padStart(4, '0')}.png`
-    fd.append('image', new File([frames[i]], fname, { type: 'image/png' }))
-    fd.append('overwrite', 'true')
-
-    try {
-      const res = await fetch('/upload/image', { method: 'POST', body: fd })
-      if (res.ok) {
-        const data = await res.json() as { name?: string; subfolder?: string }
-        const name = data.subfolder ? `${data.subfolder}/${data.name}` : (data.name || fname)
-        filenames.push(name)
-      }
-    } catch {
-      // Skip failed frames — the batch will be shorter but usable
-    }
-  }
-
-  return filenames
 }
 
 // ── Composable wrapper ──────────────────────────────────────────────────────

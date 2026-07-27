@@ -51,7 +51,7 @@ vi.mock('../../app/lib/engine/spaceTypeEnginePool', () => ({
 
 // ensureSpaceTypeClipBake's upload step hits a real /upload/image endpoint by
 // default — stub it so the bake completes offline.
-vi.mock('../../app/composables/useKineticRenderer', () => ({
+vi.mock('../../app/lib/studio/frameUpload', () => ({
   uploadFrameBatch: async (blobs: Blob[]) => blobs.map((_, i) => `fake_${i}.png`),
 }))
 
