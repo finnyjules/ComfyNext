@@ -9,6 +9,7 @@ import {
 import {
   type TextLayer, type RectLayer, type EllipseLayer, type LocalLayer, type StackItem, type CornerPin, type BrushLayer, type Paint,
   drawLocalLayer, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages, paintLayerStack, layerMaskRef, localLayerBox, createBrushLayer,
+  hasAnimatedShaderFill,
 } from '~/composables/useCompositorLayers'
 import { readWiredTreatments, setWiredMask, setWiredMaskShowSource, setWiredMaskUrl, maskCandidateKeys } from '~/composables/useWiredTreatments'
 import { useLocalLayerEditor, resizableKind } from '~/composables/useLocalLayerEditor'
@@ -1311,32 +1312,52 @@ watch(() => layers.value.map(l => l.live ? `L${l.slot}` : l.url).join('|') + '|'
 }, { immediate: true })
 
 // ── Live animation loop (mirrors the Frame node card) ────────────────────────
+// `previewT` is declared here (hoisted above its natural "Motion preview" section
+// below) because `needsWallClock`'s computed reads it, and a plain `watch(computed, ...)`
+// dereferences its source synchronously at setup time — a later `const previewT` would
+// throw a TDZ ReferenceError (same trap documented on the Frame node card for
+// `wiredTreatments`).
+const previewT = ref<number | null>(null)
 const MAX_LIVE_SLOTS = 8
 const liveMasterClock = computed(() => deriveMasterClock(
   layers.value.filter(l => l.live).map(l => ({ duration: l.live!.duration, fps: l.live!.fps })),
   ((compositor.value?.data?.properties as any)?.sailor_frame?.clock) ?? null))
 const hasAnimatedSlot = computed(() => layers.value.some(l => l.live && l.live.duration > 0))
+// A live (speed !== 0) shader fill also needs SOME clock advancing it. The scrubbable
+// playhead (`previewT`) is authoritative whenever it's set — Motion tab, scrubbing or
+// playing (see `renderStack`'s `clockT` below) — so this wall clock only needs to run
+// while idle (`previewT == null`, i.e. Design tab / not in a motion preview). Gating on
+// `previewT == null` rather than `!playing` means pausing/scrubbing to a stop does NOT
+// wake this loop back up to fight the frozen scrub position with a free-running clock.
+const hasAnimatedFill = computed(() => hasAnimatedShaderFill(buildStackItems(), background.value))
+const needsWallClock = computed(() => hasAnimatedFill.value && previewT.value == null)
+const needsLiveLoop = computed(() => hasAnimatedSlot.value || needsWallClock.value)
 let liveRaf = 0, liveStart = 0, liveInFlight = false, liveCapWarned = false
 function liveFrameTick(ts: number) {
   if (!liveStart) liveStart = ts
   const mc = liveMasterClock.value
+  const wallT = (ts - liveStart) / 1000
   if (!liveInFlight && mc && mc.duration > 0) {
     liveInFlight = true
-    const t = ((ts - liveStart) / 1000) % mc.duration
+    const t = wallT % mc.duration
     let animated = layers.value.filter(l => l.live && l.live.duration > 0)
     if (animated.length > MAX_LIVE_SLOTS) {
       if (!liveCapWarned) { console.warn(`[Compositor] ${animated.length} animated slots > cap ${MAX_LIVE_SLOTS}; extras shown as stills`); liveCapWarned = true }
       animated = animated.slice(0, MAX_LIVE_SLOTS)
     }
     Promise.all(animated.map(l => pullLiveFrameModal(l, slotPhase01(t, l.live!.duration))))
-      .then(() => renderStack())
+      .then(() => renderStack(wallT))
       .finally(() => { liveInFlight = false })
+  } else if (needsWallClock.value) {
+    // No animated wired slot to pull frames for (mc idle/null), but a live shader fill
+    // still needs a fresh paint every tick to advance — no async work to gate on here.
+    renderStack(wallT)
   }
   liveRaf = requestAnimationFrame(liveFrameTick)
 }
-function startLive() { cancelAnimationFrame(liveRaf); liveStart = 0; liveInFlight = false; if (hasAnimatedSlot.value) liveRaf = requestAnimationFrame(liveFrameTick) }
+function startLive() { cancelAnimationFrame(liveRaf); liveStart = 0; liveInFlight = false; if (needsLiveLoop.value) liveRaf = requestAnimationFrame(liveFrameTick) }
 function stopLive() { cancelAnimationFrame(liveRaf); liveRaf = 0 }
-watch(hasAnimatedSlot, startLive)
+watch(needsLiveLoop, startLive)
 onMounted(startLive)
 onBeforeUnmount(stopLive)
 function drawWiredLayer(ctx: CanvasRenderingContext2D, layer: Layer, W: number, H: number) {
@@ -1462,7 +1483,6 @@ function commitMotionTimeline() {
   commit(localLayers.value)
 }
 
-const previewT = ref<number | null>(null)
 const playing = ref(false)
 let rafId = 0
 let playStartWall = 0
@@ -1806,7 +1826,14 @@ const overlayCanvas = ref<HTMLCanvasElement | null>(null)
 // Studio node — see useCompositorLayers.ts's doc on _fieldCtx). Surfaced here so a
 // capped frame never animates silently, matching Space Type/Shape Studio's own hint.
 const shaderFieldsFrozen = ref(0)
-function renderStack() {
+// `wallT` is the idle-fallback clock from `liveFrameTick` (real elapsed seconds since
+// that loop started) — see the "Live animation loop" section above for why it's the
+// ONLY source of time when `previewT` is null. Every other call site (many — brush
+// strokes, layer edits, wiring changes) omits it, which is correct: whenever the
+// playhead is set it wins outright, and whenever it's null AND nothing is animating,
+// t=0 is indistinguishable from "no clock needed" (`hasAnimatedFill` is false, so the
+// wall-clock loop isn't running to call this with a real `wallT` anyway).
+function renderStack(wallT?: number) {
   const cv = overlayCanvas.value
   if (!cv) return
   const W = canvasDisplay.w, H = canvasDisplay.h
@@ -1840,9 +1867,16 @@ function renderStack() {
       items.push({ type: 'local', key: `l:${tmp.id}`, layer: tmp })
     }
   }
+  // Playhead wins outright when set (Motion tab — scrubbing or playing); otherwise fall
+  // back to the idle wall clock so a shader fill still animates in the Design tab. Never
+  // both: `motionArg` (which activates the Kinetic Slate motion path) only follows
+  // `previewT`, never `wallT` — the wall clock is field-time only, exactly like the
+  // Frame node card.
+  const clockT = previewT.value ?? wallT
+  const motionArg = previewT.value != null ? motionDoc.value : undefined
   const { frozenCount } = paintLayerStack(ctx, W, H, items, localLayers.value as LocalLayer[], l =>
     l.id === editingId.value || (nodeEdit.active.value && l.id === nodeEdit.layerId.value),
-    previewT.value ?? undefined, previewT.value != null ? motionDoc.value : undefined,
+    clockT, motionArg,
     wiredTreatments.value, background.value, localGroups.value, postEffects.value)
   shaderFieldsFrozen.value = frozenCount
 }

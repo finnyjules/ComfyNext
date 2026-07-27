@@ -6,7 +6,7 @@ import {
 } from 'lucide-vue-next'
 import { getTypeColor } from '~/composables/useVueNodes'
 import { useLocalLayerEditor } from '~/composables/useLocalLayerEditor'
-import { type LocalLayer, type TextLayer, type StackItem, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages, paintLayerStack } from '~/composables/useCompositorLayers'
+import { type LocalLayer, type TextLayer, type StackItem, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages, paintLayerStack, hasAnimatedShaderFill } from '~/composables/useCompositorLayers'
 import { paintPrimaryColor } from '~/lib/spacetype/fillTile'
 import { readWiredTreatments } from '~/composables/useWiredTreatments'
 import type { Cloner } from '~/composables/useCloner'
@@ -459,7 +459,13 @@ function buildStackItems(): StackItem[] {
 }
 
 const stackCanvas = ref<HTMLCanvasElement | null>(null)
-function renderStack() {
+// `t` is the Frame's own master-timeline seconds (see `animateFrame` below) — real
+// elapsed time, not the wrapped/bounded master-clock period. Omitted (`undefined`) for
+// the plain watch-driven repaint below, which is correct: with no animated slot AND no
+// live shader fill there is nothing time-dependent to paint, so `paintLayerStack`
+// defaulting to t=0 is byte-identical to "no clock needed" — see `hasAnimatedFill` below
+// for the predicate that decides whether that default is actually being exercised.
+function renderStack(t?: number) {
   const cv = stackCanvas.value
   if (!cv) return
   const W = box.value.w, H = box.value.h
@@ -469,43 +475,65 @@ function renderStack() {
   const ctx = cv.getContext('2d')!
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.clearRect(0, 0, W, H)
+  // `motion` (Kinetic Slate per-layer animation) intentionally stays undefined here —
+  // out of scope for this fix, and passing a truthy `motion` alongside `t` would also
+  // activate the slate-motion path in paintLayerStack, which the Frame card has never
+  // driven. Only the shader-fill clock (`t`) is being wired up.
   paintLayerStack(ctx, W, H, buildStackItems(), editor.localLayers.value, l => l.id === editor.editingId.value,
-    undefined, undefined, wiredTreatments.value, editor.background.value, editor.localGroups.value, editor.postEffects.value)
+    t, undefined, wiredTreatments.value, editor.background.value, editor.localGroups.value, editor.postEffects.value)
 }
 
 // ── Live animation loop ──────────────────────────────────────────────────────
 // The Frame owns one master timeline derived from its live slots (longest duration,
 // max fps), or the config override. Each animated slot plays at its native speed and
-// loops within it. Runs a rAF loop only when a slot is actually animated; otherwise
-// the static watch-driven render below is unchanged.
+// loops within it. Runs a rAF loop only when a slot is actually animated OR a shader
+// fill is actually live (speed !== 0) — otherwise the static watch-driven render below
+// is unchanged, so a Frame with nothing time-dependent never pays for a rAF loop.
 const MAX_LIVE_SLOTS = 8   // soft cap on concurrently-animated slots (perf bound)
 const masterClock = computed(() => deriveMasterClock(
   wiredLayers.value.filter(l => l.live).map(l => ({ duration: l.live!.duration, fps: l.live!.fps })),
   (props.data.properties as any)?.sailor_frame?.clock ?? null))
 const hasAnimatedSlot = computed(() => wiredLayers.value.some(l => l.live && l.live.duration > 0))
+// A `speed: 0` shader fill must NOT start this loop (it's deliberately frozen); only a
+// live (speed !== 0) fill counts. See `hasAnimatedShaderFill`'s doc for why this needs
+// to be pure/shared rather than re-derived per host.
+const hasAnimatedFill = computed(() => hasAnimatedShaderFill(buildStackItems(), editor.background.value))
+const needsClock = computed(() => hasAnimatedSlot.value || hasAnimatedFill.value)
 let animRaf = 0, animStart = 0, animInFlight = false, cappedWarned = false
 function animateFrame(ts: number) {
   if (!animStart) animStart = ts
   const mc = masterClock.value
+  // Raw elapsed seconds — NOT wrapped to the master period. Each slot loops on its OWN
+  // duration via slotPhase01's `% slotDuration`, so an endless live preview stays seamless
+  // per slot. Wrapping by mc.duration here reset every slot whose duration didn't evenly
+  // divide the master, yanking it back to phase 0 mid-loop once per master period (the
+  // "scene resets every few seconds" jump). The bounded master clock is still the guard
+  // below and drives the finite video export (renderCompositeAtTime), which must stay wrapped.
+  // This SAME clock feeds shader fills (via renderStack(t)) so a fill and an animated
+  // slot in the same Frame agree on what time it is — one clock, not two.
+  const t = (ts - animStart) / 1000
   // getFrame is async — skip a tick rather than queue, so a slow slot lowers the frame
   // rate instead of piling up. Draws land in owned canvases; then renderStack paints.
   if (!animInFlight && mc && mc.duration > 0) {
     animInFlight = true
-    const t = ((ts - animStart) / 1000) % mc.duration
     let animated = wiredLayers.value.filter(l => l.live && l.live.duration > 0)
     if (animated.length > MAX_LIVE_SLOTS) {
       if (!cappedWarned) { console.warn(`[Frame] ${animated.length} animated slots > cap ${MAX_LIVE_SLOTS}; extras shown as stills`); cappedWarned = true }
       animated = animated.slice(0, MAX_LIVE_SLOTS)
     }
     Promise.all(animated.map(l => pullLiveFrame(l, slotPhase01(t, l.live!.duration))))
-      .then(() => renderStack())
+      .then(() => renderStack(t))
       .finally(() => { animInFlight = false })
+  } else if (hasAnimatedFill.value) {
+    // No animated wired slot to pull frames for (mc is null/idle), but a shader fill
+    // still needs a fresh paint every tick to advance — no async work to gate on here.
+    renderStack(t)
   }
   animRaf = requestAnimationFrame(animateFrame)
 }
-function startAnim() { cancelAnimationFrame(animRaf); animStart = 0; animInFlight = false; if (hasAnimatedSlot.value) animRaf = requestAnimationFrame(animateFrame) }
+function startAnim() { cancelAnimationFrame(animRaf); animStart = 0; animInFlight = false; if (needsClock.value) animRaf = requestAnimationFrame(animateFrame) }
 function stopAnim() { cancelAnimationFrame(animRaf); animRaf = 0 }
-watch(hasAnimatedSlot, startAnim)
+watch(needsClock, startAnim)
 // Declared BEFORE the `{ immediate: true }` watch below — that watch's getter reads
 // wiredTreatments during setup, so a later `const` would throw a TDZ ReferenceError
 // (which cascaded into VueFlow and broke adding any node).

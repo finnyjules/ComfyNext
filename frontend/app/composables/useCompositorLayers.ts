@@ -1527,6 +1527,25 @@ function layerPaints(layer: LocalLayer): Paint[] {
   }
 }
 
+/** Whether `items`/`background` currently carry a LIVE shader fill — one whose
+ *  `speed !== 0`, and therefore needs a real clock (`t`) to animate at all. A
+ *  `speed: 0` fill is deliberately frozen and must NOT count here, or "frozen"
+ *  becomes impossible to express: a host that starts a rAF loop whenever any
+ *  shader fill exists (animated or not) would spin forever for a still fill.
+ *  Pure + host-agnostic on purpose: both the Frame node card and the Compositor
+ *  modal use this to decide whether THEY need to own a clock, and a unit test
+ *  pins it directly so "does this need a clock" can't silently regress into
+ *  waking every Frame on the canvas (see saf-frame-clock-report.md). */
+export function hasAnimatedShaderFill(items: StackItem[], background?: Paint): boolean {
+  const isLiveShader = (p: Paint | undefined): boolean => isFill(p) && fillIsShader(p) && p.shader.speed !== 0
+  if (isLiveShader(background)) return true
+  for (const it of items) {
+    if (it.type !== 'local') continue
+    if (layerPaints(it.layer).some(isLiveShader)) return true
+  }
+  return false
+}
+
 /** Collect a shader-fill Paint into `out` as a FieldRequest, sized EXACTLY the way
  *  resolveShaderFill sizes it at paint time (frame anchor → frame size; object anchor →
  *  the fixed OBJECT_SHADER_FIELD_PX) — see resolveShaderFill's doc for why the two must
@@ -1589,6 +1608,21 @@ export function paintLayerStack(
     for (const p of layerPaints(it.layer)) addShaderFieldRequest(shaderRequests, p, W, H, fieldT, fieldFps, bake)
   }
   addShaderFieldRequest(shaderRequests, background, W, H, fieldT, fieldFps, bake)
+
+  // Make a missing clock DETECTABLE instead of silently rendering "frozen at zero"
+  // forever — the exact failure mode that shipped Frames looking broken (the caller
+  // passed no `t`, `fieldT` defaulted to 0, and a still gradient is indistinguishable
+  // from a working-but-idle one). Only warns when a LIVE (`speed !== 0`) shader fill is
+  // actually present and `t` itself was omitted — a `speed: 0` fill intentionally wants
+  // t=0 and must stay silent. Dev-only: this is a wiring smell for whoever adds the next
+  // surface, not a runtime condition to report in production.
+  if (import.meta.dev && t === undefined && shaderRequests.some(r => r.spec.speed !== 0)) {
+    console.warn(
+      '[paintLayerStack] a live shader fill (speed !== 0) was painted with no `t` — it will ' +
+      'render frozen at t=0. Pass real elapsed/scrub time as the `t` argument instead of ' +
+      'leaving it `undefined`.',
+    )
+  }
 
   // Item 2 fix (final review): `_fieldCtx.token` must not outlive this span — the `finally`
   // below resets it to `0` (field.ts's own "no span" sentinel, see its "ACTUAL CURRENT RULE"
