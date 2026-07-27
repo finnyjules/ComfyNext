@@ -88,12 +88,17 @@ const sceneDoc = computed(() => parseDoc(widgetStr('scene_state')))
 let headlessCanvas: HTMLCanvasElement | null = null
 let headlessEngine: SceneEngine | null = null
 let registered = false
+// Wall-clock mount time for the headless engine's OWN shaderFill field clock — mirrors
+// Scene3DStudioSurface's `scene3dMountedAt` (Item 5, final review). Reset each time the
+// headless engine is (re)created, since a fresh engine's fields should animate from a
+// fresh t=0 rather than inheriting whatever time had already elapsed on the card.
+let headlessMountedAt = 0
 
 function ensureHeadless(w: number, h: number): SceneEngine | null {
   if (typeof document === 'undefined') return null
   if (!headlessCanvas) headlessCanvas = document.createElement('canvas')
   if (!headlessEngine) {
-    try { headlessEngine = new SceneEngine(headlessCanvas, w, h) }
+    try { headlessEngine = new SceneEngine(headlessCanvas, w, h); headlessMountedAt = performance.now() }
     catch { headlessEngine = null; return null }
   }
   headlessEngine.setSize(w, h)
@@ -166,7 +171,10 @@ async function rebakePasses(): Promise<void> {
   if (!eng) throw new Error('WebGL unavailable')
   eng.syncFromDoc(doc)
   eng.applyCameraFromDoc(doc)
-  const passes = await renderPasses(eng, doc)
+  // Item 5 (final review): same live elapsed-seconds convention as
+  // Scene3DStudioSurface's bake() — bakes a shaderFill field at the headless engine's
+  // own current moment instead of always freezing it at t=0.
+  const passes = await renderPasses(eng, doc, (performance.now() - headlessMountedAt) / 1000)
   const [beauty, depth, normal] = await Promise.all([
     inpaint.uploadDataUrl(passes.beauty, `scene3d_beauty_${props.id}`),
     inpaint.uploadDataUrl(passes.depth, `scene3d_depth_${props.id}`),

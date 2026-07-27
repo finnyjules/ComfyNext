@@ -4,6 +4,7 @@ import { Gem, Pencil } from 'lucide-vue-next'
 import { ShapeEngine } from '~/lib/shapefx/engine'
 import { mergeConfig } from '~/lib/shapefx/config'
 import { detectWebGL } from '~/lib/spacetype/webgl'
+import { fetchShaderFxCatalog } from '~/lib/shaderfx/catalog'
 import { registerStudioBaker, unregisterStudioBaker } from '~/lib/studio/cascade'
 import StudioRenderButton from '~/components/vue-canvas/StudioRenderButton.vue'
 
@@ -63,6 +64,15 @@ const DEFAULT_ORBIT = { yaw: 0.6, pitch: 0.32, zoom: 1 }
 // feedback (see bakedThumb).
 async function bakeOutput(): Promise<Blob | null> {
   if (!detectWebGL()) return null
+  // Item 2 fix (final review, residual Critical): this builds a THROWAWAY engine and
+  // renders exactly once — unlike the persistent card-preview `engine` (which self-heals
+  // over subsequent rAF frames once field.ts's own catalog fetch lands, per
+  // shaderFieldTexture's doc in ~/lib/spacetype/fills.ts), a one-shot bake gets no second
+  // chance: a shader fill whose effect isn't in the catalog YET at build time fell back to
+  // its input fill and PERSISTED that fallback as the uploaded PNG, forever, with no
+  // retry. Awaiting the catalog before building (cheap — memoized after the first real
+  // fetch on the page) guarantees the effect is resolvable before setConfig ever runs.
+  await fetchShaderFxCatalog().catch(() => { /* offline/backend down — build proceeds and falls back same as before */ })
   const blob = props.data?.properties?.sailor_shapeStudio as
     { config?: unknown; canvasW?: number; canvasH?: number
       orbit?: { yaw?: number; pitch?: number; zoom?: number } } | undefined

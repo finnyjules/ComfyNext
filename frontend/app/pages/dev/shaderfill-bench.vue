@@ -2,7 +2,7 @@
   <div class="bench">
     <h1>Shader fill readback bench (Task 3: field renderer)</h1>
     <p class="note">
-      Drives <code>beginFieldFrame</code> + <code>resolveField</code> (<code>~/lib/shaderfill/field</code>)
+      Drives <code>withFieldFrame</code> + <code>resolveField</code> (<code>~/lib/shaderfill/field</code>)
       instead of calling shaderFx directly — the same descriptor-batched cache every real
       surface will go through. shaderFx renders a field into its own WebGL2 context; field.ts
       blits it ONCE into its own persistent, cached 2D canvas (by <code>fieldKey</code>) and
@@ -122,7 +122,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as THREE from 'three'
 import { fetchShaderFxCatalog } from '~/lib/shaderfx/catalog'
 import { DEFAULT_FILL, fillTileBox, type Fill, type ShaderSpec } from '~/lib/spacetype/fillTile'
-import { beginFieldFrame, resolveField, clearFieldCache, fieldStats, type FieldRequest } from '~/lib/shaderfill/field'
+import { withFieldFrame, resolveField, clearFieldCache, fieldStats, type FieldRequest } from '~/lib/shaderfill/field'
 import { LIVE_FIELD_CEILING } from '~/lib/shaderfill/descriptor'
 import type { EffectDef } from '~/lib/shaderfx/types'
 
@@ -317,34 +317,38 @@ function loop(now: number): void {
   const n = fieldsCount.value
   let bindAccum = 0
 
-  // One beginFieldFrame call per rendered frame, covering every field this frame
+  // One withFieldFrame call per rendered frame, covering every field this frame
   // wants — this is what lets the live/frozen ceiling apply per-frame rather than
   // per-field. Identical descriptors collapse to one key regardless of `n`.
+  // withFieldFrame owns the begin/end pairing in a try/finally (see its doc in
+  // ~/lib/shaderfill/field.ts) — this bench used to call beginFieldFrame with no
+  // matching endFieldFrame anywhere (the Item 1 regression the final review caught:
+  // every OTHER host's next beginFieldFrame call threw once this one ran).
   const requests: FieldRequest[] = Array.from({ length: n }, (_, i) => ({
     spec: specForField(i, distinct.value), w: FIELD_SIZE, h: FIELD_SIZE, t: timeSec, fps: BENCH_FPS,
   }))
-  beginFieldFrame(requests)
-
-  for (let i = 0; i < n; i++) {
-    const out = resolveField(requests[i]!)
-    const st = fieldStates[i]
-    if (!st || !out) continue
-    const tb0 = performance.now()
-    // No copy: bind resolveField's canvas DIRECTLY as the texture's image source —
-    // see field.ts's resolveField ownership-contract doc. This IS the production
-    // consumption pattern — deliberately NO forced-sync readback here (unlike
-    // runSweep's benchmark-only equivalent below): forcing a synchronous GPU wait
-    // every live frame would slow down real interactive rendering for no reason a
-    // real consumer needs, since the browser's own pipeline/vsync handles
-    // presentation timing. So this stat (`bindMs` in the live panel) measures only
-    // the trivial property assignment and should read near-zero — it is NOT
-    // comparable to the sweep table's `bindMs` column, which deliberately includes
-    // a forced sync for honest measurement.
-    st.texture.image = out
-    st.texture.needsUpdate = true
-    bindAccum += performance.now() - tb0
-    st.mesh.rotation.y += 0.012
-  }
+  withFieldFrame(requests, (_frozenCount, token) => {
+    for (let i = 0; i < n; i++) {
+      const out = resolveField(requests[i]!, token)
+      const st = fieldStates[i]
+      if (!st || !out) continue
+      const tb0 = performance.now()
+      // No copy: bind resolveField's canvas DIRECTLY as the texture's image source —
+      // see field.ts's resolveField ownership-contract doc. This IS the production
+      // consumption pattern — deliberately NO forced-sync readback here (unlike
+      // runSweep's benchmark-only equivalent below): forcing a synchronous GPU wait
+      // every live frame would slow down real interactive rendering for no reason a
+      // real consumer needs, since the browser's own pipeline/vsync handles
+      // presentation timing. So this stat (`bindMs` in the live panel) measures only
+      // the trivial property assignment and should read near-zero — it is NOT
+      // comparable to the sweep table's `bindMs` column, which deliberately includes
+      // a forced sync for honest measurement.
+      st.texture.image = out
+      st.texture.needsUpdate = true
+      bindAccum += performance.now() - tb0
+      st.mesh.rotation.y += 0.012
+    }
+  })
 
   renderer.render(scene, camera)
 
@@ -513,37 +517,41 @@ async function runSweep(opts: SweepOptions = {}): Promise<SweepRow[] | { error: 
       const requests: FieldRequest[] = Array.from({ length: n }, (_, i) => ({
         spec: specForField(i, useDistinct), w: FIELD_SIZE, h: FIELD_SIZE, t: timeSec, fps: BENCH_FPS,
       }))
-      beginFieldFrame(requests)
-
-      for (let i = 0; i < n; i++) {
-        const out = resolveField(requests[i]!)
-        const st = fieldStates[i]
-        if (!st || !out) continue
-        const tb0 = performance.now()
-        // No copy: bind resolveField's canvas DIRECTLY as the texture's image
-        // source (the production consumption pattern — see resolveField's ownership
-        // doc). The read below is NOT a copy — no second canvas, no drawImage into a
-        // separate destination — it is a forced-materialise readback on `out` itself,
-        // and it is NOT optional measurement overhead:
-        //
-        // shaderFx renders on its OWN WebGL2 context, separate from this bench's
-        // THREE.WebGLRenderer context. `gl.finish()` below only blocks until commands
-        // submitted to the context it's called ON have completed — it has no
-        // visibility into shaderFx's separate context's queue. An earlier version of
-        // this fix dropped the forced sync entirely (reasoning that the texture
-        // upload inside renderer.render() would force resolution as a side effect),
-        // and measured ~0.25ms/render — a ~20x drop that turned out to be a false
-        // reading: the sweep was measuring command SUBMISSION, not completed work,
-        // the exact trap the file's own long-standing comments already warn about.
-        // Re-adding this single-pixel readback (on the canvas we already have, not a
-        // new one) forces shaderFx's context to actually finish before we time it,
-        // and the number came back up to something plausible. Confirmed via a live
-        // A/B on the running bench before keeping this — see the Task 3 report.
-        st.texture.image = out
-        st.texture.needsUpdate = true
-        out.getContext('2d')!.getImageData(0, 0, 1, 1)
-        bindAccum += performance.now() - tb0
-      }
+      // withFieldFrame owns the begin/end pairing in a try/finally — see its doc in
+      // ~/lib/shaderfill/field.ts. This sweep used to call beginFieldFrame with no
+      // matching endFieldFrame per iteration (the Item 1 regression: iteration 2
+      // threw on re-entry).
+      withFieldFrame(requests, (_frozenCount, token) => {
+        for (let i = 0; i < n; i++) {
+          const out = resolveField(requests[i]!, token)
+          const st = fieldStates[i]
+          if (!st || !out) continue
+          const tb0 = performance.now()
+          // No copy: bind resolveField's canvas DIRECTLY as the texture's image
+          // source (the production consumption pattern — see resolveField's ownership
+          // doc). The read below is NOT a copy — no second canvas, no drawImage into a
+          // separate destination — it is a forced-materialise readback on `out` itself,
+          // and it is NOT optional measurement overhead:
+          //
+          // shaderFx renders on its OWN WebGL2 context, separate from this bench's
+          // THREE.WebGLRenderer context. `gl.finish()` below only blocks until commands
+          // submitted to the context it's called ON have completed — it has no
+          // visibility into shaderFx's separate context's queue. An earlier version of
+          // this fix dropped the forced sync entirely (reasoning that the texture
+          // upload inside renderer.render() would force resolution as a side effect),
+          // and measured ~0.25ms/render — a ~20x drop that turned out to be a false
+          // reading: the sweep was measuring command SUBMISSION, not completed work,
+          // the exact trap the file's own long-standing comments already warn about.
+          // Re-adding this single-pixel readback (on the canvas we already have, not a
+          // new one) forces shaderFx's context to actually finish before we time it,
+          // and the number came back up to something plausible. Confirmed via a live
+          // A/B on the running bench before keeping this — see the Task 3 report.
+          st.texture.image = out
+          st.texture.needsUpdate = true
+          out.getContext('2d')!.getImageData(0, 0, 1, 1)
+          bindAccum += performance.now() - tb0
+        }
+      })
 
       rendererInst.render(sceneInst, cameraInst)
       // Force a GPU sync so the timer reflects completed work, not submission.
@@ -594,32 +602,35 @@ function runProbe(): unknown {
 
   clearFieldCache()
   const req: FieldRequest = { spec: specForField(0, distinct.value), w: FIELD_SIZE, h: FIELD_SIZE, t: 1.234, fps: BENCH_FPS }
-  beginFieldFrame([req])
-  const out = resolveField(req)
-  if (!out) return { error: 'resolveField returned null' }
+  // withFieldFrame owns the begin/end pairing in a try/finally — see its doc in
+  // ~/lib/shaderfill/field.ts.
+  return withFieldFrame([req], (_frozenCount, token) => {
+    const out = resolveField(req, token)
+    if (!out) return { error: 'resolveField returned null' }
 
-  // Independently rebuild the same input tile resolveField rasterised internally,
-  // purely for this probe's own reporting (resolveField doesn't expose it).
-  const inputTile = fillTileBox(baseFillSpec, FIELD_SIZE, FIELD_SIZE)
+    // Independently rebuild the same input tile resolveField rasterised internally,
+    // purely for this probe's own reporting (resolveField doesn't expose it).
+    const inputTile = fillTileBox(baseFillSpec, FIELD_SIZE, FIELD_SIZE)
 
-  const stats = (c: HTMLCanvasElement, label: string) => {
-    const x = c.getContext('2d')
-    if (!x) return { label, err: 'no 2d context' }
-    const d = x.getImageData(0, 0, c.width, c.height).data
-    let mn = 255, mx = 0, sum = 0, n = 0, opaque = 0
-    for (let i = 0; i < d.length; i += 4 * 401) {
-      const v = d[i]!
-      mn = Math.min(mn, v); mx = Math.max(mx, v); sum += v; n++
-      if (d[i + 3]! > 0) opaque++
+    const stats = (c: HTMLCanvasElement, label: string) => {
+      const x = c.getContext('2d')
+      if (!x) return { label, err: 'no 2d context' }
+      const d = x.getImageData(0, 0, c.width, c.height).data
+      let mn = 255, mx = 0, sum = 0, n = 0, opaque = 0
+      for (let i = 0; i < d.length; i += 4 * 401) {
+        const v = d[i]!
+        mn = Math.min(mn, v); mx = Math.max(mx, v); sum += v; n++
+        if (d[i + 3]! > 0) opaque++
+      }
+      return { label, w: c.width, h: c.height, min: mn, max: mx, mean: +(sum / n).toFixed(1), spread: mx - mn, opaquePct: +(100 * opaque / n).toFixed(1) }
     }
-    return { label, w: c.width, h: c.height, min: mn, max: mx, mean: +(sum / n).toFixed(1), spread: mx - mn, opaquePct: +(100 * opaque / n).toFixed(1) }
-  }
 
-  return {
-    effect: def.id,
-    inputFill: stats(inputTile, 'input fill (shader source)'),
-    field: stats(out, 'field canvas (resolveField result, direct — no copy)'),
-  }
+    return {
+      effect: def.id,
+      inputFill: stats(inputTile, 'input fill (shader source)'),
+      field: stats(out, 'field canvas (resolveField result, direct — no copy)'),
+    }
+  })
 }
 
 /**
@@ -649,16 +660,20 @@ function runBatch(): unknown {
     w: FIELD_SIZE, h: FIELD_SIZE, t: tOverride, fps: BENCH_FPS,
   })
 
+  // withFieldFrame owns the begin/end pairing in a try/finally for each of the three
+  // isolated cases below — see its doc in ~/lib/shaderfill/field.ts.
   clearFieldCache()
   const identicalReqs = Array.from({ length: n }, () => mk({}))
-  beginFieldFrame(identicalReqs)
-  for (const r of identicalReqs) resolveField(r)
+  withFieldFrame(identicalReqs, (_frozenCount, token) => {
+    for (const r of identicalReqs) resolveField(r, token)
+  })
   const identicalRenders = fieldStats().renders
 
   clearFieldCache()
   const distinctReqs = Array.from({ length: n }, (_, i) => mk(paramOverridesForIndex(i, n)))
-  beginFieldFrame(distinctReqs)
-  for (const r of distinctReqs) resolveField(r)
+  withFieldFrame(distinctReqs, (_frozenCount, token) => {
+    for (const r of distinctReqs) resolveField(r, token)
+  })
   const distinctRenders = fieldStats().renders
 
   clearFieldCache()
@@ -666,8 +681,9 @@ function runBatch(): unknown {
   // if this collapses to 1 render it can only be because speed:0 made fieldKey
   // ignore `t`, not because the requests happened to be identical.
   const frozenReqs = Array.from({ length: n }, (_, i) => mk({}, 0, i * 0.37))
-  beginFieldFrame(frozenReqs)
-  for (const r of frozenReqs) resolveField(r)
+  withFieldFrame(frozenReqs, (_frozenCount, token) => {
+    for (const r of frozenReqs) resolveField(r, token)
+  })
   const frozenRenders = fieldStats().renders
 
   clearFieldCache()
@@ -720,8 +736,9 @@ function runBakeCeilingProof(): unknown {
     const reqs: FieldRequest[] = Array.from({ length: n }, (_, i) => ({
       spec: specForField(i + 1, true), w: FIELD_SIZE, h: FIELD_SIZE, t, fps: BENCH_FPS, bake,
     }))
-    beginFieldFrame(reqs)
-    return reqs.map(r => meanOf(resolveField(r)))
+    // withFieldFrame owns the begin/end pairing in a try/finally — see its doc in
+    // ~/lib/shaderfill/field.ts.
+    return withFieldFrame(reqs, (_frozenCount, token) => reqs.map(r => meanOf(resolveField(r, token))))
   }
 
   clearFieldCache()

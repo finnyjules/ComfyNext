@@ -22,7 +22,7 @@ import {
 // scoping below (shaderFillMaterials + refreshSceneShaderFields) — deliberately not reusing
 // fills.ts's `_shaderFieldCache`/`withShaderFillContext`, so Scene3D's live-field ceiling and
 // frozen count can never pool with, or be walked by, Space Type's or the Compositor's.
-import { resolveField, beginFieldFrame, endFieldFrame, type FieldRequest } from '~/lib/shaderfill/field'
+import { resolveField, withFieldFrame, type FieldRequest } from '~/lib/shaderfill/field'
 import { DEFAULT_SHADER_SPEC, type ShaderSpec } from '~/lib/spacetype/fillTile'
 
 const hasDOM = typeof document !== 'undefined'
@@ -622,31 +622,34 @@ export function refreshSceneShaderFields(
   const requests: FieldRequest[] = entries.map((m) => ({
     spec: m.userData.shaderSpec as ShaderSpec, w, h, t, fps, bake,
   }))
-  const { frozenCount } = beginFieldFrame(requests)
-  for (let i = 0; i < entries.length; i++) {
-    const canvas = resolveField(requests[i]!)
-    if (!canvas) continue                          // keep showing the last good frame
-    const mat = entries[i] as THREE.MeshStandardMaterial | THREE.MeshBasicMaterial
-    const tex = mat.map as THREE.CanvasTexture | null
-    if (tex) {
-      // CRITICAL 2 fix: the common case — a texture already exists (materialFor built it
-      // successfully), just repoint it at the newest canvas in place, per resolveField's
-      // ownership contract (bind directly, never copy).
-      if (tex.image !== canvas) { tex.image = canvas; tex.needsUpdate = true }
-    } else {
-      // materialFor's `tex2 = canvas ? new THREE.CanvasTexture(canvas) : null` raced the
-      // catalog fetch (or a transient WebGL failure) at material-creation time and got
-      // null — `.map` was left null FOREVER, because this branch used to be `if (tex &&
-      // ...)` and silently no-op on a null map. Heal it now that a canvas is available:
-      // create the texture the material creation call couldn't, so the object recovers
-      // without needing an unrelated edit (or an `unlit` toggle) to force a rebuild.
-      const newTex = new THREE.CanvasTexture(canvas)
-      newTex.colorSpace = THREE.SRGBColorSpace
-      newTex.wrapS = newTex.wrapT = THREE.ClampToEdgeWrapping
-      mat.map = newTex
-      mat.needsUpdate = true
+  // withFieldFrame owns the begin/end pairing in a try/finally (see its doc in
+  // ~/lib/shaderfill/field.ts) — a throw anywhere in the loop below can no longer leave
+  // the module-global field-frame span stuck open.
+  return withFieldFrame(requests, (frozenCount, token) => {
+    for (let i = 0; i < entries.length; i++) {
+      const canvas = resolveField(requests[i]!, token)
+      if (!canvas) continue                          // keep showing the last good frame
+      const mat = entries[i] as THREE.MeshStandardMaterial | THREE.MeshBasicMaterial
+      const tex = mat.map as THREE.CanvasTexture | null
+      if (tex) {
+        // CRITICAL 2 fix: the common case — a texture already exists (materialFor built it
+        // successfully), just repoint it at the newest canvas in place, per resolveField's
+        // ownership contract (bind directly, never copy).
+        if (tex.image !== canvas) { tex.image = canvas; tex.needsUpdate = true }
+      } else {
+        // materialFor's `tex2 = canvas ? new THREE.CanvasTexture(canvas) : null` raced the
+        // catalog fetch (or a transient WebGL failure) at material-creation time and got
+        // null — `.map` was left null FOREVER, because this branch used to be `if (tex &&
+        // ...)` and silently no-op on a null map. Heal it now that a canvas is available:
+        // create the texture the material creation call couldn't, so the object recovers
+        // without needing an unrelated edit (or an `unlit` toggle) to force a rebuild.
+        const newTex = new THREE.CanvasTexture(canvas)
+        newTex.colorSpace = THREE.SRGBColorSpace
+        newTex.wrapS = newTex.wrapT = THREE.ClampToEdgeWrapping
+        mat.map = newTex
+        mat.needsUpdate = true
+      }
     }
-  }
-  endFieldFrame()   // close the synchronous span beginFieldFrame opened — see its doc
-  return { frozenCount }
+    return { frozenCount }
+  })
 }

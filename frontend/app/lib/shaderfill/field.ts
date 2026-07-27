@@ -137,41 +137,90 @@ function getInputTile(input: ShaderSpec['input'], w: number, h: number): HTMLCan
  * one-shot Shape/Scene3D bake, …) fell back to its input fill FOREVER — nothing
  * ever kicked the fetch, let alone retried it.
  *
- * Fix: every `resolve()` miss kicks `fetchShaderFxCatalog()` itself. Callers that
- * already re-invoke `resolveField` every frame (Space Type's rAF preview, any live
- * loop) self-heal for free the very next frame once the catalog lands — "no
- * ordering dependency anywhere", per the review. Callers that render once and stop
- * (ArtifactFrameNode's static renderStack, a one-shot bake) need an explicit nudge;
- * `onFieldCatalogReady` below is that nudge, for the hosts that have no loop of
- * their own to self-heal in.
- *
- * Deduped to a SINGLE in-flight promise (`_catalogRetry`): `resolve()` runs on
- * every `resolveField`/`beginFieldFrame` call, which for a live field is every
- * host frame, so calling `fetchShaderFxCatalog()` unconditionally would attach a
- * new `.then` per frame and fire every subscriber once per attached `.then` when
- * it finally resolves (fan-out, not a fix). `fetchShaderFxCatalog` itself already
- * dedupes concurrent NETWORK requests (see catalog.ts's `promise`), but this local
- * guard is still needed to dedupe the `.then`/subscriber-notify attachment here.
+ * Fix: every `resolve()` miss kicks `fetchShaderFxCatalog()` itself, bounded by
+ * `CATALOG_RETRY_MAX` attempts with backoff (see `kickCatalogFetch`). Callers that
+ * already re-invoke `resolveField` every frame AND already have a cache entry to
+ * retry against (Space Type/Shape Studio/Scene3D's rAF previews, once a MISS also
+ * registers an entry — see shaderFieldTexture's/materialFor's own docs) self-heal
+ * for free the very next successful frame once the catalog lands — "no ordering
+ * dependency anywhere", per the review. A host with no per-frame loop of its own
+ * (a one-shot bake) needs an explicit `await fetchShaderFxCatalog()` before it
+ * ever builds (see the Space Type/Shape Studio bake call sites), or the
+ * `onFieldCatalogReady` nudge below, for a host that renders once and stops
+ * (e.g. ArtifactFrameNode's static renderStack).
  */
+const CATALOG_RETRY_MAX = 6
+const CATALOG_RETRY_BASE_MS = 500
+const CATALOG_RETRY_MAX_MS = 20000
+
 let _catalogRetry: Promise<void> | null = null
+/**
+ * True once `fetchShaderFxCatalog()` has resolved successfully at least once.
+ * Gates `kickCatalogFetch` so a miss caused by "the effect genuinely isn't in an
+ * ALREADY-loaded catalog" (a renamed effect in a saved project) doesn't keep
+ * re-fetching the same cached, already-resolved promise forever — Important 4 of
+ * the final review: before this flag existed, every such miss (one per live field
+ * per host frame) called `fetchShaderFxCatalog()` again, which returned the SAME
+ * resolved promise (catalog.ts memoizes it), attached a FRESH `.then`, and that
+ * `.then` fired on the next microtask regardless — a request that never actually
+ * re-fetched anything over the network, but did re-notify every
+ * `onFieldCatalogReady` subscriber once per miss instead of once per load (one
+ * extra full repaint of every Frame node per frame, forever). `retryFieldCatalog`
+ * below is the only thing that clears this, for a caller that wants to force a
+ * re-check (an explicit "retry" affordance, or an edit that repoints a fill at a
+ * different effect id) after this module stops trying on its own.
+ */
+let _catalogLoaded = false
+/** Consecutive failed fetch attempts since the last success (or since
+ *  `retryFieldCatalog` last reset it) — bounds the retry storm from a backend
+ *  that's genuinely down (Important 4: without a cap, a live host renders a miss
+ *  every frame, and every miss used to kick a brand new `$fetch`). Capped at
+ *  `CATALOG_RETRY_MAX`; once reached, `kickCatalogFetch` stops trying on its own
+ *  until `retryFieldCatalog()` is called. */
+let _catalogRetryCount = 0
 const _catalogReadySubs = new Set<() => void>()
 
 function kickCatalogFetch(): void {
-  if (_catalogRetry) return
-  try {
-    // fetchShaderFxCatalog uses Nuxt's auto-imported $fetch, which doesn't exist outside a
-    // Nuxt runtime context (e.g. a plain vitest unit test that imports this module directly)
-    // and throws SYNCHRONOUSLY (a ReferenceError, not a rejected promise) in that case.
-    // resolveField/resolve() must never throw — that's the whole point of this module's
-    // graceful fallback — so this guards the call the same way the `.catch` below guards an
-    // async rejection (a genuine fetch failure once $fetch does exist).
-    _catalogRetry = fetchShaderFxCatalog()
-      .then(() => { for (const cb of [..._catalogReadySubs]) cb() })
-      .catch(() => { /* transient failure — the NEXT miss retries, see the `finally` below */ })
-      .finally(() => { _catalogRetry = null })
-  } catch {
-    /* no fetch capability in this environment — every future miss just retries the same way */
-  }
+  // Loaded at least once already: a further miss means the requested effect id
+  // just isn't (or isn't yet) in THAT catalog, not that the fetch itself needs
+  // retrying — re-fetching the same resolved promise can't fix that, and doing it
+  // anyway is Important 4's request-storm/over-notify bug (see `_catalogLoaded`'s
+  // doc). Stop here; `retryFieldCatalog()` is the explicit escape hatch.
+  if (_catalogLoaded) return
+  if (_catalogRetry) return                          // already in flight — dedupe
+  if (_catalogRetryCount >= CATALOG_RETRY_MAX) return // gave up — see retryFieldCatalog
+  const attempt = _catalogRetryCount++
+  const delay = attempt === 0 ? 0 : Math.min(CATALOG_RETRY_MAX_MS, CATALOG_RETRY_BASE_MS * 2 ** (attempt - 1))
+  _catalogRetry = new Promise<void>((resolve) => { setTimeout(resolve, delay) })
+    .then(() => (
+      // fetchShaderFxCatalog uses Nuxt's auto-imported $fetch, which doesn't exist
+      // outside a Nuxt runtime context (e.g. a plain vitest unit test that imports
+      // this module directly) and throws SYNCHRONOUSLY (a ReferenceError, not a
+      // rejected promise) in that case. Calling it from inside this `.then` turns
+      // that synchronous throw into an ordinary rejection the `.catch` below
+      // already handles — resolveField/resolve() must never throw, that's the
+      // whole point of this module's graceful fallback.
+      fetchShaderFxCatalog()
+    ))
+    .then(() => {
+      _catalogLoaded = true
+      _catalogRetryCount = 0
+      for (const cb of [..._catalogReadySubs]) cb()
+    })
+    .catch(() => { /* still failing — the NEXT miss retries with backoff, up to CATALOG_RETRY_MAX */ })
+    .finally(() => { _catalogRetry = null })
+}
+
+/** Explicit escape hatch out of `kickCatalogFetch`'s two stop conditions (already
+ *  loaded once, or gave up after `CATALOG_RETRY_MAX` attempts) — call from a
+ *  manual "retry" affordance, or when an edit repoints a fill at a possibly
+ *  different effect id. Doesn't fetch anything itself; it just re-arms
+ *  `kickCatalogFetch` so the NEXT `resolveField`/`beginFieldFrame`/`withFieldFrame`
+ *  miss (there is always one soon, for any live field still on a fallback) fetches
+ *  again. */
+export function retryFieldCatalog(): void {
+  _catalogLoaded = false
+  _catalogRetryCount = 0
 }
 
 /** Subscribe to be notified once (per successful catalog load) after a `resolveField`
@@ -222,27 +271,54 @@ function resolve(spec: ShaderSpec): { effect: EffectDef | null; spec: ShaderSpec
  *  in the gap, silently reassign `liveKeys` out from under the first host, and freeze
  *  its fields at t=0 — the same failure class `withShaderFillContext` in
  *  ~/lib/spacetype/fills.ts guards for the build-time context, just on the render-time
- *  context instead. Every current caller (fills.ts's `refreshLiveShaderFills`,
- *  materials.ts's `refreshSceneShaderFields`, useCompositorLayers.ts's
- *  `paintLayerStack`) already satisfies this — none of those functions ever await
- *  between this call and their last `resolveField` — and each MUST call
- *  `endFieldFrame()` immediately after its loop so the guard below can detect a
- *  violation instead of failing silently, the way `withShaderFillContext` throws on
- *  re-entry rather than nesting/queueing. */
+ *  context instead.
+ *
+ *  REGRESSION FIX (final review, Item 1): this used to THROW on re-entry. That crashed
+ *  a live render path on entirely legitimate arrangements too — two strictly
+ *  SEQUENTIAL, non-overlapping spans (e.g. the dev bench's several helper functions,
+ *  none of which ever called `endFieldFrame()`) are not a violation, and the throw
+ *  couldn't tell the difference. Worse, `_frameOpen` had NO `try/finally` at any real
+ *  call site, so an unrelated exception mid-span (a broken canvas op, a WebGL hiccup)
+ *  left it stuck true PROCESS-WIDE — every host's next `beginFieldFrame` then threw
+ *  too, and since every rAF-driven preview re-arms itself AFTER the render call, every
+ *  preview loop on the page died permanently (Vue error boundaries don't catch rAF
+ *  callbacks — only a page reload recovered). Fixed by three changes:
+ *   1. `withFieldFrame` below makes the span STRUCTURAL (a `try`/`finally`, exactly
+ *      the shape `withShaderFillContext` already uses) instead of a begin/end PAIR a
+ *      caller can forget to close — every real host and the bench are migrated to it.
+ *      Prefer it for any new call site; `beginFieldFrame`/`endFieldFrame` stay exported
+ *      for anything that genuinely needs manual control, but no longer throw.
+ *   2. The real invariant (a second host's span landing inside this one, reassigning
+ *      `liveKeys` out from under it) is now detected with a TOKEN: `beginFieldFrame`/
+ *      `withFieldFrame` return one, and `resolveField(req, token)` compares it against
+ *      whichever span most recently installed `liveKeys` — a mismatch means exactly
+ *      the interleaving this system exists to catch, caught at the exact call that's
+ *      now wrong, not by crashing an unrelated one.
+ *   3. Neither path throws. A residual violation (which should not happen on any
+ *      migrated host) is a `console.error` in dev only, plus AUTO-RECOVERY — the stale
+ *      span is closed and the call proceeds with whatever the current state is. A
+ *      silent wrong-pixels bug must never become a permanent freeze. */
 let _frameOpen = false
+let _frameToken = 0
+/** The token the CURRENTLY-installed `liveKeys` belongs to. `resolveField` compares a
+ *  caller-supplied token against this to detect the HOST-ISOLATION violation above. */
+let _liveKeysToken = 0
 
-export function beginFieldFrame(requests: FieldRequest[]): { frozenCount: number } {
-  if (_frameOpen) {
-    throw new Error(
-      'beginFieldFrame: re-entered while a previous beginFieldFrame\'s resolveField loop ' +
-      'had not yet called endFieldFrame(). beginFieldFrame and the resolveField calls that ' +
-      'consume its liveKeys MUST run as one synchronous span with no interleaving await — ' +
-      'see this function\'s doc comment. A second host\'s beginFieldFrame landed inside that ' +
-      'span and would otherwise silently reassign liveKeys and freeze the first host\'s ' +
-      'fields at t=0.',
+function openFieldFrame(requests: FieldRequest[]): { frozenCount: number; token: number } {
+  if (_frameOpen && import.meta.dev) {
+    console.error(
+      '[shaderfill] beginFieldFrame/withFieldFrame: re-entered while a previous span was ' +
+      'still open (no matching endFieldFrame()/withFieldFrame return happened first) — ' +
+      'auto-closing the stale span and proceeding rather than throwing. This means two ' +
+      'hosts\' beginFieldFrame/resolveField spans overlapped; see this module\'s ' +
+      'HOST-ISOLATION doc above beginFieldFrame. The FIRST host\'s own subsequent ' +
+      'resolveField(req, token) calls will separately report a token mismatch, at the ' +
+      'exact call site that is now stale.',
     )
   }
   _frameOpen = true
+  _frameToken++
+  const token = _frameToken
   const liveCandidates: string[] = []
   const bakeKeys: string[] = []
   for (const r of requests) {
@@ -253,15 +329,53 @@ export function beginFieldFrame(requests: FieldRequest[]): { frozenCount: number
   }
   const { live, frozen } = planFields(liveCandidates)
   liveKeys = new Set([...live, ...bakeKeys])
-  return { frozenCount: frozen.length }
+  _liveKeysToken = token
+  return { frozenCount: frozen.length, token }
+}
+
+function closeFieldFrame(): void {
+  _frameOpen = false
+}
+
+/** Manual open/close pair — prefer `withFieldFrame` below for any new call site (it
+ *  can't be left unpaired). Kept for callers that need to hold the span open across
+ *  non-trivial control flow `withFieldFrame`'s single callback can't express cleanly.
+ *  Never throws; see the HOST-ISOLATION doc above for what changed and why. */
+export function beginFieldFrame(requests: FieldRequest[]): { frozenCount: number; token: number } {
+  return openFieldFrame(requests)
 }
 
 /** Close the synchronous span `beginFieldFrame` opened — call once, immediately after
- *  the LAST `resolveField` call in this host's per-frame loop. See `beginFieldFrame`'s
- *  host-isolation doc; skipping this call leaves `_frameOpen` stuck true and makes the
- *  NEXT host's `beginFieldFrame` throw even though nothing actually overlapped. */
+ *  the LAST `resolveField` call in this host's per-frame loop, in a `finally` so an
+ *  exception in between still closes it (or better: use `withFieldFrame`, which does
+ *  this for you). */
 export function endFieldFrame(): void {
-  _frameOpen = false
+  closeFieldFrame()
+}
+
+/**
+ * Structural replacement for the `beginFieldFrame`/…/`endFieldFrame` pairing above —
+ * every real host (Space Type/Shape Studio's `refreshLiveShaderFills`, Scene3D's
+ * `refreshSceneShaderFields`, the Compositor's `paintLayerStack`) and the dev bench are
+ * migrated to this. Owns the pairing in a `try`/`finally`, mirroring
+ * `withShaderFillContext` in ~/lib/spacetype/fills.ts: an exception thrown by `fn` (a
+ * broken canvas op, a WebGL hiccup, anything) still closes the span, so `_frameOpen`
+ * can never get stuck true — the regression this whole rewrite fixes (see the
+ * HOST-ISOLATION doc above `beginFieldFrame`).
+ *
+ * `fn` receives the `frozenCount` and a `token` — pass that token into every
+ * `resolveField(req, token)` call made inside `fn` (directly, or via a per-host context
+ * object that carries it, e.g. the Compositor's `_fieldCtx.token`) so a call that runs
+ * AFTER another host's span interleaved (the one case that indicates the invariant
+ * actually broke) is detected AT THAT CALL, not by crashing the render path.
+ */
+export function withFieldFrame<T>(requests: FieldRequest[], fn: (frozenCount: number, token: number) => T): T {
+  const { frozenCount, token } = openFieldFrame(requests)
+  try {
+    return fn(frozenCount, token)
+  } finally {
+    closeFieldFrame()
+  }
 }
 
 /**
@@ -302,8 +416,25 @@ export function endFieldFrame(): void {
  *    showing a DIFFERENT descriptor's pixels the moment the recycled canvas got
  *    reused, silently. Do not reintroduce pooling without re-solving that hazard;
  *    see the Task 3 report for the full history.
+ *
+ * `token`, when passed, is the token `beginFieldFrame`/`withFieldFrame` returned for
+ * the span this call believes it's still inside. A mismatch against the CURRENTLY
+ * installed `liveKeys`' token means a different host's span landed in between (the
+ * HOST-ISOLATION violation documented above `beginFieldFrame`) — logged as a dev-only
+ * `console.error` at the exact call site that's now stale, never thrown. Omit it (as
+ * every pre-migration/ad-hoc caller does, e.g. a single build-time resolve outside any
+ * span) to skip the check entirely and just read whatever `liveKeys` currently holds.
  */
-export function resolveField(req: FieldRequest): HTMLCanvasElement | null {
+export function resolveField(req: FieldRequest, token?: number): HTMLCanvasElement | null {
+  if (token !== undefined && token !== _liveKeysToken && import.meta.dev) {
+    console.error(
+      `[shaderfill] resolveField: called with token ${token}, but the currently-live span ` +
+      `belongs to token ${_liveKeysToken} — this call landed after a DIFFERENT host's ` +
+      'beginFieldFrame/withFieldFrame reassigned liveKeys out from under it (see the ' +
+      'HOST-ISOLATION doc above beginFieldFrame). Falling back to the CURRENT liveKeys ' +
+      'rather than crashing — this field may render frozen at t=0 for this call.',
+    )
+  }
   const { w, h } = fieldSize(req)
   const { effect, spec } = resolve(req.spec)
   const tq = quantizeTime(req.t, req.fps)
@@ -363,10 +494,15 @@ export function clearFieldCache(): void {
   tileCache.clear()
   liveKeys = new Set()
   stats = { renders: 0, hits: 0, misses: 0, tileHits: 0, tileMisses: 0 }
-  // Test isolation: without this, a test that throws/returns before its matching
-  // endFieldFrame() (or simply doesn't model a full host loop) would leave a
-  // stuck `_frameOpen = true` that fails the NEXT test's first beginFieldFrame
-  // for a reason that has nothing to do with that test.
+  // Test isolation: a test that throws/returns before its matching endFieldFrame()
+  // (or simply doesn't model a full host loop) would otherwise leave a stuck
+  // `_frameOpen = true` that pollutes the NEXT test's first beginFieldFrame/
+  // withFieldFrame call with a spurious dev console.error for a reason that has
+  // nothing to do with that test. (No longer a THROW since the Item 1 fix — but
+  // still worth resetting cleanly.) Deliberately does NOT reset the catalog-retry
+  // state (`_catalogLoaded`/`_catalogRetryCount`) — that tracks real fetch progress,
+  // not per-test/per-measurement cache state, and callers like the bench's own
+  // sweep call this between blocks without wanting to re-trigger a fetch storm.
   _frameOpen = false
 }
 

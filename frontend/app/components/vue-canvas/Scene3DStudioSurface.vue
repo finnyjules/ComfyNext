@@ -1164,7 +1164,11 @@ async function bake(): Promise<void> {
   if (wasLightView) engine?.setLightView(false)
   try {
     try {
-      const passes = await renderPasses(engine, doc)
+      // Item 5 (final review): pass the SAME live elapsed-seconds value the rAF loop
+      // above feeds `engine.refreshShaderFields` (`(performance.now() - scene3dMountedAt)
+      // / 1000`), so a still export bakes a shaderFill field at whatever moment the live
+      // view was actually showing, not always frozen at its very first frame (t=0).
+      const passes = await renderPasses(engine, doc, (performance.now() - scene3dMountedAt) / 1000)
       // Upload all three passes BEFORE touching any widget so a mid-bake failure
       // never leaves a mismatched pass set (e.g. fresh beauty + stale depth).
       const [beauty, depth, normal] = await Promise.all([

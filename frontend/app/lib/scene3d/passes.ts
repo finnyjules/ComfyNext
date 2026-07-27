@@ -51,8 +51,19 @@ const depthMaterial = () => new THREE.ShaderMaterial({
     }`,
 })
 
-export async function renderPasses(engine: SceneEngine, doc: SceneDoc):
-  Promise<{ beauty: string; depth: string; normal: string }> {
+export async function renderPasses(
+  engine: SceneEngine, doc: SceneDoc,
+  /** Real elapsed seconds to advance a shaderFill field's OWN animation clock to before
+   *  baking (Item 5, final review — residual Important) — independent of `doc.motion`'s
+   *  object-motion playhead, matching `SceneEngine.refreshShaderFields`'s doc ("Scene3D's
+   *  own doc.motion/playhead governs OBJECT motion, not a shaderFill's animation
+   *  clock"). Defaults to 0 for any caller that doesn't have (or doesn't care about) a
+   *  live clock; every real caller passes its own live elapsed-seconds value (the same
+   *  one its rAF loop already feeds `engine.refreshShaderFields`), so a still export
+   *  matches exactly what the live view was showing at export time instead of always
+   *  baking the field frozen at its very first frame. */
+  t = 0,
+): Promise<{ beauty: string; depth: string; normal: string }> {
   const { width, height } = doc.output
   // Bake with the SAME renderer the viewport uses, so the beauty inherits its
   // exact tone mapping / colour space and matches the modal 1:1. (A separate
@@ -97,8 +108,11 @@ export async function renderPasses(engine: SceneEngine, doc: SceneDoc):
     // SHADER_FIELD_PX=512) is the only thing that ever populated it, so an export always
     // rendered a stale/undersized field regardless of `doc.motion`'s playhead. Bake it fresh,
     // unclamped, at the real output resolution — matches Space Type/Shape Studio's bake path
-    // (same function, different resolution, per field.ts's own doc).
-    engine.refreshShaderFields(0, true, width, height)
+    // (same function, different resolution, per field.ts's own doc). Residual fix (Item 5):
+    // this originally still hardcoded `t: 0` here, so a still export at a non-zero playhead
+    // baked the field at its very first frame regardless — `t` (now threaded through from
+    // the caller's own live clock) fixes that too.
+    engine.refreshShaderFields(t, true, width, height)
     engine.renderWithPost(scene, camera, doc.post)
     const beauty = canvas.toDataURL('image/png')
 

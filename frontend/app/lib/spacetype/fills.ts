@@ -1,7 +1,7 @@
 import * as THREE from 'three'
-import { type Fill, type ShaderSpec, hexBytes, patternImageData, ombrePicker, fillIsShader, effectiveTileFill } from './fillTile'
+import { type Fill, type ShaderSpec, hexBytes, patternImageData, ombrePicker, fillIsShader, effectiveTileFill, fillTileBox } from './fillTile'
 import { parseHexA, stripAlpha } from '~/lib/color/convert'
-import { resolveField, beginFieldFrame, endFieldFrame, type FieldRequest } from '~/lib/shaderfill/field'
+import { resolveField, withFieldFrame, type FieldRequest } from '~/lib/shaderfill/field'
 import { specIdentityKey, resolveEffectParams } from '~/lib/shaderfill/descriptor'
 import { getEffectSync } from '~/lib/shaderfx/catalog'
 
@@ -184,7 +184,27 @@ const _shaderFieldCache = new Map<string, LiveShaderFillEntry>()
  *  identical — would key as two different cache entries, and insertion order would make the
  *  key unstable. When the effect isn't in the catalog yet, `resolveField` will itself return
  *  null below (same "not loaded" gate), so keying on the raw spec in that narrow window never
- *  produces a wrongly-deduplicated entry — it just never reaches the cache-insert line. */
+ *  produces a wrongly-deduplicated entry — it just never reaches the cache-insert line.
+ *
+ *  CRITICAL fix (final review, residual Item 2): a `resolveField` MISS used to return the
+ *  input fill's texture directly and insert NOTHING into `_shaderFieldCache` — but
+ *  `refreshLiveShaderFills` below only ever iterates EXISTING entries, so a miss with no
+ *  entry could never be found and healed by a later frame; only a fresh
+ *  `withShaderFillContext` build (a full rebuild, not the per-frame preview loop) could
+ *  retry, and Space Type/Shape Studio's node cards only rebuild on mount + a debounced
+ *  config change. A hard-reload racing the catalog fetch is therefore a GUARANTEED miss on
+ *  first build, and it fell back to the input fill FOREVER even though the rAF preview kept
+ *  calling `refreshLiveShaderFills` every frame — there was simply no cache entry there for
+ *  it to retry. Fixed by ALWAYS registering an entry, hit or miss, mirroring how
+ *  `materialFor` in ~/lib/scene3d/materials.ts always adds its material to
+ *  `shaderFillMaterials` regardless of whether its `.map` build succeeded. The texture must
+ *  be a DEDICATED (never shared) `CanvasTexture` — reusing a fallback texture pooled in
+ *  `_cache`/`_shaderCache` below would mean a later `refreshLiveShaderFills` swap of `.image`
+ *  silently corrupts every OTHER, unrelated fill still displaying that same pooled texture.
+ *  Seeded with the rasterised input tile on a miss (identical pixels to the old fallback, so
+ *  the very first frame looks the same either way) — the difference is this entry now
+ *  EXISTS, so the owning engine's next per-frame refresh can swap it to the real field the
+ *  moment `resolveField` succeeds (itself kicked by field.ts's own `kickCatalogFetch`). */
 function shaderFieldTexture(three: typeof THREE, spec: ShaderSpec): THREE.Texture {
   const ctx = _activeContext
   const effect = getEffectSync(spec.effectId)
@@ -194,12 +214,8 @@ function shaderFieldTexture(three: typeof THREE, spec: ShaderSpec): THREE.Textur
   if (hit) return hit.tex
 
   const canvas = resolveField({ spec, w: ctx.w, h: ctx.h, t: 0, fps: 30, bake: ctx.bake })
-  if (!canvas) {
-    const inputFill = effectiveTileFill({ type: 'shader', a: '#ffffff', b: '#000000', textColor: '#ffffff', angle: 45, density: 8, shader: spec })
-    return fillTexture(three, inputFill) ?? fillShaderTexture(three, inputFill)
-  }
-
-  const tex = new three.CanvasTexture(canvas)
+  const initial = canvas ?? fillTileBox(effectiveTileFill(spec.input), ctx.w, ctx.h)
+  const tex = new three.CanvasTexture(initial)
   tex.wrapS = tex.wrapT = three.ClampToEdgeWrapping
   tex.colorSpace = three.SRGBColorSpace
   tex.needsUpdate = true
@@ -230,18 +246,21 @@ export function refreshLiveShaderFills(ownerId: string, t: number, fps: number, 
   for (const e of _shaderFieldCache.values()) if (e.ownerId === ownerId) entries.push(e)
   if (entries.length === 0) return { frozenCount: 0 }
   const requests: FieldRequest[] = entries.map(e => ({ spec: e.spec, w, h, t, fps, bake }))
-  const { frozenCount } = beginFieldFrame(requests)
-  for (let i = 0; i < entries.length; i++) {
-    const canvas = resolveField(requests[i]!)
-    if (!canvas) continue                          // keep showing the last good frame
-    const entry = entries[i]!
-    if (entry.tex.image !== canvas) {
-      entry.tex.image = canvas
-      entry.tex.needsUpdate = true
+  // withFieldFrame owns the begin/end pairing in a try/finally (see its doc in
+  // ~/lib/shaderfill/field.ts) — a throw anywhere in the loop below can no longer leave
+  // the module-global field-frame span stuck open.
+  return withFieldFrame(requests, (frozenCount, token) => {
+    for (let i = 0; i < entries.length; i++) {
+      const canvas = resolveField(requests[i]!, token)
+      if (!canvas) continue                          // keep showing the last good frame
+      const entry = entries[i]!
+      if (entry.tex.image !== canvas) {
+        entry.tex.image = canvas
+        entry.tex.needsUpdate = true
+      }
     }
-  }
-  endFieldFrame()   // close the synchronous span beginFieldFrame opened — see its doc
-  return { frozenCount }
+    return { frozenCount }
+  })
 }
 
 /** Drop every shader-fill texture owned by `ownerId`, disposing its GPU texture. Call when

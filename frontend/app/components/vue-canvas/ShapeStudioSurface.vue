@@ -10,6 +10,7 @@ import { ref, reactive, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { Dices, Lock, Unlock } from 'lucide-vue-next'
 import { ShapeEngine } from '~/lib/shapefx/engine'
 import { configHasShaderFill } from '~/lib/shapefx/surface'
+import { fetchShaderFxCatalog } from '~/lib/shaderfx/catalog'
 import { LIVE_FIELD_CEILING } from '~/lib/shaderfill/descriptor'
 import { DEFAULT_CONFIG, mergeConfig, type ShapeConfig } from '~/lib/shapefx/config'
 import { reroll } from '~/lib/shapefx/randomize'
@@ -393,6 +394,14 @@ async function renderBlobWithOverrides(overrides: Record<string, string | number
   for (const key of keys) snapshot.set(key, paramsProxy[key] as string | number | undefined)
   let offEngine: ShapeEngine | null = null
   try {
+    // Item 2 fix (final review, residual Critical): this builds a THROWAWAY offscreen
+    // engine and renders exactly once per Collection sweep row — unlike the persistent
+    // live-preview `engine` (which self-heals over subsequent rAF frames once field.ts's
+    // own catalog fetch lands), a one-shot bake gets no second chance. Awaiting the
+    // catalog before building guarantees a shader-fill effect is resolvable before
+    // setConfig ever runs, instead of silently baking (and uploading) the input-fill
+    // fallback with no retry.
+    await fetchShaderFxCatalog().catch(() => { /* offline/backend down — proceeds and falls back same as before */ })
     for (const key of keys) paramsProxy[key] = overrides[key]!
     const w = canvasW.value, h = canvasH.value
     offEngine = new ShapeEngine(document.createElement('canvas'), w, h)

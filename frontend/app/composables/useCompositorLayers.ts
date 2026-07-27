@@ -27,7 +27,7 @@ import type { FrameMotion } from '~/lib/motion/types'
 import { axesToVariationSettings } from '~/lib/motion/axes'
 import { expandClones, type Cloner } from '~/composables/useCloner'
 import { type Fill, type ShaderSpec, fillTileBox, fillIsShader } from '~/lib/spacetype/fillTile'
-import { resolveField, beginFieldFrame, endFieldFrame, type FieldRequest } from '~/lib/shaderfill/field'
+import { resolveField, withFieldFrame, type FieldRequest } from '~/lib/shaderfill/field'
 import { drawQuadWarp, type Quad } from '~/lib/compositor/warp'
 import { polygonPathData, starPathData } from '~/lib/compositor/polygonGeometry'
 import { resolveGroupCascade, type LayerGroup } from '~/lib/compositor/layerGroups'
@@ -612,15 +612,15 @@ function fillTileCached(fill: Fill, tw: number, th: number): HTMLCanvasElement {
 }
 
 // ── Shader fills on frame primitives (Task 6) ────────────────────────────────────
-// The Compositor is its OWN shader-fill host: `beginFieldFrame`'s live-field ceiling
+// The Compositor is its OWN shader-fill host: `withFieldFrame`'s live-field ceiling
 // (see ~/lib/shaderfill/field.ts) and the frozen-field count it returns must be this
 // frame's own, never pooled with an open Space Type/Shape Studio node — those are a
 // DIFFERENT host with their own per-owner call in ~/lib/spacetype/fills.ts's
 // refreshLiveShaderFills (Task 4's `withShaderFillContext` scheme). `paintLayerStack`
-// (below) is the ONE place that calls `beginFieldFrame`, once per synchronous pass,
+// (below) is the ONE place that calls `withFieldFrame`, once per synchronous pass,
 // with every shader fill this frame's own layers + background actually carry — so as
-// long as it never awaits mid-pass (it doesn't), no other host's beginFieldFrame call
-// can land between it and the resolveField calls that consume its `liveKeys`.
+// long as it never awaits mid-pass (it doesn't), no other host's span can land
+// between it and the resolveField calls that consume its `liveKeys`.
 //
 // `_fieldCtx.base` is "the ctx transform in effect BEFORE the current primitive's own
 // local placement (translate/rotate/shear/scale) was applied" — i.e. the frame's own
@@ -633,8 +633,17 @@ function fillTileCached(fill: Fill, tw: number, th: number): HTMLCanvasElement {
 // exactly the part contributed by the shape's own position/rotation, leaving every
 // primitive sampling the SAME field at the SAME frame-space location regardless of
 // where the shape sits — the field stays put; the shape moves over it.
-interface ShaderFieldFrameCtx { frameW: number; frameH: number; t: number; fps: number; base: DOMMatrix | null; bake: boolean }
-let _fieldCtx: ShaderFieldFrameCtx = { frameW: 1, frameH: 1, t: 0, fps: 30, base: null, bake: false }
+interface ShaderFieldFrameCtx {
+  frameW: number; frameH: number; t: number; fps: number; base: DOMMatrix | null; bake: boolean
+  /** The `withFieldFrame` token for the span currently open — see `resolveField`'s doc in
+   *  ~/lib/shaderfill/field.ts. Set once per `paintLayerStack` call, right after
+   *  `withFieldFrame` opens its span; `resolveShaderFill` (called deep inside the per-item
+   *  draw loop, not at the `withFieldFrame` call site itself) reads it from here to pass
+   *  into every `resolveField` call, the same way it already reads `t`/`fps`/`bake` from
+   *  this struct rather than threading them as parameters through every intermediate call. */
+  token: number
+}
+let _fieldCtx: ShaderFieldFrameCtx = { frameW: 1, frameH: 1, t: 0, fps: 30, base: null, bake: false, token: 0 }
 
 /** Object-anchor shader fields render at ONE fixed resolution and get STRETCHED into
  *  each shape's own box by the pattern's scale transform below — the same semantics as
@@ -665,7 +674,7 @@ function resolveShaderFill(
   const bw = Math.max(box.w, 1e-3), bh = Math.max(box.h, 1e-3)
   const fw = frame ? Math.max(1, Math.round(_fieldCtx.frameW)) : OBJECT_SHADER_FIELD_PX
   const fh = frame ? Math.max(1, Math.round(_fieldCtx.frameH)) : OBJECT_SHADER_FIELD_PX
-  const canvas = resolveField({ spec, w: fw, h: fh, t: _fieldCtx.t, fps: _fieldCtx.fps, bake: _fieldCtx.bake })
+  const canvas = resolveField({ spec, w: fw, h: fh, t: _fieldCtx.t, fps: _fieldCtx.fps, bake: _fieldCtx.bake }, _fieldCtx.token)
   if (!canvas) return resolveFill(ctx, spec.input, box)   // graceful: the shader's own input fill
   const pat = ctx.createPattern(canvas, 'no-repeat')
   if (!pat) return fill.a
@@ -1564,114 +1573,119 @@ export function paintLayerStack(
   _fieldCtx = {
     frameW: W, frameH: H, t: fieldT, fps: fieldFps,
     base: typeof ctx.getTransform === 'function' ? ctx.getTransform() : null,
-    bake,
+    bake, token: 0,
   }
-  // Task 6: one beginFieldFrame call per rendered frame, scoped to exactly the shader
-  // fills THIS document's layers/background carry this pass — see the doc above
-  // resolveShaderFill for why this is the Compositor's own host boundary. Must run
-  // (and finish) before any drawing below, in the same synchronous call — paintLayerStack
-  // never awaits, so no other host's beginFieldFrame can land in between.
+  // Task 6 / Item 1 (final review): one `withFieldFrame` call per rendered frame, scoped
+  // to exactly the shader fills THIS document's layers/background carry this pass — see
+  // the doc above resolveShaderFill for why this is the Compositor's own host boundary.
+  // `withFieldFrame` owns the begin/end pairing in a try/finally (see its doc in
+  // ~/lib/shaderfill/field.ts), so an exception anywhere in the drawing loop below (a
+  // broken canvas op, a WebGL hiccup) can no longer leave the module-global field-frame
+  // span stuck open and freeze every OTHER host's next frame. paintLayerStack never
+  // awaits, so no other host's span can land inside this one either way.
   const shaderRequests: FieldRequest[] = []
   for (const it of items) {
     if (it.type !== 'local') continue
     for (const p of layerPaints(it.layer)) addShaderFieldRequest(shaderRequests, p, W, H, fieldT, fieldFps, bake)
   }
   addShaderFieldRequest(shaderRequests, background, W, H, fieldT, fieldFps, bake)
-  const { frozenCount } = beginFieldFrame(shaderRequests)
 
-  // Background fill — the bottom-most thing in the frame, baked into output.
-  if (hasPaint(background)) {
-    ctx.save()
-    _fieldCtx = { ..._fieldCtx, base: ctx.getTransform() } // frame base, before the center translate below
-    ctx.translate(W / 2, H / 2) // center so gradient/pattern geometry spans the canvas
-    ctx.fillStyle = resolvePaint(ctx, background!, { w: W, h: H })
-    ctx.fillRect(-W / 2, -H / 2, W, H)
-    ctx.restore()
-  }
+  return withFieldFrame(shaderRequests, (frozenCount, token) => {
+    _fieldCtx.token = token   // resolveShaderFill reads this to pass into every resolveField call
 
-  const byKey = new Map(items.map(it => [it.key, it]))
-  // Resolve every item's mask reference (local → layerMaskRef; wired → treatments).
-  const maskRefOf = (it: StackItem): string | undefined =>
-    it.type === 'local' ? layerMaskRef(it.layer) : wiredTreatments?.[it.key]?.maskedByKey
-  // Whether an item requests that its mask source remains visible at its own z-position.
-  const showSourceOf = (it: StackItem): boolean =>
-    it.type === 'local' ? !!it.layer.maskShowSource : !!wiredTreatments?.[it.key]?.showSource
-  // Keys used as a mask source by someone → those items only clip, never self-paint
-  // (unless the masked item sets showSource, in which case the source also renders normally).
-  const maskSourceKeys = new Set<string>()
-  const keepVisibleKeys = new Set<string>()
-  for (const it of items) {
-    const r = maskRefOf(it)
-    if (r) {
-      maskSourceKeys.add(r)
-      if (showSourceOf(it)) keepVisibleKeys.add(r)
-    }
-  }
-
-  for (const item of items) {
-    if (maskSourceKeys.has(item.key) && !keepVisibleKeys.has(item.key)) continue
-
-    if (item.type === 'wired') {
-      const ref = maskRefOf(item)
-      const maskItem = ref ? byKey.get(ref) ?? null : null
-      if (maskItem) { drawItemMasked(ctx, item, maskItem, W, H, 'source-over'); continue }
-      item.draw(ctx, W, H)
-      continue
+    // Background fill — the bottom-most thing in the frame, baked into output.
+    if (hasPaint(background)) {
+      ctx.save()
+      _fieldCtx = { ..._fieldCtx, base: ctx.getTransform() } // frame base, before the center translate below
+      ctx.translate(W / 2, H / 2) // center so gradient/pattern geometry spans the canvas
+      ctx.fillStyle = resolvePaint(ctx, background!, { w: W, h: H })
+      ctx.fillRect(-W / 2, -H / 2, W, H)
+      ctx.restore()
     }
 
-    const layer = item.layer
-    // Nested-group cascade (Task 1): absent `groups` ⇒ gc stays null ⇒ opacityMul
-    // defaults to 1 everywhere below, byte-identical to pre-cascade behavior.
-    const gc = groups ? resolveGroupCascade(layer.groupId, groups) : null
-    if (layerHidden(layer) || gc?.hidden) continue
-    if (skip?.(layer)) continue
-    const opacityMul = gc ? gc.opacity : 1
-
-    const ref = layerMaskRef(layer)
-    const maskItem = ref ? byKey.get(ref) ?? null : null
-    const motionActive = t !== undefined && motion && _motionPainterImpl
-      && (layer.animation || (maskItem?.type === 'local' && maskItem.layer.animation))
-    if (motionActive) {
-      const { motionStateFor, drawLayerWithMotion, identityState } = _motionPainterImpl!
-      const st = layer.animation ? motionStateFor(layer, t!, motion!) : identityState()
-      if (st) {
-        if (!st.visible) continue
-        // Phase-1 limitation: the motion path only carries a LOCAL mask. An
-        // animated local layer masked by a WIRED silhouette renders unmasked for
-        // that frame (the static path below handles wired-masks-local correctly).
-        const maskLocal = maskItem?.type === 'local' ? maskItem.layer : null
-        const maskState = maskLocal?.animation ? motionStateFor(maskLocal, t!, motion!) : null
-        if (maskState && !maskState.visible) continue
-        const bgBlur = layer.effects?.find(
-          (e): e is BackgroundBlurEffect => e.type === 'background_blur' && e.visible,
-        )
-        if (bgBlur) applyBackdropBlur(ctx, layer, localLayers, W, H, bgBlur.radius)
-        // Group-cascade limitation (Task 3, mirrors the mask limitation above): the
-        // motion path composes its own effective layer in lib/motion/paint.ts and
-        // doesn't thread an opacityMul through, so an animated layer's group cascade
-        // opacity isn't applied for that frame. Visibility (gc.hidden) IS honored via
-        // the `continue` above. Static (non-animated) layers are unaffected.
-        drawLayerWithMotion(ctx, layer, W, H, maskLocal, st, maskState)
-        continue
+    const byKey = new Map(items.map(it => [it.key, it]))
+    // Resolve every item's mask reference (local → layerMaskRef; wired → treatments).
+    const maskRefOf = (it: StackItem): string | undefined =>
+      it.type === 'local' ? layerMaskRef(it.layer) : wiredTreatments?.[it.key]?.maskedByKey
+    // Whether an item requests that its mask source remains visible at its own z-position.
+    const showSourceOf = (it: StackItem): boolean =>
+      it.type === 'local' ? !!it.layer.maskShowSource : !!wiredTreatments?.[it.key]?.showSource
+    // Keys used as a mask source by someone → those items only clip, never self-paint
+    // (unless the masked item sets showSource, in which case the source also renders normally).
+    const maskSourceKeys = new Set<string>()
+    const keepVisibleKeys = new Set<string>()
+    for (const it of items) {
+      const r = maskRefOf(it)
+      if (r) {
+        maskSourceKeys.add(r)
+        if (showSourceOf(it)) keepVisibleKeys.add(r)
       }
     }
-    const bgBlur = layer.effects?.find(
-      (e): e is BackgroundBlurEffect => e.type === 'background_blur' && e.visible,
-    )
-    if (bgBlur) applyBackdropBlur(ctx, layer, localLayers, W, H, bgBlur.radius)
 
-    if (maskItem && maskItem.type !== 'local') {
-      // Wired silhouette masking a local layer → generic cross-source path.
-      drawItemMasked(ctx, item, maskItem, W, H, localBlendOp(layer), opacityMul)
-    } else {
-      // Local content + local mask (or no mask) → unchanged fast path.
-      drawLocalLayer(ctx, layer, W, H, maskItem?.type === 'local' ? maskItem.layer : null, opacityMul)
+    for (const item of items) {
+      if (maskSourceKeys.has(item.key) && !keepVisibleKeys.has(item.key)) continue
+
+      if (item.type === 'wired') {
+        const ref = maskRefOf(item)
+        const maskItem = ref ? byKey.get(ref) ?? null : null
+        if (maskItem) { drawItemMasked(ctx, item, maskItem, W, H, 'source-over'); continue }
+        item.draw(ctx, W, H)
+        continue
+      }
+
+      const layer = item.layer
+      // Nested-group cascade (Task 1): absent `groups` ⇒ gc stays null ⇒ opacityMul
+      // defaults to 1 everywhere below, byte-identical to pre-cascade behavior.
+      const gc = groups ? resolveGroupCascade(layer.groupId, groups) : null
+      if (layerHidden(layer) || gc?.hidden) continue
+      if (skip?.(layer)) continue
+      const opacityMul = gc ? gc.opacity : 1
+
+      const ref = layerMaskRef(layer)
+      const maskItem = ref ? byKey.get(ref) ?? null : null
+      const motionActive = t !== undefined && motion && _motionPainterImpl
+        && (layer.animation || (maskItem?.type === 'local' && maskItem.layer.animation))
+      if (motionActive) {
+        const { motionStateFor, drawLayerWithMotion, identityState } = _motionPainterImpl!
+        const st = layer.animation ? motionStateFor(layer, t!, motion!) : identityState()
+        if (st) {
+          if (!st.visible) continue
+          // Phase-1 limitation: the motion path only carries a LOCAL mask. An
+          // animated local layer masked by a WIRED silhouette renders unmasked for
+          // that frame (the static path below handles wired-masks-local correctly).
+          const maskLocal = maskItem?.type === 'local' ? maskItem.layer : null
+          const maskState = maskLocal?.animation ? motionStateFor(maskLocal, t!, motion!) : null
+          if (maskState && !maskState.visible) continue
+          const bgBlur = layer.effects?.find(
+            (e): e is BackgroundBlurEffect => e.type === 'background_blur' && e.visible,
+          )
+          if (bgBlur) applyBackdropBlur(ctx, layer, localLayers, W, H, bgBlur.radius)
+          // Group-cascade limitation (Task 3, mirrors the mask limitation above): the
+          // motion path composes its own effective layer in lib/motion/paint.ts and
+          // doesn't thread an opacityMul through, so an animated layer's group cascade
+          // opacity isn't applied for that frame. Visibility (gc.hidden) IS honored via
+          // the `continue` above. Static (non-animated) layers are unaffected.
+          drawLayerWithMotion(ctx, layer, W, H, maskLocal, st, maskState)
+          continue
+        }
+      }
+      const bgBlur = layer.effects?.find(
+        (e): e is BackgroundBlurEffect => e.type === 'background_blur' && e.visible,
+      )
+      if (bgBlur) applyBackdropBlur(ctx, layer, localLayers, W, H, bgBlur.radius)
+
+      if (maskItem && maskItem.type !== 'local') {
+        // Wired silhouette masking a local layer → generic cross-source path.
+        drawItemMasked(ctx, item, maskItem, W, H, localBlendOp(layer), opacityMul)
+      } else {
+        // Local content + local mask (or no mask) → unchanged fast path.
+        drawLocalLayer(ctx, layer, W, H, maskItem?.type === 'local' ? maskItem.layer : null, opacityMul)
+      }
     }
-  }
 
-  if (post && chainActive(post)) applyStackPost(ctx, post, W)
-  endFieldFrame()   // close the synchronous span beginFieldFrame opened — see its doc
-  return { frozenCount }
+    if (post && chainActive(post)) applyStackPost(ctx, post, W)
+    return { frozenCount }
+  })
 }
 
 /**
