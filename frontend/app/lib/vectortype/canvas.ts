@@ -47,7 +47,13 @@ import {
   type VtGlyphClip,
   type VtGlyphMotion,
 } from './presetMotion'
-import { glyphTransform as glyphPlacement, outlinesToPath2D, outlinesToSVG } from './render'
+import {
+  blurRadiusToStdDeviation,
+  glyphCellClipRect,
+  glyphTransform as glyphPlacement,
+  outlinesToPath2D,
+  outlinesToSVG,
+} from './render'
 
 /** One frame's worth of resolved geometry: what to draw and how each glyph moves. */
 export interface VtFrame {
@@ -75,19 +81,6 @@ export interface VtFrame {
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v)
 
-/**
- * Where the baseline sits inside the glyph's CELL BOX, as a fraction of the em.
- *
- * The cell box is one em tall, not the font's line box, and that is a deliberate
- * choice: `clip.amount` is a FRACTION of the animated unit's box, and this
- * studio's unit box is the em — it is what `presetMotion` multiplies `dx`, `dy`
- * and `blur` by (`size` = em height in output px, CSS `font-size` semantics).
- * Measuring the mask against a font-metric line box instead would silently make
- * a mask reveal refer to a different unit than the offsets do, which is trap 1
- * wearing a different hat. 0.8/0.2 is the conventional CSS-ish split.
- */
-const CELL_DESCENT = 0.2
-
 /** Non-zero, sign-preserving: a scale factor of exactly 0 makes the CTM
  *  singular and Chrome then drops the drawing op entirely. The card-flip presets
  *  drive `scaleX`/`scaleY` to their own 0.001 floor; this is the renderer's own
@@ -106,11 +99,10 @@ const nonZero = (v: number): number =>
  * window along with the letter — every frame still shows a plausibly masked
  * glyph, so a thumbnail cannot tell the two apart, and the reveal is gone.
  *
- * Only the axis the mask moves on is measured against the cell box; the
- * perpendicular axis is padded by an em so a descender's tail or an italic
- * overhang is not sliced off by the sides of the window. The masked axis is NOT
- * padded — `amount === 1` has to leave a zero-extent window, or an entrance
- * would begin with the bottom of a 'g' already showing.
+ * WHERE the window is, is `glyphCellClipRect`'s answer and not this function's:
+ * the SVG export needs the identical rect for its `<clipPath>`, and a second
+ * copy of the cell-box arithmetic is exactly the drift this file exists to
+ * prevent. This is only the two `ctx` calls that turn that rect into a clip.
  */
 function clipGlyphCell(
   ctx: CanvasRenderingContext2D,
@@ -121,28 +113,11 @@ function clipGlyphCell(
   em: number,
   clip: VtGlyphClip,
 ): void {
-  const a = clamp01(clip.amount)
-  const x0 = origin.x
-  const x1 = origin.x + advance
-  // The origin is the glyph's placed BASELINE, and the cell hangs around it.
-  const y1 = origin.y + em * CELL_DESCENT
-  const y0 = y1 - em
-
-  let bx0 = x0, bx1 = x1, by0 = y0, by1 = y1
-  if (clip.side === 'top' || clip.side === 'bottom') {
-    bx0 -= em; bx1 += em
-    if (clip.side === 'top') by0 = y0 + em * a
-    else by1 = y1 - em * a
-  } else {
-    by0 -= em; by1 += em
-    if (clip.side === 'left') bx0 = x0 + advance * a
-    else bx1 = x1 - advance * a
-  }
-
+  const r = glyphCellClipRect(origin, advance, em, clip)
   // `beginPath` is safe here: this renderer draws `Path2D` objects and never
   // uses the context's own current path.
   ctx.beginPath()
-  ctx.rect(bx0, by0, Math.max(0, bx1 - bx0), Math.max(0, by1 - by0))
+  ctx.rect(r.x, r.y, r.width, r.height)
   ctx.clip()
 }
 
@@ -539,6 +514,9 @@ export function vectorTypeSVG(
   const W = Math.max(1, opts.width)
   const H = Math.max(1, opts.height)
   const stroked = Number.isFinite(strokeWidth) && strokeWidth > 0
+  // The em in output pixels, from the PLACEMENT — same line as `drawVectorType`,
+  // so the cell box a mask is measured against cannot drift between the two.
+  const em = place.scale * (frame.outlines.unitsPerEm || 1000)
 
   const svg = outlinesToSVG(frame.outlines, {
     ...place,
@@ -550,6 +528,20 @@ export function vectorTypeSVG(
     strokeWidth: stroked ? strokeWidth : undefined,
     fillRule: 'nonzero',
     opacity: (_g, i) => clamp01((frame.transforms[i] ?? IDENTITY_GLYPH_MOTION).opacity),
+    // BLUR. `stdDeviation` is in USER UNITS and the viewBox below is 1:1 with
+    // the rendered size, so it is the same number of output pixels the canvas
+    // blurs by — the canvas multiplies by `pixelRatio` because ITS radius is in
+    // device pixels and ignores the CTM; an SVG has no device-pixel step to
+    // compensate for. No factor of two: see `blurRadiusToStdDeviation`.
+    blur: (_g, i) => blurRadiusToStdDeviation((frame.transforms[i] ?? IDENTITY_GLYPH_MOTION).blur),
+    // CLIP. Identical rect to the canvas's — literally the same function — and
+    // it lands on a wrapper `<g>` with no transform, so the glyph's own
+    // `transform` slides it THROUGH a stationary window.
+    clip: (glyph, i) => {
+      const tr = frame.transforms[i] ?? IDENTITY_GLYPH_MOTION
+      if (!tr.clip || tr.clip.amount <= 0.001) return null
+      return glyphCellClipRect(glyphPlacement(glyph, place), glyph.advance * place.scale, em, tr.clip)
+    },
     attrs: (glyph, i) => {
       const tr = frame.transforms[i] ?? IDENTITY_GLYPH_MOTION
       const transform = glyphSvgTransform(glyphPlacement(glyph, place), tr, precision)

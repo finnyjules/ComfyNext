@@ -19,14 +19,14 @@
  * flat-shaded facets to polygons and call `shapesToSVG` directly. Everything
  * below is the type-specific adapter over that spine.
  */
-import type { SvgDocOptions, Transform2D, VectorCommand, VectorShape } from '~/lib/vector/svg'
-import { shapesToSVG, transformCommands } from '~/lib/vector/svg'
+import type { SvgDocOptions, Transform2D, VectorCommand, VectorRect, VectorShape } from '~/lib/vector/svg'
+import { blurRadiusToStdDeviation, shapesToSVG, transformCommands } from '~/lib/vector/svg'
 import type { GlyphOutline, TextOutlines, VtBBox } from './outline'
 
-export type { Transform2D, VectorShape } from '~/lib/vector/svg'
+export type { Transform2D, VectorRect, VectorShape } from '~/lib/vector/svg'
 /** Re-exported so a second studio can reach the spine without importing
  *  anything type-specific. */
-export { controlPointBounds, shapesToSVG } from '~/lib/vector/svg'
+export { blurRadiusToStdDeviation, controlPointBounds, shapesToSVG } from '~/lib/vector/svg'
 
 /** Where a glyph run lands in output units. Defaults: scale 1, no offset, y flipped. */
 export type PlacementOptions = Transform2D
@@ -80,6 +80,74 @@ export function glyphTransform(glyph: GlyphOutline, t: PlacementOptions = {}): R
     y: r.y + glyph.y * (r.flipY ? -r.scale : r.scale),
     flipY: r.flipY,
   }
+}
+
+/**
+ * Where the baseline sits inside a glyph's CELL BOX, as a fraction of the em.
+ *
+ * The cell box is one em tall, not the font's line box, and that is a
+ * deliberate choice: a mask `amount` is a FRACTION of the animated unit's box,
+ * and this studio's unit box is the em — it is what the preset evaluator
+ * multiplies `dx`, `dy` and `blur` by (`size` = em height in output px, CSS
+ * `font-size` semantics). Measuring the mask against a font-metric line box
+ * instead would silently make a reveal refer to a different unit than the
+ * offsets do. 0.8/0.2 is the conventional CSS-ish split.
+ */
+export const CELL_DESCENT = 0.2
+
+/** A one-sided reveal: `amount` is the fraction of the cell hidden from `side`.
+ *  Structural on purpose — `presetMotion`'s `VtGlyphClip` satisfies it, and this
+ *  module stays out of the motion model's import graph. */
+export interface GlyphClip {
+  side: 'top' | 'bottom' | 'left' | 'right'
+  amount: number
+}
+
+/**
+ * One glyph's mask window, in OUTPUT space — the ONE definition of it.
+ *
+ * Both renderers call this: the canvas hands it to `ctx.rect` + `ctx.clip()`,
+ * the SVG writer emits it as a `<clipPath><rect>`. A second derivation would
+ * drift, and the drift would be invisible — both surfaces would still show a
+ * plausibly masked glyph.
+ *
+ * `origin` is the glyph's PLACED BASELINE (`glyphTransform`), `advance` its
+ * advance in output pixels and `em` the em in output pixels. Only the axis the
+ * mask moves on is measured against the cell; the perpendicular axis is padded
+ * by an em so a descender's tail or an italic overhang is not sliced off by the
+ * sides of the window. The masked axis is NOT padded — `amount === 1` has to
+ * leave a zero-extent window, or an entrance would begin with the bottom of a
+ * 'g' already showing.
+ *
+ * The window is FIXED in output space. Whatever transform the glyph carries is
+ * applied to the glyph and not to this rect, so the letter slides THROUGH the
+ * window rather than dragging it along.
+ */
+export function glyphCellClipRect(
+  origin: { x: number; y: number },
+  advance: number,
+  em: number,
+  clip: GlyphClip,
+): VectorRect {
+  const a = clip.amount < 0 ? 0 : clip.amount > 1 ? 1 : clip.amount
+  const x0 = origin.x
+  const x1 = origin.x + advance
+  // The origin is the glyph's placed BASELINE, and the cell hangs around it.
+  const y1 = origin.y + em * CELL_DESCENT
+  const y0 = y1 - em
+
+  let bx0 = x0, bx1 = x1, by0 = y0, by1 = y1
+  if (clip.side === 'top' || clip.side === 'bottom') {
+    bx0 -= em; bx1 += em
+    if (clip.side === 'top') by0 = y0 + em * a
+    else by1 = y1 - em * a
+  } else {
+    by0 -= em; by1 += em
+    if (clip.side === 'left') bx0 = x0 + advance * a
+    else bx1 = x1 - advance * a
+  }
+
+  return { x: bx0, y: by0, width: Math.max(0, bx1 - bx0), height: Math.max(0, by1 - by0) }
 }
 
 /**
@@ -147,6 +215,25 @@ export interface GlyphPaint {
    */
   opacity?: number | ((glyph: GlyphOutline, index: number) => number)
   /**
+   * Per-glyph blur, as `feGaussianBlur`'s `stdDeviation` in OUTPUT units.
+   *
+   * The canvas expresses this as `ctx.filter = 'blur(Npx)'`; without it here a
+   * `blur-in` entrance exports perfectly sharp. Pass the canvas radius through
+   * `blurRadiusToStdDeviation` — they are the same quantity, but saying so at
+   * the call site is what stops someone "fixing" it with a factor of two.
+   */
+  blur?: number | ((glyph: GlyphOutline, index: number) => number)
+  /**
+   * Per-glyph mask window, in OUTPUT space — see `glyphCellClipRect`, which is
+   * what both renderers use to compute it. The canvas expresses this as a
+   * `ctx.clip()` taken BEFORE the per-glyph transform; the spine's `<clipPath>`
+   * rides on an untransformed wrapper `<g>` for the same reason.
+   */
+  clip?:
+    | VectorRect
+    | null
+    | ((glyph: GlyphOutline, index: number) => VectorRect | null | undefined)
+  /**
    * Extra attributes on each glyph's `<path>`.
    *
    * This is how a per-glyph MOTION transform survives export: the canvas replays
@@ -179,6 +266,8 @@ export function outlinesToShapes(
     const glyph = outlines.glyphs[i] as GlyphOutline
     const attrs = pick(opts.attrs, glyph, i)
     const opacity = pick(opts.opacity, glyph, i)
+    const blur = pick(opts.blur, glyph, i)
+    const clip = pick(opts.clip, glyph, i)
     return {
       commands,
       fill: pick(opts.fill, glyph, i) ?? '#000000',
@@ -186,8 +275,11 @@ export function outlinesToShapes(
       strokeWidth: opts.strokeWidth,
       fillRule: opts.fillRule ?? 'nonzero',
       // Omitted rather than written as 1 — a fully opaque glyph should not carry
-      // a redundant attribute into a file a designer is going to read.
+      // a redundant attribute into a file a designer is going to read. Same for
+      // a zero blur and an absent clip: no `<defs>` entry, no wrapper `<g>`.
       ...(opacity === undefined || opacity === 1 ? {} : { opacity }),
+      ...(blur === undefined || !(blur > 0) ? {} : { blur }),
+      ...(clip ? { clip } : {}),
       ...(attrs && Object.keys(attrs).length ? { attrs } : {}),
     }
   })
@@ -230,5 +322,6 @@ export function outlinesToSVG(outlines: TextOutlines, opts: OutlinesSvgOptions =
     background: opts.background,
     precision: opts.precision,
     groupAttrs: opts.groupAttrs,
+    idPrefix: opts.idPrefix,
   })
 }
