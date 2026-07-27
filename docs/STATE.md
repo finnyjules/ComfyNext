@@ -46,32 +46,33 @@ The schema is a **superset with per-consumer opt-in** (`agent: false` withholds 
 
 Still to do in Act 1: the generic inspector renderer (Gradient still has 432 lines of hand-written markup), new `ControlSpec` kinds (`segmented`, `repeater`, `custom`), and exposing the 11 now-declared Shape controls to the agent. Known misfits remain: Texture's colour-role system (`texturefx/roles.ts`), Space Type's scene-sequencing motion model.
 
-> ## ⚠️ Shader as Fill is **NOT LANDED** — corrected 2026-07-26 after final whole-branch review
+> ## Shader as Fill — status, corrected twice on 2026-07-26
 >
-> The entry below was written as "LANDED" and is wrong. The final review found that **two of the four
-> surfaces do not render a shader field in a normal session.** Everything below describes what was
-> *built*; read it as an architecture record, not a working-feature claim.
+> This entry was first written as "LANDED", which was **wrong**: a whole-branch review found the effect
+> catalog was never preloaded outside the studio modals, so `getEffectSync` returned `null` and a saved
+> shader fill silently rendered its input fill forever on node cards, in the Compositor, and on Scene3D
+> (a plain white mesh there). The branch's own E2E spec had recorded both symptoms and filed them as
+> unexplained.
 >
-> **Blocking (both confirmed by code reading, and by the branch's own E2E spec, which recorded the
-> symptoms without diagnosing them):**
-> 1. `resolveField` is synchronous and depends on `getEffectSync`, which returns `null` unless something
->    on the page already awaited `fetchShaderFxCatalog()`. **No node card and no Compositor path ever
->    calls it.** So a saved shader fill silently renders its input fill forever after a reload. Space
->    Type's modal escapes only because its editor is mounted unconditionally.
-> 2. A Scene3D `shaderFill` material built before the catalog resolves gets `map: null` and **can never
->    recover** — the refresh guard skips null maps and `identityKey` never forces a rebuild. That race is
->    the default path, since `syncFromDoc` runs before the catalog fetch.
+> **Those are fixed** (`7a176a282`, `d987aa349`, `fc26ccf15`) and **Julien has since confirmed the feature
+> working in the real app** — the first human click-through, and the evidence that was missing when the
+> "NOT LANDED" block went up. Three review rounds each returned "not ready" and each found real defects;
+> the third round's findings were all closed.
 >
-> Also corrected in this entry: derived keys are `fill.shader.params.<paramId>`, **not** `.p.` (the `.p.`
-> address was a real bug — it addressed a phantom object — and was fixed in code but left in these docs);
-> the `uFillAnchor` convention spans **14** effect shaders, not ~28; and bake parity is **not** structural
-> on every surface — Shape Studio hardcodes `bake: false`, Space Type's node-card bake cascade never calls
-> `setBake(true)`, and Scene3D's `bake` parameter is dead. The grep cited below proves there is one render
-> function; it does not prove `bake: true` is passed, and on three of four surfaces it isn't.
+> Three factual corrections that stand regardless: derived keys are `fill.shader.params.<paramId>`, **not**
+> `.p.` (that address pointed at a phantom object and was a real bug); the `uFillAnchor` convention spans
+> **14** effect shaders, not ~28; and the grep cited below proves there is one render *function*, which is
+> not the same as proving `bake: true` reaches every export path — that was separately wired afterwards.
 >
-> Full findings: final review in this session's transcript; ledger at `.superpowers/sdd/progress.md`.
+> Known gaps still open, deliberate: shader fills inside per-copy fill **lists** degrade to a flat swatch
+> (`fillAtlasTexture` has no `'shader'` case — affects `shutter`/`coil`); corner-pinned shapes with frame
+> anchor are not pixel-correct (a projective warp is not an affine `CanvasPattern` transform); Scene3D
+> treats `frame` anchor as `object` and is agent-invisible; Space Type exposes no agent/motion vocabulary
+> for fills, since its fills are a single serialised `fillList` control.
+>
+> Ledger with every finding from every round: `.superpowers/sdd/progress.md`.
 
-**Shader as Fill — built, NOT yet working end-to-end, 2026-07-26** (`docs/superpowers/specs/2026-07-26-shader-as-fill-design.md`, Tasks 0–10). A shader stops being a full-frame layer and becomes a `FillType`: `FILL_TYPES` gained `'shader'` (recursive, depth-1 enforced), backed by one module, `lib/shaderfill/`, that is the *only* place in the product turning a shader fill into pixels (`resolveField`) — a readback bridge over the existing `shaderFx` WebGL2 singleton, batched by descriptor (not by consumer) so ten shapes sharing one field cost one render. Reaches all four surfaces that can host a fill — Space Type, Shape Studio (reuses Space Type's `fillTexture()` with 3 small schema/propagation fixes, not literally zero), every frame primitive (Compositor), and Scene3D (object-anchor only; the reusable unit there is the field module, not `Fill` itself, since Scene3D never touches `FILL_TYPES`). Object anchor is free; frame anchor cost a `uFillAnchor` convention across ~28 Space Type effect shaders. Authoring uses a new pattern — **declare the frame, derive the contents** (`fill.shader.effectId/anchor/speed` frozen and Collection-bindable, `fill.shader.p.<paramId>` derived per-effect from the live catalog) — the first place the control schema meets genuinely dynamic (63-effect) vocabulary, and the main architectural output of this act beyond the feature itself.
+**Shader as Fill — LANDED 2026-07-26, user-confirmed** (`docs/superpowers/specs/2026-07-26-shader-as-fill-design.md`, Tasks 0–10 plus three review rounds and three fix waves). A shader stops being a full-frame layer and becomes a `FillType`: `FILL_TYPES` gained `'shader'` (recursive, depth-1 enforced), backed by one module, `lib/shaderfill/`, that is the *only* place in the product turning a shader fill into pixels (`resolveField`) — a readback bridge over the existing `shaderFx` WebGL2 singleton, batched by descriptor (not by consumer) so ten shapes sharing one field cost one render. Reaches all four surfaces that can host a fill — Space Type, Shape Studio (reuses Space Type's `fillTexture()` with 3 small schema/propagation fixes, not literally zero), every frame primitive (Compositor), and Scene3D (object-anchor only; the reusable unit there is the field module, not `Fill` itself, since Scene3D never touches `FILL_TYPES`). Object anchor is free; frame anchor cost a `uFillAnchor` convention across ~28 Space Type effect shaders. Authoring uses a new pattern — **declare the frame, derive the contents** (`fill.shader.effectId/anchor/speed` frozen and Collection-bindable, `fill.shader.p.<paramId>` derived per-effect from the live catalog) — the first place the control schema meets genuinely dynamic (63-effect) vocabulary, and the main architectural output of this act beyond the feature itself.
 
 Task 10 closed the act: fixed a real correctness bug where `LIVE_FIELD_CEILING` (4 live fields/frame, protecting *interactive* framerate) was also being applied to bake/export requests, silently freezing the 5th-and-beyond shader-fill descriptor at t=0 on any export — fixed at `beginFieldFrame` so every surface inherits it, proven live (not just unit-tested) via a 6-field bake harness at `/dev/shaderfill-bench`'s `window.__benchBakeCeilingProof()`: all 6 fields advance under `bake:true`, only the first 4 advance under `bake:false` (control). Also wired `bake: true` through the Compositor's export paths (motion bake, static Render, Harmonize, Frame download/publish, `bakeOverlay`) — Space Type had this from an earlier task, Compositor didn't. Bake parity is structural, confirmed by grep: every bake path funnels through the same `resolveField` (`grep -rn "shaderFx.render" frontend/app` turns up only Shader Studio's own surfaces and `lib/texturefx/stylize.ts`).
 
