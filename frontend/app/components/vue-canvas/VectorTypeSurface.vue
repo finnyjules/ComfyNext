@@ -30,6 +30,7 @@ import { mergeConfig, type VectorTypeConfig } from '~/lib/vectortype/config'
 import { VT_CONTROLS, VT_SECTIONS, derivedAxisControls, type VtControl } from '~/lib/vectortype/controls'
 import { VT_GUIDANCE, vtAgentControls } from '~/lib/vectortype/agentControls'
 import { animatableTargets } from '~/lib/vectortype/motion'
+import { vtStillTime } from '~/lib/vectortype/presetMotion'
 import { loadVariableFont, type VtAxis, type VtFont } from '~/lib/vectortype/font'
 import { drawVectorTypeToCanvas, vectorTypeSVG, vtExportName, vtIsAnimated } from '~/lib/vectortype/canvas'
 import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
@@ -475,7 +476,9 @@ async function renderBlobWithOverrides(overrides: Record<string, string | number
     const f = await loadVariableFont(config.value.fontId).catch(() => font.value)
     if (!f) return null
     const off = document.createElement('canvas')
-    drawVectorTypeToCanvas(off, f, config.value, 0, {
+    // A sweep row is a STILL, and with an entrance preset `t = 0` is deliberately
+    // empty — every row would bake blank. `vtStillTime` is the resting frame.
+    drawVectorTypeToCanvas(off, f, config.value, vtStillTime(config.value), {
       width: canvasW.value, height: canvasH.value, background: background.value,
     })
     return await new Promise<Blob | null>(resolve => off.toBlob(b => resolve(b), 'image/png'))

@@ -19,6 +19,7 @@ import { Pencil, Type } from 'lucide-vue-next'
 import { mergeConfig, type VectorTypeConfig } from '~/lib/vectortype/config'
 import { loadVariableFont, type VtFont } from '~/lib/vectortype/font'
 import { drawVectorTypeToCanvas, vtIsAnimated } from '~/lib/vectortype/canvas'
+import { vtStillTime } from '~/lib/vectortype/presetMotion'
 import { makeVectorTypeFrameSource } from '~/lib/vectortype/frameSource'
 import { registerStudioBaker, unregisterStudioBaker } from '~/lib/studio/cascade'
 import { registerStudioFrameSource, unregisterStudioFrameSource } from '~/lib/studio/frameSource'
@@ -113,7 +114,9 @@ async function bakeOutput(): Promise<Blob | null> {
   try {
     const f = font.value ?? await ensureFont(config.value.fontId)
     const off = document.createElement('canvas')
-    drawVectorTypeToCanvas(off, f, config.value, 0, {
+    // Not `t = 0`: with an entrance preset frame 0 is deliberately EMPTY, so a
+    // still baked there would be a blank PNG (see `vtStillTime`).
+    drawVectorTypeToCanvas(off, f, config.value, vtStillTime(config.value), {
       width: outW.value, height: outH.value, background: background.value,
     })
     return await new Promise<Blob | null>(resolve => off.toBlob(b => resolve(b), 'image/png'))

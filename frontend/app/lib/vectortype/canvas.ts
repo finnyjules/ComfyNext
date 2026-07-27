@@ -41,10 +41,10 @@ import {
   IDENTITY_GLYPH_TRANSFORM,
   applyMotion,
   glyphConfig,
-  glyphTransform as glyphMotion,
   resolveStagger,
   type VtGlyphTransform,
 } from './motion'
+import { vtEmSize, vtGlyphMotion, vtHasPreset, type VtGlyphMotion } from './presetMotion'
 import { glyphTransform as glyphPlacement, outlinesToPath2D, outlinesToSVG } from './render'
 
 /** One frame's worth of resolved geometry: what to draw and how each glyph moves. */
@@ -54,8 +54,12 @@ export interface VtFrame {
   /** The config at this instant, on the shared (un-staggered) clock. Paint, size,
    *  tracking and align are read from here — they are run-level, not per-glyph. */
   config: VectorTypeConfig
-  /** Per-glyph motion transform, index-aligned with `outlines.glyphs`. */
-  transforms: VtGlyphTransform[]
+  /** Per-glyph motion, index-aligned with `outlines.glyphs`: the axis TRACKS and
+   *  the entrance/exit/loop PRESETS composed into one state (see
+   *  `./presetMotion.ts`). A superset of `VtGlyphTransform` — the extra fields
+   *  (`blur`, `clip`, `scaleX/scaleY`, `axes`) are carried for the renderers that
+   *  consume them; the five transform fields are what this module draws with. */
+  transforms: VtGlyphMotion[]
   /** True when at least one glyph was shaped at its own axis position — i.e. the
    *  travelling-wave path actually ran. Exposed so a caller can ASSERT the
    *  intended path executed rather than inferring it from the picture. */
@@ -148,8 +152,12 @@ export function vectorTypeFrame(font: VtFont, cfg: VectorTypeConfig, t: number):
     ? { minX, minY, maxX, maxY }
     : { minX: 0, minY: 0, maxX: 0, maxY: 0 }
 
-  const transforms: VtGlyphTransform[] = []
-  for (let i = 0; i < glyphs.length; i++) transforms.push(glyphMotion(cfg, t, i, glyphs.length))
+  // One em for the whole run, resolved once: `vtPlacement` scales every glyph by
+  // the SAME `size`, so a per-glyph em would move the letters in units the
+  // geometry does not share.
+  const em = vtEmSize(cfg, t)
+  const transforms: VtGlyphMotion[] = []
+  for (let i = 0; i < glyphs.length; i++) transforms.push(vtGlyphMotion(cfg, t, i, glyphs.length, em))
 
   return {
     outlines: { glyphs, width: penX, unitsPerEm: upem, coords: shaped.coords, bbox },
@@ -418,9 +426,21 @@ export function vtExportName(cfg: VectorTypeConfig | null | undefined): string {
   return slug || 'vector-type'
 }
 
-/** True when this config has something that MOVES — i.e. a preview loop is worth
- *  running. Stagger alone is not motion: it shifts a clock nothing is reading. */
+/**
+ * True when this config has something that MOVES — i.e. a preview loop is worth
+ * running, and the frame source should report a real duration.
+ *
+ * TWO sources now, and both must count. This gated on `tracks.length > 0` alone
+ * until presets arrived, which would have made every preset-only config render
+ * FROZEN: the surface and the node card would draw a single frame, the frame
+ * source would report `duration: 0`, and nothing would error. A picked preset
+ * that visibly does nothing reads as "this feature is broken", so the widening
+ * ships in the same commit as the evaluator.
+ *
+ * Stagger alone still is not motion: it shifts a clock nothing is reading.
+ */
 export function vtIsAnimated(cfg: VectorTypeConfig | null | undefined): boolean {
   const tracks = cfg?.motion?.tracks
-  return Array.isArray(tracks) && tracks.length > 0
+  if (Array.isArray(tracks) && tracks.length > 0) return true
+  return vtHasPreset(cfg)
 }

@@ -14,6 +14,10 @@
  * Deliberately NOT here: canvas size and background — both live outside the
  * config in every other studio.
  *
+ * `motion.in/out/loop` are the SHARED kinetic engine's preset slots, added once
+ * `./presetMotion.ts` existed to read them — same rule as `motion.stagger`
+ * below. They compose with `tracks`; neither overwrites the other.
+ *
  * `motion.stagger` IS here as of Task 6, which built the evaluator that reads it
  * (`./motion.ts`: `glyphTime` / `glyphTransform`). It was withheld until then
  * for the reason this schema exists — declaring keys no renderer reads is the
@@ -21,6 +25,7 @@
  * landed, not because the shape got clearer.
  */
 import type { MotionTrack as GradientMotionTrack } from '~/lib/gradientfx/types'
+import type { LayerAnimSpec } from '~/lib/motion/types'
 import { DEFAULT_FONT_ID, VARIABLE_FONTS } from '~/data/variable-fonts'
 
 /** Horizontal anchoring of the (single-line, v1) glyph run. */
@@ -83,6 +88,25 @@ export interface VtMotionConfig {
   /** Export height base (1080 / 1440 / 2160). */
   size: number
   stagger: VtStaggerConfig
+  /**
+   * Entrance / exit / loop presets from the SHARED kinetic engine
+   * (`~/lib/motion/evaluate`), evaluated by `./presetMotion.ts`.
+   *
+   * `LayerAnimSpec` is adopted VERBATIM — the same shape the Compositor stores
+   * and the same shape `MotionPresetPicker` emits — so the picker can be mounted
+   * here with no conversion layer. A parallel VT-shaped type would have to be
+   * translated at the picker, at the evaluator and at every test, and the
+   * translation is exactly where a field quietly stops being carried.
+   *
+   * These COMPOSE with `tracks`; they do not replace them. A Slide-Up preset and
+   * a `axes.wght` track are both visible at once (see `./presetMotion.ts` for the
+   * composition rule). Absent = that slot contributes nothing.
+   *
+   * `LayerAnimSpec.stagger` is DELIBERATELY NOT STORED — see `mergeAnimSpec`.
+   */
+  in?: LayerAnimSpec
+  out?: LayerAnimSpec
+  loop?: LayerAnimSpec
 }
 
 /** Compile-time proof that a VT track can be fed to gradientfx's `trackValue`
@@ -159,6 +183,15 @@ export const VT_STAGGER_SEED_MAX = 999
 /** Export heights the motion block accepts, matching gradientfx's. */
 export const VT_MOTION_SIZES = [1080, 1440, 2160] as const
 
+/** The three preset slots, in evaluation order. */
+export const VT_PRESET_SLOTS = ['in', 'out', 'loop'] as const
+export type VtPresetSlot = (typeof VT_PRESET_SLOTS)[number]
+
+/** Phase length a slot gets when a stored spec has none, matching what the
+ *  Compositor's editor writes (`MotionLayerEditor.assign`) so the same preset
+ *  reads the same speed in both studios. */
+export const VT_PRESET_DURATIONS: Record<VtPresetSlot, number> = { in: 0.8, out: 0.8, loop: 1.5 }
+
 const num = (v: unknown, d: number): number => (typeof v === 'number' && Number.isFinite(v) ? v : d)
 const str = (v: unknown, d: string): string => (typeof v === 'string' ? v : d)
 const oneOf = <T extends string>(v: unknown, allowed: readonly T[], d: T): T =>
@@ -227,6 +260,56 @@ function mergeStagger(raw: unknown): VtStaggerConfig {
   }
 }
 
+/** Rebuild a preset's knob values: finite numbers only, and `undefined` rather
+ *  than an empty record so an untouched preset stores nothing. A non-numeric
+ *  knob is DROPPED, not coerced — `resolveParams` spreads this straight over the
+ *  preset defaults, so a `"3"` would reach the maths as a string. */
+function mergeParams(raw: unknown): Record<string, number> | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const out: Record<string, number> = {}
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof v === 'number' && Number.isFinite(v)) out[k] = v
+  }
+  return Object.keys(out).length ? out : undefined
+}
+
+/**
+ * Rebuild one preset slot, or `undefined` if it names no preset.
+ *
+ * Same rule as `mergeTrack`: a spec with no `presetId` cannot be evaluated or
+ * edited, so it is dropped rather than defaulted to some preset the user never
+ * picked. An UNKNOWN-but-well-formed id is KEPT — the config layer does not own
+ * the preset catalog, and dropping ids would silently delete a newer version's
+ * work on an older load (the same reason `mergeAxes` keeps a tag the current
+ * font lacks). `./presetMotion.ts` refuses to evaluate an id the engine does not
+ * have rather than guessing, so an unknown id animates nothing instead of
+ * animating the wrong thing.
+ *
+ * `stagger` IS NOT CARRIED. `LayerAnimSpec.stagger` and `motion.stagger.delay`
+ * are two spellings of the same idea, and Vector Type already has the richer one
+ * (delay + order + seed, feeding `glyphTime`). The evaluator therefore drives the
+ * engine with a per-glyph CLOCK and a zeroed spec stagger, which makes a stored
+ * `stagger` structurally dead — so it is not stored, rather than stored and
+ * silently ignored.
+ */
+function mergeAnimSpec(raw: unknown, slot: VtPresetSlot): LayerAnimSpec | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const o = raw as Record<string, unknown>
+  const presetId = typeof o.presetId === 'string' ? o.presetId.trim() : ''
+  if (!presetId) return undefined
+  const spec: LayerAnimSpec = {
+    presetId,
+    // 0.05 is the engine's own floor (MIN_UNIT_DUR); below it a phase cannot be
+    // seen, and `evaluateAnimation` clamps there anyway.
+    duration: clamp(num(o.duration, VT_PRESET_DURATIONS[slot]), 0.05, 60),
+  }
+  const ease = typeof o.ease === 'string' ? o.ease.trim() : ''
+  if (ease) spec.ease = ease
+  const params = mergeParams(o.params)
+  if (params) spec.params = params
+  return spec
+}
+
 function mergeMotion(raw: unknown): VtMotionConfig {
   const o = (raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}) as Record<string, unknown>
   const rawTracks = Array.isArray(o.tracks) ? o.tracks : []
@@ -235,12 +318,20 @@ function mergeMotion(raw: unknown): VtMotionConfig {
     const track = mergeTrack(t)
     if (track) tracks.push(track)
   }
+  // Spread-when-present, not `in: undefined`: an absent slot must leave no key
+  // behind, so a round-tripped default config is byte-identical to the default.
+  const slots: Partial<Record<VtPresetSlot, LayerAnimSpec>> = {}
+  for (const slot of VT_PRESET_SLOTS) {
+    const spec = mergeAnimSpec(o[slot], slot)
+    if (spec) slots[slot] = spec
+  }
   return {
     tracks,
     duration: clamp(num(o.duration, DEFAULT_MOTION.duration), 0.1, 60),
     fps: clamp(Math.round(num(o.fps, DEFAULT_MOTION.fps)), 1, 60),
     size: oneOfNum(o.size, VT_MOTION_SIZES, DEFAULT_MOTION.size),
     stagger: mergeStagger(o.stagger),
+    ...slots,
   }
 }
 
@@ -279,6 +370,15 @@ export function cloneConfig(cfg: VectorTypeConfig): VectorTypeConfig {
   // choke-point note in ./motion.ts. Values are copied, never invented: a
   // missing block clones as empty and the evaluator resolves defaults itself.
   const m = cfg.motion
+  // Preset slots carry a nested `params` record, so a shallow spread would leave
+  // the clone sharing one knob object with its source.
+  const spec = (s: LayerAnimSpec | undefined): LayerAnimSpec | undefined =>
+    s ? { ...s, ...(s.params ? { params: { ...s.params } } : {}) } : undefined
+  const slots: Partial<Record<VtPresetSlot, LayerAnimSpec>> = {}
+  for (const slot of VT_PRESET_SLOTS) {
+    const copy = spec(m?.[slot])
+    if (copy) slots[slot] = copy
+  }
   return {
     ...cfg,
     axes: { ...cfg.axes },
@@ -286,6 +386,7 @@ export function cloneConfig(cfg: VectorTypeConfig): VectorTypeConfig {
       ...m,
       stagger: { ...m?.stagger } as VtStaggerConfig,
       tracks: Array.isArray(m?.tracks) ? m.tracks.map(t => ({ ...t })) : [],
+      ...slots,
     },
   }
 }

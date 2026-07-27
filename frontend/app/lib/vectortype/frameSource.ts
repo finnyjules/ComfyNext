@@ -34,9 +34,11 @@ export function makeVectorTypeFrameSource(deps: VtFrameSourceDeps): StudioFrameS
     const cfg = deps.getConfig()
     const m = cfg?.motion
     const fps = m?.fps ?? 30
-    // Stagger with no tracks animates nothing — it only shifts the clock each
-    // glyph reads tracks at. Reporting a duration for it would make every
-    // downstream consumer run a video pipeline over N identical frames.
+    // Tracks OR presets count (`vtIsAnimated` owns that question — it gated on
+    // tracks alone until the preset engine landed). Stagger by itself animates
+    // nothing: it only shifts the clock each glyph reads the others at.
+    // Reporting a duration for it would make every downstream consumer run a
+    // video pipeline over N identical frames.
     if (!vtIsAnimated(cfg)) return { duration: 0, fps }
     return { duration: m?.duration ?? 4, fps }
   }

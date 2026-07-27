@@ -1,0 +1,398 @@
+/**
+ * Vector Type Studio — the shared motion engine, adapted to glyphs. PURE.
+ *
+ * `./motion.ts` animates the CONFIG (tracks over dotted paths, on a per-glyph
+ * clock). This module animates the same glyphs from the OTHER motion source: the
+ * Compositor's kinetic preset engine (`~/lib/motion/evaluate`), so Vector Type
+ * gets Fade / Slide / Mask / Grow / Blur — and, later, variable-axis presets —
+ * without a second evaluator.
+ *
+ * The two sources are complementary and BOTH ACTIVE AT ONCE. A user with a
+ * Slide-Up preset and an `axes.wght` track must see the word slide in *and* the
+ * weight wave travel. `vtGlyphMotion` is the one place they meet.
+ *
+ * ## Three things this file exists to get right
+ *
+ * ### 1. The coordinate spaces differ — multiply by the em
+ *
+ * `UnitState.dx/dy/blur` are in UNIT-BOX HEIGHTS (a normalised space: 1 = the
+ * height of the animated unit's own box). `VtGlyphTransform.dx/dy` are OUTPUT
+ * PIXELS, because that is what `render.ts` places glyphs in and what
+ * `drawVectorType` feeds to `ctx.translate`.
+ *
+ * Vector Type's unit box is the EM, whose height in output pixels is exactly
+ * `config.size` (that is the control's definition — CSS `font-size` semantics,
+ * `scale = size / unitsPerEm`). So every spatial quantity crossing this boundary
+ * is multiplied by `size`.
+ *
+ * Forget it and a preset looks *almost right at one font size* and wrong at
+ * every other, which is why the tests pin it at two sizes rather than one:
+ * a missing multiply is invisible in a single-size test.
+ *
+ * The em is read at the RUN clock, not the glyph's — `size` is itself animatable,
+ * and `vtPlacement` scales the whole run by `applyMotion(cfg, t).size`. Using a
+ * per-glyph em here would make the offsets disagree with the geometry they move.
+ *
+ * ### 2. There is only ONE stagger, and it is Vector Type's
+ *
+ * `LayerAnimSpec.stagger` (seconds between units, inside `evaluateAnimation`) and
+ * `motion.stagger` (delay + order + seed, feeding `glyphTime`) are two spellings
+ * of the same idea. Two live stagger sources would fight — the engine's is
+ * forward-only and defaults to 0.04 even when absent, so a user who set `order:
+ * 'edges'` would get an edges wave with a forward wave underneath it.
+ *
+ * So: **`motion.stagger` wins, always.** The engine is driven at the glyph's own
+ * `glyphTime()` clock with the spec's `stagger` forced to 0, which makes the
+ * engine's own offset structurally inert rather than merely unused.
+ * `mergeConfig` does not even store `stagger` for the same reason.
+ *
+ * The glyph's real `i`/`n` are still passed through, because seeded presets
+ * (`glitch-in`, `wiggle`) key their randomness on the unit index — collapsing
+ * that to `n = 1` would give every letter identical jitter.
+ *
+ * ### 3. Presets and tracks ADD; they never overwrite
+ *
+ * The previous plan shipped a bug of exactly this shape (a Collection sweep and a
+ * motion track wrote the same path; `applyMotion` overwrote the sweep, and five
+ * identical baked PNGs looked perfectly fine). Here the rule is spelled out and
+ * tested: **offsets and rotation add, scale and opacity multiply.** Both operands
+ * are identity-at-rest (0 / 1), so a config with only one source is bit-identical
+ * to what that source produced alone.
+ */
+import type { FrameMotion, LayerAnimation, LayerAnimSpec } from '~/lib/motion/types'
+import type { UnitState } from '~/lib/motion/evaluate'
+import {
+  ALL_PRESET_CAPABILITIES,
+  IDENTITY_UNIT,
+  evaluateAnimation,
+  presetIdsFor,
+} from '~/lib/motion/evaluate'
+import {
+  DEFAULT_CONFIG,
+  DEFAULT_MOTION,
+  VT_PRESET_SLOTS,
+  type VectorTypeConfig,
+  type VtPresetSlot,
+} from './config'
+import {
+  IDENTITY_GLYPH_TRANSFORM,
+  glyphTime,
+  glyphTransform,
+  resolveStagger,
+  type VtGlyphTransform,
+} from './motion'
+import { trackValue } from '~/lib/studio/track'
+
+/** A one-sided reveal of the glyph's own box: `amount` is the fraction hidden
+ *  from `side`. Structurally `UnitState['clip']`, restated as a named type
+ *  because it is part of this module's published output. */
+export interface VtGlyphClip {
+  side: 'top' | 'bottom' | 'left' | 'right'
+  amount: number
+}
+
+/**
+ * THE OUTPUT SHAPE. Everything one glyph's motion produces at one instant.
+ *
+ * A superset of `VtGlyphTransform`, so anything already reading `dx/dy/scale/
+ * rotate/opacity` off `VtFrame.transforms` keeps working untouched, and the new
+ * fields ride along for the renderer that learns to consume them.
+ *
+ * Units, spelled out because the whole point of this module is the conversion:
+ *
+ * | field            | unit                              | rest  |
+ * |------------------|-----------------------------------|-------|
+ * | `dx`, `dy`       | OUTPUT PIXELS (y-DOWN, like canvas) | 0   |
+ * | `scale`          | multiplier, uniform               | 1     |
+ * | `scaleX`,`scaleY`| extra per-axis multipliers (flips) | 1     |
+ * | `rotate`         | degrees, clockwise                | 0     |
+ * | `opacity`        | 0..1 multiplier                   | 1     |
+ * | `blur`           | OUTPUT PIXELS of blur radius      | 0     |
+ * | `clip`           | fraction of the glyph box hidden  | null  |
+ * | `axes`           | variable-font axis DELTAS by tag  | `{}`  |
+ *
+ * `blur`, `clip`, `scaleX/scaleY` and `axes` are PRODUCED here and consumed by
+ * the canvas/SVG renderers in later tasks. They are always present (0 / null /
+ * `{}` at rest) so a consumer never has to distinguish "absent" from "neutral".
+ */
+export interface VtGlyphMotion extends VtGlyphTransform {
+  scaleX: number
+  scaleY: number
+  /** Blur radius in OUTPUT PIXELS (the engine's unit-box value × em). */
+  blur: number
+  clip: VtGlyphClip | null
+  /** Axis DELTAS by OpenType tag, to be ADDED to the glyph's resting axis
+   *  positions (`{ wght: -300 }` = 300 lighter than the config says). Empty at
+   *  rest. Deltas, not absolutes, so an axis preset composes with whatever the
+   *  user set and with an axis track. */
+  axes: Record<string, number>
+}
+
+export const IDENTITY_GLYPH_MOTION: Readonly<VtGlyphMotion> = Object.freeze({
+  ...IDENTITY_GLYPH_TRANSFORM,
+  scaleX: 1,
+  scaleY: 1,
+  blur: 0,
+  clip: null,
+  axes: Object.freeze({}) as Record<string, number>,
+})
+
+const CLIP_SIDES = ['top', 'bottom', 'left', 'right'] as const
+
+const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
+const fin = (v: unknown, d: number): number => (isNum(v) ? v : d)
+const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v)
+
+/**
+ * The preset ids this studio can render faithfully.
+ *
+ * Vector Type declares EVERY capability the engine knows about — it draws real
+ * outlines, so `blur` and `axes` are both within reach (Tasks 5 and 7 wire the
+ * last of them to pixels). Derived from `presetIdsFor`, never a second list.
+ */
+const KNOWN_IDS: Record<VtPresetSlot, ReadonlySet<string>> = {
+  in: new Set(presetIdsFor('in', ALL_PRESET_CAPABILITIES)),
+  out: new Set(presetIdsFor('out', ALL_PRESET_CAPABILITIES)),
+  loop: new Set(presetIdsFor('loop', ALL_PRESET_CAPABILITIES)),
+}
+
+/** True when the engine has a preset by that id for that slot. */
+export function vtKnowsPreset(slot: VtPresetSlot, presetId: unknown): boolean {
+  return typeof presetId === 'string' && KNOWN_IDS[slot].has(presetId.trim())
+}
+
+/**
+ * The slots that will actually animate, from a config of any vintage.
+ *
+ * Defensive for the reason `./motion.ts` is: only the editor surface holds a
+ * `mergeConfig`-ed ref — the node card, the baker and the frame source read
+ * `properties.sailor_vectorType` as parsed JSON. So a `motion` that is missing, a
+ * string, or an array must behave as "no presets" rather than throw.
+ *
+ * An id the engine does not have is DROPPED here rather than passed on:
+ * `evaluateAnimation` silently substitutes `fade-in`/`fade-out` for an unknown
+ * id, so forwarding it would show the user a fade they never asked for.
+ */
+export function vtPresetSpecs(cfg: VectorTypeConfig | null | undefined): Partial<Record<VtPresetSlot, LayerAnimSpec>> {
+  const m = cfg?.motion as Record<string, unknown> | undefined
+  const out: Partial<Record<VtPresetSlot, LayerAnimSpec>> = {}
+  if (!m || typeof m !== 'object') return out
+  for (const slot of VT_PRESET_SLOTS) {
+    const raw = m[slot] as Partial<LayerAnimSpec> | undefined
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue
+    if (!vtKnowsPreset(slot, raw.presetId)) continue
+    out[slot] = {
+      presetId: (raw.presetId as string).trim(),
+      duration: Math.max(0.05, fin(raw.duration, 0.8)),
+      // See the header: the engine's own stagger is forced off so `motion.stagger`
+      // is the single source. Not "left absent" — absent means 0.04.
+      stagger: 0,
+      ...(typeof raw.ease === 'string' && raw.ease.trim() ? { ease: raw.ease.trim() } : {}),
+      ...(raw.params && typeof raw.params === 'object' && !Array.isArray(raw.params)
+        ? { params: raw.params as Record<string, number> }
+        : {}),
+    }
+  }
+  return out
+}
+
+/** True when any slot names a preset the engine can actually run. The `?` in
+ *  `vtIsAnimated`'s widening (trap 2: a preset-only config used to report
+ *  "not animated" and render frozen). */
+export function vtHasPreset(cfg: VectorTypeConfig | null | undefined): boolean {
+  for (const slot of VT_PRESET_SLOTS) {
+    const raw = (cfg?.motion as any)?.[slot]
+    if (raw && typeof raw === 'object' && !Array.isArray(raw) && vtKnowsPreset(slot, raw.presetId)) return true
+  }
+  return false
+}
+
+/** Clip length in seconds, however the blob spells it. */
+function clipDuration(cfg: VectorTypeConfig | null | undefined): number {
+  return Math.max(0.001, fin(cfg?.motion?.duration, DEFAULT_MOTION.duration))
+}
+
+/**
+ * The em height in OUTPUT PIXELS at run time `t` — the number every spatial
+ * conversion in this file goes through.
+ *
+ * `size` is animatable, so this is not simply `cfg.size`: it is `cfg.size` as a
+ * `size` track would have written it. Evaluated directly from the tracks rather
+ * than via `applyMotion` so that resolving one number does not clone the config
+ * once per glyph per frame.
+ */
+export function vtEmSize(cfg: VectorTypeConfig | null | undefined, t: number): number {
+  let em = fin(cfg?.size, DEFAULT_CONFIG.size)
+  const tracks = cfg?.motion?.tracks
+  if (Array.isArray(tracks)) {
+    const d = clipDuration(cfg)
+    for (const tr of tracks) {
+      if (!tr || typeof tr !== 'object' || tr.path?.trim?.() !== 'size') continue
+      if (!isNum(tr.from) || !isNum(tr.to)) continue
+      em = trackValue(tr, t, d)
+    }
+  }
+  return isNum(em) ? em : DEFAULT_CONFIG.size
+}
+
+/**
+ * The instant a SINGLE still frame should be sampled at — 0 for a config with no
+ * entrance, the moment the entrance has finished for one that has.
+ *
+ * The still bakes (the render cascade's PNG, the Collection param baker) render
+ * `t = 0`. An entrance preset's whole point is that `t = 0` is FULLY OUT, so with
+ * presets live those bakes would produce a blank or half-formed PNG and nothing
+ * would error — the exact failure mode this plan keeps finding. A track could do
+ * this too (`glyph.opacity` 0→1), but a preset does it by default, so the still
+ * time has to be derived rather than assumed.
+ *
+ * The word is at rest one in-duration after the LAST glyph starts, i.e. after the
+ * whole stagger queue has run. Capped at the exit's start (and at the clip) so a
+ * clip too short to hold a resting frame gives the latest one that is not already
+ * leaving, rather than a frame past the end.
+ */
+export function vtStillTime(cfg: VectorTypeConfig | null | undefined): number {
+  const specs = vtPresetSpecs(cfg)
+  if (!specs.in) return 0
+  const duration = clipDuration(cfg)
+  const glyphs = Math.max(1, [...String(cfg?.text ?? '')].length)
+  const { delay } = resolveStagger(cfg as VectorTypeConfig)
+  const rest = specs.in.duration + delay * (glyphs - 1)
+  const outStart = specs.out
+    ? Math.max(specs.in.duration, duration - specs.out.duration)
+    : duration
+  return Math.max(0, Math.min(rest, outStart, duration - 1e-6))
+}
+
+/**
+ * The engine's per-glyph state, or identity when no slot is live.
+ *
+ * COST: `evaluateAnimation` evaluates the whole run and we keep one unit, so a
+ * frame is O(n²) preset calls. Deliberately not memoised — the obvious cache key
+ * is the config OBJECT, and the surfaces mutate their config in place (a
+ * reactive ref, same reference before and after an edit), so an identity-keyed
+ * memo would serve stale motion the moment a slider moved while paused. The
+ * arithmetic is a handful of floats per call against per-glyph font shaping and
+ * a `Path2D` rebuild every frame, which are orders of magnitude dearer.
+ */
+function unitStateFor(cfg: VectorTypeConfig, t: number, index: number, count: number): UnitState {
+  const specs = vtPresetSpecs(cfg)
+  if (!specs.in && !specs.out && !specs.loop) return IDENTITY_UNIT
+
+  const duration = clipDuration(cfg)
+  const n = Math.max(1, Math.floor(count))
+  const i = Math.min(n - 1, Math.max(0, Math.floor(index)))
+
+  // The glyph's own clock — the SAME `glyphTime` the tracks are read at, so one
+  // stagger drives both sources and a wave cannot travel at two speeds.
+  //
+  // CLAMPED into the clip, never allowed to fall outside it. `evaluateAnimation`
+  // reports HIDDEN outside [start, end): before its turn a staggered glyph would
+  // vanish (right for an entrance, catastrophic for a loop — every glyph would
+  // blink out for its first `rank·delay` seconds), and past the end the whole run
+  // would disappear on the final frame of a bake. Clamping instead pins the
+  // pre-roll to progress 0 (an entrance's own "fully out" state) and the tail to
+  // the last frame's state, which is exactly what `trackValue` does with a
+  // single-play track.
+  const raw = glyphTime(cfg, t, i, n)
+  const gt = Math.min(Math.max(0, isNum(raw) ? raw : 0), duration - 1e-6)
+
+  const anim: LayerAnimation = { offset: 0, duration, ...specs }
+  const motion: FrameMotion = { fps: Math.max(1, fin(cfg?.motion?.fps, DEFAULT_MOTION.fps)), duration }
+  const state = evaluateAnimation(anim, gt, motion, n)
+  if (!state.visible) return IDENTITY_UNIT
+  return state.units?.[i] ?? IDENTITY_UNIT
+}
+
+/**
+ * What the PRESETS alone add to glyph `index` at time `t`.
+ *
+ * The unit conversion lives here and nowhere else: `dx`, `dy` and `blur` come out
+ * of the engine in unit-box heights and leave in output pixels, multiplied by the
+ * em at run time `t` (see the header, trap 1).
+ *
+ * `em` may be passed explicitly by a caller that has already resolved it — the
+ * renderer knows the exact size it is drawing at, and passing it keeps the
+ * transform and the geometry from resolving `size` twice.
+ */
+export function presetTransform(
+  cfg: VectorTypeConfig,
+  t: number,
+  index: number,
+  count: number,
+  em: number = vtEmSize(cfg, t),
+): VtGlyphMotion {
+  const u = unitStateFor(cfg, t, index, count)
+  if (u === IDENTITY_UNIT) return { ...IDENTITY_GLYPH_MOTION, axes: {} }
+
+  const scale = fin(u.scale, 1)
+  const emPx = isNum(em) ? em : DEFAULT_CONFIG.size
+
+  const axes: Record<string, number> = {}
+  if (u.axes && typeof u.axes === 'object') {
+    for (const [tag, v] of Object.entries(u.axes)) if (isNum(v) && v !== 0) axes[tag] = v
+  }
+
+  let clip: VtGlyphClip | null = null
+  if (u.clip && (CLIP_SIDES as readonly string[]).includes(u.clip.side) && isNum(u.clip.amount)) {
+    const amount = clamp01(u.clip.amount)
+    // A zero-amount clip hides nothing; emitting it would make every consumer
+    // set up a clipping region per glyph for no visual difference.
+    if (amount > 0) clip = { side: u.clip.side, amount }
+  }
+
+  return {
+    dx: fin(u.dx, 0) * emPx,
+    dy: fin(u.dy, 0) * emPx,
+    scale,
+    scaleX: fin(u.scaleX, 1),
+    scaleY: fin(u.scaleY, 1),
+    rotate: fin(u.rotation, 0),
+    opacity: clamp01(fin(u.opacity, 1)),
+    blur: Math.max(0, fin(u.blur, 0) * emPx),
+    clip,
+    axes,
+  }
+}
+
+/**
+ * THE COMPOSITION. Preset ∘ tracks for glyph `index` at time `t`, both read on
+ * `glyphTime()`.
+ *
+ *   dx, dy, rotate  ADD        (identity 0 — either source alone passes through)
+ *   scale           MULTIPLIES (identity 1)
+ *   opacity         MULTIPLIES (identity 1), clamped to 0..1
+ *   blur, clip, axes, scaleX/scaleY  come from the presets; tracks cannot
+ *                   express them (a track carries one number down one config path)
+ *
+ * Multiplying opacity rather than adding is what makes "fade in *and* pulse"
+ * read as a pulse inside a fade instead of saturating at 1 the moment both are
+ * partly on. Multiplying scale means a Grow preset scales whatever the track
+ * already scaled, rather than one of the two winning.
+ *
+ * This is the function every renderer should call. `glyphTransform` (tracks only)
+ * and `presetTransform` (presets only) remain exported for tests and for callers
+ * that genuinely want one source.
+ */
+export function vtGlyphMotion(
+  cfg: VectorTypeConfig,
+  t: number,
+  index: number,
+  count: number,
+  em?: number,
+): VtGlyphMotion {
+  const tr = glyphTransform(cfg, t, index, count)
+  const pr = presetTransform(cfg, t, index, count, em ?? vtEmSize(cfg, t))
+  return {
+    dx: tr.dx + pr.dx,
+    dy: tr.dy + pr.dy,
+    scale: tr.scale * pr.scale,
+    scaleX: pr.scaleX,
+    scaleY: pr.scaleY,
+    rotate: tr.rotate + pr.rotate,
+    opacity: clamp01(tr.opacity * pr.opacity),
+    blur: pr.blur,
+    clip: pr.clip,
+    axes: pr.axes,
+  }
+}
