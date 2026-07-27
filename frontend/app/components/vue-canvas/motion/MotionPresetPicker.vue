@@ -62,35 +62,46 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
 <template>
   <Teleport to="body">
-    <!-- click-away backdrop -->
-    <div class="fixed inset-0 z-[110]" @pointerdown="emit('close')" />
-    <div class="fixed z-[111] w-72 max-h-[420px] flex flex-col rounded-xl border border-white/10 bg-[#141416]/98 shadow-2xl"
-      :style="style" @pointerdown.stop>
-      <div class="flex items-center justify-between px-3 py-2 border-b border-white/10">
-        <span class="text-[11px] uppercase tracking-[0.12em] text-white/50">{{ slotKind }} presets</span>
-        <div class="flex items-center gap-1">
-          <button v-if="currentId" class="text-[10px] px-1.5 py-0.5 rounded border border-white/10 text-white/60 hover:text-white/90 cursor-pointer"
-            @click="emit('clear')">Clear</button>
-          <button class="text-white/45 hover:text-white/80 p-1 cursor-pointer" @click="emit('close')"><X class="size-3.5" /></button>
+    <!-- ONE root, pointer-events-none, with every interactive child opting back
+         in. This popover is teleported over the node canvas: a root that eats
+         pointer events swallows wire drags, which this codebase has paid for
+         before. The backdrop below opts IN deliberately — it is the click-away
+         target and only exists while the gallery is open. -->
+    <div class="fixed inset-0 z-[110] pointer-events-none">
+      <div class="absolute inset-0 pointer-events-auto" @pointerdown="emit('close')" />
+      <div class="pointer-events-auto fixed z-[111] w-72 max-h-[420px] flex flex-col rounded-xl border border-white/10 bg-[#141416]/98 shadow-2xl"
+        :style="style" @pointerdown.stop>
+        <div class="flex items-center justify-between px-3 py-2 border-b border-white/10">
+          <span class="text-[11px] uppercase tracking-[0.12em] text-white/50">{{ slotKind }} presets</span>
+          <div class="flex items-center gap-1">
+            <button v-if="currentId" class="text-[10px] px-1.5 py-0.5 rounded border border-white/10 text-white/60 hover:text-white/90 cursor-pointer"
+              @click="emit('clear')">Clear</button>
+            <button class="text-white/45 hover:text-white/80 p-1 cursor-pointer" @click="emit('close')"><X class="size-3.5" /></button>
+          </div>
         </div>
-      </div>
-      <div class="flex-1 min-h-0 overflow-y-auto p-3 space-y-3">
-        <div v-for="s in sections" :key="s.label">
-          <div class="text-[10px] uppercase tracking-[0.12em] text-white/35 mb-1.5">{{ s.label }}</div>
-          <div class="grid grid-cols-2 gap-2">
-            <button v-for="id in s.ids" :key="id"
-              class="group flex flex-col gap-1 rounded-lg border p-1.5 text-left cursor-pointer transition-colors"
-              :class="id === currentId ? 'border-white/60 bg-white/[0.08]' : 'border-white/[0.07] bg-white/[0.03] hover:bg-white/[0.06]'"
-              @click="emit('pick', id)">
-              <PresetThumb :preset-id="id" :slot-kind="slotKind" :capabilities="capabilities" />
-              <span class="text-[10.5px] truncate" :class="id === currentId ? 'text-white' : 'text-white/65'">{{ label(id) }}</span>
-            </button>
-            <!-- Custom: the property-keyframe milestone's visible entry point -->
-            <div v-if="s === sections[sections.length - 1]"
-              class="flex flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-white/[0.12] p-1.5 opacity-50 select-none"
-              title="Custom property animation — coming soon">
-              <div class="w-full aspect-[4/3] grid place-items-center rounded bg-white/[0.02] text-white/40 text-lg">+</div>
-              <span class="text-[10.5px] text-white/45">Custom <span class="text-[8px] uppercase border border-white/20 rounded px-0.5 ml-0.5">soon</span></span>
+        <div class="flex-1 min-h-0 overflow-y-auto p-3 space-y-3">
+          <!-- A consumer whose OWN presets are the headline renders them here,
+               ABOVE the shared engine's sections. Vector Type's variable-axis
+               tiles are the only thing in this gallery that no other tool does;
+               below Slide they would read as five more kinetic-text presets. -->
+          <slot name="lead" />
+          <div v-for="s in sections" :key="s.label">
+            <div class="text-[10px] uppercase tracking-[0.12em] text-white/35 mb-1.5">{{ s.label }}</div>
+            <div class="grid grid-cols-2 gap-2">
+              <button v-for="id in s.ids" :key="id"
+                class="group flex flex-col gap-1 rounded-lg border p-1.5 text-left cursor-pointer transition-colors"
+                :class="id === currentId ? 'border-white/60 bg-white/[0.08]' : 'border-white/[0.07] bg-white/[0.03] hover:bg-white/[0.06]'"
+                @click="emit('pick', id)">
+                <PresetThumb :preset-id="id" :slot-kind="slotKind" :capabilities="capabilities" />
+                <span class="text-[10.5px] truncate" :class="id === currentId ? 'text-white' : 'text-white/65'">{{ label(id) }}</span>
+              </button>
+              <!-- Custom: the property-keyframe milestone's visible entry point -->
+              <div v-if="s === sections[sections.length - 1]"
+                class="flex flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-white/[0.12] p-1.5 opacity-50 select-none"
+                title="Custom property animation — coming soon">
+                <div class="w-full aspect-[4/3] grid place-items-center rounded bg-white/[0.02] text-white/40 text-lg">+</div>
+                <span class="text-[10.5px] text-white/45">Custom <span class="text-[8px] uppercase border border-white/20 rounded px-0.5 ml-0.5">soon</span></span>
+              </div>
             </div>
           </div>
         </div>

@@ -24,14 +24,22 @@
  *    has already paid for more than once.
  */
 import { computed, markRaw, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
-import { Plus, Trash2 } from 'lucide-vue-next'
+import { Plus, Trash2, X } from 'lucide-vue-next'
 import type { ControlSpec } from '~/lib/spacetype/effect'
-import { mergeConfig, type VectorTypeConfig } from '~/lib/vectortype/config'
+import type { LayerAnimSpec } from '~/lib/motion/types'
+import { ALL_PRESET_CAPABILITIES } from '~/lib/motion/evaluate'
+import { KINETIC_PRESETS_BY_ID, presetParamDefault } from '~/data/kinetic-presets'
+import { VARIABLE_FONTS } from '~/data/variable-fonts'
+import { VT_PRESET_DURATIONS, VT_PRESET_SLOTS, mergeConfig, type VectorTypeConfig, type VtPresetSlot } from '~/lib/vectortype/config'
 import { VT_CONTROLS, VT_SECTIONS, derivedAxisControls, type VtControl } from '~/lib/vectortype/controls'
 import { VT_GUIDANCE, vtAgentControls } from '~/lib/vectortype/agentControls'
 import { animatableTargets } from '~/lib/vectortype/motion'
-import { vtStillTime } from '~/lib/vectortype/presetMotion'
+import { vtAxisOffers, vtPresetSpecs, vtStillTime } from '~/lib/vectortype/presetMotion'
+import { vtAxisPreset } from '~/lib/vectortype/axisPresets'
 import { loadVariableFont, type VtAxis, type VtFont } from '~/lib/vectortype/font'
+import MotionPresetPicker from '~/components/vue-canvas/motion/MotionPresetPicker.vue'
+import PresetThumb from '~/components/vue-canvas/motion/PresetThumb.vue'
+import VectorTypeThumb from '~/components/vue-canvas/motion/VectorTypeThumb.vue'
 import { drawVectorTypeToCanvas, vectorTypeSVG, vtExportName, vtIsAnimated } from '~/lib/vectortype/canvas'
 import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
@@ -229,6 +237,103 @@ function slotControl(slotProps: unknown): ControlSpec {
   return (slotProps as { control: ControlSpec }).control
 }
 
+// ── motion presets ──────────────────────────────────────────────────────────
+/**
+ * The In / Out / Loop preset slots, and the gallery that fills them.
+ *
+ * Two things here are decisions rather than plumbing:
+ *
+ * 1. **Vector Type declares EVERY capability the shared engine knows about.**
+ *    It draws real outlines through `drawVectorType`, which applies `blur`,
+ *    `clip` and `scaleX/scaleY` — so the blur presets the Compositor cannot
+ *    render are genuinely offered here. `layerKind: 'text'` is passed for the
+ *    opposite reason: the copy-based presets draw extra whole-unit copies, and
+ *    `VtGlyphMotion` has no `copies` field, so those four would be tiles that
+ *    silently do nothing.
+ *
+ * 2. **The axis section is rendered by THIS surface, into the picker's `lead`
+ *    slot, so it sits above every engine section.** It cannot live in the
+ *    shared picker: an axis preset's values are fractions of the LOADED FONT'S
+ *    range and the engine is font-agnostic by design (see `axisPresets.ts`).
+ *    And it is first on purpose — Fade, Slide and Grow are what every kinetic
+ *    text tool already does; re-cutting `XOPQ`/`GRAD`/`YTAS` as design
+ *    parameters is the only thing in this gallery that is ours.
+ */
+const VT_CAPABILITIES = [...ALL_PRESET_CAPABILITIES]
+
+const pickerFor = ref<VtPresetSlot | null>(null)
+const pickerAnchor = ref<{ top: number; left: number; width: number } | null>(null)
+function openPicker(slot: VtPresetSlot, e: MouseEvent) {
+  const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+  pickerAnchor.value = { top: r.top, left: r.left, width: r.width }
+  pickerFor.value = slot
+}
+
+const fontLabel = computed(() => VARIABLE_FONTS.find(f => f.id === config.value.fontId)?.label ?? 'This font')
+/** All five axis tiles for the open slot — unavailable ones included, each
+ *  carrying the sentence that says which axis is missing. Never filtered: a
+ *  hidden tile teaches nothing, and "pick Roboto Flex instead" is an action the
+ *  user owns (Task 7's hide-vs-disable call). */
+const axisOffers = computed(() =>
+  pickerFor.value ? vtAxisOffers(pickerFor.value, fontAxes.value, fontLabel.value) : [],
+)
+/** The id sitting in the slot the gallery is open for. */
+const currentPresetId = computed(() => (pickerFor.value ? config.value.motion[pickerFor.value]?.presetId ?? null : null))
+
+/** An id's label, whichever table it came from. */
+function presetLabel(slot: VtPresetSlot, id: string): string {
+  return vtAxisPreset(slot, id)?.label ?? KINETIC_PRESETS_BY_ID[id]?.label ?? id
+}
+function isAxisPreset(slot: VtPresetSlot, id: string): boolean {
+  return vtAxisPreset(slot, id) !== null
+}
+/** Axis presets carry no tunable params; the engine's catalog ones may. */
+const presetParams = (id: string) => KINETIC_PRESETS_BY_ID[id]?.params ?? []
+const paramValue = (spec: LayerAnimSpec, key: string) => spec.params?.[key] ?? presetParamDefault(spec.presetId, key)
+
+const slotSpec = (slot: VtPresetSlot): LayerAnimSpec | undefined => config.value.motion[slot]
+/** The slots that will really animate — `vtPresetSpecs` drops an id no table
+ *  knows, so this counts what the renderer will run, not what is stored. */
+const activePresets = computed(() => {
+  const specs = vtPresetSpecs(config.value)
+  return VT_PRESET_SLOTS.filter(s => specs[s]).map(s => ({ slot: s, spec: specs[s]! }))
+})
+const trackCount = computed(() => config.value.motion.tracks.length)
+/** Both sources, in one number, so the Motion tab can never read "no motion"
+ *  while a preset is running (Task 4's hand-off #6). */
+const motionSourceCount = computed(() => activePresets.value.length + trackCount.value)
+const bothSourcesLive = computed(() => activePresets.value.length > 0 && trackCount.value > 0)
+const activePresetSummary = computed(() =>
+  activePresets.value.map(p => `${p.slot === 'loop' ? 'Loop' : p.slot === 'in' ? 'In' : 'Out'} ${presetLabel(p.slot, p.spec.presetId)}`).join(', '),
+)
+
+function assignPreset(slot: VtPresetSlot, presetId: string) {
+  const cur = config.value.motion[slot]
+  // params reset on preset change — a param named for one preset means nothing
+  // to the next (the Compositor's editor does the same).
+  config.value.motion[slot] = { presetId, duration: cur?.duration ?? VT_PRESET_DURATIONS[slot] }
+  onEdit(`motion.${slot}`, presetId)
+  pickerFor.value = null
+  restartPreview()
+}
+function clearPreset(slot: VtPresetSlot) {
+  delete config.value.motion[slot]
+  onEdit(`motion.${slot}`, '')
+  pickerFor.value = null
+  restartPreview()
+}
+function patchSpec(slot: VtPresetSlot, patch: Partial<LayerAnimSpec>) {
+  const cur = config.value.motion[slot]
+  if (!cur) return
+  config.value.motion[slot] = { ...cur, ...patch }
+  restartPreview()
+}
+function patchParam(slot: VtPresetSlot, key: string, v: number) {
+  const cur = config.value.motion[slot]
+  if (!cur) return
+  patchSpec(slot, { params: { ...(cur.params ?? {}), [key]: v } })
+}
+
 // ── motion tracks ───────────────────────────────────────────────────────────
 function addTrack() {
   const target = animatable.value.find(a => a.path.startsWith('axes.')) ?? animatable.value[0]
@@ -341,6 +446,20 @@ function draw() {
  */
 watch(animated, (a) => { startedAt = 0; if (!a) previewTime.value = 0 })
 watch(playing, (p) => { startedAt = p ? performance.now() - previewTime.value * 1000 : 0 })
+
+/**
+ * Rewind and play — used only when a PRESET slot changes.
+ *
+ * An entrance is over by t = 0.8s and the preview clock runs a 4s loop, so
+ * assigning `Slide Up` at t = 3.1 would show the user nothing at all and read
+ * as a dead control. Track edits deliberately do NOT do this: a track spans the
+ * whole clip, so scrubbing back would just fight the user mid-drag.
+ */
+function restartPreview() {
+  previewTime.value = 0
+  startedAt = 0
+  playing.value = true
+}
 
 onMounted(() => {
   registerStudioParamBaker(props.nodeId, renderBlobWithOverrides)
@@ -544,6 +663,11 @@ const frameCount = computed(() => Math.round((config.value.motion.fps || 30) * (
           <span>{{ stats.shapings }} shaping{{ stats.shapings === 1 ? '' : 's' }}</span>
           <span v-if="stats.staggered" class="text-white/60">wave</span>
           <span>t {{ previewTime.toFixed(2) }}s</span>
+          <!-- Presets and tracks are two INDEPENDENT sources that compose. Both
+               are named here so a user running one never wonders whether it
+               replaced the other. -->
+          <span v-if="activePresets.length" class="text-white/60">{{ activePresets.length }} preset{{ activePresets.length === 1 ? '' : 's' }}</span>
+          <span v-if="trackCount" class="text-white/60">{{ trackCount }} track{{ trackCount === 1 ? '' : 's' }}</span>
         </div>
       </div>
     </template>
@@ -587,7 +711,10 @@ const frameCount = computed(() => Math.round((config.value.motion.fps || 30) * (
         <button type="button" class="flex-1 rounded px-2 py-1 text-[11px] transition"
                 :class="onMotion ? 'bg-white/15 text-white' : 'text-white/55 hover:text-white/80'"
                 @click="inspectorTab = 'motion'">
-          Motion<span v-if="config.motion.tracks.length" class="ml-1 text-white/40">{{ config.motion.tracks.length }}</span>
+          <!-- Counts BOTH sources. A preset with no track used to read as
+               "Motion" with no number at all — a live animation the tab denied. -->
+          Motion<span v-if="motionSourceCount" class="ml-1 text-white/40"
+                      :title="`${activePresets.length} preset${activePresets.length === 1 ? '' : 's'} · ${trackCount} track${trackCount === 1 ? '' : 's'}`">{{ motionSourceCount }}</span>
         </button>
       </div>
 
@@ -661,9 +788,71 @@ const frameCount = computed(() => Math.round((config.value.motion.fps || 30) * (
         </StudioSection>
       </template>
 
-      <!-- Motion: the stagger controls come from the schema; the track list is a
-           bespoke block (a repeater is not a ControlSpec). -->
+      <!-- Motion: presets first (the gallery), then the schema's stagger block,
+           then the hand-authored tracks. The two motion sources COMPOSE — see
+           the notes each section carries about the other. -->
       <template v-else>
+        <StudioSection title="Presets">
+          <p class="text-[10px] leading-snug text-white/30">
+            Entrance, exit and loop. Variable-axis presets re-cut the letterforms themselves —
+            they sit at the top of each gallery.
+          </p>
+          <div v-for="slot in VT_PRESET_SLOTS" :key="slot" class="flex flex-col gap-1.5">
+            <div class="flex items-center justify-between">
+              <span class="text-[11px] capitalize text-white/55">{{ slot }}</span>
+              <button v-if="slotSpec(slot)" class="text-white/30 hover:text-white/75" :title="`Clear ${slot}`"
+                      @click="clearPreset(slot)"><X class="h-3 w-3" /></button>
+            </div>
+            <button
+              type="button"
+              class="flex items-center gap-2 rounded-lg border p-1.5 text-left transition-colors"
+              :class="slotSpec(slot) ? 'border-white/25 bg-white/[0.06]' : 'border-dashed border-white/[0.12] bg-white/[0.02] hover:bg-white/[0.05]'"
+              @click="(e: MouseEvent) => openPicker(slot, e)"
+            >
+              <!-- The real-outline thumb is used ONLY for axis presets: it costs
+                   an outline shaping per frame, and for Slide/Fade the abstract
+                   card is the honest picture anyway. -->
+              <div class="w-14 shrink-0">
+                <VectorTypeThumb
+                  v-if="slotSpec(slot) && isAxisPreset(slot, slotSpec(slot)!.presetId)"
+                  :preset-id="slotSpec(slot)!.presetId" :slot-kind="slot"
+                  :font-id="config.fontId" :text="config.text" :axes="config.axes" :font="font" :fill="config.fill"
+                />
+                <PresetThumb
+                  v-else-if="slotSpec(slot)"
+                  :preset-id="slotSpec(slot)!.presetId" :slot-kind="slot"
+                  :params="slotSpec(slot)!.params" :capabilities="VT_CAPABILITIES"
+                />
+              </div>
+              <span class="min-w-0 flex-1 truncate text-[11px]" :class="slotSpec(slot) ? 'text-white/90' : 'text-white/40'">
+                {{ slotSpec(slot) ? presetLabel(slot, slotSpec(slot)!.presetId) : `Choose ${slot} preset…` }}
+              </span>
+            </button>
+            <div v-if="slotSpec(slot)" class="flex flex-col gap-1.5 pl-1">
+              <label class="flex items-center gap-1 text-[11px] text-white/50">dur
+                <input type="number" min="0.1" step="0.1" :value="slotSpec(slot)!.duration"
+                       class="w-16 rounded-md border border-white/[0.08] bg-white/[0.04] px-1 py-0.5 text-white/90 outline-none"
+                       @change="patchSpec(slot, { duration: Math.max(0.1, Number(($event.target as HTMLInputElement).value) || VT_PRESET_DURATIONS[slot]) })">
+                <span class="text-white/30">s</span>
+              </label>
+              <label v-for="ps in presetParams(slotSpec(slot)!.presetId)" :key="ps.key"
+                     class="flex items-center gap-2 text-[11px] text-white/50">
+                <span class="w-14 truncate">{{ ps.label }}</span>
+                <input type="range" :min="ps.min" :max="ps.max" :step="ps.step" :value="paramValue(slotSpec(slot)!, ps.key)"
+                       class="studio-range flex-1"
+                       @input="patchParam(slot, ps.key, Number(($event.target as HTMLInputElement).value))">
+                <span class="w-8 text-right tabular-nums text-white/70">{{ paramValue(slotSpec(slot)!, ps.key) }}</span>
+              </label>
+            </div>
+          </div>
+          <!-- The coexistence affordance, from the preset side. -->
+          <p v-if="bothSourcesLive" class="rounded border border-white/10 bg-white/[0.04] px-2 py-1.5 text-[10px] leading-snug text-white/50">
+            <span class="text-white/75">Both are running.</span>
+            {{ trackCount }} hand-authored track{{ trackCount === 1 ? ' plays' : 's play' }} alongside these presets —
+            neither replaces the other. Offsets and rotation add; scale and opacity multiply.
+          </p>
+        </StudioSection>
+
         <StudioControlPanel
           :controls="allControls"
           :order="MOTION_SECTIONS"
@@ -689,6 +878,13 @@ const frameCount = computed(() => Math.round((config.value.motion.fps || 30) * (
               <Plus class="h-3 w-3" /> Track
             </button>
           </template>
+          <!-- …and from the track side. A user who just added a weight track
+               under a running Slide-Up preset must not conclude one replaced
+               the other. -->
+          <p v-if="activePresets.length" class="rounded border border-white/10 bg-white/[0.04] px-2 py-1.5 text-[10px] leading-snug text-white/50">
+            <span class="text-white/75">{{ activePresets.length }} preset{{ activePresets.length === 1 ? '' : 's' }} also running</span>
+            — {{ activePresetSummary }}. Tracks compose on top of them.
+          </p>
           <p v-if="!config.motion.tracks.length" class="text-[11px] text-white/30">
             Add a track to animate an axis (or a per-glyph offset) over the clip.
           </p>
@@ -733,6 +929,73 @@ const frameCount = computed(() => Math.round((config.value.motion.fps || 30) * (
       </template>
     </template>
   </StudioModalShell>
+
+  <!-- The gallery. The axis section goes into `#lead`, i.e. ABOVE every engine
+       section — see the block comment on VT_CAPABILITIES. -->
+  <MotionPresetPicker
+    v-if="pickerFor"
+    :slot-kind="pickerFor"
+    :current-id="currentPresetId"
+    :anchor-rect="pickerAnchor"
+    :capabilities="VT_CAPABILITIES"
+    layer-kind="text"
+    @pick="(id: string) => assignPreset(pickerFor!, id)"
+    @clear="clearPreset(pickerFor!)"
+    @close="pickerFor = null"
+  >
+    <template #lead>
+      <!-- No axis preset targets this slot at all (there is no axis EXIT yet):
+           an empty section header advertises a capability that is not there. -->
+      <div v-if="axisOffers.length">
+        <div class="mb-1 flex items-baseline justify-between gap-2">
+          <span class="text-[10px] uppercase tracking-[0.12em] text-white/70">Variable axes</span>
+          <span class="text-[9px] text-white/30">{{ fontLabel }} · {{ fontAxes.length }} axes</span>
+        </div>
+        <p class="mb-1.5 text-[9.5px] leading-snug text-white/35">
+          The letterforms are re-cut, not moved — real outline interpolation the font itself declares.
+        </p>
+        <!-- Before the file has parsed there ARE no axes, and every offer would
+             read "this font has no wght axis" — true of the empty list, a lie
+             about the font. Say what is actually happening instead. -->
+        <p v-if="fontLoading && !fontAxes.length" class="text-[10px] text-white/30">Reading the font's axes…</p>
+        <p v-else-if="fontError" class="text-[10px] text-amber-200/60">Font failed to load — no axes to animate.</p>
+        <div v-else class="grid grid-cols-2 gap-2">
+          <button
+            v-for="o in axisOffers" :key="o.preset.id"
+            type="button"
+            class="flex flex-col gap-1 rounded-lg border p-1.5 text-left transition-colors"
+            :class="!o.available
+              ? 'border-white/[0.06] bg-white/[0.02] cursor-not-allowed'
+              : (o.preset.id === currentPresetId
+                ? 'border-white/60 bg-white/[0.08] cursor-pointer'
+                : 'border-white/[0.07] bg-white/[0.03] hover:bg-white/[0.06] cursor-pointer')"
+            :disabled="!o.available"
+            :title="o.reason ?? o.preset.pitch"
+            @click="assignPreset(pickerFor!, o.preset.id)"
+          >
+            <!-- Real outlines, not a card: "Weight In" drawn as a growing
+                 rectangle is indistinguishable from "Grow In". This is the only
+                 section that pays for VectorTypeThumb. `:font` is handed down so
+                 five tiles cost zero extra fetches. -->
+            <VectorTypeThumb
+              :preset-id="o.preset.id" :slot-kind="pickerFor!"
+              :font-id="config.fontId" :text="config.text" :axes="config.axes" :font="font"
+              :fill="config.fill" :disabled="!o.available"
+            />
+            <span class="truncate text-[10.5px]"
+                  :class="!o.available ? 'text-white/35' : (o.preset.id === currentPresetId ? 'text-white' : 'text-white/70')">
+              {{ o.preset.label }}
+            </span>
+            <!-- The reason is RENDERED, not just a `disabled` attribute: a
+                 missing axis is fixable by the user (pick Roboto Flex), and a
+                 tooltip nobody hovers teaches nobody. -->
+            <span v-if="o.reason" class="text-[9px] leading-tight text-amber-200/55">{{ o.reason }}</span>
+            <span v-else class="text-[9px] leading-tight text-white/30">{{ o.preset.pitch }}</span>
+          </button>
+        </div>
+      </div>
+    </template>
+  </MotionPresetPicker>
 
   <CanvasContextMenu v-if="varMenu" :x="varMenu.x" :y="varMenu.y" :items="varMenu.items" @close="varMenu = null" />
   <SweepPopover
