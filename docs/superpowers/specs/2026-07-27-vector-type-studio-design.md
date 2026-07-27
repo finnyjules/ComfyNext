@@ -53,29 +53,50 @@ These are genuinely different materials. Space Type stays — it is the flagship
 
 ## What the spike established (2026-07-27)
 
-Run live against the running app.
+Run live against the running app. **Two spikes — the second supersedes the first.**
 
-**The naive path is closed.** The `opentype` build vendored inside three parses `fvar` (2 refs — it can read *which* axes exist) but has **zero `gvar` support** (0 refs). `gvar` holds the per-point deltas. So it can report "Inter has weight 100–900" and cannot produce the outline at weight 650.
+### Spike 1 — the vendored parser is a dead end
 
-**The fallback works, and is structurally sound.** Two static instances of the same family interpolate cleanly:
+three's bundled `opentype` parses `fvar` (2 refs — it reads *which* axes exist) but has **zero `gvar` support** (0 refs). `gvar` holds the per-point deltas, so it can report "Inter has weight 100–900" and never produce the outline at 650.
 
-- Every glyph tested — `A G O & g 8`, including the awkward ones — has **identical command counts and identical command-type sequences** between weight 100 and 900, in both Inter (2048 upem) and Archivo (1000 upem). They come from the same masters, so points correspond one-to-one.
-- Interpolating and measuring ink coverage gives a smooth monotonic ramp: `A` = 1921 → 4981 → 7848 → 10438 → 12829 across t = 0…1. Same shape for `g` and `&`.
+A fallback works: two static instances interpolate cleanly (identical command counts *and* sequences across `A G O & g 8` in Inter and Archivo; ink coverage ramps monotonically 1921 → 12829). Kept on record as a zero-dependency option, but not the chosen path.
 
-**Everything needed already exists:** `opentype` (via three, in `scene3d/outlines.ts`), the Google font proxy that already serves weight-specific static TTFs (`/api/scene3d/google-font-file`), Paper.js (installed, headless, used by `useVectorSvg.ts`), and the Compositor's `PathLayer` model.
+### Spike 2 — fontkit, and it is decisively better
 
-**Known limits of the fallback:**
-- Only families Google serves **static cuts** for. Roboto Flex returns **502** — variable-only. The best variable font is the one this can't use.
-- Effectively **one axis** with two fetches. Weight × width needs four corner instances and bilinear blending.
-- **Linear approximation.** Real fonts can carry non-linear axis mappings (`avar`); a straight lerp approximates. Fine for display type, not typographically exact.
+`fontkit@2.0.4` added. It ships a browser build (`dist/browser-module.mjs`) and depends on `brotli`, so it decodes woff2. **Confirmed working in the browser against real variable fonts:**
+
+| | Inter | Roboto Flex |
+|---|---|---|
+| Parsed as variable | ✅ | ✅ |
+| Axes | 2 — `opsz`, `wght` | **13** — `wght`, `wdth`, `opsz`, `slnt`, `GRAD`, `XOPQ`, `YOPQ`, `XTRA`, `YTUC`, `YTLC`, `YTAS`, `YTDE`, `YTFI` |
+| Weight sweep (glyph bbox area) | 1,358,512 → 1,828,988 | 1,378,312 → 1,722,176 |
+| Path commands across the sweep | **46, constant** | **36, constant** |
+
+Two things matter here. **Outline topology is stable** — the command count never changes across the axis range, so animating between any two positions is safe by construction, no point-matching needed. And **Roboto Flex works**, which the interpolation fallback could not touch at all (Google serves it no static cuts — the proxy returns 502).
+
+Roboto Flex's exotic axes are the genuinely unexplored surface: `XOPQ` (stroke thickness), `YTAS` (ascender height), `GRAD` (grade — weight without width change). Nothing in the market exposes these as animatable design parameters.
+
+### The font source is NOT the CSS2 API
+
+Important and non-obvious. `fonts.googleapis.com/css2` **never serves the variable file**:
+- with a `curl` UA it returns static per-weight TTF cuts (325 KB, `glyf` only)
+- with a browser UA it returns woff2 — but still `font-weight: 100`, a **static instance**, split by unicode-range
+
+The variable TTFs live in the Google Fonts repo, e.g.
+`raw.githubusercontent.com/google/fonts/main/ofl/inter/Inter[opsz,wght].ttf`
+— verified to carry `fvar`, `gvar` and `avar` for Inter, Archivo and Roboto Flex.
+
+**Consequence for the plan:** a new proxy route is needed alongside the existing `/api/scene3d/google-font-file`, resolving family → variable TTF from the fonts repo, with the same cache-and-allowlist treatment. It is a different source, not a parameter change.
+
+Spike code: `frontend/app/lib/vectortype/spike.ts` — temporary, superseded by the plan's first task.
 
 ## Scope — v1
 
 Deliberately narrow. The test for inclusion: *could the Compositor's text layer already do this?* If yes, it isn't v1.
 
 **In:**
-1. **Text → outlines.** Reuse `scene3d/outlines.ts`'s glyph path extraction; add a 2D path output alongside its existing `THREE.Shape[]`.
-2. **Axis animation** — weight as geometry, via two-instance interpolation. The headline.
+1. **Text → outlines** via fontkit, with a variable-TTF proxy route. Note this does NOT reuse `scene3d/outlines.ts` — that path is opentype-based and cannot vary; the two coexist until Scene3D text is optionally migrated later.
+2. **Axis animation** — any axis as geometry, via fontkit variations. The headline. Roboto Flex alone exposes 13, including `XOPQ`, `GRAD` and `YTAS`, which nothing in the market animates.
 3. **Per-glyph stagger** — the thing that makes it *kinetic*: delay, and per-glyph transform.
 4. **Fill + stroke rendering** to canvas, including outline **offset** (weight as geometry, independent of the font's own axis).
 5. **PNG bake** through the existing studio cascade — so it behaves like every other studio on day one.
@@ -86,7 +107,7 @@ Deliberately narrow. The test for inclusion: *could the Compositor's text layer 
 - Boolean ops between letters (Paper.js can, but it needs its own design pass)
 - Field deformation of anchor points (wants the field work first)
 - Complex-script shaping (opentype's shaping is basic; Latin display type only)
-- Multi-axis blending (needs four-corner fetches)
+- Multi-axis *choreography* (several axes on independent timelines) — fontkit makes multi-axis sampling free, but the authoring UI for it is its own design problem
 
 ## Architecture — how it fits what exists
 
@@ -99,15 +120,28 @@ Deliberately narrow. The test for inclusion: *could the Compositor's text layer 
 
 **The shared piece worth building once: a vector export spine.** SVG output should not be per-studio. Shape Studio is the obvious second consumer — its flat-shaded facets project to coloured polygons, which is exactly an SVG. Design the writer so both feed it.
 
-## Open decisions
+## Decisions taken (2026-07-27)
 
-1. **Kinetic Slates: delete or leave dormant?** The code is intact behind a flag. Deleting is honest; leaving it costs nothing but keeps a dead surface in the tree.
-2. **fontkit now, or two-instance interpolation?** The spike says interpolation ships today with zero dependencies but limits font coverage. fontkit is one dependency and unlocks every axis on every variable font, including Roboto Flex. **Recommendation: ship on interpolation, add fontkit when a real font is blocked by it** — the abstraction is the same either way.
-3. **Does the Font Playground node migrate or coexist?** Migration is cleaner but touches saved projects.
-4. **Name.** "Vector Type" is descriptive; "Type Studio" collides with Space Type's informal name.
+1. **Kinetic Slates — delete.** Not left dormant.
+2. **fontkit — added** (`2.0.4`). Spike 2 justifies it: every axis on every variable font, stable outline topology, and Roboto Flex works where interpolation could not.
+3. **Font Playground — migrate**, then remove the widget.
+4. **KineticType node — replace, with a migration** so saved nodes open in the new studio carrying their text and preset.
+5. **Name — deferred.** "Vector Type" is a working title.
+
+## Corrections to the retirement list (found while scoping)
+
+The original list conflated two different things and would have broken live code.
+
+**`lib/motion/` must be KEPT.** The comment in `kineticEnabled.ts` lists it as part of the dormant feature; that comment is **stale**. It is now live infrastructure imported by `useCompositorLayers`, `CompositorMotionTimeline`, `MotionPresetPicker`, `KeyframeDock` and `MotionClipInspector` — the shipped Compositor motion redesign and the timeline.
+
+**`uploadFrameBatch` must be EXTRACTED before anything is deleted.** It lives in `useKineticRenderer.ts` but is general-purpose: Shape, Gradient, Texture, Shader, Space Type, Compositor and both bake modules all call it to upload baked frame sequences. Move it to a neutral home (`lib/studio/frameUpload.ts`) and repoint its call sites first, or deleting the kinetic files breaks video export in every studio.
+
+**Kinetic Slates ≠ Kinetic Type.** Only *Slates* is gated off. `KineticType` is a **live, ungated node** in the toolbox ("Animated text — type a word, pick a motion preset…"), reachable today and possibly in saved projects. It is the real thing this replaces, which is why it needs a migration rather than a deletion.
+
+**Genuinely dead set (~450 lines):** `lib/slates/` (2 files), `data/slate-templates.ts`, `SlateGalleryModal.vue`, `lib/kineticEnabled.ts` and its three gates (`studio-options.ts:25`, `layouts/default.vue:4232`, `CompositorModal.vue:4076`).
 
 ## Risks
 
 - **Sprawl if nothing retires.** Six type surfaces is already a lot. If this ships without the retirement list, it is the bloat the landscape research flagged as how tools in this category decay. The retirement list is not optional garnish.
-- **Font coverage disappoints.** If the families users want are variable-only, interpolation fails and it looks broken rather than limited. Mitigation: detect variable-only families and say so plainly in the UI, rather than silently rendering one weight.
+- **Font coverage.** fontkit removes the variable-only problem, but the fonts repo is a different source from the existing CSS2 proxy: family→file-path resolution is by convention (`ofl/<family>/<Family>[axes].ttf`) and will not resolve for every family. Mitigation: resolve against the repo listing and fall back to a static cut with the axis controls disabled and labelled, rather than silently rendering one weight.
 - **Performance.** Hundreds of anchor points per glyph, animated per frame, is real work. Bound the character count in v1 and measure before promising long strings.
