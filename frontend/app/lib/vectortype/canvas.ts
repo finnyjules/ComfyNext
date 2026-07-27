@@ -38,6 +38,7 @@ import type { VtFont } from './font'
 import type { GlyphOutline, TextOutlines } from './outline'
 import { textOutlines } from './outline'
 import { applyMotion, glyphConfig, resolveStagger } from './motion'
+import { vtAxisCoords } from './axisPresets'
 import {
   IDENTITY_GLYPH_MOTION,
   vtEmSize,
@@ -61,12 +62,14 @@ export interface VtFrame {
    *  (`blur`, `clip`, `scaleX/scaleY`, `axes`) are carried for the renderers that
    *  consume them; the five transform fields are what this module draws with. */
   transforms: VtGlyphMotion[]
-  /** True when at least one glyph was shaped at its own axis position — i.e. the
-   *  travelling-wave path actually ran. Exposed so a caller can ASSERT the
-   *  intended path executed rather than inferring it from the picture. */
+  /** True when the glyphs were read on their OWN clocks — the travelling-wave
+   *  path. Exposed so a caller can ASSERT the intended path executed rather than
+   *  inferring it from the picture. Not the same as "more than one shaping": an
+   *  axis PRESET re-shapes the run without a stagger (`shapings` says so). */
   staggered: boolean
-  /** How many distinct `textOutlines` shapings this frame cost. 1 when the whole
-   *  run shares one clock; up to `glyphs.length` when a wave is travelling. */
+  /** How many distinct `textOutlines` shapings this frame cost. 1 when every
+   *  glyph shares one axis position; up to `glyphs.length + 1` when a wave is
+   *  travelling or an axis preset has moved the run off its resting position. */
   shapings: number
 }
 
@@ -153,18 +156,22 @@ function coordsKey(coords: Record<string, number>): string {
 }
 
 /**
- * Shape the run at time `t`, giving each glyph its OWN axis position when
- * stagger is on.
+ * Shape the run at time `t`, giving each glyph its OWN axis position whenever
+ * something has moved it there — a staggered axis TRACK, or an axis PRESET.
  *
  * This is the studio's headline capability, and it is the expensive one: a
  * travelling wave means glyph *i* sits at a different axis position from glyph
  * *i+1*, so fontkit must instance the font once per distinct coordinate set.
  * Two mitigations, both cheap:
  *
- *  - `delay === 0` collapses to a SINGLE shaping (Task 6 proved the collapse is
- *    exact), so the common case pays nothing.
+ *  - a frame where NO glyph's axes moved collapses to a SINGLE shaping (Task 6
+ *    proved the collapse is exact), so the common case pays nothing. Note it is
+ *    the axis motion that decides, NOT `delay === 0`: an axis preset moves the
+ *    outline with the stagger off, and gating on the delay alone would return
+ *    axis numbers that nothing ever shaped.
  *  - identical coordinate sets are memoised within the frame, so a `center` or
- *    `edges` order — where glyphs pair up — costs about half.
+ *    `edges` order — where glyphs pair up — costs about half, and a preset with
+ *    no stagger costs exactly one extra shaping for the whole run.
  *
  * Advances come from each glyph's own instance, so the word BREATHES as the wave
  * passes. That is the font's real metric at that axis position; freezing the
@@ -177,21 +184,59 @@ export function vectorTypeFrame(font: VtFont, cfg: VectorTypeConfig, t: number):
   const n = shaped.glyphs.length
 
   const stagger = resolveStagger(cfg)
-  const perGlyph = stagger.delay > 0 && n > 1
+  const staggered = stagger.delay > 0 && n > 1
+
+  // MOTION FIRST, then geometry. An axis PRESET (`./axisPresets.ts`) puts each
+  // glyph at its own axis position through `transforms[i].axes`, exactly as a
+  // staggered axis track does through `glyphConfig` — so the shaping below has
+  // to know both before it can decide how many shapings this frame needs.
+  //
+  // One em for the whole run, resolved once: `vtPlacement` scales every glyph by
+  // the SAME `size`, so a per-glyph em would move the letters in units the
+  // geometry does not share.
+  const em = vtEmSize(cfg, t)
+  const resting: Record<string, number>[] = []
+  const transforms: VtGlyphMotion[] = []
+  for (let i = 0; i < n; i++) {
+    // The glyph's resting axes: its own clock when a stagger is on, the shared
+    // one otherwise. Preset deltas are added to THIS, so a preset composes with
+    // an axis track instead of replacing it.
+    const rest = staggered ? glyphConfig(cfg, t, i, n).axes : base.axes
+    resting.push(rest)
+    transforms.push(vtGlyphMotion(cfg, t, i, n, em, { axes: font.axes, resting: rest }))
+  }
+
+  // THE FAST PATH, widened (Task 4's hand-off). `delay === 0` is the DEFAULT, and
+  // it used to collapse to a single shaping unconditionally — which was right
+  // while only tracks could move an axis, and silently wrong the moment a preset
+  // could: every axis preset would have returned numbers that nothing shaped.
+  // A zero delta is never emitted, so a frame with no axis motion still takes
+  // the one-shaping path and pays nothing.
+  const axisMotion = transforms.some(tr => Object.keys(tr.axes).length > 0)
+  const perGlyph = staggered || axisMotion
   const cache = new Map<string, TextOutlines>()
   cache.set(coordsKey(shaped.coords), shaped)
 
   const source: GlyphOutline[] = []
+  // The coords every glyph shared, when they did share one set — so
+  // `outlines.coords` reports what was actually shaped rather than the resting
+  // position the presets moved off. Null once two glyphs disagree: a travelling
+  // wave has no single answer, and `staggered`/`shapings` are what describe it.
+  let uniform: Record<string, number> | null = shaped.coords
   if (perGlyph) {
+    let firstKey: string | null = null
+    uniform = null
     for (let i = 0; i < n; i++) {
-      const gc = glyphConfig(cfg, t, i, n)
-      // Shape through the SAME entry point, so the axis clamping and the sparse-
-      // axes contract are identical to the un-staggered path.
-      const probeCoords = { ...shaped.coords, ...gc.axes }
-      const key = coordsKey(probeCoords)
+      // Fully resolved absolute coords — resting position plus the preset's
+      // delta, clamped to each axis's own range. Equal to what `textOutlines`
+      // resolves internally, so the cache key describes the real shaping.
+      const coords = vtAxisCoords(font.axes, resting[i], transforms[i]?.axes)
+      const key = coordsKey(coords)
+      if (i === 0) { firstKey = key; uniform = coords }
+      else if (key !== firstKey) uniform = null
       let run = cache.get(key)
       if (!run) {
-        run = textOutlines(font, base.text, gc.axes)
+        run = textOutlines(font, base.text, coords)
         cache.set(key, run)
       }
       source.push((run.glyphs[i] ?? shaped.glyphs[i]) as GlyphOutline)
@@ -224,18 +269,15 @@ export function vectorTypeFrame(font: VtFont, cfg: VectorTypeConfig, t: number):
     ? { minX, minY, maxX, maxY }
     : { minX: 0, minY: 0, maxX: 0, maxY: 0 }
 
-  // One em for the whole run, resolved once: `vtPlacement` scales every glyph by
-  // the SAME `size`, so a per-glyph em would move the letters in units the
-  // geometry does not share.
-  const em = vtEmSize(cfg, t)
-  const transforms: VtGlyphMotion[] = []
-  for (let i = 0; i < glyphs.length; i++) transforms.push(vtGlyphMotion(cfg, t, i, glyphs.length, em))
-
   return {
-    outlines: { glyphs, width: penX, unitsPerEm: upem, coords: shaped.coords, bbox },
+    outlines: { glyphs, width: penX, unitsPerEm: upem, coords: uniform ?? shaped.coords, bbox },
     config: base,
     transforms,
-    staggered: perGlyph,
+    // Unchanged meaning: a TRAVELLING wave, i.e. glyphs on their own clocks. An
+    // axis preset at delay 0 shapes off the resting position but every glyph
+    // shares it, so it is not a wave and must not claim to be one — `shapings`
+    // is what says how many distinct positions were paid for.
+    staggered,
     shapings: cache.size,
   }
 }

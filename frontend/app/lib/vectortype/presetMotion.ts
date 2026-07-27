@@ -4,8 +4,10 @@
  * `./motion.ts` animates the CONFIG (tracks over dotted paths, on a per-glyph
  * clock). This module animates the same glyphs from the OTHER motion source: the
  * Compositor's kinetic preset engine (`~/lib/motion/evaluate`), so Vector Type
- * gets Fade / Slide / Mask / Grow / Blur — and, later, variable-axis presets —
- * without a second evaluator.
+ * gets Fade / Slide / Mask / Grow / Blur without a second evaluator — plus the
+ * variable-AXIS presets in `./axisPresets.ts`, which cannot live in the shared
+ * engine because their values are fractions of the loaded font's own axis
+ * ranges. Both tables are dispatched from `unitStateFor` below, on one clock.
  *
  * The two sources are complementary and BOTH ACTIVE AT ONCE. A user with a
  * Slide-Up preset and an `axes.wght` track must see the word slide in *and* the
@@ -67,6 +69,18 @@ import {
   evaluateAnimation,
   presetIdsFor,
 } from '~/lib/motion/evaluate'
+import { resolveEase } from '~/lib/motion/easing'
+// TYPE-ONLY against ./font.ts (it loads fontkit at module scope); ./axisPresets
+// is deliberately type-only against it too, so this stays a light import.
+import type { VtAxis } from './font'
+import {
+  VT_EVAL,
+  vtAxisDelta,
+  vtAxisOffersFor,
+  vtAxisPreset,
+  vtAxisPresetIdsFor,
+  type VtAxisOffer,
+} from './axisPresets'
 import {
   DEFAULT_CONFIG,
   DEFAULT_MOTION,
@@ -147,18 +161,49 @@ const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v)
  * The preset ids this studio can render faithfully.
  *
  * Vector Type declares EVERY capability the engine knows about — it draws real
- * outlines, so `blur` and `axes` are both within reach (Tasks 5 and 7 wire the
- * last of them to pixels). Derived from `presetIdsFor`, never a second list.
+ * outlines, so `blur` and `axes` are both within reach. Derived from
+ * `presetIdsFor`, never a second list.
+ *
+ * UNION with `./axisPresets`, whose table is Vector-Type-only for a structural
+ * reason: an axis preset's values are fractions of the LOADED FONT'S range, and
+ * the shared engine does not know which font is loaded (see that module's
+ * header). Both halves are derived — nothing here is hand-listed.
  */
 const KNOWN_IDS: Record<VtPresetSlot, ReadonlySet<string>> = {
-  in: new Set(presetIdsFor('in', ALL_PRESET_CAPABILITIES)),
-  out: new Set(presetIdsFor('out', ALL_PRESET_CAPABILITIES)),
-  loop: new Set(presetIdsFor('loop', ALL_PRESET_CAPABILITIES)),
+  in: new Set([...presetIdsFor('in', ALL_PRESET_CAPABILITIES), ...Object.keys(VT_EVAL.in)]),
+  out: new Set([...presetIdsFor('out', ALL_PRESET_CAPABILITIES), ...Object.keys(VT_EVAL.out)]),
+  loop: new Set([...presetIdsFor('loop', ALL_PRESET_CAPABILITIES), ...Object.keys(VT_EVAL.loop)]),
 }
 
-/** True when the engine has a preset by that id for that slot. */
+/** True when SOME table — the engine's or this studio's — has a preset by that
+ *  id for that slot. Font-independent on purpose: `vtHasPreset`/`vtIsAnimated`
+ *  run against a raw stored blob with no font loaded, so "do we know this id"
+ *  and "can this font run it" have to stay separate questions. The second is
+ *  `vtAxisAvailability`'s. */
 export function vtKnowsPreset(slot: VtPresetSlot, presetId: unknown): boolean {
   return typeof presetId === 'string' && KNOWN_IDS[slot].has(presetId.trim())
+}
+
+/**
+ * Everything a picker should offer for a slot, given the loaded font's axes.
+ *
+ * The engine's capability-gated ids (renderable by anything Vector Type draws)
+ * plus the axis presets this font can actually run. Task 9's gallery calls this
+ * for the ids and `vtAxisOffersFor` for the greyed-out tiles and their reasons —
+ * it never assembles a list of its own.
+ */
+export function vtPresetIdsFor(slot: VtPresetSlot, axes?: readonly VtAxis[] | null): string[] {
+  return [...presetIdsFor(slot, ALL_PRESET_CAPABILITIES), ...vtAxisPresetIdsFor(slot, axes)]
+}
+
+/** The axis tiles for a slot, available ones and unavailable ones with their
+ *  reasons. Re-exported here so a surface has ONE import for its preset menu. */
+export function vtAxisOffers(
+  slot: VtPresetSlot,
+  axes?: readonly VtAxis[] | null,
+  fontLabel?: string,
+): VtAxisOffer[] {
+  return vtAxisOffersFor(slot, axes, fontLabel)
 }
 
 /**
@@ -264,6 +309,88 @@ export function vtStillTime(cfg: VectorTypeConfig | null | undefined): number {
   return Math.max(0, Math.min(rest, outStart, duration - 1e-6))
 }
 
+/** The engine's floor on a unit's animating window (`MIN_UNIT_DUR`). Restated
+ *  rather than imported because `evaluate.ts` keeps it private; the parity test
+ *  pins the two together against real engine output. */
+const MIN_UNIT_DUR = 0.05
+
+/** Which slot owns time `gt`, and how far through it that glyph is. */
+export interface VtSlotPhase {
+  slot: VtPresetSlot
+  /** EASED progress 0→1 for `in`/`out`; RAW phase 0→1 for `loop`. */
+  e: number
+}
+
+/**
+ * The slot the clock is inside, mirroring `evaluateAnimation`'s own branch
+ * order exactly: `in` while `gt < inDuration`, then `out` from `outStart`, then
+ * `loop`. Returns null when nothing is live.
+ *
+ * This exists because the axis presets are evaluated OUTSIDE the engine (their
+ * values depend on the loaded font, which the engine does not know), and they
+ * must still land on the same instant as an engine preset would — otherwise a
+ * `weight-in` and a `slide-up` picked together would finish at different times.
+ *
+ * It is a restatement of engine-private arithmetic, which is a drift risk, so
+ * the spec cross-checks it against real `evaluateAnimation` output on presets
+ * whose easing is `none` (fade-in's opacity IS `e`, fade-out's is `1 − e`,
+ * spin-loop's rotation is `360·phase`). If the engine's windowing ever changes,
+ * that test goes red rather than the axis presets quietly desynchronising.
+ *
+ * The engine's own stagger is 0 here (see the header), so a unit's window is
+ * the whole slot and `unitProgress` collapses to `gt / duration`.
+ */
+export function vtSlotPhase(
+  specs: Partial<Record<VtPresetSlot, LayerAnimSpec>>,
+  gt: number,
+  duration: number,
+): VtSlotPhase | null {
+  const W = Math.max(0.001, fin(duration, DEFAULT_MOTION.duration))
+  const t = Math.max(0, fin(gt, 0))
+  const inDur = specs.in ? Math.max(0.01, specs.in.duration) : 0
+  const outDur = specs.out ? Math.max(0.01, specs.out.duration) : 0
+  const outStart = Math.max(inDur, W - outDur)
+
+  if (specs.in && t < inDur) {
+    const eased = resolveEase(specs.in.ease ?? easeOf('in', specs.in.presetId))
+    return { slot: 'in', e: eased(clamp01(t / Math.max(MIN_UNIT_DUR, specs.in.duration))) }
+  }
+  if (specs.out && t >= outStart && W > inDur) {
+    const effDur = Math.max(0.01, W - outStart)
+    const eased = resolveEase(specs.out.ease ?? easeOf('out', specs.out.presetId))
+    return { slot: 'out', e: eased(clamp01((t - outStart) / Math.max(MIN_UNIT_DUR, effDur))) }
+  }
+  if (specs.loop) {
+    const cycle = Math.max(0.1, specs.loop.duration)
+    // Phase 0 at loop start, so an in→loop handoff is seamless (the engine's rule).
+    const phase = (((t - inDur) / cycle) % 1 + 1) % 1
+    return { slot: 'loop', e: phase }
+  }
+  return null
+}
+
+/** The default easing for a slot's preset — the axis table's own, so a Vector
+ *  Type preset eases like the entrance it is unless the spec overrides it. */
+function easeOf(slot: VtPresetSlot, presetId: string): string | undefined {
+  return vtAxisPreset(slot, presetId)?.ease
+}
+
+/**
+ * The environment an AXIS preset needs and the engine cannot supply: the loaded
+ * font's real axis ranges, and where this glyph currently rests on them.
+ *
+ * Optional everywhere. Omit it and axis presets emit nothing at all — the
+ * honest answer before a font has loaded, and the same rule `animatableTargets`
+ * follows when it is handed no axes.
+ */
+export interface VtAxisEnv {
+  /** The loaded font's declared axes (`VtFont.axes`). */
+  axes: readonly VtAxis[]
+  /** This glyph's resting axis values — the config's `axes` as an axis TRACK
+   *  would have written them at this glyph's clock. Defaults to `cfg.axes`. */
+  resting?: Record<string, number> | null
+}
+
 /**
  * The engine's per-glyph state, or identity when no slot is live.
  *
@@ -275,7 +402,13 @@ export function vtStillTime(cfg: VectorTypeConfig | null | undefined): number {
  * arithmetic is a handful of floats per call against per-glyph font shaping and
  * a `Path2D` rebuild every frame, which are orders of magnitude dearer.
  */
-function unitStateFor(cfg: VectorTypeConfig, t: number, index: number, count: number): UnitState {
+function unitStateFor(
+  cfg: VectorTypeConfig,
+  t: number,
+  index: number,
+  count: number,
+  env?: VtAxisEnv | null,
+): UnitState {
   const specs = vtPresetSpecs(cfg)
   if (!specs.in && !specs.out && !specs.loop) return IDENTITY_UNIT
 
@@ -296,6 +429,25 @@ function unitStateFor(cfg: VectorTypeConfig, t: number, index: number, count: nu
   // single-play track.
   const raw = glyphTime(cfg, t, i, n)
   const gt = Math.min(Math.max(0, isNum(raw) ? raw : 0), duration - 1e-6)
+
+  // AXIS PRESETS FIRST. They are not in the engine's tables — their values are
+  // fractions of the loaded font's own range, which the engine cannot know — so
+  // the live slot is resolved here and, when it holds an axis preset, that
+  // preset's output REPLACES what the engine would have returned for this
+  // instant. The unknown id is still passed to `evaluateAnimation` below (for
+  // the other slots' sake: `in`'s duration is what times a loop's handoff), and
+  // the fade it substitutes is discarded on this branch rather than shown.
+  const live = vtSlotPhase(specs, gt, duration)
+  const axisPreset = live ? vtAxisPreset(live.slot, specs[live.slot]?.presetId) : null
+  if (live && axisPreset) {
+    const axes = env?.axes
+    if (!axes?.length) return IDENTITY_UNIT
+    const resting = env?.resting ?? (cfg?.axes as Record<string, number> | undefined) ?? null
+    const delta = vtAxisDelta(axisPreset, live.e, i, n, axes, resting)
+    // An axis preset moves ONLY axes: no offset, no scale, no fade. The word is
+    // re-cut, not moved, which is the distinction the whole section rests on.
+    return Object.keys(delta).length ? { ...IDENTITY_UNIT, axes: delta } : IDENTITY_UNIT
+  }
 
   const anim: LayerAnimation = { offset: 0, duration, ...specs }
   const motion: FrameMotion = { fps: Math.max(1, fin(cfg?.motion?.fps, DEFAULT_MOTION.fps)), duration }
@@ -321,8 +473,9 @@ export function presetTransform(
   index: number,
   count: number,
   em: number = vtEmSize(cfg, t),
+  env?: VtAxisEnv | null,
 ): VtGlyphMotion {
-  const u = unitStateFor(cfg, t, index, count)
+  const u = unitStateFor(cfg, t, index, count, env)
   if (u === IDENTITY_UNIT) return { ...IDENTITY_GLYPH_MOTION, axes: {} }
 
   const scale = fin(u.scale, 1)
@@ -380,9 +533,10 @@ export function vtGlyphMotion(
   index: number,
   count: number,
   em?: number,
+  env?: VtAxisEnv | null,
 ): VtGlyphMotion {
   const tr = glyphTransform(cfg, t, index, count)
-  const pr = presetTransform(cfg, t, index, count, em ?? vtEmSize(cfg, t))
+  const pr = presetTransform(cfg, t, index, count, em ?? vtEmSize(cfg, t), env)
   return {
     dx: tr.dx + pr.dx,
     dy: tr.dy + pr.dy,
