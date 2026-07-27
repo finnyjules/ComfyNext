@@ -12,6 +12,7 @@
  *   - error:   red icon + node + message + dismiss (persists until cleared)
  */
 import { CheckCircle2, Loader2, AlertCircle, X, Square } from 'lucide-vue-next'
+import { fmtSec, elapsedSince } from '~/lib/canvas/elapsed'
 
 export type RunResult =
   // `cost` is the Comfy-credits delta (used for native nodes that hit Comfy's
@@ -56,18 +57,7 @@ onBeforeUnmount(() => {
   if (tickId) clearInterval(tickId)
 })
 
-const elapsedSec = computed(() => {
-  if (!props.startedAt) return 0
-  return Math.max(0, (now.value - props.startedAt) / 1000)
-})
-
-function fmtSec(s: number): string {
-  if (s < 10) return `${s.toFixed(1)}s`
-  if (s < 60) return `${Math.round(s)}s`
-  const m = Math.floor(s / 60)
-  const rest = Math.round(s - m * 60)
-  return `${m}m ${rest}s`
-}
+const elapsedSec = computed(() => elapsedSince(props.startedAt, now.value))
 
 const view = computed<'backend' | 'backend-success' | 'running' | 'success' | 'error' | null>(() => {
   if (props.backendBusy) return 'backend'

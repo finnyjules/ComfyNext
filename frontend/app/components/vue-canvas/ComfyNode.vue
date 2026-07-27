@@ -35,6 +35,8 @@ const props = defineProps<{
     bgcolor?: string
     size?: [number, number]
     running?: boolean
+    runningSince?: number | null
+    hasRun?: boolean
     error?: boolean
     progress?: number
     images?: string[]

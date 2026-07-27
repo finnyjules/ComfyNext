@@ -2682,7 +2682,11 @@ function handleBridgeMessage(event: MessageEvent) {
         // the FX never tears down (mosaic forever). The backend still loads it
         // (free); we just don't paint a generating state on it.
         if (!(target.data?.properties as any)?.sketchOutput) {
-          target.data = { ...target.data, running: true, error: false }
+          // runningSince powers the capsule read-out's live elapsed counter.
+          // The run-level startedAt in runRegistry measures the whole run, not
+          // this node, so a per-node stamp is the only way a capsule can say
+          // how long IT has been going.
+          target.data = { ...target.data, running: true, error: false, runningSince: Date.now() }
         }
         // Light outgoing edges from this node — but only the ones whose
         // target is part of the current run set. A generator fanned out
@@ -2789,6 +2793,7 @@ function handleBridgeMessage(event: MessageEvent) {
           running: false,
           error: true,
           errorMessage: event.data.exception_message || null,
+          runningSince: null,
         }
       }
     }
@@ -2829,7 +2834,7 @@ function handleBridgeMessage(event: MessageEvent) {
       runningNodeByPrompt.delete(promptId)
       const target = (nodes.value as any[]).find((n: any) => n.id === nid)
       if (target?.data && (target.data.running || target.data.progress)) {
-        target.data = { ...target.data, running: false, progress: undefined }
+        target.data = { ...target.data, running: false, progress: undefined, runningSince: null, hasRun: true }
       }
       for (const e of edges.value) {
         if (e.source === nid && e.data?.running) e.data = { ...e.data, running: false }
