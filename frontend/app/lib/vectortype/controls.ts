@@ -3,7 +3,15 @@ import type { ControlSpec } from '~/lib/spacetype/effect'
 // while this module is pulled in by the Collection control resolver and every
 // node card. A value import here would drag a font parser into both.
 import type { VtAxis } from './font'
-import { DEFAULT_CONFIG, VT_ALIGNS, VT_FONT_IDS, type VectorTypeConfig } from './config'
+import {
+  DEFAULT_CONFIG,
+  VT_ALIGNS,
+  VT_FONT_IDS,
+  VT_STAGGER_DELAY_MAX,
+  VT_STAGGER_ORDERS,
+  VT_STAGGER_SEED_MAX,
+  type VectorTypeConfig,
+} from './config'
 
 /**
  * The single declarative description of Vector Type Studio's parameters.
@@ -51,7 +59,7 @@ export type VtControl = ControlSpec & { when?: (cfg: VectorTypeConfig) => boolea
 /** Emission order; a control whose group is not listed here is dropped.
  *  `Axes` is declared but carries no STATIC member — it is the slot the derived
  *  per-font sliders land in. That empty section is the "frame" being declared. */
-export const VT_SECTIONS = ['Text', 'Font', 'Axes', 'Layout', 'Paint'] as const
+export const VT_SECTIONS = ['Text', 'Font', 'Axes', 'Layout', 'Paint', 'Motion'] as const
 
 /** The group every derived axis slider carries. Must be one of VT_SECTIONS. */
 export const VT_AXES_GROUP = 'Axes'
@@ -61,6 +69,12 @@ export const VT_AXES_GROUP = 'Axes'
  *  that the agent must raise `strokeWidth` before it can pick `stroke`, which
  *  VT_GUIDANCE says out loud (same trade `fill.b` makes in Shape Studio). */
 const hasStroke = (c: VectorTypeConfig) => c.strokeWidth > 0
+
+/** The shuffle seed only means anything for the shuffled order; shown for any
+ *  other it is a knob whose effect the user can never see. Optional-chained
+ *  because a control list can be asked for from a config straight out of
+ *  storage, before `mergeConfig` has rebuilt the motion block. */
+const isShuffled = (c: VectorTypeConfig) => c.motion?.stagger?.order === 'random'
 
 const slider = (
   key: string, label: string, min: number, max: number, step: number, group: string,
@@ -104,6 +118,21 @@ export const VT_CONTROLS: VtControl[] = [
   slider('strokeWidth', 'Stroke width', 0, 40, 0.5, 'Paint', DEFAULT_CONFIG.strokeWidth,
     'Outline width in OUTPUT pixels, so it does not shrink with size. 0 = no stroke.'),
   color('stroke', 'Stroke', DEFAULT_CONFIG.stroke, 'Paint', { when: hasStroke }),
+
+  // --- Motion ---------------------------------------------------------------
+  // Stagger is NOT a track: it shifts the clock each glyph reads the tracks at.
+  // So it is `animatable: false` on purpose — a track pointing at the stagger
+  // block would be asking the timeline to rewrite its own reader mid-frame.
+  slider('motion.stagger.delay', 'Stagger', 0, VT_STAGGER_DELAY_MAX, 0.01, 'Motion',
+    DEFAULT_CONFIG.motion.stagger.delay,
+    'Seconds between glyphs. 0 = every glyph animates on one clock; raise it and a track becomes a wave travelling across the word.',
+    { animatable: false }),
+  select('motion.stagger.order', 'Stagger order', [...VT_STAGGER_ORDERS], DEFAULT_CONFIG.motion.stagger.order, 'Motion',
+    'Which glyph goes first: forward, reverse, center (middle outwards), edges (outermost inwards), or random.'),
+  slider('motion.stagger.seed', 'Shuffle seed', 0, VT_STAGGER_SEED_MAX, 1, 'Motion',
+    DEFAULT_CONFIG.motion.stagger.seed,
+    'Re-rolls the random order. The shuffle is seeded, so the same seed always gives the same order — that is what keeps a bake from flickering.',
+    { animatable: false, when: isShuffled }),
 ]
 
 /** Controls applicable to this config, in VT_SECTIONS order. Static only — the
@@ -203,6 +232,8 @@ THE FONT COMES FIRST. \`fontId\` picks the variable family, and it decides WHICH
 AXES ARE THE POINT. Every axis the chosen font declares is a live slider at \`axes.<tag>\`: the familiar ones are \`axes.wght\` (weight), \`axes.wdth\` (width), \`axes.opsz\` (optical size) and \`axes.slnt\` (slant), and Roboto Flex adds the rare ones — \`axes.GRAD\` (grade: weight without changing the width the text occupies), \`axes.XOPQ\` (thick-stroke thickness), \`axes.XTRA\` (counter width), \`axes.YTAS\` (ascender height), \`axes.YTLC\` (x-height). These interpolate the OUTLINE itself, so reach for an axis before faking weight with \`strokeWidth\`. Only tags the current font declares exist; anything else is ignored.
 
 LAYOUT. \`size\` is the em size in output pixels. \`tracking\` is extra letter spacing in 1/1000 em (0 = the font's own spacing, negative tightens). \`align\` anchors the run horizontally.
+
+STAGGER MAKES IT KINETIC. \`motion.stagger.delay\` is the gap in seconds between one glyph and the next; at 0 the whole word animates as one, and raising it turns any animated axis into a wave that travels across the word. \`motion.stagger.order\` picks which glyph leads — forward, reverse, center (middle outwards), edges (outermost inwards) or random — and \`motion.stagger.seed\` re-rolls the random one. Reach for these when the user asks for letters to cascade, ripple, or come in one at a time.
 
 PAINT. \`fill\` is the glyph body colour. \`strokeWidth\` is the outline width in output pixels; it is 0 by default and \`stroke\` (the outline colour) is withheld until you raise it — set the width first, then the colour.
 

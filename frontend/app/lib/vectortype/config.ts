@@ -11,11 +11,14 @@
  * (or newer, or corrupted) version can only ever contribute values of the right
  * type. Nothing is trusted, including the axes record and the motion tracks.
  *
- * Deliberately NOT here: canvas size, background, and per-glyph stagger. The
- * first two live outside the config in every other studio; stagger is a v1
- * feature whose parameter shape is Task 7's to establish, and declaring keys no
- * renderer reads is exactly the silent-dead-control failure this schema exists
- * to prevent.
+ * Deliberately NOT here: canvas size and background — both live outside the
+ * config in every other studio.
+ *
+ * `motion.stagger` IS here as of Task 6, which built the evaluator that reads it
+ * (`./motion.ts`: `glyphTime` / `glyphTransform`). It was withheld until then
+ * for the reason this schema exists — declaring keys no renderer reads is the
+ * silent-dead-control failure — and it is declared now because the reader
+ * landed, not because the shape got clearer.
  */
 import type { MotionTrack as GradientMotionTrack } from '~/lib/gradientfx/types'
 import { DEFAULT_FONT_ID, VARIABLE_FONTS } from '~/data/variable-fonts'
@@ -51,6 +54,27 @@ export interface VtMotionTrack {
   delay: number
 }
 
+/**
+ * The queue every glyph waits in. `forward` = first letter first; `center` =
+ * middle outwards; `edges` = outermost inwards; `random` = a SEEDED shuffle
+ * (see `motion.stagger.seed` — a per-frame `Math.random()` would make the bake
+ * flicker and the SVG export unreproducible).
+ */
+export type VtStaggerOrder = 'forward' | 'reverse' | 'center' | 'edges' | 'random'
+
+/**
+ * Per-glyph timing offset. Not a track: it does not animate anything by itself,
+ * it SHIFTS THE CLOCK each glyph reads the tracks at — which is what turns a
+ * single `axes.wght` track into a weight wave travelling across a word.
+ */
+export interface VtStaggerConfig {
+  /** Seconds between consecutive glyphs in the queue. 0 = one shared clock. */
+  delay: number
+  order: VtStaggerOrder
+  /** Shuffle seed for `order: 'random'`. Ignored by every other order. */
+  seed: number
+}
+
 export interface VtMotionConfig {
   tracks: VtMotionTrack[]
   /** Clip length in seconds. */
@@ -58,6 +82,7 @@ export interface VtMotionConfig {
   fps: number
   /** Export height base (1080 / 1440 / 2160). */
   size: number
+  stagger: VtStaggerConfig
 }
 
 /** Compile-time proof that a VT track can be fed to gradientfx's `trackValue`
@@ -97,7 +122,11 @@ export interface VectorTypeConfig {
   motion: VtMotionConfig
 }
 
-export const DEFAULT_MOTION: VtMotionConfig = { tracks: [], duration: 4, fps: 30, size: 1080 }
+export const DEFAULT_STAGGER: VtStaggerConfig = { delay: 0, order: 'forward', seed: 0 }
+
+export const DEFAULT_MOTION: VtMotionConfig = {
+  tracks: [], duration: 4, fps: 30, size: 1080, stagger: { ...DEFAULT_STAGGER },
+}
 
 export const DEFAULT_CONFIG: VectorTypeConfig = {
   text: 'Vector',
@@ -109,7 +138,9 @@ export const DEFAULT_CONFIG: VectorTypeConfig = {
   fill: '#ffffff',
   stroke: '#000000',
   strokeWidth: 0,
-  motion: { ...DEFAULT_MOTION, tracks: [] },
+  // Spread is shallow: `stagger` must be copied too, or DEFAULT_CONFIG and
+  // DEFAULT_MOTION would share one mutable object.
+  motion: { ...DEFAULT_MOTION, tracks: [], stagger: { ...DEFAULT_STAGGER } },
 }
 
 /** Every catalog font id, in catalog order. Exported so the control schema
@@ -119,6 +150,12 @@ export const VT_FONT_IDS: string[] = VARIABLE_FONTS.map(f => f.id)
 
 export const VT_ALIGNS = ['left', 'center', 'right'] as const
 export const VT_EASINGS = ['linear', 'pingpong', 'easeinout'] as const
+export const VT_STAGGER_ORDERS = ['forward', 'reverse', 'center', 'edges', 'random'] as const
+/** Upper bound on the per-glyph delay. A whole second between letters is
+ *  already longer than most clips; beyond that the tail never enters. */
+export const VT_STAGGER_DELAY_MAX = 1
+/** Seeds are small integers so the "re-roll the shuffle" control is a short drag. */
+export const VT_STAGGER_SEED_MAX = 999
 /** Export heights the motion block accepts, matching gradientfx's. */
 export const VT_MOTION_SIZES = [1080, 1440, 2160] as const
 
@@ -176,6 +213,20 @@ function mergeTrack(raw: unknown): VtMotionTrack | null {
   }
 }
 
+/** Rebuild the stagger block. Same strictness as everything else here: an
+ *  unknown order, a NaN delay or a fractional seed can only ever yield the
+ *  default, never a value the evaluator has to defend against. */
+function mergeStagger(raw: unknown): VtStaggerConfig {
+  const o = (raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}) as Record<string, unknown>
+  return {
+    // Negative delays are not "reverse" — `order` already says that — so they
+    // clamp to 0 rather than silently inverting the queue.
+    delay: clamp(num(o.delay, DEFAULT_STAGGER.delay), 0, VT_STAGGER_DELAY_MAX),
+    order: oneOf(o.order, VT_STAGGER_ORDERS, DEFAULT_STAGGER.order),
+    seed: clamp(Math.round(num(o.seed, DEFAULT_STAGGER.seed)), 0, VT_STAGGER_SEED_MAX),
+  }
+}
+
 function mergeMotion(raw: unknown): VtMotionConfig {
   const o = (raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}) as Record<string, unknown>
   const rawTracks = Array.isArray(o.tracks) ? o.tracks : []
@@ -189,6 +240,7 @@ function mergeMotion(raw: unknown): VtMotionConfig {
     duration: clamp(num(o.duration, DEFAULT_MOTION.duration), 0.1, 60),
     fps: clamp(Math.round(num(o.fps, DEFAULT_MOTION.fps)), 1, 60),
     size: oneOfNum(o.size, VT_MOTION_SIZES, DEFAULT_MOTION.size),
+    stagger: mergeStagger(o.stagger),
   }
 }
 
@@ -222,9 +274,18 @@ export function mergeConfig(raw: unknown): VectorTypeConfig {
 /** A deep copy safe to mutate — what motion evaluation clones before applying
  *  tracks, and what the surface hands to a preview render. */
 export function cloneConfig(cfg: VectorTypeConfig): VectorTypeConfig {
+  // Tolerant of a config straight out of storage (`motion`/`tracks`/`stagger`
+  // absent), because `applyMotion` clones BEFORE anything normalises — see the
+  // choke-point note in ./motion.ts. Values are copied, never invented: a
+  // missing block clones as empty and the evaluator resolves defaults itself.
+  const m = cfg.motion
   return {
     ...cfg,
     axes: { ...cfg.axes },
-    motion: { ...cfg.motion, tracks: cfg.motion.tracks.map(t => ({ ...t })) },
+    motion: {
+      ...m,
+      stagger: { ...m?.stagger } as VtStaggerConfig,
+      tracks: Array.isArray(m?.tracks) ? m.tracks.map(t => ({ ...t })) : [],
+    },
   }
 }

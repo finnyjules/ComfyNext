@@ -2,10 +2,17 @@
 // animated params are overridden for that frame. The renderer then draws the
 // frame normally — preview and bake share this path, so they always match.
 
-import { cloneConfig, type EasingKind, type GradientConfig, type MotionTrack } from './types'
+import { cloneConfig, type GradientConfig, type MotionTrack } from './types'
 import { visibleGradientControls } from './controls'
 import { layerLabels } from './layerLabel'
 import { getByPath, setByPath } from '~/lib/studio/path'
+import { trackValue } from '~/lib/studio/track'
+
+// The easing engine moved to ~/lib/studio/track so a second stateless studio
+// (Vector Type) could reuse it without importing this module — and through it
+// ./types, which value-imports the mesh generator. Re-exported here because
+// `trackValue` was this module's published surface first.
+export { trackValue } from '~/lib/studio/track'
 
 export interface AnimatableTarget { path: string; label: string; min: number; max: number }
 
@@ -38,44 +45,6 @@ export function animatableTargets(cfg: GradientConfig): AnimatableTarget[] {
   return out
 }
 
-function ease(p: number, kind: EasingKind): number {
-  const t = clamp01(p)
-  switch (kind) {
-    case 'pingpong': return 1 - Math.abs(1 - 2 * t) // 0→1→0
-    case 'easeinout': return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2
-    default: return t
-  }
-}
-
-/**
- * Normalized progress (0..1) of a track at time `t` seconds within a clip of
- * `duration` seconds. Honors loops, delay, cycle offset, and hold-at-extremes.
- */
-export function trackValue(track: MotionTrack, t: number, duration: number): number {
-  const d = Math.max(0.001, duration)
-  const local = (t - (track.delay || 0)) / d
-  if (local < 0) return track.from
-  const loops = Math.max(1, track.loops || 1)
-  const phase = local * loops + (track.cycleOffset || 0)
-  // A single non-pingpong play holds at its end value; looping / pingpong wrap so
-  // the clip is seamless (frame 0 == frame N).
-  let cyc: number
-  if (loops <= 1 && track.easing !== 'pingpong') {
-    cyc = clamp01(phase)
-  } else {
-    cyc = phase % 1
-    if (cyc < 0) cyc += 1
-  }
-  // Hold at extremes: clamp the active window, pinning the ends.
-  const hold = clamp01(track.hold || 0)
-  if (hold > 0) {
-    const active = 1 - 2 * hold
-    cyc = active <= 0 ? 0 : clamp01((cyc - hold) / active)
-  }
-  const e = ease(cyc, track.easing)
-  return track.from + (track.to - track.from) * e
-}
-
 /** Build a frame-specific config: clone `cfg` and apply each track's value. */
 export function applyMotion(cfg: GradientConfig, t: number): GradientConfig {
   if (!cfg.motion?.tracks?.length) return cfg
@@ -104,10 +73,6 @@ export function applyMotion(cfg: GradientConfig, t: number): GradientConfig {
     setByPath(out, path, trackValue(track, t, cfg.motion.duration))
   }
   return out
-}
-
-function clamp01(v: number): number {
-  return v < 0 ? 0 : v > 1 ? 1 : v
 }
 
 const LAYER_RE = /^layers\.(\d+)\./
