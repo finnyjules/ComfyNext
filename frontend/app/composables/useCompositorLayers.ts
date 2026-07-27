@@ -59,24 +59,14 @@ let _motionPainterImpl: MotionPainter | null = null
 export function _registerMotionPainter(impl: MotionPainter) { _motionPainterImpl = impl }
 
 // ── Paint (solid color or gradient) ──────────────────────────────────────────
-// A fill/stroke can be a plain CSS color string, or a gradient. Gradient
-// geometry is resolution-independent: it's resolved against the layer's local
-// bounding box at draw time, so it scales with the shape.
-export interface GradientStop { offset: number; color: string } // offset 0..1
-export interface LinearGradient { type: 'linear'; angle: number; stops: GradientStop[] } // angle in degrees
-export interface RadialGradient { type: 'radial'; stops: GradientStop[] }
-export type Gradient = LinearGradient | RadialGradient
-// A Paint can also be a Type-Studio `Fill` (ombre/grid/noise/checkerboard/stripes/qr/…),
-// rendered via a tileable 2D-canvas pattern scaled to span the shape's box.
-export type Paint = string | Gradient | Fill
-
-export function isGradient(p: Paint | undefined): p is Gradient {
-  return !!p && typeof p === 'object' && ((p as Gradient).type === 'linear' || (p as Gradient).type === 'radial')
-}
-// A Fill is distinguished from a Gradient by its `a`/`density` fields (Gradient has `stops`).
-export function isFill(p: Paint | undefined): p is Fill {
-  return !!p && typeof p === 'object' && 'a' in p && 'density' in p
-}
+// Moved to lib/compositor/paint.ts so CPU-only lib/ modules (fillTile.ts) can
+// reference `Paint` without pointing back up at this composable — re-exported
+// here unchanged so this file's ~40 existing importers don't need to move.
+export {
+  type GradientStop, type LinearGradient, type RadialGradient, type Gradient, type Paint,
+  isGradient, isFill,
+} from '~/lib/compositor/paint'
+import { type Paint, isGradient, isFill } from '~/lib/compositor/paint'
 
 // Layer effects (Figma-style). All distances normalized to canvas width, like
 // every other dimension here, so they survive resize/export unchanged.
