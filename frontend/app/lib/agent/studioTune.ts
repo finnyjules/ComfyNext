@@ -40,6 +40,12 @@ import { cloneConfig as cloneShaderConfig, defaultConfig as defaultShaderConfig,
 import { shaderAgentControls } from '~/lib/shaderstudio/agentControls'
 import { mergeConfig as mergeShapeConfig } from '~/lib/shapefx/config'
 import { SHAPE_GUIDANCE, shapeAgentControls } from '~/lib/shapefx/agentControls'
+// Vector Type's config + control schema are fontkit-free (controls.ts imports
+// VtAxis TYPE-only, on purpose); only ./font.ts loads the parser, and that one is
+// imported dynamically inside the adapter below.
+import { mergeConfig as mergeVtConfig } from '~/lib/vectortype/config'
+import { VT_GUIDANCE, vtAgentControls } from '~/lib/vectortype/agentControls'
+import type { VtAxis as VtAxisLike } from '~/lib/vectortype/font'
 import { getEffect } from '~/lib/shaderfx/catalog'
 
 const MEDIA_OPS = new Set(['generateImage', 'editImage', 'removeImageBackground'])
@@ -388,6 +394,48 @@ export async function tuneShapeNode(node: any, request: string, apiKey: string):
   return runParamPatch(node, request, apiKey, shapeAdapter)
 }
 
+/**
+ * Vector Type: a WRAPPER property like Shape's — { config, canvasW, canvasH,
+ * aspectKey, background } — so `write` merges back rather than replacing.
+ *
+ * The one studio whose control vocabulary is only half declared: `axes.<tag>`
+ * sliders are DERIVED from the loaded font's own `fvar`, so `read` loads the
+ * font before it can describe them. The import is dynamic to keep fontkit out of
+ * this module's import graph (studioTune is imported by plain unit specs), and a
+ * failed load falls back to the static vocabulary — the agent then simply cannot
+ * reach the axes this turn, rather than the whole tune failing.
+ */
+const vectorTypeAdapter: PatchAdapter = {
+  read: async (n: any) => {
+    const config = mergeVtConfig(n?.data?.properties?.sailor_vectorType?.config)
+    let axes: VtAxisLike[] = []
+    try {
+      const { loadVariableFont } = await import('~/lib/vectortype/font')
+      axes = (await loadVariableFont(config.fontId)).axes
+    } catch { /* offline / unknown family — static vocabulary only */ }
+    return { config, controls: vtAgentControls(config, axes as any) }
+  },
+  params: (config: any) => makeConfigParams(() => config, () => 0),
+  write: (n: any, config: any) => {
+    if (!n.data) n.data = {}
+    if (!n.data.properties) n.data.properties = {}
+    const prev = n.data.properties.sailor_vectorType ?? {}
+    n.data.properties.sailor_vectorType = { ...prev, config: JSON.parse(JSON.stringify(config)) }
+  },
+  clone: (config: any) => JSON.parse(JSON.stringify(config)),
+  label: 'Vector Type',
+  guidance: VT_GUIDANCE,
+}
+
+/** Exposed for tests only — the adapter is otherwise reached via the registry. */
+export const __vectorTypeAdapterForTest = vectorTypeAdapter
+
+/** Vector Type: config lives nested under sailor_vectorType.config, alongside a
+ *  canvas box that is NOT tune-adjustable (see vectorTypeAdapter above). */
+export async function tuneVectorTypeNode(node: any, request: string, apiKey: string): Promise<TuneResult> {
+  return runParamPatch(node, request, apiKey, vectorTypeAdapter)
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Registry — the canvas agent dispatches a tuneNode by the target's nodeType.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -400,6 +448,7 @@ export const STUDIO_TUNERS: Record<string, StudioTuner> = {
   GradientStudio: tuneGradientNode,
   ShaderStudio: tuneShaderNode,
   ShapeStudio: tuneShapeNode,
+  VectorType: tuneVectorTypeNode,
 }
 
 /** The in-place tuner for a node type, or undefined if that node has no canvas

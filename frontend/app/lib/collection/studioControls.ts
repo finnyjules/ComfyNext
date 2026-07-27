@@ -96,6 +96,33 @@ async function shapeControls(node: any): Promise<StudioControlDesc[]> {
   return mapAll(shapeAgentControls(config))
 }
 
+/**
+ * Vector Type: the declared frame (`sailor_vectorType.config`) PLUS the loaded
+ * font's own axes.
+ *
+ * Unique among the studios in that half its vocabulary comes off the wire: Inter
+ * declares 2 variation axes, Roboto Flex 13, and `axes.<tag>` keys only exist
+ * once the file has parsed. So this awaits the font — the dynamic import keeps
+ * fontkit out of any spec that merely touches this module, and a failed load
+ * degrades to the static vocabulary rather than to nothing.
+ */
+async function vectorTypeControls(node: any): Promise<StudioControlDesc[]> {
+  const [{ mergeConfig }, { vtAgentControls }] = await Promise.all([
+    import('~/lib/vectortype/config'),
+    import('~/lib/vectortype/agentControls'),
+  ])
+  const config = mergeConfig(node?.data?.properties?.sailor_vectorType?.config)
+  let axes: any[] = []
+  try {
+    const { loadVariableFont } = await import('~/lib/vectortype/font')
+    axes = (await loadVariableFont(config.fontId)).axes
+  } catch {
+    // Offline / unknown family — the static controls are still bindable, and an
+    // axis binding that cannot be derived yet is better than an empty menu.
+  }
+  return mapAll(vtAgentControls(config, axes))
+}
+
 /** Resolve the bindable control list for a studio node, keyed off
  *  `node.data.nodeType`. Returns [] for unknown/non-studio types. */
 export async function controlsForStudio(node: any): Promise<StudioControlDesc[]> {
@@ -105,6 +132,7 @@ export async function controlsForStudio(node: any): Promise<StudioControlDesc[]>
     case 'ShaderStudio': return shaderControls(node)
     case 'TextureStudio': return textureControls(node)
     case 'ShapeStudio': return shapeControls(node)
+    case 'VectorType': return vectorTypeControls(node)
     default: return []
   }
 }

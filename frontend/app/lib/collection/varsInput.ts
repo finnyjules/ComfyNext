@@ -2,7 +2,7 @@ import { VARS_TYPE } from './types'
 
 /** Node types that can accept a Collection's VARS output: Smart Layout (props/brand
  *  bindables) plus every studio surface with a `controlsForStudio` adapter (Task 4). */
-export const VARS_TARGET_NODE_TYPES = new Set(['SmartLayout', 'SpaceType', 'GradientStudio', 'ShaderStudio', 'TextureStudio', 'ShapeStudio'])
+export const VARS_TARGET_NODE_TYPES = new Set(['SmartLayout', 'SpaceType', 'GradientStudio', 'ShaderStudio', 'TextureStudio', 'ShapeStudio', 'VectorType'])
 
 /**
  * Idempotently gives VARS-target nodes (Smart Layout + studios) an optional

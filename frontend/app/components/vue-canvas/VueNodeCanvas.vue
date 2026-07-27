@@ -74,6 +74,7 @@ import GradientStudioNode from '~/components/vue-canvas/GradientStudioNode.vue'
 import ShaderStudioNode from '~/components/vue-canvas/ShaderStudioNode.vue'
 import TextureStudioNode from '~/components/vue-canvas/TextureStudioNode.vue'
 import ShapeStudioNode from '~/components/vue-canvas/ShapeStudioNode.vue'
+import VectorTypeNode from '~/components/vue-canvas/VectorTypeNode.vue'
 import Scene3DStudioNode from '~/components/vue-canvas/Scene3DStudioNode.vue'
 import ShotDirectorNode from '~/components/vue-canvas/ShotDirectorNode.vue'
 import ShotDirectorSurface from '~/components/vue-canvas/ShotDirectorSurface.vue'
@@ -249,6 +250,7 @@ const nodeTypes = {
   'artifact-3d': markRaw(Artifact3DNode), 'space-type': markRaw(SpaceTypeNode),
   'gradient-studio': markRaw(GradientStudioNode), 'shader-studio': markRaw(ShaderStudioNode),
   'texture-studio': markRaw(TextureStudioNode), 'shape-studio': markRaw(ShapeStudioNode),
+  'vector-type': markRaw(VectorTypeNode),
   'scene3d-studio': markRaw(Scene3DStudioNode),
   'shot-director': markRaw(ShotDirectorNode),
   'subgraph-io': markRaw(SubgraphIONode), 'character': markRaw(CharacterNode),
@@ -1564,7 +1566,7 @@ function createNodeData(nodeType: string, position: { x: number, y: number }, wi
   // Frontend-only Space Type node has no backend objectInfo, so `outputs` is
   // empty. Give it ONE wildcard output so the generated Image/Video artifact can
   // be wired from it (visual/provenance link only — SpaceType never executes).
-  if ((nodeType === 'SpaceType' || nodeType === 'GradientStudio' || nodeType === 'ShaderStudio' || nodeType === 'TextureStudio' || nodeType === 'ShapeStudio' || nodeType === 'ShotDirector' || nodeType === 'LipSyncStudio') && (!data.data.outputs || data.data.outputs.length === 0)) {
+  if ((nodeType === 'SpaceType' || nodeType === 'GradientStudio' || nodeType === 'ShaderStudio' || nodeType === 'TextureStudio' || nodeType === 'ShapeStudio' || nodeType === 'VectorType' || nodeType === 'ShotDirector' || nodeType === 'LipSyncStudio') && (!data.data.outputs || data.data.outputs.length === 0)) {
     data.data.outputs = [{ name: 'output', type: '*', links: null }]
   }
   // Shader Studio consumes an image — give it one input handle (input-0).
@@ -2949,6 +2951,13 @@ const shapeStudioOpenForId = ref<string | null>(null)
 function handleOpenShapeStudio(e: Event) {
   const detail = (e as CustomEvent).detail
   if (detail?.nodeId) shapeStudioOpenForId.value = String(detail.nodeId)
+}
+
+// Vector Type editor open-state (same pattern as Shape Studio).
+const vectorTypeOpenForId = ref<string | null>(null)
+function handleOpenVectorType(e: Event) {
+  const detail = (e as CustomEvent).detail
+  if (detail?.nodeId) vectorTypeOpenForId.value = String(detail.nodeId)
 }
 
 // Scene3D Studio editor open-state (same pattern as Shape Studio).
@@ -4345,7 +4354,7 @@ const anyEditorModalOpen = computed(() => !!(
   textEffectGalleryOpenForId.value || shotPresetGalleryOpenForId.value || loraGalleryOpenForId.value ||
   voiceGalleryOpenForId.value || spaceTypeOpenForId.value || gradientStudioOpenForId.value ||
   shaderStudioOpenForId.value || textureStudioOpenForId.value || shapeStudioOpenForId.value ||
-  scene3dStudioOpenForId.value ||
+  vectorTypeOpenForId.value || scene3dStudioOpenForId.value ||
   shotDirectorOpenForId.value || !!collectionDrawerForId.value || !!sketchStackForId.value
 ))
 // Vue Flow's built-in delete-key deletes the *selected node* — but when an editor
@@ -4524,6 +4533,9 @@ onMounted(() => {
   window.addEventListener('sailor:openShapeStudio', handleOpenShapeStudio)
   // Shape Studio output is generic (sourceNodeId/nodeType/widgetOverrides) — reuse the Space Type handler.
   window.addEventListener('sailor:shapeStudioOutput', handleSpaceTypeOutput)
+  window.addEventListener('sailor:openVectorType', handleOpenVectorType)
+  // Vector Type output is generic (sourceNodeId/nodeType/widgetOverrides) — reuse the Space Type handler.
+  window.addEventListener('sailor:vectorTypeStudioOutput', handleSpaceTypeOutput)
   // 3D Studio "Export to Canvas": beauty render dropped as an Image node, wired
   // from the node's beauty output (output-0) — generic, reuse the same handler.
   window.addEventListener('sailor:scene3dStudioOutput', handleSpaceTypeOutput)
@@ -4589,6 +4601,8 @@ onUnmounted(() => {
   window.removeEventListener('sailor:shaderStudioOutput', handleSpaceTypeOutput)
   window.removeEventListener('sailor:openShapeStudio', handleOpenShapeStudio)
   window.removeEventListener('sailor:shapeStudioOutput', handleSpaceTypeOutput)
+  window.removeEventListener('sailor:openVectorType', handleOpenVectorType)
+  window.removeEventListener('sailor:vectorTypeStudioOutput', handleSpaceTypeOutput)
   window.removeEventListener('sailor:scene3dStudioOutput', handleSpaceTypeOutput)
   window.removeEventListener('sailor:openScene3DStudio', handleOpenScene3DStudio)
   window.removeEventListener('sailor:openShotDirector', handleOpenShotDirector)
@@ -7455,6 +7469,19 @@ defineExpose({
         :nodes="nodes as any[]"
         :edges="edges as any[]"
         @close="shapeStudioOpenForId = null"
+      />
+    </Teleport>
+
+    <!-- Vector Type editor modal (frontend-only config node). `edges` is passed
+         as well as `nodes`: the surface's Collection bind/sweep menu resolves
+         its wired collection by walking VARS edges. -->
+    <Teleport to="body">
+      <VueCanvasVectorTypeSurface
+        v-if="vectorTypeOpenForId"
+        :node-id="vectorTypeOpenForId"
+        :nodes="nodes as any[]"
+        :edges="edges as any[]"
+        @close="vectorTypeOpenForId = null"
       />
     </Teleport>
 

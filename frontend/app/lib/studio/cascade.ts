@@ -55,8 +55,8 @@ export function getStudioParamBaker(id: string): StudioParamBaker | undefined { 
 export interface WalkNode { id: string; type?: string; data?: { nodeType?: string } | null }
 export interface WalkEdge { source: string | number; target: string | number; sourceHandle?: string | null; targetHandle?: string | null }
 
-export const STUDIO_VF_TYPES = new Set(['space-type', 'gradient-studio', 'shader-studio', 'texture-studio', 'shot-director'])
-export const STUDIO_NODE_TYPES = new Set(['SpaceType', 'GradientStudio', 'ShaderStudio', 'TextureStudio', 'ShotDirector'])
+export const STUDIO_VF_TYPES = new Set(['space-type', 'gradient-studio', 'shader-studio', 'texture-studio', 'shape-studio', 'vector-type', 'shot-director'])
+export const STUDIO_NODE_TYPES = new Set(['SpaceType', 'GradientStudio', 'ShaderStudio', 'TextureStudio', 'ShapeStudio', 'VectorType', 'ShotDirector'])
 
 /** A client-bakeable node in the cascade — a studio OR the Frame (Compositor), which
  *  also bakes its composite client-side. Identified by vue-flow type or data.nodeType
