@@ -18,16 +18,17 @@ import { paletteFor } from '~/lib/shapefx/color'
 import { detectWebGL } from '~/lib/spacetype/webgl'
 import { HARMONY_TYPES, HARMONY_LABELS, toStops } from '~/lib/color/harmony'
 import { hexToOklch, oklchToHex } from '~/lib/color/convert'
-import { FILL_TYPES, DEFAULT_SHADER_SPEC, type ShaderSpec } from '~/lib/spacetype/fillTile'
+import { DEFAULT_SHADER_SPEC, type ShaderSpec } from '~/lib/spacetype/fillTile'
+import type { ControlSpec } from '~/lib/spacetype/effect'
 import ShaderFillEditor from '~/components/vue-canvas/widgets/ShaderFillEditor.vue'
 import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
 import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
-import StudioSlider from '~/components/vue-canvas/studio/StudioSlider.vue'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
 import StudioSwitch from '~/components/vue-canvas/studio/StudioSwitch.vue'
-import StudioSegmented from '~/components/vue-canvas/studio/StudioSegmented.vue'
 import StudioSelect from '~/components/vue-canvas/studio/StudioSelect.vue'
+import StudioControlPanel from '~/components/vue-canvas/studio/StudioControlPanel.vue'
+import VariableGlyph from '~/components/vue-canvas/studio/VariableGlyph.vue'
 import FillSwatch from '~/components/vue-canvas/studio/FillSwatch.vue'
 import CanvasContextMenu from '~/components/vue-canvas/CanvasContextMenu.vue'
 import SweepPopover from '~/components/vue-canvas/studio/SweepPopover.vue'
@@ -36,6 +37,7 @@ import { useStudioVarBindings } from '~/composables/useStudioVarBindings'
 import { useStudioVarMenu } from '~/composables/useStudioVarMenu'
 import { makeConfigParams } from '~/lib/agent/configParams'
 import { shapeAgentControls, SHAPE_GUIDANCE } from '~/lib/shapefx/agentControls'
+import { SHAPE_CONTROLS, SHAPE_SECTIONS, type ShapeControl } from '~/lib/shapefx/controls'
 import { controlsForStudio } from '~/lib/collection/studioControls'
 import type { StudioControlDesc } from '~/lib/collection/studioBindables'
 import { registerStudioParamBaker, unregisterStudioParamBaker } from '~/lib/studio/cascade'
@@ -138,29 +140,36 @@ const { wiredColumns, sweepPopover, applySweep, varMenu, openVarMenu, goToCollec
   boundColumnFor, boundColumnKeyFor, promote, unbind,
 })
 
-// ── enum fields → string proxies ────────────────────────────────────────────────────────
-// StudioSelect/StudioSegmented's v-model is typed `string`; ShapeConfig's mode/primitive/
-// projection/harmony/rule/fillMode fields are narrower string-literal unions. A thin
-// computed proxy per field keeps the template `v-model`s type-clean without widening the
-// config schema itself.
-function enumProxy<T extends string>(get: () => T, set: (v: T) => void) {
-  return computed<string>({ get, set: (v: string) => set(v as T) })
+// ── StudioControlPanel wiring — the schema (SHAPE_CONTROLS/SHAPE_SECTIONS) is now the
+// single source for every slider/select/color control below except the hand-written
+// blocks called out in the panel's own doc comment (harmony grid, palette preview,
+// base-colour swatch, transparent-background switch, seed/re-roll/import, canvas dims).
+// `setShapeControl` mirrors what every hand-written control did before the panel existed
+// (write the proxy, then onEdit for write-through to a bound Collection cell) plus the one
+// side effect the panel's generic setter can't know about: switching fill.type INTO
+// 'shader' seeds a fresh spec (cloned — DEFAULT_SHADER_SPEC is a shared module constant,
+// never mutated in place) so ShaderFillEditor has something real to bind to immediately.
+function setShapeControl(key: string, value: string | number) {
+  if (key === 'fill.type' && value === 'shader' && !config.value.fill.shader) {
+    config.value.fill.shader = structuredClone(DEFAULT_SHADER_SPEC)
+  }
+  paramsProxy[key] = value
+  onEdit(key, value)
 }
-const shapeModeProxy = enumProxy(() => config.value.shape.mode, v => { config.value.shape.mode = v })
-const primitiveProxy = enumProxy(() => config.value.shape.primitive, v => { config.value.shape.primitive = v })
-const projectionProxy = enumProxy(() => config.value.shape.projection, v => { config.value.shape.projection = v })
-const coloringProxy = enumProxy(() => config.value.palette.coloring, v => { config.value.palette.coloring = v })
-const directionProxy = enumProxy(() => config.value.palette.direction, v => { config.value.palette.direction = v })
-const fillTypeProxy = enumProxy(() => config.value.fill.type, (v) => {
-  // Switching INTO shader seeds a fresh spec (cloned — DEFAULT_SHADER_SPEC is a shared
-  // module constant, never mutated in place) so ShaderFillEditor has something real to
-  // bind to immediately, rather than relying on its `?? DEFAULT_SHADER_SPEC` fallback.
-  if (v === 'shader' && !config.value.fill.shader) config.value.fill.shader = structuredClone(DEFAULT_SHADER_SPEC)
-  config.value.fill.type = v
-})
-const fillModeProxy = enumProxy(() => config.value.fillMode, v => { config.value.fillMode = v })
-
-const PRIMITIVE_OPTIONS = ['cube', 'sphere', 'cone', 'cylinder', 'prism', 'torus', 'icosahedron', 'octahedron']
+function promoteShapeControl(c: ControlSpec) {
+  promote(c, paramsProxy[c.key] as string | number)
+}
+function controlVisible(c: ControlSpec): boolean {
+  const sc = c as ShapeControl
+  return !sc.when || sc.when(config.value)
+}
+// StudioControlPanel's per-key named slots (#control-<key>) are dynamically named, so
+// vue-tsc can't infer their scoped-prop type without the panel declaring `defineSlots` —
+// cast through this one spot rather than annotating each `v-slot` (which the compiler
+// rejects: the dynamic-name overload it resolves to expects `props: {}`).
+function slotControl(slotProps: unknown): ControlSpec {
+  return (slotProps as { control: ControlSpec }).control
+}
 
 // ── locks ────────────────────────────────────────────────────────────────────────────────
 function toggleLock(key: 'shape' | 'palette' | 'style') { config.value.locks[key] = !config.value.locks[key] }
@@ -190,12 +199,6 @@ const baseColorHex = computed<string>({
 const paletteSwatches = computed(() => paletteFor(config.value))
 const paletteRampCss = computed(() =>
   `linear-gradient(to right, ${toStops(paletteFor(config.value), 8).map(s => s.color).join(', ')})`)
-
-// ── Fill section (surface mode) — mirrors Space Type's fillNeedsB/fillHasAngle/
-// fillHasDensity helpers for the same FillType union.
-const fillNeedsB = computed(() => config.value.fill.type !== 'solid')
-const fillHasAngle = computed(() => config.value.fill.type === 'ombre' || config.value.fill.type === 'stripes')
-const fillHasDensity = computed(() => ['grid', 'checkerboard', 'stripes', 'qr'].includes(config.value.fill.type))
 
 // ── Style section: background transparency toggle (StyleParams.background is either a hex
 // or the literal 'transparent') — remember the last real color so toggling transparency
@@ -507,223 +510,155 @@ async function onImportFile(e: Event) {
         </button>
       </div>
 
-      <!-- Fill mode -->
-      <div class="flex items-center justify-between rounded-lg border border-white/[0.07] bg-white/[0.03] px-3 py-2.5">
-        <span class="text-[11px] text-white/55">Fill mode</span>
-        <StudioSegmented v-model="fillModeProxy" :options="['facets', 'surface']" />
-      </div>
-
-      <!-- Shape -->
-      <StudioSection title="Shape">
-        <template #badge>
-          <button type="button" class="text-white/30 hover:text-white/70" @click.stop="toggleLock('shape')">
-            <component :is="locked('shape') ? Lock : Unlock" class="h-3 w-3" />
-          </button>
-        </template>
-        <div>
-          <label class="mb-1 block text-[11px] text-white/55">Mode</label>
-          <StudioSegmented v-model="shapeModeProxy" :options="['primitive', 'gem']" />
-        </div>
-        <template v-if="config.shape.mode === 'primitive'">
-          <div>
-            <label class="mb-1 block text-[11px] text-white/55">Primitive</label>
-            <StudioSelect v-model="primitiveProxy" :options="PRIMITIVE_OPTIONS" />
+      <!-- Schema-driven inspector: every slider/select/color declared in SHAPE_CONTROLS,
+           grouped into Form/Shape/Palette/Fill/Style cards per SHAPE_SECTIONS. Bespoke
+           blocks (harmony grid, palette preview, base-colour swatch, transparent-bg
+           switch, shader fill editor, section lock toggles) are injected via named
+           slots so they land inside the right card without going through the generic
+           slider/select/color renderers. -->
+      <StudioControlPanel
+        :controls="SHAPE_CONTROLS"
+        :order="SHAPE_SECTIONS"
+        :value="(k: string) => paramsProxy[k] as string | number"
+        :visible="controlVisible"
+        :bound-for="boundColumnFor"
+        :go-to-collection="goToCollection"
+        @set="setShapeControl"
+        @promote="promoteShapeControl"
+        @menu="(e: MouseEvent, c: ControlSpec) => openVarMenu(e, c)"
+      >
+        <!-- Shape: lock badge moved into the card body (the panel has no header-badge
+             slot) — still gates reroll via config.locks.shape. -->
+        <template #section-Shape>
+          <div class="flex justify-end">
+            <button type="button" class="text-white/30 hover:text-white/70" @click.stop="toggleLock('shape')">
+              <component :is="locked('shape') ? Lock : Unlock" class="h-3 w-3" />
+            </button>
           </div>
-          <StudioSlider
-            :model-value="config.shape.density" label="Density" :min="0" :max="4" :step="1" :default="DEFAULT_CONFIG.shape.density"
-            :bindable="true" :bound="boundColumnFor('shape.density')"
-            @update:model-value="(v: number) => { config.shape.density = v; onEdit('shape.density', v) }"
-            @promote="promote({ key: 'shape.density', label: 'Density', kind: 'slider', min: 0, max: 4, step: 1 }, config.shape.density)"
-            @menu="(e: MouseEvent) => openVarMenu(e, { key: 'shape.density', label: 'Density', kind: 'slider', min: 0, max: 4, step: 1 })"
-          />
         </template>
-        <template v-else>
-          <StudioSlider
-            :model-value="config.shape.vertices" label="Vertices" :min="4" :max="40" :step="1" :default="DEFAULT_CONFIG.shape.vertices"
-            :bindable="true" :bound="boundColumnFor('shape.vertices')"
-            @update:model-value="(v: number) => { config.shape.vertices = v; onEdit('shape.vertices', v) }"
-            @promote="promote({ key: 'shape.vertices', label: 'Vertices', kind: 'slider', min: 4, max: 40, step: 1 }, config.shape.vertices)"
-            @menu="(e: MouseEvent) => openVarMenu(e, { key: 'shape.vertices', label: 'Vertices', kind: 'slider', min: 4, max: 40, step: 1 })"
-          />
-          <StudioSlider
-            :model-value="config.shape.depth" label="Depth" :min="0.2" :max="2" :step="0.05" :default="DEFAULT_CONFIG.shape.depth"
-            :bindable="true" :bound="boundColumnFor('shape.depth')"
-            @update:model-value="(v: number) => { config.shape.depth = v; onEdit('shape.depth', v) }"
-            @promote="promote({ key: 'shape.depth', label: 'Depth', kind: 'slider', min: 0.2, max: 2, step: 0.05 }, config.shape.depth)"
-            @menu="(e: MouseEvent) => openVarMenu(e, { key: 'shape.depth', label: 'Depth', kind: 'slider', min: 0.2, max: 2, step: 0.05 })"
-          />
-          <StudioSlider
-            :model-value="config.shape.spread" label="Spread" :min="0.1" :max="1" :step="0.05" :default="DEFAULT_CONFIG.shape.spread"
-            :bindable="true" :bound="boundColumnFor('shape.spread')"
-            @update:model-value="(v: number) => { config.shape.spread = v; onEdit('shape.spread', v) }"
-            @promote="promote({ key: 'shape.spread', label: 'Spread', kind: 'slider', min: 0.1, max: 1, step: 0.05 }, config.shape.spread)"
-            @menu="(e: MouseEvent) => openVarMenu(e, { key: 'shape.spread', label: 'Spread', kind: 'slider', min: 0.1, max: 1, step: 0.05 })"
-          />
-        </template>
-        <StudioSlider
-          :model-value="config.shape.jitter" label="Jitter" :min="0" :max="100" :step="1" :default="DEFAULT_CONFIG.shape.jitter"
-          :bindable="true" :bound="boundColumnFor('shape.jitter')"
-          @update:model-value="(v: number) => { config.shape.jitter = v; onEdit('shape.jitter', v) }"
-          @promote="promote({ key: 'shape.jitter', label: 'Jitter', kind: 'slider', min: 0, max: 100, step: 1 }, config.shape.jitter)"
-          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'shape.jitter', label: 'Jitter', kind: 'slider', min: 0, max: 100, step: 1 })"
-        />
-        <StudioSlider
-          :model-value="config.shape.scale" label="Scale" :min="0.25" :max="3" :step="0.05" :default="DEFAULT_CONFIG.shape.scale"
-          :bindable="true" :bound="boundColumnFor('shape.scale')"
-          @update:model-value="(v: number) => { config.shape.scale = v; onEdit('shape.scale', v) }"
-          @promote="promote({ key: 'shape.scale', label: 'Scale', kind: 'slider', min: 0.25, max: 3, step: 0.05 }, config.shape.scale)"
-          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'shape.scale', label: 'Scale', kind: 'slider', min: 0.25, max: 3, step: 0.05 })"
-        />
-        <div>
-          <label class="mb-1 block text-[11px] text-white/55">Projection</label>
-          <StudioSegmented v-model="projectionProxy" :options="['orthographic', 'perspective']" />
-        </div>
-      </StudioSection>
 
-      <!-- Palette (facets) -->
-      <StudioSection v-if="config.fillMode === 'facets'" title="Palette">
-        <template #badge>
-          <button type="button" class="text-white/30 hover:text-white/70" @click.stop="toggleLock('palette')">
-            <component :is="locked('palette') ? Lock : Unlock" class="h-3 w-3" />
-          </button>
-        </template>
-        <div>
-          <label class="mb-1 block text-[11px] text-white/55">Base color</label>
-          <StudioColor v-model="baseColorHex" />
-        </div>
-        <div>
-          <label class="mb-1 block text-[11px] text-white/55">Harmony</label>
-          <div class="grid grid-cols-2 gap-1">
+        <!-- Palette: bespoke 2-column harmony grid (ControlSpec has no label-map, so a
+             dropdown would regress this) — still gets the same glyph/promote/bound-row
+             treatment the panel gives every other select. -->
+        <template #control-palette.harmony="slotProps">
+          <label class="mb-1 flex items-center gap-1.5 text-[11px] text-white/55 group">
+            <span>Harmony</span>
+            <VariableGlyph
+              :bound="boundColumnFor('palette.harmony')"
+              @promote="promoteShapeControl(slotControl(slotProps))"
+              @menu="(e: MouseEvent) => openVarMenu(e, slotControl(slotProps))"
+            />
+          </label>
+          <div v-if="boundColumnFor('palette.harmony')" class="flex items-center justify-between gap-2 rounded bg-white/[0.04] px-2 py-1.5">
+            <span class="truncate text-[12px]" style="color: var(--var-accent-text)">{{ boundColumnFor('palette.harmony') }}</span>
+            <button type="button" @click="goToCollection?.()"
+                    class="shrink-0 rounded px-2 py-1 text-[11px] text-white/60 hover:bg-white/10 hover:text-white">Edit in table</button>
+          </div>
+          <div v-else class="grid grid-cols-2 gap-1">
             <button
               v-for="h in HARMONY_TYPES" :key="h" type="button"
               class="rounded px-2 py-1 text-left text-[11px] transition-colors"
               :class="config.palette.harmony === h ? 'bg-white/15 text-white' : 'text-white/50 hover:bg-white/5 hover:text-white/80'"
-              @click="config.palette.harmony = h"
+              @click="setShapeControl('palette.harmony', h)"
             >{{ HARMONY_LABELS[h] }}</button>
           </div>
-        </div>
-        <StudioSlider
-          :model-value="config.palette.baseHue" label="Hue" :min="0" :max="360" :step="1" :default="DEFAULT_CONFIG.palette.baseHue"
-          :bindable="true" :bound="boundColumnFor('palette.baseHue')"
-          @update:model-value="(v: number) => { config.palette.baseHue = v; onEdit('palette.baseHue', v) }"
-          @promote="promote({ key: 'palette.baseHue', label: 'Hue', kind: 'slider', min: 0, max: 360, step: 1 }, config.palette.baseHue)"
-          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'palette.baseHue', label: 'Hue', kind: 'slider', min: 0, max: 360, step: 1 })"
-        />
-        <StudioSlider
-          :model-value="config.palette.saturation" label="Saturation" :min="0" :max="100" :step="1" :default="DEFAULT_CONFIG.palette.saturation"
-          :bindable="true" :bound="boundColumnFor('palette.saturation')"
-          @update:model-value="(v: number) => { config.palette.saturation = v; onEdit('palette.saturation', v) }"
-          @promote="promote({ key: 'palette.saturation', label: 'Saturation', kind: 'slider', min: 0, max: 100, step: 1 }, config.palette.saturation)"
-          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'palette.saturation', label: 'Saturation', kind: 'slider', min: 0, max: 100, step: 1 })"
-        />
-        <StudioSlider
-          :model-value="config.palette.lightness" label="Lightness" :min="0" :max="100" :step="1" :default="DEFAULT_CONFIG.palette.lightness"
-          :bindable="true" :bound="boundColumnFor('palette.lightness')"
-          @update:model-value="(v: number) => { config.palette.lightness = v; onEdit('palette.lightness', v) }"
-          @promote="promote({ key: 'palette.lightness', label: 'Lightness', kind: 'slider', min: 0, max: 100, step: 1 }, config.palette.lightness)"
-          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'palette.lightness', label: 'Lightness', kind: 'slider', min: 0, max: 100, step: 1 })"
-        />
-        <div>
-          <label class="mb-1 block text-[11px] text-white/55">Preview</label>
-          <div class="h-4 rounded" :style="{ background: paletteRampCss }" />
-          <div class="mt-1 flex h-2.5 gap-0.5 overflow-hidden rounded">
-            <div v-for="(c, i) in paletteSwatches" :key="i" class="flex-1" :style="{ background: c }" />
+        </template>
+        <!-- Palette: read-only preview strip + derived base-colour swatch (a 3-way setter
+             over hue/saturation/lightness — no single ControlSpec can express it) + the
+             section's lock badge. Lands after the schema-driven controls. -->
+        <template #section-Palette>
+          <div>
+            <label class="mb-1 block text-[11px] text-white/55">Base color</label>
+            <StudioColor v-model="baseColorHex" />
           </div>
-        </div>
-        <div>
-          <label class="mb-1 block text-[11px] text-white/55">Coloring</label>
-          <StudioSegmented v-model="coloringProxy" :options="['prismatic', 'smooth', 'faceted', 'ombre', 'scatter']" />
-        </div>
-        <div v-if="config.palette.coloring !== 'scatter'">
-          <label class="mb-1 block text-[11px] text-white/55">Direction</label>
-          <StudioSegmented v-model="directionProxy" :options="['vertical', 'depth', 'radial', 'angular']" />
-        </div>
-      </StudioSection>
-
-      <!-- Fill (surface) -->
-      <StudioSection v-else title="Fill">
-        <template #badge>
-          <button type="button" class="text-white/30 hover:text-white/70" @click.stop="toggleLock('palette')">
-            <component :is="locked('palette') ? Lock : Unlock" class="h-3 w-3" />
-          </button>
+          <div>
+            <label class="mb-1 block text-[11px] text-white/55">Preview</label>
+            <div class="h-4 rounded" :style="{ background: paletteRampCss }" />
+            <div class="mt-1 flex h-2.5 gap-0.5 overflow-hidden rounded">
+              <div v-for="(c, i) in paletteSwatches" :key="i" class="flex-1" :style="{ background: c }" />
+            </div>
+          </div>
+          <div class="flex justify-end">
+            <button type="button" class="text-white/30 hover:text-white/70" @click.stop="toggleLock('palette')">
+              <component :is="locked('palette') ? Lock : Unlock" class="h-3 w-3" />
+            </button>
+          </div>
         </template>
-        <div>
-          <label class="mb-1 block text-[11px] text-white/55">Fill type</label>
-          <StudioSelect v-model="fillTypeProxy" :options="FILL_TYPES" />
-        </div>
-        <div v-if="config.fill.type !== 'shader'" class="flex gap-4">
+
+        <!-- Fill: colour swatches already had a bind affordance (FillSwatch) before this
+             task — kept hand-written since they're hidden while fill.type is 'shader'
+             (a guard SHAPE_CONTROLS' `when` can't express, being unrelated to fillMode). -->
+        <template #control-fill.a="slotProps">
           <FillSwatch
+            v-if="config.fill.type !== 'shader'"
             label="Color 1" :color="config.fill.a" :bound="boundColumnFor('fill.a')"
-            @update:color="(v: string) => { config.fill.a = v; onEdit('fill.a', v) }"
-            @promote="promote({ key: 'fill.a', label: 'Color 1', kind: 'color' }, config.fill.a)"
-            @menu="(e: MouseEvent) => openVarMenu(e, { key: 'fill.a', label: 'Color 1', kind: 'color' })"
+            @update:color="(v: string) => setShapeControl('fill.a', v)"
+            @promote="promoteShapeControl(slotControl(slotProps))"
+            @menu="(e: MouseEvent) => openVarMenu(e, slotControl(slotProps))"
             @edit="goToCollection"
           />
-          <FillSwatch
-            v-if="fillNeedsB"
-            label="Color 2" :color="config.fill.b" :bound="boundColumnFor('fill.b')"
-            @update:color="(v: string) => { config.fill.b = v; onEdit('fill.b', v) }"
-            @promote="promote({ key: 'fill.b', label: 'Color 2', kind: 'color' }, config.fill.b)"
-            @menu="(e: MouseEvent) => openVarMenu(e, { key: 'fill.b', label: 'Color 2', kind: 'color' })"
-            @edit="goToCollection"
-          />
-        </div>
-        <StudioSlider
-          v-if="fillHasAngle"
-          :model-value="config.fill.angle" label="Angle" :min="0" :max="360" :step="1" :default="DEFAULT_CONFIG.fill.angle"
-          :bindable="true" :bound="boundColumnFor('fill.angle')"
-          @update:model-value="(v: number) => { config.fill.angle = v; onEdit('fill.angle', v) }"
-          @promote="promote({ key: 'fill.angle', label: 'Angle', kind: 'slider', min: 0, max: 360, step: 1 }, config.fill.angle)"
-          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'fill.angle', label: 'Angle', kind: 'slider', min: 0, max: 360, step: 1 })"
-        />
-        <StudioSlider
-          v-if="fillHasDensity"
-          :model-value="config.fill.density" label="Density" :min="2" :max="32" :step="1" :default="DEFAULT_CONFIG.fill.density"
-          :bindable="true" :bound="boundColumnFor('fill.density')"
-          @update:model-value="(v: number) => { config.fill.density = v; onEdit('fill.density', v) }"
-          @promote="promote({ key: 'fill.density', label: 'Density', kind: 'slider', min: 2, max: 32, step: 1 }, config.fill.density)"
-          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'fill.density', label: 'Density', kind: 'slider', min: 2, max: 32, step: 1 })"
-        />
-        <!-- shader fill: effect/params/anchor/speed + nested input fill. Hand-wired (no
-             var-binding integration yet) — the dynamically-keyed per-effect params don't
-             fit the fixed-field promote/bind system the sliders above use. -->
-        <ShaderFillEditor
-          v-if="config.fill.type === 'shader'"
-          :model-value="config.fill.shader ?? DEFAULT_SHADER_SPEC"
-          @update:model-value="(v: ShaderSpec) => { config.fill.shader = v }"
-        />
-      </StudioSection>
-
-      <!-- Style -->
-      <StudioSection title="Style">
-        <template #badge>
-          <button type="button" class="text-white/30 hover:text-white/70" @click.stop="toggleLock('style')">
-            <component :is="locked('style') ? Lock : Unlock" class="h-3 w-3" />
-          </button>
         </template>
-        <StudioSlider
-          :model-value="config.style.grain" label="Grain" :min="0" :max="100" :step="1" :default="DEFAULT_CONFIG.style.grain"
-          :bindable="true" :bound="boundColumnFor('style.grain')"
-          @update:model-value="(v: number) => { config.style.grain = v; onEdit('style.grain', v) }"
-          @promote="promote({ key: 'style.grain', label: 'Grain', kind: 'slider', min: 0, max: 100, step: 1 }, config.style.grain)"
-          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'style.grain', label: 'Grain', kind: 'slider', min: 0, max: 100, step: 1 })"
-        />
-        <StudioSlider
-          :model-value="config.style.distortion" label="Distortion" :min="0" :max="100" :step="1" :default="DEFAULT_CONFIG.style.distortion"
-          :bindable="true" :bound="boundColumnFor('style.distortion')"
-          @update:model-value="(v: number) => { config.style.distortion = v; onEdit('style.distortion', v) }"
-          @promote="promote({ key: 'style.distortion', label: 'Distortion', kind: 'slider', min: 0, max: 100, step: 1 }, config.style.distortion)"
-          @menu="(e: MouseEvent) => openVarMenu(e, { key: 'style.distortion', label: 'Distortion', kind: 'slider', min: 0, max: 100, step: 1 })"
-        />
-        <div class="flex items-center justify-between">
-          <span class="text-[11px] text-white/55">Transparent background</span>
-          <StudioSwitch v-model="bgTransparent" />
-        </div>
-        <div v-if="!bgTransparent" class="flex items-center gap-2">
-          <span class="text-[11px] text-white/55">Background</span>
-          <StudioColor v-model="bgColorProxy" />
-        </div>
-      </StudioSection>
+        <template #control-fill.b="slotProps">
+          <FillSwatch
+            v-if="config.fill.type !== 'shader'"
+            label="Color 2" :color="config.fill.b" :bound="boundColumnFor('fill.b')"
+            @update:color="(v: string) => setShapeControl('fill.b', v)"
+            @promote="promoteShapeControl(slotControl(slotProps))"
+            @menu="(e: MouseEvent) => openVarMenu(e, slotControl(slotProps))"
+            @edit="goToCollection"
+          />
+        </template>
+        <!-- Fill: shader effect editor (dynamically-keyed per-effect params — no fixed
+             ControlSpec fits) + the section's lock badge (same config.locks.palette key
+             the Palette card's badge toggles — Fill and Palette are mutually exclusive
+             views of the same lock). -->
+        <template #section-Fill>
+          <ShaderFillEditor
+            v-if="config.fill.type === 'shader'"
+            :model-value="config.fill.shader ?? DEFAULT_SHADER_SPEC"
+            @update:model-value="(v: ShaderSpec) => { config.fill.shader = v }"
+          />
+          <div class="flex justify-end">
+            <button type="button" class="text-white/30 hover:text-white/70" @click.stop="toggleLock('palette')">
+              <component :is="locked('palette') ? Lock : Unlock" class="h-3 w-3" />
+            </button>
+          </div>
+        </template>
+
+        <!-- Style: transparent-background switch (style.background is a hex-or-
+             'transparent' union — one `color` ControlSpec can't express it) + the
+             background swatch itself, still gaining the glyph/bound-row like every
+             other promoted control. -->
+        <template #control-style.background="slotProps">
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] text-white/55">Transparent background</span>
+            <StudioSwitch v-model="bgTransparent" />
+          </div>
+          <div v-if="!bgTransparent" class="flex items-center gap-2">
+            <label class="flex items-center gap-1.5 text-[11px] text-white/55 group">
+              <span>Background</span>
+              <VariableGlyph
+                :bound="boundColumnFor('style.background')"
+                @promote="promoteShapeControl(slotControl(slotProps))"
+                @menu="(e: MouseEvent) => openVarMenu(e, slotControl(slotProps))"
+              />
+            </label>
+            <div v-if="boundColumnFor('style.background')" class="flex flex-1 items-center justify-between gap-2 rounded bg-white/[0.04] px-2 py-1.5">
+              <span class="truncate text-[12px]" style="color: var(--var-accent-text)">{{ boundColumnFor('style.background') }}</span>
+              <button type="button" @click="goToCollection?.()"
+                      class="shrink-0 rounded px-2 py-1 text-[11px] text-white/60 hover:bg-white/10 hover:text-white">Edit in table</button>
+            </div>
+            <StudioColor v-else v-model="bgColorProxy" />
+          </div>
+        </template>
+        <template #section-Style>
+          <div class="flex justify-end">
+            <button type="button" class="text-white/30 hover:text-white/70" @click.stop="toggleLock('style')">
+              <component :is="locked('style') ? Lock : Unlock" class="h-3 w-3" />
+            </button>
+          </div>
+        </template>
+      </StudioControlPanel>
 
       <!-- Canvas (not lockable) -->
       <StudioSection title="Canvas">
