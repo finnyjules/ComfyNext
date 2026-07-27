@@ -37,14 +37,15 @@ import type { VectorTypeConfig } from './config'
 import type { VtFont } from './font'
 import type { GlyphOutline, TextOutlines } from './outline'
 import { textOutlines } from './outline'
+import { applyMotion, glyphConfig, resolveStagger } from './motion'
 import {
-  IDENTITY_GLYPH_TRANSFORM,
-  applyMotion,
-  glyphConfig,
-  resolveStagger,
-  type VtGlyphTransform,
-} from './motion'
-import { vtEmSize, vtGlyphMotion, vtHasPreset, type VtGlyphMotion } from './presetMotion'
+  IDENTITY_GLYPH_MOTION,
+  vtEmSize,
+  vtGlyphMotion,
+  vtHasPreset,
+  type VtGlyphClip,
+  type VtGlyphMotion,
+} from './presetMotion'
 import { glyphTransform as glyphPlacement, outlinesToPath2D, outlinesToSVG } from './render'
 
 /** One frame's worth of resolved geometry: what to draw and how each glyph moves. */
@@ -70,6 +71,77 @@ export interface VtFrame {
 }
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v)
+
+/**
+ * Where the baseline sits inside the glyph's CELL BOX, as a fraction of the em.
+ *
+ * The cell box is one em tall, not the font's line box, and that is a deliberate
+ * choice: `clip.amount` is a FRACTION of the animated unit's box, and this
+ * studio's unit box is the em — it is what `presetMotion` multiplies `dx`, `dy`
+ * and `blur` by (`size` = em height in output px, CSS `font-size` semantics).
+ * Measuring the mask against a font-metric line box instead would silently make
+ * a mask reveal refer to a different unit than the offsets do, which is trap 1
+ * wearing a different hat. 0.8/0.2 is the conventional CSS-ish split.
+ */
+const CELL_DESCENT = 0.2
+
+/** Non-zero, sign-preserving: a scale factor of exactly 0 makes the CTM
+ *  singular and Chrome then drops the drawing op entirely. The card-flip presets
+ *  drive `scaleX`/`scaleY` to their own 0.001 floor; this is the renderer's own
+ *  guard so a future preset (or a track) cannot pass a bare 0 through. */
+const nonZero = (v: number): number =>
+  !Number.isFinite(v) ? 1 : Math.abs(v) >= 0.001 ? v : v < 0 ? -0.001 : 0.001
+
+/**
+ * Clip one glyph's cell box — and do it BEFORE the unit transform.
+ *
+ * That ordering is the whole trick, lifted from `lib/motion/animatedText.ts`
+ * (the Compositor's working per-character reveal). The mask is a FIXED WINDOW
+ * the letter slides through: `mask-up` starts the glyph a quarter-em low and
+ * lifts it while the window opens, so what the viewer sees is a letter rising
+ * out of a stationary edge. Clipping after `ctx.translate` would carry the
+ * window along with the letter — every frame still shows a plausibly masked
+ * glyph, so a thumbnail cannot tell the two apart, and the reveal is gone.
+ *
+ * Only the axis the mask moves on is measured against the cell box; the
+ * perpendicular axis is padded by an em so a descender's tail or an italic
+ * overhang is not sliced off by the sides of the window. The masked axis is NOT
+ * padded — `amount === 1` has to leave a zero-extent window, or an entrance
+ * would begin with the bottom of a 'g' already showing.
+ */
+function clipGlyphCell(
+  ctx: CanvasRenderingContext2D,
+  origin: { x: number; y: number },
+  /** The glyph's advance in OUTPUT pixels — the cell's width. */
+  advance: number,
+  /** The em in OUTPUT pixels — the cell's height. */
+  em: number,
+  clip: VtGlyphClip,
+): void {
+  const a = clamp01(clip.amount)
+  const x0 = origin.x
+  const x1 = origin.x + advance
+  // The origin is the glyph's placed BASELINE, and the cell hangs around it.
+  const y1 = origin.y + em * CELL_DESCENT
+  const y0 = y1 - em
+
+  let bx0 = x0, bx1 = x1, by0 = y0, by1 = y1
+  if (clip.side === 'top' || clip.side === 'bottom') {
+    bx0 -= em; bx1 += em
+    if (clip.side === 'top') by0 = y0 + em * a
+    else by1 = y1 - em * a
+  } else {
+    by0 -= em; by1 += em
+    if (clip.side === 'left') bx0 = x0 + advance * a
+    else bx1 = x1 - advance * a
+  }
+
+  // `beginPath` is safe here: this renderer draws `Path2D` objects and never
+  // uses the context's own current path.
+  ctx.beginPath()
+  ctx.rect(bx0, by0, Math.max(0, bx1 - bx0), Math.max(0, by1 - by0))
+  ctx.clip()
+}
 
 /** A stable key for a coords record, so two glyphs that land on the same axis
  *  position share one `getVariation` instance instead of paying for it twice. */
@@ -246,20 +318,56 @@ export function drawVectorType(
   const paths = outlinesToPath2D(frame.outlines, place)
   const { fill, stroke, strokeWidth } = frame.config
 
+  // The em in output pixels, from the placement rather than re-read from the
+  // config, so the cell box a mask is measured against cannot drift from the
+  // geometry it masks.
+  const em = place.scale * (frame.outlines.unitsPerEm || 1000)
+
   for (let i = 0; i < paths.length; i++) {
     const glyph = frame.outlines.glyphs[i] as GlyphOutline
     const path = paths[i] as Path2D
-    const tr = frame.transforms[i] ?? IDENTITY_GLYPH_TRANSFORM
+    const tr = frame.transforms[i] ?? IDENTITY_GLYPH_MOTION
     // The glyph's own placed origin — motion rotates and scales AROUND it, so a
     // spinning glyph spins in place rather than swinging about the canvas corner.
     const origin = glyphPlacement(glyph, place)
 
     ctx.save()
     ctx.globalAlpha = clamp01(tr.opacity)
-    if (tr.dx || tr.dy || tr.rotate || tr.scale !== 1) {
+
+    // BLUR. `ctx.filter` is part of the saved drawing state, so the `restore()`
+    // at the bottom of this loop body is what stops it leaking into the next
+    // glyph — and a leak is invisible until a glyph that should be sharp is not.
+    // Nothing resets it by hand: a second reset site is a second place to forget
+    // one.
+    //
+    // The `* k` is load-bearing, not decoration. A canvas filter's blur radius
+    // is in DEVICE pixels and IGNORES the current transform — measured in Chrome
+    // at ctm scale 0.5, 1 and 2, where `blur(4px)` grew a rect's device-pixel
+    // footprint by exactly 18px in all three. `tr.blur` is in LOGICAL output
+    // pixels (`presetMotion` already multiplied by the em), so without this the
+    // 220px node card would blur ~5× harder than the 1024px bake of the same
+    // config — trap 1 again, one layer down.
+    const blurPx = Number.isFinite(tr.blur) ? Math.max(0, tr.blur) * k : 0
+    // Below ~1/20 device px there is nothing to see, and setting a filter costs
+    // a separate compositing pass per glyph.
+    if (blurPx >= 0.05) ctx.filter = `blur(${blurPx}px)`
+
+    // CLIP — before the transform below, deliberately. See `clipGlyphCell`.
+    if (tr.clip && tr.clip.amount > 0.001) {
+      clipGlyphCell(ctx, origin, glyph.advance * place.scale, em, tr.clip)
+    }
+
+    const sx = nonZero(tr.scale * (Number.isFinite(tr.scaleX) ? tr.scaleX : 1))
+    const sy = nonZero(tr.scale * (Number.isFinite(tr.scaleY) ? tr.scaleY : 1))
+    if (tr.dx || tr.dy || tr.rotate || sx !== 1 || sy !== 1) {
       ctx.translate(origin.x + tr.dx, origin.y + tr.dy)
       if (tr.rotate) ctx.rotate((tr.rotate * Math.PI) / 180)
-      if (tr.scale !== 1) ctx.scale(tr.scale, tr.scale)
+      // Non-uniform, so the card-flip presets are DRAWN rather than degenerating
+      // into a bare opacity ramp (Task 4 produced `scaleX`/`scaleY` and flagged
+      // that nothing applied them). `scale` and `scaleX/Y` multiply: the uniform
+      // one is the tracks' and the presets' shared channel, the per-axis pair is
+      // the flip on top of it.
+      if (sx !== 1 || sy !== 1) ctx.scale(sx, sy)
       ctx.translate(-origin.x, -origin.y)
     }
     ctx.fillStyle = fill
@@ -327,14 +435,19 @@ export function drawVectorTypeToCanvas(
  */
 function glyphSvgTransform(
   origin: { x: number; y: number },
-  tr: VtGlyphTransform,
+  tr: VtGlyphMotion,
   precision = 3,
 ): string | undefined {
-  if (!tr.dx && !tr.dy && !tr.rotate && tr.scale === 1) return undefined
+  const sx = nonZero(tr.scale * (Number.isFinite(tr.scaleX) ? tr.scaleX : 1))
+  const sy = nonZero(tr.scale * (Number.isFinite(tr.scaleY) ? tr.scaleY : 1))
+  if (!tr.dx && !tr.dy && !tr.rotate && sx === 1 && sy === 1) return undefined
   const n = (v: number) => formatNumber(v, precision)
   const parts = [`translate(${n(origin.x + tr.dx)} ${n(origin.y + tr.dy)})`]
   if (tr.rotate) parts.push(`rotate(${n(tr.rotate)})`)
-  if (tr.scale !== 1) parts.push(`scale(${n(tr.scale)})`)
+  // Single-argument when uniform: that is the same transform, and it keeps an
+  // ordinary export readable. The two-argument form appears only for a card
+  // flip, which is exactly when the axes really do differ.
+  if (sx !== 1 || sy !== 1) parts.push(sx === sy ? `scale(${n(sx)})` : `scale(${n(sx)} ${n(sy)})`)
   parts.push(`translate(${n(-origin.x)} ${n(-origin.y)})`)
   return parts.join(' ')
 }
@@ -394,9 +507,9 @@ export function vectorTypeSVG(
     stroke: stroked ? stroke : undefined,
     strokeWidth: stroked ? strokeWidth : undefined,
     fillRule: 'nonzero',
-    opacity: (_g, i) => clamp01((frame.transforms[i] ?? IDENTITY_GLYPH_TRANSFORM).opacity),
+    opacity: (_g, i) => clamp01((frame.transforms[i] ?? IDENTITY_GLYPH_MOTION).opacity),
     attrs: (glyph, i) => {
-      const tr = frame.transforms[i] ?? IDENTITY_GLYPH_TRANSFORM
+      const tr = frame.transforms[i] ?? IDENTITY_GLYPH_MOTION
       const transform = glyphSvgTransform(glyphPlacement(glyph, place), tr, precision)
       return transform ? { transform } : undefined
     },
