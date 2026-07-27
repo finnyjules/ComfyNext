@@ -2843,7 +2843,12 @@ function handleBridgeMessage(event: MessageEvent) {
       // No prompt_id at all (legacy path): original clear-everything sweep.
       for (const n of nodes.value) {
         if (n.data?.running || n.data?.progress) {
-          n.data = { ...n.data, running: false, progress: undefined }
+          // Clear runningSince / stamp hasRun here too. This branch is reachable
+          // (an executing(null) completion with no preceding execution_start —
+          // e.g. a mid-run reload reconnecting the socket), and a node that
+          // exits it without them keeps a forever-ticking elapsed counter and
+          // never becomes eligible for the after-run collapse tier.
+          n.data = { ...n.data, running: false, progress: undefined, runningSince: null, hasRun: true }
         }
       }
       for (const e of edges.value) {
