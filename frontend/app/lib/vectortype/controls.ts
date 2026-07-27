@@ -1,0 +1,209 @@
+import type { ControlSpec } from '~/lib/spacetype/effect'
+// TYPE-ONLY, and it must stay that way: ./font.ts loads fontkit at module scope,
+// while this module is pulled in by the Collection control resolver and every
+// node card. A value import here would drag a font parser into both.
+import type { VtAxis } from './font'
+import { DEFAULT_CONFIG, VT_ALIGNS, VT_FONT_IDS, type VectorTypeConfig } from './config'
+
+/**
+ * The single declarative description of Vector Type Studio's parameters.
+ *
+ * One list, four consumers: the agent's vocabulary (`agentControls.ts`), the
+ * motion system's animatable targets (Task 6's `motion.ts`), Collection variable
+ * bindings / sweeps (`lib/collection/studioControls.ts`), and the inspector UI
+ * (`StudioControlPanel`). Declare a control once and all four pick it up; each
+ * consumer opts OUT (`agent: false`, `animatable: false`) rather than in.
+ *
+ * Keys are dotted paths resolved by `makeConfigParams`, so each one must address
+ * a real leaf on `VectorTypeConfig` — pinned by a test, because a key that does
+ * not resolve is a control that silently does nothing.
+ *
+ * ## The axis controls are DERIVED, not declared
+ *
+ * Every other studio has a closed vocabulary. This one cannot: Inter declares 2
+ * variation axes, Roboto Flex 13 (including `XOPQ`, `GRAD`, `YTAS`). You cannot
+ * freeze what you do not know, and Collection bindings persist `params.<key>`.
+ *
+ * This is the same problem shader fills hit (63 catalog effects, each with its
+ * own param list) and it takes the same answer — **declare the frame, derive the
+ * contents** (`lib/shaderfill/controls.ts`, and the design doc
+ * `docs/superpowers/specs/2026-07-26-shader-as-fill-design.md`):
+ *
+ *   fontId         <- DECLARED here, frozen forever, Collection-bindable
+ *   axes.<tag>     <- DERIVED from the loaded font (`derivedAxisControls`)
+ *
+ * `fontId` never changes shape, so a binding against it is as safe as any
+ * hand-authored control. The derived `axes.<tag>` keys are stable only PER FONT
+ * — switching `fontId` changes which axes exist — and that instability is
+ * inherent to what they represent, not a defect: there is no font-independent
+ * "XOPQ" knob. A stale binding degrades to "ignored", never "wrong value
+ * applied", because `clampCoords` (./font.ts) drops any tag the font does not
+ * declare before the outline is ever asked for.
+ *
+ * The one structural difference from shader fills: they read their catalog from
+ * a synchronous cache (`getEffectSync`), so `shapeAgentControls(cfg)` could keep
+ * a one-argument signature. `loadVariableFont` exposes only promises, so the
+ * loaded axes are passed IN — exactly as `shaderAgentControls(config, effectDef)`
+ * already does for Shader Studio.
+ */
+export type VtControl = ControlSpec & { when?: (cfg: VectorTypeConfig) => boolean }
+
+/** Emission order; a control whose group is not listed here is dropped.
+ *  `Axes` is declared but carries no STATIC member — it is the slot the derived
+ *  per-font sliders land in. That empty section is the "frame" being declared. */
+export const VT_SECTIONS = ['Text', 'Font', 'Axes', 'Layout', 'Paint'] as const
+
+/** The group every derived axis slider carries. Must be one of VT_SECTIONS. */
+export const VT_AXES_GROUP = 'Axes'
+
+/** The stroke COLOUR is withheld while the stroke has no width — a colour that
+ *  paints nothing is a control the user cannot see the effect of. The cost is
+ *  that the agent must raise `strokeWidth` before it can pick `stroke`, which
+ *  VT_GUIDANCE says out loud (same trade `fill.b` makes in Shape Studio). */
+const hasStroke = (c: VectorTypeConfig) => c.strokeWidth > 0
+
+const slider = (
+  key: string, label: string, min: number, max: number, step: number, group: string,
+  def: number, hint?: string, extra: Partial<VtControl> = {},
+): VtControl =>
+  ({ key, label, kind: 'slider', min, max, step, default: def, group, ...(hint ? { hint } : {}), ...extra } as VtControl)
+
+const select = (
+  key: string, label: string, options: string[], def: string, group: string,
+  hint?: string, extra: Partial<VtControl> = {},
+): VtControl =>
+  ({ key, label, kind: 'select', options, default: def, group, ...(hint ? { hint } : {}), ...extra } as VtControl)
+
+const color = (key: string, label: string, def: string, group: string, extra: Partial<VtControl> = {}): VtControl =>
+  ({ key, label, kind: 'color', default: def, group, ...extra } as VtControl)
+
+export const VT_CONTROLS: VtControl[] = [
+  // --- Text -----------------------------------------------------------------
+  // `kind: 'text'` is not AI-editable by default (controlDescriptor.ts) and that
+  // default is kept: `validatePatch` has no branch for text, so an agent write
+  // would be dropped silently anyway. It IS declared, because a Collection
+  // binding maps `text` to a 'text' variable — sweeping a column of words
+  // through the studio is the whole point of having it in the schema.
+  { key: 'text', label: 'Text', kind: 'text', default: DEFAULT_CONFIG.text, group: 'Text' },
+
+  // --- Font -----------------------------------------------------------------
+  select('fontId', 'Font', VT_FONT_IDS, DEFAULT_CONFIG.fontId, 'Font',
+    'Which variable family to set the type in. Changing it changes WHICH AXES EXIST.',
+    // A different font is a different axis set, not a point on a scale: tweening
+    // it would swap vocabularies mid-clip, not interpolate anything.
+    { animatable: false }),
+
+  // --- Layout ---------------------------------------------------------------
+  slider('size', 'Size', 8, 600, 1, 'Layout', DEFAULT_CONFIG.size, 'Em size in output pixels (CSS font-size semantics).'),
+  slider('tracking', 'Tracking', -200, 500, 1, 'Layout', DEFAULT_CONFIG.tracking,
+    "Extra letter spacing in 1/1000 em; 0 = the font's own spacing, negative tightens."),
+  select('align', 'Align', [...VT_ALIGNS], DEFAULT_CONFIG.align, 'Layout', 'Horizontal anchoring of the glyph run.'),
+
+  // --- Paint ----------------------------------------------------------------
+  color('fill', 'Fill', DEFAULT_CONFIG.fill, 'Paint'),
+  slider('strokeWidth', 'Stroke width', 0, 40, 0.5, 'Paint', DEFAULT_CONFIG.strokeWidth,
+    'Outline width in OUTPUT pixels, so it does not shrink with size. 0 = no stroke.'),
+  color('stroke', 'Stroke', DEFAULT_CONFIG.stroke, 'Paint', { when: hasStroke }),
+]
+
+/** Controls applicable to this config, in VT_SECTIONS order. Static only — the
+ *  per-font axis sliders come from `derivedAxisControls`, which needs a loaded
+ *  font this function has no access to. */
+export function visibleVtControls(cfg: VectorTypeConfig): VtControl[] {
+  const out: VtControl[] = []
+  for (const section of VT_SECTIONS) {
+    for (const c of VT_CONTROLS) {
+      if (c.group !== section) continue
+      if (c.when && !c.when(cfg)) continue
+      out.push(c)
+    }
+  }
+  return out
+}
+
+/** Short semantic notes for the axis tags a user is least likely to recognise.
+ *  Anything not listed falls back to a generic hint naming the tag. */
+const AXIS_HINTS: Record<string, string> = {
+  wght: 'Weight — thin to black, as real outline geometry.',
+  wdth: 'Width — condensed to extended.',
+  opsz: 'Optical size — the cut the designer intended at this size.',
+  slnt: 'Slant — a true oblique, not a skew.',
+  ital: 'Italic — the font\'s own italic forms where it has them.',
+  GRAD: 'Grade — weight WITHOUT changing the width the text occupies.',
+  XOPQ: 'Thick stroke — thickness of the vertical strokes.',
+  YOPQ: 'Thin stroke — thickness of the horizontal strokes.',
+  XTRA: 'Counter width — the space inside the letters.',
+  YTAS: 'Ascender height.',
+  YTDE: 'Descender depth.',
+  YTUC: 'Uppercase height.',
+  YTLC: 'Lowercase height (x-height).',
+  YTFI: 'Figure height.',
+  SOFT: 'Softness — how rounded the terminals are.',
+  WONK: 'Wonk — the quirkier alternate forms.',
+  CASL: 'Casual — upright to relaxed handwriting-ish.',
+  CRSV: 'Cursive — connected letterforms.',
+  MONO: 'Mono — proportional to monospaced.',
+}
+
+/** Sub-unit axes (CASL/WONK, 0..1) need a fine step; wght-style ranges do not. */
+function axisStep(a: VtAxis): number {
+  const span = a.max - a.min
+  if (span <= 2) return 0.01
+  if (span <= 20) return 0.1
+  return 1
+}
+
+/**
+ * One slider per axis the loaded font declares, addressed at `axes.<tag>` — the
+ * REAL path into `VectorTypeConfig.axes`, so `makeConfigParams` and
+ * `getByPath`/`setByPath` land on the stored value with no translation layer.
+ * (Shader fills paid for this lesson: a reserved `.p.` segment one step off the
+ * real path wrote to a phantom object and never reached the renderer.)
+ *
+ * Sliders are animatable by default, which is the point — every axis of every
+ * font becomes a motion target without this function opting in per-tag.
+ *
+ * Pass `font.axes` from a loaded `VtFont`; the ranges and defaults are the
+ * FILE's `fvar`, not the catalog's curated subset, so exotic axes appear too.
+ */
+export function derivedAxisControls(axes: VtAxis[]): ControlSpec[] {
+  const out: ControlSpec[] = []
+  for (const a of axes ?? []) {
+    // A zero-width axis cannot be dragged and would break the "max > min"
+    // invariant every slider consumer assumes. `normaliseAxes` allows it
+    // (it only rejects max < min); this is where it stops.
+    if (!(a.max > a.min)) continue
+    out.push({
+      key: `axes.${a.tag}`,
+      label: a.name || a.tag,
+      kind: 'slider',
+      min: a.min,
+      max: a.max,
+      step: axisStep(a),
+      default: a.default,
+      group: VT_AXES_GROUP,
+      hint: AXIS_HINTS[a.tag] ?? `Variable axis ${a.tag} — real outline geometry.`,
+    })
+  }
+  return out
+}
+
+/**
+ * Domain guidance injected into the /api/vibe prompt. Owned here, co-located
+ * with the schema it describes.
+ *
+ * Every control key it names is backticked and pinned by a test — prose that
+ * teaches the model a key which does not exist teaches it to emit patches
+ * `validatePatch` will silently drop.
+ */
+export const VT_GUIDANCE = `This is a VECTOR TYPE studio: real glyph OUTLINES pulled from a VARIABLE font and animated as geometry. Not a raster text layer, not 3D type.
+
+THE FONT COMES FIRST. \`fontId\` picks the variable family, and it decides WHICH AXES EXIST — change it before touching any axis, never after.
+
+AXES ARE THE POINT. Every axis the chosen font declares is a live slider at \`axes.<tag>\`: the familiar ones are \`axes.wght\` (weight), \`axes.wdth\` (width), \`axes.opsz\` (optical size) and \`axes.slnt\` (slant), and Roboto Flex adds the rare ones — \`axes.GRAD\` (grade: weight without changing the width the text occupies), \`axes.XOPQ\` (thick-stroke thickness), \`axes.XTRA\` (counter width), \`axes.YTAS\` (ascender height), \`axes.YTLC\` (x-height). These interpolate the OUTLINE itself, so reach for an axis before faking weight with \`strokeWidth\`. Only tags the current font declares exist; anything else is ignored.
+
+LAYOUT. \`size\` is the em size in output pixels. \`tracking\` is extra letter spacing in 1/1000 em (0 = the font's own spacing, negative tightens). \`align\` anchors the run horizontally.
+
+PAINT. \`fill\` is the glyph body colour. \`strokeWidth\` is the outline width in output pixels; it is 0 by default and \`stroke\` (the outline colour) is withheld until you raise it — set the width first, then the colour.
+
+\`text\` is the user's own copy and is not yours to rewrite; change how it LOOKS, not what it says.`
