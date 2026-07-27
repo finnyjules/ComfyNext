@@ -16,7 +16,6 @@ import { healDanglingLinks, stripVarsLinks, collectKeepSet, collectKeepSetDownst
 import { stripFrontendOnlyNodes } from '~/utils/stripFrontendOnlyNodes'
 import { FRONTEND_ONLY_NODE_TYPES } from '~/lib/agent/capabilities'
 import { brandKitToKv, brandSwatches as kitSwatches } from '~~/shared/brand/resolve'
-import { KINETIC_ENABLED } from '~/lib/kineticEnabled'
 import { SPACE_TYPE_ENABLED } from '~/lib/spaceTypeEnabled'
 import type { ActionDomain } from '~/data/action-catalog'
 import { STUDIO_OPTIONS } from '~/data/studio-options'
@@ -170,12 +169,9 @@ function addLoadNode(nodeType: string) {
   openSubmenu.value = null
 }
 
-// Load submenu click: most items drop their artifact node, but "Slate" is a
-// special entry that opens the slate gallery instead of dispatching addNode.
-const slateGalleryOpen = ref(false)
+// Load submenu click: most items drop their artifact node.
 function onLoadOption(opt: { nodeType?: string; special?: string }) {
   openSubmenu.value = null
-  if (opt.special === 'slate-gallery') { slateGalleryOpen.value = true; return }
   // Space Type is a persistent, re-editable canvas node now — drop the node and
   // let VueNodeCanvas auto-open its editor (config persists in node properties).
   if (opt.special === 'space-type') { window.dispatchEvent(new CustomEvent('sailor:addNode', { detail: { nodeType: 'SpaceType' } })); return }
@@ -199,22 +195,6 @@ const generateAudioOptions = [
 ]
 const generateAudioExpanded = ref(false)
 watch(openSubmenu, (v) => { if (v !== 'generate') generateAudioExpanded.value = false })
-
-// Gallery → canvas: a placed slate is a Compositor (Frame) node whose
-// properties carry the instantiated local layers + motion doc. VueNodeCanvas's
-// handleAddNode already applies `propertyOverrides`, so we just dispatch.
-function onCreateSlate(payload: { layers: unknown[]; motion: unknown }) {
-  slateGalleryOpen.value = false
-  window.dispatchEvent(new CustomEvent('sailor:addNode', {
-    detail: {
-      nodeType: 'Compositor',
-      propertyOverrides: {
-        sailor_localLayers: payload.layers,
-        sailor_motion: payload.motion,
-      },
-    },
-  }))
-}
 
 // Space Type surface → outputs. The surface bakes its own frames and dispatches
 // `sailor:addNode` directly (Image or Video node), so the layout only needs
@@ -4224,15 +4204,6 @@ function dismissRunResult() {
           @delete-canvas="deleteProjectCanvas"
           @restore="onRestoreVersion"
           @show-deliverables="showDeliverables"
-        />
-
-        <!-- Slate gallery: pick a Kinetic Slate template, fill its slots, and
-             drop a pre-animated Frame (Compositor) node onto the canvas. -->
-        <VueCanvasSlateGalleryModal
-          v-if="KINETIC_ENABLED && slateGalleryOpen"
-          :active-kit="brandLib.activeKit.value ?? null"
-          @close="slateGalleryOpen = false"
-          @create="onCreateSlate"
         />
 
         <!-- Vue canvas top-right toolbar (Run / Stop / Panel) -->

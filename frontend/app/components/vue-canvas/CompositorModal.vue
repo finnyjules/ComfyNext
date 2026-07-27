@@ -43,7 +43,6 @@ import { DEFAULT_FRAME_MOTION, type FrameMotion } from '~/lib/motion/types'
 import { LIVE_FIELD_CEILING } from '~/lib/shaderfill/descriptor'
 import '~/lib/motion/paint' // registers the motion painter for paintLayerStack(t)
 import { bakeAndUpload, motionSourceKey, type MotionParams } from '~/lib/motion/bake'
-import { createSlateFixtureLayers, SLATE_FIXTURE_MOTION } from '~/data/dev-slate-fixture'
 import CompositorMotionTimeline from '~/components/vue-canvas/compositor/CompositorMotionTimeline.vue'
 import MotionLayerEditor from '~/components/vue-canvas/compositor/MotionLayerEditor.vue'
 import CompositorClonerPanel from '~/components/vue-canvas/compositor/CompositorClonerPanel.vue'
@@ -61,7 +60,6 @@ import { paintPrimaryColor } from '~/lib/spacetype/fillTile'
 import FontPicker from '~/components/vue-canvas/widgets/FontPicker.vue'
 import { VARIABLE_FONTS } from '~/data/variable-fonts'
 import type { GoogleFont } from '~/data/google-fonts'
-import { KINETIC_ENABLED } from '~/lib/kineticEnabled'
 import { defaultExpressiveParams, type ExpressiveParams } from '~~/shared/text-layout/expressive'
 import { PenTool, Brush, FileUp, Sparkles, Wand2, Lasso, Undo2, Redo2, ChevronRight, ChevronDown, GripVertical, Play, Palette, Check, RefreshCw } from 'lucide-vue-next'
 import type { ComputedRef } from 'vue'
@@ -1526,15 +1524,6 @@ watch(inspectorTab, (tab) => {
   if (tab === 'motion') { if (previewT.value == null) scrubTo(0) }
   else exitMotionPreview()
 })
-
-// Dev-only: load the LIV-style slate fixture (acceptance choreography for the
-// motion engine). Uses addLocal so history/persistence behave like hand-adds.
-const isDev = import.meta.dev
-function loadSlateFixture() {
-  for (const l of createSlateFixtureLayers()) addLocal(l)
-  setMotion(SLATE_FIXTURE_MOTION)
-  scrubTo(0)
-}
 
 // ── Brand library (project kit entry point) ─────────────────────────────────
 // The layout (default.vue) provides the project's active brand kit; this
@@ -4072,13 +4061,6 @@ onUnmounted(() => {
           @click="brandOpen = !brandOpen"
         >
           <Palette class="size-4" />
-        </button>
-        <button v-if="isDev && KINETIC_ENABLED"
-          class="flex items-center justify-center h-8 px-2 rounded hover:bg-white/10 text-white/80 cursor-pointer text-[11px] whitespace-nowrap"
-          title="Dev: load the LIV-style slate acceptance fixture"
-          @click="loadSlateFixture"
-        >
-          Slate fixture
         </button>
         <input ref="imageInputRef" type="file" accept="image/*" class="hidden" @change="onAddImageFile" />
         <input ref="brushFillInputRef" type="file" accept="image/*" class="hidden" @change="onBrushFillImageFile" />
