@@ -10,10 +10,11 @@ import { cloneParams } from '~/lib/texturefx/types'
 import { rolesFor } from '~/lib/texturefx/roles'
 import { fillForRole } from '~/lib/texturefx/fills'
 import type { Fill } from '~/lib/texturefx/types'
-import type { Params } from '~/lib/spacetype/effect'
+import type { ControlSpec, Params } from '~/lib/spacetype/effect'
 import type { TextureControl } from '~/lib/texturefx/controls'
 import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
+import StudioControlPanel from '~/components/vue-canvas/studio/StudioControlPanel.vue'
 import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
 import StudioSlider from '~/components/vue-canvas/studio/StudioSlider.vue'
@@ -216,22 +217,27 @@ function closeEditor() {
   emit('close')
 }
 
-// Group visible controls by section, in TEXTURE_SECTIONS order. A control with
-// a `when` predicate is shown only when it returns true for the current params
-// (contextual reveal); sections with no visible controls are omitted.
-const sections = computed(() => {
-  const byGroup = new Map<string, TextureControl[]>()
-  for (const c of TEXTURE_CONTROLS as TextureControl[]) {
-    if (c.when && !c.when(params)) continue
-    const g = String(c.group)
-    if (!(TEXTURE_SECTIONS as readonly string[]).includes(g)) continue
-    if (!byGroup.has(g)) byGroup.set(g, [])
-    byGroup.get(g)!.push(c)
-  }
-  return TEXTURE_SECTIONS
-    .filter((g) => byGroup.has(g) && byGroup.get(g)!.length > 0)
-    .map((g) => ({ title: g, controls: byGroup.get(g)! }))
-})
+// Controls visible to StudioControlPanel: a control with a `when` predicate is
+// shown only when it returns true for the current params (contextual reveal).
+// Sectioning/ordering/dropping-empty-sections now lives in groupIntoSections
+// (shared with every other adopter), driven by TEXTURE_SECTIONS as the order.
+function controlVisible(c: ControlSpec): boolean {
+  const tc = c as TextureControl
+  return !tc.when || tc.when(params)
+}
+
+// `set`/`promote` mirror the setter every control in the panel already used
+// before the shared component existed (`params[key] = value; onParam()`), so
+// `onEdit`'s write-through behaves exactly like a user edit.
+function setParam(key: string, value: string | number) {
+  (params as Record<string, unknown>)[key] = value
+  onParam()
+  onEdit(key, value)
+}
+function promoteControlFromPanel(c: ControlSpec) {
+  const v = (params as Record<string, unknown>)[c.key]
+  promote(c, c.kind === 'slider' ? Number(v) : String(v))
+}
 
 const TILE = 256
 
@@ -576,76 +582,18 @@ onBeforeUnmount(() => {
     </template>
 
     <template #controls>
-      <StudioSection v-for="s in sections" :key="s.title" :title="s.title">
-        <div v-for="c in s.controls" :key="c.key" @contextmenu.prevent="openVarMenu($event, c)">
-          <template v-if="c.kind === 'slider'">
-            <!-- StudioSlider uses defineModel<number> — bind with v-model -->
-            <StudioSlider
-              :label="c.label"
-              :min="Number(c.min)"
-              :max="Number(c.max)"
-              :step="Number(c.step)"
-              :default="Number(c.default)"
-              :model-value="Number(params[c.key])"
-              :bindable="controlKindToVariableType(c.kind) !== null"
-              :bound="boundColumnFor(c.key)"
-              @update:model-value="(v: number) => { params[c.key] = v; onParam(); onEdit(c.key, v) }"
-              @promote="promote(c, Number(params[c.key]))"
-              @menu="(e: MouseEvent) => openVarMenu(e, c)"
-            />
-          </template>
-          <template v-else-if="c.kind === 'select'">
-            <label class="mb-1 flex items-center gap-1.5 text-[11px] text-white/55 group">
-              <span>{{ c.label }}</span>
-              <VariableGlyph
-                v-if="controlKindToVariableType(c.kind) !== null"
-                :bound="boundColumnFor(c.key)"
-                @promote="promote(c, String(params[c.key]))"
-                @menu="(e: MouseEvent) => openVarMenu(e, c)"
-              />
-            </label>
-            <!-- Bound: pink read-only row — the variable name, never the resolved
-                 literal value. Editing happens in the collection table. -->
-            <div v-if="boundColumnFor(c.key)" class="flex items-center justify-between gap-2 rounded bg-white/[0.04] px-2 py-1.5">
-              <span class="truncate text-[12px]" style="color: var(--var-accent-text)">{{ boundColumnFor(c.key) }}</span>
-              <button type="button" @click="goToCollection"
-                      class="shrink-0 rounded px-2 py-1 text-[11px] text-white/60 hover:bg-white/10 hover:text-white">Edit in table</button>
-            </div>
-            <!-- StudioSelect uses defineModel<string> — bind with v-model -->
-            <StudioSelect
-              v-else
-              :options="c.options as string[]"
-              :model-value="String(params[c.key])"
-              @update:model-value="(v: string) => { params[c.key] = v; onParam(); onEdit(c.key, v) }"
-            />
-          </template>
-          <template v-else-if="c.kind === 'color'">
-            <div class="flex items-center gap-2">
-              <label class="flex items-center gap-1.5 text-[11px] text-white/55 group">
-                <span>{{ c.label }}</span>
-                <VariableGlyph
-                  v-if="controlKindToVariableType(c.kind) !== null"
-                  :bound="boundColumnFor(c.key)"
-                  @promote="promote(c, String(params[c.key]))"
-                  @menu="(e: MouseEvent) => openVarMenu(e, c)"
-                />
-              </label>
-              <!-- Bound: pink read-only row instead of the swatch/picker. -->
-              <div v-if="boundColumnFor(c.key)" class="flex flex-1 items-center justify-between gap-2 rounded bg-white/[0.04] px-2 py-1.5">
-                <span class="truncate text-[12px]" style="color: var(--var-accent-text)">{{ boundColumnFor(c.key) }}</span>
-                <button type="button" @click="goToCollection"
-                        class="shrink-0 rounded px-2 py-1 text-[11px] text-white/60 hover:bg-white/10 hover:text-white">Edit in table</button>
-              </div>
-              <!-- StudioColor uses defineModel<string> — bind with v-model -->
-              <StudioColor
-                v-else
-                :model-value="String(params[c.key])"
-                @update:model-value="(v: string) => { params[c.key] = v; onParam(); onEdit(c.key, v) }"
-              />
-            </div>
-          </template>
-        </div>
-      </StudioSection>
+      <StudioControlPanel
+        :controls="TEXTURE_CONTROLS"
+        :order="TEXTURE_SECTIONS"
+        :value="(key: string) => (params as Record<string, unknown>)[key] as string | number"
+        :visible="controlVisible"
+        :bound-for="boundColumnFor"
+        :segmented-max="0"
+        :go-to-collection="goToCollection"
+        @set="setParam"
+        @promote="promoteControlFromPanel"
+        @menu="(e: MouseEvent, c: ControlSpec) => openVarMenu(e, c)"
+      />
 
       <!-- Fills panel: per-role solid/gradient fill pickers (not driven by TEXTURE_CONTROLS). -->
       <!-- Hidden in raster mode (raster has no ink/ground roles). -->
