@@ -27,8 +27,8 @@ import CatalogModal from '~/components/CatalogModal.vue'
 import FillControl from '~/components/vue-canvas/compositor/FillControl.vue'
 import StudioSlider from '~/components/vue-canvas/studio/StudioSlider.vue'
 import StudioSegmented from '~/components/vue-canvas/studio/StudioSegmented.vue'
-import { type Fill, type ShaderSpec, DEFAULT_SHADER_SPEC } from '~/lib/spacetype/fillTile'
-import { type Paint, isGradient } from '~/composables/useCompositorLayers'
+import { type ShaderSpec, DEFAULT_SHADER_SPEC } from '~/lib/spacetype/fillTile'
+import { type Paint, isFill } from '~/composables/useCompositorLayers'
 import { fetchShaderFxCatalog } from '~/lib/shaderfx/catalog'
 import type { EffectDef, ShaderFxCatalog } from '~/lib/shaderfx/types'
 import { derivedShaderFillControls } from '~/lib/shaderfill/controls'
@@ -186,34 +186,18 @@ const speed = computed<number>({
 })
 
 // ── Nested input fill ─────────────────────────────────────────────────────────
-// `Fill` is a member of compositor's `Paint` union, so it can be handed to
-// FillControl's modelValue directly on the read side; the write side has to
-// undo FillControl's own Paint-collapsing (solid -> hex string, gradient ->
-// multi-stop Gradient) back into the single-stop `Fill` shape `ShaderSpec.input`
-// requires. Mirrors FillControl's own toFill()/toGrad() adapters.
-function fillFromPaint(p: Paint): Fill {
-  if (typeof p === 'string') {
-    return { type: 'solid', a: p, b: '#000000', textColor: '#ffffff', angle: 45, density: 8 }
-  }
-  if (isGradient(p)) {
-    const stops = [...p.stops].sort((a, b) => a.offset - b.offset)
-    return {
-      type: 'gradient',
-      a: stops[0]?.color ?? '#ffffff',
-      b: stops[stops.length - 1]?.color ?? '#000000',
-      textColor: '#ffffff',
-      angle: (p as { angle?: number }).angle ?? 45,
-      density: 8,
-    }
-  }
-  // Already a Fill — spread (not a listed-field rebuild) so nothing it carries
-  // is lost. `nested` on the child FillControl keeps 'shader' out of its type
-  // list, so `p.type === 'shader'` shouldn't happen; guarded anyway rather than
-  // trusting that invariant to hold from every possible caller.
-  return { ...p, type: p.type === 'shader' ? 'gradient' : p.type }
-}
+// `ShaderSpec.input` is `Paint` now (fillTile.ts), the same union FillControl
+// edits, so no adapter is needed either direction. Depth-1 nesting (a shader
+// fill's input can never itself be shader-typed) is enforced at the parse
+// boundary by normalizeFill/normalizePaint (fillTile.ts) — but edits from this
+// editor patch `spec.input` directly and never pass through normalizePaint, so
+// that enforcement alone wouldn't catch a nested shader fill until the next
+// load. `nested` on the child FillControl already excludes 'shader' from its
+// type list, so `p.type === 'shader'` shouldn't be reachable from any current
+// caller; guarded here anyway as the same runtime backstop `fillFromPaint`
+// used to provide, rather than trusting that invariant end-to-end.
 function onInputChange(p: Paint) {
-  patch({ input: fillFromPaint(p) })
+  patch({ input: isFill(p) && p.type === 'shader' ? { ...p, type: 'gradient' } : p })
 }
 </script>
 
