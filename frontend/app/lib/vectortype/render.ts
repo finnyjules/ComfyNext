@@ -140,6 +140,25 @@ export interface GlyphPaint {
   strokeWidth?: number
   /** Glyph outlines rely on nonzero winding for counters. Change with care. */
   fillRule?: 'nonzero' | 'evenodd'
+  /**
+   * 0..1, per glyph. The canvas renderer expresses a per-glyph motion opacity as
+   * `ctx.globalAlpha`; without this the SVG has nowhere to put it and a fading
+   * stagger exports fully opaque.
+   */
+  opacity?: number | ((glyph: GlyphOutline, index: number) => number)
+  /**
+   * Extra attributes on each glyph's `<path>`.
+   *
+   * This is how a per-glyph MOTION transform survives export: the canvas replays
+   * translate/rotate/scale around the glyph's own origin as `ctx` operations,
+   * and an SVG `transform` list composes in the same order, so the caller can
+   * hand the identical composition through here. It is kept as an open attribute
+   * bag rather than a typed `transform` field so the spine stays free of any one
+   * studio's motion model.
+   */
+  attrs?:
+    | Record<string, string | number>
+    | ((glyph: GlyphOutline, index: number) => Record<string, string | number> | undefined)
 }
 
 function pick<T>(
@@ -158,12 +177,18 @@ export function outlinesToShapes(
   const placed = placeOutlines(outlines, opts)
   return placed.map((commands, i) => {
     const glyph = outlines.glyphs[i] as GlyphOutline
+    const attrs = pick(opts.attrs, glyph, i)
+    const opacity = pick(opts.opacity, glyph, i)
     return {
       commands,
       fill: pick(opts.fill, glyph, i) ?? '#000000',
       stroke: pick(opts.stroke, glyph, i),
       strokeWidth: opts.strokeWidth,
       fillRule: opts.fillRule ?? 'nonzero',
+      // Omitted rather than written as 1 — a fully opaque glyph should not carry
+      // a redundant attribute into a file a designer is going to read.
+      ...(opacity === undefined || opacity === 1 ? {} : { opacity }),
+      ...(attrs && Object.keys(attrs).length ? { attrs } : {}),
     }
   })
 }

@@ -31,7 +31,7 @@ import { VT_CONTROLS, VT_SECTIONS, derivedAxisControls, type VtControl } from '~
 import { VT_GUIDANCE, vtAgentControls } from '~/lib/vectortype/agentControls'
 import { animatableTargets } from '~/lib/vectortype/motion'
 import { loadVariableFont, type VtAxis, type VtFont } from '~/lib/vectortype/font'
-import { drawVectorTypeToCanvas, vtIsAnimated } from '~/lib/vectortype/canvas'
+import { drawVectorTypeToCanvas, vectorTypeSVG, vtExportName, vtIsAnimated } from '~/lib/vectortype/canvas'
 import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
@@ -326,7 +326,20 @@ function draw() {
   }
 }
 
-watch([animated, playing], () => { startedAt = 0; if (!animated.value || !playing.value) previewTime.value = 0 })
+/**
+ * Pause HOLDS the frame; it does not rewind to 0.
+ *
+ * This mattered the moment there was a vector export: both exports write the
+ * frame at `previewTime`, so if pausing snapped the clock back to zero there was
+ * no way to export any frame but the first — you could see frame 37 and only
+ * ever save frame 0. Resuming rebases `startedAt` so the clock continues from
+ * where it stopped instead of jumping.
+ *
+ * Losing the tracks entirely is different: there is no clip left, so t = 0 is
+ * the only meaningful time.
+ */
+watch(animated, (a) => { startedAt = 0; if (!a) previewTime.value = 0 })
+watch(playing, (p) => { startedAt = p ? performance.now() - previewTime.value * 1000 : 0 })
 
 onMounted(() => {
   registerStudioParamBaker(props.nodeId, renderBlobWithOverrides)
@@ -380,6 +393,50 @@ async function exportPng() {
     setActionError('Export failed — please try again')
   } finally {
     exporting.value = false
+  }
+}
+
+/**
+ * Export SVG — Sailor's first vector deliverable.
+ *
+ * Three things about this are decisions, not defaults:
+ *
+ * 1. **It exports `previewTime`, not the base config.** Every other output on
+ *    this surface does too, and the alternative is worse than it sounds: with a
+ *    track running, "export" would silently hand back frame 0 while the screen
+ *    shows frame 37. Pause and the file matches the paused frame exactly.
+ * 2. **It goes to the user's disk, not to the canvas.** The image output path
+ *    (`recordAsset` -> `sailor:vectorTypeStudioOutput`) publishes a *filename a
+ *    ComfyUI image node can load*, and no node in the product consumes SVG —
+ *    routing vector through it would produce a broken image node, not a
+ *    deliverable. Export PNG remains the canvas hand-off; this is the one that
+ *    opens in Illustrator.
+ * 3. **The whole document is built by `vectorTypeSVG`**, the same function that
+ *    would be called headlessly, sharing `vectorTypeFrame` + `vtPlacement` with
+ *    the preview loop. So the file is the frame on screen, not a second
+ *    interpretation of the config.
+ */
+const svgExporting = ref(false)
+async function exportSvg() {
+  svgExporting.value = true
+  actionError.value = ''
+  try {
+    const f = font.value ?? await loadVariableFont(config.value.fontId)
+    const { svg, frame } = vectorTypeSVG(f, config.value, previewTime.value, {
+      width: canvasW.value, height: canvasH.value, background: background.value,
+    })
+    if (!frame.outlines.glyphs.length) throw new Error('nothing to export — the run has no glyphs')
+    const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${vtExportName(config.value)}.svg`
+    a.click()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  } catch (e) {
+    console.error('[vector-type] SVG export failed', e)
+    setActionError('SVG export failed — please try again')
+  } finally {
+    svgExporting.value = false
   }
 }
 
@@ -500,6 +557,16 @@ const frameCount = computed(() => Math.round((config.value.motion.fps || 30) * (
       <input ref="importInput" type="file" accept="application/json" class="hidden" @change="onImportFile" />
       <span v-if="actionError" class="text-[11px] text-red-400/90">{{ actionError }}</span>
       <span class="flex-1" />
+      <!-- Vector first, then raster: this is the only studio in the product whose
+           output is editable geometry, and the file it writes is the point. -->
+      <button
+        type="button"
+        class="rounded border border-white/15 bg-white/[0.08] px-3.5 py-1.5 text-[12px] font-medium text-white/85 transition enabled:hover:bg-white/[0.14] disabled:cursor-not-allowed disabled:opacity-40"
+        :disabled="!font || svgExporting"
+        title="Real outlines — one editable path per glyph, no raster"
+        aria-label="Export SVG"
+        @click="exportSvg"
+      >{{ svgExporting ? 'Exporting…' : 'Export SVG' }}</button>
       <button
         type="button"
         class="rounded bg-action px-3.5 py-1.5 text-[12px] font-medium text-white transition enabled:hover:bg-action/85 disabled:cursor-not-allowed disabled:opacity-40"

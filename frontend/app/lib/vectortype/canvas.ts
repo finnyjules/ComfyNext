@@ -32,6 +32,7 @@
  * has to say which it means; this is that module saying it.
  */
 import type { Transform2D } from '~/lib/vector/svg'
+import { formatNumber } from '~/lib/vector/svg'
 import type { VectorTypeConfig } from './config'
 import type { VtFont } from './font'
 import type { GlyphOutline, TextOutlines } from './outline'
@@ -44,7 +45,7 @@ import {
   resolveStagger,
   type VtGlyphTransform,
 } from './motion'
-import { glyphTransform as glyphPlacement, outlinesToPath2D } from './render'
+import { glyphTransform as glyphPlacement, outlinesToPath2D, outlinesToSVG } from './render'
 
 /** One frame's worth of resolved geometry: what to draw and how each glyph moves. */
 export interface VtFrame {
@@ -285,6 +286,136 @@ export function drawVectorTypeToCanvas(
   const ctx = (canvas as HTMLCanvasElement).getContext('2d') as CanvasRenderingContext2D | null
   if (!ctx) return null
   return drawVectorType(ctx, font, cfg, t, opts)
+}
+
+// ── The vector output ───────────────────────────────────────────────────────
+//
+// This module is called `canvas.ts` because pixels were its first job, but what
+// it really owns is `(config, time) -> a placed, motion-composed frame`. The SVG
+// writer below is the SECOND consumer of exactly that, and it lives here rather
+// than in `render.ts` for the reason the rest of this file exists: framing,
+// tracking, alignment and the per-glyph motion composition must be decided ONCE.
+// A separate export path that re-derived any of them would drift, and the drift
+// would be invisible — both outputs would still look like the word.
+//
+// Nothing here is the SVG serialiser. That is `~/lib/vector/svg`, which knows
+// nothing about type and is Shape Studio's next consumer; `render.ts` is the
+// type-specific adapter over it. This function only decides WHAT to hand it.
+
+/**
+ * A per-glyph motion transform as an SVG `transform` list.
+ *
+ * Mirrors `drawVectorType`'s canvas sequence exactly:
+ *
+ *   translate(origin + d) · rotate · scale · translate(-origin)
+ *
+ * An SVG transform list composes left-to-right the same way successive `ctx`
+ * operations do, and SVG's `rotate(deg)` turns the same direction as
+ * `ctx.rotate(rad)` because both spaces are y-down here (the flip is already
+ * baked into the coordinates by `transformCommands`). So the two are the same
+ * transform written twice, not two transforms that happen to agree.
+ *
+ * Returns `undefined` for identity so an unanimated export carries no attribute.
+ */
+function glyphSvgTransform(
+  origin: { x: number; y: number },
+  tr: VtGlyphTransform,
+  precision = 3,
+): string | undefined {
+  if (!tr.dx && !tr.dy && !tr.rotate && tr.scale === 1) return undefined
+  const n = (v: number) => formatNumber(v, precision)
+  const parts = [`translate(${n(origin.x + tr.dx)} ${n(origin.y + tr.dy)})`]
+  if (tr.rotate) parts.push(`rotate(${n(tr.rotate)})`)
+  if (tr.scale !== 1) parts.push(`scale(${n(tr.scale)})`)
+  parts.push(`translate(${n(-origin.x)} ${n(-origin.y)})`)
+  return parts.join(' ')
+}
+
+export interface VtSvgOptions extends VtBoxOptions {
+  /** Painted as a full-bleed rect behind the glyphs, matching the canvas.
+   *  `null`/omitted leaves the document transparent. */
+  background?: string | null
+  /** Decimal places in path data. Default 3 — sub-tenth-of-a-pixel. */
+  precision?: number
+}
+
+export interface VtSvgResult {
+  svg: string
+  /** The same `VtFrame` the canvas would have drawn, so a caller can assert the
+   *  export came from the path it thinks it did (glyph count, `staggered`,
+   *  `shapings`) rather than trusting the picture. */
+  frame: VtFrame
+}
+
+/**
+ * Draw one frame as VECTOR — Sailor's first real vector deliverable.
+ *
+ * The SVG twin of `drawVectorType`, and deliberately the same three lines of
+ * setup: `vectorTypeFrame` for the geometry at time `t`, `vtPlacement` for where
+ * it lands in the output box, `glyphPlacement` for each glyph's own origin. Only
+ * the replay differs.
+ *
+ * What comes out is editable geometry: one `<path>` per glyph whose `d` is the
+ * glyph's real outline at its real axis position, with `fill`/`stroke` as
+ * attributes (never baked into the geometry) and per-glyph motion as a
+ * `transform`. No raster, no `<image>`, nothing traced.
+ *
+ * `t` is a real clock, so exporting mid-animation exports THAT frame — pass the
+ * time the surface is showing and the file matches the screen.
+ */
+export function vectorTypeSVG(
+  font: VtFont,
+  cfg: VectorTypeConfig,
+  t: number,
+  opts: VtSvgOptions,
+): VtSvgResult {
+  const frame = vectorTypeFrame(font, cfg, t)
+  const place = vtPlacement(frame, opts)
+  const { fill, stroke, strokeWidth } = frame.config
+  const precision = opts.precision ?? 3
+  const W = Math.max(1, opts.width)
+  const H = Math.max(1, opts.height)
+  const stroked = Number.isFinite(strokeWidth) && strokeWidth > 0
+
+  const svg = outlinesToSVG(frame.outlines, {
+    ...place,
+    fill,
+    // The stroke is an ATTRIBUTE, not outlined into geometry: a designer opening
+    // this can restyle or remove it, and the path still describes the letterform
+    // rather than the letterform's outer contour.
+    stroke: stroked ? stroke : undefined,
+    strokeWidth: stroked ? strokeWidth : undefined,
+    fillRule: 'nonzero',
+    opacity: (_g, i) => clamp01((frame.transforms[i] ?? IDENTITY_GLYPH_TRANSFORM).opacity),
+    attrs: (glyph, i) => {
+      const tr = frame.transforms[i] ?? IDENTITY_GLYPH_TRANSFORM
+      const transform = glyphSvgTransform(glyphPlacement(glyph, place), tr, precision)
+      return transform ? { transform } : undefined
+    },
+    // The document is the OUTPUT BOX, not a crop of the ink — so the SVG frames
+    // the composition exactly as the PNG does and the two can be swapped.
+    width: W,
+    height: H,
+    viewBox: [0, 0, W, H],
+    background: opts.background ?? null,
+    precision,
+    // Matches `ctx.lineJoin = 'round'` in drawVectorType. SVG's default is
+    // `miter`, which spikes at the sharp joins letterforms are full of.
+    ...(stroked ? { groupAttrs: { 'stroke-linejoin': 'round' } } : {}),
+  })
+
+  return { svg, frame }
+}
+
+/** A filesystem-safe stem for an export, derived from the text being set. */
+export function vtExportName(cfg: VectorTypeConfig | null | undefined): string {
+  const slug = String(cfg?.text ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48)
+    .replace(/-+$/, '')
+  return slug || 'vector-type'
 }
 
 /** True when this config has something that MOVES — i.e. a preview loop is worth

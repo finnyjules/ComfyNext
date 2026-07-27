@@ -17,7 +17,9 @@ import * as fontkit from 'fontkit'
 import { describe, expect, it } from 'vitest'
 import { normaliseAxes, type VtFont } from '~/lib/vectortype/font'
 import { DEFAULT_CONFIG, mergeConfig, type VectorTypeConfig } from '~/lib/vectortype/config'
-import { vectorTypeFrame, vtIsAnimated, vtPlacement } from '~/lib/vectortype/canvas'
+import { vectorTypeFrame, vectorTypeSVG, vtExportName, vtIsAnimated, vtPlacement } from '~/lib/vectortype/canvas'
+import { placeOutlines } from '~/lib/vectortype/render'
+import { commandsToPathData } from '~/lib/vector/svg'
 
 const FIXTURE = fileURLToPath(new URL('../fixtures/inter-subset-var.ttf', import.meta.url))
 
@@ -220,5 +222,201 @@ describe('vtIsAnimated', () => {
     expect(vtIsAnimated(undefined)).toBe(false)
     expect(vtIsAnimated({} as any)).toBe(false)
     expect(vtIsAnimated({ motion: 'later' } as any)).toBe(false)
+  })
+})
+
+// ── The vector output ───────────────────────────────────────────────────────
+//
+// Sailor's first non-pixel deliverable, so these tests are about the FILE, not
+// about "it rendered". The three things that can be silently wrong in an SVG
+// export — an upside-down y, a raster payload hiding inside, and a per-glyph
+// motion transform that never made it out — each get a test that would fail for
+// the right reason.
+
+function paths(svg: string): string[] {
+  return svg.match(/<path\b[^>]*\/>/g) ?? []
+}
+function attrOf(tag: string, name: string): string | undefined {
+  return new RegExp(`\\b${name}="([^"]*)"`).exec(tag)?.[1]
+}
+function dOf(tag: string): string {
+  return attrOf(tag, 'd') ?? ''
+}
+/** Every (x, y) pair a path `d` mentions, in document space. */
+function pointsOf(d: string): Array<[number, number]> {
+  const out: Array<[number, number]> = []
+  for (const m of d.matchAll(/[MLQC]([-\d.\s]+)/g)) {
+    const nums = (m[1] as string).trim().split(/\s+/).map(Number).filter(Number.isFinite)
+    for (let i = 0; i + 1 < nums.length; i += 2) out.push([nums[i] as number, nums[i + 1] as number])
+  }
+  return out
+}
+const yMax = (d: string) => Math.max(...pointsOf(d).map(p => p[1]))
+const yMin = (d: string) => Math.min(...pointsOf(d).map(p => p[1]))
+
+const BOX = { width: 1280, height: 720 }
+
+describe('vectorTypeSVG — editable outlines, not a raster embed', () => {
+  it('writes one <path> per glyph, with real curve commands', () => {
+    const { svg, frame } = vectorTypeSVG(font, cfg({ text: 'Sailor' }), 0, BOX)
+    const p = paths(svg)
+    expect(p).toHaveLength(6)
+    expect(frame.outlines.glyphs).toHaveLength(6)
+    for (const tag of p) {
+      const d = dOf(tag)
+      expect(d.startsWith('M')).toBe(true)
+      expect(d).toContain('Z')
+      // Plausible command count: a Latin glyph is a handful to a few dozen
+      // commands — not 2 (a box) and not thousands (a traced bitmap). `l` is a
+      // legitimate 5 (four corners and a close), which is why the floor is low.
+      const n = (d.match(/[MLQCZ]/g) ?? []).length
+      expect(n).toBeGreaterThanOrEqual(5)
+      expect(n).toBeLessThan(400)
+    }
+    // Letterforms are CURVES. `S`, `a`, `o` and `r` cannot be drawn with lines,
+    // so their absence would mean something flattened the outline on the way out.
+    const curvy = p.map(dOf).filter(d => /[QC]/.test(d))
+    expect(curvy.length).toBeGreaterThanOrEqual(4)
+    // Task 4 pinned Inter's `g` at 46 commands; the run as a whole should be of
+    // that order, not an order of magnitude off.
+    const total = p.reduce((s, t) => s + (dOf(t).match(/[MLQCZ]/g) ?? []).length, 0)
+    expect(total).toBeGreaterThan(60)
+    expect(total).toBeLessThan(600)
+  })
+
+  it('contains NO raster payload anywhere', () => {
+    const { svg } = vectorTypeSVG(font, cfg(), 0, { ...BOX, background: '#0b0d12' })
+    expect(svg).not.toContain('<image')
+    expect(svg).not.toContain('data:image')
+    expect(svg).not.toContain('base64')
+    expect(svg).not.toContain('xlink:href')
+    // The only <rect> permitted is the background, and it must not be the ink.
+    expect((svg.match(/<rect/g) ?? []).length).toBe(1)
+    expect(svg).toContain('xmlns="http://www.w3.org/2000/svg"')
+  })
+
+  it('frames the OUTPUT BOX, so the SVG and the PNG are interchangeable', () => {
+    const { svg } = vectorTypeSVG(font, cfg(), 0, BOX)
+    expect(svg).toContain('viewBox="0 0 1280 720"')
+    expect(svg).toContain('width="1280"')
+    expect(svg).toContain('height="720"')
+  })
+
+  it('is RIGHT SIDE UP — the descender hangs below the baseline', () => {
+    // Font space is y-up, SVG is y-down. This asserts the flip by MEANING rather
+    // than by restating the formula: `g` has a descender and `S` does not, so in
+    // a correct export `g`'s lowest ink is below `S`'s, and its topmost ink is
+    // not. Flip the sign anywhere in the chain and both comparisons invert.
+    const { svg } = vectorTypeSVG(font, cfg({ text: 'Sg' }), 0, BOX)
+    const [S, g] = paths(svg).map(dOf) as [string, string]
+    expect(yMax(g)).toBeGreaterThan(yMax(S))
+    expect(yMin(g)).toBeGreaterThan(yMin(S))
+  })
+
+  it('places the ink inside the box, matching vtPlacement', () => {
+    const c = cfg({ text: 'Sailor', size: 200 })
+    const { svg, frame } = vectorTypeSVG(font, c, 0, BOX)
+    const place = vtPlacement(frame, BOX)
+    const all = paths(svg).flatMap(t => pointsOf(dOf(t)))
+    const ys = all.map(p => p[1])
+    const b = frame.outlines.bbox
+    // The source bbox's MAX y is the output's TOP edge (the flip), and both ends
+    // land where the shared placement says they do.
+    expect(Math.min(...ys)).toBeCloseTo(place.y - b.maxY * place.scale, 2)
+    expect(Math.max(...ys)).toBeCloseTo(place.y - b.minY * place.scale, 2)
+    expect(Math.min(...ys)).toBeGreaterThanOrEqual(0)
+    expect(Math.max(...ys)).toBeLessThanOrEqual(BOX.height)
+  })
+
+  it('describes the SAME geometry the canvas replays', () => {
+    // Not a second implementation: the `d` must be the placed command list the
+    // Path2D path is built from, character for character.
+    const c = cfg({ text: 'Sailor', size: 180, tracking: 40, align: 'right' })
+    const { svg, frame } = vectorTypeSVG(font, c, 0, BOX)
+    const place = vtPlacement(frame, BOX)
+    const expected = placeOutlines(frame.outlines, place).map(cmds => commandsToPathData(cmds, 3))
+    expect(paths(svg).map(dOf)).toEqual(expected)
+  })
+
+  it('exports the frame at time `t`, not the base config', () => {
+    const c = cfg({ motion: { ...DEFAULT_CONFIG.motion, tracks: [wghtTrack()], duration: 4 } })
+    const a = vectorTypeSVG(font, c, 0, BOX)
+    const b = vectorTypeSVG(font, c, 4, BOX)
+    expect(a.frame.config.axes.wght).toBeCloseTo(100, 6)
+    expect(b.frame.config.axes.wght).toBeCloseTo(900, 6)
+    expect(b.svg).not.toEqual(a.svg)
+    // Same topology, different coordinates — the axis moved the outline.
+    const shape = (s: string) => paths(s).map(t => (dOf(t).match(/[MLQCZ]/g) ?? []).join(''))
+    expect(shape(b.svg)).toEqual(shape(a.svg))
+  })
+
+  it('carries the STROKE as attributes, never baked into the geometry', () => {
+    const plain = vectorTypeSVG(font, cfg({ strokeWidth: 0 }), 0, BOX)
+    const outlined = vectorTypeSVG(font, cfg({ strokeWidth: 6, stroke: '#ff0055' }), 0, BOX)
+    // Identical `d` — a stroke that had been outlined into geometry would double
+    // the contour count and change every coordinate.
+    expect(paths(outlined.svg).map(dOf)).toEqual(paths(plain.svg).map(dOf))
+    expect(outlined.svg).toContain('stroke="#ff0055"')
+    expect(outlined.svg).toContain('stroke-width="6"')
+    // Matches ctx.lineJoin = 'round'; SVG's default miter spikes at sharp joins.
+    expect(outlined.svg).toContain('stroke-linejoin="round"')
+    expect(plain.svg).not.toContain('stroke=')
+    expect(plain.svg).not.toContain('stroke-width=')
+  })
+
+  it('carries the per-glyph STAGGER transform, so a wave does not export flat', () => {
+    const c = cfg({
+      text: 'Sailor',
+      motion: {
+        ...DEFAULT_CONFIG.motion,
+        duration: 4,
+        stagger: { delay: 0.4, order: 'forward', seed: 0 },
+        tracks: [
+          { path: 'glyph.dy', from: -120, to: 0, easing: 'linear', loops: 1, hold: 0, cycleOffset: 0, delay: 0 },
+          { path: 'glyph.opacity', from: 0, to: 1, easing: 'linear', loops: 1, hold: 0, cycleOffset: 0, delay: 0 },
+        ],
+      },
+    })
+    const { svg, frame } = vectorTypeSVG(font, c, 2, BOX)
+    expect(frame.staggered).toBe(true)
+    const tags = paths(svg)
+    const transforms = tags.map(t => attrOf(t, 'transform'))
+    // Every glyph moved, and each by its OWN amount — one shared transform would
+    // mean the stagger was flattened on the way out.
+    expect(transforms.every(t => typeof t === 'string' && t.startsWith('translate('))).toBe(true)
+    expect(new Set(transforms).size).toBe(tags.length)
+    const opacities = tags.map(t => attrOf(t, 'opacity'))
+    expect(new Set(opacities).size).toBeGreaterThan(1)
+  })
+
+  it('writes no transform and no opacity when nothing animates', () => {
+    const { svg } = vectorTypeSVG(font, cfg(), 0, BOX)
+    expect(svg).not.toContain('transform=')
+    expect(svg).not.toContain('opacity=')
+  })
+
+  it('paints the background only when there is one', () => {
+    expect(vectorTypeSVG(font, cfg(), 0, { ...BOX, background: '#0b0d12' }).svg).toContain('<rect')
+    expect(vectorTypeSVG(font, cfg(), 0, { ...BOX, background: null }).svg).not.toContain('<rect')
+  })
+
+  it('survives empty text rather than emitting a broken document', () => {
+    const { svg, frame } = vectorTypeSVG(font, cfg({ text: '' }), 0, BOX)
+    expect(frame.outlines.glyphs).toHaveLength(0)
+    expect(paths(svg)).toHaveLength(0)
+    expect(svg).toContain('viewBox="0 0 1280 720"')
+  })
+})
+
+describe('vtExportName', () => {
+  it('derives a filesystem-safe stem from the text', () => {
+    expect(vtExportName(cfg({ text: 'Sailor Wave' }))).toBe('sailor-wave')
+    expect(vtExportName(cfg({ text: '  ¡Hola!  ' }))).toBe('hola')
+  })
+
+  it('never returns an empty stem', () => {
+    expect(vtExportName(cfg({ text: '' }))).toBe('vector-type')
+    expect(vtExportName(cfg({ text: '///' }))).toBe('vector-type')
+    expect(vtExportName(undefined)).toBe('vector-type')
   })
 })
