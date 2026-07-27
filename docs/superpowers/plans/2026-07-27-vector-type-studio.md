@@ -213,7 +213,28 @@ Follow `app/lib/gradientfx/motion.ts` — this studio is stateless like Gradient
 - [ ] **Step 1:** `animatableTargets(cfg)` derived from `VT_CONTROLS` where `animatable` is not false — including every `axes.<tag>`. Reuse `MotionTrack`/`trackValue` shapes from gradientfx rather than reinventing them; extract to a shared module if that is cleaner than duplicating.
 - [ ] **Step 2:** `applyMotion(cfg, t)` via `getByPath`/`setByPath` from `~/lib/studio/path`, cloning rather than mutating.
 - [ ] **Step 3:** Tests — an axis track animates; an unresolvable path is skipped without fabricating structure; the config is not mutated.
-- [ ] **Step 4: Commit** — `feat(vectortype): motion tracks over any axis`
+- [ ] **Step 4: Per-glyph stagger.** *(Added 2026-07-27 during execution — the plan omitted it, but the
+design doc lists it as v1 scope item 3, "the thing that makes it kinetic", and Task 9 retires a
+KineticType node whose entire pitch is "pick a motion preset (stagger, wave, scramble, elastic...)".
+Shipping without it is a capability regression, not a deferral.)*
+
+Whole-config `applyMotion(cfg, t)` cannot express this: stagger is **per glyph**, so glyph *i* must
+evaluate at its own shifted time. Add alongside it:
+
+```ts
+export function glyphTime(cfg, t, index, count): number     // t shifted by this glyph's delay
+export function glyphTransform(cfg, t, index, count): { dx, dy, scale, rotate, opacity }
+```
+
+- `motion.stagger.delay` (seconds between glyphs) and `motion.stagger.order`
+  (`forward` | `reverse` | `center` | `edges` | `random`). `random` must be **seeded and stable** —
+  a per-frame `Math.random()` makes the bake flicker and the export non-reproducible.
+- Axis tracks then evaluate at `glyphTime(...)`, which is what makes a weight wave travel across a word.
+- Tests: delay 0 leaves every glyph identical; a non-zero delay makes glyph *n* lag glyph 0 by exactly
+  the declared amount; `center`/`edges` orders are symmetric; `random` returns the same values on a
+  second call with the same inputs.
+
+- [ ] **Step 5: Commit** — `feat(vectortype): motion tracks over any axis, with per-glyph stagger`
 
 ---
 
