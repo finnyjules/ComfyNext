@@ -336,7 +336,8 @@ describe('resolveReadout — state precedence', () => {
 
   it('reports live elapsed while running', () => {
     expect(resolveReadout({ ...base, running: true, runningSince: 1_000, now: 13_500 }))
-      .toBe(`rendering${READOUT_SEPARATOR}12.5s`)
+      // fmtSec rounds anything >= 10s to whole seconds, so 12.5 renders "13s".
+      .toBe(`rendering${READOUT_SEPARATOR}13s`)
   })
 
   it('says rendering with no clock when the stamp is missing', () => {
