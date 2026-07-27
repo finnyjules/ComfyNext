@@ -20,7 +20,8 @@ export interface ClipSource {
 
 export interface ResolveClipSourceOpts {
   /**
-   * KineticType resolution:
+   * Baked frame-sequence resolution (a Vector Type node carrying frames baked by
+   * the retired KineticType node it was migrated from):
    *  - 'sequence' (default): return every rendered frame so playback animates
    *    through them (frame 0 of a fade-in is invisible, so a single still looks
    *    blank).
@@ -88,21 +89,20 @@ export function resolveClipSource(src: any, opts: ResolveClipSourceOpts = {}): C
     return null
   }
 
-  // KineticType stores a full rendered frame sequence in its params JSON.
-  if (type === 'KineticType') {
-    const raw = readWidget(data, 'params', false)
-    if (raw) {
-      try {
-        const p = JSON.parse(raw || '{}')
-        if (Array.isArray(p.rendered) && p.rendered.length > 0) {
-          if (opts.kinetic === 'mid') {
-            const mid = p.rendered[Math.floor(p.rendered.length / 2)]
-            return { url: viewUrl(mid), kind: 'image' }
-          }
-          const urls = p.rendered.map((fn: string) => viewUrl(fn))
-          return { url: urls[0]!, kind: 'sequence', urls }
-        }
-      } catch { /* fall through */ }
+  // A Vector Type node migrated from the retired KineticType keeps that node's
+  // baked PNG sequence in `sailor_kineticLegacy.frames` (see
+  // app/lib/vectortype/migrateKinetic.ts). Those files are still on disk and are
+  // still what a saved clip plays, so they resolve exactly as they used to —
+  // dropping them would blank every migrated clip. Vector Type nodes that were
+  // never a KineticType have no frames here and fall through to `data.images`.
+  if (type === 'VectorType') {
+    const frames = (data?.properties?.sailor_kineticLegacy as any)?.frames
+    if (Array.isArray(frames) && frames.length > 0) {
+      if (opts.kinetic === 'mid') {
+        return { url: viewUrl(frames[Math.floor(frames.length / 2)]), kind: 'image' }
+      }
+      const urls = frames.map((fn: string) => viewUrl(fn))
+      return { url: urls[0]!, kind: 'sequence', urls }
     }
   }
 

@@ -64,7 +64,7 @@ interface PreviewLayer {
   fadeIn: number; fadeOut: number
   srcUrl: string | null
   srcKind: 'video' | 'image' | 'sequence' | null
-  srcUrls?: string[]    // for sequence sources (KineticType frames)
+  srcUrls?: string[]    // for sequence sources (baked frame sequences)
   inFrame: number
   keyframes?: Keyframe[]   // present ⇒ transform animates over clip-local frames
 }
@@ -143,7 +143,7 @@ const bgColor = computed(() => String(getWidget('bg_color') ?? '#000000'))
 // Per-slot media elements, owned by this component.
 const videos: Record<number, HTMLVideoElement> = {}
 const images: Record<number, HTMLImageElement> = {}
-// Per-slot frame sequences (KineticType): preloaded image arrays + the url
+// Per-slot frame sequences: preloaded image arrays + the url
 // signature used to detect when a re-bake changed the frame list.
 const sequences: Record<number, HTMLImageElement[]> = {}
 const sequenceKeys: Record<number, string> = {}

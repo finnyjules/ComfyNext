@@ -95,7 +95,7 @@ function resolveSource(clipSlot: number): ClipSource | null {
     e.target === props.nodeId && e.targetHandle === `input-${clipSlot - 1}`)
   if (!edge) return null
   const src = props.nodes.find((n: any) => n.id === edge.source)
-  // This preview pairs stills/clips — collapse a KineticType to a single
+  // This preview pairs stills/clips — collapse a frame sequence to a single
   // mid-sequence frame rather than a playable sequence.
   return resolveClipSource(src, { kinetic: 'mid' })
 }

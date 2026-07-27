@@ -66,7 +66,7 @@ function resolveSource(clipPortIdx: number): ClipSource | null {
     e.target === props.nodeId && e.targetHandle === `input-${clipPortIdx}`)
   if (!edge) return null
   const src = props.nodes.find((n: any) => n.id === edge.source)
-  // Crossfade pairs two stills/clips — collapse a KineticType to a single
+  // Crossfade pairs two stills/clips — collapse a frame sequence to a single
   // mid-sequence frame rather than a playable sequence.
   return resolveClipSource(src, { kinetic: 'mid' })
 }

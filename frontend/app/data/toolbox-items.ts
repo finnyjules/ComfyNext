@@ -317,7 +317,7 @@ export const TOOLBOX_SECTIONS: ToolboxSection[] = [
     domain: 'text',
     title: 'Motion',
     items: [
-      { nodeType: 'KineticType',     label: 'Kinetic Type',    description: 'Animated text — type a word, pick a motion preset (stagger, wave, scramble, elastic…), get a frame sequence. GSAP-powered, local, no cost.', icon: Film },
+      { nodeType: 'VectorType',      label: 'Vector Type',     description: 'Animated text as real vector outlines — set a word in a variable font, animate its axes and each glyph (offset, scale, rotation, fade) with a per-letter cascade. Local render, no cost.', icon: Film },
     ],
   },
   {

@@ -498,16 +498,6 @@ function formatLabel(name: string): string {
         @update:model-value="emit('update:modelValue', $event)"
       />
     </template>
-    <!-- Kinetic Typography: animated text with GSAP SplitText. Produces a
-         JSON state blob (text, preset, font, animation params, frame filenames). -->
-    <template v-else-if="widgetDef.sailor_widget === 'kinetic_type'">
-      <VueCanvasWidgetsWidgetKineticType
-        :model-value="modelValue"
-        :node-id="nodeId"
-        :label="formatLabel(widgetDef.name)"
-        @update:model-value="emit('update:modelValue', $event)"
-      />
-    </template>
     <!-- Text Mask: renders text as a B&W clipping mask. Same font infra
          as Font Playground, always white-on-black (or inverted). -->
     <template v-else-if="widgetDef.sailor_widget === 'text_mask'">

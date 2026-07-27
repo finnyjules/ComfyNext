@@ -3,6 +3,7 @@ import { assembleWorkflowLinks, repairInvalidNodeIds, seedHasControlWidget } fro
 import { schemaOutputsFromInfo, syncNodeOutputsWithSchema } from '~/utils/syncNodeOutputs'
 import { ensureVarsInput } from '~/lib/collection/varsInput'
 import { stashTakesIntoProperties, restoreTakesFromProperties } from '~/lib/canvas/persistTakes'
+import { migrateKineticWorkflow } from '~/lib/vectortype/migrateKinetic'
 
 // LiteGraph workflow format
 export interface LiteGraphNode {
@@ -334,6 +335,15 @@ export function useVueNodes(opts: { groupsBridge?: GroupsBridge; annotationsBrid
     const repairedIds = repairInvalidNodeIds(workflow as any)
     if (repairedIds.length) {
       console.warn('[Sailor] repaired node(s) with invalid id on load:', repairedIds)
+    }
+    // Retired node types are rewritten here, BEFORE anything reads the graph:
+    // this is the one choke point every load crosses (project open, tab switch,
+    // subgraph enter, collab merge), and a per-reader adapter would have to be
+    // added to each of them and kept in step forever. Mutates in place, like the
+    // id repair above, so `lastWorkflow` and the re-serialize see the new shape.
+    const migratedKinetic = migrateKineticWorkflow(workflow as any)
+    if (migratedKinetic) {
+      console.info(`[Sailor] migrated ${migratedKinetic} KineticType node(s) to Vector Type`)
     }
     lastWorkflow = workflow
     opts.groupsBridge?.load(workflow.groups)

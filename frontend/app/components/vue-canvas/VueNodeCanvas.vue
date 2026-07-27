@@ -3849,13 +3849,6 @@ function handlePoseMultiResult(e: Event) {
   }
 }
 
-// Kinetic Typography modal state.
-const kineticTypeOpenForId = ref<string | null>(null)
-function handleOpenKineticType(e: Event) {
-  const detail = (e as CustomEvent).detail
-  if (detail?.nodeId) kineticTypeOpenForId.value = String(detail.nodeId)
-}
-
 // Images dropped onto a Frame become owned image layers (LocalLayer kind
 // 'image') — uploaded, sized to their aspect, appended to the frame's layers.
 // They flow through the same overlay bake/inject path as text & shapes.
@@ -4347,7 +4340,7 @@ const voiceGalleryOptions = ref<string[]>([])
 // Any full-screen editor/gallery modal that overlays the canvas and owns the
 // keyboard while open.
 const anyEditorModalOpen = computed(() => !!(
-  compositorOpenForId.value || inpaintOpenForId.value || kineticTypeOpenForId.value ||
+  compositorOpenForId.value || inpaintOpenForId.value ||
   poseOpenForId.value ||
   asciiOpenForId.value || timelineOpenForId.value || crossfadeOpenForId.value ||
   smartLayoutOpenForId.value || batchExportOpenForId.value || modelGalleryOpenForId.value || videoModelGalleryOpenForId.value ||
@@ -4571,7 +4564,6 @@ onMounted(() => {
   window.addEventListener('sailor:openModelGallery', handleOpenModelGallery)
   window.addEventListener('sailor:openLoraGallery', handleOpenLoraGallery)
   window.addEventListener('sailor:openVoiceGallery', handleOpenVoiceGallery)
-  window.addEventListener('sailor:openKineticType', handleOpenKineticType)
   window.addEventListener('sailor:openPose', handleOpenPose)
   window.addEventListener('sailor:poseResult', handlePoseResult)
   window.addEventListener('sailor:poseMultiResult', handlePoseMultiResult)
@@ -4636,7 +4628,6 @@ onUnmounted(() => {
   window.removeEventListener('sailor:openModelGallery', handleOpenModelGallery)
   window.removeEventListener('sailor:openLoraGallery', handleOpenLoraGallery)
   window.removeEventListener('sailor:openVoiceGallery', handleOpenVoiceGallery)
-  window.removeEventListener('sailor:openKineticType', handleOpenKineticType)
   window.removeEventListener('sailor:openPose', handleOpenPose)
   window.removeEventListener('sailor:poseResult', handlePoseResult)
   window.removeEventListener('sailor:poseMultiResult', handlePoseMultiResult)
@@ -5413,8 +5404,8 @@ let timelineDirty = false
 let timelineRafHandle = 0
 
 /** Resolve a Timeline clip port (slot = port_index, 1-based) to a still poster
- *  source. Uses the shared resolver but collapses KineticType to a single
- *  guaranteed-visible mid-sequence frame, and skips the generic images fallback
+ *  source. Uses the shared resolver but collapses a baked frame sequence to a
+ *  single guaranteed-visible mid frame, and skips the generic images fallback
  *  so the baked poster never tries to render arbitrary upstream nodes. */
 function getTimelineClipSource(node: any, slot: number): ClipSource | null {
   const edge = (edges.value as any[]).find((e: any) =>
@@ -5674,17 +5665,13 @@ function timelineSnapshot(node: any) {
       const fileIdx = src.data.widgetDefs?.findIndex((d: any) => d.name === 'file') ?? 0
       return src.data.widgetsValues?.[fileIdx >= 0 ? fileIdx : 0] ?? null
     }
-    // KineticType (and similar) store rendered frames in params JSON — track
-    // the rendered count + first filename so a re-bake invalidates the preview.
-    if (src?.data?.nodeType === 'KineticType') {
-      const pIdx = src.data.widgetDefs?.findIndex((d: any) => d.name === 'params') ?? -1
-      if (pIdx >= 0) {
-        try {
-          const p = JSON.parse(src.data.widgetsValues?.[pIdx] || '{}')
-          const r = Array.isArray(p.rendered) ? p.rendered : []
-          return `kt:${r.length}:${r[0] ?? ''}`
-        } catch { /* ignore */ }
-      }
+    // A Vector Type node migrated from the retired KineticType carries that
+    // node's baked frame sequence — track the count + first filename so a
+    // re-bake invalidates the poster, exactly as it did before the migration.
+    if (src?.data?.nodeType === 'VectorType') {
+      const frames = (src.data.properties?.sailor_kineticLegacy as any)?.frames
+      const r = Array.isArray(frames) ? frames : []
+      if (r.length) return `vt:${r.length}:${r[0] ?? ''}`
     }
     // Universal artifact nodes: track the upload widget so picking a new file
     // invalidates the baked poster (falls back to images[0] post-run).
@@ -7536,16 +7523,6 @@ defineExpose({
         :nodes="nodes as any[]"
         :edges="edges as any[]"
         @close="poseOpenForId = null"
-      />
-    </Teleport>
-
-    <!-- Kinetic Typography editor modal -->
-    <Teleport to="body">
-      <VueCanvasKineticTypeModal
-        v-if="kineticTypeOpenForId"
-        :node-id="kineticTypeOpenForId"
-        :nodes="nodes as any[]"
-        @close="kineticTypeOpenForId = null"
       />
     </Teleport>
 

@@ -1615,15 +1615,25 @@ const portBindings = computed<PortBinding[]>(() => {
       const fname = idx >= 0 ? src.data?.widgetsValues?.[idx] : undefined
       if (fname) label = String(fname)
       if (type === 'Image') duration = 1
-    } else if (type === 'KineticType') {
-      // Read frame count + text from the params JSON widget
-      const pIdx = (src.data?.widgetDefs as any[] | undefined)?.findIndex((d: any) => d.name === 'params') ?? -1
-      if (pIdx >= 0) {
-        try {
-          const p = JSON.parse(src.data?.widgetsValues?.[pIdx] || '{}')
-          if (p.text) label = `"${p.text}"`
-          if (Array.isArray(p.rendered) && p.rendered.length > 0) duration = p.rendered.length
-        } catch { /* ignore */ }
+    } else if (type === 'VectorType') {
+      // Label from the studio config; length from whichever the node can offer.
+      // A node migrated from the retired KineticType still carries that node's
+      // baked frames, and their count IS the clip length the user had — so it
+      // wins over the declared clip, which a re-bake has not yet honoured.
+      // Without this branch every migrated clip would silently fall back to the
+      // 5-second default below.
+      const blob = (src.data?.properties?.sailor_vectorType ?? {}) as any
+      const text = blob?.config?.text
+      if (typeof text === 'string' && text) label = `"${text}"`
+      const frames = (src.data?.properties?.sailor_kineticLegacy as any)?.frames
+      if (Array.isArray(frames) && frames.length > 0) {
+        duration = frames.length
+      } else {
+        const secs = Number(blob?.config?.motion?.duration)
+        const nodeFps = Number(blob?.config?.motion?.fps)
+        if (Number.isFinite(secs) && secs > 0 && Number.isFinite(nodeFps) && nodeFps > 0) {
+          duration = Math.max(1, Math.round(secs * nodeFps))
+        }
       }
     }
 
