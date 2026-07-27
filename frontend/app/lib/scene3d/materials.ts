@@ -23,7 +23,7 @@ import {
 // fills.ts's `_shaderFieldCache`/`withShaderFillContext`, so Scene3D's live-field ceiling and
 // frozen count can never pool with, or be walked by, Space Type's or the Compositor's.
 import { resolveField, withFieldFrame, type FieldRequest } from '~/lib/shaderfill/field'
-import { DEFAULT_SHADER_SPEC, type ShaderSpec } from '~/lib/spacetype/fillTile'
+import { DEFAULT_SHADER_SPEC, effectiveTileFill, fillTileBox, type ShaderSpec } from '~/lib/spacetype/fillTile'
 
 const hasDOM = typeof document !== 'undefined'
 
@@ -444,7 +444,22 @@ export function materialFor(mat: SceneMaterial, geometry?: THREE.BufferGeometry,
       // renders as `object`, silently and correctly per the brief.
       const spec = mat.shader ?? DEFAULT_SHADER_SPEC
       const canvas = resolveField({ spec, w: SHADER_FIELD_PX, h: SHADER_FIELD_PX, t: 0, fps: 30 })
-      const tex2 = canvas ? new THREE.CanvasTexture(canvas) : null
+      // Item 7 fix (final review): a miss (catalog not loaded yet / WebGL hiccup) used to
+      // leave `.map` NULL — every other host (Space Type/Shape Studio's shaderFieldTexture in
+      // ~/lib/spacetype/fills.ts) already falls back to the rasterised INPUT fill's own pixels
+      // on a miss, so Scene3D was the one place a shader-fill miss rendered a flat white mesh
+      // instead of the same graceful gradient/pattern fallback every other surface shows. In a
+      // real (DOM) environment `tex2` is now ALWAYS a real CanvasTexture — seeded with the
+      // input tile on a miss, identical in spirit to fills.ts's own
+      // `initial = canvas ?? fillTileBox(...)`. `hasDOM` keeps this module's own node-safety
+      // contract (see its top-of-file doc — matcap/picker thumbnails degrade the same way):
+      // `fillTileBox` needs `document.createElement('canvas')`, unavailable in the node-env
+      // unit tests, so a miss in that environment still degrades to `.map = null` exactly as
+      // before, rather than throwing. The healing path (`refreshSceneShaderFields`'s `else`
+      // branch below) still repoints `.map` to a freshly-resolved field the moment one becomes
+      // available, unchanged either way.
+      const initial = canvas ?? (hasDOM ? fillTileBox(effectiveTileFill(spec.input), SHADER_FIELD_PX, SHADER_FIELD_PX) : null)
+      const tex2 = initial ? new THREE.CanvasTexture(initial) : null
       if (tex2) { tex2.colorSpace = THREE.SRGBColorSpace; tex2.wrapS = tex2.wrapT = THREE.ClampToEdgeWrapping }
       const unlit = mat.unlit === true
       // Unlit uses Basic so the field glows flat (no scene-light shading, the point of the
@@ -637,12 +652,13 @@ export function refreshSceneShaderFields(
         // ownership contract (bind directly, never copy).
         if (tex.image !== canvas) { tex.image = canvas; tex.needsUpdate = true }
       } else {
-        // materialFor's `tex2 = canvas ? new THREE.CanvasTexture(canvas) : null` raced the
-        // catalog fetch (or a transient WebGL failure) at material-creation time and got
-        // null — `.map` was left null FOREVER, because this branch used to be `if (tex &&
-        // ...)` and silently no-op on a null map. Heal it now that a canvas is available:
-        // create the texture the material creation call couldn't, so the object recovers
-        // without needing an unrelated edit (or an `unlit` toggle) to force a rebuild.
+        // Defensive only, should not fire in practice since Item 7 (final review):
+        // `materialFor`'s `tex2` is now ALWAYS a real CanvasTexture (seeded with the input
+        // fill's own pixels on a miss, never null) — `.map` should never actually be null for
+        // a `shaderFill` material anymore. Originally this healed a material-creation-time
+        // race where `tex2 = canvas ? new THREE.CanvasTexture(canvas) : null` really did leave
+        // `.map` null FOREVER (this branch used to be `if (tex && ...)` and silently no-op on
+        // a null map); kept as a safety net rather than assuming that invariant always holds.
         const newTex = new THREE.CanvasTexture(canvas)
         newTex.colorSpace = THREE.SRGBColorSpace
         newTex.wrapS = newTex.wrapT = THREE.ClampToEdgeWrapping

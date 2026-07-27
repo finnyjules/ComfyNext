@@ -14,6 +14,7 @@ import { applySceneToState } from '~/lib/spacetype/scene'
 import { registerStudioBaker, unregisterStudioBaker } from '~/lib/studio/cascade'
 import { registerStudioFrameSource, unregisterStudioFrameSource } from '~/lib/studio/frameSource'
 import { makeSpaceTypeFrameSource } from '~/lib/spacetype/frameSource'
+import { fetchShaderFxCatalog } from '~/lib/shaderfx/catalog'
 import StudioRenderButton from '~/components/vue-canvas/StudioRenderButton.vue'
 
 // Space Type — a frontend-only config node for the client-side Three.js ribbon
@@ -222,6 +223,14 @@ async function bakeOutput(): Promise<Blob | null> {
   const [cw, ch] = dimsFromKey(s.dimsKey)
   stopPreview()
   try {
+    // Item 8 (final review): this is a one-shot render-cascade bake, not the live preview
+    // loop — a shader fill whose effect isn't in the catalog YET at the `engine.build()` call
+    // below gets no second chance to self-heal, and its fallback pixels get PERSISTED as the
+    // uploaded PNG. Await the catalog first, same guard as ShapeStudioNode.bakeOutput /
+    // Scene3DStudioNode.rebakePasses. A plain `try`, not `.catch()` on the call's return value:
+    // `fetchShaderFxCatalog` throws SYNCHRONOUSLY outside a Nuxt runtime context, which
+    // `.catch()` cannot intercept (see spaceTypeClipBake.ts's identical guard for the full why).
+    try { await fetchShaderFxCatalog() } catch { /* offline/backend down, or non-Nuxt context — bake proceeds and falls back same as before */ }
     await ensureSpaceTypeFont(String(s.params.font))
     // Important 5 (final review): this IS an export (the studio render cascade), not the
     // live preview — without setBake(true) a shader fill stayed clamped to the LIVE_FIELD_PX

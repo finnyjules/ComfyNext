@@ -22,7 +22,7 @@
  * `FillControl` itself (mounted internally there when `fill.type === 'shader'`).
  */
 import { computed, onMounted, ref } from 'vue'
-import { ChevronRight, Sparkles } from 'lucide-vue-next'
+import { ChevronRight, RefreshCw, Sparkles } from 'lucide-vue-next'
 import CatalogModal from '~/components/CatalogModal.vue'
 import FillControl from '~/components/vue-canvas/compositor/FillControl.vue'
 import StudioSlider from '~/components/vue-canvas/studio/StudioSlider.vue'
@@ -33,6 +33,7 @@ import { fetchShaderFxCatalog } from '~/lib/shaderfx/catalog'
 import type { EffectDef, ShaderFxCatalog } from '~/lib/shaderfx/types'
 import { derivedShaderFillControls } from '~/lib/shaderfill/controls'
 import { unprefixedKey } from '~/lib/shaderfill/descriptor'
+import { retryFieldCatalog } from '~/lib/shaderfill/field'
 
 const props = defineProps<{ modelValue: ShaderSpec }>()
 const emit = defineEmits<{ 'update:modelValue': [ShaderSpec] }>()
@@ -46,9 +47,19 @@ function patch(partial: Partial<ShaderSpec>) {
 
 // ── Catalog ──────────────────────────────────────────────────────────────────
 const catalog = ref<ShaderFxCatalog | null>(null)
-onMounted(() => {
+// Item 4 fix (final review): field.ts's own `retryFieldCatalog` had NO production caller —
+// once `kickCatalogFetch` gives up after CATALOG_RETRY_MAX attempts (~15.5s total), nothing
+// ever retries, and every shader fill on the page is stuck showing its input fill until a
+// full page reload. This editor is the one place a user can KNOW an effect isn't resolving
+// (its params/picker never populate) and can act on it, so it's the natural place to re-arm
+// the retry: on open (a ComfyUI restart mid-session is exactly the case the give-up budget
+// can't outlast), on repointing the effect (the doc for CATALOG_RETRY_MAX names this case
+// explicitly), and via the manual "Retry" affordance below.
+function loadCatalog() {
+  retryFieldCatalog()
   fetchShaderFxCatalog().then((c) => { catalog.value = c }).catch(() => { /* picker falls back to the raw id */ })
-})
+}
+onMounted(loadCatalog)
 
 const effectDef = computed<EffectDef | null>(
   () => catalog.value?.effects.find((e) => e.id === props.modelValue.effectId) ?? null,
@@ -93,6 +104,11 @@ function pickEffect(id: string) {
   // mirroring ShaderEffectNode's own pickEffect.
   patch({ effectId: id, params: {} })
   pickerOpen.value = false
+  // Item 4 fix (final review): repointing effectId means a DIFFERENT effect may need
+  // resolving that this module already gave up retrying for (CATALOG_RETRY_MAX reached,
+  // e.g. after a long ComfyUI restart) — re-arm the retry so the newly-picked effect's
+  // shader field doesn't sit on its input-fill fallback until an unrelated page reload.
+  retryFieldCatalog()
 }
 
 // ── Derived per-effect params ────────────────────────────────────────────────
@@ -196,7 +212,22 @@ function onInputChange(p: Paint) {
   <div class="space-y-2.5 rounded-lg border border-white/10 bg-white/[0.02] p-2.5">
     <!-- Effect picker -->
     <div>
-      <label class="mb-1 block text-[9px] uppercase tracking-[0.1em] text-white/35">Effect</label>
+      <div class="mb-1 flex items-center justify-between gap-2">
+        <label class="block text-[9px] uppercase tracking-[0.1em] text-white/35">Effect</label>
+        <!-- Item 4 fix (final review): manual escape hatch for CATALOG_RETRY_MAX give-up —
+             shown only once the catalog HAS loaded but this fill's own effect isn't in it
+             (unresolved id / a backend that was still down at mount), the same signal the
+             picker itself falls back on (raw effectId text) below. -->
+        <button
+          v-if="catalog && !effectDef"
+          type="button"
+          title="Retry loading this effect"
+          class="nopan nodrag flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[9px] uppercase tracking-[0.06em] text-white/40 transition-colors hover:bg-white/10 hover:text-white/70"
+          @click="loadCatalog"
+        >
+          <RefreshCw class="size-2.5" :stroke-width="2" /> Retry
+        </button>
+      </div>
       <button
         type="button"
         class="flex w-full cursor-pointer items-center gap-2 rounded border border-white/10 bg-white/[0.04] px-2 py-1.5 text-left transition-colors hover:border-white/20 hover:bg-white/[0.08]"

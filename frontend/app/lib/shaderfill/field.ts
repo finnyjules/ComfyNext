@@ -27,8 +27,18 @@ export interface FieldRequest {
  *  live fields by construction), but its `spec.input` is almost always unchanged
  *  frame to frame, so `tileHits` should be high even when `hits` is near zero. A low
  *  `tileHits` rate on an animated field is the signal that the input-tile cache isn't
- *  doing its job (e.g. a caller mutating `spec.input` needlessly every frame). */
-export interface FieldStats { renders: number; hits: number; misses: number; tileHits: number; tileMisses: number }
+ *  doing its job (e.g. a caller mutating `spec.input` needlessly every frame).
+ *
+ *  `tokenMismatches` (final review, Important 3) is UNCONDITIONAL — not gated on
+ *  `import.meta.dev` like the `console.error` in `resolveField` is — so a production
+ *  build, the bench hooks, and any test can assert it stays zero without needing dev
+ *  mode. It only increments on a REAL HOST-ISOLATION violation (see `resolveField`'s
+ *  doc): a call made with a genuine, still-open span's token while a DIFFERENT span
+ *  is the one currently installed. A stale token presented with no span open at all
+ *  (e.g. a hit-test calling `resolveField` outside any `withFieldFrame`, final review
+ *  Important 2) is not a violation and must never move this counter — see the
+ *  `_frameOpen` gate in `resolveField`. */
+export interface FieldStats { renders: number; hits: number; misses: number; tileHits: number; tileMisses: number; tokenMismatches: number }
 
 /**
  * Sized as a small multiple of LIVE_FIELD_CEILING rather than a bare number, so the
@@ -77,7 +87,7 @@ function fieldSize(req: FieldRequest): { w: number; h: number } {
 
 const cache = new Map<string, HTMLCanvasElement>()
 let liveKeys = new Set<string>()
-let stats: FieldStats = { renders: 0, hits: 0, misses: 0, tileHits: 0, tileMisses: 0 }
+let stats: FieldStats = { renders: 0, hits: 0, misses: 0, tileHits: 0, tileMisses: 0, tokenMismatches: 0 }
 
 /**
  * Cache of the RASTERISED INPUT TILE (`fillTileBox(effectiveTileFill(spec.input), w,
@@ -297,7 +307,22 @@ function resolve(spec: ShaderSpec): { effect: EffectDef | null; spec: ShaderSpec
  *   3. Neither path throws. A residual violation (which should not happen on any
  *      migrated host) is a `console.error` in dev only, plus AUTO-RECOVERY — the stale
  *      span is closed and the call proceeds with whatever the current state is. A
- *      silent wrong-pixels bug must never become a permanent freeze. */
+ *      silent wrong-pixels bug must never become a permanent freeze.
+ *
+ *  THE ACTUAL CURRENT RULE (final review, Important 2 — this replaced the old throw-based
+ *  detection above, and nothing previously stated it directly): a `token` is only
+ *  MEANINGFUL while `_frameOpen` is true for the span that produced it. `endFieldFrame`/
+ *  `withFieldFrame`'s `finally` are not "guards that detect a violation" — they just close
+ *  `_frameOpen`; detection happens entirely in `resolveField`, and only by comparing a
+ *  caller's token against `_liveKeysToken` WHILE `_frameOpen` is true. A call made with a
+ *  token from a span that has ALREADY closed (no span open at all when the call happens —
+ *  e.g. a hit-test that re-runs `resolveShaderFill` outside any `withFieldFrame`, final
+ *  review Important 2) is not a violation and must not be reported as one: with no span
+ *  open, there is no "currently installed" owner to have been reassigned out from under
+ *  anyone. `resolveField` below gates its comparison on `_frameOpen` for exactly this
+ *  reason, and separately treats `token === 0` as the same "no span" sentinel as omitting
+ *  the argument (real tokens from `_frameToken` start at 1) — a caller with no span open
+ *  should reset its own remembered token to `0` rather than replaying a stale nonzero one. */
 let _frameOpen = false
 let _frameToken = 0
 /** The token the CURRENTLY-installed `liveKeys` belongs to. `resolveField` compares a
@@ -308,12 +333,16 @@ function openFieldFrame(requests: FieldRequest[]): { frozenCount: number; token:
   if (_frameOpen && import.meta.dev) {
     console.error(
       '[shaderfill] beginFieldFrame/withFieldFrame: re-entered while a previous span was ' +
-      'still open (no matching endFieldFrame()/withFieldFrame return happened first) — ' +
-      'auto-closing the stale span and proceeding rather than throwing. This means two ' +
-      'hosts\' beginFieldFrame/resolveField spans overlapped; see this module\'s ' +
-      'HOST-ISOLATION doc above beginFieldFrame. The FIRST host\'s own subsequent ' +
-      'resolveField(req, token) calls will separately report a token mismatch, at the ' +
-      'exact call site that is now stale.',
+      'still open (no matching endFieldFrame()/withFieldFrame return happened first) — this ' +
+      'does NOT close or recover anything: `_frameOpen` is simply re-set to the `true` value ' +
+      'it already held, and this call proceeds regardless. Nothing gets stuck, though — each ' +
+      'span (the first host\'s and this one\'s) still closes itself independently via its own ' +
+      'withFieldFrame try/finally (or an explicit endFieldFrame()), so `_frameOpen` reliably ' +
+      'ends up false again once both have run their course. What actually happened is real: ' +
+      'two hosts\' beginFieldFrame/resolveField spans overlapped, `liveKeys`/`_liveKeysToken` ' +
+      'now belong to THIS (second) span, and the FIRST host\'s own subsequent ' +
+      'resolveField(req, token) calls will separately report a token mismatch, at the exact ' +
+      'call site that is now stale — see this module\'s HOST-ISOLATION doc above beginFieldFrame.',
     )
   }
   _frameOpen = true
@@ -419,21 +448,38 @@ export function withFieldFrame<T>(requests: FieldRequest[], fn: (frozenCount: nu
  *
  * `token`, when passed, is the token `beginFieldFrame`/`withFieldFrame` returned for
  * the span this call believes it's still inside. A mismatch against the CURRENTLY
- * installed `liveKeys`' token means a different host's span landed in between (the
- * HOST-ISOLATION violation documented above `beginFieldFrame`) — logged as a dev-only
- * `console.error` at the exact call site that's now stale, never thrown. Omit it (as
- * every pre-migration/ad-hoc caller does, e.g. a single build-time resolve outside any
- * span) to skip the check entirely and just read whatever `liveKeys` currently holds.
+ * installed `liveKeys`' token, WHILE a span is actually open (`_frameOpen`), means a
+ * different host's span landed in between (the HOST-ISOLATION violation documented
+ * above `beginFieldFrame`) — logged as a dev-only `console.error` at the exact call
+ * site that's now stale, and counted in `fieldStats().tokenMismatches` unconditionally
+ * (final review, Important 3), never thrown.
+ *
+ * Omit `token` (as every pre-migration/ad-hoc caller does, e.g. a single build-time
+ * resolve outside any span) to skip the check entirely and just read whatever
+ * `liveKeys` currently holds. `token === 0` is treated identically to omitting it —
+ * `_frameToken` starts at 0 and its first real value is 1, so 0 is never a genuine
+ * span's token; a caller that keeps its own token in a mutable field (the Compositor's
+ * `_fieldCtx.token`, final review Important 2) should reset that field to `0` once its
+ * own span closes, rather than leaving the last real token sitting there to be replayed
+ * on every call made outside any span (a hit-test between frames, for example) — that
+ * replay is not a violation (see the HOST-ISOLATION doc's "ACTUAL CURRENT RULE" above),
+ * and warning about it every time blames an interleaving that never happened. The
+ * `_frameOpen` gate below is the same protection from the other direction: with no span
+ * open at all, there is no "currently installed" owner for a stale token to have been
+ * reassigned out from under.
  */
 export function resolveField(req: FieldRequest, token?: number): HTMLCanvasElement | null {
-  if (token !== undefined && token !== _liveKeysToken && import.meta.dev) {
-    console.error(
-      `[shaderfill] resolveField: called with token ${token}, but the currently-live span ` +
-      `belongs to token ${_liveKeysToken} — this call landed after a DIFFERENT host's ` +
-      'beginFieldFrame/withFieldFrame reassigned liveKeys out from under it (see the ' +
-      'HOST-ISOLATION doc above beginFieldFrame). Falling back to the CURRENT liveKeys ' +
-      'rather than crashing — this field may render frozen at t=0 for this call.',
-    )
+  if (token !== undefined && token !== 0 && _frameOpen && token !== _liveKeysToken) {
+    stats.tokenMismatches++
+    if (import.meta.dev) {
+      console.error(
+        `[shaderfill] resolveField: called with token ${token}, but the currently-live span ` +
+        `belongs to token ${_liveKeysToken} — this call landed after a DIFFERENT host's ` +
+        'beginFieldFrame/withFieldFrame reassigned liveKeys out from under it (see the ' +
+        'HOST-ISOLATION doc above beginFieldFrame). Falling back to the CURRENT liveKeys ' +
+        'rather than crashing — this field may render frozen at t=0 for this call.',
+      )
+    }
   }
   const { w, h } = fieldSize(req)
   const { effect, spec } = resolve(req.spec)
@@ -489,11 +535,19 @@ export function resolveField(req: FieldRequest, token?: number): HTMLCanvasEleme
   return out
 }
 
+/** Resets the render caches and counters. Does NOT reset `_frameToken`/`_liveKeysToken`
+ *  (final review, Important 3, doc correction) — those only need to keep producing
+ *  fresh, mutually-distinct values across `beginFieldFrame`/`withFieldFrame` calls,
+ *  which holds regardless of what number they start counting from; there is nothing
+ *  "stale" about carrying them across a `clearFieldCache()` for a test/bench call to
+ *  reset. `_frameOpen` IS reset (see the comment below), so the two are not a matched
+ *  pair — don't read "resets frame state" as "resets every module-level `let` this file
+ *  owns". */
 export function clearFieldCache(): void {
   cache.clear()
   tileCache.clear()
   liveKeys = new Set()
-  stats = { renders: 0, hits: 0, misses: 0, tileHits: 0, tileMisses: 0 }
+  stats = { renders: 0, hits: 0, misses: 0, tileHits: 0, tileMisses: 0, tokenMismatches: 0 }
   // Test isolation: a test that throws/returns before its matching endFieldFrame()
   // (or simply doesn't model a full host loop) would otherwise leave a stuck
   // `_frameOpen = true` that pollutes the NEXT test's first beginFieldFrame/

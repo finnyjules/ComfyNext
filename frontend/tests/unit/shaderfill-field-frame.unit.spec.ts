@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { beginFieldFrame, endFieldFrame, withFieldFrame, resolveField, clearFieldCache, type FieldRequest } from '~/lib/shaderfill/field'
+import { beginFieldFrame, endFieldFrame, withFieldFrame, resolveField, clearFieldCache, fieldStats, type FieldRequest } from '~/lib/shaderfill/field'
 import { DEFAULT_SHADER_SPEC } from '~/lib/spacetype/fillTile'
 
 // Final review, Item 1 (Regression — fix first): `beginFieldFrame` used to THROW on
@@ -79,5 +79,58 @@ describe('resolveField token mismatch — detected, never thrown (Item 1)', () =
 
   it('omitting the token entirely (pre-migration/ad-hoc call shape) still works', () => {
     expect(() => resolveField(req('k'))).not.toThrow()
+  })
+})
+
+// Final review, Important 2 + 3: the previous wave's coverage only ever asserted
+// "does not throw" — it never asserted the diagnostic actually FIRES when a real
+// HOST-ISOLATION violation happens, nor that it stays SILENT for the shape that turned
+// out to be a false positive (Important 2: a Compositor hit-test replaying a stale token
+// outside any span). `fieldStats().tokenMismatches` is the unconditional (non-dev-gated)
+// signal both directions below assert against — see FieldStats' doc in field.ts.
+describe('resolveField token mismatch — tokenMismatches counts the REAL violation and nothing else (Important 2 + 3)', () => {
+  it('a stale token replayed WHILE a different span is genuinely open counts as a mismatch — the actual violation this token exists to catch', () => {
+    let staleToken = 0
+    withFieldFrame([req('m1')], (_fc, token) => { staleToken = token })
+    const before = fieldStats().tokenMismatches
+    withFieldFrame([req('n1')], () => {
+      // Inside a genuinely open (different) span, resolve with the FIRST span's now-stale
+      // token — exactly the interleaving `_liveKeysToken` exists to catch.
+      resolveField(req('m1'), staleToken)
+    })
+    expect(fieldStats().tokenMismatches).toBe(before + 1)
+  })
+
+  it('a stale token replayed OUTSIDE any span (the Compositor hit-test shape) does NOT count as a mismatch — no span is open, so there is nothing to have been reassigned out from under', () => {
+    let staleToken = 0
+    withFieldFrame([req('m2')], (_fc, token) => { staleToken = token })
+    withFieldFrame([req('n2')], () => {})   // bumps _liveKeysToken, then closes — no span open now
+    const before = fieldStats().tokenMismatches
+    resolveField(req('m2'), staleToken)     // outside any span — CompositorModal's layerHitAt shape
+    expect(fieldStats().tokenMismatches).toBe(before)
+  })
+
+  it('token 0 (the "no span" sentinel — what a caller should reset a cleared per-host token field to) never counts as a mismatch, even inside another genuinely open span', () => {
+    const before = fieldStats().tokenMismatches
+    withFieldFrame([req('o1')], () => {
+      resolveField(req('o1'), 0)
+    })
+    expect(fieldStats().tokenMismatches).toBe(before)
+  })
+
+  it('omitting the token entirely never counts as a mismatch, even inside another genuinely open span', () => {
+    const before = fieldStats().tokenMismatches
+    withFieldFrame([req('o2')], () => {
+      resolveField(req('o2'))
+    })
+    expect(fieldStats().tokenMismatches).toBe(before)
+  })
+
+  it('resolving WITH the span\'s own current token, from inside that same span, never counts as a mismatch', () => {
+    const before = fieldStats().tokenMismatches
+    withFieldFrame([req('p')], (_fc, token) => {
+      resolveField(req('p'), token)
+    })
+    expect(fieldStats().tokenMismatches).toBe(before)
   })
 })

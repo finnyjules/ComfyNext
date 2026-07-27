@@ -1590,8 +1590,18 @@ export function paintLayerStack(
   }
   addShaderFieldRequest(shaderRequests, background, W, H, fieldT, fieldFps, bake)
 
-  return withFieldFrame(shaderRequests, (frozenCount, token) => {
-    _fieldCtx.token = token   // resolveShaderFill reads this to pass into every resolveField call
+  // Item 2 fix (final review): `_fieldCtx.token` must not outlive this span — the `finally`
+  // below resets it to `0` (field.ts's own "no span" sentinel, see its "ACTUAL CURRENT RULE"
+  // doc above `resolveField`) once this call returns, whether it threw or not. Before this
+  // fix, `_fieldCtx.token` stayed set to the LAST real token forever, so any later call made
+  // OUTSIDE this span — CompositorModal's `layerHitAt` → `drawLocalLayer` → `resolveShaderFill`
+  // runs on every canvas hit test, never inside a `withFieldFrame` of its own — replayed that
+  // now-stale nonzero token against whatever `_liveKeysToken` a completely unrelated host's
+  // rAF loop had since advanced to, logging a HOST-ISOLATION violation on every click that
+  // never actually happened.
+  try {
+    return withFieldFrame(shaderRequests, (frozenCount, token) => {
+      _fieldCtx.token = token   // resolveShaderFill reads this to pass into every resolveField call
 
     // Background fill — the bottom-most thing in the frame, baked into output.
     if (hasPaint(background)) {
@@ -1685,7 +1695,10 @@ export function paintLayerStack(
 
     if (post && chainActive(post)) applyStackPost(ctx, post, W)
     return { frozenCount }
-  })
+    })
+  } finally {
+    _fieldCtx.token = 0
+  }
 }
 
 /**

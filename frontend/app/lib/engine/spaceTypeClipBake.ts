@@ -14,6 +14,7 @@ import type { SpaceTypeClip, MotionBake } from '~~/shared/timeline/types'
 import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
 import { dimsFromKey } from '~/lib/spacetype/state'
 import { spaceTypeSourceFrameCount } from '~/composables/timelineSpaceTypeClip'
+import { fetchShaderFxCatalog } from '~/lib/shaderfx/catalog'
 import { renderSpaceTypeClipToCanvas, spaceTypeLoopMultiplier } from './spaceTypeClipRenderer'
 import { acquireSpaceTypeEngine, releaseSpaceTypeEngine } from './spaceTypeEnginePool'
 
@@ -73,6 +74,19 @@ export async function ensureSpaceTypeClipBake(
   clip: SpaceTypeClip,
   onProgress?: (done: number, total: number) => void,
 ): Promise<MotionBake> {
+  // Item 8 (final review): renderSpaceTypeClipToCanvas's engine.buildKeyed() below is a
+  // synchronous, one-shot-per-structural-key build — a shader fill whose effect isn't in
+  // the catalog YET at frame 0's build gets no guaranteed second chance before its fallback
+  // pixels are PNG-encoded and uploaded as this clip's persisted bake (buildKeyed's cache-hit
+  // path never re-invokes shaderFieldTexture on later frames — see fills.ts's doc). Await the
+  // catalog before the very first frame, same guard as every other one-shot bake in this
+  // feature (ShapeStudioNode.bakeOutput, SpaceTypeNode.bakeOutput, Scene3DStudioNode.rebakePasses).
+  // A plain `try`, not `.catch()` on the call's return value: `fetchShaderFxCatalog` uses
+  // Nuxt's auto-imported `$fetch`, which throws SYNCHRONOUSLY (not a rejected promise) outside
+  // a Nuxt runtime context (e.g. this module imported directly by a plain vitest unit test) —
+  // `.catch()` never even gets attached in that case, since the expression throws before
+  // returning a promise to call `.catch` on.
+  try { await fetchShaderFxCatalog() } catch { /* offline/backend down, or non-Nuxt context — bake proceeds and falls back same as before */ }
   const cfg = bakeCfg(clip)
   // Acquire ONCE for the whole bake, release in `finally` — never per frame.
   // See the ownership contract at the top of spaceTypeEnginePool.ts.

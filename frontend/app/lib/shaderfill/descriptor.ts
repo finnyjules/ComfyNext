@@ -78,7 +78,12 @@ export function fieldKey(spec: ShaderSpec, w: number, h: number, tq: number): st
  *  `fieldKey` rather than a hand-rolled second scheme, so the two can never silently
  *  disagree about what "the same descriptor" means. `spec.params` MUST already be
  *  resolved (see `resolveEffectParams`'s doc) before calling this, same precondition as
- *  `fieldKey`. */
+ *  `fieldKey` — with ONE deliberate exception: `~/lib/spacetype/fills.ts`'s
+ *  `shaderFieldTexture` calls this with the RAW (possibly unresolved) spec on purpose, so
+ *  its cache key stays stable whether or not the effect has resolved yet (see that
+ *  function's KEY DOMAIN INVARIANT doc) — that call site trades away this function's
+ *  usual default-vs-explicit-value collapsing for key stability across a catalog load,
+ *  which is a correctness requirement there, not an oversight. */
 export function specIdentityKey(spec: ShaderSpec): string {
   return encode([spec.effectId, paramsKey(spec.params), spec.anchor, spec.speed, inputKey(spec.input)])
 }

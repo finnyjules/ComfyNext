@@ -14,6 +14,8 @@ import { sceneHasMotion, renderMotionFrame } from '~/lib/scene3d/motion/render'
 import { makeScene3DFrameSource } from '~/lib/scene3d/motion/frameSource'
 import { registerStudioFrameSource, unregisterStudioFrameSource } from '~/lib/studio/frameSource'
 import { registerScene3DRebaker, unregisterScene3DRebaker } from '~/lib/scene3d/rebake'
+import { onFieldCatalogReady } from '~/lib/shaderfill/field'
+import { fetchShaderFxCatalog } from '~/lib/shaderfx/catalog'
 import StudioRenderButton from '~/components/vue-canvas/StudioRenderButton.vue'
 
 const props = defineProps<{
@@ -88,17 +90,12 @@ const sceneDoc = computed(() => parseDoc(widgetStr('scene_state')))
 let headlessCanvas: HTMLCanvasElement | null = null
 let headlessEngine: SceneEngine | null = null
 let registered = false
-// Wall-clock mount time for the headless engine's OWN shaderFill field clock — mirrors
-// Scene3DStudioSurface's `scene3dMountedAt` (Item 5, final review). Reset each time the
-// headless engine is (re)created, since a fresh engine's fields should animate from a
-// fresh t=0 rather than inheriting whatever time had already elapsed on the card.
-let headlessMountedAt = 0
 
 function ensureHeadless(w: number, h: number): SceneEngine | null {
   if (typeof document === 'undefined') return null
   if (!headlessCanvas) headlessCanvas = document.createElement('canvas')
   if (!headlessEngine) {
-    try { headlessEngine = new SceneEngine(headlessCanvas, w, h); headlessMountedAt = performance.now() }
+    try { headlessEngine = new SceneEngine(headlessCanvas, w, h) }
     catch { headlessEngine = null; return null }
   }
   headlessEngine.setSize(w, h)
@@ -157,6 +154,18 @@ function schedulePreview(): void {
 
 watch(sceneDoc, () => { syncRegistration(); schedulePreview() }, { immediate: true, deep: true })
 
+// CRITICAL 1 fix (final review, residual): a STATIC scene (a shaderFill material but no
+// object/camera motion — sceneHasMotion() false) never registers a frame source, so
+// `renderPreview`'s mount-time call (the `{ immediate: true }` watch above) is the ONLY
+// render this card's thumbnail ever gets — nothing here previously re-rendered when the
+// shader-fx catalog finished loading after that first paint. If that first `renderPreview`
+// raced the catalog fetch (the normal case on a fresh reload — see field.ts's own doc), the
+// card showed a plain white mesh (`map: null` before Item 7's fix; the input-fill fallback
+// after it) FOREVER, since nothing else ever touched this card again. `ArtifactFrameNode.vue`
+// already carries the identical nudge for its own static (no-frame-source) render path — this
+// is that same fix, for this host.
+const unsubFieldCatalog = onFieldCatalogReady(() => schedulePreview())
+
 // Footer "Render" (StudioRenderButton → sailor:studioRender → VueNodeCanvas's
 // handler, which calls this for Scene3DStudio nodes): re-bake the three passes
 // headlessly from the persisted scene and stamp the widgets, WITHOUT opening the
@@ -167,14 +176,30 @@ watch(sceneDoc, () => { syncRegistration(); schedulePreview() }, { immediate: tr
 async function rebakePasses(): Promise<void> {
   const doc = sceneDoc.value
   const { width, height } = doc.output
+  // Item 8 (final review): this is a one-shot bake with no per-frame loop of its own to
+  // self-heal on a later frame (unlike this card's rAF-less preview, which now re-renders
+  // via onFieldCatalogReady above) — await the catalog before building so a shader fill
+  // whose effect isn't loaded YET doesn't get its fallback pixels PERSISTED as the uploaded
+  // beauty/depth/normal images. Mirrors ShapeStudioNode.bakeOutput's identical guard. A plain
+  // `try`, not `.catch()` on the call's return value: `fetchShaderFxCatalog` throws
+  // SYNCHRONOUSLY outside a Nuxt runtime context, which `.catch()` cannot intercept (see
+  // spaceTypeClipBake.ts's identical guard for the full why).
+  try { await fetchShaderFxCatalog() } catch { /* offline/backend down, or non-Nuxt context — bake proceeds and falls back same as before */ }
   const eng = ensureHeadless(width, height)
   if (!eng) throw new Error('WebGL unavailable')
   eng.syncFromDoc(doc)
   eng.applyCameraFromDoc(doc)
-  // Item 5 (final review): same live elapsed-seconds convention as
-  // Scene3DStudioSurface's bake() — bakes a shaderFill field at the headless engine's
-  // own current moment instead of always freezing it at t=0.
-  const passes = await renderPasses(eng, doc, (performance.now() - headlessMountedAt) / 1000)
+  // Item 5 fix (final review, residual): this used to advance a shaderFill field's clock by
+  // WALL-CLOCK time since the headless engine was constructed — completely unrelated to what
+  // the card's own preview/frame-source show, which both resolve a shaderFill's animation
+  // clock as `t01 * doc.motion.duration` (see renderMotionFrame in scene3d/motion/render.ts).
+  // This card's own live preview always renders at t01=0 (see renderPreview above — it's a
+  // still thumbnail, not a scrubbable view), so bake at that SAME instant: `0 * duration = 0`.
+  // Before this fix, a Render clicked long after mount baked the field far outside what the
+  // thumbnail was showing (e.g. t≈600s ten minutes in) — the Surface path (which DOES scrub a
+  // live clock, consistently, for both its own preview and its own bake) never had this
+  // mismatch; only this node-card path did.
+  const passes = await renderPasses(eng, doc, 0)
   const [beauty, depth, normal] = await Promise.all([
     inpaint.uploadDataUrl(passes.beauty, `scene3d_beauty_${props.id}`),
     inpaint.uploadDataUrl(passes.depth, `scene3d_depth_${props.id}`),
@@ -191,6 +216,7 @@ onBeforeUnmount(() => {
   if (previewTimer) clearTimeout(previewTimer)
   unregisterScene3DRebaker(props.id)
   if (registered) unregisterStudioFrameSource(props.id)
+  unsubFieldCatalog()
   headlessEngine?.dispose()
   headlessEngine = null
   headlessCanvas = null

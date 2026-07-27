@@ -157,14 +157,36 @@ export function withShaderFillContext<T>(ctx: ShaderFillBuildContext, fn: () => 
 }
 
 interface LiveShaderFillEntry { tex: THREE.CanvasTexture; spec: ShaderSpec; ownerId: string }
-// No size cap (see clearShaderFillOwner) — unlike the other module caches in this file
-// (static textures, cheap to keep forever), each entry here costs a live GPU render every
-// frame it's refreshed, so a COUNT-based cap risks evicting a texture a material is still
-// showing (the review's second finding) while an orphaned owner is never evicted anyway,
-// since eviction only ever fires on a NEW insert. Bounding by explicit owner lifetime
-// instead — cleared in clearShaderFillOwner() when an engine disposes — keeps this
-// naturally small (live engines × fills per engine) without that hazard.
+// Bounded per-owner (final review, Important 6) — bounding by explicit owner lifetime
+// ALONE (cleared in clearShaderFillOwner() when an engine disposes) assumed the set of
+// distinct specs one owner ever registers stays small ("live engines × fills per
+// engine"), which held until a rebuild's key could change out from under an entry that
+// never got cleaned up (see shaderFieldTexture's doc below): param churn on one fill
+// during a catalog outage (e.g. dragging a slider while resolveEffectParams keeps
+// falling back to raw params) registers a FRESH orphaned entry — and its own
+// CanvasTexture/canvas — per distinct raw param combination, none of them ever
+// reachable again once the slider moves on, and none of them ever evicted. Capped
+// PER-OWNER (not globally) so churn on one owner can never evict another, unrelated
+// owner's live entries — only that owner's own stale ones, oldest first (insertion
+// order), which are exactly the entries a rebuild has already stopped pointing at.
+const SHADER_FIELD_CACHE_MAX_PER_OWNER = 32
 const _shaderFieldCache = new Map<string, LiveShaderFillEntry>()
+
+/** Evict the OLDEST entry belonging to `ownerId` (if any) — called right before
+ *  inserting a NEW one for that owner once it's at the per-owner cap. Disposes the
+ *  evicted entry's texture, same as `clearShaderFillOwner`; safe because an entry only
+ *  survives to become "oldest" by never being re-hit (a cache HIT doesn't reinsert —
+ *  unlike field.ts's LRU caches, there is no live-material recency signal to preserve
+ *  here beyond insertion order, and the entry actually still driving a visible material
+ *  is always the just-inserted (freshest) one for that spec identity). */
+function evictOldestForOwner(ownerId: string): void {
+  for (const [key, entry] of _shaderFieldCache) {
+    if (entry.ownerId !== ownerId) continue
+    entry.tex.dispose()
+    _shaderFieldCache.delete(key)
+    return
+  }
+}
 
 /** Resolve a shader fill spec to its live field texture — the ONLY place Space Type/Shape
  *  Studio materials get a shader fill's `uFill` texture from. Reused across BOTH
@@ -175,16 +197,29 @@ const _shaderFieldCache = new Map<string, LiveShaderFillEntry>()
  *  ownership contract (~/lib/shaderfill/field.ts). Falls back to the INPUT fill's own texture
  *  when the field can't be produced yet (unknown effect not loaded, WebGL context loss) —
  *  resolveField returns null in both cases, and the user must see the input fill, never an
- *  empty/blank shape. No cache entry is made on a fallback, so the next per-frame refresh
- *  (or the next material rebuild) simply tries again rather than freezing on the fallback.
+ *  empty/blank shape. A cache entry IS made on a fallback (see the CRITICAL fix below) — the
+ *  next per-frame refresh (or the next material rebuild) finds that entry and heals it in
+ *  place rather than freezing on the fallback forever.
  *
- *  Keys on the RESOLVED params (effect defaults applied, unknown keys dropped — same
- *  precondition `fieldKey`/`specIdentityKey` document), not the raw authored `spec.params`:
- *  otherwise `params: {}` and `params: { amount: <the effect's own default> }` — pixel
- *  identical — would key as two different cache entries, and insertion order would make the
- *  key unstable. When the effect isn't in the catalog yet, `resolveField` will itself return
- *  null below (same "not loaded" gate), so keying on the raw spec in that narrow window never
- *  produces a wrongly-deduplicated entry — it just never reaches the cache-insert line.
+ *  KEY DOMAIN INVARIANT (final review, Important 6 — read this before changing how `key` is
+ *  computed): the key must be computed in the SAME param domain the entry will later be
+ *  healed into, i.e. it must not change just because `getEffectSync` starts returning
+ *  non-null. Keys on the spec's RAW `params` — NOT `resolveEffectParams`'s resolved output —
+ *  for exactly that reason: `effect` is null (unresolved) on a catalog-load-race miss and
+ *  non-null on every rebuild after the catalog lands, so a key derived from the RESOLVED
+ *  params (defaults filled in, unknown keys dropped) is a DIFFERENT string in each case for
+ *  the identical authored spec. That used to register a SECOND entry (and a second
+ *  `CanvasTexture` + canvas) the moment the catalog landed and an unrelated edit triggered a
+ *  rebuild, orphaning the first (miss) entry — never reachable again, but still walked and
+ *  re-resolved every frame by `refreshLiveShaderFills` below, forever. Keying on the raw spec
+ *  is stable across that transition, so a rebuild after a miss reuses (and — via
+ *  `refreshLiveShaderFills`'s per-frame loop — heals) the SAME entry instead of doubling it.
+ *  The trade-off: `params: {}` and `params: { amount: <the effect's own default> }` — pixel
+ *  identical once resolved — now key as two distinct entries/textures rather than collapsing
+ *  to one; a minor, bounded memory cost (see `SHADER_FIELD_CACHE_MAX_PER_OWNER` above), not a
+ *  correctness one — `resolveField`'s OWN cache (`~/lib/shaderfill/field.ts`) still keys the
+ *  actual GPU render on resolved params, so the batching/dedup that matters for render cost
+ *  is untouched by this.
  *
  *  CRITICAL fix (final review, residual Item 2): a `resolveField` MISS used to return the
  *  input fill's texture directly and insert NOTHING into `_shaderFieldCache` — but
@@ -209,7 +244,8 @@ function shaderFieldTexture(three: typeof THREE, spec: ShaderSpec): THREE.Textur
   const ctx = _activeContext
   const effect = getEffectSync(spec.effectId)
   const resolvedSpec = effect ? { ...spec, params: resolveEffectParams(effect, spec.params) } : spec
-  const key = `${ctx.ownerId}::${specIdentityKey(resolvedSpec)}`
+  // See the KEY DOMAIN INVARIANT doc above: always the RAW spec, never resolvedSpec.
+  const key = `${ctx.ownerId}::${specIdentityKey(spec)}`
   const hit = _shaderFieldCache.get(key)
   if (hit) return hit.tex
 
@@ -219,6 +255,10 @@ function shaderFieldTexture(three: typeof THREE, spec: ShaderSpec): THREE.Textur
   tex.wrapS = tex.wrapT = three.ClampToEdgeWrapping
   tex.colorSpace = three.SRGBColorSpace
   tex.needsUpdate = true
+
+  let ownerCount = 0
+  for (const e of _shaderFieldCache.values()) if (e.ownerId === ctx.ownerId) ownerCount++
+  if (ownerCount >= SHADER_FIELD_CACHE_MAX_PER_OWNER) evictOldestForOwner(ctx.ownerId)
 
   _shaderFieldCache.set(key, { tex, spec: resolvedSpec, ownerId: ctx.ownerId })
   return tex
