@@ -35,6 +35,15 @@ export interface UnitState {
   clip?: { side: 'top' | 'bottom' | 'left' | 'right'; amount: number }
   /** Extra draws of this unit (echoes/tiles); painter draws base then copies. */
   copies?: UnitCopy[]
+  /** Variable-font AXIS DELTAS by tag (e.g. `{ wght: -300 }`), added to the
+   *  glyph's resting axis values. Vector Type consumes these; the Compositor
+   *  ignores them (Canvas2D text has no axis control). Absent = no change. */
+  axes?: Record<string, number>
+  /** Blur radius in UNIT-BOX HEIGHTS, like dx/dy — the consumer multiplies by
+   *  its own unit box so blur scales with type size. 0/absent = sharp.
+   *  Consumed by Vector Type; the Compositor painters ignore it today
+   *  (wiring blur into paint.ts is deliberately out of scope). */
+  blur?: number
 }
 
 export interface LayerMotionState {
