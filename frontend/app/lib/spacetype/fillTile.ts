@@ -5,21 +5,33 @@
  * that only paint into a 2D canvas — the Frame-modal compositor — can import the fill
  * model + `fillTileCanvas` WITHOUT pulling THREE into their bundle. fills.ts re-exports
  * everything here, so Type Studio importers are unchanged.
+ *
+ * CIRCULAR IMPORT (intentional, safe): `~/lib/compositor/paint`'s `Paint`/`Gradient`
+ * embed this module's `Fill`, and this module's `ShaderSpec.input` is `Paint` — so the
+ * two modules import each other. Every cross-boundary value (`isGradient`/`isFill`
+ * here, `effectiveTileFill`/`fillTileBox` there) is an `export function` declaration,
+ * which ES modules hoist fully before either module's body runs, and neither module
+ * calls the other's export at its own top level (only inside function bodies invoked
+ * later) — so the cycle never observes a not-yet-initialized binding. Do not turn any
+ * of these into `export const fn = () => …`, which is NOT hoisted and would break this.
  */
+import { isGradient, isFill, sortedClampedStops, type Paint } from '~/lib/compositor/paint'
 
 export type FillType = 'solid' | 'gradient' | 'ombre' | 'grid' | 'noise' | 'checkerboard' | 'stripes' | 'qr' | 'shader'
 /** `a`/`b` drive the slot's fill (stripe); `textColor` is the solid colour for type on that row.
  *  `angle` (degrees) applies to `stripes`/`gradient`/`ombre`; `density` controls cell/stripe count. */
 export interface Fill { type: FillType; a: string; b: string; textColor: string; angle: number; density: number; shader?: ShaderSpec }
 
-/** A shader fill runs `input` through a catalog effect. `input` is NEVER itself a shader
- *  fill — depth-1 is enforced in normalizeFill, because unbounded nesting hangs the renderer. */
+/** A shader fill runs `input` through a catalog effect against any `Paint` — a flat
+ *  colour, a linear/radial gradient, or another (non-shader) `Fill`. `input` is NEVER
+ *  itself a shader-typed `Fill` — depth-1 is enforced in normalizeFill/normalizePaint,
+ *  because unbounded nesting hangs the renderer. */
 export interface ShaderSpec {
   effectId: string
   params: Record<string, number>
   anchor: 'object' | 'frame'
   speed: number
-  input: Fill
+  input: Paint
 }
 
 /** All fill types, in picker order. SINGLE SOURCE OF TRUTH — imported by every fill dropdown. */
@@ -36,16 +48,40 @@ export function fillIsShader(f: Fill): f is Fill & { shader: ShaderSpec } {
   return f.type === 'shader' && !!f.shader
 }
 
-/** Resolve the fill that should actually be rasterised by the CPU tile builders below. The
- *  shader renderer doesn't land until a later task, so — per spec — a shader fill degrades
- *  gracefully to its `input` fill rather than an empty/arbitrary shape: the user sees a plain
- *  gradient instead of a warped one, never nothing. Falls back to the default shader input if
- *  `shader` is somehow absent, and cannot loop even on a malformed/miscoerced object, because
- *  it only ever unwraps one level. */
+/** Paint equivalent of `effectiveTileFill` below — unwraps a shader-typed `Fill` exactly
+ *  one level so the shader-INPUT rasterisation path (`paintTileBox`, via `getInputTile`)
+ *  never re-enters the field renderer with a stale descriptor. Passes a string, a
+ *  `Gradient`, or a non-shader `Fill` through UNCHANGED (same reference) — only a
+ *  shader-typed `Fill` is unwrapped. Never returns a shader-typed value: falls back to
+ *  the default shader input if `shader` — or its own `input`, however deeply malformed —
+ *  is somehow absent/shader-typed itself, and cannot loop because it only ever unwraps
+ *  one level. Guard is explicit (`isFill(p) && p.type === 'shader'`) rather than relying
+ *  on `undefined !== 'shader'`, so a non-Fill Paint can never accidentally satisfy it. */
+export function effectiveTilePaint(p: Paint): Paint {
+  if (!(isFill(p) && p.type === 'shader')) return p
+  const input = p.shader?.input ?? DEFAULT_SHADER_SPEC.input
+  return isFill(input) && input.type === 'shader' ? DEFAULT_SHADER_SPEC.input : input
+}
+
+/** Resolve the fill that should actually be rasterised by the FILL-ONLY CPU tile builders
+ *  below (`fillTileCanvas`/`fillTileBox`) and the THREE seeds in fills.ts/materials.ts —
+ *  every one of which can only paint a `Fill`, never a bare colour string or a `Gradient`.
+ *  Delegates to `effectiveTilePaint` above (the general Paint-unwrap) so the two can never
+ *  silently disagree about what a shader fill unwraps to; when that unwrap yields something
+ *  that ISN'T a `Fill` (the shader's configured input is a `Gradient`/string, now that
+ *  `ShaderSpec.input` accepts any `Paint`), there is no `Fill` representation of it for
+ *  these CPU-only consumers to rasterise, so this degrades the same way the "shader somehow
+ *  absent" case always has: the default shader input's plain gradient, never nothing. The
+ *  live-field-capable callers (`getInputTile`, `paintTileBox`) use `effectiveTilePaint`
+ *  directly instead, so a Gradient/string input is never lossily downgraded on THAT path. */
 export function effectiveTileFill(fill: Fill): Fill {
-  if (fill.type !== 'shader') return fill
-  const input = fill.shader?.input ?? DEFAULT_SHADER_SPEC.input
-  return input.type === 'shader' ? DEFAULT_SHADER_SPEC.input : input
+  const p = effectiveTilePaint(fill)
+  if (isFill(p)) return p
+  // DEFAULT_SHADER_SPEC.input is documented to stay a Fill (see its own declaration
+  // above) even though its STATIC type widened to Paint alongside ShaderSpec.input —
+  // `isFill` re-narrows that guarantee for the type checker rather than casting past
+  // it, with DEFAULT_FILL as an (unreachable in practice) belt-and-suspenders fallback.
+  return isFill(DEFAULT_SHADER_SPEC.input) ? DEFAULT_SHADER_SPEC.input : DEFAULT_FILL
 }
 
 /** True when the fill needs a texture/pattern (anything but a flat colour). */
@@ -67,7 +103,14 @@ export function parseFills(raw: unknown): Fill[] {
 export function normalizeFill(f: unknown, depth = 0): Fill {
   const o = (f ?? {}) as Record<string, unknown>
   let type = FILL_TYPES.includes(o.type as FillType) ? (o.type as FillType) : 'solid'
-  if (type === 'shader' && depth > 0) type = DEFAULT_SHADER_SPEC.input.type
+  // Was `DEFAULT_SHADER_SPEC.input.type` — only meaningful while the default shader
+  // input was guaranteed to be a Fill. Now that `ShaderSpec.input` is `Paint`, that
+  // expression's static type is `Paint['type']`, which includes `undefined` (a bare
+  // colour string has no `.type`) — neither `undefined` nor a Gradient's `'linear'`/
+  // `'radial'` is a valid `FillType`. The literal is what the default has always
+  // actually been (see DEFAULT_SHADER_SPEC above); spelling it out avoids depending on
+  // that constant's shape staying a Fill forever.
+  if (type === 'shader' && depth > 0) type = 'gradient'
   const base: Fill = {
     type,
     a: typeof o.a === 'string' ? o.a : '#ffffff',
@@ -99,8 +142,52 @@ export function normalizeShaderSpec(s: unknown, depth: number): ShaderSpec {
     params,
     anchor: o.anchor === 'frame' ? 'frame' : 'object',
     speed: typeof o.speed === 'number' && Number.isFinite(o.speed) ? o.speed : 1,
-    input: normalizeFill(o.input ?? DEFAULT_SHADER_SPEC.input, depth + 1),
+    input: normalizePaint(o.input ?? DEFAULT_SHADER_SPEC.input, depth + 1),
   }
+}
+
+/** Coerce an unknown value into a valid `Paint` — the `Paint`-widened sibling of
+ *  `normalizeFill` for `ShaderSpec.input`. Routing order is a MIGRATION-SAFETY
+ *  condition, not a style choice:
+ *   1. a string passes through as-is (a flat CSS colour is already a valid Paint)
+ *   2. an object shaped like a `Gradient` (`isGradient`) is normalised as one —
+ *      offsets coerced to finite numbers clamped 0..1, colors coerced to strings,
+ *      entries that aren't even shaped like a stop dropped outright; an empty result
+ *      falls back to the default shader input (never an empty-stops gradient); `angle`
+ *      normalised for `linear`
+ *   3. EVERYTHING ELSE — including `null`, `undefined`, and junk — falls through to
+ *      `normalizeFill`, exactly as it always has. This is deliberately NOT gated on
+ *      `isFill(p)`: `isFill` requires both `a` and `density` to be present, but a
+ *      persisted or hand-edited `Fill` missing either field is currently *repaired* by
+ *      `normalizeFill` (defaults fill the gap), not dropped. Gating on `isFill` here
+ *      would instead route that same value to the Gradient-or-fallback arms above and
+ *      silently drop it to `DEFAULT_SHADER_SPEC.input` — a real data loss on already-
+ *      saved projects. Routing "by exclusion" (arms 1 and 2 first, everything else
+ *      falls through) preserves `normalizeFill`'s existing total-function/repair
+ *      behaviour exactly. */
+export function normalizePaint(p: unknown, depth: number): Paint {
+  if (typeof p === 'string') return p
+  if (isGradient(p as Paint | undefined)) return normalizeGradient(p as Record<string, unknown>)
+  return normalizeFill(p, depth)
+}
+
+function normalizeGradient(g: Record<string, unknown>): Paint {
+  const rawStops = Array.isArray(g.stops) ? g.stops : []
+  const stops = rawStops
+    .filter((s: unknown): s is Record<string, unknown> => !!s && typeof s === 'object')
+    .map((s: Record<string, unknown>) => ({
+      offset: typeof s.offset === 'number' && Number.isFinite(s.offset) ? Math.max(0, Math.min(1, s.offset)) : 0,
+      color: typeof s.color === 'string' ? s.color : '#000000',
+    }))
+  // DEFAULT_SHADER_SPEC.input is a Fill (a gradient-typed one), not a Gradient — an
+  // empty stop array falls back to it directly, deliberately changing ARM rather than
+  // producing a zero-stop Gradient, mirroring normalizeFill's own "coerce junk to
+  // something valid, never throw" contract one level up at the Paint level.
+  if (!stops.length) return DEFAULT_SHADER_SPEC.input
+  const sorted = sortedClampedStops(stops)
+  if (g.type === 'radial') return { type: 'radial', stops: sorted }
+  const angle = typeof g.angle === 'number' && Number.isFinite(g.angle) ? g.angle : 0
+  return { type: 'linear', angle, stops: sorted }
 }
 
 export function serializeFills(fills: Fill[]): string { return JSON.stringify(fills) }

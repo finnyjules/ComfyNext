@@ -1,5 +1,6 @@
 import * as THREE from 'three'
-import { type Fill, type ShaderSpec, hexBytes, patternImageData, ombrePicker, fillIsShader, effectiveTileFill, fillTileBox } from './fillTile'
+import { type Fill, type ShaderSpec, hexBytes, patternImageData, ombrePicker, fillIsShader, effectiveTileFill } from './fillTile'
+import { paintTileBox } from '~/lib/compositor/paint'
 import { parseHexA, stripAlpha } from '~/lib/color/convert'
 import { resolveField, withFieldFrame, type FieldRequest } from '~/lib/shaderfill/field'
 import { specIdentityKey, resolveEffectParams } from '~/lib/shaderfill/descriptor'
@@ -250,7 +251,11 @@ function shaderFieldTexture(three: typeof THREE, spec: ShaderSpec): THREE.Textur
   if (hit) return hit.tex
 
   const canvas = resolveField({ spec, w: ctx.w, h: ctx.h, t: 0, fps: 30, bake: ctx.bake })
-  const initial = canvas ?? fillTileBox(effectiveTileFill(spec.input), ctx.w, ctx.h)
+  // spec.input is a Paint (string | Gradient | Fill) — paintTileBox handles the
+  // shader-typed-Fill unwrap internally, same fallback the old
+  // fillTileBox(effectiveTileFill(...)) pairing produced for a Fill input, now
+  // extended to render an actual gradient/colour tile instead of downgrading one.
+  const initial = canvas ?? paintTileBox(spec.input, ctx.w, ctx.h)
   const tex = new three.CanvasTexture(initial)
   tex.wrapS = tex.wrapT = three.ClampToEdgeWrapping
   tex.colorSpace = three.SRGBColorSpace

@@ -28,8 +28,11 @@ export function isFill(p: Paint | undefined): p is Fill {
   return !!p && typeof p === 'object' && 'a' in p && 'density' in p
 }
 
-/** Sort a gradient's stops by offset and clamp each to 0..1 (non-finite offsets sink to 0). */
-function sortedClampedStops(stops: GradientStop[]): GradientStop[] {
+/** Sort a gradient's stops by offset and clamp each to 0..1 (non-finite offsets sink to 0).
+ *  Exported (not just internal) so `~/lib/shaderfill/descriptor.ts`'s `inputKey` can encode
+ *  a gradient's stops in the SAME canonical order `paintTileBox` renders them in — sorting
+ *  twice (once here, once by hand in the key) would let the two silently drift apart. */
+export function sortedClampedStops(stops: GradientStop[]): GradientStop[] {
   return [...stops]
     .map(s => ({ ...s, offset: Number.isFinite(s.offset) ? Math.max(0, Math.min(1, s.offset)) : 0 }))
     .sort((a, b) => a.offset - b.offset)

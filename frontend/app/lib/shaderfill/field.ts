@@ -7,7 +7,8 @@
  * field, and we blit its canvas into a per-field 2D canvas. shaderFx's own canvas is
  * only valid until the next call, so the blit MUST happen before anything else renders.
  */
-import { effectiveTileFill, fillTileBox, type ShaderSpec } from '~/lib/spacetype/fillTile'
+import { effectiveTilePaint, type ShaderSpec } from '~/lib/spacetype/fillTile'
+import { paintTileBox } from '~/lib/compositor/paint'
 import { shaderFx, expandPasses, type Uniforms } from '~/lib/shaderfx/renderer'
 import { getEffectSync, fetchShaderFxCatalog } from '~/lib/shaderfx/catalog'
 import type { EffectDef } from '~/lib/shaderfx/types'
@@ -90,10 +91,10 @@ let liveKeys = new Set<string>()
 let stats: FieldStats = { renders: 0, hits: 0, misses: 0, tileHits: 0, tileMisses: 0, tokenMismatches: 0 }
 
 /**
- * Cache of the RASTERISED INPUT TILE (`fillTileBox(effectiveTileFill(spec.input), w,
- * h)`), keyed on the input fill + size — deliberately NOT on time, effect, params, or
+ * Cache of the RASTERISED INPUT TILE (`paintTileBox(effectiveTilePaint(spec.input), w,
+ * h)`), keyed on the input paint + size — deliberately NOT on time, effect, params, or
  * anchor, unlike `cache` above. `spec.input` is time-invariant: an animated field's
- * `t` changes every frame but its input fill almost never does, yet without this it
+ * `t` changes every frame but its input paint almost never does, yet without this it
  * was being fully re-rasterised on the CPU every single frame regardless. Built once
  * per distinct (input, size) pair and reused for the entire animation, across every
  * consumer sharing that input — the same batching principle `cache`/`fieldKey` apply
@@ -123,13 +124,16 @@ function getInputTile(input: ShaderSpec['input'], w: number, h: number): HTMLCan
   const hit = tileCache.get(key)
   if (hit) { stats.tileHits++; return hit }
   stats.tileMisses++
-  // The shader's input image is the nested fill, rasterised on the CPU. Depth-1
-  // nesting is enforced only at the normalizeFill/parseFills boundary, not in the
-  // type system — a hand-constructed spec can still carry a shader fill as its
-  // input, so unwrap defensively via effectiveTileFill rather than reading `input`
-  // directly (see fillTile.ts). NOTE: `tileKey` above already keys on the SAME
-  // unwrap via `inputKey`, so key and cached content agree by construction.
-  const tile = fillTileBox(effectiveTileFill(input), w, h)
+  // The shader's input image is the nested paint (string | Gradient | Fill),
+  // rasterised on the CPU via paintTileBox. Depth-1 nesting is enforced only at the
+  // normalizeFill/normalizePaint boundary, not in the type system — a
+  // hand-constructed spec can still carry a shader fill as its input, so unwrap
+  // defensively via effectiveTilePaint rather than reading `input` directly (see
+  // fillTile.ts) — a shader-typed Fill reaching paintTileBox unrasterised would
+  // otherwise risk re-entering the field renderer with a stale descriptor. NOTE:
+  // `tileKey` above already keys on the SAME unwrap via `inputKey`, so key and
+  // cached content agree by construction.
+  const tile = paintTileBox(effectiveTilePaint(input), w, h)
   if (tileCache.size >= TILE_CACHE_MAX) {
     const oldest = tileCache.keys().next().value
     if (oldest) tileCache.delete(oldest)

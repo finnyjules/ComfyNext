@@ -659,13 +659,16 @@ function resolveShaderFill(
   fill: Fill,
   spec: ShaderSpec,
   box: { w: number; h: number },
-): string | CanvasPattern {
+): string | CanvasGradient | CanvasPattern {
   const frame = spec.anchor === 'frame'
   const bw = Math.max(box.w, 1e-3), bh = Math.max(box.h, 1e-3)
   const fw = frame ? Math.max(1, Math.round(_fieldCtx.frameW)) : OBJECT_SHADER_FIELD_PX
   const fh = frame ? Math.max(1, Math.round(_fieldCtx.frameH)) : OBJECT_SHADER_FIELD_PX
   const canvas = resolveField({ spec, w: fw, h: fh, t: _fieldCtx.t, fps: _fieldCtx.fps, bake: _fieldCtx.bake }, _fieldCtx.token)
-  if (!canvas) return resolveFill(ctx, spec.input, box)   // graceful: the shader's own input fill
+  // graceful: the shader's own input paint. spec.input is a Paint (string | Gradient |
+  // Fill), not just a Fill — go through resolvePaint (the general Paint resolver), not
+  // resolveFill (Fill-only), or a Gradient/string input would throw/misrender here.
+  if (!canvas) return resolvePaint(ctx, spec.input, box)
   const pat = ctx.createPattern(canvas, 'no-repeat')
   if (!pat) return fill.a
   if (typeof DOMMatrix !== 'undefined' && pat.setTransform) {
@@ -695,7 +698,7 @@ function resolveFill(
   ctx: CanvasRenderingContext2D,
   fill: Fill,
   box: { w: number; h: number },
-): string | CanvasPattern {
+): string | CanvasGradient | CanvasPattern {
   if (fill.type === 'solid') return fill.a
   if (fillIsShader(fill)) return resolveShaderFill(ctx, fill, fill.shader, box)
   const bw = Math.max(box.w, 1e-3), bh = Math.max(box.h, 1e-3)

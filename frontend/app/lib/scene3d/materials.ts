@@ -23,7 +23,8 @@ import {
 // fills.ts's `_shaderFieldCache`/`withShaderFillContext`, so Scene3D's live-field ceiling and
 // frozen count can never pool with, or be walked by, Space Type's or the Compositor's.
 import { resolveField, withFieldFrame, type FieldRequest } from '~/lib/shaderfill/field'
-import { DEFAULT_SHADER_SPEC, effectiveTileFill, fillTileBox, type ShaderSpec } from '~/lib/spacetype/fillTile'
+import { DEFAULT_SHADER_SPEC, type ShaderSpec } from '~/lib/spacetype/fillTile'
+import { paintTileBox } from '~/lib/compositor/paint'
 
 const hasDOM = typeof document !== 'undefined'
 
@@ -451,14 +452,15 @@ export function materialFor(mat: SceneMaterial, geometry?: THREE.BufferGeometry,
       // instead of the same graceful gradient/pattern fallback every other surface shows. In a
       // real (DOM) environment `tex2` is now ALWAYS a real CanvasTexture — seeded with the
       // input tile on a miss, identical in spirit to fills.ts's own
-      // `initial = canvas ?? fillTileBox(...)`. `hasDOM` keeps this module's own node-safety
+      // `initial = canvas ?? paintTileBox(...)`. `hasDOM` keeps this module's own node-safety
       // contract (see its top-of-file doc — matcap/picker thumbnails degrade the same way):
-      // `fillTileBox` needs `document.createElement('canvas')`, unavailable in the node-env
+      // `paintTileBox` needs `document.createElement('canvas')`, unavailable in the node-env
       // unit tests, so a miss in that environment still degrades to `.map = null` exactly as
       // before, rather than throwing. The healing path (`refreshSceneShaderFields`'s `else`
       // branch below) still repoints `.map` to a freshly-resolved field the moment one becomes
-      // available, unchanged either way.
-      const initial = canvas ?? (hasDOM ? fillTileBox(effectiveTileFill(spec.input), SHADER_FIELD_PX, SHADER_FIELD_PX) : null)
+      // available, unchanged either way. `spec.input` is a Paint (string | Gradient | Fill);
+      // paintTileBox handles the shader-typed-Fill unwrap internally (see its own doc).
+      const initial = canvas ?? (hasDOM ? paintTileBox(spec.input, SHADER_FIELD_PX, SHADER_FIELD_PX) : null)
       const tex2 = initial ? new THREE.CanvasTexture(initial) : null
       if (tex2) { tex2.colorSpace = THREE.SRGBColorSpace; tex2.wrapS = tex2.wrapT = THREE.ClampToEdgeWrapping }
       const unlit = mat.unlit === true

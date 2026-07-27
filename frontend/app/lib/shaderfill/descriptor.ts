@@ -3,7 +3,8 @@
  * live-field budget. Deliberately free of canvas/GL/three so it is unit-testable in
  * the node environment; all rendering lives in ./field.ts.
  */
-import { effectiveTileFill, type Fill, type ShaderSpec } from '~/lib/spacetype/fillTile'
+import { effectiveTilePaint, type ShaderSpec } from '~/lib/spacetype/fillTile'
+import { isGradient, sortedClampedStops, type Paint } from '~/lib/compositor/paint'
 import type { EffectDef } from '~/lib/shaderfx/types'
 
 /** Measured, not guessed: a live 512² field costs ~1.25ms typically / ~3.6ms worst-observed,
@@ -37,21 +38,42 @@ function encode(parts: unknown[]): string {
       : value)
 }
 
-/** Keys the fill that will ACTUALLY be rendered, not necessarily `f` itself.
+/** Keys the paint that will ACTUALLY be rendered, not necessarily `p` itself.
  *  `field.ts` never rasterises `spec.input` raw — it unwraps a shader-typed input via
- *  `effectiveTileFill` first (depth-1 nesting is enforced only at the
- *  normalizeFill/parseFills parse boundary, not in the type system, so a
+ *  `effectiveTilePaint` first (depth-1 nesting is enforced only at the
+ *  normalizeFill/normalizePaint parse boundary, not in the type system, so a
  *  hand-constructed spec can still carry a shader fill as its `input`). Encoding the
- *  raw `f` here would drop `f.shader` entirely — two specs whose shader-typed
+ *  raw `p` here would drop `p.shader` entirely — two specs whose shader-typed
  *  `input`s differ only in their nested content would key IDENTICALLY while
  *  rendering two different images, the same silent-wrong-pixels class `fieldKey`
- *  exists to prevent. Running `f` through the SAME `effectiveTileFill` the renderer
- *  uses makes key and render agree by construction: whatever fill effectiveTileFill
- *  resolves to is never itself shader-typed (see its own doc in fillTile.ts), so once
- *  unwrapped there is no `.shader` left to lose. */
-export function inputKey(f: Fill): string {
-  const eff = effectiveTileFill(f)
-  return encode([eff.type, eff.a, eff.b, eff.angle, eff.density])
+ *  exists to prevent. Running `p` through the SAME `effectiveTilePaint` the renderer
+ *  uses (`getInputTile`) makes key and render agree by construction: whatever paint
+ *  `effectiveTilePaint` resolves to is never itself shader-typed (see its own doc in
+ *  fillTile.ts), so once unwrapped there is no `.shader` left to lose.
+ *
+ *  `input` is `Paint` — a string, a `Gradient`, or a `Fill` — since a shader can now
+ *  eat any of the three. THREE DISJOINT ARMS, each tagged (`'s'`/`'g'`/`'f'`) as the
+ *  FIRST element of its own `encode` array, so a string can never key identically to
+ *  a same-text `Gradient`/`Fill` field, and (within the gradient arm) a linear
+ *  gradient can never key identically to a radial one sharing the same stops:
+ *  `RadialGradient` has no `angle`, so that slot is always `null` — emitted, never
+ *  omitted — rather than letting a linear's `angle` and a radial's `stops` shift into
+ *  each other's array position. Stops are encoded via the SAME `sortedClampedStops`
+ *  the renderer (`paintTileBox`) sorts with, not a second hand-rolled sort — the
+ *  renderer treats two stop arrays differing only in order as IDENTICAL (they render
+ *  the same gradient), so the key must too, or batching silently gets worse without
+ *  ever producing a wrong pixel (the opposite failure, but still a correctness bug
+ *  against the "identical descriptors key identically" contract `fieldKey` exists to
+ *  uphold). */
+export function inputKey(p: Paint): string {
+  const eff = effectiveTilePaint(p)
+  if (typeof eff === 'string') return encode(['s', eff])
+  if (isGradient(eff)) {
+    const stops = sortedClampedStops(eff.stops).map(s => [s.offset, s.color])
+    const angle = eff.type === 'linear' ? eff.angle : null
+    return encode(['g', eff.type, angle, stops])
+  }
+  return encode(['f', eff.type, eff.a, eff.b, eff.angle, eff.density])
 }
 
 /** Sorted [key, value] pairs, not a hand-joined string — sorting normalises order

@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { DEFAULT_FILL, DEFAULT_SHADER_SPEC, type Fill, type ShaderSpec } from '~/lib/spacetype/fillTile'
-import { quantizeTime, fieldKey, planFields, resolveEffectParams, LIVE_FIELD_CEILING } from '~/lib/shaderfill/descriptor'
+import { quantizeTime, fieldKey, inputKey, planFields, resolveEffectParams, LIVE_FIELD_CEILING } from '~/lib/shaderfill/descriptor'
 import type { EffectDef } from '~/lib/shaderfx/types'
+import type { Gradient } from '~/lib/compositor/paint'
 
 const spec = (o: Partial<ShaderSpec> = {}): ShaderSpec => ({ ...DEFAULT_SHADER_SPEC, ...o })
 
@@ -164,6 +165,41 @@ describe('resolveEffectParams', () => {
     const keyA = fieldKey(spec({ params: empty }), 512, 512, 0.5)
     const keyB = fieldKey(spec({ params: explicit }), 512, 512, 0.5)
     expect(keyA).toBe(keyB)
+  })
+})
+
+describe('inputKey (Paint-widened: string | Gradient | Fill must never collide)', () => {
+  const linear: Gradient = { type: 'linear', angle: 45, stops: [{ offset: 0, color: '#000000' }, { offset: 1, color: '#ffffff' }] }
+  const radial: Gradient = { type: 'radial', stops: [{ offset: 0, color: '#000000' }, { offset: 1, color: '#ffffff' }] }
+  const fill: Fill = { ...DEFAULT_FILL, type: 'gradient', a: '#000000', b: '#ffffff' }
+
+  it('a string, a linear gradient, a radial gradient, and a Fill all key distinctly — the four-way collision proof', () => {
+    const str = '#000000'
+    const keys = new Set([inputKey(str), inputKey(linear), inputKey(radial), inputKey(fill)])
+    expect(keys.size).toBe(4)
+  })
+
+  it('reordering a gradient\'s stops does not change the key — the renderer sorts before drawing, so the key must sort the same way', () => {
+    const forward: Gradient = { type: 'linear', angle: 10, stops: [{ offset: 0, color: '#111111' }, { offset: 1, color: '#222222' }] }
+    const reversed: Gradient = { type: 'linear', angle: 10, stops: [{ offset: 1, color: '#222222' }, { offset: 0, color: '#111111' }] }
+    expect(inputKey(forward)).toBe(inputKey(reversed))
+  })
+
+  it('a linear and a radial gradient sharing identical stops still key distinctly (angle slot is null for radial, never omitted)', () => {
+    const sameStops = [{ offset: 0, color: '#abcabc' }, { offset: 1, color: '#defdef' }]
+    const l: Gradient = { type: 'linear', angle: 0, stops: sameStops }
+    const r: Gradient = { type: 'radial', stops: sameStops }
+    expect(inputKey(l)).not.toBe(inputKey(r))
+  })
+
+  it('two strings with different text key distinctly, and identical strings key identically', () => {
+    expect(inputKey('#111111')).not.toBe(inputKey('#222222'))
+    expect(inputKey('#111111')).toBe(inputKey('#111111'))
+  })
+
+  it('a shader-typed Fill input keys by what it actually unwraps to, even when that is a Gradient', () => {
+    const shaderInput: Fill = { ...DEFAULT_FILL, type: 'shader', shader: { ...DEFAULT_SHADER_SPEC, input: radial } }
+    expect(inputKey(shaderInput)).toBe(inputKey(radial))
   })
 })
 

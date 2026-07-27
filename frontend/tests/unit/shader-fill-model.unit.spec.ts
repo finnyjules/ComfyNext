@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import {
-  type Fill, FILL_TYPES, DEFAULT_FILL, DEFAULT_SHADER_SPEC,
-  normalizeFill, parseFills, serializeFills, fillIsShader, effectiveTileFill,
+  type Fill, type ShaderSpec, FILL_TYPES, DEFAULT_FILL, DEFAULT_SHADER_SPEC,
+  normalizeFill, normalizeShaderSpec, parseFills, serializeFills, fillIsShader,
+  effectiveTileFill, effectiveTilePaint, normalizePaint,
 } from '~/lib/spacetype/fillTile'
+import { isFill, isGradient, type Gradient } from '~/lib/compositor/paint'
 
 const shaderFill = (over: Partial<Fill> = {}): Fill => ({
   ...DEFAULT_FILL, type: 'shader', shader: { ...DEFAULT_SHADER_SPEC }, ...over,
@@ -35,8 +37,11 @@ describe('shader fill model', () => {
       type: 'shader',
       shader: { ...DEFAULT_SHADER_SPEC, input: { ...DEFAULT_FILL, type: 'shader', shader: { ...DEFAULT_SHADER_SPEC } } },
     })
-    expect(nested.shader!.input.type).not.toBe('shader')
-    expect(nested.shader!.input.shader).toBeUndefined()
+    const input = nested.shader!.input // Paint — narrow before reading Fill-only fields
+    expect(isFill(input)).toBe(true)
+    if (!isFill(input)) throw new Error('unreachable')
+    expect(input.type).not.toBe('shader')
+    expect(input.shader).toBeUndefined()
   })
 
   it('coerces a junk spec rather than throwing', () => {
@@ -85,5 +90,106 @@ describe('effectiveTileFill (graceful degradation for the CPU tile builders)', (
     // simulate a bypass of the depth-1 guard: input is itself (bogusly) typed 'shader'
     ;(malformed.shader as any).input = { ...DEFAULT_FILL, type: 'shader', shader: { ...DEFAULT_SHADER_SPEC } }
     expect(effectiveTileFill(malformed).type).not.toBe('shader')
+  })
+
+  it('degrades a shader-typed Fill whose (widened) input is a Gradient/string to the default shader Fill — there is no Fill representation of a Gradient', () => {
+    const gradientInput: Gradient = { type: 'radial', stops: [{ offset: 0, color: '#000' }, { offset: 1, color: '#fff' }] }
+    const f = shaderFill({ shader: { ...DEFAULT_SHADER_SPEC, input: gradientInput } })
+    expect(effectiveTileFill(f)).toEqual(DEFAULT_SHADER_SPEC.input)
+
+    const stringInput = '#ff00ff'
+    const f2 = shaderFill({ shader: { ...DEFAULT_SHADER_SPEC, input: stringInput } })
+    expect(effectiveTileFill(f2)).toEqual(DEFAULT_SHADER_SPEC.input)
+  })
+})
+
+describe('effectiveTilePaint (the Paint-general sibling used on the live-field path)', () => {
+  it('passes a string paint through unchanged', () => {
+    expect(effectiveTilePaint('#123456')).toBe('#123456')
+  })
+
+  it('passes a Gradient paint through unchanged (same reference)', () => {
+    const g: Gradient = { type: 'linear', angle: 30, stops: [{ offset: 0, color: '#000' }, { offset: 1, color: '#fff' }] }
+    expect(effectiveTilePaint(g)).toBe(g)
+  })
+
+  it('unwraps a shader-typed Fill to its actual (Gradient) input, unlike effectiveTileFill', () => {
+    const g: Gradient = { type: 'radial', stops: [{ offset: 0, color: '#111' }, { offset: 1, color: '#222' }] }
+    const f = shaderFill({ shader: { ...DEFAULT_SHADER_SPEC, input: g } })
+    expect(effectiveTilePaint(f)).toEqual(g)
+  })
+
+  it('never returns a shader-typed value', () => {
+    const malformed = { ...DEFAULT_FILL, type: 'shader', shader: { ...DEFAULT_SHADER_SPEC } } as Fill
+    ;(malformed.shader as any).input = { ...DEFAULT_FILL, type: 'shader', shader: { ...DEFAULT_SHADER_SPEC } }
+    const out = effectiveTilePaint(malformed)
+    expect(isFill(out) && out.type === 'shader').toBe(false)
+  })
+})
+
+describe('normalizePaint (routing order is a migration-safety condition)', () => {
+  it('a string passes through as Paint arm 1', () => {
+    expect(normalizePaint('#abcdef', 1)).toBe('#abcdef')
+  })
+
+  it('a Gradient-shaped object is normalised as Paint arm 2, not routed through normalizeFill', () => {
+    const out = normalizePaint({ type: 'linear', angle: '30' as any, stops: [{ offset: 2, color: '#fff' }, { offset: -1, color: 7 as any }] }, 1)
+    expect(isGradient(out)).toBe(true)
+    if (!isGradient(out)) throw new Error('unreachable')
+    expect(out.type).toBe('linear')
+    expect((out as any).angle).toBe(0)              // non-number angle coerced to a finite default
+    expect(out.stops.map(s => s.offset)).toEqual([1, 0].sort((a, b) => a - b)) // clamped + sorted
+    expect(out.stops.every(s => typeof s.color === 'string')).toBe(true)      // non-string color coerced
+  })
+
+  it('drops stop entries that are not even shaped like a stop, and falls back to the default shader input if none survive', () => {
+    const out = normalizePaint({ type: 'radial', stops: [null, 42, 'nope'] }, 1)
+    expect(out).toEqual(DEFAULT_SHADER_SPEC.input)
+  })
+
+  it('everything else — null, undefined, and junk — falls through to normalizeFill, exactly as before', () => {
+    expect(normalizePaint(null, 1)).toEqual(normalizeFill(null, 1))
+    expect(normalizePaint(undefined, 1)).toEqual(normalizeFill(undefined, 1))
+    expect(normalizePaint(42, 1)).toEqual(normalizeFill(42, 1))
+    expect(normalizePaint({ type: 'grid', a: '#ff0000' }, 1)).toEqual(normalizeFill({ type: 'grid', a: '#ff0000' }, 1))
+  })
+
+  it('is NOT gated on isFill: a Fill missing `density` is repaired by normalizeFill, not dropped to the default', () => {
+    const handEdited = { type: 'grid', a: '#ff0000', b: '#00ff00', textColor: '#ffffff', angle: 10 } // no `density`
+    expect(isFill(handEdited as any)).toBe(false)   // confirms this is exactly the case isFill would mis-route
+    const out = normalizePaint(handEdited, 1)
+    expect(out).not.toEqual(DEFAULT_SHADER_SPEC.input)
+    expect(out).toEqual(normalizeFill(handEdited, 1))
+    expect((out as Fill).density).toBe(8) // repaired to the Fill default, not dropped
+  })
+})
+
+describe('no migration: a persisted ShaderSpec is untouched by normalizeShaderSpec', () => {
+  it('a Fill input, as persisted today, round-trips through normalizeShaderSpec unchanged', () => {
+    const persisted: ShaderSpec = {
+      effectId: 'kaleidoscope', params: { segments: 6 }, anchor: 'frame', speed: 0.5,
+      input: { type: 'gradient', a: '#ff0000', b: '#00ff00', textColor: '#ffffff', angle: 12, density: 3 },
+    }
+    expect(normalizeShaderSpec(persisted, 0)).toEqual(persisted)
+  })
+
+  it('a Fill input missing `density` (the hand-edited case) is repaired exactly as before, not dropped to a fallback', () => {
+    const handEdited = {
+      effectId: 'kaleidoscope', params: {}, anchor: 'object', speed: 1,
+      input: { type: 'grid', a: '#ff0000', b: '#00ff00', textColor: '#ffffff', angle: 10 }, // no density
+    }
+    const out = normalizeShaderSpec(handEdited, 0)
+    expect(isFill(out.input)).toBe(true)
+    expect(out.input).not.toEqual(DEFAULT_SHADER_SPEC.input)
+    expect((out.input as Fill).type).toBe('grid')
+    expect((out.input as Fill).density).toBe(8) // DEFAULT_FILL's density, filled in by normalizeFill
+  })
+
+  it('a Gradient input, as it would be freshly saved by step 3, round-trips unchanged too', () => {
+    const persisted: ShaderSpec = {
+      effectId: 'fbm_warp', params: {}, anchor: 'object', speed: 1,
+      input: { type: 'radial', stops: [{ offset: 0, color: '#000000' }, { offset: 1, color: '#ffffff' }] },
+    }
+    expect(normalizeShaderSpec(persisted, 0)).toEqual(persisted)
   })
 })
