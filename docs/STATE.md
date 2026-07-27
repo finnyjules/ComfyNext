@@ -13,6 +13,7 @@ Legend: **bake** = render/export path · **motion** = animatable · **inspector*
 | Surface | bake | motion | inspector | agent | engine LOC |
 |---|---|---|---|---|---|
 | Space Type | ✅ + clip bake | ✅ timeline clip | ✅ | ✅ descriptor | 11,202 |
+| Vector Type Studio | ✅ PNG + SVG export | ✅ full incl. stagger | ✅ | ✅ descriptor (unverified live) | — |
 | Scene3D Studio | ✅ 3-pass + mp4 | ✅ own timeline | ✅ | ❌ | 4,258 |
 | Compositor / Frame | ✅ | ✅ motion clips | ✅ | ✅ commands | 1,667 (+1,041 motion) |
 | Timeline (NLE) | ✅ webm/mp4 + server | ✅ native | ✅ | ❌ | shared/timeline |
@@ -27,7 +28,6 @@ Legend: **bake** = render/export path · **motion** = animatable · **inspector*
 | Voice Trainer | n/a (server) | — | partial | ❌ | 341 (UI) |
 | Character / Sheet | ✅ sheet gen | ❌ | ✅ | ✅ capability | — |
 | Pose Mannequin | ✅ control img | ❌ | modal | ❌ (excluded) | — |
-| Kinetic Type / Slate | ✅ frame seq | ✅ presets | modal | ✅ capability | flagged |
 | Inpaint / Region | ✅ backend | — | toolbar | ✅ ops | — |
 | Collection (sweeps) | — | — | ✅ | ✅ | backbone |
 
@@ -76,9 +76,15 @@ Still to do in Act 1: the generic inspector renderer (Gradient still has 432 lin
 
 Task 10 closed the act: fixed a real correctness bug where `LIVE_FIELD_CEILING` (4 live fields/frame, protecting *interactive* framerate) was also being applied to bake/export requests, silently freezing the 5th-and-beyond shader-fill descriptor at t=0 on any export — fixed at `beginFieldFrame` so every surface inherits it, proven live (not just unit-tested) via a 6-field bake harness at `/dev/shaderfill-bench`'s `window.__benchBakeCeilingProof()`: all 6 fields advance under `bake:true`, only the first 4 advance under `bake:false` (control). Also wired `bake: true` through the Compositor's export paths (motion bake, static Render, Harmonize, Frame download/publish, `bakeOverlay`) — Space Type had this from an earlier task, Compositor didn't. Bake parity is structural, confirmed by grep: every bake path funnels through the same `resolveField` (`grep -rn "shaderFx.render" frontend/app` turns up only Shader Studio's own surfaces and `lib/texturefx/stylize.ts`).
 
+**Vector Type Studio — LANDED 2026-07-27** (commits `003ac333a`..`7423d4fad`, 11 commits, +15,076/−4,065 across 161 files; `docs/superpowers/specs/2026-07-27-vector-type-studio-design.md`). Act 2's first surface: text → variable-font outlines (fontkit) → animated as real 2D geometry, baked to PNG through the existing cascade, and exported as SVG — **Sailor's first vector output**. It is stateless (`f(cfg, t) → paths`) like Gradient, not rebuild-on-change like Shape, so it arrived fully animatable on day one, including per-glyph stagger (seeded-stable order; a travelling weight wave proven by test). Roboto Flex's 13 axes — `XOPQ` (stroke thickness), `GRAD` (grade), `YTAS` (ascender height), among others — are now animatable design parameters. Fourth factory proof: one `ControlSpec[]` declaration again generated inspector, agent vocabulary, motion, and sweeps together. `app/lib/vector/svg.ts` (`VectorShape`/`shapesToSVG`) was built studio-agnostic, so Shape Studio can become its second consumer.
+
+It replaced three retiring surfaces: Kinetic Slates (−781), the KineticType node with a 74-preset migration (−1,527, 17 mapped honestly / 9 partial / 48 dropped with a written reason each), and the Font Playground widget (−730, removed outright — 0/289 saved and 0/91 backup projects referenced it). **Surface count, stated honestly:** the plan's headline six→four counts only the four type-*authoring* surfaces (Vector Type, Space Type, Text on Path, Text Mask); the honest census is **six→five**, since Scene3D text and Compositor text layers also let a user pick a font and the design doc excluded them as "different jobs" rather than counting them.
+
+Open, not softened: a migrated KineticType node no longer executes on the ComfyUI backend (it was a real node with IMAGE/MASK outputs; Vector Type is frontend-only — graphs piping kinetic frames into a backend node lose that input at Run time, though baked frames and timeline playback still work; needs a release note), and its migrated MASK output wire dangles unconnected. No fallback exists if `google/fonts` renames a path upstream (the design doc's "static cut, axes disabled" mitigation is unimplemented). No node consumes SVG output — it only leaves the product by download. Parity gaps vs. the retired Font Playground remain: 10 curated families rather than the full Google Fonts catalog, no kerning off-switch, no word-level 3-D transform. `lib/gsap-kinetic.ts` and `kinetic-presets.ts`'s `build()` closures are now orphaned (the preset catalog is still live for Compositor metadata) — a separate cleanup. The in-studio agent tuner is wired and guard-tested but not yet runtime-verified against a live model.
+
 ## Agent layer
 
-Loop shape is right (perceive → plan → invertible commands → ghost preview → Keep/Dismiss) plus visual self-review and Direction Loop. **Reach is the gap:** 4 agent surfaces (canvas, compositor, smartLayout, texture) vs ~22 creative surfaces; 3 of 8 studios expose descriptors. LLM tiers: haiku→patch / sonnet→plan / opus→campaign; Fable for style profiles.
+Loop shape is right (perceive → plan → invertible commands → ghost preview → Keep/Dismiss) plus visual self-review and Direction Loop. **Reach is the gap:** 4 agent surfaces (canvas, compositor, smartLayout, texture) vs ~22 creative surfaces; 3 of 8 studios expose descriptors, plus a 4th (Vector Type) wired but with its agent tuner unverified live. LLM tiers: haiku→patch / sonnet→plan / opus→campaign; Fable for style profiles.
 
 ## Known debt
 
@@ -87,3 +93,7 @@ Loop shape is right (perceive → plan → invertible commands → ghost preview
 - **Agent-invisible depth:** Scene3D is the largest surface with zero agent access. (Act 3, or free via factory retrofit)
 - **Texture/Shape have bakers but no motion path.**
 - **Bindability markup gate:** a control missing its `<BindableRow>` wrapper is sweepable in principle but has no UI affordance.
+- **Migrated KineticType nodes lost backend execution.** The retired node was a real ComfyUI node (IMAGE/MASK outputs); Vector Type Studio is frontend-only. Graphs that piped kinetic frames into a downstream backend node lose that input at Run time — baked frames and timeline playback are unaffected. Needs a release note. The migrated MASK output wire also dangles unconnected on these nodes.
+- **No fallback if `google/fonts` renames a path upstream** for Vector Type Studio's variable-TTF proxy — the family just fails to load. The design's "static cut, axes disabled and labelled" mitigation was never implemented.
+- **No SVG-consuming node exists.** Vector Type's SVG export only leaves the product by download.
+- **`lib/gsap-kinetic.ts` and `kinetic-presets.ts`'s `build()` closures are orphaned** by the KineticType retirement (the preset catalog itself is still live, read by the Compositor for metadata) — an uncompleted cleanup.
