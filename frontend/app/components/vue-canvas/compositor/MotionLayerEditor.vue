@@ -4,8 +4,8 @@
  *  whole next LayerAnimation (parent persists via setLocal, as before). */
 import type { LayerAnimation, LayerAnimSpec } from '~/lib/motion/types'
 import { KINETIC_PRESETS_BY_ID, presetParamDefault } from '~/data/kinetic-presets'
-import MotionPresetPicker from '~/components/vue-canvas/compositor/MotionPresetPicker.vue'
-import PresetThumb from '~/components/vue-canvas/compositor/PresetThumb.vue'
+import MotionPresetPicker from '~/components/vue-canvas/motion/MotionPresetPicker.vue'
+import PresetThumb from '~/components/vue-canvas/motion/PresetThumb.vue'
 import { X } from 'lucide-vue-next'
 
 const props = defineProps<{ animation: LayerAnimation | undefined; frameDuration: number; layerKind?: string }>()

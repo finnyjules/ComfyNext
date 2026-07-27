@@ -5,7 +5,7 @@
  *  Must stack above CompositorModal's z-[100] context (z-[110] backdrop, z-[111] panel). */
 import { SUPPORTED_IN_IDS, SUPPORTED_OUT_IDS, SUPPORTED_LOOP_IDS } from '~/lib/motion/evaluate'
 import { KINETIC_PRESETS_BY_ID, KINETIC_GROUP_LABELS, type KineticGroup } from '~/data/kinetic-presets'
-import PresetThumb from '~/components/vue-canvas/compositor/PresetThumb.vue'
+import PresetThumb from '~/components/vue-canvas/motion/PresetThumb.vue'
 import { X } from 'lucide-vue-next'
 
 const props = defineProps<{
