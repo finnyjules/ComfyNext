@@ -101,6 +101,33 @@ Behaviour-preserving move, first because it has the widest blast radius and is t
 
 ---
 
+### Task 3b: Gate presets by consumer capability *(added during execution)*
+
+Task 3 introduced a **live regression in the Compositor**: `MotionPresetPicker` lists
+`Object.keys(IN_EVAL/OUT_EVAL)` with no allow-list, so the three new blur tiles appeared in the
+Compositor's own picker — where `PresetThumb` cannot render blur and `paint.ts` does not apply it.
+A user can pick "Blur In" on a Compositor layer today and get a plain fade.
+
+Two consumers now want different subsets of one shared catalog, so the catalog needs to say what each
+preset *requires* rather than each consumer hard-coding a list.
+
+**Files:** `lib/motion/evaluate.ts` (or `data/kinetic-presets.ts`), `components/vue-canvas/motion/MotionPresetPicker.vue`, `PresetThumb.vue`.
+
+- [ ] **Step 1:** Declare a capability per preset — the natural set today is `blur` and `axes`.
+      Derive it from what the preset's `UnitEval` actually returns where you can; a hand-maintained
+      list will drift.
+- [ ] **Step 2:** `MotionPresetPicker` takes the consumer's supported capabilities and hides (or
+      disables with a reason) presets needing more. **Compositor: no `blur`, no `axes`.**
+      **Vector Type: both.** Default must be the *conservative* set, so a future consumer that forgets
+      to declare gets fewer presets rather than broken ones.
+- [ ] **Step 3:** Teach `PresetThumb` to render blur via `ctx.filter`, so the tile matches what the
+      consumer will actually do. Without this the Vector Type gallery shows Blur tiles that do not blur.
+- [ ] **Step 4:** Verify in a browser that the Compositor picker no longer offers blur, and that its
+      other tiles still animate. Confirm the count of offered presets dropped by exactly three.
+- [ ] **Step 5:** Commit — `fix(motion): gate presets by consumer capability`
+
+---
+
 ### Task 4: The `UnitState` → `VtGlyphTransform` adapter
 
 **Files:** `lib/vectortype/presetMotion.ts`, tests. **This is the load-bearing task.**
