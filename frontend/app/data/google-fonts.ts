@@ -1,5 +1,5 @@
 /**
- * Google Fonts catalog client — the Font Playground's bridge to the full
+ * Google Fonts catalog client — the type widgets' bridge to the full
  * ~1900-family library. The list is fetched once from our own /api/google-fonts
  * proxy (which strips Google's XSSI guard) and cached for the page session.
  *

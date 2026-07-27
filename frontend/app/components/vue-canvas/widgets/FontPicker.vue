@@ -1,9 +1,10 @@
 <script setup lang="ts">
 /**
- * FontPicker — searchable font chooser for the Font Playground. Trigger button
- * opens an inline panel (clip-safe inside a node) listing the curated Featured
- * variable fonts plus the full Google catalog (lazy-loaded on first open and
- * filtered as you type). Emits a `pick` the widget turns into playground state.
+ * FontPicker — searchable font chooser for the in-node type widgets (Text Mask,
+ * Text on Path). Trigger button opens an inline panel (clip-safe inside a node)
+ * listing the curated Featured variable fonts plus the full Google catalog
+ * (lazy-loaded on first open and filtered as you type). Emits a `pick` the
+ * widget turns into its own state.
  */
 import { VARIABLE_FONTS, type VariableFont } from '~/data/variable-fonts'
 import { loadGoogleCatalog, type GoogleFont } from '~/data/google-fonts'

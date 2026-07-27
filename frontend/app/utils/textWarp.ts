@@ -1,5 +1,6 @@
 /**
- * textWarp — pure geometry for the Font Playground's 3D text transforms.
+ * textWarp — pure geometry for the Text Mask widget's 3D text transforms.
+ * (Originally written for the Font Playground, retired 2026-07-27.)
  *
  * One source of truth for both the live preview and the baked PNG:
  *  - the preview applies `cssTransform()` (the browser does the projection), and

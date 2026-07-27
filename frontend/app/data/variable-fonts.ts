@@ -1,15 +1,16 @@
 /**
- * Variable-font catalog for the Font Playground widget. Each entry is a Google
- * Font with variable axes. The widget loads `cssUrl` (a Google Fonts CSS2 link
- * requesting the FULL axis ranges so the variable file is served), then varies
- * it live via `font-variation-settings`.
+ * Variable-font catalog. Each entry is a Google Font with variable axes. The
+ * CSS consumers (Text on Path, Text Mask, the Compositor's text layers, the
+ * template renderer) load `cssUrl` — a Google Fonts CSS2 link requesting the
+ * FULL axis ranges so the variable file is served — then vary it live via
+ * `font-variation-settings`. Vector Type Studio instead loads the `ttfPath`
+ * outlines (see below); it is this list's font menu.
  *
  * Axis tags follow the OpenType spec: wght (weight), wdth (width), slnt
  * (slant), opsz (optical size), plus font-specific ones (SOFT, WONK, CASL,
  * MONO, GRAD). Each axis declares its slider range + default.
  *
- * This is a LOCAL-render node — no AI, no cost. The widget rasterizes the
- * chosen font to a PNG client-side and the RenderType node loads it.
+ * Every consumer is a LOCAL render — no AI, no cost.
  *
  * `ttfPath` points at the same family's VARIABLE TTF inside the google/fonts
  * repo, for Vector Type Studio (which needs real outlines, not CSS). It is a
@@ -43,7 +44,7 @@ export interface VariableFont {
    *  `ofl/inter/Inter[opsz,wght].ttf`. Curated — never derived. */
   ttfPath: string
   axes: FontAxis[]
-  defaultSize: number  // px at the playground's reference canvas width
+  defaultSize: number  // px at the reference canvas width
   category: 'sans' | 'serif' | 'display' | 'mono'
 }
 
@@ -68,7 +69,7 @@ export const VARIABLE_FONTS: VariableFont[] = [
     label: 'Roboto Flex',
     family: 'Roboto Flex',
     cssUrl: 'https://fonts.googleapis.com/css2?family=Roboto+Flex:opsz,slnt,wdth,wght@8..144,-10..0,25..151,100..1000&display=swap',
-    // 13 axes in the file; the playground curates the four legible ones. Vector
+    // 13 axes in the file; the CSS consumers curate the four legible ones. Vector
     // Type reads the full set off the parsed font, not from here.
     ttfPath: 'ofl/robotoflex/RobotoFlex[GRAD,XOPQ,XTRA,YOPQ,YTAS,YTDE,YTFI,YTLC,YTUC,opsz,slnt,wdth,wght].ttf',
     axes: [

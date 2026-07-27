@@ -489,17 +489,8 @@ function formatLabel(name: string): string {
         @update:model-value="emit('update:modelValue', $event)"
       />
     </template>
-    <!-- Variable-font playground: drives RenderType. Owns its full UI and
-         produces a JSON state blob (font, axes, colors, uploaded filename). -->
-    <template v-else-if="widgetDef.sailor_widget === 'font_playground'">
-      <VueCanvasWidgetsWidgetFontPlayground
-        :model-value="modelValue"
-        :label="formatLabel(widgetDef.name)"
-        @update:model-value="emit('update:modelValue', $event)"
-      />
-    </template>
     <!-- Text Mask: renders text as a B&W clipping mask. Same font infra
-         as Font Playground, always white-on-black (or inverted). -->
+         as Text on Path, always white-on-black (or inverted). -->
     <template v-else-if="widgetDef.sailor_widget === 'text_mask'">
       <VueCanvasWidgetsWidgetTextMask
         :model-value="modelValue"

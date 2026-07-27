@@ -308,7 +308,6 @@ export const TOOLBOX_SECTIONS: ToolboxSection[] = [
     domain: 'text',
     title: 'Typography',
     items: [
-      { nodeType: 'RenderType',      label: 'Font Playground', description: 'Render a word in a real variable font — drag weight, width, slant and other axes live. Local render, no AI, no cost.', icon: TypeIcon },
       { nodeType: 'TextOnPath',      label: 'Text on Path',    description: 'Render text along an arc, circle, wave, or curve — each char follows the path. Local render, no cost.', icon: Spline },
       { nodeType: 'TextMask',        label: 'Text Mask',       description: 'Use text as a clipping mask — type shows through to the image behind it. Local render, no cost.', icon: TypeIcon },
     ],

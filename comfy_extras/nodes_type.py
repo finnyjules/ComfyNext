@@ -1,7 +1,15 @@
-"""RenderType — local typography render node.
+"""RenderType — local typography render node. RETIRED 2026-07-27.
 
-The "Font Playground" widget (frontend) rasterizes a variable-font word to a
-PNG client-side and uploads it via /upload/image. This node just loads that
+Superseded by the Vector Type Studio (`VectorType`), which sets the same
+variable families as real outlines. Its toolbox entry and its frontend widget
+(`WidgetFontPlayground.vue`) are gone, so no new RenderType node can be created.
+The node itself is kept one release so that any workflow saved outside the
+projects store still loads and still resolves its already-baked PNG; it can be
+deleted after that. Zero RenderType nodes were found across the 380 saved
+project documents on disk when the widget was retired.
+
+The (now-deleted) "Font Playground" widget rasterized a variable-font word to a
+PNG client-side and uploaded it via /upload/image. This node just loads that
 PNG back as an IMAGE (+ MASK from its alpha) so the type flows into the graph
 like any other image — no AI, no cost.
 

@@ -2,8 +2,9 @@
 /**
  * WidgetTextMask — renders text as a black & white mask.
  *
- * Simplified version of WidgetFontPlayground: same font selection and axis
- * controls, but always renders white text on black background. The output
+ * Same font selection and axis controls as the other in-node type widgets
+ * (it grew out of the retired Font Playground and still shares its FontPicker
+ * and textWarp helpers), but always renders white text on black. The output
  * is a mask that can clip an upstream image.
  *
  * State: { fontId, fontSource, googleFamily, googleAxes, googleWeights,
@@ -171,7 +172,7 @@ const previewStyle = computed(() => ({
   transformOrigin: 'center',
 }))
 
-// ── Bake (simplified from Font Playground — always B&W) ─────────────────────
+// ── Bake (always B&W) ───────────────────────────────────────────────────────
 
 const SCALE = 2
 const PAD = 0.25
