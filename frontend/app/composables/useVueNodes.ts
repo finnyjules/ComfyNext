@@ -3,6 +3,7 @@ import { assembleWorkflowLinks, repairInvalidNodeIds, seedHasControlWidget } fro
 import { schemaOutputsFromInfo, syncNodeOutputsWithSchema } from '~/utils/syncNodeOutputs'
 import { ensureVarsInput } from '~/lib/collection/varsInput'
 import { stashTakesIntoProperties, restoreTakesFromProperties } from '~/lib/canvas/persistTakes'
+import { stashCapsuleIntoProperties, restoreCapsuleFromProperties } from '~/lib/canvas/persistCapsule'
 import { migrateKineticWorkflow } from '~/lib/vectortype/migrateKinetic'
 
 // LiteGraph workflow format
@@ -476,6 +477,11 @@ export function useVueNodes(opts: { groupsBridge?: GroupsBridge; annotationsBrid
         previewData.takes = stashedTakes.takes
         previewData.activeTakeId = stashedTakes.activeTakeId
       }
+      // Rehydrate the capsule's resting state (collapsed / hasRun). Same stash
+      // pattern; deliberately carries no `running` / `runningSince` — see
+      // persistCapsule.ts. Spread as its own object so a future field added to
+      // the stash can never leak into previewData's shape.
+      const stashedCapsule = restoreCapsuleFromProperties(lgNode.properties as any) ?? {}
 
       return {
         id: String(lgNode.id),
@@ -500,6 +506,7 @@ export function useVueNodes(opts: { groupsBridge?: GroupsBridge; annotationsBrid
           widgetDefs: getWidgetDefs(lgNode.type),
           properties: lgNode.properties || {},
           ...previewData,
+          ...stashedCapsule,
           mode: lgNode.mode ?? 0,
           color: lgNode.color,
           bgcolor: lgNode.bgcolor,
@@ -563,6 +570,12 @@ export function useVueNodes(opts: { groupsBridge?: GroupsBridge; annotationsBrid
       // curated field mapping below would otherwise drop them on every save,
       // wiping filmstrips on reload. (Restored in convertFromLiteGraph.)
       properties = stashTakesIntoProperties(d, properties)
+      // Capsule resting state: the spec says the collapsed flag persists with
+      // the project, and the curated field mapping below drops anything not
+      // stashed — so without this every capsule reverted to a full card on
+      // reload. `running` / `runningSince` are excluded on purpose; a saved
+      // wall-clock start stamp reloads as a counter that ticks forever.
+      properties = stashCapsuleIntoProperties(d, properties)
       return {
         id: Number(n.id),
         type: d.nodeType,
