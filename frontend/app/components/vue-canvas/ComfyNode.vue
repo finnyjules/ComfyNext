@@ -283,7 +283,11 @@ const hasHeaderIcon = computed(() =>
 // given the same width as the card it stands in for, so expanding changes
 // height only. That is also why the header can stay put — nothing moves
 // horizontally at any point in the transition.
-const CAPSULE_H = 44
+// The height the card grows FROM. Captured off the real capsule at the moment
+// it is dismissed rather than hardcoded — a capsule with a read-out and one
+// without are different heights, and hardcoding meant the grow started from the
+// wrong place for one of them.
+let lastCapsuleH = 44
 
 function beginGrow(node: HTMLElement, from: number, to: number) {
   node.style.overflow = 'hidden'
@@ -298,15 +302,15 @@ function onUnfoldEnter(el: Element) {
   // canvas viewport's zoom, which would make the target height wrong on any
   // canvas not at 100%.
   const full = node.offsetHeight
-  if (full <= CAPSULE_H) return
-  beginGrow(node, CAPSULE_H, full)
+  if (full <= lastCapsuleH) return
+  beginGrow(node, lastCapsuleH, full)
 }
 
 function onFoldLeave(el: Element) {
   const node = el as HTMLElement
   const full = node.offsetHeight
-  if (full <= CAPSULE_H) return
-  beginGrow(node, full, CAPSULE_H)
+  if (full <= lastCapsuleH) return
+  beginGrow(node, full, lastCapsuleH)
 }
 
 function clearUnfold(el: Element) {
@@ -363,6 +367,8 @@ function onCapsuleAction(action: CapsuleAction) {
 const pinnedOpen = ref(false)
 
 function onExpandCapsule() {
+  const el = portSyncRoot.value?.querySelector('.node-capsule') as HTMLElement | null
+  if (el) lastCapsuleH = el.offsetHeight
   props.data.collapsed = false
   pinnedOpen.value = true
 }

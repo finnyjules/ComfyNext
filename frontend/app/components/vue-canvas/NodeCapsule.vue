@@ -93,7 +93,11 @@ function onKeydown(e: KeyboardEvent) {
      scanned this file. ComfyNode.vue keeps its own chrome the same way. */
   position: relative;
   display: flex;
-  align-items: center;
+  /* Top, not centre. The tile, title and action share a 26px band that matches
+     the card header's row exactly, and the read-out hangs below it. Centring
+     across both lines instead put the icon and title 5.6px above where the card
+     puts them, so they jumped on every expand. */
+  align-items: flex-start;
   width: var(--capsule-w, 260px);
   gap: 9px;
   padding: 6px 7px;
@@ -151,7 +155,9 @@ function onKeydown(e: KeyboardEvent) {
 .node-capsule__title {
   grid-row: 1;
   font-size: 12.5px;
-  line-height: 1.25;
+  /* 26px so the text centres in the same band as the tile beside it and the
+     card header's title above it. */
+  line-height: 26px;
   color: rgba(255, 255, 255, 0.88);
   overflow: hidden;
   text-overflow: ellipsis;
