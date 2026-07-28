@@ -45,7 +45,7 @@ entry and inheriting the whole control-schema → agent → motion chain.
 
 | # | Source | How the height canvas is produced |
 |---|---|---|
-| 1 | Shader field | `resolveField()` from `app/lib/shaderfill/field.ts` in height mode |
+| 1 | Shader field | `resolveField()` from `app/lib/shaderfill/field.ts` → luminance |
 | 2 | Uploaded / existing image | image → height (see below) |
 | 3 | AI prompt | prompt → colour tile → height (see below) |
 
@@ -93,7 +93,11 @@ feature is bad" rather than "this slider is too high".
 `materialFor` gains a relief step applied **after** the existing per-type construction, so it
 composes with every material type rather than being special-cased per type:
 
-- `relief.source === 'shader'` → `resolveField()` canvas → `CanvasTexture` → `.bumpMap`
+- `relief.source === 'shader'` → `resolveField()` canvas → luminance → `CanvasTexture` → `.bumpMap`
+
+  Note: shader relief reuses the **same luminance transform** as the image path rather than
+  adding a per-effect "height output mode". Every effect gains relief with zero shader work.
+  A true per-effect height channel is a possible later refinement, not a v1 requirement.
 - `relief.source === 'image'` → loaded texture (same `getImageTexture` path as `map`) → `.bumpMap`
 - `normalImage` set → loaded texture → `.normalMap`
 - `.bumpScale = relief.scale`; `invert` flips via a one-line canvas/texture transform
