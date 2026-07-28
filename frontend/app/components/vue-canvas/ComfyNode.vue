@@ -11,6 +11,7 @@ import NodeCapsule from '~/components/vue-canvas/NodeCapsule.vue'
 import { resolveReadout } from '~/lib/canvas/capsuleReadout'
 import { resolveNodeIcon, type NodeIcon } from '~/lib/canvas/nodeIcon'
 import { readoutRuleFor, defaultCollapsed } from '~/lib/canvas/capsuleMeta'
+import type { CapsuleAction, CapsuleState } from '~/lib/canvas/capsuleAction'
 import { LIVE_PREVIEW_NODE_TYPES } from '~/lib/livePreviewNodes'
 import { allowedAspectRatios, allowedDurations, modelSupportsSeed } from '~/lib/videoModelAdapt'
 import { TOOLBOX_NODE_ICONS } from '~/data/toolbox-items'
@@ -258,15 +259,73 @@ const capsuleIcon = computed<NodeIcon>(() => {
   })
 })
 
-const capsuleState = computed<'ready' | 'running' | 'done' | 'failed'>(() => {
+const capsuleState = computed<CapsuleState>(() => {
   if (props.data.error) return 'failed'
   if (props.data.running) return 'running'
   return props.data.hasRun ? 'done' : 'ready'
 })
 
+// The capsule's button reports WHICH action its label promised (see
+// lib/canvas/capsuleAction.ts); this only routes it. Note `run` cannot go
+// through dispatchRun's guard-free twin — dispatchRun returns early while
+// running, which is exactly why the stop button used to do nothing.
+function onCapsuleAction(action: CapsuleAction) {
+  if (action === 'run') { playThisNode(); return }
+  if (action === 'expand') { onExpandCapsule(); return }
+  // Interrupt. The real implementation is stopVueWorkflow() in the layout —
+  // the same one the canvas toolbar's stop button calls — so this dispatches
+  // to it rather than growing a second /interrupt caller. It is queue-wide,
+  // not node-scoped, which matches what the toolbar button already does.
+  window.dispatchEvent(new CustomEvent('sailor:stopRun', { detail: { nodeId: props.id } }))
+}
+
+// --- Expand / re-collapse -------------------------------------------------
+// The spec's interaction model: "a click on the capsule body opens the full
+// card, pinned until you click away". Nothing used to unpin it, so a capsule
+// opened once stayed open forever. `pinnedOpen` holds the card open and arms
+// the click-away listener.
+const pinnedOpen = ref(false)
+
 function onExpandCapsule() {
   props.data.collapsed = false
+  pinnedOpen.value = true
 }
+
+function collapseBack() {
+  pinnedOpen.value = false
+  // Back to the TIER DEFAULT, not a hard `true`. `collapsed` is tri-state:
+  // undefined means "ask the tier", so a node whose default is expanded (not
+  // yet run) correctly stays open when you click away from it, and a node
+  // whose default is a capsule settles back into one.
+  props.data.collapsed = undefined
+}
+
+function onPinnedDocPointer(e: MouseEvent) {
+  const root = portSyncRoot.value
+  if (root && root.contains(e.target as Node)) return
+  // Only a click on the canvas surface counts as "away". A click into a modal
+  // this node opened (Light Table, the inspector, a toolbar) is still working
+  // on this node, and collapsing it out from under the user would be hostile.
+  if (!(e.target as HTMLElement)?.closest?.('.vue-flow')) return
+  collapseBack()
+}
+function onPinnedKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape') collapseBack()
+}
+watch(pinnedOpen, (pinned) => {
+  if (pinned) {
+    document.addEventListener('mousedown', onPinnedDocPointer)
+    document.addEventListener('keydown', onPinnedKeydown)
+  }
+  else {
+    document.removeEventListener('mousedown', onPinnedDocPointer)
+    document.removeEventListener('keydown', onPinnedKeydown)
+  }
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('mousedown', onPinnedDocPointer)
+  document.removeEventListener('keydown', onPinnedKeydown)
+})
 
 // --- Takes (non-destructive variation loop) -------------------------------
 // The strip renders once there's at least one take. Actions mutate props.data
@@ -1314,7 +1373,11 @@ watch(previewImages, (urls) => {
        so the card's opaque background occludes each dot's inner half and the
        ports read as tucked in behind the node — a child can't paint behind its
        own parent's background. The card keeps every bit of its own chrome. -->
-  <div ref="portSyncRoot" class="relative w-fit" :class="{ 'comfy-node-collapsed': isCapsule }">
+  <div
+    ref="portSyncRoot"
+    class="relative w-fit"
+    :class="{ 'comfy-node-collapsed': isCapsule, 'comfy-node-pinned-open': pinnedOpen && !isCapsule }"
+  >
     <VueCanvasNodePort
       v-for="(port, i) in visiblePorts"
       :id="`input-${port.idx}`"
@@ -1348,7 +1411,7 @@ watch(previewImages, (urls) => {
     :state="capsuleState"
     :border-left="borderColorLeft"
     :border-right="borderColorRight"
-    @action="playThisNode"
+    @action="onCapsuleAction"
     @expand="onExpandCapsule"
   />
   <div

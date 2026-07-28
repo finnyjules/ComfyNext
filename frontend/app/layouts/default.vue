@@ -1343,6 +1343,7 @@ onMounted(() => {
   window.addEventListener('sailor:openActions', handleOpenActions)
   window.addEventListener('sailor:createRef', onCreateRef)
   window.addEventListener('sailor:markReady', handleMarkReady)
+  window.addEventListener('sailor:stopRun', handleStopRun)
   runEstimateTimer = setInterval(updateRunEstimate, 2000)
   // Escape hatch: force-reload the embedded ComfyUI canvas from the console
   // (`__reloadCanvas()`) when its node schema goes stale after a backend change.
@@ -1359,9 +1360,18 @@ onBeforeUnmount(() => {
   window.removeEventListener('sailor:openActions', handleOpenActions)
   window.removeEventListener('sailor:createRef', onCreateRef)
   window.removeEventListener('sailor:markReady', handleMarkReady)
+  window.removeEventListener('sailor:stopRun', handleStopRun)
   if (runEstimateTimer) clearInterval(runEstimateTimer)
   stopHealthPoll()
 })
+
+// A node asked to stop (the running capsule's coral square). Routed here
+// rather than reimplemented on the node, because interrupting is a queue-wide
+// operation and this is where the one implementation lives — the toolbar stop
+// button calls the same function.
+function handleStopRun() {
+  stopVueWorkflow()
+}
 
 // Stop/interrupt the current ComfyUI execution and clear the queue
 async function stopVueWorkflow() {

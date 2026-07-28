@@ -7773,8 +7773,15 @@ defineExpose({
 /* A capsule that has just expanded must sit above its neighbours, or the card
    it grew into is clipped by whatever is drawn after it. There is no tracked
    hover state on the canvas (hoverNodeIds is the agent proposal highlight, not
-   the mouse), so this is done in CSS. */
-.vue-flow__node:has(.node-capsule:hover) {
+   the mouse), so this is done in CSS.
+   The `:has(.node-capsule:hover)` half only covers the moment BEFORE the
+   click: the instant the card expands, .node-capsule is gone from the subtree
+   and the selector stops matching — which is precisely when the raise is
+   needed. `.comfy-node-pinned-open` is the class ComfyNode puts on its root
+   for as long as an expanded card is pinned, so the second half carries it
+   through the state the comment is actually about. */
+.vue-flow__node:has(.node-capsule:hover),
+.vue-flow__node:has(.comfy-node-pinned-open) {
   z-index: 20 !important;
 }
 

@@ -2,19 +2,20 @@
 import { computed } from 'vue'
 import { Play, Square, RotateCw, AlertCircle } from 'lucide-vue-next'
 import type { NodeIcon } from '~/lib/canvas/nodeIcon'
+import { CAPSULE_ACTIONS, type CapsuleState, type CapsuleAction } from '~/lib/canvas/capsuleAction'
 
 const props = defineProps<{
   title: string
   readout: string | null
   icon: NodeIcon
-  state: 'ready' | 'running' | 'done' | 'failed'
+  state: CapsuleState
   /** Input type colour — left end of the running sweep gradient. */
   borderLeft: string
   /** Output type colour — right end of the running sweep gradient. */
   borderRight: string
 }>()
 
-const emit = defineEmits<{ action: []; expand: [] }>()
+const emit = defineEmits<{ action: [CapsuleAction]; expand: [] }>()
 
 const actionIcon = computed(() => {
   if (props.state === 'running') return Square
@@ -23,12 +24,19 @@ const actionIcon = computed(() => {
   return Play
 })
 
-const actionLabel = computed(() => {
-  if (props.state === 'running') return 'Stop'
-  if (props.state === 'failed') return 'Show the error'
-  if (props.state === 'done') return 'Run again'
-  return 'Run'
-})
+// Label AND behaviour come from the same table, so the button can never again
+// promise one thing and dispatch another.
+const actionLabel = computed(() => CAPSULE_ACTIONS[props.state].label)
+function onAction() { emit('action', CAPSULE_ACTIONS[props.state].action) }
+
+// The capsule is the ONLY way to open a collapsed node, so a mouse-only click
+// handler makes those nodes unreachable from the keyboard entirely. Space is
+// prevented because it scrolls the canvas otherwise.
+function onKeydown(e: KeyboardEvent) {
+  if (e.key !== 'Enter' && e.key !== ' ') return
+  e.preventDefault()
+  emit('expand')
+}
 </script>
 
 <template>
@@ -39,7 +47,11 @@ const actionLabel = computed(() => {
       'node-capsule--failed': state === 'failed',
     }"
     :style="{ '--border-left': borderLeft, '--border-right': borderRight }"
+    role="button"
+    tabindex="0"
+    :aria-label="`Open ${title}`"
     @click="emit('expand')"
+    @keydown="onKeydown"
   >
     <span v-if="icon" class="node-capsule__tile">
       <img v-if="icon.kind === 'url'" :src="icon.value" alt="">
@@ -56,7 +68,8 @@ const actionLabel = computed(() => {
       class="node-capsule__action"
       :title="actionLabel"
       :aria-label="actionLabel"
-      @click.stop="emit('action')"
+      @click.stop="onAction"
+      @keydown.stop
     >
       <component :is="actionIcon" :stroke-width="1.9" />
     </button>
