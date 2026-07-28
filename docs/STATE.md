@@ -13,7 +13,7 @@ Legend: **bake** = render/export path · **motion** = animatable · **inspector*
 | Surface | bake | motion | inspector | agent | engine LOC |
 |---|---|---|---|---|---|
 | Space Type | ✅ + clip bake | ✅ timeline clip | ✅ | ✅ descriptor | 11,202 |
-| Vector Type Studio | ✅ PNG + SVG export | ✅ full incl. stagger + preset gallery | ✅ | ✅ descriptor (unverified live) | — |
+| Vector Type Studio | ✅ PNG + SVG export (9 fill types, 6 as real vector) | ✅ full incl. stagger + preset gallery | ✅ | ✅ descriptor (unverified live) | — |
 | Scene3D Studio | ✅ 3-pass + mp4 | ✅ own timeline | ✅ | ❌ | 4,258 |
 | Compositor / Frame | ✅ | ✅ motion clips | ✅ | ✅ commands | 1,667 (+1,041 motion) |
 | Timeline (NLE) | ✅ webm/mp4 + server | ✅ native | ✅ | ❌ | shared/timeline |
@@ -111,6 +111,16 @@ importance instead of every node carrying equal weight.
 Modules: `lib/canvas/{elapsed,capsuleReadout,capsuleMeta,nodeIcon,persistCapsule}.ts`,
 `components/vue-canvas/NodeCapsule.vue`. 5 unit specs + 2 Playwright specs.
 
+**Vector Type — fills — LANDED 2026-07-28** (commits `0cdc83e5a`..`29a308a94`, 10 tasks; `docs/superpowers/plans/2026-07-27-vector-type-fills.md`). The studio's flat `#rrggbb` becomes the product's full `Paint` vocabulary — all nine `FILL_TYPES` (solid, gradient, ombre, grid, noise, checkerboard, stripes, qr, shader), reusing `lib/spacetype/fillTile.ts` and `lib/compositor/paint.ts` rather than a second model. All nine proven end-to-end (canvas, PNG bake, SVG through the real Export button). The 2D paint resolver moved out of `useCompositorLayers` into `lib/paint/resolve.ts` so a second studio could use it.
+
+**Three fill anchors, not two.** Space Type has `object | frame`; type needed the middle term. `glyph` gives every letter its own ramp (all ≈ midpoint), `word` spans the run (235→22 red across six letters), `frame` pins to the canvas (183→73). Under motion a letter's colour is byte-identical at t=0 and t=1 under `glyph` and changes completely under `word`/`frame` — the fill rides the letter, or the letter slides across it.
+
+**Six of nine export as genuine vector**, and the product says so. Solid and both gradient forms emit real `<linearGradient>`/`<radialGradient>`; grid, stripes, checkerboard and qr emit real `<pattern>` geometry — every one at **0.0000%** against the canvas, with broken controls diffing 95–100%. Ombre, noise and shader cannot be vector (per-pixel dithers and a WebGL fragment render have no geometry to recover) and embed an honest raster. `exportTier(paint)` derives the tier by calling **the same function the exporter calls**, so the UI claim cannot drift from the bytes — verified 9/9 by clicking Export and inspecting the file.
+
+Findings worth keeping. An untransformed wrapper `<g>` does **not** pin an SVG paint server — `fill` is inherited; the inverse `gradientTransform` is what cancels the glyph's own transform (the plan said otherwise and a pixel diff disproved it). `objectBoundingBox` needs aspect correction at oblique angles (46.3% disagreement, exact at 0°/90°). Angled stripes tile exactly, because the canvas's per-pixel dot product is an orthonormal basis change. And raster embed scale must be **kind-derived** — a dither at 2× measured 82–91% different, because its raster grid *is* the artwork.
+
+Open: the live Space Type 3D render could not be verified in the browser pane (scene builds, no GL error, readback black — believed environmental, not claimed working). No non-Chrome renderer was checked. `useVectorSvg.ts` (the Compositor's own SVG writer) still collapses rich fills to a flat colour silently — the anti-pattern this work corrected in Vector Type, still live there.
+
 ## Agent layer
 
 Loop shape is right (perceive → plan → invertible commands → ghost preview → Keep/Dismiss) plus visual self-review and Direction Loop. **Reach is the gap:** 4 agent surfaces (canvas, compositor, smartLayout, texture) vs ~22 creative surfaces; 3 of 8 studios expose descriptors, plus a 4th (Vector Type) wired but with its agent tuner unverified live. LLM tiers: haiku→patch / sonnet→plan / opus→campaign; Fable for style profiles.
@@ -125,6 +135,8 @@ Loop shape is right (perceive → plan → invertible commands → ghost preview
 - **Migrated KineticType nodes lost backend execution.** The retired node was a real ComfyUI node (IMAGE/MASK outputs); Vector Type Studio is frontend-only. Graphs that piped kinetic frames into a downstream backend node lose that input at Run time — baked frames and timeline playback are unaffected. Needs a release note. The migrated MASK output wire also dangles unconnected on these nodes.
 - **No fallback if `google/fonts` renames a path upstream** for Vector Type Studio's variable-TTF proxy — the family just fails to load. The design's "static cut, axes disabled and labelled" mitigation was never implemented.
 - **No SVG-consuming node exists.** Vector Type's SVG export only leaves the product by download.
+- **`useVectorSvg.ts` still degrades silently.** The Compositor's SVG writer collapses every rich fill to a flat representative colour via `paintPrimaryColor` and says nothing — the exact anti-pattern Vector Type's export-tier declaration was built to avoid. Same fix would port.
+- **Space Type's live 3D render is unverified** after the `fillTileBox` rounding change. Its fill textures provably never route through that function, and `paintTileBox` (its only exposure) is verified correct — but the on-screen 3D readback could not be captured in the browser pane.
 - **`MotionClipInspector`'s timeline path is unverified** for the new preset capability gating — checked at function level only, never driven through the live timeline UI.
 - **Gallery cost is unmeasured on a visible window.** 11 outline thumbnails ran 12–16 ms/tick in a hidden pane, which is why `VectorTypeThumb` is used for the axis section only and `PresetThumb` elsewhere.
 - **`lib/gsap-kinetic.ts` and `kinetic-presets.ts`'s `build()` closures are orphaned** by the KineticType retirement (the preset catalog itself is still live, read by the Compositor for metadata) — an uncompleted cleanup.
