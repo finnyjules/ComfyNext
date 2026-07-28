@@ -14,7 +14,7 @@ Legend: **bake** = render/export path · **motion** = animatable · **inspector*
 |---|---|---|---|---|---|
 | Space Type | ✅ + clip bake | ✅ timeline clip | ✅ | ✅ descriptor | 11,202 |
 | Vector Type Studio | ✅ PNG + SVG export (9 fill types, 6 as real vector) | ✅ full incl. stagger + preset gallery | ✅ | ✅ descriptor (unverified live) | — |
-| Scene3D Studio | ✅ 3-pass + mp4 | ✅ own timeline | ✅ | ❌ | 4,258 |
+| Scene3D Studio | ✅ 3-pass + mp4 | ✅ own timeline | ✅ | ❌ | 5,095 |
 | Compositor / Frame | ✅ | ✅ motion clips | ✅ | ✅ commands | 1,667 (+1,041 motion) |
 | Timeline (NLE) | ✅ webm/mp4 + server | ✅ native | ✅ | ❌ | shared/timeline |
 | Gradient Studio | ✅ | ✅ 30 targets, path-based | ✅ (hand-written) | ✅ descriptor | 2,620 |
@@ -87,6 +87,33 @@ Open, not softened: a migrated KineticType node no longer executes on the ComfyU
 Three things worth remembering from it. Putting blur into the *shared* engine tables silently added three un-renderable tiles to the **Compositor's** picker — fixed by making the catalog declare what each preset requires, derived by probing what it actually returns, which also caught a fourth un-gated consumer in the timeline's clip inspector. Canvas filter radius is in **device px and ignores the CTM**, so it needs a `pixelRatio` multiply or the node card blurs ~5× harder than the bake. And SVG `stdDeviation` **equals** canvas blur radius — the CSS spec defines the parameter as the standard deviation — verified at RMS 0.000 against a σ-halved control that diffs 12.55%.
 
 Open: `MotionClipInspector`'s timeline path and the mask-through-the-real-SVG-button case were verified at function level only, never through the live button. Gallery cost is unmeasured on a visible window (11 outline tiles ran 12–16 ms/tick headless, which is why outline thumbnails are axis-section-only).
+
+## Scene3D — surface relief (landed 2026-07-28)
+
+Scene3D materials had exactly one texture slot, so a brick photo on a cube read as a
+sticker. Three producers — a procedural shader effect, an uploaded image, and an AI
+tile — now funnel through **one grayscale height field** bound to THREE's `bumpMap`,
+which derives the perturbed normal in the fragment shader. No Sobel pass, no
+normalisation, no tangent handling. Controls: **Depth · Contrast · Tiling**, plus a
+separate `normalImage` slot for real baked tangent-space normal maps. Also landed: a
+**Phong** material type, and film grain as the first of the stylised post passes.
+
+**The one thing to know: bump renders the height field's *local gradient*, not its
+range.** Every failure in this feature traced to that. Measured across all 63 catalog
+effects, the original default scored 5.42 against a catalog median of 6.0 and rendered
+identically to no relief; it was swapped for one at 36.8. A flatness guard now warns
+below 8 rather than silently doing nothing.
+
+Two design errors worth remembering. The AI path ran its tile through a **depth** model
+to dodge baked-in lighting — correct diagnosis, wrong tool, because depth reports scene
+*distance* and a flat material sample is all one distance (gradient 3.3, invisible). It
+now uses the colour tile the route already generated and was throwing away, which also
+halved the cost per generation. And `contrast` was wired to the rebuild key alongside
+`invert` — correct for a toggle, wrong for a *slider*, costing 51 material rebuilds per
+drag until the final review caught it.
+
+Open: the paid AI generation path has never been run live; Space Type shares
+`PostSettings` and now carries pass fields its own UI does not expose.
 
 ## Canvas — the node capsule (landed 2026-07-27)
 
