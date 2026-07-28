@@ -223,6 +223,79 @@ export function hexBytes(hex: string): [number, number, number] {
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
 }
 
+// ── The patterned fills' shared cell maths ──────────────────────────────────
+//
+// `grid`, `checkerboard`, `stripes` and `qr` are all "chop the box into square
+// cells and colour some of them `b`". Everything below states ONE of the rules
+// that decides which, and every renderer of these four fills calls them rather
+// than spelling the arithmetic out again:
+//
+//   - `fillTileBox` (this file)          — the CPU tile the Compositor and Vector
+//                                           Type's canvas paint with
+//   - `fillTileCanvas` (this file)       — the square swatch tile
+//   - `paintToVectorPaint` (lib/paint/toVector) — the `<pattern>` the SVG export
+//                                           writes, which must be the SAME
+//                                           geometry as the pixels, not a second
+//                                           derivation of it
+//
+// That last consumer is why these are functions at all. A mirrored renderer
+// drifts (see the warning at `lib/texturefx/fills.ts:22`), and pattern drift is
+// invisible: both surfaces still show a checkerboard.
+
+/**
+ * The cell edge of a patterned fill, in whatever units `boxW` is given in —
+ * tile pixels for the CPU tiles, document units for the SVG export.
+ *
+ * SQUARE cells: the same edge is used on both axes, so a pattern never
+ * stretches on a non-square shape.
+ *
+ * Deliberately NOT rounded to whole pixels. `fillTileBox` used to round, which
+ * made a fill's cell size depend on the RASTER RESOLUTION its tile happened to
+ * be built at: a 1× card and a 2× bake of the same shape put their cell
+ * boundaries at different fractions of the box (up to half a cell of drift by
+ * the far edge), and the density control delivered `round(W/d)` cells rather
+ * than the `d` it promises. `fillTileCanvas` below and the THREE textures in
+ * `fills.ts` never rounded — this is the odd one out being brought into line,
+ * which is also what makes a resolution-independent vector export able to match
+ * the canvas at all.
+ */
+export function fillPatternCell(boxW: number, density: number): number {
+  const d = Math.max(1, Math.round(Number.isFinite(density) ? density : 1))
+  const w = Number.isFinite(boxW) && boxW > 0 ? boxW : 0
+  return Math.max(2, w / d)
+}
+
+/** Checkerboard: cell `(cx, cy)` takes colour `b` on the odd diagonals, so
+ *  `(0, 0)` is `a`. */
+export function checkerCellIsB(cx: number, cy: number): boolean {
+  return (cx + cy) % 2 === 1
+}
+
+/** Stripes: band `k` (the cell index along the stripe direction) takes colour
+ *  `b` when odd. Written for a SIGNED `k` because an SVG `<pattern>` tiles into
+ *  negative band indices where the canvas — which only ever samples pixels
+ *  inside the box — does not. `-1` is odd, and `-1 % 2` is `-1` in JS, so the
+ *  `!== 0` test (rather than `=== 1`) is load-bearing. */
+export function stripeBandIsB(k: number): boolean {
+  return k % 2 !== 0
+}
+
+/** QR: a deterministic per-CELL hash, so the "code" is stable across renders and
+ *  across surfaces. `> 0.45` makes it slightly denser than half. */
+export function qrCellIsB(cx: number, cy: number): boolean {
+  const v = Math.sin(cx * 12.9898 + cy * 78.233 + cx * cy * 3.71) * 43758.5453
+  return (v - Math.floor(v)) > 0.45
+}
+
+/** Grid: the border line's width for a `cell`-wide cell, in the same units.
+ *  8 % of the cell, with a hairline floor of one unit so a dense grid still has
+ *  visible lines. (The floor is the one part of this that is not resolution
+ *  independent — at 2× it is half a logical pixel — but it only bites on cells
+ *  under 12.5 units, where the line is sub-pixel either way.) */
+export function gridLineWidth(cell: number): number {
+  return Math.max(1, cell * 0.08)
+}
+
 /** Ombre: a GRAINY / pointillist A→B fade at `angle` degrees — each pixel is colB with probability
  *  = its position along the gradient (else colA), so the two colours mix as scattered dots whose
  *  density shifts across the fade (solid A → grain → solid B). Deterministic hash for stable dots. */
@@ -281,14 +354,18 @@ export function fillTileCanvas(fillIn: Fill, size = 128): HTMLCanvasElement {
     return c
   }
   const colA = hexBytes(fill.a), colB = hexBytes(fill.b), d = Math.max(2, Math.round(fill.density))
+  // The swatch keeps its own `max(2, …)` density floor (which predates the box
+  // tile's `max(1, …)`), but WHICH cell is `b` comes from the shared predicates
+  // above — that rule, not the cell size, is what the export has to reproduce.
+  const step = size / d
   const picker: (px: number, py: number) => boolean =
-    fill.type === 'checkerboard' ? (px, py) => (Math.floor(px * d / size) + Math.floor(py * d / size)) % 2 === 1
+    fill.type === 'checkerboard' ? (px, py) => checkerCellIsB(Math.floor(px / step), Math.floor(py / step))
     : fill.type === 'stripes' ? (() => {
         const rad = (fill.angle * Math.PI) / 180, dx = Math.cos(rad), dy = Math.sin(rad)
-        return (px: number, py: number) => Math.floor((px * dx + py * dy) / (size / d)) % 2 !== 0
+        return (px: number, py: number) => stripeBandIsB(Math.floor((px * dx + py * dy) / step))
       })()
     : fill.type === 'noise' ? (px, py) => { const h = Math.sin(px * 12.9898 + py * 78.233) * 43758.5453; return (h - Math.floor(h)) >= 0.5 }
-    : (px, py) => { const cx = Math.floor(px * d / size), cy = Math.floor(py * d / size); const v = Math.sin(cx * 12.9898 + cy * 78.233 + cx * cy * 3.71) * 43758.5453; return (v - Math.floor(v)) > 0.45 }
+    : (px, py) => qrCellIsB(Math.floor(px / step), Math.floor(py / step))
   ctx.putImageData(patternImageData(size, size, colA, colB, picker), 0, 0)
   return c
 }
@@ -320,23 +397,25 @@ export function fillTileBox(fillIn: Fill, w: number, h: number): HTMLCanvasEleme
     ctx.putImageData(patternImageData(W, H, hexBytes(fill.a), hexBytes(fill.b), ombrePicker(W, H, fill.angle)), 0, 0)
     return c
   }
-  const d = Math.max(1, Math.round(fill.density)), cell = Math.max(2, Math.round(W / d))
+  // THE cell edge, and the same call the `<pattern>` emitter makes with the box
+  // in document units — see `fillPatternCell`, including why it no longer rounds.
+  const cell = fillPatternCell(W, fill.density)
   if (fill.type === 'grid') {
     ctx.fillStyle = fill.a; ctx.fillRect(0, 0, W, H)
-    ctx.strokeStyle = fill.b; ctx.lineWidth = Math.max(1, Math.round(cell * 0.08))
+    ctx.strokeStyle = fill.b; ctx.lineWidth = gridLineWidth(cell)
     for (let x = 0; x <= W + cell; x += cell) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke() }
     for (let y = 0; y <= H + cell; y += cell) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke() }
     return c
   }
   const colA = hexBytes(fill.a), colB = hexBytes(fill.b)
   const picker: (px: number, py: number) => boolean =
-    fill.type === 'checkerboard' ? (px, py) => (Math.floor(px / cell) + Math.floor(py / cell)) % 2 === 1
+    fill.type === 'checkerboard' ? (px, py) => checkerCellIsB(Math.floor(px / cell), Math.floor(py / cell))
     : fill.type === 'stripes' ? (() => {
         const rad = (fill.angle * Math.PI) / 180, dx = Math.cos(rad), dy = Math.sin(rad)
-        return (px: number, py: number) => Math.floor((px * dx + py * dy) / cell) % 2 !== 0
+        return (px: number, py: number) => stripeBandIsB(Math.floor((px * dx + py * dy) / cell))
       })()
     : fill.type === 'noise' ? (px, py) => { const v = Math.sin(px * 12.9898 + py * 78.233) * 43758.5453; return (v - Math.floor(v)) >= 0.5 }
-    : (px, py) => { const cx = Math.floor(px / cell), cy = Math.floor(py / cell); const v = Math.sin(cx * 12.9898 + cy * 78.233 + cx * cy * 3.71) * 43758.5453; return (v - Math.floor(v)) > 0.45 }
+    : (px, py) => qrCellIsB(Math.floor(px / cell), Math.floor(py / cell))
   ctx.putImageData(patternImageData(W, H, colA, colB, picker), 0, 0)
   return c
 }

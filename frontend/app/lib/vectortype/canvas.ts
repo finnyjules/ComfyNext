@@ -917,13 +917,21 @@ export function vectorTypeSVG(
   // paint server resolves in the user space of the element actually PAINTED.
   // Measured, not assumed. The inverse matrix is what pins it.
   //
+  // The four PROCEDURAL fills — `grid`, `checkerboard`, `stripes` and `qr` —
+  // export as real `<pattern>` geometry, anchored the same three ways. A pattern
+  // is always `userSpaceOnUse` (a tile sized as a fraction of each shape could
+  // not say "square cells"), so the `glyph` anchor hands over the glyph's own
+  // paint box in document units too — which is why `box` is passed on BOTH arms
+  // below. That box is in the glyph's pre-motion coordinates, the same space the
+  // path data is in, so the pattern rides the letter exactly as the canvas's
+  // per-glyph paint space does.
+  //
   // ── WHAT STILL BRIDGES ──────────────────────────────────────────────────────
-  // `paintToVectorPaint` returns `null` for the seven remaining kinds and this
-  // falls back to the representative colour, exactly as before: `grid`,
-  // `stripes`, `checkerboard` and `qr` become `<pattern>` geometry in TASK 5;
-  // `ombre`, `noise` and `shader` cannot be vector at all and get the declared
-  // raster embed in TASK 6. Task 7 is what makes that degradation visible to the
-  // user rather than silent.
+  // `paintToVectorPaint` returns `null` for the three remaining kinds and this
+  // falls back to the representative colour, exactly as before: `ombre`, `noise`
+  // and `shader` cannot be vector at all — two per-pixel hashes and a fragment
+  // program — and get the declared raster embed in TASK 6. Task 7 is what makes
+  // that degradation visible to the user rather than silent.
   const anchor = vtFillAnchor(frame.config)
   const runRect = anchor === 'glyph'
     ? null
@@ -936,7 +944,11 @@ export function vectorTypeSVG(
       return paintToVectorPaint(fill, { units: 'userSpaceOnUse', box: runRect, elementTransform }) ?? flatFill
     }
     const box = vtGlyphPaintBox(glyph, place, em)
-    return paintToVectorPaint(fill, { units: 'objectBoundingBox', aspect: box.w / box.h }) ?? flatFill
+    return paintToVectorPaint(fill, {
+      units: 'objectBoundingBox',
+      aspect: box.w / box.h,
+      box: paintBoxRect(box),
+    }) ?? flatFill
   }
 
   const svg = outlinesToSVG(frame.outlines, {

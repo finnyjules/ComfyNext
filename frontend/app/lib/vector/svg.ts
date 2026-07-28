@@ -314,10 +314,61 @@ export interface VectorGradient {
   transform?: Affine
 }
 
-export type VectorPaint = string | VectorGradient
+/** One filled rectangle inside a pattern tile, in the TILE's own coordinates
+ *  (origin at the tile's corner). Rectangles are the whole vocabulary on
+ *  purpose: every procedural fill this spine has to express — a grid's rules, a
+ *  checker's squares, a stripe band, a QR cell — is one, and a tile of rects is
+ *  geometry any editor can select, recolour and delete. */
+export interface VectorPatternRect {
+  x: number
+  y: number
+  width: number
+  height: number
+  fill: string
+}
+
+/**
+ * A tiling paint server — a `<pattern>` in `<defs>`, referenced by every shape
+ * that shares its value.
+ *
+ * Always `patternUnits="userSpaceOnUse"`, and the tile always sits at the
+ * pattern space's origin: WHERE the lattice starts is expressed entirely by
+ * `transform`. A pattern's phase is part of what it looks like — two otherwise
+ * identical checkerboards half a cell apart are different pictures — so the
+ * placement cannot be left implicit the way a bounding-box gradient's can, and
+ * `objectBoundingBox` (which would size the tile as a FRACTION of each
+ * referencing shape) cannot say "square cells of edge `c`" at all.
+ *
+ * The coordinates are resolved in the user space of the element actually
+ * PAINTED, exactly as a `userSpaceOnUse` gradient's are — so a `<path>` with a
+ * `transform` drags the pattern along with it, and putting the reference on an
+ * untransformed wrapper `<g>` does NOT change that (`fill` is inherited). A
+ * caller that wants the tiling pinned in document space while the shape moves
+ * over it composes the INVERSE of that shape's own transform into `transform`;
+ * a caller that wants the pattern to RIDE the shape leaves it out. See
+ * `VectorGradient.transform`, which is the same fact measured.
+ */
+export interface VectorPattern {
+  type: 'pattern'
+  /** Tile size in pattern space, before `transform`. */
+  width: number
+  height: number
+  /** Painted full-bleed behind `rects`. Omitted/null → a transparent tile. */
+  background?: string | null
+  rects: VectorPatternRect[]
+  /** Emitted as `patternTransform`: pattern space → the referencing element's
+   *  user space. Omitted when it would be the identity. */
+  transform?: Affine
+}
+
+export type VectorPaint = string | VectorGradient | VectorPattern
 
 export function isVectorGradient(p: VectorPaint | null | undefined): p is VectorGradient {
   return !!p && typeof p === 'object' && (p.type === 'linear' || p.type === 'radial')
+}
+
+export function isVectorPattern(p: VectorPaint | null | undefined): p is VectorPattern {
+  return !!p && typeof p === 'object' && p.type === 'pattern'
 }
 
 /**
@@ -357,10 +408,10 @@ export function blurRadiusToStdDeviation(radius: number): number {
 export interface VectorShape {
   commands: VectorCommand[]
   /**
-   * A CSS colour, or a gradient paint server — which is emitted ONCE in
-   * `<defs>` per distinct value and referenced by `url(#…)`, so forty glyphs
-   * sharing a ramp share one `<linearGradient>`. `null` is an explicit
-   * `fill="none"`; omitted leaves the attribute off entirely.
+   * A CSS colour, or a paint server — a gradient or a tiling pattern — which is
+   * emitted ONCE in `<defs>` per distinct value and referenced by `url(#…)`, so
+   * forty glyphs sharing a ramp share one `<linearGradient>`. `null` is an
+   * explicit `fill="none"`; omitted leaves the attribute off entirely.
    */
   fill?: VectorPaint | null
   stroke?: string | null
@@ -481,6 +532,7 @@ class Defs {
   private readonly blurs = new Map<string, number>()
   private readonly clips = new Map<string, VectorRect>()
   private readonly gradients = new Map<string, VectorGradient>()
+  private readonly patterns = new Map<string, VectorPattern>()
 
   constructor(private readonly precision: number) {}
 
@@ -517,22 +569,39 @@ class Defs {
     return key
   }
 
+  /** Same rule again: the key IS the element's own markup with the id left out,
+   *  so a `<pattern>` is shared by every shape whose tile, placement and
+   *  contents would have been written identically — and by nothing else, because
+   *  a pattern's PHASE is part of the picture. */
+  patternKey(p: VectorPattern): string {
+    const key = this.patternMarkup(p, '')
+    if (!this.patterns.has(key)) this.patterns.set(key, p)
+    return key
+  }
+
   /** Every distinct value, in first-use order — the string the id prefix hashes. */
   signature(): string {
     const base = `${[...this.blurs.keys()].join(',')}|${[...this.clips.keys()].join(',')}`
     // Appended only when there is something to append, so a document with no
     // paint servers hashes EXACTLY as it did before they existed. An id prefix
     // that churns because an unrelated feature was added makes every previously
-    // exported file diff for nothing.
-    return this.gradients.size ? `${base}|${[...this.gradients.keys()].join(',')}` : base
+    // exported file diff for nothing. The `p:` tag keeps a pattern-only document
+    // from hashing as if its patterns were gradients.
+    const g = this.gradients.size ? `|${[...this.gradients.keys()].join(',')}` : ''
+    const p = this.patterns.size ? `|p:${[...this.patterns.keys()].join(',')}` : ''
+    return `${base}${g}${p}`
   }
 
   get empty(): boolean {
-    return this.blurs.size === 0 && this.clips.size === 0 && this.gradients.size === 0
+    return this.blurs.size === 0 && this.clips.size === 0
+      && this.gradients.size === 0 && this.patterns.size === 0
   }
 
-  idFor(prefix: string, kind: 'b' | 'c' | 'g', key: string): string {
-    const keys = kind === 'b' ? this.blurs : kind === 'c' ? this.clips : this.gradients
+  idFor(prefix: string, kind: 'b' | 'c' | 'g' | 'p', key: string): string {
+    const keys = kind === 'b' ? this.blurs
+      : kind === 'c' ? this.clips
+      : kind === 'g' ? this.gradients
+      : this.patterns
     return `${prefix}-${kind}${[...keys.keys()].indexOf(key)}`
   }
 
@@ -580,7 +649,54 @@ class Defs {
       out.push(this.gradientMarkup(g, `${prefix}-g${i}`))
       i++
     }
+    i = 0
+    for (const p of this.patterns.values()) {
+      out.push(this.patternMarkup(p, `${prefix}-p${i}`))
+      i++
+    }
     return out.length ? `<defs>${out.join('')}</defs>` : ''
+  }
+
+  /**
+   * One tiling paint server. `id` is omitted when empty, which is what lets
+   * `patternKey` reuse this as the dedup key — same construction as
+   * `gradientMarkup`.
+   *
+   * `x`/`y` are left at their default 0 and the whole placement rides in
+   * `patternTransform`; see `VectorPattern` for why the tile's phase cannot be
+   * implicit. The background is a full-bleed rect rather than a `fill` on the
+   * `<pattern>` element (which SVG ignores) — and it is real geometry, so a
+   * designer can recolour the ground without touching the figure.
+   */
+  private patternMarkup(p: VectorPattern, id: string): string {
+    const prec = this.precision
+    const n = (v: number) => formatNumber(v, prec)
+    const w = Math.max(0, p.width)
+    const h = Math.max(0, p.height)
+    const bg = p.background
+      ? `<rect${attrs([['width', n(w)], ['height', n(h)], ['fill', p.background]])}/>`
+      : ''
+    const body = (p.rects ?? [])
+      .map(r => `<rect${attrs([
+        ['x', n(r.x)],
+        ['y', n(r.y)],
+        ['width', n(Math.max(0, r.width))],
+        ['height', n(Math.max(0, r.height))],
+        ['fill', r.fill],
+      ])}/>`)
+      .join('')
+    return `<pattern${attrs([
+      ['id', id],
+      ['patternUnits', 'userSpaceOnUse'],
+      ['width', n(w)],
+      ['height', n(h)],
+      // A pattern's placement is sub-pixel-sensitive in a way path data is not:
+      // half a cell of phase error is a visibly different picture, and the
+      // translation component here is a document-space coordinate that can be in
+      // the hundreds. Written at UNIT_PRECISION for the same reason bounding-box
+      // coordinates are.
+      ['patternTransform', p.transform ? `matrix(${p.transform.map(v => formatNumber(v, UNIT_PRECISION)).join(' ')})` : undefined],
+    ])}>${bg}${body}</pattern>`
   }
 
   /**
@@ -693,8 +809,8 @@ class Defs {
  *    the filter first and clips the result — the order `ctx.filter` then
  *    `ctx.clip()` then `fill()` produces.
  *
- * A shape carrying a gradient `fill` registers a paint server in the same
- * `<defs>` and references it FROM THE PATH ITSELF. That is not an inconsistency
+ * A shape carrying a gradient or pattern `fill` registers a paint server in the
+ * same `<defs>` and references it FROM THE PATH ITSELF. That is not an inconsistency
  * with the wrapper above: `clip-path` and `filter` are applied to the element
  * that carries them, so an untransformed wrapper is what holds them still,
  * whereas `fill` is INHERITED and a paint server is resolved in the user space
@@ -725,7 +841,7 @@ export function shapesToSVG(shapes: readonly VectorShape[], doc: SvgDocOptions =
   const defs = new Defs(precision)
   const drawn: Array<{
     pairs: Array<[string, string | number | null | undefined]>
-    gradient: string | null
+    paint: { kind: 'g' | 'p'; key: string } | null
     blur: string | null
     clip: string | null
   }> = []
@@ -734,16 +850,19 @@ export function shapesToSVG(shapes: readonly VectorShape[], doc: SvgDocOptions =
     if (!d) continue
     const extra: Array<[string, string | number | null | undefined]> = []
     for (const [k, v] of Object.entries(s.attrs ?? {})) extra.push([k, v])
-    // A gradient fill registers its value now and carries its KEY in the
-    // attribute; the key becomes a real `url(#…)` in pass 2, once the prefix is
-    // known. Hashing the key rather than the finished url is what stops two
-    // documents with the same geometry but different paint servers — or the
-    // same servers assigned the other way round — from hashing alike and then
-    // colliding when they are pasted into one file.
-    const gradient = isVectorGradient(s.fill) ? defs.gradientKey(s.fill) : null
+    // A paint-server fill — a gradient or a pattern — registers its value now
+    // and carries its KEY in the attribute; the key becomes a real `url(#…)` in
+    // pass 2, once the prefix is known. Hashing the key rather than the finished
+    // url is what stops two documents with the same geometry but different paint
+    // servers — or the same servers assigned the other way round — from hashing
+    // alike and then colliding when they are pasted into one file.
+    const paint: { kind: 'g' | 'p'; key: string } | null =
+      isVectorGradient(s.fill) ? { kind: 'g', key: defs.gradientKey(s.fill) }
+      : isVectorPattern(s.fill) ? { kind: 'p', key: defs.patternKey(s.fill) }
+      : null
     const pairs: Array<[string, string | number | null | undefined]> = [
       ['d', d],
-      ['fill', s.fill === null ? 'none' : gradient ?? (s.fill as string | undefined)],
+      ['fill', s.fill === null ? 'none' : paint?.key ?? (s.fill as string | undefined)],
       ['fill-rule', s.fillRule],
       ['stroke', s.stroke === null ? undefined : s.stroke],
       ['stroke-width', s.strokeWidth === undefined ? undefined : formatNumber(s.strokeWidth, precision)],
@@ -754,7 +873,7 @@ export function shapesToSVG(shapes: readonly VectorShape[], doc: SvgDocOptions =
     const clip = s.clip
     drawn.push({
       pairs,
-      gradient,
+      paint,
       blur: sd >= MIN_STD_DEVIATION ? defs.blurKey(sd) : null,
       clip: clip ? defs.clipKey(clip) : null,
     })
@@ -770,9 +889,9 @@ export function shapesToSVG(shapes: readonly VectorShape[], doc: SvgDocOptions =
   const body: string[] = []
   if (background) body.push(background)
   for (const item of drawn) {
-    if (item.gradient !== null) {
+    if (item.paint !== null) {
       const fill = item.pairs.find(pr => pr[0] === 'fill')
-      if (fill) fill[1] = `url(#${defs.idFor(prefix, 'g', item.gradient)})`
+      if (fill) fill[1] = `url(#${defs.idFor(prefix, item.paint.kind, item.paint.key)})`
     }
     let el = `<path${attrs(item.pairs)}/>`
     if (item.blur !== null || item.clip !== null) {

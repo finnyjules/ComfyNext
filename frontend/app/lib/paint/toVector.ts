@@ -8,13 +8,21 @@
  * product's fill model (Shape Studio is its second consumer) and the mapping is
  * the same for every studio that stores a `Paint`.
  *
- * TIER 1 ONLY. Gradients — `Gradient`'s multi-stop linear/radial form AND
- * `Fill`'s two-colour `a`/`b` + `angle` form, which are the same idea written
- * twice — map exactly onto SVG paint servers, so they come out as real,
- * editable vector. Everything else returns `null` and the caller degrades:
+ * TIERS 1 AND 2. Two families map onto SVG paint servers, so they come out as
+ * real, editable vector:
  *
- *  - `ombre`, `noise`, `shader`  → cannot be vector at all (raster embed, task 6)
- *  - `grid`, `stripes`, `checkerboard`, `qr` → `<pattern>` geometry (task 5)
+ *  - **gradients** — `Gradient`'s multi-stop linear/radial form AND `Fill`'s
+ *    two-colour `a`/`b` + `angle` form, which are the same idea written twice.
+ *  - **procedural patterns** — `grid`, `checkerboard`, `stripes` and `qr`, as
+ *    `<pattern>` tiles of real rectangles. Their geometry is not re-derived
+ *    here: every number comes from the cell maths in `~/lib/spacetype/fillTile`
+ *    that the canvas tile builders themselves call.
+ *
+ * Everything else returns `null` and the caller degrades to a flat colour:
+ *
+ *  - `ombre`, `noise`, `shader` → cannot be vector at all. `ombre` and `noise`
+ *    are PER-PIXEL hashes with no cell structure to draw, and a `shader` is a
+ *    fragment program. They get the declared raster embed in task 6.
  *
  * A `null` here is therefore "not YET, or not EVER" — never "no paint". The
  * caller keeps its flat-colour fallback for those.
@@ -26,11 +34,22 @@ import {
   type VectorGradient,
   type VectorGradientStop,
   type VectorPaint,
+  type VectorPattern,
+  type VectorPatternRect,
   type VectorRect,
+  IDENTITY_AFFINE,
   invertAffine,
+  multiplyAffine,
 } from '~/lib/vector/svg'
 import { type Paint, isFill, isGradient, sortedClampedStops } from '~/lib/compositor/paint'
-import { type Fill } from '~/lib/spacetype/fillTile'
+import {
+  type Fill,
+  checkerCellIsB,
+  fillPatternCell,
+  gridLineWidth,
+  qrCellIsB,
+  stripeBandIsB,
+} from '~/lib/spacetype/fillTile'
 
 export interface VectorPaintOptions {
   /**
@@ -39,7 +58,16 @@ export interface VectorPaintOptions {
    * `box`, i.e. the `word` and `frame` anchors.
    */
   units: 'objectBoundingBox' | 'userSpaceOnUse'
-  /** The box the paint spans, in document units. Required by `userSpaceOnUse`. */
+  /**
+   * The box the paint spans, in document units.
+   *
+   * Required by `userSpaceOnUse`. Also required by EVERY pattern, `units`
+   * notwithstanding: a `<pattern>` is always `userSpaceOnUse` (see
+   * `VectorPattern`), so even the per-shape anchor needs the shape's own box
+   * spelled out in document units rather than implied by SVG's bounding box.
+   * A pattern with no box comes back `null` and stays on the caller's flat
+   * fallback rather than guessing a lattice.
+   */
   box?: VectorRect
   /**
    * The referencing shape's own transform. Under `userSpaceOnUse` the emitted
@@ -91,6 +119,186 @@ function gradientFor(
   }
 }
 
+// ── The procedural patterns ─────────────────────────────────────────────────
+//
+// All four are the same shape of answer: a tile of rectangles, plus the matrix
+// that puts that tile's lattice where the canvas puts its own.
+//
+// THE PLACEMENT. The canvas builds a tile the size of the paint box and draws it
+// ONCE, corner-aligned to the box (`resolveFill`'s `translate(-w/2, -h/2)`
+// against a context centred on the box). So the lattice origin is the box's
+// top-left corner in the space the shape is painted in, and every emitter's
+// transform starts `translate(box.x, box.y)`.
+//
+// Under the `word`/`frame` anchors the caller also hands us the shape's own
+// transform, and the INVERSE of it is composed on the left — the same
+// correction, for the same reason, as a `userSpaceOnUse` gradient's
+// `gradientTransform` (`VectorGradient.transform`; measured, not reasoned
+// about). Under the per-shape anchor there is no transform to cancel: the
+// pattern is MEANT to ride the shape, and the box is already expressed in the
+// shape's own pre-motion coordinates.
+
+/** `translate(x, y)`. */
+function translation(x: number, y: number): Affine {
+  return [1, 0, 0, 1, x, y]
+}
+
+/** `rotate(deg)`, y-down like every space this reaches — so `+angle` turns the
+ *  same way `Math.cos/sin` do in the canvas pickers, which is what makes a
+ *  stripe band's normal `(cos, sin)` on both surfaces. */
+function rotation(deg: number): Affine {
+  const rad = ((Number.isFinite(deg) ? deg : 0) * Math.PI) / 180
+  const c = Math.cos(rad), s = Math.sin(rad)
+  return [c, s, -s, c, 0, 0]
+}
+
+/** The full pattern-space → element-space matrix, or `undefined` for identity. */
+function patternPlacement(box: VectorRect, inverse: Affine | null, extra?: Affine): Affine | undefined {
+  let m: Affine = inverse ?? IDENTITY_AFFINE
+  m = multiplyAffine(m, translation(box.x, box.y))
+  if (extra) m = multiplyAffine(m, extra)
+  return m.every((v, i) => v === IDENTITY_AFFINE[i]) ? undefined : m
+}
+
+/**
+ * `grid` — the cell colour `a` ruled with `b` lines on every cell boundary.
+ *
+ * The canvas strokes lines CENTRED on `x = 0, cell, 2·cell, …`, so a tile whose
+ * origin is a cell boundary has to carry each line in two halves, one at each
+ * edge. **Do not do that.** Measured in Chrome: two abutting half-width rects on
+ * opposite edges of a fractional-sized tile do not rasterise back into one line
+ * — a 9.906-unit tile with 0.5 at each edge came out at 0.73 units of ink
+ * instead of 1, which reads as the whole word being ~10/255 too light. It is a
+ * tiling artefact, invisible as anything but a tint, and it passed every
+ * geometry check.
+ *
+ * So each line is ONE whole rect at the tile's near edge, and the LATTICE is
+ * shifted back by half a line width instead (`gridOffset`) — which puts the same
+ * ink in the same place with nothing straddling a tile seam.
+ */
+function gridTile(fill: Fill, cell: number): { background: string; rects: VectorPatternRect[]; width: number; height: number } {
+  const lw = Math.min(gridLineWidth(cell), cell)
+  return {
+    width: cell,
+    height: cell,
+    background: fill.a,
+    rects: [
+      { x: 0, y: 0, width: lw, height: cell, fill: fill.b },
+      { x: 0, y: 0, width: cell, height: lw, fill: fill.b },
+    ],
+  }
+}
+
+/** The half-line-width the grid lattice is shifted by — see `gridTile`. */
+function gridOffset(cell: number): Affine {
+  const lw = Math.min(gridLineWidth(cell), cell)
+  return translation(-lw / 2, -lw / 2)
+}
+
+/** `checkerboard` — a `2·cell` tile, with `checkerCellIsB` (the canvas picker's
+ *  own rule) deciding which two of the four squares are `b`. */
+function checkerTile(fill: Fill, cell: number): { background: string; rects: VectorPatternRect[]; width: number; height: number } {
+  const rects: VectorPatternRect[] = []
+  for (let cy = 0; cy < 2; cy++) {
+    for (let cx = 0; cx < 2; cx++) {
+      if (checkerCellIsB(cx, cy)) rects.push({ x: cx * cell, y: cy * cell, width: cell, height: cell, fill: fill.b })
+    }
+  }
+  return { width: cell * 2, height: cell * 2, background: fill.a, rects }
+}
+
+/**
+ * `stripes` — bands of width `cell` perpendicular to `(cos θ, sin θ)`.
+ *
+ * The canvas does this with a PER-PIXEL dot product, `floor((x·cos + y·sin) /
+ * cell)`, not with a rotated tile — which is exactly the thing the plan flagged
+ * as maybe-unmatchable. It matches, and the reason it does is that the dot
+ * product is an orthonormal change of basis: in the frame rotated by θ the
+ * predicate depends only on `u`, so a `2·cell` tile carrying one `a` band and
+ * one `b` band, placed by `rotate(θ)`, IS that function. Including where SVG
+ * tiles into NEGATIVE band indices and the canvas never does — `stripeBandIsB`
+ * is written for a signed index so `k = -1` agrees with `k = 1`.
+ *
+ * The tile is square rather than `2·cell × 1`, purely so that a renderer
+ * rasterising it before applying the rotation has a sane aspect to work with.
+ */
+function stripeTile(fill: Fill, cell: number): { background: string; rects: VectorPatternRect[]; width: number; height: number } {
+  const rects: VectorPatternRect[] = []
+  for (let k = 0; k < 2; k++) {
+    if (stripeBandIsB(k)) rects.push({ x: k * cell, y: 0, width: cell, height: cell * 2, fill: fill.b })
+  }
+  return { width: cell * 2, height: cell * 2, background: fill.a, rects }
+}
+
+/**
+ * `qr` — a deterministic per-cell hash, which is NOT periodic, so there is no
+ * small tile to repeat. The tile is the whole box and it is emitted cell by
+ * cell, `qrCellIsB` (again the canvas picker's own rule) deciding each one.
+ *
+ * Horizontally adjacent `b` cells are merged into one rect. That is not a
+ * micro-optimisation: at the top of the density range a per-glyph box is a few
+ * thousand cells, and the run merge roughly halves what a designer has to scroll
+ * past. It cannot change the picture — abutting rects of one colour are the
+ * rect that spans them.
+ */
+function qrTile(fill: Fill, cell: number, box: VectorRect): { background: string; rects: VectorPatternRect[]; width: number; height: number } {
+  const cols = Math.max(1, Math.ceil(box.width / cell))
+  const rows = Math.max(1, Math.ceil(box.height / cell))
+  const rects: VectorPatternRect[] = []
+  for (let cy = 0; cy < rows; cy++) {
+    const y = cy * cell
+    const height = Math.min(cell, box.height - y)
+    let run = -1
+    for (let cx = 0; cx <= cols; cx++) {
+      const on = cx < cols && qrCellIsB(cx, cy)
+      if (on && run < 0) run = cx
+      if (!on && run >= 0) {
+        const x = run * cell
+        rects.push({ x, y, width: Math.min(cx * cell, box.width) - x, height, fill: fill.b })
+        run = -1
+      }
+    }
+  }
+  return { width: box.width, height: box.height, background: fill.a, rects }
+}
+
+/** A patterned `Fill` as a `<pattern>`, or `null` where there is nothing to
+ *  anchor it to (see `VectorPaintOptions.box`) or the kind has no cell
+ *  structure at all. */
+function patternFor(fill: Fill, opts: VectorPaintOptions): VectorPattern | null {
+  const box = opts.box
+  if (!box || !(box.width > 0) || !(box.height > 0)) return null
+  // THE cell edge — `fillTileBox`'s own call, with the box in document units
+  // instead of tile pixels. One definition, two renderers.
+  const cell = fillPatternCell(box.width, fill.density)
+  const inverse = opts.units === 'userSpaceOnUse' && opts.elementTransform
+    ? invertAffine(opts.elementTransform)
+    : null
+  if (fill.type === 'stripes') {
+    return {
+      type: 'pattern',
+      ...stripeTile(fill, cell),
+      ...withTransform(patternPlacement(box, inverse, rotation(fill.angle))),
+    }
+  }
+  if (fill.type === 'grid') {
+    return {
+      type: 'pattern',
+      ...gridTile(fill, cell),
+      ...withTransform(patternPlacement(box, inverse, gridOffset(cell))),
+    }
+  }
+  const tile = fill.type === 'checkerboard' ? checkerTile(fill, cell)
+    : fill.type === 'qr' ? qrTile(fill, cell, box)
+    : null
+  if (!tile) return null
+  return { type: 'pattern', ...tile, ...withTransform(patternPlacement(box, inverse)) }
+}
+
+function withTransform(m: Affine | undefined): { transform?: Affine } {
+  return m ? { transform: m } : {}
+}
+
 /**
  * A `Paint` as something the SVG writer can paint with, or `null` where this
  * paint has no vector form (see the header).
@@ -111,7 +319,7 @@ export function paintToVectorPaint(paint: Paint | undefined, opts: VectorPaintOp
   if (isFill(paint)) {
     if (paint.type === 'solid') return paint.a
     if (paint.type === 'gradient') return gradientFor('linear', paint.angle, fillGradientStops(paint), opts)
-    return null
+    return patternFor(paint, opts)
   }
   return null
 }
@@ -119,7 +327,14 @@ export function paintToVectorPaint(paint: Paint | undefined, opts: VectorPaintOp
 /** Which export tier a paint lands in TODAY — `vector` when
  *  `paintToVectorPaint` can express it, `flat` when the caller still has to
  *  degrade to a representative colour. Task 7 turns the second one into
- *  something the user is told about; this is only the fact, not the wording. */
+ *  something the user is told about; this is only the fact, not the wording.
+ *
+ *  The unit box is not a placeholder to be tidied away: it is what makes this a
+ *  question about the paint's KIND rather than about a particular shape, given
+ *  that a pattern refuses to emit without a box to anchor to. */
 export function paintIsVector(paint: Paint | undefined): boolean {
-  return paintToVectorPaint(paint, { units: 'objectBoundingBox' }) !== null
+  return paintToVectorPaint(paint, {
+    units: 'objectBoundingBox',
+    box: { x: 0, y: 0, width: 1, height: 1 },
+  }) !== null
 }
