@@ -57,7 +57,9 @@ import {
 // too slow for a draw loop (plan trap 5), and the import edge runs the other way
 // so that adding a call from this file would have to create a cycle. What this
 // module knows about `solid` is a `ReadonlyMap` of already-computed geometry a
-// bake or an export awaited and handed in.
+// bake or an export awaited and handed in — plus a synchronous PEEK at the body
+// cache (`./extrudeBodyCache.ts`), which is a `Map.get` in a module that imports
+// no paper at all. Reading is free; computing is somebody else's job.
 import {
   VT_EXTRUDE_FRAME_BUDGET,
   extrudeBudget,
@@ -69,6 +71,9 @@ import {
   type VtExtrudeSpec,
   type VtSolidBodies,
 } from './extrude'
+// The body STORE, not the union. Two functions, both synchronous, neither able
+// to compute — see `./extrudeBodyCache.ts` for why the split exists at all.
+import { peekSolidBody, solidBodyCacheKey } from './extrudeBodyCache'
 import type { VtFont } from './font'
 import type { GlyphOutline, TextOutlines } from './outline'
 import { textOutlines } from './outline'
@@ -88,8 +93,8 @@ import {
   commandsToPath2D,
   glyphCellClipRect,
   glyphTransform as glyphPlacement,
-  outlinesToPath2D,
   outlinesToShapes,
+  placeOutlines,
   shapesToSVG,
 } from './render'
 
@@ -654,10 +659,13 @@ interface VtPaintLayer {
    * The user asked for the copies to be FUSED into one body (`solid: true`).
    *
    * A request, not a capability: this flag alone changes nothing. The union is
-   * async and lives in `./extrudeSolid.ts`; a frame only draws a body if a bake
-   * or an export awaited one and passed it in as `opts.solid`. A live preview of
-   * a `solid: true` extrude therefore draws the un-unioned stack, by design
-   * (plan trap 5) — the two differ only where translucent copies overlap.
+   * async and lives in `./extrudeSolid.ts`; a frame only draws a body if one has
+   * ALREADY been computed — either handed in as `opts.solid` (a bake, an export)
+   * or found in the paper-free body cache by a synchronous peek (the live path,
+   * once the surface's debounced watcher has united this exact geometry). Until
+   * then a `solid: true` extrude draws the un-unioned stack, which is the
+   * fallback plan trap 5 exists to protect — the two differ only where
+   * translucent copies overlap.
    */
   solid: boolean
 }
@@ -854,9 +862,14 @@ export interface VtDrawOptions extends VtBoxOptions {
    * **Nothing on a live path passes this, and nothing on a live path may.** A
    * boolean union of `depth × glyphs` paths is not a 60fps operation — it is not
    * within an order of magnitude of one — so the preview, the node card and the
-   * frame source all omit it and draw the un-unioned stack. A bake or an export
-   * `await`s `prepareSolidExtrudes(font, cfg, t, opts)` (`./extrudeSolid.ts`)
-   * once and hands the result in here.
+   * frame source all omit it. A bake or an export `await`s
+   * `prepareSolidExtrudes(font, cfg, t, opts)` (`./extrudeSolid.ts`) once and
+   * hands the result in here.
+   *
+   * A live path that wants a body **peeks the cache instead** (see `solidBody`):
+   * a `Map.get` that returns what somebody else already united, or nothing. That
+   * is a read, not a trigger, and it is the only shape of live access this
+   * boundary permits.
    *
    * It is a MAP OF GEOMETRY rather than a function on purpose: this renderer is
    * synchronous, so it could not await a union even if someone gave it one, and
@@ -903,7 +916,12 @@ export function drawVectorType(
 
   const frame = vectorTypeFrame(font, cfg, t)
   const place = vtPlacement(frame, opts)
-  const paths = outlinesToPath2D(frame.outlines, place)
+  // `outlinesToPath2D` is exactly these two lines, split apart because the
+  // PLACED COMMAND LISTS are needed as well as the paths: they are the first of
+  // the four inputs a solid body is cached under, so `solidBody` below cannot
+  // build a cache key without them. Same work, same order, no second placement.
+  const placed = placeOutlines(frame.outlines, place)
+  const paths = placed.map(cmds => commandsToPath2D(cmds))
   // ── THE APPEARANCE STACK ────────────────────────────────────────────────────
   // Every enabled layer, back to front, resolved ONCE for the run. Task 2's
   // `vtBaseAppearance` bridge — which collapsed the stack to the bottom-most fill
@@ -1009,23 +1027,53 @@ export function drawVectorType(
     }
 
     /**
-     * The `Path2D` for one (layer, glyph)'s precomputed SOLID body, or `null`.
+     * The `Path2D` for one (layer, glyph)'s already-computed SOLID body, or
+     * `null`.
      *
-     * `null` on EVERY live frame, because no live caller passes `opts.solid` —
-     * see `VtDrawOptions.solid`. This function does no geometry: the union
-     * already happened, asynchronously, before this frame started. All it does is
-     * replay a command list the same way the glyph's own path was replayed
-     * (`commandsToPath2D`, shared with `outlinesToPath2D`), memoised for the
-     * frame so a six-layer stack does not rebuild the same body six times.
+     * **This function does no geometry.** It cannot: the union is `async` and
+     * lives behind an import edge this module does not have. There are exactly
+     * two places a body can come from, and both are somebody else's finished
+     * work:
+     *
+     *  1. **`opts.solid`** — the map a BAKE or an EXPORT awaited from
+     *     `prepareSolidExtrudes` and handed in. Authoritative when present: a
+     *     bake asked for these bodies at this exact time and must draw those,
+     *     not whatever the preview happens to have warm.
+     *  2. **`peekSolidBody`** — a synchronous `Map.get` against the paper-free
+     *     body cache (`./extrudeBodyCache.ts`). This is the LIVE path's read,
+     *     and it is safe precisely because the key is the union's whole
+     *     geometric input: a hit is by construction the body of the copies this
+     *     frame is about to draw, so there is no staleness to reason about. A
+     *     MISS is the normal cold answer — the layer falls back to its offset
+     *     copies, which is the picture the preview has always shown — and the
+     *     surface's debounced watcher is what turns a miss into a hit a moment
+     *     later. Nothing here waits for it. (`resolveField`'s posture exactly:
+     *     `null` while the field is cooking, and the caller draws on.)
+     *
+     * Memoised per frame on `vtSolidKey`, so a six-layer stack does not rebuild
+     * the same body — or the same ~1 kB cache key — six times.
      */
     const solidPaths = new Map<string, Path2D | null>()
-    function solidBody(L: VtPaintLayer, index: number): Path2D | null {
-      const src = opts.solid
-      if (!src || !L.id) return null
+    function solidBody(
+      L: VtPaintLayer,
+      index: number,
+      origin: { x: number; y: number },
+      advance: number,
+    ): Path2D | null {
+      if (!L.id) return null
       const key = vtSolidKey(L.id, index)
       const hit = solidPaths.get(key)
       if (hit !== undefined) return hit
-      const cmds = src.get(key)
+      let cmds = opts.solid?.get(key)
+      if (!cmds?.length && L.copies?.length) {
+        const glyphCommands = placed[index]
+        // The live read. Building the key is a string join over this glyph's
+        // commands — measured at ~30 µs, against a union that is 27–1,100 ms —
+        // and it is what makes the answer exact rather than plausible.
+        if (glyphCommands?.length) {
+          cmds = peekSolidBody(solidBodyCacheKey(glyphCommands, L.copies, origin, advance))
+        }
+      }
       const built = cmds && cmds.length ? commandsToPath2D(cmds) : null
       solidPaths.set(key, built)
       return built
@@ -1061,13 +1109,15 @@ export function drawVectorType(
      * than a second paint model. It is filled, never stroked, on every kind of
      * paint — `width` is as inert on an extrude as it is on a fill.
      *
-     * ### SOLID: the same ink, fused — and only on a bake or an export
+     * ### SOLID: the same ink, fused — whenever a body already exists
      *
-     * When `solid: true` AND a caller has handed in a precomputed body for this
-     * (layer, glyph), the copy loop is replaced by ONE fill of the union. The
-     * difference is exactly the overlaps: N translucent copies double-darken
-     * where they cross, one body cannot. At full opacity the two are the same
-     * picture. The union itself never happens here — see `VtDrawOptions.solid`.
+     * When `solid: true` AND a body for this (layer, glyph) already exists —
+     * handed in by a bake, or peeked out of the paper-free cache on a live
+     * frame — the copy loop is replaced by ONE fill of the union. The difference
+     * is exactly the overlaps: N translucent copies double-darken where they
+     * cross, one body cannot. At full opacity the two are the same picture. The
+     * union itself never happens here and cannot — see `solidBody` and
+     * `VtDrawOptions.solid`.
      *
      * ### The paint space does NOT move with the copy — decided, not defaulted
      *
@@ -1106,7 +1156,7 @@ export function drawVectorType(
       // space as the glyph's own path, so it is drawn by the SAME code below with
       // the copy loop simply switched off — same paint, same anchor, same motion
       // transform, same clip. No entry (every live frame) → the copies below.
-      const body = L.solid && L.copies ? solidBody(L, index) : null
+      const body = L.solid && L.copies ? solidBody(L, index, origin, advance) : null
       // The fused body REPLACES the glyph path AND cancels the copy loop: it
       // already contains every copy, so drawing it once per copy would paint the
       // same shape N times — the double-darkening this feature exists to remove.

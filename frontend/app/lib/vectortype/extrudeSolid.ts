@@ -59,6 +59,7 @@
 import type { VectorCommand } from '~/lib/vector/svg'
 import { commandsToPathData } from '~/lib/vector/svg'
 import { vtSolidKey, extrudeCopyCommands, type VtExtrudeCopy, type VtSolidBodies } from './extrude'
+import { peekSolidBody, putSolidBody, solidBodyCacheKey } from './extrudeBodyCache'
 import type { VectorTypeConfig } from './config'
 import type { VtFont } from './font'
 import { glyphTransform as glyphPlacement, placeOutlines } from './render'
@@ -245,60 +246,30 @@ export async function solidExtrudeBody(
   return unionCommandLists(extrudeCopyCommands(commands, copies, origin, advance))
 }
 
-// ── The frame cache: what makes a VIDEO bake affordable ─────────────────────
+// ── The frame cache: what makes a VIDEO bake affordable — AND what the live
+//    path reads ───────────────────────────────────────────────────────────────
 //
 // A union costs ~1.3 ms PER COPY in the browser. Task 4's worst realistic case
 // is 800 copies — 1,123 ms — and a video bake would pay that on EVERY FRAME:
 // over two minutes for 120 frames, five for 300. That is the one door plan
 // trap 5 could come back through, and Task 5 flagged it as undecided.
 //
-// It is decided here, and the decision is: **cache, because extrude geometry is
+// It is decided, and the decision is: **cache, because extrude geometry is
 // time-invariant unless something feeding it is animated.** The union's inputs
 // are exactly four — the glyph's placed commands, the copy list, the glyph's
 // origin and its advance — so a frame whose four are unchanged has, by
 // construction, the same body. Nothing about `t` enters the computation except
-// through those four.
+// through those four. The key IS those four, verbatim.
 //
-// So the key IS the four inputs, verbatim, not a proxy for them. A key of
-// "(layer id, t is not animated)" would need a correct answer to "is anything
-// that could move this animated?", and every wrong answer is a body from the
-// wrong frame drawn confidently — a plausible picture, which is the worst kind
-// of bug. Keying on the numbers cannot be wrong: an axis track that re-shapes
-// the glyph changes its commands, a `distance` track changes the copies, a
-// translate changes the origin. Any of them misses, and the union runs.
-//
-// The cost of being exact is building the key: ~1–2 kB of string per (layer,
-// glyph) per frame. Measured at roughly 30 µs against a 27–1,100 ms union —
-// three to four orders of magnitude, and it is paid on the MISSES too.
-
-/** Entries kept. A 25-glyph line with 6 solid extrude layers is 150 bodies, so
- *  this holds a whole frame of the worst case with room for the frame before it
- *  (a bake stepping time re-asks for the same keys, in the same order). */
-const SOLID_BODY_CACHE_MAX = 512
-
-/** Insertion-ordered, so the oldest key is `keys().next()` — a Map is already an
- *  LRU-by-insertion and needs no second structure. */
-const solidBodyCache = new Map<string, VectorCommand[]>()
-
-/** The four inputs, verbatim. `formatNumber` is deliberately NOT used: a key
- *  that rounded could collide two genuinely different frames of a slow
- *  animation, and this is the one place where being conservative means being
- *  exact rather than being coarse. */
-function solidBodyKey(
-  commands: readonly VectorCommand[],
-  copies: readonly VtExtrudeCopy[],
-  origin: { x: number; y: number },
-  advance: number,
-): string {
-  const geom: string[] = []
-  for (const c of commands) geom.push(c.command, ...(c.args ?? []).map(String))
-  const step: string[] = []
-  for (const c of copies) step.push(String(c.dx), String(c.dy), String(c.scale))
-  return `${origin.x}|${origin.y}|${advance}|${step.join(',')}|${geom.join(',')}`
-}
+// **The store itself lives in `./extrudeBodyCache.ts`, which imports no paper.**
+// That split is what lets `canvas.ts` READ a body — to stroke its silhouette —
+// without its import graph ever reaching the geometry library. This module is
+// the only WRITER, because it is the only module that can produce one. See that
+// file for the full reasoning; what stays here is the `await`.
 
 /**
- * `solidExtrudeBody`, memoised on its inputs — the form a SEQUENCE bake calls.
+ * `solidExtrudeBody`, memoised on its inputs — the form a SEQUENCE bake calls,
+ * and the only thing that ever fills the cache the live path peeks at.
  *
  * Identical geometry to the uncached call, always: the key is the whole input,
  * so a hit is a frame that would have produced this exact body anyway. Returns
@@ -312,34 +283,25 @@ export async function solidExtrudeBodyCached(
   advance: number,
 ): Promise<VectorCommand[]> {
   if (!commands.length || !copies.length) return []
-  const key = solidBodyKey(commands, copies, origin, advance)
-  const hit = solidBodyCache.get(key)
+  const key = solidBodyCacheKey(commands, copies, origin, advance)
+  const hit = peekSolidBody(key)
   if (hit) return hit
   const body = await solidExtrudeBody(commands, copies, origin, advance)
-  // A FAILED union (`[]`, see `unionCommandLists`'s catch) is not cached: it is
-  // not an answer about the geometry, and caching it would make one transient
-  // failure permanent for the rest of the bake.
-  if (!body.length) return body
-  if (solidBodyCache.size >= SOLID_BODY_CACHE_MAX) {
-    const oldest = solidBodyCache.keys().next().value
-    if (oldest !== undefined) solidBodyCache.delete(oldest)
-  }
-  solidBodyCache.set(key, body)
+  // A FAILED union (`[]`, see `unionCommandLists`'s catch) is not stored — that
+  // rule is `putSolidBody`'s, so the writer cannot forget it.
+  putSolidBody(key, body)
   return body
 }
 
-/** Drop every cached body. Nothing in the product needs this — the key is the
- *  whole input, so a stale entry is not expressible — but a test that measures
- *  the cold cost does. */
-export function clearSolidExtrudeCache(): void {
-  solidBodyCache.clear()
-}
-
-/** How many bodies are cached. For tests and for a memory probe; never a
- *  control. */
-export function solidExtrudeCacheSize(): number {
-  return solidBodyCache.size
-}
+// Re-exported so the cache's lifecycle is reachable from the module that owns
+// the union, which is where a caller looks for it. The implementations are in
+// the paper-free store.
+export {
+  clearSolidExtrudeCache,
+  peekSolidBody,
+  solidBodyCacheKey,
+  solidExtrudeCacheSize,
+} from './extrudeBodyCache'
 
 /**
  * Every solid extrude in `cfg`, unioned for the frame at time `t`.

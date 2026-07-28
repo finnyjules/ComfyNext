@@ -58,11 +58,13 @@ import { loadVariableFont, type VtAxis, type VtFont } from '~/lib/vectortype/fon
 import MotionPresetPicker from '~/components/vue-canvas/motion/MotionPresetPicker.vue'
 import PresetThumb from '~/components/vue-canvas/motion/PresetThumb.vue'
 import VectorTypeThumb from '~/components/vue-canvas/motion/VectorTypeThumb.vue'
-import { drawVectorTypeToCanvas, vectorTypeSVG, vtExportName, vtIsAnimated } from '~/lib/vectortype/canvas'
-// BAKE/EXPORT ONLY (plan trap 5). This import must never appear in the preview
-// loop's reach: `prepareSolidExtrudes` runs paper.js boolean unions, which are
-// orders of magnitude too slow for a frame. Both call sites below are one-shot
-// full-resolution renders that already `await` other one-shot work.
+import { drawVectorTypeToCanvas, vectorTypeSVG, vtExportName, vtIsAnimated, type VtBoxOptions } from '~/lib/vectortype/canvas'
+// NEVER FROM THE DRAW LOOP (plan trap 5). `prepareSolidExtrudes` runs paper.js
+// boolean unions — orders of magnitude too slow for a frame — so every call site
+// here is `await`ed off the loop: two one-shot full-resolution renders (the PNG
+// bake and the SVG export, both of which already await other one-shot work) plus
+// `runSolidUnion`, the debounced watcher that fills the body cache the preview
+// PEEKS at. `render()` itself never calls this and never may.
 import { prepareSolidExtrudes } from '~/lib/vectortype/extrudeSolid'
 import { DEFAULT_FILL, DEFAULT_SHADER_SPEC, FILL_TYPES, fillIsShader, type ShaderSpec } from '~/lib/spacetype/fillTile'
 import { paintIsVector } from '~/lib/paint/toVector'
@@ -784,6 +786,107 @@ function draw() {
   render()
 }
 
+/**
+ * ── THE SOLID-EXTRUDE UNION, OFF THE DRAW LOOP ──────────────────────────────
+ *
+ * A `solid: true` extrude wants its offset copies fused into one body. The
+ * fusion is a paper.js boolean union at **~1.3 ms per copy** — 575× the cost of
+ * drawing one — so a deep extrude united on a draw frame drops 67 consecutive
+ * frames and the studio feels broken. That is why `canvas.ts` cannot reach paper
+ * at all (asserted by an import-graph test) and why the renderer's only access
+ * to a body is a synchronous PEEK at an already-filled cache.
+ *
+ * Somebody still has to fill it, and the surface is the natural owner: it is the
+ * thing that knows when a parameter settled, and it is already where the bake
+ * and the export await the same function. So:
+ *
+ *   the draw loop READS  (`peekSolidBody`, a `Map.get`, on the frame)
+ *   this watcher WRITES  (`prepareSolidExtrudes`, awaited, off the frame)
+ *
+ * A miss is not an error and nothing waits for a hit: the frame draws the
+ * un-unioned stack — the picture the preview has always shown — and the fused
+ * body appears on some later frame. Exactly `resolveField`'s posture with a
+ * shader field that is still cooking.
+ *
+ * ## Coalescing — three separate guards, because a slider drag is three problems
+ *
+ * Dragging `depth` from 1 to 32 emits ~200 `input` events. Without coalescing
+ * that is 200 unions of up to 800 copies each, i.e. minutes of queued work for a
+ * value the user passed through in 300 ms.
+ *
+ *  1. **A trailing debounce.** The timer is cleared and re-armed on every change,
+ *     so the whole drag collapses to ONE run, fired after the value settles.
+ *     Nothing runs mid-drag at all.
+ *  2. **One at a time.** A union already in flight is never joined by a second:
+ *     the new request sets `solidUnionPending` and the in-flight run re-arms the
+ *     debounce when it finishes. Depth is 1, not N.
+ *  3. **The cache itself.** `prepareSolidExtrudes` memoises on the union's whole
+ *     geometric input, so a run whose geometry has not moved since the last one
+ *     is a handful of map lookups and no paper at all. Re-running is cheap on
+ *     purpose — that is what lets the trigger be conservative rather than clever
+ *     about deciding when it is needed.
+ */
+const SOLID_UNION_DEBOUNCE_MS = 160
+
+/**
+ * A stable signature of everything that could move a solid extrude's geometry —
+ * or the EMPTY STRING when the stack holds no solid extrude at all, which is the
+ * overwhelmingly common case and must cost nothing.
+ *
+ * It is the whole config rather than a hand-picked list of fields because the
+ * union's inputs are the placed outlines: text, size, tracking, axes, the motion
+ * stack and the extrude's own four controls all move them. A list would be a
+ * second, incomplete answer to "what feeds this geometry" — and a field left off
+ * it would show as a silhouette that stopped tracking one particular slider,
+ * which is a bug nobody would think to look for here.
+ */
+const solidExtrudeSig = computed(() => {
+  const layers = config.value.appearance ?? []
+  const anySolid = layers.some(
+    l => l?.kind === 'extrude' && l.solid === true && Math.round(Number(l.depth) || 0) > 0,
+  )
+  return anySolid ? JSON.stringify(config.value) : ''
+})
+
+let solidUnionTimer = 0
+let solidUnionRunning = false
+let solidUnionPending = false
+let lastSolidBoxSig = ''
+/** The draw options the LAST frame actually used. The union must be prepared in
+ *  the same output box and pixel ratio the preview is drawing in, or its bodies
+ *  are keyed to a placement nothing will ask for and the cache never hits. */
+let solidUnionOpts: VtBoxOptions | null = null
+
+function scheduleSolidUnion() {
+  if (!solidExtrudeSig.value) return
+  clearTimeout(solidUnionTimer)
+  solidUnionTimer = window.setTimeout(runSolidUnion, SOLID_UNION_DEBOUNCE_MS) as unknown as number
+}
+
+async function runSolidUnion() {
+  if (disposed) return
+  const f = font.value
+  const opts = solidUnionOpts
+  if (!f || !opts || !solidExtrudeSig.value) return
+  if (solidUnionRunning) { solidUnionPending = true; return }
+  solidUnionRunning = true
+  try {
+    // The result is discarded on purpose: the CACHE is the channel, and the draw
+    // loop reads it directly. Handing the map to the preview would mean the
+    // preview held geometry from a frame it is no longer drawing.
+    await prepareSolidExtrudes(f, config.value, previewTime.value, opts)
+  } catch (e) {
+    // A failed union is a solid extrude that renders as its un-unioned stack —
+    // visible and recoverable. It must never take the preview down with it.
+    console.warn('[vector-type] solid extrude union failed', e)
+  } finally {
+    solidUnionRunning = false
+    if (solidUnionPending) { solidUnionPending = false; scheduleSolidUnion() }
+  }
+}
+
+watch(solidExtrudeSig, () => { scheduleSolidUnion() })
+
 function render() {
   const el = canvas.value
   const f = font.value
@@ -802,10 +905,21 @@ function render() {
   // Render the LOGICAL output box scaled down to the preview, so what you see is
   // the composition the bake produces — not a differently laid-out one.
   const k = (cssW / Math.max(1, canvasW.value)) * dpr
+  const drawOpts = {
+    width: canvasW.value, height: canvasH.value, background: background.value, pixelRatio: k,
+  }
+  // The union's inputs include the PLACEMENT, so the body cache is keyed to this
+  // exact box and pixel ratio. A resize (or a move between a 1× and a 2× display)
+  // invalidates every warm body, and nothing in the config changed to say so —
+  // hence this second trigger alongside the config watcher. It fires only when
+  // the box actually moves, so a steady preview asks once and never again.
+  solidUnionOpts = drawOpts
+  if (solidExtrudeSig.value) {
+    const boxSig = `${drawOpts.width}x${drawOpts.height}@${k}`
+    if (boxSig !== lastSolidBoxSig) { lastSolidBoxSig = boxSig; scheduleSolidUnion() }
+  }
   try {
-    const frame = drawVectorTypeToCanvas(el, f, config.value, previewTime.value, {
-      width: canvasW.value, height: canvasH.value, background: background.value, pixelRatio: k,
-    })
+    const frame = drawVectorTypeToCanvas(el, f, config.value, previewTime.value, drawOpts)
     if (frame) {
       let cmds = 0
       for (const g of frame.outlines.glyphs) cmds += g.commands.length
@@ -890,6 +1004,9 @@ onBeforeUnmount(() => {
   saveConfig()
   disposed = true
   stopLoop()
+  // A debounced union armed by the last edit before the studio closed would
+  // otherwise fire into a torn-down component.
+  clearTimeout(solidUnionTimer)
   offCatalogReady?.()
   offCatalogReady = null
   unregisterStudioParamBaker(props.nodeId)

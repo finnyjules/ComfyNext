@@ -52,6 +52,7 @@ import {
   type VtSolidBodies,
 } from '~/lib/vectortype/extrude'
 import {
+  clearSolidExtrudeCache,
   prepareSolidExtrudes,
   solidExtrudeBody,
   subpathCount,
@@ -423,6 +424,14 @@ describe('trap 5 — the render path cannot reach the union', () => {
   it('draws the FULL un-unioned stack when no bodies were handed in', () => {
     // The live path, and the one that must never change: `solid: true` with no
     // precomputed geometry is `depth` copies, exactly as `solid: false` is.
+    //
+    // "NO precomputed geometry" now has a second source. Since the paper-free
+    // body cache landed, `drawVectorType` also PEEKS at bodies somebody else
+    // united (`extrudeBodyCache.ts`) — a `Map.get`, never a computation. So the
+    // premise is made explicit rather than assumed: with the store empty, this
+    // asserts exactly the property it always did, and it no longer depends on
+    // which describe block ran first.
+    clearSolidExtrudeCache()
     const solidCfg = stack({ kind: 'extrude', paint: BLUE, depth: 6, distance: 4, angle: 0, solid: true })
     const looseCfg = stack({ kind: 'extrude', paint: BLUE, depth: 6, distance: 4, angle: 0, solid: false })
     const a = draw(solidCfg).ctx.paints.length
