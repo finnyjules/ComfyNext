@@ -211,6 +211,10 @@ function onKeydown(e: KeyboardEvent) {
   color: color-mix(in oklab, var(--action) 58%, white);
   opacity: 0.62;
 }
+/* A right-pointing triangle's visual mass sits left of its bounding box, so
+   geometric centring reads as off-centre. Nudged optically; the other three
+   glyphs (square, circle, arrow) are symmetric and need nothing. */
+.node-capsule__action svg.lucide-play { translate: 1px; }
 .node-capsule__action svg { grid-area: 1 / 1; width: 13px; height: 13px; display: block; }
 
 /* The visible button is 26px; the comfortable target is 40px. Extend it with a

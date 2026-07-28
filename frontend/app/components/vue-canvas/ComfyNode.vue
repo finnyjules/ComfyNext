@@ -1502,7 +1502,7 @@ watch(previewImages, (urls) => {
   <div
     v-else
     key="card"
-    class="comfy-node relative z-10 rounded-xl border select-none backdrop-blur-sm transition-opacity duration-150"
+    class="comfy-node relative z-10 border select-none backdrop-blur-sm transition-opacity duration-150"
     :class="{
       'comfy-node--muted': isMuted,
       'comfy-node--bypassed': isBypassed,
@@ -1546,7 +1546,7 @@ watch(previewImages, (urls) => {
     </div>
     <!-- Title bar -->
     <div
-      class="node-head flex items-center border-b border-white/5 rounded-t-xl"
+      class="node-head flex items-center border-b border-white/5"
       @mouseenter="measureTitle"
       :style="{ background: `linear-gradient(135deg, ${accentColor}15 0%, transparent 60%)` }"
     >
@@ -2135,7 +2135,15 @@ watch(previewImages, (urls) => {
 
 <style scoped>
 .comfy-node {
+  /* 13px, not Tailwind's rounded-xl (12px). Two reasons: it matches the
+     capsule, so the corner does not change shape halfway through the expand;
+     and it is concentric with the 7px header tile at 6px padding. */
+  border-radius: 13px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), 0 1px 4px rgba(0, 0, 0, 0.2);
+}
+.node-head {
+  border-top-left-radius: 13px;
+  border-top-right-radius: 13px;
 }
 
 /* The header's icon and title sit at exactly the capsule's offsets — 7px in,
@@ -2179,24 +2187,21 @@ watch(previewImages, (urls) => {
 }
 
 /* Capsule <-> card. NOT a cross-fade — fading one out while fading the other
-   in reads as two different objects swapping places. It is meant to read as one
+   in reads as two different objects swapping places. This has to read as one
    object opening.
-   The header is already pixel-identical between the two (icon at x=8, title at
-   x=43), so nothing about it needs to animate: the swap happens in a single
-   frame and is invisible. What animates is the BODY, wiping down from under the
-   header. The clip starts at CAPSULE_H so the header is on screen from frame
-   one and never flashes.
-   One rule set covers both directions. Expanding, `leave-to` lands on the
-   capsule, where clipping to its own height is a no-op; collapsing, it lands on
-   the card and folds it back up. */
+   The header is pixel-identical between the two (icon and title both at y=20,
+   x=8 and x=43) and the widths match, so nothing about the top of the node
+   needs to animate: that swap happens in a single frame and is invisible. What
+   animates is the card's real HEIGHT, which is what makes the ports and their
+   wires travel with it — an earlier clip-path version looked the same but does
+   not affect layout, so the ports sat at their final positions from frame one
+   and the edges snapped.
+   Start and end heights are measured and set inline by the hooks above; CSS has
+   no height to animate to. One rule set covers both directions. */
 .capsule-swap-enter-active,
 .capsule-swap-leave-active {
-  transition-property: height, scale;
+  transition-property: height;
   transition-timing-function: cubic-bezier(0.32, 0, 0.12, 1);
-  /* Top-left: the header is the fixed point, so the growth happens downward
-     and away from it rather than around a moving centre. */
-  transform-origin: left top;
-  will-change: height, transform;
   /* Compositing a backdrop filter every frame while the element is clipped is
      the expensive part, and the blur is invisible mid-transition anyway. */
   backdrop-filter: none;
@@ -2208,11 +2213,10 @@ watch(previewImages, (urls) => {
   top: 0;
   left: 0;
 }
-/* Height is set inline by the hooks above (it has to be measured). The scale is
-   deliberately tiny — it adds the sense of the card coming forward as it opens
-   without moving the header, which a larger delta would. */
-.capsule-swap-enter-from,
-.capsule-swap-leave-to { scale: 0.97; }
+/* No scale. Once the capsule and the card share a width, ANY scale reintroduces
+   horizontal movement — 0.97 started the card ~8px narrower than the capsule it
+   replaced, which reads as growing out of something smaller. Height is set
+   inline by the hooks above and carries the whole transition on its own. */
 
 @media (prefers-reduced-motion: reduce) {
   .capsule-swap-enter-active,
