@@ -174,15 +174,17 @@ This also disposes of the "chips pop open every time you cross the canvas" probl
 
 Collapse is a **per-node state**, not a per-type rule — but the default is set per type. Three tiers:
 
-**Always a capsule** — no visual output of their own: `comfy` (non-generator), `gate`, `subgraph-io`, `reference`, `character`.
+**Always a capsule** — no visual output of their own: `comfy` (non-generator), `gate`, `subgraph-io`.
 
-**Capsule once it has run** — produces something visible downstream, so the capsule is the record of how it got there: `comfy` generators, `pose-mannequin`, `shader-effect`, `lip-sync`. Freshly added, they open; after a successful run and no further edits, they settle.
+**Capsule once it has run** — produces something visible downstream, so the capsule is the record of how it got there: `comfy` generators, `pose-mannequin`, `lip-sync`, `shot-director`. The last two are summary cards with an open-editor button; they render nothing live themselves. Freshly added, they open; after a successful run and no further edits, they settle.
 
 **Never a capsule** — `artifact-image`, `artifact-text`, `artifact-audio`, `artifact-video`, `artifact-frame`, `artifact-timeline`, `artifact-3d`, `character-sheet`, `collection`, `batch-grid`, `sketch-pile`, `note`. These *are* the content.
 
 That accounts for all 28 registered types.
 
-**Studios are the judgement call.** `gradient-studio`, `shader-studio`, `texture-studio`, `shape-studio`, `space-type`, `vector-type`, `scene3d-studio`, `shot-director` render a live canvas preview, which is most of their value. They **do not** collapse by default, but get a manual collapse toggle — a busy canvas with six studios is exactly when you'd want them small.
+**Anything with a live preview is the judgement call.** `gradient-studio`, `shader-studio`, `texture-studio`, `shape-studio`, `space-type`, `vector-type`, `scene3d-studio` and `shader-effect` render a live canvas preview, which is most of their value. `reference` and `character` join them: both show the picked asset's thumbnail, and collapsing them unconditionally would start a freshly added node closed with its picker behind an extra click. They **do not** collapse by default, but get a manual collapse toggle — a busy canvas with six studios is exactly when you'd want them small.
+
+*Corrected during implementation (2026-07-27): `shader-effect`, `reference` and `character` were originally assigned by type name and moved here after reading the components; `shot-director` moved the other way.*
 
 The collapsed/expanded flag persists with the project.
 
