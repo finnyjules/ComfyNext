@@ -238,7 +238,12 @@ const capsuleReadout = computed(() => resolveReadout({
   properties: props.data.properties,
   running: props.data.running,
   runningSince: props.data.runningSince,
-  errorMessage: props.data.errorMessage,
+  // Gated on `error`, exactly as the expanded card's error chip is (:1460).
+  // errorMessage is a sticky field — it holds the last exception text until
+  // something overwrites it — so passing it ungated would pin a dead failure
+  // to the read-out for the rest of the session, outranking both "rendering ·
+  // 12s" and the settings summary on every subsequent run.
+  errorMessage: props.data.error ? props.data.errorMessage : null,
   now: nowTick.value,
 }))
 

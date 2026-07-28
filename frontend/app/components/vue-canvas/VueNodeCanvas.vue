@@ -2699,7 +2699,23 @@ function handleBridgeMessage(event: MessageEvent) {
           // The run-level startedAt in runRegistry measures the whole run, not
           // this node, so a per-node stamp is the only way a capsule can say
           // how long IT has been going.
-          target.data = { ...target.data, running: true, error: false, runningSince: Date.now() }
+          //
+          // errorMessage clears WITH error, never after it. The two are one
+          // fact: the capsule read-out ranks errorMessage above everything
+          // else, so leaving the text behind while flipping the flag pins a
+          // dead failure over "rendering · 12s" and then over the settings
+          // summary — for the rest of the session.
+          target.data = {
+            ...target.data,
+            running: true,
+            error: false,
+            errorMessage: null,
+            runningSince: Date.now(),
+          }
+        } else if (target.data?.error) {
+          // A sketch-output card never paints a running state (see above), but
+          // a stale failure on it must still clear when it is touched again.
+          target.data = { ...target.data, error: false, errorMessage: null }
         }
         // Light outgoing edges from this node — but only the ones whose
         // target is part of the current run set. A generator fanned out
@@ -2829,14 +2845,12 @@ function handleBridgeMessage(event: MessageEvent) {
     }
   }
 
-  // On any successful executing event, clear stale error state for the node
-  // that's about to run — the previous failure is no longer relevant.
-  if (evt === 'executing' && nodeId) {
-    const target = (nodes.value as any[]).find((n: any) => n.id === String(nodeId))
-    if (target?.data?.error) {
-      target.data = { ...target.data, error: false, errorMessage: null }
-    }
-  }
+  // (Stale-error clearing used to live here, as a second `evt === 'executing'`
+  // pass guarded on `target.data.error`. The first pass above had already set
+  // error:false on the same node object, so the guard could only ever be true
+  // for a sketch-output card — the one node the first pass skips. Both cases
+  // are now handled up there, where `error` is cleared, so errorMessage can
+  // never be left behind by a code path that clears only the flag.)
 
   if (evt === 'execution_complete') {
     const promptId = (event.data as any).prompt_id ? String((event.data as any).prompt_id) : null
