@@ -10,8 +10,13 @@ import { DotScreenPass } from 'three/examples/jsm/postprocessing/DotScreenPass.j
 import { GlitchPass } from 'three/examples/jsm/postprocessing/GlitchPass.js'
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js'
 import type { PostSettings } from '~~/shared/spacetype/state'
+import { DEFAULT_POST, postEnabled } from '~/lib/spacetype/postSettings'
 
 export type { PostSettings } from '~~/shared/spacetype/state'
+// DEFAULT_POST/postEnabled are plain data/logic and live in postSettings.ts (three-free — see its
+// header doc) so config.ts's import graph doesn't have to drag in this module's EffectComposer
+// stack. Re-exported here so every existing importer of post.ts keeps working unchanged.
+export { DEFAULT_POST, postEnabled } from '~/lib/spacetype/postSettings'
 
 /**
  * Shared post-processing for the whole Space Type suite. A Three EffectComposer wraps the engine's
@@ -32,22 +37,6 @@ export type { PostSettings } from '~~/shared/spacetype/state'
  * `renderer.outputColorSpace` itself; because upstream passes never applied it, this is exactly one
  * conversion, matching the direct-render path — not a double tone-map.
  */
-export const DEFAULT_POST: PostSettings = {
-  bloom: false, bloomStrength: 0.6, bloomRadius: 0.4, bloomThreshold: 0.8,
-  color: false, exposure: 1, contrast: 1, saturation: 1, hue: 0,
-  chroma: false, chromaAmount: 0.25,
-  blur: false, blurAmount: 0.01,
-  film: false, filmIntensity: 0.35, filmGrayscale: false,
-  halftone: false, halftoneRadius: 4, halftoneScatter: 0,
-  dotScreen: false, dotScreenScale: 1, dotScreenAngle: 1.57,
-  glitch: false,
-  gtao: false, gtaoRadius: 0.5, gtaoIntensity: 0.5, gtaoThickness: 0.25,
-}
-
-/** True when ANY post effect is on — the engine renders through the composer only then. */
-export function postEnabled(p: PostSettings): boolean {
-  return !!(p.bloom || p.color || p.chroma || p.blur || p.film || p.halftone || p.dotScreen || p.glitch || p.gtao)
-}
 
 // Bokeh blur (16-tap golden-angle disc) + radial chromatic aberration + colour grade, in one pass.
 const GRADE_FRAG = [

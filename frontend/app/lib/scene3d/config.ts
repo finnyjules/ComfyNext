@@ -4,7 +4,13 @@
 import { sanitizeParams, sanitizeModifiers } from '~/lib/scene3d/primParams'
 import type { ObjectMotion, CameraMotion, SceneMotion, LoopKind, TransitionPreset, Direction, EaseRef, TransitionSpec } from '~/lib/scene3d/motion/types'
 import { DEFAULT_SCENE_MOTION } from '~/lib/scene3d/motion/types'
-import { DEFAULT_POST, type PostSettings } from '~/lib/spacetype/post'
+// DEFAULT_POST comes from postSettings.ts (three-free), NOT post.ts — post.ts pulls in the
+// EffectComposer stack, and config.ts must not drag three into its import graph (see
+// controls.ts's constraint, documented in collection/studioControls.ts and shapefx/controls.ts).
+// The `type` import of PostSettings is harmless from post.ts (erases at compile time) and stays
+// there per the brief — the type itself still lives in shared/spacetype/state.ts.
+import { DEFAULT_POST } from '~/lib/spacetype/postSettings'
+import type { PostSettings } from '~/lib/spacetype/post'
 // Scene3D does not have (and does not want) its own fill vocabulary — a shaderFill material
 // carries the SAME ShaderSpec the shader-fill field module (~/lib/shaderfill/field.ts) already
 // understands, imported straight from Type Studio's CPU fill model. This is the one place
