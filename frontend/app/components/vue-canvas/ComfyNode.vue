@@ -2131,18 +2131,30 @@ watch(previewImages, (urls) => {
 .capsule-swap-enter-active,
 .capsule-swap-leave-active {
   transition-property: opacity, scale;
-  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+  /* Long tail rather than a hard ease-out: most of the movement happens early
+     and the last of it settles, which is what stops the size change reading as
+     a snap. */
+  transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
   transform-origin: left center;
+  will-change: transform, opacity;
+  /* The card carries backdrop-blur. Compositing a backdrop filter every frame
+     while the element is also scaling is the single biggest source of stutter
+     here, and the blur is invisible mid-transition anyway. Scoped to the
+     transition classes, so the card gets it back the moment it lands. */
+  backdrop-filter: none;
 }
-.capsule-swap-enter-active { transition-duration: 0.22s; }
+.capsule-swap-enter-active { transition-duration: 0.34s; }
 .capsule-swap-leave-active {
-  transition-duration: 0.13s;
+  transition-duration: 0.18s;
   position: absolute;
   top: 0;
   left: 0;
 }
-.capsule-swap-enter-from { opacity: 0; scale: 0.96; }
-.capsule-swap-leave-to { opacity: 0; scale: 0.98; }
+/* Shallow on purpose. A big scale delta means the card's text is re-rasterised
+   across a wide range of non-integer sizes, which is what actually reads as
+   jitter — the fade carries the transition, the scale just gives it direction. */
+.capsule-swap-enter-from { opacity: 0; scale: 0.985; }
+.capsule-swap-leave-to { opacity: 0; scale: 0.995; }
 
 @media (prefers-reduced-motion: reduce) {
   .capsule-swap-enter-active,
