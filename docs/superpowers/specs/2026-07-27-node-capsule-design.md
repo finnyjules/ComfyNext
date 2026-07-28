@@ -188,6 +188,8 @@ That accounts for all 28 registered types.
 
 The collapsed/expanded flag persists with the project.
 
+*Scope note added during implementation (2026-07-27): in v1 only `comfy` nodes render a capsule — `ComfyNode.vue` is the sole component wired to `NodeCapsule`. The tier table classifies all 28 node types and the `{from:'controls'}` read-out path is implemented and tested, but both are groundwork: no studio or artifact component consumes them yet, and the `manual`-tier collapse toggle does not exist. Persistence stores `collapsed` and `hasRun` and deliberately excludes `runningSince` — a saved wall clock would reload as a forever-ticking counter.*
+
 ## Plumbing summary
 
 | Need | Seam |
