@@ -1125,7 +1125,12 @@ onMounted(() => {
       const t01 = dur > 0 ? playhead.value / dur : 0
       const { doc: sampled, opacities } = applyMotionToDoc(doc, t01)
       // Lock orbit while the camera is animated so it can't fight the motion.
-      if (interaction) interaction.orbit.enabled = !(doc.camera.motion && doc.camera.motion.preset !== 'none')
+      // Must go through setCameraLocked, not a direct `orbit.enabled =` write:
+      // a gizmo drag also owns that flag (SceneInteraction's dragging-changed
+      // listener), and this runs every frame — a raw per-frame write here would
+      // silently stomp the gizmo's lock the instant a drag starts (this exact
+      // bug shipped once already; see interaction.ts's orbitShouldBeEnabled).
+      interaction?.setCameraLocked(!!(doc.camera.motion && doc.camera.motion.preset !== 'none'))
       engine.syncFromDoc(sampled)
       engine.applyCameraFromDoc(sampled)
       engine.applyObjectOpacities(opacities)
@@ -1133,7 +1138,7 @@ onMounted(() => {
       engine.render()
       updateLightLabels()
     } else {
-      if (interaction) interaction.orbit.enabled = true
+      interaction?.setCameraLocked(false)
       interaction?.orbit.update()
       engine?.render()
       updateLightLabels()

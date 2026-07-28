@@ -20,32 +20,11 @@ export interface TransformSnapshot { position: Vec3; rotation: Vec3; scale: Vec3
 
 type GizmoMode = 'translate' | 'rotate' | 'scale'
 
-// ─── TEMPORARY GIZMO/ORBIT TRACE — remove after diagnosis ───
-// Diagnosing: gizmo drag simultaneously orbits the camera. Records the exact
-// sequence of orbit.enabled writes, dragging-changed events, and
-// pointerdown/pointerup state across the three TransformControls instances.
-// Capped ring buffer so a long session can't grow unbounded. SSR-guarded
-// since this module can be imported server-side in Nuxt.
-interface GizmoTraceEntry { t: number; type: string; [key: string]: unknown }
-const GIZMO_TRACE_MAX = 500
-const gizmoTraceBuffer: GizmoTraceEntry[] = []
-function gizmoTrace(type: string, data?: Record<string, unknown>): void {
-  gizmoTraceBuffer.push({ t: Math.round(performance.now()), type, ...data })
-  if (gizmoTraceBuffer.length > GIZMO_TRACE_MAX) gizmoTraceBuffer.shift()
+/** Orbit is enabled only when neither lock is held. Pure so it's unit-testable
+ *  without the DOM/WebGL context SceneInteraction requires. */
+export function orbitShouldBeEnabled(cameraLocked: boolean, gizmoDragging: boolean): boolean {
+  return !cameraLocked && !gizmoDragging
 }
-if (typeof window !== 'undefined') {
-  ;(window as unknown as { __gizmoTrace: GizmoTraceEntry[] }).__gizmoTrace = gizmoTraceBuffer
-  ;(window as unknown as { __gizmoDump: () => string }).__gizmoDump = () => {
-    const json = JSON.stringify(gizmoTraceBuffer)
-    // eslint-disable-next-line no-console
-    console.log(json)
-    return json
-  }
-  ;(window as unknown as { __gizmoClear: () => void }).__gizmoClear = () => {
-    gizmoTraceBuffer.length = 0
-  }
-}
-// ─── END TEMPORARY GIZMO/ORBIT TRACE ───
 
 /** REMOVE every handle (visual AND picker) whose name isn't in `keep`.
  *  Setting `visible = false` is not enough: TransformControlsGizmo re-derives
@@ -91,6 +70,16 @@ export class SceneInteraction {
   // (vs the scale recorded at drag start) is applied to all three axes.
   private shiftDown = false
   private scaleDragStart: THREE.Vector3 | null = null
+  // Single authority over `orbit.enabled`. Two independent concerns want to
+  // disable orbit — camera motion playing back (surface calls setCameraLocked)
+  // and a gizmo being dragged (the dragging-changed listener below) — so each
+  // gets its own field and `orbit.enabled` is always the AND-negation of both,
+  // recomputed through updateOrbitEnabled. Neither side may write
+  // `orbit.enabled` directly: a per-frame writer that did so would silently
+  // stomp the other's lock (this exact bug shipped once already — see
+  // Scene3DStudioSurface's call sites for the full story).
+  private cameraLocked = false
+  private gizmoDragging = false
 
   constructor(
     private engine: SceneEngine,
@@ -104,32 +93,6 @@ export class SceneInteraction {
     this.orbit = new OrbitControls(engine.camera, domElement)
     this.orbit.enableDamping = true
     this.orbit.addEventListener('change', () => callbacks.onCameraChange?.())
-
-    // ─── TEMPORARY GIZMO/ORBIT TRACE — remove after diagnosis ───
-    // Wrap orbit.enabled AFTER construction so OrbitControls' own constructor
-    // assignment (this.enabled = true) isn't touched by the wrapper — only
-    // subsequent writes (ours, and any of theirs) are recorded. Verified
-    // against three/examples/jsm/controls/OrbitControls.js: `enabled` is set
-    // once in the constructor and only ever read afterward (`if
-    // (this.enabled === false) return` guards in the pointer handlers) — it's
-    // never reassigned elsewhere in that file, so redefining it as an
-    // accessor post-construction is safe. The one behavioural difference is
-    // that Object.defineProperty's default `enumerable: false` makes the
-    // property no longer show up in for-in/Object.keys/spread on the
-    // instance; OrbitControls itself never iterates its own keys, so this is
-    // inert here, but worth remembering if this trace lingers.
-    {
-      let _orbEnabled = this.orbit.enabled
-      Object.defineProperty(this.orbit, 'enabled', {
-        get: () => _orbEnabled,
-        set: (v: boolean) => {
-          gizmoTrace('orbit.enabled=', { from: _orbEnabled, to: v })
-          _orbEnabled = v
-        },
-        configurable: true,
-      })
-    }
-    // ─── END TEMPORARY GIZMO/ORBIT TRACE ───
 
     // The combined gizmo: three pruned single-mode instances, spatially LAYERED
     // by size so their handles/pickers don't occupy the same span (all of
@@ -156,21 +119,8 @@ export class SceneInteraction {
       // pruned instance is the scale one without a parallel lookup structure.
       ;(tc as unknown as { userData: Record<string, unknown> }).userData = { mode }
       tc.addEventListener('dragging-changed', (e) => {
-        // ─── TEMPORARY GIZMO/ORBIT TRACE — remove after diagnosis ───
-        gizmoTrace('dragging-changed', {
-          mode,
-          value: e.value,
-          orbitEnabledBefore: this.orbit.enabled,
-        })
-        // ─── END TEMPORARY GIZMO/ORBIT TRACE ───
-        this.orbit.enabled = !e.value
-        // ─── TEMPORARY GIZMO/ORBIT TRACE — remove after diagnosis ───
-        gizmoTrace('dragging-changed:after-assign', {
-          mode,
-          value: e.value,
-          orbitEnabledAfter: this.orbit.enabled,
-        })
-        // ─── END TEMPORARY GIZMO/ORBIT TRACE ───
+        this.gizmoDragging = e.value
+        this.updateOrbitEnabled()
         if (e.value) {
           this.gizmoDragged = true
           // Uniform-scale support: remember where the scale started.
@@ -217,42 +167,21 @@ export class SceneInteraction {
     domElement.addEventListener('pointerdown', this.onDown)
     domElement.addEventListener('pointermove', this.onMove)
     domElement.addEventListener('pointerup', this.onUp)
+  }
 
-    // ─── TEMPORARY GIZMO/ORBIT TRACE — remove after diagnosis ───
-    // Capture phase so these run BEFORE TransformControls' own pointerdown/up
-    // handlers (registered later, on the same domElement, in bubble phase),
-    // giving a snapshot of state at the instant the gesture starts/ends.
-    domElement.addEventListener(
-      'pointerdown',
-      (e: PointerEvent) => {
-        gizmoTrace('pointerdown', {
-          button: e.button,
-          orbitEnabled: this.orbit.enabled,
-          gizmos: this.gizmos.map((g) => ({
-            mode: (g as unknown as { userData: Record<string, unknown> }).userData.mode,
-            enabled: g.enabled,
-            dragging: g.dragging,
-          })),
-        })
-      },
-      true,
-    )
-    domElement.addEventListener(
-      'pointerup',
-      (e: PointerEvent) => {
-        gizmoTrace('pointerup', {
-          button: e.button,
-          orbitEnabled: this.orbit.enabled,
-          gizmos: this.gizmos.map((g) => ({
-            mode: (g as unknown as { userData: Record<string, unknown> }).userData.mode,
-            enabled: g.enabled,
-            dragging: g.dragging,
-          })),
-        })
-      },
-      true,
-    )
-    // ─── END TEMPORARY GIZMO/ORBIT TRACE ───
+  /** Recomputes `orbit.enabled` from the two locks. Called whenever either
+   *  changes — never write `orbit.enabled` directly (see field comments). */
+  private updateOrbitEnabled(): void {
+    this.orbit.enabled = orbitShouldBeEnabled(this.cameraLocked, this.gizmoDragging)
+  }
+
+  /** Surface-owned lock: true while camera motion is animating playback.
+   *  Safe (and expected) to call every frame — it's a cheap idempotent
+   *  recompute, not a raw write, so it can never stomp a concurrent gizmo
+   *  drag's lock the way a direct `orbit.enabled = ...` write would. */
+  setCameraLocked(locked: boolean): void {
+    this.cameraLocked = locked
+    this.updateOrbitEnabled()
   }
 
   // Shift state rides on the pointer events (works for real keyboards AND
