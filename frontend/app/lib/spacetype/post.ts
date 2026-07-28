@@ -4,6 +4,9 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js'
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
 import { FilmPass } from 'three/examples/jsm/postprocessing/FilmPass.js'
+import { HalftonePass } from 'three/examples/jsm/postprocessing/HalftonePass.js'
+import { DotScreenPass } from 'three/examples/jsm/postprocessing/DotScreenPass.js'
+import { GlitchPass } from 'three/examples/jsm/postprocessing/GlitchPass.js'
 import type { PostSettings } from '~~/shared/spacetype/state'
 
 export type { PostSettings } from '~~/shared/spacetype/state'
@@ -21,11 +24,14 @@ export const DEFAULT_POST: PostSettings = {
   chroma: false, chromaAmount: 0.25,
   blur: false, blurAmount: 0.01,
   film: false, filmIntensity: 0.35, filmGrayscale: false,
+  halftone: false, halftoneRadius: 4, halftoneScatter: 0,
+  dotScreen: false, dotScreenScale: 1, dotScreenAngle: 1.57,
+  glitch: false,
 }
 
 /** True when ANY post effect is on — the engine renders through the composer only then. */
 export function postEnabled(p: PostSettings): boolean {
-  return !!(p.bloom || p.color || p.chroma || p.blur || p.film)
+  return !!(p.bloom || p.color || p.chroma || p.blur || p.film || p.halftone || p.dotScreen || p.glitch)
 }
 
 // Bokeh blur (16-tap golden-angle disc) + radial chromatic aberration + colour grade, in one pass.
@@ -81,7 +87,10 @@ export class PostChain {
   readonly composer: EffectComposer
   private renderPass: RenderPass
   private bloomPass: UnrealBloomPass
+  private halftonePass: HalftonePass
+  private dotScreenPass: DotScreenPass
   private filmPass: FilmPass
+  private glitchPass: GlitchPass
   private gradePass: ShaderPass
 
   constructor(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera, width: number, height: number) {
@@ -89,8 +98,14 @@ export class PostChain {
     this.composer.setSize(width, height)
     this.renderPass = new RenderPass(scene, camera)
     this.bloomPass = new UnrealBloomPass(new THREE.Vector2(width, height), 0.6, 0.4, 0.8)
+    this.halftonePass = new HalftonePass(width, height, { radius: 4, scatter: 0 })
+    this.halftonePass.enabled = false
+    this.dotScreenPass = new DotScreenPass(new THREE.Vector2(0.5, 0.5), 1.57, 1)
+    this.dotScreenPass.enabled = false
     this.filmPass = new FilmPass(0.35, false)
     this.filmPass.enabled = false
+    this.glitchPass = new GlitchPass()
+    this.glitchPass.enabled = false
     this.gradePass = new ShaderPass({
       uniforms: {
         tDiffuse: { value: null },
@@ -103,17 +118,21 @@ export class PostChain {
     })
     this.composer.addPass(this.renderPass)
     this.composer.addPass(this.bloomPass)
+    this.composer.addPass(this.halftonePass)
+    this.composer.addPass(this.dotScreenPass)
     this.composer.addPass(this.filmPass)
-    // order matters: RenderPass → [GTAO] → Bloom → [Halftone] → [DotScreen] → Film → [Glitch] → Grade.
+    this.composer.addPass(this.glitchPass)
+    // order matters: RenderPass → [GTAO] → Bloom → Halftone → DotScreen → Film → [Glitch] → Grade.
     // Geometry-aware passes (GTAO) go right after the render; grade must stay LAST — it's the pass
     // that always ends the chain on screen (see the force-enable quirk in setSettings below). Future
-    // passes (halftone, dot screen, glitch) insert between bloom and grade, never after it.
+    // passes (pixelation) insert between bloom and grade, never after it.
     this.composer.addPass(this.gradePass)
   }
 
   setSize(width: number, height: number): void {
     this.composer.setSize(width, height)
     this.bloomPass.setSize(width, height)
+    this.halftonePass.setSize(width, height)
     ;(this.gradePass.uniforms.uResolution!.value as THREE.Vector2).set(width, height)
   }
 
@@ -136,6 +155,17 @@ export class PostChain {
     // (UniformsUtils.clone'd once, shared with the ShaderMaterial) but properly typed.
     this.filmPass.material.uniforms.intensity!.value = p.filmIntensity
     this.filmPass.material.uniforms.grayscale!.value = p.filmGrayscale
+    this.halftonePass.enabled = p.halftone
+    this.halftonePass.uniforms.radius!.value = p.halftoneRadius
+    this.halftonePass.uniforms.scatter!.value = p.halftoneScatter
+    this.dotScreenPass.enabled = p.dotScreen
+    // DotScreenPass types `uniforms` as a loose `object`; `material.uniforms` is the same object
+    // (UniformsUtils.clone'd once, shared with the ShaderMaterial) but properly typed.
+    this.dotScreenPass.material.uniforms.scale!.value = p.dotScreenScale
+    this.dotScreenPass.material.uniforms.angle!.value = p.dotScreenAngle
+    // GlitchPass.goWild is intentionally left at its default (false) — only the on/off toggle
+    // is exposed for now, per the task brief.
+    this.glitchPass.enabled = p.glitch
     // The composer needs a non-bloom pass to end on screen; gradePass is always the last pass, so
     // force it on (neutral) when only bloom is active so bloom still composites to the canvas.
     if (!grade && p.bloom) this.gradePass.enabled = true
@@ -151,7 +181,10 @@ export class PostChain {
   dispose(): void {
     this.composer.dispose()
     this.bloomPass.dispose()
+    this.halftonePass.dispose()
+    this.dotScreenPass.dispose()
     this.filmPass.dispose()
+    this.glitchPass.dispose()
     this.gradePass.material.dispose()
     ;(this.gradePass as unknown as { fsQuad?: { dispose?: () => void } }).fsQuad?.dispose?.()
   }

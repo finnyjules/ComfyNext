@@ -18,6 +18,9 @@ export interface PostSettings {
   chroma: boolean; chromaAmount: number
   blur: boolean; blurAmount: number
   film: boolean; filmIntensity: number; filmGrayscale: boolean
+  halftone: boolean; halftoneRadius: number; halftoneScatter: number
+  dotScreen: boolean; dotScreenScale: number; dotScreenAngle: number
+  glitch: boolean
 }
 
 export interface SpaceTypeState {

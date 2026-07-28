@@ -523,6 +523,13 @@ export function parseDoc(json: string): SceneDoc {
       film: bool(p.film, DEFAULT_POST.film),
       filmIntensity: num(p.filmIntensity, DEFAULT_POST.filmIntensity),
       filmGrayscale: bool(p.filmGrayscale, DEFAULT_POST.filmGrayscale),
+      halftone: bool(p.halftone, DEFAULT_POST.halftone),
+      halftoneRadius: num(p.halftoneRadius, DEFAULT_POST.halftoneRadius),
+      halftoneScatter: num(p.halftoneScatter, DEFAULT_POST.halftoneScatter),
+      dotScreen: bool(p.dotScreen, DEFAULT_POST.dotScreen),
+      dotScreenScale: num(p.dotScreenScale, DEFAULT_POST.dotScreenScale),
+      dotScreenAngle: num(p.dotScreenAngle, DEFAULT_POST.dotScreenAngle),
+      glitch: bool(p.glitch, DEFAULT_POST.glitch),
     }
   }
   const parseMaterial = (m: any): SceneMaterial => {

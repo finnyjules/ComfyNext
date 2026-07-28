@@ -2395,6 +2395,29 @@ function onClose() {
             <StudioSwitch v-model="doc.post.filmGrayscale" />
           </div>
         </template>
+
+        <div class="flex items-center justify-between">
+          <span class="text-[11px] text-white/55">Halftone</span>
+          <StudioSwitch v-model="doc.post.halftone" />
+        </div>
+        <template v-if="doc.post.halftone">
+          <StudioSlider v-model="doc.post.halftoneRadius" label="Radius" hint="Size of the print dots" :min="1" :max="20" :step="0.5" />
+          <StudioSlider v-model="doc.post.halftoneScatter" label="Scatter" hint="Randomises dot placement" :min="0" :max="1" :step="0.02" />
+        </template>
+
+        <div class="flex items-center justify-between">
+          <span class="text-[11px] text-white/55">Dot screen</span>
+          <StudioSwitch v-model="doc.post.dotScreen" />
+        </div>
+        <template v-if="doc.post.dotScreen">
+          <StudioSlider v-model="doc.post.dotScreenScale" label="Scale" hint="Size of the dot pattern" :min="0.2" :max="4" :step="0.1" />
+          <StudioSlider v-model="doc.post.dotScreenAngle" label="Angle" hint="Rotates the dot grid" :min="-3.14" :max="3.14" :step="0.05" />
+        </template>
+
+        <div class="flex items-center justify-between">
+          <span class="text-[11px] text-white/55">Glitch</span>
+          <StudioSwitch v-model="doc.post.glitch" />
+        </div>
       </StudioSection>
       </template>
       <template v-else>
