@@ -645,6 +645,58 @@ async function onReliefFilePicked(e: Event) {
   }
 }
 
+// Relief generation: text prompt → /api/scene3d/gen-map (fal FLUX tile → fal depth
+// model) → uploaded height map. Explicit button ONLY — this costs money and takes
+// seconds, so it must never fire on a parameter change. Same object-id-keyed
+// spinner/error shape as the upload above (reliefUploading/reliefUploadError), so a
+// busy or failed generation on one object can't bleed onto another after reselecting.
+const reliefGenOpen = ref(false)
+const reliefGenPrompt = ref('')
+const reliefGenBusy = ref<string | null>(null)
+const reliefGenError = reactive<Record<string, boolean>>({})
+function toggleReliefGen() {
+  reliefGenOpen.value = !reliefGenOpen.value
+}
+/** fal's height map comes back as a remote CDN URL; inpaint.uploadDataUrl (like the
+ *  file-picker path above) needs a data: URL to hand ComfyUI's /upload/image, so fetch
+ *  it client-side and re-encode before handing it off. */
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader()
+    r.onload = () => resolve(String(r.result))
+    r.onerror = () => reject(new Error('read failed'))
+    r.readAsDataURL(blob)
+  })
+}
+async function generateReliefFromPrompt() {
+  const target = selected.value
+  const prompt = reliefGenPrompt.value.trim()
+  if (!target || target.kind === 'light' || !prompt || reliefGenBusy.value) return
+  reliefGenBusy.value = target.id
+  delete reliefGenError[target.id]
+  try {
+    const r = await $fetch<{ imageUrl: string, heightUrl: string, seed: number }>('/api/scene3d/gen-map', {
+      method: 'POST',
+      body: { prompt },
+    })
+    const res = await fetch(r.heightUrl)
+    if (!res.ok) throw new Error(`fetch ${res.status}`)
+    const dataUrl = await blobToDataUrl(await res.blob())
+    const filename = await inpaint.uploadDataUrl(dataUrl, `scene3d_relief_gen_${props.nodeId}`)
+    delete texLoadError[filename]
+    if (!target.material.relief) target.material.relief = { source: 'image', scale: MATERIAL_DEFAULTS.reliefScale }
+    target.material.relief.source = 'image'
+    target.material.relief.image = filename
+    reliefGenOpen.value = false
+    reliefGenPrompt.value = ''
+  } catch (err) {
+    console.error('[scene3d-studio] gen-map failed', err)
+    reliefGenError[target.id] = true
+  } finally {
+    if (reliefGenBusy.value === target.id) reliefGenBusy.value = null
+  }
+}
+
 // Numeric transform fields (per-axis) — position/scale stored & shown raw, rotation
 // stored in radians but edited in degrees. Setters replace the whole array so the
 // deep doc watcher fires (engine syncs); gizmo drags mutate the same arrays, so the
@@ -2057,9 +2109,42 @@ function onClose() {
                       {{ reliefUploading === selected.id ? 'Uploading…' : matReliefImage ? 'Replace image' : 'Upload image' }}
                     </span>
                   </StudioButton>
+                  <!-- AI height generation (Task 6): text → fal FLUX tile → fal depth model,
+                       via /api/scene3d/gen-map. Explicit button + inline prompt panel — never
+                       automatic, costs money and takes seconds. -->
+                  <StudioButton :disabled="reliefGenBusy === selected.id" @click="toggleReliefGen">
+                    <span class="flex items-center gap-1.5">
+                      <Loader2 v-if="reliefGenBusy === selected.id" class="h-3.5 w-3.5 animate-spin" />
+                      <Sparkles v-else class="h-3.5 w-3.5" />
+                      {{ reliefGenBusy === selected.id ? 'Generating…' : 'Generate…' }}
+                    </span>
+                  </StudioButton>
                 </div>
                 <p v-if="reliefUploadError[selected.id] || (matReliefImage && texLoadError[matReliefImage])"
                   class="text-[11px] text-red-400/90">texture failed</p>
+                <div v-if="reliefGenOpen" class="space-y-1.5 rounded border border-white/10 bg-white/[0.03] p-2">
+                  <textarea
+                    v-model="reliefGenPrompt"
+                    rows="2"
+                    placeholder="Hammered copper, worn oak planks…"
+                    :disabled="reliefGenBusy === selected.id"
+                    class="w-full resize-none rounded border border-white/10 bg-white/[0.04] px-2 py-1.5 text-[12px] text-white/85 placeholder:text-white/30 outline-none focus:border-white/25"
+                  />
+                  <StudioButton
+                    variant="primary"
+                    :disabled="!reliefGenPrompt.trim() || reliefGenBusy === selected.id"
+                    @click="generateReliefFromPrompt"
+                  >
+                    <span class="flex items-center gap-1.5">
+                      <Loader2 v-if="reliefGenBusy === selected.id" class="h-3.5 w-3.5 animate-spin" />
+                      <Sparkles v-else class="h-3.5 w-3.5" />
+                      {{ reliefGenBusy === selected.id ? 'Generating height map…' : 'Generate' }}
+                    </span>
+                  </StudioButton>
+                </div>
+                <p v-if="reliefGenError[selected.id]" class="text-[11px] text-red-400/90">
+                  Height generation failed — try again.
+                </p>
                 <div v-if="matReliefImage" class="flex items-center justify-between">
                   <div>
                     <span class="text-[11px] text-white/55">Already a normal map</span>
