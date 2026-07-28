@@ -463,6 +463,17 @@ const matReliefInvert = computed<boolean>({
     mat.relief.invert = v
   },
 })
+// Contrast is applied at texture-build time alongside invert (materials.ts), not at
+// upload/conversion time — so it's a live, adjustable knob for both the Effect and Image
+// relief sources, without needing to re-upload anything.
+const matReliefContrast = computed<number>({
+  get: () => selected.value?.material.relief?.contrast ?? MATERIAL_DEFAULTS.reliefContrast,
+  set: (v) => {
+    const mat = selected.value?.material
+    if (!mat?.relief) return
+    mat.relief.contrast = v
+  },
+})
 const matReliefSpec = computed<ShaderSpec>({
   get: () => selected.value?.material.relief?.spec ?? DEFAULT_SHADER_SPEC,
   set: (v) => {
@@ -2112,7 +2123,9 @@ function onClose() {
             <template v-if="matReliefSource !== 'none'">
               <template v-if="!(matReliefSource === 'image' && matIsNormalMap)">
                 <StudioSlider v-model="matReliefScale" label="Depth"
-                  hint="How raised or recessed the surface detail looks" :min="0" :max="1" :step="0.01" />
+                  hint="How raised or recessed the surface detail looks" :min="0" :max="4" :step="0.01" />
+                <StudioSlider v-model="matReliefContrast" label="Contrast"
+                  hint="Deepens the light and dark areas so the relief catches the light." :min="1" :max="6" :step="0.1" />
                 <div class="flex items-center justify-between">
                   <span class="text-[11px] text-white/55">Invert</span>
                   <StudioSwitch v-model="matReliefInvert" />
@@ -2162,7 +2175,7 @@ function onClose() {
                 <p v-if="reliefUploadError[selected.id] || (matReliefImage && texLoadError[matReliefImage])"
                   class="text-[11px] text-red-400/90">texture failed</p>
                 <p v-else-if="reliefFlatWarning[selected.id]" class="text-[11px] text-amber-400/80">
-                  This image is too smooth to show as relief — try one with finer detail.
+                  This image is very smooth — raise Contrast, or try one with finer detail.
                 </p>
                 <div v-if="reliefGenOpen" class="space-y-1.5 rounded border border-white/10 bg-white/[0.03] p-2">
                   <textarea

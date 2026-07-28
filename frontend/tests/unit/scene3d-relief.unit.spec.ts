@@ -47,6 +47,45 @@ describe('toHeightPixels', () => {
     expect(out[4]).toBe(0)
     expect(out.length).toBe(8)
   })
+
+  // The single most important guarantee for the contrast feature: every existing caller
+  // (getHeightTexture, buildHeightTextureFromSpec, brightnessToHeightDataUrl) calls
+  // toHeightPixels without a contrast argument and must see EXACTLY the pre-contrast output —
+  // a factor of 1 is a byte-exact no-op, not just "close enough".
+  describe('contrast', () => {
+    it('is a byte-exact no-op at the default (no contrast argument passed)', () => {
+      for (const rgb of [[255, 0, 0], [0, 255, 0], [0, 0, 255], [128, 128, 128], [17, 201, 63]]) {
+        expect(toHeightPixels(px(...rgb))).toEqual(toHeightPixels(px(...rgb), false, 1))
+      }
+    })
+
+    it('is a byte-exact no-op at contrast 1 even with invert on', () => {
+      expect(toHeightPixels(px(200, 40, 90), true)).toEqual(toHeightPixels(px(200, 40, 90), true, 1))
+    })
+
+    it('expands values away from the midpoint above 1', () => {
+      // Rec. 709 luma of pure red ≈ 54, well below the 127.5 midpoint — contrast should
+      // push it further DOWN, toward 0.
+      const base = toHeightPixels(px(255, 0, 0))[0]!
+      const contrasted = toHeightPixels(px(255, 0, 0), false, 3)[0]!
+      expect(contrasted).toBeLessThan(base)
+    })
+
+    it('clamps to the 0-255 byte range instead of wrapping or going negative', () => {
+      // Near-white luma pushed further up by a high contrast must clamp at 255, not overflow.
+      const white = toHeightPixels(px(255, 255, 255), false, 6)[0]!
+      expect(white).toBe(255)
+      // Near-black luma pushed further down must clamp at 0, not go negative.
+      const black = toHeightPixels(px(0, 0, 0), false, 6)[0]!
+      expect(black).toBe(0)
+    })
+
+    it('matches the documented formula exactly: clamp((v - 127.5) * contrast + 127.5, 0, 255)', () => {
+      // Grayscale input: Rec. 709 weights sum to exactly 1, so luma == the input value with
+      // no rounding noise — (180 - 127.5) * 2 + 127.5 = 232.5, which Math.round takes to 233.
+      expect(toHeightPixels(px(180, 180, 180), false, 2)[0]).toBe(233)
+    })
+  })
 })
 
 // Builds a WxH RGBA buffer (opaque, R=G=B) from a per-pixel value function — the shape

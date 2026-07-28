@@ -15,6 +15,34 @@ describe('scene3d relief doc model', () => {
     expect(back.objects[0]!.material.relief).toEqual({ source: 'shader', scale: 0.4, invert: true })
   })
 
+  // The trap this file exists to catch: parseMaterial is a WHITELIST, and a new optional
+  // relief field not explicitly copied there is silently dropped on every save/reload.
+  it('round-trips relief.contrast through serialize → parse', () => {
+    const doc = defaultDoc()
+    const obj = createPrimitive('box')
+    obj.material.relief = { source: 'shader', scale: 0.4, invert: true, contrast: 3.5 }
+    doc.objects = [obj]
+    const back = parseDoc(serializeDoc(doc))
+    expect(back.objects[0]!.material.relief).toEqual({ source: 'shader', scale: 0.4, invert: true, contrast: 3.5 })
+  })
+
+  it('coerces a junk contrast to the default instead of dropping the relief block', () => {
+    const raw = JSON.parse(serializeDoc(defaultDoc()))
+    raw.objects = [{
+      ...createPrimitive('box'),
+      material: { type: 'standard', color: '#fff', roughness: 0.5, metalness: 0, relief: { source: 'image', image: 'h.png', scale: 0.3, contrast: 'nope' } },
+    }]
+    const back = parseDoc(JSON.stringify(raw))
+    // A non-number contrast simply fails the `typeof === 'number'` gate, same as every other
+    // optional field — the key stays absent (not coerced-and-kept), so callers fall back to
+    // MATERIAL_DEFAULTS.reliefContrast exactly like an old document that never had it.
+    expect('contrast' in back.objects[0]!.material.relief!).toBe(false)
+  })
+
+  it('defaults relief contrast to 1', () => {
+    expect(MATERIAL_DEFAULTS.reliefContrast).toBe(1)
+  })
+
   it('round-trips an image relief and a normalImage', () => {
     const doc = defaultDoc()
     const obj = createPrimitive('box')

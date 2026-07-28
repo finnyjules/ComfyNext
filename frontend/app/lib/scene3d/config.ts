@@ -47,6 +47,14 @@ export interface ReliefSpec {
   /** → THREE bumpScale. 1 is already extreme; the shipped default is 0.25. */
   scale: number
   invert?: boolean
+  /** Contrast expansion around the height midpoint, applied at TEXTURE-BUILD time —
+   *  same step as `invert` (see materials.ts's getHeightTexture/getShaderHeightTexture) —
+   *  never at conversion time, because the original colour image isn't retained after the
+   *  height conversion: a conversion-time contrast would require re-uploading to change.
+   *  1 = unchanged; bump responds to the height field's LOCAL GRADIENT, not its range (see
+   *  relief.ts's heightGradient doc), so a flat-looking AI height map often needs this well
+   *  above 1 to read as relief at all. Absent = 1, so old docs render identically. */
+  contrast?: number
 }
 
 export interface SceneMaterial {
@@ -278,6 +286,7 @@ export const MATERIAL_DEFAULTS = {
   iridescenceIOR: 1.3,
   envMapIntensity: 1,
   reliefScale: 0.25,
+  reliefContrast: 1,
   shader: DEFAULT_SHADER_SPEC,
   unlit: false,
 }
@@ -547,6 +556,7 @@ export function parseDoc(json: string): SceneDoc {
       if (typeof r.image === 'string') rel.image = r.image
       if (r.spec && typeof r.spec === 'object') rel.spec = normalizeShaderSpec(r.spec, 0)
       if (typeof r.invert === 'boolean') rel.invert = r.invert
+      if (typeof r.contrast === 'number') rel.contrast = num(r.contrast, MATERIAL_DEFAULTS.reliefContrast)
       out.relief = rel
     }
     if (typeof m?.normalImage === 'string') out.normalImage = m.normalImage

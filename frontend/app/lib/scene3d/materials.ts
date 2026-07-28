@@ -155,12 +155,14 @@ function getImageTexture(filename: string): THREE.Texture | null {
 const heightCache = new Map<string, THREE.Texture>()
 
 /** Load an input-dir image and convert it to a height field. Cached per
- *  (filename, invert) since inverting produces a genuinely different texture.
+ *  (filename, invert, contrast) since either one produces a genuinely different texture —
+ *  contrast is applied at this same build step (see toHeightPixels/ReliefSpec.contrast's
+ *  doc), so a contrast change MUST join the key or a stale texture would be returned.
  *  Returns null outside a browser — the unit suite runs in node, where the
  *  factory must still set bumpScale and simply bind no texture. */
-function getHeightTexture(filename: string, invert: boolean): THREE.Texture | null {
+function getHeightTexture(filename: string, invert: boolean, contrast: number): THREE.Texture | null {
   if (typeof document === 'undefined') return null
-  const key = `${filename}|${invert ? 1 : 0}`
+  const key = `${filename}|${invert ? 1 : 0}|${contrast}`
   const hit = heightCache.get(key)
   if (hit) return hit
 
@@ -175,7 +177,7 @@ function getHeightTexture(filename: string, invert: boolean): THREE.Texture | nu
     if (!ctx) return
     ctx.drawImage(img, 0, 0)
     const data = ctx.getImageData(0, 0, c.width, c.height)
-    data.data.set(toHeightPixels(data.data, invert))
+    data.data.set(toHeightPixels(data.data, invert, contrast))
     ctx.putImageData(data, 0, 0)
     tex.image = c
     tex.needsUpdate = true
@@ -208,7 +210,7 @@ function getHeightTexture(filename: string, invert: boolean): THREE.Texture | nu
  *  matching how this call has always been made here: relief is a one-shot resolve, never
  *  part of a live per-frame field batch, so it must never compete with an animating
  *  shaderFill for `LIVE_FIELD_CEILING` slots. */
-function buildHeightTextureFromSpec(spec: ShaderSpec, invert: boolean): THREE.Texture | null {
+function buildHeightTextureFromSpec(spec: ShaderSpec, invert: boolean, contrast: number): THREE.Texture | null {
   if (typeof document === 'undefined') return null
   const src = resolveField({ spec, w: 512, h: 512, t: 0, fps: 30 })
   if (!src) return null
@@ -220,7 +222,7 @@ function buildHeightTextureFromSpec(spec: ShaderSpec, invert: boolean): THREE.Te
   if (!ctx) return null
   ctx.drawImage(src, 0, 0)
   const data = ctx.getImageData(0, 0, c.width, c.height)
-  data.data.set(toHeightPixels(data.data, invert))
+  data.data.set(toHeightPixels(data.data, invert, contrast))
   ctx.putImageData(data, 0, 0)
   return new THREE.CanvasTexture(c)
 }
@@ -228,7 +230,7 @@ function buildHeightTextureFromSpec(spec: ShaderSpec, invert: boolean): THREE.Te
 function getShaderHeightTexture(mat: SceneMaterial, r: ReliefSpec): THREE.Texture | null {
   const spec = r.spec ?? mat.shader
   if (!spec) return null
-  return buildHeightTextureFromSpec(spec, r.invert === true)
+  return buildHeightTextureFromSpec(spec, r.invert === true, r.contrast ?? MATERIAL_DEFAULTS.reliefContrast)
 }
 
 /** Materials whose shader-relief `bumpMap` is still null because `resolveField` missed at
@@ -250,7 +252,8 @@ function healReliefMaterials(ownerId: string): void {
     if (m.userData.reliefOwnerId !== ownerId) continue
     const spec = m.userData.reliefSpec as ShaderSpec | undefined
     if (!spec) { reliefHealPending.delete(m); continue }
-    const tex = buildHeightTextureFromSpec(spec, m.userData.reliefInvert === true)
+    const contrast = (m.userData.reliefContrast as number | undefined) ?? MATERIAL_DEFAULTS.reliefContrast
+    const tex = buildHeightTextureFromSpec(spec, m.userData.reliefInvert === true, contrast)
     if (!tex) continue // still missing (catalog not resolved yet) — retry on a later call
     ;(m as THREE.MeshStandardMaterial).bumpMap = tex
     m.needsUpdate = true
@@ -272,7 +275,7 @@ export function applyRelief(m: THREE.Material, mat: SceneMaterial, ownerId: stri
   reliefHealPending.delete(target) // always a fresh material instance here — defensive only
   if (r && r.source !== 'none') {
     const tex = r.source === 'image'
-      ? (r.image ? getHeightTexture(r.image, r.invert === true) : null)
+      ? (r.image ? getHeightTexture(r.image, r.invert === true, r.contrast ?? MATERIAL_DEFAULTS.reliefContrast) : null)
       : getShaderHeightTexture(mat, r)
     target.bumpMap = tex
     target.bumpScale = r.scale ?? MATERIAL_DEFAULTS.reliefScale
@@ -285,6 +288,7 @@ export function applyRelief(m: THREE.Material, mat: SceneMaterial, ownerId: stri
       if (spec) {
         target.userData.reliefSpec = spec
         target.userData.reliefInvert = r.invert === true
+        target.userData.reliefContrast = r.contrast ?? MATERIAL_DEFAULTS.reliefContrast
         target.userData.reliefOwnerId = ownerId
         reliefHealPending.add(target)
       }
@@ -639,16 +643,20 @@ export function materialFor(mat: SceneMaterial, geometry?: THREE.BufferGeometry,
 }
 
 /** The part of relief that forces a material REBUILD: which texture object is bound.
- *  `scale` updates in place (a slider drag must not rebuild per tick).
- *  `invert` rebuilds (a toggle is clicked occasionally, so cost is negligible and removes bugs).
- *  See updateMaterial: bumpScale updates in place, but getHeightTexture caches per (filename, invert). */
+ *  `scale` updates in place (a slider drag must not rebuild per tick) — deliberately EXCLUDED
+ *  from this key. `invert` and `contrast` both rebuild: they change the height PIXELS at
+ *  texture-build time (see toHeightPixels), so the bound texture itself is different, not just
+ *  a uniform on an existing one — a toggle/drag-release is occasional, so the rebuild cost is
+ *  negligible and it removes a whole class of stale-texture bugs.
+ *  See updateMaterial: bumpScale updates in place, but getHeightTexture caches per
+ *  (filename, invert, contrast). */
 function reliefKey(mat: SceneMaterial): string {
   const r = mat.relief
   const relief = !r || r.source === 'none'
     ? '-'
     : r.source === 'image'
-      ? `i:${r.image ?? ''}:${r.invert ? 1 : 0}`
-      : `s:${r.spec ? JSON.stringify(r.spec) : ''}:${r.invert ? 1 : 0}`
+      ? `i:${r.image ?? ''}:${r.invert ? 1 : 0}:${r.contrast ?? MATERIAL_DEFAULTS.reliefContrast}`
+      : `s:${r.spec ? JSON.stringify(r.spec) : ''}:${r.invert ? 1 : 0}:${r.contrast ?? MATERIAL_DEFAULTS.reliefContrast}`
   return `|${relief}|n:${mat.normalImage ?? ''}`
 }
 

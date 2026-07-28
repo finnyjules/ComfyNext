@@ -80,6 +80,28 @@ describe('scene3d relief on materials', () => {
     expect(updateMaterial(m, base({ relief: { source: 'shader', scale: 0.2, invert: true } }))).toBe(false)
   })
 
+  // Contrast changes the height PIXELS at texture-build time (toHeightPixels), so the bound
+  // bumpMap is a genuinely different texture — reliefKey must include it, same as invert,
+  // or a contrast edit would silently keep showing the old (stale) texture in place.
+  it('rebuilds when contrast changes on an image relief', () => {
+    const m = materialFor(base({ relief: { source: 'image', image: 'h.png', scale: 0.2, contrast: 1 } }))
+    expect(updateMaterial(m, base({ relief: { source: 'image', image: 'h.png', scale: 0.2, contrast: 3 } }))).toBe(false)
+  })
+
+  it('rebuilds when contrast changes on a shader relief', () => {
+    const m = materialFor(base({ relief: { source: 'shader', scale: 0.2, contrast: 1 } }))
+    expect(updateMaterial(m, base({ relief: { source: 'shader', scale: 0.2, contrast: 3 } }))).toBe(false)
+  })
+
+  // Deliberate contrast with the above: `scale` is a slider that must keep updating IN
+  // PLACE (a drag must not rebuild per tick) even while a contrast change forces a rebuild —
+  // reliefKey must include contrast WITHOUT also picking up scale.
+  it('still updates in place when only scale changes, contrast held fixed', () => {
+    const m = materialFor(base({ relief: { source: 'image', image: 'h.png', scale: 0.2, contrast: 2 } }))
+    expect(updateMaterial(m, base({ relief: { source: 'image', image: 'h.png', scale: 0.9, contrast: 2 } }))).toBe(true)
+    expect((m as THREE.MeshPhysicalMaterial).bumpScale).toBe(0.9)
+  })
+
   it('still updates scale in place without rebuilding', () => {
     const m = materialFor(base({ relief: { source: 'image', image: 'h.png', scale: 0.2, invert: false } }))
     expect(updateMaterial(m, base({ relief: { source: 'image', image: 'h.png', scale: 0.8, invert: false } }))).toBe(true)

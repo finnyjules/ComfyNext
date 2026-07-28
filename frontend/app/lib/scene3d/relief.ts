@@ -11,12 +11,20 @@ const LUMA_B = 0.0722
 
 /** Collapse RGBA to a grayscale height field. Returns a NEW buffer; the input is not
  *  mutated. Alpha is forced opaque: a transparent source pixel has no meaningful height,
- *  and leaving it transparent would punch a hole THREE samples as zero. */
-export function toHeightPixels(rgba: Uint8ClampedArray, invert = false): Uint8ClampedArray {
+ *  and leaving it transparent would punch a hole THREE samples as zero.
+ *
+ *  `contrast` expands (>1) or compresses (<1) the height value around the 127.5 midpoint,
+ *  applied AFTER invert — the same texture-build-time step invert already runs at (see
+ *  materials.ts's getHeightTexture/getShaderHeightTexture and ReliefSpec.contrast's doc in
+ *  config.ts). `contrast === 1` takes a literal fast path identical to the pre-contrast
+ *  expression below, so every existing caller that doesn't pass it gets a byte-exact no-op. */
+export function toHeightPixels(rgba: Uint8ClampedArray, invert = false, contrast = 1): Uint8ClampedArray {
   const out = new Uint8ClampedArray(rgba.length)
   for (let i = 0; i < rgba.length; i += 4) {
     const luma = LUMA_R * rgba[i]! + LUMA_G * rgba[i + 1]! + LUMA_B * rgba[i + 2]!
-    const v = Math.round(invert ? 255 - luma : luma)
+    const inverted = invert ? 255 - luma : luma
+    const adjusted = contrast === 1 ? inverted : Math.min(255, Math.max(0, (inverted - 127.5) * contrast + 127.5))
+    const v = Math.round(adjusted)
     out[i] = v
     out[i + 1] = v
     out[i + 2] = v
