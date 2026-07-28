@@ -222,11 +222,24 @@ function draw(c: VectorTypeConfig, t = 0, opts: Record<string, unknown> = {}) {
   return { ctx, frame }
 }
 
-/** The paints belonging to glyph `i`, in draw order. Glyph-major: the loop draws
- *  every layer of glyph 0, then every layer of glyph 1. */
+/**
+ * The paints belonging to glyph `i`, in stack order.
+ *
+ * **LAYER-MAJOR** (changed by Task 4): the loop finishes every glyph of layer 0
+ * before it starts layer 1, so layer `l`'s ink on glyph `i` is at `l·n + i`.
+ * Task 3 shipped this glyph-major, which is the same picture for as long as no
+ * layer's ink leaves its own glyph cell — extrude is the first kind with reach,
+ * and glyph-major drew letter 2's block shadow over letter 1's face. Every
+ * assertion below is unchanged; only where the paints are found moved.
+ */
 function perGlyph(ctx: RecCtx, layersPerGlyph: number): Paint[][] {
+  const n = ctx.paints.length / layersPerGlyph
   const out: Paint[][] = []
-  for (let i = 0; i < ctx.paints.length; i += layersPerGlyph) out.push(ctx.paints.slice(i, i + layersPerGlyph))
+  for (let i = 0; i < n; i++) {
+    const g: Paint[] = []
+    for (let l = 0; l < layersPerGlyph; l++) g.push(ctx.paints[l * n + i] as Paint)
+    out.push(g)
+  }
   return out
 }
 
@@ -296,17 +309,36 @@ describe('the layers that must NOT paint', () => {
       .toEqual(on.ctx.paints.filter(p => p.style !== BLUE).map(p => `${p.op}:${p.style}`))
   })
 
-  it('skips EXTRUDE layers whole — Tasks 4-5, not half-drawn as a fill', () => {
+  it('draws an EXTRUDE as depth COPIES, in stack position — Task 4', () => {
+    // ── UPDATED BY TASK 4 ──────────────────────────────────────────────────
+    // This test used to assert an extrude contributed NOTHING (2×N paints), and
+    // that was the correct assertion while `vtPaintLayers` skipped the kind
+    // whole. Task 4 is the reader: an extrude is now `depth` filled copies of
+    // the glyph path, drawn in the layer's own slot in the stack. The geometry
+    // itself is pinned in `vectortype-extrude.unit.spec.ts`; what this file
+    // still owns is that the extrude takes part in the LAYER LOOP like any
+    // other layer — right position, right paint, one alpha, no leakage.
     const { ctx } = draw(stack(
       { kind: 'fill', paint: RED },
       { kind: 'extrude', paint: BLUE, depth: 8, distance: 4 },
       { kind: 'fill', paint: GREEN },
     ))
-    // An extrude drawn as an ordinary fill would give 3×N paints and a picture
-    // the user cannot tell from a broken extrude. It contributes nothing.
-    expect(ctx.paints.length).toBe(2 * N)
-    expect(ctx.paints.some(p => p.style === BLUE)).toBe(false)
-    expect(perGlyph(ctx, 2)[0]!.map(p => p.style)).toEqual([RED, GREEN])
+    expect(ctx.paints.length).toBe((1 + 8 + 1) * N)
+    // Layer-major, and the middle layer contributes EIGHT paints per glyph:
+    // N reds, then N×8 blues, then N greens.
+    expect(ctx.paints.slice(0, N).map(p => p.style)).toEqual(Array(N).fill(RED))
+    expect(ctx.paints.slice(N, N + 8 * N).every(p => p.style === BLUE)).toBe(true)
+    expect(ctx.paints.slice(N + 8 * N).map(p => p.style)).toEqual(Array(N).fill(GREEN))
+    // Filled, never stroked — `width` is as inert on an extrude as on a fill.
+    expect(ctx.paints.every(p => p.op === 'fill')).toBe(true)
+    // A `depth: 0` extrude is still skipped whole, and does not become a fill.
+    const zero = draw(stack(
+      { kind: 'fill', paint: RED },
+      { kind: 'extrude', paint: BLUE, depth: 0, distance: 4 },
+      { kind: 'fill', paint: GREEN },
+    ))
+    expect(zero.ctx.paints.length).toBe(2 * N)
+    expect(zero.ctx.paints.some(p => p.style === BLUE)).toBe(false)
   })
 
   it('drops a zero-width stroke and a zero-opacity layer', () => {

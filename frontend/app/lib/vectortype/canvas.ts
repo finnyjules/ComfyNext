@@ -52,6 +52,13 @@ import {
   type VtFillAnchor,
   type VtLegacyPaint,
 } from './config'
+import {
+  VT_EXTRUDE_FRAME_BUDGET,
+  extrudeBudget,
+  extrudeOffsets,
+  type VtExtrudeCopy,
+  type VtExtrudeSpec,
+} from './extrude'
 import type { VtFont } from './font'
 import type { GlyphOutline, TextOutlines } from './outline'
 import { textOutlines } from './outline'
@@ -114,6 +121,20 @@ export interface VtFrame {
    * enabled layer.
    */
   frozenFields: number
+  /**
+   * How many EXTRUDE COPIES this frame's `VT_EXTRUDE_FRAME_BUDGET` removed.
+   *
+   * `0` for every frame a user can reach without deliberately stacking six
+   * full-depth extrudes over a long line — see `VT_EXTRUDE_FRAME_BUDGET` for the
+   * measured numbers. Reported for exactly the reason `frozenFields` is: an
+   * extrude that quietly got shallower reads as "the depth slider stopped
+   * working", and the picture does not say otherwise. `drawVectorType` also
+   * `console.warn`s once per distinct shortfall.
+   *
+   * The pure geometry path (`vectorTypeFrame`) draws nothing and always reports
+   * 0, because no copy was budgeted there at all.
+   */
+  extrudeDropped: number
 }
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v)
@@ -294,6 +315,8 @@ export function vectorTypeFrame(font: VtFont, cfg: VectorTypeConfig, t: number):
     // No `withFieldFrame` span is opened here — this function resolves GEOMETRY,
     // not paint. `drawVectorType` overwrites this with its span's real count.
     frozenFields: 0,
+    // Likewise: no copy was drawn here, so none was budgeted away.
+    extrudeDropped: 0,
   }
 }
 
@@ -567,8 +590,7 @@ function vtFieldRequests(
  * once for the run rather than once per letter.
  */
 interface VtPaintLayer {
-  /** `extrude` never reaches here — see `vtPaintLayers`. */
-  kind: 'fill' | 'stroke'
+  kind: 'fill' | 'stroke' | 'extrude'
   paint: Paint
   /** The plain CSS colour this paint resolves to, or `null` when it needs the
    *  anchoring machinery. The fast path, and the common one. */
@@ -582,6 +604,18 @@ interface VtPaintLayer {
   op: GlobalCompositeOperation
   runPm: DOMMatrix | null
   runStyle: string | CanvasGradient | CanvasPattern | null
+  /**
+   * The offset copies an `extrude` layer draws, BACK TO FRONT — `null` on a
+   * `fill` or a `stroke`, which draw the glyph path exactly once.
+   *
+   * Resolved ONCE for the run (the offsets depend only on the layer's four
+   * numbers, never on which glyph is being drawn) and then replayed per glyph,
+   * so a 24-letter word at depth 8 does one `extrudeOffsets` call, not 24.
+   *
+   * An extrude with `depth: 0` produces an EMPTY array and the layer is dropped
+   * by `vtPaintLayers` before it gets here, so this is never `[]`.
+   */
+  copies: VtExtrudeCopy[] | null
 }
 
 /**
@@ -606,29 +640,49 @@ interface VtPaintLayer {
  *    why users concluded this studio had no stroke; a stroke layer added through
  *    the UI gets `VT_DEFAULT_STROKE_WIDTH`.
  *
- * ── EXTRUDE IS TASKS 4-5, AND IS SKIPPED WHOLE ──────────────────────────────
- * `kind: 'extrude'` layers exist in the model (`depth`/`angle`/`distance`/
- * `taper`/`solid` are stored and merged) and NOTHING here draws them. Not a
- * partial implementation, not "drawn as a plain fill": an extrude rendered as an
- * ordinary fill would be a picture the user cannot distinguish from a broken
- * extrude. Task 4 adds the offset-copy loop; until then the layer is inert, and
- * it also asks for no shader field, so it cannot displace a visible one.
+ * ── EXTRUDE ─────────────────────────────────────────────────────────────────
+ * An `extrude` layer is the same glyph path FILLED `depth` more times, at the
+ * offsets `extrudeOffsets` derives (see `./extrude.ts` for the geometry and the
+ * angle convention). It is a fill of N copies, never a stroke: `width` is inert
+ * on it, exactly as it is on a fill layer.
+ *
+ * A `depth: 0` extrude is dropped here for the same reason a zero-width stroke
+ * is — it paints nothing, so it must not be able to spend a shader FIELD.
+ *
+ * `solid: true` (fusing the copies into ONE body via paper.js `unite`) is
+ * **Task 5**, and it is not read here at all: the union is far too slow for a
+ * draw loop, so the live path draws the un-unioned stack by design (plan trap 5).
+ *
+ * @param glyphs How many glyphs the run has — the other half of the
+ *   `depth × glyphs` cost, needed to spend `VT_EXTRUDE_FRAME_BUDGET`.
  */
-function vtPaintLayers(cfg: VectorTypeConfig | null | undefined): VtPaintLayer[] {
+function vtPaintLayers(
+  cfg: VectorTypeConfig | null | undefined,
+  glyphs: number,
+): { layers: VtPaintLayer[]; extrudeDropped: number } {
   const out: VtPaintLayer[] = []
+  /** Every extrude layer paired with the config layer it came from, so the
+   *  budget's caps can be applied after the whole stack is known — a budget
+   *  spent front-to-back has to see every extrude before it can decide which one
+   *  gives copies up. */
+  const extrudes: Array<{ L: VtPaintLayer; spec: VtExtrudeSpec }> = []
   for (const layer of vtDrawLayers(cfg)) {
     if (!layer || typeof layer !== 'object') continue
     if (layer.enabled === false) continue
-    // Tasks 4-5. Anything unrecognised is dropped for the same reason: drawing a
-    // kind this loop does not understand as if it were a fill is a wrong picture.
-    if (layer.kind !== 'fill' && layer.kind !== 'stroke') continue
+    // Anything unrecognised is dropped: drawing a kind this loop does not
+    // understand as if it were a fill is a wrong picture, not a partial one.
+    if (layer.kind !== 'fill' && layer.kind !== 'stroke' && layer.kind !== 'extrude') continue
     const paint = layer.paint
     if (!hasPaint(paint)) continue
     const opacity = clamp01(Number.isFinite(layer.opacity) ? layer.opacity : 1)
     if (opacity <= 0) continue
     const width = Number.isFinite(layer.width) ? Math.max(0, layer.width) : 0
     if (layer.kind === 'stroke' && width <= 0) continue
-    out.push({
+    // Cheap pre-check on the raw depth so a `depth: 0` extrude never reaches the
+    // budget or the field span. The real offsets are built below, once the
+    // budget has had its say.
+    if (layer.kind === 'extrude' && !(Number.isFinite(layer.depth) && Math.round(layer.depth) > 0)) continue
+    const L: VtPaintLayer = {
       kind: layer.kind,
       paint,
       flat: flatPaint(paint),
@@ -638,9 +692,26 @@ function vtPaintLayers(cfg: VectorTypeConfig | null | undefined): VtPaintLayer[]
       op: VT_BLEND_OP[layer.blend] ?? 'source-over',
       runPm: null,
       runStyle: null,
-    })
+      copies: null,
+    }
+    if (layer.kind === 'extrude') extrudes.push({ L, spec: layer })
+    out.push(L)
   }
-  return out
+
+  if (!extrudes.length) return { layers: out, extrudeDropped: 0 }
+
+  // ONE budget for the frame, spent across every extrude layer at once — see
+  // `VT_EXTRUDE_FRAME_BUDGET`. Nothing is silently truncated: `dropped` is
+  // returned, surfaced on `VtFrame`, and logged by `drawVectorType`.
+  const { caps, dropped } = extrudeBudget(extrudes.map(e => e.spec.depth), glyphs)
+  extrudes.forEach((e, i) => { e.L.copies = extrudeOffsets(e.spec, caps[i] as number) })
+  // A layer the budget shortened to nothing paints nothing; drop it rather than
+  // leave an empty copy list the draw loop would iterate zero times while still
+  // paying to resolve its paint.
+  return {
+    layers: out.filter(L => L.kind !== 'extrude' || (L.copies?.length ?? 0) > 0),
+    extrudeDropped: dropped,
+  }
 }
 
 /**
@@ -663,6 +734,27 @@ function vtPaintLayers(cfg: VectorTypeConfig | null | undefined): VtPaintLayer[]
 function matScale(m: DOMMatrix): number {
   const det = Math.abs(m.a * m.d - m.b * m.c)
   return det > 0 && Number.isFinite(det) ? Math.sqrt(det) : 1
+}
+
+/** The last shortfall warned about, so a 60fps preview of an over-budget config
+ *  logs once rather than sixty times a second. Reset by any different shortfall,
+ *  so raising the depth further does warn again. */
+let lastExtrudeWarn = 0
+
+/**
+ * Say out loud that the frame budget shortened an extrude.
+ *
+ * `console.warn`, not a silent cap: the plan's own bar, and Space Type's and
+ * Shape Studio's precedent for a truncated field. `frame.extrudeDropped` carries
+ * the same number to any host that wants to show it in the UI.
+ */
+function warnExtrudeBudget(dropped: number, glyphs: number): void {
+  if (dropped === lastExtrudeWarn) return
+  lastExtrudeWarn = dropped
+  console.warn(
+    `[vectortype] extrude shortened: ${dropped} offset copies dropped over ${glyphs} glyphs ` +
+    `(frame budget ${VT_EXTRUDE_FRAME_BUDGET} copies). Lower the depth, or shorten the text.`,
+  )
 }
 
 export interface VtDrawOptions extends VtBoxOptions {
@@ -725,7 +817,13 @@ export function drawVectorType(
   // Compositor paints with — because `ctx.fillStyle`/`strokeStyle` SILENTLY
   // IGNORE a non-string assignment. A `flat` layer (a `solid` fill, every lifted
   // legacy string) is the fast path and needs none of the anchoring machinery.
-  const layers = vtPaintLayers(frame.config)
+  //
+  // An EXTRUDE layer resolves to a list of offset copies here too, budgeted
+  // against the glyph count — the cost of an extrude is `depth × glyphs` filled
+  // paths, and the glyph count is only known now.
+  const { layers, extrudeDropped } = vtPaintLayers(frame.config, frame.outlines.glyphs.length)
+  frame.extrudeDropped = extrudeDropped
+  if (extrudeDropped > 0) warnExtrudeBudget(extrudeDropped, frame.outlines.glyphs.length)
 
   // The em in output pixels, from the placement rather than re-read from the
   // config, so the cell box a mask is measured against cannot drift from the
@@ -831,20 +929,71 @@ export function drawVectorType(
      * layer under a `normal` layer works. It is part of the saved drawing state,
      * so the glyph's own `restore()` is what stops it leaking, exactly as with
      * `ctx.filter`.
+     *
+     * ## EXTRUDE: the same path, N more times, BEHIND
+     *
+     * An extrude layer replays this glyph's path once per entry in `L.copies`,
+     * in array order — which `extrudeOffsets` guarantees is BACK TO FRONT, so
+     * the copy nearest the face lands last. There is no copy at offset zero: the
+     * FACE is whatever `fill` layer sits ABOVE the extrude in the stack, which
+     * is what makes "an extrude under a gradient fill" a stack expression rather
+     * than a second paint model. It is filled, never stroked, on every kind of
+     * paint — `width` is as inert on an extrude as it is on a fill.
+     *
+     * ### The paint space does NOT move with the copy — decided, not defaulted
+     *
+     * A copy translates the GEOMETRY inside the layer's paint space; `pm` and the
+     * resolved `style` are computed once for this glyph and shared by every copy.
+     * So a `word`-anchored gradient extrude is ONE ramp that the whole extruded
+     * mass is a window onto — copy k samples it wherever copy k has been pushed
+     * to — and the block reads as one solid body lit by one gradient.
+     *
+     * The alternative (moving `pm` with each copy, so every copy samples the ramp
+     * identically) would make each copy an independent recolouring of the face
+     * and the extrude would read as N stacked stickers, not a body. It would also
+     * contradict what the anchor MEANS: `word` says "this paint is pinned to the
+     * run", and a paint that slides along with the geometry it paints is pinned to
+     * nothing. One rule, no per-anchor special case — and it is observable: with a
+     * word-anchored A→B gradient and a horizontal extrude, the copies step
+     * through the ramp; if they did not, every copy would be the face's colour.
      */
-    function paintLayer(L: VtPaintLayer, path: Path2D, glyph: GlyphOutline, glyphAlpha: number): void {
+    function paintLayer(
+      L: VtPaintLayer,
+      path: Path2D,
+      glyph: GlyphOutline,
+      glyphAlpha: number,
+      /** The glyph's placed origin — the taper pivot's anchor. */
+      origin: { x: number; y: number },
+      /** The glyph's advance in output px — the taper pivot's other half. */
+      advance: number,
+    ): void {
       ctx.globalAlpha = glyphAlpha * L.opacity
       ctx.globalCompositeOperation = L.op
+      const copies = L.copies
       if (L.flat !== null) {
-        if (L.kind === 'stroke') {
+        const stroking = L.kind === 'stroke'
+        if (stroking) {
           ctx.lineWidth = L.width
           ctx.lineJoin = 'round'
           ctx.strokeStyle = L.flat
-          ctx.stroke(path)
         } else {
-          // nonzero, always: glyph counters (the hole in an 'o') depend on it.
           ctx.fillStyle = L.flat
-          ctx.fill(path, 'nonzero')
+        }
+        // nonzero, always: glyph counters (the hole in an 'o') depend on it.
+        const once = () => (stroking ? ctx.stroke(path) : ctx.fill(path, 'nonzero'))
+        if (!copies) {
+          once()
+          return
+        }
+        for (const c of copies) {
+          // The copy transform is applied to the CONTEXT rather than folded into
+          // a matrix, because the flat path deliberately never touches
+          // `getTransform`/`Path2D.addPath` at all — that is what makes it the
+          // fast path, and it is the path almost every frame in the product takes.
+          ctx.save()
+          applyCopy(c, origin, advance)
+          once()
+          ctx.restore()
         }
         return
       }
@@ -853,28 +1002,83 @@ export function drawVectorType(
       const box = L.runPm ? null : vtGlyphPaintBox(glyph, place, em)
       const pm = L.runPm ?? gm.translate(box!.cx, box!.cy)
       // Pull the path back into the paint space so the paint is anchored to `pm`
-      // while the glyph still draws where the motion put it.
-      const local = new Path2D()
-      local.addPath(path, pm.inverse().multiply(gm))
+      // while the glyph still draws where the motion put it. ONE matrix for the
+      // glyph, reused by every extrude copy — the copy's own step is composed on
+      // the right of it, i.e. applied in the GLYPH's space, where `dx`/`dy` are
+      // the output pixels the control promises.
+      const toPaint = pm.inverse().multiply(gm)
       ctx.save()
       ctx.setTransform(pm)
       const style = L.runStyle ?? resolvePaint(ctx, L.paint, { w: box!.w, h: box!.h }, field)
-      if (L.kind === 'stroke') {
+      const stroking = L.kind === 'stroke'
+      if (stroking) {
         // `lineWidth` is in the CURRENT transform's units and we have just left
         // the glyph's own — see `matScale`. At the `glyph` anchor `pm` is `gm`
         // translated, so this factor is exactly 1 and the width is untouched.
         ctx.lineWidth = L.width * (matScale(gm) / matScale(pm))
         ctx.lineJoin = 'round'
         ctx.strokeStyle = style
-        ctx.stroke(local)
       } else {
         ctx.fillStyle = style
-        ctx.fill(local, 'nonzero')
       }
+      const drawAt = (m: DOMMatrix) => {
+        const local = new Path2D()
+        local.addPath(path, m)
+        if (stroking) ctx.stroke(local)
+        else ctx.fill(local, 'nonzero')
+      }
+      if (!copies) drawAt(toPaint)
+      else for (const c of copies) drawAt(copyMatrix(toPaint, c, origin, advance))
       ctx.restore()
     }
 
-    for (let i = 0; i < paths.length; i++) {
+    /**
+     * The pivot a tapered copy scales about, in the glyph's own drawing space.
+     *
+     * The SAME pivot the motion scale uses (see the `scaleX`/`scaleY` block
+     * below): the glyph CELL's centre horizontally, the BASELINE vertically. Type
+     * scales about its baseline — that is why `card-flip-v` always read correctly
+     * — and pinning the left edge instead would make each tapered copy drift
+     * rightwards as it shrank, so a tapered extrude would bend rather than
+     * recede. Two pivots for the same operation in one file is exactly the drift
+     * this module exists to prevent.
+     */
+    const pivotX = (origin: { x: number }, advance: number) => origin.x + advance / 2
+
+    /** Apply one copy's step to the CONTEXT, in the glyph's own space. */
+    function applyCopy(c: VtExtrudeCopy, origin: { x: number; y: number }, advance: number): void {
+      ctx.translate(c.dx, c.dy)
+      if (c.scale === 1) return
+      const px = pivotX(origin, advance)
+      ctx.translate(px, origin.y)
+      ctx.scale(c.scale, c.scale)
+      ctx.translate(-px, -origin.y)
+    }
+
+    /** The same step, as a matrix composed onto `base` — the anchored path, where
+     *  the context transform is the PAINT space and the copy must move in the
+     *  glyph's. */
+    function copyMatrix(
+      base: DOMMatrix,
+      c: VtExtrudeCopy,
+      origin: { x: number; y: number },
+      advance: number,
+    ): DOMMatrix {
+      const stepped = base.translate(c.dx, c.dy)
+      if (c.scale === 1) return stepped
+      const px = pivotX(origin, advance)
+      return stepped.translate(px, origin.y).scale(c.scale, c.scale).translate(-px, -origin.y)
+    }
+
+    /**
+     * Paint ONE layer's ink on ONE glyph, inside that glyph's own drawing state
+     * — its motion alpha, its blur, its cell clip and its motion transform.
+     *
+     * The state is rebuilt per (layer, glyph) rather than once per glyph,
+     * because the stack loop is now the OUTER one (see below). That is a handful
+     * of extra `ctx` calls per layer; the alternative is a wrong picture.
+     */
+    function paintGlyph(L: VtPaintLayer, i: number): void {
       const glyph = frame.outlines.glyphs[i] as GlyphOutline
       const path = paths[i] as Path2D
       const tr = frame.transforms[i] ?? IDENTITY_GLYPH_MOTION
@@ -944,11 +1148,36 @@ export function drawVectorType(
         }
         ctx.translate(-origin.x, -origin.y)
       }
-      // THE STACK, BACK TO FRONT. Array order is paint order, so a stroke layer
-      // BELOW a fill draws first and the fill covers its inner half — the
-      // ordering the single fixed fill-then-stroke pair could not express.
-      for (const L of layers) paintLayer(L, path, glyph, glyphAlpha)
+      paintLayer(L, path, glyph, glyphAlpha, origin, advance)
       ctx.restore()
+    }
+
+    /**
+     * THE STACK, BACK TO FRONT — and the LAYER loop is the OUTER one.
+     *
+     * Array order is paint order, so a stroke layer below a fill draws first and
+     * the fill covers its inner half — the ordering the single fixed
+     * fill-then-stroke pair could not express.
+     *
+     * ## Why the layer loop is outside the glyph loop, and not inside it
+     *
+     * Task 3 shipped this glyph-major (`for glyph: for layer`), which is
+     * indistinguishable from layer-major for as long as no layer's ink leaves
+     * its own glyph cell. EXTRUDE is the first layer kind with REACH: its copies
+     * step `depth × distance` px away, straight over the neighbouring letters.
+     * Glyph-major then draws letter 2's block shadow ON TOP OF letter 1's face,
+     * because letter 1's face was already finished — measured live at the
+     * default 135° angle: 4,674 of the face's 11,092 px eaten at `distance: 8`,
+     * and letters visibly bitten out of the word.
+     *
+     * Layer-major is what "an ordered appearance stack" means: a layer covers the
+     * WHOLE RUN before the next one starts, so an extrude is behind every face,
+     * not just behind its own letter's. It costs a per-glyph state setup per
+     * layer (alpha, blur, clip, transform — a handful of `ctx` calls), and for
+     * the one-layer default it is byte-identical to what was there.
+     */
+    for (const L of layers) {
+      for (let i = 0; i < paths.length; i++) paintGlyph(L, i)
     }
   }
 }

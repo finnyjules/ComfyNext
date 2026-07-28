@@ -10,8 +10,10 @@ import { DEFAULT_FILL, FILL_TYPES, type Fill } from '~/lib/spacetype/fillTile'
 import type { VtAxis } from './font'
 import {
   DEFAULT_CONFIG,
+  LAYER_DEFAULTS,
   VT_ALIGNS,
   VT_DEFAULT_STROKE_WIDTH,
+  VT_EXTRUDE_DEPTH_MAX,
   VT_FILL_ANCHORS,
   VT_FONT_IDS,
   VT_STAGGER_DELAY_MAX,
@@ -122,6 +124,7 @@ const vtLayerOf = (c: VectorTypeConfig, l?: VtAppearanceLayer | null): VtAppeara
   l ?? c?.appearance?.[0] ?? null
 
 const layerIsStroke = (c: VectorTypeConfig, l?: VtAppearanceLayer | null) => vtLayerOf(c, l)?.kind === 'stroke'
+const layerIsExtrude = (c: VectorTypeConfig, l?: VtAppearanceLayer | null) => vtLayerOf(c, l)?.kind === 'extrude'
 
 /**
  * The active layer's paint as a `Fill`, or null.
@@ -270,13 +273,34 @@ export const VT_CONTROLS: VtControl[] = [
   slider('layer.width', 'Stroke width', 0, 40, 0.5, 'Paint', VT_DEFAULT_STROKE_WIDTH,
     'Outline width in OUTPUT pixels, so it does not shrink with size.',
     { when: layerIsStroke }),
-  // DELIBERATELY NOT DECLARED YET: `layer.opacity`, `layer.blend`, and the five
-  // extrude keys (`layer.depth` / `angle` / `distance` / `taper` / `solid`).
-  // They are STORED — the model is complete, so `setByPath`'s parent guard always
-  // finds its leaf — but no renderer reads them until Tasks 3 and 4. Declaring a
-  // control whose reader has not landed is the silent-dead-control failure this
-  // file's header opens by refusing, and it is the same reason `motion.stagger`
-  // was withheld until `glyphTime` existed.
+  // The EXTRUDE knobs, withheld unless the active layer IS an extrude — same
+  // gate, same reason, as the stroke width above. An extrude layer draws the
+  // glyph path `depth` more times behind the face (see `./extrude.ts`); the face
+  // itself is whatever fill layer sits ABOVE it in the stack.
+  slider('layer.depth', 'Extrude depth', 0, VT_EXTRUDE_DEPTH_MAX, 1, 'Paint', LAYER_DEFAULTS.depth,
+    'How many offset copies of the letterform are drawn behind the face. 0 = none.',
+    { when: layerIsExtrude }),
+  // NOT the same knob as `layer.paint.angle`, and it shares its convention with
+  // it on purpose: 0° steps right, 90° steps down, so two "angle" sliders in one
+  // panel cannot rotate in opposite directions.
+  slider('layer.angle', 'Extrude angle', 0, 360, 1, 'Paint', LAYER_DEFAULTS.angle,
+    'Which way the extrude steps, in degrees. 0 is to the right, 90 is straight down.',
+    { when: layerIsExtrude }),
+  slider('layer.distance', 'Extrude distance', 0, 40, 0.5, 'Paint', LAYER_DEFAULTS.distance,
+    'Pixels between consecutive copies, so the extrude reaches depth × distance.',
+    { when: layerIsExtrude }),
+  slider('layer.taper', 'Extrude taper', -1, 1, 0.01, 'Paint', LAYER_DEFAULTS.taper,
+    'Shrinks the copies as they recede: 1 fades the far end to nothing, 0 keeps them all the same size, negative flares them outwards.',
+    { when: layerIsExtrude }),
+  // DELIBERATELY NOT DECLARED YET: `layer.opacity`, `layer.blend` and
+  // `layer.solid`. All three are STORED — the model is complete, so
+  // `setByPath`'s parent guard always finds its leaf — but nothing reads them
+  // yet: opacity and blend RENDER (Task 3) but have no UI home until the stack
+  // panel exists (Task 8), and `solid` (fusing the extrude copies into one body
+  // via paper.js) is Task 5, which has not landed. Declaring a control whose
+  // reader has not landed is the silent-dead-control failure this file's header
+  // opens by refusing — the same reason `motion.stagger` was withheld until
+  // `glyphTime` existed.
 
   // --- Motion ---------------------------------------------------------------
   // Stagger is NOT a track: it shifts the clock each glyph reads the tracks at.
@@ -408,6 +432,8 @@ PAINT IS A STACK. The type carries an ordered list of appearance layers — fill
 \`layer.paint.type\` picks how the active layer is painted: solid, gradient, ombre (a grainy A→B fade), grid, noise, checkerboard, stripes, qr, or shader. \`layer.paint.a\` is the main colour and \`layer.paint.b\` the second one, which appears for everything except solid — and neither applies to a shader fill (see below). \`layer.paint.angle\` sets the direction of a gradient, ombre or stripes; \`layer.paint.density\` sets how many cells or stripes span grid, checkerboard, stripes and qr. \`layer.anchor\` decides which box THIS LAYER is measured against — "glyph" gives every letter its own copy, "word" spans one fill across the whole run so the letters are windows onto it, and "frame" pins the fill to the canvas so moving type slides over it. Reach for "word" when the user asks for a gradient across a word.
 
 \`layer.width\` is the outline width in output pixels, and it only exists when the active layer is a STROKE layer. A stroke is visible because it is in the stack, not because a width was raised. You cannot add or remove layers — only adjust the one that is active.
+
+EXTRUDE IS A BLOCK SHADOW, not 3D. An extrude layer redraws the letterform several times behind the face, which is what gives retro block lettering and hard offset shadows; the FACE is whichever fill layer sits above it in the stack. Its four knobs exist only when the active layer is an EXTRUDE layer. \`layer.depth\` is how many copies (0 draws none), \`layer.distance\` is the gap in pixels between consecutive copies, so the block reaches depth × distance, and \`layer.angle\` is the direction in degrees — 0 steps right, 90 steps straight down, using the same convention as the fill angle above. \`layer.taper\` shrinks the copies as they recede: 1 fades the far end away for a vanishing-point look, 0 keeps the block even, and negative values flare it outwards.
 
 SHADER FILLS. Setting \`layer.paint.type\` to shader paints the layer with a live catalog shader effect rather than a flat pattern, and the flat colours stop applying: a shader fill is painted from the effect's own input, so \`layer.paint.a\` and \`layer.paint.b\` are withdrawn and writing them would change nothing. Three controls take their place. \`layer.paint.shader.effectId\` names the catalog effect. \`layer.paint.shader.anchor\` is object (every glyph carries its own copy of the field) or frame (one continuous field, and the letters are windows onto it) — the same distinction \`layer.anchor\` draws for the other fills, applied to the effect. \`layer.paint.shader.speed\` is the animation rate, 0 = frozen. Each effect also brings its OWN parameters, at \`layer.paint.shader.params.<param>\`: which ones exist depends entirely on the chosen effect, so they only appear in the control list once an effect is picked, and changing \`layer.paint.shader.effectId\` replaces the whole set. Be aware that many effects also declare a speed parameter of their own, which is a different knob from \`layer.paint.shader.speed\` — both must be non-zero for the fill to move.
 

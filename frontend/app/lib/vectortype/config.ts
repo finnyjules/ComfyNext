@@ -399,8 +399,13 @@ export const VT_BASE_STROKE_ID = 'Lstroke'
  */
 export const VT_DEFAULT_STROKE_WIDTH = 3
 
-/** Field-by-field defaults for a layer, minus the id (which is never shared). */
-const LAYER_DEFAULTS: Omit<VtAppearanceLayer, 'id' | 'paint'> = {
+/** Field-by-field defaults for a layer, minus the id (which is never shared).
+ *
+ *  EXPORTED so `controls.ts` can seed the layer sliders' `default` from the one
+ *  the merge actually ships, rather than a second hand-written copy — the same
+ *  reason its paint controls read `DEFAULT_FILL`. A slider whose default drifts
+ *  from the stored value shows the wrong number until the user drags it. */
+export const LAYER_DEFAULTS: Omit<VtAppearanceLayer, 'id' | 'paint'> = {
   kind: 'fill',
   enabled: true,
   // `glyph` is the identity-preserving anchor: it is what the renderer already
@@ -409,7 +414,12 @@ const LAYER_DEFAULTS: Omit<VtAppearanceLayer, 'id' | 'paint'> = {
   opacity: 1,
   blend: 'normal',
   width: VT_DEFAULT_STROKE_WIDTH,
-  // Extrude defaults — a readable block shadow down-right, not a hairline.
+  // Extrude defaults — a readable block shadow, not a hairline. `135°` steps
+  // DOWN-LEFT: the angle convention is canvas's own (`dx = cos θ`, `dy = sin θ`,
+  // y pointing down), shared with `fillTile`'s gradient angle so the two "angle"
+  // sliders in one panel cannot rotate in opposite directions. See
+  // `./extrude.ts`. (This comment said "down-right" when the field was stored but
+  // unread; Task 4 is what made it a claim about pixels.)
   depth: 8,
   angle: 135,
   distance: 3,
