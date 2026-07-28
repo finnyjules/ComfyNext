@@ -220,7 +220,13 @@ onUnmounted(() => document.removeEventListener('mousedown', onRunMenuDocPointer)
 // later still reaches nodes saved before the change.
 const isCapsule = computed(() => {
   if (typeof props.data.collapsed === 'boolean') return props.data.collapsed
-  return defaultCollapsed('comfy', Boolean(props.data.hasRun))
+  // Use the `hasRun` computed above, not `data.hasRun`. The computed already
+  // derives from an existing result, so a graph that produced output before
+  // this feature existed still collapses; `data.hasRun` is only ever stamped by
+  // a completion event, which meant no pre-existing canvas ever showed a
+  // capsule. Keep `data.hasRun` in the OR for node types whose output is not
+  // images/audio/text/takes.
+  return defaultCollapsed('comfy', hasRun.value || Boolean(props.data.hasRun))
 })
 
 // Ticks only while this node is running, so an idle canvas does no work.
