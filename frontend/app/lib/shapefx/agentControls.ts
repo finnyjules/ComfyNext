@@ -9,7 +9,7 @@ import { visibleShapeControls } from './controls'
 function stripMeta(specs: ControlSpec[]): ControlSpec[] {
   return specs
     .filter((c) => (c as any).agent !== false)
-    .map(({ when, agent, animatable, ...spec }: any) => spec as ControlSpec)
+    .map(({ when, agent, animatable, summary, ...spec }: any) => spec as ControlSpec)
 }
 
 /**
