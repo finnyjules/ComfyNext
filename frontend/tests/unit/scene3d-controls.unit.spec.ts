@@ -7,6 +7,7 @@ import {
 import {
   defaultDoc, createPrimitive, createLight, createGlbObject, MATERIAL_DEFAULTS, DEFAULT_MATERIAL,
 } from '~/lib/scene3d/config'
+import { getByPath } from '~/lib/studio/path'
 
 describe('SCENE_CONTROLS integrity', () => {
   it('every control has a non-empty key, label and group', () => {
@@ -101,6 +102,40 @@ describe('SCENE_CONTROLS integrity', () => {
     const transform = SCENE_CONTROLS.filter((c) => c.group === 'Transform')
     expect(transform.length).toBeGreaterThan(0)
     for (const c of transform) expect(c.animatable, c.key).toBe(false)
+  })
+
+  it('transform control keys resolve to actual values on a scene object (array indices, not properties)', () => {
+    // Build a test object with known position, rotation, scale
+    const obj = createPrimitive('box', [])
+    obj.position = [1.5, 2.5, 3.5]
+    obj.rotation = [0.1, 0.2, 0.3]
+    obj.scale = [2, 3, 4]
+
+    // Verify each transform control's key resolves via getByPath (after stripping 'object.' prefix)
+    const transformControls = SCENE_CONTROLS.filter((c) => c.group === 'Transform')
+    expect(transformControls.length).toBe(9) // 3 position + 3 rotation + 3 scale
+
+    const resolvedValues: Record<string, unknown> = {}
+    for (const control of transformControls) {
+      // Strip 'object.' prefix to get the path relative to the object
+      const relativePath = control.key.replace(/^object\./, '')
+      const value = getByPath(obj, relativePath)
+      resolvedValues[control.key] = value
+      // Verify it resolves to a number, not undefined
+      expect(value, `${control.key} must resolve to a number`).not.toBeUndefined()
+      expect(typeof value, `${control.key} must be numeric`).toBe('number')
+    }
+
+    // Spot-check specific values
+    expect(resolvedValues['object.position.0']).toBe(1.5)
+    expect(resolvedValues['object.position.1']).toBe(2.5)
+    expect(resolvedValues['object.position.2']).toBe(3.5)
+    expect(resolvedValues['object.rotation.0']).toBe(0.1)
+    expect(resolvedValues['object.rotation.1']).toBe(0.2)
+    expect(resolvedValues['object.rotation.2']).toBe(0.3)
+    expect(resolvedValues['object.scale.0']).toBe(2)
+    expect(resolvedValues['object.scale.1']).toBe(3)
+    expect(resolvedValues['object.scale.2']).toBe(4)
   })
 })
 

@@ -240,15 +240,21 @@ export const SCENE_CONTROLS: SceneControl[] = [
   // rotation), NOT the degrees the Selection UI displays — the UI's rotX/rotY/rotZ
   // computed props convert at the edge; this schema addresses the underlying radian
   // value makeConfigParams writes straight through.
-  slider('object.position.x', 'Position X', -20, 20, 0.1, 'Transform', 0, undefined, { animatable: false }),
-  slider('object.position.y', 'Position Y', -20, 20, 0.1, 'Transform', 0, undefined, { animatable: false }),
-  slider('object.position.z', 'Position Z', -20, 20, 0.1, 'Transform', 0, undefined, { animatable: false }),
-  slider('object.rotation.x', 'Rotation X', -Math.PI, Math.PI, 0.01, 'Transform', 0, 'Radians', { animatable: false }),
-  slider('object.rotation.y', 'Rotation Y', -Math.PI, Math.PI, 0.01, 'Transform', 0, 'Radians', { animatable: false }),
-  slider('object.rotation.z', 'Rotation Z', -Math.PI, Math.PI, 0.01, 'Transform', 0, 'Radians', { animatable: false }),
-  slider('object.scale.x', 'Scale X', 0.05, 10, 0.05, 'Transform', 1, undefined, { animatable: false }),
-  slider('object.scale.y', 'Scale Y', 0.05, 10, 0.05, 'Transform', 1, undefined, { animatable: false }),
-  slider('object.scale.z', 'Scale Z', 0.05, 10, 0.05, 'Transform', 1, undefined, { animatable: false }),
+  //
+  // Keys use numeric array indices (e.g., `object.position.0` not `.x`) because
+  // Vec3 is a plain array `[number, number, number]` with no `.x/.y/.z` properties.
+  // The path resolver (lib/studio/path.ts) reads these via `o[k]` which works for
+  // numeric string keys on arrays. Labels stay human-readable ("Position X", etc.);
+  // keys are dotted paths addressing the data, nothing else.
+  slider('object.position.0', 'Position X', -20, 20, 0.1, 'Transform', 0, undefined, { animatable: false }),
+  slider('object.position.1', 'Position Y', -20, 20, 0.1, 'Transform', 0, undefined, { animatable: false }),
+  slider('object.position.2', 'Position Z', -20, 20, 0.1, 'Transform', 0, undefined, { animatable: false }),
+  slider('object.rotation.0', 'Rotation X', -Math.PI, Math.PI, 0.01, 'Transform', 0, 'Radians', { animatable: false }),
+  slider('object.rotation.1', 'Rotation Y', -Math.PI, Math.PI, 0.01, 'Transform', 0, 'Radians', { animatable: false }),
+  slider('object.rotation.2', 'Rotation Z', -Math.PI, Math.PI, 0.01, 'Transform', 0, 'Radians', { animatable: false }),
+  slider('object.scale.0', 'Scale X', 0.05, 10, 0.05, 'Transform', 1, undefined, { animatable: false }),
+  slider('object.scale.1', 'Scale Y', 0.05, 10, 0.05, 'Transform', 1, undefined, { animatable: false }),
+  slider('object.scale.2', 'Scale Z', 0.05, 10, 0.05, 'Transform', 1, undefined, { animatable: false }),
 ]
 
 /** Controls applicable to `doc`/`obj`, in SCENE_SECTIONS order — the single gate
