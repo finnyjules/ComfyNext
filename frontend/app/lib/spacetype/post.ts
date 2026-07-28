@@ -4,6 +4,7 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js'
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
 import { FilmPass } from 'three/examples/jsm/postprocessing/FilmPass.js'
+import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js'
 import { HalftonePass } from 'three/examples/jsm/postprocessing/HalftonePass.js'
 import { DotScreenPass } from 'three/examples/jsm/postprocessing/DotScreenPass.js'
 import { GlitchPass } from 'three/examples/jsm/postprocessing/GlitchPass.js'
@@ -27,11 +28,12 @@ export const DEFAULT_POST: PostSettings = {
   halftone: false, halftoneRadius: 4, halftoneScatter: 0,
   dotScreen: false, dotScreenScale: 1, dotScreenAngle: 1.57,
   glitch: false,
+  gtao: false, gtaoRadius: 4, gtaoIntensity: 0.5, gtaoThickness: 1,
 }
 
 /** True when ANY post effect is on — the engine renders through the composer only then. */
 export function postEnabled(p: PostSettings): boolean {
-  return !!(p.bloom || p.color || p.chroma || p.blur || p.film || p.halftone || p.dotScreen || p.glitch)
+  return !!(p.bloom || p.color || p.chroma || p.blur || p.film || p.halftone || p.dotScreen || p.glitch || p.gtao)
 }
 
 // Bokeh blur (16-tap golden-angle disc) + radial chromatic aberration + colour grade, in one pass.
@@ -86,6 +88,7 @@ const GRADE_VERT = 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = proje
 export class PostChain {
   readonly composer: EffectComposer
   private renderPass: RenderPass
+  private gtaoPass: GTAOPass
   private bloomPass: UnrealBloomPass
   private halftonePass: HalftonePass
   private dotScreenPass: DotScreenPass
@@ -97,6 +100,21 @@ export class PostChain {
     this.composer = new EffectComposer(renderer)
     this.composer.setSize(width, height)
     this.renderPass = new RenderPass(scene, camera)
+    // @types/three's GTAOPass constructor only declares (scene, camera, width, height, parameters) —
+    // the aoParameters/pdParameters args exist at runtime (see GTAOPass.js) but aren't in the .d.ts,
+    // so they're set via updateGtaoMaterial() right after construction instead of the constructor.
+    this.gtaoPass = new GTAOPass(scene, camera, width, height)
+    // screenSpaceRadius: true — GTAO's `radius` is otherwise in world units, and this is a design
+    // tool where users scale objects freely; a radius tuned on a 1-unit sphere would be wrong on a
+    // 10-unit one. Screen-space radius keeps the effect scale-independent. Set once here; setSettings
+    // only ever updates radius/thickness, so this define is never toggled back off.
+    this.gtaoPass.updateGtaoMaterial({ radius: 4, thickness: 1, screenSpaceRadius: true })
+    // blendIntensity is a property on the pass itself, not a material uniform. AO should only
+    // darken *ambient/indirect* light, but this pass multiplies its occlusion over the whole
+    // finished image — including directly-lit surfaces. Studio lighting has a strong sun, so a
+    // blend near 1.0 reads as grime rather than grounding. Keep this moderate; do not "fix" it to 1.
+    this.gtaoPass.blendIntensity = 0.5
+    this.gtaoPass.enabled = false
     this.bloomPass = new UnrealBloomPass(new THREE.Vector2(width, height), 0.6, 0.4, 0.8)
     this.halftonePass = new HalftonePass(width, height, { radius: 4, scatter: 0 })
     this.halftonePass.enabled = false
@@ -117,26 +135,32 @@ export class PostChain {
       fragmentShader: GRADE_FRAG,
     })
     this.composer.addPass(this.renderPass)
+    this.composer.addPass(this.gtaoPass)
     this.composer.addPass(this.bloomPass)
     this.composer.addPass(this.halftonePass)
     this.composer.addPass(this.dotScreenPass)
     this.composer.addPass(this.filmPass)
     this.composer.addPass(this.glitchPass)
-    // order matters: RenderPass → [GTAO] → Bloom → Halftone → DotScreen → Film → [Glitch] → Grade.
-    // Geometry-aware passes (GTAO) go right after the render; grade must stay LAST — it's the pass
-    // that always ends the chain on screen (see the force-enable quirk in setSettings below). Future
-    // passes (pixelation) insert between bloom and grade, never after it.
+    // order matters: RenderPass → GTAO → Bloom → Halftone → DotScreen → Film → [Glitch] → Grade.
+    // Geometry-aware passes (GTAO) go right after the render — it needs the raw depth/normal buffers,
+    // not anything bloom or the other stylised passes have touched; grade must stay LAST — it's the
+    // pass that always ends the chain on screen (see the force-enable quirk in setSettings below).
+    // Future passes (pixelation) insert between bloom and grade, never after it.
     this.composer.addPass(this.gradePass)
   }
 
   setSize(width: number, height: number): void {
     this.composer.setSize(width, height)
+    this.gtaoPass.setSize(width, height)
     this.bloomPass.setSize(width, height)
     this.halftonePass.setSize(width, height)
     ;(this.gradePass.uniforms.uResolution!.value as THREE.Vector2).set(width, height)
   }
 
   setSettings(p: PostSettings): void {
+    this.gtaoPass.enabled = p.gtao
+    this.gtaoPass.updateGtaoMaterial({ radius: p.gtaoRadius, thickness: p.gtaoThickness })
+    this.gtaoPass.blendIntensity = p.gtaoIntensity
     this.bloomPass.enabled = p.bloom
     this.bloomPass.strength = p.bloomStrength
     this.bloomPass.radius = p.bloomRadius
@@ -175,11 +199,16 @@ export class PostChain {
   render(scene: THREE.Scene, camera: THREE.Camera): void {
     this.renderPass.scene = scene
     this.renderPass.camera = camera
+    // GTAOPass also holds its own scene/camera refs (it re-renders geometry into depth/normal
+    // buffers) — repoint them the same way, or it silently occludes against a stale camera.
+    this.gtaoPass.scene = scene
+    this.gtaoPass.camera = camera
     this.composer.render()
   }
 
   dispose(): void {
     this.composer.dispose()
+    this.gtaoPass.dispose()
     this.bloomPass.dispose()
     this.halftonePass.dispose()
     this.dotScreenPass.dispose()

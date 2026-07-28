@@ -2352,6 +2352,16 @@ function onClose() {
            the beauty bake (see passes.ts). -->
       <StudioSection title="Effects">
         <div class="flex items-center justify-between">
+          <span class="text-[11px] text-white/55">Ambient occlusion</span>
+          <StudioSwitch v-model="doc.post.gtao" />
+        </div>
+        <template v-if="doc.post.gtao">
+          <StudioSlider v-model="doc.post.gtaoRadius" label="Radius" hint="How far around each point to check for blockers" :min="0.5" :max="20" :step="0.5" />
+          <StudioSlider v-model="doc.post.gtaoIntensity" label="Intensity" hint="How dark the occluded areas get" :min="0" :max="2" :step="0.05" />
+          <StudioSlider v-model="doc.post.gtaoThickness" label="Thickness" hint="How solid nearby surfaces are treated as blockers" :min="0.1" :max="5" :step="0.1" />
+        </template>
+
+        <div class="flex items-center justify-between">
           <span class="text-[11px] text-white/55">Bloom</span>
           <StudioSwitch v-model="doc.post.bloom" />
         </div>

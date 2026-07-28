@@ -21,6 +21,7 @@ export interface PostSettings {
   halftone: boolean; halftoneRadius: number; halftoneScatter: number
   dotScreen: boolean; dotScreenScale: number; dotScreenAngle: number
   glitch: boolean
+  gtao: boolean; gtaoRadius: number; gtaoIntensity: number; gtaoThickness: number
 }
 
 export interface SpaceTypeState {

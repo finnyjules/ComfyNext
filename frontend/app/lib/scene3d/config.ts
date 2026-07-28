@@ -530,6 +530,10 @@ export function parseDoc(json: string): SceneDoc {
       dotScreenScale: num(p.dotScreenScale, DEFAULT_POST.dotScreenScale),
       dotScreenAngle: num(p.dotScreenAngle, DEFAULT_POST.dotScreenAngle),
       glitch: bool(p.glitch, DEFAULT_POST.glitch),
+      gtao: bool(p.gtao, DEFAULT_POST.gtao),
+      gtaoRadius: num(p.gtaoRadius, DEFAULT_POST.gtaoRadius),
+      gtaoIntensity: num(p.gtaoIntensity, DEFAULT_POST.gtaoIntensity),
+      gtaoThickness: num(p.gtaoThickness, DEFAULT_POST.gtaoThickness),
     }
   }
   const parseMaterial = (m: any): SceneMaterial => {

@@ -34,4 +34,13 @@ describe('post settings', () => {
   it('postEnabled reports true when ONLY glitch is on', () => {
     expect(postEnabled({ ...DEFAULT_POST, glitch: true })).toBe(true)
   })
+  it('gtao defaults to off but is present, so the tolerant Space Type spread picks it up', () => {
+    expect(DEFAULT_POST.gtao).toBe(false)
+    expect(typeof DEFAULT_POST.gtaoRadius).toBe('number')
+    expect(typeof DEFAULT_POST.gtaoIntensity).toBe('number')
+    expect(typeof DEFAULT_POST.gtaoThickness).toBe('number')
+  })
+  it('postEnabled reports true when ONLY gtao is on', () => {
+    expect(postEnabled({ ...DEFAULT_POST, gtao: true })).toBe(true)
+  })
 })
