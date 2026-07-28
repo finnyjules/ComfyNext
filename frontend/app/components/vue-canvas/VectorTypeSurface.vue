@@ -247,10 +247,16 @@ const { sweepPopover, applySweep, varMenu, openVarMenu, goToCollection } = useSt
  * predicates on the `shader` type, and are listed here so the rule reads as
  * one rule rather than two half-rules.
  *
- * Done HERE and not in `VT_CONTROLS` deliberately: this is a surface-level
- * visibility question and `controls.ts` is landed/verified. The agent can
- * still write `fill.a` on a shader fill and see nothing happen — a `when` on
- * the schema is the real fix, and it is flagged rather than smuggled in.
+ * REDUNDANT AS OF THE AGENT-VOCABULARY TASK, AND KEPT ON PURPOSE. This set was
+ * originally the whole rule, living here rather than in `VT_CONTROLS` because
+ * `controls.ts` was landed/verified — with the stated cost that the AGENT could
+ * still write `fill.a` on a shader fill and see nothing happen, since
+ * `vtAgentControls`/`animatableTargets`/the Collection resolver all read `when`
+ * and never this predicate. That cost has since been paid: `fillIsFill` and
+ * `fillNeedsB` in `controls.ts` now exclude the `shader` type, so all four
+ * consumers agree and every key in this set is already withheld by its own
+ * `when`. The set stays as a second net — if a future edit loosens one of those
+ * predicates, the panel does not silently regain a control that paints nothing.
  */
 const SHADER_INERT_FILL_KEYS = new Set(['fill.a', 'fill.b', 'fill.angle', 'fill.density'])
 

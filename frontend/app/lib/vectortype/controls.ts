@@ -89,7 +89,28 @@ const hasStroke = (c: VectorTypeConfig) => c.strokeWidth > 0
  * the optional chaining is for, same as `isShuffled` below.
  */
 const vtFill = (c: VectorTypeConfig): Fill | null => (isFill(c?.fill) ? c.fill : null)
-const fillIsFill = (c: VectorTypeConfig) => !!vtFill(c)
+
+/**
+ * A SHADER fill's own `a` / `b` are never read.
+ *
+ * `effectiveTilePaint` (fillTile.ts:60) unwraps a `type: 'shader'` Fill to
+ * `shader.input` and paints THAT — the outer Fill's colours are not consulted by
+ * any renderer on the screen path. So `fill.a` on a shader fill is the exact
+ * "control that resolves to nothing" this file withholds `stroke` and `fill.b`
+ * for elsewhere: a tune like "make the fill red" writes a value that is stored,
+ * survives the merge, and changes not one pixel.
+ *
+ * Task 8 already hid these two in the studio panel (`VectorTypeSurface.vue`'s own
+ * `controlVisible`), but that predicate is the PANEL's — `vtAgentControls`,
+ * `animatableTargets` and the Collection resolver all read `when` instead, so
+ * the agent kept being offered both. Putting the rule here is what makes the four
+ * consumers agree; the panel's copy is now redundant rather than contradicted.
+ *
+ * `fillHasAngle`/`fillHasDensity` below needed no change — neither list contains
+ * `shader`, so those two were already withheld.
+ */
+const fillIsShader = (c: VectorTypeConfig) => vtFill(c)?.type === 'shader'
+const fillIsFill = (c: VectorTypeConfig) => !!vtFill(c) && !fillIsShader(c)
 // Mirrors shapefx/controls.ts:33-35 — the same three questions, asked of the
 // same `Fill`. ONE deliberate difference: `gradient` is in `fillHasAngle` here.
 // `fillTileBox`'s gradient arm reads `fill.angle` (fillTile.ts:306), so Shape
@@ -97,7 +118,7 @@ const fillIsFill = (c: VectorTypeConfig) => !!vtFill(c)
 // own UI. Mirroring that would be mirroring a bug.
 const fillNeedsB = (c: VectorTypeConfig) => {
   const f = vtFill(c)
-  return !!f && f.type !== 'solid'
+  return !!f && f.type !== 'solid' && f.type !== 'shader'
 }
 const fillHasAngle = (c: VectorTypeConfig) => {
   const t = vtFill(c)?.type
@@ -304,7 +325,9 @@ LAYOUT. \`size\` is the em size in output pixels. \`tracking\` is extra letter s
 
 STAGGER MAKES IT KINETIC. \`motion.stagger.delay\` is the gap in seconds between one glyph and the next; at 0 the whole word animates as one, and raising it turns any animated axis into a wave that travels across the word. \`motion.stagger.order\` picks which glyph leads — forward, reverse, center (middle outwards), edges (outermost inwards) or random — and \`motion.stagger.seed\` re-rolls the random one. Reach for these when the user asks for letters to cascade, ripple, or come in one at a time.
 
-PAINT. The glyph bodies take the product's full fill vocabulary, not just a colour. \`fill.type\` picks it: solid, gradient, ombre (a grainy A→B fade), grid, noise, checkerboard, stripes, qr, or shader. \`fill.a\` is the main colour and \`fill.b\` the second one, which appears for everything except solid. \`fill.angle\` sets the direction of a gradient, ombre or stripes; \`fill.density\` sets how many cells or stripes span grid, checkerboard, stripes and qr. \`fillAnchor\` decides which box the fill is measured against — "glyph" gives every letter its own copy, "word" spans one fill across the whole run so the letters are windows onto it, and "frame" pins the fill to the canvas so moving type slides over it. Reach for "word" when the user asks for a gradient across a word.
+PAINT. The glyph bodies take the product's full fill vocabulary, not just a colour. \`fill.type\` picks it: solid, gradient, ombre (a grainy A→B fade), grid, noise, checkerboard, stripes, qr, or shader. \`fill.a\` is the main colour and \`fill.b\` the second one, which appears for everything except solid — and neither applies to a shader fill (see below). \`fill.angle\` sets the direction of a gradient, ombre or stripes; \`fill.density\` sets how many cells or stripes span grid, checkerboard, stripes and qr. \`fillAnchor\` decides which box the fill is measured against — "glyph" gives every letter its own copy, "word" spans one fill across the whole run so the letters are windows onto it, and "frame" pins the fill to the canvas so moving type slides over it. Reach for "word" when the user asks for a gradient across a word.
+
+SHADER FILLS. Setting \`fill.type\` to shader paints the glyph bodies with a live catalog shader effect rather than a flat pattern, and the flat colours stop applying: a shader fill is painted from the effect's own input, so \`fill.a\` and \`fill.b\` are withdrawn and writing them would change nothing. Three controls take their place. \`fill.shader.effectId\` names the catalog effect. \`fill.shader.anchor\` is object (every glyph carries its own copy of the field) or frame (one continuous field, and the letters are windows onto it) — the same distinction \`fillAnchor\` draws for the other fills, applied to the effect. \`fill.shader.speed\` is the animation rate, 0 = frozen. Each effect also brings its OWN parameters, at \`fill.shader.params.<param>\`: which ones exist depends entirely on the chosen effect, so they only appear in the control list once an effect is picked, and changing \`fill.shader.effectId\` replaces the whole set. Be aware that many effects also declare a speed parameter of their own, which is a different knob from \`fill.shader.speed\` — both must be non-zero for the fill to move.
 
 \`strokeWidth\` is the outline width in output pixels; it is 0 by default and \`stroke\` (the outline colour) is withheld until you raise it — set the width first, then the colour. The stroke is a flat colour only.
 

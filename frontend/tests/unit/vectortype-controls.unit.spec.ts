@@ -14,7 +14,34 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import * as fontkit from 'fontkit'
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
+
+/**
+ * The shader-fx catalog is a NETWORK resource (`$fetch('/sailor/shader_effects')`),
+ * and `getEffectSync` reads whatever a page has already fetched. That module-level
+ * cache is the seam: mocking it hands `vtAgentControls` a real-shaped `EffectDef`
+ * without a request, and lets a test also exercise the "catalog has not resolved
+ * this id" branch, which is otherwise unreachable offline.
+ *
+ * The mocked effect deliberately declares BOTH param types — a float and an enum —
+ * because `derivedShaderFillControls` addresses them through two different code
+ * paths and only the float one would be covered by a single-param fixture.
+ */
+const { CATALOG_EFFECT } = vi.hoisted(() => ({
+  CATALOG_EFFECT: {
+    id: 'kaleidoscope',
+    name: 'Kaleidoscope',
+    params: [
+      { uniform: 'u_segments', label: 'Segments', type: 'float', min: 2, max: 24, default: 6 },
+      { uniform: 'u_zoom', label: 'Zoom', type: 'float', min: 0.1, max: 4, default: 1 },
+      { uniform: 'u_mode', label: 'Mode', type: 'enum', default: 0, options: [{ label: 'Wedge', value: 0 }, { label: 'Nested', value: 1 }] },
+    ],
+  } as any,
+}))
+vi.mock('~/lib/shaderfx/catalog', () => ({
+  getEffectSync: (id: string) => (id === CATALOG_EFFECT.id ? CATALOG_EFFECT : null),
+}))
+
 import { makeConfigParams } from '~/lib/agent/configParams'
 import { DEFAULT_FILL, paintPrimaryColor } from '~/lib/spacetype/fillTile'
 import { isValidAxisTag, normaliseAxes, type VtAxis } from '~/lib/vectortype/font'
@@ -37,6 +64,7 @@ import {
   visibleVtControls,
 } from '~/lib/vectortype/controls'
 import { VT_GUIDANCE, vtAgentControls } from '~/lib/vectortype/agentControls'
+import { SHADER_FILL_CONTROLS, derivedShaderFillControls } from '~/lib/shaderfill/controls'
 
 const cfg = (over: Partial<VectorTypeConfig> = {}): VectorTypeConfig =>
   mergeConfig({ ...cloneConfig(DEFAULT_CONFIG), ...over })
@@ -519,34 +547,215 @@ describe('vtAgentControls', () => {
   })
 })
 
+/**
+ * SHADER FILLS in the agent's vocabulary.
+ *
+ * `VT_CONTROLS` declares no `fill.shader.*` key at all — the shader vocabulary is
+ * shared across four host studios and lives in `~/lib/shaderfill/controls.ts`. So
+ * `visibleVtControls`, which can only return members of `VT_CONTROLS`, can never
+ * produce one, and `vtAgentControls` needs an explicit branch. These tests pin
+ * that the branch exists, that it fires only when it should, and — the one that
+ * matters — that every key it emits addresses REAL storage.
+ */
+describe('shader fills enter the agent vocabulary', () => {
+  /** A config whose fill is a shader over the mocked catalog effect. Every param
+   *  the effect declares is SET, because `makeConfigParams` is sparse: an unwritten
+   *  leaf reads `undefined`, so an unset param would make the resolution probe
+   *  below pass or fail for the wrong reason. */
+  const shaderCfg = (over: Record<string, unknown> = {}) => cfg({
+    fill: {
+      ...DEFAULT_FILL,
+      type: 'shader',
+      shader: {
+        effectId: 'kaleidoscope',
+        params: { segments: 14, zoom: 2.5, mode: 1 },
+        anchor: 'frame',
+        speed: 1.5,
+        input: { ...DEFAULT_FILL, type: 'gradient' },
+        ...over,
+      },
+    },
+  } as any)
+
+  const keysOf = (c: VectorTypeConfig) => vtAgentControls(c).map((s) => s.key)
+
+  it('offers the three frozen shader keys only when the fill type is shader', () => {
+    // Measured before the branch was written: a shader-typed config emitted
+    // `text, fontId, size, tracking, align, fill.type, fill.a, fill.b, fillAnchor,
+    // strokeWidth, motion.stagger.*` and not one `fill.shader` key. Nothing derives
+    // them; Shape Studio needed the same explicit branch.
+    const frozen = SHADER_FILL_CONTROLS.map((c) => c.key)
+    expect(frozen).toEqual(['fill.shader.effectId', 'fill.shader.anchor', 'fill.shader.speed'])
+    for (const k of frozen) expect(keysOf(shaderCfg()), k).toContain(k)
+    for (const k of frozen) expect(keysOf(cfg()), k).not.toContain(k)
+    expect(keysOf(cfg({ fill: { ...DEFAULT_FILL, type: 'stripes' } } as any)).some((k) => k.startsWith('fill.shader'))).toBe(false)
+  })
+
+  it('strips the schema-only fields off the shared shader controls too', () => {
+    // `fill.shader.anchor` carries `animatable: false`; leaking it into the agent's
+    // ControlSpec[] would put a schema field in the model's prompt.
+    for (const c of vtAgentControls(shaderCfg())) {
+      expect(c, c.key).not.toHaveProperty('animatable')
+      expect(c, c.key).not.toHaveProperty('when')
+      expect(c, c.key).not.toHaveProperty('agent')
+    }
+  })
+
+  it("derives the active effect's own params at the real ShaderSpec.params path", () => {
+    const derived = keysOf(shaderCfg()).filter((k) => k.startsWith('fill.shader.params.'))
+    expect(derived).toEqual([
+      'fill.shader.params.segments',
+      'fill.shader.params.zoom',
+      'fill.shader.params.mode',
+    ])
+    // …and it is genuinely `derivedShaderFillControls`'s output, prefix and all,
+    // not a second hand-built list that happens to agree today.
+    expect(vtAgentControls(shaderCfg()).slice(-3))
+      .toEqual(derivedShaderFillControls(CATALOG_EFFECT, 'fill.shader'))
+  })
+
+  it('degrades to the frozen three when the catalog has not resolved that effect', () => {
+    // `getEffectSync` never fetches: before any page has loaded the catalog it
+    // returns null for every id. The frozen keys must still be offered.
+    const k = keysOf(shaderCfg({ effectId: 'nothing-in-the-catalog' }))
+    expect(k).toContain('fill.shader.effectId')
+    expect(k.some((x) => x.startsWith('fill.shader.params.'))).toBe(false)
+  })
+
+  /**
+   * THE ONE THAT MATTERS. `makeConfigParams` does naive dotted traversal with no
+   * special cases, so a derived key one segment off the real path resolves to
+   * `undefined` on read and creates a phantom object on write — which is exactly
+   * what an earlier `<prefix>.p.<id>` namespace did in this codebase: it wrote to
+   * `fill.shader.p` next to the real `fill.shader.params` and silently never
+   * reached the renderer, with nothing thrown anywhere.
+   */
+  it('every derived shader param key RESOLVES against the real config', () => {
+    const c = shaderCfg()
+    const params = paramsFor(c)
+    const derived = vtAgentControls(c).map((s) => s.key).filter((k) => k.startsWith('fill.shader.'))
+    const unresolved = derived.filter((k) => params[k] === undefined)
+    expect(unresolved).toEqual([])
+    // Not just "defined" — the ACTUAL stored numbers, so a key landing on some
+    // other real leaf would still fail.
+    expect(params['fill.shader.params.segments']).toBe(14)
+    expect(params['fill.shader.params.zoom']).toBe(2.5)
+    expect(params['fill.shader.params.mode']).toBe(1)
+    expect(params['fill.shader.effectId']).toBe('kaleidoscope')
+    expect(params['fill.shader.anchor']).toBe('frame')
+    expect(params['fill.shader.speed']).toBe(1.5)
+  })
+
+  it('the probe is not vacuous: a key one segment off the real path resolves to nothing', () => {
+    // The old `.p.` address, and a plausible near-miss, against the same config
+    // that resolves every real key above. If this ever passes, the test above has
+    // stopped proving anything.
+    const params = paramsFor(shaderCfg())
+    expect(params['fill.shader.p.segments']).toBeUndefined()
+    expect(params['fill.shader.segments']).toBeUndefined()
+    expect(params['fill.params.segments']).toBeUndefined()
+  })
+
+  it('WRITING a derived key lands on the real params bag, creating no phantom object', () => {
+    const c = shaderCfg()
+    const params = paramsFor(c)
+    params['fill.shader.params.segments'] = 3
+    const shader = (c.fill as any).shader
+    expect(shader.params.segments).toBe(3)
+    expect(shader.p).toBeUndefined()
+    // And the write is visible to the OTHER naive resolver too — `setByPath` /
+    // `getByPath`, which motion and Collection bindings use.
+    expect(paramsFor(c)['fill.shader.params.segments']).toBe(3)
+  })
+
+  /**
+   * The inert-`fill.a` decision, asserted rather than described.
+   *
+   * `effectiveTilePaint` unwraps a shader fill to `shader.input` and paints THAT,
+   * so the outer Fill's `a`/`b` are read by nothing on the screen path. Offering
+   * them to the agent means "make the fill red" writes a value that is stored,
+   * survives the merge, and changes not one pixel — so they are withheld, by the
+   * same `when` predicates that already withhold `stroke` and `fill.angle`.
+   */
+  it('withholds the inert fill.a / fill.b on a shader fill, in the panel AND the agent', () => {
+    const shader = shaderCfg()
+    expect(visibleVtControls(shader).map((c) => c.key)).not.toContain('fill.a')
+    expect(visibleVtControls(shader).map((c) => c.key)).not.toContain('fill.b')
+    expect(keysOf(shader)).not.toContain('fill.a')
+    expect(keysOf(shader)).not.toContain('fill.b')
+    // `fill.angle` / `fill.density` were already withheld — `shader` is in neither
+    // predicate's list — so the rule now reads as one rule.
+    expect(keysOf(shader).filter((k) => k.startsWith('fill.'))).toEqual([
+      'fill.type', 'fill.shader.effectId', 'fill.shader.anchor', 'fill.shader.speed',
+      'fill.shader.params.segments', 'fill.shader.params.zoom', 'fill.shader.params.mode',
+    ])
+  })
+
+  it('is a characterization snapshot of the shader vocabulary', () => {
+    // The two existing snapshots (above) are both SOLID fills, so neither moved
+    // when this branch landed — the shader keys are `when`-gated and those
+    // configs never reach them. This is the third one, so the shader vocabulary
+    // is pinned rather than merely reachable.
+    expect(vtAgentControls(shaderCfg())).toMatchSnapshot()
+  })
+
+  it('still offers fill.a everywhere it PAINTS something', () => {
+    // The withholding must be about the shader arm, not a blanket loss: every
+    // other fill type reads `fill.a`, and a `Gradient` paint reads neither.
+    for (const type of ['solid', 'gradient', 'ombre', 'grid', 'noise', 'checkerboard', 'stripes', 'qr']) {
+      expect(keysOf(cfg({ fill: { ...DEFAULT_FILL, type } } as any)), type).toContain('fill.a')
+    }
+    expect(keysOf(cfg({ fill: { ...DEFAULT_FILL, type: 'shader' } } as any))).not.toContain('fill.a')
+  })
+})
+
 describe('VT_GUIDANCE', () => {
   /** Every key the prose names is backticked; this is the set. */
   const quoted = [...VT_GUIDANCE.matchAll(/`([^`]+)`/g)].map((m) => m[1] as string)
-  const staticKeys = new Set(VT_CONTROLS.map((c) => c.key))
+  const staticKeys = new Set([...VT_CONTROLS, ...SHADER_FILL_CONTROLS].map((c) => c.key))
   const isAxisKey = (t: string) => t.startsWith('axes.') && (t === 'axes.<tag>' || isAxisTag(t.slice(5)))
+  /** The shader params are DERIVED per effect, so no fixed key exists to name.
+   *  The prose may name the placeholder — and only the placeholder: a concrete
+   *  `fill.shader.params.segments` would be teaching the model a key that exists
+   *  for some effects and not others. */
+  const isShaderParamKey = (t: string) => t === 'fill.shader.params.<param>'
 
   it('names only keys that exist in the schema', () => {
     expect(quoted.length).toBeGreaterThan(0)
     for (const t of quoted) {
-      expect(staticKeys.has(t) || isAxisKey(t), `guidance names unknown key \`${t}\``).toBe(true)
+      expect(staticKeys.has(t) || isAxisKey(t) || isShaderParamKey(t),
+        `guidance names unknown key \`${t}\``).toBe(true)
     }
   })
 
   it('names every control the agent can actually reach', () => {
     // A control the agent is offered but the prose never explains is a knob the
-    // model will use blind.
-    for (const c of VT_CONTROLS) {
+    // model will use blind. SHADER_FILL_CONTROLS is in here because
+    // `vtAgentControls` now offers those three on a shader fill — a shared
+    // module's keys still land in THIS studio's prompt.
+    for (const c of [...VT_CONTROLS, ...SHADER_FILL_CONTROLS]) {
       if ((c as any).agent === false) continue
       expect(quoted, `guidance never mentions ${c.key}`).toContain(c.key)
     }
   })
 
+  it('says out loud that fill.a / fill.b do not apply to a shader fill', () => {
+    // Both keys are named by the prose (the rule above requires it) but they are
+    // WITHHELD on a shader fill. Prose that named them without saying when they
+    // vanish would teach the model to reach for a control that is not there.
+    expect(VT_GUIDANCE).toMatch(/SHADER FILLS\./)
+    expect(VT_GUIDANCE).toMatch(/withdrawn/)
+  })
+
   it('leaves no un-backticked dotted key hiding in the prose', () => {
     // Second net: the rule above only sees backticked tokens, so anything
-    // shaped like a path outside them is caught here.
-    for (const m of VT_GUIDANCE.matchAll(/(?<!`)\b(?:axes|motion)\.[A-Za-z<>]+/g)) {
-      const t = m[0]
-      expect(staticKeys.has(t) || isAxisKey(t), `guidance names unknown key ${t}`).toBe(true)
+    // shaped like a path outside them is caught here. `fill` joined the
+    // alternation with the shader vocabulary — `fill.shader.effectId` un-quoted
+    // is exactly as invisible to the first net as `axes.wght` was.
+    for (const m of VT_GUIDANCE.matchAll(/(?<!`)\b(?:axes|motion|fill)\.[A-Za-z<>.]+/g)) {
+      const t = m[0].replace(/\.$/, '')
+      expect(staticKeys.has(t) || isAxisKey(t) || isShaderParamKey(t),
+        `guidance names unknown key ${t}`).toBe(true)
     }
   })
 })
