@@ -1,0 +1,195 @@
+/**
+ * The 2D paint resolver — turn a `Paint` (colour string | Gradient | Fill) into
+ * something assignable to `ctx.fillStyle`/`ctx.strokeStyle`.
+ *
+ * Lifted VERBATIM out of `composables/useCompositorLayers.ts`, where these four
+ * functions were module-private, so a second studio (Vector Type) can use the
+ * same resolver instead of growing a near-copy. The only change from the
+ * original is that the module-level `_fieldCtx` frame state is now an EXPLICIT
+ * `field` parameter (see `ShaderFieldFrameCtx` below) — a hidden module global
+ * was defensible with exactly one host that set it up; with two it would be a
+ * cross-host coupling bug waiting to happen. Each host keeps (and mutates) its
+ * own frame state and threads it in at the call site.
+ *
+ * ORIGIN CONVENTION: gradients and patterns here are built CENTRED on the
+ * origin — the box `{ w, h }` maps to `[-w/2..w/2] × [-h/2..h/2]` — because the
+ * Compositor draws every primitive centred at its own origin. This is
+ * deliberately DIFFERENT from `paintTileBox` in `~/lib/compositor/paint.ts`,
+ * which is corner-origin (`[0,0]..[w,h]`); see its doc at paint.ts:44-52. Do not
+ * harmonise the two: callers pick the one matching their drawing convention.
+ */
+import { type Fill, type ShaderSpec, fillTileBox, fillIsShader } from '~/lib/spacetype/fillTile'
+import { resolveField } from '~/lib/shaderfill/field'
+import { type Paint, isGradient, isFill } from '~/lib/compositor/paint'
+
+export function hasPaint(paint: Paint | undefined): boolean {
+  if (isFill(paint)) return true                        // a fill always paints (solid → fill.a)
+  if (isGradient(paint)) return paint.stops.length > 0
+  return !!paint && paint !== 'none' && paint !== 'transparent'
+}
+
+/**
+ * Resolve a Paint to a canvas fillStyle. Solid colors pass through; gradients
+ * are built against a local box `{ w, h }` (in the CURRENT drawing units, i.e.
+ * pixels for rect/ellipse, local width-fraction units for paths) centered on
+ * origin, so the gradient tracks the shape under any transform.
+ */
+export function resolvePaint(
+  ctx: CanvasRenderingContext2D,
+  paint: Paint,
+  box: { w: number; h: number },
+  field: ShaderFieldFrameCtx,
+): string | CanvasGradient | CanvasPattern {
+  if (isFill(paint)) return resolveFill(ctx, paint, box, field)
+  if (!isGradient(paint)) return paint
+  const stops = [...paint.stops].sort((a, b) => a.offset - b.offset)
+  let g: CanvasGradient
+  if (paint.type === 'radial') {
+    const r = Math.max(box.w, box.h) / 2
+    g = ctx.createRadialGradient(0, 0, 0, 0, 0, Math.max(r, 0.0001))
+  } else {
+    const rad = ((paint.angle ?? 0) * Math.PI) / 180
+    const hx = (Math.cos(rad) * box.w) / 2
+    const hy = (Math.sin(rad) * box.h) / 2
+    g = ctx.createLinearGradient(-hx, -hy, hx, hy)
+  }
+  for (const s of stops) g.addColorStop(Math.max(0, Math.min(1, s.offset)), s.color)
+  return g
+}
+
+// A Type-Studio Fill → a 2D pattern that spans the shape's box ONCE (drawing is
+// centered, so the tile maps onto [-w/2..w/2] × [-h/2..h/2]). The tile is built at
+// the box's ACTUAL on-screen pixel size (read from the ctx transform, capped) so it
+// stays crisp, and patterns use square cells so they never stretch on a non-square
+// shape. `solid` short-circuits to the flat colour. `shader` NEVER reaches this tile
+// cache — see resolveShaderFill below, which routes to the (time-aware) field cache
+// instead, keyed by `fillIsShader` before any of this runs.
+const FILL_TILE_CAP = 1024
+const _fillTileCache = new Map<string, HTMLCanvasElement>()
+function fillTileCached(fill: Fill, tw: number, th: number): HTMLCanvasElement {
+  const key = `${fill.type}|${fill.a}|${fill.b}|${fill.angle}|${fill.density}|${tw}x${th}`
+  let t = _fillTileCache.get(key)
+  if (!t) {
+    t = fillTileBox(fill, tw, th)
+    if (_fillTileCache.size > 64) _fillTileCache.clear()
+    _fillTileCache.set(key, t)
+  }
+  return t
+}
+
+// ── Shader fills on frame primitives (Task 6) ────────────────────────────────────
+// The host is its OWN shader-fill host: `withFieldFrame`'s live-field ceiling
+// (see ~/lib/shaderfill/field.ts) and the frozen-field count it returns must be that
+// frame's own, never pooled with an open Space Type/Shape Studio node — those are a
+// DIFFERENT host with their own per-owner call in ~/lib/spacetype/fills.ts's
+// refreshLiveShaderFills (Task 4's `withShaderFillContext` scheme). The Compositor's
+// `paintLayerStack` is the ONE place that calls `withFieldFrame` for its frame, once
+// per synchronous pass, with every shader fill this frame's own layers + background
+// actually carry — so as long as it never awaits mid-pass (it doesn't), no other
+// host's span can land between it and the resolveField calls that consume its
+// `liveKeys`.
+//
+// `field.base` is "the ctx transform in effect BEFORE the current primitive's own
+// local placement (translate/rotate/shear/scale) was applied" — i.e. the frame's own
+// base transform. It's re-captured right before every `applyXform` call (both the
+// fast path and the effects offscreen path) and before the background's own center
+// translate, so it's always correct for whichever primitive resolveFill is about to
+// paint, regardless of which canvas (`ctx` or a fresh effects offscreen) that is.
+// A frame-anchored fill's pattern matrix is then `currentCTM⁻¹ · base`: composing the
+// INVERSE of the primitive's own local transform against that captured base cancels
+// exactly the part contributed by the shape's own position/rotation, leaving every
+// primitive sampling the SAME field at the SAME frame-space location regardless of
+// where the shape sits — the field stays put; the shape moves over it.
+export interface ShaderFieldFrameCtx {
+  frameW: number; frameH: number; t: number; fps: number; base: DOMMatrix | null; bake: boolean
+  /** The `withFieldFrame` token for the span currently open — see `resolveField`'s doc in
+   *  ~/lib/shaderfill/field.ts. Set once per host frame pass, right after
+   *  `withFieldFrame` opens its span; `resolveShaderFill` (called deep inside the per-item
+   *  draw loop, not at the `withFieldFrame` call site itself) reads it from here to pass
+   *  into every `resolveField` call, the same way it already reads `t`/`fps`/`bake` from
+   *  this struct rather than threading them as parameters through every intermediate call. */
+  token: number
+}
+
+/** Object-anchor shader fields render at ONE fixed resolution and get STRETCHED into
+ *  each shape's own box by the pattern's scale transform below — the same semantics as
+ *  Space Type/Shape Studio's shaderFieldTexture (one texture per spec, reused by every
+ *  material that shares it, fitted to each one's own UV box), not a per-shape render.
+ *  Crucially this also keeps the paintLayerStack pre-pass trivial and impossible to
+ *  desync from this function: neither depends on any shape's actual box size (which the
+ *  pre-pass would otherwise have to duplicate exactly — box math differs subtly per
+ *  layer kind, e.g. brush's dpr-scaled bounds crop — to avoid the pre-pass asking
+ *  beginFieldFrame for a DIFFERENT key than this function resolves, which would silently
+ *  freeze an in-budget fill; see the git history of this comment for that exact bug).
+ *  This is the size we ASK resolveField for, not necessarily the size we GET: it clamps
+ *  any live (non-bake) request to LIVE_FIELD_PX (512, ~/lib/shaderfill/field.ts) — so
+ *  every scale computation below reads the RETURNED canvas's own `.width`/`.height`,
+ *  never `fw`/`fh`. Getting that backwards (scaling by the request instead of the
+ *  clamped result) was a real, shipped bug: the pattern only covered the top-left
+ *  fraction of the box/frame that the clamp ratio implies, transparent beyond it —
+ *  see the git history of this comment. */
+export const OBJECT_SHADER_FIELD_PX = 1024
+
+export function resolveShaderFill(
+  ctx: CanvasRenderingContext2D,
+  fill: Fill,
+  spec: ShaderSpec,
+  box: { w: number; h: number },
+  field: ShaderFieldFrameCtx,
+): string | CanvasGradient | CanvasPattern {
+  const frame = spec.anchor === 'frame'
+  const bw = Math.max(box.w, 1e-3), bh = Math.max(box.h, 1e-3)
+  const fw = frame ? Math.max(1, Math.round(field.frameW)) : OBJECT_SHADER_FIELD_PX
+  const fh = frame ? Math.max(1, Math.round(field.frameH)) : OBJECT_SHADER_FIELD_PX
+  const canvas = resolveField({ spec, w: fw, h: fh, t: field.t, fps: field.fps, bake: field.bake }, field.token)
+  // graceful: the shader's own input paint. spec.input is a Paint (string | Gradient |
+  // Fill), not just a Fill — go through resolvePaint (the general Paint resolver), not
+  // resolveFill (Fill-only), or a Gradient/string input would throw/misrender here.
+  if (!canvas) return resolvePaint(ctx, spec.input, box, field)
+  const pat = ctx.createPattern(canvas, 'no-repeat')
+  if (!pat) return fill.a
+  if (typeof DOMMatrix !== 'undefined' && pat.setTransform) {
+    if (frame && field.base) {
+      // ctx.getTransform().inverse() never throws — a singular (zero-scale) matrix
+      // comes back as all-NaN, and setTransform silently no-ops on a non-finite
+      // matrix (leaving the pattern unpositioned), so this degrades gracefully on
+      // its own; the try/catch is just defensive, not load-bearing.
+      try {
+        // The field was very likely rendered SMALLER than the frame (resolveField's
+        // live clamp) — canvas.width/height is the size we actually got, so an extra
+        // scale-up by frameW/canvas.width (etc.) stretches it back across the full
+        // frame instead of leaving it covering only a corner of it.
+        pat.setTransform(
+          ctx.getTransform().inverse().multiply(field.base)
+            .scaleSelf(field.frameW / canvas.width, field.frameH / canvas.height),
+        )
+      } catch { /* see comment above — not expected to fire */ }
+    } else {
+      pat.setTransform(new DOMMatrix().translateSelf(-bw / 2, -bh / 2).scaleSelf(bw / canvas.width, bh / canvas.height))
+    }
+  }
+  return pat
+}
+
+export function resolveFill(
+  ctx: CanvasRenderingContext2D,
+  fill: Fill,
+  box: { w: number; h: number },
+  field: ShaderFieldFrameCtx,
+): string | CanvasGradient | CanvasPattern {
+  if (fill.type === 'solid') return fill.a
+  if (fillIsShader(fill)) return resolveShaderFill(ctx, fill, fill.shader, box, field)
+  const bw = Math.max(box.w, 1e-3), bh = Math.max(box.h, 1e-3)
+  // Effective on-screen pixel extent of the box under the current transform.
+  const m = typeof ctx.getTransform === 'function' ? ctx.getTransform() : null
+  const sx = m ? (Math.hypot(m.a, m.b) || 1) : 1, sy = m ? (Math.hypot(m.c, m.d) || 1) : 1
+  const k = Math.min(1, FILL_TILE_CAP / Math.max(bw * sx, bh * sy, 1))
+  const tw = Math.max(1, Math.round(bw * sx * k)), th = Math.max(1, Math.round(bh * sy * k))
+  const tile = fillTileCached(fill, tw, th)
+  const pat = ctx.createPattern(tile, 'no-repeat')
+  if (!pat) return fill.a
+  if (typeof DOMMatrix !== 'undefined' && pat.setTransform) {
+    pat.setTransform(new DOMMatrix().translateSelf(-bw / 2, -bh / 2).scaleSelf(bw / tw, bh / th))
+  }
+  return pat
+}
