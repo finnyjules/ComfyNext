@@ -22,6 +22,7 @@ import {
   type SceneDoc, type SceneObject, type PrimitiveObject, type PrimitiveKind, type MaterialType, type GradientStop, type LightKind, type LightObject,
 } from '~/lib/scene3d/config'
 import { MATCAP_IDS, matcapThumb, onTextureError } from '~/lib/scene3d/materials'
+import { toHeightPixels } from '~/lib/scene3d/relief'
 import { DEFAULT_SHADER_SPEC, type ShaderSpec } from '~/lib/spacetype/fillTile'
 import { fetchShaderFxCatalog } from '~/lib/shaderfx/catalog'
 import { LIVE_FIELD_CEILING } from '~/lib/shaderfill/descriptor'
@@ -418,6 +419,75 @@ const matShader = computed<ShaderSpec>({
   set: (v) => { if (selected.value) selected.value.material.shader = v },
 })
 
+// ── Surface relief (Task 5) — orthogonal to material type, so its proxies read/write
+// `material.relief`/`material.normalImage` directly rather than going through matParam.
+// Mirrors the shaderFill proxies' shape: get() falls back to a default, set() only writes
+// once a `relief` object exists (matReliefSource's setter is what creates it).
+const matReliefSource = computed<'none' | 'shader' | 'image'>({
+  get: () => selected.value?.material.relief?.source ?? 'none',
+  set: (v) => {
+    const mat = selected.value?.material
+    if (!mat) return
+    mat.relief = { ...(mat.relief ?? { scale: MATERIAL_DEFAULTS.reliefScale }), source: v }
+  },
+})
+const matReliefScale = computed<number>({
+  get: () => selected.value?.material.relief?.scale ?? MATERIAL_DEFAULTS.reliefScale,
+  set: (v) => {
+    const mat = selected.value?.material
+    if (!mat?.relief) return
+    mat.relief.scale = v
+  },
+})
+const matReliefInvert = computed<boolean>({
+  get: () => selected.value?.material.relief?.invert === true,
+  set: (v) => {
+    const mat = selected.value?.material
+    if (!mat?.relief) return
+    mat.relief.invert = v
+  },
+})
+const matReliefSpec = computed<ShaderSpec>({
+  get: () => selected.value?.material.relief?.spec ?? DEFAULT_SHADER_SPEC,
+  set: (v) => {
+    const mat = selected.value?.material
+    if (!mat?.relief) return
+    mat.relief.spec = v
+  },
+})
+/** Relief needs lighting to perturb. An unlit shaderFill is a MeshBasicMaterial with no
+ *  bump slot at all — disable rather than silently no-op (materials.ts applyRelief). */
+const reliefAvailable = computed(() => !(matType.value === 'shaderFill' && matUnlit.value))
+// The uploaded/converted image, whichever channel currently holds it: relief.image
+// (bump path) normally, or normalImage once "Already a normal map" moved it there.
+// Read-only: writes go through the upload handler / matIsNormalMap below.
+const matReliefImage = computed<string | undefined>(() => selected.value?.material.relief?.image ?? selected.value?.material.normalImage)
+/** Whether the chosen relief image is a real tangent-space normal map (→ `.normalMap`)
+ *  rather than a height field (→ `.bumpMap`). Toggling MOVES the filename between the
+ *  two fields rather than gating a shared one, since they are genuinely different
+ *  textures read by materials.ts — see SceneMaterial.normalImage's doc in config.ts. */
+const matIsNormalMap = computed<boolean>({
+  get: () => !!selected.value?.material.normalImage,
+  set: (v) => {
+    const mat = selected.value?.material
+    if (!mat) return
+    if (v) {
+      const img = mat.relief?.image
+      if (img) {
+        mat.normalImage = img
+        if (mat.relief) mat.relief.image = undefined
+      }
+    } else {
+      const img = mat.normalImage
+      if (img) {
+        if (!mat.relief) mat.relief = { source: 'image', scale: MATERIAL_DEFAULTS.reliefScale }
+        mat.relief.image = img
+        mat.normalImage = undefined
+      }
+    }
+  },
+})
+
 // Light field proxies — same shape as matParam, but the fields live flat on the
 // LightObject itself (not nested under .material). Falls back to LIGHT_DEFAULTS
 // so sliders always have a number even before the selected light's field is touched.
@@ -492,6 +562,72 @@ async function onTexFilePicked(e: Event) {
 let offTexError: (() => void) | null = null
 onMounted(() => { offTexError = onTextureError((f) => { texLoadError[f] = true }) })
 onBeforeUnmount(() => { offTexError?.() })
+
+// Relief image upload: same object-scoped-spinner / capture-before-await shape as the
+// texture upload above (texUploading/onTexFilePicked), plus a conversion step. `relief.image`
+// ALWAYS stores a grayscale height map — colour photos are converted client-side BEFORE
+// upload, never at render time (lib/scene3d/relief.ts owns the one luminance→height transform;
+// materials.ts's getHeightTexture assumes whatever it fetches is already height data).
+const reliefFileInput = ref<HTMLInputElement | null>(null)
+const reliefUploading = ref<string | null>(null)
+const reliefUploadError = reactive<Record<string, boolean>>({})
+// Which of the two Task-5 conversions the NEXT upload runs through. 'Refine with depth'
+// (a paid server call) is Task 6's — not built here, and no disabled placeholder for it.
+const reliefConversion = ref<'brightness' | 'asis'>('brightness')
+function triggerReliefUpload() { reliefFileInput.value?.click() }
+function readAsDataUrl(file: File): Promise<string> {
+  return new Promise((res, rej) => {
+    const r = new FileReader()
+    r.onload = () => res(String(r.result))
+    r.onerror = () => rej(new Error('read failed'))
+    r.readAsDataURL(file)
+  })
+}
+/** Decode → run toHeightPixels → re-encode. Mirrors materials.ts's getHeightTexture
+ *  canvas dance, but produces a data URL up front instead of a lazily-loaded texture. */
+function brightnessToHeightDataUrl(dataUrl: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => {
+      const c = document.createElement('canvas')
+      c.width = img.naturalWidth
+      c.height = img.naturalHeight
+      const ctx = c.getContext('2d')
+      if (!ctx) { reject(new Error('no 2d context')); return }
+      ctx.drawImage(img, 0, 0)
+      const data = ctx.getImageData(0, 0, c.width, c.height)
+      data.data.set(toHeightPixels(data.data))
+      ctx.putImageData(data, 0, 0)
+      resolve(c.toDataURL('image/png'))
+    }
+    img.onerror = () => reject(new Error('decode failed'))
+    img.src = dataUrl
+  })
+}
+async function onReliefFilePicked(e: Event) {
+  const file = (e.target as HTMLInputElement).files?.[0]
+  ;(e.target as HTMLInputElement).value = ''
+  // Capture the target BEFORE any await: reselecting mid-upload must not land
+  // the texture (or the error) on the newly selected object.
+  const target = selected.value
+  if (!file || !target || target.kind === 'light') return
+  const mode = reliefConversion.value
+  reliefUploading.value = target.id
+  delete reliefUploadError[target.id]
+  try {
+    const rawUrl = await readAsDataUrl(file)
+    const heightUrl = mode === 'brightness' ? await brightnessToHeightDataUrl(rawUrl) : rawUrl
+    const filename = await inpaint.uploadDataUrl(heightUrl, `scene3d_relief_${props.nodeId}`)
+    delete texLoadError[filename]
+    if (!target.material.relief) target.material.relief = { source: 'image', scale: MATERIAL_DEFAULTS.reliefScale }
+    target.material.relief.source = 'image'
+    target.material.relief.image = filename
+  } catch {
+    reliefUploadError[target.id] = true
+  } finally {
+    if (reliefUploading.value === target.id) reliefUploading.value = null
+  }
+}
 
 // Numeric transform fields (per-axis) — position/scale stored & shown raw, rotation
 // stored in radians but edited in degrees. Setters replace the whole array so the
@@ -1838,6 +1974,80 @@ function onClose() {
           <StudioSlider v-if="!matUnlit" v-model="matRoughness" label="Roughness" hint="How matte or glossy the surface is" :min="0" :max="1" :step="0.01" />
           <StudioSlider v-if="!matUnlit" v-model="matMetalness" label="Metalness" hint="Blends between plastic-like and metal reflections" :min="0" :max="1" :step="0.01" />
         </template>
+
+        <!-- Surface relief: a grayscale height texture perturbing .bumpMap, orthogonal to
+             material type — sits after the per-type chain so it applies to every branch above.
+             NB: never call this a "normal pass" in copy — passes.ts already emits a
+             screen-space `normal` G-buffer for ControlNet, a completely different thing. -->
+        <div v-if="matEditable">
+          <p class="mb-1.5 text-[10px] uppercase tracking-[0.12em] text-white/35">Surface relief</p>
+          <p v-if="!reliefAvailable" class="text-[10px] text-white/35">
+            Unlit materials have no lighting to catch relief. Turn off Unlit to use it.
+          </p>
+          <div v-else class="space-y-3">
+            <div class="flex items-center justify-between">
+              <span class="text-[11px] text-white/55">Relief</span>
+              <StudioSegmented v-model="matReliefSource" :options="['none', 'shader', 'image']" />
+            </div>
+            <template v-if="matReliefSource !== 'none'">
+              <template v-if="!(matReliefSource === 'image' && matIsNormalMap)">
+                <StudioSlider v-model="matReliefScale" label="Depth"
+                  hint="How raised or recessed the surface detail looks" :min="0" :max="1" :step="0.01" />
+                <div class="flex items-center justify-between">
+                  <span class="text-[11px] text-white/55">Invert</span>
+                  <StudioSwitch v-model="matReliefInvert" />
+                </div>
+              </template>
+
+              <!-- image: reuses the texture-upload structure at :1801-1827 (hidden file
+                   input, StudioButton + Loader2 spinner, object-id-keyed uploading state,
+                   target captured before await) plus a conversion choice run BEFORE upload
+                   so what persists is already a height map. -->
+              <template v-if="matReliefSource === 'image'">
+                <input ref="reliefFileInput" type="file" accept="image/*" class="hidden" @change="onReliefFilePicked" />
+                <div>
+                  <label class="mb-1 block text-[11px] text-white/55">Convert</label>
+                  <div class="flex items-center gap-1.5">
+                    <button type="button"
+                      class="flex-1 rounded border px-2 py-1 text-[11px] uppercase transition-colors"
+                      :class="reliefConversion === 'brightness' ? 'border-white/70 bg-white/[0.10] text-white' : 'border-white/[0.10] bg-white/[0.04] text-white/55 hover:text-white/85'"
+                      @click="reliefConversion = 'brightness'">Brightness</button>
+                    <button type="button"
+                      class="flex-1 rounded border px-2 py-1 text-[11px] uppercase transition-colors"
+                      :class="reliefConversion === 'asis' ? 'border-white/70 bg-white/[0.10] text-white' : 'border-white/[0.10] bg-white/[0.04] text-white/55 hover:text-white/85'"
+                      @click="reliefConversion = 'asis'">Use as-is</button>
+                  </div>
+                </div>
+                <div class="flex items-center gap-2">
+                  <img v-if="matReliefImage" class="size-12 rounded object-cover"
+                    :src="texViewUrl(matReliefImage)" alt="" />
+                  <StudioButton :disabled="reliefUploading === selected.id" @click="triggerReliefUpload">
+                    <span class="flex items-center gap-1.5">
+                      <Loader2 v-if="reliefUploading === selected.id" class="h-3.5 w-3.5 animate-spin" />
+                      <Upload v-else class="h-3.5 w-3.5" />
+                      {{ reliefUploading === selected.id ? 'Uploading…' : matReliefImage ? 'Replace image' : 'Upload image' }}
+                    </span>
+                  </StudioButton>
+                </div>
+                <p v-if="reliefUploadError[selected.id] || (matReliefImage && texLoadError[matReliefImage])"
+                  class="text-[11px] text-red-400/90">texture failed</p>
+                <div v-if="matReliefImage" class="flex items-center justify-between">
+                  <div>
+                    <span class="text-[11px] text-white/55">Already a normal map</span>
+                    <p class="text-[10px] text-white/35">For maps baked in Blender or from a game asset</p>
+                  </div>
+                  <StudioSwitch v-model="matIsNormalMap" />
+                </div>
+              </template>
+
+              <!-- shader: same ShaderFillEditor binding as the shaderFill branch above, just
+                   pointed at relief.spec instead of material.shader. -->
+              <template v-if="matReliefSource === 'shader'">
+                <ShaderFillEditor v-model="matReliefSpec" :show-anchor="false" />
+              </template>
+            </template>
+          </div>
+        </div>
       </StudioSection>
 
       <StudioSection v-if="selectedIsLight" title="Light" @pointerdown.capture="onControlsPointerDown">
