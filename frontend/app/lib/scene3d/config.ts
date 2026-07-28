@@ -35,6 +35,20 @@ export interface GradientStop { pos: number; color: string }
 export const GRADIENT_STOPS_MIN = 2
 export const GRADIENT_STOPS_MAX = 8
 
+/** Surface relief — a grayscale height field perturbing the lit normal via THREE's
+ *  `.bumpMap`. `image` is ALWAYS already a height map: converting a colour photo to
+ *  height happens once at authoring time (see lib/scene3d/relief.ts), never at render
+ *  time. `spec` mirrors the shaderFill ShaderSpec and is luminance-converted the same
+ *  way, so every catalog effect gains relief with no per-effect shader work. */
+export interface ReliefSpec {
+  source: 'none' | 'shader' | 'image'
+  spec?: ShaderSpec
+  image?: string
+  /** → THREE bumpScale. 1 is already extreme; the shipped default is 0.25. */
+  scale: number
+  invert?: boolean
+}
+
 export interface SceneMaterial {
   type: MaterialType
   color: string
@@ -73,6 +87,13 @@ export interface SceneMaterial {
   /** `shaderFill` only — MeshBasicMaterial (flat, unshaded) when true, MeshStandardMaterial
    *  (scene-lit) when false/absent. */
   unlit?: boolean
+  /** Surface relief. Absent = flat, exactly as before. Never applied to an `unlit`
+   *  shaderFill: that builds a MeshBasicMaterial, which has no bump slot at all. */
+  relief?: ReliefSpec
+  /** A REAL baked tangent-space normal map (Blender, a game asset) → `.normalMap`.
+   *  Distinct from `relief` because a normal map must NOT go through the bump path —
+   *  that would misread its blue channel as height. */
+  normalImage?: string
   // physical surface (standard + glass; all optional, defaults render identical
   // to the pre-physical look)
   clearcoat?: number            // 0–1
@@ -247,6 +268,7 @@ export const MATERIAL_DEFAULTS = {
   iridescence: 0,
   iridescenceIOR: 1.3,
   envMapIntensity: 1,
+  reliefScale: 0.25,
   shader: DEFAULT_SHADER_SPEC,
   unlit: false,
 }
@@ -334,7 +356,7 @@ function numberedName(base: string, existing: SceneObject[]): string {
   for (let n = 2; ; n++) if (!taken.has(`${base} ${n}`)) return `${base} ${n}`
 }
 
-export function createPrimitive(kind: PrimitiveKind, existing: SceneObject[]): PrimitiveObject {
+export function createPrimitive(kind: PrimitiveKind, existing: SceneObject[] = []): PrimitiveObject {
   const base = kind.charAt(0).toUpperCase() + kind.slice(1)
   const obj: PrimitiveObject = {
     kind: 'primitive', primitive: kind,
@@ -504,6 +526,21 @@ export function parseDoc(json: string): SceneDoc {
     // present" rule as every other optional field above.
     if (m?.shader && typeof m.shader === 'object') out.shader = normalizeShaderSpec(m.shader, 0)
     if (typeof m?.unlit === 'boolean') out.unlit = m.unlit
+    // Relief: same "copy only when present" rule as every other optional field, but the
+    // nested shape needs its own coercion — a junk source degrades to 'none' rather than
+    // dropping the whole block, so a hand-edited doc still loads.
+    if (m?.relief && typeof m.relief === 'object') {
+      const r = m.relief
+      const rel: ReliefSpec = {
+        source: r.source === 'shader' || r.source === 'image' ? r.source : 'none',
+        scale: num(r.scale, MATERIAL_DEFAULTS.reliefScale),
+      }
+      if (typeof r.image === 'string') rel.image = r.image
+      if (r.spec && typeof r.spec === 'object') rel.spec = normalizeShaderSpec(r.spec, 0)
+      if (typeof r.invert === 'boolean') rel.invert = r.invert
+      out.relief = rel
+    }
+    if (typeof m?.normalImage === 'string') out.normalImage = m.normalImage
     return out
   }
   // Tolerant content parse: any non-string/unknown field in a stored doc is
