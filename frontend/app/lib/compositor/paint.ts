@@ -13,6 +13,7 @@
  * its own function body, exactly like `fillTileBox`/`fillTileCanvas` there).
  */
 import { type Fill, effectiveTileFill, fillTileBox } from '~/lib/spacetype/fillTile'
+import { gradientUnitAxis, orderGradientStops } from '~/lib/vector/svg'
 
 export interface GradientStop { offset: number; color: string } // offset 0..1
 export interface LinearGradient { type: 'linear'; angle: number; stops: GradientStop[] } // angle in degrees
@@ -33,9 +34,11 @@ export function isFill(p: Paint | undefined): p is Fill {
  *  a gradient's stops in the SAME canonical order `paintTileBox` renders them in — sorting
  *  twice (once here, once by hand in the key) would let the two silently drift apart. */
 export function sortedClampedStops(stops: GradientStop[]): GradientStop[] {
-  return [...stops]
-    .map(s => ({ ...s, offset: Number.isFinite(s.offset) ? Math.max(0, Math.min(1, s.offset)) : 0 }))
-    .sort((a, b) => a.offset - b.offset)
+  // The rule itself lives in the vector spine, which has to apply it too (SVG
+  // PINS an out-of-order offset to its predecessor, where canvas does not, so
+  // an unsorted list is two different ramps on the two surfaces). One
+  // implementation, three callers.
+  return orderGradientStops(stops)
 }
 
 /**
@@ -65,10 +68,11 @@ export function paintTileBox(paint: Paint, w: number, h: number): HTMLCanvasElem
     const r = Math.max(W, H) / 2
     g = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.max(r, 0.0001))
   } else {
-    const rad = ((paint.angle ?? 0) * Math.PI) / 180
-    const hx = (Math.cos(rad) * W) / 2
-    const hy = (Math.sin(rad) * H) / 2
-    g = ctx.createLinearGradient(W / 2 - hx, H / 2 - hy, W / 2 + hx, H / 2 + hy)
+    // Corner-origin (this function's convention): the shared unit axis scaled
+    // onto the tile. Same arithmetic as the `W/2 ± cos·W/2` it replaces — the
+    // third and last copy of that trig, now all three reading one definition.
+    const ax = gradientUnitAxis(paint.angle ?? 0)
+    g = ctx.createLinearGradient(ax.x1 * W, ax.y1 * H, ax.x2 * W, ax.y2 * H)
   }
   for (const s of stops) g.addColorStop(s.offset, s.color)
   ctx.fillStyle = g; ctx.fillRect(0, 0, W, H)

@@ -16,6 +16,11 @@
  * of these into `export const fn = () => …`, which is NOT hoisted and would break this.
  */
 import { isGradient, isFill, sortedClampedStops, type Paint } from '~/lib/compositor/paint'
+// The angle→axis trig for a linear gradient, shared with the SVG spine so a
+// gradient tile and the `<linearGradient>` exported for it cannot drift. It is a
+// pure numeric helper — importing it pulls no DOM, no model and no cycle
+// (`lib/vector/svg` imports nothing at all).
+import { gradientUnitAxis } from '~/lib/vector/svg'
 
 export type FillType = 'solid' | 'gradient' | 'ombre' | 'grid' | 'noise' | 'checkerboard' | 'stripes' | 'qr' | 'shader'
 /** `a`/`b` drive the slot's fill (stripe); `textColor` is the solid colour for type on that row.
@@ -303,8 +308,11 @@ export function fillTileBox(fillIn: Fill, w: number, h: number): HTMLCanvasEleme
   const ctx = c.getContext('2d')!
   if (fill.type === 'solid') { ctx.fillStyle = fill.a; ctx.fillRect(0, 0, W, H); return c }
   if (fill.type === 'gradient') {
-    const rad = (fill.angle * Math.PI) / 180, hx = Math.cos(rad) * W / 2, hy = Math.sin(rad) * H / 2
-    const g = ctx.createLinearGradient(W / 2 - hx, H / 2 - hy, W / 2 + hx, H / 2 + hy)
+    // Corner-origin: the unit axis scaled onto the tile. Was `W/2 ± cos·W/2`
+    // written out here, which is the same arithmetic — the shared helper is what
+    // makes the SVG export the same GEOMETRY rather than the same intention.
+    const ax = gradientUnitAxis(fill.angle)
+    const g = ctx.createLinearGradient(ax.x1 * W, ax.y1 * H, ax.x2 * W, ax.y2 * H)
     g.addColorStop(0, fill.a); g.addColorStop(1, fill.b)
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); return c
   }

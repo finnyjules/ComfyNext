@@ -19,11 +19,11 @@
  * flat-shaded facets to polygons and call `shapesToSVG` directly. Everything
  * below is the type-specific adapter over that spine.
  */
-import type { SvgDocOptions, Transform2D, VectorCommand, VectorRect, VectorShape } from '~/lib/vector/svg'
+import type { SvgDocOptions, Transform2D, VectorCommand, VectorPaint, VectorRect, VectorShape } from '~/lib/vector/svg'
 import { blurRadiusToStdDeviation, shapesToSVG, transformCommands } from '~/lib/vector/svg'
 import type { GlyphOutline, TextOutlines, VtBBox } from './outline'
 
-export type { Transform2D, VectorRect, VectorShape } from '~/lib/vector/svg'
+export type { Transform2D, VectorGradient, VectorPaint, VectorRect, VectorShape } from '~/lib/vector/svg'
 /** Re-exported so a second studio can reach the spine without importing
  *  anything type-specific. */
 export { blurRadiusToStdDeviation, controlPointBounds, shapesToSVG } from '~/lib/vector/svg'
@@ -200,9 +200,11 @@ export function outlinesToPath2D(outlines: TextOutlines, opts: PlacementOptions 
 }
 
 /** Paint for the glyph run. A function form gets called per glyph, which is how
- *  per-glyph colour staggers get expressed without a second render path. */
+ *  per-glyph colour staggers get expressed without a second render path — and,
+ *  now that `fill` can be a gradient paint server, how a run-anchored ramp gets
+ *  each glyph the `gradientTransform` that pins it (see `VectorGradient`). */
 export interface GlyphPaint {
-  fill?: string | null | ((glyph: GlyphOutline, index: number) => string | null)
+  fill?: VectorPaint | null | ((glyph: GlyphOutline, index: number) => VectorPaint | null)
   stroke?: string | null | ((glyph: GlyphOutline, index: number) => string | null)
   /** In OUTPUT units, so it does not shrink when the type is scaled down. */
   strokeWidth?: number

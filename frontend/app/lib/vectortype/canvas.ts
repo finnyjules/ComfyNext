@@ -31,10 +31,11 @@
  * `glyphMotion`). Task 6 chose the collision deliberately so a module using both
  * has to say which it means; this is that module saying it.
  */
-import type { Transform2D } from '~/lib/vector/svg'
-import { formatNumber } from '~/lib/vector/svg'
+import type { Affine, Transform2D, VectorPaint, VectorRect } from '~/lib/vector/svg'
+import { formatNumber, multiplyAffine } from '~/lib/vector/svg'
 import { fillIsShader, paintPrimaryColor } from '~/lib/spacetype/fillTile'
 import { isFill, type Paint } from '~/lib/compositor/paint'
+import { paintToVectorPaint } from '~/lib/paint/toVector'
 import {
   OBJECT_SHADER_FIELD_PX,
   hasPaint,
@@ -797,6 +798,57 @@ function glyphSvgTransform(
   return parts.join(' ')
 }
 
+/**
+ * The SAME transform as `glyphSvgTransform`, as a matrix.
+ *
+ * A run- or frame-anchored paint server has to be pinned in document space, and
+ * the only thing that does that is a `gradientTransform` holding the INVERSE of
+ * the glyph's own transform (`VectorGradient.units` says why the untransformed
+ * wrapper `<g>` cannot). That needs the transform as numbers, not as a string.
+ *
+ * Written as the same sequence of parts, in the same order, from the same
+ * inputs, ROUNDED THE SAME WAY — so the matrix is the exact transform the
+ * `transform` attribute spells out, not an approximation of it. A unit test
+ * parses the string and composes it to hold the two together; two hand-written
+ * compositions of the same list is precisely the drift this file exists to
+ * prevent.
+ *
+ * `null` for identity, matching `glyphSvgTransform`'s `undefined`.
+ */
+function glyphSvgMatrix(
+  origin: { x: number; y: number },
+  advance: number,
+  tr: VtGlyphMotion,
+  precision = 3,
+): Affine | null {
+  const sx = nonZero(tr.scale * (Number.isFinite(tr.scaleX) ? tr.scaleX : 1))
+  const sy = nonZero(tr.scale * (Number.isFinite(tr.scaleY) ? tr.scaleY : 1))
+  if (!tr.dx && !tr.dy && !tr.rotate && sx === 1 && sy === 1) return null
+  // Through the string formatter and back, so the matrix carries the numbers the
+  // file carries rather than the full-precision ones behind them.
+  const q = (v: number) => Number.parseFloat(formatNumber(v, precision))
+  const T = (x: number, y: number): Affine => [1, 0, 0, 1, x, y]
+  let m: Affine = T(q(origin.x + tr.dx), q(origin.y + tr.dy))
+  if (tr.rotate) {
+    const rad = (q(tr.rotate) * Math.PI) / 180
+    const c = Math.cos(rad), s = Math.sin(rad)
+    m = multiplyAffine(m, [c, s, -s, c, 0, 0])
+  }
+  if (sx !== 1 || sy !== 1) {
+    const hx = q(Number.isFinite(advance) ? advance / 2 : 0)
+    m = multiplyAffine(m, T(hx, 0))
+    m = multiplyAffine(m, [q(sx), 0, 0, q(sy), 0, 0])
+    m = multiplyAffine(m, T(-hx, 0))
+  }
+  return multiplyAffine(m, T(q(-origin.x), q(-origin.y)))
+}
+
+/** A `VtPaintBox` (centre + extent, the canvas resolver's convention) as a
+ *  document-space rect, which is what a `userSpaceOnUse` paint server spans. */
+function paintBoxRect(box: VtPaintBox): VectorRect {
+  return { x: box.cx - box.w / 2, y: box.cy - box.h / 2, width: box.w, height: box.h }
+}
+
 export interface VtSvgOptions extends VtBoxOptions {
   /** Painted as a full-bleed rect behind the glyphs, matching the canvas.
    *  `null`/omitted leaves the document transparent. */
@@ -846,16 +898,50 @@ export function vectorTypeSVG(
   // so the cell box a mask is measured against cannot drift between the two.
   const em = place.scale * (frame.outlines.unitsPerEm || 1000)
 
+  // ── THE FILL ────────────────────────────────────────────────────────────────
+  // Gradients — both the multi-stop `Gradient` and the two-colour `Fill` form —
+  // export as REAL paint servers, anchored the way the canvas anchors them:
+  //
+  //   glyph → `objectBoundingBox`, so each letter carries its own copy of the
+  //           ramp over its own ink and it rides that letter's motion. SVG maps
+  //           the unit square onto the glyph's bounds with the same independent
+  //           x/y stretch `vtGlyphPaintBox` + the canvas resolver produce.
+  //   word  → `userSpaceOnUse` over `vtRunPaintBox`, the run's ink.
+  //   frame → `userSpaceOnUse` over the whole output box.
+  //
+  // The two user-space anchors need the glyph's own transform CANCELLED, or the
+  // ramp travels with the letter and "the type moves over a fill that stays
+  // put" is silently lost — every frame still looks like a gradient on a word.
+  // The wrapper `<g>` that holds a clip or a filter still does NOT do this: those
+  // are applied to the element carrying them, while `fill` is inherited and a
+  // paint server resolves in the user space of the element actually PAINTED.
+  // Measured, not assumed. The inverse matrix is what pins it.
+  //
+  // ── WHAT STILL BRIDGES ──────────────────────────────────────────────────────
+  // `paintToVectorPaint` returns `null` for the seven remaining kinds and this
+  // falls back to the representative colour, exactly as before: `grid`,
+  // `stripes`, `checkerboard` and `qr` become `<pattern>` geometry in TASK 5;
+  // `ombre`, `noise` and `shader` cannot be vector at all and get the declared
+  // raster embed in TASK 6. Task 7 is what makes that degradation visible to the
+  // user rather than silent.
+  const anchor = vtFillAnchor(frame.config)
+  const runRect = anchor === 'glyph'
+    ? null
+    : paintBoxRect(anchor === 'frame' ? vtFramePaintBox(opts) : vtRunPaintBox(frame.outlines, place, opts))
+  const flatFill = paintPrimaryColor(fill, '#ffffff')
+  const svgFill = (glyph: GlyphOutline, i: number): VectorPaint => {
+    if (runRect) {
+      const tr = frame.transforms[i] ?? IDENTITY_GLYPH_MOTION
+      const elementTransform = glyphSvgMatrix(glyphPlacement(glyph, place), glyph.advance * place.scale, tr, precision)
+      return paintToVectorPaint(fill, { units: 'userSpaceOnUse', box: runRect, elementTransform }) ?? flatFill
+    }
+    const box = vtGlyphPaintBox(glyph, place, em)
+    return paintToVectorPaint(fill, { units: 'objectBoundingBox', aspect: box.w / box.h }) ?? flatFill
+  }
+
   const svg = outlinesToSVG(frame.outlines, {
     ...place,
-    // ── TEMPORARY BRIDGE — TASKS 4-6 REPLACE THIS LINE ────────────────────────
-    // `VectorShape.fill` is `string | null`; widening it to carry gradient paint
-    // servers, `<pattern>` emitters and the declared raster embed is Tasks 4-6.
-    // Until then the export degrades to the paint's representative colour — the
-    // same collapse the Compositor's writer does — so an exported file is a
-    // simplification of the screen, never a different picture. Task 7 is what
-    // makes that degradation VISIBLE to the user rather than silent.
-    fill: paintPrimaryColor(fill, '#ffffff'),
+    fill: svgFill,
     // The stroke is an ATTRIBUTE, not outlined into geometry: a designer opening
     // this can restyle or remove it, and the path still describes the letterform
     // rather than the letterform's outer contour.

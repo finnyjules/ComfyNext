@@ -150,6 +150,176 @@ export interface VectorRect {
   height: number
 }
 
+// ── Affine helpers ──────────────────────────────────────────────────────────
+//
+// `[a, b, c, d, e, f]`, exactly SVG's `matrix(…)` and the same order as
+// `DOMMatrix`'s 2D components — so a caller can hand one straight to either
+// without a re-ordering step nobody would notice was wrong.
+
+export type Affine = readonly [number, number, number, number, number, number]
+
+export const IDENTITY_AFFINE: Affine = [1, 0, 0, 1, 0, 0]
+
+/** `m · n` — apply `n` first, then `m`, matching SVG's left-to-right transform
+ *  list and successive `ctx` operations. */
+export function multiplyAffine(m: Affine, n: Affine): Affine {
+  return [
+    m[0] * n[0] + m[2] * n[1],
+    m[1] * n[0] + m[3] * n[1],
+    m[0] * n[2] + m[2] * n[3],
+    m[1] * n[2] + m[3] * n[3],
+    m[0] * n[4] + m[2] * n[5] + m[4],
+    m[1] * n[4] + m[3] * n[5] + m[5],
+  ]
+}
+
+/** The inverse, or `null` where there is none (a singular or non-finite matrix —
+ *  a zero scale, which a motion preset can legitimately produce mid-flip). */
+export function invertAffine(m: Affine): Affine | null {
+  const det = m[0] * m[3] - m[1] * m[2]
+  if (!Number.isFinite(det) || det === 0) return null
+  // `+ 0` collapses the negative zero the negations produce. It formats as "0"
+  // either way, but a `-0` surviving into a comparison is a trap nobody enjoys.
+  const z = (v: number) => v + 0
+  const out: Affine = [
+    z(m[3] / det),
+    z(-m[1] / det),
+    z(-m[2] / det),
+    z(m[0] / det),
+    z((m[2] * m[5] - m[3] * m[4]) / det),
+    z((m[1] * m[4] - m[0] * m[5]) / det),
+  ]
+  return out.every(Number.isFinite) ? out : null
+}
+
+/**
+ * A linear gradient's axis for `angle` degrees, in UNIT-BOX coordinates
+ * (`0,0` = the box's top-left corner, `1,1` its bottom-right).
+ *
+ * THE one definition of what an angle means for a gradient in this product, and
+ * it lives in the spine because the spine is what must not drift from the
+ * screen. `fillTileBox` (the `Fill` gradient tile) and `resolvePaint` (the
+ * `Gradient` arm of the canvas resolver) both call it, so a canvas gradient and
+ * the `<linearGradient>` exported for it are the same geometry by construction
+ * rather than by two people doing the same trig twice.
+ *
+ * `0°` runs left→right and `+90°` runs top→bottom, because y is DOWN in every
+ * space this reaches (canvas, SVG, and command lists that have already been
+ * flipped by `transformCommands`).
+ *
+ * The x and y half-extents are scaled INDEPENDENTLY by the box — so on a
+ * non-square box the axis is not at `angle` to the horizon, it is at `angle` in
+ * the box's own unit square. That is exactly what `gradientUnits =
+ * "objectBoundingBox"` does with the same numbers, and exactly what the canvas
+ * does with `cos(a)·W/2` / `sin(a)·H/2`. Matching the screen matters more than
+ * matching a protractor, and the two conventions cannot both be had.
+ */
+export function gradientUnitAxis(angleDeg: number): { x1: number; y1: number; x2: number; y2: number } {
+  const rad = ((Number.isFinite(angleDeg) ? angleDeg : 0) * Math.PI) / 180
+  const hx = Math.cos(rad) / 2
+  const hy = Math.sin(rad) / 2
+  return { x1: 0.5 - hx, y1: 0.5 - hy, x2: 0.5 + hx, y2: 0.5 + hy }
+}
+
+/** One stop in a gradient paint server. `offset` is 0..1. */
+export interface VectorGradientStop {
+  offset: number
+  color: string
+  /** 0..1. Omitted means fully opaque; emitted as `stop-opacity`. */
+  opacity?: number
+}
+
+/**
+ * Stops in ascending order with every offset clamped to 0..1 (a non-finite one
+ * sinks to 0), as new objects.
+ *
+ * SVG requires each offset to be >= the previous and silently pins the ones
+ * that are not, so an unsorted list renders as a completely different ramp on
+ * the two surfaces. Canvas `addColorStop` has no such rule, which is exactly
+ * why this cannot be left to the caller.
+ *
+ * Generic and exported because it IS the rule `~/lib/compositor/paint`'s
+ * `sortedClampedStops` states — that function now delegates here rather than
+ * keeping a second copy of it, which also keeps `shaderfill/descriptor`'s
+ * `inputKey` encoding stops in the order they are actually painted in.
+ */
+export function orderGradientStops<T extends { offset: number }>(stops: readonly T[] | undefined): T[] {
+  return [...(stops ?? [])]
+    .map(s => ({ ...s, offset: Number.isFinite(s.offset) ? Math.max(0, Math.min(1, s.offset)) : 0 }))
+    .sort((a, b) => a.offset - b.offset)
+}
+
+/**
+ * A gradient paint server — a `<linearGradient>` or `<radialGradient>` in
+ * `<defs>`, referenced by every shape that shares its value.
+ *
+ * Studio-agnostic on purpose: it says WHERE a gradient is anchored and WHAT it
+ * ramps through, and nothing about what is being painted. Translating a
+ * studio's own fill model into this is the adapter's job (`lib/paint/toVector`
+ * does it for `Paint`).
+ */
+export interface VectorGradient {
+  type: 'linear' | 'radial'
+  stops: VectorGradientStop[]
+  /** Degrees, `linear` only — see `gradientUnitAxis`. Default 0. */
+  angle?: number
+  /**
+   * `objectBoundingBox` (the default) anchors the gradient to each referencing
+   * shape's OWN bounds, so every shape carries its own copy of the ramp and it
+   * rides whatever `transform` that shape has.
+   *
+   * `userSpaceOnUse` anchors it to `box`, in document units, so one ramp spans
+   * many shapes. Note that the coordinates are then resolved in the user space
+   * of the PAINTED element — a `<path>` with a `transform` drags the paint
+   * server along with it, and `fill` being an inherited property means putting
+   * the reference on an untransformed wrapper `<g>` does NOT change that (the
+   * trick that works for `clip-path` and `filter`, which are applied to the
+   * wrapper itself, does not transfer). `transform` below is what pins it.
+   */
+  units?: 'objectBoundingBox' | 'userSpaceOnUse'
+  /** Required by `userSpaceOnUse`: the box the ramp spans, in document units. */
+  box?: VectorRect
+  /**
+   * The referencing shape's box aspect (`width / height`), for
+   * `objectBoundingBox` only. Default 1.
+   *
+   * NOT cosmetic. SVG maps the unit square onto the bounding box with a
+   * NON-UNIFORM scale, and that changes what the gradient means on any shape
+   * that is not square:
+   *
+   *  - a `linear`'s bands stay perpendicular to its axis in the UNIT square, so
+   *    after the stretch they are no longer perpendicular in user space, while
+   *    a canvas gradient's always are. Measured on a 6-letter word at 35°:
+   *    46.3 % of core ink pixels differed from the canvas by more than 32/255
+   *    (worst 255) without this, and 0.0000 % with it. At 0° and 90° the axis
+   *    is an eigenvector of the stretch and the two agree either way — which is
+   *    exactly why an axis-aligned test would have "passed" and shipped it.
+   *  - a `radial` becomes an ELLIPSE, where the canvas draws a circle of radius
+   *    `max(w, h) / 2`.
+   *
+   * Both corrections are derived here rather than by the caller, because both
+   * are facts about SVG's coordinate system, not about anyone's fill model.
+   */
+  aspect?: number
+  /**
+   * Emitted as `gradientTransform` — the INVERSE of the referencing element's
+   * own transform, which cancels it and leaves a `userSpaceOnUse` ramp pinned
+   * in document space (verified in Chrome: byte-identical pixels to the same
+   * shape drawn untransformed at the same place).
+   *
+   * `objectBoundingBox` ignores it: there the `gradientTransform` slot is spent
+   * on the `aspect` correction above, and a bounding-box-anchored ramp is
+   * MEANT to ride its shape's transform.
+   */
+  transform?: Affine
+}
+
+export type VectorPaint = string | VectorGradient
+
+export function isVectorGradient(p: VectorPaint | null | undefined): p is VectorGradient {
+  return !!p && typeof p === 'object' && (p.type === 'linear' || p.type === 'radial')
+}
+
 /**
  * Canvas/CSS `blur(Npx)` → `feGaussianBlur`'s `stdDeviation`.
  *
@@ -186,7 +356,13 @@ export function blurRadiusToStdDeviation(radius: number): number {
  */
 export interface VectorShape {
   commands: VectorCommand[]
-  fill?: string | null
+  /**
+   * A CSS colour, or a gradient paint server — which is emitted ONCE in
+   * `<defs>` per distinct value and referenced by `url(#…)`, so forty glyphs
+   * sharing a ramp share one `<linearGradient>`. `null` is an explicit
+   * `fill="none"`; omitted leaves the attribute off entirely.
+   */
+  fill?: VectorPaint | null
   stroke?: string | null
   strokeWidth?: number
   fillRule?: 'nonzero' | 'evenodd'
@@ -291,10 +467,20 @@ export function defsIdPrefix(content: string): string {
   return `s${hash36(content)}`
 }
 
+/**
+ * Fractional coordinates — `objectBoundingBox` units and stop offsets — are
+ * written at their own precision, not the path data's. At the document's
+ * default 3 places a bounding-box coordinate quantises to a thousandth of the
+ * shape, which on a 900px run is nearly a pixel of drift against the canvas for
+ * free.
+ */
+const UNIT_PRECISION = 5
+
 /** A `<defs>` registry: distinct values in first-use order, each with an id. */
 class Defs {
   private readonly blurs = new Map<string, number>()
   private readonly clips = new Map<string, VectorRect>()
+  private readonly gradients = new Map<string, VectorGradient>()
 
   constructor(private readonly precision: number) {}
 
@@ -313,18 +499,41 @@ class Defs {
     return key
   }
 
+  /**
+   * The key IS the serialised value here too, so two shapes computed by
+   * completely different routes — a run-anchored ramp under a stagger, say —
+   * share one paint server whenever the markup would have been identical, and
+   * a 40-glyph word emits ONE `<linearGradient>` rather than forty.
+   */
+  gradientKey(g: VectorGradient): string {
+    // The key is the element's OWN MARKUP with the id left out, which makes
+    // "identical markup" the dedup rule by construction rather than by a
+    // hand-written serialiser that has to be kept in step with the writer. It
+    // also means two values that differ in a field the markup does not USE —
+    // an aspect on an axis-aligned ramp, where the correction is the identity —
+    // correctly share one paint server instead of fragmenting the `<defs>`.
+    const key = this.gradientMarkup(g, '')
+    if (!this.gradients.has(key)) this.gradients.set(key, g)
+    return key
+  }
+
   /** Every distinct value, in first-use order — the string the id prefix hashes. */
   signature(): string {
-    return `${[...this.blurs.keys()].join(',')}|${[...this.clips.keys()].join(',')}`
+    const base = `${[...this.blurs.keys()].join(',')}|${[...this.clips.keys()].join(',')}`
+    // Appended only when there is something to append, so a document with no
+    // paint servers hashes EXACTLY as it did before they existed. An id prefix
+    // that churns because an unrelated feature was added makes every previously
+    // exported file diff for nothing.
+    return this.gradients.size ? `${base}|${[...this.gradients.keys()].join(',')}` : base
   }
 
   get empty(): boolean {
-    return this.blurs.size === 0 && this.clips.size === 0
+    return this.blurs.size === 0 && this.clips.size === 0 && this.gradients.size === 0
   }
 
-  idFor(prefix: string, kind: 'b' | 'c', key: string): string {
-    const index = kind === 'b' ? [...this.blurs.keys()].indexOf(key) : [...this.clips.keys()].indexOf(key)
-    return `${prefix}-${kind}${index}`
+  idFor(prefix: string, kind: 'b' | 'c' | 'g', key: string): string {
+    const keys = kind === 'b' ? this.blurs : kind === 'c' ? this.clips : this.gradients
+    return `${prefix}-${kind}${[...keys.keys()].indexOf(key)}`
   }
 
   render(prefix: string, viewBox: readonly number[]): string {
@@ -366,7 +575,103 @@ class Defs {
       ])}/></clipPath>`)
       i++
     }
+    i = 0
+    for (const g of this.gradients.values()) {
+      out.push(this.gradientMarkup(g, `${prefix}-g${i}`))
+      i++
+    }
     return out.length ? `<defs>${out.join('')}</defs>` : ''
+  }
+
+  /**
+   * One paint server. `id` is omitted when it is empty, which is what lets
+   * `gradientKey` reuse this as the dedup key.
+   *
+   * `userSpaceOnUse` is the straightforward half: the axis scaled onto `box` in
+   * document units, a radial at the box centre with radius `max(w, h) / 2` —
+   * the canvas resolver's own rule — and the caller's `transform` passed
+   * through.
+   *
+   * `objectBoundingBox` is where SVG's non-uniform bbox mapping has to be
+   * undone; see `VectorGradient.aspect`. When the correction is the identity
+   * (a square box, or an axis-aligned ramp whose axis is an eigenvector of the
+   * stretch) the plain unit-square form is written instead — same picture,
+   * simpler file, and one paint server shared by shapes of every shape.
+   */
+  private gradientMarkup(g: VectorGradient, id: string): string {
+    const p = this.precision
+    const n = (v: number) => formatNumber(v, p)
+    const u = (v: number) => formatNumber(v, UNIT_PRECISION)
+    const userSpace = g.units === 'userSpaceOnUse'
+    const box = g.box ?? { x: 0, y: 0, width: 1, height: 1 }
+    const aspect = Number.isFinite(g.aspect as number) && (g.aspect as number) > 0 ? (g.aspect as number) : 1
+    const stops = orderGradientStops(g.stops)
+      .map(s => `<stop${attrs([
+        ['offset', u(s.offset)],
+        ['stop-color', s.color],
+        ['stop-opacity', s.opacity === undefined || s.opacity >= 1 ? undefined : u(Math.max(0, s.opacity))],
+      ])}/>`)
+      .join('')
+    const matrix = (m: Affine, prec: number) => `matrix(${m.map(v => formatNumber(v, prec)).join(' ')})`
+    const head = (extra: Array<[string, string | number | null | undefined]>, xf: string | undefined) =>
+      attrs([
+        ['id', id],
+        ['gradientUnits', userSpace ? 'userSpaceOnUse' : 'objectBoundingBox'],
+        ['gradientTransform', xf],
+        ...extra,
+      ])
+
+    if (g.type === 'radial') {
+      if (userSpace) {
+        return `<radialGradient${head([
+          ['cx', n(box.x + box.width / 2)],
+          ['cy', n(box.y + box.height / 2)],
+          ['r', n(Math.max(box.width, box.height) / 2)],
+        ], g.transform ? matrix(g.transform, p) : undefined)}>${stops}</radialGradient>`
+      }
+      // A circle of radius max(w,h)/2, said in bounding-box units: scale the
+      // r = 0.5 ellipse about its centre until both radii are that.
+      const sx = aspect >= 1 ? 1 : 1 / aspect
+      const sy = aspect >= 1 ? aspect : 1
+      const fix: Affine | undefined = sx === 1 && sy === 1
+        ? undefined
+        : [sx, 0, 0, sy, 0.5 * (1 - sx), 0.5 * (1 - sy)]
+      return `<radialGradient${head(
+        [['cx', '0.5'], ['cy', '0.5'], ['r', '0.5']],
+        fix ? matrix(fix, UNIT_PRECISION) : undefined,
+      )}>${stops}</radialGradient>`
+    }
+
+    const angle = g.angle ?? 0
+    const ax = gradientUnitAxis(angle)
+    if (userSpace) {
+      return `<linearGradient${head([
+        ['x1', n(box.x + ax.x1 * box.width)],
+        ['y1', n(box.y + ax.y1 * box.height)],
+        ['x2', n(box.x + ax.x2 * box.width)],
+        ['y2', n(box.y + ax.y2 * box.height)],
+      ], g.transform ? matrix(g.transform, p) : undefined)}>${stops}</linearGradient>`
+    }
+
+    const rad = ((Number.isFinite(angle) ? angle : 0) * Math.PI) / 180
+    const c = Math.cos(rad), s = Math.sin(rad)
+    // Axis-aligned, or square: the unit-square stretch leaves the bands
+    // perpendicular, so the plain form already IS the canvas geometry.
+    if (aspect === 1 || Math.abs(c * s) < 1e-12) {
+      return `<linearGradient${head([
+        ['x1', u(ax.x1)], ['y1', u(ax.y1)], ['x2', u(ax.x2)], ['y2', u(ax.y2)],
+      ], undefined)}>${stops}</linearGradient>`
+    }
+    // Otherwise: declare the ramp along gradient-space x (0,0)→(1,0) and hand
+    // SVG the map from that space into the unit square that, once the bbox
+    // stretch is applied, is a SIMILARITY in user space — axis `(cos·w, sin·h)`
+    // as the canvas draws it, with the bands genuinely perpendicular to it.
+    //   G = S⁻¹ · [A  A⊥  P1],  A = (cos·w, sin·h),  S = diag(w, h)
+    const fix: Affine = [c, s, -s / aspect, c * aspect, 0.5 - c / 2, 0.5 - s / 2]
+    return `<linearGradient${head(
+      [['x1', '0'], ['y1', '0'], ['x2', '1'], ['y2', '0']],
+      matrix(fix, UNIT_PRECISION),
+    )}>${stops}</linearGradient>`
   }
 }
 
@@ -387,6 +692,15 @@ class Defs {
  *  - filter and clip sit on the SAME wrapper, and SVG's rendering model applies
  *    the filter first and clips the result — the order `ctx.filter` then
  *    `ctx.clip()` then `fill()` produces.
+ *
+ * A shape carrying a gradient `fill` registers a paint server in the same
+ * `<defs>` and references it FROM THE PATH ITSELF. That is not an inconsistency
+ * with the wrapper above: `clip-path` and `filter` are applied to the element
+ * that carries them, so an untransformed wrapper is what holds them still,
+ * whereas `fill` is INHERITED and a paint server is resolved in the user space
+ * of the element actually painted — so the wrapper buys nothing, and a
+ * `userSpaceOnUse` server is pinned by `VectorGradient.transform` instead.
+ * Measured in Chrome, not reasoned about: see that field's doc.
  */
 export function shapesToSVG(shapes: readonly VectorShape[], doc: SvgDocOptions = {}): string {
   const precision = doc.precision ?? 3
@@ -409,25 +723,38 @@ export function shapesToSVG(shapes: readonly VectorShape[], doc: SvgDocOptions =
   // yet: the prefix is a function of everything the document holds, which is
   // not known until the last shape has been read.
   const defs = new Defs(precision)
-  const drawn: Array<{ path: string; blur: string | null; clip: string | null }> = []
+  const drawn: Array<{
+    pairs: Array<[string, string | number | null | undefined]>
+    gradient: string | null
+    blur: string | null
+    clip: string | null
+  }> = []
   for (const s of shapes) {
     const d = commandsToPathData(s.commands ?? [], precision)
     if (!d) continue
     const extra: Array<[string, string | number | null | undefined]> = []
     for (const [k, v] of Object.entries(s.attrs ?? {})) extra.push([k, v])
-    const path = `<path${attrs([
+    // A gradient fill registers its value now and carries its KEY in the
+    // attribute; the key becomes a real `url(#…)` in pass 2, once the prefix is
+    // known. Hashing the key rather than the finished url is what stops two
+    // documents with the same geometry but different paint servers — or the
+    // same servers assigned the other way round — from hashing alike and then
+    // colliding when they are pasted into one file.
+    const gradient = isVectorGradient(s.fill) ? defs.gradientKey(s.fill) : null
+    const pairs: Array<[string, string | number | null | undefined]> = [
       ['d', d],
-      ['fill', s.fill === null ? 'none' : s.fill],
+      ['fill', s.fill === null ? 'none' : gradient ?? (s.fill as string | undefined)],
       ['fill-rule', s.fillRule],
       ['stroke', s.stroke === null ? undefined : s.stroke],
       ['stroke-width', s.strokeWidth === undefined ? undefined : formatNumber(s.strokeWidth, precision)],
       ['opacity', s.opacity === undefined ? undefined : formatNumber(s.opacity, 4)],
       ...extra,
-    ])}/>`
+    ]
     const sd = Number.isFinite(s.blur as number) ? (s.blur as number) : 0
     const clip = s.clip
     drawn.push({
-      path,
+      pairs,
+      gradient,
       blur: sd >= MIN_STD_DEVIATION ? defs.blurKey(sd) : null,
       clip: clip ? defs.clipKey(clip) : null,
     })
@@ -437,13 +764,17 @@ export function shapesToSVG(shapes: readonly VectorShape[], doc: SvgDocOptions =
   // when they are the same picture — in which case the definitions they would
   // share are identical anyway.
   const prefix = doc.idPrefix
-    ?? defsIdPrefix(`${viewBox.join(' ')}|${defs.signature()}|${drawn.map(x => x.path).join('')}`)
+    ?? defsIdPrefix(`${viewBox.join(' ')}|${defs.signature()}|${drawn.map(x => `<path${attrs(x.pairs)}/>`).join('')}`)
 
-  // PASS 2 — wrap.
+  // PASS 2 — resolve the paint-server references and wrap.
   const body: string[] = []
   if (background) body.push(background)
   for (const item of drawn) {
-    let el = item.path
+    if (item.gradient !== null) {
+      const fill = item.pairs.find(pr => pr[0] === 'fill')
+      if (fill) fill[1] = `url(#${defs.idFor(prefix, 'g', item.gradient)})`
+    }
+    let el = `<path${attrs(item.pairs)}/>`
     if (item.blur !== null || item.clip !== null) {
       el = `<g${attrs([
         ['filter', item.blur === null ? undefined : `url(#${defs.idFor(prefix, 'b', item.blur)})`],

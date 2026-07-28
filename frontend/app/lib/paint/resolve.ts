@@ -21,6 +21,10 @@
 import { type Fill, type ShaderSpec, fillTileBox, fillIsShader } from '~/lib/spacetype/fillTile'
 import { resolveField } from '~/lib/shaderfill/field'
 import { type Paint, isGradient, isFill } from '~/lib/compositor/paint'
+// One definition of what a gradient ANGLE means, shared with the SVG spine (and
+// with `fillTileBox`) so the exported paint server is the same geometry as the
+// canvas gradient rather than a second derivation of it.
+import { gradientUnitAxis } from '~/lib/vector/svg'
 
 export function hasPaint(paint: Paint | undefined): boolean {
   if (isFill(paint)) return true                        // a fill always paints (solid → fill.a)
@@ -48,10 +52,12 @@ export function resolvePaint(
     const r = Math.max(box.w, box.h) / 2
     g = ctx.createRadialGradient(0, 0, 0, 0, 0, Math.max(r, 0.0001))
   } else {
-    const rad = ((paint.angle ?? 0) * Math.PI) / 180
-    const hx = (Math.cos(rad) * box.w) / 2
-    const hy = (Math.sin(rad) * box.h) / 2
-    g = ctx.createLinearGradient(-hx, -hy, hx, hy)
+    // CENTRED origin (this module's convention, see the header): the unit axis
+    // shifted so the box's centre is the origin. Identical arithmetic to the
+    // `±cos·w/2` it replaces; the point is that the number now comes from the
+    // one definition the SVG writer also uses.
+    const ax = gradientUnitAxis(paint.angle ?? 0)
+    g = ctx.createLinearGradient((ax.x1 - 0.5) * box.w, (ax.y1 - 0.5) * box.h, (ax.x2 - 0.5) * box.w, (ax.y2 - 0.5) * box.h)
   }
   for (const s of stops) g.addColorStop(Math.max(0, Math.min(1, s.offset)), s.color)
   return g
