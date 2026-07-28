@@ -18,14 +18,17 @@
  *    here: every number comes from the cell maths in `~/lib/spacetype/fillTile`
  *    that the canvas tile builders themselves call.
  *
- * Everything else returns `null` and the caller degrades to a flat colour:
+ * TIER 3. `ombre`, `noise` and `shader` cannot be vector at ALL — the first two
+ * are per-pixel hashes with no cell structure to draw, the third is a fragment
+ * program — so they come out as a `<pattern>` holding one `<image>`, provided
+ * the caller hands over a raster to embed (`VectorPaintOptions.raster`). That is
+ * a real, working export; it is simply pixels, and the product's job is to say
+ * so rather than to pretend otherwise. Note the raster is passed IN: this module
+ * has no canvas and does not acquire one.
  *
- *  - `ombre`, `noise`, `shader` → cannot be vector at all. `ombre` and `noise`
- *    are PER-PIXEL hashes with no cell structure to draw, and a `shader` is a
- *    fragment program. They get the declared raster embed in task 6.
- *
- * A `null` here is therefore "not YET, or not EVER" — never "no paint". The
- * caller keeps its flat-colour fallback for those.
+ * With no raster to embed, those three return `null` and the caller degrades to
+ * a flat colour — the pre-task-6 bridge, still what SSR, a worker and a unit
+ * test get. A `null` here is therefore "not without pixels", never "no paint".
  *
  * Pure: no DOM, no canvas. Callable from a test, a worker, or SSR.
  */
@@ -77,6 +80,23 @@ export interface VectorPaintOptions {
    * for why the untransformed-wrapper trick does not do this job.
    */
   elementTransform?: Affine | null
+  /**
+   * TIER 3 — a PRE-ENCODED raster of this paint over `box`, as a `data:` URL.
+   *
+   * Only `ombre`, `noise` and `shader` consult it, and only when they have a
+   * `box`: those three have no vector form at ANY tier (two per-pixel hashes and
+   * a fragment program), so the alternative is not a better export, it is a flat
+   * colour that throws the fill away. With one, they come back as a `<pattern>`
+   * whose tile is a single `<image>` — a real, working export that is simply
+   * raster, which the product declares rather than hides.
+   *
+   * Passed IN, never produced here, for the same reason the spine does not
+   * produce one: this module is pure (no DOM, no canvas), and rasterising a
+   * paint means owning a canvas. `lib/vectortype/canvas` is where that happens.
+   * Omit it and these three stay on the caller's flat fallback, unchanged — which
+   * is exactly what a worker, SSR or a unit test gets.
+   */
+  raster?: string | null
   /**
    * The referencing shape's box aspect (`w / h`), passed straight through to
    * `VectorGradient.aspect` — which is where the reason lives. Short version:
@@ -263,9 +283,35 @@ function qrTile(fill: Fill, cell: number, box: VectorRect): { background: string
   return { width: box.width, height: box.height, background: fill.a, rects }
 }
 
+/**
+ * TIER 3 — the whole box as one embedded `<image>`, placed exactly the way `qr`
+ * places its own box-sized tile.
+ *
+ * This is the FALLTHROUGH, not a list of three kind names: whatever a patterned
+ * fill is, if none of the emitters above could describe its geometry then the
+ * only honest thing left is the pixels the canvas painted. A tenth fill type
+ * lands here automatically, and moves up the moment it gets an emitter.
+ *
+ * `null` with no raster in hand — the caller's flat fallback. Never a guess.
+ */
+function rasterTile(box: VectorRect, inverse: Affine | null, raster: string | null | undefined): VectorPattern | null {
+  if (!raster) return null
+  return {
+    type: 'pattern',
+    width: box.width,
+    height: box.height,
+    // No background and no rects: the image IS the tile. A background would show
+    // through wherever the raster carries alpha, which for a shader field is a
+    // silent, plausible-looking colour shift rather than a visible failure.
+    rects: [],
+    image: raster,
+    ...withTransform(patternPlacement(box, inverse)),
+  }
+}
+
 /** A patterned `Fill` as a `<pattern>`, or `null` where there is nothing to
  *  anchor it to (see `VectorPaintOptions.box`) or the kind has no cell
- *  structure at all. */
+ *  structure AND no raster was handed in. */
 function patternFor(fill: Fill, opts: VectorPaintOptions): VectorPattern | null {
   const box = opts.box
   if (!box || !(box.width > 0) || !(box.height > 0)) return null
@@ -292,7 +338,7 @@ function patternFor(fill: Fill, opts: VectorPaintOptions): VectorPattern | null 
   const tile = fill.type === 'checkerboard' ? checkerTile(fill, cell)
     : fill.type === 'qr' ? qrTile(fill, cell, box)
     : null
-  if (!tile) return null
+  if (!tile) return rasterTile(box, inverse, opts.raster)
   return { type: 'pattern', ...tile, ...withTransform(patternPlacement(box, inverse)) }
 }
 

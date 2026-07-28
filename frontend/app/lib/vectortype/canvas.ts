@@ -35,7 +35,7 @@ import type { Affine, Transform2D, VectorPaint, VectorRect } from '~/lib/vector/
 import { formatNumber, multiplyAffine } from '~/lib/vector/svg'
 import { fillIsShader, paintPrimaryColor } from '~/lib/spacetype/fillTile'
 import { isFill, type Paint } from '~/lib/compositor/paint'
-import { paintToVectorPaint } from '~/lib/paint/toVector'
+import { paintIsVector, paintToVectorPaint } from '~/lib/paint/toVector'
 import {
   OBJECT_SHADER_FIELD_PX,
   hasPaint,
@@ -849,12 +849,169 @@ function paintBoxRect(box: VtPaintBox): VectorRect {
   return { x: box.cx - box.w / 2, y: box.cy - box.h / 2, width: box.w, height: box.h }
 }
 
+// ── TIER 3: the honest raster embed ─────────────────────────────────────────
+//
+// `ombre`, `noise` and `shader` have no vector form and never will. `ombre` and
+// `noise` are per-pixel stochastic dithers — there is no SVG primitive for "this
+// pixel, by hash" — and a `shader` is a WebGL2 fragment program, pixels by
+// construction with no geometry to recover. The user chose all nine fill types
+// knowing three of them are like this; the deal is that the export is CORRECT and
+// DECLARED, not that it is quietly replaced by a flat colour (which is what the
+// Compositor's writer does, and what this replaces).
+//
+// So they come out as `<pattern><image href="data:image/png;base64,…">`. Real,
+// working, self-contained SVG — simply raster. Task 7 is what tells the user.
+//
+// THE SPINE STAYS PURE (plan trap 3). `lib/vector/svg.ts` is documented "no DOM,
+// no canvas, no fetch", which is the property that makes it reusable — Shape
+// Studio is its intended second consumer. A data URL needs a canvas, so the
+// encoding happens HERE and the finished string is passed in;
+// `VectorPattern.image` is a string the writer was handed, never one it built.
+
+/** Above this, a supersampled embed costs more file than it can possibly show.
+ *  It caps the SUPERSAMPLING only — never the 1:1 floor; see `rasterScaleFor`. */
+const RASTER_MAX_PX = 4096
+
+/**
+ * Pixels per document unit for this export's embeds.
+ *
+ * THE FLOOR IS 1, ALWAYS. The point of this whole function is the thing it
+ * cannot do: return less than export resolution. `resolveField` clamps a LIVE
+ * request to 512 px, which is right for a 30 fps preview and catastrophic for an
+ * export — a 1600-unit-wide shader fill would embed a 512 px bitmap stretched
+ * over it. The clamp is opted out of with `bake: true` (see `rasteriseForExport`),
+ * and the size asked for is derived from the document, so nothing here can quietly
+ * re-introduce it. `RASTER_MAX_PX` only trims SUPERSAMPLING on a huge document.
+ *
+ * THE DEFAULT IS A MEASUREMENT, not a taste. A shader field is a CONTINUOUS
+ * function being sampled, so supersampling it is strictly better: measured against
+ * the canvas at 1:1, a 2× embed of three different effects diffs 0.0000 % of core
+ * ink pixels (worst 0) — free crispness for a designer who scales the artwork up.
+ * `ombre` and `noise` are the opposite: their raster grid IS the artwork, a
+ * per-pixel hash, and supersampling it produces a genuinely FINER grain — 56–91 %
+ * of core pixels differ, with the 8×8 block mean off by 10–17/255, i.e. a visibly
+ * different fill rather than a sharper one. So a dither embeds at exactly 1:1 and
+ * a field at 2×.
+ *
+ * An EXPLICIT `rasterScale` still wins for either — a caller that wants a 4×
+ * dither is asking for a finer grain deliberately, and this is not the place to
+ * argue.
+ */
+function rasterScaleFor(opts: VtSvgOptions, boxes: readonly (VtPaintBox | null)[], paint: Paint): number {
+  const sampled = isFill(paint) && fillIsShader(paint)
+  const asked = Number.isFinite(opts.rasterScale as number) ? (opts.rasterScale as number) : (sampled ? 2 : 1)
+  const s = Math.max(1, Math.min(4, asked))
+  let side = Math.max(opts.width, opts.height, 1)
+  for (const b of boxes) if (b) side = Math.max(side, b.w, b.h)
+  return Math.min(s, Math.max(1, RASTER_MAX_PX / side))
+}
+
+/**
+ * One paint box → a PNG data URL, by drawing the SAME resolver the canvas paints
+ * with over the SAME box. Not a second rendering of the fill: `resolvePaint` is
+ * `lib/paint/resolve`'s, so what is embedded is by construction what
+ * `drawVectorType` would have put on screen.
+ *
+ * ── THE COPY (plan trap 4) ─────────────────────────────────────────────────
+ * `resolveField` hands back a canvas OWNED by its LRU cache, and its ownership
+ * contract says consumers MUST NOT copy it — an earlier revision that copied
+ * everywhere measured as the dominant cost in a ~4× regression, which is why the
+ * contract exists at all. Filling with the resulting `CanvasPattern` copies those
+ * pixels into the canvas below, and `toDataURL` copies them again.
+ *
+ * That is legitimate HERE AND NOWHERE ELSE. An export is one-shot: there is no
+ * frame budget to blow, and an SVG cannot reference a live canvas — the pixels
+ * have to become bytes in the file or there is no export. Every per-frame path
+ * (`drawVectorType`, the node card, the frame source) still binds the field
+ * directly through `ctx.fillStyle` and copies nothing.
+ *
+ * The gate is that this function is MODULE-PRIVATE and called from exactly one
+ * place, `vectorTypeSVG` below. It is not exported, so it cannot be picked up by
+ * a render loop; if you find yourself widening that, you are about to pay the 4×.
+ */
+function rasterisePaintBox(paint: Paint, box: VtPaintBox, scale: number, field: ShaderFieldFrameCtx): string | null {
+  const w = Math.max(1, Math.round(box.w * scale))
+  const h = Math.max(1, Math.round(box.h * scale))
+  const canvas = document.createElement('canvas')
+  canvas.width = w
+  canvas.height = h
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return null
+  const x0 = box.cx - box.w / 2
+  const y0 = box.cy - box.h / 2
+  // The FRAME's own base transform, in this raster's pixels — the same capture
+  // `drawVectorType` makes while its context is still identity, and what a
+  // FRAME-anchored shader field is positioned against (`resolveShaderFill`
+  // composes `CTM⁻¹ · base`). Here the raster covers only `box`, so the frame's
+  // origin sits at `-x0·scale, -y0·scale`: a frame-anchored field stays pinned to
+  // the document even when the box it is being sampled through is one letter's.
+  ctx.setTransform(1, 0, 0, 1, -x0 * scale, -y0 * scale)
+  field.base = typeof ctx.getTransform === 'function' ? ctx.getTransform() : null
+  // Document units → raster pixels, then the resolver's CENTRED-origin
+  // convention: exactly `drawGlyphRun`'s `translate(box.cx, box.cy)` before
+  // `resolvePaint`, so the geometry the resolver builds lands on the same pixels.
+  ctx.setTransform(scale, 0, 0, scale, -x0 * scale, -y0 * scale)
+  ctx.translate(box.cx, box.cy)
+  ctx.fillStyle = resolvePaint(ctx, paint, { w: box.w, h: box.h }, field)
+  ctx.fillRect(-box.w / 2, -box.h / 2, box.w, box.h)
+  return canvas.toDataURL('image/png')
+}
+
+/**
+ * The embeds for one export: one data URL per paint box, index-aligned.
+ *
+ * Opens this export's own `withFieldFrame` span with `bake: true`, which is what
+ * takes a shader fill's field off the 512 px live clamp AND out of
+ * `LIVE_FIELD_CEILING` — an export has no frame budget to protect. The requests
+ * come from `vtFieldRequests`, the same function `drawVectorType` uses, so the
+ * key the span budgets is the key `resolveShaderFill` then asks for; deriving it
+ * twice is how a field silently freezes at `t = 0`.
+ *
+ * Every box shares ONE span and one field: at the `glyph` anchor six letters
+ * resolve the same descriptor six times and hit the field cache five of them.
+ *
+ * A `null` BOX (a glyph with no ink — a space, whose path is empty and whose
+ * shape the writer drops) costs nothing: no canvas, no encode. A `null` RESULT
+ * means there was no canvas to draw on at all (SSR, a worker, the unit test
+ * environment) and the caller falls back to a flat colour, which is the
+ * pre-task-6 behaviour rather than a blank fill.
+ */
+function rasteriseForExport(
+  paint: Paint,
+  boxes: readonly (VtPaintBox | null)[],
+  opts: VtSvgOptions,
+  t: number,
+  fps: number,
+): (string | null)[] {
+  if (typeof document === 'undefined' || !boxes.some(Boolean)) return boxes.map(() => null)
+  const scale = rasterScaleFor(opts, boxes, paint)
+  // The document at embed resolution — what a frame-anchored field is asked for.
+  const frameW = Math.max(1, Math.round(opts.width * scale))
+  const frameH = Math.max(1, Math.round(opts.height * scale))
+  const requests = vtFieldRequests(paint, frameW, frameH, t, fps, true)
+  return withFieldFrame(requests, (_frozen, token) => {
+    const field: ShaderFieldFrameCtx = { frameW, frameH, t, fps, base: null, bake: true, token }
+    return boxes.map(box => (box ? rasterisePaintBox(paint, box, scale, field) : null))
+  })
+}
+
 export interface VtSvgOptions extends VtBoxOptions {
   /** Painted as a full-bleed rect behind the glyphs, matching the canvas.
    *  `null`/omitted leaves the document transparent. */
   background?: string | null
   /** Decimal places in path data. Default 3 — sub-tenth-of-a-pixel. */
   precision?: number
+  /**
+   * Pixels per document unit in a TIER-3 raster embed (`ombre`, `noise`,
+   * `shader` — see `rasteriseForExport`). Clamped to 1..4; the DEFAULT depends
+   * on the fill and is a measurement, not a preference (see `rasterScaleFor`).
+   *
+   * `1` is exactly export resolution: the viewBox is 1:1 with the rendered size,
+   * so one raster pixel per document unit is what a 100 % view shows. It is
+   * never clamped BELOW that, which is the property that matters — the live
+   * 512 px field clamp must not reach the export.
+   */
+  rasterScale?: number
 }
 
 export interface VtSvgResult {
@@ -926,28 +1083,60 @@ export function vectorTypeSVG(
   // path data is in, so the pattern rides the letter exactly as the canvas's
   // per-glyph paint space does.
   //
+  // ── TIER 3, THE RASTER EMBED ────────────────────────────────────────────────
+  // `ombre`, `noise` and `shader` have no vector form at any tier, so they are
+  // rasterised over their own paint box and embedded as
+  // `<pattern><image href="data:image/png…">` — see `rasteriseForExport`. One
+  // embed for the whole run under `word`/`frame`, one PER LETTER under `glyph`
+  // (each letter's box is its own, so one shared image would be the wrong
+  // picture on five of six letters).
+  //
   // ── WHAT STILL BRIDGES ──────────────────────────────────────────────────────
-  // `paintToVectorPaint` returns `null` for the three remaining kinds and this
-  // falls back to the representative colour, exactly as before: `ombre`, `noise`
-  // and `shader` cannot be vector at all — two per-pixel hashes and a fragment
-  // program — and get the declared raster embed in TASK 6. Task 7 is what makes
-  // that degradation visible to the user rather than silent.
+  // `paintPrimaryColor` remains as the LAST resort, and only that: it is reached
+  // when there is no canvas to rasterise on at all (SSR, a worker, the unit test
+  // environment) or the paint is a blob no arm recognises. In a browser all nine
+  // fill types now export as a paint server, real `<pattern>` geometry, or a
+  // declared raster — none of them as a silently flattened colour.
   const anchor = vtFillAnchor(frame.config)
-  const runRect = anchor === 'glyph'
+  const runBox = anchor === 'glyph'
     ? null
-    : paintBoxRect(anchor === 'frame' ? vtFramePaintBox(opts) : vtRunPaintBox(frame.outlines, place, opts))
+    : anchor === 'frame' ? vtFramePaintBox(opts) : vtRunPaintBox(frame.outlines, place, opts)
+  const runRect = runBox ? paintBoxRect(runBox) : null
+  // Asked for ONCE per export, not once per glyph: `rasteriseForExport` opens a
+  // single field span for all of them. `paintIsVector` answers by KIND (it passes
+  // a unit box), so this is "has no vector form", not "did not get one here".
+  //
+  // `isFill` is the other half of the gate and it is not belt-and-braces: only a
+  // `Fill` ever reaches the arm that consumes a raster, and without it an absent
+  // or unrecognised `fill` — which has no vector form either — would be handed to
+  // the resolver, come back as `undefined`, and embed a canvas-default BLACK
+  // rectangle in place of today's white flat fallback.
+  const rasterBoxes: (VtPaintBox | null)[] = !isFill(fill) || paintIsVector(fill)
+    ? []
+    : runBox
+      ? [runBox]
+      // An ink-less glyph (a space) is dropped by the writer, so it gets no box
+      // and costs no encode — its paint box would be the CELL fallback anyway.
+      : frame.outlines.glyphs.map(g => (g.commands.length ? vtGlyphPaintBox(g, place, em) : null))
+  const rasters = rasteriseForExport(fill, rasterBoxes, opts, t, frame.config.motion?.fps ?? 30)
   const flatFill = paintPrimaryColor(fill, '#ffffff')
   const svgFill = (glyph: GlyphOutline, i: number): VectorPaint => {
     if (runRect) {
       const tr = frame.transforms[i] ?? IDENTITY_GLYPH_MOTION
       const elementTransform = glyphSvgMatrix(glyphPlacement(glyph, place), glyph.advance * place.scale, tr, precision)
-      return paintToVectorPaint(fill, { units: 'userSpaceOnUse', box: runRect, elementTransform }) ?? flatFill
+      return paintToVectorPaint(fill, {
+        units: 'userSpaceOnUse',
+        box: runRect,
+        elementTransform,
+        raster: rasters[0],
+      }) ?? flatFill
     }
     const box = vtGlyphPaintBox(glyph, place, em)
     return paintToVectorPaint(fill, {
       units: 'objectBoundingBox',
       aspect: box.w / box.h,
       box: paintBoxRect(box),
+      raster: rasters[i],
     }) ?? flatFill
   }
 

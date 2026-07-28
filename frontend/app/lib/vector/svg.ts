@@ -8,9 +8,13 @@
  * which is exactly a list of filled paths). Anything that can produce
  * `VectorCommand[]` can export vector without writing another serialiser.
  *
- * Everything here is pure: no DOM, no canvas, no fetch. `commandsToPathData` is
- * shared with the canvas renderer so the two outputs cannot drift — the SVG
- * `d` and the Path2D replay are built from the same transformed command list.
+ * Everything here is pure: no DOM, no canvas, no fetch — including the one place
+ * that emits a raster (`VectorPattern.image`), which takes a data URL the CALLER
+ * encoded rather than reaching for a canvas to encode one itself.
+ *
+ * `commandsToPathData` is shared with the canvas renderer so the two outputs
+ * cannot drift — the SVG `d` and the Path2D replay are built from the same
+ * transformed command list.
  */
 
 /** The five path commands fontkit emits, and the only ones we serialise. */
@@ -356,6 +360,26 @@ export interface VectorPattern {
   /** Painted full-bleed behind `rects`. Omitted/null → a transparent tile. */
   background?: string | null
   rects: VectorPatternRect[]
+  /**
+   * A PRE-ENCODED raster, stretched over the whole tile as an `<image>` — the
+   * honest bottom tier, for a fill that has no geometric description to recover
+   * at all (a per-pixel dither, a fragment program). It is a real, working
+   * export; it is simply not editable vector, which is a fact the product has to
+   * declare rather than hide.
+   *
+   * A SELF-CONTAINED `data:` URL, or the file stops working the moment it leaves
+   * the machine that made it. **This spine never builds one.** It has no DOM, no
+   * canvas and no encoder by design (see the module header) — that purity is
+   * what lets a worker, a test or SSR call it, and what makes it reusable by a
+   * second studio. A caller that has pixels encodes them itself and hands the
+   * finished string in; `lib/vectortype/canvas` is the first to do so.
+   *
+   * Emitted with `preserveAspectRatio="none"` and the tile's own width/height, so
+   * it lands exactly on the tile however its pixel dimensions were rounded.
+   * Drawn OVER `background` and UNDER `rects`, though in practice a raster tile
+   * carries neither.
+   */
+  image?: string | null
   /** Emitted as `patternTransform`: pattern space → the referencing element's
    *  user space. Omitted when it would be the identity. */
   transform?: Affine
@@ -533,6 +557,24 @@ class Defs {
   private readonly clips = new Map<string, VectorRect>()
   private readonly gradients = new Map<string, VectorGradient>()
   private readonly patterns = new Map<string, VectorPattern>()
+  /**
+   * The raster embeds, keyed by URL + the tile they are stretched onto, emitted
+   * ONCE as an `<image>` in `<defs>` and `<use>`d by every pattern that carries
+   * them.
+   *
+   * Not a micro-optimisation. A run-anchored paint under per-glyph motion emits
+   * one pattern PER GLYPH — each carrying that glyph's own inverse transform,
+   * which is what pins the paint (see `VectorGradient.transform`) — while the
+   * picture inside every one of them is the SAME. Measured on a six-letter word
+   * with a staggered translate: 161 KB still, 794 KB moving, of which five
+   * sixths were byte-identical copies of one PNG. Sharing them puts it back to
+   * 166 KB.
+   *
+   * The tile size is part of the key because `<use>` cannot resize an `<image>`
+   * target: the shared element carries its own `width`/`height`, so two patterns
+   * share it only when they stretch it exactly the same way.
+   */
+  private readonly images = new Map<string, { href: string; width: number; height: number }>()
 
   constructor(private readonly precision: number) {}
 
@@ -574,8 +616,24 @@ class Defs {
    *  contents would have been written identically — and by nothing else, because
    *  a pattern's PHASE is part of the picture. */
   patternKey(p: VectorPattern): string {
+    // KEY mode writes the data URL inline (see `patternMarkup`), so two patterns
+    // collide only when they carry the same picture as well as the same tile,
+    // placement and geometry — the sharing below cannot make two different
+    // rasters look alike to the dedup.
     const key = this.patternMarkup(p, '')
     if (!this.patterns.has(key)) this.patterns.set(key, p)
+    if (p.image) this.imageKey(p)
+    return key
+  }
+
+  /** The shared-image key for a pattern that carries one — registering it on
+   *  first use, exactly as every other registry here does. */
+  private imageKey(p: VectorPattern): string {
+    const n = (v: number) => formatNumber(v, this.precision)
+    const key = `${n(Math.max(0, p.width))}x${n(Math.max(0, p.height))}|${p.image}`
+    if (!this.images.has(key)) {
+      this.images.set(key, { href: p.image as string, width: Math.max(0, p.width), height: Math.max(0, p.height) })
+    }
     return key
   }
 
@@ -594,13 +652,14 @@ class Defs {
 
   get empty(): boolean {
     return this.blurs.size === 0 && this.clips.size === 0
-      && this.gradients.size === 0 && this.patterns.size === 0
+      && this.gradients.size === 0 && this.patterns.size === 0 && this.images.size === 0
   }
 
-  idFor(prefix: string, kind: 'b' | 'c' | 'g' | 'p', key: string): string {
+  idFor(prefix: string, kind: 'b' | 'c' | 'g' | 'p' | 'i', key: string): string {
     const keys = kind === 'b' ? this.blurs
       : kind === 'c' ? this.clips
       : kind === 'g' ? this.gradients
+      : kind === 'i' ? this.images
       : this.patterns
     return `${prefix}-${kind}${[...keys.keys()].indexOf(key)}`
   }
@@ -649,9 +708,23 @@ class Defs {
       out.push(this.gradientMarkup(g, `${prefix}-g${i}`))
       i++
     }
+    // The raster embeds first, so a reader meets the picture before the five
+    // patterns that place it. `<image>` inside `<defs>` is not rendered — it is
+    // there to be `<use>`d, exactly like every other definition here.
+    i = 0
+    for (const im of this.images.values()) {
+      out.push(`<image${attrs([
+        ['id', `${prefix}-i${i}`],
+        ['width', n(im.width)],
+        ['height', n(im.height)],
+        ['preserveAspectRatio', 'none'],
+        ['href', im.href],
+      ])}/>`)
+      i++
+    }
     i = 0
     for (const p of this.patterns.values()) {
-      out.push(this.patternMarkup(p, `${prefix}-p${i}`))
+      out.push(this.patternMarkup(p, `${prefix}-p${i}`, p.image ? this.idFor(prefix, 'i', this.imageKey(p)) : undefined))
       i++
     }
     return out.length ? `<defs>${out.join('')}</defs>` : ''
@@ -668,13 +741,37 @@ class Defs {
    * `<pattern>` element (which SVG ignores) — and it is real geometry, so a
    * designer can recolour the ground without touching the figure.
    */
-  private patternMarkup(p: VectorPattern, id: string): string {
+  private patternMarkup(p: VectorPattern, id: string, imageRef?: string): string {
     const prec = this.precision
     const n = (v: number) => formatNumber(v, prec)
     const w = Math.max(0, p.width)
     const h = Math.max(0, p.height)
     const bg = p.background
       ? `<rect${attrs([['width', n(w)], ['height', n(h)], ['fill', p.background]])}/>`
+      : ''
+    // The raster tier. `href` is a string this writer was HANDED — it is never
+    // generated here (see `VectorPattern.image`).
+    //
+    // TWO FORMS, deliberately. With an `imageRef` (RENDER mode) the tile holds a
+    // `<use>` of the one `<image>` in `<defs>`, so five patterns that differ only
+    // in placement carry one copy of the picture between them. Without one (KEY
+    // mode, `patternKey`) the data URL is written INLINE, because the key has to
+    // tell two different rasters apart and a shared id would make them look
+    // identical.
+    //
+    // The shared `<image>` carries `preserveAspectRatio="none"` and the tile's own
+    // extent: the encoded bitmap's pixel dimensions are a rounding of the tile
+    // size, and the default `xMidYMid meet` would letterbox that rounding into a
+    // visible seam.
+    const img = p.image
+      ? imageRef
+        ? `<use${attrs([['href', `#${imageRef}`]])}/>`
+        : `<image${attrs([
+            ['href', p.image],
+            ['width', n(w)],
+            ['height', n(h)],
+            ['preserveAspectRatio', 'none'],
+          ])}/>`
       : ''
     const body = (p.rects ?? [])
       .map(r => `<rect${attrs([
@@ -696,7 +793,7 @@ class Defs {
       // the hundreds. Written at UNIT_PRECISION for the same reason bounding-box
       // coordinates are.
       ['patternTransform', p.transform ? `matrix(${p.transform.map(v => formatNumber(v, UNIT_PRECISION)).join(' ')})` : undefined],
-    ])}>${bg}${body}</pattern>`
+    ])}>${bg}${img}${body}</pattern>`
   }
 
   /**
