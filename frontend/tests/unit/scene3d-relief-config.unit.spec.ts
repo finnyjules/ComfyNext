@@ -99,6 +99,37 @@ describe('scene3d relief doc model', () => {
   })
 })
 
+// I7 (final review): parseMaterial is a WHITELIST — `shininess`/`specular` ARE correctly copied
+// there (unlike relief.contrast/tiling above before their fixes), but nothing exercised that
+// copy, so a future edit that dropped one of those two lines the same way relief.contrast/
+// tiling once were would ship silently. Same trap this file exists to catch, applied to Phong's
+// pair of whitelist fields instead of relief's.
+describe('scene3d phong material whitelist fields (I7)', () => {
+  it('round-trips a phong material\'s shininess and specular through serialize → parse', () => {
+    const doc = defaultDoc()
+    const obj = createPrimitive('box')
+    obj.material = { type: 'phong', color: '#9aa3af', roughness: 0.6, metalness: 0, shininess: 87, specular: '#ff8800' }
+    doc.objects = [obj]
+    const back = parseDoc(serializeDoc(doc))
+    expect(back.objects[0]!.material.shininess).toBe(87)
+    expect(back.objects[0]!.material.specular).toBe('#ff8800')
+  })
+
+  // The paired "absent stays absent" property parseMaterial promises for every optional field
+  // (see its own doc: "copy only when present AND valid, so absent fields stay absent") — a
+  // material that never set shininess/specular must not gain them from MATERIAL_DEFAULTS on a
+  // round-trip, or every old phong document would silently start reporting values it never had.
+  it('leaves shininess and specular absent when absent, so old phong docs round-trip exactly', () => {
+    const doc = defaultDoc()
+    const obj = createPrimitive('box')
+    obj.material = { type: 'phong', color: '#9aa3af', roughness: 0.6, metalness: 0 }
+    doc.objects = [obj]
+    const back = parseDoc(serializeDoc(doc))
+    expect('shininess' in back.objects[0]!.material).toBe(false)
+    expect('specular' in back.objects[0]!.material).toBe(false)
+  })
+})
+
 // Task 5 fix: sceneHasShaderFill (the per-frame refresh gate — see its doc in config.ts and
 // refreshSceneShaderFields's in materials.ts) used to only recognise the `shaderFill`
 // MATERIAL TYPE. A `standard`/`glass`/etc. material carrying a SHADER surface relief never

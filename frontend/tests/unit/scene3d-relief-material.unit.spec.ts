@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import * as THREE from 'three'
 import { materialFor, updateMaterial } from '~/lib/scene3d/materials'
 import { MATERIAL_DEFAULTS, type SceneMaterial } from '~/lib/scene3d/config'
@@ -22,12 +22,53 @@ describe('scene3d relief on materials', () => {
     expect(m.bumpScale).toBe(0.4)
   })
 
-  // A normal map must NEVER go through the bump path — that misreads its blue channel
-  // as height. Asserted as bumpMap staying null rather than normalMap being non-null,
-  // because texture LOADING needs a DOM and this suite runs in node.
-  it('never routes a normal map through the bump path', () => {
-    const m = materialFor(base({ normalImage: 'baked.png' })) as THREE.MeshPhysicalMaterial
-    expect(m.bumpMap).toBeNull()
+  // A normal map must NEVER go through the bump path — that misreads its blue channel as
+  // height. The obvious assertion (bumpMap stays null) is VACUOUS in this suite as originally
+  // written: materials.ts's module-level `hasDOM` const (`typeof document !== 'undefined'`,
+  // frozen the instant materials.ts is first imported — see its top-of-file doc) is `false` in
+  // vitest's node environment, so `getImageTexture` (the function behind BOTH `.map` and
+  // `.normalMap`) returns null regardless of what applyRelief does — bumpMap would read null
+  // even if applyRelief were rewritten to (wrongly) route `normalImage` through
+  // `target.bumpMap = getImageTexture(...)` instead of `target.normalMap = ...`, because THAT
+  // call would ALSO return null. The fixture also carried no `relief` at all, so the assertion
+  // proved nothing about the normal-map path specifically.
+  //
+  // Fix: `vi.stubGlobal('document', ...)` alone (the heal spec's trick) does not help here,
+  // because `hasDOM` is a frozen top-level const, not the dynamic `typeof document ===
+  // 'undefined'` check `getHeightTexture`/`buildHeightTextureFromSpec` use — stubbing `document`
+  // AFTER materials.ts has already been imported (as it was, statically, at the top of this
+  // file) can't retroactively flip an already-evaluated constant. So this test stubs `document`
+  // FIRST, then forces a FRESH evaluation of materials.ts via `vi.resetModules()` + a dynamic
+  // `import()`, scoped to this one test — every other test in this file keeps using the
+  // original (node-safe, hasDOM=false) module instance bound by the static import at the top.
+  // The stub only needs to satisfy three's ImageLoader (`document.createElementNS('...', 'img')`
+  // → an element with addEventListener/removeEventListener/src/crossOrigin) — the image never
+  // actually loads (no network/XHR polyfill in node), but TextureLoader.load returns a real,
+  // non-null `Texture` synchronously regardless, which is all this assertion needs.
+  it('never routes a normal map through the bump path', async () => {
+    vi.resetModules()
+    const fakeImgEl = () => ({
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      crossOrigin: undefined as string | undefined,
+      src: '',
+    })
+    vi.stubGlobal('document', {
+      createElementNS: () => fakeImgEl(),
+      createElement: () => fakeImgEl(),
+    })
+    try {
+      const fresh = await import('~/lib/scene3d/materials')
+      const m = fresh.materialFor(base({ normalImage: 'baked.png' })) as THREE.MeshPhysicalMaterial
+      // The real assertion: a normal map reaches `.normalMap` (non-null now that hasDOM is
+      // true for this fresh module instance) and NEVER `.bumpMap` (still null — there's no
+      // `relief` on this fixture at all, so nothing should ever bind bumpMap here).
+      expect(m.normalMap).not.toBeNull()
+      expect(m.bumpMap).toBeNull()
+    } finally {
+      vi.unstubAllGlobals()
+      vi.resetModules()
+    }
   })
 
   // The unlit shaderFill case builds a MeshBasicMaterial, which has NO bump slot.
