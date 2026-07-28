@@ -127,7 +127,10 @@ class RecCtx {
   }
   clip() { this.ops.push({ op: 'clip' }) }
   fill(..._a: unknown[]) {
-    this.ops.push({ op: 'fill', filter: this._filter, alpha: this.globalAlpha, depth: this.stack.length })
+    // The CTM in force at the fill IS the glyph's transform — the pivot tests
+    // read it back and push points through it, which is the only way to tell
+    // "scaled about the left edge" from "scaled about the cell centre".
+    this.ops.push({ op: 'fill', filter: this._filter, alpha: this.globalAlpha, depth: this.stack.length, m: [...this.m] as Mat })
   }
   stroke(..._a: unknown[]) { this.ops.push({ op: 'stroke', filter: this._filter }) }
 }
@@ -395,6 +398,113 @@ describe('scaleX / scaleY — the card-flip presets are DRAWN, not silently drop
     for (const s of ctx.ops.filter(o => o.op === 'scale') as Array<{ x: number; y: number }>) {
       expect(Math.abs(s.x)).toBeGreaterThanOrEqual(0.001)
       expect(Math.abs(s.y)).toBeGreaterThanOrEqual(0.001)
+    }
+  })
+})
+
+// ── the scale pivot ─────────────────────────────────────────────────────────
+//
+// A glyph's placed ORIGIN is its left edge, on the baseline. Scaling about it is
+// right vertically — type scales about its baseline — and wrong horizontally: it
+// pins each letter's LEFT edge, so a card flip at scaleX 0.43 reads as six thin
+// letters with wide gaps rather than six cards turning in place. The horizontal
+// pivot is the glyph CELL's centre (`origin.x + advance/2`); the vertical one
+// stays on the baseline, and rotation stays on the origin.
+//
+// None of this is visible in a still: every frame shows plausibly narrow
+// letters. Only pushing points through the composed CTM can tell them apart.
+
+/** The affine matrix an SVG transform list composes to, so the exported
+ *  transform can be compared with the canvas CTM as a MATRIX rather than as a
+ *  string — the two renderers may legitimately spell it differently. */
+function matFromSvgTransform(list: string): Mat {
+  let m: Mat = [...IDENT] as Mat
+  for (const [, fn, args] of list.matchAll(/(translate|rotate|scale)\(([^)]*)\)/g)) {
+    const a = args!.trim().split(/[\s,]+/).map(Number)
+    if (fn === 'translate') m = mul(m, [1, 0, 0, 1, a[0]!, a[1] ?? 0])
+    else if (fn === 'scale') m = mul(m, [a[0]!, 0, 0, a[1] ?? a[0]!, 0, 0])
+    else {
+      const r = (a[0]! * Math.PI) / 180
+      m = mul(m, [Math.cos(r), Math.sin(r), -Math.sin(r), Math.cos(r), 0, 0])
+    }
+  }
+  return m
+}
+
+/** Everything the pivot is measured against, for glyph `i` of one frame. */
+function glyphGeom(c: VectorTypeConfig, t: number, i = 0) {
+  const { ctx, frame } = draw(c, t)
+  const place = vtPlacement(frame, BOX)
+  const glyph = frame.outlines.glyphs[i] as GlyphOutline
+  const origin = glyphPlacement(glyph, place)
+  const advance = glyph.advance * place.scale
+  const fill = ctx.ops.filter(o => o.op === 'fill')[i] as { m: Mat }
+  return { frame, origin, advance, m: fill.m, ctx, place, glyph }
+}
+
+describe('the scale pivot — cards flip in place, they do not slide left', () => {
+  it('scales horizontally about the glyph CELL CENTRE, not the left edge', () => {
+    const c = withPreset('in', 'card-flip-h')
+    const { origin, advance, m, frame } = glyphGeom(c, 0.5)
+    const sx = frame.transforms[0]!.scale * frame.transforms[0]!.scaleX
+    expect(sx).toBeLessThan(0.9)                       // the flip really is narrow
+
+    const cx = origin.x + advance / 2
+    // The cell centre is a FIXED POINT: the letter narrows around itself.
+    expect(apply(m, cx, origin.y).x).toBeCloseTo(cx, 6)
+    // Both edges land the same distance from the centre, so both move inward by
+    // the same amount — the artefact was all of the shortfall landing on the
+    // right while the left edge stayed put.
+    const left = apply(m, origin.x, origin.y).x
+    const right = apply(m, origin.x + advance, origin.y).x
+    expect(left).toBeCloseTo(cx - (advance / 2) * sx, 6)
+    expect(right).toBeCloseTo(cx + (advance / 2) * sx, 6)
+    expect(cx - left).toBeCloseTo(right - cx, 6)
+    // …and, stated as the bug: the left edge is NOT pinned any more.
+    expect(apply(m, origin.x, origin.y).x).toBeGreaterThan(origin.x + 1)
+  })
+
+  it('keeps the BASELINE as the vertical pivot — type scales off its baseline', () => {
+    const { origin, m } = glyphGeom(withPreset('in', 'card-flip-v'), 0.5)
+    expect(apply(m, origin.x, origin.y).y).toBeCloseTo(origin.y, 6)
+  })
+
+  it('applies the same centre pivot to the UNIFORM scale presets', () => {
+    for (const id of ['grow-in', 'shrink-in']) {
+      const { origin, advance, m, frame } = glyphGeom(withPreset('in', id), 0.5)
+      const s = frame.transforms[0]!.scale
+      expect(s).not.toBeCloseTo(1, 3)
+      const cx = origin.x + advance / 2
+      expect(apply(m, cx, origin.y).x, id).toBeCloseTo(cx, 6)
+      expect(apply(m, origin.x, origin.y).y, id).toBeCloseTo(origin.y, 6)
+    }
+  })
+
+  it('leaves ROTATION pivoting on the origin — the pivot translate comes after it', () => {
+    const ops = spans(draw(withPreset('in', 'spin-in'), 0.5).ctx)[0]!
+      .filter(o => ['translate', 'rotate', 'scale'].includes(o.op)).map(o => o.op)
+    expect(ops).toEqual(['translate', 'rotate', 'translate', 'scale', 'translate', 'translate'])
+  })
+
+  it('does NOTHING when there is no scale — an unscaled glyph gains no ops', () => {
+    const ops = spans(draw(withPreset('in', 'slide-up'), 0.5).ctx)[0]!
+      .filter(o => ['translate', 'rotate', 'scale'].includes(o.op)).map(o => o.op)
+    expect(ops).toEqual(['translate', 'translate'])
+  })
+
+  it('the SVG writer composes the IDENTICAL matrix — canvas and vector agree', () => {
+    for (const id of ['card-flip-h', 'card-flip-v', 'grow-in', 'shrink-in', 'spin-in', 'slide-up']) {
+      const c = withPreset('in', id)
+      const { m } = glyphGeom(c, 0.5)
+      const { svg } = vectorTypeSVG(font, c, 0.5, BOX)
+      const attr = /transform="([^"]+)"/.exec(svg)?.[1] ?? ''
+      const sm = matFromSvgTransform(attr)
+      // Point-wise, at three corners of the em box — a matrix comparison that
+      // cannot be satisfied by an accidental algebraic near-miss.
+      for (const [px, py] of [[0, 0], [200, 100], [-50, 60]] as const) {
+        expect(apply(sm, px, py).x, `${id} x`).toBeCloseTo(apply(m, px, py).x, 2)
+        expect(apply(sm, px, py).y, `${id} y`).toBeCloseTo(apply(m, px, py).y, 2)
+      }
     }
   })
 })

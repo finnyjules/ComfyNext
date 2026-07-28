@@ -369,9 +369,10 @@ export function drawVectorType(
     // a separate compositing pass per glyph.
     if (blurPx >= 0.05) ctx.filter = `blur(${blurPx}px)`
 
+    const advance = glyph.advance * place.scale
     // CLIP — before the transform below, deliberately. See `clipGlyphCell`.
     if (tr.clip && tr.clip.amount > 0.001) {
-      clipGlyphCell(ctx, origin, glyph.advance * place.scale, em, tr.clip)
+      clipGlyphCell(ctx, origin, advance, em, tr.clip)
     }
 
     const sx = nonZero(tr.scale * (Number.isFinite(tr.scaleX) ? tr.scaleX : 1))
@@ -384,7 +385,25 @@ export function drawVectorType(
       // that nothing applied them). `scale` and `scaleX/Y` multiply: the uniform
       // one is the tracks' and the presets' shared channel, the per-axis pair is
       // the flip on top of it.
-      if (sx !== 1 || sy !== 1) ctx.scale(sx, sy)
+      //
+      // THE PIVOT IS NOT THE ORIGIN. The origin is the glyph's LEFT edge on the
+      // baseline. Vertically that is exactly right — type scales about its
+      // baseline, which is why `card-flip-v` always read correctly. Horizontally
+      // it pins each letter's left edge, so at `scaleX 0.43` the letters narrow
+      // by 57 % while the word narrows by 7 %: six thin letters with wide gaps,
+      // not six cards turning in place. So the horizontal pivot is the glyph
+      // CELL's centre and the vertical one stays on the baseline.
+      //
+      // Rotation is deliberately left OUTSIDE this, still turning about the
+      // origin: it was not the reported defect, `spin`/`sway`/`rock` are
+      // verified against it, and moving two pivots at once would make any
+      // regression impossible to attribute.
+      if (sx !== 1 || sy !== 1) {
+        const hx = advance / 2
+        ctx.translate(hx, 0)
+        ctx.scale(sx, sy)
+        ctx.translate(-hx, 0)
+      }
       ctx.translate(-origin.x, -origin.y)
     }
     ctx.fillStyle = fill
@@ -440,7 +459,8 @@ export function drawVectorTypeToCanvas(
  *
  * Mirrors `drawVectorType`'s canvas sequence exactly:
  *
- *   translate(origin + d) · rotate · scale · translate(-origin)
+ *   translate(origin + d) · rotate · translate(adv/2, 0) · scale
+ *                         · translate(-adv/2, 0) · translate(-origin)
  *
  * An SVG transform list composes left-to-right the same way successive `ctx`
  * operations do, and SVG's `rotate(deg)` turns the same direction as
@@ -448,10 +468,17 @@ export function drawVectorTypeToCanvas(
  * baked into the coordinates by `transformCommands`). So the two are the same
  * transform written twice, not two transforms that happen to agree.
  *
+ * The pair of `adv/2` translates around the scale is the horizontal pivot — see
+ * the long note at the canvas site for why it is the cell centre and not the
+ * origin. It is written here in the same shape rather than folded into the
+ * outer translates on purpose: a reader comparing the two functions has to be
+ * able to see that they are the same list.
+ *
  * Returns `undefined` for identity so an unanimated export carries no attribute.
  */
 function glyphSvgTransform(
   origin: { x: number; y: number },
+  advance: number,
   tr: VtGlyphMotion,
   precision = 3,
 ): string | undefined {
@@ -464,7 +491,12 @@ function glyphSvgTransform(
   // Single-argument when uniform: that is the same transform, and it keeps an
   // ordinary export readable. The two-argument form appears only for a card
   // flip, which is exactly when the axes really do differ.
-  if (sx !== 1 || sy !== 1) parts.push(sx === sy ? `scale(${n(sx)})` : `scale(${n(sx)} ${n(sy)})`)
+  if (sx !== 1 || sy !== 1) {
+    const hx = Number.isFinite(advance) ? advance / 2 : 0
+    parts.push(`translate(${n(hx)} 0)`)
+    parts.push(sx === sy ? `scale(${n(sx)})` : `scale(${n(sx)} ${n(sy)})`)
+    parts.push(`translate(${n(-hx)} 0)`)
+  }
   parts.push(`translate(${n(-origin.x)} ${n(-origin.y)})`)
   return parts.join(' ')
 }
@@ -544,7 +576,10 @@ export function vectorTypeSVG(
     },
     attrs: (glyph, i) => {
       const tr = frame.transforms[i] ?? IDENTITY_GLYPH_MOTION
-      const transform = glyphSvgTransform(glyphPlacement(glyph, place), tr, precision)
+      // Same two inputs the canvas loop uses for the pivot — the placed origin
+      // and the cell's own advance — so neither renderer can drift into its own
+      // idea of where a glyph turns.
+      const transform = glyphSvgTransform(glyphPlacement(glyph, place), glyph.advance * place.scale, tr, precision)
       return transform ? { transform } : undefined
     },
     // The document is the OUTPUT BOX, not a crop of the ink — so the SVG frames
