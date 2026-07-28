@@ -581,15 +581,16 @@ export function materialFor(mat: SceneMaterial, geometry?: THREE.BufferGeometry,
 }
 
 /** The part of relief that forces a material REBUILD: which texture object is bound.
- *  `scale` and `invert` are deliberately excluded — scale is a slider, and rebuilding
- *  a material per tick would jank. Those update in place (see updateMaterial). */
+ *  `scale` updates in place (a slider drag must not rebuild per tick).
+ *  `invert` rebuilds (a toggle is clicked occasionally, so cost is negligible and removes bugs).
+ *  See updateMaterial: bumpScale updates in place, but getHeightTexture caches per (filename, invert). */
 function reliefKey(mat: SceneMaterial): string {
   const r = mat.relief
   const relief = !r || r.source === 'none'
     ? '-'
     : r.source === 'image'
-      ? `i:${r.image ?? ''}`
-      : `s:${r.spec ? JSON.stringify(r.spec) : ''}`
+      ? `i:${r.image ?? ''}:${r.invert ? 1 : 0}`
+      : `s:${r.spec ? JSON.stringify(r.spec) : ''}:${r.invert ? 1 : 0}`
   return `|${relief}|n:${mat.normalImage ?? ''}`
 }
 

@@ -69,4 +69,25 @@ describe('scene3d relief on materials', () => {
     const matcap = materialFor(base({ type: 'matcap', relief: { source: 'image', image: 'h.png', scale: 0.3 } })) as THREE.MeshMatcapMaterial
     expect(matcap.bumpScale).toBe(0.3)
   })
+
+  it('rebuilds when invert toggles on an image relief', () => {
+    const m = materialFor(base({ relief: { source: 'image', image: 'h.png', scale: 0.2, invert: false } }))
+    expect(updateMaterial(m, base({ relief: { source: 'image', image: 'h.png', scale: 0.2, invert: true } }))).toBe(false)
+  })
+
+  it('rebuilds when invert toggles on a shader relief', () => {
+    const m = materialFor(base({ relief: { source: 'shader', scale: 0.2, invert: false } }))
+    expect(updateMaterial(m, base({ relief: { source: 'shader', scale: 0.2, invert: true } }))).toBe(false)
+  })
+
+  it('still updates scale in place without rebuilding', () => {
+    const m = materialFor(base({ relief: { source: 'image', image: 'h.png', scale: 0.2, invert: false } }))
+    expect(updateMaterial(m, base({ relief: { source: 'image', image: 'h.png', scale: 0.8, invert: false } }))).toBe(true)
+    expect((m as THREE.MeshPhysicalMaterial).bumpScale).toBe(0.8)
+  })
+
+  it('does not let invert perturb the key when relief is off', () => {
+    const m = materialFor(base({ relief: { source: 'none', invert: false } }))
+    expect(updateMaterial(m, base({ relief: { source: 'none', invert: true } }))).toBe(true)
+  })
 })
