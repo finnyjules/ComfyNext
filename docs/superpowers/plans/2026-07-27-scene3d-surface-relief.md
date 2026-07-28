@@ -416,15 +416,18 @@ Expected: FAIL — `bumpScale` is the THREE default `1`, not `0.4`.
 
 ```ts
 /** The part of relief that forces a material REBUILD: which texture object is bound.
- *  `scale` and `invert` are deliberately excluded — scale is a slider, and rebuilding
- *  a material per tick would jank. Those update in place (see updateMaterial). */
+ *  `scale` is deliberately excluded — it is a slider, and rebuilding a material per
+ *  tick would jank; it updates in place (see updateMaterial). `invert` IS included:
+ *  height textures are cached per (filename, invert), so an inverted map is a
+ *  genuinely different texture object, and a toggle clicked occasionally can afford
+ *  a rebuild. Excluding it made toggling Invert silently do nothing. */
 function reliefKey(mat: SceneMaterial): string {
   const r = mat.relief
   const relief = !r || r.source === 'none'
     ? '-'
     : r.source === 'image'
-      ? `i:${r.image ?? ''}`
-      : `s:${r.spec ? JSON.stringify(r.spec) : ''}`
+      ? `i:${r.image ?? ''}:${r.invert === true ? 1 : 0}`
+      : `s:${r.spec ? JSON.stringify(r.spec) : ''}:${r.invert === true ? 1 : 0}`
   return `|${relief}|n:${mat.normalImage ?? ''}`
 }
 
@@ -554,8 +557,9 @@ function getShaderHeightTexture(mat: SceneMaterial, r: ReliefSpec): THREE.Textur
 `updateMaterial` returns early only on identity mismatch, then switches per type. Relief is orthogonal, so add this immediately after the identity guard at `materials.ts:512` and before the `switch`:
 
 ```ts
-  // Relief scale/invert are in-place updates for EVERY material type — identityKey
-  // already forced a rebuild if the bound texture itself changed.
+  // Relief SCALE is an in-place update for EVERY material type — identityKey already
+  // forced a rebuild if the bound texture itself changed (source, image, spec, or
+  // invert). Do NOT try to handle invert here: it rebuilds, by design.
   const rt = m as THREE.MeshStandardMaterial
   if ('bumpScale' in rt && mat.relief && mat.relief.source !== 'none') {
     rt.bumpScale = mat.relief.scale ?? MATERIAL_DEFAULTS.reliefScale
@@ -988,12 +992,11 @@ cd /Users/julien/Documents/GitHub/Sailor/frontend && npx vue-tsc --noEmit 2>&1 |
 - [ ] Depth 0 vs 1 produces a visibly different render on `standard`, `gradient`, `fresnel`, `toon`, and a lit `shaderFill`.
 - [ ] The relief section is disabled with an explanation on an unlit `shaderFill`.
 - [ ] No UI copy anywhere calls this a "normal map pass".
-- [ ] **Live-field budget check (spec risk 1).** Shader relief resolves the field a second
-      time — once for `.map`, once for `.bumpMap` — so `LIVE_FIELD_CEILING = 4`
-      (`app/lib/shaderfill/descriptor.ts:14`) effectively becomes 2. Build a scene with
-      **three** objects using a lit `shaderFill` **with** shader relief, and confirm the
-      viewport still animates rather than dropping fields. If it degrades, record it in the
-      spec's risk 1 and open a follow-up for emitting colour + height from a single pass;
-      do not silently ship a halved ceiling.
-      Note: the Browser pane pauses rAF when hidden, so measure with the pane visible or
-      via a forced-sync probe — a reading of 0.00 fps is the pane, not the feature.
+- [ ] **Static-relief check (spec risk 1, rescoped).** v1 shader relief resolves the field ONCE
+      at `t: 0` and never re-points it, so there is no per-frame relief cost and the live-field
+      ceiling is untouched. What must be verified is the *consequence*: on an object whose
+      `shaderFill` colour map is animating AND which uses shader relief, confirm the colour
+      animates while the relief stays fixed — and that this reads as intentional rather than
+      broken. If it reads as a bug to you, that is a finding worth raising before shipping.
+      Note: the Browser pane pauses rAF when hidden, so drive renders with a forced-sync probe
+      rather than trusting the live loop — a reading of 0.00 fps is the pane, not the feature.

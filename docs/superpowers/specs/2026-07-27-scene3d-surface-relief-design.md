@@ -170,13 +170,34 @@ the layout above is derived from the material model, not from the panel).
 
 ## Known risks
 
-1. **Animated relief roughly doubles field cost.** A shader field driving both `.map` and
-   `.bumpMap` resolves twice per frame per material. `LIVE_FIELD_CEILING = 4`
-   (`app/lib/shaderfill/descriptor.ts:14`) effectively becomes 2. Mitigation if it bites: emit
-   colour and height from a single field pass.
-2. **`gradient` and `fresnel` inject shader code via `onBeforeCompile`** (`materials.ts:364`,
-   `:407`) near the normal fragment — exactly where bump support could break. **Spike this early,
-   not last.**
+1. ~~**Animated relief roughly doubles field cost.**~~
+   **RESOLVED by scoping, 2026-07-27: v1 shader relief is STATIC.** The field is resolved once at
+   `t: 0` and the resulting `CanvasTexture` is never re-pointed — relief is deliberately not wired
+   into `refreshSceneShaderFields` and carries no `shaderOwnerId` scoping. So there is no
+   per-frame relief cost at all, and `LIVE_FIELD_CEILING = 4`
+   (`app/lib/shaderfill/descriptor.ts:14`) is untouched.
+
+   **The tradeoff this buys, stated plainly:** an animating effect used as relief renders
+   *frozen* relief under an animating colour map. Accepted for v1. Animated relief is a
+   follow-up and needs one field pass emitting colour and height together — doing it the naive
+   way (a second resolve per frame) is what would have halved the ceiling.
+2. ~~**`gradient` and `fresnel` inject shader code via `onBeforeCompile`** near the normal
+   fragment — exactly where bump support could break.~~
+   **RESOLVED 2026-07-27 by the Task 4 spike. Bump works on both.** Measured with the real
+   `materialFor` and the real three.js instance, rendering a lit sphere and pixel-diffing
+   `bumpScale` 0 vs 2 over the sphere's own pixels:
+
+   | material | max per-pixel diff | negative control (no `bumpMap`) |
+   |---|---|---|
+   | `standard` (control) | 86 / 255 | **0** |
+   | `gradient` | 73 / 255 | **0** |
+   | `fresnel` | 77 / 255 | **0** |
+
+   The negative control is what makes this evidence rather than an impression: with `bumpMap`
+   left null, the same scale change produces a diff of **exactly 0**, so the measured change is
+   attributable to the bump path and nothing else. Confirmed visually too — both materials show
+   clear relief, and fresnel's rim glow survives alongside it, so the injection still works.
+   `toon` (1.55 mean) and `matcap` (5.45 mean) also bind and respond.
 3. **Naming collision.** `passes.ts:54` already emits a `normal` pass — a screen-space G-buffer
    for ControlNet, unrelated to a tangent-space material normal map. Use "relief" in all UI
    copy; never call this feature's output a "normal pass".
