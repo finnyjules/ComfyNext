@@ -1363,6 +1363,10 @@ async function studioFrame(page: any): Promise<string> {
 
 async function embedFrame(context: any, html: string): Promise<string> {
   const p = await context.newPage()
+  // Runs before any page script, so the runtime sees the flag at startup and
+  // renders exactly this frame instead of starting its clock. No debug global
+  // is shipped in the export itself.
+  await p.addInitScript((t: number) => { (window as any).__SAILOR_FREEZE_T01__ = t }, T)
   await p.setContent(html)
   await p.waitForFunction(() => {
     const c = document.querySelector('#sailor-embed canvas') as HTMLCanvasElement | null
@@ -1373,10 +1377,8 @@ async function embedFrame(context: any, html: string): Promise<string> {
   // its poster would sail through the diff and look like a pass.
   expect(await p.locator('#sailor-poster').isHidden()).toBe(true)
 
-  const png = await p.evaluate((t: number) => {
-    ;(window as any).__sailorHandle?.setTime(t)
-    return (document.querySelector('#sailor-embed canvas') as HTMLCanvasElement).toDataURL()
-  }, T)
+  const png = await p.evaluate(() =>
+    (document.querySelector('#sailor-embed canvas') as HTMLCanvasElement).toDataURL())
   await p.close()
   return png
 }
@@ -1418,13 +1420,30 @@ test.describe('embed parity with the studio', () => {
 })
 ```
 
-- [ ] **Step 3: Expose the handle in the embed runtime**
+- [ ] **Step 3: Add deterministic still mode to the embed runtime**
 
-The parity test calls `window.__sailorHandle.setTime(t)` to compare a specific frame rather than whatever the clock happens to be showing. In `frontend/app/lib/embed/bundle.ts`, inside the `surface.mount(...).then(function (handle) {` block, add as the first line:
+The parity test must compare a *specific* frame, not whatever the clock happens to be showing. Do **not** expose the handle as a debug global — every exported file is user-facing, and a leaked `window.__sailorHandle` would ship in all of them.
+
+Instead give the runtime a real feature: if `window.__SAILOR_FREEZE_T01__` is a number when the runtime starts, it renders that one frame and never starts the loop. This is the same code path `prefers-reduced-motion` already needs, and it is legitimately useful (a still embed).
+
+In `frontend/app/lib/embed/bundle.ts`, replace this line inside the `surface.mount(...).then(function (handle) {` block:
 
 ```js
-    window.__sailorHandle = handle;
+    if (reduce) { handle.setTime(0); return; }
 ```
+
+with:
+
+```js
+    // Deterministic still mode: an explicit frozen frame, or the reduced-motion
+    // still. Both render exactly once and never start the loop.
+    var frozen = typeof window.__SAILOR_FREEZE_T01__ === 'number'
+      ? window.__SAILOR_FREEZE_T01__
+      : null;
+    if (frozen !== null || reduce) { handle.setTime(frozen === null ? 0 : frozen); return; }
+```
+
+The parity test sets that global with Playwright's `addInitScript`, which runs before page scripts — see Task 8 Step 2.
 
 - [ ] **Step 4: Run the parity tests**
 
