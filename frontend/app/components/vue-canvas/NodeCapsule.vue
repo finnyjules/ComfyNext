@@ -61,6 +61,7 @@ function onKeydown(e: KeyboardEvent) {
     <span class="node-capsule__text">
       <span class="node-capsule__title">{{ title }}</span>
       <span v-if="readout" class="node-capsule__readout">{{ readout }}</span>
+      <span class="node-capsule__hint" aria-hidden="true">Click for options</span>
     </span>
 
     <button
@@ -97,6 +98,16 @@ function onKeydown(e: KeyboardEvent) {
   background: #1f1f1f;
   box-shadow: 0 3px 12px rgba(0, 0, 0, 0.4);
   cursor: pointer;
+  transition-property: background-color, border-color, box-shadow;
+  transition-duration: 0.16s;
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+/* The whole capsule is the click target, so the whole capsule has to look
+   live — the surface lifts and the hint appears. */
+.node-capsule:hover {
+  background: #262626;
+  border-color: rgba(255, 255, 255, 0.22);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
 }
 .node-capsule:focus-visible {
   outline: 2px solid var(--action);
@@ -122,13 +133,14 @@ function onKeydown(e: KeyboardEvent) {
 .node-capsule__tile :is(svg, img) { width: 15px; height: 15px; display: block; }
 
 .node-capsule__text {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
+  display: grid;
+  grid-template-rows: auto auto;
+  row-gap: 1px;
   flex: 1;
   min-width: 0;
 }
 .node-capsule__title {
+  grid-row: 1;
   font-size: 12.5px;
   line-height: 1.25;
   color: rgba(255, 255, 255, 0.88);
@@ -136,7 +148,26 @@ function onKeydown(e: KeyboardEvent) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Occupies the read-out's row and cross-fades with it, so the capsule never
+   changes height and nothing shifts under the cursor. */
+.node-capsule__hint {
+  grid-row: 2;
+  grid-column: 1;
+  font-size: 10.5px;
+  line-height: 1.25;
+  color: rgba(255, 255, 255, 0.55);
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.16s cubic-bezier(0.2, 0, 0, 1);
+  pointer-events: none;
+}
+.node-capsule:hover .node-capsule__hint { opacity: 1; }
+.node-capsule:hover .node-capsule__readout { opacity: 0; }
+
 .node-capsule__readout {
+  grid-row: 2;
+  grid-column: 1;
+  transition: opacity 0.16s cubic-bezier(0.2, 0, 0, 1);
   font-size: 10.5px;
   line-height: 1.25;
   color: rgba(255, 255, 255, 0.4);
@@ -200,7 +231,14 @@ function onKeydown(e: KeyboardEvent) {
 /* Hover (and keyboard focus — the capsule is reachable by Tab) only changes
    the three properties that carry the intensity step. Everything else is
    inherited from the base rule above. */
-.node-capsule:hover .node-capsule__action,
+/* Capsule hover brings the button to full opacity but deliberately does NOT
+   fill it. A blue-filled button under the cursor reads as "primed to run", so
+   hovering the capsule felt like clicking it would fire the node — when it
+   actually opens the card. Only hovering the button itself fills it. */
+.node-capsule:hover .node-capsule__action {
+  opacity: 1;
+}
+.node-capsule__action:hover,
 .node-capsule__action:focus-visible {
   background: var(--action);
   color: #fff;

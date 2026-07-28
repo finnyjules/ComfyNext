@@ -1408,8 +1408,10 @@ watch(previewImages, (urls) => {
       :connectable="!isCapsule"
     />
 
+  <Transition name="capsule-swap">
   <NodeCapsule
     v-if="isCapsule"
+    key="capsule"
     class="comfy-node"
     :title="displayTitle"
     :readout="capsuleReadout"
@@ -1422,6 +1424,7 @@ watch(previewImages, (urls) => {
   />
   <div
     v-else
+    key="card"
     class="comfy-node relative z-10 rounded-xl border select-none backdrop-blur-sm transition-opacity duration-150"
     :class="{
       'comfy-node--muted': isMuted,
@@ -2044,12 +2047,42 @@ watch(previewImages, (urls) => {
       </div>
     </div>
   </div>
+  </Transition>
   </div>
 </template>
 
 <style scoped>
 .comfy-node {
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), 0 1px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* Capsule <-> card. The card grows out of where the capsule was rather than
+   replacing it in one frame, so the size change reads as the same object
+   opening. transform-origin is left-centre because that edge is the one that
+   stays put — the ports are anchored there and the node's x position does not
+   move. The leaving element is taken out of flow so the wrapper's width is
+   driven by whichever element is arriving and nothing jumps mid-swap.
+   Exit is faster and shallower than the enter, per the usual rule that a thing
+   leaving should be quieter than a thing arriving. */
+.capsule-swap-enter-active,
+.capsule-swap-leave-active {
+  transition-property: opacity, scale;
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+  transform-origin: left center;
+}
+.capsule-swap-enter-active { transition-duration: 0.22s; }
+.capsule-swap-leave-active {
+  transition-duration: 0.13s;
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+.capsule-swap-enter-from { opacity: 0; scale: 0.96; }
+.capsule-swap-leave-to { opacity: 0; scale: 0.98; }
+
+@media (prefers-reduced-motion: reduce) {
+  .capsule-swap-enter-active,
+  .capsule-swap-leave-active { transition-duration: 1ms; }
 }
 
 /* Collapsed: every port sits at the capsule's vertical centre, so edges
