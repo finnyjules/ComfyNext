@@ -19,11 +19,11 @@ import {
   parseDoc, serializeDoc, createPrimitive, createGlbObject, createLight,
   LIGHTING_PRESETS, MATERIAL_TYPES, MATERIAL_DEFAULTS, LIGHT_KINDS, LIGHT_DEFAULTS, lightIntensityMax, gradientAngles, gradientStopsOf,
   DEFAULT_FONT_URL, sceneHasShaderFill,
-  type SceneDoc, type SceneObject, type PrimitiveObject, type PrimitiveKind, type MaterialType, type GradientStop, type LightKind, type LightObject,
+  type SceneDoc, type SceneObject, type PrimitiveObject, type PrimitiveKind, type MaterialType, type GradientStop, type LightKind, type LightObject, type ReliefSpec,
 } from '~/lib/scene3d/config'
 import { MATCAP_IDS, matcapThumb, onTextureError } from '~/lib/scene3d/materials'
 import { toHeightPixels } from '~/lib/scene3d/relief'
-import { DEFAULT_SHADER_SPEC, type ShaderSpec } from '~/lib/spacetype/fillTile'
+import { DEFAULT_SHADER_SPEC, normalizeShaderSpec, type ShaderSpec } from '~/lib/spacetype/fillTile'
 import { fetchShaderFxCatalog } from '~/lib/shaderfx/catalog'
 import { LIVE_FIELD_CEILING } from '~/lib/shaderfill/descriptor'
 import { AVAILABLE_FONTS, loadFont, fontDisplayName, parseGoogleFontValue } from '~/lib/scene3d/outlines'
@@ -428,7 +428,21 @@ const matReliefSource = computed<'none' | 'shader' | 'image'>({
   set: (v) => {
     const mat = selected.value?.material
     if (!mat) return
-    mat.relief = { ...(mat.relief ?? { scale: MATERIAL_DEFAULTS.reliefScale }), source: v }
+    const relief: ReliefSpec = { ...(mat.relief ?? { scale: MATERIAL_DEFAULTS.reliefScale }), source: v }
+    // Selecting 'shader' must SEED relief.spec, not just switch the source: matReliefSpec's
+    // getter falls back to DEFAULT_SHADER_SPEC for display, so without this the editor shows
+    // a fully-configured effect while the persisted state has no spec at all — materials.ts's
+    // getShaderHeightTexture then has neither `spec` nor `mat.shader` to render from and
+    // returns null, so the relief silently never renders (Task 5 bug). Deep-clone via
+    // normalizeShaderSpec (same helper parseDoc uses for this exact field) rather than
+    // assigning the shared DEFAULT_SHADER_SPEC constant directly — that would let every
+    // shader-relief material alias one mutable spec object, so editing one object's effect
+    // would silently edit them all.
+    // Deliberately NOT clearing `spec` when switching to 'none'/'image': keeping it lets a
+    // user bounce between sources without losing their configured effect, which reads as
+    // kinder than punishing an exploratory toggle.
+    if (v === 'shader' && !relief.spec) relief.spec = normalizeShaderSpec(undefined, 0)
+    mat.relief = relief
   },
 })
 const matReliefScale = computed<number>({

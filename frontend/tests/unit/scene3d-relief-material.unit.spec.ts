@@ -90,4 +90,34 @@ describe('scene3d relief on materials', () => {
     const m = materialFor(base({ relief: { source: 'none', invert: false } }))
     expect(updateMaterial(m, base({ relief: { source: 'none', invert: true } }))).toBe(true)
   })
+
+  // Documents the contract that made the Task 5 "Effect selected but nothing renders" bug
+  // invisible: a shader relief with no `spec` (and no `mat.shader` fallback) is exactly what
+  // Scene3DStudioSurface.vue's matReliefSource setter used to write when the user picked
+  // "Effect" — the getter displayed DEFAULT_SHADER_SPEC, but materials.ts had nothing to
+  // render from. The literal end-to-end assertion ("no spec -> no bumpMap; spec -> a
+  // bumpMap") CANNOT be made to discriminate in this suite: getShaderHeightTexture's very
+  // first line is `if (typeof document === 'undefined') return null`, so in node BOTH cases
+  // bind no bumpMap regardless of spec — a test comparing them would pass no matter what the
+  // fix did, i.e. vacuous. Exercising the spec-present branch for real would require a canvas/
+  // WebGL-capable field resolver (shaderfill/field.ts's resolveField) that has no stub
+  // anywhere in this suite, and building one is out of scope here.
+  //
+  // What IS genuinely testable without a DOM is that `relief.spec` is not inert data: it is
+  // folded into the material's rebuild identity (reliefKey, via JSON.stringify(spec)), so
+  // adding or removing it is a real state transition the system reacts to, not a no-op the
+  // renderer silently ignores either way.
+  it('treats an added/removed relief.spec as an identity change, not inert data', () => {
+    const withoutSpec = base({ relief: { source: 'shader', scale: 0.3 } })
+    const withSpec = base({
+      relief: {
+        source: 'shader', scale: 0.3,
+        spec: { effectId: 'fbm_warp', params: {}, anchor: 'object' as const, speed: 1, input: '#ffffff' },
+      },
+    })
+    const m = materialFor(withoutSpec)
+    expect(updateMaterial(m, withSpec)).toBe(false) // gaining a spec forces a rebuild
+    const m2 = materialFor(withSpec)
+    expect(updateMaterial(m2, withoutSpec)).toBe(false) // losing it again also forces one
+  })
 })
