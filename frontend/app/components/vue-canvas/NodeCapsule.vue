@@ -167,14 +167,6 @@ const actionLabel = computed(() => {
 }
 .node-capsule--running .node-capsule__action,
 .node-capsule--running:hover .node-capsule__action {
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 7px;
-  transition: background 0.18s, color 0.18s, opacity 0.18s;
   background: rgba(255, 255, 255, 0.07);
   color: var(--palette-coral);
   opacity: 1;
@@ -209,27 +201,11 @@ const actionLabel = computed(() => {
   border-color: color-mix(in oklab, var(--palette-coral) 45%, transparent);
 }
 .node-capsule--failed .node-capsule__action {
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 7px;
-  transition: background 0.18s, color 0.18s, opacity 0.18s;
   background: color-mix(in oklab, var(--palette-coral) 20%, transparent);
   color: var(--palette-coral);
   opacity: 1;
 }
 .node-capsule--failed:hover .node-capsule__action {
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 7px;
-  transition: background 0.18s, color 0.18s, opacity 0.18s;
   background: var(--palette-coral);
   color: #fff;
 }
