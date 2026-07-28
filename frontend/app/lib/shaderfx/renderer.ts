@@ -78,7 +78,12 @@ void main() {
   fragColor = vec4(mix(below, b, clamp(u_opacity, 0.0, 1.0)), 1.0);
 }`
 
-class ShaderFxRenderer {
+/**
+ * Exported so embeds can hold their own instance — two embeds on one page must
+ * not share a GL context. App code should keep using the `shaderFx` singleton
+ * below (browsers cap contexts at ~8-16).
+ */
+export class ShaderFxRenderer {
   private canvas: HTMLCanvasElement | null = null
   private gl: WebGL2RenderingContext | null = null
   private programs = new Map<string, { source: string; prog: WebGLProgram }>()
