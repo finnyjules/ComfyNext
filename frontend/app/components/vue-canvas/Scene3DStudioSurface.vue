@@ -19,7 +19,7 @@ import {
   parseDoc, serializeDoc, createPrimitive, createGlbObject, createLight,
   LIGHTING_PRESETS, MATERIAL_TYPES, MATERIAL_DEFAULTS, LIGHT_KINDS, LIGHT_DEFAULTS, lightIntensityMax, gradientAngles, gradientStopsOf,
   DEFAULT_FONT_URL, sceneHasShaderFill,
-  type SceneDoc, type SceneObject, type PrimitiveObject, type PrimitiveKind, type MaterialType, type GradientStop, type LightKind, type LightObject, type ReliefSpec,
+  type SceneDoc, type SceneObject, type PrimitiveObject, type PrimitiveKind, type MaterialType, type GradientStop, type LightKind, type LightObject, type ReliefSpec, type SceneMaterial,
 } from '~/lib/scene3d/config'
 import { MATCAP_IDS, matcapThumb, onTextureError } from '~/lib/scene3d/materials'
 import { toHeightPixels, heightGradient, RELIEF_FLAT_THRESHOLD } from '~/lib/scene3d/relief'
@@ -467,13 +467,22 @@ const matReliefInvert = computed<boolean>({
 })
 // Contrast is applied at texture-build time alongside invert (materials.ts), not at
 // upload/conversion time — so it's a live, adjustable knob for both the Effect and Image
-// relief sources, without needing to re-upload anything.
+// relief sources, without needing to re-upload anything. Repaints the material's own bump
+// canvas IN PLACE (materials.ts's updateMaterial) rather than rebuilding — see the C1 fix.
 const matReliefContrast = computed<number>({
   get: () => selected.value?.material.relief?.contrast ?? MATERIAL_DEFAULTS.reliefContrast,
   set: (v) => {
-    const mat = selected.value?.material
+    const target = selected.value
+    const mat = target?.material
     if (!mat?.relief) return
     mat.relief.contrast = v
+    // Minor 6 fix (final review): the flatness warning is measured ONCE, on the pre-contrast
+    // pixels, at upload/generate time — raising Contrast can genuinely fix a flat-reading map,
+    // but the warning (and its "raise Contrast" copy) never re-evaluated, so it sat there
+    // contradicting a surface that now reads fine. Clear it on any contrast edit rather than
+    // re-measuring — contrast is a live per-tick slider now, and re-decoding the whole source
+    // image on every tick just to re-run heightGradient would be real, avoidable cost.
+    if (target) delete reliefFlatWarning[target.id]
   },
 })
 // Tiling is a Texture.repeat property (materials.ts's applyRelief/updateMaterial), never a
@@ -526,6 +535,17 @@ const matIsNormalMap = computed<boolean>({
     }
   },
 })
+// I3 fix (final review): `normalImage` is a field independent of `relief.source` (see its doc
+// in config.ts) — materials.ts correctly keeps applying it no matter what Relief is set to,
+// but the ONLY control that could touch it ("Already a normal map") used to render solely
+// under `matReliefSource === 'image'`. Switching Relief to None/Effect after checking that box
+// left the normal shading bound with no way to clear it. This is a plain discard, independent
+// of matIsNormalMap's move-between-fields dance above (there is no relief.image to move it
+// back to once the user has explicitly walked away from Image source).
+function removeNormalMap() {
+  const mat = selected.value?.material
+  if (mat) mat.normalImage = undefined
+}
 
 // Light field proxies — same shape as matParam, but the fields live flat on the
 // LightObject itself (not nested under .material). Falls back to LIGHT_DEFAULTS
@@ -603,10 +623,15 @@ onMounted(() => { offTexError = onTextureError((f) => { texLoadError[f] = true }
 onBeforeUnmount(() => { offTexError?.() })
 
 // Relief image upload: same object-scoped-spinner / capture-before-await shape as the
-// texture upload above (texUploading/onTexFilePicked), plus a conversion step. `relief.image`
-// ALWAYS stores a grayscale height map — colour photos are converted client-side BEFORE
-// upload, never at render time (lib/scene3d/relief.ts owns the one luminance→height transform;
-// materials.ts's getHeightTexture assumes whatever it fetches is already height data).
+// texture upload above (texUploading/onTexFilePicked). C2 fix (final review): `relief.image`
+// now stores the user's ORIGINAL uploaded bytes, unconverted — the client used to run the SAME
+// luminance→height transform materials.ts's getHeightTexture already runs at build time, so
+// (a) "Brightness" and "Use as-is" produced byte-identical output (toHeightPixels is idempotent
+// on grayscale — Use-as-is did nothing) and (b) a real Blender/game-asset normal map uploaded
+// through the default Brightness path got flattened to gray BEFORE it ever reached storage,
+// unrecoverably — routing it to normalImage afterwards just bound a uniformly-tilted flat gray
+// square. Conversion now happens exactly once, in materials.ts, at texture-build time — see its
+// relief-section doc.
 const reliefFileInput = ref<HTMLInputElement | null>(null)
 const reliefUploading = ref<string | null>(null)
 const reliefUploadError = reactive<Record<string, boolean>>({})
@@ -615,9 +640,6 @@ const reliefUploadError = reactive<Record<string, boolean>>({})
 // see heightGradient/RELIEF_FLAT_THRESHOLD in lib/scene3d/relief.ts. Advisory only: the
 // map is still applied, this just tells the user why they might not see anything.
 const reliefFlatWarning = reactive<Record<string, boolean>>({})
-// Which of the two Task-5 conversions the NEXT upload runs through. 'Refine with depth'
-// (a paid server call) is Task 6's — not built here, and no disabled placeholder for it.
-const reliefConversion = ref<'brightness' | 'asis'>('brightness')
 function triggerReliefUpload() { reliefFileInput.value?.click() }
 function readAsDataUrl(file: File): Promise<string> {
   return new Promise((res, rej) => {
@@ -627,9 +649,13 @@ function readAsDataUrl(file: File): Promise<string> {
     r.readAsDataURL(file)
   })
 }
-/** Decode → run toHeightPixels → re-encode. Mirrors materials.ts's getHeightTexture
- *  canvas dance, but produces a data URL up front instead of a lazily-loaded texture. */
-function brightnessToHeightDataUrl(dataUrl: string): Promise<string> {
+/** Decode a data URL, run the SAME default luminance conversion materials.ts applies at
+ *  texture-build time (invert/contrast are per-material picks made AFTER upload, so there is
+ *  no live value to measure against here — a genuinely smooth source reads as flat regardless
+ *  of what the user later dials in), and measure its local gradient. The one guard shared by
+ *  both the upload path and the generate path below. Measurement is advisory: callers should
+ *  treat a rejection as "unknown" rather than a hard failure. */
+function measureReliefFlatness(dataUrl: string): Promise<number> {
   return new Promise((resolve, reject) => {
     const img = new Image()
     img.onload = () => {
@@ -640,30 +666,7 @@ function brightnessToHeightDataUrl(dataUrl: string): Promise<string> {
       if (!ctx) { reject(new Error('no 2d context')); return }
       ctx.drawImage(img, 0, 0)
       const data = ctx.getImageData(0, 0, c.width, c.height)
-      data.data.set(toHeightPixels(data.data))
-      ctx.putImageData(data, 0, 0)
-      resolve(c.toDataURL('image/png'))
-    }
-    img.onerror = () => reject(new Error('decode failed'))
-    img.src = dataUrl
-  })
-}
-/** Decode a data URL and run heightGradient over its pixels — the same guard for both the
- *  upload path and the generate path below, on whatever image will actually be applied as
- *  relief (brightness-converted or as-is). Measurement is advisory, so callers should treat
- *  a rejection as "unknown" rather than a hard failure. */
-function dataUrlToGradient(dataUrl: string): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const img = new Image()
-    img.onload = () => {
-      const c = document.createElement('canvas')
-      c.width = img.naturalWidth
-      c.height = img.naturalHeight
-      const ctx = c.getContext('2d')
-      if (!ctx) { reject(new Error('no 2d context')); return }
-      ctx.drawImage(img, 0, 0)
-      const data = ctx.getImageData(0, 0, c.width, c.height)
-      resolve(heightGradient(data.data, c.width, c.height))
+      resolve(heightGradient(toHeightPixels(data.data, false, 1), c.width, c.height))
     }
     img.onerror = () => reject(new Error('decode failed'))
     img.src = dataUrl
@@ -676,20 +679,18 @@ async function onReliefFilePicked(e: Event) {
   // the texture (or the error) on the newly selected object.
   const target = selected.value
   if (!file || !target || target.kind === 'light') return
-  const mode = reliefConversion.value
   reliefUploading.value = target.id
   delete reliefUploadError[target.id]
   delete reliefFlatWarning[target.id]
   try {
     const rawUrl = await readAsDataUrl(file)
-    const heightUrl = mode === 'brightness' ? await brightnessToHeightDataUrl(rawUrl) : rawUrl
-    const filename = await inpaint.uploadDataUrl(heightUrl, `scene3d_relief_${props.nodeId}`)
+    const filename = await inpaint.uploadDataUrl(rawUrl, `scene3d_relief_${props.nodeId}`)
     delete texLoadError[filename]
     if (!target.material.relief) target.material.relief = { source: 'image', scale: MATERIAL_DEFAULTS.reliefScale }
     target.material.relief.source = 'image'
     target.material.relief.image = filename
     try {
-      reliefFlatWarning[target.id] = (await dataUrlToGradient(heightUrl)) < RELIEF_FLAT_THRESHOLD
+      reliefFlatWarning[target.id] = (await measureReliefFlatness(rawUrl)) < RELIEF_FLAT_THRESHOLD
     } catch { /* measurement is advisory only — a failure here must not fail the upload */ }
   } catch {
     reliefUploadError[target.id] = true
@@ -698,14 +699,15 @@ async function onReliefFilePicked(e: Event) {
   }
 }
 
-// Relief generation: text prompt → /api/scene3d/gen-map (fal FLUX tile) → uploaded
-// height map, via the same brightness→height conversion as the file-upload path below.
-// (A fal depth-model second stage used to run here; removed — depth reports scene
-// distance, which is flat on a straight-on material photo, so it was a wasted paid call.
-// See server/utils/scene3dRelief.ts.) Explicit button ONLY — this costs money and takes
-// seconds, so it must never fire on a parameter change. Same object-id-keyed
-// spinner/error shape as the upload above (reliefUploading/reliefUploadError), so a
-// busy or failed generation on one object can't bleed onto another after reselecting.
+// Relief generation: text prompt → /api/scene3d/gen-map (fal FLUX tile) → uploaded colour
+// tile, converted once at build time by materials.ts exactly like an uploaded image (C2 fix —
+// no client-side pre-conversion here either; see onReliefFilePicked's doc above). (A fal
+// depth-model second stage used to run here; removed — depth reports scene distance, which is
+// flat on a straight-on material photo, so it was a wasted paid call. See
+// server/utils/scene3dRelief.ts.) Explicit button ONLY — this costs money and takes seconds, so
+// it must never fire on a parameter change. Same object-id-keyed spinner/error shape as the
+// upload above (reliefUploading/reliefUploadError), so a busy or failed generation on one
+// object can't bleed onto another after reselecting.
 const reliefGenOpen = ref(false)
 const reliefGenPrompt = ref('')
 const reliefGenBusy = ref<string | null>(null)
@@ -713,7 +715,7 @@ const reliefGenError = reactive<Record<string, boolean>>({})
 function toggleReliefGen() {
   reliefGenOpen.value = !reliefGenOpen.value
 }
-/** fal's height map comes back as a remote CDN URL; inpaint.uploadDataUrl (like the
+/** fal's colour tile comes back as a remote CDN URL; inpaint.uploadDataUrl (like the
  *  file-picker path above) needs a data: URL to hand ComfyUI's /upload/image, so fetch
  *  it client-side and re-encode before handing it off. */
 function blobToDataUrl(blob: Blob): Promise<string> {
@@ -736,14 +738,10 @@ async function generateReliefFromPrompt() {
       method: 'POST',
       body: { prompt },
     })
-    // Run the colour tile through the same brightness→height conversion the file-upload
-    // path uses below — it carries the actual surface detail, unlike a depth pass (removed;
-    // see server/utils/scene3dRelief.ts).
     const res = await fetch(r.imageUrl)
     if (!res.ok) throw new Error(`fetch ${res.status}`)
     const rawUrl = await blobToDataUrl(await res.blob())
-    const heightUrl = await brightnessToHeightDataUrl(rawUrl)
-    const filename = await inpaint.uploadDataUrl(heightUrl, `scene3d_relief_gen_${props.nodeId}`)
+    const filename = await inpaint.uploadDataUrl(rawUrl, `scene3d_relief_gen_${props.nodeId}`)
     delete texLoadError[filename]
     if (!target.material.relief) target.material.relief = { source: 'image', scale: MATERIAL_DEFAULTS.reliefScale }
     target.material.relief.source = 'image'
@@ -751,7 +749,7 @@ async function generateReliefFromPrompt() {
     reliefGenOpen.value = false
     reliefGenPrompt.value = ''
     try {
-      reliefFlatWarning[target.id] = (await dataUrlToGradient(heightUrl)) < RELIEF_FLAT_THRESHOLD
+      reliefFlatWarning[target.id] = (await measureReliefFlatness(rawUrl)) < RELIEF_FLAT_THRESHOLD
     } catch { /* measurement is advisory only — a failure here must not fail the generation */ }
   } catch (err) {
     console.error('[scene3d-studio] gen-map failed', err)
@@ -1183,6 +1181,13 @@ watch(doc, () => { dirty.value = true; bakeError.value = ''; engine?.syncFromDoc
 watch(selectedId, (id) => {
   interaction?.select(id, doc.objects.find((o) => o.id === id)?.kind === 'light')
   engine?.setSelected(id)
+  // Minor 4 fix (final review): an open Generate panel stays bound to whichever object it was
+  // opened for via reliefGenBusy/reliefGenPrompt's shared id-keying, but its BUTTON just reads
+  // `selected.id` at click time — leaving the panel open across a reselect would bill the
+  // newly-selected object for a prompt the user wrote while looking at a different one. The
+  // prompt text itself carrying over is harmless (Minor, not Critical); only the panel's
+  // visibility needs resetting.
+  reliefGenOpen.value = false
 })
 watch(snap, (s) => interaction?.setSnap(s))
 watch(lightView, (on) => engine?.setLightView(on))
@@ -1315,6 +1320,22 @@ function removeObject(id: string) {
   if (selectedId.value === id) selectedId.value = null
   delete glbError[id]
 }
+// C3 fix (final review): `{ ...src.material }` is a SHALLOW copy — `material.relief` (and
+// `material.relief.spec`/`material.shader`, same hazard) is a nested object, so the shallow
+// copy left both objects' materials pointing at the SAME `relief` object. Duplicate a box with
+// relief, drag the copy's Depth, and the ORIGINAL's Depth moved too — it looked like it fixed
+// itself after save+reload only because serializeDoc writes two independent copies to JSON.
+// duplicateObject's very next line already deep-clones params/modifiers with a comment about
+// exactly this hazard; material just never got the same treatment.
+function cloneMaterial(mat: SceneMaterial): SceneMaterial {
+  const copy: SceneMaterial = { ...mat }
+  if (mat.relief) {
+    copy.relief = { ...mat.relief }
+    if (mat.relief.spec) copy.relief.spec = JSON.parse(JSON.stringify(mat.relief.spec))
+  }
+  if (mat.shader) copy.shader = JSON.parse(JSON.stringify(mat.shader))
+  return copy
+}
 function duplicateObject(id: string) {
   const src = doc.objects.find((o) => o.id === id)
   if (!src) return
@@ -1323,7 +1344,7 @@ function duplicateObject(id: string) {
     : createLight(src.light, doc.objects)
   Object.assign(copy, {
     position: [src.position[0] + 0.5, src.position[1], src.position[2] + 0.5],
-    rotation: [...src.rotation], scale: [...src.scale], material: { ...src.material },
+    rotation: [...src.rotation], scale: [...src.scale], material: cloneMaterial(src.material),
     // Geometry params travel with the copy, cloned not aliased — a shared bag
     // would make both objects' shapes move together on any later edit.
     ...(src.kind === 'primitive' && src.params ? { params: { ...src.params } } : {}),
@@ -2154,6 +2175,19 @@ function onClose() {
                   @click="matReliefSource = 'image'">Image</button>
               </div>
             </div>
+            <!-- I3 fix (final review): `normalImage` is independent of `matReliefSource` (see
+                 config.ts's doc) — materials.ts keeps applying it no matter what Relief is set
+                 to, but the ONLY control that could clear it used to live inside the Image
+                 branch below, so switching Relief to None/Effect after checking "Already a
+                 normal map" left the tilt bound with no way to remove it. Visible whenever a
+                 normal map is actually set, regardless of source. -->
+            <div v-if="selected?.material.normalImage" class="flex items-center justify-between rounded border border-white/10 bg-white/[0.03] px-2 py-1.5">
+              <div>
+                <span class="text-[11px] text-white/55">Normal map bound</span>
+                <p class="text-[10px] text-white/35">Applied regardless of the Relief source above</p>
+              </div>
+              <button type="button" class="text-[11px] text-white/55 underline hover:text-white/85" @click="removeNormalMap">Remove</button>
+            </div>
             <template v-if="matReliefSource !== 'none'">
               <template v-if="!(matReliefSource === 'image' && matIsNormalMap)">
                 <StudioSlider v-model="matReliefScale" label="Depth"
@@ -2170,23 +2204,11 @@ function onClose() {
 
               <!-- image: reuses the texture-upload structure at :1801-1827 (hidden file
                    input, StudioButton + Loader2 spinner, object-id-keyed uploading state,
-                   target captured before await) plus a conversion choice run BEFORE upload
-                   so what persists is already a height map. -->
+                   target captured before await). No conversion choice here (C2 fix, final
+                   review): the uploaded file's ORIGINAL bytes are stored as-is; materials.ts
+                   converts to a height field exactly once, at texture-build time. -->
               <template v-if="matReliefSource === 'image'">
                 <input ref="reliefFileInput" type="file" accept="image/*" class="hidden" @change="onReliefFilePicked" />
-                <div>
-                  <label class="mb-1 block text-[11px] text-white/55">Convert</label>
-                  <div class="flex items-center gap-1.5">
-                    <button type="button"
-                      class="flex-1 rounded border px-2 py-1 text-[11px] uppercase transition-colors"
-                      :class="reliefConversion === 'brightness' ? 'border-white/70 bg-white/[0.10] text-white' : 'border-white/[0.10] bg-white/[0.04] text-white/55 hover:text-white/85'"
-                      @click="reliefConversion = 'brightness'">Brightness</button>
-                    <button type="button"
-                      class="flex-1 rounded border px-2 py-1 text-[11px] uppercase transition-colors"
-                      :class="reliefConversion === 'asis' ? 'border-white/70 bg-white/[0.10] text-white' : 'border-white/[0.10] bg-white/[0.04] text-white/55 hover:text-white/85'"
-                      @click="reliefConversion = 'asis'">Use as-is</button>
-                  </div>
-                </div>
                 <div class="flex items-center gap-2">
                   <img v-if="matReliefImage" class="size-12 rounded object-cover"
                     :src="texViewUrl(matReliefImage)" alt="" />

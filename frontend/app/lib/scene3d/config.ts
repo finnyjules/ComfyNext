@@ -41,10 +41,16 @@ export const GRADIENT_STOPS_MIN = 2
 export const GRADIENT_STOPS_MAX = 8
 
 /** Surface relief — a grayscale height field perturbing the lit normal via THREE's
- *  `.bumpMap`. `image` is ALWAYS already a height map: converting a colour photo to
- *  height happens once at authoring time (see lib/scene3d/relief.ts), never at render
- *  time. `spec` mirrors the shaderFill ShaderSpec and is luminance-converted the same
- *  way, so every catalog effect gains relief with no per-effect shader work. */
+ *  `.bumpMap`. `image` stores the user's ORIGINAL uploaded bytes — NOT a pre-converted height
+ *  map. (Revised from the original design, which had `image` ALWAYS already a height map,
+ *  converted once client-side at upload time: that made "Use as-is" a no-op — toHeightPixels is
+ *  idempotent on grayscale, so re-running it at render time produced byte-identical output to
+ *  running it once at upload time — and silently flattened any REAL tangent-space normal map a
+ *  user uploaded before they got a chance to mark it as one, unrecoverably. See the final
+ *  surface-relief review, C2.) Conversion to a height field now happens exactly ONCE, at
+ *  TEXTURE-BUILD time in materials.ts (getHeightTexture), never client-side and never twice.
+ *  `spec` mirrors the shaderFill ShaderSpec and is luminance-converted the same way at build
+ *  time, so every catalog effect gains relief with no per-effect shader work. */
 export interface ReliefSpec {
   source: 'none' | 'shader' | 'image'
   spec?: ShaderSpec
@@ -53,12 +59,14 @@ export interface ReliefSpec {
   scale: number
   invert?: boolean
   /** Contrast expansion around the height midpoint, applied at TEXTURE-BUILD time —
-   *  same step as `invert` (see materials.ts's getHeightTexture/getShaderHeightTexture) —
-   *  never at conversion time, because the original colour image isn't retained after the
-   *  height conversion: a conversion-time contrast would require re-uploading to change.
-   *  1 = unchanged; bump responds to the height field's LOCAL GRADIENT, not its range (see
-   *  relief.ts's heightGradient doc), so a flat-looking AI height map often needs this well
-   *  above 1 to read as relief at all. Absent = 1, so old docs render identically. */
+   *  same step as `invert` (see materials.ts's getHeightTexture/getShaderHeightTexture). Unlike
+   *  `invert`, a contrast edit updates the bound texture's canvas IN PLACE rather than
+   *  rebuilding the material — see materials.ts's reliefKey doc (C1 of the final review): it's
+   *  a continuous slider, not a toggle, so folding it into the rebuild identity turned a drag
+   *  into dozens of full material rebuilds. 1 = unchanged; bump responds to the height field's
+   *  LOCAL GRADIENT, not its range (see relief.ts's heightGradient doc), so a flat-looking AI
+   *  height map often needs this well above 1 to read as relief at all. Absent = 1, so old docs
+   *  render identically. */
   contrast?: number
   /** How many times the height field repeats across the object's UVs → THREE's per-texture
    *  `.repeat`/`.wrapS`/`.wrapT` (RepeatWrapping), NOT a material property — see materials.ts's

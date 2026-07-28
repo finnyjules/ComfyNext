@@ -51,21 +51,50 @@ entry and inheriting the whole control-schema → agent → motion chain.
 
 **Producers 2 and 3 share their second half.** The image→height step is one component serving both.
 
-### What `relief.image` always stores
+### What `relief.image` stores
 
-`relief.image` is **always a grayscale height map**. Conversion happens once at authoring time,
-never at render time — the render path stays dumb and fast, and nothing paid runs per frame.
+> **Revised 2026-07-28 (final review, findings C1/C2) — superseding the original design below.**
+> The original plan (kept struck through for the record) had `relief.image` **always** a
+> grayscale height map, converted once client-side at upload time. Two bugs fell out of that in
+> practice:
+>
+> - `toHeightPixels` is idempotent on grayscale input, so **converting a second time is a no-op**
+>   — running the SAME conversion again at upload time and then again at render time produced
+>   byte-identical output either way, so the planned **"Use as-is"** option did literally
+>   nothing observable.
+> - Worse: a user uploading a **real tangent-space normal map** (from Blender or a game asset)
+>   through the default "Brightness" conversion got it **luminance-flattened before upload** —
+>   the original colour/vector data was gone, unrecoverably, before "Already a normal map" ever
+>   got a chance to route it correctly. Ticking that box afterwards just bound a uniform gray
+>   square, decoding to a flat ~45° tilt everywhere.
+>
+> **The corrected contract: `relief.image` stores the user's ORIGINAL uploaded bytes, untouched.**
+> Conversion to a height field happens **exactly once**, in `materials.ts`, at **texture-build
+> time** — never client-side, never twice. The client-side "Convert" control (Brightness /
+> Use-as-is) is removed entirely: with the render path now the ONLY place conversion happens, the
+> choice it offered was meaningless, and it was the one switch silently deciding whether a
+> user's normal map survived. "Already a normal map" now routes the untouched original to
+> `normalImage`, which is lossless.
+>
+> ~~`relief.image` is **always a grayscale height map**. Conversion happens once at authoring
+> time, never at render time — the render path stays dumb and fast, and nothing paid runs per
+> frame.~~
+>
+> ~~When a user uploads a colour photo, offer two conversions:~~
+>
+> - ~~**Brightness** (default) — local, free, instant. A crude heuristic: dark paint reads as a
+>   dent. Good enough surprisingly often, and it is the right default because it costs
+>   nothing.~~
+> - ~~**Refine with depth** — the paid server call. Same depth stage as producer 3. Genuine
+>   height, immune to baked-in lighting.~~
+>
+> ~~If the user uploads an image that is *already* a height map, both conversions are wrong — so
+> the Brightness conversion is a no-op on an already-grayscale image, and the UI offers a plain
+> **Use as-is** option.~~
 
-When a user uploads a colour photo, offer two conversions:
-
-- **Brightness** (default) — local, free, instant. A crude heuristic: dark paint reads as a dent.
-  Good enough surprisingly often, and it is the right default because it costs nothing.
-- **Refine with depth** — the paid server call. Same depth stage as producer 3. Genuine height,
-  immune to baked-in lighting.
-
-If the user uploads an image that is *already* a height map, both conversions are wrong — so the
-Brightness conversion is a no-op on an already-grayscale image, and the UI offers a plain
-**Use as-is** option.
+The "Refine with depth" paid server call was never built (Task 6 shipped the AI colour-tile
+generator instead, `/api/scene3d/gen-map`, which is unaffected by this revision — its output is
+also stored unconverted now and goes through the same build-time conversion as an upload).
 
 ## Architecture
 

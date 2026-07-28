@@ -128,16 +128,24 @@ const UNOWNED_SCENE3D = '__scene3d_unowned__'
  *  per resolveField's ownership contract (its canvas is bound directly as `.image`, never
  *  copied). */
 const shaderFillMaterials = new Set<THREE.Material>()
-function getImageTexture(filename: string): THREE.Texture | null {
+/** `colorSpace` (I1 fix, final review): defaults to sRGB for the diffuse-map callers this was
+ *  originally written for, but a REAL tangent-space normal map is non-colour data — sRGB-
+ *  decoding it turns a flat texel (128,128,255) into ≈(0.216,0.216,1.0), which after `*2-1`
+ *  reads as a steep tilt, so every "flat" region of every normal map read as tilted. Callers
+ *  binding `.normalMap` (applyRelief below) pass `THREE.NoColorSpace`. The cache key folds in
+ *  `colorSpace` for any non-default value so a diffuse `map` and a `.normalMap` that happen to
+ *  share a filename never collide on one mis-decoded Texture instance. */
+function getImageTexture(filename: string, colorSpace: THREE.ColorSpace = THREE.SRGBColorSpace): THREE.Texture | null {
   if (!hasDOM || !filename) return null
-  let t = imageCache.get(filename)
+  const key = colorSpace === THREE.SRGBColorSpace ? filename : `${colorSpace}:${filename}`
+  let t = imageCache.get(key)
   if (!t) {
     const tex = new THREE.TextureLoader().load(
       `/view?${new URLSearchParams({ filename, type: 'input' })}`,
       undefined,
       undefined,
       () => {
-        imageCache.delete(filename)
+        imageCache.delete(key)
         errorSubs.forEach((cb) => cb(filename))
         imageMaterials.forEach((mat) => {
           if (mat.map === tex) { mat.map = null; mat.needsUpdate = true }
@@ -145,73 +153,116 @@ function getImageTexture(filename: string): THREE.Texture | null {
       },
     )
     t = tex
-    t.colorSpace = THREE.SRGBColorSpace
-    imageCache.set(filename, t)
+    t.colorSpace = colorSpace
+    imageCache.set(key, t)
   }
   return t
 }
 
 // ── Surface relief textures (height fields bound to .bumpMap) ────────────────
-// CANVAS-keyed, not Texture-keyed: `tiling` lives on THREE's per-Texture `.repeat`, not on the
-// Material, so two objects sharing the same (filename, invert, contrast) height map must each
-// own their OWN Texture to tile independently — sharing one Texture (the old design) would make
-// every object using that map tile together the instant any one of them dragged the slider.
-// The pixel conversion (luminance + invert + contrast) is the expensive part; wrapping a canvas
-// in a THREE.Texture is cheap, so only the CONVERTED CANVAS is cached per key, and a fresh
-// Texture is minted per `getHeightTexture` call, each `.repeat`-independent. `textures` tracks
-// every live Texture wrapping a given canvas so a still-loading image's `onload` can flip
-// `needsUpdate` on all of them at once (there is no single owner to notify).
-interface HeightCanvasEntry { canvas: HTMLCanvasElement; textures: Set<THREE.Texture> }
-const heightCache = new Map<string, HeightCanvasEntry>()
+// C1/C2 redesign (final review of the surface-relief feature). The ORIGINAL design cached the
+// CONVERTED canvas keyed by (filename, invert, contrast) and ran the client-side colour→height
+// conversion a SECOND time before upload. Two bugs fell out of that:
+//   C1 — `contrast` is a slider (StudioSlider fires on every `input` event), but it was folded
+//        into the material's rebuild identity. Dragging 1→6 produced ~51 identity keys, each a
+//        brand-new full-resolution canvas + fetch + decode + getImageData/putImageData, with
+//        `heightCache` never evicted (~16MB/entry at 2048²) — and since a fresh THREE.Texture
+//        wraps a BLANK canvas until its async `onload` fires, the relief visibly vanished for
+//        the whole drag.
+//   C2 — the client pre-converted before upload AND materials.ts converted again at build time.
+//        Since toHeightPixels is idempotent on grayscale, "Brightness" and "Use as-is" produced
+//        byte-identical output (Use-as-is did nothing), and a real Blender normal map uploaded
+//        through the (default) Brightness path got luminance-flattened before it ever reached
+//        storage — unrecoverable.
+//
+// The fix separates two lifetimes:
+//  1. `reliefSourceCache` — the DECODED, UNCONVERTED source image (relief.image now stores the
+//     user's ORIGINAL bytes — see Scene3DStudioSurface.vue's upload handlers), cached per
+//     FILENAME ONLY. One fetch + one decode per filename, ever.
+//  2. Each material's bumpMap is its OWN private canvas + Texture (tiling lives on THREE's
+//     per-Texture `.repeat`, not on the Material, so sharing one Texture across materials — the
+//     old design predating even C1/C2 — would make every object using that source tile
+//     together the instant any one of them dragged the Tiling slider). It is painted from the
+//     shared source above with its OWN invert/contrast. `contrast` repaints this same canvas IN
+//     PLACE (`tex.userData.reliefSetContrast`, called from updateMaterial) — no rebuild, no
+//     refetch, no new canvas, and `contrast` is deliberately EXCLUDED from `reliefKey` below.
+//     `invert` still forces a rebuild (reliefKey), a deliberate, occasional toggle — but now
+//     rebuilds cheaply, repainting from the ALREADY-cached source rather than re-fetching.
+interface ReliefSourceEntry { canvas: HTMLCanvasElement; ready: boolean; subs: Set<() => void> }
+const reliefSourceCache = new Map<string, ReliefSourceEntry>()
 
-/** Load an input-dir image and convert it to a height field, returning a FRESH per-call
- *  Texture wrapping a canvas shared with every other caller of the same
- *  (filename, invert, contrast) — contrast is applied at this same build step (see
- *  toHeightPixels/ReliefSpec.contrast's doc), so it MUST join the cache key or a stale-pixel
- *  canvas would be reused. The returned Texture is exclusively owned by the caller (never a
- *  shared singleton the way matcaps/the diffuse image cache are) — disposeMaterial disposes it
- *  and unregisters it from the cache entry's `textures` Set.
+/** Fetch + decode an input-dir image exactly once per filename, however many materials
+ *  reference it (C2 fix). `onReady` is queued if the decode hasn't completed yet; if it HAS
+ *  (`entry.ready`), the caller is responsible for invoking its own paint immediately — this
+ *  never calls back synchronously, so a caller can't assume it always will. */
+function getReliefImageSource(filename: string, onReady: () => void): ReliefSourceEntry {
+  let entry = reliefSourceCache.get(filename)
+  if (entry) {
+    if (!entry.ready) entry.subs.add(onReady)
+    return entry
+  }
+  const canvas = document.createElement('canvas')
+  entry = { canvas, ready: false, subs: new Set([onReady]) }
+  reliefSourceCache.set(filename, entry)
+  const img = new Image()
+  img.crossOrigin = 'anonymous'
+  img.onload = () => {
+    canvas.width = img.naturalWidth
+    canvas.height = img.naturalHeight
+    const ctx = canvas.getContext('2d')
+    if (ctx) ctx.drawImage(img, 0, 0)
+    entry!.ready = true
+    const subs = entry!.subs
+    entry!.subs = new Set()
+    for (const cb of subs) cb()
+  }
+  img.src = `/view?filename=${encodeURIComponent(filename)}&type=input`
+  return entry
+}
+
+/** Minor 2 fix (final review): the canvas → getImageData → toHeightPixels → putImageData
+ *  sequence used to exist in FOUR near-identical copies (here, buildHeightTextureFromSpec, and
+ *  two in Scene3DStudioSurface.vue's upload handlers — the latter two are gone entirely now
+ *  that conversion happens exactly once, at build time, here). This is the one shared core:
+ *  draws `source` onto `dest` at (w, h) then converts its pixels to a height field in place. */
+function paintHeightCanvas(dest: HTMLCanvasElement, source: CanvasImageSource, w: number, h: number, invert: boolean, contrast: number): void {
+  dest.width = w
+  dest.height = h
+  const ctx = dest.getContext('2d')
+  if (!ctx) return
+  ctx.drawImage(source, 0, 0, w, h)
+  const data = ctx.getImageData(0, 0, w, h)
+  data.data.set(toHeightPixels(data.data, invert, contrast))
+  ctx.putImageData(data, 0, 0)
+}
+
+/** Build a FRESH per-material Texture for an IMAGE relief source, wrapping a canvas this
+ *  material exclusively owns, painted from the shared per-filename source (see
+ *  `reliefSourceCache` above). `invert` is fixed for this texture's whole lifetime (a change
+ *  rebuilds via `reliefKey`); `contrast` is NOT — `tex.userData.reliefSetContrast` lets
+ *  `updateMaterial` repaint this same canvas in place on a contrast edit, reading the SAME
+ *  cached source, never refetching.
  *  Returns null outside a browser — the unit suite runs in node, where the
  *  factory must still set bumpScale and simply bind no texture. */
 function getHeightTexture(filename: string, invert: boolean, contrast: number): THREE.Texture | null {
-  if (typeof document === 'undefined') return null
-  const key = `${filename}|${invert ? 1 : 0}|${contrast}`
-  let entry = heightCache.get(key)
-  if (!entry) {
-    const canvas = document.createElement('canvas')
-    entry = { canvas, textures: new Set() }
-    heightCache.set(key, entry)
-    const img = new Image()
-    img.crossOrigin = 'anonymous'
-    img.onload = () => {
-      canvas.width = img.naturalWidth
-      canvas.height = img.naturalHeight
-      const ctx = canvas.getContext('2d')
-      if (!ctx) return
-      ctx.drawImage(img, 0, 0)
-      const data = ctx.getImageData(0, 0, canvas.width, canvas.height)
-      data.data.set(toHeightPixels(data.data, invert, contrast))
-      ctx.putImageData(data, 0, 0)
-      // The canvas mutated in place — every Texture currently wrapping it (one per material
-      // sharing this key) needs its own needsUpdate flip to re-upload.
-      for (const t of entry!.textures) t.needsUpdate = true
-    }
-    img.src = `/view?filename=${encodeURIComponent(filename)}&type=input`
+  if (!hasDOM || !filename) return null
+  const canvas = document.createElement('canvas')
+  const tex = new THREE.Texture(canvas)
+  let liveContrast = contrast
+  const repaint = () => {
+    const src = reliefSourceCache.get(filename)
+    if (!src || !src.ready) return
+    paintHeightCanvas(canvas, src.canvas, src.canvas.width, src.canvas.height, invert, liveContrast)
+    tex.needsUpdate = true
   }
-  const tex = new THREE.Texture(entry.canvas)
-  tex.userData.reliefCacheKey = key
-  entry.textures.add(tex)
+  tex.userData.reliefSetContrast = (c: number) => { liveContrast = c; repaint() }
+  const entry = getReliefImageSource(filename, repaint)
+  if (entry.ready) repaint()
+  // A material disposed before its source image finishes loading would otherwise leave this
+  // `repaint` closure (and the Texture/canvas it references) stuck in `entry.subs` forever —
+  // unregister it on dispose (see disposeMaterial).
+  else tex.userData.reliefUnsub = () => entry.subs.delete(repaint)
   return tex
-}
-
-/** Unregister + dispose a bumpMap Texture built by getHeightTexture (drops it from its cache
- *  entry's `textures` Set so that entry doesn't accumulate references to disposed Textures
- *  forever) or by buildHeightTextureFromSpec (no cache entry to drop from — `reliefCacheKey` is
- *  simply absent, so this degrades to a plain dispose). Shared by disposeMaterial. */
-function disposeHeightTexture(tex: THREE.Texture): void {
-  const key = tex.userData.reliefCacheKey as string | undefined
-  if (key) heightCache.get(key)?.textures.delete(tex)
-  tex.dispose()
 }
 
 /** RepeatWrapping is required — the default ClampToEdgeWrapping would smear the edge pixels
@@ -225,8 +276,8 @@ function applyReliefTiling(tex: THREE.Texture | null, tiling: number): void {
 
 /** Relief from a shader field: resolve the field, then run the SAME luminance
  *  transform as the image path. No per-effect height mode — every catalog effect
- *  gains relief with zero shader work. Not cached: the spec can change per edit,
- *  and identityKey already rebuilds the material when it does.
+ *  gains relief with zero shader work. Not cached across materials: the spec can differ per
+ *  material, and `reliefKey` already rebuilds when it (or `invert`) changes.
  *
  *  v1 relief is STATIC by decision: the field is resolved at t: 0 and the resulting
  *  CanvasTexture is never re-pointed on a healthy per-frame cadence — an animating
@@ -245,22 +296,28 @@ function applyReliefTiling(tex: THREE.Texture | null, tiling: number): void {
  *  calls `resolveField` directly — no `beginFieldFrame`/`withFieldFrame` span, no token —
  *  matching how this call has always been made here: relief is a one-shot resolve, never
  *  part of a live per-frame field batch, so it must never compete with an animating
- *  shaderFill for `LIVE_FIELD_CEILING` slots. */
+ *  shaderFill for `LIVE_FIELD_CEILING` slots.
+ *
+ *  C1 fix: like the image path above, the RAW resolved field canvas (`src`) is kept alive in
+ *  this texture's closure so a later contrast edit (`tex.userData.reliefSetContrast`) can
+ *  repaint the owned canvas from it WITHOUT calling `resolveField` again — a GL readback is far
+ *  more expensive than a canvas repaint, and re-resolving on every contrast tick would reproduce
+ *  C1's per-tick cost under a different name. */
 function buildHeightTextureFromSpec(spec: ShaderSpec, invert: boolean, contrast: number): THREE.Texture | null {
   if (typeof document === 'undefined') return null
   const src = resolveField({ spec, w: 512, h: 512, t: 0, fps: 30 })
   if (!src) return null
 
-  const c = document.createElement('canvas')
-  c.width = src.width
-  c.height = src.height
-  const ctx = c.getContext('2d')
-  if (!ctx) return null
-  ctx.drawImage(src, 0, 0)
-  const data = ctx.getImageData(0, 0, c.width, c.height)
-  data.data.set(toHeightPixels(data.data, invert, contrast))
-  ctx.putImageData(data, 0, 0)
-  return new THREE.CanvasTexture(c)
+  const canvas = document.createElement('canvas')
+  const tex = new THREE.CanvasTexture(canvas)
+  let liveContrast = contrast
+  const repaint = () => {
+    paintHeightCanvas(canvas, src, src.width, src.height, invert, liveContrast)
+    tex.needsUpdate = true
+  }
+  repaint()
+  tex.userData.reliefSetContrast = (c: number) => { liveContrast = c; repaint() }
+  return tex
 }
 
 function getShaderHeightTexture(mat: SceneMaterial, r: ReliefSpec): THREE.Texture | null {
@@ -281,18 +338,32 @@ const reliefHealPending = new Set<THREE.Material>()
 
 /** Attempt the one-time relief heal for every material `ownerId` still has pending. A
  *  no-op the moment the Set is empty (the steady-state case once every relief has healed
- *  or no scene ever used a shader relief), so this costs nothing on an ordinary frame. */
+ *  or no scene ever used a shader relief), so this costs nothing on an ordinary frame.
+ *
+ *  I2 fix (final review): tiling/contrast are read from the LIVE `SceneMaterial`
+ *  (`m.userData.reliefMat`, stamped by `applyRelief` at construction), never from a
+ *  construction-time snapshot. Cold load with a slow catalog → user picks Effect (miss,
+ *  `bumpMap` null, queued here) → user drags Tiling/Contrast (updateMaterial's in-place block
+ *  is a no-op while `bumpMap` is null) → catalog resolves → this heal used to bind with the
+ *  STALE construction-time values, silently discarding the drag. Reading the live material
+ *  fixes that for free — `invert` doesn't need the same treatment because changing it forces a
+ *  rebuild (a brand-new material with the CURRENT invert baked in at construction; see
+ *  `reliefKey`), so a still-pending heal entry's snapshotted `reliefInvert` can never go stale. */
 function healReliefMaterials(ownerId: string): void {
   if (reliefHealPending.size === 0) return
   for (const m of reliefHealPending) {
     if (m.userData.reliefOwnerId !== ownerId) continue
     const spec = m.userData.reliefSpec as ShaderSpec | undefined
     if (!spec) { reliefHealPending.delete(m); continue }
-    const contrast = (m.userData.reliefContrast as number | undefined) ?? MATERIAL_DEFAULTS.reliefContrast
-    const tex = buildHeightTextureFromSpec(spec, m.userData.reliefInvert === true, contrast)
+    const invert = m.userData.reliefInvert === true
+    const liveRelief = (m.userData.reliefMat as SceneMaterial | undefined)?.relief
+    const contrast = liveRelief?.contrast ?? MATERIAL_DEFAULTS.reliefContrast
+    const tiling = liveRelief?.tiling ?? MATERIAL_DEFAULTS.reliefTiling
+    const tex = buildHeightTextureFromSpec(spec, invert, contrast)
     if (!tex) continue // still missing (catalog not resolved yet) — retry on a later call
-    applyReliefTiling(tex, (m.userData.reliefTiling as number | undefined) ?? MATERIAL_DEFAULTS.reliefTiling)
+    applyReliefTiling(tex, tiling)
     ;(m as THREE.MeshStandardMaterial).bumpMap = tex
+    m.userData.reliefContrastApplied = contrast
     m.needsUpdate = true
     reliefHealPending.delete(m)
   }
@@ -311,24 +382,31 @@ export function applyRelief(m: THREE.Material, mat: SceneMaterial, ownerId: stri
   const r = mat.relief
   reliefHealPending.delete(target) // always a fresh material instance here — defensive only
   if (r && r.source !== 'none') {
+    const contrast = r.contrast ?? MATERIAL_DEFAULTS.reliefContrast
     const tex = r.source === 'image'
-      ? (r.image ? getHeightTexture(r.image, r.invert === true, r.contrast ?? MATERIAL_DEFAULTS.reliefContrast) : null)
+      ? (r.image ? getHeightTexture(r.image, r.invert === true, contrast) : null)
       : getShaderHeightTexture(mat, r)
     const tiling = r.tiling ?? MATERIAL_DEFAULTS.reliefTiling
     applyReliefTiling(tex, tiling)
     target.bumpMap = tex
     target.bumpScale = r.scale ?? MATERIAL_DEFAULTS.reliefScale
+    // C1 fix: the contrast this texture was JUST painted at, so updateMaterial's in-place
+    // block only repaints (getHeightTexture/buildHeightTextureFromSpec's `reliefSetContrast`)
+    // when contrast has actually moved since — not on every unrelated property edit.
+    target.userData.reliefContrastApplied = contrast
     // Item Task-5 heal: a shader relief that missed (catalog not loaded yet) gets queued
     // for `refreshSceneShaderFields` to retry — see `healReliefMaterials`'s doc. `mat.shader`
     // is the SAME fallback `getShaderHeightTexture` just used, so the heal resolves the exact
-    // spec construction attempted, not a stale/different one.
+    // spec construction attempted, not a stale/different one. `reliefMat` (I2 fix) is a LIVE
+    // reference to the SceneMaterial itself — the heal reads tiling/contrast off it directly
+    // rather than a construction-time snapshot, so a slider drag that lands while `bumpMap` is
+    // still null isn't silently lost (see healReliefMaterials's doc).
     if (!tex && r.source === 'shader') {
       const spec = r.spec ?? mat.shader
       if (spec) {
         target.userData.reliefSpec = spec
         target.userData.reliefInvert = r.invert === true
-        target.userData.reliefContrast = r.contrast ?? MATERIAL_DEFAULTS.reliefContrast
-        target.userData.reliefTiling = tiling
+        target.userData.reliefMat = mat
         target.userData.reliefOwnerId = ownerId
         reliefHealPending.add(target)
       }
@@ -337,7 +415,9 @@ export function applyRelief(m: THREE.Material, mat: SceneMaterial, ownerId: stri
     target.bumpMap = null
   }
 
-  target.normalMap = mat.normalImage ? getImageTexture(mat.normalImage) : null
+  // I1 fix: NoColorSpace — a normal map is non-colour data, not an sRGB-encoded photo (see
+  // getImageTexture's doc).
+  target.normalMap = mat.normalImage ? getImageTexture(mat.normalImage, THREE.NoColorSpace) : null
   target.needsUpdate = true
 }
 
@@ -639,6 +719,10 @@ export function materialFor(mat: SceneMaterial, geometry?: THREE.BufferGeometry,
       const tex = getImageTexture(mat.image ?? '')
       if (tex) t.map = tex
       imageMaterials.add(t)
+      // I4 fix (final review): disposeMaterial needs the plain filename to evict this
+      // material's entry from `imageCache` — stash it directly rather than trying to parse it
+      // back out of `identity` (which now always carries a relief/normalImage suffix too).
+      t.userData.imageFilename = mat.image ?? ''
       m = t
       break
     }
@@ -697,22 +781,26 @@ export function materialFor(mat: SceneMaterial, geometry?: THREE.BufferGeometry,
 }
 
 /** The part of relief that forces a material REBUILD: which texture object is bound.
- *  `scale` AND `tiling` update in place (a slider drag must not rebuild per tick) —
- *  deliberately EXCLUDED from this key. `invert` and `contrast` both rebuild: they change the
- *  height PIXELS at texture-build time (see toHeightPixels), so the bound texture itself is
- *  different, not just a uniform on an existing one — a toggle/drag-release is occasional, so
- *  the rebuild cost is negligible and it removes a whole class of stale-texture bugs. `tiling`
- *  is a pure Texture property (`.repeat`/`.wrapS`/`.wrapT`), never a pixel change, so it never
- *  needs a new canvas — exactly like `scale`.
- *  See updateMaterial: bumpScale/tiling update in place, but getHeightTexture caches its
- *  CANVAS per (filename, invert, contrast). */
+ *  `scale`, `tiling`, AND (as of the C1 fix) `contrast` all update IN PLACE — a slider drag
+ *  must never rebuild per tick — so all three are deliberately EXCLUDED from this key.
+ *  `contrast` used to be included here on the reasoning that it changes the height PIXELS at
+ *  texture-build time, so the bound texture was "a different texture, not just a uniform on an
+ *  existing one" — true, but `contrast` is a CONTINUOUS slider (StudioSlider fires on every
+ *  `input` event during a drag), unlike `invert`'s discrete toggle, so that reasoning produced
+ *  ~51 material rebuilds (and ~51 fresh canvases behind them) for one drag gesture (C1 of the
+ *  final review). The fix keeps the SAME texture object across a contrast change and repaints
+ *  its canvas in place instead (`getHeightTexture`/`buildHeightTextureFromSpec`'s
+ *  `reliefSetContrast`, invoked from `updateMaterial`'s in-place block below).
+ *  `invert` still rebuilds: it changes which pixels are drawn (light head-to-tail) just like
+ *  `contrast` does, but it's a one-shot toggle/click, not a drag, so the occasional rebuild is
+ *  harmless and it avoids adding a second live-mutable knob to the paint closure. */
 function reliefKey(mat: SceneMaterial): string {
   const r = mat.relief
   const relief = !r || r.source === 'none'
     ? '-'
     : r.source === 'image'
-      ? `i:${r.image ?? ''}:${r.invert ? 1 : 0}:${r.contrast ?? MATERIAL_DEFAULTS.reliefContrast}`
-      : `s:${r.spec ? JSON.stringify(r.spec) : ''}:${r.invert ? 1 : 0}:${r.contrast ?? MATERIAL_DEFAULTS.reliefContrast}`
+      ? `i:${r.image ?? ''}:${r.invert ? 1 : 0}`
+      : `s:${r.spec ? JSON.stringify(r.spec) : ''}:${r.invert ? 1 : 0}`
   return `|${relief}|n:${mat.normalImage ?? ''}`
 }
 
@@ -740,15 +828,24 @@ function baseIdentityKey(mat: SceneMaterial): string {
 
 export function updateMaterial(m: THREE.Material, mat: SceneMaterial): boolean {
   if (m.userData.matType !== mat.type || m.userData.identity !== identityKey(mat)) return false
-  // Relief SCALE and TILING are the only in-place updates here — a slider drag must not
-  // rebuild per tick. `invert`/`contrast` never reach this block: identityKey includes both,
-  // so a change to either fails the identity guard above and forces a rebuild instead.
+  // Relief SCALE, TILING, and (C1 fix) CONTRAST are the in-place updates here — a slider drag
+  // must not rebuild per tick. `invert` never reaches this block: identityKey includes it, so
+  // a change fails the identity guard above and forces a rebuild instead.
   const rt = m as THREE.MeshStandardMaterial
   if ('bumpScale' in rt && mat.relief && mat.relief.source !== 'none') {
     rt.bumpScale = mat.relief.scale ?? MATERIAL_DEFAULTS.reliefScale
     if (rt.bumpMap) {
       const t = mat.relief.tiling ?? MATERIAL_DEFAULTS.reliefTiling
       rt.bumpMap.repeat.set(t, t)
+      // C1 fix: repaint the bumpMap's OWN canvas from its already-cached source instead of
+      // rebuilding — only when contrast actually moved since the last paint (construction or
+      // the previous repaint both stamp `reliefContrastApplied`), so an unrelated edit (e.g.
+      // Depth/Tiling alone) never re-triggers a canvas repaint it doesn't need.
+      const c = mat.relief.contrast ?? MATERIAL_DEFAULTS.reliefContrast
+      if (m.userData.reliefContrastApplied !== c) {
+        m.userData.reliefContrastApplied = c
+        ;(rt.bumpMap.userData.reliefSetContrast as ((c: number) => void) | undefined)?.(c)
+      }
     }
   }
   switch (mat.type) {
@@ -853,21 +950,25 @@ export function disposeMaterial(m: THREE.Material): void {
   // The gradient ramp LUT is owned by exactly one material.
   const ramp = (m.userData.gradUniforms as { uRamp?: { value?: THREE.Texture } } | undefined)?.uRamp?.value
   if (ramp) ramp.dispose()
-  // Bump/height texture (Task: relief tiling): now EXCLUSIVELY owned by this material — every
-  // relief texture (image OR shader) is a per-material Texture since tiling moved `.repeat`
-  // onto the Texture rather than the Material (see getHeightTexture's/applyReliefTiling's doc),
-  // so unlike matcaps/the diffuse image cache it must be disposed here, and — for the image-
-  // relief case — dropped from its shared canvas cache entry's `textures` Set via
-  // disposeHeightTexture so that entry doesn't accumulate references to disposed Textures
-  // forever. (Pre-existing finding, not introduced by this change: a SHADER relief's bumpMap
-  // was already a fresh per-call CanvasTexture with no cache entry at all — see
-  // buildHeightTextureFromSpec's doc — so it was already never disposed anywhere; this line
-  // fixes that latent leak too, via the same `tex.dispose()` fallback when `reliefCacheKey` is
-  // absent.)
+  // Bump/height texture: EXCLUSIVELY owned by this material — every relief texture (image OR
+  // shader) is a private per-material canvas + Texture (see the C1/C2 redesign doc at the top
+  // of the relief section), so it is always safe to dispose here directly. The image-relief
+  // case additionally unregisters its (possibly still-pending) repaint callback from the
+  // shared per-filename `reliefSourceCache` via `reliefUnsub` — otherwise a material disposed
+  // before its source image finishes loading would leave that closure (and the canvas/Texture
+  // it references) stuck in the cache entry's `subs` Set forever.
   const bumpMap = (m as THREE.MeshStandardMaterial).bumpMap
-  if (bumpMap) disposeHeightTexture(bumpMap)
+  if (bumpMap) {
+    (bumpMap.userData.reliefUnsub as (() => void) | undefined)?.()
+    bumpMap.dispose()
+  }
   const map = (m as THREE.MeshStandardMaterial).map
-  if (map) { map.dispose(); if (m.userData.identity?.startsWith('image:')) imageCache.delete(m.userData.identity.slice(6)) }
+  // I4 fix (final review): `identity` used to be exactly `image:foo.png` when this eviction was
+  // written; `reliefKey` now always appends at least `|-|n:`, so slicing `identity` stopped
+  // matching the `imageCache` key and this delete silently never fired. `imageFilename` is
+  // stashed directly by the `case 'image':` branch of `materialFor` instead of being parsed
+  // back out of `identity`.
+  if (map) { map.dispose(); if (m.userData.matType === 'image' && m.userData.imageFilename) imageCache.delete(m.userData.imageFilename as string) }
   m.dispose()
 }
 

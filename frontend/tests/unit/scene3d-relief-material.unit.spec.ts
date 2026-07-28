@@ -87,22 +87,35 @@ describe('scene3d relief on materials', () => {
     expect(updateMaterial(m, base({ relief: { source: 'shader', scale: 0.2, invert: true } }))).toBe(false)
   })
 
-  // Contrast changes the height PIXELS at texture-build time (toHeightPixels), so the bound
-  // bumpMap is a genuinely different texture — reliefKey must include it, same as invert,
-  // or a contrast edit would silently keep showing the old (stale) texture in place.
-  it('rebuilds when contrast changes on an image relief', () => {
+  // C1 fix (final review): `contrast` is a CONTINUOUS slider (StudioSlider fires on every
+  // `input` event during a drag), unlike `invert`'s discrete toggle — folding it into
+  // reliefKey used to turn a single drag gesture into ~51 material rebuilds (each a fresh
+  // canvas + fetch + decode). It must now update IN PLACE, exactly like scale/tiling: same
+  // texture object, repainted from the cached source via `reliefSetContrast`.
+  it('updates in place when contrast changes on an image relief', () => {
     const m = materialFor(base({ relief: { source: 'image', image: 'h.png', scale: 0.2, contrast: 1 } }))
-    expect(updateMaterial(m, base({ relief: { source: 'image', image: 'h.png', scale: 0.2, contrast: 3 } }))).toBe(false)
+    expect(updateMaterial(m, base({ relief: { source: 'image', image: 'h.png', scale: 0.2, contrast: 3 } }))).toBe(true)
   })
 
-  it('rebuilds when contrast changes on a shader relief', () => {
+  it('updates in place when contrast changes on a shader relief', () => {
     const m = materialFor(base({ relief: { source: 'shader', scale: 0.2, contrast: 1 } }))
-    expect(updateMaterial(m, base({ relief: { source: 'shader', scale: 0.2, contrast: 3 } }))).toBe(false)
+    expect(updateMaterial(m, base({ relief: { source: 'shader', scale: 0.2, contrast: 3 } }))).toBe(true)
+  })
+
+  // The paired assertion that pins the partition: a contrast-ONLY change updates in place,
+  // while an invert-ONLY change (contrast held fixed) still rebuilds — invert was deliberately
+  // NOT moved to the in-place path (it's a one-shot toggle, not a drag; see reliefKey's doc).
+  it('contrast updates in place while invert still rebuilds — the C1 partition', () => {
+    const base1 = base({ relief: { source: 'image', image: 'h.png', scale: 0.2, invert: false, contrast: 1 } })
+    const mContrast = materialFor(base1)
+    expect(updateMaterial(mContrast, base({ relief: { source: 'image', image: 'h.png', scale: 0.2, invert: false, contrast: 4 } }))).toBe(true)
+
+    const mInvert = materialFor(base1)
+    expect(updateMaterial(mInvert, base({ relief: { source: 'image', image: 'h.png', scale: 0.2, invert: true, contrast: 1 } }))).toBe(false)
   })
 
   // Deliberate contrast with the above: `scale` is a slider that must keep updating IN
-  // PLACE (a drag must not rebuild per tick) even while a contrast change forces a rebuild —
-  // reliefKey must include contrast WITHOUT also picking up scale.
+  // PLACE (a drag must not rebuild per tick) alongside a contrast change also updating in place.
   it('still updates in place when only scale changes, contrast held fixed', () => {
     const m = materialFor(base({ relief: { source: 'image', image: 'h.png', scale: 0.2, contrast: 2 } }))
     expect(updateMaterial(m, base({ relief: { source: 'image', image: 'h.png', scale: 0.9, contrast: 2 } }))).toBe(true)
@@ -110,17 +123,18 @@ describe('scene3d relief on materials', () => {
   })
 
   // Tiling is a Texture.repeat property (materials.ts's applyReliefTiling), never a pixel
-  // change — it must update IN PLACE like scale, not force a rebuild like invert/contrast.
+  // change — it must update IN PLACE like scale, not force a rebuild.
   it('updates tiling in place — a slider drag must not rebuild', () => {
     const m = materialFor(base({ relief: { source: 'image', image: 'h.png', scale: 0.2, tiling: 1 } }))
     expect(updateMaterial(m, base({ relief: { source: 'image', image: 'h.png', scale: 0.2, tiling: 6 } }))).toBe(true)
   })
 
-  // Deliberate contrast with the above: a contrast-only change (tiling held fixed) must still
-  // rebuild — tiling must NOT have been folded into reliefKey.
-  it('still rebuilds on a contrast-only change with tiling held fixed', () => {
+  // Deliberate contrast with the above: a contrast-only change (tiling held fixed) must ALSO
+  // update in place now — tiling must NOT have been folded into reliefKey, and neither is
+  // contrast anymore (C1 fix).
+  it('still updates in place on a contrast-only change with tiling held fixed', () => {
     const m = materialFor(base({ relief: { source: 'image', image: 'h.png', scale: 0.2, tiling: 3, contrast: 1 } }))
-    expect(updateMaterial(m, base({ relief: { source: 'image', image: 'h.png', scale: 0.2, tiling: 3, contrast: 3 } }))).toBe(false)
+    expect(updateMaterial(m, base({ relief: { source: 'image', image: 'h.png', scale: 0.2, tiling: 3, contrast: 3 } }))).toBe(true)
   })
 
   it('still updates scale in place without rebuilding', () => {
