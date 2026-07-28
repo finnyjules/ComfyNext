@@ -351,6 +351,8 @@ function matParam<K extends keyof typeof MATERIAL_DEFAULTS>(key: K) {
     set: (v) => { if (selected.value) (selected.value.material as any)[key] = v },
   })
 }
+const matShininess = matParam('shininess')
+const matSpecular = matParam('specular')
 const matToonSteps = matParam('toonSteps')
 const matMatcap = matParam('matcap')
 const matIor = matParam('ior')
@@ -1993,6 +1995,21 @@ function onClose() {
               <StudioSlider v-model="matEnvMapIntensity" label="Intensity" hint="How strongly reflections from the surroundings show" :min="0" :max="3" :step="0.05" />
             </div>
           </details>
+        </template>
+
+        <!-- phong: retro-CG specular/shininess model, kept deliberately distinct from the
+             PBR types (standard/glass) — see MaterialType's doc in config.ts. No roughness/
+             metalness here; Phong has no such properties. -->
+        <template v-else-if="matEditable && matType === 'phong'">
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] text-white/55">Color</span>
+            <StudioColor v-model="matColor" />
+          </div>
+          <StudioSlider v-model="matShininess" label="Shininess" hint="How tight and glossy the highlight is — higher is sharper" :min="0" :max="200" :step="1" />
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] text-white/55">Specular</span>
+            <StudioColor v-model="matSpecular" />
+          </div>
         </template>
 
         <!-- toon -->

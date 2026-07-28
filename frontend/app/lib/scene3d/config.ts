@@ -25,8 +25,13 @@ export type Vec3 = [number, number, number]
 // importing it here would drag all of three into config's import graph.
 export const DEFAULT_FONT_URL = '/fonts/ABCROM-Bold.otf'
 
-export type MaterialType = 'standard' | 'toon' | 'matcap' | 'glass' | 'fresnel' | 'gradient' | 'image' | 'shaderFill'
-export const MATERIAL_TYPES: MaterialType[] = ['standard', 'toon', 'matcap', 'glass', 'fresnel', 'gradient', 'image', 'shaderFill']
+// 'phong' is a DELIBERATE stylistic addition, not a legacy leftover: MeshPhongMaterial's
+// specular/shininess model produces a hard, glossy, slightly artificial highlight dot that
+// no amount of roughness tuning on the PBR types (standard/glass) can reproduce — that
+// hard-dot look is a distinct retro-CG aesthetic worth keeping on its own terms. Do not
+// "modernise" it away in favour of Standard.
+export type MaterialType = 'standard' | 'phong' | 'toon' | 'matcap' | 'glass' | 'fresnel' | 'gradient' | 'image' | 'shaderFill'
+export const MATERIAL_TYPES: MaterialType[] = ['standard', 'phong', 'toon', 'matcap', 'glass', 'fresnel', 'gradient', 'image', 'shaderFill']
 
 /** One stop of the gradient ramp. `pos` is 0..1 along the ramp direction. */
 export interface GradientStop { pos: number; color: string }
@@ -70,6 +75,11 @@ export interface SceneMaterial {
   color: string
   roughness: number
   metalness: number
+  /** `phong` only — MeshPhongMaterial's specular-highlight tightness (three's own default
+   *  is 30). Has no roughness/metalness equivalent; Phong ignores both. */
+  shininess?: number
+  /** `phong` only — the highlight's own colour, independent of the base `color`. */
+  specular?: string
   toonSteps?: number
   matcap?: string
   ior?: number
@@ -264,6 +274,9 @@ const DEFAULT_MATERIAL: SceneMaterial = { type: 'standard', color: '#9aa3af', ro
 /** Per-type parameter defaults — the single source of truth shared by the
  *  material factory (materials.ts) and the Selection UI's proxies. */
 export const MATERIAL_DEFAULTS = {
+  // three.js's own MeshPhongMaterial defaults.
+  shininess: 30,
+  specular: '#111111',
   toonSteps: 3,
   matcap: 'chrome',
   ior: 1.5,
@@ -510,6 +523,8 @@ export function parseDoc(json: string): SceneDoc {
     }
     // Optional per-type params: copy only when present AND valid, so absent
     // fields stay absent (keeps serialize→parse round-trips exact).
+    if (typeof m?.shininess === 'number') out.shininess = num(m.shininess, MATERIAL_DEFAULTS.shininess)
+    if (typeof m?.specular === 'string') out.specular = m.specular
     if (typeof m?.toonSteps === 'number') out.toonSteps = num(m.toonSteps, MATERIAL_DEFAULTS.toonSteps)
     if (typeof m?.matcap === 'string') out.matcap = m.matcap
     if (typeof m?.ior === 'number') out.ior = num(m.ior, MATERIAL_DEFAULTS.ior)

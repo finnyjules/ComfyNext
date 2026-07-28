@@ -11,6 +11,9 @@ describe('scene3d materials factory', () => {
     expect(materialFor(base())).toBeInstanceOf(THREE.MeshStandardMaterial)
     // standard is a full physical surface now
     expect(materialFor(base())).toBeInstanceOf(THREE.MeshPhysicalMaterial)
+    // Phong is a deliberate stylistic addition (hard specular highlight the PBR
+    // types cannot reproduce) — see MaterialType's doc in config.ts.
+    expect(materialFor(base({ type: 'phong' }))).toBeInstanceOf(THREE.MeshPhongMaterial)
     expect(materialFor(base({ type: 'toon' }))).toBeInstanceOf(THREE.MeshToonMaterial)
     expect(materialFor(base({ type: 'matcap' }))).toBeInstanceOf(THREE.MeshMatcapMaterial)
     expect(materialFor(base({ type: 'glass' }))).toBeInstanceOf(THREE.MeshPhysicalMaterial)
@@ -33,6 +36,31 @@ describe('scene3d materials factory', () => {
     expect(updateMaterial(materialFor(base({ type: 'toon' })), base({ type: 'toon', toonSteps: 5 }))).toBe(false)
     expect(updateMaterial(materialFor(base({ type: 'matcap' })), base({ type: 'matcap', matcap: 'gold' }))).toBe(false)
     expect(updateMaterial(materialFor(base({ type: 'image' })), base({ type: 'image', image: 'a.png' }))).toBe(false)
+  })
+
+  it('updates phong params in place', () => {
+    const m = materialFor(base({ type: 'phong' })) as THREE.MeshPhongMaterial
+    expect(m.shininess).toBe(MATERIAL_DEFAULTS.shininess)
+    expect(`#${m.specular.getHexString()}`).toBe(MATERIAL_DEFAULTS.specular)
+    expect(updateMaterial(m, base({
+      type: 'phong', color: '#ff0000', shininess: 90, specular: '#00ff00',
+      emissive: '#111111', emissiveIntensity: 2,
+    }))).toBe(true)
+    expect(m.shininess).toBe(90)
+    expect(`#${m.specular.getHexString()}`).toBe('#00ff00')
+    expect(`#${m.emissive.getHexString()}`).toBe('#111111')
+    expect(m.emissiveIntensity).toBe(2)
+  })
+
+  it('strips alpha from phong colours (8-digit hex must not render white)', () => {
+    const m = materialFor(base({ type: 'phong', color: '#ff000080', specular: '#00ff0080' })) as THREE.MeshPhongMaterial
+    expect(`#${m.color.getHexString()}`).toBe('#ff0000')
+    expect(`#${m.specular.getHexString()}`).toBe('#00ff00')
+  })
+
+  it('rebuilds when switching to/from phong', () => {
+    expect(updateMaterial(materialFor(base()), base({ type: 'phong' }))).toBe(false)
+    expect(updateMaterial(materialFor(base({ type: 'phong' })), base())).toBe(false)
   })
 
   it('updates glass params in place', () => {

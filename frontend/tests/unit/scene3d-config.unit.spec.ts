@@ -89,6 +89,7 @@ describe('scene3d config', () => {
     }
     boxFor({ type: 'toon', toonSteps: 4 })
     boxFor({ type: 'matcap', matcap: 'gold' })
+    boxFor({ type: 'phong', shininess: 80, specular: '#ffddaa' })
     boxFor({ type: 'glass', ior: 1.8, transmission: 0.9, thickness: 1.2, roughness: 0.1 })
     boxFor({ type: 'fresnel', fresnelColor: '#ff00aa', fresnelPower: 5 })
     boxFor({ type: 'gradient', gradientB: '#123456', gradientAxis: 'z', gradientShading: 'faceted' })
@@ -100,7 +101,7 @@ describe('scene3d config', () => {
         input: { type: 'gradient', a: '#ff0000', b: '#00ff00', textColor: '#ffffff', angle: 10, density: 4 },
       },
     })
-    expect(MATERIAL_TYPES).toHaveLength(8)
+    expect(MATERIAL_TYPES).toHaveLength(9)
     const back = parseDoc(serializeDoc(doc))
     expect(back).toEqual(doc)
   })
@@ -134,6 +135,36 @@ describe('scene3d config', () => {
     })
     doc.objects.push(o)
     expect(parseDoc(serializeDoc(doc))).toEqual(doc)
+  })
+
+  it('round-trips phong shininess and specular exactly', () => {
+    const doc = defaultDoc()
+    const o = createPrimitive('box', doc.objects)
+    Object.assign(o.material, { type: 'phong', shininess: 120, specular: '#aabbcc' })
+    doc.objects.push(o)
+    expect(parseDoc(serializeDoc(doc))).toEqual(doc)
+  })
+
+  it('leaves absent phong fields absent (round-trips stay exact)', () => {
+    const doc = defaultDoc()
+    const o = createPrimitive('box', doc.objects)
+    o.material.type = 'phong'
+    doc.objects.push(o)
+    const back = parseDoc(serializeDoc(doc)).objects[0]!.material
+    expect('shininess' in back).toBe(false)
+    expect('specular' in back).toBe(false)
+  })
+
+  it('drops a junk shininess but keeps a valid specular on parse', () => {
+    const doc = defaultDoc()
+    doc.objects.push(createPrimitive('box', doc.objects))
+    const raw: any = JSON.parse(serializeDoc(doc))
+    raw.objects[0].material.type = 'phong'
+    raw.objects[0].material.shininess = 'bright'
+    raw.objects[0].material.specular = '#ff0000'
+    const back = parseDoc(JSON.stringify(raw)).objects[0]!.material
+    expect('shininess' in back).toBe(false)
+    expect(back.specular).toBe('#ff0000')
   })
 
   it('round-trips primitive geometry params and drops junk ones', () => {

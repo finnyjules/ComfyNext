@@ -70,6 +70,13 @@ describe('scene3d relief on materials', () => {
     expect(matcap.bumpScale).toBe(0.3)
   })
 
+  // Phong has both bumpMap and normalMap slots, same as every other lit material — relief
+  // works for it with no extra code in applyRelief (it only guards on 'bumpMap' in target).
+  it('applies relief to a phong material too', () => {
+    const phong = materialFor(base({ type: 'phong', relief: { source: 'image', image: 'h.png', scale: 0.45 } })) as THREE.MeshPhongMaterial
+    expect(phong.bumpScale).toBe(0.45)
+  })
+
   it('rebuilds when invert toggles on an image relief', () => {
     const m = materialFor(base({ relief: { source: 'image', image: 'h.png', scale: 0.2, invert: false } }))
     expect(updateMaterial(m, base({ relief: { source: 'image', image: 'h.png', scale: 0.2, invert: true } }))).toBe(false)

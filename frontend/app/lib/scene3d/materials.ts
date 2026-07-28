@@ -539,6 +539,20 @@ export function materialFor(mat: SceneMaterial, geometry?: THREE.BufferGeometry,
       m = t
       break
     }
+    // Phong is a DELIBERATE stylistic choice, not a legacy leftover — see MaterialType's doc
+    // in config.ts. MeshPhongMaterial's specular/shininess model has no roughness/metalness
+    // concept, so neither is set here; it renders a hard glossy highlight the PBR types
+    // (standard/glass) cannot reproduce regardless of how their roughness is tuned.
+    case 'phong': {
+      const ph = new THREE.MeshPhongMaterial()
+      ph.color.set(stripAlpha(mat.color))
+      ph.shininess = mat.shininess ?? MATERIAL_DEFAULTS.shininess
+      ph.specular.set(stripAlpha(mat.specular ?? MATERIAL_DEFAULTS.specular))
+      ph.emissive.set(stripAlpha(mat.emissive ?? MATERIAL_DEFAULTS.emissive))
+      ph.emissiveIntensity = mat.emissiveIntensity ?? MATERIAL_DEFAULTS.emissiveIntensity
+      m = ph
+      break
+    }
     case 'matcap': {
       const t = new THREE.MeshMatcapMaterial()
       const tex = getMatcap(mat.matcap ?? MATERIAL_DEFAULTS.matcap)
@@ -759,6 +773,15 @@ export function updateMaterial(m: THREE.Material, mat: SceneMaterial): boolean {
     }
     case 'toon': {
       (m as THREE.MeshToonMaterial).color.set(stripAlpha(mat.color))
+      return true
+    }
+    case 'phong': {
+      const ph = m as THREE.MeshPhongMaterial
+      ph.color.set(stripAlpha(mat.color))
+      ph.shininess = mat.shininess ?? MATERIAL_DEFAULTS.shininess
+      ph.specular.set(stripAlpha(mat.specular ?? MATERIAL_DEFAULTS.specular))
+      ph.emissive.set(stripAlpha(mat.emissive ?? MATERIAL_DEFAULTS.emissive))
+      ph.emissiveIntensity = mat.emissiveIntensity ?? MATERIAL_DEFAULTS.emissiveIntensity
       return true
     }
     case 'matcap':
