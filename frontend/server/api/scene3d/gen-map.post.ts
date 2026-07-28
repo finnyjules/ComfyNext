@@ -30,5 +30,11 @@ export default defineEventHandler(async (event) => {
   const heightUrl = DEPTH_MODEL.heightUrlFrom(depth)
   if (!heightUrl) throw createError({ statusCode: 502, message: 'fal returned no height map' })
 
+  // heightUrl is currently UNUSED by the client: depth models report scene distance, which
+  // is nearly flat on a material sample photographed straight-on and so renders no visible
+  // bump (measured mean gradient ~3.3, far below RELIEF_FLAT_THRESHOLD in lib/scene3d/relief.ts).
+  // The UI instead runs `imageUrl` through the same brightness→height conversion the file-upload
+  // path uses, which keeps the tile's real surface detail. Still returned/computed here — not
+  // deleted — because depth may come back as a deliberate "large-form relief" option later.
   return { imageUrl, heightUrl, seed }
 })

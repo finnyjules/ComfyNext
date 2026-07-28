@@ -22,7 +22,7 @@ import {
   type SceneDoc, type SceneObject, type PrimitiveObject, type PrimitiveKind, type MaterialType, type GradientStop, type LightKind, type LightObject, type ReliefSpec,
 } from '~/lib/scene3d/config'
 import { MATCAP_IDS, matcapThumb, onTextureError } from '~/lib/scene3d/materials'
-import { toHeightPixels } from '~/lib/scene3d/relief'
+import { toHeightPixels, heightGradient, RELIEF_FLAT_THRESHOLD } from '~/lib/scene3d/relief'
 import { DEFAULT_SHADER_SPEC, normalizeShaderSpec, type ShaderSpec } from '~/lib/spacetype/fillTile'
 import { fetchShaderFxCatalog } from '~/lib/shaderfx/catalog'
 import { LIVE_FIELD_CEILING } from '~/lib/shaderfill/descriptor'
@@ -587,6 +587,11 @@ onBeforeUnmount(() => { offTexError?.() })
 const reliefFileInput = ref<HTMLInputElement | null>(null)
 const reliefUploading = ref<string | null>(null)
 const reliefUploadError = reactive<Record<string, boolean>>({})
+// Set once a relief image's local gradient is measured (upload path or generate path,
+// below). true means the map is suspiciously flat and bump mapping will show ~nothing —
+// see heightGradient/RELIEF_FLAT_THRESHOLD in lib/scene3d/relief.ts. Advisory only: the
+// map is still applied, this just tells the user why they might not see anything.
+const reliefFlatWarning = reactive<Record<string, boolean>>({})
 // Which of the two Task-5 conversions the NEXT upload runs through. 'Refine with depth'
 // (a paid server call) is Task 6's — not built here, and no disabled placeholder for it.
 const reliefConversion = ref<'brightness' | 'asis'>('brightness')
@@ -620,6 +625,27 @@ function brightnessToHeightDataUrl(dataUrl: string): Promise<string> {
     img.src = dataUrl
   })
 }
+/** Decode a data URL and run heightGradient over its pixels — the same guard for both the
+ *  upload path and the generate path below, on whatever image will actually be applied as
+ *  relief (brightness-converted or as-is). Measurement is advisory, so callers should treat
+ *  a rejection as "unknown" rather than a hard failure. */
+function dataUrlToGradient(dataUrl: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => {
+      const c = document.createElement('canvas')
+      c.width = img.naturalWidth
+      c.height = img.naturalHeight
+      const ctx = c.getContext('2d')
+      if (!ctx) { reject(new Error('no 2d context')); return }
+      ctx.drawImage(img, 0, 0)
+      const data = ctx.getImageData(0, 0, c.width, c.height)
+      resolve(heightGradient(data.data, c.width, c.height))
+    }
+    img.onerror = () => reject(new Error('decode failed'))
+    img.src = dataUrl
+  })
+}
 async function onReliefFilePicked(e: Event) {
   const file = (e.target as HTMLInputElement).files?.[0]
   ;(e.target as HTMLInputElement).value = ''
@@ -630,6 +656,7 @@ async function onReliefFilePicked(e: Event) {
   const mode = reliefConversion.value
   reliefUploading.value = target.id
   delete reliefUploadError[target.id]
+  delete reliefFlatWarning[target.id]
   try {
     const rawUrl = await readAsDataUrl(file)
     const heightUrl = mode === 'brightness' ? await brightnessToHeightDataUrl(rawUrl) : rawUrl
@@ -638,6 +665,9 @@ async function onReliefFilePicked(e: Event) {
     if (!target.material.relief) target.material.relief = { source: 'image', scale: MATERIAL_DEFAULTS.reliefScale }
     target.material.relief.source = 'image'
     target.material.relief.image = filename
+    try {
+      reliefFlatWarning[target.id] = (await dataUrlToGradient(heightUrl)) < RELIEF_FLAT_THRESHOLD
+    } catch { /* measurement is advisory only — a failure here must not fail the upload */ }
   } catch {
     reliefUploadError[target.id] = true
   } finally {
@@ -674,21 +704,30 @@ async function generateReliefFromPrompt() {
   if (!target || target.kind === 'light' || !prompt || reliefGenBusy.value) return
   reliefGenBusy.value = target.id
   delete reliefGenError[target.id]
+  delete reliefFlatWarning[target.id]
   try {
     const r = await $fetch<{ imageUrl: string, heightUrl: string, seed: number }>('/api/scene3d/gen-map', {
       method: 'POST',
       body: { prompt },
     })
-    const res = await fetch(r.heightUrl)
+    // Consume the COLOUR tile, not the depth map: depth models report scene distance, which
+    // is nearly flat on a straight-on material photo and renders no visible bump (measured
+    // mean gradient ~3.3). The colour tile carries the actual surface detail — run it through
+    // the same brightness→height conversion the file-upload path uses, below.
+    const res = await fetch(r.imageUrl)
     if (!res.ok) throw new Error(`fetch ${res.status}`)
-    const dataUrl = await blobToDataUrl(await res.blob())
-    const filename = await inpaint.uploadDataUrl(dataUrl, `scene3d_relief_gen_${props.nodeId}`)
+    const rawUrl = await blobToDataUrl(await res.blob())
+    const heightUrl = await brightnessToHeightDataUrl(rawUrl)
+    const filename = await inpaint.uploadDataUrl(heightUrl, `scene3d_relief_gen_${props.nodeId}`)
     delete texLoadError[filename]
     if (!target.material.relief) target.material.relief = { source: 'image', scale: MATERIAL_DEFAULTS.reliefScale }
     target.material.relief.source = 'image'
     target.material.relief.image = filename
     reliefGenOpen.value = false
     reliefGenPrompt.value = ''
+    try {
+      reliefFlatWarning[target.id] = (await dataUrlToGradient(heightUrl)) < RELIEF_FLAT_THRESHOLD
+    } catch { /* measurement is advisory only — a failure here must not fail the generation */ }
   } catch (err) {
     console.error('[scene3d-studio] gen-map failed', err)
     reliefGenError[target.id] = true
@@ -2122,6 +2161,9 @@ function onClose() {
                 </div>
                 <p v-if="reliefUploadError[selected.id] || (matReliefImage && texLoadError[matReliefImage])"
                   class="text-[11px] text-red-400/90">texture failed</p>
+                <p v-else-if="reliefFlatWarning[selected.id]" class="text-[11px] text-amber-400/80">
+                  This image is too smooth to show as relief — try one with finer detail.
+                </p>
                 <div v-if="reliefGenOpen" class="space-y-1.5 rounded border border-white/10 bg-white/[0.03] p-2">
                   <textarea
                     v-model="reliefGenPrompt"

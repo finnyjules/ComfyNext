@@ -24,3 +24,35 @@ export function toHeightPixels(rgba: Uint8ClampedArray, invert = false): Uint8Cl
   }
   return out
 }
+
+/** Below this mean gradient, bump mapping shows effectively nothing — the whole class of
+ *  failure this guards against. Calibrated from measured artifacts (see gen-map.post.ts /
+ *  Scene3DStudioSurface.vue relief section for the incident): fbm_warp (5.42) and two
+ *  real AI-generated depth maps (3.26, 3.30) were all reported invisible; voronoi_cells
+ *  (36.8, the current effect default) and a checkerboard (60.2) both render strongly. 8
+ *  sits just above the known-invisible band and well below anything that has ever worked. */
+export const RELIEF_FLAT_THRESHOLD = 8
+
+/** Mean absolute per-pixel gradient of an already-height-converted buffer (red channel —
+ *  toHeightPixels writes the same value into R/G/B, so any one channel represents the
+ *  height field). Bump mapping perturbs normals from the LOCAL DERIVATIVE of the height
+ *  field, not its range, so a height map can span the full 0–255 range and still be
+ *  invisible if it varies smoothly (e.g. a depth-model vignette) rather than sharply.
+ *  Interior pixels only — edges have no symmetric left/right or up/down neighbour. */
+export function heightGradient(rgba: Uint8ClampedArray, width: number, height: number): number {
+  if (width < 3 || height < 3) return 0
+  let sum = 0
+  let count = 0
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
+      const i = (y * width + x) * 4
+      const left = rgba[i - 4]!
+      const right = rgba[i + 4]!
+      const up = rgba[i - width * 4]!
+      const down = rgba[i + width * 4]!
+      sum += Math.abs(left - right) + Math.abs(up - down)
+      count++
+    }
+  }
+  return count === 0 ? 0 : sum / count
+}
