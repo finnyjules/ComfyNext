@@ -28,7 +28,7 @@ export const DEFAULT_POST: PostSettings = {
   halftone: false, halftoneRadius: 4, halftoneScatter: 0,
   dotScreen: false, dotScreenScale: 1, dotScreenAngle: 1.57,
   glitch: false,
-  gtao: false, gtaoRadius: 4, gtaoIntensity: 0.5, gtaoThickness: 1,
+  gtao: false, gtaoRadius: 0.5, gtaoIntensity: 0.5, gtaoThickness: 0.25,
 }
 
 /** True when ANY post effect is on — the engine renders through the composer only then. */
@@ -104,11 +104,18 @@ export class PostChain {
     // the aoParameters/pdParameters args exist at runtime (see GTAOPass.js) but aren't in the .d.ts,
     // so they're set via updateGtaoMaterial() right after construction instead of the constructor.
     this.gtaoPass = new GTAOPass(scene, camera, width, height)
-    // screenSpaceRadius: true — GTAO's `radius` is otherwise in world units, and this is a design
-    // tool where users scale objects freely; a radius tuned on a 1-unit sphere would be wrong on a
-    // 10-unit one. Screen-space radius keeps the effect scale-independent. Set once here; setSettings
-    // only ever updates radius/thickness, so this define is never toggled back off.
-    this.gtaoPass.updateGtaoMaterial({ radius: 4, thickness: 1, screenSpaceRadius: true })
+    // screenSpaceRadius was tried here (radius scaled by a depth-dependent factor so it stays
+    // scale-independent for freely-resized objects) but it broke localised occlusion: GTAOShader.js's
+    // accept/reject gate — `if (abs(viewDelta.z) < thickness)` — always reads the RAW `thickness`
+    // uniform, never the screen-space-scaled `distanceFalloffToUse` the shader computes right next to
+    // it (that value is dead code, unused after being computed — see GTAOShader.js's fragment shader).
+    // So with screenSpaceRadius on, `radius` became depth-scaled but `thickness` stayed fixed — a unit
+    // mismatch that made the occlusion test's outcome depend on `thickness` almost exclusively,
+    // leaving `radius` (and therefore contact-vs-open discrimination) with barely any effect on the
+    // result. Both stay in plain world units instead; DEFAULT_POST's radius/thickness are tuned for
+    // Sailor's roughly unit-scale primitives (radius 0.5, thickness 0.25) rather than the shader's own
+    // (unrelated) defaults.
+    this.gtaoPass.updateGtaoMaterial({ radius: DEFAULT_POST.gtaoRadius, thickness: DEFAULT_POST.gtaoThickness })
     // blendIntensity is a property on the pass itself, not a material uniform. AO should only
     // darken *ambient/indirect* light, but this pass multiplies its occlusion over the whole
     // finished image — including directly-lit surfaces. Studio lighting has a strong sun, so a
@@ -190,9 +197,14 @@ export class PostChain {
     // GlitchPass.goWild is intentionally left at its default (false) — only the on/off toggle
     // is exposed for now, per the task brief.
     this.glitchPass.enabled = p.glitch
-    // The composer needs a non-bloom pass to end on screen; gradePass is always the last pass, so
-    // force it on (neutral) when only bloom is active so bloom still composites to the canvas.
-    if (!grade && p.bloom) this.gradePass.enabled = true
+    // The composer needs a pass after GTAO/bloom to end on screen; gradePass is always the last pass
+    // in the chain, so force it on (neutral) when GTAO and/or bloom are active without any grade
+    // effect, so they still composite to the canvas. Without this, EffectComposer.render() marks
+    // whichever pass is *actually* last-enabled as `renderToScreen` (see EffectComposer.js's
+    // `isLastEnabledPass`) — if that ends up being gtaoPass (GTAO on, nothing after it enabled), it
+    // renders straight to the canvas mid-chain instead of into the composer's off-screen buffer,
+    // which the chain's ordering assumes never happens (see the comment at addPass below).
+    if (!grade && (p.bloom || p.gtao)) this.gradePass.enabled = true
   }
 
   /** Point the render pass at the current scene/camera (camera swaps per frame) and render. */

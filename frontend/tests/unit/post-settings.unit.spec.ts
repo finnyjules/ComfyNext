@@ -43,4 +43,16 @@ describe('post settings', () => {
   it('postEnabled reports true when ONLY gtao is on', () => {
     expect(postEnabled({ ...DEFAULT_POST, gtao: true })).toBe(true)
   })
+  // Regression guard for the "GTAO darkens everything uniformly" bug: radius/thickness must stay
+  // in the same (plain world-space) units, and both scaled for Sailor's roughly unit-scale
+  // primitives — NOT the >1 world-unit values a screen-space-scaled radius needs. This can't catch
+  // the actual GPU-side symptom (that needs a real render + pixel diff, see the bug report), but it
+  // does stop someone reintroducing the old radius=4 / thickness=1 defaults that made `radius`
+  // negligible relative to a fixed, unscaled `thickness` gate.
+  it('gtao radius/thickness defaults are small, unit-scale-appropriate world-space values', () => {
+    expect(DEFAULT_POST.gtaoRadius).toBeGreaterThan(0)
+    expect(DEFAULT_POST.gtaoRadius).toBeLessThanOrEqual(1)
+    expect(DEFAULT_POST.gtaoThickness).toBeGreaterThan(0)
+    expect(DEFAULT_POST.gtaoThickness).toBeLessThanOrEqual(1)
+  })
 })
