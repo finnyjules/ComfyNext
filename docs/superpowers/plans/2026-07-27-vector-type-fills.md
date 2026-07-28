@@ -68,7 +68,7 @@ across a **word** is the single most-wanted treatment and neither existing ancho
 - `glyph` — each letter carries its own fill (canvas: `fillStyle` inside the per-glyph transform, which
   is where it is today; SVG: `gradientUnits="objectBoundingBox"`)
 - `word` — one fill spans the whole run, letters are windows onto it (canvas: hoist `fillStyle` above
-  the loop with a run-level box; SVG: `userSpaceOnUse` referenced from an **untransformed wrapper `<g>`**,
+  the loop with a run-level box; SVG: `userSpaceOnUse` referenced from an **inverse `gradientTransform`/`patternTransform`**,
   the same trick already used for clip and blur)
 - `frame` — one fill spans the canvas, type moves over it (the existing frame anchor; canvas recipe is
   the matrix inversion at `useCompositorLayers.ts:657-700`)
@@ -140,7 +140,7 @@ must not move.
 - [ ] **Step 2:** `<linearGradient>` (angle → `x1/y1/x2/y2`, the same trig as `fillTileBox:306`) and
       `<radialGradient>`. Dedupe by value; two exports pasted into one document must not collide.
 - [ ] **Step 3:** `gradientUnits` follows the anchor: `objectBoundingBox` for glyph, `userSpaceOnUse`
-      from an untransformed wrapper `<g>` for word/frame.
+      from an inverse `gradientTransform`/`patternTransform` for word/frame.
 - [ ] **Step 4:** Rasterise the export and diff against canvas, **with a deliberately broken control**
       (wrong `gradientUnits`, or the gradient ref stripped) to show the check can detect what it rules
       out. Report both percentages.
@@ -149,6 +149,13 @@ must not move.
 ---
 
 ### Task 5: SVG tier 2 — procedural `<pattern>` emitters
+
+> **Correction (2026-07-28, found by Task 4's pixel diff):** an untransformed wrapper `<g>` does **not**
+> pin a paint server — `fill` is inherited, so the wrapper changes nothing. The **inverse
+> `gradientTransform` / `patternTransform`** is what cancels the glyph's own transform. Also:
+> `objectBoundingBox` plus an oblique angle disagreed with the canvas by 46.3% of pixels while being
+> exact at 0°/90° — **aspect correction is required**. Both apply to Task 5's patterns identically.
+
 
 **Files:** `lib/vector/svg.ts` or a new `lib/vector/patterns.ts`.
 
