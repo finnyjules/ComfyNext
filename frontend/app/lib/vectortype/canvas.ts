@@ -87,6 +87,25 @@ export interface VtFrame {
    *  glyph shares one axis position; up to `glyphs.length + 1` when a wave is
    *  travelling or an axis preset has moved the run off its resting position. */
   shapings: number
+  /**
+   * How many of this frame's shader fields `withFieldFrame` had to FREEZE at
+   * `t = 0` because the frame asked for more live fields than
+   * `LIVE_FIELD_CEILING` allows.
+   *
+   * Reported rather than swallowed for the same reason Space Type and Shape
+   * Studio report theirs: a silently truncated field reads to a user as "my
+   * shader stopped working", and there is nothing in the picture that says
+   * otherwise. `drawVectorType` sets this from the span it opens; the pure
+   * geometry path (`vectorTypeFrame`) opens no span and always reports 0,
+   * because no field decision was made there at all.
+   *
+   * Vector Type carries exactly ONE paint today, so `vtFieldRequests` emits at
+   * most one request and this is 0 by construction — it is wired anyway because
+   * the moment a second paint lands (a `Paint`-typed stroke, per-glyph fills)
+   * the ceiling becomes reachable, and a host that only starts counting once it
+   * can overflow starts counting one release too late.
+   */
+  frozenFields: number
 }
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v)
@@ -264,6 +283,9 @@ export function vectorTypeFrame(font: VtFont, cfg: VectorTypeConfig, t: number):
     // is what says how many distinct positions were paid for.
     staggered,
     shapings: cache.size,
+    // No `withFieldFrame` span is opened here — this function resolves GEOMETRY,
+    // not paint. `drawVectorType` overwrites this with its span's real count.
+    frozenFields: 0,
   }
 }
 
@@ -547,10 +569,14 @@ export function drawVectorType(
     ? vtFieldRequests(fill, W, H, t, field.fps, field.bake)
     : []
 
-  return withFieldFrame(requests, (_frozenCount, token) => {
+  return withFieldFrame(requests, (frozenCount, token) => {
     // `resolveShaderFill` reads the token from here to pass into every
     // `resolveField` call, the same way it reads `t`/`fps`/`bake`.
     field.token = token
+    // Surfaced, never swallowed — see `VtFrame.frozenFields`. The studio surface
+    // turns a non-zero count into a visible hint; a host that drops it on the
+    // floor is a host whose shader silently stops moving.
+    frame.frozenFields = frozenCount
     drawGlyphRun()
     ctx.setTransform(1, 0, 0, 1, 0, 0)
     return frame

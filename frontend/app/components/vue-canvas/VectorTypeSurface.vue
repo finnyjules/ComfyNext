@@ -47,6 +47,12 @@ import MotionPresetPicker from '~/components/vue-canvas/motion/MotionPresetPicke
 import PresetThumb from '~/components/vue-canvas/motion/PresetThumb.vue'
 import VectorTypeThumb from '~/components/vue-canvas/motion/VectorTypeThumb.vue'
 import { drawVectorTypeToCanvas, vectorTypeSVG, vtExportName, vtIsAnimated } from '~/lib/vectortype/canvas'
+import { DEFAULT_SHADER_SPEC, fillIsShader, type ShaderSpec } from '~/lib/spacetype/fillTile'
+import { isFill } from '~/lib/compositor/paint'
+import { fetchShaderFxCatalog } from '~/lib/shaderfx/catalog'
+import { LIVE_FIELD_CEILING } from '~/lib/shaderfill/descriptor'
+import { onFieldCatalogReady } from '~/lib/shaderfill/field'
+import ShaderFillEditor from '~/components/vue-canvas/widgets/ShaderFillEditor.vue'
 import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
@@ -230,17 +236,74 @@ const { sweepPopover, applySweep, varMenu, openVarMenu, goToCollection } = useSt
   boundColumnFor, boundColumnKeyFor, promote, unbind,
 })
 
+/**
+ * Keys on the `Fill` arm that a SHADER fill does not read.
+ *
+ * `fill.a`/`fill.b` are the flat/tiling colours; a shader fill paints
+ * `spec.input` instead (edited by ShaderFillEditor's nested FillControl), so
+ * leaving them in the panel is a control the user can drag with no effect —
+ * the exact thing `controls.ts` withholds `stroke` and `fill.b` for elsewhere.
+ * `fill.angle`/`fill.density` are already hidden by their own `when`
+ * predicates on the `shader` type, and are listed here so the rule reads as
+ * one rule rather than two half-rules.
+ *
+ * Done HERE and not in `VT_CONTROLS` deliberately: this is a surface-level
+ * visibility question and `controls.ts` is landed/verified. The agent can
+ * still write `fill.a` on a shader fill and see nothing happen — a `when` on
+ * the schema is the real fix, and it is flagged rather than smuggled in.
+ */
+const SHADER_INERT_FILL_KEYS = new Set(['fill.a', 'fill.b', 'fill.angle', 'fill.density'])
+
+/** The fill is TYPED shader — the question the panel asks, deliberately not
+ *  "has a ShaderSpec". `setControl` seeds the spec on the same tick the type
+ *  changes, but gating the editor on the spec would mean a config that somehow
+ *  arrived typed-shader with no spec shows no editor at all and no way to make
+ *  one, which is unrecoverable from inside the UI. */
+const fillTypeIsShader = computed(() => {
+  const f = config.value.fill
+  return isFill(f) && f.type === 'shader'
+})
+
+/** Two-way binding for ShaderFillEditor. `DEFAULT_SHADER_SPEC` is only ever the
+ *  READ fallback (a clone lands in the config on the type switch itself, and on
+ *  the first edit here) — the editor never mutates its `modelValue` in place,
+ *  it emits a fresh spread, so the shared module constant cannot be written
+ *  through even on that path. */
+const shaderSpec = computed<ShaderSpec>({
+  get: () => {
+    const f = config.value.fill
+    return isFill(f) && fillIsShader(f) ? f.shader : DEFAULT_SHADER_SPEC
+  },
+  set: (v: ShaderSpec) => {
+    const f = config.value.fill
+    if (isFill(f)) f.shader = v
+  },
+})
+
 function setControl(key: string, value: string | number) {
   // Any write to the stagger retires the note explaining the last one — the
   // user has taken the control back (and `assignPreset` re-arms it right after
   // its own write, so its own bump is not swallowed here).
   if (key === 'motion.stagger.delay') staggerNote.value = null
+  // Switching the fill type INTO 'shader' seeds a real ShaderSpec so
+  // ShaderFillEditor has something to bind to the instant it mounts —
+  // otherwise the picker/params/speed read the module-level default while the
+  // config still has no `shader` at all, and the first edit is the one that
+  // creates it. STRUCTURED-CLONED, never spread: `DEFAULT_SHADER_SPEC` is a
+  // shared module constant, and Task 2 already paid for the version of this bug
+  // where a shallow copy let frame values leak into the module default (which
+  // is what `clonePaint` exists for).
+  if (key === 'fill.type' && value === 'shader') {
+    const f = config.value.fill
+    if (isFill(f) && !f.shader) f.shader = structuredClone(DEFAULT_SHADER_SPEC)
+  }
   paramsProxy[key] = value
   onEdit(key, value)
 }
 function promoteControl(c: ControlSpec) { promote(c, paramsProxy[c.key] as string | number) }
 function controlVisible(c: ControlSpec): boolean {
   const vc = c as VtControl
+  if (SHADER_INERT_FILL_KEYS.has(vc.key) && fillTypeIsShader.value) return false
   return !vc.when || vc.when(config.value)
 }
 function slotControl(slotProps: unknown): ControlSpec {
@@ -385,6 +448,16 @@ const canvas = ref<HTMLCanvasElement | null>(null)
 const playing = ref(true)
 const stats = ref({ glyphs: 0, shapings: 0, staggered: false, commands: 0 })
 const previewTime = ref(0)
+/**
+ * Shader fields this frame had to freeze at t=0 because the frame asked for
+ * more live fields than `LIVE_FIELD_CEILING` allows — read from the frame
+ * `drawVectorType` returns, so it is what the renderer ACTUALLY decided rather
+ * than a second guess at the same rule.
+ *
+ * Surfaced for the same reason Space Type and Shape Studio surface theirs: a
+ * field truncated without a word reads as "my shader stopped working".
+ */
+const frozenFieldCount = ref(0)
 let timer = 0
 let startedAt = 0
 let disposed = false
@@ -425,8 +498,20 @@ function previewBox() {
   return { cssW: Math.max(1, Math.round(cssW)), cssH: Math.max(1, Math.round(cssH)) }
 }
 
+/**
+ * One scheduled tick: re-arm the loop, then paint.
+ *
+ * Split from `render` so a nudge that is NOT the loop (the catalog landing,
+ * below) can force a repaint without forking a second loop — calling `draw()`
+ * for that would arm a second `schedule()` and the two would double every
+ * frame from then on.
+ */
 function draw() {
   schedule()
+  render()
+}
+
+function render() {
   const el = canvas.value
   const f = font.value
   if (!el || !f) return
@@ -457,6 +542,7 @@ function draw() {
         staggered: frame.staggered,
         commands: cmds,
       }
+      frozenFieldCount.value = frame.frozenFields
     }
   } catch (e) {
     console.error('[vector-type] preview render failed', e)
@@ -492,14 +578,47 @@ function restartPreview() {
   playing.value = true
 }
 
+/**
+ * The shader-effect catalog, pulled once when the studio opens.
+ *
+ * Two separate jobs, and both are needed:
+ *
+ * 1. **The fetch.** `getEffectSync` — which `resolveField` is built on — only
+ *    ever returns non-null once SOMETHING on the page has awaited
+ *    `fetchShaderFxCatalog()`. `field.ts` self-heals via `kickCatalogFetch` on
+ *    a miss, but that costs the user a visibly wrong first frame (the shader's
+ *    input fill, not the shader) every time the studio opens. Asking up front
+ *    means the very first frame usually has it.
+ * 2. **The nudge.** `onFieldCatalogReady` fires once the catalog lands, and
+ *    forces ONE repaint. This is the fix for Task 3's hand-off #2: a `speed: 0`
+ *    shader fill is deliberately NOT animation (`vtIsAnimated` says so, or a
+ *    frozen field would be inexpressible), so nothing about it re-triggers a
+ *    draw on its own — on a cold load its one frame is drawn before the
+ *    catalog exists and the fallback would stand forever. `render()`, not
+ *    `draw()`: see `draw`'s doc.
+ *
+ * The surface's own loop happens to be unconditional today (`schedule()` runs
+ * at the top of every tick regardless of `animated`), so it would eventually
+ * self-heal too — but "eventually, because an unrelated loop happens to still
+ * be running" is not a fix, and the loop is exactly what Chrome's intensive
+ * throttling kills in a backgrounded tab.
+ */
+let offCatalogReady: (() => void) | null = null
+
 onMounted(() => {
   registerStudioParamBaker(props.nodeId, renderBlobWithOverrides)
+  offCatalogReady = onFieldCatalogReady(() => { if (!disposed) render() })
+  void fetchShaderFxCatalog()
+    .then(() => { if (!disposed) render() })
+    .catch(() => { /* offline/backend down — a shader fill shows its input fill, same as before */ })
   schedule()
 })
 onBeforeUnmount(() => {
   saveConfig()
   disposed = true
   stopLoop()
+  offCatalogReady?.()
+  offCatalogReady = null
   unregisterStudioParamBaker(props.nodeId)
 })
 
@@ -517,6 +636,13 @@ function setActionError(msg: string) {
  *  Collection param baker, so the two can never disagree about framing. */
 async function renderFullResBlob(t: number): Promise<Blob | null> {
   const f = font.value ?? await loadVariableFont(config.value.fontId)
+  // A ONE-SHOT render gets no second chance: unlike the live preview (which
+  // re-resolves every tick and self-heals the moment field.ts's own catalog
+  // fetch lands), this draws once and uploads whatever it got. Awaiting the
+  // catalog first is what stops a shader fill from silently exporting its input
+  // fill. Cheap — the fetch is memoized, so after the first call this resolves
+  // on the next microtask.
+  await fetchShaderFxCatalog().catch(() => { /* offline — falls back, same as before */ })
   const off = document.createElement('canvas')
   drawVectorTypeToCanvas(off, f, config.value, t, {
     // `bake` opts a shader fill's field out of the 512px live-preview clamp, so the
@@ -627,11 +753,18 @@ async function renderBlobWithOverrides(overrides: Record<string, string | number
     // shaped, and the loaded `font` ref still holds the old one.
     const f = await loadVariableFont(config.value.fontId).catch(() => font.value)
     if (!f) return null
+    // Same one-shot reasoning as `renderFullResBlob` — a sweep row renders once
+    // and is uploaded; there is no later frame to correct it.
+    await fetchShaderFxCatalog().catch(() => { /* offline — falls back, same as before */ })
     const off = document.createElement('canvas')
     // A sweep row is a STILL, and with an entrance preset `t = 0` is deliberately
     // empty — every row would bake blank. `vtStillTime` is the resting frame.
     drawVectorTypeToCanvas(off, f, config.value, vtStillTime(config.value), {
-      width: canvasW.value, height: canvasH.value, background: background.value,
+      // A sweep row is a full-resolution EXPORT, not a preview — `bake` opts a
+      // shader fill's field out of the 512px live clamp so the uploaded PNG
+      // carries the field at the row's own output size rather than an upscale.
+      // (Task 3 wired the two PNG sites; this is the third full-res site.)
+      width: canvasW.value, height: canvasH.value, background: background.value, bake: true,
     })
     return await new Promise<Blob | null>(resolve => off.toBlob(b => resolve(b), 'image/png'))
   } catch (e) {
@@ -686,6 +819,15 @@ const frameCount = computed(() => Math.round((config.value.motion.fps || 30) * (
         </div>
         <div v-else-if="fontLoading && !font" class="absolute inset-0 flex items-center justify-center text-[11px] text-white/40">
           Loading outlines…
+        </div>
+        <!-- Never truncate a shader silently: past LIVE_FIELD_CEILING live
+             fields the rest freeze at t=0, and a frozen field is visually
+             indistinguishable from a broken one. Same wording and placement as
+             Shape Studio / Space Type. -->
+        <div v-if="frozenFieldCount > 0"
+             class="pointer-events-none absolute inset-x-3 bottom-3 rounded-md border border-amber-400/30 bg-black/70 px-3 py-2 text-[11px] text-amber-200/90">
+          {{ frozenFieldCount }} shader fill{{ frozenFieldCount > 1 ? 's' : '' }} frozen — too many live shader
+          fields at once (limit {{ LIVE_FIELD_CEILING }}). Remove a shader fill for full motion.
         </div>
         <!-- Not decoration: `shapings` is how many DISTINCT axis positions this
              frame shaped. 1 means the whole word shares one clock; anything more
@@ -790,6 +932,26 @@ const frameCount = computed(() => Math.round((config.value.motion.fps || 30) * (
             <p v-else class="text-[10px] leading-snug text-white/30">
               {{ fontAxes.length }} axes from the file's own fvar. These interpolate the OUTLINE, not a bitmap.
             </p>
+          </template>
+
+          <!-- Paint: the shader-fill editor. Dynamically-keyed per-effect params
+               and a recursive nested fill — no fixed ControlSpec fits, so it is
+               a bespoke block in the section slot, exactly as Shape Studio
+               mounts the SAME component (never a fork of it). -->
+          <template #section-Paint>
+            <template v-if="fillTypeIsShader">
+              <ShaderFillEditor v-model="shaderSpec" />
+              <!-- TWO anchors are live at once and they are not the same anchor.
+                   Said out loud because two controls a section apart, both
+                   labelled "anchor", is otherwise a trap: the user changes the
+                   wrong one and concludes the other is broken. -->
+              <p class="rounded border border-white/10 bg-white/[0.04] px-2 py-1.5 text-[10px] leading-snug text-white/50">
+                <span class="text-white/75">Two anchors, two jobs.</span>
+                The editor's <em>Anchor</em> decides where the shader itself is pinned — to each
+                letter, or to the frame. <em>Fill anchor</em> above decides which box the letters
+                sample it through. A frame-anchored shader stays put no matter what Fill anchor says.
+              </p>
+            </template>
           </template>
         </StudioControlPanel>
 
