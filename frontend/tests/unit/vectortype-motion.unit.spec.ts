@@ -23,11 +23,13 @@ import {
   VT_STAGGER_ORDERS,
   cloneConfig,
   mergeConfig,
+  vtLayer,
   type VectorTypeConfig,
   type VtMotionTrack,
   type VtStaggerOrder,
 } from '~/lib/vectortype/config'
 import { VT_CONTROLS, visibleVtControls } from '~/lib/vectortype/controls'
+import { DEFAULT_FILL } from '~/lib/spacetype/fillTile'
 import type { VtAxis } from '~/lib/vectortype/font'
 import {
   IDENTITY_GLYPH_TRANSFORM,
@@ -59,6 +61,12 @@ const cfg = (over: Partial<VectorTypeConfig> = {}): VectorTypeConfig =>
 const withTracks = (tracks: VtMotionTrack[], over: Partial<VectorTypeConfig> = {}): VectorTypeConfig =>
   cfg({ ...over, motion: { ...DEFAULT_CONFIG.motion, duration: 4, tracks } })
 
+/** A config with a stroke layer above its fill, so the stroke vocabulary is
+ *  reachable. `cfg({ strokeWidth })` no longer means anything: the stack is
+ *  already present on a `DEFAULT_CONFIG` spread. */
+const strokedCfg = (over: Partial<VectorTypeConfig> = {}) =>
+  cfg({ ...over, appearance: [vtLayer({ id: 'Lfill' }), vtLayer({ id: 'Lstroke', kind: 'stroke', width: 3 })] })
+
 const staggered = (delay: number, order: VtStaggerOrder = 'forward', seed = 0, tracks: VtMotionTrack[] = []) =>
   cfg({ motion: { ...DEFAULT_CONFIG.motion, duration: 4, tracks, stagger: { delay, order, seed } } })
 
@@ -73,11 +81,34 @@ describe('animatableTargets — derived from the one declaration', () => {
     const paths = animatableTargets(cfg()).map(t => t.path)
     expect(paths).toContain('size')
     expect(paths).toContain('tracking')
-    expect(paths).toContain('strokeWidth')
+  })
+
+  it('EXPANDS the relative `layer.` prefix to one absolute path per layer', () => {
+    // The whole point of the relative prefix: one declaration, N targets. A
+    // target still addressing `layer.paint.angle` would animate nothing —
+    // `applyMotion` resolves against the config, where there is no `layer` key.
+    const two = cfg({
+      appearance: [
+        vtLayer({ id: 'La', paint: { ...DEFAULT_FILL, type: 'gradient' } }),
+        vtLayer({ id: 'Lb', kind: 'stroke' }),
+      ],
+    })
+    const paths = animatableTargets(two).map(t => t.path)
+    expect(paths).toContain('appearance.0.paint.angle')
+    expect(paths).toContain('appearance.1.width')
+    expect(paths.some(p => p.startsWith('layer.'))).toBe(false)
+    // Labelled per layer, so a timeline dropdown can tell two of them apart.
+    const labels = animatableTargets(two).filter(t => t.path.startsWith('appearance.')).map(t => t.label)
+    expect(new Set(labels).size).toBe(labels.length)
+  })
+
+  it('offers NOTHING from the stack when the stack is empty', () => {
+    const bare = cfg({ appearance: [] })
+    expect(animatableTargets(bare).some(t => t.path.startsWith('appearance.'))).toBe(false)
   })
 
   it('offers nothing that is not a slider', () => {
-    const paths = new Set(animatableTargets(cfg({ strokeWidth: 3 }), RICH_AXES).map(t => t.path))
+    const paths = new Set(animatableTargets(strokedCfg(), RICH_AXES).map(t => t.path))
     for (const c of VT_CONTROLS) {
       if (c.kind === 'slider') continue
       expect(paths.has(c.key), `${c.key} (${c.kind}) is animatable`).toBe(false)
@@ -86,6 +117,7 @@ describe('animatableTargets — derived from the one declaration', () => {
     expect(paths.has('fontId')).toBe(false)
     expect(paths.has('text')).toBe(false)
     expect(paths.has('fill')).toBe(false)
+    expect(paths.has('layer.anchor')).toBe(false)
   })
 
   it('honours animatable: false — the stagger block is not itself a track target', () => {
@@ -117,7 +149,7 @@ describe('animatableTargets — derived from the one declaration', () => {
   })
 
   it('emits unique paths with a usable range on every one', () => {
-    const targets = animatableTargets(cfg({ strokeWidth: 3 }), RICH_AXES)
+    const targets = animatableTargets(strokedCfg(), RICH_AXES)
     expect(new Set(targets.map(t => t.path)).size).toBe(targets.length)
     for (const t of targets) {
       expect(t.max, t.path).toBeGreaterThan(t.min)
@@ -130,8 +162,8 @@ describe('animatableTargets — derived from the one declaration', () => {
     // The glyph namespace is deliberately NOT a config leaf (a per-glyph offset
     // is an output, not stored state); everything else must resolve, or it is a
     // track the renderer will never read.
-    const c = cfg({ strokeWidth: 3, axes: Object.fromEntries(RICH_AXES.map(a => [a.tag, a.default])) })
-    const params = makeConfigParams(() => c)
+    const c = strokedCfg({ axes: Object.fromEntries(RICH_AXES.map(a => [a.tag, a.default])) })
+    const params = makeConfigParams(() => c, () => 0, 'appearance')
     const unresolved = animatableTargets(c, RICH_AXES)
       .map(t => t.path)
       .filter(p => !p.startsWith('glyph.') && params[p] === undefined)
@@ -205,19 +237,20 @@ describe('applyMotion', () => {
     expect(Object.keys(out).sort()).toEqual(Object.keys(c).sort())
   })
 
-  it('animating fill.angle leaves the SOURCE fill — and DEFAULT_CONFIG — untouched', () => {
-    // `fill` is a mutable object as of Task 2 and `fill.angle` is an animatable
+  it('animating a layer paint leaves the SOURCE layer — and DEFAULT_CONFIG — untouched', () => {
+    // A layer's `paint` is a mutable object and `paint.angle` is an animatable
     // slider, so `cloneConfig`'s shallow spread would have let `applyMotion`
     // write frame 37's angle into the config the surface holds. Worse: every
-    // config built from `DEFAULT_CONFIG` shares ONE `fill` object unless the
+    // config built from `DEFAULT_CONFIG` shares ONE layer object unless the
     // clone is deep, so the module-level default itself would drift.
-    const before = { ...(DEFAULT_CONFIG.fill as Record<string, unknown>) }
-    const c = withTracks([track({ path: 'fill.angle', from: 0, to: 300 })])
+    const before = { ...(DEFAULT_CONFIG.appearance[0]!.paint as Record<string, unknown>) }
+    const c = withTracks([track({ path: 'appearance.0.paint.angle', from: 0, to: 300 })])
     const out = applyMotion(c, 2)
-    expect((out.fill as any).angle).toBeCloseTo(150, 6)
-    expect((c.fill as any).angle).toBe(45)
-    expect(out.fill).not.toBe(c.fill)
-    expect(DEFAULT_CONFIG.fill).toEqual(before)
+    expect((out.appearance[0]!.paint as any).angle).toBeCloseTo(150, 6)
+    expect((c.appearance[0]!.paint as any).angle).toBe(45)
+    expect(out.appearance[0]!.paint).not.toBe(c.appearance[0]!.paint)
+    expect(out.appearance[0]).not.toBe(c.appearance[0])
+    expect(DEFAULT_CONFIG.appearance[0]!.paint).toEqual(before)
   })
 
   it('still fills a SPARSE leaf whose parent exists', () => {

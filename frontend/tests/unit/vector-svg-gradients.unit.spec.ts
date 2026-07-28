@@ -42,7 +42,7 @@ import { paintToVectorPaint } from '~/lib/paint/toVector'
 import { DEFAULT_FILL, type Fill } from '~/lib/spacetype/fillTile'
 import type { Gradient } from '~/lib/compositor/paint'
 import { normaliseAxes, type VtFont } from '~/lib/vectortype/font'
-import { DEFAULT_CONFIG, mergeConfig, type VectorTypeConfig } from '~/lib/vectortype/config'
+import { DEFAULT_CONFIG, mergeConfig, vtLayer, type VectorTypeConfig } from '~/lib/vectortype/config'
 import { vectorTypeSVG, vectorTypeFrame, vtPlacement, vtRunPaintBox, vtGlyphPaintBox } from '~/lib/vectortype/canvas'
 
 // ── fixtures ────────────────────────────────────────────────────────────────
@@ -60,8 +60,21 @@ const BOX = { width: 400, height: 200 }
 
 const RAMP: Fill = { ...DEFAULT_FILL, type: 'gradient', a: '#ff0000', b: '#0000ff', angle: 0 }
 
-function cfg(patch: Partial<VectorTypeConfig> = {}): VectorTypeConfig {
-  return mergeConfig({ ...DEFAULT_CONFIG, text: WORD, size: 100, fill: { ...RAMP }, ...patch })
+
+/** ═══ APPEARANCE STACK ═══ the `fill` / `fillAnchor` a caller asks for is now
+ *  the BASE FILL LAYER's paint and anchor. Translated here so every call site
+ *  below reads as it did — the stack is what changed, not what these tests
+ *  assert about the document. */
+function vtStack(fill: unknown, fillAnchor: unknown) {
+  return [vtLayer({ id: 'Lfill', paint: fill as any, anchor: (fillAnchor ?? 'glyph') as any })]
+}
+
+function cfg(patch: Partial<VectorTypeConfig> & Record<string, unknown> = {}): VectorTypeConfig {
+  const { fill, fillAnchor, ...rest } = patch as Record<string, unknown>
+  return mergeConfig({
+    ...DEFAULT_CONFIG, text: WORD, size: 100,
+    appearance: vtStack(fill ?? { ...RAMP }, fillAnchor), ...rest,
+  })
 }
 
 function withPreset(presetId: string, patch: Partial<VectorTypeConfig> = {}) {

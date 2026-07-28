@@ -349,8 +349,12 @@ export function kineticParamsToVectorType(rawParams: unknown): KineticMigration 
     // Kinetic stored letter-spacing in em; Vector Type's tracking is 1/1000 em.
     tracking: Math.round(num(o.letterSpacing, KINETIC_DEFAULTS.letterSpacing) * 1000),
     align: 'center',
+    // Handed to `mergeConfig` in the PRE-STACK spelling on purpose: KineticType
+    // had exactly one colour and no outline, so the appearance stack this should
+    // produce is precisely the one the legacy migration already builds — a single
+    // fill layer and no stroke. Spelling it here in the stack's vocabulary would
+    // be a second, hand-maintained copy of that migration.
     fill: hex6(o.color, KINETIC_DEFAULTS.color),
-    stroke: DEFAULT_CONFIG.stroke,
     strokeWidth: 0,
     motion: {
       tracks,

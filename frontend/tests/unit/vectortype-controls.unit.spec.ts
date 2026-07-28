@@ -45,31 +45,64 @@ vi.mock('~/lib/shaderfx/catalog', () => ({
 import { makeConfigParams } from '~/lib/agent/configParams'
 import { DEFAULT_FILL, paintPrimaryColor } from '~/lib/spacetype/fillTile'
 import { isValidAxisTag, normaliseAxes, type VtAxis } from '~/lib/vectortype/font'
-import { animatableTargets } from '~/lib/vectortype/motion'
+import { animatableTargets, applyMotion } from '~/lib/vectortype/motion'
 import {
   DEFAULT_CONFIG,
   VT_ALIGNS,
+  VT_BASE_FILL_ID,
+  VT_BASE_STROKE_ID,
+  VT_DEFAULT_STROKE_WIDTH,
   VT_FILL_ANCHORS,
   VT_FONT_IDS,
+  VT_LAYER_MAX,
   cloneConfig,
   isAxisTag,
   mergeConfig,
+  migrateLegacyAppearance,
+  vtBaseAppearance,
+  vtLayer,
+  vtLayerId,
   type VectorTypeConfig,
 } from '~/lib/vectortype/config'
 import {
   VT_AXES_GROUP,
   VT_CONTROLS,
+  VT_LAYER_PREFIX,
   VT_SECTIONS,
   derivedAxisControls,
   visibleVtControls,
 } from '~/lib/vectortype/controls'
-import { VT_GUIDANCE, vtAgentControls } from '~/lib/vectortype/agentControls'
-import { SHADER_FILL_CONTROLS, derivedShaderFillControls } from '~/lib/shaderfill/controls'
+import { VT_GUIDANCE, VT_LAYER_SHADER_PREFIX, vtAgentControls } from '~/lib/vectortype/agentControls'
+import { derivedShaderFillControls, shaderFillControls } from '~/lib/shaderfill/controls'
 
 const cfg = (over: Partial<VectorTypeConfig> = {}): VectorTypeConfig =>
   mergeConfig({ ...cloneConfig(DEFAULT_CONFIG), ...over })
 
-const paramsFor = (c: VectorTypeConfig) => makeConfigParams(() => c, () => 0)
+/** A LEGACY (pre-stack) blob: the shape every saved node holds. `cfg` cannot
+ *  build one, because it spreads `DEFAULT_CONFIG` and that now carries an
+ *  `appearance` array — whose presence is exactly what tells `mergeConfig` the
+ *  config has already been migrated. */
+const legacyCfg = (over: Record<string, unknown> = {}): VectorTypeConfig =>
+  mergeConfig({ text: 'Saved', fontId: 'inter', size: 120, ...over })
+
+/** A config whose ACTIVE layer (index 0) is a STROKE layer — what `layer.width`
+ *  is gated on now that the stroke is a layer rather than a width on the config. */
+const strokeCfg = (width = 3) =>
+  cfg({ appearance: [vtLayer({ id: VT_BASE_STROKE_ID, kind: 'stroke', width })] })
+
+/** The layer vocabulary resolves against `appearance[active]`, not `layers[…]`. */
+const paramsFor = (c: VectorTypeConfig, active = 0) =>
+  makeConfigParams(() => c, () => active, 'appearance')
+
+/** The three frozen shader keys AT VECTOR TYPE'S PREFIX. The shared constant
+ *  `VT_SHADER_CONTROLS` is still at `layer.paint.shader` for its three other hosts. */
+const VT_SHADER_CONTROLS = shaderFillControls(VT_LAYER_SHADER_PREFIX)
+
+/** A config whose single (active) layer carries `paint`. `cfg({ fill })` cannot
+ *  do this any more: `cfg` spreads `DEFAULT_CONFIG`, so the stack is already
+ *  present and a stray `fill` key is correctly ignored by the merge. */
+const paintCfg = (paint: unknown) =>
+  cfg({ appearance: [vtLayer({ id: VT_BASE_FILL_ID, paint: paint as any })] })
 
 /** A Roboto-Flex-shaped axis set: two familiar axes and two exotic ones, so the
  *  derived vocabulary is exercised on the tags the design doc calls the point. */
@@ -143,7 +176,10 @@ describe('VT_CONTROLS integrity', () => {
     // The whole point of dotted keys: the agent, motion and Collection bindings
     // all write through makeConfigParams. A key that does not resolve is a
     // control that silently does nothing.
-    const params = paramsFor(cfg({ strokeWidth: 4 }))
+    // EVERY declared key, including the ones `when` hides on this config: the
+    // kind-specific layer fields are backfilled on every layer precisely so a
+    // control can never address a leaf that is not there.
+    const params = paramsFor(strokeCfg(4))
     const unresolved = VT_CONTROLS.map((s) => s.key).filter((k) => params[k] === undefined)
     expect(unresolved).toEqual([])
   })
@@ -153,9 +189,12 @@ describe('VT_CONTROLS integrity', () => {
     // a key with no leaf behind it. (Confirmed by hand too — renaming a real key
     // in VT_CONTROLS turns the test above red.)
     const params = paramsFor(cfg())
-    expect(params.fill).toBeDefined()
+    expect(params['layer.paint.a']).toBeDefined()
     expect(params['nope']).toBeUndefined()
-    expect(params['fill.deeper']).toBeUndefined()
+    expect(params['layer.paint.deeper']).toBeUndefined()
+    // …and the relative prefix is not magic: it only resolves because
+    // `makeConfigParams` was told the list is `appearance`.
+    expect(makeConfigParams(() => cfg(), () => 0)['layer.paint.a']).toBeUndefined()
     // Sparse by design: an unset axis has no leaf until it is written.
     expect(params['axes.wght']).toBeUndefined()
   })
@@ -179,20 +218,30 @@ describe('VT_CONTROLS integrity', () => {
 })
 
 describe('visibleVtControls follows the surface predicates', () => {
-  it('withholds the stroke colour until the stroke has width', () => {
-    expect(visibleVtControls(cfg({ strokeWidth: 0 })).map((c) => c.key)).not.toContain('stroke')
-    expect(visibleVtControls(cfg({ strokeWidth: 3 })).map((c) => c.key)).toContain('stroke')
+  it('withholds the stroke width unless the ACTIVE layer is a stroke', () => {
+    // The old gate was backwards: `strokeWidth` was always offered and the
+    // COLOUR was withheld until the width went above zero — which is how the
+    // stroke stayed invisible. Now the width belongs to a stroke layer, and a
+    // stroke layer is visible because it is in the stack.
+    expect(visibleVtControls(cfg()).map((c) => c.key)).not.toContain('layer.width')
+    expect(visibleVtControls(strokeCfg()).map((c) => c.key)).toContain('layer.width')
+  })
+
+  it('gates the layer controls on the ACTIVE layer, not on layer 0', () => {
+    const two = cfg({ appearance: [vtLayer({ id: 'La' }), vtLayer({ id: 'Lb', kind: 'stroke' })] })
+    expect(visibleVtControls(two, 0).map((c) => c.key)).not.toContain('layer.width')
+    expect(visibleVtControls(two, 1).map((c) => c.key)).toContain('layer.width')
   })
 
   it('emits in VT_SECTIONS order', () => {
-    const groups = visibleVtControls(cfg({ strokeWidth: 3 })).map((c) => c.group)
+    const groups = visibleVtControls(strokeCfg()).map((c) => c.group)
     const order = groups.map((g) => VT_SECTIONS.indexOf(g as any))
     expect(order).toEqual([...order].sort((a, b) => a - b))
   })
 
   it('returns only members of VT_CONTROLS', () => {
     const all = new Set(VT_CONTROLS.map((c) => c.key))
-    for (const c of visibleVtControls(cfg({ strokeWidth: 3 }))) expect(all.has(c.key), c.key).toBe(true)
+    for (const c of visibleVtControls(strokeCfg())) expect(all.has(c.key), c.key).toBe(true)
   })
 })
 
@@ -304,7 +353,7 @@ describe('mergeConfig is a strict rebuild', () => {
     const c = mergeConfig({ size: NaN, tracking: Infinity, strokeWidth: -Infinity })
     expect(c.size).toBe(DEFAULT_CONFIG.size)
     expect(c.tracking).toBe(DEFAULT_CONFIG.tracking)
-    expect(c.strokeWidth).toBe(DEFAULT_CONFIG.strokeWidth)
+    expect(vtBaseAppearance(c).strokeWidth).toBe(0)
   })
 
   it('falls back to the default font for an id the catalog does not have', () => {
@@ -395,7 +444,7 @@ describe('mergeConfig is a strict rebuild', () => {
   describe('a legacy string fill is LIFTED, not lost (trap 5)', () => {
     it('lifts `#rrggbb` to a solid Fill carrying that colour', () => {
       const c = mergeConfig({ fill: '#ff8800' })
-      expect(c.fill).toEqual({ ...DEFAULT_FILL, a: '#ff8800' })
+      expect(vtBaseAppearance(c).fill).toEqual({ ...DEFAULT_FILL, a: '#ff8800' })
     })
 
     it('a legacy config still RENDERS its colour, through the one renderer', () => {
@@ -404,7 +453,7 @@ describe('mergeConfig is a strict rebuild', () => {
       // `paintPrimaryColor`, the bridge `drawVectorType` and `vectorTypeSVG`
       // both collapse through — rather than just the stored shape.
       const legacy = { text: 'Saved', fontId: 'inter', size: 120, fill: '#22cc55' }
-      expect(paintPrimaryColor(mergeConfig(legacy).fill, '#000000')).toBe('#22cc55')
+      expect(paintPrimaryColor(vtBaseAppearance(mergeConfig(legacy)).fill, '#000000')).toBe('#22cc55')
       // …and the deliberately-broken control: WITHOUT the lift the same blob
       // would have taken this branch, which is indistinguishable from a colour
       // that happens to be right. The colour must survive the merge, not the
@@ -414,17 +463,18 @@ describe('mergeConfig is a strict rebuild', () => {
 
     it('lifts every colour form a stored config could hold', () => {
       for (const hex of ['#fff', '#ffffff', '#ffffffcc', 'red', 'rgb(1,2,3)']) {
-        expect((mergeConfig({ fill: hex }).fill as any).a, hex).toBe(hex)
+        expect((vtBaseAppearance(mergeConfig({ fill: hex })).fill as any).a, hex).toBe(hex)
       }
     })
 
-    it('every dotted fill control key resolves on a LIFTED legacy config', () => {
+    it('every dotted layer control key resolves on a LIFTED legacy config', () => {
       // The concrete consequence: before the lift these all addressed nothing.
       const params = paramsFor(mergeConfig({ fill: '#123456' }))
-      for (const key of ['fill.type', 'fill.a', 'fill.b', 'fill.angle', 'fill.density', 'fillAnchor']) {
+      for (const key of ['layer.paint.type', 'layer.paint.a', 'layer.paint.b',
+        'layer.paint.angle', 'layer.paint.density', 'layer.anchor', 'layer.width']) {
         expect(params[key], key).toBeDefined()
       }
-      expect(params['fill.a']).toBe('#123456')
+      expect(params['layer.paint.a']).toBe('#123456')
     })
 
     it('is idempotent — a lifted config re-merges to itself', () => {
@@ -436,15 +486,15 @@ describe('mergeConfig is a strict rebuild', () => {
   describe('mergeFill survives hostile paint blobs', () => {
     it('falls back to the default fill for junk of every shape', () => {
       for (const junk of [null, undefined, [], 42, true, NaN, { type: 'plaid' }, { stops: [] }]) {
-        expect(mergeConfig({ fill: junk }).fill, String(junk)).toEqual(DEFAULT_FILL)
+        expect(vtBaseAppearance(mergeConfig({ fill: junk })).fill, String(junk)).toEqual(DEFAULT_FILL)
       }
     })
 
     it('keeps a Gradient as a Gradient — collapsing it would be data loss', () => {
       // Multi-stop and radial are `Paint`-only; `Fill` cannot express them.
       const g = { type: 'radial', stops: [{ offset: 0, color: '#000000' }, { offset: 1, color: '#ffffff' }] }
-      expect(mergeConfig({ fill: g }).fill).toEqual(g)
-      const lin = mergeConfig({ fill: { type: 'linear', angle: 90, stops: [{ offset: 0.5, color: '#ff0000' }] } }).fill
+      expect(vtBaseAppearance(mergeConfig({ fill: g })).fill).toEqual(g)
+      const lin = vtBaseAppearance(mergeConfig({ fill: { type: 'linear', angle: 90, stops: [{ offset: 0.5, color: '#ff0000' }] } })).fill
       expect(lin).toEqual({ type: 'linear', angle: 90, stops: [{ offset: 0.5, color: '#ff0000' }] })
     })
 
@@ -460,7 +510,7 @@ describe('mergeConfig is a strict rebuild', () => {
           input: { type: 'shader', a: '#ff0000', b: '#00ff00', textColor: '#ffffff', angle: 0, density: 4, shader: {} },
         },
       }
-      const out = mergeConfig({ fill: nested }).fill as any
+      const out = vtBaseAppearance(mergeConfig({ fill: nested })).fill as any
       expect(out.type).toBe('shader')
       expect(out.shader.input.type).toBe('gradient')
       expect(out.shader.input.shader).toBeUndefined()
@@ -470,35 +520,42 @@ describe('mergeConfig is a strict rebuild', () => {
       // Every other numeric field in this schema rejects NaN/Infinity (`num`),
       // because a non-finite number does not fall back at the renderer — it
       // propagates through the tile maths and paints nothing.
-      const f = mergeConfig({ fill: { ...DEFAULT_FILL, angle: NaN, density: Infinity } }).fill as any
+      const f = vtBaseAppearance(mergeConfig({ fill: { ...DEFAULT_FILL, angle: NaN, density: Infinity } })).fill as any
       expect(f.angle).toBe(DEFAULT_FILL.angle)
       expect(f.density).toBe(DEFAULT_FILL.density)
       // …inside a shader's input too, which is the one place it can nest.
-      const s = mergeConfig({
+      const s = vtBaseAppearance(mergeConfig({
         fill: {
           ...DEFAULT_FILL, type: 'shader',
           shader: { effectId: 'fbm_warp', params: {}, anchor: 'object', speed: 1, input: { ...DEFAULT_FILL, density: NaN } },
         },
-      }).fill as any
+      })).fill as any
       expect(s.shader.input.density).toBe(DEFAULT_FILL.density)
     })
   })
 
-  describe('fillAnchor', () => {
+  describe('the anchor — now PER LAYER', () => {
     it('accepts every anchor the schema offers and rejects anything else', () => {
-      for (const a of VT_FILL_ANCHORS) expect(mergeConfig({ fillAnchor: a }).fillAnchor).toBe(a)
+      for (const a of VT_FILL_ANCHORS) {
+        expect(vtBaseAppearance(mergeConfig({ fillAnchor: a })).fillAnchor).toBe(a)
+      }
       for (const junk of ['object', '', null, 3, {}]) {
-        expect(mergeConfig({ fillAnchor: junk }).fillAnchor, String(junk)).toBe('glyph')
+        expect(vtBaseAppearance(mergeConfig({ fillAnchor: junk })).fillAnchor, String(junk)).toBe('glyph')
       }
     })
 
-    it('is declared, and declared NOT animatable', () => {
-      const spec = VT_CONTROLS.find((c) => c.key === 'fillAnchor')!
+    it('is declared at layer.anchor, and declared NOT animatable', () => {
+      const spec = VT_CONTROLS.find((c) => c.key === 'layer.anchor')!
       expect(spec.kind).toBe('select')
       expect((spec as any).options).toEqual([...VT_FILL_ANCHORS])
       expect((spec as any).animatable).toBe(false)
       // And it is genuinely unreachable from the timeline, not merely labelled.
-      expect(animatableTargets(cfg()).map((t) => t.path)).not.toContain('fillAnchor')
+      expect(animatableTargets(cfg()).map((t) => t.path)).not.toContain('appearance.0.anchor')
+    })
+
+    it('each layer keeps its OWN anchor', () => {
+      const c = cfg({ appearance: [vtLayer({ id: 'La', anchor: 'word' }), vtLayer({ id: 'Lb', anchor: 'frame' })] })
+      expect(c.appearance.map((l) => l.anchor)).toEqual(['word', 'frame'])
     })
   })
 
@@ -507,14 +564,272 @@ describe('mergeConfig is a strict rebuild', () => {
     const b = cloneConfig(a)
     b.axes.wght = 100
     b.motion.tracks[0]!.to = 99
+    b.appearance[0]!.width = 99
+    ;(b.appearance[0]!.paint as any).a = '#123123'
     expect(a.axes.wght).toBe(700)
     expect(a.motion.tracks[0]!.to).toBe(2)
+    expect(a.appearance[0]!.width).toBe(VT_DEFAULT_STROKE_WIDTH)
+    expect((a.appearance[0]!.paint as any).a).toBe(DEFAULT_FILL.a)
+    // …and the module-level default is untouched, which is the bug the previous
+    // task on this file shipped and then fixed (`clonePaint` existed and was
+    // never called, so every config built from DEFAULT_CONFIG shared one fill).
+    expect((DEFAULT_CONFIG.appearance[0]!.paint as any).a).toBe(DEFAULT_FILL.a)
+    expect(DEFAULT_CONFIG.appearance[0]!.width).toBe(VT_DEFAULT_STROKE_WIDTH)
+  })
+})
+
+/**
+ * TRAP 4 — the migration, and the reason this is the most important block here.
+ *
+ * EVERY saved Vector Type node holds the flat `fill` / `fillAnchor` / `stroke` /
+ * `strokeWidth`. And `mergeConfig` is NOT on the universal load path: the node
+ * card, the bake and the frame source read the stored blob. A saved node that
+ * renders wrong is the failure mode, and it does not throw.
+ */
+describe('the appearance stack — the model, and the legacy migration (trap 4)', () => {
+  describe('migration from a pre-stack config', () => {
+    it('turns a legacy fill + fillAnchor into ONE fill layer', () => {
+      const c = legacyCfg({ fill: '#22cc55', fillAnchor: 'word' })
+      expect(c.appearance).toHaveLength(1)
+      const [l] = c.appearance
+      expect(l!.kind).toBe('fill')
+      expect(l!.anchor).toBe('word')
+      expect(l!.paint).toEqual({ ...DEFAULT_FILL, a: '#22cc55' })
+      // …and it still RENDERS that colour, through the bridge the canvas reads.
+      expect(paintPrimaryColor(vtBaseAppearance(c).fill, '#000000')).toBe('#22cc55')
+    })
+
+    it('turns a strokeWidth > 0 stroke into a stroke layer ABOVE the fill', () => {
+      const c = legacyCfg({ fill: '#ffffff', stroke: '#ff0055', strokeWidth: 6 })
+      expect(c.appearance.map((l) => l.kind)).toEqual(['fill', 'stroke'])
+      // ABOVE = later in the array = painted in front, reproducing the old fixed
+      // order (the single stroke was unconditionally drawn after the single fill).
+      const stroke = c.appearance[1]!
+      expect(stroke.width).toBe(6)
+      expect(stroke.paint).toEqual({ ...DEFAULT_FILL, a: '#ff0055' })
+      const base = vtBaseAppearance(c)
+      expect(base.strokeWidth).toBe(6)
+      expect(paintPrimaryColor(base.stroke, '#000000')).toBe('#ff0055')
+    })
+
+    it('does NOT create a stroke layer for strokeWidth === 0', () => {
+      // That stroke was never visible — it is the DEFAULT, and it is the whole
+      // reason users concluded this studio had no stroke. Materialising it would
+      // put a dead layer in every migrated node.
+      for (const w of [0, undefined, -4, 'thick', null, NaN]) {
+        const c = legacyCfg({ fill: '#ffffff', stroke: '#ff0055', strokeWidth: w })
+        expect(c.appearance.map((l) => l.kind), String(w)).toEqual(['fill'])
+        expect(vtBaseAppearance(c).strokeWidth, String(w)).toBe(0)
+      }
+    })
+
+    it('keeps a zero-width stroke ONLY when a motion track animates it', () => {
+      // The one exception, and it exists so the migration cannot destroy work: a
+      // stroke that was invisible at rest but animated to 10px was visible.
+      const animated = legacyCfg({
+        stroke: '#ff0055', strokeWidth: 0,
+        motion: { tracks: [{ path: 'strokeWidth', from: 0, to: 10 }] },
+      })
+      expect(animated.appearance.map((l) => l.kind)).toEqual(['fill', 'stroke'])
+      // …and the TRACK follows it, positionally, or the animation is still lost.
+      expect(animated.motion.tracks.map((t) => t.path)).toEqual(['appearance.1.width'])
+      // A track that animates 0 → 0 is not an exception; it is still invisible.
+      const flat = legacyCfg({ strokeWidth: 0, motion: { tracks: [{ path: 'strokeWidth', from: 0, to: 0 }] } })
+      expect(flat.appearance.map((l) => l.kind)).toEqual(['fill'])
+      expect(flat.motion.tracks).toEqual([])
+    })
+
+    it('remaps legacy fill.* motion tracks onto the migrated layer', () => {
+      const c = legacyCfg({
+        fill: { ...DEFAULT_FILL, type: 'gradient' },
+        motion: { tracks: [
+          { path: 'fill.angle', from: 0, to: 360 },
+          { path: 'axes.wght', from: 100, to: 900 },
+          { path: 'fillAnchor', from: 0, to: 1 },
+        ] },
+      })
+      expect(c.motion.tracks.map((t) => t.path)).toEqual(['appearance.0.paint.angle', 'axes.wght'])
+      // The remapped track ANIMATES — a path that merely looks right proves
+      // nothing, since `applyMotion` skips a path whose parent is missing.
+      const at = applyMotion(c, 2)
+      expect((at.appearance[0]!.paint as any).angle).toBeCloseTo(180, 6)
+    })
+
+    it('does not re-migrate a config that already has a stack', () => {
+      // An EMPTY stack is the user having removed every layer, and it must not
+      // be quietly refilled from stale flat fields.
+      const c = mergeConfig({ appearance: [], fill: '#ff0000', strokeWidth: 9 })
+      expect(c.appearance).toEqual([])
+      expect(vtBaseAppearance(c).fill).toBeUndefined()
+      expect(vtBaseAppearance(c).strokeWidth).toBe(0)
+      // …and a config with a real stack ignores the flat fields entirely.
+      const d = mergeConfig({ appearance: [vtLayer({ id: 'Lx', paint: '#00ff00' })], fill: '#ff0000' })
+      expect(paintPrimaryColor(vtBaseAppearance(d).fill, '#000000')).toBe('#00ff00')
+    })
+
+    it('is idempotent — a migrated config re-merges to itself', () => {
+      const once = legacyCfg({ fill: '#abcdef', stroke: '#123456', strokeWidth: 4 })
+      expect(mergeConfig(once)).toEqual(once)
+      expect(mergeConfig(mergeConfig(once))).toEqual(once)
+    })
+  })
+
+  describe('the id scheme', () => {
+    it('mints ids that can never be read as an array index', () => {
+      // `lib/studio/path.ts`'s `isIndex` is /^\d+$/, so an all-digits id in
+      // `appearance.<id>.width` resolves to a POSITION — a real but wrong layer.
+      for (const id of [VT_BASE_FILL_ID, VT_BASE_STROKE_ID, vtLayerId(), vtLayerId(), vtLayer().id]) {
+        expect(id, id).not.toMatch(/^\d+$/)
+        expect(id, id).not.toContain('.')
+        expect(id.length, id).toBeGreaterThan(0)
+      }
+      expect(vtLayerId()).not.toBe(vtLayerId())
+    })
+
+    it('gives a migrated config DETERMINISTIC ids across loads', () => {
+      // A migration that minted a fresh id every load would defeat the whole
+      // point: a binding written against the layer would stop resolving.
+      const blob = { fill: '#22cc55', stroke: '#ff0055', strokeWidth: 2 }
+      const a = mergeConfig(blob).appearance.map((l) => l.id)
+      const b = mergeConfig(blob).appearance.map((l) => l.id)
+      expect(a).toEqual(b)
+      expect(a).toEqual([VT_BASE_FILL_ID, VT_BASE_STROKE_ID])
+    })
+
+    it('REJECTS a stored id that is all digits, or carries a dot', () => {
+      const c = mergeConfig({ appearance: [
+        { kind: 'fill', id: '3' },
+        { kind: 'fill', id: 'a.b' },
+        { kind: 'fill', id: '  ' },
+      ] })
+      for (const l of c.appearance) {
+        expect(l.id).not.toMatch(/^\d+$/)
+        expect(l.id).not.toContain('.')
+      }
+      expect(new Set(c.appearance.map((l) => l.id)).size).toBe(3)
+    })
+
+    it('re-mints a DUPLICATE id rather than leaving two layers addressable as one', () => {
+      // `resolveIdPath` resolves a duplicate to the LOWEST index, so leaving both
+      // would make one binding silently address two layers.
+      const c = mergeConfig({ appearance: [
+        { kind: 'fill', id: 'Lsame' }, { kind: 'stroke', id: 'Lsame' },
+      ] })
+      expect(c.appearance[0]!.id).toBe('Lsame')
+      expect(c.appearance[1]!.id).not.toBe('Lsame')
+    })
+
+    it('never lets a minted fallback steal an id a LATER layer holds', () => {
+      // Two passes, and this is why: layer 0 has no id and would naively be given
+      // `L0` — which layer 1 already legibly owns. Renaming layer 1 on load would
+      // break every binding against it.
+      const c = mergeConfig({ appearance: [{ kind: 'fill' }, { kind: 'stroke', id: 'L0' }] })
+      expect(c.appearance[1]!.id).toBe('L0')
+      expect(c.appearance[0]!.id).not.toBe('L0')
+      expect(new Set(c.appearance.map((l) => l.id)).size).toBe(2)
+    })
+
+    it('keeps a stored id stable across a re-merge', () => {
+      const c = mergeConfig({ appearance: [{ kind: 'fill' }, { kind: 'stroke' }] })
+      expect(mergeConfig(c).appearance.map((l) => l.id)).toEqual(c.appearance.map((l) => l.id))
+    })
+  })
+
+  describe('mergeAppearance is a strict rebuild', () => {
+    it('rebuilds a layer field by field, defaulting anything wrong-typed', () => {
+      const [l] = mergeConfig({ appearance: [{
+        id: 'Lx', kind: 'sparkle', enabled: 'yes', anchor: 'object', opacity: 9,
+        blend: 'divide', width: -3, depth: 1e6, angle: NaN, distance: 'far',
+        taper: 40, solid: 1, nope: true,
+      }] }).appearance
+      expect(l).toEqual({
+        id: 'Lx', kind: 'fill', enabled: true, paint: { ...DEFAULT_FILL },
+        anchor: 'glyph', opacity: 1, blend: 'normal', width: 0, depth: 32,
+        angle: 135, distance: 3, taper: 1, solid: false,
+      })
+      expect((l as any).nope).toBeUndefined()
+    })
+
+    it('keeps every kind the schema declares', () => {
+      const c = mergeConfig({ appearance: [{ kind: 'fill' }, { kind: 'stroke' }, { kind: 'extrude' }] })
+      expect(c.appearance.map((l) => l.kind)).toEqual(['fill', 'stroke', 'extrude'])
+    })
+
+    it('lifts a layer whose paint is a bare colour string', () => {
+      const [l] = mergeConfig({ appearance: [{ kind: 'stroke', paint: '#ff0055' }] }).appearance
+      expect(l!.paint).toEqual({ ...DEFAULT_FILL, a: '#ff0055' })
+    })
+
+    it('drops entries that are not layers, and bounds the stack at VT_LAYER_MAX', () => {
+      const c = mergeConfig({ appearance: [null, 'fill', 42, { kind: 'fill' }, []] })
+      expect(c.appearance).toHaveLength(1)
+      const many = mergeConfig({ appearance: Array.from({ length: 20 }, () => ({ kind: 'fill' })) })
+      expect(many.appearance).toHaveLength(VT_LAYER_MAX)
+    })
+
+    it('survives an appearance value that is not an array by MIGRATING instead', () => {
+      for (const junk of [null, 'stack', 42, { 0: { kind: 'fill' } }]) {
+        const c = mergeConfig({ appearance: junk, fill: '#ff0000' })
+        expect(c.appearance.map((l) => l.kind), String(junk)).toEqual(['fill'])
+        expect(paintPrimaryColor(vtBaseAppearance(c).fill, '#000000'), String(junk)).toBe('#ff0000')
+      }
+    })
+
+    it('backfills every kind-specific field on every layer', () => {
+      // The whole reason they are required rather than optional: `setByPath` and
+      // `makeConfigParams` guard on the PARENT, and a control must never address
+      // a leaf that is not there.
+      const c = mergeConfig({ appearance: [{ kind: 'fill' }] })
+      for (const k of ['width', 'depth', 'angle', 'distance', 'taper', 'solid', 'opacity', 'blend', 'anchor', 'enabled']) {
+        expect((c.appearance[0] as any)[k], k).toBeDefined()
+      }
+    })
+
+    it('honours a stored enabled: false', () => {
+      const c = mergeConfig({ appearance: [{ kind: 'fill', enabled: false }, { kind: 'fill', paint: '#00ff00' }] })
+      expect(c.appearance[0]!.enabled).toBe(false)
+      // …and the bridge skips it, so a hidden base layer does not paint.
+      expect(paintPrimaryColor(vtBaseAppearance(c).fill, '#000000')).toBe('#00ff00')
+    })
+  })
+
+  describe('vtBaseAppearance — the Task 3 bridge', () => {
+    it('reads a RAW pre-stack blob that never went through mergeConfig', () => {
+      // `ensureConfigDefaults` is not on the universal load path, and neither is
+      // `mergeConfig`: the node card, the bake and the frame source can hand the
+      // renderer a stored blob directly.
+      const raw = { text: 'Saved', fill: '#22cc55', fillAnchor: 'frame', stroke: '#ff0055', strokeWidth: 4 } as any
+      const base = vtBaseAppearance(raw)
+      expect(base.fill).toBe('#22cc55')
+      expect(base.fillAnchor).toBe('frame')
+      expect(base.strokeWidth).toBe(4)
+      expect(base.stroke).toBe('#ff0055')
+      // A raw blob whose stroke had no width still has no stroke.
+      expect(vtBaseAppearance({ stroke: '#ff0055', strokeWidth: 0 } as any).stroke).toBeUndefined()
+    })
+
+    it('returns the layer paint BY REFERENCE, so a control write lands on the layer', () => {
+      const c = cfg()
+      const params = paramsFor(c)
+      params['layer.paint.a'] = '#010203'
+      expect((vtBaseAppearance(c).fill as any).a).toBe('#010203')
+      expect(vtBaseAppearance(c).fill).toBe(c.appearance[0]!.paint)
+    })
+
+    it('survives null, undefined and an empty stack', () => {
+      for (const junk of [null, undefined, {} as any, { appearance: [] } as any]) {
+        const base = vtBaseAppearance(junk)
+        expect(base.fill, String(junk)).toBeUndefined()
+        expect(base.fillAnchor, String(junk)).toBe('glyph')
+        expect(base.strokeWidth, String(junk)).toBe(0)
+      }
+    })
   })
 })
 
 describe('vtAgentControls', () => {
   it('emits plain ControlSpecs with no schema-only fields leaking', () => {
-    for (const c of vtAgentControls(cfg({ strokeWidth: 3 }), RICH_AXES)) {
+    for (const c of vtAgentControls(strokeCfg(), RICH_AXES)) {
       expect(c, c.key).not.toHaveProperty('when')
       expect(c, c.key).not.toHaveProperty('agent')
       expect(c, c.key).not.toHaveProperty('animatable')
@@ -522,8 +837,8 @@ describe('vtAgentControls', () => {
   })
 
   it('tracks the visibility predicate', () => {
-    expect(vtAgentControls(cfg({ strokeWidth: 0 })).map((c) => c.key)).not.toContain('stroke')
-    expect(vtAgentControls(cfg({ strokeWidth: 3 })).map((c) => c.key)).toContain('stroke')
+    expect(vtAgentControls(cfg()).map((c) => c.key)).not.toContain('layer.width')
+    expect(vtAgentControls(strokeCfg()).map((c) => c.key)).toContain('layer.width')
   })
 
   it('grows the vocabulary with the loaded font, and shrinks back without one', () => {
@@ -535,7 +850,7 @@ describe('vtAgentControls', () => {
   })
 
   it('every emitted key resolves once its value is set', () => {
-    const c = cfg({ strokeWidth: 3, axes: Object.fromEntries(RICH_AXES.map((a) => [a.tag, a.default])) })
+    const c = cfg({ appearance: strokeCfg().appearance, axes: Object.fromEntries(RICH_AXES.map((a) => [a.tag, a.default])) })
     const params = paramsFor(c)
     const unresolved = vtAgentControls(c, RICH_AXES).map((s) => s.key).filter((k) => params[k] === undefined)
     expect(unresolved).toEqual([])
@@ -543,14 +858,14 @@ describe('vtAgentControls', () => {
 
   it('is a characterization snapshot, with and without a font loaded', () => {
     expect(vtAgentControls(cfg())).toMatchSnapshot()
-    expect(vtAgentControls(cfg({ strokeWidth: 3 }), RICH_AXES)).toMatchSnapshot()
+    expect(vtAgentControls(strokeCfg(), RICH_AXES)).toMatchSnapshot()
   })
 })
 
 /**
  * SHADER FILLS in the agent's vocabulary.
  *
- * `VT_CONTROLS` declares no `fill.shader.*` key at all — the shader vocabulary is
+ * `VT_CONTROLS` declares no `layer.paint.shader.*` key at all — the shader vocabulary is
  * shared across four host studios and lives in `~/lib/shaderfill/controls.ts`. So
  * `visibleVtControls`, which can only return members of `VT_CONTROLS`, can never
  * produce one, and `vtAgentControls` needs an explicit branch. These tests pin
@@ -562,37 +877,35 @@ describe('shader fills enter the agent vocabulary', () => {
    *  the effect declares is SET, because `makeConfigParams` is sparse: an unwritten
    *  leaf reads `undefined`, so an unset param would make the resolution probe
    *  below pass or fail for the wrong reason. */
-  const shaderCfg = (over: Record<string, unknown> = {}) => cfg({
-    fill: {
-      ...DEFAULT_FILL,
-      type: 'shader',
-      shader: {
-        effectId: 'kaleidoscope',
-        params: { segments: 14, zoom: 2.5, mode: 1 },
-        anchor: 'frame',
-        speed: 1.5,
-        input: { ...DEFAULT_FILL, type: 'gradient' },
-        ...over,
-      },
+  const shaderCfg = (over: Record<string, unknown> = {}) => paintCfg({
+    ...DEFAULT_FILL,
+    type: 'shader',
+    shader: {
+      effectId: 'kaleidoscope',
+      params: { segments: 14, zoom: 2.5, mode: 1 },
+      anchor: 'frame',
+      speed: 1.5,
+      input: { ...DEFAULT_FILL, type: 'gradient' },
+      ...over,
     },
-  } as any)
+  })
 
   const keysOf = (c: VectorTypeConfig) => vtAgentControls(c).map((s) => s.key)
 
   it('offers the three frozen shader keys only when the fill type is shader', () => {
     // Measured before the branch was written: a shader-typed config emitted
     // `text, fontId, size, tracking, align, fill.type, fill.a, fill.b, fillAnchor,
-    // strokeWidth, motion.stagger.*` and not one `fill.shader` key. Nothing derives
+    // strokeWidth, motion.stagger.*` and not one `layer.paint.shader` key. Nothing derives
     // them; Shape Studio needed the same explicit branch.
-    const frozen = SHADER_FILL_CONTROLS.map((c) => c.key)
-    expect(frozen).toEqual(['fill.shader.effectId', 'fill.shader.anchor', 'fill.shader.speed'])
+    const frozen = VT_SHADER_CONTROLS.map((c) => c.key)
+    expect(frozen).toEqual(['layer.paint.shader.effectId', 'layer.paint.shader.anchor', 'layer.paint.shader.speed'])
     for (const k of frozen) expect(keysOf(shaderCfg()), k).toContain(k)
     for (const k of frozen) expect(keysOf(cfg()), k).not.toContain(k)
-    expect(keysOf(cfg({ fill: { ...DEFAULT_FILL, type: 'stripes' } } as any)).some((k) => k.startsWith('fill.shader'))).toBe(false)
+    expect(keysOf(paintCfg({ ...DEFAULT_FILL, type: 'stripes' })).some((k) => k.startsWith('layer.paint.shader'))).toBe(false)
   })
 
   it('strips the schema-only fields off the shared shader controls too', () => {
-    // `fill.shader.anchor` carries `animatable: false`; leaking it into the agent's
+    // `layer.paint.shader.anchor` carries `animatable: false`; leaking it into the agent's
     // ControlSpec[] would put a schema field in the model's prompt.
     for (const c of vtAgentControls(shaderCfg())) {
       expect(c, c.key).not.toHaveProperty('animatable')
@@ -602,24 +915,24 @@ describe('shader fills enter the agent vocabulary', () => {
   })
 
   it("derives the active effect's own params at the real ShaderSpec.params path", () => {
-    const derived = keysOf(shaderCfg()).filter((k) => k.startsWith('fill.shader.params.'))
+    const derived = keysOf(shaderCfg()).filter((k) => k.startsWith('layer.paint.shader.params.'))
     expect(derived).toEqual([
-      'fill.shader.params.segments',
-      'fill.shader.params.zoom',
-      'fill.shader.params.mode',
+      'layer.paint.shader.params.segments',
+      'layer.paint.shader.params.zoom',
+      'layer.paint.shader.params.mode',
     ])
     // …and it is genuinely `derivedShaderFillControls`'s output, prefix and all,
     // not a second hand-built list that happens to agree today.
     expect(vtAgentControls(shaderCfg()).slice(-3))
-      .toEqual(derivedShaderFillControls(CATALOG_EFFECT, 'fill.shader'))
+      .toEqual(derivedShaderFillControls(CATALOG_EFFECT, VT_LAYER_SHADER_PREFIX))
   })
 
   it('degrades to the frozen three when the catalog has not resolved that effect', () => {
     // `getEffectSync` never fetches: before any page has loaded the catalog it
     // returns null for every id. The frozen keys must still be offered.
     const k = keysOf(shaderCfg({ effectId: 'nothing-in-the-catalog' }))
-    expect(k).toContain('fill.shader.effectId')
-    expect(k.some((x) => x.startsWith('fill.shader.params.'))).toBe(false)
+    expect(k).toContain('layer.paint.shader.effectId')
+    expect(k.some((x) => x.startsWith('layer.paint.shader.params.'))).toBe(false)
   })
 
   /**
@@ -627,23 +940,23 @@ describe('shader fills enter the agent vocabulary', () => {
    * special cases, so a derived key one segment off the real path resolves to
    * `undefined` on read and creates a phantom object on write — which is exactly
    * what an earlier `<prefix>.p.<id>` namespace did in this codebase: it wrote to
-   * `fill.shader.p` next to the real `fill.shader.params` and silently never
+   * `layer.paint.shader.p` next to the real `layer.paint.shader.params` and silently never
    * reached the renderer, with nothing thrown anywhere.
    */
   it('every derived shader param key RESOLVES against the real config', () => {
     const c = shaderCfg()
     const params = paramsFor(c)
-    const derived = vtAgentControls(c).map((s) => s.key).filter((k) => k.startsWith('fill.shader.'))
+    const derived = vtAgentControls(c).map((s) => s.key).filter((k) => k.startsWith('layer.paint.shader.'))
     const unresolved = derived.filter((k) => params[k] === undefined)
     expect(unresolved).toEqual([])
     // Not just "defined" — the ACTUAL stored numbers, so a key landing on some
     // other real leaf would still fail.
-    expect(params['fill.shader.params.segments']).toBe(14)
-    expect(params['fill.shader.params.zoom']).toBe(2.5)
-    expect(params['fill.shader.params.mode']).toBe(1)
-    expect(params['fill.shader.effectId']).toBe('kaleidoscope')
-    expect(params['fill.shader.anchor']).toBe('frame')
-    expect(params['fill.shader.speed']).toBe(1.5)
+    expect(params['layer.paint.shader.params.segments']).toBe(14)
+    expect(params['layer.paint.shader.params.zoom']).toBe(2.5)
+    expect(params['layer.paint.shader.params.mode']).toBe(1)
+    expect(params['layer.paint.shader.effectId']).toBe('kaleidoscope')
+    expect(params['layer.paint.shader.anchor']).toBe('frame')
+    expect(params['layer.paint.shader.speed']).toBe(1.5)
   })
 
   it('the probe is not vacuous: a key one segment off the real path resolves to nothing', () => {
@@ -651,21 +964,21 @@ describe('shader fills enter the agent vocabulary', () => {
     // that resolves every real key above. If this ever passes, the test above has
     // stopped proving anything.
     const params = paramsFor(shaderCfg())
-    expect(params['fill.shader.p.segments']).toBeUndefined()
-    expect(params['fill.shader.segments']).toBeUndefined()
+    expect(params['layer.paint.shader.p.segments']).toBeUndefined()
+    expect(params['layer.paint.shader.segments']).toBeUndefined()
     expect(params['fill.params.segments']).toBeUndefined()
   })
 
   it('WRITING a derived key lands on the real params bag, creating no phantom object', () => {
     const c = shaderCfg()
     const params = paramsFor(c)
-    params['fill.shader.params.segments'] = 3
-    const shader = (c.fill as any).shader
+    params['layer.paint.shader.params.segments'] = 3
+    const shader = (c.appearance[0]!.paint as any).shader
     expect(shader.params.segments).toBe(3)
     expect(shader.p).toBeUndefined()
     // And the write is visible to the OTHER naive resolver too — `setByPath` /
     // `getByPath`, which motion and Collection bindings use.
-    expect(paramsFor(c)['fill.shader.params.segments']).toBe(3)
+    expect(paramsFor(c)['layer.paint.shader.params.segments']).toBe(3)
   })
 
   /**
@@ -677,17 +990,18 @@ describe('shader fills enter the agent vocabulary', () => {
    * survives the merge, and changes not one pixel — so they are withheld, by the
    * same `when` predicates that already withhold `stroke` and `fill.angle`.
    */
-  it('withholds the inert fill.a / fill.b on a shader fill, in the panel AND the agent', () => {
+  it('withholds the inert layer.paint.a / .b on a shader fill, in the panel AND the agent', () => {
     const shader = shaderCfg()
-    expect(visibleVtControls(shader).map((c) => c.key)).not.toContain('fill.a')
-    expect(visibleVtControls(shader).map((c) => c.key)).not.toContain('fill.b')
-    expect(keysOf(shader)).not.toContain('fill.a')
-    expect(keysOf(shader)).not.toContain('fill.b')
+    expect(visibleVtControls(shader).map((c) => c.key)).not.toContain('layer.paint.a')
+    expect(visibleVtControls(shader).map((c) => c.key)).not.toContain('layer.paint.b')
+    expect(keysOf(shader)).not.toContain('layer.paint.a')
+    expect(keysOf(shader)).not.toContain('layer.paint.b')
     // `fill.angle` / `fill.density` were already withheld — `shader` is in neither
     // predicate's list — so the rule now reads as one rule.
-    expect(keysOf(shader).filter((k) => k.startsWith('fill.'))).toEqual([
-      'fill.type', 'fill.shader.effectId', 'fill.shader.anchor', 'fill.shader.speed',
-      'fill.shader.params.segments', 'fill.shader.params.zoom', 'fill.shader.params.mode',
+    expect(keysOf(shader).filter((k) => k.startsWith('layer.'))).toEqual([
+      'layer.paint.type', 'layer.anchor',
+      'layer.paint.shader.effectId', 'layer.paint.shader.anchor', 'layer.paint.shader.speed',
+      'layer.paint.shader.params.segments', 'layer.paint.shader.params.zoom', 'layer.paint.shader.params.mode',
     ])
   })
 
@@ -699,47 +1013,51 @@ describe('shader fills enter the agent vocabulary', () => {
     expect(vtAgentControls(shaderCfg())).toMatchSnapshot()
   })
 
-  it('still offers fill.a everywhere it PAINTS something', () => {
+  it('still offers layer.paint.a everywhere it PAINTS something', () => {
     // The withholding must be about the shader arm, not a blanket loss: every
     // other fill type reads `fill.a`, and a `Gradient` paint reads neither.
     for (const type of ['solid', 'gradient', 'ombre', 'grid', 'noise', 'checkerboard', 'stripes', 'qr']) {
-      expect(keysOf(cfg({ fill: { ...DEFAULT_FILL, type } } as any)), type).toContain('fill.a')
+      expect(keysOf(paintCfg({ ...DEFAULT_FILL, type })), type).toContain('layer.paint.a')
     }
-    expect(keysOf(cfg({ fill: { ...DEFAULT_FILL, type: 'shader' } } as any))).not.toContain('fill.a')
+    expect(keysOf(paintCfg({ ...DEFAULT_FILL, type: 'shader' }))).not.toContain('layer.paint.a')
   })
 })
 
 describe('VT_GUIDANCE', () => {
   /** Every key the prose names is backticked; this is the set. */
   const quoted = [...VT_GUIDANCE.matchAll(/`([^`]+)`/g)].map((m) => m[1] as string)
-  const staticKeys = new Set([...VT_CONTROLS, ...SHADER_FILL_CONTROLS].map((c) => c.key))
+  const staticKeys = new Set([...VT_CONTROLS, ...VT_SHADER_CONTROLS].map((c) => c.key))
   const isAxisKey = (t: string) => t.startsWith('axes.') && (t === 'axes.<tag>' || isAxisTag(t.slice(5)))
   /** The shader params are DERIVED per effect, so no fixed key exists to name.
    *  The prose may name the placeholder — and only the placeholder: a concrete
-   *  `fill.shader.params.segments` would be teaching the model a key that exists
+   *  `layer.paint.shader.params.segments` would be teaching the model a key that exists
    *  for some effects and not others. */
-  const isShaderParamKey = (t: string) => t === 'fill.shader.params.<param>'
+  const isShaderParamKey = (t: string) => t === 'layer.paint.shader.params.<param>'
+  /** The relative prefix itself, which the prose names when it explains that the
+   *  paint controls address the ACTIVE layer. Allowed as the one non-key token,
+   *  and asserted against the exported constant so it cannot drift. */
+  const isLayerPrefix = (t: string) => t === VT_LAYER_PREFIX
 
   it('names only keys that exist in the schema', () => {
     expect(quoted.length).toBeGreaterThan(0)
     for (const t of quoted) {
-      expect(staticKeys.has(t) || isAxisKey(t) || isShaderParamKey(t),
+      expect(staticKeys.has(t) || isAxisKey(t) || isShaderParamKey(t) || isLayerPrefix(t),
         `guidance names unknown key \`${t}\``).toBe(true)
     }
   })
 
   it('names every control the agent can actually reach', () => {
     // A control the agent is offered but the prose never explains is a knob the
-    // model will use blind. SHADER_FILL_CONTROLS is in here because
+    // model will use blind. VT_SHADER_CONTROLS is in here because
     // `vtAgentControls` now offers those three on a shader fill — a shared
     // module's keys still land in THIS studio's prompt.
-    for (const c of [...VT_CONTROLS, ...SHADER_FILL_CONTROLS]) {
+    for (const c of [...VT_CONTROLS, ...VT_SHADER_CONTROLS]) {
       if ((c as any).agent === false) continue
       expect(quoted, `guidance never mentions ${c.key}`).toContain(c.key)
     }
   })
 
-  it('says out loud that fill.a / fill.b do not apply to a shader fill', () => {
+  it('says out loud that layer.paint.a / .b do not apply to a shader fill', () => {
     // Both keys are named by the prose (the rule above requires it) but they are
     // WITHHELD on a shader fill. Prose that named them without saying when they
     // vanish would teach the model to reach for a control that is not there.
@@ -750,7 +1068,7 @@ describe('VT_GUIDANCE', () => {
   it('leaves no un-backticked dotted key hiding in the prose', () => {
     // Second net: the rule above only sees backticked tokens, so anything
     // shaped like a path outside them is caught here. `fill` joined the
-    // alternation with the shader vocabulary — `fill.shader.effectId` un-quoted
+    // alternation with the shader vocabulary — `layer.paint.shader.effectId` un-quoted
     // is exactly as invisible to the first net as `axes.wght` was.
     for (const m of VT_GUIDANCE.matchAll(/(?<!`)\b(?:axes|motion|fill)\.[A-Za-z<>.]+/g)) {
       const t = m[0].replace(/\.$/, '')

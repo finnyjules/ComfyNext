@@ -57,7 +57,7 @@ import {
   type VtStaggerConfig,
   type VtStaggerOrder,
 } from './config'
-import { derivedAxisControls, visibleVtControls } from './controls'
+import { VT_CONTROLS, VT_LAYER_PREFIX, derivedAxisControls, visibleVtControls } from './controls'
 import { getByPath, setByPath } from '~/lib/studio/path'
 import { trackValue } from '~/lib/studio/track'
 
@@ -131,14 +131,45 @@ const finite = (v: unknown, d: number): number => (isFinite_(v) ? v : d)
  */
 export function animatableTargets(cfg: VectorTypeConfig, axes: VtAxis[] = []): VtAnimatableTarget[] {
   const out: VtAnimatableTarget[] = []
-  for (const c of [...visibleVtControls(cfg), ...derivedAxisControls(axes)]) {
-    if (c.kind !== 'slider') continue
-    const flag = (c as any).animatable
-    if (flag === false) continue
+  const sliderRange = (c: any) => {
     // An explicit range lets animation reach past what the UI slider allows
     // (Gradient's `layer.shape.sweep` is the precedent).
-    const range = flag && typeof flag === 'object' ? flag : { min: c.min, max: c.max }
-    out.push({ path: c.key, label: c.label, group: c.group, ...range })
+    const flag = c.animatable
+    return flag && typeof flag === 'object' ? flag : { min: c.min, max: c.max }
+  }
+  const usable = (c: any) => c.kind === 'slider' && c.animatable !== false
+
+  // `visibleVtControls` gates the `layer.*` keys on ONE layer (the active one),
+  // which is right for a panel and wrong here: motion must reach every layer.
+  // So they are skipped in this loop and expanded per layer below.
+  for (const c of [...visibleVtControls(cfg), ...derivedAxisControls(axes)]) {
+    if (c.key.startsWith(VT_LAYER_PREFIX) || !usable(c)) continue
+    out.push({ path: c.key, label: c.label, group: c.group, ...sliderRange(c) })
+  }
+
+  // ═══ TASK 9 BRIDGE ═══ the relative `layer.` prefix expands to one ABSOLUTE
+  // path per appearance layer, exactly as `gradientfx/motion.ts` expands its own,
+  // with each layer's own `when` predicate applied to it — a stroke width is a
+  // target on a stroke layer and on no other.
+  //
+  // POSITIONAL for now (`appearance.2.width`), because `applyMotion` below
+  // resolves through `getByPath`/`setByPath`, which understand positions only; an
+  // id-addressed path would silently animate nothing until Task 9 routes motion
+  // through `resolveIdPath`. Task 9 also replaces `Layer N` with
+  // `gradientfx/layerLabel.ts`-style names derived from what each layer IS.
+  const stack = Array.isArray(cfg?.appearance) ? cfg.appearance : []
+  for (const c of VT_CONTROLS) {
+    if (!c.key.startsWith(VT_LAYER_PREFIX) || !usable(c)) continue
+    const rest = c.key.slice(VT_LAYER_PREFIX.length)
+    stack.forEach((l, i) => {
+      if (c.when && !c.when(cfg, l)) return
+      out.push({
+        path: `appearance.${i}.${rest}`,
+        label: `Layer ${i + 1} · ${c.label}`,
+        group: c.group,
+        ...sliderRange(c),
+      })
+    })
   }
   out.push(...VT_GLYPH_TARGETS.map(t => ({ ...t })))
   return out

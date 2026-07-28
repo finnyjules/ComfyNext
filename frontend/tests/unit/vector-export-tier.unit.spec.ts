@@ -35,7 +35,7 @@ import { isVectorGradient, isVectorPattern } from '~/lib/vector/svg'
 import { DEFAULT_FILL, FILL_TYPES, type Fill, type FillType } from '~/lib/spacetype/fillTile'
 import type { Gradient } from '~/lib/compositor/paint'
 import { normaliseAxes, type VtFont } from '~/lib/vectortype/font'
-import { DEFAULT_CONFIG, mergeConfig, type VectorTypeConfig } from '~/lib/vectortype/config'
+import { DEFAULT_CONFIG, mergeConfig, vtLayer, type VectorTypeConfig } from '~/lib/vectortype/config'
 import { vectorTypeSVG } from '~/lib/vectortype/canvas'
 
 // ── fixtures ────────────────────────────────────────────────────────────────
@@ -205,8 +205,21 @@ function exportFacts(svg: string) {
   }
 }
 
-function exportOf(type: FillType, patch: Partial<VectorTypeConfig> = {}): string {
-  const cfg = mergeConfig({ ...DEFAULT_CONFIG, text: 'Sail', size: 100, fill: fill(type), ...patch })
+
+/** ═══ APPEARANCE STACK ═══ the `fill` / `fillAnchor` a caller asks for is now
+ *  the BASE FILL LAYER's paint and anchor. Translated here so every call site
+ *  below reads as it did — the stack is what changed, not what these tests
+ *  assert about the document. */
+function vtStack(fill: unknown, fillAnchor: unknown) {
+  return [vtLayer({ id: 'Lfill', paint: fill as any, anchor: (fillAnchor ?? 'glyph') as any })]
+}
+
+function exportOf(type: FillType, patch: Partial<VectorTypeConfig> & Record<string, unknown> = {}): string {
+  const { fill: paint, fillAnchor, ...rest } = patch as Record<string, unknown>
+  const cfg = mergeConfig({
+    ...DEFAULT_CONFIG, text: 'Sail', size: 100,
+    appearance: vtStack(paint ?? fill(type), fillAnchor), ...rest,
+  })
   // No background — a background rect would put a second `fill="#…"` in the
   // document and blur the reading of what the GLYPHS are painted with.
   return vectorTypeSVG(font, cfg, 0, { width: 800, height: 300, background: null }).svg

@@ -58,7 +58,7 @@ import {
   DEFAULT_CONFIG,
   DEFAULT_MOTION,
   DEFAULT_STAGGER,
-  mergeFill,
+  migrateLegacyAppearance,
   type VectorTypeConfig,
   type VtPresetSlot,
 } from './config'
@@ -172,13 +172,15 @@ export function vtThumbConfig(spec: VtThumbSpec): VectorTypeConfig {
     size: Number.isFinite(spec.size) ? (spec.size as number) : 24,
     tracking: 0,
     align: 'center',
-    // Through the SAME lift `mergeConfig` uses, not a raw assignment: a tile
-    // config is asserted to be one `mergeConfig` accepts UNCHANGED, and a bare
-    // string here would come back lifted and fail that round-trip. `||` keeps
-    // the old empty-string-means-default behaviour (an object is truthy, so a
-    // real `Paint` passes through it untouched).
-    fill: mergeFill(spec.fill || '#ffffff'),
-    strokeWidth: 0,
+    // Through the SAME migration `mergeConfig` uses, not a hand-built layer: a
+    // tile config is asserted to be one `mergeConfig` accepts UNCHANGED, so the
+    // stack it carries — layer id included — has to be byte-identical to the one
+    // the merge would build. This file is the read path that BYPASSES
+    // `mergeConfig` entirely (it builds a config rather than loading one), which
+    // is exactly where the previous config migration on this module found its one
+    // real gap. `||` keeps the old empty-string-means-default behaviour (an
+    // object is truthy, so a real `Paint` passes through it untouched).
+    appearance: migrateLegacyAppearance({ fill: spec.fill || '#ffffff', strokeWidth: 0 }),
     motion: {
       ...DEFAULT_MOTION,
       tracks: [],

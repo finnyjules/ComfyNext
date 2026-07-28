@@ -29,7 +29,7 @@ import type { ControlSpec } from '~/lib/spacetype/effect'
 import type { LayerAnimSpec } from '~/lib/motion/types'
 import { KINETIC_PRESETS_BY_ID, presetParamDefault } from '~/data/kinetic-presets'
 import { VARIABLE_FONTS } from '~/data/variable-fonts'
-import { VT_PRESET_DURATIONS, VT_PRESET_SLOTS, mergeConfig, type VectorTypeConfig, type VtPresetSlot } from '~/lib/vectortype/config'
+import { VT_PRESET_DURATIONS, VT_PRESET_SLOTS, mergeConfig, vtBaseAppearance, type VectorTypeConfig, type VtPresetSlot } from '~/lib/vectortype/config'
 import { VT_CONTROLS, VT_SECTIONS, derivedAxisControls, type VtControl } from '~/lib/vectortype/controls'
 import { VT_GUIDANCE, vtAgentControls } from '~/lib/vectortype/agentControls'
 import { animatableTargets } from '~/lib/vectortype/motion'
@@ -178,7 +178,24 @@ const animatableGroups = computed(() => {
 })
 
 const { getLocalSetting } = useLocalSettings()
-const agentParams = makeConfigParams(() => config.value, () => 0)
+/**
+ * ═══ TASK 8 BRIDGE ═══ which appearance layer the `layer.*` controls address.
+ *
+ * Pinned at 0 — the bottom layer, which for a fresh config and every migrated
+ * legacy node IS the fill. Task 8 mounts `StudioLayerStack` and makes this a real
+ * selection; when it does, it must also pass the same index to
+ * `visibleVtControls` / `vtAgentControls`, or the panel will decide which
+ * controls to SHOW from layer 0 while the proxy WRITES to layer N.
+ */
+const activeLayerIndex = ref(0)
+/** The layer those controls address, for the `when` predicates and the shader
+ *  editor. Never null in practice; the stack may legitimately be empty. */
+const activeLayer = computed(() => config.value.appearance?.[activeLayerIndex.value] ?? null)
+/** ═══ TASK 3 BRIDGE ═══ the base fill the export-tier notes describe. The same
+ *  collapse `canvas.ts` draws with, so the warning and the picture agree. */
+const baseFill = computed(() => vtBaseAppearance(config.value).fill)
+
+const agentParams = makeConfigParams(() => config.value, () => activeLayerIndex.value, 'appearance')
 const vtAgent = useStudioAgent({
   controls: () => activeAgentControls.value,
   params: agentParams,
@@ -195,7 +212,7 @@ onMounted(() => { void refreshStudioControls() })
 // has to be re-resolved then — otherwise `axes.wght` is unbindable forever.
 watch(fontAxes, () => { void refreshStudioControls() })
 
-const paramsProxy = makeConfigParams(() => config.value, () => 0)
+const paramsProxy = makeConfigParams(() => config.value, () => activeLayerIndex.value, 'appearance')
 
 /**
  * Read a control's live value, falling back to its declared default.
@@ -259,7 +276,7 @@ const { sweepPopover, applySweep, varMenu, openVarMenu, goToCollection } = useSt
  * `when`. The set stays as a second net — if a future edit loosens one of those
  * predicates, the panel does not silently regain a control that paints nothing.
  */
-const SHADER_INERT_FILL_KEYS = new Set(['fill.a', 'fill.b', 'fill.angle', 'fill.density'])
+const SHADER_INERT_FILL_KEYS = new Set(['layer.paint.a', 'layer.paint.b', 'layer.paint.angle', 'layer.paint.density'])
 
 /** The fill is TYPED shader — the question the panel asks, deliberately not
  *  "has a ShaderSpec". `setControl` seeds the spec on the same tick the type
@@ -267,7 +284,7 @@ const SHADER_INERT_FILL_KEYS = new Set(['fill.a', 'fill.b', 'fill.angle', 'fill.
  *  arrived typed-shader with no spec shows no editor at all and no way to make
  *  one, which is unrecoverable from inside the UI. */
 const fillTypeIsShader = computed(() => {
-  const f = config.value.fill
+  const f = activeLayer.value?.paint
   return isFill(f) && f.type === 'shader'
 })
 
@@ -290,13 +307,13 @@ const fillTypeIsShader = computed(() => {
  * so a fill that gains (or loses) a vector form changes this copy on the same
  * day, not the day someone remembers.
  */
-const fillExportTier = computed(() => exportTier(config.value.fill))
+const fillExportTier = computed(() => exportTier(baseFill.value ?? '#ffffff'))
 /** The fill type's own name when it exports as a raster, else `null` — which is
  *  also the flag both notes below are rendered on. `isFill` is the guard that
  *  makes naming it safe: a `Gradient` or a bare string has no `type` to say. */
 const rasterFillName = computed(() => {
   if (fillExportTier.value !== 'raster') return null
-  const f = config.value.fill
+  const f = baseFill.value
   if (!isFill(f)) return null
   return f.type.charAt(0).toUpperCase() + f.type.slice(1)
 })
@@ -320,11 +337,11 @@ const svgExportTitle = computed(() => (rasterFillName.value
  *  through even on that path. */
 const shaderSpec = computed<ShaderSpec>({
   get: () => {
-    const f = config.value.fill
+    const f = activeLayer.value?.paint
     return isFill(f) && fillIsShader(f) ? f.shader : DEFAULT_SHADER_SPEC
   },
   set: (v: ShaderSpec) => {
-    const f = config.value.fill
+    const f = activeLayer.value?.paint
     if (isFill(f)) f.shader = v
   },
 })
@@ -342,8 +359,8 @@ function setControl(key: string, value: string | number) {
   // shared module constant, and Task 2 already paid for the version of this bug
   // where a shallow copy let frame values leak into the module default (which
   // is what `clonePaint` exists for).
-  if (key === 'fill.type' && value === 'shader') {
-    const f = config.value.fill
+  if (key === 'layer.paint.type' && value === 'shader') {
+    const f = activeLayer.value?.paint
     if (isFill(f) && !f.shader) f.shader = structuredClone(DEFAULT_SHADER_SPEC)
   }
   paramsProxy[key] = value
@@ -1088,7 +1105,7 @@ const frameCount = computed(() => Math.round((config.value.motion.fps || 30) * (
                 <VectorTypeThumb
                   v-if="slotSpec(slot) && isAxisPreset(slot, slotSpec(slot)!.presetId)"
                   :preset-id="slotSpec(slot)!.presetId" :slot-kind="slot"
-                  :font-id="config.fontId" :text="config.text" :axes="config.axes" :font="font" :fill="config.fill"
+                  :font-id="config.fontId" :text="config.text" :axes="config.axes" :font="font" :fill="baseFill ?? '#ffffff'"
                 />
                 <PresetThumb
                   v-else-if="slotSpec(slot)"
@@ -1263,7 +1280,7 @@ const frameCount = computed(() => Math.round((config.value.motion.fps || 30) * (
             <VectorTypeThumb
               :preset-id="o.preset.id" :slot-kind="pickerFor!"
               :font-id="config.fontId" :text="config.text" :axes="config.axes" :font="font"
-              :fill="config.fill" :disabled="!o.available"
+              :fill="baseFill ?? '#ffffff'" :disabled="!o.available"
             />
             <span class="truncate text-[10.5px]"
                   :class="!o.available ? 'text-white/35' : (o.preset.id === currentPresetId ? 'text-white' : 'text-white/70')">

@@ -43,7 +43,7 @@ import {
   type ShaderFieldFrameCtx,
 } from '~/lib/paint/resolve'
 import { withFieldFrame, type FieldRequest } from '~/lib/shaderfill/field'
-import type { VectorTypeConfig, VtFillAnchor } from './config'
+import { vtBaseAppearance, type VectorTypeConfig, type VtFillAnchor } from './config'
 import type { VtFont } from './font'
 import type { GlyphOutline, TextOutlines } from './outline'
 import { textOutlines } from './outline'
@@ -430,7 +430,9 @@ export function vtFramePaintBox(opts: VtBoxOptions): VtPaintBox {
  *  absent or bogus value must land on `glyph`, the pre-anchor behaviour, rather
  *  than defaulting into one of the two new sampling spaces. */
 export function vtFillAnchor(cfg: VectorTypeConfig): VtFillAnchor {
-  const a = cfg.fillAnchor
+  // ═══ TASK 3 BRIDGE ═══ reads the BASE fill layer's anchor. Task 3's layer
+  // loop asks each layer for its own anchor and deletes this function.
+  const a = vtBaseAppearance(cfg).fillAnchor
   return a === 'word' || a === 'frame' ? a : 'glyph'
 }
 
@@ -526,12 +528,27 @@ export function drawVectorType(
   const frame = vectorTypeFrame(font, cfg, t)
   const place = vtPlacement(frame, opts)
   const paths = outlinesToPath2D(frame.outlines, place)
-  const { stroke, strokeWidth } = frame.config
-  // A raw blob can reach here — `applyMotion` clones whatever it is handed — and a
-  // config with no `fill` at all must still paint SOMETHING: an invisible word is a
-  // worse failure than a wrong colour, and this is the same `'#ffffff'` the bridge
-  // this replaces fell back to.
-  const fill: Paint = frame.config.fill ?? '#ffffff'
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TASK 3 BRIDGE — the appearance stack, collapsed to the ONE fill + ONE stroke
+  // this function still knows how to draw. `vtBaseAppearance` takes the
+  // bottom-most enabled layer of each kind (and absorbs a raw pre-stack blob,
+  // which `applyMotion` can hand us). On a one-fill stack — a fresh config and
+  // every migrated legacy node — it is the identical picture.
+  //
+  // TASK 3 REPLACES THIS with a loop over `frame.config.appearance`, back to
+  // front, carrying each layer's own anchor / opacity / blend. Everything below
+  // outside the paint step (transform, clip, blur, alpha) is per-glyph-invariant
+  // and stays exactly where it is.
+  // ═══════════════════════════════════════════════════════════════════════════
+  const base = vtBaseAppearance(frame.config)
+  const strokeWidth = base.strokeWidth
+  // A stroke's paint is a `Paint` now; `ctx.strokeStyle` needs a string, so the
+  // bridge flattens it to the representative colour. Task 3 resolves it properly.
+  const stroke = paintPrimaryColor(base.stroke, '#000000')
+  // A config with no fill layer at all must still paint SOMETHING: an invisible
+  // word is a worse failure than a wrong colour, and this is the same `'#ffffff'`
+  // the bridge this replaces fell back to.
+  const fill: Paint = base.fill ?? '#ffffff'
   const anchor = vtFillAnchor(frame.config)
 
   // The em in output pixels, from the placement rather than re-read from the
@@ -1046,7 +1063,12 @@ export function vectorTypeSVG(
 ): VtSvgResult {
   const frame = vectorTypeFrame(font, cfg, t)
   const place = vtPlacement(frame, opts)
-  const { fill, stroke, strokeWidth } = frame.config
+  // ═══ TASKS 3/6 BRIDGE ═══ same collapse as `drawVectorType`; Task 6 emits K
+  // shapes per glyph instead (`outlinesToShapes` already returns an array).
+  const svgBase = vtBaseAppearance(frame.config)
+  const fill: Paint = svgBase.fill ?? '#ffffff'
+  const stroke = paintPrimaryColor(svgBase.stroke, '#000000')
+  const strokeWidth = svgBase.strokeWidth
   const precision = opts.precision ?? 3
   const W = Math.max(1, opts.width)
   const H = Math.max(1, opts.height)
@@ -1227,6 +1249,12 @@ export function vtIsAnimated(cfg: VectorTypeConfig | null | undefined): boolean 
   const tracks = cfg?.motion?.tracks
   if (Array.isArray(tracks) && tracks.length > 0) return true
   if (vtHasPreset(cfg)) return true
-  const fill = cfg?.fill
-  return isFill(fill) && fillIsShader(fill) && fill.shader.speed !== 0
+  // ═══ TASK 3 BRIDGE ═══ any layer with a moving shader fill animates the node,
+  // so this folds over the whole stack rather than asking the base layer only —
+  // getting that wrong freezes a node card that should be playing.
+  const layers = Array.isArray(cfg?.appearance) ? cfg.appearance : []
+  const paints: (Paint | undefined)[] = layers.length
+    ? layers.map(l => l?.paint)
+    : [vtBaseAppearance(cfg).fill]
+  return paints.some(p => isFill(p) && fillIsShader(p) && p.shader.speed !== 0)
 }

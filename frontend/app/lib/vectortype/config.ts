@@ -28,6 +28,10 @@ import type { MotionTrack as GradientMotionTrack } from '~/lib/gradientfx/types'
 import type { LayerAnimSpec } from '~/lib/motion/types'
 import { isFill, isGradient, type Gradient, type Paint } from '~/lib/compositor/paint'
 import { DEFAULT_FILL, normalizePaint, type Fill } from '~/lib/spacetype/fillTile'
+// CPU-only (plain strings plus a GLSL source string), so it is safe in the
+// Collection control resolver and every node card — the same bar `fillTile`
+// clears above.
+import { BLEND_MODES, type BlendKind } from '~/lib/studio/blend'
 import { DEFAULT_FONT_ID, VARIABLE_FONTS } from '~/data/variable-fonts'
 
 /** Horizontal anchoring of the (single-line, v1) glyph run. */
@@ -57,6 +61,95 @@ export type VtFillAnchor = 'glyph' | 'word' | 'frame'
  *  and for `mergeConfig`'s whitelist, so the picker cannot offer a value the
  *  merge would throw away. */
 export const VT_FILL_ANCHORS = ['glyph', 'word', 'frame'] as const
+
+// ── The appearance stack ────────────────────────────────────────────────────
+
+/** What one appearance layer paints. Array order is paint order, BACK TO FRONT,
+ *  so a `stroke` below a `fill` is expressible — it was not before, because the
+ *  single stroke was unconditionally drawn after the single fill. */
+export type VtLayerKind = 'fill' | 'stroke' | 'extrude'
+
+/** The three kinds, in add-menu order. Single source for the merge whitelist. */
+export const VT_LAYER_KINDS = ['fill', 'stroke', 'extrude'] as const
+
+/** Upper bound on the stack, matching Gradient's and Shader's `LAYER_MAX`. */
+export const VT_LAYER_MAX = 6
+
+/** Offset copies an extrude layer may draw. Bounds the cost, which is
+ *  `depth × glyphs` paths per frame. */
+export const VT_EXTRUDE_DEPTH_MAX = 32
+
+/**
+ * One entry in the appearance stack.
+ *
+ * ## EVERY per-layer property lives HERE, never inside `paint` — trap 1
+ *
+ * `normalizePaint` does not merge, it REBUILDS field by declared field on all
+ * three arms (see `mergeFill` below). Anything smuggled onto a `Paint` survives
+ * in memory and is DROPPED on the next load — a control that works until you
+ * reopen the file. That is what already forced `fillAnchor` to be a sibling of
+ * `fill` rather than a field inside it, and it is why `anchor`, `enabled`,
+ * `opacity`, `blend`, `width` and every extrude knob are declared on the LAYER.
+ *
+ * ## Every field is REQUIRED, including the ones a given kind ignores
+ *
+ * The plan's sketch marks the kind-specific fields optional. They are stored
+ * required and backfilled by `mergeLayer` instead, for two reasons:
+ *
+ *  - `setByIdPath`/`setByPath`/`makeConfigParams` all guard on the leaf's PARENT
+ *    existing and refuse to fabricate containers. With optional leaves that
+ *    guard is fine (the parent is the layer, which always exists) — but
+ *    `lib/studio/idPath.ts`'s hand-off asks for the backfill explicitly, and a
+ *    always-present leaf is what makes a slider readable before it is first
+ *    dragged (`axes` is sparse and needs a fallback at every read site; this
+ *    does not).
+ *  - it is the same trade `Fill` already makes with `textColor`, which Vector
+ *    Type never reads. An inert field costs a few bytes; a shape that differs
+ *    per kind costs a branch at every consumer.
+ *
+ * A fill layer therefore carries a `width` nothing paints with, and the CONTROL
+ * for it is `when`-gated to stroke layers so the user is never shown it.
+ */
+export interface VtAppearanceLayer {
+  /**
+   * STABLE identity. Minted once, never positional, and NEVER ALL DIGITS —
+   * `lib/studio/path.ts`'s `isIndex` is `/^\d+$/`, so an id of `"3"` in
+   * `appearance.3.width` would be read as an array index and silently address a
+   * different layer. `vtLayerId` guarantees the `L` prefix; `mergeLayer` rejects
+   * a stored id that is all digits (or carries a `.`, which would split the path)
+   * and mints a fresh one.
+   */
+  id: string
+  kind: VtLayerKind
+  /** Visibility. Independent of `opacity`, so a hidden layer keeps its opacity
+   *  for when it is shown again. Stored as a real boolean rather than Gradient's
+   *  `enabled?: boolean` back-compat optional: there is no saved Vector Type data
+   *  in which an absent `enabled` means anything, so the strict rebuild wins. */
+  enabled: boolean
+  /** The nine-type fill model, reused as-is — a stroke's colour is a `Paint`
+   *  too, so a gradient stroke is expressible from day one. */
+  paint: Paint
+  /** Which box this layer's paint is sampled against. PER LAYER: a word-anchored
+   *  gradient fill under a glyph-anchored stroke is the point. */
+  anchor: VtFillAnchor
+  /** 0..1, composed with (not replacing) the glyph's own motion opacity. */
+  opacity: number
+  blend: BlendKind
+  /** `stroke` only — outline width in OUTPUT pixels, so it does not shrink with
+   *  `size`. Inert on the other two kinds. */
+  width: number
+  /** `extrude` only — number of offset copies. */
+  depth: number
+  /** `extrude` only — offset direction in degrees. */
+  angle: number
+  /** `extrude` only — pixels between consecutive copies. */
+  distance: number
+  /** `extrude` only — per-copy scale falloff. */
+  taper: number
+  /** `extrude` only — union the copies into one body. Bake/export only: the
+   *  boolean union is far too slow for a draw loop (plan trap 5). */
+  solid: boolean
+}
 
 /** Same three curves gradientfx's `trackValue` implements. */
 export type VtEasing = 'linear' | 'pingpong' | 'easeinout'
@@ -165,7 +258,53 @@ export interface VectorTypeConfig {
   tracking: number
   align: VtAlign
   /**
-   * Glyph body paint — the product's whole fill vocabulary, not a colour.
+   * The appearance stack — multiple fills, multiple strokes, extrudes, painted
+   * BACK TO FRONT. Illustrator's Appearance panel, in a config.
+   *
+   * ## This REPLACES `fill` / `fillAnchor` / `stroke` / `strokeWidth`
+   *
+   * Those four are GONE, not kept as derived accessors, and the reason is
+   * mechanical rather than aesthetic:
+   *
+   *  - a derived GETTER cannot survive `cloneConfig`. It spreads (`{ ...cfg }`),
+   *    which invokes getters and copies their result as a plain value — so every
+   *    clone would freeze a stale snapshot, and `applyMotion` writes THROUGH the
+   *    clone. The renderer would then read a value the stack no longer holds.
+   *  - a derived FIELD is a second writable copy. `makeConfigParams` writes are
+   *    plain property assignments with no hook, so a control pointed at
+   *    `strokeWidth` would update the copy and not the layer; the next
+   *    `mergeConfig` re-derives it and the edit vanishes on reload. That is
+   *    exactly the "works until you reopen the file" failure trap 1 is about.
+   *
+   * So there is one source of truth. `vtBaseAppearance` (below) is the single,
+   * clearly-labelled BRIDGE that answers "which fill and which stroke would the
+   * old single-pair renderer have drawn" — it is what `canvas.ts` reads until
+   * Task 3 replaces it with a real layer loop, and it also absorbs a legacy blob
+   * that never went through `mergeConfig`.
+   *
+   * A migrated legacy config holds one `fill` layer, plus one `stroke` layer
+   * ABOVE it when the saved `strokeWidth` was greater than zero. See
+   * `migrateLegacyAppearance`.
+   *
+   * MAY BE EMPTY: the user removing every layer is a legitimate state, and it is
+   * distinguishable from "an older config that never had a stack" because the
+   * key is present as an array. An empty stack paints nothing.
+   */
+  appearance: VtAppearanceLayer[]
+  motion: VtMotionConfig
+}
+
+/**
+ * The retired flat paint fields, kept as a TYPE only.
+ *
+ * Nothing on `VectorTypeConfig` carries these any more. The shape is declared so
+ * `migrateLegacyAppearance` and `vtBaseAppearance` can name what they read, and
+ * so a reader of this file can see exactly what a pre-stack saved node holds.
+ */
+export interface VtLegacyPaint {
+  /**
+   * Glyph body paint — the product's whole fill vocabulary, not a colour. Now
+   * `appearance[fill].paint`.
    *
    * A REAL `Paint` (`string | Gradient | Fill`), stored verbatim, NOT a
    * Vector-Type-shaped near-copy. Shape Studio declared its own `SurfaceFill`
@@ -183,9 +322,10 @@ export interface VectorTypeConfig {
    * Space Type slot row. It is carried because `Fill` is adopted WHOLE; the
    * alternative is exactly the near-copy this comment opens by refusing.
    */
-  fill: Paint
+  fill?: Paint
   /**
-   * Which space the fill is sampled in. See `VtFillAnchor`.
+   * Which space the fill is sampled in. See `VtFillAnchor`. Now
+   * `appearance[fill].anchor`.
    *
    * ## A SIBLING of `fill`, not a field inside it — and that is FORCED
    *
@@ -205,46 +345,117 @@ export interface VectorTypeConfig {
    * counter-example: its only anchor lives on `ShaderSpec` (`fills.ts:54`),
    * i.e. inside a struct that actually declares the field.
    *
-   * So the anchor is a top-level key. `VT_CONTROLS` declares it as `fillAnchor`
-   * for the same reason every other key here is the REAL dotted path: a control
-   * key that is one segment off the storage it claims to address writes to a
-   * phantom object (the lesson `derivedAxisControls` records).
+   * So the anchor was a top-level key, spelled `fillAnchor` — the REAL dotted
+   * path, because a control key one segment off the storage it claims to address
+   * writes to a phantom object (the lesson `derivedAxisControls` records). The
+   * stack keeps the rule and moves the key to `layer.anchor`.
    */
-  fillAnchor: VtFillAnchor
+  fillAnchor?: VtFillAnchor
   /**
-   * Outline colour, `#rrggbb`. Only paints when `strokeWidth > 0`.
+   * Outline colour, `#rrggbb`. Only painted when `strokeWidth > 0`.
    *
-   * ## Why `stroke` is DELIBERATELY still a colour and not a `Paint`
-   *
-   * A gradient stroke is cheap on canvas and free in SVG, and it was still
-   * declined for v1:
-   *
-   *  - it roughly doubles the fill control surface — five more `when`-gated
-   *    keys plus a shader arm plus a second anchor question (does the stroke
-   *    share `fillAnchor` or own one?), and neither answer is free;
-   *  - it multiplies every downstream task in this plan: two paint servers to
-   *    dedupe in the SVG spine, an export tier that becomes `max(fill, stroke)`
-   *    rather than a property of one value, a second shader field competing for
-   *    the 4-live-field ceiling;
-   *  - the demand is asymmetric. `strokeWidth` is 0 by default, so the stroke
-   *    paints nothing until the user asks for it, and its colour control is
-   *    withheld until then — most users would never see the extra knobs, while
-   *    every user sees the fill.
-   *
-   * It stays cheap to add later precisely because nothing here forecloses it:
-   * widening `stroke` to `Paint` is purely additive, the resolver is per-call,
-   * and `hasStroke` is already the gate the extra controls would hang off.
+   * v1 declined to widen this to a `Paint`, on the grounds that the extra knobs
+   * doubled the control surface for a feature `strokeWidth: 0` hid by default.
+   * The stack overturns BOTH halves of that reasoning at once: a stroke is now a
+   * layer, so it is visible because it is in the list rather than because a width
+   * was raised, and its paint is the same `Paint` a fill carries — one
+   * vocabulary, no second control surface. The invisible stroke is precisely what
+   * prompted this work.
    */
-  stroke: string
-  /** Outline width in OUTPUT pixels (so it does not shrink with `size`). 0 = no stroke. */
-  strokeWidth: number
-  motion: VtMotionConfig
+  stroke?: string
+  /** Outline width in OUTPUT pixels (so it did not shrink with `size`). 0 = no
+   *  stroke, and the default — which is why the stroke was invisible. Now
+   *  `appearance[stroke].width`. */
+  strokeWidth?: number
 }
 
 export const DEFAULT_STAGGER: VtStaggerConfig = { delay: 0, order: 'forward', seed: 0 }
 
 export const DEFAULT_MOTION: VtMotionConfig = {
   tracks: [], duration: 4, fps: 30, size: 1080, stagger: { ...DEFAULT_STAGGER },
+}
+
+/**
+ * The id the BASE FILL layer carries — in a fresh config and in every migrated
+ * legacy one.
+ *
+ * Deterministic on purpose. A migration that minted a different id on each load
+ * would defeat the entire point of stable ids: a motion track or a Collection
+ * binding written against the layer would stop resolving the next time the file
+ * opened. `L`-prefixed, so it can never be read as an array index.
+ */
+export const VT_BASE_FILL_ID = 'Lfill'
+/** The id a MIGRATED stroke layer carries. Same reasoning as `VT_BASE_FILL_ID`. */
+export const VT_BASE_STROKE_ID = 'Lstroke'
+
+/**
+ * Width a NEW stroke layer gets.
+ *
+ * Non-zero, deliberately, and it is the headline fix of this work: the old
+ * `strokeWidth` defaulted to 0 and its colour control was `when`-gated behind a
+ * non-zero width, so a user who went looking for the stroke found nothing and
+ * reasonably concluded there wasn't one. A stroke layer is visible because it is
+ * in the list.
+ */
+export const VT_DEFAULT_STROKE_WIDTH = 3
+
+/** Field-by-field defaults for a layer, minus the id (which is never shared). */
+const LAYER_DEFAULTS: Omit<VtAppearanceLayer, 'id' | 'paint'> = {
+  kind: 'fill',
+  enabled: true,
+  // `glyph` is the identity-preserving anchor: it is what the renderer already
+  // did, and for a solid fill all three anchors are the same picture.
+  anchor: 'glyph',
+  opacity: 1,
+  blend: 'normal',
+  width: VT_DEFAULT_STROKE_WIDTH,
+  // Extrude defaults — a readable block shadow down-right, not a hairline.
+  depth: 8,
+  angle: 135,
+  distance: 3,
+  taper: 0,
+  solid: false,
+}
+
+/**
+ * Build one appearance layer.
+ *
+ * `paint` is always a FRESH object (`{ ...DEFAULT_FILL }`, or the caller's own),
+ * never a shared module constant — the previous task on this file paid for the
+ * version of that bug where `DEFAULT_CONFIG.fill` was one object and a motion
+ * frame's angle leaked into the module-level default.
+ *
+ * EXPORTED because `mergeConfig` is not the only place a config is BUILT:
+ * `thumbPreview.ts` assembles one from a `VtThumbSpec` and has nothing to merge.
+ */
+export function vtLayer(over: Partial<VtAppearanceLayer> = {}): VtAppearanceLayer {
+  // Assigned key by key rather than spread, so an explicit `undefined` on the
+  // override (which a spread would happily reinstate over the default) cannot
+  // produce a layer with a missing field.
+  const out: VtAppearanceLayer = { ...LAYER_DEFAULTS, id: '', paint: { ...DEFAULT_FILL } }
+  for (const [k, v] of Object.entries(over)) {
+    if (v !== undefined) (out as unknown as Record<string, unknown>)[k] = v
+  }
+  if (!out.id) out.id = vtLayerId()
+  return out
+}
+
+/**
+ * Mint a layer id.
+ *
+ * NEVER ALL DIGITS — the `L` prefix guarantees it, and that is not decoration:
+ * `lib/studio/path.ts` treats an all-digits path segment as an array index, so a
+ * numeric id in `appearance.<id>.width` would resolve to a POSITION and silently
+ * address the wrong layer. `newLayerId()` in the other two stacks has the same
+ * prefix for the same reason.
+ *
+ * Uniqueness comes from a monotonic counter plus the clock, not from randomness
+ * alone, so two layers added in the same millisecond cannot collide.
+ */
+let vtIdSeq = 0
+export function vtLayerId(): string {
+  vtIdSeq = (vtIdSeq + 1) % 0xffff
+  return `L${Date.now().toString(36)}${vtIdSeq.toString(36)}`
 }
 
 export const DEFAULT_CONFIG: VectorTypeConfig = {
@@ -254,16 +465,10 @@ export const DEFAULT_CONFIG: VectorTypeConfig = {
   size: 120,
   tracking: 0,
   align: 'center',
-  // The same white the legacy `fill: '#ffffff'` painted, said in the fill
-  // vocabulary — so the default config's PIXELS are unchanged by this task.
-  fill: { ...DEFAULT_FILL },
-  // `glyph` is the identity-preserving default: it is what the renderer already
-  // does, and for a solid fill all three anchors are the same picture. Task 3
-  // lands the three sampling spaces against that known baseline rather than
-  // changing the default in the same commit as the mechanism.
-  fillAnchor: 'glyph',
-  stroke: '#000000',
-  strokeWidth: 0,
+  // One white fill and nothing else — the same picture the legacy
+  // `fill: '#ffffff'` + `strokeWidth: 0` default painted, said in the stack's
+  // vocabulary. The default config's PIXELS are unchanged by this task.
+  appearance: [vtLayer({ id: VT_BASE_FILL_ID })],
   // Spread is shallow: `stagger` must be copied too, or DEFAULT_CONFIG and
   // DEFAULT_MOTION would share one mutable object.
   motion: { ...DEFAULT_MOTION, tracks: [], stagger: { ...DEFAULT_STAGGER } },
@@ -401,6 +606,233 @@ function clonePaint(p: Paint): Paint {
   }
 }
 
+// ── The appearance stack: rebuild, migrate, and the render bridge ───────────
+
+/**
+ * A stored id worth keeping, or `''`.
+ *
+ * Three rejections, and every one of them is a real addressing hazard rather
+ * than tidiness:
+ *
+ *  - ALL DIGITS — `lib/studio/path.ts`'s `isIndex` is `/^\d+$/`, so `"3"` in
+ *    `appearance.3.width` is read as an ARRAY INDEX. An id that resolves to a
+ *    position is worse than no id: it silently addresses a real but wrong layer,
+ *    which is the exact failure the stable-id decision exists to prevent.
+ *  - CONTAINS A DOT — the path grammar is dot-separated, so `a.b` would split.
+ *  - EMPTY / not a string.
+ */
+function validLayerId(raw: unknown): string {
+  const id = typeof raw === 'string' ? raw.trim() : ''
+  if (!id || id.includes('.') || /^\d+$/.test(id)) return ''
+  return id
+}
+
+/**
+ * Rebuild ONE layer. Strict, like every other merge here: an unknown kind
+ * collapses to `fill`, a non-finite number falls back, an unknown blend becomes
+ * `normal`, and nothing arrives on the layer that was not declared.
+ *
+ * `paint` goes through `mergeFill`, so a layer whose paint is a bare colour
+ * string (hand-written JSON, or a stroke migrated from its `#rrggbb`) is lifted
+ * exactly as the old flat `fill` was.
+ */
+function mergeLayer(raw: unknown, id: string): VtAppearanceLayer | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const o = raw as Record<string, unknown>
+  return {
+    id,
+    kind: oneOf(o.kind, VT_LAYER_KINDS, 'fill'),
+    enabled: typeof o.enabled === 'boolean' ? o.enabled : true,
+    paint: mergeFill(o.paint),
+    anchor: oneOf(o.anchor, VT_FILL_ANCHORS, LAYER_DEFAULTS.anchor),
+    opacity: clamp(num(o.opacity, LAYER_DEFAULTS.opacity), 0, 1),
+    blend: oneOf(o.blend, BLEND_MODES, LAYER_DEFAULTS.blend),
+    // A negative width is not "the other side" — it is a broken value, and
+    // `ctx.lineWidth` ignores it silently.
+    width: Math.max(0, num(o.width, LAYER_DEFAULTS.width)),
+    depth: clamp(Math.round(num(o.depth, LAYER_DEFAULTS.depth)), 0, VT_EXTRUDE_DEPTH_MAX),
+    angle: num(o.angle, LAYER_DEFAULTS.angle),
+    distance: num(o.distance, LAYER_DEFAULTS.distance),
+    taper: clamp(num(o.taper, LAYER_DEFAULTS.taper), -1, 1),
+    solid: typeof o.solid === 'boolean' ? o.solid : false,
+  }
+}
+
+/**
+ * Rebuild a stored stack.
+ *
+ * TWO PASSES over the ids, and the order matters. Pass one claims every valid,
+ * non-duplicate stored id; pass two mints for the rest. Minting inside a single
+ * pass would let a positional fallback (`L0`) steal an id a LATER layer legibly
+ * holds, and that layer would then be renamed on load — silently breaking any
+ * binding written against it.
+ *
+ * A DUPLICATE id keeps the first occurrence and re-mints the second: duplicates
+ * are a data bug (a duplicate-layer action that forgot to mint), and
+ * `resolveIdPath` resolves a duplicate to the LOWEST index, so leaving both
+ * would make one binding address two layers.
+ *
+ * A layer that was never given an id gets a POSITIONAL fallback (`L<index>`).
+ * That is stable across loads of an unchanged file, which is the most that can
+ * be promised for data that never had an identity — it is not stable across a
+ * reorder, but nothing can be bound to it yet either.
+ *
+ * Bounded by `VT_LAYER_MAX`; extras are dropped rather than rendered, matching
+ * Gradient and Shader.
+ */
+function mergeAppearance(raw: unknown[]): VtAppearanceLayer[] {
+  const capped = raw.slice(0, VT_LAYER_MAX)
+  const taken = new Set<string>()
+  const ids: (string | null)[] = capped.map((entry) => {
+    const id = validLayerId((entry as Record<string, unknown> | null)?.id)
+    if (!id || taken.has(id)) return null
+    taken.add(id)
+    return id
+  })
+  const out: VtAppearanceLayer[] = []
+  for (let i = 0; i < capped.length; i++) {
+    let id = ids[i]
+    if (!id) {
+      let n = i
+      do { id = `L${n}`; n++ } while (taken.has(id))
+      taken.add(id)
+    }
+    const layer = mergeLayer(capped[i], id)
+    // A non-object entry is not a layer with bad values, it is not a layer —
+    // dropped, the same way `mergeTrack` drops a track with no path.
+    if (layer) out.push(layer)
+  }
+  return out
+}
+
+/**
+ * TRAP 4 — turn a pre-stack saved config into an appearance stack.
+ *
+ * EVERY saved Vector Type node holds the flat `fill` / `fillAnchor` / `stroke` /
+ * `strokeWidth`, and `mergeConfig` is the only place that knows how to read
+ * them. The three rules:
+ *
+ *  1. `fill` + `fillAnchor` become ONE `fill` layer, id `VT_BASE_FILL_ID`.
+ *  2. A `strokeWidth > 0` stroke becomes one `stroke` layer ABOVE it (later in
+ *     the array = painted in front), reproducing the old fixed order.
+ *  3. `strokeWidth === 0` produces NO stroke layer. That stroke was never
+ *     visible — it is the default, and the whole reason users concluded this
+ *     studio had no stroke. Materialising it would put a dead layer in every
+ *     migrated node's stack.
+ *
+ * ONE EXCEPTION to rule 3, and it exists to avoid destroying user work: if a
+ * MOTION TRACK animates `strokeWidth` between two values that are not both zero,
+ * the stroke was visible — just not at rest. Dropping the layer would silently
+ * delete an animation the user built. So the layer is created with the stored
+ * (zero) width and the remapped track drives it, which paints exactly what the
+ * old renderer painted at every t.
+ */
+export function migrateLegacyAppearance(legacy: VtLegacyPaint, strokeIsAnimated = false): VtAppearanceLayer[] {
+  const out: VtAppearanceLayer[] = [vtLayer({
+    id: VT_BASE_FILL_ID,
+    kind: 'fill',
+    paint: mergeFill(legacy?.fill),
+    anchor: oneOf(legacy?.fillAnchor, VT_FILL_ANCHORS, LAYER_DEFAULTS.anchor),
+  })]
+  const width = Math.max(0, num(legacy?.strokeWidth, 0))
+  if (width > 0 || strokeIsAnimated) {
+    out.push(vtLayer({
+      id: VT_BASE_STROKE_ID,
+      kind: 'stroke',
+      // The legacy stroke was `#rrggbb`; `mergeFill` lifts it to a solid `Fill`
+      // exactly as it lifts a legacy flat fill, so both arms of a migrated stack
+      // speak one vocabulary.
+      paint: mergeFill(typeof legacy?.stroke === 'string' ? legacy.stroke : '#000000'),
+      width,
+    }))
+  }
+  return out
+}
+
+/**
+ * Rewrite a pre-stack motion track path onto the migrated stack, or `null` to
+ * drop the track.
+ *
+ * POSITIONAL, not id-addressed, and deliberately: `applyMotion` resolves through
+ * `getByPath`/`setByPath`, which understand positions only. Task 9 moves the
+ * whole motion system onto `resolveIdPath`; until then an id-shaped path here
+ * would silently animate nothing.
+ *
+ * Only the two animatable legacy paint keys existed — `fill.angle` /
+ * `fill.density` (sliders on the `Fill` arm) and `strokeWidth`. `fillAnchor` and
+ * `stroke` were a select and a colour, neither animatable, so no saved track can
+ * point at them.
+ */
+function remapLegacyTrackPath(path: string, appearance: VtAppearanceLayer[]): string | null {
+  if (path === 'strokeWidth') {
+    const i = appearance.findIndex(l => l.kind === 'stroke')
+    return i === -1 ? null : `appearance.${i}.width`
+  }
+  if (path.startsWith('fill.')) {
+    const i = appearance.findIndex(l => l.kind === 'fill')
+    return i === -1 ? null : `appearance.${i}.paint.${path.slice('fill.'.length)}`
+  }
+  if (path === 'fill' || path === 'fillAnchor' || path === 'stroke') return null
+  return path
+}
+
+/**
+ * ## THE BRIDGE — Task 3 deletes this, and nothing else should grow a caller
+ *
+ * "Which single fill and which single stroke would the pre-stack renderer have
+ * drawn?" — the bottom-most ENABLED layer of each kind. It exists so `canvas.ts`
+ * and the studio surface keep painting while Task 3 replaces the fill/stroke
+ * pair with a real back-to-front layer loop. On a one-fill stack (a fresh config
+ * and every migrated legacy node) it is not an approximation at all: it is the
+ * same picture, pixel for pixel. On a taller stack it draws the bottom pair only
+ * — a SIMPLIFICATION of the stack, never a different picture.
+ *
+ * `fill` is returned BY REFERENCE, so a `layer.paint.*` control write lands on
+ * the layer rather than on a copy. That is what lets the paint controls keep
+ * working through the bridge.
+ *
+ * It also tolerates a RAW, never-merged blob, because `applyMotion` clones
+ * whatever it is handed and the plan's trap 4 is precisely that
+ * `ensureConfigDefaults`-style normalisation is not on the universal load path.
+ * With no `appearance` array it falls back to reading the legacy flat fields —
+ * so a node card rendering straight from stored JSON still paints the user's
+ * colours instead of defaulting to white.
+ */
+export interface VtBaseAppearance {
+  /** The base fill layer's paint, or `undefined` when the stack has no enabled
+   *  fill layer (a legitimate state: the user removed it). */
+  fill: Paint | undefined
+  fillAnchor: VtFillAnchor
+  /** The base stroke layer's paint. `undefined` when there is no stroke layer,
+   *  which is also when `strokeWidth` is 0. */
+  stroke: Paint | undefined
+  /** OUTPUT pixels. 0 = no stroke, exactly as the flat field meant. */
+  strokeWidth: number
+}
+
+export function vtBaseAppearance(cfg: VectorTypeConfig | VtLegacyPaint | null | undefined): VtBaseAppearance {
+  const stack = (cfg as VectorTypeConfig | null)?.appearance
+  if (!Array.isArray(stack)) {
+    const legacy = (cfg ?? {}) as VtLegacyPaint
+    const width = Math.max(0, num(legacy.strokeWidth, 0))
+    return {
+      fill: legacy.fill ?? undefined,
+      fillAnchor: oneOf(legacy.fillAnchor, VT_FILL_ANCHORS, LAYER_DEFAULTS.anchor),
+      stroke: width > 0 && typeof legacy.stroke === 'string' ? legacy.stroke : undefined,
+      strokeWidth: width,
+    }
+  }
+  const fill = stack.find(l => l?.kind === 'fill' && l.enabled !== false)
+  const stroke = stack.find(l => l?.kind === 'stroke' && l.enabled !== false)
+  const width = Math.max(0, num(stroke?.width, 0))
+  return {
+    fill: fill?.paint,
+    fillAnchor: oneOf(fill?.anchor, VT_FILL_ANCHORS, LAYER_DEFAULTS.anchor),
+    stroke: width > 0 ? stroke?.paint : undefined,
+    strokeWidth: width,
+  }
+}
+
 /** Rebuild the axes record: four-char tags mapped to finite numbers, nothing else.
  *  A stringified number is REJECTED rather than coerced — `Number('')` is 0 and
  *  `Number('700abc')` is NaN, so coercion here would invent axis positions. */
@@ -418,10 +850,15 @@ function mergeAxes(raw: unknown): Record<string, number> {
 /** Rebuild one motion track, or null if it targets nothing. A track without a
  *  path cannot be evaluated or edited — it would sit in the timeline forever
  *  doing nothing — so it is dropped rather than defaulted to some path. */
-function mergeTrack(raw: unknown): VtMotionTrack | null {
+function mergeTrack(raw: unknown, remap?: (path: string) => string | null): VtMotionTrack | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
   const o = raw as Record<string, unknown>
-  const path = typeof o.path === 'string' ? o.path.trim() : ''
+  const raws = typeof o.path === 'string' ? o.path.trim() : ''
+  if (!raws) return null
+  // `remap` is supplied only when this config was MIGRATED from the flat paint
+  // fields, and it may return null for a track whose target no longer exists —
+  // dropped, for the same reason a path-less track is.
+  const path = remap ? remap(raws) : raws
   if (!path) return null
   return {
     path,
@@ -499,12 +936,12 @@ function mergeAnimSpec(raw: unknown, slot: VtPresetSlot): LayerAnimSpec | undefi
   return spec
 }
 
-function mergeMotion(raw: unknown): VtMotionConfig {
+function mergeMotion(raw: unknown, remap?: (path: string) => string | null): VtMotionConfig {
   const o = (raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}) as Record<string, unknown>
   const rawTracks = Array.isArray(o.tracks) ? o.tracks : []
   const tracks: VtMotionTrack[] = []
   for (const t of rawTracks) {
-    const track = mergeTrack(t)
+    const track = mergeTrack(t, remap)
     if (track) tracks.push(track)
   }
   // Spread-when-present, not `in: undefined`: an absent slot must leave no key
@@ -534,6 +971,17 @@ function mergeMotion(raw: unknown): VtMotionConfig {
 export function mergeConfig(raw: unknown): VectorTypeConfig {
   const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, any>
   const d = DEFAULT_CONFIG
+  // A stack is PRESENT when the key is an array — including an EMPTY one, which
+  // is the user having removed every layer and must not be re-migrated back into
+  // a fill. Anything else (absent, null, an object) is a pre-stack config and
+  // goes through the trap-4 migration.
+  const stored = Array.isArray(o.appearance) ? (o.appearance as unknown[]) : null
+  // Read the raw track paths BEFORE the merge, because whether a legacy
+  // zero-width stroke becomes a layer depends on whether anything animates it.
+  const strokeIsAnimated = !stored && legacyStrokeIsAnimated(o.motion)
+  const appearance = stored
+    ? mergeAppearance(stored)
+    : migrateLegacyAppearance(o as VtLegacyPaint, strokeIsAnimated)
   return {
     text: str(o.text, d.text),
     // An unknown font id is NOT kept: every later stage (the proxy, the loader,
@@ -544,12 +992,22 @@ export function mergeConfig(raw: unknown): VectorTypeConfig {
     size: num(o.size, d.size),
     tracking: num(o.tracking, d.tracking),
     align: oneOf(o.align, VT_ALIGNS, d.align),
-    fill: mergeFill(o.fill),
-    fillAnchor: oneOf(o.fillAnchor, VT_FILL_ANCHORS, d.fillAnchor),
-    stroke: str(o.stroke, d.stroke),
-    strokeWidth: num(o.strokeWidth, d.strokeWidth),
-    motion: mergeMotion(o.motion),
+    appearance,
+    motion: mergeMotion(o.motion, stored ? undefined : path => remapLegacyTrackPath(path, appearance)),
   }
+}
+
+/** Does a pre-stack config animate its `strokeWidth` away from zero? See rule 3's
+ *  exception in `migrateLegacyAppearance`. Reads the RAW motion block, because
+ *  this question is asked before the merge that would normalise it. */
+function legacyStrokeIsAnimated(rawMotion: unknown): boolean {
+  const o = (rawMotion && typeof rawMotion === 'object' ? rawMotion : {}) as Record<string, unknown>
+  const tracks = Array.isArray(o.tracks) ? o.tracks : []
+  return tracks.some((t) => {
+    const tr = (t ?? {}) as Record<string, unknown>
+    if (typeof tr.path !== 'string' || tr.path.trim() !== 'strokeWidth') return false
+    return num(tr.from, 0) > 0 || num(tr.to, 0) > 0
+  })
 }
 
 /** A deep copy safe to mutate — what motion evaluation clones before applying
@@ -572,12 +1030,21 @@ export function cloneConfig(cfg: VectorTypeConfig): VectorTypeConfig {
   return {
     ...cfg,
     axes: { ...cfg.axes },
-    // `fill` is now a mutable OBJECT, so the shallow spread above would leave
-    // the clone sharing it. `fill.angle`/`fill.density` are animatable sliders,
-    // and `applyMotion` writes THROUGH this clone: without the deep copy, frame
-    // 37's angle lands in the config the surface is holding — and, because
-    // `DEFAULT_CONFIG.fill` is one object, in the module-level default too.
-    fill: clonePaint(cfg.fill),
+    // The stack and every paint in it are mutable OBJECTS, so the shallow spread
+    // above would leave the clone sharing them. `layer.paint.angle` /
+    // `layer.paint.density` / `layer.width` are animatable, and `applyMotion`
+    // writes THROUGH this clone: without the deep copy, frame 37's angle lands in
+    // the config the surface is holding — and, because `DEFAULT_CONFIG` holds one
+    // layer object, in the module-level default too. Tolerant of a raw stored
+    // blob (no `appearance` at all), same as its caller.
+    //
+    // Spread CONDITIONALLY: a raw legacy blob has no `appearance`, and writing an
+    // empty array onto the clone would tell `vtBaseAppearance` "the user removed
+    // every layer" instead of "this was never migrated" — the clone would then
+    // render nothing where the blob renders the user's colours.
+    ...(Array.isArray(cfg.appearance)
+      ? { appearance: cfg.appearance.map(l => (l && typeof l === 'object' ? { ...l, paint: clonePaint(l.paint) } : l)) }
+      : {}),
     motion: {
       ...m,
       stagger: { ...m?.stagger } as VtStaggerConfig,

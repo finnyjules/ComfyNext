@@ -15,7 +15,7 @@ import * as fontkit from 'fontkit'
 import { describe, expect, it } from 'vitest'
 import { normaliseAxes, type VtFont } from '~/lib/vectortype/font'
 import { DEFAULT_FILL } from '~/lib/spacetype/fillTile'
-import { mergeConfig } from '~/lib/vectortype/config'
+import { mergeConfig, vtBaseAppearance } from '~/lib/vectortype/config'
 import { vectorTypeFrame, vtIsAnimated, vtPlacement } from '~/lib/vectortype/canvas'
 import { vtHasPreset } from '~/lib/vectortype/presetMotion'
 import {
@@ -163,9 +163,12 @@ describe('vtThumbConfig — a REAL config, through the one render path', () => {
     // tile assembles its config directly (there is no stored blob to merge), so
     // it goes through the same `mergeFill` `mergeConfig` uses. The colour the
     // caller asked for lands on `a`.
-    expect(cfg.fill).toEqual({ ...DEFAULT_FILL, a: '#ff0000' })
+    expect(vtBaseAppearance(cfg).fill).toEqual({ ...DEFAULT_FILL, a: '#ff0000' })
     expect(cfg.motion.tracks).toEqual([])
-    expect(cfg.strokeWidth).toBe(0)
+    // No stroke LAYER at all — the tile never had one, and the migration must
+    // not materialise a dead layer for a zero-width stroke (trap 4, rule 3).
+    expect(vtBaseAppearance(cfg).strokeWidth).toBe(0)
+    expect(cfg.appearance.map((l) => l.kind)).toEqual(['fill'])
     expect(cfg.align).toBe('center')
   })
 

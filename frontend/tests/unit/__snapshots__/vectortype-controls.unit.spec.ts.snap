@@ -67,8 +67,8 @@ exports[`shader fills enter the agent vocabulary > is a characterization snapsho
   {
     "default": "solid",
     "group": "Paint",
-    "hint": "How the glyph bodies are painted: a flat colour, a gradient, or one of the procedural patterns.",
-    "key": "fill.type",
+    "hint": "How this layer is painted: a flat colour, a gradient, or one of the procedural patterns.",
+    "key": "layer.paint.type",
     "kind": "select",
     "label": "Fill type",
     "options": [
@@ -86,8 +86,8 @@ exports[`shader fills enter the agent vocabulary > is a characterization snapsho
   {
     "default": "glyph",
     "group": "Paint",
-    "hint": "Which box the fill is measured against: each glyph, the whole word, or the frame (so the type moves over a fill that stays put).",
-    "key": "fillAnchor",
+    "hint": "Which box this layer is measured against: each glyph, the whole word, or the frame (so the type moves over a fill that stays put).",
+    "key": "layer.anchor",
     "kind": "select",
     "label": "Fill anchor",
     "options": [
@@ -95,17 +95,6 @@ exports[`shader fills enter the agent vocabulary > is a characterization snapsho
       "word",
       "frame",
     ],
-  },
-  {
-    "default": 0,
-    "group": "Paint",
-    "hint": "Outline width in OUTPUT pixels, so it does not shrink with size. 0 = no stroke.",
-    "key": "strokeWidth",
-    "kind": "slider",
-    "label": "Stroke width",
-    "max": 40,
-    "min": 0,
-    "step": 0.5,
   },
   {
     "default": 0,
@@ -137,7 +126,7 @@ exports[`shader fills enter the agent vocabulary > is a characterization snapsho
     "default": "fbm_warp",
     "group": "Shader",
     "hint": "Which catalog shader effect processes the fill underneath.",
-    "key": "fill.shader.effectId",
+    "key": "layer.paint.shader.effectId",
     "kind": "select",
     "label": "Effect",
     "options": [],
@@ -146,7 +135,7 @@ exports[`shader fills enter the agent vocabulary > is a characterization snapsho
     "default": "object",
     "group": "Shader",
     "hint": "object = the field samples in the shape's own local space (tiles/moves with it); frame = it samples the whole frame's space (the shape is a window onto one continuous field).",
-    "key": "fill.shader.anchor",
+    "key": "layer.paint.shader.anchor",
     "kind": "select",
     "label": "Anchor",
     "options": [
@@ -158,7 +147,7 @@ exports[`shader fills enter the agent vocabulary > is a characterization snapsho
     "default": 1,
     "group": "Shader",
     "hint": "Animation rate multiplier for the effect; 0 = frozen (still).",
-    "key": "fill.shader.speed",
+    "key": "layer.paint.shader.speed",
     "kind": "slider",
     "label": "Speed",
     "max": 4,
@@ -168,7 +157,7 @@ exports[`shader fills enter the agent vocabulary > is a characterization snapsho
   {
     "default": 6,
     "group": "Effect",
-    "key": "fill.shader.params.segments",
+    "key": "layer.paint.shader.params.segments",
     "kind": "slider",
     "label": "Segments",
     "max": 24,
@@ -178,7 +167,7 @@ exports[`shader fills enter the agent vocabulary > is a characterization snapsho
   {
     "default": 1,
     "group": "Effect",
-    "key": "fill.shader.params.zoom",
+    "key": "layer.paint.shader.params.zoom",
     "kind": "slider",
     "label": "Zoom",
     "max": 4,
@@ -188,7 +177,7 @@ exports[`shader fills enter the agent vocabulary > is a characterization snapsho
   {
     "default": "0",
     "group": "Effect",
-    "key": "fill.shader.params.mode",
+    "key": "layer.paint.shader.params.mode",
     "kind": "select",
     "label": "Mode",
     "options": [
@@ -266,8 +255,8 @@ exports[`vtAgentControls > is a characterization snapshot, with and without a fo
   {
     "default": "solid",
     "group": "Paint",
-    "hint": "How the glyph bodies are painted: a flat colour, a gradient, or one of the procedural patterns.",
-    "key": "fill.type",
+    "hint": "How this layer is painted: a flat colour, a gradient, or one of the procedural patterns.",
+    "key": "layer.paint.type",
     "kind": "select",
     "label": "Fill type",
     "options": [
@@ -285,15 +274,15 @@ exports[`vtAgentControls > is a characterization snapshot, with and without a fo
   {
     "default": "#ffffff",
     "group": "Paint",
-    "key": "fill.a",
+    "key": "layer.paint.a",
     "kind": "color",
     "label": "Fill",
   },
   {
     "default": "glyph",
     "group": "Paint",
-    "hint": "Which box the fill is measured against: each glyph, the whole word, or the frame (so the type moves over a fill that stays put).",
-    "key": "fillAnchor",
+    "hint": "Which box this layer is measured against: each glyph, the whole word, or the frame (so the type moves over a fill that stays put).",
+    "key": "layer.anchor",
     "kind": "select",
     "label": "Fill anchor",
     "options": [
@@ -301,17 +290,6 @@ exports[`vtAgentControls > is a characterization snapshot, with and without a fo
       "word",
       "frame",
     ],
-  },
-  {
-    "default": 0,
-    "group": "Paint",
-    "hint": "Outline width in OUTPUT pixels, so it does not shrink with size. 0 = no stroke.",
-    "key": "strokeWidth",
-    "kind": "slider",
-    "label": "Stroke width",
-    "max": 40,
-    "min": 0,
-    "step": 0.5,
   },
   {
     "default": 0,
@@ -409,8 +387,8 @@ exports[`vtAgentControls > is a characterization snapshot, with and without a fo
   {
     "default": "solid",
     "group": "Paint",
-    "hint": "How the glyph bodies are painted: a flat colour, a gradient, or one of the procedural patterns.",
-    "key": "fill.type",
+    "hint": "How this layer is painted: a flat colour, a gradient, or one of the procedural patterns.",
+    "key": "layer.paint.type",
     "kind": "select",
     "label": "Fill type",
     "options": [
@@ -428,15 +406,15 @@ exports[`vtAgentControls > is a characterization snapshot, with and without a fo
   {
     "default": "#ffffff",
     "group": "Paint",
-    "key": "fill.a",
+    "key": "layer.paint.a",
     "kind": "color",
     "label": "Fill",
   },
   {
     "default": "glyph",
     "group": "Paint",
-    "hint": "Which box the fill is measured against: each glyph, the whole word, or the frame (so the type moves over a fill that stays put).",
-    "key": "fillAnchor",
+    "hint": "Which box this layer is measured against: each glyph, the whole word, or the frame (so the type moves over a fill that stays put).",
+    "key": "layer.anchor",
     "kind": "select",
     "label": "Fill anchor",
     "options": [
@@ -446,22 +424,15 @@ exports[`vtAgentControls > is a characterization snapshot, with and without a fo
     ],
   },
   {
-    "default": 0,
+    "default": 3,
     "group": "Paint",
-    "hint": "Outline width in OUTPUT pixels, so it does not shrink with size. 0 = no stroke.",
-    "key": "strokeWidth",
+    "hint": "Outline width in OUTPUT pixels, so it does not shrink with size.",
+    "key": "layer.width",
     "kind": "slider",
     "label": "Stroke width",
     "max": 40,
     "min": 0,
     "step": 0.5,
-  },
-  {
-    "default": "#000000",
-    "group": "Paint",
-    "key": "stroke",
-    "kind": "color",
-    "label": "Stroke",
   },
   {
     "default": 0,

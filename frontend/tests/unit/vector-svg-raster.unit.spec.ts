@@ -40,7 +40,7 @@ import {
 import { paintIsVector, paintToVectorPaint } from '~/lib/paint/toVector'
 import { DEFAULT_FILL, DEFAULT_SHADER_SPEC, type Fill, type FillType } from '~/lib/spacetype/fillTile'
 import { normaliseAxes, type VtFont } from '~/lib/vectortype/font'
-import { DEFAULT_CONFIG, mergeConfig, type VectorTypeConfig } from '~/lib/vectortype/config'
+import { DEFAULT_CONFIG, mergeConfig, vtLayer, type VectorTypeConfig } from '~/lib/vectortype/config'
 
 // ── the two mocks, and why they are the only two ────────────────────────────
 //
@@ -106,8 +106,22 @@ function shaderFill(anchor: 'object' | 'frame' = 'object'): Fill {
   return fill('shader', { shader: { ...DEFAULT_SHADER_SPEC, anchor } })
 }
 
+
+/** ═══ APPEARANCE STACK ═══ the `fill` / `fillAnchor` a caller asks for is now
+ *  the BASE FILL LAYER's paint and anchor. Translated here so every call site
+ *  below reads as it did — the stack is what changed, not what these tests
+ *  assert about the document. */
+function vtStack(fill: unknown, fillAnchor: unknown) {
+  return [vtLayer({ id: 'Lfill', paint: fill as any, anchor: (fillAnchor ?? 'glyph') as any })]
+}
+
 function cfg(patch: Partial<VectorTypeConfig> & Record<string, unknown> = {}): VectorTypeConfig {
-  return mergeConfig({ ...DEFAULT_CONFIG, text: 'Sail', size: 150, ...patch })
+  const { fill, fillAnchor, ...rest } = patch as Record<string, unknown>
+  return mergeConfig({
+    ...DEFAULT_CONFIG, text: 'Sail', size: 150,
+    ...(fill !== undefined || fillAnchor !== undefined ? { appearance: vtStack(fill, fillAnchor) } : {}),
+    ...rest,
+  })
 }
 
 // ── the fake canvas, which is also the measuring instrument ─────────────────

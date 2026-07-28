@@ -50,7 +50,7 @@ import {
   stripeBandIsB,
 } from '~/lib/spacetype/fillTile'
 import { normaliseAxes, type VtFont } from '~/lib/vectortype/font'
-import { DEFAULT_CONFIG, mergeConfig, type VectorTypeConfig } from '~/lib/vectortype/config'
+import { DEFAULT_CONFIG, mergeConfig, vtLayer, type VectorTypeConfig } from '~/lib/vectortype/config'
 import { vectorTypeSVG, vectorTypeFrame, vtPlacement, vtRunPaintBox, vtGlyphPaintBox } from '~/lib/vectortype/canvas'
 
 // ── fixtures ────────────────────────────────────────────────────────────────
@@ -89,8 +89,21 @@ function square(x: number, size = 10): VectorShape['commands'] {
   ]
 }
 
+
+/** ═══ APPEARANCE STACK ═══ the `fill` / `fillAnchor` a caller asks for is now
+ *  the BASE FILL LAYER's paint and anchor. Translated here so every call site
+ *  below reads as it did — the stack is what changed, not what these tests
+ *  assert about the document. */
+function vtStack(fill: unknown, fillAnchor: unknown) {
+  return [vtLayer({ id: 'Lfill', paint: fill as any, anchor: (fillAnchor ?? 'glyph') as any })]
+}
+
 function cfg(patch: Partial<VectorTypeConfig> & Record<string, unknown> = {}): VectorTypeConfig {
-  return mergeConfig({ ...DEFAULT_CONFIG, text: WORD, size: 100, fill: fill('checkerboard'), ...patch })
+  const { fill: paint, fillAnchor, ...rest } = patch as Record<string, unknown>
+  return mergeConfig({
+    ...DEFAULT_CONFIG, text: WORD, size: 100,
+    appearance: vtStack(paint ?? fill('checkerboard'), fillAnchor), ...rest,
+  })
 }
 
 // ── the shared cell maths ───────────────────────────────────────────────────

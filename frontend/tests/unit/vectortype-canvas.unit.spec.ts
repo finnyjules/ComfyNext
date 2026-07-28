@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url'
 import * as fontkit from 'fontkit'
 import { describe, expect, it } from 'vitest'
 import { normaliseAxes, type VtFont } from '~/lib/vectortype/font'
-import { DEFAULT_CONFIG, mergeConfig, type VectorTypeConfig } from '~/lib/vectortype/config'
+import { DEFAULT_CONFIG, mergeConfig, vtLayer, type VectorTypeConfig } from '~/lib/vectortype/config'
 import {
   vectorTypeFrame,
   vectorTypeSVG,
@@ -51,6 +51,24 @@ const WORD = 'Sailor'
 
 function cfg(patch: Partial<VectorTypeConfig> = {}): VectorTypeConfig {
   return mergeConfig({ ...DEFAULT_CONFIG, text: WORD, ...patch })
+}
+
+/** A config whose one appearance layer carries `paint`. `cfg({ fill })` no
+ *  longer works: the spread of `DEFAULT_CONFIG` already supplies an
+ *  `appearance` array, and its presence is what tells `mergeConfig` there is
+ *  nothing to migrate. */
+function paintCfg(paint: unknown, patch: Partial<VectorTypeConfig> = {}): VectorTypeConfig {
+  return cfg({ ...patch, appearance: [vtLayer({ id: 'Lfill', paint: paint as any })] })
+}
+
+/** A config with a real stroke layer above its fill. */
+function strokedCfg(width: number, colour = '#ff0055'): VectorTypeConfig {
+  return cfg({
+    appearance: [
+      vtLayer({ id: 'Lfill' }),
+      vtLayer({ id: 'Lstroke', kind: 'stroke', width, paint: colour }),
+    ],
+  })
 }
 
 function wghtTrack(from = 100, to = 900) {
@@ -362,8 +380,8 @@ describe('vectorTypeSVG — editable outlines, not a raster embed', () => {
   })
 
   it('carries the STROKE as attributes, never baked into the geometry', () => {
-    const plain = vectorTypeSVG(font, cfg({ strokeWidth: 0 }), 0, BOX)
-    const outlined = vectorTypeSVG(font, cfg({ strokeWidth: 6, stroke: '#ff0055' }), 0, BOX)
+    const plain = vectorTypeSVG(font, cfg(), 0, BOX)
+    const outlined = vectorTypeSVG(font, strokedCfg(6, '#ff0055'), 0, BOX)
     // Identical `d` — a stroke that had been outlined into geometry would double
     // the contour count and change every coordinate.
     expect(paths(outlined.svg).map(dOf)).toEqual(paths(plain.svg).map(dOf))
@@ -542,7 +560,7 @@ describe('the three fill anchors — the sampling boxes', () => {
 describe('vtFillAnchor — the anchor a config actually renders with', () => {
   it('passes the three real anchors through', () => {
     for (const a of ['glyph', 'word', 'frame'] as const) {
-      expect(vtFillAnchor({ ...DEFAULT_CONFIG, fillAnchor: a })).toBe(a)
+      expect(vtFillAnchor(cfg({ appearance: [vtLayer({ id: 'Lfill', anchor: a })] }))).toBe(a)
     }
   })
 
@@ -551,8 +569,14 @@ describe('vtFillAnchor — the anchor a config actually renders with', () => {
     // undefined at the renderer. Defaulting into `word` or `frame` would change
     // how every legacy node paints.
     for (const bad of [undefined, null, '', 'object', 'letter', 3, {}]) {
-      expect(vtFillAnchor({ ...DEFAULT_CONFIG, fillAnchor: bad as any })).toBe('glyph')
+      // Straight onto the LAYER, un-merged: this is the raw-blob path.
+      expect(vtFillAnchor({ ...DEFAULT_CONFIG, appearance: [{ ...DEFAULT_CONFIG.appearance[0]!, anchor: bad as any }] }))
+        .toBe('glyph')
     }
+    // …and a pre-stack blob with no `appearance` at all, which is what
+    // `applyMotion` can hand the renderer.
+    expect(vtFillAnchor({ text: 'x', fillAnchor: 'word' } as any)).toBe('word')
+    expect(vtFillAnchor({ text: 'x' } as any)).toBe('glyph')
   })
 })
 
@@ -566,15 +590,20 @@ describe('vtIsAnimated — a live shader fill is motion too', () => {
     // Without this the surface draws exactly ONE frame — and while the effect
     // catalog is still loading that frame is the graceful fallback, with nothing
     // ever re-rendering to replace it.
-    expect(vtIsAnimated(cfg({ fill: shaderFill(1) }))).toBe(true)
+    expect(vtIsAnimated(paintCfg(shaderFill(1)))).toBe(true)
+    // …and on a layer that is NOT the base one, which the pre-stack question
+    // ("is the fill a live shader?") could not have asked.
+    expect(vtIsAnimated(cfg({
+      appearance: [vtLayer({ id: 'Lfill' }), vtLayer({ id: 'Ls', kind: 'stroke', paint: shaderFill(1) as any })],
+    }))).toBe(true)
   })
 
   it('a FROZEN shader fill (speed 0) is still not motion', () => {
-    expect(vtIsAnimated(cfg({ fill: shaderFill(0) }))).toBe(false)
+    expect(vtIsAnimated(paintCfg(shaderFill(0)))).toBe(false)
   })
 
   it('a plain fill of any other type is not motion', () => {
-    expect(vtIsAnimated(cfg({ fill: { ...DEFAULT_FILL, type: 'gradient' } }))).toBe(false)
+    expect(vtIsAnimated(paintCfg({ ...DEFAULT_FILL, type: 'gradient' }))).toBe(false)
     expect(vtIsAnimated(cfg())).toBe(false)
   })
 })

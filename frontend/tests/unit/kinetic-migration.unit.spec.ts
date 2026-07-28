@@ -20,6 +20,7 @@ import {
 import { KINETIC_PRESETS_BY_ID } from '~/data/kinetic-presets'
 import { DEFAULT_FILL, paintPrimaryColor } from '~/lib/spacetype/fillTile'
 import { applyMotion, glyphTransform } from '~/lib/vectortype/motion'
+import { vtBaseAppearance } from '~/lib/vectortype/config'
 
 /** A realistic saved `params` blob, in the shape WidgetKineticType.parse read. */
 const SAVED_PARAMS = {
@@ -72,7 +73,11 @@ describe('kineticParamsToVectorType — what carries across', () => {
     // fills work, and `mergeConfig` turns the migration's flat colour into a
     // solid `Fill` carrying it. A saved KineticType node's colour is still the
     // colour that gets painted — it just lives on `a` now.
-    expect(m.config.fill).toEqual({ ...DEFAULT_FILL, a: '#ff2200' })
+    // The colour lands on the ONE fill layer the appearance-stack migration
+    // builds — KineticType had one colour and no outline, so the stack is a
+    // single fill and no stroke.
+    expect(m.config.appearance.map((l) => l.kind)).toEqual(['fill'])
+    expect(vtBaseAppearance(m.config).fill).toEqual({ ...DEFAULT_FILL, a: '#ff2200' })
     // 0.05em spacing → 50 (1/1000 em), Vector Type's tracking unit.
     expect(m.config.tracking).toBe(50)
   })
@@ -250,7 +255,7 @@ describe('kineticParamsToVectorType — hostile input', () => {
       expect(Array.isArray(m.frames)).toBe(true)
       // Through the same collapse the renderer uses, so this still asserts
       // "a usable colour reaches the canvas" rather than a storage shape.
-      expect(paintPrimaryColor(m.config.fill)).toMatch(/^#[0-9a-f]{6}$/)
+      expect(paintPrimaryColor(vtBaseAppearance(m.config).fill)).toMatch(/^#[0-9a-f]{6}$/)
       expect(m.background === null || typeof m.background === 'string').toBe(true)
     })
   }

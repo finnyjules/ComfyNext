@@ -53,47 +53,68 @@ import { unprefixedKey } from './descriptor'
 
 const GROUP = 'Shader'
 
-export const SHADER_FILL_CONTROLS: ControlSpec[] = [
-  {
-    key: 'fill.shader.effectId',
-    label: 'Effect',
-    kind: 'select',
-    // Deliberately empty: the 63-effect catalog is fetched at runtime
-    // (`lib/shaderfx/catalog.ts`), not a static list this module can declare — the
-    // same reason `Scene3DStudioSurface.vue`'s `shaderEffectIds` computed reads it
-    // from the live catalog instead of a constant. A caller that offers this control
-    // (agent prompt, UI select) must merge in the live catalog's effect ids.
-    options: [],
-    default: DEFAULT_SHADER_SPEC.effectId,
-    group: GROUP,
-    hint: 'Which catalog shader effect processes the fill underneath.',
-  },
-  {
-    key: 'fill.shader.anchor',
-    label: 'Anchor',
-    kind: 'select',
-    options: ['object', 'frame'],
-    default: DEFAULT_SHADER_SPEC.anchor,
-    group: GROUP,
-    hint: "object = the field samples in the shape's own local space (tiles/moves with it); frame = it samples the whole frame's space (the shape is a window onto one continuous field).",
-    // A MODE, not a value: animating it would flip between two different sampling
-    // spaces mid-tween (a discrete jump), not interpolate a quantity — the same
-    // reasoning `layer.shape.phase` vs a `select` control gets elsewhere in this
-    // codebase. Opts out of motion; stays agent-settable (the default `agent: true`).
-    animatable: false,
-  },
-  {
-    key: 'fill.shader.speed',
-    label: 'Speed',
-    kind: 'slider',
-    min: 0,
-    max: 4,
-    step: 0.05,
-    default: DEFAULT_SHADER_SPEC.speed,
-    group: GROUP,
-    hint: 'Animation rate multiplier for the effect; 0 = frozen (still).',
-  },
-]
+/**
+ * The three declared keys, addressed under `prefix`.
+ *
+ * A FACTORY rather than a bare constant because the host studio decides where a
+ * `ShaderSpec` lives: Space Type, Shape Studio and the Compositor store it at
+ * `fill.shader`, while Vector Type's appearance stack stores one PER LAYER and
+ * addresses it relatively, at `layer.paint.shader`. `derivedShaderFillControls`
+ * below already took a `prefix` for exactly this reason; the declared three had
+ * hard-coded theirs, which meant a host with a different storage path could only
+ * offer the derived half of the vocabulary.
+ *
+ * The prefix must be the REAL dotted path to the `ShaderSpec` — see the module
+ * header for what a key one segment off it cost last time.
+ */
+export function shaderFillControls(prefix = 'fill.shader'): ControlSpec[] {
+  return [
+    {
+      key: `${prefix}.effectId`,
+      label: 'Effect',
+      kind: 'select',
+      // Deliberately empty: the 63-effect catalog is fetched at runtime
+      // (`lib/shaderfx/catalog.ts`), not a static list this module can declare — the
+      // same reason `Scene3DStudioSurface.vue`'s `shaderEffectIds` computed reads it
+      // from the live catalog instead of a constant. A caller that offers this control
+      // (agent prompt, UI select) must merge in the live catalog's effect ids.
+      options: [],
+      default: DEFAULT_SHADER_SPEC.effectId,
+      group: GROUP,
+      hint: 'Which catalog shader effect processes the fill underneath.',
+    },
+    {
+      key: `${prefix}.anchor`,
+      label: 'Anchor',
+      kind: 'select',
+      options: ['object', 'frame'],
+      default: DEFAULT_SHADER_SPEC.anchor,
+      group: GROUP,
+      hint: "object = the field samples in the shape's own local space (tiles/moves with it); frame = it samples the whole frame's space (the shape is a window onto one continuous field).",
+      // A MODE, not a value: animating it would flip between two different sampling
+      // spaces mid-tween (a discrete jump), not interpolate a quantity — the same
+      // reasoning `layer.shape.phase` vs a `select` control gets elsewhere in this
+      // codebase. Opts out of motion; stays agent-settable (the default `agent: true`).
+      animatable: false,
+    },
+    {
+      key: `${prefix}.speed`,
+      label: 'Speed',
+      kind: 'slider',
+      min: 0,
+      max: 4,
+      step: 0.05,
+      default: DEFAULT_SHADER_SPEC.speed,
+      group: GROUP,
+      hint: 'Animation rate multiplier for the effect; 0 = frozen (still).',
+    },
+  ]
+}
+
+/** The declared three at the default `fill.shader` prefix — the three studios
+ *  that store a `ShaderSpec` there import this and are untouched by the factory
+ *  above. */
+export const SHADER_FILL_CONTROLS: ControlSpec[] = shaderFillControls()
 
 /**
  * Build one ControlSpec per param the given catalog effect declares, addressed
