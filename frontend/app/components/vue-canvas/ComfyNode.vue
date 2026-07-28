@@ -264,6 +264,44 @@ const hasHeaderIcon = computed(() =>
 // Ticker for a truncated card title. Measured on hover rather than watched: the
 // title only changes when the node does, and a ResizeObserver per node on a
 // canvas of forty is a cost for something nobody looks at until they hover it.
+// The card unfolds from under a header that does not move. Both ends of the
+// clip have to be plain pixels — `calc(100% - 44px)` parses but does NOT
+// interpolate against `0`, so the clip snapped open and nothing animated.
+//
+// Measured and driven from JS rather than from enter-from/leave-to classes:
+// `before-enter` fires before the element is laid out, so it reports a height
+// of 0 and the travel distance comes out as nothing. `enter` runs after
+// insertion, when the box is real. Clip does not affect layout, so measuring
+// under an active clip is still the true full height.
+const CAPSULE_H = 44
+const clipFor = (hidden: number) => `inset(0px 0px ${hidden}px 0px round 12px)`
+
+function unfoldExtent(node: HTMLElement) {
+  return Math.max(0, node.getBoundingClientRect().height - CAPSULE_H)
+}
+
+function onUnfoldEnter(el: Element) {
+  const node = el as HTMLElement
+  const hidden = unfoldExtent(node)
+  if (!hidden) return
+  node.style.clipPath = clipFor(hidden)
+  void node.offsetHeight // commit the start value before changing it
+  node.style.clipPath = clipFor(0)
+}
+
+function onFoldLeave(el: Element) {
+  const node = el as HTMLElement
+  const hidden = unfoldExtent(node)
+  if (!hidden) return
+  node.style.clipPath = clipFor(0)
+  void node.offsetHeight
+  node.style.clipPath = clipFor(hidden)
+}
+
+function clearUnfold(el: Element) {
+  ;(el as HTMLElement).style.clipPath = ''
+}
+
 const titleClipEl = ref<HTMLElement | null>(null)
 function measureTitle() {
   const clip = titleClipEl.value
@@ -1427,7 +1465,7 @@ watch(previewImages, (urls) => {
       :connectable="!isCapsule"
     />
 
-  <Transition name="capsule-swap">
+  <Transition name="capsule-swap" @enter="onUnfoldEnter" @after-enter="clearUnfold" @leave="onFoldLeave" @after-leave="clearUnfold">
   <NodeCapsule
     v-if="isCapsule"
     key="capsule"
@@ -2120,44 +2158,38 @@ watch(previewImages, (urls) => {
   to { translate: var(--tick-shift, 0px); }
 }
 
-/* Capsule <-> card. The card grows out of where the capsule was rather than
-   replacing it in one frame, so the size change reads as the same object
-   opening. transform-origin is left-centre because that edge is the one that
-   stays put — the ports are anchored there and the node's x position does not
-   move. The leaving element is taken out of flow so the wrapper's width is
-   driven by whichever element is arriving and nothing jumps mid-swap.
-   Exit is faster and shallower than the enter, per the usual rule that a thing
-   leaving should be quieter than a thing arriving. */
+/* Capsule <-> card. NOT a cross-fade — fading one out while fading the other
+   in reads as two different objects swapping places. It is meant to read as one
+   object opening.
+   The header is already pixel-identical between the two (icon at x=8, title at
+   x=43), so nothing about it needs to animate: the swap happens in a single
+   frame and is invisible. What animates is the BODY, wiping down from under the
+   header. The clip starts at CAPSULE_H so the header is on screen from frame
+   one and never flashes.
+   One rule set covers both directions. Expanding, `leave-to` lands on the
+   capsule, where clipping to its own height is a no-op; collapsing, it lands on
+   the card and folds it back up. */
 .capsule-swap-enter-active,
 .capsule-swap-leave-active {
-  transition-property: opacity, scale;
-  /* Distribution matters more than duration here. easeOutQuint
-     (0.22, 1, 0.36, 1) put HALF the visible change in the first 100ms and spent
-     the rest crawling from 0.96 to 1.0 — invisible — so raising the duration
-     from 0.34 to 0.6s changed nothing you could perceive. This curve spreads
-     the motion across the whole timeline, which is what makes the duration a
-     real knob instead of a number in a stylesheet. */
+  transition-property: clip-path;
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
-  transform-origin: left center;
-  will-change: transform, opacity;
-  /* The card carries backdrop-blur. Compositing a backdrop filter every frame
-     while the element is also scaling is the single biggest source of stutter
-     here, and the blur is invisible mid-transition anyway. Scoped to the
-     transition classes, so the card gets it back the moment it lands. */
+  transform-origin: left top;
+  will-change: clip-path;
+  /* Compositing a backdrop filter every frame while the element is clipped is
+     the expensive part, and the blur is invisible mid-transition anyway. */
   backdrop-filter: none;
 }
-.capsule-swap-enter-active { transition-duration: 0.6s; }
+.capsule-swap-enter-active { transition-duration: 0.42s; }
 .capsule-swap-leave-active {
-  transition-duration: 0.32s;
+  transition-duration: 0.26s;
   position: absolute;
   top: 0;
   left: 0;
 }
-/* Shallow on purpose. A big scale delta means the card's text is re-rasterised
-   across a wide range of non-integer sizes, which is what actually reads as
-   jitter — the fade carries the transition, the scale just gives it direction. */
-.capsule-swap-enter-from { opacity: 0; scale: 0.985; }
-.capsule-swap-leave-to { opacity: 0; scale: 0.995; }
+/* No enter-from/leave-to clip here on purpose — the start and end values are
+   set inline by the hooks above, because they have to be measured. The `round
+   12px` in those values matches the card's rounded-xl so the travelling edge
+   keeps its corner radius instead of squaring off mid-wipe. */
 
 @media (prefers-reduced-motion: reduce) {
   .capsule-swap-enter-active,
