@@ -257,6 +257,25 @@ const capsuleReadout = computed(() => resolveReadout({
 // resolveNodeIcon only knows {nodeType, category} — subgraphs render a
 // dedicated icon in the expanded card's title bar (the three-box glyph just
 // below), so special-case them here rather than widen the shared resolver.
+const hasHeaderIcon = computed(() =>
+  Boolean(props.data.isSubgraph || generatorIcon.value || partnerIconUrl.value || toolboxIcon.value),
+)
+
+// Ticker for a truncated card title. Measured on hover rather than watched: the
+// title only changes when the node does, and a ResizeObserver per node on a
+// canvas of forty is a cost for something nobody looks at until they hover it.
+const titleClipEl = ref<HTMLElement | null>(null)
+function measureTitle() {
+  const clip = titleClipEl.value
+  const track = clip?.firstElementChild as HTMLElement | undefined
+  if (!clip || !track) return
+  const dist = track.scrollWidth - clip.clientWidth
+  const overflows = dist > 1
+  clip.style.setProperty('--tick-shift', overflows ? `-${dist}px` : '0px')
+  // ~30px/s plus a beat at each end, so long titles do not race past.
+  clip.style.setProperty('--tick-dur', overflows ? `${Math.max(2.4, dist / 30 + 1.4)}s` : '0s')
+}
+
 const capsuleIcon = computed<NodeIcon>(() => {
   if (props.data.isSubgraph) return { kind: 'component', value: Boxes }
   return resolveNodeIcon({
@@ -1469,21 +1488,26 @@ watch(previewImages, (urls) => {
     </div>
     <!-- Title bar -->
     <div
-      class="flex items-center gap-2 px-3 py-2 border-b border-white/5 rounded-t-xl"
+      class="node-head flex items-center border-b border-white/5 rounded-t-xl"
+      @mouseenter="measureTitle"
       :style="{ background: `linear-gradient(135deg, ${accentColor}15 0%, transparent 60%)` }"
     >
       <!-- Subgraph icon → partner icon → toolbox icon. No fallback dot:
            if nothing resolves, the title fills the space instead. -->
-      <svg v-if="data.isSubgraph" class="size-4 shrink-0 text-white/70" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <span v-if="hasHeaderIcon" class="node-head__tile">
+      <svg v-if="data.isSubgraph" class="text-white/70" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <rect x="2" y="2" width="8" height="8" rx="1" /><rect x="14" y="2" width="8" height="8" rx="1" /><rect x="8" y="14" width="8" height="8" rx="1" />
       </svg>
       <!-- Per-node generator icon takes precedence over provider logo: a
            Flux Dev card and a Veo card from the same provider should read
            differently at a glance, not as two identical Replicate clouds. -->
-      <component v-else-if="generatorIcon" :is="generatorIcon" class="size-4 shrink-0 text-white/70" :stroke-width="1.75" />
-      <img v-else-if="partnerIconUrl" :src="partnerIconUrl" class="size-4 shrink-0 rounded-sm" />
-      <component v-else-if="toolboxIcon" :is="toolboxIcon" class="size-4 shrink-0 text-white/70" :stroke-width="1.75" />
-      <span class="text-xs font-semibold text-white/90 truncate flex-1">{{ data.subgraphName || displayTitle }}</span>
+      <component v-else-if="generatorIcon" :is="generatorIcon" class="text-white/70" :stroke-width="1.75" />
+      <img v-else-if="partnerIconUrl" :src="partnerIconUrl" class="rounded-sm" />
+      <component v-else-if="toolboxIcon" :is="toolboxIcon" class="text-white/70" :stroke-width="1.75" />
+      </span>
+      <span ref="titleClipEl" class="node-head__title text-xs font-semibold text-white/90">
+        <span>{{ data.subgraphName || displayTitle }}</span>
+      </span>
       <!-- Seed lock: fix the seed so every run keeps the same options. Shares
            state with the inspector's seed widget. -->
       <button
@@ -2056,6 +2080,46 @@ watch(previewImages, (urls) => {
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), 0 1px 4px rgba(0, 0, 0, 0.2);
 }
 
+/* The header's icon and title sit at exactly the capsule's offsets — 7px in,
+   a 26px tile, a 9px gap — so expanding leaves both of them where they were and
+   the card grows around a header that does not move. Layout lives here rather
+   than in utilities so the two components can be read against each other. */
+.node-head {
+  gap: 9px;
+  padding: 6px 12px 6px 7px;
+}
+.node-head__tile {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(255, 255, 255, 0.72);
+}
+.node-head__tile :is(svg, img) { width: 15px; height: 15px; display: block; }
+
+/* A truncated title tells you a node is "Generate an i…". On hover the full
+   text tracks past and comes back, so the ellipsis stops being a dead end. */
+.node-head__title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+.node-head__title > span {
+  display: inline-block;
+  white-space: nowrap;
+}
+.comfy-node:hover .node-head__title > span {
+  animation: node-title-ticker var(--tick-dur, 0s) ease-in-out infinite alternate;
+}
+@keyframes node-title-ticker {
+  from { translate: 0; }
+  to { translate: var(--tick-shift, 0px); }
+}
+
 /* Capsule <-> card. The card grows out of where the capsule was rather than
    replacing it in one frame, so the size change reads as the same object
    opening. transform-origin is left-centre because that edge is the one that
@@ -2083,6 +2147,7 @@ watch(previewImages, (urls) => {
 @media (prefers-reduced-motion: reduce) {
   .capsule-swap-enter-active,
   .capsule-swap-leave-active { transition-duration: 1ms; }
+  .comfy-node:hover .node-head__title > span { animation: none; }
 }
 
 /* Collapsed: every port sits at the capsule's vertical centre, so edges
