@@ -2361,6 +2361,18 @@ function onClose() {
           <StudioSwitch v-model="doc.post.blur" />
         </div>
         <StudioSlider v-if="doc.post.blur" v-model="doc.post.blurAmount" label="Amount" hint="Soft bokeh-style blur" :min="0" :max="0.04" :step="0.002" />
+
+        <div class="flex items-center justify-between">
+          <span class="text-[11px] text-white/55">Film</span>
+          <StudioSwitch v-model="doc.post.film" />
+        </div>
+        <template v-if="doc.post.film">
+          <StudioSlider v-model="doc.post.filmIntensity" label="Intensity" hint="How strong the grain is" :min="0" :max="1" :step="0.01" />
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] text-white/55">Grayscale</span>
+            <StudioSwitch v-model="doc.post.filmGrayscale" />
+          </div>
+        </template>
       </StudioSection>
       </template>
       <template v-else>

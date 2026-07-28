@@ -17,6 +17,7 @@ export interface PostSettings {
   color: boolean; exposure: number; contrast: number; saturation: number; hue: number
   chroma: boolean; chromaAmount: number
   blur: boolean; blurAmount: number
+  film: boolean; filmIntensity: number; filmGrayscale: boolean
 }
 
 export interface SpaceTypeState {

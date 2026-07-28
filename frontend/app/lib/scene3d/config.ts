@@ -512,6 +512,9 @@ export function parseDoc(json: string): SceneDoc {
       chromaAmount: num(p.chromaAmount, DEFAULT_POST.chromaAmount),
       blur: bool(p.blur, DEFAULT_POST.blur),
       blurAmount: num(p.blurAmount, DEFAULT_POST.blurAmount),
+      film: bool(p.film, DEFAULT_POST.film),
+      filmIntensity: num(p.filmIntensity, DEFAULT_POST.filmIntensity),
+      filmGrayscale: bool(p.filmGrayscale, DEFAULT_POST.filmGrayscale),
     }
   }
   const parseMaterial = (m: any): SceneMaterial => {
