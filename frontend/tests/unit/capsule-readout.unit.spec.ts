@@ -235,3 +235,21 @@ describe('GRADIENT_CONTROLS summary declaration', () => {
     expect(ranked.map((c: any) => c.summary)).toEqual([1, 2])
   })
 })
+
+describe('resolveReadout — part.format', () => {
+  it('maps a raw value through the rule’s formatter', () => {
+    expect(resolveReadout({
+      rule: { from: 'widgets', parts: [{ name: 'model', format: (v) => `Pretty ${v}` }] },
+      widgetDefs: [{ name: 'model', type: 'COMBO' }],
+      widgetsValues: ['flux-2-pro'],
+    })).toBe('Pretty flux-2-pro')
+  })
+
+  it('drops the part when the formatter returns null', () => {
+    expect(resolveReadout({
+      rule: { from: 'widgets', parts: [{ name: 'model', format: () => null }] },
+      widgetDefs: [{ name: 'model', type: 'COMBO' }],
+      widgetsValues: ['flux-2-pro'],
+    })).toBeNull()
+  })
+})

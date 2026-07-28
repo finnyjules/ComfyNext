@@ -16,7 +16,18 @@ export const MAX_SUMMARY_PARTS = 2
 const MAX_ERROR_CHARS = 60
 
 /** One value pulled from a Comfy node's positional widget array, by name. */
-export type ReadoutPart = { name: string; prefix?: string; suffix?: string }
+export type ReadoutPart = {
+  name: string
+  prefix?: string
+  suffix?: string
+  /**
+   * Optional display mapping for a raw widget value — e.g. a model id like
+   * `flux-2-pro` to the label the card shows, `Flux 2 Pro`. Lives on the rule
+   * rather than in here so this module keeps no data imports. Return null to
+   * drop the part.
+   */
+  format?: (raw: unknown) => string | null
+}
 
 export type ReadoutRule =
   /** Comfy nodes: no schema, so the widget names are declared as data. */
@@ -81,7 +92,7 @@ function fromWidgets(parts: ReadoutPart[], defs: WidgetDef[], values: unknown[])
     // arrays aligned, so any positional assumption here is wrong by one.
     const idx = defs.findIndex(d => d.name === part.name)
     if (idx < 0) continue
-    const shown = formatReadoutValue(values[idx])
+    const shown = part.format ? part.format(values[idx]) : formatReadoutValue(values[idx])
     if (shown === null) continue
     out.push(`${part.prefix ?? ''}${shown}${part.suffix ?? ''}`)
   }

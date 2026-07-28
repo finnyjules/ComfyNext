@@ -1,4 +1,12 @@
 import type { ReadoutRule } from '~/lib/canvas/capsuleReadout'
+import { formatReadoutValue } from '~/lib/canvas/capsuleReadout'
+import { IMAGE_MODELS_BY_ID } from '~/data/image-models'
+
+/** A model widget stores an id (`flux-2-pro`); the capsule should read the way
+ *  the card does (`Flux 2 Pro`). Falls back to the raw value for ids that are
+ *  not in the catalog, rather than showing nothing. */
+const modelLabel = (raw: unknown): string | null =>
+  IMAGE_MODELS_BY_ID[String(raw)]?.label ?? formatReadoutValue(raw)
 
 // Which node types collapse, and what their read-out says.
 //
@@ -71,6 +79,13 @@ export function defaultCollapsed(vueFlowType: string, hasRun: boolean): boolean 
 
 /** Keyed by Comfy class_type (node.data.nodeType), not vue-flow type. */
 export const READOUT_RULES: Record<string, ReadoutRule> = {
+  // Sailor's own generator nodes. `model` is the one fact worth carrying: it is
+  // self-describing, always set, and it is what the card leads with too.
+  GenerateImageNode: { from: 'widgets', parts: [{ name: 'model', format: modelLabel }] },
+  EditImageNode: { from: 'widgets', parts: [{ name: 'model', format: modelLabel }] },
+  UpscaleImageNode: { from: 'widgets', parts: [{ name: 'model', format: modelLabel }] },
+  FluxLoRARemoteNode: { from: 'widgets', parts: [{ name: 'lora_name' }] },
+  GenerateVideoNode: { from: 'widgets', parts: [{ name: 'model' }] },
   KSampler: { from: 'widgets', parts: [{ name: 'steps', suffix: ' steps' }, { name: 'cfg', prefix: 'guidance ' }] },
   CLIPTextEncode: { from: 'text', property: 'text', max: 28 },
   EmptyLatentImage: { from: 'widgets', parts: [{ name: 'width', suffix: '' }, { name: 'height', prefix: '× ' }] },

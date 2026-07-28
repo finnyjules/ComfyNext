@@ -61,7 +61,7 @@ function onKeydown(e: KeyboardEvent) {
     <span class="node-capsule__text">
       <span class="node-capsule__title">{{ title }}</span>
       <span v-if="readout" class="node-capsule__readout">{{ readout }}</span>
-      <span class="node-capsule__hint" aria-hidden="true">Click for options</span>
+      <span v-if="readout" class="node-capsule__hint" aria-hidden="true">Click for options</span>
     </span>
 
     <button
@@ -132,9 +132,12 @@ function onKeydown(e: KeyboardEvent) {
 }
 .node-capsule__tile :is(svg, img) { width: 15px; height: 15px; display: block; }
 
+/* Rows are implicit, so a capsule with no read-out is ONE row and the title
+   sits on the capsule's centre line. Declaring two fixed rows left an empty
+   second line under title-only capsules and pushed the title visibly high. */
 .node-capsule__text {
   display: grid;
-  grid-template-rows: auto auto;
+  align-content: center;
   row-gap: 1px;
   flex: 1;
   min-width: 0;
