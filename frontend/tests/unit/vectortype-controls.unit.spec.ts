@@ -631,8 +631,11 @@ describe('the appearance stack — the model, and the legacy migration (trap 4)'
         motion: { tracks: [{ path: 'strokeWidth', from: 0, to: 10 }] },
       })
       expect(animated.appearance.map((l) => l.kind)).toEqual(['fill', 'stroke'])
-      // …and the TRACK follows it, positionally, or the animation is still lost.
-      expect(animated.motion.tracks.map((t) => t.path)).toEqual(['appearance.1.width'])
+      // …and the TRACK follows it, or the animation is still lost. It is written
+      // POSITIONALLY by `remapLegacyTrackPath` and then lifted onto the layer's
+      // id by `migrateStackTrackPaths`, in the same `mergeConfig` pass — so what
+      // comes out of a load is the id form, whatever vintage went in.
+      expect(animated.motion.tracks.map((t) => t.path)).toEqual([`appearance.${VT_BASE_STROKE_ID}.width`])
       // A track that animates 0 → 0 is not an exception; it is still invisible.
       const flat = legacyCfg({ strokeWidth: 0, motion: { tracks: [{ path: 'strokeWidth', from: 0, to: 0 }] } })
       expect(flat.appearance.map((l) => l.kind)).toEqual(['fill'])
@@ -648,7 +651,9 @@ describe('the appearance stack — the model, and the legacy migration (trap 4)'
           { path: 'fillAnchor', from: 0, to: 1 },
         ] },
       })
-      expect(c.motion.tracks.map((t) => t.path)).toEqual(['appearance.0.paint.angle', 'axes.wght'])
+      // Id-addressed on the way out — see the note above. `axes.wght` is NOT a
+      // member path and is left exactly as written.
+      expect(c.motion.tracks.map((t) => t.path)).toEqual([`appearance.${VT_BASE_FILL_ID}.paint.angle`, 'axes.wght'])
       // The remapped track ANIMATES — a path that merely looks right proves
       // nothing, since `applyMotion` skips a path whose parent is missing.
       const at = applyMotion(c, 2)

@@ -50,6 +50,7 @@ import type { VtAxis } from './font'
 import {
   DEFAULT_MOTION,
   DEFAULT_STAGGER,
+  VT_STACK_PREFIX,
   VT_STAGGER_ORDERS,
   cloneConfig,
   type VectorTypeConfig,
@@ -138,13 +139,11 @@ const finite = (v: unknown, d: number): number => (isFinite_(v) ? v : d)
 export const VT_APPEARANCE_REMAP = makeListRemap({ list: 'appearance' })
 
 /** The config key the appearance stack lives at, and the prefix every absolute
- *  stack path carries. One constant, because three functions below have to agree
- *  about which paths are member paths and which are ordinary config leaves —
- *  `axes.wght` is `<something>.<something>` too, and running it through an
- *  id resolver would refuse it (there is no `axes` ARRAY) and silently stop every
- *  variable axis animating. */
-export const VT_STACK_LIST = 'appearance'
-export const VT_STACK_PREFIX = `${VT_STACK_LIST}.`
+ *  stack path carries — DEFINED IN `./config.ts` and re-exported here, where its
+ *  three readers below are, because `mergeConfig`'s positional-track migration
+ *  needs the same constant and this module already imports that one. Importers
+ *  of either name are unaffected by which module declares it. */
+export { VT_STACK_LIST, VT_STACK_PREFIX } from './config'
 
 /** True for a path that addresses a member of the appearance stack, by id or by
  *  index. Everything else is an ordinary dotted config path. */

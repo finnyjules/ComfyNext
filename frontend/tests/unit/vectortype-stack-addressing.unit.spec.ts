@@ -37,6 +37,7 @@ import {
   DEFAULT_CONFIG,
   VT_DEFAULT_STROKE_WIDTH,
   mergeConfig,
+  migrateStackTrackPaths,
   vtLayer,
   type VectorTypeConfig,
   type VtAppearanceLayer,
@@ -558,5 +559,171 @@ describe('an unresolvable path grows NO junk into the config', () => {
     const out = applyMotion(c, 4)
     expect(out.axes.wght).toBeCloseTo(900, 6)
     expect(out.size).toBeCloseTo(240, 6)
+  })
+})
+
+// ── 6. the migration: a POSITIONAL track saved mid-development ──────────────
+//
+// Two addressing schemes coexisted in one config until `mergeConfig` learned to
+// lift the old one. A track written before ids landed says `appearance.1.width`;
+// every Collection binding, every agent key and every track written after it
+// says `appearance.Lstroke.width`. The positional form only stays correct while
+// `VT_APPEARANCE_REMAP` is called at every mutation site, forever, by every
+// future author — and Task 9's live negative control showed what it costs when
+// one call is missed: the same picture at t=0 and t=4, no error, no warning.
+//
+// Every test below loads through `mergeConfig` (the real load path) and then
+// proves the track by APPLYING it and reading the value off the layer found by
+// id — never by comparing path strings, which is the failure mode itself.
+
+describe('a POSITIONAL stack track is migrated onto its layer’s id at load', () => {
+  /** What a project saved before Task 9 holds: real layer ids on the stack, a
+   *  positional path on the track. */
+  const saved = (path: string) => ({
+    ...DEFAULT_CONFIG,
+    text: 'Sail',
+    size: 100,
+    appearance: [
+      vtLayer({ id: 'Lfill', kind: 'fill' }),
+      vtLayer({ id: 'Lstroke', kind: 'stroke', width: 3 }),
+      vtLayer({ id: 'Lyellow', kind: 'fill' }),
+    ],
+    motion: { ...DEFAULT_CONFIG.motion, duration: 4, tracks: [track(path, 0, 24)] },
+  })
+
+  it('rewrites `appearance.<index>.<leaf>` to `appearance.<id>.<leaf>`', () => {
+    const c = mergeConfig(saved('appearance.1.width'))
+    expect(c.motion.tracks[0]!.path).toBe('appearance.Lstroke.width')
+    // …and only the member segment: the leaf and every track field survive.
+    expect(c.motion.tracks[0]).toMatchObject({ from: 0, to: 24, easing: 'linear' })
+  })
+
+  it('drives the SAME layer it drove before the migration', () => {
+    const before = applyMotion(mergeConfig(saved('appearance.1.width')), 4)
+    expect(byId(before, 'Lstroke').width).toBe(24)
+    // The other two keep their STORED width — the value landed on one layer.
+    expect(byId(before, 'Lfill').width).toBe(VT_DEFAULT_STROKE_WIDTH)
+  })
+
+  it('SURVIVES a real reorder, which is the whole point', () => {
+    const c = mergeConfig(saved('appearance.1.width'))
+    // The stroke to the front — Task 9's live scenario, exactly.
+    reorder(c, 1, 2)
+    expect(c.appearance.map(l => l.id)).toEqual(['Lfill', 'Lyellow', 'Lstroke'])
+    // NOTHING was called at the mutation site: no `VT_APPEARANCE_REMAP`, no
+    // `pruneStackTracks`. That is the guarantee — an id path needs no promise
+    // from a future author.
+    const out = applyMotion(c, 4)
+    expect(byId(out, 'Lstroke').width).toBe(24)
+    expect(byId(out, 'Lyellow').width).toBe(VT_DEFAULT_STROKE_WIDTH)
+    expect(byId(out, 'Lfill').width).toBe(VT_DEFAULT_STROKE_WIDTH)
+  })
+
+  it('NEGATIVE CONTROL — the un-migrated path lands on the wrong layer, silently', () => {
+    // The identical scenario with the migration bypassed: build the merged
+    // config, then put the positional path back. Slot 1 is now the yellow FILL,
+    // which paints no outline — Task 9 measured this as 5,741 cyan px at both
+    // t=0 and t=4.
+    const c = mergeConfig(saved('appearance.1.width'))
+    reorder(c, 1, 2)
+    c.motion.tracks[0]!.path = 'appearance.1.width'
+    const out = applyMotion(c, 4)
+    expect(byId(out, 'Lstroke').width).toBe(3)        // untouched: the animation is dead
+    expect(byId(out, 'Lyellow').width).toBe(24)       // …and landed on a fill
+  })
+
+  it('changes the PICTURE, so the config is not the only witness', () => {
+    const c = mergeConfig(saved('appearance.1.width'))
+    reorder(c, 1, 2)
+    const svg = (t: number) => vectorTypeSVG(font, applyMotion(c, t), t, BOX).svg
+    // At t=0 the stroke is 0 wide, so it is dropped from the document entirely;
+    // at t=4 it is there at 24. Two different pictures.
+    expect(svg(0)).not.toContain('stroke-width=')
+    expect(svg(4)).toContain('stroke-width="24"')
+    // The un-migrated control emits the SAME document at both times.
+    const dead = mergeConfig(saved('appearance.1.width'))
+    reorder(dead, 1, 2)
+    dead.motion.tracks[0]!.path = 'appearance.1.width'
+    const deadSvg = (t: number) => vectorTypeSVG(font, applyMotion(dead, t), t, BOX).svg
+    expect(deadSvg(4)).toBe(deadSvg(0))
+  })
+
+  it('migrates the track `migrateLegacyAppearance` writes for a LEGACY node too', () => {
+    // A pre-stack blob: flat `strokeWidth`, animated away from zero, no
+    // `appearance` at all. `remapLegacyTrackPath` writes `appearance.<i>.width`
+    // — positional — and this lifts that in the same pass.
+    const c = mergeConfig({
+      text: 'Sail', fill: '#ff0000', strokeWidth: 0, stroke: '#0000ff',
+      motion: { duration: 4, tracks: [{ path: 'strokeWidth', from: 0, to: 18, easing: 'linear' }] },
+    })
+    const strokeId = c.appearance.find(l => l.kind === 'stroke')!.id
+    expect(c.motion.tracks[0]!.path).toBe(`appearance.${strokeId}.width`)
+    expect(byId(applyMotion(c, 4), strokeId).width).toBe(18)
+  })
+
+  it('is IDEMPOTENT — a second load rewrites nothing', () => {
+    const once = mergeConfig(saved('appearance.1.width'))
+    const twice = mergeConfig(JSON.parse(JSON.stringify(once)))
+    expect(twice.motion.tracks[0]!.path).toBe('appearance.Lstroke.width')
+    expect(JSON.stringify(twice)).toBe(JSON.stringify(once))
+  })
+
+  it('returns the SAME tracks array when nothing needs lifting, so no watcher fires', () => {
+    const c = mergeConfig(saved('appearance.Lstroke.width'))
+    const again = migrateStackTrackPaths(c.motion.tracks, c.appearance)
+    expect(again).toBe(c.motion.tracks)
+  })
+
+  it('leaves an OUT-OF-RANGE index alone rather than resurrecting it onto a real layer', () => {
+    // The track is already dead — `resolveIdPath` refuses an index past the end.
+    // Inventing an id for it would apply a real value to a real layer, which is
+    // strictly worse than a row that animates nothing.
+    const c = mergeConfig(saved('appearance.7.width'))
+    expect(c.motion.tracks[0]!.path).toBe('appearance.7.width')
+    const out = applyMotion(c, 4)
+    // Every layer keeps its stored width: the track applied to nothing at all.
+    for (const l of out.appearance) expect(l.width).toBe(VT_DEFAULT_STROKE_WIDTH)
+  })
+
+  it('DROPS NOTHING — a load must never delete a row the user can see', () => {
+    const c = mergeConfig(saved('appearance.7.width'))
+    expect(c.motion.tracks).toHaveLength(1)
+  })
+
+  it('leaves the ordinary config paths alone', () => {
+    const raw = saved('appearance.1.width')
+    raw.motion.tracks = [track('axes.wght', 100, 900), track('size', 40, 240), track('glyph.dy', 0, 30)]
+    const c = mergeConfig(raw)
+    expect(c.motion.tracks.map(t => t.path)).toEqual(['axes.wght', 'size', 'glyph.dy'])
+  })
+
+  it('rewrites against the MERGED indices, not the raw ones', () => {
+    // `mergeAppearance` DROPS a non-object entry, so raw index 2 is merged index
+    // 1. `applyMotion` has always resolved a positional path against the merged
+    // array, so the migration must read the same one or it would change the
+    // picture while claiming to preserve it.
+    const c = mergeConfig({
+      ...DEFAULT_CONFIG,
+      appearance: [vtLayer({ id: 'Lfill', kind: 'fill' }), null, vtLayer({ id: 'Lstroke', kind: 'stroke', width: 3 })],
+      motion: { ...DEFAULT_CONFIG.motion, duration: 4, tracks: [track('appearance.1.width', 0, 24)] },
+    })
+    expect(c.appearance.map(l => l.id)).toEqual(['Lfill', 'Lstroke'])
+    expect(c.motion.tracks[0]!.path).toBe('appearance.Lstroke.width')
+    expect(byId(applyMotion(c, 4), 'Lstroke').width).toBe(24)
+  })
+
+  it('survives hostile input without throwing', () => {
+    for (const path of ['appearance', 'appearance.', 'appearance..width', 'appearance.-1.width',
+      'appearance.1e2.width', 'appearance.01.width', 'appearance.1', 'appearanceX.1.width']) {
+      expect(() => mergeConfig(saved(path))).not.toThrow()
+    }
+    // `appearance.1` — a member with no leaf — is a real positional path and is
+    // lifted; nothing downstream writes through it, and refusing it would be a
+    // second rule for no reason.
+    expect(mergeConfig(saved('appearance.1')).motion.tracks[0]!.path).toBe('appearance.Lstroke')
+    // A leading zero is not an index this codebase mints, but /^\d+$/ matches it
+    // and `Number('01')` is 1 — so it lifts to the same layer rather than being
+    // left as a path that resolves differently in two places.
+    expect(mergeConfig(saved('appearance.01.width')).motion.tracks[0]!.path).toBe('appearance.Lstroke.width')
   })
 })

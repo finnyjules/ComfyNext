@@ -32,6 +32,10 @@ import { DEFAULT_FILL, normalizePaint, type Fill } from '~/lib/spacetype/fillTil
 // Collection control resolver and every node card — the same bar `fillTile`
 // clears above.
 import { BLEND_MODES, type BlendKind } from '~/lib/studio/blend'
+// Pure path arithmetic over a plain object — no renderer, no DOM. `mergeConfig`
+// uses it to lift a positional motion track onto the id addressing every other
+// persisted reference to a layer already uses (see `migrateStackTrackPaths`).
+import { toIdPath } from '~/lib/studio/idPath'
 import { DEFAULT_FONT_ID, VARIABLE_FONTS } from '~/data/variable-fonts'
 
 /** Horizontal anchoring of the (single-line, v1) glyph run. */
@@ -619,6 +623,26 @@ function clonePaint(p: Paint): Paint {
 // ── The appearance stack: rebuild, migrate, and the render bridge ───────────
 
 /**
+ * The config key the appearance stack lives at, and the prefix every absolute
+ * stack path carries.
+ *
+ * ONE constant, because four things have to agree about which dotted paths are
+ * member paths and which are ordinary config leaves: `animatableTargets` (which
+ * builds them), `applyMotion` (which resolves them), `pruneStackTracks` (which
+ * drops the dangling ones) and `migrateStackTrackPaths` below (which lifts the
+ * positional ones). `axes.wght` is `<something>.<something>` too, and running it
+ * through an id resolver would refuse it — there is no `axes` ARRAY — and
+ * silently stop every variable axis animating.
+ *
+ * It lives HERE rather than in `./motion.ts` (which owned it until the migration
+ * needed it) because `motion.ts` imports this module: the constant has to sit at
+ * the bottom of that edge or the two form a cycle. `motion.ts` re-exports both
+ * names, so every existing importer is unchanged.
+ */
+export const VT_STACK_LIST = 'appearance'
+export const VT_STACK_PREFIX = `${VT_STACK_LIST}.`
+
+/**
  * A stored id worth keeping, or `''`.
  *
  * Three rejections, and every one of them is a real addressing hazard rather
@@ -784,6 +808,72 @@ function remapLegacyTrackPath(path: string, appearance: VtAppearanceLayer[]): st
   }
   if (path === 'fill' || path === 'fillAnchor' || path === 'stroke') return null
   return path
+}
+
+/**
+ * Lift every POSITIONAL stack track path onto the layer's stable id.
+ *
+ * ## Why this exists
+ *
+ * `appearance.1.width` and `appearance.Lstroke.width` are two addressing schemes
+ * for the same thing, and until this function both were live in one config: a
+ * track written before ids landed is positional, a track written after it is
+ * id-addressed, and so is every Collection binding and every agent key. Nothing
+ * migrated the old form, so a project saved mid-development carried a reference
+ * that only stays correct while `VT_APPEARANCE_REMAP` is called at every single
+ * mutation site, forever, by every future author. An id path needs no such
+ * promise: reorder is a no-op because there is nothing to rewrite.
+ *
+ * `mergeConfig` is the right home because it is the one place a stored blob is
+ * rebuilt, and because the rewrite is only sound against a REBUILT stack (see
+ * below).
+ *
+ * ## Rewrite only what resolves, and never guess
+ *
+ * `toIdPath` returns `undefined` for four different reasons and all four mean
+ * "leave this path exactly as it is":
+ *
+ *  - the path is ALREADY id-addressed (the common case after the first load);
+ *  - the index is out of range — the track is already dead, and `resolveIdPath`
+ *    refuses it at render time. Inventing an id for it would resurrect it onto a
+ *    real layer, which is strictly worse than a track that animates nothing;
+ *  - the layer at that index has no usable id. `mergeAppearance` mints one for
+ *    every layer, so this is only reachable from a caller that hands raw layers
+ *    in;
+ *  - the path is not a member path at all.
+ *
+ * Nothing is ever DROPPED here. A dangling track is `pruneStackTracks`'s job,
+ * asked at the mutation site where the user can see what happened; silently
+ * deleting a row during a load is the one behaviour a merge must not have.
+ *
+ * ## The indices must be the MERGED stack's
+ *
+ * `mergeAppearance` can drop a member (a non-object entry) and caps the stack at
+ * `VT_LAYER_MAX`, so raw index 2 is not necessarily merged index 2. The rewrite
+ * is therefore done against the merged array — which is also the array
+ * `applyMotion` resolves a surviving positional path against today, so this
+ * function preserves the picture exactly rather than "fixing" it into a
+ * different one.
+ *
+ * Returns the SAME array when nothing changed, so a caller can compare by
+ * identity and a Vue watcher does not fire on a no-op load.
+ */
+export function migrateStackTrackPaths(
+  tracks: VtMotionTrack[],
+  appearance: VtAppearanceLayer[],
+): VtMotionTrack[] {
+  // `toIdPath` reads `cfg[list]`, and the only list it needs is this one — so it
+  // is asked about a bare `{ appearance }` rather than a half-built config.
+  const host = { [VT_STACK_LIST]: appearance }
+  let changed = false
+  const out = tracks.map((t) => {
+    if (!t.path.startsWith(VT_STACK_PREFIX)) return t
+    const id = toIdPath(host, t.path)
+    if (!id || id === t.path) return t
+    changed = true
+    return { ...t, path: id }
+  })
+  return changed ? out : tracks
 }
 
 /**
@@ -992,6 +1082,13 @@ export function mergeConfig(raw: unknown): VectorTypeConfig {
   const appearance = stored
     ? mergeAppearance(stored)
     : migrateLegacyAppearance(o as VtLegacyPaint, strokeIsAnimated)
+  const motion = mergeMotion(o.motion, stored ? undefined : path => remapLegacyTrackPath(path, appearance))
+  // Both vintages of positional path are lifted here, and BOTH need it: a track
+  // saved before ids existed, and the `appearance.<i>.width` that
+  // `remapLegacyTrackPath` just wrote a line above for a legacy `strokeWidth`
+  // animation. Same rewrite, one call, after the stack it is addressed against
+  // is final.
+  const tracks = migrateStackTrackPaths(motion.tracks, appearance)
   return {
     text: str(o.text, d.text),
     // An unknown font id is NOT kept: every later stage (the proxy, the loader,
@@ -1003,7 +1100,7 @@ export function mergeConfig(raw: unknown): VectorTypeConfig {
     tracking: num(o.tracking, d.tracking),
     align: oneOf(o.align, VT_ALIGNS, d.align),
     appearance,
-    motion: mergeMotion(o.motion, stored ? undefined : path => remapLegacyTrackPath(path, appearance)),
+    motion: tracks === motion.tracks ? motion : { ...motion, tracks },
   }
 }
 
