@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ChevronDown, ChevronLeft, ChevronRight, Download, Frame, Layers, Loader2, Lock, LockOpen, Play, Sparkles, SkipBack, SkipForward, SlidersHorizontal, Upload, RefreshCw } from 'lucide-vue-next'
+import { Boxes, ChevronDown, ChevronLeft, ChevronRight, Download, Frame, Layers, Loader2, Lock, LockOpen, Play, Sparkles, SkipBack, SkipForward, SlidersHorizontal, Upload, RefreshCw } from 'lucide-vue-next'
 import { getTypeColor, getInputTooltip } from '~/composables/useVueNodes'
 import { useAgentActivity } from '~/composables/useAgentActivity'
 import { useDirectExecutionEnabled } from '~/composables/useDirectExecutionEnabled'
@@ -7,6 +7,10 @@ import { getPartnerIcon } from '~/lib/partnerIcons'
 import { nodeTier } from '~/lib/canvas/nodeTier'
 import { minHeightForPorts } from '~/lib/canvas/portLayout'
 import { useNodePortSync } from '~/composables/useNodePortSync'
+import NodeCapsule from '~/components/vue-canvas/NodeCapsule.vue'
+import { resolveReadout } from '~/lib/canvas/capsuleReadout'
+import { resolveNodeIcon, type NodeIcon } from '~/lib/canvas/nodeIcon'
+import { readoutRuleFor, defaultCollapsed } from '~/lib/canvas/capsuleMeta'
 import { LIVE_PREVIEW_NODE_TYPES } from '~/lib/livePreviewNodes'
 import { allowedAspectRatios, allowedDurations, modelSupportsSeed } from '~/lib/videoModelAdapt'
 import { TOOLBOX_NODE_ICONS } from '~/data/toolbox-items'
@@ -37,6 +41,7 @@ const props = defineProps<{
     running?: boolean
     runningSince?: number | null
     hasRun?: boolean
+    collapsed?: boolean
     error?: boolean
     progress?: number
     images?: string[]
@@ -206,6 +211,57 @@ watch(runMenuOpen, (open) => {
   else document.removeEventListener('mousedown', onRunMenuDocPointer)
 })
 onUnmounted(() => document.removeEventListener('mousedown', onRunMenuDocPointer))
+
+// --- Capsule (collapsed resting state) ------------------------------------
+// A node is a capsule when it has been explicitly collapsed, or when its type
+// says so by default and nobody has said otherwise. `collapsed` is tri-state
+// on purpose: undefined means "use the tier default", so changing a default
+// later still reaches nodes saved before the change.
+const isCapsule = computed(() => {
+  if (typeof props.data.collapsed === 'boolean') return props.data.collapsed
+  return defaultCollapsed('comfy', Boolean(props.data.hasRun))
+})
+
+// Ticks only while this node is running, so an idle canvas does no work.
+const nowTick = ref(Date.now())
+let tickId: ReturnType<typeof setInterval> | null = null
+watch(() => props.data.running, (running) => {
+  if (tickId) { clearInterval(tickId); tickId = null }
+  if (running) tickId = setInterval(() => { nowTick.value = Date.now() }, 1000)
+}, { immediate: true })
+onBeforeUnmount(() => { if (tickId) clearInterval(tickId) })
+
+const capsuleReadout = computed(() => resolveReadout({
+  rule: readoutRuleFor(props.data.nodeType as string),
+  widgetDefs: props.data.widgetDefs,
+  widgetsValues: props.data.widgetsValues,
+  properties: props.data.properties,
+  running: props.data.running,
+  runningSince: props.data.runningSince,
+  errorMessage: props.data.errorMessage,
+  now: nowTick.value,
+}))
+
+// resolveNodeIcon only knows {nodeType, category} — subgraphs render a
+// dedicated icon in the expanded card's title bar (the three-box glyph just
+// below), so special-case them here rather than widen the shared resolver.
+const capsuleIcon = computed<NodeIcon>(() => {
+  if (props.data.isSubgraph) return { kind: 'component', value: Boxes }
+  return resolveNodeIcon({
+    nodeType: props.data.nodeType as string,
+    category: props.data.category,
+  })
+})
+
+const capsuleState = computed<'ready' | 'running' | 'done' | 'failed'>(() => {
+  if (props.data.error) return 'failed'
+  if (props.data.running) return 'running'
+  return props.data.hasRun ? 'done' : 'ready'
+})
+
+function onExpandCapsule() {
+  props.data.collapsed = false
+}
 
 // --- Takes (non-destructive variation loop) -------------------------------
 // The strip renders once there's at least one take. Actions mutate props.data
@@ -1230,7 +1286,7 @@ watch(previewImages, (urls) => {
        so the card's opaque background occludes each dot's inner half and the
        ports read as tucked in behind the node — a child can't paint behind its
        own parent's background. The card keeps every bit of its own chrome. -->
-  <div ref="portSyncRoot" class="relative w-fit">
+  <div ref="portSyncRoot" class="relative w-fit" :class="{ 'comfy-node-collapsed': isCapsule }">
     <VueCanvasNodePort
       v-for="(port, i) in visiblePorts"
       :id="`input-${port.idx}`"
@@ -1253,7 +1309,20 @@ watch(previewImages, (urls) => {
       :label="output.name"
     />
 
+  <NodeCapsule
+    v-if="isCapsule"
+    class="comfy-node"
+    :title="displayTitle"
+    :readout="capsuleReadout"
+    :icon="capsuleIcon"
+    :state="capsuleState"
+    :border-left="borderColorLeft"
+    :border-right="borderColorRight"
+    @action="playThisNode"
+    @expand="onExpandCapsule"
+  />
   <div
+    v-else
     class="comfy-node relative z-10 rounded-xl border select-none backdrop-blur-sm transition-opacity duration-150"
     :class="{
       'comfy-node--muted': isMuted,
@@ -1882,6 +1951,18 @@ watch(previewImages, (urls) => {
 <style scoped>
 .comfy-node {
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), 0 1px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* Collapsed: every port sits at the capsule's vertical centre, so edges
+   converge on one point per side instead of trailing off a 40px chip. They
+   stay in the DOM with their handle ids intact — that is what keeps the
+   edges attached. Non-interactive because you cannot meaningfully aim at
+   four overlapping dots; expand the node to rewire it. */
+.comfy-node-collapsed .node-port {
+  top: 50% !important;
+  margin-top: -6px !important;
+  opacity: 0;
+  pointer-events: none;
 }
 
 /* Outpaint zone preview: dark base + blue diagonal hatch marks the new area,

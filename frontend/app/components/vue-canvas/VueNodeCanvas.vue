@@ -2321,6 +2321,19 @@ async function handlePortIntentAi(intent: string) {
 }
 
 // Listen for addNode events from NodeSearchDialog
+// Test-only escape hatch: patch node.data directly without a real run, so
+// Playwright can force a capsule/running/error state instead of paying for a
+// generation just to see the collapsed UI. Matches the first node whose
+// nodeType contains `detail.match`. Registered only in dev (see onMounted) —
+// a no-op in production.
+function handleTestSetNodeData(e: Event) {
+  const detail = (e as CustomEvent<{ match: string, patch: Record<string, unknown> }>).detail
+  if (!detail?.match || !detail.patch) return
+  const node = (nodes.value as any[]).find((n) => String(n.data?.nodeType ?? '').includes(detail.match))
+  if (!node) return
+  Object.assign(node.data, detail.patch)
+}
+
 async function handleAddNode(e: Event) {
   const detail = (e as CustomEvent<{ nodeType: string, widgetOverrides?: Record<string, unknown>, propertyOverrides?: Record<string, unknown>, dataOverrides?: Record<string, unknown> }>).detail
   const { nodeType, widgetOverrides, propertyOverrides, dataOverrides } = detail
@@ -4516,6 +4529,7 @@ function handleAddAnnotationEvent(event: Event) {
 
 onMounted(() => {
   window.addEventListener('sailor:addNode', handleAddNode)
+  if (import.meta.dev) window.addEventListener('sailor:test:setNodeData', handleTestSetNodeData)
   window.addEventListener('sailor:addAssetNode', handleAddAssetNode)
   window.addEventListener('sailor:addAnnotation', handleAddAnnotationEvent)
   window.addEventListener('message', handleBridgeMessage)
@@ -4589,6 +4603,7 @@ onMounted(() => {
 })
 onUnmounted(() => {
   window.removeEventListener('sailor:addNode', handleAddNode)
+  if (import.meta.dev) window.removeEventListener('sailor:test:setNodeData', handleTestSetNodeData)
   window.removeEventListener('sailor:addAssetNode', handleAddAssetNode)
   window.removeEventListener('sailor:addAnnotation', handleAddAnnotationEvent)
   window.removeEventListener('message', handleBridgeMessage)
@@ -7739,6 +7754,14 @@ defineExpose({
   outline: 2px solid var(--action);
   outline-offset: 3px;
   border-radius: 12px;
+}
+
+/* A capsule that has just expanded must sit above its neighbours, or the card
+   it grew into is clipped by whatever is drawn after it. There is no tracked
+   hover state on the canvas (hoverNodeIds is the agent proposal highlight, not
+   the mouse), so this is done in CSS. */
+.vue-flow__node:has(.node-capsule:hover) {
+  z-index: 20 !important;
 }
 
 .vue-node-canvas .vue-flow__edge.selected path {
