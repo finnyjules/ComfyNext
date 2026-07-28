@@ -13,7 +13,7 @@ Legend: **bake** = render/export path · **motion** = animatable · **inspector*
 | Surface | bake | motion | inspector | agent | engine LOC |
 |---|---|---|---|---|---|
 | Space Type | ✅ + clip bake | ✅ timeline clip | ✅ | ✅ descriptor | 11,202 |
-| Vector Type Studio | ✅ PNG + SVG export (9 fill types, 6 as real vector) | ✅ full incl. stagger + preset gallery | ✅ | ✅ descriptor (unverified live) | — |
+| Vector Type Studio | ✅ PNG + SVG export (9 fill types, 6 as real vector; multi-fill/stroke stack + extrude) | ✅ full incl. stagger + preset gallery | ✅ | ✅ descriptor (unverified live) | — |
 | Scene3D Studio | ✅ 3-pass + mp4 | ✅ own timeline | ✅ | ❌ | 5,095 |
 | Compositor / Frame | ✅ | ✅ motion clips | ✅ | ✅ commands | 1,667 (+1,041 motion) |
 | Timeline (NLE) | ✅ webm/mp4 + server | ✅ native | ✅ | ❌ | shared/timeline |
@@ -148,6 +148,16 @@ Findings worth keeping. An untransformed wrapper `<g>` does **not** pin an SVG p
 
 Open: the live Space Type 3D render could not be verified in the browser pane (scene builds, no GL error, readback black — believed environmental, not claimed working). No non-Chrome renderer was checked. `useVectorSvg.ts` (the Compositor's own SVG writer) still collapses rich fills to a flat colour silently — the anti-pattern this work corrected in Vector Type, still live there.
 
+**Vector Type — appearance stack — LANDED 2026-07-28** (commits `00d307f0b`..`7953f8c4b`, 10 tasks; `docs/superpowers/plans/2026-07-28-vector-type-appearance.md`). Multiple fills and multiple strokes as an ordered, Illustrator-style stack, plus **extrude**. Each layer carries a **stable id**, its own `Paint`, anchor, opacity, blend and enabled flag. Array order is paint order, so **a stroke below a fill** is now expressible — measured at 56,350 px of visible fill against 0 px under the old fixed order, where the stroke swallowed the letterform.
+
+**Extrude is real editable vector, not 3D and not a raster** — the same glyph path drawn N times at translated offsets behind the face (`depth`/`angle`/`distance`/`taper`), optionally unioned via paper.js into one solid body. Depth grows ink 11,804 → 61,683 px while the face stays *exactly* 11,092 at every depth. Worst realistic case 3.1 ms/frame, bounded at 2,400 copies with the drop reported rather than silently capped. The union costs ~1.3 ms per copy — 575× drawing — so it is gated to bake and export, proven three independent ways (import graph, sync-vs-async, input type); a memo on the union's own input took a 120-frame bake from 111.5 s to **1.12 s**.
+
+**Stable ids were chosen over positional paths**, and the choice paid: a motion track survives a drag reorder still animating the same layer (cyan 0 → 38,785 px), while the same track written positionally reads 5,741 px at both times — **silently dead**. A Collection binding to a deleted layer bakes byte-identical to no-override rather than hitting a wrong layer. `lib/studio/listRemap.ts` + `idPath.ts` were extracted in the process, ending a copy-paste of the remap logic that Shader Studio had inlined into its `.vue`.
+
+Also: **stroke was already there and merely invisible** — its colour control was `when`-gated behind `strokeWidth`, which defaults to 0. The stack fixes that structurally; a new stroke layer paints 7,055 px immediately without touching a slider.
+
+Open: **a pre-existing paint-box clipping bug**, exposed by canvas-vs-SVG diffing and deliberately left unfixed. `resolvePaint` returns a `no-repeat` pattern, so a `Fill`-form gradient loses 68% of an extrude's ink at the `glyph` anchor, 50% at `word`, and 47% of a 20px gradient stroke. The correct answer differs per fill type (SVG pads gradients but tiles grid/stripes), the line is in `lib/paint/resolve.ts` shared with the Compositor, and the tempting local fix would break canvas/SVG colour parity. Recipe in the task report. Also open: `VectorShape.stroke` is `string | null`, so a gradient *stroke* still flattens to a colour in SVG; and Shader Studio's post-refactor behaviour is verified at module and test level only — ComfyUI was not running, so no live pixel.
+
 ## Agent layer
 
 Loop shape is right (perceive → plan → invertible commands → ghost preview → Keep/Dismiss) plus visual self-review and Direction Loop. **Reach is the gap:** 4 agent surfaces (canvas, compositor, smartLayout, texture) vs ~22 creative surfaces; 3 of 8 studios expose descriptors, plus a 4th (Vector Type) wired but with its agent tuner unverified live. LLM tiers: haiku→patch / sonnet→plan / opus→campaign; Fable for style profiles.
@@ -162,6 +172,8 @@ Loop shape is right (perceive → plan → invertible commands → ghost preview
 - **Migrated KineticType nodes lost backend execution.** The retired node was a real ComfyUI node (IMAGE/MASK outputs); Vector Type Studio is frontend-only. Graphs that piped kinetic frames into a downstream backend node lose that input at Run time — baked frames and timeline playback are unaffected. Needs a release note. The migrated MASK output wire also dangles unconnected on these nodes.
 - **No fallback if `google/fonts` renames a path upstream** for Vector Type Studio's variable-TTF proxy — the family just fails to load. The design's "static cut, axes disabled and labelled" mitigation was never implemented.
 - **No SVG-consuming node exists.** Vector Type's SVG export only leaves the product by download.
+- **Paint-box clipping in `resolvePaint`.** A `no-repeat` pattern clips `Fill`-form gradients at their paint box: 68% of an extrude's ink lost at the `glyph` anchor, 50% at `word`, 47% of a 20px gradient stroke. Shared with the Compositor; the fix differs per fill type. Deliberately reported rather than patched.
+- **Gradient strokes flatten in SVG.** `VectorShape.stroke` is `string | null` — it needs a paint-server slot like `fill` has.
 - **`useVectorSvg.ts` still degrades silently.** The Compositor's SVG writer collapses every rich fill to a flat representative colour via `paintPrimaryColor` and says nothing — the exact anti-pattern Vector Type's export-tier declaration was built to avoid. Same fix would port.
 - **Space Type's live 3D render is unverified** after the `fillTileBox` rounding change. Its fill textures provably never route through that function, and `paintTileBox` (its only exposure) is verified correct — but the on-screen 3D readback could not be captured in the browser pane.
 - **`MotionClipInspector`'s timeline path is unverified** for the new preset capability gating — checked at function level only, never driven through the live timeline UI.
