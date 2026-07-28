@@ -618,8 +618,9 @@ function baseIdentityKey(mat: SceneMaterial): string {
 
 export function updateMaterial(m: THREE.Material, mat: SceneMaterial): boolean {
   if (m.userData.matType !== mat.type || m.userData.identity !== identityKey(mat)) return false
-  // Relief scale/invert are in-place updates for EVERY material type — identityKey
-  // already forced a rebuild if the bound texture itself changed.
+  // Relief SCALE is the only in-place update here — a slider drag must not rebuild
+  // per tick. `invert` never reaches this block: identityKey includes it, so an invert
+  // change fails the identity guard above and forces a rebuild instead.
   const rt = m as THREE.MeshStandardMaterial
   if ('bumpScale' in rt && mat.relief && mat.relief.source !== 'none') {
     rt.bumpScale = mat.relief.scale ?? MATERIAL_DEFAULTS.reliefScale
