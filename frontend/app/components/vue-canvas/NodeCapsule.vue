@@ -71,7 +71,9 @@ function onKeydown(e: KeyboardEvent) {
       @click.stop="onAction"
       @keydown.stop
     >
-      <component :is="actionIcon" :stroke-width="1.9" />
+      <Transition name="glyph">
+        <component :is="actionIcon" :key="state" :stroke-width="1.9" />
+      </Transition>
     </button>
   </div>
 </template>
@@ -89,7 +91,8 @@ function onKeydown(e: KeyboardEvent) {
   gap: 9px;
   padding: 6px 7px;
   border: 1px solid rgba(255, 255, 255, 0.13);
-  border-radius: 11px;
+  /* Concentric with the 7px tile/action inside it: 7 + 6px padding = 13. */
+  border-radius: 13px;
   text-align: left;
   background: #1f1f1f;
   box-shadow: 0 3px 12px rgba(0, 0, 0, 0.4);
@@ -146,19 +149,53 @@ function onKeydown(e: KeyboardEvent) {
 /* Action blue at three intensities: dim at rest, solid on hover, solid while
    running. One accent, used where the work happens. */
 .node-capsule__action {
+  position: relative;
   flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  /* Grid rather than flex so the outgoing and incoming glyphs share one cell
+     and cross-fade in place instead of shunting each other sideways. */
+  display: grid;
+  place-items: center;
   width: 26px;
   height: 26px;
   border-radius: 7px;
-  transition: background 0.18s, color 0.18s, opacity 0.18s;
+  transition-property: background-color, color, opacity, scale;
+  transition-duration: 0.18s;
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
   background: color-mix(in oklab, var(--action) 20%, transparent);
   color: color-mix(in oklab, var(--action) 58%, white);
   opacity: 0.62;
 }
-.node-capsule__action svg { width: 13px; height: 13px; display: block; }
+.node-capsule__action svg { grid-area: 1 / 1; width: 13px; height: 13px; display: block; }
+
+/* The visible button is 26px; the comfortable target is 40px. Extend it with a
+   pseudo-element rather than growing the control — the extra 7px reaches into
+   the gap beside it, never into another interactive element. */
+.node-capsule__action::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 40px;
+  height: 40px;
+  transform: translate(-50%, -50%);
+}
+.node-capsule__action:active { scale: 0.96; }
+
+/* Glyph swap: scale 0.25 -> 1, opacity 0 -> 1, blur 4px -> 0. The button changes
+   meaning at exactly the moments you are watching it (run starts, run ends, run
+   fails), and an instant swap reads as a glitch at that size. */
+.glyph-enter-active,
+.glyph-leave-active {
+  transition-property: opacity, scale, filter;
+  transition-duration: 0.3s;
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+.glyph-enter-from,
+.glyph-leave-to {
+  opacity: 0;
+  scale: 0.25;
+  filter: blur(4px);
+}
 
 /* Hover (and keyboard focus — the capsule is reachable by Tab) only changes
    the three properties that carry the intensity step. Everything else is
@@ -197,7 +234,9 @@ function onKeydown(e: KeyboardEvent) {
   content: '';
   position: absolute;
   inset: -2px;
-  border-radius: inherit;
+  /* Not `inherit`: the ring is inset -2px, so staying concentric with the
+     13px shell needs 13 + 2. `inherit` leaves the corners visibly tight. */
+  border-radius: 15px;
   padding: 2px;
   background: linear-gradient(to right, var(--border-left), var(--border-right));
   -webkit-mask:
@@ -231,5 +270,8 @@ function onKeydown(e: KeyboardEvent) {
 
 @media (prefers-reduced-motion: reduce) {
   .node-capsule--running::before { animation: none; --sweep-angle: 140deg; }
+  .glyph-enter-active,
+  .glyph-leave-active { transition-duration: 1ms; }
+  .node-capsule__action:active { scale: 1; }
 }
 </style>

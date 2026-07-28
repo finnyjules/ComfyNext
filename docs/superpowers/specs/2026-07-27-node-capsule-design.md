@@ -48,11 +48,11 @@ The capsule does not depend on any of them and they do not depend on it.
 
 | Part | Spec |
 |---|---|
-| Shell | `border-radius: 11px`, `background: #1f1f1f`, `border: 1px solid rgba(255,255,255,.13)`, `box-shadow: 0 3px 12px rgba(0,0,0,.4)`, padding `6px 7px`, gap `9px` |
+| Shell | `border-radius: 13px` (concentric: 7px inner + 6px padding), `background: #1f1f1f`, `border: 1px solid rgba(255,255,255,.13)`, `box-shadow: 0 3px 12px rgba(0,0,0,.4)`, padding `6px 7px`, gap `9px` |
 | Icon tile | 26px, `border-radius: 7px`, `background: rgba(255,255,255,.07)`, glyph `rgba(255,255,255,.72)` at 15px. **Neutral — no type tint.** |
 | Name | 12.5px / `rgba(255,255,255,.88)`, single line, truncates |
 | Read-out | 10.5px / `rgba(255,255,255,.4)`, `font-variant-numeric: tabular-nums`, single line, ellipsis |
-| Action | 26px, `border-radius: 7px`. Idle `background: color-mix(in oklab, var(--action) 20%, transparent)`, glyph `color-mix(in oklab, var(--action) 58%, white)`, `opacity: .62`. Hover → `background: var(--action)`, glyph `#fff`, full opacity. |
+| Action | 26px visible, `border-radius: 7px`, 40×40 hit area via `::after`, `scale(0.96)` on press. Idle `background: color-mix(in oklab, var(--action) 20%, transparent)`, glyph `color-mix(in oklab, var(--action) 58%, white)`, `opacity: .62`. Hover → `background: var(--action)`, glyph `#fff`, full opacity. |
 | Ports | Hidden at rest, centred on each edge, revealed with the action button on hover |
 
 Roughly a seventh the area of a 200×150 card, and legible down to ~50% canvas zoom — the point where a card's parameter rows have already turned to mush.
