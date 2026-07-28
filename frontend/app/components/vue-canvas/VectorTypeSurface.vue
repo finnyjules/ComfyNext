@@ -519,7 +519,9 @@ async function renderFullResBlob(t: number): Promise<Blob | null> {
   const f = font.value ?? await loadVariableFont(config.value.fontId)
   const off = document.createElement('canvas')
   drawVectorTypeToCanvas(off, f, config.value, t, {
-    width: canvasW.value, height: canvasH.value, background: background.value,
+    // `bake` opts a shader fill's field out of the 512px live-preview clamp, so the
+    // exported PNG carries the field at the output's own resolution.
+    width: canvasW.value, height: canvasH.value, background: background.value, bake: true,
   })
   return await new Promise<Blob | null>(resolve => off.toBlob(b => resolve(b), 'image/png'))
 }

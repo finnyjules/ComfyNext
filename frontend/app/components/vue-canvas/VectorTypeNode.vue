@@ -117,7 +117,9 @@ async function bakeOutput(): Promise<Blob | null> {
     // Not `t = 0`: with an entrance preset frame 0 is deliberately EMPTY, so a
     // still baked there would be a blank PNG (see `vtStillTime`).
     drawVectorTypeToCanvas(off, f, config.value, vtStillTime(config.value), {
-      width: outW.value, height: outH.value, background: background.value,
+      // `bake` opts a shader fill's field out of the 512px live-preview clamp, so
+      // the PNG carries the field at the output's own resolution.
+      width: outW.value, height: outH.value, background: background.value, bake: true,
     })
     return await new Promise<Blob | null>(resolve => off.toBlob(b => resolve(b), 'image/png'))
   } catch (e) {

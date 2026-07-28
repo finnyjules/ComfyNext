@@ -33,8 +33,16 @@
  */
 import type { Transform2D } from '~/lib/vector/svg'
 import { formatNumber } from '~/lib/vector/svg'
-import { paintPrimaryColor } from '~/lib/spacetype/fillTile'
-import type { VectorTypeConfig } from './config'
+import { fillIsShader, paintPrimaryColor } from '~/lib/spacetype/fillTile'
+import { isFill, type Paint } from '~/lib/compositor/paint'
+import {
+  OBJECT_SHADER_FIELD_PX,
+  hasPaint,
+  resolvePaint,
+  type ShaderFieldFrameCtx,
+} from '~/lib/paint/resolve'
+import { withFieldFrame, type FieldRequest } from '~/lib/shaderfill/field'
+import type { VectorTypeConfig, VtFillAnchor } from './config'
 import type { VtFont } from './font'
 import type { GlyphOutline, TextOutlines } from './outline'
 import { textOutlines } from './outline'
@@ -49,6 +57,7 @@ import {
   type VtGlyphMotion,
 } from './presetMotion'
 import {
+  CELL_DESCENT,
   blurRadiusToStdDeviation,
   glyphCellClipRect,
   glyphTransform as glyphPlacement,
@@ -298,9 +307,162 @@ export function vtPlacement(frame: VtFrame, opts: VtBoxOptions): Required<Transf
   }
 }
 
+// ── Where a fill is sampled: the three anchors ──────────────────────────────
+//
+// Space Type has two anchors (`object | frame`) and type needs a middle term. A
+// gradient across a WORD and a gradient across each LETTER are completely
+// different treatments, and neither existing anchor can say the first one.
+//
+// All three are expressed as a box in OUTPUT (logical) pixels plus that box's
+// CENTRE, because `resolvePaint` builds its gradients and pattern matrices
+// CENTRED on the origin (`lib/paint/resolve.ts`'s header; the other convention
+// in this codebase — `paintTileBox`'s corner origin — is documented at
+// `lib/compositor/paint.ts:44-48`, and the two are deliberately NOT harmonised).
+// So `w`/`h` are what the resolver is asked for, and `cx`/`cy` are where the
+// drawing transform has to be for that centred geometry to land on the right
+// pixels.
+
+/** A fill's sampling box in OUTPUT pixels, with the centre the resolver's
+ *  centred-origin geometry is built around. */
+export interface VtPaintBox { cx: number; cy: number; w: number; h: number }
+
+/** Never-degenerate, order-independent: a box built from two opposite corners in
+ *  either order. `1e-3` matches `resolveFill`/`resolveShaderFill`'s own floor, so
+ *  a zero-extent box (an empty run, a hairline glyph) cannot make the pattern
+ *  matrix singular. */
+function paintBoxFrom(ax: number, ay: number, bx: number, by: number): VtPaintBox {
+  const x0 = Math.min(ax, bx), x1 = Math.max(ax, bx)
+  const y0 = Math.min(ay, by), y1 = Math.max(ay, by)
+  return { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, w: Math.max(x1 - x0, 1e-3), h: Math.max(y1 - y0, 1e-3) }
+}
+
+/**
+ * `glyph` — ONE letter's own box, so each letter carries its own copy of the fill.
+ *
+ * The box is the glyph's INK bounds, not its cell: that is what SVG's
+ * `gradientUnits="objectBoundingBox"` means (Task 4 emits exactly that for this
+ * anchor, and a canvas/SVG mismatch here would be invisible — both would still
+ * show a gradient on the letter). It is also the more useful of the two: an ink
+ * box gives every letter the FULL ramp over its own extent, where a cell box
+ * would give a vertical gradient the same band on every letter and collapse the
+ * visible difference from `word`.
+ *
+ * A glyph with no ink (a space) has no bounding box to speak of, so it falls back
+ * to its CELL — the same box `glyphCellClipRect` masks against.
+ */
+export function vtGlyphPaintBox(
+  glyph: GlyphOutline,
+  place: Required<Transform2D>,
+  /** The em in OUTPUT pixels — only used for the no-ink fallback. */
+  em: number,
+): VtPaintBox {
+  const origin = glyphPlacement(glyph, place)
+  const s = place.scale
+  // y is FLIPPED by the placement, so the source's MAX y is the output's TOP.
+  const fy = place.flipY ? -s : s
+  const b = glyph.bbox
+  const inked = glyph.commands.length > 0 && Number.isFinite(b.minX) && Number.isFinite(b.minY)
+  if (!inked) {
+    const y1 = origin.y + em * CELL_DESCENT
+    return paintBoxFrom(origin.x, y1 - em, origin.x + glyph.advance * s, y1)
+  }
+  return paintBoxFrom(origin.x + b.minX * s, origin.y + b.minY * fy, origin.x + b.maxX * s, origin.y + b.maxY * fy)
+}
+
+/**
+ * `word` — the RUN's ink box, so one fill spans the whole word and the letters
+ * are windows onto it. Exactly the glyph box one level up: the same ink-bounds
+ * rule applied to `outlines.bbox`, which is the run's bounds in font units with
+ * the pen already folded in.
+ *
+ * An empty run (no text, or nothing but spaces) has no ink, so it falls back to
+ * the frame box rather than to a sliver at the origin.
+ */
+export function vtRunPaintBox(
+  outlines: TextOutlines,
+  place: Required<Transform2D>,
+  opts: VtBoxOptions,
+): VtPaintBox {
+  const b = outlines.bbox
+  const s = place.scale
+  const fy = place.flipY ? -s : s
+  if (!Number.isFinite(b.minX) || (b.maxX === b.minX && b.maxY === b.minY)) return vtFramePaintBox(opts)
+  return paintBoxFrom(place.x + b.minX * s, place.y + b.minY * fy, place.x + b.maxX * s, place.y + b.maxY * fy)
+}
+
+/** `frame` — the whole output box, so the type moves over a fill pinned to the
+ *  canvas. Logical units, not device: the drawing transform already carries
+ *  `pixelRatio`, so a 220px card and a 1024px bake sample the same composition. */
+export function vtFramePaintBox(opts: VtBoxOptions): VtPaintBox {
+  return {
+    cx: opts.width / 2,
+    cy: opts.height / 2,
+    w: Math.max(opts.width, 1e-3),
+    h: Math.max(opts.height, 1e-3),
+  }
+}
+
+/** The anchor a config actually renders with. `frame.config` can be a raw blob
+ *  (`applyMotion` clones whatever it is handed — see `cloneConfig`'s doc), so an
+ *  absent or bogus value must land on `glyph`, the pre-anchor behaviour, rather
+ *  than defaulting into one of the two new sampling spaces. */
+export function vtFillAnchor(cfg: VectorTypeConfig): VtFillAnchor {
+  const a = cfg.fillAnchor
+  return a === 'word' || a === 'frame' ? a : 'glyph'
+}
+
+/** A paint that resolves to a plain CSS colour needs none of the anchoring
+ *  machinery — no box, no paint-space matrix, no per-glyph `Path2D`. This is the
+ *  DEFAULT config (`solid`) and every legacy string fill, so it is the path
+ *  almost every frame in the product takes. */
+function flatPaint(paint: Paint): string | null {
+  if (typeof paint === 'string') return paint
+  if (isFill(paint) && paint.type === 'solid') return paint.a
+  return null
+}
+
+/**
+ * The shader field this config's fill needs, sized EXACTLY the way
+ * `resolveShaderFill` sizes it at paint time — frame-anchored fields at the
+ * frame's own size, object-anchored ones at the fixed `OBJECT_SHADER_FIELD_PX`.
+ * The two must agree or `beginFieldFrame` budgets a key the resolver never asks
+ * for and the fill silently freezes at t=0; see `OBJECT_SHADER_FIELD_PX`'s doc
+ * for the version of that bug that already shipped once.
+ *
+ * Vector Type carries exactly ONE paint, so this returns 0 or 1 requests — but it
+ * still has to open its own `withFieldFrame` span, because the span is what makes
+ * a field LIVE at all. Without one every field renders frozen at t=0.
+ */
+function vtFieldRequests(
+  paint: Paint,
+  /** DEVICE pixels — the frame `field.base` is captured in. */
+  W: number,
+  H: number,
+  t: number,
+  fps: number,
+  bake: boolean,
+): FieldRequest[] {
+  if (!isFill(paint) || !fillIsShader(paint)) return []
+  const frameAnchored = paint.shader.anchor === 'frame'
+  return [{
+    spec: paint.shader,
+    w: frameAnchored ? Math.max(1, Math.round(W)) : OBJECT_SHADER_FIELD_PX,
+    h: frameAnchored ? Math.max(1, Math.round(H)) : OBJECT_SHADER_FIELD_PX,
+    t,
+    fps,
+    bake,
+  }]
+}
+
 export interface VtDrawOptions extends VtBoxOptions {
   /** Painted before the glyphs. `null`/omitted leaves the canvas transparent. */
   background?: string | null
+  /** True for a final export/bake. Opts shader-fill fields out of the 512px live
+   *  preview clamp AND out of `LIVE_FIELD_CEILING`, exactly as `paintLayerStack`'s
+   *  own `bake` flag does — same function, same time, different resolution, which
+   *  is what keeps a bake from drifting from the preview it was made in. Default
+   *  `false` is byte-identical to the live path. */
+  bake?: boolean
   /** Device/preview multiplier. The canvas must be `width*pixelRatio` wide. Lets
    *  a 220px card show the SAME composition a 1024px bake produces, rather than
    *  a differently-laid-out one. */
@@ -324,6 +486,13 @@ export function drawVectorType(
   const H = Math.max(1, Math.round(opts.height * k))
 
   ctx.setTransform(1, 0, 0, 1, 0, 0)
+  // The frame's own base transform, captured in DEVICE pixels while the context
+  // is still identity. This is what a frame-anchored SHADER field is positioned
+  // against: `resolveShaderFill` composes `CTM⁻¹ · base`, which cancels whatever
+  // the fill-time transform happens to be, so the field lands on the device
+  // canvas 1:1 regardless of which of the three anchors is drawing — and a 2×
+  // bake asks for (and gets) a 2× field instead of a stretched 1× one.
+  const deviceBase = typeof ctx.getTransform === 'function' ? ctx.getTransform() : null
   ctx.clearRect(0, 0, W, H)
   if (opts.background) {
     ctx.fillStyle = opts.background
@@ -334,103 +503,193 @@ export function drawVectorType(
   const frame = vectorTypeFrame(font, cfg, t)
   const place = vtPlacement(frame, opts)
   const paths = outlinesToPath2D(frame.outlines, place)
-  const { fill, stroke, strokeWidth } = frame.config
-
-  // ── TEMPORARY BRIDGE — TASK 3 REPLACES THIS LINE ────────────────────────────
-  // `config.fill` is a `Paint` as of Task 2, and `ctx.fillStyle` SILENTLY IGNORES
-  // a non-string assignment: without this the glyphs would keep whatever colour
-  // the context last had (black on a fresh one) with nothing thrown anywhere.
-  // Collapsing to the paint's representative colour is what the Compositor's SVG
-  // writer already does, so a rich fill renders as its primary colour today
-  // rather than wrongly. Task 3 replaces THIS ONE BINDING with `lib/paint/resolve`
-  // and the glyph/word/frame anchors; nothing else in this function changes.
-  const fillColor = paintPrimaryColor(fill, '#ffffff')
+  const { stroke, strokeWidth } = frame.config
+  // A raw blob can reach here — `applyMotion` clones whatever it is handed — and a
+  // config with no `fill` at all must still paint SOMETHING: an invisible word is a
+  // worse failure than a wrong colour, and this is the same `'#ffffff'` the bridge
+  // this replaces fell back to.
+  const fill: Paint = frame.config.fill ?? '#ffffff'
+  const anchor = vtFillAnchor(frame.config)
 
   // The em in output pixels, from the placement rather than re-read from the
   // config, so the cell box a mask is measured against cannot drift from the
   // geometry it masks.
   const em = place.scale * (frame.outlines.unitsPerEm || 1000)
 
-  for (let i = 0; i < paths.length; i++) {
-    const glyph = frame.outlines.glyphs[i] as GlyphOutline
-    const path = paths[i] as Path2D
-    const tr = frame.transforms[i] ?? IDENTITY_GLYPH_MOTION
-    // The glyph's own placed origin — motion rotates and scales AROUND it, so a
-    // spinning glyph spins in place rather than swinging about the canvas corner.
-    const origin = glyphPlacement(glyph, place)
+  // ── THE FILL ────────────────────────────────────────────────────────────────
+  // `config.fill` is a `Paint` (Task 2) and `ctx.fillStyle` SILENTLY IGNORES a
+  // non-string assignment, so this goes through `lib/paint/resolve` — the SAME
+  // resolver the Compositor paints with, extracted in Task 1 rather than copied.
+  //
+  // `flat` is the fast path and the common one: a `solid` fill (the default) and
+  // every lifted legacy string resolve to a plain CSS colour, which needs none of
+  // the paint-space machinery below.
+  const flat = flatPaint(fill)
+  const paints = hasPaint(fill)
 
-    ctx.save()
-    ctx.globalAlpha = clamp01(tr.opacity)
-
-    // BLUR. `ctx.filter` is part of the saved drawing state, so the `restore()`
-    // at the bottom of this loop body is what stops it leaking into the next
-    // glyph — and a leak is invisible until a glyph that should be sharp is not.
-    // Nothing resets it by hand: a second reset site is a second place to forget
-    // one.
-    //
-    // The `* k` is load-bearing, not decoration. A canvas filter's blur radius
-    // is in DEVICE pixels and IGNORES the current transform — measured in Chrome
-    // at ctm scale 0.5, 1 and 2, where `blur(4px)` grew a rect's device-pixel
-    // footprint by exactly 18px in all three. `tr.blur` is in LOGICAL output
-    // pixels (`presetMotion` already multiplied by the em), so without this the
-    // 220px node card would blur ~5× harder than the 1024px bake of the same
-    // config — trap 1 again, one layer down.
-    const blurPx = Number.isFinite(tr.blur) ? Math.max(0, tr.blur) * k : 0
-    // Below ~1/20 device px there is nothing to see, and setting a filter costs
-    // a separate compositing pass per glyph.
-    if (blurPx >= 0.05) ctx.filter = `blur(${blurPx}px)`
-
-    const advance = glyph.advance * place.scale
-    // CLIP — before the transform below, deliberately. See `clipGlyphCell`.
-    if (tr.clip && tr.clip.amount > 0.001) {
-      clipGlyphCell(ctx, origin, advance, em, tr.clip)
-    }
-
-    const sx = nonZero(tr.scale * (Number.isFinite(tr.scaleX) ? tr.scaleX : 1))
-    const sy = nonZero(tr.scale * (Number.isFinite(tr.scaleY) ? tr.scaleY : 1))
-    if (tr.dx || tr.dy || tr.rotate || sx !== 1 || sy !== 1) {
-      ctx.translate(origin.x + tr.dx, origin.y + tr.dy)
-      if (tr.rotate) ctx.rotate((tr.rotate * Math.PI) / 180)
-      // Non-uniform, so the card-flip presets are DRAWN rather than degenerating
-      // into a bare opacity ramp (Task 4 produced `scaleX`/`scaleY` and flagged
-      // that nothing applied them). `scale` and `scaleX/Y` multiply: the uniform
-      // one is the tracks' and the presets' shared channel, the per-axis pair is
-      // the flip on top of it.
-      //
-      // THE PIVOT IS NOT THE ORIGIN. The origin is the glyph's LEFT edge on the
-      // baseline. Vertically that is exactly right — type scales about its
-      // baseline, which is why `card-flip-v` always read correctly. Horizontally
-      // it pins each letter's left edge, so at `scaleX 0.43` the letters narrow
-      // by 57 % while the word narrows by 7 %: six thin letters with wide gaps,
-      // not six cards turning in place. So the horizontal pivot is the glyph
-      // CELL's centre and the vertical one stays on the baseline.
-      //
-      // Rotation is deliberately left OUTSIDE this, still turning about the
-      // origin: it was not the reported defect, `spin`/`sway`/`rock` are
-      // verified against it, and moving two pivots at once would make any
-      // regression impossible to attribute.
-      if (sx !== 1 || sy !== 1) {
-        const hx = advance / 2
-        ctx.translate(hx, 0)
-        ctx.scale(sx, sy)
-        ctx.translate(-hx, 0)
-      }
-      ctx.translate(-origin.x, -origin.y)
-    }
-    ctx.fillStyle = fillColor
-    // nonzero, always: glyph counters (the hole in an 'o') depend on it.
-    ctx.fill(path, 'nonzero')
-    if (strokeWidth > 0) {
-      ctx.lineWidth = strokeWidth
-      ctx.lineJoin = 'round'
-      ctx.strokeStyle = stroke
-      ctx.stroke(path)
-    }
-    ctx.restore()
+  // This host's OWN shader-fill frame state. Vector Type is a second field host,
+  // not a guest in the Compositor's: it opens its own `withFieldFrame` span below
+  // (Task 1's hand-off #4 — a shader fill painted outside any span works, because
+  // token 0 skips the isolation check, but every field freezes at t=0), and it
+  // threads this struct into every `resolvePaint` call rather than reaching for a
+  // module global. `fps` comes from the config's own clock so the field quantises
+  // its time the same way the motion does.
+  const field: ShaderFieldFrameCtx = {
+    frameW: W,
+    frameH: H,
+    t,
+    fps: frame.config.motion?.fps ?? 30,
+    base: deviceBase,
+    bake: !!opts.bake,
+    token: 0,
   }
+  const requests = paints && !flat
+    ? vtFieldRequests(fill, W, H, t, field.fps, field.bake)
+    : []
 
-  ctx.setTransform(1, 0, 0, 1, 0, 0)
-  return frame
+  return withFieldFrame(requests, (_frozenCount, token) => {
+    // `resolveShaderFill` reads the token from here to pass into every
+    // `resolveField` call, the same way it reads `t`/`fps`/`bake`.
+    field.token = token
+    drawGlyphRun()
+    ctx.setTransform(1, 0, 0, 1, 0, 0)
+    return frame
+  })
+
+  /**
+   * The glyph loop, in a closure only so the `withFieldFrame` span above can wrap
+   * it without re-indenting 90 lines of unrelated motion code.
+   *
+   * THE ANCHORS, mechanically. Each anchor picks a PAINT SPACE — a matrix `pm` —
+   * and the fill is resolved and drawn with the context transform set to it:
+   *
+   *   glyph — `pm` is the glyph's own CTM (motion included) translated to the
+   *           glyph's ink centre, so the fill rides the letter: a spinning letter
+   *           spins its gradient with it.
+   *   word  — `pm` is the frame's base transform translated to the RUN's ink
+   *           centre. It does not depend on `i` at all, so one fill spans the
+   *           whole word and the letters are windows onto it — a letter that
+   *           moves slides across a fill that stays where the word is.
+   *   frame — the same, but the box is the whole output box, so the type moves
+   *           over a fill pinned to the canvas.
+   *
+   * The glyph's path is in the glyph's own CTM space, so it is pre-multiplied by
+   * `pm⁻¹ · CTM` before filling: the GEOMETRY still lands exactly where the motion
+   * put it, while the PAINT is anchored to `pm`. For `glyph` that product is a
+   * bare translate; for `word`/`frame` it is the full cancellation of the glyph's
+   * own motion, which is what makes those two anchors stand still.
+   */
+  function drawGlyphRun(): void {
+    // Hoisted for `word` and `frame`: their paint space and their resolved style
+    // are the same for every letter, so the tile/gradient/field is built ONCE for
+    // the run instead of once per glyph.
+    let runPm: DOMMatrix | null = null
+    let runStyle: string | CanvasGradient | CanvasPattern | null = null
+    if (paints && !flat && anchor !== 'glyph') {
+      const box = anchor === 'frame' ? vtFramePaintBox(opts) : vtRunPaintBox(frame.outlines, place, opts)
+      ctx.save()
+      ctx.translate(box.cx, box.cy)
+      runPm = ctx.getTransform()
+      runStyle = resolvePaint(ctx, fill, { w: box.w, h: box.h }, field)
+      ctx.restore()
+    }
+
+    for (let i = 0; i < paths.length; i++) {
+      const glyph = frame.outlines.glyphs[i] as GlyphOutline
+      const path = paths[i] as Path2D
+      const tr = frame.transforms[i] ?? IDENTITY_GLYPH_MOTION
+      // The glyph's own placed origin — motion rotates and scales AROUND it, so a
+      // spinning glyph spins in place rather than swinging about the canvas corner.
+      const origin = glyphPlacement(glyph, place)
+
+      ctx.save()
+      ctx.globalAlpha = clamp01(tr.opacity)
+
+      // BLUR. `ctx.filter` is part of the saved drawing state, so the `restore()`
+      // at the bottom of this loop body is what stops it leaking into the next
+      // glyph — and a leak is invisible until a glyph that should be sharp is not.
+      // Nothing resets it by hand: a second reset site is a second place to forget
+      // one.
+      //
+      // The `* k` is load-bearing, not decoration. A canvas filter's blur radius
+      // is in DEVICE pixels and IGNORES the current transform — measured in Chrome
+      // at ctm scale 0.5, 1 and 2, where `blur(4px)` grew a rect's device-pixel
+      // footprint by exactly 18px in all three. `tr.blur` is in LOGICAL output
+      // pixels (`presetMotion` already multiplied by the em), so without this the
+      // 220px node card would blur ~5× harder than the 1024px bake of the same
+      // config — trap 1 again, one layer down.
+      const blurPx = Number.isFinite(tr.blur) ? Math.max(0, tr.blur) * k : 0
+      // Below ~1/20 device px there is nothing to see, and setting a filter costs
+      // a separate compositing pass per glyph.
+      if (blurPx >= 0.05) ctx.filter = `blur(${blurPx}px)`
+
+      const advance = glyph.advance * place.scale
+      // CLIP — before the transform below, deliberately. See `clipGlyphCell`.
+      if (tr.clip && tr.clip.amount > 0.001) {
+        clipGlyphCell(ctx, origin, advance, em, tr.clip)
+      }
+
+      const sx = nonZero(tr.scale * (Number.isFinite(tr.scaleX) ? tr.scaleX : 1))
+      const sy = nonZero(tr.scale * (Number.isFinite(tr.scaleY) ? tr.scaleY : 1))
+      if (tr.dx || tr.dy || tr.rotate || sx !== 1 || sy !== 1) {
+        ctx.translate(origin.x + tr.dx, origin.y + tr.dy)
+        if (tr.rotate) ctx.rotate((tr.rotate * Math.PI) / 180)
+        // Non-uniform, so the card-flip presets are DRAWN rather than degenerating
+        // into a bare opacity ramp (Task 4 produced `scaleX`/`scaleY` and flagged
+        // that nothing applied them). `scale` and `scaleX/Y` multiply: the uniform
+        // one is the tracks' and the presets' shared channel, the per-axis pair is
+        // the flip on top of it.
+        //
+        // THE PIVOT IS NOT THE ORIGIN. The origin is the glyph's LEFT edge on the
+        // baseline. Vertically that is exactly right — type scales about its
+        // baseline, which is why `card-flip-v` always read correctly. Horizontally
+        // it pins each letter's left edge, so at `scaleX 0.43` the letters narrow
+        // by 57 % while the word narrows by 7 %: six thin letters with wide gaps,
+        // not six cards turning in place. So the horizontal pivot is the glyph
+        // CELL's centre and the vertical one stays on the baseline.
+        //
+        // Rotation is deliberately left OUTSIDE this, still turning about the
+        // origin: it was not the reported defect, `spin`/`sway`/`rock` are
+        // verified against it, and moving two pivots at once would make any
+        // regression impossible to attribute.
+        if (sx !== 1 || sy !== 1) {
+          const hx = advance / 2
+          ctx.translate(hx, 0)
+          ctx.scale(sx, sy)
+          ctx.translate(-hx, 0)
+        }
+        ctx.translate(-origin.x, -origin.y)
+      }
+      // nonzero, always: glyph counters (the hole in an 'o') depend on it.
+      if (paints) {
+        if (flat !== null) {
+          ctx.fillStyle = flat
+          ctx.fill(path, 'nonzero')
+        } else {
+          // The glyph's own CTM, motion already applied above.
+          const gm = ctx.getTransform()
+          const box = runPm ? null : vtGlyphPaintBox(glyph, place, em)
+          const pm = runPm ?? gm.translate(box!.cx, box!.cy)
+          // Pull the path back into the paint space so the paint is anchored to
+          // `pm` while the glyph still draws where the motion put it.
+          const local = new Path2D()
+          local.addPath(path, pm.inverse().multiply(gm))
+          ctx.save()
+          ctx.setTransform(pm)
+          ctx.fillStyle = runStyle ?? resolvePaint(ctx, fill, { w: box!.w, h: box!.h }, field)
+          ctx.fill(local, 'nonzero')
+          ctx.restore()
+        }
+      }
+      if (strokeWidth > 0) {
+        ctx.lineWidth = strokeWidth
+        ctx.lineJoin = 'round'
+        ctx.strokeStyle = stroke
+        ctx.stroke(path)
+      }
+      ctx.restore()
+    }
+  }
 }
 
 /** Size `canvas` and draw into it. The convenience wrapper every consumer uses. */
@@ -638,9 +897,23 @@ export function vtExportName(cfg: VectorTypeConfig | null | undefined): string {
  * ships in the same commit as the evaluator.
  *
  * Stagger alone still is not motion: it shifts a clock nothing is reading.
+ *
+ * THREE sources as of the fills work, and the third is not a nicety. A LIVE
+ * shader fill (`speed !== 0`) animates on its own clock with the type standing
+ * perfectly still, so without it here a shader-filled config renders exactly one
+ * frame — and worse, `resolveField` returns `null` until the effect catalog has
+ * landed, so that one frame is the graceful fallback (the shader's flat input
+ * paint) and NOTHING ever re-renders to replace it. The self-heal in
+ * `lib/shaderfill/field.ts` is explicitly "callers that re-invoke `resolveField`
+ * every frame get it for free"; this is what makes Vector Type one of them.
+ * Mirrors the Compositor's `hasAnimatedShaderFill`, including why `speed: 0` must
+ * NOT count: a deliberately frozen field would otherwise be impossible to
+ * express, and every still node on the canvas would spin a loop forever.
  */
 export function vtIsAnimated(cfg: VectorTypeConfig | null | undefined): boolean {
   const tracks = cfg?.motion?.tracks
   if (Array.isArray(tracks) && tracks.length > 0) return true
-  return vtHasPreset(cfg)
+  if (vtHasPreset(cfg)) return true
+  const fill = cfg?.fill
+  return isFill(fill) && fillIsShader(fill) && fill.shader.speed !== 0
 }

@@ -17,8 +17,19 @@ import * as fontkit from 'fontkit'
 import { describe, expect, it } from 'vitest'
 import { normaliseAxes, type VtFont } from '~/lib/vectortype/font'
 import { DEFAULT_CONFIG, mergeConfig, type VectorTypeConfig } from '~/lib/vectortype/config'
-import { vectorTypeFrame, vectorTypeSVG, vtExportName, vtIsAnimated, vtPlacement } from '~/lib/vectortype/canvas'
-import { placeOutlines } from '~/lib/vectortype/render'
+import {
+  vectorTypeFrame,
+  vectorTypeSVG,
+  vtExportName,
+  vtFillAnchor,
+  vtFramePaintBox,
+  vtGlyphPaintBox,
+  vtIsAnimated,
+  vtPlacement,
+  vtRunPaintBox,
+} from '~/lib/vectortype/canvas'
+import { DEFAULT_FILL, DEFAULT_SHADER_SPEC } from '~/lib/spacetype/fillTile'
+import { glyphTransform, placeOutlines } from '~/lib/vectortype/render'
 import { commandsToPathData } from '~/lib/vector/svg'
 
 const FIXTURE = fileURLToPath(new URL('../fixtures/inter-subset-var.ttf', import.meta.url))
@@ -418,5 +429,152 @@ describe('vtExportName', () => {
     expect(vtExportName(cfg({ text: '' }))).toBe('vector-type')
     expect(vtExportName(cfg({ text: '///' }))).toBe('vector-type')
     expect(vtExportName(undefined)).toBe('vector-type')
+  })
+})
+
+// ── The three fill anchors ──────────────────────────────────────────────────
+//
+// `drawVectorType` itself needs a real canvas (Path2D, DOMMatrix), so the
+// PAINTING is verified in a browser. What is pinned here is the part that
+// decides WHERE each anchor samples: three pure box functions, which is the
+// whole visible difference between "a gradient across the word" and "a gradient
+// on every letter". If these three ever return the same box the feature is gone
+// and the picture still looks like a gradient on a word — exactly the class of
+// silent drift this file exists for.
+
+describe('the three fill anchors — the sampling boxes', () => {
+  const BOX3 = { width: 1280, height: 720 }
+  const place3 = (c = cfg()) => vtPlacement(vectorTypeFrame(font, c, 0), BOX3)
+
+  function boxes(c = cfg()) {
+    const f = vectorTypeFrame(font, c, 0)
+    const p = vtPlacement(f, BOX3)
+    const em = p.scale * (f.outlines.unitsPerEm || 1000)
+    return {
+      glyphs: f.outlines.glyphs.map(g => vtGlyphPaintBox(g, p, em)),
+      run: vtRunPaintBox(f.outlines, p, BOX3),
+      frame: vtFramePaintBox(BOX3),
+    }
+  }
+
+  it('frame is the whole output box', () => {
+    expect(vtFramePaintBox(BOX3)).toEqual({ cx: 640, cy: 360, w: 1280, h: 720 })
+  })
+
+  it('gives every glyph its OWN box, marching left to right', () => {
+    const { glyphs } = boxes()
+    expect(glyphs).toHaveLength(WORD.length)
+    const centres = glyphs.map(b => b.cx)
+    // Strictly increasing: each letter's paint space sits where the letter does.
+    for (let i = 1; i < centres.length; i++) expect(centres[i]!).toBeGreaterThan(centres[i - 1]!)
+    expect(new Set(centres).size).toBe(WORD.length)
+  })
+
+  it('a glyph box IS that glyph\'s placed ink, not its cell', () => {
+    const f = vectorTypeFrame(font, cfg(), 0)
+    const p = vtPlacement(f, BOX3)
+    const em = p.scale * f.outlines.unitsPerEm
+    const g = f.outlines.glyphs[0]!
+    const b = vtGlyphPaintBox(g, p, em)
+    const o = glyphTransform(g, p)
+    expect(b.cx - b.w / 2).toBeCloseTo(o.x + g.bbox.minX * p.scale, 6)
+    expect(b.cx + b.w / 2).toBeCloseTo(o.x + g.bbox.maxX * p.scale, 6)
+    // y is flipped: the source's MAX y is the output's TOP edge.
+    expect(b.cy - b.h / 2).toBeCloseTo(o.y - g.bbox.maxY * p.scale, 6)
+    expect(b.cy + b.h / 2).toBeCloseTo(o.y - g.bbox.minY * p.scale, 6)
+    // A cap-height 'S' is NOT one em tall — proof this is the ink and not the cell.
+    expect(b.h).toBeLessThan(em * 0.95)
+  })
+
+  it('the run box is the union of the glyph boxes, and strictly wider than any one', () => {
+    const { glyphs, run } = boxes()
+    const left = Math.min(...glyphs.map(b => b.cx - b.w / 2))
+    const right = Math.max(...glyphs.map(b => b.cx + b.w / 2))
+    expect(run.cx - run.w / 2).toBeCloseTo(left, 4)
+    expect(run.cx + run.w / 2).toBeCloseTo(right, 4)
+    for (const b of glyphs) expect(run.w).toBeGreaterThan(b.w)
+  })
+
+  it('the three boxes are genuinely NESTED — glyph ⊂ run ⊂ frame', () => {
+    const { glyphs, run, frame } = boxes()
+    expect(glyphs[0]!.w).toBeLessThan(run.w)
+    expect(run.w).toBeLessThan(frame.w)
+    expect(glyphs[0]!.h).toBeLessThanOrEqual(run.h)
+    expect(run.h).toBeLessThan(frame.h)
+    // And the centres differ horizontally, so even a radial fill lands elsewhere.
+    // (Vertically the run IS centred in the frame by `vtPlacement`, so `cy`
+    // agreeing with the frame's is correct, not a collapse — the HEIGHTS above
+    // are what say the two boxes are different.)
+    expect(glyphs[0]!.cx).not.toBeCloseTo(run.cx, 1)
+  })
+
+  it('a glyph with no ink falls back to its CELL rather than a sliver', () => {
+    const f = vectorTypeFrame(font, cfg({ text: 'Sa lo' }), 0)
+    const p = vtPlacement(f, BOX3)
+    const em = p.scale * f.outlines.unitsPerEm
+    const space = f.outlines.glyphs.find(g => g.commands.length === 0)
+    expect(space).toBeTruthy()
+    const b = vtGlyphPaintBox(space!, p, em)
+    expect(b.h).toBeCloseTo(em, 6)
+    expect(b.w).toBeCloseTo(space!.advance * p.scale, 6)
+  })
+
+  it('an empty run falls back to the FRAME box rather than a sliver at the origin', () => {
+    const f = vectorTypeFrame(font, cfg({ text: '' }), 0)
+    expect(vtRunPaintBox(f.outlines, vtPlacement(f, BOX3), BOX3)).toEqual(vtFramePaintBox(BOX3))
+  })
+
+  it('boxes stay finite on a degenerate output box', () => {
+    const b = vtFramePaintBox({ width: 0, height: 0 })
+    expect(b.w).toBeGreaterThan(0)
+    expect(b.h).toBeGreaterThan(0)
+    expect(Number.isFinite(b.cx)).toBe(true)
+  })
+
+  it('the run box tracks alignment — it is the ink, not the output box', () => {
+    const left = vtRunPaintBox(vectorTypeFrame(font, cfg({ align: 'left' }), 0).outlines, place3(cfg({ align: 'left' })), BOX3)
+    const right = vtRunPaintBox(vectorTypeFrame(font, cfg({ align: 'right' }), 0).outlines, place3(cfg({ align: 'right' })), BOX3)
+    expect(right.cx).toBeGreaterThan(left.cx)
+    expect(right.w).toBeCloseTo(left.w, 4)
+  })
+})
+
+describe('vtFillAnchor — the anchor a config actually renders with', () => {
+  it('passes the three real anchors through', () => {
+    for (const a of ['glyph', 'word', 'frame'] as const) {
+      expect(vtFillAnchor({ ...DEFAULT_CONFIG, fillAnchor: a })).toBe(a)
+    }
+  })
+
+  it('lands a missing or bogus anchor on `glyph` — the pre-anchor behaviour', () => {
+    // `applyMotion` clones whatever blob it is handed, so this really can be
+    // undefined at the renderer. Defaulting into `word` or `frame` would change
+    // how every legacy node paints.
+    for (const bad of [undefined, null, '', 'object', 'letter', 3, {}]) {
+      expect(vtFillAnchor({ ...DEFAULT_CONFIG, fillAnchor: bad as any })).toBe('glyph')
+    }
+  })
+})
+
+describe('vtIsAnimated — a live shader fill is motion too', () => {
+  const shaderFill = (speed: number) => ({
+    ...DEFAULT_FILL, type: 'shader' as const,
+    shader: { ...DEFAULT_SHADER_SPEC, speed },
+  })
+
+  it('a live shader fill animates a config with no tracks and no preset', () => {
+    // Without this the surface draws exactly ONE frame — and while the effect
+    // catalog is still loading that frame is the graceful fallback, with nothing
+    // ever re-rendering to replace it.
+    expect(vtIsAnimated(cfg({ fill: shaderFill(1) }))).toBe(true)
+  })
+
+  it('a FROZEN shader fill (speed 0) is still not motion', () => {
+    expect(vtIsAnimated(cfg({ fill: shaderFill(0) }))).toBe(false)
+  })
+
+  it('a plain fill of any other type is not motion', () => {
+    expect(vtIsAnimated(cfg({ fill: { ...DEFAULT_FILL, type: 'gradient' } }))).toBe(false)
+    expect(vtIsAnimated(cfg())).toBe(false)
   })
 })
