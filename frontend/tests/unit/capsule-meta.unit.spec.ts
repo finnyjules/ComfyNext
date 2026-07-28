@@ -24,10 +24,17 @@ describe('collapseTier', () => {
     expect(stale).toEqual([])
   })
 
+  it('groups the summary-card editors together', () => {
+    // Both are a compact card plus an "open the editor" button, rendering
+    // nothing live themselves — so they belong in the same tier.
+    expect(collapseTier('lip-sync')).toBe('after-run')
+    expect(collapseTier('shot-director')).toBe('after-run')
+  })
+
   it('collapses machinery with no output of its own', () => {
     expect(collapseTier('comfy')).toBe('after-run')
     expect(collapseTier('gate')).toBe('always')
-    expect(collapseTier('reference')).toBe('always')
+    expect(collapseTier('subgraph-io')).toBe('always')
   })
 
   it('never collapses the content itself', () => {
@@ -36,8 +43,12 @@ describe('collapseTier', () => {
     }
   })
 
-  it('leaves studios to the user — their live preview is the point', () => {
-    for (const t of ['gradient-studio', 'shader-studio', 'space-type', 'scene3d-studio']) {
+  it('leaves anything with a live preview to the user', () => {
+    // shader-effect renders a live WebGL canvas on the card; reference and
+    // character render the picked asset's thumbnail. Collapsing those by
+    // default hides the whole reason the node is on the canvas.
+    for (const t of ['gradient-studio', 'shader-studio', 'space-type', 'scene3d-studio',
+                     'shader-effect', 'reference', 'character']) {
       expect(collapseTier(t)).toBe('manual')
     }
   })

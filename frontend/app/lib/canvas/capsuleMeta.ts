@@ -24,12 +24,10 @@ export const COLLAPSE_TIERS: Record<string, CollapseTier> = {
   comfy: 'after-run',
   gate: 'always',
   'subgraph-io': 'always',
-  reference: 'always',
-  character: 'always',
 
   'pose-mannequin': 'after-run',
-  'shader-effect': 'after-run',
   'lip-sync': 'after-run',
+  'shot-director': 'after-run',
 
   note: 'never',
   'artifact-image': 'never',
@@ -44,6 +42,11 @@ export const COLLAPSE_TIERS: Record<string, CollapseTier> = {
   'batch-grid': 'never',
   'sketch-pile': 'never',
 
+  // Live WebGL preview + manifest-driven sliders on the card itself — the same
+  // shape as the studios below, not a fire-and-forget step.
+  reference: 'manual',
+  character: 'manual',
+  'shader-effect': 'manual',
   'space-type': 'manual',
   'gradient-studio': 'manual',
   'shader-studio': 'manual',
@@ -51,7 +54,6 @@ export const COLLAPSE_TIERS: Record<string, CollapseTier> = {
   'shape-studio': 'manual',
   'vector-type': 'manual',
   'scene3d-studio': 'manual',
-  'shot-director': 'manual',
 }
 
 /** Unknown types default to 'never' — a node type nobody has classified should
