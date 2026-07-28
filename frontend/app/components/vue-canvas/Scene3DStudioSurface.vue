@@ -1987,7 +1987,20 @@ function onClose() {
           <div v-else class="space-y-3">
             <div class="flex items-center justify-between">
               <span class="text-[11px] text-white/55">Relief</span>
-              <StudioSegmented v-model="matReliefSource" :options="['none', 'shader', 'image']" />
+              <div class="flex items-center gap-1.5">
+                <button type="button"
+                  class="flex-1 rounded border px-2 py-1 text-[11px] uppercase transition-colors"
+                  :class="matReliefSource === 'none' ? 'border-white/70 bg-white/[0.10] text-white' : 'border-white/[0.10] bg-white/[0.04] text-white/55 hover:text-white/85'"
+                  @click="matReliefSource = 'none'">None</button>
+                <button type="button"
+                  class="flex-1 rounded border px-2 py-1 text-[11px] uppercase transition-colors"
+                  :class="matReliefSource === 'shader' ? 'border-white/70 bg-white/[0.10] text-white' : 'border-white/[0.10] bg-white/[0.04] text-white/55 hover:text-white/85'"
+                  @click="matReliefSource = 'shader'">Effect</button>
+                <button type="button"
+                  class="flex-1 rounded border px-2 py-1 text-[11px] uppercase transition-colors"
+                  :class="matReliefSource === 'image' ? 'border-white/70 bg-white/[0.10] text-white' : 'border-white/[0.10] bg-white/[0.04] text-white/55 hover:text-white/85'"
+                  @click="matReliefSource = 'image'">Image</button>
+              </div>
             </div>
             <template v-if="matReliefSource !== 'none'">
               <template v-if="!(matReliefSource === 'image' && matIsNormalMap)">
