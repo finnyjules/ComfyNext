@@ -43,7 +43,15 @@ import {
   type ShaderFieldFrameCtx,
 } from '~/lib/paint/resolve'
 import { withFieldFrame, type FieldRequest } from '~/lib/shaderfill/field'
-import { vtBaseAppearance, type VectorTypeConfig, type VtFillAnchor } from './config'
+import type { BlendKind } from '~/lib/studio/blend'
+import {
+  migrateLegacyAppearance,
+  vtBaseAppearance,
+  type VectorTypeConfig,
+  type VtAppearanceLayer,
+  type VtFillAnchor,
+  type VtLegacyPaint,
+} from './config'
 import type { VtFont } from './font'
 import type { GlyphOutline, TextOutlines } from './outline'
 import { textOutlines } from './outline'
@@ -100,11 +108,10 @@ export interface VtFrame {
    * geometry path (`vectorTypeFrame`) opens no span and always reports 0,
    * because no field decision was made there at all.
    *
-   * Vector Type carries exactly ONE paint today, so `vtFieldRequests` emits at
-   * most one request and this is 0 by construction — it is wired anyway because
-   * the moment a second paint lands (a `Paint`-typed stroke, per-glyph fills)
-   * the ceiling becomes reachable, and a host that only starts counting once it
-   * can overflow starts counting one release too late.
+   * This was 0 by construction while the studio carried ONE paint. The
+   * appearance stack is what makes it reachable: six layers may each carry a
+   * live shader fill, and `drawVectorType` asks `vtFieldRequests` once per
+   * enabled layer.
    */
   frozenFields: number
 }
@@ -425,15 +432,81 @@ export function vtFramePaintBox(opts: VtBoxOptions): VtPaintBox {
   }
 }
 
-/** The anchor a config actually renders with. `frame.config` can be a raw blob
- *  (`applyMotion` clones whatever it is handed — see `cloneConfig`'s doc), so an
- *  absent or bogus value must land on `glyph`, the pre-anchor behaviour, rather
- *  than defaulting into one of the two new sampling spaces. */
+/**
+ * The anchor the BASE fill layer renders with.
+ *
+ * ═══ THE SVG BRIDGE — Task 6 deletes this ═══
+ *
+ * The canvas no longer calls it: `drawGlyphRun` asks every layer for its OWN
+ * `anchor` (that is the point of the stack — a word-anchored gradient fill under
+ * a glyph-anchored stroke). `vectorTypeSVG` still collapses the stack to one
+ * fill + one stroke, so it still needs one answer, and Task 6 is what replaces
+ * that collapse with K shapes per glyph. Left EXACTLY as it was rather than
+ * deleted, so the vector path is untouched by this task.
+ *
+ * `frame.config` can be a raw blob (`applyMotion` clones whatever it is handed —
+ * see `cloneConfig`'s doc), so an absent or bogus value must land on `glyph`, the
+ * pre-anchor behaviour, rather than defaulting into one of the two new sampling
+ * spaces.
+ */
 export function vtFillAnchor(cfg: VectorTypeConfig): VtFillAnchor {
-  // ═══ TASK 3 BRIDGE ═══ reads the BASE fill layer's anchor. Task 3's layer
-  // loop asks each layer for its own anchor and deletes this function.
   const a = vtBaseAppearance(cfg).fillAnchor
   return a === 'word' || a === 'frame' ? a : 'glyph'
+}
+
+/** Per-layer anchor, with the same "anything unrecognised means `glyph`" rule
+ *  `vtFillAnchor` applies to the base layer — a layer can reach here from a raw
+ *  blob that never went through `mergeAppearance`. */
+function vtLayerAnchor(layer: VtAppearanceLayer): VtFillAnchor {
+  const a = layer.anchor
+  return a === 'word' || a === 'frame' ? a : 'glyph'
+}
+
+/**
+ * The appearance stack this config PAINTS, back to front.
+ *
+ * ═══ THIS REPLACES `vtBaseAppearance` ON THE CANVAS PATH ═══
+ *
+ * Task 2 shipped a bridge that collapsed the stack to the bottom-most enabled
+ * fill plus the bottom-most enabled stroke, because the renderer only knew how to
+ * draw one of each. It is gone from here: `drawVectorType` now walks the array.
+ *
+ * It keeps the ONE thing the bridge was load-bearing for — plan trap 4. A config
+ * reaching the renderer has NOT necessarily been through `mergeConfig`:
+ * `applyMotion`/`cloneConfig` clone whatever blob they are handed, and the node
+ * card, the bake and the frame source can each read stored JSON directly. So a
+ * config with no `appearance` ARRAY is a pre-stack blob and is migrated on the
+ * spot, through `config.ts`'s own `migrateLegacyAppearance` rather than a second
+ * copy of the lift. A saved legacy node therefore paints its fill AND its stroke,
+ * not a white default.
+ *
+ * `appearance: []` is the opposite case and is honoured: the array is present, so
+ * the user really did remove every layer, and an empty stack paints nothing.
+ */
+export function vtDrawLayers(cfg: VectorTypeConfig | null | undefined): VtAppearanceLayer[] {
+  const stack = cfg?.appearance
+  return Array.isArray(stack) ? stack : migrateLegacyAppearance((cfg ?? {}) as VtLegacyPaint)
+}
+
+/**
+ * A layer's blend as a canvas composite op.
+ *
+ * `Record<BlendKind, …>` on purpose: a blend kind added to `lib/studio/blend.ts`
+ * without an op here stops COMPILING, rather than silently falling back to
+ * `source-over` and reading as "the blend control does nothing". The Compositor
+ * and the playback engine each keep their own wider map (they carry
+ * `soft_light`/`hard_light`/`difference`, which `BlendKind` does not); this one is
+ * exactly the seven the studios share.
+ */
+const VT_BLEND_OP: Record<BlendKind, GlobalCompositeOperation> = {
+  normal: 'source-over',
+  lighten: 'lighten',
+  screen: 'screen',
+  // Canvas spells additive blending `lighter`, not `add`.
+  add: 'lighter',
+  multiply: 'multiply',
+  darken: 'darken',
+  overlay: 'overlay',
 }
 
 /** A paint that resolves to a plain CSS colour needs none of the anchoring
@@ -454,9 +527,11 @@ function flatPaint(paint: Paint): string | null {
  * for and the fill silently freezes at t=0; see `OBJECT_SHADER_FIELD_PX`'s doc
  * for the version of that bug that already shipped once.
  *
- * Vector Type carries exactly ONE paint, so this returns 0 or 1 requests — but it
- * still has to open its own `withFieldFrame` span, because the span is what makes
- * a field LIVE at all. Without one every field renders frozen at t=0.
+ * ONE paint in, so 0 or 1 requests out — the caller asks once PER APPEARANCE
+ * LAYER and concatenates, which is how a six-layer stack can now genuinely
+ * overflow `LIVE_FIELD_CEILING` (it could not while there was one paint). The
+ * host still has to open its own `withFieldFrame` span, because the span is what
+ * makes a field LIVE at all. Without one every field renders frozen at t=0.
  */
 function vtFieldRequests(
   paint: Paint,
@@ -477,6 +552,117 @@ function vtFieldRequests(
     fps,
     bake,
   }]
+}
+
+/**
+ * One appearance layer, resolved down to what the draw loop needs — computed
+ * ONCE for the whole run, never per glyph.
+ *
+ * `runPm`/`runStyle` are the reason this is a struct rather than a tuple: they
+ * used to be two hoisted locals, which was correct while there was one paint and
+ * silently wrong with a stack (a word-anchored gradient on layer 0 and another on
+ * layer 2 do not share a paint space, and one pair of locals would have given the
+ * second one the first one's ramp). They are per LAYER, filled in once at the top
+ * of `drawGlyphRun`, so a run-anchored gradient or shader field is still built
+ * once for the run rather than once per letter.
+ */
+interface VtPaintLayer {
+  /** `extrude` never reaches here — see `vtPaintLayers`. */
+  kind: 'fill' | 'stroke'
+  paint: Paint
+  /** The plain CSS colour this paint resolves to, or `null` when it needs the
+   *  anchoring machinery. The fast path, and the common one. */
+  flat: string | null
+  anchor: VtFillAnchor
+  /** OUTPUT pixels; `0` on a fill layer, and a stroke layer with `0` never gets
+   *  here at all. */
+  width: number
+  /** 0..1, MULTIPLIED with the glyph's motion opacity — see `paintLayer`. */
+  opacity: number
+  op: GlobalCompositeOperation
+  runPm: DOMMatrix | null
+  runStyle: string | CanvasGradient | CanvasPattern | null
+}
+
+/**
+ * The stack, resolved for drawing: enabled layers with something to paint, in
+ * array order — BACK TO FRONT. Array order is paint order, so a `stroke` layer
+ * BELOW a `fill` layer draws first and the fill covers its inner half. That
+ * ordering was not expressible before this task, because the single stroke was
+ * unconditionally drawn after the single fill.
+ *
+ * Four reasons a layer is dropped here rather than inside the glyph loop, so the
+ * cost is paid once and a layer that cannot show up also cannot ask for a shader
+ * FIELD (which would count against `LIVE_FIELD_CEILING` and freeze a field that
+ * is actually visible):
+ *
+ *  - `enabled === false`;
+ *  - `opacity <= 0` — no ink at any blend mode;
+ *  - `hasPaint` says the paint cannot paint — a `none`/`transparent`/empty
+ *    string, or a gradient with no stops. A MERGED layer's paint is always a
+ *    `Fill`, which always paints, so this guards the raw-blob and hand-written
+ *    stacks rather than anything `mergeConfig` produces;
+ *  - a `stroke` whose width is not above zero. That is the OLD default, and it is
+ *    why users concluded this studio had no stroke; a stroke layer added through
+ *    the UI gets `VT_DEFAULT_STROKE_WIDTH`.
+ *
+ * ── EXTRUDE IS TASKS 4-5, AND IS SKIPPED WHOLE ──────────────────────────────
+ * `kind: 'extrude'` layers exist in the model (`depth`/`angle`/`distance`/
+ * `taper`/`solid` are stored and merged) and NOTHING here draws them. Not a
+ * partial implementation, not "drawn as a plain fill": an extrude rendered as an
+ * ordinary fill would be a picture the user cannot distinguish from a broken
+ * extrude. Task 4 adds the offset-copy loop; until then the layer is inert, and
+ * it also asks for no shader field, so it cannot displace a visible one.
+ */
+function vtPaintLayers(cfg: VectorTypeConfig | null | undefined): VtPaintLayer[] {
+  const out: VtPaintLayer[] = []
+  for (const layer of vtDrawLayers(cfg)) {
+    if (!layer || typeof layer !== 'object') continue
+    if (layer.enabled === false) continue
+    // Tasks 4-5. Anything unrecognised is dropped for the same reason: drawing a
+    // kind this loop does not understand as if it were a fill is a wrong picture.
+    if (layer.kind !== 'fill' && layer.kind !== 'stroke') continue
+    const paint = layer.paint
+    if (!hasPaint(paint)) continue
+    const opacity = clamp01(Number.isFinite(layer.opacity) ? layer.opacity : 1)
+    if (opacity <= 0) continue
+    const width = Number.isFinite(layer.width) ? Math.max(0, layer.width) : 0
+    if (layer.kind === 'stroke' && width <= 0) continue
+    out.push({
+      kind: layer.kind,
+      paint,
+      flat: flatPaint(paint),
+      anchor: vtLayerAnchor(layer),
+      width,
+      opacity,
+      op: VT_BLEND_OP[layer.blend] ?? 'source-over',
+      runPm: null,
+      runStyle: null,
+    })
+  }
+  return out
+}
+
+/**
+ * The uniform scale a matrix applies, as √|det|.
+ *
+ * Only strokes need it, and only when the paint space is not the geometry space.
+ * `ctx.lineWidth` is in CURRENT TRANSFORM units, so a stroke drawn under the
+ * glyph's own CTM is scaled by the glyph's motion — which is exactly right, and
+ * what a flat stroke has always done. A word- or frame-anchored PAINT, though, is
+ * drawn with the transform set to the run's paint space, which carries no motion
+ * at all; without this factor the same stroke would keep a constant width while
+ * the letter scaled, and only for the non-flat paints. So the width is
+ * pre-multiplied by `scale(CTM) / scale(pm)` to put it back.
+ *
+ * √|det| is the right scalar because it is the one canvas itself would apply to a
+ * circular pen. Under a NON-uniform CTM (the card-flip presets) canvas strokes
+ * with an elliptical pen and this is the average of the two axes instead —
+ * documented rather than hidden; it affects a gradient-stroked card flip only.
+ */
+function matScale(m: DOMMatrix): number {
+  const det = Math.abs(m.a * m.d - m.b * m.c)
+  return det > 0 && Number.isFinite(det) ? Math.sqrt(det) : 1
 }
 
 export interface VtDrawOptions extends VtBoxOptions {
@@ -528,44 +714,23 @@ export function drawVectorType(
   const frame = vectorTypeFrame(font, cfg, t)
   const place = vtPlacement(frame, opts)
   const paths = outlinesToPath2D(frame.outlines, place)
-  // ═══════════════════════════════════════════════════════════════════════════
-  // TASK 3 BRIDGE — the appearance stack, collapsed to the ONE fill + ONE stroke
-  // this function still knows how to draw. `vtBaseAppearance` takes the
-  // bottom-most enabled layer of each kind (and absorbs a raw pre-stack blob,
-  // which `applyMotion` can hand us). On a one-fill stack — a fresh config and
-  // every migrated legacy node — it is the identical picture.
+  // ── THE APPEARANCE STACK ────────────────────────────────────────────────────
+  // Every enabled layer, back to front, resolved ONCE for the run. Task 2's
+  // `vtBaseAppearance` bridge — which collapsed the stack to the bottom-most fill
+  // plus the bottom-most stroke — is GONE from this path; `vtPaintLayers` walks
+  // the array and keeps the one property the bridge was load-bearing for (a raw,
+  // never-merged pre-stack blob still paints its fill AND its stroke).
   //
-  // TASK 3 REPLACES THIS with a loop over `frame.config.appearance`, back to
-  // front, carrying each layer's own anchor / opacity / blend. Everything below
-  // outside the paint step (transform, clip, blur, alpha) is per-glyph-invariant
-  // and stays exactly where it is.
-  // ═══════════════════════════════════════════════════════════════════════════
-  const base = vtBaseAppearance(frame.config)
-  const strokeWidth = base.strokeWidth
-  // A stroke's paint is a `Paint` now; `ctx.strokeStyle` needs a string, so the
-  // bridge flattens it to the representative colour. Task 3 resolves it properly.
-  const stroke = paintPrimaryColor(base.stroke, '#000000')
-  // A config with no fill layer at all must still paint SOMETHING: an invisible
-  // word is a worse failure than a wrong colour, and this is the same `'#ffffff'`
-  // the bridge this replaces fell back to.
-  const fill: Paint = base.fill ?? '#ffffff'
-  const anchor = vtFillAnchor(frame.config)
+  // Each layer's paint goes through `lib/paint/resolve` — the SAME resolver the
+  // Compositor paints with — because `ctx.fillStyle`/`strokeStyle` SILENTLY
+  // IGNORE a non-string assignment. A `flat` layer (a `solid` fill, every lifted
+  // legacy string) is the fast path and needs none of the anchoring machinery.
+  const layers = vtPaintLayers(frame.config)
 
   // The em in output pixels, from the placement rather than re-read from the
   // config, so the cell box a mask is measured against cannot drift from the
   // geometry it masks.
   const em = place.scale * (frame.outlines.unitsPerEm || 1000)
-
-  // ── THE FILL ────────────────────────────────────────────────────────────────
-  // `config.fill` is a `Paint` (Task 2) and `ctx.fillStyle` SILENTLY IGNORES a
-  // non-string assignment, so this goes through `lib/paint/resolve` — the SAME
-  // resolver the Compositor paints with, extracted in Task 1 rather than copied.
-  //
-  // `flat` is the fast path and the common one: a `solid` fill (the default) and
-  // every lifted legacy string resolve to a plain CSS colour, which needs none of
-  // the paint-space machinery below.
-  const flat = flatPaint(fill)
-  const paints = hasPaint(fill)
 
   // This host's OWN shader-fill frame state. Vector Type is a second field host,
   // not a guest in the Compositor's: it opens its own `withFieldFrame` span below
@@ -583,9 +748,12 @@ export function drawVectorType(
     bake: !!opts.bake,
     token: 0,
   }
-  const requests = paints && !flat
-    ? vtFieldRequests(fill, W, H, t, field.fps, field.bake)
-    : []
+  // ONE span for the whole stack, budgeted from every layer that can actually
+  // ask for a field. A layer dropped by `vtPaintLayers` (disabled, zero-opacity,
+  // an extrude) contributes nothing, so it cannot spend the live-field budget a
+  // VISIBLE layer needs — which is the failure `frozenFields` reports.
+  const requests = layers.flatMap(L =>
+    L.flat === null ? vtFieldRequests(L.paint, W, H, t, field.fps, field.bake) : [])
 
   return withFieldFrame(requests, (frozenCount, token) => {
     // `resolveShaderFill` reads the token from here to pass into every
@@ -622,19 +790,87 @@ export function drawVectorType(
    * put it, while the PAINT is anchored to `pm`. For `glyph` that product is a
    * bare translate; for `word`/`frame` it is the full cancellation of the glyph's
    * own motion, which is what makes those two anchors stand still.
+   *
+   * AND THE ANCHOR IS PER LAYER — that is the point of the stack. A word-anchored
+   * gradient fill and a glyph-anchored stroke over it are two different paint
+   * spaces alive in the same glyph span, which is why `runPm`/`runStyle` moved
+   * from two locals onto `VtPaintLayer`.
    */
   function drawGlyphRun(): void {
-    // Hoisted for `word` and `frame`: their paint space and their resolved style
-    // are the same for every letter, so the tile/gradient/field is built ONCE for
-    // the run instead of once per glyph.
-    let runPm: DOMMatrix | null = null
-    let runStyle: string | CanvasGradient | CanvasPattern | null = null
-    if (paints && !flat && anchor !== 'glyph') {
-      const box = anchor === 'frame' ? vtFramePaintBox(opts) : vtRunPaintBox(frame.outlines, place, opts)
+    // PER LAYER, and hoisted for `word` and `frame`: their paint space and their
+    // resolved style are the same for every letter, so the tile / gradient /
+    // shader field is built ONCE for the run rather than once per glyph. Resolving
+    // these inside the glyph loop would rebuild a word-anchored gradient for every
+    // letter — the same picture, at N times the cost.
+    for (const L of layers) {
+      if (L.flat !== null || L.anchor === 'glyph') continue
+      const box = L.anchor === 'frame' ? vtFramePaintBox(opts) : vtRunPaintBox(frame.outlines, place, opts)
       ctx.save()
       ctx.translate(box.cx, box.cy)
-      runPm = ctx.getTransform()
-      runStyle = resolvePaint(ctx, fill, { w: box.w, h: box.h }, field)
+      L.runPm = ctx.getTransform()
+      L.runStyle = resolvePaint(ctx, L.paint, { w: box.w, h: box.h }, field)
+      ctx.restore()
+    }
+
+    /**
+     * One layer's ink on one glyph.
+     *
+     * ## Opacity MULTIPLIES; blend REPLACES
+     *
+     * `globalAlpha = motionOpacity × layerOpacity`. Multiply, not replace, and it
+     * is not a coin toss: the two mean different things and both must survive.
+     * The motion opacity is the glyph FADING (an entrance, an exit, a per-glyph
+     * stagger), the layer opacity is how strong that layer's ink is in the stack.
+     * Replacing would make a 50 % layer ignore a fade-out and stay at half
+     * strength over a word that has already left; and a fade-out would flatten
+     * every layer to the same opacity, destroying the stack's own weighting.
+     * Multiplying is also the only rule that keeps `1` inert on either side.
+     *
+     * The BLEND is the layer's alone — there is no motion blend to compose with —
+     * and it is set per layer rather than once per glyph so that a `multiply`
+     * layer under a `normal` layer works. It is part of the saved drawing state,
+     * so the glyph's own `restore()` is what stops it leaking, exactly as with
+     * `ctx.filter`.
+     */
+    function paintLayer(L: VtPaintLayer, path: Path2D, glyph: GlyphOutline, glyphAlpha: number): void {
+      ctx.globalAlpha = glyphAlpha * L.opacity
+      ctx.globalCompositeOperation = L.op
+      if (L.flat !== null) {
+        if (L.kind === 'stroke') {
+          ctx.lineWidth = L.width
+          ctx.lineJoin = 'round'
+          ctx.strokeStyle = L.flat
+          ctx.stroke(path)
+        } else {
+          // nonzero, always: glyph counters (the hole in an 'o') depend on it.
+          ctx.fillStyle = L.flat
+          ctx.fill(path, 'nonzero')
+        }
+        return
+      }
+      // The glyph's own CTM, motion already applied by the caller.
+      const gm = ctx.getTransform()
+      const box = L.runPm ? null : vtGlyphPaintBox(glyph, place, em)
+      const pm = L.runPm ?? gm.translate(box!.cx, box!.cy)
+      // Pull the path back into the paint space so the paint is anchored to `pm`
+      // while the glyph still draws where the motion put it.
+      const local = new Path2D()
+      local.addPath(path, pm.inverse().multiply(gm))
+      ctx.save()
+      ctx.setTransform(pm)
+      const style = L.runStyle ?? resolvePaint(ctx, L.paint, { w: box!.w, h: box!.h }, field)
+      if (L.kind === 'stroke') {
+        // `lineWidth` is in the CURRENT transform's units and we have just left
+        // the glyph's own — see `matScale`. At the `glyph` anchor `pm` is `gm`
+        // translated, so this factor is exactly 1 and the width is untouched.
+        ctx.lineWidth = L.width * (matScale(gm) / matScale(pm))
+        ctx.lineJoin = 'round'
+        ctx.strokeStyle = style
+        ctx.stroke(local)
+      } else {
+        ctx.fillStyle = style
+        ctx.fill(local, 'nonzero')
+      }
       ctx.restore()
     }
 
@@ -647,7 +883,11 @@ export function drawVectorType(
       const origin = glyphPlacement(glyph, place)
 
       ctx.save()
-      ctx.globalAlpha = clamp01(tr.opacity)
+      // The glyph's own fade, before any layer weighting. Set here as well as in
+      // `paintLayer` so an EMPTY stack still leaves the context in the state this
+      // loop documents, and so the clip/blur below run under it.
+      const glyphAlpha = clamp01(tr.opacity)
+      ctx.globalAlpha = glyphAlpha
 
       // BLUR. `ctx.filter` is part of the saved drawing state, so the `restore()`
       // at the bottom of this loop body is what stops it leaking into the next
@@ -704,33 +944,10 @@ export function drawVectorType(
         }
         ctx.translate(-origin.x, -origin.y)
       }
-      // nonzero, always: glyph counters (the hole in an 'o') depend on it.
-      if (paints) {
-        if (flat !== null) {
-          ctx.fillStyle = flat
-          ctx.fill(path, 'nonzero')
-        } else {
-          // The glyph's own CTM, motion already applied above.
-          const gm = ctx.getTransform()
-          const box = runPm ? null : vtGlyphPaintBox(glyph, place, em)
-          const pm = runPm ?? gm.translate(box!.cx, box!.cy)
-          // Pull the path back into the paint space so the paint is anchored to
-          // `pm` while the glyph still draws where the motion put it.
-          const local = new Path2D()
-          local.addPath(path, pm.inverse().multiply(gm))
-          ctx.save()
-          ctx.setTransform(pm)
-          ctx.fillStyle = runStyle ?? resolvePaint(ctx, fill, { w: box!.w, h: box!.h }, field)
-          ctx.fill(local, 'nonzero')
-          ctx.restore()
-        }
-      }
-      if (strokeWidth > 0) {
-        ctx.lineWidth = strokeWidth
-        ctx.lineJoin = 'round'
-        ctx.strokeStyle = stroke
-        ctx.stroke(path)
-      }
+      // THE STACK, BACK TO FRONT. Array order is paint order, so a stroke layer
+      // BELOW a fill draws first and the fill covers its inner half — the
+      // ordering the single fixed fill-then-stroke pair could not express.
+      for (const L of layers) paintLayer(L, path, glyph, glyphAlpha)
       ctx.restore()
     }
   }
