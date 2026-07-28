@@ -1,19 +1,40 @@
 import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { collapseTier, readoutRuleFor, defaultCollapsed, COLLAPSE_TIERS, READOUT_RULES } from '~/lib/canvas/capsuleMeta'
 
-// The 28 keys registered in VueNodeCanvas.vue:244-263. If this list drifts,
-// the tier table has drifted with it and the guard below will say so.
-const REGISTERED_TYPES = [
-  'comfy', 'note', 'gate', 'artifact-image', 'artifact-text', 'artifact-audio',
-  'artifact-video', 'artifact-frame', 'artifact-timeline', 'pose-mannequin',
-  'shader-effect', 'artifact-3d', 'space-type', 'gradient-studio',
-  'shader-studio', 'texture-studio', 'shape-studio', 'vector-type',
-  'scene3d-studio', 'shot-director', 'subgraph-io', 'character',
-  'character-sheet', 'lip-sync', 'collection', 'reference', 'batch-grid',
-  'sketch-pile',
-]
+// The node types actually registered with vue-flow, READ FROM THE SOURCE.
+// This used to be a hand-copied array of 28 strings that claimed to catch
+// drift and could not: a 29th type added to nodeTypes appears in neither list,
+// so both guards below stayed green while the tier table silently fell behind.
+// Parsing the real object literal is the only version of this test that can
+// fail for the reason it says it fails.
+const CANVAS_SRC = fileURLToPath(new URL('../../app/components/vue-canvas/VueNodeCanvas.vue', import.meta.url))
+
+function registeredNodeTypes(): string[] {
+  const src = readFileSync(CANVAS_SRC, 'utf8')
+  const start = src.indexOf('const nodeTypes = {')
+  const end = src.indexOf('} as NodeTypesObject', start)
+  if (start < 0 || end < 0) throw new Error('nodeTypes literal not found in VueNodeCanvas.vue — update this parser')
+  const body = src.slice(start, end)
+  // Every entry is `key: markRaw(Component)`, quoted or bare.
+  const keys = [...body.matchAll(/(?:'([^']+)'|"([^"]+)"|([A-Za-z0-9_$-]+))\s*:\s*markRaw\(/g)]
+    .map(m => m[1] ?? m[2] ?? m[3]!)
+  if (keys.length < 20) throw new Error(`only parsed ${keys.length} node types — the parser has gone stale`)
+  return keys
+}
+
+const REGISTERED_TYPES = registeredNodeTypes()
 
 describe('collapseTier', () => {
+  it('parses the registration list rather than trusting a copy of it', () => {
+    // Guards the guard: if the regex silently stops matching, every drift
+    // check below degrades to a no-op over an empty array.
+    expect(REGISTERED_TYPES).toContain('comfy')
+    expect(REGISTERED_TYPES).toContain('sketch-pile')
+    expect(new Set(REGISTERED_TYPES).size).toBe(REGISTERED_TYPES.length)
+  })
+
   it('assigns every registered node type a tier', () => {
     const missing = REGISTERED_TYPES.filter(t => !(t in COLLAPSE_TIERS))
     expect(missing).toEqual([])

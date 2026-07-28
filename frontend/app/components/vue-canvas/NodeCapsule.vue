@@ -93,6 +93,11 @@ function onKeydown(e: KeyboardEvent) {
   text-align: left;
   background: #1f1f1f;
   box-shadow: 0 3px 12px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+}
+.node-capsule:focus-visible {
+  outline: 2px solid var(--action);
+  outline-offset: 2px;
 }
 
 /* Rendered only when an icon actually resolves. Most core Comfy node types are
@@ -153,15 +158,13 @@ function onKeydown(e: KeyboardEvent) {
   color: color-mix(in oklab, var(--action) 58%, white);
   opacity: 0.62;
 }
-.node-capsule:hover .node-capsule__action {
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 7px;
-  transition: background 0.18s, color 0.18s, opacity 0.18s;
+.node-capsule__action svg { width: 13px; height: 13px; display: block; }
+
+/* Hover (and keyboard focus — the capsule is reachable by Tab) only changes
+   the three properties that carry the intensity step. Everything else is
+   inherited from the base rule above. */
+.node-capsule:hover .node-capsule__action,
+.node-capsule__action:focus-visible {
   background: var(--action);
   color: #fff;
   opacity: 1;
@@ -171,8 +174,6 @@ function onKeydown(e: KeyboardEvent) {
    — a coral stop square on a neutral chip, matching the canvas toolbar at
    layouts/default.vue:4226. No spinner, no solid fill: the sweep already says
    "this is working" and a second moving thing just competes with it. */
-.node-capsule__action svg { width: 13px; height: 13px; display: block; }
-
 .node-capsule--running {
   border-color: transparent;
   /* REQUIRED. The sweep pseudo-element is z-index:-1, which only stays inside
@@ -182,7 +183,8 @@ function onKeydown(e: KeyboardEvent) {
   isolation: isolate;
 }
 .node-capsule--running .node-capsule__action,
-.node-capsule--running:hover .node-capsule__action {
+.node-capsule--running:hover .node-capsule__action,
+.node-capsule--running .node-capsule__action:focus-visible {
   background: rgba(255, 255, 255, 0.07);
   color: var(--palette-coral);
   opacity: 1;
@@ -221,7 +223,8 @@ function onKeydown(e: KeyboardEvent) {
   color: var(--palette-coral);
   opacity: 1;
 }
-.node-capsule--failed:hover .node-capsule__action {
+.node-capsule--failed:hover .node-capsule__action,
+.node-capsule--failed .node-capsule__action:focus-visible {
   background: var(--palette-coral);
   color: #fff;
 }
