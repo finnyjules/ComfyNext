@@ -29,6 +29,15 @@ const props = defineProps<{
   /** Position within this edge's stack — 0 sits at the node's centre. */
   index: number
   tooltip?: string
+  /**
+   * False while the node is collapsed to a capsule. This must be a PROP on the
+   * <Handle>, not CSS: vue-flow ships `.vue-flow__handle.connectable {
+   * pointer-events: all }` on the handle itself, and an element's own
+   * pointer-events declaration beats `pointer-events: none` inherited from an
+   * ancestor — so hiding the wrapper leaves a full-size invisible drag target
+   * live at the capsule's edge.
+   */
+  connectable?: boolean
 }>()
 
 const { isDragging, draggingType } = useWireDrag()
@@ -101,6 +110,7 @@ const displayLabel = computed(() => toTitleCase(props.label))
       :id="id"
       :type="type"
       :position="handlePosition"
+      :connectable="props.connectable !== false"
       class="!rounded-full !border-none !bg-transparent"
       :style="{
         position: 'absolute',

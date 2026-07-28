@@ -547,7 +547,16 @@ useNodePortSync(portSyncRoot)
 // plus one trailing empty slot ready to catch the next connection. The Python
 // schema declares a generous static cap (Compositor: 16, SmartLayout: 8);
 // this is purely a UI affordance to keep the node tidy.
-const DYNAMIC_GROW_NODES = new Set<string>(['Compositor', 'SmartLayout', 'Timeline'])
+const DYNAMIC_GROW_NODES = new Set<string>(['Compositor', 'SmartLayout', 'Timeline', 'GenerateImageNode', 'EditImageNode'])
+
+// Model-gated reference ports: GenerateImageNode / EditImageNode declare
+// image_N inputs in their Python schema, but only some models can use them.
+// Keep these sets in sync with _IMAGE_GEN_REF_MODELS / _MULTI_IMAGE_EDIT_MODELS
+// in nodes_replicate.py.
+const MULTI_REF_MODELS: Record<string, Set<string>> = {
+  GenerateImageNode: new Set(['nano-banana-2', 'nano-banana-pro']),
+  EditImageNode: new Set(['Nano Banana 2', 'Nano Banana Pro', 'Flux 2 Pro']),
+}
 
 // Vue Flow's edges array, provided by the canvas. Needed here (and not just
 // further down where the upstream-image helper uses it) because the dynamic-
@@ -594,6 +603,20 @@ const visibleInputIndices = computed<number[]>(() => {
     }
     const showCount = Math.max(1, Math.min(groupIdxs.length, highest + 2))
     return groupIdxs.slice(0, showCount)
+  }
+
+  const refModels = MULTI_REF_MODELS[props.data.nodeType]
+  if (refModels) {
+    // Reference ports (image_N) are gated on the selected model: hidden for
+    // models that can't use them (except already-connected ones, so their
+    // wires stay reachable for disconnecting), grow-as-you-connect otherwise.
+    const refIdxs = all.filter((i) => /^image_\d+$/.test(inputs[i]?.name ?? ''))
+    const restIdxs = all.filter((i) => !/^image_\d+$/.test(inputs[i]?.name ?? ''))
+    const model = String(props.data.widgetsValues?.[widgetIndex('model')] ?? '')
+    const visibleRefs = refModels.has(model)
+      ? visibleInGroup(refIdxs)
+      : refIdxs.filter((i) => connectedIdxs.has(i))
+    return [...restIdxs, ...visibleRefs].sort((a, b) => a - b)
   }
 
   if (props.data.nodeType === 'SmartLayout') {
@@ -1297,6 +1320,7 @@ watch(previewImages, (urls) => {
       :data-type="port.slot.type"
       :label="port.slot.name"
       :tooltip="getInputTooltip(data.nodeType, port.slot.name)"
+      :connectable="!isCapsule"
     />
     <VueCanvasNodePort
       v-for="(output, i) in data.outputs"
@@ -1307,6 +1331,7 @@ watch(previewImages, (urls) => {
       :index="i"
       :data-type="output.type"
       :label="output.name"
+      :connectable="!isCapsule"
     />
 
   <NodeCapsule
@@ -1960,7 +1985,7 @@ watch(previewImages, (urls) => {
    four overlapping dots; expand the node to rewire it. */
 .comfy-node-collapsed .node-port {
   top: 50% !important;
-  margin-top: -6px !important;
+  margin-top: -8px !important;
   opacity: 0;
   pointer-events: none;
 }
