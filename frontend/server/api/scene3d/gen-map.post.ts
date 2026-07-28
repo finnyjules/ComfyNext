@@ -1,40 +1,31 @@
-// POST /api/scene3d/gen-map — text → colour tile → grayscale height map, for Scene3D
-// surface relief. Returns both URLs so the UI can offer the colour tile as the albedo
-// map in the same action. /api/scene3d is already in NITRO_API_PREFIXES.
+// POST /api/scene3d/gen-map — text → colour tile, for Scene3D surface relief. The client
+// runs the returned image through its own brightness→height conversion (same path as the
+// file-upload flow) to get the height map. /api/scene3d is already in NITRO_API_PREFIXES.
+//
+// This used to be a two-stage pipeline that also ran a fal depth model over the tile and
+// returned a `heightUrl`. Removed: depth models report scene DISTANCE, which is nearly
+// flat on a material sample photographed straight-on (measured mean gradient ~3.3, well
+// below RELIEF_FLAT_THRESHOLD) — so it produced a featureless height map that the client
+// never actually used, while still being billed on every generation. Do not reinstate a
+// depth stage for this purpose; see server/utils/scene3dRelief.ts.
 //
 // Mirrors the auto-import convention of gen-image.post.ts (runFal/firstFalImageUrl from
-// server/utils/falRun.ts, shapeReliefPrompt/DEPTH_MODEL from server/utils/scene3dRelief.ts
-// — both auto-imported by Nitro from server/utils, no import statements needed).
+// server/utils/falRun.ts, shapeReliefPrompt from server/utils/scene3dRelief.ts — both
+// auto-imported by Nitro from server/utils, no import statements needed).
 interface Body {
   prompt?: string
   seed?: number
-  /** Skip stage 1 and run depth directly on an image the user already has
-   *  (powers "Refine with depth" on an uploaded photo — same route, one component). */
-  imageUrl?: string
 }
 
 export default defineEventHandler(async (event) => {
   const body = await readBody<Body>(event)
   const seed = Number.isFinite(body?.seed) ? Math.round(body!.seed as number) : Math.floor(Date.now() % 2_000_000_000)
 
-  let imageUrl = typeof body?.imageUrl === 'string' ? body.imageUrl : ''
-  if (!imageUrl) {
-    const prompt = shapeReliefPrompt(body?.prompt ?? '')
-    if (!prompt) throw createError({ statusCode: 400, message: 'prompt or imageUrl is required' })
-    const tile = await runFal('fal-ai/flux/dev', { prompt, image_size: 'square_hd', num_images: 1, seed })
-    imageUrl = firstFalImageUrl(tile) ?? ''
-    if (!imageUrl) throw createError({ statusCode: 502, message: 'fal returned no image' })
-  }
+  const prompt = shapeReliefPrompt(body?.prompt ?? '')
+  if (!prompt) throw createError({ statusCode: 400, message: 'prompt is required' })
+  const tile = await runFal('fal-ai/flux/dev', { prompt, image_size: 'square_hd', num_images: 1, seed })
+  const imageUrl = firstFalImageUrl(tile) ?? ''
+  if (!imageUrl) throw createError({ statusCode: 502, message: 'fal returned no image' })
 
-  const depth = await runFal(DEPTH_MODEL.app, DEPTH_MODEL.buildInput(imageUrl))
-  const heightUrl = DEPTH_MODEL.heightUrlFrom(depth)
-  if (!heightUrl) throw createError({ statusCode: 502, message: 'fal returned no height map' })
-
-  // heightUrl is currently UNUSED by the client: depth models report scene distance, which
-  // is nearly flat on a material sample photographed straight-on and so renders no visible
-  // bump (measured mean gradient ~3.3, far below RELIEF_FLAT_THRESHOLD in lib/scene3d/relief.ts).
-  // The UI instead runs `imageUrl` through the same brightness→height conversion the file-upload
-  // path uses, which keeps the tile's real surface detail. Still returned/computed here — not
-  // deleted — because depth may come back as a deliberate "large-form relief" option later.
-  return { imageUrl, heightUrl, seed }
+  return { imageUrl, seed }
 })

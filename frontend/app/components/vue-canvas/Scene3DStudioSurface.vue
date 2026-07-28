@@ -38,7 +38,7 @@ import { loadGlb, GLB_SIZE_CAP_BYTES } from '~/lib/scene3d/glb'
 import { fitGlbGroup } from '~/lib/scene3d/fitGlb'
 import { renderPasses } from '~/lib/scene3d/passes'
 import { SCENE_TEMPLATES, animateSceneDefaults } from '~/lib/scene3d/motion/defaults'
-import { LOOP_OPTIONS, IN_OPTIONS, OUT_OPTIONS, CAMERA_OPTIONS, setObjectLoop, setObjectTransition, setObjectDirection } from '~/lib/scene3d/motion/panel'
+import { LOOP_OPTIONS, IN_OPTIONS, OUT_OPTIONS, CAMERA_OPTIONS, LOOP_USES_AMOUNT, CAMERA_USES_CYCLES, CAMERA_USES_AMOUNT, setObjectLoop, setObjectTransition, setObjectDirection } from '~/lib/scene3d/motion/panel'
 import { sceneHasMotion, renderMotionFrame } from '~/lib/scene3d/motion/render'
 import { applyMotionToDoc } from '~/lib/scene3d/motion/apply'
 import { EASE_PRESETS, presetKeyForEaseRef, easeRefForPresetKey, easeRefToCurveString, curveStringToEaseRef } from '~/lib/scene3d/motion/easePresets'
@@ -698,8 +698,11 @@ async function onReliefFilePicked(e: Event) {
   }
 }
 
-// Relief generation: text prompt → /api/scene3d/gen-map (fal FLUX tile → fal depth
-// model) → uploaded height map. Explicit button ONLY — this costs money and takes
+// Relief generation: text prompt → /api/scene3d/gen-map (fal FLUX tile) → uploaded
+// height map, via the same brightness→height conversion as the file-upload path below.
+// (A fal depth-model second stage used to run here; removed — depth reports scene
+// distance, which is flat on a straight-on material photo, so it was a wasted paid call.
+// See server/utils/scene3dRelief.ts.) Explicit button ONLY — this costs money and takes
 // seconds, so it must never fire on a parameter change. Same object-id-keyed
 // spinner/error shape as the upload above (reliefUploading/reliefUploadError), so a
 // busy or failed generation on one object can't bleed onto another after reselecting.
@@ -729,14 +732,13 @@ async function generateReliefFromPrompt() {
   delete reliefGenError[target.id]
   delete reliefFlatWarning[target.id]
   try {
-    const r = await $fetch<{ imageUrl: string, heightUrl: string, seed: number }>('/api/scene3d/gen-map', {
+    const r = await $fetch<{ imageUrl: string, seed: number }>('/api/scene3d/gen-map', {
       method: 'POST',
       body: { prompt },
     })
-    // Consume the COLOUR tile, not the depth map: depth models report scene distance, which
-    // is nearly flat on a straight-on material photo and renders no visible bump (measured
-    // mean gradient ~3.3). The colour tile carries the actual surface detail — run it through
-    // the same brightness→height conversion the file-upload path uses, below.
+    // Run the colour tile through the same brightness→height conversion the file-upload
+    // path uses below — it carries the actual surface detail, unlike a depth pass (removed;
+    // see server/utils/scene3dRelief.ts).
     const res = await fetch(r.imageUrl)
     if (!res.ok) throw new Error(`fetch ${res.status}`)
     const rawUrl = await blobToDataUrl(await res.blob())
@@ -2368,7 +2370,8 @@ function onClose() {
             <StudioSwitch v-model="motionOn" />
           </div>
           <template v-if="motionOn">
-            <StudioSlider v-model="doc.motion.duration" label="Duration (s)" :min="1" :max="12" :step="0.5" />
+            <StudioSlider v-model="doc.motion.duration" label="Duration (s)" :min="1" :max="60" :step="0.5"
+                          hint="Scene length. Video export renders FPS × Duration frames — a 60s clip at 30fps is 1800." />
             <StudioSlider v-model="doc.motion.fps" label="FPS" :min="12" :max="60" :step="1" />
             <div class="grid grid-cols-3 gap-1">
               <button v-for="key in (['showcase', 'reveal', 'loop'] as const)" :key="key" type="button"
@@ -2381,8 +2384,15 @@ function onClose() {
             <div>
               <label class="mb-1 block text-[11px] text-white/55">Camera</label>
               <StudioSelect :model-value="doc.camera.motion?.preset ?? 'none'" :options="CAMERA_OPTIONS"
-                @update:model-value="(v: string) => doc.camera.motion = v === 'none' ? undefined : { preset: v as CameraMotion['preset'], speed: 1, amount: 1 }" />
+                @update:model-value="(v: string) => doc.camera.motion = v === 'none' ? undefined : { preset: v as CameraMotion['preset'], speed: doc.camera.motion?.speed ?? 1, amount: doc.camera.motion?.amount ?? 1 }" />
             </div>
+            <template v-if="doc.camera.motion">
+              <StudioSlider v-if="CAMERA_USES_CYCLES.includes(doc.camera.motion.preset)"
+                            v-model="doc.camera.motion.speed" label="Camera cycles" :min="1" :max="20" :step="1"
+                            hint="How many times the camera move repeats across the scene." />
+              <StudioSlider v-if="CAMERA_USES_AMOUNT.includes(doc.camera.motion.preset)"
+                            v-model="doc.camera.motion.amount" label="Camera amount" :min="0" :max="3" :step="0.1" />
+            </template>
           </template>
         </StudioSection>
 
@@ -2392,6 +2402,12 @@ function onClose() {
             <StudioSelect :model-value="selected.motion?.loop?.kind ?? 'none'" :options="LOOP_OPTIONS"
               @update:model-value="(v: string) => setObjectLoop(selected!, v as LoopKind)" />
           </div>
+          <template v-if="selected.motion?.loop">
+            <StudioSlider v-model="selected.motion.loop.speed" label="Cycles" :min="1" :max="20" :step="1"
+                          hint="How many times the loop repeats across the scene. Whole numbers only, so it closes seamlessly at the end." />
+            <StudioSlider v-if="LOOP_USES_AMOUNT.includes(selected.motion.loop.kind)"
+                          v-model="selected.motion.loop.amount" label="Amount" :min="0" :max="3" :step="0.1" />
+          </template>
           <div>
             <label class="mb-1 block text-[11px] text-white/55">In</label>
             <StudioSelect :model-value="selected.motion?.in?.preset ?? 'none'" :options="IN_OPTIONS"
