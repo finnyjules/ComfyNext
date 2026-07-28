@@ -34,7 +34,13 @@ import { VT_PRESET_DURATIONS, VT_PRESET_SLOTS, mergeConfig, type VectorTypeConfi
 import { VT_CONTROLS, VT_SECTIONS, derivedAxisControls, type VtControl } from '~/lib/vectortype/controls'
 import { VT_GUIDANCE, vtAgentControls } from '~/lib/vectortype/agentControls'
 import { animatableTargets } from '~/lib/vectortype/motion'
-import { vtAxisOffers, vtPresetSpecs, vtStillTime } from '~/lib/vectortype/presetMotion'
+import {
+  vtAxisOffers,
+  vtPresetSpecs,
+  vtStaggerBumpFor,
+  vtStaggerStarvedSlots,
+  vtStillTime,
+} from '~/lib/vectortype/presetMotion'
 import { vtAxisPreset } from '~/lib/vectortype/axisPresets'
 import { loadVariableFont, type VtAxis, type VtFont } from '~/lib/vectortype/font'
 import MotionPresetPicker from '~/components/vue-canvas/motion/MotionPresetPicker.vue'
@@ -225,6 +231,10 @@ const { sweepPopover, applySweep, varMenu, openVarMenu, goToCollection } = useSt
 })
 
 function setControl(key: string, value: string | number) {
+  // Any write to the stagger retires the note explaining the last one — the
+  // user has taken the control back (and `assignPreset` re-arms it right after
+  // its own write, so its own bump is not swallowed here).
+  if (key === 'motion.stagger.delay') staggerNote.value = null
   paramsProxy[key] = value
   onEdit(key, value)
 }
@@ -307,18 +317,40 @@ const activePresetSummary = computed(() =>
   activePresets.value.map(p => `${p.slot === 'loop' ? 'Loop' : p.slot === 'in' ? 'In' : 'Out'} ${presetLabel(p.slot, p.spec.presetId)}`).join(', '),
 )
 
+/**
+ * The slots whose preset cannot express itself at the current stagger, and the
+ * note explaining a delay this surface adopted on the user's behalf.
+ *
+ * Both exist for one rule: a user must never be looking at a preset that is
+ * silently doing nothing, and nothing may change under them unannounced. See
+ * `vtStaggerBumpFor`.
+ */
+const staggerStarved = computed(() => vtStaggerStarvedSlots(config.value))
+const staggerNote = ref<string | null>(null)
+
 function assignPreset(slot: VtPresetSlot, presetId: string) {
   const cur = config.value.motion[slot]
   // params reset on preset change — a param named for one preset means nothing
   // to the next (the Compositor's editor does the same).
   config.value.motion[slot] = { presetId, duration: cur?.duration ?? VT_PRESET_DURATIONS[slot] }
   onEdit(`motion.${slot}`, presetId)
+  // Typewriter types by STAGGER — with none it is a word that is simply there.
+  // Written through `setControl`, the same path the Stagger slider takes, so the
+  // slider moves with it and the edit is recorded like any other.
+  const bump = vtStaggerBumpFor(presetId, config.value.motion.stagger.delay)
+  if (bump != null) {
+    setControl('motion.stagger.delay', bump)
+    staggerNote.value = `${presetLabel(slot, presetId)} types one glyph at a time — Stagger set to ${bump}s. Adjust it under Motion.`
+  } else {
+    staggerNote.value = null
+  }
   pickerFor.value = null
   restartPreview()
 }
 function clearPreset(slot: VtPresetSlot) {
   delete config.value.motion[slot]
   onEdit(`motion.${slot}`, '')
+  staggerNote.value = null
   pickerFor.value = null
   restartPreview()
 }
@@ -845,6 +877,18 @@ const frameCount = computed(() => Math.round((config.value.motion.fps || 30) * (
               </label>
             </div>
           </div>
+          <!-- The stagger a typing preset needs. Two states, and both are the
+               same rule: never leave a preset silently doing nothing, and never
+               change a setting without saying so. -->
+          <p v-if="staggerStarved.length" class="rounded border border-amber-300/25 bg-amber-300/[0.06] px-2 py-1.5 text-[10px] leading-snug text-amber-100/70">
+            <span class="text-amber-100">Stagger is 0 — this types nothing.</span>
+            Typewriter reveals one glyph at a time, and that gap is the Stagger control under Motion.
+            Raise it above 0 or the whole word simply appears.
+          </p>
+          <p v-else-if="staggerNote" class="rounded border border-white/10 bg-white/[0.04] px-2 py-1.5 text-[10px] leading-snug text-white/50">
+            {{ staggerNote }}
+          </p>
+
           <!-- The coexistence affordance, from the preset side. -->
           <p v-if="bothSourcesLive" class="rounded border border-white/10 bg-white/[0.04] px-2 py-1.5 text-[10px] leading-snug text-white/50">
             <span class="text-white/75">Both are running.</span>

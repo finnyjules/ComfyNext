@@ -68,6 +68,7 @@ import {
   IDENTITY_UNIT,
   evaluateAnimation,
   presetIdsFor,
+  presetNeedsStagger,
 } from '~/lib/motion/evaluate'
 import { resolveEase } from '~/lib/motion/easing'
 // TYPE-ONLY against ./font.ts (it loads fontkit at module scope); ./axisPresets
@@ -239,6 +240,59 @@ export function vtPresetSpecs(cfg: VectorTypeConfig | null | undefined): Partial
     }
   }
   return out
+}
+
+/**
+ * The stagger a typing preset needs to type, in seconds between glyphs.
+ *
+ * Small on purpose: at 6 glyphs it spreads the entrance over 0.30 s, which reads
+ * as typing without making the entrance feel slower than the duration the user
+ * set. It is a STARTING POINT, not a lock — the Stagger slider owns it from the
+ * moment it is applied.
+ */
+export const VT_TYPING_STAGGER = 0.06
+
+/**
+ * The delay to adopt when a stagger-dependent preset is picked, or null to leave
+ * `motion.stagger.delay` alone.
+ *
+ * WHY A BUMP RATHER THAN HIDING THE TILE. `typewriter` works perfectly here at
+ * any non-zero delay (Task 10 measured it typing at 0.15); it is only the
+ * shipped DEFAULT of 0 that makes it inert. Hiding it would delete a working —
+ * and, in a type studio, conspicuously expected — preset to dodge a default.
+ * Task 4's single-stagger rule is untouched: this moves Vector Type's own
+ * stagger, the one source there is, and does not resurrect the engine's.
+ *
+ * The change must be VISIBLE, and it is, in three places: the Stagger slider in
+ * the Motion section moves, the surface writes it through the same `setControl`
+ * path a user drag takes (so it is an ordinary undoable edit, not a hidden
+ * mutation), and the Presets section says what it did.
+ *
+ * Null whenever the user already has a stagger — their value is never
+ * overwritten — and null for every preset that does not need one, so picking
+ * `appear` (the same step function, but doing exactly what its label promises)
+ * has no side effect on a setting that is global across slots and tracks.
+ */
+export function vtStaggerBumpFor(presetId: unknown, currentDelay: unknown): number | null {
+  if (!presetNeedsStagger(presetId)) return null
+  return isNum(currentDelay) && currentDelay > 0 ? null : VT_TYPING_STAGGER
+}
+
+/**
+ * The slots holding a preset that CANNOT express itself at the config's stored
+ * stagger — i.e. a tile that is silently doing nothing.
+ *
+ * The bump above covers the moment of picking. This covers everything else: a
+ * config imported from JSON, an agent-written one, or a user who dragged Stagger
+ * back to 0 afterwards. The surface renders it as a warning next to the slot, so
+ * "the preview is frozen and I do not know why" is never the user's problem to
+ * work out.
+ */
+export function vtStaggerStarvedSlots(cfg: VectorTypeConfig | null | undefined): VtPresetSlot[] {
+  const { delay } = resolveStagger(cfg as VectorTypeConfig)
+  if (isNum(delay) && delay > 0) return []
+  const specs = vtPresetSpecs(cfg)
+  return VT_PRESET_SLOTS.filter(s => presetNeedsStagger(specs[s]?.presetId))
 }
 
 /** True when any slot names a preset the engine can actually run. The `?` in

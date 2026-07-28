@@ -252,6 +252,42 @@ export const SUPPORTED_IN_IDS = Object.keys(IN_EVAL)
 export const SUPPORTED_OUT_IDS = Object.keys(OUT_EVAL)
 export const SUPPORTED_LOOP_IDS = Object.keys(LOOP_EVAL)
 
+/**
+ * Presets whose ENTIRE effect is the per-unit stagger window.
+ *
+ * `typewriter` is `opacity: e > 0.01 ? 1 : 0` — a step, with no intermediate
+ * state and no dependence on the unit index. Every letter it types is typed by
+ * the STAGGER shifting each unit's window, not by the function. Drive it at
+ * `stagger = 0` and all n units step together: the word is simply present, and
+ * the tile does nothing it is named for.
+ *
+ * DECLARED, not derived, and that is the honest description. `appear` is the
+ * *same function* (`e > 0` vs `e > 0.01`), so no probe over the engine's output
+ * can separate them — the difference is the promise the label makes ("Chars
+ * appear one by one" against "Instant … appear"), which lives in the catalog and
+ * in nothing the evaluator returns. What IS derived, and asserted in
+ * `vectortype-stagger-presets.unit.spec.ts`, is the surrounding measurement:
+ * the full set of presets that are constant at `stagger = 0` is pinned, so a new
+ * step preset cannot join the catalog without someone deciding whether it
+ * belongs here.
+ *
+ * Consumers that supply their own per-unit clock instead of the engine's — Vector
+ * Type drives `evaluateAnimation` at a per-glyph time with `spec.stagger` forced
+ * to 0 — must read this and make sure THEIR stagger is non-zero, or offer the
+ * preset knowing it will be inert. The Compositor needs nothing: the engine's own
+ * `stagger` defaults to 0.04 there.
+ */
+export const STAGGER_DEPENDENT_IDS: ReadonlySet<string> = Object.freeze(
+  new Set(['typewriter', 'typewriter-out']),
+) as ReadonlySet<string>
+
+/** True when a preset can only express itself through a non-zero per-unit
+ *  stagger (see `STAGGER_DEPENDENT_IDS`). Tolerant of any input: it is called
+ *  against ids straight out of stored JSON. */
+export function presetNeedsStagger(presetId: unknown): boolean {
+  return typeof presetId === 'string' && STAGGER_DEPENDENT_IDS.has(presetId.trim())
+}
+
 // ── Preset capabilities ─────────────────────────────────────────────────────
 // One engine, several consumers, each able to render a different subset of
 // UnitState. A preset that emits an OPTIONAL field its consumer ignores does
