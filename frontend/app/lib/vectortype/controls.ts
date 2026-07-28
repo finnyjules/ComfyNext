@@ -4,6 +4,9 @@ import { isFill } from '~/lib/compositor/paint'
 // module scope — so they are safe for the Collection control resolver and the
 // node card, same as `shapefx/controls.ts` already assumes.
 import { DEFAULT_FILL, FILL_TYPES, type Fill } from '~/lib/spacetype/fillTile'
+// The seven blends the studios share — the SAME list `mergeLayer` whitelists
+// against, so the picker cannot offer a mode the merge would throw away.
+import { BLEND_MODES } from '~/lib/studio/blend'
 // TYPE-ONLY, and it must stay that way: ./font.ts loads fontkit at module scope,
 // while this module is pulled in by the Collection control resolver and every
 // node card. A value import here would drag a font parser into both.
@@ -292,26 +295,30 @@ export const VT_CONTROLS: VtControl[] = [
   slider('layer.taper', 'Extrude taper', -1, 1, 0.01, 'Paint', LAYER_DEFAULTS.taper,
     'Shrinks the copies as they recede: 1 fades the far end to nothing, 0 keeps them all the same size, negative flares them outwards.',
     { when: layerIsExtrude }),
-  // DELIBERATELY NOT DECLARED: `layer.opacity`, `layer.blend` and `layer.solid`.
-  // All three are STORED and all three now RENDER — but a control that cannot be
-  // WRITTEN is as dead as one that cannot be read, and each is blocked on a
-  // different thing:
+  // How strongly this layer's ink lands. Both were withheld until now for the
+  // reason this file's header gives — a control that cannot be WRITTEN is as
+  // dead as one that cannot be read, and until the stack panel existed there was
+  // nowhere to write them from. Task 3 made them real on the canvas and Task 6
+  // in the SVG; Task 8 is the panel, so they are declared in the same commit as
+  // their UI, exactly as the header demands.
   //
-  //  - `layer.opacity` / `layer.blend` render (Task 3) and have no UI home until
-  //    the stack panel exists (Task 8).
-  //  - `layer.solid` renders (Task 5 — the copies fuse into one body on a bake or
-  //    an export) but is a **boolean**, and `ControlSpec` has no boolean kind. The
-  //    house pattern for one is a `select` over `['off','on']`, which works for
-  //    Space Type because its params are strings — here `mergeLayer` reads
-  //    `typeof o.solid === 'boolean'` and drops the string on the next load
-  //    (trap 1's shape, one level out). So declaring it as a select would ship a
-  //    toggle that appears to work and forgets itself, which is strictly worse
-  //    than no control. Its home is Task 8's stack row, beside `enabled` — the
-  //    other boolean this schema deliberately does not declare.
-  //
-  // Declaring a control whose reader — or whose writer — has not landed is the
-  // silent-dead-control failure this file's header opens by refusing; the same
-  // reason `motion.stagger` was withheld until `glyphTime` existed.
+  // Ungated on purpose: unlike `width` and the extrude knobs, these two mean the
+  // same thing on all three kinds and paint on all three.
+  slider('layer.opacity', 'Layer opacity', 0, 1, 0.01, 'Paint', LAYER_DEFAULTS.opacity,
+    "How strong this layer's ink is in the stack. MULTIPLIES the glyph's own motion fade rather than replacing it, so a half-strength layer still fades out with the word."),
+  select('layer.blend', 'Layer blend', [...BLEND_MODES], LAYER_DEFAULTS.blend, 'Paint',
+    'How this layer composites onto the layers below it (and onto the background, which this studio draws straight onto).',
+    // A MODE — tweening `multiply` towards `screen` interpolates nothing.
+    { animatable: false }),
+  // DELIBERATELY NOT DECLARED: `layer.solid`. It renders (Task 5 — the copies
+  // fuse into one body on a bake or an export) but is a **boolean**, and
+  // `ControlSpec` has no boolean kind. The house pattern for one is a `select`
+  // over `['off','on']`, which works for Space Type because its params are
+  // strings — here `mergeLayer` reads `typeof o.solid === 'boolean'` and drops
+  // the string on the next load (trap 1's shape, one level out). So declaring it
+  // as a select would ship a toggle that appears to work and forgets itself,
+  // which is strictly worse than no control. Its home is a stack row, beside
+  // `enabled` — the other boolean this schema deliberately does not declare.
 
   // --- Motion ---------------------------------------------------------------
   // Stagger is NOT a track: it shifts the clock each glyph reads the tracks at.
@@ -443,6 +450,8 @@ PAINT IS A STACK. The type carries an ordered list of appearance layers — fill
 \`layer.paint.type\` picks how the active layer is painted: solid, gradient, ombre (a grainy A→B fade), grid, noise, checkerboard, stripes, qr, or shader. \`layer.paint.a\` is the main colour and \`layer.paint.b\` the second one, which appears for everything except solid — and neither applies to a shader fill (see below). \`layer.paint.angle\` sets the direction of a gradient, ombre or stripes; \`layer.paint.density\` sets how many cells or stripes span grid, checkerboard, stripes and qr. \`layer.anchor\` decides which box THIS LAYER is measured against — "glyph" gives every letter its own copy, "word" spans one fill across the whole run so the letters are windows onto it, and "frame" pins the fill to the canvas so moving type slides over it. Reach for "word" when the user asks for a gradient across a word.
 
 \`layer.width\` is the outline width in output pixels, and it only exists when the active layer is a STROKE layer. A stroke is visible because it is in the stack, not because a width was raised. You cannot add or remove layers — only adjust the one that is active.
+
+EVERY LAYER COMPOSITES. \`layer.opacity\` is how strong that layer's ink is in the stack, 0 to 1 — it multiplies the glyph's own motion fade rather than replacing it, so a half-strength layer still fades out with the word. \`layer.blend\` is how the layer composites onto what is below it: normal, lighten, screen, add, multiply, darken or overlay. Both apply to fills, strokes and extrudes alike. Reach for them when the user asks for a layer to be subtler, to glow, or to darken the one underneath.
 
 EXTRUDE IS A BLOCK SHADOW, not 3D. An extrude layer redraws the letterform several times behind the face, which is what gives retro block lettering and hard offset shadows; the FACE is whichever fill layer sits above it in the stack. Its four knobs exist only when the active layer is an EXTRUDE layer. \`layer.depth\` is how many copies (0 draws none), \`layer.distance\` is the gap in pixels between consecutive copies, so the block reaches depth × distance, and \`layer.angle\` is the direction in degrees — 0 steps right, 90 steps straight down, using the same convention as the fill angle above. \`layer.taper\` shrinks the copies as they recede: 1 fades the far end away for a vanishing-point look, 0 keeps the block even, and negative values flare it outwards.
 

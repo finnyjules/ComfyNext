@@ -998,8 +998,11 @@ describe('shader fills enter the agent vocabulary', () => {
     expect(keysOf(shader)).not.toContain('layer.paint.b')
     // `fill.angle` / `fill.density` were already withheld — `shader` is in neither
     // predicate's list — so the rule now reads as one rule.
+    // `layer.opacity` / `layer.blend` ARE here, and belong here: unlike the
+    // paint's own colours they compose the whole layer onto the stack whatever
+    // it is painted with, so a shader fill reads them exactly like a solid one.
     expect(keysOf(shader).filter((k) => k.startsWith('layer.'))).toEqual([
-      'layer.paint.type', 'layer.anchor',
+      'layer.paint.type', 'layer.anchor', 'layer.opacity', 'layer.blend',
       'layer.paint.shader.effectId', 'layer.paint.shader.anchor', 'layer.paint.shader.speed',
       'layer.paint.shader.params.segments', 'layer.paint.shader.params.zoom', 'layer.paint.shader.params.mode',
     ])

@@ -23,16 +23,28 @@
  *    Four render surfaces that each grew their own copy is a failure this repo
  *    has already paid for more than once.
  */
-import { computed, markRaw, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import { computed, markRaw, onBeforeUnmount, onMounted, ref, shallowRef, toRaw, watch } from 'vue'
 import { Plus, Trash2, X } from 'lucide-vue-next'
 import type { ControlSpec } from '~/lib/spacetype/effect'
 import type { LayerAnimSpec } from '~/lib/motion/types'
 import { KINETIC_PRESETS_BY_ID, presetParamDefault } from '~/data/kinetic-presets'
 import { VARIABLE_FONTS } from '~/data/variable-fonts'
-import { VT_PRESET_DURATIONS, VT_PRESET_SLOTS, mergeConfig, vtBaseAppearance, type VectorTypeConfig, type VtPresetSlot } from '~/lib/vectortype/config'
+import {
+  VT_LAYER_KINDS,
+  VT_LAYER_MAX,
+  VT_PRESET_DURATIONS,
+  VT_PRESET_SLOTS,
+  mergeConfig,
+  vtBaseAppearance,
+  vtLayer,
+  type VectorTypeConfig,
+  type VtLayerKind,
+  type VtPresetSlot,
+} from '~/lib/vectortype/config'
+import { vtLayerLabels } from '~/lib/vectortype/layerLabel'
 import { VT_CONTROLS, VT_SECTIONS, derivedAxisControls, type VtControl } from '~/lib/vectortype/controls'
 import { VT_GUIDANCE, vtAgentControls } from '~/lib/vectortype/agentControls'
-import { animatableTargets } from '~/lib/vectortype/motion'
+import { VT_APPEARANCE_REMAP, animatableTargets } from '~/lib/vectortype/motion'
 import {
   VT_PRESET_CAPABILITIES,
   vtAxisOffers,
@@ -61,6 +73,7 @@ import { LIVE_FIELD_CEILING } from '~/lib/shaderfill/descriptor'
 import { onFieldCatalogReady } from '~/lib/shaderfill/field'
 import ShaderFillEditor from '~/components/vue-canvas/widgets/ShaderFillEditor.vue'
 import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
+import StudioLayerStack from '~/components/vue-canvas/StudioLayerStack.vue'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
 import StudioSelect from '~/components/vue-canvas/studio/StudioSelect.vue'
@@ -169,7 +182,10 @@ const MOTION_SECTIONS = ['Motion'] as const
 /** The full inspector vocabulary: the declared frame plus the loaded font's own
  *  axes. One list, so the panel, the agent and the sweep menu cannot drift. */
 const allControls = computed<ControlSpec[]>(() => [...VT_CONTROLS, ...derivedAxisControls(fontAxes.value)])
-const activeAgentControls = computed(() => vtAgentControls(config.value, fontAxes.value))
+// The ACTIVE layer's index is passed, not defaulted: `vtAgentControls` gates the
+// `layer.*` vocabulary on `appearance[active]`, so a stroke selected in the aside
+// is what makes `layer.width` offerable to the agent.
+const activeAgentControls = computed(() => vtAgentControls(config.value, fontAxes.value, activeLayerIndex.value))
 /** Motion targets, grouped by the target's OWN group — `Glyph` is not a
  *  VT_SECTIONS member (per-glyph offsets are animation outputs, not config
  *  leaves), so grouping strictly by section would drop them silently. */
@@ -185,18 +201,29 @@ const animatableGroups = computed(() => {
 
 const { getLocalSetting } = useLocalSettings()
 /**
- * ═══ TASK 8 BRIDGE ═══ which appearance layer the `layer.*` controls address.
+ * Which appearance layer the `layer.*` controls address — the aside stack's
+ * selection.
  *
- * Pinned at 0 — the bottom layer, which for a fresh config and every migrated
- * legacy node IS the fill. Task 8 mounts `StudioLayerStack` and makes this a real
- * selection; when it does, it must also pass the same index to
- * `visibleVtControls` / `vtAgentControls`, or the panel will decide which
- * controls to SHOW from layer 0 while the proxy WRITES to layer N.
+ * The index is handed to THREE consumers and they must all get the same one:
+ * `makeConfigParams` (which resolves a `layer.` key against it, so it is what
+ * the panel WRITES to), `visibleVtControls` via `controlVisible` (which decides
+ * which controls to SHOW), and `vtAgentControls` (the agent's vocabulary).
+ * Gating on layer 0 while writing to layer N is the failure `controls.ts`'s own
+ * header warns about: controls that appear and disappear for the wrong reasons.
  */
 const activeLayerIndex = ref(0)
 /** The layer those controls address, for the `when` predicates and the shader
  *  editor. Never null in practice; the stack may legitimately be empty. */
 const activeLayer = computed(() => config.value.appearance?.[activeLayerIndex.value] ?? null)
+/** Names for the aside rows, derived from what each layer IS. Never positional —
+ *  see `lib/vectortype/layerLabel.ts` for why that matters to motion. */
+const layerNames = computed(() => vtLayerLabels(config.value.appearance))
+// A stack that shrank under the selection (Import settings, or the agent
+// rewriting `appearance`) would leave the panel addressing a layer that is not
+// there — every `layer.*` control silently reading its declared default.
+watch(() => config.value.appearance?.length ?? 0, (n) => {
+  if (activeLayerIndex.value > n - 1) activeLayerIndex.value = Math.max(0, n - 1)
+})
 /** ═══ TASK 3 BRIDGE ═══ the base fill the export-tier notes describe. The same
  *  collapse `canvas.ts` draws with, so the warning and the picture agree. */
 const baseFill = computed(() => vtBaseAppearance(config.value).fill)
@@ -318,7 +345,7 @@ const fillTypeIsShader = computed(() => {
  * so a fill that gains (or loses) a vector form changes this copy on the same
  * day, not the day someone remembers.
  */
-const stackExportTier = computed(() => vtExportTier(config.value))
+const stackExportTier = computed(() => vtExportTier(config.value, layerNames.value))
 const fillExportTier = computed(() => stackExportTier.value.tier)
 /** One sentence naming the layer(s) that force a raster export, else `null` —
  *  which is also the flag both notes below are rendered on. */
@@ -376,10 +403,126 @@ function promoteControl(c: ControlSpec) { promote(c, paramsProxy[c.key] as strin
 function controlVisible(c: ControlSpec): boolean {
   const vc = c as VtControl
   if (SHADER_INERT_FILL_KEYS.has(vc.key) && fillTypeIsShader.value) return false
-  return !vc.when || vc.when(config.value)
+  // The ACTIVE layer, not `appearance[0]`: `when` falls back to the first layer
+  // when it is not told which, which is right headlessly and wrong here.
+  return !vc.when || vc.when(config.value, activeLayer.value)
 }
 function slotControl(slotProps: unknown): ControlSpec {
   return (slotProps as { control: ControlSpec }).control
+}
+
+// ── the appearance stack ────────────────────────────────────────────────────
+/**
+ * Add / remove / duplicate / reorder / toggle, behind the shared
+ * `StudioLayerStack` in the `#aside` slot — the same component Gradient and
+ * Shader mount, not a fork of it.
+ *
+ * ## Every mutation goes through `listRemap`
+ *
+ * Motion tracks address the stack POSITIONALLY (`appearance.2.width`, built by
+ * `animatableTargets`), so splicing the array silently re-aims every track at
+ * whatever slid into the slot — and nothing throws. `VT_APPEARANCE_REMAP`
+ * rewrites the index segment so a track follows its layer; it is the extracted,
+ * tested `makeListRemap` both other stacks already use, rather than a fourth
+ * copy of it, and it is IMPORTED from `motion.ts` — the module that builds those
+ * paths — rather than restated here, so the writer and the rewriter cannot
+ * disagree about the shape.
+ */
+function remapLayerTracks(kind: 'move' | 'insert' | 'remove', a: number, b?: number): void {
+  const tracks = config.value.motion.tracks
+  config.value.motion.tracks = kind === 'remove'
+    ? VT_APPEARANCE_REMAP.onRemove(tracks, a)
+    : kind === 'insert'
+      ? VT_APPEARANCE_REMAP.onInsert(tracks, a)
+      : VT_APPEARANCE_REMAP.onReorder(tracks, a, b!)
+}
+
+/**
+ * Colours a NEW layer's paint cycles through.
+ *
+ * `DEFAULT_FILL` is white, and a second white fill over the first is a layer the
+ * user added, cannot see, and reasonably concludes did nothing — the same
+ * complaint that made the old zero-width stroke look like "there is no stroke".
+ * Gradient's `addLayer` overrides its new layer's blend and opacity for exactly
+ * this reason. One click changes it; zero clicks must not hide it.
+ */
+const NEW_LAYER_COLORS = ['#ff2200', '#00c8ff', '#ffee00', '#22ff88', '#ff5bd0']
+
+/** What each kind is, in the add menu — a kind is a decision about the picture,
+ *  not a synonym for "layer". */
+const LAYER_KIND_HINT: Record<VtLayerKind, string> = {
+  fill: 'Paints the letterform itself.',
+  stroke: 'An outline around it. Visible immediately.',
+  extrude: 'Offset copies behind it — a block shadow.',
+}
+
+const addMenuOpen = ref(false)
+function openAddMenu() { addMenuOpen.value = config.value.appearance.length < VT_LAYER_MAX }
+// Closed by the next pointer down anywhere else. The menu itself stops that
+// event, so choosing a kind is not swallowed by the dismissal.
+let offAddMenu: (() => void) | null = null
+watch(addMenuOpen, (open) => {
+  offAddMenu?.()
+  offAddMenu = null
+  if (!open) return
+  const close = () => { addMenuOpen.value = false }
+  window.addEventListener('pointerdown', close)
+  offAddMenu = () => window.removeEventListener('pointerdown', close)
+})
+onBeforeUnmount(() => { offAddMenu?.(); offAddMenu = null })
+
+/**
+ * A new layer, of the kind the user asked for.
+ *
+ * A NEW STROKE IS VISIBLE IMMEDIATELY. `vtLayer` seeds `width` from
+ * `VT_DEFAULT_STROKE_WIDTH`, which is non-zero precisely because the old flat
+ * `strokeWidth` defaulted to 0 with its colour control gated behind a non-zero
+ * width — so the stroke was invisible, its controls were hidden, and users
+ * concluded the studio had no stroke at all. That is the bug this whole feature
+ * exists to fix; it must not be recreated at the add site.
+ */
+function addLayer(kind: VtLayerKind) {
+  addMenuOpen.value = false
+  if (config.value.appearance.length >= VT_LAYER_MAX) return
+  const a = NEW_LAYER_COLORS[config.value.appearance.length % NEW_LAYER_COLORS.length] as string
+  config.value.appearance.push(vtLayer({ kind, paint: { ...DEFAULT_FILL, a } }))
+  // Appended at the TOP of the stack (array end = front), so nothing already in
+  // the file is re-ordered by adding — Illustrator's Appearance panel does the
+  // same. No track can be pointing past the old end, so there is nothing to remap.
+  activeLayerIndex.value = config.value.appearance.length - 1
+  onEdit('appearance', config.value.appearance.length)
+  restartPreview()
+}
+function removeLayer(i: number) {
+  if (config.value.appearance.length <= 1) return
+  config.value.appearance.splice(i, 1)
+  remapLayerTracks('remove', i)
+  activeLayerIndex.value = Math.min(activeLayerIndex.value, config.value.appearance.length - 1)
+}
+function duplicateLayer(i: number) {
+  if (config.value.appearance.length >= VT_LAYER_MAX) return
+  const src = config.value.appearance[i]
+  if (!src) return
+  // A FRESH id, never the source's: `vtSolidKey` addresses a solid extrude's
+  // precomputed body by layer id, so two layers sharing one id would hand the
+  // copy the original's geometry.
+  config.value.appearance.splice(i + 1, 0, vtLayer({ ...structuredClone(toRaw(src)), id: '' }))
+  remapLayerTracks('insert', i + 1)
+  activeLayerIndex.value = i + 1
+}
+function reorderLayer(from: number, to: number) {
+  const [moved] = config.value.appearance.splice(from, 1)
+  if (!moved) return
+  config.value.appearance.splice(to, 0, moved)
+  remapLayerTracks('move', from, to)
+  activeLayerIndex.value = to
+}
+// `enabled` is a real persisted boolean (`VtAppearanceLayer.enabled`), not view
+// state — the renderer skips a disabled layer, the SVG export omits it, and the
+// export tier stops counting it.
+function toggleLayer(i: number) {
+  const L = config.value.appearance[i]
+  if (L) L.enabled = L.enabled === false
 }
 
 // ── motion presets ──────────────────────────────────────────────────────────
@@ -916,6 +1059,49 @@ const frameCount = computed(() => Math.round((config.value.motion.fps || 30) * (
     agent-placeholder="Describe the type — e.g. heavier and wider, letters cascading in…"
     @close="closeEditor"
   >
+    <!-- THE APPEARANCE STACK. Illustrator's Appearance panel: an ordered list of
+         fills, strokes and extrudes, top of the list = front of the picture.
+         Until now this array was reachable only from a settings-JSON import or
+         the agent. Shared component, mounted exactly as Gradient and Shader
+         mount it — never forked. -->
+    <template #aside>
+      <div class="relative flex h-full w-full min-h-0 flex-col">
+        <StudioLayerStack
+          :layers="config.appearance.map((l, i) => ({ label: layerNames[i] ?? `Layer ${i + 1}`, enabled: l.enabled !== false }))"
+          :active-index="activeLayerIndex"
+          :max="VT_LAYER_MAX"
+          @select="activeLayerIndex = $event"
+          @add="openAddMenu"
+          @remove="removeLayer"
+          @duplicate="duplicateLayer"
+          @reorder="reorderLayer"
+          @toggle="toggleLayer"
+        />
+        <!-- The one thing StudioLayerStack cannot express: this stack's `add` is
+             a CHOICE of three kinds, and its `add` event carries none. Rather
+             than fork the component (or cycle kinds behind one button), the
+             choice is rendered here, in the slot this surface owns.
+             OVERLAY HYGIENE: the root is `pointer-events-none` and only the menu
+             itself takes pointer events — an absolutely-positioned pane over the
+             modal that swallowed events would eat wire drags on the canvas
+             beneath it. -->
+        <div v-if="addMenuOpen" class="pointer-events-none absolute inset-0 z-30">
+          <div class="pointer-events-auto absolute right-2 top-9 w-52 rounded-lg border border-white/15 bg-neutral-900/95 p-1 shadow-xl backdrop-blur"
+               data-testid="vt-add-layer-menu" @pointerdown.stop>
+            <button
+              v-for="k in VT_LAYER_KINDS" :key="k" type="button"
+              :data-testid="`vt-add-layer-${k}`"
+              class="flex w-full flex-col rounded px-2 py-1.5 text-left transition hover:bg-white/10"
+              @click="addLayer(k)"
+            >
+              <span class="text-[11px] capitalize text-white/90">{{ k }}</span>
+              <span class="text-[9.5px] leading-tight text-white/40">{{ LAYER_KIND_HINT[k] }}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </template>
+
     <template #preview>
       <div class="relative flex h-full w-full flex-col items-center justify-center gap-2">
         <canvas ref="canvas" class="max-h-full max-w-full rounded-lg shadow-2xl" />

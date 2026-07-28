@@ -60,6 +60,7 @@ import {
 import { VT_CONTROLS, VT_LAYER_PREFIX, derivedAxisControls, visibleVtControls } from './controls'
 import { getByPath, setByPath } from '~/lib/studio/path'
 import { trackValue } from '~/lib/studio/track'
+import { makeListRemap } from '~/lib/studio/listRemap'
 
 export { trackValue } from '~/lib/studio/track'
 
@@ -117,6 +118,22 @@ const GLYPH_FIELD: Record<string, keyof VtGlyphTransform> = Object.fromEntries(
 
 const isFinite_ = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
 const finite = (v: unknown, d: number): number => (isFinite_(v) ? v : d)
+
+/**
+ * How to rewrite the positional stack paths `animatableTargets` emits below.
+ *
+ * It lives HERE, beside the loop that builds `appearance.<i>.<leaf>`, because
+ * the module that decides a path's shape is the only one that can be trusted to
+ * describe it — Shader's scheme needs `mid: 'params'` and a non-empty leaf, and
+ * either knob set wrongly matches nothing and silently remaps nothing. The stack
+ * UI imports this rather than restating it.
+ *
+ * Splicing `appearance` without it re-aims every track at whatever slid into the
+ * slot, and nothing throws. (See `lib/studio/listRemap.ts` — and its note that
+ * stable ids would remove the need for any of this, which is where this should
+ * go once motion resolves through `resolveIdPath`.)
+ */
+export const VT_APPEARANCE_REMAP = makeListRemap({ list: 'appearance' })
 
 /**
  * Every path a track may point at, derived from the SAME declaration the agent,
