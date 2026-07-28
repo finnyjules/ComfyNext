@@ -13,8 +13,9 @@ import * as THREE from 'three'
 import { stripAlpha } from '~/lib/color/convert'
 import {
   MATERIAL_DEFAULTS, gradientAngles, gradientDirection, gradientStopsOf,
-  type GradientStop, type SceneMaterial,
+  type GradientStop, type ReliefSpec, type SceneMaterial,
 } from './config'
+import { toHeightPixels } from './relief'
 // The field module — the ONLY place a ShaderSpec becomes pixels (see its ownership contract).
 // Scene3D is a second, independent consumer alongside Space Type/Shape Studio's
 // ~/lib/spacetype/fills.ts: it never routes through `Fill`/`FILL_TYPES` (SceneMaterial has no
@@ -148,6 +149,94 @@ function getImageTexture(filename: string): THREE.Texture | null {
     imageCache.set(filename, t)
   }
   return t
+}
+
+// ── Surface relief textures (height fields bound to .bumpMap) ────────────────
+const heightCache = new Map<string, THREE.Texture>()
+
+/** Load an input-dir image and convert it to a height field. Cached per
+ *  (filename, invert) since inverting produces a genuinely different texture.
+ *  Returns null outside a browser — the unit suite runs in node, where the
+ *  factory must still set bumpScale and simply bind no texture. */
+function getHeightTexture(filename: string, invert: boolean): THREE.Texture | null {
+  if (typeof document === 'undefined') return null
+  const key = `${filename}|${invert ? 1 : 0}`
+  const hit = heightCache.get(key)
+  if (hit) return hit
+
+  const tex = new THREE.Texture()
+  const img = new Image()
+  img.crossOrigin = 'anonymous'
+  img.onload = () => {
+    const c = document.createElement('canvas')
+    c.width = img.naturalWidth
+    c.height = img.naturalHeight
+    const ctx = c.getContext('2d')
+    if (!ctx) return
+    ctx.drawImage(img, 0, 0)
+    const data = ctx.getImageData(0, 0, c.width, c.height)
+    data.data.set(toHeightPixels(data.data, invert))
+    ctx.putImageData(data, 0, 0)
+    tex.image = c
+    tex.needsUpdate = true
+  }
+  img.src = `/view?filename=${encodeURIComponent(filename)}&type=input`
+  heightCache.set(key, tex)
+  return tex
+}
+
+/** Relief from a shader field: resolve the field, then run the SAME luminance
+ *  transform as the image path. No per-effect height mode — every catalog effect
+ *  gains relief with zero shader work. Not cached: the spec can change per edit,
+ *  and identityKey already rebuilds the material when it does.
+ *
+ *  v1 relief is STATIC by decision: the field is resolved once at t: 0 and the
+ *  resulting CanvasTexture is never re-pointed per frame (relief is not wired into
+ *  refreshSceneShaderFields, and carries no shaderOwnerId scoping). An animating
+ *  effect used as relief renders frozen relief under an animating colour map —
+ *  that is accepted v1 behaviour, not a bug. */
+function getShaderHeightTexture(mat: SceneMaterial, r: ReliefSpec): THREE.Texture | null {
+  if (typeof document === 'undefined') return null
+  const spec = r.spec ?? mat.shader
+  if (!spec) return null
+  const src = resolveField({ spec, w: 512, h: 512, t: 0, fps: 30 })
+  if (!src) return null
+
+  const c = document.createElement('canvas')
+  c.width = src.width
+  c.height = src.height
+  const ctx = c.getContext('2d')
+  if (!ctx) return null
+  ctx.drawImage(src, 0, 0)
+  const data = ctx.getImageData(0, 0, c.width, c.height)
+  data.data.set(toHeightPixels(data.data, r.invert === true))
+  ctx.putImageData(data, 0, 0)
+  return new THREE.CanvasTexture(c)
+}
+
+/** Bind relief onto an already-constructed material. Applied AFTER per-type construction
+ *  so it composes with every material type instead of being special-cased per branch.
+ *
+ *  MeshBasicMaterial (the `unlit` shaderFill class) has neither a bumpMap nor a normalMap
+ *  slot — there is no lighting to perturb — so relief is skipped entirely rather than
+ *  writing a property THREE will ignore. The UI disables the section to match. */
+export function applyRelief(m: THREE.Material, mat: SceneMaterial): void {
+  const target = m as THREE.MeshStandardMaterial
+  if (!('bumpMap' in target)) return
+
+  const r = mat.relief
+  if (r && r.source !== 'none') {
+    const tex = r.source === 'image'
+      ? (r.image ? getHeightTexture(r.image, r.invert === true) : null)
+      : getShaderHeightTexture(mat, r)
+    target.bumpMap = tex
+    target.bumpScale = r.scale ?? MATERIAL_DEFAULTS.reliefScale
+  } else {
+    target.bumpMap = null
+  }
+
+  target.normalMap = mat.normalImage ? getImageTexture(mat.normalImage) : null
+  target.needsUpdate = true
 }
 
 // ── Fresnel / gradient: LIT materials (Spline-style layers over lighting) ────
@@ -487,11 +576,29 @@ export function materialFor(mat: SceneMaterial, geometry?: THREE.BufferGeometry,
   }
   m.userData.matType = mat.type
   m.userData.identity = identityKey(mat)
+  applyRelief(m, mat)
   return m
+}
+
+/** The part of relief that forces a material REBUILD: which texture object is bound.
+ *  `scale` and `invert` are deliberately excluded — scale is a slider, and rebuilding
+ *  a material per tick would jank. Those update in place (see updateMaterial). */
+function reliefKey(mat: SceneMaterial): string {
+  const r = mat.relief
+  const relief = !r || r.source === 'none'
+    ? '-'
+    : r.source === 'image'
+      ? `i:${r.image ?? ''}`
+      : `s:${r.spec ? JSON.stringify(r.spec) : ''}`
+  return `|${relief}|n:${mat.normalImage ?? ''}`
 }
 
 /** Params that require a rebuild when they change (texture/ramp identity). */
 function identityKey(mat: SceneMaterial): string {
+  return baseIdentityKey(mat) + reliefKey(mat)
+}
+
+function baseIdentityKey(mat: SceneMaterial): string {
   switch (mat.type) {
     case 'toon': return `toon:${mat.toonSteps ?? MATERIAL_DEFAULTS.toonSteps}`
     case 'matcap': return `matcap:${mat.matcap ?? MATERIAL_DEFAULTS.matcap}`
@@ -510,6 +617,12 @@ function identityKey(mat: SceneMaterial): string {
 
 export function updateMaterial(m: THREE.Material, mat: SceneMaterial): boolean {
   if (m.userData.matType !== mat.type || m.userData.identity !== identityKey(mat)) return false
+  // Relief scale/invert are in-place updates for EVERY material type — identityKey
+  // already forced a rebuild if the bound texture itself changed.
+  const rt = m as THREE.MeshStandardMaterial
+  if ('bumpScale' in rt && mat.relief && mat.relief.source !== 'none') {
+    rt.bumpScale = mat.relief.scale ?? MATERIAL_DEFAULTS.reliefScale
+  }
   switch (mat.type) {
     case 'standard':
     case 'glass': {
