@@ -474,6 +474,16 @@ const matReliefContrast = computed<number>({
     mat.relief.contrast = v
   },
 })
+// Tiling is a Texture.repeat property (materials.ts's applyRelief/updateMaterial), never a
+// pixel change — updates in place exactly like scale, so a slider drag never rebuilds.
+const matReliefTiling = computed<number>({
+  get: () => selected.value?.material.relief?.tiling ?? MATERIAL_DEFAULTS.reliefTiling,
+  set: (v) => {
+    const mat = selected.value?.material
+    if (!mat?.relief) return
+    mat.relief.tiling = v
+  },
+})
 const matReliefSpec = computed<ShaderSpec>({
   get: () => selected.value?.material.relief?.spec ?? DEFAULT_SHADER_SPEC,
   set: (v) => {
@@ -2126,6 +2136,8 @@ function onClose() {
                   hint="How raised or recessed the surface detail looks" :min="0" :max="4" :step="0.01" />
                 <StudioSlider v-model="matReliefContrast" label="Contrast"
                   hint="Deepens the light and dark areas so the relief catches the light." :min="1" :max="6" :step="0.1" />
+                <StudioSlider v-model="matReliefTiling" label="Tiling"
+                  hint="How many times the pattern repeats across the surface — higher is finer." :min="0.25" :max="12" :step="0.25" />
                 <div class="flex items-center justify-between">
                   <span class="text-[11px] text-white/55">Invert</span>
                   <StudioSwitch v-model="matReliefInvert" />

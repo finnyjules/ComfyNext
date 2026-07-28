@@ -102,6 +102,20 @@ describe('scene3d relief on materials', () => {
     expect((m as THREE.MeshPhysicalMaterial).bumpScale).toBe(0.9)
   })
 
+  // Tiling is a Texture.repeat property (materials.ts's applyReliefTiling), never a pixel
+  // change — it must update IN PLACE like scale, not force a rebuild like invert/contrast.
+  it('updates tiling in place — a slider drag must not rebuild', () => {
+    const m = materialFor(base({ relief: { source: 'image', image: 'h.png', scale: 0.2, tiling: 1 } }))
+    expect(updateMaterial(m, base({ relief: { source: 'image', image: 'h.png', scale: 0.2, tiling: 6 } }))).toBe(true)
+  })
+
+  // Deliberate contrast with the above: a contrast-only change (tiling held fixed) must still
+  // rebuild — tiling must NOT have been folded into reliefKey.
+  it('still rebuilds on a contrast-only change with tiling held fixed', () => {
+    const m = materialFor(base({ relief: { source: 'image', image: 'h.png', scale: 0.2, tiling: 3, contrast: 1 } }))
+    expect(updateMaterial(m, base({ relief: { source: 'image', image: 'h.png', scale: 0.2, tiling: 3, contrast: 3 } }))).toBe(false)
+  })
+
   it('still updates scale in place without rebuilding', () => {
     const m = materialFor(base({ relief: { source: 'image', image: 'h.png', scale: 0.2, invert: false } }))
     expect(updateMaterial(m, base({ relief: { source: 'image', image: 'h.png', scale: 0.8, invert: false } }))).toBe(true)

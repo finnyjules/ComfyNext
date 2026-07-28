@@ -55,6 +55,14 @@ export interface ReliefSpec {
    *  relief.ts's heightGradient doc), so a flat-looking AI height map often needs this well
    *  above 1 to read as relief at all. Absent = 1, so old docs render identically. */
   contrast?: number
+  /** How many times the height field repeats across the object's UVs → THREE's per-texture
+   *  `.repeat`/`.wrapS`/`.wrapT` (RepeatWrapping), NOT a material property — see materials.ts's
+   *  getHeightTexture/applyRelief doc for why that forces a per-material Texture instead of the
+   *  shared-by-key one every relief texture used to be. Absent = 1 (the old stretch-once
+   *  behaviour), so old docs render identically. Updates IN PLACE like `scale` — a slider drag
+   *  must not rebuild the material — so it is deliberately excluded from materials.ts's
+   *  reliefKey. */
+  tiling?: number
 }
 
 export interface SceneMaterial {
@@ -287,6 +295,7 @@ export const MATERIAL_DEFAULTS = {
   envMapIntensity: 1,
   reliefScale: 0.25,
   reliefContrast: 1,
+  reliefTiling: 1,
   shader: DEFAULT_SHADER_SPEC,
   unlit: false,
 }
@@ -557,6 +566,7 @@ export function parseDoc(json: string): SceneDoc {
       if (r.spec && typeof r.spec === 'object') rel.spec = normalizeShaderSpec(r.spec, 0)
       if (typeof r.invert === 'boolean') rel.invert = r.invert
       if (typeof r.contrast === 'number') rel.contrast = num(r.contrast, MATERIAL_DEFAULTS.reliefContrast)
+      if (typeof r.tiling === 'number') rel.tiling = num(r.tiling, MATERIAL_DEFAULTS.reliefTiling)
       out.relief = rel
     }
     if (typeof m?.normalImage === 'string') out.normalImage = m.normalImage

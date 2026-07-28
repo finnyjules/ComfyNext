@@ -26,6 +26,31 @@ describe('scene3d relief doc model', () => {
     expect(back.objects[0]!.material.relief).toEqual({ source: 'shader', scale: 0.4, invert: true, contrast: 3.5 })
   })
 
+  // The same trap, again: tiling is a new optional relief field, and parseMaterial's relief
+  // block is a WHITELIST — a field not explicitly copied there is silently dropped.
+  it('round-trips relief.tiling through serialize → parse', () => {
+    const doc = defaultDoc()
+    const obj = createPrimitive('box')
+    obj.material.relief = { source: 'image', image: 'h.png', scale: 0.4, tiling: 4.5 }
+    doc.objects = [obj]
+    const back = parseDoc(serializeDoc(doc))
+    expect(back.objects[0]!.material.relief).toEqual({ source: 'image', image: 'h.png', scale: 0.4, tiling: 4.5 })
+  })
+
+  it('coerces a junk tiling to absent instead of dropping the relief block', () => {
+    const raw = JSON.parse(serializeDoc(defaultDoc()))
+    raw.objects = [{
+      ...createPrimitive('box'),
+      material: { type: 'standard', color: '#fff', roughness: 0.5, metalness: 0, relief: { source: 'image', image: 'h.png', scale: 0.3, tiling: 'nope' } },
+    }]
+    const back = parseDoc(JSON.stringify(raw))
+    expect('tiling' in back.objects[0]!.material.relief!).toBe(false)
+  })
+
+  it('defaults relief tiling to 1', () => {
+    expect(MATERIAL_DEFAULTS.reliefTiling).toBe(1)
+  })
+
   it('coerces a junk contrast to the default instead of dropping the relief block', () => {
     const raw = JSON.parse(serializeDoc(defaultDoc()))
     raw.objects = [{
