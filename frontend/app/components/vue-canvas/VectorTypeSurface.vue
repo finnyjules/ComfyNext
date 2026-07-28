@@ -750,6 +750,15 @@ async function exportSvg() {
   actionError.value = ''
   try {
     const f = font.value ?? await loadVariableFont(config.value.fontId)
+    // Same one-shot reasoning as `renderFullResBlob` (:694) and the param baker
+    // (:807), and it applies here MORE than to either: the two PNG paths draw
+    // through the live canvas resolver, which self-heals on the next tick if the
+    // catalog lands late. `vectorTypeSVG` writes a FILE — there is no next tick.
+    // Without this, Export SVG clicked in the first few hundred ms of a cold
+    // page embeds the shader's INPUT paint instead of the field: `resolveField`
+    // returns null, `resolveShaderFill` degrades gracefully, and the file looks
+    // entirely plausible while being the wrong picture.
+    await fetchShaderFxCatalog().catch(() => { /* offline — falls back, same as before */ })
     const { svg, frame } = vectorTypeSVG(f, config.value, previewTime.value, {
       width: canvasW.value, height: canvasH.value, background: background.value,
     })
