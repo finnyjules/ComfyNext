@@ -2143,9 +2143,9 @@ watch(previewImages, (urls) => {
      transition classes, so the card gets it back the moment it lands. */
   backdrop-filter: none;
 }
-.capsule-swap-enter-active { transition-duration: 0.34s; }
+.capsule-swap-enter-active { transition-duration: 0.45s; }
 .capsule-swap-leave-active {
-  transition-duration: 0.18s;
+  transition-duration: 0.24s;
   position: absolute;
   top: 0;
   left: 0;
