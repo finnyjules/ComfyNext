@@ -283,7 +283,10 @@ export function lightIntensityMax(kind: LightKind): number {
   return kind === 'rect' ? 60 : 600
 }
 
-const DEFAULT_MATERIAL: SceneMaterial = { type: 'standard', color: '#9aa3af', roughness: 0.6, metalness: 0.0 }
+// Exported (not just module-private) so controls.ts can source object.material.color/
+// roughness/metalness/type defaults from the same values createPrimitive/createGlbObject
+// actually ship, rather than retyping them — the anti-drift habit this whole schema follows.
+export const DEFAULT_MATERIAL: SceneMaterial = { type: 'standard', color: '#9aa3af', roughness: 0.6, metalness: 0.0 }
 
 /** Per-type parameter defaults — the single source of truth shared by the
  *  material factory (materials.ts) and the Selection UI's proxies. */
