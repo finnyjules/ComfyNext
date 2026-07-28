@@ -41,9 +41,9 @@ const actionLabel = computed(() => {
     :style="{ '--border-left': borderLeft, '--border-right': borderRight }"
     @click="emit('expand')"
   >
-    <span class="node-capsule__tile">
-      <img v-if="icon?.kind === 'url'" :src="icon.value" alt="">
-      <component :is="icon.value" v-else-if="icon?.kind === 'component'" :stroke-width="1.75" />
+    <span v-if="icon" class="node-capsule__tile">
+      <img v-if="icon.kind === 'url'" :src="icon.value" alt="">
+      <component :is="icon.value" v-else :stroke-width="1.75" />
     </span>
 
     <span class="node-capsule__text">
@@ -82,6 +82,9 @@ const actionLabel = computed(() => {
   box-shadow: 0 3px 12px rgba(0, 0, 0, 0.4);
 }
 
+/* Rendered only when an icon actually resolves. Most core Comfy node types are
+   in none of the three icon maps, and an empty 26px tile reads as a broken
+   image — worse than no tile at all. The title just takes the space. */
 .node-capsule__tile {
   flex: none;
   display: flex;
