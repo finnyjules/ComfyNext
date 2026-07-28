@@ -34,6 +34,7 @@ import { shaderAgentControls } from '~/lib/shaderstudio/agentControls'
 import { controlsForStudio } from '~/lib/collection/studioControls'
 import type { StudioControlDesc } from '~/lib/collection/studioBindables'
 import { registerStudioParamBaker, unregisterStudioParamBaker } from '~/lib/studio/cascade'
+import { makeListRemap } from '~/lib/studio/listRemap'
 import SweepPopover from '~/components/vue-canvas/studio/SweepPopover.vue'
 
 const props = defineProps<{ nodeId: string; nodes: any[]; edges?: any[]; wiredUrl?: string | null }>()
@@ -537,47 +538,19 @@ function reorderEffect(from: number, to: number) {
 function toggleEffect(i: number) { const e = config.value.effects[i]!; e.enabled = !e.enabled }
 
 // Rewrites motion track `path`s of the form `effects.<idx>.params.<uniform>` to
-// follow an effect through add/remove/reorder — mirrors gradientfx/motion.ts's
-// `remapTracksOnReorder`/`dropTracksForLayer`, adapted to path-string addressing
-// (shader tracks target an arbitrary dotted leaf, not just a layer's shape param).
-const EFFECT_PATH_RE = /^effects\.(\d+)\.params\.(.+)$/
+// follow an effect through add/remove/reorder. These three used to be inline
+// copies of gradientfx/motion.ts's; both now share ~/lib/studio/listRemap.
+// `requireLeaf` reproduces the original matcher exactly — it was
+// `/^effects\.(\d+)\.params\.(.+)$/`, i.e. a non-empty single-line uniform name,
+// not a bare prefix (pinned in tests/unit/studio-list-remap.unit.spec.ts).
+const EFFECT_REMAP = makeListRemap({ list: 'effects', mid: 'params', requireLeaf: true })
 function remapEffectTracks(kind: 'move' | 'insert' | 'remove', a: number, b?: number): void {
-  const rewrite = (idx: number, rest: string) => `effects.${idx}.params.${rest}`
-  if (kind === 'remove') {
-    config.value.motion.tracks = config.value.motion.tracks
-      .filter((t) => { const m = EFFECT_PATH_RE.exec(t.path); return !m || Number(m[1]) !== a })
-      .map((t) => {
-        const m = EFFECT_PATH_RE.exec(t.path)
-        if (!m) return t
-        const idx = Number(m[1])
-        return idx > a ? { ...t, path: rewrite(idx - 1, m[2]!) } : t
-      })
-    return
-  }
-  if (kind === 'insert') {
-    for (const t of config.value.motion.tracks) {
-      const m = EFFECT_PATH_RE.exec(t.path)
-      if (!m) continue
-      const idx = Number(m[1])
-      if (idx >= a) t.path = rewrite(idx + 1, m[2]!)
-    }
-    return
-  }
-  // move: same swap math as gradientfx/motion.ts's remapTracksOnReorder.
-  const from = a, to = b!
-  const move = (l: number): number => {
-    if (l === from) return to
-    if (from < to && l > from && l <= to) return l - 1
-    if (from > to && l >= to && l < from) return l + 1
-    return l
-  }
-  for (const t of config.value.motion.tracks) {
-    const m = EFFECT_PATH_RE.exec(t.path)
-    if (!m) continue
-    const idx = Number(m[1])
-    const ni = move(idx)
-    if (ni !== idx) t.path = rewrite(ni, m[2]!)
-  }
+  const tracks = config.value.motion.tracks
+  config.value.motion.tracks = kind === 'remove'
+    ? EFFECT_REMAP.onRemove(tracks, a)
+    : kind === 'insert'
+      ? EFFECT_REMAP.onInsert(tracks, a)
+      : EFFECT_REMAP.onReorder(tracks, a, b!)
 }
 </script>
 

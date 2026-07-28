@@ -6,6 +6,7 @@ import { cloneConfig, type GradientConfig, type MotionTrack } from './types'
 import { visibleGradientControls } from './controls'
 import { layerLabels } from './layerLabel'
 import { getByPath, setByPath } from '~/lib/studio/path'
+import { makeListRemap } from '~/lib/studio/listRemap'
 import { trackValue } from '~/lib/studio/track'
 
 // The easing engine moved to ~/lib/studio/track so a second stateless studio
@@ -75,45 +76,24 @@ export function applyMotion(cfg: GradientConfig, t: number): GradientConfig {
   return out
 }
 
-const LAYER_RE = /^layers\.(\d+)\./
-
-const layerIndexOf = (path: string | undefined): number | null => {
-  const m = LAYER_RE.exec(path ?? '')
-  return m ? Number(m[1]) : null
-}
-
-const withLayerIndex = (path: string, i: number): string => path.replace(LAYER_RE, `layers.${i}.`)
+// The three remap functions below moved to ~/lib/studio/listRemap so Shader
+// Studio — which had copy-pasted all three inline — and the Vector Type
+// appearance stack could share one tested implementation. Re-exported here
+// under their original names because this module was their published surface
+// first; Gradient's call sites and spec are unchanged.
+const LAYER_REMAP = makeListRemap({ list: 'layers' })
 
 /** Return tracks with `path`'s `layers.N.` segment rewritten to follow a layer moved from `from` to `to`. */
 export function remapTracksOnReorder(tracks: MotionTrack[], from: number, to: number): MotionTrack[] {
-  return tracks.map((tr) => {
-    const i = layerIndexOf(tr.path)
-    if (i === null) return tr
-    let next = i
-    if (i === from) next = to
-    else if (from < i && i <= to) next = i - 1
-    else if (to <= i && i < from) next = i + 1
-    return next === i ? tr : { ...tr, path: withLayerIndex(tr.path!, next) }
-  })
+  return LAYER_REMAP.onReorder(tracks, from, to)
 }
 
 /** Return tracks with those on `removed` dropped and higher `layers.N.` indices decremented. */
 export function dropTracksForLayer(tracks: MotionTrack[], removed: number): MotionTrack[] {
-  const out: MotionTrack[] = []
-  for (const tr of tracks) {
-    const i = layerIndexOf(tr.path)
-    if (i === null) { out.push(tr); continue }
-    if (i === removed) continue
-    out.push(i > removed ? { ...tr, path: withLayerIndex(tr.path!, i - 1) } : tr)
-  }
-  return out
+  return LAYER_REMAP.onRemove(tracks, removed)
 }
 
 /** Shift track paths up one layer when a new layer is inserted at `at`. */
 export function remapTracksOnInsert(tracks: MotionTrack[], at: number): MotionTrack[] {
-  return tracks.map((tr) => {
-    const i = layerIndexOf(tr.path)
-    if (i === null || i < at) return tr
-    return { ...tr, path: withLayerIndex(tr.path!, i + 1) }
-  })
+  return LAYER_REMAP.onInsert(tracks, at)
 }
