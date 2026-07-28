@@ -25,4 +25,20 @@ describe('t01At', () => {
     expect(t01At(1234, 0)).toBe(0)
     expect(t01At(1234, -5)).toBe(0)
   })
+
+  // The sign-correction branch: a negative elapsed value must wrap forward into
+  // [0, 1), not produce a negative result or a mirrored one. Without this,
+  // deleting the ternary in clock.ts still passes the suite.
+  it('wraps a negative elapsed time forward into the loop', () => {
+    expect(t01At(-15_000, 30)).toBeCloseTo(0.5, 6)
+    expect(t01At(-1_000, 30)).toBeCloseTo(29 / 30, 6)
+  })
+
+  it('keeps negative elapsed times in [0, 1)', () => {
+    for (const ms of [-1, -29_999, -30_000, -45_000, -1_234_567]) {
+      const v = t01At(ms, 30)
+      expect(v).toBeGreaterThanOrEqual(0)
+      expect(v).toBeLessThan(1)
+    }
+  })
 })
