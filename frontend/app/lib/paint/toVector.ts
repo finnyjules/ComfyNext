@@ -39,6 +39,7 @@ import {
   type VectorRect,
   IDENTITY_AFFINE,
   invertAffine,
+  isVectorPattern,
   multiplyAffine,
 } from '~/lib/vector/svg'
 import { type Paint, isFill, isGradient, sortedClampedStops } from '~/lib/compositor/paint'
@@ -324,17 +325,63 @@ export function paintToVectorPaint(paint: Paint | undefined, opts: VectorPaintOp
   return null
 }
 
-/** Which export tier a paint lands in TODAY — `vector` when
- *  `paintToVectorPaint` can express it, `flat` when the caller still has to
- *  degrade to a representative colour. Task 7 turns the second one into
- *  something the user is told about; this is only the fact, not the wording.
+/**
+ * What an SVG export of this paint actually IS.
  *
- *  The unit box is not a placeholder to be tidied away: it is what makes this a
- *  question about the paint's KIND rather than about a particular shape, given
- *  that a pattern refuses to emit without a box to anchor to. */
-export function paintIsVector(paint: Paint | undefined): boolean {
-  return paintToVectorPaint(paint, {
+ *  - `vector` — a flat `fill="#rrggbb"` or a `<linearGradient>`/`<radialGradient>`.
+ *  - `pattern` — a `<pattern>` of real rectangles. Still genuine, editable
+ *    geometry; named apart from `vector` only because it is a different thing to
+ *    open in an editor (a tile you can recolour, not a ramp you can add a stop
+ *    to). Both tiers are "real vector" for the purpose of the studio's claim.
+ *  - `raster` — no geometric description exists, so the export embeds a picture
+ *    (`<pattern><image href="data:image/png…">`). `ombre` and `noise` are
+ *    per-pixel hashes and a `shader` is a fragment program.
+ *
+ * DERIVED, NOT TABULATED. The answer is whatever `paintToVectorPaint` — the one
+ * function the exporter itself calls — hands back for this paint, classified by
+ * the spine's own `isVectorPattern` guard. There is no list of kind names here
+ * to fall out of step with the emitters; adding a tenth fill type, or teaching
+ * an existing one a vector form, moves its tier the same day without anyone
+ * remembering to. The codebase has been bitten twice recently by a
+ * hand-maintained list that disagreed with its catalog; this is the shape that
+ * cannot.
+ *
+ * TWO THINGS ABOUT THE ARGUMENTS, both load-bearing:
+ *
+ *  - **The unit box** is not a placeholder to be tidied away. It is what makes
+ *    this a question about the paint's KIND rather than about a particular
+ *    shape, given that a pattern refuses to emit without a box to anchor to.
+ *    Without it the four pattern kinds would read `raster` and the studio would
+ *    put the note on seven fills instead of three.
+ *  - **No `raster`** is handed in, deliberately. The tier 3 arm turns ANY
+ *    patterned fill into a `<pattern><image>` once a caller supplies pixels, so
+ *    asking with one would answer "can this be embedded?" — true of everything.
+ *    Asking without one answers the question the user is actually owed: does
+ *    this paint have a form of its OWN, or does it exist only as a picture?
+ *    (The `image` guard below covers a caller who asks with one anyway.)
+ *
+ * A paint with no vector form at all — `undefined`, a malformed gradient — reads
+ * `raster` too, which is the honest answer to "will this come out as editable
+ * geometry?". Callers wanting to NAME the fill in a sentence should ask
+ * `isFill` first; there is no kind to name otherwise.
+ */
+export type ExportTier = 'vector' | 'pattern' | 'raster'
+
+export function exportTier(paint: Paint | undefined): ExportTier {
+  const vp = paintToVectorPaint(paint, {
     units: 'objectBoundingBox',
     box: { x: 0, y: 0, width: 1, height: 1 },
-  }) !== null
+  })
+  if (vp === null) return 'raster'
+  // A tile whose content is an embedded picture is a raster export wearing a
+  // `<pattern>` — the wrapper is plumbing, not geometry. Read structurally
+  // rather than by kind so this stays true of whatever lands in that arm next.
+  if (isVectorPattern(vp)) return (vp as { image?: string | null }).image ? 'raster' : 'pattern'
+  return 'vector'
+}
+
+/** True when the export carries this paint as real geometry — both vector tiers.
+ *  Kept as the yes/no form of `exportTier` for callers that only need the claim. */
+export function paintIsVector(paint: Paint | undefined): boolean {
+  return exportTier(paint) !== 'raster'
 }
