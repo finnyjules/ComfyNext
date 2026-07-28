@@ -77,4 +77,92 @@ test.describe('node capsule', () => {
     await page.locator('.node-capsule__action').click()
     await expect(page.locator('.node-capsule')).toBeVisible()
   })
+
+  test('an expanded capsule collapses again when you click away', async ({ page }) => {
+    // The spec's interaction model: pinned open until you click away. Nothing
+    // used to unpin it — `collapsed = false` was the only writer in the whole
+    // codebase, so a capsule opened once stayed a card for the session.
+    await addNode(page, 'KSampler')
+    // hasRun puts the node in the after-run tier's collapsed default, which is
+    // what click-away returns to (`collapsed` goes back to undefined, not true).
+    await setNodeData(page, 'KSampler', { collapsed: true, hasRun: true })
+
+    await page.locator('.node-capsule').click()
+    await expect(page.locator('.node-capsule')).toHaveCount(0)
+
+    // Click bare canvas, clear of both the node (added at viewport centre) and
+    // the toolbar overlays that sit in the corners.
+    const pane = await page.locator('.vue-flow__pane').boundingBox()
+    await page.mouse.click(pane!.x + 60, pane!.y + pane!.height / 2)
+    await expect(page.locator('.node-capsule')).toBeVisible()
+  })
+
+  test('a capsule opens from the keyboard', async ({ page }) => {
+    // The capsule is the ONLY way to open a collapsed node, so a mouse-only
+    // handler puts those nodes out of keyboard reach entirely.
+    await addNode(page, 'KSampler')
+    await setNodeData(page, 'KSampler', { collapsed: true })
+    await page.locator('.node-capsule').focus()
+    await page.keyboard.press('Enter')
+    await expect(page.locator('.node-capsule')).toHaveCount(0)
+  })
+
+  test('a stale error message does not survive the node clearing its error', async ({ page }) => {
+    await addNode(page, 'KSampler')
+    await setNodeData(page, 'KSampler', {
+      collapsed: true, error: true, errorMessage: 'CUDA out of memory',
+    })
+    await expect(page.locator('.node-capsule')).toContainText('CUDA out of memory')
+
+    // errorMessage is sticky — only a new exception overwrites it. The read-out
+    // must key off `error`, or the failure outranks every later read-out.
+    await setNodeData(page, 'KSampler', { error: false })
+    await expect(page.locator('.node-capsule')).not.toContainText('CUDA')
+    await expect(page.locator('.node-capsule')).toContainText('steps')
+  })
+
+  test('the failed capsule opens the card instead of re-running', async ({ page }) => {
+    await addNode(page, 'KSampler')
+    await setNodeData(page, 'KSampler', {
+      collapsed: true, error: true, errorMessage: 'Something broke',
+    })
+    const action = page.locator('.node-capsule__action')
+    await expect(action).toHaveAttribute('aria-label', 'Show the error')
+
+    const runs: unknown[] = []
+    await page.exposeFunction('__capsuleRun', (d: unknown) => { runs.push(d) })
+    await page.evaluate(() => {
+      window.addEventListener('sailor:runFiltered', (e) => {
+        ;(window as any).__capsuleRun((e as CustomEvent).detail)
+      })
+    })
+
+    await action.click()
+    // It opens the card (where the untruncated error chip lives) …
+    await expect(page.locator('.node-capsule')).toHaveCount(0)
+    // … and does NOT spend money on the click that asked what went wrong.
+    expect(runs).toEqual([])
+  })
+
+  test('the running capsule stops the run instead of doing nothing', async ({ page }) => {
+    await addNode(page, 'KSampler')
+    await setNodeData(page, 'KSampler', {
+      collapsed: true, running: true, runningSince: Date.now(),
+    })
+    const action = page.locator('.node-capsule__action')
+    await expect(action).toHaveAttribute('aria-label', 'Stop')
+
+    const stops: unknown[] = []
+    await page.exposeFunction('__capsuleStop', (d: unknown) => { stops.push(d) })
+    await page.evaluate(() => {
+      window.addEventListener('sailor:stopRun', (e) => {
+        ;(window as any).__capsuleStop((e as CustomEvent).detail ?? {})
+      })
+    })
+
+    await action.click()
+    // The old wiring called dispatchRun, which returns early while running —
+    // the button was inert. Assert the interrupt actually leaves the node.
+    await expect.poll(() => stops.length).toBe(1)
+  })
 })
