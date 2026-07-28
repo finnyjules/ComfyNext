@@ -164,18 +164,27 @@ export interface LightObject extends SceneObjectBase {
 
 export type SceneObject = PrimitiveObject | GlbObject | LightObject
 
-/** True when any object in `doc` currently RENDERS a shaderFill material — a real ShaderSpec
- *  attached, not just the bare type picked with nothing to render yet. The gate the Scene3D
- *  surface's per-frame loop uses (mirrors `configHasShaderFill` in lib/shapefx/surface.ts) so
- *  the shader-field refresh (beginFieldFrame + resolveField, a WebGL readback per live field)
- *  never runs for an ordinary scene that doesn't use one. Lights never render `material`
- *  (LIGHT_DEFAULTS carries a dummy `DEFAULT_MATERIAL`, see createLight) and a GLB's material
- *  only applies with `materialOverride` on — both excluded. */
+/** True when any object in `doc` currently needs the Scene3D per-frame shader-field
+ *  refresh (`refreshSceneShaderFields` in materials.ts) — either it RENDERS a shaderFill
+ *  material (a real ShaderSpec attached, not just the bare type picked with nothing to
+ *  render yet), or it carries a SHADER surface relief (`relief.source === 'shader'` with
+ *  `relief.spec` present). Widened for relief (Task 5 fix) because relief's null→bound
+ *  bumpMap heal (see `refreshSceneShaderFields`'s doc) only ever runs from a call this
+ *  gate is what triggers — a relief-only scene (no shaderFill material anywhere) used to
+ *  never call `refreshSceneShaderFields` at all, so a bumpMap left null by a catalog-not-
+ *  loaded-yet miss at material-construction time stayed null forever. The gate the Scene3D
+ *  surface's per-frame loop uses (mirrors `configHasShaderFill` in lib/shapefx/surface.ts)
+ *  so the shader-field refresh (beginFieldFrame + resolveField, a WebGL readback per live
+ *  field) never runs for an ordinary scene that uses neither. Lights never render
+ *  `material` (LIGHT_DEFAULTS carries a dummy `DEFAULT_MATERIAL`, see createLight) and a
+ *  GLB's material only applies with `materialOverride` on — both still excluded. */
 export function sceneHasShaderFill(doc: SceneDoc): boolean {
   return doc.objects.some((o) => {
     if (o.kind === 'light') return false
     if (o.kind === 'glb' && o.materialOverride !== true) return false
-    return o.material.type === 'shaderFill' && !!o.material.shader
+    const m = o.material
+    if (m.type === 'shaderFill' && !!m.shader) return true
+    return m.relief?.source === 'shader' && !!m.relief.spec
   })
 }
 

@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { defaultDoc, createPrimitive, serializeDoc, parseDoc, MATERIAL_DEFAULTS } from '~/lib/scene3d/config'
+import {
+  defaultDoc, createPrimitive, createLight, createGlbObject, serializeDoc, parseDoc,
+  sceneHasShaderFill, MATERIAL_DEFAULTS,
+} from '~/lib/scene3d/config'
+import type { ShaderSpec } from '~/lib/spacetype/fillTile'
 
 describe('scene3d relief doc model', () => {
   it('round-trips a shader relief through serialize → parse', () => {
@@ -39,5 +43,77 @@ describe('scene3d relief doc model', () => {
 
   it('defaults relief scale to 0.25', () => {
     expect(MATERIAL_DEFAULTS.reliefScale).toBe(0.25)
+  })
+})
+
+// Task 5 fix: sceneHasShaderFill (the per-frame refresh gate — see its doc in config.ts and
+// refreshSceneShaderFields's in materials.ts) used to only recognise the `shaderFill`
+// MATERIAL TYPE. A `standard`/`glass`/etc. material carrying a SHADER surface relief never
+// satisfied it, so `refreshSceneShaderFields` (the only thing that can heal a relief bumpMap
+// left null by a catalog-not-loaded-yet miss) was never even called for a relief-only scene —
+// the null bumpMap stayed null forever. Mirrors scene3d-shaderfill.unit.spec.ts's coverage of
+// the original shaderFill-type gate, so both paths (and their shared exclusions) stay pinned.
+const reliefShaderSpec = (effectId = 'voronoi_cells'): ShaderSpec =>
+  ({ effectId, params: {}, anchor: 'object', speed: 1, input: '#ffffff' })
+
+describe('sceneHasShaderFill — widened for shader relief (Task 5 fix)', () => {
+  it('is true for a primitive whose material has a shader relief with a spec', () => {
+    const doc = defaultDoc()
+    const box = createPrimitive('box', doc.objects)
+    box.material.relief = { source: 'shader', scale: 0.3, spec: reliefShaderSpec() }
+    doc.objects.push(box)
+    expect(sceneHasShaderFill(doc)).toBe(true)
+  })
+
+  it('is false for a shader relief with no spec attached yet (source picked, nothing to render)', () => {
+    const doc = defaultDoc()
+    const box = createPrimitive('box', doc.objects)
+    box.material.relief = { source: 'shader', scale: 0.3 }
+    doc.objects.push(box)
+    expect(sceneHasShaderFill(doc)).toBe(false)
+  })
+
+  it('is false for an image relief — only a SHADER relief needs the per-frame heal', () => {
+    const doc = defaultDoc()
+    const box = createPrimitive('box', doc.objects)
+    box.material.relief = { source: 'image', image: 'height.png', scale: 0.3 }
+    doc.objects.push(box)
+    expect(sceneHasShaderFill(doc)).toBe(false)
+  })
+
+  it('ignores a light object even if its (never-rendered) material carries a shader relief', () => {
+    const doc = defaultDoc()
+    const light = createLight('point', doc.objects)
+    light.material.relief = { source: 'shader', scale: 0.3, spec: reliefShaderSpec() }
+    doc.objects.push(light)
+    expect(sceneHasShaderFill(doc)).toBe(false)
+  })
+
+  it('ignores a GLB shader relief unless materialOverride is explicitly on', () => {
+    const doc = defaultDoc()
+    const glb = createGlbObject('https://example.com/m.glb', doc.objects)
+    glb.material.relief = { source: 'shader', scale: 0.3, spec: reliefShaderSpec() }
+    doc.objects.push(glb)
+    expect(sceneHasShaderFill(doc)).toBe(false) // override absent -> the GLB's own material never renders
+    glb.materialOverride = true
+    expect(sceneHasShaderFill(doc)).toBe(true) // override on -> it does
+  })
+
+  it('is still true for the original shaderFill MATERIAL TYPE case (no regression)', () => {
+    const doc = defaultDoc()
+    const box = createPrimitive('box', doc.objects)
+    box.material = { type: 'shaderFill', color: '#ffffff', roughness: 0.6, metalness: 0, shader: reliefShaderSpec('fbm_warp') }
+    doc.objects.push(box)
+    expect(sceneHasShaderFill(doc)).toBe(true)
+  })
+
+  it('is true if any single object in a mixed scene carries a shader relief', () => {
+    const doc = defaultDoc()
+    doc.objects.push(createPrimitive('box', doc.objects))
+    doc.objects.push(createLight('point', doc.objects))
+    const sphere = createPrimitive('sphere', doc.objects)
+    sphere.material.relief = { source: 'shader', scale: 0.3, spec: reliefShaderSpec() }
+    doc.objects.push(sphere)
+    expect(sceneHasShaderFill(doc)).toBe(true)
   })
 })

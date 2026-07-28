@@ -190,15 +190,26 @@ function getHeightTexture(filename: string, invert: boolean): THREE.Texture | nu
  *  gains relief with zero shader work. Not cached: the spec can change per edit,
  *  and identityKey already rebuilds the material when it does.
  *
- *  v1 relief is STATIC by decision: the field is resolved once at t: 0 and the
- *  resulting CanvasTexture is never re-pointed per frame (relief is not wired into
- *  refreshSceneShaderFields, and carries no shaderOwnerId scoping). An animating
- *  effect used as relief renders frozen relief under an animating colour map —
- *  that is accepted v1 behaviour, not a bug. */
-function getShaderHeightTexture(mat: SceneMaterial, r: ReliefSpec): THREE.Texture | null {
+ *  v1 relief is STATIC by decision: the field is resolved at t: 0 and the resulting
+ *  CanvasTexture is never re-pointed on a healthy per-frame cadence — an animating
+ *  effect used as relief renders frozen relief under an animating colour map, and
+ *  that is accepted v1 behaviour, not a bug. The ONE exception (Task 5 fix) is a
+ *  construction-time MISS (the shader-fx catalog hadn't resolved yet, so `resolveField`
+ *  returned null and `bumpMap` was left permanently null): `refreshSceneShaderFields`
+ *  now retries that specific material, ONCE, via `healReliefMaterials`/
+ *  `reliefHealPending` below — a null→bound recovery, not a per-frame re-resolve. A
+ *  material is removed from `reliefHealPending` the instant it heals, so it costs
+ *  nothing on any later frame and is never re-pointed again after that.
+ *
+ *  `buildHeightTextureFromSpec` below is the shared core behind both the construction-time
+ *  attempt (`getShaderHeightTexture`) and the later heal (`healReliefMaterials`), so a
+ *  catalog miss now vs. a catalog hit later run the EXACT same pixels-to-height path. It
+ *  calls `resolveField` directly — no `beginFieldFrame`/`withFieldFrame` span, no token —
+ *  matching how this call has always been made here: relief is a one-shot resolve, never
+ *  part of a live per-frame field batch, so it must never compete with an animating
+ *  shaderFill for `LIVE_FIELD_CEILING` slots. */
+function buildHeightTextureFromSpec(spec: ShaderSpec, invert: boolean): THREE.Texture | null {
   if (typeof document === 'undefined') return null
-  const spec = r.spec ?? mat.shader
-  if (!spec) return null
   const src = resolveField({ spec, w: 512, h: 512, t: 0, fps: 30 })
   if (!src) return null
 
@@ -209,9 +220,42 @@ function getShaderHeightTexture(mat: SceneMaterial, r: ReliefSpec): THREE.Textur
   if (!ctx) return null
   ctx.drawImage(src, 0, 0)
   const data = ctx.getImageData(0, 0, c.width, c.height)
-  data.data.set(toHeightPixels(data.data, r.invert === true))
+  data.data.set(toHeightPixels(data.data, invert))
   ctx.putImageData(data, 0, 0)
   return new THREE.CanvasTexture(c)
+}
+
+function getShaderHeightTexture(mat: SceneMaterial, r: ReliefSpec): THREE.Texture | null {
+  const spec = r.spec ?? mat.shader
+  if (!spec) return null
+  return buildHeightTextureFromSpec(spec, r.invert === true)
+}
+
+/** Materials whose shader-relief `bumpMap` is still null because `resolveField` missed at
+ *  construction time (the shader-fx catalog hadn't resolved yet) — filtered by
+ *  `userData.reliefOwnerId` in `refreshSceneShaderFields`, the same per-engine ownerId
+ *  scoping `shaderFillMaterials` uses. This is a ONE-TIME heal, unlike that Set's `.map`
+ *  heal: a material is REMOVED from here the instant its `bumpMap` binds, so a later
+ *  `refreshSceneShaderFields` call never touches it again — relief stays static (see
+ *  `buildHeightTextureFromSpec`'s doc): this only recovers a null→bound miss, it never
+ *  re-resolves an already-bound one. */
+const reliefHealPending = new Set<THREE.Material>()
+
+/** Attempt the one-time relief heal for every material `ownerId` still has pending. A
+ *  no-op the moment the Set is empty (the steady-state case once every relief has healed
+ *  or no scene ever used a shader relief), so this costs nothing on an ordinary frame. */
+function healReliefMaterials(ownerId: string): void {
+  if (reliefHealPending.size === 0) return
+  for (const m of reliefHealPending) {
+    if (m.userData.reliefOwnerId !== ownerId) continue
+    const spec = m.userData.reliefSpec as ShaderSpec | undefined
+    if (!spec) { reliefHealPending.delete(m); continue }
+    const tex = buildHeightTextureFromSpec(spec, m.userData.reliefInvert === true)
+    if (!tex) continue // still missing (catalog not resolved yet) — retry on a later call
+    ;(m as THREE.MeshStandardMaterial).bumpMap = tex
+    m.needsUpdate = true
+    reliefHealPending.delete(m)
+  }
 }
 
 /** Bind relief onto an already-constructed material. Applied AFTER per-type construction
@@ -220,17 +264,31 @@ function getShaderHeightTexture(mat: SceneMaterial, r: ReliefSpec): THREE.Textur
  *  MeshBasicMaterial (the `unlit` shaderFill class) has neither a bumpMap nor a normalMap
  *  slot — there is no lighting to perturb — so relief is skipped entirely rather than
  *  writing a property THREE will ignore. The UI disables the section to match. */
-export function applyRelief(m: THREE.Material, mat: SceneMaterial): void {
+export function applyRelief(m: THREE.Material, mat: SceneMaterial, ownerId: string = UNOWNED_SCENE3D): void {
   const target = m as THREE.MeshStandardMaterial
   if (!('bumpMap' in target)) return
 
   const r = mat.relief
+  reliefHealPending.delete(target) // always a fresh material instance here — defensive only
   if (r && r.source !== 'none') {
     const tex = r.source === 'image'
       ? (r.image ? getHeightTexture(r.image, r.invert === true) : null)
       : getShaderHeightTexture(mat, r)
     target.bumpMap = tex
     target.bumpScale = r.scale ?? MATERIAL_DEFAULTS.reliefScale
+    // Item Task-5 heal: a shader relief that missed (catalog not loaded yet) gets queued
+    // for `refreshSceneShaderFields` to retry — see `healReliefMaterials`'s doc. `mat.shader`
+    // is the SAME fallback `getShaderHeightTexture` just used, so the heal resolves the exact
+    // spec construction attempted, not a stale/different one.
+    if (!tex && r.source === 'shader') {
+      const spec = r.spec ?? mat.shader
+      if (spec) {
+        target.userData.reliefSpec = spec
+        target.userData.reliefInvert = r.invert === true
+        target.userData.reliefOwnerId = ownerId
+        reliefHealPending.add(target)
+      }
+    }
   } else {
     target.bumpMap = null
   }
@@ -576,7 +634,7 @@ export function materialFor(mat: SceneMaterial, geometry?: THREE.BufferGeometry,
   }
   m.userData.matType = mat.type
   m.userData.identity = identityKey(mat)
-  applyRelief(m, mat)
+  applyRelief(m, mat, ownerId)
   return m
 }
 
@@ -714,6 +772,7 @@ export function disposeMaterial(m: THREE.Material): void {
   if ((m as THREE.MeshToonMaterial).isMaterial && (m as any).gradientMap) (m as any).gradientMap.dispose()
   if (m.userData.matType === 'image') imageMaterials.delete(m as THREE.MeshStandardMaterial)
   if (m.userData.matType === 'shaderFill') shaderFillMaterials.delete(m)
+  reliefHealPending.delete(m) // a disposed material still awaiting its relief heal must not leak
   // The gradient ramp LUT is owned by exactly one material.
   const ramp = (m.userData.gradUniforms as { uRamp?: { value?: THREE.Texture } } | undefined)?.uRamp?.value
   if (ramp) ramp.dispose()
@@ -744,10 +803,18 @@ export function disposeMaterial(m: THREE.Material): void {
  *  `false` and `w`/`h` at the fixed `SHADER_FIELD_PX` (== resolveField's own LIVE_FIELD_PX
  *  clamp), so passing `bake: true` here was inert: `fieldSize()` in field.ts only skips its
  *  clamp when `bake` is true AND w/h differ from the clamp size, and they never did. `w`/`h`
- *  default to `SHADER_FIELD_PX` so every existing (live-preview) call site is unaffected. */
+ *  default to `SHADER_FIELD_PX` so every existing (live-preview) call site is unaffected.
+ *
+ *  Task 5 fix: also runs `healReliefMaterials(ownerId)` FIRST, unconditionally — a relief-only
+ *  scene (no shaderFill material anywhere) has an empty `entries` below and returns early, so
+ *  the relief heal has to happen before that early return or a relief-only doc would never get
+ *  healed at all. This is why `sceneHasShaderFill` (config.ts) was widened to also gate on a
+ *  shader relief: without that, this function is never even called for a relief-only scene. */
 export function refreshSceneShaderFields(
   ownerId: string, t: number, fps: number, bake = false, w = SHADER_FIELD_PX, h = SHADER_FIELD_PX,
 ): { frozenCount: number } {
+  healReliefMaterials(ownerId)
+
   const entries: THREE.Material[] = []
   for (const m of shaderFillMaterials) if (m.userData.shaderOwnerId === ownerId) entries.push(m)
   if (entries.length === 0) return { frozenCount: 0 }
