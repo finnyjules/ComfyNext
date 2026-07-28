@@ -62,7 +62,7 @@
  * to what that source produced alone.
  */
 import type { FrameMotion, LayerAnimation, LayerAnimSpec } from '~/lib/motion/types'
-import type { UnitState } from '~/lib/motion/evaluate'
+import type { PresetCapability, UnitState } from '~/lib/motion/evaluate'
 import {
   ALL_PRESET_CAPABILITIES,
   IDENTITY_UNIT,
@@ -159,11 +159,27 @@ const fin = (v: unknown, d: number): number => (isNum(v) ? v : d)
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v)
 
 /**
- * The preset ids this studio can render faithfully.
+ * What this studio can draw, in the engine's own vocabulary.
  *
- * Vector Type declares EVERY capability the engine knows about — it draws real
- * outlines, so `blur` and `axes` are both within reach. Derived from
- * `presetIdsFor`, never a second list.
+ * `drawVectorType` applies `blur`, `clip`, `scaleX/scaleY` and per-glyph `axes`
+ * to real outlines, so Vector Type takes everything the engine offers EXCEPT
+ * `copies`: a copy is an extra whole-unit draw, and `VtGlyphMotion` has no field
+ * for one. Subtracted from `ALL_PRESET_CAPABILITIES` rather than re-typed, so a
+ * capability added to the engine arrives here automatically and only the one
+ * genuine gap is stated.
+ *
+ * ONE list, and everything reads it: `KNOWN_IDS` below (what a stored config may
+ * name), `vtPresetIdsFor` (what the gallery offers) and the surface's
+ * `:capabilities` prop (what the tiles are allowed to draw). Before this the
+ * gallery filtered copy-based presets through a private set inside
+ * `MotionPresetPicker` while `vtKnowsPreset` accepted them — so an imported
+ * config reported "animated" over a frozen word.
+ */
+export const VT_PRESET_CAPABILITIES: readonly PresetCapability[] =
+  Object.freeze(ALL_PRESET_CAPABILITIES.filter(c => c !== 'copies'))
+
+/**
+ * The preset ids this studio can render faithfully.
  *
  * UNION with `./axisPresets`, whose table is Vector-Type-only for a structural
  * reason: an axis preset's values are fractions of the LOADED FONT'S range, and
@@ -171,9 +187,9 @@ const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v)
  * header). Both halves are derived — nothing here is hand-listed.
  */
 const KNOWN_IDS: Record<VtPresetSlot, ReadonlySet<string>> = {
-  in: new Set([...presetIdsFor('in', ALL_PRESET_CAPABILITIES), ...Object.keys(VT_EVAL.in)]),
-  out: new Set([...presetIdsFor('out', ALL_PRESET_CAPABILITIES), ...Object.keys(VT_EVAL.out)]),
-  loop: new Set([...presetIdsFor('loop', ALL_PRESET_CAPABILITIES), ...Object.keys(VT_EVAL.loop)]),
+  in: new Set([...presetIdsFor('in', VT_PRESET_CAPABILITIES), ...Object.keys(VT_EVAL.in)]),
+  out: new Set([...presetIdsFor('out', VT_PRESET_CAPABILITIES), ...Object.keys(VT_EVAL.out)]),
+  loop: new Set([...presetIdsFor('loop', VT_PRESET_CAPABILITIES), ...Object.keys(VT_EVAL.loop)]),
 }
 
 /** True when SOME table — the engine's or this studio's — has a preset by that
@@ -194,7 +210,7 @@ export function vtKnowsPreset(slot: VtPresetSlot, presetId: unknown): boolean {
  * it never assembles a list of its own.
  */
 export function vtPresetIdsFor(slot: VtPresetSlot, axes?: readonly VtAxis[] | null): string[] {
-  return [...presetIdsFor(slot, ALL_PRESET_CAPABILITIES), ...vtAxisPresetIdsFor(slot, axes)]
+  return [...presetIdsFor(slot, VT_PRESET_CAPABILITIES), ...vtAxisPresetIdsFor(slot, axes)]
 }
 
 /** The axis tiles for a slot, available ones and unavailable ones with their

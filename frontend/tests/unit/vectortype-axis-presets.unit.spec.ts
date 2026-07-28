@@ -44,6 +44,7 @@ import {
   vtAxisOffers,
   vtPresetIdsFor,
   vtSlotPhase,
+  VT_PRESET_CAPABILITIES,
 } from '~/lib/vectortype/presetMotion'
 import { ALL_PRESET_CAPABILITIES, evaluateAnimation, presetIdsFor } from '~/lib/motion/evaluate'
 
@@ -199,7 +200,9 @@ describe('capabilities — derived by probing, exactly as the engine does', () =
     const loopInter = vtPresetIdsFor('loop', INTER)
     const loopFlex = vtPresetIdsFor('loop', ROBOTO_FLEX)
     // engine ids survive untouched, in order, in both
-    const engine = presetIdsFor('loop', ALL_PRESET_CAPABILITIES)
+    // The studio's OWN capability set, which is what `vtPresetIdsFor` gates on
+    // — `ALL_…` would re-admit the copy-based presets it cannot draw.
+    const engine = presetIdsFor('loop', VT_PRESET_CAPABILITIES)
     expect(loopInter.slice(0, engine.length)).toEqual(engine)
     expect(loopInter).toContain('weight-wave')
     expect(loopInter).not.toContain('grade-pulse')             // Inter has no GRAD

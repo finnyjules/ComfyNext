@@ -27,7 +27,6 @@ import { computed, markRaw, onBeforeUnmount, onMounted, ref, shallowRef, watch }
 import { Plus, Trash2, X } from 'lucide-vue-next'
 import type { ControlSpec } from '~/lib/spacetype/effect'
 import type { LayerAnimSpec } from '~/lib/motion/types'
-import { ALL_PRESET_CAPABILITIES } from '~/lib/motion/evaluate'
 import { KINETIC_PRESETS_BY_ID, presetParamDefault } from '~/data/kinetic-presets'
 import { VARIABLE_FONTS } from '~/data/variable-fonts'
 import { VT_PRESET_DURATIONS, VT_PRESET_SLOTS, mergeConfig, type VectorTypeConfig, type VtPresetSlot } from '~/lib/vectortype/config'
@@ -35,6 +34,7 @@ import { VT_CONTROLS, VT_SECTIONS, derivedAxisControls, type VtControl } from '~
 import { VT_GUIDANCE, vtAgentControls } from '~/lib/vectortype/agentControls'
 import { animatableTargets } from '~/lib/vectortype/motion'
 import {
+  VT_PRESET_CAPABILITIES,
   vtAxisOffers,
   vtPresetSpecs,
   vtStaggerBumpFor,
@@ -253,13 +253,12 @@ function slotControl(slotProps: unknown): ControlSpec {
  *
  * Two things here are decisions rather than plumbing:
  *
- * 1. **Vector Type declares EVERY capability the shared engine knows about.**
- *    It draws real outlines through `drawVectorType`, which applies `blur`,
- *    `clip` and `scaleX/scaleY` — so the blur presets the Compositor cannot
- *    render are genuinely offered here. `layerKind: 'text'` is passed for the
- *    opposite reason: the copy-based presets draw extra whole-unit copies, and
- *    `VtGlyphMotion` has no `copies` field, so those four would be tiles that
- *    silently do nothing.
+ * 1. **What this studio can draw is stated ONCE, in the library.**
+ *    `VT_PRESET_CAPABILITIES` is `blur` + `axes` — everything the engine knows
+ *    except `copies`, which `VtGlyphMotion` has no field for. The same constant
+ *    gates the gallery, the assigned-slot thumbnail and `vtKnowsPreset`, so a
+ *    tile can never be offered for a preset the renderer will ignore, and a
+ *    stored config can never claim to be animated by one.
  *
  * 2. **The axis section is rendered by THIS surface, into the picker's `lead`
  *    slot, so it sits above every engine section.** It cannot live in the
@@ -269,7 +268,7 @@ function slotControl(slotProps: unknown): ControlSpec {
  *    text tool already does; re-cutting `XOPQ`/`GRAD`/`YTAS` as design
  *    parameters is the only thing in this gallery that is ours.
  */
-const VT_CAPABILITIES = [...ALL_PRESET_CAPABILITIES]
+const VT_CAPABILITIES = [...VT_PRESET_CAPABILITIES]
 
 const pickerFor = ref<VtPresetSlot | null>(null)
 const pickerAnchor = ref<{ top: number; left: number; width: number } | null>(null)
@@ -982,7 +981,6 @@ const frameCount = computed(() => Math.round((config.value.motion.fps || 30) * (
     :current-id="currentPresetId"
     :anchor-rect="pickerAnchor"
     :capabilities="VT_CAPABILITIES"
-    layer-kind="text"
     @pick="(id: string) => assignPreset(pickerFor!, id)"
     @clear="clearPreset(pickerFor!)"
     @close="pickerFor = null"

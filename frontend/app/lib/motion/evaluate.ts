@@ -301,9 +301,9 @@ export function presetNeedsStagger(presetId: unknown): boolean {
 // itself — there is no second list to keep in sync.
 
 /** An optional UnitState field a consumer must implement to render a preset
- *  faithfully. Core fields (dx/dy/scale/rotation/opacity/clip/copies) are
- *  assumed of every consumer and are not capabilities. */
-export type PresetCapability = 'blur' | 'axes'
+ *  faithfully. Core fields (dx/dy/scale/rotation/opacity/clip) are assumed of
+ *  every consumer and are not capabilities. */
+export type PresetCapability = 'blur' | 'axes' | 'copies'
 
 /** The probe set IS the capability list — add a row and it flows everywhere. */
 const CAPABILITY_PROBES: ReadonlyArray<{ cap: PresetCapability; emits: (s: UnitState) => boolean }> = [
@@ -311,6 +311,14 @@ const CAPABILITY_PROBES: ReadonlyArray<{ cap: PresetCapability; emits: (s: UnitS
   // a preset whose blur is 0 across its range needs nothing from the consumer.
   { cap: 'blur', emits: s => typeof s.blur === 'number' && s.blur !== 0 },
   { cap: 'axes', emits: s => !!s.axes && Object.keys(s.axes).length > 0 },
+  // `copies` was originally filed under "core, assumed of every consumer", and
+  // that was wrong twice over: per-char text animation cannot draw whole-unit
+  // copies (the picker already hid these four by hand for text layers) and
+  // neither can Vector Type, whose `VtGlyphMotion` has no such field. A private
+  // list in one component is exactly the second source of truth this probe set
+  // exists to avoid, so the requirement is derived here like the others and the
+  // consumers declare.
+  { cap: 'copies', emits: s => Array.isArray(s.copies) && s.copies.length > 0 },
 ]
 
 /** Every capability the engine currently knows about — what a fully-featured

@@ -2,8 +2,8 @@
 /** Presets declare what they need from a CONSUMER; consumers declare what they
  *  support. These tests pin (a) that the declaration is derived from real preset
  *  output rather than hand-maintained, (b) that an undeclared consumer gets the
- *  conservative set, and (c) that gating removes exactly the blur presets and
- *  nothing else. */
+ *  conservative set, and (c) that gating removes exactly the blur and
+ *  copy-based presets and nothing else. */
 import { describe, it, expect } from 'vitest'
 import {
   PRESET_CAPABILITIES, ALL_PRESET_CAPABILITIES, presetIdsFor,
@@ -14,6 +14,9 @@ import { KINETIC_PRESETS_BY_ID } from '~/data/kinetic-presets'
 
 const BLUR_IN_IDS = ['blur-in', 'blur-slide-up']
 const BLUR_OUT_IDS = ['blur-out']
+/** The four presets that express themselves through `UnitState.copies`. Named
+ *  only to assert the DERIVATION reproduces them — no consumer reads this. */
+const COPY_LOOP_IDS = ['inward-echoes', 'grid-scroll-x', 'grid-scroll-y', 'noise-tile']
 const SLOTS = ['in', 'out', 'loop'] as const
 const IDS: Record<typeof SLOTS[number], string[]> = {
   in: SUPPORTED_IN_IDS, out: SUPPORTED_OUT_IDS, loop: SUPPORTED_LOOP_IDS,
@@ -31,14 +34,20 @@ describe('preset capability declaration', () => {
     expect(needBlur).toEqual([...BLUR_IN_IDS, ...BLUR_OUT_IDS].sort())
   })
 
+  it('the copy-based presets — and only they — require `copies`', () => {
+    const needCopies = Object.entries(PRESET_CAPABILITIES)
+      .filter(([, caps]) => caps.includes('copies')).map(([id]) => id).sort()
+    expect(needCopies).toEqual([...COPY_LOOP_IDS].sort())
+  })
+
   it('presets that emit no optional field require nothing', () => {
-    for (const id of ['fade-in', 'slide-up', 'mask-up', 'card-flip-h', 'inward-echoes', 'wave', 'fade-out'])
+    for (const id of ['fade-in', 'slide-up', 'mask-up', 'card-flip-h', 'wave', 'fade-out'])
       expect(PRESET_CAPABILITIES[id], id).toEqual([])
   })
 
   it('no preset emits `axes` yet — the capability exists for Vector Type', () => {
     expect(Object.values(PRESET_CAPABILITIES).some(c => c.includes('axes'))).toBe(false)
-    expect(ALL_PRESET_CAPABILITIES).toEqual(['blur', 'axes'])
+    expect(ALL_PRESET_CAPABILITIES).toEqual(['blur', 'axes', 'copies'])
   })
 })
 
@@ -61,6 +70,7 @@ function emittedCapabilities(slot: typeof SLOTS[number], id: string): PresetCapa
   const record = (u: UnitState) => {
     if (typeof u.blur === 'number' && u.blur !== 0) found.add('blur')
     if (u.axes && Object.keys(u.axes).length > 0) found.add('axes')
+    if (Array.isArray(u.copies) && u.copies.length > 0) found.add('copies')
   }
   for (const params of paramCombos(id)) {
     const spec = { presetId: id, duration: slot === 'loop' ? 1.5 : 1, stagger: 0, params }
@@ -87,9 +97,10 @@ describe('declared capabilities match real engine output', () => {
     })
   }
 
-  it('the sweep is not vacuous — it does observe blur', () => {
+  it('the sweep is not vacuous — it does observe blur and copies', () => {
     expect(emittedCapabilities('in', 'blur-in')).toEqual(['blur'])
     expect(emittedCapabilities('out', 'blur-out')).toEqual(['blur'])
+    expect(emittedCapabilities('loop', 'inward-echoes')).toEqual(['copies'])
   })
 })
 
@@ -107,13 +118,13 @@ describe('presetIdsFor', () => {
     expect(presetIdsFor('out')).not.toContain('blur-out')
   })
 
-  it('drops EXACTLY the three blur presets and nothing else', () => {
+  it('drops EXACTLY the blur and copy-based presets and nothing else', () => {
     const dropped = (slot: typeof SLOTS[number]) =>
       IDS[slot].filter(id => !presetIdsFor(slot).includes(id))
     expect(dropped('in')).toEqual(BLUR_IN_IDS)
     expect(dropped('out')).toEqual(BLUR_OUT_IDS)
-    expect(dropped('loop')).toEqual([])
-    expect([...dropped('in'), ...dropped('out'), ...dropped('loop')]).toHaveLength(3)
+    expect(dropped('loop')).toEqual(COPY_LOOP_IDS)
+    expect([...dropped('in'), ...dropped('out'), ...dropped('loop')]).toHaveLength(7)
   })
 
   it('a fully-capable consumer keeps the whole catalog — order included', () => {
@@ -124,5 +135,9 @@ describe('presetIdsFor', () => {
   it('partial capability gates only what it lacks', () => {
     expect(presetIdsFor('in', ['blur'])).toEqual(SUPPORTED_IN_IDS)
     expect(presetIdsFor('in', ['axes'])).toEqual(presetIdsFor('in'))
+    // The Compositor's own split: a non-text layer paints copies, a text one
+    // does not, and that is now one declaration rather than a private set.
+    expect(presetIdsFor('loop', ['copies'])).toEqual(SUPPORTED_LOOP_IDS)
+    expect(presetIdsFor('loop', [])).toEqual(SUPPORTED_LOOP_IDS.filter(id => !COPY_LOOP_IDS.includes(id)))
   })
 })

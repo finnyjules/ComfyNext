@@ -3,6 +3,7 @@
  *  open the preset gallery, plus timing + per-preset param sliders. Emits the
  *  whole next LayerAnimation (parent persists via setLocal, as before). */
 import type { LayerAnimation, LayerAnimSpec } from '~/lib/motion/types'
+import type { PresetCapability } from '~/lib/motion/evaluate'
 import { KINETIC_PRESETS_BY_ID, presetParamDefault } from '~/data/kinetic-presets'
 import MotionPresetPicker from '~/components/vue-canvas/motion/MotionPresetPicker.vue'
 import PresetThumb from '~/components/vue-canvas/motion/PresetThumb.vue'
@@ -10,6 +11,17 @@ import { X } from 'lucide-vue-next'
 
 const props = defineProps<{ animation: LayerAnimation | undefined; frameDuration: number; layerKind?: string }>()
 const emit = defineEmits<{ update: [anim: LayerAnimation | undefined] }>()
+
+/**
+ * What `paint.ts` can draw for THIS layer, in the engine's vocabulary.
+ *
+ * `copies` (echo trails, tiled marquees) are extra whole-unit draws. The painter
+ * makes them for a whole-layer sample but not for per-char text — so a text
+ * layer declares nothing and the four copy-based presets are withheld, exactly
+ * as the picker's own private list used to do it. Blur is still unwired in
+ * `paint.ts` for every kind, so it is declared by nobody here.
+ */
+const capabilities = computed<PresetCapability[]>(() => (props.layerKind === 'text' ? [] : ['copies']))
 
 const SLOTS = ['in', 'loop', 'out'] as const
 type SlotKind = typeof SLOTS[number]
@@ -110,7 +122,7 @@ const paramValue = (spec: LayerAnimSpec, key: string) => spec.params?.[key] ?? p
 
     <MotionPresetPicker v-if="pickerFor"
       :slot-kind="pickerFor" :current-id="animation?.[pickerFor]?.presetId ?? null" :anchor-rect="pickerAnchor"
-      :layer-kind="layerKind"
+      :capabilities="capabilities"
       @pick="(id: string) => assign(pickerFor!, id)" @clear="clearSlot(pickerFor!)" @close="pickerFor = null" />
   </div>
 </template>

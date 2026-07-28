@@ -12,7 +12,6 @@ const props = defineProps<{
   slotKind: 'in' | 'out' | 'loop'
   currentId: string | null
   anchorRect: { top: number; left: number; width: number } | null
-  layerKind?: string
   /** Optional UnitState fields THIS consumer can actually render. Omitted =
    *  the conservative set (none), so a consumer that forgets to declare is
    *  offered fewer presets rather than presets that silently do nothing. */
@@ -20,19 +19,17 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ pick: [id: string]; clear: []; close: [] }>()
 
-// v1 limitation: copy-based presets (echoes/tiles) draw extra whole-unit
-// copies, which per-char text animation can't express — hidden for text layers.
-const COPY_BASED_IDS = new Set(['inward-echoes', 'grid-scroll-x', 'grid-scroll-y', 'noise-tile'])
-
 // Presets the consumer can't render are HIDDEN, not disabled-with-a-reason:
-// there is no switch the user could flip to enable them (blur is a property of
-// the consuming renderer, not of the layer), so a permanently-dead tile is
-// clutter that invites "how do I turn this on?". It also matches how this
-// picker already treats COPY_BASED_IDS for text layers.
-const ids = computed(() => {
-  const base = presetIdsFor(props.slotKind, props.capabilities)
-  return props.layerKind === 'text' ? base.filter(id => !COPY_BASED_IDS.has(id)) : base
-})
+// there is no switch the user could flip to enable them (blur and whole-unit
+// copies are properties of the consuming renderer, not of the layer), so a
+// permanently-dead tile is clutter that invites "how do I turn this on?".
+//
+// THE ONLY FILTER. This component used to also carry a private `COPY_BASED_IDS`
+// set keyed off a `layerKind` prop — a second answer to "what may this consumer
+// be offered", which agreed with the library's answer only by coincidence.
+// `copies` is now a probed capability like `blur`, so the caller declares it and
+// one derivation serves the gallery, `vtKnowsPreset` and everything after.
+const ids = computed(() => presetIdsFor(props.slotKind, props.capabilities))
 
 /** Group ids by catalog group; uncataloged ids (e.g. 'marquee') land in 'other'. */
 const sections = computed(() => {
