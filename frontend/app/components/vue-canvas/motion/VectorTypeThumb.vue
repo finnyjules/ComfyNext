@@ -34,6 +34,7 @@
  *
  * Task 9 mounts this; it does not mount itself anywhere.
  */
+import type { Paint } from '~/lib/compositor/paint'
 import { registerThumb } from '~/lib/motion/thumbClock'
 import { drawVectorTypeToCanvas } from '~/lib/vectortype/canvas'
 import type { VtPresetSlot } from '~/lib/vectortype/config'
@@ -68,8 +69,9 @@ const props = defineProps<{
    *  and leaves the shared clock alone rather than burning frames on a preset
    *  that emits nothing. */
   disabled?: boolean
-  /** Glyph colour. Defaults to the tile's white-on-dark. */
-  fill?: string
+  /** Glyph paint — the studio's own `config.fill`, which is a `Paint` and not a
+   *  colour. Handed straight to `vtThumbConfig`. Defaults to white-on-dark. */
+  fill?: Paint
 }>()
 
 const W = VT_THUMB_W, H = VT_THUMB_H

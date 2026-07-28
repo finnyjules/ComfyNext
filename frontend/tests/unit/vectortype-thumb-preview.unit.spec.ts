@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url'
 import * as fontkit from 'fontkit'
 import { describe, expect, it } from 'vitest'
 import { normaliseAxes, type VtFont } from '~/lib/vectortype/font'
+import { DEFAULT_FILL } from '~/lib/spacetype/fillTile'
 import { mergeConfig } from '~/lib/vectortype/config'
 import { vectorTypeFrame, vtIsAnimated, vtPlacement } from '~/lib/vectortype/canvas'
 import { vtHasPreset } from '~/lib/vectortype/presetMotion'
@@ -158,7 +159,11 @@ describe('vtThumbConfig — a REAL config, through the one render path', () => {
     })
     expect(cfg.text).toBe('Typogr')
     expect(cfg.axes).toEqual({ wght: 700, opsz: 20 })
-    expect(cfg.fill).toBe('#ff0000')
+    // LIFTED, not stored raw: `config.fill` is a `Paint` as of Task 2, and a
+    // tile assembles its config directly (there is no stored blob to merge), so
+    // it goes through the same `mergeFill` `mergeConfig` uses. The colour the
+    // caller asked for lands on `a`.
+    expect(cfg.fill).toEqual({ ...DEFAULT_FILL, a: '#ff0000' })
     expect(cfg.motion.tracks).toEqual([])
     expect(cfg.strokeWidth).toBe(0)
     expect(cfg.align).toBe('center')

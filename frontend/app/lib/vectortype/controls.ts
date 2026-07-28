@@ -1,4 +1,9 @@
 import type { ControlSpec } from '~/lib/spacetype/effect'
+import { isFill } from '~/lib/compositor/paint'
+// Both CPU-only by contract (see fillTile.ts's header) — no `three`, no DOM at
+// module scope — so they are safe for the Collection control resolver and the
+// node card, same as `shapefx/controls.ts` already assumes.
+import { DEFAULT_FILL, FILL_TYPES, type Fill } from '~/lib/spacetype/fillTile'
 // TYPE-ONLY, and it must stay that way: ./font.ts loads fontkit at module scope,
 // while this module is pulled in by the Collection control resolver and every
 // node card. A value import here would drag a font parser into both.
@@ -6,6 +11,7 @@ import type { VtAxis } from './font'
 import {
   DEFAULT_CONFIG,
   VT_ALIGNS,
+  VT_FILL_ANCHORS,
   VT_FONT_IDS,
   VT_STAGGER_DELAY_MAX,
   VT_STAGGER_ORDERS,
@@ -70,6 +76,38 @@ export const VT_AXES_GROUP = 'Axes'
  *  VT_GUIDANCE says out loud (same trade `fill.b` makes in Shape Studio). */
 const hasStroke = (c: VectorTypeConfig) => c.strokeWidth > 0
 
+/**
+ * The `fill` as a `Fill`, or null.
+ *
+ * `VectorTypeConfig.fill` is a `Paint` — `string | Gradient | Fill`. Every
+ * `fill.*` control below addresses the `Fill` arm's own fields, so all of them
+ * hang off this: on a `Gradient` (multi-stop / radial, which `Fill` cannot
+ * express and `mergeConfig` deliberately preserves) `fill.a` resolves to
+ * nothing, and a control that resolves to nothing is a control that silently
+ * does nothing. `mergeConfig` lifts a bare string, so the string arm is only
+ * reachable from a config that has not been merged yet — which is exactly what
+ * the optional chaining is for, same as `isShuffled` below.
+ */
+const vtFill = (c: VectorTypeConfig): Fill | null => (isFill(c?.fill) ? c.fill : null)
+const fillIsFill = (c: VectorTypeConfig) => !!vtFill(c)
+// Mirrors shapefx/controls.ts:33-35 — the same three questions, asked of the
+// same `Fill`. ONE deliberate difference: `gradient` is in `fillHasAngle` here.
+// `fillTileBox`'s gradient arm reads `fill.angle` (fillTile.ts:306), so Shape
+// Studio's list leaves a knob that DOES change the render unreachable from its
+// own UI. Mirroring that would be mirroring a bug.
+const fillNeedsB = (c: VectorTypeConfig) => {
+  const f = vtFill(c)
+  return !!f && f.type !== 'solid'
+}
+const fillHasAngle = (c: VectorTypeConfig) => {
+  const t = vtFill(c)?.type
+  return t === 'gradient' || t === 'ombre' || t === 'stripes'
+}
+const fillHasDensity = (c: VectorTypeConfig) => {
+  const t = vtFill(c)?.type
+  return t === 'grid' || t === 'checkerboard' || t === 'stripes' || t === 'qr'
+}
+
 /** The shuffle seed only means anything for the shuffled order; shown for any
  *  other it is a knob whose effect the user can never see. Optional-chained
  *  because a control list can be asked for from a config straight out of
@@ -114,7 +152,38 @@ export const VT_CONTROLS: VtControl[] = [
   select('align', 'Align', [...VT_ALIGNS], DEFAULT_CONFIG.align, 'Layout', 'Horizontal anchoring of the glyph run.'),
 
   // --- Paint ----------------------------------------------------------------
-  color('fill', 'Fill', DEFAULT_CONFIG.fill, 'Paint'),
+  // The glyph body is a `Paint`, so the fill is FIVE keys addressing the `Fill`
+  // arm's own fields, `when`-gated by type exactly as Shape Studio's are. The
+  // defaults come from `DEFAULT_FILL`, not from a second hand-written copy:
+  // `DEFAULT_CONFIG.fill` IS `{ ...DEFAULT_FILL }`, and reading the shared
+  // constant is what keeps the picker's idea of "solid white" and the merge's
+  // from drifting.
+  select('fill.type', 'Fill type', [...FILL_TYPES], DEFAULT_FILL.type, 'Paint',
+    'How the glyph bodies are painted: a flat colour, a gradient, or one of the procedural patterns.',
+    // A mode, not a point on a scale — the same reason `fontId` opts out.
+    // (`animatableTargets` only ever offers sliders, so this is documentation
+    // of intent rather than the mechanism; it is declared so the intent
+    // survives a future consumer that reads the flag for other kinds.)
+    { animatable: false }),
+  color('fill.a', 'Fill', DEFAULT_FILL.a, 'Paint', { when: fillIsFill }),
+  // Same trade `stroke` makes below: a second colour that paints nothing on a
+  // solid fill is a control whose effect the user cannot see.
+  color('fill.b', 'Fill 2', DEFAULT_FILL.b, 'Paint', { when: fillNeedsB }),
+  slider('fill.angle', 'Fill angle', 0, 360, 1, 'Paint', DEFAULT_FILL.angle,
+    'Direction of the gradient / ombre fade / stripes, in degrees.',
+    { when: fillHasAngle }),
+  slider('fill.density', 'Fill density', 2, 32, 1, 'Paint', DEFAULT_FILL.density,
+    'How many cells or stripes span the fill.',
+    { when: fillHasDensity }),
+  // NOT `fill.anchor` — `normalizePaint` rebuilds every arm field by declared
+  // field, so an anchor stored inside the paint is dropped on the next load.
+  // See the doc on `VectorTypeConfig.fillAnchor`.
+  select('fillAnchor', 'Fill anchor', [...VT_FILL_ANCHORS], DEFAULT_CONFIG.fillAnchor, 'Paint',
+    'Which box the fill is measured against: each glyph, the whole word, or the frame (so the type moves over a fill that stays put).',
+    // A MODE. Tweening it would jump between sampling spaces rather than
+    // interpolate anything — the same reason Space Type's own anchor is
+    // withheld from motion.
+    { animatable: false }),
   slider('strokeWidth', 'Stroke width', 0, 40, 0.5, 'Paint', DEFAULT_CONFIG.strokeWidth,
     'Outline width in OUTPUT pixels, so it does not shrink with size. 0 = no stroke.'),
   color('stroke', 'Stroke', DEFAULT_CONFIG.stroke, 'Paint', { when: hasStroke }),
@@ -235,6 +304,8 @@ LAYOUT. \`size\` is the em size in output pixels. \`tracking\` is extra letter s
 
 STAGGER MAKES IT KINETIC. \`motion.stagger.delay\` is the gap in seconds between one glyph and the next; at 0 the whole word animates as one, and raising it turns any animated axis into a wave that travels across the word. \`motion.stagger.order\` picks which glyph leads — forward, reverse, center (middle outwards), edges (outermost inwards) or random — and \`motion.stagger.seed\` re-rolls the random one. Reach for these when the user asks for letters to cascade, ripple, or come in one at a time.
 
-PAINT. \`fill\` is the glyph body colour. \`strokeWidth\` is the outline width in output pixels; it is 0 by default and \`stroke\` (the outline colour) is withheld until you raise it — set the width first, then the colour.
+PAINT. The glyph bodies take the product's full fill vocabulary, not just a colour. \`fill.type\` picks it: solid, gradient, ombre (a grainy A→B fade), grid, noise, checkerboard, stripes, qr, or shader. \`fill.a\` is the main colour and \`fill.b\` the second one, which appears for everything except solid. \`fill.angle\` sets the direction of a gradient, ombre or stripes; \`fill.density\` sets how many cells or stripes span grid, checkerboard, stripes and qr. \`fillAnchor\` decides which box the fill is measured against — "glyph" gives every letter its own copy, "word" spans one fill across the whole run so the letters are windows onto it, and "frame" pins the fill to the canvas so moving type slides over it. Reach for "word" when the user asks for a gradient across a word.
+
+\`strokeWidth\` is the outline width in output pixels; it is 0 by default and \`stroke\` (the outline colour) is withheld until you raise it — set the width first, then the colour. The stroke is a flat colour only.
 
 \`text\` is the user's own copy and is not yours to rewrite; change how it LOOKS, not what it says.`

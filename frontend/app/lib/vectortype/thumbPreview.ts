@@ -52,11 +52,13 @@
  * the frame, exactly as the real render does.
  */
 import type { LayerAnimSpec } from '~/lib/motion/types'
+import type { Paint } from '~/lib/compositor/paint'
 import { vectorTypeFrame } from './canvas'
 import {
   DEFAULT_CONFIG,
   DEFAULT_MOTION,
   DEFAULT_STAGGER,
+  mergeFill,
   type VectorTypeConfig,
   type VtPresetSlot,
 } from './config'
@@ -132,8 +134,11 @@ export interface VtThumbSpec {
    *  so a tile that ignored it would advertise motion from a weight the user is
    *  not at. */
   axes?: Record<string, number> | null
-  /** Glyph colour. Defaults to the tile's white-on-dark. */
-  fill?: string
+  /** Glyph paint. A `Paint`, not a colour, because the surface hands its own
+   *  `config.fill` straight in (`VectorTypeSurface.vue:850,1025`) — a tile that
+   *  narrowed it to a string would be the fifth render path this file's header
+   *  refuses. Defaults to the tile's white-on-dark. */
+  fill?: Paint
   /** Em size in tile pixels. Normally left to `vtThumbSize`. */
   size?: number
 }
@@ -167,7 +172,12 @@ export function vtThumbConfig(spec: VtThumbSpec): VectorTypeConfig {
     size: Number.isFinite(spec.size) ? (spec.size as number) : 24,
     tracking: 0,
     align: 'center',
-    fill: spec.fill || '#ffffff',
+    // Through the SAME lift `mergeConfig` uses, not a raw assignment: a tile
+    // config is asserted to be one `mergeConfig` accepts UNCHANGED, and a bare
+    // string here would come back lifted and fail that round-trip. `||` keeps
+    // the old empty-string-means-default behaviour (an object is truthy, so a
+    // real `Paint` passes through it untouched).
+    fill: mergeFill(spec.fill || '#ffffff'),
     strokeWidth: 0,
     motion: {
       ...DEFAULT_MOTION,

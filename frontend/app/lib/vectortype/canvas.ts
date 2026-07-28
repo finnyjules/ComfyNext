@@ -33,6 +33,7 @@
  */
 import type { Transform2D } from '~/lib/vector/svg'
 import { formatNumber } from '~/lib/vector/svg'
+import { paintPrimaryColor } from '~/lib/spacetype/fillTile'
 import type { VectorTypeConfig } from './config'
 import type { VtFont } from './font'
 import type { GlyphOutline, TextOutlines } from './outline'
@@ -335,6 +336,16 @@ export function drawVectorType(
   const paths = outlinesToPath2D(frame.outlines, place)
   const { fill, stroke, strokeWidth } = frame.config
 
+  // ── TEMPORARY BRIDGE — TASK 3 REPLACES THIS LINE ────────────────────────────
+  // `config.fill` is a `Paint` as of Task 2, and `ctx.fillStyle` SILENTLY IGNORES
+  // a non-string assignment: without this the glyphs would keep whatever colour
+  // the context last had (black on a fresh one) with nothing thrown anywhere.
+  // Collapsing to the paint's representative colour is what the Compositor's SVG
+  // writer already does, so a rich fill renders as its primary colour today
+  // rather than wrongly. Task 3 replaces THIS ONE BINDING with `lib/paint/resolve`
+  // and the glyph/word/frame anchors; nothing else in this function changes.
+  const fillColor = paintPrimaryColor(fill, '#ffffff')
+
   // The em in output pixels, from the placement rather than re-read from the
   // config, so the cell box a mask is measured against cannot drift from the
   // geometry it masks.
@@ -406,7 +417,7 @@ export function drawVectorType(
       }
       ctx.translate(-origin.x, -origin.y)
     }
-    ctx.fillStyle = fill
+    ctx.fillStyle = fillColor
     // nonzero, always: glyph counters (the hole in an 'o') depend on it.
     ctx.fill(path, 'nonzero')
     if (strokeWidth > 0) {
@@ -552,7 +563,14 @@ export function vectorTypeSVG(
 
   const svg = outlinesToSVG(frame.outlines, {
     ...place,
-    fill,
+    // ── TEMPORARY BRIDGE — TASKS 4-6 REPLACE THIS LINE ────────────────────────
+    // `VectorShape.fill` is `string | null`; widening it to carry gradient paint
+    // servers, `<pattern>` emitters and the declared raster embed is Tasks 4-6.
+    // Until then the export degrades to the paint's representative colour — the
+    // same collapse the Compositor's writer does — so an exported file is a
+    // simplification of the screen, never a different picture. Task 7 is what
+    // makes that degradation VISIBLE to the user rather than silent.
+    fill: paintPrimaryColor(fill, '#ffffff'),
     // The stroke is an ATTRIBUTE, not outlined into geometry: a designer opening
     // this can restyle or remove it, and the path still describes the letterform
     // rather than the letterform's outer contour.

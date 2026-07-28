@@ -26,10 +26,37 @@
  */
 import type { MotionTrack as GradientMotionTrack } from '~/lib/gradientfx/types'
 import type { LayerAnimSpec } from '~/lib/motion/types'
+import { isFill, isGradient, type Gradient, type Paint } from '~/lib/compositor/paint'
+import { DEFAULT_FILL, normalizePaint, type Fill } from '~/lib/spacetype/fillTile'
 import { DEFAULT_FONT_ID, VARIABLE_FONTS } from '~/data/variable-fonts'
 
 /** Horizontal anchoring of the (single-line, v1) glyph run. */
 export type VtAlign = 'left' | 'center' | 'right'
+
+/**
+ * Which BOX the fill is sampled against — i.e. what "100% along the gradient"
+ * means. Three terms, where Space Type has two (`object | frame`):
+ *
+ *  - `glyph` — each letter carries its own copy of the fill. Where the renderer
+ *              is today (`ctx.fillStyle` inside the per-glyph transform);
+ *              `gradientUnits="objectBoundingBox"` in SVG.
+ *  - `word`  — ONE fill spans the whole run and the letters are windows onto
+ *              it. The middle term type needs and neither Space Type anchor
+ *              expresses; a gradient across a word is the most-wanted
+ *              treatment in the design doc.
+ *  - `frame` — one fill spans the canvas and the type moves over it. Space
+ *              Type's `frame`, and the anchor a moving run reads against.
+ *
+ * NOT ANIMATABLE, and declared so in `controls.ts`. It is a MODE: tweening it
+ * would jump between sampling spaces rather than interpolate anything, exactly
+ * the reason Space Type declares its own anchor `animatable: false`.
+ */
+export type VtFillAnchor = 'glyph' | 'word' | 'frame'
+
+/** The three anchors, in picker order. Single source for the select's options
+ *  and for `mergeConfig`'s whitelist, so the picker cannot offer a value the
+ *  merge would throw away. */
+export const VT_FILL_ANCHORS = ['glyph', 'word', 'frame'] as const
 
 /** Same three curves gradientfx's `trackValue` implements. */
 export type VtEasing = 'linear' | 'pingpong' | 'easeinout'
@@ -137,9 +164,77 @@ export interface VectorTypeConfig {
    *  applied after the font's own shaping. 0 = the font's spacing untouched. */
   tracking: number
   align: VtAlign
-  /** Glyph body colour, `#rrggbb` (validatePatch accepts nothing else). */
-  fill: string
-  /** Outline colour, `#rrggbb`. Only paints when `strokeWidth > 0`. */
+  /**
+   * Glyph body paint — the product's whole fill vocabulary, not a colour.
+   *
+   * A REAL `Paint` (`string | Gradient | Fill`), stored verbatim, NOT a
+   * Vector-Type-shaped near-copy. Shape Studio declared its own `SurfaceFill`
+   * (a `Fill` minus `textColor`) and the function that mapped one back to the
+   * other silently dropped a field and shipped broken — see the doc comment at
+   * `shapefx/config.ts:60-70`. There is no mapping function here to get wrong.
+   *
+   * `mergeConfig` normalises this so the common case is always a `Fill`: a
+   * LEGACY `'#rrggbb'` string (what every node saved before this existed holds)
+   * is LIFTED to `{ type: 'solid', a: <the string>, … }` — see `mergeFill`. A
+   * `Gradient` (multi-stop / radial, which `Fill` cannot express) is the one
+   * arm that survives as itself, because collapsing it would be data loss.
+   *
+   * `textColor` on the `Fill` arm is inert here — it is the type colour for a
+   * Space Type slot row. It is carried because `Fill` is adopted WHOLE; the
+   * alternative is exactly the near-copy this comment opens by refusing.
+   */
+  fill: Paint
+  /**
+   * Which space the fill is sampled in. See `VtFillAnchor`.
+   *
+   * ## A SIBLING of `fill`, not a field inside it — and that is FORCED
+   *
+   * The plan spells this control `fill.anchor`, and it cannot be stored there.
+   * `normalizePaint` (which this schema is required to reuse, because it owns
+   * the depth-1 shader-nesting guard) does not merge — it REBUILDS, field by
+   * declared field, on all three arms:
+   *
+   *  - a bare colour string has nowhere to put an anchor at all;
+   *  - `normalizeGradient` rebuilds a `Gradient` as `{ type, angle?, stops }`;
+   *  - `normalizeFill` rebuilds a `Fill` as `{ type, a, b, textColor, angle,
+   *    density, shader? }`.
+   *
+   * An `anchor` smuggled onto any of them survives in memory and is DROPPED on
+   * the next load — a control that works until you reopen the file, which is
+   * precisely the class of failure trap 5 is about. Space Type has no
+   * counter-example: its only anchor lives on `ShaderSpec` (`fills.ts:54`),
+   * i.e. inside a struct that actually declares the field.
+   *
+   * So the anchor is a top-level key. `VT_CONTROLS` declares it as `fillAnchor`
+   * for the same reason every other key here is the REAL dotted path: a control
+   * key that is one segment off the storage it claims to address writes to a
+   * phantom object (the lesson `derivedAxisControls` records).
+   */
+  fillAnchor: VtFillAnchor
+  /**
+   * Outline colour, `#rrggbb`. Only paints when `strokeWidth > 0`.
+   *
+   * ## Why `stroke` is DELIBERATELY still a colour and not a `Paint`
+   *
+   * A gradient stroke is cheap on canvas and free in SVG, and it was still
+   * declined for v1:
+   *
+   *  - it roughly doubles the fill control surface — five more `when`-gated
+   *    keys plus a shader arm plus a second anchor question (does the stroke
+   *    share `fillAnchor` or own one?), and neither answer is free;
+   *  - it multiplies every downstream task in this plan: two paint servers to
+   *    dedupe in the SVG spine, an export tier that becomes `max(fill, stroke)`
+   *    rather than a property of one value, a second shader field competing for
+   *    the 4-live-field ceiling;
+   *  - the demand is asymmetric. `strokeWidth` is 0 by default, so the stroke
+   *    paints nothing until the user asks for it, and its colour control is
+   *    withheld until then — most users would never see the extra knobs, while
+   *    every user sees the fill.
+   *
+   * It stays cheap to add later precisely because nothing here forecloses it:
+   * widening `stroke` to `Paint` is purely additive, the resolver is per-call,
+   * and `hasStroke` is already the gate the extra controls would hang off.
+   */
   stroke: string
   /** Outline width in OUTPUT pixels (so it does not shrink with `size`). 0 = no stroke. */
   strokeWidth: number
@@ -159,7 +254,14 @@ export const DEFAULT_CONFIG: VectorTypeConfig = {
   size: 120,
   tracking: 0,
   align: 'center',
-  fill: '#ffffff',
+  // The same white the legacy `fill: '#ffffff'` painted, said in the fill
+  // vocabulary — so the default config's PIXELS are unchanged by this task.
+  fill: { ...DEFAULT_FILL },
+  // `glyph` is the identity-preserving default: it is what the renderer already
+  // does, and for a solid fill all three anchors are the same picture. Task 3
+  // lands the three sampling spaces against that known baseline rather than
+  // changing the default in the same commit as the mechanism.
+  fillAnchor: 'glyph',
   stroke: '#000000',
   strokeWidth: 0,
   // Spread is shallow: `stagger` must be copied too, or DEFAULT_CONFIG and
@@ -210,6 +312,93 @@ const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.m
  */
 export function isAxisTag(tag: unknown): boolean {
   return typeof tag === 'string' && /^[\x20-\x7E]{4}$/.test(tag)
+}
+
+/**
+ * Rebuild the glyph paint — and LIFT A LEGACY COLOUR STRING.
+ *
+ * ## Trap 5, and it is the whole reason this function exists
+ *
+ * Every Vector Type node saved before this task holds `fill: '#ffffff'` — a
+ * bare string. `Paint` still ACCEPTS a bare string, so nothing would throw and
+ * nothing would look wrong at first glance; what would break is every dotted
+ * control key (`fill.type`, `fill.a`, …), which would resolve against a string
+ * and silently address nothing. So the string is lifted to a solid `Fill`
+ * HERE, at the one function every read path goes through, rather than defended
+ * against at each renderer.
+ *
+ * Only `a` is seeded from the legacy colour. `b`/`angle`/`density` come from
+ * `DEFAULT_FILL`, which is what a fresh solid fill has always had, and
+ * `textColor` stays at its default because Vector Type never reads it (see the
+ * note on `VectorTypeConfig.fill`).
+ *
+ * ## Why the lift happens BEFORE `normalizePaint`, not inside it
+ *
+ * `normalizePaint`'s first arm passes a string through UNCHANGED, deliberately
+ * — for `ShaderSpec.input` a flat colour IS a valid terminal value. That
+ * contract is not ours to change, so the lift is a pre-step and everything
+ * after it is `normalizePaint` verbatim: no second normaliser, and in
+ * particular no second copy of its DEPTH-1 shader-nesting guard, which is what
+ * stops a shader-inside-a-shader from hanging the renderer.
+ *
+ * `depth: 0` is the top level, so `type: 'shader'` is accepted here and refused
+ * one level down inside the spec's own `input`.
+ *
+ * EXPORTED because `mergeConfig` is not the only place a config is BUILT.
+ * `thumbPreview.ts` assembles one directly from a `VtThumbSpec` (it is not
+ * loading a stored blob, so it has nothing to merge), and a tile whose `fill`
+ * did not go through the same lift would be a config `mergeConfig` rejects —
+ * which is exactly what its own round-trip test pins.
+ */
+export function mergeFill(raw: unknown): Paint {
+  const seed = typeof raw === 'string' ? { ...DEFAULT_FILL, a: raw } : raw
+  return finitePaint(normalizePaint(seed, 0))
+}
+
+/**
+ * Repair non-finite `angle`/`density` on the `Fill` arm.
+ *
+ * NOT a second normaliser, and deliberately not a change to `normalizePaint`:
+ * it runs AFTER it, adds no arms, and enforces nothing about shape. It enforces
+ * the one invariant this schema holds everywhere else and `normalizeFill` does
+ * not — `num()` above rejects `NaN`/`Infinity` on every other numeric field,
+ * because a non-finite number does not fall back at the renderer, it propagates
+ * (`Math.max(1, Math.round(NaN))` is `NaN`, and `fillTileBox`'s cell maths then
+ * produces a blank tile with no error anywhere).
+ *
+ * `normalizeFill` keeps a `NaN` density because Space Type's own consumers have
+ * always tolerated it; changing that is not this task's to make, so the repair
+ * lives here where the stricter contract already is.
+ *
+ * Recursion is bounded by the SAME depth-1 guard: at depth 1 `normalizeFill`
+ * refuses `type: 'shader'` and drops a `shader` field from any non-shader fill,
+ * so a shader's `input` can never itself carry one and this cannot loop.
+ */
+function finitePaint(p: Paint): Paint {
+  if (!isFill(p)) return p
+  const out: Fill = {
+    ...p,
+    angle: Number.isFinite(p.angle) ? p.angle : DEFAULT_FILL.angle,
+    density: Number.isFinite(p.density) ? p.density : DEFAULT_FILL.density,
+  }
+  if (out.shader) out.shader = { ...out.shader, input: finitePaint(out.shader.input) }
+  return out
+}
+
+/** Deep copy of a `Paint` — see `cloneConfig`, which needs one because motion
+ *  writes THROUGH the clone (`fill.angle`/`fill.density` are animatable, and a
+ *  shared `fill` object would write frame 37 back into the config the surface
+ *  is holding and then save it). Tolerant of a config straight out of storage,
+ *  same as its caller: a string clones as itself. */
+function clonePaint(p: Paint): Paint {
+  if (typeof p !== 'object' || p === null) return p
+  if (isGradient(p)) return { ...p, stops: (p as Gradient).stops.map(s => ({ ...s })) } as Gradient
+  const f = p as Fill
+  if (!f.shader) return { ...f }
+  return {
+    ...f,
+    shader: { ...f.shader, params: { ...f.shader.params }, input: clonePaint(f.shader.input) },
+  }
 }
 
 /** Rebuild the axes record: four-char tags mapped to finite numbers, nothing else.
@@ -355,7 +544,8 @@ export function mergeConfig(raw: unknown): VectorTypeConfig {
     size: num(o.size, d.size),
     tracking: num(o.tracking, d.tracking),
     align: oneOf(o.align, VT_ALIGNS, d.align),
-    fill: str(o.fill, d.fill),
+    fill: mergeFill(o.fill),
+    fillAnchor: oneOf(o.fillAnchor, VT_FILL_ANCHORS, d.fillAnchor),
     stroke: str(o.stroke, d.stroke),
     strokeWidth: num(o.strokeWidth, d.strokeWidth),
     motion: mergeMotion(o.motion),
@@ -382,6 +572,12 @@ export function cloneConfig(cfg: VectorTypeConfig): VectorTypeConfig {
   return {
     ...cfg,
     axes: { ...cfg.axes },
+    // `fill` is now a mutable OBJECT, so the shallow spread above would leave
+    // the clone sharing it. `fill.angle`/`fill.density` are animatable sliders,
+    // and `applyMotion` writes THROUGH this clone: without the deep copy, frame
+    // 37's angle lands in the config the surface is holding — and, because
+    // `DEFAULT_CONFIG.fill` is one object, in the module-level default too.
+    fill: clonePaint(cfg.fill),
     motion: {
       ...m,
       stagger: { ...m?.stagger } as VtStaggerConfig,

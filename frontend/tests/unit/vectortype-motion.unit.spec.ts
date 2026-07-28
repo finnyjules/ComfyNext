@@ -192,14 +192,32 @@ describe('applyMotion', () => {
     const c = withTracks([
       track({ path: 'nope.deeper.leaf' }),
       track({ path: 'layers.3.shape.count' }),
-      track({ path: 'fill.r' }), // parent is a string, not a container
+      // Was `fill.r` — `fill` became a `Paint` OBJECT in Task 2, so it is now a
+      // real container and `fill.r` is the sparse-leaf case below, not this one.
+      // `stroke` is still a flat colour string, so it is the string-parent case.
+      track({ path: 'stroke.r' }),
     ])
     const out = applyMotion(c, 2)
     expect(out).toEqual(c)
     expect((out as any).nope).toBeUndefined()
     expect((out as any).layers).toBeUndefined()
-    expect(out.fill).toBe(DEFAULT_CONFIG.fill)
+    expect(out.stroke).toBe(DEFAULT_CONFIG.stroke)
     expect(Object.keys(out).sort()).toEqual(Object.keys(c).sort())
+  })
+
+  it('animating fill.angle leaves the SOURCE fill — and DEFAULT_CONFIG — untouched', () => {
+    // `fill` is a mutable object as of Task 2 and `fill.angle` is an animatable
+    // slider, so `cloneConfig`'s shallow spread would have let `applyMotion`
+    // write frame 37's angle into the config the surface holds. Worse: every
+    // config built from `DEFAULT_CONFIG` shares ONE `fill` object unless the
+    // clone is deep, so the module-level default itself would drift.
+    const before = { ...(DEFAULT_CONFIG.fill as Record<string, unknown>) }
+    const c = withTracks([track({ path: 'fill.angle', from: 0, to: 300 })])
+    const out = applyMotion(c, 2)
+    expect((out.fill as any).angle).toBeCloseTo(150, 6)
+    expect((c.fill as any).angle).toBe(45)
+    expect(out.fill).not.toBe(c.fill)
+    expect(DEFAULT_CONFIG.fill).toEqual(before)
   })
 
   it('still fills a SPARSE leaf whose parent exists', () => {

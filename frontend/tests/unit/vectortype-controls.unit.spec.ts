@@ -16,10 +16,13 @@ import { fileURLToPath } from 'node:url'
 import * as fontkit from 'fontkit'
 import { describe, it, expect } from 'vitest'
 import { makeConfigParams } from '~/lib/agent/configParams'
+import { DEFAULT_FILL, paintPrimaryColor } from '~/lib/spacetype/fillTile'
 import { isValidAxisTag, normaliseAxes, type VtAxis } from '~/lib/vectortype/font'
+import { animatableTargets } from '~/lib/vectortype/motion'
 import {
   DEFAULT_CONFIG,
   VT_ALIGNS,
+  VT_FILL_ANCHORS,
   VT_FONT_IDS,
   cloneConfig,
   isAxisTag,
@@ -348,6 +351,126 @@ describe('mergeConfig is a strict rebuild', () => {
 
     it('survives a tracks value that is not an array', () => {
       expect(mergeConfig({ motion: { tracks: { 0: { path: 'size' } } } }).motion.tracks).toEqual([])
+    })
+  })
+
+  /**
+   * TRAP 5 — the one that can destroy user work.
+   *
+   * Every Vector Type node saved before the fill vocabulary landed holds
+   * `fill: '#ffffff'`, a bare string. `Paint` still ACCEPTS a string, so nothing
+   * throws and nothing looks obviously wrong — what breaks is every dotted
+   * control key (`fill.type`, `fill.a`, …), which resolves against a string and
+   * silently addresses nothing. The lift is what stops that, and these are the
+   * tests that stop the lift from being quietly removed.
+   */
+  describe('a legacy string fill is LIFTED, not lost (trap 5)', () => {
+    it('lifts `#rrggbb` to a solid Fill carrying that colour', () => {
+      const c = mergeConfig({ fill: '#ff8800' })
+      expect(c.fill).toEqual({ ...DEFAULT_FILL, a: '#ff8800' })
+    })
+
+    it('a legacy config still RENDERS its colour, through the one renderer', () => {
+      // The failure mode is a saved node rendering black, and it does not throw.
+      // So this asserts the value the canvas/SVG paint path actually reads —
+      // `paintPrimaryColor`, the bridge `drawVectorType` and `vectorTypeSVG`
+      // both collapse through — rather than just the stored shape.
+      const legacy = { text: 'Saved', fontId: 'inter', size: 120, fill: '#22cc55' }
+      expect(paintPrimaryColor(mergeConfig(legacy).fill, '#000000')).toBe('#22cc55')
+      // …and the deliberately-broken control: WITHOUT the lift the same blob
+      // would have taken this branch, which is indistinguishable from a colour
+      // that happens to be right. The colour must survive the merge, not the
+      // fallback.
+      expect(paintPrimaryColor(undefined, '#000000')).toBe('#000000')
+    })
+
+    it('lifts every colour form a stored config could hold', () => {
+      for (const hex of ['#fff', '#ffffff', '#ffffffcc', 'red', 'rgb(1,2,3)']) {
+        expect((mergeConfig({ fill: hex }).fill as any).a, hex).toBe(hex)
+      }
+    })
+
+    it('every dotted fill control key resolves on a LIFTED legacy config', () => {
+      // The concrete consequence: before the lift these all addressed nothing.
+      const params = paramsFor(mergeConfig({ fill: '#123456' }))
+      for (const key of ['fill.type', 'fill.a', 'fill.b', 'fill.angle', 'fill.density', 'fillAnchor']) {
+        expect(params[key], key).toBeDefined()
+      }
+      expect(params['fill.a']).toBe('#123456')
+    })
+
+    it('is idempotent — a lifted config re-merges to itself', () => {
+      const once = mergeConfig({ fill: '#abcdef' })
+      expect(mergeConfig(once)).toEqual(once)
+    })
+  })
+
+  describe('mergeFill survives hostile paint blobs', () => {
+    it('falls back to the default fill for junk of every shape', () => {
+      for (const junk of [null, undefined, [], 42, true, NaN, { type: 'plaid' }, { stops: [] }]) {
+        expect(mergeConfig({ fill: junk }).fill, String(junk)).toEqual(DEFAULT_FILL)
+      }
+    })
+
+    it('keeps a Gradient as a Gradient — collapsing it would be data loss', () => {
+      // Multi-stop and radial are `Paint`-only; `Fill` cannot express them.
+      const g = { type: 'radial', stops: [{ offset: 0, color: '#000000' }, { offset: 1, color: '#ffffff' }] }
+      expect(mergeConfig({ fill: g }).fill).toEqual(g)
+      const lin = mergeConfig({ fill: { type: 'linear', angle: 90, stops: [{ offset: 0.5, color: '#ff0000' }] } }).fill
+      expect(lin).toEqual({ type: 'linear', angle: 90, stops: [{ offset: 0.5, color: '#ff0000' }] })
+    })
+
+    it('enforces the DEPTH-1 shader guard rather than re-implementing it', () => {
+      // A shader inside a shader hangs the renderer. `mergeFill` reuses
+      // `normalizePaint`, whose own guard collapses the inner one to a gradient
+      // — no second copy of the rule to fall out of sync.
+      const nested = {
+        type: 'shader',
+        a: '#ffffff', b: '#000000', textColor: '#ffffff', angle: 45, density: 8,
+        shader: {
+          effectId: 'fbm_warp', params: {}, anchor: 'object', speed: 1,
+          input: { type: 'shader', a: '#ff0000', b: '#00ff00', textColor: '#ffffff', angle: 0, density: 4, shader: {} },
+        },
+      }
+      const out = mergeConfig({ fill: nested }).fill as any
+      expect(out.type).toBe('shader')
+      expect(out.shader.input.type).toBe('gradient')
+      expect(out.shader.input.shader).toBeUndefined()
+    })
+
+    it('repairs a non-finite angle / density', () => {
+      // Every other numeric field in this schema rejects NaN/Infinity (`num`),
+      // because a non-finite number does not fall back at the renderer — it
+      // propagates through the tile maths and paints nothing.
+      const f = mergeConfig({ fill: { ...DEFAULT_FILL, angle: NaN, density: Infinity } }).fill as any
+      expect(f.angle).toBe(DEFAULT_FILL.angle)
+      expect(f.density).toBe(DEFAULT_FILL.density)
+      // …inside a shader's input too, which is the one place it can nest.
+      const s = mergeConfig({
+        fill: {
+          ...DEFAULT_FILL, type: 'shader',
+          shader: { effectId: 'fbm_warp', params: {}, anchor: 'object', speed: 1, input: { ...DEFAULT_FILL, density: NaN } },
+        },
+      }).fill as any
+      expect(s.shader.input.density).toBe(DEFAULT_FILL.density)
+    })
+  })
+
+  describe('fillAnchor', () => {
+    it('accepts every anchor the schema offers and rejects anything else', () => {
+      for (const a of VT_FILL_ANCHORS) expect(mergeConfig({ fillAnchor: a }).fillAnchor).toBe(a)
+      for (const junk of ['object', '', null, 3, {}]) {
+        expect(mergeConfig({ fillAnchor: junk }).fillAnchor, String(junk)).toBe('glyph')
+      }
+    })
+
+    it('is declared, and declared NOT animatable', () => {
+      const spec = VT_CONTROLS.find((c) => c.key === 'fillAnchor')!
+      expect(spec.kind).toBe('select')
+      expect((spec as any).options).toEqual([...VT_FILL_ANCHORS])
+      expect((spec as any).animatable).toBe(false)
+      // And it is genuinely unreachable from the timeline, not merely labelled.
+      expect(animatableTargets(cfg()).map((t) => t.path)).not.toContain('fillAnchor')
     })
   })
 
