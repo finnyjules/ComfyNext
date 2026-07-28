@@ -42,9 +42,9 @@ import {
   type VtPresetSlot,
 } from '~/lib/vectortype/config'
 import { vtLayerLabels } from '~/lib/vectortype/layerLabel'
-import { VT_CONTROLS, VT_SECTIONS, derivedAxisControls, type VtControl } from '~/lib/vectortype/controls'
-import { VT_GUIDANCE, vtAgentControls } from '~/lib/vectortype/agentControls'
-import { VT_APPEARANCE_REMAP, animatableTargets } from '~/lib/vectortype/motion'
+import { VT_CONTROLS, VT_LAYER_PREFIX, VT_SECTIONS, derivedAxisControls, type VtControl } from '~/lib/vectortype/controls'
+import { VT_GUIDANCE, vtAgentControls, vtBindableControls } from '~/lib/vectortype/agentControls'
+import { VT_APPEARANCE_REMAP, animatableTargets, pruneStackTracks } from '~/lib/vectortype/motion'
 import {
   VT_PRESET_CAPABILITIES,
   vtAxisOffers,
@@ -85,7 +85,7 @@ import { useStudioAgent } from '~/composables/useStudioAgent'
 import { useStudioVarBindings } from '~/composables/useStudioVarBindings'
 import { useStudioVarMenu } from '~/composables/useStudioVarMenu'
 import { makeConfigParams } from '~/lib/agent/configParams'
-import { controlsForStudio } from '~/lib/collection/studioControls'
+import { mapControlSpecToDesc } from '~/lib/collection/studioControls'
 import type { StudioControlDesc } from '~/lib/collection/studioBindables'
 import { registerStudioParamBaker, unregisterStudioParamBaker } from '~/lib/studio/cascade'
 
@@ -238,14 +238,45 @@ const vtAgent = useStudioAgent({
 })
 
 // ── Collection variable bindings + sweeps ───────────────────────────────────
-const studioControls = ref<StudioControlDesc[]>([])
-async function refreshStudioControls() { studioControls.value = await controlsForStudio(currentNode()) }
-onMounted(() => { void refreshStudioControls() })
-// The axis controls only exist once the font has parsed, so the bindable list
-// has to be re-resolved then — otherwise `axes.wght` is unbindable forever.
-watch(fontAxes, () => { void refreshStudioControls() })
+/**
+ * What a Collection column may be bound to, from the LIVE config.
+ *
+ * Deliberately not `controlsForStudio(currentNode())` — that resolver reads the
+ * node's PERSISTED blob, which this surface only writes on close, so adding a
+ * layer left the bindable list describing the stack as it was when the studio
+ * opened. It is still the right answer for the Collection drawer (which is
+ * looking at a node, not at an open editor); here the config is in hand.
+ *
+ * `vtBindableControls` id-addresses the stack (`appearance.Lstroke.width`)
+ * rather than offering the active-layer-relative `layer.*` keys — see its own
+ * doc for why a persisted binding must never mean "whichever layer is selected".
+ * It recomputes as the stack changes, so a deleted layer's keys leave this list
+ * and any binding made against them degrades to ignored.
+ */
+const studioControls = computed<StudioControlDesc[]>(() =>
+  vtBindableControls(config.value, fontAxes.value).map(mapControlSpecToDesc))
 
 const paramsProxy = makeConfigParams(() => config.value, () => activeLayerIndex.value, 'appearance')
+
+/**
+ * The key a BINDING is made against, for a control the panel is showing.
+ *
+ * The panel's `layer.*` controls follow the selection, which is what an
+ * inspector should do and what a persisted binding must not do. So promoting or
+ * binding one names the layer it was promoted FROM: `layer.width` on the active
+ * stroke becomes `appearance.Lstroke.width`, labelled `Stroke · Stroke width`.
+ * Everything else passes through untouched.
+ */
+function bindableControl(c: ControlSpec): ControlSpec {
+  if (!c.key.startsWith(VT_LAYER_PREFIX)) return c
+  const id = activeLayer.value?.id
+  if (!id) return c
+  const key = `appearance.${id}.${c.key.slice(VT_LAYER_PREFIX.length)}`
+  const name = layerNames.value[activeLayerIndex.value]
+  return { ...c, key, label: name ? `${name} · ${c.label}` : c.label } as ControlSpec
+}
+const bindableKey = (key: string): string =>
+  bindableControl({ key } as ControlSpec).key
 
 /**
  * Read a control's live value, falling back to its declared default.
@@ -265,7 +296,12 @@ const controlDefaults = computed(() => {
 function controlValue(key: string): string | number {
   const v = paramsProxy[key]
   if (v === undefined || v === null || (typeof v === 'number' && !Number.isFinite(v))) {
-    return controlDefaults.value.get(key) ?? 0
+    // An id-addressed stack key (`appearance.Lstroke.width`, minted by
+    // `bindableControl`) has no entry of its own — its default is the one
+    // declaration it was expanded from, `layer.width`.
+    const m = /^appearance\.[^.]+\.(.+)$/.exec(key)
+    const declared = m ? `${VT_LAYER_PREFIX}${m[1]}` : key
+    return controlDefaults.value.get(key) ?? controlDefaults.value.get(declared) ?? 0
   }
   return v as string | number
 }
@@ -279,13 +315,23 @@ const { boundColumnFor, boundColumnKeyFor, onEdit, promote, unbind } = useStudio
 // `boundColumnKeyFor` is handed straight through: the sweep writer needs the
 // column's stable KEY, and passing the display label instead is the bug that
 // silently baked N identical frames across five surfaces.
+//
+// Every key crossing this boundary goes through `bindableKey` first: the panel
+// asks about `layer.width`, the BINDING is stored against the active layer's own
+// `appearance.<id>.width`, and the two must agree or the chip never appears on
+// the control the user just bound.
 const { sweepPopover, applySweep, varMenu, openVarMenu, goToCollection } = useStudioVarMenu({
   nodeId: () => props.nodeId,
   nodes: () => props.nodes ?? [],
   edges: () => props.edges ?? [],
   liveValue: controlValue,
-  boundColumnFor, boundColumnKeyFor, promote, unbind,
+  boundColumnFor: (k: string) => boundColumnFor(bindableKey(k)),
+  boundColumnKeyFor: (k: string) => boundColumnKeyFor(bindableKey(k)),
+  promote,
+  unbind: (k: string, v: string | number) => unbind(bindableKey(k), v),
 })
+/** The panel's own binding chip, same translation as the menu above. */
+const boundFor = (key: string): string | null => boundColumnFor(bindableKey(key))
 
 /**
  * Keys on the `Fill` arm that a SHADER fill does not read.
@@ -399,7 +445,11 @@ function setControl(key: string, value: string | number) {
   paramsProxy[key] = value
   onEdit(key, value)
 }
-function promoteControl(c: ControlSpec) { promote(c, paramsProxy[c.key] as string | number) }
+// Promotes the ACTIVE layer's own key, not the relative one — `bindableControl`.
+function promoteControl(c: ControlSpec) {
+  const b = bindableControl(c)
+  promote(b, controlValue(b.key))
+}
 function controlVisible(c: ControlSpec): boolean {
   const vc = c as VtControl
   if (SHADER_INERT_FILL_KEYS.has(vc.key) && fillTypeIsShader.value) return false
@@ -417,16 +467,22 @@ function slotControl(slotProps: unknown): ControlSpec {
  * `StudioLayerStack` in the `#aside` slot — the same component Gradient and
  * Shader mount, not a fork of it.
  *
- * ## Every mutation goes through `listRemap`
+ * ## Reorder is a NO-OP for motion, and that is by construction
  *
- * Motion tracks address the stack POSITIONALLY (`appearance.2.width`, built by
- * `animatableTargets`), so splicing the array silently re-aims every track at
- * whatever slid into the slot — and nothing throws. `VT_APPEARANCE_REMAP`
- * rewrites the index segment so a track follows its layer; it is the extracted,
- * tested `makeListRemap` both other stacks already use, rather than a fourth
- * copy of it, and it is IMPORTED from `motion.ts` — the module that builds those
- * paths — rather than restated here, so the writer and the rewriter cannot
- * disagree about the shape.
+ * `animatableTargets` addresses the stack by the layer's own stable ID
+ * (`appearance.Lstroke.width`), so splicing the array moves the layer and the
+ * track's path still names it. Nothing to rewrite, nothing to forget at a future
+ * mutation site.
+ *
+ * `VT_APPEARANCE_REMAP` is still called, and it is not vestigial: it matches only
+ * `appearance.<digits>.…`, which is what a track saved before ids — and what
+ * `migrateLegacyAppearance` writes for a legacy `strokeWidth` animation — looks
+ * like. It leaves an id path alone. So both vintages follow their layer.
+ *
+ * REMOVE is the one mutation an id cannot absorb: the layer is gone, so
+ * `pruneStackTracks` drops the tracks that pointed at it rather than leaving a
+ * timeline row that animates nothing. `applyMotion` would ignore them anyway —
+ * that is the guarantee, never a wrong layer — this is the tidy-up.
  */
 function remapLayerTracks(kind: 'move' | 'insert' | 'remove', a: number, b?: number): void {
   const tracks = config.value.motion.tracks
@@ -497,6 +553,8 @@ function removeLayer(i: number) {
   if (config.value.appearance.length <= 1) return
   config.value.appearance.splice(i, 1)
   remapLayerTracks('remove', i)
+  // …and the id-addressed tracks the positional remap does not see.
+  config.value.motion.tracks = pruneStackTracks(config.value)
   activeLayerIndex.value = Math.min(activeLayerIndex.value, config.value.appearance.length - 1)
 }
 function duplicateLayer(i: number) {
@@ -1201,11 +1259,11 @@ const frameCount = computed(() => Math.round((config.value.motion.fps || 30) * (
           :order="DESIGN_SECTIONS"
           :value="controlValue"
           :visible="controlVisible"
-          :bound-for="boundColumnFor"
+          :bound-for="boundFor"
           :go-to-collection="goToCollection"
           @set="setControl"
           @promote="promoteControl"
-          @menu="(e: MouseEvent, c: ControlSpec) => openVarMenu(e, c)"
+          @menu="(e: MouseEvent, c: ControlSpec) => openVarMenu(e, bindableControl(c))"
         >
           <!-- `kind: 'text'` has no default renderer in StudioControlPanel. -->
           <template #control-text="slotProps">
@@ -1376,11 +1434,11 @@ const frameCount = computed(() => Math.round((config.value.motion.fps || 30) * (
           :order="MOTION_SECTIONS"
           :value="controlValue"
           :visible="controlVisible"
-          :bound-for="boundColumnFor"
+          :bound-for="boundFor"
           :go-to-collection="goToCollection"
           @set="setControl"
           @promote="promoteControl"
-          @menu="(e: MouseEvent, c: ControlSpec) => openVarMenu(e, c)"
+          @menu="(e: MouseEvent, c: ControlSpec) => openVarMenu(e, bindableControl(c))"
         >
           <template #section-Motion>
             <p class="text-[10px] leading-snug text-white/30">

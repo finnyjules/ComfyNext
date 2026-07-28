@@ -105,9 +105,15 @@ async function shapeControls(node: any): Promise<StudioControlDesc[]> {
  * once the file has parsed. So this awaits the font — the dynamic import keeps
  * fontkit out of any spec that merely touches this module, and a failed load
  * degrades to the static vocabulary rather than to nothing.
+ *
+ * `vtBindableControls`, NOT `vtAgentControls`: the appearance stack's per-layer
+ * keys are offered here ID-ADDRESSED (`appearance.Lstroke.width`) rather than as
+ * the active-layer-relative `layer.width`, because a binding is persisted and
+ * re-resolved long after the selection that made it has moved. See that
+ * function's own doc for the failure the relative key would cause.
  */
 async function vectorTypeControls(node: any): Promise<StudioControlDesc[]> {
-  const [{ mergeConfig }, { vtAgentControls }] = await Promise.all([
+  const [{ mergeConfig }, { vtBindableControls }] = await Promise.all([
     import('~/lib/vectortype/config'),
     import('~/lib/vectortype/agentControls'),
   ])
@@ -120,7 +126,7 @@ async function vectorTypeControls(node: any): Promise<StudioControlDesc[]> {
     // Offline / unknown family — the static controls are still bindable, and an
     // axis binding that cannot be derived yet is better than an empty menu.
   }
-  return mapAll(vtAgentControls(config, axes))
+  return mapAll(vtBindableControls(config, axes))
 }
 
 /** Resolve the bindable control list for a studio node, keyed off

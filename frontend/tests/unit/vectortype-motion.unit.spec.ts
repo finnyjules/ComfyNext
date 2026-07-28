@@ -94,8 +94,10 @@ describe('animatableTargets — derived from the one declaration', () => {
       ],
     })
     const paths = animatableTargets(two).map(t => t.path)
-    expect(paths).toContain('appearance.0.paint.angle')
-    expect(paths).toContain('appearance.1.width')
+    // …addressed by the layer's own stable ID, not its position. See
+    // `vectortype-stack-addressing.unit.spec.ts` for why that is the point.
+    expect(paths).toContain('appearance.La.paint.angle')
+    expect(paths).toContain('appearance.Lb.width')
     expect(paths.some(p => p.startsWith('layer.'))).toBe(false)
     // Labelled per layer, so a timeline dropdown can tell two of them apart.
     const labels = animatableTargets(two).filter(t => t.path.startsWith('appearance.')).map(t => t.label)

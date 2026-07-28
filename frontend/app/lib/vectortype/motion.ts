@@ -58,7 +58,9 @@ import {
   type VtStaggerOrder,
 } from './config'
 import { VT_CONTROLS, VT_LAYER_PREFIX, derivedAxisControls, visibleVtControls } from './controls'
+import { vtLayerLabels } from './layerLabel'
 import { getByPath, setByPath } from '~/lib/studio/path'
+import { parseIdPath, resolveIdPath, setByIdPath } from '~/lib/studio/idPath'
 import { trackValue } from '~/lib/studio/track'
 import { makeListRemap } from '~/lib/studio/listRemap'
 
@@ -135,6 +137,70 @@ const finite = (v: unknown, d: number): number => (isFinite_(v) ? v : d)
  */
 export const VT_APPEARANCE_REMAP = makeListRemap({ list: 'appearance' })
 
+/** The config key the appearance stack lives at, and the prefix every absolute
+ *  stack path carries. One constant, because three functions below have to agree
+ *  about which paths are member paths and which are ordinary config leaves —
+ *  `axes.wght` is `<something>.<something>` too, and running it through an
+ *  id resolver would refuse it (there is no `axes` ARRAY) and silently stop every
+ *  variable axis animating. */
+export const VT_STACK_LIST = 'appearance'
+export const VT_STACK_PREFIX = `${VT_STACK_LIST}.`
+
+/** True for a path that addresses a member of the appearance stack, by id or by
+ *  index. Everything else is an ordinary dotted config path. */
+export const isStackPath = (path: string): boolean => path.startsWith(VT_STACK_PREFIX)
+
+/**
+ * A layer id minted by `vtLayerId` can never be read as an index (`config.ts`
+ * guarantees the `L` prefix and rejects an all-digit stored id), so a member
+ * segment that is not all digits is an id. Used to build id paths, and to refuse
+ * to build one from a layer whose id would be ambiguous.
+ */
+const usableId = (id: unknown): id is string =>
+  typeof id === 'string' && id !== '' && !id.includes('.') && !/^\d+$/.test(id)
+
+/**
+ * Which LAYER a track is aimed at, as a stable id — `undefined` for a track that
+ * is not aimed at the stack at all, and for one whose layer is gone.
+ *
+ * This is the question every proof in this area actually wants to ask. "The path
+ * string did not change" proves nothing about a positional path (that is the
+ * failure), and "the path string DID change" proves nothing about an id path
+ * (it must not). Both reduce to: does this track still drive the same layer?
+ */
+export function trackLayerId(cfg: VectorTypeConfig, path: string): string | undefined {
+  if (!isStackPath(path)) return undefined
+  const p = parseIdPath(path)
+  if (!p) return undefined
+  const stack = Array.isArray(cfg?.appearance) ? cfg.appearance : []
+  if (!p.positional) return stack.some(l => l?.id === p.key) ? p.key : undefined
+  const id = stack[Number(p.key)]?.id
+  return usableId(id) ? id : undefined
+}
+
+/**
+ * Drop tracks whose stack path no longer resolves to a layer.
+ *
+ * Removing a layer is the one mutation an id path cannot absorb: the layer is
+ * genuinely gone, so the track has nothing to drive. `applyMotion` already
+ * IGNORES it (that is the guarantee — never a wrong layer), but leaving the row
+ * in the timeline shows the user an entry that animates nothing, which is what
+ * the positional `VT_APPEARANCE_REMAP.onRemove` used to prevent by dropping it.
+ * Same outcome, asked of the config rather than of an index.
+ *
+ * Returns the SAME array when nothing is dangling, so a caller can skip the
+ * write (and the deep watcher it would trigger).
+ */
+export function pruneStackTracks(cfg: VectorTypeConfig): VtMotionTrack[] {
+  const tracks = Array.isArray(cfg?.motion?.tracks) ? cfg.motion.tracks : []
+  const kept = tracks.filter((t) => {
+    const path = typeof t?.path === 'string' ? t.path.trim() : ''
+    if (!isStackPath(path)) return true
+    return resolveIdPath(cfg, path) !== undefined
+  })
+  return kept.length === tracks.length ? tracks : kept
+}
+
 /**
  * Every path a track may point at, derived from the SAME declaration the agent,
  * the inspector and Collection sweeps read — `animatable !== false` means
@@ -164,25 +230,38 @@ export function animatableTargets(cfg: VectorTypeConfig, axes: VtAxis[] = []): V
     out.push({ path: c.key, label: c.label, group: c.group, ...sliderRange(c) })
   }
 
-  // ═══ TASK 9 BRIDGE ═══ the relative `layer.` prefix expands to one ABSOLUTE
-  // path per appearance layer, exactly as `gradientfx/motion.ts` expands its own,
-  // with each layer's own `when` predicate applied to it — a stroke width is a
-  // target on a stroke layer and on no other.
+  // The relative `layer.` prefix expands to one ABSOLUTE path per appearance
+  // layer, exactly as `gradientfx/motion.ts` expands its own, with each layer's
+  // own `when` predicate applied to it — a stroke width is a target on a stroke
+  // layer and on no other.
   //
-  // POSITIONAL for now (`appearance.2.width`), because `applyMotion` below
-  // resolves through `getByPath`/`setByPath`, which understand positions only; an
-  // id-addressed path would silently animate nothing until Task 9 routes motion
-  // through `resolveIdPath`. Task 9 also replaces `Layer N` with
-  // `gradientfx/layerLabel.ts`-style names derived from what each layer IS.
+  // ADDRESSED BY ID (`appearance.Lstroke.width`), not by position. A positional
+  // path re-points the moment the stack is spliced: the track keeps animating
+  // slot 2, which is now a different layer, and nothing throws. `listRemap`
+  // exists to patch that up after the fact and every future mutation site has to
+  // remember to call it; an id path makes reorder a NO-OP instead — there is
+  // nothing to remap and nothing to get wrong. `applyMotion` below resolves it
+  // through `setByIdPath`.
+  //
+  // Labels come from `vtLayerLabels`, which names a layer for what it IS and
+  // de-duplicates with ordinals. They must stay UNIQUE: a timeline builds its
+  // dropdown from them, and two identical entries make two different targets
+  // indistinguishable.
   const stack = Array.isArray(cfg?.appearance) ? cfg.appearance : []
+  const names = vtLayerLabels(stack)
   for (const c of VT_CONTROLS) {
     if (!c.key.startsWith(VT_LAYER_PREFIX) || !usable(c)) continue
     const rest = c.key.slice(VT_LAYER_PREFIX.length)
     stack.forEach((l, i) => {
       if (c.when && !c.when(cfg, l)) return
+      // A layer with no usable id can only be addressed by position. That is a
+      // config `mergeConfig` never produces (it mints and de-duplicates ids), so
+      // this is the raw-blob path — a positional target that animates the right
+      // layer today beats no target at all, and it still resolves.
+      const member = usableId(l?.id) ? l.id : String(i)
       out.push({
-        path: `appearance.${i}.${rest}`,
-        label: `Layer ${i + 1} · ${c.label}`,
+        path: `${VT_STACK_PREFIX}${member}.${rest}`,
+        label: `${names[i] ?? `Layer ${i + 1}`} · ${c.label}`,
         group: c.group,
         ...sliderRange(c),
       })
@@ -231,6 +310,21 @@ export function applyMotion(cfg: VectorTypeConfig, t: number): VectorTypeConfig 
     // explicitly rather than relying on the parent guard below, so it stays
     // skipped even if a future config ever grows a real `glyph` field.
     if (path.startsWith(VT_GLYPH_PREFIX)) continue
+    // A STACK path is id-addressed (`appearance.Lstroke.width`), so it must be
+    // resolved to a position before `setByPath` sees it — handed the raw id,
+    // `setByPath` would create a property named `Lstroke` ON THE ARRAY and write
+    // into it. `setByIdPath` resolves, applies the SAME parent guard as the
+    // branch below, and returns false rather than guessing:
+    //
+    //   an unknown id (the layer was deleted) → the track is IGNORED, never
+    //   re-aimed at whichever layer slid into its slot.
+    //
+    // An in-range positional path passes through unchanged, so tracks saved
+    // before ids — and the ones `migrateLegacyAppearance` writes — still animate.
+    if (isStackPath(path)) {
+      setByIdPath(out, path, trackValue(track, t, duration))
+      continue
+    }
     // Guard on the PARENT container, not the leaf: `axes` is SPARSE by design,
     // so `axes.wght` legitimately has no leaf until something writes one. What
     // must not happen is fabricating structure — `setByPath` creates missing

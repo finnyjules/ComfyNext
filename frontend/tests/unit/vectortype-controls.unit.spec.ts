@@ -45,7 +45,7 @@ vi.mock('~/lib/shaderfx/catalog', () => ({
 import { makeConfigParams } from '~/lib/agent/configParams'
 import { DEFAULT_FILL, paintPrimaryColor } from '~/lib/spacetype/fillTile'
 import { isValidAxisTag, normaliseAxes, type VtAxis } from '~/lib/vectortype/font'
-import { animatableTargets, applyMotion } from '~/lib/vectortype/motion'
+import { VT_STACK_PREFIX, animatableTargets, applyMotion } from '~/lib/vectortype/motion'
 import {
   DEFAULT_CONFIG,
   VT_ALIGNS,
@@ -1040,13 +1040,35 @@ describe('VT_GUIDANCE', () => {
    *  paint controls address the ACTIVE layer. Allowed as the one non-key token,
    *  and asserted against the exported constant so it cannot drift. */
   const isLayerPrefix = (t: string) => t === VT_LAYER_PREFIX
+  /**
+   * The id-addressed stack form. The prose may name it as a TEMPLATE only —
+   * `<layerId>` is minted per layer and a concrete `appearance.Lfill.width`
+   * would teach the model an id that exists in one project and not the next.
+   * The leaf must still be a real `layer.*` key, so an invented one is caught.
+   */
+  const isStackKey = (t: string) => {
+    if (!t.startsWith(`${VT_STACK_PREFIX}<layerId>.`)) return false
+    const leaf = t.slice(`${VT_STACK_PREFIX}<layerId>.`.length)
+    return leaf === '<key>' || staticKeys.has(`${VT_LAYER_PREFIX}${leaf}`)
+  }
 
   it('names only keys that exist in the schema', () => {
     expect(quoted.length).toBeGreaterThan(0)
     for (const t of quoted) {
-      expect(staticKeys.has(t) || isAxisKey(t) || isShaderParamKey(t) || isLayerPrefix(t),
+      expect(staticKeys.has(t) || isAxisKey(t) || isShaderParamKey(t) || isLayerPrefix(t) || isStackKey(t),
         `guidance names unknown key \`${t}\``).toBe(true)
     }
+  })
+
+  it('teaches the id-addressed stack form, and only as a template', () => {
+    // The regression this closes: `layer.width` is `when`-gated to stroke layers
+    // and the headless active layer is 0 — a fill on every migrated node — so
+    // "make the outline thicker" reached nothing at all. The prose has to tell
+    // the model the other way in, or the keys `vtStackControls` offers go unused.
+    expect(VT_GUIDANCE).toContain(`\`${VT_STACK_PREFIX}<layerId>.<key>\``)
+    expect(VT_GUIDANCE).toContain(`\`${VT_STACK_PREFIX}<layerId>.width\``)
+    // No concrete id anywhere — the ids are per project.
+    expect(VT_GUIDANCE).not.toMatch(/`appearance\.L[0-9a-z]+\./)
   })
 
   it('names every control the agent can actually reach', () => {

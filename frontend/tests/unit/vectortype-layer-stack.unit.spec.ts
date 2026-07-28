@@ -218,9 +218,10 @@ describe('`layer.opacity` and `layer.blend` are reachable controls, not just fie
   })
 
   it('makes opacity a motion target on every layer, and blend on none', () => {
+    // Addressed by the layer's own ID since Task 9 — `stack()` mints `L0`/`L1`.
     const paths = animatableTargets(stack({ kind: 'fill' }, { kind: 'stroke' })).map(t => t.path)
-    expect(paths).toContain('appearance.0.opacity')
-    expect(paths).toContain('appearance.1.opacity')
+    expect(paths).toContain('appearance.L0.opacity')
+    expect(paths).toContain('appearance.L1.opacity')
     // A blend is a MODE; tweening `multiply` towards `screen` interpolates nothing.
     expect(paths.some(p => p.endsWith('.blend'))).toBe(false)
   })
@@ -244,16 +245,28 @@ describe('stack mutations remap motion tracks — a track follows its layer', ()
     { kind: 'extrude', paint: '#ffee00' },
   )
 
-  it('matches the paths `animatableTargets` really emits — not a guessed shape', () => {
-    // The trap this test exists for: Shader's scheme needs `mid: 'params'` and a
-    // non-empty leaf, and either knob set wrongly here would silently match
-    // nothing and remap nothing.
+  it('does NOT match the paths `animatableTargets` emits — those are id-addressed', () => {
+    // Task 9 moved motion onto stable ids, so the remap is no longer what keeps a
+    // NEW track on its layer; the id is. Asserted in the negative, because a
+    // remap that DID match an id path would rewrite `appearance.Lstroke.width`
+    // into `appearance.<n>.width` and freeze the track to a position — undoing
+    // the whole point. `L`-prefixed ids are what make this impossible to confuse
+    // (`config.ts` rejects an all-digit id for exactly this reason).
     const targets = animatableTargets(three()).filter(t => t.path.startsWith('appearance.'))
     expect(targets.length).toBeGreaterThan(0)
     for (const t of targets) {
-      expect(REMAP.indexOf(t.path), t.path).not.toBeNull()
-      expect(REMAP.indexOf(t.path), t.path).toBe(Number(t.path.split('.')[1]))
+      expect(t.path, t.path).toMatch(/^appearance\.L\d+\./)
+      expect(REMAP.indexOf(t.path), t.path).toBeNull()
     }
+  })
+
+  it('still matches the POSITIONAL shape a legacy track carries', () => {
+    // Not vestigial: `migrateLegacyAppearance` rewrites a saved `strokeWidth`
+    // animation to `appearance.<i>.width`, and a project saved between Task 2 and
+    // Task 9 holds positional stack tracks. Both vintages must follow their layer,
+    // so the remap stays wired at the mutation sites for the older one.
+    expect(REMAP.indexOf('appearance.2.width')).toBe(2)
+    expect(REMAP.withIndex('appearance.2.width', 0)).toBe('appearance.0.width')
   })
 
   /** Which layer id each track addresses, read through the path. */
