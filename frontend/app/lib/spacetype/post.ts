@@ -8,16 +8,29 @@ import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js'
 import { HalftonePass } from 'three/examples/jsm/postprocessing/HalftonePass.js'
 import { DotScreenPass } from 'three/examples/jsm/postprocessing/DotScreenPass.js'
 import { GlitchPass } from 'three/examples/jsm/postprocessing/GlitchPass.js'
+import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js'
 import type { PostSettings } from '~~/shared/spacetype/state'
 
 export type { PostSettings } from '~~/shared/spacetype/state'
 
 /**
  * Shared post-processing for the whole Space Type suite. A Three EffectComposer wraps the engine's
- * render: RenderPass → UnrealBloomPass (glow) → a combined GRADE pass (bokeh blur + chromatic
- * aberration + colour adjust). Because the final pass writes the canvas, post applies to BOTH the
- * live preview and exports (bake just reads the canvas). When everything is off the engine bypasses
- * this entirely (see postEnabled), so there's zero overhead and byte-identical output.
+ * render: RenderPass → GTAO → UnrealBloomPass (glow) → Halftone → DotScreen → Film → Glitch → a
+ * combined GRADE pass (bokeh blur + chromatic aberration + colour adjust) → OutputPass. Because the
+ * final pass writes the canvas, post applies to BOTH the live preview and exports (bake just reads
+ * the canvas). When everything is off the engine bypasses this entirely (see postEnabled), so
+ * there's zero overhead and byte-identical output.
+ *
+ * OutputPass is the chain's permanent terminal pass, always enabled: EffectComposer renders every
+ * intermediate pass into off-screen (non-null) render targets, and three.js only bakes tone mapping
+ * and sRGB output-colour-space conversion into a material's fragment shader when the CURRENT render
+ * target is null (the screen) — see WebGLPrograms.js's `currentRenderTarget === null` gate on both
+ * `toneMapping` and `outputColorSpace`. So RenderPass's scene draw, deep inside the composer, never
+ * applies either even though the engine's renderer has toneMapping configured (Scene3D sets
+ * ACESFilmicToneMapping) — that only fires when `renderer.render()` targets the canvas directly.
+ * OutputPass is what performs that conversion for the composer path, reading `renderer.toneMapping`/
+ * `renderer.outputColorSpace` itself; because upstream passes never applied it, this is exactly one
+ * conversion, matching the direct-render path — not a double tone-map.
  */
 export const DEFAULT_POST: PostSettings = {
   bloom: false, bloomStrength: 0.6, bloomRadius: 0.4, bloomThreshold: 0.8,
@@ -95,6 +108,7 @@ export class PostChain {
   private filmPass: FilmPass
   private glitchPass: GlitchPass
   private gradePass: ShaderPass
+  private outputPass: OutputPass
 
   constructor(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera, width: number, height: number) {
     this.composer = new EffectComposer(renderer)
@@ -141,6 +155,7 @@ export class PostChain {
       vertexShader: GRADE_VERT,
       fragmentShader: GRADE_FRAG,
     })
+    this.outputPass = new OutputPass()
     this.composer.addPass(this.renderPass)
     this.composer.addPass(this.gtaoPass)
     this.composer.addPass(this.bloomPass)
@@ -148,12 +163,15 @@ export class PostChain {
     this.composer.addPass(this.dotScreenPass)
     this.composer.addPass(this.filmPass)
     this.composer.addPass(this.glitchPass)
-    // order matters: RenderPass → GTAO → Bloom → Halftone → DotScreen → Film → [Glitch] → Grade.
-    // Geometry-aware passes (GTAO) go right after the render — it needs the raw depth/normal buffers,
-    // not anything bloom or the other stylised passes have touched; grade must stay LAST — it's the
-    // pass that always ends the chain on screen (see the force-enable quirk in setSettings below).
-    // Future passes (pixelation) insert between bloom and grade, never after it.
     this.composer.addPass(this.gradePass)
+    // order matters: RenderPass → GTAO → Bloom → Halftone → DotScreen → Film → [Glitch] → Grade →
+    // OutputPass. Geometry-aware passes (GTAO) go right after the render — it needs the raw
+    // depth/normal buffers, not anything bloom or the other stylised passes have touched. OutputPass
+    // is the permanent terminal pass (always enabled, never toggled) — it's what converts the
+    // composer's linear-space intermediate result to the renderer's configured tone mapping + output
+    // colour space on the way to the screen (see the class doc above). Grade must stay immediately
+    // before it. Future passes (pixelation) insert between bloom and grade, never after OutputPass.
+    this.composer.addPass(this.outputPass)
   }
 
   setSize(width: number, height: number): void {
@@ -197,14 +215,6 @@ export class PostChain {
     // GlitchPass.goWild is intentionally left at its default (false) — only the on/off toggle
     // is exposed for now, per the task brief.
     this.glitchPass.enabled = p.glitch
-    // The composer needs a pass after GTAO/bloom to end on screen; gradePass is always the last pass
-    // in the chain, so force it on (neutral) when GTAO and/or bloom are active without any grade
-    // effect, so they still composite to the canvas. Without this, EffectComposer.render() marks
-    // whichever pass is *actually* last-enabled as `renderToScreen` (see EffectComposer.js's
-    // `isLastEnabledPass`) — if that ends up being gtaoPass (GTAO on, nothing after it enabled), it
-    // renders straight to the canvas mid-chain instead of into the composer's off-screen buffer,
-    // which the chain's ordering assumes never happens (see the comment at addPass below).
-    if (!grade && (p.bloom || p.gtao)) this.gradePass.enabled = true
   }
 
   /** Point the render pass at the current scene/camera (camera swaps per frame) and render. */
@@ -228,5 +238,6 @@ export class PostChain {
     this.glitchPass.dispose()
     this.gradePass.material.dispose()
     ;(this.gradePass as unknown as { fsQuad?: { dispose?: () => void } }).fsQuad?.dispose?.()
+    this.outputPass.dispose()
   }
 }
