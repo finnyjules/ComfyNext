@@ -88,6 +88,29 @@ Three things worth remembering from it. Putting blur into the *shared* engine ta
 
 Open: `MotionClipInspector`'s timeline path and the mask-through-the-real-SVG-button case were verified at function level only, never through the live button. Gallery cost is unmeasured on a visible window (11 outline tiles ran 12–16 ms/tick headless, which is why outline thumbnails are axis-section-only).
 
+## Canvas — the node capsule (landed 2026-07-27)
+
+Canvas nodes have a collapsed resting state: a 260px capsule (icon, title, one-line
+read-out, run button) that grows into the full card on click. Size now encodes
+importance instead of every node carrying equal weight.
+
+- **Read-out** resolves error > running > declared rule > silence. Studios derive theirs
+  from `ControlSpec.summary` (one opt-in field beside `agent`/`animatable`); Comfy nodes
+  declare widget names in `lib/canvas/capsuleMeta.ts`. Undeclared types show their name
+  and nothing else, so coverage lands incrementally.
+- **Tiers**: always / after-run / never / manual, all 28 vue-flow types classified.
+  **v1 ships `comfy` only** — the tier table and the `{from:'controls'}` path are tested
+  groundwork with no consumer yet, and the manual toggle for studios does not exist.
+- **Transition**: real height animation (0.36s in / 0.22s out, `cubic-bezier(0.32,0,0.12,1)`)
+  plus a card-only fade. Deliberately no width, scale or capsule-opacity change — each
+  contradicted "same object opening". Height is what makes ports and wires travel.
+- **Persistence**: `collapsed` (true only) and `hasRun` via `lib/canvas/persistCapsule.ts`.
+  `runningSince` is deliberately excluded — a saved wall clock reloads as a forever-ticking
+  counter.
+
+Modules: `lib/canvas/{elapsed,capsuleReadout,capsuleMeta,nodeIcon,persistCapsule}.ts`,
+`components/vue-canvas/NodeCapsule.vue`. 5 unit specs + 2 Playwright specs.
+
 ## Agent layer
 
 Loop shape is right (perceive → plan → invertible commands → ghost preview → Keep/Dismiss) plus visual self-review and Direction Loop. **Reach is the gap:** 4 agent surfaces (canvas, compositor, smartLayout, texture) vs ~22 creative surfaces; 3 of 8 studios expose descriptors, plus a 4th (Vector Type) wired but with its agent tuner unverified live. LLM tiers: haiku→patch / sonnet→plan / opus→campaign; Fable for style profiles.
