@@ -26,11 +26,14 @@ export function stashCapsuleIntoProperties(
   properties: Record<string, any> | undefined,
 ): Record<string, any> {
   const stash: CapsuleStash = {}
-  // `collapsed` is tri-state on purpose (see ComfyNode.vue): undefined means
-  // "use the tier default", so only a real boolean is worth recording — writing
-  // `collapsed: false` for an untouched node would freeze it against a later
-  // change to its tier default.
-  if (typeof data?.collapsed === 'boolean') stash.collapsed = data.collapsed
+  // ONLY `true` is recorded. `collapsed` is tri-state (see ComfyNode.vue) and
+  // `false` is not a preference — it is the transient "pinned open" state from
+  // clicking a capsule, which the spec says lasts until you click away.
+  // Persisting it made that pin permanent: the click-away that clears it lives
+  // in component state, so it cannot survive a reload, and a node expanded once
+  // came back expanded forever with nothing able to reset it. Saving only the
+  // deliberate collapse means a reloaded node returns to its tier default.
+  if (data?.collapsed === true) stash.collapsed = true
   if (data?.hasRun === true) stash.hasRun = true
 
   if (Object.keys(stash).length) {
@@ -52,7 +55,11 @@ export function restoreCapsuleFromProperties(
   const stash = properties?.sailor_capsule
   if (!stash || typeof stash !== 'object' || Array.isArray(stash)) return null
   const out: CapsuleStash = {}
-  if (typeof (stash as any).collapsed === 'boolean') out.collapsed = (stash as any).collapsed
+  // Symmetric with the save side: only `true` is honoured. Projects saved
+  // before that rule have `collapsed: false` baked in, and reading it back
+  // would keep those nodes expanded forever even though nothing writes it any
+  // more. Ignoring it here heals them on load rather than on next save.
+  if ((stash as any).collapsed === true) out.collapsed = true
   if ((stash as any).hasRun === true) out.hasRun = true
   return Object.keys(out).length ? out : null
 }

@@ -57,11 +57,12 @@ describe('capsule state survives the save/load conversion', () => {
     expect(roundTrip({ collapsed: true }).collapsed).toBe(true)
   })
 
-  it('round-trips an explicit collapsed: false — the user chose it', () => {
-    // Tri-state: `false` means "the user expanded this one", which must not
-    // decay back to undefined ("use the tier default") on reload.
-    expect(roundTrip({ collapsed: false }).collapsed).toBe(false)
+  it('does NOT persist collapsed: false — expansion is a transient pin, not a choice', () => {
+    // The click-away that clears the pin is component state and cannot survive
+    // a reload, so persisting `false` made an expanded node expanded forever.
+    expect(roundTrip({ collapsed: false }).collapsed).toBeUndefined()
   })
+
 
   it('round-trips hasRun, which decides the after-run tier default', () => {
     expect(roundTrip({ hasRun: true }).hasRun).toBe(true)
@@ -136,5 +137,17 @@ describe('persistCapsule helpers', () => {
     expect(stashCapsuleIntoProperties({ collapsed: true }, undefined)).toEqual({
       sailor_capsule: { collapsed: true },
     })
+  })
+})
+
+describe('legacy stashes', () => {
+  it('ignores a collapsed: false written by an older build', () => {
+    // Projects saved before "only a deliberate collapse persists" carry
+    // collapsed:false. Honouring it would keep those nodes expanded forever,
+    // since nothing writes that value any more and click-away cannot survive a
+    // reload. Ignoring it returns the node to its tier default on load.
+    const restored = restoreCapsuleFromProperties({ sailor_capsule: { collapsed: false, hasRun: true } })
+    expect(restored?.collapsed).toBeUndefined()
+    expect(restored?.hasRun).toBe(true)
   })
 })
