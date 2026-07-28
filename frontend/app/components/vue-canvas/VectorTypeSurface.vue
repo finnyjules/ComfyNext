@@ -53,7 +53,8 @@ import { drawVectorTypeToCanvas, vectorTypeSVG, vtExportName, vtIsAnimated } fro
 // full-resolution renders that already `await` other one-shot work.
 import { prepareSolidExtrudes } from '~/lib/vectortype/extrudeSolid'
 import { DEFAULT_FILL, DEFAULT_SHADER_SPEC, FILL_TYPES, fillIsShader, type ShaderSpec } from '~/lib/spacetype/fillTile'
-import { exportTier, paintIsVector } from '~/lib/paint/toVector'
+import { paintIsVector } from '~/lib/paint/toVector'
+import { vtExportTier, vtRasterNote } from '~/lib/vectortype/exportTier'
 import { isFill } from '~/lib/compositor/paint'
 import { fetchShaderFxCatalog } from '~/lib/shaderfx/catalog'
 import { LIVE_FIELD_CEILING } from '~/lib/shaderfill/descriptor'
@@ -294,7 +295,7 @@ const fillTypeIsShader = computed(() => {
 })
 
 /**
- * What an SVG export will actually do with the chosen fill.
+ * What an SVG export will actually do with the whole APPEARANCE STACK.
  *
  * The studio's claim is that its output is real, editable vector — "no raster,
  * no `<image>`, nothing traced". Six of the nine fill types keep that promise;
@@ -303,25 +304,25 @@ const fillTypeIsShader = computed(() => {
  * picture instead. All nine were shipped knowing that. The deal is that the
  * product SAYS so — before the file is opened in Illustrator, not after.
  *
+ * With a stack that becomes a FOLD: one raster-tier layer makes the whole export
+ * raster, and the note names WHICH layer, because "this file contains a raster"
+ * is not something the owner of a six-layer stack can act on. Extrude layers are
+ * glyph outlines like any other, so an extruded gradient still reports `vector`.
+ *
  * The Compositor's SVG writer (`useVectorSvg.ts`) is the anti-pattern this is
  * correcting: it collapses every rich fill to a flat representative colour and
  * tells the user nothing. Silent degradation is the exact failure mode here.
  *
- * Both values below are DERIVED from `exportTier`, which is itself derived from
+ * Everything below is DERIVED from `exportTier`, which is itself derived from
  * what the emitter returns — no list of kind names is maintained on this side,
  * so a fill that gains (or loses) a vector form changes this copy on the same
  * day, not the day someone remembers.
  */
-const fillExportTier = computed(() => exportTier(baseFill.value ?? '#ffffff'))
-/** The fill type's own name when it exports as a raster, else `null` — which is
- *  also the flag both notes below are rendered on. `isFill` is the guard that
- *  makes naming it safe: a `Gradient` or a bare string has no `type` to say. */
-const rasterFillName = computed(() => {
-  if (fillExportTier.value !== 'raster') return null
-  const f = baseFill.value
-  if (!isFill(f)) return null
-  return f.type.charAt(0).toUpperCase() + f.type.slice(1)
-})
+const stackExportTier = computed(() => vtExportTier(config.value))
+const fillExportTier = computed(() => stackExportTier.value.tier)
+/** One sentence naming the layer(s) that force a raster export, else `null` —
+ *  which is also the flag both notes below are rendered on. */
+const rasterNote = computed(() => vtRasterNote(stackExportTier.value))
 /** The other six, named from the catalog rather than typed out, so the sentence
  *  cannot claim a kind exports as vector after it stops doing so. */
 const vectorFillList = computed(() => {
@@ -331,8 +332,8 @@ const vectorFillList = computed(() => {
   const list = head ? `${head} and ${last}` : String(last ?? '')
   return list.charAt(0).toUpperCase() + list.slice(1)
 })
-const svgExportTitle = computed(() => (rasterFillName.value
-  ? `Real outlines — one editable path per glyph. The ${rasterFillName.value.toLowerCase()} fill inside them is embedded as an image.`
+const svgExportTitle = computed(() => (rasterNote.value
+  ? `Real outlines — one editable path per glyph. ${rasterNote.value}.`
   : 'Real outlines — one editable path per glyph, no raster'))
 
 /** Two-way binding for ShaderFillEditor. `DEFAULT_SHADER_SPEC` is only ever the
@@ -966,9 +967,9 @@ const frameCount = computed(() => Math.round((config.value.motion.fps || 30) * (
       <!-- WHERE THE CONSEQUENCE LANDS. The same fact as the Paint-section note,
            said again at the button that produces the file — a user who set the
            fill an hour ago is not expected to remember. -->
-      <span v-if="rasterFillName" data-testid="vt-export-tier-export-note"
+      <span v-if="rasterNote" data-testid="vt-export-tier-export-note"
             class="min-w-0 max-w-[24rem] text-right text-[10.5px] leading-snug text-amber-100/70">
-        {{ rasterFillName }} fill — the SVG embeds it as an image. The outlines stay editable vector.
+        {{ rasterNote }}. Every other layer, and every outline, stays editable vector.
       </span>
       <!-- Vector first, then raster: this is the only studio in the product whose
            output is editable geometry, and the file it writes is the point. -->
@@ -1056,11 +1057,12 @@ const frameCount = computed(() => Math.round((config.value.motion.fps || 30) * (
                  same voice the axis-unavailable and stagger notes use — this is
                  information, not a scolding, and for plenty of work an embedded
                  picture is exactly the right answer. -->
-            <p v-if="rasterFillName" data-testid="vt-export-tier-note"
+            <p v-if="rasterNote" data-testid="vt-export-tier-note"
                class="rounded border border-amber-300/25 bg-amber-300/[0.06] px-2 py-1.5 text-[10px] leading-snug text-amber-100/70">
-              <span class="text-amber-100">{{ rasterFillName }} fills export as an embedded image, not editable vector.</span>
+              <span class="text-amber-100">{{ rasterNote }}, not editable vector.</span>
               The glyph outlines stay real paths — it is the paint inside them that becomes a picture,
-              written at the export's own resolution. {{ vectorFillList }} export as real vector.
+              written at the export's own resolution. One such layer is enough to make the whole file a
+              mixed document. {{ vectorFillList }} export as real vector.
             </p>
             <template v-if="fillTypeIsShader">
               <ShaderFillEditor v-model="shaderSpec" />
