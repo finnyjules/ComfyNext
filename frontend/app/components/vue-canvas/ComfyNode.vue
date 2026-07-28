@@ -2200,7 +2200,7 @@ watch(previewImages, (urls) => {
    no height to animate to. One rule set covers both directions. */
 .capsule-swap-enter-active,
 .capsule-swap-leave-active {
-  transition-property: height;
+  transition-property: height, opacity;
   transition-timing-function: cubic-bezier(0.32, 0, 0.12, 1);
   /* Compositing a backdrop filter every frame while the element is clipped is
      the expensive part, and the blur is invisible mid-transition anyway. */
@@ -2213,10 +2213,18 @@ watch(previewImages, (urls) => {
   top: 0;
   left: 0;
 }
-/* No scale. Once the capsule and the card share a width, ANY scale reintroduces
-   horizontal movement — 0.97 started the card ~8px narrower than the capsule it
-   replaced, which reads as growing out of something smaller. Height is set
-   inline by the hooks above and carries the whole transition on its own. */
+/* The CARD fades, the capsule does not. Both elements pass through these
+   classes, so the opacity is scoped with :not(.node-capsule) — the capsule
+   carries `comfy-node` too, for the selection outline, so the capsule class is
+   what actually tells them apart. Holding the capsule at full opacity is what
+   keeps the header looking continuous: it is pixel-identical to the card's, so
+   fading it would draw attention to a swap that is otherwise invisible.
+
+   Still no scale. Once the capsule and the card share a width, ANY scale
+   reintroduces horizontal movement — 0.97 started the card ~8px narrower than
+   the capsule it replaced, which reads as growing out of something smaller. */
+.capsule-swap-enter-from:not(.node-capsule),
+.capsule-swap-leave-to:not(.node-capsule) { opacity: 0; }
 
 @media (prefers-reduced-motion: reduce) {
   .capsule-swap-enter-active,
