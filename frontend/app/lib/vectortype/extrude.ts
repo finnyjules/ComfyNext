@@ -34,6 +34,7 @@
  * "Smart Layout render parity" failure this codebase keeps paying for.
  */
 import type { Transform2D, VectorCommand } from '~/lib/vector/svg'
+import { transformCommands } from '~/lib/vector/svg'
 import { VT_EXTRUDE_DEPTH_MAX, type VtAppearanceLayer } from './config'
 
 /**
@@ -198,6 +199,34 @@ export function extrudeCopyTransform(
     y: (Number.isFinite(c?.dy) ? c.dy : 0) + origin.y * (1 - s),
     flipY: false,
   }
+}
+
+/**
+ * One glyph's placed command list → **one command list per copy**, back to
+ * front.
+ *
+ * The geometry half of an extrude, and now the ONLY derivation of it: the SVG
+ * export flatMaps a glyph to exactly this (`GlyphPaint.expand`) and the boolean
+ * union unites exactly this (`solidExtrudeBody`). Before, those two built the
+ * same list from `extrudeCopyTransform` separately — which is the shape of the
+ * drift this studio keeps paying for, one level below where `extrudeCopyTransform`
+ * itself already fixed it.
+ *
+ * The canvas does NOT call it, and cannot: it never materialises a copy's
+ * command list at all, because replaying a `Path2D` under a `ctx.translate` is
+ * far cheaper than transforming a few hundred numbers per copy per frame. What
+ * it shares is the transform, which is the part that could disagree.
+ *
+ * `commands` are the glyph's PLACED coordinates (`placeOutlines`), so the output
+ * is in the same output space and drops straight into a `VectorShape`.
+ */
+export function extrudeCopyCommands(
+  commands: readonly VectorCommand[],
+  copies: readonly VtExtrudeCopy[],
+  origin: { x: number; y: number },
+  advance: number,
+): VectorCommand[][] {
+  return copies.map(c => transformCommands(commands, extrudeCopyTransform(c, origin, advance)))
 }
 
 /**

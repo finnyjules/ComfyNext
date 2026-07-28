@@ -789,8 +789,17 @@ async function exportSvg() {
     // returns null, `resolveShaderFill` degrades gracefully, and the file looks
     // entirely plausible while being the wrong picture.
     await fetchShaderFxCatalog().catch(() => { /* offline — falls back, same as before */ })
+    // SOLID EXTRUDE — the same one-shot union `renderFullResBlob` awaits, and it
+    // matters MORE here: a PNG of eight stacked copies at least looks like the
+    // preview, while an SVG of them is eight overlapping paths a designer has to
+    // select and merge by hand. With the bodies, a solid extrude is ONE `<path>`
+    // per letter. Resolves instantly (an empty map, no paper.js loaded) unless the
+    // stack actually holds a solid extrude.
+    const solid = await prepareSolidExtrudes(f, config.value, previewTime.value, {
+      width: canvasW.value, height: canvasH.value,
+    })
     const { svg, frame } = vectorTypeSVG(f, config.value, previewTime.value, {
-      width: canvasW.value, height: canvasH.value, background: background.value,
+      width: canvasW.value, height: canvasH.value, background: background.value, solid,
     })
     if (!frame.outlines.glyphs.length) throw new Error('nothing to export — the run has no glyphs')
     const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }))

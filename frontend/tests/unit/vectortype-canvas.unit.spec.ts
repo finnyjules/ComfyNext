@@ -21,7 +21,6 @@ import {
   vectorTypeFrame,
   vectorTypeSVG,
   vtExportName,
-  vtFillAnchor,
   vtFramePaintBox,
   vtGlyphPaintBox,
   vtIsAnimated,
@@ -382,9 +381,22 @@ describe('vectorTypeSVG — editable outlines, not a raster embed', () => {
   it('carries the STROKE as attributes, never baked into the geometry', () => {
     const plain = vectorTypeSVG(font, cfg(), 0, BOX)
     const outlined = vectorTypeSVG(font, strokedCfg(6, '#ff0055'), 0, BOX)
-    // Identical `d` — a stroke that had been outlined into geometry would double
-    // the contour count and change every coordinate.
-    expect(paths(outlined.svg).map(dOf)).toEqual(paths(plain.svg).map(dOf))
+    // ── UPDATED BY TASK 6 (multi-layer SVG export) ───────────────────────────
+    // A stroke is a LAYER now, so `strokedCfg`'s two-layer stack emits two
+    // paths per glyph — the fill's and the stroke's — where the collapsed
+    // fill+stroke pair emitted one carrying both attributes. What the test is
+    // actually about is unchanged and is asserted more strictly than before:
+    // every one of those paths has the SAME `d` as the plain export's, because
+    // a stroke that had been outlined into geometry would double the contour
+    // count and change every coordinate.
+    const plainDs = paths(plain.svg).map(dOf)
+    const outlinedDs = paths(outlined.svg).map(dOf)
+    expect(outlinedDs).toHaveLength(plainDs.length * 2)
+    // Layer-major: the whole fill layer, then the whole stroke layer.
+    expect(outlinedDs.slice(0, plainDs.length)).toEqual(plainDs)
+    expect(outlinedDs.slice(plainDs.length)).toEqual(plainDs)
+    // The stroke layer paints no fill — otherwise it would cover the layer below.
+    expect((outlined.svg.match(/fill="none"/g) ?? [])).toHaveLength(plainDs.length)
     expect(outlined.svg).toContain('stroke="#ff0055"')
     expect(outlined.svg).toContain('stroke-width="6"')
     // Matches ctx.lineJoin = 'round'; SVG's default miter spikes at sharp joins.
@@ -554,29 +566,6 @@ describe('the three fill anchors — the sampling boxes', () => {
     const right = vtRunPaintBox(vectorTypeFrame(font, cfg({ align: 'right' }), 0).outlines, place3(cfg({ align: 'right' })), BOX3)
     expect(right.cx).toBeGreaterThan(left.cx)
     expect(right.w).toBeCloseTo(left.w, 4)
-  })
-})
-
-describe('vtFillAnchor — the anchor a config actually renders with', () => {
-  it('passes the three real anchors through', () => {
-    for (const a of ['glyph', 'word', 'frame'] as const) {
-      expect(vtFillAnchor(cfg({ appearance: [vtLayer({ id: 'Lfill', anchor: a })] }))).toBe(a)
-    }
-  })
-
-  it('lands a missing or bogus anchor on `glyph` — the pre-anchor behaviour', () => {
-    // `applyMotion` clones whatever blob it is handed, so this really can be
-    // undefined at the renderer. Defaulting into `word` or `frame` would change
-    // how every legacy node paints.
-    for (const bad of [undefined, null, '', 'object', 'letter', 3, {}]) {
-      // Straight onto the LAYER, un-merged: this is the raw-blob path.
-      expect(vtFillAnchor({ ...DEFAULT_CONFIG, appearance: [{ ...DEFAULT_CONFIG.appearance[0]!, anchor: bad as any }] }))
-        .toBe('glyph')
-    }
-    // …and a pre-stack blob with no `appearance` at all, which is what
-    // `applyMotion` can hand the renderer.
-    expect(vtFillAnchor({ text: 'x', fillAnchor: 'word' } as any)).toBe('word')
-    expect(vtFillAnchor({ text: 'x' } as any)).toBe('glyph')
   })
 })
 

@@ -31,7 +31,7 @@
  * `glyphMotion`). Task 6 chose the collision deliberately so a module using both
  * has to say which it means; this is that module saying it.
  */
-import type { Affine, Transform2D, VectorPaint, VectorRect } from '~/lib/vector/svg'
+import type { Affine, Transform2D, VectorPaint, VectorRect, VectorShape } from '~/lib/vector/svg'
 import { formatNumber, multiplyAffine } from '~/lib/vector/svg'
 import { fillIsShader, paintPrimaryColor } from '~/lib/spacetype/fillTile'
 import { isFill, type Paint } from '~/lib/compositor/paint'
@@ -61,6 +61,7 @@ import {
 import {
   VT_EXTRUDE_FRAME_BUDGET,
   extrudeBudget,
+  extrudeCopyCommands,
   extrudeCopyTransform,
   extrudeOffsets,
   vtSolidKey,
@@ -88,7 +89,8 @@ import {
   glyphCellClipRect,
   glyphTransform as glyphPlacement,
   outlinesToPath2D,
-  outlinesToSVG,
+  outlinesToShapes,
+  shapesToSVG,
 } from './render'
 
 /** One frame's worth of resolved geometry: what to draw and how each glyph moves. */
@@ -466,30 +468,18 @@ export function vtFramePaintBox(opts: VtBoxOptions): VtPaintBox {
 }
 
 /**
- * The anchor the BASE fill layer renders with.
+ * One layer's anchor, with "anything unrecognised means `glyph`" — a layer can
+ * reach here from a raw blob that never went through `mergeAppearance`, because
+ * `applyMotion` clones whatever it is handed (see `cloneConfig`'s doc), so an
+ * absent or bogus value must land on the pre-anchor behaviour rather than
+ * defaulting into one of the two run-level sampling spaces.
  *
- * ═══ THE SVG BRIDGE — Task 6 deletes this ═══
- *
- * The canvas no longer calls it: `drawGlyphRun` asks every layer for its OWN
- * `anchor` (that is the point of the stack — a word-anchored gradient fill under
- * a glyph-anchored stroke). `vectorTypeSVG` still collapses the stack to one
- * fill + one stroke, so it still needs one answer, and Task 6 is what replaces
- * that collapse with K shapes per glyph. Left EXACTLY as it was rather than
- * deleted, so the vector path is untouched by this task.
- *
- * `frame.config` can be a raw blob (`applyMotion` clones whatever it is handed —
- * see `cloneConfig`'s doc), so an absent or bogus value must land on `glyph`, the
- * pre-anchor behaviour, rather than defaulting into one of the two new sampling
- * spaces.
+ * `vtFillAnchor` — the BASE-layer accessor that answered this question for a
+ * renderer that could only draw one fill — is GONE, as its own banner said Task 6
+ * would delete it. Both renderers now ask every layer for its own anchor: that is
+ * the point of the stack, and a word-anchored gradient fill under a
+ * glyph-anchored stroke is two paint spaces the collapsed accessor could not name.
  */
-export function vtFillAnchor(cfg: VectorTypeConfig): VtFillAnchor {
-  const a = vtBaseAppearance(cfg).fillAnchor
-  return a === 'word' || a === 'frame' ? a : 'glyph'
-}
-
-/** Per-layer anchor, with the same "anything unrecognised means `glyph`" rule
- *  `vtFillAnchor` applies to the base layer — a layer can reach here from a raw
- *  blob that never went through `mergeAppearance`. */
 function vtLayerAnchor(layer: VtAppearanceLayer): VtFillAnchor {
   const a = layer.anchor
   return a === 'word' || a === 'frame' ? a : 'glyph'
@@ -537,6 +527,31 @@ const VT_BLEND_OP: Record<BlendKind, GlobalCompositeOperation> = {
   screen: 'screen',
   // Canvas spells additive blending `lighter`, not `add`.
   add: 'lighter',
+  multiply: 'multiply',
+  darken: 'darken',
+  overlay: 'overlay',
+}
+
+/**
+ * The SAME seven blends, in CSS's spelling — what the SVG export writes as
+ * `mix-blend-mode` on a layer's paths.
+ *
+ * `Record<BlendKind, …>` for the identical reason `VT_BLEND_OP` is: a blend kind
+ * added to `lib/studio/blend.ts` with no entry here stops COMPILING rather than
+ * exporting silently as `normal`, which is a wrong picture in a file nobody can
+ * re-render.
+ *
+ * Canvas spells additive blending `lighter`; CSS spells it `plus-lighter`. They
+ * are the same operation. (`plus-lighter` is the one entry with imperfect
+ * renderer support — Chrome and Safari have it, and a renderer that does not
+ * falls back to `normal`, i.e. to the pre-stack export rather than to something
+ * wrong.)
+ */
+const VT_BLEND_CSS: Record<BlendKind, string> = {
+  normal: 'normal',
+  lighten: 'lighten',
+  screen: 'screen',
+  add: 'plus-lighter',
   multiply: 'multiply',
   darken: 'darken',
   overlay: 'overlay',
@@ -617,6 +632,10 @@ interface VtPaintLayer {
   /** 0..1, MULTIPLIED with the glyph's motion opacity — see `paintLayer`. */
   opacity: number
   op: GlobalCompositeOperation
+  /** The same blend in CSS's spelling, for the SVG export's `mix-blend-mode`.
+   *  Resolved HERE, beside the canvas op, so the two cannot be derived from
+   *  different readings of `layer.blend`. */
+  blendCss: string
   runPm: DOMMatrix | null
   runStyle: string | CanvasGradient | CanvasPattern | null
   /**
@@ -719,6 +738,7 @@ function vtPaintLayers(
       width,
       opacity,
       op: VT_BLEND_OP[layer.blend] ?? 'source-over',
+      blendCss: VT_BLEND_CSS[layer.blend] ?? 'normal',
       runPm: null,
       runStyle: null,
       copies: null,
@@ -1588,6 +1608,21 @@ export interface VtSvgOptions extends VtBoxOptions {
    * 512 px field clamp must not reach the export.
    */
   rasterScale?: number
+  /**
+   * Precomputed SOLID extrude bodies — exactly `VtDrawOptions.solid`, and for
+   * exactly the same reason (plan trap 5): the union is `async` and this writer
+   * is not, so the geometry has to arrive already computed.
+   *
+   * With one, a `solid: true` extrude layer emits **ONE `<path>` per glyph**
+   * instead of `depth` overlapping ones — a designer opening the file gets one
+   * selectable block shadow rather than eight stacked letters. Without one it
+   * emits the copies, which is the picture the live preview shows, so omitting
+   * it is a valid export and never an error.
+   *
+   * The export site awaits `prepareSolidExtrudes` (which memoises, so a sequence
+   * bake pays for one frame's unions) and passes the map straight through.
+   */
+  solid?: VtSolidBodies | null
 }
 
 export interface VtSvgResult {
@@ -1622,19 +1657,35 @@ export function vectorTypeSVG(
 ): VtSvgResult {
   const frame = vectorTypeFrame(font, cfg, t)
   const place = vtPlacement(frame, opts)
-  // ═══ TASKS 3/6 BRIDGE ═══ same collapse as `drawVectorType`; Task 6 emits K
-  // shapes per glyph instead (`outlinesToShapes` already returns an array).
-  const svgBase = vtBaseAppearance(frame.config)
-  const fill: Paint = svgBase.fill ?? '#ffffff'
-  const stroke = paintPrimaryColor(svgBase.stroke, '#000000')
-  const strokeWidth = svgBase.strokeWidth
   const precision = opts.precision ?? 3
   const W = Math.max(1, opts.width)
   const H = Math.max(1, opts.height)
-  const stroked = Number.isFinite(strokeWidth) && strokeWidth > 0
   // The em in output pixels, from the PLACEMENT — same line as `drawVectorType`,
   // so the cell box a mask is measured against cannot drift between the two.
   const em = place.scale * (frame.outlines.unitsPerEm || 1000)
+  const glyphs = frame.outlines.glyphs
+  const fps = frame.config.motion?.fps ?? 30
+
+  // ── THE APPEARANCE STACK, BACK TO FRONT ─────────────────────────────────────
+  //
+  // `vtPaintLayers` — the SAME resolution `drawVectorType` draws from, including
+  // the same drops (disabled, zero-opacity, a zero-width stroke, a `depth: 0`
+  // extrude) and the same spent `VT_EXTRUDE_FRAME_BUDGET`. Task 2's
+  // `vtBaseAppearance` collapse is gone from here too: it took the bottom-most
+  // fill plus the bottom-most stroke and exported those, so a three-layer stack
+  // exported as one layer and every extrude exported as nothing at all.
+  //
+  // ## The order is LAYER-MAJOR, and that is not cosmetic
+  //
+  // Shapes are emitted in the order SVG paints them, so this loop nests exactly
+  // as the canvas loop does: a layer covers the WHOLE RUN before the next one
+  // starts. Task 4 measured what glyph-major costs — an extrude has REACH, so
+  // letter 2's block shadow lands on top of letter 1's finished face and 42 % of
+  // the face is eaten at the default angle. A file with the letters bitten out of
+  // it is not a rendering difference; it is the wrong artwork.
+  const { layers } = vtPaintLayers(frame.config, glyphs.length)
+  const motionOf = (i: number): VtGlyphMotion => frame.transforms[i] ?? IDENTITY_GLYPH_MOTION
+  const advanceOf = (glyph: GlyphOutline): number => glyph.advance * place.scale
 
   // ── THE FILL ────────────────────────────────────────────────────────────────
   // Gradients — both the multi-stop `Gradient` and the two-colour `Fill` form —
@@ -1678,81 +1729,134 @@ export function vectorTypeSVG(
   // environment) or the paint is a blob no arm recognises. In a browser all nine
   // fill types now export as a paint server, real `<pattern>` geometry, or a
   // declared raster — none of them as a silently flattened colour.
-  const anchor = vtFillAnchor(frame.config)
-  const runBox = anchor === 'glyph'
-    ? null
-    : anchor === 'frame' ? vtFramePaintBox(opts) : vtRunPaintBox(frame.outlines, place, opts)
-  const runRect = runBox ? paintBoxRect(runBox) : null
-  // Asked for ONCE per export, not once per glyph: `rasteriseForExport` opens a
-  // single field span for all of them. `paintIsVector` answers by KIND (it passes
-  // a unit box), so this is "has no vector form", not "did not get one here".
   //
-  // `isFill` is the other half of the gate and it is not belt-and-braces: only a
-  // `Fill` ever reaches the arm that consumes a raster, and without it an absent
-  // or unrecognised `fill` — which has no vector form either — would be handed to
-  // the resolver, come back as `undefined`, and embed a canvas-default BLACK
-  // rectangle in place of today's white flat fallback.
-  const rasterBoxes: (VtPaintBox | null)[] = !isFill(fill) || paintIsVector(fill)
-    ? []
-    : runBox
-      ? [runBox]
-      // An ink-less glyph (a space) is dropped by the writer, so it gets no box
-      // and costs no encode — its paint box would be the CELL fallback anyway.
-      : frame.outlines.glyphs.map(g => (g.commands.length ? vtGlyphPaintBox(g, place, em) : null))
-  const rasters = rasteriseForExport(fill, rasterBoxes, opts, t, frame.config.motion?.fps ?? 30)
-  const flatFill = paintPrimaryColor(fill, '#ffffff')
-  const svgFill = (glyph: GlyphOutline, i: number): VectorPaint => {
-    if (runRect) {
-      const tr = frame.transforms[i] ?? IDENTITY_GLYPH_MOTION
-      const elementTransform = glyphSvgMatrix(glyphPlacement(glyph, place), glyph.advance * place.scale, tr, precision)
-      return paintToVectorPaint(fill, {
-        units: 'userSpaceOnUse',
-        box: runRect,
-        elementTransform,
-        raster: rasters[0],
+  // ── AND ALL OF IT IS PER LAYER ──────────────────────────────────────────────
+  // The anchor, the paint box, the raster embed and the flat fallback are the
+  // LAYER's, not the config's — a word-anchored gradient fill under a
+  // glyph-anchored stroke is two paint spaces in one document, which is the whole
+  // point of the stack. `rasteriseForExport` opens one field span per layer that
+  // needs one; a layer whose paint has a vector form asks for none.
+  const shapes: VectorShape[] = []
+  for (const L of layers) {
+    const runBox = L.anchor === 'glyph'
+      ? null
+      : L.anchor === 'frame' ? vtFramePaintBox(opts) : vtRunPaintBox(frame.outlines, place, opts)
+    const runRect = runBox ? paintBoxRect(runBox) : null
+    // `paintIsVector` answers by KIND (it passes a unit box), so this is "has no
+    // vector form", not "did not get one here".
+    //
+    // `isFill` is the other half of the gate and it is not belt-and-braces: only
+    // a `Fill` ever reaches the arm that consumes a raster, and without it an
+    // absent or unrecognised paint — which has no vector form either — would be
+    // handed to the resolver, come back as `undefined`, and embed a canvas-default
+    // BLACK rectangle in place of the flat fallback.
+    const rasterBoxes: (VtPaintBox | null)[] = !isFill(L.paint) || paintIsVector(L.paint)
+      ? []
+      : runBox
+        ? [runBox]
+        // An ink-less glyph (a space) is dropped by the writer, so it gets no box
+        // and costs no encode — its paint box would be the CELL fallback anyway.
+        : glyphs.map(g => (g.commands.length ? vtGlyphPaintBox(g, place, em) : null))
+    const rasters = rasteriseForExport(L.paint, rasterBoxes, opts, t, fps)
+    const flatFill = paintPrimaryColor(L.paint, '#ffffff')
+    // An EXTRUDE's shapes are NOT the glyph's outline — they are offset copies of
+    // it, or one fused body — so SVG's own bounding box is the COPY's box rather
+    // than the letter's, and `objectBoundingBox` would give every copy its own
+    // private ramp aligned to itself. The canvas does the opposite: `pm` is built
+    // once per (layer, glyph) from the GLYPH's ink box and every copy samples that
+    // one paint space wherever it has been pushed to (Task 4's decision). So a
+    // glyph-anchored extrude is written `userSpaceOnUse` over the glyph's box,
+    // with NO `gradientTransform` — which resolves in the painted element's user
+    // space and therefore still rides the letter's motion, exactly as `pm` does.
+    const expanded = L.kind === 'extrude'
+    const layerPaint = (glyph: GlyphOutline, i: number): VectorPaint => {
+      if (runRect) {
+        const elementTransform = glyphSvgMatrix(glyphPlacement(glyph, place), advanceOf(glyph), motionOf(i), precision)
+        return paintToVectorPaint(L.paint, {
+          units: 'userSpaceOnUse',
+          box: runRect,
+          elementTransform,
+          raster: rasters[0],
+        }) ?? flatFill
+      }
+      const box = vtGlyphPaintBox(glyph, place, em)
+      return paintToVectorPaint(L.paint, {
+        units: expanded ? 'userSpaceOnUse' : 'objectBoundingBox',
+        aspect: box.w / box.h,
+        box: paintBoxRect(box),
+        raster: rasters[i],
       }) ?? flatFill
     }
-    const box = vtGlyphPaintBox(glyph, place, em)
-    return paintToVectorPaint(fill, {
-      units: 'objectBoundingBox',
-      aspect: box.w / box.h,
-      box: paintBoxRect(box),
-      raster: rasters[i],
-    }) ?? flatFill
+
+    const stroking = L.kind === 'stroke'
+    shapes.push(...outlinesToShapes(frame.outlines, {
+      ...place,
+      // A stroke layer paints NO fill — `null` is the spine's explicit
+      // `fill="none"`, and without it the letter would come out solid black under
+      // its own outline.
+      //
+      // A stroke's paint is flattened to its primary COLOUR, which is a real
+      // limitation and not a choice: `VectorShape.stroke` is `string | null`, so
+      // the spine cannot reference a paint server from a stroke at all. A
+      // gradient-stroked layer therefore exports as its `a` colour. Widening the
+      // spine is a change to a studio-agnostic file with a second consumer coming;
+      // it is named in the task report rather than made in passing.
+      fill: stroking ? null : layerPaint,
+      // The stroke is an ATTRIBUTE, not outlined into geometry: a designer opening
+      // this can restyle or remove it, and the path still describes the letterform
+      // rather than the letterform's outer contour.
+      stroke: stroking ? paintPrimaryColor(L.paint, '#000000') : undefined,
+      strokeWidth: stroking ? L.width : undefined,
+      fillRule: 'nonzero',
+      // The glyph's motion fade TIMES the layer's own opacity — multiplied, never
+      // replaced, for the reason spelled out at `paintLayer`: they mean different
+      // things and both have to survive.
+      opacity: (_g, i) => clamp01(motionOf(i).opacity) * L.opacity,
+      // BLUR. `stdDeviation` is in USER UNITS and the viewBox below is 1:1 with
+      // the rendered size, so it is the same number of output pixels the canvas
+      // blurs by — the canvas multiplies by `pixelRatio` because ITS radius is in
+      // device pixels and ignores the CTM; an SVG has no device-pixel step to
+      // compensate for. No factor of two: see `blurRadiusToStdDeviation`.
+      blur: (_g, i) => blurRadiusToStdDeviation(motionOf(i).blur),
+      // CLIP. Identical rect to the canvas's — literally the same function — and
+      // it lands on a wrapper `<g>` with no transform, so the glyph's own
+      // `transform` slides it THROUGH a stationary window.
+      clip: (glyph, i) => {
+        const tr = motionOf(i)
+        if (!tr.clip || tr.clip.amount <= 0.001) return null
+        return glyphCellClipRect(glyphPlacement(glyph, place), advanceOf(glyph), em, tr.clip)
+      },
+      attrs: (glyph, i) => {
+        // Same two inputs the canvas loop uses for the pivot — the placed origin
+        // and the cell's own advance — so neither renderer can drift into its own
+        // idea of where a glyph turns.
+        const transform = glyphSvgTransform(glyphPlacement(glyph, place), advanceOf(glyph), motionOf(i), precision)
+        const out: Record<string, string | number> = {}
+        if (transform) out.transform = transform
+        // The layer's BLEND, which had nowhere to go while the export was one
+        // fill plus one stroke. `normal` writes nothing.
+        if (L.blendCss !== 'normal') out.style = `mix-blend-mode:${L.blendCss}`
+        return out
+      },
+      // ── K SHAPES PER GLYPH ────────────────────────────────────────────────
+      // The whole of Task 6 in one option. A fill or a stroke layer expands to
+      // nothing and emits the glyph's own single path, byte-identical to the
+      // pre-stack export. An extrude expands to its `depth` offset copies —
+      // through `extrudeCopyCommands`, the same function the boolean union
+      // unites, never a second derivation of the step — or, when a caller has
+      // awaited the union and handed the body in, to exactly ONE path holding the
+      // whole block shadow.
+      expand: expanded
+        ? (commands, glyph, i) => {
+            const body = L.solid && L.id && opts.solid ? opts.solid.get(vtSolidKey(L.id, i)) : null
+            if (body && body.length) return [[...body]]
+            return extrudeCopyCommands(commands, L.copies ?? [], glyphPlacement(glyph, place), advanceOf(glyph))
+          }
+        : undefined,
+    }))
   }
 
-  const svg = outlinesToSVG(frame.outlines, {
-    ...place,
-    fill: svgFill,
-    // The stroke is an ATTRIBUTE, not outlined into geometry: a designer opening
-    // this can restyle or remove it, and the path still describes the letterform
-    // rather than the letterform's outer contour.
-    stroke: stroked ? stroke : undefined,
-    strokeWidth: stroked ? strokeWidth : undefined,
-    fillRule: 'nonzero',
-    opacity: (_g, i) => clamp01((frame.transforms[i] ?? IDENTITY_GLYPH_MOTION).opacity),
-    // BLUR. `stdDeviation` is in USER UNITS and the viewBox below is 1:1 with
-    // the rendered size, so it is the same number of output pixels the canvas
-    // blurs by — the canvas multiplies by `pixelRatio` because ITS radius is in
-    // device pixels and ignores the CTM; an SVG has no device-pixel step to
-    // compensate for. No factor of two: see `blurRadiusToStdDeviation`.
-    blur: (_g, i) => blurRadiusToStdDeviation((frame.transforms[i] ?? IDENTITY_GLYPH_MOTION).blur),
-    // CLIP. Identical rect to the canvas's — literally the same function — and
-    // it lands on a wrapper `<g>` with no transform, so the glyph's own
-    // `transform` slides it THROUGH a stationary window.
-    clip: (glyph, i) => {
-      const tr = frame.transforms[i] ?? IDENTITY_GLYPH_MOTION
-      if (!tr.clip || tr.clip.amount <= 0.001) return null
-      return glyphCellClipRect(glyphPlacement(glyph, place), glyph.advance * place.scale, em, tr.clip)
-    },
-    attrs: (glyph, i) => {
-      const tr = frame.transforms[i] ?? IDENTITY_GLYPH_MOTION
-      // Same two inputs the canvas loop uses for the pivot — the placed origin
-      // and the cell's own advance — so neither renderer can drift into its own
-      // idea of where a glyph turns.
-      const transform = glyphSvgTransform(glyphPlacement(glyph, place), glyph.advance * place.scale, tr, precision)
-      return transform ? { transform } : undefined
-    },
+  const svg = shapesToSVG(shapes, {
     // The document is the OUTPUT BOX, not a crop of the ink — so the SVG frames
     // the composition exactly as the PNG does and the two can be swapped.
     width: W,
@@ -1762,7 +1866,7 @@ export function vectorTypeSVG(
     precision,
     // Matches `ctx.lineJoin = 'round'` in drawVectorType. SVG's default is
     // `miter`, which spikes at the sharp joins letterforms are full of.
-    ...(stroked ? { groupAttrs: { 'stroke-linejoin': 'round' } } : {}),
+    ...(layers.some(L => L.kind === 'stroke') ? { groupAttrs: { 'stroke-linejoin': 'round' } } : {}),
   })
 
   return { svg, frame }

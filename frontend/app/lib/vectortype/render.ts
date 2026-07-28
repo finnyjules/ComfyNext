@@ -261,6 +261,37 @@ export interface GlyphPaint {
   attrs?:
     | Record<string, string | number>
     | ((glyph: GlyphOutline, index: number) => Record<string, string | number> | undefined)
+  /**
+   * One glyph → **K command lists**, in paint order — the seam that lets a
+   * single appearance layer emit more than one `<path>` per letter.
+   *
+   * `outlinesToShapes` already returned an array, so this is a `flatMap` and
+   * nothing downstream changes: the spine writes whatever shapes it is handed.
+   * Vector Type's EXTRUDE layer is the first caller — it returns `depth` offset
+   * copies of the glyph (`extrudeCopyCommands`), or the ONE fused body of a
+   * solid extrude.
+   *
+   * Every list produced for a glyph shares that glyph's resolved paint, opacity,
+   * blur, clip and attributes: they are the same layer's ink on the same letter,
+   * differing only in geometry. That is exactly what the canvas does — `pm` and
+   * the resolved style are computed once per (layer, glyph) and replayed per
+   * copy — and it is why the paint is picked BEFORE the expansion below rather
+   * than per shape.
+   *
+   * Returning `undefined`/`null` means "no expansion": the glyph emits its own
+   * single shape, byte-identical to what it emitted before this option existed.
+   * Returning an EMPTY array means "nothing for this glyph" and emits no shape
+   * at all — a real answer (a budget-shortened extrude, an ink-less space), not
+   * a synonym for the default.
+   *
+   * Structural on purpose: it takes command lists and returns command lists, so
+   * this module stays out of the extrude model's import graph.
+   */
+  expand?: (
+    commands: VectorCommand[],
+    glyph: GlyphOutline,
+    index: number,
+  ) => VectorCommand[][] | null | undefined
 }
 
 function pick<T>(
@@ -271,21 +302,31 @@ function pick<T>(
   return typeof v === 'function' ? (v as (g: GlyphOutline, i: number) => T)(glyph, index) : v
 }
 
-/** Outlines → paintable shapes in output space. The bridge to the spine. */
+/**
+ * Outlines → paintable shapes in output space. The bridge to the spine.
+ *
+ * ONE shape per glyph by default, and K per glyph when `expand` says so — an
+ * appearance layer that draws the same letter several times (an extrude) is a
+ * `flatMap`, not a second render path.
+ */
 export function outlinesToShapes(
   outlines: TextOutlines,
   opts: PlacementOptions & GlyphPaint = {},
 ): VectorShape[] {
   const placed = placeOutlines(outlines, opts)
-  return placed.map((commands, i) => {
+  return placed.flatMap((commands, i) => {
     const glyph = outlines.glyphs[i] as GlyphOutline
     const attrs = pick(opts.attrs, glyph, i)
     const opacity = pick(opts.opacity, glyph, i)
     const blur = pick(opts.blur, glyph, i)
     const clip = pick(opts.clip, glyph, i)
-    return {
-      commands,
-      fill: pick(opts.fill, glyph, i) ?? '#000000',
+    const fill = pick(opts.fill, glyph, i)
+    const style = {
+      // `undefined` means "nobody said", which keeps the historical black
+      // default. `null` is a caller SAYING "no fill" and must survive as the
+      // spine's explicit `fill="none"` — a stroke-only layer is exactly that,
+      // and collapsing it to black would paint the letter solid.
+      fill: fill === undefined ? '#000000' : fill,
       stroke: pick(opts.stroke, glyph, i),
       strokeWidth: opts.strokeWidth,
       fillRule: opts.fillRule ?? 'nonzero',
@@ -297,6 +338,12 @@ export function outlinesToShapes(
       ...(clip ? { clip } : {}),
       ...(attrs && Object.keys(attrs).length ? { attrs } : {}),
     }
+    // The paint above is resolved ONCE for the glyph and shared by every command
+    // list below — see `GlyphPaint.expand`. `undefined`/`null` is "no expansion"
+    // and emits the glyph's own single shape; `[]` emits none.
+    const parts = opts.expand ? opts.expand(commands, glyph, i) : null
+    if (!parts) return [{ ...style, commands }]
+    return parts.map(cmds => ({ ...style, commands: cmds }))
   })
 }
 
