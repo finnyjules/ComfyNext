@@ -264,42 +264,54 @@ const hasHeaderIcon = computed(() =>
 // Ticker for a truncated card title. Measured on hover rather than watched: the
 // title only changes when the node does, and a ResizeObserver per node on a
 // canvas of forty is a cost for something nobody looks at until they hover it.
-// The card unfolds from under a header that does not move. Both ends of the
-// clip have to be plain pixels — `calc(100% - 44px)` parses but does NOT
-// interpolate against `0`, so the clip snapped open and nothing animated.
+// The card GROWS into place. Earlier attempts animated clip-path, which looks
+// similar but is not: clip does not affect layout, so the node occupied its
+// full height from the first frame, the ports jumped to their final positions
+// instantly and the edges snapped. Animating real height is what makes the
+// wires follow, because the ports are positioned off the node's own box.
 //
-// Measured and driven from JS rather than from enter-from/leave-to classes:
-// `before-enter` fires before the element is laid out, so it reports a height
-// of 0 and the travel distance comes out as nothing. `enter` runs after
-// insertion, when the box is real. Clip does not affect layout, so measuring
-// under an active clip is still the true full height.
+// Height is measured and set inline. It cannot be done in CSS (there is no
+// height to animate to) and it cannot be measured in `before-enter`, which
+// fires before layout and reports 0.
+//
+// The measured target can be short of the final height when the card's content
+// (images, canvases) is still settling. That is survivable rather than a bug:
+// `transition-property: height` stays on the element for the whole duration, so
+// the later growth animates on the same curve instead of snapping.
+//
+// Width is NOT animated: the capsule is 228px and the card ~260px, and
+// interpolating between them reflows the card's text on every frame. A 30px
+// step on one frame is invisible; text rewrapping for 400ms is not.
 const CAPSULE_H = 44
-const clipFor = (hidden: number) => `inset(0px 0px ${hidden}px 0px round 12px)`
 
-function unfoldExtent(node: HTMLElement) {
-  return Math.max(0, node.getBoundingClientRect().height - CAPSULE_H)
+function beginGrow(node: HTMLElement, from: number, to: number) {
+  node.style.overflow = 'hidden'
+  node.style.height = `${from}px`
+  void node.offsetHeight // commit the start height before changing it
+  node.style.height = `${to}px`
 }
 
 function onUnfoldEnter(el: Element) {
   const node = el as HTMLElement
-  const hidden = unfoldExtent(node)
-  if (!hidden) return
-  node.style.clipPath = clipFor(hidden)
-  void node.offsetHeight // commit the start value before changing it
-  node.style.clipPath = clipFor(0)
+  // offsetHeight, not getBoundingClientRect: the latter is multiplied by the
+  // canvas viewport's zoom, which would make the target height wrong on any
+  // canvas not at 100%.
+  const full = node.offsetHeight
+  if (full <= CAPSULE_H) return
+  beginGrow(node, CAPSULE_H, full)
 }
 
 function onFoldLeave(el: Element) {
   const node = el as HTMLElement
-  const hidden = unfoldExtent(node)
-  if (!hidden) return
-  node.style.clipPath = clipFor(0)
-  void node.offsetHeight
-  node.style.clipPath = clipFor(hidden)
+  const full = node.offsetHeight
+  if (full <= CAPSULE_H) return
+  beginGrow(node, full, CAPSULE_H)
 }
 
 function clearUnfold(el: Element) {
-  ;(el as HTMLElement).style.clipPath = ''
+  const node = el as HTMLElement
+  node.style.height = ''
+  node.style.overflow = ''
 }
 
 const titleClipEl = ref<HTMLElement | null>(null)
@@ -2171,10 +2183,12 @@ watch(previewImages, (urls) => {
    the card and folds it back up. */
 .capsule-swap-enter-active,
 .capsule-swap-leave-active {
-  transition-property: clip-path;
+  transition-property: height, scale;
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  /* Top-left: the header is the fixed point, so the growth happens downward
+     and away from it rather than around a moving centre. */
   transform-origin: left top;
-  will-change: clip-path;
+  will-change: height, transform;
   /* Compositing a backdrop filter every frame while the element is clipped is
      the expensive part, and the blur is invisible mid-transition anyway. */
   backdrop-filter: none;
@@ -2186,10 +2200,11 @@ watch(previewImages, (urls) => {
   top: 0;
   left: 0;
 }
-/* No enter-from/leave-to clip here on purpose — the start and end values are
-   set inline by the hooks above, because they have to be measured. The `round
-   12px` in those values matches the card's rounded-xl so the travelling edge
-   keeps its corner radius instead of squaring off mid-wipe. */
+/* Height is set inline by the hooks above (it has to be measured). The scale is
+   deliberately tiny — it adds the sense of the card coming forward as it opens
+   without moving the header, which a larger delta would. */
+.capsule-swap-enter-from,
+.capsule-swap-leave-to { scale: 0.97; }
 
 @media (prefers-reduced-motion: reduce) {
   .capsule-swap-enter-active,
