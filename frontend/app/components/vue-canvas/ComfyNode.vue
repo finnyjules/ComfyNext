@@ -2186,7 +2186,7 @@ watch(previewImages, (urls) => {
 .capsule-swap-enter-active,
 .capsule-swap-leave-active {
   transition-property: height, scale;
-  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-timing-function: cubic-bezier(0.32, 0, 0.12, 1);
   /* Top-left: the header is the fixed point, so the growth happens downward
      and away from it rather than around a moving centre. */
   transform-origin: left top;
@@ -2195,9 +2195,9 @@ watch(previewImages, (urls) => {
      the expensive part, and the blur is invisible mid-transition anyway. */
   backdrop-filter: none;
 }
-.capsule-swap-enter-active { transition-duration: 0.42s; }
+.capsule-swap-enter-active { transition-duration: 0.36s; }
 .capsule-swap-leave-active {
-  transition-duration: 0.26s;
+  transition-duration: 0.22s;
   position: absolute;
   top: 0;
   left: 0;
