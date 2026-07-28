@@ -441,7 +441,9 @@ const matReliefSource = computed<'none' | 'shader' | 'image'>({
     // Deliberately NOT clearing `spec` when switching to 'none'/'image': keeping it lets a
     // user bounce between sources without losing their configured effect, which reads as
     // kinder than punishing an exploratory toggle.
-    if (v === 'shader' && !relief.spec) relief.spec = normalizeShaderSpec(undefined, 0)
+    // Seed voronoi_cells instead of fbm_warp: bump responds to local gradient, not range.
+    // fbm_warp gradient ≈5.4 (invisible), voronoi_cells ≈36.8 (reads as material surface).
+    if (v === 'shader' && !relief.spec) relief.spec = normalizeShaderSpec({ effectId: 'voronoi_cells' }, 0)
     mat.relief = relief
   },
 })
