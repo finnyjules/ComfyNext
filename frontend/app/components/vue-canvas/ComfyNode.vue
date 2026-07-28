@@ -2131,10 +2131,13 @@ watch(previewImages, (urls) => {
 .capsule-swap-enter-active,
 .capsule-swap-leave-active {
   transition-property: opacity, scale;
-  /* Long tail rather than a hard ease-out: most of the movement happens early
-     and the last of it settles, which is what stops the size change reading as
-     a snap. */
-  transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  /* Distribution matters more than duration here. easeOutQuint
+     (0.22, 1, 0.36, 1) put HALF the visible change in the first 100ms and spent
+     the rest crawling from 0.96 to 1.0 — invisible — so raising the duration
+     from 0.34 to 0.6s changed nothing you could perceive. This curve spreads
+     the motion across the whole timeline, which is what makes the duration a
+     real knob instead of a number in a stylesheet. */
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
   transform-origin: left center;
   will-change: transform, opacity;
   /* The card carries backdrop-blur. Compositing a backdrop filter every frame
