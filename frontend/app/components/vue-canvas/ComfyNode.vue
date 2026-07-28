@@ -279,9 +279,10 @@ const hasHeaderIcon = computed(() =>
 // `transition-property: height` stays on the element for the whole duration, so
 // the later growth animates on the same curve instead of snapping.
 //
-// Width is NOT animated: the capsule is 228px and the card ~260px, and
-// interpolating between them reflows the card's text on every frame. A 30px
-// step on one frame is invisible; text rewrapping for 400ms is not.
+// Width is not animated because there is nothing to animate: the capsule is
+// given the same width as the card it stands in for, so expanding changes
+// height only. That is also why the header can stay put — nothing moves
+// horizontally at any point in the transition.
 const CAPSULE_H = 44
 
 function beginGrow(node: HTMLElement, from: number, to: number) {
@@ -1488,6 +1489,7 @@ watch(previewImages, (urls) => {
     :state="capsuleState"
     :border-left="borderColorLeft"
     :border-right="borderColorRight"
+    :width="isRecessiveNode ? 208 : 260"
     @action="onCapsuleAction"
     @expand="onExpandCapsule"
   />

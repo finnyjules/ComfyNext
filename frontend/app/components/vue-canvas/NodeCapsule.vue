@@ -13,6 +13,12 @@ const props = defineProps<{
   borderLeft: string
   /** Output type colour — right end of the running sweep gradient. */
   borderRight: string
+  /**
+   * Match the card this capsule stands in for — 260px normally, 208px for a
+   * recessive node. Equal widths mean expanding changes height only, so there
+   * is no horizontal movement to animate or to jump.
+   */
+  width?: number
 }>()
 
 const emit = defineEmits<{ action: [CapsuleAction]; expand: [] }>()
@@ -46,7 +52,7 @@ function onKeydown(e: KeyboardEvent) {
       'node-capsule--running': state === 'running',
       'node-capsule--failed': state === 'failed',
     }"
-    :style="{ '--border-left': borderLeft, '--border-right': borderRight }"
+    :style="{ '--border-left': borderLeft, '--border-right': borderRight, '--capsule-w': `${width ?? 260}px` }"
     role="button"
     tabindex="0"
     :aria-label="`Open ${title}`"
@@ -88,7 +94,7 @@ function onKeydown(e: KeyboardEvent) {
   position: relative;
   display: flex;
   align-items: center;
-  width: 228px;
+  width: var(--capsule-w, 260px);
   gap: 9px;
   padding: 6px 7px;
   border: 1px solid rgba(255, 255, 255, 0.13);

@@ -41,14 +41,14 @@ The capsule does not depend on any of them and they do not depend on it.
 
 ```
 ┌──────────────────────────────────────────┐
-│  [icon]   Flux Dev                  [▶]  │   ~40px tall
-│           28 steps · guidance 3.5        │   ~228px wide
+│  [icon]   Flux Dev                  [▶]  │   ~44px tall
+│           28 steps · guidance 3.5        │   260px — the card's width
 └──────────────────────────────────────────┘
 ```
 
 | Part | Spec |
 |---|---|
-| Shell | `border-radius: 13px` (concentric: 7px inner + 6px padding), `background: #1f1f1f`, `border: 1px solid rgba(255,255,255,.13)`, `box-shadow: 0 3px 12px rgba(0,0,0,.4)`, padding `6px 7px`, gap `9px` |
+| Shell | 260px wide &mdash; the same as the card it stands in for (208px recessive), so expanding changes height only. `border-radius: 13px` (concentric: 7px inner + 6px padding), `background: #1f1f1f`, `border: 1px solid rgba(255,255,255,.13)`, `box-shadow: 0 3px 12px rgba(0,0,0,.4)`, padding `6px 7px`, gap `9px` |
 | Icon tile | 26px, `border-radius: 7px`, `background: rgba(255,255,255,.07)`, glyph `rgba(255,255,255,.72)` at 15px. **Neutral — no type tint.** |
 | Name | 12.5px / `rgba(255,255,255,.88)`, single line, truncates |
 | Read-out | 10.5px / `rgba(255,255,255,.4)`, `font-variant-numeric: tabular-nums`, single line, ellipsis |
