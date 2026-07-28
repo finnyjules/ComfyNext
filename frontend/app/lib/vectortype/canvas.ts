@@ -52,12 +52,21 @@ import {
   type VtFillAnchor,
   type VtLegacyPaint,
 } from './config'
+// The PURE half of extrude only. `./extrudeSolid.ts` — the paper.js boolean
+// union — is deliberately NOT imported here and must never be: the union is far
+// too slow for a draw loop (plan trap 5), and the import edge runs the other way
+// so that adding a call from this file would have to create a cycle. What this
+// module knows about `solid` is a `ReadonlyMap` of already-computed geometry a
+// bake or an export awaited and handed in.
 import {
   VT_EXTRUDE_FRAME_BUDGET,
   extrudeBudget,
+  extrudeCopyTransform,
   extrudeOffsets,
+  vtSolidKey,
   type VtExtrudeCopy,
   type VtExtrudeSpec,
+  type VtSolidBodies,
 } from './extrude'
 import type { VtFont } from './font'
 import type { GlyphOutline, TextOutlines } from './outline'
@@ -75,6 +84,7 @@ import {
 import {
   CELL_DESCENT,
   blurRadiusToStdDeviation,
+  commandsToPath2D,
   glyphCellClipRect,
   glyphTransform as glyphPlacement,
   outlinesToPath2D,
@@ -590,6 +600,11 @@ function vtFieldRequests(
  * once for the run rather than once per letter.
  */
 interface VtPaintLayer {
+  /** The layer's STABLE id — how a precomputed solid body is addressed
+   *  (`vtSolidKey`). Never its position in the stack: a map keyed by index would
+   *  hand a reordered layer somebody else's body, and the picture would still be
+   *  a solid extrude (trap 2). */
+  id: string
   kind: 'fill' | 'stroke' | 'extrude'
   paint: Paint
   /** The plain CSS colour this paint resolves to, or `null` when it needs the
@@ -616,6 +631,16 @@ interface VtPaintLayer {
    * by `vtPaintLayers` before it gets here, so this is never `[]`.
    */
   copies: VtExtrudeCopy[] | null
+  /**
+   * The user asked for the copies to be FUSED into one body (`solid: true`).
+   *
+   * A request, not a capability: this flag alone changes nothing. The union is
+   * async and lives in `./extrudeSolid.ts`; a frame only draws a body if a bake
+   * or an export awaited one and passed it in as `opts.solid`. A live preview of
+   * a `solid: true` extrude therefore draws the un-unioned stack, by design
+   * (plan trap 5) — the two differ only where translucent copies overlap.
+   */
+  solid: boolean
 }
 
 /**
@@ -650,8 +675,11 @@ interface VtPaintLayer {
  * is — it paints nothing, so it must not be able to spend a shader FIELD.
  *
  * `solid: true` (fusing the copies into ONE body via paper.js `unite`) is
- * **Task 5**, and it is not read here at all: the union is far too slow for a
- * draw loop, so the live path draws the un-unioned stack by design (plan trap 5).
+ * recorded on the resolved layer but NOT acted on here, and that is the whole
+ * shape of plan trap 5: the union is far too slow for a draw loop, so this path
+ * resolves the un-unioned copies whatever `solid` says. A frame only draws a
+ * fused body when a BAKE or an EXPORT awaited `prepareSolidExtrudes`
+ * (`./extrudeSolid.ts`) and handed the geometry in as `VtDrawOptions.solid`.
  *
  * @param glyphs How many glyphs the run has — the other half of the
  *   `depth × glyphs` cost, needed to spend `VT_EXTRUDE_FRAME_BUDGET`.
@@ -683,6 +711,7 @@ function vtPaintLayers(
     // budget has had its say.
     if (layer.kind === 'extrude' && !(Number.isFinite(layer.depth) && Math.round(layer.depth) > 0)) continue
     const L: VtPaintLayer = {
+      id: typeof layer.id === 'string' ? layer.id : '',
       kind: layer.kind,
       paint,
       flat: flatPaint(paint),
@@ -693,6 +722,7 @@ function vtPaintLayers(
       runPm: null,
       runStyle: null,
       copies: null,
+      solid: layer.kind === 'extrude' && layer.solid === true,
     }
     if (layer.kind === 'extrude') extrudes.push({ L, spec: layer })
     out.push(L)
@@ -712,6 +742,31 @@ function vtPaintLayers(
     layers: out.filter(L => L.kind !== 'extrude' || (L.copies?.length ?? 0) > 0),
     extrudeDropped: dropped,
   }
+}
+
+/**
+ * The SOLID extrude layers of `cfg`, each with the EXACT copies the draw loop
+ * would have drawn for them.
+ *
+ * The one seam between the renderer and the union. `prepareSolidExtrudes`
+ * (`./extrudeSolid.ts`) calls this rather than walking the config itself, so the
+ * bodies it builds are built from the same stack resolution, the same defaults
+ * and — the part a second walk would certainly get wrong — the same spent
+ * `VT_EXTRUDE_FRAME_BUDGET`. A union of 32 copies over a stack the preview
+ * shortened to 19 is a bake that does not match its own preview.
+ *
+ * A layer with an empty id is skipped: `vtSolidKey` would collide every such
+ * layer onto one key, and handing glyph 3 the wrong body is worse than handing
+ * it none (it falls back to the copies and merely looks un-fused). Every layer
+ * `mergeConfig` produces has an id; a hand-written raw blob may not.
+ */
+export function vtSolidExtrudeLayers(
+  cfg: VectorTypeConfig | null | undefined,
+  glyphs: number,
+): Array<{ id: string; copies: VtExtrudeCopy[] }> {
+  return vtPaintLayers(cfg, glyphs).layers
+    .filter(L => L.kind === 'extrude' && L.solid && L.id !== '' && (L.copies?.length ?? 0) > 0)
+    .map(L => ({ id: L.id, copies: L.copies as VtExtrudeCopy[] }))
 }
 
 /**
@@ -770,6 +825,29 @@ export interface VtDrawOptions extends VtBoxOptions {
    *  a 220px card show the SAME composition a 1024px bake produces, rather than
    *  a differently-laid-out one. */
   pixelRatio?: number
+  /**
+   * Precomputed SOLID extrude bodies — the copies of a `solid: true` extrude
+   * already fused into one path per glyph.
+   *
+   * ═══ THE BAKE/EXPORT BOUNDARY (plan trap 5) ═══
+   *
+   * **Nothing on a live path passes this, and nothing on a live path may.** A
+   * boolean union of `depth × glyphs` paths is not a 60fps operation — it is not
+   * within an order of magnitude of one — so the preview, the node card and the
+   * frame source all omit it and draw the un-unioned stack. A bake or an export
+   * `await`s `prepareSolidExtrudes(font, cfg, t, opts)` (`./extrudeSolid.ts`)
+   * once and hands the result in here.
+   *
+   * It is a MAP OF GEOMETRY rather than a function on purpose: this renderer is
+   * synchronous, so it could not await a union even if someone gave it one, and
+   * with no callable here there is nothing for a future draw loop to call by
+   * mistake.
+   *
+   * A missing entry is not an error. It means "no body for this (layer, glyph)",
+   * and the layer falls back to its offset copies — which is exactly what the
+   * live preview shows, so the fallback is a picture the user has already seen.
+   */
+  solid?: VtSolidBodies | null
 }
 
 /**
@@ -911,6 +989,29 @@ export function drawVectorType(
     }
 
     /**
+     * The `Path2D` for one (layer, glyph)'s precomputed SOLID body, or `null`.
+     *
+     * `null` on EVERY live frame, because no live caller passes `opts.solid` —
+     * see `VtDrawOptions.solid`. This function does no geometry: the union
+     * already happened, asynchronously, before this frame started. All it does is
+     * replay a command list the same way the glyph's own path was replayed
+     * (`commandsToPath2D`, shared with `outlinesToPath2D`), memoised for the
+     * frame so a six-layer stack does not rebuild the same body six times.
+     */
+    const solidPaths = new Map<string, Path2D | null>()
+    function solidBody(L: VtPaintLayer, index: number): Path2D | null {
+      const src = opts.solid
+      if (!src || !L.id) return null
+      const key = vtSolidKey(L.id, index)
+      const hit = solidPaths.get(key)
+      if (hit !== undefined) return hit
+      const cmds = src.get(key)
+      const built = cmds && cmds.length ? commandsToPath2D(cmds) : null
+      solidPaths.set(key, built)
+      return built
+    }
+
+    /**
      * One layer's ink on one glyph.
      *
      * ## Opacity MULTIPLIES; blend REPLACES
@@ -940,6 +1041,14 @@ export function drawVectorType(
      * than a second paint model. It is filled, never stroked, on every kind of
      * paint — `width` is as inert on an extrude as it is on a fill.
      *
+     * ### SOLID: the same ink, fused — and only on a bake or an export
+     *
+     * When `solid: true` AND a caller has handed in a precomputed body for this
+     * (layer, glyph), the copy loop is replaced by ONE fill of the union. The
+     * difference is exactly the overlaps: N translucent copies double-darken
+     * where they cross, one body cannot. At full opacity the two are the same
+     * picture. The union itself never happens here — see `VtDrawOptions.solid`.
+     *
      * ### The paint space does NOT move with the copy — decided, not defaulted
      *
      * A copy translates the GEOMETRY inside the layer's paint space; `pm` and the
@@ -959,17 +1068,30 @@ export function drawVectorType(
      */
     function paintLayer(
       L: VtPaintLayer,
-      path: Path2D,
+      glyphPath: Path2D,
       glyph: GlyphOutline,
       glyphAlpha: number,
       /** The glyph's placed origin — the taper pivot's anchor. */
       origin: { x: number; y: number },
       /** The glyph's advance in output px — the taper pivot's other half. */
       advance: number,
+      /** This glyph's index, so a precomputed solid body can be found. */
+      index: number,
     ): void {
       ctx.globalAlpha = glyphAlpha * L.opacity
       ctx.globalCompositeOperation = L.op
-      const copies = L.copies
+      // ── SOLID: one fused body instead of N overlapping copies ───────────────
+      // Only when a BAKE or an EXPORT has already awaited the union and handed it
+      // in (see `VtDrawOptions.solid`). The body is in the same placed output
+      // space as the glyph's own path, so it is drawn by the SAME code below with
+      // the copy loop simply switched off — same paint, same anchor, same motion
+      // transform, same clip. No entry (every live frame) → the copies below.
+      const body = L.solid && L.copies ? solidBody(L, index) : null
+      // The fused body REPLACES the glyph path AND cancels the copy loop: it
+      // already contains every copy, so drawing it once per copy would paint the
+      // same shape N times — the double-darkening this feature exists to remove.
+      const path = body ?? glyphPath
+      const copies = body ? null : L.copies
       if (L.flat !== null) {
         const stroking = L.kind === 'stroke'
         if (stroking) {
@@ -1032,27 +1154,19 @@ export function drawVectorType(
       ctx.restore()
     }
 
-    /**
-     * The pivot a tapered copy scales about, in the glyph's own drawing space.
-     *
-     * The SAME pivot the motion scale uses (see the `scaleX`/`scaleY` block
-     * below): the glyph CELL's centre horizontally, the BASELINE vertically. Type
-     * scales about its baseline — that is why `card-flip-v` always read correctly
-     * — and pinning the left edge instead would make each tapered copy drift
-     * rightwards as it shrank, so a tapered extrude would bend rather than
-     * recede. Two pivots for the same operation in one file is exactly the drift
-     * this module exists to prevent.
-     */
-    const pivotX = (origin: { x: number }, advance: number) => origin.x + advance / 2
+    // WHERE a copy goes — including the pivot a tapered one scales about — is
+    // `extrudeCopyTransform`'s answer, not this file's. It is the same pivot the
+    // motion `scaleX`/`scaleY` block below uses (the glyph CELL's centre
+    // horizontally, the BASELINE vertically) and, since Task 5, the same one the
+    // SOLID union steps its copies with. Three derivations of a
+    // translate-and-scale would drift, and a union that disagreed with the
+    // preview by a pixel is a plausible picture that is not the one on screen.
 
     /** Apply one copy's step to the CONTEXT, in the glyph's own space. */
     function applyCopy(c: VtExtrudeCopy, origin: { x: number; y: number }, advance: number): void {
-      ctx.translate(c.dx, c.dy)
-      if (c.scale === 1) return
-      const px = pivotX(origin, advance)
-      ctx.translate(px, origin.y)
-      ctx.scale(c.scale, c.scale)
-      ctx.translate(-px, -origin.y)
+      const t = extrudeCopyTransform(c, origin, advance)
+      ctx.translate(t.x, t.y)
+      if (t.scale !== 1) ctx.scale(t.scale, t.scale)
     }
 
     /** The same step, as a matrix composed onto `base` — the anchored path, where
@@ -1064,10 +1178,9 @@ export function drawVectorType(
       origin: { x: number; y: number },
       advance: number,
     ): DOMMatrix {
-      const stepped = base.translate(c.dx, c.dy)
-      if (c.scale === 1) return stepped
-      const px = pivotX(origin, advance)
-      return stepped.translate(px, origin.y).scale(c.scale, c.scale).translate(-px, -origin.y)
+      const t = extrudeCopyTransform(c, origin, advance)
+      const stepped = base.translate(t.x, t.y)
+      return t.scale === 1 ? stepped : stepped.scale(t.scale, t.scale)
     }
 
     /**
@@ -1148,7 +1261,7 @@ export function drawVectorType(
         }
         ctx.translate(-origin.x, -origin.y)
       }
-      paintLayer(L, path, glyph, glyphAlpha, origin, advance)
+      paintLayer(L, path, glyph, glyphAlpha, origin, advance, i)
       ctx.restore()
     }
 

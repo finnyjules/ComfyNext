@@ -292,15 +292,26 @@ export const VT_CONTROLS: VtControl[] = [
   slider('layer.taper', 'Extrude taper', -1, 1, 0.01, 'Paint', LAYER_DEFAULTS.taper,
     'Shrinks the copies as they recede: 1 fades the far end to nothing, 0 keeps them all the same size, negative flares them outwards.',
     { when: layerIsExtrude }),
-  // DELIBERATELY NOT DECLARED YET: `layer.opacity`, `layer.blend` and
-  // `layer.solid`. All three are STORED — the model is complete, so
-  // `setByPath`'s parent guard always finds its leaf — but nothing reads them
-  // yet: opacity and blend RENDER (Task 3) but have no UI home until the stack
-  // panel exists (Task 8), and `solid` (fusing the extrude copies into one body
-  // via paper.js) is Task 5, which has not landed. Declaring a control whose
-  // reader has not landed is the silent-dead-control failure this file's header
-  // opens by refusing — the same reason `motion.stagger` was withheld until
-  // `glyphTime` existed.
+  // DELIBERATELY NOT DECLARED: `layer.opacity`, `layer.blend` and `layer.solid`.
+  // All three are STORED and all three now RENDER — but a control that cannot be
+  // WRITTEN is as dead as one that cannot be read, and each is blocked on a
+  // different thing:
+  //
+  //  - `layer.opacity` / `layer.blend` render (Task 3) and have no UI home until
+  //    the stack panel exists (Task 8).
+  //  - `layer.solid` renders (Task 5 — the copies fuse into one body on a bake or
+  //    an export) but is a **boolean**, and `ControlSpec` has no boolean kind. The
+  //    house pattern for one is a `select` over `['off','on']`, which works for
+  //    Space Type because its params are strings — here `mergeLayer` reads
+  //    `typeof o.solid === 'boolean'` and drops the string on the next load
+  //    (trap 1's shape, one level out). So declaring it as a select would ship a
+  //    toggle that appears to work and forgets itself, which is strictly worse
+  //    than no control. Its home is Task 8's stack row, beside `enabled` — the
+  //    other boolean this schema deliberately does not declare.
+  //
+  // Declaring a control whose reader — or whose writer — has not landed is the
+  // silent-dead-control failure this file's header opens by refusing; the same
+  // reason `motion.stagger` was withheld until `glyphTime` existed.
 
   // --- Motion ---------------------------------------------------------------
   // Stagger is NOT a track: it shifts the clock each glyph reads the tracks at.

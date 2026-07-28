@@ -47,6 +47,11 @@ import MotionPresetPicker from '~/components/vue-canvas/motion/MotionPresetPicke
 import PresetThumb from '~/components/vue-canvas/motion/PresetThumb.vue'
 import VectorTypeThumb from '~/components/vue-canvas/motion/VectorTypeThumb.vue'
 import { drawVectorTypeToCanvas, vectorTypeSVG, vtExportName, vtIsAnimated } from '~/lib/vectortype/canvas'
+// BAKE/EXPORT ONLY (plan trap 5). This import must never appear in the preview
+// loop's reach: `prepareSolidExtrudes` runs paper.js boolean unions, which are
+// orders of magnitude too slow for a frame. Both call sites below are one-shot
+// full-resolution renders that already `await` other one-shot work.
+import { prepareSolidExtrudes } from '~/lib/vectortype/extrudeSolid'
 import { DEFAULT_FILL, DEFAULT_SHADER_SPEC, FILL_TYPES, fillIsShader, type ShaderSpec } from '~/lib/spacetype/fillTile'
 import { exportTier, paintIsVector } from '~/lib/paint/toVector'
 import { isFill } from '~/lib/compositor/paint'
@@ -710,10 +715,18 @@ async function renderFullResBlob(t: number): Promise<Blob | null> {
   // on the next microtask.
   await fetchShaderFxCatalog().catch(() => { /* offline — falls back, same as before */ })
   const off = document.createElement('canvas')
+  const box = { width: canvasW.value, height: canvasH.value }
+  // SOLID EXTRUDE — the boolean union, and the ONLY kind of place it may happen
+  // (plan trap 5). It is far too slow for the preview loop above, so the screen
+  // shows the un-unioned stack and this one-shot render awaits the fused bodies.
+  // The two differ only where translucent copies overlapped and double-darkened,
+  // which is the entire point of the flag. Resolves instantly (an empty map, no
+  // paper.js loaded at all) unless the stack actually holds a solid extrude.
+  const solid = await prepareSolidExtrudes(f, config.value, t, box)
   drawVectorTypeToCanvas(off, f, config.value, t, {
     // `bake` opts a shader fill's field out of the 512px live-preview clamp, so the
     // exported PNG carries the field at the output's own resolution.
-    width: canvasW.value, height: canvasH.value, background: background.value, bake: true,
+    ...box, background: background.value, bake: true, solid,
   })
   return await new Promise<Blob | null>(resolve => off.toBlob(b => resolve(b), 'image/png'))
 }
@@ -834,12 +847,19 @@ async function renderBlobWithOverrides(overrides: Record<string, string | number
     const off = document.createElement('canvas')
     // A sweep row is a STILL, and with an entrance preset `t = 0` is deliberately
     // empty — every row would bake blank. `vtStillTime` is the resting frame.
-    drawVectorTypeToCanvas(off, f, config.value, vtStillTime(config.value), {
+    const stillT = vtStillTime(config.value)
+    const box = { width: canvasW.value, height: canvasH.value }
+    // Same one-shot union as `renderFullResBlob` — a sweep row is a bake, so a
+    // solid extrude fuses here too. A sweep of `layer.depth` would otherwise
+    // produce rows whose extrude is solid in the export and stacked in the
+    // preview, which is the surface-drift this studio keeps one render path for.
+    const solid = await prepareSolidExtrudes(f, config.value, stillT, box)
+    drawVectorTypeToCanvas(off, f, config.value, stillT, {
       // A sweep row is a full-resolution EXPORT, not a preview — `bake` opts a
       // shader fill's field out of the 512px live clamp so the uploaded PNG
       // carries the field at the row's own output size rather than an upscale.
       // (Task 3 wired the two PNG sites; this is the third full-res site.)
-      width: canvasW.value, height: canvasH.value, background: background.value, bake: true,
+      ...box, background: background.value, bake: true, solid,
     })
     return await new Promise<Blob | null>(resolve => off.toBlob(b => resolve(b), 'image/png'))
   } catch (e) {

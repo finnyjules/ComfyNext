@@ -16,10 +16,12 @@
  *    project. The plan says so out loud.
  *  - **not 3D.** Scene3D's `ExtrudeGeometry` is real depth and feeds a RASTER
  *    pipeline; routing type through it would leave the vector path entirely.
- *  - **not the boolean union.** `solid: true` fuses the copies into one body and
- *    that is **Task 5** — paper.js `unite` is far too slow for a draw loop (plan
- *    trap 5). Live preview draws the un-unioned stack, which is what this module
- *    describes.
+ *  - **not the boolean union, here.** `solid: true` fuses the copies into one
+ *    body, and that lives in `./extrudeSolid.ts` because paper.js `unite` is far
+ *    too slow for a draw loop (plan trap 5). Live preview draws the un-unioned
+ *    stack, which is what this module describes. The two are kept in separate
+ *    files on purpose: `canvas.ts` imports THIS one and never that one, so the
+ *    draw loop structurally cannot reach the union.
  *
  * ## Why this file is pure
  *
@@ -31,6 +33,7 @@
  * (Task 6) reuse the identical numbers instead of re-deriving them, which is the
  * "Smart Layout render parity" failure this codebase keeps paying for.
  */
+import type { Transform2D, VectorCommand } from '~/lib/vector/svg'
 import { VT_EXTRUDE_DEPTH_MAX, type VtAppearanceLayer } from './config'
 
 /**
@@ -146,6 +149,94 @@ export function extrudeOffsets(
     })
   }
   return out
+}
+
+/**
+ * ONE copy's placement, as a `Transform2D` in the glyph's own OUTPUT space.
+ *
+ * The single derivation of "where a copy goes", shared by the three surfaces
+ * that need it — the flat canvas path (`ctx.translate`/`ctx.scale`), the
+ * anchored canvas path (a `DOMMatrix` composed onto the paint transform) and the
+ * SOLID union (`transformCommands` on the placed command list). Three
+ * re-derivations of a translate-and-scale is exactly the "Smart Layout render
+ * parity" failure this studio keeps paying for, and here it would be worse than
+ * usual: a union that disagreed with the preview by a pixel produces a *plausible*
+ * solid extrude that is not the one on screen.
+ *
+ * ## The pivot
+ *
+ * A tapered copy scales about the glyph CELL's centre horizontally and the
+ * BASELINE vertically — the same pivot the motion `scaleX`/`scaleY` block uses,
+ * and for the reason written down there: type scales about its baseline, and
+ * pinning the left edge would make each copy drift rightwards as it shrank, so a
+ * tapered extrude would BEND rather than recede.
+ *
+ * ## Why the pivot is folded into `x`/`y` rather than left as three steps
+ *
+ * `translate(dx,dy) · translate(p) · scale(s) · translate(-p)` collapses to
+ * `p' = p·s + (d + pivot·(1-s))`, which is exactly what a `Transform2D` says.
+ * At `scale === 1` the pivot term is exactly `0` — not approximately — so the
+ * overwhelmingly common untapered copy is a bare translate with no float noise
+ * introduced by the fold.
+ *
+ * `flipY` is always `false`: the y flip is baked into the placed coordinates long
+ * before a copy is taken (see `render.ts`'s header), so a copy that flipped again
+ * would draw the extrude upside-down behind an upright face.
+ */
+export function extrudeCopyTransform(
+  c: VtExtrudeCopy,
+  /** The glyph's PLACED origin — its left edge on the baseline, in output px. */
+  origin: { x: number; y: number },
+  /** The glyph's advance in OUTPUT pixels — the other half of the pivot. */
+  advance: number,
+): Required<Transform2D> {
+  const s = Number.isFinite(c?.scale) ? c.scale : 1
+  const px = origin.x + advance / 2
+  return {
+    scale: s,
+    x: (Number.isFinite(c?.dx) ? c.dx : 0) + px * (1 - s),
+    y: (Number.isFinite(c?.dy) ? c.dy : 0) + origin.y * (1 - s),
+    flipY: false,
+  }
+}
+
+/**
+ * The unioned bodies a SOLID extrude draws, keyed by `vtSolidKey`.
+ *
+ * ═══ THE BAKE/EXPORT BOUNDARY, AS A DATA TYPE (plan trap 5) ═══
+ *
+ * This is deliberately **plain, already-computed geometry** rather than a
+ * function the renderer could call. `drawVectorType` is SYNCHRONOUS and the union
+ * is `async` (paper.js is lazily imported), so the draw loop cannot produce this
+ * even if someone tried; it can only be handed one that a bake or an export
+ * already awaited. A frame with no map draws the un-unioned stack, which is what
+ * every live path does and must keep doing.
+ *
+ * It lives in THIS module — the pure one — precisely so `canvas.ts` can name the
+ * type without importing `./extrudeSolid.ts`, i.e. without paper.js being
+ * reachable from the render path at all.
+ *
+ * Commands are in the SAME placed output space as the glyph's own path (what
+ * `placeOutlines` returns), so a body is drawn exactly where the un-unioned
+ * copies would have been drawn, under the same motion transform and the same
+ * paint space.
+ *
+ * **This is also the interface Task 6 (SVG) consumes**: one body per (layer,
+ * glyph) is one `<path>`'s worth of commands, so a solid extrude layer
+ * `flatMap`s to ONE shape per glyph where an un-solid one flatMaps to `depth`.
+ */
+export type VtSolidBodies = ReadonlyMap<string, readonly VectorCommand[]>
+
+/**
+ * The key one unioned body is stored under: the LAYER'S STABLE ID and the glyph
+ * index.
+ *
+ * The id, never the layer's position — trap 2. A map keyed by stack index would
+ * silently hand layer 3's body to whatever moved into slot 3 after a reorder,
+ * and the picture would still be a solid extrude, just the wrong one.
+ */
+export function vtSolidKey(layerId: string, glyphIndex: number): string {
+  return `${layerId}#${glyphIndex}`
 }
 
 /**

@@ -179,24 +179,37 @@ interface Path2DLike {
  * of keeping the geometry pure.
  */
 export function outlinesToPath2D(outlines: TextOutlines, opts: PlacementOptions = {}): Path2D[] {
+  return placeOutlines(outlines, opts).map(commands => commandsToPath2D(commands))
+}
+
+/**
+ * One already-placed command list → a `Path2D`.
+ *
+ * Extracted from `outlinesToPath2D` so the SOLID extrude (`./extrudeSolid.ts`)
+ * can replay a UNIONED body — which is a command list in the same output space,
+ * but not one that came from a glyph — through the identical switch. Two replays
+ * of the same five commands is a second place for a `quadraticCurveTo` to be
+ * forgotten, and the symptom would be a body with a subtly wrong contour.
+ *
+ * Throws where `Path2D` does not exist (SSR, a worker without OffscreenCanvas).
+ */
+export function commandsToPath2D(commands: readonly VectorCommand[]): Path2D {
   const Ctor = (globalThis as any).Path2D as (new () => Path2DLike) | undefined
   if (typeof Ctor !== 'function') {
-    throw new Error('outlinesToPath2D: Path2D is unavailable in this environment')
+    throw new Error('commandsToPath2D: Path2D is unavailable in this environment')
   }
-  return placeOutlines(outlines, opts).map(commands => {
-    const p = new Ctor()
-    for (const c of commands) {
-      const a = c.args
-      switch (c.command) {
-        case 'moveTo': p.moveTo(a[0] as number, a[1] as number); break
-        case 'lineTo': p.lineTo(a[0] as number, a[1] as number); break
-        case 'quadraticCurveTo': p.quadraticCurveTo(a[0] as number, a[1] as number, a[2] as number, a[3] as number); break
-        case 'bezierCurveTo': p.bezierCurveTo(a[0] as number, a[1] as number, a[2] as number, a[3] as number, a[4] as number, a[5] as number); break
-        case 'closePath': p.closePath(); break
-      }
+  const p = new Ctor()
+  for (const c of commands) {
+    const a = c.args
+    switch (c.command) {
+      case 'moveTo': p.moveTo(a[0] as number, a[1] as number); break
+      case 'lineTo': p.lineTo(a[0] as number, a[1] as number); break
+      case 'quadraticCurveTo': p.quadraticCurveTo(a[0] as number, a[1] as number, a[2] as number, a[3] as number); break
+      case 'bezierCurveTo': p.bezierCurveTo(a[0] as number, a[1] as number, a[2] as number, a[3] as number, a[4] as number, a[5] as number); break
+      case 'closePath': p.closePath(); break
     }
-    return p as unknown as Path2D
-  })
+  }
+  return p as unknown as Path2D
 }
 
 /** Paint for the glyph run. A function form gets called per glyph, which is how
