@@ -139,6 +139,48 @@ Three things worth remembering from it. Putting blur into the *shared* engine ta
 
 Open: `MotionClipInspector`'s timeline path and the mask-through-the-real-SVG-button case were verified at function level only, never through the live button. Gallery cost is unmeasured on a visible window (11 outline tiles ran 12–16 ms/tick headless, which is why outline thumbnails are axis-section-only).
 
+## Compositor — depth of field, and the first local model (landed 2026-07-29)
+
+The first slice of **local inference**: `POST /api/depth/estimate` runs Depth Anything
+V2 in-process via transformers.js and caches greyscale depth maps by content hash. No
+API call, no per-preview bill. Measured on a 4094² portrait: **3.6 s one-time pipeline
+load, 1.1 s inference, 38 ms on a cache hit**; maps are capped at 1024 px on the long
+edge because they drive a blur radius, not detail.
+
+That depth drives a **depth-of-field post effect on image layers** — focus, sharp band,
+aperture, blade count and rotation, highlight threshold and boost. The blade polygon
+*is* the iris, so six blades give hexagonal bokeh and under three a circle.
+
+This also gives the Compositor its **first GPU post stage**. The existing chain is
+Canvas 2D and correctly so, but a variable-radius shaped blur is ~700 samples/px —
+the wrong machine, not an optimisation problem. `gpuPost.ts` is a small WebGL2 runner
+whose output re-enters the 2D chain; DOF is its first inhabitant, and fog, distance
+grading and every "by distance" variant of the existing 63 effects want the same stage.
+
+`DofEffect` is routed by `GPU_TYPES`, deliberately disjoint from `CHAIN_TYPES`, so
+`applyEffectChain` can never silently skip a type it cannot render. It sits **first** in
+the order (`dof → adjust → duotone → bloom → vignette → grain`) because defocus happens
+at the lens — putting it last would blur the grain.
+
+**The factory paid out again.** The agent surface needed no code: `sanitizeEffect` is
+already driven by `POST_EFFECT_DEFAULTS`/`POST_FX_PARAM_CLAMP`, so declaring the type
+made DOF agent-drivable for free. Only the prose hint changed.
+
+**Two bugs only real-GL verification could catch**, both of which produced *plausible*
+output. (1) Missing `UNPACK_FLIP_Y_WEBGL`: every result was vertically flipped, and
+because colour and depth flipped together the depth stayed correctly aligned — mean abs
+diff 23.95 upright vs 3.07 flipped. (2) At 32 taps, samples land ~5 px apart, so each
+bokeh disc rendered as a scatter of dots; fixed with a deterministic per-pixel rotation
+of the tap spiral (hash of `gl_FragCoord`, stable across frames so bakes don't shimmer)
+plus 48 taps. Face local contrast now 0.477 original / 0.472 focused / 0.195 defocused.
+
+Open: **occlusion bleed is mitigated, not solved** — taps are weighted by whether their
+own CoC reaches the centre, which softens the dark halo on foreground edges, but the
+pixels behind a blurred foreground object were never captured. A correct fix needs layer
+separation. Residual sampling speckle at 48 taps. **Not yet driven end-to-end in the
+real Compositor UI** — the pass, the panel and the routing are each verified
+independently, but nobody has added DOF to a live layer and watched it blur.
+
 ## Scene3D — surface relief (landed 2026-07-28)
 
 Scene3D materials had exactly one texture slot, so a brick photo on a cube read as a
