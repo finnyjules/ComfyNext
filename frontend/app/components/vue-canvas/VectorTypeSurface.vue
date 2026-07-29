@@ -54,6 +54,7 @@ import {
   vtStillTime,
 } from '~/lib/vectortype/presetMotion'
 import { vtAxisPreset } from '~/lib/vectortype/axisPresets'
+import { vtApplyTrackPreset, vtTrackPresetActive, vtTrackPresetOffers } from '~/lib/vectortype/trackPresets'
 import { loadVariableFont, type VtAxis, type VtFont } from '~/lib/vectortype/font'
 import MotionPresetPicker from '~/components/vue-canvas/motion/MotionPresetPicker.vue'
 import PresetThumb from '~/components/vue-canvas/motion/PresetThumb.vue'
@@ -755,6 +756,29 @@ function addTrack() {
   playing.value = true
 }
 function removeTrack(i: number) { config.value.motion.tracks.splice(i, 1) }
+
+/**
+ * The APPEARANCE-STACK motions, as tiles rather than as a possibility.
+ *
+ * These are not gallery presets and structurally cannot be — a slot preset
+ * evaluates to a per-glyph `UnitState`, with no channel to a config leaf and no
+ * knowledge of which layer to aim at (see `lib/vectortype/trackPresets.ts`).
+ * They are ordinary TRACKS the instant they land, editable in the rows below,
+ * which is why they live in this section and not in the preset picker.
+ *
+ * Recomputed from the live stack, so adding an extrude layer lights the tiles up
+ * and removing one greys them with the reason.
+ */
+const trackPresets = computed(() => vtTrackPresetOffers(config.value))
+const activeTrackPreset = (id: string) => vtTrackPresetActive(config.value, id)
+
+function applyTrackPreset(id: string) {
+  const next = vtApplyTrackPreset(config.value, id)
+  if (next === config.value.motion.tracks) return
+  config.value.motion.tracks = next
+  onEdit('motion.tracks', next.length)
+  playing.value = true
+}
 
 // ── preview loop ────────────────────────────────────────────────────────────
 const canvas = ref<HTMLCanvasElement | null>(null)
@@ -1644,6 +1668,37 @@ const frameCount = computed(() => Math.round((config.value.motion.fps || 30) * (
           <p v-if="!config.motion.tracks.length" class="text-[11px] text-white/30">
             Add a track to animate an axis (or a per-glyph offset) over the clip.
           </p>
+
+          <!-- THE APPEARANCE-STACK MOTIONS. They belong here rather than in the
+               preset gallery because they ARE tracks — one click writes the rows
+               below, and every one stays editable afterwards. Disabled tiles keep
+               their reason on screen: the fix is a layer the user owns and can
+               add in the Layers section, exactly like a missing font axis. -->
+          <div v-if="trackPresets.length" class="mb-2">
+            <div class="mb-1 text-[10px] uppercase tracking-[0.12em] text-white/45">Stack motion</div>
+            <div class="grid grid-cols-2 gap-1.5">
+              <button
+                v-for="o in trackPresets" :key="o.preset.id"
+                type="button"
+                class="rounded-lg border p-1.5 text-left transition-colors"
+                :class="!o.available
+                  ? 'border-white/[0.06] bg-white/[0.02] cursor-not-allowed'
+                  : (activeTrackPreset(o.preset.id)
+                    ? 'border-white/60 bg-white/[0.08] cursor-pointer'
+                    : 'border-white/[0.07] bg-white/[0.03] hover:bg-white/[0.06] cursor-pointer')"
+                :disabled="!o.available"
+                :title="o.reason ?? o.preset.pitch"
+                @click="applyTrackPreset(o.preset.id)"
+              >
+                <span class="block truncate text-[10.5px]"
+                      :class="!o.available ? 'text-white/35' : (activeTrackPreset(o.preset.id) ? 'text-white' : 'text-white/70')">
+                  {{ o.preset.label }}
+                </span>
+                <span v-if="o.reason" class="mt-0.5 block text-[9px] leading-tight text-amber-200/55">{{ o.reason }}</span>
+                <span v-else class="mt-0.5 block text-[9px] leading-tight text-white/30">{{ o.preset.pitch }}</span>
+              </button>
+            </div>
+          </div>
           <div v-for="(tk, i) in config.motion.tracks" :key="i" class="mb-2 rounded border border-white/10 p-2">
             <div class="mb-1 flex items-center gap-1">
               <select v-model="tk.path" class="min-w-0 flex-1 rounded-md border border-white/[0.08] bg-white/[0.04] px-1 py-0.5 text-[11px]">
