@@ -94,8 +94,39 @@ per-effect logic lives as *data* (GLSL inside `EffectDef`s) run by a thin generi
 That is an argument for the data-driven shape whenever a surface has a plugin axis.
 
 Spec: [specs/2026-07-28-web-embed-export-design.md](superpowers/specs/2026-07-28-web-embed-export-design.md) ·
-Plan: [plans/2026-07-28-web-embed-export.md](superpowers/plans/2026-07-28-web-embed-export.md) ·
-Companion (unbuilt): [transparent video export](superpowers/specs/2026-07-28-transparent-video-export-design.md)
+Plan: [plans/2026-07-28-web-embed-export.md](superpowers/plans/2026-07-28-web-embed-export.md)
+
+## Transparent Video Export — LANDED 2026-07-28
+
+Motion exports can now keep their transparency. The alpha always survived the whole pipeline —
+frames render client-side to RGBA PNGs and upload intact — and was discarded at the last step
+only because h264/yuv420p cannot carry it. `comfy_extras/nodes_timeline.py` now branches to
+`libvpx-vp9` / `yuva420p` / `.webm` when the caller passes `alpha: true`; the h264 default is
+byte-identical to before (proven by running the pre-refactor encoder on the same frames).
+
+Six duplicated frontend POST sites collapsed into `lib/engine/encodeVideo.ts`'s `encodeFrames()`,
+which derives the file extension from the **server's response** rather than the request — so a
+server-side downgrade can never produce a `.mp4`-named WebM. Space Type has a **Transparent
+background** toggle, enabled only when a full-pixel scan finds real transparency, and it says
+plainly that WebM excludes Safari.
+
+Verified end to end on a real export: `codec vp9 · pix_fmt yuva420p · alpha min 0 · max 255`.
+
+> **Gotcha that will cost you an hour.** Verifying VP9 alpha with the obvious probe gives a
+> **false negative**: PyAV auto-selects ffmpeg's native `vp9` decoder, which does not merge
+> WebM's `BlockAdditional` alpha side-channel, so a correct file decodes fully opaque. Force the
+> `libvpx-vp9` decoder. The working alpha-aware helper is in `tests-unit/sailor_encode_alpha_test.py`.
+
+Only three surfaces render with alpha at all — **Space Type, Compositor, Scene3D**. Shader and
+Gradient were measured opaque during the embed work. The toggle is wired for Space Type; the
+other two are follow-ups.
+
+Known unknown: `auto-alt-ref` never engaged in this libvpx build even across a 60-frame sweep, so
+omitting it is unproven rather than confirmed. First thing to check if alpha ever vanishes on a
+long clip.
+
+Spec: [specs/2026-07-28-transparent-video-export-design.md](superpowers/specs/2026-07-28-transparent-video-export-design.md) ·
+Plan: [plans/2026-07-28-transparent-video-export.md](superpowers/plans/2026-07-28-transparent-video-export.md)
 
 > ## Shader as Fill — status, corrected twice on 2026-07-26
 >
