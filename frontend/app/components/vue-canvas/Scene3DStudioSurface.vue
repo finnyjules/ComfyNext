@@ -13,7 +13,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import * as THREE from 'three'
 import {
-  Box, Plus, Trash2, Copy, Eye, EyeOff, Loader2, Upload, RotateCcw, Lightbulb, Sparkles, Shuffle, Group, Ungroup,
+  Box, Plus, Loader2, Upload, Lightbulb, Sparkles, Shuffle, Group, Ungroup,
 } from 'lucide-vue-next'
 import {
   parseDoc, serializeDoc, createPrimitive, createGlbObject, createLight, createGroup,
@@ -31,7 +31,8 @@ import { loadGoogleCatalog, type GoogleFont } from '~/data/google-fonts'
 import FontPicker from '~/components/vue-canvas/FontPicker.vue'
 import { PRIM_GROUPS } from '~/lib/scene3d/primGroups'
 import { SceneEngine, baseSizeFor, baseVertexCountFor } from '~/lib/scene3d/engine'
-import { rebaseMany, groupObjects, ungroupMany } from '~/lib/scene3d/hierarchy'
+import { rebaseMany, groupObjects, ungroupMany, rootObjects } from '~/lib/scene3d/hierarchy'
+import Scene3DObjectRow from './studio/Scene3DObjectRow.vue'
 import { totalClones } from '~/lib/scene3d/modifiers'
 import { PRIMITIVE_PARAMS, paramValue, MODIFIER_SPECS, modifierValue } from '~/lib/scene3d/primParams'
 import { SceneInteraction } from '~/lib/scene3d/interaction'
@@ -96,6 +97,9 @@ const selectedObjects = computed<SceneObject[]>(() =>
 // doesn't offer it — hence >= 2, not >= 1.
 const canGroup = computed(() => selectedIds.value.length >= 2)
 const canUngroup = computed(() => selectedObjects.value.some((o) => o.kind === 'group'))
+// The object list renders this tree rather than `doc.objects` directly — the
+// doc itself stays a flat array plus `parentId`; only the render is nested.
+const rootObjectList = computed(() => rootObjects(doc.objects))
 
 function toggleSelected(id: string, additive: boolean): void {
   if (!additive) { selectedIds.value = [id]; return }
@@ -1849,20 +1853,13 @@ function onClose() {
           <div v-if="!doc.objects.length" class="px-1 text-xs leading-relaxed text-white/40">
             Empty scene — add a primitive or upload a GLB from the toolbar below<span v-if="wiredGlbUrl">, or import the wired model</span>.
           </div>
-          <div v-for="o in doc.objects" :key="o.id"
-            class="group flex items-center gap-2 rounded px-2 py-1 text-xs"
-            :class="selectedIds.includes(o.id) ? 'bg-white/15' : 'hover:bg-white/5'"
-            @click="toggleSelected(o.id, $event.shiftKey || $event.metaKey || $event.ctrlKey)">
-            <component :is="o.kind === 'light' ? Lightbulb : Box" class="h-3.5 w-3.5 shrink-0 opacity-60" />
-            <span class="flex-1 truncate" :class="glbError[o.id] ? 'text-red-400' : ''">{{ o.name }}</span>
-            <button v-if="glbError[o.id]" type="button" class="text-red-400 opacity-90 hover:opacity-100"
-              title="Load failed — retry" @click.stop="retryGlb(o.id)"><RotateCcw class="h-3.5 w-3.5" /></button>
-            <button type="button" class="opacity-0 group-hover:opacity-70" @click.stop="o.visible = !o.visible">
-              <component :is="o.visible ? Eye : EyeOff" class="h-3.5 w-3.5" />
-            </button>
-            <button type="button" class="opacity-0 group-hover:opacity-70" @click.stop="duplicateObject(o.id)"><Copy class="h-3.5 w-3.5" /></button>
-            <button type="button" class="opacity-0 group-hover:opacity-70" @click.stop="removeObject(o.id)"><Trash2 class="h-3.5 w-3.5" /></button>
-          </div>
+          <Scene3DObjectRow v-for="o in rootObjectList" :key="o.id"
+            :object="o" :objects="doc.objects" :selected-ids="selectedIds" :glb-error="glbError" :depth="0"
+            @select="toggleSelected"
+            @remove="removeObject"
+            @duplicate="duplicateObject"
+            @retry="retryGlb"
+            @toggle-visible="(id) => { const found = doc.objects.find((x) => x.id === id); if (found) found.visible = !found.visible }" />
         </div>
         <div v-if="wiredGlbUrl" class="shrink-0 border-t border-white/[0.08] p-2">
           <StudioButton @click="addGlb(wiredGlbUrl)">
