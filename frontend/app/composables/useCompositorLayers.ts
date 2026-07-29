@@ -38,9 +38,11 @@ import { layoutExpressive, type ExpressiveParams } from '~~/shared/text-layout/e
 import { type PaintStroke, stampStrokes, strokeBounds } from '~/lib/compositor/brushStamp'
 import {
   applyEffectChain, applyStackPost, chainActive, isChainEffect,
-  type AdjustEffect, type BloomEffect, type DuotoneEffect, type GrainEffect,
-  type PostEffect, type VignetteEffect,
+  type AdjustEffect, type BloomEffect, type DofEffect, type DuotoneEffect,
+  type GrainEffect, type PostEffect, type VignetteEffect,
 } from '~/lib/compositor/postEffects'
+import { applyDof, dofAvailable, dofShouldRun } from '~/lib/compositor/dofPass'
+import { depthImageFor, requestDepth } from '~/lib/compositor/depthRegistry'
 
 // Throwaway 2D context used only for text measurement (localLayerBox mutates the
 // ctx font), so it never touches a real render target.
@@ -104,10 +106,13 @@ export interface BackgroundBlurEffect {
   radius: number  // blur radius, normalized to canvas width
   visible: boolean
 }
-export type { AdjustEffect, BloomEffect, DuotoneEffect, GrainEffect, PostEffect, VignetteEffect }
+export type { AdjustEffect, BloomEffect, DofEffect, DuotoneEffect, GrainEffect, PostEffect, VignetteEffect }
 export type LayerEffect =
   | DropShadowEffect | LayerBlurEffect | InnerShadowEffect | BackgroundBlurEffect
   | AdjustEffect | BloomEffect | GrainEffect | VignetteEffect | DuotoneEffect
+  // GPU-stage. Lives in the same per-layer effects array as the rest, but is routed by
+  // GPU_TYPES rather than CHAIN_TYPES so applyEffectChain never sees it.
+  | DofEffect
 
 // Clip mask: the layer is clipped to a rect/ellipse region in CANVAS space
 // (axis-aligned, normalized like everything else). For local layers this is
@@ -949,6 +954,10 @@ function paintLayer(
   const blur = fx.find((e): e is LayerBlurEffect => e.type === 'layer_blur')
   const inner = fx.find((e): e is InnerShadowEffect => e.type === 'inner_shadow')
   const chain = fx.filter(isChainEffect)
+  // Image layers only — nothing else has a depth map to drive the blur.
+  const dof = layer.kind === 'image'
+    ? fx.find((e): e is DofEffect => e.type === 'dof')
+    : undefined
   // (background_blur is a stack-level effect — paintLayerStack applies it
   // against the backdrop before this layer paints.)
 
@@ -968,15 +977,65 @@ function paintLayer(
   // No corner-pin ⇒ draw content directly. With it: render content to a box-sized
   // offscreen (centered, like the normal draw), then projectively warp that box onto
   // the corner-pin quad in local space.
-  const drawContent = (c: CanvasRenderingContext2D) => {
-    if (!cp) { drawLayerContent(c, layer, W); return }
+  // Depth of field runs on the GPU (postEffects' 2D chain cannot do a variable-radius
+  // shaped blur), so it renders the layer's content to an offscreen and hands back a
+  // canvas. null ⇒ off, unavailable, or depth not ready yet — every caller falls back
+  // to the normal draw, so a layer ALWAYS renders.
+  //
+  // Memoized because expandClones calls drawContent once per clone and the DOF result
+  // is identical for all of them. The result is copied out of the pass's canvas, which
+  // is reused between calls — holding a reference to it would alias.
+  let dofMemo: HTMLCanvasElement | null | undefined
+  const dofContent = (): HTMLCanvasElement | null => {
+    if (dofMemo !== undefined) return dofMemo
+    dofMemo = null
+    if (!dof || !dofAvailable()) return dofMemo
+
+    const filename = (layer as ImageLayer).filename
+    const depth = depthImageFor(filename)
+    if (!depth) { requestDepth(filename); return dofMemo }
+    if (!dofShouldRun(dof, true)) return dofMemo
+
     const box = localLayerBox(measureCtx(), layer, W, H)
     const bw = Math.max(1, Math.round(box.w)), bh = Math.max(1, Math.round(box.h))
-    const cc = document.createElement('canvas'); cc.width = bw; cc.height = bh
-    const cctx = cc.getContext('2d')
-    if (!cctx) { drawLayerContent(c, layer, W); return }
-    cctx.translate(bw / 2, bh / 2)
-    drawLayerContent(cctx, layer, W)
+    const src = document.createElement('canvas'); src.width = bw; src.height = bh
+    const sctx = src.getContext('2d')
+    if (!sctx) return dofMemo
+    sctx.translate(bw / 2, bh / 2)
+    drawLayerContent(sctx, layer, W)
+
+    const out = applyDof(src, depth, dof, W, bw, bh)
+    if (!out) return dofMemo
+
+    const owned = document.createElement('canvas'); owned.width = bw; owned.height = bh
+    owned.getContext('2d')?.drawImage(out, 0, 0)
+    dofMemo = owned
+    return dofMemo
+  }
+
+  const drawContent = (c: CanvasRenderingContext2D) => {
+    const dofCanvas = dofContent()
+    if (!cp) {
+      if (dofCanvas) {
+        c.drawImage(dofCanvas, -dofCanvas.width / 2, -dofCanvas.height / 2)
+        return
+      }
+      drawLayerContent(c, layer, W); return
+    }
+    const box = localLayerBox(measureCtx(), layer, W, H)
+    const bw = Math.max(1, Math.round(box.w)), bh = Math.max(1, Math.round(box.h))
+    // Corner-pin warps whatever the content is — including the defocused version, so
+    // the two effects compose instead of one silently winning.
+    let cc: HTMLCanvasElement
+    if (dofCanvas) {
+      cc = dofCanvas
+    } else {
+      cc = document.createElement('canvas'); cc.width = bw; cc.height = bh
+      const cctx = cc.getContext('2d')
+      if (!cctx) { drawLayerContent(c, layer, W); return }
+      cctx.translate(bw / 2, bh / 2)
+      drawLayerContent(cctx, layer, W)
+    }
     const hw = box.w / 2, hh = box.h / 2
     const quad: Quad = [
       { x: -hw + cp.tl.x * hw, y: -hh + cp.tl.y * hh },

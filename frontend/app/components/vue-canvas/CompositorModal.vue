@@ -39,6 +39,7 @@ import type { Cloner } from '~/composables/useCloner'
 import { resolveWiredSourceKind } from '~/lib/studio/frameResolve'
 import { frameSourceEpoch, type StudioFrameSource } from '~/lib/studio/frameSource'
 import { deriveMasterClock, slotPhase01 } from '~/lib/compositor/masterClock'
+import { onDepthChange } from '~/lib/compositor/depthRegistry'
 import { DEFAULT_FRAME_MOTION, type FrameMotion } from '~/lib/motion/types'
 import { LIVE_FIELD_CEILING } from '~/lib/shaderfill/descriptor'
 import '~/lib/motion/paint' // registers the motion painter for paintLayerStack(t)
@@ -1869,6 +1870,15 @@ function renderStack(wallT?: number) {
     wiredTreatments.value, background.value, localGroups.value, postEffects.value)
   shaderFieldsFrozen.value = frozenCount
 }
+
+// Depth maps arrive asynchronously (see lib/compositor/depthRegistry). paintLayer reads
+// them synchronously and renders through unchanged when one is missing, so without this
+// subscription a DOF layer would stay unblurred until some unrelated interaction
+// happened to trigger a repaint.
+let stopDepthWatch: (() => void) | null = null
+onMounted(() => { stopDepthWatch = onDepthChange(() => renderStack()) })
+onBeforeUnmount(() => { stopDepthWatch?.(); stopDepthWatch = null })
+
 watch(
   () => [
     JSON.stringify(localLayers.value), editingId.value,
