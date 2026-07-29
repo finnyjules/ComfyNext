@@ -21,7 +21,12 @@ const DIR_IDX: Record<Direction, number> = { up: 0, right: 1, down: 2, left: 3 }
 const MAP_IDX: Record<MappingKind, number> = { across: 0, perbar: 1, field: 2 }
 const LAYOUT_IDX: Record<LayoutKind, number> = { linear: 0, radial: 1, orbit: 2, stack: 3, liquid: 4, mesh: 5 }
 
-class GradientFxRenderer {
+/**
+ * Exported so embeds can hold their own instance — two embeds on one page must
+ * not share a GL context. App code should keep using the `gradientFx` singleton
+ * below, which is cached on globalThis (browsers cap contexts at ~8-16).
+ */
+export class GradientFxRenderer {
   private canvas: HTMLCanvasElement | null = null
   private gl: WebGL2RenderingContext | null = null
   private prog: WebGLProgram | null = null
