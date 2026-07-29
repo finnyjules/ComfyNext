@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  rootObjects, childrenOf, descendantIds, orderParentsFirst, sanitizeHierarchy,
+  rootObjects, childrenOf, descendantIds, orderParentsFirst, sanitizeHierarchy, cloneSubtree,
 } from '~/lib/scene3d/hierarchy'
 import type { SceneObject } from '~/lib/scene3d/config'
 
@@ -111,6 +111,78 @@ describe('scene3d hierarchy', () => {
     const objects = [obj('g'), obj('a', 'g')]
     sanitizeHierarchy(objects)
     expect(objects[1]!.parentId).toBe('g')
+  })
+})
+
+// ── cloneSubtree: duplicate's clone-and-remap, extracted so it can be pinned
+// with a counting fake `make` instead of only exercised through the Vue
+// surface. A real `make` (Scene3DStudioSurface's `cloneObject`) fabricates a
+// fresh id and numbers the copy's name against `existing`; this fake instead
+// derives a deterministic id from the source's own id and RECORDS every
+// `existing` array it was handed, so the batch-accumulation behaviour is
+// directly observable rather than inferred from names.
+function fakeCloneFactory() {
+  const calls: { srcId: string; existingIds: string[] }[] = []
+  const make = (src: SceneObject, existing: SceneObject[]): SceneObject => {
+    calls.push({ srcId: src.id, existingIds: existing.map((o) => o.id) })
+    // parentId travels verbatim off the source, exactly like the real
+    // cloneObject — cloneSubtree is what's responsible for remapping it.
+    return { ...src, id: `${src.id}-clone` }
+  }
+  return { make, calls }
+}
+
+describe('scene3d cloneSubtree', () => {
+  it('clones a childless object as a single clone, leaving its own parentId untouched', () => {
+    // 'a' sits under an external ancestor ('outer') that is not part of the
+    // subtree being cloned — its parentId must survive verbatim, not get
+    // remapped, since 'outer' is never a key in cloneSubtree's id map.
+    const objects = [obj('outer'), obj('a', 'outer')]
+    const { make } = fakeCloneFactory()
+    const clones = cloneSubtree(objects, 'a', make)
+    expect(clones).toHaveLength(1)
+    expect(clones[0]!.id).toBe('a-clone')
+    expect(clones[0]!.parentId).toBe('outer')
+  })
+
+  it('remaps every clone parentId to the CLONED ancestor, never the original, across a two-level subtree', () => {
+    const objects = [obj('g'), obj('child', 'g'), obj('grand', 'child')]
+    const { make } = fakeCloneFactory()
+    const clones = cloneSubtree(objects, 'g', make)
+    expect(clones.map((c) => c.id)).toEqual(['g-clone', 'child-clone', 'grand-clone'])
+
+    const byId = new Map(clones.map((c) => [c.id, c]))
+    expect(byId.get('g-clone')!.parentId).toBeUndefined()
+    expect(byId.get('child-clone')!.parentId).toBe('g-clone')
+    expect(byId.get('grand-clone')!.parentId).toBe('child-clone')
+
+    // No clone's parentId names an ORIGINAL id — every non-root clone's
+    // parentId must resolve inside the clone set, not the source subtree.
+    const originalIds = new Set(objects.map((o) => o.id))
+    for (const clone of clones) {
+      if (clone.parentId) expect(originalIds.has(clone.parentId)).toBe(false)
+    }
+  })
+
+  // THE regression test for the naming-collision fix: a group named "Group"
+  // containing a group named "Group 2" duplicated the outer group, and the
+  // inner clone was numbered against the SAME stale `doc.objects` snapshot the
+  // outer clone was numbered against — both became "Group 3". Fixed by seeding
+  // the accumulating scope with the root's own clone BEFORE any descendant is
+  // cloned. Asserting on names would couple this test to a factory's specific
+  // numbering scheme; asserting on the `existing` array `make` was actually
+  // handed is the direct, factory-agnostic version of the same claim.
+  it('hands the first child clone an existing-scope that already contains the root clone', () => {
+    const objects = [obj('g'), obj('child', 'g')]
+    const { make, calls } = fakeCloneFactory()
+    cloneSubtree(objects, 'g', make)
+
+    expect(calls).toHaveLength(2)
+    const rootCall = calls[0]!
+    const firstChildCall = calls[1]!
+    expect(rootCall.srcId).toBe('g')
+    expect(firstChildCall.srcId).toBe('child')
+    expect(firstChildCall.existingIds).toContain('g-clone')
   })
 })
 

@@ -31,7 +31,7 @@ import { loadGoogleCatalog, type GoogleFont } from '~/data/google-fonts'
 import FontPicker from '~/components/vue-canvas/FontPicker.vue'
 import { PRIM_GROUPS } from '~/lib/scene3d/primGroups'
 import { SceneEngine, baseSizeFor, baseVertexCountFor } from '~/lib/scene3d/engine'
-import { rebaseMany, groupObjects, ungroupMany, rootObjects, descendantIds } from '~/lib/scene3d/hierarchy'
+import { rebaseMany, groupObjects, ungroupMany, rootObjects, descendantIds, cloneSubtree } from '~/lib/scene3d/hierarchy'
 import Scene3DObjectRow from './studio/Scene3DObjectRow.vue'
 import { totalClones } from '~/lib/scene3d/modifiers'
 import { PRIMITIVE_PARAMS, paramValue, MODIFIER_SPECS, modifierValue } from '~/lib/scene3d/primParams'
@@ -1492,6 +1492,20 @@ function cloneMaterial(mat: SceneMaterial): SceneMaterial {
 // (also-cloned) parent, so leaving it untouched is what keeps the whole
 // subtree's shape intact.
 //
+// `visible`/`content`/`motion` are carried too (review fix, post-Task-9):
+// `Object.assign` here used to only reach position/rotation/scale/material/
+// params/modifiers/materialOverride/light fields/parentId, silently dropping
+// SceneObjectBase.visible and PrimitiveObject.content along with ObjectMotion
+// entirely. Duplicating a hidden object made the copy visible (nobody asked
+// for that), and duplicating an animated Text object — now routine since
+// subtree duplication clones every descendant — produced N children that all
+// read the default "Text" with no animation at all. `content` and `motion`
+// are both nested objects (motion's `in`/`out`.ease.cps is itself an array
+// inside a nested TransitionSpec), so both are JSON-round-tripped rather than
+// spread one level — a shallow `{ ...src.motion }` would still alias `cps`
+// between original and copy, exactly the `material.relief` aliasing class
+// cloneMaterial's C3 fix already exists to prevent, just reintroduced here.
+//
 // Switches on `src.kind` (rather than an if/else-if chain) so the `default`
 // branch can assign `src` to a `never` — the moment SceneObject grows a fifth
 // member, that assignment stops compiling instead of silently falling through
@@ -1520,10 +1534,21 @@ function cloneObject(src: SceneObject, existing: SceneObject[] = doc.objects): S
   }
   Object.assign(copy, {
     position: [...src.position], rotation: [...src.rotation], scale: [...src.scale], material: cloneMaterial(src.material),
+    visible: src.visible,
     // Geometry params travel with the copy, cloned not aliased — a shared bag
     // would make both objects' shapes move together on any later edit.
     ...(src.kind === 'primitive' && src.params ? { params: { ...src.params } } : {}),
     ...(src.kind === 'primitive' && src.modifiers ? { modifiers: { ...src.modifiers } } : {}),
+    // Deep-copied: a shallow `{ ...src.content }` is safe today (both fields
+    // are strings) but this is the same nested-bag shape as params/modifiers
+    // above, so it's cloned the same defensive way rather than relying on
+    // "happens to be flat right now."
+    ...(src.kind === 'primitive' && src.content ? { content: { ...src.content } } : {}),
+    // motion is a nested structure (loop/in/out, and in/out's ease can itself
+    // carry a `cps` array) — JSON round-tripped rather than spread, matching
+    // cloneMaterial's own treatment of relief.spec/shader for the identical
+    // aliasing reason.
+    ...(src.motion ? { motion: JSON.parse(JSON.stringify(src.motion)) } : {}),
     ...(src.kind === 'glb' && src.materialOverride ? { materialOverride: true } : {}),
     // Light fields likewise travel with the copy — same discriminated-union
     // shape as material/params above, just flat on the object instead of nested.
@@ -1544,33 +1569,15 @@ function cloneObject(src: SceneObject, existing: SceneObject[] = doc.objects): S
 function duplicateObject(id: string) {
   const src = doc.objects.find((o) => o.id === id)
   if (!src) return
-  const copy = cloneObject(src)
+  // Clone the whole subtree (a group with no children copied is an empty box)
+  // via hierarchy.ts's cloneSubtree, which owns the id-remapping and the
+  // batch-numbering-scope accumulation — see its doc comment for the naming
+  // collision that scope-accumulation exists to prevent. `cloneObject` is
+  // passed straight through as the `make` factory.
+  const clones = cloneSubtree(doc.objects, id, (s, existing) => cloneObject(s, existing))
+  const copy = clones[0]!
   copy.position = [src.position[0] + 0.5, src.position[1], src.position[2] + 0.5]
-  // A group with no children copied is an empty box; copy the whole subtree and
-  // rewrite parent links so the copy is self-contained rather than pointing
-  // back into the original's children.
-  const kids = descendantIds(doc.objects, id)
-  let clones: SceneObject[] = []
-  if (kids.length) {
-    const idMap = new Map<string, string>([[id, copy.id]])
-    // Threaded through cloneObject's `existing` so each clone is numbered
-    // against every clone made so far THIS batch too, not just the pre-clone doc.
-    let numberingScope = doc.objects
-    for (const kid of kids) {
-      const kidSrc = doc.objects.find((o) => o.id === kid)
-      if (!kidSrc) continue
-      const clone = cloneObject(kidSrc, numberingScope)
-      numberingScope = [...numberingScope, clone]
-      idMap.set(kid, clone.id)
-      clones.push(clone)
-    }
-    for (const clone of clones) {
-      const mapped = clone.parentId ? idMap.get(clone.parentId) : undefined
-      if (mapped) clone.parentId = mapped
-    }
-  }
-  doc.objects.push(copy)
-  if (clones.length) doc.objects.push(...clones)
+  doc.objects.push(...clones)
   selectedId.value = copy.id
   // Same eager warm-up as addGlb so a failing GLB source flags the duplicate too.
   if (copy.kind === 'glb') loadGlb(copy.url).catch(() => { glbError[copy.id] = true })

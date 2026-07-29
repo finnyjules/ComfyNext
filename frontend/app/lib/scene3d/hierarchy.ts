@@ -303,6 +303,71 @@ export function ungroupObject(objects: readonly SceneObject[], groupId: string):
     })
 }
 
+/** Clone `rootId` and its whole subtree, returning the clones — root's clone
+ *  first, then descendants in the order `descendantIds` walks them (parents
+ *  before their own children) — with each clone's `parentId` re-pointed at the
+ *  CLONED ancestor, never left naming an object in the ORIGINAL subtree. Left
+ *  unmapped, a child clone's `parentId` would still point at the SOURCE
+ *  parent, so a "self-contained" duplicate would secretly stay wired into the
+ *  original — deleting or moving the source would take pieces of the
+ *  duplicate with it.
+ *
+ *  `make` is threaded an ACCUMULATING `existing` array — every clone produced
+ *  so far in this call, root's included — because `existing` doubles as the
+ *  name-uniqueness scope object factories number a new name against. Handing
+ *  every clone in a batch the SAME starting snapshot instead of one that
+ *  grows as clones are made is what let two clones collide on a name: a group
+ *  named "Group" containing a group named "Group 2" — duplicating the outer
+ *  group numbers the copy "Group 3" against the doc, but if the inner clone
+ *  is then numbered against that same stale doc snapshot (not one containing
+ *  the copy), it ALSO becomes "Group 3". Seeding the scope with the root's own
+ *  clone before any descendant is cloned is what closes that gap.
+ *
+ *  `make` fabricates the new id/object, so this function stays engine- and
+ *  factory-agnostic — it only orchestrates cloning order and `parentId`
+ *  remapping, which is what makes it unit-testable with a fake `make`. */
+export function cloneSubtree(
+  objects: readonly SceneObject[],
+  rootId: string,
+  make: (src: SceneObject, existing: SceneObject[]) => SceneObject,
+): SceneObject[] {
+  const root = objects.find((o) => o.id === rootId)
+  if (!root) return []
+
+  // The scope every clone in this batch is numbered against — starts as the
+  // pre-duplicate doc and grows with each clone, root's included, so no two
+  // clones made here can ever see the same stale snapshot.
+  let scope = [...objects]
+  const idMap = new Map<string, string>()
+  const clones: SceneObject[] = []
+
+  const rootClone = make(root, scope)
+  scope = [...scope, rootClone]
+  idMap.set(rootId, rootClone.id)
+  clones.push(rootClone)
+
+  for (const descId of descendantIds(objects, rootId)) {
+    const src = objects.find((o) => o.id === descId)
+    if (!src) continue
+    const clone = make(src, scope)
+    scope = [...scope, clone]
+    idMap.set(descId, clone.id)
+    clones.push(clone)
+  }
+
+  // Remap every clone's parentId through idMap in one pass at the end, not as
+  // each clone is made — a clone's parentId travels VERBATIM off its source
+  // (see cloneObject), so it still names the ORIGINAL ancestor until this
+  // rewrite runs. Root's own parentId is deliberately left alone: its parent
+  // sits outside the subtree and is never a key in idMap, so the lookup below
+  // is a no-op for it.
+  for (const clone of clones) {
+    if (clone.parentId && idMap.has(clone.parentId)) clone.parentId = idMap.get(clone.parentId)!
+  }
+
+  return clones
+}
+
 /** Dissolve every group named in `groupIds` and report the ids that should
  *  become the new selection. Exists because a selection can legitimately
  *  contain a group AND one of its own descendant groups (e.g. `A -> B -> D`
