@@ -1492,6 +1492,77 @@ def render_timeline_to_file(state: dict, output_dir: str, progress=None) -> dict
     }
 
 
+def encode_spacetype_video(frames_list, fps, width, height, out_path, alpha=False):
+    """Encode a sequence of frame image files (PNGs) into a video file.
+
+    Default (alpha=False): h264/yuv420p in an .mp4 container. RGBA source
+    frames are flattened onto black, since yuv420p has no alpha channel —
+    this is the original, unchanged behaviour.
+
+    alpha=True: libvpx-vp9/yuva420p in a .webm container, preserving the
+    frames' alpha channel. VP9 in WebM is the only alpha-capable combination
+    that plays in Chrome/Firefox/Edge; Safari will not play it (the UI says
+    so).
+
+    Module-level (rather than nested in the route handler) so it can be
+    exercised directly in tests without going through aiohttp.
+    """
+    import av
+
+    input_dir = folder_paths.get_input_directory()
+
+    out = av.open(out_path, mode="w")
+    try:
+        if alpha:
+            stream = out.add_stream("libvpx-vp9", rate=Fraction(fps, 1))
+            stream.pix_fmt = "yuva420p"
+            # b:v 0 selects constant-quality mode, where crf actually governs.
+            stream.options = {"crf": "30", "b:v": "0"}
+        else:
+            stream = out.add_stream("h264", rate=Fraction(fps, 1))
+            stream.pix_fmt = "yuv420p"
+            stream.options = {"preset": "veryfast", "crf": "20"}
+        stream.width = width
+        stream.height = height
+
+        for fn in frames_list:
+            # Resolve filename: try annotated filepath first, then input_dir
+            try:
+                abs_path = folder_paths.get_annotated_filepath(fn)
+            except Exception:
+                abs_path = os.path.join(input_dir, fn)
+
+            im = PILImage.open(abs_path)
+
+            # Resize if dimensions don't match (normally they already match)
+            if im.size != (width, height):
+                im = im.resize((width, height), PILImage.LANCZOS)
+
+            if alpha:
+                im = im.convert("RGBA")
+                arr = np.array(im, dtype=np.uint8)
+                av_frame = av.VideoFrame.from_ndarray(arr, format="rgba")
+            else:
+                # Flatten RGBA onto black — h264/yuv420p has no alpha channel
+                if im.mode == "RGBA":
+                    bg = PILImage.new("RGB", im.size, (0, 0, 0))
+                    bg.paste(im, mask=im.split()[-1])
+                    im = bg
+                else:
+                    im = im.convert("RGB")
+                arr = np.array(im, dtype=np.uint8)
+                av_frame = av.VideoFrame.from_ndarray(arr, format="rgb24")
+
+            for packet in stream.encode(av_frame):
+                out.mux(packet)
+
+        # Flush encoder
+        for packet in stream.encode():
+            out.mux(packet)
+    finally:
+        out.close()
+
+
 # Register HTTP endpoint on Comfy's PromptServer if available.
 try:
     from server import PromptServer
@@ -1595,15 +1666,20 @@ try:
 
     @PromptServer.instance.routes.post("/sailor/spacetype_encode")
     async def _spacetype_encode_route(request):
-        """Encode a sequence of PNG frames (from input/) into an MP4 video.
+        """Encode a sequence of PNG frames (from input/) into a video.
 
         Body JSON:
           { "frames": ["spacetype_..._0000.png", ...], "fps": 30,
-            "width": 1920, "height": 1080 }
+            "width": 1920, "height": 1080, "alpha": false }
         Response JSON:
           { "filename": "spacetype_<ms>.mp4" }   // written into input/
+          // or "spacetype_<ms>.webm" when "alpha": true
+
+        With no "alpha" flag (or alpha=false), behaviour is unchanged:
+        h264/yuv420p in an .mp4, RGBA frames flattened onto black. With
+        "alpha": true, encodes libvpx-vp9/yuva420p in a .webm, preserving
+        transparency.
         """
-        import av
         try:
             data = await request.json()
         except Exception as e:
@@ -1616,59 +1692,21 @@ try:
         fps = int(data.get("fps", 30))
         width = int(data.get("width", 1920))
         height = int(data.get("height", 1080))
+        alpha = bool(data.get("alpha", False))
 
-        # yuv420p requires even dimensions
+        # yuv420p/yuva420p both require even dimensions
         width = width - (width % 2)
         height = height - (height % 2)
 
         input_dir = folder_paths.get_input_directory()
-        out_name = f"spacetype_{int(time.time() * 1000)}.mp4"
+        ext = "webm" if alpha else "mp4"
+        out_name = f"spacetype_{int(time.time() * 1000)}.{ext}"
         out_path = os.path.join(input_dir, out_name)
-
-        def _encode():
-            out = av.open(out_path, mode="w")
-            try:
-                stream = out.add_stream("h264", rate=Fraction(fps, 1))
-                stream.width = width
-                stream.height = height
-                stream.pix_fmt = "yuv420p"
-                stream.options = {"preset": "veryfast", "crf": "20"}
-
-                for fn in frames_list:
-                    # Resolve filename: try annotated filepath first, then input_dir
-                    try:
-                        abs_path = folder_paths.get_annotated_filepath(fn)
-                    except Exception:
-                        abs_path = os.path.join(input_dir, fn)
-
-                    im = PILImage.open(abs_path)
-
-                    # Resize if dimensions don't match (normally they already match)
-                    if im.size != (width, height):
-                        im = im.resize((width, height), PILImage.LANCZOS)
-
-                    # Flatten RGBA onto black — h264/yuv420p has no alpha channel
-                    if im.mode == "RGBA":
-                        bg = PILImage.new("RGB", im.size, (0, 0, 0))
-                        bg.paste(im, mask=im.split()[-1])
-                        im = bg
-                    else:
-                        im = im.convert("RGB")
-
-                    arr = np.array(im, dtype=np.uint8)
-                    av_frame = av.VideoFrame.from_ndarray(arr, format="rgb24")
-                    for packet in stream.encode(av_frame):
-                        out.mux(packet)
-
-                # Flush encoder
-                for packet in stream.encode():
-                    out.mux(packet)
-            finally:
-                out.close()
 
         try:
             loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, _encode)
+            await loop.run_in_executor(
+                None, encode_spacetype_video, frames_list, fps, width, height, out_path, alpha)
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 
