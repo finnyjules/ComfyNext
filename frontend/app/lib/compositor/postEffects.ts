@@ -43,7 +43,21 @@ export interface DuotoneEffect {
   mix: number         // 0..1 — blend between original and duotone result
   visible: boolean
 }
-export type PostEffect = AdjustEffect | BloomEffect | GrainEffect | VignetteEffect | DuotoneEffect
+/** Depth of field. GPU-only — applied to layer content BEFORE the 2D chain, because
+ *  defocus happens at the lens (grain is on the negative, vignette is the barrel).
+ *  Needs a depth map; renders through untouched without one. */
+export interface DofEffect {
+  type: 'dof'
+  focus: number          // 0..1 — normalized depth of the focal plane
+  range: number          // 0..1 — depth band that stays sharp
+  aperture: number       // 0..1 — max blur radius, NORMALIZED TO CANVAS WIDTH
+  bladeCount: number     // 0..12 — iris sides; < 3 renders a circle
+  bladeRotation: number  // 0..360 degrees
+  bloomThreshold: number // 0..1 — linear-light luminance cutoff
+  bloomStrength: number  // 0..4 — highlight boost before accumulation
+  visible: boolean
+}
+export type PostEffect = AdjustEffect | BloomEffect | GrainEffect | VignetteEffect | DuotoneEffect | DofEffect
 
 export const POST_EFFECT_DEFAULTS: Record<PostEffect['type'], PostEffect> = {
   adjust: { type: 'adjust', brightness: 1, contrast: 1, saturation: 1, hue: 0, visible: true },
@@ -51,6 +65,11 @@ export const POST_EFFECT_DEFAULTS: Record<PostEffect['type'], PostEffect> = {
   grain: { type: 'grain', amount: 0.25, size: 2, visible: true },
   vignette: { type: 'vignette', amount: 0.5, size: 0.5, softness: 0.5, visible: true },
   duotone: { type: 'duotone', shadows: '#1a1a40', highlights: '#ffe8d6', mix: 1, visible: true },
+  dof: {
+    type: 'dof', focus: 0.5, range: 0.15, aperture: 0.02,
+    bladeCount: 6, bladeRotation: 0, bloomThreshold: 0.75, bloomStrength: 1.5,
+    visible: true,
+  },
 }
 export function defaultPostEffect(type: PostEffect['type']): PostEffect {
   return JSON.parse(JSON.stringify(POST_EFFECT_DEFAULTS[type])) as PostEffect
@@ -63,12 +82,24 @@ export const POST_FX_PARAM_CLAMP: Record<string, Record<string, [number, number]
   grain: { amount: [0, 1], size: [1, 8] },
   vignette: { amount: [0, 1], size: [0, 1], softness: [0, 1] },
   duotone: { mix: [0, 1] },
+  dof: {
+    focus: [0, 1], range: [0, 1], aperture: [0, 1],
+    bladeCount: [0, 12], bladeRotation: [0, 360],
+    bloomThreshold: [0, 1], bloomStrength: [0, 4],
+  },
 }
 
 const CHAIN_TYPES = new Set<string>(['adjust', 'duotone', 'bloom', 'vignette', 'grain'])
 export const isChainEffect = (e: { type: string }): e is PostEffect => CHAIN_TYPES.has(e.type)
 export const chainActive = (effects?: { type: string; visible?: boolean }[]): boolean =>
   !!effects?.some(e => e.visible !== false && CHAIN_TYPES.has(e.type))
+
+/** GPU-stage effects. Deliberately DISJOINT from CHAIN_TYPES: applyEffectChain must
+ *  never see these, or they'd be silently skipped while appearing to be handled. */
+export const GPU_TYPES = new Set<string>(['dof'])
+export const isGpuEffect = (e: { type: string }): e is DofEffect => GPU_TYPES.has(e.type)
+export const gpuActive = (effects?: { type: string; visible?: boolean }[]): boolean =>
+  !!effects?.some(e => e.visible !== false && GPU_TYPES.has(e.type))
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
 const clamp01 = (v: number) => clamp(v, 0, 1)

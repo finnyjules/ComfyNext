@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest'
 import {
   adjustFilterString, noiseBytes, brightPassInPlace, duotoneInPlace,
   vignetteStops, hexToRgb, chainActive, isChainEffect, defaultPostEffect,
-  POST_EFFECT_DEFAULTS, type AdjustEffect,
+  POST_EFFECT_DEFAULTS, POST_FX_PARAM_CLAMP, GPU_TYPES, isGpuEffect,
+  type AdjustEffect, type DofEffect,
 } from '~/lib/compositor/postEffects'
 
 const adjust = (p: Partial<AdjustEffect>): AdjustEffect =>
@@ -97,5 +98,34 @@ describe('defaults', () => {
     const a = defaultPostEffect('adjust')
     ;(a as any).brightness = 99
     expect((POST_EFFECT_DEFAULTS.adjust as any).brightness).toBe(1)
+  })
+})
+
+describe('dof effect routing', () => {
+  it('has defaults inside its own clamp ranges', () => {
+    const d = defaultPostEffect('dof') as DofEffect
+    expect(d.type).toBe('dof')
+    for (const [k, [lo, hi]] of Object.entries(POST_FX_PARAM_CLAMP.dof!)) {
+      const v = (d as unknown as Record<string, number>)[k]!
+      expect(v).toBeGreaterThanOrEqual(lo)
+      expect(v).toBeLessThanOrEqual(hi)
+    }
+  })
+
+  it('is a GPU effect and NOT a 2D chain effect', () => {
+    const d = defaultPostEffect('dof')
+    expect(isGpuEffect(d)).toBe(true)
+    expect(isChainEffect(d)).toBe(false)
+    expect(GPU_TYPES.has('dof')).toBe(true)
+  })
+
+  it('does not activate the 2D chain on its own', () => {
+    expect(chainActive([defaultPostEffect('dof')])).toBe(false)
+  })
+
+  it('defaultPostEffect returns a fresh object each call', () => {
+    const a = defaultPostEffect('dof') as DofEffect
+    a.aperture = 0.9
+    expect((defaultPostEffect('dof') as DofEffect).aperture).not.toBe(0.9)
   })
 })
