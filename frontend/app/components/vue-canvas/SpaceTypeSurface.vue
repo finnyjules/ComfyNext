@@ -15,6 +15,7 @@ import { DEFAULT_POST, type PostSettings } from '~/lib/spacetype/post'
 import type { SpaceTypeState } from '~/lib/spacetype/state'
 import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
 import { encodeFrames } from '~/lib/engine/encodeVideo'
+import { canvasHasAlpha } from '~/lib/engine/hasAlpha'
 import { loopMultiplier } from '~/lib/spacetype/loop'
 import { loadGoogleCatalog, googleFontCssUrl, googleAxisList, resolveFontFamily, fontHasWeightAxis, type GoogleFont } from '~/data/google-fonts'
 import type { GradientStop } from '~/lib/spacetype/gradient'
@@ -703,10 +704,48 @@ function onRenderMenuKeydown(e: KeyboardEvent) {
   renderMenuOpen.value = false
 }
 function onRenderMenuPointerdown() { renderMenuOpen.value = false }
+
+// Transparent-export detection: read the frame the live preview is ALREADY showing
+// (engine.renderer.domElement) rather than rendering a fresh one just to test it.
+// Space Type is one of the three surfaces whose renderer preserves alpha (see the
+// `transparent`/bgColor Output controls + engine.setBackground) — Shader Studio and
+// Gradient Studio were measured opaque during the embed work and don't get this toggle.
+// Re-checked every time the Render menu opens so it reflects whatever's on screen right
+// before the user decides, without adding a per-frame cost to the preview loop.
+const exportAlphaAvailable = ref(false)
+function detectAlpha(): boolean {
+  if (!engine) return false
+  // Render synchronously right before reading pixels back. The preview engine runs with
+  // preserveDrawingBuffer: false (perf — see EngineOptions' doc), so the WebGL drawing
+  // buffer is NOT guaranteed to still hold the last rAF-loop frame by the time a
+  // user click (async relative to that loop) gets here: the browser can have already
+  // cleared it to transparent black, which reads back as "has alpha" even for a fully
+  // opaque scene — verified empirically (an unsynchronized read came back alpha 0
+  // everywhere with the opaque background selected). renderFrameAt here is cheap (it's
+  // exactly what the preview loop already calls every frame) and, critically, keeps the
+  // render-then-read in one synchronous task with no `await` in between, so the buffer
+  // can't be cleared out from under us.
+  engine.renderFrameAt(previewT01, params)
+  const src = engine.renderer.domElement
+  if (!src.width || !src.height) return false
+  const probe = document.createElement('canvas')
+  probe.width = src.width
+  probe.height = src.height
+  const ctx = probe.getContext('2d')
+  if (!ctx) return false
+  ctx.drawImage(src, 0, 0)
+  const img = ctx.getImageData(0, 0, probe.width, probe.height)
+  return canvasHasAlpha(img)
+}
+// User's choice of transparent export.
+const exportAlpha = ref(false)
 watch(renderMenuOpen, (open) => {
   if (open) {
     window.addEventListener('keydown', onRenderMenuKeydown, { capture: true })
     window.addEventListener('pointerdown', onRenderMenuPointerdown)
+    exportAlphaAvailable.value = detectAlpha()
+    // Don't leave a checked-but-disabled checkbox behind if this render no longer has alpha.
+    if (!exportAlphaAvailable.value) exportAlpha.value = false
   } else {
     window.removeEventListener('keydown', onRenderMenuKeydown, { capture: true })
     window.removeEventListener('pointerdown', onRenderMenuPointerdown)
@@ -1069,8 +1108,12 @@ async function generateVideo() {
       renderFrame: async (i) => { engine!.renderFrameAt(i / origFrames, params); return engine!.frameToBlob(W.value, H.value) },
     })
     engine.setSize(W.value, H.value)
+    // Gate on exportAlphaAvailable too, not just the checkbox: it's a stale UI value
+    // once the menu closes, and the request-side flag is what actually changes the
+    // server's encoder path (VP9/WebM instead of h264/mp4) — never send it unearned.
+    const wantAlpha = exportAlpha.value && exportAlphaAvailable.value
     try {
-      const encoded = await encodeFrames({ frames: bake.frames, fps: fps.value, width: W.value, height: H.value })
+      const encoded = await encodeFrames({ frames: bake.frames, fps: fps.value, width: W.value, height: H.value, alpha: wantAlpha })
       await recordAsset(activeTab.value?.projectUuid, 'video', encoded.filename)
       window.dispatchEvent(new CustomEvent('sailor:spaceTypeOutput', {
         detail: { sourceNodeId: props.nodeId, nodeType: 'Video', widgetOverrides: { file: encoded.filename } },
@@ -1441,11 +1484,27 @@ async function generateVideo() {
               {{ baking ? 'Generating…' : 'Render ▾' }}
             </StudioButton>
             <div v-if="renderMenuOpen" @pointerdown.stop
-                 class="absolute bottom-full right-0 z-20 mb-1.5 w-44 overflow-hidden rounded-lg border border-white/10 bg-[#1a1a1e] py-1 shadow-xl">
+                 class="absolute bottom-full right-0 z-20 mb-1.5 w-60 overflow-hidden rounded-lg border border-white/10 bg-[#1a1a1e] py-1 shadow-xl">
               <button type="button" class="block w-full px-3 py-1.5 text-left text-xs text-white/85 hover:bg-white/10"
                       @click="renderMenuOpen = false; generateImage()">Render as image</button>
               <button type="button" class="block w-full px-3 py-1.5 text-left text-xs text-white/85 hover:bg-white/10"
                       @click="renderMenuOpen = false; generateVideo()">Render as video</button>
+              <!-- Only offered when the frame the preview is showing right now actually has
+                   alpha (Space Type is one of the three surfaces whose renderer preserves
+                   it) — see detectAlpha(). Disabled + titled rather than hidden, so a user
+                   who wants transparency learns exactly what to change. -->
+              <label class="flex items-center gap-2 px-3 py-1.5 text-xs"
+                     :class="exportAlphaAvailable ? 'text-white/85' : 'cursor-not-allowed text-white/30'"
+                     :title="exportAlphaAvailable
+                       ? 'Exports as WebM with real transparency — Safari cannot play this file.'
+                       : 'No transparency in the current frame — turn on Transparent background in the Output section, or use an effect/background with gaps.'">
+                <input type="checkbox" v-model="exportAlpha" :disabled="!exportAlphaAvailable" />
+                Transparent background
+              </label>
+              <p v-if="exportAlpha && exportAlphaAvailable"
+                 class="px-3 pb-1.5 text-[10px] leading-snug text-amber-300/90">
+                Exports as WebM — Safari will not play this file.
+              </p>
               <button type="button" class="block w-full px-3 py-1.5 text-left text-xs text-white/85 hover:bg-white/10"
                       @click="renderMenuOpen = false; sendToTimeline()">Send to timeline</button>
             </div>
