@@ -20,11 +20,14 @@
 import { readFile, mkdir, access } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { depthCacheKey, depthCacheName } from '~~/server/utils/depthCache'
+import { depthCacheKey, depthCacheName, assetType, safeAssetRelPath } from '~~/server/utils/depthCache'
 
 const MODEL = 'onnx-community/depth-anything-v2-small'
-const INPUT_DIR = join(process.cwd(), '..', 'input')
+const COMFY_ROOT = join(process.cwd(), '..')
+const INPUT_DIR = join(COMFY_ROOT, 'input')
 const CACHE_SUBDIR = 'sailor_depth'
+// The cache always lives under input/, whatever root the SOURCE came from, so one
+// /view?type=input URL serves every depth map.
 const CACHE_DIR = join(INPUT_DIR, CACHE_SUBDIR)
 
 /** Depth drives a blur radius, not detail — full resolution buys nothing and costs
@@ -44,18 +47,21 @@ function depthPipeline(): Promise<any> {
 const exists = (p: string) => access(p).then(() => true, () => false)
 
 export default defineEventHandler(async (event) => {
-  const body = await readBody<{ filename?: string }>(event)
-  const filename = (body?.filename ?? '').trim()
-  if (!filename || filename.includes('/') || filename.includes('\\') || filename.includes('..')) {
-    throw createError({ statusCode: 400, message: 'a bare filename is required' })
-  }
+  const body = await readBody<{ filename?: string; subfolder?: string; type?: string }>(event)
 
-  const srcPath = join(INPUT_DIR, filename)
+  // A WIRED layer's image is an execution output, so it lives under output/ or temp/,
+  // not input/. Same feature must work on both — see the parity rule.
+  const root = assetType(body?.type)
+  if (!root) throw createError({ statusCode: 400, message: `unknown asset type: ${body?.type}` })
+  const rel = safeAssetRelPath(body?.filename ?? '', body?.subfolder)
+  if (!rel) throw createError({ statusCode: 400, message: 'a safe filename is required' })
+
+  const srcPath = join(COMFY_ROOT, root, rel)
   let bytes: Uint8Array
   try {
     bytes = new Uint8Array(await readFile(srcPath))
   } catch {
-    throw createError({ statusCode: 404, message: `not found in input dir: ${filename}` })
+    throw createError({ statusCode: 404, message: `not found in ${root}: ${rel}` })
   }
 
   const name = depthCacheName(depthCacheKey(bytes))

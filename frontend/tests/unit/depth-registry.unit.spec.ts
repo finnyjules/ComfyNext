@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import {
   depthStatusFor, depthImageFor, depthMessageFor, requestDepth, onDepthChange,
-  depthUrl, __resetDepthRegistry,
+  depthUrl, depthKey, __resetDepthRegistry,
 } from '~/lib/compositor/depthRegistry'
 
 beforeEach(() => { __resetDepthRegistry(); vi.restoreAllMocks() })
@@ -80,5 +80,38 @@ describe('depthRegistry', () => {
     requestDepth('a.png')
     await vi.waitFor(() => expect(depthStatusFor('a.png')).toBe('error'))
     expect(seen).not.toHaveBeenCalled()
+  })
+})
+
+describe('depthKey — wired/local parity', () => {
+  it('defaults a bare filename to the input root', () => {
+    expect(depthKey('a.png')).toBe(depthKey({ filename: 'a.png', type: 'input' }))
+  })
+  it('does NOT confuse the same basename in different roots', () => {
+    // A wired execution output and an uploaded file can share a name.
+    expect(depthKey({ filename: 'a.png', type: 'output' }))
+      .not.toBe(depthKey({ filename: 'a.png', type: 'input' }))
+  })
+  it('distinguishes subfolders', () => {
+    expect(depthKey({ filename: 'a.png', subfolder: 'x', type: 'output' }))
+      .not.toBe(depthKey({ filename: 'a.png', type: 'output' }))
+  })
+})
+
+describe('requestDepth for a wired image', () => {
+  it('posts the root and subfolder so the server reads the right directory', async () => {
+    const f = vi.fn(async () => ({ ok: true, json: async () => ({}) }))
+    vi.stubGlobal('fetch', f)
+    requestDepth({ filename: 'out.png', subfolder: 'sub', type: 'output' })
+    await vi.waitFor(() => expect(f).toHaveBeenCalled())
+    const body = JSON.parse((f.mock.calls[0] as any)[1].body)
+    expect(body).toEqual({ filename: 'out.png', subfolder: 'sub', type: 'output' })
+  })
+
+  it('tracks a wired and a local image with the same name independently', () => {
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})))
+    requestDepth({ filename: 'same.png', type: 'output' })
+    expect(depthStatusFor({ filename: 'same.png', type: 'output' })).toBe('loading')
+    expect(depthStatusFor({ filename: 'same.png', type: 'input' })).toBe('idle')
   })
 })

@@ -8,6 +8,30 @@
 
 type Status = 'idle' | 'loading' | 'ready' | 'error'
 
+/**
+ * Where an image lives. An uploaded/local layer is a bare filename under input/; a
+ * WIRED layer's image is an execution output under output/ or temp/. Both must work —
+ * a feature that appears on one and not the other reads as a bug.
+ */
+export interface DepthSource {
+  filename: string
+  subfolder?: string
+  type?: 'input' | 'output' | 'temp'
+}
+
+/** Call sites may pass a bare filename (the common input/ case) or a full source. */
+export type DepthRef = string | DepthSource
+
+const asSource = (ref: DepthRef): DepthSource =>
+  typeof ref === 'string' ? { filename: ref } : ref
+
+/** Cache key. Includes root and subfolder, so the same basename in output/ and input/
+ *  are not confused for one another. */
+export function depthKey(ref: DepthRef): string {
+  const s = asSource(ref)
+  return `${s.type ?? 'input'}:${s.subfolder ?? ''}:${s.filename}`
+}
+
 interface Entry { status: Status; img: HTMLImageElement | null; message?: string }
 
 let entries = new Map<string, Entry>()
@@ -22,18 +46,18 @@ export function depthUrl(depthFilename: string, subfolder: string): string {
   return `/view?${q}`
 }
 
-export function depthStatusFor(filename: string): Status {
-  return entries.get(filename)?.status ?? 'idle'
+export function depthStatusFor(ref: DepthRef): Status {
+  return entries.get(depthKey(ref))?.status ?? 'idle'
 }
 
 /** Synchronous by design — safe to call from inside a paint. */
-export function depthImageFor(filename: string): HTMLImageElement | null {
-  const e = entries.get(filename)
+export function depthImageFor(ref: DepthRef): HTMLImageElement | null {
+  const e = entries.get(depthKey(ref))
   return e?.status === 'ready' ? e.img : null
 }
 
-export function depthMessageFor(filename: string): string {
-  return entries.get(filename)?.message ?? ''
+export function depthMessageFor(ref: DepthRef): string {
+  return entries.get(depthKey(ref))?.message ?? ''
 }
 
 export function onDepthChange(cb: () => void): () => void {
@@ -41,18 +65,20 @@ export function onDepthChange(cb: () => void): () => void {
   return () => { listeners.delete(cb) }
 }
 
-function fail(filename: string, message: string) {
-  entries.set(filename, { status: 'error', img: null, message })
+function fail(key: string, message: string) {
+  entries.set(key, { status: 'error', img: null, message })
   notify()
 }
 
-export function requestDepth(filename: string): void {
-  if (!filename) return
-  const cur = entries.get(filename)
+export function requestDepth(ref: DepthRef): void {
+  const src = asSource(ref)
+  if (!src?.filename) return
+  const key = depthKey(src)
+  const cur = entries.get(key)
   // 'error' is deliberately retryable; 'loading' and 'ready' are not re-requested.
   if (cur && cur.status !== 'error') return
 
-  entries.set(filename, { status: 'loading', img: null })
+  entries.set(key, { status: 'loading', img: null })
   notify()
 
   void (async () => {
@@ -61,20 +87,24 @@ export function requestDepth(filename: string): void {
       const res = await fetch('/api/depth/estimate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filename }),
+        body: JSON.stringify({
+          filename: src.filename,
+          subfolder: src.subfolder,
+          type: src.type ?? 'input',
+        }),
       })
-      if (!res.ok) return fail(filename, `depth request failed (${res.status})`)
+      if (!res.ok) return fail(key, `depth request failed (${res.status})`)
       const data = await res.json()
-      if (!data?.depthFilename) return fail(filename, 'depth request returned no file')
+      if (!data?.depthFilename) return fail(key, 'depth request returned no file')
       url = depthUrl(data.depthFilename, data.subfolder ?? '')
     } catch (err) {
-      return fail(filename, `depth request failed: ${(err as Error).message}`)
+      return fail(key, `depth request failed: ${(err as Error).message}`)
     }
 
     const img = new Image()
     img.crossOrigin = 'anonymous'
-    img.onload = () => { entries.set(filename, { status: 'ready', img }); notify() }
-    img.onerror = () => fail(filename, 'depth map could not be decoded')
+    img.onload = () => { entries.set(key, { status: 'ready', img }); notify() }
+    img.onerror = () => fail(key, 'depth map could not be decoded')
     img.src = url
   })()
 }
