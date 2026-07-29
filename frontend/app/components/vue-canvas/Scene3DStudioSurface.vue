@@ -1346,7 +1346,9 @@ function addGlb(url: string) {
 function removeObject(id: string) {
   const i = doc.objects.findIndex((o) => o.id === id)
   if (i >= 0) doc.objects.splice(i, 1)
-  if (selectedId.value === id) selectedId.value = null
+  // Remove the deleted id from the selection without going through the replace-setter,
+  // which would discard any other selected objects when multi-selection is active.
+  selectedIds.value = selectedIds.value.filter((x) => x !== id)
   delete glbError[id]
 }
 // C3 fix (final review): `{ ...src.material }` is a SHALLOW copy — `material.relief` (and
