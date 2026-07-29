@@ -236,7 +236,7 @@ export async function unionCommandLists(
 export async function solidExtrudeBody(
   commands: readonly VectorCommand[],
   copies: ReadonlyArray<VtExtrudeCopy>,
-  origin: { x: number; y: number },
+  origin: { x: number; y: number; rotate?: number },
   advance: number,
 ): Promise<VectorCommand[]> {
   if (!commands.length || !copies.length) return []
@@ -279,7 +279,7 @@ export async function solidExtrudeBody(
 export async function solidExtrudeBodyCached(
   commands: readonly VectorCommand[],
   copies: readonly VtExtrudeCopy[],
-  origin: { x: number; y: number },
+  origin: { x: number; y: number; rotate?: number },
   advance: number,
 ): Promise<VectorCommand[]> {
   if (!commands.length || !copies.length) return []

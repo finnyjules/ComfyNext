@@ -69,6 +69,7 @@ import {
   extrudeCopyCommands,
   extrudeCopyTransform,
   extrudeOffsets,
+  vtCellPivot,
   vtSolidKey,
   type VtExtrudeCopy,
   type VtExtrudeSpec,
@@ -184,13 +185,21 @@ const nonZero = (v: number): number =>
  * glyph, so a thumbnail cannot tell the two apart, and the reveal is gone.
  *
  * WHERE the window is, is `glyphCellClipRect`'s answer and not this function's:
- * the SVG export needs the identical rect for its `<clipPath>`, and a second
+ * the SVG export needs the identical window for its `<clipPath>`, and a second
  * copy of the cell-box arithmetic is exactly the drift this file exists to
- * prevent. This is only the two `ctx` calls that turn that rect into a clip.
+ * prevent. This is only the `ctx` calls that turn that window into a clip.
+ *
+ * On a CURVE the window is TURNED (see `glyphCellClipRect` for why that is still
+ * a fixed window), and the turn is applied to the CONTEXT before the identical
+ * rect is taken — the SVG writer turns the identical rect inside its
+ * `<clipPath>` instead. The context is then put back with `setTransform` rather
+ * than by rotating back: `ctx.clip()` has already baked the region into device
+ * space, so restoring the matrix exactly costs nothing and cannot accumulate the
+ * float noise a there-and-back rotation would.
  */
 function clipGlyphCell(
   ctx: CanvasRenderingContext2D,
-  origin: { x: number; y: number },
+  origin: { x: number; y: number; rotate?: number },
   /** The glyph's advance in OUTPUT pixels — the cell's width. */
   advance: number,
   /** The em in OUTPUT pixels — the cell's height. */
@@ -198,11 +207,21 @@ function clipGlyphCell(
   clip: VtGlyphClip,
 ): void {
   const r = glyphCellClipRect(origin, advance, em, clip)
+  const rot = Number.isFinite(r.rotate as number) ? (r.rotate as number) : 0
+  const restore = rot === 0 ? null : ctx.getTransform()
+  if (restore) {
+    const px = Number.isFinite(r.pivotX as number) ? (r.pivotX as number) : r.x + r.width / 2
+    const py = Number.isFinite(r.pivotY as number) ? (r.pivotY as number) : r.y + r.height / 2
+    ctx.translate(px, py)
+    ctx.rotate((rot * Math.PI) / 180)
+    ctx.translate(-px, -py)
+  }
   // `beginPath` is safe here: this renderer draws `Path2D` objects and never
   // uses the context's own current path.
   ctx.beginPath()
   ctx.rect(r.x, r.y, r.width, r.height)
   ctx.clip()
+  if (restore) ctx.setTransform(restore)
 }
 
 /** A stable key for a coords record, so two glyphs that land on the same axis
@@ -479,19 +498,54 @@ function paintBoxFrom(ax: number, ay: number, bx: number, by: number): VtPaintBo
   return { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, w: Math.max(x1 - x0, 1e-3), h: Math.max(y1 - y0, 1e-3) }
 }
 
+/** The axis-aligned box of a rect's four corners taken through a placement's own
+ *  turn — the shape both paint boxes need once a glyph can be rotated. Kept as
+ *  one helper so "the placed box" has one meaning here. */
+function turnedBoxFrom(
+  origin: { x: number; y: number; rotate: number },
+  ax: number, ay: number, bx: number, by: number,
+): VtPaintBox {
+  const rad = (origin.rotate * Math.PI) / 180
+  const cos = Math.cos(rad)
+  const sin = Math.sin(rad)
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
+  for (const [px, py] of [[ax, ay], [bx, ay], [ax, by], [bx, by]] as const) {
+    const x = origin.x + px * cos - py * sin
+    const y = origin.y + px * sin + py * cos
+    if (x < x0) x0 = x
+    if (x > x1) x1 = x
+    if (y < y0) y0 = y
+    if (y > y1) y1 = y
+  }
+  return paintBoxFrom(x0, y0, x1, y1)
+}
+
 /**
  * `glyph` — ONE letter's own box, so each letter carries its own copy of the fill.
  *
- * The box is the glyph's INK bounds, not its cell: that is what SVG's
- * `gradientUnits="objectBoundingBox"` means (Task 4 emits exactly that for this
- * anchor, and a canvas/SVG mismatch here would be invisible — both would still
- * show a gradient on the letter). It is also the more useful of the two: an ink
- * box gives every letter the FULL ramp over its own extent, where a cell box
- * would give a vertical gradient the same band on every letter and collapse the
- * visible difference from `word`.
+ * The box is the glyph's INK bounds, not its cell. It is the more useful of the
+ * two: an ink box gives every letter the FULL ramp over its own extent, where a
+ * cell box would give a vertical gradient the same band on every letter and
+ * collapse the visible difference from `word`.
+ *
+ * ## PLACED ink, which on a curve is not the same box
+ *
+ * The bounds are taken through the glyph's OWN placement, rotation included —
+ * the four corners of its font-space box turned by the tangent and unioned. A
+ * turned letter's axis-aligned extent is not its unturned extent, and the old
+ * arithmetic (which only translated and scaled) put the box somewhere the letter
+ * was not: measured at 76.7 % / 80.8 % of core ink disagreeing with the export
+ * at arc 150° / 330°, the only live break of this studio's 0.0000 % guarantee.
+ *
+ * **And the box stays AXIS-ALIGNED, deliberately.** The alternative — a box
+ * glued to the letter's own frame, so the ramp turns with it — was considered
+ * and rejected: it fans the ramp direction around the arc, and it disagrees with
+ * the extrude on the same run, which fixes ONE absolute light direction whatever
+ * angle a letter sits at. One scene, one set of directions.
  *
  * A glyph with no ink (a space) has no bounding box to speak of, so it falls back
- * to its CELL — the same box `glyphCellClipRect` masks against.
+ * to its CELL — the same box `glyphCellClipRect` masks against, turned the same
+ * way.
  */
 export function vtGlyphPaintBox(
   glyph: GlyphOutline,
@@ -505,18 +559,51 @@ export function vtGlyphPaintBox(
   const fy = place.flipY ? -s : s
   const b = glyph.bbox
   const inked = glyph.commands.length > 0 && Number.isFinite(b.minX) && Number.isFinite(b.minY)
-  if (!inked) {
-    const y1 = origin.y + em * CELL_DESCENT
-    return paintBoxFrom(origin.x, y1 - em, origin.x + glyph.advance * s, y1)
+  // The straight run keeps the original two-corner expression rather than
+  // folding `cos 0`/`sin 0` through the general form, so every flat config lands
+  // on exactly the doubles it always did.
+  if (origin.rotate === 0) {
+    if (!inked) {
+      const y1 = origin.y + em * CELL_DESCENT
+      return paintBoxFrom(origin.x, y1 - em, origin.x + glyph.advance * s, y1)
+    }
+    return paintBoxFrom(origin.x + b.minX * s, origin.y + b.minY * fy, origin.x + b.maxX * s, origin.y + b.maxY * fy)
   }
-  return paintBoxFrom(origin.x + b.minX * s, origin.y + b.minY * fy, origin.x + b.maxX * s, origin.y + b.maxY * fy)
+  if (!inked) {
+    // The cell, in the glyph's own frame: the baseline runs along its x, so the
+    // descent hangs below it on the local y.
+    return turnedBoxFrom(origin, 0, em * CELL_DESCENT - em, glyph.advance * s, em * CELL_DESCENT)
+  }
+  return turnedBoxFrom(origin, b.minX * s, b.minY * fy, b.maxX * s, b.maxY * fy)
 }
 
 /**
  * `word` — the RUN's ink box, so one fill spans the whole word and the letters
  * are windows onto it. Exactly the glyph box one level up: the same ink-bounds
- * rule applied to `outlines.bbox`, which is the run's bounds in font units with
- * the pen already folded in.
+ * rule applied to the whole run.
+ *
+ * ## On a curve it is the PLACED ink, not the straight run's box
+ *
+ * `outlines.bbox` is the run's bounds in FONT units on a straight baseline, so
+ * scaling and translating it answers a question about a run that is not the one
+ * being drawn: measured at arc 150°–330° it kept the straight run's size
+ * (284.3 × 84.1 px at every sweep, against a true placed ink of 239.1 × 233.5)
+ * and its centre drifted 47 px — a third of the run's own height — off the ink
+ * it is supposed to span. `placedInkBounds` is that same union taken through
+ * each glyph's own placement, which is the box the ink actually occupies.
+ *
+ * **It spans the arc's bounding box, not the arc**, and that is the decision
+ * rather than a leftover. `word` means "one fill, and the letters are windows
+ * onto it" — a single ramp across a rectangle, which is what a linear gradient
+ * IS. A ramp that followed the curve would be a different feature (a gradient
+ * ALONG a path, parameterised by arc length, needing a paint server per glyph on
+ * both surfaces); it is not what this anchor promises and it is not what a user
+ * dragging an `angle` slider is asking for.
+ *
+ * A straight run takes the original expression, so it is byte-identical: the
+ * placed union and the scaled `outlines.bbox` are the same box, but they are not
+ * the same FLOATING-POINT arithmetic (`(gx + bx)·s` against `gx·s + bx·s`), and
+ * this box is also `vtRunShear`'s pivot.
  *
  * An empty run (no text, or nothing but spaces) has no ink, so it falls back to
  * the frame box rather than to a sliver at the origin.
@@ -530,7 +617,11 @@ export function vtRunPaintBox(
   const s = place.scale
   const fy = place.flipY ? -s : s
   if (!Number.isFinite(b.minX) || (b.maxX === b.minX && b.maxY === b.minY)) return vtFramePaintBox(opts)
-  return paintBoxFrom(place.x + b.minX * s, place.y + b.minY * fy, place.x + b.maxX * s, place.y + b.maxY * fy)
+  if (!place.curve && !place.rotate) {
+    return paintBoxFrom(place.x + b.minX * s, place.y + b.minY * fy, place.x + b.maxX * s, place.y + b.maxY * fy)
+  }
+  const p = placedInkBounds(outlines, place)
+  return paintBoxFrom(p.minX, p.minY, p.maxX, p.maxY)
 }
 
 // ── The whole-run shear ─────────────────────────────────────────────────────
@@ -1295,7 +1386,7 @@ export function drawVectorType(
     function solidBody(
       L: VtPaintLayer,
       index: number,
-      origin: { x: number; y: number },
+      origin: { x: number; y: number; rotate?: number },
       advance: number,
     ): Path2D | null {
       if (!L.id) return null
@@ -1380,7 +1471,7 @@ export function drawVectorType(
       glyph: GlyphOutline,
       glyphAlpha: number,
       /** The glyph's placed origin — the taper pivot's anchor. */
-      origin: { x: number; y: number },
+      origin: { x: number; y: number; rotate?: number },
       /** The glyph's advance in output px — the taper pivot's other half. */
       advance: number,
       /** This glyph's index, so a precomputed solid body can be found. */
@@ -1506,7 +1597,7 @@ export function drawVectorType(
     // preview by a pixel is a plausible picture that is not the one on screen.
 
     /** Apply one copy's step to the CONTEXT, in the glyph's own space. */
-    function applyCopy(c: VtExtrudeCopy, origin: { x: number; y: number }, advance: number): void {
+    function applyCopy(c: VtExtrudeCopy, origin: { x: number; y: number; rotate?: number }, advance: number): void {
       const t = extrudeCopyTransform(c, origin, advance)
       ctx.translate(t.x, t.y)
       if (t.scale !== 1) ctx.scale(t.scale, t.scale)
@@ -1518,7 +1609,7 @@ export function drawVectorType(
     function copyMatrix(
       base: DOMMatrix,
       c: VtExtrudeCopy,
-      origin: { x: number; y: number },
+      origin: { x: number; y: number; rotate?: number },
       advance: number,
     ): DOMMatrix {
       const t = extrudeCopyTransform(c, origin, advance)
@@ -1608,11 +1699,17 @@ export function drawVectorType(
         // origin: it was not the reported defect, `spin`/`sway`/`rock` are
         // verified against it, and moving two pivots at once would make any
         // regression impossible to attribute.
+        //
+        // On a CURVE the cell centre is half an advance along the glyph's own
+        // TANGENT, not along the output's x — `vtCellPivot`, the same function
+        // `extrudeCopyTransform` and the two SVG transform writers use, so the
+        // four surfaces that scale a glyph cannot disagree about the point it
+        // turns about.
         if (sx !== 1 || sy !== 1) {
-          const hx = advance / 2
-          ctx.translate(hx, 0)
+          const h = vtCellPivot(advance, origin.rotate)
+          ctx.translate(h.x, h.y)
           ctx.scale(sx, sy)
-          ctx.translate(-hx, 0)
+          ctx.translate(-h.x, -h.y)
         }
         ctx.translate(-origin.x, -origin.y)
       }
@@ -1714,7 +1811,7 @@ export function drawVectorTypeToCanvas(
  * attribute.
  */
 function glyphSvgTransform(
-  origin: { x: number; y: number },
+  origin: { x: number; y: number; rotate?: number },
   advance: number,
   tr: VtGlyphMotion,
   /** The run's shear, from `vtRunShear`. `null` = none. */
@@ -1735,10 +1832,10 @@ function glyphSvgTransform(
   // ordinary export readable. The two-argument form appears only for a card
   // flip, which is exactly when the axes really do differ.
   if (sx !== 1 || sy !== 1) {
-    const hx = Number.isFinite(advance) ? advance / 2 : 0
-    parts.push(`translate(${n(hx)} 0)`)
+    const h = vtCellPivot(advance, origin.rotate)
+    parts.push(`translate(${n(h.x)} ${n(h.y)})`)
     parts.push(sx === sy ? `scale(${n(sx)})` : `scale(${n(sx)} ${n(sy)})`)
-    parts.push(`translate(${n(-hx)} 0)`)
+    parts.push(`translate(${n(-h.x)} ${n(-h.y)})`)
   }
   parts.push(`translate(${n(-origin.x)} ${n(-origin.y)})`)
   return parts.join(' ')
@@ -1767,7 +1864,7 @@ function glyphSvgTransform(
  * terms — the whole reason `VT_SKEW_MAX` bounds the determinant away from zero.
  */
 function glyphSvgMatrix(
-  origin: { x: number; y: number },
+  origin: { x: number; y: number; rotate?: number },
   advance: number,
   tr: VtGlyphMotion,
   /** The run's shear, from `vtRunShear`. `null` = none. */
@@ -1793,10 +1890,12 @@ function glyphSvgMatrix(
     m = multiplyAffine(m, [c, s, -s, c, 0, 0])
   }
   if (sx !== 1 || sy !== 1) {
-    const hx = q(Number.isFinite(advance) ? advance / 2 : 0)
-    m = multiplyAffine(m, T(hx, 0))
+    const h = vtCellPivot(advance, origin.rotate)
+    const hx = q(h.x)
+    const hy = q(h.y)
+    m = multiplyAffine(m, T(hx, hy))
     m = multiplyAffine(m, [q(sx), 0, 0, q(sy), 0, 0])
-    m = multiplyAffine(m, T(-hx, 0))
+    m = multiplyAffine(m, T(-hx, -hy))
   }
   return multiplyAffine(m, T(q(-origin.x), q(-origin.y)))
 }
@@ -2052,6 +2151,12 @@ export function vectorTypeSVG(
   // one `ctx.transform` — same config, same placement, same box. Resolved once
   // for the document, not once per glyph: it does not depend on `i`.
   const shear = vtRunShear(frame.config, frame.outlines, place, opts)
+  /** Is any glyph in this run PLACED at an angle? Asked once for the document,
+   *  because it decides how the `glyph` anchor is written — see `layerPaint`.
+   *  `vtIsCurved` is the same question `vtRunCurve` answers with `null`, and the
+   *  run-level `rotate` is folded in so the answer does not depend on which of
+   *  the two put the letters at an angle. */
+  const turned = vtIsCurved(frame.config) || place.rotate !== 0
 
   // ── THE FILL ────────────────────────────────────────────────────────────────
   // Gradients — both the multi-stop `Gradient` and the two-colour `Fill` form —
@@ -2147,7 +2252,26 @@ export function vectorTypeSVG(
       }
       const box = vtGlyphPaintBox(glyph, place, em)
       return paintToVectorPaint(L.paint, {
-        units: expanded ? 'userSpaceOnUse' : 'objectBoundingBox',
+        // `objectBoundingBox` hands the BOX to the browser, which is a second
+        // derivation of it — and it agreed with `vtGlyphPaintBox` only for as
+        // long as a glyph's placed path had the same bounds as its font-space
+        // bbox translated and scaled. TURN the glyph and the two part company:
+        // the browser measures the rotated outline, the canvas measures the
+        // corners of the unrotated box turned, and neither is wrong so much as
+        // they are two answers. Measured at 76.7 % / 80.8 % of core ink
+        // disagreeing at arc 150° / 330° — the only live break of this studio's
+        // 0.0000 % guarantee.
+        //
+        // So a turned run stops delegating and writes `userSpaceOnUse` over the
+        // box the canvas computed, which is exactly the move the EXTRUDE arm
+        // already made one line up and for the same reason. Still no
+        // `gradientTransform`: with nothing to cancel, a user-space server
+        // resolves in the painted element's own user space and therefore still
+        // rides that letter's motion, exactly as a bounding-box one does.
+        //
+        // A straight run keeps `objectBoundingBox` and every existing export is
+        // byte-identical.
+        units: expanded || turned ? 'userSpaceOnUse' : 'objectBoundingBox',
         aspect: box.w / box.h,
         box: paintBoxRect(box),
         raster: rasters[i],

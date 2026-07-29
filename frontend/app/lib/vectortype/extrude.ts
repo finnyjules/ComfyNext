@@ -166,11 +166,17 @@ export function extrudeOffsets(
  *
  * ## The pivot
  *
- * A tapered copy scales about the glyph CELL's centre horizontally and the
- * BASELINE vertically — the same pivot the motion `scaleX`/`scaleY` block uses,
- * and for the reason written down there: type scales about its baseline, and
- * pinning the left edge would make each copy drift rightwards as it shrank, so a
- * tapered extrude would BEND rather than recede.
+ * A tapered copy scales about the glyph CELL's centre along the baseline and
+ * about the BASELINE across it — the same pivot the motion `scaleX`/`scaleY`
+ * block uses, and for the reason written down there: type scales about its
+ * baseline, and pinning the left edge would make each copy drift rightwards as
+ * it shrank, so a tapered extrude would BEND rather than recede.
+ *
+ * **In the GLYPH's frame, not the output's** — see `vtCellPivot`. On a straight
+ * run those are the same frame and the arithmetic is unchanged; on a curve the
+ * cell centre is half an advance along the glyph's own TANGENT, and taking it
+ * along the output's x instead puts the pivot somewhere off the letter, so the
+ * copies of a tapered extrude slew sideways instead of converging on it.
  *
  * ## Why the pivot is folded into `x`/`y` rather than left as three steps
  *
@@ -186,25 +192,74 @@ export function extrudeOffsets(
  */
 export function extrudeCopyTransform(
   c: VtExtrudeCopy,
-  /** The glyph's PLACED origin — its left edge on the baseline, in output px. */
-  origin: { x: number; y: number },
+  /** The glyph's PLACED origin — its left edge on the baseline, in output px.
+   *  `rotate` (degrees) comes straight off a `glyphTransform` result, so no
+   *  caller has to remember to pass the angle and no two callers can pass a
+   *  different one. */
+  origin: { x: number; y: number; rotate?: number },
   /** The glyph's advance in OUTPUT pixels — the other half of the pivot. */
   advance: number,
 ): Required<Transform2D> {
   const s = Number.isFinite(c?.scale) ? c.scale : 1
-  const px = origin.x + advance / 2
+  const p = vtCellPivot(advance, origin.rotate)
+  const px = origin.x + p.x
+  const py = origin.y + p.y
   return {
     scale: s,
     // A copy is a translate-and-scale in the OUTPUT space the placed commands
     // are already in, so it never rotates — including on a curve, where the
-    // glyph's own turn is already baked into those commands. What that means for
-    // the taper PIVOT below (`origin.x + advance/2` is the cell centre only while
-    // the cell is horizontal) is a live question on an arc, not a settled one.
+    // glyph's own turn is already baked into those commands. ONE absolute light
+    // direction: every letter's block shadow steps the same way whatever angle
+    // the letter sits at, which is what a single light source looks like and
+    // what the `angle` control promises. Stepping in each glyph's own frame
+    // instead makes the shadows fan outwards around the arc like a starburst.
+    //
+    // The taper PIVOT is the one part that IS in the glyph's frame, because it
+    // is a point on the letter rather than a direction in the scene.
     rotate: 0,
     x: (Number.isFinite(c?.dx) ? c.dx : 0) + px * (1 - s),
-    y: (Number.isFinite(c?.dy) ? c.dy : 0) + origin.y * (1 - s),
+    y: (Number.isFinite(c?.dy) ? c.dy : 0) + py * (1 - s),
     flipY: false,
   }
+}
+
+/**
+ * The glyph CELL's centre, as an offset from the glyph's PLACED ORIGIN — the
+ * ONE derivation of the pivot a per-glyph scale turns about.
+ *
+ * Half an advance along the glyph's own baseline, and nothing across it: type
+ * scales about its baseline. On a straight run that is `(advance/2, 0)` and the
+ * arithmetic below is the identical expression it always was — `rotate === 0`
+ * takes a branch rather than folding `cos 0`/`sin 0`, so every flat run lands on
+ * the same doubles. On a curve the baseline is the TANGENT, so the offset turns
+ * with it.
+ *
+ * Shared, and it has to be: FOUR surfaces scale a glyph about this point and a
+ * disagreement between any two is a plausible picture that is not the one on
+ * screen —
+ *
+ *  1. `extrudeCopyTransform` above (which is itself the one derivation the
+ *     canvas fast path, the canvas anchored path, the SVG `expand` and the
+ *     boolean union all step their copies with);
+ *  2. the canvas's motion `scaleX`/`scaleY` block;
+ *  3. `glyphSvgTransform`, the same motion written as an SVG transform list;
+ *  4. `glyphSvgMatrix`, the same list again as numbers, which a test already
+ *     holds against (3).
+ *
+ * It lives HERE rather than in `./render` so `./extrude` stays a leaf — this
+ * file imports nothing but the spine's types and the config's bound.
+ */
+export function vtCellPivot(
+  /** The glyph's advance in OUTPUT pixels. */
+  advance: number,
+  /** The placement's rotation in DEGREES — `0`/absent for every straight run. */
+  rotate: number | undefined,
+): { x: number; y: number } {
+  const hx = Number.isFinite(advance) ? advance / 2 : 0
+  const rot = Number.isFinite(rotate as number) ? (rotate as number) : 0
+  if (rot === 0) return { x: hx, y: 0 }
+  const rad = (rot * Math.PI) / 180
+  return { x: hx * Math.cos(rad), y: hx * Math.sin(rad) }
 }
 
 /**
@@ -229,7 +284,7 @@ export function extrudeCopyTransform(
 export function extrudeCopyCommands(
   commands: readonly VectorCommand[],
   copies: readonly VtExtrudeCopy[],
-  origin: { x: number; y: number },
+  origin: { x: number; y: number; rotate?: number },
   advance: number,
 ): VectorCommand[][] {
   return copies.map(c => transformCommands(commands, extrudeCopyTransform(c, origin, advance)))

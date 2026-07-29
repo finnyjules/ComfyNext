@@ -19,13 +19,13 @@
  * flat-shaded facets to polygons and call `shapesToSVG` directly. Everything
  * below is the type-specific adapter over that spine.
  */
-import type { SvgDocOptions, Transform2D, VectorCommand, VectorPaint, VectorRect, VectorShape } from '~/lib/vector/svg'
+import type { SvgDocOptions, Transform2D, VectorCommand, VectorPaint, VectorShape, VectorWindow } from '~/lib/vector/svg'
 import { blurRadiusToStdDeviation, shapesToSVG, transformCommands } from '~/lib/vector/svg'
 import type { VtCurveTable } from './curve'
 import { pointAtLength } from './curve'
 import type { GlyphOutline, TextOutlines, VtBBox } from './outline'
 
-export type { Transform2D, VectorGradient, VectorPaint, VectorRect, VectorShape } from '~/lib/vector/svg'
+export type { Transform2D, VectorGradient, VectorPaint, VectorRect, VectorShape, VectorWindow } from '~/lib/vector/svg'
 /** Re-exported so a second studio can reach the spine without importing
  *  anything type-specific. */
 export { blurRadiusToStdDeviation, controlPointBounds, shapesToSVG } from '~/lib/vector/svg'
@@ -274,16 +274,48 @@ export interface GlyphClip {
  * leave a zero-extent window, or an entrance would begin with the bottom of a
  * 'g' already showing.
  *
- * The window is FIXED in output space. Whatever transform the glyph carries is
- * applied to the glyph and not to this rect, so the letter slides THROUGH the
- * window rather than dragging it along.
+ * The window is FIXED. Whatever transform the glyph carries — its motion, the
+ * run's shear — is applied to the glyph and not to this window, so the letter
+ * slides THROUGH it rather than dragging it along.
+ *
+ * ## Why it TURNS with the glyph on a curve, and why that is still "fixed"
+ *
+ * `origin` is the glyph's PLACED baseline origin, and on a curve that placement
+ * carries a `rotate` (the tangent). The window is built in the glyph's own
+ * frame — `advance` along its baseline, the em across it — and then turned
+ * about that origin by exactly the placement's own angle.
+ *
+ * That is not a hole in "fixed", it is what fixed means once the cell is not
+ * horizontal. Two properties survive intact and they are the ones the mask
+ * presets are drawn against:
+ *
+ *  - **the window does not MOVE while the letter animates.** The rotation comes
+ *    from the PLACEMENT, which is a property of the config, not of `t`. A
+ *    `mask-up` glyph still starts a quarter-em low and lifts through a window
+ *    that stays exactly where it is.
+ *  - **the wipe still crosses the letter the way the preset asked.** A `top`
+ *    reveal uncovers the letter from its own top; on an axis-aligned window a
+ *    glyph turned 90° is uncovered from its SIDE instead, and one turned past
+ *    that is uncovered backwards.
+ *
+ * Measured before the turn was added, with the stagger off so every glyph shares
+ * one `amount`: the same reveal showed 98.1 % of the run at arc 0 and 73.6 % at
+ * arc 330 at the same instant, with each letter sliced by its own horizontal
+ * edge at its own placed baseline. It did not read as a reveal.
+ *
+ * `rotate: 0` — every straight run — returns a plain axis-aligned rect with no
+ * rotation and no pivot, byte-identical to what this returned before curves
+ * existed.
  */
 export function glyphCellClipRect(
-  origin: { x: number; y: number },
+  /** The glyph's PLACED origin. `rotate` (degrees) is read straight off a
+   *  `glyphTransform` result, so neither renderer has to remember to pass the
+   *  angle and neither can pass a different one. */
+  origin: { x: number; y: number; rotate?: number },
   advance: number,
   em: number,
   clip: GlyphClip,
-): VectorRect {
+): VectorWindow {
   const a = clip.amount < 0 ? 0 : clip.amount > 1 ? 1 : clip.amount
   const x0 = origin.x
   const x1 = origin.x + advance
@@ -302,7 +334,13 @@ export function glyphCellClipRect(
     else bx1 = x1 - advance * a
   }
 
-  return { x: bx0, y: by0, width: Math.max(0, bx1 - bx0), height: Math.max(0, by1 - by0) }
+  const rect: VectorWindow = { x: bx0, y: by0, width: Math.max(0, bx1 - bx0), height: Math.max(0, by1 - by0) }
+  const rot = Number.isFinite(origin.rotate as number) ? (origin.rotate as number) : 0
+  if (rot === 0) return rect
+  // About the glyph's OWN origin, not the window's centre: the window is
+  // expressed in the frame whose origin that is, and the padded sides above
+  // move its centre off the letter.
+  return { ...rect, rotate: rot, pivotX: origin.x, pivotY: origin.y }
 }
 
 /**
@@ -409,9 +447,9 @@ export interface GlyphPaint {
    * rides on an untransformed wrapper `<g>` for the same reason.
    */
   clip?:
-    | VectorRect
+    | VectorWindow
     | null
-    | ((glyph: GlyphOutline, index: number) => VectorRect | null | undefined)
+    | ((glyph: GlyphOutline, index: number) => VectorWindow | null | undefined)
   /**
    * Extra attributes on each glyph's `<path>`.
    *

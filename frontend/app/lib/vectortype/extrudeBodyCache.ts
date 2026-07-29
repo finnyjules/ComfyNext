@@ -89,14 +89,22 @@ const solidBodyCache = new Map<string, VectorCommand[]>()
 export function solidBodyCacheKey(
   commands: readonly VectorCommand[],
   copies: readonly VtExtrudeCopy[],
-  origin: { x: number; y: number },
+  origin: { x: number; y: number; rotate?: number },
   advance: number,
 ): string {
   const geom: string[] = []
   for (const c of commands) geom.push(c.command, ...(c.args ?? []).map(String))
   const step: string[] = []
   for (const c of copies) step.push(String(c.dx), String(c.dy), String(c.scale))
-  return `${origin.x}|${origin.y}|${advance}|${step.join(',')}|${geom.join(',')}`
+  // The placement's ROTATION is part of the input because the taper pivot is
+  // derived from it (`extrudeCopyTransform`). In practice the placed `commands`
+  // already carry the same turn, so it is belt-and-braces — but that is the right
+  // posture for a key whose failure mode is handing one glyph another glyph's
+  // body. Appended only when there IS a turn, so every straight run keys exactly
+  // as it did before curves existed.
+  const rot = Number.isFinite(origin.rotate as number) ? (origin.rotate as number) : 0
+  const r = rot === 0 ? '' : `|r${rot}`
+  return `${origin.x}|${origin.y}|${advance}${r}|${step.join(',')}|${geom.join(',')}`
 }
 
 /**

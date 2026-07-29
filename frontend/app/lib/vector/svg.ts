@@ -193,6 +193,56 @@ export interface VectorRect {
   height: number
 }
 
+/**
+ * A reveal window: a rect, optionally TURNED about a point.
+ *
+ * The rotation exists because a shape can be PLACED at an angle while its
+ * window still belongs to the shape's own frame. An axis-aligned window over a
+ * turned shape cuts it along an axis that means nothing to it — the wipe stops
+ * being a wipe and becomes a diagonal slice — and no amount of padding fixes
+ * it, because the error grows with the angle rather than with the size.
+ *
+ * `rotate: 0` (or absent) is the plain axis-aligned window, and it writes
+ * BYTE-IDENTICAL markup to what a bare `VectorRect` wrote before this field
+ * existed: the rotation is emitted as a `transform` on the `<rect>` and an
+ * untouched window emits no transform at all.
+ *
+ * Note the rect's own `x`/`y`/`width`/`height` stay in DOCUMENT units and are
+ * the window's extent BEFORE the turn — i.e. the numbers a caller already had.
+ * That keeps the two surfaces on one derivation: a canvas turns its context and
+ * takes the identical rect, an SVG turns the identical rect inside the
+ * `<clipPath>`.
+ */
+export interface VectorWindow extends VectorRect {
+  /**
+   * DEGREES, clockwise on screen — the same sign and the same y-down space as
+   * `Transform2D.rotate`, `ctx.rotate` and SVG's `rotate(deg)`. Default 0.
+   */
+  rotate?: number
+  /**
+   * The point the rotation turns about, in the same document units. Both must
+   * be finite for either to be used; otherwise the rect's own CENTRE is the
+   * pivot, which is the only pivot a bare rectangle can imply.
+   */
+  pivotX?: number
+  pivotY?: number
+}
+
+/** The window's pivot, resolved — the caller's point, or the rect's centre. */
+function windowPivot(r: VectorWindow): { x: number; y: number } {
+  const px = r.pivotX as number
+  const py = r.pivotY as number
+  return Number.isFinite(px) && Number.isFinite(py)
+    ? { x: px, y: py }
+    : { x: r.x + r.width / 2, y: r.y + r.height / 2 }
+}
+
+/** The window's rotation in degrees, with a non-finite value read as none. */
+function windowRotate(r: VectorWindow): number {
+  const v = r.rotate as number
+  return Number.isFinite(v) ? v : 0
+}
+
 // ── Affine helpers ──────────────────────────────────────────────────────────
 //
 // `[a, b, c, d, e, f]`, exactly SVG's `matrix(…)` and the same order as
@@ -489,15 +539,22 @@ export interface VectorShape {
    */
   blur?: number
   /**
-   * An axis-aligned reveal window in DOCUMENT space. Emits a `<clipPath>` in
-   * `<defs>`, one per distinct rect, and references it.
+   * A reveal window in DOCUMENT space — a rect, optionally turned about a point
+   * (`VectorWindow`). Emits a `<clipPath>` in `<defs>`, one per distinct
+   * window, and references it.
    *
    * It is applied on a WRAPPER `<g>`, never on the path itself, so a shape's
    * own `transform` (in `attrs`) moves the shape THROUGH the window instead of
    * dragging the window along with it. That distinction is the whole difference
    * between a reveal and a translated, permanently-masked shape.
+   *
+   * The window's own `rotate` is NOT a hole in that rule: it is the window's
+   * PLACEMENT, fixed for as long as the shape is placed where it is, and the
+   * shape's `transform` still slides the shape through it. A shape standing at
+   * an angle gets a window standing at the same angle, and it still does not
+   * move.
    */
-  clip?: VectorRect | null
+  clip?: VectorWindow | null
   /** Extra attributes, e.g. a Shape Studio facet id or a class for animation. */
   attrs?: Record<string, string | number>
 }
@@ -593,7 +650,7 @@ const UNIT_PRECISION = 5
 /** A `<defs>` registry: distinct values in first-use order, each with an id. */
 class Defs {
   private readonly blurs = new Map<string, number>()
-  private readonly clips = new Map<string, VectorRect>()
+  private readonly clips = new Map<string, VectorWindow>()
   private readonly gradients = new Map<string, VectorGradient>()
   private readonly patterns = new Map<string, VectorPattern>()
   /**
@@ -625,9 +682,19 @@ class Defs {
     return key
   }
 
-  clipKey(r: VectorRect): string {
+  /**
+   * The key IS the serialised value, and the ROTATION is part of it — two
+   * windows over the same rect turned different ways are different windows, and
+   * sharing one `<clipPath>` between them would mask both with whichever
+   * arrived first. An unturned window appends nothing, so a document with no
+   * rotated window keys, hashes and emits exactly as it did before rotation
+   * existed.
+   */
+  clipKey(r: VectorWindow): string {
     const n = (v: number) => formatNumber(v, this.precision)
-    const key = `${n(r.x)} ${n(r.y)} ${n(r.width)} ${n(r.height)}`
+    const rot = windowRotate(r)
+    const p = rot === 0 ? '' : (() => { const q = windowPivot(r); return ` @${n(rot)} ${n(q.x)} ${n(q.y)}` })()
+    const key = `${n(r.x)} ${n(r.y)} ${n(r.width)} ${n(r.height)}${p}`
     if (!this.clips.has(key)) this.clips.set(key, r)
     return key
   }
@@ -734,11 +801,18 @@ class Defs {
     }
     i = 0
     for (const r of this.clips.values()) {
+      // The turn rides the `<rect>`, not the `<clipPath>` and not the wrapper
+      // `<g>`: `clipPathUnits="userSpaceOnUse"` puts the rect in document space,
+      // which is the space the canvas turns its context in before taking the
+      // identical rect. An unturned window emits no attribute at all.
+      const rot = windowRotate(r)
+      const q = rot === 0 ? null : windowPivot(r)
       out.push(`<clipPath${attrs([['id', `${prefix}-c${i}`], ['clipPathUnits', 'userSpaceOnUse']])}><rect${attrs([
         ['x', n(r.x)],
         ['y', n(r.y)],
         ['width', n(Math.max(0, r.width))],
         ['height', n(Math.max(0, r.height))],
+        ['transform', q ? `rotate(${n(rot)} ${n(q.x)} ${n(q.y)})` : undefined],
       ])}/></clipPath>`)
       i++
     }
