@@ -44,6 +44,17 @@ onMounted(async () => {
       handles[slot] = h
       return h
     },
+    // Mounts with a caller-supplied ShaderEmbedConfig rather than the fixed
+    // default — lets tests exercise shapes the default (generative, no motion)
+    // config can't, e.g. a config with motion tracks.
+    async mountConfig(slot: string, cfg: ShaderEmbedConfig) {
+      const surface = await loadEmbedSurface('shader')
+      if (!surface) return null
+      const el = document.getElementById(`slot-${slot}`)!
+      const h = await surface.mount(el, cfg)
+      handles[slot] = h
+      return h
+    },
     snapshot(slot: string): string {
       const c = document.querySelector(`#slot-${slot} canvas`) as HTMLCanvasElement | null
       return c ? c.toDataURL('image/png') : ''

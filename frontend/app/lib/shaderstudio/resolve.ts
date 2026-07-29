@@ -77,16 +77,7 @@ export function exportClock(
   return { duration: ownDuration, fps: ownFps }
 }
 
-/**
- * Return `cfg` with `motion.duration` replaced by the governing clock.
- *
- * `applyMotion` divides by `cfg.motion.duration` internally
- * (`frontend/app/lib/shaderstudio/motion.ts:72`). Feeding it absolute seconds
- * derived from a DIFFERENT clock — an upstream source's — would run every track
- * at the wrong rate: a 6s upstream against a 4s config completes 1.5 ramps
- * instead of the one the spec requires. Always route config through this before
- * calling applyMotion with an upstream-derived time.
- */
-export function motionConfigFor<T extends { motion: { duration: number } }>(cfg: T, duration: number): T {
-  return { ...cfg, motion: { ...cfg.motion, duration } }
-}
+// motionConfigFor lives in ./motion, not here: that module is Vue-free and the
+// shader embed adapter needs it too. Re-exported so existing callers of
+// resolve.ts (ShaderStudioNode.vue, ShaderStudioSurface.vue) are unaffected.
+export { motionConfigFor } from './motion'

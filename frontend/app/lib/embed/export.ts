@@ -28,13 +28,22 @@ async function bakePoster(
   document.body.appendChild(box)
   try {
     const handle = await surface.mount(box, config)
-    handle.setSize(width, height)
-    handle.setTime(t01)
-    const canvas = box.querySelector('canvas') as HTMLCanvasElement | null
-    if (!canvas) throw new Error('embed: adapter produced no canvas')
-    const url = canvas.toDataURL('image/png')
-    handle.destroy()
-    return url
+    // Own try/finally, nested inside the box-removal one: destroy() is the only
+    // caller of renderer.dispose() → loseContext(). If setSize/setTime throws (a
+    // shader compile/runtime error), or the canvas lookup or toDataURL below
+    // throws, a bare `handle.destroy()` after those lines would be skipped and
+    // the WebGL context would leak — Chrome caps live contexts around 16, so a
+    // few failed export retries would start breaking unrelated live previews
+    // (e.g. Shader Studio's own) with no error pointing back at this function.
+    try {
+      handle.setSize(width, height)
+      handle.setTime(t01)
+      const canvas = box.querySelector('canvas') as HTMLCanvasElement | null
+      if (!canvas) throw new Error('embed: adapter produced no canvas')
+      return canvas.toDataURL('image/png')
+    } finally {
+      handle.destroy()
+    }
   } finally {
     box.remove()
   }

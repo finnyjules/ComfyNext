@@ -50,6 +50,37 @@ test.describe('EmbedSurface contract — shader', () => {
     expect(after).toBe(0)
   })
 
+  // Regression for the frozen-motion bug: composePasses was fed the raw config,
+  // so a keyframed track (e.g. an adjust.* param) never moved — invisible in
+  // manual testing because generative effects keep animating via u_time
+  // regardless. This isolates a motion track from any generative-effect
+  // animation: the base effect layer has id: '' (composePasses skips it, so no
+  // effect layer contributes to the pixels — see passes.ts:44's `if (!layer.id)
+  // continue`), leaving `adjust.brightness` as the ONLY thing that can move the
+  // output between t01=0 and t01=1. If the adapter ever again composes from the
+  // raw (un-motion-applied) config, this must fail — brightness would stay at
+  // its base value (0) at both times and the two snapshots would be identical.
+  test('a keyframed motion track actually animates the render', async ({ page }) => {
+    const [p0, p1] = await page.evaluate(async () => {
+      const H = (window as any).__embedHarness
+      const cfg = JSON.parse(JSON.stringify(H.config.cfg))
+      cfg.effects = [{ layerId: 'L0', id: '', params: {}, enabled: true, blend: 'normal', opacity: 1 }]
+      cfg.adjust = { enabled: true, exposure: 0, brightness: 0, contrast: 0, saturation: 0, hue: 0, temperature: 0, tint: 0 }
+      cfg.motion = {
+        duration: 4, fps: 30,
+        tracks: [{ path: 'adjust.brightness', from: -0.9, to: 0.9, easing: 'linear', loops: 1, delay: 0, hold: 0, cycleOffset: 0 }],
+      }
+      const embedConfig = { cfg, defs: [], duration: 30, baseDataUrl: null }
+      const h = await H.mountConfig('a', embedConfig)
+      h.setTime(0.0)
+      const a = H.snapshot('a')
+      h.setTime(1.0)
+      const b = H.snapshot('a')
+      return [a, b]
+    })
+    expect(p0).not.toBe(p1)
+  })
+
   // The test that catches shared-state bugs. Two embeds on one page is the
   // real-world case (two pieces on one slide) and the reason ShaderFxRenderer
   // had to become instantiable.

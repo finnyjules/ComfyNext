@@ -77,3 +77,21 @@ export function applyMotion(cfg: ShaderStudioConfig, t: number): ShaderStudioCon
   }
   return out
 }
+
+/**
+ * Return `cfg` with `motion.duration` replaced by the governing clock.
+ *
+ * `applyMotion` divides by `cfg.motion.duration` internally (above). Feeding it
+ * absolute seconds derived from a DIFFERENT clock — an upstream source's — would
+ * run every track at the wrong rate: a 6s upstream against a 4s config completes
+ * 1.5 ramps instead of the one the spec requires. Always route config through
+ * this before calling applyMotion with an upstream-derived time.
+ *
+ * Lives here (not resolve.ts) because this module stays Vue-free — the shader
+ * embed adapter (`~/lib/embed/surfaces/shader.ts`) needs this exact function too,
+ * and the embed build may never pull in Vue (resolve.ts transitively does, via
+ * frameSource.ts's `ref`).
+ */
+export function motionConfigFor<T extends { motion: { duration: number } }>(cfg: T, duration: number): T {
+  return { ...cfg, motion: { ...cfg.motion, duration } }
+}

@@ -525,8 +525,8 @@ async function exportWebEmbed() {
 
     // Size is shown, not discovered later when a page takes eight seconds to load.
     const mb = (new Blob([html]).size / 1_048_576).toFixed(1)
-    embedMsg.value = `Downloaded — ${mb} MB`
     downloadEmbed('sailor-shader-embed.html', html)
+    embedMsg.value = `Downloaded — ${mb} MB`
   } catch (err) {
     console.error('[ShaderStudio] embed export failed:', err)
     embedMsg.value = err instanceof Error ? err.message : 'Export failed'

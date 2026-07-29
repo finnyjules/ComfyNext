@@ -1,6 +1,12 @@
 import type { EmbedSurface, EmbedHandle } from '../contract'
 import { ShaderFxRenderer } from '~/lib/shaderfx/renderer'
 import { composePasses } from '~/lib/shaderstudio/passes'
+// applyMotion/motionConfigFor come from motion.ts specifically (not resolve.ts,
+// which re-exports motionConfigFor) — resolve.ts transitively imports Vue via
+// frameSource.ts, and this file is bundled standalone for the exported embed
+// (vite.embed.config.ts: "nothing here may pull in Vue, Nuxt, or anything that
+// reaches the network").
+import { applyMotion, motionConfigFor } from '~/lib/shaderstudio/motion'
 import type { ShaderStudioConfig } from '~/lib/shaderstudio/types'
 import type { EffectDef } from '~/lib/shaderfx/types'
 
@@ -82,10 +88,19 @@ const shaderEmbedSurface: EmbedSurface = {
     let mounted: HTMLCanvasElement | null = null
 
     const draw = (t01: number) => {
+      const t = t01 * embed.duration
+      // Mirrors ShaderStudioSurface.vue's renderFrame exactly: a config with
+      // motion tracks is evaluated through applyMotion, keyed to THIS export's
+      // clock (motionConfigFor), before composePasses ever sees it. Without
+      // this, keyframed params stay stuck at their base values in the export —
+      // only generative effects (driven by u_time internally) would still
+      // appear to animate.
+      const animated = (embed.cfg.motion?.tracks?.length ?? 0) > 0
+      const cfg = animated ? applyMotion(motionConfigFor(embed.cfg, embed.duration), t) : embed.cfg
       // composePasses is the studio's own composer — layer blend, opacity,
       // captureSource sequencing and the post stack all live in it. Never
       // reimplement any of that here.
-      const passes = composePasses(embed.cfg, resolveDef, t01 * embed.duration)
+      const passes = composePasses(cfg, resolveDef, t)
       const out = renderer.render(passes, base, w, h)
       if (out !== mounted) {
         if (mounted) mounted.remove()
