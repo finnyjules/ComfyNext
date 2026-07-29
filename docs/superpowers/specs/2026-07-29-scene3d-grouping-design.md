@@ -68,9 +68,9 @@ Three consequences need real work.
 
 **Sync order.** A child cannot be added to a parent root that does not exist yet, so the sync pass iterates parents-first. A topological ordering over `parentId` (Kahn's algorithm, or a memoised depth sort — depth sort is simpler and the cycle invariant guarantees it terminates). Reparenting is then just a re-add on the next sync, since `Object3D.add` removes from the previous parent automatically.
 
-**`baseSizeFor()`** ([engine.ts:195](../../../frontend/app/lib/scene3d/engine.ts)) builds a geometry, measures its bounding box, and disposes it. A group has no geometry. It needs a separate path: `new THREE.Box3().setFromObject(root)` over the live subtree, which is also what makes the Size row meaningful for a group. Note this is a *live-scene* measurement where the primitive path is pure — the function signature has to accommodate both, so the group case takes the engine's root rather than rebuilding from the doc.
+**Size measurement — already solved, corrected during planning.** An earlier draft of this spec claimed `baseSizeFor()` needed a group path. It does not: the Size row already routes every non-primitive to `engine.baseSizeOf(id)` ([Scene3DStudioSurface.vue:921](../../../frontend/app/components/vue-canvas/Scene3DStudioSurface.vue)), which is `Box3.setFromObject(root)` over the live subtree divided by the root's scale ([engine.ts:738](../../../frontend/app/lib/scene3d/engine.ts)) — exactly what a group wants, with no changes. One latent bug becomes reachable though: it divides by the root's *local* scale, which equalled world scale only because every object was previously top-level. Nested objects need `getWorldScale`.
 
-**Selection outlines** ([outlines.ts](../../../frontend/app/lib/scene3d/outlines.ts)) wrap a mesh. Selecting a group must outline its whole subtree.
+**Selection outlines — not a thing, corrected during planning.** An earlier draft claimed `outlines.ts` draws selection outlines and would need to wrap a subtree. `outlines.ts` is the font/text-outline module; it has nothing to do with selection. Selection is shown by the gizmo alone (`setSelected` only drives light widgets, [engine.ts:470](../../../frontend/app/lib/scene3d/engine.ts)), so attaching the gizmo to a group root is the whole affordance and no outline work exists.
 
 Two smaller ones, both easy to get wrong:
 
@@ -115,7 +115,9 @@ The pivot is transient: created on drag start, destroyed on drag end. It never e
 
 **Cmd+Shift+G** — ungroup: each child's `parentId` becomes the group's `parentId`, transforms rebased to preserve world transforms, the group object is removed, and the freed children become the selection.
 
-**Rebasing uses world-matrix decomposition, not subtraction.** A group created at identity rotation and scale makes naive subtraction *look* correct, and it stays correct right up until someone rotates that group and then drags another object into it — at which point the child lands somewhere wrong in a way that is very hard to attribute. Compose the child's world matrix, multiply by the inverse of the new parent's world matrix, decompose into position/quaternion/scale, write Euler back. The engine's live roots already carry accurate world matrices, so this reads them rather than recomputing from the doc.
+**Rebasing uses world-matrix decomposition, not subtraction.** A group created at identity rotation and scale makes naive subtraction *look* correct, and it stays correct right up until someone rotates that group and then groups another object under it — at which point the child lands somewhere wrong in a way that is very hard to attribute. Compose the child's world matrix, multiply by the inverse of the new parent's world matrix, decompose into position/quaternion/scale, write Euler back.
+
+**The matrices are computed from the doc, not read off the engine's live roots** (a change from this spec's first draft). Both are correct — the engine mirrors the doc — but walking the `parentId` chain in plain data makes `groupObjects` and `ungroupObject` pure functions of `SceneObject[]`, which is what lets the world-transform-invariant test run in vitest with no WebGL context. `THREE.Matrix4` is pure JS and needs no renderer.
 
 Groups nest arbitrarily. The parser's cycle invariant is the only depth guard, and it is sufficient — there is no meaningful maximum depth to enforce.
 

@@ -1482,33 +1482,56 @@ git commit -m "feat(scene3d): subtree delete/duplicate, Escape step-up, multi-ob
 - Consumes: the whole feature.
 - Produces: browser proof that grouping survives a real render loop.
 
-- [ ] **Step 1: Write the test**
+**Why this task was rewritten.** The original plan left this body as prose ("fill in the body using the studio's exposed test hooks"), which is a plan failure — a test that asserts nothing passes every time. The selectors below were established by Tasks 7–9 and are now concrete.
 
-Model the setup on `frontend/tests/shader-fill.spec.ts` — in particular its local `openBlankWorkflow`, which deliberately does **not** wait for `networkidle` (the app polls `/system_stats` continuously against the live backend, so `networkidle` never fires).
+**Entry recipe (verified against the codebase):**
+
+- `frontend/tests/_helpers.ts` exports `openBlankWorkflow(page)`, `dropNode(page, nodeType)` (dispatches the `sailor:addNode` custom event, bypassing HTML5 DnD, which does not survive `dispatchEvent`), and `waitForBackend(page)`.
+- **Do not use the shared `openBlankWorkflow` unmodified.** It waits for `networkidle`, which never fires — the app polls `/system_stats` continuously against the live backend. Copy the local variant from [tests/shader-fill.spec.ts](../../../frontend/tests/shader-fill.spec.ts), which documents exactly this and skips that wait.
+- The node type is `Scene3DStudio`.
+- The studio surface opens by dispatching `new CustomEvent('sailor:openScene3DStudio', { detail: { nodeId } })` on `window` — the same event [Scene3DStudioNode.vue:79](../../../frontend/app/components/vue-canvas/Scene3DStudioNode.vue) fires on double-click.
+
+**Selectors (stable, added deliberately for this test):**
+
+| Target | Selector |
+|---|---|
+| An object row | `[data-testid="object-row"]` |
+| A row by object id / name | `[data-object-id="…"]` / `[data-object-name="…"]` |
+| A group row's child count | `[data-testid="object-row-children"]` |
+| Expand/collapse chevron | `[data-testid="object-row-toggle"]` |
+| Group / Ungroup buttons | `page.getByRole('button', { name: 'Group', exact: true })` / `'Ungroup'` |
+| Selected object's position | `page.getByLabel('Position X' \| 'Position Y' \| 'Position Z')` |
+
+**What to assert, and why this form.** Reading the position inputs gives the selected object's **local** transform. Groups are created at identity rotation and unit scale (pinned by a unit test in `scene3d-hierarchy.unit.spec.ts`), so for a top-level group a child's world position is exactly `group.position + child.local`. After ungrouping, the child's local must equal its original pre-group world position. That equality **is** the world-transform invariant for this case, readable entirely through the DOM — no new production hook required.
+
+- [ ] **Step 1: Write the spec**
 
 ```ts
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
+import { dropNode, waitForBackend } from './_helpers'
 
 /**
  * Grouping — end-to-end.
  *
  * The assertion that matters is the world-transform invariant: group, move the
- * group, ungroup, and every child must be exactly where the screen showed it.
- * A viewport that merely LOOKS right is not evidence — grouping fails silently
- * in exactly the way a screenshot cannot catch, so this reads doc state.
+ * group, ungroup, and every child must end up exactly where the screen showed
+ * it. A viewport that merely LOOKS right is not evidence — grouping fails in
+ * precisely the way a screenshot cannot catch, so this reads numeric state out
+ * of the properties panel.
  */
-test('group, transform, and ungroup preserve world positions', async ({ page }) => {
-  // ...open a blank workflow and a 3D Studio node (see shader-fill.spec.ts)
-
-  // Add two primitives, select both, group them.
-  // Read each child's world position from the doc via the studio's own state.
-  // Move the group by a known delta.
-  // Ungroup.
-  // Assert each child's world position equals its pre-ungroup world position.
-})
 ```
 
-Fill in the body using the studio's exposed test hooks; if none exist, drive the UI directly (add-menu clicks, shift-click in the object list, `Meta+g`) and read state through `page.evaluate` against the doc the surface holds.
+Then a single test that:
+
+1. Opens a blank workflow (local no-`networkidle` variant), waits for the backend, drops a `Scene3DStudio` node, and opens its surface via `sailor:openScene3DStudio`.
+2. Adds two primitives from the add-menu.
+3. Selects the first row, records its `Position X/Y/Z`; does the same for the second. These are the pre-group world positions (both are top-level, so local == world).
+4. Clicks the first row, shift-clicks the second, and clicks **Group**. Asserts a new `[data-testid="object-row"]` appears whose `[data-testid="object-row-children"]` reads `2`, and that both original rows are now nested beneath it.
+5. Sets the group's `Position X` to a known offset and asserts nothing throws.
+6. Clicks **Ungroup**. Asserts the group row is gone and both original rows are back at root.
+7. **Asserts each child's `Position X/Y/Z` now equals its recorded pre-group value plus the offset applied in step 5** — to the tolerance the inputs round to.
+
+Use `expect.poll` where the value is written asynchronously through Vue's reactivity rather than a bare read.
 
 - [ ] **Step 2: Run it**
 
@@ -1517,7 +1540,9 @@ Expected: PASS.
 
 - [ ] **Step 3: Prove it can fail**
 
-Temporarily make `ungroupObject` skip its rebase (return children with `parentId` cleared but transforms untouched). Re-run. Expected: FAIL on the world-position assertion. Restore and re-run to PASS.
+Temporarily make `ungroupObject` in `frontend/app/lib/scene3d/hierarchy.ts` skip its rebase — return children with `parentId` cleared but `position`/`rotation`/`scale` untouched. Re-run.
+
+Expected: FAIL on the step-7 position assertions. Restore and re-run to PASS. Report both outputs. **If it still passes with the rebase disabled, the test is not testing the invariant** — fix it before finishing.
 
 - [ ] **Step 4: Commit**
 
@@ -1527,7 +1552,6 @@ git add frontend/tests/scene3d-grouping.spec.ts
 git commit -m "test(scene3d): E2E world-transform invariant for grouping"
 ```
 
----
 
 ## Self-Review
 
