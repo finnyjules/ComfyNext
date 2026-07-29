@@ -51,6 +51,7 @@ import FillControl from '~/components/vue-canvas/compositor/FillControl.vue'
 import FillSwatch from '~/components/vue-canvas/compositor/FillSwatch.vue'
 import PostEffectsControls from '~/components/vue-canvas/PostEffectsControls.vue'
 import { isChainEffect, isGpuEffect } from '~/lib/compositor/postEffects'
+import { encodeFrames } from '~/lib/engine/encodeVideo'
 /** Everything the post-effects panel owns: the 2D chain plus the GPU stage. */
 const isPanelEffect = (e: { type: string }) => isChainEffect(e) || isGpuEffect(e)
 import {
@@ -1758,20 +1759,16 @@ async function generateVideo() {
     // Use the fps actually baked (carried on storedMotionParams), not motionDoc,
     // so the encode matches the effective motion used above.
     const fps = storedMotionParams.value?.fps ?? motionDoc.value.fps
-    const res = await fetch('/sailor/spacetype_encode', {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ frames: storedMotionParams.value!.rendered, fps, width: W, height: H }),
-    })
-    const data = await res.json().catch(() => ({}))
-    if (data.filename) {
-      await recordAsset(activeTab.value?.projectUuid, 'video', data.filename)
+    try {
+      const encoded = await encodeFrames({ frames: storedMotionParams.value!.rendered, fps, width: W, height: H })
+      await recordAsset(activeTab.value?.projectUuid, 'video', encoded.filename)
       window.dispatchEvent(new CustomEvent('sailor:compositorOutput', {
-        detail: { sourceNodeId: node.id, nodeType: 'Video', widgetOverrides: { file: data.filename } },
+        detail: { sourceNodeId: node.id, nodeType: 'Video', widgetOverrides: { file: encoded.filename } },
       }))
       emit('close')
-    } else {
+    } catch (encErr) {
       renderError.value = 'Encode failed — restart ComfyUI to load the encoder.'
-      console.error('[compositor generate] encode failed', data)
+      console.error('[compositor generate] encode failed', encErr)
     }
   } catch (err: any) {
     console.error('[compositor generate]', err)

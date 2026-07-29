@@ -6,6 +6,7 @@ import { LIQUID_PRESETS, buildConfig, defaultConfig, liquidConfig, liquidPresetC
 import { MESH_MAX_POINTS, buildMeshPoints, defaultMesh } from '~/lib/gradientfx/mesh'
 import { randomSeed } from '~/lib/gradientfx/rng'
 import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
+import { encodeFrames } from '~/lib/engine/encodeVideo'
 import { animatableTargets, dropTracksForLayer, remapTracksOnInsert, remapTracksOnReorder } from '~/lib/gradientfx/motion'
 import { layerLabels } from '~/lib/gradientfx/layerLabel'
 import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
@@ -592,18 +593,14 @@ async function generateVideo() {
       },
     })
     bakeMsg.value = 'Encoding…'
-    const res = await fetch('/sailor/spacetype_encode', {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ frames: bake.frames, fps: m.fps, width: w, height: h }),
-    })
-    const data = await res.json().catch(() => ({}))
-    if (data.filename) {
-      await recordAsset(activeTab.value?.projectUuid, 'video', data.filename)
+    try {
+      const encoded = await encodeFrames({ frames: bake.frames, fps: m.fps, width: w, height: h })
+      await recordAsset(activeTab.value?.projectUuid, 'video', encoded.filename)
       window.dispatchEvent(new CustomEvent('sailor:gradientStudioOutput', {
-        detail: { sourceNodeId: props.nodeId, nodeType: 'Video', widgetOverrides: { file: data.filename } },
+        detail: { sourceNodeId: props.nodeId, nodeType: 'Video', widgetOverrides: { file: encoded.filename } },
       }))
       closeEditor()
-    } else { bakeMsg.value = 'Encode failed — restart ComfyUI to load the encoder.'; console.error('[gradient] encode failed', data) }
+    } catch (encErr) { bakeMsg.value = 'Encode failed — restart ComfyUI to load the encoder.'; console.error('[gradient] encode failed', encErr) }
   } catch (e) { console.error('[gradient] video generate failed', e); bakeMsg.value = 'Failed — see console.' }
   finally { baking.value = false; startPreview() }
 }

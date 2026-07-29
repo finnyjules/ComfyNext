@@ -37,6 +37,7 @@ import { SceneInteraction } from '~/lib/scene3d/interaction'
 import { loadGlb, GLB_SIZE_CAP_BYTES } from '~/lib/scene3d/glb'
 import { fitGlbGroup } from '~/lib/scene3d/fitGlb'
 import { renderPasses } from '~/lib/scene3d/passes'
+import { encodeFrames } from '~/lib/engine/encodeVideo'
 import { SCENE_TEMPLATES, animateSceneDefaults } from '~/lib/scene3d/motion/defaults'
 import { LOOP_OPTIONS, IN_OPTIONS, OUT_OPTIONS, CAMERA_OPTIONS, LOOP_USES_AMOUNT, CAMERA_USES_CYCLES, CAMERA_USES_AMOUNT, setObjectLoop, setObjectTransition, setObjectDirection } from '~/lib/scene3d/motion/panel'
 import { sceneHasMotion, renderMotionFrame } from '~/lib/scene3d/motion/render'
@@ -155,16 +156,17 @@ async function exportVideo() {
         return await new Promise<Blob>((res, rej) => cv.toBlob(b => b ? res(b) : rej(new Error('toBlob failed')), 'image/png'))
       },
     })
-    const res = await fetch('/sailor/spacetype_encode', {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ frames: bake.frames, fps, width: W, height: H }),
-    })
-    const data = await res.json().catch(() => ({}))
-    if (!data.filename) { bakeError.value = 'Video encode failed'; return }
-    const vres = await fetch(`/view?${new URLSearchParams({ filename: data.filename, type: 'input' })}`)
+    let encoded: Awaited<ReturnType<typeof encodeFrames>>
+    try {
+      encoded = await encodeFrames({ frames: bake.frames, fps, width: W, height: H })
+    } catch {
+      bakeError.value = 'Video encode failed'
+      return
+    }
+    const vres = await fetch(`/view?${new URLSearchParams({ filename: encoded.filename, type: 'input' })}`)
     const blob = await vres.blob()
     const obj = URL.createObjectURL(blob)
-    const a = document.createElement('a'); a.href = obj; a.download = `scene3d-${props.nodeId}.mp4`
+    const a = document.createElement('a'); a.href = obj; a.download = `scene3d-${props.nodeId}.${encoded.ext}`
     document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(obj)
   } catch (err) {
     bakeError.value = 'Video export failed'

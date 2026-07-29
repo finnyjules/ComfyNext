@@ -13,6 +13,7 @@ import type { Cloner } from '~/composables/useCloner'
 import CompositorInlineToolbar from '~/components/vue-canvas/CompositorInlineToolbar.vue'
 import StudioRenderButton from '~/components/vue-canvas/StudioRenderButton.vue'
 import { registerStudioBaker, unregisterStudioBaker } from '~/lib/studio/cascade'
+import { encodeFrames } from '~/lib/engine/encodeVideo'
 import { resolveWiredSourceKind } from '~/lib/studio/frameResolve'
 import { frameSourceEpoch, type StudioFrameSource } from '~/lib/studio/frameSource'
 import { deriveMasterClock, slotPhase01 } from '~/lib/compositor/masterClock'
@@ -702,14 +703,18 @@ async function downloadVideo() {
         return await new Promise<Blob>((res, rej) => cv ? cv.toBlob(b => b ? res(b) : rej(new Error('toBlob failed')), 'image/png') : rej(new Error('no composite')))
       },
     })
-    const res = await fetch('/sailor/spacetype_encode', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ frames: bake.frames, fps: mc.fps, width: W, height: H }) })
-    const data = await res.json().catch(() => ({}))
-    if (!data.filename) { console.error('[Frame] video encode failed', data); return }
-    await recordAsset(activeTab.value?.projectUuid, 'video', data.filename)
-    const vres = await fetch(`/view?${new URLSearchParams({ filename: data.filename, type: 'input' })}`)
+    let encoded: Awaited<ReturnType<typeof encodeFrames>>
+    try {
+      encoded = await encodeFrames({ frames: bake.frames, fps: mc.fps, width: W, height: H })
+    } catch (err) {
+      console.error('[Frame] video encode failed', err)
+      return
+    }
+    await recordAsset(activeTab.value?.projectUuid, 'video', encoded.filename)
+    const vres = await fetch(`/view?${new URLSearchParams({ filename: encoded.filename, type: 'input' })}`)
     const blob = await vres.blob()
     const obj = URL.createObjectURL(blob)
-    const a = document.createElement('a'); a.href = obj; a.download = `frame-${props.id}.mp4`
+    const a = document.createElement('a'); a.href = obj; a.download = `frame-${props.id}.${encoded.ext}`
     document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(obj)
   } catch (err) { console.error('[Frame] video export failed:', err) }
   finally { startAnim() }

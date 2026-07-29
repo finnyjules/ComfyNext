@@ -14,6 +14,7 @@ import { detectWebGL } from '~/lib/spacetype/webgl'
 import { DEFAULT_POST, type PostSettings } from '~/lib/spacetype/post'
 import type { SpaceTypeState } from '~/lib/spacetype/state'
 import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
+import { encodeFrames } from '~/lib/engine/encodeVideo'
 import { loopMultiplier } from '~/lib/spacetype/loop'
 import { loadGoogleCatalog, googleFontCssUrl, googleAxisList, resolveFontFamily, fontHasWeightAxis, type GoogleFont } from '~/data/google-fonts'
 import type { GradientStop } from '~/lib/spacetype/gradient'
@@ -1068,20 +1069,15 @@ async function generateVideo() {
       renderFrame: async (i) => { engine!.renderFrameAt(i / origFrames, params); return engine!.frameToBlob(W.value, H.value) },
     })
     engine.setSize(W.value, H.value)
-    const res = await fetch('/sailor/spacetype_encode', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ frames: bake.frames, fps: fps.value, width: W.value, height: H.value }),
-    })
-    const data = await res.json().catch(() => ({}))
-    if (data.filename) {
-      await recordAsset(activeTab.value?.projectUuid, 'video', data.filename)
+    try {
+      const encoded = await encodeFrames({ frames: bake.frames, fps: fps.value, width: W.value, height: H.value })
+      await recordAsset(activeTab.value?.projectUuid, 'video', encoded.filename)
       window.dispatchEvent(new CustomEvent('sailor:spaceTypeOutput', {
-        detail: { sourceNodeId: props.nodeId, nodeType: 'Video', widgetOverrides: { file: data.filename } },
+        detail: { sourceNodeId: props.nodeId, nodeType: 'Video', widgetOverrides: { file: encoded.filename } },
       }))
       closeEditor()
-    } else {
-      console.error('[spacetype] video encode failed', data)
+    } catch (encErr) {
+      console.error('[spacetype] video encode failed', encErr)
       alert('Video encode failed — make sure ComfyUI was restarted to load the encoder. See console.')
     }
   } finally {

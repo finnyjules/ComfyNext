@@ -26,6 +26,7 @@ import { loadImage } from '~/lib/shaderstudio/source'
 import { BLEND_MODES } from '~/lib/studio/blend'
 import { cloneConfig, defaultConfig, hydrateConfig, LAYER_MAX, newLayerId, outputDims, type MotionTrack, type ShaderStudioConfig, type StudioEffect } from '~/lib/shaderstudio/types'
 import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
+import { encodeFrames } from '~/lib/engine/encodeVideo'
 import { useStudioAgent } from '~/composables/useStudioAgent'
 import { useStudioVarBindings } from '~/composables/useStudioVarBindings'
 import { useStudioVarMenu } from '~/composables/useStudioVarMenu'
@@ -475,13 +476,12 @@ async function generateVideo() {
       renderFrame: async (i) => { bakeMsg.value = `Baking ${i + 1}/${total}`; return await renderBlob(i / total) },
     })
     bakeMsg.value = 'Encoding…'
-    const res = await fetch('/sailor/spacetype_encode', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ frames: bake.frames, fps: clock.fps, width: w, height: h }) })
-    const data = await res.json().catch(() => ({}))
-    if (data.filename) {
-      await recordAsset(activeTab.value?.projectUuid, 'video', data.filename)
-      window.dispatchEvent(new CustomEvent('sailor:shaderStudioOutput', { detail: { sourceNodeId: props.nodeId, nodeType: 'Video', widgetOverrides: { file: data.filename } } }))
+    try {
+      const encoded = await encodeFrames({ frames: bake.frames, fps: clock.fps, width: w, height: h })
+      await recordAsset(activeTab.value?.projectUuid, 'video', encoded.filename)
+      window.dispatchEvent(new CustomEvent('sailor:shaderStudioOutput', { detail: { sourceNodeId: props.nodeId, nodeType: 'Video', widgetOverrides: { file: encoded.filename } } }))
       closeEditor()
-    } else { bakeMsg.value = 'Encode failed — restart ComfyUI to load the encoder.'; console.error('[shader-studio] encode failed', data) }
+    } catch (encErr) { bakeMsg.value = 'Encode failed — restart ComfyUI to load the encoder.'; console.error('[shader-studio] encode failed', encErr) }
   } catch (e) { console.error('[shader-studio] video failed', e); bakeMsg.value = 'Failed — see console.' }
   finally { baking.value = false; startPreview() }
 }
