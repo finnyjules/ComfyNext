@@ -73,6 +73,14 @@ describe('buildEmbedHtml', () => {
   it('rejects a poster that is not a data URI', () => {
     expect(() => buildEmbedHtml(snap({ posterDataUrl: 'https://example.com/p.png' }), '')).toThrow(/data:/i)
   })
+
+  it('rejects an adapter bundle containing a literal "</script" sequence', () => {
+    expect(() => buildEmbedHtml(snap(), 'var s = "</script>";')).toThrow(/script/i)
+  })
+
+  it('rejects an adapter bundle containing "</SCRIPT" case-insensitively', () => {
+    expect(() => buildEmbedHtml(snap(), 'var s = "</SCRIPT>";')).toThrow(/script/i)
+  })
 })
 
 describe('externalRefs', () => {

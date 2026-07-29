@@ -1,16 +1,21 @@
+// @ts-expect-error — 'vite' is only a transitive dependency here (pulled in
+// via Nuxt), not a direct one, so pnpm's strict node_modules does not link a
+// top-level `vite` package for this workspace to resolve — for types as well
+// as at runtime (`error TS2307: Cannot find module 'vite'`). This `import
+// type` is NOT type safety: it cannot actually be checked, and it is erased
+// at build time, so the build succeeds regardless of whether it resolves.
+// It exists purely as documentation of the intended shape of `config` below.
+// This file also sits outside the Nuxt tsconfig's `include` globs, so the
+// repo-wide typecheck never sees this line either way; the directive is here
+// only to keep an editor that opens this file directly from showing a red
+// squiggle. Do not chase making `vite` resolvable — that would require
+// promoting it to a direct dependency for no functional benefit.
 import type { UserConfig } from 'vite'
 import { fileURLToPath } from 'node:url'
 
 // Builds each embed adapter as a standalone IIFE for inlining into exported
 // .html files. Separate from the Nuxt build on purpose: nothing here may pull
 // in Vue, Nuxt, or anything that reaches the network.
-//
-// `vite` is only a transitive dependency here (pulled in via Nuxt), not a
-// direct one, so pnpm's strict node_modules does not link a top-level `vite`
-// package for this workspace to resolve at runtime. `defineConfig` is purely
-// an identity helper for type inference, so importing it as a value would
-// force that resolution for no benefit — `import type` is erased at build
-// time and sidesteps the problem entirely while keeping the config typed.
 const config: UserConfig = {
   resolve: {
     alias: {
@@ -32,6 +37,11 @@ const config: UserConfig = {
     lib: {
       entry: fileURLToPath(new URL('./app/lib/embed/entry-shader.ts', import.meta.url)),
       formats: ['iife'],
+      // Required by Vite's lib-mode API when formats includes 'iife' (it's
+      // the global Rollup would assign the entry's exports to), but unused
+      // here in practice: the entry has zero exports, so nothing is ever
+      // assigned to this name and it appears nowhere in the built output.
+      // Do not go looking for `window.__SailorEmbedShader` at runtime.
       name: '__SailorEmbedShader',
       fileName: () => 'shader.js',
     },

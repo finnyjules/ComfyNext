@@ -70,6 +70,20 @@ export function buildEmbedHtml(snapshot: EmbedSnapshot, adapterJs: string): stri
   if (!snapshot.posterDataUrl.startsWith('data:')) {
     throw new Error('embed: poster must be a data: URI — an external poster would break self-containment')
   }
+  // adapterJs is spliced verbatim into an inline <script> block below (unlike
+  // the config JSON, which safeJson escapes). A literal "</script" anywhere in
+  // it — in a string constant, a regex, or even a comment — terminates that
+  // block early in the HTML parser, silently truncating the page to a
+  // poster-only export with no runtime error. Escaping raw JavaScript for a
+  // script context is subtle and easy to get wrong, so fail loudly instead:
+  // today's bundle doesn't contain this sequence, but nothing guarantees a
+  // future adapter build won't.
+  if (/<\\?\/script/i.test(adapterJs)) {
+    throw new Error(
+      `embed: adapter bundle for "${snapshot.kind}" contains a "</script" sequence, which would terminate ` +
+        'the inline <script> block early and ship a poster-only export. The adapter bundle must not contain that sequence.',
+    )
+  }
 
   const bg = snapshot.transparent ? 'transparent' : '#000'
 
