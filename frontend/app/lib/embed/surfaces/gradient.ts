@@ -1,5 +1,6 @@
 import type { EmbedSurface, EmbedHandle } from '../contract'
 import { GradientFxRenderer } from '~/lib/gradientfx/renderer'
+import { motionConfigFor } from '~/lib/gradientfx/motion'
 import type { GradientConfig } from '~/lib/gradientfx/types'
 
 /**
@@ -32,6 +33,18 @@ const gradientEmbedSurface: EmbedSurface = {
     const embed = config as GradientEmbedConfig
     if (!embed?.cfg) throw new Error('gradient embed: config has no cfg')
 
+    // render() applies motion internally against cfg.motion.duration (both
+    // applyMotion and the flow-churn loop phase in renderer.ts key off it),
+    // but `draw` below feeds it seconds derived from embed.duration — a
+    // DIFFERENT clock. If the two ever diverge, every track (and the churn
+    // loop) evaluates at the wrong rate and the loop would not close cleanly
+    // at t01 = 1. Reconciled once here, at mount, rather than per-draw:
+    // setTime is on the hot path and must stay synchronous and
+    // allocation-light, and this only needs to happen once since embed.cfg
+    // and embed.duration are both fixed for the handle's lifetime. Mirrors
+    // the shader adapter's identical guard (~/lib/embed/surfaces/shader.ts).
+    const cfg = motionConfigFor(embed.cfg, embed.duration)
+
     // Own instance, not the globalThis-cached singleton — two embeds on one
     // page must not share a GL context.
     const renderer = new GradientFxRenderer()
@@ -43,7 +56,7 @@ const gradientEmbedSurface: EmbedSurface = {
       // render() applies motion internally (renderer.ts imports applyMotion),
       // so the adapter must NOT apply it again — that would double-apply.
       // `time` is in SECONDS.
-      const out = renderer.render(embed.cfg, w, h, t01 * embed.duration)
+      const out = renderer.render(cfg, w, h, t01 * embed.duration)
       if (out !== mounted) {
         if (mounted) mounted.remove()
         out.style.display = 'block'

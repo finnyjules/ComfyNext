@@ -46,6 +46,27 @@ export function animatableTargets(cfg: GradientConfig): AnimatableTarget[] {
   return out
 }
 
+/**
+ * Return `cfg` with `motion.duration` replaced by the governing clock.
+ *
+ * `applyMotion` divides by `cfg.motion.duration` internally (below), and
+ * renderer.ts's flow-churn loop phase keys off the same field. Feeding either
+ * of them absolute seconds derived from a DIFFERENT clock — an embed export's
+ * own duration, say — would run every track (and the churn loop) at the wrong
+ * rate: a 6s export duration against a 4s config completes 1.5 ramps instead
+ * of the one loop the export is supposed to close. Always route a config
+ * through this before rendering it against a time value that came from a
+ * clock other than its own `motion.duration`.
+ *
+ * Mirrors `~/lib/shaderstudio/motion.ts`'s `motionConfigFor` exactly — the
+ * gradient embed adapter (`~/lib/embed/surfaces/gradient.ts`) needs this same
+ * guard, and this module stays Vue-free (unlike ./frameSource.ts) so it is
+ * safe for the embed bundle to import.
+ */
+export function motionConfigFor<T extends { motion: { duration: number } }>(cfg: T, duration: number): T {
+  return { ...cfg, motion: { ...cfg.motion, duration } }
+}
+
 /** Build a frame-specific config: clone `cfg` and apply each track's value. */
 export function applyMotion(cfg: GradientConfig, t: number): GradientConfig {
   if (!cfg.motion?.tracks?.length) return cfg

@@ -10,8 +10,10 @@ import { composePasses } from '~/lib/shaderstudio/passes'
 // transitively imports Vue) — studioRef below must mirror the adapter's own
 // import path, not just its behavior.
 import { applyMotion, motionConfigFor } from '~/lib/shaderstudio/motion'
+import { gradientFx } from '~/lib/gradientfx/renderer'
 import type { EmbedHandle } from '~/lib/embed/contract'
 import type { ShaderEmbedConfig } from '~/lib/embed/surfaces/shader'
+import type { GradientEmbedConfig } from '~/lib/embed/surfaces/gradient'
 
 // Test-only page. Exposes mount/snapshot so tests drive the contract directly
 // rather than through studio UI.
@@ -143,6 +145,40 @@ onMounted(async () => {
     },
   }
   ;(window as any).__embedHarnessReady = true
+
+  // --- Gradient embed harness (loop-duration reconciliation test) ---
+  // Minimal on purpose: this only supports embed-gradient.spec.ts's one
+  // scenario (an embed export duration that diverges from cfg.motion.duration).
+  // A later task building out full gradient embed E2E coverage should extend
+  // this block rather than duplicate it.
+  const gradientHandles: Record<string, EmbedHandle> = {}
+  ;(window as any).__embedHarnessGradient = {
+    async mountConfig(slot: string, cfg: GradientEmbedConfig) {
+      const surface = await loadEmbedSurface('gradient')
+      if (!surface) return null
+      const el = document.getElementById(`slot-${slot}`)!
+      const h = await surface.mount(el, cfg)
+      gradientHandles[slot] = h
+      return h
+    },
+    snapshot(slot: string): string {
+      const c = document.querySelector(`#slot-${slot} canvas`) as HTMLCanvasElement | null
+      return c ? c.toDataURL('image/png') : ''
+    },
+    /**
+     * Renders through the STUDIO path — the gradientFx singleton, exactly as
+     * GradientStudioNode.vue / frameSource.ts call it — at t01. frameSource.ts
+     * always derives its clock from `cfg.motion.duration` (never a separately
+     * chosen export duration), so that field IS the studio's duration; this is
+     * the parity reference the gradient embed adapter's reconciliation must
+     * match regardless of what `duration` an export was told to use.
+     */
+    studioRef(cfg: any, t01: number, w = 512, h = 512): string {
+      const duration = cfg.motion?.duration || 4
+      return gradientFx.render(cfg, w, h, t01 * duration).toDataURL('image/png')
+    },
+  }
+  ;(window as any).__embedHarnessGradientReady = true
 })
 </script>
 
@@ -151,5 +187,6 @@ onMounted(async () => {
     <h1 class="text-sm opacity-60">embed harness (test only)</h1>
     <div id="slot-a" class="w-[512px] h-[512px] bg-black" />
     <div id="slot-b" class="w-[512px] h-[512px] bg-black" />
+    <div id="slot-g" class="w-[512px] h-[512px] bg-black" />
   </div>
 </template>
