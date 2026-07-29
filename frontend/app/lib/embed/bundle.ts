@@ -143,7 +143,12 @@ ${adapterJs}
     size();
     window.addEventListener('resize', size);
 
-    if (reduce) { handle.setTime(0); return; }
+    // Deterministic still mode: an explicit frozen frame, or the reduced-motion
+    // still. Both render exactly once and never start the loop.
+    var frozen = typeof window.__SAILOR_FREEZE_T01__ === 'number'
+      ? window.__SAILOR_FREEZE_T01__
+      : null;
+    if (frozen !== null || reduce) { handle.setTime(frozen === null ? 0 : frozen); return; }
 
     function tick(now) {
       handle.setTime(t01At(elapsed + (now - resumedAt), snap.duration));
