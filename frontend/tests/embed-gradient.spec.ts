@@ -105,3 +105,197 @@ test.describe('gradient embed loop-duration reconciliation', () => {
     expect(unreconciled).not.toBe(studio)
   })
 })
+
+// --- Full contract + parity coverage (mirrors embed-contract.spec.ts /
+// embed-parity.spec.ts / embed-export.spec.ts for shader). The two scenarios
+// above already cover "adapter matches the studio path at t01" and (via the
+// unreconciled-vs-studio comparison) "setTime genuinely changes pixels" for
+// this fixture class, so they are not repeated here.
+//
+// This block drives the default __embedHarnessGradient.config fixture — built
+// from gradientfx/randomize.ts's own defaultConfig(), the same builder
+// GradientStudioNode seeds a fresh node from — plus a motion track
+// (relief.grain 0->1) so time genuinely matters on every render.
+test.describe('EmbedSurface contract — gradient', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/dev/embed-harness')
+    await page.waitForFunction(() => (window as any).__embedHarnessGradientReady === true)
+  })
+
+  test('mounts and puts a canvas in the container', async ({ page }) => {
+    const n = await page.evaluate(async () => {
+      const h = await (window as any).__embedHarnessGradient.mount('g')
+      return h ? document.querySelectorAll('#slot-g canvas').length : -1
+    })
+    expect(n).toBe(1)
+  })
+
+  test('setTime changes the rendered pixels', async ({ page }) => {
+    const [p0, p1] = await page.evaluate(async () => {
+      const H = (window as any).__embedHarnessGradient
+      const h = await H.mount('g')
+      h.setTime(0.0)
+      const a = H.snapshot('g')
+      h.setTime(0.5)
+      const b = H.snapshot('g')
+      return [a, b]
+    })
+    expect(p0).not.toBe(p1)
+  })
+
+  test('setSize resizes the canvas', async ({ page }) => {
+    const dims = await page.evaluate(async () => {
+      const h = await (window as any).__embedHarnessGradient.mount('g')
+      h.setSize(320, 200)
+      h.setTime(0.25)
+      const c = document.querySelector('#slot-g canvas') as HTMLCanvasElement
+      return [c.width, c.height]
+    })
+    expect(dims).toEqual([320, 200])
+  })
+
+  test('destroy removes the canvas', async ({ page }) => {
+    const after = await page.evaluate(async () => {
+      const h = await (window as any).__embedHarnessGradient.mount('g')
+      h.destroy()
+      return document.querySelectorAll('#slot-g canvas').length
+    })
+    expect(after).toBe(0)
+  })
+
+  // The test that justifies Task 1 (GradientFxRenderer becoming instantiable
+  // rather than staying a globalThis-cached singleton): two embeds on one page
+  // must not share a GL context or renderer state.
+  test('two instances on one page render independently', async ({ page }) => {
+    const { aAt0, aAt0Again, bAt5 } = await page.evaluate(async () => {
+      const H = (window as any).__embedHarnessGradient
+      const ha = await H.mount('g')
+      const hb = await H.mount('g2')
+      ha.setTime(0.0)
+      const aAt0 = H.snapshot('g')
+      hb.setTime(0.5)
+      const bAt5 = H.snapshot('g2')
+      const aAt0Again = H.snapshot('g')
+      return { aAt0, aAt0Again, bAt5 }
+    })
+    expect(aAt0).toBe(aAt0Again)   // b's render must not have disturbed a
+    expect(aAt0).not.toBe(bAt5)
+  })
+
+  // Regression for the leaked-WebGL-context bug, mirrored from
+  // embed-contract.spec.ts's shader version. Chrome silently force-evicts the
+  // OLDEST context past its ~16 cap rather than refusing new ones, so "the
+  // last mount still works" cannot tell a leak apart from a fix — the real
+  // signal is whether the eviction warning fires at all. Task 2 added
+  // GradientFxRenderer.dispose(); this proves the gradient adapter's destroy()
+  // actually calls it on every cycle, not just the last one.
+  test('repeated mount/destroy releases WebGL contexts (no browser context-eviction warning)', async ({ page }) => {
+    const contextWarnings: string[] = []
+    page.on('console', (msg) => {
+      if (msg.type() === 'warning' && msg.text().includes('Too many active WebGL contexts')) {
+        contextWarnings.push(msg.text())
+      }
+    })
+
+    const result = await page.evaluate(async () => {
+      const H = (window as any).__embedHarnessGradient
+      let prev: any = null
+      for (let i = 0; i < 20; i++) {
+        if (prev) prev.destroy()
+        const h = await H.mount('g')
+        if (!h) return { ok: false, error: `mount ${i} returned null` }
+        h.setTime(0.25)
+        prev = h
+      }
+      const c = document.querySelector('#slot-g canvas') as HTMLCanvasElement | null
+      const snapshot = H.snapshot('g')
+      return {
+        ok: true,
+        canvasCount: document.querySelectorAll('#slot-g canvas').length,
+        width: c?.width ?? 0,
+        height: c?.height ?? 0,
+        snapshotLength: snapshot.length,
+      }
+    })
+    expect(result.ok).toBe(true)
+    expect(result.canvasCount).toBe(1)
+    expect(result.width).toBeGreaterThan(0)
+    expect(result.height).toBeGreaterThan(0)
+    expect(result.snapshotLength).toBeGreaterThan(0)
+    expect(contextWarnings).toEqual([])
+  })
+})
+
+test.describe('embed export — gradient', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/dev/embed-harness')
+    await page.waitForFunction(() => (window as any).__embedHarnessGradientReady === true)
+  })
+
+  // The exported file must run the LIVE renderer, not just show its poster —
+  // every export carries a poster fallback, and a dead render path still
+  // LOOKS fine if only the poster is ever checked.
+  test('the exported file renders live, not just its poster', async ({ page, context }) => {
+    const html = await page.evaluate(() => (window as any).__embedHarnessGradient.exportHtml())
+
+    const embed = await context.newPage()
+    await embed.setContent(html)
+    await embed.waitForFunction(() => {
+      const c = document.querySelector('#sailor-embed canvas') as HTMLCanvasElement | null
+      return !!c && c.width > 1
+    }, undefined, { timeout: 15_000 })
+
+    expect(await embed.locator('#sailor-poster').isHidden()).toBe(true)
+
+    // And it must actually animate, given the fixture's motion track.
+    const first = await embed.evaluate(() =>
+      (document.querySelector('#sailor-embed canvas') as HTMLCanvasElement).toDataURL())
+    await embed.waitForTimeout(600)
+    const later = await embed.evaluate(() =>
+      (document.querySelector('#sailor-embed canvas') as HTMLCanvasElement).toDataURL())
+    expect(first).not.toBe(later)
+    await embed.close()
+  })
+})
+
+test.describe('embed parity with the studio — gradient', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/dev/embed-harness')
+    await page.waitForFunction(() => (window as any).__embedHarnessGradientReady === true)
+  })
+
+  // The gate on the gates. If this passes, a parity check would accept a
+  // broken render. Perturbs the first layer's first color stop — the ramp LUT
+  // this feeds pixels directly, so it changes output regardless of which
+  // flow/motion params happen to be active (unlike e.g. flow.intensity, which
+  // is a no-op while flow.speed is 0 in this fixture).
+  test('the parity check fails when the config is deliberately corrupted', async ({ page, context }) => {
+    const before = await page.evaluate(async (t: number) => {
+      const H = (window as any).__embedHarnessGradient
+      const h = await H.mount('g')
+      h.setSize(512, 512)
+      h.setTime(t)
+      const png = H.snapshot('g')
+      h.destroy()
+      return png
+    }, T)
+
+    await page.evaluate(() => (window as any).__embedHarnessGradient.corrupt())
+
+    const html = await page.evaluate(() => (window as any).__embedHarnessGradient.exportHtml())
+    await context.addInitScript((t: number) => { (window as any).__SAILOR_FREEZE_T01__ = t }, T)
+    const embed = await context.newPage()
+    await embed.setViewportSize({ width: 512, height: 512 })
+    await embed.setContent(html)
+    await embed.waitForFunction(() => {
+      const c = document.querySelector('#sailor-embed canvas') as HTMLCanvasElement | null
+      return !!c && c.width > 1
+    }, undefined, { timeout: 15_000 })
+    expect(await embed.locator('#sailor-poster').isHidden()).toBe(true)
+    const after = await embed.evaluate(() =>
+      (document.querySelector('#sailor-embed canvas') as HTMLCanvasElement).toDataURL())
+    await embed.close()
+
+    expect(after).not.toBe(before)
+  })
+})

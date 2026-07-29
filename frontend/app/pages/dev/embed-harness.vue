@@ -11,6 +11,11 @@ import { composePasses } from '~/lib/shaderstudio/passes'
 // import path, not just its behavior.
 import { applyMotion, motionConfigFor } from '~/lib/shaderstudio/motion'
 import { gradientFx } from '~/lib/gradientfx/renderer'
+// The studio's own default-config builder — the same one GradientStudioNode
+// seeds a fresh node from (see GradientStudioNode.vue's defaultConfig import).
+// Aliased: shader.ts's defaultConfig (shaderstudio/types) is already imported
+// above under the same name.
+import { defaultConfig as gradientDefaultConfig } from '~/lib/gradientfx/randomize'
 import type { EmbedHandle } from '~/lib/embed/contract'
 import type { ShaderEmbedConfig } from '~/lib/embed/surfaces/shader'
 import type { GradientEmbedConfig } from '~/lib/embed/surfaces/gradient'
@@ -146,13 +151,37 @@ onMounted(async () => {
   }
   ;(window as any).__embedHarnessReady = true
 
-  // --- Gradient embed harness (loop-duration reconciliation test) ---
-  // Minimal on purpose: this only supports embed-gradient.spec.ts's one
-  // scenario (an embed export duration that diverges from cfg.motion.duration).
-  // A later task building out full gradient embed E2E coverage should extend
-  // this block rather than duplicate it.
+  // --- Gradient embed harness ---
+  // Started minimal (loop-duration reconciliation only); this block now also
+  // carries the default contract/parity fixture for embed-gradient.spec.ts's
+  // full suite. Built from the studio's OWN defaults (gradientDefaultConfig,
+  // i.e. gradientfx/randomize.ts's defaultConfig — the same builder
+  // GradientStudioNode seeds a fresh node from) rather than a hand-authored
+  // shape, plus one motion track so time genuinely moves the render.
   const gradientHandles: Record<string, EmbedHandle> = {}
+  const GRADIENT_DURATION = 4
+  const gradientCfg = gradientDefaultConfig('embed-gradient-task3')
+  // relief.grain 0->1, delay: 0 — visually obvious and, like the
+  // loop-duration fixture above, depends only on t/duration.
+  gradientCfg.motion = {
+    tracks: [{ path: 'relief.grain', from: 0, to: 1, easing: 'linear', loops: 1, hold: 0, cycleOffset: 0, delay: 0 }],
+    duration: GRADIENT_DURATION, fps: 30, size: 1080,
+  }
+  const gradientConfig: GradientEmbedConfig = { cfg: gradientCfg, duration: GRADIENT_DURATION }
+
   ;(window as any).__embedHarnessGradient = {
+    config: gradientConfig,
+    async mount(slot: string) {
+      const surface = await loadEmbedSurface('gradient')
+      if (!surface) return null
+      const el = document.getElementById(`slot-${slot}`)!
+      const h = await surface.mount(el, gradientConfig)
+      gradientHandles[slot] = h
+      return h
+    },
+    // Mounts with a caller-supplied GradientEmbedConfig rather than the fixed
+    // default — lets tests exercise shapes the default fixture can't (e.g. a
+    // different motion.duration than the embed's own).
     async mountConfig(slot: string, cfg: GradientEmbedConfig) {
       const surface = await loadEmbedSurface('gradient')
       if (!surface) return null
@@ -164,6 +193,15 @@ onMounted(async () => {
     snapshot(slot: string): string {
       const c = document.querySelector(`#slot-${slot} canvas`) as HTMLCanvasElement | null
       return c ? c.toDataURL('image/png') : ''
+    },
+    async exportHtml() {
+      return await exportEmbedHtml({
+        kind: 'gradient',
+        config: gradientConfig,
+        duration: GRADIENT_DURATION,
+        width: 512,
+        height: 512,
+      })
     },
     /**
      * Renders through the STUDIO path — the gradientFx singleton, exactly as
@@ -177,6 +215,19 @@ onMounted(async () => {
       const duration = cfg.motion?.duration || 4
       return gradientFx.render(cfg, w, h, t01 * duration).toDataURL('image/png')
     },
+    /**
+     * Test-only: perturb the fixture so a parity diff MUST fail. Changes the
+     * first layer's first color stop — the ramp LUT built from `stops` feeds
+     * pixels directly (buildRampLut in gradientfx/ramp.ts), so this is visible
+     * regardless of which flow/motion params happen to be active. Unlike e.g.
+     * flow.intensity, which is a no-op while flow.speed is 0 in this fixture,
+     * a color-stop change can never be a no-op.
+     */
+    corrupt() {
+      const stop = gradientCfg.layers[0]?.color?.stops?.[0]
+      if (!stop) throw new Error('harness: gradient fixture has no color stop to corrupt')
+      stop.color = stop.color === '#00ff00' ? '#f9d9f0' : '#00ff00'
+    },
   }
   ;(window as any).__embedHarnessGradientReady = true
 })
@@ -188,5 +239,6 @@ onMounted(async () => {
     <div id="slot-a" class="w-[512px] h-[512px] bg-black" />
     <div id="slot-b" class="w-[512px] h-[512px] bg-black" />
     <div id="slot-g" class="w-[512px] h-[512px] bg-black" />
+    <div id="slot-g2" class="w-[512px] h-[512px] bg-black" />
   </div>
 </template>
