@@ -33,17 +33,18 @@ const icon = computed(() =>
 <template>
   <div>
     <div class="group flex items-center gap-2 rounded px-2 py-1 text-xs"
+      data-testid="object-row" :data-object-id="object.id" :data-object-name="object.name"
       :class="selectedIds.includes(object.id) ? 'bg-white/15' : 'hover:bg-white/5'"
       :style="{ paddingLeft: `${8 + depth * 12}px` }"
       @click="emit('select', object.id, $event.shiftKey || $event.metaKey || $event.ctrlKey)">
-      <button v-if="children.length" type="button" class="-ml-1 shrink-0 opacity-60 hover:opacity-100"
+      <button v-if="children.length" type="button" data-testid="object-row-toggle" class="-ml-1 shrink-0 opacity-60 hover:opacity-100"
         @click.stop="expanded = !expanded">
         <component :is="expanded ? ChevronDown : ChevronRight" class="h-3 w-3" />
       </button>
       <span v-else class="w-2 shrink-0" />
       <component :is="icon" class="h-3.5 w-3.5 shrink-0 opacity-60" />
       <span class="flex-1 truncate" :class="glbError[object.id] ? 'text-red-400' : ''">{{ object.name }}</span>
-      <span v-if="children.length" class="shrink-0 text-[10px] tabular-nums opacity-40">{{ children.length }}</span>
+      <span v-if="children.length" data-testid="object-row-children" class="shrink-0 text-[10px] tabular-nums opacity-40">{{ children.length }}</span>
       <button v-if="glbError[object.id]" type="button" class="text-red-400 opacity-90 hover:opacity-100"
         title="Load failed — retry" @click.stop="emit('retry', object.id)"><RotateCcw class="h-3.5 w-3.5" /></button>
       <button type="button" class="opacity-0 group-hover:opacity-70" @click.stop="emit('toggleVisible', object.id)">

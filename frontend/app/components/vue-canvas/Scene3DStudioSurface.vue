@@ -31,7 +31,7 @@ import { loadGoogleCatalog, type GoogleFont } from '~/data/google-fonts'
 import FontPicker from '~/components/vue-canvas/FontPicker.vue'
 import { PRIM_GROUPS } from '~/lib/scene3d/primGroups'
 import { SceneEngine, baseSizeFor, baseVertexCountFor } from '~/lib/scene3d/engine'
-import { rebaseMany, groupObjects, ungroupMany, rootObjects } from '~/lib/scene3d/hierarchy'
+import { rebaseMany, groupObjects, ungroupMany, rootObjects, descendantIds } from '~/lib/scene3d/hierarchy'
 import Scene3DObjectRow from './studio/Scene3DObjectRow.vue'
 import { totalClones } from '~/lib/scene3d/modifiers'
 import { PRIMITIVE_PARAMS, paramValue, MODIFIER_SPECS, modifierValue } from '~/lib/scene3d/primParams'
@@ -370,21 +370,36 @@ const bgColorProxy = computed<string>({
   set: (v) => { doc.background = v; lastBgColor.value = v },
 })
 
+/** Material edits apply to EVERY selected object — this is what makes "select
+ *  the logo's paths, pick gold" one action instead of twelve. Each object keeps
+ *  its own material afterward, so a single path can still be tweaked alone.
+ *  Groups and lights carry a dummy `DEFAULT_MATERIAL` that is never rendered
+ *  (see their `create*` doc comments in config.ts) — mutating it would be a
+ *  silent no-op at best, so both kinds are skipped rather than included. */
+function applyMaterial(mutate: (m: SceneMaterial) => void) {
+  for (const o of selectedObjects.value) {
+    if (o.kind === 'light' || o.kind === 'group') continue
+    mutate(o.material)
+  }
+}
+
 // Selection field proxies — nullable-safe so vue-tsc stays happy without template narrowing.
-const matColor = computed<string>({ get: () => selected.value?.material.color ?? '#9aa3af', set: (v) => { if (selected.value) selected.value.material.color = v } })
-const matRoughness = computed<number>({ get: () => selected.value?.material.roughness ?? 0.6, set: (v) => { if (selected.value) selected.value.material.roughness = v } })
-const matMetalness = computed<number>({ get: () => selected.value?.material.metalness ?? 0, set: (v) => { if (selected.value) selected.value.material.metalness = v } })
+// get() reads the PRIMARY selection only (what the panel displays); set() fans out to every
+// selected object via applyMaterial (what actually gets edited) — see its doc above.
+const matColor = computed<string>({ get: () => selected.value?.material.color ?? '#9aa3af', set: (v) => applyMaterial((m) => { m.color = v }) })
+const matRoughness = computed<number>({ get: () => selected.value?.material.roughness ?? 0.6, set: (v) => applyMaterial((m) => { m.roughness = v }) })
+const matMetalness = computed<number>({ get: () => selected.value?.material.metalness ?? 0, set: (v) => applyMaterial((m) => { m.metalness = v }) })
 
 // Material type + per-type params. Proxies fall back to MATERIAL_DEFAULTS so
 // sliders always have a number; the doc only records what the user touches.
 const matType = computed<MaterialType>({
   get: () => selected.value?.material.type ?? 'standard',
-  set: (v) => { if (selected.value) selected.value.material.type = v },
+  set: (v) => applyMaterial((m) => { m.type = v }),
 })
 function matParam<K extends keyof typeof MATERIAL_DEFAULTS>(key: K) {
   return computed<any>({
     get: () => (selected.value?.material as any)?.[key] ?? MATERIAL_DEFAULTS[key],
-    set: (v) => { if (selected.value) (selected.value.material as any)[key] = v },
+    set: (v) => applyMaterial((m) => { (m as any)[key] = v }),
   })
 }
 const matShininess = matParam('shininess')
@@ -406,7 +421,7 @@ const matGradientSpread = matParam('gradientSpread')
 function angleProxy(key: 'yaw' | 'pitch') {
   return computed<number>({
     get: () => (selected.value ? gradientAngles(selected.value.material)[key] : MATERIAL_DEFAULTS[key === 'yaw' ? 'gradientYaw' : 'gradientPitch']),
-    set: (v) => { if (selected.value) selected.value.material[key === 'yaw' ? 'gradientYaw' : 'gradientPitch'] = v },
+    set: (v) => applyMaterial((m) => { m[key === 'yaw' ? 'gradientYaw' : 'gradientPitch'] = v }),
   })
 }
 const matGradientYaw = angleProxy('yaw')
@@ -416,10 +431,8 @@ const matGradientPitch = angleProxy('pitch')
 // angles exist on the material the axis field is only a seed and would look dead.
 const AXIS_PRESETS = { x: { yaw: 90, pitch: 0 }, y: { yaw: 0, pitch: 90 }, z: { yaw: 0, pitch: 0 } } as const
 function applyAxisPreset(axis: 'x' | 'y' | 'z') {
-  if (!selected.value) return
   const p = AXIS_PRESETS[axis]
-  selected.value.material.gradientYaw = p.yaw
-  selected.value.material.gradientPitch = p.pitch
+  applyMaterial((m) => { m.gradientYaw = p.yaw; m.gradientPitch = p.pitch })
 }
 function isAxisPreset(axis: 'x' | 'y' | 'z') {
   const p = AXIS_PRESETS[axis]
@@ -430,7 +443,11 @@ function isAxisPreset(axis: 'x' | 'y' | 'z') {
 // synthesized from `color` + `gradientB`; the array materializes on first edit.
 const matGradientStops = computed<GradientStop[]>({
   get: () => (selected.value ? gradientStopsOf(selected.value.material) : []),
-  set: (v) => { if (selected.value) selected.value.material.gradientStops = v },
+  // Cloned per object rather than assigning the same `v` array to every
+  // selected material — the array (and its stop objects) must not become one
+  // mutable reference shared across objects, same hazard cloneMaterial's fix
+  // above documents for `relief`/`shader`.
+  set: (v) => applyMaterial((m) => { m.gradientStops = v.map((s) => ({ ...s })) }),
 })
 const matClearcoat = matParam('clearcoat')
 const matClearcoatRoughness = matParam('clearcoatRoughness')
@@ -454,7 +471,11 @@ const matEnvMapIntensity = matParam('envMapIntensity')
 const matUnlit = matParam('unlit')
 const matShader = computed<ShaderSpec>({
   get: () => selected.value?.material.shader ?? DEFAULT_SHADER_SPEC,
-  set: (v) => { if (selected.value) selected.value.material.shader = v },
+  // Deep-cloned per object (JSON round-trip, same as cloneMaterial's own shader
+  // handling) rather than assigning `v` to every selected material — a shared
+  // spec object would mean editing one object's shaderFill silently edits them
+  // all, the same hazard as material.relief's documented shallow-copy bug.
+  set: (v) => applyMaterial((m) => { m.shader = JSON.parse(JSON.stringify(v)) }),
 })
 
 // ── Surface relief (Task 5) — orthogonal to material type, so its proxies read/write
@@ -464,42 +485,36 @@ const matShader = computed<ShaderSpec>({
 const matReliefSource = computed<'none' | 'shader' | 'image'>({
   get: () => selected.value?.material.relief?.source ?? 'none',
   set: (v) => {
-    const mat = selected.value?.material
-    if (!mat) return
-    const relief: ReliefSpec = { ...(mat.relief ?? { scale: MATERIAL_DEFAULTS.reliefScale }), source: v }
-    // Selecting 'shader' must SEED relief.spec, not just switch the source: matReliefSpec's
-    // getter falls back to DEFAULT_SHADER_SPEC for display, so without this the editor shows
-    // a fully-configured effect while the persisted state has no spec at all — materials.ts's
-    // getShaderHeightTexture then has neither `spec` nor `mat.shader` to render from and
-    // returns null, so the relief silently never renders (Task 5 bug). Deep-clone via
-    // normalizeShaderSpec (same helper parseDoc uses for this exact field) rather than
-    // assigning the shared DEFAULT_SHADER_SPEC constant directly — that would let every
-    // shader-relief material alias one mutable spec object, so editing one object's effect
-    // would silently edit them all.
-    // Deliberately NOT clearing `spec` when switching to 'none'/'image': keeping it lets a
-    // user bounce between sources without losing their configured effect, which reads as
-    // kinder than punishing an exploratory toggle.
-    // Seed voronoi_cells instead of fbm_warp: bump responds to local gradient, not range.
-    // fbm_warp gradient ≈5.4 (invisible), voronoi_cells ≈36.8 (reads as material surface).
-    if (v === 'shader' && !relief.spec) relief.spec = normalizeShaderSpec({ effectId: 'voronoi_cells' }, 0)
-    mat.relief = relief
+    applyMaterial((mat) => {
+      const relief: ReliefSpec = { ...(mat.relief ?? { scale: MATERIAL_DEFAULTS.reliefScale }), source: v }
+      // Selecting 'shader' must SEED relief.spec, not just switch the source: matReliefSpec's
+      // getter falls back to DEFAULT_SHADER_SPEC for display, so without this the editor shows
+      // a fully-configured effect while the persisted state has no spec at all — materials.ts's
+      // getShaderHeightTexture then has neither `spec` nor `mat.shader` to render from and
+      // returns null, so the relief silently never renders (Task 5 bug). Deep-clone via
+      // normalizeShaderSpec (same helper parseDoc uses for this exact field) rather than
+      // assigning the shared DEFAULT_SHADER_SPEC constant directly — that would let every
+      // shader-relief material alias one mutable spec object, so editing one object's effect
+      // would silently edit them all. Called once PER selected object (inside this loop) for
+      // the same reason: a fan-out across a multi-selection must not let them alias each
+      // other's spec either.
+      // Deliberately NOT clearing `spec` when switching to 'none'/'image': keeping it lets a
+      // user bounce between sources without losing their configured effect, which reads as
+      // kinder than punishing an exploratory toggle.
+      // Seed voronoi_cells instead of fbm_warp: bump responds to local gradient, not range.
+      // fbm_warp gradient ≈5.4 (invisible), voronoi_cells ≈36.8 (reads as material surface).
+      if (v === 'shader' && !relief.spec) relief.spec = normalizeShaderSpec({ effectId: 'voronoi_cells' }, 0)
+      mat.relief = relief
+    })
   },
 })
 const matReliefScale = computed<number>({
   get: () => selected.value?.material.relief?.scale ?? MATERIAL_DEFAULTS.reliefScale,
-  set: (v) => {
-    const mat = selected.value?.material
-    if (!mat?.relief) return
-    mat.relief.scale = v
-  },
+  set: (v) => applyMaterial((mat) => { if (mat.relief) mat.relief.scale = v }),
 })
 const matReliefInvert = computed<boolean>({
   get: () => selected.value?.material.relief?.invert === true,
-  set: (v) => {
-    const mat = selected.value?.material
-    if (!mat?.relief) return
-    mat.relief.invert = v
-  },
+  set: (v) => applyMaterial((mat) => { if (mat.relief) mat.relief.invert = v }),
 })
 // Contrast is applied at texture-build time alongside invert (materials.ts), not at
 // upload/conversion time — so it's a live, adjustable knob for both the Effect and Image
@@ -508,36 +523,30 @@ const matReliefInvert = computed<boolean>({
 const matReliefContrast = computed<number>({
   get: () => selected.value?.material.relief?.contrast ?? MATERIAL_DEFAULTS.reliefContrast,
   set: (v) => {
-    const target = selected.value
-    const mat = target?.material
-    if (!mat?.relief) return
-    mat.relief.contrast = v
+    applyMaterial((mat) => { if (mat.relief) mat.relief.contrast = v })
     // Minor 6 fix (final review): the flatness warning is measured ONCE, on the pre-contrast
     // pixels, at upload/generate time — raising Contrast can genuinely fix a flat-reading map,
     // but the warning (and its "raise Contrast" copy) never re-evaluated, so it sat there
     // contradicting a surface that now reads fine. Clear it on any contrast edit rather than
     // re-measuring — contrast is a live per-tick slider now, and re-decoding the whole source
-    // image on every tick just to re-run heightGradient would be real, avoidable cost.
-    if (target) delete reliefFlatWarning[target.id]
+    // image on every tick just to re-run heightGradient would be real, avoidable cost. The
+    // warning is a per-object measurement, so this now clears it for every selected object
+    // whose contrast the fan-out above just touched, not just the primary.
+    for (const o of selectedObjects.value) delete reliefFlatWarning[o.id]
   },
 })
 // Tiling is a Texture.repeat property (materials.ts's applyRelief/updateMaterial), never a
 // pixel change — updates in place exactly like scale, so a slider drag never rebuilds.
 const matReliefTiling = computed<number>({
   get: () => selected.value?.material.relief?.tiling ?? MATERIAL_DEFAULTS.reliefTiling,
-  set: (v) => {
-    const mat = selected.value?.material
-    if (!mat?.relief) return
-    mat.relief.tiling = v
-  },
+  set: (v) => applyMaterial((mat) => { if (mat.relief) mat.relief.tiling = v }),
 })
 const matReliefSpec = computed<ShaderSpec>({
   get: () => selected.value?.material.relief?.spec ?? DEFAULT_SHADER_SPEC,
-  set: (v) => {
-    const mat = selected.value?.material
-    if (!mat?.relief) return
-    mat.relief.spec = v
-  },
+  // Deep-cloned per object, same reasoning as matShader above — a relief spec
+  // is a nested object too, and the ShaderFillEditor emits one fresh `v` shared
+  // across this whole fan-out unless each object gets its own copy.
+  set: (v) => applyMaterial((mat) => { if (mat.relief) mat.relief.spec = JSON.parse(JSON.stringify(v)) }),
 })
 /** Relief needs lighting to perturb. An unlit shaderFill is a MeshBasicMaterial with no
  *  bump slot at all — disable rather than silently no-op (materials.ts applyRelief). */
@@ -553,22 +562,22 @@ const matReliefImage = computed<string | undefined>(() => selected.value?.materi
 const matIsNormalMap = computed<boolean>({
   get: () => !!selected.value?.material.normalImage,
   set: (v) => {
-    const mat = selected.value?.material
-    if (!mat) return
-    if (v) {
-      const img = mat.relief?.image
-      if (img) {
-        mat.normalImage = img
-        if (mat.relief) mat.relief.image = undefined
+    applyMaterial((mat) => {
+      if (v) {
+        const img = mat.relief?.image
+        if (img) {
+          mat.normalImage = img
+          if (mat.relief) mat.relief.image = undefined
+        }
+      } else {
+        const img = mat.normalImage
+        if (img) {
+          if (!mat.relief) mat.relief = { source: 'image', scale: MATERIAL_DEFAULTS.reliefScale }
+          mat.relief.image = img
+          mat.normalImage = undefined
+        }
       }
-    } else {
-      const img = mat.normalImage
-      if (img) {
-        if (!mat.relief) mat.relief = { source: 'image', scale: MATERIAL_DEFAULTS.reliefScale }
-        mat.relief.image = img
-        mat.normalImage = undefined
-      }
-    }
+    })
   },
 })
 // I3 fix (final review): `normalImage` is a field independent of `relief.source` (see its doc
@@ -579,8 +588,7 @@ const matIsNormalMap = computed<boolean>({
 // of matIsNormalMap's move-between-fields dance above (there is no relief.image to move it
 // back to once the user has explicitly walked away from Image source).
 function removeNormalMap() {
-  const mat = selected.value?.material
-  if (mat) mat.normalImage = undefined
+  applyMaterial((mat) => { mat.normalImage = undefined })
 }
 
 // Light field proxies — same shape as matParam, but the fields live flat on the
@@ -618,6 +626,11 @@ watch(matType, (t) => { transparencyOpen.value = t === 'glass' })
 // spinner only shows on it, and upload failures are keyed by object id
 // (texUploadError) while engine-side load failures stay keyed by filename
 // (texLoadError) — a failed replace must not smear the old, still-working file.
+// Deliberately NOT routed through applyMaterial (Task 9): the spinner/error refs
+// above are single-id, not sets, so fanning an upload across a multi-selection
+// would need its own per-id async state, not a one-line change — a materially
+// bigger change than the panel's synchronous sliders/colours below, and outside
+// what this task's material fan-out targets.
 const texFileInput = ref<HTMLInputElement | null>(null)
 const texUploading = ref<string | null>(null)
 const texUploadError = reactive<Record<string, boolean>>({})
@@ -1361,6 +1374,16 @@ function onKey(e: KeyboardEvent) {
     // An open StudioColor popover owns Escape (its own capture listener closes
     // it); it registered after us so we'd fire first — yield to it.
     if (document.querySelector('[data-studio-color-pop]')) return
+    const primary = selectedId.value ? doc.objects.find((o) => o.id === selectedId.value) : null
+    if (primary?.parentId) {
+      // Step up to the containing group rather than clearing — the only
+      // traversal in the model, and the way a group gets selected from the
+      // viewport (clicking always picks the child).
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      selectedIds.value = [primary.parentId]
+      return
+    }
     if (selectedId.value) {
       // Deselect only: preventDefault + stopImmediatePropagation keep the
       // shell's window keydown (and anything else) from closing the modal.
@@ -1370,7 +1393,12 @@ function onKey(e: KeyboardEvent) {
     }
     // No selection → fall through untouched; the shell's Escape closes.
   }
-  else if (e.key === 'Backspace' && selectedId.value) removeObject(selectedId.value)
+  else if (e.key === 'Backspace' && selectedIds.value.length) {
+    // Snapshot before looping: removeObject mutates selectedIds as it goes (a
+    // cascade can remove a later id in this same batch as somebody else's
+    // descendant), and iterating the live ref would skip or re-visit entries.
+    for (const id of [...selectedIds.value]) removeObject(id)
+  }
 }
 
 // ── Grouping ──────────────────────────────────────────────────────────────────
@@ -1430,12 +1458,14 @@ function addGlb(url: string) {
   loadGlb(url).catch(() => { glbError[o.id] = true })
 }
 function removeObject(id: string) {
-  const i = doc.objects.findIndex((o) => o.id === id)
-  if (i >= 0) doc.objects.splice(i, 1)
-  // Remove the deleted id from the selection without going through the replace-setter,
+  // A group's children are independent doc objects; deleting only the group
+  // would leave them orphaned at the root — visually "escaping" the delete.
+  const doomed = new Set([id, ...descendantIds(doc.objects, id)])
+  doc.objects = doc.objects.filter((o) => !doomed.has(o.id))
+  // Remove every doomed id from the selection without going through the replace-setter,
   // which would discard any other selected objects when multi-selection is active.
-  selectedIds.value = selectedIds.value.filter((x) => x !== id)
-  delete glbError[id]
+  selectedIds.value = selectedIds.value.filter((x) => !doomed.has(x))
+  for (const gone of doomed) delete glbError[gone]
 }
 // C3 fix (final review): `{ ...src.material }` is a SHALLOW copy — `material.relief` (and
 // `material.relief.spec`/`material.shader`, same hazard) is a nested object, so the shallow
@@ -1453,15 +1483,34 @@ function cloneMaterial(mat: SceneMaterial): SceneMaterial {
   if (mat.shader) copy.shader = JSON.parse(JSON.stringify(mat.shader))
   return copy
 }
-function duplicateObject(id: string) {
-  const src = doc.objects.find((o) => o.id === id)
-  if (!src) return
-  const copy = src.kind === 'primitive' ? createPrimitive(src.primitive, doc.objects)
-    : src.kind === 'glb' ? createGlbObject(src.url, doc.objects)
-    : createLight(src.light, doc.objects)
+// Shared body behind duplicateObject's single-object copy AND its subtree clones
+// below (Task 9) — pulled out so both call sites share one deep-clone instead of
+// growing two copies of the material/params/modifiers hazard the comment above
+// documents. Position/rotation/scale/parentId travel VERBATIM (not offset) —
+// duplicateObject applies its own +0.5 nudge only to the object the user
+// actually clicked "duplicate" on; a descendant's local TRS is relative to its
+// (also-cloned) parent, so leaving it untouched is what keeps the whole
+// subtree's shape intact.
+//
+// NOTE (known pre-existing gap, not introduced or fixed by Task 9): this ternary
+// only special-cases 'primitive' and 'glb'; every other kind — including 'group'
+// — falls to `createLight(src.light, ...)`, which is a type error for GroupObject
+// (`src.light` doesn't exist on it) and, at runtime, would fabricate a
+// light-shaped object instead of a real group. Duplicating a GROUP therefore
+// does not work correctly today. Left as-is per the task's explicit instruction
+// to report, not fix, this error — flagged separately as follow-up.
+// `existing` defaults to the live doc for the single-object call site, but the
+// subtree loop below passes an ACCUMULATING array instead — createPrimitive/
+// createGlbObject/createLight number the copy's name against `existing`, and
+// cloning several children before any of them are pushed to `doc.objects`
+// would otherwise have every clone numbered against the same stale snapshot,
+// handing two of them the identical next-available name.
+function cloneObject(src: SceneObject, existing: SceneObject[] = doc.objects): SceneObject {
+  const copy = src.kind === 'primitive' ? createPrimitive(src.primitive, existing)
+    : src.kind === 'glb' ? createGlbObject(src.url, existing)
+    : createLight(src.light, existing)
   Object.assign(copy, {
-    position: [src.position[0] + 0.5, src.position[1], src.position[2] + 0.5],
-    rotation: [...src.rotation], scale: [...src.scale], material: cloneMaterial(src.material),
+    position: [...src.position], rotation: [...src.rotation], scale: [...src.scale], material: cloneMaterial(src.material),
     // Geometry params travel with the copy, cloned not aliased — a shared bag
     // would make both objects' shapes move together on any later edit.
     ...(src.kind === 'primitive' && src.params ? { params: { ...src.params } } : {}),
@@ -1473,8 +1522,46 @@ function duplicateObject(id: string) {
       color: src.color, intensity: src.intensity, distance: src.distance, decay: src.decay,
       angle: src.angle, penumbra: src.penumbra, width: src.width, height: src.height, castShadow: src.castShadow,
     } : {}),
+    // Preserve containment: a duplicate should land beside its source, not
+    // escape to the root — the same "escaping" failure mode Step 1's delete
+    // cascade guards against, just for duplicate instead of delete. (Not in the
+    // task's original pseudocode, but duplicateObject predates `parentId` and
+    // this is exactly the kind of gap "make per-object operations
+    // hierarchy-aware" calls out — see task report.)
+    ...(src.parentId ? { parentId: src.parentId } : {}),
   })
+  return copy
+}
+function duplicateObject(id: string) {
+  const src = doc.objects.find((o) => o.id === id)
+  if (!src) return
+  const copy = cloneObject(src)
+  copy.position = [src.position[0] + 0.5, src.position[1], src.position[2] + 0.5]
+  // A group with no children copied is an empty box; copy the whole subtree and
+  // rewrite parent links so the copy is self-contained rather than pointing
+  // back into the original's children.
+  const kids = descendantIds(doc.objects, id)
+  let clones: SceneObject[] = []
+  if (kids.length) {
+    const idMap = new Map<string, string>([[id, copy.id]])
+    // Threaded through cloneObject's `existing` so each clone is numbered
+    // against every clone made so far THIS batch too, not just the pre-clone doc.
+    let numberingScope = doc.objects
+    for (const kid of kids) {
+      const kidSrc = doc.objects.find((o) => o.id === kid)
+      if (!kidSrc) continue
+      const clone = cloneObject(kidSrc, numberingScope)
+      numberingScope = [...numberingScope, clone]
+      idMap.set(kid, clone.id)
+      clones.push(clone)
+    }
+    for (const clone of clones) {
+      const mapped = clone.parentId ? idMap.get(clone.parentId) : undefined
+      if (mapped) clone.parentId = mapped
+    }
+  }
   doc.objects.push(copy)
+  if (clones.length) doc.objects.push(...clones)
   selectedId.value = copy.id
   // Same eager warm-up as addGlb so a failing GLB source flags the duplicate too.
   if (copy.kind === 'glb') loadGlb(copy.url).catch(() => { glbError[copy.id] = true })
