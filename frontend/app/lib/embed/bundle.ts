@@ -63,6 +63,17 @@ function safeJson(value: unknown): string {
     .replace(/\u2029/g, '\\u2029')
 }
 
+/**
+ * Neutralize sequences that would break out of an HTML attribute. The poster
+ * is a base64 data: URI, and its alphabet is `[A-Za-z0-9+/=]` plus the
+ * `data:...;base64,` prefix, so it cannot actually contain a quote or `&`.
+ * Escaping defensively anyway means this stays correct if that ever stops
+ * being true (an SVG poster with a literal, non-base64 payload, say).
+ */
+function safeAttr(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+}
+
 export function buildEmbedHtml(snapshot: EmbedSnapshot, adapterJs: string): string {
   if (!(snapshot.duration > 0)) {
     throw new Error(`embed: duration must be positive, got ${snapshot.duration}`)
@@ -116,11 +127,9 @@ export function buildEmbedHtml(snapshot: EmbedSnapshot, adapterJs: string): stri
 </style>
 </head>
 <body>
-<div id="sailor-embed"><div id="sailor-stage"></div><img id="sailor-poster" alt=""></div>
+<div id="sailor-embed"><div id="sailor-stage"></div><img id="sailor-poster" alt="" src="${safeAttr(snapshot.posterDataUrl)}"></div>
 <script>
 window.__SAILOR_SNAPSHOT__ = ${safeJson({ ...snapshot, posterDataUrl: '' })};
-window.__SAILOR_POSTER__ = ${safeJson(snapshot.posterDataUrl)};
-document.getElementById('sailor-poster').src = window.__SAILOR_POSTER__;
 </script>
 <script>
 ${adapterJs}

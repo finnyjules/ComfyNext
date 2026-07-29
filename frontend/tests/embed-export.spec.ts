@@ -19,6 +19,30 @@ test.describe('embed export', () => {
     expect(externalRefs(html)).toEqual([])
   })
 
+  // The poster is the documented fallback for "the live path can't run" —
+  // before mount, under prefers-reduced-motion, and when the browser can't
+  // run the piece at all. A sandboxed preview pane, an email client, a
+  // strict-CSP host, or an <iframe sandbox> without allow-scripts all block
+  // inline <script> outright, so that fallback must not itself depend on a
+  // script running. Prove it with a context that has JavaScript disabled.
+  test('the poster is visible with JavaScript disabled entirely', async ({ page, browser }) => {
+    const html = await page.evaluate(() => (window as any).__embedHarness.exportHtml())
+
+    const noJsContext = await browser.newContext({ javaScriptEnabled: false })
+    try {
+      const embed = await noJsContext.newPage()
+      await embed.setContent(html)
+
+      const poster = embed.locator('#sailor-poster')
+      await expect(poster).toBeVisible()
+      const src = await poster.getAttribute('src')
+      expect(src).toBeTruthy()
+      expect(src).toMatch(/^data:image\//)
+    } finally {
+      await noJsContext.close()
+    }
+  })
+
   test('the exported file renders live, not just its poster', async ({ page, context }) => {
     const html = await page.evaluate(() => (window as any).__embedHarness.exportHtml())
 

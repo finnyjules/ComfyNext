@@ -53,6 +53,29 @@ describe('buildEmbedHtml', () => {
     expect(html).toContain(POSTER)
   })
 
+  // The poster must render with NO JavaScript at all — a sandboxed preview
+  // pane, an email client, a strict CSP host, or an <iframe sandbox> without
+  // allow-scripts all block inline <script>. A src assigned by an inline
+  // script leaves those viewers with a completely blank page instead of the
+  // documented fallback. The data: URI must be in the markup itself.
+  it('puts the poster data URI directly in the <img src> attribute, not behind a script', () => {
+    const html = buildEmbedHtml(snap(), '')
+    const match = html.match(/<img[^>]*id="sailor-poster"[^>]*>/)
+    expect(match).not.toBeNull()
+    const imgTag = match![0]
+    expect(imgTag).toContain(`src="${POSTER}"`)
+    // And no script should still be assigning it as a fallback/duplicate path.
+    expect(html).not.toContain('__SAILOR_POSTER__')
+  })
+
+  // Duplicating the poster (once in the <img src>, once in a JS payload)
+  // would inflate every export by the full base64 blob size for no reason.
+  it('the poster payload appears exactly once in the document', () => {
+    const html = buildEmbedHtml(snap(), '')
+    const occurrences = html.split(POSTER).length - 1
+    expect(occurrences).toBe(1)
+  })
+
   it('contains no external references', () => {
     const html = buildEmbedHtml(snap(), 'const x = 1;')
     expect(externalRefs(html)).toEqual([])
