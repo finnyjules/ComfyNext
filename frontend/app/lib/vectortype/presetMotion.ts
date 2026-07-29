@@ -117,7 +117,7 @@ export interface VtGlyphClip {
  *
  * | field            | unit                              | rest  |
  * |------------------|-----------------------------------|-------|
- * | `dx`, `dy`       | OUTPUT PIXELS (y-DOWN, like canvas) | 0   |
+ * | `dx`, `dy`       | OUTPUT PIXELS (y-DOWN, like canvas), along the GLYPH'S OWN axes — `dy` is a baseline shift, so on an arc'd run it moves the letter off its own baseline rather than down the screen (`vtGlyphOffset`). Identical on a straight run. | 0   |
  * | `scale`          | multiplier, uniform               | 1     |
  * | `scaleX`,`scaleY`| extra per-axis multipliers (flips) | 1     |
  * | `rotate`         | degrees, clockwise                | 0     |

@@ -70,6 +70,7 @@ import {
   extrudeCopyTransform,
   extrudeOffsets,
   vtCellPivot,
+  vtGlyphOffset,
   vtSolidKey,
   type VtExtrudeCopy,
   type VtExtrudeSpec,
@@ -1679,7 +1680,12 @@ export function drawVectorType(
       const sx = nonZero(tr.scale * (Number.isFinite(tr.scaleX) ? tr.scaleX : 1))
       const sy = nonZero(tr.scale * (Number.isFinite(tr.scaleY) ? tr.scaleY : 1))
       if (tr.dx || tr.dy || tr.rotate || sx !== 1 || sy !== 1) {
-        ctx.translate(origin.x + tr.dx, origin.y + tr.dy)
+        // IN THE GLYPH'S OWN FRAME — `dy` is a baseline shift, so on a curve it
+        // moves the letter off ITS baseline rather than down the screen. See
+        // `vtGlyphOffset` for the decision and the four reasons; on a straight
+        // run it returns `(dx, dy)` unchanged, by a branch.
+        const d = vtGlyphOffset(tr.dx, tr.dy, origin.rotate)
+        ctx.translate(origin.x + d.x, origin.y + d.y)
         if (tr.rotate) ctx.rotate((tr.rotate * Math.PI) / 180)
         // Non-uniform, so the card-flip presets are DRAWN rather than degenerating
         // into a bare opacity ramp (Task 4 produced `scaleX`/`scaleY` and flagged
@@ -1788,6 +1794,10 @@ export function drawVectorTypeToCanvas(
  *   matrix(shear) · translate(origin + d) · rotate · translate(adv/2, 0) · scale
  *                                         · translate(-adv/2, 0) · translate(-origin)
  *
+ * `d` is `vtGlyphOffset(tr.dx, tr.dy, origin.rotate)` — the motion offset in the
+ * glyph's OWN frame — and `adv/2` is `vtCellPivot` for the same reason. Both are
+ * the identity expression on a straight run.
+ *
  * An SVG transform list composes left-to-right the same way successive `ctx`
  * operations do, and SVG's `rotate(deg)` turns the same direction as
  * `ctx.rotate(rad)` because both spaces are y-down here (the flip is already
@@ -1826,7 +1836,8 @@ function glyphSvgTransform(
   const parts: string[] = []
   if (shear) parts.push(`matrix(${shear.map(n).join(' ')})`)
   if (still) return parts.join(' ')
-  parts.push(`translate(${n(origin.x + tr.dx)} ${n(origin.y + tr.dy)})`)
+  const d = vtGlyphOffset(tr.dx, tr.dy, origin.rotate)
+  parts.push(`translate(${n(origin.x + d.x)} ${n(origin.y + d.y)})`)
   if (tr.rotate) parts.push(`rotate(${n(tr.rotate)})`)
   // Single-argument when uniform: that is the same transform, and it keeps an
   // ordinary export readable. The two-argument form appears only for a card
@@ -1883,7 +1894,8 @@ function glyphSvgMatrix(
     ? [q(shear[0]), q(shear[1]), q(shear[2]), q(shear[3]), q(shear[4]), q(shear[5])]
     : IDENTITY_AFFINE
   if (still) return m
-  m = multiplyAffine(m, T(q(origin.x + tr.dx), q(origin.y + tr.dy)))
+  const d = vtGlyphOffset(tr.dx, tr.dy, origin.rotate)
+  m = multiplyAffine(m, T(q(origin.x + d.x), q(origin.y + d.y)))
   if (tr.rotate) {
     const rad = (q(tr.rotate) * Math.PI) / 180
     const c = Math.cos(rad), s = Math.sin(rad)

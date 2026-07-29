@@ -87,9 +87,17 @@ export interface VtAnimatableTarget {
  * rather than in `VT_CONTROLS` (where every key must resolve against the config,
  * pinned by a test) and read by `glyphTransform`, never by `applyMotion`.
  *
- * `dx`/`dy` are OUTPUT PIXELS, matching `render.ts` (which bakes the y-flip into
- * the coordinates so stroke widths and glyph offsets are in the same units on
- * canvas and in SVG). `rotate` is degrees, `scale` multiplies, `opacity` is 0..1.
+ * `dx`/`dy` are in OUTPUT PIXELS, matching `render.ts` (which bakes the y-flip
+ * into the coordinates so stroke widths and glyph offsets are in the same units
+ * on canvas and in SVG) — but they are measured along the GLYPH'S OWN AXES, not
+ * the output's. `dy` is a baseline shift: on a bent run it moves the letter off
+ * its own baseline (radially, on a ring), which is what type-on-a-path means by
+ * it everywhere else. On a straight run the two frames are identical and the
+ * arithmetic is unchanged; `vtGlyphOffset` (./extrude.ts) is the one derivation,
+ * and carries the reasoning and the numbers behind the choice.
+ *
+ * `rotate` is degrees ADDED to the placement's own angle, `scale` multiplies,
+ * `opacity` is 0..1. So every channel here is in the glyph's frame.
  */
 export const VT_GLYPH_PREFIX = 'glyph.'
 

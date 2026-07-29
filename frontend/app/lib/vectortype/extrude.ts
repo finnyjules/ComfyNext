@@ -263,6 +263,66 @@ export function vtCellPivot(
 }
 
 /**
+ * A per-glyph motion OFFSET (`VtGlyphTransform.dx`/`dy`) taken into the GLYPH's
+ * own frame — the ONE derivation of where a translated glyph goes.
+ *
+ * ## The decision this encodes, and why it went this way
+ *
+ * Task 4 measured the alternative and left it: `dx`/`dy` were applied in OUTPUT
+ * space, so on a bent run a glyph translated "up" moved up the SCREEN rather
+ * than up off its OWN baseline. Through the `mask-up` preset that cost 16.6
+ * points of spread at t=0.15 — at arc 330 the letter crossed its (correctly
+ * turned) mask window instead of travelling along the axis the window masks.
+ *
+ * Both readings are defensible in the abstract. Four things decide it:
+ *
+ *  1. **`dy` is baseline shift, and every type tool on earth makes baseline
+ *     shift radial on a path.** Illustrator, InDesign and After Effects all move
+ *     type-on-a-path off the CURVE, not down the artboard. This is the one
+ *     channel with an established meaning, and it is not the output one.
+ *  2. **It is the only channel that was not already local.** A glyph's `rotate`
+ *     composes onto its placement angle, its `scaleX`/`scaleY` pivot is the cell
+ *     centre IN THE GLYPH'S FRAME (`vtCellPivot`, above), and its mask window is
+ *     the glyph's own cell. One channel in a different frame is not a design, it
+ *     is an omission — and it is the one that breaks the mask contract.
+ *  3. **The "one absolute direction" rule is about the SCENE, not the letter.**
+ *     `extrudeCopyTransform` keeps `rotate: 0` because a block shadow implies a
+ *     light source, and one scene has one light; `vtGlyphPaintBox` stays
+ *     axis-aligned because a ramp is a direction across the picture. A motion
+ *     offset is neither — it is the letter's own movement, like its own spin.
+ *  4. **The disagreement grows with exactly the thing that makes local right.**
+ *     On a gentle 30° headline arch the two frames differ by a few degrees and
+ *     nobody can tell; they diverge only towards a ring, which is precisely the
+ *     badge case where radial is unarguable.
+ *
+ * `rotate === 0` takes a BRANCH rather than folding `cos 0`/`sin 0`, so every
+ * straight run — which is every run that exists today, since the placement only
+ * ever turns on a curve — lands on the identical doubles it always did. This
+ * change cannot move a flat composition by a float.
+ *
+ * Three surfaces translate a glyph and all three call this: the canvas motion
+ * block, `glyphSvgTransform` and `glyphSvgMatrix`. Same discipline, and the same
+ * reason, as `vtCellPivot` above.
+ */
+export function vtGlyphOffset(
+  /** Output-pixel offset along the glyph's own baseline (+x = forward). */
+  dx: number,
+  /** Output-pixel offset across it (+y = below the baseline, y-down). */
+  dy: number,
+  /** The placement's rotation in DEGREES — `0`/absent for every straight run. */
+  rotate: number | undefined,
+): { x: number; y: number } {
+  const ox = Number.isFinite(dx) ? dx : 0
+  const oy = Number.isFinite(dy) ? dy : 0
+  const rot = Number.isFinite(rotate as number) ? (rotate as number) : 0
+  if (rot === 0) return { x: ox, y: oy }
+  const rad = (rot * Math.PI) / 180
+  const cos = Math.cos(rad)
+  const sin = Math.sin(rad)
+  return { x: ox * cos - oy * sin, y: ox * sin + oy * cos }
+}
+
+/**
  * One glyph's placed command list → **one command list per copy**, back to
  * front.
  *

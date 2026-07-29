@@ -15,6 +15,7 @@ import {
   DEFAULT_CONFIG,
   LAYER_DEFAULTS,
   VT_ALIGNS,
+  VT_ARC_MAX,
   VT_DEFAULT_STROKE_COLOR,
   VT_DEFAULT_STROKE_WIDTH,
   VT_EXTRUDE_DEPTH_MAX,
@@ -273,6 +274,25 @@ export const VT_CONTROLS: VtControl[] = [
     "Leans the WHOLE RUN sideways, in degrees — a shear over the finished outlines, so counters go oval and horizontal strokes thin. If the font has a Slant axis, that is the better tool: it is a true oblique the designer drew. Reach for this on a font with no such axis, or when you want the composition to lean rather than the letters."),
   slider('skewY', 'Skew Y', -VT_SKEW_MAX, VT_SKEW_MAX, 1, 'Layout', DEFAULT_CONFIG.skewY,
     'The same shear on the other axis: the run tilts vertically, rising or falling across its own width. No font axis does this one.'),
+  // ── ARC — declared as SWEEP, which is the whole reason it is draggable ──────
+  // `config.ts`'s own note says it: sweep and radius are the same bend said two
+  // ways (`radius = runWidth / arcRadians`), and only one of them is a control.
+  // A radius slider has its flat end at INFINITY — most of its travel does
+  // nothing visible and "straight" is unreachable — where sweep is linear, its
+  // flat end is exactly 0, and the sign flips the bow. ±360 is where the run's
+  // two ends meet, so the range ends at a picture rather than at a taste call.
+  //
+  // The step is 1°, matching the two skew sliders: at a typical 300px run width
+  // one degree of sweep moves the middle of the word by under half a pixel, so a
+  // finer step would be offering precision the raster cannot show.
+  //
+  // Ungated, and ANIMATABLE by default — which is the point, and it is not free
+  // by accident: the curve keeps its arc length as it bends (`vtRunCurve`), so
+  // every glyph stays at the arc length its own advance puts it at and `arc: 0`
+  // is byte-identical to the flat run. A track from 0 to 180 is therefore a
+  // smooth unbending rather than a pop at the moment the curve appears.
+  slider('arc', 'Arc', -VT_ARC_MAX, VT_ARC_MAX, 1, 'Layout', DEFAULT_CONFIG.arc,
+    'Bends the baseline into an arc, in degrees of TOTAL SWEEP: 0 is straight, positive arches the word upward like a rainbow, negative bowls it downward, and ±360 closes it into a ring. The letters themselves are not bent — each one is moved onto the curve and turned to follow it, so the letterforms and the spacing are untouched.'),
 
   // --- Paint ----------------------------------------------------------------
   // The ACTIVE APPEARANCE LAYER's own keys, declared once under the `layer.`
@@ -508,6 +528,8 @@ AXES ARE THE POINT. Every axis the chosen font declares is a live slider at \`ax
 LAYOUT. \`size\` is the em size in output pixels. \`tracking\` is extra letter spacing in 1/1000 em (0 = the font's own spacing, negative tightens). \`align\` anchors the run horizontally.
 
 SKEW LEANS THE WHOLE RUN, and it is the CRUDER way to slant type. \`skewX\` shears the run sideways in degrees and \`skewY\` tilts it vertically; both apply to the composition as one piece, so the word leans rather than each letter leaning inside an upright word. When the user asks for italic or slanted type and the font declares a slant axis, reach for \`axes.slnt\` FIRST — that is a true oblique the type designer drew, with round counters and even stems, where a shear stretches the finished outlines into ovals and thins the horizontals. Use skew when the font has no slant axis, when the user explicitly asks to skew or shear, or when the whole block of type should lean. \`skewY\` has no font-axis equivalent at all.
+
+ARC BENDS THE BASELINE. \`arc\` is the total sweep in DEGREES, not a radius: 0 is a straight line, positive arches the word upward like a rainbow, negative bowls it downward, and ±360 closes the run into a full ring. Reach for it whenever the user asks for curved, arched, bowed, circular or badge-style type. Only the BASELINE bends — every letter is moved onto the curve and turned to follow it, so the letterforms and the letter spacing are exactly what they were on the straight run, and there is no separate radius to set: the word keeps its own length, so a longer word on the same sweep simply describes a bigger circle. A gentle headline arch is roughly 20 to 60; a half-circle is 180; a seal or a badge is at or near 360. Combine it with \`skewX\` freely — the run bends first and the whole bent composition then leans.
 
 STAGGER MAKES IT KINETIC. \`motion.stagger.delay\` is the gap in seconds between one glyph and the next; at 0 the whole word animates as one, and raising it turns any animated axis into a wave that travels across the word. \`motion.stagger.order\` picks which glyph leads — forward, reverse, center (middle outwards), edges (outermost inwards) or random — and \`motion.stagger.seed\` re-rolls the random one. Reach for these when the user asks for letters to cascade, ripple, or come in one at a time.
 
