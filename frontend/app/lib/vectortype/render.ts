@@ -21,6 +21,8 @@
  */
 import type { SvgDocOptions, Transform2D, VectorCommand, VectorPaint, VectorRect, VectorShape } from '~/lib/vector/svg'
 import { blurRadiusToStdDeviation, shapesToSVG, transformCommands } from '~/lib/vector/svg'
+import type { VtCurveTable } from './curve'
+import { pointAtLength } from './curve'
 import type { GlyphOutline, TextOutlines, VtBBox } from './outline'
 
 export type { Transform2D, VectorGradient, VectorPaint, VectorRect, VectorShape } from '~/lib/vector/svg'
@@ -28,8 +30,43 @@ export type { Transform2D, VectorGradient, VectorPaint, VectorRect, VectorShape 
  *  anything type-specific. */
 export { blurRadiusToStdDeviation, controlPointBounds, shapesToSVG } from '~/lib/vector/svg'
 
-/** Where a glyph run lands in output units. Defaults: scale 1, no offset, y flipped. */
-export type PlacementOptions = Transform2D
+/**
+ * The CURVE a run is placed along — the arc feature, as one option on the
+ * placement.
+ *
+ * Everything about it is in OUTPUT units (the same units `scale` produces), which
+ * is a decision and not a default: glyph advances arrive from fontkit in FONT
+ * units, so the accumulated distance and the curve's own size have to be brought
+ * into one space or an arc radius would mean a different shape at every `size`.
+ * Output units is the house convention — `extrude.ts`'s `dx`/`dy` and
+ * `strokeWidth` are already output pixels for the same reason.
+ *
+ * The TABLE, not the curve: `pointAtLength` accepts a bare curve as a
+ * convenience and rebuilds the table on every call, which in a glyph loop is
+ * O(samples) per letter. Build it once per run (`buildCurveTable`) and hand it
+ * in.
+ */
+export interface RunCurve {
+  /** Arc-length table over a curve in OUTPUT units. Build once per run. */
+  table: VtCurveTable
+  /** Arc length at which the run's PEN starts, i.e. where `glyph.x === 0` lands.
+   *  Default 0, which starts the run at the curve's own start. */
+  offset?: number
+}
+
+/** Where a glyph run lands in output units. Defaults: scale 1, no rotation, no
+ *  offset, y flipped, no curve. */
+export interface PlacementOptions extends Transform2D {
+  /** Place the glyphs along this curve instead of along a straight baseline.
+   *  Absent or `null` is the flat run, byte-identical to what it always was. */
+  curve?: RunCurve | null
+}
+
+/** A fully-resolved placement: every `Transform2D` field decided, plus the run's
+ *  curve if it has one. What `vtPlacement` hands the renderers. */
+export interface ResolvedPlacement extends Required<Transform2D> {
+  curve?: RunCurve | null
+}
 
 /** Fit a run into a box, preserving aspect and centring. */
 export interface FitOptions {
@@ -39,9 +76,13 @@ export interface FitOptions {
   padding?: number
 }
 
+const DEG_TO_RAD = Math.PI / 180
+const RAD_TO_DEG = 180 / Math.PI
+
 function resolve(t: PlacementOptions = {}): Required<Transform2D> {
   return {
     scale: Number.isFinite(t.scale as number) ? (t.scale as number) : 1,
+    rotate: Number.isFinite(t.rotate as number) ? (t.rotate as number) : 0,
     x: Number.isFinite(t.x as number) ? (t.x as number) : 0,
     y: Number.isFinite(t.y as number) ? (t.y as number) : 0,
     flipY: t.flipY !== false,
@@ -64,6 +105,7 @@ export function fitTransform(bbox: VtBBox, opts: FitOptions): Required<Transform
   const scale = bw > 0 && bh > 0 ? Math.min(availW / bw, availH / bh) : 1
   return {
     scale,
+    rotate: 0,
     x: pad + (availW - bw * scale) / 2 - bbox.minX * scale,
     // y-flipped: the source's MAX y becomes the output's top edge.
     y: pad + (availH - bh * scale) / 2 + bbox.maxY * scale,
@@ -71,15 +113,128 @@ export function fitTransform(bbox: VtBBox, opts: FitOptions): Required<Transform
   }
 }
 
-/** The transform for one glyph = the run placement plus that glyph's own origin. */
+/**
+ * The transform for one glyph = the run placement plus that glyph's own origin.
+ *
+ * `x`/`y` is the glyph's placed **baseline-left origin** in output space, and
+ * that meaning is unchanged on a curve — every existing caller (the motion
+ * pivot, the cell clip, the extrude step, the glyph paint box) reads it as
+ * exactly that. What a curve adds is `rotate`.
+ *
+ * ## Placement on a curve — `utils/textOnPath.ts:169-188`'s algorithm
+ *
+ * Accumulate half an advance, place the glyph's CENTRE at that arc length, and
+ * turn the glyph to the tangent there. Two deliberate differences from the
+ * widget:
+ *
+ *  - the advances are **fontkit's shaped `xAdvance`**, kerning, ligatures and
+ *    GPOS included (`glyph.x` is already the shaped pen position with the
+ *    studio's own `tracking` folded in by `vectorTypeFrame`), where the widget
+ *    measures single characters with `ctx.measureText` and so has none of it;
+ *  - the distance is inverted to a curve parameter through the **arc-length
+ *    table** (`pointAtLength`), where the widget maps `distance ÷ length`
+ *    straight back to `t`. That is only correct on a constant-speed curve; on a
+ *    wave it bunches glyphs over the crests by 36 % (measured in `./curve.ts`'s
+ *    spec).
+ *
+ * No loop state is needed and none is kept: `glyph.x` IS the accumulated
+ * advance, so the placement of glyph *i* is a pure function of glyph *i*. That
+ * is the property `./outline.ts`'s header describes — *"placement into the line
+ * is carried separately on `x`/`y` rather than baked into the commands"* — and
+ * it is what makes an arc cost one binary search per glyph instead of a
+ * re-shaping.
+ *
+ * The half-advance is then walked BACK along the tangent, because what this
+ * returns is the origin (the left edge) and what the curve positioned is the
+ * centre.
+ */
 export function glyphTransform(glyph: GlyphOutline, t: PlacementOptions = {}): Required<Transform2D> {
   const r = resolve(t)
+  const fy = r.flipY ? -r.scale : r.scale
+  // The run-level rotation, about the run's own placement origin. Zero for every
+  // config the studio can currently produce; written out so `rotate` on the
+  // placement means the same thing at both levels rather than being a field only
+  // the curve is allowed to set.
+  const rr = r.rotate * DEG_TO_RAD
+  const rc = r.rotate === 0 ? 1 : Math.cos(rr)
+  const rs = r.rotate === 0 ? 0 : Math.sin(rr)
+
+  // ── The flat run ───────────────────────────────────────────────────────────
+  if (!t.curve) {
+    const px = glyph.x * r.scale
+    const py = glyph.y * fy
+    return {
+      scale: r.scale,
+      rotate: r.rotate,
+      x: r.x + px * rc - py * rs,
+      y: r.y + px * rs + py * rc,
+      flipY: r.flipY,
+    }
+  }
+
+  // ── On the curve ───────────────────────────────────────────────────────────
+  const half = (glyph.advance / 2) * r.scale
+  const s = (t.curve.offset ?? 0) + glyph.x * r.scale + half
+  const p = pointAtLength(t.curve.table, s)
+  const gc = Math.cos(p.angle)
+  const gs = Math.sin(p.angle)
+  // The origin, in the CURVE's frame: back off half an advance along the
+  // tangent, and carry the glyph's own y offset (GPOS mark placement) on the
+  // curve's NORMAL rather than on the output's vertical — an accent belongs over
+  // its letter, not over the canvas.
+  const lx = -half
+  const ly = glyph.y * fy
+  const cx = p.x + lx * gc - ly * gs
+  const cy = p.y + lx * gs + ly * gc
   return {
     scale: r.scale,
-    x: r.x + glyph.x * r.scale,
-    y: r.y + glyph.y * (r.flipY ? -r.scale : r.scale),
+    rotate: r.rotate + p.angle * RAD_TO_DEG,
+    x: r.x + cx * rc - cy * rs,
+    y: r.y + cx * rs + cy * rc,
     flipY: r.flipY,
   }
+}
+
+/**
+ * The union of every glyph's INK, PLACED — in OUTPUT units.
+ *
+ * `TextOutlines.bbox` cannot answer this once a curve or a rotation is in play:
+ * it is the run's bounds in FONT units on a straight baseline, and a rotated
+ * glyph's axis-aligned box is not its unrotated box scaled. This transforms each
+ * glyph's own tight bounds by that glyph's own placement and unions the result,
+ * which is exact for the corners and — since a glyph's outline never leaves its
+ * fontkit bbox — an upper bound that is tight in the flat case.
+ *
+ * Ink only: a blank (a space) contributes nothing, exactly as it contributes
+ * nothing to `TextOutlines.bbox`. A run with no ink at all degenerates to a
+ * zero-extent box at the placement's own origin, which is what the flat
+ * arithmetic this replaces produced for the same input.
+ */
+export function placedInkBounds(outlines: TextOutlines, opts: PlacementOptions = {}): VtBBox {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  for (const g of outlines.glyphs) {
+    if (!g.commands.length) continue
+    const t = glyphTransform(g, opts)
+    const s = t.scale
+    const fy = t.flipY ? -s : s
+    const rad = t.rotate * DEG_TO_RAD
+    const cos = t.rotate === 0 ? 1 : Math.cos(rad)
+    const sin = t.rotate === 0 ? 0 : Math.sin(rad)
+    const b = g.bbox
+    for (const [bx, by] of [[b.minX, b.minY], [b.maxX, b.minY], [b.minX, b.maxY], [b.maxX, b.maxY]] as const) {
+      const px = bx * s
+      const py = by * fy
+      const x = t.x + px * cos - py * sin
+      const y = t.y + px * sin + py * cos
+      if (x < minX) minX = x
+      if (x > maxX) maxX = x
+      if (y < minY) minY = y
+      if (y > maxY) maxY = y
+    }
+  }
+  if (Number.isFinite(minX)) return { minX, minY, maxX, maxY }
+  const r = resolve(opts)
+  return { minX: r.x, minY: r.y, maxX: r.x, maxY: r.y }
 }
 
 /**
@@ -370,20 +525,19 @@ export interface OutlinesSvgOptions extends PlacementOptions, GlyphPaint, SvgDoc
  * rather than sitting somewhere in an arbitrary canvas.
  */
 export function outlinesToSVG(outlines: TextOutlines, opts: OutlinesSvgOptions = {}): string {
-  const t = resolve(opts)
   const shapes = outlinesToShapes(outlines, opts)
   const pad = opts.padding ?? 0
 
   let viewBox = opts.viewBox
   if (!viewBox) {
-    const b = outlines.bbox
-    // The source bbox, through the same transform the commands went through.
-    const xs = [t.x + b.minX * t.scale, t.x + b.maxX * t.scale]
-    const sy = t.flipY ? -t.scale : t.scale
-    const ys = [t.y + b.minY * sy, t.y + b.maxY * sy]
-    const minX = Math.min(...xs) - pad
-    const minY = Math.min(...ys) - pad
-    viewBox = [minX, minY, Math.max(...xs) - minX + pad, Math.max(...ys) - minY + pad]
+    // The PLACED ink, per glyph. Identical to the old "source bbox through the
+    // placement transform" arithmetic for a flat run — asserted by a test — and
+    // the only form that stays correct once a glyph can be turned to a curve,
+    // where the run's axis-aligned bounds are not its font-space bounds scaled.
+    const b = placedInkBounds(outlines, opts)
+    const minX = b.minX - pad
+    const minY = b.minY - pad
+    viewBox = [minX, minY, b.maxX - minX + pad, b.maxY - minY + pad]
   }
 
   return shapesToSVG(shapes, {

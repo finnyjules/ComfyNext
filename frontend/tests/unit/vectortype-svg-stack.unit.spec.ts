@@ -191,7 +191,7 @@ describe('the export emits K shapes per glyph — one per layer, `depth` per ext
     expect((firstX[depth - 1] as number) - Number.parseFloat(bare)).toBeCloseTo(distance, 3)
     // And the transform the exporter used is the one `extrudeCopyTransform` gives.
     expect(extrudeCopyTransform({ dx: distance, dy: 0, scale: 1 }, origin(0), advance(0)))
-      .toEqual({ scale: 1, x: distance, y: 0, flipY: false })
+      .toEqual({ scale: 1, rotate: 0, x: distance, y: 0, flipY: false })
   })
 })
 

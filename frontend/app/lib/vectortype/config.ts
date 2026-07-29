@@ -330,6 +330,41 @@ export interface VectorTypeConfig {
   skewX: number
   skewY: number
   /**
+   * Bend the run onto an ARC, in degrees of **total sweep**. `0` is a straight
+   * baseline and exactly the run this studio has always drawn.
+   *
+   * ## Why sweep and not radius
+   *
+   * The two are the same number said differently — the run keeps its own arc
+   * length as it bends, so `radius = runWidth / arcRadians` — but only one of
+   * them is a usable control. A radius slider has its flat end at INFINITY and
+   * spends most of its travel doing nothing visible; sweep is linear, its flat
+   * end is 0, and a sign flips the bow. `±360` closes the run into a full circle,
+   * which is the natural end of the range rather than an arbitrary cap.
+   *
+   * Positive arches the run UPWARD (a rainbow); negative bowls it downward.
+   *
+   * ## The run does not change length as it bends
+   *
+   * The curve is `./curve.ts`'s `line` — a span bowed by `curvature`, whose
+   * radius is `length / sweep` and whose arc length is therefore `length` at
+   * every curvature. So bending the type does not stretch or squeeze the letter
+   * spacing: every glyph sits at exactly the arc length its shaped advance puts
+   * it at, and at `arc: 0` the placement is byte-identical to the flat one. That
+   * continuity is what makes an animated arc a smooth bend rather than a pop.
+   *
+   * ## Still EXACTLY-correct vector
+   *
+   * Each glyph is TRANSLATED onto the curve and ROTATED to the tangent — a rigid
+   * body move, which is affine, so the letterforms are untouched and the export
+   * is real geometry. Bending the letterforms themselves is a different (and
+   * deliberately deferred) feature: that is point-level deformation with the same
+   * rational-Bézier approximation problem as perspective.
+   *
+   * Bounded by `VT_ARC_MAX`.
+   */
+  arc: number
+  /**
    * The appearance stack — multiple fills, multiple strokes, extrudes, painted
    * BACK TO FRONT. Illustrator's Appearance panel, in a config.
    *
@@ -591,6 +626,9 @@ export const DEFAULT_CONFIG: VectorTypeConfig = {
   // byte-identical to what it drew and exported before the control existed.
   skewX: 0,
   skewY: 0,
+  // No bend — `vtRunCurve` returns `null` for this, so the placement is the
+  // straight-baseline one it has always been, to the bit.
+  arc: 0,
   // One white fill and nothing else — the same picture the legacy
   // `fill: '#ffffff'` + `strokeWidth: 0` default painted, said in the stack's
   // vocabulary. The default config's PIXELS are unchanged by this task.
@@ -637,6 +675,18 @@ export const VT_STAGGER_SEED_MAX = 999
  * and a 40° lean is already past caricature.
  */
 export const VT_SKEW_MAX = 40
+/**
+ * The bound on `arc`, in degrees of total sweep.
+ *
+ * A full turn is the natural end of the range rather than a taste call: at
+ * `±360` the run's two ends meet and the type closes into a ring, and past that
+ * it would begin to overlap itself — the same letters drawn twice in the same
+ * place, which is a picture with no reading of it that is right. The clamp lives
+ * at the render choke point (`vtArcSweep`) rather than only in `mergeConfig`,
+ * because a motion track's `from`/`to` never pass through the merge and a bound
+ * only the merge honours is not a bound.
+ */
+export const VT_ARC_MAX = 360
 /** Export heights the motion block accepts, matching gradientfx's. */
 export const VT_MOTION_SIZES = [1080, 1440, 2160] as const
 
@@ -1294,6 +1344,8 @@ export function mergeConfig(raw: unknown): VectorTypeConfig {
     // a guarantee only one of the two entrances honours is not a guarantee.
     skewX: num(o.skewX, d.skewX),
     skewY: num(o.skewY, d.skewY),
+    // Same reasoning, same choke point — `vtArcSweep`.
+    arc: num(o.arc, d.arc),
     appearance,
     motion: tracks === motion.tracks ? motion : { ...motion, tracks },
   }

@@ -161,7 +161,7 @@ describe('extrudeCopyTransform — one derivation, three surfaces', () => {
     // billionth of a pixel off would make the union's coincident edges stop
     // coinciding, and paper would return a hairline sliver instead of a seam.
     const t = extrudeCopyTransform({ dx: 12, dy: -7, scale: 1 }, origin, advance)
-    expect(t).toEqual({ scale: 1, x: 12, y: -7, flipY: false })
+    expect(t).toEqual({ scale: 1, rotate: 0, x: 12, y: -7, flipY: false })
   })
 
   it('scales a tapered copy about the CELL CENTRE and the BASELINE', () => {
@@ -212,7 +212,7 @@ describe('extrudeCopyTransform — one derivation, three surfaces', () => {
 
   it('falls back rather than propagating NaN into a transform', () => {
     const t = extrudeCopyTransform({ dx: NaN, dy: undefined as unknown as number, scale: NaN }, origin, advance)
-    expect(t).toEqual({ scale: 1, x: 0, y: 0, flipY: false })
+    expect(t).toEqual({ scale: 1, rotate: 0, x: 0, y: 0, flipY: false })
   })
 })
 

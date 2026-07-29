@@ -31,7 +31,7 @@
  * `glyphMotion`). Task 6 chose the collision deliberately so a module using both
  * has to say which it means; this is that module saying it.
  */
-import type { Affine, Transform2D, VectorCommand, VectorPaint, VectorRect, VectorShape } from '~/lib/vector/svg'
+import type { Affine, VectorCommand, VectorPaint, VectorRect, VectorShape } from '~/lib/vector/svg'
 import { IDENTITY_AFFINE, formatNumber, multiplyAffine } from '~/lib/vector/svg'
 import { fillIsShader, paintPrimaryColor } from '~/lib/spacetype/fillTile'
 import { isFill, type Paint } from '~/lib/compositor/paint'
@@ -46,6 +46,7 @@ import {
 import { withFieldFrame, type FieldRequest } from '~/lib/shaderfill/field'
 import type { BlendKind } from '~/lib/studio/blend'
 import {
+  VT_ARC_MAX,
   VT_SKEW_MAX,
   migrateLegacyAppearance,
   vtBaseAppearance,
@@ -97,8 +98,14 @@ import {
   glyphTransform as glyphPlacement,
   outlinesToShapes,
   placeOutlines,
+  placedInkBounds,
   shapesToSVG,
+  type ResolvedPlacement,
+  type RunCurve,
 } from './render'
+// The arc-length curve module — pure, zero imports of its own, and deliberately
+// NOT paper.js: placement runs every frame (see `./curve.ts`'s header).
+import { buildCurveTable } from './curve'
 
 /** One frame's worth of resolved geometry: what to draw and how each glyph moves. */
 export interface VtFrame {
@@ -348,22 +355,85 @@ export interface VtBoxOptions {
   padding?: number
 }
 
+// ── The run's curve ─────────────────────────────────────────────────────────
+
+/** Into `VT_ARC_MAX`, with a non-finite value landing on 0 — the same guard, for
+ *  the same reason, as `clampSkew`: a track can drive this past the slider's own
+ *  ends, and a `NaN` reaching a placement puts every glyph at `NaN` with nothing
+ *  in the console. */
+export function vtArcSweep(cfg: VectorTypeConfig | null | undefined): number {
+  const v = cfg?.arc as number
+  if (!Number.isFinite(v)) return 0
+  return v < -VT_ARC_MAX ? -VT_ARC_MAX : v > VT_ARC_MAX ? VT_ARC_MAX : v
+}
+
+/**
+ * Is this run bent at all?
+ *
+ * The same question `vtRunCurve` answers with `null`, asked WITHOUT the outlines
+ * and the scale — because `vtPaintLayers` needs it (a curved run overspills its
+ * axis-aligned paint box, exactly as a sheared one does) and runs before either
+ * exists. `vtIsSheared` exists for the identical reason; two readings of "is
+ * there a bend" would be one too many.
+ */
+export function vtIsCurved(cfg: VectorTypeConfig | null | undefined): boolean {
+  return vtArcSweep(cfg) !== 0
+}
+
+/**
+ * The run's CURVE in output units — the ONE definition of it, `null` when the
+ * run is straight.
+ *
+ * `length` is the run's own advance width in output pixels, so the curve is
+ * exactly as long as the text and every glyph lands at the arc length its shaped
+ * advance puts it at. `./curve.ts`'s `line` keeps its arc length constant as it
+ * bends (its radius is `length / sweep`), which is why bending does not stretch
+ * the letter spacing and why `arc: 0` is byte-identical to the flat run.
+ *
+ * `curvature = ±1` is a full turn in that module's vocabulary, hence `/ 360`.
+ *
+ * The TABLE is built once here, per run per frame, and handed to every glyph —
+ * `pointAtLength` would otherwise rebuild it per letter.
+ */
+export function vtRunCurve(
+  cfg: VectorTypeConfig | null | undefined,
+  outlines: TextOutlines,
+  scale: number,
+): RunCurve | null {
+  const sweep = vtArcSweep(cfg)
+  if (sweep === 0) return null
+  const length = (Number.isFinite(outlines.width) ? outlines.width : 0) * (Number.isFinite(scale) ? scale : 0)
+  // A zero-width run has no curve to be placed on and would give the table a
+  // zero length, which `pointAtLength` answers with one point for every glyph.
+  if (!(length > 0)) return null
+  return { table: buildCurveTable({ type: 'line', length, curvature: sweep / 360 }) }
+}
+
 /**
  * Where the run lands in the output box: `size` decides the scale (this is NOT a
  * fit-to-box — the type is the size the user asked for, and overflowing is a
  * legitimate composition), `align` decides the horizontal anchor, and the ink is
  * always vertically centred.
+ *
+ * The anchoring is measured against the run's PLACED ink (`placedInkBounds`)
+ * rather than against `outlines.bbox` scaled. For a flat run the two are the
+ * same arithmetic and a test asserts the identity term by term; for a CURVED one
+ * only the first is true, because a rotated glyph's axis-aligned box is not its
+ * unrotated box scaled. So an arc'd run stays centred in the box as it bends,
+ * instead of drifting out of frame — one promise, honoured on both.
  */
-export function vtPlacement(frame: VtFrame, opts: VtBoxOptions): Required<Transform2D> {
+export function vtPlacement(frame: VtFrame, opts: VtBoxOptions): ResolvedPlacement {
   const { outlines, config } = frame
   const upem = outlines.unitsPerEm || 1000
   const scale = (Number.isFinite(config.size) ? config.size : 0) / upem
   const pad = opts.padding ?? 0
   const availW = Math.max(0, opts.width - pad * 2)
   const availH = Math.max(0, opts.height - pad * 2)
-  const b = outlines.bbox
-  const inkW = (b.maxX - b.minX) * scale
-  const inkH = (b.maxY - b.minY) * scale
+  const curve = vtRunCurve(config, outlines, scale)
+  // The placed ink at the ORIGIN, so what comes back is the offset to correct.
+  const b = placedInkBounds(outlines, { scale, rotate: 0, x: 0, y: 0, flipY: true, curve })
+  const inkW = b.maxX - b.minX
+  const inkH = b.maxY - b.minY
 
   let x: number
   if (config.align === 'left') x = pad
@@ -372,10 +442,11 @@ export function vtPlacement(frame: VtFrame, opts: VtBoxOptions): Required<Transf
 
   return {
     scale,
-    x: x - b.minX * scale,
-    // y-flipped, so the source's MAX y is the output's TOP edge.
-    y: pad + (availH - inkH) / 2 + b.maxY * scale,
+    rotate: 0,
+    x: x - b.minX,
+    y: pad + (availH - inkH) / 2 - b.minY,
     flipY: true,
+    curve,
   }
 }
 
@@ -424,7 +495,7 @@ function paintBoxFrom(ax: number, ay: number, bx: number, by: number): VtPaintBo
  */
 export function vtGlyphPaintBox(
   glyph: GlyphOutline,
-  place: Required<Transform2D>,
+  place: ResolvedPlacement,
   /** The em in OUTPUT pixels — only used for the no-ink fallback. */
   em: number,
 ): VtPaintBox {
@@ -452,7 +523,7 @@ export function vtGlyphPaintBox(
  */
 export function vtRunPaintBox(
   outlines: TextOutlines,
-  place: Required<Transform2D>,
+  place: ResolvedPlacement,
   opts: VtBoxOptions,
 ): VtPaintBox {
   const b = outlines.bbox
@@ -521,7 +592,7 @@ export function vtIsSheared(cfg: VectorTypeConfig | null | undefined): boolean {
 export function vtRunShear(
   cfg: VectorTypeConfig,
   outlines: TextOutlines,
-  place: Required<Transform2D>,
+  place: ResolvedPlacement,
   opts: VtBoxOptions,
 ): Affine | null {
   if (!vtIsSheared(cfg)) return null
@@ -851,6 +922,22 @@ function vtPaintLayers(
    * every unskewed config is byte-identical.
    */
   const sheared = vtIsSheared(cfg)
+  /**
+   * A CURVED run overspills its paint box for the same reason, harder.
+   *
+   * `vtRunPaintBox` and `vtGlyphPaintBox` are axis-aligned and derived from the
+   * run's STRAIGHT ink (they have to be — the export anchors its paint servers to
+   * exactly those rects), so bending the run walks its ink clean out of them: a
+   * glyph turned 30° has corners outside its own unrotated box, and the run's box
+   * does not even sit where the arc'd run does.
+   *
+   * MEASURED, not reasoned about, exactly as the shear was — see the task report
+   * for the numbers, which are far worse than the shear's 30.6 %. `'extend'`
+   * changes nothing INSIDE the box, so every straight config is byte-identical.
+   * Where the box SHOULD be on an arc is a separate question and a deliberate
+   * one; this only stops the ink outside it coming out empty.
+   */
+  const curved = vtIsCurved(cfg)
   /** Every extrude layer paired with the config layer it came from, so the
    *  budget's caps can be applied after the whole stack is known — a budget
    *  spent front-to-back has to see every extrude before it can decide which one
@@ -893,7 +980,7 @@ function vtPaintLayers(
       // Asked of the KIND, not of `copies` — the extrude's copy list is filled in
       // by the budget pass below, and a layer whose reach depends on how much
       // budget was left would paint differently on a busy frame.
-      spread: sheared || layer.kind === 'extrude' || layer.kind === 'stroke' ? 'extend' : 'box',
+      spread: sheared || curved || layer.kind === 'extrude' || layer.kind === 'stroke' ? 'extend' : 'box',
       runPm: null,
       runStyle: null,
       copies: null,

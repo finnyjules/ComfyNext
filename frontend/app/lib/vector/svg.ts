@@ -48,7 +48,7 @@ export function isVectorCommandName(v: unknown): v is VectorCommandName {
 }
 
 /**
- * A scale-then-translate placement, with an optional y flip.
+ * A scale-rotate-translate placement, with an optional y flip.
  *
  * The flip is the whole reason this exists: font space (and any right-handed
  * projection) is y-up with the baseline at 0, while canvas and SVG are y-down.
@@ -56,16 +56,36 @@ export function isVectorCommandName(v: unknown): v is VectorCommandName {
  * `ctx.scale(1, -1)` at the call site — means stroke widths, dash patterns and
  * per-glyph transforms all stay in output units, and the SVG needs no wrapper
  * transform to match what the canvas drew.
+ *
+ * `rotate` is baked the same way and for the same reason. It exists because a
+ * glyph placed on a CURVE has to turn to the tangent, and turning it here — in
+ * the coordinates, at the one placement choke point — is what keeps the canvas
+ * path and the exported `d` the same geometry by construction rather than by two
+ * writers agreeing. It is a similarity transform, so it stays exactly-correct
+ * vector: no approximation enters the export.
  */
 export interface Transform2D {
   /** Uniform scale from source units to output units. Default 1. */
   scale?: number
-  /** Translation in OUTPUT units, applied after the scale. Default 0. */
+  /**
+   * DEGREES, applied AFTER the scale and the flip and BEFORE the translate, so
+   * it turns about the SOURCE origin.
+   *
+   * Positive turns clockwise ON SCREEN, because the space it acts in is already
+   * y-down (the flip has been applied by then) — the same direction and the same
+   * sign as `ctx.rotate` and SVG's `rotate(deg)`. Default 0, and 0 is exactly
+   * inert: the multiply-free branch below is byte-identical to what this
+   * function returned before rotation existed.
+   */
+  rotate?: number
+  /** Translation in OUTPUT units, applied after the scale and the rotation. Default 0. */
   x?: number
   y?: number
   /** Negate y, turning y-up source space into y-down output space. Default true. */
   flipY?: boolean
 }
+
+const DEG_TO_RAD = Math.PI / 180
 
 /**
  * Apply a `Transform2D` to a command list, returning new plain objects.
@@ -79,15 +99,34 @@ export function transformCommands(commands: readonly VectorCommand[], t: Transfo
   const dx = Number.isFinite(t.x as number) ? (t.x as number) : 0
   const dy = Number.isFinite(t.y as number) ? (t.y as number) : 0
   const sy = t.flipY === false ? s : -s
+  const rot = Number.isFinite(t.rotate as number) ? (t.rotate as number) : 0
+  // Branch rather than fold `cos 0 = 1` / `sin 0 = 0` into the general form. The
+  // arithmetic would agree exactly, but every flat run in the product takes this
+  // path every frame and there is no reason to pay four multiplies per point for
+  // a rotation nobody asked for.
+  const rad = rot * DEG_TO_RAD
+  const cos = rot === 0 ? 1 : Math.cos(rad)
+  const sin = rot === 0 ? 0 : Math.sin(rad)
 
   const out: VectorCommand[] = []
   for (const c of commands) {
     if (!c || !isVectorCommandName(c.command)) continue
     const args = c.args ?? []
     const mapped: number[] = new Array(args.length)
-    for (let i = 0; i < args.length; i++) {
-      // args alternate x, y, x, y … for every command shape we accept.
-      mapped[i] = i % 2 === 0 ? dx + (args[i] as number) * s : dy + (args[i] as number) * sy
+    if (rot === 0) {
+      for (let i = 0; i < args.length; i++) {
+        // args alternate x, y, x, y … for every command shape we accept.
+        mapped[i] = i % 2 === 0 ? dx + (args[i] as number) * s : dy + (args[i] as number) * sy
+      }
+    } else {
+      // The pair has to be read together, so this steps by two rather than
+      // mapping each coordinate independently.
+      for (let i = 0; i + 1 < args.length; i += 2) {
+        const px = (args[i] as number) * s
+        const py = (args[i + 1] as number) * sy
+        mapped[i] = dx + px * cos - py * sin
+        mapped[i + 1] = dy + px * sin + py * cos
+      }
     }
     out.push({ command: c.command, args: mapped })
   }

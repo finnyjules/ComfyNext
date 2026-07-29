@@ -195,6 +195,12 @@ export function extrudeCopyTransform(
   const px = origin.x + advance / 2
   return {
     scale: s,
+    // A copy is a translate-and-scale in the OUTPUT space the placed commands
+    // are already in, so it never rotates — including on a curve, where the
+    // glyph's own turn is already baked into those commands. What that means for
+    // the taper PIVOT below (`origin.x + advance/2` is the cell centre only while
+    // the cell is horizontal) is a live question on an arc, not a settled one.
+    rotate: 0,
     x: (Number.isFinite(c?.dx) ? c.dx : 0) + px * (1 - s),
     y: (Number.isFinite(c?.dy) ? c.dy : 0) + origin.y * (1 - s),
     flipY: false,
