@@ -13,10 +13,10 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import * as THREE from 'three'
 import {
-  Box, Plus, Trash2, Copy, Eye, EyeOff, Loader2, Upload, RotateCcw, Lightbulb, Sparkles, Shuffle,
+  Box, Plus, Trash2, Copy, Eye, EyeOff, Loader2, Upload, RotateCcw, Lightbulb, Sparkles, Shuffle, Group, Ungroup,
 } from 'lucide-vue-next'
 import {
-  parseDoc, serializeDoc, createPrimitive, createGlbObject, createLight,
+  parseDoc, serializeDoc, createPrimitive, createGlbObject, createLight, createGroup,
   LIGHTING_PRESETS, MATERIAL_TYPES, MATERIAL_DEFAULTS, LIGHT_KINDS, LIGHT_DEFAULTS, lightIntensityMax, gradientAngles, gradientStopsOf,
   DEFAULT_FONT_URL, sceneHasShaderFill,
   type SceneDoc, type SceneObject, type PrimitiveObject, type PrimitiveKind, type MaterialType, type GradientStop, type LightKind, type LightObject, type ReliefSpec, type SceneMaterial,
@@ -31,7 +31,7 @@ import { loadGoogleCatalog, type GoogleFont } from '~/data/google-fonts'
 import FontPicker from '~/components/vue-canvas/FontPicker.vue'
 import { PRIM_GROUPS } from '~/lib/scene3d/primGroups'
 import { SceneEngine, baseSizeFor, baseVertexCountFor } from '~/lib/scene3d/engine'
-import { rebaseMany } from '~/lib/scene3d/hierarchy'
+import { rebaseMany, groupObjects, ungroupObject, childrenOf } from '~/lib/scene3d/hierarchy'
 import { totalClones } from '~/lib/scene3d/modifiers'
 import { PRIMITIVE_PARAMS, paramValue, MODIFIER_SPECS, modifierValue } from '~/lib/scene3d/primParams'
 import { SceneInteraction } from '~/lib/scene3d/interaction'
@@ -91,6 +91,11 @@ const selectedObjects = computed<SceneObject[]>(() =>
   selectedIds.value
     .map((id) => doc.objects.find((o) => o.id === id))
     .filter((o): o is SceneObject => !!o))
+// A one-object "group" is a legal state groupObjects would happily create, but
+// it is pointless (nothing to keep together) and the toolbar deliberately
+// doesn't offer it — hence >= 2, not >= 1.
+const canGroup = computed(() => selectedIds.value.length >= 2)
+const canUngroup = computed(() => selectedObjects.value.some((o) => o.kind === 'group'))
 
 function toggleSelected(id: string, additive: boolean): void {
   if (!additive) { selectedIds.value = [id]; return }
@@ -1330,6 +1335,10 @@ function onKey(e: KeyboardEvent) {
     const k = e.key.toLowerCase()
     if (k === 'z') { e.preventDefault(); e.stopImmediatePropagation(); if (e.shiftKey) redo(); else undo(); return }
     if (k === 'y') { e.preventDefault(); e.stopImmediatePropagation(); redo(); return }
+    // Cmd/Ctrl+G groups, +Shift ungroups. Handled here (not down by Escape, as
+    // the brief first sketched) because the very next line unconditionally
+    // returns on ANY modified key — a branch placed after it would never run.
+    if (k === 'g') { e.preventDefault(); e.stopImmediatePropagation(); if (e.shiftKey) ungroupSelection(); else groupSelection(); return }
   }
   // Never hijack other modified chords (Cmd+R reload, Ctrl/Alt combos).
   if (e.metaKey || e.ctrlKey || e.altKey) return
@@ -1358,6 +1367,36 @@ function onKey(e: KeyboardEvent) {
     // No selection → fall through untouched; the shell's Escape closes.
   }
   else if (e.key === 'Backspace' && selectedId.value) removeObject(selectedId.value)
+}
+
+// ── Grouping ──────────────────────────────────────────────────────────────────
+/** Wrap the selection in a new group. The group is parented wherever the
+ *  PRIMARY selection lives, so grouping inside an existing group nests rather
+ *  than escaping to the root. */
+function groupSelection() {
+  const ids = selectedIds.value
+  if (ids.length < 2) return
+  const primary = doc.objects.find((o) => o.id === ids[ids.length - 1]!)
+  const group = createGroup(doc.objects)
+  if (primary?.parentId) group.parentId = primary.parentId
+  doc.objects = groupObjects(doc.objects, ids, group)
+  selectedIds.value = [group.id]
+}
+
+/** Dissolve every selected group, freeing its children in place. */
+function ungroupSelection() {
+  const groupIds = selectedObjects.value.filter((o) => o.kind === 'group').map((o) => o.id)
+  if (!groupIds.length) return
+  const freed: string[] = []
+  for (const id of groupIds) {
+    // Collect BEFORE dissolving — once `id` is gone, childrenOf can no longer
+    // find its children by parentId, so this must run ahead of ungroupObject,
+    // and read the CURRENT doc.objects each iteration since it was reassigned
+    // by the previous loop pass (a stale capture would miss earlier reparents).
+    freed.push(...childrenOf(doc.objects, id).map((o) => o.id))
+    doc.objects = ungroupObject(doc.objects, id)
+  }
+  selectedIds.value = freed
 }
 
 // ── Object operations ─────────────────────────────────────────────────────────
@@ -1802,6 +1841,14 @@ function onClose() {
     <template #aside>
       <div class="flex h-full w-full flex-col overflow-hidden rounded-lg border border-white/[0.10] bg-white/[0.04]">
         <div class="shrink-0 px-3 py-2.5 text-[11px] font-medium text-white/50">Objects</div>
+        <div v-if="canGroup || canUngroup" class="flex shrink-0 gap-1 px-2 pb-2">
+          <StudioButton v-if="canGroup" @click="groupSelection">
+            <span class="flex items-center gap-1.5"><Group class="h-3.5 w-3.5" /> Group</span>
+          </StudioButton>
+          <StudioButton v-if="canUngroup" @click="ungroupSelection">
+            <span class="flex items-center gap-1.5"><Ungroup class="h-3.5 w-3.5" /> Ungroup</span>
+          </StudioButton>
+        </div>
         <div class="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2 pb-2">
           <div v-if="!doc.objects.length" class="px-1 text-xs leading-relaxed text-white/40">
             Empty scene — add a primitive or upload a GLB from the toolbar below<span v-if="wiredGlbUrl">, or import the wired model</span>.
