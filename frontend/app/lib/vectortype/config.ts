@@ -36,6 +36,18 @@ import { BLEND_MODES, type BlendKind } from '~/lib/studio/blend'
 // uses it to lift a positional motion track onto the id addressing every other
 // persisted reference to a layer already uses (see `migrateStackTrackPaths`).
 import { toIdPath } from '~/lib/studio/idPath'
+// The blink block's shape, defaults and domains live with the evaluator that
+// reads them, not here — `./blink.ts` imports nothing but `./random`,
+// `./words`, a shared track helper and this module's TYPES, so the dependency
+// runs config → blink and never back. Same direction as `./random.ts`, and for
+// the same reason: the light module must not drag the heavy one behind it.
+import {
+  DEFAULT_BLINK,
+  VT_BLINK_RATE_MAX,
+  VT_BLINK_SEED_MAX,
+  VT_BLINK_UNITS,
+  type VtBlinkConfig,
+} from './blink'
 import { DEFAULT_FONT_ID, VARIABLE_FONTS } from '~/data/variable-fonts'
 
 /** Horizontal anchoring of the (single-line, v1) glyph run. */
@@ -246,6 +258,19 @@ export interface VtMotionConfig {
   /** Export height base (1080 / 1440 / 2160). */
   size: number
   stagger: VtStaggerConfig
+  /**
+   * Letters (or whole words) dropping out and coming back — `./blink.ts`.
+   *
+   * Not a track and not a preset slot: it is a per-unit ON/OFF derived from a
+   * seeded hash of `(unit, beat)`, so it needs settings of its own rather than a
+   * `from`/`to` pair. `amount: 0` is the shipped default and means off, which is
+   * what keeps every config written before this feature rendering identically.
+   *
+   * `amount`, `rate` and `stayLit` are ordinary animatable leaves — a track on
+   * `motion.blink.amount` ramps a sign into failure — so they are declared here
+   * as real config state rather than as evaluator-only knobs.
+   */
+  blink: VtBlinkConfig
   /**
    * Entrance / exit / loop presets from the SHARED kinetic engine
    * (`~/lib/motion/evaluate`), evaluated by `./presetMotion.ts`.
@@ -479,7 +504,8 @@ export interface VtLegacyPaint {
 export const DEFAULT_STAGGER: VtStaggerConfig = { delay: 0, order: 'forward', seed: 0 }
 
 export const DEFAULT_MOTION: VtMotionConfig = {
-  tracks: [], duration: 4, fps: 30, size: 1080, stagger: { ...DEFAULT_STAGGER },
+  tracks: [], duration: 4, fps: 30, size: 1080,
+  stagger: { ...DEFAULT_STAGGER }, blink: { ...DEFAULT_BLINK },
 }
 
 /**
@@ -633,9 +659,12 @@ export const DEFAULT_CONFIG: VectorTypeConfig = {
   // `fill: '#ffffff'` + `strokeWidth: 0` default painted, said in the stack's
   // vocabulary. The default config's PIXELS are unchanged by this task.
   appearance: [vtLayer({ id: VT_BASE_FILL_ID })],
-  // Spread is shallow: `stagger` must be copied too, or DEFAULT_CONFIG and
-  // DEFAULT_MOTION would share one mutable object.
-  motion: { ...DEFAULT_MOTION, tracks: [], stagger: { ...DEFAULT_STAGGER } },
+  // Spread is shallow: `stagger` and `blink` must be copied too, or
+  // DEFAULT_CONFIG and DEFAULT_MOTION would share one mutable object.
+  motion: {
+    ...DEFAULT_MOTION, tracks: [],
+    stagger: { ...DEFAULT_STAGGER }, blink: { ...DEFAULT_BLINK },
+  },
 }
 
 /** Every catalog font id, in catalog order. Exported so the control schema
@@ -1225,6 +1254,27 @@ function mergeStagger(raw: unknown): VtStaggerConfig {
   }
 }
 
+/**
+ * Rebuild the blink block.
+ *
+ * Same strictness as `mergeStagger`, and one decision worth naming: `amount`,
+ * `rate` and `stayLit` CLAMP into range rather than falling back to the default.
+ * A stored `amount: 3` came from a config that meant "as much as possible", and
+ * resetting it to the default 0 would silently switch a saved animation off —
+ * the failure this whole file exists to prevent. An unknown `unit` has no such
+ * reading (it is a name, not a point on a scale), so that one falls back.
+ */
+function mergeBlink(raw: unknown): VtBlinkConfig {
+  const o = (raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}) as Record<string, unknown>
+  return {
+    amount: clamp(num(o.amount, DEFAULT_BLINK.amount), 0, 1),
+    rate: clamp(num(o.rate, DEFAULT_BLINK.rate), 0, VT_BLINK_RATE_MAX),
+    stayLit: clamp(num(o.stayLit, DEFAULT_BLINK.stayLit), 0, 1),
+    unit: oneOf(o.unit, VT_BLINK_UNITS, DEFAULT_BLINK.unit),
+    seed: clamp(Math.round(num(o.seed, DEFAULT_BLINK.seed)), 0, VT_BLINK_SEED_MAX),
+  }
+}
+
 /** Rebuild a preset's knob values: finite numbers only, and `undefined` rather
  *  than an empty record so an untouched preset stores nothing. A non-numeric
  *  knob is DROPPED, not coerced — `resolveParams` spreads this straight over the
@@ -1296,6 +1346,7 @@ function mergeMotion(raw: unknown, remap?: (path: string) => string | null): VtM
     fps: clamp(Math.round(num(o.fps, DEFAULT_MOTION.fps)), 1, 60),
     size: oneOfNum(o.size, VT_MOTION_SIZES, DEFAULT_MOTION.size),
     stagger: mergeStagger(o.stagger),
+    blink: mergeBlink(o.blink),
     ...slots,
   }
 }
@@ -1402,6 +1453,11 @@ export function cloneConfig(cfg: VectorTypeConfig): VectorTypeConfig {
     motion: {
       ...m,
       stagger: { ...m?.stagger } as VtStaggerConfig,
+      // `motion.blink.amount` / `.rate` / `.stayLit` are animatable leaves, so
+      // `applyMotion` writes THROUGH this clone. Without the copy, frame 37's
+      // blink rate lands in the config the surface is holding — and, because
+      // `DEFAULT_CONFIG` holds one blink object, in the module-level default too.
+      blink: { ...m?.blink } as VtBlinkConfig,
       tracks: Array.isArray(m?.tracks) ? m.tracks.map(t => ({ ...t })) : [],
       ...slots,
     },

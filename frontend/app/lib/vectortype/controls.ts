@@ -11,6 +11,9 @@ import { BLEND_MODES } from '~/lib/studio/blend'
 // while this module is pulled in by the Collection control resolver and every
 // node card. A value import here would drag a font parser into both.
 import type { VtAxis } from './font'
+// Pure arithmetic over `./random` and `./words` — no canvas, no DOM, no font
+// parser — so it clears the same CPU-only bar this module holds itself to.
+import { VT_BLINK_RATE_MAX, VT_BLINK_SEED_MAX, VT_BLINK_UNITS } from './blink'
 import {
   DEFAULT_CONFIG,
   LAYER_DEFAULTS,
@@ -221,6 +224,12 @@ const fillHasDensity = (c: VectorTypeConfig, l?: VtAppearanceLayer | null) => {
  *  storage, before `mergeConfig` has rebuilt the motion block. */
 const isShuffled = (c: VectorTypeConfig) => c.motion?.stagger?.order === 'random'
 
+/** Blink's own settings only mean something once something is blinking.
+ *  `amount: 0` is the shipped default AND the off switch, so this is the same
+ *  gate `isShuffled` applies to the shuffle seed — optional-chained for the same
+ *  reason: a control list can be asked for from a raw stored blob. */
+const blinksAtAll = (c: VectorTypeConfig) => (c.motion?.blink?.amount ?? 0) > 0
+
 const slider = (
   key: string, label: string, min: number, max: number, step: number, group: string,
   def: number, hint?: string, extra: Partial<VtControl> = {},
@@ -414,6 +423,36 @@ export const VT_CONTROLS: VtControl[] = [
     DEFAULT_CONFIG.motion.stagger.seed,
     'Re-rolls the random order. The shuffle is seeded, so the same seed always gives the same order — that is what keeps a bake from flickering.',
     { animatable: false, when: isShuffled }),
+
+  // ── BLINK ──────────────────────────────────────────────────────────────────
+  // Five knobs, but only ONE of them is on screen until the effect is switched
+  // on: `Blink` at 0 means off (and is the shipped default), so the other four
+  // are gated on it the way `Shuffle seed` is gated on the shuffled order. A
+  // panel of blink settings above a blink that is not running is four controls
+  // whose effect the user cannot see.
+  //
+  // The first three ARE animatable, and that is not incidental — a track on
+  // `motion.blink.amount` is how a sign fails over the length of a clip rather
+  // than flickering evenly from the first frame. `./blink.ts`'s `vtResolveBlink`
+  // reads them off the tracks directly, the way `vtEmSize` reads `size`.
+  slider('motion.blink.amount', 'Blink', 0, 1, 0.05, 'Motion',
+    DEFAULT_CONFIG.motion.blink.amount,
+    'How much of the word takes part in each blink. 0 switches the whole effect off; 1 puts every letter (or word) in the rotation. What you see dark AT ANY INSTANT is this times the share of the beat that is dark — raise Stay lit and fewer are out at a time.'),
+  slider('motion.blink.rate', 'Blink rate', 0, VT_BLINK_RATE_MAX, 0.5, 'Motion',
+    DEFAULT_CONFIG.motion.blink.rate,
+    'Blinks per second. Each beat re-picks who drops out, so this is the pulse of the effect rather than its speed. 0 stops it.',
+    { when: blinksAtAll }),
+  slider('motion.blink.stayLit', 'Stay lit', 0, 1, 0.05, 'Motion',
+    DEFAULT_CONFIG.motion.blink.stayLit,
+    'How much of each beat a letter stays lit before it drops out — the duty cycle. 1 never goes dark at all; 0.9 is a brief nervous stutter; 0 holds it dark for the whole beat.',
+    { when: blinksAtAll }),
+  select('motion.blink.unit', 'Blink unit', [...VT_BLINK_UNITS], DEFAULT_CONFIG.motion.blink.unit, 'Motion',
+    'What drops out as one thing: a single letter, or a whole word at a time. Spaces separate words; commas and hyphens do not, so a word takes its punctuation with it.',
+    { when: blinksAtAll }),
+  slider('motion.blink.seed', 'Blink seed', 0, VT_BLINK_SEED_MAX, 1, 'Motion',
+    DEFAULT_CONFIG.motion.blink.seed,
+    'Re-rolls which letters blink and when, without changing how many or how often. Seeded, so the same seed always gives the same blink — that is what makes the export match the preview frame for frame.',
+    { animatable: false, when: blinksAtAll }),
 ]
 
 /**
@@ -532,6 +571,8 @@ SKEW LEANS THE WHOLE RUN, and it is the CRUDER way to slant type. \`skewX\` shea
 ARC BENDS THE BASELINE. \`arc\` is the total sweep in DEGREES, not a radius: 0 is a straight line, positive arches the word upward like a rainbow, negative bowls it downward, and ±360 closes the run into a full ring. Reach for it whenever the user asks for curved, arched, bowed, circular or badge-style type. Only the BASELINE bends — every letter is moved onto the curve and turned to follow it, so the letterforms and the letter spacing are exactly what they were on the straight run, and there is no separate radius to set: the word keeps its own length, so a longer word on the same sweep simply describes a bigger circle. A gentle headline arch is roughly 20 to 60; a half-circle is 180; a seal or a badge is at or near 360. Combine it with \`skewX\` freely — the run bends first and the whole bent composition then leans.
 
 STAGGER MAKES IT KINETIC. \`motion.stagger.delay\` is the gap in seconds between one glyph and the next; at 0 the whole word animates as one, and raising it turns any animated axis into a wave that travels across the word. \`motion.stagger.order\` picks which glyph leads — forward, reverse, center (middle outwards), edges (outermost inwards) or random — and \`motion.stagger.seed\` re-rolls the random one. Reach for these when the user asks for letters to cascade, ripple, or come in one at a time.
+
+BLINK DROPS LETTERS OUT. \`motion.blink.amount\` is the master and the switch: 0 is off, and raising it puts that share of the run into the rotation — reach for it whenever the user asks for a flicker, a stutter, a broken neon sign, or letters that come and go. \`motion.blink.rate\` is blinks per second (each beat re-picks who drops out), \`motion.blink.stayLit\` is how much of each beat a letter stays lit before dropping out (1 never goes dark; 0.9 is a nervous stutter), \`motion.blink.unit\` is whether a letter or a whole word drops out at a time, and \`motion.blink.seed\` re-rolls which letters without changing how many. What is dark AT ANY INSTANT is amount × (1 − stayLit), so raise \`motion.blink.amount\` for "more of the word" and lower \`motion.blink.stayLit\` for "out for longer". The blink is seeded, so the export matches the preview frame for frame.
 
 PAINT IS A STACK. The type carries an ordered list of appearance layers — fills, strokes and extrudes, painted back to front, Illustrator's Appearance panel. The paint controls address the ACTIVE layer and are prefixed \`layer.\`; they do not name an index, so the same keys work whichever layer is selected.
 

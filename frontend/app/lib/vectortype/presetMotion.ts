@@ -96,6 +96,14 @@ import {
   resolveStagger,
   type VtGlyphTransform,
 } from './motion'
+// The THIRD motion source (Task 3). Pure arithmetic over `./random`, so it costs
+// this module nothing beyond the call.
+import {
+  vtBlinkActive,
+  vtBlinkOpacity,
+  vtBlinkUnitIndex,
+  vtResolveBlink,
+} from './blink'
 import { trackValue } from '~/lib/studio/track'
 
 /** A one-sided reveal of the glyph's own box: `amount` is the fraction hidden
@@ -453,13 +461,31 @@ function easeOf(slot: VtPresetSlot, presetId: string): string | undefined {
  * honest answer before a font has loaded, and the same rule `animatableTargets`
  * follows when it is handed no axes.
  */
-export interface VtAxisEnv {
+export interface VtGlyphEnv {
   /** The loaded font's declared axes (`VtFont.axes`). */
   axes: readonly VtAxis[]
   /** This glyph's resting axis values — the config's `axes` as an axis TRACK
    *  would have written them at this glyph's clock. Defaults to `cfg.axes`. */
   resting?: Record<string, number> | null
+  /**
+   * Which WORD each glyph of the run belongs to — `wordIndexOfGlyph` over the
+   * shaped run, index-aligned with it, `VT_NO_WORD` (`-1`) for a separator.
+   *
+   * Needed only by `unit: 'word'` blink, and needed from OUT HERE for the reason
+   * the whole `words.ts` module takes a glyph run rather than a string: a
+   * ligature makes glyph indices and character indices disagree, so the grouping
+   * cannot be recovered from `cfg.text` and an index. `vectorTypeFrame` has the
+   * shaped run and computes it once per frame.
+   *
+   * Omit it and word blink is INERT — never a silent fallback to letter blink.
+   * See `vtBlinkUnitIndex`.
+   */
+  wordOf?: readonly number[] | null
 }
+
+/** @deprecated The env is no longer axis-only — it also carries the run's word
+ *  grouping. Kept as an alias so existing importers compile unchanged. */
+export type VtAxisEnv = VtGlyphEnv
 
 /**
  * The engine's per-glyph state, or identity when no slot is live.
@@ -477,7 +503,7 @@ function unitStateFor(
   t: number,
   index: number,
   count: number,
-  env?: VtAxisEnv | null,
+  env?: VtGlyphEnv | null,
 ): UnitState {
   const specs = vtPresetSpecs(cfg)
   if (!specs.in && !specs.out && !specs.loop) return IDENTITY_UNIT
@@ -543,7 +569,7 @@ export function presetTransform(
   index: number,
   count: number,
   em: number = vtEmSize(cfg, t),
-  env?: VtAxisEnv | null,
+  env?: VtGlyphEnv | null,
 ): VtGlyphMotion {
   const u = unitStateFor(cfg, t, index, count, env)
   if (u === IDENTITY_UNIT) return { ...IDENTITY_GLYPH_MOTION, axes: {} }
@@ -579,8 +605,7 @@ export function presetTransform(
 }
 
 /**
- * THE COMPOSITION. Preset ∘ tracks for glyph `index` at time `t`, both read on
- * `glyphTime()`.
+ * THE COMPOSITION. Preset ∘ tracks ∘ blink for glyph `index` at time `t`.
  *
  *   dx, dy, rotate  ADD        (identity 0 — either source alone passes through)
  *   scale           MULTIPLIES (identity 1)
@@ -593,6 +618,23 @@ export function presetTransform(
  * partly on. Multiplying scale means a Grow preset scales whatever the track
  * already scaled, rather than one of the two winning.
  *
+ * ## Blink is the THIRD source, and it multiplies for a reason
+ *
+ * `./blink.ts` returns 1 or 0, so multiplying makes it compose exactly as the
+ * rule already says opacity composes: a letter blinked out during a fade-in is
+ * out, and one that is lit is at whatever the fade had reached. Adding would
+ * make a dark letter reappear the moment anything else raised its opacity, and
+ * overwriting would make the blink win over an exit and leave the word visible
+ * after the clip had faded it away.
+ *
+ * ## Blink is on the RUN clock, not the glyph's
+ *
+ * `tr` and `pr` are read at `glyphTime()`; blink is read at `t`. That asymmetry
+ * is deliberate and it is what makes `unit: 'word'` mean anything: two glyphs of
+ * one word sit at different stagger ranks, so on the glyph clock they would be
+ * in different beats and the word would come apart letter by letter. The stagger
+ * shifts when a glyph reads its TRACKS; the blink beat is a property of the run.
+ *
  * This is the function every renderer should call. `glyphTransform` (tracks only)
  * and `presetTransform` (presets only) remain exported for tests and for callers
  * that genuinely want one source.
@@ -603,10 +645,17 @@ export function vtGlyphMotion(
   index: number,
   count: number,
   em?: number,
-  env?: VtAxisEnv | null,
+  env?: VtGlyphEnv | null,
 ): VtGlyphMotion {
   const tr = glyphTransform(cfg, t, index, count)
   const pr = presetTransform(cfg, t, index, count, em ?? vtEmSize(cfg, t), env)
+  const blink = vtResolveBlink(cfg, t)
+  // `vtBlinkActive` is the cheap gate: with blink off (the shipped default) the
+  // per-glyph hashing below never runs, so every config written before this
+  // feature composes to exactly what it composed to before.
+  const lit = vtBlinkActive(blink)
+    ? vtBlinkOpacity(blink, t, vtBlinkUnitIndex(blink.unit, index, env?.wordOf))
+    : 1
   return {
     dx: tr.dx + pr.dx,
     dy: tr.dy + pr.dy,
@@ -614,7 +663,7 @@ export function vtGlyphMotion(
     scaleX: pr.scaleX,
     scaleY: pr.scaleY,
     rotate: tr.rotate + pr.rotate,
-    opacity: clamp01(tr.opacity * pr.opacity),
+    opacity: clamp01(tr.opacity * pr.opacity * lit),
     blur: pr.blur,
     clip: pr.clip,
     axes: pr.axes,

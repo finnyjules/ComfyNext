@@ -83,6 +83,10 @@ import type { VtFont } from './font'
 import type { GlyphOutline, TextOutlines } from './outline'
 import { textOutlines } from './outline'
 import { applyMotion, glyphConfig, resolveStagger } from './motion'
+// Word grouping for `unit: 'word'` blink. Imports nothing itself, so this costs
+// the render path a single pass over the shaped run.
+import { wordIndexOfGlyph } from './words'
+import { vtBlinkActive } from './blink'
 import { vtAxisCoords } from './axisPresets'
 import {
   IDENTITY_GLYPH_MOTION,
@@ -274,6 +278,14 @@ export function vectorTypeFrame(font: VtFont, cfg: VectorTypeConfig, t: number):
   // the SAME `size`, so a per-glyph em would move the letters in units the
   // geometry does not share.
   const em = vtEmSize(cfg, t)
+  // WHICH WORD each glyph belongs to, computed ONCE per frame from the shaped
+  // run — the only place in the product that has both the glyph indices the
+  // transforms are keyed on and the code points a word boundary is defined over.
+  // `unit: 'word'` blink is inert without it (see `vtBlinkUnitIndex`), so this
+  // is not an optimisation: it is what makes the setting work at all. Passed for
+  // every frame rather than gated on the blink being on, because the cost is one
+  // pass over an array a `Path2D` rebuild dwarfs.
+  const wordOf = wordIndexOfGlyph(shaped.glyphs)
   const resting: Record<string, number>[] = []
   const transforms: VtGlyphMotion[] = []
   for (let i = 0; i < n; i++) {
@@ -282,7 +294,7 @@ export function vectorTypeFrame(font: VtFont, cfg: VectorTypeConfig, t: number):
     // an axis track instead of replacing it.
     const rest = staggered ? glyphConfig(cfg, t, i, n).axes : base.axes
     resting.push(rest)
-    transforms.push(vtGlyphMotion(cfg, t, i, n, em, { axes: font.axes, resting: rest }))
+    transforms.push(vtGlyphMotion(cfg, t, i, n, em, { axes: font.axes, resting: rest, wordOf }))
   }
 
   // THE FAST PATH, widened (Task 4's hand-off). `delay === 0` is the DEFAULT, and
@@ -2448,11 +2460,19 @@ export function vtExportName(cfg: VectorTypeConfig | null | undefined): string {
  * Mirrors the Compositor's `hasAnimatedShaderFill`, including why `speed: 0` must
  * NOT count: a deliberately frozen field would otherwise be impossible to
  * express, and every still node on the canvas would spin a loop forever.
+ *
+ * FOUR as of blink, and it has the shader fill's failure mode exactly: a blink
+ * with no track and no preset is motion with nothing else moving, so without
+ * this line the surface would draw one frame, the frame source would report
+ * `duration: 0`, and the user would see a word that never blinks with no error
+ * anywhere. `vtBlinkActive` is the same gate the evaluator takes, so a blink
+ * switched off (`amount: 0`, the shipped default) does not spin a still node.
  */
 export function vtIsAnimated(cfg: VectorTypeConfig | null | undefined): boolean {
   const tracks = cfg?.motion?.tracks
   if (Array.isArray(tracks) && tracks.length > 0) return true
   if (vtHasPreset(cfg)) return true
+  if (vtBlinkActive(cfg?.motion?.blink)) return true
   // ═══ TASK 3 BRIDGE ═══ any layer with a moving shader fill animates the node,
   // so this folds over the whole stack rather than asking the base layer only —
   // getting that wrong freezes a node card that should be playing.
