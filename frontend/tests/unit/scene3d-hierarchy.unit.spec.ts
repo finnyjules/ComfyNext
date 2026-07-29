@@ -237,3 +237,135 @@ describe('scene3d group/ungroup transforms', () => {
     expect(after.find(o => o.id === g.id)!.parentId).toBeUndefined()
   })
 })
+
+// ── rebaseMany: the multi-selection gizmo's world→local conversion ───────────
+// This is what the gizmo pivot's per-pointermove output goes through. It lives
+// here rather than in the Vue surface precisely so the parents-before-children
+// ordering — the subtlest rule in the multi-select drag — can be pinned.
+
+import { rebaseMany, type LocalTransform } from '~/lib/scene3d/hierarchy'
+import type { Vec3 } from '~/lib/scene3d/config'
+
+/** Decompose a world matrix the way the gizmo does before reporting it. */
+function trsOf(m: THREE.Matrix4): LocalTransform {
+  const p = new THREE.Vector3(); const q = new THREE.Quaternion(); const s = new THREE.Vector3()
+  m.decompose(p, q, s)
+  const e = new THREE.Euler().setFromQuaternion(q, 'XYZ')
+  return {
+    position: [p.x, p.y, p.z] as Vec3,
+    rotation: [e.x, e.y, e.z] as Vec3,
+    scale: [s.x, s.y, s.z] as Vec3,
+  }
+}
+
+/** What SceneInteraction emits after a drag that applied `delta` to the pivot:
+ *  every selected root's NEW world transform. */
+function draggedEntries(objects: SceneObject[], ids: string[], delta: THREE.Matrix4) {
+  return ids.map(id => ({
+    id,
+    t: trsOf(new THREE.Matrix4().multiplyMatrices(delta, worldMatrixOf(objects, id))),
+  }))
+}
+
+/** What the surface does with rebaseMany's output. */
+function applyResults(objects: SceneObject[], results: { id: string; t: LocalTransform }[]): SceneObject[] {
+  const byId = new Map(results.map(r => [r.id, r.t]))
+  return objects.map(o => (byId.has(o.id) ? { ...o, ...byId.get(o.id)! } : o))
+}
+
+/** The world position `id` should end at: its old world position through `delta`. */
+function expectedWorld(objects: SceneObject[], id: string, delta: THREE.Matrix4): [number, number, number] {
+  const v = new THREE.Vector3().setFromMatrixPosition(
+    new THREE.Matrix4().multiplyMatrices(delta, worldMatrixOf(objects, id)),
+  )
+  return [v.x, v.y, v.z]
+}
+
+/** A drag that both moves and TURNS the selection. A pure translation would let
+ *  a naive subtraction-based rebase pass every assertion below. */
+const dragDelta = new THREE.Matrix4()
+  .makeRotationY(Math.PI / 2)
+  .premultiply(new THREE.Matrix4().makeTranslation(0, 0, 5))
+
+describe('scene3d rebaseMany', () => {
+  it('takes root-level world transforms verbatim, and ignores unknown ids', () => {
+    const a = obj('a'); a.position = [1, 0, 0]
+    const b = obj('b'); b.position = [0, 0, 3]; b.rotation = [0, Math.PI / 4, 0]
+    const objects = [a, b]
+    const entries = [...draggedEntries(objects, ['a', 'b'], dragDelta), {
+      id: 'ghost', t: { position: [9, 9, 9] as Vec3, rotation: [0, 0, 0] as Vec3, scale: [1, 1, 1] as Vec3 },
+    }]
+
+    const results = rebaseMany(objects, entries)
+    expect(results.map(r => r.id).sort()).toEqual(['a', 'b'])
+
+    const after = applyResults(objects, results)
+    expectClose(worldPos(after, 'a'), expectedWorld(objects, 'a', dragDelta))
+    expectClose(worldPos(after, 'b'), expectedWorld(objects, 'b', dragDelta))
+    // No parent to divide out, so the local IS the reported world transform.
+    expectClose(results.find(r => r.id === 'a')!.t.position, expectedWorld(objects, 'a', dragDelta))
+  })
+
+  // THE test the parents-first ordering exists for. Applying one rigid transform
+  // to both a parent and its own child does not change their RELATIONSHIP, so the
+  // child's local must come out byte-for-byte what it went in as. Rebasing the
+  // child against its parent's PRE-drag world instead bakes the delta into that
+  // local, which the parent's own new transform then applies a second time — the
+  // child ends up twice as far from where the gizmo put it. Reverse the ordering
+  // inside rebaseMany and this test goes red on the very first assertion.
+  it('leaves a child untouched when its own parent is dragged with it', () => {
+    const p = obj('p'); p.position = [1, 0, 0]
+    const c = obj('c', 'p'); c.position = [0, 2, 0]
+    const objects = [p, c]
+
+    const results = rebaseMany(objects, draggedEntries(objects, ['p', 'c'], dragDelta))
+    const child = results.find(r => r.id === 'c')!.t
+    expectClose(child.position, [0, 2, 0])
+    expectClose(child.rotation, [0, 0, 0])
+    expectClose(child.scale, [1, 1, 1])
+
+    // …and both objects land exactly where the gizmo left them.
+    const after = applyResults(objects, results)
+    expectClose(worldPos(after, 'p'), expectedWorld(objects, 'p', dragDelta))
+    expectClose(worldPos(after, 'c'), expectedWorld(objects, 'c', dragDelta))
+  })
+
+  // Array order must not matter either — the doc's object order is whatever
+  // insertion happened to produce, so the ordering has to be DERIVED.
+  it('is independent of the order the objects sit in the doc array', () => {
+    const p = obj('p'); p.position = [1, 0, 0]
+    const c = obj('c', 'p'); c.position = [0, 2, 0]
+    const childFirst = rebaseMany([c, p], draggedEntries([c, p], ['c', 'p'], dragDelta))
+    expectClose(childFirst.find(r => r.id === 'c')!.t.position, [0, 2, 0])
+  })
+
+  it('rebases through a rotated, non-uniformly scaled ancestor that is NOT selected', () => {
+    const outer = obj('outer')
+    outer.position = [5, 1, -2]
+    outer.rotation = [Math.PI / 5, Math.PI / 3, 0]
+    outer.scale = [2, 1, 3]
+    const a = obj('a', 'outer'); a.position = [1, 0, 0]
+    const b = obj('b', 'outer'); b.position = [0, 0, 2]; b.rotation = [0, Math.PI / 6, 0]
+    const objects = [outer, a, b]
+
+    const results = rebaseMany(objects, draggedEntries(objects, ['a', 'b'], dragDelta))
+    const after = applyResults(objects, results)
+
+    // Position is asserted, not rotation/scale: dividing a rotated delta by a
+    // NON-UNIFORMLY scaled parent produces genuine shear, and THREE's decompose
+    // drops shear silently — a TRS doc simply cannot express the linear part
+    // exactly. The translation column survives that decompose intact, so the
+    // objects still land where the gizmo put them, which is the invariant that
+    // matters here.
+    expectClose(worldPos(after, 'a'), expectedWorld(objects, 'a', dragDelta))
+    expectClose(worldPos(after, 'b'), expectedWorld(objects, 'b', dragDelta))
+
+    // Proves the rebase actually happened rather than the world being written
+    // through: under this ancestor a local can never equal its own world.
+    const localA = results.find(r => r.id === 'a')!.t.position
+    expect(localA).not.toEqual(expectedWorld(objects, 'a', dragDelta))
+
+    // The unselected ancestor is left alone.
+    expect(after.find(o => o.id === 'outer')).toEqual(outer)
+  })
+})

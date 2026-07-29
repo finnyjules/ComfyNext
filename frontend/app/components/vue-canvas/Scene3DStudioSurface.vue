@@ -31,7 +31,7 @@ import { loadGoogleCatalog, type GoogleFont } from '~/data/google-fonts'
 import FontPicker from '~/components/vue-canvas/FontPicker.vue'
 import { PRIM_GROUPS } from '~/lib/scene3d/primGroups'
 import { SceneEngine, baseSizeFor, baseVertexCountFor } from '~/lib/scene3d/engine'
-import { orderParentsFirst, worldMatrixOf } from '~/lib/scene3d/hierarchy'
+import { rebaseMany } from '~/lib/scene3d/hierarchy'
 import { totalClones } from '~/lib/scene3d/modifiers'
 import { PRIMITIVE_PARAMS, paramValue, MODIFIER_SPECS, modifierValue } from '~/lib/scene3d/primParams'
 import { SceneInteraction } from '~/lib/scene3d/interaction'
@@ -1123,36 +1123,13 @@ onMounted(() => {
     },
     onTransformMany: (entries) => {
       // Entries carry WORLD transforms (under the gizmo pivot a root's local TRS
-      // is pivot-relative), so each one is rebased into its own parent's frame
-      // before writing — the doc stores LOCAL transforms.
-      //
-      // Parents strictly before children: a selection may contain both an object
-      // and one of its own descendants, and the child's rebase divides by its
-      // parent's world matrix READ FROM THE DOC. Writing the child first would
-      // rebase it against the parent's pre-drag world, baking the drag delta
-      // into a local that the parent's own (later) write then applies a second
-      // time — the child moves twice as far as the gizmo. orderParentsFirst is
-      // the same ordering the engine syncs in.
-      const byId = new Map(entries.map((e) => [e.id, e.t]))
-      for (const o of orderParentsFirst(doc.objects)) {
-        const t = byId.get(o.id)
-        if (!t) continue
-        if (!o.parentId) { o.position = t.position; o.rotation = t.rotation; o.scale = t.scale; continue }
-        const parentWorld = worldMatrixOf(doc.objects, o.parentId)
-        const world = new THREE.Matrix4().compose(
-          new THREE.Vector3(...t.position),
-          // XYZ everywhere — SceneObjectBase.rotation's documented order. A
-          // mismatch here yields rotations that are wrong but still plausible.
-          new THREE.Quaternion().setFromEuler(new THREE.Euler(...t.rotation, 'XYZ')),
-          new THREE.Vector3(...t.scale),
-        )
-        const local = new THREE.Matrix4().copy(parentWorld).invert().multiply(world)
-        const p = new THREE.Vector3(); const q = new THREE.Quaternion(); const s = new THREE.Vector3()
-        local.decompose(p, q, s)
-        const e = new THREE.Euler().setFromQuaternion(q, 'XYZ')
-        o.position = [p.x, p.y, p.z]
-        o.rotation = [e.x, e.y, e.z]
-        o.scale = [s.x, s.y, s.z]
+      // is pivot-relative), so rebaseMany turns each one back into a local under
+      // its real parent — the doc stores LOCAL transforms. The parents-before-
+      // children ordering that a parent+descendant selection depends on lives in
+      // there too, where it is unit-tested (scene3d-hierarchy.unit.spec.ts).
+      for (const { id, t } of rebaseMany(doc.objects, entries)) {
+        const o = doc.objects.find((x) => x.id === id)
+        if (o) { o.position = t.position; o.rotation = t.rotation; o.scale = t.scale }
       }
     },
     // The drag suppressed every syncFromDoc it triggered (see the doc watcher);
@@ -1199,7 +1176,18 @@ onMounted(() => {
       // silently stomp the gizmo's lock the instant a drag starts (this exact
       // bug shipped once already; see interaction.ts's orbitShouldBeEnabled).
       interaction?.setCameraLocked(!!(doc.camera.motion && doc.camera.motion.preset !== 'none'))
-      engine.syncFromDoc(sampled)
+      // Refuse gizmo grabs for as long as playback runs. Dragging against a
+      // per-frame re-sync from a SAMPLED doc is incoherent for a single
+      // selection and destructive for a multi-selection: the sync tears the
+      // roots out of the pivot, which keeps emitting, so each object's
+      // motion-sampled world transform gets written back as its BASE local and
+      // the animation's offsets are baked in permanently.
+      interaction?.setPlaybackLocked(true)
+      // Second line of defence for the one way a drag can still be live here —
+      // playback started (keyboard, or the button on a second pointer) with the
+      // pointer already down, which the lock above deliberately does not
+      // interrupt. Sampled state is throwaway; the pivot's roots are not.
+      if (!interaction?.pivotDragActive) engine.syncFromDoc(sampled)
       engine.applyCameraFromDoc(sampled)
       engine.applyObjectOpacities(opacities)
       interaction?.orbit.update()
@@ -1207,6 +1195,7 @@ onMounted(() => {
       updateLightLabels()
     } else {
       interaction?.setCameraLocked(false)
+      interaction?.setPlaybackLocked(false)
       interaction?.orbit.update()
       engine?.render()
       updateLightLabels()
@@ -1261,8 +1250,12 @@ watch(doc, () => {
 // that only extends the list leaves `selectedId` unchanged but still has to
 // rebuild the gizmo around a pivot.
 watch(selectedIds, (ids) => {
-  const primary = ids.length === 1 ? doc.objects.find((o) => o.id === ids[0]) : null
-  interaction?.selectMany([...ids], primary?.kind === 'light')
+  // ANY light in the selection suppresses the scale gizmo, not just the primary:
+  // LightObject's scale is never read, so scaling a light in a mixed selection
+  // writes a number nothing honours — and a light that resists scaling alone but
+  // accepts it next to a cube is the more confusing of the two behaviours.
+  const anyLight = ids.some((id) => doc.objects.find((o) => o.id === id)?.kind === 'light')
+  interaction?.selectMany([...ids], anyLight)
   engine?.setSelected(ids[ids.length - 1] ?? null)
   // Minor 4 fix (final review): an open Generate panel stays bound to whichever object it was
   // opened for via reliefGenBusy/reliefGenPrompt's shared id-keying, but its BUTTON just reads

@@ -5,7 +5,9 @@
 // three pruned instances on the same object:
 //   - translate: axis arrows only (planes + centre handle hidden)
 //   - rotate:    the three axis arcs only (outer ring + view sphere hidden)
-//   - scale:     the centre cube only (uniform scale; axis boxes hidden)
+//   - scale:     the three axis cubes only (per-axis; the centre XYZ cube is
+//                removed because three's centre-scale divides by the pointer's
+//                start distance from the origin — Shift makes a drag uniform)
 // Each instance raycasts only its own visible picker handles (TransformControls
 // skips invisible pickers), so they never fight over a drag.
 // Emits document-shaped mutations (TransformSnapshot) so the surface owns all
@@ -111,6 +113,15 @@ export class SceneInteraction {
   // Scene3DStudioSurface's call sites for the full story).
   private cameraLocked = false
   private gizmoDragging = false
+  // Single authority over every gizmo's `enabled`, for the same reason as
+  // `orbit.enabled` above: two concerns want to write it — mutual exclusion
+  // between the three pruned instances (`dragOwner`) and the surface's
+  // playback lock (`playbackLocked`) — and the surface re-asserts its lock
+  // every frame. Nothing may write `tc.enabled` directly; go through
+  // `updateGizmosEnabled`, which ANDs both and never touches a gizmo that is
+  // mid-drag (see there for the pointer-capture leak that would cause).
+  private playbackLocked = false
+  private dragOwner: TransformControls | null = null
 
   constructor(
     private engine: SceneEngine,
@@ -179,7 +190,8 @@ export class SceneInteraction {
           // drag → simultaneous translate+scale). The first to start dragging
           // (listener registration order = `parts` order) disables the rest;
           // their enabled-guard makes their later pointerdown listeners bail.
-          for (const other of this.gizmos) if (other !== tc && !other.dragging) other.enabled = false
+          this.dragOwner = tc
+          this.updateGizmosEnabled()
         } else {
           if (mode === 'scale') this.scaleDragStart = null
           // Give the roots back to the scene the instant the drag ends. The doc
@@ -189,7 +201,8 @@ export class SceneInteraction {
           const wasPivotDrag = this.pivotHolding
           this.releaseRoots()
           this.reseatPivot()
-          for (const other of this.gizmos) other.enabled = true
+          this.dragOwner = null
+          this.updateGizmosEnabled()
           if (wasPivotDrag) this.callbacks.onPivotDragEnd?.()
         }
       })
@@ -239,6 +252,36 @@ export class SceneInteraction {
   setCameraLocked(locked: boolean): void {
     this.cameraLocked = locked
     this.updateOrbitEnabled()
+  }
+
+  /** Recomputes every gizmo's `enabled` from the two locks. Never write
+   *  `tc.enabled` directly (see the field comments).
+   *
+   *  A gizmo that is MID-DRAG is skipped rather than disabled: three's
+   *  `onPointerUp` bails on `!enabled`, so disabling one during its own drag
+   *  would leave `dragging` stuck true, the pointer capture never released and
+   *  'dragging-changed' never fired — `pivotHolding` would latch on forever and
+   *  the surface would stop syncing the doc to the viewport for the rest of the
+   *  session. The lock takes effect at the next grab instead. */
+  private updateGizmosEnabled(): void {
+    for (const tc of this.gizmos) {
+      if (tc.dragging) continue
+      tc.enabled = !this.playbackLocked && (!this.dragOwner || this.dragOwner === tc)
+    }
+  }
+
+  /** Surface-owned lock: true while motion playback is running. Safe (and
+   *  expected) to call every frame — an idempotent recompute, not a raw write.
+   *
+   *  Playback re-syncs the engine from a SAMPLED doc every frame, which rips a
+   *  multi-selection's roots out of the gizmo pivot; the pivot then keeps
+   *  dispatching objectChange, so each root's motion-sampled world transform
+   *  gets decomposed and written back as its BASE local. That bakes the
+   *  animation's offsets into the objects permanently — data loss, not just a
+   *  confused viewport. Refusing the grab in the first place is the fix. */
+  setPlaybackLocked(locked: boolean): void {
+    this.playbackLocked = locked
+    this.updateGizmosEnabled()
   }
 
   // Shift state rides on the pointer events (works for real keyboards AND
@@ -349,8 +392,14 @@ export class SceneInteraction {
 
   /** Attach the gizmo to `ids`. One id behaves exactly as before. Two or more
    *  build a pivot at the bounds centre of their roots and attach that instead.
-   *  `isLight` only applies to a single selection — a mixed multi-selection has
-   *  no one kind to hide the scale gizmo for. */
+   *
+   *  `isLight` means ANY selected object is a light, not just the primary:
+   *  LightObject's scale is never read by the engine, so scaling a light writes
+   *  a number nothing will ever honour. Suppressing the scale gizmo for a mixed
+   *  selection costs the user nothing (the meshes in it can still be moved and
+   *  rotated) and keeps the multi-select rule identical to the single-select
+   *  one — a light that can't be scaled alone but can be scaled next to a cube
+   *  reads as a bug either way round. */
   selectMany(ids: string[], isLight = false): void {
     this.teardownPivot()
     this.selectedIds = [...ids]
@@ -367,20 +416,35 @@ export class SceneInteraction {
     this.engine.scene.add(pivot)
     this.pivot = pivot
     this.reseatPivot()
-    for (const tc of this.gizmos) tc.attach(pivot)
+    for (const tc of this.gizmos) {
+      const mode = (tc as unknown as { userData: Record<string, unknown> }).userData.mode
+      if (isLight && mode === 'scale') tc.detach()
+      else tc.attach(pivot)
+    }
   }
 
   /** Park the pivot at the bounds centre of the selected roots' world origins,
    *  with identity rotation and scale.
    *
+   *  The POSITION re-seat is what keeps the gizmo on its objects. A translate
+   *  drag moves the roots but leaves the pivot wherever the gesture ended
+   *  relative to them, so without this the handles drift off the selection and,
+   *  worse, the next rotate/scale drag pivots about a centre that is no longer
+   *  the selection's — the objects swing away on an arc instead of turning in
+   *  place. Same story after any doc edit that moves a selected object.
+   *
+   *  The IDENTITY re-seat matters because the scale gizmo keeps its three
+   *  PER-AXIS handles (only the centre XYZ cube is pruned), so a pivot really
+   *  can end a drag non-uniformly scaled. Composed with a rotated child on the
+   *  next `holdRoots`, that produces genuine shear — and `Object3D.attach`
+   *  decomposes, which drops shear silently, so the child visibly deforms at
+   *  the instant of the grab.
+   *
    *  Called on selection and again after every drag — never at drag START.
    *  three captures the object's start transform in its own pointerdown, which
    *  runs before our dragging-changed listener, so moving the pivot at the grab
    *  would drag from a position the maths never saw (the gizmo jumps under the
-   *  pointer). Re-seating to IDENTITY also matters: a pivot left non-uniformly
-   *  scaled by the previous drag would shear a rotated child on the next
-   *  attach, and Object3D.attach decomposes — dropping that shear silently
-   *  deforms the object at the moment of the grab. */
+   *  pointer). */
   private reseatPivot(): void {
     const pivot = this.pivot
     if (!pivot) return
@@ -424,14 +488,29 @@ export class SceneInteraction {
 
   /** Release the roots and drop the pivot. Called before every re-attach and on
    *  dispose — a leaked pivot would keep owning roots the engine believes it
-   *  parents itself, and would linger in the scene as an untracked child. */
+   *  parents itself, and would linger in the scene as an untracked child.
+   *
+   *  Fires `onPivotDragEnd` if it was actually holding, because this is
+   *  reachable MID-DRAG: undo rewrites `selectedIds` (a fresh array every time),
+   *  which re-enters `selectMany` → here with the pointer still down. Clearing
+   *  the surface's sync gate without paying the sync it owes would drop the
+   *  roots into the scene while the doc still says they have parents, leaving
+   *  the hierarchy visually flat until some unrelated doc write; and the rest of
+   *  the drag would then run against a fresh pivot with `pivotHolding` false, so
+   *  `emitTransform` would take the single-selection branch and write the
+   *  primary's SCENE-relative local into the doc as if it were parent-relative.
+   *  Cannot double-fire: the normal drag-end path calls `releaseRoots` directly
+   *  and never routes through here, and by the time it does `pivotHolding` is
+   *  already false. */
   private teardownPivot(): void {
     const pivot = this.pivot
     if (!pivot) return
+    const wasHolding = this.pivotHolding
     this.releaseRoots()
     pivot.removeFromParent()
     this.pivot = null
     for (const tc of this.gizmos) if (tc.object === pivot) tc.detach()
+    if (wasHolding) this.callbacks.onPivotDragEnd?.()
   }
 
   select(id: string | null, isLight = false): void {

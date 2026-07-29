@@ -159,6 +159,58 @@ function rebase(childWorld: THREE.Matrix4, parentWorld: THREE.Matrix4): {
   }
 }
 
+/** Local TRS of one object, as the doc stores it. */
+export interface LocalTransform { position: Vec3; rotation: Vec3; scale: Vec3 }
+
+/** Convert a batch of WORLD transforms into the LOCAL transforms the doc stores,
+ *  each rebased under its own real `parentId`. This is what the multi-selection
+ *  gizmo needs: while the pivot owns the selected roots their local TRS is
+ *  pivot-relative and means nothing to the doc, so the drag reports world
+ *  transforms and this puts them back in their parents' frames.
+ *
+ *  Entries are applied PARENTS FIRST, and each result is folded into the working
+ *  copy before the next is computed. A selection may legitimately contain both
+ *  an object and one of its own descendants (a group and a child inside it), and
+ *  the child's rebase divides by its parent's world matrix. Computing the child
+ *  against the parent's PRE-drag world bakes the drag delta into the child's
+ *  local, which the parent's own new transform then applies a second time — the
+ *  child moves twice as far as the gizmo. Parents first makes that child's local
+ *  come out exactly unchanged, which is the right answer: applying one transform
+ *  P to a parent and its child leaves their relationship alone.
+ *
+ *  Ids not present in `objects` are skipped. Root-level objects (no `parentId`)
+ *  take their world transform verbatim. Pure — `objects` is never mutated. */
+export function rebaseMany(
+  objects: readonly SceneObject[],
+  entries: readonly { id: string; t: LocalTransform }[],
+): { id: string; t: LocalTransform }[] {
+  const wanted = new Map(entries.map((e) => [e.id, e.t]))
+  // Working copy: rebasing a child must see its parent's ALREADY-REBASED local,
+  // which is exactly what makes the ordering above load-bearing.
+  let working = [...objects]
+  const out: { id: string; t: LocalTransform }[] = []
+  for (const o of orderParentsFirst(objects)) {
+    const world = wanted.get(o.id)
+    if (!world) continue
+    let local: LocalTransform
+    if (!o.parentId) {
+      local = { position: world.position, rotation: world.rotation, scale: world.scale }
+    } else {
+      const worldMatrix = new THREE.Matrix4().compose(
+        new THREE.Vector3(...world.position),
+        // XYZ everywhere — SceneObjectBase.rotation's documented order. A
+        // mismatch here yields rotations that are wrong but still plausible.
+        new THREE.Quaternion().setFromEuler(new THREE.Euler(...world.rotation, 'XYZ')),
+        new THREE.Vector3(...world.scale),
+      )
+      local = rebase(worldMatrix, worldMatrixOf(working, o.parentId))
+    }
+    out.push({ id: o.id, t: local })
+    working = working.map((x) => (x.id === o.id ? { ...x, ...local } : x))
+  }
+  return out
+}
+
 /** True when `candidateParentId` is `id` itself or sits inside `id`'s subtree —
  *  the reparent that would create a cycle. */
 function wouldCycle(objects: readonly SceneObject[], id: string, candidateParentId?: string): boolean {
