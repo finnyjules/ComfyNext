@@ -13,7 +13,7 @@ Legend: **bake** = render/export path · **motion** = animatable · **inspector*
 | Surface | bake | motion | inspector | agent | engine LOC |
 |---|---|---|---|---|---|
 | Space Type | ✅ + clip bake | ✅ timeline clip | ✅ | ✅ descriptor | 11,202 |
-| Vector Type Studio | ✅ PNG + SVG export (9 fill types, 6 as real vector; multi-fill/stroke stack + extrude) | ✅ full incl. stagger + preset gallery | ✅ | ✅ descriptor (unverified live) | — |
+| Vector Type Studio | ✅ PNG + SVG export (9 fill types, 6 as real vector; multi-fill/stroke stack + extrude + skew/arc) | ✅ full incl. stagger + preset gallery | ✅ | ✅ descriptor (unverified live) | — |
 | Scene3D Studio | ✅ 3-pass + mp4 | ✅ own timeline | ✅ | ❌ | 5,095 |
 | Compositor / Frame | ✅ | ✅ motion clips | ✅ | ✅ commands | 1,667 (+1,041 motion) |
 | Timeline (NLE) | ✅ webm/mp4 + server | ✅ native | ✅ | ❌ | shared/timeline |
@@ -194,6 +194,14 @@ Open: **a pre-existing paint-box clipping bug**, exposed by canvas-vs-SVG diffin
 
 Open: on an **animated axis**, pausing or scrubbing does not bring the silhouette back — `previewTime` is in neither union trigger, so no body is scheduled for the paused frame. Two task reports claimed otherwise and the final verification pass disproved them. Deliberately unfixed: the one-line watcher would spend that 103 ms block precisely at the moment the user pauses. **Deliverables are unaffected** — SVG and PNG at the same `t` are correctly fused and stroked.
 
+**Vector Type — skew and arc — LANDED 2026-07-28** (commits `f9cd8097b`..`50318329b`, 6 tasks; `docs/superpowers/plans/2026-07-28-vector-type-skew-arc.md`). A whole-run shear, and glyphs placed along a curve with each rotated to the tangent. **Both stay exactly-correct vector** — a shear is affine and rigid placement is affine, so both are legal SVG transforms. 21/21 verification items pass, with canvas-vs-SVG at 0.0000% and deliberately broken controls at 68–100%.
+
+**Arc deliberately does not use paper.js.** It has exactly the right API, but arc placement runs every frame and the guarantee that a draw frame cannot reach paper is load-bearing. A cumulative-chord table plus a binary-search inversion gives spacing 1,600× more even than the naive `t`-uniform mapping `utils/textOnPath.ts` uses (0.0227% spread vs 36.30% on a wave), for ~15 lines and no dependency.
+
+**Rotation broke four downstream assumptions, each measured before it was fixed.** The `glyph` fill anchor diverged canvas-vs-SVG by 76.7% — and *neither* renderer was right, SVG's box being the browser's own second derivation; both now replay the canvas's placed-ink box. The axis-aligned clip window was sliced per letter and, independently of arc, **could not fully open** (22.6% of ink lost at `amount: 0`); it became a generic `VectorWindow` with an optional rotation. The taper pivot lived in **four** places, not the three the handoff predicted. And motion `dx`/`dy` moved in output space rather than the glyph's frame — now local, dropping mask spread across arc angles from 17.0 to 0.4 points, with `rotate === 0` branching so straight runs stay bit-identical.
+
+Open: negative arc past ~−150° collapses the word into its own centre. Proven to be *correct* type-on-path geometry — the placements are exact mirrors — but the slider range and its hint over-promise on the negative side; an Illustrator-style flip is a design decision, not a patch. Skew also carries a ~0.016px rounding residual at the default export precision, converging to exactly 0 at precision 6.
+
 ## Agent layer
 
 Loop shape is right (perceive → plan → invertible commands → ghost preview → Keep/Dismiss) plus visual self-review and Direction Loop. **Reach is the gap:** 4 agent surfaces (canvas, compositor, smartLayout, texture) vs ~22 creative surfaces; 3 of 8 studios expose descriptors, plus a 4th (Vector Type) wired but with its agent tuner unverified live. LLM tiers: haiku→patch / sonnet→plan / opus→campaign; Fable for style profiles.
@@ -209,6 +217,7 @@ Loop shape is right (perceive → plan → invertible commands → ghost preview
 - **No fallback if `google/fonts` renames a path upstream** for Vector Type Studio's variable-TTF proxy — the family just fails to load. The design's "static cut, axes disabled and labelled" mitigation was never implemented.
 - **No SVG-consuming node exists.** Vector Type's SVG export only leaves the product by download.
 - ~~**Paint-box clipping in `resolvePaint`.**~~ **FIXED 2026-07-28** (`9c83a9e1f`). A `Fill` paint now spreads outside its own box when the ink reaches — extrude copies and stroke outsets. 42/42 cases reach SVG parity (losses of 65/47/42/21% → 0%); the Compositor is byte-identical across 48 cases because the default preserves the old behaviour exactly. Residual: per-pixel *colour* outside the box is approximate for `stripes`/`checkerboard`/`grid` (a box-sized tile leaves a phase seam) — the same disagreement those three already show inside the box. Gradients are exact.
+- **Negative arc past ~−150° collapses the word.** Geometrically correct (exact mirror placements) but the slider range and hint over-promise; wants an Illustrator-style flip.
 - **Gradient strokes flatten in SVG.** `VectorShape.stroke` is `string | null` — it needs a paint-server slot like `fill` has.
 - **Paused frames lose the extrude silhouette on an animated axis.** `previewTime` is in neither union trigger, so scrubbing shows the un-fused stack. A config nudge restores it instantly, proving the mechanism. Unfixed by choice — the obvious watcher costs a 103 ms block at the pause. Exports are correct.
 - **`useVectorSvg.ts` still degrades silently.** The Compositor's SVG writer collapses every rich fill to a flat representative colour via `paintPrimaryColor` and says nothing — the exact anti-pattern Vector Type's export-tier declaration was built to avoid. Same fix would port.
