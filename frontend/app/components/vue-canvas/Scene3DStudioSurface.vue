@@ -31,7 +31,7 @@ import { loadGoogleCatalog, type GoogleFont } from '~/data/google-fonts'
 import FontPicker from '~/components/vue-canvas/FontPicker.vue'
 import { PRIM_GROUPS } from '~/lib/scene3d/primGroups'
 import { SceneEngine, baseSizeFor, baseVertexCountFor } from '~/lib/scene3d/engine'
-import { rebaseMany, groupObjects, ungroupObject, childrenOf } from '~/lib/scene3d/hierarchy'
+import { rebaseMany, groupObjects, ungroupMany } from '~/lib/scene3d/hierarchy'
 import { totalClones } from '~/lib/scene3d/modifiers'
 import { PRIMITIVE_PARAMS, paramValue, MODIFIER_SPECS, modifierValue } from '~/lib/scene3d/primParams'
 import { SceneInteraction } from '~/lib/scene3d/interaction'
@@ -1383,20 +1383,16 @@ function groupSelection() {
   selectedIds.value = [group.id]
 }
 
-/** Dissolve every selected group, freeing its children in place. */
+/** Dissolve every selected group, freeing its children in place. The actual
+ *  dissolve-and-collect logic lives in `ungroupMany` (hierarchy.ts) — it has to
+ *  handle a selection containing both a group and its own descendant group,
+ *  which isn't safe to get right in a component with no unit test coverage. */
 function ungroupSelection() {
   const groupIds = selectedObjects.value.filter((o) => o.kind === 'group').map((o) => o.id)
   if (!groupIds.length) return
-  const freed: string[] = []
-  for (const id of groupIds) {
-    // Collect BEFORE dissolving — once `id` is gone, childrenOf can no longer
-    // find its children by parentId, so this must run ahead of ungroupObject,
-    // and read the CURRENT doc.objects each iteration since it was reassigned
-    // by the previous loop pass (a stale capture would miss earlier reparents).
-    freed.push(...childrenOf(doc.objects, id).map((o) => o.id))
-    doc.objects = ungroupObject(doc.objects, id)
-  }
-  selectedIds.value = freed
+  const { objects, freedIds } = ungroupMany(doc.objects, groupIds)
+  doc.objects = objects
+  selectedIds.value = freedIds
 }
 
 // ── Object operations ─────────────────────────────────────────────────────────

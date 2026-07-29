@@ -302,3 +302,42 @@ export function ungroupObject(objects: readonly SceneObject[], groupId: string):
       return rebased
     })
 }
+
+/** Dissolve every group named in `groupIds` and report the ids that should
+ *  become the new selection. Exists because a selection can legitimately
+ *  contain a group AND one of its own descendant groups (e.g. `A -> B -> D`
+ *  with both `A` and `B` selected) — dissolving `A` frees `B` as a child, but
+ *  `B` is itself in `groupIds` and gets dissolved right after. A naive loop
+ *  that just concatenates each group's freed children (as the Vue surface
+ *  used to) reports `B`'s id as part of the new selection even though `B` no
+ *  longer exists in the returned array: `B` was ALSO in `groupIds`, so it gets
+ *  dissolved on its own iteration and stops existing. That phantom id is not
+ *  cosmetic — a `selectedIds.length >= 2` "can group" guard reads true for a
+ *  single surviving object, and Cmd+G immediately after ungrouping silently
+ *  filters the dead id out and produces a pointless one-child group, exactly
+ *  the state the guard exists to prevent.
+ *
+ *  `freedIds` is therefore built as a Set across all iterations — because
+ *  processing order can revisit the same eventual survivor twice (dissolving
+ *  the inner group before the outer one frees the same descendant again) —
+ *  and then filtered down to ids that still exist in the final `objects`. For
+ *  `A -> B -> D` with both dissolved, the only surviving freed object is `D`,
+ *  so `freedIds` is `[D.id]` regardless of the order `groupIds` lists `A`/`B`
+ *  in. An id in `groupIds` that is not a group (or does not exist) is skipped,
+ *  matching `ungroupObject`'s own no-op behaviour for such ids. */
+export function ungroupMany(
+  objects: readonly SceneObject[],
+  groupIds: readonly string[],
+): { objects: SceneObject[]; freedIds: string[] } {
+  let working = [...objects]
+  const freed = new Set<string>()
+  for (const id of groupIds) {
+    const group = working.find((o) => o.id === id)
+    if (!group || group.kind !== 'group') continue
+    for (const child of childrenOf(working, id)) freed.add(child.id)
+    working = ungroupObject(working, id)
+  }
+  const survivingIds = new Set(working.map((o) => o.id))
+  const freedIds = [...freed].filter((id) => survivingIds.has(id))
+  return { objects: working, freedIds }
+}

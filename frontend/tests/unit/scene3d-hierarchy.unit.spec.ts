@@ -115,7 +115,7 @@ describe('scene3d hierarchy', () => {
 })
 
 import * as THREE from 'three'
-import { worldMatrixOf, groupObjects, ungroupObject } from '~/lib/scene3d/hierarchy'
+import { worldMatrixOf, groupObjects, ungroupObject, ungroupMany } from '~/lib/scene3d/hierarchy'
 import { createGroup } from '~/lib/scene3d/config'
 
 /** World-space position of `id`, derived independently of the code under test. */
@@ -235,6 +235,79 @@ describe('scene3d group/ungroup transforms', () => {
     const after = groupObjects([g, child, inner], [g.id], inner)
     // The illegal reparent is skipped, leaving the graph acyclic.
     expect(after.find(o => o.id === g.id)!.parentId).toBeUndefined()
+  })
+})
+
+// ── ungroupMany: dissolving multiple selected groups at once ─────────────────
+// Lives here (not in the Vue surface) precisely so the nested-selection case —
+// a group AND one of its own descendant groups both selected — can be pinned
+// with a real assertion. See ungroupMany's doc comment in hierarchy.ts for the
+// phantom-selection bug this replaces.
+
+describe('scene3d ungroupMany', () => {
+  it('dissolves a single group, freeing its children with world position preserved', () => {
+    const outer = obj('outer')
+    outer.position = [0, 2, 0]
+    outer.rotation = [Math.PI / 5, Math.PI / 3, 0]
+    outer.scale = [1.5, 1.5, 1.5]
+    const group = createGroup([outer]) as SceneObject
+    group.parentId = 'outer'
+    group.position = [1, 0, 2]
+    group.rotation = [0, Math.PI / 4, 0]
+    const a = obj('a', group.id); a.position = [2, 0, 0]
+    const b = obj('b', group.id); b.position = [0, 1, 1]
+    const objects = [outer, group, a, b]
+    const before = [worldPos(objects, 'a'), worldPos(objects, 'b')]
+
+    const { objects: after, freedIds } = ungroupMany(objects, [group.id])
+
+    expect(after.find(o => o.id === group.id)).toBeUndefined()
+    expect(freedIds.sort()).toEqual(['a', 'b'])
+    expect(after.find(o => o.id === 'a')!.parentId).toBe('outer')
+    expect(after.find(o => o.id === 'b')!.parentId).toBe('outer')
+    expectClose(worldPos(after, 'a'), before[0]!)
+    expectClose(worldPos(after, 'b'), before[1]!)
+  })
+
+  // THE regression test. A and B are both groups, B nested inside A (A -> B -> D).
+  // Selecting both and ungrouping must not report B's id as part of the new
+  // selection — B is dissolved on its own iteration, same as A, so only D
+  // survives. A naive "concatenate each group's freed children" loop (the bug
+  // this replaces) reports [B.id, D.id]: a dead id sitting in the selection
+  // that a `selectedIds.length >= 2` guard reads as "still two objects."
+  it('ungrouping a group together with its own nested child group leaves only the true survivor', () => {
+    const a = createGroup([]) as SceneObject
+    a.id = 'a'; a.position = [1, 0, 0]
+    const b = createGroup([]) as SceneObject
+    b.id = 'b'; b.parentId = 'a'; b.position = [0, 2, 0]
+    const d = obj('d', 'b'); d.position = [0, 0, 3]
+    const objects = [a, b, d]
+    const beforeD = worldPos(objects, 'd')
+
+    const { objects: after, freedIds } = ungroupMany(objects, ['a', 'b'])
+
+    expect(after.find(o => o.id === 'a')).toBeUndefined()
+    expect(after.find(o => o.id === 'b')).toBeUndefined()
+    expect(freedIds).toEqual(['d'])
+    expect(freedIds).not.toContain('b')
+    expectClose(worldPos(after, 'd'), beforeD)
+
+    // Order-independence: selecting them in the opposite order must land on
+    // the exact same surviving selection.
+    const reversed = ungroupMany(objects, ['b', 'a'])
+    expect(reversed.freedIds).toEqual(['d'])
+  })
+
+  it('ignores ids in groupIds that are not groups, or do not exist, without throwing', () => {
+    const leaf = obj('leaf')
+    const group = createGroup([leaf]) as SceneObject
+    leaf.parentId = group.id
+    const objects = [group, leaf]
+
+    expect(() => ungroupMany(objects, ['leaf', 'ghost', group.id])).not.toThrow()
+    const { objects: after, freedIds } = ungroupMany(objects, ['leaf', 'ghost', group.id])
+    expect(after.find(o => o.id === group.id)).toBeUndefined()
+    expect(freedIds).toEqual(['leaf'])
   })
 })
 
