@@ -489,23 +489,26 @@ export class SceneEngine {
     this.lastDoc = doc
     // Remove three-roots whose doc object is gone.
     const live = new Set(doc.objects.map((o) => o.id))
-    for (const [id, root] of this.objectRoots) {
-      if (live.has(id)) continue
-      // A dead GROUP root may still contain the roots of children that are very
-      // much alive (ungroup removes the group and reparents in one doc edit).
-      // disposeTree traverses, so letting it run here would free geometry and
-      // textures still referenced by objectRoots — a blank viewport with no
-      // error. Detach every surviving child first; the sync pass below
-      // re-parents each one wherever its new parentId says it belongs.
-      for (const child of [...root.children]) {
-        const cid = child.userData.sceneId as string | undefined
-        if (cid && live.has(cid)) this.scene.add(child)
+    const dead = [...this.objectRoots].filter(([id]) => !live.has(id))
+    if (dead.length) {
+      // Flatten every SURVIVOR to the scene before disposing anything: a dead
+      // group can contain live child roots (ungroup deletes the group and
+      // reparents in one doc edit), and disposeTree traverses, so it would free
+      // geometry still referenced by objectRoots — a blank viewport with no
+      // error. Doing it for all survivors rather than just direct children makes
+      // this independent of objectRoots' insertion order, which an undo can flip
+      // (deleting and restoring a root re-inserts it at the end of the Map,
+      // after its group, instead of before). The sync pass below re-parents
+      // each survivor to its real parent; Object3D.add keeps the local
+      // transform, and no frame renders in between.
+      for (const [id, root] of this.objectRoots) if (live.has(id)) this.scene.add(root)
+      for (const [id, root] of dead) {
+        root.removeFromParent() // NOT scene.remove — the root may be parented to another root
+        disposeTree(root)
+        this.objectRoots.delete(id)
+        this.glbTokens.delete(id)
+        this.fontTokens.delete(id)
       }
-      root.removeFromParent() // NOT scene.remove — the root may be parented to another root
-      disposeTree(root)
-      this.objectRoots.delete(id)
-      this.glbTokens.delete(id)
-      this.fontTokens.delete(id)
     }
     // Parents first: a child's root cannot be added to a parent root that has
     // not been created yet. orderParentsFirst is stable, so same-level ordering
@@ -574,7 +577,19 @@ export class SceneEngine {
       : `light:${obj.light}`
     let root = this.objectRoots.get(obj.id)
     if (root && root.userData.sourceKey !== sourceKey) {
-      this.scene.remove(root)
+      // Same hazard as syncFromDoc's removal loop: a retyped GROUP root can
+      // still have live child roots attached (nothing retypes a group in
+      // place today, but the invariant this leans on — every root is a direct
+      // child of this.scene — was deleted by parenting, so this branch can't
+      // assume it either). Detach any child whose doc object is still around
+      // before disposing, and use removeFromParent, not scene.remove — this
+      // root may be parented to another root rather than the scene, and
+      // scene.remove would then be a silent no-op that leaves it rendering.
+      for (const child of [...root.children]) {
+        const cid = child.userData.sceneId as string | undefined
+        if (cid && this.objectRoots.has(cid)) this.scene.add(child)
+      }
+      root.removeFromParent()
       disposeTree(root)
       this.objectRoots.delete(obj.id)
       this.glbTokens.delete(obj.id)
