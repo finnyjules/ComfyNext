@@ -13,6 +13,7 @@ import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLigh
 import { roundedLatheGeometry, roundedPolyGeometry, roundedHullGeometry } from '~/lib/scene3d/roundedGeometry'
 import type { SceneDoc, SceneObject, SceneMaterial, Vec3, LightingPreset, PrimitiveKind, PrimitiveObject, PrimitiveContent, GlbObject, LightObject } from './config'
 import { LIGHT_DEFAULTS, DEFAULT_FONT_URL } from './config'
+import { orderParentsFirst } from './hierarchy'
 import { loadGlb } from './glb'
 import { loadFont, fontCacheGet, textOutline, shapeOutline, type Font } from '~/lib/scene3d/outlines'
 import { materialFor, updateMaterial, disposeMaterial, refreshSceneShaderFields } from './materials'
@@ -489,15 +490,27 @@ export class SceneEngine {
     // Remove three-roots whose doc object is gone.
     const live = new Set(doc.objects.map((o) => o.id))
     for (const [id, root] of this.objectRoots) {
-      if (!live.has(id)) {
-        this.scene.remove(root)
-        disposeTree(root)
-        this.objectRoots.delete(id)
-        this.glbTokens.delete(id)
-        this.fontTokens.delete(id)
+      if (live.has(id)) continue
+      // A dead GROUP root may still contain the roots of children that are very
+      // much alive (ungroup removes the group and reparents in one doc edit).
+      // disposeTree traverses, so letting it run here would free geometry and
+      // textures still referenced by objectRoots — a blank viewport with no
+      // error. Detach every surviving child first; the sync pass below
+      // re-parents each one wherever its new parentId says it belongs.
+      for (const child of [...root.children]) {
+        const cid = child.userData.sceneId as string | undefined
+        if (cid && live.has(cid)) this.scene.add(child)
       }
+      root.removeFromParent() // NOT scene.remove — the root may be parented to another root
+      disposeTree(root)
+      this.objectRoots.delete(id)
+      this.glbTokens.delete(id)
+      this.fontTokens.delete(id)
     }
-    for (const obj of doc.objects) this.syncObject(obj)
+    // Parents first: a child's root cannot be added to a parent root that has
+    // not been created yet. orderParentsFirst is stable, so same-level ordering
+    // is untouched.
+    for (const obj of orderParentsFirst(doc.objects)) this.syncObject(obj)
     // Lighting + background.
     const preset = PRESETS[doc.lighting.preset]
     const [sx, sy, sz] = sunDirection(doc.lighting.sunAzimuth, doc.lighting.sunElevation)
@@ -557,6 +570,7 @@ export class SceneEngine {
     // otherwise the diff would keep rendering the stale one.
     const sourceKey = obj.kind === 'primitive' ? `primitive:${obj.primitive}`
       : obj.kind === 'glb' ? `glb:${obj.url}`
+      : obj.kind === 'group' ? 'group'
       : `light:${obj.light}`
     let root = this.objectRoots.get(obj.id)
     if (root && root.userData.sourceKey !== sourceKey) {
@@ -592,6 +606,8 @@ export class SceneEngine {
           // root each sync), not the one captured when the load started.
           syncGlbMaterials(root!, (root!.userData.glbObj as GlbObject | undefined) ?? obj, this.lightView, this.clay, this.id)
         }).catch(() => { /* surface shows the error state; the group stays empty */ })
+      } else if (obj.kind === 'group') {
+        root = new THREE.Group() // an empty transform node — no geometry, no light, no marker
       } else {
         const group = new THREE.Group()
         const light = lightFor(obj)
@@ -616,9 +632,15 @@ export class SceneEngine {
       }
       root.userData.sceneId = obj.id
       root.userData.sourceKey = sourceKey
-      this.scene.add(root)
       this.objectRoots.set(obj.id, root)
     }
+    // Re-parent on EVERY sync, not just creation: group/ungroup changes
+    // parentId without changing sourceKey, so a creation-only attach would
+    // leave the root under its old parent. Object3D.add removes from the
+    // previous parent, so this is a no-op when nothing moved.
+    const parentRoot = obj.parentId ? this.objectRoots.get(obj.parentId) : undefined
+    const desiredParent = parentRoot ?? this.scene
+    if (root.parent !== desiredParent) desiredParent.add(root)
     root.visible = obj.visible
     root.position.set(...obj.position)
     root.rotation.set(...obj.rotation)
@@ -740,7 +762,10 @@ export class SceneEngine {
     if (!root) return null
     const box = new THREE.Box3().setFromObject(root)
     if (box.isEmpty()) return null
-    const s = root.scale
+    // setFromObject measures in WORLD space, so the divisor must be the world
+    // scale too. These were identical while every object was top-level; a
+    // nested object's ancestors contribute scale the local vector does not see.
+    const s = root.getWorldScale(new THREE.Vector3())
     return [
       (box.max.x - box.min.x) / (s.x || 1),
       (box.max.y - box.min.y) / (s.y || 1),
@@ -806,6 +831,9 @@ export class SceneEngine {
     // attaching to a disposed root.
     this.glbTokens.clear()
     this.fontTokens.clear()
+    // Flatten first: nested roots would otherwise be disposed twice — once via
+    // their parent's traverse, once directly.
+    for (const root of this.objectRoots.values()) this.scene.add(root)
     for (const root of this.objectRoots.values()) disposeTree(root)
     this.objectRoots.clear()
     this.grid.geometry.dispose()
