@@ -32,7 +32,7 @@
  * has to say which it means; this is that module saying it.
  */
 import type { Affine, Transform2D, VectorCommand, VectorPaint, VectorRect, VectorShape } from '~/lib/vector/svg'
-import { formatNumber, multiplyAffine } from '~/lib/vector/svg'
+import { IDENTITY_AFFINE, formatNumber, multiplyAffine } from '~/lib/vector/svg'
 import { fillIsShader, paintPrimaryColor } from '~/lib/spacetype/fillTile'
 import { isFill, type Paint } from '~/lib/compositor/paint'
 import { paintIsVector, paintToVectorPaint } from '~/lib/paint/toVector'
@@ -46,6 +46,7 @@ import {
 import { withFieldFrame, type FieldRequest } from '~/lib/shaderfill/field'
 import type { BlendKind } from '~/lib/studio/blend'
 import {
+  VT_SKEW_MAX,
   migrateLegacyAppearance,
   vtBaseAppearance,
   type VectorTypeConfig,
@@ -461,6 +462,77 @@ export function vtRunPaintBox(
   return paintBoxFrom(place.x + b.minX * s, place.y + b.minY * fy, place.x + b.maxX * s, place.y + b.maxY * fy)
 }
 
+// ── The whole-run shear ─────────────────────────────────────────────────────
+
+/** Into `VT_SKEW_MAX`, with a non-finite value landing on 0 rather than on
+ *  `NaN` — a track can drive this past the slider's own ends, and a `NaN` in the
+ *  CTM makes Chrome drop the drawing op with nothing in the console. */
+const clampSkew = (v: number): number =>
+  !Number.isFinite(v) ? 0 : v < -VT_SKEW_MAX ? -VT_SKEW_MAX : v > VT_SKEW_MAX ? VT_SKEW_MAX : v
+
+/**
+ * Does this config lean at all?
+ *
+ * The same question `vtRunShear` answers with `null`, asked WITHOUT the outlines
+ * and the placement — because `vtPaintLayers` needs it (a sheared run overspills
+ * its paint box) and runs before either exists. Two readings of "is there a
+ * shear" would be one reading too many.
+ */
+export function vtIsSheared(cfg: VectorTypeConfig | null | undefined): boolean {
+  return clampSkew(cfg?.skewX as number) !== 0 || clampSkew(cfg?.skewY as number) !== 0
+}
+
+/**
+ * The run's SHEAR as an affine in OUTPUT space — the ONE definition of it, and
+ * `null` when there is none.
+ *
+ * Both renderers call this. The canvas hands it to a single `ctx.transform(…)`;
+ * the SVG writer emits it as the leading `matrix(…)` of each glyph's `transform`
+ * list. A second derivation would drift, and the drift would be invisible — both
+ * surfaces would still show a leaning word.
+ *
+ * ## WHOLE-RUN, about the run's ink centre
+ *
+ * A shear about each glyph's own origin leans every LETTER while the word stays
+ * put. This is composed once for the run and every glyph rides the same matrix,
+ * so the word leans as one piece.
+ *
+ * The pivot is `vtRunPaintBox`'s centre — the run's own ink box, already
+ * computed by both renderers for the `word` fill anchor, so there is no second
+ * idea of where the run is. Centre rather than baseline for two reasons: the run
+ * stays where the user put it as the slider moves (the same pivot the Compositor
+ * shears a layer about — `useCompositorLayers`' `applyXform`), and `skewY` has
+ * no "baseline" to speak of, so a per-axis pivot rule would be two rules.
+ *
+ * `T(p) · [1, tan(skewY), tan(skewX), 1, 0, 0] · T(−p)`, folded into six numbers:
+ * the linear part is the shear and the translation is `p − S·p`.
+ *
+ * ## Composed OUTSIDE the motion, and outside the mask window
+ *
+ * The full element transform is `shear · motion`, i.e. the artwork is placed and
+ * animated first and the whole thing is then leaned — which is what "skew the
+ * composition" means, and what makes `skewX` read the same whether a glyph is
+ * spinning or still. The cell CLIP is taken before either (canvas) and rides an
+ * untransformed wrapper `<g>` (SVG), so `glyphCellClipRect`'s stated invariant
+ * survives untouched: the window is FIXED in output space and the letter slides
+ * through it. A sheared letter slides through an upright window; that is the
+ * reveal the mask presets are drawn against, not a bug.
+ */
+export function vtRunShear(
+  cfg: VectorTypeConfig,
+  outlines: TextOutlines,
+  place: Required<Transform2D>,
+  opts: VtBoxOptions,
+): Affine | null {
+  if (!vtIsSheared(cfg)) return null
+  const kx = clampSkew(cfg?.skewX as number)
+  const ky = clampSkew(cfg?.skewY as number)
+  const c = Math.tan((kx * Math.PI) / 180)
+  const b = Math.tan((ky * Math.PI) / 180)
+  const { cx, cy } = vtRunPaintBox(outlines, place, opts)
+  return [1, b, c, 1, -c * cy, -b * cx]
+}
+
 /** `frame` — the whole output box, so the type moves over a fill pinned to the
  *  canvas. Logical units, not device: the drawing transform already carries
  *  `pixelRatio`, so a 220px card and a 1024px bake sample the same composition. */
@@ -762,6 +834,23 @@ function vtPaintLayers(
   glyphs: number,
 ): { layers: VtPaintLayer[]; extrudeDropped: number } {
   const out: VtPaintLayer[] = []
+  /**
+   * A SHEARED run overspills its own paint box, so every layer needs `'extend'`.
+   *
+   * `vtRunPaintBox` and `vtGlyphPaintBox` are both AXIS-ALIGNED and both derived
+   * from the run's UNSHEARED ink (they have to be — the export anchors its paint
+   * servers to exactly those rects). Lean the run and its ink leaves them, which
+   * is word for word the condition `PaintSpread` documents: *"the ink reaches
+   * OUTSIDE its own paint box, and the paint has to follow it there"*.
+   *
+   * MEASURED, not reasoned about. Without this, a `word`-anchored gradient at
+   * `skewY: 22` painted 7,406 of the run's 10,673 ink pixels on canvas and the
+   * SVG painted all of them — 30.6 % of the union missing, and missing in a way
+   * that reads as "the top and bottom of the word are cut off" rather than as a
+   * colour bug. `'extend'` is 0.0000 %. It changes nothing INSIDE the box, so
+   * every unskewed config is byte-identical.
+   */
+  const sheared = vtIsSheared(cfg)
   /** Every extrude layer paired with the config layer it came from, so the
    *  budget's caps can be applied after the whole stack is known — a budget
    *  spent front-to-back has to see every extrude before it can decide which one
@@ -804,7 +893,7 @@ function vtPaintLayers(
       // Asked of the KIND, not of `copies` — the extrude's copy list is filled in
       // by the budget pass below, and a layer whose reach depends on how much
       // budget was left would paint differently on a busy frame.
-      spread: layer.kind === 'extrude' || layer.kind === 'stroke' ? 'extend' : 'box',
+      spread: sheared || layer.kind === 'extrude' || layer.kind === 'stroke' ? 'extend' : 'box',
       runPm: null,
       runStyle: null,
       copies: null,
@@ -980,6 +1069,10 @@ export function drawVectorType(
   // build a cache key without them. Same work, same order, no second placement.
   const placed = placeOutlines(frame.outlines, place)
   const paths = placed.map(cmds => commandsToPath2D(cmds))
+  // The WHOLE-RUN shear, resolved ONCE for the run — `frame.config` is the
+  // post-motion config, so an animated skew moves. `null` (both angles 0) makes
+  // the block in `paintGlyph` a no-op and the frame byte-identical to before.
+  const shear = vtRunShear(frame.config, frame.outlines, place, opts)
   // ── THE APPEARANCE STACK ────────────────────────────────────────────────────
   // Every enabled layer, back to front, resolved ONCE for the run. Task 2's
   // `vtBaseAppearance` bridge — which collapsed the stack to the bottom-most fill
@@ -1393,6 +1486,18 @@ export function drawVectorType(
         clipGlyphCell(ctx, origin, advance, em, tr.clip)
       }
 
+      // THE WHOLE-RUN SHEAR, and it goes HERE — after the clip and before the
+      // motion. After the clip, because the mask window is fixed in output space
+      // and the SVG writer's `<clipPath>` rides an untransformed wrapper `<g>`;
+      // shearing the context first would lean the canvas's window and not the
+      // file's. Before the motion, because the element transform is
+      // `shear · motion`: the run is animated and then the whole composition
+      // leans, rather than each letter carrying a shear into its own spin.
+      //
+      // One `ctx.transform` — the same six numbers the export writes as its
+      // leading `matrix(…)`, from the same `vtRunShear`.
+      if (shear) ctx.transform(shear[0], shear[1], shear[2], shear[3], shear[4], shear[5])
+
       const sx = nonZero(tr.scale * (Number.isFinite(tr.scaleX) ? tr.scaleX : 1))
       const sy = nonZero(tr.scale * (Number.isFinite(tr.scaleY) ? tr.scaleY : 1))
       if (tr.dx || tr.dy || tr.rotate || sx !== 1 || sy !== 1) {
@@ -1491,12 +1596,13 @@ export function drawVectorTypeToCanvas(
 // type-specific adapter over it. This function only decides WHAT to hand it.
 
 /**
- * A per-glyph motion transform as an SVG `transform` list.
+ * One glyph's element transform — the run's SHEAR plus that glyph's MOTION — as
+ * an SVG `transform` list.
  *
  * Mirrors `drawVectorType`'s canvas sequence exactly:
  *
- *   translate(origin + d) · rotate · translate(adv/2, 0) · scale
- *                         · translate(-adv/2, 0) · translate(-origin)
+ *   matrix(shear) · translate(origin + d) · rotate · translate(adv/2, 0) · scale
+ *                                         · translate(-adv/2, 0) · translate(-origin)
  *
  * An SVG transform list composes left-to-right the same way successive `ctx`
  * operations do, and SVG's `rotate(deg)` turns the same direction as
@@ -1504,25 +1610,39 @@ export function drawVectorTypeToCanvas(
  * baked into the coordinates by `transformCommands`). So the two are the same
  * transform written twice, not two transforms that happen to agree.
  *
+ * The SHEAR leads, matching the `ctx.transform` the canvas issues before its
+ * motion block — see `vtRunShear` for why the composition is that way round. It
+ * is written as one `matrix(…)` rather than as SVG's own `skewX`/`skewY` pair
+ * because those two do NOT compose to the requested shear: `skewX(a) skewY(b)`
+ * is `[1 + tan a·tan b, tan b, tan a, 1]`, whose top-left term is not 1. One
+ * primitive is also one thing for `glyphSvgMatrix` to agree with.
+ *
  * The pair of `adv/2` translates around the scale is the horizontal pivot — see
  * the long note at the canvas site for why it is the cell centre and not the
  * origin. It is written here in the same shape rather than folded into the
  * outer translates on purpose: a reader comparing the two functions has to be
  * able to see that they are the same list.
  *
- * Returns `undefined` for identity so an unanimated export carries no attribute.
+ * Returns `undefined` for identity so an unanimated, unskewed export carries no
+ * attribute.
  */
 function glyphSvgTransform(
   origin: { x: number; y: number },
   advance: number,
   tr: VtGlyphMotion,
+  /** The run's shear, from `vtRunShear`. `null` = none. */
+  shear: Affine | null,
   precision = 3,
 ): string | undefined {
   const sx = nonZero(tr.scale * (Number.isFinite(tr.scaleX) ? tr.scaleX : 1))
   const sy = nonZero(tr.scale * (Number.isFinite(tr.scaleY) ? tr.scaleY : 1))
-  if (!tr.dx && !tr.dy && !tr.rotate && sx === 1 && sy === 1) return undefined
+  const still = !tr.dx && !tr.dy && !tr.rotate && sx === 1 && sy === 1
+  if (still && !shear) return undefined
   const n = (v: number) => formatNumber(v, precision)
-  const parts = [`translate(${n(origin.x + tr.dx)} ${n(origin.y + tr.dy)})`]
+  const parts: string[] = []
+  if (shear) parts.push(`matrix(${shear.map(n).join(' ')})`)
+  if (still) return parts.join(' ')
+  parts.push(`translate(${n(origin.x + tr.dx)} ${n(origin.y + tr.dy)})`)
   if (tr.rotate) parts.push(`rotate(${n(tr.rotate)})`)
   // Single-argument when uniform: that is the same transform, and it keeps an
   // ordinary export readable. The two-argument form appears only for a card
@@ -1553,21 +1673,33 @@ function glyphSvgTransform(
  * prevent.
  *
  * `null` for identity, matching `glyphSvgTransform`'s `undefined`.
+ *
+ * The SHEAR is the same six numbers, rounded the same way and composed in the
+ * same place (first), so a skewed word-anchored ramp is pinned by the inverse of
+ * the transform the file actually carries. That inverse now has OFF-DIAGONAL
+ * terms — the whole reason `VT_SKEW_MAX` bounds the determinant away from zero.
  */
 function glyphSvgMatrix(
   origin: { x: number; y: number },
   advance: number,
   tr: VtGlyphMotion,
+  /** The run's shear, from `vtRunShear`. `null` = none. */
+  shear: Affine | null,
   precision = 3,
 ): Affine | null {
   const sx = nonZero(tr.scale * (Number.isFinite(tr.scaleX) ? tr.scaleX : 1))
   const sy = nonZero(tr.scale * (Number.isFinite(tr.scaleY) ? tr.scaleY : 1))
-  if (!tr.dx && !tr.dy && !tr.rotate && sx === 1 && sy === 1) return null
+  const still = !tr.dx && !tr.dy && !tr.rotate && sx === 1 && sy === 1
+  if (still && !shear) return null
   // Through the string formatter and back, so the matrix carries the numbers the
   // file carries rather than the full-precision ones behind them.
   const q = (v: number) => Number.parseFloat(formatNumber(v, precision))
   const T = (x: number, y: number): Affine => [1, 0, 0, 1, x, y]
-  let m: Affine = T(q(origin.x + tr.dx), q(origin.y + tr.dy))
+  let m: Affine = shear
+    ? [q(shear[0]), q(shear[1]), q(shear[2]), q(shear[3]), q(shear[4]), q(shear[5])]
+    : IDENTITY_AFFINE
+  if (still) return m
+  m = multiplyAffine(m, T(q(origin.x + tr.dx), q(origin.y + tr.dy)))
   if (tr.rotate) {
     const rad = (q(tr.rotate) * Math.PI) / 180
     const c = Math.cos(rad), s = Math.sin(rad)
@@ -1829,6 +1961,10 @@ export function vectorTypeSVG(
   const { layers } = vtPaintLayers(frame.config, glyphs.length)
   const motionOf = (i: number): VtGlyphMotion => frame.transforms[i] ?? IDENTITY_GLYPH_MOTION
   const advanceOf = (glyph: GlyphOutline): number => glyph.advance * place.scale
+  // The WHOLE-RUN shear, from the same function `drawVectorType` hands to its
+  // one `ctx.transform` — same config, same placement, same box. Resolved once
+  // for the document, not once per glyph: it does not depend on `i`.
+  const shear = vtRunShear(frame.config, frame.outlines, place, opts)
 
   // ── THE FILL ────────────────────────────────────────────────────────────────
   // Gradients — both the multi-stop `Gradient` and the two-colour `Fill` form —
@@ -1914,7 +2050,7 @@ export function vectorTypeSVG(
     const expanded = L.kind === 'extrude'
     const layerPaint = (glyph: GlyphOutline, i: number): VectorPaint => {
       if (runRect) {
-        const elementTransform = glyphSvgMatrix(glyphPlacement(glyph, place), advanceOf(glyph), motionOf(i), precision)
+        const elementTransform = glyphSvgMatrix(glyphPlacement(glyph, place), advanceOf(glyph), motionOf(i), shear, precision)
         return paintToVectorPaint(L.paint, {
           units: 'userSpaceOnUse',
           box: runRect,
@@ -2002,7 +2138,7 @@ export function vectorTypeSVG(
         // Same two inputs the canvas loop uses for the pivot — the placed origin
         // and the cell's own advance — so neither renderer can drift into its own
         // idea of where a glyph turns.
-        const transform = glyphSvgTransform(glyphPlacement(glyph, place), advanceOf(glyph), motionOf(i), precision)
+        const transform = glyphSvgTransform(glyphPlacement(glyph, place), advanceOf(glyph), motionOf(i), shear, precision)
         const out: Record<string, string | number> = {}
         if (transform) out.transform = transform
         // The layer's BLEND, which had nowhere to go while the export was one

@@ -397,7 +397,12 @@ describe('paintToVectorPaint — which of the nine fills have a vector form', ()
 
 /** Parse an SVG transform list into an affine, composed HERE rather than with
  *  the spine's own multiply, so the check cannot pass by sharing a bug with the
- *  code it is checking. */
+ *  code it is checking.
+ *
+ *  `matrix` is in the alternation because the whole-run SHEAR is written as one
+ *  — and a parser that silently skipped it would make every assertion below
+ *  PASS on a skewed document while the `<path>` carried a transform nothing had
+ *  checked. That is the shape of a test that agrees with itself. */
 function parseTransform(list: string): Affine {
   const mul = (m: Affine, n: Affine): Affine => [
     m[0] * n[0] + m[2] * n[1], m[1] * n[0] + m[3] * n[1],
@@ -405,15 +410,22 @@ function parseTransform(list: string): Affine {
     m[0] * n[4] + m[2] * n[5] + m[4], m[1] * n[4] + m[3] * n[5] + m[5],
   ]
   let out: Affine = [1, 0, 0, 1, 0, 0]
-  for (const m of list.matchAll(/(translate|rotate|scale)\(([^)]*)\)/g)) {
+  let seen = 0
+  for (const m of list.matchAll(/(translate|rotate|scale|matrix)\(([^)]*)\)/g)) {
     const a = (m[2] as string).trim().split(/[\s,]+/).map(Number)
+    seen++
     if (m[1] === 'translate') out = mul(out, [1, 0, 0, 1, a[0] as number, (a[1] ?? 0) as number])
     else if (m[1] === 'scale') out = mul(out, [a[0] as number, 0, 0, (a[1] ?? a[0]) as number, 0, 0])
+    else if (m[1] === 'matrix') out = mul(out, a.slice(0, 6) as unknown as Affine)
     else {
       const r = ((a[0] as number) * Math.PI) / 180
       out = mul(out, [Math.cos(r), Math.sin(r), -Math.sin(r), Math.cos(r), 0, 0])
     }
   }
+  // A list with a primitive this parser does not know is a list it has silently
+  // half-read. Better to fail here than to "verify" a transform nobody parsed.
+  expect(seen, `unparsed primitive in "${list}"`)
+    .toBe((list.match(/[a-zA-Z]+\(/g) ?? []).length)
   return out
 }
 
@@ -594,6 +606,96 @@ describe('vectorTypeSVG — a run-anchored ramp stays PUT while the type moves',
     expect(count(svg, LINEARS)).toBe(1)
     expect(svg).not.toContain('gradientTransform=')
     expect(svg).toMatch(/<path[^>]*transform="/)
+  })
+
+  // ── THE SHEAR CASE ────────────────────────────────────────────────────────
+  //
+  // The inverse of a rotate-and-scale is a rotate-and-scale; the inverse of a
+  // SHEAR has off-diagonal terms that neither of the two mirrored writers had
+  // ever produced before. This is the specific case `invertAffine` is most
+  // likely to be subtly wrong in, so it is asserted on its own rather than left
+  // to the general motion case above.
+  it('cancels a SKEWED glyph\'s transform too — the off-diagonal inverse', () => {
+    for (const skew of [{ skewX: 24 }, { skewY: -18 }, { skewX: 31, skewY: 22 }]) {
+      const { svg } = vectorTypeSVG(font, cfg({ fillAnchor: 'word', ...skew }), 0, BOX)
+      const paths = paintedPaths(svg)
+      expect(paths.length).toBe(WORD.length)
+      let checked = 0
+      for (const path of paths) {
+        const list = /transform="([^"]*)"/.exec(path)?.[1] as string
+        // A skewed run gives EVERY glyph a transform, motion or no motion.
+        expect(list, JSON.stringify(skew)).toBeTruthy()
+        expect(list).toContain('matrix(')
+        const id = /fill="url\(#([^)]*)\)"/.exec(path)?.[1] as string
+        const def = new RegExp(`<linearGradient id="${id}"[^>]*>`).exec(svg)?.[0] as string
+        const xf = /gradientTransform="matrix\(([^)]*)\)"/.exec(def)?.[1]
+        expect(xf, `no gradientTransform under ${JSON.stringify(skew)}`).toBeTruthy()
+        const M = parseTransform(list)
+        const G = (xf as string).trim().split(/\s+/).map(Number) as unknown as Affine
+        const id3 = multiplyAffine(M, G)
+        expect(id3[0]).toBeCloseTo(1, 3)
+        expect(id3[1]).toBeCloseTo(0, 3)
+        expect(id3[2]).toBeCloseTo(0, 3)
+        expect(id3[3]).toBeCloseTo(1, 3)
+        expect(id3[4]).toBeCloseTo(0, 2)
+        expect(id3[5]).toBeCloseTo(0, 2)
+        checked++
+      }
+      expect(checked).toBe(WORD.length)
+    }
+  })
+
+  it('the correction is REAL work — it is not the identity under skew', () => {
+    // The failure this closes is the quiet one: an inverse that came back `null`
+    // (a singular shear) drops the attribute, and every glyph then paints a ramp
+    // that rides it. The test above would still see M · G ≈ I if G were the
+    // identity and M were too, so the shear must be shown to be IN M.
+    const { svg } = vectorTypeSVG(font, cfg({ fillAnchor: 'word', skewX: 30 }), 0, BOX)
+    const list = /transform="([^"]*)"/.exec(paintedPaths(svg)[0] as string)?.[1] as string
+    const M = parseTransform(list)
+    // c = tan(30°): the shear is present and it is the requested one.
+    expect(M[2]).toBeCloseTo(Math.tan(Math.PI / 6), 3)
+    expect(M[0]).toBeCloseTo(1, 6)
+    expect(M[3]).toBeCloseTo(1, 6)
+    const xf = /gradientTransform="matrix\(([^)]*)\)"/.exec(svg)?.[1] as string
+    const G = xf.trim().split(/\s+/).map(Number)
+    // …and the correction carries the OFF-DIAGONAL term, which is exactly what a
+    // rotate/scale inverse never had.
+    expect(G[2]).toBeCloseTo(-Math.tan(Math.PI / 6), 3)
+  })
+
+  it('skew AND a stagger together — the hardest inverse in the studio', () => {
+    // spin-in gives every glyph its own rotate + scale + translate; the shear is
+    // composed on top of all of it, so M is a genuinely full matrix and every
+    // glyph's is different.
+    const c = mergeConfig({
+      ...withPreset('spin-in', { fillAnchor: 'word', skewX: 22, skewY: -14 }),
+      motion: {
+        ...withPreset('spin-in', { fillAnchor: 'word', skewX: 22, skewY: -14 }).motion,
+        stagger: { delay: 0.12, order: 'forward' },
+      },
+    })
+    const { svg } = vectorTypeSVG(font, c, 0.5, BOX)
+    const seen = new Set<string>()
+    let checked = 0
+    for (const path of paintedPaths(svg)) {
+      const list = /transform="([^"]*)"/.exec(path)?.[1] as string
+      const id = /fill="url\(#([^)]*)\)"/.exec(path)?.[1] as string
+      const def = new RegExp(`<linearGradient id="${id}"[^>]*>`).exec(svg)?.[0] as string
+      const xf = /gradientTransform="matrix\(([^)]*)\)"/.exec(def)?.[1] as string
+      seen.add(list)
+      const id3 = multiplyAffine(parseTransform(list), xf.trim().split(/\s+/).map(Number) as unknown as Affine)
+      expect(id3[0]).toBeCloseTo(1, 3)
+      expect(id3[1]).toBeCloseTo(0, 3)
+      expect(id3[2]).toBeCloseTo(0, 3)
+      expect(id3[3]).toBeCloseTo(1, 3)
+      expect(id3[4]).toBeCloseTo(0, 2)
+      expect(id3[5]).toBeCloseTo(0, 2)
+      checked++
+    }
+    expect(checked).toBe(WORD.length)
+    // Not one shared transform being checked four times.
+    expect(seen.size).toBeGreaterThan(1)
   })
 })
 

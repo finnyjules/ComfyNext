@@ -296,6 +296,40 @@ export interface VectorTypeConfig {
   tracking: number
   align: VtAlign
   /**
+   * WHOLE-RUN shear, in degrees. `skewX` leans the run horizontally (x displaced
+   * by `tan(skewX) · y`), `skewY` vertically.
+   *
+   * ## Whole-run, not per-glyph — and that is the entire design
+   *
+   * A shear applied about each glyph's OWN origin makes every letter slant while
+   * the WORD stays upright; the letters lean and the baseline does not, which is
+   * the wrong-looking one. The shear is composed once, about the run's ink
+   * centre, and every glyph rides it — see `vtRunShear` in `./canvas.ts`, which
+   * is the single place it is built for both renderers.
+   *
+   * ## It is a SHEAR, not an oblique
+   *
+   * A variable font's `slnt` axis re-draws the letterforms at an angle — the
+   * counters stay round, the stems stay the right thickness, the designer drew
+   * it. A shear is a matrix applied to finished geometry: round shapes become
+   * ellipses and horizontal stems thin out. It is the cruder effect, on purpose
+   * — it works on EVERY font (including the ones with no `slnt` axis at all) and
+   * it leans the whole composition rather than each letter. The control hint
+   * says so out loud rather than implying the two are equivalent.
+   *
+   * ## Still EXACTLY-correct vector
+   *
+   * A shear is affine, so it is a legal SVG `transform` and the export is
+   * geometry rather than an approximation — the property that separates this
+   * from the deferred perspective work, whose projection SVG path data cannot
+   * express.
+   *
+   * Bounded by `VT_SKEW_MAX`, and that bound is load-bearing rather than
+   * cosmetic — see its own note.
+   */
+  skewX: number
+  skewY: number
+  /**
    * The appearance stack — multiple fills, multiple strokes, extrudes, painted
    * BACK TO FRONT. Illustrator's Appearance panel, in a config.
    *
@@ -553,6 +587,10 @@ export const DEFAULT_CONFIG: VectorTypeConfig = {
   size: 120,
   tracking: 0,
   align: 'center',
+  // No shear — `vtRunShear` returns `null` for this pair, so an unskewed run is
+  // byte-identical to what it drew and exported before the control existed.
+  skewX: 0,
+  skewY: 0,
   // One white fill and nothing else — the same picture the legacy
   // `fill: '#ffffff'` + `strokeWidth: 0` default painted, said in the stack's
   // vocabulary. The default config's PIXELS are unchanged by this task.
@@ -575,6 +613,30 @@ export const VT_STAGGER_ORDERS = ['forward', 'reverse', 'center', 'edges', 'rand
 export const VT_STAGGER_DELAY_MAX = 1
 /** Seeds are small integers so the "re-roll the shuffle" control is a short drag. */
 export const VT_STAGGER_SEED_MAX = 999
+/**
+ * The bound on `skewX` / `skewY`, per axis, in degrees — and it is a MATH
+ * constraint wearing a taste constraint's clothes.
+ *
+ * The shear is `[1, tan(skewY), tan(skewX), 1, 0, 0]`, whose determinant is
+ * `1 − tan(skewX)·tan(skewY)`. That is ZERO along the whole curve
+ * `tan(skewX)·tan(skewY) = 1` — most reachably at 45°/45°, two sliders a user
+ * can land on by accident — and a singular run transform collapses the word onto
+ * a line. Worse than the picture: `invertAffine` refuses a singular matrix, so
+ * the `gradientTransform` that pins a word-anchored ramp in document space
+ * silently disappears and the export stops matching the canvas. NEAR-singular is
+ * no better; the SVG writer rounds the matrix to `precision` before inverting,
+ * and a 1e-3 rounding amplifies without bound as the determinant approaches 0.
+ *
+ * 40° holds `|tan|` to 0.8391, so the product cannot exceed 0.7041 and the
+ * determinant cannot fall below **0.2959** anywhere in the declared range. The
+ * transform is well-conditioned by construction rather than by hoping nobody
+ * drags both sliders. (A test asserts that floor across the whole square.)
+ *
+ * It costs nothing anyone wants: a designed oblique is 8–15°, the Compositor's
+ * own Slant sliders reach 60° on a raster layer that has no inverse to protect,
+ * and a 40° lean is already past caricature.
+ */
+export const VT_SKEW_MAX = 40
 /** Export heights the motion block accepts, matching gradientfx's. */
 export const VT_MOTION_SIZES = [1080, 1440, 2160] as const
 
@@ -1226,6 +1288,12 @@ export function mergeConfig(raw: unknown): VectorTypeConfig {
     size: num(o.size, d.size),
     tracking: num(o.tracking, d.tracking),
     align: oneOf(o.align, VT_ALIGNS, d.align),
+    // NOT clamped here, deliberately — `size` is not either. The bound belongs
+    // at the RENDER choke point (`vtRunShear`), because a motion track's
+    // `from`/`to` are arbitrary numbers that never pass through this merge, and
+    // a guarantee only one of the two entrances honours is not a guarantee.
+    skewX: num(o.skewX, d.skewX),
+    skewY: num(o.skewY, d.skewY),
     appearance,
     motion: tracks === motion.tracks ? motion : { ...motion, tracks },
   }

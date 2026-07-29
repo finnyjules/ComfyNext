@@ -20,6 +20,7 @@ import {
   VT_EXTRUDE_DEPTH_MAX,
   VT_FILL_ANCHORS,
   VT_FONT_IDS,
+  VT_SKEW_MAX,
   VT_STAGGER_DELAY_MAX,
   VT_STAGGER_ORDERS,
   VT_STAGGER_SEED_MAX,
@@ -255,6 +256,23 @@ export const VT_CONTROLS: VtControl[] = [
   slider('tracking', 'Tracking', -200, 500, 1, 'Layout', DEFAULT_CONFIG.tracking,
     "Extra letter spacing in 1/1000 em; 0 = the font's own spacing, negative tightens."),
   select('align', 'Align', [...VT_ALIGNS], DEFAULT_CONFIG.align, 'Layout', 'Horizontal anchoring of the glyph run.'),
+  // ── SKEW, and the hint is deliberately not flattering ──────────────────────
+  // The `slnt` axis hint two hundred lines down says "a true oblique, not a
+  // skew", and this studio means it: an oblique is drawn by the type designer,
+  // with round counters and stems that keep their weight. A shear is a matrix
+  // over finished geometry — circles become ellipses and horizontals thin out.
+  // Saying "slants the type" here would leave the two reading as the same knob
+  // and quietly recommend the worse one, so the hint names the trade and points
+  // at the axis. What it is FOR is the two things `slnt` cannot do: it works on
+  // every font, and it leans the whole COMPOSITION rather than each letter.
+  //
+  // Ungated: unlike an axis, there is no font for which this does nothing.
+  // Animatable by default — `animatableTargets` admits any slider that does not
+  // opt out, and a shear is a point on a scale, not a mode.
+  slider('skewX', 'Skew X', -VT_SKEW_MAX, VT_SKEW_MAX, 1, 'Layout', DEFAULT_CONFIG.skewX,
+    "Leans the WHOLE RUN sideways, in degrees — a shear over the finished outlines, so counters go oval and horizontal strokes thin. If the font has a Slant axis, that is the better tool: it is a true oblique the designer drew. Reach for this on a font with no such axis, or when you want the composition to lean rather than the letters."),
+  slider('skewY', 'Skew Y', -VT_SKEW_MAX, VT_SKEW_MAX, 1, 'Layout', DEFAULT_CONFIG.skewY,
+    'The same shear on the other axis: the run tilts vertically, rising or falling across its own width. No font axis does this one.'),
 
   // --- Paint ----------------------------------------------------------------
   // The ACTIVE APPEARANCE LAYER's own keys, declared once under the `layer.`
@@ -408,7 +426,11 @@ const AXIS_HINTS: Record<string, string> = {
   wght: 'Weight — thin to black, as real outline geometry.',
   wdth: 'Width — condensed to extended.',
   opsz: 'Optical size — the cut the designer intended at this size.',
-  slnt: 'Slant — a true oblique, not a skew.',
+  // There is now a Skew X slider in Layout, so this line has a companion rather
+  // than an absent one. It still says which is better — the axis re-draws the
+  // letterforms, the slider shears them — and it stays the FIRST thing offered
+  // wherever the font declares the axis.
+  slnt: 'Slant — a true oblique the designer drew, not the Skew X shear in Layout. Prefer this one.',
   ital: 'Italic — the font\'s own italic forms where it has them.',
   GRAD: 'Grade — weight WITHOUT changing the width the text occupies.',
   XOPQ: 'Thick stroke — thickness of the vertical strokes.',
@@ -484,6 +506,8 @@ THE FONT COMES FIRST. \`fontId\` picks the variable family, and it decides WHICH
 AXES ARE THE POINT. Every axis the chosen font declares is a live slider at \`axes.<tag>\`: the familiar ones are \`axes.wght\` (weight), \`axes.wdth\` (width), \`axes.opsz\` (optical size) and \`axes.slnt\` (slant), and Roboto Flex adds the rare ones — \`axes.GRAD\` (grade: weight without changing the width the text occupies), \`axes.XOPQ\` (thick-stroke thickness), \`axes.XTRA\` (counter width), \`axes.YTAS\` (ascender height), \`axes.YTLC\` (x-height). These interpolate the OUTLINE itself, so reach for an axis before faking weight with an outline. Only tags the current font declares exist; anything else is ignored.
 
 LAYOUT. \`size\` is the em size in output pixels. \`tracking\` is extra letter spacing in 1/1000 em (0 = the font's own spacing, negative tightens). \`align\` anchors the run horizontally.
+
+SKEW LEANS THE WHOLE RUN, and it is the CRUDER way to slant type. \`skewX\` shears the run sideways in degrees and \`skewY\` tilts it vertically; both apply to the composition as one piece, so the word leans rather than each letter leaning inside an upright word. When the user asks for italic or slanted type and the font declares a slant axis, reach for \`axes.slnt\` FIRST — that is a true oblique the type designer drew, with round counters and even stems, where a shear stretches the finished outlines into ovals and thins the horizontals. Use skew when the font has no slant axis, when the user explicitly asks to skew or shear, or when the whole block of type should lean. \`skewY\` has no font-axis equivalent at all.
 
 STAGGER MAKES IT KINETIC. \`motion.stagger.delay\` is the gap in seconds between one glyph and the next; at 0 the whole word animates as one, and raising it turns any animated axis into a wave that travels across the word. \`motion.stagger.order\` picks which glyph leads — forward, reverse, center (middle outwards), edges (outermost inwards) or random — and \`motion.stagger.seed\` re-rolls the random one. Reach for these when the user asks for letters to cascade, ripple, or come in one at a time.
 
