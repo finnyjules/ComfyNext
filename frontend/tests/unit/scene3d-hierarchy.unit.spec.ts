@@ -113,3 +113,105 @@ describe('scene3d hierarchy', () => {
     expect(objects[1]!.parentId).toBe('g')
   })
 })
+
+import * as THREE from 'three'
+import { worldMatrixOf, groupObjects, ungroupObject } from '~/lib/scene3d/hierarchy'
+import { createGroup } from '~/lib/scene3d/config'
+
+/** World-space position of `id`, derived independently of the code under test. */
+function worldPos(objects: SceneObject[], id: string): [number, number, number] {
+  const v = new THREE.Vector3().setFromMatrixPosition(worldMatrixOf(objects, id))
+  return [v.x, v.y, v.z]
+}
+
+function expectClose(a: readonly number[], b: readonly number[]) {
+  a.forEach((n, i) => expect(n).toBeCloseTo(b[i]!, 5))
+}
+
+describe('scene3d group/ungroup transforms', () => {
+  it('composes a parent transform into a child world matrix', () => {
+    const parent = obj('p'); parent.position = [1, 0, 0]
+    const child = obj('c', 'p'); child.position = [0, 2, 0]
+    expectClose(worldPos([parent, child], 'c'), [1, 2, 0])
+  })
+
+  it('preserves world position when grouping', () => {
+    const a = obj('a'); a.position = [1, 0, 0]
+    const b = obj('b'); b.position = [3, 0, 0]
+    const before = [worldPos([a, b], 'a'), worldPos([a, b], 'b')]
+    const group = createGroup([a, b])
+    const after = groupObjects([a, b], ['a', 'b'], group)
+    expect(after.find(o => o.id === 'a')!.parentId).toBe(group.id)
+    expectClose(worldPos(after, 'a'), before[0]!)
+    expectClose(worldPos(after, 'b'), before[1]!)
+  })
+
+  it('places the group at the selection bounds centre', () => {
+    const a = obj('a'); a.position = [1, 0, 0]
+    const b = obj('b'); b.position = [3, 0, 0]
+    const group = createGroup([a, b])
+    const after = groupObjects([a, b], ['a', 'b'], group)
+    expectClose(after.find(o => o.id === group.id)!.position, [2, 0, 0])
+  })
+
+  // THE test this feature lives or dies on. Rebasing by subtraction passes every
+  // assertion above and fails this one: a rotated parent means the child's local
+  // offset is no longer its world offset.
+  it('preserves world position when grouping under a ROTATED, SCALED ancestor', () => {
+    const outer = obj('outer')
+    outer.position = [5, 1, -2]
+    outer.rotation = [0, Math.PI / 3, Math.PI / 7]
+    outer.scale = [2, 0.5, 1.5]
+    const a = obj('a', 'outer'); a.position = [1, 0, 0]
+    const b = obj('b', 'outer'); b.position = [0, 3, 1]
+    const objects = [outer, a, b]
+    const before = [worldPos(objects, 'a'), worldPos(objects, 'b')]
+
+    const group = createGroup(objects)
+    group.parentId = 'outer'
+    const after = groupObjects(objects, ['a', 'b'], group)
+
+    expectClose(worldPos(after, 'a'), before[0]!)
+    expectClose(worldPos(after, 'b'), before[1]!)
+  })
+
+  it('preserves world position when ungrouping under a rotated ancestor', () => {
+    const outer = obj('outer')
+    outer.position = [0, 2, 0]
+    outer.rotation = [Math.PI / 5, Math.PI / 3, 0]
+    outer.scale = [1.5, 1.5, 1.5]
+    const group = createGroup([outer]) as SceneObject
+    group.parentId = 'outer'
+    group.position = [1, 0, 2]
+    group.rotation = [0, Math.PI / 4, 0]
+    const a = obj('a', group.id); a.position = [2, 0, 0]
+    const objects = [outer, group, a]
+    const before = worldPos(objects, 'a')
+
+    const after = ungroupObject(objects, group.id)
+    expect(after.find(o => o.id === group.id)).toBeUndefined()
+    expect(after.find(o => o.id === 'a')!.parentId).toBe('outer')
+    expectClose(worldPos(after, 'a'), before)
+  })
+
+  it('group then ungroup is an identity on world transforms', () => {
+    const a = obj('a'); a.position = [1, 2, 3]; a.rotation = [0.3, 0.4, 0.5]; a.scale = [1, 2, 3]
+    const b = obj('b'); b.position = [-4, 0, 1]
+    const before = [worldPos([a, b], 'a'), worldPos([a, b], 'b')]
+    const group = createGroup([a, b])
+    const grouped = groupObjects([a, b], ['a', 'b'], group)
+    const back = ungroupObject(grouped, group.id)
+    expectClose(worldPos(back, 'a'), before[0]!)
+    expectClose(worldPos(back, 'b'), before[1]!)
+  })
+
+  it('refuses to group an object into its own descendant', () => {
+    const g = createGroup([]) as SceneObject
+    const child = obj('child', g.id)
+    const inner = createGroup([g, child])
+    inner.parentId = 'child'
+    const after = groupObjects([g, child, inner], [g.id], inner)
+    // The illegal reparent is skipped, leaving the graph acyclic.
+    expect(after.find(o => o.id === g.id)!.parentId).toBeUndefined()
+  })
+})
