@@ -60,6 +60,10 @@ import {
 } from './config'
 import { VT_CONTROLS, VT_LAYER_PREFIX, derivedAxisControls, visibleVtControls } from './controls'
 import { vtLayerLabels } from './layerLabel'
+// The stagger's `random` order and the blink/scatter/flicker family must draw on
+// ONE seeded hash, or "seeded and stable" holds twice with two different
+// meanings. ./random.ts is its home; it imports nothing, so this costs nothing.
+import { hash32 } from './random'
 import { getByPath, setByPath } from '~/lib/studio/path'
 import { parseIdPath, resolveIdPath, setByIdPath } from '~/lib/studio/idPath'
 import { trackValue } from '~/lib/studio/track'
@@ -361,18 +365,6 @@ export function resolveStagger(cfg: VectorTypeConfig): VtStaggerConfig {
       : DEFAULT_STAGGER.order,
     seed: finite(s?.seed, DEFAULT_STAGGER.seed),
   }
-}
-
-/**
- * A 32-bit avalanche hash of (index, seed). Integer maths only — no floats, no
- * `Math.random()`, no module-level mutable RNG state — so the same inputs give
- * the same bits in the browser preview, the headless bake and the SVG export.
- */
-function hash32(index: number, seed: number): number {
-  let h = (index | 0) ^ Math.imul(seed | 0, 0x9e3779b1)
-  h = Math.imul(h ^ (h >>> 16), 0x21f0aaad)
-  h = Math.imul(h ^ (h >>> 15), 0x735a2d97)
-  return (h ^ (h >>> 15)) >>> 0
 }
 
 // The shuffled ranks depend only on (count, seed), and within a frame both are
