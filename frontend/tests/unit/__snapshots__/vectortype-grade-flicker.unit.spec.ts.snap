@@ -1,0 +1,23 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`determinism — the same \`t\` twice, and a bake matching the preview > the seed is FIXED, so the tile looks the same every time it plays > grade-flicker @ phase 0 1`] = `
+[
+  0,
+  69.287307,
+  0,
+  0,
+  62.428852,
+  0,
+]
+`;
+
+exports[`determinism — the same \`t\` twice, and a bake matching the preview > the seed is FIXED, so the tile looks the same every time it plays > grade-flicker @ phase 0.5 1`] = `
+[
+  0,
+  0,
+  113.196971,
+  64.051544,
+  -140.228789,
+  91.500396,
+]
+`;

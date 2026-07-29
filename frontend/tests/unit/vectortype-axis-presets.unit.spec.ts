@@ -118,13 +118,17 @@ const env = (axes: readonly VtAxis[] = INTER, resting?: Record<string, number>) 
 
 // ── The catalog ─────────────────────────────────────────────────────────────
 
-describe('the catalog — five presets, each naming a REAL axis', () => {
-  it('is exactly the five, with the axis each one needs', () => {
+describe('the catalog — six presets, each naming a REAL axis', () => {
+  it('is exactly the six, with the axis each one needs', () => {
     expect(VT_AXIS_PRESETS.map(p => [p.id, p.slot, p.axis])).toEqual([
       ['weight-in', 'in', 'wght'],
       ['weight-wave', 'loop', 'wght'],
       ['width-breathe', 'loop', 'wdth'],
       ['grade-pulse', 'loop', 'GRAD'],
+      // The two GRAD tiles sit together in the gallery: one word beating as a
+      // whole, one letter-by-letter fault. Both no-reflow, neither a variant of
+      // the other — see `vectortype-grade-flicker.unit.spec.ts`.
+      ['grade-flicker', 'loop', 'GRAD'],
       ['optical-drift', 'loop', 'opsz'],
     ])
   })
@@ -206,8 +210,11 @@ describe('capabilities — derived by probing, exactly as the engine does', () =
     expect(loopInter.slice(0, engine.length)).toEqual(engine)
     expect(loopInter).toContain('weight-wave')
     expect(loopInter).not.toContain('grade-pulse')             // Inter has no GRAD
+    expect(loopInter).not.toContain('grade-flicker')            // …nor for the flicker
     expect(loopFlex).toContain('grade-pulse')
-    expect(loopFlex.length).toBe(engine.length + 4)
+    expect(loopFlex).toContain('grade-flicker')
+    // Every LOOP preset in the table, since Roboto Flex has all four tags.
+    expect(loopFlex.length).toBe(engine.length + VT_AXIS_PRESETS.filter(p => p.slot === 'loop').length)
     // No font loaded yet ⇒ the honest answer is the engine's list alone.
     expect(vtPresetIdsFor('loop')).toEqual(engine)
     // …and the tiles a surface greys out come from the same one import.
@@ -342,13 +349,15 @@ describe('Grade Pulse is NOT Weight Wave with a different tag', () => {
 // ── Availability ────────────────────────────────────────────────────────────
 
 describe('availability is per FONT, and says why', () => {
-  it('a 2-axis font runs three of the five, and refuses two BY NAME', () => {
+  it('a 2-axis font runs three of the six, and refuses three BY NAME', () => {
     const offers = [...vtAxisOffersFor('in', INTER), ...vtAxisOffersFor('loop', INTER)]
-    expect(offers.length).toBe(5)                     // all five are OFFERED, not hidden
+    // EVERY preset is offered, none hidden — the module's stated contract, and
+    // the reason this counts the table rather than a literal.
+    expect(offers.length).toBe(VT_AXIS_PRESETS.length)
     const ok = offers.filter(o => o.available).map(o => o.preset.id)
     const no = offers.filter(o => !o.available)
     expect(ok.sort()).toEqual(['optical-drift', 'weight-in', 'weight-wave'])
-    expect(no.map(o => o.preset.id).sort()).toEqual(['grade-pulse', 'width-breathe'])
+    expect(no.map(o => o.preset.id).sort()).toEqual(['grade-flicker', 'grade-pulse', 'width-breathe'])
     for (const o of no) {
       expect(o.reason, o.preset.id).toBeTruthy()
       expect(o.reason!).toContain(o.preset.axis)      // the TAG the user must go find
@@ -357,9 +366,9 @@ describe('availability is per FONT, and says why', () => {
     }
   })
 
-  it('a 13-axis font runs all five, with no reasons attached', () => {
+  it('a 13-axis font runs all six, with no reasons attached', () => {
     const offers = [...vtAxisOffersFor('in', ROBOTO_FLEX), ...vtAxisOffersFor('loop', ROBOTO_FLEX)]
-    expect(offers.length).toBe(5)
+    expect(offers.length).toBe(VT_AXIS_PRESETS.length)
     expect(offers.every(o => o.available)).toBe(true)
     expect(offers.every(o => o.reason === undefined)).toBe(true)
     // The font's REAL range comes back with the offer, so a tile can show it.

@@ -51,11 +51,26 @@
  * — the user never learns the axis exists, never learns fonts differ, and the
  * gallery silently shrinks to a conventional kinetic-text picker. So the tile is
  * rendered, greyed, and carries the reason. See `vtAxisAvailability`.
+ *
+ * ## One preset here is SEEDED, and time enters it as a bucket
+ *
+ * `grade-flicker` gives every letter its own `GRAD` state, re-picked on a fast
+ * beat inside the loop cycle. Everything else in the table is a closed-form curve
+ * of `(phase, i, n)`; this one reads `glyphRandom` from `./random.ts`, and it is
+ * still a pure function of its arguments because the phase is QUANTISED into a
+ * sub-beat before it reaches the hash (`vtGradeFlickerStep`) — never rolled. The
+ * studio's promise is that the preview, the PNG bake, the video bake and the SVG
+ * export draw the same frame at the same `t`, and a `Math.random()` flicker breaks
+ * that in the way that looks fine: all four flicker convincingly, and differently.
  */
 // TYPE-ONLY, and it must stay that way — ./font.ts loads fontkit at module
 // scope and this module is reached from every node card (via ./presetMotion.ts).
 // Same rule as ./motion.ts and ./controls.ts, for the same reason.
 import type { VtAxis } from './font'
+// SEEDED randomness for `grade-flicker`, the one preset here that is not a
+// closed-form curve. `./random.ts` imports nothing at all, so this stays the
+// light module every node card can afford.
+import { glyphRandom } from './random'
 
 /** The three slots a preset can occupy, spelled as `LayerAnimation`'s are. */
 export type VtAxisSlot = 'in' | 'out' | 'loop'
@@ -146,7 +161,119 @@ function headroom(ctx: VtAxisContext, frac: number): number {
   return (up >= span(ctx.axis) * 0.25 ? up : -down) * frac
 }
 
-// ── The five ────────────────────────────────────────────────────────────────
+/**
+ * Room on BOTH sides of `rest`, each as the share `frac` of what the axis
+ * actually has there.
+ *
+ * `headroom` above is one-sided because a *pulse* is one-sided. A flicker is
+ * not: a failing sign surges AND sags, and a one-directional flicker is
+ * `grade-pulse` with noise on it. Scaling each side into its own room (rather
+ * than taking one symmetric amplitude) is the decision `./scatter.ts` measured —
+ * a symmetric swing clamped at an axis end piles several glyphs onto exactly the
+ * same value, which reads as a rendering bug in an effect whose whole point is
+ * that the letters differ.
+ */
+function room(ctx: VtAxisContext, frac: number): { up: number; down: number } {
+  const f = Math.max(0, frac)
+  return {
+    up: Math.max(0, ctx.axis.max - ctx.rest) * f,
+    down: Math.max(0, ctx.rest - ctx.axis.min) * f,
+  }
+}
+
+// ── Grade flicker's constants, named because they are choices ────────────────
+
+/**
+ * Sub-beats per loop cycle.
+ *
+ * THE FLICKER'S RATE IS THE LOOP DURATION — there is no new control, because
+ * every loop preset in this studio is already timed by the duration on its slot.
+ * 12 steps across the default 0.8 s cycle is 15 changes a second, which is a
+ * failing fluorescent tube; across a 3 s cycle it is 4 a second, a lazy neon
+ * sign. Both are the same preset with the slider the user already knows.
+ */
+const FLICKER_STEPS = 12
+
+/** The share of steps a glyph spends on the user's own design, doing nothing.
+ *  Above 0 for a reason: a value that changes on *every* step is not a flicker,
+ *  it is noise, and the eye needs the steady letters to read the moving ones
+ *  against. */
+const FLICKER_STEADY = 0.5
+
+/** Of the steps that DO move, the share that go lighter rather than heavier.
+ *  Biased toward the surge because up is the direction `GRAD` means (see
+ *  `headroom`), and a sign that mostly dims reads as a fade, not a fault. */
+const FLICKER_SAG = 0.35
+
+/** The faintest a flicker may be, as a share of the room on its side. Without a
+ *  floor, a uniform magnitude puts half the flickering glyph-steps within a few
+ *  axis units of rest, i.e. invisible — the effect would measure as busy and
+ *  look almost static. */
+const FLICKER_MIN = 0.45
+
+/** How much of each side's room the flicker is allowed to use. Short of 1 so
+ *  the extreme is reached rather than sat on, and so a stroke-weight axis never
+ *  quite hits the end of its own gvar deltas. */
+const FLICKER_ROOM = 0.8
+
+/**
+ * The random channels grade flicker reads, and NOTHING ELSE READS.
+ *
+ * Exported by name for the same reason `./blink.ts` exports `VT_BLINK_CHANNEL`:
+ * so the next effect can see what is taken. Two effects sharing a channel do not
+ * merely correlate — `tests/unit/vectortype-random.unit.spec.ts` measures
+ * r = 1.000000, the *same series* — and on screen the letter that blinks off is
+ * the letter that flickers hardest, which reads as one effect instead of two.
+ *
+ * Two channels rather than one, exactly as blink splits `'blink'` (who) from
+ * `'blink.phase'` (when): here it is WHICH WAY a glyph goes on this step and HOW
+ * FAR. Sharing one stream would tie the two together — every hard surge also the
+ * one nearest the top of the range — and the eye reads that ordering as a
+ * pattern.
+ */
+export const VT_GRADE_FLICKER_CHANNEL = 'grade.flicker'
+export const VT_GRADE_FLICKER_LEVEL_CHANNEL = 'grade.flicker.level'
+
+/**
+ * The flicker's seed, fixed.
+ *
+ * `motion.blink.seed` and `motion.scatter.seed` exist because those are control
+ * BLOCKS — a group of sliders the user tunes, where a re-roll is one more knob.
+ * An axis preset is a TILE: you click it and it runs. A tile with a hidden seed
+ * nobody can change is the honest version of that promise — the flicker looks
+ * the same every time the clip plays, which is also the only way the preview,
+ * the PNG bake and the SVG export can agree.
+ *
+ * An arbitrary odd constant. Its only job is not to be 0 (see `VT_RANDOM_SALT`).
+ */
+export const VT_GRADE_FLICKER_SEED = 0x5a17b3
+
+/** Sub-beats per cycle, published so a spec can sample step edges rather than
+ *  restate the number. */
+export const VT_GRADE_FLICKER_STEPS = FLICKER_STEPS
+
+/**
+ * Which sub-beat a loop phase falls in — the QUANTISER, and the whole reason
+ * this preset is deterministic.
+ *
+ * `Math.floor(phase × steps)` is a pure function of the phase, which is itself a
+ * pure function of `t` (`vtSlotPhase`). So a preview and a bake evaluating the
+ * same `t` land on the same step and draw the same frame; no state, no
+ * `Math.random`, no dependence on how many frames have been drawn. It is
+ * `timeBucket` in the loop's own coordinates rather than in seconds, because the
+ * loop duration is what times every other preset here.
+ *
+ * Phase is `[0, 1)` by construction, but `vtAxisPresetCapabilities` probes at
+ * exactly 1 and a stored blob can say anything, so the step is clamped into the
+ * cycle rather than allowed to fall off the end into a 13th bucket that only
+ * one sample ever visits.
+ */
+export function vtGradeFlickerStep(phase: number): number {
+  const p = Number.isFinite(phase) ? Math.max(0, phase) : 0
+  return Math.min(FLICKER_STEPS - 1, Math.floor(p * FLICKER_STEPS))
+}
+
+// ── The presets ─────────────────────────────────────────────────────────────
 
 const PRESETS: VtAxisPreset[] = [
   {
@@ -232,6 +359,62 @@ const PRESETS: VtAxisPreset[] = [
     fn: (phase, _i, _n, ctx) => {
       const beat = Math.max(0, Math.sin(TWO_PI * phase))
       return ctx.rest + headroom(ctx, 0.6) * beat * beat
+    },
+  },
+  {
+    id: 'grade-flicker',
+    slot: 'loop',
+    label: 'Grade Flicker',
+    pitch: 'A failing sign — the letters waver in weight, none of them moves',
+    axis: 'GRAD',
+    axisName: 'Grade',
+    group: 'axis',
+    ease: 'none',
+    // THE PAIR WITH BLINK, and the one preset in this table that is not a
+    // closed-form curve.
+    //
+    // Grade Pulse and this are both GRAD, and they are not variants of each
+    // other. The pulse is a heartbeat: one curve, the whole word together, every
+    // letter identical at any instant. This is the opposite arrangement of the
+    // same axis — every letter on its OWN state, changing on a fast quantised
+    // beat, most of them steady at any one moment. Pulse is the word breathing;
+    // flicker is the word's electrics failing.
+    //
+    // Why it belongs on GRAD rather than on `wght`, which is the whole point of
+    // the tile: GRAD changes stroke weight WITHOUT changing advance width, so a
+    // letter can jump two-thirds of the way to black and back and the line does
+    // not reflow — nothing shuffles sideways, nothing re-wraps, the word stays
+    // exactly where the user placed it. The same flicker on `wght` makes the run
+    // twitch left and right as the advances change. Measured on the real 13-axis
+    // Roboto Flex file, "Sailor": the shaped advances are IDENTICAL to the last
+    // unit across the entire GRAD range, -200 to +150 — 0.000 % — while the ink
+    // area rises 84 %; across the wght range the same advances move +20.8 %. A
+    // warp-based tool cannot produce this at all; it has no notion of a letter
+    // being re-cut in place.
+    //
+    // Seeded, and on ITS OWN channels — never blink's and never the scatter's, so
+    // "the letter that goes dark" and "the letter that surges" are independent
+    // draws. Together they are the broken-neon look; correlated they would read
+    // as a single effect.
+    fn: (phase, i, _n, ctx) => {
+      const step = vtGradeFlickerStep(phase)
+      const pick = glyphRandom(i, VT_GRADE_FLICKER_SEED, VT_GRADE_FLICKER_CHANNEL, step)
+      // Most letters, most of the time, sit exactly on the user's own design —
+      // returning `rest` emits NO delta at all (see `vtAxisDelta`), so a steady
+      // glyph costs the renderer nothing and shapes at the shared base position.
+      if (pick < FLICKER_STEADY) return ctx.rest
+      const { up, down } = room(ctx, FLICKER_ROOM)
+      const sag = (pick - FLICKER_STEADY) / (1 - FLICKER_STEADY) < FLICKER_SAG
+      // MIRROR into the side that has room, rather than freeze against an end.
+      // A user who parks Grade at the top of the axis has nowhere heavier to go;
+      // the honest answer is "then it flickers downward", not "then a third of
+      // the letters stop moving" (`./scatter.ts` measured that failure).
+      const signed = sag
+        ? (down > 0 ? -down : up)
+        : (up > 0 ? up : -down)
+      const level = FLICKER_MIN + (1 - FLICKER_MIN)
+        * glyphRandom(i, VT_GRADE_FLICKER_SEED, VT_GRADE_FLICKER_LEVEL_CHANNEL, step)
+      return ctx.rest + signed * level
     },
   },
   {
