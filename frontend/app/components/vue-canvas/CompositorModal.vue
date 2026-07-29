@@ -50,7 +50,9 @@ import CompositorClonerPanel from '~/components/vue-canvas/compositor/Compositor
 import FillControl from '~/components/vue-canvas/compositor/FillControl.vue'
 import FillSwatch from '~/components/vue-canvas/compositor/FillSwatch.vue'
 import PostEffectsControls from '~/components/vue-canvas/PostEffectsControls.vue'
-import { isChainEffect } from '~/lib/compositor/postEffects'
+import { isChainEffect, isGpuEffect } from '~/lib/compositor/postEffects'
+/** Everything the post-effects panel owns: the 2D chain plus the GPU stage. */
+const isPanelEffect = (e: { type: string }) => isChainEffect(e) || isGpuEffect(e)
 import {
   samplePointsFromStroke, layerAffine, invertAffine, applyAffine, wiredImageAffine,
   luminanceToAlpha, alphaBounds, cutoutPlacement, wiredCutoutPlacement, pickSamSegments,
@@ -4958,10 +4960,13 @@ onUnmounted(() => {
             </div>
           </div>
 
-          <!-- Post-processing (adjust / bloom / grain / vignette / duotone) -->
+          <!-- Post-processing (adjust / bloom / grain / vignette / duotone / dof).
+               Both the 2D chain and the GPU stage are edited here, so the filter has to
+               admit both — passing only isChainEffect would silently drop dof. -->
           <PostEffectsControls class="mt-3"
-            :effects="(((selectedLocal as any).effects || []).filter(isChainEffect) as any)"
-            @update="(fx: any[]) => setLocal(selectedLocal!.id, { effects: [...((selectedLocal as any).effects || []).filter((e: any) => !isChainEffect(e)), ...fx] } as any)" />
+            :effects="(((selectedLocal as any).effects || []).filter(isPanelEffect) as any)"
+            :depth-filename="selectedLocal?.kind === 'image' ? (selectedLocal as any).filename : undefined"
+            @update="(fx: any[]) => setLocal(selectedLocal!.id, { effects: [...((selectedLocal as any).effects || []).filter((e: any) => !isPanelEffect(e)), ...fx] } as any)" />
 
           <!-- Layer mask: clip this layer to another layer's silhouette (cross-source) -->
           <div class="mt-3">

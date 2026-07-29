@@ -1,12 +1,39 @@
 <!-- frontend/app/components/vue-canvas/PostEffectsControls.vue -->
 <script setup lang="ts">
-// Post-processing effect sections (adjust/bloom/grain/vignette/duotone).
+// Post-processing effect sections (adjust/bloom/grain/vignette/duotone/dof).
 // Emits the FULL replacement chain array — the owner decides where it lives
 // (layer.effects for a layer, sailor_localFx for the document).
+//
+// `depthFilename` gates the Depth of Field section: it runs on the GPU against a depth
+// map, so it is only offered for image layers. Pass the layer's filename to enable it.
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { defaultPostEffect, type PostEffect } from '~/lib/compositor/postEffects'
+import { dofAvailable, dofUnavailableReason } from '~/lib/compositor/dofPass'
+import {
+  depthMessageFor, depthStatusFor, onDepthChange, requestDepth,
+} from '~/lib/compositor/depthRegistry'
 
-const props = defineProps<{ effects: PostEffect[] }>()
+const props = defineProps<{ effects: PostEffect[]; depthFilename?: string }>()
 const emit = defineEmits<{ (e: 'update', effects: PostEffect[]): void }>()
+
+// The registry is a plain module, not reactive — bump a counter on change so the
+// status line re-renders when depth arrives or fails.
+const depthTick = ref(0)
+let stopDepthWatch: (() => void) | null = null
+onMounted(() => { stopDepthWatch = onDepthChange(() => { depthTick.value++ }) })
+onBeforeUnmount(() => { stopDepthWatch?.(); stopDepthWatch = null })
+
+const glOk = computed(() => dofAvailable())
+const glReason = computed(() => dofUnavailableReason())
+const depthStatus = computed(() => {
+  void depthTick.value
+  return props.depthFilename ? depthStatusFor(props.depthFilename) : 'idle'
+})
+const depthMessage = computed(() => {
+  void depthTick.value
+  return props.depthFilename ? depthMessageFor(props.depthFilename) : ''
+})
+function retryDepth() { if (props.depthFilename) requestDepth(props.depthFilename) }
 
 interface ParamSpec { key: string; label: string; min: number; max: number; step: number }
 interface SectionSpec { type: PostEffect['type']; label: string; params: ParamSpec[]; colors?: [string, string][] }
@@ -34,7 +61,21 @@ const SECTIONS: SectionSpec[] = [
   { type: 'duotone', label: 'Duotone', colors: [['shadows', 'Shadows'], ['highlights', 'Highlights']], params: [
     { key: 'mix', label: 'Mix', min: 0, max: 1, step: 0.01 },
   ] },
+  // Blades < 3 renders a circular iris; 6 gives hexagonal bokeh. Highlight boost is
+  // what turns bright defocused points into discs rather than grey mush.
+  { type: 'dof', label: 'Depth of Field', params: [
+    { key: 'focus', label: 'Focus', min: 0, max: 1, step: 0.01 },
+    { key: 'range', label: 'Sharp band', min: 0, max: 1, step: 0.01 },
+    { key: 'aperture', label: 'Aperture', min: 0, max: 1, step: 0.005 },
+    { key: 'bladeCount', label: 'Blades', min: 0, max: 12, step: 1 },
+    { key: 'bladeRotation', label: 'Blade angle', min: 0, max: 360, step: 1 },
+    { key: 'bloomThreshold', label: 'Highlight', min: 0, max: 1, step: 0.01 },
+    { key: 'bloomStrength', label: 'Boost', min: 0, max: 4, step: 0.05 },
+  ] },
 ]
+
+// Depth of field needs a depth map, so it is offered only where one can exist.
+const sections = computed(() => SECTIONS.filter(s => s.type !== 'dof' || !!props.depthFilename))
 
 function fx(type: string): Record<string, any> | undefined {
   return props.effects.find(e => e.type === type) as Record<string, any> | undefined
@@ -58,13 +99,30 @@ function fmt(v: unknown, step: number): string {
 
 <template>
   <div>
-    <div v-for="s in SECTIONS" :key="s.type" class="mt-3 first:mt-0">
+    <div v-for="s in sections" :key="s.type" class="mt-3 first:mt-0">
       <div class="flex items-center justify-between mb-1.5">
         <div class="panel-label">{{ s.label }}</div>
         <button class="text-[10px] px-1.5 py-0.5 rounded border border-[#2a2a2a] text-white/60 hover:text-white/90"
           :data-testid="`postfx-add-${s.type}`"
           @click="toggle(s.type)">{{ fx(s.type) ? 'Remove' : 'Add' }}</button>
       </div>
+      <!-- Depth of field states its own preconditions. It never falls back to a 2D
+           blur: a plausible-looking substitute would hide a broken integration. -->
+      <template v-if="s.type === 'dof' && fx('dof')">
+        <div v-if="!glOk" data-testid="dof-status-nogl"
+          class="mb-1.5 text-[10px] leading-snug text-amber-400/80">
+          Depth of field needs WebGL2, which isn’t available here.
+          <span v-if="glReason" class="text-white/40">({{ glReason }})</span>
+        </div>
+        <div v-else-if="depthStatus === 'loading'" data-testid="dof-status-loading"
+          class="mb-1.5 text-[10px] text-white/50">Reading depth…</div>
+        <div v-else-if="depthStatus === 'error'" data-testid="dof-status-error"
+          class="mb-1.5 text-[10px] leading-snug text-amber-400/80">
+          {{ depthMessage || 'Depth couldn’t be read.' }}
+          <button class="underline text-white/60 hover:text-white/90 ml-1"
+            data-testid="dof-retry" @click="retryDepth">Retry</button>
+        </div>
+      </template>
       <div v-if="fx(s.type)" class="space-y-1.5">
         <div v-if="s.colors" class="flex items-center gap-1.5">
           <div v-for="[key, label] in s.colors" :key="key" class="flex-1 flex items-center gap-1.5 min-w-0">
