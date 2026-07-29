@@ -17,7 +17,10 @@ import type { ShaderEmbedConfig } from '~/lib/embed/surfaces/shader'
 // rather than through studio UI.
 const handles: Record<string, EmbedHandle> = {}
 
-const DURATION = 30
+// Matches defaultConfig().motion.duration. The studio's duration slider is
+// min=1 max=12, so the old value of 30 modelled a clock no real export can
+// produce — a fixture has to be reachable in the product.
+const DURATION = 4
 
 // Matches the adapter's 1x1 opaque black base for generative (texture-free)
 // effects — see shader.ts's blackPixel().
@@ -89,6 +92,20 @@ onMounted(async () => {
         width: 512,
         height: 512,
       })
+    },
+
+    // Exports at a caller-chosen size so a test can load the result in a
+    // viewport with a DIFFERENT aspect ratio and check the piece keeps the
+    // exported one instead of stretching to the window.
+    async exportHtmlAt(width: number, height: number) {
+      return await exportEmbedHtml({ kind: 'shader', config, duration: DURATION, width, height })
+    },
+
+    // Exports a caller-supplied config — used to measure payload size against a
+    // realistic (image-backed) config rather than the generative fixture, which
+    // carries no image at all.
+    async exportWith(cfg: ShaderEmbedConfig, width: number, height: number) {
+      return await exportEmbedHtml({ kind: 'shader', config: cfg, duration: DURATION, width, height })
     },
 
     /**
