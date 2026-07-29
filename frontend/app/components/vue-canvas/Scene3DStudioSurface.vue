@@ -1492,23 +1492,32 @@ function cloneMaterial(mat: SceneMaterial): SceneMaterial {
 // (also-cloned) parent, so leaving it untouched is what keeps the whole
 // subtree's shape intact.
 //
-// NOTE (known pre-existing gap, not introduced or fixed by Task 9): this ternary
-// only special-cases 'primitive' and 'glb'; every other kind — including 'group'
-// — falls to `createLight(src.light, ...)`, which is a type error for GroupObject
-// (`src.light` doesn't exist on it) and, at runtime, would fabricate a
-// light-shaped object instead of a real group. Duplicating a GROUP therefore
-// does not work correctly today. Left as-is per the task's explicit instruction
-// to report, not fix, this error — flagged separately as follow-up.
+// Switches on `src.kind` (rather than an if/else-if chain) so the `default`
+// branch can assign `src` to a `never` — the moment SceneObject grows a fifth
+// member, that assignment stops compiling instead of silently falling through
+// to whichever branch happened to be last. That silent-fallthrough failure
+// mode is exactly what bit 'group': it used to be the ternary's unconditional
+// `else`, so a GroupObject was constructed via `createLight(src.light, ...)` —
+// a type error (`src.light` doesn't exist on GroupObject) that also described
+// a real runtime bug, fabricating a light-shaped object instead of a group.
 // `existing` defaults to the live doc for the single-object call site, but the
 // subtree loop below passes an ACCUMULATING array instead — createPrimitive/
-// createGlbObject/createLight number the copy's name against `existing`, and
-// cloning several children before any of them are pushed to `doc.objects`
-// would otherwise have every clone numbered against the same stale snapshot,
-// handing two of them the identical next-available name.
+// createGlbObject/createLight/createGroup number the copy's name against
+// `existing`, and cloning several children before any of them are pushed to
+// `doc.objects` would otherwise have every clone numbered against the same
+// stale snapshot, handing two of them the identical next-available name.
 function cloneObject(src: SceneObject, existing: SceneObject[] = doc.objects): SceneObject {
-  const copy = src.kind === 'primitive' ? createPrimitive(src.primitive, existing)
-    : src.kind === 'glb' ? createGlbObject(src.url, existing)
-    : createLight(src.light, existing)
+  let copy: SceneObject
+  switch (src.kind) {
+    case 'primitive': copy = createPrimitive(src.primitive, existing); break
+    case 'glb': copy = createGlbObject(src.url, existing); break
+    case 'light': copy = createLight(src.light, existing); break
+    case 'group': copy = createGroup(existing); break
+    default: {
+      const _exhaustive: never = src
+      throw new Error(`cloneObject: unhandled kind ${(_exhaustive as SceneObject).kind}`)
+    }
+  }
   Object.assign(copy, {
     position: [...src.position], rotation: [...src.rotation], scale: [...src.scale], material: cloneMaterial(src.material),
     // Geometry params travel with the copy, cloned not aliased — a shared bag
