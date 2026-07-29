@@ -102,6 +102,39 @@ describe('externalRefs', () => {
     const html = buildEmbedHtml(snap(), 'var css = "body{background:url(//cdn.example.com/a.png)}";')
     expect(externalRefs(html)).not.toEqual([])
   })
+
+  it('detects a root-relative CSS url()', () => {
+    const html = buildEmbedHtml(snap(), 'var css = "body{background:url(/images/a.png)}";')
+    expect(externalRefs(html)).not.toEqual([])
+  })
+
+  // Regression test for the data: scrub being unbounded. `[^"')\s]*` has no
+  // idea where the base64 payload ends, so it consumed straight through the
+  // "=" padding and into whatever followed — hiding a real external URL from
+  // the scan entirely. Bounding the scrub to the base64 alphabet (which
+  // cannot contain ":") fixes this: verify against the unbounded pattern by
+  // temporarily restoring it and confirming this test fails.
+  it('detects a URL smuggled directly after a base64 payload in config', () => {
+    const html = buildEmbedHtml(
+      snap({
+        config: {
+          effects: [
+            {
+              effectId: 'data:image/png;base64,AAAA=https://evil.example.com/x',
+              source: '',
+              params: {},
+              seed: 1,
+              passes: 1,
+            },
+          ],
+        },
+      }),
+      '',
+    )
+    expect(externalRefs(html)).toEqual(
+      expect.arrayContaining([expect.stringContaining('https://evil.example.com/x')]),
+    )
+  })
 })
 
 describe('generated runtime clock', () => {

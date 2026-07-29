@@ -1,8 +1,13 @@
 import type { EmbedSnapshot } from './contract'
 
 /**
- * Every reference that would make an exported file reach the network.
- * Returns them so a failure can say WHAT it found, not just that something matched.
+ * Scans the HTML this bundler itself generates for references that would make
+ * the exported file reach the network. It targets first-party generated
+ * output — the config JSON, the inlined poster, and the adapter bundle we
+ * control — not arbitrary third-party JS. It does NOT catch `new Worker()`,
+ * `EventSource`, `XMLHttpRequest.open`, or schemeless-relative references like
+ * `fetch("api/x")`. Returns what it found so a failure can say WHAT matched,
+ * not just that something did.
  *
  * Scrubbing first is essential: base64 payloads routinely contain "//", and the
  * minifier emits //# sourceMappingURL comments. Scanning raw HTML for a bare "//"
@@ -11,7 +16,10 @@ import type { EmbedSnapshot } from './contract'
 export function externalRefs(html: string): string[] {
   const scrubbed = html
     // Inlined assets are the mechanism, not a violation. Collapse them first.
-    .replace(/data:[a-z0-9.+-]+\/[a-z0-9.+-]+[^"')\s]*/gi, 'data:INLINED')
+    // Bounded to the base64 alphabet (which cannot contain ":") so a URL
+    // immediately following a payload's terminal "=" padding is not absorbed
+    // into the match and hidden from the scan below.
+    .replace(/data:[a-z0-9.+-]+\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/]*={0,2}/gi, 'data:INLINED')
     // Minifier sourcemap comments are not network references.
     .replace(/\/\/[#@]\s*sourceMappingURL=[^\s*]*/g, '')
 
@@ -19,7 +27,7 @@ export function externalRefs(html: string): string[] {
     /https?:\/\/[^\s"')]+/gi, // absolute URL
     /(?:src|href)\s*=\s*["']\/\/[^"']*/gi, // protocol-relative in an attribute
     /(?:src|href)\s*=\s*["']\/(?!\/)[^"']*/gi, // root-relative in an attribute
-    /\burl\(\s*["']?(?:https?:)?\/\/[^)]*/gi, // CSS url()
+    /\burl\(\s*["']?(?:(?:https?:)?\/\/|\/(?!\/))[^)]*/gi, // CSS url(), protocol-relative or root-relative
     /@import\s+["'][^"']*/gi, // CSS @import
     /\bfetch\(\s*["']\/[^"']*/gi, // root-relative fetch from adapter JS
     /\bnew\s+WebSocket\(\s*["'][^"']*/gi, // websocket
