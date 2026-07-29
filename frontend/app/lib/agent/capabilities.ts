@@ -135,7 +135,7 @@ export function capabilityByType(nodeType: string, caps: AgentCapability[] = AGE
 const IMG = [{ name: 'IMAGE', type: 'IMAGE' }]
 const GENERATORS: AgentCapability[] = [
   // ---- Image · generation ----
-  { nodeType: 'GenerateImageNode', kind: 'generator', title: 'Generate an image', summary: 'Text-to-image; pick any model (Flux, Ideogram, Reve…) and generate from a prompt. Nano Banana 2/Pro also accept optional reference images (image_1…image_6).', inputs: [{ name: 'image_1', type: 'IMAGE', optional: true }], outputs: IMG,
+  { nodeType: 'GenerateImageNode', kind: 'generator', title: 'Generate an image', summary: 'Text-to-image; pick any model (Flux, Ideogram, Reve…) and generate from a prompt.', inputs: [], outputs: IMG,
     intents: ['generate an image', 'make a picture', 'create an image', 'text to image', 'draw me', 'render a photo', 'make art', 'generate a photo of', 'imagine', 'dream up', 'conjure an image', 'produce an image', 'ai image', 'picture of a', 'visualize', 'make me a graphic', 'generate a dog', 'create artwork', 'create a painting of', 'render an illustration', 'wallpaper of a', 'make a wallpaper of', 'background image of'] },
   { nodeType: 'FluxLoRARemoteNode', kind: 'generator', title: 'Generate with your LoRA', summary: 'Generate with a trained LoRA (character/style), or img2img-restyle with it.', inputs: [{ name: 'image', type: 'IMAGE', optional: true }], outputs: IMG,
     intents: ['generate with my lora', 'use my trained model', 'make an image of my character', 'generate my character', 'use my finetune', 'lora generation', 'my model image', 'personalized generation', 'generate using my training', 'generate in my style', 'make this in my style', 'an image in my own style', 'use my trained style', 'my character in a scene'] },
@@ -153,7 +153,7 @@ const GENERATORS: AgentCapability[] = [
     intents: ['make a text effect', 'stylize this word', 'typographic art', 'chrome text', 'holographic letters', 'make a logo word', 'fancy text', 'word art', '3d text effect', 'liquid metal text', 'title treatment', 'neon text'] },
 
   // ---- Image · editing & transformation ----
-  { nodeType: 'EditImageNode', kind: 'effect', title: 'Edit an image', summary: 'Natural-language image editing (Nano Banana 2/Pro / Flux Kontext / Flux 2 Pro) — change, add, remove anything. Nano Banana and Flux 2 Pro also accept extra reference images (image_2…image_6).', inputs: [{ name: 'input_image', type: 'IMAGE' }, { name: 'image_2', type: 'IMAGE', optional: true }], outputs: IMG,
+  { nodeType: 'EditImageNode', kind: 'effect', title: 'Edit an image', summary: 'Natural-language image editing (Nano Banana / Flux Kontext / Flux 2 Pro) — change, add, remove anything.', inputs: [{ name: 'input_image', type: 'IMAGE' }], outputs: IMG,
     intents: ['edit this image', 'change her shirt', 'make her hair blue', 'change the background', 'edit the photo', 'modify this picture', 'alter the image', 'change the sky', 'make it nighttime', 'make it look like nighttime', 'tweak this image', 'photoshop this', 'add an object', 'add a hat', 'put glasses on', 'add a logo to the image'] },
     // Removal, recolor and in-image text edits have DEDICATED nodes below
     // (RemoveObjectNode / RecolorObjectNode / TextEditNode) — their verbs
