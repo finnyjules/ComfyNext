@@ -62,8 +62,10 @@ Worth considering, not required:
 
 ## Open questions
 
-- Does the ComfyUI-side ffmpeg/PyAV build include `libvpx-vp9`? If not, this needs a dependency note
-  before anything else. **Verify first — it gates the whole spec.**
+- ~~Does the ComfyUI-side ffmpeg/PyAV build include `libvpx-vp9`?~~ **RESOLVED 2026-07-28 — yes.**
+  PyAV 17.0.0, `libvpx-vp9` encoder present, and it advertises `yuva420p` among its pixel formats.
+  `libvpx`, `libx264` and `prores_ks` are also available. Nothing needs installing; this is purely a
+  codec branch now.
 - Do all render paths actually produce alpha? `frontend/app/lib/engine/gl/glRenderer.ts` creates its
   context with `alpha: false`, so at least one path is opaque by construction and would need changing or
   explicitly excluding from the toggle.
