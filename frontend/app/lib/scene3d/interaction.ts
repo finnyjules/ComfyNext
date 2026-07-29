@@ -85,7 +85,7 @@ export class SceneInteraction {
     private engine: SceneEngine,
     private domElement: HTMLElement,
     private callbacks: {
-      onSelect: (id: string | null) => void
+      onSelect: (id: string | null, additive: boolean) => void
       onTransform: (id: string, t: TransformSnapshot) => void
       onCameraChange?: () => void
     },
@@ -227,7 +227,10 @@ export class SceneInteraction {
       if (node?.userData.sceneId) { id = node.userData.sceneId; break }
     }
     this.select(id)
-    this.callbacks.onSelect(id)
+    // Viewport clicks don't detect modifier keys for additive selection yet —
+    // that lands in Task 6 alongside the multi-selection pivot. `false` keeps
+    // today's single-select-on-click behaviour unchanged in the meantime.
+    this.callbacks.onSelect(id, false)
   }
 
   private emitTransform(): void {

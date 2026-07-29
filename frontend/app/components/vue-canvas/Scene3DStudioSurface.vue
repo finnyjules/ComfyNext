@@ -75,7 +75,31 @@ function setWidget(name: string, value: any) {
 
 // ── Document state ────────────────────────────────────────────────────────────
 const doc = reactive<SceneDoc>(parseDoc(widgetStr('scene_state')))
-const selectedId = ref<string | null>(null)
+// Selection is an ORDERED list; the LAST entry is the primary (the anchor the
+// properties panel titles itself after, and the object a single-selection gizmo
+// attaches to). `selectedId` stays available as a computed so the dozen
+// existing single-selection readers keep working unchanged — but note it is
+// WRITABLE, and writing it REPLACES the selection. Any code that needs to add
+// to the selection must go through `toggleSelected`.
+const selectedIds = ref<string[]>([])
+const selectedId = computed<string | null>({
+  get: () => selectedIds.value[selectedIds.value.length - 1] ?? null,
+  set: (id) => { selectedIds.value = id ? [id] : [] },
+})
+const selectedObjects = computed<SceneObject[]>(() =>
+  selectedIds.value
+    .map((id) => doc.objects.find((o) => o.id === id))
+    .filter((o): o is SceneObject => !!o))
+
+function toggleSelected(id: string, additive: boolean): void {
+  if (!additive) { selectedIds.value = [id]; return }
+  const i = selectedIds.value.indexOf(id)
+  // Re-selecting an already-selected object promotes it to primary rather than
+  // deselecting it when it is the only member — deselecting the last object via
+  // a modifier-click is a dead end the user has to undo with another click.
+  if (i < 0) selectedIds.value = [...selectedIds.value, id]
+  else if (selectedIds.value.length > 1) selectedIds.value = selectedIds.value.filter((x) => x !== id)
+}
 const selected = computed<SceneObject | null>(() => doc.objects.find((o) => o.id === selectedId.value) ?? null)
 const selectedIsPrimitive = computed(() => selected.value?.kind === 'primitive')
 const selectedIsGlb = computed(() => selected.value?.kind === 'glb')
@@ -1088,7 +1112,10 @@ onMounted(() => {
   engine = new SceneEngine(canvasEl.value, rect.width, rect.height)
   engine.applyCameraFromDoc(doc)
   interaction = new SceneInteraction(engine, viewportEl.value, {
-    onSelect: (id) => { selectedId.value = id },
+    onSelect: (id, additive) => {
+      if (!id) { selectedIds.value = []; return }
+      toggleSelected(id, additive)
+    },
     onTransform: (id, t) => {
       const o = doc.objects.find((x) => x.id === id)
       if (o) { o.position = t.position; o.rotation = t.rotation; o.scale = t.scale }
@@ -1229,7 +1256,7 @@ function applySnapshot(snap: string) {
   doc.output = p.output
   doc.motion = p.motion
   // A restored snapshot may not contain the selected object anymore.
-  if (selectedId.value && !doc.objects.some((o) => o.id === selectedId.value)) selectedId.value = null
+  selectedIds.value = selectedIds.value.filter((id) => doc.objects.some((o) => o.id === id))
   lastSnapshot = snap
   nextTick(() => { restoring = false })
 }
@@ -1732,8 +1759,8 @@ function onClose() {
           </div>
           <div v-for="o in doc.objects" :key="o.id"
             class="group flex items-center gap-2 rounded px-2 py-1 text-xs"
-            :class="o.id === selectedId ? 'bg-white/15' : 'hover:bg-white/5'"
-            @click="selectedId = o.id">
+            :class="selectedIds.includes(o.id) ? 'bg-white/15' : 'hover:bg-white/5'"
+            @click="toggleSelected(o.id, $event.shiftKey || $event.metaKey || $event.ctrlKey)">
             <component :is="o.kind === 'light' ? Lightbulb : Box" class="h-3.5 w-3.5 shrink-0 opacity-60" />
             <span class="flex-1 truncate" :class="glbError[o.id] ? 'text-red-400' : ''">{{ o.name }}</span>
             <button v-if="glbError[o.id]" type="button" class="text-red-400 opacity-90 hover:opacity-100"
