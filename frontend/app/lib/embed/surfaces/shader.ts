@@ -108,6 +108,7 @@ const shaderEmbedSurface: EmbedSurface = {
       },
       destroy: () => {
         if (mounted) { mounted.remove(); mounted = null }
+        renderer.dispose()
       },
     }
   },

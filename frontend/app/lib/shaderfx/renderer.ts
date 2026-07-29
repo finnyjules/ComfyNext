@@ -372,6 +372,54 @@ export class ShaderFxRenderer {
     gl.drawArrays(gl.TRIANGLES, 0, 3)
     return this.canvas!
   }
+
+  /**
+   * Release every GL object this instance owns and drop its canvas/context
+   * references. Safe to call before anything was ever rendered (gl still
+   * null) and safe to call more than once — both are no-ops beyond the first
+   * real cleanup. Callers that hold their own instance (embeds) must call
+   * this when done, since browsers cap live WebGL contexts per page.
+   */
+  dispose(): void {
+    const gl = this.gl
+    if (!gl) return
+
+    for (const prog of this.programs.values()) gl.deleteProgram(prog.prog)
+    this.programs.clear()
+    if (this.blit) gl.deleteProgram(this.blit)
+    this.blit = null
+    if (this.composite) gl.deleteProgram(this.composite)
+    this.composite = null
+
+    for (let i = 0; i < 2; i++) {
+      if (this.fboTex[i]) gl.deleteTexture(this.fboTex[i] ?? null)
+      if (this.fbos[i]) gl.deleteFramebuffer(this.fbos[i] ?? null)
+      this.fboTex[i] = null
+      this.fbos[i] = null
+    }
+
+    if (this.holdTex) gl.deleteTexture(this.holdTex)
+    if (this.holdFbo) gl.deleteFramebuffer(this.holdFbo)
+    this.holdTex = null
+    this.holdFbo = null
+
+    if (this.layerSrcTex) gl.deleteTexture(this.layerSrcTex)
+    if (this.layerSrcFbo) gl.deleteFramebuffer(this.layerSrcFbo)
+    this.layerSrcTex = null
+    this.layerSrcFbo = null
+
+    if (this.baseTex) gl.deleteTexture(this.baseTex)
+    this.baseTex = null
+    this.baseSize = [0, 0]
+    this.fboSize = [0, 0]
+
+    for (const tex of this.extraTexCache.values()) gl.deleteTexture(tex)
+    this.extraTexCache.clear()
+
+    gl.getExtension('WEBGL_lose_context')?.loseContext()
+    this.gl = null
+    this.canvas = null
+  }
 }
 
 export const shaderFx = new ShaderFxRenderer()

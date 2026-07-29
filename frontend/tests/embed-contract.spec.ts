@@ -68,4 +68,53 @@ test.describe('EmbedSurface contract — shader', () => {
     expect(aAt0).toBe(aAt0Again)   // b's render must not have disturbed a
     expect(aAt0).not.toBe(bAt5)
   })
+
+  // Regression for the leaked-WebGL-context bug: destroy() must release the
+  // context (and its programs/FBOs), not just remove the canvas. Browsers cap
+  // live WebGL contexts per page (Chrome logs a warning and force-loses the
+  // *oldest* context past the cap, which means a naive "does the last mount
+  // still work" assertion can't tell a leak apart from a fix — Chrome's own
+  // recovery papers over it either way. The real signal is whether the
+  // "Too many active WebGL contexts" warning fires at all: it should never
+  // fire if destroy() is actually releasing contexts as it goes. 20
+  // iterations comfortably exceeds Chrome's ~16-context cap if nothing is
+  // released.
+  test('repeated mount/destroy releases WebGL contexts (no browser context-eviction warning)', async ({ page }) => {
+    const contextWarnings: string[] = []
+    page.on('console', (msg) => {
+      if (msg.type() === 'warning' && msg.text().includes('Too many active WebGL contexts')) {
+        contextWarnings.push(msg.text())
+      }
+    })
+
+    const result = await page.evaluate(async () => {
+      const H = (window as any).__embedHarness
+      let prev: any = null
+      for (let i = 0; i < 20; i++) {
+        if (prev) prev.destroy()
+        const h = await H.mount('a')
+        if (!h) return { ok: false, error: `mount ${i} returned null` }
+        h.setTime(0.25)
+        prev = h
+      }
+      // Deliberately leave the last mount alive — asserting on it below is the
+      // "still produces a working canvas" sanity check.
+      const c = document.querySelector('#slot-a canvas') as HTMLCanvasElement | null
+      const snapshot = H.snapshot('a')
+      return {
+        ok: true,
+        canvasCount: document.querySelectorAll('#slot-a canvas').length,
+        width: c?.width ?? 0,
+        height: c?.height ?? 0,
+        snapshotLength: snapshot.length,
+      }
+    })
+    expect(result.ok).toBe(true)
+    expect(result.canvasCount).toBe(1)
+    expect(result.width).toBeGreaterThan(0)
+    expect(result.height).toBeGreaterThan(0)
+    expect(result.snapshotLength).toBeGreaterThan(0)
+    // The teeth: without dispose(), Chrome logs this warning by iteration ~17.
+    expect(contextWarnings).toEqual([])
+  })
 })
