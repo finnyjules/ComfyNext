@@ -1,6 +1,6 @@
-import { buildEmbedHtml } from './bundle'
+import { buildEmbedHtml, externalRefs } from './bundle'
 import { loadEmbedSurface } from './surfaces'
-import type { EmbedSnapshot } from './contract'
+import type { EmbedSnapshot, EmbedSurface } from './contract'
 
 export interface ExportEmbedOptions {
   kind: string
@@ -18,11 +18,9 @@ export interface ExportEmbedOptions {
  * path, so the fallback frame is guaranteed to match what the embed renders.
  */
 async function bakePoster(
-  kind: string, config: unknown, width: number, height: number, t01: number,
+  surface: EmbedSurface, config: unknown, width: number, height: number, t01: number,
+  alpha: boolean,
 ): Promise<string> {
-  const surface = await loadEmbedSurface(kind)
-  if (!surface) throw new Error(`embed: unknown surface kind "${kind}"`)
-
   const box = document.createElement('div')
   box.style.cssText = `position:fixed;left:-99999px;top:0;width:${width}px;height:${height}px`
   document.body.appendChild(box)
@@ -40,7 +38,14 @@ async function bakePoster(
       handle.setTime(t01)
       const canvas = box.querySelector('canvas') as HTMLCanvasElement | null
       if (!canvas) throw new Error('embed: adapter produced no canvas')
-      return canvas.toDataURL('image/png')
+      // The poster is a fallback still, not a master — a lossless full-res PNG
+      // of a photographic frame is routinely 4MB of base64 in a file the user
+      // has to load over the wire. JPEG only where the surface has declared it
+      // does not render alpha; PNG is the only correct choice when it does,
+      // since JPEG would composite the transparent area as black.
+      return alpha
+        ? canvas.toDataURL('image/png')
+        : canvas.toDataURL('image/jpeg', 0.85)
     } finally {
       handle.destroy()
     }
@@ -54,17 +59,21 @@ export async function exportEmbedHtml(opts: ExportEmbedOptions): Promise<string>
   if (!surface) throw new Error(`embed: unknown surface kind "${opts.kind}"`)
 
   const transparent = !!opts.transparent && surface.caps.alpha
-  const posterDataUrl = await bakePoster(
-    opts.kind, opts.config, opts.width, opts.height, opts.posterT01 ?? 0,
-  )
 
-  // Emitted by `npm run build:embed`. Same-origin, read once at export time —
-  // the produced file itself never fetches anything.
+  // Fetched BEFORE the poster bake, deliberately. A missing bundle is a build
+  // problem, not a render problem: failing here costs milliseconds, whereas
+  // failing after the bake means the user waits out a full-resolution GL render
+  // only to be told to run a build script.
   const res = await fetch(`/embed/${opts.kind}.js`)
   if (!res.ok) {
     throw new Error(`embed: /embed/${opts.kind}.js missing — run \`npm run build:embed\``)
   }
   const adapterJs = await res.text()
+
+  const posterDataUrl = await bakePoster(
+    surface, opts.config, opts.width, opts.height, opts.posterT01 ?? 0,
+    surface.caps.alpha,
+  )
 
   const snapshot: EmbedSnapshot = {
     kind: opts.kind,
@@ -75,7 +84,21 @@ export async function exportEmbedHtml(opts: ExportEmbedOptions): Promise<string>
     posterDataUrl,
     transparent,
   }
-  return buildEmbedHtml(snapshot, adapterJs)
+  const html = buildEmbedHtml(snapshot, adapterJs)
+
+  // The self-containment guarantee has to hold for real user configs, not just
+  // for the test fixture. externalRefs was previously only ever called from
+  // tests, so an asset URL that made it into a config — or a future adapter
+  // that reached the network — would have shipped unnoticed. It is a string
+  // scan over a string we already have; run it on every export.
+  const refs = externalRefs(html)
+  if (refs.length) {
+    throw new Error(
+      `embed: export would reach the network — ${refs.slice(0, 3).join(', ')}` +
+        (refs.length > 3 ? ` (+${refs.length - 3} more)` : ''),
+    )
+  }
+  return html
 }
 
 export function downloadEmbed(filename: string, html: string): void {

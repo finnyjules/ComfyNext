@@ -3,7 +3,9 @@
   "type": "module",
   "private": true,
   "scripts": {
+    "predev": "npm run build:embed",
     "dev": "nuxt dev",
+    "prebuild": "npm run build:embed",
     "build": "nuxt build",
     "generate": "nuxt generate",
     "preview": "nuxt preview",

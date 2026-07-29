@@ -87,6 +87,19 @@ export function buildEmbedHtml(snapshot: EmbedSnapshot, adapterJs: string): stri
 
   const bg = snapshot.transparent ? 'transparent' : '#000'
 
+  // Framing policy: CONTAIN, for both the poster and the live canvas.
+  //
+  // The renderers draw a fullscreen triangle with no aspect correction, so
+  // handing them the host window's dimensions squashes the piece to whatever
+  // shape that window happens to be (a 1536x1536 export in a 1512x760 window
+  // became a 2:1 squash the moment the poster hid). snapshot.width/height is
+  // the exported aspect and it governs: #sailor-stage is letterboxed to that
+  // ratio and centred, and the area around it is left to the page background
+  // (transparent when the surface declared alpha, otherwise the export's own
+  // backdrop). The poster is object-fit:contain against the same box and its
+  // intrinsic aspect IS snapshot.width/height, so it lands on exactly the same
+  // rectangle — the poster→live swap must not visibly jump, which rules out
+  // cover on one side and contain on the other.
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -95,14 +108,15 @@ export function buildEmbedHtml(snapshot: EmbedSnapshot, adapterJs: string): stri
 <title>Sailor embed</title>
 <style>
   html,body{margin:0;padding:0;background:${bg};overflow:hidden}
-  #sailor-embed{position:relative;width:100vw;height:100vh}
+  #sailor-embed{position:relative;width:100vw;height:100vh;overflow:hidden}
+  #sailor-stage{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%)}
   #sailor-embed canvas{display:block;width:100%;height:100%}
-  #sailor-poster{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+  #sailor-poster{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
   #sailor-poster[hidden]{display:none}
 </style>
 </head>
 <body>
-<div id="sailor-embed"><img id="sailor-poster" alt=""></div>
+<div id="sailor-embed"><div id="sailor-stage"></div><img id="sailor-poster" alt=""></div>
 <script>
 window.__SAILOR_SNAPSHOT__ = ${safeJson({ ...snapshot, posterDataUrl: '' })};
 window.__SAILOR_POSTER__ = ${safeJson(snapshot.posterDataUrl)};
@@ -114,6 +128,7 @@ ${adapterJs}
 <script>
 (function () {
   var box = document.getElementById('sailor-embed');
+  var stage = document.getElementById('sailor-stage');
   var poster = document.getElementById('sailor-poster');
   var snap = window.__SAILOR_SNAPSHOT__;
   var surface = window.__SAILOR_SURFACE__;
@@ -124,41 +139,89 @@ ${adapterJs}
     return (w < 0 ? w + d : w) / d;
   }
 
+  // Backing store is sized in DEVICE pixels; the CSS box stays in layout
+  // pixels. Without this the piece renders at 1/DPR of its linear resolution
+  // and looks softer than the MP4 it is meant to beat. Capped at 2 so a 3x
+  // phone does not pay for 9x the fragments it can actually show.
+  var dpr = Math.min(2, window.devicePixelRatio || 1);
+
+  // Letterbox the exported aspect ratio inside whatever box the page gives us,
+  // and report the resulting DEVICE-pixel dimensions. See the framing note in
+  // bundle.ts — the poster is object-fit:contain over the same box, so both
+  // land on the same rectangle.
+  function fit() {
+    var bw = box.clientWidth || snap.width, bh = box.clientHeight || snap.height;
+    var sw = snap.width > 0 ? snap.width : bw, sh = snap.height > 0 ? snap.height : bh;
+    var k = Math.min(bw / sw, bh / sh);
+    var cw = Math.max(1, Math.round(sw * k)), ch = Math.max(1, Math.round(sh * k));
+    stage.style.width = cw + 'px';
+    stage.style.height = ch + 'px';
+    return [Math.max(1, Math.round(cw * dpr)), Math.max(1, Math.round(ch * dpr))];
+  }
+  // Before mount, so the adapter's first draw already has the right box.
+  fit();
+
   // Poster stays visible until the live renderer has actually produced a frame.
   // If anything below throws, it simply never hides — a still frame, never a
   // blank rectangle and never an error in someone else's console.
   if (!surface || typeof surface.mount !== 'function') return;
 
-  surface.mount(box, snap.config).then(function (handle) {
+  surface.mount(stage, snap.config).then(function (handle) {
     poster.hidden = true;
     // elapsed accumulates completed play spans; resumedAt anchors the current one.
     // Phase = elapsed + (now - resumedAt), so pause/resume never rewinds to 0.
-    var elapsed = 0, resumedAt = 0, raf = 0, visible = true;
+    var elapsed = 0, resumedAt = 0, raf = 0, visible = true, dead = false;
     var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     var now2 = function () { return (window.performance && performance.now) ? performance.now() : Date.now(); };
 
+    // The renderer died after the poster was hidden. Stop the loop and put the
+    // still frame back. Deliberately silent: this runs inside someone else's
+    // page and must never print into their console.
+    function fail() {
+      if (dead) return;
+      dead = true;
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
+      poster.hidden = false;
+    }
+
     function size() {
-      handle.setSize(box.clientWidth || snap.width, box.clientHeight || snap.height);
+      var d = fit();
+      try { handle.setSize(d[0], d[1]); } catch (e) { fail(); }
     }
     size();
     window.addEventListener('resize', size);
+
+    // Ten embeds on one page is ten live WebGL contexts; past the browser's cap
+    // (~16 in Chrome) the oldest is force-lost. Fall back to the poster rather
+    // than freeze on a stale frame and spray GL errors into the host page.
+    var cv = stage.querySelector('canvas');
+    if (cv && cv.addEventListener) {
+      cv.addEventListener('webglcontextlost', function (e) {
+        if (e && e.preventDefault) e.preventDefault();
+        fail();
+      }, false);
+    }
 
     // Deterministic still mode: an explicit frozen frame, or the reduced-motion
     // still. Both render exactly once and never start the loop.
     var frozen = typeof window.__SAILOR_FREEZE_T01__ === 'number'
       ? window.__SAILOR_FREEZE_T01__
       : null;
-    if (frozen !== null || reduce) { handle.setTime(frozen === null ? 0 : frozen); return; }
+    if (frozen !== null || reduce) {
+      try { handle.setTime(frozen === null ? 0 : frozen); } catch (e) { fail(); }
+      return;
+    }
 
     function tick(now) {
-      handle.setTime(t01At(elapsed + (now - resumedAt), snap.duration));
+      try { handle.setTime(t01At(elapsed + (now - resumedAt), snap.duration)); }
+      catch (e) { fail(); return; }
       raf = requestAnimationFrame(tick);
     }
     // Guarded by 'raf', which is only ever non-zero between a play() call and its
     // matching pause(). The synchronous 'if (visible) play()' below and the
     // IntersectionObserver's first (always-async) callback therefore cannot
     // both start a loop: whichever runs first sets raf, so the other is a no-op.
-    function play() { if (raf) return; resumedAt = now2(); raf = requestAnimationFrame(tick); }
+    function play() { if (raf || dead) return; resumedAt = now2(); raf = requestAnimationFrame(tick); }
     function pause() { if (!raf) return; cancelAnimationFrame(raf); raf = 0; elapsed += now2() - resumedAt; }
 
     // Ten embeds on one page should not cook a laptop.
