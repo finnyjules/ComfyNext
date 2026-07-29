@@ -77,6 +77,28 @@ export function exportClock(
   return { duration: ownDuration, fps: ownFps }
 }
 
+/**
+ * Web embed refuses an animated upstream source.
+ *
+ * exportClock (above) hands an animated source's duration to the export, but a
+ * web embed carries exactly ONE baked base frame — so the shader stack would
+ * run over a still image for a loop length chosen precisely because the source
+ * moves. The studio preview animates the base, the export does not, and nothing
+ * would tell the user. Baking N base frames is a real future feature; silently
+ * shipping a frozen one is not an option, so refuse loudly instead.
+ *
+ * Same posture as the adapter's textured-effect guard in
+ * lib/embed/surfaces/shader.ts: throw rather than export something subtly wrong.
+ */
+export function assertEmbeddableSource(resolved: ResolvedSource | null): void {
+  if (resolved && resolved.duration > 0) {
+    throw new Error(
+      'Web embed can\'t carry a wired live source yet — this input animates '
+      + `(${resolved.duration.toFixed(1)}s). Bake it to an image or video first.`,
+    )
+  }
+}
+
 // motionConfigFor lives in ./motion, not here: that module is Vue-free and the
 // shader embed adapter needs it too. Re-exported so existing callers of
 // resolve.ts (ShaderStudioNode.vue, ShaderStudioSurface.vue) are unaffected.

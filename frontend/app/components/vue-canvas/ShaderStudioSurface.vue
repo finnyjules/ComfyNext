@@ -1,6 +1,6 @@
 <!-- frontend/app/components/vue-canvas/ShaderStudioSurface.vue -->
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
 import { ChevronRight, Plus, Trash2 } from 'lucide-vue-next'
 import CatalogModal from '~/components/CatalogModal.vue'
 import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
@@ -20,7 +20,7 @@ import { composePasses, type EffectTextureBundle } from '~/lib/shaderstudio/pass
 import { migrateShaderConfig } from '~/lib/shaderstudio/migrate'
 import { ANIMATABLE, applyMotion } from '~/lib/shaderstudio/motion'
 import { ADJUST_PRESETS, applyAdjustPreset } from '~/lib/shaderstudio/presets'
-import { exportClock, makeImageSource, makeLiveSource, motionConfigFor, resolveSourceKind, type ResolvedSource } from '~/lib/shaderstudio/resolve'
+import { assertEmbeddableSource, exportClock, makeImageSource, makeLiveSource, motionConfigFor, resolveSourceKind, type ResolvedSource } from '~/lib/shaderstudio/resolve'
 import { frameSourceEpoch } from '~/lib/studio/frameSource'
 import { loadImage } from '~/lib/shaderstudio/source'
 import { BLEND_MODES } from '~/lib/studio/blend'
@@ -54,6 +54,8 @@ const glError = ref<string | null>(null)
 const baking = ref(false)
 const bakeMsg = ref('')
 const embedMsg = ref('')
+const embedErr = ref(false)
+const embedding = ref(false)
 // Preview backing-store cap. Kept high so grid-based effects (ASCII, halftone,
 // dither) render enough pixels-per-cell to stay crisp on retina displays and at
 // fine Size values — at 880 a dense ASCII grid mushed out. Export still upscales
@@ -485,10 +487,17 @@ async function generateVideo() {
 }
 
 async function exportWebEmbed() {
-  if (!resolved.value) { embedMsg.value = 'Add a source first'; return }
+  if (embedding.value) return
+  if (!resolved.value) { embedErr.value = true; embedMsg.value = 'Add a source first'; return }
+  embedding.value = true
+  embedErr.value = false
   embedMsg.value = 'Building…'
   try {
     const src = resolved.value!
+    // An animated upstream (Gradient/Space Type wired in) would export as a
+    // single frozen base frame looping for a duration chosen because the source
+    // moves. Refuse before any expensive work happens. See resolve.ts.
+    assertEmbeddableSource(src)
     const clock = exportClock(src, config.value.motion.duration, config.value.motion.fps)
     const { w, h } = outputDims(src.width, src.height, config.value.resolution, { upscale: true })
 
@@ -508,8 +517,16 @@ async function exportWebEmbed() {
     const ids = new Set(config.value.effects.filter(e => e.enabled && e.id).map(e => e.id))
     const defs = (catalog.value?.effects ?? []).filter(d => ids.has(d.id))
 
+    // `source` is stripped, not cloned: it carries the FULL original upload as
+    // base64 (a 4MB JPEG becomes ~5.3MB of JSON), and the adapter never reads
+    // cfg.source — the pixels travel as `baseDataUrl`, already re-encoded at
+    // export resolution. Everything else stays: composePasses reads effects,
+    // duotone, gradientMap, adjust and post, and applyMotion reads motion.
+    const cfg = structuredClone(toRaw(config.value))
+    cfg.source = { kind: 'none' }
+
     const embedConfig: ShaderEmbedConfig = {
-      cfg: structuredClone(toRaw(config.value)),
+      cfg,
       defs,
       duration: clock.duration,
       baseDataUrl: flat.toDataURL('image/png'),
@@ -523,13 +540,19 @@ async function exportWebEmbed() {
       height: h,
     })
 
-    // Size is shown, not discovered later when a page takes eight seconds to load.
+    // Size is shown BEFORE the download, not discovered later when a page takes
+    // eight seconds to load. Still one action — no confirmation dialog.
     const mb = (new Blob([html]).size / 1_048_576).toFixed(1)
+    embedMsg.value = `${mb} MB — downloading…`
+    await nextTick()
     downloadEmbed('sailor-shader-embed.html', html)
     embedMsg.value = `Downloaded — ${mb} MB`
   } catch (err) {
     console.error('[ShaderStudio] embed export failed:', err)
+    embedErr.value = true
     embedMsg.value = err instanceof Error ? err.message : 'Export failed'
+  } finally {
+    embedding.value = false
   }
 }
 
@@ -637,8 +660,12 @@ function remapEffectTracks(kind: 'move' | 'insert' | 'remove', a: number, b?: nu
     <template #actions>
       <StudioButton variant="primary" :disabled="baking" @click="generateImage">{{ baking ? (bakeMsg || 'Working…') : 'Generate as image' }}</StudioButton>
       <StudioButton variant="secondary" :disabled="baking" @click="generateVideo">{{ baking ? (bakeMsg || 'Working…') : 'Generate as video' }}</StudioButton>
-      <StudioButton @click="exportWebEmbed">Export embed</StudioButton>
-      <span v-if="embedMsg" class="text-xs opacity-60">{{ embedMsg }}</span>
+      <!-- Disabled while in flight: a double-click otherwise starts two
+           full-resolution GL bakes and downloads two files. -->
+      <StudioButton :disabled="embedding" @click="exportWebEmbed">{{ embedding ? 'Exporting…' : 'Export embed' }}</StudioButton>
+      <!-- A failure must not read like a success. Matches glError's styling. -->
+      <span v-if="embedMsg" class="truncate text-xs"
+            :class="embedErr ? 'text-red-300/80' : 'opacity-60'">{{ embedMsg }}</span>
       <span v-if="glError" class="ml-2 truncate text-xs text-red-300/80">{{ glError }}</span>
     </template>
 

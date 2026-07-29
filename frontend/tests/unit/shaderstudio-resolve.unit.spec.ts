@@ -6,6 +6,7 @@ import {
   type StudioFrameSource,
 } from '~/lib/studio/frameSource'
 import {
+  assertEmbeddableSource,
   exportClock,
   makeImageSource,
   makeLiveSource,
@@ -145,6 +146,37 @@ describe('exportClock', () => {
   it('falls back to own settings for a live source with zero duration', () => {
     const r = makeLiveSource(frames({ duration: 0, fps: 24 }))
     expect(exportClock(r, 5, 30)).toEqual({ duration: 5, fps: 30 })
+  })
+})
+
+// The trap exportClock sets for the web embed: it happily hands an animated
+// upstream's duration to an exporter that can only carry ONE base frame, so the
+// export loops a FROZEN base for a duration chosen precisely because the source
+// moves — and says nothing. The studio preview animates; the file does not.
+// Refusal is the contract until multi-frame bases exist.
+describe('assertEmbeddableSource', () => {
+  it('refuses an animated live source', () => {
+    const r = makeLiveSource(frames({ duration: 6, fps: 24 }))
+    expect(() => assertEmbeddableSource(r)).toThrow(/live source/i)
+  })
+
+  it('names the duration so the message is actionable', () => {
+    const r = makeLiveSource(frames({ duration: 6, fps: 24 }))
+    expect(() => assertEmbeddableSource(r)).toThrow(/6\.0s/)
+  })
+
+  it('allows a still image source', () => {
+    expect(() => assertEmbeddableSource(makeImageSource({ naturalWidth: 8, naturalHeight: 8 }))).not.toThrow()
+  })
+
+  // Same duration <= 0 rule exportClock uses: a live source that is not
+  // actually moving is a still, and exports fine.
+  it('allows a live source with zero duration', () => {
+    expect(() => assertEmbeddableSource(makeLiveSource(frames({ duration: 0 })))).not.toThrow()
+  })
+
+  it('allows no source at all (the caller reports "Add a source first")', () => {
+    expect(() => assertEmbeddableSource(null)).not.toThrow()
   })
 })
 
