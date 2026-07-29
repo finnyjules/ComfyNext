@@ -135,6 +135,37 @@ describe('externalRefs', () => {
       expect.arrayContaining([expect.stringContaining('https://evil.example.com/x')]),
     )
   })
+
+  // Regression test for the data: scrub trusting the base64 alphabet to
+  // self-delimit. The alphabet contains h, t, t, p, s, so a payload glued
+  // directly to a URL with NO delimiter at all (no "=" padding, no quote) had
+  // its scheme letters eaten by the greedy match, leaving a schemeless
+  // "://evil.example.com/..." that no scan pattern recognizes. Anchoring the
+  // scrub to a real terminator (quote/paren/whitespace/end-of-string) leaves
+  // this string unscrubbed instead, so the URL survives into the scan intact.
+  // Verify against the un-anchored pattern by temporarily restoring it and
+  // confirming this test fails.
+  it('detects a URL glued directly after a base64 payload with no delimiter at all', () => {
+    const html = buildEmbedHtml(
+      snap({
+        config: {
+          effects: [
+            {
+              effectId: 'data:image/png;base64,AAAAhttps://evil.example.com/nopad',
+              source: '',
+              params: {},
+              seed: 1,
+              passes: 1,
+            },
+          ],
+        },
+      }),
+      '',
+    )
+    expect(externalRefs(html)).toEqual(
+      expect.arrayContaining([expect.stringContaining('https://evil.example.com/nopad')]),
+    )
+  })
 })
 
 describe('generated runtime clock', () => {

@@ -19,7 +19,21 @@ export function externalRefs(html: string): string[] {
     // Bounded to the base64 alphabet (which cannot contain ":") so a URL
     // immediately following a payload's terminal "=" padding is not absorbed
     // into the match and hidden from the scan below.
-    .replace(/data:[a-z0-9.+-]+\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/]*={0,2}/gi, 'data:INLINED')
+    //
+    // The base64 alphabet also contains h, t, t, p, s — so when a payload is
+    // glued directly to a URL with NO delimiter (no "=" padding, no quote),
+    // the greedy alphabet class happily eats the scheme letters as if they
+    // were payload, leaving a schemeless "://host/x" that none of the scan
+    // patterns below recognize (they all require an explicit "http(s):" or
+    // an attribute/CSS/JS wrapper). The trailing lookahead anchors the match
+    // to a real terminator (a quote, paren, whitespace, or end of string)
+    // instead of trusting the alphabet to self-delimit. When no such
+    // terminator exists, the whole data: URI is left unscrubbed rather than
+    // partially consumed — so the smuggled URL survives intact into the scan
+    // and gets caught by the absolute-URL pattern. Do not remove this
+    // lookahead to "simplify" the regex: without it this scrub reintroduces
+    // a false negative on the export's sole network-reachability gate.
+    .replace(/data:[a-z0-9.+-]+\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/]*={0,2}(?=["')\s]|$)/gi, 'data:INLINED')
     // Minifier sourcemap comments are not network references.
     .replace(/\/\/[#@]\s*sourceMappingURL=[^\s*]*/g, '')
 
