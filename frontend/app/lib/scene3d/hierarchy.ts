@@ -211,6 +211,81 @@ export function rebaseMany(
   return out
 }
 
+/** The members of `ids` that have NO ancestor also in `ids` — the outermost
+ *  objects of a selection, in `ids` order. Ids naming no object are dropped.
+ *
+ *  Exists because a transform delta applied to a group already reaches that
+ *  group's children through the scene graph. Selecting a group AND one of its
+ *  own children is a legal, one-shift-click-away state, and applying the same
+ *  delta to both would move the child twice as far as the user asked for. The
+ *  outermost member is the one that carries the delta.
+ *
+ *  A broken or cyclic ancestor chain (defensive — `sanitizeHierarchy` should
+ *  have cut it) terminates the walk and counts the object as outermost, so a
+ *  malformed doc drops an object out of a fan-out rather than hanging. */
+export function outermostIds(objects: readonly SceneObject[], ids: readonly string[]): string[] {
+  const byId = new Map(objects.map((o) => [o.id, o]))
+  const wanted = new Set(ids)
+  return ids.filter((id) => {
+    const start = byId.get(id)
+    if (!start) return false
+    const seen = new Set<string>([id])
+    let current = start
+    while (current.parentId) {
+      const parent = byId.get(current.parentId)
+      if (!parent || seen.has(parent.id)) break
+      if (wanted.has(parent.id)) return false
+      seen.add(parent.id)
+      current = parent
+    }
+    return true
+  })
+}
+
+/** Transform-row fan-out for a multi-selection: the writes that apply the same
+ *  DELTA on one axis to every selected object.
+ *
+ *  Delta, never the same absolute value — typing a Position X of 3 with three
+ *  objects selected must nudge all three by the same amount, not stack them on
+ *  top of each other at x = 3. So the typed number lands verbatim on the PRIMARY
+ *  (the last entry, the object whose value the panel is displaying) and every
+ *  other member shifts by `next - primaryCurrent`.
+ *
+ *  `next` is in DOC units — radians for `rotation`, not the degrees the panel
+ *  edits in. The caller converts, exactly as the single-selection path already
+ *  did.
+ *
+ *  The primary always receives the typed value even when it sits inside another
+ *  selected object: the row edits a LOCAL transform, so the number in the field
+ *  has to become true whatever its ancestors are doing. Other members receive
+ *  the delta only when they are outermost — see `outermostIds`.
+ *
+ *  Pure: returns writes for the caller to apply, and never touches `objects`. */
+export function axisDeltaWrites(
+  objects: readonly SceneObject[],
+  ids: readonly string[],
+  prop: 'position' | 'rotation' | 'scale',
+  axis: 0 | 1 | 2,
+  next: number,
+): { id: string; value: number }[] {
+  const byId = new Map(objects.map((o) => [o.id, o]))
+  const primaryId = ids[ids.length - 1]
+  const primary = primaryId ? byId.get(primaryId) : undefined
+  if (!primary) return []
+  const delta = next - primary[prop][axis]
+  const out = [{ id: primary.id, value: next }]
+  // An unchanged value fans out nothing rather than re-writing everyone's
+  // current number: those writes are no-ops the deep doc watcher would still
+  // pay a full engine sync for.
+  if (delta === 0) return out
+  for (const id of outermostIds(objects, ids)) {
+    if (id === primary.id) continue
+    const o = byId.get(id)!
+    out.push({ id, value: o[prop][axis] + delta })
+  }
+  return out
+}
+
 /** True when `candidateParentId` is `id` itself or sits inside `id`'s subtree —
  *  the reparent that would create a cycle. */
 function wouldCycle(objects: readonly SceneObject[], id: string, candidateParentId?: string): boolean {

@@ -13,7 +13,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import * as THREE from 'three'
 import {
-  Box, Plus, Loader2, Upload, Lightbulb, Sparkles, Shuffle, Group, Ungroup,
+  Box, Boxes, Plus, Loader2, Upload, Lightbulb, Sparkles, Shuffle, Group, Ungroup,
 } from 'lucide-vue-next'
 import {
   parseDoc, serializeDoc, createPrimitive, createGlbObject, createLight, createGroup,
@@ -31,7 +31,7 @@ import { loadGoogleCatalog, type GoogleFont } from '~/data/google-fonts'
 import FontPicker from '~/components/vue-canvas/FontPicker.vue'
 import { PRIM_GROUPS } from '~/lib/scene3d/primGroups'
 import { SceneEngine, baseSizeFor, baseVertexCountFor } from '~/lib/scene3d/engine'
-import { rebaseMany, groupObjects, ungroupMany, rootObjects, descendantIds, cloneSubtree } from '~/lib/scene3d/hierarchy'
+import { rebaseMany, groupObjects, ungroupMany, rootObjects, descendantIds, cloneSubtree, axisDeltaWrites } from '~/lib/scene3d/hierarchy'
 import Scene3DObjectRow from './studio/Scene3DObjectRow.vue'
 import { totalClones } from '~/lib/scene3d/modifiers'
 import { PRIMITIVE_PARAMS, paramValue, MODIFIER_SPECS, modifierValue } from '~/lib/scene3d/primParams'
@@ -375,10 +375,18 @@ const bgColorProxy = computed<string>({
  *  its own material afterward, so a single path can still be tweaked alone.
  *  Groups and lights carry a dummy `DEFAULT_MATERIAL` that is never rendered
  *  (see their `create*` doc comments in config.ts) — mutating it would be a
- *  silent no-op at best, so both kinds are skipped rather than included. */
+ *  silent no-op at best, so both kinds are skipped rather than included.
+ *
+ *  A GLB without `materialOverride` is skipped for the same reason and one
+ *  worse: its `material` isn't rendered either (the imported materials are),
+ *  but it IS kept, so a GLB sitting in a multi-selection would silently bank
+ *  every edit made while it was there and dump them all on the scene the day
+ *  someone flips the override switch. This mirrors `isEditableMaterial` in
+ *  controls.ts, which already draws the line in the same place. */
 function applyMaterial(mutate: (m: SceneMaterial) => void) {
   for (const o of selectedObjects.value) {
     if (o.kind === 'light' || o.kind === 'group') continue
+    if (o.kind === 'glb' && o.materialOverride !== true) continue
     mutate(o.material)
   }
 }
@@ -814,15 +822,36 @@ async function generateReliefFromPrompt() {
 // computed getters re-read and the inputs update — two-way, no extra wiring.
 const RAD2DEG = 180 / Math.PI
 const DEG2RAD = Math.PI / 180
+/** Apply one transform-row edit across the WHOLE selection, as the spec's
+ *  multi-select rule requires: the typed number lands on the primary and every
+ *  other selected object shifts by the same DELTA. Absolute fan-out would stack
+ *  three selected objects on one another the moment you typed a position, which
+ *  is why `axisDeltaWrites` (unit-tested in scene3d-hierarchy.unit.spec.ts) owns
+ *  the arithmetic — including the rule that a selected object inside another
+ *  selected object does NOT get the delta, since its ancestor already carries it
+ *  through the scene graph.
+ *
+ *  Without this, the panel was incoherent: with three objects selected, Color
+ *  changed three, Position X changed one, and the gizmo moved all three.
+ *
+ *  `v` is in DOC units — the rotation row converts to radians before calling. */
+function writeAxis(prop: 'position' | 'rotation' | 'scale', axis: 0 | 1 | 2, v: number): void {
+  for (const { id, value } of axisDeltaWrites(doc.objects, selectedIds.value, prop, axis, v)) {
+    const o = doc.objects.find((x) => x.id === id)
+    if (!o) continue
+    // Replace the whole array so the deep doc watcher fires (engine syncs) —
+    // same reason the single-selection path always did.
+    const next = [...o[prop]] as [number, number, number]
+    next[axis] = value
+    o[prop] = next
+  }
+}
 function axisField(prop: 'position' | 'scale', axis: 0 | 1 | 2) {
   return computed<number>({
     get: () => selected.value?.[prop][axis] ?? (prop === 'scale' ? 1 : 0),
     set: (v) => {
-      const s = selected.value
-      if (!s || !Number.isFinite(v)) return
-      const next = [...s[prop]] as [number, number, number]
-      next[axis] = v
-      s[prop] = next
+      if (!selected.value || !Number.isFinite(v)) return
+      writeAxis(prop, axis, v)
     },
   })
 }
@@ -830,11 +859,8 @@ function rotField(axis: 0 | 1 | 2) {
   return computed<number>({
     get: () => (selected.value ? selected.value.rotation[axis] * RAD2DEG : 0),
     set: (v) => {
-      const s = selected.value
-      if (!s || !Number.isFinite(v)) return
-      const next = [...s.rotation] as [number, number, number]
-      next[axis] = v * DEG2RAD
-      s.rotation = next
+      if (!selected.value || !Number.isFinite(v)) return
+      writeAxis('rotation', axis, v * DEG2RAD)
     },
   })
 }
@@ -1136,7 +1162,11 @@ onMounted(() => {
   engine.applyCameraFromDoc(doc)
   interaction = new SceneInteraction(engine, viewportEl.value, {
     onSelect: (id, additive) => {
-      if (!id) { selectedIds.value = []; return }
+      // A miss with a modifier held leaves the selection alone. Shift-clicking is
+      // how you BUILD a multi-selection, so one shift-click that lands a few
+      // pixels off an object must not throw away everything picked up so far —
+      // the gesture that adds must never be the gesture that wipes.
+      if (!id) { if (!additive) selectedIds.value = []; return }
       toggleSelected(id, additive)
     },
     onTransform: (id, t) => {
@@ -1598,6 +1628,12 @@ function retryGlb(id: string) {
     position: [...o.position], rotation: [...o.rotation], scale: [...o.scale],
     material: { ...o.material },
     ...(o.materialOverride ? { materialOverride: true } : {}),
+    // Carry the parent across too, for the same reason `cloneObject` does: the
+    // retried object's TRS is a LOCAL transform under that parent. Dropping
+    // parentId here re-reads those same numbers as world coordinates, so a
+    // failed GLB inside a group at [5,0,0] jumps to the origin and leaves the
+    // group the instant the user clicks Retry.
+    ...(o.parentId ? { parentId: o.parentId } : {}),
   })
   doc.objects.splice(idx, 1, fresh)
   if (selectedId.value === id) selectedId.value = fresh.id
@@ -1984,6 +2020,16 @@ function onClose() {
       </div>
 
       <template v-if="activeTab === 'build'">
+      <!-- Multi-selection indicator. Every row below reads the PRIMARY's value
+           but writes to the whole selection, so without this the panel looks
+           like an ordinary single-object inspector right up until one edit
+           changes N objects. Action blue is Sailor's only accent. -->
+      <div v-if="selectedIds.length > 1" data-testid="multi-select-badge"
+           class="mb-2 flex items-center gap-1.5 rounded-lg border border-[#4f8cff]/35 bg-[#4f8cff]/10 px-2.5 py-1.5 text-[11px] text-[#4f8cff]">
+        <Boxes class="h-3.5 w-3.5 shrink-0" />
+        <span class="tabular-nums">{{ selectedIds.length }} objects selected</span>
+        <span class="ml-auto shrink-0 text-[10px] text-[#4f8cff]/60">edits apply to all</span>
+      </div>
       <StudioSection v-if="selected" title="Transform" @pointerdown.capture="onControlsPointerDown">
         <div>
           <label class="mb-1 block text-[11px] text-white/55">Position</label>

@@ -514,3 +514,142 @@ describe('scene3d rebaseMany', () => {
     expect(after.find(o => o.id === 'outer')).toEqual(outer)
   })
 })
+
+// ── Multi-selection fan-out (final-review I2 + I4) ────────────────────────────
+import { outermostIds, axisDeltaWrites } from '~/lib/scene3d/hierarchy'
+import { parseDoc } from '~/lib/scene3d/config'
+import type { GroupObject, SceneDoc } from '~/lib/scene3d/config'
+import { SCENE_TEMPLATES, templateTargets } from '~/lib/scene3d/motion/defaults'
+
+/** A group stand-in with a caller-chosen id, so the assertions can name it. */
+function group(id: string, parentId?: string): GroupObject {
+  return {
+    kind: 'group', id, name: id, visible: true,
+    position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1],
+    material: { type: 'standard' } as SceneObject['material'],
+    ...(parentId ? { parentId } : {}),
+  }
+}
+
+describe('outermostIds', () => {
+  it('drops a selected object that sits inside another selected object', () => {
+    // A group and one of its own children: one shift-click apart in the object
+    // list, so this is a state a user reaches by accident, not a contrivance.
+    const g = group('g')
+    const objects = [g, obj('a', 'g'), obj('b', 'g'), obj('c')]
+    expect(outermostIds(objects, ['g', 'a', 'c'])).toEqual(['g', 'c'])
+  })
+
+  it('keeps siblings, and drops a grandchild rather than only a direct child', () => {
+    const objects = [group('outer'), group('inner', 'outer'), obj('leaf', 'inner'), obj('other')]
+    expect(outermostIds(objects, ['outer', 'leaf'])).toEqual(['outer'])
+    expect(outermostIds(objects, ['inner', 'leaf', 'other'])).toEqual(['inner', 'other'])
+  })
+
+  it('ignores ids naming no object', () => {
+    expect(outermostIds([obj('a')], ['a', 'ghost'])).toEqual(['a'])
+  })
+})
+
+describe('axisDeltaWrites', () => {
+  const scene = () => {
+    const a = obj('a'); a.position = [0, 0, 0]
+    const b = obj('b'); b.position = [10, 0, 0]
+    const c = obj('c'); c.position = [-4, 0, 0]
+    return [a, b, c]
+  }
+
+  it('gives the primary the typed value and everyone else the same DELTA', () => {
+    // The bug this replaces wrote only the primary. The bug it must NOT become
+    // is writing the typed value to all three, which would stack them.
+    const objects = scene()
+    const writes = axisDeltaWrites(objects, ['b', 'c', 'a'], 'position', 0, 3)
+    expect(new Map(writes.map(w => [w.id, w.value]))).toEqual(new Map([
+      ['a', 3],  // primary (last entry): typed value, was 0 → delta +3
+      ['b', 13], // 10 + 3
+      ['c', -1], // -4 + 3
+    ]))
+  })
+
+  it('writes only the primary when it is the whole selection', () => {
+    expect(axisDeltaWrites(scene(), ['b'], 'position', 0, 3)).toEqual([{ id: 'b', value: 3 }])
+  })
+
+  it('does not double-move a selected child of a selected group', () => {
+    // The group's delta already reaches the child through the scene graph, so a
+    // second delta on the child would move it twice as far as the field asked.
+    const g = group('g'); g.position = [1, 0, 0]
+    const child = obj('child', 'g'); child.position = [2, 0, 0]
+    const solo = obj('solo'); solo.position = [7, 0, 0]
+    const writes = axisDeltaWrites([g, child, solo], ['child', 'solo', 'g'], 'position', 0, 4)
+    expect(writes).toEqual([{ id: 'g', value: 4 }, { id: 'solo', value: 10 }])
+    expect(writes.some(w => w.id === 'child')).toBe(false)
+  })
+
+  it('still writes the primary verbatim when the primary is the nested one', () => {
+    // The row edits a LOCAL transform, so the number in the field must become
+    // true regardless of what the primary's selected ancestor is doing.
+    const g = group('g'); g.position = [1, 0, 0]
+    const child = obj('child', 'g'); child.position = [2, 0, 0]
+    const writes = axisDeltaWrites([g, child], ['g', 'child'], 'position', 0, 5)
+    expect(writes).toEqual([{ id: 'child', value: 5 }, { id: 'g', value: 4 }])
+  })
+
+  it('fans out rotation and scale on the requested axis only', () => {
+    const a = obj('a'); a.rotation = [0, 0.5, 0]; a.scale = [1, 1, 1]
+    const b = obj('b'); b.rotation = [0, 2, 0]; b.scale = [3, 3, 3]
+    expect(axisDeltaWrites([a, b], ['b', 'a'], 'rotation', 1, 1.5)).toEqual([
+      { id: 'a', value: 1.5 }, { id: 'b', value: 3 },
+    ])
+    expect(axisDeltaWrites([a, b], ['b', 'a'], 'scale', 0, 2)).toEqual([
+      { id: 'a', value: 2 }, { id: 'b', value: 4 },
+    ])
+  })
+
+  it('fans out nothing when the value is unchanged', () => {
+    const objects = scene()
+    expect(axisDeltaWrites(objects, ['b', 'a'], 'position', 0, 0)).toEqual([{ id: 'a', value: 0 }])
+  })
+
+  it('returns no writes when the primary names no object', () => {
+    expect(axisDeltaWrites(scene(), ['a', 'ghost'], 'position', 0, 3)).toEqual([])
+  })
+})
+
+describe('motion templates target roots only', () => {
+  const docOf = (objects: SceneObject[]): SceneDoc =>
+    ({ ...parseDoc(''), objects }) as SceneDoc
+
+  it('stamps the group and not its children', () => {
+    // The failure this guards: Showcase on a two-box group gave each child a
+    // `rise` of its own AND the group's, so every child travelled twice as far
+    // and the two `bob` loops beat against each other.
+    const g = group('g')
+    const doc = docOf([g, obj('a', 'g'), obj('b', 'g'), obj('loose')])
+    expect(templateTargets(doc).map(o => o.id)).toEqual(['g', 'loose'])
+
+    SCENE_TEMPLATES.showcase(doc)
+    expect(doc.objects.find(o => o.id === 'g')!.motion).toBeTruthy()
+    expect(doc.objects.find(o => o.id === 'loose')!.motion).toBeTruthy()
+    expect(doc.objects.find(o => o.id === 'a')!.motion).toBeUndefined()
+    expect(doc.objects.find(o => o.id === 'b')!.motion).toBeUndefined()
+  })
+
+  it('excludes lights, as before', () => {
+    const light = obj('l'); (light as SceneObject & { kind: string }).kind = 'light'
+    const doc = docOf([obj('a'), light])
+    expect(templateTargets(doc).map(o => o.id)).toEqual(['a'])
+  })
+
+  it('clears a child motion left over from a run made before the grouping', () => {
+    // Re-applying a template after grouping must not leave the child carrying
+    // the previous run's preset — that reintroduces the double-travel through
+    // history instead of through one pass.
+    const g = group('g')
+    const child = obj('a', 'g')
+    const doc = docOf([g, child])
+    doc.objects.find(o => o.id === 'a')!.motion = { loop: { kind: 'bob', speed: 1, amount: 1, phase: 0 } }
+    SCENE_TEMPLATES.loop(doc)
+    expect(doc.objects.find(o => o.id === 'a')!.motion).toBeUndefined()
+  })
+})

@@ -227,4 +227,70 @@ test.describe('3D Studio — object grouping (E2E)', () => {
       }
     }
   })
+
+  /**
+   * Multi-selection fan-out. The unit tests pin the arithmetic
+   * (`axisDeltaWrites` in scene3d-hierarchy.unit.spec.ts); this pins the WIRING,
+   * which is where the bug actually lived — the panel was reading and writing
+   * only the primary while material edits and the gizmo already fanned out, so
+   * with three objects selected Color changed three and Position X changed one.
+   *
+   * Both halves have been shown to fail against a deliberately-broken control:
+   * writing only `selectedIds.slice(-1)` leaves the Box at 1 instead of 8, and
+   * restoring the unconditional `selectedIds = []` on a null select makes the
+   * badge disappear on the shift-click miss.
+   */
+  test('a transform row applies the same delta to every selected object', async ({ page }) => {
+    await waitForBackend(page)
+    await openBlankWorkflow(page)
+    await page.setViewportSize({ width: 1600, height: 1300 })
+    await dropNode(page, 'Scene3DStudio')
+    await page.getByRole('button', { name: 'Edit', exact: true }).first().click()
+    const dialog = page.getByRole('dialog')
+    await expect(dialog.getByText('3D Studio', { exact: true })).toBeVisible({ timeout: 15_000 })
+
+    const BOX: Vec3 = [1, 0.5, 0]
+    const SPHERE: Vec3 = [-2, 3, 1]
+    await addPrimitive(page, 'Box')
+    await selectOnly(page, 'Box')
+    await writePosition(page, BOX)
+    await addPrimitive(page, 'Sphere')
+    await selectOnly(page, 'Sphere')
+    await writePosition(page, SPHERE)
+
+    // Box, then shift-Sphere: the LAST entry is the primary, so the panel is
+    // showing the Sphere's numbers.
+    await selectOnly(page, 'Box')
+    await row(page, 'Sphere').click({ modifiers: ['Shift'] })
+
+    const badge = page.locator('[data-testid="multi-select-badge"]')
+    await expect(badge).toBeVisible()
+    await expect(badge).toContainText('2 objects selected')
+    expect(await readPosition(page)).toEqual(SPHERE)
+
+    // Typing 5 on the primary is a delta of +7. DELTA, not the absolute value:
+    // if both objects were set to 5 they would land on top of each other, which
+    // is the failure mode the spec's "same delta" wording exists to rule out.
+    await page.getByLabel('Position X').fill('5')
+    await selectOnly(page, 'Sphere')
+    await expect.poll(async () => (await readPosition(page))[0]).toBeCloseTo(5, 5)
+    await selectOnly(page, 'Box')
+    await expect.poll(async () => (await readPosition(page))[0]).toBeCloseTo(BOX[0]! + 7, 5)
+    // Untouched axes on the non-primary stayed put — a fan-out that copied the
+    // whole vector would fail here and pass the X check above.
+    expect((await readPosition(page))[1]).toBeCloseTo(BOX[1]!, 5)
+
+    // A shift-click that MISSES everything must leave the selection alone: the
+    // gesture that builds a multi-selection must never be the one that wipes it.
+    // The point is derived from the canvas rect rather than hard-coded — the
+    // viewport's top-LEFT corner is covered by a toolbar button, and clicking
+    // that made an earlier version of this assertion vacuous.
+    await selectOnly(page, 'Box')
+    await row(page, 'Sphere').click({ modifiers: ['Shift'] })
+    await expect(badge).toBeVisible()
+    const canvas = dialog.locator('canvas').first()
+    const rect = (await canvas.boundingBox())!
+    await canvas.click({ position: { x: rect.width - 20, y: 20 }, modifiers: ['Shift'] })
+    await expect(badge).toBeVisible()
+  })
 })

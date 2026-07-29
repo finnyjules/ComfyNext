@@ -821,14 +821,35 @@ export class SceneEngine {
   }
 
   /** Set per-object opacity for a motion frame. Ids not in `map` are forced opaque.
-   *  Traverses each root's meshes; toggles material.transparent so fades render. */
+   *  Walks each root's own meshes; toggles material.transparent so fades render.
+   *
+   *  Deliberately NOT `root.traverse`: since parenting landed, a nested object's
+   *  root sits INSIDE its parent's subtree, so a plain traverse writes the
+   *  parent's opacity over every child's — and the winner is whichever root this
+   *  loop happens to visit last. That order is not stable across sessions: roots
+   *  land children-first right after an in-session group (the child roots already
+   *  existed; the group's is appended), and parents-first after a reload, because
+   *  `syncFromDoc` creates them through `orderParentsFirst`. The same document
+   *  would then fade the children but not the group in one session, and the group
+   *  but not the children in the next. Skipping other objects' roots makes each
+   *  entry in `map` apply to exactly the geometry that object owns. */
   applyObjectOpacities(map: Record<string, number>): void {
     for (const [id, root] of this.objectRoots) {
       const o = map[id] ?? 1
-      root.traverse((n) => {
+      const stack: THREE.Object3D[] = [root]
+      while (stack.length) {
+        const n = stack.pop()!
+        for (const c of n.children) {
+          // `userData.sceneId` is stamped on every object root at creation
+          // (syncObject), and only there — a GLB's loaded interior carries none,
+          // so it is still walked as part of the object that owns it.
+          const cid = c.userData.sceneId as string | undefined
+          if (cid && cid !== id && this.objectRoots.has(cid)) continue
+          stack.push(c)
+        }
         const mesh = n as THREE.Mesh
         const mat = mesh.material as THREE.Material | THREE.Material[] | undefined
-        if (!mat) return
+        if (!mat) continue
         const mats = Array.isArray(mat) ? mat : [mat]
         for (const m of mats) {
           const mm = m as THREE.Material & { opacity?: number; transparent?: boolean }
@@ -836,7 +857,7 @@ export class SceneEngine {
           mm.transparent = o < 1
           mm.needsUpdate = true
         }
-      })
+      }
     }
   }
 

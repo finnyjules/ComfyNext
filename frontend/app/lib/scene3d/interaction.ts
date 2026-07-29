@@ -171,7 +171,12 @@ export class SceneInteraction {
       // pruned instance is the scale one without a parallel lookup structure.
       ;(tc as unknown as { userData: Record<string, unknown> }).userData = { mode }
       tc.addEventListener('dragging-changed', (e) => {
-        this.gizmoDragging = e.value
+        // three types EVERY entry in TransformControlsEventMap as `{ value: unknown }`,
+        // this one included, so the boolean has to be recovered here. Coerced, not
+        // cast — a cast would assert a shape three does not promise, and this flag
+        // gates orbit; a truthy non-boolean silently wedging orbit off is exactly
+        // the failure an `as boolean` would hide.
+        this.gizmoDragging = !!e.value
         this.updateOrbitEnabled()
         if (e.value) {
           this.gizmoDragged = true
@@ -410,7 +415,16 @@ export class SceneInteraction {
     // select() narrows selectedIds to match, so emitTransform reports exactly
     // what the gizmo actually drives.
     const roots = ids.map((id) => this.engine.objectRoots.get(id)).filter((r): r is THREE.Object3D => !!r)
-    if (roots.length < 2) { this.select(ids[0] ?? null, isLight); return }
+    if (roots.length < 2) {
+      // The primary is the LAST entry everywhere else in this feature (it is what
+      // the properties panel titles itself after); falling back to ids[0] here
+      // would silently put the gizmo on a different object than the panel is
+      // describing. Prefer the last id that still HAS a root, since attaching to
+      // one that doesn't shows no gizmo at all.
+      const live = [...ids].reverse().find((id) => this.engine.objectRoots.has(id))
+      this.select(live ?? ids[ids.length - 1] ?? null, isLight)
+      return
+    }
     const pivot = new THREE.Object3D()
     pivot.userData.isGizmoHelper = true // keep it out of every baked/exported pass
     this.engine.scene.add(pivot)
