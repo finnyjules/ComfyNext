@@ -36,6 +36,8 @@ import type { StudioControlDesc } from '~/lib/collection/studioBindables'
 import { registerStudioParamBaker, unregisterStudioParamBaker } from '~/lib/studio/cascade'
 import { makeListRemap } from '~/lib/studio/listRemap'
 import SweepPopover from '~/components/vue-canvas/studio/SweepPopover.vue'
+import { exportEmbedHtml, downloadEmbed } from '~/lib/embed/export'
+import type { ShaderEmbedConfig } from '~/lib/embed/surfaces/shader'
 
 const props = defineProps<{ nodeId: string; nodes: any[]; edges?: any[]; wiredUrl?: string | null }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
@@ -51,6 +53,7 @@ const canvas = ref<HTMLCanvasElement | null>(null)
 const glError = ref<string | null>(null)
 const baking = ref(false)
 const bakeMsg = ref('')
+const embedMsg = ref('')
 // Preview backing-store cap. Kept high so grid-based effects (ASCII, halftone,
 // dither) render enough pixels-per-cell to stay crisp on retina displays and at
 // fine Size values — at 880 a dense ASCII grid mushed out. Export still upscales
@@ -481,6 +484,55 @@ async function generateVideo() {
   finally { baking.value = false; startPreview() }
 }
 
+async function exportWebEmbed() {
+  if (!resolved.value) { embedMsg.value = 'Add a source first'; return }
+  embedMsg.value = 'Building…'
+  try {
+    const src = resolved.value!
+    const clock = exportClock(src, config.value.motion.duration, config.value.motion.fps)
+    const { w, h } = outputDims(src.width, src.height, config.value.resolution, { upscale: true })
+
+    // Inline the source image — the exported file must not fetch it. `src` is
+    // the ResolvedSource wrapper (getFrame/width/height/...), not itself
+    // drawable, so pull an actual frame the same way renderFrame/renderBlob do
+    // (resolve.ts:201/396) before handing it to the 2D canvas. Drawing through
+    // a 2D canvas gives a data: URI regardless of whether the frame arrived as
+    // an <img>, a canvas, or a bitmap.
+    const frame = await src.getFrame(0, w, h)
+    const flat = document.createElement('canvas')
+    flat.width = w
+    flat.height = h
+    flat.getContext('2d')!.drawImage(frame as CanvasImageSource, 0, 0, w, h)
+
+    // Only the defs actually referenced by enabled layers travel with the export.
+    const ids = new Set(config.value.effects.filter(e => e.enabled && e.id).map(e => e.id))
+    const defs = (catalog.value?.effects ?? []).filter(d => ids.has(d.id))
+
+    const embedConfig: ShaderEmbedConfig = {
+      cfg: structuredClone(toRaw(config.value)),
+      defs,
+      duration: clock.duration,
+      baseDataUrl: flat.toDataURL('image/png'),
+    }
+
+    const html = await exportEmbedHtml({
+      kind: 'shader',
+      config: embedConfig,
+      duration: clock.duration,
+      width: w,
+      height: h,
+    })
+
+    // Size is shown, not discovered later when a page takes eight seconds to load.
+    const mb = (new Blob([html]).size / 1_048_576).toFixed(1)
+    embedMsg.value = `Downloaded — ${mb} MB`
+    downloadEmbed('sailor-shader-embed.html', html)
+  } catch (err) {
+    console.error('[ShaderStudio] embed export failed:', err)
+    embedMsg.value = err instanceof Error ? err.message : 'Export failed'
+  }
+}
+
 const RESOLUTIONS = [1024, 1536, 2048, 4096]
 
 // Live readout of the baked output size (the preview is a fixed-size proxy, so
@@ -585,6 +637,8 @@ function remapEffectTracks(kind: 'move' | 'insert' | 'remove', a: number, b?: nu
     <template #actions>
       <StudioButton variant="primary" :disabled="baking" @click="generateImage">{{ baking ? (bakeMsg || 'Working…') : 'Generate as image' }}</StudioButton>
       <StudioButton variant="secondary" :disabled="baking" @click="generateVideo">{{ baking ? (bakeMsg || 'Working…') : 'Generate as video' }}</StudioButton>
+      <StudioButton @click="exportWebEmbed">Export embed</StudioButton>
+      <span v-if="embedMsg" class="text-xs opacity-60">{{ embedMsg }}</span>
       <span v-if="glError" class="ml-2 truncate text-xs text-red-300/80">{{ glError }}</span>
     </template>
 

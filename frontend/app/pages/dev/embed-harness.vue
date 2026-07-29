@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted } from 'vue'
 import { loadEmbedSurface } from '~/lib/embed/surfaces'
+import { exportEmbedHtml } from '~/lib/embed/export'
 import { fetchShaderFxCatalog } from '~/lib/shaderfx/catalog'
 import { defaultConfig, newLayerId } from '~/lib/shaderstudio/types'
 import type { EmbedHandle } from '~/lib/embed/contract'
@@ -46,6 +47,15 @@ onMounted(async () => {
     snapshot(slot: string): string {
       const c = document.querySelector(`#slot-${slot} canvas`) as HTMLCanvasElement | null
       return c ? c.toDataURL('image/png') : ''
+    },
+    async exportHtml() {
+      return await exportEmbedHtml({
+        kind: 'shader',
+        config,
+        duration: DURATION,
+        width: 512,
+        height: 512,
+      })
     },
   }
   ;(window as any).__embedHarnessReady = true
