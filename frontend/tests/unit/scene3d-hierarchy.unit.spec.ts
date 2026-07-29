@@ -167,12 +167,34 @@ describe('scene3d group/ungroup transforms', () => {
     const objects = [outer, a, b]
     const before = [worldPos(objects, 'a'), worldPos(objects, 'b')]
 
+    // Expected group world position: bounds centre of the members' world
+    // origins, computed independently from `before` (captured pre-grouping)
+    // rather than by calling back into the code under test — for two points
+    // the componentwise min/max average coincides with the componentwise
+    // mean, so this is exact, not an approximation.
+    const expectedGroupWorldPos: [number, number, number] = [
+      (before[0]![0] + before[1]![0]) / 2,
+      (before[0]![1] + before[1]![1]) / 2,
+      (before[0]![2] + before[1]![2]) / 2,
+    ]
+
     const group = createGroup(objects)
     group.parentId = 'outer'
     const after = groupObjects(objects, ['a', 'b'], group)
 
     expectClose(worldPos(after, 'a'), before[0]!)
     expectClose(worldPos(after, 'b'), before[1]!)
+
+    // The group itself: its WORLD position must land at the selection's
+    // bounds centre even though it has a rotated, non-uniformly-scaled
+    // parent (naive `centre - parentWorld.position` subtraction would miss
+    // this), and its LOCAL rotation/scale must stay identity — a group
+    // inherits its parent's orientation rather than correcting to world
+    // identity, which is what decides gizmo orientation later.
+    const placedGroup = after.find(o => o.id === group.id)!
+    expectClose(worldPos(after, group.id), expectedGroupWorldPos)
+    expectClose(placedGroup.rotation, [0, 0, 0])
+    expectClose(placedGroup.scale, [1, 1, 1])
   })
 
   it('preserves world position when ungrouping under a rotated ancestor', () => {
