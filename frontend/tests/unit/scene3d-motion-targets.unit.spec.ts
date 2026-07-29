@@ -1,0 +1,202 @@
+import { describe, it, expect } from 'vitest'
+import { animatableTargets, animatableRange } from '~/lib/scene3d/motion/targets'
+import { applyMotionToDoc } from '~/lib/scene3d/motion/apply'
+import { defaultDoc, createPrimitive } from '~/lib/scene3d/config'
+import { SCENE_CONTROLS } from '~/lib/scene3d/controls'
+import type { SceneMotionTrack } from '~/lib/scene3d/motion/types'
+
+const track = (over: Partial<SceneMotionTrack> = {}): SceneMotionTrack => ({
+  path: 'lighting.sunIntensity', from: 0, to: 1, easing: 'linear', loops: 1, hold: 0, cycleOffset: 0, delay: 0, ...over,
+})
+
+describe('animatableTargets', () => {
+  it('includes lighting.sunIntensity with its declared slider range', () => {
+    const doc = defaultDoc()
+    const t = animatableTargets(doc).find((x) => x.path === 'lighting.sunIntensity')
+    expect(t).toBeTruthy()
+    expect(t!.min).toBe(0)
+    expect(t!.max).toBe(3)
+    expect(t!.label).toBe('Sun intensity')
+  })
+
+  it('includes a per-object relief path, id-addressed and labelled with the object name', () => {
+    const doc = defaultDoc()
+    const box = createPrimitive('box', doc.objects)
+    box.name = 'My Box'
+    doc.objects.push(box)
+
+    const path = `objects.${box.id}.material.relief.scale`
+    const t = animatableTargets(doc).find((x) => x.path === path)
+    expect(t, path).toBeTruthy()
+    expect(t!.label).toBe('My Box · Relief scale')
+    expect(t!.min).toBe(0)
+    expect(t!.max).toBe(4)
+  })
+
+  it('reaches every object, not just one', () => {
+    const doc = defaultDoc()
+    const a = createPrimitive('box', doc.objects); a.name = 'A'; doc.objects.push(a)
+    const b = createPrimitive('sphere', doc.objects); b.name = 'B'; doc.objects.push(b)
+    const paths = animatableTargets(doc).map((t) => t.path)
+    expect(paths).toContain(`objects.${a.id}.material.roughness`)
+    expect(paths).toContain(`objects.${b.id}.material.roughness`)
+  })
+
+  it('excludes transform paths — SCENE_CONTROLS declares them animatable: false', () => {
+    const doc = defaultDoc()
+    const box = createPrimitive('box', doc.objects)
+    doc.objects.push(box)
+    const paths = animatableTargets(doc).map((t) => t.path)
+
+    // Nothing emitted for any axis of position/rotation/scale, relative or id-addressed.
+    for (const axis of ['0', '1', '2']) {
+      for (const field of ['position', 'rotation', 'scale']) {
+        expect(paths).not.toContain(`object.${field}.${axis}`)
+        expect(paths).not.toContain(`objects.${box.id}.${field}.${axis}`)
+      }
+    }
+
+    // Don't just assume — assert the schema itself still marks every Transform control
+    // animatable: false, so a future edit that silently drops the flag fails THIS test
+    // rather than shipping a track that fights ObjectMotion.
+    const transform = SCENE_CONTROLS.filter((c) => c.group === 'Transform')
+    expect(transform.length).toBeGreaterThan(0)
+    for (const c of transform) expect(c.animatable, c.key).toBe(false)
+  })
+
+  it('excludes anything under objects.<id>.motion.', () => {
+    const doc = defaultDoc()
+    const box = createPrimitive('box', doc.objects)
+    doc.objects.push(box)
+    const paths = animatableTargets(doc).map((t) => t.path)
+    expect(paths.some((p) => p.includes('.motion.'))).toBe(false)
+    expect(paths.some((p) => p.startsWith(`objects.${box.id}.motion`))).toBe(false)
+  })
+
+  it('every target has a finite range with max > min', () => {
+    const doc = defaultDoc()
+    doc.objects.push(createPrimitive('box', doc.objects))
+    for (const t of animatableTargets(doc)) {
+      expect(Number.isFinite(t.min), `${t.path} min`).toBe(true)
+      expect(Number.isFinite(t.max), `${t.path} max`).toBe(true)
+      expect(t.max, `${t.path} range`).toBeGreaterThan(t.min)
+    }
+  })
+
+  it('a default scene (no objects) still offers the doc-level (Lighting/Camera/Post) targets', () => {
+    const paths = animatableTargets(defaultDoc()).map((t) => t.path)
+    expect(paths).toContain('lighting.sunIntensity')
+    expect(paths).toContain('camera.fov')
+    expect(paths).toContain('post.bloomStrength')
+  })
+})
+
+describe('animatableRange — the widening mechanism', () => {
+  it('reports the slider range when animatable is absent', () => {
+    expect(animatableRange({ min: 0, max: 1 })).toEqual({ min: 0, max: 1 })
+  })
+  it('reports the slider range when animatable: true', () => {
+    expect(animatableRange({ min: 0, max: 1, animatable: true })).toEqual({ min: 0, max: 1 })
+  })
+  it('reports the WIDENED range when animatable is an explicit {min,max}, not the slider\'s own', () => {
+    expect(animatableRange({ min: 0, max: 1, animatable: { min: -50, max: 50 } })).toEqual({ min: -50, max: 50 })
+  })
+})
+
+describe('applyMotionToDoc — path tracks', () => {
+  it('writes the track value at the right doc-level path', () => {
+    const doc = defaultDoc()
+    doc.motion = { duration: 1, fps: 30, loop: true, tracks: [track({ path: 'lighting.sunIntensity', from: 0, to: 2 })] }
+    const out = applyMotionToDoc(doc, 1).doc
+    expect(out.lighting.sunIntensity).toBeCloseTo(2, 6)
+  })
+
+  it('writes the value at the right OBJECT and leaves the other object untouched', () => {
+    const doc = defaultDoc()
+    const a = createPrimitive('box', doc.objects); doc.objects.push(a)
+    const b = createPrimitive('sphere', doc.objects); doc.objects.push(b)
+    doc.motion = {
+      duration: 1, fps: 30, loop: true,
+      tracks: [track({ path: `objects.${a.id}.material.roughness`, from: 0, to: 0.9 })],
+    }
+    const out = applyMotionToDoc(doc, 1).doc
+    const outA = out.objects.find((o) => o.id === a.id)!
+    const outB = out.objects.find((o) => o.id === b.id)!
+    expect((outA as any).material.roughness).toBeCloseTo(0.9, 6)
+    expect((outB as any).material.roughness).toBe(b.material.roughness) // untouched
+  })
+
+  it('does not mutate the input doc', () => {
+    const doc = defaultDoc()
+    doc.motion = { duration: 1, fps: 30, loop: true, tracks: [track({ path: 'lighting.sunIntensity', from: 0, to: 2 })] }
+    const before = JSON.stringify(doc)
+    applyMotionToDoc(doc, 1)
+    expect(JSON.stringify(doc)).toBe(before)
+  })
+
+  it('a track whose parent container is missing is skipped and fabricates nothing', () => {
+    const doc = defaultDoc()
+    const box = createPrimitive('box', doc.objects); doc.objects.push(box)
+    expect(box.material.relief).toBeUndefined() // precondition: relief block genuinely absent
+    doc.motion = {
+      duration: 1, fps: 30, loop: true,
+      tracks: [track({ path: `objects.${box.id}.material.relief.scale`, from: 0, to: 1 })],
+    }
+    const out = applyMotionToDoc(doc, 1).doc
+    const outBox = out.objects.find((o) => o.id === box.id)!
+    expect((outBox as any).material.relief).toBeUndefined() // still absent — nothing fabricated
+  })
+
+  it('a bogus doc-level path is skipped without throwing and fabricates nothing', () => {
+    const doc = defaultDoc()
+    doc.motion = { duration: 1, fps: 30, loop: true, tracks: [track({ path: 'nope.does.not.exist', from: 0, to: 1 })] }
+    expect(() => applyMotionToDoc(doc, 1)).not.toThrow()
+    const out = applyMotionToDoc(doc, 1).doc as any
+    expect(out.nope).toBeUndefined()
+  })
+
+  it('an unresolvable object id is ignored, not fabricated or re-aimed at another object', () => {
+    const doc = defaultDoc()
+    const box = createPrimitive('box', doc.objects); doc.objects.push(box)
+    doc.motion = {
+      duration: 1, fps: 30, loop: true,
+      tracks: [track({ path: 'objects.does-not-exist.material.roughness', from: 0, to: 0.9 })],
+    }
+    const out = applyMotionToDoc(doc, 1).doc
+    expect((out.objects[0] as any).material.roughness).toBe(box.material.roughness)
+  })
+
+  it('a track explicitly aimed at the motion sub-namespace is ignored, never fighting the preset system', () => {
+    const doc = defaultDoc()
+    const box = createPrimitive('box', doc.objects)
+    box.motion = { loop: { kind: 'spin', speed: 1, amount: 1 } }
+    doc.objects.push(box)
+    doc.motion = {
+      duration: 1, fps: 30, loop: true,
+      tracks: [track({ path: `objects.${box.id}.motion.loop.speed`, from: 0, to: 99 })],
+    }
+    const out = applyMotionToDoc(doc, 1).doc
+    const outBox = out.objects.find((o) => o.id === box.id)!
+    expect(outBox.motion?.loop?.speed).toBe(1) // unchanged — the track never touched it
+  })
+
+  it('with no tracks, output is unchanged from the existing preset-only behaviour', () => {
+    const doc = defaultDoc()
+    const box = createPrimitive('box', doc.objects); box.position = [0, 5, 0]
+    box.motion = { loop: { kind: 'bob', speed: 1, amount: 2 } }
+    doc.objects.push(box)
+    doc.motion = { duration: 4, fps: 30, loop: true } // no tracks field at all
+    const quarter = applyMotionToDoc(doc, 0.25).doc.objects[0]!.position
+    expect(quarter[1]).toBeGreaterThan(5) // same bob-peak assertion scene3d-motion.unit.spec.ts already pins
+    const zero = applyMotionToDoc(doc, 0).doc.objects[0]!.position
+    expect(zero[1]).toBeCloseTo(5, 6)
+  })
+
+  it('an empty tracks array behaves identically to an absent one', () => {
+    const doc = defaultDoc()
+    const box = createPrimitive('box', doc.objects); box.position = [1, 2, 3]; doc.objects.push(box)
+    doc.motion = { duration: 4, fps: 30, loop: true, tracks: [] }
+    const out = applyMotionToDoc(doc, 0.5).doc
+    expect(out.objects[0]!.position).toEqual([1, 2, 3])
+  })
+})

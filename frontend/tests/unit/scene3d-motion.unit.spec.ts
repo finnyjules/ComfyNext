@@ -64,6 +64,53 @@ describe('scene3d motion — config parse', () => {
     expect(round.motion).toEqual(DEFAULT_SCENE_MOTION)
   })
 
+  // THE TRAP: parseDoc is a whitelist, and `motion.tracks` is a new field — round-trip
+  // it explicitly, the same way scene3d-relief-config.unit.spec.ts pins every new
+  // optional relief field, so a future edit that forgets to copy it in parseSceneMotion
+  // fails loudly here instead of silently dropping every saved track on reload.
+  it('round-trips path-based motion tracks through serialize → parse', () => {
+    const doc = defaultDoc()
+    const tracks = [
+      { path: 'lighting.sunIntensity', from: 0, to: 2, easing: 'linear' as const, loops: 1, hold: 0, cycleOffset: 0, delay: 0 },
+      { path: 'post.bloomStrength', from: 0.2, to: 1.5, easing: 'pingpong' as const, loops: 2, hold: 0.1, cycleOffset: 0.25, delay: 0.5 },
+    ]
+    doc.motion = { duration: 5, fps: 24, loop: true, tracks }
+    const round = parseDoc(serializeDoc(doc))
+    expect(round.motion.tracks).toEqual(tracks)
+  })
+
+  it('drops a malformed track (bad easing, non-finite from/to) but keeps the valid ones', () => {
+    const doc = defaultDoc()
+    doc.motion = {
+      duration: 5, fps: 24, loop: true,
+      tracks: [{ path: 'lighting.sunIntensity', from: 0, to: 2, easing: 'linear', loops: 1, hold: 0, cycleOffset: 0, delay: 0 }],
+    }
+    const raw = JSON.parse(serializeDoc(doc))
+    raw.motion.tracks.push({ path: 'lighting.ambient', from: 0, to: 1, easing: 'not-a-real-easing', loops: 1, hold: 0, cycleOffset: 0, delay: 0 })
+    raw.motion.tracks.push({ path: 'camera.fov', from: 'nope', to: 1, easing: 'linear', loops: 1, hold: 0, cycleOffset: 0, delay: 0 })
+    raw.motion.tracks.push({ from: 0, to: 1, easing: 'linear', loops: 1, hold: 0, cycleOffset: 0, delay: 0 }) // no path
+    const round = parseDoc(JSON.stringify(raw))
+    expect(round.motion.tracks).toEqual([
+      { path: 'lighting.sunIntensity', from: 0, to: 2, easing: 'linear', loops: 1, hold: 0, cycleOffset: 0, delay: 0 },
+    ])
+  })
+
+  it('a doc without tracks does not gain an empty array — absent stays absent', () => {
+    const doc = defaultDoc() // motion has no `tracks` key at all
+    const round = parseDoc(serializeDoc(doc))
+    expect(round.motion.tracks).toBeUndefined()
+    expect('tracks' in round.motion).toBe(false)
+    expect(round.motion).toEqual(DEFAULT_SCENE_MOTION)
+  })
+
+  it('an explicit empty tracks array parses back to absent, not `[]`', () => {
+    const doc = defaultDoc()
+    const raw = JSON.parse(serializeDoc(doc))
+    raw.motion.tracks = []
+    const round = parseDoc(JSON.stringify(raw))
+    expect(round.motion.tracks).toBeUndefined()
+  })
+
   it('malformed camera motion drops to undefined', () => {
     const doc = defaultDoc()
     const raw = JSON.parse(serializeDoc(doc))

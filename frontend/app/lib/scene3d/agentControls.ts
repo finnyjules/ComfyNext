@@ -1,7 +1,7 @@
 import type { ControlSpec } from '~/lib/spacetype/effect'
 import { getEffectSync } from '~/lib/shaderfx/catalog'
 import { derivedShaderFillControls, shaderFillControls } from '~/lib/shaderfill/controls'
-import { SCENE_CONTROLS, visibleSceneControls } from './controls'
+import { SCENE_CONTROLS, visibleSceneControls, type SceneControl } from './controls'
 import type { SceneDoc, SceneObject } from './config'
 
 /** Strip the schema-only fields (`when`/`agent`/`animatable`/`summary`) a `SceneControl`
@@ -13,7 +13,7 @@ function stripMeta(specs: ControlSpec[]): ControlSpec[] {
     .map(({ when, agent, animatable, summary, ...spec }: any) => spec as ControlSpec)
 }
 
-const OBJECT_PREFIX = 'object.'
+export const OBJECT_PREFIX = 'object.'
 
 /** Where a Scene3D object's shader-fill `ShaderSpec` lives, relative to the active
  *  object. Exported so the surface's shader-fill editor and this vocabulary cannot
@@ -56,21 +56,43 @@ export const OBJECT_SHADER_PREFIX = 'object.material.shader'
  * never empty, dotted, or all-digit — so in practice nothing a real document
  * produces is ever skipped; this only guards a hand-edited or malformed `scene_state`.
  */
-export function sceneStackControls(doc: SceneDoc): ControlSpec[] {
+/**
+ * The id-safety + per-object `when` expansion every `object.`-prefixed consumer needs,
+ * factored out so it exists in exactly ONE place. `sceneStackControls` (below) and
+ * `animatableTargets` (`motion/targets.ts`, Task 4's motion-track vocabulary) both build
+ * their output by calling this rather than re-deriving the id-safety refusal a second time —
+ * see this module's own doc for why a missing/empty/dotted/all-digit id must be skipped
+ * rather than addressed positionally.
+ *
+ * `visit` receives the control UNSTRIPPED (still carrying `when`/`agent`/`animatable`/
+ * `summary`) — callers that need the agent-facing shape strip it themselves, same as
+ * `sceneStackControls` always has; a motion consumer needs `animatable` precisely because
+ * `sceneStackControls` would otherwise strip it.
+ */
+export function iterateObjectControls(
+  doc: SceneDoc,
+  visit: (control: SceneControl, obj: SceneObject, id: string) => void,
+): void {
   const objects = Array.isArray(doc?.objects) ? doc.objects : []
-  const out: ControlSpec[] = []
   for (const c of SCENE_CONTROLS) {
     if (!c.key.startsWith(OBJECT_PREFIX)) continue
-    if ((c as { agent?: boolean }).agent === false) continue
-    const rest = c.key.slice(OBJECT_PREFIX.length)
     for (const obj of objects) {
       const id = obj?.id
       if (typeof id !== 'string' || id === '' || id.includes('.') || /^\d+$/.test(id)) continue
       if (c.when && !c.when(doc, obj)) continue
-      const { when, agent, animatable, summary, ...spec } = c as any
-      out.push({ ...spec, key: `objects.${id}.${rest}`, label: `${obj.name || 'Object'} · ${c.label}` } as ControlSpec)
+      visit(c, obj, id)
     }
   }
+}
+
+export function sceneStackControls(doc: SceneDoc): ControlSpec[] {
+  const out: ControlSpec[] = []
+  iterateObjectControls(doc, (c, obj, id) => {
+    if ((c as { agent?: boolean }).agent === false) return
+    const rest = c.key.slice(OBJECT_PREFIX.length)
+    const { when, agent, animatable, summary, ...spec } = c as any
+    out.push({ ...spec, key: `objects.${id}.${rest}`, label: `${obj.name || 'Object'} · ${c.label}` } as ControlSpec)
+  })
   return out
 }
 

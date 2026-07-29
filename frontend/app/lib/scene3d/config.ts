@@ -2,8 +2,9 @@
 // the editor mutates a SceneDoc, the engine renders from it, and serializeDoc's
 // output is what the Scene3DStudio node stores in its `scene_state` widget.
 import { sanitizeParams, sanitizeModifiers } from '~/lib/scene3d/primParams'
-import type { ObjectMotion, CameraMotion, SceneMotion, LoopKind, TransitionPreset, Direction, EaseRef, TransitionSpec } from '~/lib/scene3d/motion/types'
+import type { ObjectMotion, CameraMotion, SceneMotion, SceneMotionTrack, LoopKind, TransitionPreset, Direction, EaseRef, TransitionSpec } from '~/lib/scene3d/motion/types'
 import { DEFAULT_SCENE_MOTION } from '~/lib/scene3d/motion/types'
+import type { TrackEasing } from '~/lib/studio/track'
 // DEFAULT_POST comes from postSettings.ts (three-free), NOT post.ts — post.ts pulls in the
 // EffectComposer stack, and config.ts must not drag three into its import graph (see
 // controls.ts's constraint, documented in collection/studioControls.ts and shapefx/controls.ts).
@@ -265,6 +266,7 @@ const LOOP_KINDS: LoopKind[] = ['none', 'spin', 'bob', 'pulse', 'orbit', 'sway',
 const TRANSITION_PRESETS: TransitionPreset[] = ['move', 'rise', 'scale', 'fade', 'pop']
 const DIRECTIONS: Direction[] = ['left', 'right', 'top', 'bottom']
 const CAMERA_PRESETS: CameraMotion['preset'][] = ['none', 'orbit', 'push', 'sway']
+const TRACK_EASINGS: TrackEasing[] = ['linear', 'pingpong', 'easeinout']
 
 export const LIGHT_KINDS: LightKind[] = ['point', 'spot', 'rect']
 export const LIGHT_DEFAULTS = {
@@ -495,6 +497,35 @@ export function parseDoc(json: string): SceneDoc {
     if (typeof raw.offset === 'number') m.offset = num(raw.offset, 0)
     return Object.keys(m).length ? m : undefined
   }
+  // Path-based motion track: copy only when every timing field is individually valid, so a
+  // junk entry is dropped rather than defaulted into a track that writes NaN or targets
+  // nothing. Mirrors parseObjectMotion/parseTransition's "validate then copy" posture above.
+  const parseMotionTrack = (raw: any): SceneMotionTrack | undefined => {
+    if (!raw || typeof raw !== 'object') return undefined
+    if (typeof raw.path !== 'string' || raw.path.trim() === '') return undefined
+    if (typeof raw.from !== 'number' || !Number.isFinite(raw.from)) return undefined
+    if (typeof raw.to !== 'number' || !Number.isFinite(raw.to)) return undefined
+    if (!TRACK_EASINGS.includes(raw.easing)) return undefined
+    return {
+      path: raw.path,
+      from: raw.from,
+      to: raw.to,
+      easing: raw.easing,
+      loops: num(raw.loops, 1),
+      hold: num(raw.hold, 0),
+      cycleOffset: num(raw.cycleOffset, 0),
+      delay: num(raw.delay, 0),
+    }
+  }
+  // THE TRAP: parseDoc is a whitelist. `tracks` must be copied here explicitly or it is
+  // silently dropped on every save/reload — see this function's module doc. Absent or
+  // empty-after-filtering collapses to `undefined` (never `[]`), so a doc with no tracks
+  // round-trips byte-identical to before this field existed.
+  const parseMotionTracks = (raw: any): SceneMotionTrack[] | undefined => {
+    if (!Array.isArray(raw)) return undefined
+    const tracks = raw.map(parseMotionTrack).filter((t: SceneMotionTrack | undefined): t is SceneMotionTrack => t !== undefined)
+    return tracks.length ? tracks : undefined
+  }
   const parseSceneMotion = (raw: any): SceneMotion => {
     if (!raw || typeof raw !== 'object') return { ...DEFAULT_SCENE_MOTION }
     const m: SceneMotion = {
@@ -503,6 +534,8 @@ export function parseDoc(json: string): SceneDoc {
       loop: raw.loop !== false,
     }
     if (typeof raw.template === 'string') m.template = raw.template
+    const tracks = parseMotionTracks(raw.tracks)
+    if (tracks) m.tracks = tracks
     return m
   }
   const parseCameraMotion = (raw: any): CameraMotion | undefined => {

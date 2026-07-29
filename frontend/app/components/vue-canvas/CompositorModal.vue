@@ -40,6 +40,7 @@ import { resolveWiredSourceKind } from '~/lib/studio/frameResolve'
 import { frameSourceEpoch, type StudioFrameSource } from '~/lib/studio/frameSource'
 import { deriveMasterClock, slotPhase01 } from '~/lib/compositor/masterClock'
 import { onDepthChange } from '~/lib/compositor/depthRegistry'
+import { imageUrlForNode } from '~/lib/canvas/nodeImage'
 import { DEFAULT_FRAME_MOTION, type FrameMotion } from '~/lib/motion/types'
 import { LIVE_FIELD_CEILING } from '~/lib/shaderfill/descriptor'
 import '~/lib/motion/paint' // registers the motion painter for paintLayerStack(t)
@@ -3317,17 +3318,62 @@ function clipboardImageFile(e: ClipboardEvent): File | null {
   const f0 = e.clipboardData?.files?.[0]
   return f0 && f0.type.startsWith('image/') ? f0 : null
 }
+/**
+ * Copying an image artifact on the canvas writes to `useNodeClipboard` — an IN-APP
+ * singleton, not the OS clipboard — so `e.clipboardData` is empty and the image-file
+ * path above finds nothing. Without this branch, Cmd+V in the Compositor after copying
+ * a canvas image silently did nothing at all.
+ *
+ * Resolved through the shared `imageUrlForNode` so this agrees with what the node is
+ * actually showing (a rendered output beats the file widget), then fetched and handed to
+ * `addImageFromFile` — the same path as drag-drop and OS paste, so upload, history and
+ * selection all behave identically.
+ */
+const nodeClipboard = useNodeClipboard()
+
+async function pastedNodeImageFile(): Promise<File | null> {
+  const clip = nodeClipboard.read()
+  if (!clip?.nodes?.length) return null
+  for (const n of clip.nodes) {
+    const url = imageUrlForNode(n)
+    if (!url) continue
+    const res = await fetch(url)
+    if (!res.ok) throw new Error(`image fetch failed (${res.status})`)
+    const blob = await res.blob()
+    if (!blob.type.startsWith('image/')) throw new Error(`not an image (${blob.type || 'unknown'})`)
+    const name = new URLSearchParams(url.split('?')[1] ?? '').get('filename') || 'pasted.png'
+    return new File([blob], name, { type: blob.type })
+  }
+  return null
+}
+
 async function onModalPaste(e: ClipboardEvent) {
   // Never hijack a real text paste (agent prompt bar, layer rename, text edit).
   if (isEditablePasteTarget(e.target) || isEditablePasteTarget(document.activeElement)) return
+
   const file = clipboardImageFile(e)
-  if (!file) return   // nothing for us — let normal paste (incl. node paste) proceed
+  if (file) {
+    e.preventDefault()
+    e.stopImmediatePropagation()
+    try {
+      await addImageFromFile(file)
+    } catch (err) {
+      console.error('[Compositor] paste image failed:', err)
+      toast('Could not paste that image')
+    }
+    return
+  }
+
+  // No OS-clipboard image — try a canvas image artifact copied in-app.
+  if (!nodeClipboard.has()) return  // nothing for us; let normal paste proceed
   e.preventDefault()
   e.stopImmediatePropagation()
   try {
-    await addImageFromFile(file)
+    const nodeFile = await pastedNodeImageFile()
+    if (!nodeFile) { toast('That copied node has no image to paste'); return }
+    await addImageFromFile(nodeFile)
   } catch (err) {
-    console.error('[Compositor] paste image failed:', err)
+    console.error('[Compositor] paste node image failed:', err)
     toast('Could not paste that image')
   }
 }
