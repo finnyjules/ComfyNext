@@ -14,6 +14,28 @@ const emit = defineEmits<{
   select: [i: number]; reorder: [from: number, to: number]
   add: []; remove: [i: number]; duplicate: [i: number]; toggle: [i: number]
 }>()
+/**
+ * The ONE studio-specific seam, and it carries no studio-specific knowledge.
+ *
+ * `row-extra` renders immediately before the eye, per row, and is passed only
+ * the row's index. A studio whose layers carry a second PERSISTED boolean (Vector
+ * Type's `solid`) puts its own button here, deciding for itself which rows get
+ * one — the shared component never learns what `solid` is, and never grows a
+ * prop that only one of its three consumers sets.
+ *
+ * WHY A SLOT AND NOT A PROP. The alternative is a per-item `solid?: boolean` on
+ * `layers` plus a `toggleSolid` emit, which puts one studio's vocabulary in the
+ * shared type and makes every other consumer's row objects carry a field they do
+ * not have. This is the same call `add` already forced: its event carries no
+ * payload, so Vector Type renders its own three-kind menu in the slot it owns
+ * rather than teaching this component about kinds.
+ *
+ * Gradient and Shader pass nothing, so `$slots['row-extra']` is undefined and
+ * their rows render EXACTLY as before — no wrapper element, no spacing change.
+ */
+defineSlots<{
+  'row-extra'?: (props: { index: number }) => unknown
+}>()
 
 const dragFrom = ref<number | null>(null)
 function onDrop(to: number) {
@@ -46,6 +68,10 @@ function onDrop(to: number) {
         <GripVertical class="h-3.5 w-3.5 shrink-0 text-white/25" />
         <img v-if="layers[i]!.thumb" :src="layers[i]!.thumb" class="h-6 w-6 shrink-0 rounded object-cover" />
         <span class="min-w-0 flex-1 truncate">{{ layers[i]!.label }}</span>
+        <!-- Beside the eye, and always rendered (never hover-revealed): whatever
+             goes here is a PERSISTED boolean like `enabled`, not a hover action
+             like duplicate/remove. Unfilled in Gradient and Shader. -->
+        <slot name="row-extra" :index="i" />
         <button aria-label="Toggle layer" class="shrink-0 text-white/30 hover:text-white/80"
                 @click.stop="emit('toggle', i)">
           <Eye v-if="layers[i]!.enabled" class="h-3.5 w-3.5" />

@@ -24,7 +24,7 @@
  *    has already paid for more than once.
  */
 import { computed, markRaw, onBeforeUnmount, onMounted, ref, shallowRef, toRaw, watch } from 'vue'
-import { Plus, Trash2, X } from 'lucide-vue-next'
+import { Combine, Plus, Trash2, X } from 'lucide-vue-next'
 import type { ControlSpec } from '~/lib/spacetype/effect'
 import type { LayerAnimSpec } from '~/lib/motion/types'
 import { KINETIC_PRESETS_BY_ID, presetParamDefault } from '~/data/kinetic-presets'
@@ -583,6 +583,44 @@ function reorderLayer(from: number, to: number) {
 function toggleLayer(i: number) {
   const L = config.value.appearance[i]
   if (L) L.enabled = L.enabled === false
+}
+
+/**
+ * FUSE — an extrude's copies united into one body, toggled per row.
+ *
+ * ## Why this is a stack row and not a control
+ *
+ * `layer.solid` is deliberately absent from `VT_CONTROLS` (see `controls.ts`).
+ * `ControlSpec` has no boolean kind, and the house workaround — a `select` over
+ * `['off','on']` — works in Space Type only because its params are strings. Here
+ * `mergeLayer` reads `typeof o.solid === 'boolean'`, so a select would store
+ * `'on'`, the merge would drop it, and the user would get a toggle that works
+ * until they reopen the file. A control that forgets is strictly worse than no
+ * control, so `solid` lives beside `enabled` — the OTHER real boolean on this
+ * layer that the schema deliberately does not declare — in the row that owns it.
+ *
+ * It is written to the layer as a real boolean and saved by `saveConfig`'s
+ * `JSON.stringify` like every other field, which is what makes the round-trip
+ * work rather than merely appear to.
+ *
+ * ## What it turns on
+ *
+ * `solid` is the CAPABILITY, not the appearance: fusing gives the layer a single
+ * outer contour, which is what `layer.width` and `layer.strokeColor` need to
+ * exist at all (both are gated on `layerIsSolidExtrude`). So the two silhouette
+ * controls appear in the inspector the moment this is on — and, on an extrude
+ * stored before the silhouette landed, at a width of 0 rather than the backfilled
+ * 3 that field used to carry; see `mergedWidth` in `config.ts` for why that
+ * normalisation is in the merge and not here.
+ *
+ * The union itself is NOT run here: `solidExtrudeSig` already watches the whole
+ * config, so flipping this schedules the debounced off-loop `prepareSolidExtrudes`
+ * on its own. The next frames draw the un-fused stack until the body lands.
+ */
+function toggleSolid(i: number) {
+  const L = config.value.appearance[i]
+  if (!L || L.kind !== 'extrude') return
+  L.solid = L.solid !== true
 }
 
 // ── motion presets ──────────────────────────────────────────────────────────
@@ -1251,7 +1289,32 @@ const frameCount = computed(() => Math.round((config.value.motion.fps || 30) * (
           @duplicate="duplicateLayer"
           @reorder="reorderLayer"
           @toggle="toggleLayer"
-        />
+        >
+          <!-- FUSE, beside the eye. The shared component's `row-extra` slot —
+               added for this and passed only the row index, so Gradient and
+               Shader (which fill it with nothing) render exactly as before.
+               EXTRUDE ROWS ONLY: a fill or a stroke has no copies to unite, and
+               a toggle that is present but inert on two thirds of the stack is
+               the dead control this studio's schema exists to prevent. -->
+          <template #row-extra="{ index }">
+            <button
+              v-if="config.appearance[index]?.kind === 'extrude'"
+              type="button"
+              :data-testid="`vt-solid-toggle-${index}`"
+              :data-solid="config.appearance[index]?.solid === true ? 'on' : 'off'"
+              :aria-pressed="config.appearance[index]?.solid === true"
+              aria-label="Fuse extrude copies"
+              :title="config.appearance[index]?.solid === true
+                ? 'Fused — one body. Click to keep the copies separate.'
+                : 'Separate copies. Click to fuse them into one body (adds the silhouette outline controls).'"
+              class="shrink-0 transition"
+              :class="config.appearance[index]?.solid === true ? 'text-blue-400 hover:text-blue-300' : 'text-white/30 hover:text-white/80'"
+              @click.stop="toggleSolid(index)"
+            >
+              <Combine class="h-3.5 w-3.5" />
+            </button>
+          </template>
+        </StudioLayerStack>
         <!-- The one thing StudioLayerStack cannot express: this stack's `add` is
              a CHOICE of three kinds, and its `add` event carries none. Rather
              than fork the component (or cycle kinds behind one button), the

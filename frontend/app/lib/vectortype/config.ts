@@ -736,6 +736,55 @@ function validLayerId(raw: unknown): string {
 }
 
 /**
+ * The stored `width`, or the extrude default for a BACKFILLED one.
+ *
+ * ## The problem this exists for
+ *
+ * `width` was documented INERT on an extrude until the silhouette landed, and its
+ * only control was gated to `stroke` layers — so no user has ever authored one.
+ * But `mergeLayer` defaulted every kind to `VT_DEFAULT_STROKE_WIDTH` (3) and then
+ * SAVED it, so every extrude layer stored before the silhouette carries a
+ * backfilled `3` that means nothing. Left alone, the first thing the new `solid`
+ * toggle would do to such a layer is grow a 3 px black keyline nobody asked for —
+ * the toggle's own debut, mis-attributed to the toggle.
+ *
+ * ## The two conjuncts, and why each one is load-bearing
+ *
+ *  1. **`strokeColor` is absent from the STORED object.** `mergeLayer` has
+ *     emitted that field since the silhouette landed, so every layer this app has
+ *     saved since has it. The branch therefore fires AT MOST ONCE per layer, ever,
+ *     and can never see a width a user authored through the toggle. This is the
+ *     one place in this file that infers a vintage from a sibling key, and it is
+ *     confined to the field whose meaning changed in the same commit that added
+ *     that key.
+ *  2. **`solid` is not `true`.** An unfused extrude has no single contour, so its
+ *     width cannot paint: no control offers it (`layerHasWidth` wants a stroke
+ *     layer or a SOLID extrude), the canvas reads it only behind `solid &&`, and
+ *     the SVG only on a fused body. So this rewrite is provably a NO-OP on the
+ *     picture at the moment it runs — it changes nothing anyone can see, only what
+ *     they will see when they later turn `solid` on. It also spares the one
+ *     authoring path that CAN legitimately hand us a fused extrude with no
+ *     `strokeColor`: a hand-written config or an agent-written one, which is how
+ *     the silhouette was verified before it had a toggle.
+ *
+ * The alternative — leaving it — is a keyline; the alternative that keys on
+ * `solid` alone would zero a width every time a user toggled `solid` off and
+ * reloaded, which is the same forgetting bug one level out.
+ */
+function mergedWidth(o: Record<string, unknown>, kind: VtLayerKind): number {
+  // A negative width is not "the other side" — it is a broken value, and
+  // `ctx.lineWidth` ignores it silently.
+  //
+  // The FALLBACK is per kind (`vtDefaultWidth`): a stored stroke layer with no
+  // width must still be visible, and a stored extrude with no width must not
+  // grow an outline. Same rule as `vtLayer`'s, from the same function.
+  const stored = Math.max(0, num(o.width, vtDefaultWidth(kind)))
+  if (kind !== 'extrude') return stored
+  if (o.strokeColor !== undefined || o.solid === true) return stored
+  return vtDefaultWidth(kind)
+}
+
+/**
  * Rebuild ONE layer. Strict, like every other merge here: an unknown kind
  * collapses to `fill`, a non-finite number falls back, an unknown blend becomes
  * `normal`, and nothing arrives on the layer that was not declared.
@@ -756,13 +805,8 @@ function mergeLayer(raw: unknown, id: string): VtAppearanceLayer | null {
     anchor: oneOf(o.anchor, VT_FILL_ANCHORS, LAYER_DEFAULTS.anchor),
     opacity: clamp(num(o.opacity, LAYER_DEFAULTS.opacity), 0, 1),
     blend: oneOf(o.blend, BLEND_MODES, LAYER_DEFAULTS.blend),
-    // A negative width is not "the other side" — it is a broken value, and
-    // `ctx.lineWidth` ignores it silently.
-    //
-    // The FALLBACK is per kind (`vtDefaultWidth`): a stored stroke layer with no
-    // width must still be visible, and a stored extrude with no width must not
-    // grow an outline. Same rule as `vtLayer`'s, from the same function.
-    width: Math.max(0, num(o.width, vtDefaultWidth(kind))),
+    // Per kind, and with the one-shot backfill normalisation — see `mergedWidth`.
+    width: mergedWidth(o, kind),
     // A flat colour, rebuilt like everything else here. Not run through
     // `mergeFill`: this is a `string`, not a `Paint` — see the field's doc for why
     // the extrude's outline is deliberately not the nine-type fill model.
