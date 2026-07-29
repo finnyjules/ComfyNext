@@ -161,6 +161,11 @@ export interface SceneObjectBase {
   scale: Vec3
   material: SceneMaterial
   motion?: ObjectMotion
+  /** Parent object id; absent = top-level. Hierarchy is a REFERENCE over the
+   *  flat `objects` array, never a nested children list — see hierarchy.ts.
+   *  The engine turns this into a real three parent/child edge, so a parent's
+   *  transform composes into this object's without any maths of our own. */
+  parentId?: string
 }
 /** Content for the `text` primitive (the `shape` primitive is params-only —
  *  its geometry is fully parametric, see primParams.ts). Absent `font` falls

@@ -4,9 +4,12 @@
 // eight modules that iterate doc.objects to recurse, and would break the flat
 // `objects.<id>.motion.*` agent path space — see the grouping design spec.
 //
-// Deliberately pure: no engine import, no WebGL. THREE appears here only for
-// Matrix4/Quaternion (plain JS maths, no renderer), which is what lets the
-// group/ungroup transform invariants be unit-tested without a GPU context.
+// Deliberately pure: no engine import, no WebGL, no `three`. This module only
+// answers structural questions over `parentId` — roots, children, descendants,
+// parent-first ordering, and cycle/dangling-reference repair. Transform maths
+// (group/ungroup composing a parent's matrix into its children) is engine-side
+// and belongs to a later task; keeping it out of here is what lets this file
+// be unit-tested with plain objects and no GPU context at all.
 import type { SceneObject } from './config'
 
 /** Objects with no resolvable parent — the top level of the tree. Call after
