@@ -745,12 +745,14 @@ describe('the appearance stack — the model, and the legacy migration (trap 4)'
       const [l] = mergeConfig({ appearance: [{
         id: 'Lx', kind: 'sparkle', enabled: 'yes', anchor: 'object', opacity: 9,
         blend: 'divide', width: -3, depth: 1e6, angle: NaN, distance: 'far',
-        taper: 40, solid: 1, nope: true,
+        // `strokeColor` (the solid extrude's silhouette colour) is rebuilt like
+        // every other field: a non-string falls back to the default.
+        taper: 40, solid: 1, strokeColor: 0xff0000, nope: true,
       }] }).appearance
       expect(l).toEqual({
         id: 'Lx', kind: 'fill', enabled: true, paint: { ...DEFAULT_FILL },
         anchor: 'glyph', opacity: 1, blend: 'normal', width: 0, depth: 32,
-        angle: 135, distance: 3, taper: 1, solid: false,
+        angle: 135, distance: 3, taper: 1, solid: false, strokeColor: '#000000',
       })
       expect((l as any).nope).toBeUndefined()
     })

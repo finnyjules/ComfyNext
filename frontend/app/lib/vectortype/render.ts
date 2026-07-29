@@ -219,8 +219,17 @@ export function commandsToPath2D(commands: readonly VectorCommand[]): Path2D {
 export interface GlyphPaint {
   fill?: VectorPaint | null | ((glyph: GlyphOutline, index: number) => VectorPaint | null)
   stroke?: string | null | ((glyph: GlyphOutline, index: number) => string | null)
-  /** In OUTPUT units, so it does not shrink when the type is scaled down. */
-  strokeWidth?: number
+  /**
+   * In OUTPUT units, so it does not shrink when the type is scaled down.
+   *
+   * A FUNCTION form for the same reason `stroke` has one, and it is load-bearing
+   * for exactly one caller: a solid extrude layer emits ONE fused body for the
+   * glyphs whose union has landed and `depth` separate copies for the rest, and
+   * only the former may be stroked — a width written across the whole layer would
+   * outline every copy of the latter and put seam lines through the block. Per
+   * glyph, the two answers can differ; as a scalar they could not.
+   */
+  strokeWidth?: number | ((glyph: GlyphOutline, index: number) => number | undefined)
   /** Glyph outlines rely on nonzero winding for counters. Change with care. */
   fillRule?: 'nonzero' | 'evenodd'
   /**
@@ -328,7 +337,7 @@ export function outlinesToShapes(
       // and collapsing it to black would paint the letter solid.
       fill: fill === undefined ? '#000000' : fill,
       stroke: pick(opts.stroke, glyph, i),
-      strokeWidth: opts.strokeWidth,
+      strokeWidth: pick(opts.strokeWidth, glyph, i),
       fillRule: opts.fillRule ?? 'nonzero',
       // Omitted rather than written as 1 — a fully opaque glyph should not carry
       // a redundant attribute into a file a designer is going to read. Same for

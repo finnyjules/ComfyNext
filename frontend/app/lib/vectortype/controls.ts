@@ -15,6 +15,7 @@ import {
   DEFAULT_CONFIG,
   LAYER_DEFAULTS,
   VT_ALIGNS,
+  VT_DEFAULT_STROKE_COLOR,
   VT_DEFAULT_STROKE_WIDTH,
   VT_EXTRUDE_DEPTH_MAX,
   VT_FILL_ANCHORS,
@@ -128,6 +129,33 @@ const vtLayerOf = (c: VectorTypeConfig, l?: VtAppearanceLayer | null): VtAppeara
 
 const layerIsStroke = (c: VectorTypeConfig, l?: VtAppearanceLayer | null) => vtLayerOf(c, l)?.kind === 'stroke'
 const layerIsExtrude = (c: VectorTypeConfig, l?: VtAppearanceLayer | null) => vtLayerOf(c, l)?.kind === 'extrude'
+
+/**
+ * An extrude that is asking for its copies to be FUSED — the only layer that can
+ * carry a silhouette outline.
+ *
+ * The outline is one contour around the whole extruded body, which does not exist
+ * until the copies have been united: stroking them individually would draw an
+ * outline around EACH, i.e. internal seam lines through the block. So on a
+ * `solid: false` extrude the width and the colour would be two knobs that
+ * resolve, store, survive the merge and change not one pixel — the exact dead
+ * control this schema exists to prevent. Gated on `solid`, they appear with the
+ * capability.
+ *
+ * (`solid` itself is deliberately NOT a declared control — `ControlSpec` has no
+ * boolean kind and `mergeLayer` reads a real boolean; its home is a stack row.
+ * See the note at the bottom of the Paint section.)
+ */
+const layerIsSolidExtrude = (c: VectorTypeConfig, l?: VtAppearanceLayer | null) => {
+  const L = vtLayerOf(c, l)
+  return L?.kind === 'extrude' && L.solid === true
+}
+
+/** The two kinds `layer.width` is live on — a stroke layer's own outline, and a
+ *  solid extrude's silhouette. One predicate so the width and its colour cannot
+ *  be gated on two different readings of the same question. */
+const layerHasWidth = (c: VectorTypeConfig, l?: VtAppearanceLayer | null) =>
+  layerIsStroke(c, l) || layerIsSolidExtrude(c, l)
 
 /**
  * The active layer's paint as a `Fill`, or null.
@@ -268,14 +296,28 @@ export const VT_CONTROLS: VtControl[] = [
     // interpolate anything — the same reason Space Type's own anchor is
     // withheld from motion.
     { animatable: false }),
-  // Withheld unless the active layer IS a stroke: an outline width on a fill
-  // layer paints nothing, which is the dead-control failure this schema exists
-  // to prevent. The old flat `strokeWidth` was ungated and defaulted to 0, so
-  // its companion colour control was withheld instead — the arrangement that
+  // Withheld unless the active layer can actually draw an outline: on a fill
+  // layer a width paints nothing, which is the dead-control failure this schema
+  // exists to prevent. The old flat `strokeWidth` was ungated and defaulted to 0,
+  // so its companion colour control was withheld instead — the arrangement that
   // made the stroke invisible and prompted this whole change.
+  //
+  // TWO kinds now: a `stroke` layer's outline around the letterform, and a SOLID
+  // `extrude`'s outline around the whole fused body — the silhouette. Same knob,
+  // one level apart, so it is one control rather than two keys addressing one
+  // leaf. The `default` here is the STROKE layer's (`VT_DEFAULT_STROKE_WIDTH`); a
+  // fresh extrude stores `VT_DEFAULT_EXTRUDE_STROKE_WIDTH` (0) instead, because
+  // an outline is what a stroke layer is FOR and one knob among five on an
+  // extrude. `ControlSpec` carries one default; the per-kind pair lives in
+  // `vtDefaultWidth`, which is what both build sites read.
   slider('layer.width', 'Stroke width', 0, 40, 0.5, 'Paint', VT_DEFAULT_STROKE_WIDTH,
-    'Outline width in OUTPUT pixels, so it does not shrink with size.',
-    { when: layerIsStroke }),
+    'Outline width in OUTPUT pixels, so it does not shrink with size. On a solid extrude it outlines the whole fused body — one silhouette, not one outline per copy.',
+    { when: layerHasWidth }),
+  // The silhouette's COLOUR, and only a colour — see `VtAppearanceLayer.strokeColor`
+  // for why the extrude's outline is deliberately not the nine-type `Paint` a
+  // stroke LAYER carries. On the layer, never inside its paint (trap 1).
+  color('layer.strokeColor', 'Stroke color', VT_DEFAULT_STROKE_COLOR, 'Paint',
+    { when: layerIsSolidExtrude }),
   // The EXTRUDE knobs, withheld unless the active layer IS an extrude — same
   // gate, same reason, as the stroke width above. An extrude layer draws the
   // glyph path `depth` more times behind the face (see `./extrude.ts`); the face
@@ -451,11 +493,13 @@ NAMING ONE LAYER INSTEAD. Every layer also appears in the control list under its
 
 \`layer.paint.type\` picks how the active layer is painted: solid, gradient, ombre (a grainy A→B fade), grid, noise, checkerboard, stripes, qr, or shader. \`layer.paint.a\` is the main colour and \`layer.paint.b\` the second one, which appears for everything except solid — and neither applies to a shader fill (see below). \`layer.paint.angle\` sets the direction of a gradient, ombre or stripes; \`layer.paint.density\` sets how many cells or stripes span grid, checkerboard, stripes and qr. \`layer.anchor\` decides which box THIS LAYER is measured against — "glyph" gives every letter its own copy, "word" spans one fill across the whole run so the letters are windows onto it, and "frame" pins the fill to the canvas so moving type slides over it. Reach for "word" when the user asks for a gradient across a word.
 
-\`layer.width\` is the outline width in output pixels, and it only exists when the active layer is a STROKE layer — for a stroke that is NOT the active one, reach for that layer's own \`appearance.<layerId>.width\` key instead. A stroke is visible because it is in the stack, not because a width was raised. You cannot add, remove or reorder layers; you can adjust any layer that is already there.
+\`layer.width\` is the outline width in output pixels, and it only exists when the active layer can draw an outline — a STROKE layer, or a solid EXTRUDE (see below) — so for a stroke that is NOT the active one, reach for that layer's own \`appearance.<layerId>.width\` key instead. A stroke is visible because it is in the stack, not because a width was raised. You cannot add, remove or reorder layers; you can adjust any layer that is already there.
 
 EVERY LAYER COMPOSITES. \`layer.opacity\` is how strong that layer's ink is in the stack, 0 to 1 — it multiplies the glyph's own motion fade rather than replacing it, so a half-strength layer still fades out with the word. \`layer.blend\` is how the layer composites onto what is below it: normal, lighten, screen, add, multiply, darken or overlay. Both apply to fills, strokes and extrudes alike. Reach for them when the user asks for a layer to be subtler, to glow, or to darken the one underneath.
 
 EXTRUDE IS A BLOCK SHADOW, not 3D. An extrude layer redraws the letterform several times behind the face, which is what gives retro block lettering and hard offset shadows; the FACE is whichever fill layer sits above it in the stack. Its four knobs exist only when the active layer is an EXTRUDE layer. \`layer.depth\` is how many copies (0 draws none), \`layer.distance\` is the gap in pixels between consecutive copies, so the block reaches depth × distance, and \`layer.angle\` is the direction in degrees — 0 steps right, 90 steps straight down, using the same convention as the fill angle above. \`layer.taper\` shrinks the copies as they recede: 1 fades the far end away for a vanishing-point look, 0 keeps the block even, and negative values flare it outwards.
+
+OUTLINED BLOCK LETTERING. An extrude whose copies have been fused into one body can carry a SILHOUETTE — a single outline around the whole extruded mass, the classic outlined-3D look, never one outline per copy. \`layer.width\` is that outline's thickness in output pixels (0 = none, and that is the default) and \`layer.strokeColor\` is its colour. Both only exist while the active extrude layer is fused; on an unfused one there is no single contour to draw, so they are withheld rather than offered as knobs that would change nothing.
 
 SHADER FILLS. Setting \`layer.paint.type\` to shader paints the layer with a live catalog shader effect rather than a flat pattern, and the flat colours stop applying: a shader fill is painted from the effect's own input, so \`layer.paint.a\` and \`layer.paint.b\` are withdrawn and writing them would change nothing. Three controls take their place. \`layer.paint.shader.effectId\` names the catalog effect. \`layer.paint.shader.anchor\` is object (every glyph carries its own copy of the field) or frame (one continuous field, and the letters are windows onto it) — the same distinction \`layer.anchor\` draws for the other fills, applied to the effect. \`layer.paint.shader.speed\` is the animation rate, 0 = frozen. Each effect also brings its OWN parameters, at \`layer.paint.shader.params.<param>\`: which ones exist depends entirely on the chosen effect, so they only appear in the control list once an effect is picked, and changing \`layer.paint.shader.effectId\` replaces the whole set. Be aware that many effects also declare a speed parameter of their own, which is a different knob from \`layer.paint.shader.speed\` — both must be non-zero for the fill to move.
 

@@ -609,7 +609,7 @@ exports[`vtAgentControls > is a characterization snapshot, with and without a fo
   {
     "default": 3,
     "group": "Paint",
-    "hint": "Outline width in OUTPUT pixels, so it does not shrink with size.",
+    "hint": "Outline width in OUTPUT pixels, so it does not shrink with size. On a solid extrude it outlines the whole fused body — one silhouette, not one outline per copy.",
     "key": "layer.width",
     "kind": "slider",
     "label": "Stroke width",
@@ -757,7 +757,7 @@ exports[`vtAgentControls > is a characterization snapshot, with and without a fo
   {
     "default": 3,
     "group": "Paint",
-    "hint": "Outline width in OUTPUT pixels, so it does not shrink with size.",
+    "hint": "Outline width in OUTPUT pixels, so it does not shrink with size. On a solid extrude it outlines the whole fused body — one silhouette, not one outline per copy.",
     "key": "appearance.Lstroke.width",
     "kind": "slider",
     "label": "Stroke · Stroke width",

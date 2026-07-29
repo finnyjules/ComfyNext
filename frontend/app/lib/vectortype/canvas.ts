@@ -31,7 +31,7 @@
  * `glyphMotion`). Task 6 chose the collision deliberately so a module using both
  * has to say which it means; this is that module saying it.
  */
-import type { Affine, Transform2D, VectorPaint, VectorRect, VectorShape } from '~/lib/vector/svg'
+import type { Affine, Transform2D, VectorCommand, VectorPaint, VectorRect, VectorShape } from '~/lib/vector/svg'
 import { formatNumber, multiplyAffine } from '~/lib/vector/svg'
 import { fillIsShader, paintPrimaryColor } from '~/lib/spacetype/fillTile'
 import { isFill, type Paint } from '~/lib/compositor/paint'
@@ -634,6 +634,25 @@ interface VtPaintLayer {
   /** OUTPUT pixels; `0` on a fill layer, and a stroke layer with `0` never gets
    *  here at all. */
   width: number
+  /**
+   * The SILHOUETTE outline an `extrude` layer draws around its fused body —
+   * `null` on every other layer, and on an extrude that has not asked for one.
+   *
+   * ## It is one contour, or it is nothing
+   *
+   * A silhouette cannot be derived from N overlapping paths; it requires the
+   * union. So this is resolved here — the layer's own `width` and `strokeColor`,
+   * both gated on the layer being `solid` — but it is only DRAWN where a body
+   * actually exists. No body, no stroke: no error, no blocking, and in particular
+   * no fallback to stroking the copies individually, which would draw an outline
+   * around each and put internal seam lines straight through the block. That is
+   * the failure signature this whole feature is defined against, not a degraded
+   * version of it.
+   *
+   * A FLAT colour, deliberately (not a `Paint`) — see
+   * `VtAppearanceLayer.strokeColor`.
+   */
+  outline: { color: string; width: number } | null
   /** 0..1, MULTIPLIED with the glyph's motion opacity — see `paintLayer`. */
   opacity: number
   op: GlobalCompositeOperation
@@ -737,6 +756,13 @@ function vtPaintLayers(
     // budget or the field span. The real offsets are built below, once the
     // budget has had its say.
     if (layer.kind === 'extrude' && !(Number.isFinite(layer.depth) && Math.round(layer.depth) > 0)) continue
+    const solid = layer.kind === 'extrude' && layer.solid === true
+    // The silhouette. `hasPaint` is the same "does this actually paint" question
+    // the layer's own paint answers above, asked of a flat colour: `''`, `'none'`
+    // and `'transparent'` are all "no outline", so a hand-written or agent-written
+    // config cannot produce a `ctx.stroke` that costs a pass and paints nothing.
+    // Gated on `solid`, because an unfused extrude has no single contour to draw.
+    const outlined = solid && width > 0 && hasPaint(layer.strokeColor)
     const L: VtPaintLayer = {
       id: typeof layer.id === 'string' ? layer.id : '',
       kind: layer.kind,
@@ -744,13 +770,14 @@ function vtPaintLayers(
       flat: flatPaint(paint),
       anchor: vtLayerAnchor(layer),
       width,
+      outline: outlined ? { color: layer.strokeColor, width } : null,
       opacity,
       op: VT_BLEND_OP[layer.blend] ?? 'source-over',
       blendCss: VT_BLEND_CSS[layer.blend] ?? 'normal',
       runPm: null,
       runStyle: null,
       copies: null,
-      solid: layer.kind === 'extrude' && layer.solid === true,
+      solid,
     }
     if (layer.kind === 'extrude') extrudes.push({ L, spec: layer })
     out.push(L)
@@ -1162,6 +1189,35 @@ export function drawVectorType(
       // same shape N times — the double-darkening this feature exists to remove.
       const path = body ?? glyphPath
       const copies = body ? null : L.copies
+      // ── THE SILHOUETTE ──────────────────────────────────────────────────────
+      // One outline around the whole extruded body, and ONLY when that body
+      // exists. `body === null` is the cold frame — the union has not landed for
+      // this exact geometry — and the honest answer there is the un-unioned
+      // copies, UNSTROKED. Stroking them individually would outline each copy and
+      // run seam lines through the block, which is not a lesser silhouette; it is
+      // a different, wrong picture. Nothing here waits, computes or errors: this
+      // is `resolveField`'s posture, one module along.
+      const outline = body && L.outline ? L.outline : null
+      /**
+       * The silhouette pass — a no-op unless a fused body was found.
+       *
+       * Drawn AFTER the body's fill, so the outline sits on top of its own ink
+       * rather than half-buried under it; a centred pen puts half the width
+       * inside the contour either way, and this is the order Illustrator's
+       * appearance stack uses for a stroke over a fill.
+       *
+       * `widthScale` is `matScale(gm)/matScale(pm)` on the anchored path and
+       * exactly 1 on the flat one — `ctx.lineWidth` is in the CURRENT transform's
+       * units, and the anchored branch has left the glyph's own for a paint
+       * space. Same factor, same reason, as the stroke LAYER a few lines down.
+       */
+      const strokeOutline = (p: Path2D, widthScale = 1): void => {
+        if (!outline) return
+        ctx.lineWidth = outline.width * widthScale
+        ctx.lineJoin = 'round'
+        ctx.strokeStyle = outline.color
+        ctx.stroke(p)
+      }
       if (L.flat !== null) {
         const stroking = L.kind === 'stroke'
         if (stroking) {
@@ -1175,6 +1231,7 @@ export function drawVectorType(
         const once = () => (stroking ? ctx.stroke(path) : ctx.fill(path, 'nonzero'))
         if (!copies) {
           once()
+          strokeOutline(path)
           return
         }
         for (const c of copies) {
@@ -1213,11 +1270,16 @@ export function drawVectorType(
       } else {
         ctx.fillStyle = style
       }
+      // The paint space is not the geometry space here, so the outline's width
+      // has to be put back into the glyph's units — the identical factor the
+      // stroke layer above uses, and exactly 1 at the `glyph` anchor.
+      const outlineScale = matScale(gm) / matScale(pm)
       const drawAt = (m: DOMMatrix) => {
         const local = new Path2D()
         local.addPath(path, m)
         if (stroking) ctx.stroke(local)
         else ctx.fill(local, 'nonzero')
+        strokeOutline(local, outlineScale)
       }
       if (!copies) drawAt(toPaint)
       else for (const c of copies) drawAt(copyMatrix(toPaint, c, origin, advance))
@@ -1839,6 +1901,25 @@ export function vectorTypeSVG(
     }
 
     const stroking = L.kind === 'stroke'
+    /**
+     * The already-computed fused body for this layer's glyph `i`, or `null`.
+     *
+     * Hoisted out of `expand` because THREE options need the same answer and they
+     * must not disagree: the expansion (one path or `depth`), the stroke colour
+     * and the stroke width. A glyph whose union has not landed emits its copies
+     * and must carry NO stroke — a layer-wide stroke would outline every one of
+     * them, which is the per-copy picture this feature exists to avoid. Asking
+     * once is what makes "stroked" and "fused" the same condition by construction.
+     *
+     * `opts.solid` is the only source here, deliberately: this writer is
+     * synchronous and the union is async, so an export awaits `prepareSolidExtrudes`
+     * and hands the map in (Task 6's boundary). No peek, no trigger.
+     */
+    const solidBodyFor = (i: number): readonly VectorCommand[] | null => {
+      if (!L.solid || !L.id || !opts.solid) return null
+      const body = opts.solid.get(vtSolidKey(L.id, i))
+      return body && body.length ? body : null
+    }
     shapes.push(...outlinesToShapes(frame.outlines, {
       ...place,
       // A stroke layer paints NO fill — `null` is the spine's explicit
@@ -1855,8 +1936,18 @@ export function vectorTypeSVG(
       // The stroke is an ATTRIBUTE, not outlined into geometry: a designer opening
       // this can restyle or remove it, and the path still describes the letterform
       // rather than the letterform's outer contour.
-      stroke: stroking ? paintPrimaryColor(L.paint, '#000000') : undefined,
-      strokeWidth: stroking ? L.width : undefined,
+      // ── AND THE EXTRUDE'S SILHOUETTE ─────────────────────────────────────────
+      // The body already comes out as ONE `<path>` per glyph, so the silhouette
+      // needs no new element and no change to the spine (`lib/vector/svg.ts`
+      // already writes `stroke` + `stroke-width` alongside a `fill`): it is two
+      // attributes on the path that is already there. Per glyph, and only where a
+      // body exists — see `solidBodyFor`.
+      stroke: stroking
+        ? paintPrimaryColor(L.paint, '#000000')
+        : L.outline ? (_g, i) => (solidBodyFor(i) ? L.outline!.color : null) : undefined,
+      strokeWidth: stroking
+        ? L.width
+        : L.outline ? (_g, i) => (solidBodyFor(i) ? L.outline!.width : undefined) : undefined,
       fillRule: 'nonzero',
       // The glyph's motion fade TIMES the layer's own opacity — multiplied, never
       // replaced, for the reason spelled out at `paintLayer`: they mean different
@@ -1898,8 +1989,8 @@ export function vectorTypeSVG(
       // whole block shadow.
       expand: expanded
         ? (commands, glyph, i) => {
-            const body = L.solid && L.id && opts.solid ? opts.solid.get(vtSolidKey(L.id, i)) : null
-            if (body && body.length) return [[...body]]
+            const body = solidBodyFor(i)
+            if (body) return [[...body]]
             return extrudeCopyCommands(commands, L.copies ?? [], glyphPlacement(glyph, place), advanceOf(glyph))
           }
         : undefined,
@@ -1914,9 +2005,19 @@ export function vectorTypeSVG(
     viewBox: [0, 0, W, H],
     background: opts.background ?? null,
     precision,
-    // Matches `ctx.lineJoin = 'round'` in drawVectorType. SVG's default is
-    // `miter`, which spikes at the sharp joins letterforms are full of.
-    ...(layers.some(L => L.kind === 'stroke') ? { groupAttrs: { 'stroke-linejoin': 'round' } } : {}),
+    // Matches `ctx.lineJoin = 'round'` in drawVectorType — for the letterform
+    // stroke AND for the extrude's silhouette, which has more sharp joins than a
+    // letterform does (every step between two copies is a corner). SVG's default
+    // is `miter`, so a document that omitted this would export spikes the preview
+    // does not show.
+    //
+    // Asked of the SHAPES rather than of the layers, because an extrude's outline
+    // is decided PER GLYPH: a layer that wants one but whose union has not landed
+    // emits copies and no stroke at all, and a document with nothing stroked must
+    // not carry the attribute.
+    ...(shapes.some(s => typeof s.stroke === 'string' && s.stroke !== '')
+      ? { groupAttrs: { 'stroke-linejoin': 'round' } }
+      : {}),
   })
 
   return { svg, frame }

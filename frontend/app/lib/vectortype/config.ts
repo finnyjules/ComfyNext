@@ -139,9 +139,43 @@ export interface VtAppearanceLayer {
   /** 0..1, composed with (not replacing) the glyph's own motion opacity. */
   opacity: number
   blend: BlendKind
-  /** `stroke` only — outline width in OUTPUT pixels, so it does not shrink with
-   *  `size`. Inert on the other two kinds. */
+  /**
+   * Outline width in OUTPUT pixels, so it does not shrink with `size`.
+   *
+   * TWO kinds read it, and they mean the same thing one level apart:
+   *
+   *  - `stroke` — the outline around the letterform itself;
+   *  - `extrude` — the outline around the whole extruded BODY, i.e. the
+   *    silhouette. Live only where a fused body exists (`solid`, and the union
+   *    already landed); see `canvas.ts`'s `paintLayer`. It cannot be an outline
+   *    per copy — that would draw internal seam lines through the block, which is
+   *    the opposite of a silhouette.
+   *
+   * Inert on `fill`. Defaults per kind — `vtDefaultWidth` — because a fresh
+   * stroke layer must be visible immediately while a fresh extrude must not grow
+   * an outline nobody asked for.
+   */
   width: number
+  /**
+   * `extrude` only — the SILHOUETTE stroke's colour, as a flat CSS colour
+   * (`#rrggbb` / `#rrggbbaa`).
+   *
+   * ## Flat, deliberately — not a `Paint`
+   *
+   * The stroke vocabulary in this studio is a colour, not the nine-type fill
+   * model. Widening it roughly doubles the extrude's control surface (a second
+   * type / a / b / angle / density / anchor set) and multiplies the downstream
+   * work — the SVG spine's `VectorShape.stroke` is `string | null` and cannot
+   * reference a paint server at all, so a gradient outline would export as a flat
+   * colour anyway. A `stroke` LAYER's colour is its `paint` and is a full `Paint`;
+   * this is the extrude's own outline and is one colour.
+   *
+   * On the LAYER, never inside `paint` — see this interface's header. A colour
+   * smuggled onto a `Paint` survives in memory and is dropped on the next load.
+   *
+   * Inert on `fill` and `stroke`.
+   */
+  strokeColor: string
   /** `extrude` only — number of offset copies. */
   depth: number
   /** `extrude` only — offset direction in degrees. */
@@ -403,6 +437,37 @@ export const VT_BASE_STROKE_ID = 'Lstroke'
  */
 export const VT_DEFAULT_STROKE_WIDTH = 3
 
+/**
+ * Width a NEW EXTRUDE layer's silhouette outline gets: **zero**, i.e. off.
+ *
+ * The opposite default from `VT_DEFAULT_STROKE_WIDTH`, and for the same reason
+ * that one is non-zero. A stroke LAYER is a thing the user added to the stack and
+ * must be visible immediately — that is what it is for. An extrude's outline is a
+ * property OF an extrude, one knob among five, and an extrude added for its block
+ * shadow must not silently come with a black keyline around it. It is the ticker
+ * band-stroke pattern (`spacetype/effects/ticker.ts`: `strokeWidth` default 0,
+ * `strokeColor` default `#000000`) — the width is the switch, the colour is ready
+ * for when it is thrown.
+ */
+export const VT_DEFAULT_EXTRUDE_STROKE_WIDTH = 0
+
+/** The extrude silhouette's colour on a fresh layer. Real black rather than an
+ *  empty string or `transparent`: `width` is the on/off switch, so the colour is
+ *  free to be a value a picker can show honestly. */
+export const VT_DEFAULT_STROKE_COLOR = '#000000'
+
+/**
+ * The `width` a layer of this kind gets when nothing stored one.
+ *
+ * ONE function, two callers — `vtLayer` (a fresh layer) and `mergeLayer` (a
+ * stored layer with no width). A second copy of the per-kind rule is exactly how
+ * a layer created through the UI and the same layer round-tripped through storage
+ * would end up with different outlines.
+ */
+export function vtDefaultWidth(kind: VtLayerKind): number {
+  return kind === 'extrude' ? VT_DEFAULT_EXTRUDE_STROKE_WIDTH : VT_DEFAULT_STROKE_WIDTH
+}
+
 /** Field-by-field defaults for a layer, minus the id (which is never shared).
  *
  *  EXPORTED so `controls.ts` can seed the layer sliders' `default` from the one
@@ -417,7 +482,11 @@ export const LAYER_DEFAULTS: Omit<VtAppearanceLayer, 'id' | 'paint'> = {
   anchor: 'glyph',
   opacity: 1,
   blend: 'normal',
+  // The default for `kind: 'fill'`, which is this record's own kind —
+  // `vtDefaultWidth('fill')` is exactly this. An EXTRUDE overrides it to 0 at
+  // both build sites; see `vtDefaultWidth`.
   width: VT_DEFAULT_STROKE_WIDTH,
+  strokeColor: VT_DEFAULT_STROKE_COLOR,
   // Extrude defaults — a readable block shadow, not a hairline. `135°` steps
   // DOWN-LEFT: the angle convention is canvas's own (`dx = cos θ`, `dy = sin θ`,
   // y pointing down), shared with `fillTile`'s gradient angle so the two "angle"
@@ -450,6 +519,11 @@ export function vtLayer(over: Partial<VtAppearanceLayer> = {}): VtAppearanceLaye
   for (const [k, v] of Object.entries(over)) {
     if (v !== undefined) (out as unknown as Record<string, unknown>)[k] = v
   }
+  // `width` defaults PER KIND, and `LAYER_DEFAULTS` can only carry one of them —
+  // so an `extrude` built here would otherwise inherit the stroke layer's 3 and
+  // arrive with a silhouette outline nobody asked for. Only when the caller said
+  // nothing: an explicit width, including 0, is the caller's answer.
+  if (over.width === undefined) out.width = vtDefaultWidth(out.kind)
   if (!out.id) out.id = vtLayerId()
   return out
 }
@@ -673,9 +747,10 @@ function validLayerId(raw: unknown): string {
 function mergeLayer(raw: unknown, id: string): VtAppearanceLayer | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
   const o = raw as Record<string, unknown>
+  const kind = oneOf(o.kind, VT_LAYER_KINDS, 'fill')
   return {
     id,
-    kind: oneOf(o.kind, VT_LAYER_KINDS, 'fill'),
+    kind,
     enabled: typeof o.enabled === 'boolean' ? o.enabled : true,
     paint: mergeFill(o.paint),
     anchor: oneOf(o.anchor, VT_FILL_ANCHORS, LAYER_DEFAULTS.anchor),
@@ -683,7 +758,15 @@ function mergeLayer(raw: unknown, id: string): VtAppearanceLayer | null {
     blend: oneOf(o.blend, BLEND_MODES, LAYER_DEFAULTS.blend),
     // A negative width is not "the other side" — it is a broken value, and
     // `ctx.lineWidth` ignores it silently.
-    width: Math.max(0, num(o.width, LAYER_DEFAULTS.width)),
+    //
+    // The FALLBACK is per kind (`vtDefaultWidth`): a stored stroke layer with no
+    // width must still be visible, and a stored extrude with no width must not
+    // grow an outline. Same rule as `vtLayer`'s, from the same function.
+    width: Math.max(0, num(o.width, vtDefaultWidth(kind))),
+    // A flat colour, rebuilt like everything else here. Not run through
+    // `mergeFill`: this is a `string`, not a `Paint` — see the field's doc for why
+    // the extrude's outline is deliberately not the nine-type fill model.
+    strokeColor: str(o.strokeColor, LAYER_DEFAULTS.strokeColor),
     depth: clamp(Math.round(num(o.depth, LAYER_DEFAULTS.depth)), 0, VT_EXTRUDE_DEPTH_MAX),
     angle: num(o.angle, LAYER_DEFAULTS.angle),
     distance: num(o.distance, LAYER_DEFAULTS.distance),
