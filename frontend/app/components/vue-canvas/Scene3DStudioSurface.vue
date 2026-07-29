@@ -31,6 +31,7 @@ import { loadGoogleCatalog, type GoogleFont } from '~/data/google-fonts'
 import FontPicker from '~/components/vue-canvas/FontPicker.vue'
 import { PRIM_GROUPS } from '~/lib/scene3d/primGroups'
 import { SceneEngine, baseSizeFor, baseVertexCountFor } from '~/lib/scene3d/engine'
+import { orderParentsFirst, worldMatrixOf } from '~/lib/scene3d/hierarchy'
 import { totalClones } from '~/lib/scene3d/modifiers'
 import { PRIMITIVE_PARAMS, paramValue, MODIFIER_SPECS, modifierValue } from '~/lib/scene3d/primParams'
 import { SceneInteraction } from '~/lib/scene3d/interaction'
@@ -1120,6 +1121,44 @@ onMounted(() => {
       const o = doc.objects.find((x) => x.id === id)
       if (o) { o.position = t.position; o.rotation = t.rotation; o.scale = t.scale }
     },
+    onTransformMany: (entries) => {
+      // Entries carry WORLD transforms (under the gizmo pivot a root's local TRS
+      // is pivot-relative), so each one is rebased into its own parent's frame
+      // before writing — the doc stores LOCAL transforms.
+      //
+      // Parents strictly before children: a selection may contain both an object
+      // and one of its own descendants, and the child's rebase divides by its
+      // parent's world matrix READ FROM THE DOC. Writing the child first would
+      // rebase it against the parent's pre-drag world, baking the drag delta
+      // into a local that the parent's own (later) write then applies a second
+      // time — the child moves twice as far as the gizmo. orderParentsFirst is
+      // the same ordering the engine syncs in.
+      const byId = new Map(entries.map((e) => [e.id, e.t]))
+      for (const o of orderParentsFirst(doc.objects)) {
+        const t = byId.get(o.id)
+        if (!t) continue
+        if (!o.parentId) { o.position = t.position; o.rotation = t.rotation; o.scale = t.scale; continue }
+        const parentWorld = worldMatrixOf(doc.objects, o.parentId)
+        const world = new THREE.Matrix4().compose(
+          new THREE.Vector3(...t.position),
+          // XYZ everywhere — SceneObjectBase.rotation's documented order. A
+          // mismatch here yields rotations that are wrong but still plausible.
+          new THREE.Quaternion().setFromEuler(new THREE.Euler(...t.rotation, 'XYZ')),
+          new THREE.Vector3(...t.scale),
+        )
+        const local = new THREE.Matrix4().copy(parentWorld).invert().multiply(world)
+        const p = new THREE.Vector3(); const q = new THREE.Quaternion(); const s = new THREE.Vector3()
+        local.decompose(p, q, s)
+        const e = new THREE.Euler().setFromQuaternion(q, 'XYZ')
+        o.position = [p.x, p.y, p.z]
+        o.rotation = [e.x, e.y, e.z]
+        o.scale = [s.x, s.y, s.z]
+      }
+    },
+    // The drag suppressed every syncFromDoc it triggered (see the doc watcher);
+    // run the one that was owed now that the roots are back in the scene, so
+    // they land under their real parents again.
+    onPivotDragEnd: () => { engine?.syncFromDoc(doc) },
   })
   interaction.orbit.target.set(...doc.camera.target)
   engine.syncFromDoc(doc)
@@ -1206,10 +1245,25 @@ onBeforeUnmount(() => {
 
 // Any edit re-dirties and clears a stale bake failure so the amber "unbaked
 // changes" indicator isn't masked by an old red "Bake failed — retry".
-watch(doc, () => { dirty.value = true; bakeError.value = ''; engine?.syncFromDoc(doc); scheduleHistory() }, { deep: true })
-watch(selectedId, (id) => {
-  interaction?.select(id, doc.objects.find((o) => o.id === id)?.kind === 'light')
-  engine?.setSelected(id)
+watch(doc, () => {
+  dirty.value = true
+  bakeError.value = ''
+  // A multi-selection drag has the selected roots temporarily re-parented under
+  // the gizmo pivot, and syncObject re-parents EVERY root to its doc parent on
+  // every sync — syncing here (from the drag's own per-move doc writes) would
+  // rip them out of the pivot after the first delta and leave the rest of the
+  // gesture moving nothing. The viewport is already live during that window
+  // (the pivot moves the roots directly), and onPivotDragEnd runs the sync.
+  if (!interaction?.pivotDragActive) engine?.syncFromDoc(doc)
+  scheduleHistory()
+}, { deep: true })
+// Watches the whole ORDERED selection, not just the primary: a modifier-click
+// that only extends the list leaves `selectedId` unchanged but still has to
+// rebuild the gizmo around a pivot.
+watch(selectedIds, (ids) => {
+  const primary = ids.length === 1 ? doc.objects.find((o) => o.id === ids[0]) : null
+  interaction?.selectMany([...ids], primary?.kind === 'light')
+  engine?.setSelected(ids[ids.length - 1] ?? null)
   // Minor 4 fix (final review): an open Generate panel stays bound to whichever object it was
   // opened for via reliefGenBusy/reliefGenPrompt's shared id-keying, but its BUTTON just reads
   // `selected.id` at click time — leaving the panel open across a reselect would bill the
