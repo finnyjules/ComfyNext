@@ -14,7 +14,7 @@ Legend: **bake** = render/export path · **motion** = animatable · **inspector*
 |---|---|---|---|---|---|
 | Space Type | ✅ + clip bake | ✅ timeline clip | ✅ | ✅ descriptor | 11,202 |
 | Vector Type Studio | ✅ PNG + SVG export (9 fill types, 6 as real vector; multi-fill/stroke stack + extrude + skew/arc) | ✅ full incl. stagger + preset gallery | ✅ | ✅ descriptor (unverified live) | — |
-| Scene3D Studio | ✅ 3-pass + mp4 | ✅ own timeline | ✅ | ❌ | 5,095 |
+| Scene3D Studio | ✅ 3-pass + mp4 | ✅ own timeline (groups animate) | ✅ + object tree | ❌ | ~5,900 |
 | Compositor / Frame | ✅ | ✅ motion clips | ✅ | ✅ commands | 1,667 (+1,041 motion) |
 | Timeline (NLE) | ✅ webm/mp4 + server | ✅ native | ✅ | ❌ | shared/timeline |
 | Gradient Studio | ✅ | ✅ 30 targets, path-based | ✅ (hand-written) | ✅ descriptor | 2,620 |
@@ -45,6 +45,25 @@ Cost for one parameter to be inspectable + agent-drivable + animatable + sweepab
 The schema is a **superset with per-consumer opt-in** (`agent: false` withholds from the agent, `animatable: false` from motion), so declaring a control can never silently widen another capability.
 
 Still to do in Act 1: the generic inspector renderer (Gradient still has 432 lines of hand-written markup), new `ControlSpec` kinds (`segmented`, `repeater`, `custom`), and exposing the 11 now-declared Shape controls to the agent. Known misfits remain: Texture's colour-role system (`texturefx/roles.ts`), Space Type's scene-sequencing motion model.
+
+## Scene3D grouping — LANDED 2026-07-29
+
+Commits `004494585`..`710f94241` (18). Spec: [2026-07-29-scene3d-grouping-design.md](superpowers/specs/2026-07-29-scene3d-grouping-design.md) · Plan: [2026-07-29-scene3d-grouping.md](superpowers/plans/2026-07-29-scene3d-grouping.md).
+
+**The first object hierarchy in any Sailor studio.** Every `SceneObject` may carry a `parentId`, and a new geometry-less `group` kind holds them, so several objects transform and animate as one unit. Built as the prerequisite for SVG import (a logo imports as one object per path, which needs something to hold the paths together) but it stands alone — two spheres and a light are groupable.
+
+**`doc.objects` stays FLAT; hierarchy is a reference, not nesting.** This is the decision the design rests on. Eight modules iterate that array and `objects.<id>.motion.*` agent paths assume a flat id space; nested `children` would have forced all of them to recurse. The engine turns `parentId` into a real three.js parent/child edge, so the scene graph composes transforms and there is **no matrix maths on the render path**. Group motion is therefore free — a group is an object, so animating it moves its children.
+
+New pure module `lib/scene3d/hierarchy.ts` owns every hierarchy operation (`orderParentsFirst`, `sanitizeHierarchy`, `worldMatrixOf`, `rebaseMany`, `groupObjects`, `ungroupObject`, `ungroupMany`, `cloneSubtree`), engine-free so it is testable without a WebGL context. Also landed: ordered multi-selection with a `selectedId` computed shim, a pivot-based gizmo for multi-drags, Cmd+G/Cmd+Shift+G, a recursive object-list tree, subtree delete/duplicate, and transform + material fan-out across a selection.
+
+**Verification:** 84 unit tests, 2 E2E against a live server, zero typecheck errors. Every assertion was demonstrated able to fail before being believed — a subtraction rebase, disabled cycle-breaking, reversed rebase ordering, naive freed-ids concatenation, an unseeded clone-numbering scope, and a disabled ungroup rebase each turned the relevant test red.
+
+**Findings worth keeping:**
+- The plan's own group placement was wrong: putting a group at world-identity rotation requires a **shear** under a rotated, non-uniformly-scaled parent, and `Matrix4.decompose` silently drops shear. Children drifted 0.4378 units. Keeping the group's local basis at exactly identity makes recomposition lossless (8.9e-16).
+- `cloneObject`'s constructor ternary was exhaustive over `primitive | glb | light`; adding `GroupObject` made **duplicating a group fabricate a light**. It hid inside the typecheck baseline for five tasks. Now guarded by a `never`-typed exhaustiveness check.
+- Every blocking item in the final review was a module no task had opened, still assuming a flat list: opacity traversed whole subtrees (with insertion-order-dependent winners, giving the same document opposite bugs either side of a save), motion templates double-wrote to groups and their children, and `retryGlb` dropped `parentId`.
+
+**Known gap:** the multi-select gizmo *drag* path has no runtime verification — synthetic pointer events do not drive `TransformControls`.
 
 ## Web Embed Export — LANDED 2026-07-28
 
