@@ -47,6 +47,11 @@ import { mergeConfig as mergeVtConfig } from '~/lib/vectortype/config'
 import { VT_GUIDANCE, vtAgentControls } from '~/lib/vectortype/agentControls'
 import type { VtAxis as VtAxisLike } from '~/lib/vectortype/font'
 import { getEffect } from '~/lib/shaderfx/catalog'
+// Scene3D (3D Studio): config.ts/agentControls.ts are three-free by construction (same
+// constraint controls.ts documents), so — like Gradient/Shape — these import statically
+// rather than dynamically; only VectorType's font.ts needs the dynamic-import treatment.
+import { parseDoc as parseSceneDoc, serializeDoc as serializeSceneDoc } from '~/lib/scene3d/config'
+import { SCENE_GUIDANCE, sceneBindableControls } from '~/lib/scene3d/agentControls'
 
 const MEDIA_OPS = new Set(['generateImage', 'editImage', 'removeImageBackground'])
 
@@ -436,6 +441,64 @@ export async function tuneVectorTypeNode(node: any, request: string, apiKey: str
   return runParamPatch(node, request, apiKey, vectorTypeAdapter)
 }
 
+/** Locates the `scene_state` WIDGET on a Scene3DStudio node — mirrors
+ *  `smartLayoutWidgetIndex` above. Unlike every other PatchAdapter's studio,
+ *  Scene3D is a REAL backend node (see comfy_extras/nodes_scene3d.py): its
+ *  state lives in `data.widgetDefs`/`widgetsValues`, not `data.properties`. */
+function scene3dWidgetIndex(node: any): number {
+  const defs = (node?.data?.widgetDefs ?? []) as any[]
+  return defs.findIndex((d) => d?.name === 'scene_state')
+}
+
+/**
+ * Scene3D (3D Studio): the persisted blob is the `scene_state` widget's
+ * STRING value — a serialized `SceneDoc` (parseDoc/serializeDoc round-trip),
+ * not a bare/wrapped object on `data.properties` like the other adapters.
+ * `write` re-serializes the WHOLE mutated doc and writes it back into ONLY
+ * that one widget slot, leaving beauty_image/depth_image/normal_image/
+ * glb_url untouched — the same "merge, don't replace" discipline Shape's
+ * `{ config, canvasW, canvasH, aspectKey, orbit }` wrapper needs, just
+ * against a widgets array instead of a properties object.
+ *
+ * `params` passes `listKey: 'objects'` (configParams.ts's parameter, matching
+ * `SceneDoc.objects`) so `objects.<id>.*` keys resolve id→index against the
+ * live doc. Controls come from `sceneBindableControls` — the ABSOLUTE
+ * `objects.<id>.*` + doc-level (Lighting/Camera/Post) keys only, never the
+ * relative `object.*` namespace `sceneAgentControls` also offers: there is no
+ * live selection headlessly, AND `makeConfigParams`'s only relative prefix is
+ * the literal string `'layer'` (not parameterized) — an `object.*` key would
+ * not resolve against a selection at all, it would silently create a bogus
+ * top-level `object` key on the SceneDoc instead (see configParams.ts's
+ * `write`, which fabricates missing intermediate objects).
+ */
+const scene3dAdapter: PatchAdapter = {
+  read: (n: any) => {
+    const i = scene3dWidgetIndex(n)
+    const raw = i >= 0 ? String(n?.data?.widgetsValues?.[i] ?? '') : ''
+    const config = parseSceneDoc(raw)
+    return { config, controls: sceneBindableControls(config) }
+  },
+  params: (config: any) => makeConfigParams(() => config, () => 0, 'objects'),
+  write: (n: any, config: any) => {
+    const i = scene3dWidgetIndex(n)
+    if (i < 0) return
+    if (!Array.isArray(n.data.widgetsValues)) n.data.widgetsValues = []
+    n.data.widgetsValues[i] = serializeSceneDoc(config)
+  },
+  clone: (config: any) => parseSceneDoc(serializeSceneDoc(config)),
+  label: '3D Studio',
+  guidance: SCENE_GUIDANCE,
+}
+
+/** Exposed for tests only — the adapter is otherwise reached via the registry. */
+export const __scene3dAdapterForTest = scene3dAdapter
+
+/** Scene3D (3D Studio): scene state lives on the `scene_state` widget as a
+ *  serialized SceneDoc (see scene3dAdapter above), not a node property. */
+export async function tuneScene3DNode(node: any, request: string, apiKey: string): Promise<TuneResult> {
+  return runParamPatch(node, request, apiKey, scene3dAdapter)
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Registry — the canvas agent dispatches a tuneNode by the target's nodeType.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -449,6 +512,7 @@ export const STUDIO_TUNERS: Record<string, StudioTuner> = {
   ShaderStudio: tuneShaderNode,
   ShapeStudio: tuneShapeNode,
   VectorType: tuneVectorTypeNode,
+  Scene3DStudio: tuneScene3DNode,
 }
 
 /** The in-place tuner for a node type, or undefined if that node has no canvas

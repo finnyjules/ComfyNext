@@ -135,7 +135,7 @@ export function capabilityByType(nodeType: string, caps: AgentCapability[] = AGE
 const IMG = [{ name: 'IMAGE', type: 'IMAGE' }]
 const GENERATORS: AgentCapability[] = [
   // ---- Image · generation ----
-  { nodeType: 'GenerateImageNode', kind: 'generator', title: 'Generate an image', summary: 'Text-to-image; pick any model (Flux, Ideogram, Reve…) and generate from a prompt.', inputs: [], outputs: IMG,
+  { nodeType: 'GenerateImageNode', kind: 'generator', title: 'Generate an image', summary: 'Text-to-image; pick any model (Flux, Ideogram, Reve…) and generate from a prompt. Nano Banana 2/Pro also accept optional reference images (image_1…image_6).', inputs: [{ name: 'image_1', type: 'IMAGE', optional: true }], outputs: IMG,
     intents: ['generate an image', 'make a picture', 'create an image', 'text to image', 'draw me', 'render a photo', 'make art', 'generate a photo of', 'imagine', 'dream up', 'conjure an image', 'produce an image', 'ai image', 'picture of a', 'visualize', 'make me a graphic', 'generate a dog', 'create artwork', 'create a painting of', 'render an illustration', 'wallpaper of a', 'make a wallpaper of', 'background image of'] },
   { nodeType: 'FluxLoRARemoteNode', kind: 'generator', title: 'Generate with your LoRA', summary: 'Generate with a trained LoRA (character/style), or img2img-restyle with it.', inputs: [{ name: 'image', type: 'IMAGE', optional: true }], outputs: IMG,
     intents: ['generate with my lora', 'use my trained model', 'make an image of my character', 'generate my character', 'use my finetune', 'lora generation', 'my model image', 'personalized generation', 'generate using my training', 'generate in my style', 'make this in my style', 'an image in my own style', 'use my trained style', 'my character in a scene'] },
@@ -153,7 +153,7 @@ const GENERATORS: AgentCapability[] = [
     intents: ['make a text effect', 'stylize this word', 'typographic art', 'chrome text', 'holographic letters', 'make a logo word', 'fancy text', 'word art', '3d text effect', 'liquid metal text', 'title treatment', 'neon text'] },
 
   // ---- Image · editing & transformation ----
-  { nodeType: 'EditImageNode', kind: 'effect', title: 'Edit an image', summary: 'Natural-language image editing (Nano Banana / Flux Kontext / Flux 2 Pro) — change, add, remove anything.', inputs: [{ name: 'input_image', type: 'IMAGE' }], outputs: IMG,
+  { nodeType: 'EditImageNode', kind: 'effect', title: 'Edit an image', summary: 'Natural-language image editing (Nano Banana 2/Pro / Flux Kontext / Flux 2 Pro) — change, add, remove anything. Nano Banana and Flux 2 Pro also accept extra reference images (image_2…image_6).', inputs: [{ name: 'input_image', type: 'IMAGE' }, { name: 'image_2', type: 'IMAGE', optional: true }], outputs: IMG,
     intents: ['edit this image', 'change her shirt', 'make her hair blue', 'change the background', 'edit the photo', 'modify this picture', 'alter the image', 'change the sky', 'make it nighttime', 'make it look like nighttime', 'tweak this image', 'photoshop this', 'add an object', 'add a hat', 'put glasses on', 'add a logo to the image'] },
     // Removal, recolor and in-image text edits have DEDICATED nodes below
     // (RemoveObjectNode / RecolorObjectNode / TextEditNode) — their verbs
@@ -268,8 +268,10 @@ const GENERATORS: AgentCapability[] = [
 // STUDIOS — the app's creative editors, added as canvas nodes. Gradient/Shader/
 // Texture/SpaceType are FRONTEND-ONLY (no /object_info) → frontendOnly:true so we
 // synthesize their catalog entry + ports (wildcard output; ShaderStudio takes an
-// IMAGE). Compositor + SmartLayout are REAL backend nodes (ports come from
-// /object_info), so frontendOnly is false — we only add their intents + boost.
+// IMAGE). Compositor + SmartLayout + Scene3DStudio are REAL backend nodes (ports
+// come from /object_info — Scene3DStudio's is Scene3DStudioNode, class_type
+// "Scene3DStudio", see comfy_extras/nodes_scene3d.py), so frontendOnly is false —
+// we only add their intents + boost.
 // ─────────────────────────────────────────────────────────────────────────────
 const STUDIOS: AgentCapability[] = [
   { nodeType: 'GradientStudio', kind: 'studio', frontendOnly: true, title: 'Gradient Studio', summary: 'Procedural WebGL gradient generator — color fields, mesh, liquid/marble flow, 3D relief, looping video.', inputs: [], outputs: [{ name: 'output', type: '*' }],
@@ -290,6 +292,12 @@ const STUDIOS: AgentCapability[] = [
     intents: ['character sheet', 'build a character', 'create a character from image', 'character builder', 'turn this image into a character', 'make a castable character', 'new character from reference'] },
   { nodeType: 'SpaceType', kind: 'studio', frontendOnly: true, title: 'Type Studio', summary: '3D kinetic typography engine — pick an effect, type text, bake to image/video; fills + post-FX.', inputs: [], outputs: [{ name: 'output', type: '*' }],
     intents: ['kinetic typography', 'animated text', 'animate text', 'animate the word', 'animated word', 'animate this text', '3d text', '3d text effect', 'text animation', 'spinning text', 'text on a sphere', 'text tunnel', 'glitchy text', 'melting text', 'spiral text', 'elastic stretchy text', 'ribbon text', 'type studio', 'animated title', 'motion typography', 'extruded text', 'text on a cylinder', 'text intro animation'] },
+  { nodeType: 'Scene3DStudio', kind: 'studio', frontendOnly: false, title: '3D Studio', summary: 'Compose a 3D scene (primitives, imported GLB models, lights) in a fullscreen editor; outputs baked beauty, depth and normal renders for img2img / ControlNet conditioning.', inputs: [{ name: 'glb_url', type: 'STRING', optional: true }], outputs: [{ name: 'beauty', type: 'IMAGE' }, { name: 'depth', type: 'IMAGE' }, { name: 'normal', type: 'IMAGE' }],
+    // Deliberately avoids "asset"/"reference"/"photo"/"image"/"from" — that
+    // vocabulary is Generate3DNode/Hunyuan3DMultiViewNode's own domain
+    // (image/photo → 3D asset); Scene3DStudio composes primitives/GLBs/lights
+    // in a scene, a different intent even where both mention "3d".
+    intents: ['3d scene', 'stage a 3d scene', 'compose a 3d scene', 'add a 3d scene', '3d studio', 'arrange objects in 3d', 'place primitives in 3d', 'add a sphere to the scene', 'add a torus', 'add a light to the scene', 'stage a glb model in a scene', 'position a 3d model in a scene', 'render a 3d scene', 'depth pass for controlnet', 'normal pass for controlnet', '3d control renders', 'low poly scene', 'studio lighting for a 3d scene', 'orbit a 3d scene'] },
   { nodeType: 'Compositor', kind: 'studio', frontendOnly: false, title: 'Frame (Compositor)', summary: 'Figma-style layer compositor / artboard — stack image + text/vector/shape layers with transforms, blend, masking, motion, post-processing (grade/bloom/grain/vignette/duotone).', inputs: [{ name: 'layer1', type: 'IMAGE' }], outputs: [{ name: 'image', type: 'IMAGE' }],
     intents: ['compose a frame', 'create a frame', 'add this to a frame', 'put the image in a frame', 'place it on an artboard', 'new artboard', 'layout layers', 'combine these into one image', 'merge images into a composition', 'overlay images', 'stack layers', 'add text over the image', 'add a caption', 'put a logo on this', 'arrange elements on a canvas', 'draw a shape on top', 'add a vector', 'design a composite',
       // Solid/coloured frame background (the backdrop behind the layers) — NOT a

@@ -129,6 +129,29 @@ async function vectorTypeControls(node: any): Promise<StudioControlDesc[]> {
   return mapAll(vtBindableControls(config, axes))
 }
 
+/**
+ * Scene3D (3D Studio): a REAL backend node whose state is the `scene_state`
+ * WIDGET value (a serialized SceneDoc via parseDoc), not a `data.properties`
+ * config like every other studio here — mirrors how `studioTune.ts`'s own
+ * adapter reads it. `sceneBindableControls`, NOT `sceneAgentControls`: a
+ * Collection binding is persisted and re-resolved with no live selection, so
+ * only the ABSOLUTE `objects.<id>.*` + doc-level (Lighting/Camera/Post) keys
+ * are offered — the relative `object.*` namespace would mean "whichever
+ * object was selected", which a persisted binding must never mean (see
+ * `sceneBindableControls`'s own doc in scene3d/agentControls.ts).
+ */
+async function scene3dControls(node: any): Promise<StudioControlDesc[]> {
+  const [{ parseDoc }, { sceneBindableControls }] = await Promise.all([
+    import('~/lib/scene3d/config'),
+    import('~/lib/scene3d/agentControls'),
+  ])
+  const defs = (node?.data?.widgetDefs ?? []) as any[]
+  const i = defs.findIndex((d) => d?.name === 'scene_state')
+  const raw = i >= 0 ? String(node?.data?.widgetsValues?.[i] ?? '') : ''
+  const doc = parseDoc(raw)
+  return mapAll(sceneBindableControls(doc))
+}
+
 /** Resolve the bindable control list for a studio node, keyed off
  *  `node.data.nodeType`. Returns [] for unknown/non-studio types. */
 export async function controlsForStudio(node: any): Promise<StudioControlDesc[]> {
@@ -139,6 +162,7 @@ export async function controlsForStudio(node: any): Promise<StudioControlDesc[]>
     case 'TextureStudio': return textureControls(node)
     case 'ShapeStudio': return shapeControls(node)
     case 'VectorType': return vectorTypeControls(node)
+    case 'Scene3DStudio': return scene3dControls(node)
     default: return []
   }
 }
