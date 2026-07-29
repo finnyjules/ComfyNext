@@ -361,6 +361,40 @@ export class GradientFxRenderer {
     return await new Promise<Blob>((resolve, reject) =>
       canvas.toBlob(b => (b ? resolve(b) : reject(new Error('toBlob failed'))), type, 0.95))
   }
+
+  /**
+   * Releases everything this instance owns (programs, the field/ramp array
+   * textures, the soft-focus FBO + scene texture) then loses the GL context
+   * outright. Idempotent, and safe to call before the first render (when `gl`
+   * is still null). Callers that hold their own instance (embeds) must call
+   * this when done — browsers cap live WebGL contexts per page. Mirrors
+   * ShaderFxRenderer.dispose().
+   */
+  dispose(): void {
+    const gl = this.gl
+    if (!gl) return
+
+    if (this.prog) gl.deleteProgram(this.prog)
+    this.prog = null
+    if (this.blurProg) gl.deleteProgram(this.blurProg)
+    this.blurProg = null
+
+    if (this.fieldArrayTex) gl.deleteTexture(this.fieldArrayTex)
+    this.fieldArrayTex = null
+    if (this.rampArrayTex) gl.deleteTexture(this.rampArrayTex)
+    this.rampArrayTex = null
+
+    if (this.sceneTex) gl.deleteTexture(this.sceneTex)
+    this.sceneTex = null
+    if (this.fbo) gl.deleteFramebuffer(this.fbo)
+    this.fbo = null
+    this.fboW = 0
+    this.fboH = 0
+
+    gl.getExtension('WEBGL_lose_context')?.loseContext()
+    this.gl = null
+    this.canvas = null
+  }
 }
 
 // Tiny inline hash for the grain seed uniform (avoids importing rng's full API).

@@ -16,6 +16,13 @@ import { fileURLToPath } from 'node:url'
 // Builds each embed adapter as a standalone IIFE for inlining into exported
 // .html files. Separate from the Nuxt build on purpose: nothing here may pull
 // in Vue, Nuxt, or anything that reaches the network.
+//
+// One config, one surface per invocation: SAILOR_EMBED_SURFACE picks which
+// entry-<surface>.ts gets built (defaulting to 'shader' so an unparameterised
+// `vite build --config vite.embed.config.ts` still works). `build:embed` in
+// package.json runs this config once per surface to produce both bundles.
+const surface = process.env.SAILOR_EMBED_SURFACE || 'shader'
+
 const config: UserConfig = {
   resolve: {
     alias: {
@@ -25,7 +32,12 @@ const config: UserConfig = {
   },
   build: {
     outDir: 'public/embed',
-    emptyOutDir: true,
+    // false, not true: each invocation of this config builds ONE surface's
+    // bundle into the same outDir. emptyOutDir: true would make the second
+    // `vite build` (e.g. gradient) delete the first surface's output (shader)
+    // before writing its own — the two builds would keep stomping each other
+    // instead of accumulating into public/embed.
+    emptyOutDir: false,
     // outDir (public/embed) sits inside the default publicDir (public/), so
     // Vite's normal "copy publicDir into outDir" step would recursively copy
     // the whole public/ tree (app_covers, fonts, hero, house-styles, icons,
@@ -35,7 +47,7 @@ const config: UserConfig = {
     // assets. Disable the copy; this build has no publicDir assets of its own.
     copyPublicDir: false,
     lib: {
-      entry: fileURLToPath(new URL('./app/lib/embed/entry-shader.ts', import.meta.url)),
+      entry: fileURLToPath(new URL(`./app/lib/embed/entry-${surface}.ts`, import.meta.url)),
       formats: ['iife'],
       // Required by Vite's lib-mode API when formats includes 'iife' (it's
       // the global Rollup would assign the entry's exports to), but unused
@@ -43,7 +55,7 @@ const config: UserConfig = {
       // assigned to this name and it appears nowhere in the built output.
       // Do not go looking for `window.__SailorEmbedShader` at runtime.
       name: '__SailorEmbedShader',
-      fileName: () => 'shader.js',
+      fileName: () => `${surface}.js`,
     },
     minify: 'esbuild',
     // Everything must be inlined — an embed has no module loader and no network.
