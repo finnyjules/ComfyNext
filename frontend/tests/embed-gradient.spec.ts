@@ -276,10 +276,64 @@ test.describe('embed export — gradient', () => {
   })
 })
 
+// Shared helpers for Layer 2 below — lifted from embed-parity.spec.ts's
+// studioFrame/embedFrame recipe (shader's Layer 1/2 pair), adapted to the
+// gradient harness's slot ('g') and exportHtml() (fixed 512x512, no size
+// argument).
+async function adapterFrame(page: any, t: number): Promise<string> {
+  return await page.evaluate(async (tt: number) => {
+    const H = (window as any).__embedHarnessGradient
+    const h = await H.mount('g')
+    h.setSize(512, 512)
+    h.setTime(tt)
+    const png = H.snapshot('g')
+    h.destroy()
+    return png
+  }, t)
+}
+
+async function embedFrame(context: any, html: string, t: number): Promise<string> {
+  // context.addInitScript, not page.addInitScript — Playwright 1.60 does not
+  // replay page-level init scripts across setContent() (see the identical
+  // note in embed-parity.spec.ts).
+  await context.addInitScript((tt: number) => { (window as any).__SAILOR_FREEZE_T01__ = tt }, t)
+  const p = await context.newPage()
+  // The exported runtime sizes its canvas from #sailor-embed's box (100vw/
+  // 100vh) — must match the 512x512 the adapter frame above used, or the two
+  // canvases diverge on size alone before any pixel comparison.
+  await p.setViewportSize({ width: 512, height: 512 })
+  await p.setContent(html)
+  await p.waitForFunction(() => {
+    const c = document.querySelector('#sailor-embed canvas') as HTMLCanvasElement | null
+    return !!c && c.width > 1
+  }, undefined, { timeout: 15_000 })
+
+  // Assert the LIVE path ran, not the poster fallback.
+  expect(await p.locator('#sailor-poster').isHidden()).toBe(true)
+
+  const png = await p.evaluate(() =>
+    (document.querySelector('#sailor-embed canvas') as HTMLCanvasElement).toDataURL())
+  await p.close()
+  return png
+}
+
 test.describe('embed parity with the studio — gradient', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/dev/embed-harness')
     await page.waitForFunction(() => (window as any).__embedHarnessGradientReady === true)
+  })
+
+  // Layer 2 — the exported file must match the adapter. This is what the
+  // bundling/serialization path can break (a config field lost, a wrong
+  // snapshot dimension, a bundle falling back to another path) — none of
+  // which Layer 1 (adapter vs studio) or Layer 3 (corruption) alone catch.
+  // Without this, Layer 3 below only proves "corrupting the config changes
+  // SOMETHING", which is equally true of a systematically-broken export.
+  test('exported file matches the adapter at the same t01', async ({ page, context }) => {
+    const html = await page.evaluate(() => (window as any).__embedHarnessGradient.exportHtml())
+    const adapter = await adapterFrame(page, T)
+    const exported = await embedFrame(context, html, T)
+    expect(exported).toBe(adapter)
   })
 
   // The gate on the gates. If this passes, a parity check would accept a

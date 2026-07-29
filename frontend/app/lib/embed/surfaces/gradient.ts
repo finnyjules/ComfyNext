@@ -32,6 +32,12 @@ const gradientEmbedSurface: EmbedSurface = {
   async mount(container: HTMLElement, config: unknown): Promise<EmbedHandle> {
     const embed = config as GradientEmbedConfig
     if (!embed?.cfg) throw new Error('gradient embed: config has no cfg')
+    // Without this, a config missing `layers` reaches render() (renderer.ts
+    // does `c.layers.slice(...)`), throws a TypeError, mount() rejects, and
+    // the runtime's poster-fallback catch swallows it silently — the export
+    // just shows a static poster forever with no visible error. Fail loudly
+    // here instead, at export/bake time, where the studio surfaces the message.
+    if (!embed.cfg.layers?.length) throw new Error('gradient embed: config has no layers')
 
     // render() applies motion internally against cfg.motion.duration (both
     // applyMotion and the flow-churn loop phase in renderer.ts key off it),

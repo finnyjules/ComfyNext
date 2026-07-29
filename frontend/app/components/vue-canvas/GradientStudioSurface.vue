@@ -27,6 +27,7 @@ import { registerStudioParamBaker, unregisterStudioParamBaker } from '~/lib/stud
 import SweepPopover from '~/components/vue-canvas/studio/SweepPopover.vue'
 import { exportEmbedHtml, downloadEmbed } from '~/lib/embed/export'
 import type { GradientEmbedConfig } from '~/lib/embed/surfaces/gradient'
+import { clampExportDims } from '~/lib/gradientfx/exportDims'
 import {
   ASPECTS, BLEND_MODES, DEFAULT_FOCUS, DIRECTIONS, GRADIENT_DIRS, LAYER_MAX, LAYOUTS, MAPPINGS, MIRROR_KINDS, RING_SHAPES, SHAPE_KINDS,
   aspectRatio, cloneConfig, ensureConfigDefaults, type GradientConfig, type LayoutKind, type MeshConfig, type ShapeKind,
@@ -534,7 +535,8 @@ async function generateImage() {
 // out so the param baker below (and any future caller) stays byte-identical.
 async function renderCurrentBlob(): Promise<Blob | null> {
   const { w, h } = exportDims.value
-  return await gradientFx.renderToBlob(config.value, Math.min(w, 4096), Math.min(h, 4096), 0)
+  const { w: cw, h: ch } = clampExportDims(w, h)
+  return await gradientFx.renderToBlob(config.value, cw, ch, 0)
 }
 
 // Studio param-baker (Slice 2a Task 8b) — bakes ONE frame with a set of
@@ -615,10 +617,11 @@ async function exportWebEmbed() {
   embedMsg.value = 'Building…'
   try {
     // Same sizing as the still-image export path (downloadExport/renderCurrentBlob
-    // above) — do not invent new sizing logic here.
+    // above) — do not invent new sizing logic here. clampExportDims scales both
+    // axes together so a non-square aspect (e.g. 9:16 at 4K) doesn't get
+    // squashed into a square by an independent per-axis clamp.
     const { w, h } = exportDims.value
-    const ew = Math.min(w, 4096)
-    const eh = Math.min(h, 4096)
+    const { w: ew, h: eh } = clampExportDims(w, h)
     // Matches the studio's own loop(): frameSource.ts always derives duration
     // from cfg.motion.duration.
     const duration = config.value.motion?.duration ?? 4

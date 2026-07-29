@@ -83,8 +83,12 @@ const shaderEmbedSurface: EmbedSurface = {
     const base: TexImageSource = embed.baseDataUrl
       ? await loadImage(embed.baseDataUrl)
       : blackPixel()
-    let w = container.clientWidth || 512
-    let h = container.clientHeight || 512
+    // Guard against a zero-width/height container (e.g. mounted before layout
+    // settles) — an unguarded 0 reaches ShaderFxRenderer.render as a canvas
+    // dimension. Mirrors the gradient adapter's identical guard
+    // (~/lib/embed/surfaces/gradient.ts).
+    let w = Math.max(1, container.clientWidth || 512)
+    let h = Math.max(1, container.clientHeight || 512)
     let mounted: HTMLCanvasElement | null = null
 
     const draw = (t01: number) => {
