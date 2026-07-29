@@ -218,17 +218,11 @@ Restart ComfyUI so the Python change is live:
 .venv/bin/python main.py --listen 127.0.0.1 --port 8188
 ```
 
-Then export a Space Type piece with the toggle on, and verify the produced file **actually has alpha** — do not judge by eye against a dark page. Probe it:
-```bash
-.venv/bin/python -c "
-import av,sys
-c=av.open(sys.argv[1]); s=c.streams.video[0]
-print('codec',s.codec_context.name,'pix_fmt',s.codec_context.pix_fmt)
-f=next(c.decode(video=0)).to_ndarray(format='rgba')
-print('shape',f.shape,'alpha min',f[...,3].min(),'max',f[...,3].max())
-" <path-to-exported.webm>
-```
-An `alpha min` of 0 with `max` 255 proves real transparency. If `alpha min` is 255 the export is opaque and the feature does not work, regardless of how it looks.
+Then export a Space Type piece with the toggle on, and verify the produced file **actually has alpha** — do not judge by eye against a dark page.
+
+⚠️ **The obvious probe gives a FALSE NEGATIVE.** PyAV auto-selects ffmpeg's native `vp9` decoder, which does not merge WebM's `BlockAdditional` alpha side-channel — a correctly-encoded transparent file decodes as fully opaque. You must force the `libvpx-vp9` decoder. Task 1 established this; its test file contains the working alpha-aware decode helper. **Reuse that helper** (`tests-unit/sailor_encode_alpha_test.py`) rather than writing a fresh probe, and if you do write one, force the decoder explicitly.
+
+An `alpha min` of 0 with `max` 255 proves real transparency. If `alpha min` is 255, first confirm you are not hitting the native-decoder false negative before concluding the feature is broken.
 
 Report that output verbatim.
 
