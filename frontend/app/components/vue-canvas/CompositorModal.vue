@@ -1330,6 +1330,17 @@ const hasAnimatedSlot = computed(() => layers.value.some(l => l.live && l.live.d
 // while idle (`previewT == null`, i.e. Design tab / not in a motion preview). Gating on
 // `previewT == null` rather than `!playing` means pausing/scrubbing to a stop does NOT
 // wake this loop back up to fight the frozen scrub position with a free-running clock.
+// Hoisted from the per-layer visibility section below, where they belong conceptually.
+// `watch(needsLiveLoop, …)` a few lines down evaluates its source DURING setup (Vue
+// seeds a watcher's old value immediately, even without `immediate: true`), which runs
+// buildStackItems → the wired branch → `hiddenWired`. Declared at their original site
+// these were still in the temporal dead zone at that moment, throwing
+// "Cannot access 'hiddenWired' before initialization" and killing the whole modal.
+// Latent since the shaderfill clock landed, because only documents with a WIRED slot
+// reach that branch. `readSlotArr` is a hoisted function declaration, so it is safe here.
+const hiddenWired = computed(() => new Set(readSlotArr('sailor_hiddenWired')))
+const lockedWired = computed(() => new Set(readSlotArr('sailor_lockedWired')))
+
 const hasAnimatedFill = computed(() => hasAnimatedShaderFill(buildStackItems(), background.value))
 const needsWallClock = computed(() => hasAnimatedFill.value && previewT.value == null)
 const needsLiveLoop = computed(() => hasAnimatedSlot.value || needsWallClock.value)
@@ -1379,8 +1390,9 @@ function writeSlotArr(propKey: string, arr: number[]) {
   if (!node.data.properties) node.data.properties = {}
   ;(node.data.properties as any)[propKey] = arr
 }
-const hiddenWired = computed(() => new Set(readSlotArr('sailor_hiddenWired')))
-const lockedWired = computed(() => new Set(readSlotArr('sailor_lockedWired')))
+// `hiddenWired` / `lockedWired` are declared ABOVE, next to the live-loop computeds —
+// see the note there. They belong here conceptually but must exist before
+// `watch(needsLiveLoop, …)` evaluates its source during setup.
 // Drop hidden/locked flags for slots that no longer have a wire. Slots come
 // from EDGES only (see the `layers` computed), so an absent slot is genuinely
 // gone — there's no load-time window where a legitimately hidden slot looks
