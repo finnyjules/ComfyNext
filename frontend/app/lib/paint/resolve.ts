@@ -21,10 +21,73 @@
 import { type Fill, type ShaderSpec, fillTileBox, fillIsShader } from '~/lib/spacetype/fillTile'
 import { resolveField } from '~/lib/shaderfill/field'
 import { type Paint, isGradient, isFill } from '~/lib/compositor/paint'
+// What the SVG export makes of a paint — the ORACLE for `spread: 'extend'` (see
+// `PaintSpread` and `fillSpreadKind` below). Import edge runs one way only:
+// `toVector` imports the spine, the paint model and `fillTile`, and imports
+// nothing from here, so this is not a cycle.
+import { exportTier } from '~/lib/paint/toVector'
 // One definition of what a gradient ANGLE means, shared with the SVG spine (and
 // with `fillTileBox`) so the exported paint server is the same geometry as the
 // canvas gradient rather than a second derivation of it.
 import { gradientUnitAxis } from '~/lib/vector/svg'
+
+/**
+ * How far a paint is allowed to reach.
+ *
+ *  - `'box'` — the paint exists ONLY inside `box`, and paints nothing outside
+ *    it. This is what this resolver has always done, and it is the DEFAULT, so
+ *    every existing caller (the Compositor, Space Type's frame modal, every
+ *    Vector Type layer with no reach) is byte-identical to before this option
+ *    existed. Correct whenever the ink being painted IS the box.
+ *  - `'extend'` — the ink reaches OUTSIDE its own paint box, and the paint has
+ *    to follow it there. A caller asks for this when it knows its geometry
+ *    overspills the box it anchored the paint to: an extrude's offset copies, a
+ *    stroke's outer half. Under `'box'` those pixels come out EMPTY — the bug
+ *    this option exists to fix, measured at 68 % of an extrude's ink and 47 % of
+ *    a 20 px stroke's.
+ *
+ * `'extend'` never changes the picture INSIDE the box; it only says what happens
+ * beyond its edge. `box` still means exactly what it meant — the ramp/lattice is
+ * still mapped onto it — which is what keeps the canvas agreeing with the SVG
+ * about COLOUR as well as about coverage. (Widening the box instead would fix
+ * the coverage and break the colour everywhere; see this module's twin,
+ * `toVector.ts`, for what the export actually anchors to.)
+ */
+export type PaintSpread = 'box' | 'extend'
+
+/**
+ * WHAT a fill does outside its box under `'extend'` — and the answer is taken
+ * from the SVG export, which is the more correct picture of the two and the one
+ * this canvas is measured against.
+ *
+ *  - `'pad'` — the export is a `<linearGradient>`/`<radialGradient>`, and SVG
+ *    paint servers pad (`spreadMethod="pad"` is the default): the end stops
+ *    extend forever. Only `gradient` reaches here; `solid` short-circuits before
+ *    any of this.
+ *  - `'repeat'` — the export is a `<pattern>`, and a `<pattern>` TILES. That
+ *    covers the four procedural fills (`grid`, `checkerboard`, `stripes`, `qr`),
+ *    which export as real tiled geometry, AND `ombre`/`noise`/`shader`, which
+ *    export as a `<pattern>` holding one box-sized `<image>` — also tiled. (The
+ *    original recipe for this fix guessed `'pad'` for those last two on the
+ *    grounds that they are "continuous"; the export says otherwise, and the
+ *    export is the oracle. It is also the better picture: an edge-clamped noise
+ *    field draws streaks out of its last pixel row, where a tiled one just keeps
+ *    being noise.)
+ *
+ * DERIVED, NOT TABULATED — `exportTier` is asked, so a tenth fill type, or an
+ * existing one taught a vector form, moves with the exporter instead of waiting
+ * for someone to remember this list. Memoised on the fill TYPE, which is the
+ * only field `exportTier` can discriminate on for these purposes, because this
+ * runs once per glyph inside a draw loop.
+ */
+const _spreadKind = new Map<string, 'pad' | 'repeat'>()
+export function fillSpreadKind(fill: Fill): 'pad' | 'repeat' {
+  const hit = _spreadKind.get(fill.type)
+  if (hit) return hit
+  const kind = exportTier(fill) === 'vector' ? 'pad' : 'repeat'
+  _spreadKind.set(fill.type, kind)
+  return kind
+}
 
 export function hasPaint(paint: Paint | undefined): boolean {
   if (isFill(paint)) return true                        // a fill always paints (solid → fill.a)
@@ -43,8 +106,12 @@ export function resolvePaint(
   paint: Paint,
   box: { w: number; h: number },
   field: ShaderFieldFrameCtx,
+  /** See `PaintSpread`. Defaults to today's behaviour. A `Gradient` ignores it —
+   *  a real `CanvasGradient` already pads, which is why the clipping bug was
+   *  only ever reachable through the `Fill` arm. */
+  spread: PaintSpread = 'box',
 ): string | CanvasGradient | CanvasPattern {
-  if (isFill(paint)) return resolveFill(ctx, paint, box, field)
+  if (isFill(paint)) return resolveFill(ctx, paint, box, field, spread)
   if (!isGradient(paint)) return paint
   const stops = [...paint.stops].sort((a, b) => a.offset - b.offset)
   let g: CanvasGradient
@@ -142,6 +209,7 @@ export function resolveShaderFill(
   spec: ShaderSpec,
   box: { w: number; h: number },
   field: ShaderFieldFrameCtx,
+  spread: PaintSpread = 'box',
 ): string | CanvasGradient | CanvasPattern {
   const frame = spec.anchor === 'frame'
   const bw = Math.max(box.w, 1e-3), bh = Math.max(box.h, 1e-3)
@@ -151,8 +219,12 @@ export function resolveShaderFill(
   // graceful: the shader's own input paint. spec.input is a Paint (string | Gradient |
   // Fill), not just a Fill — go through resolvePaint (the general Paint resolver), not
   // resolveFill (Fill-only), or a Gradient/string input would throw/misrender here.
-  if (!canvas) return resolvePaint(ctx, spec.input, box, field)
-  const pat = ctx.createPattern(canvas, 'no-repeat')
+  if (!canvas) return resolvePaint(ctx, spec.input, box, field, spread)
+  // A shader exports as a `<pattern>` holding one box-sized `<image>`, which tiles —
+  // so `'extend'` tiles too. The FRAME anchor is exempt: its box is the whole output
+  // frame, so there is nothing outside it to paint, and repeating it would only give
+  // a bake at a larger size a second copy of the field where it currently has none.
+  const pat = ctx.createPattern(canvas, spread === 'extend' && !frame ? 'repeat' : 'no-repeat')
   if (!pat) return fill.a
   if (typeof DOMMatrix !== 'undefined' && pat.setTransform) {
     if (frame && field.base) {
@@ -182,17 +254,63 @@ export function resolveFill(
   fill: Fill,
   box: { w: number; h: number },
   field: ShaderFieldFrameCtx,
+  /** See `PaintSpread`. `'box'` — the default — is byte-for-byte the behaviour
+   *  this function has always had: ONE `no-repeat` tile, nothing outside it. */
+  spread: PaintSpread = 'box',
 ): string | CanvasGradient | CanvasPattern {
   if (fill.type === 'solid') return fill.a
-  if (fillIsShader(fill)) return resolveShaderFill(ctx, fill, fill.shader, box, field)
+  if (fillIsShader(fill)) return resolveShaderFill(ctx, fill, fill.shader, box, field, spread)
   const bw = Math.max(box.w, 1e-3), bh = Math.max(box.h, 1e-3)
+  // ── The padding arm ───────────────────────────────────────────────────────
+  // A `gradient` Fill is the two-colour shorthand for a linear ramp, and the
+  // canvas already owns a primitive that ramps over a segment and PADS beyond
+  // it — which is exactly `spreadMethod="pad"`, exactly what the `<linearGradient>`
+  // this fill exports as does, and exact rather than an approximation of it.
+  // (The recipe for this fix proposed a margined tile with its 1 px edges
+  // stretched outward. That is what you build when the only tool is a pattern;
+  // it costs a second canvas, ~9× the tile pixels, and a margin guess that is
+  // wrong the moment the reach exceeds it. `createLinearGradient` has no margin
+  // to guess and no edge to stretch.)
+  //
+  // The segment is `resolvePaint`'s own `Gradient` arithmetic — the SAME unit
+  // axis, mapped onto the SAME centred box — so the ramp lands on the same
+  // pixels the tile put it on; only what happens past the box's edge changes.
+  if (spread === 'extend' && fillSpreadKind(fill) === 'pad') {
+    const ax = gradientUnitAxis(fill.angle)
+    const g = ctx.createLinearGradient(
+      (ax.x1 - 0.5) * bw, (ax.y1 - 0.5) * bh,
+      (ax.x2 - 0.5) * bw, (ax.y2 - 0.5) * bh,
+    )
+    g.addColorStop(0, fill.a)
+    g.addColorStop(1, fill.b)
+    return g
+  }
   // Effective on-screen pixel extent of the box under the current transform.
   const m = typeof ctx.getTransform === 'function' ? ctx.getTransform() : null
   const sx = m ? (Math.hypot(m.a, m.b) || 1) : 1, sy = m ? (Math.hypot(m.c, m.d) || 1) : 1
   const k = Math.min(1, FILL_TILE_CAP / Math.max(bw * sx, bh * sy, 1))
   const tw = Math.max(1, Math.round(bw * sx * k)), th = Math.max(1, Math.round(bh * sy * k))
   const tile = fillTileCached(fill, tw, th)
-  const pat = ctx.createPattern(tile, 'no-repeat')
+  // The tiling arm. `'repeat'` continues the lattice/field past the box the way
+  // the `<pattern>` this fill exports as does.
+  //
+  // EXACT for `qr`, `ombre`, `noise` and `shader`: the export's tile IS the box
+  // (one box-sized `<image>` or one box-sized cell grid), and so is this one.
+  //
+  // APPROXIMATE for `grid` / `checkerboard` / `stripes`, whose export tiles a
+  // SMALLER unit (`cell`, `2·cell`, `2·cell` rotated). Horizontally the box is a
+  // whole number of cells by construction (`fillPatternCell` is `W / density`),
+  // so the lattice continues cleanly along the axis the box is measured on;
+  // vertically, and for a rotated stripe, the box edge is a phase seam. Measured
+  // against the SVG: coverage is identical, and the per-pixel colour difference
+  // outside the box is the same KIND of sub-pixel lattice disagreement these
+  // three already show INSIDE it (a no-reach `stripes` fill differs from its own
+  // export on 27 % of glyph pixels today), just more of it. Closing that gap
+  // means emitting the export's own tile plus its rotation here, which is a
+  // second renderer of the same lattice — the drift this codebase keeps paying
+  // for. Not worth it to fix a seam; very much worth it to stop losing 68 % of
+  // the ink.
+  const pat = ctx.createPattern(tile, spread === 'extend' ? 'repeat' : 'no-repeat')
   if (!pat) return fill.a
   if (typeof DOMMatrix !== 'undefined' && pat.setTransform) {
     pat.setTransform(new DOMMatrix().translateSelf(-bw / 2, -bh / 2).scaleSelf(bw / tw, bh / th))

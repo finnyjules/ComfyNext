@@ -40,6 +40,7 @@ import {
   OBJECT_SHADER_FIELD_PX,
   hasPaint,
   resolvePaint,
+  type PaintSpread,
   type ShaderFieldFrameCtx,
 } from '~/lib/paint/resolve'
 import { withFieldFrame, type FieldRequest } from '~/lib/shaderfill/field'
@@ -660,6 +661,32 @@ interface VtPaintLayer {
    *  Resolved HERE, beside the canvas op, so the two cannot be derived from
    *  different readings of `layer.blend`. */
   blendCss: string
+  /**
+   * Whether this layer's INK reaches outside its own paint box — see
+   * `PaintSpread` in `~/lib/paint/resolve`.
+   *
+   * A `fill` layer paints the glyph outline it anchored its paint to, so its ink
+   * IS the box and `'box'` is exact. Two kinds are not:
+   *
+   *  - an `extrude` draws the same path again at `depth` OFFSETS, so the block
+   *    trails `depth × distance` output pixels away from the letter it was
+   *    anchored to (and further still once the copies are fused into one body,
+   *    which is bigger than any single copy);
+   *  - a `stroke` is a centred pen, so half of `width` lies OUTSIDE the contour
+   *    the ink box was measured from.
+   *
+   * Under `'box'` those pixels came out empty whenever the paint was a `Fill` —
+   * 68 % of a glyph-anchored extrude's ink, 47 % of a 20 px stroke's — while the
+   * SVG export painted all of it. Solid paints were never affected (a flat colour
+   * has no box), which is why this survived to a user report ("the extrude only
+   * looks right when the fill is solid").
+   *
+   * Resolved HERE, off the same `kind`/`copies` this function already decides,
+   * rather than at the two `resolvePaint` call sites — which would be two places
+   * to keep in step, and the hoisted run-anchored one is far away from the
+   * per-glyph one.
+   */
+  spread: PaintSpread
   runPm: DOMMatrix | null
   runStyle: string | CanvasGradient | CanvasPattern | null
   /**
@@ -774,6 +801,10 @@ function vtPaintLayers(
       opacity,
       op: VT_BLEND_OP[layer.blend] ?? 'source-over',
       blendCss: VT_BLEND_CSS[layer.blend] ?? 'normal',
+      // Asked of the KIND, not of `copies` — the extrude's copy list is filled in
+      // by the budget pass below, and a layer whose reach depends on how much
+      // budget was left would paint differently on a busy frame.
+      spread: layer.kind === 'extrude' || layer.kind === 'stroke' ? 'extend' : 'box',
       runPm: null,
       runStyle: null,
       copies: null,
@@ -1049,7 +1080,7 @@ export function drawVectorType(
       ctx.save()
       ctx.translate(box.cx, box.cy)
       L.runPm = ctx.getTransform()
-      L.runStyle = resolvePaint(ctx, L.paint, { w: box.w, h: box.h }, field)
+      L.runStyle = resolvePaint(ctx, L.paint, { w: box.w, h: box.h }, field, L.spread)
       ctx.restore()
     }
 
@@ -1258,7 +1289,7 @@ export function drawVectorType(
       const toPaint = pm.inverse().multiply(gm)
       ctx.save()
       ctx.setTransform(pm)
-      const style = L.runStyle ?? resolvePaint(ctx, L.paint, { w: box!.w, h: box!.h }, field)
+      const style = L.runStyle ?? resolvePaint(ctx, L.paint, { w: box!.w, h: box!.h }, field, L.spread)
       const stroking = L.kind === 'stroke'
       if (stroking) {
         // `lineWidth` is in the CURRENT transform's units and we have just left
