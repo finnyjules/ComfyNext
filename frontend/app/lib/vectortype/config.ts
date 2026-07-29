@@ -212,6 +212,42 @@ export interface VtAppearanceLayer {
   /** `extrude` only — union the copies into one body. Bake/export only: the
    *  boolean union is far too slow for a draw loop (plan trap 5). */
   solid: boolean
+  /**
+   * `stroke` only — **DRAW-ON**. How much of this layer's outline is drawn,
+   * 0..1. `1` is the whole thing and is the default, so every config written
+   * before this existed renders and exports byte-identically.
+   *
+   * ## It is a CONFIG LEAF, and that is the whole design
+   *
+   * Draw-on needs a progress from somewhere, and a leaf is the only one of the
+   * three candidates that can name a layer. A gallery preset evaluates to a
+   * per-unit `UnitState` (`dx / dy / scale / rotation / opacity / blur / clip /
+   * copies`) and is never handed the config, so it has neither a channel to
+   * write a per-layer value nor a way to say which layer (see
+   * `./trackPresets.ts`'s header and Task 1's structural finding). A leaf, by
+   * contrast, is animatable for FREE — this studio is `f(cfg, t) → paths` with
+   * no engine to rebuild, so `animatableTargets` offers `appearance.<id>.draw`
+   * the moment `controls.ts` declares the slider, and a 0 → 1 track over the
+   * clip IS the draw-on, with the easing, loops, hold, delay and — the one that
+   * makes it read as handwriting — the per-glyph STAGGER all already built.
+   *
+   * ## PER LAYER, not "the active stroke layer"
+   *
+   * There is no active layer at render time: `vtPaintLayers` is handed a config
+   * and never a selection index, so "the active one" is a panel concept the
+   * renderer cannot ask about. And a stack may legitimately hold a static
+   * keyline under a drawing-on outline, which one shared flag could not express.
+   *
+   * ## Only on a `stroke` layer
+   *
+   * A dash acts on stroked ink and there is none on a `fill`. The other stroked
+   * thing in this studio — a solid extrude's SILHOUETTE — is deliberately
+   * excluded: that contour only exists once the async boolean union has landed
+   * (no body, no stroke at all), so a draw-on there would appear a moment after
+   * an edit and vanish on the next one. That is the dead-control failure this
+   * studio's schema exists to prevent, not a lesser version of the feature.
+   */
+  draw: number
 }
 
 /** Same three curves gradientfx's `trackValue` implements. */
@@ -620,6 +656,10 @@ export const LAYER_DEFAULTS: Omit<VtAppearanceLayer, 'id' | 'paint'> = {
   distance: 3,
   taper: 0,
   solid: false,
+  // FULLY DRAWN. The identity value, and the reason adding this field changes no
+  // existing picture and no existing export: at 1 both renderers emit no dash at
+  // all rather than a dash that happens to cover everything.
+  draw: 1,
 }
 
 /**
@@ -984,6 +1024,9 @@ function mergeLayer(raw: unknown, id: string): VtAppearanceLayer | null {
     distance: num(o.distance, LAYER_DEFAULTS.distance),
     taper: clamp(num(o.taper, LAYER_DEFAULTS.taper), -1, 1),
     solid: typeof o.solid === 'boolean' ? o.solid : false,
+    // Backfilled to 1 — FULLY DRAWN — so a stack saved before draw-on existed
+    // loads with every stroke intact rather than invisible.
+    draw: clamp(num(o.draw, LAYER_DEFAULTS.draw), 0, 1),
   }
 }
 

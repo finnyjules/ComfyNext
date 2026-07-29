@@ -789,6 +789,17 @@ exports[`vtAgentControls > is a characterization snapshot, with and without a fo
     ],
   },
   {
+    "default": 1,
+    "group": "Paint",
+    "hint": "How much of this outline is drawn, as a fraction of its longest contour — the letters drawing themselves. 1 is the whole stroke and is the default. It exports as a REAL \`stroke-dasharray\` / \`stroke-dashoffset\`, so a designer opening the SVG gets a dashed stroke they can restyle, not a clipped one. Animate it 0 → 1 (with a stagger, so the letters draw one after another).",
+    "key": "layer.draw",
+    "kind": "slider",
+    "label": "Draw on",
+    "max": 1,
+    "min": 0,
+    "step": 0.01,
+  },
+  {
     "default": 0,
     "group": "Motion",
     "hint": "Seconds between glyphs. 0 = every glyph animates on one clock; raise it and a track becomes a wave travelling across the word.",
@@ -957,6 +968,17 @@ exports[`vtAgentControls > is a characterization snapshot, with and without a fo
       "darken",
       "overlay",
     ],
+  },
+  {
+    "default": 1,
+    "group": "Paint",
+    "hint": "How much of this outline is drawn, as a fraction of its longest contour — the letters drawing themselves. 1 is the whole stroke and is the default. It exports as a REAL \`stroke-dasharray\` / \`stroke-dashoffset\`, so a designer opening the SVG gets a dashed stroke they can restyle, not a clipped one. Animate it 0 → 1 (with a stagger, so the letters draw one after another).",
+    "key": "appearance.Lstroke.draw",
+    "kind": "slider",
+    "label": "Stroke · Draw on",
+    "max": 1,
+    "min": 0,
+    "step": 0.01,
   },
 ]
 `;

@@ -423,6 +423,26 @@ export interface GlyphPaint {
    * glyph, the two answers can differ; as a scalar they could not.
    */
   strokeWidth?: number | ((glyph: GlyphOutline, index: number) => number | undefined)
+  /**
+   * `stroke-dasharray` in OUTPUT units, per glyph — the DRAW-ON.
+   *
+   * PER GLYPH by necessity, not for symmetry with `stroke`: a dash pattern is
+   * measured against the path it dashes, and every letter's outline is a
+   * different length. One list across the run would draw an `l` and an `M` to
+   * wildly different fractions at the same progress.
+   *
+   * The canvas expresses this as `ctx.setLineDash`; without it here a draw-on
+   * exports fully drawn. Both surfaces measure dash lengths in the same units as
+   * the path coordinates, which `placeOutlines` has already baked into output
+   * space — the identical rule `strokeWidth` follows.
+   */
+  dash?:
+    | readonly number[]
+    | null
+    | ((glyph: GlyphOutline, index: number) => readonly number[] | null | undefined)
+  /** `stroke-dashoffset` in OUTPUT units, per glyph. Inert without `dash`, and
+   *  `ctx.lineDashOffset` is its canvas twin. */
+  dashOffset?: number | ((glyph: GlyphOutline, index: number) => number | undefined)
   /** Glyph outlines rely on nonzero winding for counters. Change with care. */
   fillRule?: 'nonzero' | 'evenodd'
   /**
@@ -523,6 +543,8 @@ export function outlinesToShapes(
     const blur = pick(opts.blur, glyph, i)
     const clip = pick(opts.clip, glyph, i)
     const fill = pick(opts.fill, glyph, i)
+    const dash = pick(opts.dash, glyph, i)
+    const dashOffset = pick(opts.dashOffset, glyph, i)
     const style = {
       // `undefined` means "nobody said", which keeps the historical black
       // default. `null` is a caller SAYING "no fill" and must survive as the
@@ -537,6 +559,13 @@ export function outlinesToShapes(
       // a zero blur and an absent clip: no `<defs>` entry, no wrapper `<g>`.
       ...(opacity === undefined || opacity === 1 ? {} : { opacity }),
       ...(blur === undefined || !(blur > 0) ? {} : { blur }),
+      // Omitted rather than written as an empty list, for the same reason as the
+      // three above: a fully-drawn stroke should not carry a dash attribute into
+      // a file a designer is going to read. The spine drops an unusable list too
+      // (see `dashArrayAttr`), so this is the cheap half of one rule, not a
+      // second reading of it.
+      ...(dash && dash.length ? { dash } : {}),
+      ...(dash && dash.length && dashOffset ? { dashOffset } : {}),
       ...(clip ? { clip } : {}),
       ...(attrs && Object.keys(attrs).length ? { attrs } : {}),
     }

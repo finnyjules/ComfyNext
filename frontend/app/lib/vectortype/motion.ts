@@ -438,6 +438,69 @@ export function glyphConfig(cfg: VectorTypeConfig, t: number, index: number, cou
 }
 
 /**
+ * The value a STACK LEAF holds **for one glyph** — the same tracks, read on that
+ * glyph's own staggered clock.
+ *
+ * ## Why this exists, when `applyMotion` already answers for the run
+ *
+ * The appearance stack is resolved ONCE per frame and every glyph paints under
+ * it (`canvas.ts`'s `vtPaintLayers(frame.config, …)`), which is right: a layer's
+ * colour, width, blend and anchor are properties of the LAYER, and there is no
+ * meaning to "letter 3's version of the layer's opacity". So a stagger — which
+ * shifts the clock each glyph reads the tracks at — cannot reach a layer leaf,
+ * and measured against a 0 → 1 `appearance.<id>.draw` track at `delay: 0.8` it
+ * did not: all four letters reported the same 0.4.
+ *
+ * **The DRAW-ON is the one exception, and it is an exception by construction
+ * rather than by taste.** Its dash is *already* resolved per glyph and has to
+ * be — the pattern is measured against the contour it dashes and every
+ * letterform is a different length (see `./pathLength.ts`). So it is the one
+ * layer leaf that is a per-glyph quantity, which is exactly the kind of thing
+ * `motion.stagger` exists to shift the clock of: without this, "the letters draw
+ * themselves" is the whole word drawing at once.
+ *
+ * Evaluates the matching tracks directly rather than cloning a config per glyph
+ * (`glyphConfig` does that, and it is `n × layers` clones a frame). The LAST
+ * matching track wins, mirroring `applyMotion`'s assignment — two tracks on one
+ * path overwrite, they do not accumulate, and the two must agree about which one
+ * survives.
+ *
+ * Returns `fallback` — the run-level value the caller already resolved — when
+ * nothing staggers, when nothing animates this path, or when there is one glyph.
+ * So a manually-set `draw` and an unstaggered clip are untouched.
+ */
+export function glyphStackLeaf(
+  cfg: VectorTypeConfig,
+  /** The layer's STABLE id — matched through `trackLayerId`, so a track saved
+   *  against a POSITION still finds its layer and an id path is not confused by
+   *  one. Asking "does this track drive this layer" rather than "is this the same
+   *  string" is the same question every other proof in this area reduces to. */
+  layerId: string,
+  leaf: string,
+  fallback: number,
+  t: number,
+  index: number,
+  count: number,
+): number {
+  const { delay } = resolveStagger(cfg)
+  if (!(delay > 0) || count <= 1 || !layerId) return fallback
+  const tracks = usableTracks(cfg)
+  if (!tracks.length) return fallback
+  let hit: VtMotionTrack | null = null
+  for (const track of tracks) {
+    const p = track.path.trim()
+    if (!isStackPath(p)) continue
+    const rest = p.slice(VT_STACK_PREFIX.length)
+    const dot = rest.indexOf('.')
+    if (dot < 0 || rest.slice(dot + 1) !== leaf) continue
+    if (trackLayerId(cfg, p) !== layerId) continue
+    hit = track
+  }
+  if (!hit) return fallback
+  return trackValue(hit, glyphTime(cfg, t, index, count), resolveDuration(cfg))
+}
+
+/**
  * The per-glyph transform at time `t`: tracks in the `glyph.` namespace,
  * evaluated on that glyph's own clock. Identity when none are declared.
  *

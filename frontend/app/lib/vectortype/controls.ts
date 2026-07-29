@@ -421,6 +421,26 @@ export const VT_CONTROLS: VtControl[] = [
     'How this layer composites onto the layers below it (and onto the background, which this studio draws straight onto).',
     // A MODE — tweening `multiply` towards `screen` interpolates nothing.
     { animatable: false }),
+  // ── DRAW-ON ────────────────────────────────────────────────────────────────
+  // The whole of the draw-on feature, declared once. Nothing else is needed: a
+  // slider is animatable by default, so `animatableTargets` expands this to one
+  // `appearance.<layerId>.draw` target per stroke layer and a 0 → 1 track is the
+  // animation. That is the studio's own guarantee being spent rather than a
+  // second motion mechanism — `f(cfg, t) → paths`, no engine to rebuild.
+  //
+  // GATED TO A STROKE LAYER, and it is a real gate rather than tidiness: a dash
+  // acts on stroked ink and a `fill` layer has none, so on a fill this would
+  // resolve, store, survive the merge and change not one pixel. A solid
+  // extrude's silhouette is stroked and is still excluded — see the field's own
+  // doc in `config.ts` for why a control that only appears once an async union
+  // has landed is worse than no control.
+  //
+  // The step is 0.01, matching `layer.opacity`: the same 0..1 shape, and a
+  // hundredth of a letter's outline is under a pixel at any size this studio
+  // sets type at.
+  slider('layer.draw', 'Draw on', 0, 1, 0.01, 'Paint', LAYER_DEFAULTS.draw,
+    "How much of this outline is drawn, as a fraction of its longest contour — the letters drawing themselves. 1 is the whole stroke and is the default. It exports as a REAL `stroke-dasharray` / `stroke-dashoffset`, so a designer opening the SVG gets a dashed stroke they can restyle, not a clipped one. Animate it 0 → 1 (with a stagger, so the letters draw one after another).",
+    { when: layerIsStroke }),
   // DELIBERATELY NOT DECLARED: `layer.solid`. It renders (Task 5 — the copies
   // fuse into one body on a bake or an export) but is a **boolean**, and
   // `ControlSpec` has no boolean kind. The house pattern for one is a `select`
@@ -690,6 +710,8 @@ NAMING ONE LAYER INSTEAD. Every layer also appears in the control list under its
 \`layer.paint.type\` picks how the active layer is painted: solid, gradient, ombre (a grainy A→B fade), grid, noise, checkerboard, stripes, qr, or shader. \`layer.paint.a\` is the main colour and \`layer.paint.b\` the second one, which appears for everything except solid — and neither applies to a shader fill (see below). \`layer.paint.angle\` sets the direction of a gradient, ombre or stripes; \`layer.paint.density\` sets how many cells or stripes span grid, checkerboard, stripes and qr. \`layer.anchor\` decides which box THIS LAYER is measured against — "glyph" gives every letter its own copy, "word" spans one fill across the whole run so the letters are windows onto it, and "frame" pins the fill to the canvas so moving type slides over it. Reach for "word" when the user asks for a gradient across a word.
 
 \`layer.width\` is the outline width in output pixels, and it only exists when the active layer can draw an outline — a STROKE layer, or a solid EXTRUDE (see below) — so for a stroke that is NOT the active one, reach for that layer's own \`appearance.<layerId>.width\` key instead. A stroke is visible because it is in the stack, not because a width was raised. You cannot add, remove or reorder layers; you can adjust any layer that is already there.
+
+DRAW-ON: THE LETTERS DRAWING THEMSELVES. \`layer.draw\` is how much of a STROKE layer's outline is drawn, 0 to 1, and 1 (the whole stroke) is the default — reach for it whenever the user asks for handwriting, letters that draw or write themselves, a signature, a line animating on, or a partly-drawn outline. It exists only on a stroke layer, because there has to be an outline to draw; on a fill or an extrude there is none. Animate it 0 → 1 over the clip and raise \`motion.stagger.delay\` at the same time, and the letters draw ONE AFTER ANOTHER instead of all at once. Each letter's progress is measured against its own longest contour, so every letter finishes exactly at 1 however long it is, and the counters of letters like o and a draw alongside the outer shape rather than after it. It exports as a real dashed stroke, so the SVG a designer opens is still the letterform.
 
 EVERY LAYER COMPOSITES. \`layer.opacity\` is how strong that layer's ink is in the stack, 0 to 1 — it multiplies the glyph's own motion fade rather than replacing it, so a half-strength layer still fades out with the word. \`layer.blend\` is how the layer composites onto what is below it: normal, lighten, screen, add, multiply, darken or overlay. Both apply to fills, strokes and extrudes alike. Reach for them when the user asks for a layer to be subtler, to glow, or to darken the one underneath.
 

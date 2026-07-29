@@ -529,6 +529,29 @@ export interface VectorShape {
   fill?: VectorPaint | null
   stroke?: string | null
   strokeWidth?: number
+  /**
+   * `stroke-dasharray`, in DOCUMENT units — the same units `strokeWidth` and the
+   * path data are in.
+   *
+   * Written as a real attribute, never outlined into geometry or faked with a
+   * clip: a consumer opening the file gets a dashed stroke it can restyle,
+   * re-time or delete, and the path still describes the shape rather than the
+   * shape's partly-visible remainder.
+   *
+   * Emitted only when the list is non-empty and every entry is a finite
+   * non-negative number, which is what the SVG grammar allows; anything else is
+   * dropped rather than written as an invalid attribute a renderer would answer
+   * by drawing the stroke solid. An all-zero list is dropped for the same
+   * reason — SVG defines it as "render solid", so writing it would be a
+   * no-op attribute in the file.
+   */
+  dash?: readonly number[] | null
+  /**
+   * `stroke-dashoffset`, in DOCUMENT units: how far INTO the dash pattern the
+   * stroke starts. Ignored without a `dash`. Omitted when it is 0, which is the
+   * attribute's own default.
+   */
+  dashOffset?: number
   fillRule?: 'nonzero' | 'evenodd'
   opacity?: number
   /**
@@ -594,6 +617,33 @@ function attrs(pairs: Array<[string, string | number | null | undefined]>): stri
     out.push(`${k}="${esc(v)}"`)
   }
   return out.length ? ' ' + out.join(' ') : ''
+}
+
+/**
+ * A dash list as the `stroke-dasharray` attribute, or `undefined` for "do not
+ * write one".
+ *
+ * The grammar is strict and the failure mode is silent, which is why this is a
+ * function rather than a `join(' ')`: SVG says an invalid list is an error (and
+ * every shipping renderer answers by drawing the stroke SOLID), and it says a
+ * list whose values sum to zero renders solid too. So a caller that hands over
+ * a negative, a `NaN` or an all-zero list gets NO attribute rather than one
+ * that turns a half-drawn stroke into a whole one — the difference between a
+ * missing effect and a wrong picture.
+ *
+ * A single zero entry beside a positive one is legal and meaningful: it is a
+ * zero-length dash, which under the default `butt` cap paints nothing. That is
+ * the "not started yet" end of a reveal and must survive.
+ */
+function dashArrayAttr(dash: readonly number[] | null | undefined, precision: number): string | undefined {
+  if (!dash || !dash.length) return undefined
+  let sum = 0
+  for (const v of dash) {
+    if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) return undefined
+    sum += v
+  }
+  if (!(sum > 0)) return undefined
+  return dash.map(v => formatNumber(v, precision)).join(' ')
 }
 
 /**
@@ -1070,12 +1120,18 @@ export function shapesToSVG(shapes: readonly VectorShape[], doc: SvgDocOptions =
       isVectorGradient(s.fill) ? { kind: 'g', key: defs.gradientKey(s.fill) }
       : isVectorPattern(s.fill) ? { kind: 'p', key: defs.patternKey(s.fill) }
       : null
+    const dash = dashArrayAttr(s.dash, precision)
     const pairs: Array<[string, string | number | null | undefined]> = [
       ['d', d],
       ['fill', s.fill === null ? 'none' : paint?.key ?? (s.fill as string | undefined)],
       ['fill-rule', s.fillRule],
       ['stroke', s.stroke === null ? undefined : s.stroke],
       ['stroke-width', s.strokeWidth === undefined ? undefined : formatNumber(s.strokeWidth, precision)],
+      ['stroke-dasharray', dash],
+      // Rides on the dash, never written alone: an offset with no pattern to
+      // offset is inert, and a file carrying it would carry a value nothing
+      // reads. `0` is the attribute's own default, so it is omitted too.
+      ['stroke-dashoffset', dash && s.dashOffset ? formatNumber(s.dashOffset, precision) : undefined],
       ['opacity', s.opacity === undefined ? undefined : formatNumber(s.opacity, 4)],
       ...extra,
     ]

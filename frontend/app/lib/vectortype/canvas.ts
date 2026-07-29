@@ -82,7 +82,7 @@ import { peekSolidBody, solidBodyCacheKey } from './extrudeBodyCache'
 import type { VtFont } from './font'
 import type { GlyphOutline, TextOutlines } from './outline'
 import { textOutlines } from './outline'
-import { applyMotion, glyphConfig, resolveStagger } from './motion'
+import { applyMotion, glyphConfig, glyphStackLeaf, resolveStagger } from './motion'
 // Word grouping for `unit: 'word'` blink. Imports nothing itself, so this costs
 // the render path a single pass over the shaped run.
 import { wordIndexOfGlyph } from './words'
@@ -113,6 +113,10 @@ import {
 // The arc-length curve module — pure, zero imports of its own, and deliberately
 // NOT paper.js: placement runs every frame (see `./curve.ts`'s header).
 import { buildCurveTable } from './curve'
+// The per-path arc length behind the DRAW-ON — pure, no paper.js, and for the
+// same reason: a draw frame measures every glyph's outline (see
+// `./pathLength.ts`'s header).
+import { pathLength, vtDrawOnDash, type VtDashSpec } from './pathLength'
 
 /** One frame's worth of resolved geometry: what to draw and how each glyph moves. */
 export interface VtFrame {
@@ -904,6 +908,21 @@ interface VtPaintLayer {
   outline: { color: string; width: number } | null
   /** 0..1, MULTIPLIED with the glyph's motion opacity — see `paintLayer`. */
   opacity: number
+  /**
+   * DRAW-ON: how much of a `stroke` layer's outline is drawn, 0..1.
+   *
+   * `1` on every other kind and on any layer that has not asked for it, and `1`
+   * means **no dash at all** rather than a dash covering everything — that is
+   * what keeps every frame and every export written before draw-on existed
+   * byte-identical.
+   *
+   * Resolved here rather than at the two draw sites, so the canvas and the SVG
+   * cannot come to two different readings of `layer.draw` (the failure the
+   * `blendCss`/`op` pair beside it is also written this way to avoid). The
+   * per-glyph DASH is not resolved here, because it depends on the glyph — see
+   * `vtDrawOnDash`.
+   */
+  draw: number
   op: GlobalCompositeOperation
   /** The same blend in CSS's spelling, for the SVG export's `mix-blend-mode`.
    *  Resolved HERE, beside the canvas op, so the two cannot be derived from
@@ -1080,6 +1099,12 @@ function vtPaintLayers(
       width,
       outline: outlined ? { color: layer.strokeColor, width } : null,
       opacity,
+      // Asked of the KIND as well as of the value: `draw` is inert on a fill
+      // (there is no stroked ink to dash) and on an extrude's silhouette (which
+      // only exists once the async union has landed), so those two are pinned to
+      // `1` here rather than left to be ignored further down. A layer dropped to
+      // 1 costs nothing at all — see `VtPaintLayer.draw`.
+      draw: layer.kind === 'stroke' ? clamp01(Number.isFinite(layer.draw) ? layer.draw : 1) : 1,
       op: VT_BLEND_OP[layer.blend] ?? 'source-over',
       blendCss: VT_BLEND_CSS[layer.blend] ?? 'normal',
       // Asked of the KIND, not of `copies` — the extrude's copy list is filled in
@@ -1134,6 +1159,39 @@ export function vtSolidExtrudeLayers(
   return vtPaintLayers(cfg, glyphs).layers
     .filter(L => L.kind === 'extrude' && L.solid && L.id !== '' && (L.copies?.length ?? 0) > 0)
     .map(L => ({ id: L.id, copies: L.copies as VtExtrudeCopy[] }))
+}
+
+/**
+ * How much of one layer's outline glyph `index` has drawn, 0..1 — **the ONE
+ * derivation both renderers use.**
+ *
+ * Two things are folded in here so neither surface can do only one of them:
+ *
+ *  1. `L.draw`, the layer's own leaf, already at its run-level value for this
+ *     frame (`vtPaintLayers` read it off the post-`applyMotion` config);
+ *  2. the per-glyph STAGGER, via `glyphStackLeaf` — the same tracks re-read on
+ *     this glyph's own clock, which is what turns one 0 → 1 track into the
+ *     letters drawing one after another instead of the whole word drawing at
+ *     once. `glyphStackLeaf` returns the fallback untouched when nothing
+ *     staggers, so an unstaggered clip and a hand-set `draw` are unaffected.
+ *
+ * `1` on every non-stroke layer: a dash needs stroked ink, and a solid extrude's
+ * silhouette does not exist until the async union has landed (see
+ * `VtAppearanceLayer.draw`).
+ *
+ * The RAW config, not `frame.config`: the stagger has to shift the clock the
+ * TRACKS are read at, and `frame.config` has already had them applied at `t`.
+ */
+export function vtGlyphDrawProgress(
+  cfg: VectorTypeConfig | null | undefined,
+  L: Pick<VtPaintLayer, 'id' | 'kind' | 'draw'>,
+  t: number,
+  index: number,
+  count: number,
+): number {
+  if (L.kind !== 'stroke') return 1
+  if (!cfg) return clamp01(L.draw)
+  return clamp01(glyphStackLeaf(cfg, L.id, 'draw', L.draw, t, index, count))
 }
 
 /**
@@ -1515,6 +1573,29 @@ export function drawVectorType(
       // is `resolveField`'s posture, one module along.
       const outline = body && L.outline ? L.outline : null
       /**
+       * ── DRAW-ON ────────────────────────────────────────────────────────────
+       * The dash that makes this letter half-drawn, measured against THIS
+       * GLYPH's own placed geometry (`placed[index]`, the very command list the
+       * `Path2D` above was replayed from and the SVG writer's `d` comes out of).
+       *
+       * Per glyph and not per run, because every letterform is a different
+       * length: one pattern across the word would draw an `l` and an `M` to
+       * wildly different fractions of themselves at the same progress.
+       *
+       * The PROGRESS is `vtGlyphDrawProgress`'s, which folds in the per-glyph
+       * stagger — so letter 3 can be behind letter 0 — and the SVG writer calls
+       * the identical function.
+       *
+       * `null` at full draw and on every non-stroke layer, and `null` means the
+       * dash is never touched at all — so a config without a draw-on paints
+       * exactly the bytes it always did. The state is scoped by `paintGlyph`'s
+       * own `save`/`restore` (the dash list is part of the canvas drawing state,
+       * like `ctx.filter` above it); nothing resets it by hand, because a second
+       * reset site is a second place to forget one.
+       */
+      const progress = vtGlyphDrawProgress(cfg, L, t, index, frame.outlines.glyphs.length)
+      const dash = progress < 1 ? vtDrawOnDash(pathLength(placed[index]).longest, progress) : null
+      /**
        * The silhouette pass — a no-op unless a fused body was found.
        *
        * Drawn AFTER the body's fill, so the outline sits on top of its own ink
@@ -1540,6 +1621,15 @@ export function drawVectorType(
           ctx.lineWidth = L.width
           ctx.lineJoin = 'round'
           ctx.strokeStyle = L.flat
+          // Untouched at `dash === null`. The dash list is in the CURRENT
+          // transform's units — the same rule `lineWidth` follows — and on this
+          // branch that transform is the glyph's own, which is the space
+          // `placed[index]` is measured in. So no factor, exactly as the width
+          // needs none here.
+          if (dash) {
+            ctx.setLineDash(dash.dash)
+            ctx.lineDashOffset = dash.offset
+          }
         } else {
           ctx.fillStyle = L.flat
         }
@@ -1575,21 +1665,29 @@ export function drawVectorType(
       ctx.save()
       ctx.setTransform(pm)
       const style = L.runStyle ?? resolvePaint(ctx, L.paint, { w: box!.w, h: box!.h }, field, L.spread)
+      // The paint space is not the geometry space here, so a length expressed in
+      // the glyph's units has to be put back into the paint space's — see
+      // `matScale`. ONE factor, read by the stroke width, the silhouette's width
+      // and the draw-on dash below, because they are the same conversion and
+      // three copies of it is three places for one of them to go stale. Exactly
+      // 1 at the `glyph` anchor, where `pm` is `gm` translated.
+      const outlineScale = matScale(gm) / matScale(pm)
       const stroking = L.kind === 'stroke'
       if (stroking) {
-        // `lineWidth` is in the CURRENT transform's units and we have just left
-        // the glyph's own — see `matScale`. At the `glyph` anchor `pm` is `gm`
-        // translated, so this factor is exactly 1 and the width is untouched.
-        ctx.lineWidth = L.width * (matScale(gm) / matScale(pm))
+        ctx.lineWidth = L.width * outlineScale
         ctx.lineJoin = 'round'
         ctx.strokeStyle = style
+        // The DASH is a length too, and the path was just pulled into the paint
+        // space by `toPaint` — so it takes the identical factor the width does.
+        // Getting this wrong would draw a plausible-looking dash at the wrong
+        // fraction, and only on a word- or frame-anchored stroke.
+        if (dash) {
+          ctx.setLineDash([dash.dash[0] * outlineScale, dash.dash[1] * outlineScale])
+          ctx.lineDashOffset = dash.offset * outlineScale
+        }
       } else {
         ctx.fillStyle = style
       }
-      // The paint space is not the geometry space here, so the outline's width
-      // has to be put back into the glyph's units — the identical factor the
-      // stroke layer above uses, and exactly 1 at the `glyph` anchor.
-      const outlineScale = matScale(gm) / matScale(pm)
       const drawAt = (m: DOMMatrix) => {
         const local = new Path2D()
         local.addPath(path, m)
@@ -2183,6 +2281,31 @@ export function vectorTypeSVG(
    *  the two put the letters at an angle. */
   const turned = vtIsCurved(frame.config) || place.rotate !== 0
 
+  /**
+   * ── DRAW-ON: the dash length per glyph ──────────────────────────────────────
+   *
+   * The longest contour of glyph `i`'s PLACED outline — the number
+   * `vtDrawOnDash` measures progress against, and the one the canvas computes
+   * from `placed[index]` in `drawVectorType`. Same function, same geometry, so
+   * the two surfaces cannot come to two different dashes.
+   *
+   * LAZY and MEMOISED, in that order. Lazy because the placement pass costs a
+   * transform per command and a document with no draw-on must not pay for one;
+   * memoised because it is per GLYPH while the layer loop below is the outer one
+   * — a stack with three drawing strokes would otherwise measure every letter
+   * three times.
+   */
+  let placedForDash: VectorCommand[][] | null = null
+  const dashLengths = new Map<number, number>()
+  const glyphDrawLength = (i: number): number => {
+    const hit = dashLengths.get(i)
+    if (hit !== undefined) return hit
+    if (!placedForDash) placedForDash = placeOutlines(frame.outlines, place)
+    const len = pathLength(placedForDash[i]).longest
+    dashLengths.set(i, len)
+    return len
+  }
+
   // ── THE FILL ────────────────────────────────────────────────────────────────
   // Gradients — both the multi-stop `Gradient` and the two-colour `Fill` form —
   // export as REAL paint servers, anchored the way the canvas anchors them:
@@ -2305,6 +2428,21 @@ export function vectorTypeSVG(
 
     const stroking = L.kind === 'stroke'
     /**
+     * This layer's DRAW-ON dash for glyph `i`, or `null` for "write no dash".
+     *
+     * Both halves are per glyph: the reference LENGTH (every letterform is a
+     * different length) and the PROGRESS (`vtGlyphDrawProgress`, which folds in
+     * the stagger). The canvas calls the same two functions on the same two
+     * inputs, which is what makes the two surfaces agree by construction rather
+     * than by inspection. `null` at full draw is why a fully-drawn stroke carries
+     * no attribute and every export written before this feature is identical.
+     */
+    const dashFor = (i: number): VtDashSpec | null => {
+      if (!stroking) return null
+      const p = vtGlyphDrawProgress(cfg, L, t, i, glyphs.length)
+      return p < 1 ? vtDrawOnDash(glyphDrawLength(i), p) : null
+    }
+    /**
      * The already-computed fused body for this layer's glyph `i`, or `null`.
      *
      * Hoisted out of `expand` because THREE options need the same answer and they
@@ -2351,6 +2489,18 @@ export function vectorTypeSVG(
       strokeWidth: stroking
         ? L.width
         : L.outline ? (_g, i) => (solidBodyFor(i) ? L.outline!.width : undefined) : undefined,
+      // ── THE DRAW-ON, AS TWO REAL ATTRIBUTES ──────────────────────────────────
+      // `stroke-dasharray` and `stroke-dashoffset`, on the path that is already
+      // there — not a `<clipPath>`, not a mask, not the letterform outlined into
+      // a partly-drawn shape. That distinction is the point of doing draw-on in
+      // this studio at all: the file a designer opens still describes the
+      // letterform, and the reveal is two attributes they can restyle, re-time
+      // or delete.
+      //
+      // The units are the document's, which is the same space the `d` data is in
+      // and the same space the canvas measures its dash in.
+      dash: stroking ? (_g, i) => dashFor(i)?.dash ?? null : undefined,
+      dashOffset: stroking ? (_g, i) => dashFor(i)?.offset : undefined,
       fillRule: 'nonzero',
       // The glyph's motion fade TIMES the layer's own opacity — multiplied, never
       // replaced, for the reason spelled out at `paintLayer`: they mean different

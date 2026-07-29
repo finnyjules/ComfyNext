@@ -749,11 +749,16 @@ describe('the appearance stack — the model, and the legacy migration (trap 4)'
         // `strokeColor` (the solid extrude's silhouette colour) is rebuilt like
         // every other field: a non-string falls back to the default.
         taper: 40, solid: 1, strokeColor: 0xff0000, nope: true,
+        // The DRAW-ON progress, clamped like every other 0..1 leaf. Out of range
+        // here, so this also pins that a broken value lands on FULLY DRAWN and
+        // not on invisible.
+        draw: 12,
       }] }).appearance
       expect(l).toEqual({
         id: 'Lx', kind: 'fill', enabled: true, paint: { ...DEFAULT_FILL },
         anchor: 'glyph', opacity: 1, blend: 'normal', width: 0, depth: 32,
         angle: 135, distance: 3, taper: 1, solid: false, strokeColor: '#000000',
+        draw: 1,
       })
       expect((l as any).nope).toBeUndefined()
     })
