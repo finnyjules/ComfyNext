@@ -8,6 +8,7 @@
     "generate": "nuxt generate",
     "preview": "nuxt preview",
     "postinstall": "nuxt prepare",
+    "build:embed": "vite build --config vite.embed.config.ts",
     "test": "playwright test",
     "test:unit": "vitest run",
     "test:headed": "playwright test --headed",

@@ -37,3 +37,6 @@ server/templates/layouts/user-*.json
 server/brand-kits/*.json
 # Uploaded licensed brand fonts (runtime data, not source)
 server/templates/fonts/user/
+
+# Emitted by `npm run build:embed`
+public/embed/
