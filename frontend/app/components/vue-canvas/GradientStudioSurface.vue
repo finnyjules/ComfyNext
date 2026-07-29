@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, toRaw, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, toRaw, watch } from 'vue'
 import { Dices, Lock, Minus, Plus, Trash2, Unlock } from 'lucide-vue-next'
 import { gradientFx } from '~/lib/gradientfx/renderer'
 import { LIQUID_PRESETS, buildConfig, defaultConfig, liquidConfig, liquidPresetConfig, meshConfig, reroll, rippleConfig, stackConfig, type RerollScope } from '~/lib/gradientfx/randomize'
@@ -25,6 +25,8 @@ import { controlsForStudio } from '~/lib/collection/studioControls'
 import type { StudioControlDesc } from '~/lib/collection/studioBindables'
 import { registerStudioParamBaker, unregisterStudioParamBaker } from '~/lib/studio/cascade'
 import SweepPopover from '~/components/vue-canvas/studio/SweepPopover.vue'
+import { exportEmbedHtml, downloadEmbed } from '~/lib/embed/export'
+import type { GradientEmbedConfig } from '~/lib/embed/surfaces/gradient'
 import {
   ASPECTS, BLEND_MODES, DEFAULT_FOCUS, DIRECTIONS, GRADIENT_DIRS, LAYER_MAX, LAYOUTS, MAPPINGS, MIRROR_KINDS, RING_SHAPES, SHAPE_KINDS,
   aspectRatio, cloneConfig, ensureConfigDefaults, type GradientConfig, type LayoutKind, type MeshConfig, type ShapeKind,
@@ -203,6 +205,9 @@ const ROLL_CAP = 48
 const canvas = ref<HTMLCanvasElement | null>(null)
 const baking = ref(false)
 const bakeMsg = ref('')
+const embedMsg = ref('')
+const embedErr = ref(false)
+const embedding = ref(false)
 const glError = ref<string | null>(null)
 let raf = 0
 let start = 0
@@ -601,6 +606,55 @@ async function generateVideo() {
   finally { baking.value = false; startPreview() }
 }
 
+async function exportWebEmbed() {
+  // Disabled while in flight (see the button below): a double-click otherwise
+  // starts two full-resolution GL bakes and downloads two files.
+  if (embedding.value) return
+  embedding.value = true
+  embedErr.value = false
+  embedMsg.value = 'Building…'
+  try {
+    // Same sizing as the still-image export path (downloadExport/renderCurrentBlob
+    // above) — do not invent new sizing logic here.
+    const { w, h } = exportDims.value
+    const ew = Math.min(w, 4096)
+    const eh = Math.min(h, 4096)
+    // Matches the studio's own loop(): frameSource.ts always derives duration
+    // from cfg.motion.duration.
+    const duration = config.value.motion?.duration ?? 4
+
+    // Gradient is fully procedural — no source image, no EffectDefs to filter —
+    // so unlike the shader adapter's config, this is just the config plus the
+    // loop duration. See GradientEmbedConfig in ~/lib/embed/surfaces/gradient.
+    const embedConfig: GradientEmbedConfig = {
+      cfg: structuredClone(toRaw(config.value)),
+      duration,
+    }
+
+    const html = await exportEmbedHtml({
+      kind: 'gradient',
+      config: embedConfig,
+      duration,
+      width: ew,
+      height: eh,
+    })
+
+    // Size is shown BEFORE the download, not discovered later. Still one
+    // action — no confirmation dialog.
+    const kb = (new Blob([html]).size / 1024).toFixed(0)
+    embedMsg.value = `${kb} KB — downloading…`
+    await nextTick()
+    downloadEmbed('sailor-gradient-embed.html', html)
+    embedMsg.value = `Downloaded — ${kb} KB`
+  } catch (err) {
+    console.error('[GradientStudio] embed export failed:', err)
+    embedErr.value = true
+    embedMsg.value = err instanceof Error ? err.message : 'Export failed'
+  } finally {
+    embedding.value = false
+  }
+}
+
 // ── keyboard shortcuts ────────────────────────────────────────────────────────
 function onKey(e: KeyboardEvent) {
   const tag = (e.target as HTMLElement)?.tagName
@@ -709,10 +763,16 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
       <StudioButton variant="secondary" :disabled="baking" @click="generateVideo">
         {{ baking ? (bakeMsg || 'Working…') : 'Generate as video' }}
       </StudioButton>
+      <!-- Disabled while in flight: a double-click otherwise starts two
+           full-resolution GL bakes and downloads two files. -->
+      <StudioButton :disabled="embedding" @click="exportWebEmbed">{{ embedding ? 'Exporting…' : 'Export embed' }}</StudioButton>
       <button class="ml-1 rounded px-2 py-1 text-xs text-white/45 hover:text-white/80 hover:bg-white/[0.06] transition"
               title="Copy this gradient's config JSON (for teaching the agent)" @click="copyConfig">
         {{ copied ? '✓ Copied' : 'Copy config' }}
       </button>
+      <!-- A failure must not read like a success. Matches glError's styling. -->
+      <span v-if="embedMsg" class="truncate text-xs"
+            :class="embedErr ? 'text-red-300/80' : 'opacity-60'">{{ embedMsg }}</span>
       <span v-if="glError" class="ml-2 truncate text-xs text-red-300/80">{{ glError }}</span>
     </template>
 

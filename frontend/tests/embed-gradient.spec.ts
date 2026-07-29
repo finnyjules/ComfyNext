@@ -232,6 +232,24 @@ test.describe('embed export — gradient', () => {
     await page.waitForFunction(() => (window as any).__embedHarnessGradientReady === true)
   })
 
+  // Mirrors embed-export.spec.ts's shader coverage. Gradient carries no source
+  // image and no EffectDefs, so its export should be far smaller than shader's
+  // ~47 KB — but it must still be fully self-contained.
+  test('produces self-contained html with no external references and a plausible size', async ({ page }) => {
+    const html = await page.evaluate(() => (window as any).__embedHarnessGradient.exportHtml())
+    expect(html).toContain('<!doctype html>')
+
+    // Use the bundler's own detector, NOT a naive regex — the inlined base64
+    // poster contains "//" constantly, and a naive pattern would fail on
+    // every genuine export.
+    const { externalRefs } = await import('../app/lib/embed/bundle')
+    expect(externalRefs(html)).toEqual([])
+
+    const kb = new Blob([html]).size / 1024
+    expect(kb).toBeGreaterThan(1)
+    expect(kb).toBeLessThan(500)
+  })
+
   // The exported file must run the LIVE renderer, not just show its poster —
   // every export carries a poster fallback, and a dead render path still
   // LOOKS fine if only the poster is ever checked.
