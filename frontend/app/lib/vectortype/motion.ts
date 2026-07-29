@@ -58,7 +58,7 @@ import {
   type VtStaggerConfig,
   type VtStaggerOrder,
 } from './config'
-import { VT_CONTROLS, VT_LAYER_PREFIX, derivedAxisControls, visibleVtControls } from './controls'
+import { VT_CONTROLS, VT_LAYER_PREFIX, derivedVtControls, visibleVtControls } from './controls'
 import { vtLayerLabels } from './layerLabel'
 // The stagger's `random` order and the blink/scatter/flicker family must draw on
 // ONE seeded hash, or "seeded and stable" holds twice with two different
@@ -236,7 +236,7 @@ export function animatableTargets(cfg: VectorTypeConfig, axes: VtAxis[] = []): V
   // `visibleVtControls` gates the `layer.*` keys on ONE layer (the active one),
   // which is right for a panel and wrong here: motion must reach every layer.
   // So they are skipped in this loop and expanded per layer below.
-  for (const c of [...visibleVtControls(cfg), ...derivedAxisControls(axes)]) {
+  for (const c of [...visibleVtControls(cfg), ...derivedVtControls(cfg, axes)]) {
     if (c.key.startsWith(VT_LAYER_PREFIX) || !usable(c)) continue
     out.push({ path: c.key, label: c.label, group: c.group, ...sliderRange(c) })
   }

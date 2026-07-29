@@ -87,6 +87,7 @@ import { applyMotion, glyphConfig, resolveStagger } from './motion'
 // the render path a single pass over the shaped run.
 import { wordIndexOfGlyph } from './words'
 import { vtBlinkActive } from './blink'
+import { vtScatterActive } from './scatter'
 import { vtAxisCoords } from './axisPresets'
 import {
   IDENTITY_GLYPH_MOTION,
@@ -2467,12 +2468,19 @@ export function vtExportName(cfg: VectorTypeConfig | null | undefined): string {
  * `duration: 0`, and the user would see a word that never blinks with no error
  * anywhere. `vtBlinkActive` is the same gate the evaluator takes, so a blink
  * switched off (`amount: 0`, the shipped default) does not spin a still node.
+ *
+ * FIVE as of the axis scatter, and it is the same line again for the same
+ * reason: a scatter with no track and no preset is motion with nothing else
+ * moving, and both its modes genuinely move — a `settle` resolves over its own
+ * seconds, a `wander` never stops. `vtScatterActive` is the gate the evaluator
+ * takes, so `spread: 0` (the shipped default) does not spin a still node.
  */
 export function vtIsAnimated(cfg: VectorTypeConfig | null | undefined): boolean {
   const tracks = cfg?.motion?.tracks
   if (Array.isArray(tracks) && tracks.length > 0) return true
   if (vtHasPreset(cfg)) return true
   if (vtBlinkActive(cfg?.motion?.blink)) return true
+  if (vtScatterActive(cfg?.motion?.scatter)) return true
   // ═══ TASK 3 BRIDGE ═══ any layer with a moving shader fill animates the node,
   // so this folds over the whole stack rather than asking the base layer only —
   // getting that wrong freezes a node card that should be playing.

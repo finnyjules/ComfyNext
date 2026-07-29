@@ -104,6 +104,14 @@ import {
   vtBlinkUnitIndex,
   vtResolveBlink,
 } from './blink'
+// The FOURTH motion source (Task 4). Pure arithmetic over `./random` and the
+// font's declared axis ranges, so it costs this module nothing beyond the call.
+import {
+  vtResolveScatter,
+  vtScatterActive,
+  vtScatterDelta,
+  vtScatterStillTime,
+} from './scatter'
 import { trackValue } from '~/lib/studio/track'
 
 /** A one-sided reveal of the glyph's own box: `amount` is the fraction hidden
@@ -373,16 +381,26 @@ export function vtEmSize(cfg: VectorTypeConfig | null | undefined, t: number): n
  * whole stagger queue has run. Capped at the exit's start (and at the clip) so a
  * clip too short to hold a resting frame gives the latest one that is not already
  * leaving, rather than a frame past the end.
+ *
+ * A SETTLING SCATTER is an entrance too, and it is counted here for exactly the
+ * same reason (`vtScatterStillTime`). Its `t = 0` is the MOST scattered frame
+ * there is, so without this line a config whose only motion is a settle would
+ * bake its PNG, its node thumbnail and every Collection row at maximum scatter —
+ * the panel reading `Weight 400` over a picture with nine weights in it, and
+ * nothing erroring. A `wander` contributes 0, correctly: it never finishes, and
+ * its `t = 0` already IS the configured word.
  */
 export function vtStillTime(cfg: VectorTypeConfig | null | undefined): number {
   const specs = vtPresetSpecs(cfg)
-  if (!specs.in) return 0
+  const settle = vtScatterStillTime(cfg)
+  if (!specs.in && !(settle > 0)) return 0
+  const inDur = specs.in ? specs.in.duration : 0
   const duration = clipDuration(cfg)
   const glyphs = Math.max(1, [...String(cfg?.text ?? '')].length)
   const { delay } = resolveStagger(cfg as VectorTypeConfig)
-  const rest = specs.in.duration + delay * (glyphs - 1)
+  const rest = Math.max(inDur, settle) + delay * (glyphs - 1)
   const outStart = specs.out
-    ? Math.max(specs.in.duration, duration - specs.out.duration)
+    ? Math.max(inDur, duration - specs.out.duration)
     : duration
   return Math.max(0, Math.min(rest, outStart, duration - 1e-6))
 }
@@ -635,6 +653,23 @@ export function presetTransform(
  * in different beats and the word would come apart letter by letter. The stagger
  * shifts when a glyph reads its TRACKS; the blink beat is a property of the run.
  *
+ * ## The SCATTER is the fourth source, and its axes ADD
+ *
+ * `./scatter.ts` returns an axis DELTA, the same currency `presetTransform`
+ * already emits, so the two are summed per tag and the sum is clamped ONCE, by
+ * `vtAxisCoords`, against the font's own range. Addition rather than replacement
+ * is what makes "a weight wave AND a scatter" read as a scattered wave instead
+ * of one source winning; addition rather than multiplication because an axis
+ * coordinate is a position on a scale with an arbitrary origin (`GRAD` runs
+ * −200…150 about 0), where a multiplier has no fixed point and inverts as the
+ * value crosses zero. Identity is 0, which is exactly what "no scatter" emits,
+ * so a config with only a wave is bit-identical to what it was before.
+ *
+ * Unlike the blink, the scatter is read on the GLYPH'S clock — there is no unit
+ * above the glyph here for a run clock to protect, and staggering the settle so
+ * the letters find their weight one after another is exactly what the stagger is
+ * for.
+ *
  * This is the function every renderer should call. `glyphTransform` (tracks only)
  * and `presetTransform` (presets only) remain exported for tests and for callers
  * that genuinely want one source.
@@ -656,6 +691,15 @@ export function vtGlyphMotion(
   const lit = vtBlinkActive(blink)
     ? vtBlinkOpacity(blink, t, vtBlinkUnitIndex(blink.unit, index, env?.wordOf))
     : 1
+  // Same cheap gate for the scatter, and the same guarantee behind it: `spread`
+  // is the only control that can switch it on, and it ships at 0.
+  const scatter = vtResolveScatter(cfg, t)
+  let axes = pr.axes
+  if (vtScatterActive(scatter)) {
+    const gt = glyphTime(cfg, t, index, count)
+    const resting = env?.resting ?? (cfg?.axes as Record<string, number> | undefined) ?? null
+    axes = addAxes(pr.axes, vtScatterDelta(scatter, isNum(gt) ? gt : 0, index, env?.axes, resting))
+  }
   return {
     dx: tr.dx + pr.dx,
     dy: tr.dy + pr.dy,
@@ -666,6 +710,33 @@ export function vtGlyphMotion(
     opacity: clamp01(tr.opacity * pr.opacity * lit),
     blur: pr.blur,
     clip: pr.clip,
-    axes: pr.axes,
+    axes,
   }
+}
+
+/**
+ * Two axis-delta records summed per tag, dropping any tag that cancels to 0.
+ *
+ * The zero drop is not tidiness: `vectorTypeFrame` decides whether a frame needs
+ * PER-GLYPH SHAPING by asking whether any glyph emitted an axis at all, so a tag
+ * carrying 0 would send the whole run down the expensive path — one fontkit
+ * instance per distinct coordinate set — to draw a picture identical to the
+ * cheap one. `vtAxisDelta` withholds a zero delta for the same reason, and the
+ * sum has to keep that property or the two sources together would break what
+ * either alone preserves.
+ *
+ * Returns the left operand UNCHANGED when the right one is empty, so the common
+ * case allocates nothing and a preset-only frame is object-identical to what it
+ * was before the scatter existed.
+ */
+function addAxes(a: Record<string, number>, b: Record<string, number>): Record<string, number> {
+  const tags = Object.keys(b)
+  if (!tags.length) return a
+  const out: Record<string, number> = { ...a }
+  for (const tag of tags) {
+    const v = fin(out[tag], 0) + fin(b[tag], 0)
+    if (v === 0) delete out[tag]
+    else out[tag] = v
+  }
+  return out
 }

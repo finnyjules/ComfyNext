@@ -4,7 +4,7 @@ import { getEffectSync } from '~/lib/shaderfx/catalog'
 import { derivedShaderFillControls, shaderFillControls } from '~/lib/shaderfill/controls'
 import type { VtAxis } from './font'
 import type { VectorTypeConfig } from './config'
-import { VT_CONTROLS, VT_LAYER_PREFIX, derivedAxisControls, visibleVtControls } from './controls'
+import { VT_CONTROLS, VT_LAYER_PREFIX, derivedVtControls, visibleVtControls } from './controls'
 import { vtLayerLabels } from './layerLabel'
 
 /** Strip the schema-only fields (`when`/`agent`/`animatable`) a `VtControl` may
@@ -110,7 +110,7 @@ export function vtStackControls(cfg: VectorTypeConfig): ControlSpec[] {
 export function vtAgentControls(cfg: VectorTypeConfig, axes: VtAxis[] = [], active = 0): ControlSpec[] {
   const out = [
     ...stripMeta(visibleVtControls(cfg, active)),
-    ...stripMeta(derivedAxisControls(axes)),
+    ...stripMeta(derivedVtControls(cfg, axes)),
     // The relative `layer.*` keys above edit whatever the user has SELECTED
     // ("make this layer red"); these name a layer outright ("make the outline
     // thicker"). Both are needed and they are not interchangeable — see above.
@@ -163,7 +163,7 @@ export function vtAgentControls(cfg: VectorTypeConfig, axes: VtAxis[] = [], acti
 export function vtBindableControls(cfg: VectorTypeConfig, axes: VtAxis[] = []): ControlSpec[] {
   return [
     ...stripMeta(visibleVtControls(cfg)).filter(c => !c.key.startsWith(VT_LAYER_PREFIX)),
-    ...stripMeta(derivedAxisControls(axes)),
+    ...stripMeta(derivedVtControls(cfg, axes)),
     ...vtStackControls(cfg),
   ]
 }

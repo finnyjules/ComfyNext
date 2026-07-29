@@ -48,6 +48,19 @@ import {
   VT_BLINK_UNITS,
   type VtBlinkConfig,
 } from './blink'
+// Same arrangement, same direction, for the per-glyph axis SCATTER: the block's
+// shape, defaults and domains live with `./scatter.ts`, which imports `./random`,
+// `./axisPresets` (itself type-only against the font layer), a shared track
+// helper and this module's TYPES.
+import {
+  DEFAULT_SCATTER,
+  VT_SCATTER_MODES,
+  VT_SCATTER_RATE_MAX,
+  VT_SCATTER_SEED_MAX,
+  VT_SCATTER_SETTLE_MAX,
+  isVtScatterAxis,
+  type VtScatterConfig,
+} from './scatter'
 import { DEFAULT_FONT_ID, VARIABLE_FONTS } from '~/data/variable-fonts'
 
 /** Horizontal anchoring of the (single-line, v1) glyph run. */
@@ -271,6 +284,20 @@ export interface VtMotionConfig {
    * as real config state rather than as evaluator-only knobs.
    */
   blink: VtBlinkConfig
+  /**
+   * Every glyph at its OWN random position on one variable axis — `./scatter.ts`.
+   *
+   * Not a track and not a preset slot, for the same reason `blink` is neither:
+   * it is a per-glyph value derived from a seeded hash of the glyph index, so it
+   * needs settings of its own rather than a `from`/`to` pair. `spread: 0` is the
+   * shipped default and means off, which is what keeps every config written
+   * before this feature rendering identically.
+   *
+   * `spread`, `settle` and `rate` are ordinary animatable leaves — a track on
+   * `motion.scatter.spread` is how a word comes apart over a clip — so they are
+   * declared here as real config state rather than as evaluator-only knobs.
+   */
+  scatter: VtScatterConfig
   /**
    * Entrance / exit / loop presets from the SHARED kinetic engine
    * (`~/lib/motion/evaluate`), evaluated by `./presetMotion.ts`.
@@ -505,7 +532,7 @@ export const DEFAULT_STAGGER: VtStaggerConfig = { delay: 0, order: 'forward', se
 
 export const DEFAULT_MOTION: VtMotionConfig = {
   tracks: [], duration: 4, fps: 30, size: 1080,
-  stagger: { ...DEFAULT_STAGGER }, blink: { ...DEFAULT_BLINK },
+  stagger: { ...DEFAULT_STAGGER }, blink: { ...DEFAULT_BLINK }, scatter: { ...DEFAULT_SCATTER },
 }
 
 /**
@@ -659,11 +686,11 @@ export const DEFAULT_CONFIG: VectorTypeConfig = {
   // `fill: '#ffffff'` + `strokeWidth: 0` default painted, said in the stack's
   // vocabulary. The default config's PIXELS are unchanged by this task.
   appearance: [vtLayer({ id: VT_BASE_FILL_ID })],
-  // Spread is shallow: `stagger` and `blink` must be copied too, or
+  // Spread is shallow: `stagger`, `blink` and `scatter` must be copied too, or
   // DEFAULT_CONFIG and DEFAULT_MOTION would share one mutable object.
   motion: {
     ...DEFAULT_MOTION, tracks: [],
-    stagger: { ...DEFAULT_STAGGER }, blink: { ...DEFAULT_BLINK },
+    stagger: { ...DEFAULT_STAGGER }, blink: { ...DEFAULT_BLINK }, scatter: { ...DEFAULT_SCATTER },
   },
 }
 
@@ -1275,6 +1302,33 @@ function mergeBlink(raw: unknown): VtBlinkConfig {
   }
 }
 
+/**
+ * Rebuild the scatter block.
+ *
+ * Same rule as `mergeBlink`: the numbers CLAMP into range rather than falling
+ * back, because a stored `spread: 3` came from a config that meant "as far as
+ * possible" and resetting it to 0 would silently switch a saved animation off.
+ * `mode` falls back (a name is not a point on a scale).
+ *
+ * `axis` is the odd one out and it is deliberate: any well-formed OpenType tag
+ * is KEPT, even one the current font does not declare, exactly as `mergeAxes`
+ * keeps a tag the current font lacks. A user who set up a `GRAD` scatter on
+ * Roboto Flex, switched to Inter to check something and switched back must find
+ * their scatter still aimed at `GRAD`. It degrades to IGNORED-with-a-reason in
+ * between (`vtScatterAvailability`), never to "applied to the wrong axis".
+ */
+function mergeScatter(raw: unknown): VtScatterConfig {
+  const o = (raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}) as Record<string, unknown>
+  return {
+    spread: clamp(num(o.spread, DEFAULT_SCATTER.spread), 0, 1),
+    axis: isVtScatterAxis(o.axis) ? (o.axis as string) : DEFAULT_SCATTER.axis,
+    mode: oneOf(o.mode, VT_SCATTER_MODES, DEFAULT_SCATTER.mode),
+    settle: clamp(num(o.settle, DEFAULT_SCATTER.settle), 0, VT_SCATTER_SETTLE_MAX),
+    rate: clamp(num(o.rate, DEFAULT_SCATTER.rate), 0, VT_SCATTER_RATE_MAX),
+    seed: clamp(Math.round(num(o.seed, DEFAULT_SCATTER.seed)), 0, VT_SCATTER_SEED_MAX),
+  }
+}
+
 /** Rebuild a preset's knob values: finite numbers only, and `undefined` rather
  *  than an empty record so an untouched preset stores nothing. A non-numeric
  *  knob is DROPPED, not coerced — `resolveParams` spreads this straight over the
@@ -1347,6 +1401,7 @@ function mergeMotion(raw: unknown, remap?: (path: string) => string | null): VtM
     size: oneOfNum(o.size, VT_MOTION_SIZES, DEFAULT_MOTION.size),
     stagger: mergeStagger(o.stagger),
     blink: mergeBlink(o.blink),
+    scatter: mergeScatter(o.scatter),
     ...slots,
   }
 }
@@ -1458,6 +1513,8 @@ export function cloneConfig(cfg: VectorTypeConfig): VectorTypeConfig {
       // blink rate lands in the config the surface is holding — and, because
       // `DEFAULT_CONFIG` holds one blink object, in the module-level default too.
       blink: { ...m?.blink } as VtBlinkConfig,
+      // Same story for `motion.scatter.spread` / `.settle` / `.rate`.
+      scatter: { ...m?.scatter } as VtScatterConfig,
       tracks: Array.isArray(m?.tracks) ? m.tracks.map(t => ({ ...t })) : [],
       ...slots,
     },

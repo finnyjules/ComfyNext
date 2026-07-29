@@ -42,7 +42,8 @@ import {
   type VtPresetSlot,
 } from '~/lib/vectortype/config'
 import { vtLayerLabels } from '~/lib/vectortype/layerLabel'
-import { VT_CONTROLS, VT_LAYER_PREFIX, VT_SECTIONS, derivedAxisControls, type VtControl } from '~/lib/vectortype/controls'
+import { VT_CONTROLS, VT_LAYER_PREFIX, VT_SECTIONS, derivedVtControls, type VtControl } from '~/lib/vectortype/controls'
+import { vtScatterAvailability } from '~/lib/vectortype/scatter'
 import { VT_GUIDANCE, vtAgentControls, vtBindableControls } from '~/lib/vectortype/agentControls'
 import { VT_APPEARANCE_REMAP, animatableTargets, pruneStackTracks } from '~/lib/vectortype/motion'
 import {
@@ -184,7 +185,7 @@ const MOTION_SECTIONS = ['Motion'] as const
 
 /** The full inspector vocabulary: the declared frame plus the loaded font's own
  *  axes. One list, so the panel, the agent and the sweep menu cannot drift. */
-const allControls = computed<ControlSpec[]>(() => [...VT_CONTROLS, ...derivedAxisControls(fontAxes.value)])
+const allControls = computed<ControlSpec[]>(() => [...VT_CONTROLS, ...derivedVtControls(config.value, fontAxes.value)])
 // The ACTIVE layer's index is passed, not defaulted: `vtAgentControls` gates the
 // `layer.*` vocabulary on `appearance[active]`, so a stroke selected in the aside
 // is what makes `layer.width` offerable to the agent.
@@ -702,6 +703,26 @@ const activePresetSummary = computed(() =>
  * `vtStaggerBumpFor`.
  */
 const staggerStarved = computed(() => vtStaggerStarvedSlots(config.value))
+/**
+ * A live scatter aimed at an axis THIS font does not have.
+ *
+ * The tag is deliberately kept in the config rather than rewritten (see
+ * `mergeScatter`), so switching back to a font that has it restores the setup —
+ * which means there is a window where a real setting is doing nothing, and the
+ * one rule this panel keeps is that the user is never looking at that silently.
+ * DISABLED WITH A REASON, exactly as an axis preset tile is greyed with its own
+ * `reason`; the sentence comes from the same generator.
+ *
+ * Null while the font is still loading: "no axes yet" is not "the font lacks
+ * this axis", and flashing the warning on every font switch would teach the user
+ * to ignore it.
+ */
+const scatterUnavailable = computed<string | null>(() => {
+  const sc = config.value.motion?.scatter
+  if (!sc || !(sc.spread > 0) || !fontAxes.value.length) return null
+  const offer = vtScatterAvailability(sc, fontAxes.value, fontLabel.value)
+  return offer.available ? null : (offer.reason ?? null)
+})
 const staggerNote = ref<string | null>(null)
 
 function assignPreset(slot: VtPresetSlot, presetId: string) {
@@ -1648,6 +1669,13 @@ const frameCount = computed(() => Math.round((config.value.motion.fps || 30) * (
             <p class="text-[10px] leading-snug text-white/30">
               Stagger shifts the clock each glyph reads the tracks at — raise it and one axis track
               becomes a wave travelling across the word.
+            </p>
+            <!-- Never leave a live setting silently doing nothing. The scatter's
+                 axis tag survives a font change on purpose, so this is the window
+                 where it is real and inert, and it says which axis and why. -->
+            <p v-if="scatterUnavailable" class="rounded border border-amber-300/25 bg-amber-300/[0.06] px-2 py-1.5 text-[10px] leading-snug text-amber-100/70">
+              <span class="text-amber-100">Scatter is not running.</span>
+              {{ scatterUnavailable }}
             </p>
           </template>
         </StudioControlPanel>

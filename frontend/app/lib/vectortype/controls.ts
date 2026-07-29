@@ -14,6 +14,15 @@ import type { VtAxis } from './font'
 // Pure arithmetic over `./random` and `./words` — no canvas, no DOM, no font
 // parser — so it clears the same CPU-only bar this module holds itself to.
 import { VT_BLINK_RATE_MAX, VT_BLINK_SEED_MAX, VT_BLINK_UNITS } from './blink'
+// Same bar, same reason: `./scatter.ts` is pure arithmetic over `./random` and
+// the font's declared ranges, type-only against the font parser.
+import {
+  VT_SCATTER_DEFAULT_AXIS,
+  VT_SCATTER_MODES,
+  VT_SCATTER_RATE_MAX,
+  VT_SCATTER_SEED_MAX,
+  VT_SCATTER_SETTLE_MAX,
+} from './scatter'
 import {
   DEFAULT_CONFIG,
   LAYER_DEFAULTS,
@@ -229,6 +238,19 @@ const isShuffled = (c: VectorTypeConfig) => c.motion?.stagger?.order === 'random
  *  gate `isShuffled` applies to the shuffle seed — optional-chained for the same
  *  reason: a control list can be asked for from a raw stored blob. */
 const blinksAtAll = (c: VectorTypeConfig) => (c.motion?.blink?.amount ?? 0) > 0
+
+/** The scatter's own settings only mean something once something is scattering.
+ *  Same gate, same reason, as `blinksAtAll`: `spread: 0` is both the shipped
+ *  default and the off switch. */
+const scattersAtAll = (c: VectorTypeConfig) => (c.motion?.scatter?.spread ?? 0) > 0
+/** The two mode-specific knobs. A settle time on a wander and a drift rate on a
+ *  settle are each a slider whose effect the user can never see — and unlike a
+ *  gated blink knob they would sit RIGHT NEXT to the mode select that makes them
+ *  dead, which reads as the mode being broken. */
+const scatterSettles = (c: VectorTypeConfig) =>
+  scattersAtAll(c) && (c.motion?.scatter?.mode ?? 'settle') !== 'wander'
+const scatterWanders = (c: VectorTypeConfig) =>
+  scattersAtAll(c) && (c.motion?.scatter?.mode ?? 'settle') === 'wander'
 
 const slider = (
   key: string, label: string, min: number, max: number, step: number, group: string,
@@ -453,6 +475,38 @@ export const VT_CONTROLS: VtControl[] = [
     DEFAULT_CONFIG.motion.blink.seed,
     'Re-rolls which letters blink and when, without changing how many or how often. Seeded, so the same seed always gives the same blink — that is what makes the export match the preview frame for frame.',
     { animatable: false, when: blinksAtAll }),
+
+  // ── SCATTER ────────────────────────────────────────────────────────────────
+  // Every letter at its OWN weight (or width, or slant). The one control that is
+  // NOT here is the AXIS — it is derived from the loaded font, because Inter
+  // declares 2 and Roboto Flex 13 and there is no font-independent list to
+  // freeze. Same "declare the frame, derive the contents" split as the axis
+  // sliders above; see `derivedScatterControls`.
+  //
+  // `Scatter` is the master and the switch, exactly as `Blink` is, so the panel
+  // reads "Scatter 0.4" rather than "Scatter spread 0.4" and dragging it to 0 is
+  // how the effect is turned off. Everything else is gated behind it.
+  slider('motion.scatter.spread', 'Scatter', 0, 1, 0.05, 'Motion',
+    DEFAULT_CONFIG.motion.scatter.spread,
+    "How far apart the letters land on the chosen axis, as a share of THAT AXIS'S OWN range — so 0.4 means the same amount of variation on a 100–1000 weight axis as on a −200–150 grade one. 0 switches the whole effect off; 1 spreads the word across the entire axis. Near an end of the axis the swing is squeezed into the room that is left rather than piling letters up on the limit."),
+  // A MODE, and the two directions are not interchangeable — see `./scatter.ts`.
+  // Tweening it would interpolate nothing, so it opts out of motion like every
+  // other select here.
+  select('motion.scatter.mode', 'Scatter mode', [...VT_SCATTER_MODES], DEFAULT_CONFIG.motion.scatter.mode, 'Motion',
+    'settle: the letters start scattered and resolve onto the values you set — an entrance, and it ends exactly on your design. wander: the letters start on your design and drift off to their own positions, each at its own pace, and keep going.',
+    { animatable: false, when: scattersAtAll }),
+  slider('motion.scatter.settle', 'Settle time', 0, VT_SCATTER_SETTLE_MAX, 0.05, 'Motion',
+    DEFAULT_CONFIG.motion.scatter.settle,
+    'Seconds from fully scattered to your own values, decelerating into place. With a Stagger on, this is how long EACH letter takes and they set off one after another. 0 means there is nothing to settle from.',
+    { when: scatterSettles }),
+  slider('motion.scatter.rate', 'Drift rate', 0, VT_SCATTER_RATE_MAX, 0.05, 'Motion',
+    DEFAULT_CONFIG.motion.scatter.rate,
+    'How fast the letters drift, in cycles per second. Each letter also gets its own multiplier, so they never all come back together after the first frame. 0 stops the drift, which leaves the word exactly as you set it.',
+    { when: scatterWanders }),
+  slider('motion.scatter.seed', 'Scatter seed', 0, VT_SCATTER_SEED_MAX, 1, 'Motion',
+    DEFAULT_CONFIG.motion.scatter.seed,
+    'Re-rolls where each letter lands and how fast it drifts, without changing how far apart they are. Seeded, so the same seed always gives the same scatter — that is what makes the export match the preview frame for frame.',
+    { animatable: false, when: scattersAtAll }),
 ]
 
 /**
@@ -551,6 +605,59 @@ export function derivedAxisControls(axes: VtAxis[]): ControlSpec[] {
 }
 
 /**
+ * WHICH AXIS the per-glyph scatter aims at, derived from the loaded font.
+ *
+ * The same split as `derivedAxisControls`, one level up: the KEY
+ * `motion.scatter.axis` is declared and frozen (a Collection binding against it
+ * is as safe as any hand-authored control), and the OPTION LIST is derived,
+ * because there is no font-independent set of axis tags to freeze — Inter
+ * declares 2, Roboto Flex 13. A hand-written list would offer `GRAD` on a font
+ * that has never heard of it.
+ *
+ * Only axes the font can actually be dragged along are offered (`max > min`, the
+ * same rule `derivedAxisControls` applies), so picking from this list can never
+ * produce the unavailable case. A STORED tag the font lacks is a different
+ * matter and is kept rather than rewritten — `vtScatterAvailability` says so in
+ * a sentence, matching how a missing axis PRESET is greyed out with its reason.
+ *
+ * Empty before a font has loaded, and empty while the scatter is switched off —
+ * the same two gates every other knob in this block takes, so the panel does not
+ * show an axis picker for an effect that is not running.
+ */
+export function derivedScatterControls(cfg: VectorTypeConfig, axes: VtAxis[]): VtControl[] {
+  if (!scattersAtAll(cfg)) return []
+  const usable = (axes ?? []).filter(a => a && a.max > a.min)
+  if (!usable.length) return []
+  const tags = usable.map(a => a.tag)
+  // `wght` when the font has it — the axis a scatter means by default, and the
+  // one every family in the catalog declares — otherwise whatever this font
+  // leads with, so the default is never a tag the font cannot run.
+  const def = tags.includes(VT_SCATTER_DEFAULT_AXIS) ? VT_SCATTER_DEFAULT_AXIS : tags[0]!
+  return [
+    select('motion.scatter.axis', 'Scatter axis', tags, def, 'Motion',
+      `Which variable axis the letters scatter along. This font offers ${tags.join(', ')}. Weight and slant read most clearly; on a font that has it, GRAD scatters the letters WITHOUT moving any of them, because grade changes weight without changing the width the text occupies.`,
+      // A tag, not a point on a scale: tweening `wght` towards `opsz` would
+      // interpolate between two vocabularies rather than between two values.
+      { animatable: false }) as VtControl,
+  ]
+}
+
+/**
+ * EVERYTHING derived from the loaded font — the per-axis sliders and the
+ * scatter's axis picker — as one call.
+ *
+ * There is one of these because there are four consumers (the inspector panel,
+ * the agent vocabulary, the Collection bindable list and `animatableTargets`)
+ * and a fifth will arrive. A consumer that called `derivedAxisControls` and
+ * forgot the second half would offer a `Scatter` slider with no way to say which
+ * axis it scatters — the shape of failure this studio has already paid for once
+ * with a shared catalog and one un-updated consumer.
+ */
+export function derivedVtControls(cfg: VectorTypeConfig, axes: VtAxis[] = []): ControlSpec[] {
+  return [...derivedAxisControls(axes), ...derivedScatterControls(cfg, axes)]
+}
+
+/**
  * Domain guidance injected into the /api/vibe prompt. Owned here, co-located
  * with the schema it describes.
  *
@@ -573,6 +680,8 @@ ARC BENDS THE BASELINE. \`arc\` is the total sweep in DEGREES, not a radius: 0 i
 STAGGER MAKES IT KINETIC. \`motion.stagger.delay\` is the gap in seconds between one glyph and the next; at 0 the whole word animates as one, and raising it turns any animated axis into a wave that travels across the word. \`motion.stagger.order\` picks which glyph leads — forward, reverse, center (middle outwards), edges (outermost inwards) or random — and \`motion.stagger.seed\` re-rolls the random one. Reach for these when the user asks for letters to cascade, ripple, or come in one at a time.
 
 BLINK DROPS LETTERS OUT. \`motion.blink.amount\` is the master and the switch: 0 is off, and raising it puts that share of the run into the rotation — reach for it whenever the user asks for a flicker, a stutter, a broken neon sign, or letters that come and go. \`motion.blink.rate\` is blinks per second (each beat re-picks who drops out), \`motion.blink.stayLit\` is how much of each beat a letter stays lit before dropping out (1 never goes dark; 0.9 is a nervous stutter), \`motion.blink.unit\` is whether a letter or a whole word drops out at a time, and \`motion.blink.seed\` re-rolls which letters without changing how many. What is dark AT ANY INSTANT is amount × (1 − stayLit), so raise \`motion.blink.amount\` for "more of the word" and lower \`motion.blink.stayLit\` for "out for longer". The blink is seeded, so the export matches the preview frame for frame.
+
+SCATTER PUTS EVERY LETTER AT ITS OWN WEIGHT. \`motion.scatter.spread\` is the master and the switch: 0 is off, and raising it gives each glyph its own randomly-chosen position on ONE variable axis, drawn around whatever \`axes.<tag>\` says — reach for it whenever the user asks for letters at random weights, mixed weights, a ransom-note or scrambled look, or type that "settles" or "finds its weight". The spread is a share of that axis's own range, so it means the same thing on every font. \`motion.scatter.axis\` picks the axis by tag and only tags the CURRENT font declares work — weight (wght) and slant (slnt) read most clearly, and grade (GRAD) scatters the letters without moving any of them. \`motion.scatter.mode\` is the direction: "settle" starts scattered and resolves onto the user's own values (an entrance, and it ends exactly on their design), "wander" starts on their values and drifts off, each letter at its own pace, forever. \`motion.scatter.settle\` is the settle's length in seconds and \`motion.scatter.rate\` the wander's speed in cycles per second; only one of the two applies at a time. \`motion.scatter.seed\` re-rolls where the letters land without changing how far apart they are. Scatter ADDS to any axis preset, so a weight wave and a scatter are both visible at once, and it is seeded, so the export matches the preview frame for frame.
 
 PAINT IS A STACK. The type carries an ordered list of appearance layers — fills, strokes and extrudes, painted back to front, Illustrator's Appearance panel. The paint controls address the ACTIVE layer and are prefixed \`layer.\`; they do not name an index, so the same keys work whichever layer is selected.
 

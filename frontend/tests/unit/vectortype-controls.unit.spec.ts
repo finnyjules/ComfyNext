@@ -70,6 +70,7 @@ import {
   VT_LAYER_PREFIX,
   VT_SECTIONS,
   derivedAxisControls,
+  derivedScatterControls,
   visibleVtControls,
 } from '~/lib/vectortype/controls'
 import { VT_GUIDANCE, VT_LAYER_SHADER_PREFIX, vtAgentControls } from '~/lib/vectortype/agentControls'
@@ -1043,6 +1044,20 @@ describe('VT_GUIDANCE', () => {
    *  `layer.paint.shader.params.segments` would be teaching the model a key that exists
    *  for some effects and not others. */
   const isShaderParamKey = (t: string) => t === 'layer.paint.shader.params.<param>'
+  /**
+   * The scatter's AXIS picker is derived from the loaded font for the same
+   * reason the axis sliders are — there is no font-independent list of tags to
+   * freeze — so it has no entry in `VT_CONTROLS`. Read off the deriving function
+   * rather than restated as a literal, so a rename turns this red instead of
+   * quietly waving an unknown key through.
+   */
+  const derivedKeys = new Set(
+    derivedScatterControls(
+      cfg({ motion: { ...cloneConfig(DEFAULT_CONFIG).motion, scatter: { ...DEFAULT_CONFIG.motion.scatter, spread: 0.5 } } }),
+      RICH_AXES,
+    ).map((c) => c.key),
+  )
+  const isDerivedKey = (t: string) => derivedKeys.has(t)
   /** The relative prefix itself, which the prose names when it explains that the
    *  paint controls address the ACTIVE layer. Allowed as the one non-key token,
    *  and asserted against the exported constant so it cannot drift. */
@@ -1062,7 +1077,7 @@ describe('VT_GUIDANCE', () => {
   it('names only keys that exist in the schema', () => {
     expect(quoted.length).toBeGreaterThan(0)
     for (const t of quoted) {
-      expect(staticKeys.has(t) || isAxisKey(t) || isShaderParamKey(t) || isLayerPrefix(t) || isStackKey(t),
+      expect(staticKeys.has(t) || isAxisKey(t) || isDerivedKey(t) || isShaderParamKey(t) || isLayerPrefix(t) || isStackKey(t),
         `guidance names unknown key \`${t}\``).toBe(true)
     }
   })

@@ -293,8 +293,16 @@ export function isVtAxisPresetId(presetId: unknown): boolean {
  *  scope, and this one is deliberately type-only against it. */
 const AXIS_TAG = /^[\x20-\x7E]{4}$/
 
-export interface VtAxisOffer {
-  preset: VtAxisPreset
+/**
+ * Whether a font can run something that needs ONE named axis, and if not, why.
+ *
+ * Preset-free on purpose. The axis presets name their tag in a frozen table, but
+ * the per-glyph axis SCATTER (`./scatter.ts`) lets the user pick the tag, and
+ * both must fail the same way and say the same sentence — otherwise the studio
+ * has two vocabularies for "this font cannot do that". One generator, two
+ * callers; `VtAxisOffer` below is this plus the preset that asked.
+ */
+export interface VtAxisTagOffer {
   /** The font's own axis, when it has one — so a picker can show the real range. */
   axis: VtAxis | null
   available: boolean
@@ -303,40 +311,60 @@ export interface VtAxisOffer {
   reason?: string
 }
 
+export interface VtAxisOffer extends VtAxisTagOffer {
+  preset: VtAxisPreset
+}
+
 /**
- * Can this preset run on a font with these axes, and if not, WHY.
- *
- * Two ways to fail, both of them the font's doing and both of them worth
- * saying out loud:
+ * The two ways one axis can be unavailable, both of them the font's doing and
+ * both worth saying out loud:
  *  - the font has no such axis (Inter has 2, Roboto Flex has 13);
  *  - the font declares the axis with `min === max`, which is a static value
  *    wearing an axis's clothes — it would animate to exactly nothing.
+ *
+ * `axisName` is the human name to quote beside the tag, when the caller has one.
+ * The presets carry one in their table; a user-chosen tag has only the tag, and
+ * the sentence simply names it once rather than repeating it in brackets.
+ */
+export function vtAxisTagAvailability(
+  tag: string,
+  axisName: string | undefined,
+  axes: readonly VtAxis[] | null | undefined,
+  fontLabel?: string,
+): VtAxisTagOffer {
+  const list = Array.isArray(axes) ? axes : []
+  const axis = list.find(a => a?.tag === tag) ?? null
+  const who = fontLabel && fontLabel.trim() ? fontLabel.trim() : 'This font'
+  const named = axisName && axisName !== tag ? `${tag} (${axisName})` : tag
+  if (!axis) {
+    return {
+      axis: null,
+      available: false,
+      reason: `${who} has no ${named} axis — pick a font that does.`,
+    }
+  }
+  if (span(axis) <= 0) {
+    return {
+      axis,
+      available: false,
+      reason: `${who}'s ${named} axis has no range — it is fixed at ${axis.min}.`,
+    }
+  }
+  return { axis, available: true }
+}
+
+/**
+ * Can this preset run on a font with these axes, and if not, WHY.
+ *
+ * The whole judgement is `vtAxisTagAvailability`'s — this only attaches the
+ * preset that asked, so a gallery tile can show its own label beside the reason.
  */
 export function vtAxisAvailability(
   preset: VtAxisPreset,
   axes: readonly VtAxis[] | null | undefined,
   fontLabel?: string,
 ): VtAxisOffer {
-  const list = Array.isArray(axes) ? axes : []
-  const axis = list.find(a => a?.tag === preset.axis) ?? null
-  const who = fontLabel && fontLabel.trim() ? fontLabel.trim() : 'This font'
-  if (!axis) {
-    return {
-      preset,
-      axis: null,
-      available: false,
-      reason: `${who} has no ${preset.axis} (${preset.axisName}) axis — pick a font that does.`,
-    }
-  }
-  if (span(axis) <= 0) {
-    return {
-      preset,
-      axis,
-      available: false,
-      reason: `${who}'s ${preset.axis} (${preset.axisName}) axis has no range — it is fixed at ${axis.min}.`,
-    }
-  }
-  return { preset, axis, available: true }
+  return { preset, ...vtAxisTagAvailability(preset.axis, preset.axisName, axes, fontLabel) }
 }
 
 /**
