@@ -65,10 +65,33 @@ published URL is meaningless to anyone else and blocked as mixed content inside 
 Figma Slides is a documented **non-goal** — it cannot embed arbitrary URLs (not even YouTube)
 and does not support video transparency; see the spec for the evidence.
 
-Tests: 14 Playwright across three suites (contract / export / three-layer parity), 36 unit.
-The parity gate is layered adapter↔studio, export↔adapter, plus a corruption test proving the
-comparison can fail — because every export carries a poster fallback, so a dead render path
+Tests: 27 Playwright across four suites (shader contract / export / parity, plus gradient), 49
+unit. The parity gate is layered adapter↔studio, export↔adapter, plus a corruption test proving
+the comparison can fail — because every export carries a poster fallback, so a dead render path
 still *looks* right.
+
+**Gradient Studio is the second surface (2026-07-28).** The point of doing it was to test
+whether the contract generalises to a surface it was *not* designed against. It does:
+`contract.ts`, `bundle.ts` and `export.ts` were untouched, and the adapter is ~25 functional
+lines. The strongest evidence is a behavioural divergence the contract absorbed silently —
+Shader applies motion *in the adapter*, Gradient's `render()` applies it *internally*, so its
+adapter must deliberately not. Two opposite placements of the same concern, one unchanged
+contract.
+
+Caveat worth keeping: both surfaces are the same species — a class owning its own canvas and GL
+context, exposing `render(cfg, w, h, t) → HTMLCanvasElement`, which is exactly the shape the
+contract was designed around. N=2 of one species is strong evidence for WebGL renderers and weak
+evidence in general. **Vector Type** (SVG, no canvas) and **Scene3D** (async asset inflation, a
+three.js scene graph) are the surfaces that would actually falsify it.
+
+Recurring tax for every future surface: motion helpers must live in a Vue-free module or they
+are unreachable from an embed bundle. `motionConfigFor` had to be duplicated because its natural
+home (`frameSource.ts`) transitively imports Vue via a module-level `ref(0)`.
+
+Bundle sizes: `shader.js` 18.6 KB, `gradient.js` 66.5 KB. Gradient is larger because it compiles
+its entire renderer — a 727-line monolithic GLSL source — into the bundle, whereas Shader's
+per-effect logic lives as *data* (GLSL inside `EffectDef`s) run by a thin generic compositor.
+That is an argument for the data-driven shape whenever a surface has a plugin axis.
 
 Spec: [specs/2026-07-28-web-embed-export-design.md](superpowers/specs/2026-07-28-web-embed-export-design.md) ·
 Plan: [plans/2026-07-28-web-embed-export.md](superpowers/plans/2026-07-28-web-embed-export.md) ·
