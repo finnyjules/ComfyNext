@@ -3,6 +3,7 @@ import {
   defaultDoc, createPrimitive, createGlbObject, serializeDoc, parseDoc, PRIMITIVE_KINDS, MATERIAL_TYPES,
   gradientAngles, gradientDirection, gradientStopsOf, MATERIAL_DEFAULTS,
   createLight, LIGHT_KINDS, LIGHT_DEFAULTS, lightIntensityDefault, lightIntensityMax,
+  createGroup, sceneHasShaderFill,
   DEFAULT_FONT_URL,
   type GradientStop, type SceneMaterial,
 } from '~/lib/scene3d/config'
@@ -438,5 +439,44 @@ describe('scene3d lights model', () => {
   it('drops an unknown light kind and keeps old docs unchanged', () => {
     const doc = parseDoc(JSON.stringify({ version: 1, objects: [{ kind: 'light', light: 'laser', id: 'x', name: 'x' }] }))
     expect(doc.objects.length).toBe(0)
+  })
+
+  it('round-trips a group and its child through serialize/parse', () => {
+    const doc = defaultDoc()
+    const group = createGroup(doc.objects)
+    const child = createPrimitive('box', doc.objects)
+    child.parentId = group.id
+    doc.objects = [group, child]
+    const back = parseDoc(serializeDoc(doc))
+    expect(back.objects).toHaveLength(2)
+    expect(back.objects[0]!.kind).toBe('group')
+    expect(back.objects[1]!.parentId).toBe(group.id)
+  })
+
+  it('drops a parentId pointing at an object an older build deleted', () => {
+    const doc = defaultDoc()
+    const child = createPrimitive('box', doc.objects)
+    child.parentId = 'a-group-that-is-gone'
+    doc.objects = [child]
+    const back = parseDoc(serializeDoc(doc))
+    expect(back.objects).toHaveLength(1)
+    expect(back.objects[0]!.parentId).toBeUndefined()
+  })
+
+  it('breaks a parentId cycle rather than preserving it', () => {
+    const doc = defaultDoc()
+    const a = createPrimitive('box', doc.objects)
+    const b = createPrimitive('sphere', doc.objects)
+    a.parentId = b.id
+    b.parentId = a.id
+    doc.objects = [a, b]
+    const back = parseDoc(serializeDoc(doc))
+    expect(back.objects.filter((o) => o.parentId)).toHaveLength(1)
+  })
+
+  it('a scene of groups never switches on the shader-field refresh', () => {
+    const doc = defaultDoc()
+    doc.objects = [createGroup(doc.objects)]
+    expect(sceneHasShaderFill(doc)).toBe(false)
   })
 })

@@ -18,6 +18,7 @@ import type { PostSettings } from '~/lib/spacetype/post'
 // Scene3D reaches into ~/lib/spacetype: for the type + its tolerant parser, never for `Fill`/
 // `FILL_TYPES` — see materials.ts for how the field itself gets rendered onto a mesh.
 import { normalizeShaderSpec, DEFAULT_SHADER_SPEC, type ShaderSpec } from '~/lib/spacetype/fillTile'
+import { sanitizeHierarchy } from './hierarchy'
 
 export type PrimitiveKind =
   | 'box' | 'sphere' | 'cylinder' | 'cone' | 'torus' | 'plane'
@@ -208,7 +209,15 @@ export interface LightObject extends SceneObjectBase {
   castShadow?: boolean // point/spot only
 }
 
-export type SceneObject = PrimitiveObject | GlbObject | LightObject
+/** A transform container with no geometry and no material of its own. Carries
+ *  `material` from the base for type uniformity exactly as `LightObject` does —
+ *  it is a dummy `DEFAULT_MATERIAL` that is never fed to a real THREE material,
+ *  which is why `sceneHasShaderFill` skips groups alongside lights. */
+export interface GroupObject extends SceneObjectBase {
+  kind: 'group'
+}
+
+export type SceneObject = PrimitiveObject | GlbObject | LightObject | GroupObject
 
 /** True when any object in `doc` currently needs the Scene3D per-frame shader-field
  *  refresh (`refreshSceneShaderFields` in materials.ts) — either it RENDERS a shaderFill
@@ -226,7 +235,7 @@ export type SceneObject = PrimitiveObject | GlbObject | LightObject
  *  GLB's material only applies with `materialOverride` on — both still excluded. */
 export function sceneHasShaderFill(doc: SceneDoc): boolean {
   return doc.objects.some((o) => {
-    if (o.kind === 'light') return false
+    if (o.kind === 'light' || o.kind === 'group') return false
     if (o.kind === 'glb' && o.materialOverride !== true) return false
     const m = o.material
     if (m.type === 'shaderFill' && !!m.shader) return true
@@ -458,6 +467,14 @@ export function createLight(kind: LightKind, existing: SceneObject[]): LightObje
   }
 }
 
+export function createGroup(existing: SceneObject[]): GroupObject {
+  return {
+    id: newId(), name: numberedName('Group', existing), kind: 'group',
+    visible: true, position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1],
+    material: { ...DEFAULT_MATERIAL }, // dummy, never rendered — see GroupObject's doc
+  }
+}
+
 export function serializeDoc(doc: SceneDoc): string {
   return JSON.stringify(doc)
 }
@@ -678,6 +695,7 @@ export function parseDoc(json: string): SceneDoc {
           rotation: vec3(o.rotation, [0, 0, 0]),
           scale: vec3(o.scale, [1, 1, 1]),
           material: parseMaterial(o.material),
+          ...(typeof o.parentId === 'string' ? { parentId: o.parentId } : {}),
           ...(om ? { motion: om } : {}),
         }
         if (o.kind === 'glb' && typeof o.url === 'string') {
@@ -708,9 +726,16 @@ export function parseDoc(json: string): SceneDoc {
             ...(content ? { content } : {}),
           }]
         }
+        if (o.kind === 'group') {
+          return [{ ...common, kind: 'group' as const }]
+        }
         return []
       })
     : []
+  // Runs on the fully-parsed set so both invariants see every surviving
+  // object: a group dropped by an older build leaves children pointing at a
+  // dead id, and any input at all could carry a cycle.
+  sanitizeHierarchy(objects)
   const doc: SceneDoc = {
     version: 1,
     objects,
