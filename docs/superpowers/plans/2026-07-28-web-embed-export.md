@@ -1039,7 +1039,12 @@ test.describe('embed export', () => {
   test('produces self-contained html with no external references', async ({ page }) => {
     const html = await page.evaluate(() => (window as any).__embedHarness.exportHtml())
     expect(html).toContain('<!doctype html>')
-    expect(html).not.toMatch(/(https?:)?\/\/[^\s"')]+/)
+
+    // Use the bundler's own detector, NOT a naive regex. A real export inlines a
+    // base64 poster, and base64 contains "//" constantly — a pattern that treats
+    // a bare "//" as an external reference fails on every genuine export.
+    const { externalRefs } = await import('../app/lib/embed/bundle')
+    expect(externalRefs(html)).toEqual([])
   })
 
   test('the exported file renders live, not just its poster', async ({ page, context }) => {
