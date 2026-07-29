@@ -1745,6 +1745,10 @@ export function drawWiredImageLayer(
   W: number,
   H: number,
   maskImg?: HTMLImageElement | HTMLCanvasElement | null,   // white = hidden, image pixel space
+  // Depth of field, matching what a local image layer gets. A wired image and an
+  // uploaded one must expose the same features — a gap between them reads as a bug.
+  dof?: DofEffect | null,
+  depthImg?: CanvasImageSource | null,
 ) {
   if (!img) return
   const iw = 'naturalWidth' in img ? img.naturalWidth : img.width
@@ -1769,6 +1773,22 @@ export function drawWiredImageLayer(
   const cAspect = W / H, iAspect = iw / ih
   let fitW: number, fitH: number
   if (iAspect > cAspect) { fitW = W; fitH = W / iAspect } else { fitH = H; fitW = H * iAspect }
+
+  // Defocus runs on the masked source, before the cloner stamps it — so every clone
+  // shows the same blur and the GPU pass runs once. Needs fitW, hence its position
+  // here: the pass renders at native size but must normalize by the ON-CANVAS width,
+  // or the blur would track the source file's resolution rather than what you see.
+  if (dof && depthImg && dofAvailable() && dofShouldRun(dof, true)) {
+    const out = applyDof(src, depthImg, dof, W, iw, ih, fitW * layer.scale)
+    if (out) {
+      // Copy out of the pass's canvas — it is reused between calls, so holding the
+      // reference would alias once a second DOF layer rendered.
+      const owned = document.createElement('canvas'); owned.width = iw; owned.height = ih
+      owned.getContext('2d')?.drawImage(out, 0, 0)
+      src = owned
+    }
+  }
+
   const op = WIRED_BLEND_OP[layer.blend] ?? 'source-over'
   // Linked cloner: stamp the layer once per clone (back-to-front; original last).
   // No cloner ⇒ a single identity transform ⇒ exactly one draw as before.

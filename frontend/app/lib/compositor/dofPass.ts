@@ -117,7 +117,12 @@ export function __dofRuns(): number {
 /**
  * @param W logical canvas width. `aperture` is normalized to it, so a 2x bake and the
  *          preview produce the same visual blur.
- * @param w,h pixel size of the surface being rendered.
+ * @param w,h pixel size of the surface being RENDERED.
+ * @param onCanvasW how wide that surface ends up ON the artboard, defaulting to `w`.
+ *        These differ for a WIRED layer: the pass runs at the image's native size, but
+ *        the image is drawn fitted-and-scaled, so normalizing by `w` would make the blur
+ *        track the source file's resolution instead of what you see. A local layer
+ *        renders at its on-canvas size, so the default is already correct there.
  */
 export function applyDof(
   color: CanvasImageSource,
@@ -126,6 +131,7 @@ export function applyDof(
   W: number,
   w: number,
   h: number,
+  onCanvasW?: number,
 ): HTMLCanvasElement | null {
   if (!dofShouldRun(fx, true)) return null
 
@@ -133,8 +139,9 @@ export function applyDof(
   const flat = new Float32Array(DOF_TAPS * 2)
   offsets.forEach((o, i) => { flat[i * 2] = o.x; flat[i * 2 + 1] = o.y })
 
-  // Radius is normalized to canvas width, then expressed in UV units of this surface.
-  const radiusUv = apertureRadiusPx(fx.aperture, W) / Math.max(1, w)
+  // Radius is normalized to canvas width, then expressed in UV units of this surface —
+  // using how wide the surface lands on the artboard, not how many pixels it renders at.
+  const radiusUv = apertureRadiusPx(fx.aperture, W) / Math.max(1, onCanvasW ?? w)
 
   return getPass().render(color, depth, w, h, {
     uFocus: fx.focus,

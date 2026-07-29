@@ -25,6 +25,26 @@ export type DepthRef = string | DepthSource
 const asSource = (ref: DepthRef): DepthSource =>
   typeof ref === 'string' ? { filename: ref } : ref
 
+/**
+ * Parse a wired layer's image URL back into a depth source.
+ *
+ * A wired layer identifies its image by a `/view?filename=…&subfolder=…&type=…` URL
+ * rather than a bare filename. Returns null for anything we cannot estimate depth from —
+ * notably the synthetic `live:<slot>` URL a live studio slot uses, which has no file
+ * behind it at all.
+ */
+export function depthSourceFromViewUrl(url: string | null | undefined): DepthSource | null {
+  if (!url || typeof url !== 'string') return null
+  if (!url.includes('?')) return null                 // covers `live:<slot>`
+  const q = new URLSearchParams(url.slice(url.indexOf('?') + 1))
+  const filename = q.get('filename') ?? ''
+  if (!filename) return null
+  const type = q.get('type') ?? 'input'
+  if (type !== 'input' && type !== 'output' && type !== 'temp') return null
+  const subfolder = q.get('subfolder') || undefined
+  return { filename, subfolder, type }
+}
+
 /** Cache key. Includes root and subfolder, so the same basename in output/ and input/
  *  are not confused for one another. */
 export function depthKey(ref: DepthRef): string {

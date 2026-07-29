@@ -4,16 +4,25 @@
 // Emits the FULL replacement chain array — the owner decides where it lives
 // (layer.effects for a layer, sailor_localFx for the document).
 //
-// `depthFilename` gates the Depth of Field section: it runs on the GPU against a depth
-// map, so it is only offered for image layers. Pass the layer's filename to enable it.
+// `depthSource` gates the Depth of Field section: it runs on the GPU against a depth
+// map, so it is only offered where one can exist. A bare filename means input/ (an
+// uploaded layer); a wired layer passes its full source.
+//
+// `only` restricts which sections are offered. Wired layers pass ['dof'] because the 2D
+// chain is not applied on their draw path yet — offering Vignette there would write a
+// setting that silently never renders.
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { defaultPostEffect, type PostEffect } from '~/lib/compositor/postEffects'
 import { dofAvailable, dofUnavailableReason } from '~/lib/compositor/dofPass'
 import {
-  depthMessageFor, depthStatusFor, onDepthChange, requestDepth,
+  depthMessageFor, depthStatusFor, onDepthChange, requestDepth, type DepthRef,
 } from '~/lib/compositor/depthRegistry'
 
-const props = defineProps<{ effects: PostEffect[]; depthFilename?: string }>()
+const props = defineProps<{
+  effects: PostEffect[]
+  depthSource?: DepthRef
+  only?: PostEffect['type'][]
+}>()
 const emit = defineEmits<{ (e: 'update', effects: PostEffect[]): void }>()
 
 // The registry is a plain module, not reactive — bump a counter on change so the
@@ -27,13 +36,13 @@ const glOk = computed(() => dofAvailable())
 const glReason = computed(() => dofUnavailableReason())
 const depthStatus = computed(() => {
   void depthTick.value
-  return props.depthFilename ? depthStatusFor(props.depthFilename) : 'idle'
+  return props.depthSource ? depthStatusFor(props.depthSource) : 'idle'
 })
 const depthMessage = computed(() => {
   void depthTick.value
-  return props.depthFilename ? depthMessageFor(props.depthFilename) : ''
+  return props.depthSource ? depthMessageFor(props.depthSource) : ''
 })
-function retryDepth() { if (props.depthFilename) requestDepth(props.depthFilename) }
+function retryDepth() { if (props.depthSource) requestDepth(props.depthSource) }
 
 interface ParamSpec { key: string; label: string; min: number; max: number; step: number }
 interface SectionSpec { type: PostEffect['type']; label: string; params: ParamSpec[]; colors?: [string, string][] }
@@ -75,7 +84,9 @@ const SECTIONS: SectionSpec[] = [
 ]
 
 // Depth of field needs a depth map, so it is offered only where one can exist.
-const sections = computed(() => SECTIONS.filter(s => s.type !== 'dof' || !!props.depthFilename))
+const sections = computed(() => SECTIONS.filter(s =>
+  (!props.only || props.only.includes(s.type))
+  && (s.type !== 'dof' || !!props.depthSource)))
 
 function fx(type: string): Record<string, any> | undefined {
   return props.effects.find(e => e.type === type) as Record<string, any> | undefined

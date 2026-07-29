@@ -4,7 +4,16 @@
  * mirrors how sailor_stackOrder lives in node.data.properties. Pure helpers so
  * the logic is unit-testable outside the SFC.
  */
-export interface WiredTreatment { maskedByKey?: string; showSource?: boolean; maskUrl?: string }
+export interface WiredTreatment {
+  maskedByKey?: string
+  showSource?: boolean
+  maskUrl?: string
+  /** Depth of field, the same shape a local layer carries in `LocalLayer.effects`.
+   *  Wired and uploaded images must expose the same features — a gap reads as a bug —
+   *  and this is the per-slot store that already exists for exactly that reason
+   *  (`maskUrl` was added here to give Smart Select and brush Mask wired parity). */
+  dof?: import('~/lib/compositor/postEffects').DofEffect
+}
 export type WiredTreatments = Record<string, WiredTreatment>
 
 export function readWiredTreatments(node: any): WiredTreatments {
@@ -68,4 +77,24 @@ export function setWiredMaskUrl(node: any, slot: number, url: string) {
 /** Every other present layer key (cross-source), excluding `selfKey`. */
 export function maskCandidateKeys(presentKeys: string[], selfKey: string): string[] {
   return presentKeys.filter(k => k !== selfKey)
+}
+
+/**
+ * Set/clear depth of field for a wired slot (1-based). Preserves other fields.
+ *
+ * Wired images get the same effects as uploaded ones — a feature that appears on one
+ * and not the other reads as a bug rather than a limitation.
+ */
+export function setWiredDof(node: any, slot: number, dof: WiredTreatment['dof'] | null) {
+  const key = `w:${slot}`
+  const cur = { ...readWiredTreatments(node) }
+  if (dof) {
+    cur[key] = { ...cur[key], dof }
+  } else {
+    const t = { ...cur[key] }
+    delete t.dof
+    if (Object.keys(t).length) cur[key] = t
+    else delete cur[key]   // no stale w:<slot> entries
+  }
+  writeWiredTreatments(node, cur)
 }

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import {
   depthStatusFor, depthImageFor, depthMessageFor, requestDepth, onDepthChange,
-  depthUrl, depthKey, __resetDepthRegistry,
+  depthUrl, depthKey, depthSourceFromViewUrl, __resetDepthRegistry,
 } from '~/lib/compositor/depthRegistry'
 
 beforeEach(() => { __resetDepthRegistry(); vi.restoreAllMocks() })
@@ -113,5 +113,32 @@ describe('requestDepth for a wired image', () => {
     requestDepth({ filename: 'same.png', type: 'output' })
     expect(depthStatusFor({ filename: 'same.png', type: 'output' })).toBe('loading')
     expect(depthStatusFor({ filename: 'same.png', type: 'input' })).toBe('idle')
+  })
+})
+
+describe('depthSourceFromViewUrl', () => {
+  it('parses a wired execution output', () => {
+    expect(depthSourceFromViewUrl('/view?filename=out_001.png&type=output'))
+      .toEqual({ filename: 'out_001.png', subfolder: undefined, type: 'output' })
+  })
+  it('carries a subfolder through', () => {
+    expect(depthSourceFromViewUrl('/view?filename=a.png&subfolder=sub&type=temp'))
+      .toEqual({ filename: 'a.png', subfolder: 'sub', type: 'temp' })
+  })
+  it('defaults a missing type to input', () => {
+    expect(depthSourceFromViewUrl('/view?filename=a.png')?.type).toBe('input')
+  })
+  it('returns null for a live studio slot — there is no file to read', () => {
+    expect(depthSourceFromViewUrl('live:3')).toBeNull()
+  })
+  it('returns null for junk rather than guessing', () => {
+    expect(depthSourceFromViewUrl('')).toBeNull()
+    expect(depthSourceFromViewUrl(null)).toBeNull()
+    expect(depthSourceFromViewUrl('/view?type=output')).toBeNull()      // no filename
+    expect(depthSourceFromViewUrl('/view?filename=a.png&type=etc')).toBeNull()
+  })
+  it('round-trips into a usable key', () => {
+    const src = depthSourceFromViewUrl('/view?filename=a.png&type=output')!
+    expect(depthKey(src)).toBe(depthKey({ filename: 'a.png', type: 'output' }))
   })
 })

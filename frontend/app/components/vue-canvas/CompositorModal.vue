@@ -11,7 +11,7 @@ import {
   drawLocalLayer, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages, paintLayerStack, layerMaskRef, localLayerBox, createBrushLayer,
   hasAnimatedShaderFill,
 } from '~/composables/useCompositorLayers'
-import { readWiredTreatments, setWiredMask, setWiredMaskShowSource, setWiredMaskUrl, maskCandidateKeys } from '~/composables/useWiredTreatments'
+import { readWiredTreatments, setWiredMask, setWiredMaskShowSource, setWiredMaskUrl, setWiredDof as writeWiredDof, maskCandidateKeys } from '~/composables/useWiredTreatments'
 import { useLocalLayerEditor, resizableKind } from '~/composables/useLocalLayerEditor'
 import {
   allGroupIds, childGroupIds, layersInGroup, groupDisplayName, isDescendantOrSelf,
@@ -39,7 +39,9 @@ import type { Cloner } from '~/composables/useCloner'
 import { resolveWiredSourceKind } from '~/lib/studio/frameResolve'
 import { frameSourceEpoch, type StudioFrameSource } from '~/lib/studio/frameSource'
 import { deriveMasterClock, slotPhase01 } from '~/lib/compositor/masterClock'
-import { onDepthChange } from '~/lib/compositor/depthRegistry'
+import {
+  onDepthChange, depthImageFor, requestDepth, depthSourceFromViewUrl,
+} from '~/lib/compositor/depthRegistry'
 import { imageUrlForNode } from '~/lib/canvas/nodeImage'
 import { DEFAULT_FRAME_MOTION, type FrameMotion } from '~/lib/motion/types'
 import { LIVE_FIELD_CEILING } from '~/lib/shaderfill/descriptor'
@@ -1374,8 +1376,36 @@ function stopLive() { cancelAnimationFrame(liveRaf); liveRaf = 0 }
 watch(needsLiveLoop, startLive)
 onMounted(startLive)
 onBeforeUnmount(stopLive)
+/** Depth source for a wired slot, or null when there is no file behind it (a live
+ *  studio slot). Kept here so the render path and the panel agree on one answer. */
+function wiredDepthSource(layer: Layer) {
+  return depthSourceFromViewUrl(layer.url)
+}
+
+function wiredDof(slot: number) {
+  return wiredTreatments.value[wiredKey(slot)]?.dof ?? null
+}
+function setWiredDof(slot: number, dof: DofEffect | null) {
+  writeWiredDof(compositor.value, slot, dof)
+  renderStack()
+}
+
 function drawWiredLayer(ctx: CanvasRenderingContext2D, layer: Layer, W: number, H: number) {
-  drawWiredImageLayer(ctx, wiredImageEls.value[layer.slot], layer, W, H, wiredMaskEls.value[layer.slot] ?? null)
+  // Depth of field, matching a local image layer. Depth is read SYNCHRONOUSLY and the
+  // layer renders through unblurred until it arrives, exactly as on the local path.
+  const dof = wiredTreatments.value[wiredKey(layer.slot)]?.dof ?? null
+  let depth: HTMLImageElement | null = null
+  if (dof?.visible !== false && dof) {
+    const src = wiredDepthSource(layer)
+    if (src) {
+      depth = depthImageFor(src)
+      if (!depth) requestDepth(src)
+    }
+  }
+  drawWiredImageLayer(
+    ctx, wiredImageEls.value[layer.slot], layer, W, H,
+    wiredMaskEls.value[layer.slot] ?? null, dof, depth,
+  )
 }
 
 // ── Per-layer visibility & lock ──────────────────────────────────────────────
@@ -5020,7 +5050,7 @@ onUnmounted(() => {
                admit both — passing only isChainEffect would silently drop dof. -->
           <PostEffectsControls class="mt-3"
             :effects="(((selectedLocal as any).effects || []).filter(isPanelEffect) as any)"
-            :depth-filename="selectedLocal?.kind === 'image' ? (selectedLocal as any).filename : undefined"
+            :depth-source="selectedLocal?.kind === 'image' ? (selectedLocal as any).filename : undefined"
             @update="(fx: any[]) => setLocal(selectedLocal!.id, { effects: [...((selectedLocal as any).effects || []).filter((e: any) => !isPanelEffect(e)), ...fx] } as any)" />
 
           <!-- Layer mask: clip this layer to another layer's silhouette (cross-source) -->
@@ -5108,6 +5138,18 @@ onUnmounted(() => {
           </div>
         </div>
         <div v-if="selected" class="inspector-body p-4 flex flex-col gap-4 flex-1 min-h-0 overflow-y-auto">
+          <!-- Depth of field, same as an uploaded image gets. Hidden for a live studio
+               slot, which has no file to estimate depth from. Only 'dof' is offered:
+               the 2D chain does not run on the wired draw path, so the rest would be
+               settings that silently never render. -->
+          <div v-if="wiredDepthSource(selected)">
+            <PostEffectsControls
+              :effects="wiredDof(selected.slot) ? [wiredDof(selected.slot)!] : []"
+              :depth-source="wiredDepthSource(selected)!"
+              :only="['dof']"
+              @update="(fx: any[]) => setWiredDof(selected!.slot, fx.find(e => e.type === 'dof') ?? null)" />
+          </div>
+
           <div>
             <div class="panel-label mb-1.5">Position</div>
             <div class="flex gap-2">
