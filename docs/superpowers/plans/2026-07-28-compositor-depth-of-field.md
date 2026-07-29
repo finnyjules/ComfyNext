@@ -324,7 +324,12 @@ The model call is isolated behind a pure, testable cache module so CI never down
 - Produces:
   - `depthCacheKey(bytes: Uint8Array): string` — 16-hex content hash.
   - `depthCacheName(key: string): string` — `depth_<key>.png`.
-  - `POST /api/depth/estimate` with body `{ filename: string }` → `{ depthFilename: string, cached: boolean }`.
+  - `POST /api/depth/estimate` with body `{ filename: string }` → `{ depthFilename: string, subfolder: string, cached: boolean }`.
+
+**`subfolder` is returned separately, not joined into `depthFilename`.** `/view` proxies
+to ComfyUI, which takes `subfolder` as its own query param — a slash inside `filename`
+does not resolve. The client URL is
+`/view?filename=<depthFilename>&subfolder=<subfolder>&type=input`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -401,8 +406,13 @@ Expected: PASS (5 tests).
 - [ ] **Step 5: Install the runtime**
 
 ```bash
-cd frontend && npm install @huggingface/transformers
+cd frontend && pnpm add @huggingface/transformers
 ```
+
+**This project uses pnpm, not npm.** `npm install` crashes on the pnpm-structured
+`node_modules` with `Cannot read properties of null (reading 'matches')`. pnpm will warn
+that it skipped build scripts for `onnxruntime-node`, `protobufjs` and `sharp` — on
+darwin/arm64 the native binaries ship prebuilt, so no approval is needed.
 
 - [ ] **Step 6: Allowlist the route**
 
