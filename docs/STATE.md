@@ -46,6 +46,34 @@ The schema is a **superset with per-consumer opt-in** (`agent: false` withholds 
 
 Still to do in Act 1: the generic inspector renderer (Gradient still has 432 lines of hand-written markup), new `ControlSpec` kinds (`segmented`, `repeater`, `custom`), and exposing the 11 now-declared Shape controls to the agent. Known misfits remain: Texture's colour-role system (`texturefx/roles.ts`), Space Type's scene-sequencing motion model.
 
+## Web Embed Export — LANDED 2026-07-28
+
+First **non-pixel, non-video** export: a Shader Studio piece exports as one self-contained
+`.html` file that renders **live** in a browser — shipping the renderer plus a config blob
+instead of frames. Resolution-independent, kilobytes of code (17.6 KB adapter bundle), real
+transparency available per-surface, and a path to scroll/pointer reactivity later.
+
+Architecture is the factory pattern again: `lib/embed/contract.ts` declares one contract
+(`mount` / `setTime(t01)` / `setSize` / `destroy`), `surfaces.ts` is a one-line-per-surface
+registry, and the Shader adapter calls the studio's **own** `composePasses` and `applyMotion`
+rather than reimplementing them — one renderer of record, no second render surface to drift.
+`vite.embed.config.ts` builds each adapter to a standalone IIFE; `bundle.ts` assembles config
++ inlined poster + adapter JS + an ES5 clock loop into a single downloadable file.
+
+**Delivery is download-only.** Sailor is local-first (no deploy config; `127.0.0.1`), so a
+published URL is meaningless to anyone else and blocked as mixed content inside HTTPS pages.
+Figma Slides is a documented **non-goal** — it cannot embed arbitrary URLs (not even YouTube)
+and does not support video transparency; see the spec for the evidence.
+
+Tests: 14 Playwright across three suites (contract / export / three-layer parity), 36 unit.
+The parity gate is layered adapter↔studio, export↔adapter, plus a corruption test proving the
+comparison can fail — because every export carries a poster fallback, so a dead render path
+still *looks* right.
+
+Spec: [specs/2026-07-28-web-embed-export-design.md](superpowers/specs/2026-07-28-web-embed-export-design.md) ·
+Plan: [plans/2026-07-28-web-embed-export.md](superpowers/plans/2026-07-28-web-embed-export.md) ·
+Companion (unbuilt): [transparent video export](superpowers/specs/2026-07-28-transparent-video-export-design.md)
+
 > ## Shader as Fill — status, corrected twice on 2026-07-26
 >
 > This entry was first written as "LANDED", which was **wrong**: a whole-branch review found the effect
