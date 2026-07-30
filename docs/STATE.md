@@ -13,7 +13,7 @@ Legend: **bake** = render/export path · **motion** = animatable · **inspector*
 | Surface | bake | motion | inspector | agent | engine LOC |
 |---|---|---|---|---|---|
 | Space Type | ✅ + clip bake | ✅ timeline clip | ✅ | ✅ descriptor | 11,202 |
-| Vector Type Studio | ✅ PNG + SVG export (9 fill types, 6 as real vector; multi-fill/stroke stack + extrude + skew/arc) | ✅ full incl. stagger + preset gallery | ✅ | ✅ descriptor (unverified live) | — |
+| Vector Type Studio | ✅ PNG + SVG export (9 fill types, 6 as real vector; multi-fill/stroke stack + extrude + skew/arc) | ✅ full incl. stagger, preset gallery, **colour tracks**, and 4 per-glyph effects (blink · axis scatter · grade flicker · draw-on) | ✅ | ✅ descriptor (unverified live) | — |
 | Scene3D Studio | ✅ 3-pass + mp4 | ✅ own timeline (groups animate) | ✅ + object tree | ❌ | ~5,900 |
 | Compositor / Frame | ✅ | ✅ motion clips | ✅ | ✅ commands | 1,667 (+1,041 motion) |
 | Timeline (NLE) | ✅ webm/mp4 + server | ✅ native | ✅ | ❌ | shared/timeline |
@@ -64,6 +64,75 @@ New pure module `lib/scene3d/hierarchy.ts` owns every hierarchy operation (`orde
 - Every blocking item in the final review was a module no task had opened, still assuming a flat list: opacity traversed whole subtrees (with insertion-order-dependent winners, giving the same document opposite bugs either side of a save), motion templates double-wrote to groups and their children, and `retryGlb` dropped `parentId`.
 
 **Known gap:** the multi-select gizmo *drag* path has no runtime verification — synthetic pointer events do not drive `TransformControls`.
+
+## Vector Type — seven animations, three of them random (landed 2026-07-29)
+
+Commits `0713fec7d`, `241caba3e`, `f7b5103ae`, `1092f8910`, `31d93b92a`, `3b11eec06`, plus
+two track presets that needed no engine at all. Plan:
+[2026-07-28-vector-type-animations.md](superpowers/plans/2026-07-28-vector-type-animations.md).
+
+**Two were free.** The studio's guarantee is `f(cfg, t) → paths`, so every declared slider
+already animates: an **extrude light sweep** is one `appearance.<id>.angle` track (the block
+shadow's ink centroid really orbits — 69.7 × 72.1 px of centroid travel over the turn, against a
+0.0000 ink-XOR broken control), and **misregistration** is two opposed depth-1 extrude plates
+with `distance` animated (plate separation, measured on isolated plates, is exactly
+`2 × distance` at every sample). The plan's route to misregistration —
+per-layer `glyph.dx` — *does not exist and cannot*: `frame.transforms[i]` is resolved once per
+glyph and the whole appearance stack paints under it. Both shipped as one-click track presets.
+
+**Three are seeded randomness**, which is the interesting part, because this studio's promise
+is that the preview, the PNG bake, the video bake and the SVG export draw the same frame at the
+same `t`. None of them rolls a die. Time enters as a **quantised bucket** and the value is a
+pure hash of `(unit, seed, channel, bucket)`:
+
+- **Blink** — letters *or whole words* drop out and come back on a beat. Word grouping is
+  computed once per frame from the shaped run (`words.ts`), because glyph indices and character
+  indices disagree the moment a ligature forms. A unit is lit at phase 0 by construction, so a
+  beat edge can never fall inside a dark window — the one instant two clocks could disagree on.
+- **Random per-glyph axis scatter** (the user's own idea) — every letter at its own position on
+  one variable axis, settling or wandering. On Roboto Flex's real 13-axis file, `wght` deltas of
+  +190 / −176 / +76 / −188 at t=0 collapsing to exactly 0 when settled.
+- **Grade flicker** — an axis preset on `GRAD`, weight *without reflow*. Pen positions, advances
+  and run width are bit-identical across the whole cycle while up to **23.6 %** of the ink's own
+  union changes; a `wght` loop of the same shape moves the run width 3385.2 → 3326.2, the control.
+
+**Draw-on** is the fourth new effect and the one that had to stay real vector: letters draw
+themselves via genuine `stroke-dasharray` / `stroke-dashoffset` on the same `<path>` that holds
+the letterform — no clip, no mask, no outlining a partly-drawn shape. It needed a per-glyph
+arc-length table (`pathLength.ts`, quadratic-aware because every TrueType font is), and its own
+`glyphStackLeaf` so a staggered draw-on reads *its own* glyph's clock rather than the run's.
+
+**Colour motion tracks** closed a gap that had blocked a whole family. `MotionTrack.from`/`to`
+are numbers, so there was no path from a track to a fill — which is why the KineticType migration
+dropped `color-cycle`. A track is now a colour track iff it carries `fromColor`/`toColor`;
+`lib/studio/track.ts` gained **one additive export**, `trackProgress` (the eased 0..1 `trackValue`
+already computed internally), and `trackValue` is one line over it. Mixing is OKLab by default —
+sRGB's red→blue midpoint lands *below both endpoints* in lightness, which reads as the animation
+dying in the middle — with OKLCH for hue rotations.
+
+**Verification (Task 8).** Every effect measured on real rasterised pixels (resvg over the
+studio's own SVG export) with a broken control beside each claim and an ink-XOR metric carried
+next to every count, because a centroid or a pixel tally is blind to geometry. Determinism holds
+end to end: the same frame twice is byte-identical, a JSON round-tripped config renders the same
+bytes, canvas and SVG agree exactly on colour, alpha and dash at every sampled `t`, and the two
+bake clocks (`i/fps` and `(i/N)·duration`) are float-equal on all 120 frames of a 4 s / 30 fps
+clip. All of it survives an arc and a stagger together — 30 distinct frames out of 30 with every
+effect on at once. The three seeded channels are uncorrelated on 420 glyph-frames (blink×scatter
+−0.0002, blink×flicker −0.0660, scatter×flicker −0.0387; the same channel against itself reads
+1.0000). The shared engine is untouched: `trackValue` is **bit-identical to its pre-change self
+over 200,000 random samples**.
+
+**Open, honestly:**
+- Live *playback* timing was never measured. The Browser pane throttles rAF to zero, so the
+  studio's continuous clock cannot be driven there; every timing claim above is headless. What
+  *was* driven by hand in the running app: the Motion tab, the blink and scatter sliders (whose
+  sub-controls appear as the amount is raised), the Colour Cycle tile lighting up once the fill
+  has saturation, and the colour popover — a typed hex reaches the preview as 9,530 pixels of
+  exactly that value.
+- `trackValue` diverges from its old self in exactly one unreachable case: endpoints whose
+  *difference* overflows to Infinity (`|to − from| > 1.8e308`) now return `NaN`.
+- The extrude presets remain the only stack-motion presets; nothing yet drives a stroke's
+  `width` or an extrude's `taper` from a preset.
 
 ## Web Embed Export — LANDED 2026-07-28
 
