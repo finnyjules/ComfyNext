@@ -53,6 +53,9 @@ import {
   type VtLayerKind,
   type VtMotionTrack,
 } from './config'
+import { isFill } from '~/lib/compositor/paint'
+import type { ColorMixSpace } from '~/lib/color/mix'
+import { hexToOklch, oklchToHexInGamut, parseHexA } from '~/lib/color/convert'
 
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
 
@@ -61,12 +64,29 @@ function track(path: string, from: number, to: number, over: Partial<VtMotionTra
   return { path, from, to, easing: 'linear', loops: 1, hold: 0, cycleOffset: 0, delay: 0, ...over }
 }
 
+/**
+ * One COLOUR track. `from`/`to` are the 0..1 progress domain — see
+ * `VtMotionTrack.from` — so every timing knob still reads the same.
+ *
+ * The space is passed in rather than defaulted, because the default is right for
+ * a mix between two chosen colours and WRONG for a hue rotation: a straight line
+ * in OKLab from a colour to its own opposite hue passes through the middle of the
+ * a/b plane, which is GREY. Measured on `#ff0000` → its opposite: OKLab's midpoint
+ * is `#b78087` at chroma 0.069 (a dusty pink), OKLCH's is `#b468eb` at 0.197. So
+ * a cycle asks for `oklch` explicitly.
+ */
+function colorTrack(
+  path: string, fromColor: string, toColor: string, space: ColorMixSpace, over: Partial<VtMotionTrack> = {},
+): VtMotionTrack {
+  return { ...track(path, 0, 1), fromColor, toColor, space, ...over }
+}
+
 /** What a preset is handed: the layers it matched, back to front, and the clip. */
 export interface VtTrackPresetContext {
   layers: readonly VtAppearanceLayer[]
   /** Clip length in seconds. Present for a preset whose values depend on it;
-   *  neither of the first two does, and that is a property worth keeping — a
-   *  track's own `loops` already expresses "twice per clip". */
+   *  none of the three shipped presets does, and that is a property worth
+   *  keeping — a track's own `loops` already expresses "twice per clip". */
   duration: number
 }
 
@@ -102,6 +122,57 @@ export const VT_MISREGISTRATION_DRIFT = 8
 
 const usableExtrude = (l: VtAppearanceLayer): boolean =>
   l?.kind === 'extrude' && isNum(l.depth) && l.depth >= 1
+
+/**
+ * A fill layer whose `paint.a` is a colour a track can drive.
+ *
+ * Mirrors `controls.ts`'s `fillIsFill` gate — a SHADER fill's own `a` is never
+ * read (`effectiveTilePaint` unwraps to `shader.input` and paints that), so
+ * animating it would store a value, survive the merge and change not one pixel.
+ * That is the dead-control failure, one level out, exactly as `usableExtrude`
+ * guards a `depth: 0` extrude.
+ */
+const usableColorFill = (l: VtAppearanceLayer): boolean =>
+  l?.kind === 'fill' && isFill(l.paint) && l.paint.type !== 'shader'
+
+/** The layer's own fill colour, as an opaque long-form hex, or `null`. */
+const fillColorOf = (l: VtAppearanceLayer): string | null => {
+  const a = isFill(l?.paint) ? l.paint.a : null
+  return typeof a === 'string' && a.trim() !== '' ? parseHexA(a).hex : null
+}
+
+/**
+ * The OPPOSITE HUE of a colour, at the same lightness and as much of its chroma
+ * as sRGB can hold.
+ *
+ * Derived from what the user already picked rather than invented: the design
+ * decides where the cycle goes, this only decides how far round. 180° is the
+ * whole point — it is the farthest a hue can travel, so a pingpong across it and
+ * back covers the wheel in two halves and reads as a cycle rather than a nudge.
+ *
+ * OKLCH, not HSV: a hue rotation there keeps perceived LIGHTNESS, so the word
+ * does not brighten and dim as it cycles (HSV's yellow is far lighter than its
+ * blue at the same nominal value).
+ *
+ * ## `oklchToHexInGamut`, and it is not a detail — it was MEASURED
+ *
+ * Most saturated sRGB colours have no equally-saturated opposite: the gamut is
+ * lopsided. With the ordinary per-channel clamp, `#0000ff` rotated 180° came back
+ * **129° away** — a third of the rotation silently eaten — and `#ff0000` came
+ * back 199° away and 9 % lighter. Reducing chroma to fit instead keeps the hue
+ * exact, which is the one property this function is named for.
+ *
+ * A near-grey has no hue to oppose and is refused by the preset's `usable`.
+ */
+export function vtOppositeHue(hex: string): string {
+  const [L, C, H] = hexToOklch(hex)
+  return oklchToHexInGamut(L, C, (H + 180) % 360)
+}
+
+/** Below this there is no hue to rotate — the opposite of grey is grey, and a
+ *  preset that visibly did nothing would be worse than one that is greyed out
+ *  with a reason. */
+const CYCLE_MIN_CHROMA = 0.02
 
 const PRESETS: VtTrackPreset[] = [
   {
@@ -148,6 +219,36 @@ const PRESETS: VtTrackPreset[] = [
       track(`${VT_STACK_PREFIX}${l.id}.distance`, 0,
         isNum(l.distance) && l.distance > 0 ? l.distance : VT_MISREGISTRATION_DRIFT,
         { easing: 'pingpong' })),
+  },
+  {
+    id: 'colour-cycle',
+    label: 'Colour Cycle',
+    pitch: 'The fill travels round to the opposite hue and back',
+    kind: 'fill',
+    minLayers: 1,
+    // Not merely "is a fill": a shader fill's `a` is never painted, and a
+    // near-grey has no hue to rotate. Both would be a tile that lands a row in
+    // the timeline and changes nothing.
+    usable: l => usableColorFill(l) && (() => {
+      const hex = fillColorOf(l)
+      return !!hex && hexToOklch(hex)[1] >= CYCLE_MIN_CHROMA
+    })(),
+    requirement: 'a solid or gradient paint in a colour with some saturation',
+    // PING-PONG from the colour the user already chose, so frame 0 is their own
+    // design and a still bake captures it — the same rule Misregistration
+    // follows, for the same reason. The far end is that colour's opposite hue at
+    // the SAME lightness and chroma, which is why this reads as the word
+    // travelling round the wheel rather than as it getting brighter and dimmer.
+    //
+    // OKLCH — a hue ROTATION, so the colour keeps its chroma all the way round.
+    // The track default (OKLab, a straight line) is the wrong space for THIS
+    // pair specifically and goes grey in the middle; `colorTrack`'s own note
+    // carries the measured numbers.
+    build: ({ layers }) => layers.flatMap((l) => {
+      const hex = fillColorOf(l)
+      if (!hex) return []
+      return [colorTrack(`${VT_STACK_PREFIX}${l.id}.paint.a`, hex, vtOppositeHue(hex), 'oklch', { easing: 'pingpong' })]
+    }),
   },
 ]
 
@@ -202,9 +303,13 @@ export function vtTrackPresetOffer(
   if (layers.length >= preset.minLayers) return { preset, layers, available: true }
 
   const ofKind = enabled.filter(l => l?.kind === preset.kind)
-  const noun = preset.kind === 'extrude' ? 'extrude layer' : `${preset.kind} layer`
+  const noun = `${preset.kind} layer`
+  // "an extrude layer", "a fill layer" — the article is derived rather than
+  // hard-coded, because this sentence grew a second kind the moment a fill preset
+  // existed and "Add an fill layer" is the kind of thing that ships.
+  const article = /^[aeiou]/.test(noun) ? 'an' : 'a'
   const reason = !ofKind.length
-    ? `Add an ${noun} — this needs ${preset.minLayers === 1 ? 'one' : preset.minLayers} to drive.`
+    ? `Add ${article} ${noun} — this needs ${preset.minLayers === 1 ? 'one' : preset.minLayers} to drive.`
     : layers.length < ofKind.length
       ? `This ${noun} needs ${preset.requirement} before there is anything to animate.`
       : `Add ${preset.minLayers - layers.length} more ${noun}${preset.minLayers - layers.length === 1 ? '' : 's'}.`
@@ -269,6 +374,11 @@ export function vtTrackPresetActive(cfg: VectorTypeConfig, presetId: unknown): b
     duration: isNum(cfg?.motion?.duration) ? cfg.motion.duration : 4,
   })
   const have = Array.isArray(cfg?.motion?.tracks) ? cfg.motion.tracks : []
+  // A COLOUR track's `from`/`to` are 0 and 1 on EVERY colour track, so comparing
+  // only those would make one colour preset read as active whenever any other
+  // had been applied to the same leaf. The endpoints that identify it are the two
+  // colours and the space they are mixed in.
   return wanted.length > 0 && wanted.every(w => have.some(h =>
-    h?.path === w.path && h.from === w.from && h.to === w.to && h.easing === w.easing))
+    h?.path === w.path && h.from === w.from && h.to === w.to && h.easing === w.easing
+    && h.fromColor === w.fromColor && h.toColor === w.toColor && h.space === w.space))
 }

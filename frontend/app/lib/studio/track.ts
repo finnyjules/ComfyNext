@@ -49,14 +49,35 @@ function ease(p: number, kind: TrackEasing): number {
 }
 
 /**
- * Normalized progress (0..1) of a track at time `t` seconds within a clip of
- * `duration` seconds, mapped onto the track's `from`..`to`. Honors loops, delay,
- * cycle offset, and hold-at-extremes.
+ * The EASED PROGRESS of a track at time `t`, 0..1 — everything `trackValue`
+ * knows about timing, with nothing said about what is being interpolated.
+ *
+ * Split out so a track can drive something that is not a number. `from`/`to` are
+ * numbers and always will be (`TrackTiming` is the shape three studios' configs
+ * are structurally assignable to, and widening it would be a breaking change to
+ * all of them), so a COLOUR track cannot express its endpoints there — it stores
+ * its own pair and asks this for the 0..1 to mix at. See
+ * `lib/vectortype/motion.ts`'s `trackColor`.
+ *
+ * ADDITIVE, deliberately: `trackValue` below is now one line of arithmetic over
+ * this function and returns the same numbers, so its downstream consumers —
+ * Gradient Studio (`gradientfx/motion.ts`) and Scene3D (`scene3d/motion/apply.ts`),
+ * plus Vector Type's own blink / scatter / preset evaluators — are untouched.
+ * (Shader Studio is NOT downstream: `shaderstudio/motion.ts` still carries its own
+ * copy of this arithmetic. Worth knowing before "the shared engine" is assumed to
+ * mean all four.) The one behavioural nuance: a not-yet-started track used to
+ * return `track.from` and now returns `from + (to − from)·0`, which differs only
+ * in the sign of zero.
+ *
+ * This function reads NEITHER `from` NOR `to`, including on the not-yet-started
+ * branch, so a track with no meaningful numeric range still gets correct timing.
+ *
+ * Honors loops, delay, cycle offset, and hold-at-extremes.
  */
-export function trackValue(track: TrackTiming, t: number, duration: number): number {
+export function trackProgress(track: TrackTiming, t: number, duration: number): number {
   const d = Math.max(0.001, duration)
   const local = (t - (track.delay || 0)) / d
-  if (local < 0) return track.from
+  if (local < 0) return 0
   const loops = Math.max(1, track.loops || 1)
   const phase = local * loops + (track.cycleOffset || 0)
   // A single non-pingpong play holds at its end value; looping / pingpong wrap so
@@ -74,6 +95,14 @@ export function trackValue(track: TrackTiming, t: number, duration: number): num
     const active = 1 - 2 * hold
     cyc = active <= 0 ? 0 : clamp01((cyc - hold) / active)
   }
-  const e = ease(cyc, track.easing)
-  return track.from + (track.to - track.from) * e
+  return ease(cyc, track.easing)
+}
+
+/**
+ * Normalized progress (0..1) of a track at time `t` seconds within a clip of
+ * `duration` seconds, mapped onto the track's `from`..`to`. Honors loops, delay,
+ * cycle offset, and hold-at-extremes.
+ */
+export function trackValue(track: TrackTiming, t: number, duration: number): number {
+  return track.from + (track.to - track.from) * trackProgress(track, t, duration)
 }

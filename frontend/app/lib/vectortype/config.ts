@@ -36,6 +36,10 @@ import { BLEND_MODES, type BlendKind } from '~/lib/studio/blend'
 // uses it to lift a positional motion track onto the id addressing every other
 // persisted reference to a layer already uses (see `migrateStackTrackPaths`).
 import { toIdPath } from '~/lib/studio/idPath'
+// Pure colour arithmetic, zero imports beyond `lib/color/convert` — the schema
+// needs the SPACE NAMES and the validator, so a stored space that no longer
+// exists falls back rather than reaching a renderer as an unknown branch.
+import { DEFAULT_COLOR_MIX_SPACE, isColorMixSpace, type ColorMixSpace } from '~/lib/color/mix'
 // The blink block's shape, defaults and domains live with the evaluator that
 // reads them, not here — `./blink.ts` imports nothing but `./random`,
 // `./words`, a shared track helper and this module's TYPES, so the dependency
@@ -265,8 +269,46 @@ export type VtEasing = 'linear' | 'pingpong' | 'easeinout'
 export interface VtMotionTrack {
   /** Absolute dotted path into VectorTypeConfig, e.g. `axes.wght`. */
   path: string
+  /**
+   * The numeric range, and the PROGRESS DOMAIN for a colour track.
+   *
+   * A colour track (see `fromColor` below) stores `from: 0, to: 1` and its
+   * endpoints in the colour fields. That is not a placeholder: `trackProgress`
+   * reads neither of these, so the pair genuinely describes the 0..1 the mix is
+   * taken at, and every timing knob — easing, loops, hold, cycleOffset, delay —
+   * means exactly what it means on a numeric track.
+   */
   from: number
   to: number
+  /**
+   * ## COLOUR TRACKS — the three fields that make one, all optional
+   *
+   * Present TOGETHER or not at all. A track is a colour track iff `fromColor`
+   * and `toColor` both parse as hex; `mergeTrack` writes all three or none, so a
+   * numeric track's saved JSON is byte-identical to what it was before colour
+   * existed and no consumer has to defend against a half-colour track.
+   *
+   * ## Why they are optional fields on the ONE track type
+   *
+   * The alternative was a discriminated `kind: 'number' | 'color'` union, which
+   * costs a branch at every one of the ~15 places that reads a track (the
+   * timeline rows, `mergeTrack`, `migrateStackTrackPaths`, `pruneStackTracks`,
+   * `listRemap`, `vtApplyTrackPreset`, `glyphStackLeaf`, the agent's writer …)
+   * and buys nothing those places need — they all care about `path` and timing,
+   * which are shared. It would also break `VT_TRACK_IS_GRADIENT_COMPATIBLE`
+   * below, and with it the reuse of ONE easing engine across three studios.
+   *
+   * Extra properties do not affect structural assignability, so the guard still
+   * compiles and `trackValue`/`trackProgress` still accept this shape unchanged.
+   *
+   * `#rrggbb` or `#rrggbbaa`, matching every other colour this studio stores.
+   */
+  fromColor?: string
+  toColor?: string
+  /** Which space the mix is taken in. Absent means `DEFAULT_COLOR_MIX_SPACE`
+   *  (OKLab) — a naive RGB lerp drops through a dark, desaturated trough, and
+   *  `lib/color/mix.ts` carries the measured numbers. */
+  space?: ColorMixSpace
   easing: VtEasing
   /** Cycles within the clip; >= 1. */
   loops: number
@@ -1285,6 +1327,25 @@ function mergeAxes(raw: unknown): Record<string, number> {
   return out
 }
 
+/**
+ * `#abc` / `#aabbcc` / `#aabbccdd` → the lower-case long form; anything else →
+ * null.
+ *
+ * REJECTS rather than clamps, which is the opposite of what `clampHex` does (it
+ * returns black for junk) and the difference matters here: a track whose colour
+ * silently became black would animate the fill to black, which reads as a
+ * rendering bug. A track whose colour fails to parse is not a colour track at
+ * all, so it keeps animating whatever its numeric `from`/`to` say — nothing, for
+ * a colour LEAF, which is visible and recoverable.
+ */
+function mergeTrackColor(v: unknown): string | null {
+  if (typeof v !== 'string') return null
+  const s = v.trim().toLowerCase()
+  if (/^#[0-9a-f]{6}$/.test(s) || /^#[0-9a-f]{8}$/.test(s)) return s
+  if (/^#[0-9a-f]{3}$/.test(s)) return `#${s[1]}${s[1]}${s[2]}${s[2]}${s[3]}${s[3]}`
+  return null
+}
+
 /** Rebuild one motion track, or null if it targets nothing. A track without a
  *  path cannot be evaluated or edited — it would sit in the timeline forever
  *  doing nothing — so it is dropped rather than defaulted to some path. */
@@ -1298,7 +1359,7 @@ function mergeTrack(raw: unknown, remap?: (path: string) => string | null): VtMo
   // dropped, for the same reason a path-less track is.
   const path = remap ? remap(raws) : raws
   if (!path) return null
-  return {
+  const out: VtMotionTrack = {
     path,
     from: num(o.from, 0),
     to: num(o.to, 0),
@@ -1308,6 +1369,19 @@ function mergeTrack(raw: unknown, remap?: (path: string) => string | null): VtMo
     cycleOffset: clamp(num(o.cycleOffset, 0), 0, 1),
     delay: Math.max(0, num(o.delay, 0)),
   }
+  // ALL THREE COLOUR FIELDS OR NONE. A track carrying only `fromColor` is not
+  // half a colour track, it is a numeric track with a stray key — and writing
+  // the stray key back would make every consumer test `both` rather than
+  // `either`, which is exactly the kind of half-state this rebuild exists to
+  // make unreachable. `space` falls back (it is a name, not a point on a scale).
+  const fromColor = mergeTrackColor(o.fromColor)
+  const toColor = mergeTrackColor(o.toColor)
+  if (fromColor && toColor) {
+    out.fromColor = fromColor
+    out.toColor = toColor
+    out.space = isColorMixSpace(o.space) ? o.space : DEFAULT_COLOR_MIX_SPACE
+  }
+  return out
 }
 
 /** Rebuild the stagger block. Same strictness as everything else here: an

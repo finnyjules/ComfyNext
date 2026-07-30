@@ -35,6 +35,27 @@
  * JSON. So everything below tolerates a missing `motion`, a missing `stagger`,
  * a non-array `tracks`, and a track whose numbers are not numbers.
  *
+ * ## COLOUR TRACKS, and where they stop
+ *
+ * A track may drive a COLOUR leaf as well as a number: it carries its own
+ * `fromColor`/`toColor` and a mix `space`, and `applyMotion` writes the mixed hex
+ * string through the very same path resolution the numeric branch uses. Nothing
+ * downstream needed a change — `setByPath` and `setByIdPath` always took
+ * `unknown`, and both renderers read the paint off the post-`applyMotion` config
+ * — which is also why canvas and SVG cannot disagree about an animated colour:
+ * `vectorTypeFrame` is the single place either of them gets a config from.
+ *
+ * WHERE IT STOPS: a colour is a RUN-LEVEL quantity here, so a `stagger` does not
+ * reach it. The appearance stack is resolved ONCE per frame — `vtPaintLayers`
+ * hoists each layer's `runStyle` (a `CanvasGradient` for the non-solid arms)
+ * before the glyph loop, because building one per glyph per layer is the cost
+ * that loop exists to avoid. `glyphStackLeaf` below is the ONE exception and
+ * documents why the draw-on earns it: its dash is already a per-glyph quantity by
+ * construction. Per-glyph hue drift is therefore a real further piece of work in
+ * `canvas.ts` (re-resolving paint per glyph), not a flag here — and until it is
+ * done, a staggered colour track colours the whole word at once, which is a
+ * correct picture rather than a broken one.
+ *
  * ## NAME COLLISION, on purpose
  *
  * `./render.ts` also exports `glyphTransform`, and it means something else
@@ -66,10 +87,13 @@ import { vtLayerLabels } from './layerLabel'
 import { hash32 } from './random'
 import { getByPath, setByPath } from '~/lib/studio/path'
 import { parseIdPath, resolveIdPath, setByIdPath } from '~/lib/studio/idPath'
-import { trackValue } from '~/lib/studio/track'
+import { trackProgress, trackValue } from '~/lib/studio/track'
 import { makeListRemap } from '~/lib/studio/listRemap'
+// Perceptual colour interpolation. Pure arithmetic over two strings — see
+// `lib/color/mix.ts` for the measured reason the default is not an RGB lerp.
+import { DEFAULT_COLOR_MIX_SPACE, mixHex } from '~/lib/color/mix'
 
-export { trackValue } from '~/lib/studio/track'
+export { trackProgress, trackValue } from '~/lib/studio/track'
 
 /** One thing a track can point at, with the range a timeline should offer. */
 export interface VtAnimatableTarget {
@@ -282,21 +306,139 @@ export function animatableTargets(cfg: VectorTypeConfig, axes: VtAxis[] = []): V
   return out
 }
 
+// ── Colour targets ──────────────────────────────────────────────────────────
+
+/**
+ * One COLOUR leaf a track can point at.
+ *
+ * A separate type and a separate list from `VtAnimatableTarget`, on purpose. That
+ * one's whole contract is `min`/`max` — a usable numeric range, asserted on every
+ * entry by its own spec — and a colour has no range: it has two endpoints the
+ * user picks with a swatch. Folding colours in would have meant either lying
+ * about the range or making `min`/`max` optional for every existing consumer to
+ * re-check.
+ *
+ * Both lists are DERIVED FROM THE SAME `VT_CONTROLS` declaration, including each
+ * control's `when` predicate, so this is not a second hand-maintained table — it
+ * is the same table read for its `kind: 'color'` rows instead of its sliders.
+ */
+export interface VtColorTarget {
+  /** Dotted path, exactly what `VtMotionTrack.path` stores. */
+  path: string
+  label: string
+  group: string
+}
+
+/**
+ * Every COLOUR leaf a track may point at.
+ *
+ * Every colour control in this studio is a `layer.` one (a fill's `paint.a` /
+ * `paint.b`, a solid extrude's `strokeColor`), so this is the same per-layer
+ * expansion `animatableTargets` does above, addressed by the layer's own stable
+ * id for the same reason, and gated by the same `when` predicates — which is what
+ * keeps `paint.b` off a solid fill (it paints nothing there) and both colours off
+ * a SHADER fill (`effectiveTilePaint` unwraps to the shader and never reads
+ * them). A track offered on one of those would be the dead-control failure this
+ * studio's schema exists to prevent, animated.
+ *
+ * A top-level colour control, if one is ever declared, is picked up by the same
+ * loop — the `layer.` prefix decides which branch it takes, exactly as above.
+ */
+export function colorTargets(cfg: VectorTypeConfig): VtColorTarget[] {
+  const out: VtColorTarget[] = []
+  const usable = (c: any) => c.kind === 'color' && c.animatable !== false
+
+  for (const c of visibleVtControls(cfg)) {
+    if (c.key.startsWith(VT_LAYER_PREFIX) || !usable(c)) continue
+    out.push({ path: c.key, label: c.label, group: c.group })
+  }
+
+  const stack = Array.isArray(cfg?.appearance) ? cfg.appearance : []
+  const names = vtLayerLabels(stack)
+  for (const c of VT_CONTROLS) {
+    if (!c.key.startsWith(VT_LAYER_PREFIX) || !usable(c)) continue
+    const rest = c.key.slice(VT_LAYER_PREFIX.length)
+    stack.forEach((l, i) => {
+      if (c.when && !c.when(cfg, l)) return
+      const member = usableId(l?.id) ? l.id : String(i)
+      out.push({
+        path: `${VT_STACK_PREFIX}${member}.${rest}`,
+        label: `${names[i] ?? `Layer ${i + 1}`} · ${c.label}`,
+        group: c.group,
+      })
+    })
+  }
+  return out
+}
+
+/** True for a path `colorTargets` offers on this config — what a timeline row
+ *  asks to decide whether to show two number inputs or two swatches. */
+export function isColorTargetPath(cfg: VectorTypeConfig, path: string): boolean {
+  const p = typeof path === 'string' ? path.trim() : ''
+  return !!p && colorTargets(cfg).some(t => t.path === p)
+}
+
+const HEXISH = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/
+
+/**
+ * Is this track a COLOUR track?
+ *
+ * Asked of the TRACK, never of its path, and that is deliberate. A path-based
+ * test would need the config (to expand `layer.` and apply the `when` gates) and
+ * would then disagree with itself across a stack edit: switch a fill to a shader
+ * and a saved colour track would stop being read as one, so `applyMotion` would
+ * fall through to the numeric branch and write the NUMBER 0.6 into `paint.a` —
+ * a `fillStyle` no renderer can parse. The track's own two colours are the honest
+ * discriminator, and they travel with it.
+ */
+export function isColorTrack(track: VtMotionTrack | null | undefined): boolean {
+  return !!track && HEXISH.test(String(track.fromColor)) && HEXISH.test(String(track.toColor))
+}
+
+/**
+ * The colour a colour track holds at time `t` — its own two endpoints mixed at
+ * the track's eased progress, in the track's chosen space.
+ *
+ * `trackProgress` is the SAME timing engine `trackValue` runs on (it is now
+ * literally what `trackValue` is built from), so easing, loops, hold, cycleOffset
+ * and delay behave identically on a colour track and on a numeric one — one
+ * implementation, nothing to keep in step, and it is asserted by equality rather
+ * than asserted twice (see the colour-track spec's timing table).
+ *
+ * The per-glyph STAGGER is the exception, and not because of anything here: it
+ * shifts the clock a glyph reads at, and a layer's colour is resolved once for the
+ * run. See this module's header.
+ */
+export function trackColor(track: VtMotionTrack, t: number, duration: number): string {
+  return mixHex(
+    track.fromColor as string,
+    track.toColor as string,
+    trackProgress(track, t, duration),
+    track.space ?? DEFAULT_COLOR_MIX_SPACE,
+  )
+}
+
 /** The motion block as the evaluator needs it, from a config of any vintage. */
 function resolveDuration(cfg: VectorTypeConfig): number {
   return Math.max(0.001, finite(cfg?.motion?.duration, DEFAULT_MOTION.duration))
 }
 
-/** Tracks worth evaluating: real path, real numbers. A track that fails this is
- *  skipped rather than defaulted — writing `NaN` into `size` from a half-parsed
- *  blob is worse than not animating. */
+/** Tracks worth evaluating: real path, and either real numbers or two real
+ *  colours. A track that fails this is skipped rather than defaulted — writing
+ *  `NaN` into `size` from a half-parsed blob is worse than not animating, and so
+ *  is writing `undefined` into a fill.
+ *
+ *  A COLOUR track is admitted on its colours alone: `mergeTrack` gives it
+ *  `from: 0, to: 1`, but a hand-written or agent-written blob may carry the two
+ *  swatches and no numbers at all, and `trackProgress` reads neither. */
 function usableTracks(cfg: VectorTypeConfig): VtMotionTrack[] {
   const raw = cfg?.motion?.tracks
   if (!Array.isArray(raw)) return []
   return raw.filter((t): t is VtMotionTrack =>
     !!t && typeof t === 'object'
     && typeof (t as VtMotionTrack).path === 'string' && (t as VtMotionTrack).path.trim() !== ''
-    && isFinite_((t as VtMotionTrack).from) && isFinite_((t as VtMotionTrack).to))
+    && (isColorTrack(t as VtMotionTrack)
+      || (isFinite_((t as VtMotionTrack).from) && isFinite_((t as VtMotionTrack).to))))
 }
 
 /**
@@ -321,6 +463,14 @@ export function applyMotion(cfg: VectorTypeConfig, t: number): VectorTypeConfig 
     // explicitly rather than relying on the parent guard below, so it stays
     // skipped even if a future config ever grows a real `glyph` field.
     if (path.startsWith(VT_GLYPH_PREFIX)) continue
+    // A COLOUR track writes a STRING. Everything else about it — the path
+    // resolution, the id addressing, the parent guard, the last-write-wins
+    // overwrite — is the numeric path verbatim, which is the point of resolving
+    // the value up here instead of duplicating the two write branches below.
+    // `setByPath`/`setByIdPath` already take `unknown`, so neither needed a change.
+    const value: number | string = isColorTrack(track)
+      ? trackColor(track, t, duration)
+      : trackValue(track, t, duration)
     // A STACK path is id-addressed (`appearance.Lstroke.width`), so it must be
     // resolved to a position before `setByPath` sees it — handed the raw id,
     // `setByPath` would create a property named `Lstroke` ON THE ARRAY and write
@@ -333,7 +483,7 @@ export function applyMotion(cfg: VectorTypeConfig, t: number): VectorTypeConfig 
     // An in-range positional path passes through unchanged, so tracks saved
     // before ids — and the ones `migrateLegacyAppearance` writes — still animate.
     if (isStackPath(path)) {
-      setByIdPath(out, path, trackValue(track, t, duration))
+      setByIdPath(out, path, value)
       continue
     }
     // Guard on the PARENT container, not the leaf: `axes` is SPARSE by design,
@@ -345,7 +495,7 @@ export function applyMotion(cfg: VectorTypeConfig, t: number): VectorTypeConfig 
     const parentPath = lastDot === -1 ? '' : path.slice(0, lastDot)
     const parent = parentPath ? getByPath(out, parentPath) : out
     if (typeof parent !== 'object' || parent === null) continue
-    setByPath(out, path, trackValue(track, t, duration))
+    setByPath(out, path, value)
   }
   return out
 }
@@ -490,6 +640,12 @@ export function glyphStackLeaf(
   for (const track of tracks) {
     const p = track.path.trim()
     if (!isStackPath(p)) continue
+    // A COLOUR track on this layer is not a candidate for a NUMERIC leaf. It
+    // cannot match `leaf` today (the only leaf asked for is `draw`, and a colour
+    // target is `paint.a` / `paint.b` / `strokeColor`), but this returns a
+    // `number` and a colour track has none — so the guard is here rather than
+    // resting on a coincidence between two lists that can both grow.
+    if (isColorTrack(track)) continue
     const rest = p.slice(VT_STACK_PREFIX.length)
     const dot = rest.indexOf('.')
     if (dot < 0 || rest.slice(dot + 1) !== leaf) continue
@@ -521,6 +677,11 @@ export function glyphTransform(
   for (const track of tracks) {
     const field = GLYPH_FIELD[track.path.trim()]
     if (!field) continue
+    // Same reason as `glyphStackLeaf`'s guard: every field here is a number, and
+    // there is no colour target in the `glyph.` namespace to reach them — but a
+    // hand-written track can name one, and `NaN` in `scale` makes the CTM
+    // singular and Chrome drops the glyph entirely.
+    if (isColorTrack(track)) continue
     out[field] = trackValue(track, gt, duration)
   }
   return out

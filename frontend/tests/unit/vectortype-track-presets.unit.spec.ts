@@ -279,7 +279,9 @@ describe('misregistration as opposed extrude plates', () => {
     appearance: [
       layer({ id: 'Lc', kind: 'extrude', depth: 1, distance: 14, taper: 0, angle: 180, paint: paint('#ff0000') }),
       layer({ id: 'Lm', kind: 'extrude', depth: 1, distance: 14, taper: 0, angle: 0, paint: paint('#0000ff') }),
-      layer({ id: 'Lface', kind: 'fill', paint: paint('#111111') }),
+      // SATURATED, so Colour Cycle accepts it too — a near-black face has no hue
+      // to rotate and the preset would (correctly) refuse it.
+      layer({ id: 'Lface', kind: 'fill', paint: paint('#cc2200') }),
     ],
     motion: { ...DEFAULT_CONFIG.motion, duration: 4, tracks: [] },
   })
@@ -336,13 +338,16 @@ describe('misregistration as opposed extrude plates', () => {
 
 describe('the track-preset table', () => {
   it('declares a frame and derives the rest', () => {
-    expect(VT_TRACK_PRESETS.map(p => p.id)).toEqual(['extrude-sweep', 'misregistration'])
+    expect(VT_TRACK_PRESETS.map(p => p.id)).toEqual(['extrude-sweep', 'misregistration', 'colour-cycle'])
     for (const p of VT_TRACK_PRESETS) {
       expect(p.label.trim()).not.toBe('')
       expect(p.pitch.trim()).not.toBe('')
       expect(p.minLayers).toBeGreaterThan(0)
     }
     expect(vtTrackPreset('extrude-sweep')?.kind).toBe('extrude')
+    // Not every preset drives an extrude any more — Colour Cycle drives a FILL,
+    // which is what made the reason sentence's article derived rather than fixed.
+    expect(vtTrackPreset('colour-cycle')?.kind).toBe('fill')
     expect(vtTrackPreset('nope')).toBeNull()
     expect(vtTrackPreset(undefined)).toBeNull()
   })
@@ -357,12 +362,17 @@ describe('the track-preset table', () => {
   })
 
   it('is disabled WITH A REASON the user can act on', () => {
-    const noExtrude = cfg({ appearance: [layer({ id: 'Lf', kind: 'fill' })] })
-    for (const o of vtTrackPresetOffers(noExtrude)) {
-      expect(o.available).toBe(false)
-      expect(o.reason).toMatch(/extrude layer/)
-      expect(o.layers).toEqual([])
+    // One plain WHITE fill: no extrude for the first two, and no hue for the
+    // third. Every preset must say something the user can act on.
+    const bare = cfg({ appearance: [layer({ id: 'Lf', kind: 'fill' })] })
+    for (const o of vtTrackPresetOffers(bare)) {
+      expect(o.available, o.preset.id).toBe(false)
+      // The reason names the preset's OWN kind, so a fill preset does not tell
+      // the user to add an extrude.
+      expect(o.reason, o.preset.id).toMatch(new RegExp(`${o.preset.kind} layer`))
+      expect(o.layers, o.preset.id).toEqual([])
     }
+    expect(vtTrackPresetOffer(vtTrackPreset('colour-cycle')!, bare).reason).toMatch(/saturation/)
     // An extrude that is THERE but inert gets its own sentence, because the fix
     // is different: raise the depth, do not add a layer.
     const inert = cfg({ appearance: [layer({ id: 'Le', kind: 'extrude', depth: 0 }), layer({ id: 'Lf', kind: 'fill' })] })
@@ -415,13 +425,15 @@ describe('the track-preset table', () => {
   })
 })
 
-/** A stack both presets accept: two usable extrude plates and a face. */
+/** A stack every preset accepts: two usable extrude plates and a coloured face. */
 function plentiful(): VectorTypeConfig {
   return cfg({
     appearance: [
       layer({ id: 'Lc', kind: 'extrude', depth: 1, distance: 6, taper: 0, angle: 180, paint: paint('#00ffff') }),
       layer({ id: 'Lm', kind: 'extrude', depth: 1, distance: 6, taper: 0, angle: 0, paint: paint('#ff00ff') }),
-      layer({ id: 'Lface', kind: 'fill', paint: paint('#111111') }),
+      // SATURATED, so Colour Cycle accepts it too — a near-black face has no hue
+      // to rotate and the preset would (correctly) refuse it.
+      layer({ id: 'Lface', kind: 'fill', paint: paint('#cc2200') }),
     ],
     motion: { ...DEFAULT_CONFIG.motion, duration: 4, tracks: [] },
   })

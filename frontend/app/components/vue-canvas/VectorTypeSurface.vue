@@ -39,13 +39,16 @@ import {
   vtLayer,
   type VectorTypeConfig,
   type VtLayerKind,
+  type VtMotionTrack,
   type VtPresetSlot,
 } from '~/lib/vectortype/config'
 import { vtLayerLabels } from '~/lib/vectortype/layerLabel'
 import { VT_CONTROLS, VT_LAYER_PREFIX, VT_SECTIONS, derivedVtControls, type VtControl } from '~/lib/vectortype/controls'
 import { vtScatterAvailability } from '~/lib/vectortype/scatter'
 import { VT_GUIDANCE, vtAgentControls, vtBindableControls } from '~/lib/vectortype/agentControls'
-import { VT_APPEARANCE_REMAP, animatableTargets, pruneStackTracks } from '~/lib/vectortype/motion'
+import { VT_APPEARANCE_REMAP, animatableTargets, colorTargets, pruneStackTracks } from '~/lib/vectortype/motion'
+import { COLOR_MIX_SPACES, COLOR_MIX_SPACE_LABELS, DEFAULT_COLOR_MIX_SPACE } from '~/lib/color/mix'
+import { getByIdPath } from '~/lib/studio/idPath'
 import {
   VT_PRESET_CAPABILITIES,
   vtAxisOffers,
@@ -55,7 +58,7 @@ import {
   vtStillTime,
 } from '~/lib/vectortype/presetMotion'
 import { vtAxisPreset } from '~/lib/vectortype/axisPresets'
-import { vtApplyTrackPreset, vtTrackPresetActive, vtTrackPresetOffers } from '~/lib/vectortype/trackPresets'
+import { vtApplyTrackPreset, vtOppositeHue, vtTrackPresetActive, vtTrackPresetOffers } from '~/lib/vectortype/trackPresets'
 import { loadVariableFont, type VtAxis, type VtFont } from '~/lib/vectortype/font'
 import MotionPresetPicker from '~/components/vue-canvas/motion/MotionPresetPicker.vue'
 import PresetThumb from '~/components/vue-canvas/motion/PresetThumb.vue'
@@ -194,14 +197,65 @@ const activeAgentControls = computed(() => vtAgentControls(config.value, fontAxe
  *  VT_SECTIONS member (per-glyph offsets are animation outputs, not config
  *  leaves), so grouping strictly by section would drop them silently. */
 const animatable = computed(() => animatableTargets(config.value, fontAxes.value))
+/**
+ * The COLOUR leaves, from the same `VT_CONTROLS` declaration read for its
+ * `kind: 'color'` rows. A separate list because a colour has no numeric range —
+ * see `VtColorTarget` — and the dropdown merges the two so a user picks a target
+ * without first having to know which kind it is.
+ */
+const colorTargetList = computed(() => colorTargets(config.value))
+const colorTargetPaths = computed(() => new Set(colorTargetList.value.map(t => t.path)))
+/** True for the track row whose target is a colour: two swatches, not two spinners. */
+const isColorRow = (tk: { path?: string }) => colorTargetPaths.value.has((tk.path ?? '').trim())
 const animatableGroups = computed(() => {
-  const groups = new Map<string, typeof animatable.value>()
-  for (const t of animatable.value) {
+  const groups = new Map<string, { path: string; label: string; group: string }[]>()
+  const push = (t: { path: string; label: string; group: string }) => {
     const arr = groups.get(t.group)
     if (arr) arr.push(t); else groups.set(t.group, [t])
   }
+  for (const t of animatable.value) push(t)
+  for (const t of colorTargetList.value) push(t)
   return [...groups.entries()]
 })
+
+/**
+ * Point a track row at a new target — and REBUILD it for the new target's kind.
+ *
+ * Not a plain `v-model` on `tk.path`, because switching between a number and a
+ * colour changes which fields carry the endpoints. Left to bind directly, a
+ * number → colour switch would leave a track with no `fromColor`, which
+ * `isColorTrack` reads as numeric — so `applyMotion` would write the NUMBER 0.6
+ * into `paint.a` and the layer would paint nothing. The seed colours are the
+ * layer's own current colour and its opposite hue, i.e. the same pair the Colour
+ * Cycle tile writes, so a fresh colour row animates something visible at once.
+ */
+function retargetTrack(tk: VtMotionTrack, path: string) {
+  const wantsColor = colorTargetPaths.value.has(path)
+  tk.path = path
+  if (wantsColor && !tk.fromColor) {
+    const seed = trackSeedColor(path)
+    tk.from = 0
+    tk.to = 1
+    tk.fromColor = seed
+    tk.toColor = vtOppositeHue(seed)
+    tk.space = DEFAULT_COLOR_MIX_SPACE
+  } else if (!wantsColor && tk.fromColor) {
+    delete tk.fromColor
+    delete tk.toColor
+    delete tk.space
+    const target = animatable.value.find(a => a.path === path)
+    if (target) { tk.from = target.min; tk.to = target.max }
+  }
+  onEdit('motion.tracks', config.value.motion.tracks.length)
+}
+
+/** The colour that leaf currently holds, so a new colour track starts from the
+ *  design rather than from an invented default. Falls back to white, which is
+ *  what a leaf that does not resolve would have been shown as anyway. */
+function trackSeedColor(path: string): string {
+  const cur = getByIdPath(config.value, path)
+  return typeof cur === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(cur.trim()) ? cur.trim() : '#ffffff'
+}
 
 const { getLocalSetting } = useLocalSettings()
 /**
@@ -1729,15 +1783,40 @@ const frameCount = computed(() => Math.round((config.value.motion.fps || 30) * (
           </div>
           <div v-for="(tk, i) in config.motion.tracks" :key="i" class="mb-2 rounded border border-white/10 p-2">
             <div class="mb-1 flex items-center gap-1">
-              <select v-model="tk.path" class="min-w-0 flex-1 rounded-md border border-white/[0.08] bg-white/[0.04] px-1 py-0.5 text-[11px]">
-                <option v-if="tk.path && !animatable.some(a => a.path === tk.path)" :value="tk.path">{{ tk.path }}</option>
+              <!-- NOT a plain v-model: switching between a numeric and a colour
+                   target has to rebuild the row's endpoints. See `retargetTrack`. -->
+              <select
+                :value="tk.path"
+                class="min-w-0 flex-1 rounded-md border border-white/[0.08] bg-white/[0.04] px-1 py-0.5 text-[11px]"
+                @change="retargetTrack(tk, ($event.target as HTMLSelectElement).value)"
+              >
+                <option v-if="tk.path && !animatable.some(a => a.path === tk.path) && !colorTargetPaths.has(tk.path)" :value="tk.path">{{ tk.path }}</option>
                 <optgroup v-for="[group, targets] in animatableGroups" :key="group" :label="group">
                   <option v-for="a in targets" :key="a.path" :value="a.path">{{ a.label }}</option>
                 </optgroup>
               </select>
               <button class="text-white/30 hover:text-white/70" @click="removeTrack(i)"><Trash2 class="h-3 w-3" /></button>
             </div>
-            <div class="mb-1 flex items-center gap-1 text-[11px] text-white/50">
+            <!-- A COLOUR track's endpoints are two swatches and a mix space. Its
+                 `from`/`to` stay 0 and 1 (the progress domain) and are not shown:
+                 two spinners reading 0 and 1 beside two colours would invite an
+                 edit that changes nothing about the colours. -->
+            <!-- StudioColor, not `<input type=color>`: the OS picker only speaks
+                 6-digit hex, and these leaves may carry `#rrggbbaa` — it would
+                 show black and then WRITE black back on the first interaction. -->
+            <div v-if="isColorRow(tk)" class="mb-1 flex items-center gap-1 text-[11px] text-white/50">
+              <StudioColor :model-value="tk.fromColor ?? '#ffffff'" @update:model-value="(v: string) => { tk.fromColor = v }" />
+              <span>→</span>
+              <StudioColor :model-value="tk.toColor ?? '#ffffff'" @update:model-value="(v: string) => { tk.toColor = v }" />
+              <select
+                v-model="tk.space"
+                class="ml-auto min-w-0 rounded-md border border-white/[0.08] bg-white/[0.04] px-1 py-0.5 text-[11px]"
+                title="Which space the two colours are mixed in. Perceptual keeps the midpoint as bright as both ends; RGB sags dark and grey through the middle."
+              >
+                <option v-for="s in COLOR_MIX_SPACES" :key="s" :value="s">{{ COLOR_MIX_SPACE_LABELS[s] }}</option>
+              </select>
+            </div>
+            <div v-else class="mb-1 flex items-center gap-1 text-[11px] text-white/50">
               <span>from</span><input v-model.number="tk.from" type="number" step="1" class="w-16 rounded-md border border-white/[0.08] bg-white/[0.04] px-1 py-0.5" />
               <span>to</span><input v-model.number="tk.to" type="number" step="1" class="w-16 rounded-md border border-white/[0.08] bg-white/[0.04] px-1 py-0.5" />
             </div>

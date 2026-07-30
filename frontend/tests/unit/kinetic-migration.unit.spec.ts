@@ -21,6 +21,7 @@ import { KINETIC_PRESETS_BY_ID } from '~/data/kinetic-presets'
 import { DEFAULT_FILL, paintPrimaryColor } from '~/lib/spacetype/fillTile'
 import { applyMotion, glyphTransform } from '~/lib/vectortype/motion'
 import { vtBaseAppearance } from '~/lib/vectortype/config'
+import { resolveIdPath } from '~/lib/studio/idPath'
 
 /** A realistic saved `params` blob, in the shape WidgetKineticType.parse read. */
 const SAVED_PARAMS = {
@@ -140,7 +141,9 @@ describe('kineticParamsToVectorType — preset mapping', () => {
   })
 
   it('leaves motion EMPTY for a preset with no honest equivalent', () => {
-    for (const id of ['scramble-in', 'blur-in', 'jello', 'color-cycle', 'marquee']) {
+    // `color-cycle` was in this list until colour tracks landed — it is now
+    // `partial` and gets a real track. See the colour-track spec for its numbers.
+    for (const id of ['scramble-in', 'blur-in', 'jello', 'color-wave', 'marquee']) {
       const m = kineticParamsToVectorType(JSON.stringify({ ...SAVED_PARAMS, presetId: id }))
       expect(m.fidelity, id).toBe('dropped')
       expect(m.config.motion.tracks, id).toEqual([])
@@ -155,13 +158,20 @@ describe('kineticParamsToVectorType — preset mapping', () => {
     expect(m.config.text).toBe('LAUNCH')
   })
 
-  it('every mapped preset id is a REAL preset id, and every track targets a glyph field', () => {
+  it('every mapped preset id is a REAL preset id, and every track targets something real', () => {
     const GLYPH_FIELDS = ['glyph.dx', 'glyph.dy', 'glyph.scale', 'glyph.rotate', 'glyph.opacity']
     for (const id of mappedPresetIds()) {
       expect(KINETIC_PRESETS_BY_ID[id], `${id} is not a real kinetic preset`).toBeTruthy()
       const m = kineticParamsToVectorType(JSON.stringify({ ...SAVED_PARAMS, presetId: id }))
       expect(m.config.motion.tracks.length, id).toBeGreaterThan(0)
-      for (const t of m.config.motion.tracks) expect(GLYPH_FIELDS, id).toContain(t.path)
+      for (const t of m.config.motion.tracks) {
+        // A COLOUR track aims at a fill layer's own paint rather than at the
+        // per-glyph namespace, and it must RESOLVE — a path naming a layer that
+        // is not there would pass a "starts with appearance." check and animate
+        // nothing, which is the failure this assertion exists to catch.
+        if (t.fromColor) expect(resolveIdPath(m.config, t.path), `${id} → ${t.path}`).toBeDefined()
+        else expect(GLYPH_FIELDS, id).toContain(t.path)
+      }
     }
   })
 

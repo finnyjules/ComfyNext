@@ -19,8 +19,11 @@
  * five-field per-glyph transform (`glyph.dx/dy/scale/rotate/opacity`).
  *
  * So `PRESET_MOTION` maps ONLY the presets whose identity is fully expressible
- * in those five fields. Everything else is dropped, and the text arrives with no
- * motion at all. That is the deliberate trade: a missing animation is visible
+ * in those five fields — plus, since colour tracks landed, the one whose identity
+ * is a COLOUR (`color-cycle`; see `colorCycleTracks`, and note that its sibling
+ * `color-wave` is still dropped for a different reason entirely — a layer's
+ * colour is resolved once per frame, not per glyph). Everything else is dropped,
+ * and the text arrives with no motion at all. That is the deliberate trade: a missing animation is visible
  * and re-addable, a subtly wrong one is neither. `presetFidelity()` reports
  * which of the three a preset got, and it is the thing to read before claiming
  * coverage.
@@ -37,11 +40,17 @@
  */
 import {
   DEFAULT_CONFIG,
+  VT_STACK_PREFIX,
   mergeConfig,
   type VectorTypeConfig,
   type VtEasing,
   type VtMotionTrack,
 } from './config'
+import { isFill } from '~/lib/compositor/paint'
+import { hexToOklch, parseHexA } from '~/lib/color/convert'
+// The 180° hue rotation, shared with the studio's own Colour Cycle tile so a
+// migrated node and a freshly-applied preset produce the SAME pair of colours.
+import { vtOppositeHue } from './trackPresets'
 
 /** What the retired node defaulted to when a field was absent — NOT what Vector
  *  Type defaults to. A params blob with no `text` rendered the word "Hello" on
@@ -77,10 +86,27 @@ interface PresetMotion {
   staggerScale?: number
   /** Why it is only `partial`. Present exactly when fidelity is 'partial'. */
   note?: string
+  /**
+   * This preset animates the FILL COLOUR, so its track is built after the merge.
+   *
+   * It cannot be declared in `tracks` above like every other one, and the reason
+   * is mechanical: a colour track addresses `appearance.<layerId>.paint.a`, and
+   * the layer id is MINTED BY `mergeConfig` (this migration hands it the legacy
+   * flat `fill` string and lets the stack migration build the layer — see the
+   * comment at the `fill:` line below). So the path does not exist until the
+   * config does. `colorCycleTrack` builds it from the merged stack.
+   */
+  colorCycle?: boolean
 }
 
 const T = (path: string, from: number, to: number, easing: VtEasing = 'easeinout', loops?: number) =>
   ({ path, from, to, easing, ...(loops ? { loops } : {}) })
+
+/** What a `color-cycle` gives up on the way across. Declared BEFORE
+ *  `PRESET_MOTION` because that table is a module-level const that reads it. */
+const COLOR_CYCLE_NOTE =
+  'the full hue wheel becomes a ping-pong to the OPPOSITE hue and back — half the wheel each way, from the '
+  + 'colour that was saved; the mix runs in OKLCH, so the chroma survives the crossing instead of going grey halfway'
 
 /**
  * Kinetic preset id → Vector Type glyph tracks.
@@ -160,6 +186,12 @@ const PRESET_MOTION: Record<string, PresetMotion> = {
   'throb': { fidelity: 'honest', staggerScale: 2, tracks: [T('glyph.scale', 1, 1.2, 'pingpong', 2)] },
   'rock':  { fidelity: 'partial', note: 'the pivot is the glyph origin, not bottom-center', tracks: [T('glyph.rotate', 0, 12, 'pingpong', 2)] },
   'spin-loop': { fidelity: 'honest', staggerScale: 2, tracks: [T('glyph.rotate', 0, 360, 'linear')] },
+
+  // ── COLOUR ────────────────────────────────────────────────────────────────
+  // Dropped until Task 6, with the reason "tracks carry numbers, not colours".
+  // They do now, so this crosses — as `partial`, and the note says exactly what
+  // was lost rather than implying a full revival.
+  'color-cycle': { fidelity: 'partial', note: COLOR_CYCLE_NOTE, tracks: [], colorCycle: true },
 }
 
 /**
@@ -207,8 +239,10 @@ export const DROPPED_REASONS: Record<string, string> = {
   'heartbeat': 'a double-beat envelope, not a single curve — and it scales the whole word',
   'scramble-in': 'rewrites the glyphs themselves',
   'scramble-out': 'rewrites the glyphs themselves',
-  'color-cycle': 'animates fill colour — tracks carry numbers, not colours',
-  'color-wave': 'animates fill colour — tracks carry numbers, not colours',
+  // `color-cycle` is NO LONGER HERE — tracks carry colours as of Task 6, and it
+  // crosses as a `partial` (see COLOR_CYCLE_NOTE). This entry stays only as the
+  // record that it was once impossible.
+  'color-wave': 'per-glyph hue offset — a layer\'s colour is resolved once per FRAME, not per glyph (see motion.ts)',
   'bounce': 'animates whole WORDS — Vector Type motion is per-glyph',
   'breathe': 'scales the whole container — Vector Type motion is per-glyph',
   'marquee': 'scrolls the whole container across the frame',
@@ -249,6 +283,42 @@ function hex6(v: unknown, fallback: string): string {
 /** A finished track: the preset's shape plus the timing every track needs. */
 function fullTrack(t: { path: string; from: number; to: number; easing: VtEasing; loops?: number }): VtMotionTrack {
   return { path: t.path, from: t.from, to: t.to, easing: t.easing, loops: t.loops ?? 1, hold: 0, cycleOffset: 0, delay: 0 }
+}
+
+/**
+ * The `color-cycle` track, built against the MERGED config.
+ *
+ * Has to run after the merge, for the reason `PresetMotion.colorCycle` gives: the
+ * fill layer's stable id does not exist until `mergeConfig` has minted it. So this
+ * is not a track the table can declare — it is one this function derives from the
+ * stack the merge produced, aimed at that layer BY ID exactly as every other
+ * persisted reference to a layer is.
+ *
+ * Returns an empty list — and the preset therefore lands with no motion, which
+ * `presetFidelity` still reports as `partial` — when the saved colour has no hue
+ * to rotate (a white/black/grey KineticType node). A grey cycling to grey is a
+ * row in the timeline that animates nothing, which is worse than nothing.
+ *
+ * `PING-PONG`, so frame 0 is the colour the node was saved with: a migrated
+ * project must open looking like itself.
+ */
+function colorCycleTracks(config: VectorTypeConfig): VtMotionTrack[] {
+  const layer = config.appearance.find(l => l?.kind === 'fill' && l.enabled !== false)
+  const paint = layer?.paint
+  const from = isFill(paint) && typeof paint.a === 'string' ? parseHexA(paint.a).hex : null
+  if (!layer || !from) return []
+  if (hexToOklch(from)[1] < 0.02) return []
+  const to = vtOppositeHue(from)
+  return [{
+    path: `${VT_STACK_PREFIX}${layer.id}.paint.a`,
+    // The 0..1 progress domain — see `VtMotionTrack.from`.
+    from: 0, to: 1,
+    fromColor: from, toColor: to,
+    // OKLCH, matching the studio's own Colour Cycle tile: this pair is a HUE
+    // ROTATION, and the default straight-line space would take it through grey.
+    space: 'oklch',
+    easing: 'pingpong', loops: 1, hold: 0, cycleOffset: 0, delay: 0,
+  }]
 }
 
 /**
@@ -368,6 +438,12 @@ export function kineticParamsToVectorType(rawParams: unknown): KineticMigration 
       },
     },
   })
+
+  // The COLOUR track, appended after the merge because it needs the layer id the
+  // merge minted. Pushed rather than re-merged: it is already in `mergeTrack`'s
+  // output shape (every field present, colours long-form lower-case), which its
+  // own round-trip test pins — so a save/load cycle returns it unchanged.
+  if (mapped?.colorCycle) config.motion.tracks.push(...colorCycleTracks(config))
 
   const bg = typeof o.bg === 'string' ? o.bg : KINETIC_DEFAULTS.bg
   const frames = Array.isArray(o.rendered)
