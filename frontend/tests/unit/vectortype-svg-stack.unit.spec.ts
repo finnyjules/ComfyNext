@@ -34,7 +34,7 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import * as fontkit from 'fontkit'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { VectorCommand } from '~/lib/vector/svg'
 import { normaliseAxes, type VtFont } from '~/lib/vectortype/font'
 import {
@@ -45,6 +45,7 @@ import {
   type VtAppearanceLayer,
 } from '~/lib/vectortype/config'
 import { extrudeCopyCommands, extrudeCopyTransform, vtSolidKey } from '~/lib/vectortype/extrude'
+import * as extrudeBodyCache from '~/lib/vectortype/extrudeBodyCache'
 import {
   clearSolidExtrudeCache,
   prepareSolidExtrudes,
@@ -530,19 +531,36 @@ describe('the solid-extrude union caches on its INPUTS', () => {
   it('makes a REPEATED frame free — a static extrude over a video bake', async () => {
     // The whole point: a sequence bake re-asks for the same bodies every frame,
     // and extrude geometry is time-invariant unless something feeding it moves.
-    const cold = Date.now()
-    await prepareSolidExtrudes(font, c, 0, BOX)
-    const coldMs = Date.now() - cold
-    expect(solidExtrudeCacheSize()).toBe(N)
+    //
+    // This used to pin that with a wall-clock bound (`warmMs <=
+    // Math.max(coldMs, 2)`), which reddened on a loaded machine: paper.js's
+    // union is fast enough here that `coldMs` itself can be 0-1 ms, so the bound
+    // was sub-2-ms and any scheduling jitter on the warm loop's nine awaits blew
+    // through it despite zero actual recomputation. Timing was never the claim —
+    // "the union did not run again" is — so pin THAT directly: `putSolidBody` is
+    // the store's only write, and `solidExtrudeBodyCached` calls it exactly once
+    // per cache MISS (see extrudeSolid.ts), so its call count is a deterministic,
+    // clock-free proxy for "how many unions actually ran". It is imported from
+    // `extrudeBodyCache.ts` — a different module than the one under test — so
+    // `vi.spyOn` intercepts the real cross-module call rather than a same-module
+    // reference a spy cannot see.
+    const putSpy = vi.spyOn(extrudeBodyCache, 'putSolidBody')
+    try {
+      await prepareSolidExtrudes(font, c, 0, BOX)
+      expect(solidExtrudeCacheSize()).toBe(N)
+      const coldCalls = putSpy.mock.calls.length
+      expect(coldCalls).toBe(N)
 
-    const warm = Date.now()
-    for (let f = 1; f < 10; f++) await prepareSolidExtrudes(font, c, f / 30, BOX)
-    const warmMs = Date.now() - warm
-    // Nine more frames, no new entries: every one of them hit.
-    expect(solidExtrudeCacheSize()).toBe(N)
-    // Nine cached frames cost less than the one uncached frame did. A weak bound
-    // deliberately — this asserts the cache is LOAD-BEARING, not a timing figure.
-    expect(warmMs).toBeLessThanOrEqual(Math.max(coldMs, 2))
+      for (let f = 1; f < 10; f++) await prepareSolidExtrudes(font, c, f / 30, BOX)
+      // Nine more frames, no new entries: every one of them hit.
+      expect(solidExtrudeCacheSize()).toBe(N)
+      // And, unlike the cache-size check above, this cannot be fooled by a
+      // recompute that happens to reproduce the same body and overwrite the same
+      // key: no NEW writes happened at all across the nine warm frames.
+      expect(putSpy.mock.calls.length).toBe(coldCalls)
+    } finally {
+      putSpy.mockRestore()
+    }
   })
 
   it('never caches a FAILED union, so one bad frame is not permanent', async () => {
