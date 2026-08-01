@@ -34,15 +34,21 @@ for (const [dashed, camel] of Object.entries(DASHED_STYLE_ALIASES)) {
   })
 }
 
-/** Signed area of a shape's outer contour (shoelace), in path units. */
-function area(shape: THREE.Shape): number {
-  const pts = shape.getPoints(24)
+/** Signed shoelace area of a contour. The SIGN is the winding direction, which
+ *  is what distinguishes a hole from a solid — see the winding test below. */
+function signedArea(path: THREE.Path): number {
+  const pts = path.getPoints(24)
   let a = 0
   for (let i = 0; i < pts.length; i++) {
     const p = pts[i]!, q = pts[(i + 1) % pts.length]!
     a += p.x * q.y - q.x * p.y
   }
-  return Math.abs(a) / 2
+  return a / 2
+}
+
+/** Unsigned area of a shape's outer contour, in path units. */
+function area(shape: THREE.Shape): number {
+  return Math.abs(signedArea(shape))
 }
 
 describe('scene3d svgPath', () => {
@@ -50,6 +56,11 @@ describe('scene3d svgPath', () => {
   // subpath as a hole.
   const SQUARE_WITH_HOLE =
     'M0 0 L10 0 L10 10 L0 10 Z M3 3 L3 7 L7 7 L7 3 Z'
+  // Same 10x10 vertical extent as the plain square, but the right edge is an
+  // `A` arc command — what Illustrator and Figma emit for a rounded corner or
+  // a circle. SVGLoader turns this into a THREE.EllipseCurve, whose geometry
+  // lives in aY/aStartAngle/aClockwise, NOT in v0..v3 control points.
+  const SQUARE_WITH_ARC = 'M0 0 L10 0 A5 5 0 0 1 10 10 L0 10 Z'
 
   it('resolves an inner subpath as a hole, not a second solid', () => {
     const shapes = pathToShapes(SQUARE_WITH_HOLE)
@@ -66,6 +77,33 @@ describe('scene3d svgPath', () => {
     const ys = shapes.flatMap((s) => s.getPoints(4).map((p) => p.y))
     // The SVG's y=0 edge is the top; flipped, it is at scene y = 0, and the
     // SVG's y=10 edge (visually lower) is at scene y = -10.
+    expect(Math.max(...ys)).toBeCloseTo(0, 5)
+    expect(Math.min(...ys)).toBeCloseTo(-10, 5)
+  })
+
+  it('winds a hole opposite its outer contour, so it reads as a hole after the flip', () => {
+    // The extruder decides hole-vs-solid from winding direction, not nesting.
+    // If the flip ever left the two contours wound the SAME way, the hole would
+    // extrude as a second solid lid and the letter counter would fill in.
+    const shapes = pathToShapes(SQUARE_WITH_HOLE)
+    const outer = signedArea(shapes[0]!)
+    const hole = signedArea(shapes[0]!.holes[0]!)
+    expect(outer).not.toBeCloseTo(0, 3)
+    expect(hole).not.toBeCloseTo(0, 3)
+    expect(Math.sign(outer)).toBe(-Math.sign(hole))
+  })
+
+  it('flips arcs too: an `A` command lands in the same half-space as the lines', () => {
+    const shapes = pathToShapes(SQUARE_WITH_ARC)
+    // Guard the fixture itself: if SVGLoader ever stopped emitting an
+    // EllipseCurve here, the assertions below would pass vacuously and stop
+    // covering the arc path at all.
+    const curves = shapes.flatMap((s) => s.curves)
+    expect(curves.some((c) => c instanceof THREE.EllipseCurve)).toBe(true)
+    // Same expectation as the plain square: every point at or below y=0. An
+    // arc left unflipped strands its half of the outline at POSITIVE y, tearing
+    // the contour into a self-crossing extrusion with no error thrown.
+    const ys = shapes.flatMap((s) => s.getPoints(24).map((p) => p.y))
     expect(Math.max(...ys)).toBeCloseTo(0, 5)
     expect(Math.min(...ys)).toBeCloseTo(-10, 5)
   })

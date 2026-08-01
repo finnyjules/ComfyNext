@@ -18,42 +18,37 @@ const CACHE_MAX = 256
 
 /** Parse one `d` into shapes, Y-flipped into scene space. Returns [] on anything
  *  unparseable rather than throwing — a bad path must degrade to "no geometry",
- *  which the caller renders as the placeholder, not to a broken studio. */
+ *  which the caller renders as the placeholder, not to a broken studio.
+ *
+ *  The returned array and its shapes are CACHED and handed out BY REFERENCE:
+ *  treat them as read-only. Mutating a returned Shape (or its holes) corrupts
+ *  every later consumer of the same `d`, including other objects on the canvas.
+ *  Clone first if you need to transform one. */
 export function pathToShapes(d: string): THREE.Shape[] {
   if (!d) return []
   const hit = cache.get(d)
   if (hit) return hit
   let shapes: THREE.Shape[] = []
   try {
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg"><path d="${d.replace(/"/g, "'")}"/></svg>`
+    // The flip lives in a `<g transform="scale(1,-1)">` wrapper rather than a
+    // hand-rolled matrix walk over the parsed curves, because SVGLoader itself
+    // owns transforming EVERY curve type it can emit. A hand-rolled walk over
+    // v0..v3 silently misses THREE.EllipseCurve — what `A`/`a` arc commands and
+    // circles become — whose geometry is aX/aY/radii/angles/aClockwise instead.
+    // That left arcs unflipped while lines and béziers moved, tearing routine
+    // Illustrator and Figma output into self-crossing extrusions with no error.
+    // Node transforms are also the code path every real-world SVG exercises,
+    // mirroring (negative determinant) included.
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg"><g transform="scale(1,-1)"><path d="${d.replace(/"/g, "'")}"/></g></svg>`
     const parsed = loader.parse(svg)
+    // createShapes runs on already-flipped curves. Scaling Y by -1 reverses
+    // winding for outer contours and holes alike, so their relative direction —
+    // the only thing hole detection reads — is preserved.
     shapes = parsed.paths.flatMap((p) => SVGLoader.createShapes(p))
-    // SVG Y-down -> three Y-up. Scaling by -1 on Y also reverses winding, which
-    // is what keeps holes reading as holes after the flip.
-    const flip = new THREE.Matrix3().scale(1, -1)
-    for (const s of shapes) {
-      applyMatrix3(s, flip)
-      for (const h of s.holes) applyMatrix3(h, flip)
-    }
   } catch {
     shapes = []
   }
   if (cache.size >= CACHE_MAX) cache.clear()
   cache.set(d, shapes)
   return shapes
-}
-
-/** THREE.Path has no transform of its own — walk the curves and move their
- *  control points. Covers the curve types SVGLoader emits from a `d`. */
-function applyMatrix3(path: THREE.Path, m: THREE.Matrix3): void {
-  const v = new THREE.Vector2()
-  const move = (p: THREE.Vector2 | undefined) => {
-    if (!p) return
-    v.set(p.x, p.y).applyMatrix3(m)
-    p.set(v.x, v.y)
-  }
-  for (const c of path.curves) {
-    const anyC = c as unknown as Record<string, THREE.Vector2 | undefined>
-    move(anyC.v0); move(anyC.v1); move(anyC.v2); move(anyC.v3)
-  }
 }

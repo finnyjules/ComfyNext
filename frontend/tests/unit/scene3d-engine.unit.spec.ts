@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 // @ts-expect-error — three vendors this lib without type declarations.
 import opentype from 'three/examples/jsm/libs/opentype.module.js'
 import { sunDirection, geometryFor, geoKeyFor, baseSizeFor, baseVertexCountFor, buildGeometry, lightFor, SceneEngine } from '~/lib/scene3d/engine'
-import { PRIMITIVE_KINDS, createPrimitive, createLight, createGlbObject, type PrimitiveKind, type PrimitiveObject, type GlbObject } from '~/lib/scene3d/config'
+import { PRIMITIVE_KINDS, createPrimitive, createLight, createGlbObject, createSvgPathObject, svgPathKey, type PrimitiveKind, type PrimitiveObject, type GlbObject } from '~/lib/scene3d/config'
 import { PRIMITIVE_PARAMS } from '~/lib/scene3d/primParams'
 import { loadFont, type Font } from '~/lib/scene3d/outlines'
 
@@ -641,6 +641,35 @@ describe('scene3d geoKeyFor', () => {
     const b = geoKeyFor({ ...box }, 'smooth')
     expect(b).toBe(a)
     expect(box.content).toBeUndefined()
+  })
+
+  // An svgPath's `d` is dropped from the key and stood in for by its `pathKey`
+  // digest, to keep multi-KB string work off the per-sync drag path. If that
+  // substitution ever broke — pathKey missing, or the spread dropping it — every
+  // imported path would share one key and be served another path's geometry.
+  describe('svgPath: the pathKey digest stands in for the raw d', () => {
+    const D_A = `M0 0 L${'10 0 L10 10 L0 10 L'.repeat(60)}0 0 Z`
+    const D_B = `M0 0 L${'20 0 L20 20 L0 20 L'.repeat(60)}0 0 Z`
+
+    it('differs for two paths, so one import cannot serve another path geometry', () => {
+      const a = geoKeyFor(createSvgPathObject(D_A, []), 'smooth')
+      const b = geoKeyFor(createSvgPathObject(D_B, []), 'smooth')
+      expect(a).not.toBe(b)
+    })
+
+    it('does not carry the raw d — that is the whole point of the digest', () => {
+      const key = geoKeyFor(createSvgPathObject(D_A, []), 'smooth')
+      expect(key).not.toContain(D_A)
+      expect(key).not.toContain(D_A.slice(0, 64))
+      expect(key.length).toBeLessThan(D_A.length)
+      expect(key).toContain(svgPathKey(D_A))
+    })
+
+    it('matches for the same d on two different objects, so the cache still hits', () => {
+      const a = geoKeyFor(createSvgPathObject(D_A, []), 'smooth')
+      const b = geoKeyFor(createSvgPathObject(D_A, []), 'smooth')
+      expect(a).toBe(b)
+    })
   })
 })
 
