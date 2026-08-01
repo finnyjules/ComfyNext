@@ -48,7 +48,7 @@ Still to do in Act 1: the generic inspector renderer (Gradient still has 432 lin
 
 ## Scene3D SVG import — LANDED 2026-08-01
 
-Commits `ece01d0af`..`6e2afaa1f` (12). Spec: [2026-07-31-scene3d-svg-import-design.md](superpowers/specs/2026-07-31-scene3d-svg-import-design.md) · Plan: [2026-07-31-scene3d-svg-import.md](superpowers/plans/2026-07-31-scene3d-svg-import.md).
+Commits `ece01d0af`..`f278dd2f7` (13). Spec: [2026-07-31-scene3d-svg-import-design.md](superpowers/specs/2026-07-31-scene3d-svg-import-design.md) · Plan: [2026-07-31-scene3d-svg-import.md](superpowers/plans/2026-07-31-scene3d-svg-import.md).
 
 **The first time a vector reaches a Sailor studio as *geometry* rather than as a picture.** Vector Type Studio could already write SVG; nothing had ever read it. Drop or paste an SVG into 3D Studio and each path becomes real extruded geometry, one object per path, held in a group — which is why [grouping](#scene3d-grouping--landed-2026-07-29) was built first.
 
@@ -68,7 +68,8 @@ Above 40 paths, import asks: separate objects, or one merged object whose `d` co
 - **Flattening curves was load-bearing, not cosmetic.** `expandShapes` gives a `<circle>` four anchors, so an anchors-only stroke outline turns a circle into a rounded square — and the area is only ~10% off, so a naive assertion would have passed it.
 - **The E2E's own stroke assertion was vacuous at first.** The Size row renders `scale * (baseSize[i] || 1)`, so a *zero*-extent axis displays `1` — a degenerate object reads *larger* than a correct one. Caught mid-sabotage; replaced with a thickness assertion.
 
-**Known gap:** every imported child sits at `position: [0,0,0]` with its offset baked into `d`, so all gizmos stack at the import centre and a per-path rotate swings around the logo's centre rather than the path's. Arrangement renders correctly; per-path transforms do not behave as expected. Fast-follow.
+- **A multi-path logo imported as a pile** — fixed same day in `f278dd2f7`. `extrudeShapes` recentres every geometry on its own bounding box (correct, and shared with `text`/`shape`), while `buildSvgObjects` placed every child at `[0,0,0]`. The two combined to stack every path on one point: two squares authored 12 units apart measured **0** apart. It was first written up here as "arrangement renders correctly, only the gizmos stack" — that was wrong, and only measuring it showed so. `SvgLeafPath` now carries each path's own `cx`/`cy` (recomputed after stroke outlining, since an outline is fatter than its source) and the object is positioned at `[cx, -cy, 0]`; the Y negation is because the stored `d` stays Y-down while `pathToShapes` flips at build.
+- **The E2E could not see it:** test 1 asserted a child *count*, not an arrangement. It now asserts the two children have different Position X.
 
 ## Scene3D grouping — LANDED 2026-07-29
 
