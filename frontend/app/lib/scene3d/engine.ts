@@ -165,6 +165,12 @@ export function geometryFor(
       if (!shapes.length) return extrudePlaceholderGeometry()
       return extrudeShapes(shapes, p('depth'), p('bevel'), p('bevelSegments'), SHAPE_CURVE_SEGMENTS)
     }
+    case 'svgPath':
+      // Converting content.path (an SVG `d`) into real Shapes is a later task
+      // (pathToShapes). Until then an imported object still needs SOME geometry
+      // to sync without crashing, so it falls back to the same placeholder cube
+      // `text`/`shape` use before their outline is ready.
+      return extrudePlaceholderGeometry()
   }
 }
 

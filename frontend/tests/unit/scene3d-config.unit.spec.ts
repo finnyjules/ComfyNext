@@ -5,7 +5,8 @@ import {
   createLight, LIGHT_KINDS, LIGHT_DEFAULTS, lightIntensityDefault, lightIntensityMax,
   createGroup, sceneHasShaderFill,
   DEFAULT_FONT_URL,
-  type GradientStop, type SceneMaterial,
+  createSvgPathObject, svgPathKey, NOT_PLACEABLE_KINDS,
+  type GradientStop, type SceneMaterial, type PrimitiveObject,
 } from '~/lib/scene3d/config'
 import { PRIM_GROUPS } from '~/lib/scene3d/primGroups'
 
@@ -65,7 +66,7 @@ describe('scene3d config', () => {
   it('round-trips a document containing every primitive kind', () => {
     const doc = defaultDoc()
     for (const kind of PRIMITIVE_KINDS) doc.objects.push(createPrimitive(kind, doc.objects))
-    expect(PRIMITIVE_KINDS).toHaveLength(16)
+    expect(PRIMITIVE_KINDS).toHaveLength(17)
     const back = parseDoc(serializeDoc(doc))
     expect(back).toEqual(doc)
     expect(back.objects.map((o) => (o as any).primitive)).toEqual([...PRIMITIVE_KINDS])
@@ -202,13 +203,42 @@ describe('scene3d config', () => {
 
   it('menu groups cover every primitive kind exactly once, in canonical order', () => {
     const menuKinds = PRIM_GROUPS.flatMap((g) => g.kinds.map((k) => k.kind))
-    expect(menuKinds).toEqual([...PRIMITIVE_KINDS])
+    // PRIM_GROUPS must still cover every kind a user can PLACE, exactly and in
+    // order — the drift guard stays strict. `svgPath` is exempt because it has
+    // no blank form to place: it only ever arrives carrying imported path data.
+    const placeable = PRIMITIVE_KINDS.filter((k) => !NOT_PLACEABLE_KINDS.includes(k))
+    expect(menuKinds).toEqual(placeable)
+  })
+
+  it('round-trips an svgPath primitive with its path content', () => {
+    const doc = defaultDoc()
+    const o = createSvgPathObject('M0 0 L10 0 L10 10 Z', doc.objects)
+    doc.objects = [o]
+    const back = parseDoc(serializeDoc(doc))
+    expect(back.objects).toHaveLength(1)
+    const p = back.objects[0] as PrimitiveObject
+    expect(p.primitive).toBe('svgPath')
+    expect(p.content?.path).toBe('M0 0 L10 0 L10 10 Z')
+    expect(p.content?.pathKey).toBe(svgPathKey('M0 0 L10 0 L10 10 Z'))
+  })
+
+  it('gives different pathKeys to different paths', () => {
+    expect(svgPathKey('M0 0 L10 0 Z')).not.toBe(svgPathKey('M0 0 L20 0 Z'))
+  })
+
+  it('appends svgPath to PRIMITIVE_KINDS last, and excludes it from the add menu', () => {
+    // svgPath is the one primitive that cannot be PLACED — it exists only as the
+    // product of an import — so PRIM_GROUPS deliberately does not carry it.
+    expect(PRIMITIVE_KINDS).toContain('svgPath')
+    expect(PRIMITIVE_KINDS[PRIMITIVE_KINDS.length - 1]).toBe('svgPath')
+    expect(NOT_PLACEABLE_KINDS).toContain('svgPath')
   })
 
   it('includes text and shape in PRIMITIVE_KINDS, appended last', () => {
     expect(PRIMITIVE_KINDS).toContain('text')
     expect(PRIMITIVE_KINDS).toContain('shape')
-    expect(PRIMITIVE_KINDS.slice(-2)).toEqual(['text', 'shape'])
+    // svgPath was appended after shape (see the dedicated svgPath ordering test).
+    expect(PRIMITIVE_KINDS.slice(-3)).toEqual(['text', 'shape', 'svgPath'])
   })
 
   it('seeds content only for the text primitive; shape is params-only', () => {

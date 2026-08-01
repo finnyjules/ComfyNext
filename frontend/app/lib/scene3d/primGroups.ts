@@ -1,5 +1,7 @@
-// Menu grouping/labels/icons for the 3D Studio add-menu. Kinds must cover
-// PRIMITIVE_KINDS exactly (unit-tested in scene3d-config.unit.spec.ts).
+// Menu grouping/labels/icons for the 3D Studio add-menu. Kinds must cover every
+// PLACEABLE PRIMITIVE_KINDS entry exactly (unit-tested in scene3d-config.unit.spec.ts).
+// `svgPath` is deliberately absent — see NOT_PLACEABLE_KINDS in config.ts: it has
+// no blank form to place, it only ever arrives carrying imported path data.
 import type { Component } from 'vue'
 import {
   Box, Circle, Cylinder, Cone, Torus, Square, Pill, Pyramid, Triangle, Gem, Diamond,

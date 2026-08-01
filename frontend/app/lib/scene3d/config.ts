@@ -25,7 +25,7 @@ export type PrimitiveKind =
   | 'capsule' | 'pyramid' | 'prism'
   | 'icosahedron' | 'octahedron' | 'dodecahedron'
   | 'torusKnot' | 'ring'
-  | 'text' | 'shape'
+  | 'text' | 'shape' | 'svgPath'
 export type Vec3 = [number, number, number]
 
 // Mirrors AVAILABLE_FONTS[0].url in outlines.ts. Duplicated as a literal rather
@@ -171,7 +171,20 @@ export interface SceneObjectBase {
 /** Content for the `text` primitive (the `shape` primitive is params-only —
  *  its geometry is fully parametric, see primParams.ts). Absent `font` falls
  *  back to the engine's first available font. */
-export interface PrimitiveContent { text?: string; font?: string }
+export interface PrimitiveContent {
+  text?: string
+  font?: string
+  /** An SVG path `d` with transforms already baked, in SVG convention (Y DOWN).
+   *  The single stored form for every source element — rect, circle, polygon and
+   *  path all normalize to this. The Y flip to scene space happens once at
+   *  geometry build (pathToShapes), NOT here, so this stays a faithful path. */
+  path?: string
+  /** Digest of `path`, used ONLY as a geometry cache key. geoKeyFor stringifies
+   *  the whole `content` on EVERY sync for EVERY object; a multi-KB `d` would
+   *  put tens of KB of string work on the drag path. A cache key, not a security
+   *  boundary — a cheap non-cryptographic hash is the right tool. */
+  pathKey?: string
+}
 
 export interface PrimitiveObject extends SceneObjectBase {
   kind: 'primitive'
@@ -272,8 +285,15 @@ export const PRIMITIVE_KINDS: PrimitiveKind[] = [
   'capsule', 'pyramid', 'prism',
   'icosahedron', 'octahedron', 'dodecahedron',
   'torusKnot', 'ring',
-  'text', 'shape',
+  'text', 'shape', 'svgPath',
 ]
+
+/** Kinds with no blank form to place from the add menu — they only exist
+ *  carrying data from an import. PRIM_GROUPS deliberately omits these, and the
+ *  drift test subtracts them before asserting exact menu coverage, so the guard
+ *  stays strict for everything a user CAN place. */
+export const NOT_PLACEABLE_KINDS: PrimitiveKind[] = ['svgPath']
+
 export const LIGHTING_PRESETS: LightingPreset[] = ['studio', 'soft', 'dramatic', 'flat']
 
 const LOOP_KINDS: LoopKind[] = ['none', 'spin', 'bob', 'pulse', 'orbit', 'sway', 'tumble']
@@ -441,6 +461,33 @@ export function createPrimitive(kind: PrimitiveKind, existing: SceneObject[] = [
   // primParams.ts) — no content to seed, like every other primitive.
   if (kind === 'text') obj.content = { text: 'Text', font: DEFAULT_FONT_URL }
   return obj
+}
+
+/** Cheap 32-bit string digest (FNV-1a), prefixed with length so two different
+ *  paths must collide in BOTH to alias. Only ever used as a cache key. */
+export function svgPathKey(d: string): string {
+  let h = 0x811c9dc5
+  for (let i = 0; i < d.length; i++) {
+    h ^= d.charCodeAt(i)
+    h = Math.imul(h, 0x01000193)
+  }
+  return `${d.length}:${(h >>> 0).toString(36)}`
+}
+
+export function createSvgPathObject(
+  d: string,
+  existing: SceneObject[],
+  opts: { name?: string; color?: string } = {},
+): PrimitiveObject {
+  const o: PrimitiveObject = {
+    kind: 'primitive', primitive: 'svgPath',
+    id: newId(), name: numberedName(opts.name ?? 'Path', existing), visible: true,
+    position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1],
+    material: { ...DEFAULT_MATERIAL },
+    content: { path: d, pathKey: svgPathKey(d) },
+  }
+  if (opts.color) o.material.color = opts.color
+  return o
 }
 
 export function createGlbObject(url: string, existing: SceneObject[]): GlbObject {
@@ -681,6 +728,8 @@ export function parseDoc(json: string): SceneDoc {
     const c: PrimitiveContent = {}
     if (typeof raw.text === 'string') c.text = raw.text
     if (typeof raw.font === 'string') c.font = raw.font
+    if (typeof raw.path === 'string') c.path = raw.path
+    if (typeof raw.pathKey === 'string') c.pathKey = raw.pathKey
     return Object.keys(c).length ? c : undefined
   }
   const objects: SceneObject[] = Array.isArray(raw.objects)

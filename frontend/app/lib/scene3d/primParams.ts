@@ -137,6 +137,13 @@ export const PRIMITIVE_PARAMS: Record<PrimitiveKind, ParamSpec[]> = {
     { key: 'roundness', label: 'Roundness', hint: 'Curves the corners inward slightly for a softer look', min: 0, max: 1, step: 0.01, default: 0.3 },
     { key: 'star', label: 'Star', hint: 'Pull alternate points inward into a star', min: 0, max: 1, step: 0.01, default: 0 },
   ],
+  // Extruded outline from an imported SVG path
+  svgPath: [
+    { key: 'depth', label: 'Depth', hint: 'How far the shape extrudes in 3D space', min: 0, max: 1, step: 0.01, default: 0.2 },
+    { key: 'bevel', label: 'Bevel', hint: 'Rounds off the edges for a smoother look', min: 0, max: 0.1, step: 0.005, default: 0.01 },
+    { key: 'bevelSegments', label: 'Bevel segments', hint: 'How smooth each beveled edge looks', min: 1, max: 5, step: 1, default: 2 },
+    { key: 'curveSegments', label: 'Curve segments', hint: 'How detailed the curves appear', min: 2, max: 12, step: 1, default: 6 },
+  ],
 }
 
 /** Resolve one value from a spec list: a stored value clamped to its range,
