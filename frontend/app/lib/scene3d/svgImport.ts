@@ -3,7 +3,7 @@
 // no paper, no DOM, no WebGL — so the object-shaping rules (grouping, colour
 // seeding, merge) are unit-testable. Parsing lives in useVectorSvg.ts and
 // geometry lives in svgPath.ts; this module only decides what lands in the doc.
-import { createGroup, createSvgPathObject, type SceneObject } from './config'
+import { createGroup, createSvgPathObject, type SceneObject, type Vec3 } from './config'
 import type { SvgLeafPath } from '~/composables/useVectorSvg'
 
 /** `createGroup` numbers a 'Group' base, but the caller wants ITS name (the
@@ -57,13 +57,14 @@ export function buildSvgObjects(
   const usable = paths.filter((p) => p.d)
   if (!usable.length) return [group]
 
-  const make = (d: string, fill: string, fillRule: SvgLeafPath['fillRule']): SceneObject => {
+  const make = (d: string, fill: string, fillRule: SvgLeafPath['fillRule'], position?: Vec3): SceneObject => {
     // A merged object can only carry one material, so it takes the first real
     // fill; 'none' leaves DEFAULT_MATERIAL's colour rather than writing 'none'.
     const o = createSvgPathObject(d, scope, {
       name: 'Path',
       fillRule,
       ...(fill && fill !== 'none' ? { color: fill } : {}),
+      ...(position ? { position } : {}),
     })
     o.parentId = group.id
     scope.push(o)
@@ -78,7 +79,19 @@ export function buildSvgObjects(
     // first path's rule wins for all of them. Split mode keeps each path's own
     // rule, which is why the choice dialog exists; noted rather than papered
     // over, since the alternative (splitting by rule) contradicts "one object".
+    // Position stays [0,0,0]: there is ONE object here, and the extruder
+    // recentres its (whole-set) geometry on its own bbox — so the import
+    // centre already IS this object's centre. A per-path offset would be
+    // wrong here, not just redundant.
     return [group, make(d, fill, usable[0]!.fillRule)]
   }
-  return [group, ...usable.map((p) => make(p.d, p.fill, p.fillRule))]
+  // Each child gets its own centre so it lands where it was drawn instead of
+  // stacking on the origin (extrudeShapes recentres every geometry on its own
+  // bbox — see that function's doc in engine.ts). `cy` is NEGATED: `d` stays in
+  // SVG convention (Y DOWN — see PrimitiveContent.path's doc) and pathToShapes
+  // flips it at geometry build, so a path sitting BELOW the import centre in
+  // SVG space must sit at NEGATIVE y in scene space. Get this backwards and the
+  // whole import mirrors vertically about its centre — plausible-looking on a
+  // symmetric mark, wrong on everything else.
+  return [group, ...usable.map((p) => make(p.d, p.fill, p.fillRule, [p.cx, -p.cy, 0]))]
 }

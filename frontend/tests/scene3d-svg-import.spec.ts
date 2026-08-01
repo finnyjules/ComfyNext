@@ -157,6 +157,14 @@ async function readSize(page: Page): Promise<[number, number, number]> {
   return [await n('Size X'), await n('Size Y'), await n('Size Z')]
 }
 
+/** Read the Transform panel's Position X for whichever object is currently
+ *  selected. Used to pin ARRANGEMENT, not just child count — see the comment
+ *  on the first test below for why count alone doesn't catch the pile-at-
+ *  the-origin bug this file's underlying fix addresses. */
+async function readPositionX(page: Page): Promise<number> {
+  return Number(await dlg(page).getByLabel('Position X').inputValue())
+}
+
 /** One stroke width of a Lucide glyph in scene units after import, to an order
  *  of magnitude — the band below is deliberately wide, so this only has to be
  *  the right SIZE, not the exact number.
@@ -280,6 +288,23 @@ test.describe('3D Studio — SVG import (E2E)', () => {
     // Group + two children and nothing else: neither child is ALSO drawn at the
     // root, which is what a missed parentId would look like.
     await expect(allRows(page)).toHaveCount(3)
+
+    // ARRANGEMENT, not just count: TWO_FILLED's two paths are drawn 12 SVG
+    // units apart (x=0..10 and x=12..20). Every path recentres its OWN
+    // geometry on its own bbox (extrudeShapes, shared with text/shape), so if
+    // the child object doesn't ALSO carry its own position, both land on the
+    // origin — a group of two objects that still LOOK like a pile of one.
+    // This is exactly the bug that shipped: a child-count assertion alone
+    // passes whether or not the arrangement fix is present.
+    const names = await childRows(page).evaluateAll(
+      (els) => els.map((e) => e.getAttribute('data-object-name') ?? ''))
+    expect(names).toHaveLength(2)
+    const xs: number[] = []
+    for (const name of names) {
+      await selectOnly(page, name)
+      xs.push(await readPositionX(page))
+    }
+    expect(Math.abs(xs[0]! - xs[1]!), 'the two children must sit at different Position X, not both at the origin').toBeGreaterThan(0.01)
   })
 
   test('a stroke-only Lucide icon outlines into extrudable area', async ({ page }) => {

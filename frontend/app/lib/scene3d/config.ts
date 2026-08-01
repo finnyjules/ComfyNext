@@ -487,12 +487,17 @@ export function svgPathKey(d: string): string {
 export function createSvgPathObject(
   d: string,
   existing: SceneObject[],
-  opts: { name?: string; color?: string; fillRule?: PrimitiveContent['fillRule'] } = {},
+  opts: { name?: string; color?: string; fillRule?: PrimitiveContent['fillRule']; position?: Vec3 } = {},
 ): PrimitiveObject {
   const o: PrimitiveObject = {
     kind: 'primitive', primitive: 'svgPath',
     id: newId(), name: numberedName(opts.name ?? 'Path', existing), visible: true,
-    position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1],
+    // extrudeShapes recentres every geometry on its own bbox, so without a
+    // per-path position every import stacks on the origin — see buildSvgObjects,
+    // the only caller that passes one. Default stays [0,0,0] so every other
+    // caller (the blank-form 'Add' menu has none for svgPath, but tests and
+    // future callers may) is unaffected.
+    position: opts.position ?? [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1],
     material: { ...DEFAULT_MATERIAL },
     // Only 'evenodd' is written. 'nonzero' IS the absent case (see fillRule's
     // comment), so storing it would add a field to every doc that means exactly

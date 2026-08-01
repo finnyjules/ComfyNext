@@ -3,6 +3,10 @@
 import { describe, it, expect } from 'vitest'
 import * as THREE from 'three'
 import { pathToShapes } from '~/lib/scene3d/svgPath'
+import { geometryFor } from '~/lib/scene3d/engine'
+import { buildSvgObjects } from '~/lib/scene3d/svgImport'
+import type { SvgLeafPath } from '~/composables/useVectorSvg'
+import type { PrimitiveObject } from '~/lib/scene3d/config'
 
 // happy-dom 20.10.6's CSSStyleDeclaration implements indexed access only for
 // camelCase IDL names (`style.fillOpacity`) and returns `undefined` — not the
@@ -170,4 +174,57 @@ describe('scene3d svgPath', () => {
     const b = pathToShapes(SQUARE_WITH_HOLE)
     expect(area(b[0]!)).toBeCloseTo(area(a[0]!), 5)
   })
+})
+
+// ── end-to-end arrangement: buildSvgObjects -> geometryFor -> world centre ──
+// The bug this whole fix addresses: extrudeShapes recentres every geometry on
+// its own bbox (correct — shared with text/shape), so a multi-path import
+// needs its OWN per-child position or every path piles on the origin. The
+// unit tests in scene3d-svg-import.unit.spec.ts pin buildSvgObjects's output
+// in isolation; this one runs the REAL geometry factory too, so a regression
+// in how position and geometry recentring combine (not just in buildSvgObjects
+// alone) would still be caught here.
+describe('scene3d svg import — world arrangement', () => {
+  /** World centre = object position + its geometry's own bbox centre. Mirrors
+   *  exactly what a viewer/renderer would compute from a synced mesh. */
+  function worldCenter(obj: PrimitiveObject): THREE.Vector3 {
+    const geo = geometryFor(obj.primitive, obj.params, obj.content)
+    geo.computeBoundingBox()
+    const b = geo.boundingBox!
+    const local = new THREE.Vector3((b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2, (b.min.z + b.max.z) / 2)
+    return local.add(new THREE.Vector3(...obj.position))
+  }
+
+  // Two 10x10 squares, authored 12 units apart in X (import space), each
+  // leaf's cx/cy set from its own d (as svgToLeafPaths would compute them).
+  const SQUARE_A: SvgLeafPath = {
+    d: 'M-11 -5 L-1 -5 L-1 5 L-11 5 Z', fill: '#ff0000', stroke: 'none', strokeWidth: 0,
+    fillRule: 'nonzero', cx: -6, cy: 0,
+  }
+  const SQUARE_B: SvgLeafPath = {
+    d: 'M1 -5 L11 -5 L11 5 L1 5 Z', fill: '#00ff00', stroke: 'none', strokeWidth: 0,
+    fillRule: 'nonzero', cx: 6, cy: 0,
+  }
+
+  it('two squares 12 units apart end up with world centres separated in X, not stacked', () => {
+    const objs = buildSvgObjects([SQUARE_A, SQUARE_B], [], { name: 'Logo' })
+    const kids = objs.filter((o) => o.kind === 'primitive') as PrimitiveObject[]
+    expect(kids).toHaveLength(2)
+    const centers = kids.map(worldCenter)
+    const dx = Math.abs(centers[0]!.x - centers[1]!.x)
+    expect(dx).toBeCloseTo(12, 0)
+    // The failure mode this guards: BOTH centres collapsing onto the origin.
+    expect(dx).toBeGreaterThan(1)
+  })
+
+  // ── broken controls (deliberately introduced, then reverted) ─────────────
+  // Not part of the shipped suite — run by hand while verifying the fix; see
+  // the task report for the actual pass/fail output captured from each.
+  //
+  // 1. Hard-code createSvgPathObject's `position` back to `[0, 0, 0]`
+  //    (ignore `opts.position` in config.ts) -> the test above must go RED
+  //    with dx close to 0.
+  // 2. Flip the Y sign in svgImport.ts's buildSvgObjects (`+p.cy` instead of
+  //    `-p.cy`) -> the "negates cy" test in scene3d-svg-import.unit.spec.ts
+  //    must go RED.
 })

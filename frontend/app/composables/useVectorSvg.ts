@@ -58,6 +58,12 @@ export interface SvgLeafPath {
   /** Already multiplied by the import's normalization factor. */
   strokeWidth: number
   fillRule: 'nonzero' | 'evenodd'
+  /** Centre of THIS path's own bounds, in the normalized import space and in SVG
+   *  convention (Y DOWN) — i.e. its offset from the import's midpoint. The
+   *  extruder recentres every geometry on its own bbox, so without this every
+   *  path stacks on the origin and a multi-path logo imports as a pile. */
+  cx: number
+  cy: number
 }
 
 export interface SvgImportOpts {
@@ -149,10 +155,17 @@ export async function svgToLeafPaths(svg: string, opts: SvgImportOpts): Promise<
   const leafPaths: SvgLeafPath[] = []
   for (const item of paths) {
     let d = ''
+    let cx = 0
+    let cy = 0
     try {
       const clone = item.clone({ insert: false }) as Paper.PathItem
       clone.transform(m)
       d = clone.getPathData(undefined, 4)
+      // The clone already has `m` applied (svg coords → normalized import
+      // space), so its own bounds centre IS this path's offset from the
+      // import's midpoint — exactly what buildSvgObjects needs to place it.
+      const cb = clone.bounds
+      if (cb) { cx = cb.center.x; cy = cb.center.y }
       clone.remove()
     } catch { continue }
     if (!d) continue
@@ -163,7 +176,7 @@ export async function svgToLeafPaths(svg: string, opts: SvgImportOpts): Promise<
     const fillRule: SvgLeafPath['fillRule'] =
       (item as any).windingRule === 'evenodd' ? 'evenodd' : 'nonzero'
 
-    leafPaths.push({ d, fill, stroke, strokeWidth, fillRule })
+    leafPaths.push({ d, fill, stroke, strokeWidth, fillRule, cx, cy })
   }
 
   project.clear()
@@ -275,12 +288,26 @@ export async function outlineStrokes(paths: SvgLeafPath[]): Promise<SvgLeafPath[
       // can unite to nothing; matches svgToLeafPaths's `if (!d) continue`
       // guard so a `d: ''` entry never reaches a consumer expecting a drawable path.
       if (!d) continue
+      // Recompute cx/cy from the OUTLINE's own bounds, not the source path's:
+      // an outline is fatter than its source by half the stroke width on every
+      // side, so a symmetric expansion leaves the centre unchanged in the
+      // common case but a re-parse (below) is exact regardless of shape.
+      let cx = p.cx
+      let cy = p.cy
+      try {
+        const reparsed = new sc.CompoundPath(d)
+        const cb = reparsed.bounds
+        if (cb) { cx = cb.center.x; cy = cb.center.y }
+        reparsed.remove()
+      } catch { /* fall back to the source path's centre */ }
       out.push({
         d,
         fill: p.stroke,          // the stroke's colour becomes the solid's colour
         stroke: 'none',
         strokeWidth: 0,
         fillRule: 'nonzero',
+        cx,
+        cy,
       })
     }
   } finally {
