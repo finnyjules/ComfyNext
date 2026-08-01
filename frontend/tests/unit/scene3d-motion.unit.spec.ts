@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import { parseDoc, serializeDoc, defaultDoc, createPrimitive } from '~/lib/scene3d/config'
-import type { ObjectMotion } from '~/lib/scene3d/motion/types'
+import type { ObjectMotion, LoopKind, LoopSpec, CameraMotion } from '~/lib/scene3d/motion/types'
+import {
+  LOOP_OPTIONS, CAMERA_OPTIONS, LOOP_USES_AMOUNT, CAMERA_USES_CYCLES, CAMERA_USES_AMOUNT,
+} from '~/lib/scene3d/motion/panel'
 import { DEFAULT_SCENE_MOTION } from '~/lib/scene3d/motion/types'
 import { evaluateObjectMotion, evaluateCameraMotion } from '~/lib/scene3d/motion/evaluate'
 import { resolveEaseRef } from '~/lib/scene3d/motion/ease'
@@ -562,5 +565,54 @@ describe('scene3d — post parse', () => {
     expect(round.post.bloom).toBe(true)
     expect(round.post.bloomStrength).toBe(1.2)
     expect(round.post).toEqual({ ...DEFAULT_POST, bloom: true, bloomStrength: 1.2 })
+  })
+})
+
+// The Motion panel hides Cycles/Amount for presets that ignore them. Those lists live in
+// motion/panel.ts but the truth lives in the evaluators, so re-derive them here: probe each
+// preset with two `amount`/`speed` values and see whether the sample actually moves.
+describe('scene3d motion — panel knob lists match the evaluators', () => {
+  const sampleLoop = (kind: LoopKind, spec: Partial<LoopSpec>) =>
+    JSON.stringify(evaluateObjectMotion(
+      { loop: { kind, speed: 1, amount: 1, ...spec } }, 0.37, 1,
+    ))
+  const sampleCam = (preset: CameraMotion['preset'], spec: Partial<CameraMotion>) =>
+    JSON.stringify(evaluateCameraMotion({ preset, speed: 1, amount: 1, ...spec }, 0.37))
+
+  it('LOOP_USES_AMOUNT lists exactly the kinds whose amount changes the sample', () => {
+    const derived = LOOP_OPTIONS.filter(
+      (k) => k !== 'none' && sampleLoop(k, { amount: 1 }) !== sampleLoop(k, { amount: 2 }),
+    )
+    expect(derived).toEqual(LOOP_USES_AMOUNT)
+  })
+
+  it('CAMERA_USES_CYCLES / CAMERA_USES_AMOUNT list exactly the presets that read them', () => {
+    const byCycles = CAMERA_OPTIONS.filter(
+      (p) => p !== 'none' && sampleCam(p, { speed: 1 }) !== sampleCam(p, { speed: 3 }),
+    )
+    const byAmount = CAMERA_OPTIONS.filter(
+      (p) => p !== 'none' && sampleCam(p, { amount: 1 }) !== sampleCam(p, { amount: 2 }),
+    )
+    expect(byCycles).toEqual(CAMERA_USES_CYCLES)
+    expect(byAmount).toEqual(CAMERA_USES_AMOUNT)
+  })
+
+  it('every loop kind reads speed as whole cycles across the scene', () => {
+    for (const kind of LOOP_OPTIONS) {
+      if (kind === 'none') continue
+      // 3 cycles at t01=x/3 is the same pose as 1 cycle at t01=x — speed only rescales time.
+      expect(JSON.stringify(evaluateObjectMotion({ loop: { kind, speed: 3, amount: 1 } }, 0.37 / 3, 1))).toBe(
+        JSON.stringify(evaluateObjectMotion({ loop: { kind, speed: 1, amount: 1 } }, 0.37, 1)),
+      )
+      // ...and a whole number of cycles still closes on the scene end.
+      expect(sampleLoop(kind, { speed: 3 })).not.toBe(sampleLoop(kind, { speed: 1 }))
+    }
+  })
+
+  it('a 60s scene bakes 60 x fps frames', () => {
+    const doc = defaultDoc()
+    doc.motion = { duration: 60, fps: 30, loop: true }
+    expect(parseDoc(serializeDoc(doc)).motion.duration).toBe(60)
+    expect(Math.round(doc.motion.fps * doc.motion.duration)).toBe(1800)
   })
 })
