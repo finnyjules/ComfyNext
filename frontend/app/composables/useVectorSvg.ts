@@ -163,6 +163,110 @@ export async function svgToLeafPaths(svg: string, opts: SvgImportOpts): Promise<
   return { paths: leafPaths, bbox }
 }
 
+// paper's classes reached through the scope instance rather than through the
+// `import type Paper` default, which is a type and not a namespace — spelling
+// these `Paper.Path` would add to this file's existing TS2503 baseline. While
+// that baseline stands these widen to `any` (same as `let acc: any` above);
+// they tighten to the real classes for free the day the import is fixed.
+type PaperScopeT = Awaited<ReturnType<typeof paperScope>>
+type PaperPath = InstanceType<PaperScopeT['Path']>
+type PaperPathItem = ReturnType<PaperPath['unite']>
+
+/**
+ * Replace every stroke-only path (fill 'none', non-zero strokeWidth) with a
+ * FILLED outline of its stroke, so it has area to extrude. Filled paths pass
+ * through untouched; a path with neither fill nor stroke is dropped.
+ *
+ * This is not an edge case: Lucide (this repo's own icon set), Feather and
+ * Heroicons-outline are entirely stroke-only, so without this step the single
+ * most likely thing a user pastes — an icon — imports as nothing at all.
+ *
+ * Built from paper's boolean ops rather than SVGLoader's `pointsToStroke`,
+ * which returns a BufferGeometry of stroke triangles and so cannot feed
+ * ExtrudeGeometry at all.
+ *
+ * EXACT for round joins and caps — which is what Lucide/Feather/Heroicons all
+ * specify — because a round-joined stroke's outline IS the union of a rectangle
+ * per segment and a disc at every vertex. Miter and bevel joins are
+ * approximated as round, so a sharp-cornered stroked logo loses its points;
+ * accepted v1 limitation. Dasharray is ignored: a dashed stroke outlines solid.
+ */
+export async function outlineStrokes(paths: SvgLeafPath[]): Promise<SvgLeafPath[]> {
+  if (!paths.length) return []
+  const sc = await paperScope()
+  const out: SvgLeafPath[] = []
+  try {
+    for (const p of paths) {
+      const hasFill = p.fill !== 'none'
+      const hasStroke = p.stroke !== 'none' && p.strokeWidth > 0
+      if (hasFill) { out.push(p); continue }
+      if (!hasStroke) continue // nothing to draw and nothing to extrude
+
+      let united: PaperPathItem | null = null
+      try {
+        const src = new sc.CompoundPath(p.d)
+        const r = p.strokeWidth / 2
+
+        // `segments` are ANCHORS only, so uniting straight from them outlines a
+        // curve as the polygon through its anchors — an expanded <circle> has
+        // four anchors and would come out a rounded square. Flatten first, to a
+        // tolerance taken from the shape's own size: `d` is in normalized import
+        // space, which is a canvas fraction (~0.6) for the Compositor and a
+        // scene size for 3D Studio, so any absolute tolerance would be wildly
+        // wrong for one of them.
+        const span = Math.max(src.bounds?.width || 0, src.bounds?.height || 0)
+        const tol = span > 0 ? span / 400 : 0
+
+        const children = (src.children?.length ? src.children : [src]) as PaperPath[]
+        for (const child of children) {
+          // Flatten a CLONE: paper's flatten is destructive, and `src` still
+          // owns the geometry the loop is walking.
+          const flat = child.clone({ insert: false }) as PaperPath
+          if (tol > 0) flat.flatten(tol)
+          const pts = flat.segments.map((s: any) => s.point)
+          const closed = flat.closed
+          flat.remove()
+          if (closed && pts.length) pts.push(pts[0]!)
+          for (let i = 0; i < pts.length; i++) {
+            // A disc at every vertex — this is the join/cap, and it is why round
+            // joins come out exact.
+            const dot = new sc.Path.Circle(pts[i]!, r)
+            united = united ? (united.unite(dot) as PaperPathItem) : dot
+            if (i + 1 >= pts.length) continue
+            // A rectangle spanning this segment, rotated onto it.
+            const a = pts[i]!, b = pts[i + 1]!
+            const len = a.getDistance(b)
+            if (len < 1e-9) continue
+            const rect = new sc.Path.Rectangle(new sc.Rectangle(0, -r, len, r * 2))
+            rect.rotate((b.subtract(a)).angle, new sc.Point(0, 0))
+            rect.translate(a)
+            united = united.unite(rect) as PaperPathItem
+          }
+        }
+        src.remove()
+      } catch (err) {
+        console.error('[useVectorSvg] stroke outline failed:', err)
+        united = null
+      }
+      if (!united) continue
+      out.push({
+        d: united.getPathData(undefined, 4),
+        fill: p.stroke,          // the stroke's colour becomes the solid's colour
+        stroke: 'none',
+        strokeWidth: 0,
+        fillRule: 'nonzero',
+      })
+      united.remove()
+    }
+  } finally {
+    // Clear on EVERY exit path, throws included: the PaperScope is cached for
+    // the life of the tab, so leftovers would accumulate across imports and
+    // pollute the next import's whole-drawing bounds.
+    sc.project.clear()
+  }
+  return out
+}
+
 /**
  * Parse an SVG string into one or more PathLayers (one per leaf path, so
  * per-shape fills/strokes are preserved). Returns [] if nothing usable.
