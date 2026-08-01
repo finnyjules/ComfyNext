@@ -45,15 +45,41 @@ interface ImportOpts {
   cy?: number
 }
 
+/** One leaf path from an imported SVG, in normalized import space (the whole
+ *  import scaled so its bounds span `targetWidth`, centred on its own midpoint).
+ *  Deliberately free of any consumer's layer/object type: the Compositor maps
+ *  these to PathLayers, 3D Studio maps them to svgPath primitives. */
+export interface SvgLeafPath {
+  d: string
+  /** CSS colour, or 'none'. */
+  fill: string
+  /** CSS colour, or 'none'. */
+  stroke: string
+  /** Already multiplied by the import's normalization factor. */
+  strokeWidth: number
+  fillRule: 'nonzero' | 'evenodd'
+}
+
+export interface SvgImportOpts {
+  /** Fraction of the target space the whole import should span (default 0.6). */
+  targetWidth?: number
+}
+
+/** Normalized bounds of the whole import, in the same space as each `d`. */
+export interface SvgLeafResult {
+  paths: SvgLeafPath[]
+  bbox: { w: number; h: number }
+}
+
 /**
- * Parse an SVG string into one or more PathLayers (one per leaf path, so
- * per-shape fills/strokes are preserved). Returns [] if nothing usable.
+ * Parse an SVG string into leaf paths in normalized import space. Shared core
+ * behind both `svgToPathLayers` (Compositor) and 3D Studio's importer — the
+ * parsing, normalization and coordinate contract live here so both consumers
+ * see the same geometry.
  */
-export async function svgToPathLayers(svg: string, opts: ImportOpts = {}): Promise<PathLayer[]> {
-  if (!svg || typeof window === 'undefined') return []
+export async function svgToLeafPaths(svg: string, opts: SvgImportOpts = {}): Promise<SvgLeafResult> {
+  if (!svg || typeof window === 'undefined') return { paths: [], bbox: { w: 0, h: 0 } }
   const targetWidth = opts.targetWidth ?? 0.6
-  const cx = opts.cx ?? 0.5
-  const cy = opts.cy ?? 0.5
 
   const sc = await paperScope()
   const project = sc.project
@@ -65,9 +91,9 @@ export async function svgToPathLayers(svg: string, opts: ImportOpts = {}): Promi
   } catch (err) {
     console.error('[useVectorSvg] importSVG failed:', err)
     project.clear()
-    return []
+    return { paths: [], bbox: { w: 0, h: 0 } }
   }
-  if (!root) { project.clear(); return [] }
+  if (!root) { project.clear(); return { paths: [], bbox: { w: 0, h: 0 } } }
 
   // Collect leaf path items (Path / CompoundPath) anywhere in the tree.
   const paths: Paper.PathItem[] = []
@@ -78,7 +104,7 @@ export async function svgToPathLayers(svg: string, opts: ImportOpts = {}): Promi
   }
   walk(root)
 
-  if (!paths.length) { project.clear(); return [] }
+  if (!paths.length) { project.clear(); return { paths: [], bbox: { w: 0, h: 0 } } }
 
   // Whole-import bounds → normalization factor (svg units → width-fractions).
   const B = root.bounds
@@ -91,7 +117,7 @@ export async function svgToPathLayers(svg: string, opts: ImportOpts = {}): Promi
   m.scale(k)
   m.translate(-B.center.x, -B.center.y)
 
-  const layers: PathLayer[] = []
+  const leafPaths: SvgLeafPath[] = []
   for (const item of paths) {
     let d = ''
     try {
@@ -102,20 +128,34 @@ export async function svgToPathLayers(svg: string, opts: ImportOpts = {}): Promi
     } catch { continue }
     if (!d) continue
 
-    const fill: Paint = paperColorToCss((item as any).fillColor)
+    const fill = paperColorToCss((item as any).fillColor)
     const stroke = paperColorToCss((item as any).strokeColor)
     const strokeWidth = stroke !== 'none' ? ((item as any).strokeWidth || 0) * k : 0
-    const fillRule: PathLayer['fillRule'] =
+    const fillRule: SvgLeafPath['fillRule'] =
       (item as any).windingRule === 'evenodd' ? 'evenodd' : 'nonzero'
 
-    layers.push(createPathLayer({
-      d, bbox: { ...bbox }, scale: 1, x: cx, y: cy,
-      fill, fillRule, stroke, strokeWidth,
-    }))
+    leafPaths.push({ d, fill, stroke, strokeWidth, fillRule })
   }
 
   project.clear()
-  return layers
+  return { paths: leafPaths, bbox }
+}
+
+/**
+ * Parse an SVG string into one or more PathLayers (one per leaf path, so
+ * per-shape fills/strokes are preserved). Returns [] if nothing usable.
+ *
+ * A thin mapping over `svgToLeafPaths` — the parsing, normalization and
+ * coordinate contract all live there now, shared with 3D Studio's importer.
+ */
+export async function svgToPathLayers(svg: string, opts: ImportOpts = {}): Promise<PathLayer[]> {
+  const { paths, bbox } = await svgToLeafPaths(svg, { targetWidth: opts.targetWidth ?? 0.6 })
+  const cx = opts.cx ?? 0.5
+  const cy = opts.cy ?? 0.5
+  return paths.map((p) => createPathLayer({
+    d: p.d, bbox: { ...bbox }, scale: 1, x: cx, y: cy,
+    fill: p.fill, fillRule: p.fillRule, stroke: p.stroke, strokeWidth: p.strokeWidth,
+  }))
 }
 
 // ── Direct anchor editing (node mode) ────────────────────────────────────────
