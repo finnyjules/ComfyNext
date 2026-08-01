@@ -19,6 +19,7 @@ import { loadFont, fontCacheGet, textOutline, shapeOutline, type Font } from '~/
 import { materialFor, updateMaterial, disposeMaterial, refreshSceneShaderFields } from './materials'
 import { applyModifiers } from '~/lib/scene3d/modifiers'
 import { PRIMITIVE_PARAMS, paramValue, MODIFIER_SPECS, modifierValue } from '~/lib/scene3d/primParams'
+import { pathToShapes } from './svgPath'
 import { buildLightWidget, setWidgetSelected, disposeWidget } from '~/lib/scene3d/lightWidgets'
 import { PostChain, postEnabled, DEFAULT_POST, type PostSettings } from '~/lib/spacetype/post'
 
@@ -165,12 +166,11 @@ export function geometryFor(
       if (!shapes.length) return extrudePlaceholderGeometry()
       return extrudeShapes(shapes, p('depth'), p('bevel'), p('bevelSegments'), SHAPE_CURVE_SEGMENTS)
     }
-    case 'svgPath':
-      // Converting content.path (an SVG `d`) into real Shapes is a later task
-      // (pathToShapes). Until then an imported object still needs SOME geometry
-      // to sync without crashing, so it falls back to the same placeholder cube
-      // `text`/`shape` use before their outline is ready.
-      return extrudePlaceholderGeometry()
+    case 'svgPath': {
+      const shapes = pathToShapes(content?.path ?? '')
+      if (!shapes.length) return extrudePlaceholderGeometry()
+      return extrudeShapes(shapes, p('depth'), p('bevel'), p('bevelSegments'), p('curveSegments'))
+    }
   }
 }
 
@@ -250,7 +250,13 @@ export function baseVertexCountFor(
 export function geoKeyFor(obj: PrimitiveObject, variant: 'smooth' | 'facet'): string {
   const vals = PRIMITIVE_PARAMS[obj.primitive].map((s) => paramValue(obj.primitive, obj.params, s.key))
   const mods = MODIFIER_SPECS.map((s) => modifierValue(obj.modifiers, s.key))
-  const content = obj.content ? JSON.stringify(obj.content) : ''
+  // An svgPath's `d` runs to several KB and this key is rebuilt on EVERY sync
+  // for EVERY object — stringifying it would put tens of KB of string work on
+  // the drag path. `pathKey` is the digest standing in for it.
+  const c = obj.content
+  const content = c
+    ? JSON.stringify(c.pathKey ? { ...c, path: undefined } : c)
+    : ''
   return `${obj.primitive}|${vals.join(',')}|${mods.join(',')}|${variant}|${content}`
 }
 
