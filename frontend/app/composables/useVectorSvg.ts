@@ -192,7 +192,10 @@ type PaperPathItem = ReturnType<PaperPath['unite']>
  * accepted v1 limitation. Dasharray is ignored: a dashed stroke outlines solid.
  */
 export async function outlineStrokes(paths: SvgLeafPath[]): Promise<SvgLeafPath[]> {
-  if (!paths.length) return []
+  // Same guard as svgToLeafPaths: paper.js touches browser globals at import
+  // time, so calling this during SSR (e.g. a component setup() that runs
+  // server-side) would throw an unhandled rejection instead of degrading to [].
+  if (!paths.length || typeof window === 'undefined') return []
   const sc = await paperScope()
   const out: SvgLeafPath[] = []
   try {
@@ -217,7 +220,13 @@ export async function outlineStrokes(paths: SvgLeafPath[]): Promise<SvgLeafPath[
         const span = Math.max(src.bounds?.width || 0, src.bounds?.height || 0)
         const tol = span > 0 ? span / 400 : 0
 
-        const children = (src.children?.length ? src.children : [src]) as PaperPath[]
+        // `src.children` is empty only for a degenerate/empty CompoundPath (no
+        // subpaths parsed from `p.d`) — there is no geometry to walk. The old
+        // `[src]` fallback treated the CompoundPath itself as a Path, whose
+        // `.segments` is undefined, and silently relied on the outer catch to
+        // drop the stroke; skip it explicitly instead so a real bug in the
+        // walk below isn't masked by the same catch.
+        const children = (src.children ?? []) as PaperPath[]
         for (const child of children) {
           // Flatten a CLONE: paper's flatten is destructive, and `src` still
           // owns the geometry the loop is walking.
@@ -229,18 +238,22 @@ export async function outlineStrokes(paths: SvgLeafPath[]): Promise<SvgLeafPath[
           if (closed && pts.length) pts.push(pts[0]!)
           for (let i = 0; i < pts.length; i++) {
             // A disc at every vertex — this is the join/cap, and it is why round
-            // joins come out exact.
-            const dot = new sc.Path.Circle(pts[i]!, r)
-            united = united ? (united.unite(dot) as PaperPathItem) : dot
+            // joins come out exact. `insert: false` keeps this intermediate out
+            // of the project (only the final `united` needs to be there, and it
+            // never is either — see the push below), so repeated imports don't
+            // accumulate stale geometry that would pollute the next import's
+            // whole-drawing bounds.
+            const dot = new sc.Path.Circle({ center: pts[i]!, radius: r, insert: false })
+            united = united ? (united.unite(dot, { insert: false }) as PaperPathItem) : dot
             if (i + 1 >= pts.length) continue
             // A rectangle spanning this segment, rotated onto it.
             const a = pts[i]!, b = pts[i + 1]!
             const len = a.getDistance(b)
             if (len < 1e-9) continue
-            const rect = new sc.Path.Rectangle(new sc.Rectangle(0, -r, len, r * 2))
+            const rect = new sc.Path.Rectangle({ rectangle: new sc.Rectangle(0, -r, len, r * 2), insert: false })
             rect.rotate((b.subtract(a)).angle, new sc.Point(0, 0))
             rect.translate(a)
-            united = united.unite(rect) as PaperPathItem
+            united = united.unite(rect, { insert: false }) as PaperPathItem
           }
         }
         src.remove()
@@ -249,14 +262,19 @@ export async function outlineStrokes(paths: SvgLeafPath[]): Promise<SvgLeafPath[
         united = null
       }
       if (!united) continue
+      const d = united.getPathData(undefined, 4)
+      united.remove()
+      // A degenerate stroke (e.g. every segment under the 1e-9 length guard)
+      // can unite to nothing; matches svgToLeafPaths's `if (!d) continue`
+      // guard so a `d: ''` entry never reaches a consumer expecting a drawable path.
+      if (!d) continue
       out.push({
-        d: united.getPathData(undefined, 4),
+        d,
         fill: p.stroke,          // the stroke's colour becomes the solid's colour
         stroke: 'none',
         strokeWidth: 0,
         fillRule: 'nonzero',
       })
-      united.remove()
     }
   } finally {
     // Clear on EVERY exit path, throws included: the PaperScope is cached for

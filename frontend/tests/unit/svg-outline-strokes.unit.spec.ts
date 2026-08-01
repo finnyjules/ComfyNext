@@ -71,9 +71,15 @@ describe('outlineStrokes', () => {
 
     const shape = await measure(outlined!.d)
     expect(shape.closed ?? shape.children.every((c: any) => c.closed)).toBe(true)
-    // 1.0 long × 0.1 wide with round caps ≈ 0.1 + π·0.05² ≈ 0.108.
-    expect(Math.abs(shape.area)).toBeGreaterThan(0.09)
-    expect(Math.abs(shape.area)).toBeLessThan(0.13)
+    // 1.0 long x 0.1 wide rectangle (0.100) plus two round end caps, which
+    // together make one full disc of radius 0.05: 0.1 + pi*0.05^2 = 0.10785.
+    // The lower bound is tightened to sit ABOVE the rectangle-only area
+    // (0.100): deleting the disc/unite lines from outlineStrokes collapses
+    // the outline to the bare rectangle, and 0.100 must fail this assertion
+    // or the discs — the whole exactness claim for round joins/caps — are
+    // unpinned. (Measured actual: ~0.107855, matching the arithmetic above.)
+    expect(Math.abs(shape.area)).toBeGreaterThan(0.105)
+    expect(Math.abs(shape.area)).toBeLessThan(0.11)
   })
 
   it('follows the curve rather than the anchors', async () => {
@@ -89,6 +95,25 @@ describe('outlineStrokes', () => {
     expect(shape.contains(new paper.Point(c, c))).toBe(true)
     // ...and the hole is still a hole: the centre is outside the ring.
     expect(shape.contains(new paper.Point(0, 0))).toBe(false)
+
+    // Pin the discs themselves, not just "some area exists". Two flattened
+    // vertices (anchors, not fill-in points) meet at (1, 0) — an explicit
+    // endpoint of the path above, so it is a real vertex regardless of paper's
+    // internal curve-to-polygon tessellation. Where the two rectangles for the
+    // segments either side of that vertex meet, their flat end-caps are at
+    // slightly different angles (the vertices turn), leaving a wedge notch on
+    // the outward side that only the round-join disc fills — that notch is
+    // exactly what "EXACT for round joins" (the doc comment above
+    // outlineStrokes) claims. A point just outside the nominal circle at that
+    // vertex's own angle, e.g. (1.02, 0) here (radius 1.02, well inside the
+    // true stroke band [0.95, 1.05]), lands in that notch: contained with the
+    // discs, NOT contained from the rectangles alone. Verified empirically —
+    // rectangle-only misses every one of 0/45/.../315 degrees across radius
+    // 1.005-1.049, so this is not a lucky single sample.
+    expect(shape.contains(new paper.Point(1.02, 0))).toBe(true)
+    // Same check off a bare vertex angle (45 degrees, also an actual flattened
+    // anchor for this input) so the assertion isn't tied to one axis.
+    expect(shape.contains(new paper.Point(1.02 * c, 1.02 * c))).toBe(true)
   })
 
   it('passes filled paths through and drops paths with neither fill nor stroke', async () => {
