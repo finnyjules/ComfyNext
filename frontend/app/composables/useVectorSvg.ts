@@ -73,6 +73,11 @@ export interface SvgImportOpts {
 export interface SvgLeafResult {
   paths: SvgLeafPath[]
   bbox: { w: number; h: number }
+  /** True when the source could not be parsed at all, as distinct from parsing
+   *  fine and containing nothing usable. Callers show different messages for
+   *  those two: telling someone their SVG was "empty" when it was actually
+   *  malformed sends them looking in entirely the wrong place. */
+  parseFailed: boolean
 }
 
 /**
@@ -101,7 +106,7 @@ export function svgNormalization(
  * see the same geometry.
  */
 export async function svgToLeafPaths(svg: string, opts: SvgImportOpts): Promise<SvgLeafResult> {
-  if (!svg || typeof window === 'undefined') return { paths: [], bbox: { w: 0, h: 0 } }
+  if (!svg || typeof window === 'undefined') return { paths: [], bbox: { w: 0, h: 0 }, parseFailed: false }
   const { targetWidth } = opts
 
   const sc = await paperScope()
@@ -114,9 +119,11 @@ export async function svgToLeafPaths(svg: string, opts: SvgImportOpts): Promise<
   } catch (err) {
     console.error('[useVectorSvg] importSVG failed:', err)
     project.clear()
-    return { paths: [], bbox: { w: 0, h: 0 } }
+    // Genuinely unparseable source (paper.js threw), distinct from parsing
+    // fine and yielding no leaf paths below — callers tell the two apart.
+    return { paths: [], bbox: { w: 0, h: 0 }, parseFailed: true }
   }
-  if (!root) { project.clear(); return { paths: [], bbox: { w: 0, h: 0 } } }
+  if (!root) { project.clear(); return { paths: [], bbox: { w: 0, h: 0 }, parseFailed: true } }
 
   // Collect leaf path items (Path / CompoundPath) anywhere in the tree.
   const paths: Paper.PathItem[] = []
@@ -127,7 +134,7 @@ export async function svgToLeafPaths(svg: string, opts: SvgImportOpts): Promise<
   }
   walk(root)
 
-  if (!paths.length) { project.clear(); return { paths: [], bbox: { w: 0, h: 0 } } }
+  if (!paths.length) { project.clear(); return { paths: [], bbox: { w: 0, h: 0 }, parseFailed: false } }
 
   // Whole-import bounds → normalization factor (svg units → width-fractions).
   const B = root.bounds
@@ -160,7 +167,7 @@ export async function svgToLeafPaths(svg: string, opts: SvgImportOpts): Promise<
   }
 
   project.clear()
-  return { paths: leafPaths, bbox }
+  return { paths: leafPaths, bbox, parseFailed: false }
 }
 
 // paper's classes reached through the scope instance rather than through the

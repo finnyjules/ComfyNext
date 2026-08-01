@@ -7,7 +7,7 @@
 // two failure modes it can have (no area, or curves sampled at their anchors)
 // are both invisible until something is rendered.
 import { describe, it, expect, beforeAll } from 'vitest'
-import { outlineStrokes, type SvgLeafPath } from '~/composables/useVectorSvg'
+import { outlineStrokes, svgToLeafPaths, type SvgLeafPath } from '~/composables/useVectorSvg'
 
 /**
  * happy-dom has a <canvas> element but no 2D context, and paper refuses to load
@@ -121,5 +121,34 @@ describe('outlineStrokes', () => {
     const empty: SvgLeafPath = { d: 'M 0 0 L 1 0', fill: 'none', stroke: 'none', strokeWidth: 0, fillRule: 'nonzero' }
     const out = await outlineStrokes([filled, empty])
     expect(out).toEqual([filled])
+  })
+})
+
+describe('svgToLeafPaths parseFailed', () => {
+  // The Scene3D import UI shows two different messages — "could not read
+  // that SVG" vs. "nothing to extrude" — and picks between them by reading
+  // this flag (Scene3DStudioSurface.vue's importSvgSource). Telling someone
+  // their malformed paste was a valid-but-empty SVG sends them looking in
+  // the wrong place, so these three cases pin the exact boundary.
+
+  it('reports parseFailed for genuinely unparseable input', async () => {
+    const res = await svgToLeafPaths('this is not svg at all', { targetWidth: 1 })
+    expect(res.parseFailed).toBe(true)
+    expect(res.paths).toEqual([])
+  })
+
+  it('does NOT report parseFailed for a valid but empty SVG', async () => {
+    const res = await svgToLeafPaths('<svg xmlns="http://www.w3.org/2000/svg"></svg>', { targetWidth: 1 })
+    expect(res.parseFailed).toBe(false)
+    expect(res.paths).toEqual([])
+  })
+
+  it('does NOT report parseFailed for a valid SVG with one filled path', async () => {
+    const res = await svgToLeafPaths(
+      '<svg xmlns="http://www.w3.org/2000/svg"><path d="M 0 0 L 1 0 L 1 1 Z" fill="#ff0000"/></svg>',
+      { targetWidth: 1 },
+    )
+    expect(res.parseFailed).toBe(false)
+    expect(res.paths).toHaveLength(1)
   })
 })

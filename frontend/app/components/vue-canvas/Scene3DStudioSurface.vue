@@ -1691,8 +1691,19 @@ async function importSvgSource(source: string, name: string) {
   let paths: SvgLeafPath[]
   try {
     const res = await svgToLeafPaths(source, { targetWidth: 1.5 })
+    // svgToLeafPaths never throws for bad input — it swallows its own parse
+    // failure and resolves to an empty result — so the distinction has to be
+    // read off `parseFailed`, not caught here. Conflating the two would tell
+    // someone who pasted garbage that their SVG was fine but empty.
+    if (res.parseFailed) {
+      svgError.value = 'Could not read that SVG.'
+      return
+    }
     paths = await outlineStrokes(res.paths)
-  } catch {
+  } catch (err) {
+    // The remaining real failure mode here is the paper.js dynamic import
+    // itself failing (network/build issue), not a bad SVG.
+    console.error('[scene3d-studio] svg import failed', err)
     svgError.value = 'Could not read that SVG.'
     return
   }
