@@ -226,6 +226,35 @@ describe('scene3d config', () => {
     expect(svgPathKey('M0 0 L10 0 Z')).not.toBe(svgPathKey('M0 0 L20 0 Z'))
   })
 
+  it('discards a stored pathKey that disagrees with its path, deriving a fresh one', () => {
+    // A hand-edited doc, a bad merge, or a future edit path that rewrites
+    // `path` without recomputing the digest can leave the pair mismatched.
+    // `pathKey` is a geometry cache key: trusting a stale one would make the
+    // engine serve cached geometry for a shape the object no longer has, and
+    // the bad pair would keep round-tripping through every save. parseDoc
+    // must always re-derive it from `path`, never read the stored value.
+    const doc = defaultDoc()
+    doc.objects = [createSvgPathObject('M0 0 L10 0 L10 10 Z', [])]
+    const raw = JSON.parse(serializeDoc(doc))
+    raw.objects[0].content.pathKey = 'not-the-real-digest'
+    const back = parseDoc(JSON.stringify(raw))
+    const p = back.objects[0] as PrimitiveObject
+    expect(p.content?.pathKey).toBe(svgPathKey('M0 0 L10 0 L10 10 Z'))
+    expect(p.content?.pathKey).not.toBe('not-the-real-digest')
+  })
+
+  it('derives a pathKey for a document with a path but no stored pathKey at all', () => {
+    // An older document (or one written before pathKey existed) must still
+    // get a usable cache key rather than silently going without one.
+    const doc = defaultDoc()
+    doc.objects = [createSvgPathObject('M0 0 L10 0 L10 10 Z', [])]
+    const raw = JSON.parse(serializeDoc(doc))
+    delete raw.objects[0].content.pathKey
+    const back = parseDoc(JSON.stringify(raw))
+    const p = back.objects[0] as PrimitiveObject
+    expect(p.content?.pathKey).toBe(svgPathKey('M0 0 L10 0 L10 10 Z'))
+  })
+
   it('appends svgPath to PRIMITIVE_KINDS last, and excludes it from the add menu', () => {
     // svgPath is the one primitive that cannot be PLACED — it exists only as the
     // product of an import — so PRIM_GROUPS deliberately does not carry it.

@@ -728,8 +728,14 @@ export function parseDoc(json: string): SceneDoc {
     const c: PrimitiveContent = {}
     if (typeof raw.text === 'string') c.text = raw.text
     if (typeof raw.font === 'string') c.font = raw.font
-    if (typeof raw.path === 'string') c.path = raw.path
-    if (typeof raw.pathKey === 'string') c.pathKey = raw.pathKey
+    if (typeof raw.path === 'string') {
+      c.path = raw.path
+      // Derived, never trusted from the document. `pathKey` is a geometry CACHE
+      // key: a stored digest that disagreed with its path would make the engine
+      // serve cached geometry for a shape the object no longer has — silently,
+      // and persistently, since the bad pair round-trips through every save.
+      c.pathKey = svgPathKey(raw.path)
+    }
     return Object.keys(c).length ? c : undefined
   }
   const objects: SceneObject[] = Array.isArray(raw.objects)
