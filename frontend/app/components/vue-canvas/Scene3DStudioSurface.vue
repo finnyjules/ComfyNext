@@ -13,7 +13,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import * as THREE from 'three'
 import {
-  Box, Boxes, Plus, Loader2, Upload, Lightbulb, Sparkles, Shuffle, Group, Ungroup,
+  Box, Boxes, Plus, Loader2, Upload, Lightbulb, Sparkles, Shuffle, Group, Ungroup, ClipboardPaste,
 } from 'lucide-vue-next'
 import {
   parseDoc, serializeDoc, createPrimitive, createGlbObject, createLight, createGroup,
@@ -38,6 +38,8 @@ import { PRIMITIVE_PARAMS, paramValue, MODIFIER_SPECS, modifierValue } from '~/l
 import { SceneInteraction } from '~/lib/scene3d/interaction'
 import { loadGlb, GLB_SIZE_CAP_BYTES } from '~/lib/scene3d/glb'
 import { fitGlbGroup } from '~/lib/scene3d/fitGlb'
+import { svgToLeafPaths, outlineStrokes, type SvgLeafPath } from '~/composables/useVectorSvg'
+import { buildSvgObjects, SVG_SPLIT_THRESHOLD } from '~/lib/scene3d/svgImport'
 import { renderPasses } from '~/lib/scene3d/passes'
 import { encodeFrames } from '~/lib/engine/encodeVideo'
 import { SCENE_TEMPLATES, animateSceneDefaults } from '~/lib/scene3d/motion/defaults'
@@ -228,6 +230,16 @@ const webglOk = ref(true)
 const uploading = ref(false)    // GLB file upload in flight
 const uploadError = ref('')     // inline error for the Upload GLB control
 const glbFileInput = ref<HTMLInputElement | null>(null)
+
+// ── SVG import ────────────────────────────────────────────────────────────────
+const svgFileInput = ref<HTMLInputElement | null>(null)
+const svgPasteOpen = ref(false)
+const svgPasteText = ref('')
+const svgError = ref<string | null>(null)
+/** Set when a source exceeds SVG_SPLIT_THRESHOLD: the user picks split or merged
+ *  before anything is added, so a 247-path map can never silently flood the
+ *  scene AND we never silently truncate their artwork. */
+const svgPending = ref<{ paths: SvgLeafPath[]; name: string } | null>(null)
 
 // ── Add-primitive menu ──────────────────────────────────────────────────────
 const primMenuOpen = ref(false)
@@ -1671,6 +1683,47 @@ async function onGlbFilePicked(e: Event) {
   }
 }
 
+// Both the file picker and the paste box funnel through here — everything past
+// parsing (split/merge choice, group naming, selection) is identical either way,
+// so the second entry point costs almost nothing.
+async function importSvgSource(source: string, name: string) {
+  svgError.value = null
+  let paths: SvgLeafPath[]
+  try {
+    const res = await svgToLeafPaths(source, { targetWidth: 1.5 })
+    paths = await outlineStrokes(res.paths)
+  } catch {
+    svgError.value = 'Could not read that SVG.'
+    return
+  }
+  if (!paths.length) {
+    svgError.value = 'That SVG had nothing to extrude — no filled or stroked paths.'
+    return
+  }
+  if (paths.length > SVG_SPLIT_THRESHOLD) { svgPending.value = { paths, name }; return }
+  commitSvg(paths, name, false)
+}
+
+function commitSvg(paths: SvgLeafPath[], name: string, merged: boolean) {
+  const objs = buildSvgObjects(paths, doc.objects, {
+    name, merged, ...(selected.value?.parentId ? { parentId: selected.value.parentId } : {}),
+  })
+  doc.objects.push(...objs)
+  selectedIds.value = [objs[0]!.id] // buildSvgObjects returns the group first
+  svgPending.value = null
+  svgPasteOpen.value = false
+  svgPasteText.value = ''
+}
+
+async function onSvgFilePicked(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = '' // reset so re-picking the same file re-fires change
+  if (!file) return
+  const base = file.name.replace(/\.svg$/i, '') || 'SVG'
+  await importSvgSource(await file.text(), base)
+}
+
 // Persist the live viewport camera into the doc so it serializes with the scene
 // (reopening restores your exact view). Called before every serialize/bake — the
 // bake itself renders from the live engine camera, so what you see is what exports.
@@ -2006,6 +2059,31 @@ function onClose() {
           </StudioButton>
         </div>
         <input ref="glbFileInput" type="file" accept=".glb,model/gltf-binary" class="hidden" @change="onGlbFilePicked" />
+
+        <!-- SVG import: same file-import spot as the GLB upload above. Two doors
+             (file picker, paste box) into one importSvgSource — see its comment. -->
+        <div class="shrink-0 space-y-1 border-t border-white/[0.08] p-2">
+          <StudioButton @click="svgFileInput?.click()">
+            <span class="flex items-center gap-1.5"><Upload class="h-3.5 w-3.5" /> Import SVG</span>
+          </StudioButton>
+          <StudioButton @click="svgPasteOpen = !svgPasteOpen">
+            <span class="flex items-center gap-1.5"><ClipboardPaste class="h-3.5 w-3.5" /> Paste SVG</span>
+          </StudioButton>
+          <div v-if="svgPasteOpen" class="space-y-1">
+            <textarea v-model="svgPasteText" rows="4" placeholder="Paste <svg>…</svg>"
+              class="w-full rounded bg-black/30 p-2 text-[11px] text-white/80" @pointerdown.stop />
+            <StudioButton :disabled="!svgPasteText.trim()" @click="importSvgSource(svgPasteText, 'SVG')">Add</StudioButton>
+          </div>
+          <p v-if="svgError" class="text-[11px] text-red-400">{{ svgError }}</p>
+          <div v-if="svgPending" class="space-y-1 rounded border border-white/15 p-2 text-[11px]">
+            <p class="text-white/70">This SVG has {{ svgPending.paths.length }} paths.</p>
+            <div class="flex gap-1">
+              <StudioButton @click="commitSvg(svgPending.paths, svgPending.name, false)">Separate objects</StudioButton>
+              <StudioButton @click="commitSvg(svgPending.paths, svgPending.name, true)">One merged object</StudioButton>
+            </div>
+          </div>
+          <input ref="svgFileInput" type="file" accept=".svg,image/svg+xml" class="hidden" @change="onSvgFilePicked" />
+        </div>
       </div>
     </template>
 
