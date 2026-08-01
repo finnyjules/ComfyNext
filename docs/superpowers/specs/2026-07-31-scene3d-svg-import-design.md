@@ -57,9 +57,32 @@ export interface PrimitiveContent {
 
 So `svgPath` carries `pathKey`, a short digest computed once at import, and `geoKeyFor` uses `pathKey` in place of `path` when present. The digest only has to distinguish *this* object's path from a later replacement of it; it is a cache key, not a security boundary.
 
-## The import pipeline — a pure module
+## The import pipeline — reuse, don't rebuild
 
-New file `frontend/app/lib/scene3d/svgImport.ts`. Pure: no engine import, no WebGL. `SVGLoader` is plain parsing and `THREE.Shape` is maths, so the entire pipeline runs under vitest — the property that made `hierarchy.ts` catch four real bugs during the grouping build.
+**Corrected 2026-07-31, during planning.** This spec's first draft proposed a new `SVGLoader`-based module. Reading the code showed that pipeline already exists and is trusted by three shipped features, and that one of the first draft's premises was simply false. Both corrections are recorded here rather than quietly applied.
+
+**`svgToPathLayers()` in [useVectorSvg.ts](../../../frontend/app/composables/useVectorSvg.ts) already does the import half.** It runs paper.js headlessly with `expandShapes: true` (so `<rect>`, `<circle>`, `<ellipse>` and `<polygon>` become real paths) and `applyMatrix: true` (so transforms are baked), walks the tree to leaf `Path`/`CompoundPath` items, normalizes the whole import to a target size around its centre, and emits per path: a `d` string, `fill`, `stroke`, `strokeWidth` and `fillRule`. That is this spec's import pipeline, already written and already exercised by the pen tool, SVG file import and the AI vector features.
+
+It returns Compositor `PathLayer`s, which is the wrong output type for 3D. So the **shared core is extracted** into a neutral function both consumers call:
+
+```ts
+/** One leaf path from an imported SVG, in normalized import space. */
+export interface SvgLeafPath {
+  d: string
+  fill: string          // CSS colour, or 'none'
+  stroke: string        // CSS colour, or 'none'
+  strokeWidth: number   // already scaled by the import's normalization factor
+  fillRule: 'nonzero' | 'evenodd'
+}
+
+export async function svgToLeafPaths(svg: string, opts?: { targetWidth?: number }): Promise<SvgLeafPath[]>
+```
+
+`svgToPathLayers` becomes a thin wrapper mapping `SvgLeafPath[]` → `PathLayer[]`, so the Compositor's behaviour is unchanged. This is a targeted improvement to code the feature is already touching, not unrelated refactoring.
+
+**The render half converts `d` → `THREE.Shape[]`** by handing a minimal `<svg><path d="…"/></svg>` wrapper to `SVGLoader`, then `createShapes()`. Two libraries in one pipeline is deliberate: paper is the stronger *parser* and is already wrapped here, while `SVGLoader.createShapes` resolves holes by fill-rule and hands back exactly the `THREE.Shape[]` the extruder wants. Neither is doing the other's job.
+
+This split also decides what is unit-testable. Paper touches browser globals, so the import half is browser-only and is covered by E2E. The render half needs only `DOMParser`, so it runs under vitest with `// @vitest-environment happy-dom` — and it is the half where the bugs live (Y-flip, holes, fill-rule).
 
 ```ts
 export interface ImportedPath {
@@ -85,7 +108,11 @@ export function importSvg(source: string): ImportResult
 Per source path:
 
 1. **Transforms are already handled.** `SVGLoader.parse()` runs `transformPath` as it walks, so nested `<g transform>` needs nothing from us.
-2. **Stroke-only paths are outlined into fills.** A path with `fill: "none"` still appears in the parse result, as an open outline with nothing to extrude. This is not an edge case: Lucide (which this repo uses for every icon), Feather and Heroicons-outline are entirely stroke-only. Without this step the most likely paste — an icon — imports as nothing. `SVGLoader` ships `getStrokeStyle` and `pointsToStroke` for exactly this.
+2. **Stroke-only paths are outlined into fills.** A path with `fill: "none"` has an open outline and nothing to extrude. This is not an edge case: Lucide (which this repo uses for every icon), Feather and Heroicons-outline are entirely stroke-only, so without this step the most likely paste — an icon — imports as nothing.
+
+   **The first draft named the wrong tool.** `SVGLoader.pointsToStroke` returns a `BufferGeometry` of stroke *triangles*, not a `Shape`, so it cannot feed `ExtrudeGeometry` at all.
+
+   Instead the outline is constructed with paper.js boolean ops, which are already available: for each subpath, unite one rectangle per segment with one circle at every join and cap. **For round caps and joins this is exact** — and round is precisely what Lucide, Feather and Heroicons specify. Miter and bevel joins are approximated as round, so a sharp-cornered stroked logo loses its points; that is an accepted v1 limitation, not a bug to be surprised by later.
 3. **Holes come from fill-rule.** `createShapes()` implements `nonzero` and `evenodd`; anything else `console.warn`s and produces wrong holes. That warning becomes a `note`, not a console message nobody reads.
 4. **Serialize to `d`, flipping Y once.** SVG's Y axis points down. Flipping during serialization means the stored string is already scene-space and nothing downstream has to remember. The repo's existing `commandsToPathData` ([lib/vector/svg.ts](../../../frontend/app/lib/vector/svg.ts)) is the reference for emitting.
 5. **Normalize the whole import together**, preserving relative positions, so overall bounds land at a sensible scene size — the same job `fitGlbGroup` does for generated GLBs.
@@ -123,21 +150,28 @@ The fix is **not** a menu entry. It is an explicit not-directly-placeable exempt
 
 ## Testing
 
-Unit, on the pure pipeline (`frontend/tests/unit/scene3d-svg-import.unit.spec.ts`):
+The two halves test differently, and that split is the point of the split.
 
-- A `<rect>`, a `<circle>` and a `<polygon>` each normalize to a `d` with the expected closed area — proving the single-form claim.
-- A letter-shaped path (outer + inner subpath) resolves the inner one as a **hole**, not a second solid.
-- An `evenodd` file resolves holes differently from the same geometry under `nonzero`.
-- A **stroke-only** path produces a closed outline with non-zero area — the Lucide case.
-- A nested `<g transform>` lands where the composed transform says, proving transforms are baked.
-- **Y-flip:** a point known to be at the top of the SVG viewBox ends up at **+Y** in scene space. **A deliberately-disabled flip must turn this test red** — a flipped import looks plausible on a symmetric logo and wrong on everything else, so this assertion has to be proven capable of failing.
-- Unimplemented fill rules produce a `note`.
+**Unit — the render half** (`frontend/tests/unit/scene3d-svg-path.unit.spec.ts`, `// @vitest-environment happy-dom` for `DOMParser`). This is where the bugs live, and it takes `d` strings as fixtures so it needs no browser:
+
+- A letter-shaped `d` (outer subpath + inner subpath) resolves the inner one as a **hole**, not a second solid — assert the extruded geometry's area, not just that it built.
+- The same geometry under `evenodd` and `nonzero` resolves holes **differently**.
+- **Y-flip:** a `d` whose topmost point is known ends up at **+Y** in scene space. **A deliberately-disabled flip must turn this red** — a flipped import looks plausible on a symmetric logo and wrong on everything else, so this assertion must be proven capable of failing before it is believed.
+- An unparseable `d` yields no geometry and does not throw.
+- `pathKey` changes when `path` changes, and `geoKeyFor` returns a different key as a result — the cache-invalidation contract.
+
+**E2E — the import half** (`frontend/tests/scene3d-svg-import.spec.ts`), because paper.js is browser-only:
+
+- Pasting a two-path filled SVG produces a group with two `svgPath` children, each with its fill colour seeded.
+- Pasting a **Lucide icon** (stroke-only, `fill="none"`, round caps and joins) produces geometry with non-zero bounds. This is the case the whole stroke-outlining branch exists for; if it is not covered end to end, it is not covered.
+- A nested `<g transform>` lands where the composed transform says.
+- Above the threshold the choice dialog appears; choosing *merged* yields exactly one object.
 
 E2E (`frontend/tests/scene3d-svg-import.spec.ts`), modelled on the grouping spec's harness: paste a known multi-path SVG, assert a group appears with the expected child count and that each child is an `svgPath` object with non-empty geometry.
 
 ## Risks
 
-**Stroke outlining is the largest new surface.** Widths, joins, caps and dasharray each have their own behaviour, and `pointsToStroke` is not widely exercised. Mitigation: test the common case (uniform width, round joins — what icon sets actually use) and let exotic strokes degrade to a note rather than a crash.
+**Stroke outlining is the largest new surface, and the least testable.** It runs on the paper.js side, which is browser-only, so it is covered by E2E rather than unit tests. Widths, joins, caps and dasharray each behave differently. Mitigation: implement and verify the case icon sets actually use (uniform width, round joins and caps, no dashes), approximate miter/bevel as round, and let anything more exotic degrade to a `note` rather than a crash. Dasharray is ignored entirely — a dashed stroke outlines as solid.
 
 **`createShapes` hole detection is scanline-based and imperfect** on self-intersecting or degenerate paths. It is three's own implementation and replacing it is out of scope; misdetection becomes a visual artefact, not an error.
 
