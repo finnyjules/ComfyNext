@@ -35,10 +35,11 @@ export type PrimitiveKind =
 export interface PrimitiveContent {
   text?: string
   font?: string
-  /** An SVG path `d` string: transforms already baked, Y already flipped into
-   *  scene space, holes resolved by the importer's fill-rule pass. The single
-   *  stored form for every source element — rect, circle, polygon and path all
-   *  normalize to this, so the render path has exactly one thing to understand. */
+  /** An SVG path `d` string with transforms already baked, in SVG coordinate
+   *  convention (Y DOWN) — a faithful path, not a scene-space one. The single
+   *  stored form for every source element: rect, circle, polygon and path all
+   *  normalize to this, so the render path has exactly one thing to understand.
+   *  The Y flip happens at geometry build, not here — see below. */
   path?: string
   /** Digest of `path`, used ONLY as a geometry cache key — see below. Computed
    *  once at import as `${path.length}:${hash32(path)}`; a cache key, not a
@@ -82,6 +83,8 @@ export async function svgToLeafPaths(svg: string, opts?: { targetWidth?: number 
 
 **The render half converts `d` → `THREE.Shape[]`** by handing a minimal `<svg><path d="…"/></svg>` wrapper to `SVGLoader`, then `createShapes()`. Two libraries in one pipeline is deliberate: paper is the stronger *parser* and is already wrapped here, while `SVGLoader.createShapes` resolves holes by fill-rule and hands back exactly the `THREE.Shape[]` the extruder wants. Neither is doing the other's job.
 
+**The Y flip lives here, in one place.** SVG's Y points down, three's points up. Doing it at geometry build rather than at import means the stored `d` stays a faithful SVG path (debuggable, and a future SVG re-export stays possible), and — more importantly — it puts the flip in the half that unit-tests, where a `d` fixture with a known topmost point can assert it and a deliberately-disabled flip can be shown to turn that assertion red.
+
 This split also decides what is unit-testable. Paper touches browser globals, so the import half is browser-only and is covered by E2E. The render half needs only `DOMParser`, so it runs under vitest with `// @vitest-environment happy-dom` — and it is the half where the bugs live (Y-flip, holes, fill-rule).
 
 ```ts
@@ -114,7 +117,7 @@ Per source path:
 
    Instead the outline is constructed with paper.js boolean ops, which are already available: for each subpath, unite one rectangle per segment with one circle at every join and cap. **For round caps and joins this is exact** — and round is precisely what Lucide, Feather and Heroicons specify. Miter and bevel joins are approximated as round, so a sharp-cornered stroked logo loses its points; that is an accepted v1 limitation, not a bug to be surprised by later.
 3. **Holes come from fill-rule.** `createShapes()` implements `nonzero` and `evenodd`; anything else `console.warn`s and produces wrong holes. That warning becomes a `note`, not a console message nobody reads.
-4. **Serialize to `d`, flipping Y once.** SVG's Y axis points down. Flipping during serialization means the stored string is already scene-space and nothing downstream has to remember. The repo's existing `commandsToPathData` ([lib/vector/svg.ts](../../../frontend/app/lib/vector/svg.ts)) is the reference for emitting.
+4. **Emit `d` unflipped.** SVG's Y axis points down and three's points up, but the flip belongs at geometry build, not here — see below.
 5. **Normalize the whole import together**, preserving relative positions, so overall bounds land at a sensible scene size — the same job `fitGlbGroup` does for generated GLBs.
 
 ## What lands in the scene
