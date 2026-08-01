@@ -14,7 +14,7 @@ Legend: **bake** = render/export path · **motion** = animatable · **inspector*
 |---|---|---|---|---|---|
 | Space Type | ✅ + clip bake | ✅ timeline clip | ✅ | ✅ descriptor | 11,202 |
 | Vector Type Studio | ✅ PNG + SVG export (9 fill types, 6 as real vector; multi-fill/stroke stack + extrude + skew/arc) | ✅ full incl. stagger, preset gallery, **colour tracks**, and 4 per-glyph effects (blink · axis scatter · grade flicker · draw-on) | ✅ | ✅ descriptor (unverified live) | — |
-| Scene3D Studio | ✅ 3-pass + mp4 | ✅ own timeline (groups animate) | ✅ + object tree | ❌ | ~5,900 |
+| Scene3D Studio | ✅ 3-pass + mp4 | ✅ own timeline (groups animate) | ✅ + object tree | ❌ | ~6,300 (+ SVG import) |
 | Compositor / Frame | ✅ | ✅ motion clips | ✅ | ✅ commands | 1,667 (+1,041 motion) |
 | Timeline (NLE) | ✅ webm/mp4 + server | ✅ native | ✅ | ❌ | shared/timeline |
 | Gradient Studio | ✅ | ✅ 30 targets, path-based | ✅ (hand-written) | ✅ descriptor | 2,620 |
@@ -45,6 +45,30 @@ Cost for one parameter to be inspectable + agent-drivable + animatable + sweepab
 The schema is a **superset with per-consumer opt-in** (`agent: false` withholds from the agent, `animatable: false` from motion), so declaring a control can never silently widen another capability.
 
 Still to do in Act 1: the generic inspector renderer (Gradient still has 432 lines of hand-written markup), new `ControlSpec` kinds (`segmented`, `repeater`, `custom`), and exposing the 11 now-declared Shape controls to the agent. Known misfits remain: Texture's colour-role system (`texturefx/roles.ts`), Space Type's scene-sequencing motion model.
+
+## Scene3D SVG import — LANDED 2026-08-01
+
+Commits `ece01d0af`..`6e2afaa1f` (12). Spec: [2026-07-31-scene3d-svg-import-design.md](superpowers/specs/2026-07-31-scene3d-svg-import-design.md) · Plan: [2026-07-31-scene3d-svg-import.md](superpowers/plans/2026-07-31-scene3d-svg-import.md).
+
+**The first time a vector reaches a Sailor studio as *geometry* rather than as a picture.** Vector Type Studio could already write SVG; nothing had ever read it. Drop or paste an SVG into 3D Studio and each path becomes real extruded geometry, one object per path, held in a group — which is why [grouping](#scene3d-grouping--landed-2026-07-29) was built first.
+
+**An imported path is a new `svgPath` PRIMITIVE, not a new object kind.** Slotting in beside `text` means it inherits all eight material types, every modifier, motion, the Size row, the gizmo, duplicate and grouping for free, and reuses `extrudeShapes()` unchanged.
+
+**Two libraries, each where it is strongest.** The import half **reuses the Compositor's existing paper.js pipeline** — `svgToLeafPaths`, extracted from `useVectorSvg.ts` so both consumers share it — which already handled `expandShapes` (rect/circle/polygon → real paths) and `applyMatrix` (transforms baked). The render half converts a stored `d` to `THREE.Shape[]` via three's `SVGLoader`, which resolves holes by fill-rule. That split also decides testability: paper is browser-only (E2E), `SVGLoader` needs only `DOMParser` (vitest under happy-dom) — and the render half is where the bugs live.
+
+**Stroke-only paths are outlined into fills** with paper boolean ops — a rectangle per segment united with a disc at every join and cap, which is *exact* for the round joins Lucide, Feather and Heroicons all specify. Without it the most likely paste, an icon, imports as nothing at all. (`SVGLoader.pointsToStroke` returns a `BufferGeometry` of triangles, not a `Shape`, so it cannot feed the extruder — the spec's first draft was wrong about this.)
+
+Above 40 paths, import asks: separate objects, or one merged object whose `d` concatenates every subpath.
+
+**Verification:** 132 unit tests, 4 E2E against a live server, zero typecheck errors. Nine deliberate broken controls were each confirmed to turn a test red — a disabled Y flip, the pre-fix arc transform, a pass-through `outlineStrokes`, a removed `flatten`, deleted join/cap discs, a non-accumulating name scope, hard-coded `parseFailed`, `geoKeyFor` reverted to stringifying content, and a hard-coded `nonzero` fill-rule.
+
+**Findings worth keeping:**
+- **Arcs were never flipped.** The hand-rolled Y flip walked curves moving `v0..v3`, but `SVGLoader` emits an `EllipseCurve` for `A` commands, whose geometry lives in `aX`/`aY`/angles/`aClockwise`. Any logo with a rounded corner — routine Illustrator output — would have had arcs stranded at +Y while lines went to −Y: torn, self-crossing extrusions, no error. Fixed by pushing the flip into the SVG itself (`<g transform="scale(1,-1)">`) and deleting the hand-rolled transform entirely.
+- **`fillRule` was captured, typed, threaded — then dropped at the seam.** Each half was individually correct; the field simply never crossed. Every import was forced to `nonzero`, so a Figma `evenodd` donut imported as a solid blob. Found only by the final whole-feature review.
+- **Flattening curves was load-bearing, not cosmetic.** `expandShapes` gives a `<circle>` four anchors, so an anchors-only stroke outline turns a circle into a rounded square — and the area is only ~10% off, so a naive assertion would have passed it.
+- **The E2E's own stroke assertion was vacuous at first.** The Size row renders `scale * (baseSize[i] || 1)`, so a *zero*-extent axis displays `1` — a degenerate object reads *larger* than a correct one. Caught mid-sabotage; replaced with a thickness assertion.
+
+**Known gap:** every imported child sits at `position: [0,0,0]` with its offset baked into `d`, so all gizmos stack at the import centre and a per-path rotate swings around the logo's centre rather than the path's. Arrangement renders correctly; per-path transforms do not behave as expected. Fast-follow.
 
 ## Scene3D grouping — LANDED 2026-07-29
 
