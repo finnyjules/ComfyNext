@@ -61,6 +61,14 @@ describe('scene3d svgPath', () => {
   // a circle. SVGLoader turns this into a THREE.EllipseCurve, whose geometry
   // lives in aY/aStartAngle/aClockwise, NOT in v0..v3 control points.
   const SQUARE_WITH_ARC = 'M0 0 L10 0 A5 5 0 0 1 10 10 L0 10 Z'
+  // The SAME 10x10 square with a 4x4 inner subpath, but wound the SAME
+  // direction as its outer contour. This is the ONLY configuration where the
+  // two fill rules genuinely disagree: `evenodd` counts crossings and calls the
+  // inner region a hole, `nonzero` sums windings (+1 +1 = 2) and calls it
+  // solid. A counter wound the OPPOSITE way — SQUARE_WITH_HOLE above — is a
+  // hole under both rules, so testing with it would prove nothing.
+  const SQUARE_SAME_WINDING =
+    'M0 0 L10 0 L10 10 L0 10 Z M3 3 L7 3 L7 7 L3 7 Z'
 
   it('resolves an inner subpath as a hole, not a second solid', () => {
     const shapes = pathToShapes(SQUARE_WITH_HOLE)
@@ -106,6 +114,46 @@ describe('scene3d svgPath', () => {
     const ys = shapes.flatMap((s) => s.getPoints(24).map((p) => p.y))
     expect(Math.max(...ys)).toBeCloseTo(0, 5)
     expect(Math.min(...ys)).toBeCloseTo(-10, 5)
+  })
+
+  // The rule cannot be recovered from the `d`, so if it fails to cross the
+  // paper->SVGLoader seam every import is silently forced to nonzero and an
+  // evenodd donut/'O' arrives as a solid blob. These are the tests for that.
+  describe('fill-rule', () => {
+    it('resolves the SAME geometry differently under evenodd and nonzero', () => {
+      // evenodd FIRST, deliberately: if the cache were still keyed on `d` alone
+      // the nonzero call below would be served this result and its assertions
+      // would fail — so the ordering also guards the cache key.
+      const even = pathToShapes(SQUARE_SAME_WINDING, 'evenodd')
+      expect(even).toHaveLength(1)
+      expect(even[0]!.holes).toHaveLength(1)
+      // 100 minus the 16-unit counter.
+      const net = area(even[0]!) - area(new THREE.Shape(even[0]!.holes[0]!.getPoints(24)))
+      expect(net).toBeCloseTo(84, 0)
+
+      // Under nonzero the same inner contour is NOT a hole — it is solid, so
+      // nothing is subtracted anywhere.
+      const nz = pathToShapes(SQUARE_SAME_WINDING, 'nonzero')
+      expect(nz.flatMap((s) => s.holes)).toHaveLength(0)
+    })
+
+    it('defaults to nonzero when no rule is given, matching the SVG default', () => {
+      // Absent fillRule is how every pre-existing document is stored, so the
+      // default has to be nonzero or reopening an old scene changes its shape.
+      const implicit = pathToShapes(SQUARE_SAME_WINDING)
+      const explicit = pathToShapes(SQUARE_SAME_WINDING, 'nonzero')
+      expect(implicit.flatMap((s) => s.holes)).toHaveLength(0)
+      expect(implicit.length).toBe(explicit.length)
+    })
+
+    it('still resolves an oppositely-wound counter as a hole under BOTH rules', () => {
+      // The common case must not regress now that a rule is threaded through.
+      for (const rule of ['nonzero', 'evenodd'] as const) {
+        const shapes = pathToShapes(SQUARE_WITH_HOLE, rule)
+        expect(shapes, rule).toHaveLength(1)
+        expect(shapes[0]!.holes, rule).toHaveLength(1)
+      }
+    })
   })
 
   it('returns no shapes for an unparseable d, and does not throw', () => {

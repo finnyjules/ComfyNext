@@ -57,11 +57,12 @@ export function buildSvgObjects(
   const usable = paths.filter((p) => p.d)
   if (!usable.length) return [group]
 
-  const make = (d: string, fill: string): SceneObject => {
+  const make = (d: string, fill: string, fillRule: SvgLeafPath['fillRule']): SceneObject => {
     // A merged object can only carry one material, so it takes the first real
     // fill; 'none' leaves DEFAULT_MATERIAL's colour rather than writing 'none'.
     const o = createSvgPathObject(d, scope, {
       name: 'Path',
+      fillRule,
       ...(fill && fill !== 'none' ? { color: fill } : {}),
     })
     o.parentId = group.id
@@ -72,7 +73,12 @@ export function buildSvgObjects(
   if (opts.merged) {
     const d = usable.map((p) => p.d).join(' ')
     const fill = usable.find((p) => p.fill && p.fill !== 'none')?.fill ?? 'none'
-    return [group, make(d, fill)]
+    // LIMITATION: one concatenated `d` can carry only ONE fill-rule, so a source
+    // mixing rules across its paths loses that distinction when merged — the
+    // first path's rule wins for all of them. Split mode keeps each path's own
+    // rule, which is why the choice dialog exists; noted rather than papered
+    // over, since the alternative (splitting by rule) contradicts "one object".
+    return [group, make(d, fill, usable[0]!.fillRule)]
   }
-  return [group, ...usable.map((p) => make(p.d, p.fill))]
+  return [group, ...usable.map((p) => make(p.d, p.fill, p.fillRule))]
 }

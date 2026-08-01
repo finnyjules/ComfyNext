@@ -670,6 +670,19 @@ describe('scene3d geoKeyFor', () => {
       const b = geoKeyFor(createSvgPathObject(D_A, []), 'smooth')
       expect(a).toBe(b)
     })
+
+    // The key is meant to cover `content` wholesale (minus `path`), so adding a
+    // geometry-affecting field to PrimitiveContent should invalidate for free.
+    // Asserted rather than assumed: the same `d` under the two fill rules is two
+    // different geometries, and a key that ignored the rule would hand an
+    // evenodd object the nonzero mesh — a filled-in counter, no error.
+    it('differs for the same d under evenodd vs nonzero', () => {
+      const even = geoKeyFor(createSvgPathObject(D_A, [], { fillRule: 'evenodd' }), 'smooth')
+      const nz = geoKeyFor(createSvgPathObject(D_A, [], { fillRule: 'nonzero' }), 'smooth')
+      expect(even).not.toBe(nz)
+      // 'nonzero' is stored as ABSENCE, so it must key identically to no rule.
+      expect(nz).toBe(geoKeyFor(createSvgPathObject(D_A, []), 'smooth'))
+    })
   })
 })
 

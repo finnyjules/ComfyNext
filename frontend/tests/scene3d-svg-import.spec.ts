@@ -157,10 +157,17 @@ async function readSize(page: Page): Promise<[number, number, number]> {
   return [await n('Size X'), await n('Size Y'), await n('Size Z')]
 }
 
-/** One stroke width of a Lucide glyph in scene units after import.
- *  Lucide draws at `stroke-width="2"` in a 24-unit viewBox, and
- *  `importSvgSource` normalizes the whole import to span `targetWidth: 1.5`
- *  scene units — so 2 × (1.5 / 24) = 0.125, plus the extruder's small bevel.
+/** One stroke width of a Lucide glyph in scene units after import, to an order
+ *  of magnitude — the band below is deliberately wide, so this only has to be
+ *  the right SIZE, not the exact number.
+ *  Lucide draws at `stroke-width="2"`, and `importSvgSource` normalizes to
+ *  `targetWidth: 1.5` scene units. Note the scale divisor is the drawing's own
+ *  CONTENT-BOUNDS width, NOT the 24-unit viewBox: normalization is
+ *  targetWidth / bounds.width, and Lucide icons sit inset from their viewBox
+ *  (`box` spans about 18 units), so the real factor is ~1.5/18 and the real
+ *  thickness lands near 0.167, plus the extruder's small bevel. Using 24 here
+ *  understates it — kept only as the conservative lower anchor for the band,
+ *  since a sparser icon with tighter bounds scales up further still.
  *  Derived from the source values, not pasted from a run. */
 const LUCIDE_STROKE = 2 * (1.5 / 24)
 
@@ -205,9 +212,10 @@ async function assertStrokesOutlinedIntoArea(page: Page) {
     widths.push(x)
   }
 
-  // The vertical stroke, outlined: one stroke width across. Band is generous on
-  // both sides of 0.125 (the bevel adds ~0.015) and still leaves a 3x gap to
-  // the 1 that a non-outlined zero-width line reports.
+  // The vertical stroke, outlined: one stroke width across. The band spans
+  // 0.0625..0.375, which comfortably brackets the real ~0.167 (see
+  // LUCIDE_STROKE on why it is not 0.125) plus the bevel's ~0.015, and still
+  // leaves a wide gap to the 1 that a non-outlined zero-width line reports.
   const thinnest = Math.min(...widths)
   expect(thinnest, 'the vertical stroke must outline into a bar about one stroke width across')
     .toBeGreaterThan(LUCIDE_STROKE * 0.5)

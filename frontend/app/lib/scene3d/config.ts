@@ -184,6 +184,16 @@ export interface PrimitiveContent {
    *  put tens of KB of string work on the drag path. A cache key, not a security
    *  boundary — a cheap non-cryptographic hash is the right tool. */
   pathKey?: string
+  /** How `path`'s subpaths resolve into holes. Carried on the object because the
+   *  rule is NOT recoverable from the `d` — the source SVG's `fill-rule` is the
+   *  only thing that says whether an inner contour is a counter or a second
+   *  solid. Drop it and every import is forced to `nonzero`, so a Figma or
+   *  Illustrator compound path exported with `evenodd` — a donut, an 'O', any
+   *  counter wound the SAME direction as its outer contour — imports as a solid
+   *  blob with the hole filled in, silently.
+   *  ABSENT MEANS 'nonzero', the SVG default: that keeps every pre-existing
+   *  document rendering exactly as before, so this needs no doc-version bump. */
+  fillRule?: 'nonzero' | 'evenodd'
 }
 
 export interface PrimitiveObject extends SceneObjectBase {
@@ -477,14 +487,20 @@ export function svgPathKey(d: string): string {
 export function createSvgPathObject(
   d: string,
   existing: SceneObject[],
-  opts: { name?: string; color?: string } = {},
+  opts: { name?: string; color?: string; fillRule?: PrimitiveContent['fillRule'] } = {},
 ): PrimitiveObject {
   const o: PrimitiveObject = {
     kind: 'primitive', primitive: 'svgPath',
     id: newId(), name: numberedName(opts.name ?? 'Path', existing), visible: true,
     position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1],
     material: { ...DEFAULT_MATERIAL },
-    content: { path: d, pathKey: svgPathKey(d) },
+    // Only 'evenodd' is written. 'nonzero' IS the absent case (see fillRule's
+    // comment), so storing it would add a field to every doc that means exactly
+    // what its absence already means.
+    content: {
+      path: d, pathKey: svgPathKey(d),
+      ...(opts.fillRule === 'evenodd' ? { fillRule: 'evenodd' as const } : {}),
+    },
   }
   if (opts.color) o.material.color = opts.color
   return o
@@ -736,6 +752,10 @@ export function parseDoc(json: string): SceneDoc {
       // and persistently, since the bad pair round-trips through every save.
       c.pathKey = svgPathKey(raw.path)
     }
+    // Anything other than the literal 'evenodd' — absent, misspelt, a number —
+    // resolves to the SVG default by staying unset, so an unreadable rule can
+    // never quietly turn a solid import into a holed one (or vice versa).
+    if (raw.fillRule === 'evenodd') c.fillRule = 'evenodd'
     return Object.keys(c).length ? c : undefined
   }
   const objects: SceneObject[] = Array.isArray(raw.objects)

@@ -240,6 +240,11 @@ const svgError = ref<string | null>(null)
  *  before anything is added, so a 247-path map can never silently flood the
  *  scene AND we never silently truncate their artwork. */
 const svgPending = ref<{ paths: SvgLeafPath[]; name: string } | null>(null)
+/** True while a parse or an outline is in flight. Both stages are synchronous
+ *  main-thread work with no progress of their own, so without this a second
+ *  click on Add (or on a choice button) starts a SECOND import over the same
+ *  frozen frame and lands two copies of the artwork in the scene. */
+const svgBusy = ref(false)
 
 // ── Add-primitive menu ──────────────────────────────────────────────────────
 const primMenuOpen = ref(false)
@@ -1687,10 +1692,20 @@ async function onGlbFilePicked(e: Event) {
 // parsing (split/merge choice, group naming, selection) is identical either way,
 // so the second entry point costs almost nothing.
 async function importSvgSource(source: string, name: string) {
+  if (svgBusy.value) return
   svgError.value = null
-  let paths: SvgLeafPath[]
+  svgBusy.value = true
   try {
-    const res = await svgToLeafPaths(source, { targetWidth: 1.5 })
+    let res: Awaited<ReturnType<typeof svgToLeafPaths>>
+    try {
+      res = await svgToLeafPaths(source, { targetWidth: 1.5 })
+    } catch (err) {
+      // The real failure mode here is the paper.js dynamic import itself failing
+      // (network/build issue), not a bad SVG — svgToLeafPaths swallows those.
+      console.error('[scene3d-studio] svg import failed', err)
+      svgError.value = 'Could not read that SVG.'
+      return
+    }
     // svgToLeafPaths never throws for bad input — it swallows its own parse
     // failure and resolves to an empty result — so the distinction has to be
     // read off `parseFailed`, not caught here. Conflating the two would tell
@@ -1699,24 +1714,53 @@ async function importSvgSource(source: string, name: string) {
       svgError.value = 'Could not read that SVG.'
       return
     }
-    paths = await outlineStrokes(res.paths)
+    if (!res.paths.length) {
+      svgError.value = 'That SVG had nothing to extrude — no filled or stroked paths.'
+      return
+    }
+    // Gate on the PRE-OUTLINE count, BEFORE any stroke outlining. Sound because
+    // outlining never GROWS the set: it replaces each stroked path with its
+    // outlined solid one-for-one and only ever drops degenerate ones, so this
+    // count can over-state but never under-state the object count the user is
+    // being asked about. And it is the whole point — outlining is a sequential
+    // boolean union per path, so running it first made the 247-path flood (the
+    // exact case this dialog defends against) freeze the main thread before
+    // anyone was even asked whether they wanted 247 objects.
+    if (res.paths.length > SVG_SPLIT_THRESHOLD) { svgPending.value = { paths: res.paths, name }; return }
+    await finishSvgImport(res.paths, name, false)
+  } finally {
+    svgBusy.value = false
+  }
+}
+
+/** The split/merge choice buttons land here; importSvgSource skips it and calls
+ *  finishSvgImport directly, because it already holds the busy flag. */
+async function commitSvg(paths: SvgLeafPath[], name: string, merged: boolean) {
+  if (svgBusy.value) return
+  svgBusy.value = true
+  try {
+    await finishSvgImport(paths, name, merged)
+  } finally {
+    svgBusy.value = false
+  }
+}
+
+/** Outline strokes (deferred until the mode is settled — see the gate above),
+ *  then build the objects. Callers own the busy flag. */
+async function finishSvgImport(paths: SvgLeafPath[], name: string, merged: boolean) {
+  let outlined: SvgLeafPath[]
+  try {
+    outlined = await outlineStrokes(paths)
   } catch (err) {
-    // The remaining real failure mode here is the paper.js dynamic import
-    // itself failing (network/build issue), not a bad SVG.
-    console.error('[scene3d-studio] svg import failed', err)
+    console.error('[scene3d-studio] svg stroke outlining failed', err)
     svgError.value = 'Could not read that SVG.'
     return
   }
-  if (!paths.length) {
+  if (!outlined.length) {
     svgError.value = 'That SVG had nothing to extrude — no filled or stroked paths.'
     return
   }
-  if (paths.length > SVG_SPLIT_THRESHOLD) { svgPending.value = { paths, name }; return }
-  commitSvg(paths, name, false)
-}
-
-function commitSvg(paths: SvgLeafPath[], name: string, merged: boolean) {
-  const objs = buildSvgObjects(paths, doc.objects, {
+  const objs = buildSvgObjects(outlined, doc.objects, {
     name, merged, ...(selected.value?.parentId ? { parentId: selected.value.parentId } : {}),
   })
   doc.objects.push(...objs)
@@ -2083,14 +2127,14 @@ function onClose() {
           <div v-if="svgPasteOpen" class="space-y-1">
             <textarea v-model="svgPasteText" rows="4" placeholder="Paste <svg>…</svg>"
               class="w-full rounded bg-black/30 p-2 text-[11px] text-white/80" @pointerdown.stop />
-            <StudioButton :disabled="!svgPasteText.trim()" @click="importSvgSource(svgPasteText, 'SVG')">Add</StudioButton>
+            <StudioButton :disabled="!svgPasteText.trim() || svgBusy" @click="importSvgSource(svgPasteText, 'SVG')">Add</StudioButton>
           </div>
           <p v-if="svgError" class="text-[11px] text-red-400">{{ svgError }}</p>
           <div v-if="svgPending" class="space-y-1 rounded border border-white/15 p-2 text-[11px]">
             <p class="text-white/70">This SVG has {{ svgPending.paths.length }} paths.</p>
             <div class="flex gap-1">
-              <StudioButton @click="commitSvg(svgPending.paths, svgPending.name, false)">Separate objects</StudioButton>
-              <StudioButton @click="commitSvg(svgPending.paths, svgPending.name, true)">One merged object</StudioButton>
+              <StudioButton :disabled="svgBusy" @click="commitSvg(svgPending.paths, svgPending.name, false)">Separate objects</StudioButton>
+              <StudioButton :disabled="svgBusy" @click="commitSvg(svgPending.paths, svgPending.name, true)">One merged object</StudioButton>
             </div>
           </div>
           <input ref="svgFileInput" type="file" accept=".svg,image/svg+xml" class="hidden" @change="onSvgFilePicked" />

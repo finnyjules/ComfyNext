@@ -167,7 +167,9 @@ export function geometryFor(
       return extrudeShapes(shapes, p('depth'), p('bevel'), p('bevelSegments'), SHAPE_CURVE_SEGMENTS)
     }
     case 'svgPath': {
-      const shapes = pathToShapes(content?.path ?? '')
+      // Absent fillRule means 'nonzero' — pathToShapes's default, matching the
+      // SVG default, so pre-fillRule documents build exactly as they always did.
+      const shapes = pathToShapes(content?.path ?? '', content?.fillRule)
       if (!shapes.length) return extrudePlaceholderGeometry()
       return extrudeShapes(shapes, p('depth'), p('bevel'), p('bevelSegments'), p('curveSegments'))
     }
