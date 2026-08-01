@@ -61,8 +61,12 @@ export interface SvgLeafPath {
 }
 
 export interface SvgImportOpts {
-  /** Fraction of the target space the whole import should span (default 0.6). */
-  targetWidth?: number
+  /** Fraction of the target space the whole import should span. REQUIRED: this
+   *  is the one number that differs between consumers (the Compositor passes a
+   *  canvas fraction, 3D Studio a scene size), so defaulting it here would let a
+   *  caller silently inherit the other consumer's units and produce
+   *  plausible-looking geometry at the wrong scale. */
+  targetWidth: number
 }
 
 /** Normalized bounds of the whole import, in the same space as each `d`. */
@@ -72,14 +76,33 @@ export interface SvgLeafResult {
 }
 
 /**
+ * Pure normalization maths for an SVG import: given the raw bounds of the
+ * whole import and the target width it should span, returns the scale factor
+ * and resulting bbox. Split out from `svgToLeafPaths` (which needs paper.js
+ * and a browser) so this arithmetic can be unit tested directly. The
+ * `width > 0` guard matters because a degenerate SVG (a single vertical line,
+ * a point) has zero-width bounds — without it `k` would be `Infinity`/`NaN`
+ * and silently poison every downstream transform instead of falling back to
+ * an identity scale.
+ */
+export function svgNormalization(
+  bounds: { width: number; height: number },
+  targetWidth: number,
+): { k: number; bbox: { w: number; h: number } } {
+  const k = bounds.width > 0 ? targetWidth / bounds.width : 1
+  const bbox = { w: Math.max(bounds.width * k, 0.001), h: Math.max(bounds.height * k, 0.001) }
+  return { k, bbox }
+}
+
+/**
  * Parse an SVG string into leaf paths in normalized import space. Shared core
  * behind both `svgToPathLayers` (Compositor) and 3D Studio's importer — the
  * parsing, normalization and coordinate contract live here so both consumers
  * see the same geometry.
  */
-export async function svgToLeafPaths(svg: string, opts: SvgImportOpts = {}): Promise<SvgLeafResult> {
+export async function svgToLeafPaths(svg: string, opts: SvgImportOpts): Promise<SvgLeafResult> {
   if (!svg || typeof window === 'undefined') return { paths: [], bbox: { w: 0, h: 0 } }
-  const targetWidth = opts.targetWidth ?? 0.6
+  const { targetWidth } = opts
 
   const sc = await paperScope()
   const project = sc.project
@@ -108,8 +131,7 @@ export async function svgToLeafPaths(svg: string, opts: SvgImportOpts = {}): Pro
 
   // Whole-import bounds → normalization factor (svg units → width-fractions).
   const B = root.bounds
-  const k = B.width > 0 ? targetWidth / B.width : 1
-  const bbox = { w: Math.max(B.width * k, 0.001), h: Math.max(B.height * k, 0.001) }
+  const { k, bbox } = svgNormalization({ width: B.width, height: B.height }, targetWidth)
 
   // Map svg coords → local: (p - B.center) * k. paper composes right-to-left,
   // so scale(k) after translate(-center) yields exactly that.
