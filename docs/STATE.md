@@ -46,6 +46,26 @@ The schema is a **superset with per-consumer opt-in** (`agent: false` withholds 
 
 Still to do in Act 1: the generic inspector renderer (Gradient still has 432 lines of hand-written markup), new `ControlSpec` kinds (`segmented`, `repeater`, `custom`), and exposing the 11 now-declared Shape controls to the agent. Known misfits remain: Texture's colour-role system (`texturefx/roles.ts`), Space Type's scene-sequencing motion model.
 
+## Style duplication — one training run, many taste profiles — LANDED 2026-08-02
+
+Commit `abb99dced`. Spec: [2026-08-02-style-duplication-design.md](../frontend/docs/superpowers/specs/2026-08-02-style-duplication-design.md).
+
+**A trained style carried exactly one taste profile, for no structural reason.** The profile is sidecar text prepended to the prompt — nothing about it is in the weights. Wanting a second aesthetic over the same training set had no expression in the UI, and publishing a second house style against one trained model was silently swallowed by an upsert keyed on `replicateModel`.
+
+**Duplicate copies the SIDECAR, not the weights** — ~1 KB against ~344 MB. It works because `GET /api/loras-local` already derived one entry per base name from *either* the `.safetensors` or the `.json`: sidecar-only entries were an existing supported shape (that is how the deployed server lists LoRAs whose weights live only on Replicate). So a copy appears in the gallery and the Style Publisher with no further wiring. Rejected alternatives: copying the weights (byte-identical waste) and a `profiles: []` array inside one sidecar (truest model, but changes the shape read by the GET loop, the publisher's per-filename draft map, and the `lora` filename stored on canvas nodes).
+
+**`trained_on` is the load-bearing field.** `/api/dataset-match` resolves a LoRA's training folder from it alone, so a copy matches the *same* `input/lora_dataset_*` folder and the Fable "rewrite the profile from the training images" flow works on it. Verified live: original and copy both resolve to `lora_dataset_1780550961478`, 16 images.
+
+**`id` replaces `replicateModel` as the house-style uniqueness key.** It already was one in practice — the publisher derives it as `kebab(name)` and thumbnails are written to `public/house-styles/<id>/`. Existing ids are unique, so this is a no-op for every published style. `findIdCollision` is unchanged and is now the only uniqueness rule.
+
+**Findings worth keeping:**
+- **"Sidecar-only" was the wrong delete guard on its own.** Refusing to delete when a `.safetensors` is present is correct locally and *inverted* on the deployed server, where **no** LoRA has weights on disk — the guard would have green-lit deleting a real trained style's provenance. Delete now also requires a `duplicate_of` marker, so only files this feature created are removable.
+- **The PATCH gate was already a latent bug.** Requiring weights to exist meant sidecar-only LoRAs were listed but uneditable on the deployed server. Duplication forced the fix rather than causing it.
+- **A nested route would have 404'd.** `/api/loras-local` is an *exact*-match entry in `comfyui-proxy.ts`'s `NITRO_API_PATHS`, so `/api/loras-local/duplicate` falls through to ComfyUI. Path matching there is method-agnostic, so duplicate/delete ride the same path as GET/PATCH and need no allowlist edit.
+- **A compile-check that greps for error strings passes vacuously on a 404.** The first pass "verified" three `.vue` files that had returned `Not Found` — 9 bytes each. The Vite dev path needs the `@fs` prefix and an absolute path; a byte count is the cheap tell.
+
+**Unverified:** a rendered image through a duplicate (never sent one to Replicate), and the gallery's Duplicate/Delete button click-through. Everything else is verified live end-to-end against the dev server.
+
 ## Scene3D SVG import — LANDED 2026-08-01
 
 Commits `ece01d0af`..`f278dd2f7` (13). Spec: [2026-07-31-scene3d-svg-import-design.md](superpowers/specs/2026-07-31-scene3d-svg-import-design.md) · Plan: [2026-07-31-scene3d-svg-import.md](superpowers/plans/2026-07-31-scene3d-svg-import.md).
