@@ -11,6 +11,7 @@ import {
 import { toast } from 'vue-sonner'
 import { useDeliverables } from '~/composables/useDeliverables'
 import { peekPendingPromote } from '~/lib/draft/runMeta'
+import { composeLoraStyle } from '~/lib/graph/loraStyleBlocks'
 import { applyPendingPromotes } from '~/lib/draft/promote'
 import { healDanglingLinks, stripVarsLinks, collectKeepSet, collectKeepSetDownstream } from '~/composables/useFilteredPrompt'
 import { stripFrontendOnlyNodes } from '~/utils/stripFrontendOnlyNodes'
@@ -557,8 +558,10 @@ function injectLoraStyleIntoPrompt(workflow: any) {
   for (const node of workflow?.nodes || []) {
     if (node?.type !== 'FluxLoRARemoteNode' && node?.type !== 'FluxMultiLoRARemoteNode') continue
     // Both keep `prompt` at widget index 0, so the same fold applies.
-    // `tasteProfile` fallback keeps workflows saved before the rename working.
-    const style = String(node.properties?.aesthetic || node.properties?.tasteProfile || '').trim()
+    // composeLoraStyle concatenates the node-level `aesthetic` (with its
+    // `tasteProfile` legacy fallback) and, on FluxMultiLoRARemoteNode, every
+    // filled slot's `aesthetic_a`..`aesthetic_d` block — see loraStyleBlocks.ts.
+    const style = composeLoraStyle(node.properties)
     if (!style) continue
     const wv = node.widgets_values
     if (!Array.isArray(wv)) continue

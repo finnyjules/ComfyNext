@@ -17,6 +17,7 @@ import {
   loraGallerySource,
   isCharacterItem,
 } from '~/lib/graph/loraGalleryTabs'
+import { slotAestheticKey } from '~/lib/graph/loraStyleBlocks'
 
 const props = defineProps<{
   nodeId: string
@@ -40,6 +41,39 @@ const isCharacter = computed(() => props.kind === 'character')
 function loraSlotSiblings(target: string): { url: string; scale: string | null } {
   const m = /^lora_([a-d])$/.exec(target)
   return m ? { url: `lora_${m[1]}_url`, scale: `scale_${m[1]}` } : { url: 'lora_url', scale: null }
+}
+
+// One-time migration: before per-slot style blocks existed, only slot B could
+// ever receive a style (slot A was character-only and the House tab was
+// hidden there), so a workflow saved pre-migration has its slot-B style
+// sitting in plain `properties.aesthetic`. composeLoraStyle still reads that
+// fine on load (the node-level block is always included) — but if the user
+// then re-picks a style into slot B, writing `aesthetic_b` while the stale
+// `aesthetic` still holds the old B text would double-count both. So: right
+// before writing any slot key on a multi-slot node, if `aesthetic` is
+// non-empty and no aesthetic_a..d has been set yet, move it into aesthetic_b.
+function migrateLegacyAestheticIfNeeded(properties: Record<string, any>) {
+  const hasSlotKey = (['aesthetic_a', 'aesthetic_b', 'aesthetic_c', 'aesthetic_d'] as const)
+    .some((k) => String(properties[k] || '').trim())
+  if (hasSlotKey) return
+  const legacy = String(properties.aesthetic || '').trim()
+  if (!legacy) return
+  properties.aesthetic_b = legacy
+  delete properties.aesthetic
+}
+
+// Shared write path for both the house-style and local-style branches below:
+// per-slot key on multi-slot nodes (running the migration first), plain
+// `aesthetic` everywhere else (the single-LoRA node's `lora_name` slot).
+function writeAesthetic(data: any, targetWidgetName: string, style: string) {
+  if (!data.properties) data.properties = {}
+  const slotKey = slotAestheticKey(targetWidgetName)
+  if (slotKey) {
+    migrateLegacyAestheticIfNeeded(data.properties)
+    data.properties[slotKey] = style
+  } else {
+    data.properties.aesthetic = style
+  }
 }
 const noun = computed(() => (isCharacter.value ? 'Character' : 'Style'))
 const nounPlural = computed(() => (isCharacter.value ? 'Characters' : 'Styles'))
@@ -224,8 +258,7 @@ function onConfirm(item: LoraItem) {
     set(urlWidget, isMultiSlot ? houseStyle.weightsUrl : houseStyle.replicateModel)
     set(targetWidget.value, '[None]')
     if (scaleWidget) set(scaleWidget, houseStyle.suggestedScale ?? 0.8)
-    if (!data.properties) data.properties = {}
-    data.properties.aesthetic = houseStyleStyleBlock(houseStyle)
+    writeAesthetic(data, targetWidget.value, houseStyleStyleBlock(houseStyle))
     emit('close')
     return
   }
@@ -252,8 +285,7 @@ function onConfirm(item: LoraItem) {
     // Style: fold aesthetic + trigger into the node's "Style" PROPERTY (prepended
     // to the prompt at run time). Schema stays stable; prompt box stays clean.
     const style = [item.aesthetic?.trim(), trig ? `${trig},` : ''].filter(Boolean).join(' ')
-    if (!data.properties) data.properties = {}
-    data.properties.aesthetic = style
+    writeAesthetic(data, targetWidget.value, style)
   }
   emit('close')
 }
