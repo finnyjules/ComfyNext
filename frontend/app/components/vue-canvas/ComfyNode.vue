@@ -11,6 +11,7 @@ import NodeCapsule from '~/components/vue-canvas/NodeCapsule.vue'
 import { resolveReadout } from '~/lib/canvas/capsuleReadout'
 import { resolveNodeIcon, type NodeIcon } from '~/lib/canvas/nodeIcon'
 import { readoutRuleFor, defaultCollapsed } from '~/lib/canvas/capsuleMeta'
+import { isLoraSlotWidgetVisible } from '~/lib/graph/loraSlotVisibility'
 import type { CapsuleAction, CapsuleState } from '~/lib/canvas/capsuleAction'
 import { LIVE_PREVIEW_NODE_TYPES } from '~/lib/livePreviewNodes'
 import { allowedAspectRatios, allowedDurations, modelSupportsSeed } from '~/lib/videoModelAdapt'
@@ -540,6 +541,9 @@ const WIDGET_VISIBILITY: Record<string, (widgetName: string, values: any[], defs
   // Outpaint: Flux Fill uses a direction picker; Bria Expand uses an aspect
   // ratio. Show only the control the selected engine actually consumes.
   OutpaintImageNode: (name, values, defs) => isVisibleForModel('OutpaintImageNode', name, values, defs),
+  // Flux + LoRAs: four slots, but C and D stay hidden until the slots before
+  // them are filled — a fresh node reads as the two-slot node it replaced.
+  FluxMultiLoRARemoteNode: (name, values, defs) => isLoraSlotWidgetVisible(name, values, defs),
 }
 
 // Sibling of WIDGET_VISIBILITY: per-node option FILTERS for combo widgets.
