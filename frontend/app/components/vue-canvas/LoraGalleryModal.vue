@@ -23,6 +23,18 @@ const emit = defineEmits<{ close: [] }>()
 // The combo this gallery edits, and whether it browses characters or styles.
 const targetWidget = computed(() => props.widgetName || 'lora_name')
 const isCharacter = computed(() => props.kind === 'character')
+
+// FluxMultiLoRARemoteNode's slots (lora_a..lora_d) each carry a `lora_<letter>_url`
+// override sibling and a `scale_<letter>` sibling. Derive both from the slot
+// letter so every slot behaves alike — hardcoding just 'lora_a'/'lora_b' left
+// lora_c/lora_d (and, for the house-style path below, even lora_a) silently
+// writing to the single-LoRA node's 'lora_url', which this node doesn't have.
+// Anything that isn't a lora_<letter> slot (e.g. the single-LoRA node's
+// 'lora_name') keeps today's 'lora_url' fallback and no scale sibling.
+function loraSlotSiblings(target: string): { url: string; scale: string | null } {
+  const m = /^lora_([a-d])$/.exec(target)
+  return m ? { url: `lora_${m[1]}_url`, scale: `scale_${m[1]}` } : { url: 'lora_url', scale: null }
+}
 const noun = computed(() => (isCharacter.value ? 'Character' : 'Style'))
 const nounPlural = computed(() => (isCharacter.value ? 'Characters' : 'Styles'))
 
@@ -182,19 +194,21 @@ function onConfirm(item: LoraItem) {
   }
 
   // House style: no local file to select, so drive the run entirely off the
-  // URL-override sibling widget. lora_b loads the multi-lora stack from the
-  // trained WEIGHTS tarball; every other slot direct-runs the private
-  // Replicate model. '[None]' is the combo's actual none sentinel — see
-  // FluxLoRARemoteNode / FluxMultiLoRARemoteNode combo options in
-  // comfy_api_nodes/nodes_replicate.py (options end with ["[None]"], default
-  // "[None]") — matches how currentId already treats it as "unset" above.
+  // URL-override sibling widget. A multi-LoRA slot (lora_a-lora_d) loads the
+  // multi-lora stack from the trained WEIGHTS tarball; the single-LoRA node's
+  // 'lora_name' direct-runs the private Replicate model. '[None]' is the
+  // combo's actual none sentinel — see FluxLoRARemoteNode /
+  // FluxMultiLoRARemoteNode combo options in comfy_api_nodes/nodes_replicate.py
+  // (options end with ["[None]"], default "[None]") — matches how currentId
+  // already treats it as "unset" above.
   if (item.houseStyle) {
     const houseStyle = item.houseStyle
     stripOrReplacePrevTrig(null)
-    const urlWidget = targetWidget.value === 'lora_b' ? 'lora_b_url' : 'lora_url'
-    set(urlWidget, targetWidget.value === 'lora_b' ? houseStyle.weightsUrl : houseStyle.replicateModel)
+    const { url: urlWidget, scale: scaleWidget } = loraSlotSiblings(targetWidget.value)
+    const isMultiSlot = scaleWidget !== null
+    set(urlWidget, isMultiSlot ? houseStyle.weightsUrl : houseStyle.replicateModel)
     set(targetWidget.value, '[None]')
-    if (targetWidget.value === 'lora_b') set('scale_b', houseStyle.suggestedScale ?? 0.8)
+    if (scaleWidget) set(scaleWidget, houseStyle.suggestedScale ?? 0.8)
     if (!data.properties) data.properties = {}
     data.properties.aesthetic = houseStyleStyleBlock(houseStyle)
     emit('close')
@@ -204,9 +218,7 @@ function onConfirm(item: LoraItem) {
   const trig = item.trigger?.trim()
   stripOrReplacePrevTrig(trig)
   // The URL-override sibling for this slot, cleared so the picked name drives.
-  const urlOverride = targetWidget.value === 'lora_a' ? 'lora_a_url'
-    : targetWidget.value === 'lora_b' ? 'lora_b_url'
-    : 'lora_url'
+  const urlOverride = loraSlotSiblings(targetWidget.value).url
   set(targetWidget.value, item.id)
   set(urlOverride, '')
 

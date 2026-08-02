@@ -643,7 +643,7 @@ class FluxLoRARemoteNode(IO.ComfyNode):
 
 
 # =============================================================================
-# Node: Flux Dev + 2 LoRAs (stack a character LoRA + a style LoRA)
+# Node: Flux Dev + up to 4 LoRAs (stack a character LoRA + a style LoRA + accents)
 # =============================================================================
 
 # Module-level rotation counter for the multi-LoRA cache-bug workaround. Lives
@@ -721,6 +721,53 @@ class FluxMultiLoRARemoteNode(IO.ComfyNode):
                     default=0.8, min=0.0, max=1.5, step=0.05,
                     tooltip="Strength of LoRA B. ~0.8 applies a style without overpowering the character.",
                 ),
+                IO.Combo.Input(
+                    "aspect_ratio",
+                    options=_FLUX_LORA_ASPECT_RATIOS,
+                    default="1:1",
+                ),
+                IO.Int.Input(
+                    "num_inference_steps",
+                    default=28, min=4, max=50,
+                    tooltip="More steps = better detail, slower. 28 is the Flux Dev sweet spot.",
+                    advanced=True,
+                ),
+                IO.Float.Input(
+                    "guidance",
+                    default=3.5, min=0.0, max=10.0, step=0.1,
+                    tooltip="Prompt adherence. 3.5 is the canonical default; 2–5 brings out style.",
+                    advanced=True,
+                ),
+                IO.Int.Input(
+                    "seed",
+                    default=0, min=0, max=0xFFFFFFFF,
+                    tooltip="0 = random each run. Set a value for reproducible A/B tests.",
+                ),
+                IO.Image.Input(
+                    "image",
+                    optional=True,
+                    tooltip=(
+                        "Optional: apply the stacked LoRAs to THIS image (image-to-image) "
+                        "instead of generating from scratch. The input's aspect ratio is kept."
+                    ),
+                ),
+                IO.Float.Input(
+                    "prompt_strength",
+                    default=0.8, min=0.0, max=1.0, step=0.05,
+                    tooltip=(
+                        "Image-to-image only: 0.2 = subtle restyle (keeps structure), "
+                        "0.9 = strong reinterpretation. Ignored when no image is wired."
+                    ),
+                    advanced=True,
+                ),
+                # ── Slots C/D MUST stay last ─────────────────────────────────
+                # widgets_values is positional, and realignWidgetValues (the
+                # frontend's saved-workflow migrator) pads a saved array by
+                # LENGTH, not by name. Any new input inserted before an
+                # existing one shifts every saved value after it onto the
+                # wrong widget — that's what happened when these six were
+                # first declared between scale_b and aspect_ratio. Future
+                # slots must also be appended here, never inserted earlier.
                 # ── Slot C (an accent — style, texture, lighting) ──
                 IO.Combo.Input(
                     "lora_c",
@@ -760,45 +807,6 @@ class FluxMultiLoRARemoteNode(IO.ComfyNode):
                     "scale_d",
                     default=0.6, min=0.0, max=1.5, step=0.05,
                     tooltip="Strength of LoRA D. The lightest slot by default.",
-                ),
-                IO.Combo.Input(
-                    "aspect_ratio",
-                    options=_FLUX_LORA_ASPECT_RATIOS,
-                    default="1:1",
-                ),
-                IO.Int.Input(
-                    "num_inference_steps",
-                    default=28, min=4, max=50,
-                    tooltip="More steps = better detail, slower. 28 is the Flux Dev sweet spot.",
-                    advanced=True,
-                ),
-                IO.Float.Input(
-                    "guidance",
-                    default=3.5, min=0.0, max=10.0, step=0.1,
-                    tooltip="Prompt adherence. 3.5 is the canonical default; 2–5 brings out style.",
-                    advanced=True,
-                ),
-                IO.Int.Input(
-                    "seed",
-                    default=0, min=0, max=0xFFFFFFFF,
-                    tooltip="0 = random each run. Set a value for reproducible A/B tests.",
-                ),
-                IO.Image.Input(
-                    "image",
-                    optional=True,
-                    tooltip=(
-                        "Optional: apply BOTH LoRAs to THIS image (image-to-image) "
-                        "instead of generating from scratch. The input's aspect ratio is kept."
-                    ),
-                ),
-                IO.Float.Input(
-                    "prompt_strength",
-                    default=0.8, min=0.0, max=1.0, step=0.05,
-                    tooltip=(
-                        "Image-to-image only: 0.2 = subtle restyle (keeps structure), "
-                        "0.9 = strong reinterpretation. Ignored when no image is wired."
-                    ),
-                    advanced=True,
                 ),
             ],
             outputs=[
@@ -5841,7 +5849,7 @@ class ReplicateExtension(ComfyExtension):
             # ─── Use-case nodes (the user-facing surface) ───
             # Image — generation
             FluxLoRARemoteNode,         # Generate an image with your LoRA — kept separate
-            FluxMultiLoRARemoteNode,    # Stack 2 LoRAs (character + style) · flux-dev-multi-lora
+            FluxMultiLoRARemoteNode,    # Stack up to 4 LoRAs (character + style + accents) · flux-dev-multi-lora
             GenerateImageNode,          # Generate an image · Flux Pro / Ideogram
             GenerateAnimeNode,          # Generate an anime image · Animagine XL
             GenerateEmojiNode,          # Generate an emoji · Flux Kontext Emoji

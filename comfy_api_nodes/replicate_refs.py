@@ -514,7 +514,7 @@ def build_flux_style_prompt(trigger: str, aesthetic: str, caption: str) -> str:
 
 # ---------- Multi-LoRA slot collection ------------------------------------------
 
-def _multilora_collect(resolved):
+def _multilora_collect(resolved: list[tuple[str | None, float]]) -> tuple[list[str], list[float]]:
     """Turn resolved (weights_ref, scale) slot pairs into parallel lists.
 
     Drops slots that resolved to nothing, taking their scale with them, and

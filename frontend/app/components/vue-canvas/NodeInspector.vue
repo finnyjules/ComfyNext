@@ -12,6 +12,7 @@
  */
 import { computed } from 'vue'
 import { X } from 'lucide-vue-next'
+import { isLoraSlotWidgetVisible } from '~/lib/graph/loraSlotVisibility'
 
 const props = defineProps<{ node: any | null }>()
 defineEmits<{ close: [] }>()
@@ -31,11 +32,17 @@ function isInspectorWidget(w: any): boolean {
 }
 
 // Mirror ComfyNode's index-aligned iteration: widgetDefs[i] ↔ widgetsValues[i].
+// Also respects the same progressive-disclosure rule ComfyNode applies on the
+// node body (WIDGET_VISIBILITY's FluxMultiLoRARemoteNode entry) — otherwise a
+// fresh multi-LoRA node shows lora_c_url/lora_d_url here even though slots C/D
+// are hidden on the node until B is filled.
 const inspectorWidgets = computed(() => {
   const defs = (props.node?.data?.widgetDefs || []) as any[]
+  const values = (props.node?.data?.widgetsValues || []) as any[]
   return defs
     .map((widget, index) => ({ widget, index }))
     .filter(({ widget }) => isInspectorWidget(widget))
+    .filter(({ widget }) => isLoraSlotWidgetVisible(widget.name, values, defs))
 })
 
 const nodeTitle = computed(() =>

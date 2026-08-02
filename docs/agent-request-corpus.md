@@ -25,7 +25,7 @@ generate an image with my lora · use my trained model to make a portrait · mak
 generate my character at the beach · use my finetune for this · lora gen: my mascot in a city ·
 personalized image using my training · run my custom model
 
-## FluxMultiLoRARemoteNode (two LoRAs)
+## FluxMultiLoRARemoteNode (up to four LoRAs)
 combine my character lora with the watercolor style lora · my character in an anime style lora ·
 stack two loras · character plus style, both my models · mix my face lora and the comic style lora
 

@@ -338,8 +338,14 @@ function ensureLoraSelected(node: any) {
     node.data.widgetsValues[i] = v
   }
   // name widget → its matching url-override widget (lora_url "wins over lora_name").
-  const urlFor: Record<string, string> = { lora_name: 'lora_url', lora_a: 'lora_a_url', lora_b: 'lora_b_url' }
-  const loraWidgets = nt === 'FluxMultiLoRARemoteNode' ? ['lora_a', 'lora_b'] : ['lora_name']
+  const urlFor: Record<string, string> = {
+    lora_name: 'lora_url',
+    lora_a: 'lora_a_url',
+    lora_b: 'lora_b_url',
+    lora_c: 'lora_c_url',
+    lora_d: 'lora_d_url',
+  }
+  const loraWidgets = nt === 'FluxMultiLoRARemoteNode' ? ['lora_a', 'lora_b', 'lora_c', 'lora_d'] : ['lora_name']
   let ci = 0
   for (const w of loraWidgets) {
     if (ci >= matches.length) break
