@@ -11,6 +11,12 @@ import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { Sparkles, Loader2, Pencil, Check, X, RefreshCcw, Copy, Trash2 } from 'lucide-vue-next'
 import { HOUSE_STYLES, houseStyleStyleBlock, type HouseStyle } from '~/data/house-styles'
 import { nextCopyName } from '~/lib/lora/copyName'
+import {
+  type LoraGalleryTab,
+  initialLoraGalleryTab,
+  loraGallerySource,
+  isCharacterItem,
+} from '~/lib/graph/loraGalleryTabs'
 
 const props = defineProps<{
   nodeId: string
@@ -50,6 +56,7 @@ interface LoraItem {
   canGenerateCover: boolean
   duplicateOf: string | null // set on copies (see duplicateItem) — gates Delete
   houseStyle?: HouseStyle    // present only for House-tab entries (drives onConfirm)
+  kind?: string              // 'character' | 'style' (as reported by /api/loras-local) — drives trigger routing in onConfirm, NOT the slot's own kind
 }
 
 const items = ref<LoraItem[]>([])
@@ -60,7 +67,7 @@ const loading = ref(true)
 // LoraItem so the existing card/detail templates and search filter Just Work;
 // canGenerateCover: false hides the cover-generate affordance (no local
 // sidecar to run against), and houseStyle is the onConfirm discriminator.
-const tab = ref<'yours' | 'house'>('yours')
+const kindTab = ref<LoraGalleryTab>(initialLoraGalleryTab(props.kind))
 const houseItems = computed<LoraItem[]>(() => HOUSE_STYLES.map((s) => ({
   id: `house:${s.id}`,
   name: s.label,
@@ -74,15 +81,22 @@ const houseItems = computed<LoraItem[]>(() => HOUSE_STYLES.map((s) => ({
   duplicateOf: null,
   houseStyle: s,
 })))
-// Tab strip only makes sense for style pickers with a published library —
-// the character picker (lora_a) never shows it.
-const showHouseTab = computed(() => !isCharacter.value && HOUSE_STYLES.length > 0)
-const filters = computed(() => showHouseTab.value
-  ? [
-      { id: 'yours', label: 'Your Styles', count: items.value.length },
-      { id: 'house', label: 'House Library', count: houseItems.value.length },
-    ]
-  : undefined)
+// Every slot can browse every library now — no more hard-gating by the
+// slot's own kind. Local LoRAs are fetched unfiltered (see onMounted) and
+// partitioned here at render time.
+const characterItems = computed<LoraItem[]>(() => items.value.filter((l) => l.kind === 'character'))
+const styleItems = computed<LoraItem[]>(() => items.value.filter((l) => l.kind !== 'character'))
+// House chip shows whenever a published library exists, regardless of slot.
+const showHouseTab = computed(() => HOUSE_STYLES.length > 0)
+const filters = computed(() => {
+  const entries: { id: LoraGalleryTab; label: string; count: number }[] = [
+    { id: 'characters', label: 'Characters', count: characterItems.value.length },
+    { id: 'yours', label: 'Your Styles', count: styleItems.value.length },
+  ]
+  if (showHouseTab.value) entries.push({ id: 'house', label: 'House Library', count: houseItems.value.length })
+  // Hide the strip entirely if there's nothing meaningful to switch between.
+  return entries.length > 1 ? entries : undefined
+})
 
 const node = computed(() => props.nodes.find((n) => n.id === props.nodeId))
 
@@ -100,7 +114,7 @@ const currentId = computed<string | null>(() => {
 const focusedId = ref<string | null>(null)
 
 const visibleItems = computed<LoraItem[]>(() => {
-  const source = (tab.value === 'house' && showHouseTab.value) ? houseItems.value : items.value
+  const source = loraGallerySource(characterItems.value, styleItems.value, houseItems.value, kindTab.value)
   const q = searchQuery.value.trim().toLowerCase()
   if (!q) return source
   return source.filter((l) =>
@@ -117,10 +131,10 @@ onMounted(async () => {
     const res = await fetch('/api/loras-local')
     if (res.ok) {
       const data = await res.json() as { loras?: any[] }
-      items.value = (data.loras || [])
-        // Show characters in a character picker, styles everywhere else.
-        .filter((l) => (isCharacter.value ? l.kind === 'character' : l.kind !== 'character'))
-        .map((l) => ({
+      // Keep ALL local LoRAs (characters and styles alike) — the tab strip
+      // partitions them at render time via characterItems/styleItems, so any
+      // slot can browse either library.
+      items.value = (data.loras || []).map((l) => ({
         id: l.filename,
         name: l.name,
         trigger: l.trigger ?? null,
@@ -131,11 +145,12 @@ onMounted(async () => {
         coverUrl: l.coverUrl ?? null,
         canGenerateCover: !!l.canGenerateCover,
         duplicateOf: l.duplicateOf ?? null,
+        kind: l.kind,
       }))
     }
   } catch { /* offline — empty gallery */ } finally {
     loading.value = false
-    focusedId.value = currentId.value ?? items.value[0]?.id ?? null
+    focusedId.value = currentId.value ?? visibleItems.value[0]?.id ?? null
   }
 })
 
@@ -222,7 +237,7 @@ function onConfirm(item: LoraItem) {
   set(targetWidget.value, item.id)
   set(urlOverride, '')
 
-  if (isCharacter.value) {
+  if (isCharacterItem(item)) {
     // Character: put its trigger in the prompt (activates the LoRA). Leave the
     // "Style" aesthetic property alone — the character's own look would fight
     // the style (and the multi-LoRA node's single Style slot holds the style's).
@@ -339,6 +354,7 @@ async function duplicateItem(item: LoraItem, e?: Event) {
       coverUrl: null,         // starts blank; never shows an image this profile didn't make
       canGenerateCover: true, // it has a hosted model ref, so a cover can be baked
       duplicateOf: item.name,
+      kind: item.kind,        // preserve character/style so it stays in the right tab
     }
     items.value.splice(items.value.indexOf(item) + 1, 0, copy)
     focusedId.value = copy.id
@@ -370,7 +386,7 @@ async function deleteItem(item: LoraItem) {
     }
     items.value = items.value.filter(i => i.id !== item.id)
     editing.value = false
-    focusedId.value = items.value[0]?.id ?? null
+    focusedId.value = visibleItems.value[0]?.id ?? null
   } catch (err: any) {
     actionError.value = err?.message || 'Delete failed'
   } finally {
@@ -382,20 +398,20 @@ async function deleteItem(item: LoraItem) {
 <template>
   <CatalogModal
     :open="true"
-    :title="tab === 'house' ? 'House Library' : `Your ${nounPlural}`"
-    :subtitle="loading ? 'Loading…' : (tab === 'house' ? `${houseItems.length} published` : `${items.length} trained`)"
+    :title="kindTab === 'house' ? 'House Library' : kindTab === 'characters' ? 'Characters' : 'Your Styles'"
+    :subtitle="loading ? 'Loading…' : (kindTab === 'house' ? `${houseItems.length} published` : kindTab === 'characters' ? `${characterItems.length} trained` : `${styleItems.length} trained`)"
     :items="visibleItems"
     :selected-id="currentId"
     :filters="filters"
-    :active-filter-id="tab"
+    :active-filter-id="kindTab"
     :search-query="searchQuery"
     :search-placeholder="`Search by name, trigger, ${noun.toLowerCase()}…`"
     :confirm-label="focusedItem ? `Use ${focusedItem.name}` : 'Use this'"
-    :empty-message="tab === 'house' ? 'No house styles match your search.' : (isCharacter ? 'No characters yet — tag a trained LoRA as a character in the Characters panel.' : 'No styles yet — create one in the Create a Style tab.')"
+    :empty-message="kindTab === 'house' ? 'No house styles match your search.' : kindTab === 'characters' ? 'No characters yet — tag a trained LoRA as a character in the Characters panel.' : 'No styles yet — create one in the Create a Style tab.'"
     @close="emit('close')"
     @confirm="(item: any) => onConfirm(item as LoraItem)"
     @update:selected-id="(id: string) => focusedId = id"
-    @update:active-filter-id="(id: string) => tab = (id as 'yours' | 'house')"
+    @update:active-filter-id="(id: string) => kindTab = (id as LoraGalleryTab)"
     @update:search-query="(q: string) => searchQuery = q"
   >
     <!-- Card -->
