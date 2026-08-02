@@ -541,8 +541,9 @@ const WIDGET_VISIBILITY: Record<string, (widgetName: string, values: any[], defs
   // Outpaint: Flux Fill uses a direction picker; Bria Expand uses an aspect
   // ratio. Show only the control the selected engine actually consumes.
   OutpaintImageNode: (name, values, defs) => isVisibleForModel('OutpaintImageNode', name, values, defs),
-  // Flux + LoRAs: four slots, but C and D stay hidden until the slots before
-  // them are filled — a fresh node reads as the two-slot node it replaced.
+  // Flux + LoRAs: four slots, but C and D stay hidden until the immediately
+  // preceding slot is filled — a fresh node reads as the two-slot node it replaced.
+  // Slot A only browses characters, so style-only users can chain B → C → D.
   FluxMultiLoRARemoteNode: (name, values, defs) => isLoraSlotWidgetVisible(name, values, defs),
 }
 

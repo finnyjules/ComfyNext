@@ -80,4 +80,27 @@ describe('isLoraSlotWidgetVisible', () => {
     const ab = values({ lora_a: 'a.safetensors', lora_b: 'b.safetensors' })
     expect(vis('lora_d', ab)).toBe(false)
   })
+
+  it('reveals C when only B is filled (A empty)', () => {
+    // The bug fix: a style-only user fills B and must be able to see C.
+    const v = values({ lora_b: 'style.safetensors' })
+    expect(vis('lora_c', v)).toBe(true)
+    expect(vis('scale_c', v)).toBe(true)
+  })
+
+  it('allows a full B → C → D walk without touching A', () => {
+    // Style-only user: fill B, assert C visible and D hidden.
+    let v = values({ lora_b: 'style.safetensors' })
+    expect(vis('lora_c', v)).toBe(true)
+    expect(vis('lora_d', v)).toBe(false)
+    // Fill C, assert D visible.
+    v = values({ lora_b: 'style.safetensors', lora_c: 'accent.safetensors' })
+    expect(vis('lora_d', v)).toBe(true)
+  })
+
+  it('hides D when only B is filled (C empty)', () => {
+    // Proves the rule is "immediately preceding slot", not "any earlier slot".
+    const v = values({ lora_b: 'style.safetensors' })
+    expect(vis('lora_d', v)).toBe(false)
+  })
 })

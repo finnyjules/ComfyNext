@@ -2,9 +2,11 @@
  * Progressive disclosure for FluxMultiLoRARemoteNode's four LoRA slots.
  *
  * The node has slots A–D, but showing four empty pickers at rest would make a
- * two-LoRA job look like a four-LoRA chore. Slot N appears only once every
- * earlier slot is filled. A and B are always visible, so a fresh node is
- * indistinguishable from the two-slot node this replaced.
+ * two-LoRA job look like a four-LoRA chore. A slot unlocks when the one before
+ * it is filled. A and B are always visible, so a fresh node is indistinguishable
+ * from the two-slot node this replaced. This rule exists because slot A only
+ * browses the Characters gallery, so a style-only user must be able to chain
+ * B → C → D without ever filling A.
  */
 const SLOTS = ['a', 'b', 'c', 'd'] as const
 
@@ -42,5 +44,6 @@ export function isLoraSlotWidgetVisible(widgetName: string, values: any[], defs:
   // that still gets submitted.
   if (slotFilled(slot, values, defs)) return true
 
-  return SLOTS.slice(0, idx).every(s => slotFilled(s, values, defs))
+  const prevSlot = SLOTS[idx - 1]
+  return prevSlot ? slotFilled(prevSlot, values, defs) : false
 }
