@@ -74,6 +74,7 @@ from comfy_api_nodes.replicate_refs import (
     _first_output_url,
     _get_token,
     _is_replicate_model_ref,
+    _multilora_collect,
     _normalize_lora_ref,
     _read_lora_sidecar,
     _read_token_from_dotenv,
@@ -657,22 +658,23 @@ class FluxMultiLoRARemoteNode(IO.ComfyNode):
         lora_options = folder_paths.get_filename_list("loras") + ["[None]"]
         return IO.Schema(
             node_id="FluxMultiLoRARemoteNode",
-            display_name="Flux Dev + 2 LoRAs (Replicate)",
+            display_name="Flux Dev + LoRAs (Replicate)",
             category="api node/image/Replicate",
             description=(
-                "Stack TWO LoRAs on Flux Dev in a single generation via "
+                "Stack up to FOUR LoRAs on Flux Dev in a single generation via "
                 "Replicate's lucataco/flux-dev-multi-lora — e.g. a character "
-                "LoRA + a style LoRA, each with its own scale. Pick "
+                "LoRA + a style LoRA + accents, each with its own scale. Pick "
                 "locally-trained LoRAs (uses the weights artifact from their "
                 "sidecar) or override a slot with a HuggingFace / CivitAI / "
-                ".safetensors reference. Requires REPLICATE_API_TOKEN."
+                ".safetensors reference. Empty slots are skipped. Requires "
+                "REPLICATE_API_TOKEN."
             ),
             inputs=[
                 IO.String.Input(
                     "prompt",
                     multiline=True,
                     default="",
-                    tooltip="Text prompt. Include BOTH LoRAs' trigger words.",
+                    tooltip="Text prompt. Include the trigger word of every LoRA you stack.",
                 ),
                 # ── Slot A (e.g. the character) ──
                 IO.Combo.Input(
@@ -718,6 +720,46 @@ class FluxMultiLoRARemoteNode(IO.ComfyNode):
                     "scale_b",
                     default=0.8, min=0.0, max=1.5, step=0.05,
                     tooltip="Strength of LoRA B. ~0.8 applies a style without overpowering the character.",
+                ),
+                # ── Slot C (an accent — style, texture, lighting) ──
+                IO.Combo.Input(
+                    "lora_c",
+                    options=lora_options,
+                    default="[None]",
+                    tooltip="Third LoRA — an accent on top of the character + style.",
+                    extra_dict={"sailor_widget": "lora_picker"},
+                ),
+                IO.String.Input(
+                    "lora_c_url",
+                    default="",
+                    multiline=False,
+                    tooltip="Override for slot C (same forms as slot A). Wins over lora_c.",
+                    advanced=True,
+                ),
+                IO.Float.Input(
+                    "scale_c",
+                    default=0.7, min=0.0, max=1.5, step=0.05,
+                    tooltip="Strength of LoRA C. Lower than B — accents should not compete.",
+                ),
+                # ── Slot D (a second accent) ──
+                IO.Combo.Input(
+                    "lora_d",
+                    options=lora_options,
+                    default="[None]",
+                    tooltip="Fourth LoRA — a second accent. Stacking this many adapters softens all of them.",
+                    extra_dict={"sailor_widget": "lora_picker"},
+                ),
+                IO.String.Input(
+                    "lora_d_url",
+                    default="",
+                    multiline=False,
+                    tooltip="Override for slot D (same forms as slot A). Wins over lora_d.",
+                    advanced=True,
+                ),
+                IO.Float.Input(
+                    "scale_d",
+                    default=0.6, min=0.0, max=1.5, step=0.05,
+                    tooltip="Strength of LoRA D. The lightest slot by default.",
                 ),
                 IO.Combo.Input(
                     "aspect_ratio",
@@ -776,6 +818,8 @@ class FluxMultiLoRARemoteNode(IO.ComfyNode):
         aspect_ratio: str, num_inference_steps: int, guidance: float,
         seed: int,
         image=None, prompt_strength: float = 0.8,
+        lora_c: str = "[None]", lora_c_url: str = "", scale_c: float = 0.7,
+        lora_d: str = "[None]", lora_d_url: str = "", scale_d: float = 0.6,
     ):
         # Resolve each slot to a WEIGHTS reference flux-dev-multi-lora can load.
         # A picker selection → the trained LoRA's weights artifact (.tar) from its
@@ -788,16 +832,16 @@ class FluxMultiLoRARemoteNode(IO.ComfyNode):
                 return await _autodetect_huggingface(_normalize_lora_ref(lora_url))
             return _resolve_lora_weights_url(lora_name)
 
-        loras: list[str] = []
-        scales: list[float] = []
+        resolved_slots = []
         for name, url, scale in (
             (lora_a, lora_a_url, scale_a),
             (lora_b, lora_b_url, scale_b),
+            (lora_c, lora_c_url, scale_c),
+            (lora_d, lora_d_url, scale_d),
         ):
-            resolved = await _resolve_slot(name, url)
-            if resolved:
-                loras.append(resolved)
-                scales.append(scale)
+            resolved_slots.append((await _resolve_slot(name, url), scale))
+
+        loras, scales = _multilora_collect(resolved_slots)
 
         if not loras:
             raise RuntimeError(
