@@ -510,3 +510,29 @@ def build_flux_style_prompt(trigger: str, aesthetic: str, caption: str) -> str:
     if trig:
         prompt = f"{prompt}, in the style of {trig}"
     return prompt
+
+
+# ---------- Multi-LoRA slot collection ------------------------------------------
+
+def _multilora_collect(resolved):
+    """Turn resolved (weights_ref, scale) slot pairs into parallel lists.
+
+    Drops slots that resolved to nothing, taking their scale with them, and
+    collapses duplicate refs onto their highest scale. Deduping matters beyond
+    tidiness: nodes_replicate's warm-container cache defence works by REVERSING
+    the LoRA list so consecutive requests never look identical, and a list with
+    a repeat can be a palindrome (``[X, Y, X]``) that reverses to itself. Once
+    every entry is distinct, a list of 2+ always differs from its reverse.
+    """
+    loras: list[str] = []
+    scales: list[float] = []
+    for ref, scale in resolved:
+        if not ref:
+            continue
+        if ref in loras:
+            i = loras.index(ref)
+            scales[i] = max(scales[i], scale)
+            continue
+        loras.append(ref)
+        scales.append(scale)
+    return loras, scales
