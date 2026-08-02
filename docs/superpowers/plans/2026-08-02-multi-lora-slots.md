@@ -624,3 +624,32 @@ git commit -m "docs(plan): record live 3-LoRA verification"
 | Progressive disclosure | Task 3 — 9 vitest cases |
 | No regressions | Task 3 Step 6 (typecheck), Task 4 Step 4 (full suite vs known-failing baseline) |
 | Adapters genuinely load | Task 5 Step 5 — log-line count, the only real proof |
+
+---
+
+## Task 5 verification record (2026-08-02)
+
+Live 3-LoRA run, ComfyUI restarted to load the new schema.
+
+- **Schema live:** `display_name: Flux Dev + LoRAs (Replicate)`, 12 slot inputs in order,
+  scale defaults `0.9/0.8/0.7/0.6`, `lora_kind: character` on slot A only.
+- **Prediction:** `0z9kxgg3jsrp40czr659k635a0` — status `succeeded`.
+- **3 distinct refs**, `lora_scales [0.7, 0.8, 0.9]`.
+- **LOAD LINES: 3** — plus three independent `Loading LoRA took: 5.54 / 5.09 / 2.98 seconds`
+  confirmations. All three adapters genuinely loaded.
+- **Scale pairing survived the order reversal:** the cache defence reversed the list
+  (C, B, A), and each scale stayed with its own ref — `0.7`↔Dotwork_Monochrome (slot C),
+  `0.8`↔Azure_Bloom (slot B), `0.9`↔Cartoon_Character (slot A).
+- **Visual corroboration:** output shows all three — cartoon creature, blue palette/blooms,
+  and dotwork stipple texture.
+
+**Measurement gotcha for future runs:** Replicate's LIST endpoint
+(`/v1/predictions?limit=N`) returns predictions with **empty/truncated `logs`**. Counting
+load lines there reports `0` on a perfectly good run and looks exactly like the bug this
+test exists to catch. Always assert against the DETAIL endpoint
+(`/v1/predictions/<id>`).
+
+Progressive disclosure separately verified in a real browser (free, no generation):
+visible slot count went `2 → 2 → 3 → 4` for fresh → A only → A+B → A+B+C, a url override
+in D kept it at 4, and with B cleared while C held a value C stayed visible — the
+stranded-value case.
