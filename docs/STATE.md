@@ -46,6 +46,18 @@ The schema is a **superset with per-consumer opt-in** (`agent: false` withholds 
 
 Still to do in Act 1: the generic inspector renderer (Gradient still has 432 lines of hand-written markup), new `ControlSpec` kinds (`segmented`, `repeater`, `custom`), and exposing the 11 now-declared Shape controls to the agent. Known misfits remain: Texture's colour-role system (`texturefx/roles.ts`), Space Type's scene-sequencing motion model.
 
+## Multi-LoRA generation — 2 slots → 4 — LANDED 2026-08-02
+
+Commits `d2a32c2ea` → `ebaea43e3`. Spec: [2026-08-02-multi-lora-slots-design.md](superpowers/specs/2026-08-02-multi-lora-slots-design.md) · Plan: [2026-08-02-multi-lora-slots.md](superpowers/plans/2026-08-02-multi-lora-slots.md).
+
+`FluxMultiLoRARemoteNode` already existed and already worked — the cap was ours, not the model's: `lucataco/flux-dev-multi-lora` takes `hf_loras`/`lora_scales` as unbounded arrays. Now four slots with tapered defaults (0.9/0.8/0.7/0.6) and progressive disclosure, so a fresh node still reads as the two-slot node it replaced. **Live-verified:** a 3-LoRA run logged three `Downloading LoRA weights` lines and three load timings, with each scale still paired to its own ref after the cache-defence reversal.
+
+**The bug the plan caused, and the review caught.** `widgets_values` is positional and `realignWidgetValues` pads by *length*, not name. Declaring the six new inputs mid-schema shifted every later value in any previously-saved workflow: `aspect_ratio` → `lora_c`, `guidance` (3.5) → `scale_c` whose max is 1.5 (ComfyUI then rejects the run), `"randomize"` → `lora_d_url` (revealing slot D holding junk), seed lost. **New inputs must be appended, never inserted** — now guarded by a Python test that reads `define_schema()` and a TS test that round-trips an old 13-value array.
+
+**Two UI gates that made the feature narrower than the node.** The gallery hardcoded `lora_a`/`lora_b`, so picking into C or D wrote to a `lora_url` widget this node doesn't have — a house-style pick was a silent no-op, and a local pick left a stale slot URL overriding the filename shown. And slot A is character-only while the reveal rule demanded *every* earlier slot be filled, so a style-only user filled B and C never unlocked — capped at one LoRA. Reveal now keys off the immediately preceding slot, and the gallery has switchable Characters / Your Styles / House Library tabs on every slot. Trigger-word routing had to move with it: it branched on the *slot's* kind, which is wrong once any slot can browse any library.
+
+**Known limitation:** one `data.properties.aesthetic` means 2+ style picks collide — only the last trigger reaches the prompt, so the other adapters load and bill with nothing activating them. Pre-existing at two slots; easier to hit at four. Wants its own spec.
+
 ## Style duplication — one training run, many taste profiles — LANDED 2026-08-02
 
 Commit `abb99dced`. Spec: [2026-08-02-style-duplication-design.md](../frontend/docs/superpowers/specs/2026-08-02-style-duplication-design.md).
