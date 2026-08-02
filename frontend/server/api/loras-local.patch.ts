@@ -16,6 +16,8 @@
  */
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+import { parseSidecar, sidecarAesthetic } from '~~/server/utils/loraPrompt'
+import { isSafeLoraFilename } from '~~/server/utils/loraSidecars'
 
 export default defineEventHandler(async (event) => {
   const body = await readBody<{
@@ -28,12 +30,7 @@ export default defineEventHandler(async (event) => {
 
   const filename = (body?.filename || '').trim()
   // Bare .safetensors filename only — reject anything that could escape the dir.
-  if (
-    !filename.endsWith('.safetensors')
-    || filename.includes('/')
-    || filename.includes('\\')
-    || filename.includes('..')
-  ) {
+  if (!isSafeLoraFilename(filename)) {
     throw createError({ statusCode: 400, statusMessage: 'Invalid filename' })
   }
 
@@ -41,10 +38,16 @@ export default defineEventHandler(async (event) => {
   const base = filename.slice(0, -'.safetensors'.length)
   const sidecarPath = path.join(lorasDir, `${base}.json`)
 
-  // The weights must exist — don't write sidecars for phantom LoRAs.
-  try {
-    await fs.access(path.join(lorasDir, filename))
-  } catch {
+  // Weights OR sidecar must exist — don't write sidecars for phantom LoRAs, but
+  // sidecar-only entries are legitimate: duplicated styles never have weights of
+  // their own, and on the deployed server no LoRA does (inference runs on
+  // Replicate via meta.replicate_model). Requiring weights locked both out.
+  const present = await Promise.all(
+    [path.join(lorasDir, filename), sidecarPath].map(async (p) => {
+      try { await fs.access(p); return true } catch { return false }
+    }),
+  )
+  if (!present.some(Boolean)) {
     throw createError({ statusCode: 404, statusMessage: 'LoRA not found' })
   }
 

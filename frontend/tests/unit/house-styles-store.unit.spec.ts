@@ -33,7 +33,7 @@ describe('validateHouseStyleEntry', () => {
 })
 
 describe('upsertHouseStyle', () => {
-  it('appends new and replaces by replicateModel, sorted by label', () => {
+  it('appends new and replaces by id, sorted by label', () => {
     const other = { ...valid, id: 'azure-bloom', label: 'Azure Bloom', replicateModel: 'finnyjules/jules-azure' }
     let out = upsertHouseStyle([], valid)
     out = upsertHouseStyle(out, other)
@@ -41,7 +41,17 @@ describe('upsertHouseStyle', () => {
     const updated = { ...valid, label: 'Rough Cut Revival v2' }
     out = upsertHouseStyle(out, updated)
     expect(out.length).toBe(2)
-    expect(out.find(e => e.replicateModel === valid.replicateModel)!.label).toBe('Rough Cut Revival v2')
+    expect(out.find(e => e.id === valid.id)!.label).toBe('Rough Cut Revival v2')
+  })
+
+  // Two taste profiles over one training run: same trained model, different ids.
+  // Keyed on replicateModel the second publish would silently erase the first.
+  it('keeps two entries that share a replicateModel but differ by id', () => {
+    const variant = { ...valid, id: 'rough-cut-noir', label: 'Rough Cut Noir', tasteProfile: `${valid.tasteProfile} Darker.` }
+    let out = upsertHouseStyle([], valid)
+    out = upsertHouseStyle(out, variant)
+    expect(out.map(e => e.id)).toEqual(['rough-cut-noir', 'rough-cut-revival'])
+    expect(out.every(e => e.replicateModel === valid.replicateModel)).toBe(true)
   })
 })
 

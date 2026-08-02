@@ -45,8 +45,14 @@ export function validateHouseStyleEntry(e: unknown): string[] {
   return errors
 }
 
+/**
+ * `id` is the uniqueness key, not `replicateModel` — one trained model can back
+ * several published styles that differ only in taste profile (same training run,
+ * different aesthetic). Keyed on the model, publishing the second would silently
+ * erase the first.
+ */
 export function upsertHouseStyle(entries: HouseStyleEntry[], entry: HouseStyleEntry): HouseStyleEntry[] {
-  const rest = entries.filter(e => e.replicateModel !== entry.replicateModel)
+  const rest = entries.filter(e => e.id !== entry.id)
   return [...rest, entry].sort((a, b) => a.label.localeCompare(b.label))
 }
 

@@ -7,9 +7,10 @@
  *   prompt    = "<aesthetic> <trigger>, "  (style kept in the prompt — no
  *                separate node input, so the ComfyUI schema stays stable)
  */
-import { ref, computed, onMounted, watch } from 'vue'
-import { Sparkles, Loader2, Pencil, Check, X, RefreshCcw } from 'lucide-vue-next'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
+import { Sparkles, Loader2, Pencil, Check, X, RefreshCcw, Copy, Trash2 } from 'lucide-vue-next'
 import { HOUSE_STYLES, houseStyleStyleBlock, type HouseStyle } from '~/data/house-styles'
+import { nextCopyName } from '~/lib/lora/copyName'
 
 const props = defineProps<{
   nodeId: string
@@ -35,6 +36,7 @@ interface LoraItem {
   sizeBytes: number | null
   coverUrl: string | null
   canGenerateCover: boolean
+  duplicateOf: string | null // set on copies (see duplicateItem) — gates Delete
   houseStyle?: HouseStyle    // present only for House-tab entries (drives onConfirm)
 }
 
@@ -57,6 +59,7 @@ const houseItems = computed<LoraItem[]>(() => HOUSE_STYLES.map((s) => ({
   sizeBytes: null,
   coverUrl: s.thumbnails[0] ?? null,
   canGenerateCover: false,
+  duplicateOf: null,
   houseStyle: s,
 })))
 // Tab strip only makes sense for style pickers with a published library —
@@ -115,6 +118,7 @@ onMounted(async () => {
         sizeBytes: l.sizeBytes ?? null,
         coverUrl: l.coverUrl ?? null,
         canGenerateCover: !!l.canGenerateCover,
+        duplicateOf: l.duplicateOf ?? null,
       }))
     }
   } catch { /* offline — empty gallery */ } finally {
@@ -240,7 +244,7 @@ const editTrigger = ref('')
 const editAesthetic = ref('')
 
 // Switching cards cancels any in-progress edit so fields never show stale data.
-watch(focusedId, () => { editing.value = false; editError.value = '' })
+watch(focusedId, () => { editing.value = false; editError.value = ''; actionError.value = '' })
 
 function startEdit(item: LoraItem) {
   editName.value = item.name || ''
@@ -282,6 +286,83 @@ async function saveEdit(item: LoraItem) {
     editError.value = e?.message || 'Save failed'
   } finally {
     saving.value = false
+  }
+}
+
+// --- Duplicate / delete ------------------------------------------------------
+// A duplicate is a second taste profile over the SAME trained weights: the server
+// writes a new sidecar pointing at the same hosted model (no .safetensors copy).
+// It lands focused and already in edit mode, since the copy is only useful once
+// its aesthetic has been rewritten.
+const duplicating = ref(false)
+const deleting = ref(false)
+const actionError = ref('')
+
+async function duplicateItem(item: LoraItem, e?: Event) {
+  e?.stopPropagation() // don't also select the card
+  if (duplicating.value) return
+  duplicating.value = true
+  actionError.value = ''
+  try {
+    const name = nextCopyName(item.name, items.value.map(i => i.name))
+    const res = await fetch('/api/loras-local', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename: item.id, name }),
+    })
+    const data = await res.json() as {
+      filename?: string, name?: string, trigger?: string | null
+      aesthetic?: string | null, message?: string
+    }
+    if (!res.ok || !data.filename) throw new Error(data?.message || `Failed (${res.status})`)
+
+    const copy: LoraItem = {
+      id: data.filename,
+      name: data.name || name,
+      trigger: data.trigger ?? null,
+      aesthetic: data.aesthetic ?? null,
+      baseModel: item.baseModel,
+      provider: item.provider,
+      sizeBytes: null,        // no weights of its own — it runs the original's
+      coverUrl: null,         // starts blank; never shows an image this profile didn't make
+      canGenerateCover: true, // it has a hosted model ref, so a cover can be baked
+      duplicateOf: item.name,
+    }
+    items.value.splice(items.value.indexOf(item) + 1, 0, copy)
+    focusedId.value = copy.id
+    // focusedId's watcher cancels any in-progress edit, so open the editor only
+    // after it has run — otherwise the panel closes the instant it appears.
+    await nextTick()
+    startEdit(copy)
+  } catch (err: any) {
+    actionError.value = err?.message || 'Duplicate failed'
+  } finally {
+    duplicating.value = false
+  }
+}
+
+async function deleteItem(item: LoraItem) {
+  if (deleting.value) return
+  if (!window.confirm(`Delete "${item.name}"? The style it was copied from is not affected.`)) return
+  deleting.value = true
+  actionError.value = ''
+  try {
+    const res = await fetch('/api/loras-local', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename: item.id }),
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({})) as { message?: string }
+      throw new Error(data?.message || `Failed (${res.status})`)
+    }
+    items.value = items.value.filter(i => i.id !== item.id)
+    editing.value = false
+    focusedId.value = items.value[0]?.id ?? null
+  } catch (err: any) {
+    actionError.value = err?.message || 'Delete failed'
+  } finally {
+    deleting.value = false
   }
 }
 </script>
@@ -397,19 +478,30 @@ async function saveEdit(item: LoraItem) {
             />
             <div v-else class="text-[15px] font-semibold text-white truncate">{{ (item as LoraItem).name }}</div>
             <div class="text-[11px] text-white/45 mt-0.5">
-              {{ (item as LoraItem).provider === 'replicate' ? 'Trained · Replicate' : (item as LoraItem).provider === 'house' ? 'House style' : 'Local' }}<span v-if="fmtMB((item as LoraItem).sizeBytes)"> · {{ fmtMB((item as LoraItem).sizeBytes) }}</span>
+              {{ (item as LoraItem).provider === 'replicate' ? 'Trained · Replicate' : (item as LoraItem).provider === 'house' ? 'House style' : 'Local' }}<span v-if="fmtMB((item as LoraItem).sizeBytes)"> · {{ fmtMB((item as LoraItem).sizeBytes) }}</span><span v-if="(item as LoraItem).duplicateOf"> · copy of {{ (item as LoraItem).duplicateOf }}</span>
             </div>
           </div>
           <!-- House items have no local .json sidecar to PATCH — no Edit affordance. -->
-          <button
-            v-if="!editing && !(item as LoraItem).houseStyle"
-            class="shrink-0 inline-flex items-center gap-1 h-7 px-2 rounded bg-white/[0.06] hover:bg-white/[0.12] text-[11px] text-white/70 hover:text-white transition-colors cursor-pointer"
-            title="Edit name, trigger and aesthetic"
-            @click="startEdit(item as LoraItem)"
-          >
-            <Pencil class="size-3" /> Edit
-          </button>
+          <div v-if="!editing && !(item as LoraItem).houseStyle" class="shrink-0 flex items-center gap-1.5">
+            <button
+              class="inline-flex items-center gap-1 h-7 px-2 rounded bg-white/[0.06] hover:bg-white/[0.12] text-[11px] text-white/70 hover:text-white transition-colors cursor-pointer disabled:opacity-50"
+              title="Make a second style over the same training — same weights, new aesthetic. Free."
+              :disabled="duplicating"
+              @click="duplicateItem(item as LoraItem, $event)"
+            >
+              <Loader2 v-if="duplicating" class="size-3 animate-spin" />
+              <Copy v-else class="size-3" /> Duplicate
+            </button>
+            <button
+              class="inline-flex items-center gap-1 h-7 px-2 rounded bg-white/[0.06] hover:bg-white/[0.12] text-[11px] text-white/70 hover:text-white transition-colors cursor-pointer"
+              title="Edit name, trigger and aesthetic"
+              @click="startEdit(item as LoraItem)"
+            >
+              <Pencil class="size-3" /> Edit
+            </button>
+          </div>
         </div>
+        <p v-if="actionError" class="text-[11px] text-red-300/80">{{ actionError }}</p>
 
         <!-- Trigger -->
         <div v-if="editing" class="space-y-1">
@@ -459,6 +551,18 @@ async function saveEdit(item: LoraItem) {
             @click="cancelEdit"
           >
             <X class="size-3.5" /> Cancel
+          </button>
+          <!-- Only duplicates are removable — a trained style has no Delete at all
+               (the server refuses it too, so this is an affordance, not the guard). -->
+          <button
+            v-if="(item as LoraItem).duplicateOf"
+            class="ml-auto inline-flex items-center gap-1.5 h-8 px-3 rounded text-[12px] text-red-300/80 hover:text-red-200 hover:bg-red-400/10 transition-colors cursor-pointer disabled:opacity-50"
+            :disabled="saving || deleting"
+            title="Delete this copy — the style it came from is not affected"
+            @click="deleteItem(item as LoraItem)"
+          >
+            <Loader2 v-if="deleting" class="size-3.5 animate-spin" /><Trash2 v-else class="size-3.5" />
+            Delete
           </button>
         </div>
         <p v-if="editError" class="text-[10.5px] text-red-300/80">{{ editError }}</p>

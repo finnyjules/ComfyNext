@@ -30,6 +30,7 @@ export default defineEventHandler(async () => {
     trigger: string | null
     aesthetic: string | null
     kind: 'character' | 'style' | null
+    duplicateOf: string | null
     model: string | null
     url: string | null
     coverUrl: string | null
@@ -85,6 +86,9 @@ export default defineEventHandler(async () => {
       // 'character' = usable as an identity LoRA in the Characters panel;
       // anything else (incl. legacy untagged) is treated as a style.
       kind: meta.kind === 'character' ? 'character' : (meta.kind === 'style' ? 'style' : null),
+      // Name of the style this was duplicated from — the gallery gates its
+      // Delete affordance on it (only duplicates are removable).
+      duplicateOf: meta.duplicate_of ?? null,
       // The runnable trained Replicate model ref (<owner>/<model>[:<version>]) — the
       // robust way to run this LoRA (the agent sets it as lora_url, which the backend
       // resolves directly, bypassing fragile filename→sidecar lookup).
