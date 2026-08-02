@@ -653,3 +653,42 @@ Progressive disclosure separately verified in a real browser (free, no generatio
 visible slot count went `2 → 2 → 3 → 4` for fresh → A only → A+B → A+B+C, a url override
 in D kept it at 4, and with B cleared while C held a value C stayed visible — the
 stranded-value case.
+
+---
+
+## Tasks 6-7 (added after final review) — the style-only user was capped at one LoRA
+
+**The hole.** Slot A is pinned to `lora_kind: character` and the gallery hard-filtered
+on it, so slot A could never show a style. The Task 3 reveal rule required *every*
+earlier slot filled before the next appeared. A user who owns only styles therefore
+filled B, C never unlocked, and they were capped at one usable slot. The node was
+always fine — `_multilora_collect` drops empty slots. It was purely a UI gate.
+
+**Task 6** (`93c11befd`) — `isLoraSlotWidgetVisible` now unlocks a slot when the
+*immediately preceding* slot is filled, not when all earlier ones are:
+`return slotFilled(SLOTS[idx - 1], values, defs)`. All 9 original tests still pass
+unmodified; 3 added for the B→C→D chain that never touches A.
+
+**Task 7** (`ebaea43e3`) — the gallery's fixed `isCharacter` filter became a
+`kindTab` (`characters | yours | house`) seeded from the slot's kind, so every slot
+can browse every library. Pure logic extracted to `app/lib/graph/loraGalleryTabs.ts`
+and unit-tested (10 cases) since the repo has no component-test harness.
+
+**The subtle part of Task 7:** the pick handler branched on the SLOT's kind to route
+trigger words — characters prepend to the prompt, styles fold into
+`data.properties.aesthetic`. Once any slot can browse any library that is wrong: a
+character picked into slot B would have written its trigger into the style property.
+It now branches on the PICKED ITEM's kind (`kind` added to `LoraItem`, confirmed
+present on the `/api/loras-local` response).
+
+**Verified live in a browser, not just by unit test:**
+- Slot A's gallery shows three chips with live counts — Characters 4, Your Styles 59,
+  House Library 50 — and switching to Your Styles surfaces all 59 from a slot that
+  previously offered only 4 characters.
+- Visible slot count goes 2 → 3 → 4 filling B then C, with slot A never filled.
+
+**Known limitation, unchanged and now easier to hit:** there is a single
+`data.properties.aesthetic`, so picking styles into two or more slots means only the
+last trigger word reaches the prompt — the other adapters load and bill with nothing
+activating them. Pre-existing at 2 slots. Fixing it means changing how trigger words
+reach the prompt and wants its own spec.
