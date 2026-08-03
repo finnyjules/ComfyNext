@@ -452,7 +452,6 @@ function formatLabel(name: string): string {
         :scale-min="scaleDef?.min"
         :scale-max="scaleDef?.max"
         :scale-step="scaleDef?.step"
-        :scale-default="scaleDef?.default"
         @update:model-value="emit('update:modelValue', $event)"
         @update:scale="emit('update:scale', $event)"
         @clear="emit('clear')"

@@ -22,10 +22,6 @@ const props = defineProps<{
   scaleMin?: number
   scaleMax?: number
   scaleStep?: number
-  // Schema default for the paired scale, forwarded through so callers have it
-  // without re-deriving it. The clear (×) reset itself happens in ComfyNode.vue
-  // (it owns widgetsValues), not here — this component only emits `clear`.
-  scaleDefault?: number
 }>()
 const emit = defineEmits<{
   'update:modelValue': [value: string]
