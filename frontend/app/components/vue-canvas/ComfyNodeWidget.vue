@@ -30,14 +30,17 @@ const props = defineProps<{
   isFixed?: boolean
   // For `lora_picker` widgets only: the paired strength widget (scale_a/scale_b/
   // lora_scale) folded into the picker card. ComfyNode supplies the live value +
-  // its min/max/step; the picker renders the slider and emits `update:scale`.
-  scaleDef?: { min?: number; max?: number; step?: number }
+  // its min/max/step/default; the picker renders the slider and emits `update:scale`.
+  // `default` rides along so the clear (×) affordance can reset the slider to
+  // its schema default without ComfyNode (or this component) hardcoding it.
+  scaleDef?: { min?: number; max?: number; step?: number; default?: number }
   scaleValue?: number
 }>()
 const emit = defineEmits<{
   'update:modelValue': [value: any]
   'update:isFixed': [value: boolean]
   'update:scale': [value: number]
+  clear: []
 }>()
 
 const isCombo = computed(() => Array.isArray(props.widgetDef.options) || props.widgetDef.type === 'COMBO')
@@ -449,8 +452,10 @@ function formatLabel(name: string): string {
         :scale-min="scaleDef?.min"
         :scale-max="scaleDef?.max"
         :scale-step="scaleDef?.step"
+        :scale-default="scaleDef?.default"
         @update:model-value="emit('update:modelValue', $event)"
         @update:scale="emit('update:scale', $event)"
+        @clear="emit('clear')"
       />
     </template>
     <!-- Voice gallery launcher: replaces the voice_id dropdown on the

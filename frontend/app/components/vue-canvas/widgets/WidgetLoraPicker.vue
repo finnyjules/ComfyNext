@@ -8,7 +8,7 @@
  * to the node.
  */
 import { computed, ref, watch } from 'vue'
-import { Sparkles, ChevronRight } from 'lucide-vue-next'
+import { Sparkles, ChevronRight, X } from 'lucide-vue-next'
 
 const props = defineProps<{
   modelValue: string   // selected LoRA filename, or "[None]"/empty
@@ -22,10 +22,15 @@ const props = defineProps<{
   scaleMin?: number
   scaleMax?: number
   scaleStep?: number
+  // Schema default for the paired scale, forwarded through so callers have it
+  // without re-deriving it. The clear (×) reset itself happens in ComfyNode.vue
+  // (it owns widgetsValues), not here — this component only emits `clear`.
+  scaleDefault?: number
 }>()
-defineEmits<{
+const emit = defineEmits<{
   'update:modelValue': [value: string]
   'update:scale': [value: number]
+  clear: []
 }>()
 
 // Strength row shows only when a paired scale exists.
@@ -63,12 +68,23 @@ function openGallery() {
     detail: { nodeId: props.nodeId, widgetName: props.widgetName, kind: props.kind },
   }))
 }
+
+function clearSlot(event: MouseEvent) {
+  // Stop propagation: the × sits inside the card next to (not inside — you
+  // can't nest a button in a button, see the range-input comment below) the
+  // launcher <button>, so a click here must not also open the gallery.
+  event.stopPropagation()
+  emit('clear')
+}
 </script>
 
 <template>
   <!-- Card owns the border/bg so the (interactive) strength slider can live
-       inside it — a range input can't be nested in a <button>. -->
-  <div class="nopan nodrag w-full rounded border border-white/10 bg-white/[0.04] hover:border-white/20 transition-colors">
+       inside it — a range input can't be nested in a <button>. The clear (×)
+       control is the same story: it can't nest inside the launcher <button>,
+       so it renders as an absolutely-positioned SIBLING inside this
+       `relative` wrapper instead. -->
+  <div class="nopan nodrag relative w-full rounded border border-white/10 bg-white/[0.04] hover:border-white/20 transition-colors">
     <button
       class="w-full flex items-center gap-2 px-2 py-1.5 rounded-t-[3px] hover:bg-white/[0.05] cursor-pointer text-left group transition-colors"
       :class="hasScale ? '' : 'rounded-b-[3px]'"
@@ -94,6 +110,20 @@ function openGallery() {
         </span>
       </span>
       <ChevronRight class="size-3.5 text-white/30 group-hover:text-white/55 shrink-0 transition-colors" />
+    </button>
+
+    <!-- Clear affordance — only when this slot actually holds a LoRA. Sibling
+         of the launcher <button>, not nested inside it. -->
+    <button
+      v-if="selected"
+      type="button"
+      class="nopan nodrag absolute -top-1.5 -right-1.5 z-10 size-4 rounded-full bg-[#1c1c1c] border border-white/15 flex items-center justify-center text-white/50 hover:text-white hover:border-white/40 hover:bg-[#2a2a2a] transition-colors cursor-pointer"
+      :aria-label="`Remove this ${noun.toLowerCase()}`"
+      :title="`Remove this ${noun.toLowerCase()}`"
+      @click="clearSlot"
+      @mousedown.stop
+    >
+      <X class="size-2.5" />
     </button>
 
     <!-- Folded strength slider — labelled above, like the node's other sliders. -->

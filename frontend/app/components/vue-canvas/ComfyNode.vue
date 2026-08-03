@@ -12,6 +12,7 @@ import { resolveReadout } from '~/lib/canvas/capsuleReadout'
 import { resolveNodeIcon, type NodeIcon } from '~/lib/canvas/nodeIcon'
 import { readoutRuleFor, defaultCollapsed } from '~/lib/canvas/capsuleMeta'
 import { isLoraSlotWidgetVisible } from '~/lib/graph/loraSlotVisibility'
+import { loraSlotResetPlan } from '~/lib/graph/loraStyleBlocks'
 import type { CapsuleAction, CapsuleState } from '~/lib/canvas/capsuleAction'
 import { LIVE_PREVIEW_NODE_TYPES } from '~/lib/livePreviewNodes'
 import { allowedAspectRatios, allowedDurations, modelSupportsSeed } from '~/lib/videoModelAdapt'
@@ -934,6 +935,46 @@ function setLoraScale(pickerName: string, val: number) {
   if (idx >= 0) props.data.widgetsValues[idx] = val
 }
 
+// Clear (×) affordance on a filled picker card. Fully resets the slot so a
+// cleared LoRA stops loading (and stops costing money on every run): the
+// picker itself, its URL-override sibling (the node prefers the URL over the
+// filename, so a stale override would silently keep the slot alive), its
+// scale sibling (reset to the SCHEMA default — read off widgetDefs, never
+// hardcoded here, so this can't drift from the Python default), and its
+// style-block property (invisible in the UI; leaving it would keep steering
+// the prompt for a LoRA that's no longer loaded).
+//
+// Deliberately NOT done here: stripping a cleared CHARACTER's trigger word
+// out of the `prompt` widget. Characters put their trigger directly into the
+// visible prompt box, where the user can see and edit it themselves — unlike
+// the hidden style block, leaving it is a visible, editable no-op, not a
+// silent leftover, so this asymmetry is a decision, not an oversight.
+function clearLoraSlot(pickerName: string) {
+  const plan = loraSlotResetPlan(pickerName)
+  const defs = (props.data.widgetDefs || []) as any[]
+  const values = props.data.widgetsValues
+
+  const pickerIdx = defs.findIndex((d) => d?.name === plan.picker)
+  if (pickerIdx >= 0) values[pickerIdx] = '[None]'
+
+  const urlIdx = defs.findIndex((d) => d?.name === plan.url)
+  if (urlIdx >= 0) values[urlIdx] = ''
+
+  const scaleIdx = defs.findIndex((d) => d?.name === plan.scale)
+  if (scaleIdx >= 0) values[scaleIdx] = defs[scaleIdx]?.default
+
+  // slotAestheticKey (and so loraSlotResetPlan.aestheticKey) returns null for
+  // 'lora_name' because that node has no per-letter slot key — but it still
+  // has a style block, just the plain `properties.aesthetic` field (see
+  // loraStyleBlocks.ts's module doc). So: per-slot key when there is one,
+  // else fall back to plain 'aesthetic' for the single-LoRA node specifically
+  // (not for any other null-aestheticKey case, which shouldn't reach here).
+  const aestheticKey = plan.aestheticKey ?? (plan.picker === 'lora_name' ? 'aesthetic' : null)
+  if (aestheticKey && props.data.properties) {
+    delete props.data.properties[aestheticKey]
+  }
+}
+
 // "Mechanical" widgets that live in the NodeInspector (seed / aspect_ratio /
 // advanced). The title-bar settings button shows only when the node has some,
 // and opens the inspector for this node. Mirror NodeInspector.isInspectorWidget.
@@ -1691,6 +1732,7 @@ watch(previewImages, (urls) => {
           @update:model-value="data.widgetsValues[i] = $event"
           @update:is-fixed="setSeedFixed(widget, i, $event)"
           @update:scale="setLoraScale(widget.name, $event)"
+          @clear="clearLoraSlot(widget.name)"
         />
       </template>
       <!-- Grouped widgets render under collapsible headers. For Compositor we

@@ -17,7 +17,7 @@ import {
   loraGallerySource,
   isCharacterItem,
 } from '~/lib/graph/loraGalleryTabs'
-import { slotAestheticKey } from '~/lib/graph/loraStyleBlocks'
+import { slotAestheticKey, loraSlotSiblings } from '~/lib/graph/loraStyleBlocks'
 
 const props = defineProps<{
   nodeId: string
@@ -30,18 +30,6 @@ const emit = defineEmits<{ close: [] }>()
 // The combo this gallery edits, and whether it browses characters or styles.
 const targetWidget = computed(() => props.widgetName || 'lora_name')
 const isCharacter = computed(() => props.kind === 'character')
-
-// FluxMultiLoRARemoteNode's slots (lora_a..lora_d) each carry a `lora_<letter>_url`
-// override sibling and a `scale_<letter>` sibling. Derive both from the slot
-// letter so every slot behaves alike — hardcoding just 'lora_a'/'lora_b' left
-// lora_c/lora_d (and, for the house-style path below, even lora_a) silently
-// writing to the single-LoRA node's 'lora_url', which this node doesn't have.
-// Anything that isn't a lora_<letter> slot (e.g. the single-LoRA node's
-// 'lora_name') keeps today's 'lora_url' fallback and no scale sibling.
-function loraSlotSiblings(target: string): { url: string; scale: string | null } {
-  const m = /^lora_([a-d])$/.exec(target)
-  return m ? { url: `lora_${m[1]}_url`, scale: `scale_${m[1]}` } : { url: 'lora_url', scale: null }
-}
 
 // One-time migration: before per-slot style blocks existed, only slot B could
 // ever receive a style (slot A was character-only and the House tab was

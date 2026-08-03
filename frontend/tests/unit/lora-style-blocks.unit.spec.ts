@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { slotAestheticKey, composeLoraStyle } from '~/lib/graph/loraStyleBlocks'
+import { slotAestheticKey, composeLoraStyle, loraSlotSiblings, loraSlotResetPlan } from '~/lib/graph/loraStyleBlocks'
 
 /**
  * FluxMultiLoRARemoteNode stacks up to four LoRAs (slots A-D). Before this
@@ -83,5 +83,56 @@ describe('composeLoraStyle', () => {
     })
     expect(result).toContain('xqzyplasm')
     expect(result).toContain('vulqentine')
+  })
+})
+
+describe('loraSlotSiblings', () => {
+  it('maps lora_a..lora_d to their url/scale siblings', () => {
+    expect(loraSlotSiblings('lora_a')).toEqual({ url: 'lora_a_url', scale: 'scale_a' })
+    expect(loraSlotSiblings('lora_b')).toEqual({ url: 'lora_b_url', scale: 'scale_b' })
+    expect(loraSlotSiblings('lora_c')).toEqual({ url: 'lora_c_url', scale: 'scale_c' })
+    expect(loraSlotSiblings('lora_d')).toEqual({ url: 'lora_d_url', scale: 'scale_d' })
+  })
+
+  it('falls back to lora_url with no scale sibling for lora_name', () => {
+    expect(loraSlotSiblings('lora_name')).toEqual({ url: 'lora_url', scale: null })
+  })
+
+  it('junk names fall back to lora_url, not a slot-shaped name', () => {
+    expect(loraSlotSiblings('lora_e')).toEqual({ url: 'lora_url', scale: null })
+    expect(loraSlotSiblings('scale_a')).toEqual({ url: 'lora_url', scale: null })
+    expect(loraSlotSiblings('')).toEqual({ url: 'lora_url', scale: null })
+  })
+})
+
+describe('loraSlotResetPlan', () => {
+  it('maps each of the four slots to its picker/url/scale/aesthetic names', () => {
+    expect(loraSlotResetPlan('lora_a')).toEqual({
+      picker: 'lora_a', url: 'lora_a_url', scale: 'scale_a', aestheticKey: 'aesthetic_a',
+    })
+    expect(loraSlotResetPlan('lora_b')).toEqual({
+      picker: 'lora_b', url: 'lora_b_url', scale: 'scale_b', aestheticKey: 'aesthetic_b',
+    })
+    expect(loraSlotResetPlan('lora_c')).toEqual({
+      picker: 'lora_c', url: 'lora_c_url', scale: 'scale_c', aestheticKey: 'aesthetic_c',
+    })
+    expect(loraSlotResetPlan('lora_d')).toEqual({
+      picker: 'lora_d', url: 'lora_d_url', scale: 'scale_d', aestheticKey: 'aesthetic_d',
+    })
+  })
+
+  it('maps lora_name to lora_url/lora_scale with a null aesthetic key', () => {
+    expect(loraSlotResetPlan('lora_name')).toEqual({
+      picker: 'lora_name', url: 'lora_url', scale: 'lora_scale', aestheticKey: null,
+    })
+  })
+
+  it('a junk name does not silently produce slot-shaped sibling names', () => {
+    for (const junk of ['lora_e', 'scale_a', '']) {
+      const plan = loraSlotResetPlan(junk)
+      expect(plan.url).toBe('lora_url')
+      expect(plan.scale).toBe('lora_scale')
+      expect(plan.aestheticKey).toBeNull()
+    }
   })
 })
