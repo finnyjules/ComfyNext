@@ -18,7 +18,7 @@ Recorded first, because everything below follows from them.
 |---|---|---|
 | What "clay" means | Direct brush sculpting — drag on the surface, it deforms under the cursor | Blobby soft-merge with sliders; hard booleans alone |
 | Parametric identity after sculpting | **Lost.** The object becomes a `mesh` primitive; Geometry sliders go away | Stroke-replay over live parameters; freeze-with-unlock |
-| Where vertex data lives | **Inline in the doc**, quantised + deflated + base64, capped at 40k vertices | Uploaded as an asset with a URL in `content` |
+| Where vertex data lives | **Inline in the doc** — quantised, delta+varint packed, deflated, base64. 40k-vertex cap, 20k default | Uploaded as an asset with a URL in `content` |
 | Topology during sculpting | **Fixed, with a manual Remesh action** | Fixed forever; dynamic topology (dyntopo) |
 | Merge semantics | **Voxel field** — union/subtract/intersect with a Blend fillet | Exact mesh CSG (`three-bvh-csg`); both behind a toggle |
 | Masking | Out of scope for v1 | — |
@@ -105,13 +105,45 @@ passes — so this feature is entirely frontend. No Python.
 
 - positions quantised to `uint16` against the mesh's own bounding box, with the
   box stored as six `float32`
-- indices as `uint32`
+- **positions delta-encoded per component against the previous vertex, zigzagged,
+  then varint-packed**
+- **indices delta-encoded against the previous index, zigzagged, varint-packed**
 - normals **not** stored — recomputed on decode, which is cheaper than the bytes
-- `CompressionStream('deflate')` → base64
+- `deflate` → base64
 
-A 40k-vertex / 80k-triangle mesh is ~240KB raw and lands around **70–90KB**
-encoded. The 40k-vertex cap is enforced at remesh time, which is the only place
-vertex count can grow.
+**The delta+varint step is load-bearing, not an optimisation.** Measured on
+`SphereGeometry` at four densities (`three@0.171`, `zlib.deflateSync` level 9,
+base64 length):
+
+| Vertices | uint16 + deflate | delta + zigzag varint + deflate |
+|---:|---:|---:|
+| 6.3k | 106KB | **15KB** |
+| 13k | 226KB | **42KB** |
+| 26k | 450KB | **91KB** |
+| 52k | 917KB | **186KB** |
+
+Naive quantise-and-deflate is ~5× worse and puts a single sculpt near a
+megabyte of base64 in the `scene_state` widget — not viable. Index buffers
+dominate the raw size and are the part that delta-encodes best; surface-nets
+output is grid-scan ordered, so its vertex and index locality is at least as
+good as the sphere measured here.
+
+Both caps sit at remesh time, the only place vertex count can grow:
+**40k vertices hard cap** (~150–190KB encoded) with the **default remesh target
+at ~20k** (~70KB encoded). The Remesh control shows the resulting vertex count
+and encoded size so the cost is never invisible.
+
+### Decode is asynchronous — use the `text` placeholder precedent
+
+`deflate` is only available in browsers through `DecompressionStream`, which is
+async, and `geometryFor` is synchronous and runs on every engine sync. So decode
+cannot happen inline.
+
+This is already a solved problem in this file: the `text` primitive needs an
+async font load, so `geometryFor` peeks a synchronous cache and falls back to a
+0.3 placeholder cube on a miss, with the async load triggering a re-sync
+moments later. `mesh` follows exactly that shape — a `meshKey → MeshData`
+cache, a placeholder box on a miss, and a re-sync when the decode lands.
 
 ### Two performance traps this creates
 
@@ -315,17 +347,20 @@ Each phase is independently shippable.
 
 | Phase | Delivers | Verifiable by |
 |---|---|---|
-| 1 | `mesh` primitive: `config.ts` edits, `mesh.ts`, `geometryFor` case, decode cache, cloner budget clamp, **Convert to mesh** | A converted sphere round-trips through save, takes modifiers and materials, animates, and exports |
+| 1 | `mesh` primitive: `config.ts` edits, `mesh.ts` (delta+varint codec), `geometryFor` case, async decode cache + placeholder, cloner budget clamp, **Convert to mesh** | A converted sphere round-trips through save, takes modifiers and materials, animates, and exports |
 | 2 | `voxel.ts` + **Remesh** + open-surface detection + Solidify | Remeshing known shapes preserves volume; a plane is refused, not mangled |
 | 3 | Sculpt mode: session, working buffer, core four brushes, mirror symmetry, per-stroke undo, orbit lock | Sculpting by hand in the studio |
 | 4 | Grab, pinch, crease, radial symmetry, **Merge** | Full brush set and merge |
 
-**Measure at the end of phase 1**, before phases 3–4 make sculpts common: the
-real `scene_state` size for a doc with several mesh objects. Inline storage was
-chosen over asset upload on the expectation of 70–90KB per sculpt. If a
-realistic scene lands in the multi-hundred-KB range and project saves feel it,
-the URL route slots in behind the same `content` field — but that decision
-should be made on a measurement, not on this estimate.
+**Confirm at the end of phase 2**, once Remesh can produce real sculpt-density
+meshes: the `scene_state` size for a doc with several mesh objects. The §2 table
+measures the encoder on `SphereGeometry`, which is smooth and coherently
+ordered; a *sculpted* mesh has displaced vertices and will encode somewhat
+worse. The budget to check against is ~70KB at the 20k default and ~190KB at the
+40k cap. If real sculpts land well above that, or a realistic scene pushes
+`scene_state` past a few hundred KB and project saves feel it, the asset-URL
+route slots in behind the same `content.mesh` field without touching anything
+else in this design.
 
 ---
 
