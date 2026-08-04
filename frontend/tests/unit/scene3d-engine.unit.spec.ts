@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import * as THREE from 'three'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -8,6 +8,8 @@ import { sunDirection, geometryFor, geoKeyFor, baseSizeFor, baseVertexCountFor, 
 import { PRIMITIVE_KINDS, createPrimitive, createLight, createGlbObject, createSvgPathObject, contentDigest, type PrimitiveKind, type PrimitiveObject, type GlbObject } from '~/lib/scene3d/config'
 import { PRIMITIVE_PARAMS } from '~/lib/scene3d/primParams'
 import { loadFont, type Font } from '~/lib/scene3d/outlines'
+import { encodeMesh, meshDataFromGeometry } from '~/lib/scene3d/mesh'
+import { loadMesh, meshCacheClear } from '~/lib/scene3d/meshCache'
 
 // vitest runs in node, so parse a real .otf off disk rather than fetching —
 // same approach as scene3d-outlines.unit.spec.ts.
@@ -804,6 +806,104 @@ describe('scene3d engine text font async re-sync', () => {
     // Bumping fontGen alone (the Surface's own success handler) wouldn't
     // touch mesh.geometry — refreshTextGeometry is the piece that does.
     refresh(host, url)
+    expect(mesh.geometry.getAttribute('position').count).not.toBe(placeholderCount)
+  })
+})
+
+// The `mesh` primitive's async decode mirrors the font path's placeholder/
+// token/re-sync machinery exactly (see the describe block above) but goes
+// through meshCache's loadMesh instead of outlines.ts's loadFont. Same host
+// shape, minus the font-only members, plus meshTokens.
+describe('scene3d engine mesh decode async re-sync', () => {
+  const makeMeshHost = () => ({
+    objectRoots: new Map<string, THREE.Object3D>(),
+    glbTokens: new Map<string, number>(),
+    fontTokens: new Map<string, number>(),
+    meshTokens: new Map<string, number>(),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    geometryForObject: (SceneEngine.prototype as any).geometryForObject,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    syncObject: (SceneEngine.prototype as any).syncObject,
+    token: 0,
+    deferGeometry: false,
+    lightView: false,
+    clay: new THREE.MeshStandardMaterial(),
+    scene: { add() {}, remove() {} },
+  })
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const sync = (host: any, obj: PrimitiveObject) => (SceneEngine.prototype as any).syncObject.call(host, obj)
+
+  const meshObj = (mesh: string, key: string): PrimitiveObject => ({
+    ...createPrimitive('mesh', []),
+    content: { mesh, meshKey: key },
+  })
+
+  beforeEach(() => { meshCacheClear() })
+
+  it('shows the 0.3 placeholder box on a cache miss, then swaps in the real geometry once the decode resolves', async () => {
+    const host = makeMeshHost() as any
+    const encoded = await encodeMesh(meshDataFromGeometry(new THREE.SphereGeometry(0.5, 32, 24)))
+    const key = contentDigest(encoded)
+    const obj = meshObj(encoded, key)
+
+    sync(host, obj)
+    const mesh = host.objectRoots.get(obj.id) as THREE.Mesh
+    const placeholderCount = mesh.geometry.getAttribute('position').count
+    expect(placeholderCount).toBeGreaterThan(0)
+
+    // Awaiting the SAME key resolves the identical in-flight promise the
+    // engine's own loadMesh(encoded, key) call kicked off (loadMesh dedupes by
+    // key) — by the time it settles here, the engine's own .then (attached
+    // first) has already run and rebuilt the mesh's geometry in place.
+    await loadMesh(encoded, key)
+
+    expect(mesh.geometry.getAttribute('position').count).not.toBe(placeholderCount)
+    expect(host.meshTokens.has(obj.id)).toBe(false) // resolved: no load left in flight
+  })
+
+  it('drops a stale mesh resolution when the object is removed before it resolves', async () => {
+    const host = makeMeshHost() as any
+    const encoded = await encodeMesh(meshDataFromGeometry(new THREE.SphereGeometry(0.5, 32, 24)))
+    const key = contentDigest(encoded)
+    const obj = meshObj(encoded, key)
+
+    sync(host, obj)
+    // Mirrors syncFromDoc's teardown-on-removal cleanup.
+    host.objectRoots.delete(obj.id)
+    host.meshTokens.delete(obj.id)
+
+    // Must not throw despite the root being gone by the time the decode settles.
+    await expect(loadMesh(encoded, key)).resolves.toBeTruthy()
+  })
+
+  it('does not let a stale (superseded) decode overwrite geometry from a newer one', async () => {
+    const host = makeMeshHost() as any
+    // Both real payloads are picked with vertex counts far from the 24-vertex
+    // 0.3 placeholder box, so a wrongly-applied late resolution is distinguishable
+    // from "still showing the placeholder" rather than coincidentally matching it.
+    const encodedA = await encodeMesh(meshDataFromGeometry(new THREE.SphereGeometry(0.5, 32, 24)))
+    const keyA = contentDigest(encodedA)
+    const encodedB = await encodeMesh(meshDataFromGeometry(new THREE.SphereGeometry(0.5, 16, 12)))
+    const keyB = contentDigest(encodedB)
+
+    // First sync starts decoding A and stamps meshTokens[id] = tokA.
+    const objA = meshObj(encodedA, keyA)
+    sync(host, objA)
+    const mesh = host.objectRoots.get(objA.id) as THREE.Mesh
+    const placeholderCount = mesh.geometry.getAttribute('position').count
+
+    // Content changes before A resolves — same id, new meshKey. This starts
+    // decoding B and overwrites meshTokens[id] with tokB, superseding A.
+    const objB = { ...objA, content: { mesh: encodedB, meshKey: keyB } }
+    sync(host, objB)
+
+    // A's decode lands first. Its token no longer matches meshTokens[id]
+    // (tokB now), so its .then must bail without touching mesh.geometry.
+    await loadMesh(encodedA, keyA)
+    expect(mesh.geometry.getAttribute('position').count).toBe(placeholderCount) // still B's placeholder, untouched by A
+
+    // B's own decode then resolves and swaps in its real geometry.
+    await loadMesh(encodedB, keyB)
     expect(mesh.geometry.getAttribute('position').count).not.toBe(placeholderCount)
   })
 })

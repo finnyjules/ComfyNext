@@ -533,6 +533,7 @@ export class SceneEngine {
         this.objectRoots.delete(id)
         this.glbTokens.delete(id)
         this.fontTokens.delete(id)
+        this.meshTokens.delete(id)
       }
     }
     // Parents first: a child's root cannot be added to a parent root that has

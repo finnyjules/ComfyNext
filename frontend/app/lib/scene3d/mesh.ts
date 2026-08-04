@@ -87,12 +87,17 @@ function fromBase64(s: string): Uint8Array {
 // --- deflate (async: the platform offers no synchronous form) ----------------
 
 async function deflate(bytes: Uint8Array): Promise<Uint8Array> {
-  const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate'))
+  // TS's newer lib.dom types narrow BlobPart to ArrayBufferView<ArrayBuffer>,
+  // which a generic Uint8Array<ArrayBufferLike> doesn't satisfy — the lib is
+  // over-narrow here, Blob's runtime constructor accepts any Uint8Array. Cast
+  // rather than copy: these buffers run tens-to-hundreds of KB per sculpt.
+  const stream = new Blob([bytes as unknown as BlobPart]).stream().pipeThrough(new CompressionStream('deflate'))
   return new Uint8Array(await new Response(stream).arrayBuffer())
 }
 
 async function inflate(bytes: Uint8Array): Promise<Uint8Array> {
-  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate'))
+  // Same BlobPart over-narrowing as deflate above.
+  const stream = new Blob([bytes as unknown as BlobPart]).stream().pipeThrough(new DecompressionStream('deflate'))
   return new Uint8Array(await new Response(stream).arrayBuffer())
 }
 
