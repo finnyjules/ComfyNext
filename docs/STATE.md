@@ -270,7 +270,27 @@ namespace, typeface-JSON licence strings) each carrying a written reason.
 > but a *static* scan cannot prove a bundled loader is never called. The definitive check is a
 > runtime one: load an export in Playwright with network interception, assert zero requests.
 
-**Size is the open problem.** `spacetype.js` is 1.85 MB (529 KB gzip) against gradient's 66 KB and
+**Size — largely addressed 2026-08-04 (`c66eecf5b`, `3c200075a`).** Exports now ship **one bundle
+per effect** rather than all 25: a Space Type export went from **2.16 MB to 1.11 MB**, median
+per-effect bundle 801 KB against the old 1.85 MB monolith. `export.ts` changed by one line — the
+bundle-name decision lives in `surfaces.ts`, which is app-side and never bundled — so
+`contract.ts` and `bundle.ts` remain untouched across all four surfaces.
+
+The adapter became a `createSpaceTypeEmbedSurface(effects)` factory, with the app-side default
+export marked `/* @__PURE__ */` so Rollup can prove it dead and drop the 25-effect registry from
+every per-effect build. `bundleNameFor` validates `effectId` against the live effect array, which
+closes path traversal as a side effect rather than by pattern-matching for `..`.
+
+**The cheapest remaining win, found while doing this:** `boost.ts` vendors three typeface JSON
+tables, but `getFont()` has exactly one caller, hardcoded to `FONT_NAMES[0]` (Helvetiker). Optimer
+and Gentilis are **dead data everywhere**, not just in embeds — dropping them cuts ~760 KB, taking
+`spacetype-boost.js` from 1.64 MB to ~880 KB and into line with the other 24.
+
+After that, **the font is the dominant cost** at 296 KB (26% of an export, up from 14% purely
+because the JS shrank). Subsetting to the glyphs used would take it to ~20–40 KB. Named imports
+are a further ~20–30%; the three.js renderer core is irreducible at ~460 KB.
+
+Superseded note — the original size analysis: `spacetype.js` was 1.85 MB (529 KB gzip) against gradient's 66 KB and
 shader's 18 KB. Measured, not guessed: a single-effect probe bundle is 793 KB, so per-effect
 bundles would be a 2.3× win, not 10×. The bigger lever is that **32 files use
 `import * as THREE from 'three'` and none use named imports**, which defeats tree-shaking —
