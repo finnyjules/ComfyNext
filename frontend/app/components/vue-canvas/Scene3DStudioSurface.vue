@@ -32,6 +32,8 @@ import FontPicker from '~/components/vue-canvas/FontPicker.vue'
 import { PRIM_GROUPS } from '~/lib/scene3d/primGroups'
 import { SceneEngine, baseSizeFor, baseVertexCountFor, buildGeometry } from '~/lib/scene3d/engine'
 import { convertToMesh } from '~/lib/scene3d/toMesh'
+import { MESH_VERTEX_CAP } from '~/lib/scene3d/mesh'
+import { loadMesh, meshCacheGet } from '~/lib/scene3d/meshCache'
 import { rebaseMany, groupObjects, ungroupMany, rootObjects, descendantIds, cloneSubtree, axisDeltaWrites } from '~/lib/scene3d/hierarchy'
 import Scene3DObjectRow from './studio/Scene3DObjectRow.vue'
 import { totalClones, clampedClones } from '~/lib/scene3d/modifiers'
@@ -1015,6 +1017,7 @@ function compactCount(n: number): string {
 let lastBaseSize: [number, number, number] = [1, 1, 1]
 const baseSize = computed<[number, number, number]>(() => {
   void fontGen.value // font loads aren't reactive; this re-measures when a font resolves
+  void meshGen.value // ditto for mesh decodes — same non-reactive cache, same stale-Size bug
   const o = selected.value
   if (!o) return [1, 1, 1]
   if (deferringGeometry.value) return lastBaseSize
@@ -1138,6 +1141,33 @@ watch(() => selectedText.value?.content?.font, (url) => {
     if (selectedText.value?.content?.font !== url) return
     fontError.value = true
   })
+}, { immediate: true })
+// Exactly the fontGen story above, for meshes. `meshCache` is the same shape of
+// non-reactive Map as the font cache, and `baseSize` peeks it through
+// baseSizeFor → buildGeometry. A freshly converted (or freshly loaded) mesh
+// therefore measures the 0.3 placeholder cube until its decode lands, and
+// nothing reactive changes when it does — the viewport heals (the engine
+// re-syncs itself) while the Size row stays stuck. Bumping this on a landed
+// decode is what re-triggers the computed.
+//
+// loadMesh de-dupes by key, so calling it here shares the engine's own in-flight
+// decode rather than inflating the buffer a second time.
+const meshGen = ref(0)
+watch(() => {
+  const o = selected.value
+  return o?.kind === 'primitive' && o.primitive === 'mesh' ? o.content?.meshKey : undefined
+}, (key) => {
+  if (!key || meshCacheGet(key)) return // already decoded: the computed measured the real mesh
+  const o = selected.value
+  const encoded = o?.kind === 'primitive' ? o.content?.mesh : undefined
+  if (!encoded) return
+  loadMesh(encoded, key).then(() => {
+    // The selection may have moved on mid-decode — a stale success must not
+    // re-measure against an object that isn't showing this mesh.
+    const now = selected.value
+    if (now?.kind !== 'primitive' || now.content?.meshKey !== key) return
+    meshGen.value++
+  }).catch(() => { /* corrupt buffer: engine keeps the placeholder, so does the Size row */ })
 }, { immediate: true })
 const sizeX = sizeAxis(0, sclX)
 const sizeY = sizeAxis(1, sclY)
@@ -1494,34 +1524,58 @@ function addPrimitive(kind: PrimitiveKind) {
 
 // ── Convert to mesh ───────────────────────────────────────────────────────────
 /** Freeze the selection's CURRENT geometry (modifiers included) into a `mesh`
- *  primitive. Irreversible in the object itself — the studio's doc-level undo is
- *  the way back — so it is gated behind a confirm. */
+ *  primitive. Irreversible in the object itself — the frozen vertices carry no
+ *  record of the params and modifiers they were built from, so there is nothing
+ *  to convert back to — and the studio's doc-level undo is the way back. It runs
+ *  straight off the click, with no confirm: no other destructive action on this
+ *  surface has one either. */
 const converting = ref(false)
+// Inline failure line under the To mesh button. Both of this action's refusals
+// (unresolved font, over the vertex cap) were console-only, so a click on a
+// too-dense object looked like the button was simply broken. Same convention as
+// uploadError above: a short plain sentence, cleared on the next attempt.
+const convertError = ref('')
 async function convertSelectionToMesh() {
   const src = selectedObjects.value[0] as PrimitiveObject | undefined
   if (!src || converting.value) return
+  convertError.value = ''
   // A `text` object builds real glyph geometry only once its font is resolved
   // in the cache; before that, buildGeometry falls back to the 0.3 placeholder
   // cube (see baseSizeFor's note above). Converting in that state would freeze
   // the placeholder permanently, so refuse and leave the object untouched.
   if (src.primitive === 'text' && !fontCacheGet(src.content?.font ?? DEFAULT_FONT_URL)) {
-    console.warn('[scene3d-studio] convert to mesh skipped — font not yet loaded for this text object')
+    convertError.value = 'Still loading the font — try again in a moment.'
     return
   }
   converting.value = true
+  const font = src.primitive === 'text' ? fontCacheGet(src.content?.font ?? DEFAULT_FONT_URL) : null
+  const geo = buildGeometry(src.primitive, src.params, src.modifiers, 'smooth', src.content, font)
   try {
-    const font = src.primitive === 'text' ? fontCacheGet(src.content?.font ?? DEFAULT_FONT_URL) : null
-    const geo = buildGeometry(src.primitive, src.params, src.modifiers, 'smooth', src.content, font)
+    // Counted here rather than left to encodeMesh's throw so the message can
+    // name the real figures in plain words; encodeMesh still guards the library
+    // path for every other caller.
+    const verts = geo.getAttribute('position')?.count ?? 0
+    if (verts > MESH_VERTEX_CAP) {
+      convertError.value = `Too detailed to convert — ${verts.toLocaleString('en-US')} vertices, the limit is ${MESH_VERTEX_CAP.toLocaleString('en-US')}.`
+      return
+    }
     const next = await convertToMesh(src, geo)
-    geo.dispose()
     const i = doc.objects.findIndex((o) => o.id === src.id)
     if (i >= 0) doc.objects[i] = next
   } catch (err) {
     console.warn('[scene3d-studio] convert to mesh failed', err)
+    convertError.value = 'Could not convert this object — try again.'
   } finally {
+    // In the finally, not after the await: the cap bail and any encode failure
+    // both used to skip it and leak the BufferGeometry, and the cap bail is a
+    // normal-use path for this button, not an edge case.
+    geo.dispose()
     converting.value = false
   }
 }
+// A refusal is about the object that was selected when it happened; leaving it
+// under the button after the user moves on would read as a fresh failure.
+watch(selectedId, () => { convertError.value = '' })
 // Scenes render every light as a real Three.js light — an unbounded count would
 // tank frame time, so the UI caps additions rather than letting the doc silently
 // grow into something the engine chokes on.
@@ -2141,6 +2195,7 @@ function onClose() {
             <span class="flex items-center gap-1.5"><Boxes class="h-3.5 w-3.5" /> To mesh</span>
           </StudioButton>
         </div>
+        <p v-if="convertError" class="shrink-0 px-2 pb-2 text-[11px] leading-snug text-red-400/90">{{ convertError }}</p>
         <div class="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2 pb-2">
           <div v-if="!doc.objects.length" class="px-1 text-xs leading-relaxed text-white/40">
             Empty scene — add a primitive or upload a GLB from the toolbar below<span v-if="wiredGlbUrl">, or import the wired model</span>.

@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import * as THREE from 'three'
 import { convertToMesh } from '~/lib/scene3d/toMesh'
-import { buildGeometry } from '~/lib/scene3d/engine'
+import { buildGeometry, baseSizeFor } from '~/lib/scene3d/engine'
 import { contentDigest, type PrimitiveObject } from '~/lib/scene3d/config'
-import { loadMesh, meshCacheGet } from '~/lib/scene3d/meshCache'
+import { loadMesh, meshCacheGet, meshCacheClear } from '~/lib/scene3d/meshCache'
 
 const sphere = (): PrimitiveObject => ({
   id: 's1', name: 'My sphere', visible: true,
@@ -59,5 +59,27 @@ describe('convert to mesh', () => {
     const huge = new THREE.SphereGeometry(0.5, 400, 260)
     expect(huge.getAttribute('position').count).toBeGreaterThan(40_000)
     await expect(convertToMesh(src, huge)).rejects.toThrow(/vertex cap/i)
+  })
+
+  // Why the Surface needs a `meshGen` bump next to its `fontGen` one: the Size
+  // readout goes through baseSizeFor, which peeks the NON-reactive mesh cache.
+  // Straight after a conversion the decode hasn't landed, so it measures the
+  // 0.3 placeholder cube; the real size only appears once the cache is warm,
+  // and warming it changes nothing Vue can see. Nothing here can assert the ref
+  // bump itself (it is component-local, like fontGen's) — this pins the stale
+  // reading that makes it necessary.
+  it('baseSizeFor measures the placeholder until the decode lands', async () => {
+    meshCacheClear()
+    const src = sphere()
+    const geo = buildGeometry('sphere', src.params, src.modifiers, 'smooth')
+    const out = await convertToMesh(src, geo)
+    const content = out.content!
+
+    const stale = baseSizeFor('mesh', undefined, undefined, content)
+    expect(stale[0]).toBeCloseTo(0.3, 5) // the placeholder cube, not the sphere
+
+    await loadMesh(content.mesh!, content.meshKey!)
+    const fresh = baseSizeFor('mesh', undefined, undefined, content)
+    expect(fresh[0]).toBeGreaterThan(0.5)
   })
 })
