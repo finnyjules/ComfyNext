@@ -33,7 +33,7 @@ import { PRIM_GROUPS } from '~/lib/scene3d/primGroups'
 import { SceneEngine, baseSizeFor, baseVertexCountFor } from '~/lib/scene3d/engine'
 import { rebaseMany, groupObjects, ungroupMany, rootObjects, descendantIds, cloneSubtree, axisDeltaWrites } from '~/lib/scene3d/hierarchy'
 import Scene3DObjectRow from './studio/Scene3DObjectRow.vue'
-import { totalClones } from '~/lib/scene3d/modifiers'
+import { totalClones, clampedClones } from '~/lib/scene3d/modifiers'
 import { PRIMITIVE_PARAMS, paramValue, MODIFIER_SPECS, modifierValue } from '~/lib/scene3d/primParams'
 import { SceneInteraction } from '~/lib/scene3d/interaction'
 import { loadGlb, GLB_SIZE_CAP_BYTES } from '~/lib/scene3d/glb'
@@ -962,8 +962,14 @@ const cloneCost = computed(() => {
   if (!o || o.kind !== 'primitive') return null
   const copies = totalClones(o.modifiers)
   if (copies <= 1) return null
-  const verts = baseVertexCountFor(o.primitive, o.params, o.modifiers, o.content) * copies
-  return { copies, verts, heavy: verts > AMBER_VERTS }
+  const base = baseVertexCountFor(o.primitive, o.params, o.modifiers, o.content)
+  const verts = base * copies
+  // The render-time vertex-budget guard (Task 4): cloneCount itself is never
+  // reduced in the doc, but applyModifiers clamps the actual clone count
+  // against the shaped (post-subdivision) base vertex count, same as `base`
+  // here. Surfaced so a clamp never reads as a silent rendering bug.
+  const clamp = clampedClones(o.modifiers, base)
+  return { copies, verts, heavy: verts > AMBER_VERTS, clamp }
 })
 // Heavy-drag deferral. A rebuild at 300k+ verts blocks the main thread long
 // enough that the slider itself stops tracking the pointer, so for the duration
@@ -2335,6 +2341,12 @@ function onClose() {
               :class="cloneCost.heavy ? 'text-amber-400/80' : 'text-white/35'"
             >
               {{ cloneCost.copies }} copies · ~{{ compactCount(cloneCost.verts) }} verts<template v-if="deferringGeometry"> · updates on release</template>
+            </div>
+            <div
+              v-if="cloneCost?.clamp.clamped"
+              class="pt-0.5 text-[10px] tabular-nums text-amber-400/80"
+            >
+              Clone count reduced to {{ cloneCost.clamp.count }} to stay inside the vertex budget.
             </div>
           </div>
         </details>

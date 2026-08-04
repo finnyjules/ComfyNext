@@ -11,8 +11,9 @@ import * as THREE from 'three'
 import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { modifierValue } from '~/lib/scene3d/primParams'
 
-/** Rough ceiling for the final merged geometry. cloneCount is user-visible so it
- *  is never reduced; subdivision stops early instead. */
+/** Rough ceiling for the final merged geometry. `totalClones` (the doc value
+ *  the panel shows back) is never reduced; subdivision stops early, and
+ *  `clampedClones` below is the render-time guard on the cloner itself. */
 const VERTEX_BUDGET = 300_000
 
 /** Total copies the cloner will produce for these settings. Linear and radial
@@ -23,6 +24,29 @@ export function totalClones(modifiers: Record<string, number> | undefined): numb
     return Math.round(m('cloneCountX')) * Math.round(m('cloneCountY')) * Math.round(m('cloneCountZ'))
   }
   return Math.round(m('cloneCount'))
+}
+
+/** The clone count actually rendered, and whether the budget reduced it.
+ *
+ *  `totalClones` reports what the USER set and stays unclamped — the doc's
+ *  value is the user's choice and the panel shows it back. This is the
+ *  render-time guard on top: subdivision already yields to VERTEX_BUDGET, but
+ *  the cloner never did, which was safe only while every base geometry was a
+ *  few thousand vertices. A 40k-vertex `mesh` primitive at cloneCount 100 is
+ *  4M vertices and hangs the tab.
+ *
+ *  Callers MUST surface `clamped` — the surface's clone-cost warning does. A
+ *  silent reduction reads as a rendering bug. */
+export function clampedClones(
+  modifiers: Record<string, number> | undefined,
+  baseVertexCount: number,
+): { count: number; clamped: boolean } {
+  const requested = totalClones(modifiers)
+  if (baseVertexCount <= 0) return { count: requested, clamped: false }
+  const affordable = Math.max(1, Math.floor(VERTEX_BUDGET / baseVertexCount))
+  return affordable >= requested
+    ? { count: requested, clamped: false }
+    : { count: affordable, clamped: true }
 }
 
 export function hasModifiers(modifiers: Record<string, number> | undefined): boolean {
@@ -278,7 +302,7 @@ export function applyModifiers(
   const m = (k: string) => modifierValue(modifiers, k)
 
   const taper = m('taper'), twist = m('twist'), bend = m('bend'), noise = m('noise'), jitter = m('jitter')
-  const count = totalClones(modifiers)
+  const requested = totalClones(modifiers)
   const deforms = taper !== 0 || twist !== 0 || bend !== 0 || noise !== 0 || jitter !== 0
 
   let out = geo.clone()
@@ -287,7 +311,7 @@ export function applyModifiers(
   // yields to the budget so a dense shape in a big clone set cannot freeze the app.
   if (deforms) {
     const iterations = Math.round(m('subdivide'))
-    const ceiling = VERTEX_BUDGET / Math.max(1, count)
+    const ceiling = VERTEX_BUDGET / Math.max(1, requested)
     for (let i = 0; i < iterations; i++) {
       if (out.getAttribute('position').count * 4 > ceiling) break
       const next = subdivideOnce(out)
@@ -308,6 +332,7 @@ export function applyModifiers(
     out.computeBoundingSphere()
   }
 
+  const { count } = clampedClones(modifiers, out.getAttribute('position').count)
   if (count > 1) {
     const cloned = applyCloner(out, count, {
       mode: Math.round(m('cloneMode')),
