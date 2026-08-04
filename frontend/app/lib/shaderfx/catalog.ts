@@ -1,17 +1,24 @@
 import type { EffectDef, ShaderFxCatalog } from './types'
+import { getEffectSync, setShaderFxCatalog, setShaderFxRefetcher } from './catalogStore'
+
+// Re-exported so this module's 20+ existing importers (which only ever wanted
+// the synchronous reader, not a fetcher) keep working unchanged — see
+// catalogStore.ts for the actual cache + getEffectSync implementation. This
+// module now owns only what genuinely fetches: fetchShaderFxCatalog, getEffect,
+// and assetUrl.
+export { getEffectSync }
 
 let promise: Promise<ShaderFxCatalog> | null = null
-// Last successfully resolved catalog, kept alongside `promise` so a synchronous
-// reader (see getEffectSync below) never has to await. Cleared only by a fresh
-// `force` fetch overwriting it on success — a failed refetch leaves the previous
-// good catalog in place rather than blanking a working sync reader.
-let cached: ShaderFxCatalog | null = null
 
-/** Fetch the catalog from the backend (proxied /sailor route). Cached per page load. */
+/** Fetch the catalog from the backend (proxied /sailor route). Cached per page load.
+ *  On success, pushes the result into catalogStore.ts via setShaderFxCatalog — see
+ *  that module's doc: a failed refetch (the `.catch` below) never calls it, which is
+ *  what leaves getEffectSync returning the previous good catalog instead of going
+ *  blank. */
 export function fetchShaderFxCatalog(force = false): Promise<ShaderFxCatalog> {
   if (!promise || force) {
     promise = $fetch<ShaderFxCatalog>('/sailor/shader_effects').then((cat) => {
-      cached = cat
+      setShaderFxCatalog(cat)
       return cat
     }).catch((err) => {
       promise = null
@@ -21,21 +28,18 @@ export function fetchShaderFxCatalog(force = false): Promise<ShaderFxCatalog> {
   return promise
 }
 
+// Registers this module as the target for ~/lib/shaderfill/field.ts's self-heal
+// retry (see catalogStore.ts's setShaderFxRefetcher doc) — a plain top-level call,
+// so merely importing this module anywhere on the page (every Studio surface that
+// renders a shader fill already does, to kick the initial fetch on mount) wires up
+// the self-heal path too, with no separate call site to remember. A context that
+// never imports this module (the Space Type embed adapters) simply never registers
+// one — field.ts's self-heal degrades to a no-op there, same as it always has.
+setShaderFxRefetcher(fetchShaderFxCatalog)
+
 export async function getEffect(id: string): Promise<EffectDef | null> {
   const cat = await fetchShaderFxCatalog()
   return cat.effects.find(e => e.id === id) ?? null
-}
-
-/**
- * Synchronous read of whatever catalog `fetchShaderFxCatalog` has already resolved
- * elsewhere (a page's `onMounted`, a preload call, etc). Never triggers a fetch and
- * never awaits — returns null if the catalog hasn't resolved yet. Exists for
- * `~/lib/shaderfill/field.ts`, whose `resolveField()` renders synchronously (it's a
- * canvas/WebGL readback bridge with no await point) and so cannot use the async
- * `getEffect` above.
- */
-export function getEffectSync(id: string): EffectDef | null {
-  return cached?.effects.find(e => e.id === id) ?? null
 }
 
 export function assetUrl(file: string, v?: string | number): string {

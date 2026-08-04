@@ -10,7 +10,13 @@
 import { effectiveTilePaint, type ShaderSpec } from '~/lib/spacetype/fillTile'
 import { paintTileBox } from '~/lib/compositor/paint'
 import { shaderFx, expandPasses, type Uniforms } from '~/lib/shaderfx/renderer'
-import { getEffectSync, fetchShaderFxCatalog } from '~/lib/shaderfx/catalog'
+// Deliberately from catalogStore, NOT ~/lib/shaderfx/catalog: this module (via
+// ~/lib/spacetype/fills.ts) is on the Space Type embed's render path, and
+// catalog.ts is where `$fetch('/sailor/shader_effects')` lives. Importing it
+// directly here would bundle that call into the embed regardless of whether it
+// ever runs. See kickCatalogFetch's doc below for how the self-heal retry still
+// works without this module ever importing the fetcher.
+import { getEffectSync, refetchShaderFxCatalog } from '~/lib/shaderfx/catalogStore'
 import type { EffectDef } from '~/lib/shaderfx/types'
 import { fieldKey, quantizeTime, planFields, resolveEffectParams, inputKey, LIVE_FIELD_CEILING } from './descriptor'
 
@@ -151,15 +157,25 @@ function getInputTile(input: ShaderSpec['input'], w: number, h: number): HTMLCan
  * one-shot Shape/Scene3D bake, …) fell back to its input fill FOREVER — nothing
  * ever kicked the fetch, let alone retried it.
  *
- * Fix: every `resolve()` miss kicks `fetchShaderFxCatalog()` itself, bounded by
- * `CATALOG_RETRY_MAX` attempts with backoff (see `kickCatalogFetch`). Callers that
- * already re-invoke `resolveField` every frame AND already have a cache entry to
- * retry against (Space Type/Shape Studio/Scene3D's rAF previews, once a MISS also
- * registers an entry — see shaderFieldTexture's/materialFor's own docs) self-heal
- * for free the very next successful frame once the catalog lands — "no ordering
- * dependency anywhere", per the review. A host with no per-frame loop of its own
- * (a one-shot bake) needs an explicit `await fetchShaderFxCatalog()` before it
- * ever builds (see the Space Type/Shape Studio bake call sites), or the
+ * Fix: every `resolve()` miss kicks a refetch itself, bounded by `CATALOG_RETRY_MAX`
+ * attempts with backoff (see `kickCatalogFetch`). It does so via
+ * `refetchShaderFxCatalog()` (~/lib/shaderfx/catalogStore), NOT by importing
+ * catalog.ts's `fetchShaderFxCatalog` directly — this module sits on the Space
+ * Type embed's render path (via ~/lib/spacetype/fills.ts), which must never bundle
+ * `$fetch('/sailor/shader_effects')` (see catalogStore.ts's "Self-heal hook" doc
+ * for the full reasoning). In practice this makes no difference to any real
+ * Studio host: every one of them already imports catalog.ts elsewhere to kick the
+ * INITIAL fetch, which registers it as the refetch target too. Only a context that
+ * never imports catalog.ts at all (the embed adapters) sees `refetchShaderFxCatalog()`
+ * return null — treated below exactly like a failed fetch attempt.
+ *
+ * Callers that already re-invoke `resolveField` every frame AND already have a
+ * cache entry to retry against (Space Type/Shape Studio/Scene3D's rAF previews,
+ * once a MISS also registers an entry — see shaderFieldTexture's/materialFor's own
+ * docs) self-heal for free the very next successful frame once the catalog lands —
+ * "no ordering dependency anywhere", per the review. A host with no per-frame loop
+ * of its own (a one-shot bake) needs an explicit `await fetchShaderFxCatalog()`
+ * before it ever builds (see the Space Type/Shape Studio bake call sites), or the
  * `onFieldCatalogReady` nudge below, for a host that renders once and stops
  * (e.g. ArtifactFrameNode's static renderStack).
  */
@@ -206,16 +222,18 @@ function kickCatalogFetch(): void {
   const attempt = _catalogRetryCount++
   const delay = attempt === 0 ? 0 : Math.min(CATALOG_RETRY_MAX_MS, CATALOG_RETRY_BASE_MS * 2 ** (attempt - 1))
   _catalogRetry = new Promise<void>((resolve) => { setTimeout(resolve, delay) })
-    .then(() => (
-      // fetchShaderFxCatalog uses Nuxt's auto-imported $fetch, which doesn't exist
-      // outside a Nuxt runtime context (e.g. a plain vitest unit test that imports
-      // this module directly) and throws SYNCHRONOUSLY (a ReferenceError, not a
-      // rejected promise) in that case. Calling it from inside this `.then` turns
-      // that synchronous throw into an ordinary rejection the `.catch` below
-      // already handles — resolveField/resolve() must never throw, that's the
+    .then(() => {
+      // refetchShaderFxCatalog() (~/lib/shaderfx/catalogStore) delegates to
+      // whatever registered itself via setShaderFxRefetcher — normally catalog.ts's
+      // fetchShaderFxCatalog. It returns null when nothing has (a context that
+      // never imported catalog.ts at all, i.e. the embed adapters) — turned into an
+      // ordinary rejection here so the SAME backoff/give-up bookkeeping below
+      // applies either way. resolveField/resolve() must never throw, that's the
       // whole point of this module's graceful fallback.
-      fetchShaderFxCatalog()
-    ))
+      const p = refetchShaderFxCatalog()
+      if (!p) throw new Error('shaderfx: no catalog refetcher registered')
+      return p
+    })
     .then(() => {
       _catalogLoaded = true
       _catalogRetryCount = 0

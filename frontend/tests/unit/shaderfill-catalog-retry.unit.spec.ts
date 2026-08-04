@@ -8,14 +8,17 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 // the SAME already-resolved promise and re-firing every `onFieldCatalogReady`
 // subscriber once per miss instead of once per load. Both fixed with bounded
 // backoff + a give-up gate + a `_catalogLoaded` flag, with `retryFieldCatalog()` as the
-// explicit escape hatch. Mocks `~/lib/shaderfx/catalog` directly so this test controls
-// fetch resolution/rejection without touching Nuxt's `$fetch` or real network I/O.
+// explicit escape hatch. Mocks `~/lib/shaderfx/catalogStore` directly (field.ts's
+// actual import target, see its doc — it deliberately does NOT import
+// ~/lib/shaderfx/catalog, the module that owns the real `$fetch` call) so this test
+// controls fetch resolution/rejection without touching Nuxt's `$fetch` or real
+// network I/O.
 
 const fetchMock = vi.fn()
 const getEffectSyncMock = vi.fn(() => null)
 
-vi.mock('~/lib/shaderfx/catalog', () => ({
-  fetchShaderFxCatalog: (...args: unknown[]) => fetchMock(...args),
+vi.mock('~/lib/shaderfx/catalogStore', () => ({
+  refetchShaderFxCatalog: (...args: unknown[]) => fetchMock(...args),
   getEffectSync: (...args: unknown[]) => getEffectSyncMock(...args),
 }))
 

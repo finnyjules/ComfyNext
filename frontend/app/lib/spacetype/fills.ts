@@ -4,7 +4,10 @@ import { paintTileBox } from '~/lib/compositor/paint'
 import { parseHexA, stripAlpha } from '~/lib/color/convert'
 import { resolveField, withFieldFrame, type FieldRequest } from '~/lib/shaderfill/field'
 import { specIdentityKey, resolveEffectParams } from '~/lib/shaderfill/descriptor'
-import { getEffectSync } from '~/lib/shaderfx/catalog'
+// From catalogStore, NOT ~/lib/shaderfx/catalog: this module ends up in the
+// Space Type embed bundle (via effects/index.ts), which must never bundle
+// catalog.ts's `$fetch('/sailor/shader_effects')` — see catalogStore.ts's doc.
+import { getEffectSync } from '~/lib/shaderfx/catalogStore'
 
 /**
  * GPU/THREE fill builders. The CPU fill model (Fill, FILL_TYPES, parsing) and the 2D-canvas
