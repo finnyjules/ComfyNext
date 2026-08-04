@@ -9,6 +9,8 @@ the canvas size (matching the Compositor convention).
 """
 from __future__ import annotations
 
+import base64
+import io
 import json
 import logging
 import os
@@ -1563,6 +1565,89 @@ def encode_spacetype_video(frames_list, fps, width, height, out_path, alpha=Fals
         out.close()
 
 
+# Font subsetting for the Space Type web-embed export ------------------------
+#
+# A Space Type export inlines its font as a data: URI. The full Google Fonts
+# TTF carries thousands of glyphs (~296 KB) when a piece typically uses
+# maybe twenty. Subsetting to *only* the characters used would get this to
+# ~20-40 KB, but the export could then never render a character it wasn't
+# built with — closing the door on reactive/data-driven embeds where the
+# text changes at runtime.
+#
+# The chosen compromise: subset to the characters the piece uses UNION the
+# full basic-Latin range U+0020-U+007E (~100 glyphs instead of thousands).
+# That lands around 40-60 KB and guarantees any English text still renders
+# even if it's not the text the piece shipped with. Only accented and
+# non-Latin characters are dropped. See
+# docs/superpowers/plans/2026-08-04-embed-font-subsetting.md.
+
+_BASIC_LATIN_CODEPOINTS = range(0x20, 0x7F)  # space .. tilde
+
+# Generous cap on the *decoded* font size a /sailor/font_subset request will
+# accept. This guards against a malformed or hostile request body exhausting
+# memory before parsing even starts. Real webfonts — even heavy variable
+# families — are a few MB at most; 20 MB leaves headroom without being
+# effectively unbounded.
+MAX_FONT_SUBSET_BYTES = 20 * 1024 * 1024
+
+
+def subset_font_bytes(font_bytes: bytes, text: str) -> bytes:
+    """Subset a TTF/OTF to `text`'s characters UNION basic Latin.
+
+    Module-level (rather than nested in the route handler) so it can be
+    exercised directly in tests without going through aiohttp, matching
+    `encode_spacetype_video` above.
+
+    fontTools.subset options, and why:
+      - `layout_features = ["*"]`: keep every GSUB/GPOS layout feature
+        (kerning, ligatures, contextual alternates, mark attachment, ...)
+        rather than fontTools' own curated default list. A subset that
+        renders *differently* from the source font — e.g. missing kerning
+        pairs or a broken ligature — is a wrong export, not a small one;
+        keeping every feature (dead ones are simply pruned along with their
+        now-unreferenced lookups) is the conservative choice.
+      - `hinting` is left at its default (True): dropping it trades fidelity
+        for a further size cut we don't need here — glyph count, not
+        hinting data, is what takes this from ~300 KB to tens of KB.
+      - Everything else (glyph_names=False, drop_tables' bitmap/Graphite
+        tables, etc.) is left at fontTools' defaults, which already drop
+        data that has no effect on how the kept glyphs render.
+
+    Raises on a missing, empty, oversized, or undecodable font — callers
+    (the HTTP route) are expected to turn that into a 4xx and the export
+    path is expected to fall back to the un-subsetted font rather than
+    propagate the error.
+    """
+    if not font_bytes:
+        raise ValueError("subset_font_bytes: no font bytes given")
+    if len(font_bytes) > MAX_FONT_SUBSET_BYTES:
+        raise ValueError(
+            f"subset_font_bytes: font is {len(font_bytes)} bytes, over the "
+            f"{MAX_FONT_SUBSET_BYTES}-byte cap"
+        )
+
+    from fontTools import subset as ftsubset
+    from fontTools.ttLib import TTFont
+
+    # TTFont() raises (TTLibError / struct.error / etc.) on bytes that
+    # aren't a font at all — that's the "undecodable font" rejection path.
+    font = TTFont(io.BytesIO(font_bytes))
+
+    unicodes = {ord(c) for c in text}
+    unicodes.update(_BASIC_LATIN_CODEPOINTS)
+
+    options = ftsubset.Options()
+    options.layout_features = ["*"]
+
+    subsetter = ftsubset.Subsetter(options=options)
+    subsetter.populate(unicodes=unicodes)
+    subsetter.subset(font)
+
+    out = io.BytesIO()
+    font.save(out)
+    return out.getvalue()
+
+
 # Register HTTP endpoint on Comfy's PromptServer if available.
 try:
     from server import PromptServer
@@ -1711,6 +1796,59 @@ try:
             return web.json_response({"error": str(e)}, status=500)
 
         return web.json_response({"filename": out_name})
+
+    @PromptServer.instance.routes.post("/sailor/font_subset")
+    async def _font_subset_route(request):
+        """Subset an embedded TTF/OTF down to the characters a piece needs.
+
+        Body JSON: { "font": "<base64 ttf/otf>", "text": "<the piece's text>" }
+        Response JSON:
+          { "font": "<base64 subsetted font>", "before": <bytes>, "after": <bytes> }
+
+        Subsets to `text`'s characters UNION the full basic-Latin range
+        (U+0020-U+007E) — see subset_font_bytes for the reasoning.
+
+        Any failure here is a 4xx/5xx, never a partial/garbage font. The
+        export path (frontend) is expected to fall back to the original,
+        un-subsetted font on any non-200 response rather than fail the
+        export outright — subsetting is a size optimization, not a
+        correctness requirement.
+        """
+        try:
+            data = await request.json()
+        except Exception as e:
+            return web.json_response({"error": f"bad json: {e}"}, status=400)
+
+        font_b64 = data.get("font")
+        if not font_b64 or not isinstance(font_b64, str):
+            return web.json_response({"error": "missing 'font'"}, status=400)
+        # Reject before decoding: base64 inflates size by ~4/3, so bound the
+        # raw string too rather than only checking after inflating it into bytes.
+        if len(font_b64) > MAX_FONT_SUBSET_BYTES * 2:
+            return web.json_response({"error": "font is too large"}, status=400)
+
+        text = data.get("text", "")
+        if not isinstance(text, str):
+            text = ""
+
+        try:
+            font_bytes = base64.b64decode(font_b64, validate=True)
+        except Exception as e:
+            return web.json_response({"error": f"undecodable font: {e}"}, status=400)
+
+        try:
+            loop = asyncio.get_event_loop()
+            subsetted = await loop.run_in_executor(None, subset_font_bytes, font_bytes, text)
+        except Exception as e:
+            # subset_font_bytes only fails on bad/oversized/unparseable font
+            # bytes — a caller-fixable input problem, not a server error.
+            return web.json_response({"error": str(e)}, status=400)
+
+        return web.json_response({
+            "font": base64.b64encode(subsetted).decode("ascii"),
+            "before": len(font_bytes),
+            "after": len(subsetted),
+        })
 
     @PromptServer.instance.routes.get("/sailor/space_defaults")
     async def _space_defaults_list(request):
