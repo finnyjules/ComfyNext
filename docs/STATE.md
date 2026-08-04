@@ -281,14 +281,34 @@ export marked `/* @__PURE__ */` so Rollup can prove it dead and drop the 25-effe
 every per-effect build. `bundleNameFor` validates `effectId` against the live effect array, which
 closes path traversal as a side effect rather than by pattern-matching for `..`.
 
-**The cheapest remaining win, found while doing this:** `boost.ts` vendors three typeface JSON
-tables, but `getFont()` has exactly one caller, hardcoded to `FONT_NAMES[0]` (Helvetiker). Optimer
-and Gentilis are **dead data everywhere**, not just in embeds — dropping them cuts ~760 KB, taking
-`spacetype-boost.js` from 1.64 MB to ~880 KB and into line with the other 24.
+**Both follow-ups are now done.**
 
-After that, **the font is the dominant cost** at 296 KB (26% of an export, up from 14% purely
-because the JS shrank). Subsetting to the glyphs used would take it to ~20–40 KB. Named imports
-are a further ~20–30%; the three.js renderer core is irreducible at ~460 KB.
+`8ed79e404` — `boost.ts` vendored three typeface JSON tables, but `getFont()` has exactly one
+caller hardcoded to `FONT_NAMES[0]` (Helvetiker), so Optimer and Gentilis were **dead data
+everywhere**, not just in embeds. Removing two imports cut `spacetype-boost.js` from 1.64 MB to
+881 KB (−46%), in line with the 801 KB median. Note `boostEffect` has no direct unit coverage —
+this was verified against the built artifact.
+
+`66116b011` + `141282eb4` — **font subsetting**, via `POST /sailor/font_subset` using `fontTools`
+(already installed at 4.63.0, so no new dependency). The font went **317 KB → 30 KB (−90%)**, and
+a whole export **1265 KB → 882 KB (−30%)**. The font is now 4.5% of an export rather than a third.
+
+> **The charset is a product decision, not an optimisation.** It subsets to the characters used
+> **union the full basic Latin range** (U+0020–U+007E). Used-only would be ~10 KB smaller but would
+> forbid an export from ever rendering a character it wasn't built with — closing the door on the
+> reactive, data-driven embeds this feature is meant to grow into. Accented characters *in the
+> piece's own text* survive (the union includes used chars), so "Café" keeps its é; only characters
+> absent from both the text and basic Latin are dropped. `layout_features=["*"]` keeps kerning and
+> ligatures, because a subset that renders *differently* is a wrong export rather than a small one.
+
+Two guarantees also hardened along the way: `tests/embed-network.spec.ts` (`ae7224e4a`) loads real
+exports with request interception and asserts **zero** network requests — proven against a runtime
+`fetch` whose URL is assembled from fragments so the static scan is demonstrably blind to it. And
+`build:embed` now skips when sources are unchanged (`2004a8085`), 26s → 0.115s, on a content hash
+rather than mtimes.
+
+**Remaining size lever:** named imports, ~20–30%; the three.js renderer core is irreducible at
+~460 KB.
 
 Superseded note — the original size analysis: `spacetype.js` was 1.85 MB (529 KB gzip) against gradient's 66 KB and
 shader's 18 KB. Measured, not guessed: a single-effect probe bundle is 793 KB, so per-effect
