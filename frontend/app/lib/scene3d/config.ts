@@ -474,14 +474,16 @@ export function createPrimitive(kind: PrimitiveKind, existing: SceneObject[] = [
 }
 
 /** Cheap 32-bit string digest (FNV-1a), prefixed with length so two different
- *  paths must collide in BOTH to alias. Only ever used as a cache key. */
-export function svgPathKey(d: string): string {
+ *  payloads must collide in BOTH to alias. Only ever used as a cache key —
+ *  stands in for `content.path` (svgPath) and `content.mesh` (mesh) inside
+ *  `geoKeyFor`, both of which are far too large to stringify per sync. */
+export function contentDigest(s: string): string {
   let h = 0x811c9dc5
-  for (let i = 0; i < d.length; i++) {
-    h ^= d.charCodeAt(i)
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i)
     h = Math.imul(h, 0x01000193)
   }
-  return `${d.length}:${(h >>> 0).toString(36)}`
+  return `${s.length}:${(h >>> 0).toString(36)}`
 }
 
 export function createSvgPathObject(
@@ -503,7 +505,7 @@ export function createSvgPathObject(
     // comment), so storing it would add a field to every doc that means exactly
     // what its absence already means.
     content: {
-      path: d, pathKey: svgPathKey(d),
+      path: d, pathKey: contentDigest(d),
       ...(opts.fillRule === 'evenodd' ? { fillRule: 'evenodd' as const } : {}),
     },
   }
@@ -755,7 +757,7 @@ export function parseDoc(json: string): SceneDoc {
       // key: a stored digest that disagreed with its path would make the engine
       // serve cached geometry for a shape the object no longer has — silently,
       // and persistently, since the bad pair round-trips through every save.
-      c.pathKey = svgPathKey(raw.path)
+      c.pathKey = contentDigest(raw.path)
     }
     // Anything other than the literal 'evenodd' — absent, misspelt, a number —
     // resolves to the SVG default by staying unset, so an unreadable rule can

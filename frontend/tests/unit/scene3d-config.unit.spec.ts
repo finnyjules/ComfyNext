@@ -5,7 +5,7 @@ import {
   createLight, LIGHT_KINDS, LIGHT_DEFAULTS, lightIntensityDefault, lightIntensityMax,
   createGroup, sceneHasShaderFill,
   DEFAULT_FONT_URL,
-  createSvgPathObject, svgPathKey, NOT_PLACEABLE_KINDS,
+  createSvgPathObject, contentDigest, NOT_PLACEABLE_KINDS,
   type GradientStop, type SceneMaterial, type PrimitiveObject,
 } from '~/lib/scene3d/config'
 import { PRIM_GROUPS } from '~/lib/scene3d/primGroups'
@@ -219,11 +219,11 @@ describe('scene3d config', () => {
     const p = back.objects[0] as PrimitiveObject
     expect(p.primitive).toBe('svgPath')
     expect(p.content?.path).toBe('M0 0 L10 0 L10 10 Z')
-    expect(p.content?.pathKey).toBe(svgPathKey('M0 0 L10 0 L10 10 Z'))
+    expect(p.content?.pathKey).toBe(contentDigest('M0 0 L10 0 L10 10 Z'))
   })
 
   it('gives different pathKeys to different paths', () => {
-    expect(svgPathKey('M0 0 L10 0 Z')).not.toBe(svgPathKey('M0 0 L20 0 Z'))
+    expect(contentDigest('M0 0 L10 0 Z')).not.toBe(contentDigest('M0 0 L20 0 Z'))
   })
 
   it('discards a stored pathKey that disagrees with its path, deriving a fresh one', () => {
@@ -239,7 +239,7 @@ describe('scene3d config', () => {
     raw.objects[0].content.pathKey = 'not-the-real-digest'
     const back = parseDoc(JSON.stringify(raw))
     const p = back.objects[0] as PrimitiveObject
-    expect(p.content?.pathKey).toBe(svgPathKey('M0 0 L10 0 L10 10 Z'))
+    expect(p.content?.pathKey).toBe(contentDigest('M0 0 L10 0 L10 10 Z'))
     expect(p.content?.pathKey).not.toBe('not-the-real-digest')
   })
 
@@ -252,7 +252,7 @@ describe('scene3d config', () => {
     delete raw.objects[0].content.pathKey
     const back = parseDoc(JSON.stringify(raw))
     const p = back.objects[0] as PrimitiveObject
-    expect(p.content?.pathKey).toBe(svgPathKey('M0 0 L10 0 L10 10 Z'))
+    expect(p.content?.pathKey).toBe(contentDigest('M0 0 L10 0 L10 10 Z'))
   })
 
   it('appends svgPath to PRIMITIVE_KINDS last, and excludes it from the add menu', () => {

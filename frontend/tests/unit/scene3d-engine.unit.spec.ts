@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 // @ts-expect-error — three vendors this lib without type declarations.
 import opentype from 'three/examples/jsm/libs/opentype.module.js'
 import { sunDirection, geometryFor, geoKeyFor, baseSizeFor, baseVertexCountFor, buildGeometry, lightFor, SceneEngine } from '~/lib/scene3d/engine'
-import { PRIMITIVE_KINDS, createPrimitive, createLight, createGlbObject, createSvgPathObject, svgPathKey, type PrimitiveKind, type PrimitiveObject, type GlbObject } from '~/lib/scene3d/config'
+import { PRIMITIVE_KINDS, createPrimitive, createLight, createGlbObject, createSvgPathObject, contentDigest, type PrimitiveKind, type PrimitiveObject, type GlbObject } from '~/lib/scene3d/config'
 import { PRIMITIVE_PARAMS } from '~/lib/scene3d/primParams'
 import { loadFont, type Font } from '~/lib/scene3d/outlines'
 
@@ -662,7 +662,7 @@ describe('scene3d geoKeyFor', () => {
       expect(key).not.toContain(D_A)
       expect(key).not.toContain(D_A.slice(0, 64))
       expect(key.length).toBeLessThan(D_A.length)
-      expect(key).toContain(svgPathKey(D_A))
+      expect(key).toContain(contentDigest(D_A))
     })
 
     it('matches for the same d on two different objects, so the cache still hits', () => {
