@@ -1,138 +1,92 @@
-# 16 failing unit tests — triage and handoff
+# Failing unit tests — triage
 
-*Captured 2026-08-01 at `aab1e2cd3`. Suite state: **6020 passing / 16 failing** across 8 files.*
-
-Run the suite with:
+*First captured 2026-08-01 at 16 failures. **Updated 2026-08-03: now 6 failures / 6124 passing.***
 
 ```bash
 cd frontend && npx vitest run
 ```
 
-## The one thing to know first
+## What changed since the first capture
 
-**10 of the 16 belong to uncommitted work in the tree; only 6 are broken on `main`.**
+| Suite | Fails | Status |
+|---|---|---|
+| `ticker-effect` | 4 → 0 | **Fixed** — `fa4a8e8fe` |
+| `video-model-adapt` | 1 → 0 | Fixed by other work |
+| `artifact-next-steps` | 2 → 0 | Fixed by other work |
+| `critique-fix-chips` | 2 → 0 | Fixed by other work |
+| `gradientfx-mesh` | 1 → 0 | Fixed by other work |
+| `agent-capability-routing` | 2 | **still failing** |
+| `gradientfx-frame-source` | 2 | **still failing** |
+| `spacetype-palette` | 2 | **still failing** |
 
-Every failing suite whose *subject module* is currently dirty is very likely failing because that
-work is unfinished — not because the test is wrong. Fixing those by editing tests would paper over
-someone's in-flight change.
+### The ticker fix, and what it teaches
 
-| Failing suite | Fails | Subject module | Dirty? | Whose problem |
-|---|---|---|---|---|
-| `ticker-effect` | 4 | `lib/spacetype/effects/ticker.ts` | **dirty** | in-flight work |
-| `agent-capability-routing` | 2 | `lib/agent/capabilities.ts` | **dirty** | in-flight work |
-| `gradientfx-frame-source` | 2 | `lib/gradientfx/frameSource.ts` | **dirty** | in-flight work |
-| `spacetype-palette` | 2 | `effects/cornerPin.ts`, `effects/shutter.ts` | **dirty** | in-flight work |
-| `gradientfx-mesh` | 1 | `lib/gradientfx/shaders.ts` | clean | **real, on main** |
-| `video-model-adapt` | 1 | `data/video-models.ts` | clean | **real, on main** |
-| `artifact-next-steps` | 2 | `lib/artifact/nextSteps.ts` | clean | **real, on main** |
-| `critique-fix-chips` | 2 | `composables/useNextStepsStrip.ts` | clean | **real, on main** |
+The per-scene state refactor moved each effect's state from a module-level variable onto
+`root.userData`, and changed the interface to `update(t01, params, root?)`. Thirteen call sites in
+`tests/unit/ticker-effect.unit.spec.ts` still used the two-argument form.
 
-Verify the split yourself before acting — it will have moved as work lands:
+Because `root` is **optional** and `update()` does `root?.userData?.tickerRows ?? []`, a call without
+`root` is a **silent no-op** — the loop body never runs, geometry never changes, and the wave tests
+(which assert arrays *differ* across frames) found them identical.
 
-```bash
-git status --short frontend/app/lib/spacetype/effects/ticker.ts
-```
+Two tests in that file were also passing for the wrong reason: "leaves geometry untouched when the
+wave is still" and "is pure in t01" both pass trivially when nothing happens at all. They now pass
+for the right reason.
 
-A clean-worktree comparison would be more rigorous, but note that `git worktree` + a symlinked
-`node_modules` does **not** work here — pnpm's store uses absolute paths and every test file fails
-to resolve. You would need a real install in the worktree.
+> **Design note worth acting on.** `root?: THREE.Object3D` being optional is what turned a signature
+> change into four silent runtime failures. Making it required would have made these compile errors
+> instead. That's a 26-effect interface change, so it is a judgement call — but the current shape
+> means any future caller that forgets `root` gets a frozen effect and no error.
 
----
+## The 3 remaining failures
 
-## The 6 real ones — fix these
+**A correction to the first version of this doc:** `spacetype-palette` was originally classified as
+caused by uncommitted work because `cornerPin.ts` and `shutter.ts` are dirty. That was wrong. Their
+diffs touch **only** the state refactor — `git diff` on both files matches zero occurrences of
+`fillList` or `defaultFillsFor`. The failure is pre-existing and would reproduce on a clean tree.
 
-### 1–2. `artifact-next-steps` (2) and `critique-fix-chips` (2)
-
-```
-TypeError: s.announceFreshTake is not a function
-```
-
-**This is a lost method, not a stale test.** `announceFreshTake` now appears *only* in the two test
-files — there is no implementation anywhere in `frontend/app`. It used to exist:
-
-- added by `08b02eecc feat(artifact-actions): singleton next-steps strip coordination composable`
-- and `8a5989403 feat(artifact-actions): post-render next-steps chip strip on image artifacts`
-- then disappeared in `c502c8e90 wip: snapshot working state before litegraph divorce (user-requested sweep commit)`
-
-A sweep commit dropped it and left the tests behind.
-
-**Do this:** recover the original implementation and decide whether it should come back.
-
-```bash
-git show 8a5989403 -- frontend/app/composables/useNextStepsStrip.ts
-git show c502c8e90 -- frontend/app/composables/useNextStepsStrip.ts
-```
-
-If the strip feature is still wanted, restore the method. If it was deliberately retired, delete the
-tests *and* whatever else references the strip — but only after confirming that, because right now
-the tests are the only surviving record that it existed.
-
-### 3. `gradientfx-mesh` (1)
+### `spacetype-palette` (2) — pre-existing
 
 ```
-AssertionError: expected '#version 300 es…' to contain 'u_flowOffset'
+expected '[{"type":"solid","a":"#15171b",…' to be '[{"type":"grid","a":"#FF6259",…'
 ```
 
-`u_flowOffset` has **zero occurrences** in `lib/gradientfx/shaders.ts` today. Same shape as above —
-the token was removed and the test was left behind.
+The test asserts every effect's declared `fillList` default equals `defaultFillsFor(n, effectId)`.
+`cornerpin` and `shutter` have hand-written defaults that don't come from the palette.
 
-**Do this:** find when it went and whether flow offset still works by another name.
+Decide which is authoritative: if all effects should seed from the palette, fix those two effects'
+defaults; if these two are deliberately different, the test needs an exemption list with a comment
+saying why.
 
-```bash
-git log --oneline -S"u_flowOffset" -- frontend/app/lib/gradientfx/
-```
-
-If the uniform was renamed, update the test to the new name. If the capability was lost, that is a
-real gradient regression — flow is one of the parameters the Act 1 work made animatable.
-
-### 4. `video-model-adapt` (1)
+### `agent-capability-routing` (2) — check against `capabilities.ts`
 
 ```
-AssertionError: expected [ '4', '6', '8' ] to deeply equal [ '8' ]
+expected [ 'Compositor', 'EditImageNode', …] to include 'GradientStudio'
+expected [ 'RestyleFromImageNode', …] to include 'ShaderStudio'
 ```
 
-The committed data says veo-3.1 offers durations 4, 6 and 8; the test expects only 8. One of them is
-wrong about the real model.
+"blue to purple gradient background" no longer routes to `GradientStudio`; "give the image a glitchy
+vhs vibe" no longer puts `ShaderStudio` in the top 6. `lib/agent/capabilities.ts` is currently dirty,
+so re-check after that work lands. This is a **behavioural** regression in routing if it survives —
+silent routing changes are hard to notice in normal use.
 
-**Do this:** check what veo-3.1 actually accepts before touching either side. If the data is right,
-the test is stale — fix the test. If the test is right, the data will produce API calls the model
-rejects, which is the worse failure and worth fixing properly.
+### `gradientfx-frame-source` (2) — environment, not logic
 
-```bash
-grep -n "veo-3.1" -A 6 frontend/app/data/video-models.ts
+```
+Error: document is not defined
 ```
 
----
+The module touches the DOM at import time; vitest runs in a node environment. Note the same property
+bit the embed work — `frameSource.ts` transitively pulls in Vue via a module-level `ref(0)`, which is
+why `motionConfigFor` had to be relocated into the Vue-free `motion.ts`. The durable fix is to keep
+pure logic out of this module rather than to stub `document`.
 
-## The 10 WIP-linked ones — do not "fix" these
+## Method note
 
-Leave them until the owning work lands, then re-run. If they still fail afterwards, *then* they are
-real. Notes in case they turn out to be real:
+`git worktree` + a symlinked `node_modules` does **not** work here for comparing against a clean
+HEAD — pnpm's store uses absolute paths and every test file fails to resolve. You would need a real
+install in the worktree. The classification above is from git provenance plus reading the diffs.
 
-- **`ticker-effect` (4)** — the assertions are `not.toEqual` checks that the travelling wave re-bakes
-  geometry as it advances. They now find the arrays *identical*, i.e. the wave has stopped
-  advancing. `ticker.ts` is mid-edit as part of a 25-file sweep moving per-effect state off module
-  singletons onto `root.userData` — an incomplete conversion here would produce exactly this
-  symptom, since a stale or shared state object would make every frame identical.
-- **`spacetype-palette` (2)** — `cornerpin` and `shutter` fill defaults now come back as `solid` with
-  different colours where the test expects a seeded `grid` palette prefix. Both effects are in that
-  same sweep.
-- **`agent-capability-routing` (2)** — "blue to purple gradient background" no longer routes to
-  `GradientStudio`, and "glitchy vhs vibe" no longer puts `ShaderStudio` in the top 6. `capabilities.ts`
-  is dirty. This is a **behavioural** regression in routing, so worth checking carefully once that
-  work settles — silent routing changes are hard to notice in use.
-- **`gradientfx-frame-source` (2)** — `Error: document is not defined`. The module touches the DOM at
-  import time, which vitest's node environment has no answer for. Note this same property bit the
-  embed work: `frameSource.ts` transitively pulls in Vue via a module-level `ref(0)`, which is why
-  `motionConfigFor` had to be moved into the Vue-free `motion.ts`. The durable fix is to keep pure
-  logic out of this module rather than to stub `document`.
-
----
-
-## Suggested prompt for a fresh session
-
-> Read `docs/failing-unit-tests-2026-08-01.md`. Fix only the 6 failures listed under "The 6 real
-> ones" — leave the 10 WIP-linked ones alone. Before changing any test, confirm whether the code or
-> the test is wrong; two of these are lost implementations, not stale assertions, so deleting the
-> test would erase the only record that the feature existed. Re-run `cd frontend && npx vitest run`
-> and report the before/after counts.
+Before changing any test, confirm whether the code or the test is wrong. Two of the original sixteen
+turned out to be lost implementations rather than stale assertions, where deleting the test would
+have erased the only record the feature existed.
