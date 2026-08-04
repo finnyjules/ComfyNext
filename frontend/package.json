@@ -10,7 +10,7 @@
     "generate": "nuxt generate",
     "preview": "nuxt preview",
     "postinstall": "nuxt prepare",
-    "build:embed": "SAILOR_EMBED_SURFACE=shader vite build --config vite.embed.config.ts && SAILOR_EMBED_SURFACE=gradient vite build --config vite.embed.config.ts && SAILOR_EMBED_SURFACE=spacetype vite build --config vite.embed.config.ts",
+    "build:embed": "node scripts/build-embed.mjs",
     "test": "playwright test",
     "test:unit": "vitest run",
     "test:headed": "playwright test --headed",

@@ -3,13 +3,19 @@ import * as fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import * as path from 'node:path'
 import { externalRefs } from '~/lib/embed/bundle'
+import { getSpaceTypeEffectEntries } from '../../scripts/spacetype-effect-list.mjs'
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url))
+const EMBED_DIR = path.join(ROOT, 'public', 'embed')
 
 // Guards the contract between the Vite library build and the runtime script in
 // bundle.ts. Run `npm run build:embed` first — this test asserts its output.
-// One vite.embed.config.ts, parameterised by SAILOR_EMBED_SURFACE, builds one
-// bundle per embeddable surface — assert the same contract holds for each.
+// vite.embed.config.ts, parameterised by SAILOR_EMBED_SURFACE, builds one
+// bundle per embeddable surface, PLUS one spacetype-<effectId>.js per
+// registered Space Type effect (see vite.embed.config.ts's virtual-module
+// plugin) — this scans EVERY .js file actually found in public/embed rather
+// than a fixed list, so a bundle nobody remembered to add a test for can never
+// silently skip the network-ref gate below.
 //
 // Per-surface size ceiling, not a shared one: gradient.js measures ~66KB
 // (vs. shader.js's ~18.6KB) purely because GradientFxRenderer statically
@@ -26,44 +32,85 @@ const ROOT = fileURLToPath(new URL('../..', import.meta.url))
 // room to exist. Do not raise it further to hide an actual new dependency —
 // re-derive the number from what's really in the bundle, as this comment does.
 //
-// spacetype.js is a different order of magnitude — ~1.85MB — because it
-// statically bundles the entire three.js runtime (WebGLRenderer, the full
-// scene graph, geometries, materials) PLUS all 25 Space Type effect modules
-// from effects/index.ts (SPACE_TYPE_EFFECTS is one flat array with no lazy
-// per-effect split — see spacetype.ts's "throw on unknown effectId" adapter,
-// which resolves the effect from that same static array). Neither dependency
-// is optional at today's architecture: the adapter cannot know which of the
-// 25 effects a given export uses without importing the whole registry, and
-// SpaceTypeEngine is built directly on THREE.WebGLRenderer/Scene/Camera.
+// spacetype.js (the monolith — still built for now; Task 2 of the per-effect
+// embed bundles plan drops it and this ceiling entry with it) is a different
+// order of magnitude — ~1.85MB — because it statically bundles the entire
+// three.js runtime (WebGLRenderer, the full scene graph, geometries,
+// materials) PLUS all 25 Space Type effect modules from effects/index.ts
+// (SPACE_TYPE_EFFECTS is one flat array with no lazy per-effect split).
+// Measured at 1,847,192 bytes. The ceiling here is 1,950,000 (~1.95MB) —
+// enough headroom for ordinary edits not to flake the suite, but tight enough
+// that a second copy of three.js, or a network-reaching import creeping back
+// in, would blow through it.
+//
+// spacetype-<effectId>.js (the per-effect bundles) are a SEPARATE, much
+// tighter bucket, because the entire point of splitting them out was to stop
+// paying for all 25 effects on every export. Measured across all 25 today:
+// smallest 793,474 bytes (tear.js), largest 1,642,847 bytes (boost.js),
+// median 801,631 bytes. boost.js is the one outlier, and it is legitimate,
+// not a leak: boost.ts is the only effect that imports three.js's vendored
+// helvetiker_bold / optimer_bold / gentilis_bold TypeFace JSON glyph tables
+// (for extruded 3D text) — ~823KB of raw JSON between the three files,
+// matching the ~844KB gap between boost.js and its neighbours almost
+// exactly. SPACETYPE_EFFECT_CEILING_BYTES is set to 1,750,000: comfortably
+// above boost.js's measured 1,642,847 (~107KB headroom for that effect to
+// grow), but far enough below the 1.85MB "all 25 effects" figure that if a
+// per-effect bundle ever crept close to THAT number, it would mean
+// effects/index.ts (or its full SPACE_TYPE_EFFECTS array) got pulled back
+// into a per-effect entry's import graph — i.e. the whole point of this
+// split silently broke. This is not a size budget; if it needs raising,
+// re-derive the number from what actually changed in the bundle that tripped
+// it, the same way this comment derives today's numbers, rather than padding
+// it to make CI pass.
 //
 // The two network leaks that used to live in this bundle (~/data/google-fonts.ts's
 // font-catalog fetch, and ~/lib/shaderfx/catalog.ts's shader-effect-catalog
 // fetch — see externalRefs()'s INERT_LITERALS doc in bundle.ts for what's left)
 // are both gone now, but neither carried much WEIGHT — the machinery they
 // dragged in was a handful of functions and a couple of URL string tables, not
-// meaningful code size, so removing them barely moves this number. Measured at
-// 1,847,057 bytes after both fixes. The ceiling here is 1,950,000 (~1.95MB) —
-// enough headroom over that measurement for ordinary edits not to flake the
-// suite, but still tight enough that a SECOND copy of three.js, or a
-// network-reaching import creeping back in, would blow through it. This is not
-// a size budget — three.js + 25 effects at ~1.85MB already exceeds the ~1.5MB
-// figure the Task 2 brief flagged as worth surfacing on its own; if this
-// ceiling is ever raised, re-derive the number from what changed in the bundle
-// rather than padding it to make CI pass, and treat a further jump as the
-// signal that per-effect bundle splitting (a real architectural change) is now
-// worth doing rather than absorbing quietly.
-const SIZE_CEILING_BYTES: Record<string, number> = { shader: 60_000, gradient: 90_000, spacetype: 1_950_000 }
+// meaningful code size, so removing them barely moves any of the numbers above.
+const SHADER_CEILING_BYTES = 60_000
+const GRADIENT_CEILING_BYTES = 90_000
+const SPACETYPE_MONOLITH_CEILING_BYTES = 1_950_000
+const SPACETYPE_EFFECT_CEILING_BYTES = 1_750_000
 
-describe.each([
-  ['shader', 'shader.js'],
-  ['gradient', 'gradient.js'],
-  ['spacetype', 'spacetype.js'],
-])('prebuilt %s embed bundle', (surface, fileName) => {
-  const OUT = path.join(ROOT, 'public', 'embed', fileName)
+/** Classifies a built bundle's filename into one of the four size buckets
+ *  documented above. Throws on anything unrecognised rather than silently
+ *  skipping the size check — an embed bundle this suite has never heard of is
+ *  exactly the kind of surprise the gate exists to catch. */
+function ceilingFor(fileName: string): number {
+  if (fileName === 'shader.js') return SHADER_CEILING_BYTES
+  if (fileName === 'gradient.js') return GRADIENT_CEILING_BYTES
+  if (fileName === 'spacetype.js') return SPACETYPE_MONOLITH_CEILING_BYTES
+  if (/^spacetype-[^/]+\.js$/.test(fileName)) return SPACETYPE_EFFECT_CEILING_BYTES
+  throw new Error(`embed-build-output: no size ceiling defined for unexpected bundle "${fileName}" — add one above`)
+}
 
+const embedDirExists = fs.existsSync(EMBED_DIR)
+const builtFiles = embedDirExists
+  ? fs.readdirSync(EMBED_DIR).filter(f => f.endsWith('.js')).sort()
+  : []
+
+describe('public/embed directory', () => {
   it('exists — run `npm run build:embed` if this fails', () => {
-    expect(fs.existsSync(OUT)).toBe(true)
+    expect(embedDirExists).toBe(true)
   })
+
+  // Catches a silently-skipped build (a `vite build` invocation that exited 0
+  // but never emitted its file, or build-embed.mjs dropping a surface off its
+  // loop) as easily as the per-bundle tests below catch a silently-bloated one.
+  it('contains shader.js, gradient.js, and one spacetype-<id>.js per registered effect', () => {
+    expect(builtFiles).toContain('shader.js')
+    expect(builtFiles).toContain('gradient.js')
+    const entries = getSpaceTypeEffectEntries()
+    for (const { id } of entries) {
+      expect(builtFiles).toContain(`spacetype-${id}.js`)
+    }
+  })
+})
+
+describe.each(builtFiles.map(f => [f] as const))('prebuilt %s embed bundle', (fileName) => {
+  const OUT = path.join(EMBED_DIR, fileName)
 
   it('assigns the global the runtime script reads', () => {
     expect(fs.readFileSync(OUT, 'utf8')).toContain('__SAILOR_SURFACE__')
@@ -80,14 +127,10 @@ describe.each([
   // were ever genuinely pulled in, its package name would not survive as a
   // string literal in the output — the greps would very likely keep passing
   // silently, exactly when they matter most. A coarse size ceiling is robust
-  // to renaming: this adapter is ~17.6KB today, and Vue's runtime alone is on
-  // the order of 100KB minified, so any accidental inclusion of a dependency
-  // that heavy (Vue above all) blows straight past any sane ceiling for what
-  // is meant to be a dependency-free adapter. Do not raise this number just
-  // to make a failing build pass — figure out what got pulled in instead.
-  it('stays well under the size a heavy dependency like Vue would add', () => {
+  // to renaming — see the bucket derivations in the module doc above.
+  it('stays under its size ceiling (a heavy/unexpected dependency, not a budget)', () => {
     const bytes = fs.statSync(OUT).size
-    expect(bytes).toBeLessThan(SIZE_CEILING_BYTES[surface]!)
+    expect(bytes).toBeLessThan(ceilingFor(fileName))
   })
 
   it('emits a single self-contained file with no import statements', () => {
