@@ -5,7 +5,8 @@
  */
 import { effectiveTilePaint, type ShaderSpec } from '~/lib/spacetype/fillTile'
 import { isGradient, sortedClampedStops, type Paint } from '~/lib/compositor/paint'
-import type { EffectDef } from '~/lib/shaderfx/types'
+import type { EffectDef, GradientStop, ParamValue } from '~/lib/shaderfx/types'
+import { cleanStops, isParamHex } from '~/lib/shaderfx/params'
 
 /** Measured, not guessed: a live 512² field costs ~1.25ms typically / ~3.6ms worst-observed,
  *  almost entirely readback. At the worst case, 4 fields is ~14ms — under half a 30fps frame,
@@ -79,7 +80,7 @@ export function inputKey(p: Paint): string {
 /** Sorted [key, value] pairs, not a hand-joined string — sorting normalises order
  *  (so param order doesn't matter) while `encode` keeps arbitrary key text, including
  *  '=' or ',', from bleeding into neighbouring pairs. */
-function paramsKey(p: Record<string, number>): string {
+function paramsKey(p: Record<string, ParamValue>): string {
   return encode(Object.keys(p).sort().map(k => [k, p[k]]))
 }
 
@@ -135,16 +136,24 @@ export function unprefixedKey(uniform: string): string {
  *  `fieldKey` and the uniform upload, not the raw `spec.params` to one and this to the
  *  other — that would just move the mismatch rather than closing it. Pure (no catalog
  *  access of its own): the caller resolves `effect` and passes it in. */
-export function resolveEffectParams(effect: EffectDef, params: Record<string, number>): Record<string, number> {
-  const out: Record<string, number> = {}
+export function resolveEffectParams(effect: EffectDef, params: Record<string, ParamValue>): Record<string, ParamValue> {
+  const out: Record<string, ParamValue> = {}
   for (const p of effect.params) {
     const key = unprefixedKey(p.uniform)
     const raw = params[key]
-    if (p.type === 'enum') {
+    if (p.type === 'color') {
+      out[key] = typeof raw === 'string' && isParamHex(raw) ? raw : (p.default as string)
+    } else if (p.type === 'gradient') {
+      // Sorted here for the same reason `inputKey` runs stops through
+      // `sortedClampedStops`: the renderer sorts before uploading, so two stop
+      // arrays differing only in order render identically and MUST key
+      // identically, or batching silently degrades.
+      out[key] = cleanStops(raw, p.maxStops ?? 8, p.default as GradientStop[])
+    } else if (p.type === 'enum') {
       const values = (p.options ?? []).map(o => o.value)
-      out[key] = typeof raw === 'number' && values.includes(raw) ? raw : p.default
+      out[key] = typeof raw === 'number' && values.includes(raw) ? raw : (p.default as number)
     } else {
-      const v = typeof raw === 'number' && Number.isFinite(raw) ? raw : p.default
+      const v = typeof raw === 'number' && Number.isFinite(raw) ? raw : (p.default as number)
       out[key] = Math.min(Math.max(v, p.min ?? -Infinity), p.max ?? Infinity)
     }
   }

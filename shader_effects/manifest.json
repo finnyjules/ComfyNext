@@ -2306,33 +2306,9 @@
       "textures": [],
       "generative": false,
       "params": [
-        {
-          "uniform": "u_shadowHue",
-          "label": "Shadow Hue",
-          "type": "float",
-          "min": 0.0,
-          "max": 1.0,
-          "default": 0.6,
-          "step": 0.01
-        },
-        {
-          "uniform": "u_lightHue",
-          "label": "Light Hue",
-          "type": "float",
-          "min": 0.0,
-          "max": 1.0,
-          "default": 0.1,
-          "step": 0.01
-        },
-        {
-          "uniform": "u_contrast",
-          "label": "Contrast",
-          "type": "float",
-          "min": 0.0,
-          "max": 2.0,
-          "default": 0.4,
-          "step": 0.05
-        }
+        { "uniform": "u_shadow", "label": "Shadow", "type": "color", "default": "#1a1a2e" },
+        { "uniform": "u_highlight", "label": "Highlight", "type": "color", "default": "#f5f0e8" },
+        { "uniform": "u_contrast", "label": "Contrast", "type": "float", "min": 0.0, "max": 2.0, "default": 0.4, "step": 0.05 }
       ]
     },
     {
@@ -2346,32 +2322,33 @@
       "generative": false,
       "params": [
         {
-          "uniform": "u_hue",
-          "label": "Hue",
-          "type": "float",
-          "min": 0.0,
-          "max": 1.0,
-          "default": 0.0,
-          "step": 0.01
+          "uniform": "u_ramp",
+          "label": "Gradient",
+          "type": "gradient",
+          "maxStops": 8,
+          "default": [
+            { "pos": 0, "color": "#06283d" },
+            { "pos": 0.5, "color": "#256d85" },
+            { "pos": 1, "color": "#47b5ff" }
+          ]
         },
-        {
-          "uniform": "u_spread",
-          "label": "Spread",
-          "type": "float",
-          "min": 0.3,
-          "max": 2.0,
-          "default": 1.0,
-          "step": 0.05
-        },
-        {
-          "uniform": "u_contrast",
-          "label": "Contrast",
-          "type": "float",
-          "min": 0.0,
-          "max": 2.0,
-          "default": 0.3,
-          "step": 0.05
-        }
+        { "uniform": "u_contrast", "label": "Contrast", "type": "float", "min": 0.0, "max": 2.0, "default": 0.0, "step": 0.05 },
+        { "uniform": "u_mix", "label": "Mix", "type": "float", "min": 0.0, "max": 1.0, "default": 1.0, "step": 0.05 }
+      ]
+    },
+    {
+      "id": "spectrum_map",
+      "name": "Spectrum Map",
+      "category": "color",
+      "animated": false,
+      "passes": 1,
+      "centerParam": null,
+      "textures": [],
+      "generative": false,
+      "params": [
+        { "uniform": "u_hue", "label": "Hue", "type": "float", "min": 0.0, "max": 1.0, "default": 0.0, "step": 0.01 },
+        { "uniform": "u_spread", "label": "Spread", "type": "float", "min": 0.3, "max": 2.0, "default": 1.0, "step": 0.05 },
+        { "uniform": "u_contrast", "label": "Contrast", "type": "float", "min": 0.0, "max": 2.0, "default": 0.3, "step": 0.05 }
       ]
     },
     {

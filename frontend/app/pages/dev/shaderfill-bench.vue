@@ -284,7 +284,9 @@ function paramOverridesForIndex(i: number, count: number): Record<string, number
   const p = effectDef.params[0]!
   const key = p.uniform.startsWith('u_') ? p.uniform.slice(2) : p.uniform
   if (p.type === 'enum' && p.options?.length) return { [key]: p.options[i % p.options.length]!.value }
-  const lo = p.min ?? 0, hi = p.max ?? (p.default + 1)
+  // Sweeps a NUMERIC param only; colour/gradient params have no scalar range to walk.
+  if (p.type === 'color' || p.type === 'gradient') return {}
+  const lo = p.min ?? 0, hi = p.max ?? ((p.default as number) + 1)
   return { [key]: lo + (hi - lo) * (i / Math.max(1, count - 1)) }
 }
 

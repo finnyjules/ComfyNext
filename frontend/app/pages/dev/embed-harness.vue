@@ -155,7 +155,7 @@ onMounted(async () => {
     corrupt() {
       const p = config.defs[0]!.params.find(x => x.type === 'float')
       if (!p) throw new Error('harness: chosen effect has no float param to corrupt')
-      const bad = p.max ?? (p.default + 1)
+      const bad = p.max ?? ((p.default as number) + 1)
       for (const layer of config.cfg.effects) {
         layer.params = { ...layer.params, [p.uniform]: bad === p.default ? p.min ?? 0 : bad }
       }

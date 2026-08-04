@@ -13,9 +13,9 @@ import BindableRow from '~/components/vue-canvas/studio/BindableRow.vue'
 import PalettePicker from '~/components/vue-canvas/studio/PalettePicker.vue'
 import CanvasContextMenu from '~/components/vue-canvas/CanvasContextMenu.vue'
 import { assetUrl, fetchShaderFxCatalog } from '~/lib/shaderfx/catalog'
-import { resolveUniforms } from '~/lib/shaderfx/params'
+import { resolveValues, resolveUniforms } from '~/lib/shaderfx/params'
 import { shaderFx } from '~/lib/shaderfx/renderer'
-import type { EffectDef, ShaderFxCatalog } from '~/lib/shaderfx/types'
+import type { EffectDef, GradientStop, ParamValue, ShaderFxCatalog } from '~/lib/shaderfx/types'
 import { composePasses, type EffectTextureBundle } from '~/lib/shaderstudio/passes'
 import { migrateShaderConfig } from '~/lib/shaderstudio/migrate'
 import { ANIMATABLE, applyMotion } from '~/lib/shaderstudio/motion'
@@ -71,8 +71,11 @@ const activeEffect = ref(0)
 const activeEffectCfg = computed<StudioEffect>(() => config.value.effects[activeEffect.value] ?? config.value.effects[0]!)
 const effectDef = computed<EffectDef | null>(
   () => catalog.value?.effects.find(e => e.id === activeEffectCfg.value?.id) ?? null)
-const effectUniforms = computed(() =>
-  effectDef.value ? resolveUniforms(effectDef.value, activeEffectCfg.value?.params ?? {}) : {})
+// The inspector reads the resolved VALUES (a number, a hex string, or a stop
+// list) — not `resolveUniforms`, whose colour/gradient output is already expanded
+// into vec3s and indexed arrays for GL and has no control to bind to.
+const effectValues = computed(() =>
+  effectDef.value ? resolveValues(effectDef.value, activeEffectCfg.value?.params ?? {}) : {})
 /** Aside layer-stack label: the catalog def's display name, or 'Empty' if unpicked. */
 function effectLabel(e: StudioEffect): string {
   return catalog.value?.effects.find(d => d.id === e.id)?.name ?? 'Empty'
@@ -174,7 +177,7 @@ function texBundle(def: EffectDef | null, layer?: StudioEffect): EffectTextureBu
   // shape AND the glyph chars from THIS layer (not the active one) so a stacked or
   // non-active ASCII effect composites its own glyphs.
   const shape = layer?.params['u_shape'] ?? def.params.find(p => p.uniform === 'u_shape')?.default ?? 0
-  if (def.id === 'ascii_dither' && Math.round(shape) === 14) {
+  if (def.id === 'ascii_dither' && Math.round(Number(shape)) === 14) {
     sources['u_customGlyphs'] = buildCustomAtlas(layer?.customChars ?? '')
   }
   return { sources, uniforms }
@@ -353,11 +356,12 @@ function applyGradientStops(stops: { pos: number; color: string }[]) {
   config.value.gradientMap.stops = stops.map(s => ({ pos: s.pos, color: s.color }))
   config.value.gradientMap.enabled = true
 }
-const gradientMapRampCss = computed(() => {
-  const s = [...config.value.gradientMap.stops].sort((a, b) => a.pos - b.pos)
+function rampCss(stops: { pos: number; color: string }[]): string {
+  const s = [...stops].sort((a, b) => a.pos - b.pos)
   if (!s.length) return 'transparent'
   return `linear-gradient(to right, ${s.map(x => `${x.color} ${Math.round(x.pos * 100)}%`).join(', ')})`
-})
+}
+const gradientMapRampCss = computed(() => rampCss(config.value.gradientMap.stops))
 function pickAdjustPreset(name: string) { const p = ADJUST_PRESETS.find(x => x.name === name); if (p) { applyAdjustPreset(config.value.adjust, p); config.value.adjust.enabled = true } }
 
 // ── focus-point drag pad ────────────────────────────────────────────────────
@@ -583,7 +587,10 @@ onMounted(async () => {
 })
 onBeforeUnmount(() => { saveConfig(); stopPreview(); unregisterStudioParamBaker(props.nodeId) })
 
-function setParam(uniform: string, value: number) { const e = activeEffectCfg.value; if (e) e.params = { ...e.params, [uniform]: value } }
+function setParam(uniform: string, value: ParamValue) { const e = activeEffectCfg.value; if (e) e.params = { ...e.params, [uniform]: value } }
+/** Narrowing helpers for the template — `effectValues` is a ParamValue union. */
+function numValue(uniform: string): number { const v = effectValues.value[uniform]; return typeof v === 'number' ? v : 0 }
+function stopsValue(uniform: string): GradientStop[] { const v = effectValues.value[uniform]; return Array.isArray(v) ? v : [] }
 
 // ── effect stack (aside StudioLayerStack) ───────────────────────────────────
 function addEffect() {
@@ -689,21 +696,36 @@ function remapEffectTracks(kind: 'move' | 'insert' | 'remove', a: number, b?: nu
         <div v-for="p in effectDef?.params ?? []" :key="p.uniform">
           <label class="mb-0.5 flex justify-between text-[11px] text-white/60">
             <span>{{ p.label }}</span>
-            <span v-if="p.type !== 'enum'" class="text-white/40">{{ (effectUniforms[p.uniform] ?? 0).toFixed(2) }}</span>
+            <span v-if="p.type === 'float'" class="text-white/40">{{ numValue(p.uniform).toFixed(2) }}</span>
           </label>
           <select
             v-if="p.type === 'enum'"
             class="mb-2 w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-xs"
-            :value="effectUniforms[p.uniform]"
+            :value="effectValues[p.uniform]"
             @change="setParam(p.uniform, Number(($event.target as HTMLSelectElement).value))"
           >
             <option v-for="o in p.options" :key="o.value" :value="o.value">{{ o.label }}</option>
           </select>
+          <div v-else-if="p.type === 'color'" class="mb-2">
+            <StudioColor :model-value="String(effectValues[p.uniform] ?? '#000000')" @update:model-value="v => setParam(p.uniform, v)" />
+          </div>
+          <!-- Same editor as the post-processing Gradient Map section below: a ramp
+               preview plus the shared PalettePicker. The stop list it emits IS what
+               gets stored, so there is one representation, not a UI copy. -->
+          <div v-else-if="p.type === 'gradient'" class="mb-2">
+            <div class="mb-2 h-6 overflow-hidden rounded border border-white/10" :style="{ background: rampCss(stopsValue(p.uniform)) }" />
+            <PalettePicker
+              mode="stops"
+              :stop-count="stopsValue(p.uniform).length || 3"
+              :seed="stopsValue(p.uniform)[0]?.color ?? '#4f8ad9'"
+              @apply-stops="(v: GradientStop[]) => setParam(p.uniform, v.slice(0, p.maxStops ?? 8).map(s => ({ pos: s.pos, color: s.color })))"
+            />
+          </div>
           <input
             v-else type="range" v-studio-reset class="studio-range mb-2 w-full" :min="p.min" :max="p.max" :step="p.step"
-            :value="effectUniforms[p.uniform]" @input="setParam(p.uniform, Number(($event.target as HTMLInputElement).value))"
+            :value="effectValues[p.uniform]" @input="setParam(p.uniform, Number(($event.target as HTMLInputElement).value))"
           />
-          <div v-if="effectDef?.id === 'ascii_dither' && p.uniform === 'u_shape' && Math.round(effectUniforms[p.uniform] ?? 0) === 14" class="mb-2">
+          <div v-if="effectDef?.id === 'ascii_dither' && p.uniform === 'u_shape' && Math.round(numValue(p.uniform)) === 14" class="mb-2">
             <label class="mb-0.5 block text-[11px] text-white/40">Characters (sorted by density)</label>
             <input
               v-model="activeEffectCfg.customChars" type="text" spellcheck="false" placeholder=" .:-=+*#%@"

@@ -17,7 +17,8 @@ import { shaderFx, expandPasses, type Uniforms } from '~/lib/shaderfx/renderer'
 // ever runs. See kickCatalogFetch's doc below for how the self-heal retry still
 // works without this module ever importing the fetcher.
 import { getEffectSync, refetchShaderFxCatalog } from '~/lib/shaderfx/catalogStore'
-import type { EffectDef } from '~/lib/shaderfx/types'
+import type { EffectDef, ParamValue } from '~/lib/shaderfx/types'
+import { toUniforms } from '~/lib/shaderfx/params'
 import { fieldKey, quantizeTime, planFields, resolveEffectParams, inputKey, LIVE_FIELD_CEILING } from './descriptor'
 
 export interface FieldRequest {
@@ -529,9 +530,14 @@ export function resolveField(req: FieldRequest, token?: number): HTMLCanvasEleme
   const base = getInputTile(spec.input, w, h)
   const t = spec.speed === 0 ? 0 : tq * spec.speed
   // spec.params is already the full resolved set (defaults + valid overrides, unknown
-  // keys dropped) from `resolve()` above — just reapply the `u_` uniform prefix.
+  // keys dropped) from `resolve()` above — reapply the `u_` prefix and run it through
+  // the SAME `toUniforms` expansion the studio uses, so a colour becomes a vec3 and a
+  // gradient becomes its indexed arrays here exactly as it does there. A hand-rolled
+  // copy of that expansion is how the two paths would drift.
   const uniforms: Uniforms = { u_time: t, u_seed: 42, u_hasInput: 1 }
-  for (const [k, v] of Object.entries(spec.params)) uniforms[`u_${k}`] = v
+  const byUniform: Record<string, ParamValue> = {}
+  for (const [k, v] of Object.entries(spec.params)) byUniform[`u_${k}`] = v
+  Object.assign(uniforms, toUniforms(effect, byUniform))
 
   let rendered: HTMLCanvasElement
   try {

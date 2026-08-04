@@ -49,11 +49,40 @@ function dataUrl(file: string): string {
   return `data:image/png;base64,${fs.readFileSync(file).toString('base64')}`
 }
 
+interface GradientStop { pos: number; color: string }
+type ParamDefault = number | string | GradientStop[]
+
 interface ManifestEffect {
   id: string
   animated?: boolean
-  params: { uniform: string; default: number }[]
+  params: { uniform: string; type?: string; default: ParamDefault; maxStops?: number }[]
   textures: { uniform: string; file: string; extraUniforms?: Record<string, number> }[]
+}
+
+type UniformValue = number | [number, number, number]
+
+/** Mirrors parse_hex() in _shader_effects.py and hexVec3() in lib/shaderfx/params.ts. */
+function hexVec3(hex: string): [number, number, number] {
+  let h = hex.replace('#', '')
+  if (h.length === 3) h = h.split('').map(c => c + c).join('')
+  const n = parseInt(h, 16)
+  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255]
+}
+
+/** The same expansion `to_uniforms()` performs, so the harness feeds the browser
+ *  renderer exactly what the server golden was rendered from. */
+function paramUniforms(p: ManifestEffect['params'][number]): Record<string, UniformValue> {
+  if (p.type === 'color') return { [p.uniform]: hexVec3(p.default as string) }
+  if (p.type === 'gradient') {
+    const stops = [...(p.default as GradientStop[])].sort((a, b) => a.pos - b.pos).slice(0, p.maxStops ?? 8)
+    const out: Record<string, UniformValue> = { [`${p.uniform}Count`]: stops.length }
+    stops.forEach((s, i) => {
+      out[`${p.uniform}[${i}]`] = hexVec3(s.color)
+      out[`${p.uniform}Pos[${i}]`] = s.pos
+    })
+    return out
+  }
+  return { [p.uniform]: p.default as number }
 }
 
 const manifest = JSON.parse(fs.readFileSync(path.join(CATALOG, 'manifest.json'), 'utf-8'))
@@ -64,8 +93,8 @@ for (const eff of manifest.effects as ManifestEffect[]) {
       const goldenPath = path.join(GOLDEN, `${eff.id}_${size}.png`)
       expect(fs.existsSync(goldenPath), `missing golden ${goldenPath} — run generate_goldens.py`).toBe(true)
 
-      const uniforms: Record<string, number> = { u_time: GOLDEN_TIME, u_seed: GOLDEN_SEED, u_hasInput: 1 }
-      for (const p of eff.params) uniforms[p.uniform] = p.default
+      const uniforms: Record<string, UniformValue> = { u_time: GOLDEN_TIME, u_seed: GOLDEN_SEED, u_hasInput: 1 }
+      for (const p of eff.params) Object.assign(uniforms, paramUniforms(p))
       const textures: Record<string, string> = {}
       for (const t of eff.textures) {
         textures[t.uniform] = dataUrl(path.join(CATALOG, 'assets', t.file))

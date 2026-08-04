@@ -10,7 +10,7 @@ describe('shader config migration', () => {
     expect(out.effects[0]!.blend).toBe('normal')
     expect(out.effects[0]!.opacity).toBe(1)
     expect(out.effects[0]!.layerId).toMatch(/.+/)
-    expect(out.version).toBe(2)
+    expect(out.version).toBe(3)
     // Task 6 cutover: readers now use `effects[]`, so the legacy field is dropped.
     expect((out as any).effect).toBeUndefined()
   })
@@ -32,5 +32,49 @@ describe('shader config migration', () => {
     expect(out.motion.tracks[0]!.path).toBe('effects.0.params.u_size')
     // Non-effect paths are left alone.
     expect(out.motion.tracks[1]!.path).toBe('adjust.exposure')
+  })
+
+  // --- v3: gradient_map became a real (Photoshop) gradient map; the old cosine
+  // rainbow moved to spectrum_map. Pre-v3 layers must follow the rainbow.
+  it('moves a pre-v3 gradient_map layer to spectrum_map, keeping its params', () => {
+    const out = migrateShaderConfig({
+      version: 2,
+      effects: [{ id: 'gradient_map', params: { u_hue: 0.42, u_spread: 1.5 }, enabled: true, blend: 'normal', opacity: 1, layerId: 'a' }],
+    })
+    expect(out.effects[0]!.id).toBe('spectrum_map')
+    expect(out.effects[0]!.params).toEqual({ u_hue: 0.42, u_spread: 1.5 })
+    expect(out.version).toBe(3)
+  })
+  it('moves a pre-v3 gradient_map layer on bare defaults too', () => {
+    const out = migrateShaderConfig({
+      version: 2,
+      effects: [{ id: 'gradient_map', params: {}, enabled: true, blend: 'normal', opacity: 1, layerId: 'a' }],
+    })
+    expect(out.effects[0]!.id).toBe('spectrum_map')
+  })
+  // The gate that makes this migration idempotent. Without it, every NEW
+  // gradient_map saved on defaults (`params: {}`) would be turned into a rainbow
+  // on the next load — the two cases are indistinguishable by params alone.
+  it('leaves a v3 gradient_map on defaults alone', () => {
+    const out = migrateShaderConfig({
+      version: 3,
+      effects: [{ id: 'gradient_map', params: {}, enabled: true, blend: 'normal', opacity: 1, layerId: 'a' }],
+    })
+    expect(out.effects[0]!.id).toBe('gradient_map')
+  })
+  it('is idempotent — migrating twice does not re-migrate', () => {
+    const once = migrateShaderConfig({
+      version: 2,
+      effects: [{ id: 'gradient_map', params: {}, enabled: true, blend: 'normal', opacity: 1, layerId: 'a' }],
+    })
+    const twice = migrateShaderConfig(JSON.parse(JSON.stringify(once)))
+    expect(twice.effects[0]!.id).toBe('spectrum_map')
+  })
+  it('keeps a pre-v3 layer already carrying new-shape params as gradient_map', () => {
+    const out = migrateShaderConfig({
+      version: 2,
+      effects: [{ id: 'gradient_map', params: { u_mix: 0.5 }, enabled: true, blend: 'normal', opacity: 1, layerId: 'a' }],
+    })
+    expect(out.effects[0]!.id).toBe('gradient_map')
   })
 })

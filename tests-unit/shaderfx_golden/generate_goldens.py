@@ -14,7 +14,7 @@ sys.modules.setdefault("nodes", MagicMock())
 import numpy as np
 from PIL import Image
 
-from comfy_extras._shader_effects import load_catalog, render_effect, resolve_params
+from comfy_extras._shader_effects import load_catalog, render_effect, resolve_params, to_uniforms
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 GOLDEN_TIME = 0.7
@@ -50,7 +50,7 @@ def main() -> None:
         save_png(make_fixture(size), fixture_path)
         fixture = load_png(fixture_path)  # round-trip through 8-bit, same as the browser sees
         for eff in catalog.effects.values():
-            uniforms = resolve_params(eff, "{}")
+            uniforms = to_uniforms(eff, resolve_params(eff, "{}"))
             textures = {}
             for t in eff.textures:
                 from comfy_extras._shader_effects import ASSETS_DIR

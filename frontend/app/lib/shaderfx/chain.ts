@@ -1,8 +1,9 @@
 import { parseParams } from './params'
+import type { ParamValue } from './types'
 
 export interface ChainPass {
   effectId: string
-  params: Record<string, number>
+  params: Record<string, ParamValue>
   seed: number
 }
 

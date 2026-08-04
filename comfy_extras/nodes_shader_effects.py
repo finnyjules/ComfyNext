@@ -20,6 +20,7 @@ from comfy_extras._shader_effects import (
     load_catalog,
     render_effect,
     resolve_params,
+    to_uniforms,
 )
 
 
@@ -103,7 +104,7 @@ class ShaderEffect(IO.ComfyNode):
             raise ValueError(f"ShaderEffect: unknown effect {effect!r}")
         eff = catalog.effects[effect]
 
-        uniforms = resolve_params(eff, params)
+        uniforms = to_uniforms(eff, resolve_params(eff, params))
         textures, extra_uniforms = _load_effect_textures(eff)
         uniforms.update(extra_uniforms)
 

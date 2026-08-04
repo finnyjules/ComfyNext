@@ -3,6 +3,7 @@
 // stacks shader passes over an input image. Persisted at
 // node.data.properties.sailor_shaderStudio.
 
+import type { ParamValue } from '~/lib/shaderfx/types'
 import type { BlendKind } from '~/lib/studio/blend'
 
 export type EasingKind = 'linear' | 'pingpong' | 'easeinout'
@@ -26,7 +27,9 @@ export interface StudioEffect {
   /** shaderfx catalog effect id, or '' for none. */
   id: string
   /** non-default uniform overrides for the effect. */
-  params: Record<string, number>
+  /** Values, not uniforms: numbers for float/enum, hex for `color`, stops for
+   *  `gradient`. `resolveUniforms` expands these for GL at render time. */
+  params: Record<string, ParamValue>
   enabled: boolean
   /** ASCII effect, "Custom" shape: characters the user rasterizes into glyphs. */
   customChars?: string
@@ -126,7 +129,7 @@ export interface ShaderStudioConfig {
 
 export function defaultConfig(): ShaderStudioConfig {
   return {
-    version: 2,
+    version: 3,
     source: { kind: 'none' },
     resolution: 1536,
     effects: [{ layerId: newLayerId(), id: '', params: {}, enabled: true, customChars: '', blend: 'normal', opacity: 1 }],

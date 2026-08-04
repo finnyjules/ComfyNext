@@ -26,6 +26,14 @@ export function shaderAgentControls(cfg: ShaderStudioConfig, effectDef: EffectDe
   const active = cfg.effects[activeEffect]
   if (active?.enabled && effectDef) {
     for (const p of effectDef.params) {
+      // A `color` param is a scalar hex string — the same representation
+      // `duotone.ink` below already uses — so it tunes directly. A `gradient` is a
+      // stop LIST with no scalar form and stays picker-only, same call as the
+      // ramp colours below.
+      if (p.type === 'color') {
+        out.push({ key: `effects.${activeEffect}.params.${p.uniform}`, label: p.label, kind: 'color', default: p.default as string, group: 'Effect' })
+        continue
+      }
       if (p.type !== 'float') continue // enum uniforms are structural, not a tune
       out.push(slider(`effects.${activeEffect}.params.${p.uniform}`, p.label, p.min ?? 0, p.max ?? 1, p.step ?? 0.01, 'Effect'))
     }

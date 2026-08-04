@@ -3,7 +3,8 @@
 
 import { BLEND_LAYERS_GLSL } from '~/lib/studio/blend'
 
-export type Uniforms = Record<string, number>
+/** A 3-tuple value is uploaded as a vec3 (colour params); everything else as a float. */
+export type Uniforms = Record<string, number | [number, number, number]>
 
 export interface ShaderPass {
   /** Program cache key — use the effect id. */
@@ -351,7 +352,9 @@ export class ShaderFxRenderer {
       if (resLoc) gl.uniform2f(resLoc, width, height)
       for (const [name, value] of Object.entries(pass.uniforms)) {
         const loc = gl.getUniformLocation(prog, name)
-        if (loc) gl.uniform1f(loc, value)
+        if (!loc) continue
+        if (Array.isArray(value)) gl.uniform3f(loc, value[0], value[1], value[2])
+        else gl.uniform1f(loc, value)
       }
 
       gl.clearColor(0, 0, 0, 0)

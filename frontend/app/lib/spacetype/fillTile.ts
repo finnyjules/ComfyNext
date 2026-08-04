@@ -21,6 +21,8 @@ import { isGradient, isFill, sortedClampedStops, type Paint } from '~/lib/compos
 // pure numeric helper — importing it pulls no DOM, no model and no cycle
 // (`lib/vector/svg` imports nothing at all).
 import { gradientUnitAxis } from '~/lib/vector/svg'
+import { isParamHex } from '~/lib/shaderfx/params'
+import type { GradientStop, ParamValue } from '~/lib/shaderfx/types'
 
 export type FillType = 'solid' | 'gradient' | 'ombre' | 'grid' | 'noise' | 'checkerboard' | 'stripes' | 'qr' | 'shader'
 /** `a`/`b` drive the slot's fill (stripe); `textColor` is the solid colour for type on that row.
@@ -33,7 +35,9 @@ export interface Fill { type: FillType; a: string; b: string; textColor: string;
  *  because unbounded nesting hangs the renderer. */
 export interface ShaderSpec {
   effectId: string
-  params: Record<string, number>
+  /** Keyed WITHOUT the `u_` prefix. Values are numbers (float/enum), hex strings
+   *  (`color`) or stop lists (`gradient`) — see ParamValue in ~/lib/shaderfx/types. */
+  params: Record<string, ParamValue>
   anchor: 'object' | 'frame'
   speed: number
   input: Paint
@@ -136,10 +140,18 @@ export function normalizeFill(f: unknown, depth = 0): Fill {
  *  the top level. */
 export function normalizeShaderSpec(s: unknown, depth: number): ShaderSpec {
   const o = (s ?? {}) as Record<string, unknown>
-  const params: Record<string, number> = {}
+  // Accepts all three ParamValue shapes. A whitelist of `number` alone would drop
+  // colour and gradient params here at the persistence boundary — silently, so the
+  // fill would reload with the effect's default colours and look merely "wrong".
+  const params: Record<string, ParamValue> = {}
   if (o.params && typeof o.params === 'object') {
     for (const [k, v] of Object.entries(o.params as Record<string, unknown>)) {
       if (typeof v === 'number' && Number.isFinite(v)) params[k] = v
+      else if (typeof v === 'string' && isParamHex(v)) params[k] = v
+      else if (Array.isArray(v) && v.every(s => s && typeof s === 'object'
+        && typeof (s as GradientStop).color === 'string' && Number.isFinite((s as GradientStop).pos))) {
+        params[k] = v as GradientStop[]
+      }
     }
   }
   return {

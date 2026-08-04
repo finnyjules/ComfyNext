@@ -161,7 +161,24 @@ export function derivedShaderFillControls(effect: EffectDef, prefix: string): Co
   const out: ControlSpec[] = []
   for (const p of effect.params) {
     const key = `${prefix}.params.${unprefixedKey(p.uniform)}`
-    if (p.type === 'enum') {
+    if (p.type === 'color') {
+      // `ControlSpec`'s own `color` kind — a scalar hex string, the same
+      // representation `ShaderSpec.params` stores, so there is exactly one
+      // identity for this value across the schema and the renderer.
+      out.push({ key, label: p.label, kind: 'color', default: p.default as string, group: 'Effect' })
+    } else if (p.type === 'gradient') {
+      // DELIBERATELY OMITTED, second stated gap. A gradient's value is a stop
+      // LIST; every structured `ControlSpec` kind (`fillList`, `path`, `curve`)
+      // stores its value as a JSON *string* because `Params` is scalar. Bridging
+      // this one that way would give the same gradient two representations — an
+      // array in `ShaderSpec.params`, a string at `<prefix>.params.<key>` — which
+      // is precisely the two-identities-disagreeing bug documented above the
+      // `.p.`-vs-`.params.` note. Until `ControlSpec` grows a real stops kind, a
+      // gradient param is driven from its own surface's inspector only: it is
+      // absent from the agent vocabulary and from derived inspectors rather than
+      // present and lying. The effect still renders — with its default ramp.
+      continue
+    } else if (p.type === 'enum') {
       const options = p.options ?? []
       out.push({
         key,
@@ -179,7 +196,7 @@ export function derivedShaderFillControls(effect: EffectDef, prefix: string): Co
         min: p.min ?? 0,
         max: p.max ?? 1,
         step: p.step ?? 0.01,
-        default: p.default,
+        default: p.default as number,
         group: 'Effect',
         // No `animatable` field: sliders are animatable by default (ControlMeta's
         // doc in ~/lib/spacetype/effect.ts), which is the point — motion tracks
