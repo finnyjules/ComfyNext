@@ -191,10 +191,17 @@ is a prerequisite rather than a follow-on. It is also the highest-leverage item 
 retroactively unlocks `material.unlit`, `material.relief.invert` and
 `GlbObject.materialOverride` in 3D Studio, blocked for the same reason.
 
-### The colour gap
+### The colour gap — already closed
 
-`EffectParamDef` types are `float | enum`. Duotone needs two colours. The manifest schema
-gains a `color` type mapping to `ControlSpec`'s existing `color` kind.
+This was a prerequisite when the design was drafted and landed mid-session from a
+parallel line of work. `EffectParamDef` at HEAD supports `color` and `gradient` alongside
+`float | enum`, and `duotone` already declares `u_shadow`/`u_highlight` as `color` with
+hex defaults. That also removes the awkward mapping this spec originally called out: the
+catalog's duotone now stores hex exactly as the Compositor does, so phase 2's absorption
+is a straight key rename.
+
+No work remains here. Re-verify at HEAD before relying on it — this file's own history
+shows how fast that answer changes.
 
 ## Retirement and migration
 
@@ -230,10 +237,16 @@ Six checks, ordered by what they would catch:
    Controls are opt-*out*, so a thirteenth post effect silently grants itself agent
    access and motion targets; the snapshot surfaces that in review.
 
-3. **Per-studio integration assertions.** For each of Gradient, Texture and Shape: render
-   with every effect off, render again with one on, assert the pixel diff is non-zero. A
-   plausible-looking screenshot does not prove the post stage ran — a chain that silently
-   no-ops renders exactly like one that is off.
+3. **Per-studio integration assertions, measured against the input.** For each of
+   Gradient, Texture and Shape: render with every effect off, render again with one on,
+   assert the pixel diff is non-zero — a chain that silently no-ops renders exactly like
+   one that is off, and a plausible screenshot does not prove the stage ran.
+
+   But a non-zero diff is *not* sufficient, and this spec originally stopped there. A
+   broken effect that flattens the frame to a wash also produces a large diff. So each
+   assertion is paired with a check on the output's relationship to its **input**:
+   `corrcoef(source_luma, output_luma)` stays high for effects that preserve structure,
+   while a wash reads near zero. Run it at several resolutions, not just one.
 
 4. **Migration fidelity.** A Gradient doc and a Shape doc saved before the change must
    render identically after the grain rescale. The retirement rests on this test.
@@ -243,9 +256,25 @@ Six checks, ordered by what they would catch:
    transparent-WebM and Figma-matte export routes depend on it, and it is the property
    Gradient's coverage gate exists to protect.
 
-6. **Golden images per effect**, extending the existing shader-golden harness. Caveat for
-   whoever runs it: the `crystal_prism` and `oil_paint` goldens are already broken on
-   main, so a green baseline should not be expected there.
+6. **Golden images per effect**, extending the existing shader-golden harness — with the
+   understanding that this gate is weaker than it looks. `shaderfx-golden.spec.ts` is a
+   *parity* test: it proves the browser and server renderers agree, not that either is
+   right. Goldens are generated from the implementation, so a bug present at generation
+   time becomes the expected output, and a second renderer of the same formula inherits
+   the same mistake.
+
+   This is not hypothetical. On 2026-08-04 the `risograph` effect sized its
+   anti-aliasing band from `u_resolution`; below roughly 2px per cell — including the
+   128px golden itself — every ink plate settled at ~50% coverage and the effect rendered
+   as a flat two-colour wash with the image gone. Parity passed at 0.01/255 mean, 0.00%
+   outliers. It was caught by looking at the catalog thumbnail in the real UI.
+
+   So: sweep resolution, which the goldens only ever sample at 128 and 256, and look at
+   each effect in the running UI at the size users actually see it. Check 3's
+   correlation assertion is the automated half of this.
+
+   Caveat for whoever runs the suite: the `crystal_prism` and `oil_paint` goldens are
+   already broken on main, so a green baseline should not be expected there.
 
 Vitest counts are unreliable under load in this repo; quote the collected-file total
 alongside any before/after failure count.
@@ -254,8 +283,8 @@ alongside any before/after failure count.
 
 Four commits:
 
-1. The `switch` `ControlSpec` kind and the `color` param type. Independently useful;
-   unblocks everything else.
+1. The `switch` `ControlSpec` kind. Independently useful; unblocks everything else.
+   (The `color` param type was the other prerequisite and has already landed.)
 2. `lib/studio/post/` — manifest, derived controls, GL2 chain, the new `adjust` frag.
 3. Per-studio adoption, one studio per commit: Gradient, Texture, Shape.
 4. Retirements and their migrations.
@@ -295,3 +324,9 @@ The main risk is grain. Retiring four versions in favour of one means existing s
 documents could suddenly look different. The plan handles that by rescaling old saved
 values as they load, and there is a test whose whole job is to prove that a document
 saved yesterday still looks identical tomorrow.
+
+The second risk is trusting the tests. Sailor's existing effect tests compare two
+renderers against each other, which only proves they agree — and one of them recently
+agreed perfectly on a picture that was completely broken. So every effect here also gets
+checked against the picture that went *into* it, and gets looked at by eye in the real
+interface at the size people actually see it.
