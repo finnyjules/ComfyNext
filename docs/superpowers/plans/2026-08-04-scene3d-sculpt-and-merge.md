@@ -1158,12 +1158,15 @@ save, takes every modifier and material, animates, and exports.
 ## Task 6: Triangle grid, closest point, unsigned distance
 
 **Files:**
+- Create: `frontend/app/lib/scene3d/voxel/bounds.ts`
 - Create: `frontend/app/lib/scene3d/voxel/triGrid.ts`
 - Test: `frontend/tests/unit/scene3d-tri-grid.unit.spec.ts`
 
 **Interfaces:**
 - Consumes: `MeshData` (Task 1).
 - Produces:
+  - `boundsOf(data: MeshData): { lo: [number,number,number]; hi: [number,number,number] }`
+  - `cellFor(data: MeshData, resolution: number): number`
   - `interface TriGrid { cell: number; min: [number,number,number]; dims: [number,number,number]; bins: Int32Array[]; data: MeshData }`
   - `buildTriGrid(data: MeshData, cell: number): TriGrid`
   - `closestDistance(grid: TriGrid, x: number, y: number, z: number, maxRadius: number): number`
@@ -1215,7 +1218,47 @@ describe('triangle grid', () => {
 Run: `npm run test:unit -- scene3d-tri-grid`
 Expected: FAIL — module not found.
 
-- [ ] **Step 3: Implement the grid**
+- [ ] **Step 3: Implement the shared bounds helper**
+
+Every consumer in this module needs a mesh's bounding box, and three of them
+(`sdf.ts`, `voxel/index.ts`, `merge.ts`) would otherwise each carry their own
+copy of the same loop. One home for it:
+
+Create `frontend/app/lib/scene3d/voxel/bounds.ts`:
+
+```ts
+// The bounding box of a MeshData, and the cell size derived from it. Every
+// other file in this module needs one or both; keeping them here is what stops
+// the same six-line loop appearing in sdf.ts, index.ts and merge.ts.
+import type { MeshData } from '~/lib/scene3d/mesh'
+
+export function boundsOf(data: MeshData): {
+  lo: [number, number, number]
+  hi: [number, number, number]
+} {
+  const p = data.positions
+  const lo: [number, number, number] = [Infinity, Infinity, Infinity]
+  const hi: [number, number, number] = [-Infinity, -Infinity, -Infinity]
+  for (let i = 0; i < p.length; i++) {
+    const a = i % 3
+    const v = p[i]!
+    if (v < lo[a]!) lo[a] = v
+    if (v > hi[a]!) hi[a] = v
+  }
+  // An empty mesh collapses to a degenerate box rather than propagating
+  // Infinity into every lattice size downstream.
+  if (!Number.isFinite(lo[0])) return { lo: [0, 0, 0], hi: [0, 0, 0] }
+  return { lo, hi }
+}
+
+/** Cell size putting `resolution` cells along the mesh's longest axis. */
+export function cellFor(data: MeshData, resolution: number): number {
+  const { lo, hi } = boundsOf(data)
+  return Math.max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2], 1e-6) / resolution
+}
+```
+
+- [ ] **Step 4: Implement the grid**
 
 Create `frontend/app/lib/scene3d/voxel/triGrid.ts`:
 
@@ -1233,6 +1276,7 @@ Create `frontend/app/lib/scene3d/voxel/triGrid.ts`:
 // entries, and that many little JS arrays costs more in allocation and GC than
 // the whole distance query.
 import type { MeshData } from '~/lib/scene3d/mesh'
+import { boundsOf } from './bounds'
 
 export interface TriGrid {
   cell: number
@@ -1254,21 +1298,15 @@ export function buildTriGrid(data: MeshData, cell: number): TriGrid {
   const ix = data.indices
   const triCount = (ix.length / 3) | 0
 
-  let lo0 = Infinity, lo1 = Infinity, lo2 = Infinity
-  let hi0 = -Infinity, hi1 = -Infinity, hi2 = -Infinity
-  for (let i = 0; i < p.length; i += 3) {
-    const x = p[i]!, y = p[i + 1]!, z = p[i + 2]!
-    if (x < lo0) lo0 = x; if (x > hi0) hi0 = x
-    if (y < lo1) lo1 = y; if (y > hi1) hi1 = y
-    if (z < lo2) lo2 = z; if (z > hi2) hi2 = z
-  }
-  if (!Number.isFinite(lo0)) { lo0 = lo1 = lo2 = 0; hi0 = hi1 = hi2 = 0 }
+  // bLo/bHi, not lo/hi — those two names are taken below by the per-triangle
+  // cell range, which is reused across both binning passes.
+  const { lo: bLo, hi: bHi } = boundsOf(data)
 
-  const min: [number, number, number] = [lo0 - cell * PAD, lo1 - cell * PAD, lo2 - cell * PAD]
+  const min: [number, number, number] = [bLo[0] - cell * PAD, bLo[1] - cell * PAD, bLo[2] - cell * PAD]
   const dims: [number, number, number] = [
-    Math.max(1, Math.ceil((hi0 - lo0) / cell) + 2 * PAD + 1),
-    Math.max(1, Math.ceil((hi1 - lo1) / cell) + 2 * PAD + 1),
-    Math.max(1, Math.ceil((hi2 - lo2) / cell) + 2 * PAD + 1),
+    Math.max(1, Math.ceil((bHi[0] - bLo[0]) / cell) + 2 * PAD + 1),
+    Math.max(1, Math.ceil((bHi[1] - bLo[1]) / cell) + 2 * PAD + 1),
+    Math.max(1, Math.ceil((bHi[2] - bLo[2]) / cell) + 2 * PAD + 1),
   ]
   const cellCount = dims[0] * dims[1] * dims[2]
 
@@ -1651,6 +1689,7 @@ Create `frontend/app/lib/scene3d/voxel/sdf.ts`:
 // the slightly-degenerate triangles real meshes carry, and needs no per-node
 // ray casting.
 import { closestDistance, type TriGrid } from './triGrid'
+import { boundsOf } from './bounds'
 
 export interface Lattice {
   min: [number, number, number]
@@ -1695,22 +1734,8 @@ function latticeFrom(
   }
 }
 
-function boundsOf(grid: TriGrid): { lo: [number, number, number]; hi: [number, number, number] } {
-  const p = grid.data.positions
-  const lo: [number, number, number] = [Infinity, Infinity, Infinity]
-  const hi: [number, number, number] = [-Infinity, -Infinity, -Infinity]
-  for (let i = 0; i < p.length; i++) {
-    const a = i % 3
-    const v = p[i]!
-    if (v < lo[a]!) lo[a] = v
-    if (v > hi[a]!) hi[a] = v
-  }
-  if (!Number.isFinite(lo[0])) return { lo: [0, 0, 0], hi: [0, 0, 0] }
-  return { lo, hi }
-}
-
 export function latticeFor(grid: TriGrid, resolution: number): Lattice {
-  const { lo, hi } = boundsOf(grid)
+  const { lo, hi } = boundsOf(grid.data)
   return latticeFrom(lo, hi, resolution)
 }
 
@@ -1720,7 +1745,7 @@ export function unionLattice(grids: TriGrid[], resolution: number): Lattice {
   const lo: [number, number, number] = [Infinity, Infinity, Infinity]
   const hi: [number, number, number] = [-Infinity, -Infinity, -Infinity]
   for (const g of grids) {
-    const b = boundsOf(g)
+    const b = boundsOf(g.data)
     for (let a = 0; a < 3; a++) {
       if (b.lo[a]! < lo[a]!) lo[a] = b.lo[a]!
       if (b.hi[a]! > hi[a]!) hi[a] = b.hi[a]!
@@ -2084,24 +2109,13 @@ export { buildTriGrid, closestDistance, raycastGrid } from './triGrid'
 export type { Sdf, Lattice } from './sdf'
 export { buildSdf, latticeFor, unionLattice, OPEN_INTERIOR_RATIO } from './sdf'
 export { surfaceNets } from './surfaceNets'
+export { boundsOf, cellFor } from './bounds'
 
 import type { MeshData } from '~/lib/scene3d/mesh'
 import { buildTriGrid } from './triGrid'
 import { buildSdf, latticeFor } from './sdf'
 import { surfaceNets } from './surfaceNets'
-
-/** Cell size for a mesh at `resolution` cells along its longest axis. */
-export function cellFor(data: MeshData, resolution: number): number {
-  const lo = [Infinity, Infinity, Infinity]
-  const hi = [-Infinity, -Infinity, -Infinity]
-  for (let i = 0; i < data.positions.length; i++) {
-    const a = i % 3, v = data.positions[i]!
-    if (v < lo[a]!) lo[a] = v
-    if (v > hi[a]!) hi[a] = v
-  }
-  if (!Number.isFinite(lo[0])) return 1 / resolution
-  return Math.max(hi[0]! - lo[0]!, hi[1]! - lo[1]!, hi[2]! - lo[2]!, 1e-6) / resolution
-}
+import { cellFor } from './bounds'
 
 /** Rebuild `data` as a uniform-density mesh at `resolution` cells along its
  *  longest axis. `open: true` means the input is not a closed surface and the
@@ -2318,7 +2332,7 @@ export function solidify(data: MeshData, thickness: number): MeshData {
 Add to `frontend/app/lib/scene3d/toMesh.ts`:
 
 ```ts
-import { remesh, cellFor } from '~/lib/scene3d/voxel'
+import { remesh } from '~/lib/scene3d/voxel'
 import { solidify } from '~/lib/scene3d/voxel/solidify'
 import { decodeMesh, encodeMesh, MESH_VERTEX_CAP, type MeshData } from '~/lib/scene3d/mesh'
 
@@ -2390,8 +2404,6 @@ export async function solidifyObject(
 }
 ```
 
-Note `cellFor` is imported for use by Task 16; if your linter flags it as unused
-at this point, leave the import out and add it in Task 16 instead.
 
 - [ ] **Step 5: Add the Remesh control to the panel**
 
@@ -3717,6 +3729,9 @@ import { MESH_VERTEX_CAP, type MeshData } from '~/lib/scene3d/mesh'
 import { buildTriGrid } from './triGrid'
 import { buildSdf, unionLattice } from './sdf'
 import { surfaceNets } from './surfaceNets'
+// Measured against each input's OWN longest axis, so a small object in a big
+// merge still gets sampled finely enough to survive.
+import { cellFor } from './bounds'
 
 export type MergeOp = 'union' | 'subtract' | 'intersect'
 
@@ -3744,7 +3759,7 @@ export function mergeMeshes(
     // ONE lattice for every input, so the fields line up node-for-node and no
     // resampling step is needed between them. Per-input lattices would have to
     // be interpolated onto a common one, blurring every merge.
-    const grids = inputs.map((d) => buildTriGrid(d, cellOf(d, res)))
+    const grids = inputs.map((d) => buildTriGrid(d, cellFor(d, res)))
     const lattice = unionLattice(grids, res)
 
     const fields: Float32Array[] = []
@@ -3774,26 +3789,12 @@ export function mergeMeshes(
   }
 
   // Same last-resort floor as remeshObject: a coarse shape beats an error.
-  const grids = inputs.map((d) => buildTriGrid(d, cellOf(d, 8)))
+  const grids = inputs.map((d) => buildTriGrid(d, cellFor(d, 8)))
   const lattice = unionLattice(grids, 8)
   const { sdf } = buildSdf(grids[0]!, lattice)
   return { data: surfaceNets(sdf), open: false }
 }
 
-/** Cell size for one input at a given resolution, measured against ITS OWN
- *  longest axis so a small object in a big merge still gets sampled finely
- *  enough to survive. */
-function cellOf(data: MeshData, resolution: number): number {
-  const lo = [Infinity, Infinity, Infinity]
-  const hi = [-Infinity, -Infinity, -Infinity]
-  for (let i = 0; i < data.positions.length; i++) {
-    const a = i % 3, v = data.positions[i]!
-    if (v < lo[a]!) lo[a] = v
-    if (v > hi[a]!) hi[a] = v
-  }
-  if (!Number.isFinite(lo[0])) return 1 / resolution
-  return Math.max(hi[0]! - lo[0]!, hi[1]! - lo[1]!, hi[2]! - lo[2]!, 1e-6) / resolution
-}
 ```
 
 - [ ] **Step 4: Run the tests to verify they pass**
