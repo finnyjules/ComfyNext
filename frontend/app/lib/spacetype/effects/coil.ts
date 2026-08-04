@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
-import { resolveFontFamily, fontHasWeightAxis } from '~/data/google-fonts'
+import { resolveFontFamily, fontHasWeightAxis } from '~/lib/font/resolveFamily'
 import { shapedSin } from '../ribbonGeometry'
 import { parseFills, fillAtlasTexture, fillTextColor, fillAnchor, fillScreenVec, type Fill } from '../fills'
 import { defaultFillsFor } from '../palette'

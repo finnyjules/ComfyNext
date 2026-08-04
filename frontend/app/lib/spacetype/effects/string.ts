@@ -4,7 +4,7 @@ import { parsePath, forwardHandle, backHandle, type PathPoint } from '../stringP
 import { sampleString, buildStrip, stripSpeedFactor, type WorldPoint } from '../stringGeometry'
 import { loopTiles } from '../ribbonGeometry'
 import { makeTextTile, makeGradient1Tile, makeGradient2Tile, makeStripesTile, type Tile, type TextureMode } from '../stringTextures'
-import { resolveFontFamily, fontHasWeightAxis } from '~/data/google-fonts'
+import { resolveFontFamily, fontHasWeightAxis } from '~/lib/font/resolveFamily'
 
 /**
  * STRING — STG /string port. Text becomes flowing ribbons that follow hand-drawn

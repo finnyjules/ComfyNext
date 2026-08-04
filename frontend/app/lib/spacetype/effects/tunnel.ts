@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect, BuildEnv } from '../effect'
 import { parseFills, fillShaderTexture, fillTiling, fillTextColor, SRGB_TO_LINEAR_GLSL, fillAnchor, fillScreenVec } from '../fills'
 import { defaultFillsFor } from '../palette'
-import { resolveFontFamily } from '~/data/google-fonts'
+import { resolveFontFamily } from '~/lib/font/resolveFamily'
 import { buildTunnelRing } from '../tunnelGeometry'
 import { stripAlpha } from '~/lib/color/convert'
 

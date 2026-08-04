@@ -3,7 +3,7 @@ import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import { parseFills, fillPrimary, fillTextColor, fillAnchor, fillScreenVec } from '../fills'
 import { defaultFillsFor } from '../palette'
 import { stripAlpha } from '~/lib/color/convert'
-import { resolveFontFamily, fontHasWeightAxis } from '~/data/google-fonts'
+import { resolveFontFamily, fontHasWeightAxis } from '~/lib/font/resolveFamily'
 import { charDeform, TAU, type DeformParams } from '../elasticDeform'
 
 /**

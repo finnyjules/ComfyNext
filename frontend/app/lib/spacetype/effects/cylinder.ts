@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import { layoutChars } from '../charLayout'
-import { resolveFontFamily, fontHasWeightAxis } from '~/data/google-fonts'
+import { resolveFontFamily, fontHasWeightAxis } from '~/lib/font/resolveFamily'
 import { parseFills, fillShaderTexture, fillIsTextured, fillTiling, fillPrimary } from '../fills'
 import { fillIsShader } from '../fillTile'
 import { defaultFillsFor } from '../palette'

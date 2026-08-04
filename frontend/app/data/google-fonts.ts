@@ -11,6 +11,7 @@
  * Local render, no AI, no cost — same as the curated variable-font path.
  */
 import type { FontAxis } from './variable-fonts'
+import { setFontCatalog } from '~/lib/font/resolveFamily'
 
 export interface GoogleFont {
   family: string
@@ -36,7 +37,14 @@ export function loadGoogleCatalog(): Promise<GoogleFont[]> {
   if (!inflight) {
     inflight = fetch('/api/google-fonts')
       .then(r => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
-      .then((d: { fonts?: GoogleFont[] }) => { catalog = d.fonts ?? []; return catalog })
+      .then((d: { fonts?: GoogleFont[] }) => {
+        catalog = d.fonts ?? []
+        // Keep the network-free resolver (~/lib/font/resolveFamily, used by
+        // the Space Type render path) in sync with the same data, so
+        // resolveFontFamily/fontHasWeightAxis see a real catalog too.
+        setFontCatalog(catalog)
+        return catalog
+      })
       .catch(() => { inflight = null; return [] as GoogleFont[] })
   }
   return inflight
@@ -88,25 +96,13 @@ export function nearestWeight(f: GoogleFont, target = 400): number {
 // font as a family NAME; effects resolve it during a synchronous buildScene, so
 // these read whatever the catalog has loaded (the surface kicks off loadGoogleCatalog
 // on mount). Before the catalog resolves they degrade gracefully.
-import { VARIABLE_FONTS } from './variable-fonts'
-
-/** Resolve a stored font value to a CSS family name. Accepts a family name directly,
- *  or a legacy VARIABLE_FONTS id (e.g. 'inter') saved by older Space Type nodes. */
-export function resolveFontFamily(value: string): string {
-  if (!value) return 'Inter'
-  if (catalog?.some(f => f.family === value)) return value
-  const legacy = VARIABLE_FONTS.find(v => v.id === value)
-  if (legacy) return legacy.family
-  return value // assume it's already a family name (catalog may not be loaded yet)
-}
-
-/** Whether a family has a continuous Weight axis (variable). Unknown ⇒ true so we
- *  don't wrongly hide the weight slider / clamp the weight before the catalog loads. */
-export function fontHasWeightAxis(family: string): boolean {
-  const f = catalog?.find(g => g.family === family)
-  if (!f) return true
-  return f.axes.some(a => a.tag === 'wght') || f.weights.length > 1
-}
+//
+// The actual implementations live in ~/lib/font/resolveFamily — a network-free
+// module the Space Type render path (and the embed bundle it compiles into)
+// imports directly, so it never drags in this file's `fetch` or
+// ~/data/variable-fonts.ts's hardcoded fonts.googleapis.com URLs. Re-exported
+// here so this module's other ~20 importers are unaffected.
+export { resolveFontFamily, fontHasWeightAxis, setFontCatalog } from '~/lib/font/resolveFamily'
 
 /** CSS2 <link> href for a family, using the catalog entry when available. */
 export function googleFontCssUrl(family: string): string {

@@ -3,7 +3,7 @@ import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import type { Fill, FillType } from '../fills'
 import { parseFills, fillShaderTexture, fillTiling, SRGB_TO_LINEAR_GLSL } from '../fills'
 import { defaultFillsFor } from '../palette'
-import { resolveFontFamily } from '~/data/google-fonts'
+import { resolveFontFamily } from '~/lib/font/resolveFamily'
 import { buildSpiralGeometry } from '../spiralGeometry'
 import { stripAlpha } from '~/lib/color/convert'
 
