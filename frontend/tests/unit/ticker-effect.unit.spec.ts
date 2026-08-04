@@ -113,9 +113,9 @@ describe('ticker band stroke', () => {
     const stroke = root.children.filter(c => (c as THREE.Mesh).isMesh)
       .map(c => (c as THREE.Mesh).geometry as THREE.BufferGeometry)
       .find(g => !g.getAttribute('uv'))!     // the rail mesh is the one without UVs
-    tickerEffect.update(0, params)
+    tickerEffect.update(0, params, root)
     const at0 = Float32Array.from(stroke.getAttribute('position').array as Float32Array)
-    tickerEffect.update(0.25, params)
+    tickerEffect.update(0.25, params, root)
     expect(Array.from(stroke.getAttribute('position').array as Float32Array)).not.toEqual(Array.from(at0))
   })
 })
@@ -125,25 +125,25 @@ describe('ticker wave rebuild', () => {
     const { params, root } = build({ waveAmplitude: 2, waveSpeed: 0 })
     const geo = firstGeo(root)
     const before = Float32Array.from(geo.getAttribute('position').array as Float32Array)
-    tickerEffect.update(0.37, params)
+    tickerEffect.update(0.37, params, root)
     expect(Array.from(geo.getAttribute('position').array as Float32Array)).toEqual(Array.from(before))
   })
 
   it('re-bakes positions as a travelling wave advances', () => {
     const { params, root } = build({ waveAmplitude: 2, waveSpeed: 1 })
     const geo = firstGeo(root)
-    tickerEffect.update(0, params)
+    tickerEffect.update(0, params, root)
     const at0 = Float32Array.from(geo.getAttribute('position').array as Float32Array)
-    tickerEffect.update(0.25, params)
+    tickerEffect.update(0.25, params, root)
     expect(Array.from(geo.getAttribute('position').array as Float32Array)).not.toEqual(Array.from(at0))
   })
 
   it('re-bakes UVs alongside positions, so glyphs cannot breathe through a moving wave', () => {
     const { params, root } = build({ waveAmplitude: 2, waveSpeed: 1 })
     const geo = firstGeo(root)
-    tickerEffect.update(0, params)
+    tickerEffect.update(0, params, root)
     const uv0 = Float32Array.from(geo.getAttribute('uv').array as Float32Array)
-    tickerEffect.update(0.25, params)
+    tickerEffect.update(0.25, params, root)
     expect(Array.from(geo.getAttribute('uv').array as Float32Array)).not.toEqual(Array.from(uv0))
   })
 
@@ -152,11 +152,11 @@ describe('ticker wave rebuild', () => {
     // explicit settle the band would freeze at whatever phase was last written.
     const { params, root } = build({ waveAmplitude: 2, waveSpeed: 1 })
     const geo = firstGeo(root)
-    tickerEffect.update(0, params)
+    tickerEffect.update(0, params, root)
     const rest = Float32Array.from(geo.getAttribute('position').array as Float32Array)
-    tickerEffect.update(0.3, params)
+    tickerEffect.update(0.3, params, root)
     expect(Array.from(geo.getAttribute('position').array as Float32Array)).not.toEqual(Array.from(rest))
-    tickerEffect.update(0.3, { ...params, waveSpeed: 0 })
+    tickerEffect.update(0.3, { ...params, waveSpeed: 0 }, root)
     const settled = geo.getAttribute('position').array as Float32Array
     for (let i = 0; i < rest.length; i++) expect(settled[i]).toBeCloseTo(rest[i]!, 5)
   })
@@ -164,10 +164,10 @@ describe('ticker wave rebuild', () => {
   it('is pure in t01 — the same frame renders identically twice', () => {
     const { params, root } = build({ waveAmplitude: 2, waveSpeed: 1 })
     const geo = firstGeo(root)
-    tickerEffect.update(0.42, params)
+    tickerEffect.update(0.42, params, root)
     const a = Float32Array.from(geo.getAttribute('position').array as Float32Array)
-    tickerEffect.update(0.11, params)
-    tickerEffect.update(0.42, params)
+    tickerEffect.update(0.11, params, root)
+    tickerEffect.update(0.42, params, root)
     const b = geo.getAttribute('position').array as Float32Array
     for (let i = 0; i < a.length; i++) expect(b[i]).toBeCloseTo(a[i]!, 5)
   })
