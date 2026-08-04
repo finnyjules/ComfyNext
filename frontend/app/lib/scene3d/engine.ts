@@ -22,6 +22,8 @@ import { PRIMITIVE_PARAMS, paramValue, MODIFIER_SPECS, modifierValue } from '~/l
 import { pathToShapes } from './svgPath'
 import { buildLightWidget, setWidgetSelected, disposeWidget } from '~/lib/scene3d/lightWidgets'
 import { PostChain, postEnabled, DEFAULT_POST, type PostSettings } from '~/lib/spacetype/post'
+import { meshCacheGet, loadMesh } from '~/lib/scene3d/meshCache'
+import { geometryFromMeshData } from '~/lib/scene3d/mesh'
 
 /** Unit vector toward the sun for azimuth (deg, around Y) / elevation (deg above horizon). */
 export function sunDirection(azimuthDeg: number, elevationDeg: number): Vec3 {
@@ -173,6 +175,13 @@ export function geometryFor(
       if (!shapes.length) return extrudePlaceholderGeometry()
       return extrudeShapes(shapes, p('depth'), p('bevel'), p('bevelSegments'), p('curveSegments'))
     }
+    case 'mesh': {
+      // Cache miss → the same 0.3 placeholder the `text` primitive draws while
+      // its font loads. geometryForObject kicks off the decode and forces a
+      // re-sync, so the placeholder is transient.
+      const data = meshCacheGet(content?.meshKey)
+      return data ? geometryFromMeshData(data) : new THREE.BoxGeometry(0.3, 0.3, 0.3)
+    }
   }
 }
 
@@ -252,12 +261,13 @@ export function baseVertexCountFor(
 export function geoKeyFor(obj: PrimitiveObject, variant: 'smooth' | 'facet'): string {
   const vals = PRIMITIVE_PARAMS[obj.primitive].map((s) => paramValue(obj.primitive, obj.params, s.key))
   const mods = MODIFIER_SPECS.map((s) => modifierValue(obj.modifiers, s.key))
-  // An svgPath's `d` runs to several KB and this key is rebuilt on EVERY sync
-  // for EVERY object — stringifying it would put tens of KB of string work on
-  // the drag path. `pathKey` is the digest standing in for it.
+  // Neither an svgPath's `d` (several KB) nor a mesh's vertex buffer (tens of
+  // KB) may reach this key: it is rebuilt on EVERY sync for EVERY object, and
+  // stringifying either would put tens of KB of string work on the drag path.
+  // `pathKey`/`meshKey` are the digests standing in for them.
   const c = obj.content
   const content = c
-    ? JSON.stringify(c.pathKey ? { ...c, path: undefined } : c)
+    ? JSON.stringify({ ...c, ...(c.pathKey ? { path: undefined } : {}), ...(c.meshKey ? { mesh: undefined } : {}) })
     : ''
   return `${obj.primitive}|${vals.join(',')}|${mods.join(',')}|${variant}|${content}`
 }
@@ -393,6 +403,7 @@ export class SceneEngine {
   private envTarget: THREE.WebGLRenderTarget | null = null
   private glbTokens = new Map<string, number>() // id → load generation (drop stale async loads)
   private fontTokens = new Map<string, number>() // id → font-load generation, same drop-stale contract as glbTokens
+  private meshTokens = new Map<string, number>()
   private token = 0
   /** While true, syncObject skips geometry rebuilds for existing meshes (the
    *  stored geoKey is deliberately left stale, so the very next sync with the
@@ -576,6 +587,24 @@ export class SceneEngine {
           root.userData.geoKey = undefined
           this.syncObject(latest)
         }).catch(() => { /* keep the placeholder; Task 5 surfaces the error state */ })
+      }
+    }
+    if (obj.primitive === 'mesh') {
+      const encoded = obj.content?.mesh
+      const key = obj.content?.meshKey
+      if (encoded && key && !meshCacheGet(key)) {
+        const tok = ++this.token
+        this.meshTokens.set(obj.id, tok)
+        loadMesh(encoded, key).then(() => {
+          if (this.meshTokens.get(obj.id) !== tok) return // stale
+          const root = this.objectRoots.get(obj.id)
+          if (!root) return // removed while decoding
+          const latest = (root.userData.primObj as PrimitiveObject | undefined) ?? obj
+          root.userData.geoKey = undefined
+          this.syncObject(latest)
+        }).catch(() => { /* keep the placeholder; a corrupt buffer stays visible as one */ })
+      } else if (key) {
+        this.meshTokens.delete(obj.id)
       }
     }
     return buildGeometry(obj.primitive, obj.params, obj.modifiers, variant, obj.content, font)
