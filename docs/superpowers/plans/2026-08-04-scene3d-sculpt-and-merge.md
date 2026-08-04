@@ -2091,6 +2091,15 @@ export function surfaceNets(sdf: Sdf): MeshData {
 }
 ```
 
+**CORRECTION (found in review, 2026-08-04):** the quad blocks above lower-bound
+the two off-axis coordinates (`j > 0 && k > 0`) but must ALSO upper-bound them
+(`j < ny - 1 && k < nz - 1`, and the analogous pair per axis). Without it
+`cellAt` reads out of range; a typed-array OOB read returns `undefined`, and
+`undefined < 0` is `false`, so `quad()`'s `-1` sentinel does NOT catch it — the
+`undefined` coerces to `0` and emits degenerate triangles pinned to vertex 0.
+`PAD = 2` masks this for anything built through `buildSdf`, but `surfaceNets` is
+publicly exported. The shipped code has the guards; this block does not.
+
 **If the volume test in Step 1 comes back inverted or the mesh renders
 inside-out, the `flip` argument is the thing to check first** — the winding rule
 is the one part of this that cannot be read off the maths, and getting it
