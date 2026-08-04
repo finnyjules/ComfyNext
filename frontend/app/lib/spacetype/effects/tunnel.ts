@@ -130,7 +130,10 @@ interface State {
   halfH: number
   texInfos: TexInfo[]
 }
-let state: State | null = null
+// Per-scene state lives on the built root's userData (root.userData.tunnelState), NOT a module
+// var: the card preview and the headless frame source run two concurrent engines over this
+// singleton effect and the engine caches multiple roots per instance — a shared var would let
+// whichever built last own it, freezing every other surface. layoutTunnel takes it as a param.
 
 function viewRotation(view: string): { x: number; y: number } {
   if (view === 'Quarter') return { x: 0.42, y: 0.5 }
@@ -147,7 +150,6 @@ export const tunnelEffect: SpaceTypeEffect = {
 
   buildScene(three, params, _textTexture, env?: BuildEnv) {
     void _textTexture
-    state = null
     const root = new three.Group()
     const group = new three.Group()
     root.add(group)
@@ -212,40 +214,42 @@ export const tunnelEffect: SpaceTypeEffect = {
       layers.push({ mat, mesh })
     }
 
-    state = { three, group, layers, N, halfW, halfH, texInfos }
+    const st: State = { three, group, layers, N, halfW, halfH, texInfos }
+    root.userData.tunnelState = st
 
     const fonts = (document as Document & { fonts?: FontFaceSet }).fonts
     if (fonts && typeof fonts.load === 'function') {
       const family = resolveFontFamily(String(params.font))
       fonts.load(`40px "${family}"`).then(() => {
-        if (state && state.texInfos === texInfos) {
+        if (st.texInfos === texInfos) {
           const next = parseTexts(params).map(s => buildTextTexture(three, params, s))
-          for (let k = 0; k < state.layers.length; k++) {
+          for (let k = 0; k < st.layers.length; k++) {
             const ni = next[k % next.length]!
-            state.layers[k]!.mat.uniforms.uText!.value = ni.tex
-            state.layers[k]!.mat.uniforms.uTextRepeat!.value = repeatFor(ni.texW)
-            state.layers[k]!.mesh.userData.tex = ni.tex
+            st.layers[k]!.mat.uniforms.uText!.value = ni.tex
+            st.layers[k]!.mat.uniforms.uTextRepeat!.value = repeatFor(ni.texW)
+            st.layers[k]!.mesh.userData.tex = ni.tex
           }
           for (const ti of texInfos) ti.tex.dispose()
-          state.texInfos = next
+          st.texInfos = next
         }
       }).catch(() => {})
     }
 
-    layoutTunnel(0, params)
+    layoutTunnel(st, 0, params)
     return root
   },
 
-  update(t01, params) {
-    layoutTunnel(t01, params)
+  update(t01, params, root) {
+    const st = root?.userData?.tunnelState as State | undefined
+    if (!st) return
+    layoutTunnel(st, t01, params)
   },
 }
 
 /** Position every ring by its continuous depth slot D = (k − dir·t·speed) mod N. Tying the
  *  rotation/offset/fade to D (not the ring's identity) keeps the vortex + vanishing point stable in
  *  space while the rings fly through, so the loop is seamless. */
-function layoutTunnel(t01: number, params: Params): void {
-  if (!state) return
+function layoutTunnel(state: State, t01: number, params: Params): void {
   const { layers, N, group } = state
   const dir = String(params.direction ?? 'forward') === 'reverse' ? -1 : 1
   const speed = Math.max(0, Math.round(n(params, 'speed')))

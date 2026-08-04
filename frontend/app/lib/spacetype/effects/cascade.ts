@@ -79,7 +79,10 @@ interface CascadeState {
   ribbonSlotMeshes: (THREE.InstancedMesh | null)[]
 }
 
-let state: CascadeState | null = null
+// Per-scene state lives on the built root's userData (see update()), NOT a module var: the card
+// preview and the headless frame source run two concurrent engines over this singleton effect, and
+// the engine caches multiple roots per instance — a shared var would let whichever built last own
+// it, freezing every other surface. buildScene stashes it on root.userData.cascadeState.
 const _m = new THREE.Matrix4()
 const _scl = new THREE.Vector3()
 const _pos = new THREE.Vector3()
@@ -106,7 +109,6 @@ export const cascadeEffect: SpaceTypeEffect = {
   buildScene(three, params, _textTexture, env) {
     void _textTexture
     const root = new three.Group()
-    state = null
 
     const family = resolveFontFamily(String(params.font))
     const firstLine = String(params.text ?? '').split('\n')[0] ?? ''
@@ -212,16 +214,17 @@ export const cascadeEffect: SpaceTypeEffect = {
     for (const c of [...root.children]) subGroup.add(c)
     root.add(subGroup)
 
-    state = {
+    const cascadeState: CascadeState = {
       subGroup, nCols, rows, rowsPerCol, mirror, typeX, tracking, lineSpacePct, gridW,
       letters, splitRibbons, ribbons, ribSlotOf, ribLocalOf, ribRowsInSlot, ribbonSlotMeshes,
     }
-    cascadeEffect.update(0, params)
+    root.userData.cascadeState = cascadeState
+    cascadeEffect.update(0, params, root)
     return root
   },
 
-  update(t01, params) {
-    const s = state
+  update(t01, params, root) {
+    const s = root?.userData?.cascadeState as CascadeState | undefined
     if (!s) return
     const { rows, nCols, rowsPerCol, mirror, typeX, tracking, lineSpacePct, gridW } = s
 

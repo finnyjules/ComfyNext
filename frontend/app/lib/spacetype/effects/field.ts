@@ -51,7 +51,11 @@ const controls: ControlSpec[] = [
   { key: 'lightAngleY', label: 'Light angle Y', kind: 'slider', min: -1.5, max: 1.5, step: 0.05, default: 0.5, group: 'Shadow' },
 ]
 
-let waveUniforms: {
+// The wave uniform object lives on the built root's userData (root.userData.fieldWaveUniforms),
+// NOT a module var: the card preview and the headless frame source run two concurrent engines over
+// this singleton effect and the engine caches multiple roots per instance — a shared object would
+// let whichever built last own it, freezing every other surface. update() reads it back off root.
+interface FieldWaveUniforms {
   uAmpZ: { value: number }
   uAmpX: { value: number }
   uAmpY: { value: number }
@@ -61,7 +65,7 @@ let waveUniforms: {
   uXOffset: { value: number }
   uYOffset: { value: number }
   uWaveTime: { value: number }
-} | null = null
+}
 
 function n(p: Params, k: string): number { return Number(p[k]) }
 
@@ -74,17 +78,7 @@ function frontMaterial(
   textColor: THREE.Color,
   params: Params,
   numTexts: number,
-  waveUniforms: {
-    uAmpZ: { value: number }
-    uAmpX: { value: number }
-    uAmpY: { value: number }
-    uFreqX: { value: number }
-    uFreqY: { value: number }
-    uZOffset: { value: number }
-    uXOffset: { value: number }
-    uYOffset: { value: number }
-    uWaveTime: { value: number }
-  },
+  waveUniforms: FieldWaveUniforms,
 ): THREE.MeshLambertMaterial {
   const mat = new three.MeshLambertMaterial({ map, side: three.DoubleSide })
   const uFillTex = { value: fillTex }
@@ -163,7 +157,6 @@ export const fieldEffect: SpaceTypeEffect = {
 
   buildScene(three, params, textTexture) {
     const root = new three.Group()
-    waveUniforms = null
 
     const fills = parseFills(params.fills)
     const cols = Math.max(1, Math.floor(n(params, 'cols')))
@@ -185,7 +178,7 @@ export const fieldEffect: SpaceTypeEffect = {
     const uRepeat = Math.max(1, cols / 4)
 
     const PI = Math.PI
-    const wu = {
+    const wu: FieldWaveUniforms = {
       uAmpZ: { value: n(params, 'ampZ') },
       uAmpX: { value: n(params, 'ampX') },
       uAmpY: { value: n(params, 'ampY') },
@@ -196,7 +189,7 @@ export const fieldEffect: SpaceTypeEffect = {
       uYOffset: { value: String(params.yOffset) === 'on' ? PI : 0 },
       uWaveTime: { value: 0 },
     }
-    waveUniforms = wu
+    root.userData.fieldWaveUniforms = wu
 
     const numTexts = Math.max(1, Math.floor(Number(textTexture.userData?.numTexts ?? 1)))
     const fill = fills[0]!
@@ -238,7 +231,8 @@ export const fieldEffect: SpaceTypeEffect = {
     return root
   },
 
-  update(t01, params) {
+  update(t01, params, root) {
+    const waveUniforms = root?.userData?.fieldWaveUniforms as FieldWaveUniforms | undefined
     if (!waveUniforms) return
     const speed = n(params, 'speed')
     const PI = Math.PI

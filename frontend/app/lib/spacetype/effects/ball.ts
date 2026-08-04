@@ -45,8 +45,10 @@ const controls: ControlSpec[] = [
 ]
 
 interface BallState { spinGroup: THREE.Group; tiltGroup: THREE.Group }
-// Single active engine/surface instance (see the other effects).
-let state: BallState | null = null
+// Per-scene state lives on the built root's userData (see update()), NOT a module var: the card
+// preview and the headless frame source run two concurrent engines over this singleton effect, and
+// the engine caches multiple roots per instance — a shared var would let whichever built last own
+// it, freezing every other surface. buildScene stashes it on root.userData.ballState.
 
 function n(p: Params, k: string): number { return Number(p[k]) }
 
@@ -160,13 +162,13 @@ export const ballEffect: SpaceTypeEffect = {
       root.add(new three.AmbientLight(0xffffff, Math.max(0.15, 1 - n(params, 'shadeStrength') * 0.7)))
     }
 
-    state = { spinGroup, tiltGroup }
-    ballEffect.update(0, params)
+    root.userData.ballState = { spinGroup, tiltGroup } as BallState
+    ballEffect.update(0, params, root)
     return root
   },
 
-  update(t01, params) {
-    const s = state
+  update(t01, params, root) {
+    const s = root?.userData?.ballState as BallState | undefined
     if (!s) return
     s.tiltGroup.rotation.z = n(params, 'axisTilt')
     // One full revolution per loop at speed 1 → always seamless (integer speed stays seamless).

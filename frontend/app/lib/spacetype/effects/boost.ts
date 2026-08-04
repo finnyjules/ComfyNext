@@ -190,7 +190,11 @@ interface BoostLetter {
 interface BoostState {
   letters: BoostLetter[]
 }
-let state: BoostState | null = null
+// Per-scene state lives on the built root's userData (see update()), NOT a module var: the
+// card preview and the headless frame source run two concurrent engines over this singleton
+// effect, and the engine caches multiple roots per instance — a shared module var would let
+// whichever built last own it, freezing every other surface. buildScene stashes the letters on
+// root.userData.boostState.
 
 // Reused per-frame scratch for the oblique-lean matrix (T·R·Shear·S) so we don't
 // allocate a Matrix4 per letter per frame.
@@ -379,7 +383,6 @@ export const boostEffect: SpaceTypeEffect = {
   buildScene(three, params, _textTexture) {
     void _textTexture
     const root = new three.Group()
-    state = null
 
     const font = getBoostFont(String(params.font))
     const curveRes = Math.max(1, Math.floor(n(params, 'curveRes')))
@@ -567,13 +570,13 @@ export const boostEffect: SpaceTypeEffect = {
       root.add(new three.AmbientLight(0xffffff, 0.5))
     }
 
-    state = { letters }
-    boostEffect.update(0, params)
+    root.userData.boostState = { letters } satisfies BoostState
+    boostEffect.update(0, params, root)
     return root
   },
 
-  update(t01, params) {
-    const s = state
+  update(t01, params, root) {
+    const s = root?.userData?.boostState as BoostState | undefined
     if (!s) return
     const depth = n(params, 'depth')
     const mode = String(params.extrudeMode)

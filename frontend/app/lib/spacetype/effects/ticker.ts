@@ -47,10 +47,12 @@ const controls: ControlSpec[] = [
   { key: 'rotateZ', label: 'Scene rotate Z', kind: 'slider', min: -1.8, max: 1.8, step: 0.01, default: 0, group: 'Transform' },
 ]
 
-// v2 assumes a single active engine/surface instance: buildScene populates this
-// module-level array and update() reads it. Two concurrent engines would clash —
-// promote to instance state (e.g. root.userData.rows) if multi-surface is ever needed.
-let rows: {
+// Per-scene state lives on the built root's userData (see update()), NOT a module var: the
+// card preview and the headless frame source run two concurrent engines over this same
+// singleton effect, and the engine caches multiple roots per instance — a shared array would
+// let whichever built last own it, freezing every other surface (that was the multi-surface
+// clash this used to warn about). buildScene stashes `rows` on root.userData.tickerRows.
+interface TickerRow {
   tex: THREE.Texture
   uRepeatEffective: number
   dir: 1 | -1
@@ -63,7 +65,7 @@ let rows: {
   /** Phase last written into the buffers, so a wave that stops can be settled back to rest. */
   bakedPhase: number
   uFillScroll: { value: number }
-}[] = []
+}
 
 function n(p: Params, k: string): number { return Number(p[k]) }
 
@@ -163,7 +165,7 @@ export const tickerEffect: SpaceTypeEffect = {
 
   buildScene(three, params, textTexture) {
     const root = new three.Group()
-    rows = []
+    const rows: TickerRow[] = []
 
     const uRepeat = Number(textTexture.userData?.uRepeat ?? n(params, 'textRepeat')) || 1
     const count = Math.max(1, Math.floor(n(params, 'rowCount')))
@@ -258,10 +260,12 @@ export const tickerEffect: SpaceTypeEffect = {
       })
     }
 
+    root.userData.tickerRows = rows
     return root
   },
 
-  update(t01, params) {
+  update(t01, params, root) {
+    const rows = (root?.userData?.tickerRows as TickerRow[] | undefined) ?? []
     const speed = n(params, 'speed')
     const waveSpeed = n(params, 'waveSpeed')
     const strokeWidth = n(params, 'strokeWidth')

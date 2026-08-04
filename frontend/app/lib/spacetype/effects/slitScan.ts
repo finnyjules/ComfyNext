@@ -69,7 +69,10 @@ interface SlitState {
   numTexts: number       // text lines in the atlas (drives the melt rate + seamless wrap)
 }
 const MAXN = 16          // per-line metric arrays sent to the shader (lines beyond this don't cycle)
-let state: SlitState | null = null
+// Per-scene state lives on the built root's userData (see update()), NOT a module var: the card
+// preview and the headless frame source run two concurrent engines over this singleton effect,
+// and the engine caches multiple roots per instance — a shared module var would let whichever
+// built last own it, freezing every other surface. buildScene stashes it on root.userData.slitState.
 
 function n(p: Params, k: string): number { return Number(p[k]) }
 
@@ -234,13 +237,13 @@ export const slitScanEffect: SpaceTypeEffect = {
     mesh.userData.tex = tex
     root.add(mesh)
 
-    state = { material, numTexts }
-    slitScanEffect.update(0, params)
+    root.userData.slitState = { material, numTexts } satisfies SlitState
+    slitScanEffect.update(0, params, root)
     return root
   },
 
-  update(t01, params) {
-    const s = state
+  update(t01, params, root) {
+    const s = root?.userData?.slitState as SlitState | undefined
     if (!s) return
     const u = s.material.uniforms
     // 'static' freezes the animation and poses the warp by hand via the Pose slider (replaces loop time).

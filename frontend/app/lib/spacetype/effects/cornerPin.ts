@@ -92,7 +92,10 @@ interface Block {
   mat: THREE.ShaderMaterial
 }
 interface CornerPinState { blocks: Block[]; num: number; halfW: number; halfH: number }
-let state: CornerPinState | null = null
+// Per-scene state lives on the built root's userData (see update()), NOT a module var: the card
+// preview and the headless frame source run two concurrent engines over this singleton effect,
+// and the engine caches multiple roots per instance — a shared module var would let whichever
+// built last own it, freezing every other surface. buildScene stashes it on root.userData.cornerPinState.
 
 function n(p: Params, k: string): number { return Number(p[k]) }
 
@@ -355,13 +358,13 @@ export const cornerPinEffect: SpaceTypeEffect = {
       blocks.push(b)
     }
 
-    state = { blocks, num, halfW, halfH }
-    cornerPinEffect.update(0, params)
+    root.userData.cornerPinState = { blocks, num, halfW, halfH } satisfies CornerPinState
+    cornerPinEffect.update(0, params, root)
     return root
   },
 
-  update(t01, params) {
-    const s = state
+  update(t01, params, root) {
+    const s = root?.userData?.cornerPinState as CornerPinState | undefined
     if (!s) return
     const { blocks, num: N, halfW, halfH } = s
     const band = (2 * halfH) / N                       // rest height of one band

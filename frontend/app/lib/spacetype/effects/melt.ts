@@ -47,8 +47,12 @@ const controls: ControlSpec[] = [
 
 function n(p: Params, k: string): number { return Number(p[k]) }
 
-let uTime: { value: number } | null = null
-let speedState = 1
+// Per-scene state lives on the built root's userData (see update()), NOT module vars: the card
+// preview and the headless frame source run two concurrent engines over this singleton effect,
+// and the engine caches multiple roots per instance — shared module vars would let whichever
+// built last own them, freezing every other surface. `uTime` is the shader uniform ref and
+// `speed` the (read-only per frame) loop rate; both are wrapped in one object mutated by update.
+interface MeltState { uTime: { value: number }; speed: number }
 
 export const meltEffect: SpaceTypeEffect = {
   id: 'melt',
@@ -57,7 +61,6 @@ export const meltEffect: SpaceTypeEffect = {
 
   buildScene(three, params, textTexture) {
     const root = new three.Group()
-    uTime = null
 
     // CLAMP the word texture (it ships as RepeatWrapping for tiling effects). Without this, the
     // plane's right edge (u→1) wraps to the word's left edge → a ghost vertical line.
@@ -90,8 +93,7 @@ export const meltEffect: SpaceTypeEffect = {
     const uGeo = { value: String(params.waveStyle) === 'geometric' ? 1 : 0 }
     const uSteps = { value: Math.max(2, n(params, 'steps')) }
     const uT = { value: 0 }
-    uTime = uT
-    speedState = Math.max(0, Math.round(n(params, 'speed')))
+    const speed = Math.max(0, Math.round(n(params, 'speed')))
 
     const mat = new three.MeshBasicMaterial({ map: textTexture, transparent: true, depthWrite: false, side: three.DoubleSide })
     mat.onBeforeCompile = (shader) => {
@@ -179,13 +181,15 @@ export const meltEffect: SpaceTypeEffect = {
     mesh.userData.tex = textTexture
     root.add(mesh)
 
-    meltEffect.update(0, params)
+    root.userData.meltState = { uTime: uT, speed } satisfies MeltState
+    meltEffect.update(0, params, root)
     return root
   },
 
-  update(t01) {
-    if (!uTime) return
+  update(t01, _params, root) {
+    const state = root?.userData?.meltState as MeltState | undefined
+    if (!state) return
     // Seamless loop: integer wave cycles per loop.
-    uTime.value = t01 * Math.PI * 2 * speedState
+    state.uTime.value = t01 * Math.PI * 2 * state.speed
   },
 }

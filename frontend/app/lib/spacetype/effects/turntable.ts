@@ -43,7 +43,10 @@ const controls: ControlSpec[] = [
 ]
 
 interface TurntableState { materials: THREE.ShaderMaterial[] }
-let state: TurntableState | null = null
+// Per-scene state lives on the built root's userData (see update()), NOT a module var: the card
+// preview and the headless frame source run two concurrent engines over this singleton effect, and
+// the engine caches multiple roots per instance — a shared var would let whichever built last own
+// it, freezing every other surface. buildScene stashes it on root.userData.turntableState.
 
 function n(p: Params, k: string): number { return Number(p[k]) }
 
@@ -132,13 +135,13 @@ export const turntableEffect: SpaceTypeEffect = {
       materials.push(material)
     }
 
-    state = { materials }
-    turntableEffect.update(0, params)
+    root.userData.turntableState = { materials } as TurntableState
+    turntableEffect.update(0, params, root)
     return root
   },
 
-  update(t01, params) {
-    const s = state
+  update(t01, params, root) {
+    const s = root?.userData?.turntableState as TurntableState | undefined
     if (!s) return
     const speed = Math.max(0, n(params, 'speed'))
     const gradient = n(params, 'ttGradient')

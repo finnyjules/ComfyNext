@@ -107,7 +107,10 @@ function measureGlyph(canvas: HTMLCanvasElement | undefined, planeW: number, pla
   }
 }
 
-let state: EchoState | null = null
+// Per-scene state lives on the built root's userData (see update()), NOT a module var: the card
+// preview and the headless frame source run two concurrent engines over this singleton effect, and
+// the engine caches multiple roots per instance — a shared var would let whichever built last own
+// it, freezing every other surface. buildScene stashes it on root.userData.echoState.
 
 /** Alpha-only ink material: glyph alpha from the texture, RGB from uColor, and a
  *  fill↔outline blend (uStroke) using the screen-space derivative of the alpha. */
@@ -144,7 +147,6 @@ export const echoEffect: SpaceTypeEffect = {
 
   buildScene(three, params, textTexture) {
     const root = new three.Group()
-    state = null
 
     // The shared texture ships RepeatWrapping (for tiling effects); clamp so the
     // plane edges don't wrap the glyph.
@@ -181,13 +183,13 @@ export const echoEffect: SpaceTypeEffect = {
       copies.push({ group: grp, card, text, uColor: ink.uColor, uOpacity: ink.uOpacity, uStroke: ink.uStroke, cardMat })
     }
 
-    state = { copies, glyphW, glyphH, glyphCX, glyphCY }
-    echoEffect.update(0, params)
+    root.userData.echoState = { copies, glyphW, glyphH, glyphCX, glyphCY } as EchoState
+    echoEffect.update(0, params, root)
     return root
   },
 
-  update(t01, params) {
-    const s = state
+  update(t01, params, root) {
+    const s = root?.userData?.echoState as EchoState | undefined
     if (!s) return
     const { copies, glyphW, glyphH, glyphCX, glyphCY } = s
     const count = copies.length - 1

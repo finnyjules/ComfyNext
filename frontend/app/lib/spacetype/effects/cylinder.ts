@@ -93,12 +93,13 @@ function ringSpacingOf(params: Params): number {
   return CHAR_SIZE * Math.max(0.1, Number(params.ringSpacing ?? 1.6))
 }
 
-// v2 assumes a single active engine/surface instance: buildScene populates this
-// module-level array and update() reads it. Two concurrent engines would clash —
-// promote to instance state (e.g. root.userData.glyphs) if multi-surface is ever needed.
+// Per-scene state lives on the built root's userData (see update()), NOT a module var: the
+// card preview and the headless frame source run two concurrent engines over this singleton
+// effect, and the engine caches multiple roots per instance — a shared array would freeze
+// every surface that didn't build last. buildScene stashes `glyphs` on root.userData.cylinderGlyphs.
 // nGlyphs is PER glyph (= its ring's glyph count) so rings with different texts (and thus
 // different lengths) each get the right even-angular spread + wave phase.
-let glyphs: { mesh: THREE.Mesh; a0: number; ringY: number; ring: number; gi: number; nGlyphs: number }[] = []
+interface CylinderGlyph { mesh: THREE.Mesh; a0: number; ringY: number; ring: number; gi: number; nGlyphs: number }
 
 // Reused per-frame so update() doesn't allocate per glyph per frame.
 const _qFace = new THREE.Quaternion()
@@ -132,7 +133,7 @@ export const cylinderEffect: SpaceTypeEffect = {
   buildScene(three, params, _textTexture, env) {
     void _textTexture
     const root = new three.Group()
-    glyphs = []
+    const glyphs: CylinderGlyph[] = []
 
     // Static (non-variable) families don't have a continuous weight axis — pin to 400
     // so the canvas doesn't faux-bold a single-weight font.
@@ -293,10 +294,12 @@ export const cylinderEffect: SpaceTypeEffect = {
       root.add(catcher)
     }
 
+    root.userData.cylinderGlyphs = glyphs
     return root
   },
 
-  update(t01, params) {
+  update(t01, params, root) {
+    const glyphs = (root?.userData?.cylinderGlyphs as CylinderGlyph[] | undefined) ?? []
     const waveCount = Math.max(1, n(params, 'waveCount'))
     const R = n(params, 'radius')
     const AL = n(params, 'waveLatitude')

@@ -39,10 +39,11 @@ const controls: ControlSpec[] = [
   { key: 'lightAngleY', label: 'Light angle Y', kind: 'slider', min: -1.5, max: 1.5, step: 0.05, default: 0.5, group: 'Shadow' },
 ]
 
-// v2 assumes a single active engine/surface instance: buildScene populates this
-// module-level array and update() reads it. Two concurrent engines would clash —
-// promote to instance state (e.g. root.userData.stripes) if multi-surface is ever needed.
-let stripes: { tex: THREE.Texture; uRepeat: number; dir: 1 | -1; group: THREE.Group; uFillScroll: { value: number } }[] = []
+// Per-scene state lives on the built root's userData (see update()), NOT a module var: the
+// card preview and the headless frame source run two concurrent engines over this singleton
+// effect, and the engine caches multiple roots per instance — a shared array would freeze
+// every surface that didn't build last. buildScene stashes `stripes` on root.userData.stripeRows.
+interface StripeRow { tex: THREE.Texture; uRepeat: number; dir: 1 | -1; group: THREE.Group; uFillScroll: { value: number } }
 
 function n(p: Params, k: string): number { return Number(p[k]) }
 
@@ -109,7 +110,7 @@ export const stripesEffect: SpaceTypeEffect = {
 
   buildScene(three, params, textTexture) {
     const root = new three.Group()
-    stripes = []
+    const stripes: StripeRow[] = []
 
     const uRepeat = Number(textTexture.userData?.uRepeat ?? n(params, 'textRepeat')) || 1
     const count = Math.max(1, Math.floor(n(params, 'stripeCount')))
@@ -216,10 +217,12 @@ export const stripesEffect: SpaceTypeEffect = {
       root.add(catcher)
     }
 
+    root.userData.stripeRows = stripes
     return root
   },
 
-  update(t01, params) {
+  update(t01, params, root) {
+    const stripes = (root?.userData?.stripeRows as StripeRow[] | undefined) ?? []
     const speed = n(params, 'speed')
     for (const s of stripes) {
       // Text scrolls along the band; integer speed keeps it seamless.

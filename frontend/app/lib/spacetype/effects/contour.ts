@@ -114,6 +114,11 @@ const OFFSET_WORLD = 6.0  // world units the inner-width/height offset maps to
 interface Edge { mat: THREE.ShaderMaterial }
 interface Frame { group: THREE.Group; edges: Edge[] }
 interface TexInfo { tex: THREE.CanvasTexture; texW: number }
+// Per-scene state lives on the built root's userData (see update()), NOT a module var: the
+// card preview and the headless frame source run two concurrent engines over this singleton
+// effect, and the engine caches multiple roots per instance — a shared object would freeze
+// every surface that didn't build last. buildScene stashes `state` on root.userData.contourState
+// and layout() takes it as a parameter (both buildScene and update pass it in).
 interface State {
   three: typeof THREE
   root: THREE.Group
@@ -121,7 +126,6 @@ interface State {
   N: number
   texInfos: TexInfo[]
 }
-let state: State | null = null
 
 function viewRotation(view: string): { x: number; y: number } {
   if (view === 'Quarter') return { x: 0.42, y: 0.5 }
@@ -138,7 +142,6 @@ export const contourEffect: SpaceTypeEffect = {
 
   buildScene(three, params, _textTexture, env?: BuildEnv) {
     void _textTexture
-    state = null
     const root = new three.Group()
     const stack = new three.Group()
     root.add(stack)
@@ -213,13 +216,14 @@ export const contourEffect: SpaceTypeEffect = {
       frames.push({ group, edges })
     }
 
-    state = { three, root, frames, N, texInfos }
+    const state: State = { three, root, frames, N, texInfos }
+    root.userData.contourState = state
 
     const fonts = (document as Document & { fonts?: FontFaceSet }).fonts
     if (fonts && typeof fonts.load === 'function') {
       const family = resolveFontFamily(String(params.font))
       fonts.load(`40px "${family}"`).then(() => {
-        if (state && state.texInfos === texInfos) {
+        if (state.texInfos === texInfos) {
           const next = parseTexts(params).map(s => buildTextTexture(three, params, s))
           state.frames.forEach((f, k) => {
             const ni = next[k % next.length]!
@@ -231,20 +235,21 @@ export const contourEffect: SpaceTypeEffect = {
       }).catch(() => {})
     }
 
-    layout(0, params)
+    layout(0, params, state)
     return root
   },
 
-  update(t01, params) {
-    layout(t01, params)
+  update(t01, params, root) {
+    const state = root?.userData?.contourState as State | undefined
+    if (!state) return
+    layout(t01, params, state)
   },
 }
 
 /** Fly the nested frames inward (depth slot D = (k − dir·t·speed) mod N) AND scroll the text along
  *  every edge. Rotation / offset / fade are tied to D (not frame identity) so the vortex + vanishing
  *  point stay fixed in space as frames fly through → seamless loop. */
-function layout(t01: number, params: Params): void {
-  if (!state) return
+function layout(t01: number, params: Params, state: State): void {
   const { frames, N, root } = state
   const dir = String(params.direction ?? 'forward') === 'reverse' ? -1 : 1
   const speed = Math.max(0, Math.round(n(params, 'speed')))

@@ -180,6 +180,10 @@ function buildTextTexture(three: typeof THREE, p: Params): { tex: THREE.CanvasTe
   return { tex: t, texW: W }
 }
 
+// Per-scene state lives on the built root's userData (see update()), NOT a module var: the
+// card preview and the headless frame source run two concurrent engines over this singleton
+// effect, and the engine caches multiple roots per instance — a shared object would freeze
+// every surface that didn't build last. buildScene stashes `state` on root.userData.spiralState.
 interface State {
   three: typeof THREE
   textTex: THREE.CanvasTexture
@@ -187,7 +191,6 @@ interface State {
   spin: THREE.Group       // inner group we rotate (keeps engine's scene tilt independent)
   front: THREE.ShaderMaterial
 }
-let state: State | null = null
 
 export const spiralEffect: SpaceTypeEffect = {
   id: 'spiral',
@@ -196,7 +199,6 @@ export const spiralEffect: SpaceTypeEffect = {
 
   buildScene(three, params, _textTexture) {
     void _textTexture
-    state = null
     const root = new three.Group()
     const spin = new three.Group()
     root.add(spin)
@@ -272,7 +274,8 @@ export const spiralEffect: SpaceTypeEffect = {
     root.scale.setScalar(norm)
     root.position.set(-center.x * norm, -center.y * norm, -center.z * norm)
 
-    state = { three, textTex, root, spin, front: frontMat }
+    const state: State = { three, textTex, root, spin, front: frontMat }
+    root.userData.spiralState = state
     root.userData.tex = textTex
     root.userData.tex2 = front.tex
     root.userData.tex3 = back.tex
@@ -281,7 +284,7 @@ export const spiralEffect: SpaceTypeEffect = {
     if (fonts && typeof fonts.load === 'function') {
       const family = resolveFontFamily(String(params.font))
       fonts.load(`40px "${family}"`).then(() => {
-        if (state && state.textTex === textTex) {
+        if (state.textTex === textTex) {
           const next = buildTextTexture(three, params)
           state.front.uniforms.uText!.value = next.tex
           textTex.dispose()
@@ -292,7 +295,8 @@ export const spiralEffect: SpaceTypeEffect = {
     return root
   },
 
-  update(t01, params) {
+  update(t01, params, root) {
+    const state = root?.userData?.spiralState as State | undefined
     if (!state) return
     // Rigid spin around the column axis. Whole turns/loop → the end orientation equals the start
     // (perfectly seamless). Because the band descends, spinning reads as a vertical barber-pole flow.

@@ -48,8 +48,11 @@ function s(p: Params, k: string): string { return String(p[k]) }
 // World half-extents the engine's camera frames (engine.ts ORTHO_HALF_H = tan(22.5°)·14).
 const H0 = Math.tan((45 / 2) * Math.PI / 180) * 14
 
+// Per-scene state lives on the built root's userData (see update()), NOT a module var: the
+// card preview and the headless frame source run two concurrent engines over this singleton
+// effect, and the engine caches multiple roots per instance — a shared array would freeze
+// every surface that didn't build last. buildScene stashes `entries` on root.userData.
 interface StripEntry { tex: THREE.Texture; stripIndex: number }
-let entries: StripEntry[] = []
 
 function textLines(p: Params): string[] {
   const ls = s(p, 'text').split('\n').map(t => t.trim()).filter(Boolean).map(t => t.toUpperCase())
@@ -76,7 +79,7 @@ export const stringEffect: SpaceTypeEffect = {
 
   buildScene(three, params, _textTexture, env?: BuildEnv) {
     void _textTexture
-    entries = []
+    const entries: StripEntry[] = []
     const root = new three.Group()
 
     const aspect = env ? env.width / env.height : 16 / 9
@@ -138,10 +141,12 @@ export const stringEffect: SpaceTypeEffect = {
       }
     })
 
+    root.userData.stringEntries = entries
     return root
   },
 
-  update(t01, params) {
+  update(t01, params, root) {
+    const entries = (root?.userData?.stringEntries as StripEntry[] | undefined) ?? []
     const speed = n(params, 'speed')
     const vary = n(params, 'speedVary')
     for (const e of entries) {

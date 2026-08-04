@@ -43,10 +43,11 @@ const controls: ControlSpec[] = [
   { key: 'lightAngleY', label: 'Light angle Y', kind: 'slider', min: -1.5, max: 1.5, step: 0.05, default: 0.5, group: 'Shadow' },
 ]
 
-// v2 assumes a single active engine/surface instance: buildScene populates this
-// module-level array and update() reads it. Two concurrent engines would clash —
-// promote to instance state (e.g. root.userData.ribbons) if multi-surface is ever needed.
-let ribbons: { tex: THREE.Texture; uRepeat: number; dir: 1 | -1; group: THREE.Group; uFillScroll: { value: number } }[] = []
+// Per-scene state lives on the built root's userData (see update()), NOT a module var: the
+// card preview and the headless frame source run two concurrent engines over this singleton
+// effect, and the engine caches multiple roots per instance — a shared array would freeze
+// every surface that didn't build last. buildScene stashes `ribbons` on root.userData.ribbonRows.
+interface RibbonRow { tex: THREE.Texture; uRepeat: number; dir: 1 | -1; group: THREE.Group; uFillScroll: { value: number } }
 
 function n(p: Params, k: string): number { return Number(p[k]) }
 
@@ -108,7 +109,7 @@ export const ribbonEffect: SpaceTypeEffect = {
 
   buildScene(three, params, textTexture) {
     const root = new three.Group()
-    ribbons = []
+    const ribbons: RibbonRow[] = []
 
     const uRepeat = Number(textTexture.userData?.uRepeat ?? n(params, 'textRepeat')) || 1
     const count = Math.max(1, Math.floor(n(params, 'ribbonCount')))
@@ -211,10 +212,12 @@ export const ribbonEffect: SpaceTypeEffect = {
       root.add(catcher)
     }
 
+    root.userData.ribbonRows = ribbons
     return root
   },
 
-  update(t01, params) {
+  update(t01, params, root) {
+    const ribbons = (root?.userData?.ribbonRows as RibbonRow[] | undefined) ?? []
     const speed = n(params, 'speed')
     for (const r of ribbons) {
       // Text scrolls along the ribbon; integer speed keeps it seamless.

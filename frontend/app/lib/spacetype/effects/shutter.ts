@@ -78,7 +78,10 @@ const controls: ControlSpec[] = [
 ]
 
 interface ShutterState { materials: THREE.ShaderMaterial[]; bg: THREE.MeshBasicMaterial }
-let state: ShutterState | null = null
+// Per-scene state lives on the built root's userData (see update()), NOT a module var: the card
+// preview and the headless frame source run two concurrent engines over this singleton effect, and
+// the engine caches multiple roots per instance — a shared var would let whichever built last own
+// it, freezing every other surface. buildScene stashes it on root.userData.shutterState.
 
 function n(p: Params, k: string): number { return Number(p[k]) }
 const clamp01 = (x: number): number => (x < 0 ? 0 : x > 1 ? 1 : x)
@@ -242,13 +245,13 @@ export const shutterEffect: SpaceTypeEffect = {
       materials.push(material)
     }
 
-    state = { materials, bg: bgMat }
-    shutterEffect.update(0, params)
+    root.userData.shutterState = { materials, bg: bgMat } as ShutterState
+    shutterEffect.update(0, params, root)
     return root
   },
 
-  update(t01, params) {
-    const s = state
+  update(t01, params, root) {
+    const s = root?.userData?.shutterState as ShutterState | undefined
     if (!s) return
     const copies = Math.min(MAX_LAYERS, Math.max(1, Math.round(n(params, 'copies'))))
     const baseSpacing = Math.max(0, n(params, 'spacing'))

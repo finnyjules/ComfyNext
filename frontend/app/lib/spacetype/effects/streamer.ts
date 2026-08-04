@@ -218,7 +218,10 @@ interface State {
   half: number
   instances: Instance[]
 }
-let state: State | null = null
+// Per-scene state lives on the built root's userData (root.userData.streamerState), NOT a module
+// var: the card preview and the headless frame source run two concurrent engines over this
+// singleton effect and the engine caches multiple roots per instance — a shared var would freeze
+// every surface that didn't build last. flowGeometry already takes the state as a param.
 
 /** Resample one instance's band vertices for a path-window starting at arc-length `s0`, re-centered
  *  on the window's centroid so the strip stays framed while the serpentine shape flows through it (a
@@ -249,7 +252,6 @@ export const streamerEffect: SpaceTypeEffect = {
 
   buildScene(three, params, _textTexture) {
     void _textTexture
-    state = null
     const root = new three.Group()
 
     const segmentSpace = n(params, 'segmentSpace')
@@ -300,11 +302,12 @@ export const streamerEffect: SpaceTypeEffect = {
     const textPeriodArc = periodArc / m
     const textRepeat = pathLen / textPeriodArc   // string-units across the whole band
 
-    state = {
+    const st: State = {
       three, textTex, cells, samples, pathLen, periodArc, textPeriodArc,
       rowLens, arcR: arcRadius, half: depth / 2,
       instances: [],
     }
+    root.userData.streamerState = st
     root.userData.tex = textTex
     root.userData.tex2 = front.tex
 
@@ -335,8 +338,8 @@ export const streamerEffect: SpaceTypeEffect = {
         positions, front: frontMat,
         phase: (k * periodArc) / count,   // spread starts across one period
       }
-      state.instances.push(inst)
-      flowGeometry(state, inst, inst.phase)
+      st.instances.push(inst)
+      flowGeometry(st, inst, inst.phase)
     }
 
     // STG works in pixel units; our camera frames ~11 world units. Fit + center.
@@ -351,11 +354,11 @@ export const streamerEffect: SpaceTypeEffect = {
     if (fonts && typeof fonts.load === 'function') {
       const family = resolveFontFamily(String(params.font))
       fonts.load(`40px "${family}"`).then(() => {
-        if (state && state.textTex === textTex) {
+        if (st.textTex === textTex) {
           const next = buildTextTexture(three, params)
-          for (const inst of state.instances) inst.front.uniforms.uText!.value = next
+          for (const inst of st.instances) inst.front.uniforms.uText!.value = next
           textTex.dispose()
-          state.textTex = next; root.userData.tex = next
+          st.textTex = next; root.userData.tex = next
         }
       }).catch(() => {})
     }
@@ -372,7 +375,8 @@ export const streamerEffect: SpaceTypeEffect = {
     return pct > 0 ? [pct] : []
   },
 
-  update(t01, params) {
+  update(t01, params, root) {
+    const state = root?.userData?.streamerState as State | undefined
     if (!state) return
     // The SHAPE flows: slide the path window by whole minimal-periods (seamless), re-centered each
     // frame. The text rides along, scrolled in units of its repeat period (s0 / textPeriodArc) so

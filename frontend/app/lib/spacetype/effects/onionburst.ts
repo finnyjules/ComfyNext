@@ -80,7 +80,10 @@ function onionTexture(three: typeof THREE, fill: Fill): THREE.Texture {
 }
 
 interface Cyl { mesh: THREE.Object3D; cycles: number; rx: number; ry: number; rz: number; rollRand: number }
-let cylinders: Cyl[] = []
+// Per-scene state lives on the built root's userData (see update()), NOT a module var: the card
+// preview and the headless frame source run two concurrent engines over this singleton effect,
+// and the engine caches multiple roots per instance — a shared module var would let whichever
+// built last own it, freezing every other surface. buildScene stashes it on root.userData.cylinders.
 
 export const onionburstEffect: SpaceTypeEffect = {
   id: 'onionburst',          // internal id kept as 'onionburst' so saved nodes still resolve
@@ -91,7 +94,7 @@ export const onionburstEffect: SpaceTypeEffect = {
   buildScene(three, params, _textTexture, env) {
     void _textTexture
     const root = new three.Group()
-    cylinders = []
+    const cylinders: Cyl[] = []
 
     const family = resolveFontFamily(String(params.font))
     const lines = String(params.text ?? '').split('\n').map(t => t.trim()).filter(Boolean)
@@ -207,11 +210,13 @@ export const onionburstEffect: SpaceTypeEffect = {
       }
     })
 
-    onionburstEffect.update(0, params)
+    root.userData.cylinders = cylinders
+    onionburstEffect.update(0, params, root)
     return root
   },
 
-  update(t01, params) {
+  update(t01, params, root) {
+    const cylinders = (root?.userData?.cylinders as Cyl[] | undefined) ?? []
     const TAU = Math.PI * 2
     const spin = n(params, 'spin')
     const roll = n(params, 'roll')

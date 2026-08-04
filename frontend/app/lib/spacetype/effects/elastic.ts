@@ -152,6 +152,10 @@ function drawMatte(ctx: CanvasRenderingContext2D, W: number, H: number, params: 
   }
 }
 
+// Per-scene state lives on the built root's userData (see update()), NOT a module var: the
+// card preview and the headless frame source run two concurrent engines over this singleton
+// effect, and the engine caches multiple roots per instance — a shared object would freeze
+// every surface that didn't build last. buildScene stashes `state` on root.userData.elasticState.
 interface State {
   ctx: CanvasRenderingContext2D
   tex: THREE.CanvasTexture
@@ -171,8 +175,6 @@ interface State {
   lastKey: string
 }
 
-let state: State | null = null
-
 export const elasticEffect: SpaceTypeEffect = {
   id: 'elastic',
   label: 'Elastic',
@@ -181,7 +183,6 @@ export const elasticEffect: SpaceTypeEffect = {
 
   buildScene(three, params, _textTexture) {
     void _textTexture
-    state = null
     const root = new three.Group()
 
     const W = 900, H = 1150
@@ -214,21 +215,23 @@ export const elasticEffect: SpaceTypeEffect = {
     mesh.userData.tex = tex
     root.add(mesh)
 
-    state = { ctx, tex, uniforms, W, H, lastKey: '' }
+    const state: State = { ctx, tex, uniforms, W, H, lastKey: '' }
+    root.userData.elasticState = state
 
     // Best-effort: ensure the chosen font is loaded, then re-rasterise once.
     const fonts = (document as Document & { fonts?: FontFaceSet }).fonts
     if (fonts && typeof fonts.load === 'function') {
       const family = resolveFontFamily(String(params.font))
       fonts.load(`900 40px "${family}"`).then(() => {
-        if (state && state.ctx === ctx) { drawMatte(ctx, W, H, params, 0); tex.needsUpdate = true }
+        if (state.ctx === ctx) { drawMatte(ctx, W, H, params, 0); tex.needsUpdate = true }
       }).catch(() => {})
     }
 
     return root
   },
 
-  update(t01, params) {
+  update(t01, params, root) {
+    const state = root?.userData?.elasticState as State | undefined
     if (!state) return
     const cycles = Math.max(0, Math.round(n(params, 'speed')))
     const time = cycles === 0 ? 0 : t01 * cycles * TAU

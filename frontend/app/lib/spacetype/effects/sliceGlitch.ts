@@ -181,7 +181,11 @@ interface State {
   uniforms: { uTex: { value: THREE.Texture }; uSplit: { value: number } }
   W: number; H: number
 }
-let state: State | null = null
+// Per-scene state lives on the built root's userData (root.userData.sliceGlitchState), NOT a
+// module var: the card preview and the headless frame source run two concurrent engines over this
+// singleton effect and the engine caches multiple roots per instance — a shared var would let
+// whichever built last own it, freezing every other surface. draw() takes the state as a param.
+// (_tileCache above is a legit content-keyed memo, safe to share across scenes.)
 
 function mkCanvas(W: number, H: number): CanvasRenderingContext2D {
   const c = document.createElement('canvas'); c.width = W; c.height = H
@@ -399,7 +403,6 @@ export const sliceGlitchEffect: SpaceTypeEffect = {
 
   buildScene(three, params, _textTexture, env) {
     void _textTexture
-    state = null
     const root = new three.Group()
     // Match the output aspect so the composition fills the frame (no letterboxing).
     // The render canvas is sized to ~1500px on its long edge at the output's aspect ratio.
@@ -423,23 +426,25 @@ export const sliceGlitchEffect: SpaceTypeEffect = {
     mesh.userData.tex = tex
     root.add(mesh)
 
-    state = { typeCtx, tintCtx, compCtx, outCtx, tex, uniforms, W, H }
-    { const m = motion(params, 0); draw(state, params, m.glitch, m.seed, m.burst) }
+    const st: State = { typeCtx, tintCtx, compCtx, outCtx, tex, uniforms, W, H }
+    root.userData.sliceGlitchState = st
+    { const m = motion(params, 0); draw(st, params, m.glitch, m.seed, m.burst) }
 
     const fonts = (document as Document & { fonts?: FontFaceSet }).fonts
     if (fonts && typeof fonts.load === 'function') {
       const family = resolveFontFamily(String(params.font))
       fonts.load(`400 40px "${family}"`).then(() => {
-        if (state && state.outCtx === outCtx) { const m = motion(params, 0); draw(state, params, m.glitch, m.seed, m.burst) }
+        if (st.outCtx === outCtx) { const m = motion(params, 0); draw(st, params, m.glitch, m.seed, m.burst) }
       }).catch(() => {})
     }
     return root
   },
 
-  update(t01, params) {
-    if (!state) return
+  update(t01, params, root) {
+    const st = root?.userData?.sliceGlitchState as State | undefined
+    if (!st) return
     const m = motion(params, t01)
-    draw(state, params, m.glitch, m.seed, m.burst)
+    draw(st, params, m.glitch, m.seed, m.burst)
   },
 }
 

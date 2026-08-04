@@ -51,7 +51,12 @@ const controls: ControlSpec[] = [
 const WORLD_H = 6              // world height of the base (un-stepped) word
 
 interface BlendState { mesh: THREE.InstancedMesh; count: number; additive: boolean }
-let state: BlendState | null = null
+// Per-scene state lives on the built root's userData (root.userData.blendState +
+// root.userData.blendPoseCache), NOT module vars: the card preview and the headless frame source
+// run two concurrent engines over this singleton effect and the engine caches multiple roots per
+// instance — a shared var would let whichever built last own it, freezing every other surface.
+// setMatrix takes the pose cache as a param. (_m/_pos/_q/_e/_scl below are transient scratch used
+// synchronously within buildScene, not per-scene state, so they stay module-level.)
 const _m = new THREE.Matrix4()
 const _pos = new THREE.Vector3()
 const _q = new THREE.Quaternion()
@@ -87,8 +92,8 @@ export function gradientT(i: number, count: number): number {
   return count <= 1 ? 0 : i / (count - 1)
 }
 
-function setMatrix(mesh: THREE.InstancedMesh, slot: number, i: number, aspect: number): void {
-  const pose = poseCache!
+function setMatrix(mesh: THREE.InstancedMesh, slot: number, i: number, aspect: number, poseCache: ReturnType<typeof stepPose>[]): void {
+  const pose = poseCache
   _e.set(pose[i]!.rx, pose[i]!.ry, pose[i]!.rz)
   _q.setFromEuler(_e)
   _pos.set(pose[i]!.px, pose[i]!.py, pose[i]!.pz)
@@ -97,8 +102,6 @@ function setMatrix(mesh: THREE.InstancedMesh, slot: number, i: number, aspect: n
   mesh.setMatrixAt(slot, _m)
 }
 
-let poseCache: ReturnType<typeof stepPose>[] | null = null
-
 export const blendEffect: SpaceTypeEffect = {
   id: 'blend',
   label: 'Blend',
@@ -106,7 +109,6 @@ export const blendEffect: SpaceTypeEffect = {
 
   buildScene(three, params, _textTexture, env) {
     void _textTexture
-    state = null
     const root = new three.Group()
 
     const family = resolveFontFamily(String(params.font))
@@ -145,14 +147,14 @@ export const blendEffect: SpaceTypeEffect = {
     const primaries = fills.map(f => fillPrimary(three, f))
     const gradient = String(params.gradientMode) === 'on'
 
-    // Precompute poses once; reused by update() when spinning.
-    poseCache = []
+    // Precompute poses once; stashed on the root so a concurrent build can't clobber them.
+    const poseCache: ReturnType<typeof stepPose>[] = []
     for (let i = 0; i < count; i++) poseCache.push(stepPose(i, params))
 
     for (let slot = 0; slot < count; slot++) {
       // Over mode draws in instance order, so map the ORIGINAL (i=0) to the last slot → on top.
       const i = additive ? slot : (count - 1 - slot)
-      setMatrix(mesh, slot, i, aspect)
+      setMatrix(mesh, slot, i, aspect, poseCache)
       const col = gradient
         ? lerpColors(primaries, gradientT(i, count))
         : primaries[((i % primaries.length) + primaries.length) % primaries.length]!.clone()
@@ -163,12 +165,13 @@ export const blendEffect: SpaceTypeEffect = {
 
     root.add(mesh)
     root.userData.tex = tex
-    state = { mesh, count, additive }
+    root.userData.blendPoseCache = poseCache
+    root.userData.blendState = { mesh, count, additive } satisfies BlendState
     return root
   },
 
-  update(t01, params) {
-    const s = state
+  update(t01, params, root) {
+    const s = root?.userData?.blendState as BlendState | undefined
     if (!s) return
     const spin = n(params, 'spin') || 0
     // Static poster when spin is off; otherwise turntable the whole stack (seamless at loop ends).

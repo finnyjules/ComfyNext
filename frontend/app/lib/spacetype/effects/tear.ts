@@ -43,7 +43,10 @@ const controls: ControlSpec[] = [
 ]
 
 interface TearState { material: THREE.ShaderMaterial }
-let state: TearState | null = null
+// Per-scene state lives on the built root's userData (see update()), NOT a module var: the card
+// preview and the headless frame source run two concurrent engines over this singleton effect, and
+// the engine caches multiple roots per instance — a shared var would let whichever built last own
+// it, freezing every other surface. buildScene stashes it on root.userData.tearState.
 
 function n(p: Params, k: string): number { return Number(p[k]) }
 
@@ -130,13 +133,13 @@ export const tearEffect: SpaceTypeEffect = {
     mesh.userData.tex = tex
     root.add(mesh)
 
-    state = { material }
-    tearEffect.update(0, params)
+    root.userData.tearState = { material } as TearState
+    tearEffect.update(0, params, root)
     return root
   },
 
-  update(t01, params) {
-    const s = state
+  update(t01, params, root) {
+    const s = root?.userData?.tearState as TearState | undefined
     if (!s) return
     const u = s.material.uniforms
     u.uTime!.value = t01

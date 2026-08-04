@@ -19,6 +19,12 @@ export interface EngineOptions {
    *  composition regardless of projection or scene rotation. */
   panX?: number
   panY?: number
+  /** Keep the WebGL drawing buffer after a render so `drawImage`/`toDataURL` is safe
+   *  ACROSS an async boundary (default false — the on-screen preview disables it for
+   *  perf and never reads back). The off-screen frame-source engine sets this true:
+   *  its canvas is drawImage'd into a consumer canvas after an `await`, by which point
+   *  a non-preserved buffer has been cleared to transparent black. */
+  preserveDrawingBuffer?: boolean
 }
 
 // Half-height the perspective camera sees at z=14 (FOV 45°) — the ortho frustum matches it
@@ -80,7 +86,7 @@ export class SpaceTypeEngine {
   constructor(canvas: HTMLCanvasElement, opts: EngineOptions) {
     this.opts = opts
     this.effect = opts.effect
-    this.renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, preserveDrawingBuffer: false })
+    this.renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, preserveDrawingBuffer: opts.preserveDrawingBuffer ?? false })
     this.renderer.shadowMap.enabled = true
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
     this.renderer.setSize(opts.width, opts.height, false)
@@ -325,7 +331,7 @@ export class SpaceTypeEngine {
         this.perspCam.position.z = 14 / scale
         this.applyPan(this.perspCam)
       }
-      this.effect.update(t01, params)
+      this.effect.update(t01, params, this.root ?? undefined)
       // Important 4 (final review): keep a frame-anchored fill's uFillScreen tracking the
       // LIVE render size — setSize() below resizes without a rebuild, so without this the
       // uniform stayed pinned to whatever size the field was built at (see fillScreenVec's

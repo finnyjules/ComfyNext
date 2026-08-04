@@ -115,7 +115,10 @@ function writeCap(
   }
 }
 
-let coilState: CoilState | null = null
+// Per-scene state lives on the built root's userData (root.userData.coilState), NOT a module var:
+// the card preview and the headless frame source run two concurrent engines over this singleton
+// effect and the engine caches multiple roots per instance — a shared var would let whichever
+// built last own it, freezing every other surface. rebuildPositions takes the state as a param.
 
 /** Trailing-gap fraction of the baked label tile, used to centre the word. */
 function gapFraction(params: Params): number {
@@ -299,7 +302,6 @@ export const coilEffect: SpaceTypeEffect = {
 
   buildScene(three, params, textTexture) {
     const root = new three.Group()
-    coilState = null
 
     const ribbonCount = Math.max(1, Math.floor(n(params, 'ribbonCount')))
     const radius = n(params, 'radius')
@@ -451,7 +453,7 @@ export const coilEffect: SpaceTypeEffect = {
     root.add(subGroup)
 
     const waveSpeed = Math.round(n(params, 'waveSpeed'))
-    coilState = {
+    const st: CoilState = {
       group: subGroup,
       geo,
       baseX, baseY, echo,
@@ -468,7 +470,8 @@ export const coilEffect: SpaceTypeEffect = {
       uArr,
       ribbonCount,
     }
-    rebuildPositions(coilState, 0)
+    root.userData.coilState = st
+    rebuildPositions(st, 0)
     geo.computeVertexNormals()
 
     if (String(params.shadows) === 'on') {
@@ -501,8 +504,8 @@ export const coilEffect: SpaceTypeEffect = {
     return root
   },
 
-  update(t01, params) {
-    const s = coilState
+  update(t01, params, root) {
+    const s = root?.userData?.coilState as CoilState | undefined
     if (!s) return
     if (s.waveSize && s.waveCount && s.waveTurns > 0) {
       rebuildPositions(s, t01 * Math.PI * 2 * s.waveTurns)
