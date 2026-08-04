@@ -10,9 +10,12 @@ import { ombreSideTexture } from '../fills'
 import { vessellColorsFor } from '../palette'
 import { stripAlpha } from '~/lib/color/convert'
 // Typeface fonts ship with three and import synchronously (no runtime TTF parsing).
+// ONE face only, deliberately: this is purely the fallback for when the user's chosen
+// Google font can't be fetched or parsed (see ensureBoostFont). Optimer and Gentilis
+// were also imported here but nothing could ever select them — bundledFont() asks for
+// FONT_NAMES[0] and getFont() has no other caller — so they were ~760 KB of dead
+// payload in every build, and 46% of the boost embed bundle.
 import helvetikerBold from 'three/examples/fonts/helvetiker_bold.typeface.json'
-import optimerBold from 'three/examples/fonts/optimer_bold.typeface.json'
-import gentilisBold from 'three/examples/fonts/gentilis_bold.typeface.json'
 
 /**
  * BOOST — extruded 3D type, inspired by spacetypegenerator.com/boost.
@@ -28,8 +31,6 @@ import gentilisBold from 'three/examples/fonts/gentilis_bold.typeface.json'
 
 const FONT_JSON: Record<string, unknown> = {
   'Helvetiker Bold': helvetikerBold,
-  'Optimer Bold': optimerBold,
-  'Gentilis Bold': gentilisBold,
 }
 const FONT_NAMES = Object.keys(FONT_JSON)
 const _fontLoader = new FontLoader()
