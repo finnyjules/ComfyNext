@@ -19,6 +19,18 @@ import { defaultConfig as gradientDefaultConfig } from '~/lib/gradientfx/randomi
 import type { EmbedHandle } from '~/lib/embed/contract'
 import type { ShaderEmbedConfig } from '~/lib/embed/surfaces/shader'
 import type { GradientEmbedConfig } from '~/lib/embed/surfaces/gradient'
+// Space Type's OWN builders — the studio path this task's fixtures are checked
+// against. getEffect/defaultsFromControls seed a real effect's default params
+// (mirrors SpaceTypeSurface.vue's own `params = reactive(defaultsFromControls(...))`);
+// texOptsFromState is the SAME shared builder the studio, the node card and the
+// embed adapter's buildTexOpts all mirror — used here (not buildTexOpts) so
+// studioRef is a genuine second implementation, not the adapter calling itself.
+import { getEffect } from '~/lib/spacetype/effects'
+import { defaultsFromControls } from '~/lib/spacetype/effect'
+import { SpaceTypeEngine } from '~/lib/spacetype/engine'
+import { texOptsFromState } from '~/lib/spacetype/state'
+import { DEFAULT_POST } from '~/lib/spacetype/post'
+import type { SpaceTypeEmbedConfig } from '~/lib/embed/surfaces/spacetype'
 
 // Test-only page. Exposes mount/snapshot so tests drive the contract directly
 // rather than through studio UI.
@@ -230,6 +242,164 @@ onMounted(async () => {
     },
   }
   ;(window as any).__embedHarnessGradientReady = true
+
+  // --- Space Type embed harness ---
+  // Built from the studio's own defaults: getEffect('ribbon') + defaultsFromControls
+  // is the exact same seed SpaceTypeSurface.vue's `params = reactive(defaultsFromControls(...))`
+  // uses, and ribbon is the studio's own default effect (see effectId = ref('ribbon')).
+  // Ribbon's default `speed: 0.6` and `rotateX: -0.5` (Motion/Transform groups) mean
+  // setTime genuinely moves pixels with NO fixture-specific motion setup, unlike
+  // gradient's fixture which had to add an explicit motion track.
+  //
+  // font: null on the DEFAULT fixture is deliberate, not an oversight — with font
+  // null, both the adapter (buildTexOpts) and studioRef (texOptsFromState) resolve
+  // the family the SAME way, from params.font, so "adapter matches studio" is a
+  // meaningful comparison. The font test below builds its OWN configs with a real
+  // font inlined, and does not use studioRef (the live studio has no notion of a
+  // pre-resolved font — it always derives family from params.font — so a config with
+  // a real `font` set has nothing in the studio path to compare itself against).
+  const spaceTypeHandles: Record<string, EmbedHandle> = {}
+  const SPACETYPE_DURATION = 6
+  const stEffectId = 'ribbon'
+  const stEffect = getEffect(stEffectId)
+  const stParams = defaultsFromControls(stEffect.controls)
+  const stGradientStops = [
+    { color: '#3b5bff', on: true }, { color: '#ff3b3b', on: true },
+    { color: '#ffd23b', on: true }, { color: '#ffffff', on: false },
+  ]
+  const spaceTypeConfig: SpaceTypeEmbedConfig = {
+    effectId: stEffectId,
+    params: { ...stParams },
+    // preserveDrawingBuffer: true — TEST-ONLY. The live studio/export leave this
+    // false (perf: see EngineOptions' own doc), which is fine for normal viewing —
+    // the browser COMPOSITS a WebGL canvas straight from its own buffer regardless
+    // of this flag. It only matters for a JS-level read (toDataURL/getImageData)
+    // that happens in a SEPARATE task from the render call, which is exactly what
+    // every test in embed-spacetype.spec.ts that reads an already-mounted/exported
+    // canvas does (e.g. reading the EXPORTED page's canvas from Playwright, well
+    // after its own internal rAF loop rendered it). Without this, that read
+    // observes an already-cleared buffer and comes back blank — confirmed via a
+    // throwaway repro before adding this (a "renders live" check comparing two
+    // such reads 600ms apart came back byte-IDENTICAL and fully transparent).
+    opts: { width: 512, height: 512, fps: 30, loopDuration: SPACETYPE_DURATION, alpha: false, bgColor: '#0e0e10', preserveDrawingBuffer: true },
+    duration: SPACETYPE_DURATION,
+    font: null,
+    gradientStops: stGradientStops,
+    post: { ...DEFAULT_POST },
+  }
+
+  ;(window as any).__embedHarnessSpaceType = {
+    config: spaceTypeConfig,
+    async mount(slot: string) {
+      const surface = await loadEmbedSurface('spacetype')
+      if (!surface) return null
+      const el = document.getElementById(`slot-${slot}`)!
+      const h = await surface.mount(el, spaceTypeConfig)
+      spaceTypeHandles[slot] = h
+      return h
+    },
+    // Mounts with a caller-supplied SpaceTypeEmbedConfig rather than the fixed
+    // default — the font test below needs configs with a real `font` set, which
+    // the default fixture deliberately does not carry (see the comment above).
+    async mountConfig(slot: string, cfg: SpaceTypeEmbedConfig) {
+      const surface = await loadEmbedSurface('spacetype')
+      if (!surface) return null
+      const el = document.getElementById(`slot-${slot}`)!
+      const h = await surface.mount(el, cfg)
+      spaceTypeHandles[slot] = h
+      return h
+    },
+    snapshot(slot: string): string {
+      const c = document.querySelector(`#slot-${slot} canvas`) as HTMLCanvasElement | null
+      return c ? c.toDataURL('image/png') : ''
+    },
+    async exportHtml() {
+      return await exportEmbedHtml({
+        kind: 'spacetype',
+        config: spaceTypeConfig,
+        duration: SPACETYPE_DURATION,
+        width: 512,
+        height: 512,
+      })
+    },
+    // Builds a fresh default SpaceTypeEmbedConfig for a DIFFERENT effect than the
+    // 'ribbon' default fixture above — same construction (getEffect + defaultsFromControls),
+    // just parameterized. THE FONT TEST uses this with 'field' (a tiled text-grid
+    // effect where text covers most of the frame) instead of 'ribbon' (whose text
+    // occupies a thin diagonal band): a font swap's pixel signature needs to clear
+    // the WebGL cross-context noise floor described in embed-spacetype.spec.ts's
+    // module doc, and 'ribbon' turned out not to have enough on-frame text area to
+    // do that reliably — 'field' does.
+    buildConfig(effectId: string): SpaceTypeEmbedConfig {
+      const eff = getEffect(effectId)
+      return {
+        effectId: eff.id,
+        params: { ...defaultsFromControls(eff.controls) },
+        opts: { width: 512, height: 512, fps: 30, loopDuration: SPACETYPE_DURATION, alpha: false, bgColor: '#0e0e10', preserveDrawingBuffer: true },
+        duration: SPACETYPE_DURATION,
+        font: null,
+        gradientStops: stGradientStops,
+        post: { ...DEFAULT_POST },
+      }
+    },
+    // Exports a caller-supplied config at a caller-chosen size — used by the font
+    // test to export the same piece with different `font` values, by the size test
+    // to check a non-512 export keeps its own aspect, and by the alpha test to
+    // exercise exportEmbedHtml's `transparent` option (see exportWebEmbed's own
+    // comment: Space Type is the first surface where surface.caps.alpha is true,
+    // so this option has never done anything until this task).
+    async exportWith(cfg: SpaceTypeEmbedConfig, width: number, height: number, transparent = false) {
+      return await exportEmbedHtml({ kind: 'spacetype', config: cfg, duration: cfg.duration, width, height, transparent })
+    },
+    /**
+     * Renders through the STUDIO path directly — a fresh SpaceTypeEngine built with
+     * texOptsFromState (the SAME shared builder SpaceTypeSurface.vue's texOpts()
+     * calls, NOT buildTexOpts, which is the adapter's own mirror of it) — so this is
+     * a genuine second implementation the adapter is checked against, not the
+     * adapter calling itself back. Ignores cfg.font: the live studio has no such
+     * concept, it always resolves family from params.font, which is exactly what
+     * happens here and in the adapter when a config's font is null.
+     */
+    studioRef(cfg: SpaceTypeEmbedConfig, t01: number, w = 512, h = 512): string {
+      const effect = getEffect(cfg.effectId)
+      const canvas = document.createElement('canvas')
+      const engine = new SpaceTypeEngine(canvas, {
+        effect, width: w, height: h, fps: cfg.opts.fps, loopDuration: cfg.opts.loopDuration,
+        alpha: cfg.opts.alpha, bgColor: cfg.opts.bgColor, projection: cfg.opts.projection,
+        panX: cfg.opts.panX, panY: cfg.opts.panY, preserveDrawingBuffer: cfg.opts.preserveDrawingBuffer,
+      })
+      engine.setPost(cfg.post ?? DEFAULT_POST)
+      const texOpts = texOptsFromState(
+        { effectId: cfg.effectId, params: cfg.params, gradientStops: cfg.gradientStops ?? [] },
+      )
+      engine.build(cfg.params, texOpts)
+      engine.renderFrameAt(t01, cfg.params)
+      const png = canvas.toDataURL('image/png')
+      engine.dispose()
+      return png
+    },
+    /**
+     * Test-only: perturb the config so the parity diff MUST fail. Flips opts.bgColor
+     * (the engine's opaque clear colour — see applyBackground() in engine.ts) rather
+     * than a params field: ribbon's own drawn area covers only a few percent of a
+     * 512x512 frame (calibrated: recolouring the ribbon's fill directly moved the
+     * whole-frame mean pixel diff by only ~0.015, uncomfortably close to the
+     * cross-WebGL-context rendering noise floor measured between two otherwise-
+     * IDENTICAL configs on separate contexts, ~0.002 mean / <1% of channel-samples
+     * over an 8/255 threshold — see embed-spacetype.spec.ts's module doc). The
+     * background fills essentially the whole frame regardless of which effect/params
+     * are active, so corrupting it is the one change guaranteed to swamp that noise
+     * floor by two orders of magnitude — calibrated at ~0.35 mean / ~98% of samples
+     * over threshold.
+     */
+    corrupt() {
+      spaceTypeConfig.opts = {
+        ...spaceTypeConfig.opts,
+        bgColor: spaceTypeConfig.opts.bgColor === '#0e0e10' ? '#ff0000' : '#0e0e10',
+      }
+    },
+  }
+  ;(window as any).__embedHarnessSpaceTypeReady = true
 })
 </script>
 
@@ -240,5 +410,7 @@ onMounted(async () => {
     <div id="slot-b" class="w-[512px] h-[512px] bg-black" />
     <div id="slot-g" class="w-[512px] h-[512px] bg-black" />
     <div id="slot-g2" class="w-[512px] h-[512px] bg-black" />
+    <div id="slot-st" class="w-[512px] h-[512px] bg-black" />
+    <div id="slot-st2" class="w-[512px] h-[512px] bg-black" />
   </div>
 </template>

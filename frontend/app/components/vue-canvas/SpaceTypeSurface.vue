@@ -48,6 +48,13 @@ import { COLLECTION_PROP, VARS_TYPE, type CollectionColumn, type CollectionData 
 import { registerStudioParamBaker, unregisterStudioParamBaker } from '~/lib/studio/cascade'
 import { effectiveColumns, makeLookupResolver } from '~/lib/collection/lookup'
 import SweepPopover from '~/components/vue-canvas/studio/SweepPopover.vue'
+import { exportEmbedHtml, downloadEmbed } from '~/lib/embed/export'
+import type { SpaceTypeEmbedConfig } from '~/lib/embed/surfaces/spacetype'
+// fontSourceUrl already resolves a `google:Family@weight` token to the
+// `/api/scene3d/google-font-file` proxy URL for the 3D Studio's text-extrude
+// path (see outlines.ts's own doc) — reused here rather than inventing a
+// second font-fetch path for the embed export.
+import { fontSourceUrl } from '~/lib/scene3d/outlines'
 
 const props = defineProps<{ nodeId: string; nodes: any[]; edges?: any[] }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
@@ -255,6 +262,10 @@ let previewStart = 0
 const baking = ref(false)
 const renderError = ref<string | null>(null)
 const webglOk = ref(true)
+// ── web embed export ────────────────────────────────────────────────────────
+const embedding = ref(false)
+const embedMsg = ref('')
+const embedErr = ref(false)
 // Non-zero when the engine capped one or more shader fills at a frozen (t=0) snapshot
 // this frame because too many live fields were requested at once (LIVE_FIELD_CEILING,
 // see ~/lib/shaderfill/field.ts). The design forbids silently truncating — the user
@@ -1129,6 +1140,128 @@ async function generateVideo() {
     startPreview()
   }
 }
+
+// Cache of family+weight -> data: URI (or null on a fetch failure) so re-exporting
+// the same node repeatedly doesn't re-fetch/re-encode an unchanged font every time.
+const fontDataUrlCache = new Map<string, string | null>()
+
+/** Base64-encode an ArrayBuffer without blowing the call stack on a ~200KB font file
+ *  (String.fromCharCode(...bytes) spread would stack-overflow on the full array). */
+function bufferToBase64(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf)
+  let binary = ''
+  const CHUNK = 0x8000
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK))
+  }
+  return btoa(binary)
+}
+
+/**
+ * Fetch the actual font FILE for family+weight as a data: URI, for inlining into a
+ * web embed export. Reuses fontSourceUrl (~/lib/scene3d/outlines) — the SAME
+ * resolution path the 3D Studio's text-extrude primitive already uses to turn a
+ * `google:Family@weight` token into `/api/scene3d/google-font-file`, a server proxy
+ * that forces Google Fonts to hand back a raw, parseable TTF instead of the woff2 it
+ * serves real browsers — rather than inventing a second font-fetch path here.
+ *
+ * Returns null on any failure (family Google doesn't have, network error, ...). The
+ * caller degrades to `font: null` (viewer's system font) instead of failing the whole
+ * export over a font that couldn't be fetched — see exportWebEmbed.
+ */
+async function fetchFontDataUrl(family: string, weight: number): Promise<string | null> {
+  const key = `${family}@${weight}`
+  if (fontDataUrlCache.has(key)) return fontDataUrlCache.get(key)!
+  try {
+    const url = fontSourceUrl(`google:${family}@${weight}`)
+    const res = await fetch(url)
+    if (!res.ok) { fontDataUrlCache.set(key, null); return null }
+    const buf = await res.arrayBuffer()
+    const dataUrl = `data:font/ttf;base64,${bufferToBase64(buf)}`
+    fontDataUrlCache.set(key, dataUrl)
+    return dataUrl
+  } catch (e) {
+    console.error('[space-type] embed export: font fetch failed', e)
+    fontDataUrlCache.set(key, null)
+    return null
+  }
+}
+
+// Mirrors GradientStudioSurface.vue's exportWebEmbed: in-flight guard (a double-click
+// otherwise starts two full-resolution GL bakes and downloads two files), size shown
+// BEFORE the download, and error styling distinct from success (embedErr).
+//
+// Space-Type-specific: `opts.alpha` defaults to the SAME `transparent` ref that
+// already drives the video export (line ~152), so the two exports agree about
+// background — Space Type is the first embed surface where caps.alpha is genuinely
+// true (see spacetype.ts's own doc), so this is the first export where that choice
+// does anything. And the font: the studio's live family/weight (resolved exactly like
+// texOptsFromState/buildTexOpts do — same resolveFontFamily/fontHasWeightAxis calls)
+// is fetched as real bytes and inlined; a fetch failure degrades to `font: null`
+// (viewer's system font) rather than silently shipping a broken typeface.
+async function exportWebEmbed() {
+  if (embedding.value) return
+  embedding.value = true
+  embedErr.value = false
+  embedMsg.value = 'Building…'
+  try {
+    if (!engine) throw new Error('Preview not ready')
+
+    const family = resolveFontFamily(String(params.font))
+    // Static families have no weight axis — pin to 400, matching texOptsFromState/
+    // buildTexOpts, so a variable-only weight isn't faux-bolted onto a single cut.
+    const weight = fontHasWeightAxis(family) ? Number(params.typeWeight ?? 700) : 400
+    const dataUrl = await fetchFontDataUrl(family, weight)
+    const font = dataUrl ? { family, weight, dataUrl } : null
+
+    const embedConfig: SpaceTypeEmbedConfig = {
+      effectId: effect.value.id,
+      params: { ...params },
+      opts: {
+        width: W.value, height: H.value, fps: fps.value, loopDuration: loopDuration.value,
+        alpha: transparent.value, bgColor: bgColor.value, projection: projection.value,
+        panX: panX.value, panY: panY.value,
+      },
+      duration: loopDuration.value,
+      font,
+      gradientStops: gradientStops.map(g => ({ ...g })),
+      post: { ...post },
+    }
+
+    const html = await exportEmbedHtml({
+      kind: 'spacetype',
+      config: embedConfig,
+      duration: loopDuration.value,
+      width: W.value,
+      height: H.value,
+      // Without this, the exported PAGE's own html/body background stays opaque
+      // black (bundle.ts's `bg` var) even though the ENGINE renders real alpha —
+      // the two exports would agree on nothing. Space Type is the first surface
+      // where surface.caps.alpha is genuinely true, so this is the first export
+      // where exportEmbedHtml's `transparent` option does anything at all (see
+      // exportEmbedHtml: `transparent = !!opts.transparent && surface.caps.alpha`).
+      transparent: transparent.value,
+    })
+
+    // Size is shown BEFORE the download, not discovered later. A missing font is
+    // stated plainly too — never a silently-wrong typeface with no visible sign.
+    const kb = (new Blob([html]).size / 1024).toFixed(0)
+    embedMsg.value = font
+      ? `${kb} KB — downloading…`
+      : `${kb} KB — downloading… ("${family}" unavailable, will use the viewer's system font)`
+    await nextTick()
+    downloadEmbed('sailor-spacetype-embed.html', html)
+    embedMsg.value = font
+      ? `Downloaded — ${kb} KB`
+      : `Downloaded — ${kb} KB ("${family}" unavailable — piece uses the viewer's system font)`
+  } catch (err) {
+    console.error('[SpaceType] embed export failed:', err)
+    embedErr.value = true
+    embedMsg.value = err instanceof Error ? err.message : 'Export failed'
+  } finally {
+    embedding.value = false
+  }
+}
 </script>
 
 <template>
@@ -1507,8 +1640,16 @@ async function generateVideo() {
               </p>
               <button type="button" class="block w-full px-3 py-1.5 text-left text-xs text-white/85 hover:bg-white/10"
                       @click="renderMenuOpen = false; sendToTimeline()">Send to timeline</button>
+              <!-- Disabled while in flight: a double-click otherwise starts two
+                   full-resolution GL bakes and downloads two files. -->
+              <button type="button" :disabled="embedding"
+                      class="block w-full px-3 py-1.5 text-left text-xs text-white/85 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+                      @click="renderMenuOpen = false; exportWebEmbed()">{{ embedding ? 'Exporting…' : 'Export embed' }}</button>
             </div>
           </div>
+          <!-- A failure must not read like a success. -->
+          <p v-if="embedMsg" class="mt-1.5 truncate text-right text-xs"
+             :class="embedErr ? 'text-red-300/80' : 'text-white/50'">{{ embedMsg }}</p>
         </div>
     </template>
   </StudioModalShell>
