@@ -243,6 +243,49 @@ That is an argument for the data-driven shape whenever a surface has a plugin ax
 Spec: [specs/2026-07-28-web-embed-export-design.md](superpowers/specs/2026-07-28-web-embed-export-design.md) ·
 Plan: [plans/2026-07-28-web-embed-export.md](superpowers/plans/2026-07-28-web-embed-export.md)
 
+## Space Type is the third embeddable surface — LANDED 2026-08-03
+
+A Space Type piece now exports as a self-contained `.html` that renders live, **with its real
+typeface inlined**. 44 Playwright tests pass across the five embed suites.
+
+`contract.ts`, `bundle.ts` and `export.ts` are **still unchanged** across all three surfaces —
+including one needing async font loading, because `mount()` was already async for asset inflation.
+Space Type is also the first surface with `caps.alpha` genuinely `true`, so the transparency
+plumbing finally has a consumer.
+
+**Getting there exposed a layering violation worth knowing about.** The bundle carried 22 network
+references — including live `fonts.googleapis.com` URLs — because `lib/spacetype`'s effects reach
+sideways into app *data* modules (`~/data/google-fonts` → `~/data/variable-fonts`) and into
+`shaderfx/catalog`'s fetcher. Both had the same shape: a module mixing a network fetcher with a
+pure sync reader of a module-level cache. Split each (`lib/font/resolveFamily.ts`,
+`lib/shaderfx/catalogStore.ts`); the render path only needs the reader.
+
+**No embed bundle had ever been scanned by `externalRefs`** — the gate only ran on final HTML,
+which is why this reached a built artifact unnoticed. `embed-build-output.unit.spec.ts` now scans
+every bundle with the real function, plus an allowlist of exact inert literals (three.js's XML
+namespace, typeface-JSON licence strings) each carrying a written reason.
+
+> **Limitation, verified not assumed.** The bundle still contains three.js's `FileLoader` and
+> `ImageBitmapLoader` with live `fetch(` sites. Nothing invokes them and every asset is inlined,
+> but a *static* scan cannot prove a bundled loader is never called. The definitive check is a
+> runtime one: load an export in Playwright with network interception, assert zero requests.
+
+**Size is the open problem.** `spacetype.js` is 1.85 MB (529 KB gzip) against gradient's 66 KB and
+shader's 18 KB. Measured, not guessed: a single-effect probe bundle is 793 KB, so per-effect
+bundles would be a 2.3× win, not 10×. The bigger lever is that **32 files use
+`import * as THREE from 'three'` and none use named imports**, which defeats tree-shaking —
+`AudioLoader` and `CubeTextureLoader` are in a bundle that only draws text. Measure that ceiling
+before committing to 25 bundles (which would also force the first-ever change to `export.ts`).
+
+Two gotchas worth keeping: `document.fonts.check()` is **unreliable** — it returns `true` for a
+fake family; use `[...document.fonts].some(f => f.family === x && f.status === 'loaded')`. And
+`exportEmbedHtml`'s `transparent` (the page background) is a different thing from
+`config.opts.alpha` (the engine's) — setting only the latter ships a "transparent" export on an
+opaque black page.
+
+Plan: [plans/2026-08-03-spacetype-embed-adapter.md](superpowers/plans/2026-08-03-spacetype-embed-adapter.md) ·
+[plans/2026-08-03-embed-bundle-network-leak.md](superpowers/plans/2026-08-03-embed-bundle-network-leak.md)
+
 ## Transparent Video Export — LANDED 2026-07-28
 
 Motion exports can now keep their transparency. The alpha always survived the whole pipeline —
