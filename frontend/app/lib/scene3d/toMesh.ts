@@ -5,8 +5,10 @@
 // dropped from the result: leaving them would re-apply a twist that is already
 // in the vertices.
 import type * as THREE from 'three'
-import { encodeMesh, meshDataFromGeometry } from '~/lib/scene3d/mesh'
+import { decodeMesh, encodeMesh, meshDataFromGeometry, MESH_VERTEX_CAP, type MeshData } from '~/lib/scene3d/mesh'
 import { contentDigest, type PrimitiveObject } from '~/lib/scene3d/config'
+import { remesh } from '~/lib/scene3d/voxel'
+import { solidify } from '~/lib/scene3d/voxel/solidify'
 
 export async function convertToMesh(
   obj: PrimitiveObject,
@@ -27,4 +29,71 @@ export async function convertToMesh(
     primitive: 'mesh',
     content: { mesh: encoded, meshKey: contentDigest(encoded) },
   }
+}
+
+/** A resolution that lands near `targetVertices`.
+ *
+ *  Surface nets emits roughly one vertex per sign-changing cell, so the count
+ *  scales with surface area over cell squared — i.e. with resolution squared.
+ *  One cheap probe at a coarse resolution therefore pins the constant, and the
+ *  answer is a scale by sqrt(target / probed). Far cheaper than bisecting with
+ *  a full remesh per step. */
+export function resolutionForTarget(data: MeshData, targetVertices: number): number {
+  const PROBE = 24
+  const probed = remesh(data, PROBE).data.positions.length / 3
+  if (probed <= 0) return PROBE
+  const scaled = PROBE * Math.sqrt(targetVertices / probed)
+  return Math.max(8, Math.min(160, Math.round(scaled)))
+}
+
+const contentFor = async (data: MeshData) => {
+  const mesh = await encodeMesh(data)
+  return { mesh, meshKey: contentDigest(mesh) }
+}
+
+/** Rebuild the object's mesh at `resolution`.
+ *
+ *  Over the vertex cap, this retries at three-quarter resolution rather than
+ *  throwing (up to 4 attempts): the user asked for a shape, not an error, and a
+ *  slightly coarser shape is a far better answer than a failure toast. `open`
+ *  returns the object UNCHANGED — see `remesh`. */
+export async function remeshObject(
+  obj: PrimitiveObject, resolution: number,
+): Promise<{ obj: PrimitiveObject; open: boolean; vertexCount: number }> {
+  const encoded = obj.content?.mesh
+  if (!encoded) return { obj, open: false, vertexCount: 0 }
+  const src = await decodeMesh(encoded)
+
+  let res = resolution
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const { data, open } = remesh(src, res)
+    if (open) return { obj, open: true, vertexCount: src.positions.length / 3 }
+    const count = data.positions.length / 3
+    if (count <= MESH_VERTEX_CAP) {
+      return {
+        obj: { ...obj, content: { ...obj.content, ...(await contentFor(data)) } },
+        open: false,
+        vertexCount: count,
+      }
+    }
+    res = Math.max(8, Math.round(res * 0.75))
+  }
+  // Four attempts at shrinking resolution and still over cap — the last resort
+  // is the coarse floor, which cannot exceed the cap for any plausible shape.
+  const { data } = remesh(src, 8)
+  return {
+    obj: { ...obj, content: { ...obj.content, ...(await contentFor(data)) } },
+    open: false,
+    vertexCount: data.positions.length / 3,
+  }
+}
+
+/** Thicken an open surface into a closed shell so it can be remeshed. */
+export async function solidifyObject(
+  obj: PrimitiveObject, thickness: number,
+): Promise<PrimitiveObject> {
+  const encoded = obj.content?.mesh
+  if (!encoded) return obj
+  const shell = solidify(await decodeMesh(encoded), thickness)
+  return { ...obj, content: { ...obj.content, ...(await contentFor(shell)) } }
 }

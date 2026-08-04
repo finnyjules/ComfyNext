@@ -31,8 +31,8 @@ import { loadGoogleCatalog, type GoogleFont } from '~/data/google-fonts'
 import FontPicker from '~/components/vue-canvas/FontPicker.vue'
 import { PRIM_GROUPS } from '~/lib/scene3d/primGroups'
 import { SceneEngine, baseSizeFor, baseVertexCountFor, buildGeometry } from '~/lib/scene3d/engine'
-import { convertToMesh } from '~/lib/scene3d/toMesh'
-import { MESH_VERTEX_CAP } from '~/lib/scene3d/mesh'
+import { convertToMesh, remeshObject, solidifyObject, resolutionForTarget } from '~/lib/scene3d/toMesh'
+import { MESH_VERTEX_CAP, MESH_DEFAULT_TARGET, type MeshData } from '~/lib/scene3d/mesh'
 import { loadMesh, meshCacheGet } from '~/lib/scene3d/meshCache'
 import { rebaseMany, groupObjects, ungroupMany, rootObjects, descendantIds, cloneSubtree, axisDeltaWrites } from '~/lib/scene3d/hierarchy'
 import Scene3DObjectRow from './studio/Scene3DObjectRow.vue'
@@ -1576,6 +1576,83 @@ async function convertSelectionToMesh() {
 // A refusal is about the object that was selected when it happened; leaving it
 // under the button after the user moves on would read as a fresh failure.
 watch(selectedId, () => { convertError.value = '' })
+
+// ── Remesh / Solidify (mesh primitives only) ──────────────────────────────────
+// The Geometry panel's schema-driven sliders (geoSpecs) are empty for `mesh` —
+// PRIMITIVE_PARAMS.mesh is `[]` — so this is what fills that space.
+const selectedMesh = computed<PrimitiveObject | null>(() => {
+  const o = selected.value
+  return o && o.kind === 'primitive' && o.primitive === 'mesh' ? o : null
+})
+// Decoded via the SAME cache the engine reads (meshCache), not a private
+// decode — `meshGen` (already bumped by the watch above once a fresh decode
+// lands) is what re-measures this after a remesh/solidify writes new content.
+const selectedMeshData = computed<MeshData | null>(() => {
+  void meshGen.value
+  const o = selectedMesh.value
+  return o ? meshCacheGet(o.content?.meshKey) : null
+})
+const meshVertexCount = computed<number>(() => (selectedMeshData.value?.positions.length ?? 0) / 3)
+const meshEncodedKB = computed<string>(() => {
+  const encoded = selectedMesh.value?.content?.mesh
+  return encoded ? (encoded.length / 1024).toFixed(1) : '0.0'
+})
+
+const remeshResolution = ref(64)
+const remeshBusy = ref(false)
+const solidifyThickness = ref(0.05)
+// Set once per selected mesh object (keyed on id, not on content) — a
+// successful Remesh replaces `selectedMesh` with a new object reference, and
+// re-deriving the default from THAT would silently reset the slider the user
+// just chose right after they used it.
+const remeshDefaultedFor = ref<string | null>(null)
+// True once a Remesh on the current selection has refused an open surface —
+// swaps the Remesh button for the open notice + Solidify path until the next
+// selection change or a successful Solidify.
+const remeshOpen = ref(false)
+watch(() => selectedMesh.value?.id ?? null, () => { remeshOpen.value = false })
+watch(selectedMeshData, (data) => {
+  const id = selectedMesh.value?.id ?? null
+  if (!data || !id || remeshDefaultedFor.value === id) return
+  remeshResolution.value = resolutionForTarget(data, MESH_DEFAULT_TARGET)
+  remeshDefaultedFor.value = id
+}, { immediate: true })
+async function remeshSelection() {
+  const obj = selectedMesh.value
+  if (!obj || remeshBusy.value) return
+  remeshBusy.value = true
+  convertError.value = ''
+  try {
+    const out = await remeshObject(obj, remeshResolution.value)
+    remeshOpen.value = out.open
+    if (!out.open) {
+      const i = doc.objects.findIndex((o) => o.id === obj.id)
+      if (i >= 0) doc.objects[i] = out.obj
+    }
+  } catch (err) {
+    console.warn('[scene3d-studio] remesh failed', err)
+    convertError.value = 'Could not remesh this object — try again.'
+  } finally {
+    remeshBusy.value = false
+  }
+}
+async function solidifySelection() {
+  const obj = selectedMesh.value
+  if (!obj || remeshBusy.value) return
+  remeshBusy.value = true
+  convertError.value = ''
+  try {
+    const next = await solidifyObject(obj, solidifyThickness.value)
+    const i = doc.objects.findIndex((o) => o.id === obj.id)
+    if (i >= 0) doc.objects[i] = next
+    remeshOpen.value = false // give Remesh another try on the closed shell
+  } catch (err) {
+    console.warn('[scene3d-studio] solidify failed', err)
+    convertError.value = 'Could not solidify this object — try again.'
+  } finally {
+    remeshBusy.value = false
+  }
+}
 // Scenes render every light as a real Three.js light — an unbounded count would
 // tank frame time, so the UI caps additions rather than letting the doc silently
 // grow into something the engine chokes on.
@@ -2312,6 +2389,27 @@ function onClose() {
             <label class="mb-1 block text-[11px] text-white/55">Weight</label>
             <StudioSelect v-model="fontWeight" :options="fontWeightOptions" />
           </div>
+        </div>
+
+        <!-- Remesh / Solidify: PRIMITIVE_PARAMS.mesh is `[]`, so geoSpecs is
+             empty for a mesh object — this fills that space instead. -->
+        <div v-if="selectedMesh" class="space-y-3 pt-1">
+          <StudioSlider
+            v-model="remeshResolution"
+            label="Resolution"
+            :min="16" :max="128" :step="1"
+          />
+          <p class="text-[11px] text-white/45">{{ meshVertexCount.toLocaleString('en-US') }} vertices · {{ meshEncodedKB }} KB</p>
+          <StudioButton v-if="!remeshOpen" :disabled="remeshBusy" @click="remeshSelection">Remesh</StudioButton>
+          <template v-else>
+            <p class="text-[11px] leading-snug text-white/55">This shape is open, so it has no inside to rebuild. Give it a thickness first.</p>
+            <StudioSlider
+              v-model="solidifyThickness"
+              label="Thickness"
+              :min="0.005" :max="0.2" :step="0.005"
+            />
+            <StudioButton :disabled="remeshBusy" @click="solidifySelection">Solidify</StudioButton>
+          </template>
         </div>
 
         <!-- Geometry: a peer of the material sub-groups (plain details, no card
