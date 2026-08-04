@@ -1,6 +1,61 @@
 import type { EmbedSnapshot } from './contract'
 
 /**
+ * Literals that the reachable-form patterns in externalRefs() below correctly
+ * still match, but which are third-party DATA, not a request anything in the
+ * product ever issues: a DOM namespace string, a code-attribution comment, and
+ * font-licence metadata baked into a vendored typeface JSON. Nothing reads these
+ * fields as a URL to fetch/navigate/load — they just happen to look like one to
+ * a text scanner.
+ *
+ * Every entry is the EXACT string externalRefs() finds, not a prefix or a bare
+ * domain — matching on e.g. "sil.org" as a substring would silently wave through
+ * "https://sil.org/evil.js" too, which defeats the entire point of this list.
+ * Add an entry here ONLY when you can point at the exact source line that embeds
+ * it and explain why nothing can ever fetch it — never to make a failing build
+ * pass. Applies inside externalRefs() itself (not a second, looser scanner some
+ * bundle-scan test reimplements), so the export-time gate and any bundle scan
+ * agree by construction — see this file's own module doc above externalRefs.
+ */
+const INERT_LITERALS: ReadonlySet<string> = new Set<string>([
+  // three.js's WebGLRenderer creates its fallback 2D canvas via
+  // document.createElementNS(NAMESPACE, 'canvas') (see WebGLRenderer.js /
+  // OffscreenCanvas fallback path). This is the XHTML XML namespace identifier
+  // the DOM spec mandates for that call — an opaque string key the DOM API
+  // compares against, never a URL any code fetches or navigates to.
+  'http://www.w3.org/1999/xhtml',
+
+  // three.js's DigitalGlitch shader (examples/jsm/shaders/DigitalGlitch.js)
+  // carries a code-attribution comment inside its GLSL source string
+  // ("...effect based on https://github.com/staffantan/unityglitch..."). Part
+  // of a shader source string compiled by WebGL, never read as a URL.
+  'https://github.com/staffantan/unityglitch',
+
+  // ~/lib/spacetype/effects/boost.ts statically imports three's bundled
+  // helvetiker_bold / optimer_bold / gentilis_bold typeface JSONs (for
+  // extruded 3D text glyphs). Each carries its own font foundry's licence
+  // metadata as plain JSON string fields — vendor_url / designer_url /
+  // license_url / license_description — that Sailor never reads, let alone
+  // fetches; they ride along as inert data baked into the typeface file
+  // three.js ships. One entry per distinct literal across the three fonts:
+  'http://www.magenta.gr',                          // helvetiker_bold.typeface.json vendor_url
+  'http://www.magenta.gr/',                         // optimer_bold.typeface.json vendor_url (trailing-slash variant)
+  'http://www.ellak.gr/fonts/MgOpen/license.html',   // both Magenta fonts' license_url (MgOpen licence)
+  'http://scripts.sil.org/',                        // gentilis_bold.typeface.json vendor_url
+  'http://www.sil.org/~gaultney',                   // gentilis_bold.typeface.json designer_url
+  'http://scripts.sil.org/OFL',                     // gentilis_bold.typeface.json license_url
+  'http://www.sil.org/',                            // gentilis_bold.typeface.json license_description, embedded copyright line
+  // The same OFL URL recurs inside license_description's body text ("...FAQ
+  // at: http://scripts.sil.org/OFL\r\n..."). The absolute-URL pattern below
+  // stops at the first real whitespace byte, but the source CR was serialized
+  // as a literal two-character "\r" escape (backslash + r), not an actual
+  // control byte, so that escape gets swept into the match too. Same inert
+  // field, same reason — the trailing `\\r` here is 2 literal characters
+  // (backslash, "r"), matching what actually appears in the built bundle.
+  'http://scripts.sil.org/OFL\\r',
+])
+
+/**
  * Scans the HTML this bundler itself generates for references that would make
  * the exported file reach the network. It targets first-party generated
  * output — the config JSON, the inlined poster, and the adapter bundle we
@@ -49,7 +104,10 @@ export function externalRefs(html: string): string[] {
 
   const found: string[] = []
   for (const re of patterns) {
-    for (const m of scrubbed.matchAll(re)) found.push(m[0])
+    for (const m of scrubbed.matchAll(re)) {
+      if (INERT_LITERALS.has(m[0])) continue
+      found.push(m[0])
+    }
   }
   return found
 }

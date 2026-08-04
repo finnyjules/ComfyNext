@@ -199,6 +199,61 @@ describe('externalRefs', () => {
   })
 })
 
+// The Space Type embed bundle carries a handful of third-party string literals
+// that LOOK like network references to a text scanner but aren't — see
+// INERT_LITERALS' doc in bundle.ts for the full list and why each is inert.
+// This suite proves the allowlist does its narrow job and nothing more: known
+// inert literals are dropped, but the allowlist has no power to hide anything
+// else, including a URL that merely shares a domain with an allowlisted entry.
+describe('externalRefs — inert literal allowlist', () => {
+  it('drops a known-inert literal (SIL OFL licence URL) on its own', () => {
+    const html = buildEmbedHtml(snap(), 'var u = "http://scripts.sil.org/OFL";')
+    expect(externalRefs(html)).toEqual([])
+  })
+
+  it('drops every known-inert literal in the same scan', () => {
+    const adapter = [
+      'var a = "http://www.w3.org/1999/xhtml";',
+      'var b = "https://github.com/staffantan/unityglitch";',
+      'var c = "http://www.magenta.gr";',
+      'var d = "http://www.magenta.gr/";',
+      'var e = "http://www.ellak.gr/fonts/MgOpen/license.html";',
+      'var f = "http://scripts.sil.org/";',
+      'var g = "http://www.sil.org/~gaultney";',
+      'var h = "http://scripts.sil.org/OFL";',
+      'var i = "http://www.sil.org/";',
+      // The literal here is the actual 2-character `\r` escape (backslash + r),
+      // written as `\\r` in this test's own source so the string VALUE matches
+      // — see INERT_LITERALS' doc in bundle.ts for why the built bundle has this.
+      'var j = "http://scripts.sil.org/OFL\\r";',
+    ].join('\n')
+    const html = buildEmbedHtml(snap(), adapter)
+    expect(externalRefs(html)).toEqual([])
+  })
+
+  // Teeth check: the allowlist must not become a mute-everything list. A
+  // genuinely new URL sitting right next to an allowlisted one must still be
+  // caught — proves the filter is exact-match, not "this bundle has some
+  // allowlisted stuff in it, ship it".
+  it('still catches a genuinely new URL even when an inert literal is present in the same bundle', () => {
+    const adapter = [
+      'var licence = "http://scripts.sil.org/OFL";',
+      'var leak = "https://evil.example.com/x.js";',
+    ].join('\n')
+    const html = buildEmbedHtml(snap(), adapter)
+    expect(externalRefs(html)).toEqual(['https://evil.example.com/x.js'])
+  })
+
+  // A substring-only match must NOT be silently allowlisted — proves entries
+  // are exact strings, not domain fragments. "sil.org" appearing as a SUBSTRING
+  // of a hostile domain must still fail loudly; only the byte-for-byte inert
+  // literal is exempt.
+  it('does not allowlist a URL that merely shares a domain fragment with an inert entry', () => {
+    const html = buildEmbedHtml(snap(), 'var u = "https://sil.org.evil.example.com/x.js";')
+    expect(externalRefs(html)).toEqual(['https://sil.org.evil.example.com/x.js'])
+  })
+})
+
 describe('generated runtime clock', () => {
   // The runtime script embeds its own copy of t01At as an ES5 template-literal
   // string (it can't import clock.ts into the exported file). Extract it and
