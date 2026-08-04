@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { embedSurfaceKinds, isEmbeddable, loadEmbedSurface } from '~/lib/embed/surfaces'
+import { embedSurfaceKinds, isEmbeddable, loadEmbedSurface, bundleNameFor } from '~/lib/embed/surfaces'
+import { SPACE_TYPE_EFFECTS } from '~/lib/spacetype/effects/index'
 
 describe('embed surface registry', () => {
   it('lists shader as an embeddable kind', () => {
@@ -40,5 +41,68 @@ describe('embed surface registry', () => {
     // opts.alpha is set (engine.ts's applyBackground) — the first real
     // consumer of EmbedCaps.alpha / EmbedSnapshot.transparent.
     expect(s!.caps.alpha).toBe(true)
+  })
+})
+
+describe('bundleNameFor', () => {
+  it('maps shader to its own bundle regardless of config', () => {
+    expect(bundleNameFor('shader', {})).toBe('shader')
+    expect(bundleNameFor('shader', { anything: 'goes' })).toBe('shader')
+  })
+
+  it('maps gradient to its own bundle regardless of config', () => {
+    expect(bundleNameFor('gradient', {})).toBe('gradient')
+  })
+
+  it('maps spacetype to the per-effect bundle named after config.effectId', () => {
+    expect(bundleNameFor('spacetype', { effectId: 'ball' })).toBe('spacetype-ball')
+    expect(bundleNameFor('spacetype', { effectId: 'cornerpin' })).toBe('spacetype-cornerpin')
+  })
+
+  it('resolves every registered Space Type effect to its own bundle name', () => {
+    for (const effect of SPACE_TYPE_EFFECTS) {
+      expect(bundleNameFor('spacetype', { effectId: effect.id })).toBe(`spacetype-${effect.id}`)
+    }
+  })
+
+  it('is case-insensitive on effectId, matching the embed adapter\'s own lookup', () => {
+    expect(bundleNameFor('spacetype', { effectId: 'BALL' })).toBe('spacetype-ball')
+  })
+
+  it('throws on a missing effectId rather than falling back to a generic bundle', () => {
+    expect(() => bundleNameFor('spacetype', {})).toThrow()
+    expect(() => bundleNameFor('spacetype', { effectId: '' })).toThrow()
+    expect(() => bundleNameFor('spacetype', null)).toThrow()
+  })
+
+  // The failure mode this whole feature exists to prevent: a wrong-but-plausible
+  // fallback bundle. A weaker implementation might return a default effect's
+  // bundle (e.g. the first in SPACE_TYPE_EFFECTS) instead of throwing — this
+  // would still resolve to SOME real spacetype-*.js file and render something
+  // that looks fine, just for the wrong effect. Asserting a throw, not merely
+  // "does not equal spacetype-ball", is what catches that implementation.
+  it('throws on an unknown effectId rather than substituting a default effect', () => {
+    expect(() => bundleNameFor('spacetype', { effectId: 'not-a-real-effect' })).toThrow()
+    // Specifically must not silently resolve to the first registered effect.
+    let thrown = false
+    try {
+      bundleNameFor('spacetype', { effectId: 'not-a-real-effect' })
+    } catch {
+      thrown = true
+    }
+    expect(thrown).toBe(true)
+  })
+
+  // Path traversal: this value reaches a URL (`/embed/${bundle}.js`). A pattern
+  // match for ".." would be brittle (a same-directory variant, e.g. a bare
+  // absolute path or a percent-encoded segment, could slip past it); validating
+  // against the real effect list rejects it for the same reason "banana" is
+  // rejected — it simply is not a registered effect id — so this test would
+  // fail against an implementation that merely greps for "..".
+  it('rejects path traversal in effectId rather than pattern-matching for ".."', () => {
+    expect(() => bundleNameFor('spacetype', { effectId: '../../etc/passwd' })).toThrow()
+    expect(() => bundleNameFor('spacetype', { effectId: '..%2f..%2fetc%2fpasswd' })).toThrow()
+    expect(() => bundleNameFor('spacetype', { effectId: '/etc/passwd' })).toThrow()
+    expect(() => bundleNameFor('spacetype', { effectId: 'ball/../../../etc/passwd' })).toThrow()
   })
 })

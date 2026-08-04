@@ -32,16 +32,12 @@ const EMBED_DIR = path.join(ROOT, 'public', 'embed')
 // room to exist. Do not raise it further to hide an actual new dependency —
 // re-derive the number from what's really in the bundle, as this comment does.
 //
-// spacetype.js (the monolith — still built for now; Task 2 of the per-effect
-// embed bundles plan drops it and this ceiling entry with it) is a different
-// order of magnitude — ~1.85MB — because it statically bundles the entire
-// three.js runtime (WebGLRenderer, the full scene graph, geometries,
-// materials) PLUS all 25 Space Type effect modules from effects/index.ts
-// (SPACE_TYPE_EFFECTS is one flat array with no lazy per-effect split).
-// Measured at 1,847,192 bytes. The ceiling here is 1,950,000 (~1.95MB) —
-// enough headroom for ordinary edits not to flake the suite, but tight enough
-// that a second copy of three.js, or a network-reaching import creeping back
-// in, would blow through it.
+// spacetype.js — the monolith that used to bundle the entire three.js runtime
+// PLUS all 25 Space Type effect modules in one file (~1.85MB) — is no longer
+// built at all (Task 2 of the per-effect embed bundles plan dropped it, along
+// with its ceiling entry here and the /embed/spacetype.js fetch that used to
+// target it): export.ts now selects a per-effect bundle via bundleNameFor
+// (surfaces.ts), so nothing needs the monolith to exist anymore.
 //
 // spacetype-<effectId>.js (the per-effect bundles) are a SEPARATE, much
 // tighter bucket, because the entire point of splitting them out was to stop
@@ -71,17 +67,15 @@ const EMBED_DIR = path.join(ROOT, 'public', 'embed')
 // meaningful code size, so removing them barely moves any of the numbers above.
 const SHADER_CEILING_BYTES = 60_000
 const GRADIENT_CEILING_BYTES = 90_000
-const SPACETYPE_MONOLITH_CEILING_BYTES = 1_950_000
 const SPACETYPE_EFFECT_CEILING_BYTES = 1_750_000
 
-/** Classifies a built bundle's filename into one of the four size buckets
+/** Classifies a built bundle's filename into one of the three size buckets
  *  documented above. Throws on anything unrecognised rather than silently
  *  skipping the size check — an embed bundle this suite has never heard of is
  *  exactly the kind of surprise the gate exists to catch. */
 function ceilingFor(fileName: string): number {
   if (fileName === 'shader.js') return SHADER_CEILING_BYTES
   if (fileName === 'gradient.js') return GRADIENT_CEILING_BYTES
-  if (fileName === 'spacetype.js') return SPACETYPE_MONOLITH_CEILING_BYTES
   if (/^spacetype-[^/]+\.js$/.test(fileName)) return SPACETYPE_EFFECT_CEILING_BYTES
   throw new Error(`embed-build-output: no size ceiling defined for unexpected bundle "${fileName}" — add one above`)
 }
@@ -106,6 +100,15 @@ describe('public/embed directory', () => {
     for (const { id } of entries) {
       expect(builtFiles).toContain(`spacetype-${id}.js`)
     }
+  })
+
+  // The monolith this whole feature exists to stop shipping. Nothing fetches
+  // /embed/spacetype.js anymore (export.ts now goes through bundleNameFor),
+  // so build-embed.mjs must not emit it — a stray build step re-adding it
+  // would silently reintroduce the 1.85MB-per-export regression this test
+  // suite is here to prevent.
+  it('does not contain the retired spacetype.js monolith', () => {
+    expect(builtFiles).not.toContain('spacetype.js')
   })
 })
 

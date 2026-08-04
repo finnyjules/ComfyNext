@@ -1,5 +1,5 @@
 import { buildEmbedHtml, externalRefs } from './bundle'
-import { loadEmbedSurface } from './surfaces'
+import { bundleNameFor, loadEmbedSurface } from './surfaces'
 import type { EmbedSnapshot, EmbedSurface } from './contract'
 
 export interface ExportEmbedOptions {
@@ -60,13 +60,20 @@ export async function exportEmbedHtml(opts: ExportEmbedOptions): Promise<string>
 
   const transparent = !!opts.transparent && surface.caps.alpha
 
+  // bundleNameFor derives which built file this export needs — the identity
+  // mapping for most kinds, but e.g. 'spacetype-ball' for a Space Type piece
+  // using the 'ball' effect (see surfaces.ts's doc). Deliberately the only
+  // surface-specific fact in this function; everything else here is generic
+  // across every embeddable kind.
+  const bundle = bundleNameFor(opts.kind, opts.config)
+
   // Fetched BEFORE the poster bake, deliberately. A missing bundle is a build
   // problem, not a render problem: failing here costs milliseconds, whereas
   // failing after the bake means the user waits out a full-resolution GL render
   // only to be told to run a build script.
-  const res = await fetch(`/embed/${opts.kind}.js`)
+  const res = await fetch(`/embed/${bundle}.js`)
   if (!res.ok) {
-    throw new Error(`embed: /embed/${opts.kind}.js missing — run \`npm run build:embed\``)
+    throw new Error(`embed: /embed/${bundle}.js missing — run \`npm run build:embed\``)
   }
   const adapterJs = await res.text()
 

@@ -274,10 +274,16 @@ test.describe('embed export — spacetype', () => {
   })
 
   // Unlike shader (~47 KB) and gradient (well under 500 KB), Space Type's bundle carries
-  // three.js plus all 25 effects (~1.85 MB, measured — see embed-build-output.unit.spec.ts's
-  // ceiling comment) inlined verbatim as the adapter <script>. The plausibility band below
-  // is set around that reality, not the other surfaces' — a naive shared ceiling would either
-  // reject every real spacetype export or hide a shader/gradient bundle regression.
+  // three.js plus the ONE effect this export uses (the harness fixture is 'ribbon' — see
+  // spaceTypeConfig above) inlined verbatim as the adapter <script>. Per-effect bundles
+  // measure ~793KB-806KB (boost.js is the sole outlier at ~1.64MB — see
+  // embed-build-output.unit.spec.ts's ceiling comment), plus a small poster/HTML shell —
+  // a real export of this fixture measures ~840KB today. This band replaces one calibrated
+  // for the old spacetype.js monolith (all 25 effects, ~1.85MB) that this task's per-effect
+  // bundle split retired — that band would reject every real per-effect export now. The
+  // floor still catches a bundle silently regressing toward near-empty; the ceiling still
+  // catches a per-effect build somehow pulling all 25 effects back in (which would blow well
+  // past it, as the old monolith band's numbers show).
   test('produces self-contained html with no external references and a plausible size', async ({ page }) => {
     const html = await page.evaluate(() => (window as any).__embedHarnessSpaceType.exportHtml())
     expect(html).toContain('<!doctype html>')
@@ -288,8 +294,8 @@ test.describe('embed export — spacetype', () => {
     expect(externalRefs(html)).toEqual([])
 
     const kb = new Blob([html]).size / 1024
-    expect(kb).toBeGreaterThan(1500)   // must be at least "the bundle alone", roughly
-    expect(kb).toBeLessThan(2500)      // and not have ballooned further unnoticed
+    expect(kb).toBeGreaterThan(600)    // must be at least "the per-effect bundle alone", roughly
+    expect(kb).toBeLessThan(1200)      // and not have ballooned back toward the old monolith
   })
 
   // The exported file must run the LIVE renderer, not just show its poster — every export
