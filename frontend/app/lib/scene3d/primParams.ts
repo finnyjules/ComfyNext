@@ -144,6 +144,9 @@ export const PRIMITIVE_PARAMS: Record<PrimitiveKind, ParamSpec[]> = {
     { key: 'bevelSegments', label: 'Bevel segments', hint: 'How smooth each beveled edge looks', min: 1, max: 5, step: 1, default: 2 },
     { key: 'curveSegments', label: 'Curve segments', hint: 'How detailed the curves appear', min: 2, max: 12, step: 1, default: 6 },
   ],
+  // A stored vertex buffer has nothing parametric left to expose — sculpting or
+  // merging is what produced it. The Geometry panel renders empty.
+  mesh: [],
 }
 
 /** Resolve one value from a spec list: a stored value clamped to its range,

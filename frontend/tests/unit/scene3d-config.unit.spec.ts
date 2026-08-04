@@ -66,7 +66,7 @@ describe('scene3d config', () => {
   it('round-trips a document containing every primitive kind', () => {
     const doc = defaultDoc()
     for (const kind of PRIMITIVE_KINDS) doc.objects.push(createPrimitive(kind, doc.objects))
-    expect(PRIMITIVE_KINDS).toHaveLength(17)
+    expect(PRIMITIVE_KINDS).toHaveLength(18)
     const back = parseDoc(serializeDoc(doc))
     expect(back).toEqual(doc)
     expect(back.objects.map((o) => (o as any).primitive)).toEqual([...PRIMITIVE_KINDS])
@@ -255,19 +255,22 @@ describe('scene3d config', () => {
     expect(p.content?.pathKey).toBe(contentDigest('M0 0 L10 0 L10 10 Z'))
   })
 
-  it('appends svgPath to PRIMITIVE_KINDS last, and excludes it from the add menu', () => {
-    // svgPath is the one primitive that cannot be PLACED — it exists only as the
-    // product of an import — so PRIM_GROUPS deliberately does not carry it.
+  it('appends svgPath to PRIMITIVE_KINDS before mesh, and excludes it from the add menu', () => {
+    // svgPath is one of two primitives that cannot be PLACED — it exists only as
+    // the product of an import — so PRIM_GROUPS deliberately does not carry it.
+    // `mesh` was appended after it (see the dedicated mesh doc test), so svgPath
+    // is second-to-last rather than last.
     expect(PRIMITIVE_KINDS).toContain('svgPath')
-    expect(PRIMITIVE_KINDS[PRIMITIVE_KINDS.length - 1]).toBe('svgPath')
+    expect(PRIMITIVE_KINDS[PRIMITIVE_KINDS.length - 2]).toBe('svgPath')
     expect(NOT_PLACEABLE_KINDS).toContain('svgPath')
   })
 
   it('includes text and shape in PRIMITIVE_KINDS, appended last', () => {
     expect(PRIMITIVE_KINDS).toContain('text')
     expect(PRIMITIVE_KINDS).toContain('shape')
-    // svgPath was appended after shape (see the dedicated svgPath ordering test).
-    expect(PRIMITIVE_KINDS.slice(-3)).toEqual(['text', 'shape', 'svgPath'])
+    // svgPath was appended after shape, then mesh after svgPath (see the
+    // dedicated svgPath and mesh ordering tests).
+    expect(PRIMITIVE_KINDS.slice(-4)).toEqual(['text', 'shape', 'svgPath', 'mesh'])
   })
 
   it('seeds content only for the text primitive; shape is params-only', () => {

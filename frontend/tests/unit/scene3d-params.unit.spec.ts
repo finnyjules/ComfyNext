@@ -10,7 +10,9 @@ describe('scene3d primitive params', () => {
   it('gives every spec a default inside its own range and a unique key', () => {
     for (const kind of PRIMITIVE_KINDS) {
       const specs = PRIMITIVE_PARAMS[kind]
-      expect(specs.length, `${kind} has no params`).toBeGreaterThan(0)
+      // 'mesh' is content-only — a stored vertex buffer has nothing parametric
+      // left to expose, so its spec list is deliberately empty (config.ts).
+      if (kind !== 'mesh') expect(specs.length, `${kind} has no params`).toBeGreaterThan(0)
       const keys = specs.map((s) => s.key)
       expect(new Set(keys).size, `${kind} has duplicate keys`).toBe(keys.length)
       for (const s of specs) {

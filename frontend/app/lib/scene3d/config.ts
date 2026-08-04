@@ -26,6 +26,7 @@ export type PrimitiveKind =
   | 'icosahedron' | 'octahedron' | 'dodecahedron'
   | 'torusKnot' | 'ring'
   | 'text' | 'shape' | 'svgPath'
+  | 'mesh'
 export type Vec3 = [number, number, number]
 
 // Mirrors AVAILABLE_FONTS[0].url in outlines.ts. Duplicated as a literal rather
@@ -194,6 +195,16 @@ export interface PrimitiveContent {
    *  ABSENT MEANS 'nonzero', the SVG default: that keeps every pre-existing
    *  document rendering exactly as before, so this needs no doc-version bump. */
   fillRule?: 'nonzero' | 'evenodd'
+  /** `mesh` only — the encoded vertex buffer (see lib/scene3d/mesh.ts). Runs to
+   *  tens of KB, so `geoKeyFor` must key on `meshKey` instead, exactly as it
+   *  does for `path`/`pathKey`. */
+  mesh?: string
+  /** Digest of `mesh`, its `geoKeyFor` stand-in. Derived at parse time, NEVER
+   *  trusted from the document: a stored digest disagreeing with its payload
+   *  would make the engine serve cached geometry for a shape the object no
+   *  longer has — silently, and persistently, since the bad pair round-trips
+   *  through every save. Same rule as `pathKey`. */
+  meshKey?: string
 }
 
 export interface PrimitiveObject extends SceneObjectBase {
@@ -295,14 +306,16 @@ export const PRIMITIVE_KINDS: PrimitiveKind[] = [
   'capsule', 'pyramid', 'prism',
   'icosahedron', 'octahedron', 'dodecahedron',
   'torusKnot', 'ring',
-  'text', 'shape', 'svgPath',
+  'text', 'shape', 'svgPath', 'mesh',
 ]
 
 /** Kinds with no blank form to place from the add menu — they only exist
  *  carrying data from an import. PRIM_GROUPS deliberately omits these, and the
  *  drift test subtracts them before asserting exact menu coverage, so the guard
- *  stays strict for everything a user CAN place. */
-export const NOT_PLACEABLE_KINDS: PrimitiveKind[] = ['svgPath']
+ *  stays strict for everything a user CAN place. `svgPath` and `mesh` both have
+ *  no blank form to place — they only ever arrive carrying data (an SVG import;
+ *  a sculpt, remesh or merge result). */
+export const NOT_PLACEABLE_KINDS: PrimitiveKind[] = ['svgPath', 'mesh']
 
 export const LIGHTING_PRESETS: LightingPreset[] = ['studio', 'soft', 'dramatic', 'flat']
 
@@ -758,6 +771,11 @@ export function parseDoc(json: string): SceneDoc {
       // serve cached geometry for a shape the object no longer has — silently,
       // and persistently, since the bad pair round-trips through every save.
       c.pathKey = contentDigest(raw.path)
+    }
+    if (typeof raw.mesh === 'string') {
+      c.mesh = raw.mesh
+      // Derived, never trusted — see PrimitiveContent.meshKey.
+      c.meshKey = contentDigest(raw.mesh)
     }
     // Anything other than the literal 'evenodd' — absent, misspelt, a number —
     // resolves to the SVG default by staying unset, so an unreadable rule can
