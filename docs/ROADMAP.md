@@ -1,6 +1,6 @@
 # Roadmap — Sailor
 
-*Last revised: 2026-07-25. Companion to [VISION.md](VISION.md) and [STATE.md](STATE.md).*
+*Last revised: 2026-08-04. Companion to [VISION.md](VISION.md) and [STATE.md](STATE.md).*
 
 Three acts. Each is sequenced because it de-risks the next.
 
@@ -47,6 +47,8 @@ It replaced as it added: Kinetic Slates (−781 lines), the KineticType node wit
 Open items carried forward, not papered over: a migrated KineticType node no longer executes on the ComfyUI backend (it was a real node with IMAGE/MASK outputs; Vector Type is frontend-only, so graphs piping kinetic frames into a backend node lose that input at Run — baked frames and timeline playback still work; needs a release note) — its migrated MASK wire also dangles unconnected; no fallback exists yet if `google/fonts` renames a path upstream (the design doc's "static cut, axes disabled" mitigation is unimplemented); no node consumes SVG output, so vector only leaves the product by download; and parity gaps vs. the retired Font Playground remain (10 curated families, not the full Google Fonts catalog; no kerning off-switch; no word-level 3-D transform). `lib/gsap-kinetic.ts` and `kinetic-presets.ts`'s `build()` closures are now orphaned by the retirement (the preset catalog is still live for Compositor metadata) — a separate cleanup. The in-studio agent tuner is wired and guard-tested but not yet runtime-verified against a live model. Design: `docs/superpowers/specs/2026-07-27-vector-type-studio-design.md`. Full ledger: `.superpowers/sdd/progress.md`.
 
 **Done when:** at least one surface from each family is live, factory-built, and agent-drivable on day one. **Vector + variable type: done.** Data-driven form and Physics/simulation: not started.
+
+**Scene3D — sculpt & merge, phase 1 of 4 — LANDED 2026-08-04.** Not one of the three chosen absorption families; a depth expansion of the existing Scene3D surface rather than a new one, so it doesn't move the "done when" bar above. Commits `e6b5392d0`..`408bb4025`. Phase 1 adds no user-visible sculpting — it lands a `mesh` `PrimitiveKind` (geometry from stored vertices, inheriting every modifier/material/motion/bake path for free), a delta-encoded vertex codec small enough to live inline in the scene document (~5x smaller than naive quantise-and-deflate), an async decode cache, a "To mesh" freeze action, and a cloner budget clamp. See `docs/STATE.md` for the full write-up. Phases 2–4 — a voxel module and Remesh, then sculpt-mode brushes, then merge — are in progress.
 
 ---
 

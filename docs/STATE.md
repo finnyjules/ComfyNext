@@ -46,6 +46,24 @@ The schema is a **superset with per-consumer opt-in** (`agent: false` withholds 
 
 Still to do in Act 1: the generic inspector renderer (Gradient still has 432 lines of hand-written markup), new `ControlSpec` kinds (`segmented`, `repeater`, `custom`), and exposing the 11 now-declared Shape controls to the agent. Known misfits remain: Texture's colour-role system (`texturefx/roles.ts`), Space Type's scene-sequencing motion model.
 
+## Scene3D — mesh primitive foundation (sculpt & merge, phase 1 of 4) — LANDED 2026-08-04
+
+Commits `e6b5392d0`..`408bb4025` (9). Spec: [2026-08-04-scene3d-sculpt-and-merge-design.md](superpowers/specs/2026-08-04-scene3d-sculpt-and-merge-design.md) · Plan: [2026-08-04-scene3d-sculpt-and-merge.md](superpowers/plans/2026-08-04-scene3d-sculpt-and-merge.md).
+
+**No user-visible sculpting yet.** This phase builds the foundation clay-style sculpting and merging need, plus one new action. Phases 2–4 (a voxel module and Remesh, then sculpt mode with brushes, then merge) are in progress.
+
+A new `mesh` **PrimitiveKind** whose geometry comes from stored vertices instead of a factory. Because `buildGeometry` is `geometryFor(...)` → `applyModifiers(...)`, a mesh primitive inherits all six modifiers, every material type (including shaderFill and surface relief), the facet shading variant, motion tracks, grouping, outlines, the three render passes, rebake and export — with no per-feature work.
+
+A vertex-buffer **codec** (`lib/scene3d/mesh.ts`) small enough to live inline in the scene document: quantise to uint16 → per-component delta vs the previous vertex → zigzag → varint → deflate → base64. The delta stage is load-bearing, not an optimisation: measured on a 52k-vertex sphere, naive quantise-and-deflate is 917KB of base64 versus 186KB with delta — roughly 5x across every density measured.
+
+An **async decode cache** — `DecompressionStream` has no synchronous form but `geometryFor` is synchronous, so decode happens off the render path with a placeholder shown on a miss, mirroring how the `text` primitive already handles its async font load.
+
+A **"To mesh"** action freezes a primitive's current geometry (modifiers baked in) into a mesh object — the one new user-facing surface this phase ships.
+
+A **cloner budget clamp**: the vertex budget previously throttled subdivision only, never the cloner. A 40k-vertex mesh at grid mode's 5×5×5 = 125 copies reaches 5 million vertices and hangs the tab. The clamp is now surfaced in the panel, never silent.
+
+**Status:** Phase 1 complete and user-confirmed working in the app.
+
 ## Multi-LoRA generation — 2 slots → 4 — LANDED 2026-08-02
 
 Commits `d2a32c2ea` → `ebaea43e3`. Spec: [2026-08-02-multi-lora-slots-design.md](superpowers/specs/2026-08-02-multi-lora-slots-design.md) · Plan: [2026-08-02-multi-lora-slots.md](superpowers/plans/2026-08-02-multi-lora-slots.md).
