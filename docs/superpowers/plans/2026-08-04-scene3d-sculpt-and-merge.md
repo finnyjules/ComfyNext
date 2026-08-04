@@ -809,8 +809,8 @@ git commit -m "feat(scene3d): decode mesh buffers through an async cache with a 
 **Why:** `VERTEX_BUDGET` (300k) currently throttles *subdivision* only —
 `cloneCount` is deliberately never reduced because it is user-visible
 (`modifiers.ts:14-16`). That was safe when every base geometry was a few
-thousand vertices. A 40k-vertex mesh at cloneCount 100 is 4M vertices and hangs
-the tab. The clamp must be **surfaced**, not silent.
+thousand vertices. The real caps are cloneCount 12 (linear) and 5x5x5 = 125 copies
+(grid): a 40k-vertex mesh hits 480k vertices linear and 5M in grid mode. The clamp must be **surfaced**, not silent.
 
 - [ ] **Step 1: Write the failing budget test**
 
@@ -828,29 +828,30 @@ describe('clone budget', () => {
   })
 
   it('clamps a heavy base geometry and reports it', () => {
-    const r = clampedClones({ cloneCount: 100 }, 40_000) // would be 4M vertices
+    const r = clampedClones({ cloneCount: 12 }, 40_000) // 12 is the cap: 480k vertices
     expect(r.clamped).toBe(true)
     expect(r.count).toBeGreaterThanOrEqual(1)
     expect(r.count * 40_000).toBeLessThanOrEqual(300_000)
   })
 
   it('never clamps below a single copy', () => {
-    const r = clampedClones({ cloneCount: 100 }, 10_000_000)
+    const r = clampedClones({ cloneCount: 12 }, 10_000_000)
     expect(r.count).toBe(1)
   })
 
   it('applyModifiers honours the clamp', () => {
-    // 20k-vertex base at cloneCount 100 would be 2M; the budget caps it.
+    // 20k-vertex base at the cloneCount cap of 12 would be 240k; grid mode's
+    // 5x5x5 = 125 copies would be 2.5M. The budget caps it.
     const base = new THREE.SphereGeometry(0.5, 180, 110)
     const n = base.getAttribute('position').count
     expect(n).toBeGreaterThan(15_000)
-    const out = applyModifiers(base, { cloneCount: 100, cloneOffsetX: 2 })
+    const out = applyModifiers(base, { cloneCount: 12, cloneOffsetX: 2 })
     expect(out.getAttribute('position').count).toBeLessThanOrEqual(300_000)
   })
 
   it('totalClones still reports the user-set figure, unclamped', () => {
     // The clamp is a render-time guard; the doc's value is what the user chose.
-    expect(totalClones({ cloneCount: 100 })).toBe(100)
+    expect(totalClones({ cloneCount: 12 })).toBe(12)
   })
 })
 ```
@@ -871,8 +872,9 @@ In `frontend/app/lib/scene3d/modifiers.ts`, after `totalClones` (line 26):
  *  value is the user's choice and the panel shows it back. This is the
  *  render-time guard on top: subdivision already yields to VERTEX_BUDGET, but
  *  the cloner never did, which was safe only while every base geometry was a
- *  few thousand vertices. A 40k-vertex `mesh` primitive at cloneCount 100 is
- *  4M vertices and hangs the tab.
+ *  few thousand vertices. The caps are `cloneCount` 12 (linear) and 5x5x5 = 125
+ *  copies (grid), so a 40k-vertex `mesh` primitive reaches 480k vertices linear
+ *  and 5M in grid mode — the latter hangs the tab.
  *
  *  Callers MUST surface `clamped` — the surface's clone-cost warning does. A
  *  silent reduction reads as a rendering bug. */

@@ -155,8 +155,10 @@ Both are real and both must be handled in the same change that adds the kind:
    `meshKey → BufferGeometry` LRU fixes it.
 2. **Cloner budget.** `applyModifiers`' `VERTEX_BUDGET` (300k) throttles
    *subdivision* only; `cloneCount` is deliberately never reduced because it is
-   user-visible. A 40k-vertex mesh at cloneCount 100 is 4M vertices and hangs
-   the tab. Mesh primitives need the clone count clamped against the budget,
+   user-visible. The real caps are `cloneCount` 12 (linear) and 5×5×5 = 125
+   copies (grid), so a 40k-vertex mesh reaches 480k vertices linear and **5M in
+   grid mode** — both over the 300k budget, grid catastrophically so.
+   Mesh primitives need the clone count clamped against the budget,
    with the clamp surfaced in the existing clone-cost warning rather than
    applied silently.
 
