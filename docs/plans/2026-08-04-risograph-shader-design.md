@@ -1,7 +1,24 @@
 # Risograph shader effect — design
 
 **Date:** 2026-08-04
-**Status:** approved, implementing
+**Status:** shipped
+
+## In simple terms
+
+A Risograph is a duplicator that prints with two or three tins of bright ink, one
+pass each. What makes a riso print look like a riso print isn't grain — it's that
+the picture was *separated*: its colour was thrown away and rebuilt out of two or
+three inks, and then the passes didn't quite line up, so edges get a coloured
+fringe.
+
+So the effect does the real thing: split the image into 2–3 actual Riso ink
+colours, print each as a pattern of dots at its own angle, nudge each one slightly
+out of line, and lay them on paper with a bit of blotchiness and texture. You pick
+an ink set (Fluoro Pink + Blue, and so on) and how strong each part is.
+
+What's risky: nothing existing changes — this is a new effect sitting alongside the
+others. The one thing to watch is that it must look right at small sizes too, not
+just full size.
 
 ## Goal
 

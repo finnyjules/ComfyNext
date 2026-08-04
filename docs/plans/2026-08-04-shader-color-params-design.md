@@ -1,7 +1,26 @@
 # Colour + gradient params for the shader catalog — design
 
 **Date:** 2026-08-04
-**Status:** approved, implementing
+**Status:** shipped
+
+## In simple terms
+
+The "Gradient Map" effect didn't do what its name says. In Photoshop, a gradient
+map reads how light or dark each part of a picture is and paints it with colours
+you choose. Ours always painted a fixed rainbow, because the shader effects could
+only be handed numbers — never colours. Anything that needed a colour had to fake
+one, which is also why "Duotone" had a "Shadow Hue" slider instead of a swatch.
+
+So: teach the effects to take colours, both single colours and whole gradients.
+Then Gradient Map becomes the real thing and Duotone gets two proper swatches.
+The old rainbow isn't thrown away — it becomes its own effect, "Spectrum Map",
+and existing projects move over to it automatically so nothing already made
+changes appearance.
+
+What's risky: this touches eleven places that read an effect's settings, and most
+of them assumed every setting was a number. A place I miss doesn't crash — it
+quietly ignores the colour and draws the default, which looks like a bug in the
+picture rather than a bug in the code. So each one gets visited by hand.
 
 ## Problem
 
