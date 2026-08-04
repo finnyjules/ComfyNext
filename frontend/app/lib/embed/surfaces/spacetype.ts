@@ -5,6 +5,9 @@ import { SPACE_TYPE_EFFECTS } from '~/lib/spacetype/effects/index'
 import type { SpaceTypeEffect, Params } from '~/lib/spacetype/effect'
 import type { TextTextureOptions } from '~/lib/spacetype/textTexture'
 import { buildRibbonLabel } from '~/lib/spacetype/ribbonMath'
+import { resolveFontFamily, fontHasWeightAxis } from '~/lib/font/resolveFamily'
+import { DEFAULT_POST } from '~/lib/spacetype/postSettings'
+import type { PostSettings, SpaceTypeState } from '~~/shared/spacetype/state'
 
 /**
  * Space Type is the first embed surface that draws TEXT and the first with
@@ -32,38 +35,69 @@ export interface SpaceTypeEmbedConfig {
    *  `params.font` names as-is (e.g. a generic/system family already present
    *  in the viewer's browser — nothing to inject or await). */
   font: { family: string; weight: number; dataUrl: string } | null
+  /** Gradient-across-text stops — mirrors SpaceTypeState.gradientStops, folded
+   *  into the text texture exactly as texOptsFromState does (see buildTexOpts).
+   *  Optional/absent degrades to [] (gradient off), matching older configs
+   *  saved before this field existed. */
+  gradientStops?: SpaceTypeState['gradientStops']
+  /** Post-processing (bloom / colour / chroma / lens blur) — mirrors
+   *  SpaceTypeState.post. Optional/absent defaults to DEFAULT_POST (everything
+   *  off) at mount(), preserving the pre-existing no-post-processing export
+   *  behaviour for configs saved before this field existed. */
+  post?: PostSettings
 }
 
 // Effects whose glyphs size to their own (uppercased or as-typed) word with NO
 // trailing-gap pad, rather than the tiled-ribbon label. Mirrors RAW_WORD_EFFECTS
-// in ~/lib/spacetype/state.ts — duplicated (not imported) because state.ts pulls
-// in ~/data/google-fonts.ts for its own font-family resolution, which this
-// adapter deliberately does NOT want (see buildTexOpts below).
+// in ~/lib/spacetype/state.ts — duplicated (not imported) because state.ts's
+// import graph still reaches ~/data/variable-fonts.ts (ensureSpaceTypeFont's
+// VARIABLE_FONTS table of hardcoded fonts.googleapis.com + SIL/OFL URLs) for
+// unrelated reasons (defaultSpaceTypeState, ensureSpaceTypeFont). Font
+// resolution itself (resolveFontFamily/fontHasWeightAxis, see buildTexOpts
+// below) is fine to import directly — that lives in the network-free
+// ~/lib/font/resolveFamily now — but state.ts as a whole is not.
 const RAW_WORD_EFFECTS = new Set(['coil', 'elastic', 'echo'])
 
 /**
  * Text-texture options for one embed frame. Mirrors texOptsFromState in
- * ~/lib/spacetype/state.ts (the studio's own builder) for every field EXCEPT:
+ * ~/lib/spacetype/state.ts (the studio's own builder) for every field, INCLUDING
+ * font resolution and gradient stops — the two used to diverge from
+ * texOptsFromState here, which is exactly the "looks plausible, is wrong"
+ * failure this file exists to avoid:
  *
- *  - fontFamily/fontWeight come from the embed's pre-resolved `font` (or,
- *    when `font` is null, straight from params) rather than
- *    resolveFontFamily/fontHasWeightAxis — those consult the live Google
- *    Fonts catalog (~/data/google-fonts.ts's `fetch('/api/google-fonts')`),
- *    which is exactly the kind of network dependency an embed must never
- *    carry. The export pipeline resolves the real family/weight once, at
- *    export time, and hands it to us pre-resolved.
- *  - gradientStops is always empty/off: SpaceTypeState.gradientStops is a
- *    top-level field the export pipeline does not fold into
- *    SpaceTypeEmbedConfig (see this task's report) — gradient-across-text
- *    is out of scope for this adapter's v1.
+ *  - fontFamily/fontWeight: when the embed carries a pre-resolved `font`
+ *    (family + weight, computed once by the export pipeline), that wins —
+ *    trust the export-time resolution rather than re-deriving it. When
+ *    `font` is null, this now calls the SAME resolveFontFamily/
+ *    fontHasWeightAxis that texOptsFromState calls, and that 12 of the 25
+ *    Space Type effects (cascade.ts, cylinder.ts, spiral.ts, ...) call
+ *    independently to build their own per-glyph textures. Previously this
+ *    function took `params.font`/`params.typeWeight` raw instead, so a
+ *    config with `font: null` and a legacy id like 'inter' in params.font
+ *    would resolve to 'Inter' inside those effects but pass the raw
+ *    'inter' through here as a CSS family — not a real family name, so
+ *    canvas silently fell back to sans-serif with no visible sign anything
+ *    was wrong. `~/lib/font/resolveFamily` is safe to import here — unlike
+ *    ~/data/google-fonts.ts (which this comment used to warn against
+ *    importing, before commit 7fe308c9d), it holds only synchronous reads
+ *    of a module-level cache: no `fetch`, no fonts.googleapis.com URL
+ *    literals, so it carries none of the network dependency an embed bundle
+ *    must never reach for. See its own header doc for the "why".
+ *  - gradientStops/gradientOn now come from the embed config's own
+ *    `gradientStops` field and `params.gradientMode` (see
+ *    SpaceTypeEmbedConfig), rather than being hardcoded to [] / off.
  */
 function buildTexOpts(
   effect: SpaceTypeEffect,
   params: Params,
   font: { family: string; weight: number } | null,
+  gradientStops: SpaceTypeState['gradientStops'],
 ): TextTextureOptions {
-  const family = font?.family ?? String(params.font ?? 'Inter')
-  const weight = font?.weight ?? Number(params.typeWeight ?? 700)
+  const family = font?.family ?? resolveFontFamily(String(params.font ?? 'Inter'))
+  // Static families have no weight axis — pin to 400 so we don't faux-bold a
+  // single cut, matching texOptsFromState. Only applies when `font` is null;
+  // a pre-resolved `font.weight` from the export pipeline is trusted as-is.
+  const weight = font?.weight ?? (fontHasWeightAxis(family) ? Number(params.typeWeight ?? 700) : 400)
   const multiAware = effect.controls.some(c => c.kind === 'textList')
   const rawTexts = String(params.text ?? '').split('\n').map(t => t.trim()).filter(Boolean)
   const texts = rawTexts.length ? rawTexts : ['']
@@ -90,11 +124,18 @@ function buildTexOpts(
     tracking: Number(params.tracking),
     strokeColor: '#000000',
     strokeWidth: Number(params.typeStroke),
-    gradientStops: [],
-    gradientOn: false,
+    gradientStops: gradientStops.map(g => ({ ...g })),
+    gradientOn: String(params.gradientMode) === 'on',
     uRepeat: Number(params.textRepeat),
   }
 }
+
+// Exported for unit testing — buildTexOpts is pure (no DOM, no THREE, no
+// engine instance), so its font-resolution and gradient-passthrough logic
+// (the two correctness gaps this file's own history records) can be asserted
+// directly without mounting a real WebGL engine. See
+// tests/unit/embed-spacetype.unit.spec.ts.
+export { buildTexOpts }
 
 const spaceTypeEmbedSurface: EmbedSurface = {
   kind: 'spacetype',
@@ -153,8 +194,13 @@ const spaceTypeEmbedSurface: EmbedSurface = {
     canvas.style.width = '100%'
     canvas.style.height = '100%'
     const engine = new SpaceTypeEngine(canvas, { ...cfg.opts, effect })
+    // Absent `post` (older configs saved before this field existed) must
+    // render exactly as before this fix — DEFAULT_POST is all-off, and
+    // setPost is a no-op cost-wise when postEnabled() is false (see
+    // engine.ts's setPost doc).
+    engine.setPost(cfg.post ?? DEFAULT_POST)
 
-    const texOpts = buildTexOpts(effect, cfg.params, cfg.font)
+    const texOpts = buildTexOpts(effect, cfg.params, cfg.font, cfg.gradientStops ?? [])
     engine.build(cfg.params, texOpts)
 
     container.appendChild(canvas)
