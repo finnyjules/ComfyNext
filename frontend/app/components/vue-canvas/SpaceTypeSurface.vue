@@ -1141,9 +1141,14 @@ async function generateVideo() {
   }
 }
 
-// Cache of family+weight -> data: URI (or null on a fetch failure) so re-exporting
-// the same node repeatedly doesn't re-fetch/re-encode an unchanged font every time.
-const fontDataUrlCache = new Map<string, string | null>()
+// Cache of family+weight -> raw font bytes (or null on a fetch failure) so
+// re-exporting the same node repeatedly doesn't re-fetch the file from Google Fonts
+// every time. Keyed by family+weight only, NOT text: the raw bytes fetched here are
+// the same regardless of what the piece says, so caching them is safe. Subsetting
+// (below) depends on text and is intentionally NOT cached — it re-runs on every
+// export in case the text changed since the last one, and it's a single fast local
+// POST, not a network fetch of an external font host.
+const fontBytesCache = new Map<string, ArrayBuffer | null>()
 
 /** Base64-encode an ArrayBuffer without blowing the call stack on a ~200KB font file
  *  (String.fromCharCode(...bytes) spread would stack-overflow on the full array). */
@@ -1158,33 +1163,95 @@ function bufferToBase64(buf: ArrayBuffer): string {
 }
 
 /**
- * Fetch the actual font FILE for family+weight as a data: URI, for inlining into a
- * web embed export. Reuses fontSourceUrl (~/lib/scene3d/outlines) — the SAME
- * resolution path the 3D Studio's text-extrude primitive already uses to turn a
- * `google:Family@weight` token into `/api/scene3d/google-font-file`, a server proxy
- * that forces Google Fonts to hand back a raw, parseable TTF instead of the woff2 it
- * serves real browsers — rather than inventing a second font-fetch path here.
+ * Fetch the actual font FILE for family+weight as raw bytes. Reuses fontSourceUrl
+ * (~/lib/scene3d/outlines) — the SAME resolution path the 3D Studio's text-extrude
+ * primitive already uses to turn a `google:Family@weight` token into
+ * `/api/scene3d/google-font-file`, a server proxy that forces Google Fonts to hand
+ * back a raw, parseable TTF instead of the woff2 it serves real browsers — rather
+ * than inventing a second font-fetch path here.
  *
  * Returns null on any failure (family Google doesn't have, network error, ...). The
  * caller degrades to `font: null` (viewer's system font) instead of failing the whole
  * export over a font that couldn't be fetched — see exportWebEmbed.
  */
-async function fetchFontDataUrl(family: string, weight: number): Promise<string | null> {
+async function fetchFontBytes(family: string, weight: number): Promise<ArrayBuffer | null> {
   const key = `${family}@${weight}`
-  if (fontDataUrlCache.has(key)) return fontDataUrlCache.get(key)!
+  if (fontBytesCache.has(key)) return fontBytesCache.get(key)!
   try {
     const url = fontSourceUrl(`google:${family}@${weight}`)
     const res = await fetch(url)
-    if (!res.ok) { fontDataUrlCache.set(key, null); return null }
+    if (!res.ok) { fontBytesCache.set(key, null); return null }
     const buf = await res.arrayBuffer()
-    const dataUrl = `data:font/ttf;base64,${bufferToBase64(buf)}`
-    fontDataUrlCache.set(key, dataUrl)
-    return dataUrl
+    fontBytesCache.set(key, buf)
+    return buf
   } catch (e) {
     console.error('[space-type] embed export: font fetch failed', e)
-    fontDataUrlCache.set(key, null)
+    fontBytesCache.set(key, null)
     return null
   }
+}
+
+/**
+ * POST a font (base64) + the piece's text to the ComfyUI-side `/sailor/font_subset`
+ * route (comfy_extras/nodes_timeline.py's subset_font_bytes) and return the
+ * subsetted font as base64. Subsets to `text`'s characters UNION the full basic-Latin
+ * range — see that route's docstring and
+ * docs/superpowers/plans/2026-08-04-embed-font-subsetting.md for why basic Latin is
+ * kept even for text that doesn't use it (so the export doesn't foreclose rendering
+ * text it wasn't built with, if it's ever wired to something dynamic).
+ *
+ * Returns null on ANY failure — network error, non-200, or a malformed body — and
+ * NEVER throws: subsetting is a size optimization, not a correctness requirement, and
+ * the caller falls back to the full font on null. Every failure path logs via
+ * console.error first, though: a silent fallback here would leave someone staring at
+ * a 296 KB export with no way to find out why it isn't ~40 KB.
+ */
+async function subsetFontBase64(fontB64: string, text: string): Promise<string | null> {
+  let res: Response
+  try {
+    res = await fetch('/sailor/font_subset', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ font: fontB64, text }),
+    })
+  } catch (e) {
+    console.error('[space-type] embed export: font subset request failed, falling back to the full font', e)
+    return null
+  }
+  if (!res.ok) {
+    const body = await res.text().catch(() => '')
+    console.error(`[space-type] embed export: font subset returned HTTP ${res.status}, falling back to the full font`, body)
+    return null
+  }
+  let data: any
+  try {
+    data = await res.json()
+  } catch (e) {
+    console.error('[space-type] embed export: font subset response was not valid JSON, falling back to the full font', e)
+    return null
+  }
+  if (!data || typeof data.font !== 'string' || !data.font) {
+    console.error('[space-type] embed export: font subset response missing "font", falling back to the full font', data)
+    return null
+  }
+  return data.font
+}
+
+/**
+ * Fetch family+weight as a data: URI for inlining into a web embed export, subsetted
+ * to `text`'s characters plus basic Latin (via subsetFontBase64/`/sailor/font_subset`)
+ * whenever that succeeds. Falls back to the full, un-subsetted font on ANY subsetting
+ * failure — the fetch from Google Fonts is a separate concern with its own fallback:
+ * only a failure to fetch the font AT ALL (family/weight genuinely unavailable)
+ * returns null here, in which case the caller degrades further to `font: null` (the
+ * viewer's system font) — see exportWebEmbed.
+ */
+async function fetchFontDataUrl(family: string, weight: number, text: string): Promise<string | null> {
+  const buf = await fetchFontBytes(family, weight)
+  if (!buf) return null
+  const fullB64 = bufferToBase64(buf)
+  const subsetB64 = await subsetFontBase64(fullB64, text)
+  return `data:font/ttf;base64,${subsetB64 ?? fullB64}`
 }
 
 // Mirrors GradientStudioSurface.vue's exportWebEmbed: in-flight guard (a double-click
@@ -1197,8 +1264,10 @@ async function fetchFontDataUrl(family: string, weight: number): Promise<string 
 // true (see spacetype.ts's own doc), so this is the first export where that choice
 // does anything. And the font: the studio's live family/weight (resolved exactly like
 // texOptsFromState/buildTexOpts do — same resolveFontFamily/fontHasWeightAxis calls)
-// is fetched as real bytes and inlined; a fetch failure degrades to `font: null`
-// (viewer's system font) rather than silently shipping a broken typeface.
+// is fetched as real bytes, subsetted to the piece's text plus basic Latin via
+// /sailor/font_subset, and inlined; a fetch failure degrades to `font: null` (viewer's
+// system font), and a subsetting failure alone degrades to the full, un-subsetted font
+// (still logged either way) rather than silently shipping a broken or oversized export.
 async function exportWebEmbed() {
   if (embedding.value) return
   embedding.value = true
@@ -1211,7 +1280,10 @@ async function exportWebEmbed() {
     // Static families have no weight axis — pin to 400, matching texOptsFromState/
     // buildTexOpts, so a variable-only weight isn't faux-bolted onto a single cut.
     const weight = fontHasWeightAxis(family) ? Number(params.typeWeight ?? 700) : 400
-    const dataUrl = await fetchFontDataUrl(family, weight)
+    // The piece's text, same source texOptsFromState/texOpts() splits into lines —
+    // what /sailor/font_subset keeps beyond basic Latin.
+    const text = String(params.text ?? '')
+    const dataUrl = await fetchFontDataUrl(family, weight, text)
     const font = dataUrl ? { family, weight, dataUrl } : null
 
     const embedConfig: SpaceTypeEmbedConfig = {

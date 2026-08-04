@@ -564,4 +564,96 @@ test.describe('embed font inlining — spacetype', () => {
     await p.close()
     return png
   }
+
+  // POSTs to /sailor/font_subset the SAME way exportWebEmbed's subsetFontBase64 does —
+  // a relative fetch from the page, which the Nuxt dev server proxies straight through
+  // to ComfyUI (server/middleware/comfyui-proxy.ts's '/sailor' prefix) — rather than
+  // calling the SpaceTypeSurface.vue helper directly (it's component-local, not
+  // exported). This is the real route, not a stub: if ComfyUI hasn't been restarted
+  // since Task 1 (66116b011) added the route, this 404s and the test fails loudly,
+  // which is the point — a silently-skipped subset here would prove nothing.
+  async function subsetViaRoute(
+    page: any, fontB64: string, text: string,
+  ): Promise<{ font: string; before: number; after: number }> {
+    return await page.evaluate(async ({ fontB64, text }: { fontB64: string; text: string }) => {
+      const res = await fetch('/sailor/font_subset', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ font: fontB64, text }),
+      })
+      if (!res.ok) throw new Error(`/sailor/font_subset returned ${res.status}: ${await res.text()}`)
+      return await res.json()
+    }, { fontB64, text })
+  }
+
+  // THE SUBSETTING TEST — proves the actual code path exportWebEmbed exercises: fetch
+  // the real font bytes, subset them through the live ComfyUI route with the piece's
+  // real text, and confirm both (a) the bytes shrink materially and (b) the SUBSETTED
+  // font still renders the real typeface, not a corrupted or fallback one. Unlike the
+  // tests above (which inject full, un-subsetted font files directly), this one is the
+  // one that would catch subsetting itself breaking rendering.
+  test('a subsetted font is materially smaller and still renders the real typeface', async ({ page, context }) => {
+    const fullB64 = fs.readFileSync(FONT_A_PATH).toString('base64')
+    const base = await fieldBaseConfig(page)
+    // field's default text is 'Sailor' — entirely basic Latin, so it's covered by the
+    // subset regardless of the text-union logic; that's deliberate here (this test is
+    // about subsetting not corrupting the common case), not an attempt to dodge it.
+    const text = String(base.params.text ?? '')
+
+    const { font: subsetB64, before, after } = await subsetViaRoute(page, fullB64, text)
+
+    // Materially smaller: Task 1 (docs/superpowers/plans/2026-08-04-embed-font-subsetting.md)
+    // measured an 84% reduction (196 KB -> 31.5 KB) subsetting a real Google font to its
+    // text plus basic Latin; this OTF display fixture measured ~66% (227 KB -> 78 KB,
+    // logged below) — smaller because a compact display face starts with far fewer
+    // glyphs than a full Google Fonts family, so there's less to cut. Assert
+    // conservatively at "well under half" rather than pinning to either figure, so a
+    // legitimate future change to fontTools' subsetting Options — or running this
+    // against a different fixture font — doesn't flake this test. The floor still
+    // catches a subsetting call that silently no-ops (which would leave `after` at
+    // ~`before`, i.e. a ratio near 1).
+    console.log(`[font-subset test] ${FONT_A_PATH}: ${before}B -> ${after}B (${((1 - after / before) * 100).toFixed(1)}% smaller)`)
+    expect(after).toBeLessThan(before * 0.5)
+    expect(after).toBeGreaterThan(0)
+
+    const fontFull = {
+      ...base,
+      font: { family: TEST_FAMILY, weight: 700, dataUrl: `data:font/otf;base64,${fullB64}` },
+      params: { ...base.params, font: TEST_FAMILY },
+    }
+    const fontSubset = {
+      ...base,
+      font: { family: TEST_FAMILY, weight: 700, dataUrl: `data:font/otf;base64,${subsetB64}` },
+      params: { ...base.params, font: TEST_FAMILY },
+    }
+    const fontNull = { ...base, font: null, params: { ...base.params, font: TEST_FAMILY } }
+
+    const htmlFull = await exportAt(page, fontFull)
+    const htmlSubset = await exportAt(page, fontSubset)
+    const htmlNull = await exportAt(page, fontNull)
+
+    // The exported FILE is materially smaller too — but NOT by the same fraction as the
+    // raw font bytes above: 'field' bundles three.js plus one effect verbatim as its
+    // adapter <script> (~800 KB-1 MB per embed-export's own band comment), so even the
+    // FULL 227 KB font is a minority of this particular fixture's total file size —
+    // unlike the general "296 KB / 1.11 MB = 26%" baseline in the plan, which was
+    // measured against a typical piece, not this bundle-heavy test fixture. A fixed
+    // fraction of the WHOLE file would therefore either be too strict here or too loose
+    // for a lighter effect — so instead this asserts against what subsetting actually
+    // saved: the file-size delta should track the measured font-byte delta (before -
+    // after), inflated by base64's ~4/3 overhead, which applies equally to both exports.
+    // 30% slack absorbs surrounding JSON/CSS-string escaping and rounding, not tuned tight.
+    const kbFull = new Blob([htmlFull]).size / 1024
+    const kbSubset = new Blob([htmlSubset]).size / 1024
+    const expectedSavingsKb = ((before - after) * 4 / 3) / 1024
+    expect(kbFull - kbSubset).toBeGreaterThan(expectedSavingsKb * 0.7)
+    expect(kbSubset).toBeLessThan(kbFull)
+
+    const pngSubset = await embedFrameIn(context, htmlSubset)
+    const pngNull = await embedFrameIn(context, htmlNull)
+    // The rendering evidence: the subsetted font actually changes what gets drawn
+    // relative to no font at all (canvas default sans-serif) — subsetting didn't
+    // degrade all the way down to "no usable glyphs".
+    expect(pngSubset).not.toBe(pngNull)
+  })
 })
