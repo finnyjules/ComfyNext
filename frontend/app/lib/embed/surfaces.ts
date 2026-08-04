@@ -8,6 +8,7 @@ import type { EmbedSurface } from './contract'
 const REGISTRY: Record<string, () => Promise<{ default: EmbedSurface }>> = {
   shader: () => import('./surfaces/shader'),
   gradient: () => import('./surfaces/gradient'),
+  spacetype: () => import('./surfaces/spacetype'),
 }
 
 export function embedSurfaceKinds(): string[] {

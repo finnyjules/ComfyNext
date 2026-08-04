@@ -24,11 +24,33 @@ const ROOT = fileURLToPath(new URL('../..', import.meta.url))
 // is on the order of 100KB) while giving gradient's real, larger footprint
 // room to exist. Do not raise it further to hide an actual new dependency —
 // re-derive the number from what's really in the bundle, as this comment does.
-const SIZE_CEILING_BYTES: Record<string, number> = { shader: 60_000, gradient: 90_000 }
+//
+// spacetype.js is a different order of magnitude — ~1.85MB — because it
+// statically bundles the entire three.js runtime (WebGLRenderer, the full
+// scene graph, geometries, materials) PLUS all 25 Space Type effect modules
+// from effects/index.ts (SPACE_TYPE_EFFECTS is one flat array with no lazy
+// per-effect split — see spacetype.ts's "throw on unknown effectId" adapter,
+// which resolves the effect from that same static array). Neither dependency
+// is optional at today's architecture: the adapter cannot know which of the
+// 25 effects a given export uses without importing the whole registry, and
+// SpaceTypeEngine is built directly on THREE.WebGLRenderer/Scene/Camera. The
+// ceiling here is 2,200,000 (~2.1MB) — meaningful headroom over the measured
+// ~1.85MB so ordinary edits don't flake the suite, but still tight enough
+// that a SECOND copy of three.js, or a network-reaching catalog import (e.g.
+// ~/data/google-fonts.ts's `fetch('/api/google-fonts')`, deliberately NOT
+// imported by spacetype.ts — see that file's buildTexOpts doc), would blow
+// through it. This is not a size budget — three.js + 25 effects at ~1.85MB
+// already exceeds the ~1.5MB figure the Task 2 brief flagged as worth
+// surfacing on its own; if this ceiling is ever raised, re-derive the number
+// from what changed in the bundle rather than padding it to make CI pass, and
+// treat a further jump as the signal that per-effect bundle splitting (a real
+// architectural change) is now worth doing rather than absorbing quietly.
+const SIZE_CEILING_BYTES: Record<string, number> = { shader: 60_000, gradient: 90_000, spacetype: 2_200_000 }
 
 describe.each([
   ['shader', 'shader.js'],
   ['gradient', 'gradient.js'],
+  ['spacetype', 'spacetype.js'],
 ])('prebuilt %s embed bundle', (surface, fileName) => {
   const OUT = path.join(ROOT, 'public', 'embed', fileName)
 

@@ -26,4 +26,19 @@ describe('embed surface registry', () => {
     expect(s!.kind).toBe('gradient')
     expect(typeof s!.caps.alpha).toBe('boolean')
   })
+
+  it('lists spacetype as an embeddable kind', () => {
+    expect(embedSurfaceKinds()).toContain('spacetype')
+  })
+
+  it('loads the spacetype surface with the right kind and genuine alpha support', async () => {
+    const s = await loadEmbedSurface('spacetype')
+    expect(s).not.toBeNull()
+    expect(s!.kind).toBe('spacetype')
+    // Unlike shader/gradient (both measured opaque), Space Type's engine is
+    // constructed with alpha:true and genuinely clears to transparent when
+    // opts.alpha is set (engine.ts's applyBackground) — the first real
+    // consumer of EmbedCaps.alpha / EmbedSnapshot.transparent.
+    expect(s!.caps.alpha).toBe(true)
+  })
 })
