@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { resolveValues, toUniforms, serializeParams, cleanStops, hexVec3 } from '~/lib/shaderfx/params'
+import { resolveValues, toUniforms, serializeParams, cleanStops, serializeStops, hexVec3 } from '~/lib/shaderfx/params'
 import { resolveEffectParams } from '~/lib/shaderfill/descriptor'
 import { derivedShaderFillControls } from '~/lib/shaderfill/controls'
 import { normalizeShaderSpec } from '~/lib/spacetype/fillTile'
+import { describeControls, validatePatch } from '~/lib/spacetype/controlDescriptor'
 import type { EffectDef, GradientStop } from '~/lib/shaderfx/types'
 
 const RAMP: GradientStop[] = [
@@ -109,15 +110,15 @@ describe('shader-fill consumers of the new types', () => {
     expect(JSON.stringify(a)).not.toBe(JSON.stringify(b))
   })
 
-  it('derives a colour control as kind:color and OMITS gradients', () => {
+  it('derives a colour as kind:color and a gradient as kind:gradientStops', () => {
     const cs = derivedShaderFillControls(def(), 'fill.shader')
     const ink = cs.find(c => c.key === 'fill.shader.params.ink')
     expect(ink?.kind).toBe('color')
     expect(ink?.default).toBe('#1a1a2e')
-    // A gradient has no scalar ControlSpec representation; absent beats lying.
-    expect(cs.find(c => c.key === 'fill.shader.params.ramp')).toBeUndefined()
-    // And a colour must never fall through to the numeric slider branch.
-    expect(cs.every(c => !(c.kind === 'slider' && c.key.endsWith('.ink')))).toBe(true)
+    expect(cs.find(c => c.key === 'fill.shader.params.ramp')?.kind).toBe('gradientStops')
+    // Neither may fall through to the numeric slider branch — that branch is the
+    // `else`, so a missing case here renders a hex string as a 0..1 slider.
+    expect(cs.every(c => c.kind !== 'slider' || !/\.(ink|ramp)$/.test(c.key))).toBe(true)
   })
 
   it('survives the persistence boundary — normalizeShaderSpec keeps all three shapes', () => {
@@ -129,5 +130,88 @@ describe('shader-fill consumers of the new types', () => {
     expect(spec.params.ramp).toEqual(RAMP)
     expect(spec.params.mix).toBe(0.5)
     expect(spec.params.junk).toBeUndefined()
+  })
+})
+
+// A `gradientStops` ControlSpec stores JSON text (ParamValue is scalar), while a
+// studio's own picker writes an array. These MUST resolve — and therefore key —
+// identically, or a ramp set by the agent renders differently from the same ramp
+// set by hand. That equivalence is the whole reason cleanStops takes both.
+describe('gradient: array and JSON text are one value', () => {
+  const RAMP3: GradientStop[] = [
+    { pos: 0, color: '#06283d' },
+    { pos: 0.5, color: '#256d85' },
+    { pos: 1, color: '#47b5ff' },
+  ]
+
+  it('cleanStops normalizes an array and its JSON text to the same list', () => {
+    const fromArray = cleanStops(RAMP3, 8, [])
+    const fromText = cleanStops(JSON.stringify(RAMP3), 8, [])
+    expect(fromText).toEqual(fromArray)
+  })
+
+  it('produces the SAME descriptor key either way', () => {
+    const a = resolveEffectParams(def(), { ramp: RAMP3 })
+    const b = resolveEffectParams(def(), { ramp: JSON.stringify(RAMP3) })
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b))
+  })
+
+  it('produces the SAME uniforms either way', () => {
+    const a = toUniforms(def(), resolveValues(def(), { u_ramp: RAMP3 }))
+    const b = toUniforms(def(), resolveValues(def(), { u_ramp: JSON.stringify(RAMP3) }))
+    expect(a).toEqual(b)
+  })
+
+  it('falls back on unparseable text rather than throwing', () => {
+    expect(cleanStops('{not json', 8, RAMP)).toEqual(RAMP)
+    expect(cleanStops('"a string"', 8, RAMP)).toEqual(RAMP)
+  })
+
+  it('treats the text spelling of the default as the default when serializing', () => {
+    const d = def()
+    expect(serializeParams(d, { u_ramp: serializeStops(RAMP) })).toBe('{}')
+  })
+})
+
+describe('gradient: agent vocabulary', () => {
+  const control = () => derivedShaderFillControls(def(), 'fill.shader')
+    .find(c => c.key === 'fill.shader.params.ramp')!
+
+  it('derives a gradientStops control carrying its stop cap', () => {
+    const c = control()
+    expect(c.kind).toBe('gradientStops')
+    expect((c as { maxStops?: number }).maxStops).toBe(4)
+    // A ramp has no float sweep — it must not offer a motion track.
+    expect((c as { animatable?: boolean }).animatable).toBe(false)
+  })
+
+  it('is offered to the agent, with the stop format spelled out', () => {
+    const d = describeControls([control()], {})
+    expect(d).toHaveLength(1)
+    expect(d[0]!.kind).toBe('gradientStops')
+    expect(d[0]!.hint).toMatch(/pos/)
+    expect(d[0]!.maxStops).toBe(4)
+  })
+
+  it('accepts a well-formed ramp from the agent and re-serializes it canonically', () => {
+    const d = describeControls([control()], {})
+    const patch = validatePatch({
+      'fill.shader.params.ramp': '[{"pos":1,"color":"#ff9900"},{"pos":0,"color":"#220044"}]',
+    }, d)
+    // Sorted on the way in, so the agent's ordering cannot create a second key.
+    expect(patch['fill.shader.params.ramp'])
+      .toBe(serializeStops([{ pos: 0, color: '#220044' }, { pos: 1, color: '#ff9900' }]))
+  })
+
+  it('drops a malformed ramp entirely rather than applying it in part', () => {
+    const d = describeControls([control()], {})
+    expect(validatePatch({ 'fill.shader.params.ramp': '[{"pos":0,"color":"nope"},{"pos":1,"color":"#fff"}]' }, d)).toEqual({})
+    expect(validatePatch({ 'fill.shader.params.ramp': '[{"pos":0,"color":"#000"}]' }, d)).toEqual({})
+    expect(validatePatch({ 'fill.shader.params.ramp': 'not json' }, d)).toEqual({})
+  })
+
+  it('accepts an 8-digit colour from the agent (StudioColor emits them)', () => {
+    const d = describeControls([{ key: 'ink', label: 'Ink', kind: 'color', default: '#000000', group: 'g' }], {})
+    expect(validatePatch({ ink: '#e609f580' }, d)).toEqual({ ink: '#e609f580' })
   })
 })

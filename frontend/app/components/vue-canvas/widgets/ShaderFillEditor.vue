@@ -27,10 +27,13 @@ import CatalogModal from '~/components/CatalogModal.vue'
 import FillControl from '~/components/vue-canvas/compositor/FillControl.vue'
 import StudioSlider from '~/components/vue-canvas/studio/StudioSlider.vue'
 import StudioSegmented from '~/components/vue-canvas/studio/StudioSegmented.vue'
+import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
+import PalettePicker from '~/components/vue-canvas/studio/PalettePicker.vue'
 import { type ShaderSpec, DEFAULT_SHADER_SPEC } from '~/lib/spacetype/fillTile'
 import { type Paint, isFill } from '~/composables/useCompositorLayers'
 import { fetchShaderFxCatalog } from '~/lib/shaderfx/catalog'
-import type { EffectDef, ShaderFxCatalog } from '~/lib/shaderfx/types'
+import type { EffectDef, GradientStop, ParamValue, ShaderFxCatalog } from '~/lib/shaderfx/types'
+import { cleanStops } from '~/lib/shaderfx/params'
 import { derivedShaderFillControls } from '~/lib/shaderfill/controls'
 import { unprefixedKey } from '~/lib/shaderfill/descriptor'
 import { retryFieldCatalog } from '~/lib/shaderfill/field'
@@ -130,21 +133,26 @@ const PARAM_PREFIX = `${PREFIX}.params.`
 interface ParamRow {
   key: string
   label: string
-  kind: 'slider' | 'select'
+  kind: 'slider' | 'select' | 'color' | 'gradientStops'
+  maxStops?: number
   min?: number
   max?: number
   step?: number
-  default: number
+  /** number for slider/select · hex string for color · JSON stops for gradientStops */
+  default: number | string
   options?: { value: number; label: string }[]
 }
 
 const paramRows = computed<ParamRow[]>(() => {
   const eff = effectDef.value
   if (!eff) return []
-  // derivedShaderFillControls only ever emits 'slider' or 'select' kinds (see its
-  // own source), but its return type is the full ControlSpec union (shared with
-  // every other control kind in the app) — flatMap + an explicit kind check on
-  // each branch narrows properly instead of asserting past the type checker.
+  // derivedShaderFillControls emits 'slider', 'select', 'color' and
+  // 'gradientStops' (see its own source); its return type is the full ControlSpec
+  // union (shared with every other control kind in the app) — flatMap + an
+  // explicit kind check on each branch narrows properly instead of asserting past
+  // the type checker. A branch MISSING here is not a type error, it just returns
+  // [] — which is how colour params silently had no editor on this widget for a
+  // commit. Any new derived kind needs a branch here AND in StudioControlPanel.
   return derivedShaderFillControls(eff, PREFIX).flatMap((c): ParamRow[] => {
     const key = c.key.startsWith(PARAM_PREFIX) ? c.key.slice(PARAM_PREFIX.length) : c.key
     if (c.kind === 'select') {
@@ -163,15 +171,36 @@ const paramRows = computed<ParamRow[]>(() => {
     if (c.kind === 'slider') {
       return [{ key, label: c.label, kind: 'slider', default: c.default, min: c.min, max: c.max, step: c.step }]
     }
+    if (c.kind === 'color') {
+      return [{ key, label: c.label, kind: 'color', default: c.default }]
+    }
+    if (c.kind === 'gradientStops') {
+      return [{ key, label: c.label, kind: 'gradientStops', default: c.default, maxStops: c.maxStops ?? 8 }]
+    }
     return []
   })
 })
 
 function paramValue(row: ParamRow): number {
   const raw = props.modelValue.params[row.key]
-  return typeof raw === 'number' && Number.isFinite(raw) ? raw : row.default
+  return typeof raw === 'number' && Number.isFinite(raw) ? raw : (row.default as number)
 }
-function setParam(key: string, v: number) {
+function colorValue(row: ParamRow): string {
+  const raw = props.modelValue.params[row.key]
+  return typeof raw === 'string' && raw ? raw : String(row.default)
+}
+/** Through `cleanStops`, which takes the stored array OR a `gradientStops` control's
+ *  JSON text — the picker below only speaks arrays. */
+function stopsValue(row: ParamRow): GradientStop[] {
+  const fallback = cleanStops(row.default, row.maxStops ?? 8, [])
+  return cleanStops(props.modelValue.params[row.key], row.maxStops ?? 8, fallback)
+}
+function rampCss(stops: GradientStop[]): string {
+  const s = [...stops].sort((a, b) => a.pos - b.pos)
+  if (!s.length) return 'transparent'
+  return `linear-gradient(to right, ${s.map(x => `${x.color} ${Math.round(x.pos * 100)}%`).join(', ')})`
+}
+function setParam(key: string, v: ParamValue) {
   patch({ params: { ...props.modelValue.params, [key]: v } })
 }
 
@@ -247,10 +276,24 @@ function onInputChange(p: Paint) {
           <option v-for="o in row.options" :key="o.value" :value="o.value" class="bg-neutral-900">{{ o.label }}</option>
         </select>
       </template>
+      <template v-else-if="row.kind === 'color'">
+        <label class="mb-1 block text-[9px] uppercase tracking-[0.1em] text-white/35">{{ row.label }}</label>
+        <StudioColor :model-value="colorValue(row)" @update:model-value="(v: string) => setParam(row.key, v)" />
+      </template>
+      <template v-else-if="row.kind === 'gradientStops'">
+        <label class="mb-1 block text-[9px] uppercase tracking-[0.1em] text-white/35">{{ row.label }}</label>
+        <div class="mb-1.5 h-5 overflow-hidden rounded border border-white/10" :style="{ background: rampCss(stopsValue(row)) }" />
+        <PalettePicker
+          mode="stops"
+          :stop-count="stopsValue(row).length || 3"
+          :seed="stopsValue(row)[0]?.color ?? '#4f8ad9'"
+          @apply-stops="(v: GradientStop[]) => setParam(row.key, v.slice(0, row.maxStops ?? 8).map(s => ({ pos: s.pos, color: s.color })))"
+        />
+      </template>
       <StudioSlider
         v-else
         :model-value="paramValue(row)"
-        :label="row.label" :min="row.min ?? 0" :max="row.max ?? 1" :step="row.step ?? 0.01" :default="row.default"
+        :label="row.label" :min="row.min ?? 0" :max="row.max ?? 1" :step="row.step ?? 0.01" :default="Number(row.default)"
         @update:model-value="(v: number) => setParam(row.key, v)"
       />
     </div>

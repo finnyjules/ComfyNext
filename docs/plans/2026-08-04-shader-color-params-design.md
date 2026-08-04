@@ -111,6 +111,38 @@ Two things only running it in the app surfaced:
    new manifest with the old code and served a 500 (`'<=' not supported between
    instances of 'float' and 'str'`).
 
+## Follow-up: driving the new types from every surface
+
+Shipped straight after the above.
+
+- **`gradientStops` ControlSpec kind.** `derivedShaderFillControls` now emits it,
+  so a gradient param is inspectable and agent-tunable wherever a shader fill
+  lives. `ParamValue` is scalar, so the control stores JSON text — but that is not
+  a second representation: `cleanStops` accepts the text *and* the array and emits
+  one normalized list for both the renderer and the descriptor key. Tests assert a
+  ramp written either way produces the same key and the same uniforms.
+- **`color` had no editor on shader fills at all.** `ShaderFillEditor` maps
+  ControlSpec kinds to its own `ParamRow` and returns `[]` for anything it doesn't
+  know — so the previous commit's colour params silently rendered nothing there.
+  A missing branch is not a type error in that shape, which is why it slipped;
+  both new kinds now have branches, with a comment saying so.
+- **Agent.** `gradientStops` joins `AI_EDITABLE_KINDS`, is described with the stop
+  format spelled out, and is validated structurally and all-or-nothing — a ramp
+  with one bad stop is dropped, not half-applied — then re-serialized canonically
+  so two spellings of one ramp cannot key as two descriptors. `validatePatch`'s
+  colour check also widened to 8 digits, the same StudioColor issue as above.
+
+**An init-order landmine, exposed not caused.** `SHADER_FILL_CONTROLS` was
+`export const … = shaderFillControls()`, evaluated at module load and reading
+`DEFAULT_SHADER_SPEC` from `fillTile` — which sits in a documented import cycle
+with `compositor/paint`. Adding any import to `controls.ts` reordered the
+traversal enough that the three defaults came back `undefined`, and the resulting
+failure was *intermittent across vitest workers* (4 of 5 runs), which is what a
+latent init-order bug looks like. Now computed on first read via
+`getShaderFillControls()`, which removes the ordering dependency instead of
+betting on a lucky traversal. `fillTile` also keeps a local hex regex rather than
+importing one, to stay a type-only boundary.
+
 ## Verification
 
 - Golden parity gate covers the new uniform path for all three effects.

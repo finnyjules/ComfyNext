@@ -1,20 +1,23 @@
 import type { ControlSpec, Params, ParamValue } from '~/lib/spacetype/effect'
+import { cleanStops, serializeStops } from '~/lib/shaderfx/params'
 
 /** A control normalized for the AI copilot. `path` equals the control key for
  *  Type/Texture (flat). A future Shader adapter will emit dotted paths here. */
 export interface DescribedControl {
   path: string
   label: string
-  kind: 'slider' | 'select' | 'color' | 'font'
+  kind: 'slider' | 'select' | 'color' | 'font' | 'gradientStops'
   min?: number
   max?: number
   step?: number
   options?: string[]
+  /** `gradientStops` only — the cap the consuming shader's array imposes. */
+  maxStops?: number
   hint?: string
   current: ParamValue
 }
 
-const AI_EDITABLE_KINDS = new Set(['slider', 'select', 'color', 'font'])
+const AI_EDITABLE_KINDS = new Set(['slider', 'select', 'color', 'font', 'gradientStops'])
 
 function isEditable(c: ControlSpec): boolean {
   if (typeof c.aiEditable === 'boolean') return c.aiEditable
@@ -31,12 +34,22 @@ export function describeControls(controls: ControlSpec[], params: Params): Descr
     if (c.hint) d.hint = c.hint
     if (c.kind === 'slider') { d.min = c.min; d.max = c.max; d.step = c.step }
     if (c.kind === 'select') d.options = c.options
+    if (c.kind === 'gradientStops') {
+      d.maxStops = c.maxStops ?? 8
+      // Spell the shape out: the model has to emit this as text, and a stop list
+      // is the one kind here whose format isn't obvious from the current value.
+      d.hint = c.hint ?? `A JSON array of colour stops, ordered by position: [{"pos":0,"color":"#rrggbb"},…]. pos is 0..1; 2 to ${c.maxStops ?? 8} stops.`
+    }
     out.push(d)
   }
   return out
 }
 
-const HEX6 = /^#[0-9a-fA-F]{6}$/
+// 8-digit #rrggbbaa is accepted because StudioColor emits it whenever its alpha
+// track is touched, so it is a legitimate CURRENT value for any colour control —
+// dropping it here would make the model unable to echo back a colour it was just
+// shown. See isParamHex in ~/lib/shaderfx/params.ts for the same widening.
+const HEX_COLOR = /^#([0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/
 
 function stepDecimals(step: number): number {
   const s = String(step)
@@ -67,10 +80,19 @@ export function validatePatch(
       if (typeof raw === 'string' && d.options!.includes(raw)) out[key] = raw
     }
     else if (d.kind === 'color') {
-      if (typeof raw === 'string' && HEX6.test(raw)) out[key] = raw
+      if (typeof raw === 'string' && HEX_COLOR.test(raw)) out[key] = raw
     }
     else if (d.kind === 'font') {
       if (typeof raw === 'string' && raw.trim()) out[key] = raw
+    }
+    else if (d.kind === 'gradientStops') {
+      // Structural, all-or-nothing: a ramp with one bad stop is dropped rather
+      // than partially applied, because a half-written gradient is not a state
+      // the user asked for. Re-serialized from the normalized list so whatever
+      // the model's spacing/ordering, one ramp always stores as one string —
+      // otherwise two spellings of the same ramp would key as two descriptors.
+      const stops = cleanStops(raw, d.maxStops ?? 8, [])
+      if (stops.length >= 2) out[key] = serializeStops(stops)
     }
   }
   return out

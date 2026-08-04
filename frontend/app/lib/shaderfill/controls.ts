@@ -1,5 +1,6 @@
 import type { ControlSpec } from '~/lib/spacetype/effect'
-import type { EffectDef } from '~/lib/shaderfx/types'
+import type { EffectDef, GradientStop } from '~/lib/shaderfx/types'
+import { cleanStops, serializeStops } from '~/lib/shaderfx/params'
 import { DEFAULT_SHADER_SPEC } from '~/lib/spacetype/fillTile'
 import { unprefixedKey } from './descriptor'
 
@@ -113,8 +114,21 @@ export function shaderFillControls(prefix = 'fill.shader'): ControlSpec[] {
 
 /** The declared three at the default `fill.shader` prefix — the three studios
  *  that store a `ShaderSpec` there import this and are untouched by the factory
- *  above. */
-export const SHADER_FILL_CONTROLS: ControlSpec[] = shaderFillControls()
+ *  above.
+ *
+ *  LAZY, not `= shaderFillControls()`. Evaluating it at module-init read
+ *  `DEFAULT_SHADER_SPEC` while `~/lib/spacetype/fillTile` could still be
+ *  mid-initialization — it sits in a documented cycle with
+ *  `~/lib/compositor/paint` — so the three defaults came back `undefined` and
+ *  this module threw on import. It only ever surfaced when some unrelated import
+ *  reordered the traversal (adding one to this file did exactly that, and the
+ *  resulting failure was intermittent across vitest workers, which is what a
+ *  latent init-order bug looks like). Computing on first read removes the
+ *  ordering dependency entirely rather than betting on a lucky traversal. */
+let _shaderFillControls: ControlSpec[] | null = null
+export function getShaderFillControls(): ControlSpec[] {
+  return (_shaderFillControls ??= shaderFillControls())
+}
 
 /**
  * Build one ControlSpec per param the given catalog effect declares, addressed
@@ -167,17 +181,22 @@ export function derivedShaderFillControls(effect: EffectDef, prefix: string): Co
       // identity for this value across the schema and the renderer.
       out.push({ key, label: p.label, kind: 'color', default: p.default as string, group: 'Effect' })
     } else if (p.type === 'gradient') {
-      // DELIBERATELY OMITTED, second stated gap. A gradient's value is a stop
-      // LIST; every structured `ControlSpec` kind (`fillList`, `path`, `curve`)
-      // stores its value as a JSON *string* because `Params` is scalar. Bridging
-      // this one that way would give the same gradient two representations — an
-      // array in `ShaderSpec.params`, a string at `<prefix>.params.<key>` — which
-      // is precisely the two-identities-disagreeing bug documented above the
-      // `.p.`-vs-`.params.` note. Until `ControlSpec` grows a real stops kind, a
-      // gradient param is driven from its own surface's inspector only: it is
-      // absent from the agent vocabulary and from derived inspectors rather than
-      // present and lying. The effect still renders — with its default ramp.
-      continue
+      // JSON text, like every other structured kind, because `ParamValue` is
+      // scalar. This is NOT a second representation of the ramp: `cleanStops`
+      // (~/lib/shaderfx/params.ts) accepts the text and the array and emits one
+      // normalized array for both the renderer and the descriptor key, so a ramp
+      // written here and a ramp written by a studio's own picker resolve — and
+      // therefore key — identically. Not animatable: a stop list has no float
+      // sweep, hence the explicit flag rather than the slider default.
+      out.push({
+        key,
+        label: p.label,
+        kind: 'gradientStops',
+        default: serializeStops(cleanStops(p.default, p.maxStops ?? 8, p.default as GradientStop[])),
+        maxStops: p.maxStops ?? 8,
+        group: 'Effect',
+        animatable: false,
+      })
     } else if (p.type === 'enum') {
       const options = p.options ?? []
       out.push({

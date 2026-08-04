@@ -1,11 +1,11 @@
 import type { ControlSpec } from '~/lib/spacetype/effect'
 import { getEffectSync } from '~/lib/shaderfx/catalog'
-import { SHADER_FILL_CONTROLS, derivedShaderFillControls } from '~/lib/shaderfill/controls'
+import { getShaderFillControls, derivedShaderFillControls } from '~/lib/shaderfill/controls'
 import type { ShapeConfig } from './config'
 import { visibleShapeControls } from './controls'
 
 /** Strip the schema-only fields (`when`/`agent`/`animatable`) that `ShapeControl`
- *  and `SHADER_FILL_CONTROLS` may carry, matching visibleShapeControls's own list. */
+ *  and `getShaderFillControls()` may carry, matching visibleShapeControls's own list. */
 function stripMeta(specs: ControlSpec[]): ControlSpec[] {
   return specs
     .filter((c) => (c as any).agent !== false)
@@ -33,7 +33,7 @@ function stripMeta(specs: ControlSpec[]): ControlSpec[] {
 export function shapeAgentControls(cfg: ShapeConfig): ControlSpec[] {
   const out = stripMeta(visibleShapeControls(cfg))
   if (cfg.fill.type === 'shader' && cfg.fill.shader) {
-    out.push(...stripMeta(SHADER_FILL_CONTROLS))
+    out.push(...stripMeta(getShaderFillControls()))
     const effectDef = getEffectSync(cfg.fill.shader.effectId)
     if (effectDef) out.push(...derivedShaderFillControls(effectDef, 'fill.shader'))
   }

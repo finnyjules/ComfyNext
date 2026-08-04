@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { SHADER_FILL_CONTROLS, derivedShaderFillControls } from '../../app/lib/shaderfill/controls'
+import { getShaderFillControls, derivedShaderFillControls } from '../../app/lib/shaderfill/controls'
 import { getByPath } from '../../app/lib/studio/path'
 import { DEFAULT_SHADER_SPEC } from '../../app/lib/spacetype/fillTile'
 import { resolveEffectParams } from '../../app/lib/shaderfill/descriptor'
@@ -25,7 +25,7 @@ const enumEffect = { id: 'facet-shape', name: 'Facet Shape', params: [
 
 describe('shader fill controls', () => {
   it('declares exactly the three frozen keys', () => {
-    expect(SHADER_FILL_CONTROLS.map(c => c.key))
+    expect(getShaderFillControls().map(c => c.key))
       .toEqual(['fill.shader.effectId', 'fill.shader.anchor', 'fill.shader.speed'])
   })
   it('derives one spec per effect param addressed at the real ShaderSpec.params path', () => {
@@ -37,7 +37,7 @@ describe('shader fill controls', () => {
     expect(derivedShaderFillControls(effect, 'fill.shader')[0]!.animatable).not.toBe(false)
   })
   it('speed is animatable and anchor is not — anchor is a mode, not a value', () => {
-    const byKey = Object.fromEntries(SHADER_FILL_CONTROLS.map(c => [c.key, c]))
+    const byKey = Object.fromEntries(getShaderFillControls().map(c => [c.key, c]))
     expect(byKey['fill.shader.speed']!.animatable).not.toBe(false)
     expect(byKey['fill.shader.anchor']!.animatable).toBe(false)
   })

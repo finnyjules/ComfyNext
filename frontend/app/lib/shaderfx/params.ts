@@ -33,18 +33,39 @@ export function hexVec3(hex: string): [number, number, number] {
   ]
 }
 
+/** Canonical text form of a ramp — what a `gradientStops` ControlSpec stores,
+ *  since `ParamValue` is scalar (see `cleanStops` for why that's not a second
+ *  representation). Always produced from an already-normalized list. */
+export function serializeStops(stops: GradientStop[]): string {
+  return JSON.stringify(stops.map(s => ({ pos: s.pos, color: s.color })))
+}
+
 /**
+ * The ONE normalizer for a ramp. Both `resolveValues` (which feeds the renderer)
+ * and `resolveEffectParams` (which feeds the descriptor cache key) go through
+ * here, so the key and the pixels cannot disagree about which stops are live.
+ *
+ * ACCEPTS AN ARRAY **OR** ITS JSON TEXT. `ControlSpec`'s value type (`ParamValue`
+ * = number | string | boolean, shared/spacetype/state.ts) cannot hold a list, so
+ * every structured control kind in this codebase — `fillList`, `path`, `curve` —
+ * stores JSON text; a `gradientStops` control therefore writes a string while the
+ * studio's own picker writes an array. That is not two representations: there is
+ * exactly one canonical form, the normalized array this returns, and this is the
+ * only place either input shape is interpreted. The alternative — teaching each
+ * reader which form to expect — is how the two would drift.
+ *
  * SORT THEN SLICE, and `toUniforms` below must do the same. Slicing first takes
  * the first N in author order, which for the same ramp given in a different order
- * is a DIFFERENT subset — so the descriptor cache key (which runs through here)
- * and the actual render (which runs through `toUniforms`) would disagree about
- * which stops are live, and a fill would serve pixels rendered from a ramp it
- * isn't keyed on.
+ * is a DIFFERENT subset, so the key and the render would pick different stops.
  */
 export function cleanStops(raw: unknown, maxStops: number, fallback: GradientStop[]): GradientStop[] {
-  if (!Array.isArray(raw) || raw.length < 2) return fallback
+  let list = raw
+  if (typeof list === 'string') {
+    try { list = JSON.parse(list) } catch { return fallback }
+  }
+  if (!Array.isArray(list) || list.length < 2) return fallback
   const out: GradientStop[] = []
-  for (const s of raw) {
+  for (const s of list) {
     if (!s || typeof s !== 'object') return fallback
     const { pos, color } = s as GradientStop
     if (typeof color !== 'string' || !isParamHex(color) || !Number.isFinite(pos)) return fallback
@@ -90,8 +111,9 @@ export function toUniforms(eff: EffectDef, values: Record<string, ParamValue>): 
     if (p.type === 'color') {
       out[p.uniform] = hexVec3(typeof v === 'string' ? v : (p.default as string))
     } else if (p.type === 'gradient') {
-      const raw = Array.isArray(v) && v.length >= 2 ? v : (p.default as GradientStop[])
-      const stops = [...raw].sort((a, b) => a.pos - b.pos).slice(0, p.maxStops ?? 8)
+      // Through `cleanStops` rather than a local sort/slice, so the uniforms and
+      // the descriptor key are normalized by the same function.
+      const stops = cleanStops(v, p.maxStops ?? 8, p.default as GradientStop[])
       out[`${p.uniform}Count`] = stops.length
       stops.forEach((s, i) => {
         out[`${p.uniform}[${i}]`] = hexVec3(s.color)
@@ -110,7 +132,15 @@ export function resolveUniforms(eff: EffectDef, overrides: Record<string, ParamV
 }
 
 function isDefault(p: EffectParamDef, v: ParamValue): boolean {
-  if (p.type === 'gradient') return JSON.stringify(v) === JSON.stringify(p.default)
+  if (p.type === 'gradient') {
+    // Normalize BOTH sides first: the same ramp can arrive as an array (picker) or
+    // as JSON text (a `gradientStops` control), and those stringify differently
+    // while meaning the same thing — so a raw compare would persist a "change"
+    // that is really just the other spelling of the default.
+    const max = p.maxStops ?? 8
+    const def = p.default as GradientStop[]
+    return serializeStops(cleanStops(v, max, def)) === serializeStops(cleanStops(def, max, def))
+  }
   return v === p.default
 }
 

@@ -46,6 +46,12 @@ export type ControlSpec = (
   // A list of "fills" (per-slot colour recipes: solid / gradient / grid / noise). Stored as one
   // JSON string in params; the surface renders a type dropdown + dependent colour pickers per row.
   | { key: string; label: string; kind: 'fillList'; default: string; group: string }
+  // An ordered list of gradient stops (`[{pos,color},…]`). Stored as JSON text for
+  // the same reason `fillList` is — `ParamValue` is scalar — and normalized back to
+  // an array by the single `cleanStops` in ~/lib/shaderfx/params.ts, which accepts
+  // either form so the text and the array are one canonical value, not two.
+  // `maxStops` mirrors the consuming shader's array size.
+  | { key: string; label: string; kind: 'gradientStops'; default: string; maxStops?: number; group: string }
   | { key: string; label: string; kind: 'color'; default: string; group: string }
   | { key: string; label: string; kind: 'select'; options: string[]; default: string; group: string }
   | { key: string; label: string; kind: 'font'; default: string; group: string }

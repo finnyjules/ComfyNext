@@ -21,8 +21,15 @@ import { isGradient, isFill, sortedClampedStops, type Paint } from '~/lib/compos
 // pure numeric helper — importing it pulls no DOM, no model and no cycle
 // (`lib/vector/svg` imports nothing at all).
 import { gradientUnitAxis } from '~/lib/vector/svg'
-import { isParamHex } from '~/lib/shaderfx/params'
 import type { GradientStop, ParamValue } from '~/lib/shaderfx/types'
+
+// Local, deliberately NOT imported from ~/lib/shaderfx/params. This module sits in
+// a documented import cycle with ~/lib/compositor/paint (see the header), so every
+// value import added here widens the graph that has to settle before
+// DEFAULT_SHADER_SPEC is assigned. Keeping this a type-only import boundary is
+// cheaper than reasoning about that each time. Mirrors isParamHex(): 3/4/6/8
+// digits, because StudioColor emits #rrggbbaa.
+const PARAM_HEX = /^#?([0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/
 
 export type FillType = 'solid' | 'gradient' | 'ombre' | 'grid' | 'noise' | 'checkerboard' | 'stripes' | 'qr' | 'shader'
 /** `a`/`b` drive the slot's fill (stripe); `textColor` is the solid colour for type on that row.
@@ -147,7 +154,7 @@ export function normalizeShaderSpec(s: unknown, depth: number): ShaderSpec {
   if (o.params && typeof o.params === 'object') {
     for (const [k, v] of Object.entries(o.params as Record<string, unknown>)) {
       if (typeof v === 'number' && Number.isFinite(v)) params[k] = v
-      else if (typeof v === 'string' && isParamHex(v)) params[k] = v
+      else if (typeof v === 'string' && PARAM_HEX.test(v.trim())) params[k] = v
       else if (Array.isArray(v) && v.every(s => s && typeof s === 'object'
         && typeof (s as GradientStop).color === 'string' && Number.isFinite((s as GradientStop).pos))) {
         params[k] = v as GradientStop[]
