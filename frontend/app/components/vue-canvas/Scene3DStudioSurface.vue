@@ -26,11 +26,12 @@ import { toHeightPixels, heightGradient, RELIEF_FLAT_THRESHOLD } from '~/lib/sce
 import { DEFAULT_SHADER_SPEC, normalizeShaderSpec, type ShaderSpec } from '~/lib/spacetype/fillTile'
 import { fetchShaderFxCatalog } from '~/lib/shaderfx/catalog'
 import { LIVE_FIELD_CEILING } from '~/lib/shaderfill/descriptor'
-import { AVAILABLE_FONTS, loadFont, fontDisplayName, parseGoogleFontValue } from '~/lib/scene3d/outlines'
+import { AVAILABLE_FONTS, loadFont, fontDisplayName, fontCacheGet, parseGoogleFontValue } from '~/lib/scene3d/outlines'
 import { loadGoogleCatalog, type GoogleFont } from '~/data/google-fonts'
 import FontPicker from '~/components/vue-canvas/FontPicker.vue'
 import { PRIM_GROUPS } from '~/lib/scene3d/primGroups'
-import { SceneEngine, baseSizeFor, baseVertexCountFor } from '~/lib/scene3d/engine'
+import { SceneEngine, baseSizeFor, baseVertexCountFor, buildGeometry } from '~/lib/scene3d/engine'
+import { convertToMesh } from '~/lib/scene3d/toMesh'
 import { rebaseMany, groupObjects, ungroupMany, rootObjects, descendantIds, cloneSubtree, axisDeltaWrites } from '~/lib/scene3d/hierarchy'
 import Scene3DObjectRow from './studio/Scene3DObjectRow.vue'
 import { totalClones, clampedClones } from '~/lib/scene3d/modifiers'
@@ -99,6 +100,10 @@ const selectedObjects = computed<SceneObject[]>(() =>
 // doesn't offer it — hence >= 2, not >= 1.
 const canGroup = computed(() => selectedIds.value.length >= 2)
 const canUngroup = computed(() => selectedObjects.value.some((o) => o.kind === 'group'))
+const canConvertToMesh = computed(() =>
+  selectedObjects.value.length === 1
+  && selectedObjects.value[0]!.kind === 'primitive'
+  && (selectedObjects.value[0] as PrimitiveObject).primitive !== 'mesh')
 // The object list renders this tree rather than `doc.objects` directly — the
 // doc itself stays a flat array plus `parentId`; only the render is nested.
 const rootObjectList = computed(() => rootObjects(doc.objects))
@@ -1486,6 +1491,37 @@ function addPrimitive(kind: PrimitiveKind) {
   doc.objects.push(o)
   selectedId.value = o.id
 }
+
+// ── Convert to mesh ───────────────────────────────────────────────────────────
+/** Freeze the selection's CURRENT geometry (modifiers included) into a `mesh`
+ *  primitive. Irreversible in the object itself — the studio's doc-level undo is
+ *  the way back — so it is gated behind a confirm. */
+const converting = ref(false)
+async function convertSelectionToMesh() {
+  const src = selectedObjects.value[0] as PrimitiveObject | undefined
+  if (!src || converting.value) return
+  // A `text` object builds real glyph geometry only once its font is resolved
+  // in the cache; before that, buildGeometry falls back to the 0.3 placeholder
+  // cube (see baseSizeFor's note above). Converting in that state would freeze
+  // the placeholder permanently, so refuse and leave the object untouched.
+  if (src.primitive === 'text' && !fontCacheGet(src.content?.font ?? DEFAULT_FONT_URL)) {
+    console.warn('[scene3d-studio] convert to mesh skipped — font not yet loaded for this text object')
+    return
+  }
+  converting.value = true
+  try {
+    const font = src.primitive === 'text' ? fontCacheGet(src.content?.font ?? DEFAULT_FONT_URL) : null
+    const geo = buildGeometry(src.primitive, src.params, src.modifiers, 'smooth', src.content, font)
+    const next = await convertToMesh(src, geo)
+    geo.dispose()
+    const i = doc.objects.findIndex((o) => o.id === src.id)
+    if (i >= 0) doc.objects[i] = next
+  } catch (err) {
+    console.warn('[scene3d-studio] convert to mesh failed', err)
+  } finally {
+    converting.value = false
+  }
+}
 // Scenes render every light as a real Three.js light — an unbounded count would
 // tank frame time, so the UI caps additions rather than letting the doc silently
 // grow into something the engine chokes on.
@@ -2094,12 +2130,15 @@ function onClose() {
     <template #aside>
       <div class="flex h-full w-full flex-col overflow-hidden rounded-lg border border-white/[0.10] bg-white/[0.04]">
         <div class="shrink-0 px-3 py-2.5 text-[11px] font-medium text-white/50">Objects</div>
-        <div v-if="canGroup || canUngroup" class="flex shrink-0 gap-1 px-2 pb-2">
+        <div v-if="canGroup || canUngroup || canConvertToMesh" class="flex shrink-0 gap-1 px-2 pb-2">
           <StudioButton v-if="canGroup" @click="groupSelection">
             <span class="flex items-center gap-1.5"><Group class="h-3.5 w-3.5" /> Group</span>
           </StudioButton>
           <StudioButton v-if="canUngroup" @click="ungroupSelection">
             <span class="flex items-center gap-1.5"><Ungroup class="h-3.5 w-3.5" /> Ungroup</span>
+          </StudioButton>
+          <StudioButton v-if="canConvertToMesh" :disabled="converting" @click="convertSelectionToMesh">
+            <span class="flex items-center gap-1.5"><Boxes class="h-3.5 w-3.5" /> To mesh</span>
           </StudioButton>
         </div>
         <div class="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2 pb-2">
