@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import * as fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import * as path from 'node:path'
+import { externalRefs } from '~/lib/embed/bundle'
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url))
 
@@ -87,5 +88,26 @@ describe.each([
     const js = fs.readFileSync(OUT, 'utf8')
     expect(js).not.toMatch(/^\s*import\s/m)
     expect(js).not.toMatch(/\bfrom\s+["'][./]/)
+  })
+
+  // The export gate (export.ts) runs externalRefs() on the FINAL HTML, which
+  // includes this bundle spliced in verbatim as an inline <script>. No built
+  // bundle has ever been scanned on its own — this closes that gap so a leak
+  // in an adapter is caught here, at build-output time, rather than only when
+  // someone actually exports that surface. Uses the real externalRefs from
+  // bundle.ts (not a reimplementation) so this test can never drift from the
+  // gate that actually runs at export time.
+  it('contains no network references externalRefs would catch at export time', () => {
+    const js = fs.readFileSync(OUT, 'utf8')
+    const refs = externalRefs(js)
+    const MAX_LISTED = 20
+    const listed = refs.slice(0, MAX_LISTED)
+    const remainder = refs.length - listed.length
+    const detail = listed.map((r) => `  - ${r}`).join('\n')
+      + (remainder > 0 ? `\n  ... and ${remainder} more` : '')
+    expect(
+      refs,
+      `${fileName} contains ${refs.length} network reference(s) that externalRefs() would reject at export time:\n${detail}`,
+    ).toEqual([])
   })
 })
