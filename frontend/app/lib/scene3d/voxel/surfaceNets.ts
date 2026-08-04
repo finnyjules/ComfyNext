@@ -86,8 +86,13 @@ export function surfaceNets(sdf: Sdf): MeshData {
         const here = values[nodeAt(i, j, k)]!
         const inside = here < 0
 
-        // edge along +x — the 4 cells sharing it vary in y and z
-        if (i < nx - 1 && j > 0 && k > 0) {
+        // edge along +x — the 4 cells sharing it vary in y and z. Both j and k
+        // need a lower AND an upper bound: cellAt(i, j, k) below reads j and k
+        // directly (not j-1/k-1), so j must also stay < ny - 1 and k < nz - 1
+        // or that read runs past the cell grid. A typed-array OOB read returns
+        // `undefined`, and `undefined < 0` is false, so quad()'s `-1` sentinel
+        // guard does NOT catch it — the missing bound must be enforced here.
+        if (i < nx - 1 && j > 0 && j < ny - 1 && k > 0 && k < nz - 1) {
           const there = values[nodeAt(i + 1, j, k)]!
           if (inside !== (there < 0)) {
             quad(
@@ -99,8 +104,10 @@ export function surfaceNets(sdf: Sdf): MeshData {
             )
           }
         }
-        // edge along +y — cells vary in z and x
-        if (j < ny - 1 && i > 0 && k > 0) {
+        // edge along +y — cells vary in z and x. Same upper-bound requirement
+        // as the +x block above: i and k each need both bounds or cellAt runs
+        // past the cell grid and silently returns undefined.
+        if (j < ny - 1 && i > 0 && i < nx - 1 && k > 0 && k < nz - 1) {
           const there = values[nodeAt(i, j + 1, k)]!
           if (inside !== (there < 0)) {
             quad(
@@ -112,8 +119,10 @@ export function surfaceNets(sdf: Sdf): MeshData {
             )
           }
         }
-        // edge along +z — cells vary in x and y
-        if (k < nz - 1 && i > 0 && j > 0) {
+        // edge along +z — cells vary in x and y. Same upper-bound requirement
+        // as the +x block above: i and j each need both bounds or cellAt runs
+        // past the cell grid and silently returns undefined.
+        if (k < nz - 1 && i > 0 && i < nx - 1 && j > 0 && j < ny - 1) {
           const there = values[nodeAt(i, j, k + 1)]!
           if (inside !== (there < 0)) {
             quad(
