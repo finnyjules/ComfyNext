@@ -141,3 +141,47 @@ for (const size of GRADIENT_PROBE_SIZES) {
     expect(Math.sign(onDelta)).toBe(Math.sign(offDelta))
   })
 }
+
+// Task 6: Texture Studio adopts the shared post stack — same seam as Task 5,
+// same two-probe shape, against /dev/texture-harness instead. See that page's
+// own comments for why Texture's orientation probe needs a hand-built
+// asymmetric cell-gradient config rather than reusing any built-in motif:
+// every built-in pattern is designed to TILE seamlessly, which makes a
+// periodic-window mean invariant to phase and useless for detecting a flip.
+const TEXTURE_PROBE_SIZES = [128, 512]
+
+// Same reasoning as Gradient's override: Color's DEFAULT_POST values
+// (exposure/contrast/saturation = 1, hue = 0) are the identity transform.
+const TEXTURE_PROBE_OVERRIDES: Partial<Record<string, Partial<PostSettings>>> = {
+  color: { exposure: 1.6 },
+}
+
+for (const def of POST_EFFECTS.filter(e => !e.threeDOnly)) {
+  test(`texture post stage runs and preserves structure: ${def.id}`, async ({ page }) => {
+    await page.goto('/dev/texture-harness')
+    await page.waitForFunction(() => typeof (window as any).__sailorPostProbe === 'function')
+    for (const size of TEXTURE_PROBE_SIZES) {
+      const r = await page.evaluate(
+        async ({ effect, s, overrides }) => await window.__sailorPostProbe({ effect, size: s, overrides }),
+        { effect: def.id, s: size, overrides: TEXTURE_PROBE_OVERRIDES[def.id] },
+      )
+      expect(r.meanAbsDiff, `${def.id} @ ${size}px: meanAbsDiff`).toBeGreaterThan(1 / 255)  // it ran
+      expect(r.corr, `${def.id} @ ${size}px: corr`).toBeGreaterThan(0.5)                     // it did not wash out
+    }
+  })
+}
+
+for (const size of TEXTURE_PROBE_SIZES) {
+  test(`texture post stage preserves vertical orientation: ${size}px`, async ({ page }) => {
+    await page.goto('/dev/texture-harness')
+    await page.waitForFunction(() => typeof (window as any).__sailorPostOrientationProbe === 'function')
+    const r = await page.evaluate(async (s) => await window.__sailorPostOrientationProbe({ size: s }), size)
+    const offDelta = r.offBottom - r.offTop
+    const onDelta = r.onBottom - r.onTop
+    // The hand-built cell-gradient config is asymmetric enough that this isn't a coin flip.
+    expect(Math.abs(offDelta)).toBeGreaterThan(5)
+    expect(Math.abs(onDelta)).toBeGreaterThan(5)
+    // Same sign = same side is brighter in both frames = no flip.
+    expect(Math.sign(onDelta)).toBe(Math.sign(offDelta))
+  })
+}

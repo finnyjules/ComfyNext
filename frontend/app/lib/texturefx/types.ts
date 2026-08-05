@@ -1,3 +1,9 @@
+import type { Params } from '~/lib/spacetype/effect'
+// Three-free settings home (see settings.ts's own header) — safe for the Collection
+// resolver's dynamic import graph, since controls.ts (which imports this file)
+// is dynamically imported by collection/studioControls.ts.
+import { DEFAULT_POST, type PostSettings } from '~/lib/studio/post/settings'
+
 export const LATTICES = ['square', 'brick', 'diagonal'] as const
 // Procedural motifs. Appended entries keep the original indices stable (the GLSL
 // mirror in renderer.ts dispatches on u_motif by index, and saved scenes store the
@@ -59,3 +65,32 @@ export type Fill =
   | { type: 'pattern'; frame: Frame; scale: number; sub: Record<string, unknown>; opacity?: number }
   | { type: 'link'; to: string }
 export type FillsByRole = Record<string, Fill>
+
+// Shared post-processing stack — see ~/lib/studio/post. Texture has no nested
+// config object (Params is flat, see ~~/shared/spacetype/state.ts), so unlike
+// Gradient's `cfg.post: PostSettings` field + ensureConfigDefaults backfill,
+// post settings live as flat `post.<key>` entries in Params (added to
+// TEXTURE_CONTROLS by controls.ts's `...postControls({ threeD: false })`, so
+// textureDefaults()/loadParams()'s `{ ...textureDefaults(), ...cloneParams(p) }`
+// merge already backfills a legacy config's missing post.* keys the same way
+// it backfills any other control default — see TextureStudioSurface.vue's
+// loadParams()).
+//
+// This function is the OTHER half of that defaulting: it builds the nested
+// PostSettings object applyPost() needs out of the flat Params the renderer
+// actually has, falling back to DEFAULT_POST key-by-key for a Params object
+// that was never merged against textureDefaults() at all (e.g. a raw
+// agent/Collection patch, or exportBlob's overrides path in
+// TextureStudioSurface.vue, which writes `params[key] = value` directly).
+export function postSettingsFromParams(p: Params): PostSettings {
+  const out = { ...DEFAULT_POST }
+  for (const key of Object.keys(DEFAULT_POST) as (keyof PostSettings)[]) {
+    const v = p[`post.${key}`]
+    if (v === undefined) continue
+    const dflt = DEFAULT_POST[key]
+    if (typeof dflt === 'boolean') (out[key] as boolean) = Boolean(v)
+    else if (typeof dflt === 'number') (out[key] as number) = Number(v)
+    else (out[key] as string) = String(v)
+  }
+  return out
+}

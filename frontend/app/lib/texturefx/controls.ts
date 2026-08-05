@@ -1,5 +1,6 @@
 import { defaultsFromControls, type ControlSpec, type Params } from '~/lib/spacetype/effect'
 import { DITHER_PATTERNS, LATTICES, MODES, MOTIFS, PLACEMENTS, SEAM_METHODS, SHAPE_FAMILIES, STYLIZE_KINDS, TILE_FAMILIES } from '~/lib/texturefx/types'
+import { postControls } from '~/lib/studio/post/controls'
 
 // Texture controls extend the shared ControlSpec with an optional `when`
 // predicate for contextual reveal (e.g. show procedural controls only in
@@ -93,6 +94,13 @@ export const TEXTURE_CONTROLS: TextureControl[] = [
   { key: 'duoShadow', label: 'Shadow hue', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0.62, group: 'Stylize', when: (p) => String(p.stylize) === 'duotone' },
   { key: 'duoLight', label: 'Light hue', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0.12, group: 'Stylize', when: (p) => String(p.stylize) === 'duotone' },
   { key: 'duoContrast', label: 'Duotone contrast', kind: 'slider', min: 0, max: 2, step: 0.01, default: 0.5, group: 'Stylize', when: (p) => String(p.stylize) === 'duotone' },
+
+  // --- Post (shared stack: bloom/color/duotone/chroma/blur/film/halftone/dotScreen/
+  //     glitch/grain/vignette — ambient occlusion withheld, 2D host). Runs INSIDE
+  //     TextureFxRenderer.render() (see renderer.ts), before the surface's separate
+  //     stylizeTile() dither/posterize/duotone pass — the two are independent stages,
+  //     not layered by this control list's order. ---------------------------------
+  ...postControls({ threeD: false }),
 ]
 
 // Numeric seed lives outside the control list (driven by the Roll button).

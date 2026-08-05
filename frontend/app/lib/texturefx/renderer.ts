@@ -6,16 +6,37 @@
 // the GPU samples the exact same state grid the CPU computes (shared source, not a mirror).
 
 import type { Params } from '~/lib/spacetype/effect'
-import { LATTICES, MOTIFS, MODES, TILE_FAMILIES, SHAPE_FAMILIES } from '~/lib/texturefx/types'
+import { LATTICES, MOTIFS, MODES, TILE_FAMILIES, SHAPE_FAMILIES, postSettingsFromParams } from '~/lib/texturefx/types'
 import { truchetStates, multiscaleLevels } from '~/lib/texturefx/pattern'
 import { getRaster } from '~/lib/texturefx/raster'
 import { fillForRole, hexToRgb } from '~/lib/texturefx/fills'
 import { rolesFor } from '~/lib/texturefx/roles'
 import { getPatternFillCanvas, patternFillKey } from '~/lib/texturefx/patternfill'
+import { applyPost } from '~/lib/studio/post/chain'
+import { postEnabled } from '~/lib/studio/post/settings'
 
+// `layout(location = 0)` pins a_pos to attribute 0 for EVERY program linked from
+// this VS text — including blitBack()'s blitProg below, which is compiled from
+// the same VS but a different fragment shader. Without the explicit location,
+// WebGL is free to (and in practice usually does, for a single-attribute shader)
+// assign the same index anyway, but that is an implementation detail, not a
+// guarantee; pinning it means ensure()'s one-time enableVertexAttribArray(loc)/
+// vertexAttribPointer(loc, ...) call is valid for both programs without redoing
+// that setup per program.
 const VS = `#version 300 es
-in vec2 a_pos; out vec2 v_uv;
+layout(location = 0) in vec2 a_pos; out vec2 v_uv;
 void main(){ v_uv = a_pos * 0.5 + 0.5; gl_Position = vec4(a_pos, 0.0, 1.0); }`
+
+// Straight pass-through — used only by blitBack() to copy applyPost()'s result onto
+// this renderer's own canvas. Compiled with the same full-screen-triangle VS above
+// via compile()'s now-parametrized fragmentSrc argument, so this is not a second
+// way to draw a full-screen pass, just a second fragment shader for the one this
+// file already had.
+const BLIT_FS = `#version 300 es
+precision highp float;
+in vec2 v_uv; out vec4 frag;
+uniform sampler2D u_src;
+void main(){ frag = texture(u_src, v_uv); }`
 
 const FS = `#version 300 es
 precision highp float;
@@ -628,6 +649,9 @@ class TextureFxRenderer {
   private canvas: HTMLCanvasElement | null = null
   private gl: WebGL2RenderingContext | null = null
   private prog: WebGLProgram | null = null
+  // blitBack()'s program + upload texture — see that method's doc comment.
+  private blitProg: WebGLProgram | null = null
+  private blitTex: WebGLTexture | null = null
   private stateTex?: WebGLTexture
   private rasterTex?: WebGLTexture
   private fillTex: WebGLTexture[] = []
@@ -686,7 +710,9 @@ class TextureFxRenderer {
     return this.gl
   }
 
-  private compile(gl: WebGL2RenderingContext): WebGLProgram {
+  // fragmentSrc defaults to the main tile shader; blitBack() below passes BLIT_FS
+  // to compile a second program off the same VS (see VS's layout(location=0) note).
+  private compile(gl: WebGL2RenderingContext, fragmentSrc: string = FS): WebGLProgram {
     const sh = (type: number, src: string) => {
       const s = gl.createShader(type)!
       gl.shaderSource(s, src); gl.compileShader(s)
@@ -698,14 +724,57 @@ class TextureFxRenderer {
     }
     const p = gl.createProgram()!
     gl.attachShader(p, sh(gl.VERTEX_SHADER, VS))
-    gl.attachShader(p, sh(gl.FRAGMENT_SHADER, FS))
+    gl.attachShader(p, sh(gl.FRAGMENT_SHADER, fragmentSrc))
     gl.linkProgram(p)
     if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(`texturefx link: ${gl.getProgramInfoLog(p)}`)
     return p
   }
 
-  // _time is reserved for future animated/looping variants (time uniform wired later).
-  render(p: Params, width: number, height: number, _time = 0): HTMLCanvasElement {
+  /**
+   * Copy `src` (applyPost()'s returned canvas) onto THIS renderer's own canvas.
+   * Required because the shared post chain is one GL2 context app-wide — its
+   * returned canvas is valid only until the next applyPost() call from ANY
+   * studio, so the result must be drawn back immediately (see chain.ts's module
+   * header). this.canvas is WebGL2-only — `getContext('2d')` returns null here,
+   * so a drawImage composite is not an option. Instead: upload `src` into a
+   * texture and draw it with the pass-through BLIT_FS above, reusing this file's
+   * own VS / compile() helper rather than adding a second way to draw a
+   * full-screen pass.
+   *
+   * Y-flip: `src` is an ordinary top-down canvas (same as any `<canvas>`), so it
+   * needs the same UNPACK_FLIP_Y_WEBGL upload the raster/fill image uploads above
+   * already use — this file's own FS never needs it (that shader computes colour
+   * directly, with no canvas source to flip).
+   *
+   * Alpha: no blending, straight RGBA copy — preserves the straight (non-
+   * premultiplied) alpha this context was created with (premultipliedAlpha:
+   * false, see `ensure()` above), which transparent-background exports depend on.
+   */
+  private blitBack(src: TexImageSource): void {
+    const gl = this.gl!
+    if (!this.blitProg) this.blitProg = this.compile(gl, BLIT_FS)
+    if (!this.blitTex) this.blitTex = gl.createTexture()
+    gl.bindTexture(gl.TEXTURE_2D, this.blitTex)
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true)
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, src)
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+
+    gl.useProgram(this.blitProg)
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+    gl.viewport(0, 0, this.canvas!.width, this.canvas!.height)
+    gl.disable(gl.BLEND)
+    gl.activeTexture(gl.TEXTURE0)
+    gl.bindTexture(gl.TEXTURE_2D, this.blitTex)
+    const loc = gl.getUniformLocation(this.blitProg, 'u_src')
+    if (loc) gl.uniform1i(loc, 0)
+    gl.drawArrays(gl.TRIANGLES, 0, 3)
+  }
+
+  render(p: Params, width: number, height: number, time = 0): HTMLCanvasElement {
     const gl = this.ensure(width, height)
     gl.useProgram(this.prog!)
     gl.disable(gl.BLEND)
@@ -879,6 +948,23 @@ class TextureFxRenderer {
     // Restore active texture to UNIT 0 so subsequent state-tex reads remain correct
     gl.activeTexture(gl.TEXTURE0)
     gl.drawArrays(gl.TRIANGLES, 0, 3)
+
+    // The single post call site for this studio (render()'s one exit point —
+    // there is no second return path). Every caller (preview, node-card bake,
+    // exportBlob, pattern-gallery) goes through render(), so post applied here
+    // is in every path automatically. Runs BEFORE the surface's separate
+    // stylizeTile() dither/posterize/duotone pass, which callers apply to this
+    // method's returned canvas afterward — the two stages are independent, not
+    // reordered by this change.
+    const post = postSettingsFromParams(p)
+    if (postEnabled(post)) {
+      // p.seed is Texture's own numeric seed (already the u_seed uniform above),
+      // so grain's noise field re-rolls with the tile's Roll button same as every
+      // other seed-driven variation — no hashing needed, unlike Gradient's string seed.
+      const out = applyPost(this.canvas!, post, width, height, time, { seed: Math.round(Number(p.seed) || 1) })
+      if (out !== this.canvas) this.blitBack(out)
+    }
+
     return this.canvas!
   }
 
