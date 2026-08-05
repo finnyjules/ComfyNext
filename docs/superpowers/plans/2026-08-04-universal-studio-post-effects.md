@@ -874,15 +874,15 @@ In `frontend/app/lib/gradientfx/renderer.ts`, at the very end of the render meth
     // every path automatically — no export route has to remember it.
     if (postEnabled(cfg.post)) {
       const out = applyPost(this.canvas, cfg.post, width, height, t)
-      if (out !== this.canvas) {
-        const ctx = this.canvas.getContext('2d')
-        // The result canvas is only valid until the next applyPost — draw back NOW.
-        ctx?.drawImage(out as CanvasImageSource, 0, 0)
-      }
+      if (out !== this.canvas) this.blitBack(out)
     }
 ```
 
-Note the gradient canvas is a WebGL2 context, so it has no 2D context to draw into. Read how `lib/shapefx/engine.ts` composites its own post result and follow the same approach — blit the post result back through GL rather than `getContext('2d')`, and adjust the snippet above accordingly. **Verify by reading the code, not by assuming.**
+**The blit is the part to get right, and it is not a `drawImage`.** `this.canvas` is a WebGL2 context — it has no 2D context, so `getContext('2d')` returns `null` and the composite would silently do nothing. Write `blitBack(src: TexImageSource)` as a private method on the renderer that uploads `src` into a texture and draws a full-screen triangle with a pass-through shader, using the renderer's existing GL context.
+
+The renderer already has everything this needs: a compiled full-screen quad path for its blur pass and its `texImage2D` upload helper. Read `lib/gradientfx/renderer.ts`'s blur-pass code and reuse its quad and program-creation helpers rather than adding a second way to draw a full-screen pass.
+
+Preserve straight (non-premultiplied) alpha — the context is created with `premultipliedAlpha: false` (renderer.ts:48), and the transparent-background export routes depend on that staying true.
 
 - [ ] **Step 6: Render the panel**
 
