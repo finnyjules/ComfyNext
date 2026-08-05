@@ -25,16 +25,26 @@ function cloneStamp(stamp: BrushStamp): BrushStamp {
     radius: stamp.radius,
     strength: stamp.strength,
     invert: stamp.invert,
+    // `drag` is a DIRECTION (grab's pointer delta), not a position — copying
+    // it unchanged would drag every mirrored/radial copy the same way as the
+    // original, which is wrong in a different, more confusing way than
+    // dropping it (applyBrush's `if (!drag) continue` at least no-ops
+    // visibly). Callers below transform it the same way they transform
+    // `centre`/`normal`. Absent stays absent.
+    ...(stamp.drag ? { drag: [stamp.drag[0], stamp.drag[1], stamp.drag[2]] } : {}),
   }
 }
 
-/** Mirror negates the `axis` component of BOTH `centre` and `normal` — the
+/** Mirror negates the `axis` component of `centre`, `normal`, AND `drag` — the
  *  normal must flip too, or every mirrored stroke ends up tilted the wrong
- *  way, which reads as a lighting bug rather than a symmetry bug. */
+ *  way, which reads as a lighting bug rather than a symmetry bug. `drag` is a
+ *  direction, so it mirrors the same way: a mirrored grab must pull the
+ *  mirrored side in the mirrored direction. */
 function mirrorStamp(stamp: BrushStamp, axis: 0 | 1 | 2): BrushStamp {
   const out = cloneStamp(stamp)
   out.centre[axis] = -out.centre[axis]
   out.normal[axis] = -out.normal[axis]
+  if (out.drag) out.drag[axis] = -out.drag[axis]
   return out
 }
 
@@ -57,6 +67,9 @@ function radialStamp(stamp: BrushStamp, axis: 0 | 1 | 2, angle: number): BrushSt
   const out = cloneStamp(stamp)
   out.centre = rotateAbout(stamp.centre, axis, angle)
   out.normal = rotateAbout(stamp.normal, axis, angle)
+  // `drag` is a direction, so it rotates the same way as `normal` — a radial
+  // grab copy must pull in the rotated direction, not the original one.
+  if (stamp.drag) out.drag = rotateAbout(stamp.drag, axis, angle)
   return out
 }
 

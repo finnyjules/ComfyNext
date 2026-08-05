@@ -259,4 +259,39 @@ describe('grab brush', () => {
     s.endStroke()
     expect(s.positions[centre * 3]! - c0).toBeGreaterThan(s.positions[rim * 3]! - r0)
   })
+
+  it('pins the exact displacement to drag * falloff — no strength or radius scaling', () => {
+    // The three tests above only check sign, ordering, and no-op — a
+    // reintroduced `* stamp.strength` (grab's doc says it uses neither
+    // strength nor radius scaling, unlike every other brush) would still
+    // pass all of them. Nail down the actual numbers, off-centre AND with a
+    // strength deliberately far from 1, so such a regression fails loudly.
+    const s = patch()
+    const radius = 0.4
+    const drag: [number, number, number] = [0.13, -0.07, 0.05]
+    const strength = 0.3 // deliberately not 1 — grab must ignore this
+    const centreV = nearest(s, 0, 0, 0)
+    const offV = nearest(s, 0.12, 0, 0.16) // off-centre, still within radius
+    const beforeCentre: [number, number, number] = [
+      s.positions[centreV * 3]!, s.positions[centreV * 3 + 1]!, s.positions[centreV * 3 + 2]!,
+    ]
+    const beforeOff: [number, number, number] = [
+      s.positions[offV * 3]!, s.positions[offV * 3 + 1]!, s.positions[offV * 3 + 2]!,
+    ]
+    const dOff = Math.hypot(beforeOff[0], beforeOff[1], beforeOff[2])
+
+    s.beginStroke()
+    applyBrush(s, 'grab', stamp({ radius, strength, drag }))
+    s.endStroke()
+
+    const wCentre = falloff(0 / radius) // 1 at the exact centre
+    expect(s.positions[centreV * 3]! - beforeCentre[0]).toBeCloseTo(drag[0] * wCentre, 6)
+    expect(s.positions[centreV * 3 + 1]! - beforeCentre[1]).toBeCloseTo(drag[1] * wCentre, 6)
+    expect(s.positions[centreV * 3 + 2]! - beforeCentre[2]).toBeCloseTo(drag[2] * wCentre, 6)
+
+    const wOff = falloff(dOff / radius)
+    expect(s.positions[offV * 3]! - beforeOff[0]).toBeCloseTo(drag[0] * wOff, 6)
+    expect(s.positions[offV * 3 + 1]! - beforeOff[1]).toBeCloseTo(drag[1] * wOff, 6)
+    expect(s.positions[offV * 3 + 2]! - beforeOff[2]).toBeCloseTo(drag[2] * wOff, 6)
+  })
 })

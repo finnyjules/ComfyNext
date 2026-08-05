@@ -27,8 +27,14 @@ export interface BrushStamp {
   strength: number
   /** Alt-held: carve inward instead of pushing outward. */
   invert: boolean
-  /** World-space pointer delta for this move. `grab` ONLY — every other brush
-   *  ignores it, and grab is a no-op without it. */
+  /** Object-space pointer delta for this move — the same space as `centre`
+   *  (and everything in `positions`), NOT world space. It is computed by
+   *  diffing consecutive `hit.point` values, which already come out of the
+   *  raycast in mesh object space, so no world→object transform is applied
+   *  or needed. If this is ever turned into a genuine world-space vector, it
+   *  must be transformed back into `centre`'s space before use, or grab will
+   *  silently misbehave on any scaled or rotated mesh. `grab` ONLY — every
+   *  other brush ignores it, and grab is a no-op without it. */
   drag?: [number, number, number]
 }
 
