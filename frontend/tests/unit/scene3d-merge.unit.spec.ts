@@ -82,6 +82,25 @@ describe('merge', () => {
     expect(out.open).toBe(true)
   })
 
+  it('reports failure instead of silently substituting the base input when the retry ladder exhausts', () => {
+    // A vertex cap of 1 can never be met at any resolution, including the
+    // floor — forcing the exact path the real 40k cap only reaches after the
+    // resolution slider (128) and ~10 shrink steps. Before this fix, running
+    // the ladder out just swapped in `remesh(inputs[0])` alone and reported
+    // success (`open: false`, no failure signal): that is REGARDLESS of `op`
+    // or the second input, so the "merge" was really just the base object
+    // reshaped. Confirm the real fix stays a real merge — data combining BOTH
+    // spheres into one connected body — while ALSO flagging failure.
+    const out = mergeMeshes([ball(-0.25), ball(0.25)], 'union', 0, RES, 1)
+    expect(out.failed).toBe(true)
+    expect(out.open).toBe(false)
+    expect(components(out.data)).toBe(1)
+    const v = volumeOf(out.data)
+    // A single remeshed sphere (the old silent-fallback shape) has volume
+    // SPHERE_VOL; the actual union of two overlapping spheres is bigger.
+    expect(v).toBeGreaterThan(SPHERE_VOL * 1.1)
+  })
+
   it('subtract is order-sensitive — the first input is the base', () => {
     const a = volumeOf(mergeMeshes([ball(-0.25), ball(0.25)], 'subtract', 0, RES).data)
     const b = volumeOf(mergeMeshes([ball(0.25), ball(-0.25)], 'subtract', 0, RES).data)

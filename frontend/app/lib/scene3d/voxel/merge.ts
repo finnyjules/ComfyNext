@@ -29,14 +29,37 @@ function smax(a: number, b: number, k: number): number {
   return -smin(-a, -b, k)
 }
 
+// Same last-resort floor as remeshObject: below this the field is too coarse
+// to mean anything, so the ladder stops shrinking here rather than continuing
+// forever. Reachable in production — the resolution slider goes to 128, and
+// 0.75-per-step needs about ten shrinks to reach it (Finding 4, Task 16
+// review) — so the ladder MUST actually get here rather than giving up early.
+const MIN_RESOLUTION = 8
+
 export function mergeMeshes(
   inputs: MeshData[], op: MergeOp, blend: number, resolution: number,
-): { data: MeshData; open: boolean } {
+  // Overridable only so a unit test can force the ladder to exhaust without
+  // needing a genuinely 40k-vertex mesh; every real caller uses the default.
+  vertexCap: number = MESH_VERTEX_CAP,
+): { data: MeshData; open: boolean; failed?: boolean } {
   if (inputs.length === 0) return { data: { positions: new Float32Array(0), indices: new Uint32Array(0) }, open: false }
   if (inputs.length === 1) return { data: inputs[0]!, open: false }
 
   let res = resolution
-  for (let attempt = 0; attempt < 4; attempt++) {
+  // Openness is a property of the MESH, not of the lattice sampling it, so it
+  // is only trustworthy checked at the finest resolution this call ever tries
+  // — the very first pass, before any shrinking. Re-checking it at every
+  // shrunk step (as a strict per-attempt port of the old 4-try loop would)
+  // breaks down once the ladder runs all the way to `MIN_RESOLUTION`: a
+  // perfectly closed shape (a sphere, say) has so little of the lattice left
+  // as interior at res 8 that `OPEN_INTERIOR_RATIO`'s heuristic can trip a
+  // false positive, refusing a merge that was never actually open. The
+  // Vue caller already probes every input's openness at the full slider
+  // resolution before ever calling this (see mergeSelection's own `remesh`
+  // loop); this check is the defensive fallback for callers that skip that —
+  // direct tests included — and only needs to run once.
+  let openChecked = false
+  for (;;) {
     // ONE lattice for every input, so the fields line up node-for-node and no
     // resampling step is needed between them. Per-input lattices would have to
     // be interpolated onto a common one, blurring every merge.
@@ -46,9 +69,10 @@ export function mergeMeshes(
     const fields: Float32Array[] = []
     for (const g of grids) {
       const { sdf, open } = buildSdf(g, lattice)
-      if (open) return { data: inputs[0]!, open: true }
+      if (!openChecked && open) return { data: inputs[0]!, open: true }
       fields.push(sdf.values)
     }
+    openChecked = true
 
     const base = fields[0]!
     const out = new Float32Array(base.length)
@@ -65,13 +89,17 @@ export function mergeMeshes(
     }
 
     const data = surfaceNets({ values: out, min: lattice.min, dims: lattice.dims, cell: lattice.cell })
-    if (data.positions.length / 3 <= MESH_VERTEX_CAP) return { data, open: false }
-    res = Math.max(8, Math.round(res * 0.75))
+    const vertexCount = data.positions.length / 3
+    if (vertexCount <= vertexCap) return { data, open: false }
+    if (res <= MIN_RESOLUTION) {
+      // Exhausted the ladder AND at the floor: `data` here is a REAL merge —
+      // every input's field, actually combined — it is simply too dense.
+      // Reporting it as a plain success (the old behaviour, which instead
+      // substituted `inputs[0]` alone) would silently hand back a shape that
+      // is not the merge at all; `failed: true` tells the caller to refuse and
+      // say so, never to commit `data` as-is.
+      return { data, open: false, failed: true }
+    }
+    res = Math.max(MIN_RESOLUTION, Math.round(res * 0.75))
   }
-
-  // Same last-resort floor as remeshObject: a coarse shape beats an error.
-  const grids = inputs.map((d) => buildTriGrid(d, cellFor(d, 8)))
-  const lattice = unionLattice(grids, 8)
-  const { sdf } = buildSdf(grids[0]!, lattice)
-  return { data: surfaceNets(sdf), open: false }
 }

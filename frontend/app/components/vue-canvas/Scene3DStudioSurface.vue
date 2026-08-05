@@ -19,7 +19,7 @@ import {
   parseDoc, serializeDoc, createPrimitive, createGlbObject, createLight, createGroup,
   LIGHTING_PRESETS, MATERIAL_TYPES, MATERIAL_DEFAULTS, LIGHT_KINDS, LIGHT_DEFAULTS, lightIntensityMax, gradientAngles, gradientStopsOf,
   DEFAULT_FONT_URL, sceneHasShaderFill,
-  type SceneDoc, type SceneObject, type PrimitiveObject, type PrimitiveKind, type MaterialType, type GradientStop, type LightKind, type LightObject, type ReliefSpec, type SceneMaterial,
+  type SceneDoc, type SceneObject, type PrimitiveObject, type PrimitiveKind, type MaterialType, type GradientStop, type LightKind, type LightObject, type ReliefSpec, type SceneMaterial, type Vec3,
 } from '~/lib/scene3d/config'
 import { MATCAP_IDS, matcapThumb, onTextureError } from '~/lib/scene3d/materials'
 import { toHeightPixels, heightGradient, RELIEF_FLAT_THRESHOLD } from '~/lib/scene3d/relief'
@@ -1786,6 +1786,21 @@ function bakedIntoWorld(data: MeshData, m: THREE.Matrix4): MeshData {
   return { positions, indices: data.indices }
 }
 
+/** Decompose a world matrix into the position/rotation/scale triple
+ *  `rebaseMany` wants for its `t` field — same XYZ Euler order as
+ *  `hierarchy.ts`'s own (private) `rebase`, which is what this stands in for
+ *  here: reparenting the children of a merged-away object needs their CURRENT
+ *  world transform captured before the parent disappears, and this is the only
+ *  piece `rebaseMany` doesn't already do for the caller. */
+function worldTransformOf(m: THREE.Matrix4): { position: Vec3; rotation: Vec3; scale: Vec3 } {
+  const p = new THREE.Vector3()
+  const q = new THREE.Quaternion()
+  const s = new THREE.Vector3()
+  m.decompose(p, q, s)
+  const e = new THREE.Euler().setFromQuaternion(q, 'XYZ')
+  return { position: [p.x, p.y, p.z], rotation: [e.x, e.y, e.z], scale: [s.x, s.y, s.z] }
+}
+
 async function mergeSelection() {
   const objs = selectedObjects.value.filter((o): o is PrimitiveObject => o.kind === 'primitive')
   if (objs.length < 2 || mergeBusy.value) return
@@ -1818,27 +1833,64 @@ async function mergeSelection() {
       convertError.value = 'Could not merge these shapes — one of them is open.'
       return
     }
+    if (out.failed) {
+      // The retry ladder reached the resolution floor and the combined field
+      // is STILL over the vertex cap — a real merge, just too dense to keep.
+      // merge.ts refuses to hand back a coarse single-input substitute dressed
+      // up as success (Finding 4, Task 16 review), so this is a genuine
+      // refusal: say so and stop, same as every other refusal on this button.
+      convertError.value = 'Too complex to merge — lower the resolution and try again.'
+      return
+    }
     // Recentre on the merged bbox, exactly like groupObjects centres a new
     // group on its members' bounds — the new object's local origin should sit
     // inside the shape it now owns, not wherever the first input's did.
     const { lo, hi } = boundsOf(out.data)
-    const centre: [number, number, number] = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2]
+    const centreWorld = new THREE.Vector3((lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2)
     const src = out.data.positions
     const positions = new Float32Array(src.length)
     for (let i = 0; i < positions.length; i += 3) {
-      positions[i] = src[i]! - centre[0]
-      positions[i + 1] = src[i + 1]! - centre[1]
-      positions[i + 2] = src[i + 2]! - centre[2]
+      positions[i] = src[i]! - centreWorld.x
+      positions[i + 1] = src[i + 1]! - centreWorld.y
+      positions[i + 2] = src[i + 2]! - centreWorld.z
     }
     const geo = geometryFromMeshData({ positions, indices: out.data.indices })
     const placeholder = createPrimitive('mesh', doc.objects)
     try {
+      // Finding 1 (Task 16 review): parent the result wherever the PRIMARY
+      // selection lives — same precedent as groupSelection — so merging inside
+      // a group nests the result instead of ejecting it to the root.
+      const primary = objs[objs.length - 1]!
+      const parentId = primary.parentId
+      const parentWorld = parentId ? worldMatrixOf(doc.objects, parentId) : new THREE.Matrix4()
+      const localCentre = centreWorld.clone().applyMatrix4(new THREE.Matrix4().copy(parentWorld).invert())
       const merged = await convertToMesh(
-        { ...placeholder, position: centre, material: { ...objs[0]!.material } },
+        {
+          ...placeholder,
+          position: [localCentre.x, localCentre.y, localCentre.z],
+          material: cloneMaterial(objs[0]!.material),
+          ...(parentId ? { parentId } : {}),
+        },
         geo,
       )
       const removed = new Set(objs.map((o) => o.id))
-      doc.objects = [...doc.objects.filter((o) => !removed.has(o.id)), merged]
+      // Finding 2 (Task 16 review): a child whose parent is one of the
+      // merged-away objects is reparented onto the merge result rather than
+      // cascade-deleted — the merge is a shape operation on the SELECTED
+      // objects only, and the user nested this child on purpose. Its world
+      // transform is captured now, before the old parent disappears, so
+      // `rebaseMany` below can put it back exactly where it visually sat.
+      const orphaned = doc.objects.filter((o) => o.parentId && removed.has(o.parentId) && !removed.has(o.id))
+      const orphanEntries = orphaned.map((o) => ({ id: o.id, t: worldTransformOf(worldMatrixOf(doc.objects, o.id)) }))
+      const reparented = orphaned.map((o) => ({ ...o, parentId: merged.id }))
+      const reparentedIds = new Set(reparented.map((o) => o.id))
+      const survivors = doc.objects.filter((o) => !removed.has(o.id) && !reparentedIds.has(o.id))
+      const nextTopology = [...survivors, merged, ...reparented]
+      const rebasedById = new Map(rebaseMany(nextTopology, orphanEntries).map((e) => [e.id, e.t]))
+      doc.objects = nextTopology.map((o) => {
+        const t = rebasedById.get(o.id)
+        return t ? { ...o, ...t } : o
+      })
       selectedIds.value = [merged.id]
       mergeOpen.value = false
     } finally {
