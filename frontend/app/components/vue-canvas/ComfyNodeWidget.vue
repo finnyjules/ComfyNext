@@ -1,4 +1,16 @@
 <script setup lang="ts">
+// `~/lib` is not on Nuxt's auto-import path (only composables/ and utils/ are), so the
+// shared end-label map and range test come in explicitly.
+import { endLabelsFor, isSliderRange } from '~/lib/canvas/widgetEndLabels'
+// The three row components are imported by PATH rather than left to Nuxt's auto-import.
+// Auto-import COLLAPSES a duplicated path segment — `studio/StudioSelect.vue` resolves as
+// `VueCanvasStudioSelect`, not `StudioSelect` the way `widgets/WidgetNumber`
+// gives `VueCanvasWidgetsWidgetNumber` — and a name that doesn't resolve renders NOTHING,
+// with no error in the console. That failure was silent for a whole render pass here.
+import StudioSelect from '~/components/vue-canvas/studio/StudioSelect.vue'
+import StudioSwitch from '~/components/vue-canvas/studio/StudioSwitch.vue'
+import StudioSlider from '~/components/vue-canvas/studio/StudioSlider.vue'
+
 const props = defineProps<{
   widgetDef: {
     name: string
@@ -47,6 +59,22 @@ const isCombo = computed(() => Array.isArray(props.widgetDef.options) || props.w
 const isNumber = computed(() => ['INT', 'FLOAT'].includes(props.widgetDef.type))
 const isToggle = computed(() => props.widgetDef.type === 'BOOLEAN')
 const isSeed = computed(() => props.widgetDef.name.toLowerCase().includes('seed'))
+/**
+ * Which generic widgets render as a 28px StudioRow rather than the older
+ * label-above-control pair. Combos and toggles always qualify; a number only does
+ * when its range is finite enough to fill a track — `isSliderRange` is the same test
+ * WidgetNumber uses to decide between its rail and a plain number field, so an
+ * unbounded number keeps that field here too instead of a row it cannot fill.
+ *
+ * Seeds are excluded: WidgetSeed pairs the value with its own lock/randomise control,
+ * which has nowhere to live in a row's value slot.
+ */
+const asRow = computed(() => {
+  if (isSeed.value) return false
+  if (isCombo.value || isToggle.value) return true
+  return isNumber.value && isSliderRange(props.widgetDef.min, props.widgetDef.max)
+})
+const rowEndLabels = computed(() => (isNumber.value ? endLabelsFor(props.widgetDef.name) : null))
 const isText = computed(() => props.widgetDef.type === 'STRING')
 // A multiline STRING widget — the prompt. Rendered as the node's primary control:
 // a larger, lighter, elevated textarea (see WidgetText).
@@ -531,6 +559,53 @@ function formatLabel(name: string): string {
         :gradient="gradient"
         @update:model-value="emit('update:modelValue', $event)"
       />
+    </template>
+    <!-- Combo, bounded number and toggle render as a 28px StudioRow — the same control
+         the studios use, label inside the row. `nodrag nopan nowheel` is not optional:
+         the row's gesture is a pointer-drag across itself, which vue-flow would
+         otherwise read as a pane drag and pan the canvas instead of changing the value.
+         Everything else (seed, text, and numbers whose range is unbounded) keeps the
+         label-above-control layout, because none of them is row-shaped. -->
+    <template v-else-if="asRow">
+      <div class="nodrag nopan nowheel">
+        <StudioSelect
+          v-if="isCombo"
+          :options="widgetDef.options || []"
+          :label="formatLabel(widgetDef.name)"
+          :hint="widgetDef.tooltip || undefined"
+          :model-value="modelValue"
+          @update:model-value="emit('update:modelValue', $event)"
+        />
+        <StudioSwitch
+          v-else-if="isToggle"
+          :label="formatLabel(widgetDef.name)"
+          :hint="widgetDef.tooltip || undefined"
+          :model-value="!!modelValue"
+          @update:model-value="emit('update:modelValue', $event)"
+        />
+        <!-- `:bindable="false"` — StudioRow shows the variable glyph by default and
+             `slider` is a bindable kind, so without this every node number would grow a
+             hexagon whose click emits `promote` into a component with no such emit.
+             Collection binding is a studio-inspector affordance; nodes bind by wire. -->
+        <StudioSlider
+          v-else
+          :label="formatLabel(widgetDef.name)"
+          :hint="widgetDef.tooltip || undefined"
+          :min="widgetDef.min!"
+          :max="widgetDef.max!"
+          :step="widgetDef.step ?? (widgetDef.type === 'FLOAT' ? 0.01 : 1)"
+          :default="widgetDef.default"
+          :bindable="false"
+          :model-value="Number(modelValue)"
+          @update:model-value="emit('update:modelValue', $event)"
+        />
+        <!-- The semantic ends (subtle/strong, creative/literal) survive the move: the row
+             has no room for them, so they sit under it exactly as they did under the rail. -->
+        <div v-if="rowEndLabels" class="mt-0.5 flex justify-between px-0.5 text-[8px] leading-none text-white/30">
+          <span>{{ rowEndLabels[0] }}</span>
+          <span>{{ rowEndLabels[1] }}</span>
+        </div>
+      </div>
     </template>
     <template v-else>
       <label

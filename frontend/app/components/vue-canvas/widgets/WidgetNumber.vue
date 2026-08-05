@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { endLabelsFor, isSliderRange } from '~/lib/canvas/widgetEndLabels'
 
 const props = defineProps<{
   modelValue: any
@@ -11,28 +12,13 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ 'update:modelValue': [value: number] }>()
 
-// Semantic end-labels per widget name: [toward-min, toward-max]. Only shown for
-// listed widgets (keeps generic numeric widgets uncluttered).
-const END_LABELS: Record<string, [string, string]> = {
-  lora_scale: ['subtle', 'strong'],
-  guidance: ['creative', 'literal'],
-  num_inference_steps: ['faster', 'more detail'],
-  prompt_strength: ['keep input', 'follow prompt'],
-  cfg_scale: ['loose', 'strict'],
-  denoise: ['keep input', 'reinvent'],
-}
-
+// The end-label map and the bounded-range test both live in ~/lib/canvas/widgetEndLabels
+// because ComfyNodeWidget needs the same two answers when it routes a bounded number to a
+// StudioRow instead of here — one copy, so the two paths cannot disagree about which
+// widgets get labels or which ranges are slider-shaped.
 const stepVal = computed(() => props.step ?? (props.isFloat ? 0.01 : 1))
-
-const useSlider = computed(() => {
-  const { min, max } = props
-  if (min == null || max == null || !isFinite(min) || !isFinite(max)) return false
-  const span = max - min
-  return span > 0 && span <= 1_000_000
-})
-
-const labels = computed<[string, string] | null>(() =>
-  props.name && END_LABELS[props.name] ? END_LABELS[props.name] : null)
+const useSlider = computed(() => isSliderRange(props.min, props.max))
+const labels = computed<[string, string] | null>(() => endLabelsFor(props.name))
 
 function clampEmit(raw: number) {
   let v = raw

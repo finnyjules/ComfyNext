@@ -16,11 +16,12 @@ import type { ControlSpec } from '~/lib/spacetype/effect'
 import StudioRow from './StudioRow.vue'
 
 const model = defineModel<string>({ required: true })
-const props = defineProps<{ options: string[]; label?: string }>()
+const props = defineProps<{ options: string[]; label?: string; hint?: string }>()
 
 const spec = computed(() => ({
   key: 'inline', label: props.label ?? '', kind: 'select',
   options: props.options, default: props.options[0] ?? '', group: '',
+  ...(props.hint ? { hint: props.hint } : {}),
 } as ControlSpec))
 </script>
 
