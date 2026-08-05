@@ -14,7 +14,7 @@ import type { ControlSpec } from '~/lib/spacetype/effect'
 import { fillFraction, fillOrigin, formatValue, nudgeValue, parseTyped, resetValue } from '~/lib/studio/row'
 import { scrubValue } from '~/lib/studio/scrub'
 import { controlKindToVariableType } from '~/lib/collection/studioBindables'
-import { rowRenderers, NUMERIC_KINDS } from './rows/registry'
+import { resolveRowRenderer, NUMERIC_KINDS } from './rows/registry'
 import VariableGlyph from './VariableGlyph.vue'
 import { TooltipProvider, TooltipRoot, TooltipTrigger, TooltipPortal, TooltipContent } from 'reka-ui'
 
@@ -39,7 +39,7 @@ const emit = defineEmits<{
 }>()
 
 const numeric = computed(() => NUMERIC_KINDS.has(props.spec.kind))
-const renderer = computed(() => rowRenderers[props.spec.kind] ?? null)
+const renderer = computed(() => resolveRowRenderer(props.spec.kind))
 const min = computed(() => Number((props.spec as { min?: number }).min ?? 0))
 const max = computed(() => Number((props.spec as { max?: number }).max ?? 1))
 const step = computed(() => Number((props.spec as { step?: number }).step ?? 1))
@@ -234,6 +234,13 @@ function onCancel() {
  */
 function onValuePointerDown(e: PointerEvent) {
   e.stopPropagation()
+  // Primary button only, for the same reason `onPointerDown` above carries this guard:
+  // a right-click fires `pointerdown` too, so without it right-clicking the readout
+  // opened the bind menu AND typed entry in one gesture, and the field then blur-commits
+  // a no-op write into the document and its undo stack — the very writes `onKeydown`
+  // refuses. `stopPropagation` stays unconditional (the row handler ignores non-primary
+  // anyway) so the numeric drag can never start from the number.
+  if (e.button !== 0) return
   if (!numeric.value || props.bound) return
   e.preventDefault()
   editing.value = true

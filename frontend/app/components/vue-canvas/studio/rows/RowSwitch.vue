@@ -9,7 +9,7 @@ const emit = defineEmits<{ (e: 'update:value', v: boolean): void }>()
 
 <template>
   <button
-    type="button" role="switch" :aria-checked="value"
+    type="button" role="switch" :aria-checked="value" :aria-label="spec.label"
     class="relative h-[16px] w-[28px] rounded-full transition-colors"
     :class="value ? 'bg-white' : 'bg-white/15'"
     @pointerdown.stop

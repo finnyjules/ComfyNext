@@ -13,6 +13,31 @@ const emit = defineEmits<{ (e: 'update:value', v: string): void }>()
 // row would offer an empty menu forever. Measured on the harness: mutating a spec's
 // options left the rendered <option> list on the old values.
 const options = computed(() => (props.spec as { options?: string[] }).options ?? [])
+
+// `v-model`, NOT `:value` + `@change`, and the reason is SELECTEDNESS, not the value
+// binding. The failure this guards against: HTML resets a select's selectedness whenever
+// its option list changes, so a value set against an EMPTY select matches nothing
+// (`selectedIndex === -1`) and, once options are appended, the reset picks the FIRST
+// option instead. That would leave the row's text showing the stored value while the
+// native control reported `options[0]` — the menu opens on the wrong row, and picking
+// `options[0]` fires no `change` at all, so it is unpickable.
+//
+// HONEST NOTE, because this was measured rather than reasoned: `:value` does NOT
+// actually break here at Vue 3. Both of Vue's prop-patch paths special-case
+// `key === 'value'` and re-patch it even when it is unchanged, and `patchElement`
+// patches children BEFORE props — so `el.value` is re-asserted after the new options
+// exist. Counterfactual on the harness, `:value` + `@change`, the effectId spec's
+// options merged in after mount with a stored value of `topographic`: selectedIndex went
+// -1 → 3, i.e. correct. `v-model` is kept anyway because it makes the guarantee
+// explicit and cheap: vModelSelect sets `option.selected` from an `updated` hook, which
+// is the mechanism that survives Vue changing the `key === 'value'` fast path.
+//
+// Verified with real input on the late-populated select: picking `options[0]` fired one
+// `change`, wrote once, and the row text and `select.value` agreed.
+const model = computed({
+  get: () => props.value,
+  set: (v: string) => emit('update:value', v),
+})
 </script>
 
 <template>
@@ -20,10 +45,10 @@ const options = computed(() => (props.spec as { options?: string[] }).options ??
     <span class="capitalize">{{ value }}</span>
     <span class="text-white/35">⌄</span>
     <select
-      :value="value"
+      v-model="model"
+      :aria-label="spec.label"
       class="absolute inset-0 cursor-pointer opacity-0"
       @pointerdown.stop
-      @change="emit('update:value', ($event.target as HTMLSelectElement).value)"
     >
       <option v-for="o in options" :key="o" :value="o" class="bg-neutral-900 capitalize">{{ o }}</option>
     </select>

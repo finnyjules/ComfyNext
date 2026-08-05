@@ -10,6 +10,7 @@ const emit = defineEmits<{ (e: 'update:value', v: string): void }>()
 <template>
   <input
     :value="value"
+    :aria-label="spec.label"
     spellcheck="false"
     class="w-32 rounded-[4px] bg-transparent px-1 text-right text-[11px] text-white/90 outline-none focus:bg-white/10"
     @pointerdown.stop
