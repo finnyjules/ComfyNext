@@ -46,6 +46,24 @@ The schema is a **superset with per-consumer opt-in** (`agent: false` withholds 
 
 Still to do in Act 1: the generic inspector renderer (Gradient still has 432 lines of hand-written markup), new `ControlSpec` kinds (`segmented`, `repeater`, `custom`), and exposing the 11 now-declared Shape controls to the agent. Known misfits remain: Texture's colour-role system (`texturefx/roles.ts`), Space Type's scene-sequencing motion model.
 
+## Studio controls — the row is the slider — LANDED 2026-08-05
+
+Commits `b26c4a422`..`4040bdade` (10). Spec: [2026-08-04-studio-control-rebuild-design.md](superpowers/specs/2026-08-04-studio-control-rebuild-design.md) · plan: [2026-08-04-studio-control-row-foundation.md](superpowers/plans/2026-08-04-studio-control-row-foundation.md). Prompted by [DialKit](https://joshpuckett.me/dialkit).
+
+Every studio control was two stacked lines — a label with a number above, a thin rail below — and **there was no way to type an exact value anywhere in the app**. Controls are now a single 28px row that *is* the slider: label left, value right, the row fills as the value rises. Click the number to type a value, drag anywhere to scrub, double-click to reset, right-click to bind. `StudioRow.vue` owns the shell; `studio/rows/` supplies only the value side per kind, so adding a kind is one component plus one registry line. `lib/studio/row.ts` holds the maths, unit-tested.
+
+**One render path, two entry points.** `StudioControlPanel` drives rows from a `ControlSpec[]`; `StudioSlider`/`StudioSelect`/`StudioSwitch` keep their exact public props but build a one-element spec internally. 88 of 89 `StudioSlider` call sites needed no edit. Sections can now nest via `'Parent/Child'` group paths.
+
+**Nine defects in the plan's own code, none reachable by synthetic events.** Every one passed a hand-dispatched `PointerEvent` and failed a real click. The worst: right-clicking a row ran click-to-position, so *opening the bind menu silently overwrote the value*. Also — `@pointerdown.stop` without `.prevent` let the compatibility `mousedown` blur-commit the typed-entry field shut the instant it opened, so clicking a number did nothing; Escape's removal-blur re-fired commit with the draft it had just discarded, making Escape behave as Enter; Enter double-committed; and `bindable !== false` was unreachable because Vue casts an absent Boolean prop to `false` — the variable glyph rendered on **no row at all**.
+
+**The accessibility fix caused its own regression.** Giving the row `role="slider"` made the variable glyph and bound-column buttons focusable descendants of a children-presentational role — axe-core measured 7 serious `nested-interactive` violations. Fixed by moving role/tabindex/aria onto a childless track div. Worth noting the tooling trap: the Browser pane's own accessibility tree does *not* prune children-presentational, so it reported the broken markup as fine. Only axe-core on the live page caught it.
+
+**Shift meant two different things and a comment claimed otherwise.** Shift-drag used an absolute grid, Shift-arrow a relative one — from 13 on a 0..100 control they gave 20 and 23 — under a docblock asserting they agreed. Both now route through one `coarseStepMultiplier()`, which also fixes the ×10 grid collapsing to endpoints on short ranges (`matToonSteps` 2..5 could only ever produce 2 or 5). Measured blast radius: 224 of 831 declared ranges. Shift still means FINE for `v-scrub`/`GridPropertyPanel`, documented in `scrub.ts`.
+
+**Verification standard.** No component-test framework in this repo by design, so every component claim was proved by driving the real app and then *reverting the fix under HMR to reproduce the bug on the same gesture*. The final review closed three residual risks by driving them, including temporarily nesting Shape Studio to execute the `StudioSectionTree` recursion for the first time — the bespoke `#control-palette.harmony` slot survived it.
+
+**Foundation only.** Two follow-on plans: four new kinds (`action`, `angle`, `spring`, and `xy` built-but-unapplied, plus a `segmented` kind — decided 2026-08-05, since dropping `segmentedMax` left the app with two answers to "pick one of three" and the schema path got the worse one), then the sweep of the ~167 remaining hand-written `<input type="range">` sites across 35 files.
+
 ## Shared post stack — grain retired, saved docs migrated — LANDED 2026-08-05
 
 Commit `dca456e7d`. Report: [usp-task-8-report.md](../.superpowers/sdd/usp-task-8-report.md).
@@ -579,6 +597,12 @@ Loop shape is right (perceive → plan → invertible commands → ghost preview
 - **Agent-invisible depth:** Scene3D is the largest surface with zero agent access. (Act 3, or free via factory retrofit)
 - **Texture/Shape have bakers but no motion path.**
 - **Bindability markup gate:** a control missing its `<BindableRow>` wrapper is sweepable in principle but has no UI affordance.
+- **The studio row's real pitch is 40px, not 28px.** `StudioSection`'s body is still `space-y-3`, a 12px gap sized for the old 62px two-line controls. It can't tighten until the sweep removes them, so the honest saving today is 74 → 40 per setting.
+- **`StudioRow`'s `#body` slot is unreachable.** Its docblock promises complex kinds render the row as a header and expand a body beneath it, but the registry supplies only the value side and nothing can pass a body per kind. The expandable-row mechanism the spec assigns to `spring`/`xy`/`curve`/`path`/`gradientStops`/`fillList` is documented but has no route — same defect class as the unreachable `bindable !== false` it shipped alongside.
+- **Both adapters' labelled branches have never executed.** All 23 `StudioSelect` and all 33 `StudioSwitch` call sites are bare, so both take their pre-rebuild escape branch 100% of the time. Their `StudioRow` paths run for the first time during the sweep.
+- **Nested `#section-` slot names use the leaf title, not the path**, so `Canvas/Shadow` and `Text/Shadow` would both claim `#section-Shadow`. No surface nests yet, so it is unreachable today.
+- **Nested children always render after all of a parent's own controls**, regardless of declaration order. Correct, but undocumented in `sections.ts`, whose docblock only promises sibling ordering.
+- **`RowText` writes per keystroke** — one undo entry per character. Parity with Space Type's existing binding rather than a regression; the real fix is commit batching.
 - **Migrated KineticType nodes lost backend execution.** The retired node was a real ComfyUI node (IMAGE/MASK outputs); Vector Type Studio is frontend-only. Graphs that piped kinetic frames into a downstream backend node lose that input at Run time — baked frames and timeline playback are unaffected. Needs a release note. The migrated MASK output wire also dangles unconnected on these nodes.
 - **No fallback if `google/fonts` renames a path upstream** for Vector Type Studio's variable-TTF proxy — the family just fails to load. The design's "static cut, axes disabled and labelled" mitigation was never implemented.
 - **No SVG-consuming node exists.** Vector Type's SVG export only leaves the product by download.

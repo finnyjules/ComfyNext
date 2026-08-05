@@ -1333,9 +1333,13 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 Three follow-on plans, in order:
 
-1. **New control kinds** — `action`, `angle`, `spring`, and `xy` (built, unapplied).
-   Each is one renderer plus one registry line plus a `ControlSpec` variant, which is
-   exactly why they wait until the registry exists.
+1. **New control kinds** — `action`, `angle`, `spring`, `xy` (built, unapplied), and
+   `segmented`. Each is one renderer plus one registry line plus a `ControlSpec`
+   variant, which is exactly why they wait until the registry exists. `segmented` was
+   added to this list on 2026-08-05: dropping `segmentedMax` left the app with two
+   answers to "pick one of three" — inline dropdowns on the schema path, pills on the 12
+   surviving hand-written `StudioSegmented` sites — and the schema path got the worse
+   one. Those 12 sites migrate onto the new kind during the sweep.
 2. **The sweep** — 167 range inputs and 30 native colour inputs across 35 files,
    surface by surface, largest first, retiring `BindableRow` as Gradient converts.
    The colour `alpha`-off-by-default flag belongs here, with its per-site checks.

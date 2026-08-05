@@ -223,6 +223,22 @@ wrapper and its extra half-row of vertical space disappear as Gradient is swept.
 3. **Colours in non-studio panels gain a real picker**, with alpha off by default per
    the trap above.
 
+## Corrections made during execution
+
+**Gradient Studio is not "entirely hand-written."** The sweep section below treats it as a
+purely hand-written surface, and Task 6 asked for it to be confirmed *unchanged*.
+`GradientStudioSurface.vue:1234` renders the whole shared post stack through
+`StudioControlPanel`, so it is a mixed surface and its post half changed with everything
+else. Driven at the end of the work: no regression, 11 post cards of exact-28px rows
+beside the untouched hand-written half. The lesson is the wrong premise, which nearly made
+a verification step confirm the wrong thing.
+
+**Segmented pills need a kind (decided 2026-08-05).** Dropping `segmentedMax` turned every
+schema select with ≤3 options into an inline dropdown while `StudioSegmented` survives with
+12 hand-written call sites — two answers to "pick one of three", with the schema path
+getting the worse one. A `segmented` renderer joins the new-kinds plan, and the 12
+hand-written sites migrate onto it during the sweep.
+
 ## Out of scope
 
 - Version snapshots and per-control keyboard shortcuts
