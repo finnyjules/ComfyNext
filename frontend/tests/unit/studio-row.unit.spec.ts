@@ -118,8 +118,11 @@ describe('nudgeValue', () => {
 
   it('snaps onto the step grid from an off-step starting value', () => {
     // 0.337 + 0.01 = 0.347, which snaps to 0.35 — the same grid parseTyped enforces.
-    expect(nudgeValue({ value: 0.337, min: 0, max: 1, step: 0.01, direction: 1 })).toBeCloseTo(0.35)
-    expect(nudgeValue({ value: 0.337, min: 0, max: 1, step: 0.01, direction: -1 })).toBeCloseTo(0.33)
+    // Precision 5 (not the default 2, i.e. +/-0.005) because a non-snapping
+    // implementation would land on 0.347/0.327 — only 0.003 off — and slip through
+    // the default tolerance despite never having snapped at all.
+    expect(nudgeValue({ value: 0.337, min: 0, max: 1, step: 0.01, direction: 1 })).toBeCloseTo(0.35, 5)
+    expect(nudgeValue({ value: 0.337, min: 0, max: 1, step: 0.01, direction: -1 })).toBeCloseTo(0.33, 5)
     // Off-grid on a coarse integer step: 7 - 5 = 2, which snaps to 0.
     expect(nudgeValue({ value: 7, min: 0, max: 100, step: 5, direction: -1 })).toBe(0)
     expect(nudgeValue({ value: 7, min: 0, max: 100, step: 5, direction: 1 })).toBe(10)

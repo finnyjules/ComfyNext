@@ -57,15 +57,39 @@ describe('groupIntoSections', () => {
     expect(out[0]!.sections.map(s => s.title)).toEqual(['Shadow'])
   })
 
+  it('silently drops a control grouped at the implicitly-created parent when only the child path is listed', () => {
+    // 'Canvas' is never itself in `order` — only 'Canvas/Shadow' is — so 'Canvas' is
+    // created as an implicit parent node but the allow-list check on the raw group
+    // string still rejects a control declared with group: 'Canvas'. Same trap as the
+    // typo'd-group case above, just reached via nesting instead of a misspelling.
+    const out = groupIntoSections(
+      [c('root', 'Canvas'), c('s', 'Canvas/Shadow')],
+      ['Canvas/Shadow'],
+    )
+    expect(out.map(s => s.title)).toEqual(['Canvas'])
+    expect(out[0]!.controls).toEqual([])
+    expect(out[0]!.sections.map(s => s.title)).toEqual(['Shadow'])
+    expect(out[0]!.sections[0]!.controls.map(x => x.key)).toEqual(['s'])
+  })
+
   it('nests more than one level deep', () => {
     const out = groupIntoSections([c('d', 'A/B/C')], ['A/B/C'])
     expect(out[0]!.sections[0]!.sections[0]!.title).toBe('C')
     expect(out[0]!.sections[0]!.sections[0]!.controls.map(x => x.key)).toEqual(['d'])
   })
 
-  it('prunes a branch whose every descendant is empty', () => {
-    const out = groupIntoSections([c('a', 'Alpha')], ['Alpha', 'Beta/Deep'])
+  it('prunes an empty branch while a populated sibling branch survives', () => {
+    // A flat (non-nesting) implementation can pass "prunes a branch whose every
+    // descendant is empty" by accident — 'Beta/Deep' just never matches anything.
+    // This pins the case that actually exercises the tree: two branches under the
+    // SAME parent, one with a control two levels down, one with none at all.
+    const out = groupIntoSections(
+      [c('p', 'Alpha/Populated')],
+      ['Alpha', 'Alpha/Populated', 'Alpha/Empty/Deeper'],
+    )
     expect(out.map(s => s.title)).toEqual(['Alpha'])
+    expect(out[0]!.sections.map(s => s.title)).toEqual(['Populated'])
+    expect(out[0]!.sections[0]!.controls.map(x => x.key)).toEqual(['p'])
   })
 
   it('gives flat groups an empty children array, so callers can loop blindly', () => {

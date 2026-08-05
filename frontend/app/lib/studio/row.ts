@@ -127,7 +127,8 @@ export function nudgeValue(opts: {
 
 /** Double-click target. A declared default always wins — including a default of 0,
  *  which is why this tests for null rather than falsiness. Without one, this is the
- *  legacy heuristic lifted from plugins/studio-reset.client.ts. */
+ *  same heuristic `plugins/studio-reset.client.ts` calls into — it does not
+ *  re-derive it, so the two cannot drift apart. */
 export function resetValue(opts: { default?: number; min: number; max: number }): number {
   const d = opts.default
   if (d != null && Number.isFinite(d)) return d
