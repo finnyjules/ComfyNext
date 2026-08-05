@@ -27,8 +27,12 @@ export interface PostEffectDef {
   frag: string | null
   /** Depth/normal-buffer effects. Withheld from every non-3D host. */
   threeDOnly?: boolean
-  /** Multiply the effect's contribution by the frame's alpha, so it never lands
-   *  on transparent background. Replaces Gradient's `cover` plumbing. */
+  /** Documentation only — the frag itself (currently just post_grain.frag) is
+   *  the one that gates unconditionally on its own input's `src.a`, so its
+   *  contribution never lands on transparent background in ANY consumer, not
+   *  only this chain. Nothing here reads this flag to set a uniform; it exists
+   *  so a reader of POST_EFFECTS can see which effects have that property
+   *  without opening every frag. Replaces Gradient's `cover` plumbing. */
   alphaGated?: boolean
   params: PostParamDef[]
 }
@@ -82,8 +86,11 @@ export const POST_EFFECTS: PostEffectDef[] = [
   },
   {
     // chromatic_aberration.frag also exposes u_centerX/u_centerY (a fixed radial
-    // origin); PostSettings has no field for it, so it stays at the catalog's
-    // centred default and only the amount is user-facing.
+    // origin); PostSettings has no field for it. chain.ts seeds every catalog
+    // uniform an effect doesn't map here from shader_effects/manifest.json's
+    // own "default" record (0.5, 0.5 — centred) before applying these params,
+    // so it stays centred rather than sitting at GL's implicit 0 for an unset
+    // uniform. Only the amount is user-facing.
     id: 'chroma', label: 'Chroma', enableKey: 'chroma', frag: 'chromatic_aberration',
     params: [
       // chromaAmount 0..1.5 -> catalog u_amount 0..0.08. Passing 1.5 straight
@@ -105,7 +112,10 @@ export const POST_EFFECTS: PostEffectDef[] = [
     // spacetype/post.ts), which crt_scanlines.frag is the catalog's equivalent
     // of — NOT film_grain.frag (that one covers the separate `grain` effect
     // below). filmIntensity drives u_scanline, the frag's single "how strong"
-    // knob; u_lineSize/u_curvature stay at the catalog defaults, unexposed.
+    // knob; u_lineSize/u_curvature/u_vignette are unmapped here, so chain.ts
+    // seeds them from shader_effects/manifest.json's own declared defaults
+    // (0.008 / 0.3 / 0.4) rather than leaving them at GL's implicit 0 for an
+    // unset uniform — see chain.ts's "Catalog defaults" module-header note.
     // filmGrayscale has no catalog counterpart (no param kind for booleans) and
     // is therefore not represented here.
     id: 'film', label: 'Film', enableKey: 'film', frag: 'crt_scanlines',
@@ -146,7 +156,12 @@ export const POST_EFFECTS: PostEffectDef[] = [
     // rgb_glitch.frag exposes u_amount/u_blocks/u_chroma/u_speed, but
     // PostSettings only ever grew a bare on/off (see Scene3DStudioSurface.vue's
     // glitch switch) — no Sailor param maps to any of them, so this effect
-    // contributes only its enable switch, at the catalog's built-in defaults.
+    // contributes only its enable switch. GLSL itself has no such thing as a
+    // "built-in" uniform default — an unset uniform simply reads back 0, which
+    // used to make this effect a byte-exact no-op. chain.ts now seeds every
+    // catalog uniform an effect doesn't map from shader_effects/manifest.json's
+    // own declared default (u_amount 0.08, u_blocks 28, u_chroma 0.012,
+    // u_speed 1.5) before applying params, so glitch renders at those values.
     id: 'glitch', label: 'Glitch', enableKey: 'glitch', frag: 'rgb_glitch',
     params: [],
   },

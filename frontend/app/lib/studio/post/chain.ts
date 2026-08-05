@@ -21,13 +21,45 @@
 // `render()`, right after each effect's pass loop. Two
 // consequences: (a) transparent stays transparent no matter which combination
 // of catalog frags is enabled, since none of them ever gets the last word on
-// alpha; (b) `post_grain`'s own alpha gate (which reads ITS input's alpha,
-// i.e. `u_image0.a`) always sees the true value, because every effect ahead of
-// grain in POST_CHAIN_ORDER has already had its alpha corrected before grain
-// runs.
+// alpha; (b) `post_grain`'s own alpha gate (its own `src.a` read) always sees
+// the true value, because every effect ahead of grain in POST_CHAIN_ORDER has
+// already had its alpha corrected before grain runs.
+//
+// Tradeoff this restore accepts (read before assuming the alpha story is
+// free): recombining an effect's colour with the ORIGINAL frame's alpha is
+// the right call — it is what keeps a matte export clean — but it means the
+// restore hard-cuts each effect's spatial spread at the ORIGINAL silhouette,
+// not the effect's own. On a transparent frame this is visible in three
+// places: bloom's glow is clipped at the source edge instead of fading past
+// it, gaussian blur's falloff is likewise cut off rather than softening into
+// the transparent surround, and chromatic aberration's colour fringe stops
+// dead at the same edge. A second, smaller effect compounds this: the catalog
+// frags blur/composite STRAIGHT-ALPHA rgb, so a blur or bloom kernel sampling
+// across a transparent neighbour mixes in that neighbour's (0,0,0) — visible
+// as a slight darkening right at the edge, even before this chain's restore
+// runs. A real fix for both would mean alpha-aware frags (weight each tap by
+// its own alpha, and blur alpha alongside rgb so glow/blur genuinely extend
+// past the silhouette) — out of scope here per the note above; flagging so
+// Tasks 5-7 don't mistake a hard edge on a transparent frame for a bug in
+// their own layer.
+//
+// Catalog defaults (read before adding a new effect or param): shader_effects
+// frags declare more uniforms than POST_EFFECTS maps to a Sailor param (e.g.
+// chromatic_aberration's u_centerX/u_centerY, rgb_glitch's whole knob set).
+// GLSL gives an unset uniform no default of its own — it simply reads back 0 —
+// so before applying POST_EFFECTS' own params, `render()` seeds every uniform
+// the catalog declares for that frag from shader_effects/manifest.json's own
+// "default" field (imported statically below, same posture as FRAG_SOURCES).
+// Without this seeding step an effect like glitch (no Sailor-mapped params at
+// all) would render as a byte-exact no-op instead of the catalog's intended
+// look, and chromatic_aberration would split from a corner instead of the
+// centre. POST_EFFECTS' own params are applied AFTER this seeding, so they
+// still win.
 import type { PostSettings } from './settings'
 import { POST_EFFECTS, POST_CHAIN_ORDER, type PostEffectDef } from './manifest'
-import { hexVec3 } from '~/lib/shaderfx/params'
+import { hexVec3, resolveUniforms } from '~/lib/shaderfx/params'
+import type { EffectDef, EffectParamDef } from '~/lib/shaderfx/types'
+import shaderCatalogJson from '../../../../../shader_effects/manifest.json'
 
 // Catalog fragment sources, bundled at build time and keyed by effect id (e.g.
 // "bloom" from shader_effects/bloom.frag → FRAG_SOURCES['bloom']). This is a
@@ -45,6 +77,16 @@ function fragSource(id: string): string {
   const src = FRAG_SOURCES[id]
   if (!src) throw new Error(`post chain: shader_effects/${id}.frag not found in the bundle`)
   return src
+}
+
+// Catalog param declarations (uniform/type/default/...), keyed by effect id —
+// see the module header's "Catalog defaults" note. Only `params` is used; the
+// rest of each manifest record (name, category, passes, textures...) is
+// irrelevant here, so this is typed as just enough of EffectDef to satisfy
+// resolveUniforms, not the full ShaderFxCatalog shape.
+const CATALOG_PARAMS: Record<string, EffectParamDef[]> = {}
+for (const eff of (shaderCatalogJson as unknown as { effects: { id: string; params: EffectParamDef[] }[] }).effects) {
+  CATALOG_PARAMS[eff.id] = eff.params
 }
 
 /**
@@ -137,6 +179,10 @@ class PostChainRunner {
   // The untouched original frame — sampled only for its alpha channel, never
   // rendered into, so it needs no FBO of its own.
   private origTex: WebGLTexture | null = null
+  // Last-uploaded orig size, so uploadOrig() can reuse storage (texSubImage2D)
+  // instead of reallocating it (texImage2D) on same-size animated re-renders —
+  // mirrors shaderfx/renderer.ts's baseSize/sameSize pattern.
+  private origSize: [number, number] = [0, 0]
 
   private ensure(width: number, height: number): WebGL2RenderingContext {
     if (!this.gl) {
@@ -197,10 +243,22 @@ class PostChainRunner {
 
   private uploadOrig(src: TexImageSource): void {
     const gl = this.gl!
-    if (!this.origTex) this.origTex = gl.createTexture()
+    let firstUpload = false
+    if (!this.origTex) {
+      this.origTex = gl.createTexture()
+      firstUpload = true
+    }
     gl.bindTexture(gl.TEXTURE_2D, this.origTex)
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true)
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, src)
+    // Same-size animated re-renders (the 60fps hot path) update the existing
+    // storage in place via texSubImage2D instead of reallocating it every
+    // frame — mirrors shaderfx/renderer.ts's uploadTexture sameSize path.
+    const sw = (src as { width?: number }).width ?? 0
+    const sh = (src as { height?: number }).height ?? 0
+    const sameSize = !firstUpload && this.origSize[0] === sw && this.origSize[1] === sh && sw > 0
+    if (sameSize) gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, sw, sh, gl.RGBA, gl.UNSIGNED_BYTE, src as TexImageSource)
+    else gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, src)
+    this.origSize = [sw, sh]
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false)
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
@@ -222,7 +280,7 @@ class PostChainRunner {
     gl.drawArrays(gl.TRIANGLES, 0, 3)
   }
 
-  render(passes: PostEffectDef[], post: PostSettings, base: TexImageSource, width: number, height: number, t: number): HTMLCanvasElement {
+  render(passes: PostEffectDef[], post: PostSettings, base: TexImageSource, width: number, height: number, t: number, seed: number): HTMLCanvasElement {
     const gl = this.ensure(width, height)
     this.uploadOrig(base)
 
@@ -244,6 +302,12 @@ class PostChainRunner {
       const fragId = effect.frag
       const prog = this.program(fragId, fragSource(fragId))
       const n = passCountFor(fragId)
+      // Every uniform the catalog declares for this frag, at its declared
+      // default — see the module header's "Catalog defaults" note. Computed
+      // once per effect (not per k) since it doesn't depend on the pass index;
+      // POST_EFFECTS' own params are applied after this and win.
+      const catalogParams = CATALOG_PARAMS[fragId]
+      const catalogDefaults = catalogParams ? resolveUniforms({ params: catalogParams } as unknown as EffectDef, {}) : null
 
       for (let k = 0; k < n; k++) {
         gl.useProgram(prog)
@@ -265,13 +329,26 @@ class PostChainRunner {
         if (loc) gl.uniform2f(loc, width, height)
         loc = gl.getUniformLocation(prog, 'u_time')
         if (loc) gl.uniform1f(loc, t)
+        loc = gl.getUniformLocation(prog, 'u_seed')
+        if (loc) gl.uniform1f(loc, seed)
         loc = gl.getUniformLocation(prog, 'u_pass')
         if (loc) gl.uniform1f(loc, k)
         loc = gl.getUniformLocation(prog, 'u_passCount')
         if (loc) gl.uniform1f(loc, n)
-        if (effect.alphaGated) {
-          loc = gl.getUniformLocation(prog, 'u_alphaGate')
-          if (loc) gl.uniform1f(loc, 1.0)
+
+        // Seed every catalog-declared uniform this effect doesn't map to a
+        // Sailor param at its catalog default, BEFORE applying POST_EFFECTS'
+        // own params below (which override on a matching uniform name). See
+        // the module header's "Catalog defaults" note — without this, an
+        // effect like glitch (params: []) would render as a no-op instead of
+        // the catalog's intended look.
+        if (catalogDefaults) {
+          for (const [name, v] of Object.entries(catalogDefaults)) {
+            const dLoc = gl.getUniformLocation(prog, name)
+            if (!dLoc) continue
+            if (Array.isArray(v)) gl.uniform3f(dLoc, v[0], v[1], v[2])
+            else gl.uniform1f(dLoc, v)
+          }
         }
 
         for (const p of effect.params) {
@@ -296,10 +373,14 @@ class PostChainRunner {
       }
 
       // Force this effect's output alpha back to the original frame's alpha —
-      // see the module header. Every effect gets this, not just alphaGated
-      // ones: alphaGated only controls whether the effect's OWN contribution is
-      // gated by alpha (post_grain not painting onto transparent background);
-      // this restore is what keeps alpha itself intact end to end.
+      // see the module header. Every effect gets this restore, alphaGated or
+      // not: `alphaGated` on a PostEffectDef is documentation only (currently
+      // just `grain`) — it does not transport anything to GL. post_grain.frag
+      // itself multiplies its own contribution by its OWN input's `src.a`
+      // unconditionally, so it never paints onto transparent background in
+      // ANY consumer (Shader Studio, shader-as-fill, the ComfyUI node), not
+      // only this chain. This restore is the separate mechanism that keeps
+      // alpha itself intact end to end through every effect's pass(es).
       if (!this.alphaRestore) this.alphaRestore = this.program('__alphaRestore__', ALPHA_RESTORE_FS)
       gl.useProgram(this.alphaRestore)
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbos[pingIdx % 2] ?? null)
@@ -339,13 +420,21 @@ const postChain = new PostChainRunner()
  * Returns `source` untouched (and creates no context) when nothing is
  * enabled, so post-off costs nothing.
  *
+ * `opts.seed` feeds `u_seed` (currently only `post_grain.frag`'s grain field —
+ * see `hashGrain(coord + u_seed)`). Defaults to a fixed constant (42, the same
+ * default every other `shaderfx` caller uses — see e.g. shaderfill/field.ts,
+ * shaderstudio/passes.ts) so behaviour stays deterministic for a caller that
+ * doesn't pass one. Pass a different value (e.g. derived from a document/layer
+ * id) to reroll the grain field per document instead of it being identical
+ * everywhere post is used.
+ *
  * Must stay free of `three` imports.
  */
 export function applyPost(
   source: TexImageSource, post: PostSettings, w: number, h: number, t: number,
-  opts: { threeD?: boolean } = {},
+  opts: { threeD?: boolean; seed?: number } = {},
 ): TexImageSource {
   const passes = activePasses(post, opts)
   if (passes.length === 0) return source
-  return postChain.render(passes, post, source, w, h, t)
+  return postChain.render(passes, post, source, w, h, t, opts.seed ?? 42)
 }

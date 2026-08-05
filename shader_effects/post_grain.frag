@@ -14,12 +14,6 @@ layout(location = 0) out vec4 fragColor0;
 // render unchanged.
 uniform float u_amount;      // 0..1, how strong the grain is
 uniform float u_size;        // 1..8, how coarse the grain is (device px per cell)
-// The alpha gate: chain.ts always sets this to 1.0 for this alphaGated effect.
-// Multiplying by it (rather than assuming it) means a caller that forgets to
-// wire it gets a defaulted-0 uniform — no grain at all — rather than grain
-// silently leaking onto transparent background. Replaces Gradient's `cover`
-// plumbing (frontend/app/lib/gradientfx/shaders.ts:633,637,640-642).
-uniform float u_alphaGate;
 
 float hashGrain(vec2 p) {
     vec3 p3 = fract(vec3(p.xyx) * 0.1031);
@@ -38,7 +32,13 @@ void main() {
 
     float lum = dot(src.rgb, vec3(0.299, 0.587, 0.114));
     float midtone = 0.35 + 0.65 * (lum * (1.0 - lum) * 4.0);   // 0.35 floor .. 1 at lum 0.5
-    float gate = u_alphaGate * src.a;   // never lands on transparent background
+    // Gated unconditionally on THIS pass's own input alpha — not a separate
+    // uniform a caller has to remember to wire. An opaque catalog preview has
+    // src.a == 1 (full grain, unaffected); a transparent pixel gets none;
+    // a partially-transparent edge gets a proportionally scaled amount. This
+    // makes every consumer of this frag (Shader Studio, shader-as-fill, the
+    // ComfyUI node, and this chain) correct without any of them opting in.
+    float gate = src.a;
 
     vec3 col = src.rgb + g * u_amount * 0.16 * midtone * gate;
     fragColor0 = vec4(clamp(col, 0.0, 1.0), src.a);

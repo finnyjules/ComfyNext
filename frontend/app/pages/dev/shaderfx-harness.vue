@@ -103,9 +103,128 @@ async function sailorPostAlphaProbe(opts: { effects: string[] }): Promise<{
   return { transparentMaxAlpha, transparentMaxLuma, opaqueMinAlpha }
 }
 
+// Grain-gate probe for post_grain (Task 4 fix pass, Finding 5). The alpha
+// probe above draws the result canvas into a 2D canvas and calls
+// getImageData — but Chromium's 2D backing store is PREMULTIPLIED 8-bit, so
+// once alpha hits 0 the RGB channels are destroyed by the premultiply itself,
+// not by the shader. That test can only prove "alpha==0 pixels read back as
+// 0,0,0,0"; it says nothing about whether the grain effect's own gate is
+// doing real work at a PARTIAL alpha, which is the antialiased-edge case the
+// gate exists for. This probe instead reads straight, unpremultiplied pixels
+// directly off the WebGL canvas via gl.readPixels (the chain's context is
+// created with premultipliedAlpha: false, preserveDrawingBuffer: true), and
+// builds three vertical bands at alpha 1 / 0.5 / 0 so grain amplitude can be
+// compared across all three in one pass.
+async function sailorPostGrainGateProbe(): Promise<{
+  opaqueDev: number
+  halfDev: number
+  transparentDev: number
+}> {
+  const W = 240
+  const H = 64
+  const BAND = 64 // band width; gaps between bands avoid any cross-seam bleed
+  const src = document.createElement('canvas')
+  src.width = W
+  src.height = H
+  const sctx = src.getContext('2d')!
+  sctx.clearRect(0, 0, W, H)
+  sctx.fillStyle = 'rgba(128,128,128,1)'
+  sctx.fillRect(0, 0, BAND, H) // opaque band
+  sctx.fillStyle = 'rgba(128,128,128,0.5)'
+  sctx.fillRect(88, 0, BAND, H) // half-alpha band
+  sctx.fillStyle = 'rgba(128,128,128,0)'
+  sctx.fillRect(176, 0, BAND, H) // fully transparent band
+
+  const post = { ...DEFAULT_POST, grain: true, grainAmount: 1, grainSize: 1 } as typeof DEFAULT_POST
+  const result = applyPost(src, post, W, H, 0) as HTMLCanvasElement
+  const gl = result.getContext('webgl2')!
+  const pixels = new Uint8Array(W * H * 4)
+  gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, pixels)
+
+  // Standard deviation of R WITHIN the band (against the band's own mean, not
+  // a fixed baseline) — deliberately NOT "deviation from 128". The fully-
+  // transparent band's true 128-grey never survives the 2D source canvas: a
+  // premultiplied 8-bit backing store destroys RGB at alpha=0 regardless of
+  // how the pixel was written (fillStyle or putImageData alike), so that
+  // band's pixels arrive at the shader already ~(0,0,0) — comparing against
+  // 128 there would measure the canvas's premultiply, not the shader. Local
+  // stddev sidesteps that: it measures how much pixel-to-pixel NOISE the
+  // grain effect added on top of whatever flat base each band actually has,
+  // which is 0 when the gate correctly suppresses grain and clearly nonzero
+  // (~3-4 at these settings) when it doesn't. Sampled well inside each band
+  // (clear of its own edges) and over the full height (readPixels' bottom-up
+  // vs canvas top-down orientation only flips rows, never columns, so it
+  // doesn't matter which rows land where for a purely x-banded probe).
+  function bandDev(x0: number, x1: number): number {
+    let sum = 0
+    let sumSq = 0
+    let n = 0
+    for (let y = 0; y < H; y++) {
+      for (let x = x0 + 8; x < x1 - 8; x++) {
+        const i = (y * W + x) * 4
+        const v = pixels[i]!
+        sum += v
+        sumSq += v * v
+        n++
+      }
+    }
+    if (n === 0) return 0
+    const mean = sum / n
+    const variance = sumSq / n - mean * mean
+    return Math.sqrt(Math.max(0, variance))
+  }
+
+  return {
+    opaqueDev: bandDev(0, BAND),
+    halfDev: bandDev(88, 88 + BAND),
+    transparentDev: bandDev(176, 176 + BAND),
+  }
+}
+
+// Renders `effectId` alone, at the catalog's default parameters, over a
+// non-flat OPAQUE test pattern (alpha 1 throughout, so the 2D canvas'
+// premultiply round-trip used by drawImage/getImageData below is lossless —
+// unlike the grain-gate probe above, this test has no partial-alpha pixels to
+// worry about), and reports whether ANY pixel differs from the untouched
+// input. Would have caught Critical 1 (Task 4 fix pass): before chain.ts
+// seeded catalog defaults, an effect with no Sailor-mapped params (glitch:
+// `params: []`) rendered a byte-exact no-op, because every one of its
+// uniforms sat at GL's implicit 0 for an unset uniform.
+async function sailorPostChangesPixels(effectId: string): Promise<boolean> {
+  const W = 64
+  const H = 64
+  const src = document.createElement('canvas')
+  src.width = W
+  src.height = H
+  const sctx = src.getContext('2d')!
+  const grad = sctx.createLinearGradient(0, 0, W, H)
+  grad.addColorStop(0, '#204060')
+  grad.addColorStop(1, '#f0a020')
+  sctx.fillStyle = grad
+  sctx.fillRect(0, 0, W, H)
+  const inData = sctx.getImageData(0, 0, W, H).data
+
+  const post = { ...DEFAULT_POST } as typeof DEFAULT_POST
+  const def = POST_EFFECTS.find(e => e.id === effectId)
+  if (def) (post as unknown as Record<string, boolean>)[def.enableKey] = true
+
+  const result = applyPost(src, post, W, H, 0.7)
+  const probe = document.createElement('canvas')
+  probe.width = W
+  probe.height = H
+  const pctx = probe.getContext('2d')!
+  pctx.drawImage(result as CanvasImageSource, 0, 0)
+  const outData = pctx.getImageData(0, 0, W, H).data
+
+  for (let i = 0; i < inData.length; i++) if (inData[i] !== outData[i]) return true
+  return false
+}
+
 if (import.meta.client) {
   ;(window as any).__renderShaderFx = renderJob
   ;(window as any).__renderPassesProbe = renderPassesProbe
   ;(window as any).__sailorPostAlphaProbe = sailorPostAlphaProbe
+  ;(window as any).__sailorPostGrainGateProbe = sailorPostGrainGateProbe
+  ;(window as any).__sailorPostChangesPixels = sailorPostChangesPixels
 }
 </script>
