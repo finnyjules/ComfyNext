@@ -92,6 +92,32 @@ marked as such — the user strikes or rewrites what is wrong.
 For spine rows (canvas, agent, projects, delivery) the destination is phrased as **what it must
 become for the studios' sake**, since their ambition is service-to-others rather than creative.
 
+### Destination decisions already made (brainstormed 2026-08-04)
+
+Five contested calls shape many rows at once. Four are decided; one is deliberately open.
+
+1. **Type family — two poles, absorb the utilities.** Vector Type owns flat/print/vector type;
+   Space Type owns spatial/cinematic type. Text on Path and Text Mask retire into Vector Type as
+   layout modes (path layout, mask fill) — continuing the Kinetic Slates consolidation. Their
+   destination rows say exactly that.
+2. **Scene3D — motion-graphics 3D, inside Sailor.** Best-in-class 3D as a *creative material*
+   (sculpt, light, animate, bake) always feeding the canvas. The standalone-tool idea stays a
+   dormant possibility, not the stated destination; moves are judged by what the canvas needs.
+3. **Motion — the Timeline is the stage, studios are the actors.** Every studio animates itself
+   through its own factory-derived tracks; the Timeline is where pieces meet (sequencing,
+   layering, audio, final render). Shot Director folds into the Timeline as a camera lane —
+   the second retirement-by-absorption. Compositor keeps per-layer motion as its local dialect.
+4. **Materials — fills AND destinations of their own.** Shader, Gradient and Texture each keep a
+   standalone creative ambition *and* expose themselves as fill/material types on other surfaces
+   (the shader-as-fill template). Two-part destinations for each. Shape stays a geometry surface
+   and feeds the SVG spine.
+5. **Taste — OPEN, deliberately.** The differentiator question: (a) spine service only, wired
+   studio by studio; (b) a Taste Studio as forcing function — an editable taste object (palette,
+   edge character, density, motion character as procedural priors over ControlSpec) proven on a
+   live cross-material proof wall; or (c) the studio shipped early with a one-panel wall that
+   grows as studios are wired. Parked for further thought; SURFACES.md records the taste rows as
+   contested with these options inline, mirroring ROADMAP's Act 1 pause.
+
 ### Layer 3 — the queue (derived)
 
 At the top of the document: moves from every surface, ordered by
