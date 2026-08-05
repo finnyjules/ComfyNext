@@ -1498,6 +1498,19 @@ function onKey(e: KeyboardEvent) {
     // An open StudioColor popover owns Escape (its own capture listener closes
     // it); it registered after us so we'd fire first — yield to it.
     if (document.querySelector('[data-studio-color-pop]')) return
+    // Escape must not touch selection at all while sculpting — the sculpted
+    // object stays the (sole) selection for the whole session, and either
+    // mutation below (ascend to parent group, or deselect) would desync the
+    // Objects-list highlight from the live sculpt target for no functional
+    // reason (finding 4, Task 13 review). Still swallow the key (preventDefault
+    // + stop) rather than falling through — before this fix a selection was
+    // always present while sculpting, so Escape never reached the shell; an
+    // untouched-selection no-op must not suddenly let it close the modal.
+    if (sculpting.value) {
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      return
+    }
     const primary = selectedId.value ? doc.objects.find((o) => o.id === selectedId.value) : null
     if (primary?.parentId) {
       // Step up to the containing group rather than clearing — the only
@@ -1726,6 +1739,13 @@ async function solidifySelection() {
 // `interaction.setSculpting`, never a direct `orbit.enabled` write (rule #1 of
 // this task's brief).
 const sculpting = ref(false)
+// Guards commitAndExitSculpt's await window (encodeMesh inside session.commit(),
+// then loadMesh's cache warm-up) — same convention as `converting` above for the
+// To-mesh button. Without it a fast double-click on Apply/Exit re-enters the
+// function before the first call's commit resolves and encodes the same working
+// buffer twice; idempotent, so nothing corrupts, but it's wasted work
+// (finding 3, Task 13 review).
+const committing = ref(false)
 const sculptBrush = ref<BrushKind>('draw')
 const sculptSize = ref(0.15)
 const sculptStrength = ref(0.5)
@@ -1851,29 +1871,47 @@ function sculptUndo() {
  *  ONLY scene_state write a sculpt makes, and only here — then leave sculpt
  *  mode. Skipped entirely when the session was never dirtied, so an
  *  accidental Sculpt-then-Exit doesn't pollute undo history or the "unexported
- *  changes" indicator. */
+ *  changes" indicator.
+ *
+ *  The exit cleanup (engine override, orbit lock, sculpting flag/session) runs
+ *  in `finally` so it happens on EVERY path, including a throw out of
+ *  `session.commit()` or `loadMesh` — mirrors `enterSculpt`'s try/catch above.
+ *  Without this a failed commit left the camera orbit-locked and the panel
+ *  stuck open with no way out (finding 2, Task 13 review); a failure is now
+ *  surfaced through the existing `convertError` line instead of swallowed, and
+ *  the session still exits so the user is never left locked without being
+ *  told why. */
 async function commitAndExitSculpt() {
   const session = sculptSession
   const id = sculptObjId
-  if (!session || !id) return
-  if (session.dirty) {
-    const { mesh, meshKey } = await session.commit()
-    // Warm the shared mesh cache BEFORE the doc write triggers the normal
-    // geoKey-gated resync, so that resync is a cache hit — no placeholder
-    // cube flash while it decodes what we already have in hand.
-    await loadMesh(mesh, meshKey)
-    const i = doc.objects.findIndex((o) => o.id === id)
-    if (i >= 0) {
-      const obj = doc.objects[i] as PrimitiveObject
-      doc.objects[i] = { ...obj, content: { ...obj.content, mesh, meshKey } }
+  if (!session || !id || committing.value) return
+  committing.value = true
+  convertError.value = ''
+  try {
+    if (session.dirty) {
+      const { mesh, meshKey } = await session.commit()
+      // Warm the shared mesh cache BEFORE the doc write triggers the normal
+      // geoKey-gated resync, so that resync is a cache hit — no placeholder
+      // cube flash while it decodes what we already have in hand.
+      await loadMesh(mesh, meshKey)
+      const i = doc.objects.findIndex((o) => o.id === id)
+      if (i >= 0) {
+        const obj = doc.objects[i] as PrimitiveObject
+        doc.objects[i] = { ...obj, content: { ...obj.content, mesh, meshKey } }
+      }
+      meshGen.value++ // same convention as the remesh/solidify paths: re-measure Size/vertex count
     }
-    meshGen.value++ // same convention as the remesh/solidify paths: re-measure Size/vertex count
+  } catch (err) {
+    console.warn('[scene3d-studio] sculpt commit failed', err)
+    convertError.value = 'Could not save the sculpt — try again.'
+  } finally {
+    engine?.setSculptOverride(null, null, null)
+    interaction?.setSculpting(false)
+    sculpting.value = false
+    sculptSession = null
+    sculptObjId = null
+    committing.value = false
   }
-  engine?.setSculptOverride(null, null, null)
-  interaction?.setSculpting(false)
-  sculpting.value = false
-  sculptSession = null
-  sculptObjId = null
 }
 
 // Scenes render every light as a real Three.js light — an unbounded count would
@@ -1904,6 +1942,13 @@ function removeObject(id: string) {
   // A group's children are independent doc objects; deleting only the group
   // would leave them orphaned at the root — visually "escaping" the delete.
   const doomed = new Set([id, ...descendantIds(doc.objects, id)])
+  // Mirrors the Backspace guard below: refuse to delete the object currently
+  // under the sculpt brush — directly, or as an ancestor group whose cascade
+  // would take it with it — since nothing here tears the sculpt session down
+  // (engine override, orbit lock, panel), and the object it points at would
+  // be gone out from under it (finding 1, Task 13 review). A DIFFERENT object
+  // (e.g. via the row's trash icon) is still deletable while sculpting.
+  if (sculpting.value && sculptObjId && doomed.has(sculptObjId)) return
   doc.objects = doc.objects.filter((o) => !doomed.has(o.id))
   // Remove every doomed id from the selection without going through the replace-setter,
   // which would discard any other selected objects when multi-selection is active.
@@ -2557,6 +2602,7 @@ function onClose() {
         v-model:size="sculptSize"
         v-model:strength="sculptStrength"
         v-model:symmetry="sculptSymmetry"
+        :committing="committing"
         @apply="commitAndExitSculpt"
         @exit="commitAndExitSculpt"
       />

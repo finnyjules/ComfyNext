@@ -25,6 +25,11 @@ const strength = defineModel<number>('strength', { required: true })
 // no translation layer needed.
 const symmetry = defineModel<'none' | 'mirror'>('symmetry', { required: true })
 
+// True while commitAndExitSculpt's await is in flight (encodeMesh, the mesh
+// cache warm-up). Guards against a fast double-click on Apply/Exit invoking
+// the commit twice concurrently — see this task's review finding 3.
+defineProps<{ committing?: boolean }>()
+
 defineEmits<{ apply: []; exit: [] }>()
 
 const BRUSHES: BrushKind[] = ['draw', 'smooth', 'inflate', 'flatten']
@@ -49,8 +54,8 @@ const SYMMETRY_OPTIONS = ['none', 'mirror']
     <!-- Sticky footer, mirrors the studio's own Save/Export footer convention
          (border-top, pinned bottom, action-blue primary). -->
     <div class="sticky bottom-0 z-10 mt-auto flex items-center justify-end gap-2 border-t border-white/10 bg-[#0e0e10] pb-1 pt-2">
-      <StudioButton variant="secondary" @click="$emit('exit')">Exit</StudioButton>
-      <StudioButton variant="primary" @click="$emit('apply')">Apply</StudioButton>
+      <StudioButton variant="secondary" :disabled="committing" @click="$emit('exit')">Exit</StudioButton>
+      <StudioButton variant="primary" :disabled="committing" @click="$emit('apply')">Apply</StudioButton>
     </div>
   </div>
 </template>
