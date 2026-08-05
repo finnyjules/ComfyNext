@@ -232,6 +232,10 @@ export default defineNuxtConfig({
     // the page for debugging.
     server: {
       allowedHosts: true,
+      // shader_effects/ lives at the repo root; the post chain imports its .frag
+      // files with ?raw so post never depends on the backend catalog endpoint at
+      // render time.
+      fs: { allow: ['..'] },
     },
   },
 

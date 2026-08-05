@@ -28,6 +28,12 @@ export function postControls(opts: { threeD?: boolean } = {}): ControlSpec[] {
       group: e.label,
     })
     for (const p of e.params) {
+      // uniform: null means this param has nothing to bind to in a 2D shader pass
+      // (gtao's three are withheld wholesale via threeDOnly above; halftoneScatter
+      // is the one that isn't — a flat host would otherwise show a slider, and
+      // offer the agent a knob, that provably cannot affect a pixel). 3D hosts
+      // keep them: gtao renders via EffectComposer, not this params list's frag.
+      if (p.uniform === null && !opts.threeD) continue
       const showIf = { key: `post.${e.enableKey}`, equals: true } as const
       if (p.kind === 'color') {
         out.push({

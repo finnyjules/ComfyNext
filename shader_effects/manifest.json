@@ -2900,6 +2900,36 @@
         { "uniform": "u_gust", "label": "Gust", "type": "float", "min": 0.0, "max": 1.0, "default": 0.35, "step": 0.05 },
         { "uniform": "u_shading", "label": "Shading", "type": "float", "min": 0.0, "max": 1.0, "default": 0.5, "step": 0.05 }
       ]
+    },
+    {
+      "id": "post_adjust",
+      "name": "Color Grade",
+      "category": "color",
+      "animated": false,
+      "passes": 1,
+      "centerParam": null,
+      "textures": [],
+      "generative": false,
+      "params": [
+        { "uniform": "u_exposure", "label": "Exposure", "type": "float", "min": 0.0, "max": 3.0, "default": 1.0, "step": 0.05 },
+        { "uniform": "u_contrast", "label": "Contrast", "type": "float", "min": 0.0, "max": 3.0, "default": 1.0, "step": 0.05 },
+        { "uniform": "u_saturation", "label": "Saturation", "type": "float", "min": 0.0, "max": 3.0, "default": 1.0, "step": 0.05 },
+        { "uniform": "u_hue", "label": "Hue", "type": "float", "min": -1.0, "max": 1.0, "default": 0.0, "step": 0.02 }
+      ]
+    },
+    {
+      "id": "post_grain",
+      "name": "Grain",
+      "category": "stylize",
+      "animated": false,
+      "passes": 1,
+      "centerParam": null,
+      "textures": [],
+      "generative": false,
+      "params": [
+        { "uniform": "u_amount", "label": "Amount", "type": "float", "min": 0.0, "max": 1.0, "default": 0.25, "step": 0.02 },
+        { "uniform": "u_size", "label": "Size", "type": "float", "min": 1.0, "max": 8.0, "default": 2.0, "step": 0.5 }
+      ]
     }
   ]
 }

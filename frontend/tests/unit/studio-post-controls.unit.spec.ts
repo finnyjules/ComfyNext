@@ -39,6 +39,11 @@ describe('derived post controls', () => {
     expect(postControls({ threeD: true }).map(c => c.key)).toContain('post.gtao')
   })
 
+  it('drops halftoneScatter (uniform: null) for a flat host — nothing to bind on 2D — but keeps it for 3D', () => {
+    expect(postControls({ threeD: false }).map(c => c.key)).not.toContain('post.halftoneScatter')
+    expect(postControls({ threeD: true }).map(c => c.key)).toContain('post.halftoneScatter')
+  })
+
   it('defaults each control to the DEFAULT_POST value', () => {
     for (const c of postControls({ threeD: true })) {
       const key = c.key.slice('post.'.length) as keyof typeof DEFAULT_POST
