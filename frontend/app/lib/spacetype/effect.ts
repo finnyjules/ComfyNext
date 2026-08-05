@@ -41,7 +41,8 @@ export type ControlSpec = (
   // A boolean toggle. Added because post-effect enables are booleans and modelling
   // them as a two-option select writes the STRING 'on' into a BOOLEAN field —
   // makeConfigParams' proxy writes through with no coercion, corrupting the doc.
-  // See lib/scene3d/controls.ts's "Boolean gap" note, which this closes.
+  // See lib/scene3d/controls.ts's "Booleans" note: this kind is what closed that gap
+  // for the shared schema (Scene3D's own booleans are still hand-omitted from ITS list).
   | { key: string; label: string; kind: 'switch'; default: boolean; group: string }
   | { key: string; label: string; kind: 'text'; default: string; group: string }
   // Multiple texts that the effect ALTERNATES per word-repeat/instance. Stored as one

@@ -23,23 +23,26 @@ import {
  *
  * Keys are FROZEN: persisted Collection bindings are `params.<key>`.
  *
- * ## Boolean gap (read before adding a toggle)
- * The nine `ControlSpec` kinds are `slider | text | textList | fillList | color | select
- * | font | path | curve` — there is no `switch`/boolean kind. Scene3D has real boolean
- * parameters (every `post.*` effect enable — bloom/color/chroma/blur/film/halftone/
- * dotScreen/glitch/gtao — plus `material.unlit`, `GlbObject.materialOverride`, and
- * `material.relief.invert`). Modelling a boolean as a two-option `select('on'|'off')`
- * would write the STRING `'on'` into a BOOLEAN field: `makeConfigParams` writes straight
- * through the proxy with no coercion, so that would corrupt the document. So these
- * booleans are simply OMITTED here — the agent can tune `post.bloomStrength` but cannot
- * switch bloom on, can tune `object.material.relief.scale` but cannot flip
- * `relief.invert`. The correct fix is adding a `switch` kind to the shared `ControlSpec`
- * (`~/lib/spacetype/effect.ts`) with its own agent/motion/UI story — that is its own task,
- * not a workaround to reach for here.
+ * ## Booleans (read before adding a toggle)
+ * `ControlSpec` DOES have a `switch` kind now (`~/lib/spacetype/effect.ts`) — it was
+ * added for the shared post stack's effect enables, which are booleans. Never model a
+ * boolean as a two-option `select('on'|'off')`: that writes the STRING `'on'` into a
+ * BOOLEAN field, and `makeConfigParams` writes straight through the proxy with no
+ * coercion, corrupting the document. Use `switch`.
+ *
+ * Scene3D's OWN booleans are still hand-omitted from this schema: every `post.*` effect
+ * enable (bloom/color/chroma/blur/film/halftone/dotScreen/glitch/gtao), plus
+ * `material.unlit`, `GlbObject.materialOverride` and `material.relief.invert`. So the
+ * agent can tune `post.bloomStrength` but cannot switch bloom on, and can tune
+ * `object.material.relief.scale` but cannot flip `relief.invert`. That is now a gap in
+ * THIS file, not in the shared schema — declaring them as `switch` controls is the fix
+ * whenever someone wants it, and would fold naturally into a migration of Scene3D onto
+ * the shared post manifest (`~/lib/studio/post/manifest.ts`), which already declares
+ * every one of those post enables.
  *
  * ## Deliberately NOT in this schema
  * - GLB `url` (an asset reference, not a tunable) and `GlbObject.materialOverride`
- *   (boolean — see the gap above; whether it's ON gates every `object.material.*`
+ *   (boolean — see the booleans note above; whether it's ON gates every `object.material.*`
  *   control via `when`, but the flag itself isn't a control).
  * - The primitive modifier stack (`primParams.ts` MODIFIER_SPECS) and per-primitive
  *   geometry `params` — a distinct, already-parametric system with its own key space.
@@ -53,7 +56,7 @@ import {
  *   "at minimum" list this schema was scoped to; add them here in a follow-on if the
  *   agent/Collection story needs them.
  * - Every `post.*` boolean enable, `material.unlit`, `material.relief.invert` — see the
- *   boolean gap above.
+ *   booleans note above.
  *
  * Must stay free of `three` imports — this module is dynamically imported by the
  * Collection control resolver (see shapefx/controls.ts's identical constraint).

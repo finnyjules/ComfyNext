@@ -13,6 +13,14 @@ import { POST_EFFECTS } from './manifest'
  *
  * Keys are FROZEN: persisted Collection bindings are `params.post.<key>`.
  *
+ * `opts.threeD` is FORWARD WORK, not a live capability: no shipping host passes
+ * it. Scene3D still hand-writes its own 21 post sliders (scene3d/controls.ts),
+ * so the `threeD` branch here, `PostEffectDef.threeDOnly`, and the "3D hosts
+ * keep `uniform: null` params" rule below are exercised only by tests. They
+ * encode the withholding rules a Scene3D migration onto this manifest would
+ * need, so that migration doesn't have to rediscover them — read them as a
+ * design note, not as something running in the product.
+ *
  * Must stay free of `three` imports — reachable from the Collection control
  * resolver's dynamic import graph (same constraint as scene3d/controls.ts).
  */
@@ -33,6 +41,7 @@ export function postControls(opts: { threeD?: boolean } = {}): ControlSpec[] {
       // is the one that isn't — a flat host would otherwise show a slider, and
       // offer the agent a knob, that provably cannot affect a pixel). 3D hosts
       // keep them: gtao renders via EffectComposer, not this params list's frag.
+      // (The 3D side of this rule is forward work — see the doc comment above.)
       if (p.uniform === null && !opts.threeD) continue
       const showIf = { key: `post.${e.enableKey}`, equals: true } as const
       if (p.kind === 'color') {
