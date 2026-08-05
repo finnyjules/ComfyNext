@@ -76,7 +76,7 @@ Sailor had **four** separate grain implementations. This closes out the shared p
 
 **Open surfaces are refused, not mangled.** A plane, a ring or an open-ended cylinder has no inside; Remesh detects that and offers a Solidify (thickness) step instead of producing garbage.
 
-**Sculpt mode.** Seven brushes — draw, smooth, inflate, flatten, grab, pinch, crease — with mirror and radial symmetry and per-stroke undo. Strokes mutate a live working buffer and only write the document on Apply/Exit.
+**Sculpt mode.** Seven brushes — draw, smooth, inflate, flatten, grab, pinch, crease — with mirror and radial symmetry and per-stroke undo. Strokes mutate a live working buffer and only write the document on Apply/Exit. The camera orbits, pans and zooms freely while sculpting, locking only for a live stroke or while the cursor is over the mesh; a brush cursor ring shows the brush's size on the surface; Remesh is reachable from inside the sculpt panel itself, so a stretched region can be re-tessellated without leaving; and material, transform and motion all stay editable throughout.
 
 **Merge.** Union / subtract / intersect through the distance field, with a Blend slider that gives a fillet at the join. The result is already a clean uniform mesh, so it can be sculpted immediately with no remesh step.
 
