@@ -46,6 +46,20 @@ The schema is a **superset with per-consumer opt-in** (`agent: false` withholds 
 
 Still to do in Act 1: the generic inspector renderer (Gradient still has 432 lines of hand-written markup), new `ControlSpec` kinds (`segmented`, `repeater`, `custom`), and exposing the 11 now-declared Shape controls to the agent. Known misfits remain: Texture's colour-role system (`texturefx/roles.ts`), Space Type's scene-sequencing motion model.
 
+## Shared post stack — grain retired, saved docs migrated — LANDED 2026-08-05
+
+Commit `dca456e7d`. Report: [usp-task-8-report.md](../.superpowers/sdd/usp-task-8-report.md).
+
+Sailor had **four** separate grain implementations. This closes out the shared post stack thread (Tasks 1–7: manifest, chain, Gradient/Texture/Shape adoption) by deleting the last two: Gradient's own `u_grain` GLSL block and Shape's own `uGrain` block. `shader_effects/post_grain.frag` is now the only grain implementation left. The two retired copies had already drifted apart under a comment insisting they hadn't — Gradient applied `g × u_grain × 0.16 × cover × midtone`, Shape applied `g × uGrain × 0.5 × midtone`, so the same slider value read ~3.1× stronger in Shape.
+
+**Every existing document is migrated, not broken.** A legacy grain value is rewritten on load into `post.grain`/`post.grainAmount`, rescaled into the canonical 0.16 space, with `post.grainSize` pinned to 1 — the shared effect's cell-quantisation has no equivalent in either retired formula, so anything above 1 would have rendered every migrated document visibly coarser than before.
+
+**Pixel-fidelity, measured on the actual bytes, not eyeballed.** A fixture doc rendered on the commit before this change and after, full RGBA buffers diffed byte-for-byte: Gradient landed ±1/255 (the honest cost of moving grain into a genuine second pass — an 8-bit quantise/re-upload round-trip); Shape landed **65,536/65,536 bytes exact**, true bit-for-bit, after the fix below.
+
+**A GPU float-precision bug the migration exposed, not caused.** The shared stack's grain seed is a full unsigned 32-bit hash (up to ~4.29 billion) fed straight into a `fract()`-chain hash inside a GPU `highp float` (~24-bit mantissa). A float32 simulation confirmed it: at that magnitude the hash collapses to a constant, so grain silently degenerated from noise into a uniform colour wash. Pre-existing since the post stack was first wired to Gradient (Task 5); this task is what finally turned grain on broadly enough to hit it. Fixed by modding the seed the same way each file's own internal uniform already did.
+
+**The brief's own instruction would have shipped a ~40/255 appearance change.** "Make Shape's post-pass trigger on distortion only" is what the task brief said to do, and it silently moves every existing Shape document (grain has defaulted on since before this task) onto a *different render path* — Shape's offscreen post target carries no MSAA, unlike the canvas's own antialiasing, an existing and unrelated quirk grain had always incidentally routed around. Proven by isolating it: forcing both old and new code through the *same* path (via distortion alone) measured bit-for-bit identical, so the discrepancy was 100% about which path a document takes, none of it about grain's own math. `postNeeded()` now keeps checking the old field for routing only — documented at length so a future pass doesn't "simplify" it back.
+
 ## Scene3D — clay sculpting and shape merging — LANDED 2026-08-04
 
 ~30 commits on main (`e6b5392d0`..`26fbec850`, interleaved with unrelated work). Spec: [2026-08-04-scene3d-sculpt-and-merge-design.md](superpowers/specs/2026-08-04-scene3d-sculpt-and-merge-design.md) · Plan: [2026-08-04-scene3d-sculpt-and-merge.md](superpowers/plans/2026-08-04-scene3d-sculpt-and-merge.md).
