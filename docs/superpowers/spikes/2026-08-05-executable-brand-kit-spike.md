@@ -1,0 +1,130 @@
+# The Executable Brand Kit — hinge spike (brief)
+
+*2026-08-05. Written before the spike runs; findings get appended below when it has.
+Child of the vision work recorded in [2026-08-04-per-surface-roadmap-design.md](../specs/2026-08-04-per-surface-roadmap-design.md)
+(the wargame + maximal-vision strategy docs are still to be committed).*
+
+## In plain language
+
+The long-term idea: a brand kit that doesn't just *describe* an aesthetic (colors, fonts,
+guidelines) but *executes* it — studios open already looking like you, variations stay in
+your lane, the agent proposes in your style. **Brand guidelines that run.**
+
+Everything in that idea rests on one assumption nobody has tested: that an aesthetic can be
+**read into parameters** — that software can look at what you like and set the sliders the
+way you would. This spike tests exactly that, in about a week, with a built-in way to fail
+loudly.
+
+## The claim under test
+
+> Given evidence of a person's taste (inspiration images, and their own past work), we can
+> produce parameter settings across several studios that the person **recognizes as theirs** —
+> well enough that *correcting* the result beats starting from neutral defaults.
+
+If true: the executable brand kit, the taste-conditioned production floor, and the
+"aesthetic into software" thesis all stand on ground. If false: they are poetry, and we
+learn it for a week's cost.
+
+## Design
+
+### The facet vocabulary, v0
+
+Taste is stored as ~12 studio-agnostic dimensions, deliberately imperfect and versionable:
+
+1. warmth (cool ↔ warm)
+2. value bias (dark ↔ light)
+3. contrast (soft ↔ punchy)
+4. saturation discipline (muted ↔ vivid)
+5. palette breadth (monochrome ↔ polychrome)
+6. grain / texture affinity (clean ↔ textured)
+7. edge quality (crisp ↔ painterly)
+8. density (sparse ↔ busy)
+9. geometric regularity (rigid ↔ organic)
+10. finish (matte ↔ luminous)
+11. ornament (restrained ↔ decorative)
+12. motion character (snappy ↔ floaty) — **expected to be unreadable from still images;
+    kept in v0 precisely to confirm that blind spot** (motion taste must come from observed
+    projects or the owner's hand)
+
+### Three evidence routes
+
+- **Elicited** — inspiration images → Fable vision → facet values. Adapts the existing
+  Style Publisher pipeline (`server/api/style-profile/`), emitting numbers instead of prose.
+  Cheap deterministic reads (palette extraction, contrast stats) run beside the model call.
+- **Observed** — the owner's saved projects mined for real parameter choices on the mapped
+  params. No AI involved; this is direct measurement.
+- **Declared** — not built in the spike; noted as the correction loop the product would add.
+
+### The mapping
+
+~30 high-salience params across three studios — **Gradient, Shader (grain/palette),
+Vector Type (weight/axes)** — hand-mapped from facets in one standalone file. No
+`ControlSpec` schema changes, no migrations: the spike must not pay productization costs.
+
+### The wall
+
+A dev page (`/dev/taste-wall`, following the `/dev/shaderfill-bench` precedent) rendering a
+grid: three studios × three columns — **neutral defaults / elicited taste / observed taste**.
+
+### Two controls (a verification that cannot fail proves nothing)
+
+1. **The anti-wall (discriminability).** A second board of deliberately opposite taste
+   (e.g. brutalist monochrome against a warm, textured set) rendered through the identical
+   pipeline. The two walls must differ **loudly**. If they look like cousins, the pipeline is
+   emitting generic pleasantness, not reading taste — the silent failure mode this control
+   exists to catch.
+2. **Elicited vs observed agreement.** Two independent routes to the same person's taste
+   should roughly agree where they overlap. Divergence in a consistent direction is not
+   necessarily failure — inspiration is aspiration, project history is practice — but *zero*
+   correlation is.
+
+## Predictions, registered in advance
+
+- The elicited wall reads as a **caricature**: directionally right, too blunt. Color lands
+  best (Gradient panel most convincing), grain roughly lands, subtlety does not.
+- **Facet 12 (motion) comes back empty or guessed** — confirming motion taste needs
+  non-image evidence.
+- The observed column is **sharper but patchy** — strong where the owner has real usage,
+  blank elsewhere.
+- Elicited and observed **partially disagree**, most likely with the board reading moodier
+  or bolder than the practice. That gap is the first measurement of aspiration-vs-practice.
+- Even at caricature quality, "Gradient Studio opens already in your colors" **feels
+  disproportionately good** — the demo moment that decides whether to keep pulling the
+  thread.
+
+## Pass / fail
+
+**Pass** requires all three:
+1. **Recognition** — the owner says "that's my direction" on the elicited wall (not "that's
+   perfect", just clearly better than neutral).
+2. **Discrimination** — wall and anti-wall differ loudly.
+3. **Economy** — correcting the elicited result would take fewer decisions than configuring
+   from neutral.
+
+**Fail** — generic output (control 1), or no recognition, or elicited/observed at ~zero
+agreement. A fail kills the executable-kit thesis cheaply and redirects taste work to
+diffusion-side only.
+
+## Owner's part
+
+30–50 images. Do not browse fresh — harvest where taste already accumulates:
+`input/lora_dataset_*` folders, own portfolio, Pinterest/Are.na/saves screenshots.
+Perfectionism about the corpus is a delay dressed as diligence; a "good enough" board is
+the realistic input the product would receive anyway. Plus ~30 minutes of honest looking
+at the finished wall.
+
+## Deliverables
+
+- `facets.v0` list (above, refined if the build forces it)
+- images → facets endpoint (Fable, JSON out)
+- the standalone facet→param mapping file (3 studios, ~30 params)
+- project-history miner for the observed column
+- `/dev/taste-wall` with all three columns + the anti-wall
+- findings appended to this document, including a facet-by-facet verdict on which evidence
+  route reads which facet best
+
+## Non-goals
+
+No board/moodboard UI. No `ControlSpec` schema field. No agent integration. No sweeps
+integration. No persistence format decisions. Each of those is product work that only makes
+sense after a pass.
