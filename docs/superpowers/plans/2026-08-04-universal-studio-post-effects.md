@@ -1114,6 +1114,14 @@ Four grain implementations collapse to one. The risk is that saved documents cha
 
 The coefficients differ threefold: `gradientfx/shaders.ts:637` applies `g * u_grain * 0.16 * cover * midtone`, while `shapefx/post.ts:54` applies `g * uGrain * 0.5 * midtone` — despite shapefx/post.ts:23 claiming the two read identically. **Gradient's 0.16 is canonical** (it is the more-used studio and the more conservative value).
 
+#### The grain-size trap (found during Task 4's review — read before writing the migration)
+
+`shader_effects/post_grain.frag` ports Gradient's formula faithfully, but it adds a cell-quantisation step keyed to `u_size` that the original has no equivalent for. The port is bit-exact **only at `grainSize <= 1`**, and `DEFAULT_POST.grainSize` is `2`.
+
+So a migration that sets only `grain: true` and `grainAmount` will render every migrated Gradient document **visibly coarser than it does today**, and the migration-fidelity test is the thing that catches it. The migration must set `grainSize: 1` for documents carrying legacy Gradient grain.
+
+Decide and state explicitly what Shape's migrated documents get: Shape's old grain had no size concept either, so the same `grainSize: 1` reasoning applies to it. Verify this rather than assuming — read `shapefx/post.ts`'s formula and confirm there is no size term.
+
 **Files:**
 - Modify: `frontend/app/lib/gradientfx/shaders.ts` (remove `u_grain`, `u_grainDeferred`, the alpha-smuggle at :642)
 - Modify: `frontend/app/lib/gradientfx/renderer.ts` (stop setting the removed uniforms)
