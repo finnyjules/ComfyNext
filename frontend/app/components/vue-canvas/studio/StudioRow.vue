@@ -112,9 +112,12 @@ function onPointerDown(e: PointerEvent) {
     if (ev.pointerId !== e.pointerId) return
     if (Math.abs(ev.clientX - startX) > 2) dragged = true
     if (!dragged) return
+    // Shift is COARSE here, exactly as it is on the arrow keys: it widens the grid
+    // to ten steps rather than slowing the travel. It used to mean the opposite
+    // (0.15× travel), so the same key made the drag finer and the keyboard bigger.
     emit('update:modelValue', scrubValue({
       startValue, deltaPx: ev.clientX - startX,
-      min: min.value, max: max.value, step: step.value, fine: ev.shiftKey,
+      min: min.value, max: max.value, step: step.value, coarse: ev.shiftKey,
     }))
   }
   // Detaching is deliberately separate from finishing: `pointercancel` (touch, pen,
@@ -314,7 +317,16 @@ function onValuePointerDown(e: PointerEvent) {
           @pointerdown.stop
           @click.stop="emit('goToCollection')"
         >{{ bound }}</button>
-        <span v-else-if="renderer" @pointerdown="onValuePointerDown">
+        <!-- The value side carries a MINIMUM WIDTH, and it has to live here rather
+             than in a renderer. Measured on the running panel: a numeric readout of
+             `0` was 6.6px wide and a select's current option 36px, so the click
+             target for typed entry and for the option menu was a few pixels of text.
+             RowSelect cannot widen itself — its `absolute inset-0` overlay resolves
+             against its own span, so stretching the target means stretching that
+             span from outside, which is why the select renderer is a `flex-1` child
+             of this box. For numeric rows the win is direct: this element owns the
+             `pointerdown` that opens typed entry, so the whole 64px is clickable. -->
+        <span v-else-if="renderer" class="flex min-w-[64px] items-center justify-end" @pointerdown="onValuePointerDown">
           <component
             :is="renderer"
             :value="modelValue"

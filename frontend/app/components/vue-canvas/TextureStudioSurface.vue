@@ -588,7 +588,6 @@ onBeforeUnmount(() => {
         :value="(key: string) => (params as Record<string, unknown>)[key] as string | number"
         :visible="controlVisible"
         :bound-for="boundColumnFor"
-        :segmented-max="0"
         :go-to-collection="goToCollection"
         @set="setParam"
         @promote="promoteControlFromPanel"

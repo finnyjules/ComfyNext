@@ -41,13 +41,21 @@ const model = computed({
 </script>
 
 <template>
-  <span class="relative flex items-center gap-1 text-[11px] text-white/90">
+  <!-- `flex-1` so the row's min-width value box stretches this span, and with it the
+       transparent `absolute inset-0` select below — the overlay resolves against THIS
+       element, so a wider parent alone would not widen the click target. `justify-end`
+       keeps the text where a right-aligned readout belongs once it is stretched. -->
+  <span class="relative flex flex-1 items-center justify-end gap-1 text-[11px] text-white/90">
     <span class="capitalize">{{ value }}</span>
     <span class="text-white/35">⌄</span>
+    <!-- `-inset-y-1.5` because the span is only as tall as one 11px line — measured at
+         17px inside a 28px row, so the menu opened from just the middle 60% of it.
+         Bleeding the overlay 6px past its own box fills the row's height; it is
+         absolutely positioned, so nothing reflows. -->
     <select
       v-model="model"
       :aria-label="spec.label"
-      class="absolute inset-0 cursor-pointer opacity-0"
+      class="absolute inset-x-0 -inset-y-1.5 cursor-pointer opacity-0"
       @pointerdown.stop
     >
       <option v-for="o in options" :key="o" :value="o" class="bg-neutral-900 capitalize">{{ o }}</option>
