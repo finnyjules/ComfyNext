@@ -99,7 +99,7 @@ function pickGoogle(f: GoogleFont) { emit('pick', { source: 'google', font: f })
     <button type="button" class="fp__trigger" @click="toggle">
       <span class="fp__trigger-label">{{ label }}</span>
       <span v-if="sublabel" class="fp__trigger-tag">{{ sublabel }}</span>
-      <span class="fp__caret" :class="{ 'fp__caret--open': open }">▾</span>
+      <span class="fp__caret" :class="{ 'fp__caret--open': open }">›</span>
     </button>
 
     <div v-if="open" class="fp__panel">
@@ -195,8 +195,10 @@ function pickGoogle(f: GoogleFont) { emit('pick', { source: 'google', font: f })
   color: rgba(255,255,255,0.65); background: rgba(255,255,255,0.1);
   padding: 1px 5px; border-radius: 4px;
 }
-.fp__caret { color: rgba(255,255,255,0.45); transition: transform 0.15s; }
-.fp__caret--open { transform: rotate(180deg); }
+/* The app's one caret: `›` turned, never ▾/▴/⌄ — those draw smaller than their type size
+   implies and sit off the optical centre. Down when closed, up when open. */
+.fp__caret { display: inline-block; color: rgba(255,255,255,0.45); transform: rotate(90deg); transition: transform 0.15s; }
+.fp__caret--open { transform: rotate(-90deg); }
 
 .fp__panel {
   margin-top: 5px;

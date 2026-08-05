@@ -72,7 +72,10 @@ watch(fontPickerOpen, (open) => { if (!open && fontSuggestRan.value) clearFontSu
   <button type="button" @click="fontPickerOpen = !fontPickerOpen"
           class="flex w-full items-center justify-between rounded bg-white/10 px-2 py-1 text-left">
     <span class="truncate">{{ modelValue || 'Select font…' }}</span>
-    <span class="ml-2 shrink-0 text-white/40">{{ fontPickerOpen ? '▴' : '▾' }}</span>
+    <!-- The app's one caret: `›` turned, never ▾/▴/⌄. Those draw smaller than their type
+         size implies and sit off the optical centre. Down when closed, up when open. -->
+    <span class="ml-2 inline-block shrink-0 text-white/40 transition-transform"
+          :class="fontPickerOpen ? '-rotate-90' : 'rotate-90'">›</span>
   </button>
   <div v-if="fontPickerOpen" class="mt-1 rounded bg-black/40 p-1">
     <div class="mb-1 flex items-center gap-1">

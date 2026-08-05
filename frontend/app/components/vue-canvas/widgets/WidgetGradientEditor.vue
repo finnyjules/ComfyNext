@@ -104,7 +104,7 @@ function applyStops(v: GradientStop[]) { stops.value = v.map(s => ({ pos: s.pos,
 
     <!-- palette picker (color theory), collapsible -->
     <button class="mt-0.5 text-left text-[11px] text-white/45 hover:text-white/75" @click="showPicker = !showPicker">
-      {{ showPicker ? '▾' : '▸' }} Colour-theory palettes
+      <span class="mr-1 inline-block transition-transform" :class="showPicker ? 'rotate-90' : ''">›</span>Colour-theory palettes
     </button>
     <div v-if="showPicker" class="rounded border border-white/10 bg-white/[0.02] p-2">
       <PalettePicker

@@ -266,7 +266,7 @@ function onValuePointerDown(e: PointerEvent) {
       <div
         v-if="band"
         class="pointer-events-none absolute inset-y-0"
-        :style="{ left: band.left, width: band.width, background: bound ? 'rgba(244,114,182,0.20)' : 'rgba(255,255,255,0.13)' }"
+        :style="{ left: band.left, width: band.width, background: bound ? 'rgba(244,114,182,0.32)' : 'rgba(255,255,255,0.22)' }"
       ></div>
 
       <!-- The track: a childless element carrying the slider role, the tab stop and the

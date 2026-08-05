@@ -1383,7 +1383,7 @@ async function exportWebEmbed() {
           <button type="button" @click="showEffectGallery = true"
                   class="flex w-full items-center justify-between rounded border border-white/[0.08] bg-white/[0.04] px-2 py-1.5 text-xs text-white/85 hover:border-white/25">
             <span class="truncate">{{ effect.label }}</span>
-            <span class="ml-2 shrink-0 text-white/40">▾</span>
+            <span class="ml-2 inline-block shrink-0 rotate-90 text-white/40">›</span>
           </button>
           <div class="mt-2 flex items-center justify-between">
             <button type="button" @click="applyEffectDefaults"
@@ -1683,7 +1683,8 @@ async function exportWebEmbed() {
           <div class="relative flex items-center justify-end gap-2">
             <StudioButton variant="secondary" :disabled="baking" @click="saveNow">Save</StudioButton>
             <StudioButton variant="primary" :disabled="baking" @pointerdown.stop @click="renderMenuOpen = !renderMenuOpen">
-              {{ baking ? 'Generating…' : 'Render ▾' }}
+              <template v-if="baking">Generating…</template>
+              <template v-else>Render <span class="ml-0.5 inline-block rotate-90">›</span></template>
             </StudioButton>
             <div v-if="renderMenuOpen" @pointerdown.stop
                  class="absolute bottom-full right-0 z-20 mb-1.5 w-60 overflow-hidden rounded-lg border border-white/10 bg-[#1a1a1e] py-1 shadow-xl">
