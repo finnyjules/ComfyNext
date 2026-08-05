@@ -411,21 +411,57 @@ export function ensureConfigDefaults(cfg: GradientConfig): GradientConfig {
 }
 
 /**
- * Rewrites pre-path motion tracks. Saved projects store `{ layer, param }`,
- * which implicitly meant `layers[layer].shape[param]`. Mirrors
+ * Resolve the config path a motion track actually targets, rewriting the two
+ * legacy shapes a saved track can still carry. THE single definition of that
+ * mapping — `migrateMotionTracks` persists whatever this returns, and
+ * `applyMotion` calls it per frame so every path that renders straight off a
+ * saved blob (node card, headless bake, studio frame source, embed) resolves
+ * tracks identically to a document that has been opened in the studio.
+ *
+ * Two legacy shapes:
+ *   1. `{ layer, param }` with no `path` — implicitly `layers[layer].shape[param]`.
+ *   2. `path: 'relief.grain'` — grain moved into the shared post stack, so its
+ *      animatable successor is `post.grainAmount` (Gradient's 0.16 coefficient is
+ *      canonical, so the value carries 1:1, no rescale). This one is resolved
+ *      against `cfg` because the legacy field is READ-ONLY-BUT-LIVE until
+ *      `ensureConfigDefaults` consumes it:
+ *        - relief.grain still present (un-migrated blob): keep targeting it.
+ *          `resolvePost` gives the legacy field precedence at render, so writing
+ *          post.grainAmount instead would strand the animation on a static value.
+ *        - relief.grain gone (migrated): target post.grainAmount. Writing
+ *          relief.grain there would RE-CREATE, on every frame's clone, the field
+ *          the migration deleted — `resolvePost` would then force grain back on
+ *          and pin grainSize, leaving the Grain switch and both sliders dead
+ *          (turning Grain off would leave it on).
+ */
+export function resolveTrackPath(tr: MotionTrack, cfg: GradientConfig): string | undefined {
+  if (typeof tr.path === 'string' && tr.path) {
+    if (tr.path === 'relief.grain') return typeof cfg.relief?.grain === 'number' ? tr.path : 'post.grainAmount'
+    return tr.path
+  }
+  if (typeof tr.layer === 'number' && typeof tr.param === 'string') return `layers.${tr.layer}.shape.${tr.param}`
+  return undefined
+}
+
+/**
+ * Rewrites legacy motion tracks in place — see `resolveTrackPath` for the two
+ * shapes and why the grain one is config-dependent. Mirrors
  * shaderstudio/migrate.ts's effect-path rewrite.
+ *
+ * Called from `ensureConfigDefaults` AFTER it has consumed and deleted
+ * `relief.grain`, so a grain track is rewritten in the same pass that retires the
+ * field it pointed at — the two must not drift apart.
  */
 export function migrateMotionTracks(cfg: GradientConfig): GradientConfig {
   for (const tr of cfg.motion?.tracks ?? []) {
-    if (typeof tr.path === 'string' && tr.path) continue
-    if (typeof tr.layer === 'number' && typeof tr.param === 'string') {
-      tr.path = `layers.${tr.layer}.shape.${tr.param}`
-      // Drop the legacy fields once migrated: leaving them alongside `path`
-      // would silently mis-target if a future rollback re-reads `layer`/`param`
-      // instead of `path` while the layer order has since changed.
-      delete tr.layer
-      delete tr.param
-    }
+    const path = resolveTrackPath(tr, cfg)
+    if (!path) continue
+    tr.path = path
+    // Drop the legacy fields once migrated: leaving them alongside `path`
+    // would silently mis-target if a future rollback re-reads `layer`/`param`
+    // instead of `path` while the layer order has since changed.
+    delete tr.layer
+    delete tr.param
   }
   return cfg
 }

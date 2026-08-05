@@ -2,7 +2,7 @@
 // animated params are overridden for that frame. The renderer then draws the
 // frame normally — preview and bake share this path, so they always match.
 
-import { cloneConfig, type GradientConfig, type MotionTrack } from './types'
+import { cloneConfig, resolveTrackPath, type GradientConfig, type MotionTrack } from './types'
 import { visibleGradientControls } from './controls'
 import { layerLabels } from './layerLabel'
 import { getByPath, setByPath } from '~/lib/studio/path'
@@ -80,15 +80,14 @@ export function applyMotion(cfg: GradientConfig, t: number): GradientConfig {
   if (!cfg.motion?.tracks?.length) return cfg
   const out = cloneConfig(cfg)
   for (const track of cfg.motion.tracks) {
-    // Legacy {layer, param} tracks reach this function un-migrated: ensureConfigDefaults
-    // only runs on the editor-open path, while the node card, the headless bake and the
-    // studio frame source all render straight from the saved blob. Resolving the legacy
-    // shape here keeps saved animations working on every path.
-    const path = track.path ?? (
-      typeof track.layer === 'number' && typeof track.param === 'string'
-        ? `layers.${track.layer}.shape.${track.param}`
-        : undefined
-    )
+    // Legacy tracks ({layer, param}, and pre-post-stack `relief.grain`) reach this
+    // function un-migrated: ensureConfigDefaults only runs on the editor-open path,
+    // while the node card, the headless bake and the studio frame source all render
+    // straight from the saved blob. Resolving them through the SAME function the
+    // migration uses keeps saved animations working on every path, and keeps a
+    // migrated document from having its retired fields re-created frame by frame —
+    // see resolveTrackPath's doc.
+    const path = resolveTrackPath(track, cfg)
     if (!path) continue
     // Guard on the PARENT container existing, not the leaf — some animatable
     // params (e.g. flow.swirl) are optional and not backfilled by

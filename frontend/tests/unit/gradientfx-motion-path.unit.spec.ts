@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { animatableTargets, applyMotion } from '../../app/lib/gradientfx/motion'
 import { defaultConfig } from '../../app/lib/gradientfx/randomize'
-import { ensureConfigDefaults } from '../../app/lib/gradientfx/types'
+import { ensureConfigDefaults, resolvePost } from '../../app/lib/gradientfx/types'
 import { getByPath } from '../../app/lib/studio/path'
 
 /**
@@ -121,8 +121,10 @@ describe('path-based applyMotion', () => {
   it('animates a non-shape path that was impossible before', () => {
     const c: any = cfg()
     c.motion.duration = 1
-    c.motion.tracks = [track({ path: 'relief.grain', from: 0, to: 1 })]
-    expect((applyMotion(c, 1) as any).relief.grain).toBe(1)
+    // relief.relief, not relief.grain: grain moved into the shared post stack and a
+    // track pointing at it is now REWRITTEN (see the legacy-track block below).
+    c.motion.tracks = [track({ path: 'relief.relief', from: 0, to: 1 })]
+    expect((applyMotion(c, 1) as any).relief.relief).toBe(1)
   })
 
   it('ignores an unresolvable path without fabricating structure', () => {
@@ -167,8 +169,8 @@ describe('legacy track migration', () => {
 
   it('leaves already-migrated tracks untouched', () => {
     const c: any = cfg()
-    c.motion.tracks = [{ path: 'relief.grain', from: 0, to: 1, easing: 'linear', loops: 1, hold: 0, cycleOffset: 0, delay: 0 }]
-    expect((ensureConfigDefaults(c) as any).motion.tracks[0].path).toBe('relief.grain')
+    c.motion.tracks = [{ path: 'relief.relief', from: 0, to: 1, easing: 'linear', loops: 1, hold: 0, cycleOffset: 0, delay: 0 }]
+    expect((ensureConfigDefaults(c) as any).motion.tracks[0].path).toBe('relief.relief')
   })
 
   it('a migrated legacy track still animates', () => {
@@ -187,6 +189,69 @@ describe('legacy track migration', () => {
     c.motion.duration = 1
     c.motion.tracks = [{ layer: 0, param: 'count', from: 0, to: 10, easing: 'linear', loops: 1, hold: 0, cycleOffset: 0, delay: 0 }]
     expect((applyMotion(c, 1) as any).layers[0].shape.count).toBe(10)
+  })
+})
+
+// The defect this block exists to prevent: `relief.grain` was an animatable target
+// before grain moved into the shared post stack, so saved documents carry tracks that
+// point at it. Such a track ALREADY has a `path`, so the {layer,param} rewrite left it
+// alone — and applyMotion then re-created `relief.grain` on its clone every frame,
+// after ensureConfigDefaults had deliberately deleted it. resolvePost's legacy-wins
+// rule saw that resurrected field and force-wrote grain back on, so on those documents
+// the new Grain switch and both sliders were dead: turning Grain off left it on.
+describe('legacy relief.grain motion track', () => {
+  const grainTrack = (from = 0, to = 1) => ({ path: 'relief.grain', from, to, easing: 'linear' as const, loops: 1, hold: 0, cycleOffset: 0, delay: 0 })
+
+  it('is rewritten onto post.grainAmount by the migration', () => {
+    const c: any = cfg()
+    c.relief.grain = 0.4
+    c.motion.tracks = [grainTrack()]
+    const out: any = ensureConfigDefaults(c)
+    expect(out.motion.tracks[0].path).toBe('post.grainAmount')
+    expect(out.relief.grain).toBeUndefined()
+  })
+
+  it('animates post.grainAmount, and leaves relief.grain absent after a render cycle', () => {
+    const c: any = cfg()
+    c.relief.grain = 0.4
+    c.motion.duration = 1
+    c.motion.tracks = [grainTrack()]
+    const migrated: any = ensureConfigDefaults(c)
+
+    const frame: any = applyMotion(migrated, 1)
+    expect(frame.post.grainAmount).toBe(1)
+    // The resurrection: a re-created relief.grain is what resolvePost picks up.
+    expect(frame.relief.grain).toBeUndefined()
+    expect('grain' in frame.relief).toBe(false)
+  })
+
+  it('leaves the Grain switch live on a document that has been through the migration', () => {
+    const c: any = cfg()
+    c.relief.grain = 0.4
+    c.motion.duration = 1
+    c.motion.tracks = [grainTrack()]
+    const migrated: any = ensureConfigDefaults(c)
+    // The user switches Grain off. It must stay off through a render cycle.
+    migrated.post.grain = false
+    expect(resolvePost(applyMotion(migrated, 1) as any).grain).toBe(false)
+    // ...and the amount slider still follows the track when it is on.
+    migrated.post.grain = true
+    expect(resolvePost(applyMotion(migrated, 1) as any).grainAmount).toBe(1)
+  })
+
+  it('still animates grain on an UN-migrated blob, where the legacy field is live', () => {
+    // The node card, headless bake and studio frame source render straight off the
+    // saved blob, so applyMotion sees a config ensureConfigDefaults never touched:
+    // relief.grain is still present and still WINS at render (resolvePost). Writing
+    // the migrated path there instead would strand the animation on a static value.
+    const raw: any = defaultConfig()
+    delete raw.post // a doc old enough to carry relief.grain predates `post` entirely
+    raw.relief.grain = 0.2
+    raw.motion.duration = 1
+    raw.motion.tracks = [grainTrack()]
+    const frame: any = applyMotion(raw, 1)
+    expect(frame.relief.grain).toBe(1)
+    expect(resolvePost(frame).grainAmount).toBe(1)
   })
 })
 
