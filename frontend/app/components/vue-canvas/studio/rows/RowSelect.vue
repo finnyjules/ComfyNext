@@ -47,7 +47,12 @@ const model = computed({
        keeps the text where a right-aligned readout belongs once it is stretched. -->
   <span class="relative flex flex-1 items-center justify-end gap-1 text-[11px] text-white/90">
     <span class="capitalize">{{ value }}</span>
-    <span class="text-white/35">⌄</span>
+    <!-- The SAME glyph and treatment as StudioSection's card caret — `›` turned 90°, not
+         `⌄` (U+2304). The two sat side by side and disagreed: U+2304 draws smaller than the
+         type size suggests and its ink sits off the optical centre, so it read as a
+         different, sloppier control. Always rotated, because a select's caret always points
+         down; the card's rotates on open. Colour matches the card's `white/30`. -->
+    <span class="inline-block rotate-90 text-white/30">›</span>
     <!-- `-inset-y-1.5` because the span is only as tall as one 11px line — measured at
          17px inside a 28px row, so the menu opened from just the middle 60% of it.
          Bleeding the overlay 6px past its own box fills the row's height; it is
