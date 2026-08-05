@@ -36,7 +36,7 @@ import { MESH_VERTEX_CAP, MESH_DEFAULT_TARGET, type MeshData } from '~/lib/scene
 import { loadMesh, meshCacheGet } from '~/lib/scene3d/meshCache'
 import { SculptSession } from '~/lib/scene3d/sculpt/session'
 import { applyBrush, type BrushKind, type BrushStamp } from '~/lib/scene3d/sculpt/brushes'
-import { expandStamp, type SymmetrySpec } from '~/lib/scene3d/sculpt/symmetry'
+import { expandStamp, type SymmetryMode, type SymmetrySpec } from '~/lib/scene3d/sculpt/symmetry'
 import Scene3DSculptPanel from '~/components/vue-canvas/studio/Scene3DSculptPanel.vue'
 import { rebaseMany, groupObjects, ungroupMany, rootObjects, descendantIds, cloneSubtree, axisDeltaWrites } from '~/lib/scene3d/hierarchy'
 import Scene3DObjectRow from './studio/Scene3DObjectRow.vue'
@@ -1749,7 +1749,11 @@ const committing = ref(false)
 const sculptBrush = ref<BrushKind>('draw')
 const sculptSize = ref(0.15)
 const sculptStrength = ref(0.5)
-const sculptSymmetry = ref<'none' | 'mirror'>('none')
+const sculptSymmetry = ref<SymmetryMode>('none')
+// Radial-only (see symmetry.ts's SymmetrySpec) — Task 15 defaults: count 6
+// about Y.
+const sculptSymmetryAxis = ref<0 | 1 | 2>(1)
+const sculptSymmetryCount = ref(6)
 let sculptSession: SculptSession | null = null
 let sculptObjId: string | null = null
 let sculptStrokeDown = false
@@ -1844,7 +1848,7 @@ function applySculptAt(e: PointerEvent) {
     invert: e.altKey,
     ...(drag ? { drag } : {}),
   }
-  const spec: SymmetrySpec = { mode: sculptSymmetry.value, axis: 0, count: 2 }
+  const spec: SymmetrySpec = { mode: sculptSymmetry.value, axis: sculptSymmetryAxis.value, count: sculptSymmetryCount.value }
   // Stamps are treated as immutable here — expandStamp can return the SAME
   // object back by reference (mode 'none', and mirror's first entry), so
   // mutating one in place would corrupt the next brush's read of it.
@@ -2633,6 +2637,8 @@ function onClose() {
         v-model:size="sculptSize"
         v-model:strength="sculptStrength"
         v-model:symmetry="sculptSymmetry"
+        v-model:symmetryAxis="sculptSymmetryAxis"
+        v-model:symmetryCount="sculptSymmetryCount"
         :committing="committing"
         @apply="commitAndExitSculpt"
         @exit="commitAndExitSculpt"
