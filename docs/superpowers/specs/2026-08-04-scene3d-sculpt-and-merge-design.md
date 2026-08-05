@@ -297,6 +297,22 @@ interaction:
 - everything outside the Geometry panel — material, transform, motion — stays
   live and untouched
 
+### Status of this section (2026-08-05)
+
+All four of the UI elements named below shipped, but three of them were missed
+by the implementation plan and had to be added afterwards — the plan was written
+from this spec and dropped them. Recorded here so the gap is visible:
+
+| Named here | First build | Now |
+|---|---|---|
+| Orbit off *while a stroke is live* | Camera frozen for the WHOLE mode | Lock held only while a stroke is live **or** the cursor hovers the mesh; empty-space drags orbit, pan and zoom freely |
+| Remesh in the sculpt panel | Absent | Present — operates on the live working buffer and clears the undo ring (its entries address the old topology) |
+| Brush cursor ring | Absent | Drawn on the surface, sized to the brush, tagged `isGizmoHelper` so bakes skip it |
+| Material/transform/motion stay live | Whole inspector swapped out | Only the Geometry section is replaced |
+
+Saving or closing the studio mid-sculpt now commits the session first, so no
+path can persist the pre-sculpt mesh.
+
 ### The orbit-lock hazard
 
 While a stroke is live, orbit must be off. `lib/scene3d/interaction.ts` is
