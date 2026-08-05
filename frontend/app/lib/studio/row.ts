@@ -51,9 +51,39 @@ export function parseTyped(input: string, min: number, max: number, step: number
   return Number(Math.min(max, Math.max(min, snapped)).toFixed(6))
 }
 
-/** How many steps a Shift-arrow covers. A native `<input type="range">` puts this
- *  jump on PageUp/PageDown; the row puts it on a key people actually press. */
+/** The MOST steps a Shift gesture covers. A native `<input type="range">` puts this
+ *  jump on PageUp/PageDown; the row puts it on a key people actually press. It is a
+ *  ceiling, not the answer — see `coarseStepMultiplier`. */
 export const KEY_COARSE_STEPS = 10
+
+/**
+ * How many steps Shift actually jumps on a given range.
+ *
+ * A flat ×10 degenerates on short ranges. Measured: Scene3D's `matToonSteps` is
+ * min 2 max 5, so a ten-step grid could only ever produce 2 or 5 — and a coarse drag
+ * two pixels past the threshold snapped 3 → 2. `Cells` (2..12) could reach 2, 10 and
+ * 12 and nothing else. So the jump is capped at a QUARTER of the range: crossing the
+ * control always takes at least four Shift gestures, and a range too short to hold
+ * even that gets a multiplier of 1, i.e. Shift simply does nothing extra rather than
+ * slamming to an end.
+ *
+ * It steps DOWN A LADDER rather than dividing, because the jump is a number people
+ * read off the control: `Math.floor(span / 4)` would hand a 0..38 slider a jump of 9
+ * and land it on 9, 18, 27. The ladder keeps every jump round.
+ *
+ * Both gestures call this — the drag through `scrubValue`, the arrow keys through
+ * `nudgeValue` — so a control cannot have one Shift size under the mouse and another
+ * under the keyboard.
+ */
+export function coarseStepMultiplier(min: number, max: number, step: number): number {
+  const size = Number.isFinite(step) && step > 0 ? step : 1
+  const span = Math.abs(max - min) / size
+  if (!Number.isFinite(span) || span <= 0) return 1
+  // Inside the function, not a module const: a top-level array reading
+  // KEY_COARSE_STEPS is the init-order hazard this codebase has been bitten by.
+  const ladder = [KEY_COARSE_STEPS, 5, 2, 1]
+  return ladder.find((v) => span / v >= 4) ?? 1
+}
 
 /**
  * One arrow press. Lives here rather than in the SFC because the arithmetic is the
@@ -76,7 +106,7 @@ export function nudgeValue(opts: {
   // 1 for the JUMP only. `parseTyped` still gets the declared step, so snapping stays
   // byte-identical to typed entry.
   const size = Number.isFinite(opts.step) && opts.step > 0 ? opts.step : 1
-  const jump = size * (opts.coarse ? KEY_COARSE_STEPS : 1)
+  const jump = size * (opts.coarse ? coarseStepMultiplier(opts.min, opts.max, size) : 1)
   const next = opts.value + (opts.direction < 0 ? -jump : jump)
   return parseTyped(String(next), opts.min, opts.max, opts.step) ?? opts.value
 }

@@ -22,7 +22,9 @@ const props = defineProps<{
   // call sites have no `@promote` listener, so a glyph on them would be a button that
   // silently does nothing. Only a caller that wired promotion asks for it.
   bindable?: boolean
-  scrubPx?: number
+  // No `scrubPx`. It was declared but never forwarded — StudioRow neither accepts it
+  // nor passes it to `scrubValue` — and no call site set it. `scrubValue` still takes
+  // one for the `v-scrub` directive, which does forward `b.scrubPx`.
   hint?: string
 }>()
 const emit = defineEmits<{ (e: 'promote'): void; (e: 'menu', event: MouseEvent): void }>()
@@ -30,7 +32,12 @@ const emit = defineEmits<{ (e: 'promote'): void; (e: 'menu', event: MouseEvent):
 const spec = computed(() => ({
   key: 'inline', label: props.label ?? '', kind: 'slider',
   min: props.min, max: props.max, step: props.step ?? 1,
-  default: props.default ?? props.min, group: '',
+  // OMITTED when the caller declared none, never defaulted to `min`. `resetValue`
+  // treats a present default as absolute truth, so `?? props.min` made its
+  // bipolar→0 rule unreachable and double-click sent Pitch (-90..90), Offset (-1..1)
+  // and both -π..π angles to their minimum instead of to zero.
+  ...(props.default != null ? { default: props.default } : {}),
+  group: '',
   ...(props.hint ? { hint: props.hint } : {}),
 } as ControlSpec))
 </script>

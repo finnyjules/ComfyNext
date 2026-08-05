@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { scrubValue } from '~/lib/studio/scrub'
+import { nudgeValue } from '~/lib/studio/row'
 
 const base = { min: 0, max: 100, step: 1 }
 
@@ -15,8 +16,9 @@ describe('scrubValue', () => {
     expect(scrubValue({ min: 0, max: 100, step: 5, startValue: 0, deltaPx: 130 })).toBe(50)
     expect(scrubValue({ min: 0, max: 100, step: 5, startValue: 0, deltaPx: 26 })).toBe(10)
   })
-  // Legacy option. Shift means `coarse` now, in both the drag and the arrow keys;
-  // `fine` survives only so an unmigrated caller compiles.
+  // Shift means `coarse` in the studios, in both the drag and the arrow keys. `fine`
+  // is the pre-studio meaning and is still live on the `v-scrub` directive
+  // (plugins/scrub.client.ts), whose one user is GridPropertyPanel.
   it('fine scales the delta down', () => {
     expect(scrubValue({ ...base, startValue: 0, deltaPx: 260, fine: true })).toBe(15)
     expect(scrubValue({ ...base, startValue: 0, deltaPx: 260, fine: false })).toBe(100)
@@ -34,6 +36,40 @@ describe('scrubValue', () => {
     expect(v).toBe(0.2)
     expect(v).toBe(Number(v.toFixed(6)))
   })
+  // The tests above all start at 0, which is ON the coarse grid — so they pass under an
+  // absolute grid AND a relative one and cannot tell the two gestures apart. This one
+  // starts off-grid and runs both paths, which is the only way the disagreement shows.
+  it('a coarse drag increment equals a shift-arrow press, from the same start', () => {
+    const r = { min: 0, max: 100, step: 1 } as const
+    const start = 13
+    const oneArrow = nudgeValue({ ...r, value: start, direction: 1, coarse: true })
+    expect(oneArrow).toBe(23) // relative: 13 + 10. An absolute x10 grid would say 20.
+    // 30px of 260 across 0..100 is +11.5 steps — one coarse increment.
+    expect(scrubValue({ ...r, startValue: start, deltaPx: 30, coarse: true })).toBe(oneArrow)
+
+    const twoArrows = nudgeValue({ ...r, value: oneArrow, direction: 1, coarse: true })
+    expect(twoArrows).toBe(33)
+    // 55px is +21.2 steps — two increments.
+    expect(scrubValue({ ...r, startValue: start, deltaPx: 55, coarse: true })).toBe(twoArrows)
+
+    // ...and backwards.
+    const backArrow = nudgeValue({ ...r, value: start, direction: -1, coarse: true })
+    expect(backArrow).toBe(3)
+    expect(scrubValue({ ...r, startValue: start, deltaPx: -30, coarse: true })).toBe(backArrow)
+  })
+
+  it('does not coarsen a range too short to hold the jump', () => {
+    // matToonSteps, min 2 max 5. The x10 grid collapsed to the endpoints: the first two
+    // pixels past the 2px drag threshold snapped 3 -> 2, and 4 was unreachable.
+    const toon = { min: 2, max: 5, step: 1 } as const
+    expect(scrubValue({ ...toon, startValue: 3, deltaPx: 3, coarse: true })).toBe(3)
+    expect(scrubValue({ ...toon, startValue: 3, deltaPx: 50, coarse: true })).toBe(4)
+    expect(scrubValue({ ...toon, startValue: 3, deltaPx: 50, coarse: true }))
+      .toBe(scrubValue({ ...toon, startValue: 3, deltaPx: 50 }))
+    // Cells, 2..12 — reachable in twos now rather than only 2, 10 and 12.
+    expect(scrubValue({ min: 2, max: 12, step: 1, startValue: 5, deltaPx: 60, coarse: true })).toBe(7)
+  })
+
   it('honours a per-control scrubPx override', () => {
     expect(scrubValue({ ...base, startValue: 0, deltaPx: 130, scrubPx: 130 })).toBe(100)
   })

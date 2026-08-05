@@ -14,7 +14,10 @@ import StudioRow from './StudioRow.vue'
 import RowSwitch from './rows/RowSwitch.vue'
 
 const model = defineModel<boolean>({ required: true })
-const props = defineProps<{ label?: string; bound?: string | null }>()
+// No `bound` prop. It had zero call sites, and had one appeared, StudioRow's pink
+// column button emits `goToCollection` into this component, which declares no such
+// emit — the same dead affordance `:bindable="false"` exists to prevent.
+const props = defineProps<{ label?: string }>()
 
 const spec = computed(() => ({
   key: 'inline', label: props.label ?? '', kind: 'switch', default: false, group: '',
@@ -29,7 +32,7 @@ const spec = computed(() => ({
   />
   <StudioRow
     v-else
-    :spec="spec" :model-value="model" :bound="bound ?? null"
+    :spec="spec" :model-value="model"
     @update:model-value="(v) => (model = Boolean(v))"
   />
 </template>

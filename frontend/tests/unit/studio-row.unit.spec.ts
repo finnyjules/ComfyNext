@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   isBipolar, fillOrigin, fillFraction, stepDecimals, formatValue, parseTyped, resetValue,
-  nudgeValue, KEY_COARSE_STEPS,
+  nudgeValue, KEY_COARSE_STEPS, coarseStepMultiplier,
 } from '../../app/lib/studio/row'
 
 describe('isBipolar', () => {
@@ -128,6 +128,48 @@ describe('nudgeValue', () => {
   it('still moves when the step is missing or nonsensical', () => {
     expect(nudgeValue({ value: 5, min: 0, max: 100, step: 0, direction: 1 })).toBe(6)
     expect(nudgeValue({ value: 5, min: 0, max: 100, step: NaN, direction: -1 })).toBe(4)
+  })
+
+  it('does not slam to an end on a range too short to hold the jump', () => {
+    // Scene3D's matToonSteps. With a flat x10 jump every coarse press pinned to 2 or 5,
+    // so Shift could not reach 3 or 4 at all.
+    const toon = { min: 2, max: 5, step: 1 } as const
+    expect(nudgeValue({ ...toon, value: 3, direction: 1, coarse: true })).toBe(4)
+    expect(nudgeValue({ ...toon, value: 4, direction: -1, coarse: true })).toBe(3)
+    // Cells. 2..12 held exactly ten steps, so x10 reached 2, 10 (the far end minus a
+    // clamp) and 12 and nothing between.
+    expect(nudgeValue({ min: 2, max: 12, step: 1, value: 5, direction: 1, coarse: true })).toBe(7)
+  })
+})
+
+describe('coarseStepMultiplier', () => {
+  it('is the full KEY_COARSE_STEPS once the range can absorb it', () => {
+    expect(coarseStepMultiplier(0, 100, 1)).toBe(KEY_COARSE_STEPS)
+    expect(coarseStepMultiplier(0, 1, 0.01)).toBe(KEY_COARSE_STEPS)
+    expect(coarseStepMultiplier(-3.14, 3.14, 0.01)).toBe(KEY_COARSE_STEPS)
+  })
+
+  it('shrinks so a Shift gesture always takes at least four to cross the range', () => {
+    expect(coarseStepMultiplier(2, 12, 1)).toBe(2)   // Cells
+    expect(coarseStepMultiplier(0, 20, 1)).toBe(5)
+    expect(coarseStepMultiplier(0, 1, 0.1)).toBe(2)
+  })
+
+  it('shrinks down a ladder, so the jump stays a round number', () => {
+    // Pattern Studio's Cells is 2..40 — 38 steps. Dividing would give 9 and land the
+    // control on 9, 18, 27; the ladder gives 5.
+    expect(coarseStepMultiplier(2, 40, 1)).toBe(5)
+    expect(coarseStepMultiplier(0, 45, 1)).toBe(10)
+    for (const [mn, mx, st] of [[0, 100, 1], [2, 40, 1], [2, 12, 1], [2, 5, 1], [0, 2, 0.05]] as const) {
+      expect([1, 2, 5, 10]).toContain(coarseStepMultiplier(mn, mx, st))
+    }
+  })
+
+  it('collapses to 1 — no coarsening at all — on a very short range', () => {
+    expect(coarseStepMultiplier(2, 5, 1)).toBe(1)    // matToonSteps
+    expect(coarseStepMultiplier(0, 1, 1)).toBe(1)
+    expect(coarseStepMultiplier(0, 0, 1)).toBe(1)
+    expect(coarseStepMultiplier(0, 10, NaN)).toBe(2)
   })
 })
 
