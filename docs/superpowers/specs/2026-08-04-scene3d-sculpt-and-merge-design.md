@@ -354,15 +354,26 @@ Each phase is independently shippable.
 | 3 | Sculpt mode: session, working buffer, core four brushes, mirror symmetry, per-stroke undo, orbit lock | Sculpting by hand in the studio |
 | 4 | Grab, pinch, crease, radial symmetry, **Merge** | Full brush set and merge |
 
-**Confirm at the end of phase 2**, once Remesh can produce real sculpt-density
-meshes: the `scene_state` size for a doc with several mesh objects. The §2 table
-measures the encoder on `SphereGeometry`, which is smooth and coherently
-ordered; a *sculpted* mesh has displaced vertices and will encode somewhat
-worse. The budget to check against is ~70KB at the 20k default and ~190KB at the
-40k cap. If real sculpts land well above that, or a realistic scene pushes
-`scene_state` past a few hundred KB and project saves feel it, the asset-URL
-route slots in behind the same `content.mesh` field without touching anything
-else in this design.
+**MEASURED at the end of phase 2 (2026-08-04), and the estimate above was ~2x
+optimistic.** Real remeshes at the 20k default:
+
+| Shape | Vertices | Encoded base64 |
+|---|---:|---:|
+| Sphere | 20,320 | **136KB** |
+| Torus | 11,840 | 95KB |
+| Box | 25,352 | **6KB** |
+
+Curved, organic shapes — the ones this feature is actually for — cost roughly
+double the budgeted ~70KB. Flat geometry is nearly free: a remeshed box's large
+planar regions delta-encode to almost nothing, so hard-surface work carries no
+real storage cost while clay-like forms carry all of it. A sculpted mesh will
+encode somewhat worse still, since displaced vertices break the smooth deltas
+these clean remeshes enjoy.
+
+**Decision (user, 2026-08-04): accept inline at this cost.** A 3-4 sculpt scene
+lands around 400-550KB of `scene_state`. The asset-URL route remains available
+behind the same `content.mesh` field if project saves ever start to feel it —
+nothing else in this design would need to change.
 
 ---
 
