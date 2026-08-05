@@ -195,3 +195,68 @@ describe('flatten brush', () => {
     expect(spread()).toBeLessThan(before)
   })
 })
+
+describe('pinch brush', () => {
+  it('pulls vertices toward the stamp centre', () => {
+    const s = patch()
+    const inRange = s.verticesNear(0, 0, 0, 0.4)
+    const meanDist = (): number => {
+      let sum = 0
+      for (let n = 0; n < inRange.length; n++) {
+        const v = inRange[n]!
+        sum += Math.hypot(s.positions[v * 3]!, s.positions[v * 3 + 1]!, s.positions[v * 3 + 2]!)
+      }
+      return sum / inRange.length
+    }
+    const before = meanDist()
+    s.beginStroke(); applyBrush(s, 'pinch', stamp({ strength: 0.5 })); s.endStroke()
+    expect(meanDist()).toBeLessThan(before)
+  })
+})
+
+describe('crease brush', () => {
+  it('pinches AND displaces — an implementation doing only one fails', () => {
+    const s = patch()
+    const v = nearest(s, 0.2, 0, 0)
+    const rBefore = Math.hypot(s.positions[v * 3]!, s.positions[v * 3 + 2]!)
+    s.beginStroke(); applyBrush(s, 'crease', stamp({ strength: 0.5, invert: true })); s.endStroke()
+    const rAfter = Math.hypot(s.positions[v * 3]!, s.positions[v * 3 + 2]!)
+    expect(rAfter).toBeLessThan(rBefore)      // the pinch half
+    expect(y(s, v)).toBeLessThan(0)           // the displace half (inverted = cut in)
+  })
+})
+
+describe('grab brush', () => {
+  it('translates by the drag, ignoring normals entirely', () => {
+    // On a sphere, top and bottom face opposite ways. Every other brush would
+    // move them in opposite directions; grab must move both the SAME way.
+    const s = sphere()
+    const top = nearest(s, 0, 0.5, 0)
+    const bottom = nearest(s, 0, -0.5, 0)
+    const beforeTop = s.positions[top * 3]!
+    const beforeBottom = s.positions[bottom * 3]!
+    s.beginStroke()
+    applyBrush(s, 'grab', stamp({ centre: [0, 0, 0], radius: 5, strength: 1, drag: [0.1, 0, 0] }))
+    s.endStroke()
+    expect(s.positions[top * 3]!).toBeGreaterThan(beforeTop)
+    expect(s.positions[bottom * 3]!).toBeGreaterThan(beforeBottom)
+  })
+
+  it('does nothing without a drag', () => {
+    const s = patch()
+    const before = s.positions.slice()
+    s.beginStroke(); applyBrush(s, 'grab', stamp()); s.endStroke()
+    expect(s.positions).toEqual(before)
+  })
+
+  it('falls off from the centre like every other brush', () => {
+    const s = patch()
+    const centre = nearest(s, 0, 0, 0)
+    const rim = nearest(s, 0.35, 0, 0)
+    const c0 = s.positions[centre * 3]!, r0 = s.positions[rim * 3]!
+    s.beginStroke()
+    applyBrush(s, 'grab', stamp({ strength: 1, drag: [0.1, 0, 0] }))
+    s.endStroke()
+    expect(s.positions[centre * 3]! - c0).toBeGreaterThan(s.positions[rim * 3]! - r0)
+  })
+})

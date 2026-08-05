@@ -32,7 +32,7 @@ defineProps<{ committing?: boolean }>()
 
 defineEmits<{ apply: []; exit: [] }>()
 
-const BRUSHES: BrushKind[] = ['draw', 'smooth', 'inflate', 'flatten']
+const BRUSHES: BrushKind[] = ['draw', 'smooth', 'inflate', 'flatten', 'grab', 'pinch', 'crease']
 const SYMMETRY_OPTIONS = ['none', 'mirror']
 </script>
 

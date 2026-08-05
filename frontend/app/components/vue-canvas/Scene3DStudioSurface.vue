@@ -1760,6 +1760,12 @@ const _sculptRay = new THREE.Raycaster()
 const _sculptInv = new THREE.Matrix4()
 const _sculptOrigin = new THREE.Vector3()
 const _sculptDir = new THREE.Vector3()
+// The previous move's surface intersection (mesh object space, same space as
+// BrushStamp.centre), used only to derive `grab`'s drag vector. Reset to null
+// whenever a stroke starts or the active brush isn't `grab`, so grab's first
+// dab in a stroke carries no drag (nothing to diff against yet) rather than
+// jumping from an arbitrary prior point.
+let _sculptLastGrabPoint: [number, number, number] | null = null
 
 async function enterSculpt() {
   if (sculpting.value) return
@@ -1810,12 +1816,33 @@ function applySculptAt(e: PointerEvent) {
     [_sculptDir.x, _sculptDir.y, _sculptDir.z],
   )
   if (!hit) return
+  // `grab` carries the surface with the pointer rather than pushing along a
+  // normal, so it alone needs the delta between this move's intersection and
+  // the last one. Every other brush leaves `drag` undefined — `applyBrush`
+  // ignores it for them regardless, but not tracking `_sculptLastGrabPoint`
+  // while a different brush is active means switching brushes mid-stroke
+  // (Alt-key aside, brush choice doesn't change mid-stroke today, but this
+  // keeps the invariant honest) never leaves a stale point to diff against.
+  let drag: [number, number, number] | undefined
+  if (sculptBrush.value === 'grab') {
+    if (_sculptLastGrabPoint) {
+      drag = [
+        hit.point[0] - _sculptLastGrabPoint[0],
+        hit.point[1] - _sculptLastGrabPoint[1],
+        hit.point[2] - _sculptLastGrabPoint[2],
+      ]
+    }
+    _sculptLastGrabPoint = hit.point
+  } else {
+    _sculptLastGrabPoint = null
+  }
   const stamp: BrushStamp = {
     centre: hit.point,
     normal: hit.normal,
     radius: sculptSize.value,
     strength: sculptStrength.value,
     invert: e.altKey,
+    ...(drag ? { drag } : {}),
   }
   const spec: SymmetrySpec = { mode: sculptSymmetry.value, axis: 0, count: 2 }
   // Stamps are treated as immutable here — expandStamp can return the SAME
@@ -1838,6 +1865,10 @@ function onSculptPointerDown(e: PointerEvent) {
   e.preventDefault()
   sculptStrokeDown = true
   sculptSession.beginStroke()
+  // A new stroke's first dab must never diff against a point left over from
+  // the PREVIOUS stroke — that would read as a teleporting jump the instant
+  // grab touches down.
+  _sculptLastGrabPoint = null
   applySculptAt(e)
 }
 function onSculptPointerMove(e: PointerEvent) {

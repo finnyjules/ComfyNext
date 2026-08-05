@@ -4,7 +4,7 @@
 // rather than a new file.
 import type { SculptSession } from '~/lib/scene3d/sculpt/session'
 
-export type BrushKind = 'draw' | 'smooth' | 'inflate' | 'flatten'
+export type BrushKind = 'draw' | 'smooth' | 'inflate' | 'flatten' | 'grab' | 'pinch' | 'crease'
 
 export interface BrushStamp {
   /** Where the brush touches the surface, in the mesh's object space. */
@@ -19,10 +19,17 @@ export interface BrushStamp {
    *  neighbour average, or the region's plane) — `strength` already IS that
    *  fraction, so multiplying by `radius` again would make the same value
    *  over- or under-smooth depending on brush size. Deliberately NOT
-   *  radius-scaled for those two. */
+   *  radius-scaled for those two. `pinch` and `crease` are directed absolute
+   *  displacements toward a point (like `draw`/`inflate`, not a fractional
+   *  pull toward a geometry target), so they follow the radius-scaled
+   *  convention too. `grab` uses neither: its displacement IS the pointer's
+   *  drag, weighted only by falloff, so `strength` does not apply to it. */
   strength: number
   /** Alt-held: carve inward instead of pushing outward. */
   invert: boolean
+  /** World-space pointer delta for this move. `grab` ONLY — every other brush
+   *  ignores it, and grab is a no-op without it. */
+  drag?: [number, number, number]
 }
 
 /** 1 at the centre, 0 at the rim, smooth at both ends. Squaring keeps the
@@ -113,10 +120,40 @@ export function applyBrush(session: SculptSession, kind: BrushKind, stamp: Brush
       dx = (mx * inv - x) * w * stamp.strength
       dy = (my * inv - yy) * w * stamp.strength
       dz = (mz * inv - z) * w * stamp.strength
-    } else { // flatten
+    } else if (kind === 'flatten') {
       const along = x * pnx + yy * pny + z * pnz
       const pull = (planeY - along) * w * stamp.strength
       dx = pnx * pull; dy = pny * pull; dz = pnz * pull
+    } else if (kind === 'pinch') {
+      const len = Math.hypot(x - cx, yy - cy, z - cz) || 1
+      const pull = w * scale * sign
+      dx = ((cx - x) / len) * pull
+      dy = ((cy - yy) / len) * pull
+      dz = ((cz - z) / len) * pull
+    } else if (kind === 'crease') {
+      // Pinch and displace together — the pinch alone only narrows a ridge, the
+      // displacement alone only dents it. A crease is both at once.
+      //
+      // The pinch half is deliberately NOT sign-scaled: a crease always
+      // narrows toward its centreline. `invert` flips only the displacement
+      // half (a raised crease vs. one cut into the surface) — baking `sign`
+      // into the pinch term too would make Alt+crease SPREAD the region
+      // instead of narrowing it, which defeats the "it's always a crease"
+      // point and is exactly the one-half-only bug the test catches.
+      const len = Math.hypot(x - cx, yy - cy, z - cz) || 1
+      const pinchPull = w * scale
+      const dispPull = w * scale * sign
+      dx = ((cx - x) / len) * pinchPull + stamp.normal[0] * dispPull
+      dy = ((cy - yy) / len) * pinchPull + stamp.normal[1] * dispPull
+      dz = ((cz - z) / len) * pinchPull + stamp.normal[2] * dispPull
+    } else if (kind === 'grab') {
+      // No normal term at all: grab carries the surface with the pointer, which
+      // is why it can pull out a limb where a normal-driven brush cannot.
+      const drag = stamp.drag
+      if (!drag) continue
+      dx = drag[0] * w
+      dy = drag[1] * w
+      dz = drag[2] * w
     }
 
     // ALWAYS before the write — undo depends on it.
