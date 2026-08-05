@@ -10,7 +10,7 @@
 import { GradientFxRenderer } from '~/lib/gradientfx/renderer'
 import { defaultConfig } from '~/lib/gradientfx/randomize'
 import { cloneConfig, ensureConfigDefaults, type GradientConfig } from '~/lib/gradientfx/types'
-import { DEFAULT_POST } from '~/lib/studio/post/settings'
+import { DEFAULT_POST, type PostSettings } from '~/lib/studio/post/settings'
 import { POST_EFFECTS } from '~/lib/studio/post/manifest'
 
 // Own instance rather than the app-wide `gradientFx` singleton — this page never
@@ -36,6 +36,27 @@ function luma(src: TexImageSource, w: number, h: number): Float64Array {
   return out
 }
 
+function correlate(a: Float64Array, b: Float64Array): { meanAbsDiff: number; corr: number } {
+  const n = a.length
+  let sumAbs = 0
+  for (let i = 0; i < n; i++) sumAbs += Math.abs(b[i]! - a[i]!)
+  const meanAbsDiff = sumAbs / n / 255
+
+  let sumA = 0, sumB = 0
+  for (let i = 0; i < n; i++) { sumA += a[i]!; sumB += b[i]! }
+  const meanA = sumA / n, meanB = sumB / n
+  let cov = 0, varA = 0, varB = 0
+  for (let i = 0; i < n; i++) {
+    const da = a[i]! - meanA
+    const db = b[i]! - meanB
+    cov += da * db
+    varA += da * da
+    varB += db * db
+  }
+  const corr = cov / (Math.sqrt(varA * varB) || 1)
+  return { meanAbsDiff, corr }
+}
+
 /**
  * Renders the default gradient at `size` with `effect` OFF, then again with it
  * ON (every other post effect stays off), and reports two numbers over the
@@ -48,9 +69,15 @@ function luma(src: TexImageSource, w: number, h: number): Float64Array {
  *    flat wash also diffs from the original, which is exactly the gap the
  *    2026-08-04 risograph bug slipped through — see
  *    tests/studio-post-integration.spec.ts's header comment.
+ *
+ * `overrides` merges onto the ON config's post settings (on top of the
+ * enable flag), for effects whose DEFAULT_POST values are neutral/no-op at
+ * rest — e.g. Color's exposure/contrast/saturation all default to 1 and hue
+ * to 0, which is the identity transform, so enabling it alone changes
+ * nothing; the test supplies a non-default value to actually exercise it.
  */
-async function sailorPostProbe(opts: { effect: string; size: number }): Promise<{ meanAbsDiff: number; corr: number }> {
-  const { effect, size } = opts
+async function sailorPostProbe(opts: { effect: string; size: number; overrides?: Partial<PostSettings> }): Promise<{ meanAbsDiff: number; corr: number }> {
+  const { effect, size, overrides } = opts
   const def = POST_EFFECTS.find(e => e.id === effect)
   if (!def) throw new Error(`gradient harness: unknown post effect "${effect}"`)
 
@@ -61,31 +88,56 @@ async function sailorPostProbe(opts: { effect: string; size: number }): Promise<
   const offLuma = luma(renderer.render(offCfg, size, size, 0), size, size)
 
   const onCfg = cloneConfig(base)
-  onCfg.post = { ...DEFAULT_POST, [def.enableKey]: true } as typeof DEFAULT_POST
+  onCfg.post = { ...DEFAULT_POST, [def.enableKey]: true, ...overrides } as typeof DEFAULT_POST
   const onLuma = luma(renderer.render(onCfg, size, size, 0), size, size)
 
-  const n = offLuma.length
-  let sumAbs = 0
-  for (let i = 0; i < n; i++) sumAbs += Math.abs(onLuma[i]! - offLuma[i]!)
-  const meanAbsDiff = sumAbs / n / 255
+  return correlate(offLuma, onLuma)
+}
 
-  let sumA = 0, sumB = 0
-  for (let i = 0; i < n; i++) { sumA += offLuma[i]!; sumB += onLuma[i]! }
-  const meanA = sumA / n, meanB = sumB / n
-  let cov = 0, varA = 0, varB = 0
-  for (let i = 0; i < n; i++) {
-    const da = offLuma[i]! - meanA
-    const db = onLuma[i]! - meanB
-    cov += da * db
-    varA += da * da
-    varB += db * db
+/**
+ * Orientation guard (Task 5 review): the meanAbsDiff/corr pair above compares
+ * post-on against post-off, but a VERTICALLY FLIPPED-yet-correlated frame
+ * (e.g. a y-flip bug in blitBack()) would pass both — flipping doesn't change
+ * either the mean |diff| much for a smooth gradient, nor does it necessarily
+ * break correlation for content that's roughly symmetric band-to-band.
+ * defaultConfig()'s gradient is deliberately vertically ASYMMETRIC (bottom→top
+ * pink→magenta→near-black→orange, see randomize.ts's own comment), so this
+ * splits each frame into its top and bottom quarter and reports each side's
+ * mean luma for post OFF and post ON (effect: bloom, enabled with its own
+ * defaults — any effect that runs the shared blit-back path would do). The
+ * test asserts the top-vs-bottom RELATIONSHIP (which side is brighter) is the
+ * same in both frames; a flip would invert it.
+ */
+async function sailorPostOrientationProbe(opts: { size: number }): Promise<{ offTop: number; offBottom: number; onTop: number; onBottom: number }> {
+  const { size } = opts
+  const base = ensureConfigDefaults(defaultConfig(HARNESS_SEED) as GradientConfig)
+
+  const offCfg = cloneConfig(base)
+  offCfg.post = { ...DEFAULT_POST }
+  const offLuma = luma(renderer.render(offCfg, size, size, 0), size, size)
+
+  const onCfg = cloneConfig(base)
+  onCfg.post = { ...DEFAULT_POST, bloom: true }
+  const onLuma = luma(renderer.render(onCfg, size, size, 0), size, size)
+
+  const quarter = Math.max(1, Math.floor(size / 4))
+  const quarterMean = (arr: Float64Array, rowStart: number, rowEnd: number) => {
+    let sum = 0, count = 0
+    for (let y = rowStart; y < rowEnd; y++) {
+      for (let x = 0; x < size; x++) { sum += arr[y * size + x]!; count++ }
+    }
+    return sum / count
   }
-  const corr = cov / (Math.sqrt(varA * varB) || 1)
-
-  return { meanAbsDiff, corr }
+  return {
+    offTop: quarterMean(offLuma, 0, quarter),
+    offBottom: quarterMean(offLuma, size - quarter, size),
+    onTop: quarterMean(onLuma, 0, quarter),
+    onBottom: quarterMean(onLuma, size - quarter, size),
+  }
 }
 
 if (import.meta.client) {
   ;(window as any).__sailorPostProbe = sailorPostProbe
+  ;(window as any).__sailorPostOrientationProbe = sailorPostOrientationProbe
 }
 </script>

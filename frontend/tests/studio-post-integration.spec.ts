@@ -1,4 +1,6 @@
 import { test, expect } from '@playwright/test'
+import { POST_EFFECTS } from '../app/lib/studio/post/manifest'
+import type { PostSettings } from '../app/lib/studio/post/settings'
 
 declare global {
   interface Window {
@@ -74,20 +76,68 @@ test('glitch (no Sailor-mapped params) is not a no-op', async ({ page }) => {
 //   2. output still correlates with input → proves it did not flatten the frame
 // The risograph bug (2026-08-04) passed a parity gate at 0.01/255 while rendering
 // a flat wash with the image gone. Assertion 2 is what would have caught it.
+//
+// Coverage fix (review of Task 5): the above proved the STAGE works, but only
+// ever drove it with `bloom`. rgb_glitch shipped as a complete no-op in the
+// immediately preceding task — every uniform sat at 0 — and nothing here could
+// have seen it, because nothing compared a specific effect's own output to its
+// own input. This block now runs the same probe over every non-3D effect in
+// POST_EFFECTS (gtao is withheld — it needs depth/normal buffers no 2D harness
+// has), derived from the manifest rather than hardcoded so a twelfth effect is
+// covered automatically.
 declare global {
   interface Window {
-    __sailorPostProbe: (opts: { effect: string; size: number }) => Promise<{ meanAbsDiff: number; corr: number }>
+    __sailorPostProbe: (opts: { effect: string; size: number; overrides?: Partial<PostSettings> }) => Promise<{ meanAbsDiff: number; corr: number }>
+    __sailorPostOrientationProbe: (opts: { size: number }) => Promise<{ offTop: number; offBottom: number; onTop: number; onBottom: number }>
   }
 }
 
 const GRADIENT_PROBE_SIZES = [128, 512]
 
-test('gradient post stage runs and preserves structure', async ({ page }) => {
-  await page.goto('/dev/gradient-harness')
-  await page.waitForFunction(() => typeof (window as any).__sailorPostProbe === 'function')
-  for (const size of GRADIENT_PROBE_SIZES) {
-    const r = await page.evaluate(async (s) => await window.__sailorPostProbe({ effect: 'bloom', size: s }), size)
-    expect(r.meanAbsDiff).toBeGreaterThan(1 / 255)      // it ran
-    expect(r.corr).toBeGreaterThan(0.5)                  // it did not wash out
-  }
-})
+// Color's DEFAULT_POST values (exposure/contrast/saturation = 1, hue = 0) are
+// the identity transform, so enabling it alone is a legitimate no-op — this
+// override supplies a non-default exposure so the probe actually exercises
+// the shader. No other effect in POST_EFFECTS needed one: every other
+// default is already non-neutral (see the per-effect table in
+// .superpowers/sdd/usp-task-5-report.md's "Coverage fix" section).
+const GRADIENT_PROBE_OVERRIDES: Partial<Record<string, Partial<PostSettings>>> = {
+  color: { exposure: 1.6 },
+}
+
+for (const def of POST_EFFECTS.filter(e => !e.threeDOnly)) {
+  test(`gradient post stage runs and preserves structure: ${def.id}`, async ({ page }) => {
+    await page.goto('/dev/gradient-harness')
+    await page.waitForFunction(() => typeof (window as any).__sailorPostProbe === 'function')
+    for (const size of GRADIENT_PROBE_SIZES) {
+      const r = await page.evaluate(
+        async ({ effect, s, overrides }) => await window.__sailorPostProbe({ effect, size: s, overrides }),
+        { effect: def.id, s: size, overrides: GRADIENT_PROBE_OVERRIDES[def.id] },
+      )
+      expect(r.meanAbsDiff, `${def.id} @ ${size}px: meanAbsDiff`).toBeGreaterThan(1 / 255)  // it ran
+      expect(r.corr, `${def.id} @ ${size}px: corr`).toBeGreaterThan(0.5)                     // it did not wash out
+    }
+  })
+}
+
+// Reviewer note on Task 5: the corr assertion above compares post-on against
+// post-off, but a frame that's vertically FLIPPED yet still correlated (e.g. a
+// y-flip bug in blitBack()'s UNPACK_FLIP_Y_WEBGL upload) would slip through —
+// correlation doesn't care which end is up. defaultConfig()'s gradient is
+// deliberately vertically asymmetric (bottom→top pink→magenta→near-black→
+// orange), so this instead compares the top quarter's mean luma against the
+// bottom quarter's, for post OFF and post ON, and asserts the relationship
+// (which side is brighter) is the SAME in both. A flip inverts it.
+for (const size of GRADIENT_PROBE_SIZES) {
+  test(`gradient post stage preserves vertical orientation: ${size}px`, async ({ page }) => {
+    await page.goto('/dev/gradient-harness')
+    await page.waitForFunction(() => typeof (window as any).__sailorPostOrientationProbe === 'function')
+    const r = await page.evaluate(async (s) => await window.__sailorPostOrientationProbe({ size: s }), size)
+    const offDelta = r.offBottom - r.offTop
+    const onDelta = r.onBottom - r.onTop
+    // The source gradient is asymmetric enough that this isn't a coin flip.
+    expect(Math.abs(offDelta)).toBeGreaterThan(5)
+    expect(Math.abs(onDelta)).toBeGreaterThan(5)
+    // Same sign = same side is brighter in both frames = no flip.
+    expect(Math.sign(onDelta)).toBe(Math.sign(offDelta))
+  })
+}
