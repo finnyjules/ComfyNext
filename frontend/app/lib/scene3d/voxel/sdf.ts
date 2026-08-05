@@ -75,6 +75,68 @@ export function unionLattice(grids: TriGrid[], resolution: number): Lattice {
 const EXTERIOR = 1
 const BAND = 2
 
+/** Chebyshev-dilated mask over the TriGrid's OWN cells: 1 where a query point
+ *  landing in that cell could plausibly find a triangle within `far`, 0 where
+ *  it provably cannot. Built by a multi-source, 26-connected flood fill from
+ *  every non-empty cell (`start[c+1] > start[c]`) — 26-connected because that
+ *  grows a Chebyshev ball one cell per step, the exact metric `closestDistance`
+ *  itself walks in shells, so the two termination conditions agree exactly:
+ *  `maxSteps` below is the same `Math.ceil(maxRadius / cell) + 1` that bounds
+ *  `closestDistance`'s own shell loop. That equivalence is what makes this
+ *  lossless rather than an approximation — a cell this marks 0 is a cell where
+ *  `closestDistance(..., far)` was always going to return `far` unchanged, so
+ *  skipping the call cannot move any sampled value.
+ *
+ *  Cost is O(cells) — each cell is enqueued at most once — versus the
+ *  O(res³) exact-distance queries this replaces for every node that isn't
+ *  near the surface. The surface band a mesh actually occupies is O(res²) of
+ *  the lattice, so for the overwhelming majority of nodes this turns an
+ *  expanding-shell triangle search into a single array read. */
+function nearSurfaceMask(grid: TriGrid, far: number): Uint8Array {
+  const [gx, gy, gz] = grid.dims
+  const total = gx * gy * gz
+  const near = new Uint8Array(total)
+  const dist = new Int32Array(total).fill(-1)
+  const maxSteps = Math.ceil(far / grid.cell) + 1
+  const queue = new Int32Array(total)
+  let head = 0
+  let tail = 0
+  for (let c = 0; c < total; c++) {
+    if (grid.start[c + 1]! > grid.start[c]!) {
+      near[c] = 1
+      dist[c] = 0
+      queue[tail++] = c
+    }
+  }
+  while (head < tail) {
+    const c = queue[head++]!
+    const d = dist[c]!
+    if (d >= maxSteps) continue
+    const i = c % gx
+    const j = ((c / gx) | 0) % gy
+    const k = (c / (gx * gy)) | 0
+    for (let dk = -1; dk <= 1; dk++) {
+      const kk = k + dk
+      if (kk < 0 || kk >= gz) continue
+      for (let dj = -1; dj <= 1; dj++) {
+        const jj = j + dj
+        if (jj < 0 || jj >= gy) continue
+        for (let di = -1; di <= 1; di++) {
+          const ii = i + di
+          if (ii < 0 || ii >= gx) continue
+          if (di === 0 && dj === 0 && dk === 0) continue
+          const nc = (kk * gy + jj) * gx + ii
+          if (dist[nc]! !== -1) continue
+          dist[nc] = d + 1
+          near[nc] = 1
+          queue[tail++] = nc
+        }
+      }
+    }
+  }
+  return near
+}
+
 export function buildSdf(grid: TriGrid, lattice: Lattice): { sdf: Sdf; open: boolean } {
   const { min, dims, cell } = lattice
   const [nx, ny, nz] = dims
@@ -84,16 +146,34 @@ export function buildSdf(grid: TriGrid, lattice: Lattice): { sdf: Sdf; open: boo
 
   // 1. Unsigned distance, exact only inside a narrow band. Surface nets never
   //    reads further than one cell from a crossing, so paying for exact
-  //    distances across the whole volume would be pure waste.
+  //    distances across the whole volume would be pure waste. Most nodes are
+  //    also nowhere near the mask above, so most of them skip the exact query
+  //    entirely rather than paying for a shell walk that was always going to
+  //    return FAR.
   const FAR = cell * 3
   const bandCut = cell * 0.75
+  const [gx, gy, gz] = grid.dims
+  const near = nearSurfaceMask(grid, FAR)
   let bandCount = 0
   for (let k = 0, idx = 0; k < nz; k++) {
     const z = min[2] + k * cell
     for (let j = 0; j < ny; j++) {
       const y = min[1] + j * cell
       for (let i = 0; i < nx; i++, idx++) {
-        const d = closestDistance(grid, min[0] + i * cell, y, z, FAR)
+        const x = min[0] + i * cell
+        // Same cell-index formula `closestDistance` uses internally, so this
+        // mask lookup and its own shell walk always agree on which cell a
+        // point falls in.
+        const ci = Math.floor((x - grid.min[0]) / grid.cell)
+        const cj = Math.floor((y - grid.min[1]) / grid.cell)
+        const ck = Math.floor((z - grid.min[2]) / grid.cell)
+        // Out of the TriGrid's own (smaller) padding margin: closestDistance
+        // would still walk shells from here, so this must not be treated as
+        // "far" without asking — fall through to the exact query.
+        const inRange = ci >= 0 && ci < gx && cj >= 0 && cj < gy && ck >= 0 && ck < gz
+        const d = (inRange && near[(ck * gy + cj) * gx + ci] === 0)
+          ? FAR
+          : closestDistance(grid, x, y, z, FAR)
         values[idx] = d
         if (d < bandCut) { flags[idx] = BAND; bandCount++ }
       }

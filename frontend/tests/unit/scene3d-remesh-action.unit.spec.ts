@@ -6,7 +6,7 @@ import {
 } from '~/lib/scene3d/mesh'
 import { remesh } from '~/lib/scene3d/voxel'
 import { solidify } from '~/lib/scene3d/voxel/solidify'
-import { remeshObject, resolutionForTarget } from '~/lib/scene3d/toMesh'
+import { remeshObject, resolutionForTarget, REMESH_RESOLUTION_MAX } from '~/lib/scene3d/toMesh'
 import type { PrimitiveObject } from '~/lib/scene3d/config'
 
 const meshObject = async (geo: THREE.BufferGeometry): Promise<PrimitiveObject> => {
@@ -31,6 +31,20 @@ describe('remesh action', () => {
   it('resolutionForTarget scales with the target', () => {
     const src = meshDataFromGeometry(new THREE.SphereGeometry(0.5, 64, 48))
     expect(resolutionForTarget(src, 20_000)).toBeGreaterThan(resolutionForTarget(src, 5_000))
+  })
+
+  it('resolutionForTarget never exceeds the Remesh slider\'s own max (Finding 3)', () => {
+    // Before this fix, resolutionForTarget's internal ceiling (160) was
+    // independent of — and 32 past — the slider's declared max (128): the
+    // thumb pinned at 128 while the readout showed 160, and the first touch
+    // of the slider silently, irreversibly dropped the real resolution to
+    // 128. An ordinary open plane hit this by default, not as an edge case.
+    const plane = meshDataFromGeometry(new THREE.PlaneGeometry(1, 1, 8, 8))
+    const sphere = meshDataFromGeometry(new THREE.SphereGeometry(0.5, 64, 48))
+    // A generous target so the un-clamped formula would ask for far more
+    // than the slider (and the vertex cap) allow.
+    expect(resolutionForTarget(plane, MESH_VERTEX_CAP)).toBeLessThanOrEqual(REMESH_RESOLUTION_MAX)
+    expect(resolutionForTarget(sphere, MESH_VERTEX_CAP)).toBeLessThanOrEqual(REMESH_RESOLUTION_MAX)
   })
 
   it('remeshes a closed object into a different buffer', async () => {
@@ -62,6 +76,24 @@ describe('remesh action', () => {
     const shell = solidify(plane, 0.05)
     expect(shell.indices.length).toBeGreaterThan(plane.indices.length * 2)
     expect(shell.positions.length).toBe(plane.positions.length * 2)
+  })
+
+  it('does not double the rim on a UV-seamed open cylinder (Finding 2)', () => {
+    // three.js's CylinderGeometry duplicates the vertex where its UV wraps
+    // around (same position, different index), so an index-pair boundary
+    // test sees the seam's shared edge twice — once per duplicate index —
+    // and detects 26 boundary edges instead of the true 24 (12 on the top
+    // rim, 12 on the bottom; caps are off via the `openEnded` argument).
+    // Welding on position before detecting boundaries is what collapses
+    // that back to 24.
+    const geo = new THREE.CylinderGeometry(0.5, 0.5, 1, 12, 1, true)
+    const cyl = meshDataFromGeometry(geo)
+    const shell = solidify(cyl, 0.05)
+    const baseTriCount = cyl.indices.length / 3
+    const rimTriCount = shell.indices.length / 3 - 2 * baseTriCount
+    // Two rim triangles (one quad) per boundary edge.
+    expect(rimTriCount % 2).toBe(0)
+    expect(rimTriCount / 2).toBe(24)
   })
 
   it('retries at a lower resolution rather than throwing over the cap', async () => {

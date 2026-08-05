@@ -31,7 +31,7 @@ import { loadGoogleCatalog, type GoogleFont } from '~/data/google-fonts'
 import FontPicker from '~/components/vue-canvas/FontPicker.vue'
 import { PRIM_GROUPS } from '~/lib/scene3d/primGroups'
 import { SceneEngine, baseSizeFor, baseVertexCountFor, buildGeometry } from '~/lib/scene3d/engine'
-import { convertToMesh, remeshObject, solidifyObject, resolutionForTarget } from '~/lib/scene3d/toMesh'
+import { convertToMesh, remeshObject, solidifyObject, resolutionForTarget, REMESH_RESOLUTION_MAX } from '~/lib/scene3d/toMesh'
 import { MESH_VERTEX_CAP, MESH_DEFAULT_TARGET, type MeshData } from '~/lib/scene3d/mesh'
 import { loadMesh, meshCacheGet } from '~/lib/scene3d/meshCache'
 import { rebaseMany, groupObjects, ungroupMany, rootObjects, descendantIds, cloneSubtree, axisDeltaWrites } from '~/lib/scene3d/hierarchy'
@@ -1617,21 +1617,44 @@ watch(selectedMeshData, (data) => {
   remeshResolution.value = resolutionForTarget(data, MESH_DEFAULT_TARGET)
   remeshDefaultedFor.value = id
 }, { immediate: true })
+// Both actions below run genuinely heavy, fully synchronous work once their
+// single `await` resolves (buildTriGrid + buildSdf + surfaceNets, potentially
+// several times over for remesh's over-cap retry ladder) — tens of ms to over
+// ten seconds at the slider's high end. `decodeMesh`'s own await only defers
+// to the microtask queue, which drains before the browser gets a chance to
+// paint, so setting `remeshBusy` alone is not enough: without this, the
+// button visually does nothing until the whole computation is already done.
+// `nextTick` flushes Vue's queued DOM patch (the busy label/spinner) and the
+// rAF round-trip after it guarantees the browser has actually painted that
+// patch before the blocking call starts — a disabled button that never
+// repaints reads as a hang, not as "working".
+async function paintPendingState(): Promise<void> {
+  await nextTick()
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+}
 async function remeshSelection() {
   const obj = selectedMesh.value
   if (!obj || remeshBusy.value) return
+  const startId = obj.id
   remeshBusy.value = true
   convertError.value = ''
+  await paintPendingState()
   try {
     const out = await remeshObject(obj, remeshResolution.value)
+    // The selection may have moved on during the remesh — a stale result must
+    // not overwrite whatever the user is looking at now (same hazard, same
+    // fix, as the `meshGen` watch above).
+    if (selectedMesh.value?.id !== startId) return
     remeshOpen.value = out.open
     if (!out.open) {
       const i = doc.objects.findIndex((o) => o.id === obj.id)
       if (i >= 0) doc.objects[i] = out.obj
     }
   } catch (err) {
-    console.warn('[scene3d-studio] remesh failed', err)
-    convertError.value = 'Could not remesh this object — try again.'
+    if (selectedMesh.value?.id === startId) {
+      console.warn('[scene3d-studio] remesh failed', err)
+      convertError.value = 'Could not remesh this object — try again.'
+    }
   } finally {
     remeshBusy.value = false
   }
@@ -1639,16 +1662,22 @@ async function remeshSelection() {
 async function solidifySelection() {
   const obj = selectedMesh.value
   if (!obj || remeshBusy.value) return
+  const startId = obj.id
   remeshBusy.value = true
   convertError.value = ''
+  await paintPendingState()
   try {
     const next = await solidifyObject(obj, solidifyThickness.value)
+    // Same stale-selection guard as remeshSelection above.
+    if (selectedMesh.value?.id !== startId) return
     const i = doc.objects.findIndex((o) => o.id === obj.id)
     if (i >= 0) doc.objects[i] = next
     remeshOpen.value = false // give Remesh another try on the closed shell
   } catch (err) {
-    console.warn('[scene3d-studio] solidify failed', err)
-    convertError.value = 'Could not solidify this object — try again.'
+    if (selectedMesh.value?.id === startId) {
+      console.warn('[scene3d-studio] solidify failed', err)
+      convertError.value = 'Could not solidify this object — try again.'
+    }
   } finally {
     remeshBusy.value = false
   }
@@ -2397,10 +2426,15 @@ function onClose() {
           <StudioSlider
             v-model="remeshResolution"
             label="Resolution"
-            :min="16" :max="128" :step="1"
+            :min="16" :max="REMESH_RESOLUTION_MAX" :step="1"
           />
           <p class="text-[11px] text-white/45">{{ meshVertexCount.toLocaleString('en-US') }} vertices · {{ meshEncodedKB }} KB</p>
-          <StudioButton v-if="!remeshOpen" :disabled="remeshBusy" @click="remeshSelection">Remesh</StudioButton>
+          <StudioButton v-if="!remeshOpen" :disabled="remeshBusy" @click="remeshSelection">
+            <span class="flex items-center gap-1.5">
+              <Loader2 v-if="remeshBusy" class="h-3.5 w-3.5 animate-spin" />
+              {{ remeshBusy ? 'Remeshing…' : 'Remesh' }}
+            </span>
+          </StudioButton>
           <template v-else>
             <p class="text-[11px] leading-snug text-white/55">This shape is open, so it has no inside to rebuild. Give it a thickness first.</p>
             <StudioSlider
@@ -2408,7 +2442,12 @@ function onClose() {
               label="Thickness"
               :min="0.005" :max="0.2" :step="0.005"
             />
-            <StudioButton :disabled="remeshBusy" @click="solidifySelection">Solidify</StudioButton>
+            <StudioButton :disabled="remeshBusy" @click="solidifySelection">
+              <span class="flex items-center gap-1.5">
+                <Loader2 v-if="remeshBusy" class="h-3.5 w-3.5 animate-spin" />
+                {{ remeshBusy ? 'Solidifying…' : 'Solidify' }}
+              </span>
+            </StudioButton>
           </template>
         </div>
 

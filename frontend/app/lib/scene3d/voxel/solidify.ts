@@ -51,20 +51,52 @@ export function solidify(data: MeshData, thickness: number): MeshData {
     indices.push(vCount + ix[t + 2]!, vCount + ix[t + 1]!, vCount + ix[t]!)
   }
 
-  // Boundary = a directed edge whose reverse never appears. Those are the only
-  // edges with one adjacent triangle, and they are exactly the rim to stitch.
+  // Boundary = a directed edge whose reverse never appears — but "never
+  // appears" has to be asked in POSITION space, not index space. Three.js
+  // duplicates vertices along UV seams (same position, different index: an
+  // open-ended CylinderGeometry(.., 12, 1, true) carries 26 indices around
+  // its 12-gon rings, not 12, because the seam column is doubled), so two
+  // triangles sharing a real interior edge can each hold their own copy of
+  // its vertices. Comparing raw indices then finds the seam's shared edge
+  // twice — once per duplicate — and misreads it as two boundary edges
+  // instead of the one interior edge it actually is. Welding every index to
+  // a canonical one per quantised position before building `seen` collapses
+  // that back down, so detection runs in the same space the mesh is
+  // geometrically continuous in. The rim itself is still emitted with the
+  // ORIGINAL (unwelded) indices, so it lines up with the `positions` arrays
+  // built above from the unwelded vertex count.
+  const weldKeyOf = (i: number): string => {
+    const o = i * 3
+    // 1e4 ~ 1/10th of a millimetre at unit scale — coarse enough to close a
+    // float-rounding gap between "the same" vertex duplicated by three.js,
+    // fine enough not to weld two genuinely distinct vertices together.
+    const qx = Math.round(p[o]! * 1e4)
+    const qy = Math.round(p[o + 1]! * 1e4)
+    const qz = Math.round(p[o + 2]! * 1e4)
+    return `${qx}_${qy}_${qz}`
+  }
+  const canonicalOf = new Int32Array(vCount)
+  const firstByKey = new Map<string, number>()
+  for (let v = 0; v < vCount; v++) {
+    const wk = weldKeyOf(v)
+    let first = firstByKey.get(wk)
+    if (first === undefined) { first = v; firstByKey.set(wk, v) }
+    canonicalOf[v] = first
+  }
   const seen = new Set<number>()
   const key = (a: number, b: number) => a * vCount + b
   for (let t = 0; t < ix.length; t += 3) {
-    const a = ix[t]!, b = ix[t + 1]!, c = ix[t + 2]!
+    const a = canonicalOf[ix[t]!]!, b = canonicalOf[ix[t + 1]!]!, c = canonicalOf[ix[t + 2]!]!
     seen.add(key(a, b)); seen.add(key(b, c)); seen.add(key(c, a))
   }
   for (let t = 0; t < ix.length; t += 3) {
     const tri = [ix[t]!, ix[t + 1]!, ix[t + 2]!]
     for (let e = 0; e < 3; e++) {
       const a = tri[e]!, b = tri[(e + 1) % 3]!
-      if (seen.has(key(b, a))) continue // interior edge — shared with a neighbour
-      // Rim quad from the outer edge down to its inner twin.
+      const wa = canonicalOf[a]!, wb = canonicalOf[b]!
+      if (seen.has(key(wb, wa))) continue // interior edge — shared with a neighbour, in welded space
+      // Rim quad from the outer edge down to its inner twin, in the
+      // ORIGINAL index space so it addresses the real position arrays.
       indices.push(a, vCount + a, vCount + b)
       indices.push(a, vCount + b, b)
     }

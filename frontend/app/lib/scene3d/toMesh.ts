@@ -31,6 +31,19 @@ export async function convertToMesh(
   }
 }
 
+/** The Remesh slider's own ceiling (Scene3DStudioSurface.vue imports this for
+ *  its `:max`) — `resolutionForTarget` MUST clamp to the same number, not the
+ *  other way round. 128 already costs ~16s of blocking work pre-Task-9
+ *  optimisation (Finding 1); the slider's ceiling is a deliberate cost limit,
+ *  not an arbitrary UI round number, so a resolution picked automatically has
+ *  to respect it too. Before this fix an ordinary open PlaneGeometry (any of
+ *  the common 1/4/8/16 segment counts) hit `resolutionForTarget`'s OWN prior,
+ *  independent ceiling of 160 by default — 32 past what the slider could even
+ *  show, so the readout and the thumb permanently disagreed the moment the
+ *  user first touched it. One constant, two readers, is what keeps that from
+ *  happening again. */
+export const REMESH_RESOLUTION_MAX = 128
+
 /** A resolution that lands near `targetVertices`.
  *
  *  Surface nets emits roughly one vertex per sign-changing cell, so the count
@@ -43,7 +56,7 @@ export function resolutionForTarget(data: MeshData, targetVertices: number): num
   const probed = remesh(data, PROBE).data.positions.length / 3
   if (probed <= 0) return PROBE
   const scaled = PROBE * Math.sqrt(targetVertices / probed)
-  return Math.max(8, Math.min(160, Math.round(scaled)))
+  return Math.max(8, Math.min(REMESH_RESOLUTION_MAX, Math.round(scaled)))
 }
 
 const contentFor = async (data: MeshData) => {
