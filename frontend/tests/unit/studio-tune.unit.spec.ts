@@ -9,6 +9,7 @@ vi.mock('ofetch', () => ({ $fetch: (...args: unknown[]) => fetchMock(...args) })
 import { STUDIO_TUNERS, studioTunerFor, tuneGradientNode, tuneShaderNode, tuneTextureNode } from '~/lib/agent/studioTune'
 import { defaultConfig as defaultGradientConfig } from '~/lib/gradientfx/randomize'
 import { gradientAgentControls } from '~/lib/gradientfx/agentControls'
+import { resolvePost } from '~/lib/gradientfx/types'
 import { makeConfigParams } from '~/lib/agent/configParams'
 import { describeControls, validatePatch } from '~/lib/spacetype/controlDescriptor'
 import { textureDefaults } from '~/lib/texturefx/controls'
@@ -128,6 +129,31 @@ describe('tuneGradientNode (param-patch / vibe)', () => {
     const res = await tuneGradientNode(n, 'x', KEY)
     expect(res.ok).toBe(false)   // 'bogus' not an option → dropped → no change
     expect(n.data.properties.sailor_gradientStudio).toBeUndefined()
+  })
+
+  it('a grain write survives a legacy relief.grain on the same doc (the invariant resolvePost documents)', async () => {
+    // Task 8 invariant: resolvePost derives post.grain* from a legacy relief.grain
+    // field at RENDER time and it wins over any saved post — deliberately, so a
+    // document never opened in the studio keeps rendering its grain everywhere
+    // (node card, bake, timeline, export). ensureConfigDefaults is the only thing
+    // that drops relief.grain from a saved blob. Any writer of
+    // sailor_gradientStudio that does not run it first has its post.grain* write
+    // silently overridden on the very next render — which is exactly what "less
+    // grain" from the agent tuner must not do.
+    const legacyDoc = defaultGradientConfig()
+    legacyDoc.relief.grain = 0.4 // never opened in the studio → legacy field still present
+    // 0.18 is an exact multiple of the grainAmount slider's 0.02 step (manifest.ts),
+    // so validatePatch's snap doesn't perturb the value we're asserting on.
+    fetchMock.mockResolvedValueOnce({ changes: [{ key: 'post.grainAmount', value: 0.18 }], rationale: 'less grain' })
+    const n = node('GradientStudio', { sailor_gradientStudio: JSON.parse(JSON.stringify(legacyDoc)) })
+    const res = await tuneGradientNode(n, 'less grain', KEY)
+    expect(res.ok).toBe(true)
+
+    const saved = n.data.properties.sailor_gradientStudio
+    // Every render path calls resolvePost on the raw saved blob — that is what must
+    // reflect the tuner's write, not the in-memory config the tuner happened to hold.
+    const rendered = resolvePost(saved)
+    expect(rendered.grainAmount).toBe(0.18) // NOT 0.4 (the legacy field re-winning)
   })
 })
 

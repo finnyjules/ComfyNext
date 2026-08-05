@@ -35,7 +35,7 @@ import type { ControlSpec } from '~/lib/spacetype/effect'
 import { defaultConfig as defaultGradientConfig } from '~/lib/gradientfx/randomize'
 import { GRADIENT_GUIDANCE, gradientAgentControls } from '~/lib/gradientfx/agentControls'
 import { buildGradientPreset } from '~/lib/gradientfx/presets'
-import { cloneConfig as cloneGradientConfig, type GradientConfig } from '~/lib/gradientfx/types'
+import { cloneConfig as cloneGradientConfig, ensureConfigDefaults as ensureGradientConfigDefaults, type GradientConfig } from '~/lib/gradientfx/types'
 import { cloneConfig as cloneShaderConfig, defaultConfig as defaultShaderConfig, hydrateConfig as hydrateShaderConfig, type ShaderStudioConfig } from '~/lib/shaderstudio/types'
 import { shaderAgentControls } from '~/lib/shaderstudio/agentControls'
 import { mergeConfig as mergeShapeConfig } from '~/lib/shapefx/config'
@@ -337,7 +337,12 @@ export async function tuneGradientNode(node: any, request: string, apiKey: strin
   return runParamPatch(node, request, apiKey, {
     read: (n) => {
       const saved = n?.data?.properties?.sailor_gradientStudio as GradientConfig | undefined
-      const config = saved ? cloneGradientConfig(saved) : defaultGradientConfig()
+      // ensureConfigDefaults must run before this config is handed to the write-through
+      // proxy: resolvePost's legacy-relief.grain-wins-at-render rule (types.ts) means a
+      // write of post.grainAmount on a config that still carries relief.grain would be
+      // silently overridden on every subsequent render otherwise. See resolvePost's doc
+      // comment for the full invariant and the other writers that must honour it.
+      const config = saved ? ensureGradientConfigDefaults(cloneGradientConfig(saved)) : defaultGradientConfig()
       // includePreset: the canvas tuner can swap the whole base config (buildGradientPreset).
       return { config, controls: gradientAgentControls(config, { includePreset: true }) }
     },

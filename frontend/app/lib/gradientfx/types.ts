@@ -345,6 +345,24 @@ export function canvasCenter(canvas: CanvasConfig): CenterOffset {
  * cell-quantisation (keyed to grainSize) has no equivalent in the old formula, so
  * the port is bit-exact ONLY at grainSize <= 1 — leaving it at DEFAULT_POST's 2
  * would render every migrated document visibly coarser than before.
+ *
+ * INVARIANT for every writer of `sailor_gradientStudio`: because legacy
+ * relief.grain WINS over a saved post.grain* at render time (above), any writer
+ * that persists a `post` edit without first running `ensureConfigDefaults` on the
+ * config it read has that edit silently overridden the next time anything renders
+ * the document — the write appears to succeed (it's in the blob) but never takes
+ * visible effect. `ensureConfigDefaults` is the only thing that drops
+ * relief.grain, making the saved `post` the sole source of truth again. The three
+ * known writers, and how each honours this:
+ *   - GradientStudioSurface.vue's `loadConfig` — calls ensureConfigDefaults when
+ *     loading the saved blob into the studio, before any user edit can be made.
+ *   - gradientfx/presets.ts's `buildGradientPreset` — calls ensureConfigDefaults
+ *     on the preset's base config before returning it to be saved.
+ *   - agent/studioTune.ts's `tuneGradientNode` (the in-product agent tuner) —
+ *     calls ensureConfigDefaults on the cloned saved config before applying the
+ *     model's patch and writing it back.
+ * A test pinning this lives in tests/unit/studio-tune.unit.spec.ts ("a grain
+ * write survives a legacy relief.grain on the same doc").
  */
 export function resolvePost(cfg: GradientConfig): PostSettings {
   const post: PostSettings = { ...DEFAULT_POST, ...(cfg.post ?? {}) }

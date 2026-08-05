@@ -15,10 +15,14 @@ import { DEFAULT_POST } from '~/lib/studio/post/settings'
 // drawFrame(), which keeps that pass and adds the shared stack after it.
 describe('shape post adoption', () => {
   it('defaults post to off for a config saved before the change (missing post key entirely)', () => {
-    // style.grain: 0 — DEFAULT_CONFIG's own grain default (20) would otherwise turn
-    // post.grain on by design (Task 8's routing-parity migration; see post.ts's
-    // postNeeded doc comment and shapefx-post.unit.spec.ts's own grain-migration
-    // coverage) — orthogonal to what THIS test checks (the post field's backfill).
+    // style.grain: 0 — explicit, not compensating for a nonzero default:
+    // DEFAULT_CONFIG no longer carries a legacy grain value at all (the old grain
+    // slider was retired in Task 8; see post-grain-migration.unit.spec.ts's "a
+    // fresh shape config carries no legacy grain" case). A nonzero style.grain
+    // would turn post.grain on by design (Task 8's routing-parity migration; see
+    // post.ts's postNeeded doc comment and shapefx-post.unit.spec.ts's own
+    // grain-migration coverage) — orthogonal to what THIS test checks (the post
+    // field's backfill).
     const legacy = mergeConfig({ ...structuredClone(DEFAULT_CONFIG), style: { ...DEFAULT_CONFIG.style, grain: 0 }, post: undefined })
     expect(legacy.post).toEqual(DEFAULT_POST)
   })
