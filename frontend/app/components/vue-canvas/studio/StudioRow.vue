@@ -218,11 +218,25 @@ function onCancel() {
   editing.value = false
 }
 
-/** Clicking the value opens typed entry on numeric kinds. The wrapper span stops the
- *  event so the row's own drag never starts from the number — otherwise a click
- *  meant to type would scrub by a pixel or two first. */
-function onValuePointerDown() {
-  if (numeric.value && !props.bound) editing.value = true
+/**
+ * Clicking the value opens typed entry on numeric kinds. The wrapper span always
+ * stops the event so the row's own drag never starts from the number — otherwise a
+ * click meant to type would scrub by a pixel or two first.
+ *
+ * `preventDefault`, though, is scoped to the numeric case, and the scoping is the
+ * whole point of doing this in a handler rather than with a `.prevent` modifier.
+ * Cancelling `pointerdown` is what keeps the typed-entry field OPEN — otherwise the
+ * compatibility `mousedown` runs its default action, moves focus to `<body>`, and
+ * the field blur-commits shut in the same gesture it opened (Task 3's finding 1).
+ * But that same cancellation also suppresses the default action that opens a native
+ * `<select>` menu and the one that focuses a button, so applying it to every kind
+ * would leave RowSelect's transparent select and RowColor's swatch dead on click.
+ */
+function onValuePointerDown(e: PointerEvent) {
+  e.stopPropagation()
+  if (!numeric.value || props.bound) return
+  e.preventDefault()
+  editing.value = true
 }
 </script>
 
@@ -293,7 +307,7 @@ function onValuePointerDown() {
           @pointerdown.stop
           @click.stop="emit('goToCollection')"
         >{{ bound }}</button>
-        <span v-else-if="renderer" @pointerdown.stop.prevent="onValuePointerDown">
+        <span v-else-if="renderer" @pointerdown="onValuePointerDown">
           <component
             :is="renderer"
             :value="modelValue"
