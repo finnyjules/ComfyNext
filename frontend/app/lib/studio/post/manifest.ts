@@ -3,9 +3,12 @@ import type { PostSettings } from './settings'
 // Discriminated because duotone's shadow/highlight are hex colours, which have no
 // min/max/step. The catalog's duotone.frag already stores hex (type: "color"),
 // so the shared stack and the catalog agree without translation.
+//
+// `uniform: null` means this param has no shader uniform to bind to — a render
+// consumer wiring this manifest to GL state must skip it rather than write to it.
 export type PostParamDef =
-  | { kind: 'slider'; uniform: string; settingsKey: keyof PostSettings; label: string; min: number; max: number; step: number; hint: string }
-  | { kind: 'color'; uniform: string; settingsKey: keyof PostSettings; label: string; hint: string }
+  | { kind: 'slider'; uniform: string | null; settingsKey: keyof PostSettings; label: string; min: number; max: number; step: number; hint: string }
+  | { kind: 'color'; uniform: string | null; settingsKey: keyof PostSettings; label: string; hint: string }
 
 export interface PostEffectDef {
   id: string
@@ -26,9 +29,9 @@ export const POST_EFFECTS: PostEffectDef[] = [
   {
     id: 'bloom', label: 'Bloom', enableKey: 'bloom', frag: 'bloom',
     params: [
-      { kind: 'slider', uniform: 'u_intensity', settingsKey: 'bloomStrength', label: 'Strength', min: 0, max: 3, step: 0.05, hint: 'How bright the glow is' },
+      { kind: 'slider', uniform: 'u_intensity', settingsKey: 'bloomStrength', label: 'Strength', min: 0, max: 3, step: 0.05, hint: 'How strong the glow is' },
       { kind: 'slider', uniform: 'u_radius', settingsKey: 'bloomRadius', label: 'Radius', min: 0, max: 1, step: 0.05, hint: 'How far the glow spreads' },
-      { kind: 'slider', uniform: 'u_threshold', settingsKey: 'bloomThreshold', label: 'Threshold', min: 0, max: 1, step: 0.05, hint: 'How bright a pixel must be to glow' },
+      { kind: 'slider', uniform: 'u_threshold', settingsKey: 'bloomThreshold', label: 'Threshold', min: 0, max: 1, step: 0.05, hint: 'How bright a pixel must be before it blooms' },
     ],
   },
   {
@@ -85,12 +88,12 @@ export const POST_EFFECTS: PostEffectDef[] = [
     // halftone.frag has no scatter/jitter uniform — u_size and u_angle are its
     // only spatial controls, and u_softness only blurs each dot's own edge.
     // halftoneScatter has nothing to bind to in the catalog today, so its
-    // uniform is left blank (same convention as gtao below) rather than
-    // silently wired to the wrong knob.
+    // uniform is null (same convention as gtao below) rather than silently
+    // wired to the wrong knob.
     id: 'halftone', label: 'Halftone', enableKey: 'halftone', frag: 'halftone',
     params: [
       { kind: 'slider', uniform: 'u_size', settingsKey: 'halftoneRadius', label: 'Radius', min: 1, max: 20, step: 0.5, hint: 'Size of the print dots' },
-      { kind: 'slider', uniform: '', settingsKey: 'halftoneScatter', label: 'Scatter', min: 0, max: 1, step: 0.02, hint: 'Randomises dot placement' },
+      { kind: 'slider', uniform: null, settingsKey: 'halftoneScatter', label: 'Scatter', min: 0, max: 1, step: 0.02, hint: 'Randomises dot placement' },
     ],
   },
   {
@@ -137,9 +140,9 @@ export const POST_EFFECTS: PostEffectDef[] = [
     // same source as everything else.
     id: 'gtao', label: 'Ambient occlusion', enableKey: 'gtao', frag: null, threeDOnly: true,
     params: [
-      { kind: 'slider', uniform: '', settingsKey: 'gtaoRadius', label: 'Radius', min: 0.05, max: 3, step: 0.05, hint: 'How far around each point to check for blockers, in scene units' },
-      { kind: 'slider', uniform: '', settingsKey: 'gtaoIntensity', label: 'Intensity', min: 0, max: 2, step: 0.05, hint: 'How dark the occluded areas get' },
-      { kind: 'slider', uniform: '', settingsKey: 'gtaoThickness', label: 'Thickness', min: 0.05, max: 2, step: 0.05, hint: 'How solid nearby surfaces are treated as blockers' },
+      { kind: 'slider', uniform: null, settingsKey: 'gtaoRadius', label: 'Radius', min: 0.05, max: 3, step: 0.05, hint: 'How far around each point to check for blockers, in scene units' },
+      { kind: 'slider', uniform: null, settingsKey: 'gtaoIntensity', label: 'Intensity', min: 0, max: 2, step: 0.05, hint: 'How dark the occluded areas get' },
+      { kind: 'slider', uniform: null, settingsKey: 'gtaoThickness', label: 'Thickness', min: 0.05, max: 2, step: 0.05, hint: 'How solid nearby surfaces are treated as blockers' },
     ],
   },
 ]
