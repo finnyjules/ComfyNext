@@ -104,12 +104,12 @@ export function applyBrush(session: SculptSession, kind: BrushKind, stamp: Brush
       dy = session.normals[v * 3 + 1]! * w * scale * sign
       dz = session.normals[v * 3 + 2]! * w * scale * sign
     } else if (kind === 'smooth') {
-      // KNOWN DEFECT (carried from Task 10): `neighboursOf` lists one entry per
-      // incident triangle, so a vertex shared by N triangles appears N times.
-      // Averaging that list directly over-weights high-valence neighbours and
-      // biases smoothing toward them instead of pulling uniformly toward the
-      // surrounding surface. Dedupe before averaging — every distinct neighbour
-      // counts exactly once, regardless of how many triangles it touches.
+      // `neighboursOf` lists one entry per incident triangle, so a vertex shared
+      // by N triangles appears N times. Averaging that list directly would
+      // over-weight high-valence neighbours and bias smoothing toward them
+      // instead of pulling uniformly toward the surrounding surface — so this
+      // dedupes with a Set before averaging, giving every distinct neighbour
+      // exactly one vote regardless of how many triangles it touches.
       const nb = session.neighboursOf(v)
       if (nb.length === 0) continue
       const seen = new Set<number>()

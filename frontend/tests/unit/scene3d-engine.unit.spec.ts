@@ -907,3 +907,73 @@ describe('scene3d engine mesh decode async re-sync', () => {
     expect(mesh.geometry.getAttribute('position').count).not.toBe(placeholderCount)
   })
 })
+
+// C2 (final review): setSculptOverride forced a rebuild only when SETTING the
+// override, on the theory that a clear is always followed by the session's one
+// doc write (Apply/Exit), and THAT write's new meshKey drives the normal
+// geoKey-gated rebuild back to the real mesh. Exit-without-stroking skips that
+// write entirely (`session.dirty` is false), so nothing ever resynced — the
+// object kept rendering the override's raw session geometry (no modifiers
+// applied) until an unrelated edit happened to change the geoKey. This test
+// drives setSculptOverride directly, set then clear, with NO intervening doc
+// mutation — reproducing exactly that gap.
+describe('scene3d engine sculpt override clear (C2)', () => {
+  const makeSculptHost = () => ({
+    objectRoots: new Map<string, THREE.Object3D>(),
+    glbTokens: new Map<string, number>(),
+    fontTokens: new Map<string, number>(),
+    meshTokens: new Map<string, number>(),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    geometryForObject: (SceneEngine.prototype as any).geometryForObject,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    syncObject: (SceneEngine.prototype as any).syncObject,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    setSculptOverride: (SceneEngine.prototype as any).setSculptOverride,
+    sculptOverride: null as { id: string; positions: Float32Array; indices: Uint32Array } | null,
+    token: 0,
+    deferGeometry: false,
+    lightView: false,
+    clay: new THREE.MeshStandardMaterial(),
+    scene: { add() {}, remove() {} },
+  })
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const sync = (host: any, obj: PrimitiveObject) => (SceneEngine.prototype as any).syncObject.call(host, obj)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const setOverride = (host: any, id: string | null, positions: Float32Array | null, indices: Uint32Array | null) =>
+    (SceneEngine.prototype as any).setSculptOverride.call(host, id, positions, indices)
+
+  beforeEach(() => { meshCacheClear() })
+
+  it('rebuilds the modifier-applied geometry when the override clears with no intervening doc write', async () => {
+    const host = makeSculptHost() as any
+    // A mesh primitive with a modifier (cloneCount triples vertex count) so a
+    // bypass of buildGeometry/applyModifiers is unmistakable in the count alone.
+    const encoded = await encodeMesh(meshDataFromGeometry(new THREE.SphereGeometry(0.5, 16, 12)))
+    const key = contentDigest(encoded)
+    await loadMesh(encoded, key) // warm the cache so the initial sync is a hit, not a placeholder
+    const obj: PrimitiveObject = {
+      ...createPrimitive('mesh', []),
+      content: { mesh: encoded, meshKey: key },
+      modifiers: { cloneCount: 3 },
+    }
+    sync(host, obj)
+    const meshNode = host.objectRoots.get(obj.id) as THREE.Mesh
+    const modifierAppliedCount = meshNode.geometry.getAttribute('position').count
+    const singleCopyCount = buildGeometry('mesh', obj.params, undefined, 'smooth', obj.content).getAttribute('position').count
+    expect(modifierAppliedCount).toBe(singleCopyCount * 3) // sanity: the cloner really did run
+
+    // Enter sculpt: SET the override with a tiny raw triangle buffer — its own
+    // vertex count (3), unrelated to the modifier-applied count above, so the
+    // override taking effect is unambiguous.
+    const overridePositions = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0])
+    const overrideIndices = new Uint32Array([0, 1, 2])
+    setOverride(host, obj.id, overridePositions, overrideIndices)
+    expect(meshNode.geometry.getAttribute('position').count).toBe(3)
+
+    // Exit sculpt WITHOUT stroking: CLEAR the override. No doc mutation happens
+    // in between (obj/content/modifiers are untouched) — before the fix this
+    // left the mesh rendering the override's raw 3-vertex geometry forever.
+    setOverride(host, null, null, null)
+    expect(meshNode.geometry.getAttribute('position').count).toBe(modifierAppliedCount)
+  })
+})

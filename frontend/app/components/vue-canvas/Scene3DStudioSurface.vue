@@ -1175,10 +1175,20 @@ watch(() => selectedText.value?.content?.font, (url) => {
 // loadMesh de-dupes by key, so calling it here shares the engine's own in-flight
 // decode rather than inflating the buffer a second time.
 const meshGen = ref(0)
+// I4 fix (final review): mirrors `fontError` above exactly — before this, a
+// corrupt/truncated mesh buffer failed completely silently. The viewport kept
+// showing the 0.3 placeholder cube forever, the Remesh panel's vertex count
+// read against the (stale, cached) placeholder while its KB figure read the
+// real (larger) payload size, so the two disagreed with no explanation, and
+// Sculpt's "Could not enter sculpt mode — try again" could never actually
+// succeed on a retry. Cleared whenever the selection/meshKey changes so a
+// stale error never lingers onto a different (healthy) object.
+const meshError = ref(false)
 watch(() => {
   const o = selected.value
   return o?.kind === 'primitive' && o.primitive === 'mesh' ? o.content?.meshKey : undefined
 }, (key) => {
+  meshError.value = false
   if (!key || meshCacheGet(key)) return // already decoded: the computed measured the real mesh
   const o = selected.value
   const encoded = o?.kind === 'primitive' ? o.content?.mesh : undefined
@@ -1188,8 +1198,15 @@ watch(() => {
     // re-measure against an object that isn't showing this mesh.
     const now = selected.value
     if (now?.kind !== 'primitive' || now.content?.meshKey !== key) return
+    meshError.value = false
     meshGen.value++
-  }).catch(() => { /* corrupt buffer: engine keeps the placeholder, so does the Size row */ })
+  }).catch(() => {
+    // The selection may have moved on mid-decode — a stale failure must not
+    // flag an object that isn't even showing this mesh anymore.
+    const now = selected.value
+    if (now?.kind !== 'primitive' || now.content?.meshKey !== key) return
+    meshError.value = true
+  })
 }, { immediate: true })
 const sizeX = sizeAxis(0, sclX)
 const sizeY = sizeAxis(1, sclY)
@@ -2511,7 +2528,25 @@ async function exportToCanvas() {
 
 // Esc / ✕: persist the scene (implicit save) and leave — export is explicit now,
 // so closing never re-renders.
-function onClose() {
+//
+// C1 fix (final review): a stroke never writes the doc by design (see
+// setSculptOverride's header — a stroke must never rebuild, let alone
+// serialize), so `dirty` was never set while sculpting either. Before this
+// fix, closing mid-sculpt serialized the PRE-sculpt doc and threw the whole
+// session away with no prompt: Escape and `removeObject` were guarded (Task
+// 13), but the shell's ✕ button lives outside this surface and calls
+// `onClose` directly, so it slipped through. Commit the live session first —
+// same `commitAndExitSculpt` the Apply/Exit button uses — so the strokes land
+// in `doc.objects` BEFORE `serializeDoc` runs. If the commit throws,
+// `commitAndExitSculpt` already surfaces it via `convertError` (and still
+// tears down the session/orbit-lock in its own `finally`, same as every other
+// caller) — this must NOT also emit `close`, or the error would flash and
+// vanish behind a closed modal instead of staying visible.
+async function onClose() {
+  if (sculpting.value) {
+    await commitAndExitSculpt()
+    if (convertError.value) return // commit failed — stay open, error is visible in the Objects aside
+  }
   syncDocCamera()
   setWidget('scene_state', serializeDoc(doc))
   emit('close')
@@ -2917,6 +2952,7 @@ function onClose() {
             :min="16" :max="REMESH_RESOLUTION_MAX" :step="1"
           />
           <p class="text-[11px] text-white/45">{{ meshVertexCount.toLocaleString('en-US') }} vertices · {{ meshEncodedKB }} KB</p>
+          <p v-if="meshError" class="text-[11px] text-red-400">Mesh failed to load — showing placeholder.</p>
           <StudioButton v-if="!remeshOpen" :disabled="remeshBusy" @click="remeshSelection">
             <span class="flex items-center gap-1.5">
               <Loader2 v-if="remeshBusy" class="h-3.5 w-3.5 animate-spin" />
@@ -2937,6 +2973,14 @@ function onClose() {
               </span>
             </StudioButton>
           </template>
+          <!-- I5 fix (final review): `convertError` also carries Remesh/Solidify
+               failures, but its only render site lived in the Objects aside next
+               to the To-mesh/Merge buttons — clear across the viewport from
+               these controls, which live in this inspector column. Rather than
+               stand up a second error ref+presentation for the same string, this
+               renders the SAME ref right next to the control that actually wrote
+               it, so a Remesh/Solidify failure is visible where it happened. -->
+          <p v-if="convertError" class="text-[11px] leading-snug text-red-400/90">{{ convertError }}</p>
         </div>
 
         <!-- Geometry: a peer of the material sub-groups (plain details, no card

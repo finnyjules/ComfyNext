@@ -622,7 +622,7 @@ export class SceneEngine {
           const latest = (root.userData.primObj as PrimitiveObject | undefined) ?? obj
           root.userData.geoKey = undefined
           this.syncObject(latest)
-        }).catch(() => { /* keep the placeholder; a corrupt buffer stays visible as one */ })
+        }).catch(() => { /* keep the placeholder; Scene3DStudioSurface's meshError watch surfaces the error state, mirroring fontError (I4, final review) */ })
       } else if (key) {
         this.meshTokens.delete(obj.id)
       }
@@ -635,18 +635,28 @@ export class SceneEngine {
    *  commit, to go back to the doc.
    *
    *  Forces an IMMEDIATE rebuild of this object's mesh (bypassing the geoKey
-   *  gate) when SETTING the override: entering sculpt mode or refreshing after
-   *  a stroke/undo touches nothing in the doc, so nothing else would ever
-   *  notice the override needs swapping in — `content.mesh`/`meshKey` never
-   *  change during a session (that's the whole point of the session). CLEARING
-   *  does not force a rebuild here: the surface always follows a clear with the
-   *  one doc write this session makes (Apply/Exit), and THAT changes
-   *  `meshKey`, which is what drives the normal geoKey-gated rebuild back to
-   *  the freshly-decoded committed mesh (see Scene3DStudioSurface's commit
-   *  flow — it warms `meshCache` before clearing so that rebuild has no
-   *  placeholder flash). Read `root.userData.primObj` for the object to
-   *  resync against — the same "stamped every sync" trick geometryForObject's
-   *  own async loaders use, not the possibly-stale `obj` a caller might have
+   *  gate) on EVERY call, set or clear. Entering sculpt mode, refreshing after
+   *  a stroke/undo, and exiting all touch nothing in `content.mesh`/`meshKey`
+   *  themselves — that's the whole point of the session — so nothing else
+   *  would ever notice the override needs swapping in either direction.
+   *
+   *  C2 fix (final review): clearing used to skip the rebuild on the theory
+   *  that the surface always follows a clear with the one doc write this
+   *  session makes (Apply/Exit), and that write's new `meshKey` would drive
+   *  the normal geoKey-gated rebuild. That premise is false — Exit-without-
+   *  stroking (`session.dirty === false`) and a thrown `commit()` both clear
+   *  the override with NO doc write, so nothing ever re-synced: the object
+   *  kept rendering the override's raw session geometry, which bypasses
+   *  `buildGeometry` entirely (no modifiers — a Twist/Cloner vanished — and no
+   *  `variant`, so a faceted material lost its face-normal attributes), and it
+   *  stayed that way until an unrelated edit changed the geoKey. Forcing the
+   *  rebuild here for both directions means a clear always resyncs against
+   *  whatever `content.mesh` currently is — the pre-sculpt mesh if nothing was
+   *  committed, or the freshly-decoded committed one otherwise (the commit
+   *  flow warms `meshCache` before clearing so that rebuild has no placeholder
+   *  flash either way). Read `root.userData.primObj` for the object to resync
+   *  against — the same "stamped every sync" trick geometryForObject's own
+   *  async loaders use, not the possibly-stale `obj` a caller might have
    *  captured earlier. */
   setSculptOverride(id: string | null, positions: Float32Array | null, indices: Uint32Array | null): void {
     const prevId = this.sculptOverride?.id ?? null
@@ -655,11 +665,9 @@ export class SceneEngine {
     if (!targetId) return
     const root = this.objectRoots.get(targetId)
     if (!root) return
-    if (this.sculptOverride) {
-      root.userData.geoKey = undefined // force geometryForObject to run again with the fresh override
-      const latest = (root.userData.primObj as PrimitiveObject | undefined)
-      if (latest) this.syncObject(latest)
-    }
+    root.userData.geoKey = undefined // force geometryForObject to run again, override present or just-cleared
+    const latest = (root.userData.primObj as PrimitiveObject | undefined)
+    if (latest) this.syncObject(latest)
   }
 
   private syncObject(obj: SceneObject): void {
