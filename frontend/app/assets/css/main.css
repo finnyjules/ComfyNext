@@ -4,14 +4,19 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* ── Unified app slider ──────────────────────────────────────────────────────
-   EVERY <input type="range"> gets the slim white "studio" look: a 2px white/12%
-   track and a 12px solid-white thumb, inside a 14px hit area (so the thumb never
-   overflows into the labels above/below). Width + margin stay per-usage (Tailwind
-   w-full / flex-1 / etc.); the `.studio-range` helper below adds the full-width +
-   grouping margin the media studios rely on. Edit the slider's identity HERE only.
-   Components that want a different slider must out-specify this base (e.g. a scoped
-   class) — but prefer this so the whole app stays consistent. */
+/* ── Legacy app slider (being swept out) ─────────────────────────────────────
+   Every remaining hand-written <input type="range"> gets the slim white look: a 2px
+   white/12% track and a 12px solid-white thumb, inside a 14px hit area (so the thumb
+   never overflows into the labels above/below). Width + margin stay per-usage
+   (Tailwind w-full / flex-1 / etc.); the `.studio-range` helper below adds the
+   full-width + grouping margin the unswept media studios rely on.
+
+   This is NO LONGER the house style. The studios' own controls render through
+   StudioRow.vue, where the row itself is the track and no <input type="range"> is
+   involved. This block exists for the ~35 surfaces not yet converted — plus the one
+   range still inside the new path, StudioColor.vue's alpha slider in the colour
+   popover. Delete it once the sweep and that popover are both done.
+   See docs/superpowers/specs/2026-08-04-studio-control-rebuild-design.md */
 input[type="range"] {
   -webkit-appearance: none;
   appearance: none;

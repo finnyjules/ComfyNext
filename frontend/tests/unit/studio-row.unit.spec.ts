@@ -136,8 +136,8 @@ describe('nudgeValue', () => {
     const toon = { min: 2, max: 5, step: 1 } as const
     expect(nudgeValue({ ...toon, value: 3, direction: 1, coarse: true })).toBe(4)
     expect(nudgeValue({ ...toon, value: 4, direction: -1, coarse: true })).toBe(3)
-    // Cells. 2..12 held exactly ten steps, so x10 reached 2, 10 (the far end minus a
-    // clamp) and 12 and nothing between.
+    // 2..12 held exactly ten steps, so x10 reached 2, 10 (the far end minus a clamp)
+    // and 12 and nothing between.
     expect(nudgeValue({ min: 2, max: 12, step: 1, value: 5, direction: 1, coarse: true })).toBe(7)
   })
 })
@@ -149,24 +149,36 @@ describe('coarseStepMultiplier', () => {
     expect(coarseStepMultiplier(-3.14, 3.14, 0.01)).toBe(KEY_COARSE_STEPS)
   })
 
-  it('shrinks so a Shift gesture always takes at least four to cross the range', () => {
-    expect(coarseStepMultiplier(2, 12, 1)).toBe(2)   // Cells
+  it('shrinks so the x10 and x5 rungs still take four gestures to cross', () => {
+    expect(coarseStepMultiplier(2, 12, 1)).toBe(2)
     expect(coarseStepMultiplier(0, 20, 1)).toBe(5)
     expect(coarseStepMultiplier(0, 1, 0.1)).toBe(2)
   })
 
   it('shrinks down a ladder, so the jump stays a round number', () => {
-    // Pattern Studio's Cells is 2..40 — 38 steps. Dividing would give 9 and land the
-    // control on 9, 18, 27; the ladder gives 5.
+    // A 38-step range. Dividing would give 9 and land the control on 9, 18, 27; the
+    // ladder gives 5. (Pattern Studio's real Cells is 2..40 STEP 2 — 19 steps, x2.)
     expect(coarseStepMultiplier(2, 40, 1)).toBe(5)
+    expect(coarseStepMultiplier(2, 40, 2)).toBe(2)   // texturefx `cells`, as declared
     expect(coarseStepMultiplier(0, 45, 1)).toBe(10)
     for (const [mn, mx, st] of [[0, 100, 1], [2, 40, 1], [2, 12, 1], [2, 5, 1], [0, 2, 0.05]] as const) {
       expect([1, 2, 5, 10]).toContain(coarseStepMultiplier(mn, mx, st))
     }
   })
 
+  // The bottom rung's floor is TWO gestures, not four. At four, every span of 4..7
+  // steps fell to x1 and Shift was a silent no-op on 47 declared ranges.
+  it('gives the x2 rung to a span of four, where a four-gesture floor gave nothing', () => {
+    expect(coarseStepMultiplier(1, 8, 1)).toBe(2)    // scene3d primParams, cylinder, slitScan
+    expect(coarseStepMultiplier(2, 8, 1)).toBe(2)    // texturefx controls, shutter, cornerPin
+    expect(coarseStepMultiplier(1, 6, 1)).toBe(2)
+    expect(coarseStepMultiplier(1, 5, 1)).toBe(2)
+    expect(coarseStepMultiplier(0, 4, 1)).toBe(2)    // exactly the floor: span 4, two gestures
+  })
+
   it('collapses to 1 — no coarsening at all — on a very short range', () => {
-    expect(coarseStepMultiplier(2, 5, 1)).toBe(1)    // matToonSteps
+    expect(coarseStepMultiplier(2, 5, 1)).toBe(1)    // matToonSteps, span 3 — under the floor
+    expect(coarseStepMultiplier(0, 3, 1)).toBe(1)
     expect(coarseStepMultiplier(0, 1, 1)).toBe(1)
     expect(coarseStepMultiplier(0, 0, 1)).toBe(1)
     expect(coarseStepMultiplier(0, 10, NaN)).toBe(2)

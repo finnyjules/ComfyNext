@@ -23,7 +23,9 @@ describe('scrubValue', () => {
     expect(scrubValue({ ...base, startValue: 0, deltaPx: 260, fine: true })).toBe(15)
     expect(scrubValue({ ...base, startValue: 0, deltaPx: 260, fine: false })).toBe(100)
   })
-  it('shift-coarse keeps the travel rate but lands on a ten-step grid', () => {
+  it('shift-coarse keeps the travel rate but widens the grid', () => {
+    // How wide is `coarseStepMultiplier`'s call, not a flat ×10; 0..100 step 1 is long
+    // enough to earn the full ×10, so this case happens to be a ten-step grid.
     // 130px of 260 is half of 0..100 → 50 either way; the grid shows at 34px, which
     // is 13.07 raw: on the normal grid that snaps to 13, on the coarse one to 10.
     expect(scrubValue({ ...base, startValue: 0, deltaPx: 130, coarse: true })).toBe(50)

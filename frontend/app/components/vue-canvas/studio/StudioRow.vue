@@ -113,8 +113,10 @@ function onPointerDown(e: PointerEvent) {
     if (Math.abs(ev.clientX - startX) > 2) dragged = true
     if (!dragged) return
     // Shift is COARSE here, exactly as it is on the arrow keys: it widens the grid
-    // to ten steps rather than slowing the travel. It used to mean the opposite
-    // (0.15× travel), so the same key made the drag finer and the keyboard bigger.
+    // rather than slowing the travel. How far it widens depends on the range — see
+    // `coarseStepMultiplier`, which gives ×10, ×5, ×2, or (on a range too short to
+    // absorb a jump) nothing at all. It used to mean the opposite (0.15× travel), so
+    // the same key made the drag finer and the keyboard bigger.
     emit('update:modelValue', scrubValue({
       startValue, deltaPx: ev.clientX - startX,
       min: min.value, max: max.value, step: step.value, coarse: ev.shiftKey,
@@ -156,9 +158,11 @@ function onPointerDown(e: PointerEvent) {
  * The keyboard path. What this replaces was a native `<input type="range">` —
  * focusable, arrow-keyable, self-describing — and this row becomes every control in
  * every studio, so the regression would have been permanent. Arrows move one step,
- * Shift-arrow ten (a native range's PageUp jump, on a key people actually press),
- * Home/End pin the ends. Bound rows are inert here exactly as they are under the
- * pointer, and an open text field keeps its own arrows for caret movement.
+ * Shift-arrow moves `coarseStepMultiplier` steps — up to ten (a native range's PageUp
+ * jump, on a key people actually press), less on a range too short to absorb ten, and
+ * nothing extra on one too short to absorb even two. Home/End pin the ends. Bound rows
+ * are inert here exactly as they are under the pointer, and an open text field keeps
+ * its own arrows for caret movement.
  */
 function onKeydown(e: KeyboardEvent) {
   if (!numeric.value || props.bound || editing.value) return

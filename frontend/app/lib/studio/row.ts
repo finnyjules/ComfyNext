@@ -61,15 +61,28 @@ export const KEY_COARSE_STEPS = 10
  *
  * A flat ×10 degenerates on short ranges. Measured: Scene3D's `matToonSteps` is
  * min 2 max 5, so a ten-step grid could only ever produce 2 or 5 — and a coarse drag
- * two pixels past the threshold snapped 3 → 2. `Cells` (2..12) could reach 2, 10 and
- * 12 and nothing else. So the jump is capped at a QUARTER of the range: crossing the
- * control always takes at least four Shift gestures, and a range too short to hold
- * even that gets a multiplier of 1, i.e. Shift simply does nothing extra rather than
- * slamming to an end.
+ * two pixels past the threshold snapped 3 → 2. So the jump shrinks with the range,
+ * and a range too short to hold even the smallest jump gets a multiplier of 1 —
+ * Shift does nothing extra rather than slamming to an end.
  *
  * It steps DOWN A LADDER rather than dividing, because the jump is a number people
  * read off the control: `Math.floor(span / 4)` would hand a 0..38 slider a jump of 9
- * and land it on 9, 18, 27. The ladder keeps every jump round.
+ * and land it on 9, 18, 27. The ladder keeps every jump round: 10, 5, 2, or nothing.
+ *
+ * The GESTURE FLOOR — how many Shift moves it must still take to cross the control —
+ * is four on the ×10 and ×5 rungs and TWO on the ×2 rung. Two rather than four there
+ * because ×2 is already the gentlest coarsening available: holding the line at four
+ * meant every span of 4..7 steps fell through to ×1, where Shift is a silent no-op.
+ * Measured across `app/`: 47 declared ranges sat in that dead band (`1..8` in
+ * scene3d/primParams, cylinder, slitScan, streamer; `2..8` in texturefx/controls ×3,
+ * shutter, cornerPin; plus `1..6`, `0..6`, `1..5`, `0..4`) and now get a working ×2.
+ *
+ * BLAST RADIUS, counted rather than estimated. A parse of every `:min/:max/:step` and
+ * `min:/max:/step:` declaration under `app/` (excluding the mock data generators)
+ * finds 831 declared ranges. 224 of them get a multiplier below ×10 — 97 at ×5, 99 at
+ * ×2, and 28 still at ×1, where Shift is deliberately inert because the range cannot
+ * hold a jump without collapsing onto its endpoints. The remaining 607 are ×10.
+ * (An earlier note here put the affected count at ~83; that number was wrong.)
  *
  * Both gestures call this — the drag through `scrubValue`, the arrow keys through
  * `nudgeValue` — so a control cannot have one Shift size under the mouse and another
@@ -81,8 +94,9 @@ export function coarseStepMultiplier(min: number, max: number, step: number): nu
   if (!Number.isFinite(span) || span <= 0) return 1
   // Inside the function, not a module const: a top-level array reading
   // KEY_COARSE_STEPS is the init-order hazard this codebase has been bitten by.
-  const ladder = [KEY_COARSE_STEPS, 5, 2, 1]
-  return ladder.find((v) => span / v >= 4) ?? 1
+  // Each rung is [multiplier, minimum gestures to cross the range].
+  const ladder: Array<readonly [number, number]> = [[KEY_COARSE_STEPS, 4], [5, 4], [2, 2]]
+  return ladder.find(([v, gestures]) => span / v >= gestures)?.[0] ?? 1
 }
 
 /**
