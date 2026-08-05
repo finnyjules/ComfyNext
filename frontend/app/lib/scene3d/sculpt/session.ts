@@ -21,9 +21,34 @@ export class SculptSession {
   /** Recomputed once per endStroke, never per pointermove. */
   normals: Float32Array
 
-  dirty = false
+  /** True when `positions` differs from the document last produced by
+   *  `commit()`. Derived from an edit-version identity rather than tracked as
+   *  a plain boolean: `commit()` does not clear the undo ring, so "ring
+   *  non-empty" is not a valid proxy — an undo that runs after a commit must
+   *  still flip this back to true even though the ring may already have been
+   *  non-empty going in. */
+  get dirty(): boolean {
+    return this.editVersion !== this.committedVersion
+  }
 
-  private grid: TriGrid
+  /** Identifies the exact content of `positions`. 0 is the state the
+   *  constructor produced. Every non-empty `endStroke` mints a brand-new id
+   *  from `nextVersion` (a counter that only ever moves forward, so ids are
+   *  never reused across two DIFFERENT states) and records the id being left
+   *  behind on that stroke's undo entry. `undo` restores the id that was
+   *  recorded on the popped entry — the id of the state now byte-identical
+   *  to `positions` — rather than inventing a new one.
+   *
+   *  A plain up/down counter (++ on stroke, -- on undo) would collide here:
+   *  stroke A, stroke B, commit, undo (back to A), stroke C would leave the
+   *  counter back at B's value even though C's content differs from B's.
+   *  Minting fresh ids on every stroke keeps that case detectably dirty. */
+  private editVersion = 0
+  /** editVersion as of the last commit(). */
+  private committedVersion = 0
+  private nextVersion = 1
+
+  private grid!: TriGrid
   private hashCell = 0.1
   private hashDims: [number, number, number] = [1, 1, 1]
   private hashMin: [number, number, number] = [0, 0, 0]
@@ -32,17 +57,14 @@ export class SculptSession {
 
   private stroke: Map<number, number> | null = null
   private strokeSnapshot: number[] = []
-  private undoStack: { indices: Int32Array; values: Float32Array }[] = []
+  private undoStack: { indices: Int32Array; values: Float32Array; fromVersion: number }[] = []
 
   constructor(data: MeshData) {
     this.positions = data.positions.slice()
     this.indices = data.indices
     this.normals = new Float32Array(this.positions.length)
-    // Placeholder so `grid` is assigned before rebuildAcceleration replaces it
-    // with one sized from the real vertex spacing.
-    this.grid = buildTriGrid({ positions: this.positions, indices: this.indices }, 0.05)
     this.recomputeNormals() // pick() reads these, so they must exist before the first stroke
-    this.rebuildAcceleration()
+    this.rebuildAcceleration() // assigns `grid`, sized from the real vertex spacing
   }
 
   // --- queries ---------------------------------------------------------------
@@ -152,9 +174,10 @@ export class SculptSession {
       this.undoStack.push({
         indices: Int32Array.from(this.stroke.keys()),
         values: Float32Array.from(this.strokeSnapshot),
+        fromVersion: this.editVersion,
       })
       if (this.undoStack.length > UNDO_DEPTH) this.undoStack.shift()
-      this.dirty = true
+      this.editVersion = this.nextVersion++
     }
     this.stroke = null
     this.strokeSnapshot = []
@@ -171,7 +194,7 @@ export class SculptSession {
       this.positions[v * 3 + 1] = last.values[n * 3 + 1]!
       this.positions[v * 3 + 2] = last.values[n * 3 + 2]!
     }
-    this.dirty = this.undoStack.length > 0
+    this.editVersion = last.fromVersion
     this.recomputeNormals()
     this.rebuildAcceleration()
     return true
@@ -243,7 +266,7 @@ export class SculptSession {
   /** The ONLY place the session produces document-shaped data. */
   async commit(): Promise<{ mesh: string; meshKey: string }> {
     const mesh = await encodeMesh(this.toMeshData())
-    this.dirty = false
+    this.committedVersion = this.editVersion
     return { mesh, meshKey: contentDigest(mesh) }
   }
 }

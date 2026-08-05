@@ -17,6 +17,55 @@ const nudge = (s: SculptSession, x: number, y: number, z: number, r: number, dy:
   return hits.length
 }
 
+/** Deterministic PRNG so a failure reproduces exactly instead of flaking. */
+function mulberry32(seed: number): () => number {
+  let a = seed
+  return () => {
+    a |= 0; a = (a + 0x6d2b79f5) | 0
+    let t = Math.imul(a ^ (a >>> 15), 1 | a)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+/** Ground truth for verticesNear: a plain linear scan over every vertex. */
+const bruteNear = (s: SculptSession, x: number, y: number, z: number, radius: number): number[] => {
+  const out: number[] = []
+  const r2 = radius * radius
+  for (let v = 0; v < s.positions.length / 3; v++) {
+    const dx = s.positions[v * 3]! - x
+    const dy = s.positions[v * 3 + 1]! - y
+    const dz = s.positions[v * 3 + 2]! - z
+    if (dx * dx + dy * dy + dz * dz <= r2) out.push(v)
+  }
+  return out
+}
+
+/** Asserts verticesNear returns EXACTLY the brute-force set — not a superset
+ *  or subset — across edge-case and randomised query points/radii. An
+ *  off-by-one in the cell-range clamp would silently drop in-radius vertices
+ *  near a cell boundary, which reads as a soft-edged brush, not a crash. */
+const assertVerticesNearMatchesBruteForce = (s: SculptSession) => {
+  const rng = mulberry32(0xc0ffee)
+  const cases: Array<[number, number, number, number]> = [
+    [0, 0.5, 0, 1e-4],   // radius far smaller than vertex spacing
+    [0, 0.5, 0, 5],      // radius larger than the whole mesh
+    [3, 3, 3, 0.5],      // query point well outside the mesh
+    [3, 3, 3, 10],       // outside point, radius that reaches the whole mesh
+  ]
+  for (let n = 0; n < 100; n++) {
+    cases.push([
+      (rng() - 0.5) * 3, (rng() - 0.5) * 3, (rng() - 0.5) * 3,
+      rng() * 1.5,
+    ])
+  }
+  for (const [x, y, z, r] of cases) {
+    const got = Array.from(s.verticesNear(x, y, z, r)).sort((a, b) => a - b)
+    const want = bruteNear(s, x, y, z, r).sort((a, b) => a - b)
+    expect(got).toEqual(want)
+  }
+}
+
 describe('sculpt session', () => {
   it('finds only vertices inside the radius, and more as it grows', () => {
     const s = session()
@@ -31,6 +80,17 @@ describe('sculpt session', () => {
       )
       expect(d).toBeLessThanOrEqual(0.1 + 1e-6)
     }
+  })
+
+  it('verticesNear matches an exhaustive linear scan exactly, over 100+ random queries', () => {
+    const s = session()
+    assertVerticesNearMatchesBruteForce(s)
+  })
+
+  it('verticesNear still matches an exhaustive scan after a stroke rebuilds the hash', () => {
+    const s = session()
+    s.beginStroke(); nudge(s, 0, 0.5, 0, 0.25, 0.15); s.endStroke()
+    assertVerticesNearMatchesBruteForce(s)
   })
 
   it('undo restores the exact prior positions', () => {
@@ -88,6 +148,53 @@ describe('sculpt session', () => {
     expect(s.dirty).toBe(true)
     await s.commit()
     expect(s.dirty).toBe(false)
+  })
+
+  it('is dirty after an undo that follows a commit (mesh no longer matches encoded doc)', async () => {
+    const s = session()
+    s.beginStroke(); nudge(s, 0, 0.5, 0, 0.2, 0.05); s.endStroke()
+    await s.commit()
+    expect(s.dirty).toBe(false)
+    s.undo()
+    expect(s.dirty).toBe(true)
+  })
+
+  it('stays clean after a commit with no further edits', async () => {
+    const s = session()
+    s.beginStroke(); nudge(s, 0, 0.5, 0, 0.2, 0.05); s.endStroke()
+    await s.commit()
+    expect(s.dirty).toBe(false)
+  })
+
+  it('is clean after undoing back to a state that was never committed', () => {
+    const s = session()
+    s.beginStroke(); nudge(s, 0, 0.5, 0, 0.2, 0.05); s.endStroke()
+    expect(s.dirty).toBe(true)
+    s.undo()
+    expect(s.dirty).toBe(false)
+  })
+
+  it('is dirty after undoing one of two committed strokes', async () => {
+    const s = session()
+    s.beginStroke(); nudge(s, 0, 0.5, 0, 0.2, 0.05); s.endStroke()
+    s.beginStroke(); nudge(s, 0.5, 0, 0, 0.2, 0.05); s.endStroke()
+    await s.commit()
+    expect(s.dirty).toBe(false)
+    s.undo()
+    expect(s.dirty).toBe(true)
+  })
+
+  it('is dirty when a new stroke replaces one that was undone after a commit (diamond case)', async () => {
+    // stroke A, stroke B, commit, undo (back to A), stroke C: a naive
+    // increment-on-stroke/decrement-on-undo counter would land back on B's
+    // version number even though the content is now A+C, not A+B.
+    const s = session()
+    s.beginStroke(); nudge(s, 0, 0.5, 0, 0.2, 0.05); s.endStroke() // A
+    s.beginStroke(); nudge(s, 0.5, 0, 0, 0.2, 0.05); s.endStroke() // B
+    await s.commit()
+    s.undo() // back to A
+    s.beginStroke(); nudge(s, -0.5, 0, 0, 0.2, 0.05); s.endStroke() // C
+    expect(s.dirty).toBe(true)
   })
 
   it('commit returns a payload whose digest matches', async () => {
