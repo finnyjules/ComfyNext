@@ -51,6 +51,10 @@ Taste is stored as ~12 studio-agnostic dimensions, deliberately imperfect and ve
 - **Elicited** — inspiration images → Fable vision → facet values. Adapts the existing
   Style Publisher pipeline (`server/api/style-profile/`), emitting numbers instead of prose.
   Cheap deterministic reads (palette extraction, contrast stats) run beside the model call.
+  Two mechanics borrowed from the field survey (2026-08-05): the output includes **avoids**
+  (negative priors — what this taste never does; Krea's moodboard analyze ships this), and
+  Fable must **cluster before averaging** — if the board holds two registers, report two
+  candidate modes rather than the mush of their mean.
 - **Observed** — the owner's saved projects mined for real parameter choices on the mapped
   params. No AI involved; this is direct measurement.
 - **Declared** — not built in the spike; noted as the correction loop the product would add.
