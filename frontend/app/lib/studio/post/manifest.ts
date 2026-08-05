@@ -25,8 +25,22 @@ export interface PostEffectDef {
   /** Catalog effect id in shader_effects/, or null for effects with no frag
    *  (ambient occlusion renders from depth+normal buffers in EffectComposer). */
   frag: string | null
-  /** Depth/normal-buffer effects. Withheld from every non-3D host. */
+  /** Depth/normal-buffer effects. Withheld from every non-3D host.
+   *  FORWARD WORK, not a live capability: nothing ships a 3D host on this
+   *  manifest yet — Scene3D still hand-writes its own 21 post sliders (see
+   *  scene3d/controls.ts). This flag, `postControls({ threeD: true })`'s branch
+   *  and the "3D hosts keep uniform: null params" rule are called only from
+   *  tests, and exist so a future Scene3D migration onto the shared stack has
+   *  the withholding rule already declared here rather than rediscovering it. */
   threeDOnly?: boolean
+  /** Catalog uniforms pinned to a constant this stack needs but no user control
+   *  owns. Applied by chain.ts BETWEEN the catalog-defaults seed and the params
+   *  loop, so the precedence is: catalog default → fixed → user param.
+   *
+   *  Exists because a catalog uniform previously had exactly two possible fates —
+   *  be a user-facing control, or sit at whatever the catalog declared — with no
+   *  way to say "this shader is used here for one part of what it does". */
+  fixed?: Record<string, number>
   /** Documentation only — the frag itself (currently just post_grain.frag) is
    *  the one that gates unconditionally on its own input's `src.a`, so its
    *  contribution never lands on transparent background in ANY consumer, not
@@ -112,16 +126,31 @@ export const POST_EFFECTS: PostEffectDef[] = [
     // spacetype/post.ts), which crt_scanlines.frag is the catalog's equivalent
     // of — NOT film_grain.frag (that one covers the separate `grain` effect
     // below). filmIntensity drives u_scanline, the frag's single "how strong"
-    // knob; u_lineSize/u_curvature/u_vignette are unmapped here, so chain.ts
-    // seeds them from shader_effects/manifest.json's own declared defaults
-    // (0.008 / 0.3 / 0.4) rather than leaving them at GL's implicit 0 for an
-    // unset uniform — see chain.ts's "Catalog defaults" module-header note.
-    // filmGrayscale has no catalog counterpart (no param kind for booleans) and
-    // is therefore not represented here.
+    // knob. u_lineSize stays at the catalog default (0.008); u_curvature and
+    // u_vignette are PINNED TO 0 rather than left at their catalog defaults
+    // (0.3 / 0.4), because crt_scanlines.frag does more than scanlines: it
+    // barrel-warps the frame, hard-blacks every pixel the warp pushes outside
+    // [0,1], and applies a vignette of its own. Off the shelf, then, this
+    // effect would geometrically distort the picture, clip the corners to
+    // black, and double up with the shared Vignette effect when both are on —
+    // none of which "Film" means in this product. Pinned to 0, what is left is
+    // the scanline + aperture-grille look FilmPass gives 3D Studio under the
+    // same name. filmGrayscale has no catalog counterpart (no param kind for
+    // booleans) and is therefore not represented here.
     id: 'film', label: 'Film', enableKey: 'film', frag: 'crt_scanlines',
+    fixed: { u_curvature: 0, u_vignette: 0 },
     params: [
       // u_scanline's catalog range is 0..1, same as filmIntensity — identity.
-      { kind: 'slider', uniform: 'u_scanline', settingsKey: 'filmIntensity', label: 'Intensity', min: 0, max: 1, step: 0.01, hint: 'How strong the grain is' },
+      //
+      // HINT DEVIATES DELIBERATELY from scene3d/controls.ts (a future
+      // consistency sweep should not "fix" it back): every other pre-existing
+      // effect's hint here is copied verbatim from Scene3D's so both studios
+      // show identical tooltips, which assumed the same effect sat behind both
+      // labels. Scene3D's Film is three's FilmPass — scanlines PLUS noise, and
+      // its hint says "How strong the grain is". This one is crt_scanlines.frag,
+      // which produces no grain at all (grain is its own effect below), so the
+      // Scene3D wording would describe a knob that does something else.
+      { kind: 'slider', uniform: 'u_scanline', settingsKey: 'filmIntensity', label: 'Intensity', min: 0, max: 1, step: 0.01, hint: 'How strong the scanlines are' },
     ],
   },
   {

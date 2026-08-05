@@ -85,21 +85,20 @@ function fragSource(id: string): string {
 // irrelevant here, so this is typed as just enough of EffectDef to satisfy
 // resolveUniforms, not the full ShaderFxCatalog shape.
 const CATALOG_PARAMS: Record<string, EffectParamDef[]> = {}
-for (const eff of (shaderCatalogJson as unknown as { effects: { id: string; params: EffectParamDef[] }[] }).effects) {
+/** Ping-pong GL draws each catalog frag needs to do its job (bloom: bright-pass
+ *  → H-blur → V-blur → composite; gaussian_blur: separable H then V). Read from
+ *  the catalog record rather than restated here, so a multi-pass effect added to
+ *  the manifest can never render wrong for want of a second declaration. */
+const CATALOG_PASSES: Record<string, number> = {}
+for (const eff of (shaderCatalogJson as unknown as { effects: { id: string; params: EffectParamDef[]; passes?: number }[] }).effects) {
   CATALOG_PARAMS[eff.id] = eff.params
+  CATALOG_PASSES[eff.id] = eff.passes ?? 1
 }
 
-/**
- * Effects whose catalog frag needs more than one ping-pong GL draw to do its
- * job — mirrors shader_effects/manifest.json's own "passes" field for exactly
- * these two ids (bloom: bright-pass → H-blur → V-blur → composite;
- * gaussian_blur: separable H then V). Every other effect in POST_CHAIN_ORDER
- * is single-pass. A small local map beats importing manifest.json wholesale
- * for two numbers.
- */
-const MULTI_PASS: Record<string, number> = { bloom: 4, gaussian_blur: 2 }
-function passCountFor(fragId: string): number {
-  return MULTI_PASS[fragId] ?? 1
+/** Ping-pong draws `fragId` needs. Exported for the test that pins it to the
+ *  catalog's own `passes` declaration. */
+export function passCountFor(fragId: string): number {
+  return CATALOG_PASSES[fragId] ?? 1
 }
 
 /** Filters POST_EFFECTS to enabled, non-withheld effects, sorted into
@@ -348,6 +347,17 @@ class PostChainRunner {
             if (!dLoc) continue
             if (Array.isArray(v)) gl.uniform3f(dLoc, v[0], v[1], v[2])
             else gl.uniform1f(dLoc, v)
+          }
+        }
+
+        // Uniforms this stack pins to a constant — applied AFTER the catalog
+        // defaults and BEFORE the user params, so the precedence documented on
+        // PostEffectDef.fixed holds: catalog default → fixed → user param.
+        // (Currently film's u_curvature/u_vignette; see manifest.ts for why.)
+        if (effect.fixed) {
+          for (const [name, v] of Object.entries(effect.fixed)) {
+            const fLoc = gl.getUniformLocation(prog, name)
+            if (fLoc) gl.uniform1f(fLoc, v)
           }
         }
 

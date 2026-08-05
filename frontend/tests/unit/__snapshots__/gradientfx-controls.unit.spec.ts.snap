@@ -527,7 +527,7 @@ exports[`gradientAgentControls characterization > emits stable full specs for la
   {
     "default": 0.35,
     "group": "Film",
-    "hint": "How strong the grain is",
+    "hint": "How strong the scanlines are",
     "key": "post.filmIntensity",
     "kind": "slider",
     "label": "Intensity",
@@ -1284,7 +1284,7 @@ exports[`gradientAgentControls characterization > emits stable full specs for la
   {
     "default": 0.35,
     "group": "Film",
-    "hint": "How strong the grain is",
+    "hint": "How strong the scanlines are",
     "key": "post.filmIntensity",
     "kind": "slider",
     "label": "Intensity",
@@ -1995,7 +1995,7 @@ exports[`gradientAgentControls characterization > emits stable full specs for la
   {
     "default": 0.35,
     "group": "Film",
-    "hint": "How strong the grain is",
+    "hint": "How strong the scanlines are",
     "key": "post.filmIntensity",
     "kind": "slider",
     "label": "Intensity",
@@ -2722,7 +2722,7 @@ exports[`gradientAgentControls characterization > emits stable full specs for la
   {
     "default": 0.35,
     "group": "Film",
-    "hint": "How strong the grain is",
+    "hint": "How strong the scanlines are",
     "key": "post.filmIntensity",
     "kind": "slider",
     "label": "Intensity",
@@ -3449,7 +3449,7 @@ exports[`gradientAgentControls characterization > emits stable full specs for la
   {
     "default": 0.35,
     "group": "Film",
-    "hint": "How strong the grain is",
+    "hint": "How strong the scanlines are",
     "key": "post.filmIntensity",
     "kind": "slider",
     "label": "Intensity",
@@ -4169,7 +4169,7 @@ exports[`gradientAgentControls characterization > emits stable specs with includ
   {
     "default": 0.35,
     "group": "Film",
-    "hint": "How strong the grain is",
+    "hint": "How strong the scanlines are",
     "key": "post.filmIntensity",
     "kind": "slider",
     "label": "Intensity",

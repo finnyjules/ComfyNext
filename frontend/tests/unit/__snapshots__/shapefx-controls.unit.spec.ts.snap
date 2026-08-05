@@ -393,7 +393,7 @@ exports[`shapeAgentControls > is a characterization snapshot for both fill modes
   {
     "default": 0.35,
     "group": "Film",
-    "hint": "How strong the grain is",
+    "hint": "How strong the scanlines are",
     "key": "post.filmIntensity",
     "kind": "slider",
     "label": "Intensity",
@@ -914,7 +914,7 @@ exports[`shapeAgentControls > is a characterization snapshot for both fill modes
   {
     "default": 0.35,
     "group": "Film",
-    "hint": "How strong the grain is",
+    "hint": "How strong the scanlines are",
     "key": "post.filmIntensity",
     "kind": "slider",
     "label": "Intensity",

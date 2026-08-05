@@ -63,29 +63,16 @@ function baseParams(): Params {
   return { ...textureDefaults() }
 }
 
-// film's CRT barrel warp + scanlines (crt_scanlines.frag's u_curvature/
-// u_vignette, both non-zero catalog defaults Sailor's Film control never
-// exposes) decorrelates badly against the sharp checkerboard above — checked
-// visually: the checkerboard stays fully recognisable under film, just
-// warped and scanlined, not washed out (meanAbsDiff ~0.3 either way) — but a
-// per-pixel Pearson corr is extremely sensitive to a few pixels of geometric
-// shift on high-contrast PERIODIC content, unlike a smooth continuous ramp
-// (Gradient Studio's default content already has this shape, which is why
-// its own film case needed no override). This gives film specifically a
-// smooth, high-CONTRAST (not low-contrast — low-contrast dropped corr
-// further, since the fixed-magnitude scanline/vignette noise then dominates
-// the signal's own variance) diagonal ramp: both checker roles share the
-// SAME tile-frame (canvas-global, not cell-local) gradient via a `link`
-// fill, so the checkerboard's cell edges disappear entirely and the whole
-// canvas is one smooth black→white ramp.
-const BASE_OVERRIDES: Record<string, Record<string, unknown>> = {
-  film: {
-    fills: {
-      a: { type: 'gradient', frame: 'tile', kind: 'linear', angle: 35, stops: [{ c: '#000000', p: 0 }, { c: '#ffffff', p: 1 }] },
-      b: { type: 'link', to: 'a' },
-    },
-  },
-}
+// Per-effect BASE content swaps, for an effect the default checkerboard is a
+// hostile fixture for. Empty since the final review pinned crt_scanlines'
+// u_curvature/u_vignette to 0 (manifest.ts's `fixed`): film used to need a
+// smooth diagonal-ramp base here, because its barrel warp geometrically
+// displaced the sharp PERIODIC checkerboard and a per-pixel Pearson corr is
+// extremely sensitive to that (the checkerboard stayed fully recognisable —
+// meanAbsDiff ~0.3 either way — it just moved). With the warp pinned off, film
+// runs on the same base as every other effect. Kept as a seam rather than
+// deleted: the next effect that displaces geometry will want it.
+const BASE_OVERRIDES: Record<string, Record<string, unknown>> = {}
 
 /**
  * Renders the base texture at `size` with `effect` OFF, then again with it
