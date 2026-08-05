@@ -45,7 +45,11 @@ const model = computed({
        transparent `absolute inset-0` select below — the overlay resolves against THIS
        element, so a wider parent alone would not widen the click target. `justify-end`
        keeps the text where a right-aligned readout belongs once it is stretched. -->
-  <span class="relative flex flex-1 items-center justify-end gap-1 text-[11px] text-white/90">
+  <!-- `gap-3`, not the `gap-1` this started at, because a rotated element keeps its
+       UNROTATED layout box: the caret lays out 3.2px wide but paints across 16.5px, so
+       ~6.6px of its mark bleeds back over the gap. 4px of gap therefore read as about
+       −2.6px and the caret optically touched the value. 12px lands ~5.4px clear. -->
+  <span class="relative flex flex-1 items-center justify-end gap-3 text-[11px] text-white/90">
     <span class="capitalize">{{ value }}</span>
     <!-- The SAME glyph and treatment as StudioSection's card caret — `›` turned 90°, not
          `⌄` (U+2304). The two sat side by side and disagreed: U+2304 draws smaller than the
