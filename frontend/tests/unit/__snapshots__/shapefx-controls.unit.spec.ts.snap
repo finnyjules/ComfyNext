@@ -158,16 +158,6 @@ exports[`shapeAgentControls > is a characterization snapshot for both fill modes
     ],
   },
   {
-    "default": 20,
-    "group": "Style",
-    "key": "style.grain",
-    "kind": "slider",
-    "label": "Grain",
-    "max": 100,
-    "min": 0,
-    "step": 1,
-  },
-  {
     "default": 0,
     "group": "Style",
     "key": "style.distortion",
@@ -687,16 +677,6 @@ exports[`shapeAgentControls > is a characterization snapshot for both fill modes
     "key": "fill.b",
     "kind": "color",
     "label": "Color 2",
-  },
-  {
-    "default": 20,
-    "group": "Style",
-    "key": "style.grain",
-    "kind": "slider",
-    "label": "Grain",
-    "max": 100,
-    "min": 0,
-    "step": 1,
   },
   {
     "default": 0,

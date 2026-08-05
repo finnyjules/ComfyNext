@@ -48,7 +48,9 @@ describe('animatableTargets', () => {
 
   it('includes non-shape targets that were previously impossible', () => {
     const paths = animatableTargets(cfg()).map((t) => t.path)
-    expect(paths).toContain('relief.grain')
+    // Was relief.grain until Task 8 moved grain into the shared post stack —
+    // post.grainAmount is its animatable successor (see postControls()).
+    expect(paths).toContain('post.grainAmount')
     expect(paths).toContain('focus.blur')
   })
 
@@ -78,14 +80,18 @@ describe('animatableTargets', () => {
   // removes a motion target fails loudly here instead of shipping unnoticed.
   it('pins the default config\'s animatable target set', () => {
     const paths = animatableTargets(cfg()).map((t) => t.path)
-    // 51 = 32 (relief.light.azimuth/elevation moved from the liquid layout, where
-    // the shader ignores them, to the banded layouts, where they aim the relief
-    // light — so the default linear config can animate the light too) + 19 post.*
-    // sliders newly adopted from the shared post stack (Task 5): every POST_EFFECTS
-    // param whose `uniform` isn't null, minus the two colour params (duotoneShadow/
-    // Highlight — motion only animates sliders) and gtao's three (withheld from a
-    // 2D host by postControls({ threeD: false })) and halftoneScatter (uniform: null).
-    expect(paths.length).toBe(51)
+    // 50 = 51 (see the previous count, from Task 5's post-stack adoption) minus 1:
+    // Task 8 retired relief.grain (its rendering moved into the shared post stack;
+    // post.grainAmount — already counted among the 19 post.* sliders below — is its
+    // animatable successor). Was: 32 (relief.light.azimuth/elevation moved from the
+    // liquid layout, where the shader ignores them, to the banded layouts, where
+    // they aim the relief light — so the default linear config can animate the
+    // light too) + 19 post.* sliders adopted from the shared post stack (Task 5):
+    // every POST_EFFECTS param whose `uniform` isn't null, minus the two colour
+    // params (duotoneShadow/Highlight — motion only animates sliders) and gtao's
+    // three (withheld from a 2D host by postControls({ threeD: false })) and
+    // halftoneScatter (uniform: null).
+    expect(paths.length).toBe(50)
     expect(paths).toMatchSnapshot()
   })
 })

@@ -123,7 +123,6 @@ export class ShapeEngine {
       depthWrite: false,
       uniforms: {
         uScene: { value: null },
-        uGrain: { value: 0 },
         uDistort: { value: 0 },
         uResolution: { value: new THREE.Vector2(this.w, this.h) },
         uSeed: { value: 0 },
@@ -231,7 +230,6 @@ export class ShapeEngine {
       this.renderer.setRenderTarget(null)
       const u = this.postMat!.uniforms
       u.uScene!.value = this.rt!.texture
-      u.uGrain!.value = (cfg.style.grain ?? 0) / 100
       u.uDistort!.value = (cfg.style.distortion ?? 0) / 100
       u.uResolution!.value.set(this.w, this.h)
       // Stable per-shape seed (derived from the config's seed string) so the grain pattern
@@ -240,10 +238,11 @@ export class ShapeEngine {
       this.renderer.render(this.postScene!, this.postCam!)
     }
 
-    // Shared post-processing stack (Task 7) — runs AFTER Shape's own grain/distortion
-    // pass above (POST_FRAG, retired only in Task 8, and only its grain half), at the
-    // TRUE end of the frame: this.renderer.domElement already holds the fully-composed
-    // frame from whichever branch ran, so applyPost sees exactly what a viewer sees.
+    // Shared post-processing stack (Task 7) — runs AFTER Shape's own distortion pass
+    // above (POST_FRAG; its grain half was retired in Task 8 — see post.ts's
+    // postNeeded and config.ts's mergeConfig), at the TRUE end of the frame: this.
+    // renderer.domElement already holds the fully-composed frame from whichever
+    // branch ran, so applyPost sees exactly what a viewer sees.
     const post = cfg?.post ?? DEFAULT_POST
     if (postEnabled(post)) {
       // t=0: Shape Studio has no timeline/motion track of its own (unlike Gradient,
@@ -255,11 +254,18 @@ export class ShapeEngine {
       //
       // seed: Shape's config carries its own seed string (cfg.seed) the same way
       // Gradient's does — hashed with the SAME hashSeed() this file already uses
-      // for POST_FRAG's own uSeed uniform above, so post_grain's noise field
-      // re-rolls per-shape too, not identically across every Shape node.
+      // for POST_FRAG's own uSeed uniform above (% 1000 there too), so post_grain's
+      // noise field re-rolls per-shape too, not identically across every Shape node.
+      // `% 1000` for the same reason POST_FRAG's own uSeed above is modded: hashSeed
+      // returns a full unsigned 32-bit value, and post_grain.frag's hashGrain is a
+      // fract()-chain hash whose entropy collapses at GPU highp float precision once
+      // the seed reaches into the billions (verified in a float32 simulation: mean/std
+      // both hit exactly 0) — grain silently degenerates from noise into a uniform
+      // colour-shift wash. Found via Task 8's Gradient pixel-fidelity check; applies
+      // here too since this call had the identical unmodded pattern.
       const out = applyPost(this.renderer.domElement, post, this.w, this.h, 0, {
         threeD: false,
-        seed: cfg ? hashSeed(cfg.seed) : undefined,
+        seed: cfg ? hashSeed(cfg.seed) % 1000 : undefined,
       })
       if (out !== this.renderer.domElement) this.blitPostResult(out)
     }

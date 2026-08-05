@@ -20,7 +20,7 @@ function buildCfg() {
   return {
     seed: 'embed-gradient-task2',
     canvas: { aspect: '16:9', layout: 'linear', margin: 0, innerRadius: 0.4, background: '#000000', center: { x: 0, y: 0 } },
-    relief: { grain: 0, relief: 0, light: { azimuth: 135, elevation: 45 } },
+    relief: { relief: 0, light: { azimuth: 135, elevation: 45 } },
     flow: {
       angle: 45, noiseScale: 3.5, intensity: 0, distortion: 50, detail: 2,
       depth: 60, highlights: 50, shadows: 55, foldScale: 60, speed: 0, gloss: 0,
@@ -43,12 +43,13 @@ function buildCfg() {
         },
       },
     ],
-    // One visually obvious track (relief.grain 0 -> 1), delay: 0 so its value
-    // depends only on t/duration — the ratio a correct reconciliation preserves
-    // regardless of which absolute duration is in play (see trackValue in
-    // ~/lib/studio/track.ts).
+    // One visually obvious track (layers.0.color.hueRotate 0 -> 360, a full hue
+    // sweep — was relief.grain 0 -> 1 until Task 8 retired that field's rendering),
+    // delay: 0 so its value depends only on t/duration — the ratio a correct
+    // reconciliation preserves regardless of which absolute duration is in play
+    // (see trackValue in ~/lib/studio/track.ts).
     motion: {
-      tracks: [{ path: 'relief.grain', from: 0, to: 1, easing: 'linear', loops: 1, hold: 0, cycleOffset: 0, delay: 0 }],
+      tracks: [{ path: 'layers.0.color.hueRotate', from: 0, to: 360, easing: 'linear', loops: 1, hold: 0, cycleOffset: 0, delay: 0 }],
       duration: D1, fps: 30, size: 1080,
     },
     locks: {},
@@ -115,7 +116,7 @@ test.describe('gradient embed loop-duration reconciliation', () => {
 // This block drives the default __embedHarnessGradient.config fixture — built
 // from gradientfx/randomize.ts's own defaultConfig(), the same builder
 // GradientStudioNode seeds a fresh node from — plus a motion track
-// (relief.grain 0->1) so time genuinely matters on every render.
+// (layers.0.color.hueRotate 0->360) so time genuinely matters on every render.
 test.describe('EmbedSurface contract — gradient', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/dev/embed-harness')

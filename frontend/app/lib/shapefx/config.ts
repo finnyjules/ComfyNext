@@ -49,7 +49,13 @@ export interface PaletteParams {
 }
 
 export interface StyleParams {
-  grain: number        // 0–100
+  /** @deprecated 0–100. Migrated into post.grain/post.grainAmount by mergeConfig
+   *  (Task 8 — grain moved into the shared post stack, retiring this studio's own
+   *  uGrain uniform in ./post.ts). Kept optional only so mergeConfig can read a
+   *  legacy saved value before dropping it — mirrors gradientfx/types.ts's
+   *  ReliefConfig.grain treatment, and randomize.ts's rollStyle, which still rolls
+   *  this as inert legacy data. */
+  grain?: number
   distortion: number   // 0–100
   background: string   // '#rrggbb' or 'transparent'
 }
@@ -93,6 +99,11 @@ export const DEFAULT_CONFIG: ShapeConfig = {
   shape: { mode: 'primitive', primitive: 'cube', vertices: 14, depth: 1, spread: 0.65, density: 1, jitter: 0, scale: 1, projection: 'orthographic' },
   palette: { harmony: 'analogous', baseHue: 287, saturation: 57, lightness: 47, coloring: 'prismatic', direction: 'vertical' },
   fill: { type: 'gradient', a: '#ff4da6', b: '#6a3df0', angle: 45, density: 8 },
+  // grain: 20 preserved as the literal default (unchanged since before Task 8) — see
+  // postNeeded()'s doc comment in ./post.ts for why this field survives mergeConfig
+  // rather than being deleted: every brand-new shape has always opened with a touch
+  // of grain, and this keeps that default (now realized via the shared post stack)
+  // pixel-identical to how it always rendered.
   style: { grain: 20, distortion: 0, background: '#000000' },
   locks: { shape: false, palette: false, style: false },
   // Own object literal, not a reference to the shared DEFAULT_POST constant — this
@@ -168,7 +179,17 @@ export function mergeConfig(raw: unknown): ShapeConfig {
       }
     })(),
     style: {
-      grain: num(st.grain, d.style.grain),
+      // Grain's NOISE moved into the shared post stack (Task 8, in `post` below) —
+      // but the value itself is NOT dropped the way Gradient's relief.grain is
+      // (see gradientfx/types.ts): it still has a job. postNeeded() in ./post.ts
+      // still counts style.grain toward "does this need the offscreen pass" —
+      // dropping that would silently move every existing document (grain has
+      // defaulted to 20 since before this task) onto a DIFFERENT render path
+      // (no MSAA on that offscreen target vs. the canvas's own antialiasing) and
+      // change its appearance for a reason that has nothing to do with grain's
+      // own pixels. Standard num()-with-default treatment, same as every other
+      // field here — see postNeeded()'s doc comment for the full story.
+      grain: num(st.grain, d.style.grain ?? 0),
       distortion: num(st.distortion, d.style.distortion),
       background: str(st.background, d.style.background),
     },
@@ -183,6 +204,32 @@ export function mergeConfig(raw: unknown): ShapeConfig {
     // (e.g. an agent patch that set only post.bloom) keeps its own keys and only
     // backfills what's missing. No per-key validation, matching Gradient's own
     // backfill — PostSettings' own consumers (postControls' sliders) already clamp.
-    post: { ...DEFAULT_POST, ...(o.post ?? {}) },
+    //
+    // Grain migration (Task 8): style.grain's NOISE moves into the shared post
+    // stack. Derived from the SAME resolved value stored in `style.grain` above
+    // (not the raw pre-default st.grain) — style.grain and postNeeded()'s routing
+    // check must stay in lockstep with what actually renders, or a document could
+    // pay for the offscreen pass (style.grain > 0) while getting no grain out of
+    // it (post.grain left off), which is strictly worse than either extreme.
+    // Shape's retired formula (`g * uGrain * 0.5 * midtone`, see the old ./post.ts)
+    // used a 0.5 coefficient on a 0-100 slider where Gradient's canonical shared
+    // formula (post_grain.frag) uses 0.16 on a 0-1 amount — so the same slider
+    // value rendered ~3.1x stronger, despite ./post.ts's now-deleted comment
+    // claiming the two matched. Rescale by (grain/100) * (0.5/0.16) into the
+    // canonical 0.16 space so a saved shape looks unchanged. grainSize is
+    // force-pinned to 1: post_grain.frag's cell-quantisation (keyed to grainSize)
+    // has no equivalent in Shape's old formula either (verified: no
+    // u_size/coarseness term in ./post.ts's old grain block) — bit-exact only at
+    // grainSize <= 1, same trap as Gradient's.
+    post: (() => {
+      const post = { ...DEFAULT_POST, ...(o.post ?? {}) }
+      const styleGrain = num(st.grain, d.style.grain ?? 0)
+      if (styleGrain > 0) {
+        post.grain = true
+        post.grainAmount = Math.min(1, (styleGrain / 100) * (0.5 / 0.16))
+        post.grainSize = 1
+      }
+      return post
+    })(),
   }
 }

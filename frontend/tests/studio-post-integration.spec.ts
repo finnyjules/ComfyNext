@@ -195,8 +195,24 @@ const SHAPE_PROBE_SIZES = [128, 512]
 
 // Same reasoning as Gradient/Texture's override: Color's DEFAULT_POST values
 // (exposure/contrast/saturation = 1, hue = 0) are the identity transform.
+//
+// blur/chroma (Task 8 review): DEFAULT_CONFIG's own style.grain (20) has always
+// unconditionally baked grain noise into every Shape render via ./post.ts's own
+// pass — including this probe's baseline, which never asked for it. That noise
+// was enough high-frequency texture for a subtle blurAmount (0.01) or chromaAmount
+// (0.25) to register as a visible diff even on this fixture's smooth-shaded solid.
+// Task 8 moves grain's actual pixels into the shared stack, applied only when
+// post.grain is explicitly on — this probe's off/on configs both reset `post` to
+// a fresh DEFAULT_POST (see sailorPostProbe in shape-harness.vue), so grain is
+// off in both, and the baseline is genuinely smooth for the first time. blurAmount
+// 0.01 and chromaAmount 0.25 on a plain gradient-shaded solid are both too subtle
+// to clear the 1/255 "it ran" bar without that incidental texture. Bumped to each
+// slider's max (blurAmount 0.04, chromaAmount 1.5 — see manifest.ts) so the probe
+// exercises the effect itself, not an accidental grain crutch.
 const SHAPE_PROBE_OVERRIDES: Partial<Record<string, Partial<PostSettings>>> = {
   color: { exposure: 1.6 },
+  blur: { blurAmount: 0.04 },
+  chroma: { chromaAmount: 1.5 },
 }
 
 for (const def of POST_EFFECTS.filter(e => !e.threeDOnly)) {

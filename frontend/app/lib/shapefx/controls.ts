@@ -93,7 +93,7 @@ export const SHAPE_CONTROLS: ShapeControl[] = [
   slider('fill.density', 'Density', 2, 32, 1, 'Fill', DEFAULT_CONFIG.fill.density, undefined, { when: (c) => isSurface(c) && fillHasDensity(c) }),
 
   // --- Style ------------------------------------------------------------------
-  slider('style.grain', 'Grain', 0, 100, 1, 'Style', DEFAULT_CONFIG.style.grain),
+  // Grain retired (Task 8) — moved into the shared post stack's own Grain section below.
   slider('style.distortion', 'Distortion', 0, 100, 1, 'Style', DEFAULT_CONFIG.style.distortion),
   color('style.background', 'Background', DEFAULT_CONFIG.style.background, 'Style'),
 
@@ -131,6 +131,6 @@ COLOUR: fillMode picks ONE of two mutually exclusive colouring systems.
 - "facets" — each face gets its own colour from a generated HARMONY_TYPES palette (palette.harmony + palette.baseHue/saturation/lightness set the ramp). palette.coloring picks how the ramp maps onto the solid: prismatic (per-facet gradient, cut-gem shimmer), smooth (one gradient sweeps the surface), faceted (flat per-facet tone progressing smoothly), ombre (grainy dither), scatter (random discrete swatch per facet — the low-poly confetti look, ignores palette.direction). palette.direction (vertical/depth/radial/angular) sets which axis smooth/faceted ramps follow.
 - "surface" — one tiled fill.type (solid/gradient/ombre/grid/noise/checkerboard/stripes/qr) painted over the whole solid using fill.a (+ fill.b for anything but solid). fill.angle applies to ombre/stripes; fill.density (tile count) applies to grid/checkerboard/stripes/qr.
 
-STYLE: style.grain adds per-pixel noise, style.distortion warps the render, style.background is the canvas colour behind the shape.
+STYLE: style.distortion warps the render, style.background is the canvas colour behind the shape. Grain is post.grain (on/off) + post.grainAmount (0-1) in the shared post stack, not a Style control.
 
 Set fillMode + its matching colour controls together; don't set palette.* while fillMode is "surface" or fill.* while it's "facets" — the other set is invisible to the user.`

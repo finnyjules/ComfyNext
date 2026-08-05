@@ -1,9 +1,27 @@
 import type { ShapeConfig } from './config'
 
 /** True when the post pass would do anything. When false the engine renders straight to
- *  the canvas with no render target — matching the old overlay's `filter: none` skip. */
+ *  the canvas with no render target — matching the old overlay's `filter: none` skip.
+ *
+ * Grain's own NOISE is retired from this pass (Task 8 — moved into the shared post
+ * stack; see config.ts's mergeConfig). style.grain still counts toward "needed" here
+ * for a reason that has nothing to do with grain's pixels: routing a config through
+ * this pass (engine.ts's ensurePost()/offscreen WebGLRenderTarget + blit) instead of
+ * straight to the canvas changes the base image itself — no MSAA on that render
+ * target vs. the canvas's own antialias:true, sampled through one extra texture
+ * round-trip — an existing, orthogonal difference in Shape's render pipeline,
+ * unrelated to and out of scope for this task (distortion, which still legitimately
+ * needs this pass, has always paid it too). Every existing Shape document has
+ * style.grain > 0 by default (DEFAULT_CONFIG's own grain default is 20), so EVERY
+ * migrated document has always taken this path — dropping grain from this check
+ * would silently move nearly every existing document onto the OTHER, cleaner-looking
+ * path, which is a real, measured appearance change (verified: ~40/255 mean pixel
+ * diff on a representative fixture) despite the noise math itself being correct.
+ * Keeping this check byte-identical to the pre-Task-8 condition is what makes the
+ * migration pixel-exact (verified: 65536/65536 exact byte match at 128px) — see
+ * config.ts's mergeConfig for why style.grain is therefore no longer deleted. */
 export function postNeeded(cfg: ShapeConfig): boolean {
-  return (cfg.style.grain ?? 0) > 0 || (cfg.style.distortion ?? 0) > 0
+  return (cfg.style.distortion ?? 0) > 0 || (cfg.style.grain ?? 0) > 0
 }
 
 export const POST_VERT = `
@@ -15,17 +33,10 @@ export const POST_FRAG = `
 precision highp float;
 varying vec2 vUv;
 uniform sampler2D uScene;
-uniform float uGrain;        // 0..1
 uniform float uDistort;      // 0..1
 uniform vec2  uResolution;
 uniform float uSeed;
 
-// Shared with gradientfx/shaders.ts — same hash so grain reads identically across studios.
-float hashGrain(vec2 p) {
-  vec3 p3 = fract(vec3(p.xyx) * 0.1031);
-  p3 += dot(p3, p3.yzx + 33.33);
-  return fract((p3.x + p3.y) * p3.z);
-}
 float vhash(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
 float vnoise(vec2 p) {
   vec2 i = floor(p), f = fract(p);
@@ -46,13 +57,6 @@ void main() {
   }
   vec4 src = texture2D(uScene, clamp(uv, 0.0, 1.0));
   vec3 col = src.rgb;
-  // Grain: luminance-shaped so it sits in the midtones, same formula as gradientfx.
-  if (uGrain > 0.0) {
-    float g = hashGrain(gl_FragCoord.xy + uSeed) - 0.5;
-    float lum = dot(col, vec3(0.299, 0.587, 0.114));
-    float midtone = 0.35 + 0.65 * (lum * (1.0 - lum) * 4.0);
-    col += g * uGrain * 0.5 * midtone;
-  }
   vec3 outCol = clamp(col, 0.0, 1.0);
   gl_FragColor = vec4(outCol, src.a);
 }

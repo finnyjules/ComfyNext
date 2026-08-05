@@ -173,10 +173,13 @@ onMounted(async () => {
   const gradientHandles: Record<string, EmbedHandle> = {}
   const GRADIENT_DURATION = 4
   const gradientCfg = gradientDefaultConfig('embed-gradient-task3')
-  // relief.grain 0->1, delay: 0 — visually obvious and, like the
-  // loop-duration fixture above, depends only on t/duration.
+  // layers.0.color.hueRotate 0->360 (a full hue sweep), delay: 0 — visually
+  // obvious and, like the loop-duration fixture above, depends only on
+  // t/duration. Was relief.grain 0->1 until Task 8 retired that field's
+  // rendering (grain moved into the shared post stack) — hueRotate is the
+  // same kind of always-live, single-layer numeric target.
   gradientCfg.motion = {
-    tracks: [{ path: 'relief.grain', from: 0, to: 1, easing: 'linear', loops: 1, hold: 0, cycleOffset: 0, delay: 0 }],
+    tracks: [{ path: 'layers.0.color.hueRotate', from: 0, to: 360, easing: 'linear', loops: 1, hold: 0, cycleOffset: 0, delay: 0 }],
     duration: GRADIENT_DURATION, fps: 30, size: 1080,
   }
   const gradientConfig: GradientEmbedConfig = { cfg: gradientCfg, duration: GRADIENT_DURATION }

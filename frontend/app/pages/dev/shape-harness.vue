@@ -107,6 +107,27 @@ function baseConfig(): ShapeConfig {
 // like Texture's checkerboard) doesn't have the same decorrelation risk Task 6
 // hit, so no BASE_OVERRIDES hatch is needed here; verified below by running the
 // probe and checking film's own corr/meanAbsDiff rather than assuming it.
+//
+// blur/chroma (Task 8 review — mirrors texture-harness.vue's own BASE_OVERRIDES
+// pattern, added for the identical reason): DEFAULT_CONFIG's style.grain used to
+// unconditionally bake grain noise into every Shape render (including this
+// probe's baseline) via ./post.ts's own pass. Task 8 moved grain's actual pixels
+// into the shared stack, applied only when post.grain is explicitly on — this
+// probe's off/on configs both reset `post` to a fresh DEFAULT_POST (below), so
+// grain is off in both, and the smooth-coloured baseline lost the incidental
+// high-frequency texture that made a subtle blur/chromatic-fringe visibly
+// register. `scatter` coloring (random discrete swatch per facet — the low-poly
+// confetti look) restores comparable per-pixel contrast for these two effects
+// specifically, without changing what every OTHER effect's test renders.
+const BASE_OVERRIDES: Partial<Record<string, Record<string, unknown>>> = {
+  // 'gem' mode's scattered-point hull carries far more facets than any primitive
+  // (up to 40 vertices' worth of hull faces — a cube is fixed at 6, and `density`
+  // doesn't subdivide one further), giving `scatter` coloring's per-facet swatches
+  // enough granularity to make blur/chromatic fringing register above the "it
+  // ran" threshold at both probe sizes.
+  blur: { palette: { coloring: 'scatter' }, shape: { mode: 'gem', vertices: 40, depth: 1, spread: 0.8 } },
+  chroma: { palette: { coloring: 'scatter' }, shape: { mode: 'gem', vertices: 40, depth: 1, spread: 0.8 } },
+}
 
 /**
  * Renders the base shape at `size` with `effect` OFF, then again with it ON
@@ -120,6 +141,9 @@ async function sailorPostProbe(opts: { effect: string; size: number; overrides?:
   if (!def) throw new Error(`shape harness: unknown post effect "${effect}"`)
 
   const base = baseConfig()
+  const baseOverride = BASE_OVERRIDES[effect]
+  if (baseOverride?.palette) Object.assign(base.palette, baseOverride.palette as Partial<ShapeConfig['palette']>)
+  if (baseOverride?.shape) Object.assign(base.shape, baseOverride.shape as Partial<ShapeConfig['shape']>)
 
   const offCfg: ShapeConfig = { ...base, post: { ...DEFAULT_POST } }
   const offLuma = renderLuma(offCfg, size)

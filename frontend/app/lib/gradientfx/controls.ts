@@ -115,7 +115,8 @@ export const GRADIENT_CONTROLS: GradientControl[] = [
   slider('layer.shape.valley', 'Valley position', 0, 1, 0.01, 'Shape', undefined, { agent: false, when: isBanded }),
 
   // --- Relief ---------------------------------------------------------------
-  slider('relief.grain', 'Grain', 0, 1, 0.01, 'Relief', undefined, { summary: 2 }),
+  // Grain retired (Task 8) — moved into the shared post stack's own Grain section
+  // (postControls() below); relief.grain is now a deprecated, unrendered field.
   // The relief light shades the band/ring height field only: shaders.ts gates u_light
   // on `u_layout < 3.5`, and the liquid branch is explicit that it uses "its own light,
   // not u_light". The legacy agent builder had these under isLiquid — exactly inverted —
@@ -143,7 +144,12 @@ export const GRADIENT_CONTROLS: GradientControl[] = [
 
   // --- Post (shared stack: bloom/color/duotone/chroma/blur/film/halftone/dotScreen/
   //     glitch/grain/vignette — ambient occlusion withheld, 2D host) ---------
-  ...postControls({ threeD: false }),
+  // post.grainAmount picks up summary rank 2 (the capsule readout's second field,
+  // e.g. "aurora · grain 0.18") — the rank retired relief.grain's own slider used
+  // to carry (Task 8). Tagged here rather than inside postControls() itself: that
+  // function is shared by Texture/Shape too, and this capsule-summary behavior is
+  // specific to how Gradient's collapsed node reads out, not a shared-stack default.
+  ...postControls({ threeD: false }).map(c => c.key === 'post.grainAmount' ? { ...c, summary: 2 } : c),
 ]
 
 /** Per-stop / per-mesh-point colour controls — runtime cardinality. */

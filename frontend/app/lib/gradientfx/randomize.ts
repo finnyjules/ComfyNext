@@ -180,7 +180,7 @@ export function rippleConfig(seed = randomSeed()): GradientConfig {
     seed,
     post: { ...DEFAULT_POST },
     canvas: { aspect: '1:1', layout: 'orbit', margin: 0.06, innerRadius: 0, background: '#000000', center: { x: 0, y: 0.08 } },
-    relief: { grain: 0.12, relief: 0.85, light: { azimuth: 135, elevation: 42 } },
+    relief: { relief: 0.85, light: { azimuth: 135, elevation: 42 } },
     flow: { ...DEFAULT_FLOW },
     layers: [
       {
@@ -206,7 +206,7 @@ export function stackConfig(seed = randomSeed()): GradientConfig {
     seed,
     post: { ...DEFAULT_POST },
     canvas: { aspect: '1:1', layout: 'stack', margin: 0.06, innerRadius: 0, background: '#000000', center: { ...DEFAULT_CENTER } },
-    relief: { grain: 0.1, relief: 0, light: { ...DEFAULT_LIGHT } },
+    relief: { relief: 0, light: { ...DEFAULT_LIGHT } },
     flow: { ...DEFAULT_FLOW },
     layers: [
       {
@@ -231,7 +231,7 @@ export function liquidConfig(seed = randomSeed()): GradientConfig {
     seed,
     post: { ...DEFAULT_POST },
     canvas: { aspect: '16:9', layout: 'liquid', margin: 0, innerRadius: 0.4, background: '#000000', center: { ...DEFAULT_CENTER } },
-    relief: { grain: 0.95, relief: 0, light: { ...DEFAULT_LIGHT } },
+    relief: { relief: 0, light: { ...DEFAULT_LIGHT } },
     // Authored default (not derived): a lit, refractive surface rather than the flat
     // max-intensity warp this used to open on. Depth is low with highlights/shadows
     // carrying the form, and heavy refract bends the ramp through the folds.
@@ -263,7 +263,7 @@ export function meshConfig(seed = randomSeed()): GradientConfig {
     seed,
     post: { ...DEFAULT_POST },
     canvas: { aspect: '1:1', layout: 'mesh', margin: 0, innerRadius: 0, background: '#100a24', center: { ...DEFAULT_CENTER } },
-    relief: { grain: 0.12, relief: 0, light: { ...DEFAULT_LIGHT } },
+    relief: { relief: 0, light: { ...DEFAULT_LIGHT } },
     flow: { ...DEFAULT_FLOW, intensity: 24, noiseScale: 2.6, distortion: 60, detail: 2, speed: 22 },
     layers: [
       {
@@ -317,7 +317,7 @@ export function liquidPresetConfig(name: LiquidPreset, seed = randomSeed()): Gra
     seed,
     post: { ...DEFAULT_POST },
     canvas: { aspect: '1:1', layout: 'liquid', margin: 0, innerRadius: 0, background: look.bg, center: { ...DEFAULT_CENTER } },
-    relief: { grain: 0.16, relief: 0, light: { ...DEFAULT_LIGHT } },
+    relief: { relief: 0, light: { ...DEFAULT_LIGHT } },
     flow: { ...DEFAULT_FLOW, ...look.flow },
     layers: [
       {
@@ -337,7 +337,7 @@ export function defaultConfig(seed = randomSeed()): GradientConfig {
     seed,
     post: { ...DEFAULT_POST },
     canvas: { aspect: '16:9', layout: 'linear', margin: 0, innerRadius: 0.4, background: '#000000', center: { ...DEFAULT_CENTER } },
-    relief: { grain: 0.22, relief: 0, light: { ...DEFAULT_LIGHT } },
+    relief: { relief: 0, light: { ...DEFAULT_LIGHT } },
     flow: { ...DEFAULT_FLOW },
     layers: [
       {
@@ -374,7 +374,7 @@ export function buildConfig(seed: string): GradientConfig {
       background: layout === 'mesh' ? '#0c0a1a' : (rng.chance(0.7) ? '#000000' : hsl(rng.range(0, 360), 0.15, rng.range(0.05, 0.25))),
       center: rng.chance(0.4) ? randCenter(rng) : { ...DEFAULT_CENTER },
     },
-    relief: { grain: rng.range(0.15, 0.6), relief: rng.range(0, 0.5), light: randLight(rng) },
+    relief: { relief: rng.range(0, 0.5), light: randLight(rng) },
     flow: randFlow(rng, layout),
     layers,
     motion: { tracks: [], duration: 4, fps: 30, size: 1080 },
@@ -402,7 +402,7 @@ export function reroll(prev: GradientConfig, scope: RerollScope, seed = randomSe
     next.canvas.margin = rng.range(0, 0.18)
   }
   if (scope === 'all') {
-    next.relief = { grain: rng.range(0.15, 0.6), relief: rng.range(0, 0.5), light: randLight(rng) }
+    next.relief = { relief: rng.range(0, 0.5), light: randLight(rng) }
     next.canvas.center = rng.chance(0.4) ? randCenter(rng) : { ...DEFAULT_CENTER }
   }
   // Always guarantee the optional fields exist after any re-roll (back-compat).

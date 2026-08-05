@@ -990,28 +990,23 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
         </BindableRow>
       </StudioSection>
 
-      <!-- Relief & grain. Relief + its light only shade the band/ring HEIGHT field (linear/
-           radial/orbit/stack); liquid uses flow.depth and mesh has no relief — so on those
-           only Grain applies, and the section slims to "Grain". -->
-      <StudioSection v-show="onDesign" :title="(isLiquid || isMesh) ? 'Grain' : 'Relief & grain'" :open="false">
-        <BindableRow control-key="relief.grain" label="Grain" kind="slider" :min="0" :max="1" :step="0.01" :bound="boundColumnFor('relief.grain')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Grain</span><span class="text-white/40">{{ config.relief.grain.toFixed(2) }}</span></label>
-          <input v-model.number="config.relief.grain" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range w-full" :class="(!isLiquid && !isMesh) ? 'mb-2' : ''" @input="onEdit('relief.grain', config.relief.grain)" />
+      <!-- Relief. Only shades the band/ring HEIGHT field (linear/radial/orbit/stack);
+           liquid uses flow.depth and mesh has no relief, so this whole section is
+           hidden for those layouts. Grain moved to the shared post stack's own Grain
+           section (Task 8) — see the schema-driven post panel further down. -->
+      <StudioSection v-show="onDesign && !isLiquid && !isMesh" title="Relief" :open="false">
+        <BindableRow control-key="relief.relief" label="Relief" kind="slider" :min="0" :max="1" :step="0.01" :bound="boundColumnFor('relief.relief')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
+          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Relief</span><span class="text-white/40">{{ config.relief.relief.toFixed(2) }}</span></label>
+          <input v-model.number="config.relief.relief" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('relief.relief', config.relief.relief)" />
         </BindableRow>
-        <template v-if="!isLiquid && !isMesh">
-          <BindableRow control-key="relief.relief" label="Relief" kind="slider" :min="0" :max="1" :step="0.01" :bound="boundColumnFor('relief.relief')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-            <label class="mb-1 flex justify-between text-xs text-white/60"><span>Relief</span><span class="text-white/40">{{ config.relief.relief.toFixed(2) }}</span></label>
-            <input v-model.number="config.relief.relief" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('relief.relief', config.relief.relief)" />
-          </BindableRow>
-          <BindableRow control-key="relief.light.azimuth" label="Light angle" kind="slider" :min="0" :max="360" :step="1" :bound="boundColumnFor('relief.light.azimuth')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-            <label class="mb-1 flex justify-between text-xs text-white/60"><span>Light angle</span><span class="text-white/40">{{ Math.round(lightAz) }}°</span></label>
-            <input v-model.number="lightAz" type="range" min="0" max="360" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('relief.light.azimuth', lightAz)" />
-          </BindableRow>
-          <BindableRow control-key="relief.light.elevation" label="Light height" kind="slider" :min="0" :max="90" :step="1" :bound="boundColumnFor('relief.light.elevation')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-            <label class="mb-1 flex justify-between text-xs text-white/60"><span>Light height</span><span class="text-white/40">{{ Math.round(lightEl) }}°</span></label>
-            <input v-model.number="lightEl" type="range" min="0" max="90" step="1" v-studio-reset class="studio-range w-full" @input="onEdit('relief.light.elevation', lightEl)" />
-          </BindableRow>
-        </template>
+        <BindableRow control-key="relief.light.azimuth" label="Light angle" kind="slider" :min="0" :max="360" :step="1" :bound="boundColumnFor('relief.light.azimuth')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
+          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Light angle</span><span class="text-white/40">{{ Math.round(lightAz) }}°</span></label>
+          <input v-model.number="lightAz" type="range" min="0" max="360" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('relief.light.azimuth', lightAz)" />
+        </BindableRow>
+        <BindableRow control-key="relief.light.elevation" label="Light height" kind="slider" :min="0" :max="90" :step="1" :bound="boundColumnFor('relief.light.elevation')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
+          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Light height</span><span class="text-white/40">{{ Math.round(lightEl) }}°</span></label>
+          <input v-model.number="lightEl" type="range" min="0" max="90" step="1" v-studio-reset class="studio-range w-full" @input="onEdit('relief.light.elevation', lightEl)" />
+        </BindableRow>
       </StudioSection>
 
       <!-- Focus / soft-focus DoF -->

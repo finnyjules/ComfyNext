@@ -142,8 +142,12 @@ export interface CanvasConfig {
 }
 
 export interface ReliefConfig {
-  /** Film-grain amount, 0..1. */
-  grain: number
+  /** @deprecated Film-grain amount, 0..1. Migrated into post.grain/post.grainAmount by
+   *  ensureConfigDefaults (Task 8 — grain moved into the shared post stack, retiring
+   *  this studio's own u_grain uniform). Kept optional only so ensureConfigDefaults can
+   *  read a legacy saved value before deleting it — mirrors MotionTrack.layer/param
+   *  below, and randomize.ts's builders/tests that still construct/inspect it as data. */
+  grain?: number
   /** Relief shading amount, 0..1. */
   relief: number
   /** Directional light for the 3D emboss (optional for back-compat; defaults to DEFAULT_LIGHT). */
@@ -331,6 +335,21 @@ export function ensureConfigDefaults(cfg: GradientConfig): GradientConfig {
   // Backfill post the same way — a config saved before this field existed (or a
   // partial agent/Collection patch) gets every effect defaulted to off.
   cfg.post = { ...DEFAULT_POST, ...(cfg.post ?? {}) }
+  // Grain moved into the shared post stack (Task 8). Gradient's 0.16 coefficient is
+  // canonical, so a legacy relief.grain value carries over 1:1 into post.grainAmount —
+  // existing docs stay pixel-stable. grainSize is force-pinned to 1: post_grain.frag's
+  // cell-quantisation (keyed to grainSize) has no equivalent in the old formula, so it
+  // is bit-exact ONLY at grainSize <= 1 — leaving it at DEFAULT_POST's 2 would render
+  // every migrated document visibly coarser than it looked before this change. Reads
+  // BEFORE `delete` so this only fires once per legacy doc, not on every subsequent
+  // ensureConfigDefaults pass. Delete this block once pre-2026-08 gradient docs are gone.
+  const legacyGrain = cfg.relief.grain
+  if (typeof legacyGrain === 'number' && legacyGrain > 0) {
+    cfg.post.grain = true
+    cfg.post.grainAmount = Math.min(1, legacyGrain)
+    cfg.post.grainSize = 1
+  }
+  delete cfg.relief.grain
   cfg.layers = cfg.layers ?? []
   // A mesh-layout config must carry mesh points on layer 0 (the renderer falls back
   // too, but backfilling here keeps the editor's bindings non-null).

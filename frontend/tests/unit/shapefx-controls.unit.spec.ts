@@ -46,10 +46,23 @@ describe('SHAPE_CONTROLS integrity', () => {
   it('every slider default equals the value DEFAULT_CONFIG actually ships', () => {
     // Guards the schema against drifting from the real defaults, which is what
     // v-studio-reset double-click restores to.
+    //
+    // post.grainAmount and post.grainSize are the deliberate exceptions (Task 8):
+    // their declared defaults (0.25 / 2, DEFAULT_POST's neutral "if you turn
+    // grain on" starting point — what a reset restores) differ from what a truly
+    // fresh DEFAULT_CONFIG-derived shape actually ships with (0.625 / 1) —
+    // because DEFAULT_CONFIG.style.grain (20, unchanged since before this task:
+    // every brand-new shape has always opened with a touch of grain) migrates
+    // through mergeConfig into non-default post.grainAmount/grainSize (grainSize
+    // force-pinned to 1 for the same cell-quantisation reason legacy saved docs
+    // are). See config.ts's style.grain doc comment and
+    // shapefx-config.unit.spec.ts's own coverage of this exact realization.
+    const GRAIN_EXCEPTIONS = new Set(['post.grainAmount', 'post.grainSize'])
     const c = cfg()
     const params = makeConfigParams(() => c, () => 0)
     for (const s of SHAPE_CONTROLS) {
       if (s.kind !== 'slider') continue
+      if (GRAIN_EXCEPTIONS.has(s.key)) continue
       expect(params[s.key], `${s.key}`).toBe(s.default)
     }
   })

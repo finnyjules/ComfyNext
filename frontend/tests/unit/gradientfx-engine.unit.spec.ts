@@ -175,7 +175,12 @@ describe('gradientfx liquid randomize', () => {
     expect(c.flow!.depth).toBe(8)         // form comes from lighting, not displacement
     expect(c.flow!.highlights).toBe(63)
     expect(c.flow!.shadows).toBe(55)
-    expect(c.relief.grain).toBe(0.95)
+    // relief.grain (was pinned at 0.95 here) is retired (Task 8) — its noise moved
+    // into the shared post stack, which fresh/rerolled builders like liquidConfig()
+    // no longer pre-enable (only migrated SAVED documents carry legacy grain
+    // forward — see gradientfx/types.ts's ensureConfigDefaults). Not part of "the
+    // look" this test pins anymore.
+    expect(c.post.grain).toBe(false)
     expect(c.focus!.blur).toBe(64)
     expect(c.layers[0]!.color.stops.map(s => s.color))
       .toEqual(['#f9d9f0', '#c026d3', '#960d32', '#fb7f09'])
@@ -258,10 +263,10 @@ describe('gradientfx focus / soft-focus post stage', () => {
     expect(BLUR_FS).toContain('focusMask')
     expect(BLUR_FS).toContain('GOLDEN')
   })
-  it('grain is deferred past the blur (grain supersedes blur — stays crisp)', () => {
-    expect(GRADIENT_FS).toContain('u_grainDeferred')       // main pass can skip grain
-    expect(BLUR_FS).toContain('hashGrain')                 // blur pass re-applies it
-    expect(BLUR_FS).toContain('u_grain')
+  it('grain retired from both passes (Task 8) — the shared post stack applies it AFTER this blur pass, so no deferred re-apply is needed here', () => {
+    expect(GRADIENT_FS).not.toContain('u_grain')            // covers u_grainDeferred too
+    expect(BLUR_FS).not.toContain('u_grain')
+    expect(BLUR_FS).not.toContain('hashGrain')
   })
   it('DEFAULT_FOCUS is off (blur 0 → byte-identical no-op)', () => {
     expect(DEFAULT_FOCUS.blur).toBe(0)
@@ -331,7 +336,7 @@ describe('gradient agent tune-up (presets + guidance)', () => {
   it('GRADIENT_GUIDANCE teaches recipes + few-shot examples, not typography', () => {
     expect(GRADIENT_GUIDANCE).toMatch(/marble|liquid/i)
     expect(GRADIENT_GUIDANCE).toMatch(/focus\.blur/)
-    expect(GRADIENT_GUIDANCE).toMatch(/relief\.grain/)
+    expect(GRADIENT_GUIDANCE).toMatch(/post\.grain/)
     expect(GRADIENT_GUIDANCE.toLowerCase()).not.toContain('typography effect')
     // few-shot composition examples present, referencing real preset names + stop keys
     expect(GRADIENT_GUIDANCE).toContain('EXAMPLES')

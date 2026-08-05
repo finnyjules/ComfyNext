@@ -128,10 +128,11 @@ export class GradientFxRenderer {
     }
   }
 
-  /** Second pass: sample the rendered scene texture with the focus-masked disc blur,
-   *  then re-apply film grain on top (deferred from the main pass so blur can't
-   *  average it away). */
-  private blurPass(gl: WebGL2RenderingContext, width: number, height: number, foc: FocusConfig, grain: number, seed: number) {
+  /** Second pass: sample the rendered scene texture with the focus-masked disc blur.
+   *  Grain no longer re-applies here (Task 8) — the shared post stack's Grain effect
+   *  runs after this canvas holds its final pixels (see render()'s applyPost() call),
+   *  which already stays crisp on top of the blur without a deferred re-apply. */
+  private blurPass(gl: WebGL2RenderingContext, width: number, height: number, foc: FocusConfig) {
     const prog = this.blurProg!
     gl.useProgram(prog)
     gl.bindFramebuffer(gl.FRAMEBUFFER, null)
@@ -147,8 +148,6 @@ export class GradientFxRenderer {
     gl.uniform1f(u('u_focusRadius'), foc.radius ?? 0.25)
     gl.uniform1f(u('u_focusSoft'), Math.max(0, (foc.softness ?? 40) / 100))
     gl.uniform1f(u('u_focusAngle'), (foc.angle ?? 0) * Math.PI / 180)
-    gl.uniform1f(u('u_grain'), grain)
-    gl.uniform1f(u('u_seed'), seed)
     gl.drawArrays(gl.TRIANGLES, 0, 3)
   }
 
@@ -287,11 +286,7 @@ export class GradientFxRenderer {
     gl.uniform1f(u('u_innerRadius'), c.canvas.innerRadius)
     const bg = hexToRgb(c.canvas.background)
     gl.uniform3f(u('u_bg'), bg.r / 255, bg.g / 255, bg.b / 255)
-    gl.uniform1f(u('u_grain'), c.relief.grain)
-    // When the soft-focus post pass is active, defer grain to it so blur can't
-    // average the grain away (grain supersedes blur).
     const blurActive = !!(c.focus && c.focus.blur > 0.001)
-    gl.uniform1f(u('u_grainDeferred'), blurActive ? 1 : 0)
     gl.uniform1f(u('u_relief'), c.relief.relief)
     const light = reliefLight(c.relief)
     const lv = lightVector(light.azimuth, light.elevation)
@@ -410,7 +405,7 @@ export class GradientFxRenderer {
       this.ensureSceneTarget(gl, width, height)
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbo)
       gl.drawArrays(gl.TRIANGLES, 0, 3)
-      this.blurPass(gl, width, height, foc, c.relief.grain, xmur(c.seed) % 10000)
+      this.blurPass(gl, width, height, foc)
     } else {
       gl.bindFramebuffer(gl.FRAMEBUFFER, null)
       gl.drawArrays(gl.TRIANGLES, 0, 3)
@@ -428,9 +423,20 @@ export class GradientFxRenderer {
     const post = c.post ?? DEFAULT_POST
     if (postEnabled(post)) {
       // Grain's noise field reroll per document: c.seed is this gradient's own
-      // short hash string, hashed to a number the same way u_seed above already
-      // is (xmur), so re-rolling the gradient also re-rolls its post grain.
-      const out = applyPost(this.canvas!, post, width, height, time, { seed: xmur(c.seed) })
+      // short hash string, hashed the same way u_seed above already is (xmur),
+      // so re-rolling the gradient also re-rolls its post grain. `% 10000` for
+      // the same reason u_seed above is modded: xmur returns a full unsigned
+      // 32-bit value (up to ~4.29e9), and post_grain.frag's hashGrain (like
+      // this file's own copy) is a fract()-chain hash — GPU highp float is
+      // ~24-bit mantissa, so an unmodded seed in the billions rounds away all
+      // of its fractional entropy and hashGrain(coord + seed) COLLAPSES to a
+      // constant (verified: mean/std both hit exactly 0 in a float32
+      // simulation at this magnitude) — grain silently degenerates from noise
+      // into a uniform colour-shift wash. Found via Task 8's pixel-fidelity
+      // check: a migrated document with legacy grain rendered visibly darker,
+      // uniformly, not grainy. Pre-existing since Task 5 wired applyPost here;
+      // Task 8's migration is what first exercises it end-to-end.
+      const out = applyPost(this.canvas!, post, width, height, time, { seed: xmur(c.seed) % 10000 })
       if (out !== this.canvas) this.blitBack(out)
     }
 

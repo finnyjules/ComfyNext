@@ -1,7 +1,9 @@
 // The Gradient Studio fragment shader. One pass synthesizes the whole image:
 // for each of up to 2 layers it maps the pixel through the layout, samples the
 // bar-depth field + gradient ramp, then blends the layers over the background
-// and adds relief + grain. GLSL ES 3.00 (WebGL2).
+// and adds relief. GLSL ES 3.00 (WebGL2). Film grain lives in the shared post
+// stack now (Task 8) — see gradientfx/types.ts's ensureConfigDefaults for the
+// legacy relief.grain migration and shader_effects/post_grain.frag for the effect.
 
 import { BLEND_LAYERS_GLSL } from '~/lib/studio/blend'
 
@@ -30,8 +32,6 @@ uniform float u_layout;        // 0 linear, 1 radial, 2 orbit
 uniform float u_margin;
 uniform float u_innerRadius;
 uniform vec3  u_bg;
-uniform float u_grain;
-uniform float u_grainDeferred; // 1 = skip grain here; the blur post-pass applies it AFTER blur (so blur can't average it away)
 uniform float u_relief;
 uniform vec3  u_light;         // normalized light dir (x,y in screen plane, z toward viewer)
 uniform vec2  u_center;        // radial/orbit origin offset
@@ -626,20 +626,11 @@ void main() {
     col += c * u_flowRipple * 0.5;
   }
 
-  // Film grain. Sampled PER DEVICE PIXEL (gl_FragCoord) — a coarser texCoord grid fell
-  // below 1px at preview resolution and beat against the pixel grid into a visible
-  // repeating tile. Per-pixel + a patternless hash keeps it clean at every resolution.
-  // Gated to shape coverage (clean background) and luminance-shaped (filmic midtone bias).
-  if (u_grain > 0.001 && cover > 0.001 && u_grainDeferred < 0.5) {
-    float g = hashGrain(gl_FragCoord.xy + u_seed) - 0.5;
-    float lum = dot(col, vec3(0.299, 0.587, 0.114));
-    float midtone = 0.35 + 0.65 * (lum * (1.0 - lum) * 4.0);   // 0.35 floor .. 1 at lum 0.5
-    col += g * u_grain * 0.16 * cover * midtone;
-  }
-
-  // When grain is deferred to the blur pass, smuggle shape coverage through the
-  // alpha channel so that pass can gate + luminance-shape grain identically.
-  fragColor = vec4(clamp(col, 0.0, 1.0), u_grainDeferred > 0.5 ? cover : 1.0);
+  // Film grain retired (Task 8) — moved into the shared post stack's own Grain
+  // effect (shader_effects/post_grain.frag, applied by gradientfx/renderer.ts's
+  // applyPost() call after this pass). cover above still gates the layer
+  // composite math; it has no remaining consumer after this point.
+  fragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
 }`
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -662,8 +653,6 @@ uniform vec2  u_focusCenter;  // −0.5..0.5
 uniform float u_focusRadius;  // in-focus size, 0..1
 uniform float u_focusSoft;    // falloff, 0..1
 uniform float u_focusAngle;   // radians (linear band)
-uniform float u_grain;        // film grain, re-applied AFTER blur so it stays crisp
-uniform float u_seed;
 
 const float GOLDEN = 2.3999632;   // golden angle (rad)
 const int   TAPS   = 28;
@@ -671,9 +660,6 @@ const int   TAPS   = 28;
 // Cheap hash → per-pixel spiral rotation, so the fixed kernel doesn't stamp a
 // visible orientation into the blur.
 float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-// Patternless grain hash (matches the main pass so grain looks identical whether
-// or not blur is on).
-float hashGrain(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 
 // 0 = fully sharp (inside focus), 1 = fully blurred. Aspect-corrected so a radial
 // focus reads round on non-square canvases.
@@ -715,13 +701,9 @@ void main(){
     outc = sum / wsum;
   }
 
-  // Grain LAST — supersedes the blur so it stays crisp everywhere (the main pass
-  // deferred it and stashed shape coverage in src.a). Same formula as the main pass.
-  if (u_grain > 0.001 && src.a > 0.001) {
-    float g = hashGrain(gl_FragCoord.xy + u_seed) - 0.5;
-    float lum = dot(outc, vec3(0.299, 0.587, 0.114));
-    float midtone = 0.35 + 0.65 * (lum * (1.0 - lum) * 4.0);
-    outc += g * u_grain * 0.16 * src.a * midtone;
-  }
+  // Grain retired from this pass (Task 8) — the shared post stack's Grain effect
+  // now runs AFTER this blur pass (applyPost(), called from renderer.ts's render()
+  // once this canvas holds the final pixels), which already guarantees grain stays
+  // crisp on top of the blur without a deferred re-apply here.
   fragColor = vec4(clamp(outc, 0.0, 1.0), 1.0);
 }`
