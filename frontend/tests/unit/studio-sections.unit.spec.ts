@@ -38,4 +38,38 @@ describe('groupIntoSections', () => {
   it('returns an empty array when nothing is visible', () => {
     expect(groupIntoSections([c('a', 'Alpha')], ORDER, () => false)).toEqual([])
   })
+
+  it('treats a slashed group as a child section', () => {
+    const out = groupIntoSections(
+      [c('a', 'Alpha'), c('s', 'Alpha/Shadow')],
+      ['Alpha', 'Alpha/Shadow'],
+    )
+    expect(out.map(s => s.title)).toEqual(['Alpha'])
+    expect(out[0]!.controls.map(x => x.key)).toEqual(['a'])
+    expect(out[0]!.sections.map(s => s.title)).toEqual(['Shadow'])
+    expect(out[0]!.sections[0]!.controls.map(x => x.key)).toEqual(['s'])
+  })
+
+  it('creates the parent even when only the child path is listed', () => {
+    const out = groupIntoSections([c('s', 'Alpha/Shadow')], ['Alpha/Shadow'])
+    expect(out.map(s => s.title)).toEqual(['Alpha'])
+    expect(out[0]!.controls).toEqual([])
+    expect(out[0]!.sections.map(s => s.title)).toEqual(['Shadow'])
+  })
+
+  it('nests more than one level deep', () => {
+    const out = groupIntoSections([c('d', 'A/B/C')], ['A/B/C'])
+    expect(out[0]!.sections[0]!.sections[0]!.title).toBe('C')
+    expect(out[0]!.sections[0]!.sections[0]!.controls.map(x => x.key)).toEqual(['d'])
+  })
+
+  it('prunes a branch whose every descendant is empty', () => {
+    const out = groupIntoSections([c('a', 'Alpha')], ['Alpha', 'Beta/Deep'])
+    expect(out.map(s => s.title)).toEqual(['Alpha'])
+  })
+
+  it('gives flat groups an empty children array, so callers can loop blindly', () => {
+    const out = groupIntoSections([c('a', 'Alpha')], ORDER)
+    expect(out[0]!.sections).toEqual([])
+  })
 })
