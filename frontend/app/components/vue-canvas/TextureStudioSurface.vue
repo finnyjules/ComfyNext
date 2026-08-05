@@ -28,6 +28,7 @@ import { controlsForStudio } from '~/lib/collection/studioControls'
 import type { StudioControlDesc } from '~/lib/collection/studioBindables'
 import { controlKindToVariableType } from '~/lib/collection/studioBindables'
 import { registerStudioParamBaker, unregisterStudioParamBaker } from '~/lib/studio/cascade'
+import { showIfVisible } from '~/lib/studio/sections'
 import SweepPopover from '~/components/vue-canvas/studio/SweepPopover.vue'
 
 const props = defineProps<{ nodeId: string; nodes: any[]; edges?: any[] }>()
@@ -223,7 +224,10 @@ function closeEditor() {
 // (shared with every other adopter), driven by TEXTURE_SECTIONS as the order.
 function controlVisible(c: ControlSpec): boolean {
   const tc = c as TextureControl
-  return !tc.when || tc.when(params)
+  // `showIf` too, not just `when`: the shared post stack's param rows declare it so
+  // they appear only once their effect's switch is on. Checking `when` alone showed
+  // all 21 of them permanently.
+  return (!tc.when || tc.when(params)) && showIfVisible(c, k => params[k])
 }
 
 // `set`/`promote` mirror the setter every control in the panel already used

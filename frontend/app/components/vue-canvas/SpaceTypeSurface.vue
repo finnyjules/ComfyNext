@@ -46,6 +46,7 @@ import { typeCompatible } from '~/lib/collection/bindables'
 import { addSweepRows } from '~/lib/collection/model'
 import { COLLECTION_PROP, VARS_TYPE, type CollectionColumn, type CollectionData } from '~/lib/collection/types'
 import { registerStudioParamBaker, unregisterStudioParamBaker } from '~/lib/studio/cascade'
+import { showIfVisible } from '~/lib/studio/sections'
 import { effectiveColumns, makeLookupResolver } from '~/lib/collection/lookup'
 import SweepPopover from '~/components/vue-canvas/studio/SweepPopover.vue'
 import { exportEmbedHtml, downloadEmbed } from '~/lib/embed/export'
@@ -301,11 +302,7 @@ function sectionVisible(section: { name: string; controls: ControlSpec[] }): boo
 /** A control may declare `showIf` to appear only when another param matches (e.g. a second axis's
  *  controls that only apply in a 'crosshatch' mode). Reactive via `params`. */
 function controlIsVisible(c: ControlSpec): boolean {
-  if (!c.showIf) return true
-  const v = params[c.showIf.key]
-  if (c.showIf.equals !== undefined) return v === c.showIf.equals
-  if (c.showIf.notEquals !== undefined) return v !== c.showIf.notEquals
-  return true
+  return showIfVisible(c, k => params[k])
 }
 
 // Collections variable binding — Type Studio is the first surface to get promote/bind

@@ -41,6 +41,7 @@ import { SHAPE_CONTROLS, SHAPE_SECTIONS, type ShapeControl } from '~/lib/shapefx
 import { controlsForStudio } from '~/lib/collection/studioControls'
 import type { StudioControlDesc } from '~/lib/collection/studioBindables'
 import { registerStudioParamBaker, unregisterStudioParamBaker } from '~/lib/studio/cascade'
+import { showIfVisible } from '~/lib/studio/sections'
 
 // `nodes` is optional (defaults to []) so this surface can be smoke-tested standalone
 // (see the dev lab page) before Task 10 wires it into VueNodeCanvas the way every other
@@ -165,7 +166,10 @@ function promoteShapeControl(c: ControlSpec) {
 }
 function controlVisible(c: ControlSpec): boolean {
   const sc = c as ShapeControl
-  return !sc.when || sc.when(config.value)
+  // `showIf` too, not just `when`: the shared post stack's param rows declare it so
+  // they appear only once their effect's switch is on. Checking `when` alone showed
+  // all 21 of them permanently.
+  return (!sc.when || sc.when(config.value)) && showIfVisible(c, k => paramsProxy[k])
 }
 // StudioControlPanel's per-key named slots (#control-<key>) are dynamically named, so
 // vue-tsc can't infer their scoped-prop type without the panel declaring `defineSlots` —

@@ -1,3 +1,26 @@
+import type { ControlSpec, ParamValue } from '~/lib/spacetype/effect'
+
+/**
+ * Evaluate a control's `showIf` — it appears only while another param matches.
+ *
+ * Shared because it was copy-pasted into SpaceTypeSurface and GradientStudioSurface
+ * with identical bodies, and NOT into TextureStudioSurface or ShapeStudioSurface,
+ * whose predicates checked only their own `when`. Those two therefore showed all 21
+ * post-effect param sliders permanently, regardless of the effect's own switch —
+ * a control declaring `showIf` was silently always-visible in exactly the studios
+ * that had just been given a stack full of them.
+ *
+ * `read` is a getter rather than a params object because the surfaces differ:
+ * Texture holds a flat record, Gradient and Shape a dotted proxy.
+ */
+export function showIfVisible(c: ControlSpec, read: (key: string) => ParamValue | undefined): boolean {
+  if (!c.showIf) return true
+  const v = read(c.showIf.key)
+  if (c.showIf.equals !== undefined) return v === c.showIf.equals
+  if (c.showIf.notEquals !== undefined) return v !== c.showIf.notEquals
+  return true
+}
+
 /**
  * Group a studio's controls into ordered inspector sections.
  *
