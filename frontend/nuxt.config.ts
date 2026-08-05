@@ -234,8 +234,11 @@ export default defineNuxtConfig({
       allowedHosts: true,
       // shader_effects/ lives at the repo root; the post chain imports its .frag
       // files with ?raw so post never depends on the backend catalog endpoint at
-      // render time.
-      fs: { allow: ['..'] },
+      // render time. Scoped to that ONE directory: '..' would grant the dev
+      // server read access to the whole repo root (user/, input/, output/,
+      // models/, .venv/, .superpowers/), and `allowedHosts: true` above has
+      // already dropped the Host-header check that guards against DNS rebinding.
+      fs: { allow: ['../shader_effects'] },
     },
   },
 
