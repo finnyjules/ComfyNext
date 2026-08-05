@@ -1,6 +1,7 @@
 import type { ControlSpec } from '~/lib/spacetype/effect'
 import { ASPECTS, BLEND_MODES, LAYOUTS, type GradientConfig } from './types'
 import { GRADIENT_PRESET_NAMES } from './presets'
+import { postControls, POST_SECTIONS } from '~/lib/studio/post/controls'
 
 /**
  * The single declarative description of Gradient Studio's parameters.
@@ -26,9 +27,12 @@ export type GradientControl = ControlSpec & {
   when?: (cfg: GradientConfig) => boolean
 }
 
-/** Emission order. The legacy builder emitted strictly in this group order. */
+/** Emission order. The legacy builder emitted strictly in this group order.
+ *  POST_SECTIONS (Bloom, Color, Duotone, ...) is appended so the shared post
+ *  stack's sections land after Focus — see the `post` field below. */
 export const GRADIENT_SECTIONS = [
   'Preset', 'Canvas', 'Colours', 'Flow', 'Liquid', 'Mesh', 'Shape', 'Relief', 'Layer', 'Focus',
+  ...POST_SECTIONS,
 ] as const
 
 const isRadial = (c: GradientConfig) => c.canvas.layout === 'radial' || c.canvas.layout === 'orbit'
@@ -136,6 +140,10 @@ export const GRADIENT_CONTROLS: GradientControl[] = [
   slider('focus.x', 'Focus X', -0.5, 0.5, 0.01, 'Focus', 'Focus centre, left↔right'),
   slider('focus.y', 'Focus Y', -0.5, 0.5, 0.01, 'Focus', 'Focus centre, up↔down'),
   slider('focus.angle', 'Band angle', 0, 360, 1, 'Focus', undefined, { when: (c) => c.focus?.shape === 'linear' }),
+
+  // --- Post (shared stack: bloom/color/duotone/chroma/blur/film/halftone/dotScreen/
+  //     glitch/grain/vignette — ambient occlusion withheld, 2D host) ---------
+  ...postControls({ threeD: false }),
 ]
 
 /** Per-stop / per-mesh-point colour controls — runtime cardinality. */

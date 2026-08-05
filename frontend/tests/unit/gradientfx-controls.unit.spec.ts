@@ -117,8 +117,16 @@ describe('GRADIENT_CONTROLS schema integrity', () => {
   })
 
   it('every slider keeps the inert default of 0', () => {
+    // Post-sourced sliders are the one deliberate exception: postControls() sets
+    // `default` to the effect's REAL default (e.g. bloomStrength 0.6) because,
+    // unlike Gradient's own hand-authored controls (whose `default` is read only
+    // by gradientAgentControls/motion, never by the UI — see this file's top
+    // comment), Post is rendered by StudioControlPanel/StudioSlider directly in
+    // GradientStudioSurface.vue, where `default` drives the actual double-click
+    // reset-to-default behaviour. A real default there is correct, not a bug.
     for (const c of GRADIENT_CONTROLS) {
       if (c.kind !== 'slider') continue
+      if (c.key.startsWith('post.')) continue
       expect(c.default, `${c.key} default`).toBe(0)
     }
   })

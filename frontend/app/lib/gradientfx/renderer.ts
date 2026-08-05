@@ -12,10 +12,25 @@ import { aspectRatio, canvasCenter, flowConfig, lightVector, reliefLight, LAYER_
   type Direction, type FocusConfig, type GradientConfig,
   type LayoutKind, type MappingKind } from './types'
 import { BLEND_IDX } from '~/lib/studio/blend'
+import { applyPost } from '~/lib/studio/post/chain'
+import { DEFAULT_POST, postEnabled } from '~/lib/studio/post/settings'
 
 const FOCUS_IDX: Record<FocusConfig['shape'], number> = { off: 0, radial: 1, linear: 2 }
 /** Blur amount 0..1 → max kernel radius as a fraction of the min canvas dimension. */
 const MAX_BLUR_FRAC = 0.12
+
+// Straight pass-through — used only by blitBack() to copy applyPost()'s result onto
+// this renderer's own canvas. Same shape as chain.ts's own BLIT_FS (out variable
+// named `fragColor`, not `fragColor0`, to match this file's GRADIENT_FS/BLUR_FS
+// convention) — compiled with GRADIENT_VS via the existing compile() helper, so
+// this is not a second way to draw a full-screen pass, just a second fragment
+// shader for the one the file already has.
+const BLIT_FS = `#version 300 es
+precision highp float;
+in vec2 v_texCoord;
+out vec4 fragColor;
+uniform sampler2D u_src;
+void main() { fragColor = texture(u_src, v_texCoord); }`
 
 const DIR_IDX: Record<Direction, number> = { up: 0, right: 1, down: 2, left: 3 }
 const MAP_IDX: Record<MappingKind, number> = { across: 0, perbar: 1, field: 2 }
@@ -31,6 +46,9 @@ export class GradientFxRenderer {
   private gl: WebGL2RenderingContext | null = null
   private prog: WebGLProgram | null = null
   private blurProg: WebGLProgram | null = null
+  // blitBack()'s program + upload texture — see that method's doc comment.
+  private blitProg: WebGLProgram | null = null
+  private blitTex: WebGLTexture | null = null
   // Per-layer fields/ramps as 2D array textures (one array layer per gradient layer),
   // sized 256 × 1 × LAYER_MAX. GLSL ES can't index a sampler[] by a loop variable, so
   // the composite loop reads them as sampler2DArray.
@@ -131,6 +149,52 @@ export class GradientFxRenderer {
     gl.uniform1f(u('u_focusAngle'), (foc.angle ?? 0) * Math.PI / 180)
     gl.uniform1f(u('u_grain'), grain)
     gl.uniform1f(u('u_seed'), seed)
+    gl.drawArrays(gl.TRIANGLES, 0, 3)
+  }
+
+  /**
+   * Copy `src` (applyPost()'s returned canvas) onto THIS renderer's own canvas.
+   * Required because the shared post chain is one GL2 context app-wide — its
+   * returned canvas is valid only until the next applyPost() call from ANY
+   * studio, so the result must be drawn back immediately (see chain.ts's module
+   * header). this.canvas is WebGL2-only — `getContext('2d')` returns null here,
+   * so a drawImage composite is not an option. Instead: upload `src` into a
+   * texture and draw it with the pass-through BLIT_FS above, reusing GRADIENT_VS
+   * / compile() (the same full-screen-triangle plumbing the blur pass already
+   * uses) rather than adding a second way to draw a full-screen pass to this file.
+   *
+   * Y-flip: `src` is an ordinary top-down canvas (same as any `<canvas>`), so it
+   * needs the same UNPACK_FLIP_Y_WEBGL upload this file's own GRADIENT_FS never
+   * needs (that shader computes colour directly, with no canvas source to flip) —
+   * matches chain.ts's uploadOrig(), which flips its own canvas-sourced upload for
+   * the identical reason.
+   *
+   * Alpha: no blending, straight RGBA copy — preserves the straight (non-
+   * premultiplied) alpha this context was created with (premultipliedAlpha:
+   * false, see `ensure()` above), which the transparent-background export
+   * routes depend on.
+   */
+  private blitBack(src: TexImageSource): void {
+    const gl = this.gl!
+    if (!this.blitProg) this.blitProg = this.compile(gl, BLIT_FS)
+    if (!this.blitTex) this.blitTex = gl.createTexture()
+    gl.bindTexture(gl.TEXTURE_2D, this.blitTex)
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true)
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, src)
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+
+    gl.useProgram(this.blitProg)
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+    gl.viewport(0, 0, this.canvas!.width, this.canvas!.height)
+    gl.disable(gl.BLEND)
+    gl.activeTexture(gl.TEXTURE0)
+    gl.bindTexture(gl.TEXTURE_2D, this.blitTex)
+    const loc = gl.getUniformLocation(this.blitProg, 'u_src')
+    if (loc) gl.uniform1i(loc, 0)
     gl.drawArrays(gl.TRIANGLES, 0, 3)
   }
 
@@ -351,6 +415,25 @@ export class GradientFxRenderer {
       gl.bindFramebuffer(gl.FRAMEBUFFER, null)
       gl.drawArrays(gl.TRIANGLES, 0, 3)
     }
+
+    // The single post call site for this studio. Because getFrame() hands this same
+    // canvas to bakes, exports and wired downstream nodes, post applied here is in
+    // every path automatically — no export route has to remember it.
+    //
+    // `c.post` (not `cfg.post`) — c is the post-motion config, so a motion track
+    // targeting a post.* param (e.g. animating bloom strength) takes effect here.
+    // Falls back to DEFAULT_POST (off) for a config that never passed through
+    // ensureConfigDefaults (the node card / embed / frame-source render paths all
+    // call this.render() straight off the saved blob — see frameSource.ts).
+    const post = c.post ?? DEFAULT_POST
+    if (postEnabled(post)) {
+      // Grain's noise field reroll per document: c.seed is this gradient's own
+      // short hash string, hashed to a number the same way u_seed above already
+      // is (xmur), so re-rolling the gradient also re-rolls its post grain.
+      const out = applyPost(this.canvas!, post, width, height, time, { seed: xmur(c.seed) })
+      if (out !== this.canvas) this.blitBack(out)
+    }
+
     return this.canvas!
   }
 
@@ -378,6 +461,10 @@ export class GradientFxRenderer {
     this.prog = null
     if (this.blurProg) gl.deleteProgram(this.blurProg)
     this.blurProg = null
+    if (this.blitProg) gl.deleteProgram(this.blitProg)
+    this.blitProg = null
+    if (this.blitTex) gl.deleteTexture(this.blitTex)
+    this.blitTex = null
 
     if (this.fieldArrayTex) gl.deleteTexture(this.fieldArrayTex)
     this.fieldArrayTex = null

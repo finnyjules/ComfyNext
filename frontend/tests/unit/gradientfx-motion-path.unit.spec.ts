@@ -78,10 +78,14 @@ describe('animatableTargets', () => {
   // removes a motion target fails loudly here instead of shipping unnoticed.
   it('pins the default config\'s animatable target set', () => {
     const paths = animatableTargets(cfg()).map((t) => t.path)
-    // 32 since relief.light.azimuth/elevation moved from the liquid layout (where
-    // the shader ignores them) to the banded layouts (where they aim the relief
-    // light) — so the default linear config can now animate the light too.
-    expect(paths.length).toBe(32)
+    // 51 = 32 (relief.light.azimuth/elevation moved from the liquid layout, where
+    // the shader ignores them, to the banded layouts, where they aim the relief
+    // light — so the default linear config can animate the light too) + 19 post.*
+    // sliders newly adopted from the shared post stack (Task 5): every POST_EFFECTS
+    // param whose `uniform` isn't null, minus the two colour params (duotoneShadow/
+    // Highlight — motion only animates sliders) and gtao's three (withheld from a
+    // 2D host by postControls({ threeD: false })) and halftoneScatter (uniform: null).
+    expect(paths.length).toBe(51)
     expect(paths).toMatchSnapshot()
   })
 })

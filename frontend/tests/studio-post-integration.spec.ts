@@ -66,3 +66,28 @@ test('glitch (no Sailor-mapped params) is not a no-op', async ({ page }) => {
   const changed = await page.evaluate(() => window.__sailorPostChangesPixels('glitch'))
   expect(changed).toBe(true)
 })
+
+// Task 5: Gradient Studio adopts the shared post stack (the FIRST real host —
+// Tasks 6/7 repeat this same per-studio probe for Texture/Shape). Two assertions,
+// because either alone can be fooled:
+//   1. post ON differs from post OFF   → proves the stage actually ran
+//   2. output still correlates with input → proves it did not flatten the frame
+// The risograph bug (2026-08-04) passed a parity gate at 0.01/255 while rendering
+// a flat wash with the image gone. Assertion 2 is what would have caught it.
+declare global {
+  interface Window {
+    __sailorPostProbe: (opts: { effect: string; size: number }) => Promise<{ meanAbsDiff: number; corr: number }>
+  }
+}
+
+const GRADIENT_PROBE_SIZES = [128, 512]
+
+test('gradient post stage runs and preserves structure', async ({ page }) => {
+  await page.goto('/dev/gradient-harness')
+  await page.waitForFunction(() => typeof (window as any).__sailorPostProbe === 'function')
+  for (const size of GRADIENT_PROBE_SIZES) {
+    const r = await page.evaluate(async (s) => await window.__sailorPostProbe({ effect: 'bloom', size: s }), size)
+    expect(r.meanAbsDiff).toBeGreaterThan(1 / 255)      // it ran
+    expect(r.corr).toBeGreaterThan(0.5)                  // it did not wash out
+  }
+})

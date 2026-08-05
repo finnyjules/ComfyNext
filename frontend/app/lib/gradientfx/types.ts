@@ -6,6 +6,9 @@
 import { defaultMesh } from './mesh'
 import type { BlendKind } from '~/lib/studio/blend'
 export { type BlendKind, BLEND_MODES } from '~/lib/studio/blend'
+// Three-free settings home (see settings.ts's own header) — safe for the Collection
+// resolver's dynamic import graph, same posture as scene3d/config.ts.
+import { DEFAULT_POST, type PostSettings } from '~/lib/studio/post/settings'
 
 /** Maximum number of stacked layers the render core composites. */
 export const LAYER_MAX = 6
@@ -252,6 +255,8 @@ export interface GradientConfig {
   flow?: FlowConfig
   /** Optical soft-focus / DoF (optional for back-compat; defaults to DEFAULT_FOCUS = off). */
   focus?: FocusConfig
+  /** Shared post-processing stack — see ~/lib/studio/post. */
+  post: PostSettings
 }
 
 export const ASPECTS = ['14:9', '16:9', '9:16', '1:1', '4:5', '3:2', '21:9'] as const
@@ -323,6 +328,9 @@ export function ensureConfigDefaults(cfg: GradientConfig): GradientConfig {
   // Backfill focus (merge so a partial object — e.g. an agent patch that set only
   // focus.blur — gets the rest of the defaults, keeping the editor bindings non-null).
   cfg.focus = { ...DEFAULT_FOCUS, ...(cfg.focus ?? {}) }
+  // Backfill post the same way — a config saved before this field existed (or a
+  // partial agent/Collection patch) gets every effect defaulted to off.
+  cfg.post = { ...DEFAULT_POST, ...(cfg.post ?? {}) }
   cfg.layers = cfg.layers ?? []
   // A mesh-layout config must carry mesh points on layer 0 (the renderer falls back
   // too, but backfilling here keeps the editor's bindings non-null).

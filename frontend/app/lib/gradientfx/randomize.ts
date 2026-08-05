@@ -9,6 +9,7 @@ import {
   type CenterOffset, type ColorConfig, type ColorStop, type FlowConfig, type GradientConfig, type LayerConfig,
   type LayoutKind, type LightConfig, type MeshConfig, type ShapeConfig,
 } from './types'
+import { DEFAULT_POST } from '~/lib/studio/post/settings'
 
 export type RerollScope = 'all' | 'colors' | 'structure'
 
@@ -177,6 +178,7 @@ export function spectrumStops(): ColorStop[] {
 export function rippleConfig(seed = randomSeed()): GradientConfig {
   return {
     seed,
+    post: { ...DEFAULT_POST },
     canvas: { aspect: '1:1', layout: 'orbit', margin: 0.06, innerRadius: 0, background: '#000000', center: { x: 0, y: 0.08 } },
     relief: { grain: 0.12, relief: 0.85, light: { azimuth: 135, elevation: 42 } },
     flow: { ...DEFAULT_FLOW },
@@ -202,6 +204,7 @@ export function rippleConfig(seed = randomSeed()): GradientConfig {
 export function stackConfig(seed = randomSeed()): GradientConfig {
   return {
     seed,
+    post: { ...DEFAULT_POST },
     canvas: { aspect: '1:1', layout: 'stack', margin: 0.06, innerRadius: 0, background: '#000000', center: { ...DEFAULT_CENTER } },
     relief: { grain: 0.1, relief: 0, light: { ...DEFAULT_LIGHT } },
     flow: { ...DEFAULT_FLOW },
@@ -226,6 +229,7 @@ export function stackConfig(seed = randomSeed()): GradientConfig {
 export function liquidConfig(seed = randomSeed()): GradientConfig {
   return {
     seed,
+    post: { ...DEFAULT_POST },
     canvas: { aspect: '16:9', layout: 'liquid', margin: 0, innerRadius: 0.4, background: '#000000', center: { ...DEFAULT_CENTER } },
     relief: { grain: 0.95, relief: 0, light: { ...DEFAULT_LIGHT } },
     // Authored default (not derived): a lit, refractive surface rather than the flat
@@ -257,6 +261,7 @@ export function meshConfig(seed = randomSeed()): GradientConfig {
   ]
   return {
     seed,
+    post: { ...DEFAULT_POST },
     canvas: { aspect: '1:1', layout: 'mesh', margin: 0, innerRadius: 0, background: '#100a24', center: { ...DEFAULT_CENTER } },
     relief: { grain: 0.12, relief: 0, light: { ...DEFAULT_LIGHT } },
     flow: { ...DEFAULT_FLOW, intensity: 24, noiseScale: 2.6, distortion: 60, detail: 2, speed: 22 },
@@ -310,6 +315,7 @@ export function liquidPresetConfig(name: LiquidPreset, seed = randomSeed()): Gra
   const look = LIQUID_LOOKS[name]
   return {
     seed,
+    post: { ...DEFAULT_POST },
     canvas: { aspect: '1:1', layout: 'liquid', margin: 0, innerRadius: 0, background: look.bg, center: { ...DEFAULT_CENTER } },
     relief: { grain: 0.16, relief: 0, light: { ...DEFAULT_LIGHT } },
     flow: { ...DEFAULT_FLOW, ...look.flow },
@@ -329,6 +335,7 @@ export function liquidPresetConfig(name: LiquidPreset, seed = randomSeed()): Gra
 export function defaultConfig(seed = randomSeed()): GradientConfig {
   return {
     seed,
+    post: { ...DEFAULT_POST },
     canvas: { aspect: '16:9', layout: 'linear', margin: 0, innerRadius: 0.4, background: '#000000', center: { ...DEFAULT_CENTER } },
     relief: { grain: 0.22, relief: 0, light: { ...DEFAULT_LIGHT } },
     flow: { ...DEFAULT_FLOW },
@@ -357,6 +364,7 @@ export function buildConfig(seed: string): GradientConfig {
   if (layout === 'mesh') layers[0]!.mesh = randMesh(rng, layers[0]!.color.stops, seed)
   return {
     seed,
+    post: { ...DEFAULT_POST },
     canvas: {
       aspect,
       // Mesh wants a dark base so the soft points read; force a near-black bg.

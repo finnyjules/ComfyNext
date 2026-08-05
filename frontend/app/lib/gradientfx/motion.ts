@@ -39,6 +39,14 @@ export function animatableTargets(cfg: GradientConfig): AnimatableTarget[] {
       cfg.layers.forEach((_l, i) => {
         out.push({ path: `layers.${i}.${rest}`, label: `${names[i] ?? `Layer ${i + 1}`} · ${c.label}`, ...range })
       })
+    } else if (c.key.startsWith('post.')) {
+      // Post params reuse generic labels across effects ("Amount", "Radius" —
+      // see manifest.ts: chroma/blur/grain/vignette all have an "Amount"), so
+      // without the effect name a motion track dropdown would show several
+      // indistinguishable "Amount" entries. Same "X · Y" disambiguation as the
+      // per-layer case above, keyed off the control's own section (c.group is
+      // the effect's label — see postControls()).
+      out.push({ path: c.key, label: `${c.group} · ${c.label}`, ...range })
     } else {
       out.push({ path: c.key, label: c.label, ...range })
     }

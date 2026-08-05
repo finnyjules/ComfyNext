@@ -8,6 +8,7 @@ import { randomSeed } from '~/lib/gradientfx/rng'
 import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
 import { encodeFrames } from '~/lib/engine/encodeVideo'
 import { animatableTargets, dropTracksForLayer, remapTracksOnInsert, remapTracksOnReorder } from '~/lib/gradientfx/motion'
+import { GRADIENT_CONTROLS } from '~/lib/gradientfx/controls'
 import { layerLabels } from '~/lib/gradientfx/layerLabel'
 import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
@@ -17,6 +18,10 @@ import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
 import BindableRow from '~/components/vue-canvas/studio/BindableRow.vue'
 import PalettePicker from '~/components/vue-canvas/studio/PalettePicker.vue'
 import CanvasContextMenu from '~/components/vue-canvas/CanvasContextMenu.vue'
+import StudioControlPanel from '~/components/vue-canvas/studio/StudioControlPanel.vue'
+import { POST_SECTIONS } from '~/lib/studio/post/controls'
+import { DEFAULT_POST } from '~/lib/studio/post/settings'
+import type { ControlSpec } from '~/lib/spacetype/effect'
 import { useStudioAgent } from '~/composables/useStudioAgent'
 import { useStudioVarBindings } from '~/composables/useStudioVarBindings'
 import { useStudioVarMenu } from '~/composables/useStudioVarMenu'
@@ -66,6 +71,11 @@ const onMotion = computed(() => inspectorTab.value === 'motion')
 // the current config so the Focus section's v-models are always non-null — presets
 // replace the whole config and defaultConfig() omits it. Runs before render.
 watch(config, (c) => { if (c && !c.focus) c.focus = { ...DEFAULT_FOCUS } }, { immediate: true, flush: 'sync' })
+// Same guarantee for post: defaultConfig()/randomize.ts's builders always set it now,
+// but a config loaded from an OLDER saved node blob (pre-this-task) or a not-yet-
+// updated preset would otherwise leave config.value.post undefined until the next
+// ensureConfigDefaults pass, and the Post panel's v-models need it non-null immediately.
+watch(config, (c) => { if (c && !c.post) c.post = { ...DEFAULT_POST } }, { immediate: true, flush: 'sync' })
 
 // In-product agent — "tune" the gradient in natural language (Phase 1). The
 // studio's nested `config` is bridged to a flat Params via makeConfigParams; only
@@ -106,13 +116,35 @@ const { boundColumnFor, boundColumnKeyFor, onEdit, promote, unbind } = useStudio
   { nodes: () => props.nodes, edges: () => props.edges ?? [] },
 )
 
-const { wiredColumns, sweepPopover, applySweep, varMenu, openVarMenu } = useStudioVarMenu({
+const { wiredColumns, sweepPopover, applySweep, varMenu, openVarMenu, goToCollection } = useStudioVarMenu({
   nodeId: () => props.nodeId,
   nodes: () => props.nodes,
   edges: () => props.edges ?? [],
   liveValue: (key) => paramsProxy[key] as string | number,
   boundColumnFor, boundColumnKeyFor, promote, unbind,
 })
+
+// ── shared post stack (Bloom/Color/Duotone/... — see ~/lib/studio/post) ────────
+// StudioControlPanel is handed the FULL GRADIENT_CONTROLS array (the single source
+// controls.ts already appends postControls() to) and the POST_SECTIONS allow-list,
+// which groupIntoSections() uses to pick out only the post.* controls — same
+// pattern Texture/Shape Studio use for their own schema-driven panels.
+function setPostControl(key: string, value: string | number | boolean) {
+  paramsProxy[key] = value as string | number
+  onEdit(key, value as string | number)
+}
+function promotePostControl(c: ControlSpec) {
+  promote(c, paramsProxy[c.key] as string | number)
+}
+/** A param row (e.g. Bloom's Strength/Radius/Threshold) only shows once its
+ *  effect's own switch is on — mirrors SpaceTypeSurface's showIf handling. */
+function postControlVisible(c: ControlSpec): boolean {
+  if (!c.showIf) return true
+  const v = paramsProxy[c.showIf.key]
+  if (c.showIf.equals !== undefined) return v === c.showIf.equals
+  if (c.showIf.notEquals !== undefined) return v !== c.showIf.notEquals
+  return true
+}
 
 // Render the current gradient to a PNG for the agent's visual self-review.
 function renderGradientForReview(): string | null {
@@ -1199,6 +1231,23 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
         </div>
         <div class="mt-1 text-[10px] text-white/30">{{ Math.round(config.motion.fps * config.motion.duration) }} frames</div>
       </StudioSection>
+
+      <!-- Post (shared stack): Bloom/Color/Duotone/Chroma/Blur/Film/Halftone/Dot screen/
+           Glitch/Grain/Vignette, one collapsible card per effect. Schema-driven — see
+           setPostControl above; POST_SECTIONS is the allow-list groupIntoSections() uses
+           to pick post.* controls out of the full GRADIENT_CONTROLS array. -->
+      <StudioControlPanel
+        v-show="onDesign"
+        :controls="GRADIENT_CONTROLS"
+        :order="POST_SECTIONS"
+        :value="(k: string) => paramsProxy[k] as string | number | boolean"
+        :visible="postControlVisible"
+        :bound-for="boundColumnFor"
+        :go-to-collection="goToCollection"
+        @set="setPostControl"
+        @promote="promotePostControl"
+        @menu="(e: MouseEvent, c: ControlSpec) => openVarMenu(e, c)"
+      />
 
       <!-- Export -->
       <StudioSection v-show="onDesign" title="Export" :open="false">
