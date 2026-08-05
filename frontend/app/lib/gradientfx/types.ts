@@ -142,11 +142,15 @@ export interface CanvasConfig {
 }
 
 export interface ReliefConfig {
-  /** @deprecated Film-grain amount, 0..1. Migrated into post.grain/post.grainAmount by
-   *  ensureConfigDefaults (Task 8 — grain moved into the shared post stack, retiring
-   *  this studio's own u_grain uniform). Kept optional only so ensureConfigDefaults can
-   *  read a legacy saved value before deleting it — mirrors MotionTrack.layer/param
-   *  below, and randomize.ts's builders/tests that still construct/inspect it as data. */
+  /** @deprecated Film-grain amount, 0..1. Read-only migration input, present only on
+   *  documents saved before Task 8 (grain moved into the shared post stack, retiring
+   *  this studio's own u_grain uniform). `resolvePost` derives post.grain /
+   *  grainAmount / grainSize from it on EVERY render — the node card, bakes, timeline
+   *  scrub and exports all render straight off the raw saved blob — and
+   *  ensureConfigDefaults then `delete`s it so the derivation happens at most once per
+   *  document in persisted form. Nothing may write it; a fresh value here would make a
+   *  migrated document look un-migrated again and override the user's own Grain
+   *  settings. Mirrors MotionTrack.layer/param below. */
   grain?: number
   /** Relief shading amount, 0..1. */
   relief: number
@@ -316,6 +320,44 @@ export function canvasCenter(canvas: CanvasConfig): CenterOffset {
 }
 
 /**
+ * Resolve a config's post settings — the ONLY place Gradient's legacy
+ * `relief.grain` turns into shared-post-stack grain.
+ *
+ * WHY THIS IS NOT INSIDE ensureConfigDefaults: that function runs on exactly one
+ * runtime path, GradientStudioSurface opening the studio. The node card, the
+ * render-cascade bake, the registered StudioFrameSource (timeline scrub + video
+ * export) and the embed all read `node.data.properties.sailor_gradientStudio` RAW
+ * and hand it straight to `GradientFxRenderer.render()`. Before Task 8 that was
+ * harmless — the shader read grain off the raw blob. Once grain moved into `post`,
+ * a migration that lived only in ensureConfigDefaults meant every legacy document
+ * lost its grain on all of those paths until someone opened and closed the studio,
+ * at which point the card and the studio visibly disagreed. So the migration lives
+ * at the render choke point (renderer.ts's `render()` calls this), and
+ * ensureConfigDefaults calls the same function so the two can never drift.
+ *
+ * Pure: never mutates `cfg`. ensureConfigDefaults is what persists the result and
+ * `delete`s the legacy field, so a document that has been through the studio once
+ * stops carrying a migration input at all and its saved `post` is thereafter the
+ * only source of truth.
+ *
+ * Gradient's 0.16 coefficient is canonical, so relief.grain carries over 1:1 into
+ * post.grainAmount. grainSize is force-pinned to 1: post_grain.frag's
+ * cell-quantisation (keyed to grainSize) has no equivalent in the old formula, so
+ * the port is bit-exact ONLY at grainSize <= 1 — leaving it at DEFAULT_POST's 2
+ * would render every migrated document visibly coarser than before.
+ */
+export function resolvePost(cfg: GradientConfig): PostSettings {
+  const post: PostSettings = { ...DEFAULT_POST, ...(cfg.post ?? {}) }
+  const legacyGrain = cfg.relief?.grain
+  if (typeof legacyGrain === 'number' && legacyGrain > 0) {
+    post.grain = true
+    post.grainAmount = Math.min(1, legacyGrain)
+    post.grainSize = 1
+  }
+  return post
+}
+
+/**
  * Backfill optional fields added after the original schema so persisted node
  * blobs keep working. Mutates `cfg` in place and returns it.
  */
@@ -334,21 +376,11 @@ export function ensureConfigDefaults(cfg: GradientConfig): GradientConfig {
   cfg.focus = { ...DEFAULT_FOCUS, ...(cfg.focus ?? {}) }
   // Backfill post the same way — a config saved before this field existed (or a
   // partial agent/Collection patch) gets every effect defaulted to off.
-  cfg.post = { ...DEFAULT_POST, ...(cfg.post ?? {}) }
-  // Grain moved into the shared post stack (Task 8). Gradient's 0.16 coefficient is
-  // canonical, so a legacy relief.grain value carries over 1:1 into post.grainAmount —
-  // existing docs stay pixel-stable. grainSize is force-pinned to 1: post_grain.frag's
-  // cell-quantisation (keyed to grainSize) has no equivalent in the old formula, so it
-  // is bit-exact ONLY at grainSize <= 1 — leaving it at DEFAULT_POST's 2 would render
-  // every migrated document visibly coarser than it looked before this change. Reads
-  // BEFORE `delete` so this only fires once per legacy doc, not on every subsequent
-  // ensureConfigDefaults pass. Delete this block once pre-2026-08 gradient docs are gone.
-  const legacyGrain = cfg.relief.grain
-  if (typeof legacyGrain === 'number' && legacyGrain > 0) {
-    cfg.post.grain = true
-    cfg.post.grainAmount = Math.min(1, legacyGrain)
-    cfg.post.grainSize = 1
-  }
+  // Grain moved into the shared post stack (Task 8) — resolvePost owns the derivation
+  // (it is also THE render-time choke point; see its doc comment). Applying it here
+  // too, and then `delete`ing the legacy field, is what makes the migration permanent
+  // in the saved blob rather than re-derived forever.
+  cfg.post = resolvePost(cfg)
   delete cfg.relief.grain
   cfg.layers = cfg.layers ?? []
   // A mesh-layout config must carry mesh points on layer 0 (the renderer falls back

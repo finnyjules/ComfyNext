@@ -8,12 +8,12 @@ import { applyMotion } from './motion'
 import { buildRampLut } from './ramp'
 import { hexToRgb } from './ramp'
 import { BLUR_FS, GRADIENT_FS, GRADIENT_VS } from './shaders'
-import { aspectRatio, canvasCenter, flowConfig, lightVector, reliefLight, LAYER_MAX,
+import { aspectRatio, canvasCenter, flowConfig, lightVector, reliefLight, resolvePost, LAYER_MAX,
   type Direction, type FocusConfig, type GradientConfig,
   type LayoutKind, type MappingKind } from './types'
 import { BLEND_IDX } from '~/lib/studio/blend'
 import { applyPost } from '~/lib/studio/post/chain'
-import { DEFAULT_POST, postEnabled } from '~/lib/studio/post/settings'
+import { postEnabled } from '~/lib/studio/post/settings'
 
 const FOCUS_IDX: Record<FocusConfig['shape'], number> = { off: 0, radial: 1, linear: 2 }
 /** Blur amount 0..1 → max kernel radius as a fraction of the min canvas dimension. */
@@ -30,7 +30,13 @@ precision highp float;
 in vec2 v_texCoord;
 out vec4 fragColor;
 uniform sampler2D u_src;
-void main() { fragColor = texture(u_src, v_texCoord); }`
+// 1 when render() smuggled shape coverage through alpha for post_grain's gate —
+// see blitBack()'s doc comment. Restores this studio's normal opaque output.
+uniform float u_forceOpaque;
+void main() {
+  vec4 s = texture(u_src, v_texCoord);
+  fragColor = vec4(s.rgb, u_forceOpaque > 0.5 ? 1.0 : s.a);
+}`
 
 const DIR_IDX: Record<Direction, number> = { up: 0, right: 1, down: 2, left: 3 }
 const MAP_IDX: Record<MappingKind, number> = { across: 0, perbar: 1, field: 2 }
@@ -132,7 +138,7 @@ export class GradientFxRenderer {
    *  Grain no longer re-applies here (Task 8) — the shared post stack's Grain effect
    *  runs after this canvas holds its final pixels (see render()'s applyPost() call),
    *  which already stays crisp on top of the blur without a deferred re-apply. */
-  private blurPass(gl: WebGL2RenderingContext, width: number, height: number, foc: FocusConfig) {
+  private blurPass(gl: WebGL2RenderingContext, width: number, height: number, foc: FocusConfig, coverAlpha: boolean) {
     const prog = this.blurProg!
     gl.useProgram(prog)
     gl.bindFramebuffer(gl.FRAMEBUFFER, null)
@@ -148,6 +154,10 @@ export class GradientFxRenderer {
     gl.uniform1f(u('u_focusRadius'), foc.radius ?? 0.25)
     gl.uniform1f(u('u_focusSoft'), Math.max(0, (foc.softness ?? 40) / 100))
     gl.uniform1f(u('u_focusAngle'), (foc.angle ?? 0) * Math.PI / 180)
+    // Pass the main pass's smuggled shape coverage straight through in alpha so
+    // post_grain.frag's gate sees it on the blur path too — exactly what the old
+    // deferred-grain-in-blur code did with the same channel.
+    gl.uniform1f(u('u_coverAlpha'), coverAlpha ? 1 : 0)
     gl.drawArrays(gl.TRIANGLES, 0, 3)
   }
 
@@ -172,8 +182,15 @@ export class GradientFxRenderer {
    * premultiplied) alpha this context was created with (premultipliedAlpha:
    * false, see `ensure()` above), which the transparent-background export
    * routes depend on.
+   *
+   * `opaque` (set when render() smuggled shape coverage through alpha for
+   * post_grain's gate) is the one exception: it resets alpha to 1 on the way
+   * back, so the coverage transport never escapes this method. Gradient's own
+   * output is fully opaque either way — GRADIENT_FS writes alpha 1.0 whenever
+   * u_coverAlpha is off — so this restores, rather than changes, the studio's
+   * opacity semantics.
    */
-  private blitBack(src: TexImageSource): void {
+  private blitBack(src: TexImageSource, opaque = false): void {
     const gl = this.gl!
     if (!this.blitProg) this.blitProg = this.compile(gl, BLIT_FS)
     if (!this.blitTex) this.blitTex = gl.createTexture()
@@ -194,6 +211,8 @@ export class GradientFxRenderer {
     gl.bindTexture(gl.TEXTURE_2D, this.blitTex)
     const loc = gl.getUniformLocation(this.blitProg, 'u_src')
     if (loc) gl.uniform1i(loc, 0)
+    const oLoc = gl.getUniformLocation(this.blitProg, 'u_forceOpaque')
+    if (oLoc) gl.uniform1f(oLoc, opaque ? 1 : 0)
     gl.drawArrays(gl.TRIANGLES, 0, 3)
   }
 
@@ -222,6 +241,20 @@ export class GradientFxRenderer {
   /** Render `cfg` at `time` seconds into the shared canvas; returns it. */
   render(cfg: GradientConfig, width: number, height: number, time = 0): HTMLCanvasElement {
     const c = applyMotion(cfg, time)
+
+    // THE post choke point for this studio. `c.post` (not `cfg.post`) so a motion
+    // track targeting a post.* param takes effect, and resolvePost (not a bare
+    // `?? DEFAULT_POST`) so the legacy relief.grain migration runs on EVERY path
+    // that renders — node card, bake, frame source, embed — not only on the one
+    // that happens to have called ensureConfigDefaults. See resolvePost's doc.
+    const post = resolvePost(c)
+    // Grain's shape-coverage gate (retired from GRADIENT_FS in Task 8) is restored
+    // by handing coverage to post_grain.frag through the one channel it already
+    // gates on: alpha. Only switched on when grain is actually running, because it
+    // makes this canvas's alpha temporarily non-opaque — blitBack() below puts it
+    // back. Same trick the pre-Task-8 deferred-blur path used (`u_grainDeferred`).
+    const coverAlpha = !!post.grain
+
     const gl = this.ensure(width, height)
     const prog = this.prog!
     gl.useProgram(prog)
@@ -287,6 +320,9 @@ export class GradientFxRenderer {
     const bg = hexToRgb(c.canvas.background)
     gl.uniform3f(u('u_bg'), bg.r / 255, bg.g / 255, bg.b / 255)
     const blurActive = !!(c.focus && c.focus.blur > 0.001)
+    // Shape-coverage transport for the shared post stack's Grain effect — see
+    // `coverAlpha` below and GRADIENT_FS's own u_coverAlpha comment.
+    gl.uniform1f(u('u_coverAlpha'), coverAlpha ? 1 : 0)
     gl.uniform1f(u('u_relief'), c.relief.relief)
     const light = reliefLight(c.relief)
     const lv = lightVector(light.azimuth, light.elevation)
@@ -405,7 +441,7 @@ export class GradientFxRenderer {
       this.ensureSceneTarget(gl, width, height)
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbo)
       gl.drawArrays(gl.TRIANGLES, 0, 3)
-      this.blurPass(gl, width, height, foc)
+      this.blurPass(gl, width, height, foc, coverAlpha)
     } else {
       gl.bindFramebuffer(gl.FRAMEBUFFER, null)
       gl.drawArrays(gl.TRIANGLES, 0, 3)
@@ -413,31 +449,22 @@ export class GradientFxRenderer {
 
     // The single post call site for this studio. Because getFrame() hands this same
     // canvas to bakes, exports and wired downstream nodes, post applied here is in
-    // every path automatically — no export route has to remember it.
-    //
-    // `c.post` (not `cfg.post`) — c is the post-motion config, so a motion track
-    // targeting a post.* param (e.g. animating bloom strength) takes effect here.
-    // Falls back to DEFAULT_POST (off) for a config that never passed through
-    // ensureConfigDefaults (the node card / embed / frame-source render paths all
-    // call this.render() straight off the saved blob — see frameSource.ts).
-    const post = c.post ?? DEFAULT_POST
+    // every path automatically — no export route has to remember it. `post` was
+    // resolved at the top of render(); see its comment there.
     if (postEnabled(post)) {
       // Grain's noise field reroll per document: c.seed is this gradient's own
       // short hash string, hashed the same way u_seed above already is (xmur),
-      // so re-rolling the gradient also re-rolls its post grain. `% 10000` for
-      // the same reason u_seed above is modded: xmur returns a full unsigned
-      // 32-bit value (up to ~4.29e9), and post_grain.frag's hashGrain (like
-      // this file's own copy) is a fract()-chain hash — GPU highp float is
-      // ~24-bit mantissa, so an unmodded seed in the billions rounds away all
-      // of its fractional entropy and hashGrain(coord + seed) COLLAPSES to a
-      // constant (verified: mean/std both hit exactly 0 in a float32
-      // simulation at this magnitude) — grain silently degenerates from noise
-      // into a uniform colour-shift wash. Found via Task 8's pixel-fidelity
-      // check: a migrated document with legacy grain rendered visibly darker,
-      // uniformly, not grainy. Pre-existing since Task 5 wired applyPost here;
-      // Task 8's migration is what first exercises it end-to-end.
+      // so re-rolling the gradient also re-rolls its post grain.
+      //
+      // `% 10000` is a FIDELITY PIN, not a precision guard (applyPost owns that
+      // now — see safeSeed/SEED_MAX in studio/post/chain.ts, which folds any seed
+      // into a GPU-precision-safe range regardless). It reproduces the exact value
+      // u_seed carries at line ~283 above, which is what the retired in-shader
+      // grain was sampled with, so a migrated document gets back its identical
+      // noise field rather than a differently-phased one. Changing it re-rolls
+      // every existing gradient's grain.
       const out = applyPost(this.canvas!, post, width, height, time, { seed: xmur(c.seed) % 10000 })
-      if (out !== this.canvas) this.blitBack(out)
+      if (out !== this.canvas) this.blitBack(out, coverAlpha)
     }
 
     return this.canvas!

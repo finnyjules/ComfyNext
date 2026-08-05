@@ -57,9 +57,10 @@ export class ShapeEngine {
    *  wire this via `setBake(true)` around a bake render, `setBake(false)` after. */
   private _bake = false
   setBake(bake: boolean): void { this._bake = bake }
-  // Lazily-built post-processing pass (grain + distortion) — see ensurePost(). Only
-  // allocated the first time a config actually needs it (postNeeded), so a plain shape
-  // with both sliders at 0 never pays for a render target or a second draw call.
+  // Lazily-built post-processing pass (distortion; grain retired to the shared post
+  // stack in Task 8) — see ensurePost(). Only allocated the first time a config
+  // actually needs it (postNeeded), so a shape that needs neither distortion nor the
+  // legacy render-path pin never pays for a render target or a second draw call.
   private rt: THREE.WebGLRenderTarget | null = null
   private postScene: THREE.Scene | null = null
   private postCam: THREE.OrthographicCamera | null = null
@@ -151,7 +152,7 @@ export class ShapeEngine {
    *
    * Instead, this composites through three's OWN render path: a full-screen quad
    * (same PlaneGeometry(2,2) + orthographic camera shape as ensurePost()'s own
-   * grain/distortion quad above), textured with applyPost()'s result canvas
+   * distortion quad above), textured with applyPost()'s result canvas
    * wrapped in a THREE.CanvasTexture, drawn via `this.renderer.render(...)`.
    * Three issues every GL call itself, so its state cache stays authoritative —
    * this is the same posture as three's own documented pattern for compositing
@@ -232,8 +233,9 @@ export class ShapeEngine {
       u.uScene!.value = this.rt!.texture
       u.uDistort!.value = (cfg.style.distortion ?? 0) / 100
       u.uResolution!.value.set(this.w, this.h)
-      // Stable per-shape seed (derived from the config's seed string) so the grain pattern
-      // doesn't jump between renders/bakes of the same shape.
+      // Stable per-shape seed (derived from the config's seed string) so the distortion
+      // field doesn't jump between renders/bakes of the same shape. The shared post
+      // stack's grain is pinned to this SAME value below — see the applyPost call.
       u.uSeed!.value = hashSeed(cfg.seed) % 1000
       this.renderer.render(this.postScene!, this.postCam!)
     }
@@ -254,15 +256,16 @@ export class ShapeEngine {
       //
       // seed: Shape's config carries its own seed string (cfg.seed) the same way
       // Gradient's does — hashed with the SAME hashSeed() this file already uses
-      // for POST_FRAG's own uSeed uniform above (% 1000 there too), so post_grain's
-      // noise field re-rolls per-shape too, not identically across every Shape node.
-      // `% 1000` for the same reason POST_FRAG's own uSeed above is modded: hashSeed
-      // returns a full unsigned 32-bit value, and post_grain.frag's hashGrain is a
-      // fract()-chain hash whose entropy collapses at GPU highp float precision once
-      // the seed reaches into the billions (verified in a float32 simulation: mean/std
-      // both hit exactly 0) — grain silently degenerates from noise into a uniform
-      // colour-shift wash. Found via Task 8's Gradient pixel-fidelity check; applies
-      // here too since this call had the identical unmodded pattern.
+      // for POST_FRAG's own uSeed uniform above, so post_grain's noise field
+      // re-rolls per-shape, not identically across every Shape node.
+      //
+      // `% 1000` is a FIDELITY PIN, not a precision guard (applyPost owns that now —
+      // see safeSeed/SEED_MAX in studio/post/chain.ts, which would fold this seed
+      // anyway). It reproduces the exact value the retired uGrain grain in POST_FRAG
+      // was sampled with (line ~237 above, `hashSeed(cfg.seed) % 1000`), so a
+      // migrated document gets back the identical noise field rather than a
+      // statistically-equivalent but differently-phased one. Changing it re-rolls
+      // every existing shape's grain.
       const out = applyPost(this.renderer.domElement, post, this.w, this.h, 0, {
         threeD: false,
         seed: cfg ? hashSeed(cfg.seed) % 1000 : undefined,

@@ -136,8 +136,93 @@ async function sailorPostOrientationProbe(opts: { size: number }): Promise<{ off
   }
 }
 
+/**
+ * Grain's SHAPE-COVERAGE gate (Task 8 review, C3).
+ *
+ * The retired in-shader formula was `col += g * u_grain * 0.16 * cover * midtone`,
+ * guarded by `cover > 0.001` — "Gated to shape coverage (clean background)". Every
+ * fidelity measurement taken during Task 8 used `defaultConfig`, whose layout is
+ * `linear` with margin 0, where `cover` is identically 1 — so the gate was invisible
+ * to the measurement and could be dropped without any test noticing. This probe uses
+ * a layout where coverage is genuinely below 1 (ORBIT + margin + innerRadius), which
+ * is the only kind of fixture that can see it at all.
+ *
+ * Method: render the same config twice, grain OFF then grain ON, and classify pixels
+ * by the OFF frame — a pixel that is exactly the background colour had no shape over
+ * it (relief and flow are off, so nothing else can tint the background). Then report,
+ * separately for background and covered pixels, how far the ON frame moved. Plus the
+ * minimum alpha of the ON frame: the gate is implemented by smuggling coverage
+ * through alpha (see GRADIENT_FS's u_coverAlpha), and that transport must never
+ * escape the renderer — the studio's output is opaque.
+ */
+async function sailorGrainCoverageProbe(opts: { size: number; blur?: number }): Promise<{
+  bgPixels: number
+  fgPixels: number
+  bgMaxDiff: number
+  bgChanged: number
+  fgMaxDiff: number
+  fgMeanDiff: number
+  minAlpha: number
+}> {
+  const { size, blur = 0 } = opts
+  const base = ensureConfigDefaults(defaultConfig(HARNESS_SEED) as GradientConfig)
+  // Orbit rings, pulled well away from the frame edges and hollowed in the middle,
+  // over a mid-dark background: lots of genuinely uncovered pixels, and a background
+  // luminance where grain's midtone shaping still gives a strong signal.
+  base.canvas.layout = 'orbit'
+  base.canvas.margin = 0.22
+  base.canvas.innerRadius = 0.4
+  base.canvas.background = '#204060'
+  base.relief.relief = 0
+  base.flow = { ...base.flow!, intensity: 0, speed: 0 }
+  // focus.blur is a 0..100 slider (see gradientfx/controls.ts), NOT 0..1 — a
+  // fractional value here silently renders sharp (radius < 0.6px) and the "blur
+  // path" variant would quietly test nothing.
+  base.focus = { ...base.focus!, blur, shape: 'off' }
+
+  const read = (post: typeof DEFAULT_POST) => {
+    const cfg = cloneConfig(base)
+    cfg.post = post
+    const out = renderer.render(cfg, size, size, 0)
+    const probe = document.createElement('canvas')
+    probe.width = size
+    probe.height = size
+    const ctx = probe.getContext('2d', { willReadFrequently: true })!
+    ctx.clearRect(0, 0, size, size)
+    ctx.drawImage(out, 0, 0)
+    return ctx.getImageData(0, 0, size, size).data
+  }
+
+  const off = read({ ...DEFAULT_POST })
+  const on = read({ ...DEFAULT_POST, grain: true, grainAmount: 1, grainSize: 1 })
+
+  const BG = [0x20, 0x40, 0x60]
+  let bgPixels = 0, fgPixels = 0, bgMaxDiff = 0, bgChanged = 0, fgMaxDiff = 0, fgSum = 0
+  let minAlpha = 255
+  for (let i = 0; i < off.length; i += 4) {
+    const d = Math.max(
+      Math.abs(on[i]! - off[i]!),
+      Math.abs(on[i + 1]! - off[i + 1]!),
+      Math.abs(on[i + 2]! - off[i + 2]!),
+    )
+    minAlpha = Math.min(minAlpha, on[i + 3]!)
+    const isBg = off[i] === BG[0] && off[i + 1] === BG[1] && off[i + 2] === BG[2]
+    if (isBg) {
+      bgPixels++
+      bgMaxDiff = Math.max(bgMaxDiff, d)
+      if (d > 1) bgChanged++
+    } else {
+      fgPixels++
+      fgMaxDiff = Math.max(fgMaxDiff, d)
+      fgSum += d
+    }
+  }
+  return { bgPixels, fgPixels, bgMaxDiff, bgChanged, fgMaxDiff, fgMeanDiff: fgSum / Math.max(1, fgPixels), minAlpha }
+}
+
 if (import.meta.client) {
   ;(window as any).__sailorPostProbe = sailorPostProbe
   ;(window as any).__sailorPostOrientationProbe = sailorPostOrientationProbe
+  ;(window as any).__sailorGrainCoverageProbe = sailorGrainCoverageProbe
 }
 </script>

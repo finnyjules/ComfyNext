@@ -4,24 +4,25 @@ import type { ShapeConfig } from './config'
  *  the canvas with no render target — matching the old overlay's `filter: none` skip.
  *
  * Grain's own NOISE is retired from this pass (Task 8 — moved into the shared post
- * stack; see config.ts's mergeConfig). style.grain still counts toward "needed" here
- * for a reason that has nothing to do with grain's pixels: routing a config through
- * this pass (engine.ts's ensurePost()/offscreen WebGLRenderTarget + blit) instead of
- * straight to the canvas changes the base image itself — no MSAA on that render
- * target vs. the canvas's own antialias:true, sampled through one extra texture
- * round-trip — an existing, orthogonal difference in Shape's render pipeline,
- * unrelated to and out of scope for this task (distortion, which still legitimately
- * needs this pass, has always paid it too). Every existing Shape document has
- * style.grain > 0 by default (DEFAULT_CONFIG's own grain default is 20), so EVERY
- * migrated document has always taken this path — dropping grain from this check
- * would silently move nearly every existing document onto the OTHER, cleaner-looking
- * path, which is a real, measured appearance change (verified: ~40/255 mean pixel
- * diff on a representative fixture) despite the noise math itself being correct.
- * Keeping this check byte-identical to the pre-Task-8 condition is what makes the
- * migration pixel-exact (verified: 65536/65536 exact byte match at 128px) — see
- * config.ts's mergeConfig for why style.grain is therefore no longer deleted. */
+ * stack; see config.ts's mergeConfig). What replaced grain in this check is NOT a
+ * look knob: `forceOffscreenPass` is a compatibility pin (read its doc comment on
+ * ShapeConfig). Routing a config through this pass (engine.ts's ensurePost()/
+ * offscreen WebGLRenderTarget + blit) instead of straight to the canvas changes the
+ * base image itself — no MSAA on that render target vs. the canvas's own
+ * antialias:true, sampled through one extra texture round-trip — an existing,
+ * orthogonal difference in Shape's render pipeline, unrelated to and out of scope for
+ * this task (distortion, which still legitimately needs this pass, has always paid it
+ * too). Pre-Task-8 the condition was `style.grain > 0`, and style.grain defaulted to
+ * 20, so every saved document took this path; testing distortion alone would have
+ * silently moved all of them onto the OTHER, cleaner-looking path — a real, measured
+ * appearance change (~40/255 mean pixel diff on a representative fixture) despite the
+ * noise math itself being correct.
+ *
+ * The pin decouples that routing answer from the grain AMOUNT, which is now the
+ * user's to change through the shared Grain controls: a migrated document keeps its
+ * original path even after its owner turns grain down, off, or up. */
 export function postNeeded(cfg: ShapeConfig): boolean {
-  return (cfg.style.distortion ?? 0) > 0 || (cfg.style.grain ?? 0) > 0
+  return cfg.forceOffscreenPass === true || (cfg.style.distortion ?? 0) > 0
 }
 
 export const POST_VERT = `

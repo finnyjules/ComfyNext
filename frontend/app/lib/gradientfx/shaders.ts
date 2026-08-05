@@ -32,6 +32,15 @@ uniform float u_layout;        // 0 linear, 1 radial, 2 orbit
 uniform float u_margin;
 uniform float u_innerRadius;
 uniform vec3  u_bg;
+// 1 = write shape COVERAGE into alpha instead of a flat 1.0, so the shared post
+// stack's Grain effect can reproduce the coverage gate this shader's own retired
+// grain had (the trailing "* cover" factor, "clean background"). post_grain.frag gates on its own
+// input alpha, which is the only channel a generic post effect can read, so alpha
+// is the transport. Set only when grain is actually running; renderer.ts's
+// blitBack() puts alpha back to 1 afterwards, so nothing downstream ever sees it.
+// Same trick as the pre-Task-8 u_grainDeferred path, which smuggled cover to the
+// blur pass through exactly this channel.
+uniform float u_coverAlpha;
 uniform float u_relief;
 uniform vec3  u_light;         // normalized light dir (x,y in screen plane, z toward viewer)
 uniform vec2  u_center;        // radial/orbit origin offset
@@ -628,9 +637,12 @@ void main() {
 
   // Film grain retired (Task 8) — moved into the shared post stack's own Grain
   // effect (shader_effects/post_grain.frag, applied by gradientfx/renderer.ts's
-  // applyPost() call after this pass). cover above still gates the layer
-  // composite math; it has no remaining consumer after this point.
-  fragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
+  // applyPost() call after this pass). The retired formula was
+  // "col += g * u_grain * 0.16 * cover * midtone" — the "cover" factor kept grain
+  // off the clean background, which matters for every layout where coverage is
+  // less than 1 (orbit/radial/stack with margin, innerRadius or gap). That gate is
+  // preserved by handing "cover" to the post stack in alpha; see u_coverAlpha.
+  fragColor = vec4(clamp(col, 0.0, 1.0), u_coverAlpha > 0.5 ? cover : 1.0);
 }`
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -653,6 +665,7 @@ uniform vec2  u_focusCenter;  // −0.5..0.5
 uniform float u_focusRadius;  // in-focus size, 0..1
 uniform float u_focusSoft;    // falloff, 0..1
 uniform float u_focusAngle;   // radians (linear band)
+uniform float u_coverAlpha;   // 1 = forward the main pass's coverage in alpha (see GRADIENT_FS)
 
 const float GOLDEN = 2.3999632;   // golden angle (rad)
 const int   TAPS   = 28;
@@ -704,6 +717,9 @@ void main(){
   // Grain retired from this pass (Task 8) — the shared post stack's Grain effect
   // now runs AFTER this blur pass (applyPost(), called from renderer.ts's render()
   // once this canvas holds the final pixels), which already guarantees grain stays
-  // crisp on top of the blur without a deferred re-apply here.
-  fragColor = vec4(clamp(outc, 0.0, 1.0), 1.0);
+  // crisp on top of the blur without a deferred re-apply here. What this pass still
+  // does for grain is forward the main pass's smuggled shape coverage (src.a, the
+  // UNBLURRED centre tap — exactly what the old deferred-grain code gated on) so
+  // the coverage gate survives the blur path too. See GRADIENT_FS's u_coverAlpha.
+  fragColor = vec4(clamp(outc, 0.0, 1.0), u_coverAlpha > 0.5 ? src.a : 1.0);
 }`

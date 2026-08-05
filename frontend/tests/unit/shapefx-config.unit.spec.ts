@@ -26,22 +26,12 @@ describe('shapefx config', () => {
     expect(merged.locks).toEqual(DEFAULT_CONFIG.locks)
   })
 
-  // Task 8: DEFAULT_CONFIG's own grain default (20) now realizes as post.grain
-  // through mergeConfig (see config.ts's style.grain doc comment for why the
-  // field survives mergeConfig instead of being migrated-and-dropped), so a full
-  // DEFAULT_CONFIG no longer round-trips byte-identical — it settles onto a
-  // stable fixed point instead, which is what these two tests check.
-  it('mergeConfig is a stable fixed point on a full DEFAULT_CONFIG (idempotent from the second pass on)', () => {
-    const once = mergeConfig(JSON.parse(JSON.stringify(DEFAULT_CONFIG)))
-    const twice = mergeConfig(JSON.parse(JSON.stringify(once)))
-    expect(twice).toEqual(once)
-  })
-
-  it("DEFAULT_CONFIG's own grain default (20) is realized as post.grain through mergeConfig", () => {
+  // DEFAULT_CONFIG describes a brand-new document, which has nothing to migrate —
+  // so it must survive mergeConfig untouched. (This test regressed during Task 8,
+  // when the grain migration re-derived post on every merge; it is restored as the
+  // canary for exactly that.)
+  it('mergeConfig round-trips a full DEFAULT_CONFIG unchanged', () => {
     const merged = mergeConfig(JSON.parse(JSON.stringify(DEFAULT_CONFIG)))
-    expect(merged.style.grain).toBe(20)
-    expect(merged.post.grain).toBe(true)
-    expect(merged.post.grainAmount).toBeCloseTo(0.625, 5)
-    expect(merged.post.grainSize).toBe(1)
+    expect(merged).toEqual(DEFAULT_CONFIG)
   })
 })

@@ -49,12 +49,23 @@ export interface PaletteParams {
 }
 
 export interface StyleParams {
-  /** @deprecated 0–100. Migrated into post.grain/post.grainAmount by mergeConfig
-   *  (Task 8 — grain moved into the shared post stack, retiring this studio's own
-   *  uGrain uniform in ./post.ts). Kept optional only so mergeConfig can read a
-   *  legacy saved value before dropping it — mirrors gradientfx/types.ts's
-   *  ReliefConfig.grain treatment, and randomize.ts's rollStyle, which still rolls
-   *  this as inert legacy data. */
+  /** @deprecated 0–100 legacy grain slider, retired in Task 8 (grain moved into the
+   *  shared post stack, retiring this studio's own uGrain uniform in ./post.ts).
+   *
+   *  THE REAL CONTRACT — read before touching this field or the code that reads it:
+   *  this is a READ-ONLY MIGRATION INPUT that exists only on documents saved before
+   *  Task 8. `mergeConfig` consumes it exactly once (deriving post.grain /
+   *  post.grainAmount / post.grainSize and the `forceOffscreenPass` render-path pin
+   *  from it) and then DROPS it — the merged config it returns never carries `grain`,
+   *  so it is gone from the blob the next save writes. This mirrors
+   *  gradientfx/types.ts's ReliefConfig.grain treatment exactly.
+   *
+   *  Nothing renders from it, nothing routes off it, and nothing may write it:
+   *  writing a value here on a live config would re-fire the migration on the next
+   *  load and clobber whatever the user had since set on the shared Grain controls.
+   *  (That is precisely why randomize.ts's rollStyle no longer rolls it.) Deleting
+   *  the field outright is safe only once no pre-Task-8 Shape document can still be
+   *  loaded. */
   grain?: number
   distortion: number   // 0–100
   background: string   // '#rrggbb' or 'transparent'
@@ -87,10 +98,33 @@ export interface ShapeConfig {
   fill: SurfaceFill
   style: StyleParams
   locks: Record<SectionKey, boolean>
-  /** Shared post-processing stack — see ~/lib/studio/post. Runs AFTER style.grain/
+  /** Shared post-processing stack — see ~/lib/studio/post. Runs AFTER
    *  style.distortion (this studio's own pass, ./post.ts's POST_FRAG); see
    *  engine.ts's drawFrame() for why both are active at once. */
   post: PostSettings
+  /** Render-path compatibility pin, NOT a user control and NOT a look knob.
+   *
+   *  `postNeeded()` (./post.ts) routes a config through engine.ts's offscreen
+   *  WebGLRenderTarget instead of straight to the canvas. That target has no MSAA
+   *  where the canvas itself is created with `antialias: true`, so which path a
+   *  document takes visibly changes its edges — an orthogonal, pre-existing quirk
+   *  of Shape's pipeline that has nothing to do with any effect.
+   *
+   *  Before Task 8 the routing question was `style.grain > 0`, and style.grain
+   *  defaulted to 20, so every document — saved or brand-new — took the offscreen
+   *  path. Retiring the grain slider would have silently moved all of them onto the
+   *  other path. This flag freezes that answer: mergeConfig's migration sets it ONCE
+   *  from the legacy value (so a document that explicitly saved grain 0, and thus
+   *  never took the pass, still doesn't), and DEFAULT_CONFIG ships it `true` so a new
+   *  shape renders down the same path every shape always has. It then stays frozen no
+   *  matter what the user later does to the shared Grain controls — which is the whole
+   *  point: the amount is theirs, the render path is history.
+   *
+   *  Flipping the default to false would move every future document onto the
+   *  antialiased path. That is arguably the nicer render, but it is a real appearance
+   *  change (~40/255 mean on a representative fixture) and belongs to the separate
+   *  fix that gives ensurePost()'s target proper MSAA, not to this migration. */
+  forceOffscreenPass: boolean
 }
 
 export const DEFAULT_CONFIG: ShapeConfig = {
@@ -99,17 +133,22 @@ export const DEFAULT_CONFIG: ShapeConfig = {
   shape: { mode: 'primitive', primitive: 'cube', vertices: 14, depth: 1, spread: 0.65, density: 1, jitter: 0, scale: 1, projection: 'orthographic' },
   palette: { harmony: 'analogous', baseHue: 287, saturation: 57, lightness: 47, coloring: 'prismatic', direction: 'vertical' },
   fill: { type: 'gradient', a: '#ff4da6', b: '#6a3df0', angle: 45, density: 8 },
-  // grain: 20 preserved as the literal default (unchanged since before Task 8) — see
-  // postNeeded()'s doc comment in ./post.ts for why this field survives mergeConfig
-  // rather than being deleted: every brand-new shape has always opened with a touch
-  // of grain, and this keeps that default (now realized via the shared post stack)
-  // pixel-identical to how it always rendered.
-  style: { grain: 20, distortion: 0, background: '#000000' },
+  // No `grain` here: the legacy 0-100 slider is a migration input only (see
+  // StyleParams.grain), and DEFAULT_CONFIG describes a BRAND-NEW document, which by
+  // definition has nothing to migrate. Consequence, deliberate and documented: a fresh
+  // shape now ships with the shared stack's own neutral grain defaults (off) rather
+  // than the old always-on touch of grain, which is what lets the control schema and
+  // the config agree again (see shapefx-controls.unit.spec.ts's no-exceptions default
+  // check). Its RENDER PATH is unchanged — see forceOffscreenPass below. Task 8's
+  // charter is that documents saved BEFORE the change render identically after it;
+  // those all carry style.grain and go through mergeConfig's migration.
+  style: { distortion: 0, background: '#000000' },
   locks: { shape: false, palette: false, style: false },
   // Own object literal, not a reference to the shared DEFAULT_POST constant — this
   // constant is reused (spread, not aliased) by callers that build config literals
   // (randomize.ts, presets), same posture as every other DEFAULT_CONFIG field.
   post: { ...DEFAULT_POST },
+  forceOffscreenPass: true,
 }
 
 const num = (v: unknown, d: number): number => (typeof v === 'number' && Number.isFinite(v) ? v : d)
@@ -143,6 +182,11 @@ export function mergeConfig(raw: unknown): ShapeConfig {
   const fi = (o.fill ?? {}) as Record<string, any>
   const st = (o.style ?? {}) as Record<string, any>
   const lo = (o.locks ?? {}) as Record<string, any>
+  // The legacy grain slider's saved value, if this blob is old enough to carry one.
+  // Read from the RAW blob (not through num()-with-default) precisely so "absent" and
+  // "explicitly 0" stay distinguishable — that difference is what makes the migration
+  // below one-time rather than a per-load re-derive. See StyleParams.grain.
+  const legacyGrain = (typeof st.grain === 'number' && Number.isFinite(st.grain)) ? st.grain : undefined
   return {
     seed: str(o.seed, d.seed),
     fillMode: oneOf(o.fillMode, FILLMODES, d.fillMode),
@@ -179,17 +223,9 @@ export function mergeConfig(raw: unknown): ShapeConfig {
       }
     })(),
     style: {
-      // Grain's NOISE moved into the shared post stack (Task 8, in `post` below) —
-      // but the value itself is NOT dropped the way Gradient's relief.grain is
-      // (see gradientfx/types.ts): it still has a job. postNeeded() in ./post.ts
-      // still counts style.grain toward "does this need the offscreen pass" —
-      // dropping that would silently move every existing document (grain has
-      // defaulted to 20 since before this task) onto a DIFFERENT render path
-      // (no MSAA on that offscreen target vs. the canvas's own antialiasing) and
-      // change its appearance for a reason that has nothing to do with grain's
-      // own pixels. Standard num()-with-default treatment, same as every other
-      // field here — see postNeeded()'s doc comment for the full story.
-      grain: num(st.grain, d.style.grain ?? 0),
+      // `grain` is deliberately NOT emitted — it is consumed once, below, and
+      // dropped (see StyleParams.grain). Mirrors gradientfx/types.ts, which
+      // `delete`s relief.grain for the same reason.
       distortion: num(st.distortion, d.style.distortion),
       background: str(st.background, d.style.background),
     },
@@ -205,31 +241,45 @@ export function mergeConfig(raw: unknown): ShapeConfig {
     // backfills what's missing. No per-key validation, matching Gradient's own
     // backfill — PostSettings' own consumers (postControls' sliders) already clamp.
     //
-    // Grain migration (Task 8): style.grain's NOISE moves into the shared post
-    // stack. Derived from the SAME resolved value stored in `style.grain` above
-    // (not the raw pre-default st.grain) — style.grain and postNeeded()'s routing
-    // check must stay in lockstep with what actually renders, or a document could
-    // pay for the offscreen pass (style.grain > 0) while getting no grain out of
-    // it (post.grain left off), which is strictly worse than either extreme.
-    // Shape's retired formula (`g * uGrain * 0.5 * midtone`, see the old ./post.ts)
-    // used a 0.5 coefficient on a 0-100 slider where Gradient's canonical shared
-    // formula (post_grain.frag) uses 0.16 on a 0-1 amount — so the same slider
-    // value rendered ~3.1x stronger, despite ./post.ts's now-deleted comment
-    // claiming the two matched. Rescale by (grain/100) * (0.5/0.16) into the
-    // canonical 0.16 space so a saved shape looks unchanged. grainSize is
-    // force-pinned to 1: post_grain.frag's cell-quantisation (keyed to grainSize)
-    // has no equivalent in Shape's old formula either (verified: no
-    // u_size/coarseness term in ./post.ts's old grain block) — bit-exact only at
-    // grainSize <= 1, same trap as Gradient's.
+    // ONE-TIME grain migration (Task 8). Fires only for a blob that actually carries
+    // the legacy `style.grain` field (`legacyGrain` above), and `style` above drops
+    // that field from the result — so it fires at most once per document, and from
+    // then on the saved `post` is the single source of truth. This is what makes a
+    // user's own Grain edit survive a save/reload: an unconditional re-derive here
+    // would silently restore the migrated value on every single load, and since the
+    // legacy slider is gone from controls.ts there would be no control able to undo
+    // it. (Covered by post-grain-migration.unit.spec.ts's round-trip test.)
+    //
+    // Rescale: Shape's retired formula (`g * uGrain * 0.5 * midtone`, see the old
+    // ./post.ts) used a 0.5 coefficient on a 0-100 slider where Gradient's canonical
+    // shared formula (post_grain.frag) uses 0.16 on a 0-1 amount — so the same slider
+    // value rendered ~3.1x stronger, despite ./post.ts's now-deleted comment claiming
+    // the two matched. (grain/100) * (0.5/0.16) lands it in the canonical space.
+    //
+    // CEILING (brief-mandated, and a known small fidelity loss): post.grainAmount is
+    // the shared slider's own 0..1 range, but the rescale reaches 1.0 at
+    // style.grain == 32 — so any document saved with grain above 32 (the old slider
+    // went to 100, and rollStyle used to roll up to 45) is clamped and renders
+    // WEAKER than it did before. Everything at or below 32 is exact.
+    //
+    // grainSize is force-pinned to 1: post_grain.frag's cell-quantisation (keyed to
+    // grainSize) has no equivalent in Shape's old formula (verified: no
+    // u_size/coarseness term in ./post.ts's old grain block) — the port is bit-exact
+    // only at grainSize <= 1, same trap as Gradient's.
     post: (() => {
       const post = { ...DEFAULT_POST, ...(o.post ?? {}) }
-      const styleGrain = num(st.grain, d.style.grain ?? 0)
-      if (styleGrain > 0) {
+      if (legacyGrain !== undefined && legacyGrain > 0) {
         post.grain = true
-        post.grainAmount = Math.min(1, (styleGrain / 100) * (0.5 / 0.16))
+        post.grainAmount = Math.min(1, (legacyGrain / 100) * (0.5 / 0.16))
         post.grainSize = 1
       }
       return post
     })(),
+    // Render-path pin — see ShapeConfig.forceOffscreenPass and postNeeded(). Frozen
+    // from the legacy value at migration time (that value IS the pre-Task-8 routing
+    // answer), and simply carried through on every load after that.
+    forceOffscreenPass: legacyGrain !== undefined
+      ? legacyGrain > 0
+      : bool(o.forceOffscreenPass, d.forceOffscreenPass),
   }
 }

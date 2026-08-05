@@ -264,8 +264,11 @@ describe('gradientfx focus / soft-focus post stage', () => {
     expect(BLUR_FS).toContain('GOLDEN')
   })
   it('grain retired from both passes (Task 8) — the shared post stack applies it AFTER this blur pass, so no deferred re-apply is needed here', () => {
-    expect(GRADIENT_FS).not.toContain('u_grain')            // covers u_grainDeferred too
-    expect(BLUR_FS).not.toContain('u_grain')
+    // Uniform DECLARATIONS, not a bare substring: the retirement is explained in
+    // prose in both files, and those comments legitimately name the old uniforms.
+    expect(GRADIENT_FS).not.toContain('uniform float u_grain;')
+    expect(GRADIENT_FS).not.toContain('uniform float u_grainDeferred;')
+    expect(BLUR_FS).not.toContain('uniform float u_grain;')
     expect(BLUR_FS).not.toContain('hashGrain')
   })
   it('DEFAULT_FOCUS is off (blur 0 → byte-identical no-op)', () => {

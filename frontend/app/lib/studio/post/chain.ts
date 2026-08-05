@@ -408,6 +408,29 @@ class PostChainRunner {
 const postChain = new PostChainRunner()
 
 /**
+ * Largest magnitude `u_seed` may reach. post_grain.frag's `hashGrain` (and any
+ * future fract()-chain hash fed from u_seed) computes `fract(...)` on
+ * `gl_FragCoord.xy + u_seed`: GPU `highp float` carries a ~24-bit mantissa, so
+ * once the seed climbs into the millions the per-pixel coordinate lands below
+ * the representable step and every pixel hashes to the SAME value — the noise
+ * field collapses into a flat colour wash. 10000 leaves ~20 bits of headroom
+ * over any plausible canvas coordinate while still giving 10k distinct fields.
+ *
+ * texturefx/renderer.ts already carried its own local `mod(u_seed, 977.0)` with
+ * a "small, precision-safe seed salt" note; this constant is that same trap
+ * handled once, at the shared boundary, so no caller has to know about it.
+ */
+const SEED_MAX = 10000
+
+/** Fold an arbitrary caller seed into the precision-safe range documented on
+ *  SEED_MAX. Non-finite input falls back to the default seed rather than
+ *  poisoning every uniform downstream with NaN. */
+export function safeSeed(seed: number): number {
+  if (!Number.isFinite(seed)) return 42
+  return Math.abs(seed) % SEED_MAX
+}
+
+/**
  * The shared post stage. Any studio hands its finished frame in and draws the
  * result back onto its own canvas.
  *
@@ -428,6 +451,13 @@ const postChain = new PostChainRunner()
  * id) to reroll the grain field per document instead of it being identical
  * everywhere post is used.
  *
+ * Any number is accepted: whatever comes in is folded through `safeSeed` into
+ * the GPU-precision-safe range (see SEED_MAX) before it reaches a uniform, so a
+ * caller handing over a raw 32-bit string hash cannot silently flatten the noise
+ * field. This is the boundary that owns that invariant — callers do not need to
+ * pre-mod, and a caller that DOES mod is pinning a specific field for its own
+ * fidelity reasons, not guarding precision.
+ *
  * Must stay free of `three` imports.
  */
 export function applyPost(
@@ -436,5 +466,5 @@ export function applyPost(
 ): TexImageSource {
   const passes = activePasses(post, opts)
   if (passes.length === 0) return source
-  return postChain.render(passes, post, source, w, h, t, opts.seed ?? 42)
+  return postChain.render(passes, post, source, w, h, t, safeSeed(opts.seed ?? 42))
 }

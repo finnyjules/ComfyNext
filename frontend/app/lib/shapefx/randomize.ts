@@ -30,7 +30,13 @@ function rollPalette(seed: string, prev: PaletteParams): PaletteParams {
 
 function rollStyle(seed: string, prev: StyleParams): StyleParams {
   const r = makeRng(seed, 'style')
-  return { ...prev, grain: r.int(0, 45), distortion: r.int(0, 20) }
+  // `grain` is deliberately NOT rolled (Task 8). It is a one-shot migration input
+  // consumed and dropped by mergeConfig (see StyleParams.grain) — writing a fresh
+  // value onto a live config would make the next load treat the document as
+  // un-migrated and overwrite whatever the user had set on the shared Grain
+  // controls. Grain now lives in `post`, which re-roll does not touch at all
+  // (neither does any other studio's re-roll).
+  return { ...prev, distortion: r.int(0, 20) }
 }
 
 /** Fresh seed + regenerate each UNLOCKED section; locked sections carry over unchanged. */

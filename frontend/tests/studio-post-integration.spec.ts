@@ -15,6 +15,15 @@ declare global {
       transparentDev: number
     }>
     __sailorPostChangesPixels: (effectId: string) => Promise<boolean>
+    __sailorGrainCoverageProbe: (opts: { size: number; blur?: number }) => Promise<{
+      bgPixels: number
+      fgPixels: number
+      bgMaxDiff: number
+      bgChanged: number
+      fgMaxDiff: number
+      fgMeanDiff: number
+      minAlpha: number
+    }>
   }
 }
 
@@ -139,6 +148,40 @@ for (const size of GRADIENT_PROBE_SIZES) {
     expect(Math.abs(onDelta)).toBeGreaterThan(5)
     // Same sign = same side is brighter in both frames = no flip.
     expect(Math.sign(onDelta)).toBe(Math.sign(offDelta))
+  })
+}
+
+// Task 8 review (C3): grain's shape-coverage gate — "Gated to shape coverage
+// (clean background)" in the retired shader's own words. Every Task 8 fidelity
+// measurement used `defaultConfig`, layout `linear`, margin 0, where coverage is
+// identically 1 — so dropping the gate was invisible to the whole test suite. This
+// runs on an ORBIT + margin + innerRadius fixture, the only kind of fixture where
+// coverage is genuinely below 1, and asserts the two halves separately: background
+// untouched, covered pixels genuinely grained. See gradient-harness.vue's
+// sailorGrainCoverageProbe for the method.
+// blur 0 = the single-pass path; blur 40 = the soft-focus path, where coverage is
+// forwarded through BLUR_FS instead (focus.blur is a 0..100 slider).
+for (const blur of [0, 40]) {
+  test(`gradient grain leaves zero-coverage background untouched (orbit fixture, blur ${blur})`, async ({ page }) => {
+    await page.goto('/dev/gradient-harness')
+    await page.waitForFunction(() => typeof (window as any).__sailorGrainCoverageProbe === 'function')
+    const r = await page.evaluate(async (b) => await window.__sailorGrainCoverageProbe({ size: 256, blur: b }), blur)
+
+    // The fixture has to actually have both kinds of pixel, or this proves nothing.
+    expect(r.bgPixels, 'uncovered background pixels in the fixture').toBeGreaterThan(2000)
+    expect(r.fgPixels, 'covered pixels in the fixture').toBeGreaterThan(2000)
+
+    // The control: grain must be doing something visible, or "background unchanged"
+    // would pass trivially on a frame where grain never ran.
+    expect(r.fgMaxDiff, 'grain amplitude on covered pixels').toBeGreaterThan(4)
+    expect(r.fgMeanDiff, 'mean grain amplitude on covered pixels').toBeGreaterThan(1)
+
+    // The gate: the clean background stays clean.
+    expect(r.bgChanged, 'background pixels moved by more than 1/255').toBe(0)
+    expect(r.bgMaxDiff, 'max background deviation').toBeLessThanOrEqual(1)
+
+    // The coverage transport rides in alpha; it must not escape the renderer.
+    expect(r.minAlpha, 'output alpha').toBe(255)
   })
 }
 
