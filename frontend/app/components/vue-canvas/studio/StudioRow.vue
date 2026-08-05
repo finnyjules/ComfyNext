@@ -335,17 +335,26 @@ function onValuePointerDown(e: PointerEvent) {
              span from outside, which is why the select renderer is a `flex-1` child
              of this box. For numeric rows the win is direct: this element owns the
              `pointerdown` that opens typed entry, so the whole 64px is clickable. -->
-        <span v-else-if="renderer" class="flex min-w-[64px] items-center justify-end" @pointerdown="onValuePointerDown">
-          <component
-            :is="renderer"
-            :value="modelValue"
-            :spec="spec"
-            :step="step"
-            :editing="editing"
-            @commit="onCommit"
-            @cancel="onCancel"
-            @update:value="(v: string | number | boolean) => emit('update:modelValue', v)"
-          />
+        <!-- `#value` overrides the registry for one row without inventing a ControlSpec
+             kind. A node's seed is the case that forced it: an integer plus a lock/shuffle
+             button, which is neither a slider (its 0..2^32 range fills no track) nor any
+             other kind, and which would otherwise have to stay a two-line widget while
+             every neighbour became a row. The slot sits INSIDE the min-width box so an
+             overridden value keeps the same target size as a registry one. -->
+        <span v-else class="flex min-w-[64px] items-center justify-end gap-1" @pointerdown="onValuePointerDown">
+          <slot name="value">
+            <component
+              v-if="renderer"
+              :is="renderer"
+              :value="modelValue"
+              :spec="spec"
+              :step="step"
+              :editing="editing"
+              @commit="onCommit"
+              @cancel="onCancel"
+              @update:value="(v: string | number | boolean) => emit('update:modelValue', v)"
+            />
+          </slot>
         </span>
       </span>
     </div>

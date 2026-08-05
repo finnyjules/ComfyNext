@@ -10,6 +10,8 @@ import { endLabelsFor, isSliderRange } from '~/lib/canvas/widgetEndLabels'
 import StudioSelect from '~/components/vue-canvas/studio/StudioSelect.vue'
 import StudioSwitch from '~/components/vue-canvas/studio/StudioSwitch.vue'
 import StudioSlider from '~/components/vue-canvas/studio/StudioSlider.vue'
+import StudioRow from '~/components/vue-canvas/studio/StudioRow.vue'
+import { Lock, Shuffle } from 'lucide-vue-next'
 
 const props = defineProps<{
   widgetDef: {
@@ -21,6 +23,11 @@ const props = defineProps<{
     step?: number
     default?: any
     tooltip?: string
+    // Set by the backend for STRING widgets that want a textarea. Undeclared until
+    // 2026-08-05 even though `isMultilineText` always read it — harmless while that
+    // computed only chose a textarea, but it now decides whether a widget is a row at
+    // all, so the one field the layout split turns on should be typed.
+    multiline?: boolean
     // Backend-provided UI hint. When set, overrides the type-based renderer
     // pick below. Only "model_picker" is recognised today — opens the model
     // gallery modal instead of showing a plain combo dropdown. Backend ships
@@ -69,12 +76,22 @@ const isSeed = computed(() => props.widgetDef.name.toLowerCase().includes('seed'
  * Seeds are excluded: WidgetSeed pairs the value with its own lock/randomise control,
  * which has nowhere to live in a row's value slot.
  */
-const asRow = computed(() => {
-  if (isSeed.value) return false
-  if (isCombo.value || isToggle.value) return true
-  return isNumber.value && isSliderRange(props.widgetDef.min, props.widgetDef.max)
-})
+const asRow = computed(() => !isMultilineText.value)
 const rowEndLabels = computed(() => (isNumber.value ? endLabelsFor(props.widgetDef.name) : null))
+/** A number whose range is finite enough to fill a track. Everything else numeric —
+ *  seeds at 0..2^32, unbounded ints — gets a plain field inside the row instead. */
+const rowIsSlider = computed(() =>
+  isNumber.value && !isSeed.value && isSliderRange(props.widgetDef.min, props.widgetDef.max))
+/** Rows whose value is supplied by the `#value` slot rather than the kind registry:
+ *  the seed (integer + lock button) and unbounded numbers. `kind: 'text'` is chosen
+ *  only for its BEHAVIOUR — it keeps StudioRow from adding a drag gesture or a fill
+ *  band, both of which would be wrong for a value with no meaningful range. The slot
+ *  replaces the value entirely, so the kind never renders. */
+const slotRowSpec = computed(() => ({
+  key: 'inline', kind: 'text', default: '', group: '',
+  label: formatLabel(props.widgetDef.name),
+  ...(props.widgetDef.tooltip ? { hint: props.widgetDef.tooltip } : {}),
+}))
 const isText = computed(() => props.widgetDef.type === 'STRING')
 // A multiline STRING widget — the prompt. Rendered as the node's primary control:
 // a larger, lighter, elevated textarea (see WidgetText).
@@ -564,8 +581,10 @@ function formatLabel(name: string): string {
          the studios use, label inside the row. `nodrag nopan nowheel` is not optional:
          the row's gesture is a pointer-drag across itself, which vue-flow would
          otherwise read as a pane drag and pan the canvas instead of changing the value.
-         Everything else (seed, text, and numbers whose range is unbounded) keeps the
-         label-above-control layout, because none of them is row-shaped. -->
+         The ONLY generic widget that stays two-line is the multiline prompt: a textarea
+         has no one-row form, and it is the node's primary control, so its size is the
+         point. Everything else — combo, toggle, bounded number, seed, unbounded number,
+         single-line text — is a row, because a panel that mixes the two reads as messy. -->
     <template v-else-if="asRow">
       <div class="nodrag nopan nowheel">
         <StudioSelect
@@ -588,7 +607,7 @@ function formatLabel(name: string): string {
              hexagon whose click emits `promote` into a component with no such emit.
              Collection binding is a studio-inspector affordance; nodes bind by wire. -->
         <StudioSlider
-          v-else
+          v-else-if="rowIsSlider"
           :label="formatLabel(widgetDef.name)"
           :hint="widgetDef.tooltip || undefined"
           :min="widgetDef.min!"
@@ -597,6 +616,69 @@ function formatLabel(name: string): string {
           :default="widgetDef.default"
           :bindable="false"
           :model-value="Number(modelValue)"
+          @update:model-value="emit('update:modelValue', $event)"
+        />
+        <!-- Seed: an integer plus its lock/shuffle button. Not a slider — 0..2^32 fills no
+             track — so the pair rides in the row's `#value` slot and the seed stops being
+             the one two-line control among rows. -->
+        <StudioRow
+          v-else-if="isSeed && isNumber"
+          :spec="slotRowSpec as never"
+          :model-value="modelValue"
+          :bindable="false"
+        >
+          <template #value>
+            <input
+              type="number"
+              class="w-[86px] rounded bg-white/5 px-1.5 h-6 text-[11px] text-foreground text-center tabular-nums outline-none focus-visible:ring-1 focus-visible:ring-white/25 [&::-webkit-inner-spin-button]:appearance-none"
+              :value="modelValue"
+              @pointerdown.stop
+              @input="emit('update:modelValue', Number(($event.target as HTMLInputElement).value))"
+            />
+            <button
+              type="button"
+              class="shrink-0 size-6 flex items-center justify-center rounded border cursor-pointer transition-[transform,background-color,color,border-color] active:scale-[0.96]"
+              :class="isFixed
+                ? 'bg-amber-500/15 border-amber-400/30 text-amber-200 hover:bg-amber-500/25'
+                : 'bg-white/5 border-white/10 text-muted-foreground hover:text-foreground hover:bg-accent'"
+              :title="isFixed
+                ? 'Fixed — seed stays put on Run. Click to switch back to random.'
+                : 'Random — Run picks a new seed each time. Click to lock the current value.'"
+              @pointerdown.stop
+              @click.stop="emit('update:isFixed', !isFixed)"
+            >
+              <Lock v-if="isFixed" class="size-3" />
+              <Shuffle v-else class="size-3" />
+            </button>
+          </template>
+        </StudioRow>
+        <!-- A number with no usable range: a plain field in the row, no track to fill. -->
+        <StudioRow
+          v-else-if="isNumber"
+          :spec="slotRowSpec as never"
+          :model-value="modelValue"
+          :bindable="false"
+        >
+          <template #value>
+            <input
+              type="number"
+              class="w-[86px] rounded bg-white/5 px-1.5 h-6 text-[11px] text-foreground text-center tabular-nums outline-none focus-visible:ring-1 focus-visible:ring-white/25 [&::-webkit-inner-spin-button]:appearance-none"
+              :value="modelValue"
+              :min="widgetDef.min"
+              :max="widgetDef.max"
+              :step="widgetDef.step ?? (widgetDef.type === 'FLOAT' ? 0.01 : 1)"
+              @pointerdown.stop
+              @input="emit('update:modelValue', Number(($event.target as HTMLInputElement).value))"
+            />
+          </template>
+        </StudioRow>
+        <!-- Single-line text (a LoRA url, a name). `kind: 'text'` already has a renderer,
+             so this needs no slot — RowText is an always-editable right-aligned field. -->
+        <StudioRow
+          v-else-if="isText"
+          :spec="slotRowSpec as never"
+          :model-value="modelValue ?? ''"
+          :bindable="false"
           @update:model-value="emit('update:modelValue', $event)"
         />
         <!-- The semantic ends (subtle/strong, creative/literal) survive the move: the row
