@@ -32,9 +32,15 @@ type GizmoMode = 'translate' | 'rotate' | 'scale'
  *  unit-testable independent of a live OrbitControls.
  *
  *  Three concerns now: camera motion playback, a gizmo drag, and a live sculpt
- *  stroke. Each owns a private field on SceneInteraction and NOTHING writes
- *  `orbit.enabled` directly — a per-frame writer that did so silently stomped
- *  another concern's lock once already. Go through `updateOrbitEnabled`. */
+ *  stroke/hover. Each owns a private field on SceneInteraction and NOTHING
+ *  writes `orbit.enabled` directly — a per-frame writer that did so silently
+ *  stomped another concern's lock once already. Go through `updateOrbitEnabled`.
+ *
+ *  `sculpting` here is deliberately narrower than "sculpt mode is active": it
+ *  is true only while a brush stroke is live or the cursor is hovering the
+ *  sculpted mesh, so the camera stays free to orbit/pan/zoom over empty space
+ *  for the whole rest of the session (see SceneInteraction's `setSculpting`
+ *  vs `setSculptMode`). */
 export function orbitShouldBeEnabled(
   cameraLocked: boolean,
   gizmoDragging: boolean,
@@ -122,10 +128,22 @@ export class SceneInteraction {
   // Scene3DStudioSurface's call sites for the full story).
   private cameraLocked = false
   private gizmoDragging = false
-  // Third orbit concern (see orbitShouldBeEnabled): held for the duration of a
-  // live sculpt brush stroke. Same rule as the two above — nothing may write
+  // Third orbit concern (see orbitShouldBeEnabled): held only while a sculpt
+  // stroke is LIVE or the cursor is currently hovering the sculpted mesh —
+  // NOT for the whole sculpt-mode session (that would refreeze the very
+  // orbit this concern exists to unfreeze; see `sculptModeActive` below for
+  // the session-long flag). Same rule as the two above — nothing may write
   // `orbit.enabled` directly; go through `updateOrbitEnabled` via `setSculpting`.
   private sculpting = false
+  // Separate concern from `sculpting` above: true for the WHOLE sculpt-mode
+  // session (entry to exit), independent of hover/stroke state. Drives gizmo
+  // hide+disable only, via `setSculptMode` — never routed through
+  // `setSculpting`, because conflating the two would either re-lock orbit for
+  // the entire session (the exact bug this task fixes) or pop the gizmo back
+  // on screen the instant the cursor leaves the mesh (the Geometry panel
+  // stays swapped for the sculpt panel the whole session regardless of
+  // hover, so a live gizmo underneath it would be meaningless either way).
+  private sculptModeActive = false
   // Single authority over every gizmo's `enabled`, for the same reason as
   // `orbit.enabled` above: two concerns want to write it — mutual exclusion
   // between the three pruned instances (`dragOwner`) and the surface's
@@ -272,44 +290,64 @@ export class SceneInteraction {
     this.updateOrbitEnabled()
   }
 
-  /** Held for the duration of a brush stroke. Third orbit concern — see
-   *  orbitShouldBeEnabled. Also hides the gizmo, which has no meaning in
-   *  sculpt mode.
+  /** Held only while a sculpt stroke is LIVE or the cursor is hovering the
+   *  sculpted mesh — the orbit lock, not the mode-long flag (see
+   *  `setSculptMode` for that). The surface calls this from its
+   *  pointerdown/pointermove/pointerup handlers, and ONLY when the boolean
+   *  actually changes: a per-move reassertion of an unchanged value is
+   *  exactly the per-frame-writer pattern that has already shipped as a bug
+   *  once in this file (see the `sculpting` field comment). */
+  setSculpting(active: boolean): void {
+    this.sculpting = active
+    this.updateOrbitEnabled()
+  }
+
+  /** Held for the WHOLE sculpt-mode session (entry to exit) — independent of
+   *  hover/stroke state. Hides and disables the gizmo, which has no meaning
+   *  while any mesh is being sculpted (the Geometry panel is swapped for the
+   *  sculpt panel for the session's whole duration, hovered or not).
    *
-   *  `updateGizmosEnabled` alone is NOT enough for that: three's own
+   *  `updateGizmosEnabled` alone is NOT enough for the hide half: three's own
    *  TransformControls only toggles `enabled` to gate pointer handling
    *  (pointerHover/pointerDown early-return on `!enabled`) — the helper's
    *  visibility (`_root.visible`, what `getHelper()` returns) is set only by
    *  `attach`/`detach`, never read from `enabled`. So the arrows/rings would
-   *  otherwise keep rendering, fully disabled but still on screen, over an
-   *  object that's mid-stroke. Force the helper hidden here, and restore it
-   *  to whatever attach/detach already says on the way out — `!!tc.object`
+   *  otherwise keep rendering, fully disabled but still on screen, for the
+   *  whole sculpt session. Force the helper hidden here, and restore it to
+   *  whatever attach/detach already says on the way out — `!!tc.object`
    *  covers a selection change that happened while sculpting (guarded against
-   *  elsewhere, but this stays correct even if that guard is ever removed). */
-  setSculpting(active: boolean): void {
-    this.sculpting = active
+   *  elsewhere, but this stays correct even if that guard is ever removed).
+   *
+   *  Deactivating also force-clears the orbit lock (`sculpting` / hover-or-
+   *  stroke), belt-and-braces against a caller that exits sculpt mode without
+   *  first taking the stroke/hover lock back down to false — the failure mode
+   *  is a camera stuck orbit-locked with no session left to explain why. */
+  setSculptMode(active: boolean): void {
+    this.sculptModeActive = active
+    if (!active) this.sculpting = false
     this.updateOrbitEnabled()
     this.updateGizmosEnabled()
     this.updateGizmoVisibility()
   }
 
-  /** Authoritative helper visibility: hidden whenever sculpting, otherwise
-   *  exactly what attach/detach already says (`!!tc.object`). Called from
-   *  `setSculpting` AND from `select`/`selectMany` — three's own `attach()`
-   *  unconditionally sets `_root.visible = true`, so a selection change that
-   *  lands while sculpting is active (nothing in today's surface triggers one,
-   *  but nothing here should depend on that) would otherwise pop the gizmo
-   *  back on screen with no code path left to hide it again. */
+  /** Authoritative helper visibility: hidden for the whole sculpt-mode
+   *  session, otherwise exactly what attach/detach already says
+   *  (`!!tc.object`). Called from `setSculptMode` AND from
+   *  `select`/`selectMany` — three's own `attach()` unconditionally sets
+   *  `_root.visible = true`, so a selection change that lands while sculpting
+   *  is active (nothing in today's surface triggers one, but nothing here
+   *  should depend on that) would otherwise pop the gizmo back on screen with
+   *  no code path left to hide it again. */
   private updateGizmoVisibility(): void {
     for (const tc of this.gizmos) {
-      tc.getHelper().visible = this.sculpting ? false : !!tc.object
+      tc.getHelper().visible = this.sculptModeActive ? false : !!tc.object
     }
   }
 
   /** Recomputes every gizmo's `enabled` from the mutual-exclusion/playback locks
-   *  plus `sculpting` (the gizmo has no meaning while sculpting — its object is
-   *  being deformed by brush strokes, not transformed). Never write
-   *  `tc.enabled` directly (see the field comments).
+   *  plus `sculptModeActive` (the gizmo has no meaning for the whole sculpt-mode
+   *  session — its object is being deformed by brush strokes, not transformed).
+   *  Never write `tc.enabled` directly (see the field comments).
    *
    *  A gizmo that is MID-DRAG is skipped rather than disabled: three's
    *  `onPointerUp` bails on `!enabled`, so disabling one during its own drag
@@ -320,7 +358,7 @@ export class SceneInteraction {
   private updateGizmosEnabled(): void {
     for (const tc of this.gizmos) {
       if (tc.dragging) continue
-      tc.enabled = !this.playbackLocked && !this.sculpting && (!this.dragOwner || this.dragOwner === tc)
+      tc.enabled = !this.playbackLocked && !this.sculptModeActive && (!this.dragOwner || this.dragOwner === tc)
     }
   }
 

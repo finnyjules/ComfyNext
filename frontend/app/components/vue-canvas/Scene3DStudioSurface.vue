@@ -1925,9 +1925,10 @@ watch(canMerge, (can) => { if (!can) mergeOpen.value = false })
 // ── Sculpt mode (Task 13) ─────────────────────────────────────────────────────
 // The session (Tasks 10–12) holds the working vertex buffer; NOTHING here ever
 // writes `doc.objects` mid-session — see `commitAndExitSculpt`, the only place
-// that does, and only once. Orbit/gizmo lock routes through
-// `interaction.setSculpting`, never a direct `orbit.enabled` write (rule #1 of
-// this task's brief).
+// that does, and only once. Gizmo lock is session-long, via
+// `interaction.setSculptMode`; orbit lock is narrower — only while a stroke is
+// live or the cursor hovers the mesh, via `interaction.setSculpting` — and
+// NEITHER ever writes `orbit.enabled` directly (see interaction.ts).
 const sculpting = ref(false)
 // Guards commitAndExitSculpt's await window (encodeMesh inside session.commit(),
 // then loadMesh's cache warm-up) — same convention as `converting` above for the
@@ -1947,6 +1948,17 @@ const sculptSymmetryCount = ref(6)
 let sculptSession: SculptSession | null = null
 let sculptObjId: string | null = null
 let sculptStrokeDown = false
+// True from the last pointermove's pick — the HOVER half of the orbit lock
+// (see `setSculptOrbitLock`). Tracked separately from the pick itself because
+// `onSculptPointerUp` has no pointer position of its own to re-pick with.
+let sculptHovering = false
+// Mirrors `interaction`'s own orbit-lock field — compared against on every
+// candidate change so `interaction.setSculpting` is called ONLY when the
+// held/not-held boolean actually flips, never once per pointermove. A
+// per-move reassertion of an unchanged lock is exactly the per-frame-writer
+// pattern interaction.ts's header comment records as having shipped a real
+// bug already.
+let sculptOrbitLocked = false
 // Scratch instances reused across pointermoves — a drag is the one place in
 // this file where per-frame allocation would actually be paid for (same
 // rationale as interaction.ts's module-scope `_p`/`_q`/`_s`/`_e`).
@@ -1960,6 +1972,88 @@ const _sculptDir = new THREE.Vector3()
 // dab in a stroke carries no drag (nothing to diff against yet) rather than
 // jumping from an arbitrary prior point.
 let _sculptLastGrabPoint: [number, number, number] | null = null
+
+// Brush cursor ring (Task 13, gap 2): a flat circle on the tangent plane at
+// the hovered pick point, oriented to the surface normal there, radius
+// tracking Size. A thin action-blue ring over a soft dark halo so it reads
+// against both light and dark geometry — action blue is this project's only
+// accent (CLAUDE.md's colour convention; purple is banned).
+//
+// Parented directly to the sculpted mesh's THREE.Object3D, which IS
+// `content.mesh`'s vertex-position space (SculptSession.pick's contract, the
+// same space applyBrush works in) — so the ring's local position/scale ARE
+// brush-radius units with no unit conversion, correct even under a
+// non-uniform object scale. `mesh.geometry` is swapped in place on
+// commit/undo (SceneEngine.syncObject) — the Mesh node itself is stable — but
+// `updateSculptRing`'s reparent guard is a cheap defensive no-op if that ever
+// changes, and lets the ring follow if sculpting is re-entered on a different
+// mesh without leaking the old one.
+//
+// Tagged `isGizmoHelper` — the SAME mechanism the TransformControls gizmo and
+// the multi-select pivot use (interaction.ts; passes.ts's
+// `collectEditorHelpers`) to stay out of every baked/exported pass.
+let sculptRing: THREE.Group | null = null
+const _sculptRingNormal = new THREE.Vector3()
+const SCULPT_RING_UP = new THREE.Vector3(0, 0, 1) // RingGeometry's own default facing
+
+function ensureSculptRing(): THREE.Group {
+  if (sculptRing) return sculptRing
+  const group = new THREE.Group()
+  group.name = 'sculptCursorRing'
+  group.userData.isGizmoHelper = true
+  group.visible = false
+  group.renderOrder = 999
+  const segments = 48
+  const halo = new THREE.Mesh(
+    new THREE.RingGeometry(0.92, 1.02, segments),
+    new THREE.MeshBasicMaterial({
+      color: 0x000000, transparent: true, opacity: 0.3, side: THREE.DoubleSide,
+      depthWrite: false, toneMapped: false,
+    }),
+  )
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.96, 1.0, segments),
+    new THREE.MeshBasicMaterial({
+      color: 0x3b82f6, transparent: true, opacity: 0.95, side: THREE.DoubleSide,
+      depthWrite: false, toneMapped: false,
+    }),
+  )
+  group.add(halo, ring)
+  sculptRing = group
+  return group
+}
+
+function hideSculptRing() {
+  if (sculptRing) sculptRing.visible = false
+}
+
+function updateSculptRing(mesh: THREE.Object3D, hit: { point: [number, number, number]; normal: [number, number, number] }) {
+  const group = ensureSculptRing()
+  if (group.parent !== mesh) mesh.add(group)
+  group.position.set(hit.point[0], hit.point[1], hit.point[2])
+  _sculptRingNormal.set(hit.normal[0], hit.normal[1], hit.normal[2])
+  if (_sculptRingNormal.lengthSq() > 1e-8) {
+    group.quaternion.setFromUnitVectors(SCULPT_RING_UP, _sculptRingNormal.normalize())
+  }
+  group.scale.setScalar(Math.max(sculptSize.value, 0.001))
+  group.visible = true
+}
+// Keep the ring's radius live against the Size slider even without a fresh
+// pointermove — dragging the slider while the pointer sits still over the
+// mesh must not require a nudge before the new radius is visible.
+watch(sculptSize, (v) => { if (sculptRing?.visible) sculptRing.scale.setScalar(Math.max(v, 0.001)) })
+
+/** Single authority for the ORBIT-lock half of sculpting (interaction.ts's
+ *  `setSculpting`, distinct from the mode-long `setSculptMode`): held while a
+ *  stroke is live OR the cursor hovers the sculpted mesh, free over empty
+ *  space. Compares against the last value it actually sent so an unchanged
+ *  lock state never re-triggers `interaction.setSculpting` — see the
+ *  `sculptOrbitLocked` field doc. */
+function setSculptOrbitLock(locked: boolean) {
+  if (sculptOrbitLocked === locked) return
+  sculptOrbitLocked = locked
+  interaction?.setSculpting(locked)
+}
 
 async function enterSculpt() {
   if (sculpting.value) return
@@ -1976,21 +2070,28 @@ async function enterSculpt() {
     sculptSession = new SculptSession(data)
     sculptObjId = obj.id
     engine?.setSculptOverride(obj.id, sculptSession.positions, sculptSession.indices)
-    interaction?.setSculpting(true)
+    // Gizmo hidden for the whole session — orbit is NOT locked here (Gap 1):
+    // it only locks once a pointermove finds the cursor over the mesh, or a
+    // stroke begins. See interaction.ts's `setSculptMode` vs `setSculpting`.
+    interaction?.setSculptMode(true)
     sculpting.value = true
+    sculptHovering = false
   } catch (err) {
     console.warn('[scene3d-studio] enter sculpt failed', err)
     convertError.value = 'Could not enter sculpt mode — try again.'
   }
 }
 
-/** Ray-pick under the pointer (in the mesh's own object space — SculptSession.pick's
- *  contract), expand for symmetry, and apply the current brush. Called from
- *  pointerdown too (so a stationary dab paints without requiring movement). */
-function applySculptAt(e: PointerEvent) {
-  if (!engine || !sculptSession || !sculptObjId || !viewportEl.value) return
+/** Ray-pick under the pointer, in the sculpted mesh's own object space —
+ *  SculptSession.pick's contract. The ONE raycast path shared by hover/ring
+ *  tracking and by brush application, so there is never a second picker to
+ *  keep in sync with the session's spatial hash. */
+function pickSculptHit(
+  e: PointerEvent,
+): { mesh: THREE.Mesh; hit: { point: [number, number, number]; normal: [number, number, number] } } | null {
+  if (!engine || !sculptSession || !sculptObjId || !viewportEl.value) return null
   const mesh = engine.objectRoots.get(sculptObjId) as THREE.Mesh | undefined
-  if (!mesh) return
+  if (!mesh) return null
   const rect = viewportEl.value.getBoundingClientRect()
   const ndc = new THREE.Vector2(
     ((e.clientX - rect.left) / rect.width) * 2 - 1,
@@ -2009,7 +2110,20 @@ function applySculptAt(e: PointerEvent) {
     [_sculptOrigin.x, _sculptOrigin.y, _sculptOrigin.z],
     [_sculptDir.x, _sculptDir.y, _sculptDir.z],
   )
-  if (!hit) return
+  if (!hit) return null
+  return { mesh, hit }
+}
+
+/** Expand for symmetry and apply the current brush at an already-picked hit.
+ *  Called from pointerdown too (so a stationary dab paints without requiring
+ *  movement) — `pickSculptHit` runs once per event and both the gate check
+ *  and the paint share its result. */
+function applyBrushAtHit(
+  mesh: THREE.Mesh,
+  hit: { point: [number, number, number]; normal: [number, number, number] },
+  e: PointerEvent,
+) {
+  if (!sculptSession) return
   // `grab` carries the surface with the pointer rather than pushing along a
   // normal, so it alone needs the delta between this move's intersection and
   // the last one. Every other brush leaves `drag` undefined — `applyBrush`
@@ -2053,25 +2167,53 @@ function applySculptAt(e: PointerEvent) {
 
 function onSculptPointerDown(e: PointerEvent) {
   if (!sculpting.value || e.button !== 0 || !sculptSession) return
+  const picked = pickSculptHit(e)
+  // Gap 1's second rule: a pointerdown that MISSES the mesh must not begin a
+  // stroke — it belongs to the camera (orbit's own pointerdown handler is
+  // free to run since orbit isn't locked over empty space).
+  if (!picked) return
   // Same as OrbitControls' own pointerdown handler: without this, a mouse
   // (non-touch) drag across the canvas falls through to the browser's native
   // drag-select, which highlights the whole page's text instead of painting.
   e.preventDefault()
   sculptStrokeDown = true
+  // Redundant with the hover lock the preceding pointermove already set in
+  // the overwhelming majority of cases (mousemove precedes pointerdown at the
+  // same screen position), but asserted explicitly here too so a stroke can
+  // never begin orbit-unlocked regardless of event ordering.
+  setSculptOrbitLock(true)
   sculptSession.beginStroke()
   // A new stroke's first dab must never diff against a point left over from
   // the PREVIOUS stroke — that would read as a teleporting jump the instant
   // grab touches down.
   _sculptLastGrabPoint = null
-  applySculptAt(e)
+  applyBrushAtHit(picked.mesh, picked.hit, e)
+  updateSculptRing(picked.mesh, picked.hit)
 }
 function onSculptPointerMove(e: PointerEvent) {
-  if (!sculptStrokeDown || !sculptSession) return
-  applySculptAt(e)
+  if (!sculpting.value || !sculptSession) { sculptHovering = false; return }
+  const picked = pickSculptHit(e)
+  sculptHovering = !!picked
+  // Gap 1's first rule: the orbit lock is held while EITHER a stroke is live
+  // OR the cursor is over the mesh, never for the whole sculpt-mode session —
+  // routed through `setSculptOrbitLock` so it's only asserted on change.
+  setSculptOrbitLock(sculptStrokeDown || sculptHovering)
+  if (picked) updateSculptRing(picked.mesh, picked.hit)
+  else hideSculptRing()
+  if (!sculptStrokeDown) return
+  // Gap 1's third rule: dragging OFF the mesh mid-stroke keeps the lock held
+  // (via `sculptStrokeDown` alone, above) so orbit never sneaks in — but
+  // there's no valid pick to paint with here, so skip this dab rather than
+  // fabricate one.
+  if (!picked) return
+  applyBrushAtHit(picked.mesh, picked.hit, e)
 }
 function onSculptPointerUp() {
   if (!sculptStrokeDown) return
   sculptStrokeDown = false
+  // The stroke's own share of the lock is released; the hover share (set by
+  // the last pointermove) still applies if the cursor is still over the mesh.
+  setSculptOrbitLock(sculptHovering)
   if (!sculptSession || !sculptObjId) return
   // endStroke() already recomputes normals and rebuilds the pick structure —
   // exactly once, here, not per pointermove (a stroke must never rebuild).
@@ -2131,7 +2273,15 @@ async function commitAndExitSculpt() {
     convertError.value = 'Could not save the sculpt — try again.'
   } finally {
     engine?.setSculptOverride(null, null, null)
-    interaction?.setSculpting(false)
+    // setSculptMode(false) also force-clears the orbit lock itself (belt and
+    // braces — see interaction.ts's doc), but reset the surface's own mirror
+    // too so a re-entry starts from a known unlocked/unhovered state rather
+    // than trusting the last stroke/hover this session happened to end on.
+    interaction?.setSculptMode(false)
+    sculptOrbitLocked = false
+    sculptHovering = false
+    sculptStrokeDown = false
+    hideSculptRing()
     sculpting.value = false
     sculptSession = null
     sculptObjId = null
