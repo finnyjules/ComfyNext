@@ -13,7 +13,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import * as THREE from 'three'
 import {
-  Box, Boxes, Plus, Loader2, Upload, Lightbulb, Sparkles, Shuffle, Group, Ungroup, ClipboardPaste, Paintbrush,
+  Box, Boxes, Plus, Loader2, Upload, Lightbulb, Sparkles, Shuffle, Group, Ungroup, ClipboardPaste, Paintbrush, Combine,
 } from 'lucide-vue-next'
 import {
   parseDoc, serializeDoc, createPrimitive, createGlbObject, createLight, createGroup,
@@ -32,13 +32,15 @@ import FontPicker from '~/components/vue-canvas/FontPicker.vue'
 import { PRIM_GROUPS } from '~/lib/scene3d/primGroups'
 import { SceneEngine, baseSizeFor, baseVertexCountFor, buildGeometry } from '~/lib/scene3d/engine'
 import { convertToMesh, remeshObject, solidifyObject, resolutionForTarget, REMESH_RESOLUTION_MAX } from '~/lib/scene3d/toMesh'
-import { MESH_VERTEX_CAP, MESH_DEFAULT_TARGET, type MeshData } from '~/lib/scene3d/mesh'
+import { MESH_VERTEX_CAP, MESH_DEFAULT_TARGET, decodeMesh, meshDataFromGeometry, geometryFromMeshData, type MeshData } from '~/lib/scene3d/mesh'
 import { loadMesh, meshCacheGet } from '~/lib/scene3d/meshCache'
 import { SculptSession } from '~/lib/scene3d/sculpt/session'
 import { applyBrush, type BrushKind, type BrushStamp } from '~/lib/scene3d/sculpt/brushes'
 import { expandStamp, type SymmetryMode, type SymmetrySpec } from '~/lib/scene3d/sculpt/symmetry'
 import Scene3DSculptPanel from '~/components/vue-canvas/studio/Scene3DSculptPanel.vue'
-import { rebaseMany, groupObjects, ungroupMany, rootObjects, descendantIds, cloneSubtree, axisDeltaWrites } from '~/lib/scene3d/hierarchy'
+import { rebaseMany, groupObjects, ungroupMany, rootObjects, descendantIds, cloneSubtree, axisDeltaWrites, worldMatrixOf } from '~/lib/scene3d/hierarchy'
+import { remesh, boundsOf } from '~/lib/scene3d/voxel'
+import { mergeMeshes, type MergeOp } from '~/lib/scene3d/voxel/merge'
 import Scene3DObjectRow from './studio/Scene3DObjectRow.vue'
 import { totalClones, clampedClones } from '~/lib/scene3d/modifiers'
 import { PRIMITIVE_PARAMS, paramValue, MODIFIER_SPECS, modifierValue } from '~/lib/scene3d/primParams'
@@ -115,6 +117,12 @@ const canSculpt = computed(() =>
   selectedObjects.value.length === 1
   && selectedObjects.value[0]!.kind === 'primitive'
   && (selectedObjects.value[0] as PrimitiveObject).primitive === 'mesh')
+// Merge (Task 16): 2+ primitives — any kind, `mesh` included, so a merge result
+// can itself be folded into a further merge. Groups/GLBs/lights have no single
+// geometry to sample into the voxel field, so they sit this action out.
+const canMerge = computed(() =>
+  selectedObjects.value.length >= 2
+  && selectedObjects.value.every((o) => o.kind === 'primitive'))
 // The object list renders this tree rather than `doc.objects` directly — the
 // doc itself stays a flat array plus `parentId`; only the render is nested.
 const rootObjectList = computed(() => rootObjects(doc.objects))
@@ -1732,6 +1740,119 @@ async function solidifySelection() {
   }
 }
 
+// ── Merge (Task 16) ────────────────────────────────────────────────────────────
+// Booleans through the shared voxel field — see merge.ts's own header for why
+// that beats exact mesh CSG here: the result is already a clean uniform mesh,
+// ready for Sculpt with no remesh step, at the cost of sharp edges softening to
+// grid resolution.
+const mergeOpen = ref(false) // popover visibility, distinct from remeshOpen above
+const mergeOp = ref<MergeOp>('union')
+const mergeOpProxy = enumProxy<MergeOp>(() => mergeOp.value, (v) => { mergeOp.value = v })
+const mergeBlend = ref(0)
+const mergeResolution = ref(48)
+const mergeBusy = ref(false)
+
+/** This object's OWN geometry, in its OWN local space — the same source
+ *  `convertSelectionToMesh` freezes for a fresh primitive, and the same
+ *  encoded buffer `selectedMeshData` decodes for an existing `mesh` one.
+ *  Null only for a `text` object whose font hasn't resolved yet (same
+ *  refusal `convertSelectionToMesh` makes, so a merge can't freeze the
+ *  placeholder cube in permanently). */
+async function localMeshDataFor(obj: PrimitiveObject): Promise<MeshData | null> {
+  if (obj.primitive === 'mesh') {
+    const encoded = obj.content?.mesh
+    return encoded ? decodeMesh(encoded) : null
+  }
+  if (obj.primitive === 'text' && !fontCacheGet(obj.content?.font ?? DEFAULT_FONT_URL)) return null
+  const font = obj.primitive === 'text' ? fontCacheGet(obj.content?.font ?? DEFAULT_FONT_URL) : null
+  const geo = buildGeometry(obj.primitive, obj.params, obj.modifiers, 'smooth', obj.content, font)
+  const data = meshDataFromGeometry(geo)
+  geo.dispose()
+  return data
+}
+
+/** `data`'s vertices carried into WORLD space by `m` — objects at different
+ *  positions/rotations/scales must combine where they visually sit, not where
+ *  their local origins are. Indices are untouched; only positions move. */
+function bakedIntoWorld(data: MeshData, m: THREE.Matrix4): MeshData {
+  const positions = new Float32Array(data.positions.length)
+  const v = new THREE.Vector3()
+  for (let i = 0; i < data.positions.length; i += 3) {
+    v.set(data.positions[i]!, data.positions[i + 1]!, data.positions[i + 2]!).applyMatrix4(m)
+    positions[i] = v.x
+    positions[i + 1] = v.y
+    positions[i + 2] = v.z
+  }
+  return { positions, indices: data.indices }
+}
+
+async function mergeSelection() {
+  const objs = selectedObjects.value.filter((o): o is PrimitiveObject => o.kind === 'primitive')
+  if (objs.length < 2 || mergeBusy.value) return
+  mergeBusy.value = true
+  convertError.value = ''
+  await paintPendingState()
+  try {
+    const inputs: MeshData[] = []
+    for (const obj of objs) {
+      const local = await localMeshDataFor(obj)
+      if (!local) {
+        convertError.value = obj.primitive === 'text'
+          ? 'Still loading a font — try again in a moment.'
+          : `Could not read the geometry of "${obj.name}" — try again.`
+        return
+      }
+      inputs.push(bakedIntoWorld(local, worldMatrixOf(doc.objects, obj.id)))
+    }
+    // Refuse up front and NAME the offender — mergeMeshes itself only reports
+    // open as a bare boolean (see its own comment on why: the caller here is
+    // the one place that can say WHICH input, since it still has the names).
+    for (let i = 0; i < inputs.length; i++) {
+      if (remesh(inputs[i]!, mergeResolution.value).open) {
+        convertError.value = `"${objs[i]!.name}" is an open surface, so it has no inside to merge. Solidify it first.`
+        return
+      }
+    }
+    const out = mergeMeshes(inputs, mergeOp.value, mergeBlend.value, mergeResolution.value)
+    if (out.open) {
+      convertError.value = 'Could not merge these shapes — one of them is open.'
+      return
+    }
+    // Recentre on the merged bbox, exactly like groupObjects centres a new
+    // group on its members' bounds — the new object's local origin should sit
+    // inside the shape it now owns, not wherever the first input's did.
+    const { lo, hi } = boundsOf(out.data)
+    const centre: [number, number, number] = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2]
+    const src = out.data.positions
+    const positions = new Float32Array(src.length)
+    for (let i = 0; i < positions.length; i += 3) {
+      positions[i] = src[i]! - centre[0]
+      positions[i + 1] = src[i + 1]! - centre[1]
+      positions[i + 2] = src[i + 2]! - centre[2]
+    }
+    const geo = geometryFromMeshData({ positions, indices: out.data.indices })
+    const placeholder = createPrimitive('mesh', doc.objects)
+    try {
+      const merged = await convertToMesh(
+        { ...placeholder, position: centre, material: { ...objs[0]!.material } },
+        geo,
+      )
+      const removed = new Set(objs.map((o) => o.id))
+      doc.objects = [...doc.objects.filter((o) => !removed.has(o.id)), merged]
+      selectedIds.value = [merged.id]
+      mergeOpen.value = false
+    } finally {
+      geo.dispose()
+    }
+  } catch (err) {
+    console.warn('[scene3d-studio] merge failed', err)
+    convertError.value = 'Could not merge these shapes — try again.'
+  } finally {
+    mergeBusy.value = false
+  }
+}
+watch(canMerge, (can) => { if (!can) mergeOpen.value = false })
+
 // ── Sculpt mode (Task 13) ─────────────────────────────────────────────────────
 // The session (Tasks 10–12) holds the working vertex buffer; NOTHING here ever
 // writes `doc.objects` mid-session — see `commitAndExitSculpt`, the only place
@@ -2564,7 +2685,7 @@ function onClose() {
     <template #aside>
       <div class="flex h-full w-full flex-col overflow-hidden rounded-lg border border-white/[0.10] bg-white/[0.04]">
         <div class="shrink-0 px-3 py-2.5 text-[11px] font-medium text-white/50">Objects</div>
-        <div v-if="!sculpting && (canGroup || canUngroup || canConvertToMesh || canSculpt)" class="flex shrink-0 gap-1 px-2 pb-2">
+        <div v-if="!sculpting && (canGroup || canUngroup || canConvertToMesh || canSculpt || canMerge)" class="flex shrink-0 flex-wrap gap-1 px-2 pb-2">
           <StudioButton v-if="canGroup" @click="groupSelection">
             <span class="flex items-center gap-1.5"><Group class="h-3.5 w-3.5" /> Group</span>
           </StudioButton>
@@ -2576,6 +2697,26 @@ function onClose() {
           </StudioButton>
           <StudioButton v-if="canSculpt" @click="enterSculpt">
             <span class="flex items-center gap-1.5"><Paintbrush class="h-3.5 w-3.5" /> Sculpt</span>
+          </StudioButton>
+          <StudioButton v-if="canMerge" @click="mergeOpen = !mergeOpen">
+            <span class="flex items-center gap-1.5"><Combine class="h-3.5 w-3.5" /> Merge</span>
+          </StudioButton>
+        </div>
+        <!-- Merge popover (Task 16): operation + blend/resolution sliders, same
+             inline-panel convention as the SVG paste box below. Booleans go
+             through the shared voxel field — see merge.ts's header for why. -->
+        <div v-if="canMerge && mergeOpen" class="shrink-0 space-y-2 px-2 pb-2">
+          <StudioSegmented v-model="mergeOpProxy" :options="['union', 'subtract', 'intersect']" />
+          <p v-if="mergeOp === 'subtract'" class="text-[11px] leading-snug text-white/45">
+            Subtracts everything else FROM the first selected object.
+          </p>
+          <StudioSlider v-model="mergeBlend" label="Blend" :min="0" :max="0.3" :step="0.01" />
+          <StudioSlider v-model="mergeResolution" label="Resolution" :min="16" :max="REMESH_RESOLUTION_MAX" :step="1" />
+          <StudioButton :disabled="mergeBusy" @click="mergeSelection">
+            <span class="flex items-center gap-1.5">
+              <Loader2 v-if="mergeBusy" class="h-3.5 w-3.5 animate-spin" />
+              {{ mergeBusy ? 'Merging…' : 'Merge' }}
+            </span>
           </StudioButton>
         </div>
         <p v-if="convertError" class="shrink-0 px-2 pb-2 text-[11px] leading-snug text-red-400/90">{{ convertError }}</p>
