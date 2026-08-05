@@ -7,19 +7,19 @@ import { orbitShouldBeEnabled, SceneInteraction } from '~/lib/scene3d/interactio
 // private updateOrbitEnabled() calls.
 describe('orbitShouldBeEnabled', () => {
   it('is enabled when nothing holds a lock', () => {
-    expect(orbitShouldBeEnabled(false, false)).toBe(true)
+    expect(orbitShouldBeEnabled(false, false, false)).toBe(true)
   })
 
   it('is disabled while camera motion is locked', () => {
-    expect(orbitShouldBeEnabled(true, false)).toBe(false)
+    expect(orbitShouldBeEnabled(true, false, false)).toBe(false)
   })
 
   it('is disabled while a gizmo is being dragged', () => {
-    expect(orbitShouldBeEnabled(false, true)).toBe(false)
+    expect(orbitShouldBeEnabled(false, true, false)).toBe(false)
   })
 
   it('is disabled when both locks are held', () => {
-    expect(orbitShouldBeEnabled(true, true)).toBe(false)
+    expect(orbitShouldBeEnabled(true, true, false)).toBe(false)
   })
 })
 

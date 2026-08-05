@@ -405,6 +405,10 @@ export class SceneEngine {
   private fontTokens = new Map<string, number>() // id → font-load generation, same drop-stale contract as glbTokens
   private meshTokens = new Map<string, number>()
   private token = 0
+  /** While a sculpt session is live, `geometryForObject` returns geometry built
+   *  directly from THESE arrays (by reference, no copy) instead of decoding
+   *  `content.mesh` — see `setSculptOverride`. */
+  private sculptOverride: { id: string; positions: Float32Array; indices: Uint32Array } | null = null
   /** While true, syncObject skips geometry rebuilds for existing meshes (the
    *  stored geoKey is deliberately left stale, so the very next sync with the
    *  flag cleared rebuilds once at the final values). Transforms, visibility and
@@ -591,6 +595,21 @@ export class SceneEngine {
       }
     }
     if (obj.primitive === 'mesh') {
+      // A live sculpt session takes over this object's geometry entirely — the
+      // working buffer, not the doc's committed `content.mesh`. Built by
+      // reference (no `.slice()`): the surface holds the very same
+      // Float32Array as SculptSession.positions, so between strokes it can
+      // just mutate that array and set `position.needsUpdate = true` with no
+      // second copy and no geometry rebuild (a stroke must never rebuild).
+      if (this.sculptOverride && this.sculptOverride.id === obj.id) {
+        const geo = new THREE.BufferGeometry()
+        geo.setAttribute('position', new THREE.BufferAttribute(this.sculptOverride.positions, 3))
+        geo.setIndex(new THREE.BufferAttribute(this.sculptOverride.indices, 1))
+        geo.computeVertexNormals()
+        geo.computeBoundingBox()
+        geo.computeBoundingSphere()
+        return geo
+      }
       const encoded = obj.content?.mesh
       const key = obj.content?.meshKey
       if (encoded && key && !meshCacheGet(key)) {
@@ -609,6 +628,38 @@ export class SceneEngine {
       }
     }
     return buildGeometry(obj.primitive, obj.params, obj.modifiers, variant, obj.content, font)
+  }
+
+  /** While a sculpt session is live, this object's geometry comes from the
+   *  session's working buffer instead of `content.mesh`. Cleared (id null) on
+   *  commit, to go back to the doc.
+   *
+   *  Forces an IMMEDIATE rebuild of this object's mesh (bypassing the geoKey
+   *  gate) when SETTING the override: entering sculpt mode or refreshing after
+   *  a stroke/undo touches nothing in the doc, so nothing else would ever
+   *  notice the override needs swapping in — `content.mesh`/`meshKey` never
+   *  change during a session (that's the whole point of the session). CLEARING
+   *  does not force a rebuild here: the surface always follows a clear with the
+   *  one doc write this session makes (Apply/Exit), and THAT changes
+   *  `meshKey`, which is what drives the normal geoKey-gated rebuild back to
+   *  the freshly-decoded committed mesh (see Scene3DStudioSurface's commit
+   *  flow — it warms `meshCache` before clearing so that rebuild has no
+   *  placeholder flash). Read `root.userData.primObj` for the object to
+   *  resync against — the same "stamped every sync" trick geometryForObject's
+   *  own async loaders use, not the possibly-stale `obj` a caller might have
+   *  captured earlier. */
+  setSculptOverride(id: string | null, positions: Float32Array | null, indices: Uint32Array | null): void {
+    const prevId = this.sculptOverride?.id ?? null
+    this.sculptOverride = id && positions && indices ? { id, positions, indices } : null
+    const targetId = id ?? prevId
+    if (!targetId) return
+    const root = this.objectRoots.get(targetId)
+    if (!root) return
+    if (this.sculptOverride) {
+      root.userData.geoKey = undefined // force geometryForObject to run again with the fresh override
+      const latest = (root.userData.primObj as PrimitiveObject | undefined)
+      if (latest) this.syncObject(latest)
+    }
   }
 
   private syncObject(obj: SceneObject): void {

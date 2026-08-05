@@ -28,10 +28,19 @@ export interface TransformSnapshot { position: Vec3; rotation: Vec3; scale: Vec3
 
 type GizmoMode = 'translate' | 'rotate' | 'scale'
 
-/** Orbit is enabled only when neither lock is held. Pure so it's unit-testable
- *  without the DOM/WebGL context SceneInteraction requires. */
-export function orbitShouldBeEnabled(cameraLocked: boolean, gizmoDragging: boolean): boolean {
-  return !cameraLocked && !gizmoDragging
+/** Orbit is enabled only when NO concern holds a lock. Pure so it's
+ *  unit-testable independent of a live OrbitControls.
+ *
+ *  Three concerns now: camera motion playback, a gizmo drag, and a live sculpt
+ *  stroke. Each owns a private field on SceneInteraction and NOTHING writes
+ *  `orbit.enabled` directly — a per-frame writer that did so silently stomped
+ *  another concern's lock once already. Go through `updateOrbitEnabled`. */
+export function orbitShouldBeEnabled(
+  cameraLocked: boolean,
+  gizmoDragging: boolean,
+  sculpting: boolean,
+): boolean {
+  return !cameraLocked && !gizmoDragging && !sculpting
 }
 
 /** REMOVE every handle (visual AND picker) whose name isn't in `keep`.
@@ -113,6 +122,10 @@ export class SceneInteraction {
   // Scene3DStudioSurface's call sites for the full story).
   private cameraLocked = false
   private gizmoDragging = false
+  // Third orbit concern (see orbitShouldBeEnabled): held for the duration of a
+  // live sculpt brush stroke. Same rule as the two above — nothing may write
+  // `orbit.enabled` directly; go through `updateOrbitEnabled` via `setSculpting`.
+  private sculpting = false
   // Single authority over every gizmo's `enabled`, for the same reason as
   // `orbit.enabled` above: two concerns want to write it — mutual exclusion
   // between the three pruned instances (`dragOwner`) and the surface's
@@ -244,10 +257,10 @@ export class SceneInteraction {
     domElement.addEventListener('pointerup', this.onUp)
   }
 
-  /** Recomputes `orbit.enabled` from the two locks. Called whenever either
+  /** Recomputes `orbit.enabled` from the three locks. Called whenever any
    *  changes — never write `orbit.enabled` directly (see field comments). */
   private updateOrbitEnabled(): void {
-    this.orbit.enabled = orbitShouldBeEnabled(this.cameraLocked, this.gizmoDragging)
+    this.orbit.enabled = orbitShouldBeEnabled(this.cameraLocked, this.gizmoDragging, this.sculpting)
   }
 
   /** Surface-owned lock: true while camera motion is animating playback.
@@ -259,7 +272,43 @@ export class SceneInteraction {
     this.updateOrbitEnabled()
   }
 
-  /** Recomputes every gizmo's `enabled` from the two locks. Never write
+  /** Held for the duration of a brush stroke. Third orbit concern — see
+   *  orbitShouldBeEnabled. Also hides the gizmo, which has no meaning in
+   *  sculpt mode.
+   *
+   *  `updateGizmosEnabled` alone is NOT enough for that: three's own
+   *  TransformControls only toggles `enabled` to gate pointer handling
+   *  (pointerHover/pointerDown early-return on `!enabled`) — the helper's
+   *  visibility (`_root.visible`, what `getHelper()` returns) is set only by
+   *  `attach`/`detach`, never read from `enabled`. So the arrows/rings would
+   *  otherwise keep rendering, fully disabled but still on screen, over an
+   *  object that's mid-stroke. Force the helper hidden here, and restore it
+   *  to whatever attach/detach already says on the way out — `!!tc.object`
+   *  covers a selection change that happened while sculpting (guarded against
+   *  elsewhere, but this stays correct even if that guard is ever removed). */
+  setSculpting(active: boolean): void {
+    this.sculpting = active
+    this.updateOrbitEnabled()
+    this.updateGizmosEnabled()
+    this.updateGizmoVisibility()
+  }
+
+  /** Authoritative helper visibility: hidden whenever sculpting, otherwise
+   *  exactly what attach/detach already says (`!!tc.object`). Called from
+   *  `setSculpting` AND from `select`/`selectMany` — three's own `attach()`
+   *  unconditionally sets `_root.visible = true`, so a selection change that
+   *  lands while sculpting is active (nothing in today's surface triggers one,
+   *  but nothing here should depend on that) would otherwise pop the gizmo
+   *  back on screen with no code path left to hide it again. */
+  private updateGizmoVisibility(): void {
+    for (const tc of this.gizmos) {
+      tc.getHelper().visible = this.sculpting ? false : !!tc.object
+    }
+  }
+
+  /** Recomputes every gizmo's `enabled` from the mutual-exclusion/playback locks
+   *  plus `sculpting` (the gizmo has no meaning while sculpting — its object is
+   *  being deformed by brush strokes, not transformed). Never write
    *  `tc.enabled` directly (see the field comments).
    *
    *  A gizmo that is MID-DRAG is skipped rather than disabled: three's
@@ -271,7 +320,7 @@ export class SceneInteraction {
   private updateGizmosEnabled(): void {
     for (const tc of this.gizmos) {
       if (tc.dragging) continue
-      tc.enabled = !this.playbackLocked && (!this.dragOwner || this.dragOwner === tc)
+      tc.enabled = !this.playbackLocked && !this.sculpting && (!this.dragOwner || this.dragOwner === tc)
     }
   }
 
@@ -435,6 +484,7 @@ export class SceneInteraction {
       if (isLight && mode === 'scale') tc.detach()
       else tc.attach(pivot)
     }
+    this.updateGizmoVisibility()
   }
 
   /** Park the pivot at the bounds centre of the selected roots' world origins,
@@ -543,6 +593,7 @@ export class SceneInteraction {
         tc.detach()
       }
     }
+    this.updateGizmoVisibility()
   }
 
   dispose(): void {

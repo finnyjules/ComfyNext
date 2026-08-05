@@ -13,7 +13,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import * as THREE from 'three'
 import {
-  Box, Boxes, Plus, Loader2, Upload, Lightbulb, Sparkles, Shuffle, Group, Ungroup, ClipboardPaste,
+  Box, Boxes, Plus, Loader2, Upload, Lightbulb, Sparkles, Shuffle, Group, Ungroup, ClipboardPaste, Paintbrush,
 } from 'lucide-vue-next'
 import {
   parseDoc, serializeDoc, createPrimitive, createGlbObject, createLight, createGroup,
@@ -34,6 +34,10 @@ import { SceneEngine, baseSizeFor, baseVertexCountFor, buildGeometry } from '~/l
 import { convertToMesh, remeshObject, solidifyObject, resolutionForTarget, REMESH_RESOLUTION_MAX } from '~/lib/scene3d/toMesh'
 import { MESH_VERTEX_CAP, MESH_DEFAULT_TARGET, type MeshData } from '~/lib/scene3d/mesh'
 import { loadMesh, meshCacheGet } from '~/lib/scene3d/meshCache'
+import { SculptSession } from '~/lib/scene3d/sculpt/session'
+import { applyBrush, type BrushKind, type BrushStamp } from '~/lib/scene3d/sculpt/brushes'
+import { expandStamp, type SymmetrySpec } from '~/lib/scene3d/sculpt/symmetry'
+import Scene3DSculptPanel from '~/components/vue-canvas/studio/Scene3DSculptPanel.vue'
 import { rebaseMany, groupObjects, ungroupMany, rootObjects, descendantIds, cloneSubtree, axisDeltaWrites } from '~/lib/scene3d/hierarchy'
 import Scene3DObjectRow from './studio/Scene3DObjectRow.vue'
 import { totalClones, clampedClones } from '~/lib/scene3d/modifiers'
@@ -106,11 +110,21 @@ const canConvertToMesh = computed(() =>
   selectedObjects.value.length === 1
   && selectedObjects.value[0]!.kind === 'primitive'
   && (selectedObjects.value[0] as PrimitiveObject).primitive !== 'mesh')
+// Sculpt: exactly one `mesh` primitive selected (Task 13).
+const canSculpt = computed(() =>
+  selectedObjects.value.length === 1
+  && selectedObjects.value[0]!.kind === 'primitive'
+  && (selectedObjects.value[0] as PrimitiveObject).primitive === 'mesh')
 // The object list renders this tree rather than `doc.objects` directly — the
 // doc itself stays a flat array plus `parentId`; only the render is nested.
 const rootObjectList = computed(() => rootObjects(doc.objects))
 
 function toggleSelected(id: string, additive: boolean): void {
+  // A stray click (viewport or the Objects list) must never re-point the
+  // selection away from the object a live sculpt session is bound to — the
+  // inspector column is showing the sculpt panel regardless of `selectedIds`,
+  // so a reselect here would just desync the two with nothing to show for it.
+  if (sculpting.value) return
   if (!additive) { selectedIds.value = [id]; return }
   const i = selectedIds.value.indexOf(id)
   // Re-selecting an already-selected object promotes it to primary rather than
@@ -1327,6 +1341,16 @@ onMounted(() => {
   window.addEventListener('keydown', onKey, true)
   window.addEventListener('pointerup', onGeometryDragRelease)
   window.addEventListener('pointercancel', onGeometryDragRelease)
+  // Sculpt pointer loop: pointerdown is scoped to the viewport (mirrors
+  // SceneInteraction's own domElement listeners); move/up sit on window so a
+  // drag that leaves the canvas mid-stroke still ends cleanly, same as the
+  // gizmo-drag release convention above. Every handler no-ops via
+  // `sculpting.value`/`sculptStrokeDown` guards when not actually sculpting,
+  // so these are safe to leave attached for the surface's whole lifetime.
+  viewportEl.value.addEventListener('pointerdown', onSculptPointerDown)
+  window.addEventListener('pointermove', onSculptPointerMove)
+  window.addEventListener('pointerup', onSculptPointerUp)
+  window.addEventListener('pointercancel', onSculptPointerUp)
 })
 
 onBeforeUnmount(() => {
@@ -1336,6 +1360,10 @@ onBeforeUnmount(() => {
   window.removeEventListener('pointerdown', onPrimMenuOutside, true)
   window.removeEventListener('pointerdown', onLightMenuOutside, true)
   window.removeEventListener('pointerdown', onGenMenuOutside, true)
+  viewportEl.value?.removeEventListener('pointerdown', onSculptPointerDown)
+  window.removeEventListener('pointermove', onSculptPointerMove)
+  window.removeEventListener('pointerup', onSculptPointerUp)
+  window.removeEventListener('pointercancel', onSculptPointerUp)
   cancelAnimationFrame(raf)
   ro?.disconnect()
   interaction?.dispose()
@@ -1438,7 +1466,15 @@ function onKey(e: KeyboardEvent) {
   // fire while the studio is open. Skipped while typing in a field (its native undo wins).
   if ((e.metaKey || e.ctrlKey) && !e.altKey && !inField) {
     const k = e.key.toLowerCase()
-    if (k === 'z') { e.preventDefault(); e.stopImmediatePropagation(); if (e.shiftKey) redo(); else undo(); return }
+    if (k === 'z') {
+      e.preventDefault(); e.stopImmediatePropagation()
+      // Sculpt mode owns undo while active — see sculptUndo's doc. Must
+      // return here unconditionally so this never falls through to the
+      // studio's own doc-level undo/redo below (rule #3 of Task 13's brief).
+      if (sculpting.value) { sculptUndo(); return }
+      if (e.shiftKey) redo(); else undo()
+      return
+    }
     if (k === 'y') { e.preventDefault(); e.stopImmediatePropagation(); redo(); return }
     // Cmd/Ctrl+G groups, +Shift ungroups. Handled here (not down by Escape, as
     // the brief first sketched) because the very next line unconditionally
@@ -1481,7 +1517,7 @@ function onKey(e: KeyboardEvent) {
     }
     // No selection → fall through untouched; the shell's Escape closes.
   }
-  else if (e.key === 'Backspace' && selectedIds.value.length) {
+  else if (e.key === 'Backspace' && selectedIds.value.length && !sculpting.value) {
     // Snapshot before looping: removeObject mutates selectedIds as it goes (a
     // cascade can remove a later id in this same batch as somebody else's
     // descendant), and iterating the live ref would skip or re-visit entries.
@@ -1682,6 +1718,164 @@ async function solidifySelection() {
     remeshBusy.value = false
   }
 }
+
+// ── Sculpt mode (Task 13) ─────────────────────────────────────────────────────
+// The session (Tasks 10–12) holds the working vertex buffer; NOTHING here ever
+// writes `doc.objects` mid-session — see `commitAndExitSculpt`, the only place
+// that does, and only once. Orbit/gizmo lock routes through
+// `interaction.setSculpting`, never a direct `orbit.enabled` write (rule #1 of
+// this task's brief).
+const sculpting = ref(false)
+const sculptBrush = ref<BrushKind>('draw')
+const sculptSize = ref(0.15)
+const sculptStrength = ref(0.5)
+const sculptSymmetry = ref<'none' | 'mirror'>('none')
+let sculptSession: SculptSession | null = null
+let sculptObjId: string | null = null
+let sculptStrokeDown = false
+// Scratch instances reused across pointermoves — a drag is the one place in
+// this file where per-frame allocation would actually be paid for (same
+// rationale as interaction.ts's module-scope `_p`/`_q`/`_s`/`_e`).
+const _sculptRay = new THREE.Raycaster()
+const _sculptInv = new THREE.Matrix4()
+const _sculptOrigin = new THREE.Vector3()
+const _sculptDir = new THREE.Vector3()
+
+async function enterSculpt() {
+  if (sculpting.value) return
+  const obj = selectedObjects.value[0] as PrimitiveObject | undefined
+  if (!obj || obj.kind !== 'primitive' || obj.primitive !== 'mesh') return
+  const encoded = obj.content?.mesh
+  const key = obj.content?.meshKey
+  if (!encoded || !key) return
+  convertError.value = ''
+  try {
+    const data = meshCacheGet(key) ?? await loadMesh(encoded, key)
+    // The object may have moved on while the decode was in flight.
+    if (selectedObjects.value.length !== 1 || selectedObjects.value[0]!.id !== obj.id) return
+    sculptSession = new SculptSession(data)
+    sculptObjId = obj.id
+    engine?.setSculptOverride(obj.id, sculptSession.positions, sculptSession.indices)
+    interaction?.setSculpting(true)
+    sculpting.value = true
+  } catch (err) {
+    console.warn('[scene3d-studio] enter sculpt failed', err)
+    convertError.value = 'Could not enter sculpt mode — try again.'
+  }
+}
+
+/** Ray-pick under the pointer (in the mesh's own object space — SculptSession.pick's
+ *  contract), expand for symmetry, and apply the current brush. Called from
+ *  pointerdown too (so a stationary dab paints without requiring movement). */
+function applySculptAt(e: PointerEvent) {
+  if (!engine || !sculptSession || !sculptObjId || !viewportEl.value) return
+  const mesh = engine.objectRoots.get(sculptObjId) as THREE.Mesh | undefined
+  if (!mesh) return
+  const rect = viewportEl.value.getBoundingClientRect()
+  const ndc = new THREE.Vector2(
+    ((e.clientX - rect.left) / rect.width) * 2 - 1,
+    -((e.clientY - rect.top) / rect.height) * 2 + 1,
+  )
+  _sculptRay.setFromCamera(ndc, engine.camera)
+  // The ray is in WORLD space; SculptSession.pick expects the mesh's OWN
+  // object space (its positions/indices are never transformed by the root's
+  // TRS), so both origin and direction are carried through the inverse world
+  // matrix — transformDirection (not applyMatrix4) for the direction, since a
+  // direction must not pick up translation.
+  _sculptInv.copy(mesh.matrixWorld).invert()
+  _sculptOrigin.copy(_sculptRay.ray.origin).applyMatrix4(_sculptInv)
+  _sculptDir.copy(_sculptRay.ray.direction).transformDirection(_sculptInv).normalize()
+  const hit = sculptSession.pick(
+    [_sculptOrigin.x, _sculptOrigin.y, _sculptOrigin.z],
+    [_sculptDir.x, _sculptDir.y, _sculptDir.z],
+  )
+  if (!hit) return
+  const stamp: BrushStamp = {
+    centre: hit.point,
+    normal: hit.normal,
+    radius: sculptSize.value,
+    strength: sculptStrength.value,
+    invert: e.altKey,
+  }
+  const spec: SymmetrySpec = { mode: sculptSymmetry.value, axis: 0, count: 2 }
+  // Stamps are treated as immutable here — expandStamp can return the SAME
+  // object back by reference (mode 'none', and mirror's first entry), so
+  // mutating one in place would corrupt the next brush's read of it.
+  for (const s of expandStamp(stamp, spec)) applyBrush(sculptSession, sculptBrush.value, s)
+  // Between strokes: mutate the live mesh's position attribute IN PLACE. Its
+  // backing array IS sculptSession.positions (set by reference in
+  // engine.setSculptOverride), so applyBrush's writes above already landed in
+  // it — marking needsUpdate is the entire cost of this, no rebuild, no copy.
+  const posAttr = mesh.geometry.getAttribute('position') as THREE.BufferAttribute | undefined
+  if (posAttr) posAttr.needsUpdate = true
+}
+
+function onSculptPointerDown(e: PointerEvent) {
+  if (!sculpting.value || e.button !== 0 || !sculptSession) return
+  // Same as OrbitControls' own pointerdown handler: without this, a mouse
+  // (non-touch) drag across the canvas falls through to the browser's native
+  // drag-select, which highlights the whole page's text instead of painting.
+  e.preventDefault()
+  sculptStrokeDown = true
+  sculptSession.beginStroke()
+  applySculptAt(e)
+}
+function onSculptPointerMove(e: PointerEvent) {
+  if (!sculptStrokeDown || !sculptSession) return
+  applySculptAt(e)
+}
+function onSculptPointerUp() {
+  if (!sculptStrokeDown) return
+  sculptStrokeDown = false
+  if (!sculptSession || !sculptObjId) return
+  // endStroke() already recomputes normals and rebuilds the pick structure —
+  // exactly once, here, not per pointermove (a stroke must never rebuild).
+  sculptSession.endStroke()
+  engine?.setSculptOverride(sculptObjId, sculptSession.positions, sculptSession.indices)
+}
+
+/** Cmd+Z / Ctrl+Z while sculpting — called from onKey BEFORE the doc-level
+ *  undo branch, and returns unconditionally so it never falls through to it
+ *  (rule #3 of this task's brief: one keystroke must not both undo a stroke
+ *  and revert an unrelated document change). Redo has no meaning here
+ *  (SculptSession keeps no redo stack), so Shift+Cmd+Z is swallowed too rather
+ *  than falling through to the doc's redo. */
+function sculptUndo() {
+  if (!sculptSession || !sculptObjId) return
+  sculptSession.undo()
+  engine?.setSculptOverride(sculptObjId, sculptSession.positions, sculptSession.indices)
+}
+
+/** Apply and Exit are the same action for Task 13 (see Scene3DSculptPanel's
+ *  header comment): commit the session's working buffer to the doc — the
+ *  ONLY scene_state write a sculpt makes, and only here — then leave sculpt
+ *  mode. Skipped entirely when the session was never dirtied, so an
+ *  accidental Sculpt-then-Exit doesn't pollute undo history or the "unexported
+ *  changes" indicator. */
+async function commitAndExitSculpt() {
+  const session = sculptSession
+  const id = sculptObjId
+  if (!session || !id) return
+  if (session.dirty) {
+    const { mesh, meshKey } = await session.commit()
+    // Warm the shared mesh cache BEFORE the doc write triggers the normal
+    // geoKey-gated resync, so that resync is a cache hit — no placeholder
+    // cube flash while it decodes what we already have in hand.
+    await loadMesh(mesh, meshKey)
+    const i = doc.objects.findIndex((o) => o.id === id)
+    if (i >= 0) {
+      const obj = doc.objects[i] as PrimitiveObject
+      doc.objects[i] = { ...obj, content: { ...obj.content, mesh, meshKey } }
+    }
+    meshGen.value++ // same convention as the remesh/solidify paths: re-measure Size/vertex count
+  }
+  engine?.setSculptOverride(null, null, null)
+  interaction?.setSculpting(false)
+  sculpting.value = false
+  sculptSession = null
+  sculptObjId = null
+}
+
 // Scenes render every light as a real Three.js light — an unbounded count would
 // tank frame time, so the UI caps additions rather than letting the doc silently
 // grow into something the engine chokes on.
@@ -2290,7 +2484,7 @@ function onClose() {
     <template #aside>
       <div class="flex h-full w-full flex-col overflow-hidden rounded-lg border border-white/[0.10] bg-white/[0.04]">
         <div class="shrink-0 px-3 py-2.5 text-[11px] font-medium text-white/50">Objects</div>
-        <div v-if="canGroup || canUngroup || canConvertToMesh" class="flex shrink-0 gap-1 px-2 pb-2">
+        <div v-if="!sculpting && (canGroup || canUngroup || canConvertToMesh || canSculpt)" class="flex shrink-0 gap-1 px-2 pb-2">
           <StudioButton v-if="canGroup" @click="groupSelection">
             <span class="flex items-center gap-1.5"><Group class="h-3.5 w-3.5" /> Group</span>
           </StudioButton>
@@ -2299,6 +2493,9 @@ function onClose() {
           </StudioButton>
           <StudioButton v-if="canConvertToMesh" :disabled="converting" @click="convertSelectionToMesh">
             <span class="flex items-center gap-1.5"><Boxes class="h-3.5 w-3.5" /> To mesh</span>
+          </StudioButton>
+          <StudioButton v-if="canSculpt" @click="enterSculpt">
+            <span class="flex items-center gap-1.5"><Paintbrush class="h-3.5 w-3.5" /> Sculpt</span>
           </StudioButton>
         </div>
         <p v-if="convertError" class="shrink-0 px-2 pb-2 text-[11px] leading-snug text-red-400/90">{{ convertError }}</p>
@@ -2349,6 +2546,21 @@ function onClose() {
     </template>
 
     <template #controls>
+      <!-- Sculpt mode swaps the WHOLE inspector column for the sculpt panel
+           (brush palette, Size/Strength, Symmetry, its own Apply/Exit) — the
+           Build/Motion tabs and the Save/Export footer below have no meaning
+           while a stroke session is live and nothing has been written to the
+           doc yet (rule #2 of Task 13's brief). -->
+      <Scene3DSculptPanel
+        v-if="sculpting"
+        v-model:brush="sculptBrush"
+        v-model:size="sculptSize"
+        v-model:strength="sculptStrength"
+        v-model:symmetry="sculptSymmetry"
+        @apply="commitAndExitSculpt"
+        @exit="commitAndExitSculpt"
+      />
+      <template v-else>
       <div class="mb-2 flex gap-1 rounded-lg bg-white/[0.04] p-1 text-[11px]">
         <button type="button" class="nodrag flex-1 rounded px-2 py-1"
                 :class="activeTab === 'build' ? 'bg-white/15 text-white' : 'text-white/55 hover:text-white/80'"
@@ -3177,6 +3389,7 @@ function onClose() {
           </StudioButton>
         </div>
       </div>
+      </template>
     </template>
   </StudioModalShell>
 </template>
