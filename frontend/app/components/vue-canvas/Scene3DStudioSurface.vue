@@ -34,7 +34,7 @@ import { SceneEngine, baseSizeFor, baseVertexCountFor, buildGeometry } from '~/l
 import { convertToMesh, remeshObject, remeshMeshData, solidifyObject, resolutionForTarget, REMESH_RESOLUTION_MAX } from '~/lib/scene3d/toMesh'
 import { MESH_VERTEX_CAP, MESH_DEFAULT_TARGET, decodeMesh, encodeMesh, meshDataFromGeometry, geometryFromMeshData, type MeshData } from '~/lib/scene3d/mesh'
 import { loadMesh, meshCacheGet } from '~/lib/scene3d/meshCache'
-import { SculptSession } from '~/lib/scene3d/sculpt/session'
+import { SculptSession, commitSculptToDoc } from '~/lib/scene3d/sculpt/session'
 import { applyBrush, type BrushKind, type BrushStamp } from '~/lib/scene3d/sculpt/brushes'
 import { expandStamp, type SymmetryMode, type SymmetrySpec } from '~/lib/scene3d/sculpt/symmetry'
 import Scene3DSculptPanel from '~/components/vue-canvas/studio/Scene3DSculptPanel.vue'
@@ -2302,6 +2302,9 @@ function sculptUndo() {
  *  precedent so the busy label actually paints before the block starts. */
 async function remeshSculptSession() {
   if (!sculptSession || !sculptObjId || sculptRemeshBusy.value || committing.value) return
+  // Captured for the staleness check below — see its comment for why this
+  // must be the SESSION INSTANCE, not just the object id.
+  const targetSession = sculptSession
   const targetId = sculptObjId
   sculptRemeshBusy.value = true
   convertError.value = ''
@@ -2309,10 +2312,18 @@ async function remeshSculptSession() {
   try {
     const data = sculptSession.toMeshData()
     const out = await remeshMeshData(data, sculptRemeshResolution.value)
-    // Sculpt mode can't be exited mid-await from this panel (Apply/Exit are
-    // disabled together with this button — see the `committing` prop wiring
-    // below), but guard the stale case anyway, same as remeshSelection.
-    if (sculptObjId !== targetId) return
+    // Finding 2 (Task 13 review): the modal's ✕ was not gated against
+    // `sculptRemeshBusy` (fixed below, in `commitAndExitSculpt`), so before
+    // that fix a close-then-reopen on the SAME object during this await
+    // built a brand-new SculptSession sharing the OLD session's obj id — an
+    // `sculptObjId !== targetId` check alone couldn't tell the two sessions
+    // apart and let a stale remesh clobber the fresh one. Compare the
+    // SESSION INSTANCE instead: `enterSculpt` and this function both always
+    // mint a fresh `new SculptSession(...)`, so reference identity is a
+    // token that's unique per session lifecycle even when the underlying
+    // object id repeats. This also still catches the case the id check was
+    // originally written for (a different object entirely).
+    if (sculptSession !== targetSession) return
     if (out.open) {
       // Spec: the object was already closed to enter sculpt in the first
       // place, so this should be unreachable — but never assume. Refuse
@@ -2355,21 +2366,38 @@ async function remeshSculptSession() {
  *
  *  Returns false (and sets `convertError`) on failure, so a caller can refuse
  *  to persist a document that never got the sculpt's strokes. No-op success
- *  (`true`) when there is no live session, or the session isn't dirty. */
+ *  (`true`) when there is no live session, or the session isn't dirty.
+ *
+ *  Goes through `commitSculptToDoc` (session.ts) rather than calling
+ *  `session.commit()` directly: that wrapper re-dirties the session on ANY
+ *  failure downstream of encoding — including `write` below returning
+ *  `false` when the object was removed from `doc.objects` mid-sculpt — so a
+ *  failed commit never leaves the session looking clean while the document
+ *  still holds the pre-sculpt mesh (Task 13 review, finding 1; the
+ *  removed-object case was its accompanying Minor, same root cause). Without
+ *  this, a transient failure here would permanently wedge the NEXT
+ *  Save/Apply/Exit: `commitSculptSession`'s `!session.dirty` guard above
+ *  would see "clean" and skip re-encoding, so Save would flash success while
+ *  silently persisting the stale doc forever. */
 async function commitSculptSession(): Promise<boolean> {
   const session = sculptSession
   const id = sculptObjId
   if (!session || !id || !session.dirty) return true
   try {
-    const { mesh, meshKey } = await session.commit()
-    // Warm the shared mesh cache BEFORE the doc write triggers the normal
-    // geoKey-gated resync, so that resync is a cache hit — no placeholder
-    // cube flash while it decodes what we already have in hand.
-    await loadMesh(mesh, meshKey)
-    const i = doc.objects.findIndex((o) => o.id === id)
-    if (i >= 0) {
+    const ok = await commitSculptToDoc(session, async (mesh, meshKey) => {
+      // Warm the shared mesh cache BEFORE the doc write triggers the normal
+      // geoKey-gated resync, so that resync is a cache hit — no placeholder
+      // cube flash while it decodes what we already have in hand.
+      await loadMesh(mesh, meshKey)
+      const i = doc.objects.findIndex((o) => o.id === id)
+      if (i < 0) return false // object removed from the doc mid-sculpt — nowhere to write
       const obj = doc.objects[i] as PrimitiveObject
       doc.objects[i] = { ...obj, content: { ...obj.content, mesh, meshKey } }
+      return true
+    })
+    if (!ok) {
+      convertError.value = 'Could not save the sculpt — try again.'
+      return false
     }
     meshGen.value++ // same convention as the remesh/solidify paths: re-measure Size/vertex count
     return true
@@ -2418,6 +2446,23 @@ async function commitAndExitSculpt() {
   const session = sculptSession
   const id = sculptObjId
   if (!session || !id || committing.value) return
+  if (sculptRemeshBusy.value) {
+    // Finding 2 (Task 13 review): the panel's own Apply/Exit buttons already
+    // fold `remeshBusy` into their `busy` computed (Scene3DSculptPanel.vue)
+    // and disable themselves, so this function normally can't be reached
+    // while a remesh is in flight through THAT path. But the modal shell's ✕
+    // (StudioModalShell.vue) lives outside the panel and calls `onClose` →
+    // this function directly, with no such gate. Committing here while the
+    // remesh promise is still in flight would race it — whichever of "commit
+    // the pre-remesh buffer" and the remesh's own stale-session guard lands
+    // second wins, and either ordering can clobber real work (see
+    // `remeshSculptSession`'s staleness-check comment for the exact
+    // scenario this closes). Refuse deliberately instead: `onClose`'s
+    // existing `if (convertError.value) return` already keeps the modal
+    // open for this, same as a genuine commit failure.
+    convertError.value = 'Remesh in progress — wait for it to finish, then close.'
+    return
+  }
   committing.value = true
   convertError.value = ''
   try {

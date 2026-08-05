@@ -277,10 +277,61 @@ export class SculptSession {
     this.editVersion = this.nextVersion++
   }
 
-  /** The ONLY place the session produces document-shaped data. */
+  /** The ONLY place the session produces document-shaped data. Marks the
+   *  session clean the instant the buffer is ENCODED — encoding itself can't
+   *  partially fail, so that part is safe in isolation. It is NOT safe once a
+   *  caller has to do something with the result (`commitSculptToDoc` below):
+   *  callers should go through that wrapper rather than calling `commit()`
+   *  directly, or a downstream failure will leave `dirty` reading false while
+   *  nothing was actually persisted. */
   async commit(): Promise<{ mesh: string; meshKey: string }> {
     const mesh = await encodeMesh(this.toMeshData())
     this.committedVersion = this.editVersion
     return { mesh, meshKey: contentDigest(mesh) }
+  }
+}
+
+/** Commits `session` through to wherever `write` persists it, keeping
+ *  `dirty` truthful no matter how that persistence turns out.
+ *
+ *  `SculptSession.commit()` marks the session clean as soon as it has
+ *  ENCODED the working buffer — but encoding is not the same as persisting.
+ *  The real caller (`commitSculptSession` in Scene3DStudioSurface.vue) still
+ *  has to warm the mesh cache and splice the result into `doc.objects`, and
+ *  either step can fail: a transient decode error, or the object having been
+ *  deleted from the doc while the session was open (`write` returning
+ *  `false` covers that second case — same root cause, same fix, per the Task
+ *  13 review). If `dirty` were left false through either failure, the next
+ *  Save would see a clean session, skip re-encoding entirely via its
+ *  `!session.dirty` guard, and permanently discard strokes that were never
+ *  actually written anywhere (Task 13 review, finding 1).
+ *
+ *  This wrapper re-dirties the session with `markDirty()` on any such
+ *  failure. `markDirty()` only bumps the version counter — it never touches
+ *  `positions` — so the working buffer stays exactly what it was, and is
+ *  still committable on the next attempt. No-ops (returns `true`) when the
+ *  session is already clean, exactly like `commitSculptSession`'s own guard
+ *  used to inline.
+ *
+ *  `write` returning `false` is reported back as `false` with no throw.
+ *  A throw from `write` (or from `commit()` itself) propagates to the
+ *  caller after re-dirtying — callers already have their own try/catch for
+ *  surfacing that as a user-facing error. */
+export async function commitSculptToDoc(
+  session: SculptSession,
+  write: (mesh: string, meshKey: string) => Promise<boolean> | boolean,
+): Promise<boolean> {
+  if (!session.dirty) return true
+  const { mesh, meshKey } = await session.commit()
+  try {
+    const wrote = await write(mesh, meshKey)
+    if (!wrote) {
+      session.markDirty()
+      return false
+    }
+    return true
+  } catch (err) {
+    session.markDirty()
+    throw err
   }
 }

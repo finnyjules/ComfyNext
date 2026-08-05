@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import * as THREE from 'three'
 import { meshDataFromGeometry, contentDigest } from '~/lib/scene3d/mesh'
-import { SculptSession, UNDO_DEPTH } from '~/lib/scene3d/sculpt/session'
+import { SculptSession, UNDO_DEPTH, commitSculptToDoc } from '~/lib/scene3d/sculpt/session'
 
 const session = () =>
   new SculptSession(meshDataFromGeometry(new THREE.SphereGeometry(0.5, 48, 32)))
@@ -246,5 +246,71 @@ describe('sculpt session', () => {
     s.beginStroke(); nudge(s, 0, 0.5, 0, 0.25, 0.2); s.endStroke()
     const after = s.pick([0, 3, 0], [0, -1, 0])!
     expect(after.point[1]).toBeGreaterThan(before.point[1] + 0.1)
+  })
+})
+
+// Task 13 review, finding 1 (Important — silent data loss): `commitSculptSession`
+// (Scene3DStudioSurface.vue) used to call `session.commit()` directly, which marks
+// the session clean the instant the buffer is ENCODED. But the caller still had to
+// warm the mesh cache and splice the result into `doc.objects` — either could fail
+// AFTER that point, leaving `dirty` false while nothing was actually persisted. The
+// next Save would then see a clean session, skip re-encoding via its own
+// `!session.dirty` guard, and flash success while silently persisting the stale
+// pre-sculpt doc forever. These pin `commitSculptToDoc`, the wrapper the surface now
+// goes through instead, which must keep `dirty` truthful across every one of those
+// failure shapes.
+describe('commitSculptToDoc', () => {
+  it('stays dirty when the encode succeeds but the downstream write throws', async () => {
+    const s = session()
+    s.beginStroke(); nudge(s, 0, 0.5, 0, 0.2, 0.05); s.endStroke()
+    expect(s.dirty).toBe(true)
+    await expect(
+      commitSculptToDoc(s, async () => { throw new Error('doc write failed') }),
+    ).rejects.toThrow('doc write failed')
+    // The failure happened strictly AFTER commit() encoded (and would, on its
+    // own, have marked the session clean) — this is the exact case finding 1
+    // covers: dirty must not read false when nothing landed anywhere.
+    expect(s.dirty).toBe(true)
+  })
+
+  it('stays dirty when write reports no matching object (removed from the doc mid-sculpt)', async () => {
+    // The accompanying Minor: `doc.objects.findIndex` coming back -1 (object
+    // deleted while the session was open) is the same "nothing was actually
+    // persisted" shape as a throw, and must be covered by the same fix.
+    const s = session()
+    s.beginStroke(); nudge(s, 0, 0.5, 0, 0.2, 0.05); s.endStroke()
+    const ok = await commitSculptToDoc(s, async () => false)
+    expect(ok).toBe(false)
+    expect(s.dirty).toBe(true)
+  })
+
+  it('a session left dirty by a failed commit is still committable on the next attempt', async () => {
+    // Not just that `dirty` reads true — the working buffer itself must
+    // survive untouched so a retry actually has something correct to send.
+    const s = session()
+    s.beginStroke(); nudge(s, 0, 0.5, 0, 0.2, 0.05); s.endStroke()
+    const positionsBefore = s.positions.slice()
+    await commitSculptToDoc(s, async () => { throw new Error('boom') }).catch(() => {})
+    expect(s.positions).toEqual(positionsBefore)
+    const ok = await commitSculptToDoc(s, async () => true) // retry succeeds
+    expect(ok).toBe(true)
+    expect(s.dirty).toBe(false)
+  })
+
+  it('clears dirty once the write actually lands', async () => {
+    const s = session()
+    s.beginStroke(); nudge(s, 0, 0.5, 0, 0.2, 0.05); s.endStroke()
+    const ok = await commitSculptToDoc(s, async () => true)
+    expect(ok).toBe(true)
+    expect(s.dirty).toBe(false)
+  })
+
+  it('no-ops on a clean session without calling write at all', async () => {
+    const s = session()
+    expect(s.dirty).toBe(false)
+    let called = false
+    const ok = await commitSculptToDoc(s, () => { called = true; return true })
+    expect(ok).toBe(true)
+    expect(called).toBe(false)
   })
 })
