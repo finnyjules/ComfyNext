@@ -18,24 +18,30 @@ const emit = defineEmits<{ (e: 'commit', raw: string): void; (e: 'cancel'): void
 const draft = ref('')
 const input = ref<HTMLInputElement | null>(null)
 
-// Escape must leave the value alone, and Chrome fires `blur` on a focused element
-// the moment it is removed from the DOM — so cancelling unmounts the input, which
-// then fires the blur-commit and writes the draft anyway. Observed: type 99, press
-// Escape, get 99. This latch makes the unmount-blur that follows a cancel a no-op.
-let cancelling = false
+// Chrome fires `blur` on a focused element the moment it is removed from the DOM,
+// and BOTH endings unmount this input: Escape's cancel and Enter's commit each set
+// `editing = false` upstream. So the latch is "this gesture is already finished",
+// not "this gesture was cancelled" — a cancel-only flag left Escape correct while
+// Enter still double-committed (commit → unmount → blur → commit again, two
+// identical `update:modelValue` writes for one keypress). Whichever ending runs
+// first wins and the unmount-blur behind it is a no-op; a plain blur with neither
+// key pressed still finds the latch clear and commits, which is click-away-to-commit.
+let done = false
 
 function cancel() {
-  cancelling = true
+  if (done) return
+  done = true
   emit('cancel')
 }
 function commit() {
-  if (cancelling) return
+  if (done) return
+  done = true
   emit('commit', draft.value)
 }
 
 watch(() => props.editing, async (on) => {
   if (!on) return
-  cancelling = false
+  done = false
   draft.value = formatValue(props.value, props.step)
   await nextTick()
   input.value?.select()

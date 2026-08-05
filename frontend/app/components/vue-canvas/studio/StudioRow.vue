@@ -11,7 +11,7 @@
  */
 import { computed, ref } from 'vue'
 import type { ControlSpec } from '~/lib/spacetype/effect'
-import { fillFraction, fillOrigin, parseTyped, resetValue } from '~/lib/studio/row'
+import { fillFraction, fillOrigin, formatValue, parseTyped, resetValue } from '~/lib/studio/row'
 import { scrubValue } from '~/lib/studio/scrub'
 import { controlKindToVariableType } from '~/lib/collection/studioBindables'
 import { rowRenderers, NUMERIC_KINDS } from './rows/registry'
@@ -50,29 +50,53 @@ const band = computed(() => {
 })
 
 const editing = ref(false)
-const dragged = ref(false)
 
 function onPointerDown(e: PointerEvent) {
+  // Primary button only. A right-click fires `pointerdown` too, and without this the
+  // gesture whose entire purpose is opening the bind menu would also capture, run
+  // `up()` with no movement, and click-to-position a brand new value into the
+  // parameter. Middle-click/back/forward are left alone for the same reason.
+  if (e.button !== 0) return
   if (!numeric.value || props.bound || editing.value) return
   const el = e.currentTarget as HTMLElement
   el.setPointerCapture(e.pointerId)
-  dragged.value = false
+  // Per-gesture, not per-component: a second pointer going down mid-drag used to
+  // reset a shared flag, so releasing the FIRST pointer read `dragged === false`
+  // and fired a spurious click-to-position jump. The template never reads it, so
+  // it does not need to be reactive either.
+  let dragged = false
   const startX = e.clientX
   const startValue = num.value
   function move(ev: PointerEvent) {
-    if (Math.abs(ev.clientX - startX) > 2) dragged.value = true
-    if (!dragged.value) return
+    if (ev.pointerId !== e.pointerId) return
+    if (Math.abs(ev.clientX - startX) > 2) dragged = true
+    if (!dragged) return
     emit('update:modelValue', scrubValue({
       startValue, deltaPx: ev.clientX - startX,
       min: min.value, max: max.value, step: step.value, fine: ev.shiftKey,
     }))
   }
-  function up(ev: PointerEvent) {
-    el.releasePointerCapture(e.pointerId)
+  // Detaching is deliberately separate from finishing: `pointercancel` (touch, pen,
+  // or the browser taking the gesture over for a scroll) never delivers `pointerup`,
+  // and without this the `pointermove` listener stayed attached to the row with a
+  // stale startX — after which merely HOVERING the row cleared the 2px test and
+  // scrubbed continuously.
+  function teardown() {
     el.removeEventListener('pointermove', move)
     el.removeEventListener('pointerup', up)
+    el.removeEventListener('pointercancel', onCancel)
+    // Last, so a throw here can never leave the listeners attached.
+    if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId)
+  }
+  function onCancel(ev: PointerEvent) {
+    if (ev.pointerId !== e.pointerId) return
+    teardown()
+  }
+  function up(ev: PointerEvent) {
+    if (ev.pointerId !== e.pointerId) return
+    teardown()
     // A press with no movement is a click: jump to where they clicked.
-    if (!dragged.value) {
+    if (!dragged) {
       const r = el.getBoundingClientRect()
       const f = Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width))
       const raw = min.value + f * (max.value - min.value)
@@ -81,6 +105,34 @@ function onPointerDown(e: PointerEvent) {
   }
   el.addEventListener('pointermove', move)
   el.addEventListener('pointerup', up)
+  el.addEventListener('pointercancel', onCancel)
+}
+
+/**
+ * The keyboard path. What this replaces was a native `<input type="range">` —
+ * focusable, arrow-keyable, self-describing — and this row becomes every control in
+ * every studio, so the regression would have been permanent. Arrows move one step,
+ * Shift-arrow ten (a native range's PageUp jump, on a key people actually press),
+ * Home/End pin the ends. Bound rows are inert here exactly as they are under the
+ * pointer, and an open text field keeps its own arrows for caret movement.
+ */
+const KEY_STEPS = 10
+
+function onKeydown(e: KeyboardEvent) {
+  if (!numeric.value || props.bound || editing.value) return
+  const jump = step.value * (e.shiftKey ? KEY_STEPS : 1)
+  let next: number
+  switch (e.key) {
+    case 'ArrowLeft': case 'ArrowDown': next = num.value - jump; break
+    case 'ArrowRight': case 'ArrowUp': next = num.value + jump; break
+    case 'Home': next = min.value; break
+    case 'End': next = max.value; break
+    default: return
+  }
+  e.preventDefault()
+  // parseTyped owns the snap-and-clamp, same as typed entry — so a keyed value and a
+  // typed one can never land on different grids.
+  emit('update:modelValue', parseTyped(String(next), min.value, max.value, step.value) ?? num.value)
 }
 
 function onReset() {
@@ -109,9 +161,18 @@ function onValuePointerDown() {
 <template>
   <div>
     <div
-      class="group relative flex h-7 select-none items-center justify-between overflow-hidden rounded-md bg-white/[0.05] px-2.5"
+      class="group relative flex h-7 select-none items-center justify-between overflow-hidden rounded-md bg-white/[0.05] px-2.5 outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-white/40"
       :class="numeric && !bound && !editing ? 'cursor-ew-resize' : ''"
+      :tabindex="numeric ? 0 : undefined"
+      :role="numeric ? 'slider' : undefined"
+      :aria-label="numeric ? spec.label : undefined"
+      :aria-valuemin="numeric ? min : undefined"
+      :aria-valuemax="numeric ? max : undefined"
+      :aria-valuenow="numeric ? num : undefined"
+      :aria-valuetext="numeric ? formatValue(num, step) : undefined"
+      :aria-readonly="numeric && bound ? 'true' : undefined"
       @pointerdown="onPointerDown"
+      @keydown="onKeydown"
       @dblclick="onReset"
       @contextmenu.prevent="emit('menu', $event)"
     >
