@@ -3799,11 +3799,14 @@ export function mergeMeshes(
     res = Math.max(8, Math.round(res * 0.75))
   }
 
-  // Same last-resort floor as remeshObject: a coarse shape beats an error.
-  const grids = inputs.map((d) => buildTriGrid(d, cellFor(d, 8)))
-  const lattice = unionLattice(grids, 8)
-  const { sdf } = buildSdf(grids[0]!, lattice)
-  return { data: surfaceNets(sdf), open: false }
+  // CORRECTION (found in review, 2026-08-04): the block that was here sampled
+  // ONLY grids[0] and returned it as `{ open: false }` — the base object's own
+  // remeshed shape, reported as a successful merge, with nothing telling the
+  // user the other inputs were dropped. It is reachable: the slider reaches 128
+  // and four 3/4 steps only get to ~54. A last resort must never return a
+  // non-merge labelled as a merge. Keep shrinking until it fits, or return a
+  // failure the UI surfaces through `convertError`. The shipped code does the
+  // former; this block is left as a warning, not as code to copy.
 }
 
 ```
