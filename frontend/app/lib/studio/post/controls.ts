@@ -24,16 +24,42 @@ import { POST_EFFECTS } from './manifest'
  * Must stay free of `three` imports — reachable from the Collection control
  * resolver's dynamic import graph (same constraint as scene3d/controls.ts).
  */
+/**
+ * One "Effects" section holding a nested section per effect: its switch sits in the
+ * header (`sectionToggle`), its params are the body, and the card opens and closes
+ * with the switch.
+ *
+ * Two earlier shapes were wrong in opposite directions. A section per effect at top
+ * level gave twelve one-row cards — a "Bloom" card whose only content was a "Bloom"
+ * switch. One flat section fixed that but ran 32 rows together, so a slider had no
+ * visible owner. Nesting keeps each effect's params visibly its own while an
+ * inactive effect costs one collapsed row.
+ *
+ * Params deliberately do NOT carry `showIf`. Collapsing is the reveal, and it is the
+ * better one: the chevron opens a disabled effect so it can be dialled in before it
+ * is switched on, which a hidden row cannot do.
+ *
+ * Labels stay qualified in the manifest ("Bloom strength", not "Strength") even though
+ * the section now supplies context, because the agent's vocabulary and motion's target
+ * list are flat — there, "Strength" alone would collide across four effects.
+ */
+export const POST_SECTION = 'Effects'
+
+/** The nested section path for one effect — 'Effects/Bloom'. */
+const sectionFor = (label: string) => `${POST_SECTION}/${label}`
+
 export function postControls(opts: { threeD?: boolean } = {}): ControlSpec[] {
   const out: ControlSpec[] = []
   for (const e of POST_EFFECTS) {
     if (e.threeDOnly && !opts.threeD) continue
+    const group = sectionFor(e.label)
     out.push({
       key: `post.${e.enableKey}`,
       label: e.label,
       kind: 'switch',
       default: DEFAULT_POST[e.enableKey] as boolean,
-      group: e.label,
+      group,
+      sectionToggle: true,
     })
     for (const p of e.params) {
       // uniform: null means this param has nothing to bind to in a 2D shader pass
@@ -43,19 +69,18 @@ export function postControls(opts: { threeD?: boolean } = {}): ControlSpec[] {
       // keep them: gtao renders via EffectComposer, not this params list's frag.
       // (The 3D side of this rule is forward work — see the doc comment above.)
       if (p.uniform === null && !opts.threeD) continue
-      const showIf = { key: `post.${e.enableKey}`, equals: true } as const
       if (p.kind === 'color') {
         out.push({
           key: `post.${p.settingsKey}`, label: p.label, kind: 'color',
           default: DEFAULT_POST[p.settingsKey] as string,
-          group: e.label, hint: p.hint, showIf,
+          group, hint: p.hint,
         })
       } else {
         out.push({
           key: `post.${p.settingsKey}`, label: p.label, kind: 'slider',
           min: p.min, max: p.max, step: p.step,
           default: DEFAULT_POST[p.settingsKey] as number,
-          group: e.label, hint: p.hint, showIf,
+          group, hint: p.hint,
         })
       }
     }
@@ -63,5 +88,11 @@ export function postControls(opts: { threeD?: boolean } = {}): ControlSpec[] {
   return out
 }
 
-/** Section order for groupIntoSections — one section per effect, chain order. */
-export const POST_SECTIONS = POST_EFFECTS.map(e => e.label)
+/**
+ * For a host's section order array: the parent plus every effect's nested path, in
+ * declaration order — the order array is what decides sibling order at each depth.
+ *
+ * Ambient occlusion's path is listed unconditionally even though only a 3D host emits
+ * its controls; `groupIntoSections` prunes a section that ends up with nothing in it.
+ */
+export const POST_SECTIONS = [POST_SECTION, ...POST_EFFECTS.map(e => sectionFor(e.label))]

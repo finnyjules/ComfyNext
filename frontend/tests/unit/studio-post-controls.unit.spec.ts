@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { POST_EFFECTS, POST_CHAIN_ORDER } from '~/lib/studio/post/manifest'
-import { postControls } from '~/lib/studio/post/controls'
+import { postControls, POST_SECTIONS } from '~/lib/studio/post/controls'
 import { DEFAULT_POST } from '~/lib/studio/post/settings'
+import { groupIntoSections } from '~/lib/studio/sections'
 
 describe('post manifest', () => {
   it('declares the twelve effects', () => {
@@ -27,9 +28,11 @@ describe('derived post controls', () => {
     expect(bloomSwitch?.kind).toBe('switch')
     const strength = cs.find(c => c.key === 'post.bloomStrength')
     expect(strength?.kind).toBe('slider')
-    // Params live under the effect's own section, revealed by its switch.
-    expect(strength?.group).toBe(bloomSwitch?.group)
-    expect((strength as { showIf?: { key: string } }).showIf?.key).toBe('post.bloom')
+    // A param sits in its effect's own nested section, alongside the switch that
+    // heads it — 'Effects/Bloom', not the parent 'Effects'.
+    expect(bloomSwitch?.group).toBe('Effects/Bloom')
+    expect(strength?.group).toBe('Effects/Bloom')
+    expect((bloomSwitch as { sectionToggle?: boolean }).sectionToggle).toBe(true)
   })
 
   it('withholds ambient occlusion from non-3D hosts', () => {
@@ -48,6 +51,57 @@ describe('derived post controls', () => {
     for (const c of postControls({ threeD: true })) {
       const key = c.key.slice('post.'.length) as keyof typeof DEFAULT_POST
       expect(c.default).toEqual(DEFAULT_POST[key])
+    }
+  })
+})
+
+// The panel's shape, not just its contents. Two earlier shapes were wrong in
+// opposite directions: a section per effect at TOP level gave twelve one-row cards,
+// and one flat section ran 32 rows together with no visible owner per slider.
+describe('post panel shape', () => {
+  // Panel order is POST_EFFECTS declaration order, NOT POST_CHAIN_ORDER. They are
+  // different jobs: the chain order is a pipeline fact (grade before glow before
+  // grain), while this is a reading order, and it deliberately follows 3D Studio's
+  // — Bloom, Color, Chroma, blur, Film, Halftone, Dot screen, Glitch — with the
+  // three effects 3D Studio lacks slotted in where they belong by kind.
+  it('is ONE section, holding a nested section per effect, in declaration order', () => {
+    const sections = groupIntoSections(postControls(), POST_SECTIONS)
+    expect(sections.map(s => s.title)).toEqual(['Effects'])
+    expect(sections[0]!.controls).toEqual([])          // the parent is a container only
+    expect(sections[0]!.sections.map(s => s.title)).toEqual([
+      'Bloom', 'Color', 'Duotone', 'Chroma', 'Blur', 'Film',
+      'Halftone', 'Dot screen', 'Glitch', 'Grain', 'Vignette',
+    ])
+  })
+
+  // Each effect's card: its switch heads it, its params are the body.
+  it('heads each effect section with exactly one sectionToggle switch', () => {
+    const [effects] = groupIntoSections(postControls(), POST_SECTIONS)
+    for (const s of effects!.sections) {
+      const toggles = s.controls.filter(c => c.sectionToggle)
+      expect(toggles).toHaveLength(1)
+      expect(toggles[0]!.kind).toBe('switch')
+      expect(toggles[0]!.label).toBe(s.title)
+      // Everything else in the card belongs to that effect.
+      expect(s.controls.filter(c => !c.sectionToggle).every(c => c.kind !== 'switch')).toBe(true)
+    }
+  })
+
+  // The chevron is the reveal now, not showIf — that is what lets you open a disabled
+  // effect and dial it in before switching it on.
+  it('leaves params free of showIf so a disabled effect can still be opened', () => {
+    for (const c of postControls({ threeD: true })) {
+      expect((c as { showIf?: unknown }).showIf).toBeUndefined()
+    }
+  })
+
+  // With one shared section the label is the ONLY thing separating two "Amount"
+  // sliders — in the panel, in the agent's vocabulary, and in motion's track list.
+  // This is why manifest labels are qualified ("Bloom strength", not "Strength").
+  it('gives every control a distinct label', () => {
+    for (const threeD of [false, true]) {
+      const labels = postControls({ threeD }).map(c => c.label)
+      expect(new Set(labels).size).toBe(labels.length)
     }
   })
 })

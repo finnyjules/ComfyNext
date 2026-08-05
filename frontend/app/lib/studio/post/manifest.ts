@@ -56,13 +56,13 @@ export const POST_EFFECTS: PostEffectDef[] = [
     id: 'bloom', label: 'Bloom', enableKey: 'bloom', frag: 'bloom',
     params: [
       // u_intensity's catalog range is 0..3, same as bloomStrength — identity.
-      { kind: 'slider', uniform: 'u_intensity', settingsKey: 'bloomStrength', label: 'Strength', min: 0, max: 3, step: 0.05, hint: 'How strong the glow is' },
+      { kind: 'slider', uniform: 'u_intensity', settingsKey: 'bloomStrength', label: 'Bloom strength', min: 0, max: 3, step: 0.05, hint: 'How strong the glow is' },
       // bloomRadius 0..1 -> catalog u_radius 0.004..0.06. bloom.frag's blur kernel
       // is capped at 24 taps, so passing 0..1 straight through would undersample
       // into a broken/aliased blur well before reaching Sailor's max.
-      { kind: 'slider', uniform: 'u_radius', settingsKey: 'bloomRadius', label: 'Radius', min: 0, max: 1, step: 0.05, hint: 'How far the glow spreads', toUniform: v => 0.004 + v * 0.056 },
+      { kind: 'slider', uniform: 'u_radius', settingsKey: 'bloomRadius', label: 'Bloom radius', min: 0, max: 1, step: 0.05, hint: 'How far the glow spreads', toUniform: v => 0.004 + v * 0.056 },
       // u_threshold's catalog range is 0..1, same as bloomThreshold — identity.
-      { kind: 'slider', uniform: 'u_threshold', settingsKey: 'bloomThreshold', label: 'Threshold', min: 0, max: 1, step: 0.05, hint: 'How bright a pixel must be before it blooms' },
+      { kind: 'slider', uniform: 'u_threshold', settingsKey: 'bloomThreshold', label: 'Bloom threshold', min: 0, max: 1, step: 0.05, hint: 'How bright a pixel must be before it blooms' },
     ],
   },
   {
@@ -88,14 +88,14 @@ export const POST_EFFECTS: PostEffectDef[] = [
   {
     id: 'duotone', label: 'Duotone', enableKey: 'duotone', frag: 'duotone',
     params: [
-      { kind: 'color', uniform: 'u_shadow', settingsKey: 'duotoneShadow', label: 'Shadow', hint: 'Colour the darkest tones become' },
-      { kind: 'color', uniform: 'u_highlight', settingsKey: 'duotoneHighlight', label: 'Highlight', hint: 'Colour the brightest tones become' },
+      { kind: 'color', uniform: 'u_shadow', settingsKey: 'duotoneShadow', label: 'Duotone shadow', hint: 'Colour the darkest tones become' },
+      { kind: 'color', uniform: 'u_highlight', settingsKey: 'duotoneHighlight', label: 'Duotone highlight', hint: 'Colour the brightest tones become' },
       // duotoneMix 0..1 -> catalog u_contrast 0..2. Range differs but both are
       // 0-anchored on the same axis (duotone.frag's own luminance-contrast curve)
       // and 0..1 stays well inside the shader's working range with no overdrive —
       // unlike halftoneRadius/chromaAmount below, identity wouldn't misbehave.
       // Sailor's slider simply doesn't reach the catalog's most extreme setting.
-      { kind: 'slider', uniform: 'u_contrast', settingsKey: 'duotoneMix', label: 'Mix', min: 0, max: 1, step: 0.05, hint: 'How much of the duotone shows through' },
+      { kind: 'slider', uniform: 'u_contrast', settingsKey: 'duotoneMix', label: 'Duotone mix', min: 0, max: 1, step: 0.05, hint: 'How much of the duotone shows through' },
     ],
   },
   {
@@ -109,7 +109,7 @@ export const POST_EFFECTS: PostEffectDef[] = [
     params: [
       // chromaAmount 0..1.5 -> catalog u_amount 0..0.08. Passing 1.5 straight
       // through overdrives the RGB split ~19x — see the Task 3 correction.
-      { kind: 'slider', uniform: 'u_amount', settingsKey: 'chromaAmount', label: 'Amount', min: 0, max: 1.5, step: 0.02, hint: 'Colour fringing at the edges', toUniform: v => (v / 1.5) * 0.08 },
+      { kind: 'slider', uniform: 'u_amount', settingsKey: 'chromaAmount', label: 'Chroma amount', min: 0, max: 1.5, step: 0.02, hint: 'Colour fringing at the edges', toUniform: v => (v / 1.5) * 0.08 },
     ],
   },
   {
@@ -118,7 +118,7 @@ export const POST_EFFECTS: PostEffectDef[] = [
       // blurAmount 0..0.04 -> catalog u_radius 0.002..0.08: same unit (UV-space
       // blur radius), Sailor's range is a safe subset that never undersamples the
       // 24-tap kernel — identity, no toUniform.
-      { kind: 'slider', uniform: 'u_radius', settingsKey: 'blurAmount', label: 'Amount', min: 0, max: 0.04, step: 0.002, hint: 'Soft bokeh-style blur' },
+      { kind: 'slider', uniform: 'u_radius', settingsKey: 'blurAmount', label: 'Blur amount', min: 0, max: 0.04, step: 0.002, hint: 'Soft bokeh-style blur' },
     ],
   },
   {
@@ -150,7 +150,7 @@ export const POST_EFFECTS: PostEffectDef[] = [
       // its hint says "How strong the grain is". This one is crt_scanlines.frag,
       // which produces no grain at all (grain is its own effect below), so the
       // Scene3D wording would describe a knob that does something else.
-      { kind: 'slider', uniform: 'u_scanline', settingsKey: 'filmIntensity', label: 'Intensity', min: 0, max: 1, step: 0.01, hint: 'How strong the scanlines are' },
+      { kind: 'slider', uniform: 'u_scanline', settingsKey: 'filmIntensity', label: 'Film intensity', min: 0, max: 1, step: 0.01, hint: 'How strong the scanlines are' },
     ],
   },
   {
@@ -164,8 +164,8 @@ export const POST_EFFECTS: PostEffectDef[] = [
       // halftoneRadius 1..20 -> catalog u_size 0.004..0.1. u_size is a divisor of
       // a UV-space grid, so passing 1..20 straight through is off by ~200x — see
       // the Task 3 correction.
-      { kind: 'slider', uniform: 'u_size', settingsKey: 'halftoneRadius', label: 'Radius', min: 1, max: 20, step: 0.5, hint: 'Size of the print dots', toUniform: v => 0.004 + ((v - 1) / 19) * (0.1 - 0.004) },
-      { kind: 'slider', uniform: null, settingsKey: 'halftoneScatter', label: 'Scatter', min: 0, max: 1, step: 0.02, hint: 'Randomises dot placement' },
+      { kind: 'slider', uniform: 'u_size', settingsKey: 'halftoneRadius', label: 'Halftone radius', min: 1, max: 20, step: 0.5, hint: 'Size of the print dots', toUniform: v => 0.004 + ((v - 1) / 19) * (0.1 - 0.004) },
+      { kind: 'slider', uniform: null, settingsKey: 'halftoneScatter', label: 'Halftone scatter', min: 0, max: 1, step: 0.02, hint: 'Randomises dot placement' },
     ],
   },
   {
@@ -173,12 +173,12 @@ export const POST_EFFECTS: PostEffectDef[] = [
     params: [
       // dotScreenScale 0.2..4 -> catalog u_size 0.004..0.06: same divisor-of-a-
       // UV-grid role as halftoneRadius above, off by ~67x uncorrected.
-      { kind: 'slider', uniform: 'u_size', settingsKey: 'dotScreenScale', label: 'Scale', min: 0.2, max: 4, step: 0.1, hint: 'Size of the dot pattern', toUniform: v => 0.004 + ((v - 0.2) / 3.8) * (0.06 - 0.004) },
+      { kind: 'slider', uniform: 'u_size', settingsKey: 'dotScreenScale', label: 'Dot screen scale', min: 0.2, max: 4, step: 0.1, hint: 'Size of the dot pattern', toUniform: v => 0.004 + ((v - 0.2) / 3.8) * (0.06 - 0.004) },
       // dotScreenAngle -3.14..3.14 RADIANS -> catalog u_angle 0..90 DEGREES
       // (dot_screen.frag calls radians(u_angle) itself). A unit mismatch, not a
       // range one — radians passed straight through as degrees rotate ~57x too
       // little.
-      { kind: 'slider', uniform: 'u_angle', settingsKey: 'dotScreenAngle', label: 'Angle', min: -3.14, max: 3.14, step: 0.05, hint: 'Rotates the dot grid', toUniform: v => v * (180 / Math.PI) },
+      { kind: 'slider', uniform: 'u_angle', settingsKey: 'dotScreenAngle', label: 'Dot screen angle', min: -3.14, max: 3.14, step: 0.05, hint: 'Rotates the dot grid', toUniform: v => v * (180 / Math.PI) },
     ],
   },
   {
@@ -203,8 +203,8 @@ export const POST_EFFECTS: PostEffectDef[] = [
     // else's uncommitted file.
     id: 'grain', label: 'Grain', enableKey: 'grain', frag: 'post_grain', alphaGated: true,
     params: [
-      { kind: 'slider', uniform: 'u_amount', settingsKey: 'grainAmount', label: 'Amount', min: 0, max: 1, step: 0.02, hint: 'How strong the grain is' },
-      { kind: 'slider', uniform: 'u_size', settingsKey: 'grainSize', label: 'Size', min: 1, max: 8, step: 0.5, hint: 'How coarse the grain is' },
+      { kind: 'slider', uniform: 'u_amount', settingsKey: 'grainAmount', label: 'Grain amount', min: 0, max: 1, step: 0.02, hint: 'How strong the grain is' },
+      { kind: 'slider', uniform: 'u_size', settingsKey: 'grainSize', label: 'Grain size', min: 1, max: 8, step: 0.5, hint: 'How coarse the grain is' },
     ],
   },
   {
@@ -214,9 +214,9 @@ export const POST_EFFECTS: PostEffectDef[] = [
     // toUniform needed for any of them.
     id: 'vignette', label: 'Vignette', enableKey: 'vignette', frag: 'vignette',
     params: [
-      { kind: 'slider', uniform: 'u_amount', settingsKey: 'vignetteAmount', label: 'Amount', min: 0, max: 1, step: 0.02, hint: 'How dark the corners get' },
-      { kind: 'slider', uniform: 'u_radius', settingsKey: 'vignetteRadius', label: 'Radius', min: 0.3, max: 1.4, step: 0.02, hint: 'How far in the vignette starts to darken' },
-      { kind: 'slider', uniform: 'u_softness', settingsKey: 'vignetteSoftness', label: 'Softness', min: 0.05, max: 0.8, step: 0.02, hint: "How gradual the vignette's edge is" },
+      { kind: 'slider', uniform: 'u_amount', settingsKey: 'vignetteAmount', label: 'Vignette amount', min: 0, max: 1, step: 0.02, hint: 'How dark the corners get' },
+      { kind: 'slider', uniform: 'u_radius', settingsKey: 'vignetteRadius', label: 'Vignette radius', min: 0.3, max: 1.4, step: 0.02, hint: 'How far in the vignette starts to darken' },
+      { kind: 'slider', uniform: 'u_softness', settingsKey: 'vignetteSoftness', label: 'Vignette softness', min: 0.05, max: 0.8, step: 0.02, hint: "How gradual the vignette's edge is" },
     ],
   },
   {
@@ -225,9 +225,9 @@ export const POST_EFFECTS: PostEffectDef[] = [
     // same source as everything else.
     id: 'gtao', label: 'Ambient occlusion', enableKey: 'gtao', frag: null, threeDOnly: true,
     params: [
-      { kind: 'slider', uniform: null, settingsKey: 'gtaoRadius', label: 'Radius', min: 0.05, max: 3, step: 0.05, hint: 'How far around each point to check for blockers, in scene units' },
-      { kind: 'slider', uniform: null, settingsKey: 'gtaoIntensity', label: 'Intensity', min: 0, max: 2, step: 0.05, hint: 'How dark the occluded areas get' },
-      { kind: 'slider', uniform: null, settingsKey: 'gtaoThickness', label: 'Thickness', min: 0.05, max: 2, step: 0.05, hint: 'How solid nearby surfaces are treated as blockers' },
+      { kind: 'slider', uniform: null, settingsKey: 'gtaoRadius', label: 'GTAO radius', min: 0.05, max: 3, step: 0.05, hint: 'How far around each point to check for blockers, in scene units' },
+      { kind: 'slider', uniform: null, settingsKey: 'gtaoIntensity', label: 'GTAO intensity', min: 0, max: 2, step: 0.05, hint: 'How dark the occluded areas get' },
+      { kind: 'slider', uniform: null, settingsKey: 'gtaoThickness', label: 'GTAO thickness', min: 0.05, max: 2, step: 0.05, hint: 'How solid nearby surfaces are treated as blockers' },
     ],
   },
 ]

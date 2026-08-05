@@ -34,6 +34,16 @@ type ControlMeta = {
    * capsule advertises.
    */
   summary?: number
+  /**
+   * Render this control in its section's HEADER rather than as a row in the body.
+   * Only one per section; a `switch` is the only kind this makes sense for today.
+   *
+   * It exists so a section can be a thing you turn on — the post-effects panel gives
+   * each effect its own section, with the effect's own enable in the header beside
+   * the collapse chevron. The section then opens and closes with the switch, while
+   * the chevron still lets you open a disabled one to set it up before enabling it.
+   */
+  sectionToggle?: boolean
 }
 
 export type ControlSpec = (

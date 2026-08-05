@@ -30,6 +30,7 @@ import { GRADIENT_GUIDANCE, gradientAgentControls } from '~/lib/gradientfx/agent
 import { controlsForStudio } from '~/lib/collection/studioControls'
 import type { StudioControlDesc } from '~/lib/collection/studioBindables'
 import { registerStudioParamBaker, unregisterStudioParamBaker } from '~/lib/studio/cascade'
+import { showIfVisible } from '~/lib/studio/sections'
 import SweepPopover from '~/components/vue-canvas/studio/SweepPopover.vue'
 import { exportEmbedHtml, downloadEmbed } from '~/lib/embed/export'
 import type { GradientEmbedConfig } from '~/lib/embed/surfaces/gradient'
@@ -136,14 +137,11 @@ function setPostControl(key: string, value: string | number | boolean) {
 function promotePostControl(c: ControlSpec) {
   promote(c, paramsProxy[c.key] as string | number)
 }
-/** A param row (e.g. Bloom's Strength/Radius/Threshold) only shows once its
- *  effect's own switch is on — mirrors SpaceTypeSurface's showIf handling. */
+/** A param row (e.g. Bloom's strength/radius/threshold) only shows once its effect's
+ *  own switch is on. The rule itself lives in ~/lib/studio/sections — it used to be
+ *  copy-pasted here and in SpaceTypeSurface, and missing from Texture and Shape. */
 function postControlVisible(c: ControlSpec): boolean {
-  if (!c.showIf) return true
-  const v = paramsProxy[c.showIf.key]
-  if (c.showIf.equals !== undefined) return v === c.showIf.equals
-  if (c.showIf.notEquals !== undefined) return v !== c.showIf.notEquals
-  return true
+  return showIfVisible(c, k => paramsProxy[k])
 }
 
 // Render the current gradient to a PNG for the agent's visual self-review.

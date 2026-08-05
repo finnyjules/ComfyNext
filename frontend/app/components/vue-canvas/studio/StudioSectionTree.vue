@@ -5,15 +5,17 @@
  * StudioControlPanel — a second pass would have to re-derive each child's group from
  * its path, which is how a nested control quietly vanishes.
  */
+import { computed } from 'vue'
 import type { ControlSpec } from '~/lib/spacetype/effect'
 import type { Section } from '~/lib/studio/sections'
 import { controlKindToVariableType } from '~/lib/collection/studioBindables'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
 import StudioRow from '~/components/vue-canvas/studio/StudioRow.vue'
+import StudioSwitch from '~/components/vue-canvas/studio/StudioSwitch.vue'
 
 defineOptions({ name: 'StudioSectionTree' })
 
-defineProps<{
+const props = defineProps<{
   section: Section<ControlSpec>
   value: (key: string) => string | number | boolean
   boundFor?: (key: string) => string | null
@@ -35,11 +37,30 @@ const emit = defineEmits<{
  * own initializer). One explicit signature cuts the cycle.
  */
 defineSlots<Record<string, (props: Record<string, unknown>) => unknown>>()
+
+/**
+ * A control marked `sectionToggle` moves into the section's header instead of being a
+ * body row, and the section then opens and closes with it — a section you switch on.
+ * The chevron still works independently, so a disabled section can be opened and set
+ * up before it is enabled.
+ *
+ * Sections without one are unaffected and stay open, exactly as before.
+ */
+const toggle = computed(() => props.section.controls.find(c => c.sectionToggle) ?? null)
+const bodyControls = computed(() => props.section.controls.filter(c => !c.sectionToggle))
 </script>
 
 <template>
-  <StudioSection :title="section.title">
-    <template v-for="c in section.controls" :key="c.key">
+  <StudioSection :title="section.title" :open="toggle ? value(toggle.key) === true : true">
+    <template v-if="toggle" #badge>
+      <!-- .stop lives in StudioSwitch's own click handler, so flipping the switch does
+           not also toggle the <details> it sits in the summary of. -->
+      <StudioSwitch
+        :model-value="value(toggle.key) === true"
+        @update:model-value="(v: boolean) => emit('set', toggle!.key, v)"
+      />
+    </template>
+    <template v-for="c in bodyControls" :key="c.key">
       <!-- Bespoke control, from the surface. It keeps the right-click-to-bind wrapper
            the previous panel gave every control, because a slot's own markup (a harmony
            grid, a FillSwatch) has no `menu` emit of its own. The wrapper is deliberately
