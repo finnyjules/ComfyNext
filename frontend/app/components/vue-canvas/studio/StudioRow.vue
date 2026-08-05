@@ -9,21 +9,26 @@
  * fillList) render this row as a header and expand a body beneath it via the
  * #body slot.
  */
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import type { ControlSpec } from '~/lib/spacetype/effect'
-import { fillFraction, fillOrigin, formatValue, parseTyped, resetValue } from '~/lib/studio/row'
+import { fillFraction, fillOrigin, formatValue, nudgeValue, parseTyped, resetValue } from '~/lib/studio/row'
 import { scrubValue } from '~/lib/studio/scrub'
 import { controlKindToVariableType } from '~/lib/collection/studioBindables'
 import { rowRenderers, NUMERIC_KINDS } from './rows/registry'
 import VariableGlyph from './VariableGlyph.vue'
 import { TooltipProvider, TooltipRoot, TooltipTrigger, TooltipPortal, TooltipContent } from 'reka-ui'
 
-const props = defineProps<{
+// `bindable` is written as an OPT-OUT everywhere it is read (`bindable !== false`), but
+// Vue casts an absent Boolean prop to `false` unless it has a default — so without this
+// the variable glyph rendered on NO row at all, and the opt-out was unreachable. Found
+// while checking the accessibility tree for the glyph the slider role was accused of
+// hiding: it was not in the tree because it was not in the DOM.
+const props = withDefaults(defineProps<{
   spec: ControlSpec
   modelValue: string | number | boolean
   bound?: string | null
   bindable?: boolean
-}>()
+}>(), { bound: null, bindable: true })
 const emit = defineEmits<{
   (e: 'update:modelValue', v: string | number | boolean): void
   (e: 'promote'): void
@@ -51,14 +56,50 @@ const band = computed(() => {
 
 const editing = ref(false)
 
+/**
+ * The element that IS the slider, for both focus and ARIA. It is a leaf on purpose:
+ * `slider` is a children-presentational role, so hanging it on the row container —
+ * which holds the variable glyph's button, the bound column's button and, while
+ * typing, an `<input>` — is the `nested-interactive` pattern, and its practical
+ * effect is that assistive tech drops those controls from the tree entirely. The
+ * track is a sibling of them instead, so the row exposes a slider AND its buttons.
+ *
+ * It is `pointer-events-none` so it never intercepts the row's own drag, which means
+ * the browser's default mousedown-focus can never land on it — every focus below is
+ * therefore explicit.
+ */
+const track = ref<HTMLElement | null>(null)
+
+/** Give the keyboard somewhere to be after a gesture that had no focus of its own. */
+function focusTrack() {
+  track.value?.focus()
+}
+
 function onPointerDown(e: PointerEvent) {
   // Primary button only. A right-click fires `pointerdown` too, and without this the
   // gesture whose entire purpose is opening the bind menu would also capture, run
   // `up()` with no movement, and click-to-position a brand new value into the
   // parameter. Middle-click/back/forward are left alone for the same reason.
   if (e.button !== 0) return
-  if (!numeric.value || props.bound || editing.value) return
+  if (!numeric.value || editing.value) return
   const el = e.currentTarget as HTMLElement
+  // Clicking a native range focuses it, and the row must behave the same or a
+  // click-then-arrow does nothing. Focusing HERE does not survive: the compatibility
+  // `mousedown` runs afterwards and its default action moves focus to the nearest
+  // focusable ancestor — which, now that the container is not focusable, is `<body>`
+  // (measured: activeElement came back null). So claim focus on the way back up,
+  // still long before any keystroke. Registered before the `bound` return because a
+  // read-only slider is still a tab stop worth landing on.
+  //
+  // ...but NOT when the press landed on one of the row's own controls. The variable
+  // glyph and the bound-column button are real buttons the user just focused by
+  // clicking, and stealing that focus back on pointerup is exactly the bug this
+  // handler exists to avoid (observed: clicking the glyph left focus on the track).
+  const hit = e.target as Element | null
+  if (!hit?.closest?.('button, input, select, textarea, a[href]')) {
+    el.addEventListener('pointerup', focusTrack, { once: true })
+  }
+  if (props.bound) return
   el.setPointerCapture(e.pointerId)
   // Per-gesture, not per-component: a second pointer going down mid-drag used to
   // reset a shared flag, so releasing the FIRST pointer read `dragged === false`
@@ -116,23 +157,27 @@ function onPointerDown(e: PointerEvent) {
  * Home/End pin the ends. Bound rows are inert here exactly as they are under the
  * pointer, and an open text field keeps its own arrows for caret movement.
  */
-const KEY_STEPS = 10
-
 function onKeydown(e: KeyboardEvent) {
   if (!numeric.value || props.bound || editing.value) return
-  const jump = step.value * (e.shiftKey ? KEY_STEPS : 1)
+  // The arithmetic lives in ~/lib/studio/row so it has a test path; both branches end
+  // in parseTyped's snap-and-clamp, same as typed entry, so a keyed value and a typed
+  // one can never land on different grids.
+  const args = { value: num.value, min: min.value, max: max.value, step: step.value, coarse: e.shiftKey }
   let next: number
   switch (e.key) {
-    case 'ArrowLeft': case 'ArrowDown': next = num.value - jump; break
-    case 'ArrowRight': case 'ArrowUp': next = num.value + jump; break
-    case 'Home': next = min.value; break
-    case 'End': next = max.value; break
+    case 'ArrowLeft': case 'ArrowDown': next = nudgeValue({ ...args, direction: -1 }); break
+    case 'ArrowRight': case 'ArrowUp': next = nudgeValue({ ...args, direction: 1 }); break
+    case 'Home': next = parseTyped(String(min.value), min.value, max.value, step.value) ?? num.value; break
+    case 'End': next = parseTyped(String(max.value), min.value, max.value, step.value) ?? num.value; break
     default: return
   }
+  // Handled either way — an arrow at the maximum must still not scroll the panel.
   e.preventDefault()
-  // parseTyped owns the snap-and-clamp, same as typed entry — so a keyed value and a
-  // typed one can never land on different grids.
-  emit('update:modelValue', parseTyped(String(next), min.value, max.value, step.value) ?? num.value)
+  // ...but it must not WRITE either. At an end the nudge returns the current value,
+  // and key repeat would otherwise pour identical no-op writes into the document and
+  // its undo stack.
+  if (next === num.value) return
+  emit('update:modelValue', next)
 }
 
 function onReset() {
@@ -144,10 +189,33 @@ function onReset() {
   }))
 }
 
+/**
+ * Both endings of typed entry unmount the input, and focus then falls to `<body>` —
+ * arrow keys go dead until the user tabs all the way back, where the native range
+ * this replaced simply stayed focused. So hand focus to the track.
+ *
+ * Only when the focus was still OURS at the moment the ending fired, though: blur
+ * commits (clicking away, which is a legitimate ending) run with focus already gone,
+ * and stealing it back would yank the user off whatever they just clicked.
+ */
+function restoreFocus() {
+  const active = document.activeElement
+  const ours = !!active && !!track.value?.parentElement?.contains(active)
+  if (!ours) return
+  // After the unmount, or the input is still there to be blurred by the focus call.
+  nextTick(focusTrack)
+}
+
 function onCommit(raw: string) {
+  restoreFocus()
   editing.value = false
   const v = parseTyped(raw, min.value, max.value, step.value)
   if (v !== null) emit('update:modelValue', v)
+}
+
+function onCancel() {
+  restoreFocus()
+  editing.value = false
 }
 
 /** Clicking the value opens typed entry on numeric kinds. The wrapper span stops the
@@ -161,18 +229,9 @@ function onValuePointerDown() {
 <template>
   <div>
     <div
-      class="group relative flex h-7 select-none items-center justify-between overflow-hidden rounded-md bg-white/[0.05] px-2.5 outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-white/40"
+      class="group relative flex h-7 select-none items-center justify-between overflow-hidden rounded-md bg-white/[0.05] px-2.5"
       :class="numeric && !bound && !editing ? 'cursor-ew-resize' : ''"
-      :tabindex="numeric ? 0 : undefined"
-      :role="numeric ? 'slider' : undefined"
-      :aria-label="numeric ? spec.label : undefined"
-      :aria-valuemin="numeric ? min : undefined"
-      :aria-valuemax="numeric ? max : undefined"
-      :aria-valuenow="numeric ? num : undefined"
-      :aria-valuetext="numeric ? formatValue(num, step) : undefined"
-      :aria-readonly="numeric && bound ? 'true' : undefined"
       @pointerdown="onPointerDown"
-      @keydown="onKeydown"
       @dblclick="onReset"
       @contextmenu.prevent="emit('menu', $event)"
     >
@@ -180,6 +239,25 @@ function onValuePointerDown() {
         v-if="band"
         class="pointer-events-none absolute inset-y-0"
         :style="{ left: band.left, width: band.width, background: bound ? 'rgba(244,114,182,0.20)' : 'rgba(255,255,255,0.13)' }"
+      ></div>
+
+      <!-- The track: a childless element carrying the slider role, the tab stop and the
+           keyboard, so the row's buttons stay siblings rather than descendants of a
+           children-presentational role. Covers the whole row, so the focus ring is the
+           row's outline and a screen reader's slider is the thing you actually drag. -->
+      <div
+        v-if="numeric"
+        ref="track"
+        tabindex="0"
+        role="slider"
+        class="pointer-events-none absolute inset-0 rounded-md outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-white/40"
+        :aria-label="spec.label"
+        :aria-valuemin="min"
+        :aria-valuemax="max"
+        :aria-valuenow="num"
+        :aria-valuetext="bound ? bound : formatValue(num, step)"
+        :aria-readonly="bound ? 'true' : undefined"
+        @keydown="onKeydown"
       ></div>
 
       <span class="relative flex min-w-0 items-center gap-1.5">
@@ -223,7 +301,7 @@ function onValuePointerDown() {
             :step="step"
             :editing="editing"
             @commit="onCommit"
-            @cancel="editing = false"
+            @cancel="onCancel"
             @update:value="(v: string | number | boolean) => emit('update:modelValue', v)"
           />
         </span>

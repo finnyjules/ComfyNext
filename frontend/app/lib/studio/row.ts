@@ -51,6 +51,36 @@ export function parseTyped(input: string, min: number, max: number, step: number
   return Number(Math.min(max, Math.max(min, snapped)).toFixed(6))
 }
 
+/** How many steps a Shift-arrow covers. A native `<input type="range">` puts this
+ *  jump on PageUp/PageDown; the row puts it on a key people actually press. */
+export const KEY_COARSE_STEPS = 10
+
+/**
+ * One arrow press. Lives here rather than in the SFC because the arithmetic is the
+ * kind of thing that quietly drifts from typed entry — so it does not do its own
+ * clamping or snapping, it hands the candidate to `parseTyped`, the same function
+ * the text field uses. A keyed value and a typed one therefore land on one grid.
+ *
+ * Returns the CURRENT value unchanged when the move is impossible (already at an
+ * end, or an unparseable candidate), so the caller can skip a redundant write.
+ */
+export function nudgeValue(opts: {
+  value: number
+  min: number
+  max: number
+  step: number
+  direction: 1 | -1
+  coarse?: boolean
+}): number {
+  // A missing or nonsensical step would make every arrow press a no-op; fall back to
+  // 1 for the JUMP only. `parseTyped` still gets the declared step, so snapping stays
+  // byte-identical to typed entry.
+  const size = Number.isFinite(opts.step) && opts.step > 0 ? opts.step : 1
+  const jump = size * (opts.coarse ? KEY_COARSE_STEPS : 1)
+  const next = opts.value + (opts.direction < 0 ? -jump : jump)
+  return parseTyped(String(next), opts.min, opts.max, opts.step) ?? opts.value
+}
+
 /** Double-click target. A declared default always wins — including a default of 0,
  *  which is why this tests for null rather than falsiness. Without one, this is the
  *  legacy heuristic lifted from plugins/studio-reset.client.ts. */
