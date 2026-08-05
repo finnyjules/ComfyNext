@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import * as THREE from 'three'
 import { meshDataFromGeometry } from '~/lib/scene3d/mesh'
 import { SculptSession } from '~/lib/scene3d/sculpt/session'
-import { applyBrush, falloff, type BrushStamp } from '~/lib/scene3d/sculpt/brushes'
+import { applyBrush, falloff, type BrushKind, type BrushStamp } from '~/lib/scene3d/sculpt/brushes'
 
 /** A flat patch in the XZ plane, normal +Y, centred on the origin. */
 const patch = () => {
@@ -61,13 +61,32 @@ describe('draw brush', () => {
     expect(y(s, mid)).toBeGreaterThan(0)
     expect(y(s, outside)).toBeCloseTo(0, 6)
   })
+})
 
-  it('records every vertex it moves, so undo is exact', () => {
-    const s = patch()
-    const before = s.positions.slice()
-    s.beginStroke(); applyBrush(s, 'draw', stamp()); s.endStroke()
-    expect(s.undo()).toBe(true)
-    expect(s.positions).toEqual(before)
+describe('undo', () => {
+  it('is exact for every brush kind, not just draw', () => {
+    // The four kinds share one loop, but each has its own displacement branch
+    // (see applyBrush) and `smooth`/`flatten` also gather a pre-pass before the
+    // loop. `recordVertex` ordering could regress in any one branch without
+    // the others noticing, so assert restoration for all four rather than
+    // treating `draw` as a stand-in for the rest.
+    const kinds: BrushKind[] = ['draw', 'smooth', 'inflate', 'flatten']
+    for (const kind of kinds) {
+      const s = patch()
+      // Give smooth/flatten a spike to pull toward, so their branches actually
+      // move something (a perfectly flat patch is already its own average).
+      const v = nearest(s, 0, 0, 0)
+      s.positions[v * 3 + 1] = 0.1
+      const before = s.positions.slice()
+
+      s.beginStroke()
+      applyBrush(s, kind, stamp({ strength: 1 }))
+      s.endStroke()
+      expect(s.positions, `${kind} should have moved something`).not.toEqual(before)
+
+      expect(s.undo(), `${kind} undo`).toBe(true)
+      expect(s.positions, `${kind} restores exactly`).toEqual(before)
+    }
   })
 })
 
@@ -133,6 +152,28 @@ describe('smooth brush', () => {
     // Deduped uniform average of {v1..v4} is (0,0,0) on x; the duplicate-
     // weighted average would land at x ≈ 0.333 instead.
     expect(s.positions[0]!).toBeCloseTo(0, 6)
+  })
+})
+
+describe('applyBrush safety', () => {
+  it('does not write NaN when radius is 0 and a vertex sits exactly on the stamp centre', () => {
+    // verticesNear's r2 test (`dx*dx+dy*dy+dz*dz <= r2`) passes on exact
+    // coincidence even when r2 is 0, so a zero-radius stamp centred exactly on
+    // a vertex still returns a hit. `falloff(d / stamp.radius)` then computes
+    // `0 / 0` for that vertex — NaN — which must not reach `positions`.
+    const s = patch()
+    const v = nearest(s, 0, 0, 0)
+    expect(s.positions[v * 3]).toBe(0)
+    expect(s.positions[v * 3 + 1]).toBe(0)
+    expect(s.positions[v * 3 + 2]).toBe(0)
+
+    s.beginStroke()
+    applyBrush(s, 'draw', stamp({ radius: 0 }))
+    s.endStroke()
+
+    for (let i = 0; i < s.positions.length; i++) {
+      expect(Number.isNaN(s.positions[i])).toBe(false)
+    }
   })
 })
 

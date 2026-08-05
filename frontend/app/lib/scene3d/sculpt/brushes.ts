@@ -13,7 +13,13 @@ export interface BrushStamp {
    *  reads each vertex's own normal instead. */
   normal: [number, number, number]
   radius: number
-  /** 0–1. Scaled by `radius` so a brush feels the same at any size. */
+  /** 0–1. `draw` and `inflate` add an absolute offset, so they scale this by
+   *  `radius` to feel the same at any brush size. `smooth` and `flatten`
+   *  instead pull a FRACTION of the way toward a geometry-derived target (the
+   *  neighbour average, or the region's plane) — `strength` already IS that
+   *  fraction, so multiplying by `radius` again would make the same value
+   *  over- or under-smooth depending on brush size. Deliberately NOT
+   *  radius-scaled for those two. */
   strength: number
   /** Alt-held: carve inward instead of pushing outward. */
   invert: boolean
@@ -22,12 +28,22 @@ export interface BrushStamp {
 /** 1 at the centre, 0 at the rim, smooth at both ends. Squaring keeps the
  *  centre plateau-ish so a stroke does not leave a spike at its midpoint. */
 export function falloff(t: number): number {
-  if (t >= 1) return 0
+  // NaN fails every comparison (including `>=`), so it would otherwise fall
+  // through this guard and come back out as NaN instead of 0 — exported, so
+  // guard it here too, not just at the one call site in `applyBrush`.
+  if (Number.isNaN(t) || t >= 1) return 0
   const u = 1 - t * t
   return u * u
 }
 
 export function applyBrush(session: SculptSession, kind: BrushKind, stamp: BrushStamp): void {
+  // A zero (or negative) radius makes `d / stamp.radius` a 0/0 NaN for any
+  // vertex `verticesNear` returns sitting exactly at `stamp.centre` (its `r2`
+  // test passes on exact coincidence even when `r2` is 0). NaN then defeats
+  // BOTH guards below: `falloff`'s `t >= 1` and this function's `w <= 0` are
+  // both false for NaN (every comparison with NaN is false), so it falls
+  // through and gets written into `positions`. Bail before any of that runs.
+  if (stamp.radius <= 0) return
   const [cx, cy, cz] = stamp.centre
   const hits = session.verticesNear(cx, cy, cz, stamp.radius)
   if (hits.length === 0) return
