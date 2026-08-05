@@ -204,6 +204,32 @@ describe('sculpt session', () => {
     expect(meshKey).toBe(contentDigest(mesh))
   })
 
+  it('markDirty flips dirty to true on a freshly constructed session with no stroke', () => {
+    // Gap 4 (in-panel Remesh): a remesh rebuilds a brand new SculptSession,
+    // which is born clean (editVersion === committedVersion, both 0) exactly
+    // like ordinary sculpt entry — but the new buffer already differs from
+    // doc.objects (new topology, not an edited old one), so it must read
+    // dirty immediately or a bare Exit right after Remesh would silently
+    // discard it.
+    const s = session()
+    expect(s.dirty).toBe(false)
+    s.markDirty()
+    expect(s.dirty).toBe(true)
+  })
+
+  it('a session built from a remesh result starts with an empty undo ring', () => {
+    // Hazard 2: undo entries hold {vertexIndex, oldPosition} against the OLD
+    // topology, so replaying them post-remesh would scatter the mesh into
+    // garbage. `remeshSculptSession` (Scene3DStudioSurface.vue) handles this
+    // by constructing a brand new SculptSession rather than mutating one in
+    // place — this asserts that construction path really does start clean.
+    const s = session()
+    s.beginStroke(); s.recordVertex(0); s.positions[0]! += 0.1; s.endStroke()
+    expect(s.undo()).toBe(true) // the OLD session has undo history
+    const fresh = new SculptSession(meshDataFromGeometry(new THREE.SphereGeometry(0.4, 32, 24)))
+    expect(fresh.undo()).toBe(false) // the NEW one (a stand-in for a remesh result) has none
+  })
+
   it('picks a ray aimed at the surface and misses one that is not', () => {
     const s = session()
     const hit = s.pick([0, 3, 0], [0, -1, 0])

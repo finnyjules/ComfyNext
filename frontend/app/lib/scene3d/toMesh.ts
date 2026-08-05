@@ -64,40 +64,49 @@ const contentFor = async (data: MeshData) => {
   return { mesh, meshKey: contentDigest(mesh) }
 }
 
-/** Rebuild the object's mesh at `resolution`.
+/** Rebuild `src` at `resolution`, retrying at three-quarter resolution rather
+ *  than throwing when the result is over the vertex cap (up to 4 attempts): the
+ *  user asked for a shape, not an error, and a slightly coarser shape is a far
+ *  better answer than a failure toast. `open` returns `src` UNCHANGED — see
+ *  `remesh`.
  *
- *  Over the vertex cap, this retries at three-quarter resolution rather than
- *  throwing (up to 4 attempts): the user asked for a shape, not an error, and a
- *  slightly coarser shape is a far better answer than a failure toast. `open`
- *  returns the object UNCHANGED — see `remesh`. */
+ *  Takes raw `MeshData` rather than a `PrimitiveObject` so it has two callers:
+ *  `remeshObject` below (decodes `obj.content.mesh`, the doc's committed copy)
+ *  and the sculpt panel's in-session Remesh (`Scene3DStudioSurface.vue`'s
+ *  `remeshSculptSession`, which remeshes `SculptSession.toMeshData()` — the
+ *  session's LIVE working buffer, which is the current truth while sculpting
+ *  even though `obj.content.mesh` still holds the pre-sculpt mesh). */
+export async function remeshMeshData(
+  src: MeshData, resolution: number,
+): Promise<{ data: MeshData; open: boolean; vertexCount: number }> {
+  let res = resolution
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const { data, open } = remesh(src, res)
+    if (open) return { data: src, open: true, vertexCount: src.positions.length / 3 }
+    const count = data.positions.length / 3
+    if (count <= MESH_VERTEX_CAP) return { data, open: false, vertexCount: count }
+    res = Math.max(8, Math.round(res * 0.75))
+  }
+  // Four attempts at shrinking resolution and still over cap — the last resort
+  // is the coarse floor, which cannot exceed the cap for any plausible shape.
+  const { data } = remesh(src, 8)
+  return { data, open: false, vertexCount: data.positions.length / 3 }
+}
+
+/** Rebuild the object's mesh at `resolution`. `open` returns the object
+ *  UNCHANGED — see `remeshMeshData`. */
 export async function remeshObject(
   obj: PrimitiveObject, resolution: number,
 ): Promise<{ obj: PrimitiveObject; open: boolean; vertexCount: number }> {
   const encoded = obj.content?.mesh
   if (!encoded) return { obj, open: false, vertexCount: 0 }
   const src = await decodeMesh(encoded)
-
-  let res = resolution
-  for (let attempt = 0; attempt < 4; attempt++) {
-    const { data, open } = remesh(src, res)
-    if (open) return { obj, open: true, vertexCount: src.positions.length / 3 }
-    const count = data.positions.length / 3
-    if (count <= MESH_VERTEX_CAP) {
-      return {
-        obj: { ...obj, content: { ...obj.content, ...(await contentFor(data)) } },
-        open: false,
-        vertexCount: count,
-      }
-    }
-    res = Math.max(8, Math.round(res * 0.75))
-  }
-  // Four attempts at shrinking resolution and still over cap — the last resort
-  // is the coarse floor, which cannot exceed the cap for any plausible shape.
-  const { data } = remesh(src, 8)
+  const out = await remeshMeshData(src, resolution)
+  if (out.open) return { obj, open: true, vertexCount: out.vertexCount }
   return {
-    obj: { ...obj, content: { ...obj.content, ...(await contentFor(data)) } },
+    obj: { ...obj, content: { ...obj.content, ...(await contentFor(out.data)) } },
     open: false,
-    vertexCount: data.positions.length / 3,
+    vertexCount: out.vertexCount,
   }
 }
 

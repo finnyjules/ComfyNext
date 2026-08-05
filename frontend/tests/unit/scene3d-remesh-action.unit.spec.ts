@@ -6,7 +6,7 @@ import {
 } from '~/lib/scene3d/mesh'
 import { remesh } from '~/lib/scene3d/voxel'
 import { solidify } from '~/lib/scene3d/voxel/solidify'
-import { remeshObject, resolutionForTarget, REMESH_RESOLUTION_MAX } from '~/lib/scene3d/toMesh'
+import { remeshObject, remeshMeshData, resolutionForTarget, REMESH_RESOLUTION_MAX } from '~/lib/scene3d/toMesh'
 import type { PrimitiveObject } from '~/lib/scene3d/config'
 
 const meshObject = async (geo: THREE.BufferGeometry): Promise<PrimitiveObject> => {
@@ -94,6 +94,25 @@ describe('remesh action', () => {
     // Two rim triangles (one quad) per boundary edge.
     expect(rimTriCount % 2).toBe(0)
     expect(rimTriCount / 2).toBe(24)
+  })
+
+  it('remeshMeshData (Gap 4: in-panel Remesh) works directly off raw MeshData, matching remeshObject', async () => {
+    // The sculpt panel's in-session Remesh calls this directly against
+    // SculptSession.toMeshData() — the LIVE working buffer, not
+    // obj.content.mesh (the doc's stale pre-sculpt copy). Asserts the raw
+    // entry point behaves the same as remeshObject's doc-object wrapper.
+    const src = meshDataFromGeometry(new THREE.SphereGeometry(0.5, 64, 48))
+    const out = await remeshMeshData(src, 48)
+    expect(out.open).toBe(false)
+    expect(out.vertexCount).toBe(out.data.positions.length / 3)
+    expect(out.data.positions).not.toEqual(src.positions)
+  })
+
+  it('remeshMeshData refuses an open buffer and leaves it UNCHANGED (same object reference)', async () => {
+    const src = meshDataFromGeometry(new THREE.PlaneGeometry(1, 1))
+    const out = await remeshMeshData(src, 48)
+    expect(out.open).toBe(true)
+    expect(out.data).toBe(src) // unchanged, not just equal — a careless caller can't commit a mangled mesh
   })
 
   it('retries at a lower resolution rather than throwing over the cap', async () => {

@@ -31,8 +31,8 @@ import { loadGoogleCatalog, type GoogleFont } from '~/data/google-fonts'
 import FontPicker from '~/components/vue-canvas/FontPicker.vue'
 import { PRIM_GROUPS } from '~/lib/scene3d/primGroups'
 import { SceneEngine, baseSizeFor, baseVertexCountFor, buildGeometry } from '~/lib/scene3d/engine'
-import { convertToMesh, remeshObject, solidifyObject, resolutionForTarget, REMESH_RESOLUTION_MAX } from '~/lib/scene3d/toMesh'
-import { MESH_VERTEX_CAP, MESH_DEFAULT_TARGET, decodeMesh, meshDataFromGeometry, geometryFromMeshData, type MeshData } from '~/lib/scene3d/mesh'
+import { convertToMesh, remeshObject, remeshMeshData, solidifyObject, resolutionForTarget, REMESH_RESOLUTION_MAX } from '~/lib/scene3d/toMesh'
+import { MESH_VERTEX_CAP, MESH_DEFAULT_TARGET, decodeMesh, encodeMesh, meshDataFromGeometry, geometryFromMeshData, type MeshData } from '~/lib/scene3d/mesh'
 import { loadMesh, meshCacheGet } from '~/lib/scene3d/meshCache'
 import { SculptSession } from '~/lib/scene3d/sculpt/session'
 import { applyBrush, type BrushKind, type BrushStamp } from '~/lib/scene3d/sculpt/brushes'
@@ -1259,6 +1259,20 @@ onMounted(() => {
   engine.applyCameraFromDoc(doc)
   interaction = new SceneInteraction(engine, viewportEl.value, {
     onSelect: (id, additive) => {
+      // Gap 3 fix: a miss must not touch selection while sculpting either — this
+      // branch used to bypass toggleSelected's `if (sculpting.value) return`
+      // guard entirely, so a stray click that missed the sculpted mesh (picked
+      // up by the ordinary object picker once the sculpt pointerdown handler
+      // itself declined it) silently cleared selectedIds. That was harmless
+      // before this task: the sculpt panel used to render off `sculpting` alone,
+      // so it stayed on screen regardless. Now that it renders off
+      // `sculpting && selectedMesh` (so it can sit beside a live Material/
+      // Transform instead of replacing the whole column), losing selectedIds
+      // mid-session hid the panel entirely — including Apply/Exit — while the
+      // engine override and orbit lock stayed live underneath, stranding the
+      // user with no visible way out. Same invariant toggleSelected already
+      // enforces, just applied to the miss path too.
+      if (sculpting.value) return
       // A miss with a modifier held leaves the selection alone. Shift-clicking is
       // how you BUILD a multi-selection, so one shift-click that lands a few
       // pixels off an object must not throw away everything picked up so far —
@@ -1945,6 +1959,25 @@ const sculptSymmetry = ref<SymmetryMode>('none')
 // about Y.
 const sculptSymmetryAxis = ref<0 | 1 | 2>(1)
 const sculptSymmetryCount = ref(6)
+// In-panel Remesh (Gap 4): separate state from remeshResolution/meshVertexCount/
+// meshEncodedKB above — those read `doc.objects`' COMMITTED content, which is
+// stale while a sculpt session is live; these read the session's own LIVE
+// working buffer instead (see `remeshSculptSession`).
+const sculptRemeshResolution = ref(64)
+const sculptRemeshBusy = ref(false)
+// Bumped whenever `sculptSession` is reassigned (enterSculpt, or an in-panel
+// remesh rebuilding it) so `sculptVertexCount` re-derives — `sculptSession` is
+// a plain (non-reactive) module-level variable, same convention `meshGen`
+// already uses for the doc-backed mesh watchers above.
+const sculptSessionVersion = ref(0)
+const sculptVertexCount = computed<number>(() => {
+  void sculptSessionVersion.value
+  return sculptSession ? sculptSession.positions.length / 3 : 0
+})
+// Snapshotted at sculpt entry (from the doc's own encoded size — nothing has
+// diverged yet) and refreshed after each in-panel remesh. Not kept live per
+// stroke: encoding is a real deflate pass, and a stroke must stay cheap.
+const sculptMeshKB = ref('0.0')
 let sculptSession: SculptSession | null = null
 let sculptObjId: string | null = null
 let sculptStrokeDown = false
@@ -2069,6 +2102,12 @@ async function enterSculpt() {
     if (selectedObjects.value.length !== 1 || selectedObjects.value[0]!.id !== obj.id) return
     sculptSession = new SculptSession(data)
     sculptObjId = obj.id
+    // Same default-once-per-selection convention as the inspector's own
+    // remeshResolution watch (line ~1688) — a target near the mesh's current
+    // density, not a fixed constant that's wildly wrong for a dense import.
+    sculptRemeshResolution.value = resolutionForTarget(data, MESH_DEFAULT_TARGET)
+    sculptMeshKB.value = meshEncodedKB.value // nothing has diverged from the doc yet
+    sculptSessionVersion.value++
     engine?.setSculptOverride(obj.id, sculptSession.positions, sculptSession.indices)
     // Gizmo hidden for the whole session — orbit is NOT locked here (Gap 1):
     // it only locks once a pointermove finds the cursor over the mesh, or a
@@ -2233,21 +2272,148 @@ function sculptUndo() {
   engine?.setSculptOverride(sculptObjId, sculptSession.positions, sculptSession.indices)
 }
 
+/** In-panel Remesh (Gap 4): rebuilds the CURRENT sculpted buffer, not the
+ *  stale mesh sitting in `doc.objects` — `session.toMeshData()` is the live
+ *  truth while sculpting (same rule `commitSculptSession` below follows for
+ *  the same reason).
+ *
+ *  Three correctness hazards this must get right:
+ *  1. Remesh the SESSION's buffer (toMeshData()), never obj.content.mesh.
+ *  2. The undo ring MUST NOT survive: its entries are {vertexIndex,
+ *     oldPosition} pairs against the OLD topology, and would scatter the mesh
+ *     into garbage if replayed against the new one. A brand new SculptSession
+ *     is constructed below rather than mutated in place — its undo ring starts
+ *     empty by construction, so the old one is simply discarded with the old
+ *     instance, never "cleared" in place because there is nothing left to
+ *     clear it FROM.
+ *  3. The session is rebuilt wholesale — new positions/indices/adjacency/
+ *     spatial hash/pick grid all fall out of `new SculptSession(...)` — and
+ *     the engine's sculpt override is re-pointed at the NEW buffers, or the
+ *     viewport keeps drawing the old topology.
+ *
+ *  `markDirty()` is required (not incidental): a fresh SculptSession starts
+ *  clean (editVersion === committedVersion, both 0), but this buffer already
+ *  differs from `doc.objects` — it's a new topology, not an edited old one —
+ *  so `dirty` must read true immediately or a bare Exit right after Remesh
+ *  would silently discard it.
+ *
+ *  Same synchronous-cost shape as the inspector's own Remesh (buildTriGrid +
+ *  buildSdf + surfaceNets, ~2s at typical resolutions) — same `paintPendingState`
+ *  precedent so the busy label actually paints before the block starts. */
+async function remeshSculptSession() {
+  if (!sculptSession || !sculptObjId || sculptRemeshBusy.value || committing.value) return
+  const targetId = sculptObjId
+  sculptRemeshBusy.value = true
+  convertError.value = ''
+  await paintPendingState()
+  try {
+    const data = sculptSession.toMeshData()
+    const out = await remeshMeshData(data, sculptRemeshResolution.value)
+    // Sculpt mode can't be exited mid-await from this panel (Apply/Exit are
+    // disabled together with this button — see the `committing` prop wiring
+    // below), but guard the stale case anyway, same as remeshSelection.
+    if (sculptObjId !== targetId) return
+    if (out.open) {
+      // Spec: the object was already closed to enter sculpt in the first
+      // place, so this should be unreachable — but never assume. Refuse
+      // rather than let a bad result corrupt the working buffer; `data` (the
+      // pre-remesh session buffer) is untouched either way.
+      convertError.value = 'This came back open from the remesh — exit sculpt and Solidify it first.'
+      return
+    }
+    const next = new SculptSession(out.data)
+    next.markDirty()
+    sculptSession = next
+    engine?.setSculptOverride(targetId, next.positions, next.indices)
+    sculptSessionVersion.value++
+    // For display only — never written to the doc; commit() re-encodes the
+    // committed copy separately. A single extra deflate pass is negligible
+    // next to the SDF/surface-nets work this function already pays for.
+    try { sculptMeshKB.value = ((await encodeMesh(out.data)).length / 1024).toFixed(1) } catch { /* keep the prior reading */ }
+  } catch (err) {
+    console.warn('[scene3d-studio] in-sculpt remesh failed', err)
+    convertError.value = 'Could not remesh — try again.'
+  } finally {
+    sculptRemeshBusy.value = false
+  }
+}
+
+/** The ONLY place the session's working buffer turns into a `doc.objects`
+ *  write. Used by Apply/Exit (via `commitAndExitSculpt`) AND by any
+ *  doc-writing action taken while a sculpt session is still open — Save and
+ *  Export to Canvas (`commitSculptIfNeeded` below). The session's buffer is
+ *  the live truth while sculpting; `doc.objects` still holds the pre-sculpt
+ *  mesh until this runs, so nothing may serialize `scene_state` without
+ *  calling this first (or the write silently persists the PRE-sculpt mesh and
+ *  discards the strokes — the exact bug the shell's close button was fixed
+ *  for, see `onClose` below).
+ *
+ *  Deliberately does NOT touch the engine override, orbit lock, or the
+ *  `sculpting`/`sculptSession` state — unlike `commitAndExitSculpt`, sculpting
+ *  continues uninterrupted afterward (a mid-session Save must not kick the
+ *  user out of the mode they were just in).
+ *
+ *  Returns false (and sets `convertError`) on failure, so a caller can refuse
+ *  to persist a document that never got the sculpt's strokes. No-op success
+ *  (`true`) when there is no live session, or the session isn't dirty. */
+async function commitSculptSession(): Promise<boolean> {
+  const session = sculptSession
+  const id = sculptObjId
+  if (!session || !id || !session.dirty) return true
+  try {
+    const { mesh, meshKey } = await session.commit()
+    // Warm the shared mesh cache BEFORE the doc write triggers the normal
+    // geoKey-gated resync, so that resync is a cache hit — no placeholder
+    // cube flash while it decodes what we already have in hand.
+    await loadMesh(mesh, meshKey)
+    const i = doc.objects.findIndex((o) => o.id === id)
+    if (i >= 0) {
+      const obj = doc.objects[i] as PrimitiveObject
+      doc.objects[i] = { ...obj, content: { ...obj.content, mesh, meshKey } }
+    }
+    meshGen.value++ // same convention as the remesh/solidify paths: re-measure Size/vertex count
+    return true
+  } catch (err) {
+    console.warn('[scene3d-studio] sculpt commit failed', err)
+    convertError.value = 'Could not save the sculpt — try again.'
+    return false
+  }
+}
+
+/** Guarded wrapper for callers that must not proceed with a stale (pre-sculpt)
+ *  document if the commit fails or is already busy — Save and Export to
+ *  Canvas. `committing` is the SAME reentrancy flag `commitAndExitSculpt` uses
+ *  (and the panel's Apply/Exit buttons disable on): a Save that raced an
+ *  in-flight Apply/Exit (or another Save) must not double-encode the same
+ *  working buffer, so this simply defers to whichever commit is already
+ *  running rather than starting a second one. Returns true immediately (no
+ *  work needed) when sculpting isn't even active. */
+async function commitSculptIfNeeded(): Promise<boolean> {
+  if (!sculpting.value) return true
+  if (committing.value || sculptRemeshBusy.value) return false
+  committing.value = true
+  convertError.value = ''
+  try {
+    return await commitSculptSession()
+  } finally {
+    committing.value = false
+  }
+}
+
 /** Apply and Exit are the same action for Task 13 (see Scene3DSculptPanel's
- *  header comment): commit the session's working buffer to the doc — the
- *  ONLY scene_state write a sculpt makes, and only here — then leave sculpt
- *  mode. Skipped entirely when the session was never dirtied, so an
- *  accidental Sculpt-then-Exit doesn't pollute undo history or the "unexported
- *  changes" indicator.
+ *  header comment): commit the session's working buffer to the doc via
+ *  `commitSculptSession` above — the only OTHER thing this adds is leaving
+ *  sculpt mode afterward. Skipped entirely when the session was never
+ *  dirtied, so an accidental Sculpt-then-Exit doesn't pollute undo history or
+ *  the "unexported changes" indicator.
  *
  *  The exit cleanup (engine override, orbit lock, sculpting flag/session) runs
  *  in `finally` so it happens on EVERY path, including a throw out of
- *  `session.commit()` or `loadMesh` — mirrors `enterSculpt`'s try/catch above.
- *  Without this a failed commit left the camera orbit-locked and the panel
- *  stuck open with no way out (finding 2, Task 13 review); a failure is now
- *  surfaced through the existing `convertError` line instead of swallowed, and
- *  the session still exits so the user is never left locked without being
- *  told why. */
+ *  `commitSculptSession`. Without this a failed commit left the camera
+ *  orbit-locked and the panel stuck open with no way out (finding 2, Task 13
+ *  review); a failure is now surfaced through the existing `convertError` line
+ *  instead of swallowed, and the session still exits so the user is never left
+ *  locked without being told why. */
 async function commitAndExitSculpt() {
   const session = sculptSession
   const id = sculptObjId
@@ -2255,22 +2421,10 @@ async function commitAndExitSculpt() {
   committing.value = true
   convertError.value = ''
   try {
-    if (session.dirty) {
-      const { mesh, meshKey } = await session.commit()
-      // Warm the shared mesh cache BEFORE the doc write triggers the normal
-      // geoKey-gated resync, so that resync is a cache hit — no placeholder
-      // cube flash while it decodes what we already have in hand.
-      await loadMesh(mesh, meshKey)
-      const i = doc.objects.findIndex((o) => o.id === id)
-      if (i >= 0) {
-        const obj = doc.objects[i] as PrimitiveObject
-        doc.objects[i] = { ...obj, content: { ...obj.content, mesh, meshKey } }
-      }
-      meshGen.value++ // same convention as the remesh/solidify paths: re-measure Size/vertex count
-    }
-  } catch (err) {
-    console.warn('[scene3d-studio] sculpt commit failed', err)
-    convertError.value = 'Could not save the sculpt — try again.'
+    // Failure is already surfaced via `convertError` inside commitSculptSession
+    // itself; nothing more to do with the return value here besides letting
+    // `finally` run the exit cleanup regardless.
+    await commitSculptSession()
   } finally {
     engine?.setSculptOverride(null, null, null)
     // setSculptMode(false) also force-clears the orbit lock itself (belt and
@@ -2652,7 +2806,17 @@ async function bake(): Promise<void> {
 // Save: persist the scene document only (no render/upload). Lets the user
 // checkpoint work and keep editing; the node's output images are unchanged
 // until an explicit Export.
-function saveScene() {
+//
+// Gap 3 (Sculpt-and-Merge spec §6): a stroke deliberately never writes
+// scene_state (see setSculptOverride's header), so while sculpting, `doc`
+// still holds the PRE-sculpt mesh right up until this runs. Save is a
+// doc-writing action available WHILE sculpting now that the footer stays live
+// (material/transform/motion all do too) — commit the live session first via
+// `commitSculptIfNeeded`, or Save would persist the pre-sculpt mesh and
+// silently discard the strokes. Sculpting stays active either way: unlike
+// Apply/Exit, Save must not kick the user out of the mode they were just in.
+async function saveScene() {
+  if (!(await commitSculptIfNeeded())) return // commit failed/busy — convertError visible, doc left untouched
   syncDocCamera()
   setWidget('scene_state', serializeDoc(doc))
   savedFlash.value = true
@@ -2664,7 +2828,11 @@ function saveScene() {
 // beauty render onto the canvas as an Image node (wired from the beauty output,
 // like the other studios' "generate" flow), then return to the canvas. Stays
 // open on failure so the inline error is visible.
+//
+// Same Gap 3 hazard as saveScene above: bake() renders from `doc`, and writes
+// scene_state itself — both would see the pre-sculpt mesh without this.
 async function exportToCanvas() {
+  if (!(await commitSculptIfNeeded())) return
   await bake()
   if (bakeError.value) return
   const beauty = widgetStr('beauty_image')
@@ -3004,24 +3172,14 @@ async function onClose() {
     </template>
 
     <template #controls>
-      <!-- Sculpt mode swaps the WHOLE inspector column for the sculpt panel
-           (brush palette, Size/Strength, Symmetry, its own Apply/Exit) — the
-           Build/Motion tabs and the Save/Export footer below have no meaning
-           while a stroke session is live and nothing has been written to the
-           doc yet (rule #2 of Task 13's brief). -->
-      <Scene3DSculptPanel
-        v-if="sculpting"
-        v-model:brush="sculptBrush"
-        v-model:size="sculptSize"
-        v-model:strength="sculptStrength"
-        v-model:symmetry="sculptSymmetry"
-        v-model:symmetryAxis="sculptSymmetryAxis"
-        v-model:symmetryCount="sculptSymmetryCount"
-        :committing="committing"
-        @apply="commitAndExitSculpt"
-        @exit="commitAndExitSculpt"
-      />
-      <template v-else>
+      <!-- Sculpt mode (Gap 3 fix): the sculpt panel now replaces ONLY the
+           Geometry section below (where the Remesh control already lived for
+           a mesh primitive) — everything else in this column (Transform,
+           Material, the Build/Motion tabs, Motion, and the Save/Export
+           footer) stays live and editable while a stroke session is open, per
+           spec §6. Save/Export commit the live session first — see
+           `commitSculptIfNeeded` — so neither one can persist the pre-sculpt
+           mesh out from under an open sculpt session. -->
       <div class="mb-2 flex gap-1 rounded-lg bg-white/[0.04] p-1 text-[11px]">
         <button type="button" class="nodrag flex-1 rounded px-2 py-1"
                 :class="activeTab === 'build' ? 'bg-white/15 text-white' : 'text-white/55 hover:text-white/80'"
@@ -3069,7 +3227,37 @@ async function onClose() {
         </div>
       </StudioSection>
 
-      <StudioSection v-if="selectedIsPrimitive" title="Geometry" @pointerdown.capture="onControlsPointerDown">
+      <!-- Gap 3 fix: sculpt mode replaces ONLY the Geometry section below (a
+           sibling swap, not nested inside it) with Scene3DSculptPanel — brush
+           palette, Symmetry, in-panel Remesh, Apply/Exit, spec §6's exact
+           list. Modifiers/Cloner (inside the Geometry StudioSection below)
+           are swapped out along with it because they're genuinely INERT
+           during a live sculpt override: geometryForObject (engine.ts)
+           short-circuits straight to the session's raw buffer and never calls
+           applyModifiers while the override is set, so a Twist/Cloner edit
+           here would silently do nothing to the live viewport. Everything
+           ELSE in the inspector column (Transform above, Material below, the
+           Motion tab, the Save/Export footer) stays live per spec §6. -->
+      <Scene3DSculptPanel
+        v-if="sculpting && selectedMesh"
+        v-model:brush="sculptBrush"
+        v-model:size="sculptSize"
+        v-model:strength="sculptStrength"
+        v-model:symmetry="sculptSymmetry"
+        v-model:symmetryAxis="sculptSymmetryAxis"
+        v-model:symmetryCount="sculptSymmetryCount"
+        v-model:remeshResolution="sculptRemeshResolution"
+        :remesh-vertex-count="sculptVertexCount"
+        :remesh-kb="sculptMeshKB"
+        :remesh-busy="sculptRemeshBusy"
+        :remesh-error="convertError"
+        :committing="committing"
+        @apply="commitAndExitSculpt"
+        @exit="commitAndExitSculpt"
+        @remesh="remeshSculptSession"
+      />
+
+      <StudioSection v-else-if="selectedIsPrimitive" title="Geometry" @pointerdown.capture="onControlsPointerDown">
         <!-- Text controls: not schema-driven (content is {text?,font?}, only
              carried by `text` objects) — sit above the generated sliders. -->
         <div v-if="selectedText" class="space-y-3 pt-1">
@@ -3844,14 +4032,30 @@ async function onClose() {
 
       <!-- Sticky action footer: Save + Export, pinned to the bottom-right of the
            inspector column. mt-auto pins it to the bottom when the column is short;
-           sticky bottom-0 keeps it visible once the inspector scrolls. -->
-      <div class="sticky bottom-0 z-10 mt-auto border-t border-white/10 bg-[#0e0e10] pb-1 pt-2">
+           sticky bottom-0 keeps it visible once the inspector scrolls. Stays live
+           while sculpting (Gap 3) — `committing` additionally disables both
+           buttons for exactly as long as a sculpt commit (this Save, or an
+           Apply/Exit/in-panel-Remesh elsewhere in the column) is in flight, the
+           same busy-disables-the-button convention every other async action on
+           this surface already uses (Remesh, Solidify, Merge, To-mesh). -->
+      <!-- pointer-events-none on the bar + pointer-events-auto on just the two
+           buttons (Gap 3/4 fix): this bar's own box is full-width and tall
+           enough (status line + button row) to sit ON TOP of whatever the
+           column has scrolled to underneath it — normally harmless, since the
+           bar's dead space had nothing reachable behind it. The sculpt
+           panel's new Remesh button changed that: at the scroll position
+           sculpt mode opens at by default, Remesh's row lands directly under
+           this bar's left-hand dead space and was silently unclickable (no
+           visual sign, the click just went to this bar instead). Same
+           overlay-pointer-events pattern used for the viewport's HTML
+           overlays elsewhere in this file. -->
+      <div class="sticky bottom-0 z-10 mt-auto border-t border-white/10 bg-[#0e0e10] pb-1 pt-2 pointer-events-none">
         <p v-if="bakeError && !baking" class="mb-1.5 text-right text-xs text-red-400/90">{{ bakeError }}</p>
         <p v-else-if="savedFlash" class="mb-1.5 text-right text-xs text-emerald-400/80">Saved ✓</p>
         <p v-else-if="dirty && !baking" class="mb-1.5 text-right text-xs text-amber-400/70">Not exported to canvas</p>
         <div class="flex items-center justify-end gap-2">
-          <StudioButton variant="secondary" :disabled="baking" @click="saveScene">Save</StudioButton>
-          <StudioButton variant="primary" :disabled="baking || !doc.objects.length" @click="exportToCanvas">
+          <StudioButton class="pointer-events-auto" variant="secondary" :disabled="baking || committing" @click="saveScene">Save</StudioButton>
+          <StudioButton class="pointer-events-auto" variant="primary" :disabled="baking || committing || !doc.objects.length" @click="exportToCanvas">
             <span class="flex items-center gap-1.5">
               <Loader2 v-if="baking" class="h-4 w-4 animate-spin" />
               {{ baking ? 'Exporting…' : 'Export to Canvas' }}
@@ -3859,7 +4063,6 @@ async function onClose() {
           </StudioButton>
         </div>
       </div>
-      </template>
     </template>
   </StudioModalShell>
 </template>

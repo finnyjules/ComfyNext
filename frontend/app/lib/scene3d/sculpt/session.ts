@@ -263,6 +263,20 @@ export class SculptSession {
     return { positions: this.positions.slice(), indices: this.indices }
   }
 
+  /** Marks the session as differing from the last commit WITHOUT touching
+   *  `positions`. Used after an in-sculpt Remesh: the caller rebuilds a brand
+   *  new `SculptSession` from the remeshed buffer (fresh undo ring, fresh
+   *  everything — see the panel's `remeshSculptSession`), and that fresh
+   *  instance is born with `editVersion === committedVersion` (both 0) exactly
+   *  like ordinary sculpt entry. But unlike ordinary entry, the new buffer
+   *  already differs from what `doc.objects` has stored — it's a new topology,
+   *  not an edited old one — so `dirty` must read true immediately, or
+   *  Save/Apply/Exit would see "clean" and skip the write, silently discarding
+   *  the remesh the moment the user leaves without sculpting a further stroke. */
+  markDirty(): void {
+    this.editVersion = this.nextVersion++
+  }
+
   /** The ONLY place the session produces document-shaped data. */
   async commit(): Promise<{ mesh: string; meshKey: string }> {
     const mesh = await encodeMesh(this.toMeshData())
