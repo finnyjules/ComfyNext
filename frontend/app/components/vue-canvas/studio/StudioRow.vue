@@ -256,8 +256,14 @@ function onValuePointerDown(e: PointerEvent) {
 
 <template>
   <div>
+    <!-- The hairline is load-bearing on the CANVAS, not in the inspector. Recessive-tier
+         nodes render at `opacity-70 hover:opacity-100` (lib/canvas/nodeTier.ts), and a
+         borderless 5% fill at 70% is close to invisible beside a bordered textarea — the
+         row read as "transparent until hovered". Every node control this replaced carried
+         `border-white/10`. On the studios' darker panel the same hairline is barely
+         perceptible, so one value serves both surfaces. -->
     <div
-      class="group relative flex h-7 select-none items-center justify-between overflow-hidden rounded-md bg-white/[0.05] px-2.5"
+      class="group relative flex h-7 select-none items-center justify-between overflow-hidden rounded-md border border-white/[0.07] bg-white/[0.05] px-2.5"
       :class="numeric && !bound && !editing ? 'cursor-ew-resize' : ''"
       @pointerdown="onPointerDown"
       @dblclick="onReset"
