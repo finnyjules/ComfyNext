@@ -1555,10 +1555,14 @@ watch(previewImages, (urls) => {
       'ring-2 ring-red-500': data.error,
       'border-white/30': data.isSubgraph,
       'border-white/10': !data.isSubgraph,
-      // Dominant: full width and weight. Recessive: narrower and dimmed until
-      // you actually look at it, so utilities stop competing with the work.
+      // Dominant: full width. Recessive: narrower, so utilities stop competing
+      // with the work. Width carries the whole distinction — recessive nodes used
+      // to also sit at `opacity-70 hover:opacity-100`, dropped 2026-08-05 because
+      // nothing else on the canvas dims: generators and studio nodes are always
+      // opaque, so a utility fading in and out was the odd one out rather than a
+      // consistent signal, and it made every control inside it hard to read.
       'w-[260px]': !isRecessiveNode,
-      'w-[208px] opacity-70 hover:opacity-100': isRecessiveNode,
+      'w-[208px]': isRecessiveNode,
     }"
     :data-running="data.running || undefined"
     :data-mode="data.mode || 0"
