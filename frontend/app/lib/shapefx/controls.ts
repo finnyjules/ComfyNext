@@ -2,6 +2,11 @@ import type { ControlSpec } from '~/lib/spacetype/effect'
 import { HARMONY_TYPES } from '~/lib/color/harmony'
 import { FILL_TYPES } from '~/lib/spacetype/fillTile'
 import { DEFAULT_CONFIG, PRIMS, type ShapeConfig } from './config'
+// postControls is three-free by construction (see its own header) — safe to import
+// here despite this module's own three-free constraint. Do NOT import chain.ts
+// (applyPost) from this file; that lives in engine.ts, the three-aware half of
+// this studio.
+import { postControls, POST_SECTIONS } from '~/lib/studio/post/controls'
 
 /**
  * The single declarative description of Shape Studio's parameters.
@@ -21,8 +26,10 @@ import { DEFAULT_CONFIG, PRIMS, type ShapeConfig } from './config'
  */
 export type ShapeControl = ControlSpec & { when?: (cfg: ShapeConfig) => boolean }
 
-/** Emission order; a control whose group is not listed here is dropped. */
-export const SHAPE_SECTIONS = ['Form', 'Shape', 'Palette', 'Fill', 'Style'] as const
+/** Emission order; a control whose group is not listed here is dropped.
+ *  POST_SECTIONS (Bloom, Color, Duotone, ...) is appended so the shared post
+ *  stack's sections land after Style — see the `...postControls(...)` below. */
+export const SHAPE_SECTIONS = ['Form', 'Shape', 'Palette', 'Fill', 'Style', ...POST_SECTIONS] as const
 
 const isPrimitive = (c: ShapeConfig) => c.shape.mode === 'primitive'
 const isGem = (c: ShapeConfig) => c.shape.mode === 'gem'
@@ -89,6 +96,12 @@ export const SHAPE_CONTROLS: ShapeControl[] = [
   slider('style.grain', 'Grain', 0, 100, 1, 'Style', DEFAULT_CONFIG.style.grain),
   slider('style.distortion', 'Distortion', 0, 100, 1, 'Style', DEFAULT_CONFIG.style.distortion),
   color('style.background', 'Background', DEFAULT_CONFIG.style.background, 'Style'),
+
+  // --- Shared post stack (Bloom/Color/Duotone/...) -----------------------------
+  // threeD: false — Shape is 3D-rendered but has no depth/normal buffers wired for
+  // ambient occlusion (see engine.ts's applyPost call), so gtao's controls are
+  // withheld the same way Gradient/Texture withhold them.
+  ...postControls({ threeD: false }),
 ]
 
 /** Controls applicable to this config, in SHAPE_SECTIONS order. */

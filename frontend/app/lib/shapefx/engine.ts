@@ -11,6 +11,19 @@ import { withShaderFillContext, clearShaderFillOwner, refreshLiveShaderFills } f
 import { hashSeed } from '~/lib/spacetype/rng'
 import { postNeeded, POST_VERT, POST_FRAG } from './post'
 import type { ShapeConfig } from './config'
+import { applyPost } from '~/lib/studio/post/chain'
+import { DEFAULT_POST, postEnabled } from '~/lib/studio/post/settings'
+
+// Straight pass-through fragment shader for blitPostResult()'s compositing quad —
+// same role as Gradient/Texture's own BLIT_FS, but reused here as a THREE
+// ShaderMaterial (see ensureBlit()'s doc for why). Shares POST_VERT (already
+// imported above) rather than declaring a second identical vertex shader.
+const BLIT_FRAG = `
+precision highp float;
+varying vec2 vUv;
+uniform sampler2D uScene;
+void main() { gl_FragColor = texture2D(uScene, vUv); }
+`
 
 // Ortho frustum half-height chosen so a unit-ish shape frames nicely at z=6.
 const ORTHO_HALF_H = 2.6
@@ -51,6 +64,12 @@ export class ShapeEngine {
   private postScene: THREE.Scene | null = null
   private postCam: THREE.OrthographicCamera | null = null
   private postMat: THREE.ShaderMaterial | null = null
+  // Compositing quad for the SHARED post stack's result (Task 7) — see ensureBlit()'s
+  // doc comment for why this exists instead of a raw-GL blit like Gradient/Texture's.
+  private blitScene: THREE.Scene | null = null
+  private blitCam: THREE.OrthographicCamera | null = null
+  private blitMat: THREE.ShaderMaterial | null = null
+  private blitTex: THREE.CanvasTexture | null = null
   /** Non-zero when one or more shader-fill fields exceeded LIVE_FIELD_CEILING on the last
    *  refreshShaderFields() call and are showing a frozen (t=0) snapshot instead of animating.
    *  Mirrors SpaceTypeEngine.frozenFieldCount — same "no silent caps" design rule applies to
@@ -114,6 +133,80 @@ export class ShapeEngine {
     this.postScene.add(quad)
   }
 
+  /**
+   * Lazily build the compositing quad that draws the SHARED post stack's result
+   * (Task 7) onto this engine's own canvas.
+   *
+   * WHY NOT A RAW GL BLIT, unlike Gradient/Texture's `blitBack`: this.canvas is
+   * owned by THREE.WebGLRenderer, which caches its own GL state (bound program,
+   * textures, buffers — see three's WebGLState) to skip redundant driver calls
+   * across frames. Gradient/Texture blit by reaching into their OWN self-owned
+   * raw WebGL2 context (gl.useProgram/gl.bindTexture/gl.drawArrays directly) —
+   * safe there because nothing else touches that context. Doing the same against
+   * `this.renderer.getContext()` here would issue GL calls three doesn't know
+   * about: three's cache would still believe its own last-bound program/texture
+   * are active, so the NEXT `renderer.render()` call (next frame, or the next
+   * `drawFrame()` inside the same frame for a resize/bake) could skip state
+   * changes it actually needs, corrupting a LATER draw in a way that wouldn't
+   * show up as an obvious one-frame glitch.
+   *
+   * Instead, this composites through three's OWN render path: a full-screen quad
+   * (same PlaneGeometry(2,2) + orthographic camera shape as ensurePost()'s own
+   * grain/distortion quad above), textured with applyPost()'s result canvas
+   * wrapped in a THREE.CanvasTexture, drawn via `this.renderer.render(...)`.
+   * Three issues every GL call itself, so its state cache stays authoritative —
+   * this is the same posture as three's own documented pattern for compositing
+   * an external canvas/texture into a scene (e.g. video textures), not a new
+   * mechanism invented for this task.
+   *
+   * The fragment shader is a raw, uncorrected `texture2D` sample (BLIT_FRAG) —
+   * deliberately a plain ShaderMaterial, not MeshBasicMaterial, so nothing in
+   * three's built-in material shader chunks (tone mapping, colour-space
+   * conversion) touches the pixels; this is a byte-for-byte copy, matching
+   * Gradient/Texture's own straight pass-through blit.
+   */
+  private ensureBlit(): void {
+    if (this.blitScene) return
+    this.blitScene = new THREE.Scene()
+    this.blitCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1)
+    // Placeholder image, swapped every call in blitPostResult() before the draw —
+    // CanvasTexture needs a real canvas at construction.
+    this.blitTex = new THREE.CanvasTexture(document.createElement('canvas'))
+    this.blitTex.generateMipmaps = false
+    this.blitTex.minFilter = THREE.LinearFilter
+    this.blitTex.magFilter = THREE.LinearFilter
+    this.blitTex.wrapS = THREE.ClampToEdgeWrapping
+    this.blitTex.wrapT = THREE.ClampToEdgeWrapping
+    this.blitMat = new THREE.ShaderMaterial({
+      vertexShader: POST_VERT,
+      fragmentShader: BLIT_FRAG,
+      depthTest: false,
+      depthWrite: false,
+      // Full-screen overwrite of the destination buffer, same requirement (and
+      // same reason) as ensurePost()'s postMat above: applyPost()'s result
+      // already carries its own final alpha, so GPU blending must stay off or
+      // fractional-alpha edge pixels would blend against whatever the canvas
+      // held before this draw instead of being written straight.
+      blending: THREE.NoBlending,
+      uniforms: { uScene: { value: this.blitTex } },
+    })
+    const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.blitMat)
+    this.blitScene.add(quad)
+  }
+
+  /** Draw `src` (applyPost()'s returned canvas) onto this engine's own canvas — see
+   *  ensureBlit()'s doc for why this goes through three's render path rather than a
+   *  raw GL blit. `src` is valid only until the NEXT applyPost() call from ANY
+   *  studio (one shared GL2 context app-wide — see chain.ts's module header), so
+   *  this must run immediately after applyPost() returns it, which drawFrame() does. */
+  private blitPostResult(src: TexImageSource): void {
+    this.ensureBlit()
+    this.blitTex!.image = src
+    this.blitTex!.needsUpdate = true
+    this.renderer.setRenderTarget(null)
+    this.renderer.render(this.blitScene!, this.blitCam!)
+  }
+
   /** The one call site that draws the 3D scene — used both for the direct-to-canvas skip
    *  path and for rendering into the offscreen target ahead of the post pass, so there is
    *  exactly one `renderer.render(scene, cam)` call in this file. */
@@ -122,28 +215,54 @@ export class ShapeEngine {
   }
 
   /** The single place the scene reaches pixels. `render()` and `frameToBlob()` both call
-   *  this, so the preview and every bake apply exactly the same post chain. */
+   *  this, so the preview and every bake apply exactly the same post chain — INCLUDING
+   *  the shared post stack appended at the end (Task 7): the SAME guarantee Gradient's
+   *  own single call site documents (see gradientfx/renderer.ts's render()). */
   private drawFrame(): void {
     const cfg = this.config
     if (!cfg || !postNeeded(cfg)) {
       this.renderer.setRenderTarget(null)
       this.renderScene()
-      return
+    } else {
+      this.ensurePost()
+      this.renderer.setRenderTarget(this.rt)
+      this.renderer.clear()
+      this.renderScene()
+      this.renderer.setRenderTarget(null)
+      const u = this.postMat!.uniforms
+      u.uScene!.value = this.rt!.texture
+      u.uGrain!.value = (cfg.style.grain ?? 0) / 100
+      u.uDistort!.value = (cfg.style.distortion ?? 0) / 100
+      u.uResolution!.value.set(this.w, this.h)
+      // Stable per-shape seed (derived from the config's seed string) so the grain pattern
+      // doesn't jump between renders/bakes of the same shape.
+      u.uSeed!.value = hashSeed(cfg.seed) % 1000
+      this.renderer.render(this.postScene!, this.postCam!)
     }
-    this.ensurePost()
-    this.renderer.setRenderTarget(this.rt)
-    this.renderer.clear()
-    this.renderScene()
-    this.renderer.setRenderTarget(null)
-    const u = this.postMat!.uniforms
-    u.uScene!.value = this.rt!.texture
-    u.uGrain!.value = (cfg.style.grain ?? 0) / 100
-    u.uDistort!.value = (cfg.style.distortion ?? 0) / 100
-    u.uResolution!.value.set(this.w, this.h)
-    // Stable per-shape seed (derived from the config's seed string) so the grain pattern
-    // doesn't jump between renders/bakes of the same shape.
-    u.uSeed!.value = hashSeed(cfg.seed) % 1000
-    this.renderer.render(this.postScene!, this.postCam!)
+
+    // Shared post-processing stack (Task 7) — runs AFTER Shape's own grain/distortion
+    // pass above (POST_FRAG, retired only in Task 8, and only its grain half), at the
+    // TRUE end of the frame: this.renderer.domElement already holds the fully-composed
+    // frame from whichever branch ran, so applyPost sees exactly what a viewer sees.
+    const post = cfg?.post ?? DEFAULT_POST
+    if (postEnabled(post)) {
+      // t=0: Shape Studio has no timeline/motion track of its own (unlike Gradient,
+      // which threads a real elapsed-seconds `time` into applyPost) — render()'s
+      // orbit argument is camera-only, and refreshShaderFields' own doc above notes
+      // Shape has no loop-duration concept at all. A time-varying post effect
+      // (film/glitch) therefore renders its t=0 frame — static, matching every
+      // other static aspect of a Shape render.
+      //
+      // seed: Shape's config carries its own seed string (cfg.seed) the same way
+      // Gradient's does — hashed with the SAME hashSeed() this file already uses
+      // for POST_FRAG's own uSeed uniform above, so post_grain's noise field
+      // re-rolls per-shape too, not identically across every Shape node.
+      const out = applyPost(this.renderer.domElement, post, this.w, this.h, 0, {
+        threeD: false,
+        seed: cfg ? hashSeed(cfg.seed) : undefined,
+      })
+      if (out !== this.renderer.domElement) this.blitPostResult(out)
+    }
   }
 
   private disposeMesh(): void {
@@ -251,6 +370,13 @@ export class ShapeEngine {
     })
     this.postMat?.dispose()
     this.rt = null; this.postScene = null; this.postCam = null; this.postMat = null
+    this.blitScene?.traverse(obj => {
+      const mesh = obj as THREE.Mesh
+      if (mesh.geometry) mesh.geometry.dispose()
+    })
+    this.blitMat?.dispose()
+    this.blitTex?.dispose()
+    this.blitScene = null; this.blitCam = null; this.blitMat = null; this.blitTex = null
     this.renderer.dispose()
   }
 }

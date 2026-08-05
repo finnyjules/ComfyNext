@@ -185,3 +185,46 @@ for (const size of TEXTURE_PROBE_SIZES) {
     expect(Math.sign(onDelta)).toBe(Math.sign(offDelta))
   })
 }
+
+// Task 7: Shape Studio adopts the shared post stack — same seam as Task 5/6, same
+// two-probe shape, against /dev/shape-harness instead. Shape renders through
+// three.js (see lib/shapefx/engine.ts's ensureBlit/blitPostResult), so the
+// harness's own render path is a throwaway ShapeEngine per call rather than a
+// persistent renderer singleton — see shape-harness.vue's own comments.
+const SHAPE_PROBE_SIZES = [128, 512]
+
+// Same reasoning as Gradient/Texture's override: Color's DEFAULT_POST values
+// (exposure/contrast/saturation = 1, hue = 0) are the identity transform.
+const SHAPE_PROBE_OVERRIDES: Partial<Record<string, Partial<PostSettings>>> = {
+  color: { exposure: 1.6 },
+}
+
+for (const def of POST_EFFECTS.filter(e => !e.threeDOnly)) {
+  test(`shape post stage runs and preserves structure: ${def.id}`, async ({ page }) => {
+    await page.goto('/dev/shape-harness')
+    await page.waitForFunction(() => typeof (window as any).__sailorPostProbe === 'function')
+    for (const size of SHAPE_PROBE_SIZES) {
+      const r = await page.evaluate(
+        async ({ effect, s, overrides }) => await window.__sailorPostProbe({ effect, size: s, overrides }),
+        { effect: def.id, s: size, overrides: SHAPE_PROBE_OVERRIDES[def.id] },
+      )
+      expect(r.meanAbsDiff, `${def.id} @ ${size}px: meanAbsDiff`).toBeGreaterThan(1 / 255)  // it ran
+      expect(r.corr, `${def.id} @ ${size}px: corr`).toBeGreaterThan(0.5)                     // it did not wash out
+    }
+  })
+}
+
+for (const size of SHAPE_PROBE_SIZES) {
+  test(`shape post stage preserves vertical orientation: ${size}px`, async ({ page }) => {
+    await page.goto('/dev/shape-harness')
+    await page.waitForFunction(() => typeof (window as any).__sailorPostOrientationProbe === 'function')
+    const r = await page.evaluate(async (s) => await window.__sailorPostOrientationProbe({ size: s }), size)
+    const offDelta = r.offBottom - r.offTop
+    const onDelta = r.onBottom - r.onTop
+    // The smooth+vertical base config is asymmetric enough that this isn't a coin flip.
+    expect(Math.abs(offDelta)).toBeGreaterThan(5)
+    expect(Math.abs(onDelta)).toBeGreaterThan(5)
+    // Same sign = same side is brighter in both frames = no flip.
+    expect(Math.sign(onDelta)).toBe(Math.sign(offDelta))
+  })
+}

@@ -1,5 +1,8 @@
 import type { HarmonyType } from '../color/harmony'
 import { normalizeShaderSpec, type FillType, type ShaderSpec } from '../spacetype/fillTile'
+// Three-free (see settings.ts's own header) — safe for config.ts, which controls.ts's
+// dynamic-import chain (Collection resolver) reaches, same posture as gradientfx/types.ts.
+import { DEFAULT_POST, type PostSettings } from '~/lib/studio/post/settings'
 
 export type ShapeMode = 'primitive' | 'gem'
 export type PrimitiveKind =
@@ -78,6 +81,10 @@ export interface ShapeConfig {
   fill: SurfaceFill
   style: StyleParams
   locks: Record<SectionKey, boolean>
+  /** Shared post-processing stack — see ~/lib/studio/post. Runs AFTER style.grain/
+   *  style.distortion (this studio's own pass, ./post.ts's POST_FRAG); see
+   *  engine.ts's drawFrame() for why both are active at once. */
+  post: PostSettings
 }
 
 export const DEFAULT_CONFIG: ShapeConfig = {
@@ -88,6 +95,10 @@ export const DEFAULT_CONFIG: ShapeConfig = {
   fill: { type: 'gradient', a: '#ff4da6', b: '#6a3df0', angle: 45, density: 8 },
   style: { grain: 20, distortion: 0, background: '#000000' },
   locks: { shape: false, palette: false, style: false },
+  // Own object literal, not a reference to the shared DEFAULT_POST constant — this
+  // constant is reused (spread, not aliased) by callers that build config literals
+  // (randomize.ts, presets), same posture as every other DEFAULT_CONFIG field.
+  post: { ...DEFAULT_POST },
 }
 
 const num = (v: unknown, d: number): number => (typeof v === 'number' && Number.isFinite(v) ? v : d)
@@ -166,5 +177,12 @@ export function mergeConfig(raw: unknown): ShapeConfig {
       palette: bool(lo.palette, d.locks.palette),
       style: bool(lo.style, d.locks.style),
     },
+    // Backfill post the same way GradientConfig's ensureConfigDefaults does (see
+    // gradientfx/types.ts) — a config saved before this field existed (or a bare
+    // {}) gets every post.* key at its DEFAULT_POST (off) value; a partial object
+    // (e.g. an agent patch that set only post.bloom) keeps its own keys and only
+    // backfills what's missing. No per-key validation, matching Gradient's own
+    // backfill — PostSettings' own consumers (postControls' sliders) already clamp.
+    post: { ...DEFAULT_POST, ...(o.post ?? {}) },
   }
 }

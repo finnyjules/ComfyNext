@@ -149,12 +149,16 @@ const { wiredColumns, sweepPopover, applySweep, varMenu, openVarMenu, goToCollec
 // side effect the panel's generic setter can't know about: switching fill.type INTO
 // 'shader' seeds a fresh spec (cloned — DEFAULT_SHADER_SPEC is a shared module constant,
 // never mutated in place) so ShaderFillEditor has something real to bind to immediately.
-function setShapeControl(key: string, value: string | number) {
+// `value: string | number | boolean` — widened for the shared post stack's
+// switch-kind controls (post.bloom etc.), same cast Gradient's setPostControl
+// uses: paramsProxy/onEdit are typed narrower (string|number) but store/forward
+// whatever they're handed at runtime; the cast documents that, it doesn't change it.
+function setShapeControl(key: string, value: string | number | boolean) {
   if (key === 'fill.type' && value === 'shader' && !config.value.fill.shader) {
     config.value.fill.shader = structuredClone(DEFAULT_SHADER_SPEC)
   }
-  paramsProxy[key] = value
-  onEdit(key, value)
+  paramsProxy[key] = value as string | number
+  onEdit(key, value as string | number)
 }
 function promoteShapeControl(c: ControlSpec) {
   promote(c, paramsProxy[c.key] as string | number)
@@ -519,7 +523,7 @@ async function onImportFile(e: Event) {
       <StudioControlPanel
         :controls="SHAPE_CONTROLS"
         :order="SHAPE_SECTIONS"
-        :value="(k: string) => paramsProxy[k] as string | number"
+        :value="(k: string) => paramsProxy[k] as string | number | boolean"
         :visible="controlVisible"
         :bound-for="boundColumnFor"
         :go-to-collection="goToCollection"
