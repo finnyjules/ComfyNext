@@ -21,6 +21,9 @@ export interface PostSettings {
   halftone: boolean; halftoneRadius: number; halftoneScatter: number
   dotScreen: boolean; dotScreenScale: number; dotScreenAngle: number
   glitch: boolean
+  grain: boolean; grainAmount: number; grainSize: number
+  vignette: boolean; vignetteAmount: number; vignetteRadius: number; vignetteSoftness: number
+  duotone: boolean; duotoneShadow: string; duotoneHighlight: string; duotoneMix: number
   gtao: boolean; gtaoRadius: number; gtaoIntensity: number; gtaoThickness: number
 }
 
