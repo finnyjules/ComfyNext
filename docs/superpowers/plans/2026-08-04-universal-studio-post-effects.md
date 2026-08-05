@@ -601,7 +601,10 @@ git commit -m "feat(post): manifest of twelve effects with manifest-derived cont
 
 **Files:**
 - Create: `shader_effects/post_adjust.frag`
-- Modify: `shader_effects/manifest.json` (register `post_adjust`)
+- Create: `shader_effects/post_grain.frag`
+- Modify: `shader_effects/manifest.json` (register both)
+- Modify: `frontend/app/lib/studio/post/manifest.ts` (add `toUniform` mappings; repoint `grain`)
+- Modify: `frontend/app/lib/studio/post/controls.ts` (drop unrenderable params per host)
 - Create: `frontend/app/lib/studio/post/chain.ts`
 - Modify: `frontend/nuxt.config.ts` (`vite.server.fs.allow`)
 - Test: `frontend/tests/unit/studio-post-chain.unit.spec.ts`
@@ -609,6 +612,37 @@ git commit -m "feat(post): manifest of twelve effects with manifest-derived cont
 **Interfaces:**
 - Consumes: `POST_EFFECTS`, `POST_CHAIN_ORDER` (Task 3); `PostSettings`, `postEnabled` (Task 2).
 - Produces: `applyPost(source: TexImageSource, post: PostSettings, w: number, h: number, t: number): TexImageSource` and `activePasses(post: PostSettings, opts?: { threeD?: boolean }): PostEffectDef[]`.
+
+#### Three corrections from Task 3, to apply before writing the chain
+
+Task 3 verified every declaration against the real catalog and found the plan's assumptions wrong in three ways. All three are settled — implement them as stated.
+
+**(a) `film_grain` is NOT in the committed catalog.** `shader_effects/film_grain.frag` exists on disk but is **untracked**, and has no entry in `shader_effects/manifest.json` — it belongs to another session's in-flight work. Depending on it would make this feature's rendering hinge on someone else's uncommitted files.
+
+So write our own `shader_effects/post_grain.frag` (alongside `post_adjust.frag`), register it, and repoint the manifest's `grain` entry from `'film_grain'` to `'post_grain'`. Its two uniforms are `u_amount` (0..1) and `u_size` (1..8), and it is the **alpha-gated** effect — see the alpha requirement below. Port the luminance-shaped midtone formula from `frontend/app/lib/gradientfx/shaders.ts:629-642` (`hashGrain`, Dave Hoskins "Hash without Sine") with the canonical `0.16` coefficient, because Task 8 migrates saved Gradient documents onto exactly this and they must render unchanged.
+
+**(b) Sailor's slider ranges do not match the catalog uniforms' ranges.** The plan assumed `settingsKey → uniform` was a direct assignment. It isn't:
+
+| Setting | Sailor range | Catalog uniform | Catalog range |
+|---|---|---|---|
+| `chromaAmount` | 0–1.5 | `u_amount` | 0–0.08 |
+| `halftoneRadius` | 1–20 | `u_size` | 0.004–0.1 |
+
+Passing 1.5 into a uniform expecting 0.08 overdrives the effect roughly nineteenfold. Add an optional mapping to `PostParamDef`:
+
+```ts
+  /** Convert the stored setting into the shader's own units. Absent = identity.
+   *  Sailor's slider ranges are settled and users' saved values sit inside them,
+   *  so the range gap between a setting and its catalog uniform is closed HERE
+   *  rather than by moving either range. */
+  toUniform?: (v: number) => number
+```
+
+Fill it in for every param whose two ranges differ — check all of them against the catalog, not just the two above — and give each one a one-line comment stating the two ranges it bridges. `applyPost` applies `toUniform` where present.
+
+**(c) Params with `uniform: null` must not reach a host that cannot render them.** Task 3 typed `uniform` as `string | null`; `halftoneScatter` and the three `gtao` params carry `null`. `gtao` is already withheld wholesale from non-3D hosts, but `halftoneScatter` is not — and on Gradient/Texture/Shape it would render a slider, and offer the agent a knob, that provably cannot affect a pixel.
+
+So in `controls.ts`, drop any param with `uniform === null` when `threeD` is false. Ambient occlusion's params keep appearing for 3D hosts (EffectComposer renders them), and `halftoneScatter` likewise stays for 3D. Add a test asserting `post.halftoneScatter` is absent for a flat host and present for a 3D one, and update the snapshot after reading it.
 
 - [ ] **Step 1: Write the failing test**
 
