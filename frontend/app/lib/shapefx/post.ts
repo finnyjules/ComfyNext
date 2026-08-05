@@ -57,8 +57,6 @@ void main() {
     uv += px / uResolution;
   }
   vec4 src = texture2D(uScene, clamp(uv, 0.0, 1.0));
-  vec3 col = src.rgb;
-  vec3 outCol = clamp(col, 0.0, 1.0);
-  gl_FragColor = vec4(outCol, src.a);
+  gl_FragColor = vec4(clamp(src.rgb, 0.0, 1.0), src.a);
 }
 `

@@ -48,7 +48,11 @@ describe('post shader source', () => {
   })
   it('preserves alpha rather than forcing opaque, so transparent exports survive', () => {
     // A `vec4(col, 1.0)` here would turn every transparent background black.
-    expect(POST_FRAG).not.toMatch(/gl_FragColor\s*=\s*vec4\([^)]*,\s*1\.0\s*\)/)
+    // Asserted POSITIVELY (the alpha argument IS the source's own alpha) rather
+    // than as a "no vec4(..., 1.0)" search: the negative form false-positived the
+    // moment the colour argument became an inline `clamp(src.rgb, 0.0, 1.0)`,
+    // whose own trailing `, 1.0)` the pattern could not tell from the alpha slot.
+    expect(POST_FRAG).toMatch(/gl_FragColor\s*=\s*vec4\(.*,\s*src\.a\s*\)\s*;/)
   })
   it('has a vertex shader that passes UVs through', () => {
     expect(POST_VERT).toContain('vUv')

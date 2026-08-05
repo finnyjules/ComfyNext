@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
+import * as THREE from 'three'
 import { DEFAULT_CONFIG, mergeConfig } from '~/lib/shapefx/config'
+import { configureBlitTexture } from '~/lib/shapefx/engine'
 import { SHAPE_CONTROLS, SHAPE_SECTIONS } from '~/lib/shapefx/controls'
 import { DEFAULT_POST } from '~/lib/studio/post/settings'
 
@@ -49,5 +51,33 @@ describe('shape post adoption', () => {
   it('the post sections land in SHAPE_SECTIONS so the schema-driven inspector renders them', () => {
     expect(SHAPE_SECTIONS).toContain('Bloom')
     expect(SHAPE_SECTIONS).toContain('Vignette')
+  })
+})
+
+// The blit that carries applyPost's result back onto Shape's own canvas is a
+// byte-for-byte copy, and two of the properties it depends on used to be left at
+// three's defaults. They are correct in three@0.171, so nothing failed — but a
+// version bump flipping either would corrupt transparent (premultiply) or
+// colour-managed (colorSpace) Shape exports with no test to notice. Pinned here.
+describe('shared-post blit texture', () => {
+  // A stub image: CanvasTexture's constructor only stores what it is handed, and
+  // this file runs in the node environment (no document).
+  const tex = () => configureBlitTexture(new THREE.CanvasTexture({ width: 1, height: 1 } as unknown as HTMLCanvasElement))
+
+  it('keeps straight alpha — applyPost\'s canvas is not premultiplied', () => {
+    expect(tex().premultiplyAlpha).toBe(false)
+  })
+
+  it('does no colour-space conversion on sample — BLIT_FRAG would not undo one', () => {
+    expect(tex().colorSpace).toBe(THREE.NoColorSpace)
+  })
+
+  it('samples 1:1 with no mips and no wrap', () => {
+    const t = tex()
+    expect(t.generateMipmaps).toBe(false)
+    expect(t.minFilter).toBe(THREE.LinearFilter)
+    expect(t.magFilter).toBe(THREE.LinearFilter)
+    expect(t.wrapS).toBe(THREE.ClampToEdgeWrapping)
+    expect(t.wrapT).toBe(THREE.ClampToEdgeWrapping)
   })
 })

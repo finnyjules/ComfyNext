@@ -25,6 +25,34 @@ uniform sampler2D uScene;
 void main() { gl_FragColor = texture2D(uScene, vUv); }
 `
 
+/**
+ * Sampling + pixel-interpretation settings for the shared post stack's blit
+ * texture (see ensureBlit). EVERY property the byte-for-byte copy depends on is
+ * set here explicitly, including the two that merely happen to match three's
+ * current defaults:
+ *  - `premultiplyAlpha = false`: applyPost's canvas holds STRAIGHT alpha (its GL
+ *    context is created with premultipliedAlpha: false — see chain.ts). Letting
+ *    three premultiply on upload would darken every partially-transparent pixel
+ *    of a Shape export against black.
+ *  - `colorSpace = NoColorSpace`: the post chain's output is already in the
+ *    renderer's output space. Tagging it sRGB would make three insert a
+ *    linearisation on sample, which BLIT_FRAG (a raw texture2D read, no colour
+ *    chunks) does not undo — so the frame would come back lighter.
+ * Both are three@0.171's defaults today, so this is not a fix; it stops a three
+ * version bump from silently corrupting transparent/colour-managed Shape exports
+ * with nothing in the suite to catch it. Pinned by shapefx-post-adoption.unit.spec.ts.
+ */
+export function configureBlitTexture(tex: THREE.CanvasTexture): THREE.CanvasTexture {
+  tex.generateMipmaps = false
+  tex.minFilter = THREE.LinearFilter
+  tex.magFilter = THREE.LinearFilter
+  tex.wrapS = THREE.ClampToEdgeWrapping
+  tex.wrapT = THREE.ClampToEdgeWrapping
+  tex.premultiplyAlpha = false
+  tex.colorSpace = THREE.NoColorSpace
+  return tex
+}
+
 // Ortho frustum half-height chosen so a unit-ish shape frames nicely at z=6.
 const ORTHO_HALF_H = 2.6
 const CAM_Z = 6
@@ -172,11 +200,7 @@ export class ShapeEngine {
     // Placeholder image, swapped every call in blitPostResult() before the draw —
     // CanvasTexture needs a real canvas at construction.
     this.blitTex = new THREE.CanvasTexture(document.createElement('canvas'))
-    this.blitTex.generateMipmaps = false
-    this.blitTex.minFilter = THREE.LinearFilter
-    this.blitTex.magFilter = THREE.LinearFilter
-    this.blitTex.wrapS = THREE.ClampToEdgeWrapping
-    this.blitTex.wrapT = THREE.ClampToEdgeWrapping
+    configureBlitTexture(this.blitTex)
     this.blitMat = new THREE.ShaderMaterial({
       vertexShader: POST_VERT,
       fragmentShader: BLIT_FRAG,
