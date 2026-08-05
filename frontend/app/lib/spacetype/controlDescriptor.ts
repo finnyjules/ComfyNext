@@ -6,7 +6,7 @@ import { cleanStops, serializeStops } from '~/lib/shaderfx/params'
 export interface DescribedControl {
   path: string
   label: string
-  kind: 'slider' | 'select' | 'color' | 'font' | 'gradientStops'
+  kind: 'slider' | 'select' | 'color' | 'font' | 'gradientStops' | 'switch'
   min?: number
   max?: number
   step?: number
@@ -17,7 +17,7 @@ export interface DescribedControl {
   current: ParamValue
 }
 
-const AI_EDITABLE_KINDS = new Set(['slider', 'select', 'color', 'font', 'gradientStops'])
+const AI_EDITABLE_KINDS = new Set(['slider', 'select', 'color', 'font', 'gradientStops', 'switch'])
 
 function isEditable(c: ControlSpec): boolean {
   if (typeof c.aiEditable === 'boolean') return c.aiEditable
@@ -78,6 +78,15 @@ export function validatePatch(
     }
     else if (d.kind === 'select') {
       if (typeof raw === 'string' && d.options!.includes(raw)) out[key] = raw
+    }
+    else if (d.kind === 'switch') {
+      // Coerce, don't pass through: the model emits true/'true'/'on'/1 freely, and
+      // a string reaching a boolean config field is the corruption this kind exists
+      // to prevent. Anything not recognisable as a boolean is dropped, not guessed.
+      const truthy = new Set([true, 'true', 'on', 'yes', 1, '1'])
+      const falsy = new Set([false, 'false', 'off', 'no', 0, '0'])
+      if (truthy.has(raw as never)) out[key] = true
+      else if (falsy.has(raw as never)) out[key] = false
     }
     else if (d.kind === 'color') {
       if (typeof raw === 'string' && HEX_COLOR.test(raw)) out[key] = raw

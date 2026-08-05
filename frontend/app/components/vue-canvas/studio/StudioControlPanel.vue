@@ -22,6 +22,7 @@ import StudioSlider from '~/components/vue-canvas/studio/StudioSlider.vue'
 import StudioSelect from '~/components/vue-canvas/studio/StudioSelect.vue'
 import StudioSegmented from '~/components/vue-canvas/studio/StudioSegmented.vue'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
+import StudioSwitch from '~/components/vue-canvas/studio/StudioSwitch.vue'
 import VariableGlyph from '~/components/vue-canvas/studio/VariableGlyph.vue'
 
 const props = withDefaults(defineProps<{
@@ -29,7 +30,7 @@ const props = withDefaults(defineProps<{
   order: readonly string[]
   /** Current value for a control key. A reader function, not a params object —
    *  Texture's params is a flat record while Gradient/Shape use a dotted proxy. */
-  value: (key: string) => string | number
+  value: (key: string) => string | number | boolean
   visible?: (c: ControlSpec) => boolean
   /** Bound collection column label for a key, or null if unbound. */
   boundFor?: (key: string) => string | null
@@ -42,7 +43,7 @@ const props = withDefaults(defineProps<{
 }>(), { segmentedMax: 3 })
 
 const emit = defineEmits<{
-  (e: 'set', key: string, value: string | number): void
+  (e: 'set', key: string, value: string | number | boolean): void
   (e: 'promote', control: ControlSpec): void
   (e: 'menu', event: MouseEvent, control: ControlSpec): void
 }>()
@@ -81,6 +82,15 @@ function isSegmented(c: ControlSpec): boolean {
             @promote="emit('promote', c)"
             @menu="(e: MouseEvent) => emit('menu', e, c)"
           />
+        </template>
+        <template v-else-if="c.kind === 'switch'">
+          <div class="flex items-center justify-between py-[6px]">
+            <span class="text-[11px] text-white/55">{{ c.label }}</span>
+            <StudioSwitch
+              :model-value="value(c.key) === true"
+              @update:model-value="(v: boolean) => emit('set', c.key, v)"
+            />
+          </div>
         </template>
         <template v-else-if="c.kind === 'select'">
           <label class="mb-1 flex items-center gap-1.5 text-[11px] text-white/55 group">

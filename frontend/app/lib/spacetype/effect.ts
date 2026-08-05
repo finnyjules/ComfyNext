@@ -38,6 +38,11 @@ type ControlMeta = {
 
 export type ControlSpec = (
   | { key: string; label: string; kind: 'slider'; min: number; max: number; step: number; default: number; group: string }
+  // A boolean toggle. Added because post-effect enables are booleans and modelling
+  // them as a two-option select writes the STRING 'on' into a BOOLEAN field —
+  // makeConfigParams' proxy writes through with no coercion, corrupting the doc.
+  // See lib/scene3d/controls.ts's "Boolean gap" note, which this closes.
+  | { key: string; label: string; kind: 'switch'; default: boolean; group: string }
   | { key: string; label: string; kind: 'text'; default: string; group: string }
   // Multiple texts that the effect ALTERNATES per word-repeat/instance. Stored as one
   // newline-separated string in params (so ParamValue stays scalar); the surface renders
