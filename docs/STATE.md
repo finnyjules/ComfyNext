@@ -46,23 +46,29 @@ The schema is a **superset with per-consumer opt-in** (`agent: false` withholds 
 
 Still to do in Act 1: the generic inspector renderer (Gradient still has 432 lines of hand-written markup), new `ControlSpec` kinds (`segmented`, `repeater`, `custom`), and exposing the 11 now-declared Shape controls to the agent. Known misfits remain: Texture's colour-role system (`texturefx/roles.ts`), Space Type's scene-sequencing motion model.
 
-## Scene3D — mesh primitive foundation (sculpt & merge, phase 1 of 4) — LANDED 2026-08-04
+## Scene3D — clay sculpting and shape merging — LANDED 2026-08-04
 
-Commits `e6b5392d0`..`408bb4025` (9). Spec: [2026-08-04-scene3d-sculpt-and-merge-design.md](superpowers/specs/2026-08-04-scene3d-sculpt-and-merge-design.md) · Plan: [2026-08-04-scene3d-sculpt-and-merge.md](superpowers/plans/2026-08-04-scene3d-sculpt-and-merge.md).
+~30 commits on main (`e6b5392d0`..`26fbec850`, interleaved with unrelated work). Spec: [2026-08-04-scene3d-sculpt-and-merge-design.md](superpowers/specs/2026-08-04-scene3d-sculpt-and-merge-design.md) · Plan: [2026-08-04-scene3d-sculpt-and-merge.md](superpowers/plans/2026-08-04-scene3d-sculpt-and-merge.md).
 
-**No user-visible sculpting yet.** This phase builds the foundation clay-style sculpting and merging need, plus one new action. Phases 2–4 (a voxel module and Remesh, then sculpt mode with brushes, then merge) are in progress.
+**Sculpting itself now works: drag on a mesh and it deforms under the cursor.** All four phases are complete — the mesh substrate, a voxel module powering Remesh, sculpt-mode brushes, and merge.
 
-A new `mesh` **PrimitiveKind** whose geometry comes from stored vertices instead of a factory. Because `buildGeometry` is `geometryFor(...)` → `applyModifiers(...)`, a mesh primitive inherits all six modifiers, every material type (including shaderFill and surface relief), the facet shading variant, motion tracks, grouping, outlines, the three render passes, rebake and export — with no per-feature work.
+**The architecture, in one line:** a new `mesh` **PrimitiveKind** whose geometry comes from stored vertices instead of a factory. Because `buildGeometry` is `geometryFor(...)` → `applyModifiers(...)`, a mesh primitive inherits all six modifiers, every material type (including shaderFill and surface relief), the facet shading variant, motion tracks, grouping, outlines, the three render passes, rebake and export — with no per-feature work.
 
-A vertex-buffer **codec** (`lib/scene3d/mesh.ts`) small enough to live inline in the scene document: quantise to uint16 → per-component delta vs the previous vertex → zigzag → varint → deflate → base64. The delta stage is load-bearing, not an optimisation: measured on a 52k-vertex sphere, naive quantise-and-deflate is 917KB of base64 versus 186KB with delta — roughly 5x across every density measured.
+**Storage.** A vertex-buffer **codec** (`lib/scene3d/mesh.ts`) small enough to live inline in the scene document: quantise to uint16 → per-component delta vs the previous vertex → zigzag → varint → deflate → base64. The delta stage is load-bearing, not an optimisation: measured on a 52k-vertex sphere, naive quantise-and-deflate is 917KB of base64 versus 186KB with delta — roughly 5x across every density measured. Measured cost is ~136KB per sculpt at the 20k-vertex default. Flat geometry is nearly free — a remeshed box is 6KB — so hard-surface work carries almost no storage cost while curved organic shapes carry all of it. An **async decode cache** — `DecompressionStream` has no synchronous form but `geometryFor` is synchronous, so decode happens off the render path with a placeholder shown on a miss, mirroring how the `text` primitive already handles its async font load.
 
-An **async decode cache** — `DecompressionStream` has no synchronous form but `geometryFor` is synchronous, so decode happens off the render path with a placeholder shown on a miss, mirroring how the `text` primitive already handles its async font load.
+**The voxel module.** mesh → triangle grid → signed distance field → surface nets → mesh, signed by **exterior flood fill** rather than winding numbers. One module powers three features: Remesh, Merge, and the sculpt brush's ray picking.
 
-A **"To mesh"** action freezes a primitive's current geometry (modifiers baked in) into a mesh object — the one new user-facing surface this phase ships.
+**Open surfaces are refused, not mangled.** A plane, a ring or an open-ended cylinder has no inside; Remesh detects that and offers a Solidify (thickness) step instead of producing garbage.
 
-A **cloner budget clamp**: the vertex budget previously throttled subdivision only, never the cloner. A 40k-vertex mesh at grid mode's 5×5×5 = 125 copies reaches 5 million vertices and hangs the tab. The clamp is now surfaced in the panel, never silent.
+**Sculpt mode.** Seven brushes — draw, smooth, inflate, flatten, grab, pinch, crease — with mirror and radial symmetry and per-stroke undo. Strokes mutate a live working buffer and only write the document on Apply/Exit.
 
-**Status:** Phase 1 complete and user-confirmed working in the app.
+**Merge.** Union / subtract / intersect through the distance field, with a Blend slider that gives a fillet at the join. The result is already a clean uniform mesh, so it can be sculpted immediately with no remesh step.
+
+A **"To mesh"** action freezes a primitive's current geometry (modifiers baked in) into a mesh object. A **cloner budget clamp**: the vertex budget previously throttled subdivision only, never the cloner. A 40k-vertex mesh at grid mode's 5×5×5 = 125 copies reaches 5 million vertices and hangs the tab. The clamp is now surfaced in the panel, never silent.
+
+**Rough edges, honestly:** a Remesh at the default resolution takes about 2 seconds of synchronous main-thread work (behind a spinner); at the 128 maximum it is ~10 seconds — a Web Worker is the obvious next lever. Merging softens sharp edges at grid resolution — merging a box into a box will not give a crisp corner, a deliberate trade for a sculptable result. Masking, dynamic topology, and exact mesh CSG were all explicitly out of scope.
+
+**Status:** all four phases complete, user-confirmed working in the app.
 
 ## Multi-LoRA generation — 2 slots → 4 — LANDED 2026-08-02
 
