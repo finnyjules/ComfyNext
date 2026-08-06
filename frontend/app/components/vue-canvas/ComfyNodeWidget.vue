@@ -2,6 +2,9 @@
 // `~/lib` is not on Nuxt's auto-import path (only composables/ and utils/ are), so the
 // shared end-label map and range test come in explicitly.
 import { endLabelsFor, isSliderRange } from '~/lib/canvas/widgetEndLabels'
+// The same predicate ComfyNode sorts by, so a widget cannot render as a textarea here
+// while sorting as an ordinary control there.
+import { isMultilineTextWidget } from '~/lib/canvas/widgetOrder'
 // The three row components are imported by PATH rather than left to Nuxt's auto-import.
 // Auto-import COLLAPSES a duplicated path segment — `studio/StudioSelect.vue` resolves as
 // `VueCanvasStudioSelect`, not `StudioSelect` the way `widgets/WidgetText`
@@ -105,11 +108,7 @@ const slotRowSpec = computed(() => ({
 const isText = computed(() => props.widgetDef.type === 'STRING')
 // A multiline STRING widget — the prompt. Rendered as the node's primary control:
 // a larger, lighter, elevated textarea (see WidgetText).
-const isMultilineText = computed(() =>
-  isText.value
-  && (props.widgetDef.multiline
-    ?? (props.widgetDef.name.toLowerCase().includes('text') || props.widgetDef.name.toLowerCase().includes('prompt'))),
-)
+const isMultilineText = computed(() => isMultilineTextWidget(props.widgetDef))
 
 // Per-node gradient slider configs. Keys: nodeType → widget name → gradient CSS.
 const GRADIENT_WIDGETS: Record<string, Record<string, string>> = {

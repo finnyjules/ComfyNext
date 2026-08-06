@@ -4,6 +4,7 @@ import { getTypeColor, getInputTooltip } from '~/composables/useVueNodes'
 import { useAgentActivity } from '~/composables/useAgentActivity'
 import { useDirectExecutionEnabled } from '~/composables/useDirectExecutionEnabled'
 import { getPartnerIcon } from '~/lib/partnerIcons'
+import { promptFirst } from '~/lib/canvas/widgetOrder'
 import { nodeTier } from '~/lib/canvas/nodeTier'
 import { minHeightForPorts } from '~/lib/canvas/portLayout'
 import { useNodePortSync } from '~/composables/useNodePortSync'
@@ -903,6 +904,15 @@ const advancedWidgets = computed(() =>
     && isWidgetVisible(w) && !groupedWidgetNames.value.has(w.name)
     && !isInspectorWidgetDef(w)))
 
+/**
+ * The body's widget order: prompts first, everything else as declared. Some generators
+ * put a model picker or a size combo above the prompt, which buries the one control the
+ * node exists for. `promptFirst` carries each widget's ORIGINAL index because
+ * `widgetsValues` is positional — sorting the definitions alone would read every value
+ * from the wrong slot, and that fails silently rather than visibly.
+ */
+const orderedWidgets = computed(() => promptFirst(props.data.widgetDefs as any[]))
+
 // Fold each LoRA strength slider INTO its picker card. A `lora_picker` widget
 // pairs with a scale widget by name: lora_a→scale_a, lora_b→scale_b,
 // lora_name→lora_scale. We render the slider inside the card (see WidgetLoraPicker)
@@ -1725,8 +1735,6 @@ watch(previewImages, (urls) => {
     </div>
 
     <!-- Widgets (Compositor / SmartLayout edit via their dedicated modal/body, so we hide the inline controls) -->
-    <!-- No horizontal padding here on purpose: every ComfyNodeWidget insets ITSELF by
-         10px, so adding it to the block doubles it (measured: a 21px field inset). -->
     <!-- No horizontal padding on this block: every ComfyNodeWidget insets ITSELF by 10px,
          so padding here doubles it — measured as a 21px field inset before this. -->
     <div v-if="data.widgetDefs?.some(w => !w.hidden) && data.nodeType !== 'Compositor' && data.nodeType !== 'Timeline' && data.nodeType !== 'SmartLayout'" class="py-4 flex flex-col gap-2">
@@ -1736,7 +1744,7 @@ watch(previewImages, (urls) => {
            control_after_generate slot); everything else stores it in
            node.properties.seedLocks so non-standard generators (Replicate,
            custom nodes) get the same toggle. -->
-      <template v-for="(widget, i) in data.widgetDefs" :key="widget.name">
+      <template v-for="{ widget, i } in orderedWidgets" :key="widget.name">
         <VueCanvasComfyNodeWidget
           v-if="!widget.hidden && !widget.advanced && widget.sailor_widget !== 'internal' && isWidgetVisible(widget) && !groupedWidgetNames.has(widget.name) && !foldedScaleNames.has(widget.name) && !isInspectorWidgetDef(widget)"
           :widget-def="effectiveWidgetDef(widget)"
