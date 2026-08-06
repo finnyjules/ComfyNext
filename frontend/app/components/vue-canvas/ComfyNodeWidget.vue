@@ -67,17 +67,27 @@ const isNumber = computed(() => ['INT', 'FLOAT'].includes(props.widgetDef.type))
 const isToggle = computed(() => props.widgetDef.type === 'BOOLEAN')
 const isSeed = computed(() => props.widgetDef.name.toLowerCase().includes('seed'))
 /**
- * Which generic widgets render as a 28px StudioRow rather than the older
- * label-above-control pair. Combos and toggles always qualify; a number only does
- * when its range is finite enough to fill a track — `isSliderRange` is the same test
- * WidgetNumber uses to decide between its rail and a plain number field, so an
- * unbounded number keeps that field here too instead of a row it cannot fill.
- *
- * Seeds are excluded: WidgetSeed pairs the value with its own lock/randomise control,
- * which has nowhere to live in a row's value slot.
+ * Every generic widget is a 28px StudioRow except the multiline prompt, which has no
+ * one-row form and whose size is the point. Seeds and unbounded numbers qualify too —
+ * they supply their own value through the row's `#value` slot rather than the kind
+ * registry (see `slotRowSpec`), which is what let them stop being the odd two-line
+ * controls in a column of rows.
  */
 const asRow = computed(() => !isMultilineText.value)
-const rowEndLabels = computed(() => (isNumber.value ? endLabelsFor(props.widgetDef.name) : null))
+/**
+ * The semantic ends (subtle/strong, creative/literal) used to sit as a second line under
+ * the row. That gave six widget names a 38px row while every neighbour was 28px, and a
+ * panel of mixed heights reads as ragged — the imbalance cost more than the labels earned.
+ * They now ride in the row's hint instead, so the meaning survives on hover of the label
+ * and every row is the same height.
+ */
+const rowHint = computed(() => {
+  const ends = isNumber.value ? endLabelsFor(props.widgetDef.name) : null
+  const tip = props.widgetDef.tooltip?.trim()
+  if (!ends) return tip || undefined
+  const scale = `Low = ${ends[0]}, high = ${ends[1]}.`
+  return tip ? `${tip} ${scale}` : scale
+})
 /** A number whose range is finite enough to fill a track. Everything else numeric —
  *  seeds at 0..2^32, unbounded ints — gets a plain field inside the row instead. */
 const rowIsSlider = computed(() =>
@@ -591,14 +601,14 @@ function formatLabel(name: string): string {
           v-if="isCombo"
           :options="widgetDef.options || []"
           :label="formatLabel(widgetDef.name)"
-          :hint="widgetDef.tooltip || undefined"
+          :hint="rowHint"
           :model-value="modelValue"
           @update:model-value="emit('update:modelValue', $event)"
         />
         <StudioSwitch
           v-else-if="isToggle"
           :label="formatLabel(widgetDef.name)"
-          :hint="widgetDef.tooltip || undefined"
+          :hint="rowHint"
           :model-value="!!modelValue"
           @update:model-value="emit('update:modelValue', $event)"
         />
@@ -609,7 +619,7 @@ function formatLabel(name: string): string {
         <StudioSlider
           v-else-if="rowIsSlider"
           :label="formatLabel(widgetDef.name)"
-          :hint="widgetDef.tooltip || undefined"
+          :hint="rowHint"
           :min="widgetDef.min!"
           :max="widgetDef.max!"
           :step="widgetDef.step ?? (widgetDef.type === 'FLOAT' ? 0.01 : 1)"
@@ -681,38 +691,21 @@ function formatLabel(name: string): string {
           :bindable="false"
           @update:model-value="emit('update:modelValue', $event)"
         />
-        <!-- The semantic ends (subtle/strong, creative/literal) survive the move: the row
-             has no room for them, so they sit under it exactly as they did under the rail. -->
-        <div v-if="rowEndLabels" class="mt-0.5 flex justify-between px-0.5 text-[8px] leading-none text-white/30">
-          <span>{{ rowEndLabels[0] }}</span>
-          <span>{{ rowEndLabels[1] }}</span>
-        </div>
       </div>
     </template>
+    <!-- The multiline prompt, and only the prompt: `asRow` is `!isMultilineText`, so every
+         other generic widget takes the row branch above. No label line — the label is the
+         textarea's placeholder now, which reads as the empty state and gets out of the way
+         once there is text. The tooltip moves onto the field itself; a floating `?` inside
+         a resizable box either overlaps the first line or hides under the resize handle. -->
     <template v-else>
-      <label
-        class="text-[9px] text-muted-foreground tracking-normal mb-0.5 flex items-center gap-1"
-        :title="widgetDef.tooltip || undefined"
-      >
-        <span>{{ formatLabel(widgetDef.name) }}</span>
-        <span
-          v-if="widgetDef.tooltip"
-          class="inline-flex items-center justify-center size-3 rounded-full border border-white/15 text-white/30 text-[8px] leading-none cursor-help"
-          aria-label="Info"
-        >?</span>
-      </label>
-      <VueCanvasWidgetsWidgetCombo v-if="isCombo" :options="widgetDef.options || []" :model-value="modelValue" @update:model-value="emit('update:modelValue', $event)" />
-      <VueCanvasWidgetsWidgetSeed
-        v-else-if="isSeed && isNumber"
+      <VueCanvasWidgetsWidgetText
         :model-value="modelValue"
-        :max="widgetDef.max"
-        :is-fixed="isFixed"
+        :multiline="true"
+        :placeholder="formatLabel(widgetDef.name)"
+        :title="widgetDef.tooltip || undefined"
         @update:model-value="emit('update:modelValue', $event)"
-        @update:is-fixed="emit('update:isFixed', $event)"
       />
-      <VueCanvasWidgetsWidgetNumber v-else-if="isNumber" :model-value="modelValue" :min="widgetDef.min" :max="widgetDef.max" :step="widgetDef.step" :is-float="widgetDef.type === 'FLOAT'" :name="widgetDef.name" @update:model-value="emit('update:modelValue', $event)" />
-      <VueCanvasWidgetsWidgetToggle v-else-if="isToggle" :model-value="modelValue" @update:model-value="emit('update:modelValue', $event)" />
-      <VueCanvasWidgetsWidgetText v-else-if="isText" :model-value="modelValue" :multiline="isMultilineText" @update:model-value="emit('update:modelValue', $event)" />
     </template>
   </div>
 </template>
