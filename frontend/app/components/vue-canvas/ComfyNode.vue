@@ -2113,10 +2113,15 @@ watch(previewImages, (urls) => {
          THIS node with upstream cached (Play → Re-render after first run); the
          caret opens the two scope variants. See playThisNode / runFromStart /
          runDownstream. -->
+    <!-- The run bar's corners are 3px, not the 4px they started at, so they are CONCENTRIC
+         with the card: inner radius = outer radius - padding = 13 - 10. At 4px the arcs sat
+         1.4px apart and diagonal clearance at a corner fell to ~7.6px against 10px on the
+         flats. The bottom is the only edge with a card corner at each end, so that pinch
+         read as "the bottom margin is smaller" when all three margins measure 10px. -->
     <div v-if="showRunButton" ref="runMenuRoot" class="relative px-2.5 pb-2.5 pt-1">
       <div class="flex items-stretch gap-px">
         <button
-          class="nopan nodrag flex-1 h-8 rounded-l flex items-center justify-center gap-1.5 text-[11px] font-medium transition-[transform,background-color,color] active:scale-[0.96] cursor-pointer"
+          class="nopan nodrag flex-1 h-8 rounded-l-[3px] flex items-center justify-center gap-1.5 text-[11px] font-medium transition-[transform,background-color,color] active:scale-[0.96] cursor-pointer"
           :class="(isMuted || isBypassed)
             ? 'bg-white/[0.04] text-white/25 cursor-not-allowed active:scale-100'
             : data.running
@@ -2137,7 +2142,7 @@ watch(previewImages, (urls) => {
         </button>
         <button
           aria-label="Run scope options"
-          class="nopan nodrag w-8 h-8 rounded-r flex items-center justify-center transition-colors cursor-pointer"
+          class="nopan nodrag w-8 h-8 rounded-r-[3px] flex items-center justify-center transition-colors cursor-pointer"
           :class="(isMuted || isBypassed || data.running)
             ? 'bg-white/[0.04] text-white/25 cursor-not-allowed'
             : 'bg-white/90 text-neutral-900 hover:bg-white'"

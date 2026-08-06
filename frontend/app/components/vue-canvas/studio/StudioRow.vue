@@ -261,13 +261,13 @@ function onValuePointerDown(e: PointerEvent) {
          transparent on a node, then removed once the real cause was found — recessive
          nodes were rendering at `opacity-70`, which is now gone (see ComfyNode.vue). Fixing
          the cause beat compensating for it in every studio. -->
-    <!-- 4px, matching a node's run bar (`rounded-l`), not the 8px `rounded-md` this
-         started at. Chosen 2026-08-06 so the row and the button a node ends with agree.
-         It makes the row the sharpest-cornered element in a node built on a 13px card and
-         10px images, and it applies to the studios too since this is one component — both
-         were weighed and the match won. -->
+    <!-- 3px, matching a node's run bar. The rule is that the row and the button a node ends
+         with agree; the value moved 8 -> 4 -> 3 as the button did, when the bar went
+         concentric with the 13px card (13 - 10 padding = 3). It makes the row the
+         sharpest-cornered element in a node, and it lands in the studios too since this is
+         one component — both were weighed and the match won. -->
     <div
-      class="group relative flex h-7 select-none items-center justify-between overflow-hidden rounded bg-white/[0.05] px-2.5"
+      class="group relative flex h-7 select-none items-center justify-between overflow-hidden rounded-[3px] bg-white/[0.05] px-2.5"
       :class="numeric && !bound && !editing ? 'cursor-ew-resize' : ''"
       @pointerdown="onPointerDown"
       @dblclick="onReset"
