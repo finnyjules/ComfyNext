@@ -2118,10 +2118,10 @@ watch(previewImages, (urls) => {
          1.4px apart and diagonal clearance at a corner fell to ~7.6px against 10px on the
          flats. The bottom is the only edge with a card corner at each end, so that pinch
          read as "the bottom margin is smaller" when all three margins measure 10px. -->
-    <div v-if="showRunButton" ref="runMenuRoot" class="relative px-2.5 pb-2.5 pt-1">
+    <div v-if="showRunButton" ref="runMenuRoot" class="relative px-2 pb-2 pt-3">
       <div class="flex items-stretch gap-px">
         <button
-          class="nopan nodrag flex-1 h-8 rounded-l-[3px] flex items-center justify-center gap-1.5 text-[11px] font-medium transition-[transform,background-color,color] active:scale-[0.96] cursor-pointer"
+          class="nopan nodrag flex-1 h-8 rounded-l-[8px] flex items-center justify-center gap-1.5 text-[11px] font-medium transition-[transform,background-color,color] active:scale-[0.96] cursor-pointer"
           :class="(isMuted || isBypassed)
             ? 'bg-white/[0.04] text-white/25 cursor-not-allowed active:scale-100'
             : data.running
@@ -2142,7 +2142,7 @@ watch(previewImages, (urls) => {
         </button>
         <button
           aria-label="Run scope options"
-          class="nopan nodrag w-8 h-8 rounded-r-[3px] flex items-center justify-center transition-colors cursor-pointer"
+          class="nopan nodrag w-8 h-8 rounded-r-[8px] flex items-center justify-center transition-colors cursor-pointer"
           :class="(isMuted || isBypassed || data.running)
             ? 'bg-white/[0.04] text-white/25 cursor-not-allowed'
             : 'bg-white/90 text-neutral-900 hover:bg-white'"
@@ -2195,15 +2195,18 @@ watch(previewImages, (urls) => {
 
 <style scoped>
 .comfy-node {
-  /* 13px, not Tailwind's rounded-xl (12px). Two reasons: it matches the
-     capsule, so the corner does not change shape halfway through the expand;
-     and it is concentric with the 7px header tile at 6px padding. */
-  border-radius: 13px;
+  /* 16px. Two reasons, both structural rather than taste: it matches the capsule,
+     so the corner does not change shape halfway through the expand; and it is
+     concentric with the 8px header tile at 8px padding. Rebased from 13 (7 + 6) on
+     2026-08-06 — see NodeCapsule.vue, which must stay equal. 16 - 8 inset = 8 is
+     also the radius every element INSIDE the card uses, so one number derives the
+     whole card. */
+  border-radius: 16px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), 0 1px 4px rgba(0, 0, 0, 0.2);
 }
 .node-head {
-  border-top-left-radius: 13px;
-  border-top-right-radius: 13px;
+  border-top-left-radius: 16px;
+  border-top-right-radius: 16px;
 }
 
 /* The header's icon and title sit at exactly the capsule's offsets — 7px in,
@@ -2212,7 +2215,7 @@ watch(previewImages, (urls) => {
    than in utilities so the two components can be read against each other. */
 .node-head {
   gap: 9px;
-  padding: 6px 12px 6px 7px;
+  padding: 8px 12px 8px 8px;
 }
 .node-head__tile {
   flex: none;
@@ -2221,7 +2224,7 @@ watch(previewImages, (urls) => {
   justify-content: center;
   width: 26px;
   height: 26px;
-  border-radius: 7px;
+  border-radius: 8px;
   background: rgba(255, 255, 255, 0.07);
   color: rgba(255, 255, 255, 0.72);
 }

@@ -100,10 +100,14 @@ function onKeydown(e: KeyboardEvent) {
   align-items: flex-start;
   width: var(--capsule-w, 260px);
   gap: 9px;
-  padding: 6px 7px;
+  padding: 8px;
   border: 1px solid rgba(255, 255, 255, 0.13);
-  /* Concentric with the 7px tile/action inside it: 7 + 6px padding = 13. */
-  border-radius: 13px;
+  /* Concentric with the 8px tile/action inside it: 8 + 8px padding = 16.
+     Rebased from 13 (7 + 6) on 2026-08-06 — the old base was principled but odd,
+     and 16/8/8 puts every derived value on an even number and on the app's own
+     radius tokens. The card in ComfyNode.vue must stay equal to this or the
+     corner changes shape halfway through the expand. */
+  border-radius: 16px;
   text-align: left;
   background: #1f1f1f;
   box-shadow: 0 3px 12px rgba(0, 0, 0, 0.4);
@@ -134,7 +138,7 @@ function onKeydown(e: KeyboardEvent) {
   justify-content: center;
   width: 26px;
   height: 26px;
-  border-radius: 7px;
+  border-radius: 8px;
   /* Neutral by design — tinting this by output type would rebuild the
      schematic type legend the capsule exists to retire. */
   background: rgba(255, 255, 255, 0.07);
@@ -203,7 +207,7 @@ function onKeydown(e: KeyboardEvent) {
   place-items: center;
   width: 26px;
   height: 26px;
-  border-radius: 7px;
+  border-radius: 8px;
   transition-property: background-color, color, opacity, scale;
   transition-duration: 0.18s;
   transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
@@ -292,8 +296,8 @@ function onKeydown(e: KeyboardEvent) {
   position: absolute;
   inset: -2px;
   /* Not `inherit`: the ring is inset -2px, so staying concentric with the
-     13px shell needs 13 + 2. `inherit` leaves the corners visibly tight. */
-  border-radius: 15px;
+     16px shell needs 16 + 2. `inherit` leaves the corners visibly tight. */
+  border-radius: 18px;
   padding: 2px;
   background: linear-gradient(to right, var(--border-left), var(--border-right));
   -webkit-mask:
