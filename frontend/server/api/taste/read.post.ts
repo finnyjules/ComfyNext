@@ -39,12 +39,16 @@ Rules:
 - Judge only visual treatment — never identify real people, brands, or artists.
 
 - "summary" is you SHOWING you understood the set: 2–3 sentences naming the world these images live in — light, place-feel, mood, material, era — in plain confident art-director language. Not a list of facets.
-- "brief" is a style direction you would hand a colleague to REPRODUCE this vibe in an abstract gradient composition: one dense line covering palette (name actual colors), composition character (soft/hard, sparse/busy, direction), light, and finish. It must stand alone without the images.
+- "briefs" are THREE style directions for reproducing this vibe as an ABSTRACT GRADIENT composition, each translating a DIFFERENT aspect of the set:
+  1. label "atmosphere" — translate the LIGHT AND AIR: how the sky/ambient light in these images behaves as a colour field. This is the default reading of a photographed world — the objects in the photos contribute PALETTE ONLY, never composition. A set of buildings under soft sky should brief as a soft sky-like wash, not as bands shaped like the buildings.
+  2. label "structure" — translate the set's geometry/graphic character (only meaningful where the set itself is graphic/poster-like; still honest to attempt).
+  3. label "essence" — your best single call on the set's most distinctive quality, whatever aspect that is.
+  Each is ONE dense standalone line and MUST name exactly one composition archetype from this menu (the studio's real vocabulary): "soft liquid marble wash" · "aurora colour wash" · "radial sunset glow" · "soft mesh blobs" · "crisp linear bands" · "embossed oil". Then actual colours, light, and finish.
 
 Return STRICT JSON only — no prose, no markdown fences, exactly this shape:
 {
   "summary": "...",
-  "brief": "...",
+  "briefs": [ { "label": "atmosphere", "text": "..." }, { "label": "structure", "text": "..." }, { "label": "essence", "text": "..." } ],
   "facets": { "<facetId>": { "value": 0..1, "confidence": 0..1, "evidence": [imageIndices] }, ... all 12 ids ... },
   "avoids": ["..."],
   "clusters": null | [ { "label": "...", "imageIndices": [..], "facets": { same shape }, "avoids": ["..."] }, ... ]
@@ -157,9 +161,18 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 502, statusMessage: `Model returned unparseable JSON: ${text.slice(0, 200)}` })
   }
 
+  const briefs = (Array.isArray(obj.briefs) ? obj.briefs : [])
+    .filter((b): b is Record<string, unknown> => !!b && typeof b === 'object')
+    .map(b => ({
+      label: typeof b.label === 'string' ? b.label.trim() : '',
+      text: typeof b.text === 'string' ? b.text.trim() : '',
+    }))
+    .filter(b => b.text)
+    .slice(0, 3)
+
   return {
     reading: parseReading(obj),
     summary: typeof obj.summary === 'string' ? obj.summary.trim() : '',
-    brief: typeof obj.brief === 'string' ? obj.brief.trim() : '',
+    briefs,
   }
 })
