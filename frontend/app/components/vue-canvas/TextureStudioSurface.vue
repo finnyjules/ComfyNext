@@ -764,20 +764,31 @@ onBeforeUnmount(() => {
 
           <!-- Image: source import, seam, scale, frame -->
           <template v-else-if="rawFill(rk)?.type === 'image'">
-            <div class="mt-1 flex flex-col gap-1">
-              <!-- Source row -->
-              <label class="text-[11px] text-white/55">Source</label>
-              <div class="flex items-center gap-2">
-                <StudioButton @click="openFillImport(rk, i)">Import image…</StudioButton>
-                <span class="truncate text-[11px] text-white/40">{{ (roleFill(rk, i) as any).src ? (roleFill(rk, i) as any).src.split('/').pop() : 'none' }}</span>
-                <input
-                  type="file"
-                  accept="image/*"
-                  class="hidden"
-                  :ref="(el) => setFillInputRef(`${rk}_${i}`, el)"
-                  @change="(e) => { const f = (e.target as HTMLInputElement).files?.[0]; if (f) onFillImport(rk, i, f) }"
-                >
-              </div>
+            <!-- gap-1.5, no mt-1: same 6px rhythm as the Type row above (see the gradient
+                 and solid branches). -->
+            <div class="flex flex-col gap-1.5">
+              <!-- Source: one launcher ROW, not a bordered button beside a "none" caption.
+                   Label left, the chosen file (or "Import…") right; clicking the row opens
+                   the file dialog. Reads like the style picker and every other row. -->
+              <button
+                type="button"
+                class="flex h-7 w-full items-center justify-between gap-2 rounded-[6px] bg-white/[0.05] px-2.5 text-left transition-colors hover:bg-white/[0.08]"
+                :title="(roleFill(rk, i) as any).src ? 'Click to replace the image' : 'Import an image to use as this fill'"
+                @click="openFillImport(rk, i)"
+              >
+                <span class="text-[11px] text-white/72">Source</span>
+                <span
+                  class="truncate text-[11px]"
+                  :class="(roleFill(rk, i) as any).src ? 'text-white/90' : 'text-white/45'"
+                >{{ (roleFill(rk, i) as any).src ? (roleFill(rk, i) as any).src.split('/').pop() : 'Import…' }}</span>
+              </button>
+              <input
+                type="file"
+                accept="image/*"
+                class="hidden"
+                :ref="(el) => setFillInputRef(`${rk}_${i}`, el)"
+                @change="(e) => { const f = (e.target as HTMLInputElement).files?.[0]; if (f) onFillImport(rk, i, f) }"
+              >
 
                             <StudioSelect
                 label="Seam"
