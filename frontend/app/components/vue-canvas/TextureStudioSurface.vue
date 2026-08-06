@@ -17,6 +17,7 @@ import StudioSection from '~/components/vue-canvas/StudioSection.vue'
 import StudioControlPanel from '~/components/vue-canvas/studio/StudioControlPanel.vue'
 import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
+import StudioColorField from '~/components/vue-canvas/studio/StudioColorField.vue'
 import StudioSlider from '~/components/vue-canvas/studio/StudioSlider.vue'
 import StudioSelect from '~/components/vue-canvas/studio/StudioSelect.vue'
 import { useTextureAgent } from '~/composables/useTextureAgent'
@@ -644,8 +645,8 @@ onBeforeUnmount(() => {
 
           <div v-show="isExpanded(rk)">
           <!-- Fill-type picker: Solid / Gradient / Image / Pattern / Link -->
-          <label class="mb-1 block text-[11px] text-white/55">Type</label>
-          <StudioSelect
+                    <StudioSelect
+            label="Type"
             :options="['solid', 'gradient', 'image', 'pattern', 'link']"
             :model-value="rawFill(rk)?.type ?? 'solid'"
             @update:model-value="(t: string) => setFillType(rk, i, t as 'solid' | 'gradient' | 'image' | 'pattern' | 'link')"
@@ -654,8 +655,8 @@ onBeforeUnmount(() => {
           <!-- Solid: single color picker + opacity -->
           <template v-if="rawFill(rk)?.type === 'solid' || !rawFill(rk)">
             <div class="mt-1 flex items-center gap-2">
-              <label class="text-[11px] text-white/55">Color</label>
-              <StudioColor
+                            <StudioColorField
+                label="Color"
                 :model-value="(roleFill(rk, i) as any).color ?? '#7aa2f7'"
                 @update:model-value="(c: string) => setFill(rk, { ...(roleFill(rk, i) as any), type: 'solid', color: c })"
               />
@@ -674,8 +675,8 @@ onBeforeUnmount(() => {
           <!-- Gradient: kind, angle, two stops, frame -->
           <template v-else-if="rawFill(rk)?.type === 'gradient'">
             <div class="mt-1 flex flex-col gap-1">
-              <label class="text-[11px] text-white/55">Kind</label>
-              <StudioSelect
+                            <StudioSelect
+                label="Kind"
                 :options="['linear', 'radial']"
                 :model-value="(roleFill(rk, i) as any).kind ?? 'linear'"
                 @update:model-value="(k: string) => setGradient(rk, i, { kind: k as any })"
@@ -728,8 +729,8 @@ onBeforeUnmount(() => {
                 + Add stop
               </button>
 
-              <label class="text-[11px] text-white/55">Frame</label>
-              <StudioSelect
+                            <StudioSelect
+                label="Frame"
                 :options="['cell', 'tile']"
                 :model-value="(roleFill(rk, i) as any).frame ?? 'cell'"
                 @update:model-value="(fr: string) => setGradient(rk, i, { frame: fr as any })"
@@ -764,8 +765,8 @@ onBeforeUnmount(() => {
                 >
               </div>
 
-              <label class="text-[11px] text-white/55">Seam</label>
-              <StudioSelect
+                            <StudioSelect
+                label="Seam"
                 :options="['mirror', 'feather', 'direct']"
                 :model-value="(roleFill(rk, i) as any).seam ?? 'mirror'"
                 @update:model-value="(seam: string) => setFill(rk, { ...(roleFill(rk, i) as any), seam })"
@@ -781,8 +782,8 @@ onBeforeUnmount(() => {
                 @update:model-value="(scale: number) => setFill(rk, { ...(roleFill(rk, i) as any), scale })"
               />
 
-              <label class="text-[11px] text-white/55">Frame</label>
-              <StudioSelect
+                            <StudioSelect
+                label="Frame"
                 :options="['cell', 'tile']"
                 :model-value="(roleFill(rk, i) as any).frame ?? 'tile'"
                 @update:model-value="(frame: string) => setFill(rk, { ...(roleFill(rk, i) as any), frame })"
@@ -803,8 +804,8 @@ onBeforeUnmount(() => {
           <!-- Link: mirrors another role's fill (cycle-guarded in fillForRole) -->
           <template v-else-if="rawFill(rk)?.type === 'link'">
             <div class="mt-1 flex flex-col gap-1">
-              <label class="text-[11px] text-white/55">Link to role</label>
-              <StudioSelect
+                            <StudioSelect
+                label="Link to role"
                 :options="rolesFor(params).filter((r) => r !== rk)"
                 :model-value="rawFill(rk)?.to ?? rolesFor(params).find((r) => r !== rk) ?? rk"
                 @update:model-value="(to: string) => setFill(rk, { type: 'link', to } as any)"
@@ -815,8 +816,8 @@ onBeforeUnmount(() => {
           <!-- Pattern: nested motif sub-picker -->
           <template v-else-if="rawFill(rk)?.type === 'pattern'">
             <div class="mt-1 flex flex-col gap-1">
-              <label class="text-[11px] text-white/55">Motif</label>
-              <StudioSelect
+                            <StudioSelect
+                label="Motif"
                 :options="['checker', 'stripes', 'dots', 'grid']"
                 :model-value="(roleFill(rk, i) as any).sub?.motif ?? 'checker'"
                 @update:model-value="(motif: string) => setSub(rk, i, { mode: 'procedural', motif })"
@@ -833,31 +834,31 @@ onBeforeUnmount(() => {
               />
 
               <div class="flex items-center gap-2">
-                <label class="text-[11px] text-white/55">Color A</label>
-                <StudioColor
+                                <StudioColorField
+                  label="Color A"
                   :model-value="(roleFill(rk, i) as any).sub?.colorA ?? '#e8eef5'"
                   @update:model-value="(colorA: string) => setSub(rk, i, { colorA })"
                 />
               </div>
 
               <div class="flex items-center gap-2">
-                <label class="text-[11px] text-white/55">Color B</label>
-                <StudioColor
+                                <StudioColorField
+                  label="Color B"
                   :model-value="(roleFill(rk, i) as any).sub?.colorB ?? '#7aa2f7'"
                   @update:model-value="(colorB: string) => setSub(rk, i, { colorB })"
                 />
               </div>
 
               <div class="flex items-center gap-2">
-                <label class="text-[11px] text-white/55">Background</label>
-                <StudioColor
+                                <StudioColorField
+                  label="Background"
                   :model-value="(roleFill(rk, i) as any).sub?.background ?? '#0e1116'"
                   @update:model-value="(background: string) => setSub(rk, i, { background })"
                 />
               </div>
 
-              <label class="text-[11px] text-white/55">Frame</label>
-              <StudioSelect
+                            <StudioSelect
+                label="Frame"
                 :options="['cell', 'tile']"
                 :model-value="(roleFill(rk, i) as any).frame ?? 'tile'"
                 @update:model-value="(frame: string) => setFill(rk, { ...(roleFill(rk, i) as any), frame })"
