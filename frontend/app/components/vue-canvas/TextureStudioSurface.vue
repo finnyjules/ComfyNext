@@ -381,14 +381,6 @@ function roleSwatchImageSrc(rk: string, i: number): string {
 }
 
 // Reset fill: remove the explicit entry so the role falls back to legacy color.
-function resetFill(rk: string) {
-  const f = (params as any).fills
-  if (f && f[rk] !== undefined) {
-    delete f[rk]
-    onParam()
-  }
-}
-
 function setGradient(rk: string, i: number, patch: Partial<{ kind: 'linear' | 'radial'; angle: number; frame: 'cell' | 'tile'; stops: { c: string; p: number }[] }>) {
   const f = roleFill(rk, i) as any
   const cur = f?.type === 'gradient' ? f : {}
@@ -602,10 +594,15 @@ onBeforeUnmount(() => {
       <!-- Fills panel: per-role solid/gradient fill pickers (not driven by TEXTURE_CONTROLS). -->
       <!-- Hidden in raster mode (raster has no ink/ground roles). -->
       <StudioSection v-if="params.mode !== 'raster'" title="Fills">
-        <div v-for="(rk, i) in rolesFor(params)" :key="rk" class="mb-3">
-          <!-- Role header: swatch + label + caret + reset -->
+        <!-- One fill role (A / B / …). `gap-1.5` matches the 6px item rhythm the studio
+             rows use, so the header, Type, Color and Opacity are evenly spaced instead of
+             relying on the removed label wrappers' incidental margins. -->
+        <div v-for="(rk, i) in rolesFor(params)" :key="rk" class="mb-3 flex flex-col gap-1.5">
+          <!-- Role header: swatch + label + caret. No reset — a fill has two values (colour
+               and opacity) each with its own double-click-to-default on the row itself, so a
+               whole-role reset was a third way to do what the rows already do. -->
           <div
-            class="mb-1 flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 hover:bg-white/5"
+            class="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 hover:bg-white/5"
             role="button"
             :tabindex="0"
             @click="toggleRole(rk)"
@@ -628,24 +625,18 @@ onBeforeUnmount(() => {
               />
             </span>
             <span class="flex-1 text-[11px] uppercase tracking-wide text-white/55">{{ rk }}</span>
-            <!-- Reset button -->
-            <button
-              class="shrink-0 rounded px-1 py-0.5 text-[10px] text-white/35 hover:bg-white/10 hover:text-white/70"
-              title="Reset fill to default"
-              @click.stop="resetFill(rk)"
-            >
-              ↺
-            </button>
-            <!-- Caret -->
+            <!-- The app's one caret: `›` turned, matching StudioSection and every dropdown.
+                 This drew &#9660; (a filled ▼ triangle), the only place in the studios still
+                 using it. Down when open, right when closed. -->
             <span
-              class="shrink-0 text-[10px] text-white/35 transition-transform"
-              :style="{ transform: isExpanded(rk) ? 'rotate(0deg)' : 'rotate(-90deg)' }"
-            >&#9660;</span>
+              class="inline-block shrink-0 text-white/30 transition-transform"
+              :class="isExpanded(rk) ? 'rotate-90' : ''"
+            >›</span>
           </div>
 
-          <div v-show="isExpanded(rk)">
+          <div v-show="isExpanded(rk)" class="flex flex-col gap-1.5">
           <!-- Fill-type picker: Solid / Gradient / Image / Pattern / Link -->
-                    <StudioSelect
+          <StudioSelect
             label="Type"
             :options="['solid', 'gradient', 'image', 'pattern', 'link']"
             :model-value="rawFill(rk)?.type ?? 'solid'"
@@ -654,7 +645,7 @@ onBeforeUnmount(() => {
 
           <!-- Solid: single color picker + opacity -->
           <template v-if="rawFill(rk)?.type === 'solid' || !rawFill(rk)">
-                            <StudioColorField
+            <StudioColorField
                 label="Color"
                 :model-value="(roleFill(rk, i) as any).color ?? '#7aa2f7'"
                 @update:model-value="(c: string) => setFill(rk, { ...(roleFill(rk, i) as any), type: 'solid', color: c })"
