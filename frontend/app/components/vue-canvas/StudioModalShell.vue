@@ -3,9 +3,6 @@
 // (title · breadcrumb · esc/close, separated from the body by spacing — no divider rule)
 // + big preview/actions on the left and a scrollable controls column on the right. No
 // vertical rail seam. Change the chrome here and all three editors update.
-//
-// The controls column publishes its scroll offset as the `--studio-scroll` CSS var so the
-// frosted-glass StudioSection cards can drift their specular/refraction as you scroll.
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import AgentBar from '~/components/agent/AgentBar.vue'
 import AgentProgress from '~/components/agent/AgentProgress.vue'
@@ -29,17 +26,6 @@ const agentActive = computed(() => {
 })
 
 const rootEl = ref<HTMLElement | null>(null)
-const controlsEl = ref<HTMLElement | null>(null)
-let raf = 0
-function onControlsScroll() {
-  if (raf) return
-  raf = requestAnimationFrame(() => {
-    raf = 0
-    const el = controlsEl.value
-    if (el) el.style.setProperty('--studio-scroll', String(el.scrollTop))
-  })
-}
-
 function onKeydown(e: KeyboardEvent) {
   if (e.defaultPrevented) return
   if (e.key === 'Escape') { e.stopPropagation(); emit('close') }
@@ -83,7 +69,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
           </div>
           <div class="mt-3 flex shrink-0 items-center gap-2"><slot name="actions" /></div>
         </div>
-        <div ref="controlsEl" @scroll="onControlsScroll" class="flex w-72 shrink-0 flex-col gap-2 overflow-y-auto pr-1 min-h-0">
+        <div class="flex w-72 shrink-0 flex-col gap-2 overflow-y-auto pr-1 min-h-0">
           <!-- Assistant takeover: the agent's progress / proposal replace the controls
                while it's working, then hand back the controls when done. -->
           <template v-if="agentActive">
