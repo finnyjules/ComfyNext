@@ -103,9 +103,14 @@ function clearSlot(event: MouseEvent) {
         <span class="text-[11px] font-medium truncate leading-tight" :class="selected ? 'text-white/90' : 'text-white/55'">
           {{ selected ?? `Choose a ${noun}` }}
         </span>
-        <span class="text-[9px] text-white/40 truncate uppercase tracking-[0.06em] leading-tight">
-          {{ selected ? noun : 'open gallery' }}
-        </span>
+        <!-- Only when something is selected, where it names the KIND of thing the row
+             holds. Empty, this used to read "OPEN GALLERY" — which "Choose a Style" and
+             the chevron already say twice over. The height does not move between the two
+             states: the 28px tile governs it, not the text. -->
+        <span
+          v-if="selected"
+          class="text-[9px] text-white/40 truncate uppercase tracking-[0.06em] leading-tight"
+        >{{ noun }}</span>
       </span>
       <ChevronRight class="size-3.5 text-white/30 group-hover:text-white/55 shrink-0 transition-colors" />
     </button>
