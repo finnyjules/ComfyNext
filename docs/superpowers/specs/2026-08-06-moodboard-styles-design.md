@@ -58,10 +58,19 @@ Fable names** (spike run 6: measurement ≠ design; shadow clusters poison enfor
 ## The flow
 
 ### The node
-**MoodboardNode** in the Add menu / toolbar — the canvas artifact. Its face is a small
-collage of the board's images (empty state: a drop hint). Double-open follows the studio
-grammar every surface already uses: node → modal editor. Dropping images directly onto
-the node is a nice-to-have, not v1-required.
+**MoodboardNode** in the Add menu / toolbar — the canvas artifact. Its face is a **messy
+pile**, not a grid: the top 3–5 images overlapping with slight rotations (±3–7°) and
+offsets, top image dominant, soft shadows between layers, a count badge when more are
+buried. Inspiration reads as collected, not produced — and nothing else on the canvas
+looks like a pile, so it's recognizable at any zoom. It rhymes with the sketch-deck idiom
+that already lives on the canvas.
+
+Craft rules: the scatter is **seeded from image ids** (stable across re-renders — never
+`Math.random` at frame time), hover fans the pile a few degrees and settles back, the
+empty state is a dashed pile outline ("drop inspiration"), and the whole face fits the
+standard node capsule footprint. Double-open follows the studio grammar every surface
+already uses: node → modal editor. Dropping images directly onto the node is a
+nice-to-have, not v1-required.
 
 ### Create / edit — the modal
 Reached from the node (primary) or from the gallery's **Moodboards** tab
