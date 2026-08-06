@@ -16,6 +16,10 @@ style, and applying it to a generation steers the output into your board's world
 No training run, no cost beyond pennies, and — unlike every competitor's style tool — the
 reading is text you can open and edit, not an opaque code.
 
+The moodboard is a **canvas citizen**: a node you add from the toolbar, showing its images
+as a small collage face — inspiration living next to the work. Opening it is where you
+drop images and edit the reading; the style gallery is where you apply it.
+
 ## Why this, why now
 
 The spike proved this channel end to end: Fable's reading of a real board was a bullseye,
@@ -26,7 +30,8 @@ agent-fidelity workstream. **The verdict inverted the build order: diffusion fir
 
 ## The object
 
-A **Moodboard** = images + reading + identity:
+A **Moodboard** = images + reading + identity, living in an **app-level library** (the
+brand-kit precedent: server-side entries, referenced by id):
 
 ```
 { id, name, createdAt,
@@ -35,8 +40,16 @@ A **Moodboard** = images + reading + identity:
     summary: string,           // "what it sees" — editable prose, the heart of the object
     palette: {name, hex}[],    // CURATED (Fable-named), editable — never raw k-means
     avoids: string[],          // editable chips
+    fonts: string[],           // up to 2 suggested Google families matching the board's
+                               // typographic character — chips, editable, display-only in
+                               // v1 (no wiring into type surfaces yet)
   } }
 ```
+
+**Ownership: the library owns; nodes reference.** A canvas MoodboardNode points at a
+moodboard by id. Adding a node creates a draft entry; deleting a node never deletes the
+moodboard; the same moodboard can sit on several canvases; gallery and node always show
+the same current version.
 
 Two palettes exist in the pipeline but only one is stored as design: the k-means
 measurement stays spike/evidence tooling; **the moodboard persists the curated palette
@@ -44,9 +57,16 @@ Fable names** (spike run 6: measurement ≠ design; shadow clusters poison enfor
 
 ## The flow
 
-### Create
-Entry: the style gallery (every LoRA slot's picker) gains a **Moodboards** tab with
-**"＋ New moodboard."** Modal flow:
+### The node
+**MoodboardNode** in the Add menu / toolbar — the canvas artifact. Its face is a small
+collage of the board's images (empty state: a drop hint). Double-open follows the studio
+grammar every surface already uses: node → modal editor. Dropping images directly onto
+the node is a nice-to-have, not v1-required.
+
+### Create / edit — the modal
+Reached from the node (primary) or from the gallery's **Moodboards** tab
+(**"＋ New moodboard"** creates a node-less library entry; editing an applied moodboard
+opens the same modal). Flow:
 
 1. **Drop 5–20 images** (decoded client-side like the taste wall; JPEG-downscaled before
    upload). Thumbnails appear as a small board.
@@ -55,7 +75,10 @@ Entry: the style gallery (every LoRA slot's picker) gains a **Moodboards** tab w
    - the **summary** in an editable text area — displayed as prose, prominently; this is
      the show-you-understood moment the spike proved,
    - the **curated palette** as named, strikeable swatches,
-   - the **avoids** as editable chips (add/remove).
+   - the **avoids** as editable chips (add/remove),
+   - the **suggested fonts** as chips (up to 2 Google families; the font infrastructure —
+     `/api/font-suggest`, FontPicker, the google-fonts pipeline — already exists for later
+     consumption).
    Everything editable before save — the correction *is* the authorship.
 3. **Preview · ~$(price)** — optional paid button (price computed from the model catalog,
    never hardcoded): fixed-seed pair, neutral vs. tasted, on a fixed test subject —
@@ -95,6 +118,10 @@ have weights, all have readable taste. Not in v1 scope; noted so the endpoint is
 shareable.
 
 ## Out of scope, deliberately
+- **No output ports on the node in v1** — wiring board images out as generation refs and
+  taste out to other nodes is the node's real endgame (the July wargame's "ours feeds the
+  graph" differentiator) and the **named fast-follow**, not v1.
+- **No font wiring** — suggested fonts are display/edit chips; nothing consumes them yet.
 - **No strength dial** — apply is on/off per slot (prompt blocks don't dial cleanly; a
   wording-based strength is a later experiment).
 - **No facet bars** in the modal — the 12-facet reading is spike instrumentation; the
@@ -121,6 +148,8 @@ mocked read → save → appears in tab → pick into slot B → prompt payload 
 paid preview and live Fable read get one manual checklist run (paid-verification pattern).
 
 ## Done when
-A user can drop images, read+correct+preview, save a named moodboard, apply it from the
-gallery tab to any slot alone or stacked, and the generation's composed prompt carries the
-block — verified live end to end, with the reading editable at every step.
+A user can add a MoodboardNode from the toolbar, drop images into its modal,
+read+correct+preview, save a named moodboard, see it in the gallery's Moodboards tab,
+apply it to any slot alone or stacked, and the generation's composed prompt carries the
+block — verified live end to end, with the reading editable at every step, and node
+deletion leaving the library entry intact.
