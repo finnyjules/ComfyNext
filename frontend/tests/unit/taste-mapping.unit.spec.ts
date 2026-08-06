@@ -213,3 +213,33 @@ describe('applyTasteToConfig helpers', () => {
     expect(out.tracking).toBe(DEFAULT_CONFIG.tracking)
   })
 })
+
+describe('enforcePaletteOnGradient coverage (run 5)', () => {
+  const PAL = ['#14120f', '#22443a', '#c9873b', '#e8e0d0', '#5d7a5a']
+
+  it('recolors mesh points and every layer\'s stops — a mesh preset\'s purples cannot survive', async () => {
+    const { enforcePaletteOnGradient } = await import('../../app/lib/taste/mapping')
+    const cfg = {
+      canvas: { background: '#000000' },
+      layers: [
+        { color: { stops: [{ pos: 0, color: '#800080' }, { pos: 1, color: '#4b0082' }] } },
+        { color: { stops: [{ pos: 0, color: '#9932cc' }] }, mesh: { points: [{ x: 0, y: 0, color: '#800080' }, { x: 1, y: 1, color: '#ba55d3' }] } },
+      ],
+    } as any
+    enforcePaletteOnGradient(cfg, PAL, 0.8)
+    const colors = [
+      ...cfg.layers[0].color.stops.map((s: any) => s.color),
+      ...cfg.layers[1].color.stops.map((s: any) => s.color),
+      ...cfg.layers[1].mesh.points.map((p: any) => p.color),
+    ]
+    for (const c of colors) expect(PAL).toContain(c) // no purple survives anywhere
+    expect(cfg.canvas.background).toBe('#e8e0d0') // bright board → lightest ground
+  })
+
+  it('broken control: enforcement limited to layers.0 stops would leave mesh purple', async () => {
+    const { enforcePaletteOnGradient } = await import('../../app/lib/taste/mapping')
+    const cfg = { canvas: {}, layers: [{ color: { stops: [] }, mesh: { points: [{ x: 0, y: 0, color: '#800080' }] } }] } as any
+    enforcePaletteOnGradient(cfg, PAL, 0.8)
+    expect(cfg.layers[0].mesh.points[0].color).not.toBe('#800080')
+  })
+})

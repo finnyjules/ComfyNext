@@ -323,8 +323,11 @@ async function composeFromBrief(brief: { label: string; text: string }): Promise
   const controls = gradientAgentControls(config, { includePreset: true })
   const described = describeControls(controls, makeConfigParams(() => config, () => 0))
   // Run-4 fix: the avoids ride along with every composition brief.
+  // Run-5 fix: simplicity bias — the agent overcomposes (mesh/marble reflex)
+  // when the wanted look is often the simplest config that satisfies the brief.
   const avoids = fableA.value?.avoids ?? []
-  const phrase = avoids.length ? `${brief.text} — avoid: ${avoids.join(', ')}` : brief.text
+  const phrase = `${brief.text}${avoids.length ? ` — avoid: ${avoids.join(', ')}` : ''}`
+    + ' — Prefer the SIMPLEST structure that satisfies this: for soft sky/atmosphere washes a plain linear or radial ramp with 3-4 stops and high blur beats fancy presets; do not reach for mesh or marble unless the brief demands visible structure.'
   const res = await $fetch<{ changes: { key: string; value: ParamValue }[]; rationale: string }>('/api/vibe', {
     method: 'POST',
     body: { apiKey: apiKey.value.trim(), controls: described, phrase, effectLabel: 'Gradient studio', guidance: GRADIENT_GUIDANCE },
@@ -341,7 +344,44 @@ async function composeFromBrief(brief: { label: string; text: string }): Promise
   // leftover dark stops can never override a bright board again.
   const lightBias = fableA.value?.facets.valueBias?.value ?? readingA.value?.facets.valueBias?.value ?? 0.5
   enforcePaletteOnGradient(cfg, paletteA.value, lightBias)
-  return { label: brief.label, img: renderGradientCell(cfg), rationale: `${res.rationale ?? ''} · palette enforced` }
+
+  // Run-5 fix: see-and-correct. One visual review round — the composer looks
+  // at its own render against the brief and emits fix commands (the shipped
+  // F4 machinery, applied to the compose path for the first time).
+  let rationale = res.rationale ?? ''
+  try {
+    const img1 = renderGradientCell(cfg)
+    const described2 = describeControls(gradientAgentControls(cfg, { includePreset: false }), makeConfigParams(() => cfg, () => 0))
+    const review = await $fetch<{ text: string }>('/api/agent-review', {
+      method: 'POST',
+      body: {
+        apiKey: apiKey.value.trim(),
+        image: img1,
+        prompt: `This abstract gradient was composed to match the brief: "${brief.text}". Look at it honestly. If the render already matches the brief's mood, return an empty changes array. Otherwise return up to 6 changes that move it closer — favouring SIMPLIFICATION (less structure, softer, calmer) over addition. Use ONLY these controls (current values and ranges): ${JSON.stringify(described2)}`,
+        schema: {
+          type: 'object', additionalProperties: false, required: ['assessment', 'changes'],
+          properties: {
+            assessment: { type: 'string' },
+            changes: { type: 'array', maxItems: 6, items: { type: 'object', additionalProperties: false, required: ['key', 'value'], properties: { key: { type: 'string' }, value: { type: ['string', 'number', 'boolean'] } } } },
+          },
+        },
+      },
+    })
+    const parsed = JSON.parse(review.text) as { assessment?: string; changes?: { key: string; value: ParamValue }[] }
+    if (parsed.changes?.length) {
+      const raw2: Record<string, ParamValue> = {}
+      for (const c of parsed.changes) raw2[c.key] = c.value
+      const fixes = validatePatch(raw2, described2)
+      const params2 = makeConfigParams(() => cfg, () => 0)
+      for (const [k, v] of Object.entries(fixes)) params2[k] = v
+      enforcePaletteOnGradient(cfg, paletteA.value, lightBias)
+      rationale += ` · reviewed: ${parsed.assessment ?? ''} (${parsed.changes.length} fixes)`
+    }
+    else if (parsed.assessment) { rationale += ` · reviewed: ${parsed.assessment}` }
+  }
+  catch { rationale += ' · review skipped' }
+
+  return { label: brief.label, img: renderGradientCell(cfg), rationale: `${rationale} · palette enforced` }
 }
 
 // ── Generation row: fixed subject ± taste (diffusion twin of the wall) ──────

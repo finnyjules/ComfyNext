@@ -188,11 +188,24 @@ export function enforcePaletteOnGradient(cfg: GradientConfig, palette: string[],
   const ramp = [...palette].filter(p => /^#[0-9a-fA-F]{6}$/.test(p)).sort((a, b) => relLuma(a) - relLuma(b))
   if (ramp.length < 2) return
   const ordered = lightBias >= 0.5 ? [...ramp].reverse() : ramp // ground-first ramps read better
-  const stops = getByPath(cfg, 'layers.0.color.stops') as Array<{ pos: number; color: string }> | undefined
-  if (Array.isArray(stops) && stops.length) {
-    stops.forEach((s, i) => { s.color = ordered[Math.min(i, ordered.length - 1)]! })
+  // EVERY colour carrier, not just layers.0 stops — run 5 found a mesh preset's
+  // purples sailing through an enforcement that only knew about `stops`.
+  const layers = (cfg as unknown as { layers?: Array<Record<string, any>> }).layers
+  let touchedStops = false
+  if (Array.isArray(layers)) {
+    for (const layer of layers) {
+      const stops = layer?.color?.stops
+      if (Array.isArray(stops) && stops.length) {
+        stops.forEach((s: { color: string }, i: number) => { s.color = ordered[Math.min(i, ordered.length - 1)]! })
+        touchedStops = true
+      }
+      const points = layer?.mesh?.points
+      if (Array.isArray(points) && points.length) {
+        points.forEach((p: { color?: string }, i: number) => { if (p && typeof p === 'object') p.color = ordered[i % ordered.length]! })
+      }
+    }
   }
-  else {
+  if (!touchedStops) {
     setByPath(cfg, 'layers.0.color.stops', ordered.slice(0, 4).map((color, i, arr) => ({
       pos: arr.length === 1 ? 0 : i / (arr.length - 1), color,
     })))
