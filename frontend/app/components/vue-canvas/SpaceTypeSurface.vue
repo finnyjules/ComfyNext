@@ -1386,7 +1386,7 @@ async function exportWebEmbed() {
                "Effect" is a quiet caption and the effect NAME is the headline. Launcher. -->
           <button type="button" @click="showEffectGallery = true"
                   class="group flex h-10 w-full items-center justify-between gap-2 rounded-[6px] bg-white/[0.05] px-2.5 text-left transition-colors hover:bg-white/[0.08]">
-            <span class="text-[10px] uppercase tracking-wide text-white/40">Effect</span>
+            <span class="text-[11px] text-white/72">Effect</span>
             <span class="flex min-w-0 items-center gap-2">
               <span class="truncate text-[13px] font-medium text-white/95">{{ effect.label }}</span>
               <span class="inline-block shrink-0 rotate-90 text-[13px] text-white/45 group-hover:text-white/70">›</span>
