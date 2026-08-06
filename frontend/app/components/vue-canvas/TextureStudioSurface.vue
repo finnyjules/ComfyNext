@@ -19,6 +19,7 @@ import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
 import StudioColorField from '~/components/vue-canvas/studio/StudioColorField.vue'
 import StudioSlider from '~/components/vue-canvas/studio/StudioSlider.vue'
+import StudioRow from '~/components/vue-canvas/studio/StudioRow.vue'
 import StudioSelect from '~/components/vue-canvas/studio/StudioSelect.vue'
 import { useTextureAgent } from '~/composables/useTextureAgent'
 import CanvasContextMenu from '~/components/vue-canvas/CanvasContextMenu.vue'
@@ -427,6 +428,27 @@ function patchStop(rk: string, i: number, si: number, patch: Partial<{ c: string
   setStops(rk, i, stops)
 }
 
+// A gradient stop renders as one StudioRow: label = its place in the ramp, the row's fill
+// band = its position 0..1 (so the band literally shows where it sits), and colour + remove
+// ride in the row's #value slot. `stopSpec` is the ControlSpec that drives that — a slider
+// kind, because position IS a 0..1 slider; the #value slot then replaces the numeric readout.
+function stopCount(rk: string, i: number): number {
+  return (roleFill(rk, i) as any).stops?.length ?? 2
+}
+function stopLabel(rk: string, i: number, si: number): string {
+  const n = stopCount(rk, i)
+  return si === 0 ? 'Start' : si === n - 1 ? 'End' : 'Mid'
+}
+function stopSpec(rk: string, i: number, si: number): ControlSpec {
+  const n = stopCount(rk, i)
+  return {
+    key: 'inline', kind: 'slider', label: stopLabel(rk, i, si),
+    min: 0, max: 1, step: 0.01,
+    default: si === 0 ? 0 : si === n - 1 ? 1 : 0.5,
+    group: '',
+  } as ControlSpec
+}
+
 // Render the full-res tile and apply stylize, then encode. 1024 is a multiple of
 // 64 so dither stays seamless.
 async function exportBlob(): Promise<Blob> {
@@ -663,7 +685,9 @@ onBeforeUnmount(() => {
 
           <!-- Gradient: kind, angle, two stops, frame -->
           <template v-else-if="rawFill(rk)?.type === 'gradient'">
-            <div class="mt-1 flex flex-col gap-1">
+            <!-- gap-1.5 and no `mt-1`, so the gradient's own controls sit on the same 6px
+                 rhythm as the Type row above them rather than bunching at 4px with a seam. -->
+            <div class="flex flex-col gap-1.5">
                             <StudioSelect
                 label="Kind"
                 :options="['linear', 'radial']"
@@ -681,38 +705,39 @@ onBeforeUnmount(() => {
                 @update:model-value="(a: number) => setGradient(rk, i, { angle: a })"
               />
 
-              <!-- Multi-stop list: 2-4 stops, each with color + position + optional remove -->
-              <div
+              <!-- Gradient stops: one row each, like every other control. The row's fill
+                   band IS the stop's position along the ramp (drag or arrow to move it);
+                   the colour swatch and the remove × ride in the #value slot. The slot's
+                   `@pointerdown.stop` keeps a press on the swatch or × from also starting
+                   the row's position drag or opening its typed-entry field. -->
+              <StudioRow
                 v-for="(st, si) in ((roleFill(rk, i) as any).stops ?? [{ c: '#e8eef5', p: 0 }, { c: '#7aa2f7', p: 1 }])"
                 :key="si"
-                class="flex items-center gap-2"
+                :spec="stopSpec(rk, i, Number(si))"
+                :model-value="st.p"
+                :bindable="false"
+                @update:model-value="(p) => patchStop(rk, i, Number(si), { p: Number(p) })"
               >
-                <label class="w-8 shrink-0 text-[11px] text-white/55">{{ si === 0 ? 'Start' : si === ((roleFill(rk, i) as any).stops?.length ?? 2) - 1 ? 'End' : 'Mid' }}</label>
-                <StudioColor
-                  :model-value="st.c"
-                  @update:model-value="(c: string) => patchStop(rk, i, Number(si), { c })"
-                />
-                <StudioSlider
-                  label=""
-                  :min="0"
-                  :max="1"
-                  :step="0.01"
-                  :default="Number(si) === 0 ? 0 : 1"
-                  :model-value="st.p"
-                  @update:model-value="(p: number) => patchStop(rk, i, Number(si), { p })"
-                />
-                <button
-                  v-if="((roleFill(rk, i) as any).stops?.length ?? 2) > 2"
-                  class="shrink-0 rounded px-1.5 py-0.5 text-[10px] text-white/40 hover:bg-white/10 hover:text-white/70"
-                  @click="removeStop(rk, i, Number(si))"
-                >
-                  &times;
-                </button>
-              </div>
-              <!-- Add stop button (max 4) -->
+                <template #value>
+                  <span class="flex items-center gap-1.5" @pointerdown.stop>
+                    <span class="font-mono text-[11px] text-white/80">{{ Number(st.p).toFixed(2) }}</span>
+                    <StudioColor
+                      :model-value="st.c"
+                      @update:model-value="(c: string) => patchStop(rk, i, Number(si), { c })"
+                    />
+                    <button
+                      v-if="stopCount(rk, i) > 2"
+                      class="shrink-0 rounded px-1 text-[12px] text-white/35 hover:bg-white/10 hover:text-white/70"
+                      title="Remove stop"
+                      @click.stop="removeStop(rk, i, Number(si))"
+                    >&times;</button>
+                  </span>
+                </template>
+              </StudioRow>
+              <!-- Add stop (max 4) -->
               <button
-                v-if="((roleFill(rk, i) as any).stops?.length ?? 2) < 4"
-                class="mt-0.5 self-start rounded px-2 py-0.5 text-[10px] text-white/50 hover:bg-white/10 hover:text-white/80"
+                v-if="stopCount(rk, i) < 4"
+                class="self-start rounded px-2 py-1 text-[11px] text-white/50 hover:bg-white/10 hover:text-white/80"
                 @click="addStop(rk, i)"
               >
                 + Add stop
