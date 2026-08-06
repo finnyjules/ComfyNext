@@ -38,8 +38,13 @@ Rules:
 - "avoids" are negative priors: things this taste clearly never does, as short phrases (e.g. "no neon accents", "no pure white backgrounds"). 3–8 of them, grounded in the set.
 - Judge only visual treatment — never identify real people, brands, or artists.
 
+- "summary" is you SHOWING you understood the set: 2–3 sentences naming the world these images live in — light, place-feel, mood, material, era — in plain confident art-director language. Not a list of facets.
+- "brief" is a style direction you would hand a colleague to REPRODUCE this vibe in an abstract gradient composition: one dense line covering palette (name actual colors), composition character (soft/hard, sparse/busy, direction), light, and finish. It must stand alone without the images.
+
 Return STRICT JSON only — no prose, no markdown fences, exactly this shape:
 {
+  "summary": "...",
+  "brief": "...",
   "facets": { "<facetId>": { "value": 0..1, "confidence": 0..1, "evidence": [imageIndices] }, ... all 12 ids ... },
   "avoids": ["..."],
   "clusters": null | [ { "label": "...", "imageIndices": [..], "facets": { same shape }, "avoids": ["..."] }, ... ]
@@ -152,5 +157,9 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 502, statusMessage: `Model returned unparseable JSON: ${text.slice(0, 200)}` })
   }
 
-  return { reading: parseReading(obj) }
+  return {
+    reading: parseReading(obj),
+    summary: typeof obj.summary === 'string' ? obj.summary.trim() : '',
+    brief: typeof obj.brief === 'string' ? obj.brief.trim() : '',
+  }
 })

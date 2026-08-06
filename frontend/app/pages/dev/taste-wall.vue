@@ -17,7 +17,12 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { gradientFx } from '~/lib/gradientfx/renderer'
 import { defaultConfig as gradientDefaultConfig } from '~/lib/gradientfx/randomize'
-import { ensureConfigDefaults, type GradientConfig } from '~/lib/gradientfx/types'
+import { cloneConfig, ensureConfigDefaults, type GradientConfig } from '~/lib/gradientfx/types'
+import { GRADIENT_GUIDANCE, gradientAgentControls } from '~/lib/gradientfx/agentControls'
+import { buildGradientPreset } from '~/lib/gradientfx/presets'
+import { makeConfigParams } from '~/lib/agent/configParams'
+import { describeControls, validatePatch } from '~/lib/spacetype/controlDescriptor'
+import type { ParamValue } from '~/lib/spacetype/effect'
 import { defaultConfig as shaderDefaultConfig, type ShaderStudioConfig } from '~/lib/shaderstudio/types'
 import { composePasses } from '~/lib/shaderstudio/passes'
 import { shaderFx } from '~/lib/shaderfx/renderer'
@@ -42,7 +47,7 @@ const GRADIENT_SEED = '#tastewall'
 const VT_BACKGROUND = '#101014'
 
 type Studio = 'gradient' | 'shader' | 'vectortype'
-type Column = 'neutral' | 'elicitedA' | 'fableA' | 'observed' | 'elicitedB'
+type Column = 'neutral' | 'elicitedA' | 'fableA' | 'composedA' | 'observed' | 'elicitedB'
 const STUDIOS: { id: Studio; label: string }[] = [
   { id: 'gradient', label: 'Gradient' },
   { id: 'shader', label: 'Shader' },
@@ -52,6 +57,7 @@ const COLUMNS: { id: Column; label: string }[] = [
   { id: 'neutral', label: 'Neutral' },
   { id: 'elicitedA', label: 'Elicited A (deterministic)' },
   { id: 'fableA', label: 'Elicited A (Fable)' },
+  { id: 'composedA', label: 'Composed (brief → agent)' },
   { id: 'observed', label: 'Observed' },
   { id: 'elicitedB', label: 'Elicited B (anti-board)' },
 ]
@@ -81,6 +87,9 @@ const paletteA = ref<string[]>([])
 const paletteB = ref<string[]>([])
 const fableA = ref<TasteReading | null>(null)
 const fableB = ref<TasteReading | null>(null)
+const summaryA = ref('')
+const briefA = ref('')
+const composedRationale = ref('')
 
 /** dataURL per `${studio}-${column}` cell. */
 const cells = reactive<Record<string, string>>({})
@@ -268,10 +277,12 @@ async function runFable() {
   error.value = ''
   try {
     busy.value = 'reading A with Fable…'
-    const resA = await $fetch<{ reading: TasteReading }>('/api/taste/read', {
+    const resA = await $fetch<{ reading: TasteReading; summary: string; brief: string }>('/api/taste/read', {
       method: 'POST', body: { images: boardA.value.bigJpegs.slice(0, 8), apiKey: apiKey.value.trim() },
     })
     fableA.value = resA.reading
+    summaryA.value = resA.summary
+    briefA.value = resA.brief
     if (boardB.value) {
       busy.value = 'reading B with Fable…'
       const resB = await $fetch<{ reading: TasteReading }>('/api/taste/read', {
@@ -285,9 +296,39 @@ async function runFable() {
     const font = await ensureFont()
     const source = ensureShaderSource(bases().gradient)
     renderColumn('fableA', applyTasteToConfigs(resA.reading, paletteA.value, bases()), source, font)
+
+    if (briefA.value) {
+      busy.value = 'composing from the brief…'
+      await composeFromBrief(briefA.value)
+    }
   }
   catch (e: any) { error.value = e?.data?.statusMessage ?? e?.message ?? String(e) }
   finally { busy.value = '' }
+}
+
+/**
+ * The actuator-gap fix (finding from run 2): the brief goes through the REAL
+ * gradient agent path — preset macro + recipe guidance — so taste can COMPOSE
+ * a config (layout, shape, softness), not just nudge params on a frozen one.
+ * Mirrors /dev/gradient-agent-eval exactly.
+ */
+async function composeFromBrief(brief: string) {
+  const config = cloneConfig(ensureConfigDefaults(gradientDefaultConfig(GRADIENT_SEED)))
+  const controls = gradientAgentControls(config, { includePreset: true })
+  const described = describeControls(controls, makeConfigParams(() => config, () => 0))
+  const res = await $fetch<{ changes: { key: string; value: ParamValue }[]; rationale: string }>('/api/vibe', {
+    method: 'POST',
+    body: { apiKey: apiKey.value.trim(), controls: described, phrase: brief, effectLabel: 'Gradient studio', guidance: GRADIENT_GUIDANCE },
+  })
+  const raw: Record<string, ParamValue> = {}
+  for (const c of res.changes ?? []) raw[c.key] = c.value
+  const patch = validatePatch(raw, described)
+  let cfg = config
+  if (typeof patch.preset === 'string') { const swapped = buildGradientPreset(patch.preset); if (swapped) cfg = swapped }
+  const params = makeConfigParams(() => cfg, () => 0)
+  for (const [k, v] of Object.entries(patch)) { if (k !== 'preset') params[k] = v }
+  cells['gradient-composedA'] = renderGradientCell(cfg)
+  composedRationale.value = res.rationale ?? ''
 }
 
 // ── Readings + divergence view models ───────────────────────────────────────
@@ -395,12 +436,20 @@ const fmt = (v: number | null | undefined) => (v === null || v === undefined ? '
                 :style="{ width: CELL_W + 'px', maxWidth: 'none', display: 'block', borderRadius: '6px', background: '#000' }" />
               <div v-else :data-cell-empty="`${s.id}-${c.id}`"
                 :style="{ width: CELL_W + 'px', height: CELL_H + 'px', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px dashed #2a2a35', borderRadius: '6px', color: '#555', fontSize: '11px' }">
-                {{ c.id === 'fableA' ? 'needs key — run "Read with Fable"' : c.id === 'elicitedB' ? 'optional anti-board' : 'run Analyze' }}
+                {{ c.id === 'fableA' ? 'needs key — run "Read with Fable"' : c.id === 'composedA' ? (s.id === 'gradient' ? 'runs with Fable — brief → gradient agent' : 'gradient only (spike)') : c.id === 'elicitedB' ? 'optional anti-board' : 'run Analyze' }}
               </div>
             </td>
           </tr>
         </tbody>
       </table>
+    </div>
+
+    <!-- Fable: what it sees -->
+    <div v-if="summaryA" data-summary style="background:#12121a;border:1px solid #22222c;border-radius:8px;padding:12px 14px;margin:0 0 14px;max-width:860px">
+      <div style="font-size:11px;color:#7aa2f7;font-weight:600;margin-bottom:4px">Fable — what it sees</div>
+      <p style="font-size:12.5px;color:#ccc;margin:0 0 8px;line-height:1.55">{{ summaryA }}</p>
+      <div v-if="briefA" style="font-size:11px;color:#888"><b style="color:#aaa">brief →</b> {{ briefA }}</div>
+      <div v-if="composedRationale" style="font-size:11px;color:#8a8;margin-top:6px"><b style="color:#aaa">agent →</b> {{ composedRationale }}</div>
     </div>
 
     <!-- Readings panel -->
