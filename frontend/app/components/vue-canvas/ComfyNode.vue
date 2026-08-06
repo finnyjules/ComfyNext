@@ -1553,8 +1553,12 @@ watch(previewImages, (urls) => {
       'comfy-node--muted': isMuted,
       'comfy-node--bypassed': isBypassed,
       'ring-2 ring-red-500': data.error,
+      // A subgraph keeps a border you can actually see — it is a signal, not chrome.
+      // An ordinary node's is near-invisible: the card already separates itself from the
+      // canvas by fill and shadow, so the outline was drawing a line around something
+      // that did not need one. Dropped from 10% on 2026-08-06.
       'border-white/30': data.isSubgraph,
-      'border-white/10': !data.isSubgraph,
+      'border-white/[0.04]': !data.isSubgraph,
       // Dominant: full width. Recessive: narrower, so utilities stop competing
       // with the work. Width carries the whole distinction — recessive nodes used
       // to also sit at `opacity-70 hover:opacity-100`, dropped 2026-08-05 because
