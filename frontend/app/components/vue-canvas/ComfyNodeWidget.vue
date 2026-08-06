@@ -641,7 +641,7 @@ function formatLabel(name: string): string {
           <template #label-after>
             <button
               type="button"
-              class="shrink-0 size-5 flex items-center justify-center rounded-[3px] cursor-pointer transition-[transform,background-color,color] active:scale-[0.96]"
+              class="shrink-0 size-5 flex items-center justify-center rounded-[4px] cursor-pointer transition-[transform,background-color,color] active:scale-[0.96]"
               :class="isFixed
                 ? 'bg-amber-500/15 text-amber-200 hover:bg-amber-500/25'
                 : 'text-white/35 hover:text-white/85 hover:bg-white/[0.08]'"
@@ -658,7 +658,7 @@ function formatLabel(name: string): string {
           <template #value>
             <input
               type="number"
-              class="w-[86px] rounded-[3px] bg-transparent px-1.5 h-6 text-[11px] text-foreground text-right tabular-nums outline-none transition-colors hover:bg-white/[0.06] focus:bg-white/[0.10] [&::-webkit-inner-spin-button]:appearance-none"
+              class="w-[86px] rounded-[4px] bg-transparent px-1.5 h-6 text-[11px] text-foreground text-right tabular-nums outline-none transition-colors hover:bg-white/[0.06] focus:bg-white/[0.10] [&::-webkit-inner-spin-button]:appearance-none"
               :value="modelValue"
               @pointerdown.stop
               @input="emit('update:modelValue', Number(($event.target as HTMLInputElement).value))"
@@ -675,7 +675,7 @@ function formatLabel(name: string): string {
           <template #value>
             <input
               type="number"
-              class="w-[86px] rounded-[3px] bg-transparent px-1.5 h-6 text-[11px] text-foreground text-right tabular-nums outline-none transition-colors hover:bg-white/[0.06] focus:bg-white/[0.10] [&::-webkit-inner-spin-button]:appearance-none"
+              class="w-[86px] rounded-[4px] bg-transparent px-1.5 h-6 text-[11px] text-foreground text-right tabular-nums outline-none transition-colors hover:bg-white/[0.06] focus:bg-white/[0.10] [&::-webkit-inner-spin-button]:appearance-none"
               :value="modelValue"
               :min="widgetDef.min"
               :max="widgetDef.max"

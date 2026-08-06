@@ -29,7 +29,7 @@ const emit = defineEmits<{ (e: 'update:value', v: string): void }>()
     :aria-label="spec.label"
     spellcheck="false"
     :placeholder="placeholder"
-    class="w-32 rounded-[3px] bg-transparent px-1.5 text-right text-[11px] text-white/90 placeholder:text-white/25 outline-none transition-colors hover:bg-white/[0.06] focus:bg-white/[0.10]"
+    class="w-32 rounded-[4px] bg-transparent px-1.5 text-right text-[11px] text-white/90 placeholder:text-white/25 outline-none transition-colors hover:bg-white/[0.06] focus:bg-white/[0.10]"
     @pointerdown.stop
     @input="emit('update:value', ($event.target as HTMLInputElement).value)"
   />

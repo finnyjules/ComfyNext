@@ -2121,7 +2121,7 @@ watch(previewImages, (urls) => {
     <div v-if="showRunButton" ref="runMenuRoot" class="relative px-2 pb-2 pt-3">
       <div class="flex items-stretch gap-px">
         <button
-          class="nopan nodrag flex-1 h-7 rounded-l-[8px] flex items-center justify-center gap-1.5 text-[11px] font-medium transition-[transform,background-color,color] active:scale-[0.96] cursor-pointer"
+          class="nopan nodrag flex-1 h-7 rounded-l-[4px] flex items-center justify-center gap-1.5 text-[11px] font-medium transition-[transform,background-color,color] active:scale-[0.96] cursor-pointer"
           :class="(isMuted || isBypassed)
             ? 'bg-white/[0.04] text-white/25 cursor-not-allowed active:scale-100'
             : data.running
@@ -2142,7 +2142,7 @@ watch(previewImages, (urls) => {
         </button>
         <button
           aria-label="Run scope options"
-          class="nopan nodrag w-7 h-7 rounded-r-[8px] flex items-center justify-center transition-colors cursor-pointer"
+          class="nopan nodrag w-7 h-7 rounded-r-[4px] flex items-center justify-center transition-colors cursor-pointer"
           :class="(isMuted || isBypassed || data.running)
             ? 'bg-white/[0.04] text-white/25 cursor-not-allowed'
             : 'bg-white/90 text-neutral-900 hover:bg-white'"
@@ -2195,18 +2195,18 @@ watch(previewImages, (urls) => {
 
 <style scoped>
 .comfy-node {
-  /* 16px. Two reasons, both structural rather than taste: it matches the capsule,
-     so the corner does not change shape halfway through the expand; and it is
-     concentric with the 8px header tile at 8px padding. Rebased from 13 (7 + 6) on
-     2026-08-06 — see NodeCapsule.vue, which must stay equal. 16 - 8 inset = 8 is
-     also the radius every element INSIDE the card uses, so one number derives the
-     whole card. */
-  border-radius: 16px;
+  /* 12px. It matches the capsule, so the corner does not change shape halfway through
+     the expand, and 12 - 8 inset = 4 is the radius every input and button uses — so the
+     corners stay concentric and the bottom does not pinch against the run bar. The 4px
+     came first here: it is the app-wide control radius, and the shell was set to suit
+     it. (History: 13 = 7 + 6, then 16/8, now 12/4.) See NodeCapsule.vue, which must
+     stay equal. */
+  border-radius: 12px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), 0 1px 4px rgba(0, 0, 0, 0.2);
 }
 .node-head {
-  border-top-left-radius: 16px;
-  border-top-right-radius: 16px;
+  border-top-left-radius: 12px;
+  border-top-right-radius: 12px;
 }
 
 /* The header's icon and title sit at exactly the capsule's offsets — 7px in,
@@ -2224,7 +2224,7 @@ watch(previewImages, (urls) => {
   justify-content: center;
   width: 26px;
   height: 26px;
-  border-radius: 8px;
+  border-radius: 4px;
   background: rgba(255, 255, 255, 0.07);
   color: rgba(255, 255, 255, 0.72);
 }

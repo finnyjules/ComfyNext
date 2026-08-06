@@ -261,13 +261,12 @@ function onValuePointerDown(e: PointerEvent) {
          transparent on a node, then removed once the real cause was found — recessive
          nodes were rendering at `opacity-70`, which is now gone (see ComfyNode.vue). Fixing
          the cause beat compensating for it in every studio. -->
-    <!-- 8px, which is what a node's card radius minus its inset comes to: 16 - 8. The rule
-         is that the row matches the button a node ends with, and both now sit on that one
-         derived value rather than being picked separately. It travelled 8 -> 4 -> 3 -> 8
-         while the card was rebased off its old 13px base; the number returned to where it
-         started, but it is now a consequence rather than a choice. -->
+    <!-- 4px. Every input and button in the app is 4px — that is the rule now, chosen
+         directly rather than derived. The card follows it rather than the other way
+         round: the shell is 12 so that 12 - 8 inset = 4 keeps the corners concentric,
+         which is what stops the bottom of a node pinching against its run bar. -->
     <div
-      class="group relative flex h-7 select-none items-center justify-between overflow-hidden rounded-[8px] bg-white/[0.05] px-2.5"
+      class="group relative flex h-7 select-none items-center justify-between overflow-hidden rounded-[4px] bg-white/[0.05] px-2.5"
       :class="numeric && !bound && !editing ? 'cursor-ew-resize' : ''"
       @pointerdown="onPointerDown"
       @dblclick="onReset"

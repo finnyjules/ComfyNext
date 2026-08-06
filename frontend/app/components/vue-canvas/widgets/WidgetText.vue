@@ -10,7 +10,7 @@ defineEmits<{ 'update:modelValue': [value: string] }>()
 <template>
   <textarea
     v-if="multiline"
-    class="nopan nodrag pastel-hairline w-full rounded-md px-2.5 py-2 text-[13px] leading-relaxed text-foreground placeholder:text-white/30 resize-y min-h-[84px] outline-none shadow-[0_4px_12px_rgba(0,0,0,0.35)]"
+    class="nopan nodrag pastel-hairline w-full rounded-[4px] px-2.5 py-2 text-[13px] leading-relaxed text-foreground placeholder:text-white/30 resize-y min-h-[84px] outline-none shadow-[0_4px_12px_rgba(0,0,0,0.35)]"
     style="--pastel-hairline-bg: #404040;"
     :placeholder="placeholder"
     :value="modelValue"
