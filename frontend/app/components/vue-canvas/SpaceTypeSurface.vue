@@ -1380,14 +1380,16 @@ async function exportWebEmbed() {
         This effect has no motion parameters.
       </p>
       <div v-show="inspectorTab === 'design'" class="flex flex-col gap-2 rounded-lg border border-white/[0.07] bg-white/[0.03] px-3 py-2.5">
-          <!-- Effect: a launcher row like every other picker — label left, effect name +
-               caret right, opens the gallery. Was a bordered caption-above dropdown. -->
+          <!-- Effect: the hero picker of the pane — it chooses everything below it, so it is
+               deliberately taller, brighter-filled and larger-typed than the ordinary rows
+               rather than one of them. Still a launcher (opens the gallery); "Effect" is a
+               quiet caption and the effect NAME is the headline. -->
           <button type="button" @click="showEffectGallery = true"
-                  class="flex h-7 w-full items-center justify-between gap-2 rounded-[6px] bg-white/[0.05] px-2.5 text-left transition-colors hover:bg-white/[0.08]">
-            <span class="text-[11px] text-white/72">Effect</span>
-            <span class="flex min-w-0 items-center gap-1.5">
-              <span class="truncate text-[11px] text-white/90">{{ effect.label }}</span>
-              <span class="inline-block shrink-0 rotate-90 text-white/40">›</span>
+                  class="group flex h-10 w-full items-center justify-between gap-2 rounded-lg bg-white/[0.07] px-3 text-left transition-colors hover:bg-white/[0.11]">
+            <span class="text-[10px] uppercase tracking-wide text-white/40">Effect</span>
+            <span class="flex min-w-0 items-center gap-2">
+              <span class="truncate text-[13px] font-medium text-white/95">{{ effect.label }}</span>
+              <span class="inline-block shrink-0 rotate-90 text-[13px] text-white/45 group-hover:text-white/70">›</span>
             </span>
           </button>
           <!-- One uniform button group, left-aligned and wrapping — not two rows split
