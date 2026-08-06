@@ -128,26 +128,30 @@ shareable.
 
 ## Ports — what wires in v1, and the pinned design for what follows
 
-**v1 ships one real port: images out.** The node emits a board image (top of pile by
-default, pickable), wirable into anything that accepts IMAGE today — img2img, image
-conditioning, compositor slots. The board's images also join the **@refs registry**, so
-any prompt can reference them by name. The node earns its place in the graph on day one;
-a portless node in a node-graph tool is a decoration, and is explicitly rejected.
+**v1 ships the node whole: taste out AND images out.** A portless node in a node-graph
+tool is a decoration, and is explicitly rejected — and the taste port is the node's
+*identity*, so it does not wait for a fast-follow.
 
-**Taste-as-wire is the fast-follow, and its design is pinned now so nothing builds
-incompatible.** Generators gain TWO new inputs together, in one schema change:
-- `prompt_in` — plain text, the *subject/intent* (the Idea node's port, as already scoped
-  in its design: no Replicate node has a wirable prompt today).
-- `style_in` — a **taste-typed** port carrying the READING itself (summary, palette,
-  avoids, fonts), never a pre-flattened string. The consumer compiles: a generator
-  compiles it to the prompt block; a procedural studio compiles it to a config later,
-  when agent fidelity lands. One edge type, every future consumer.
+- **`style` output (taste-typed)** — the node's primary port, carrying the READING itself
+  (summary, palette, avoids, fonts), never a pre-flattened string. The consumer compiles:
+  a generator compiles it to the prompt block at run time; a procedural studio compiles
+  it to a config later, when agent fidelity lands. One edge type, every future consumer.
+- **`image` output** — a board image (top of pile by default, pickable), wirable into
+  anything that accepts IMAGE today. The board's images also join the **@refs registry**.
 
-Two ports because subject and style must be wirable *simultaneously* — an Idea node
-saying what, a moodboard saying how it feels, into the same generator. Both inputs are
-**appended to the schema, never inserted** (the multi-LoRA positional-widget lesson;
-guard tests exist). This one substrate change lands the Idea node and the taste wire as
-siblings. Slot-apply remains alongside the wire, same duality as images.
+**Consumer side, v1: two generator nodes** (the same two the Idea node design scoped —
+not all fifty models) gain TWO new inputs together, in one schema change, **appended
+never inserted** (the multi-LoRA positional-widget lesson; guard tests exist):
+- `style_in` — accepts the taste edge; at run the reading compiles to the block. Wired
+  style and slot styles coexist and concatenate — wire first (ambient influence), slots
+  after (per-node picks) — through the existing `composeLoraStyle` composition.
+- `prompt_in` — plain text, the *subject/intent*. This is the Idea node's socket landing
+  as a free rider: subject and style must be wirable *simultaneously* (an Idea node
+  saying what, a moodboard saying how it feels, into the same generator), and one
+  substrate change serves both features.
+
+Slot-apply remains alongside the wire, same duality as images: wire it, or pick it
+per-node.
 
 ## Out of scope, deliberately
 - **No font wiring** — suggested fonts are display/edit chips; nothing consumes them yet.
@@ -179,7 +183,9 @@ paid preview and live Fable read get one manual checklist run (paid-verification
 ## Done when
 A user can add a MoodboardNode from the toolbar, drop images into its modal,
 read+correct+preview, save a named moodboard, see it in the gallery's Moodboards tab,
-apply it to any slot alone or stacked, **wire a board image out of the node into an
-image-accepting input and reference board images via @refs**, and the generation's
-composed prompt carries the block — verified live end to end, with the reading editable
-at every step, and node deletion leaving the library entry intact.
+apply it to any slot alone or stacked, **wire the node's taste output into a generator's
+`style_in` and see the block in the composed prompt, wire a board image into an
+image-accepting input, and reference board images via @refs** — verified live end to end
+including a saved-workflow round-trip proving the appended inputs shift no positional
+widget values, with the reading editable at every step, and node deletion leaving the
+library entry intact.
