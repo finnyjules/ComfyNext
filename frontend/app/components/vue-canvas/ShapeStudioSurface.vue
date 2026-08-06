@@ -25,6 +25,7 @@ import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
 import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
+import StudioColorField from '~/components/vue-canvas/studio/StudioColorField.vue'
 import StudioSwitch from '~/components/vue-canvas/studio/StudioSwitch.vue'
 import StudioSelect from '~/components/vue-canvas/studio/StudioSelect.vue'
 import StudioControlPanel from '~/components/vue-canvas/studio/StudioControlPanel.vue'
@@ -575,10 +576,7 @@ async function onImportFile(e: Event) {
              over hue/saturation/lightness — no single ControlSpec can express it) + the
              section's lock badge. Lands after the schema-driven controls. -->
         <template #section-Palette>
-          <div>
-            <label class="mb-1 block text-[11px] text-white/55">Base color</label>
-            <StudioColor v-model="baseColorHex" />
-          </div>
+          <StudioColorField label="Base color" v-model="baseColorHex" />
           <div>
             <label class="mb-1 block text-[11px] text-white/55">Preview</label>
             <div class="h-4 rounded" :style="{ background: paletteRampCss }" />
@@ -670,10 +668,7 @@ async function onImportFile(e: Event) {
 
       <!-- Canvas (not lockable) -->
       <StudioSection title="Canvas">
-        <div>
-          <label class="mb-1 block text-[11px] text-white/55">Aspect</label>
-          <StudioSelect v-model="aspectKey" :options="ASPECT_OPTIONS" />
-        </div>
+        <StudioSelect label="Aspect" v-model="aspectKey" :options="ASPECT_OPTIONS" />
         <div class="grid grid-cols-2 gap-2">
           <div>
             <label class="mb-1 block text-[11px] text-white/55">Width</label>

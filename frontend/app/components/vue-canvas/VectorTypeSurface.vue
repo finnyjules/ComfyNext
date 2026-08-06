@@ -83,6 +83,7 @@ import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
 import StudioLayerStack from '~/components/vue-canvas/StudioLayerStack.vue'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
+import StudioColorField from '~/components/vue-canvas/studio/StudioColorField.vue'
 import StudioSelect from '~/components/vue-canvas/studio/StudioSelect.vue'
 import StudioSwitch from '~/components/vue-canvas/studio/StudioSwitch.vue'
 import StudioControlPanel from '~/components/vue-canvas/studio/StudioControlPanel.vue'
@@ -1604,10 +1605,7 @@ const frameCount = computed(() => Math.round((config.value.motion.fps || 30) * (
         </StudioControlPanel>
 
         <StudioSection title="Canvas">
-          <div>
-            <label class="mb-1 block text-[11px] text-white/55">Aspect</label>
-            <StudioSelect v-model="aspectKey" :options="ASPECT_OPTIONS" />
-          </div>
+          <StudioSelect label="Aspect" v-model="aspectKey" :options="ASPECT_OPTIONS" />
           <div class="grid grid-cols-2 gap-2">
             <div>
               <label class="mb-1 block text-[11px] text-white/55">Width</label>
@@ -1624,10 +1622,12 @@ const frameCount = computed(() => Math.round((config.value.motion.fps || 30) * (
             <span class="text-[11px] text-white/55">Transparent background</span>
             <StudioSwitch v-model="bgTransparent" />
           </div>
-          <div v-if="!bgTransparent" class="flex items-center gap-2">
-            <label class="text-[11px] text-white/55">Background</label>
-            <StudioColor v-model="lastBgColor" @update:model-value="(v: string) => { background = v }" />
-          </div>
+          <StudioColorField
+            v-if="!bgTransparent"
+            label="Background"
+            v-model="lastBgColor"
+            @update:model-value="(v: string) => { background = v }"
+          />
         </StudioSection>
       </template>
 

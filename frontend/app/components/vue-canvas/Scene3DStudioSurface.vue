@@ -3321,8 +3321,7 @@ async function onClose() {
             <p v-if="fontError" class="mt-1 text-[11px] text-red-400">Font failed to load — showing placeholder.</p>
           </div>
           <div v-if="selectedGoogleFont">
-            <label class="mb-1 block text-[11px] text-white/55">Weight</label>
-            <StudioSelect v-model="fontWeight" :options="fontWeightOptions" />
+            <StudioSelect label="Weight" v-model="fontWeight" :options="fontWeightOptions" />
           </div>
         </div>
 
@@ -3509,8 +3508,7 @@ async function onClose() {
         </div>
 
         <div v-if="matEditable">
-          <label class="mb-1 block text-[11px] text-white/55">Material</label>
-          <StudioSelect v-model="matType" :options="MATERIAL_TYPES" />
+          <StudioSelect label="Material" v-model="matType" :options="MATERIAL_TYPES" />
         </div>
 
         <!-- physical surface: standard + glass share the grouped panel -->
@@ -4007,8 +4005,7 @@ async function onClose() {
               </button>
             </div>
             <div>
-              <label class="mb-1 block text-[11px] text-white/55">Camera</label>
-              <StudioSelect :model-value="doc.camera.motion?.preset ?? 'none'" :options="CAMERA_OPTIONS"
+              <StudioSelect label="Camera" :model-value="doc.camera.motion?.preset ?? 'none'" :options="CAMERA_OPTIONS"
                 @update:model-value="(v: string) => doc.camera.motion = v === 'none' ? undefined : { preset: v as CameraMotion['preset'], speed: doc.camera.motion?.speed ?? 1, amount: doc.camera.motion?.amount ?? 1 }" />
             </div>
             <template v-if="doc.camera.motion">
@@ -4023,8 +4020,7 @@ async function onClose() {
 
         <StudioSection v-if="motionOn && selected" title="Object motion">
           <div>
-            <label class="mb-1 block text-[11px] text-white/55">Loop</label>
-            <StudioSelect :model-value="selected.motion?.loop?.kind ?? 'none'" :options="LOOP_OPTIONS"
+            <StudioSelect label="Loop" :model-value="selected.motion?.loop?.kind ?? 'none'" :options="LOOP_OPTIONS"
               @update:model-value="(v: string) => setObjectLoop(selected!, v as LoopKind)" />
           </div>
           <template v-if="selected.motion?.loop">
@@ -4034,38 +4030,32 @@ async function onClose() {
                           v-model="selected.motion.loop.amount" label="Amount" :min="0" :max="3" :step="0.1" />
           </template>
           <div>
-            <label class="mb-1 block text-[11px] text-white/55">In</label>
-            <StudioSelect :model-value="selected.motion?.in?.preset ?? 'none'" :options="IN_OPTIONS"
+            <StudioSelect label="In" :model-value="selected.motion?.in?.preset ?? 'none'" :options="IN_OPTIONS"
               @update:model-value="(v: string) => setObjectTransition(selected!, 'in', v as TransitionPreset | 'none')" />
           </div>
           <template v-if="selected?.motion?.in">
             <div v-if="['move', 'rise'].includes(selected.motion.in.preset)">
-              <label class="mb-1 block text-[11px] text-white/55">In direction</label>
-              <StudioSelect :model-value="selected.motion.in.direction ?? 'left'" :options="DIRECTION_OPTIONS"
+              <StudioSelect label="In direction" :model-value="selected.motion.in.direction ?? 'left'" :options="DIRECTION_OPTIONS"
                 @update:model-value="(v: string) => setObjectDirection(selected!, 'in', v as Direction)" />
             </div>
             <div>
-              <label class="mb-1 block text-[11px] text-white/55">In ease</label>
-              <StudioSelect :model-value="easeKey('in')" :options="EASE_KEY_OPTIONS"
+              <StudioSelect label="In ease" :model-value="easeKey('in')" :options="EASE_KEY_OPTIONS"
                 @update:model-value="(v: string) => setEaseKey('in', v)" />
               <CurveEditor v-if="curveProxy('in') !== null" class="mt-1"
                 :model-value="curveProxy('in')!" @update:model-value="(v: string) => setCurve('in', v)" />
             </div>
           </template>
           <div>
-            <label class="mb-1 block text-[11px] text-white/55">Out</label>
-            <StudioSelect :model-value="selected.motion?.out?.preset ?? 'none'" :options="OUT_OPTIONS"
+            <StudioSelect label="Out" :model-value="selected.motion?.out?.preset ?? 'none'" :options="OUT_OPTIONS"
               @update:model-value="(v: string) => setObjectTransition(selected!, 'out', v as TransitionPreset | 'none')" />
           </div>
           <template v-if="selected?.motion?.out">
             <div v-if="['move', 'rise'].includes(selected.motion.out.preset)">
-              <label class="mb-1 block text-[11px] text-white/55">Out direction</label>
-              <StudioSelect :model-value="selected.motion.out.direction ?? 'left'" :options="DIRECTION_OPTIONS"
+              <StudioSelect label="Out direction" :model-value="selected.motion.out.direction ?? 'left'" :options="DIRECTION_OPTIONS"
                 @update:model-value="(v: string) => setObjectDirection(selected!, 'out', v as Direction)" />
             </div>
             <div>
-              <label class="mb-1 block text-[11px] text-white/55">Out ease</label>
-              <StudioSelect :model-value="easeKey('out')" :options="EASE_KEY_OPTIONS"
+              <StudioSelect label="Out ease" :model-value="easeKey('out')" :options="EASE_KEY_OPTIONS"
                 @update:model-value="(v: string) => setEaseKey('out', v)" />
               <CurveEditor v-if="curveProxy('out') !== null" class="mt-1"
                 :model-value="curveProxy('out')!" @update:model-value="(v: string) => setCurve('out', v)" />

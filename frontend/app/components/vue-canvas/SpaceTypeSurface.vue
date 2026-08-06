@@ -28,6 +28,7 @@ import StudioSegmented from '~/components/vue-canvas/studio/StudioSegmented.vue'
 import StudioSelect from '~/components/vue-canvas/studio/StudioSelect.vue'
 import CurveEditor from '~/components/vue-canvas/CurveEditor.vue'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
+import StudioColorField from '~/components/vue-canvas/studio/StudioColorField.vue'
 import StudioSwitch from '~/components/vue-canvas/studio/StudioSwitch.vue'
 import StringPathEditor from '~/components/vue-canvas/StringPathEditor.vue'
 import VibeControlBar from '~/components/vue-canvas/VibeControlBar.vue'
@@ -1569,24 +1570,17 @@ async function exportWebEmbed() {
             </div>
 
             <template v-if="section.name === 'Camera'">
-              <div data-control class="text-xs">
-                <label class="mb-1 block text-[11px] text-white/50">Projection</label>
-                <select v-model="projection" class="w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1.5 text-xs text-white/85">
-                  <option value="perspective" class="bg-neutral-900">Perspective</option>
-                  <option value="isometric" class="bg-neutral-900">Isometric</option>
-                </select>
+              <!-- Camera controls: these were hand-written as a raw <select> and raw range
+                   inputs (the two-line label-above idiom the rest of the studios retired).
+                   Now the same StudioSelect / StudioSlider rows as every other control. -->
+              <div data-control>
+                <StudioSelect label="Projection" v-model="projection" :options="['perspective', 'isometric']" />
               </div>
-              <div data-control class="text-xs">
-                <label class="mb-1.5 flex justify-between text-[11px] text-white/50">
-                  <span>Pan X</span><span class="font-mono text-white/80">{{ panX.toFixed(2) }}</span>
-                </label>
-                <input v-model.number="panX" type="range" min="-1" max="1" step="0.01" v-studio-reset class="studio-range w-full" />
+              <div data-control>
+                <StudioSlider label="Pan X" v-model="panX" :min="-1" :max="1" :step="0.01" :bindable="false" />
               </div>
-              <div data-control class="text-xs">
-                <label class="mb-1.5 flex justify-between text-[11px] text-white/50">
-                  <span>Pan Y</span><span class="font-mono text-white/80">{{ panY.toFixed(2) }}</span>
-                </label>
-                <input v-model.number="panY" type="range" min="-1" max="1" step="0.01" v-studio-reset class="studio-range w-full" />
+              <div data-control>
+                <StudioSlider label="Pan Y" v-model="panY" :min="-1" :max="1" :step="0.01" :bindable="false" />
               </div>
             </template>
 
@@ -1624,9 +1618,8 @@ async function exportWebEmbed() {
               <label data-control class="flex items-center gap-2 text-xs text-white/60">
                 <input type="checkbox" v-model="transparent" /> Transparent background
               </label>
-              <div v-if="!transparent" data-control class="text-xs">
-                <label class="mb-1 block text-white/60">Background color</label>
-                <StudioColor v-model="bgColor" />
+              <div v-if="!transparent" data-control>
+                <StudioColorField label="Background color" v-model="bgColor" />
               </div>
             </template>
           </div>
