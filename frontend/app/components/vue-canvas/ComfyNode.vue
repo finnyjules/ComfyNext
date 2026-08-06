@@ -1682,7 +1682,7 @@ watch(previewImages, (urls) => {
          new area hatched. OutpaintImageNode only. Pure HTML/CSS so it never
          re-decodes the source image during canvas pan/zoom (SVG <image> did). -->
     <div v-if="data.nodeType === 'OutpaintImageNode' && outpaintGeom"
-         class="border-t border-[#2a2a2a] px-2 py-3 flex flex-col items-center gap-1.5">
+         class="px-2.5 py-4 flex flex-col items-center gap-2">
       <div class="op-canvas relative overflow-hidden rounded-[3px]"
            :style="{ width: outpaintGeom.dispW + 'px', height: outpaintGeom.dispH + 'px' }">
         <!-- Original image (thumbnail if wired, else solid block) -->
@@ -1702,9 +1702,9 @@ watch(previewImages, (urls) => {
     </div>
 
     <!-- Edit as Frame: hand the split layers to a Frame artifact -->
-    <div v-if="showEditAsFrame" class="border-t border-[#2a2a2a] px-2 py-3">
+    <div v-if="showEditAsFrame" class="px-2.5 py-4">
       <button
-        class="w-full flex items-center justify-center gap-1.5 rounded-[6px] py-1.5 text-[11px] font-medium transition-colors"
+        class="w-full flex items-center justify-center gap-2 rounded-[6px] py-1.5 text-[11px] font-medium transition-colors"
         :class="editAsFrameReady
           ? 'bg-white/[0.07] hover:bg-white/[0.14] text-white/85 cursor-pointer'
           : 'bg-white/[0.03] text-white/30 cursor-not-allowed'"
@@ -1720,7 +1720,11 @@ watch(previewImages, (urls) => {
     </div>
 
     <!-- Widgets (Compositor / SmartLayout edit via their dedicated modal/body, so we hide the inline controls) -->
-    <div v-if="data.widgetDefs?.some(w => !w.hidden) && data.nodeType !== 'Compositor' && data.nodeType !== 'Timeline' && data.nodeType !== 'SmartLayout'" class="border-t border-[#2a2a2a] py-3 flex flex-col gap-1.5">
+    <!-- No horizontal padding here on purpose: every ComfyNodeWidget insets ITSELF by
+         10px, so adding it to the block doubles it (measured: a 21px field inset). -->
+    <!-- No horizontal padding on this block: every ComfyNodeWidget insets ITSELF by 10px,
+         so padding here doubles it — measured as a 21px field inset before this. -->
+    <div v-if="data.widgetDefs?.some(w => !w.hidden) && data.nodeType !== 'Compositor' && data.nodeType !== 'Timeline' && data.nodeType !== 'SmartLayout'" class="py-4 flex flex-col gap-2">
       <!-- Ungrouped widgets render first. Seed widgets carry a lock state
            that controls whether the pre-Run randomizer touches them. For
            Comfy-standard seeds it lives at widgets_values[i+1] (the
@@ -1747,11 +1751,11 @@ watch(previewImages, (urls) => {
            hide layer groups whose layer index is beyond the visible-input
            count, so the body stays in sync with the grow-on-connect ports. -->
       <template v-for="group in visibleWidgetGroups" :key="group.title">
-        <!-- `mt-1.5` on top of the container's `gap-1.5`: this disclosure opens a new
+        <!-- `mt-1.5` on top of the container's `gap-2`: this disclosure opens a new
              group, so it takes the 12px group gap rather than the 6px that separates one
              widget from the next. Without it, ADVANCED sat as close to the last control
              as two controls sit to each other. -->
-        <div class="px-2 mt-1.5 nopan nodrag">
+        <div class="px-2.5 mt-2 nopan nodrag">
           <button
             class="flex items-center gap-1 w-full text-[10px] uppercase tracking-[0.08em] text-white/50 hover:text-white/80 cursor-pointer py-1 transition-colors"
             @click="toggleGroup(group.title)"
@@ -1774,15 +1778,18 @@ watch(previewImages, (urls) => {
         </template>
       </template>
 
+      <!-- No `border-t` between groups any more: 16px of space says "new group" without
+           a line, and eight hairlines down a 260px card read as a form rather than a
+           thing. The header keeps its hairline — that one divides chrome from content. -->
       <!-- Advanced inputs (collapsed by default) — any input flagged
            `advanced` in the schema, e.g. the multi-LoRA node's URL overrides
            and sampler knobs, so the node shows only its core controls. -->
       <template v-if="advancedWidgets.length">
-        <!-- `mt-1.5` on top of the container's `gap-1.5`: this disclosure opens a new
+        <!-- `mt-1.5` on top of the container's `gap-2`: this disclosure opens a new
              group, so it takes the 12px group gap rather than the 6px that separates one
              widget from the next. Without it, ADVANCED sat as close to the last control
              as two controls sit to each other. -->
-        <div class="px-2 mt-1.5 nopan nodrag">
+        <div class="px-2.5 mt-2 nopan nodrag">
           <button
             class="flex items-center gap-1 w-full text-[10px] uppercase tracking-[0.08em] text-white/50 hover:text-white/80 cursor-pointer py-1 transition-colors"
             @click="advancedOpen = !advancedOpen"
@@ -1812,7 +1819,7 @@ watch(previewImages, (urls) => {
     <!-- Lens · 3D Reframe: focal-length strips + live FOV / compression diagram.
          Companion to the source/target dropdowns — clicking a chip writes the
          matching lens widget; chips highlight whatever the dropdowns hold. -->
-    <div v-if="data.nodeType === 'LensReframe'" class="border-t border-[#2a2a2a] px-2 py-3 flex flex-col gap-1.5 nopan nodrag">
+    <div v-if="data.nodeType === 'LensReframe'" class="px-2.5 py-4 flex flex-col gap-2 nopan nodrag">
       <div>
         <div class="text-[10px] text-white/40 mb-1">Shot on</div>
         <div class="flex gap-1">
@@ -1872,7 +1879,7 @@ watch(previewImages, (urls) => {
     <!-- Compositor: open the editor modal -->
     <div v-if="data.nodeType === 'Compositor'" class="px-2 pb-2 nopan nodrag">
       <button
-        class="flex items-center justify-center gap-1.5 w-full h-7 rounded-[6px] bg-white/[0.06] hover:bg-white/[0.1] text-white/70 hover:text-white/90 text-xs transition-colors cursor-pointer border border-white/10"
+        class="flex items-center justify-center gap-2 w-full h-7 rounded-[6px] bg-white/[0.06] hover:bg-white/[0.1] text-white/70 hover:text-white/90 text-xs transition-colors cursor-pointer border border-white/10"
         @click="openCompositorEditor"
       >
         Open editor
@@ -1882,7 +1889,7 @@ watch(previewImages, (urls) => {
     <!-- Ascii: open the glyph-dither options panel -->
     <div v-if="data.nodeType === 'Ascii'" class="px-2 pb-2 nopan nodrag">
       <button
-        class="flex items-center justify-center gap-1.5 w-full h-7 rounded-[6px] bg-white/[0.06] hover:bg-white/[0.1] text-white/70 hover:text-white/90 text-xs transition-colors cursor-pointer border border-white/10"
+        class="flex items-center justify-center gap-2 w-full h-7 rounded-[6px] bg-white/[0.06] hover:bg-white/[0.1] text-white/70 hover:text-white/90 text-xs transition-colors cursor-pointer border border-white/10"
         @click="openAsciiOptions"
       >
         More options
@@ -1892,7 +1899,7 @@ watch(previewImages, (urls) => {
     <!-- Crossfade: open the visual editor modal -->
     <div v-if="data.nodeType === 'VideoCrossfade'" class="px-2 pb-2 nopan nodrag">
       <button
-        class="flex items-center justify-center gap-1.5 w-full h-7 rounded-[6px] bg-white/[0.06] hover:bg-white/[0.1] text-white/70 hover:text-white/90 text-xs transition-colors cursor-pointer border border-white/10"
+        class="flex items-center justify-center gap-2 w-full h-7 rounded-[6px] bg-white/[0.06] hover:bg-white/[0.1] text-white/70 hover:text-white/90 text-xs transition-colors cursor-pointer border border-white/10"
         @click="openCrossfadeEditor"
       >
         Open editor
@@ -1918,7 +1925,7 @@ watch(previewImages, (urls) => {
         @change="handleUpload"
       />
       <button
-        class="flex items-center justify-center gap-1.5 w-full h-7 rounded-[6px] bg-white/[0.05] hover:bg-white/[0.1] border border-white/10 text-xs text-white/80 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-wait"
+        class="flex items-center justify-center gap-2 w-full h-7 rounded-[6px] bg-white/[0.05] hover:bg-white/[0.1] border border-white/10 text-xs text-white/80 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-wait"
         :disabled="uploading"
         @click="fileInputRef?.click()"
       >
@@ -1934,7 +1941,7 @@ watch(previewImages, (urls) => {
     </div>
 
     <!-- Audio previews (PreviewAudio, SaveAudio*, etc.) -->
-    <div v-if="data.audios?.length" class="border-t border-[#2a2a2a] px-2 py-3 flex flex-col gap-1.5">
+    <div v-if="data.audios?.length" class="px-2.5 py-4 flex flex-col gap-2">
       <audio
         v-for="(src, i) in data.audios"
         :key="i"
@@ -1946,7 +1953,7 @@ watch(previewImages, (urls) => {
     </div>
 
     <!-- Text output (PreviewAny "Preview as Text" + any node that returns ui.text) -->
-    <div v-if="data.text" class="border-t border-[#2a2a2a] px-2 py-3">
+    <div v-if="data.text" class="px-2.5 py-4">
       <pre class="text-[10.5px] text-white/80 whitespace-pre-wrap break-words font-mono leading-snug max-h-[200px] overflow-auto nopan nodrag select-text">{{ data.text }}</pre>
     </div>
 
@@ -1956,7 +1963,7 @@ watch(previewImages, (urls) => {
          image (single-aspect render). -->
     <div
       v-else-if="data.nodeType === 'SmartLayout' && displayedImages.length"
-      class="border-t border-[#2a2a2a] px-2 py-3 nopan nodrag"
+      class="px-2.5 py-4 nopan nodrag"
     >
       <div class="relative">
         <img
@@ -2020,7 +2027,7 @@ watch(previewImages, (urls) => {
     </div>
 
     <!-- Media previews (images or video) -->
-    <div v-else-if="displayedImages.length" class="border-t border-[#2a2a2a] px-2 py-3">
+    <div v-else-if="displayedImages.length" class="px-2.5 py-4">
       <!-- Collapse toggle: hide the result to declutter; dims stay as a hint. -->
       <button
         class="nopan nodrag w-full flex items-center gap-1 mb-1.5 text-[10px] uppercase tracking-[0.08em] text-white/45 hover:text-white/75 cursor-pointer transition-colors"
@@ -2126,10 +2133,10 @@ watch(previewImages, (urls) => {
          1.4px apart and diagonal clearance at a corner fell to ~7.6px against 10px on the
          flats. The bottom is the only edge with a card corner at each end, so that pinch
          read as "the bottom margin is smaller" when all three margins measure 10px. -->
-    <div v-if="showRunButton" ref="runMenuRoot" class="relative px-2 pb-2">
+    <div v-if="showRunButton" ref="runMenuRoot" class="relative px-2.5 pb-2.5">
       <div class="flex items-stretch gap-px">
         <button
-          class="nopan nodrag flex-1 h-7 rounded-l-[6px] flex items-center justify-center gap-1.5 text-[11px] font-medium transition-[transform,background-color,color] active:scale-[0.96] cursor-pointer"
+          class="nopan nodrag flex-1 h-9 rounded-l-[6px] flex items-center justify-center gap-2 text-[11px] font-medium transition-[transform,background-color,color] active:scale-[0.96] cursor-pointer"
           :class="(isMuted || isBypassed)
             ? 'bg-white/[0.04] text-white/25 cursor-not-allowed active:scale-100'
             : data.running
@@ -2150,7 +2157,7 @@ watch(previewImages, (urls) => {
         </button>
         <button
           aria-label="Run scope options"
-          class="nopan nodrag w-7 h-7 rounded-r-[6px] flex items-center justify-center transition-colors cursor-pointer"
+          class="nopan nodrag w-9 h-9 rounded-r-[6px] flex items-center justify-center transition-colors cursor-pointer"
           :class="(isMuted || isBypassed || data.running)
             ? 'bg-white/[0.04] text-white/25 cursor-not-allowed'
             : 'bg-white/90 text-neutral-900 hover:bg-white'"
@@ -2203,18 +2210,19 @@ watch(previewImages, (urls) => {
 
 <style scoped>
 .comfy-node {
-  /* 14px. It matches the capsule, so the corner does not change shape halfway through
-     the expand, and 14 - 8 inset = 6 is the radius every input and button uses — so the
+  /* 16px. It matches the capsule, so the corner does not change shape halfway through
+     the expand, and 16 - 10 inset = 6 is the radius every input and button uses — so the
      corners stay concentric and the bottom does not pinch against the run bar. The 6px
      came first here: it is the app-wide control radius, and the shell was set to suit
-     it. (History: 13 = 7 + 6, then 16/8, then 12/4 which read too sharp, now 14/6.)
+     it. (History: 13 = 7 + 6, then 16/8, then 12/4 which read too sharp, then 14/6,
+     now 16/10/6 — the inset went to 10 for the roomier spacing, so the shell followed.)
      See NodeCapsule.vue, which must stay equal. */
-  border-radius: 14px;
+  border-radius: 16px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), 0 1px 4px rgba(0, 0, 0, 0.2);
 }
 .node-head {
-  border-top-left-radius: 14px;
-  border-top-right-radius: 14px;
+  border-top-left-radius: 16px;
+  border-top-right-radius: 16px;
 }
 
 /* The header's icon and title sit at exactly the capsule's offsets — 7px in,
@@ -2222,8 +2230,8 @@ watch(previewImages, (urls) => {
    the card grows around a header that does not move. Layout lives here rather
    than in utilities so the two components can be read against each other. */
 .node-head {
-  gap: 8px;
-  padding: 8px 12px 8px 8px;
+  gap: 10px;
+  padding: 10px 12px 10px 10px;
 }
 .node-head__tile {
   flex: none;

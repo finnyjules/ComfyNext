@@ -483,7 +483,7 @@ function formatLabel(name: string): string {
 }
 </script>
 <template>
-  <div class="px-2" data-slot="comfy-node-field">
+  <div class="px-2.5" data-slot="comfy-node-field">
     <!-- Backend-marked custom widget: skip the standard label + renderer chain
          and hand the whole slot to the model picker (it owns its own label).
          `video_model_picker` is the same widget pointed at the video catalog. -->

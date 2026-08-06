@@ -100,14 +100,15 @@ function onKeydown(e: KeyboardEvent) {
   align-items: flex-start;
   width: var(--capsule-w, 260px);
   gap: 8px;
-  padding: 8px;
+  padding: 10px;
   border: 1px solid rgba(255, 255, 255, 0.13);
-  /* 14, to sit 8px of padding outside the 6px tile/action inside it. 6px is the
+  /* 16, to sit 10px of padding outside the 6px tile/action inside it. 6px is the
      app-wide radius for every input and button, and this shell was set to suit it.
-     (History: 13 = 7 + 6, then 16/8, then 12/4 which read too sharp, now 14/6.) The
+     (History: 13 = 7 + 6, then 16/8, then 12/4 which read too sharp, then 14/6, now
+     16/10/6 for the roomier inset.) The
      card in ComfyNode.vue must stay equal to this or the corner changes shape halfway
      through the expand. */
-  border-radius: 14px;
+  border-radius: 16px;
   text-align: left;
   background: #1f1f1f;
   box-shadow: 0 3px 12px rgba(0, 0, 0, 0.4);
@@ -296,8 +297,8 @@ function onKeydown(e: KeyboardEvent) {
   position: absolute;
   inset: -2px;
   /* Not `inherit`: the ring is inset -2px, so staying concentric with the
-     14px shell needs 14 + 2. `inherit` leaves the corners visibly tight. */
-  border-radius: 16px;
+     16px shell needs 16 + 2. `inherit` leaves the corners visibly tight. */
+  border-radius: 18px;
   padding: 2px;
   background: linear-gradient(to right, var(--border-left), var(--border-right));
   -webkit-mask:
