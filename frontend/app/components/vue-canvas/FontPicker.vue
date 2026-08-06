@@ -10,16 +10,31 @@
  */
 import { loadGoogleCatalog, type GoogleFont } from '~/data/google-fonts'
 import StudioSwitch from '~/components/vue-canvas/studio/StudioSwitch.vue'
+import VariableGlyph from '~/components/vue-canvas/studio/VariableGlyph.vue'
 
 withDefaults(defineProps<{
   modelValue: string
   pinned?: { label: string; value: string }[]
   showVariableToggle?: boolean
+  // When set, the trigger reads as a 28px studio row — label left, font name and caret
+  // right — so a Font control sits in the same rhythm as the sliders beside it instead of
+  // a caption-above-a-dropdown. Omitted, the trigger keeps its original full-width form
+  // for callers that already draw their own label.
+  label?: string
+  // A font is a bindable control. In row mode (`label` set), the variable glyph rides next
+  // to the label and a bound value shows the pink column name instead of the picker — the
+  // same treatment StudioColorField gives a bound colour, so binding survives the move off
+  // the old caption-above layout that carried the glyph.
+  bound?: string | null
 }>(), {
   showVariableToggle: true,
+  bound: null,
 })
 
 const emit = defineEmits<{
+  (e: 'promote'): void
+  (e: 'menu', ev: MouseEvent): void
+  (e: 'goToCollection'): void
   (e: 'select', payload: { kind: 'google'; family: string } | { kind: 'pinned'; value: string }): void
 }>()
 
@@ -69,13 +84,38 @@ watch(fontPickerOpen, (open) => { if (!open && fontSuggestRan.value) clearFontSu
 </script>
 
 <template>
-  <button type="button" @click="fontPickerOpen = !fontPickerOpen"
-          class="flex w-full items-center justify-between rounded bg-white/10 px-2 py-1 text-left">
-    <span class="truncate">{{ modelValue || 'Select font…' }}</span>
+  <!-- Bound (row mode only): the pink column name, click = edit in table, exactly like a
+       bound colour/slider row. No picker while bound — the value comes from the column. -->
+  <button
+    v-if="label && bound"
+    type="button"
+    class="group flex h-7 w-full items-center justify-between gap-2 rounded-[6px] bg-white/[0.05] px-2.5 text-left"
+    :title="`${bound} — edit in table`"
+    @click="emit('goToCollection')"
+  >
+    <span class="flex items-center gap-1.5 text-[11px] text-white/72">
+      {{ label }}
+      <VariableGlyph :bound="bound" @promote="emit('promote')" @menu="emit('menu', $event)" />
+    </span>
+    <span class="ml-auto truncate font-mono text-[11px]" style="color: var(--var-accent-text)">{{ bound }}</span>
+  </button>
+  <button
+    v-else
+    type="button"
+    @click="fontPickerOpen = !fontPickerOpen"
+    class="group flex w-full items-center gap-2 text-left transition-colors"
+    :class="label
+      ? 'h-7 justify-between rounded-[6px] bg-white/[0.05] px-2.5 hover:bg-white/[0.08]'
+      : 'justify-between rounded bg-white/10 px-2 py-1'">
+    <span v-if="label" class="flex shrink-0 items-center gap-1.5 text-[11px] text-white/72">
+      {{ label }}
+      <VariableGlyph :bound="null" @promote="emit('promote')" @menu="emit('menu', $event)" />
+    </span>
+    <span class="truncate" :class="label ? 'ml-auto text-[11px] text-white/90' : ''">{{ modelValue || 'Select font…' }}</span>
     <!-- The app's one caret: `›` turned, never ▾/▴/⌄. Those draw smaller than their type
          size implies and sit off the optical centre. Down when closed, up when open. -->
-    <span class="ml-2 inline-block shrink-0 text-white/40 transition-transform"
-          :class="fontPickerOpen ? '-rotate-90' : 'rotate-90'">›</span>
+    <span class="inline-block shrink-0 text-white/40 transition-transform"
+          :class="[label ? '' : 'ml-2', fontPickerOpen ? '-rotate-90' : 'rotate-90']">›</span>
   </button>
   <div v-if="fontPickerOpen" class="mt-1 rounded bg-black/40 p-1">
     <div class="mb-1 flex items-center gap-1">

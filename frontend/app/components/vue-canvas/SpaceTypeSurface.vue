@@ -29,6 +29,7 @@ import StudioSelect from '~/components/vue-canvas/studio/StudioSelect.vue'
 import CurveEditor from '~/components/vue-canvas/CurveEditor.vue'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
 import StudioColorField from '~/components/vue-canvas/studio/StudioColorField.vue'
+import StudioRow from '~/components/vue-canvas/studio/StudioRow.vue'
 import StudioSwitch from '~/components/vue-canvas/studio/StudioSwitch.vue'
 import StringPathEditor from '~/components/vue-canvas/StringPathEditor.vue'
 import VibeControlBar from '~/components/vue-canvas/VibeControlBar.vue'
@@ -1416,7 +1417,10 @@ async function exportWebEmbed() {
               :class="{ 'rounded-md ring-1 ring-amber-400/30 px-1 -mx-1': vibeMoved.has(c.key) }"
               data-control class="text-xs"
               @contextmenu.prevent="openVarMenu($event, c)">
-              <label v-if="c.kind !== 'slider'" class="mb-1 flex items-center gap-1.5 text-white/60 group">
+              <!-- No external caption for slider / font / single text: each self-labels inside
+                   its own row (StudioSlider, FontPicker's row mode, StudioRow), carrying the
+                   variable glyph there. textList still shows it — a list needs a header. -->
+              <label v-if="!['slider', 'font', 'text'].includes(c.kind)" class="mb-1 flex items-center gap-1.5 text-white/60 group">
                 <span>{{ c.label }}</span>
                 <VariableGlyph
                   v-if="controlKindToVariableType(c.kind) !== null"
@@ -1435,13 +1439,21 @@ async function exportWebEmbed() {
                             @update:model-value="(v: number) => { params[c.key] = v; onEdit(c.key, v) }"
                             @promote="promote(controlDesc(c), Number(params[c.key]))"
                             @menu="(e: MouseEvent) => openVarMenu(e, c)" />
-              <div v-else-if="c.kind === 'text' && boundColumnFor(c.key)" class="flex items-center justify-between gap-2 rounded bg-white/[0.04] px-2 py-1.5">
-                <span class="truncate text-[12px]" style="color: var(--var-accent-text)">{{ boundColumnFor(c.key) }}</span>
-                <button type="button" @click="goToCollection"
-                        class="shrink-0 rounded px-2 py-1 text-[11px] text-white/60 hover:bg-white/10 hover:text-white">Edit in table</button>
-              </div>
-              <input v-else-if="c.kind === 'text'" type="text" v-model="params[c.key]"
-                     class="w-full rounded bg-white/10 px-2 py-1" @input="rebuild" @change="onEdit(c.key, String(params[c.key]))" />
+              <!-- Single text: a bindable value-right row (RowText), same shape as every
+                   other control. StudioRow carries the glyph + bound pink state itself, so
+                   the old external-caption + raw <input> + separate bound block all collapse
+                   into this. -->
+              <StudioRow
+                v-else-if="c.kind === 'text'"
+                :spec="{ key: c.key, label: c.label, kind: 'text', default: '', group: '' } as ControlSpec"
+                :model-value="String(params[c.key])"
+                :bound="boundColumnFor(c.key)"
+                :bindable="true"
+                @update:model-value="(v) => { params[c.key] = String(v); rebuild(); onEdit(c.key, String(v)) }"
+                @promote="promote(controlDesc(c), params[c.key] as string | number)"
+                @menu="(e: MouseEvent) => openVarMenu(e, c)"
+                @go-to-collection="goToCollection"
+              />
               <div v-else-if="c.kind === 'textList' && boundColumnFor(c.key)" class="flex items-center justify-between gap-2 rounded bg-white/[0.04] px-2 py-1.5">
                 <span class="truncate text-[12px]" style="color: var(--var-accent-text)">{{ boundColumnFor(c.key) }}</span>
                 <button type="button" @click="goToCollection"
@@ -1456,12 +1468,13 @@ async function exportWebEmbed() {
                         class="shrink-0 cursor-grab px-0.5 text-white/25 hover:text-white/60 active:cursor-grabbing" title="Drag to reorder" aria-label="Drag to reorder">
                     <svg width="10" height="16" viewBox="0 0 10 16" fill="currentColor"><circle cx="2.5" cy="4" r="1" /><circle cx="7.5" cy="4" r="1" /><circle cx="2.5" cy="8" r="1" /><circle cx="7.5" cy="8" r="1" /><circle cx="2.5" cy="12" r="1" /><circle cx="7.5" cy="12" r="1" /></svg>
                   </span>
-                  <input type="text" v-model="textLines[i]" class="w-full rounded bg-white/10 px-2 py-1" />
-                  <button v-if="textLines.length > 1" type="button" @click="removeTextRow(i)"
-                          class="shrink-0 rounded px-2 py-1 text-white/40 hover:bg-white/10 hover:text-white">−</button>
+                  <input type="text" v-model="textLines[i]"
+                         class="h-7 w-full rounded-[6px] bg-white/[0.05] px-2.5 text-[11px] text-white/90 outline-none transition-colors hover:bg-white/[0.07] focus:bg-white/[0.10]" />
+                  <button v-if="textLines.length > 1" type="button" @click="removeTextRow(i)" aria-label="Remove text"
+                          class="shrink-0 rounded-[6px] px-1.5 text-white/35 hover:bg-white/10 hover:text-white/80">−</button>
                 </div>
                 <button type="button" @click="addTextRow"
-                        class="mt-0.5 rounded bg-white/10 px-2 py-1 text-white/60 hover:text-white">+ Add text</button>
+                        class="mt-0.5 self-start rounded-[6px] px-2 py-1 text-[11px] text-white/50 hover:bg-white/10 hover:text-white/80">+ Add text</button>
                 <p class="mt-1 text-[10px] text-white/40">Multiple texts alternate per repeat.</p>
               </template>
               <template v-else-if="c.kind === 'fillList'">
@@ -1547,7 +1560,9 @@ async function exportWebEmbed() {
               </p>
               <CurveEditor v-else-if="c.kind === 'curve'" :model-value="String(params[c.key])"
                            @update:model-value="(val: string) => { params[c.key] = val }" />
-              <div v-else-if="(c.kind === 'color' || c.kind === 'select' || c.kind === 'font') && boundColumnFor(c.key)"
+              <!-- Font is excluded here: its bound state now lives inside FontPicker's row
+                   (like a bound colour), so it does not need this shared pink block. -->
+              <div v-else-if="(c.kind === 'color' || c.kind === 'select') && boundColumnFor(c.key)"
                    class="flex items-center justify-between gap-2 rounded bg-white/[0.04] px-2 py-1.5">
                 <span class="truncate text-[12px]" style="color: var(--var-accent-text)">{{ boundColumnFor(c.key) }}</span>
                 <button type="button" @click="goToCollection"
@@ -1562,7 +1577,15 @@ async function exportWebEmbed() {
                             :options="c.options ?? []" :model-value="String(params[c.key])"
                             @update:model-value="(v: string) => { params[c.key] = v; rebuild(); onEdit(c.key, v) }" />
               <template v-else-if="c.kind === 'font'">
-                <FontPicker :model-value="String(params[c.key])" @select="(p) => onFontSelect(c.key, p)" />
+                <FontPicker
+                  :model-value="String(params[c.key])"
+                  :label="c.label"
+                  :bound="boundColumnFor(c.key)"
+                  @select="(p) => onFontSelect(c.key, p)"
+                  @promote="promote(controlDesc(c), params[c.key] as string | number)"
+                  @menu="(e: MouseEvent) => openVarMenu(e, c)"
+                  @go-to-collection="goToCollection"
+                />
                 <div v-if="varAxisList.length" class="mt-2 space-y-2.5">
                   <StudioSlider v-for="a in varAxisList" :key="a.tag"
                                 :model-value="fontAxes[a.tag] ?? a.default" @update:model-value="(v: number) => { fontAxes[a.tag] = v }"
