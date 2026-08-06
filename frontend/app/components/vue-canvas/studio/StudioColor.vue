@@ -22,7 +22,10 @@ const base = computed(() => parseHexA(model.value).hex)
 function emit(hex6: string) { model.value = withAlpha(hex6, alpha.value) }
 
 // A checkerboard behind any swatch, so a translucent colour reads as translucent.
-const CHECKER = 'background-image:linear-gradient(45deg,#555 25%,transparent 25%),linear-gradient(-45deg,#555 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#555 75%),linear-gradient(-45deg,transparent 75%,#555 75%);background-size:8px 8px;background-position:0 0,0 4px,4px -4px,-4px 0px;background-color:#888'
+// `background-clip: padding-box` matters: the swatch's border is translucent white, and
+// with the default border-box clip the 8px checker painted UNDER it — alternating light and
+// dark squares around the perimeter, which reads as a DASHED outline rather than a hairline.
+const CHECKER = 'background-image:linear-gradient(45deg,#555 25%,transparent 25%),linear-gradient(-45deg,#555 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#555 75%),linear-gradient(-45deg,transparent 75%,#555 75%);background-size:8px 8px;background-position:0 0,0 4px,4px -4px,-4px 0px;background-color:#888;background-clip:padding-box'
 const MODES = ['hex', 'rgb', 'oklch'] as const
 const mode = ref<typeof MODES[number]>('hex')
 

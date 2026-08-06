@@ -654,13 +654,11 @@ onBeforeUnmount(() => {
 
           <!-- Solid: single color picker + opacity -->
           <template v-if="rawFill(rk)?.type === 'solid' || !rawFill(rk)">
-            <div class="mt-1 flex items-center gap-2">
                             <StudioColorField
                 label="Color"
                 :model-value="(roleFill(rk, i) as any).color ?? '#7aa2f7'"
                 @update:model-value="(c: string) => setFill(rk, { ...(roleFill(rk, i) as any), type: 'solid', color: c })"
               />
-            </div>
             <StudioSlider
               label="Opacity"
               :min="0"
@@ -803,14 +801,12 @@ onBeforeUnmount(() => {
 
           <!-- Link: mirrors another role's fill (cycle-guarded in fillForRole) -->
           <template v-else-if="rawFill(rk)?.type === 'link'">
-            <div class="mt-1 flex flex-col gap-1">
                             <StudioSelect
                 label="Link to role"
                 :options="rolesFor(params).filter((r) => r !== rk)"
                 :model-value="rawFill(rk)?.to ?? rolesFor(params).find((r) => r !== rk) ?? rk"
                 @update:model-value="(to: string) => setFill(rk, { type: 'link', to } as any)"
               />
-            </div>
           </template>
 
           <!-- Pattern: nested motif sub-picker -->
@@ -833,29 +829,23 @@ onBeforeUnmount(() => {
                 @update:model-value="(cells: number) => setSub(rk, i, { cells })"
               />
 
-              <div class="flex items-center gap-2">
                                 <StudioColorField
                   label="Color A"
                   :model-value="(roleFill(rk, i) as any).sub?.colorA ?? '#e8eef5'"
                   @update:model-value="(colorA: string) => setSub(rk, i, { colorA })"
                 />
-              </div>
 
-              <div class="flex items-center gap-2">
                                 <StudioColorField
                   label="Color B"
                   :model-value="(roleFill(rk, i) as any).sub?.colorB ?? '#7aa2f7'"
                   @update:model-value="(colorB: string) => setSub(rk, i, { colorB })"
                 />
-              </div>
 
-              <div class="flex items-center gap-2">
                                 <StudioColorField
                   label="Background"
                   :model-value="(roleFill(rk, i) as any).sub?.background ?? '#0e1116'"
                   @update:model-value="(background: string) => setSub(rk, i, { background })"
                 />
-              </div>
 
                             <StudioSelect
                 label="Frame"
