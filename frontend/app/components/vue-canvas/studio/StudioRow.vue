@@ -319,6 +319,11 @@ function onValuePointerDown(e: PointerEvent) {
           @promote="emit('promote')"
           @menu="(e: MouseEvent) => emit('menu', e)"
         />
+        <!-- A control that belongs to the label rather than the value. The seed's
+             randomise/lock toggle is the case: it acts on the row, it does not display the
+             row's value, and sitting beside the number it competed with it for the one
+             place the eye goes for a reading. -->
+        <slot name="label-after" />
       </span>
 
       <span class="relative flex shrink-0 items-center gap-2" @dblclick.stop>

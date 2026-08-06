@@ -628,29 +628,23 @@ function formatLabel(name: string): string {
           :model-value="Number(modelValue)"
           @update:model-value="emit('update:modelValue', $event)"
         />
-        <!-- Seed: an integer plus its lock/shuffle button. Not a slider — 0..2^32 fills no
-             track — so the pair rides in the row's `#value` slot and the seed stops being
-             the one two-line control among rows. -->
+        <!-- Seed: an integer plus its lock/shuffle toggle. Not a slider — 0..2^32 fills no
+             track. The number goes in `#value` like every other row's reading; the toggle
+             goes beside the LABEL, because it acts on the row rather than displaying it,
+             and next to the number it competed with the one thing you look right to read. -->
         <StudioRow
           v-else-if="isSeed && isNumber"
           :spec="slotRowSpec as never"
           :model-value="modelValue"
           :bindable="false"
         >
-          <template #value>
-            <input
-              type="number"
-              class="w-[86px] rounded-[3px] bg-white/[0.03] px-1.5 h-6 text-[11px] text-foreground text-right tabular-nums outline-none transition-colors hover:bg-white/[0.07] focus:bg-white/[0.10] [&::-webkit-inner-spin-button]:appearance-none"
-              :value="modelValue"
-              @pointerdown.stop
-              @input="emit('update:modelValue', Number(($event.target as HTMLInputElement).value))"
-            />
+          <template #label-after>
             <button
               type="button"
-              class="shrink-0 size-6 flex items-center justify-center rounded-[3px] cursor-pointer transition-[transform,background-color,color] active:scale-[0.96]"
+              class="shrink-0 size-5 flex items-center justify-center rounded-[3px] cursor-pointer transition-[transform,background-color,color] active:scale-[0.96]"
               :class="isFixed
                 ? 'bg-amber-500/15 text-amber-200 hover:bg-amber-500/25'
-                : 'text-white/40 hover:text-white/85 hover:bg-white/[0.08]'"
+                : 'text-white/35 hover:text-white/85 hover:bg-white/[0.08]'"
               :title="isFixed
                 ? 'Fixed — seed stays put on Run. Click to switch back to random.'
                 : 'Random — Run picks a new seed each time. Click to lock the current value.'"
@@ -660,6 +654,15 @@ function formatLabel(name: string): string {
               <Lock v-if="isFixed" class="size-3" />
               <Shuffle v-else class="size-3" />
             </button>
+          </template>
+          <template #value>
+            <input
+              type="number"
+              class="w-[86px] rounded-[3px] bg-transparent px-1.5 h-6 text-[11px] text-foreground text-right tabular-nums outline-none transition-colors hover:bg-white/[0.06] focus:bg-white/[0.10] [&::-webkit-inner-spin-button]:appearance-none"
+              :value="modelValue"
+              @pointerdown.stop
+              @input="emit('update:modelValue', Number(($event.target as HTMLInputElement).value))"
+            />
           </template>
         </StudioRow>
         <!-- A number with no usable range: a plain field in the row, no track to fill. -->
@@ -672,7 +675,7 @@ function formatLabel(name: string): string {
           <template #value>
             <input
               type="number"
-              class="w-[86px] rounded-[3px] bg-white/[0.03] px-1.5 h-6 text-[11px] text-foreground text-right tabular-nums outline-none transition-colors hover:bg-white/[0.07] focus:bg-white/[0.10] [&::-webkit-inner-spin-button]:appearance-none"
+              class="w-[86px] rounded-[3px] bg-transparent px-1.5 h-6 text-[11px] text-foreground text-right tabular-nums outline-none transition-colors hover:bg-white/[0.06] focus:bg-white/[0.10] [&::-webkit-inner-spin-button]:appearance-none"
               :value="modelValue"
               :min="widgetDef.min"
               :max="widgetDef.max"

@@ -2,15 +2,24 @@
 // Value side of a text row: an always-editable right-aligned field. Unlike numbers,
 // there is no drag gesture to protect, so it needs no editing mode.
 //
-// The resting fill is deliberately FAINTER than a control's would normally be. Two
-// pressures meet here: empty and fully transparent, a text row is a label with nothing
-// beside it and nothing says you can type; but at control strength it reads as a box
-// inside the row's own box, which no slider row has — the slider's fill sits BEHIND the
-// whole row, so a nested panel is the thing that looks out of place in a column of them.
-// 3% hints without enclosing; hover and focus do the rest.
+// NO resting fill. A slider row's fill sits BEHIND the whole row, so any field with a
+// background of its own reads as a box inside a box — and a merely fainter box still
+// reads as one, which is how this landed at 6%, then 3%, then nothing. The field is
+// invisible until you go near it: hover raises it, focus raises it further.
+//
+// The empty state is the cost, and it is paid by the placeholder. Without one, an empty
+// text row would be a label with nothing beside it and no sign you can type — which is
+// why `placeholder` is not optional dressing here.
 import type { ControlSpec } from '~/lib/spacetype/effect'
 
-const props = defineProps<{ value: string; spec: ControlSpec; step: number; editing: boolean }>()
+// `placeholder` defaults to an em dash rather than repeating the label, which already sits
+// on the left of the same row. It is declared (not left to fall through) so it cannot land
+// on the input as a stray attribute, and it is the only prop here beyond the four every
+// renderer takes — StudioRow does not pass it, so the default is what ships.
+const props = withDefaults(
+  defineProps<{ value: string; spec: ControlSpec; step: number; editing: boolean; placeholder?: string }>(),
+  { placeholder: '—' },
+)
 const emit = defineEmits<{ (e: 'update:value', v: string): void }>()
 </script>
 
@@ -19,7 +28,8 @@ const emit = defineEmits<{ (e: 'update:value', v: string): void }>()
     :value="value"
     :aria-label="spec.label"
     spellcheck="false"
-    class="w-32 rounded-[3px] bg-white/[0.03] px-1.5 text-right text-[11px] text-white/90 outline-none transition-colors hover:bg-white/[0.07] focus:bg-white/[0.10]"
+    :placeholder="placeholder"
+    class="w-32 rounded-[3px] bg-transparent px-1.5 text-right text-[11px] text-white/90 placeholder:text-white/25 outline-none transition-colors hover:bg-white/[0.06] focus:bg-white/[0.10]"
     @pointerdown.stop
     @input="emit('update:value', ($event.target as HTMLInputElement).value)"
   />
