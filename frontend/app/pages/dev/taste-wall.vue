@@ -31,6 +31,8 @@ import { drawVectorTypeToCanvas } from '~/lib/vectortype/canvas'
 import { loadVariableFont, type VtFont } from '~/lib/vectortype/font'
 import { DEFAULT_CONFIG, mergeConfig, type VectorTypeConfig } from '~/lib/vectortype/config'
 import { applyTasteToConfigs, CONFIDENCE_FLOOR } from '~/lib/taste/mapping'
+import { tastedPrompt } from '~/lib/taste/styleBlock'
+import { IMAGE_MODELS_BY_ID } from '~/data/image-models'
 import { observedToConfigs, observedFacetProxies } from '~/lib/taste/observedConfigs'
 import observedJson from '~/lib/taste/observed.json'
 import { TASTE_FACETS, type TasteReading } from '~~/shared/taste/facets'
@@ -334,6 +336,49 @@ async function composeFromBrief(brief: { label: string; text: string }): Promise
   return { label: brief.label, img: renderGradientCell(cfg), rationale: res.rationale ?? '' }
 }
 
+// ── Generation row: fixed subject ± taste (diffusion twin of the wall) ──────
+// Endpoint: POST /api/inpaint/text2img — FLUX schnell on Replicate, no LoRA,
+// returns base64 data URLs. Same request shape as useInpaint.text2img. Same
+// seed for both calls so only the prompt differs (the fixed-composition
+// discipline, generation edition).
+const GEN_SEED = 424242
+const GEN_ASPECT = '16:9' // matches the wall's cell aspect
+const GEN_PRICE_PER_IMAGE = IMAGE_MODELS_BY_ID['flux-schnell']?.pricePerImage ?? 0.003
+const GEN_PAIR_PRICE = `~$${(GEN_PRICE_PER_IMAGE * 2).toFixed(3)}`
+
+const genPrompt = ref('a small lighthouse on a rocky coast, morning')
+const genBusy = ref(false)
+interface GenSlot { label: string; prompt: string; img: string; error: string; loading: boolean }
+const genNeutral = reactive<GenSlot>({ label: 'neutral', prompt: '', img: '', error: '', loading: false })
+const genTasted = reactive<GenSlot>({ label: 'tasted', prompt: '', img: '', error: '', loading: false })
+
+async function generatePair() {
+  if (!summaryA.value) { error.value = 'generation pair needs a Fable reading (run "Read with Fable" first)'; return }
+  const subject = genPrompt.value.trim()
+  if (!subject) { error.value = 'subject prompt is empty'; return }
+  genBusy.value = true
+  genNeutral.prompt = subject
+  genTasted.prompt = tastedPrompt(subject, { summary: summaryA.value, palette: paletteA.value, avoids: fableA.value?.avoids })
+  // Sequential on purpose: cheap, and errors stay attributable per image.
+  for (const slot of [genNeutral, genTasted]) {
+    slot.loading = true; slot.img = ''; slot.error = ''
+    try {
+      const res = await $fetch<{ images: string[] }>('/api/inpaint/text2img', {
+        method: 'POST',
+        body: { prompt: slot.prompt, aspect_ratio: GEN_ASPECT, count: 1, seed: GEN_SEED },
+      })
+      slot.img = res.images?.[0] ?? ''
+      if (!slot.img) slot.error = 'endpoint returned no image'
+    }
+    catch (e: any) {
+      // Result-stage failures matter as much as submit-stage ones — show whatever arrived.
+      slot.error = e?.data?.message ?? e?.data?.statusMessage ?? e?.message ?? String(e)
+    }
+    finally { slot.loading = false }
+  }
+  genBusy.value = false
+}
+
 // ── Readings + divergence view models ───────────────────────────────────────
 function facetRows(reading: TasteReading | null) {
   return TASTE_FACETS.map((f) => {
@@ -453,6 +498,45 @@ const fmt = (v: number | null | undefined) => (v === null || v === undefined ? '
           </tr>
         </tbody>
       </table>
+    </div>
+
+    <!-- Generation: fixed subject ± taste -->
+    <div data-gen-section style="margin:0 0 18px">
+      <h2 style="font-size:13px;margin:0 0 4px">Generation — fixed subject ± taste</h2>
+      <p style="font-size:11px;color:#777;margin:0 0 8px;max-width:720px">
+        The diffusion twin of the fixed-composition discipline: one subject prompt, rendered neutral vs. with the
+        Fable reading's style block (summary + palette + avoids), same seed. FLUX schnell via Replicate — paid, so the button says what it costs.
+      </p>
+      <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:10px">
+        <label style="font-size:11px;color:#aaa;display:flex;flex-direction:column;gap:4px">Fixed subject prompt
+          <input v-model="genPrompt" data-gen-prompt spellcheck="false"
+            style="width:340px;background:#15151c;color:#ddd;border:1px solid #2a2a35;border-radius:6px;padding:5px;font-size:11px" />
+        </label>
+        <button :disabled="!summaryA || genBusy || !!busy" data-gen-pair @click="generatePair"
+          :title="summaryA ? '' : 'needs a Fable reading — run “Read with Fable” first'"
+          :style="{ background: summaryA && !genBusy ? '#2a2a35' : '#1a1a22', color: summaryA && !genBusy ? '#ddd' : '#555', border: '1px solid #3a3a48', borderRadius: '8px', padding: '8px 16px', fontWeight: 600, cursor: summaryA && !genBusy ? 'pointer' : 'not-allowed' }">
+          {{ genBusy ? 'generating…' : `Generate pair (paid ${GEN_PAIR_PRICE})` }}
+        </button>
+        <span v-if="!summaryA" style="font-size:11px;color:#666">needs a Fable reading first</span>
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <div v-for="g in [genNeutral, genTasted]" :key="g.label" :style="{ width: CELL_W + 'px' }">
+          <div style="font-size:11px;color:#aaa;font-weight:600;margin-bottom:3px">{{ g.label }}</div>
+          <img v-if="g.img" :src="g.img" :data-gen-img="g.label"
+            :style="{ width: CELL_W + 'px', maxWidth: 'none', display: 'block', borderRadius: '6px', background: '#000' }" />
+          <div v-else :data-gen-empty="g.label"
+            :style="{ width: CELL_W + 'px', height: CELL_H + 'px', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px dashed #2a2a35', borderRadius: '6px', color: '#555', fontSize: '11px' }">
+            {{ g.loading ? 'generating…' : g.error ? 'failed' : 'not run' }}
+          </div>
+          <div v-if="g.error" :data-gen-error="g.label" style="color:#e66;font-size:11px;margin-top:4px;line-height:1.4">{{ g.error }}</div>
+        </div>
+      </div>
+      <details v-if="genTasted.prompt" data-gen-prompts style="margin-top:8px;max-width:740px">
+        <summary style="font-size:12px;color:#888;cursor:pointer">Prompts sent</summary>
+        <pre style="font-size:10.5px;color:#9a9;background:#0f0f14;border:1px solid #22222c;border-radius:6px;padding:10px;white-space:pre-wrap;overflow-x:auto">neutral: {{ genNeutral.prompt }}
+
+tasted: {{ genTasted.prompt }}</pre>
+      </details>
     </div>
 
     <!-- Fable: what it sees -->
