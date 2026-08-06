@@ -261,12 +261,12 @@ function onValuePointerDown(e: PointerEvent) {
          transparent on a node, then removed once the real cause was found — recessive
          nodes were rendering at `opacity-70`, which is now gone (see ComfyNode.vue). Fixing
          the cause beat compensating for it in every studio. -->
-    <!-- 4px. Every input and button in the app is 4px — that is the rule now, chosen
-         directly rather than derived. The card follows it rather than the other way
-         round: the shell is 12 so that 12 - 8 inset = 4 keeps the corners concentric,
-         which is what stops the bottom of a node pinching against its run bar. -->
+    <!-- 6px. Every input and button in the app is 6px — the rule is chosen directly, and
+         the card follows it rather than the other way round: the shell is 14 so that
+         14 - 8 inset = 6 keeps the corners concentric, which is what stops the bottom of
+         a node pinching against its run bar. 4px was tried first and read too sharp. -->
     <div
-      class="group relative flex h-7 select-none items-center justify-between overflow-hidden rounded-[4px] bg-white/[0.05] px-2.5"
+      class="group relative flex h-7 select-none items-center justify-between overflow-hidden rounded-[6px] bg-white/[0.05] px-2.5"
       :class="numeric && !bound && !editing ? 'cursor-ew-resize' : ''"
       @pointerdown="onPointerDown"
       @dblclick="onReset"

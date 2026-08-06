@@ -80,16 +80,16 @@ function clearSlot(event: MouseEvent) {
   <!-- No card border and no card fill. The wrapper is now only what the clear (×)
        needs — it can't nest inside the launcher <button>, so it renders as an
        absolutely-positioned SIBLING and something has to be `relative`. The launcher
-       and the strength row carry their own fill instead, at the app's 4px control
+       and the strength row carry their own fill instead, at the app's 6px control
        radius, and sit 6px apart like any two items in a group. A bordered box holding
        a fill holding a row was three nested surfaces for two controls. -->
   <div class="nopan nodrag relative flex w-full flex-col gap-1.5">
     <button
-      class="w-full flex items-center gap-2 px-2 py-1.5 rounded-[4px] bg-white/[0.05] hover:bg-white/[0.08] cursor-pointer text-left group transition-colors"
+      class="w-full flex items-center gap-2 px-2 py-1.5 rounded-[6px] bg-white/[0.05] hover:bg-white/[0.08] cursor-pointer text-left group transition-colors"
       :title="selected ? `${selected} — click to change ${noun}` : `Browse your ${noun === 'Character' ? 'Characters' : 'Styles'}`"
       @click="openGallery"
     >
-      <span class="size-7 rounded-[4px] shrink-0 flex items-center justify-center bg-white/[0.06] overflow-hidden ring-1 ring-inset ring-white/10">
+      <span class="size-7 rounded-[6px] shrink-0 flex items-center justify-center bg-white/[0.06] overflow-hidden ring-1 ring-inset ring-white/10">
         <img
           v-if="coverSrc && !coverError"
           :src="coverSrc"

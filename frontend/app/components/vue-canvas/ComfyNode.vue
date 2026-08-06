@@ -1624,7 +1624,7 @@ watch(previewImages, (urls) => {
            state with the inspector's seed widget. -->
       <button
         v-if="hasSeed"
-        class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center transition-colors cursor-pointer"
+        class="nopan nodrag shrink-0 size-5 rounded-[6px] flex items-center justify-center transition-colors cursor-pointer"
         :class="seedLocked
           ? 'text-amber-300 bg-amber-400/15'
           : 'text-white/40 hover:text-white/80 hover:bg-white/[0.08]'"
@@ -1639,7 +1639,7 @@ watch(previewImages, (urls) => {
            (run→look→fix, on-demand). Only once there's an output to judge. -->
       <button
         v-if="data.images?.length"
-        class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center text-white/40 hover:text-white/80 hover:bg-white/[0.08] transition-colors cursor-pointer"
+        class="nopan nodrag shrink-0 size-5 rounded-[6px] flex items-center justify-center text-white/40 hover:text-white/80 hover:bg-white/[0.08] transition-colors cursor-pointer"
         title="Critique result — look at the output and suggest fixes"
         @click.stop="critiqueResult"
       >
@@ -1649,7 +1649,7 @@ watch(previewImages, (urls) => {
            mechanical params (seed / aspect / advanced). Only when it has some. -->
       <button
         v-if="hasInspectorSettings"
-        class="nopan nodrag shrink-0 size-5 rounded flex items-center justify-center text-white/40 hover:text-white/80 hover:bg-white/[0.08] transition-colors cursor-pointer"
+        class="nopan nodrag shrink-0 size-5 rounded-[6px] flex items-center justify-center text-white/40 hover:text-white/80 hover:bg-white/[0.08] transition-colors cursor-pointer"
         title="Node settings"
         @click.stop="openInspector"
       >
@@ -1704,7 +1704,7 @@ watch(previewImages, (urls) => {
     <!-- Edit as Frame: hand the split layers to a Frame artifact -->
     <div v-if="showEditAsFrame" class="border-t border-[#2a2a2a] px-2 py-3">
       <button
-        class="w-full flex items-center justify-center gap-1.5 rounded py-1.5 text-[11px] font-medium transition-colors"
+        class="w-full flex items-center justify-center gap-1.5 rounded-[6px] py-1.5 text-[11px] font-medium transition-colors"
         :class="editAsFrameReady
           ? 'bg-white/[0.07] hover:bg-white/[0.14] text-white/85 cursor-pointer'
           : 'bg-white/[0.03] text-white/30 cursor-not-allowed'"
@@ -1864,7 +1864,7 @@ watch(previewImages, (urls) => {
     <!-- Compositor: open the editor modal -->
     <div v-if="data.nodeType === 'Compositor'" class="px-2 pb-2 nopan nodrag">
       <button
-        class="flex items-center justify-center gap-1.5 w-full h-7 rounded bg-white/[0.06] hover:bg-white/[0.1] text-white/70 hover:text-white/90 text-xs transition-colors cursor-pointer border border-white/10"
+        class="flex items-center justify-center gap-1.5 w-full h-7 rounded-[6px] bg-white/[0.06] hover:bg-white/[0.1] text-white/70 hover:text-white/90 text-xs transition-colors cursor-pointer border border-white/10"
         @click="openCompositorEditor"
       >
         Open editor
@@ -1874,7 +1874,7 @@ watch(previewImages, (urls) => {
     <!-- Ascii: open the glyph-dither options panel -->
     <div v-if="data.nodeType === 'Ascii'" class="px-2 pb-2 nopan nodrag">
       <button
-        class="flex items-center justify-center gap-1.5 w-full h-7 rounded bg-white/[0.06] hover:bg-white/[0.1] text-white/70 hover:text-white/90 text-xs transition-colors cursor-pointer border border-white/10"
+        class="flex items-center justify-center gap-1.5 w-full h-7 rounded-[6px] bg-white/[0.06] hover:bg-white/[0.1] text-white/70 hover:text-white/90 text-xs transition-colors cursor-pointer border border-white/10"
         @click="openAsciiOptions"
       >
         More options
@@ -1884,7 +1884,7 @@ watch(previewImages, (urls) => {
     <!-- Crossfade: open the visual editor modal -->
     <div v-if="data.nodeType === 'VideoCrossfade'" class="px-2 pb-2 nopan nodrag">
       <button
-        class="flex items-center justify-center gap-1.5 w-full h-7 rounded bg-white/[0.06] hover:bg-white/[0.1] text-white/70 hover:text-white/90 text-xs transition-colors cursor-pointer border border-white/10"
+        class="flex items-center justify-center gap-1.5 w-full h-7 rounded-[6px] bg-white/[0.06] hover:bg-white/[0.1] text-white/70 hover:text-white/90 text-xs transition-colors cursor-pointer border border-white/10"
         @click="openCrossfadeEditor"
       >
         Open editor
@@ -1910,7 +1910,7 @@ watch(previewImages, (urls) => {
         @change="handleUpload"
       />
       <button
-        class="flex items-center justify-center gap-1.5 w-full h-7 rounded bg-white/[0.05] hover:bg-white/[0.1] border border-white/10 text-xs text-white/80 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-wait"
+        class="flex items-center justify-center gap-1.5 w-full h-7 rounded-[6px] bg-white/[0.05] hover:bg-white/[0.1] border border-white/10 text-xs text-white/80 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-wait"
         :disabled="uploading"
         @click="fileInputRef?.click()"
       >
@@ -1959,7 +1959,7 @@ watch(previewImages, (urls) => {
         />
         <!-- Download current -->
         <button
-          class="absolute top-1.5 right-1.5 size-7 rounded bg-black/55 hover:bg-black/75 backdrop-blur-sm text-white/85 hover:text-white flex items-center justify-center transition-colors cursor-pointer"
+          class="absolute top-1.5 right-1.5 size-7 rounded-[6px] bg-black/55 hover:bg-black/75 backdrop-blur-sm text-white/85 hover:text-white flex items-center justify-center transition-colors cursor-pointer"
           title="Download this image"
           @click.stop="downloadCarouselImage(
             displayedImages[Math.min(carouselIndex, displayedImages.length - 1)]!,
@@ -2121,7 +2121,7 @@ watch(previewImages, (urls) => {
     <div v-if="showRunButton" ref="runMenuRoot" class="relative px-2 pb-2 pt-3">
       <div class="flex items-stretch gap-px">
         <button
-          class="nopan nodrag flex-1 h-7 rounded-l-[4px] flex items-center justify-center gap-1.5 text-[11px] font-medium transition-[transform,background-color,color] active:scale-[0.96] cursor-pointer"
+          class="nopan nodrag flex-1 h-7 rounded-l-[6px] flex items-center justify-center gap-1.5 text-[11px] font-medium transition-[transform,background-color,color] active:scale-[0.96] cursor-pointer"
           :class="(isMuted || isBypassed)
             ? 'bg-white/[0.04] text-white/25 cursor-not-allowed active:scale-100'
             : data.running
@@ -2142,7 +2142,7 @@ watch(previewImages, (urls) => {
         </button>
         <button
           aria-label="Run scope options"
-          class="nopan nodrag w-7 h-7 rounded-r-[4px] flex items-center justify-center transition-colors cursor-pointer"
+          class="nopan nodrag w-7 h-7 rounded-r-[6px] flex items-center justify-center transition-colors cursor-pointer"
           :class="(isMuted || isBypassed || data.running)
             ? 'bg-white/[0.04] text-white/25 cursor-not-allowed'
             : 'bg-white/90 text-neutral-900 hover:bg-white'"
@@ -2158,28 +2158,28 @@ watch(previewImages, (urls) => {
         v-if="runMenuOpen"
         class="absolute left-2.5 right-2.5 bottom-full mb-1 z-50 rounded-lg border border-white/10 bg-neutral-900/95 backdrop-blur-md p-1 shadow-xl"
       >
-        <button class="nopan nodrag w-full text-left rounded px-2 py-1.5 flex gap-2 items-start hover:bg-white/[0.06] cursor-pointer" @click.stop="playThisNode">
+        <button class="nopan nodrag w-full text-left rounded-[6px] px-2 py-1.5 flex gap-2 items-start hover:bg-white/[0.06] cursor-pointer" @click.stop="playThisNode">
           <RefreshCw class="size-3.5 mt-0.5 text-white/80 shrink-0" />
           <span class="min-w-0">
             <span class="block text-[11px] font-medium text-white/90">Run this node</span>
             <span class="block text-[10px] text-white/45 leading-snug">Re-render this node, upstream stays cached</span>
           </span>
         </button>
-        <button v-if="directExecutionEnabled" class="nopan nodrag w-full text-left rounded px-2 py-1.5 flex gap-2 items-start hover:bg-white/[0.06] cursor-pointer" @click.stop="rerollTakesParallel">
+        <button v-if="directExecutionEnabled" class="nopan nodrag w-full text-left rounded-[6px] px-2 py-1.5 flex gap-2 items-start hover:bg-white/[0.06] cursor-pointer" @click.stop="rerollTakesParallel">
           <Layers class="size-3.5 mt-0.5 text-white/80 shrink-0" />
           <span class="min-w-0">
             <span class="block text-[11px] font-medium text-white/90">Re-render ×4 (parallel)</span>
             <span class="block text-[10px] text-white/45 leading-snug">Four fresh takes at once across the cloud pool</span>
           </span>
         </button>
-        <button class="nopan nodrag w-full text-left rounded px-2 py-1.5 flex gap-2 items-start hover:bg-white/[0.06] cursor-pointer" @click.stop="runFromStart">
+        <button class="nopan nodrag w-full text-left rounded-[6px] px-2 py-1.5 flex gap-2 items-start hover:bg-white/[0.06] cursor-pointer" @click.stop="runFromStart">
           <SkipBack class="size-3.5 mt-0.5 text-white/60 shrink-0" />
           <span class="min-w-0">
             <span class="block text-[11px] font-medium text-white/90">Rebuild from start → here</span>
             <span class="block text-[10px] text-white/45 leading-snug">Fresh run of everything before, new seeds</span>
           </span>
         </button>
-        <button class="nopan nodrag w-full text-left rounded px-2 py-1.5 flex gap-2 items-start hover:bg-white/[0.06] cursor-pointer" @click.stop="runDownstream">
+        <button class="nopan nodrag w-full text-left rounded-[6px] px-2 py-1.5 flex gap-2 items-start hover:bg-white/[0.06] cursor-pointer" @click.stop="runDownstream">
           <SkipForward class="size-3.5 mt-0.5 text-white/60 shrink-0" />
           <span class="min-w-0">
             <span class="block text-[11px] font-medium text-white/90">Run here → end</span>
@@ -2195,18 +2195,18 @@ watch(previewImages, (urls) => {
 
 <style scoped>
 .comfy-node {
-  /* 12px. It matches the capsule, so the corner does not change shape halfway through
-     the expand, and 12 - 8 inset = 4 is the radius every input and button uses — so the
-     corners stay concentric and the bottom does not pinch against the run bar. The 4px
+  /* 14px. It matches the capsule, so the corner does not change shape halfway through
+     the expand, and 14 - 8 inset = 6 is the radius every input and button uses — so the
+     corners stay concentric and the bottom does not pinch against the run bar. The 6px
      came first here: it is the app-wide control radius, and the shell was set to suit
-     it. (History: 13 = 7 + 6, then 16/8, now 12/4.) See NodeCapsule.vue, which must
-     stay equal. */
-  border-radius: 12px;
+     it. (History: 13 = 7 + 6, then 16/8, then 12/4 which read too sharp, now 14/6.)
+     See NodeCapsule.vue, which must stay equal. */
+  border-radius: 14px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), 0 1px 4px rgba(0, 0, 0, 0.2);
 }
 .node-head {
-  border-top-left-radius: 12px;
-  border-top-right-radius: 12px;
+  border-top-left-radius: 14px;
+  border-top-right-radius: 14px;
 }
 
 /* The header's icon and title sit at exactly the capsule's offsets — 7px in,
@@ -2224,7 +2224,7 @@ watch(previewImages, (urls) => {
   justify-content: center;
   width: 26px;
   height: 26px;
-  border-radius: 4px;
+  border-radius: 6px;
   background: rgba(255, 255, 255, 0.07);
   color: rgba(255, 255, 255, 0.72);
 }
