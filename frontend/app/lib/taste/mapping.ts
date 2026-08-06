@@ -172,24 +172,32 @@ export function applyTasteToGradient(
   const texture = facetValue(reading, 'texture')
   if (texture !== null) setByPath(cfg, 'post.grain', texture > 0.3)
 
-  if (palette.length) {
-    const ramp = [...palette].filter(p => /^#[0-9a-fA-F]{6}$/.test(p)).sort((a, b) => relLuma(a) - relLuma(b))
-    if (ramp.length >= 2) {
-      const light = facetValue(reading, 'valueBias') ?? 0.5
-      const ordered = light >= 0.5 ? [...ramp].reverse() : ramp // ground-first ramps read better
-      const stops = getByPath(cfg, 'layers.0.color.stops') as Array<{ pos: number; color: string }> | undefined
-      if (Array.isArray(stops) && stops.length) {
-        stops.forEach((s, i) => { s.color = ordered[Math.min(i, ordered.length - 1)]! })
-      }
-      else {
-        setByPath(cfg, 'layers.0.color.stops', ordered.slice(0, 4).map((color, i, arr) => ({
-          pos: arr.length === 1 ? 0 : i / (arr.length - 1), color,
-        })))
-      }
-      setByPath(cfg, 'canvas.background', light >= 0.6 ? ramp[ramp.length - 1]! : ramp[0]!)
-    }
-  }
+  enforcePaletteOnGradient(cfg, palette, facetValue(reading, 'valueBias') ?? 0.5)
   return cfg
+}
+
+/**
+ * Deterministic palette enforcement on a gradient config, IN PLACE: stops
+ * recolored from the board's palette in luminance order, background pinned to
+ * the value bias. The compose-then-enforce step (spike run 4): the agent
+ * proposes structure, the kit's palette disposes — same doctrine as the
+ * diffusion post-pass, applied procedurally.
+ */
+export function enforcePaletteOnGradient(cfg: GradientConfig, palette: string[], lightBias: number): void {
+  if (!palette.length) return
+  const ramp = [...palette].filter(p => /^#[0-9a-fA-F]{6}$/.test(p)).sort((a, b) => relLuma(a) - relLuma(b))
+  if (ramp.length < 2) return
+  const ordered = lightBias >= 0.5 ? [...ramp].reverse() : ramp // ground-first ramps read better
+  const stops = getByPath(cfg, 'layers.0.color.stops') as Array<{ pos: number; color: string }> | undefined
+  if (Array.isArray(stops) && stops.length) {
+    stops.forEach((s, i) => { s.color = ordered[Math.min(i, ordered.length - 1)]! })
+  }
+  else {
+    setByPath(cfg, 'layers.0.color.stops', ordered.slice(0, 4).map((color, i, arr) => ({
+      pos: arr.length === 1 ? 0 : i / (arr.length - 1), color,
+    })))
+  }
+  setByPath(cfg, 'canvas.background', lightBias >= 0.6 ? ramp[ramp.length - 1]! : ramp[0]!)
 }
 
 /**

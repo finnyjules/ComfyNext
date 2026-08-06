@@ -30,7 +30,7 @@ import { fetchShaderFxCatalog, getEffectSync } from '~/lib/shaderfx/catalog'
 import { drawVectorTypeToCanvas } from '~/lib/vectortype/canvas'
 import { loadVariableFont, type VtFont } from '~/lib/vectortype/font'
 import { DEFAULT_CONFIG, mergeConfig, type VectorTypeConfig } from '~/lib/vectortype/config'
-import { applyTasteToConfigs, CONFIDENCE_FLOOR } from '~/lib/taste/mapping'
+import { applyTasteToConfigs, CONFIDENCE_FLOOR, enforcePaletteOnGradient } from '~/lib/taste/mapping'
 import { tastedPrompt } from '~/lib/taste/styleBlock'
 import { IMAGE_MODELS_BY_ID } from '~/data/image-models'
 import { observedToConfigs, observedFacetProxies } from '~/lib/taste/observedConfigs'
@@ -322,9 +322,12 @@ async function composeFromBrief(brief: { label: string; text: string }): Promise
   const config = cloneConfig(ensureConfigDefaults(gradientDefaultConfig(GRADIENT_SEED)))
   const controls = gradientAgentControls(config, { includePreset: true })
   const described = describeControls(controls, makeConfigParams(() => config, () => 0))
+  // Run-4 fix: the avoids ride along with every composition brief.
+  const avoids = fableA.value?.avoids ?? []
+  const phrase = avoids.length ? `${brief.text} — avoid: ${avoids.join(', ')}` : brief.text
   const res = await $fetch<{ changes: { key: string; value: ParamValue }[]; rationale: string }>('/api/vibe', {
     method: 'POST',
-    body: { apiKey: apiKey.value.trim(), controls: described, phrase: brief.text, effectLabel: 'Gradient studio', guidance: GRADIENT_GUIDANCE },
+    body: { apiKey: apiKey.value.trim(), controls: described, phrase, effectLabel: 'Gradient studio', guidance: GRADIENT_GUIDANCE },
   })
   const raw: Record<string, ParamValue> = {}
   for (const c of res.changes ?? []) raw[c.key] = c.value
@@ -333,7 +336,12 @@ async function composeFromBrief(brief: { label: string; text: string }): Promise
   if (typeof patch.preset === 'string') { const swapped = buildGradientPreset(patch.preset); if (swapped) cfg = swapped }
   const params = makeConfigParams(() => cfg, () => 0)
   for (const [k, v] of Object.entries(patch)) { if (k !== 'preset') params[k] = v }
-  return { label: brief.label, img: renderGradientCell(cfg), rationale: res.rationale ?? '' }
+  // Run-4 fix: compose-then-enforce — the agent proposes structure, the
+  // board's extracted palette disposes (stops + background), so a preset's
+  // leftover dark stops can never override a bright board again.
+  const lightBias = fableA.value?.facets.valueBias?.value ?? readingA.value?.facets.valueBias?.value ?? 0.5
+  enforcePaletteOnGradient(cfg, paletteA.value, lightBias)
+  return { label: brief.label, img: renderGradientCell(cfg), rationale: `${res.rationale ?? ''} · palette enforced` }
 }
 
 // ── Generation row: fixed subject ± taste (diffusion twin of the wall) ──────
