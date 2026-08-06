@@ -640,17 +640,17 @@ function formatLabel(name: string): string {
           <template #value>
             <input
               type="number"
-              class="w-[86px] rounded bg-white/5 px-1.5 h-6 text-[11px] text-foreground text-center tabular-nums outline-none focus-visible:ring-1 focus-visible:ring-white/25 [&::-webkit-inner-spin-button]:appearance-none"
+              class="w-[86px] rounded-[3px] bg-white/[0.03] px-1.5 h-6 text-[11px] text-foreground text-right tabular-nums outline-none transition-colors hover:bg-white/[0.07] focus:bg-white/[0.10] [&::-webkit-inner-spin-button]:appearance-none"
               :value="modelValue"
               @pointerdown.stop
               @input="emit('update:modelValue', Number(($event.target as HTMLInputElement).value))"
             />
             <button
               type="button"
-              class="shrink-0 size-6 flex items-center justify-center rounded border cursor-pointer transition-[transform,background-color,color,border-color] active:scale-[0.96]"
+              class="shrink-0 size-6 flex items-center justify-center rounded-[3px] cursor-pointer transition-[transform,background-color,color] active:scale-[0.96]"
               :class="isFixed
-                ? 'bg-amber-500/15 border-amber-400/30 text-amber-200 hover:bg-amber-500/25'
-                : 'bg-white/5 border-white/10 text-muted-foreground hover:text-foreground hover:bg-accent'"
+                ? 'bg-amber-500/15 text-amber-200 hover:bg-amber-500/25'
+                : 'text-white/40 hover:text-white/85 hover:bg-white/[0.08]'"
               :title="isFixed
                 ? 'Fixed — seed stays put on Run. Click to switch back to random.'
                 : 'Random — Run picks a new seed each time. Click to lock the current value.'"
@@ -672,7 +672,7 @@ function formatLabel(name: string): string {
           <template #value>
             <input
               type="number"
-              class="w-[86px] rounded bg-white/5 px-1.5 h-6 text-[11px] text-foreground text-center tabular-nums outline-none focus-visible:ring-1 focus-visible:ring-white/25 [&::-webkit-inner-spin-button]:appearance-none"
+              class="w-[86px] rounded-[3px] bg-white/[0.03] px-1.5 h-6 text-[11px] text-foreground text-right tabular-nums outline-none transition-colors hover:bg-white/[0.07] focus:bg-white/[0.10] [&::-webkit-inner-spin-button]:appearance-none"
               :value="modelValue"
               :min="widgetDef.min"
               :max="widgetDef.max"
