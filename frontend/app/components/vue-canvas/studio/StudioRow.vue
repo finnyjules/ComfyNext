@@ -69,10 +69,14 @@ const handlePct = computed(() => fillFraction(num.value, min.value, max.value) *
  * Ticks as one repeating gradient rather than N elements: a row is 260px of a canvas that
  * can hold hundreds of nodes, and eight spans per row is eight spans too many. Eight
  * intervals reads as a scale without turning into a ruler.
+ *
+ * Deliberately quiet — 12% white, and SHORTER than the handle (8px against 14px in a 28px
+ * row). The ticks are a ruler you read past; the handle is the thing you are moving, so it
+ * has to win on both height and brightness or the row reads as a row of ticks.
  */
 const TICK_EVERY = 12.5
 const tickStyle = {
-  backgroundImage: `repeating-linear-gradient(to right, rgba(255,255,255,0.22) 0 1px, transparent 1px ${TICK_EVERY}%)`,
+  backgroundImage: `repeating-linear-gradient(to right, rgba(255,255,255,0.12) 0 1px, transparent 1px ${TICK_EVERY}%)`,
 }
 
 /**
@@ -307,12 +311,12 @@ function onValuePointerDown(e: PointerEvent) {
            of a drag would be a lie. -->
       <template v-if="numeric && !bound">
         <div
-          class="pointer-events-none absolute inset-y-1.5 left-0 right-0 opacity-0 transition-opacity duration-100 group-hover:opacity-100"
+          class="pointer-events-none absolute inset-y-[10px] left-0 right-0 opacity-0 transition-opacity duration-200 ease-out group-hover:opacity-100"
           :class="dragging ? 'opacity-100' : ''"
           :style="tickStyle"
         ></div>
         <div
-          class="pointer-events-none absolute top-1/2 h-3.5 w-[2px] -translate-y-1/2 rounded-full opacity-0 transition-[opacity,background-color] duration-100 group-hover:opacity-100"
+          class="pointer-events-none absolute top-1/2 h-3.5 w-[2px] -translate-y-1/2 rounded-full opacity-0 transition-[opacity,background-color] [transition-duration:200ms,120ms] ease-out group-hover:opacity-100"
           :class="dragging ? 'bg-white opacity-100' : 'bg-white/60'"
           :style="{ left: `calc(${handlePct}% - 1px)` }"
         ></div>
