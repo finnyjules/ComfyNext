@@ -4,8 +4,8 @@
 import { endLabelsFor, isSliderRange } from '~/lib/canvas/widgetEndLabels'
 // The three row components are imported by PATH rather than left to Nuxt's auto-import.
 // Auto-import COLLAPSES a duplicated path segment — `studio/StudioSelect.vue` resolves as
-// `VueCanvasStudioSelect`, not `StudioSelect` the way `widgets/WidgetNumber`
-// gives `VueCanvasWidgetsWidgetNumber` — and a name that doesn't resolve renders NOTHING,
+// `VueCanvasStudioSelect`, not `StudioSelect` the way `widgets/WidgetText`
+// gives `VueCanvasWidgetsWidgetText` — and a name that doesn't resolve renders NOTHING,
 // with no error in the console. That failure was silent for a whole render pass here.
 import StudioSelect from '~/components/vue-canvas/studio/StudioSelect.vue'
 import StudioSwitch from '~/components/vue-canvas/studio/StudioSwitch.vue'

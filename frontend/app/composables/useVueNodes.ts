@@ -131,7 +131,7 @@ export function getWidgetDefs(nodeType: string): any[] {
       // Seed-type INT inputs have an extra "control_after_generate" value
       // in LiteGraph's widgets_values. Add a hidden placeholder to keep
       // widgetDefs aligned with widgetsValues. Default to "randomize" so
-      // new generators randomize their seed on each Run — `WidgetSeed.vue`
+      // new generators randomize their seed on each Run — `ComfyNodeWidget`
       // lets the user flip this to "fixed" via a lock icon. The slot is added
       // whenever ComfyUI's frontend would (explicit flag OR seed/noise_seed
       // name) — a name-only seed without the slot shifts every later widget by

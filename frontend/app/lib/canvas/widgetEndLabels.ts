@@ -2,10 +2,10 @@
  * Semantic end-labels for a node's numeric widgets: [toward-min, toward-max].
  *
  * Only listed widgets get them, which is what keeps generic numeric widgets
- * uncluttered. Shared rather than inlined because two components need the same
- * map now: `WidgetNumber` draws them under its own rail, and `ComfyNodeWidget`
- * draws them under a `StudioRow` for the bounded numbers it routes to the row.
- * One copy, so a widget can never gain labels in one path and not the other.
+ * uncluttered. `ComfyNodeWidget` is the only caller now that every generic
+ * widget renders as a `StudioRow`, which draws the labels under the row for
+ * the bounded numbers it routes there. The map and the range test stay out
+ * here as plain data and a pure predicate rather than buried in the component.
  */
 export const WIDGET_END_LABELS: Record<string, [string, string]> = {
   lora_scale: ['subtle', 'strong'],
@@ -23,8 +23,7 @@ export function endLabelsFor(name?: string): [string, string] | null {
 
 /**
  * Whether a numeric widget's range is finite enough to draw as a filled track.
- * Mirrors `WidgetNumber`'s own `useSlider` test exactly — an unbounded or absurd
- * range keeps a plain number field in both paths.
+ * An unbounded or absurd range keeps a plain number field instead.
  */
 export function isSliderRange(min?: number, max?: number): boolean {
   if (min == null || max == null || !isFinite(min) || !isFinite(max)) return false
