@@ -39,7 +39,6 @@ import { saveEffectThumbnail } from '~/composables/useEffectThumbnails'
 import { SCENE_CONTENT_KEYS, type Scene } from '~/lib/spacetype/scene'
 import CanvasContextMenu, { type MenuItem } from '~/components/vue-canvas/CanvasContextMenu.vue'
 import VariableGlyph from '~/components/vue-canvas/studio/VariableGlyph.vue'
-import FillSwatch from '~/components/vue-canvas/studio/FillSwatch.vue'
 import { fillSwatchKey, parseFillSwatchKey, writeFillSwatch, type FillSwatchField } from '~/lib/spacetype/fillSwatchPath'
 import { useStudioVarBindings } from '~/composables/useStudioVarBindings'
 import { controlKindToVariableType, type StudioControlDesc } from '~/lib/collection/studioBindables'
@@ -1485,41 +1484,45 @@ async function exportWebEmbed() {
                         <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></svg>
                       </button>
                     </div>
-                    <!-- colours: fill pair grouped left, text colour pushed right. The A/B pair
-                         is meaningless for a shader fill (its look comes from the nested input
-                         fill below instead), so it's hidden rather than shown-but-inert; Text
-                         stays — it's an independent solid colour used by some effects regardless
-                         of the fill pattern (see Fill's own doc). -->
-                    <div class="mt-2.5 flex items-end gap-2.5 pl-6">
-                      <FillSwatch
+                    <!-- Colours as rows, not caption-over-swatch tiles in a horizontal strip.
+                         The A/B pair is meaningless for a shader fill (its look comes from the
+                         nested input fill below), so it's hidden rather than shown inert; Text
+                         is an independent solid colour some effects use regardless of the fill
+                         pattern (see Fill's own doc), so it always shows. Each is a bindable
+                         colour row — the variable glyph + pink bound row is StudioRow's now,
+                         which is what FillSwatch used to hand-roll. -->
+                    <div class="mt-2 space-y-1.5 pl-6">
+                      <StudioColorField
                         v-if="f.type !== 'shader'"
                         :label="fillNeedsB(f) ? 'Color 1' : 'Fill'"
-                        :color="f.a"
+                        :model-value="f.a"
                         :bound="boundColumnFor(swatchKey(i, 'a'))"
-                        @update:color="(v: string) => { f.a = v }"
+                        :bindable="true"
+                        @update:model-value="(v: string) => { f.a = v }"
                         @promote="promote(swatchDesc(i, 'a', fillNeedsB(f) ? 'Color 1' : 'Fill'), f.a)"
                         @menu="(e: MouseEvent) => openVarMenuDesc(e, swatchDesc(i, 'a', fillNeedsB(f) ? 'Color 1' : 'Fill'), f.a)"
-                        @edit="goToCollection"
+                        @go-to-collection="goToCollection"
                       />
-                      <FillSwatch
+                      <StudioColorField
                         v-if="f.type !== 'shader' && fillNeedsB(f)"
                         label="Color 2"
-                        :color="f.b"
+                        :model-value="f.b"
                         :bound="boundColumnFor(swatchKey(i, 'b'))"
-                        @update:color="(v: string) => { f.b = v }"
+                        :bindable="true"
+                        @update:model-value="(v: string) => { f.b = v }"
                         @promote="promote(swatchDesc(i, 'b', 'Color 2'), f.b)"
                         @menu="(e: MouseEvent) => openVarMenuDesc(e, swatchDesc(i, 'b', 'Color 2'), f.b)"
-                        @edit="goToCollection"
+                        @go-to-collection="goToCollection"
                       />
-                      <div class="flex-1"></div>
-                      <FillSwatch
+                      <StudioColorField
                         label="Text"
-                        :color="f.textColor"
+                        :model-value="f.textColor"
                         :bound="boundColumnFor(swatchKey(i, 'textColor'))"
-                        @update:color="(v: string) => { f.textColor = v }"
+                        :bindable="true"
+                        @update:model-value="(v: string) => { f.textColor = v }"
                         @promote="promote(swatchDesc(i, 'textColor', 'Text'), f.textColor)"
                         @menu="(e: MouseEvent) => openVarMenuDesc(e, swatchDesc(i, 'textColor', 'Text'), f.textColor)"
-                        @edit="goToCollection"
+                        @go-to-collection="goToCollection"
                       />
                     </div>
                     <!-- pattern controls (only the ones this type uses) -->

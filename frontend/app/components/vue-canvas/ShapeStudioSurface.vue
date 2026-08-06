@@ -30,7 +30,6 @@ import StudioSwitch from '~/components/vue-canvas/studio/StudioSwitch.vue'
 import StudioSelect from '~/components/vue-canvas/studio/StudioSelect.vue'
 import StudioControlPanel from '~/components/vue-canvas/studio/StudioControlPanel.vue'
 import VariableGlyph from '~/components/vue-canvas/studio/VariableGlyph.vue'
-import FillSwatch from '~/components/vue-canvas/studio/FillSwatch.vue'
 import CanvasContextMenu from '~/components/vue-canvas/CanvasContextMenu.vue'
 import SweepPopover from '~/components/vue-canvas/studio/SweepPopover.vue'
 import { useStudioAgent } from '~/composables/useStudioAgent'
@@ -595,23 +594,23 @@ async function onImportFile(e: Event) {
              task — kept hand-written since they're hidden while fill.type is 'shader'
              (a guard SHAPE_CONTROLS' `when` can't express, being unrelated to fillMode). -->
         <template #control-fill.a="slotProps">
-          <FillSwatch
+          <StudioColorField
             v-if="config.fill.type !== 'shader'"
-            label="Color 1" :color="config.fill.a" :bound="boundColumnFor('fill.a')"
-            @update:color="(v: string) => setShapeControl('fill.a', v)"
+            label="Color 1" :model-value="config.fill.a" :bound="boundColumnFor('fill.a')" :bindable="true"
+            @update:model-value="(v: string) => setShapeControl('fill.a', v)"
             @promote="promoteShapeControl(slotControl(slotProps))"
             @menu="(e: MouseEvent) => openVarMenu(e, slotControl(slotProps))"
-            @edit="goToCollection"
+            @go-to-collection="goToCollection"
           />
         </template>
         <template #control-fill.b="slotProps">
-          <FillSwatch
+          <StudioColorField
             v-if="config.fill.type !== 'shader'"
-            label="Color 2" :color="config.fill.b" :bound="boundColumnFor('fill.b')"
-            @update:color="(v: string) => setShapeControl('fill.b', v)"
+            label="Color 2" :model-value="config.fill.b" :bound="boundColumnFor('fill.b')" :bindable="true"
+            @update:model-value="(v: string) => setShapeControl('fill.b', v)"
             @promote="promoteShapeControl(slotControl(slotProps))"
             @menu="(e: MouseEvent) => openVarMenu(e, slotControl(slotProps))"
-            @edit="goToCollection"
+            @go-to-collection="goToCollection"
           />
         </template>
         <!-- Fill: shader effect editor (dynamically-keyed per-effect params — no fixed
