@@ -1379,26 +1379,30 @@ async function exportWebEmbed() {
       <p v-if="inspectorTab === 'motion' && !motionControlCount" class="px-1 pt-2 text-[11px] text-white/40">
         This effect has no motion parameters.
       </p>
-      <div v-show="inspectorTab === 'design'" class="rounded-lg border border-white/[0.07] bg-white/[0.03] px-3 py-2.5">
-          <label class="mb-1 block text-[11px] text-white/50">Effect</label>
+      <div v-show="inspectorTab === 'design'" class="flex flex-col gap-2 rounded-lg border border-white/[0.07] bg-white/[0.03] px-3 py-2.5">
+          <!-- Effect: a launcher row like every other picker — label left, effect name +
+               caret right, opens the gallery. Was a bordered caption-above dropdown. -->
           <button type="button" @click="showEffectGallery = true"
-                  class="flex w-full items-center justify-between rounded border border-white/[0.08] bg-white/[0.04] px-2 py-1.5 text-xs text-white/85 hover:border-white/25">
-            <span class="truncate">{{ effect.label }}</span>
-            <span class="ml-2 inline-block shrink-0 rotate-90 text-white/40">›</span>
+                  class="flex h-7 w-full items-center justify-between gap-2 rounded-[6px] bg-white/[0.05] px-2.5 text-left transition-colors hover:bg-white/[0.08]">
+            <span class="text-[11px] text-white/72">Effect</span>
+            <span class="flex min-w-0 items-center gap-1.5">
+              <span class="truncate text-[11px] text-white/90">{{ effect.label }}</span>
+              <span class="inline-block shrink-0 rotate-90 text-white/40">›</span>
+            </span>
           </button>
-          <div class="mt-2 flex items-center justify-between">
+          <!-- One uniform button group, left-aligned and wrapping — not two rows split
+               justify-between / justify-end. Filled, not bordered, to match the rows. -->
+          <div class="flex flex-wrap gap-1.5">
             <button type="button" @click="applyEffectDefaults"
-                    class="rounded border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-[11px] text-white/70 hover:border-white/25">
+                    class="rounded-[6px] bg-white/[0.05] px-2.5 py-1 text-[11px] text-white/70 transition-colors hover:bg-white/10 hover:text-white/90">
               Reset to defaults
             </button>
             <button type="button" @click="makeAsDefault" :disabled="savingDefault"
-                    class="rounded border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-[11px] text-white/70 hover:border-white/25 disabled:opacity-40">
+                    class="rounded-[6px] bg-white/[0.05] px-2.5 py-1 text-[11px] text-white/70 transition-colors hover:bg-white/10 hover:text-white/90 disabled:opacity-40">
               {{ savingDefault ? 'Saving…' : 'Make as default' }}
             </button>
-          </div>
-          <div v-if="SHOW_THUMB_CAPTURE" class="mt-2 flex justify-end">
             <button v-if="SHOW_THUMB_CAPTURE" type="button" @click="captureThumbnail" :disabled="capturingThumb"
-                    class="rounded border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-[11px] text-white/70 hover:border-white/25 disabled:opacity-40">
+                    class="rounded-[6px] bg-white/[0.05] px-2.5 py-1 text-[11px] text-white/70 transition-colors hover:bg-white/10 hover:text-white/90 disabled:opacity-40">
               {{ capturingThumb ? 'Capturing…' : 'Capture thumbnail' }}
             </button>
           </div>
