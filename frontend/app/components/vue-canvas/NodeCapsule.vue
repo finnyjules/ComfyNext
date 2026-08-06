@@ -99,7 +99,7 @@ function onKeydown(e: KeyboardEvent) {
      puts them, so they jumped on every expand. */
   align-items: flex-start;
   width: var(--capsule-w, 260px);
-  gap: 9px;
+  gap: 8px;
   padding: 8px;
   border: 1px solid rgba(255, 255, 255, 0.13);
   /* Concentric with the 8px tile/action inside it: 8 + 8px padding = 16.

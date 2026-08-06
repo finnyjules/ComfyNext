@@ -1682,7 +1682,7 @@ watch(previewImages, (urls) => {
          new area hatched. OutpaintImageNode only. Pure HTML/CSS so it never
          re-decodes the source image during canvas pan/zoom (SVG <image> did). -->
     <div v-if="data.nodeType === 'OutpaintImageNode' && outpaintGeom"
-         class="border-t border-[#2a2a2a] pt-2 pb-1 flex flex-col items-center gap-1">
+         class="border-t border-[#2a2a2a] px-2 py-3 flex flex-col items-center gap-1.5">
       <div class="op-canvas relative overflow-hidden rounded-[3px]"
            :style="{ width: outpaintGeom.dispW + 'px', height: outpaintGeom.dispH + 'px' }">
         <!-- Original image (thumbnail if wired, else solid block) -->
@@ -1702,7 +1702,7 @@ watch(previewImages, (urls) => {
     </div>
 
     <!-- Edit as Frame: hand the split layers to a Frame artifact -->
-    <div v-if="showEditAsFrame" class="border-t border-[#2a2a2a] px-2 py-1.5">
+    <div v-if="showEditAsFrame" class="border-t border-[#2a2a2a] px-2 py-3">
       <button
         class="w-full flex items-center justify-center gap-1.5 rounded py-1.5 text-[11px] font-medium transition-colors"
         :class="editAsFrameReady
@@ -1720,7 +1720,7 @@ watch(previewImages, (urls) => {
     </div>
 
     <!-- Widgets (Compositor / SmartLayout edit via their dedicated modal/body, so we hide the inline controls) -->
-    <div v-if="data.widgetDefs?.some(w => !w.hidden) && data.nodeType !== 'Compositor' && data.nodeType !== 'Timeline' && data.nodeType !== 'SmartLayout'" class="border-t border-[#2a2a2a] py-1.5 flex flex-col gap-1.5">
+    <div v-if="data.widgetDefs?.some(w => !w.hidden) && data.nodeType !== 'Compositor' && data.nodeType !== 'Timeline' && data.nodeType !== 'SmartLayout'" class="border-t border-[#2a2a2a] py-3 flex flex-col gap-1.5">
       <!-- Ungrouped widgets render first. Seed widgets carry a lock state
            that controls whether the pre-Run randomizer touches them. For
            Comfy-standard seeds it lives at widgets_values[i+1] (the
@@ -1804,7 +1804,7 @@ watch(previewImages, (urls) => {
     <!-- Lens · 3D Reframe: focal-length strips + live FOV / compression diagram.
          Companion to the source/target dropdowns — clicking a chip writes the
          matching lens widget; chips highlight whatever the dropdowns hold. -->
-    <div v-if="data.nodeType === 'LensReframe'" class="border-t border-[#2a2a2a] px-2.5 py-2 flex flex-col gap-2 nopan nodrag">
+    <div v-if="data.nodeType === 'LensReframe'" class="border-t border-[#2a2a2a] px-2 py-3 flex flex-col gap-1.5 nopan nodrag">
       <div>
         <div class="text-[10px] text-white/40 mb-1">Shot on</div>
         <div class="flex gap-1">
@@ -1926,7 +1926,7 @@ watch(previewImages, (urls) => {
     </div>
 
     <!-- Audio previews (PreviewAudio, SaveAudio*, etc.) -->
-    <div v-if="data.audios?.length" class="border-t border-[#2a2a2a] p-2 flex flex-col gap-1.5">
+    <div v-if="data.audios?.length" class="border-t border-[#2a2a2a] px-2 py-3 flex flex-col gap-1.5">
       <audio
         v-for="(src, i) in data.audios"
         :key="i"
@@ -1938,7 +1938,7 @@ watch(previewImages, (urls) => {
     </div>
 
     <!-- Text output (PreviewAny "Preview as Text" + any node that returns ui.text) -->
-    <div v-if="data.text" class="border-t border-[#2a2a2a] p-2">
+    <div v-if="data.text" class="border-t border-[#2a2a2a] px-2 py-3">
       <pre class="text-[10.5px] text-white/80 whitespace-pre-wrap break-words font-mono leading-snug max-h-[200px] overflow-auto nopan nodrag select-text">{{ data.text }}</pre>
     </div>
 
@@ -1948,7 +1948,7 @@ watch(previewImages, (urls) => {
          image (single-aspect render). -->
     <div
       v-else-if="data.nodeType === 'SmartLayout' && displayedImages.length"
-      class="border-t border-[#2a2a2a] p-2 nopan nodrag"
+      class="border-t border-[#2a2a2a] px-2 py-3 nopan nodrag"
     >
       <div class="relative">
         <img
@@ -2012,7 +2012,7 @@ watch(previewImages, (urls) => {
     </div>
 
     <!-- Media previews (images or video) -->
-    <div v-else-if="displayedImages.length" class="border-t border-[#2a2a2a] p-2">
+    <div v-else-if="displayedImages.length" class="border-t border-[#2a2a2a] px-2 py-3">
       <!-- Collapse toggle: hide the result to declutter; dims stay as a hint. -->
       <button
         class="nopan nodrag w-full flex items-center gap-1 mb-1.5 text-[10px] uppercase tracking-[0.08em] text-white/45 hover:text-white/75 cursor-pointer transition-colors"
@@ -2121,7 +2121,7 @@ watch(previewImages, (urls) => {
     <div v-if="showRunButton" ref="runMenuRoot" class="relative px-2 pb-2 pt-3">
       <div class="flex items-stretch gap-px">
         <button
-          class="nopan nodrag flex-1 h-8 rounded-l-[8px] flex items-center justify-center gap-1.5 text-[11px] font-medium transition-[transform,background-color,color] active:scale-[0.96] cursor-pointer"
+          class="nopan nodrag flex-1 h-7 rounded-l-[8px] flex items-center justify-center gap-1.5 text-[11px] font-medium transition-[transform,background-color,color] active:scale-[0.96] cursor-pointer"
           :class="(isMuted || isBypassed)
             ? 'bg-white/[0.04] text-white/25 cursor-not-allowed active:scale-100'
             : data.running
@@ -2142,7 +2142,7 @@ watch(previewImages, (urls) => {
         </button>
         <button
           aria-label="Run scope options"
-          class="nopan nodrag w-8 h-8 rounded-r-[8px] flex items-center justify-center transition-colors cursor-pointer"
+          class="nopan nodrag w-7 h-7 rounded-r-[8px] flex items-center justify-center transition-colors cursor-pointer"
           :class="(isMuted || isBypassed || data.running)
             ? 'bg-white/[0.04] text-white/25 cursor-not-allowed'
             : 'bg-white/90 text-neutral-900 hover:bg-white'"
@@ -2214,7 +2214,7 @@ watch(previewImages, (urls) => {
    the card grows around a header that does not move. Layout lives here rather
    than in utilities so the two components can be read against each other. */
 .node-head {
-  gap: 9px;
+  gap: 8px;
   padding: 8px 12px 8px 8px;
 }
 .node-head__tile {
