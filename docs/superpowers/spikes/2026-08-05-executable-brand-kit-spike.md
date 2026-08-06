@@ -233,3 +233,28 @@ thesis applied to the kit itself).
 (what aspect of the evidence maps to this material?) that is itself a creative call —
 which is exactly why the compile target must be briefs-through-agents with human choice,
 not a deterministic mapping.
+
+## Run 4 — diffusion transfers; the gradient needed compose-then-enforce (2026-08-05)
+
+**The generation pair is a strong pass.** Fixed seed, fixed subject, ± the taste style
+block (summary + palette + avoids as prose): the tasted render came back pink stucco, teal
+doors, palms, sunset over a beach — unmistakably the board's world, at $0.003/image
+through nothing but prompt text. Caveat, registered honestly: the subject (a coastal
+building) is *native* to the board, so this tested style transfer on easy mode; an
+out-of-world subject ("a hedgehog in a forest") is the sharper test and remains to run.
+Julien's verdict: "that looks pretty good!"
+
+**The atmosphere gradient got closer — soft, liquid, horizontal — but kept a large
+near-black mass against a bright, "no darkness" board.** Diagnosis: (a) the avoids never
+reached the composition call (only the brief text was sent), and (b) when the agent picks a
+preset it recolors only the stops the brief names — the preset's leftover dark base stops
+survive. Compose-then-drift.
+
+**Correction (`c35fa43a8`): compose, then enforce.** Avoids now ride along with every
+composition brief, and `enforcePaletteOnGradient` (extracted from `applyTasteToGradient`,
+behavior-identical, 37 tests green) deterministically stamps the board's palette and value
+bias onto the composed config — stops in luminance order, background pinned. **The model
+proposes, the kit disposes** — the diffusion post-pass doctrine, arriving in the
+procedural pipeline first, upstream of any product build. This two-stage shape
+(agent composes structure → kit enforces palette/value invariants) is the strongest
+architectural output of the spike so far.
