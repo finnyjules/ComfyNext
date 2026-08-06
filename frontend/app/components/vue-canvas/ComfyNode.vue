@@ -1548,7 +1548,7 @@ watch(previewImages, (urls) => {
   <div
     v-else
     key="card"
-    class="comfy-node relative z-10 border select-none backdrop-blur-sm transition-opacity duration-150"
+    class="comfy-node relative z-10 border select-none transition-opacity duration-150"
     :class="{
       'comfy-node--muted': isMuted,
       'comfy-node--bypassed': isBypassed,
@@ -1571,9 +1571,14 @@ watch(previewImages, (urls) => {
     :data-running="data.running || undefined"
     :data-mode="data.mode || 0"
     :style="{
+      // Flat, not the 180deg #252525 -> #1e1e1e gradient this used to be. A gradient on a
+      // 260px card reads as a sheen the controls have to compete with, and every surface
+      // inside it (rows, prompt, launcher) is a flat percentage of white — so the one
+      // gradient was the odd surface. #1a1a1c is also a touch darker, which gives the
+      // white-ish controls more room. A user-set bgcolor still tints, now as a flat mix.
       background: data.bgcolor
-        ? `linear-gradient(180deg, color-mix(in srgb, ${data.bgcolor} 35%, #1a1a1a) 0%, color-mix(in srgb, ${data.bgcolor} 20%, #1a1a1a) 100%)`
-        : 'linear-gradient(180deg, #252525 0%, #1e1e1e 100%)',
+        ? `color-mix(in srgb, ${data.bgcolor} 28%, #1a1a1c)`
+        : '#1a1a1c',
       '--border-color-left': borderColorLeft,
       '--border-color-right': borderColorRight,
       // Short nodes with many ports must still enclose their own dots.
@@ -2210,7 +2215,11 @@ watch(previewImages, (urls) => {
 
 <style scoped>
 .comfy-node {
-  /* 16px. It matches the capsule, so the corner does not change shape halfway through
+  /* `backdrop-blur-sm` removed: the card's background is set inline and has always been
+     opaque, so there was never anything to see through it — the filter ran every frame
+     and changed nothing.
+
+     16px. It matches the capsule, so the corner does not change shape halfway through
      the expand, and 16 - 10 inset = 6 is the radius every input and button uses — so the
      corners stay concentric and the bottom does not pinch against the run bar. The 6px
      came first here: it is the app-wide control radius, and the shell was set to suit
