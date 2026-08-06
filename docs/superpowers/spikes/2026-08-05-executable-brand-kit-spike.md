@@ -170,3 +170,36 @@ shader column runs on adjust/bloom medians + pooled duotone colors only.
 **Still owed for the verdict:** the Fable column (Julien's key into the page field), the
 recognition test on Julien's own board, and the elicited-vs-observed agreement once both
 exist for the same person.
+
+## Run 2 — Julien's board exposed the actuator gap (2026-08-05)
+
+Julien drove the first user-run: a coherent pastel board (Miami/Palm-Springs pink buildings
+against turquoise/sunset skies) through the deterministic route. **His verdict: "a recolored
+vertical gradient which doesn't get it at all." He is right, and it is the spike's most
+important finding so far.**
+
+**The diagnosis has two layers.** (1) He tested the pixel-math half — the half that cannot
+know "Miami." (2) Deeper: even a perfect reading would have disappointed, because the
+actuators were too weak. The wall nudged ~30 sliders on a *frozen* composition (the fixed
+banded layout, deliberately held constant as a control) and recolored its stops. **A vibe is
+not thirty slider offsets** — his board's taste means a different *layout*, softness, and
+light. The reading was starved by its actuator space.
+
+**The correction (`8503209ca`): taste must be allowed to COMPOSE, and Sailor already owns
+the mechanism — the per-studio agents.** The Fable read now returns a "what it sees"
+summary (the show-you-understood moment) and a standalone **style brief**; the wall gained
+a **Composed** column that feeds the brief through the real gradient-agent path
+(`/api/vibe`, preset macro + recipe guidance — exactly `/dev/gradient-agent-eval`'s
+pipeline), so taste can pick layout and character rather than recolor a fixed one.
+
+**Architectural consequence for the kit design:** the kit's compile target for procedural
+studios is **palette + priors + a brief handed to each studio's agent** — not a static
+facet→param table. The param mapping remains useful for *defaults biasing* and sweeps; the
+*first configuration* of a surface under a kit should be agent-composed. (This also merges
+the taste spine with the existing agentic-north-star machinery instead of building a
+parallel channel.)
+
+The fixed-composition columns stay on the wall as what they always were: a control
+instrument, not the product behavior.
+
+**Unrun:** the Composed column live (key-gated; Julien's next run is its first execution).
