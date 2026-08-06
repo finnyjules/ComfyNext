@@ -63,7 +63,10 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
                A studio with a bespoke agent (Space Type's vibe flow) provides its own
                bar via the #agentBar slot, so it lands in this SAME centred position
                instead of floating in the controls column. -->
-          <div v-if="agent || $slots.agentBar" class="mt-3 shrink-0">
+          <!-- Capped width + centred, matching the canvas prompt bar's proportions rather
+               than stretching the full preview column, and `mb-3` so it lifts off the very
+               bottom edge. Applies to every studio's bar, the default AgentBar included. -->
+          <div v-if="agent || $slots.agentBar" class="mt-3 mb-3 w-full max-w-[640px] self-center shrink-0">
             <slot name="agentBar">
               <AgentBar
                 :busy="agent.busy.value" :error="agent.error.value" :notice="agent.notice.value"
