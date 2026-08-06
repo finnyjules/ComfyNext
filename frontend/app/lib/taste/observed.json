@@ -1,0 +1,5473 @@
+{
+  "generatedAt": "2026-08-06T00:15:00.034Z",
+  "projectsScanned": 383,
+  "projectsMined": 47,
+  "studios": {
+    "gradient": {
+      "nodes": 26,
+      "projects": 19,
+      "params": {
+        "canvas.margin": {
+          "n": 26,
+          "projects": 19,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 0.16
+        },
+        "canvas.innerRadius": {
+          "n": 26,
+          "projects": 19,
+          "min": 0,
+          "p25": 0.4,
+          "median": 0.4,
+          "p75": 0.4,
+          "max": 0.4
+        },
+        "canvas.center.x": {
+          "n": 26,
+          "projects": 19,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 0
+        },
+        "canvas.center.y": {
+          "n": 26,
+          "projects": 19,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 0.08
+        },
+        "relief.relief": {
+          "n": 26,
+          "projects": 19,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 1
+        },
+        "relief.light.azimuth": {
+          "n": 26,
+          "projects": 19,
+          "min": 135,
+          "p25": 135,
+          "median": 135,
+          "p75": 135,
+          "max": 192
+        },
+        "relief.light.elevation": {
+          "n": 26,
+          "projects": 19,
+          "min": 42,
+          "p25": 45,
+          "median": 45,
+          "p75": 45,
+          "max": 45
+        },
+        "layers[*].opacity": {
+          "n": 27,
+          "projects": 19,
+          "min": 0.65,
+          "p25": 1,
+          "median": 1,
+          "p75": 1,
+          "max": 1
+        },
+        "layers[*].shape.count": {
+          "n": 27,
+          "projects": 19,
+          "min": 10,
+          "p25": 12.5,
+          "median": 20,
+          "p75": 20,
+          "max": 35
+        },
+        "layers[*].shape.minDepth": {
+          "n": 27,
+          "projects": 19,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0.1367,
+          "max": 0.78
+        },
+        "layers[*].shape.curveExp": {
+          "n": 27,
+          "projects": 19,
+          "min": 0.8,
+          "p25": 1,
+          "median": 1,
+          "p75": 1,
+          "max": 2.3291
+        },
+        "layers[*].shape.jitter": {
+          "n": 27,
+          "projects": 19,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 0.98
+        },
+        "layers[*].shape.peaks": {
+          "n": 27,
+          "projects": 19,
+          "min": 1,
+          "p25": 3,
+          "median": 3,
+          "p75": 3,
+          "max": 5
+        },
+        "layers[*].shape.phase": {
+          "n": 27,
+          "projects": 19,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 0.78
+        },
+        "layers[*].shape.detail": {
+          "n": 27,
+          "projects": 19,
+          "min": 4,
+          "p25": 4,
+          "median": 4,
+          "p75": 4,
+          "max": 6
+        },
+        "layers[*].shape.sweep": {
+          "n": 27,
+          "projects": 19,
+          "min": 127.5415,
+          "p25": 360,
+          "median": 360,
+          "p75": 360,
+          "max": 360
+        },
+        "layers[*].shape.scrub": {
+          "n": 27,
+          "projects": 19,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 0.5347
+        },
+        "layers[*].shape.gap": {
+          "n": 27,
+          "projects": 19,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 0.62
+        },
+        "layers[*].shape.rounding": {
+          "n": 27,
+          "projects": 19,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 1
+        },
+        "layers[*].shape.valley": {
+          "n": 27,
+          "projects": 19,
+          "min": 0.5,
+          "p25": 0.5,
+          "median": 0.5,
+          "p75": 0.5,
+          "max": 0.7808
+        },
+        "layers[*].color.stops[*].pos": {
+          "n": 111,
+          "projects": 19,
+          "min": 0,
+          "p25": 0.26,
+          "median": 0.6,
+          "p75": 0.84,
+          "max": 1
+        },
+        "layers[*].color.steps": {
+          "n": 27,
+          "projects": 19,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 0
+        },
+        "layers[*].color.hueDrift": {
+          "n": 27,
+          "projects": 19,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 48
+        },
+        "layers[*].color.hueRotate": {
+          "n": 27,
+          "projects": 19,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 39.1883
+        },
+        "motion.duration": {
+          "n": 26,
+          "projects": 19,
+          "min": 3.5,
+          "p25": 4,
+          "median": 4,
+          "p75": 4,
+          "max": 8.5
+        },
+        "motion.fps": {
+          "n": 26,
+          "projects": 19,
+          "min": 30,
+          "p25": 30,
+          "median": 30,
+          "p75": 30,
+          "max": 30
+        },
+        "motion.size": {
+          "n": 26,
+          "projects": 19,
+          "min": 1080,
+          "p25": 1080,
+          "median": 1080,
+          "p75": 1080,
+          "max": 1080
+        },
+        "flow.angle": {
+          "n": 26,
+          "projects": 19,
+          "min": 45,
+          "p25": 45,
+          "median": 45,
+          "p75": 58,
+          "max": 207
+        },
+        "flow.noiseScale": {
+          "n": 26,
+          "projects": 19,
+          "min": 0.5,
+          "p25": 3.5,
+          "median": 3.5,
+          "p75": 3.5,
+          "max": 7.4
+        },
+        "flow.intensity": {
+          "n": 26,
+          "projects": 19,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 87.25,
+          "max": 100
+        },
+        "flow.distortion": {
+          "n": 26,
+          "projects": 19,
+          "min": 50,
+          "p25": 50,
+          "median": 50,
+          "p75": 69,
+          "max": 100
+        },
+        "flow.detail": {
+          "n": 26,
+          "projects": 19,
+          "min": 1,
+          "p25": 2,
+          "median": 2,
+          "p75": 2,
+          "max": 6
+        },
+        "flow.depth": {
+          "n": 26,
+          "projects": 19,
+          "min": 0,
+          "p25": 8.75,
+          "median": 60,
+          "p75": 60,
+          "max": 60
+        },
+        "flow.highlights": {
+          "n": 26,
+          "projects": 19,
+          "min": 0,
+          "p25": 50,
+          "median": 50,
+          "p75": 50,
+          "max": 72
+        },
+        "flow.shadows": {
+          "n": 26,
+          "projects": 19,
+          "min": 0,
+          "p25": 55,
+          "median": 55,
+          "p75": 55,
+          "max": 55
+        },
+        "flow.foldScale": {
+          "n": 26,
+          "projects": 19,
+          "min": 0,
+          "p25": 60,
+          "median": 60,
+          "p75": 60,
+          "max": 60
+        },
+        "flow.speed": {
+          "n": 26,
+          "projects": 19,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 34
+        },
+        "flow.gloss": {
+          "n": 26,
+          "projects": 19,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 100
+        },
+        "flow.veins": {
+          "n": 25,
+          "projects": 19,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 100
+        },
+        "flow.veinScale": {
+          "n": 25,
+          "projects": 19,
+          "min": 0,
+          "p25": 35,
+          "median": 35,
+          "p75": 35,
+          "max": 100
+        },
+        "flow.ripple": {
+          "n": 25,
+          "projects": 19,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 100
+        },
+        "flow.refract": {
+          "n": 25,
+          "projects": 19,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 100
+        },
+        "flow.viscosity": {
+          "n": 25,
+          "projects": 19,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 63,
+          "max": 100
+        },
+        "flow.swirl": {
+          "n": 25,
+          "projects": 19,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 50,
+          "max": 100
+        },
+        "focus.blur": {
+          "n": 26,
+          "projects": 19,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 100
+        },
+        "focus.x": {
+          "n": 26,
+          "projects": 19,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 0
+        },
+        "focus.y": {
+          "n": 26,
+          "projects": 19,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 0
+        },
+        "focus.radius": {
+          "n": 26,
+          "projects": 19,
+          "min": 0.14,
+          "p25": 0.25,
+          "median": 0.25,
+          "p75": 0.25,
+          "max": 0.25
+        },
+        "focus.softness": {
+          "n": 26,
+          "projects": 19,
+          "min": 40,
+          "p25": 40,
+          "median": 40,
+          "p75": 40,
+          "max": 54
+        },
+        "focus.angle": {
+          "n": 26,
+          "projects": 19,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 0
+        },
+        "post.bloomStrength": {
+          "n": 26,
+          "projects": 19,
+          "min": 0.6,
+          "p25": 0.6,
+          "median": 0.6,
+          "p75": 0.6,
+          "max": 0.6
+        },
+        "post.bloomRadius": {
+          "n": 26,
+          "projects": 19,
+          "min": 0.4,
+          "p25": 0.4,
+          "median": 0.4,
+          "p75": 0.4,
+          "max": 0.4
+        },
+        "post.bloomThreshold": {
+          "n": 26,
+          "projects": 19,
+          "min": 0.8,
+          "p25": 0.8,
+          "median": 0.8,
+          "p75": 0.8,
+          "max": 0.8
+        },
+        "post.exposure": {
+          "n": 26,
+          "projects": 19,
+          "min": 1,
+          "p25": 1,
+          "median": 1,
+          "p75": 1,
+          "max": 1
+        },
+        "post.contrast": {
+          "n": 26,
+          "projects": 19,
+          "min": 1,
+          "p25": 1,
+          "median": 1,
+          "p75": 1,
+          "max": 1
+        },
+        "post.saturation": {
+          "n": 26,
+          "projects": 19,
+          "min": 1,
+          "p25": 1,
+          "median": 1,
+          "p75": 1,
+          "max": 1
+        },
+        "post.hue": {
+          "n": 26,
+          "projects": 19,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 0
+        },
+        "post.chromaAmount": {
+          "n": 26,
+          "projects": 19,
+          "min": 0.25,
+          "p25": 0.25,
+          "median": 0.25,
+          "p75": 0.25,
+          "max": 0.25
+        },
+        "post.blurAmount": {
+          "n": 26,
+          "projects": 19,
+          "min": 0.01,
+          "p25": 0.01,
+          "median": 0.01,
+          "p75": 0.01,
+          "max": 0.01
+        },
+        "post.filmIntensity": {
+          "n": 26,
+          "projects": 19,
+          "min": 0,
+          "p25": 0.35,
+          "median": 0.35,
+          "p75": 0.35,
+          "max": 0.35
+        },
+        "post.halftoneRadius": {
+          "n": 26,
+          "projects": 19,
+          "min": 4,
+          "p25": 4,
+          "median": 4,
+          "p75": 4,
+          "max": 4
+        },
+        "post.halftoneScatter": {
+          "n": 26,
+          "projects": 19,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 0
+        },
+        "post.dotScreenScale": {
+          "n": 26,
+          "projects": 19,
+          "min": 1,
+          "p25": 1,
+          "median": 1,
+          "p75": 1,
+          "max": 1
+        },
+        "post.dotScreenAngle": {
+          "n": 26,
+          "projects": 19,
+          "min": 1.57,
+          "p25": 1.57,
+          "median": 1.57,
+          "p75": 1.57,
+          "max": 1.57
+        },
+        "post.grainAmount": {
+          "n": 26,
+          "projects": 19,
+          "min": 0.1,
+          "p25": 0.22,
+          "median": 0.785,
+          "p75": 1,
+          "max": 1
+        },
+        "post.grainSize": {
+          "n": 26,
+          "projects": 19,
+          "min": 1,
+          "p25": 1,
+          "median": 1,
+          "p75": 1,
+          "max": 1
+        },
+        "post.vignetteAmount": {
+          "n": 26,
+          "projects": 19,
+          "min": 0.4,
+          "p25": 0.4,
+          "median": 0.4,
+          "p75": 0.4,
+          "max": 0.4
+        },
+        "post.vignetteRadius": {
+          "n": 26,
+          "projects": 19,
+          "min": 0.6,
+          "p25": 0.6,
+          "median": 0.6,
+          "p75": 0.6,
+          "max": 0.6
+        },
+        "post.vignetteSoftness": {
+          "n": 26,
+          "projects": 19,
+          "min": 0.5,
+          "p25": 0.5,
+          "median": 0.5,
+          "p75": 0.5,
+          "max": 0.5
+        },
+        "post.duotoneMix": {
+          "n": 26,
+          "projects": 19,
+          "min": 1,
+          "p25": 1,
+          "median": 1,
+          "p75": 1,
+          "max": 1
+        },
+        "post.gtaoRadius": {
+          "n": 26,
+          "projects": 19,
+          "min": 0.5,
+          "p25": 0.5,
+          "median": 0.5,
+          "p75": 0.5,
+          "max": 0.5
+        },
+        "post.gtaoIntensity": {
+          "n": 26,
+          "projects": 19,
+          "min": 0.5,
+          "p25": 0.5,
+          "median": 0.5,
+          "p75": 0.5,
+          "max": 0.5
+        },
+        "post.gtaoThickness": {
+          "n": 26,
+          "projects": 19,
+          "min": 0.25,
+          "p25": 0.25,
+          "median": 0.25,
+          "p75": 0.25,
+          "max": 0.25
+        },
+        "layers[*].mesh.softness": {
+          "n": 3,
+          "projects": 3,
+          "min": 13,
+          "p25": 37,
+          "median": 61,
+          "p75": 67,
+          "max": 73
+        },
+        "layers[*].mesh.contrast": {
+          "n": 3,
+          "projects": 3,
+          "min": 26,
+          "p25": 26.5,
+          "median": 27,
+          "p75": 30.5,
+          "max": 34
+        },
+        "layers[*].mesh.blur": {
+          "n": 3,
+          "projects": 3,
+          "min": 22,
+          "p25": 61,
+          "median": 100,
+          "p75": 100,
+          "max": 100
+        },
+        "layers[*].mesh.drift": {
+          "n": 3,
+          "projects": 3,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 16,
+          "max": 32
+        },
+        "layers[*].shape.rotStep": {
+          "n": 5,
+          "projects": 5,
+          "min": 5.0283,
+          "p25": 7,
+          "median": 8,
+          "p75": 8,
+          "max": 35
+        },
+        "layers[*].shape.pivot": {
+          "n": 5,
+          "projects": 5,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0.1,
+          "max": 0.1
+        },
+        "layers[*].shape.ringScale": {
+          "n": 5,
+          "projects": 5,
+          "min": 1,
+          "p25": 1,
+          "median": 1.7486,
+          "p75": 2.2,
+          "max": 2.2
+        }
+      },
+      "enums": {
+        "canvas.aspect": {
+          "16:9": 15,
+          "4:5": 6,
+          "1:1": 5
+        },
+        "canvas.layout": {
+          "linear": 12,
+          "liquid": 10,
+          "orbit": 2,
+          "stack": 2
+        },
+        "layers[*].blend": {
+          "normal": 27
+        },
+        "layers[*].shape.type": {
+          "bands": 26,
+          "pyramid": 1
+        },
+        "layers[*].shape.direction": {
+          "right": 2,
+          "up": 25
+        },
+        "layers[*].shape.mirror": {
+          "none": 26,
+          "vertical": 1
+        },
+        "layers[*].color.gradientDir": {
+          "horizontal": 1,
+          "vertical": 26
+        },
+        "layers[*].color.mapping": {
+          "field": 25,
+          "perbar": 1,
+          "across": 1
+        },
+        "focus.shape": {
+          "off": 26
+        },
+        "post.bloom": {
+          "false": 26
+        },
+        "post.color": {
+          "false": 26
+        },
+        "post.chroma": {
+          "false": 26
+        },
+        "post.blur": {
+          "false": 26
+        },
+        "post.film": {
+          "false": 26
+        },
+        "post.filmGrayscale": {
+          "false": 26
+        },
+        "post.halftone": {
+          "false": 26
+        },
+        "post.dotScreen": {
+          "false": 26
+        },
+        "post.glitch": {
+          "false": 26
+        },
+        "post.grain": {
+          "true": 25,
+          "false": 1
+        },
+        "post.vignette": {
+          "false": 26
+        },
+        "post.duotone": {
+          "false": 26
+        },
+        "post.gtao": {
+          "false": 26
+        },
+        "layers[*].shape.ringShape": {
+          "circle": 4,
+          "diamond": 1
+        }
+      },
+      "colors": {
+        "#000000": 23,
+        "#c026d3": 15,
+        "#f9d9f0": 14,
+        "#0e0a1e": 10,
+        "#f0a35a": 10,
+        "#3b4cff": 2,
+        "#f7a8d8": 2,
+        "#7b6cff": 2,
+        "#1d1340": 2,
+        "#100a24": 2,
+        "#653ffd": 2,
+        "#5ad8f0": 2,
+        "#5b6ee8": 2,
+        "#e9f25a": 2,
+        "#430000": 1,
+        "#ff7000": 1,
+        "#eb6e67": 1,
+        "#557bf3": 1,
+        "#37d0e6": 1,
+        "#e6f23a": 1,
+        "#f7b8d8": 1,
+        "#ff8a5b": 1,
+        "#ffd2a6": 1,
+        "#490000": 1,
+        "#923500": 1,
+        "#f0638b": 1,
+        "#94f4ff": 1,
+        "#237aff": 1,
+        "#252d7b": 1,
+        "#ff98c0": 1,
+        "#fc1051": 1,
+        "#3b043b": 1,
+        "#ff274b": 1,
+        "#ead5dd": 1,
+        "#cfebff": 1,
+        "#9d819d": 1,
+        "#e8faff": 1,
+        "#fff1a8": 1,
+        "#ff8a2b": 1,
+        "#e27a1b": 1,
+        "#080705": 1,
+        "#6a580d": 1,
+        "#0a0402": 1,
+        "#0659ff": 1,
+        "#d6cfff": 1,
+        "#4695f0": 1,
+        "#3327c7": 1,
+        "#f8d8ef": 1,
+        "#e23637": 1,
+        "#37e236": 1,
+        "#3637e2": 1,
+        "#f3a85f": 1,
+        "#f6c2e2": 1,
+        "#311a2a": 1,
+        "#ff7d46": 1,
+        "#f1ddac": 1,
+        "#ff7acc": 1,
+        "#960d32": 1,
+        "#fb7f09": 1,
+        "#3c61f1": 1,
+        "#d9ff39": 1
+      }
+    },
+    "shader": {
+      "nodes": 35,
+      "projects": 24,
+      "params": {
+        "resolution": {
+          "n": 35,
+          "projects": 24,
+          "min": 1536,
+          "p25": 1536,
+          "median": 1536,
+          "p75": 1536,
+          "max": 4096
+        },
+        "effects[block_glitch].params.u_growth": {
+          "n": 1,
+          "projects": 1,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 0
+        },
+        "effects[block_glitch].params.u_amount": {
+          "n": 1,
+          "projects": 1,
+          "min": 0.06,
+          "p25": 0.06,
+          "median": 0.06,
+          "p75": 0.06,
+          "max": 0.06
+        },
+        "effects[block_glitch].params.u_speed": {
+          "n": 1,
+          "projects": 1,
+          "min": 1.95,
+          "p25": 1.95,
+          "median": 1.95,
+          "p75": 1.95,
+          "max": 1.95
+        },
+        "effects[block_glitch].params.u_step": {
+          "n": 1,
+          "projects": 1,
+          "min": 9,
+          "p25": 9,
+          "median": 9,
+          "p75": 9,
+          "max": 9
+        },
+        "effects[block_glitch].params.u_dstart": {
+          "n": 1,
+          "projects": 1,
+          "min": 0.35,
+          "p25": 0.35,
+          "median": 0.35,
+          "p75": 0.35,
+          "max": 0.35
+        },
+        "effects[block_glitch].params.u_diag": {
+          "n": 1,
+          "projects": 1,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 0
+        },
+        "effects[block_glitch].opacity": {
+          "n": 1,
+          "projects": 1,
+          "min": 1,
+          "p25": 1,
+          "median": 1,
+          "p75": 1,
+          "max": 1
+        },
+        "gradientMap.mix": {
+          "n": 35,
+          "projects": 24,
+          "min": 1,
+          "p25": 1,
+          "median": 1,
+          "p75": 1,
+          "max": 1
+        },
+        "gradientMap.stops[*].pos": {
+          "n": 106,
+          "projects": 24,
+          "min": 0,
+          "p25": 0,
+          "median": 0.5,
+          "p75": 1,
+          "max": 1
+        },
+        "adjust.exposure": {
+          "n": 35,
+          "projects": 24,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 0.04
+        },
+        "adjust.brightness": {
+          "n": 35,
+          "projects": 24,
+          "min": -0.03,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 0
+        },
+        "adjust.contrast": {
+          "n": 35,
+          "projects": 24,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 0.77
+        },
+        "adjust.saturation": {
+          "n": 35,
+          "projects": 24,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 0.2
+        },
+        "adjust.hue": {
+          "n": 35,
+          "projects": 24,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 0
+        },
+        "adjust.temperature": {
+          "n": 35,
+          "projects": 24,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 0
+        },
+        "adjust.tint": {
+          "n": 35,
+          "projects": 24,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 0
+        },
+        "post.blur.focusX": {
+          "n": 35,
+          "projects": 24,
+          "min": 0.5,
+          "p25": 0.5,
+          "median": 0.5,
+          "p75": 0.5,
+          "max": 0.5
+        },
+        "post.blur.focusY": {
+          "n": 35,
+          "projects": 24,
+          "min": 0.5,
+          "p25": 0.5,
+          "median": 0.5,
+          "p75": 0.5,
+          "max": 0.5
+        },
+        "post.blur.range": {
+          "n": 35,
+          "projects": 24,
+          "min": 0.2,
+          "p25": 0.2,
+          "median": 0.2,
+          "p75": 0.2,
+          "max": 0.4
+        },
+        "post.blur.aperture": {
+          "n": 35,
+          "projects": 24,
+          "min": 0.25,
+          "p25": 0.25,
+          "median": 0.25,
+          "p75": 0.25,
+          "max": 0.69
+        },
+        "post.blur.maxBlur": {
+          "n": 35,
+          "projects": 24,
+          "min": 8,
+          "p25": 8,
+          "median": 8,
+          "p75": 8,
+          "max": 8
+        },
+        "post.chromatic.amount": {
+          "n": 35,
+          "projects": 24,
+          "min": 0.3,
+          "p25": 0.3,
+          "median": 0.3,
+          "p75": 0.3,
+          "max": 1
+        },
+        "post.bloom.threshold": {
+          "n": 35,
+          "projects": 24,
+          "min": 0.12,
+          "p25": 0.5,
+          "median": 0.5,
+          "p75": 0.5,
+          "max": 0.98
+        },
+        "post.bloom.intensity": {
+          "n": 35,
+          "projects": 24,
+          "min": 0.48,
+          "p25": 1.5,
+          "median": 1.5,
+          "p75": 1.5,
+          "max": 2.23
+        },
+        "post.bloom.radius": {
+          "n": 35,
+          "projects": 24,
+          "min": 30,
+          "p25": 64,
+          "median": 64,
+          "p75": 64,
+          "max": 154
+        },
+        "motion.duration": {
+          "n": 35,
+          "projects": 24,
+          "min": 4,
+          "p25": 4,
+          "median": 4,
+          "p75": 4,
+          "max": 4
+        },
+        "motion.fps": {
+          "n": 35,
+          "projects": 24,
+          "min": 30,
+          "p25": 30,
+          "median": 30,
+          "p75": 30,
+          "max": 30
+        },
+        "effects[ascii_dither].params.u_cell": {
+          "n": 4,
+          "projects": 4,
+          "min": 0.014,
+          "p25": 0.02,
+          "median": 0.031,
+          "p75": 0.0415,
+          "max": 0.046
+        },
+        "effects[ascii_dither].params.u_brightness": {
+          "n": 3,
+          "projects": 3,
+          "min": -0.26,
+          "p25": 0,
+          "median": 0.26,
+          "p75": 0.57,
+          "max": 0.88
+        },
+        "effects[ascii_dither].params.u_spacing": {
+          "n": 3,
+          "projects": 3,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 0
+        },
+        "effects[ascii_dither].params.u_shape": {
+          "n": 4,
+          "projects": 4,
+          "min": 7,
+          "p25": 7.75,
+          "median": 9.5,
+          "p75": 12.5,
+          "max": 17
+        },
+        "effects[ascii_dither].params.u_underlay": {
+          "n": 2,
+          "projects": 2,
+          "min": 0,
+          "p25": 0.75,
+          "median": 1.5,
+          "p75": 2.25,
+          "max": 3
+        },
+        "effects[ascii_dither].params.u_invert": {
+          "n": 1,
+          "projects": 1,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 0
+        },
+        "effects[ascii_dither].params.u_jitter": {
+          "n": 2,
+          "projects": 2,
+          "min": 0.48,
+          "p25": 0.485,
+          "median": 0.49,
+          "p75": 0.495,
+          "max": 0.5
+        },
+        "effects[ascii_dither].params.u_speed": {
+          "n": 2,
+          "projects": 2,
+          "min": 0.45,
+          "p25": 0.7125,
+          "median": 0.975,
+          "p75": 1.2375,
+          "max": 1.5
+        },
+        "effects[ascii_dither].params.u_blur": {
+          "n": 2,
+          "projects": 2,
+          "min": 0.2,
+          "p25": 0.4,
+          "median": 0.6,
+          "p75": 0.8,
+          "max": 1
+        },
+        "effects[ascii_dither].params.u_colored": {
+          "n": 2,
+          "projects": 2,
+          "min": 1,
+          "p25": 1,
+          "median": 1,
+          "p75": 1,
+          "max": 1
+        },
+        "effects[ascii_dither].opacity": {
+          "n": 5,
+          "projects": 5,
+          "min": 1,
+          "p25": 1,
+          "median": 1,
+          "p75": 1,
+          "max": 1
+        },
+        "effects[bayer_dither].params.u_pattern": {
+          "n": 1,
+          "projects": 1,
+          "min": 5,
+          "p25": 5,
+          "median": 5,
+          "p75": 5,
+          "max": 5
+        },
+        "effects[bayer_dither].params.u_scale": {
+          "n": 1,
+          "projects": 1,
+          "min": 0.007,
+          "p25": 0.007,
+          "median": 0.007,
+          "p75": 0.007,
+          "max": 0.007
+        },
+        "effects[bayer_dither].params.u_levels": {
+          "n": 1,
+          "projects": 1,
+          "min": 2,
+          "p25": 2,
+          "median": 2,
+          "p75": 2,
+          "max": 2
+        },
+        "effects[bayer_dither].opacity": {
+          "n": 1,
+          "projects": 1,
+          "min": 1,
+          "p25": 1,
+          "median": 1,
+          "p75": 1,
+          "max": 1
+        },
+        "effects[crystal_prism].params.u_mode": {
+          "n": 6,
+          "projects": 4,
+          "min": 1,
+          "p25": 1,
+          "median": 1,
+          "p75": 1,
+          "max": 1
+        },
+        "effects[crystal_prism].params.u_facetStyle": {
+          "n": 6,
+          "projects": 4,
+          "min": 1,
+          "p25": 3,
+          "median": 3,
+          "p75": 3,
+          "max": 3
+        },
+        "effects[crystal_prism].params.u_multiScale": {
+          "n": 6,
+          "projects": 4,
+          "min": 0,
+          "p25": 0,
+          "median": 0.03,
+          "p75": 0.285,
+          "max": 0.64
+        },
+        "effects[crystal_prism].params.u_facetRefract": {
+          "n": 5,
+          "projects": 4,
+          "min": 0.02,
+          "p25": 0.4,
+          "median": 0.98,
+          "p75": 1,
+          "max": 1
+        },
+        "effects[crystal_prism].params.u_facetJitter": {
+          "n": 6,
+          "projects": 4,
+          "min": 0.33,
+          "p25": 1,
+          "median": 1,
+          "p75": 1,
+          "max": 1
+        },
+        "effects[crystal_prism].params.u_shading": {
+          "n": 4,
+          "projects": 4,
+          "min": 0,
+          "p25": 0,
+          "median": 0.305,
+          "p75": 0.6975,
+          "max": 0.96
+        },
+        "effects[crystal_prism].params.u_refraction": {
+          "n": 6,
+          "projects": 4,
+          "min": 0,
+          "p25": 0.865,
+          "median": 0.925,
+          "p75": 0.985,
+          "max": 1
+        },
+        "effects[crystal_prism].params.u_facets": {
+          "n": 6,
+          "projects": 4,
+          "min": 3.5,
+          "p25": 4,
+          "median": 4.5,
+          "p75": 5.375,
+          "max": 20
+        },
+        "effects[crystal_prism].params.u_glint": {
+          "n": 6,
+          "projects": 4,
+          "min": 0,
+          "p25": 0,
+          "median": 0.01,
+          "p75": 0.095,
+          "max": 0.14
+        },
+        "effects[crystal_prism].params.u_shimmer": {
+          "n": 6,
+          "projects": 4,
+          "min": 0.08,
+          "p25": 0.25,
+          "median": 0.395,
+          "p75": 0.5625,
+          "max": 1
+        },
+        "effects[crystal_prism].params.u_rotation": {
+          "n": 5,
+          "projects": 4,
+          "min": 17,
+          "p25": 96,
+          "median": 167,
+          "p75": 256,
+          "max": 323
+        },
+        "effects[crystal_prism].params.u_centerY": {
+          "n": 1,
+          "projects": 1,
+          "min": 0.39,
+          "p25": 0.39,
+          "median": 0.39,
+          "p75": 0.39,
+          "max": 0.39
+        },
+        "effects[crystal_prism].params.u_dispersion": {
+          "n": 6,
+          "projects": 4,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0.0375,
+          "max": 0.1
+        },
+        "effects[crystal_prism].opacity": {
+          "n": 6,
+          "projects": 4,
+          "min": 1,
+          "p25": 1,
+          "median": 1,
+          "p75": 1,
+          "max": 1
+        },
+        "effects[blinds].params.u_refraction": {
+          "n": 6,
+          "projects": 6,
+          "min": 0,
+          "p25": 1.64,
+          "median": 2.11,
+          "p75": 2.895,
+          "max": 3
+        },
+        "effects[blinds].params.u_count": {
+          "n": 6,
+          "projects": 6,
+          "min": 11,
+          "p25": 20.5,
+          "median": 33.5,
+          "p75": 49.5,
+          "max": 82
+        },
+        "effects[blinds].params.u_depth": {
+          "n": 6,
+          "projects": 6,
+          "min": 0.04,
+          "p25": 0.17,
+          "median": 0.28,
+          "p75": 0.33,
+          "max": 0.84
+        },
+        "effects[blinds].params.u_shadeWidth": {
+          "n": 5,
+          "projects": 5,
+          "min": 0.1,
+          "p25": 0.88,
+          "median": 0.92,
+          "p75": 0.94,
+          "max": 0.96
+        },
+        "effects[blinds].params.u_chromatic": {
+          "n": 4,
+          "projects": 4,
+          "min": 0.009,
+          "p25": 0.0098,
+          "median": 0.0205,
+          "p75": 0.032,
+          "max": 0.035
+        },
+        "effects[blinds].params.u_angle": {
+          "n": 5,
+          "projects": 5,
+          "min": 41,
+          "p25": 47,
+          "median": 50,
+          "p75": 130,
+          "max": 135
+        },
+        "effects[blinds].opacity": {
+          "n": 6,
+          "projects": 6,
+          "min": 1,
+          "p25": 1,
+          "median": 1,
+          "p75": 1,
+          "max": 1
+        },
+        "effects[blinds].params.u_blur": {
+          "n": 4,
+          "projects": 4,
+          "min": 0,
+          "p25": 0,
+          "median": 0.045,
+          "p75": 0.155,
+          "max": 0.35
+        },
+        "effects[blinds].params.u_centerX": {
+          "n": 1,
+          "projects": 1,
+          "min": 0.62,
+          "p25": 0.62,
+          "median": 0.62,
+          "p75": 0.62,
+          "max": 0.62
+        },
+        "effects[bloom].params.u_threshold": {
+          "n": 1,
+          "projects": 1,
+          "min": 0.88,
+          "p25": 0.88,
+          "median": 0.88,
+          "p75": 0.88,
+          "max": 0.88
+        },
+        "effects[bloom].opacity": {
+          "n": 1,
+          "projects": 1,
+          "min": 1,
+          "p25": 1,
+          "median": 1,
+          "p75": 1,
+          "max": 1
+        },
+        "effects[blocks].params.u_speed": {
+          "n": 1,
+          "projects": 1,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 0
+        },
+        "effects[blocks].params.u_flow": {
+          "n": 1,
+          "projects": 1,
+          "min": 0.4,
+          "p25": 0.4,
+          "median": 0.4,
+          "p75": 0.4,
+          "max": 0.4
+        },
+        "effects[blocks].opacity": {
+          "n": 1,
+          "projects": 1,
+          "min": 1,
+          "p25": 1,
+          "median": 1,
+          "p75": 1,
+          "max": 1
+        },
+        "effects[crystal_prism].params.u_centerX": {
+          "n": 2,
+          "projects": 2,
+          "min": 0.5,
+          "p25": 0.585,
+          "median": 0.67,
+          "p75": 0.755,
+          "max": 0.84
+        },
+        "effects[wave].params.u_amplitude": {
+          "n": 1,
+          "projects": 1,
+          "min": 0.046,
+          "p25": 0.046,
+          "median": 0.046,
+          "p75": 0.046,
+          "max": 0.046
+        },
+        "effects[wave].params.u_frequency": {
+          "n": 1,
+          "projects": 1,
+          "min": 50,
+          "p25": 50,
+          "median": 50,
+          "p75": 50,
+          "max": 50
+        },
+        "effects[wave].params.u_speed": {
+          "n": 1,
+          "projects": 1,
+          "min": 0.6,
+          "p25": 0.6,
+          "median": 0.6,
+          "p75": 0.6,
+          "max": 0.6
+        },
+        "effects[wave].params.u_angle": {
+          "n": 1,
+          "projects": 1,
+          "min": 128,
+          "p25": 128,
+          "median": 128,
+          "p75": 128,
+          "max": 128
+        },
+        "effects[wave].opacity": {
+          "n": 1,
+          "projects": 1,
+          "min": 1,
+          "p25": 1,
+          "median": 1,
+          "p75": 1,
+          "max": 1
+        },
+        "effects[noise_distortion].params.u_amount": {
+          "n": 2,
+          "projects": 2,
+          "min": 0.015,
+          "p25": 0.0588,
+          "median": 0.1025,
+          "p75": 0.1463,
+          "max": 0.19
+        },
+        "effects[noise_distortion].params.u_scale": {
+          "n": 2,
+          "projects": 2,
+          "min": 6.5,
+          "p25": 9.875,
+          "median": 13.25,
+          "p75": 16.625,
+          "max": 20
+        },
+        "effects[noise_distortion].params.u_speed": {
+          "n": 2,
+          "projects": 2,
+          "min": 0.3,
+          "p25": 0.4375,
+          "median": 0.575,
+          "p75": 0.7125,
+          "max": 0.85
+        },
+        "effects[noise_distortion].opacity": {
+          "n": 2,
+          "projects": 2,
+          "min": 1,
+          "p25": 1,
+          "median": 1,
+          "p75": 1,
+          "max": 1
+        },
+        "effects[flag].params.u_amplitude": {
+          "n": 1,
+          "projects": 1,
+          "min": 0.155,
+          "p25": 0.155,
+          "median": 0.155,
+          "p75": 0.155,
+          "max": 0.155
+        },
+        "effects[flag].params.u_frequency": {
+          "n": 1,
+          "projects": 1,
+          "min": 3.1,
+          "p25": 3.1,
+          "median": 3.1,
+          "p75": 3.1,
+          "max": 3.1
+        },
+        "effects[flag].params.u_gust": {
+          "n": 1,
+          "projects": 1,
+          "min": 0.75,
+          "p25": 0.75,
+          "median": 0.75,
+          "p75": 0.75,
+          "max": 0.75
+        },
+        "effects[flag].params.u_shading": {
+          "n": 1,
+          "projects": 1,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 0
+        },
+        "effects[flag].params.u_anchor": {
+          "n": 1,
+          "projects": 1,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 0
+        },
+        "effects[flag].params.u_speed": {
+          "n": 1,
+          "projects": 1,
+          "min": 2.7,
+          "p25": 2.7,
+          "median": 2.7,
+          "p75": 2.7,
+          "max": 2.7
+        },
+        "effects[flag].opacity": {
+          "n": 2,
+          "projects": 2,
+          "min": 1,
+          "p25": 1,
+          "median": 1,
+          "p75": 1,
+          "max": 1
+        },
+        "effects[*].opacity": {
+          "n": 4,
+          "projects": 4,
+          "min": 1,
+          "p25": 1,
+          "median": 1,
+          "p75": 1,
+          "max": 1
+        },
+        "effects[holographic].params.u_pattern": {
+          "n": 1,
+          "projects": 1,
+          "min": 1,
+          "p25": 1,
+          "median": 1,
+          "p75": 1,
+          "max": 1
+        },
+        "effects[holographic].params.u_iridescence": {
+          "n": 1,
+          "projects": 1,
+          "min": 1,
+          "p25": 1,
+          "median": 1,
+          "p75": 1,
+          "max": 1
+        },
+        "effects[holographic].params.u_bands": {
+          "n": 1,
+          "projects": 1,
+          "min": 0.8,
+          "p25": 0.8,
+          "median": 0.8,
+          "p75": 0.8,
+          "max": 0.8
+        },
+        "effects[holographic].params.u_angle": {
+          "n": 1,
+          "projects": 1,
+          "min": 23,
+          "p25": 23,
+          "median": 23,
+          "p75": 23,
+          "max": 23
+        },
+        "effects[holographic].params.u_shimmer": {
+          "n": 1,
+          "projects": 1,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 0
+        },
+        "effects[holographic].params.u_metallic": {
+          "n": 1,
+          "projects": 1,
+          "min": 0.31,
+          "p25": 0.31,
+          "median": 0.31,
+          "p75": 0.31,
+          "max": 0.31
+        },
+        "effects[holographic].params.u_sheen": {
+          "n": 1,
+          "projects": 1,
+          "min": 1,
+          "p25": 1,
+          "median": 1,
+          "p75": 1,
+          "max": 1
+        },
+        "effects[holographic].opacity": {
+          "n": 1,
+          "projects": 1,
+          "min": 1,
+          "p25": 1,
+          "median": 1,
+          "p75": 1,
+          "max": 1
+        },
+        "effects[water_ripple].params.u_amplitude": {
+          "n": 1,
+          "projects": 1,
+          "min": 0.086,
+          "p25": 0.086,
+          "median": 0.086,
+          "p75": 0.086,
+          "max": 0.086
+        },
+        "effects[water_ripple].opacity": {
+          "n": 1,
+          "projects": 1,
+          "min": 1,
+          "p25": 1,
+          "median": 1,
+          "p75": 1,
+          "max": 1
+        },
+        "effects[liquify].params.u_amount": {
+          "n": 2,
+          "projects": 2,
+          "min": 0.095,
+          "p25": 0.1338,
+          "median": 0.1725,
+          "p75": 0.2113,
+          "max": 0.25
+        },
+        "effects[liquify].params.u_speed": {
+          "n": 2,
+          "projects": 2,
+          "min": 0.45,
+          "p25": 0.45,
+          "median": 0.45,
+          "p75": 0.45,
+          "max": 0.45
+        },
+        "effects[liquify].params.u_scale": {
+          "n": 2,
+          "projects": 2,
+          "min": 6.25,
+          "p25": 6.75,
+          "median": 7.25,
+          "p75": 7.75,
+          "max": 8.25
+        },
+        "effects[liquify].opacity": {
+          "n": 2,
+          "projects": 2,
+          "min": 1,
+          "p25": 1,
+          "median": 1,
+          "p75": 1,
+          "max": 1
+        },
+        "effects[kaleidoscope].params.u_segments": {
+          "n": 1,
+          "projects": 1,
+          "min": 4,
+          "p25": 4,
+          "median": 4,
+          "p75": 4,
+          "max": 4
+        },
+        "effects[kaleidoscope].params.u_rotation": {
+          "n": 1,
+          "projects": 1,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 0
+        },
+        "effects[kaleidoscope].params.u_zoom": {
+          "n": 1,
+          "projects": 1,
+          "min": 1.7,
+          "p25": 1.7,
+          "median": 1.7,
+          "p75": 1.7,
+          "max": 1.7
+        },
+        "effects[kaleidoscope].opacity": {
+          "n": 1,
+          "projects": 1,
+          "min": 1,
+          "p25": 1,
+          "median": 1,
+          "p75": 1,
+          "max": 1
+        },
+        "effects[duotone].opacity": {
+          "n": 2,
+          "projects": 2,
+          "min": 1,
+          "p25": 1,
+          "median": 1,
+          "p75": 1,
+          "max": 1
+        },
+        "effects[duotone].params.u_lightHue": {
+          "n": 1,
+          "projects": 1,
+          "min": 0.92,
+          "p25": 0.92,
+          "median": 0.92,
+          "p75": 0.92,
+          "max": 0.92
+        },
+        "effects[duotone].params.u_shadowHue": {
+          "n": 1,
+          "projects": 1,
+          "min": 0.1,
+          "p25": 0.1,
+          "median": 0.1,
+          "p75": 0.1,
+          "max": 0.1
+        },
+        "effects[duotone].params.u_contrast": {
+          "n": 1,
+          "projects": 1,
+          "min": 1.15,
+          "p25": 1.15,
+          "median": 1.15,
+          "p75": 1.15,
+          "max": 1.15
+        },
+        "effects[fbm_warp].params.u_amount": {
+          "n": 1,
+          "projects": 1,
+          "min": 0.13,
+          "p25": 0.13,
+          "median": 0.13,
+          "p75": 0.13,
+          "max": 0.13
+        },
+        "effects[fbm_warp].params.u_scale": {
+          "n": 1,
+          "projects": 1,
+          "min": 2,
+          "p25": 2,
+          "median": 2,
+          "p75": 2,
+          "max": 2
+        },
+        "effects[fbm_warp].params.u_warp": {
+          "n": 1,
+          "projects": 1,
+          "min": 2.6,
+          "p25": 2.6,
+          "median": 2.6,
+          "p75": 2.6,
+          "max": 2.6
+        },
+        "effects[fbm_warp].params.u_detail": {
+          "n": 1,
+          "projects": 1,
+          "min": 0.6,
+          "p25": 0.6,
+          "median": 0.6,
+          "p75": 0.6,
+          "max": 0.6
+        },
+        "effects[fbm_warp].params.u_speed": {
+          "n": 1,
+          "projects": 1,
+          "min": 0.9,
+          "p25": 0.9,
+          "median": 0.9,
+          "p75": 0.9,
+          "max": 0.9
+        },
+        "effects[fbm_warp].opacity": {
+          "n": 1,
+          "projects": 1,
+          "min": 1,
+          "p25": 1,
+          "median": 1,
+          "p75": 1,
+          "max": 1
+        },
+        "effects[pixel_sort].params.u_low": {
+          "n": 1,
+          "projects": 1,
+          "min": 0.55,
+          "p25": 0.55,
+          "median": 0.55,
+          "p75": 0.55,
+          "max": 0.55
+        },
+        "effects[pixel_sort].params.u_high": {
+          "n": 1,
+          "projects": 1,
+          "min": 0.9,
+          "p25": 0.9,
+          "median": 0.9,
+          "p75": 0.9,
+          "max": 0.9
+        },
+        "effects[pixel_sort].params.u_length": {
+          "n": 1,
+          "projects": 1,
+          "min": 1,
+          "p25": 1,
+          "median": 1,
+          "p75": 1,
+          "max": 1
+        },
+        "effects[pixel_sort].params.u_mode": {
+          "n": 1,
+          "projects": 1,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 0
+        },
+        "effects[pixel_sort].params.u_direction": {
+          "n": 1,
+          "projects": 1,
+          "min": 2,
+          "p25": 2,
+          "median": 2,
+          "p75": 2,
+          "max": 2
+        },
+        "effects[pixel_sort].opacity": {
+          "n": 1,
+          "projects": 1,
+          "min": 1,
+          "p25": 1,
+          "median": 1,
+          "p75": 1,
+          "max": 1
+        }
+      },
+      "enums": {
+        "effects[block_glitch].enabled": {
+          "true": 1
+        },
+        "effects[block_glitch].blend": {
+          "normal": 1
+        },
+        "duotone.enabled": {
+          "false": 35
+        },
+        "gradientMap.enabled": {
+          "false": 34,
+          "true": 1
+        },
+        "adjust.enabled": {
+          "false": 34,
+          "true": 1
+        },
+        "post.blur.enabled": {
+          "false": 34,
+          "true": 1
+        },
+        "post.chromatic.enabled": {
+          "false": 28,
+          "true": 7
+        },
+        "post.bloom.enabled": {
+          "true": 5,
+          "false": 30
+        },
+        "effects[ascii_dither].enabled": {
+          "true": 5
+        },
+        "effects[ascii_dither].blend": {
+          "normal": 5
+        },
+        "effects[bayer_dither].enabled": {
+          "true": 1
+        },
+        "effects[bayer_dither].blend": {
+          "normal": 1
+        },
+        "effects[crystal_prism].enabled": {
+          "true": 5,
+          "false": 1
+        },
+        "effects[crystal_prism].blend": {
+          "normal": 6
+        },
+        "effects[blinds].enabled": {
+          "true": 6
+        },
+        "effects[blinds].blend": {
+          "normal": 6
+        },
+        "effects[bloom].enabled": {
+          "true": 1
+        },
+        "effects[bloom].blend": {
+          "normal": 1
+        },
+        "effects[blocks].enabled": {
+          "true": 1
+        },
+        "effects[blocks].blend": {
+          "darken": 1
+        },
+        "effects[wave].enabled": {
+          "true": 1
+        },
+        "effects[wave].blend": {
+          "overlay": 1
+        },
+        "effects[noise_distortion].enabled": {
+          "true": 2
+        },
+        "effects[noise_distortion].blend": {
+          "normal": 2
+        },
+        "effects[flag].enabled": {
+          "true": 2
+        },
+        "effects[flag].blend": {
+          "normal": 2
+        },
+        "effects[*].enabled": {
+          "true": 4
+        },
+        "effects[*].blend": {
+          "normal": 4
+        },
+        "effects[holographic].enabled": {
+          "true": 1
+        },
+        "effects[holographic].blend": {
+          "normal": 1
+        },
+        "effects[water_ripple].enabled": {
+          "true": 1
+        },
+        "effects[water_ripple].blend": {
+          "normal": 1
+        },
+        "effects[liquify].enabled": {
+          "true": 2
+        },
+        "effects[liquify].blend": {
+          "normal": 2
+        },
+        "effects[kaleidoscope].enabled": {
+          "true": 1
+        },
+        "effects[kaleidoscope].blend": {
+          "normal": 1
+        },
+        "effects[duotone].enabled": {
+          "true": 2
+        },
+        "effects[duotone].blend": {
+          "normal": 2
+        },
+        "effects[fbm_warp].enabled": {
+          "true": 1
+        },
+        "effects[fbm_warp].blend": {
+          "normal": 1
+        },
+        "effects[pixel_sort].enabled": {
+          "true": 1
+        },
+        "effects[pixel_sort].blend": {
+          "normal": 1
+        }
+      },
+      "colors": {
+        "#e609f5": 1,
+        "#40004c": 1,
+        "#aa0065": 1,
+        "#b275ff": 1,
+        "#98ff90": 1
+      }
+    },
+    "vectorType": {
+      "nodes": 18,
+      "projects": 15,
+      "params": {
+        "axes.wght": {
+          "n": 6,
+          "projects": 5,
+          "min": 400,
+          "p25": 515.5,
+          "median": 722,
+          "p75": 861,
+          "max": 1000
+        },
+        "size": {
+          "n": 18,
+          "projects": 15,
+          "min": 120,
+          "p25": 120,
+          "median": 120,
+          "p75": 157.5,
+          "max": 534
+        },
+        "tracking": {
+          "n": 18,
+          "projects": 15,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 0
+        },
+        "skewX": {
+          "n": 18,
+          "projects": 15,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 21
+        },
+        "skewY": {
+          "n": 18,
+          "projects": 15,
+          "min": -17,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 0
+        },
+        "arc": {
+          "n": 18,
+          "projects": 15,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 0
+        },
+        "appearance[fill].opacity": {
+          "n": 19,
+          "projects": 15,
+          "min": 1,
+          "p25": 1,
+          "median": 1,
+          "p75": 1,
+          "max": 1
+        },
+        "appearance[fill].width": {
+          "n": 19,
+          "projects": 15,
+          "min": 0,
+          "p25": 3,
+          "median": 3,
+          "p75": 3,
+          "max": 3
+        },
+        "appearance[fill].depth": {
+          "n": 19,
+          "projects": 15,
+          "min": 0,
+          "p25": 8,
+          "median": 8,
+          "p75": 8,
+          "max": 8
+        },
+        "appearance[fill].angle": {
+          "n": 19,
+          "projects": 15,
+          "min": 45,
+          "p25": 135,
+          "median": 135,
+          "p75": 135,
+          "max": 135
+        },
+        "appearance[fill].distance": {
+          "n": 19,
+          "projects": 15,
+          "min": 3,
+          "p25": 3,
+          "median": 3,
+          "p75": 3,
+          "max": 6
+        },
+        "appearance[fill].taper": {
+          "n": 19,
+          "projects": 15,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 0
+        },
+        "appearance[fill].draw": {
+          "n": 19,
+          "projects": 15,
+          "min": 1,
+          "p25": 1,
+          "median": 1,
+          "p75": 1,
+          "max": 1
+        },
+        "appearance[fill].paint.angle": {
+          "n": 19,
+          "projects": 15,
+          "min": 45,
+          "p25": 45,
+          "median": 45,
+          "p75": 45,
+          "max": 45
+        },
+        "appearance[fill].paint.density": {
+          "n": 19,
+          "projects": 15,
+          "min": 8,
+          "p25": 8,
+          "median": 8,
+          "p75": 8,
+          "max": 16
+        },
+        "appearance[fill].paint.shader.speed": {
+          "n": 5,
+          "projects": 5,
+          "min": 0,
+          "p25": 1,
+          "median": 1,
+          "p75": 1,
+          "max": 1
+        },
+        "appearance[fill].paint.shader.input.angle": {
+          "n": 5,
+          "projects": 5,
+          "min": 45,
+          "p25": 45,
+          "median": 45,
+          "p75": 45,
+          "max": 45
+        },
+        "appearance[fill].paint.shader.input.density": {
+          "n": 5,
+          "projects": 5,
+          "min": 8,
+          "p25": 8,
+          "median": 8,
+          "p75": 8,
+          "max": 8
+        },
+        "motion.duration": {
+          "n": 18,
+          "projects": 15,
+          "min": 4,
+          "p25": 4,
+          "median": 4,
+          "p75": 4,
+          "max": 4
+        },
+        "motion.fps": {
+          "n": 18,
+          "projects": 15,
+          "min": 30,
+          "p25": 30,
+          "median": 30,
+          "p75": 30,
+          "max": 30
+        },
+        "motion.size": {
+          "n": 18,
+          "projects": 15,
+          "min": 1080,
+          "p25": 1080,
+          "median": 1080,
+          "p75": 1080,
+          "max": 1080
+        },
+        "motion.stagger.delay": {
+          "n": 18,
+          "projects": 15,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 0.25
+        },
+        "motion.blink.amount": {
+          "n": 18,
+          "projects": 15,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 0.95
+        },
+        "motion.blink.rate": {
+          "n": 18,
+          "projects": 15,
+          "min": 0.5,
+          "p25": 6,
+          "median": 6,
+          "p75": 6,
+          "max": 6
+        },
+        "motion.blink.stayLit": {
+          "n": 18,
+          "projects": 15,
+          "min": 0.7,
+          "p25": 0.7,
+          "median": 0.7,
+          "p75": 0.7,
+          "max": 0.8
+        },
+        "motion.scatter.spread": {
+          "n": 18,
+          "projects": 15,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 0.55
+        },
+        "motion.scatter.settle": {
+          "n": 18,
+          "projects": 15,
+          "min": 0.8,
+          "p25": 0.8,
+          "median": 0.8,
+          "p75": 0.8,
+          "max": 9.5
+        },
+        "motion.scatter.rate": {
+          "n": 18,
+          "projects": 15,
+          "min": 0,
+          "p25": 0.3,
+          "median": 0.3,
+          "p75": 0.3,
+          "max": 0.3
+        },
+        "motion.in.duration": {
+          "n": 4,
+          "projects": 4,
+          "min": 0.5,
+          "p25": 0.725,
+          "median": 0.8,
+          "p75": 0.8,
+          "max": 0.8
+        },
+        "canvas.canvasW": {
+          "n": 18,
+          "projects": 15,
+          "min": 800,
+          "p25": 1280,
+          "median": 1280,
+          "p75": 1280,
+          "max": 1280
+        },
+        "canvas.canvasH": {
+          "n": 18,
+          "projects": 15,
+          "min": 300,
+          "p25": 720,
+          "median": 720,
+          "p75": 720,
+          "max": 720
+        },
+        "appearance[extrude].paint.angle": {
+          "n": 3,
+          "projects": 2,
+          "min": 30,
+          "p25": 37.5,
+          "median": 45,
+          "p75": 45,
+          "max": 45
+        },
+        "appearance[extrude].paint.density": {
+          "n": 3,
+          "projects": 2,
+          "min": 8,
+          "p25": 8,
+          "median": 8,
+          "p75": 8,
+          "max": 8
+        },
+        "appearance[extrude].opacity": {
+          "n": 3,
+          "projects": 2,
+          "min": 1,
+          "p25": 1,
+          "median": 1,
+          "p75": 1,
+          "max": 1
+        },
+        "appearance[extrude].width": {
+          "n": 3,
+          "projects": 2,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 3,
+          "max": 6
+        },
+        "appearance[extrude].depth": {
+          "n": 3,
+          "projects": 2,
+          "min": 8,
+          "p25": 8,
+          "median": 8,
+          "p75": 9,
+          "max": 10
+        },
+        "appearance[extrude].angle": {
+          "n": 3,
+          "projects": 2,
+          "min": 45,
+          "p25": 90,
+          "median": 135,
+          "p75": 135,
+          "max": 135
+        },
+        "appearance[extrude].distance": {
+          "n": 3,
+          "projects": 2,
+          "min": 3,
+          "p25": 4.5,
+          "median": 6,
+          "p75": 6,
+          "max": 6
+        },
+        "appearance[extrude].taper": {
+          "n": 3,
+          "projects": 2,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 0
+        },
+        "appearance[extrude].draw": {
+          "n": 3,
+          "projects": 2,
+          "min": 1,
+          "p25": 1,
+          "median": 1,
+          "p75": 1,
+          "max": 1
+        },
+        "appearance[stroke].paint.angle": {
+          "n": 3,
+          "projects": 3,
+          "min": 45,
+          "p25": 45,
+          "median": 45,
+          "p75": 45,
+          "max": 45
+        },
+        "appearance[stroke].paint.density": {
+          "n": 3,
+          "projects": 3,
+          "min": 8,
+          "p25": 8,
+          "median": 8,
+          "p75": 8,
+          "max": 8
+        },
+        "appearance[stroke].opacity": {
+          "n": 3,
+          "projects": 3,
+          "min": 1,
+          "p25": 1,
+          "median": 1,
+          "p75": 1,
+          "max": 1
+        },
+        "appearance[stroke].width": {
+          "n": 3,
+          "projects": 3,
+          "min": 0,
+          "p25": 1.5,
+          "median": 3,
+          "p75": 3.5,
+          "max": 4
+        },
+        "appearance[stroke].depth": {
+          "n": 3,
+          "projects": 3,
+          "min": 8,
+          "p25": 8,
+          "median": 8,
+          "p75": 8,
+          "max": 8
+        },
+        "appearance[stroke].angle": {
+          "n": 3,
+          "projects": 3,
+          "min": 135,
+          "p25": 135,
+          "median": 135,
+          "p75": 135,
+          "max": 135
+        },
+        "appearance[stroke].distance": {
+          "n": 3,
+          "projects": 3,
+          "min": 3,
+          "p25": 3,
+          "median": 3,
+          "p75": 3,
+          "max": 3
+        },
+        "appearance[stroke].taper": {
+          "n": 3,
+          "projects": 3,
+          "min": 0,
+          "p25": 0,
+          "median": 0,
+          "p75": 0,
+          "max": 0
+        },
+        "appearance[stroke].draw": {
+          "n": 3,
+          "projects": 3,
+          "min": 1,
+          "p25": 1,
+          "median": 1,
+          "p75": 1,
+          "max": 1
+        },
+        "appearance[fill].paint.shader.params.segments": {
+          "n": 1,
+          "projects": 1,
+          "min": 14,
+          "p25": 14,
+          "median": 14,
+          "p75": 14,
+          "max": 14
+        },
+        "appearance[fill].paint.shader.params.speed": {
+          "n": 1,
+          "projects": 1,
+          "min": 1.5,
+          "p25": 1.5,
+          "median": 1.5,
+          "p75": 1.5,
+          "max": 1.5
+        },
+        "motion.loop.duration": {
+          "n": 2,
+          "projects": 2,
+          "min": 1.5,
+          "p25": 1.5,
+          "median": 1.5,
+          "p75": 1.5,
+          "max": 1.5
+        },
+        "appearance[fill].paint.shader.params.amount": {
+          "n": 1,
+          "projects": 1,
+          "min": 0.12,
+          "p25": 0.12,
+          "median": 0.12,
+          "p75": 0.12,
+          "max": 0.12
+        },
+        "appearance[fill].paint.shader.params.scale": {
+          "n": 1,
+          "projects": 1,
+          "min": 3,
+          "p25": 3,
+          "median": 3,
+          "p75": 3,
+          "max": 3
+        },
+        "appearance[fill].paint.shader.params.warp": {
+          "n": 1,
+          "projects": 1,
+          "min": 2,
+          "p25": 2,
+          "median": 2,
+          "p75": 2,
+          "max": 2
+        },
+        "appearance[fill].paint.shader.params.detail": {
+          "n": 1,
+          "projects": 1,
+          "min": 0.5,
+          "p25": 0.5,
+          "median": 0.5,
+          "p75": 0.5,
+          "max": 0.5
+        },
+        "motion.out.duration": {
+          "n": 1,
+          "projects": 1,
+          "min": 0.8,
+          "p25": 0.8,
+          "median": 0.8,
+          "p75": 0.8,
+          "max": 0.8
+        }
+      },
+      "enums": {
+        "fontId": {
+          "big-shoulders": 2,
+          "inter": 14,
+          "roboto-flex": 2
+        },
+        "align": {
+          "center": 18
+        },
+        "appearance[fill].kind": {
+          "fill": 19
+        },
+        "appearance[fill].enabled": {
+          "true": 19
+        },
+        "appearance[fill].anchor": {
+          "glyph": 18,
+          "word": 1
+        },
+        "appearance[fill].blend": {
+          "normal": 19
+        },
+        "appearance[fill].solid": {
+          "false": 19
+        },
+        "appearance[fill].paint.type": {
+          "shader": 5,
+          "stripes": 1,
+          "solid": 10,
+          "qr": 1,
+          "noise": 1,
+          "gradient": 1
+        },
+        "appearance[fill].paint.shader.effectId": {
+          "fbm_warp": 4,
+          "kaleidoscope": 1
+        },
+        "appearance[fill].paint.shader.anchor": {
+          "object": 4,
+          "frame": 1
+        },
+        "appearance[fill].paint.shader.input.type": {
+          "gradient": 5
+        },
+        "motion.stagger.order": {
+          "forward": 18
+        },
+        "motion.blink.unit": {
+          "letter": 18
+        },
+        "motion.scatter.axis": {
+          "wght": 18
+        },
+        "motion.scatter.mode": {
+          "settle": 17,
+          "wander": 1
+        },
+        "motion.in.presetId": {
+          "slide-up": 1,
+          "blur-slide-up": 1,
+          "typewriter": 1,
+          "weight-in": 1
+        },
+        "canvas.aspectKey": {
+          "16:9": 18
+        },
+        "appearance[extrude].kind": {
+          "extrude": 3
+        },
+        "appearance[extrude].enabled": {
+          "true": 3
+        },
+        "appearance[extrude].paint.type": {
+          "solid": 2,
+          "gradient": 1
+        },
+        "appearance[extrude].anchor": {
+          "glyph": 3
+        },
+        "appearance[extrude].blend": {
+          "normal": 3
+        },
+        "appearance[extrude].solid": {
+          "false": 2,
+          "true": 1
+        },
+        "appearance[stroke].kind": {
+          "stroke": 3
+        },
+        "appearance[stroke].enabled": {
+          "true": 3
+        },
+        "appearance[stroke].paint.type": {
+          "solid": 3
+        },
+        "appearance[stroke].anchor": {
+          "glyph": 3
+        },
+        "appearance[stroke].blend": {
+          "normal": 3
+        },
+        "appearance[stroke].solid": {
+          "false": 3
+        },
+        "motion.loop.presetId": {
+          "grade-pulse": 1,
+          "weight-wave": 1
+        },
+        "motion.out.presetId": {
+          "fade-out": 1
+        }
+      },
+      "colors": {
+        "#0b0d12": 16,
+        "#ffffff": 14,
+        "#000000": 8,
+        "#00c8ff": 3,
+        "#ff2200": 2,
+        "#101014": 2,
+        "#ff0055": 2,
+        "#ffee00": 1,
+        "#353535": 1,
+        "#3b82f6": 1,
+        "#0044ff": 1
+      }
+    }
+  },
+  "topParams": [
+    {
+      "studio": "gradient",
+      "path": "layers[*].color.stops[*].pos",
+      "n": 111,
+      "perProject": {
+        "08207849-95a6-40e7-9479-9439921fc28b": [
+          0,
+          0.4,
+          0.64,
+          1
+        ],
+        "0acf88c6-c101-4d07-960a-52e4435acb15": [
+          0,
+          0.3333,
+          0.6667,
+          1
+        ],
+        "0d1b2f49-a1f5-43a1-bc6b-8e034cfd8815": [
+          0,
+          0.22,
+          0.46,
+          0.7,
+          0.86,
+          1,
+          0,
+          0.3,
+          0.6,
+          0.82,
+          1
+        ],
+        "203763cc-69f4-4a32-8f34-364e39432f14": [
+          0,
+          0.4,
+          0.64,
+          1,
+          0,
+          0.4,
+          0.64,
+          1
+        ],
+        "36280028-a91c-4353-aca2-fa325d26f2c8": [
+          0,
+          0.3333,
+          0.6667,
+          1
+        ],
+        "3ceae9eb-31c9-4a2b-9baf-1f062f7a405a": [
+          0,
+          0.4,
+          0.64,
+          1
+        ],
+        "44a84c6f-26a5-4d3a-9fa2-73da7ef32b93": [
+          0,
+          0.4,
+          0.64,
+          1,
+          0,
+          0.4,
+          0.64,
+          1,
+          0,
+          0.32,
+          0.6,
+          0.82,
+          1,
+          0,
+          0.4,
+          0.64,
+          1
+        ],
+        "48487401-325c-4b93-b6ae-af102b2845bd": [
+          0,
+          0.4,
+          0.64,
+          1
+        ],
+        "598b9854-a301-4a91-bd6b-6b5ee12108f8": [
+          0,
+          0.4,
+          0.64,
+          1,
+          0,
+          0.4,
+          0.64,
+          1
+        ],
+        "78f8af63-e146-4a83-8fc0-6d464e18b65a": [
+          0,
+          0.5,
+          1,
+          0,
+          0.4,
+          0.64,
+          1
+        ],
+        "94466acc-0ce7-4abf-928d-0350b723762d": [
+          0,
+          0.34,
+          0.6,
+          1,
+          0,
+          0.4,
+          0.64,
+          1
+        ],
+        "95d28eea-0774-4e4c-bbc4-3faa6b15bc8f": [
+          0,
+          0.4,
+          0.64,
+          1
+        ],
+        "9dcde1e1-ce55-41e2-84db-a32f9a70d6da": [
+          0,
+          0.4,
+          0.64,
+          1
+        ],
+        "a600866c-b7b4-4066-97d9-f37cffc7e7b9": [
+          0,
+          0.4,
+          0.64,
+          1
+        ],
+        "c61b2ee5-ecf5-4b4e-8cd4-cc1356839c18": [
+          0,
+          0.4,
+          0.64,
+          1
+        ],
+        "cc621c77-e466-4b45-a2ac-d2d25a6146c0": [
+          0,
+          0.5,
+          1
+        ],
+        "d07d192f-aa5f-4292-ab51-f876cfd28f02": [
+          0,
+          0.4,
+          0.64,
+          1
+        ],
+        "e4792d5f-5e9f-4731-9394-d05aa978c065": [
+          0,
+          0.3,
+          0.6,
+          0.82,
+          1
+        ],
+        "eb79304f-7fa5-4ca0-9085-392b8f10a180": [
+          0,
+          0.4,
+          0.64,
+          1
+        ]
+      }
+    },
+    {
+      "studio": "shader",
+      "path": "gradientMap.stops[*].pos",
+      "n": 106,
+      "perProject": {
+        "0d1b2f49-a1f5-43a1-bc6b-8e034cfd8815": [
+          0,
+          0.5,
+          1,
+          0,
+          0.5,
+          1,
+          0,
+          0.5,
+          1,
+          0,
+          0.5,
+          1,
+          0,
+          0.5,
+          1
+        ],
+        "1af393fc-c7af-4329-b367-f0165ca6b9ed": [
+          0,
+          0.5,
+          1
+        ],
+        "203763cc-69f4-4a32-8f34-364e39432f14": [
+          0,
+          0.5,
+          1
+        ],
+        "3ceae9eb-31c9-4a2b-9baf-1f062f7a405a": [
+          0,
+          0.5,
+          1
+        ],
+        "44a84c6f-26a5-4d3a-9fa2-73da7ef32b93": [
+          0,
+          0.5,
+          1,
+          0,
+          0.5,
+          1,
+          0,
+          0.5,
+          1,
+          0,
+          0.5,
+          1
+        ],
+        "49e43346-0eaa-4929-9bde-e4a26078c5cf": [
+          0,
+          0.5,
+          1
+        ],
+        "5977260a-02a9-4017-ab25-316bb68645aa": [
+          0,
+          0.5,
+          1
+        ],
+        "598b9854-a301-4a91-bd6b-6b5ee12108f8": [
+          0,
+          0.5,
+          1
+        ],
+        "6dd2a944-fe42-49b3-8128-a3e2992fa825": [
+          0,
+          0.5,
+          1
+        ],
+        "78f8af63-e146-4a83-8fc0-6d464e18b65a": [
+          0,
+          0.5,
+          1
+        ],
+        "7998aa84-29ad-4765-a08a-58bdb80fdfc4": [
+          0,
+          0.5,
+          1,
+          0,
+          0.5,
+          1
+        ],
+        "7cfc8759-b087-494e-9237-04a24b736292": [
+          0,
+          0.5,
+          1
+        ],
+        "8915412f-614e-435c-856b-51d6e55786d8": [
+          0,
+          0.5,
+          1
+        ],
+        "94466acc-0ce7-4abf-928d-0350b723762d": [
+          0,
+          0.5,
+          1,
+          0,
+          0.5,
+          1
+        ],
+        "95b30974-fd1f-46dd-a4aa-78537d4c8b21": [
+          0,
+          0.5,
+          1
+        ],
+        "95d28eea-0774-4e4c-bbc4-3faa6b15bc8f": [
+          0,
+          0.5,
+          1
+        ],
+        "9ea00e32-0b4c-4138-844e-3bcb3d9fa427": [
+          0,
+          0.5,
+          1
+        ],
+        "a0585864-a43f-4d8e-965c-0f57c927931d": [
+          0,
+          0.5,
+          1
+        ],
+        "b45c19c6-662b-405b-929f-9ca590b8f62f": [
+          0,
+          0.5,
+          1
+        ],
+        "c7bb7f88-4556-486f-a975-1331f080b360": [
+          0,
+          0.5,
+          1
+        ],
+        "cc621c77-e466-4b45-a2ac-d2d25a6146c0": [
+          0,
+          0.5,
+          1
+        ],
+        "cef45039-46cb-4bd3-ba4c-903d692655b6": [
+          0,
+          0.5,
+          1,
+          0,
+          0.3333,
+          0.6667,
+          1,
+          0,
+          0.5,
+          1
+        ],
+        "e6b9108c-c1eb-4b69-9552-fc7564d249c7": [
+          0,
+          0.5,
+          1
+        ],
+        "ebf30ef2-e9f8-4d52-b350-9f790baf6617": [
+          0,
+          0.5,
+          1
+        ]
+      }
+    },
+    {
+      "studio": "shader",
+      "path": "adjust.brightness",
+      "n": 35,
+      "perProject": {
+        "0d1b2f49-a1f5-43a1-bc6b-8e034cfd8815": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "1af393fc-c7af-4329-b367-f0165ca6b9ed": [
+          0
+        ],
+        "203763cc-69f4-4a32-8f34-364e39432f14": [
+          0
+        ],
+        "3ceae9eb-31c9-4a2b-9baf-1f062f7a405a": [
+          0
+        ],
+        "44a84c6f-26a5-4d3a-9fa2-73da7ef32b93": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "49e43346-0eaa-4929-9bde-e4a26078c5cf": [
+          0
+        ],
+        "5977260a-02a9-4017-ab25-316bb68645aa": [
+          0
+        ],
+        "598b9854-a301-4a91-bd6b-6b5ee12108f8": [
+          0
+        ],
+        "6dd2a944-fe42-49b3-8128-a3e2992fa825": [
+          0
+        ],
+        "78f8af63-e146-4a83-8fc0-6d464e18b65a": [
+          0
+        ],
+        "7998aa84-29ad-4765-a08a-58bdb80fdfc4": [
+          0,
+          0
+        ],
+        "7cfc8759-b087-494e-9237-04a24b736292": [
+          0
+        ],
+        "8915412f-614e-435c-856b-51d6e55786d8": [
+          0
+        ],
+        "94466acc-0ce7-4abf-928d-0350b723762d": [
+          0,
+          0
+        ],
+        "95b30974-fd1f-46dd-a4aa-78537d4c8b21": [
+          0
+        ],
+        "95d28eea-0774-4e4c-bbc4-3faa6b15bc8f": [
+          0
+        ],
+        "9ea00e32-0b4c-4138-844e-3bcb3d9fa427": [
+          0
+        ],
+        "a0585864-a43f-4d8e-965c-0f57c927931d": [
+          0
+        ],
+        "b45c19c6-662b-405b-929f-9ca590b8f62f": [
+          0
+        ],
+        "c7bb7f88-4556-486f-a975-1331f080b360": [
+          -0.03
+        ],
+        "cc621c77-e466-4b45-a2ac-d2d25a6146c0": [
+          0
+        ],
+        "cef45039-46cb-4bd3-ba4c-903d692655b6": [
+          0,
+          0,
+          0
+        ],
+        "e6b9108c-c1eb-4b69-9552-fc7564d249c7": [
+          0
+        ],
+        "ebf30ef2-e9f8-4d52-b350-9f790baf6617": [
+          0
+        ]
+      }
+    },
+    {
+      "studio": "shader",
+      "path": "adjust.contrast",
+      "n": 35,
+      "perProject": {
+        "0d1b2f49-a1f5-43a1-bc6b-8e034cfd8815": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "1af393fc-c7af-4329-b367-f0165ca6b9ed": [
+          0
+        ],
+        "203763cc-69f4-4a32-8f34-364e39432f14": [
+          0
+        ],
+        "3ceae9eb-31c9-4a2b-9baf-1f062f7a405a": [
+          0
+        ],
+        "44a84c6f-26a5-4d3a-9fa2-73da7ef32b93": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "49e43346-0eaa-4929-9bde-e4a26078c5cf": [
+          0
+        ],
+        "5977260a-02a9-4017-ab25-316bb68645aa": [
+          0
+        ],
+        "598b9854-a301-4a91-bd6b-6b5ee12108f8": [
+          0
+        ],
+        "6dd2a944-fe42-49b3-8128-a3e2992fa825": [
+          0
+        ],
+        "78f8af63-e146-4a83-8fc0-6d464e18b65a": [
+          0
+        ],
+        "7998aa84-29ad-4765-a08a-58bdb80fdfc4": [
+          0,
+          0
+        ],
+        "7cfc8759-b087-494e-9237-04a24b736292": [
+          0
+        ],
+        "8915412f-614e-435c-856b-51d6e55786d8": [
+          0
+        ],
+        "94466acc-0ce7-4abf-928d-0350b723762d": [
+          0,
+          0
+        ],
+        "95b30974-fd1f-46dd-a4aa-78537d4c8b21": [
+          0
+        ],
+        "95d28eea-0774-4e4c-bbc4-3faa6b15bc8f": [
+          0
+        ],
+        "9ea00e32-0b4c-4138-844e-3bcb3d9fa427": [
+          0
+        ],
+        "a0585864-a43f-4d8e-965c-0f57c927931d": [
+          0
+        ],
+        "b45c19c6-662b-405b-929f-9ca590b8f62f": [
+          0
+        ],
+        "c7bb7f88-4556-486f-a975-1331f080b360": [
+          0.77
+        ],
+        "cc621c77-e466-4b45-a2ac-d2d25a6146c0": [
+          0
+        ],
+        "cef45039-46cb-4bd3-ba4c-903d692655b6": [
+          0,
+          0,
+          0
+        ],
+        "e6b9108c-c1eb-4b69-9552-fc7564d249c7": [
+          0
+        ],
+        "ebf30ef2-e9f8-4d52-b350-9f790baf6617": [
+          0
+        ]
+      }
+    },
+    {
+      "studio": "shader",
+      "path": "adjust.exposure",
+      "n": 35,
+      "perProject": {
+        "0d1b2f49-a1f5-43a1-bc6b-8e034cfd8815": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "1af393fc-c7af-4329-b367-f0165ca6b9ed": [
+          0
+        ],
+        "203763cc-69f4-4a32-8f34-364e39432f14": [
+          0
+        ],
+        "3ceae9eb-31c9-4a2b-9baf-1f062f7a405a": [
+          0
+        ],
+        "44a84c6f-26a5-4d3a-9fa2-73da7ef32b93": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "49e43346-0eaa-4929-9bde-e4a26078c5cf": [
+          0
+        ],
+        "5977260a-02a9-4017-ab25-316bb68645aa": [
+          0
+        ],
+        "598b9854-a301-4a91-bd6b-6b5ee12108f8": [
+          0
+        ],
+        "6dd2a944-fe42-49b3-8128-a3e2992fa825": [
+          0
+        ],
+        "78f8af63-e146-4a83-8fc0-6d464e18b65a": [
+          0
+        ],
+        "7998aa84-29ad-4765-a08a-58bdb80fdfc4": [
+          0,
+          0
+        ],
+        "7cfc8759-b087-494e-9237-04a24b736292": [
+          0
+        ],
+        "8915412f-614e-435c-856b-51d6e55786d8": [
+          0
+        ],
+        "94466acc-0ce7-4abf-928d-0350b723762d": [
+          0,
+          0
+        ],
+        "95b30974-fd1f-46dd-a4aa-78537d4c8b21": [
+          0
+        ],
+        "95d28eea-0774-4e4c-bbc4-3faa6b15bc8f": [
+          0
+        ],
+        "9ea00e32-0b4c-4138-844e-3bcb3d9fa427": [
+          0
+        ],
+        "a0585864-a43f-4d8e-965c-0f57c927931d": [
+          0
+        ],
+        "b45c19c6-662b-405b-929f-9ca590b8f62f": [
+          0
+        ],
+        "c7bb7f88-4556-486f-a975-1331f080b360": [
+          0.04
+        ],
+        "cc621c77-e466-4b45-a2ac-d2d25a6146c0": [
+          0
+        ],
+        "cef45039-46cb-4bd3-ba4c-903d692655b6": [
+          0,
+          0,
+          0
+        ],
+        "e6b9108c-c1eb-4b69-9552-fc7564d249c7": [
+          0
+        ],
+        "ebf30ef2-e9f8-4d52-b350-9f790baf6617": [
+          0
+        ]
+      }
+    },
+    {
+      "studio": "shader",
+      "path": "adjust.hue",
+      "n": 35,
+      "perProject": {
+        "0d1b2f49-a1f5-43a1-bc6b-8e034cfd8815": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "1af393fc-c7af-4329-b367-f0165ca6b9ed": [
+          0
+        ],
+        "203763cc-69f4-4a32-8f34-364e39432f14": [
+          0
+        ],
+        "3ceae9eb-31c9-4a2b-9baf-1f062f7a405a": [
+          0
+        ],
+        "44a84c6f-26a5-4d3a-9fa2-73da7ef32b93": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "49e43346-0eaa-4929-9bde-e4a26078c5cf": [
+          0
+        ],
+        "5977260a-02a9-4017-ab25-316bb68645aa": [
+          0
+        ],
+        "598b9854-a301-4a91-bd6b-6b5ee12108f8": [
+          0
+        ],
+        "6dd2a944-fe42-49b3-8128-a3e2992fa825": [
+          0
+        ],
+        "78f8af63-e146-4a83-8fc0-6d464e18b65a": [
+          0
+        ],
+        "7998aa84-29ad-4765-a08a-58bdb80fdfc4": [
+          0,
+          0
+        ],
+        "7cfc8759-b087-494e-9237-04a24b736292": [
+          0
+        ],
+        "8915412f-614e-435c-856b-51d6e55786d8": [
+          0
+        ],
+        "94466acc-0ce7-4abf-928d-0350b723762d": [
+          0,
+          0
+        ],
+        "95b30974-fd1f-46dd-a4aa-78537d4c8b21": [
+          0
+        ],
+        "95d28eea-0774-4e4c-bbc4-3faa6b15bc8f": [
+          0
+        ],
+        "9ea00e32-0b4c-4138-844e-3bcb3d9fa427": [
+          0
+        ],
+        "a0585864-a43f-4d8e-965c-0f57c927931d": [
+          0
+        ],
+        "b45c19c6-662b-405b-929f-9ca590b8f62f": [
+          0
+        ],
+        "c7bb7f88-4556-486f-a975-1331f080b360": [
+          0
+        ],
+        "cc621c77-e466-4b45-a2ac-d2d25a6146c0": [
+          0
+        ],
+        "cef45039-46cb-4bd3-ba4c-903d692655b6": [
+          0,
+          0,
+          0
+        ],
+        "e6b9108c-c1eb-4b69-9552-fc7564d249c7": [
+          0
+        ],
+        "ebf30ef2-e9f8-4d52-b350-9f790baf6617": [
+          0
+        ]
+      }
+    },
+    {
+      "studio": "shader",
+      "path": "adjust.saturation",
+      "n": 35,
+      "perProject": {
+        "0d1b2f49-a1f5-43a1-bc6b-8e034cfd8815": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "1af393fc-c7af-4329-b367-f0165ca6b9ed": [
+          0
+        ],
+        "203763cc-69f4-4a32-8f34-364e39432f14": [
+          0
+        ],
+        "3ceae9eb-31c9-4a2b-9baf-1f062f7a405a": [
+          0
+        ],
+        "44a84c6f-26a5-4d3a-9fa2-73da7ef32b93": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "49e43346-0eaa-4929-9bde-e4a26078c5cf": [
+          0
+        ],
+        "5977260a-02a9-4017-ab25-316bb68645aa": [
+          0
+        ],
+        "598b9854-a301-4a91-bd6b-6b5ee12108f8": [
+          0
+        ],
+        "6dd2a944-fe42-49b3-8128-a3e2992fa825": [
+          0
+        ],
+        "78f8af63-e146-4a83-8fc0-6d464e18b65a": [
+          0
+        ],
+        "7998aa84-29ad-4765-a08a-58bdb80fdfc4": [
+          0,
+          0
+        ],
+        "7cfc8759-b087-494e-9237-04a24b736292": [
+          0
+        ],
+        "8915412f-614e-435c-856b-51d6e55786d8": [
+          0
+        ],
+        "94466acc-0ce7-4abf-928d-0350b723762d": [
+          0,
+          0
+        ],
+        "95b30974-fd1f-46dd-a4aa-78537d4c8b21": [
+          0
+        ],
+        "95d28eea-0774-4e4c-bbc4-3faa6b15bc8f": [
+          0
+        ],
+        "9ea00e32-0b4c-4138-844e-3bcb3d9fa427": [
+          0
+        ],
+        "a0585864-a43f-4d8e-965c-0f57c927931d": [
+          0
+        ],
+        "b45c19c6-662b-405b-929f-9ca590b8f62f": [
+          0
+        ],
+        "c7bb7f88-4556-486f-a975-1331f080b360": [
+          0.2
+        ],
+        "cc621c77-e466-4b45-a2ac-d2d25a6146c0": [
+          0
+        ],
+        "cef45039-46cb-4bd3-ba4c-903d692655b6": [
+          0,
+          0,
+          0
+        ],
+        "e6b9108c-c1eb-4b69-9552-fc7564d249c7": [
+          0
+        ],
+        "ebf30ef2-e9f8-4d52-b350-9f790baf6617": [
+          0
+        ]
+      }
+    },
+    {
+      "studio": "shader",
+      "path": "adjust.temperature",
+      "n": 35,
+      "perProject": {
+        "0d1b2f49-a1f5-43a1-bc6b-8e034cfd8815": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "1af393fc-c7af-4329-b367-f0165ca6b9ed": [
+          0
+        ],
+        "203763cc-69f4-4a32-8f34-364e39432f14": [
+          0
+        ],
+        "3ceae9eb-31c9-4a2b-9baf-1f062f7a405a": [
+          0
+        ],
+        "44a84c6f-26a5-4d3a-9fa2-73da7ef32b93": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "49e43346-0eaa-4929-9bde-e4a26078c5cf": [
+          0
+        ],
+        "5977260a-02a9-4017-ab25-316bb68645aa": [
+          0
+        ],
+        "598b9854-a301-4a91-bd6b-6b5ee12108f8": [
+          0
+        ],
+        "6dd2a944-fe42-49b3-8128-a3e2992fa825": [
+          0
+        ],
+        "78f8af63-e146-4a83-8fc0-6d464e18b65a": [
+          0
+        ],
+        "7998aa84-29ad-4765-a08a-58bdb80fdfc4": [
+          0,
+          0
+        ],
+        "7cfc8759-b087-494e-9237-04a24b736292": [
+          0
+        ],
+        "8915412f-614e-435c-856b-51d6e55786d8": [
+          0
+        ],
+        "94466acc-0ce7-4abf-928d-0350b723762d": [
+          0,
+          0
+        ],
+        "95b30974-fd1f-46dd-a4aa-78537d4c8b21": [
+          0
+        ],
+        "95d28eea-0774-4e4c-bbc4-3faa6b15bc8f": [
+          0
+        ],
+        "9ea00e32-0b4c-4138-844e-3bcb3d9fa427": [
+          0
+        ],
+        "a0585864-a43f-4d8e-965c-0f57c927931d": [
+          0
+        ],
+        "b45c19c6-662b-405b-929f-9ca590b8f62f": [
+          0
+        ],
+        "c7bb7f88-4556-486f-a975-1331f080b360": [
+          0
+        ],
+        "cc621c77-e466-4b45-a2ac-d2d25a6146c0": [
+          0
+        ],
+        "cef45039-46cb-4bd3-ba4c-903d692655b6": [
+          0,
+          0,
+          0
+        ],
+        "e6b9108c-c1eb-4b69-9552-fc7564d249c7": [
+          0
+        ],
+        "ebf30ef2-e9f8-4d52-b350-9f790baf6617": [
+          0
+        ]
+      }
+    },
+    {
+      "studio": "shader",
+      "path": "adjust.tint",
+      "n": 35,
+      "perProject": {
+        "0d1b2f49-a1f5-43a1-bc6b-8e034cfd8815": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "1af393fc-c7af-4329-b367-f0165ca6b9ed": [
+          0
+        ],
+        "203763cc-69f4-4a32-8f34-364e39432f14": [
+          0
+        ],
+        "3ceae9eb-31c9-4a2b-9baf-1f062f7a405a": [
+          0
+        ],
+        "44a84c6f-26a5-4d3a-9fa2-73da7ef32b93": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "49e43346-0eaa-4929-9bde-e4a26078c5cf": [
+          0
+        ],
+        "5977260a-02a9-4017-ab25-316bb68645aa": [
+          0
+        ],
+        "598b9854-a301-4a91-bd6b-6b5ee12108f8": [
+          0
+        ],
+        "6dd2a944-fe42-49b3-8128-a3e2992fa825": [
+          0
+        ],
+        "78f8af63-e146-4a83-8fc0-6d464e18b65a": [
+          0
+        ],
+        "7998aa84-29ad-4765-a08a-58bdb80fdfc4": [
+          0,
+          0
+        ],
+        "7cfc8759-b087-494e-9237-04a24b736292": [
+          0
+        ],
+        "8915412f-614e-435c-856b-51d6e55786d8": [
+          0
+        ],
+        "94466acc-0ce7-4abf-928d-0350b723762d": [
+          0,
+          0
+        ],
+        "95b30974-fd1f-46dd-a4aa-78537d4c8b21": [
+          0
+        ],
+        "95d28eea-0774-4e4c-bbc4-3faa6b15bc8f": [
+          0
+        ],
+        "9ea00e32-0b4c-4138-844e-3bcb3d9fa427": [
+          0
+        ],
+        "a0585864-a43f-4d8e-965c-0f57c927931d": [
+          0
+        ],
+        "b45c19c6-662b-405b-929f-9ca590b8f62f": [
+          0
+        ],
+        "c7bb7f88-4556-486f-a975-1331f080b360": [
+          0
+        ],
+        "cc621c77-e466-4b45-a2ac-d2d25a6146c0": [
+          0
+        ],
+        "cef45039-46cb-4bd3-ba4c-903d692655b6": [
+          0,
+          0,
+          0
+        ],
+        "e6b9108c-c1eb-4b69-9552-fc7564d249c7": [
+          0
+        ],
+        "ebf30ef2-e9f8-4d52-b350-9f790baf6617": [
+          0
+        ]
+      }
+    },
+    {
+      "studio": "shader",
+      "path": "gradientMap.mix",
+      "n": 35,
+      "perProject": {
+        "0d1b2f49-a1f5-43a1-bc6b-8e034cfd8815": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "1af393fc-c7af-4329-b367-f0165ca6b9ed": [
+          1
+        ],
+        "203763cc-69f4-4a32-8f34-364e39432f14": [
+          1
+        ],
+        "3ceae9eb-31c9-4a2b-9baf-1f062f7a405a": [
+          1
+        ],
+        "44a84c6f-26a5-4d3a-9fa2-73da7ef32b93": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "49e43346-0eaa-4929-9bde-e4a26078c5cf": [
+          1
+        ],
+        "5977260a-02a9-4017-ab25-316bb68645aa": [
+          1
+        ],
+        "598b9854-a301-4a91-bd6b-6b5ee12108f8": [
+          1
+        ],
+        "6dd2a944-fe42-49b3-8128-a3e2992fa825": [
+          1
+        ],
+        "78f8af63-e146-4a83-8fc0-6d464e18b65a": [
+          1
+        ],
+        "7998aa84-29ad-4765-a08a-58bdb80fdfc4": [
+          1,
+          1
+        ],
+        "7cfc8759-b087-494e-9237-04a24b736292": [
+          1
+        ],
+        "8915412f-614e-435c-856b-51d6e55786d8": [
+          1
+        ],
+        "94466acc-0ce7-4abf-928d-0350b723762d": [
+          1,
+          1
+        ],
+        "95b30974-fd1f-46dd-a4aa-78537d4c8b21": [
+          1
+        ],
+        "95d28eea-0774-4e4c-bbc4-3faa6b15bc8f": [
+          1
+        ],
+        "9ea00e32-0b4c-4138-844e-3bcb3d9fa427": [
+          1
+        ],
+        "a0585864-a43f-4d8e-965c-0f57c927931d": [
+          1
+        ],
+        "b45c19c6-662b-405b-929f-9ca590b8f62f": [
+          1
+        ],
+        "c7bb7f88-4556-486f-a975-1331f080b360": [
+          1
+        ],
+        "cc621c77-e466-4b45-a2ac-d2d25a6146c0": [
+          1
+        ],
+        "cef45039-46cb-4bd3-ba4c-903d692655b6": [
+          1,
+          1,
+          1
+        ],
+        "e6b9108c-c1eb-4b69-9552-fc7564d249c7": [
+          1
+        ],
+        "ebf30ef2-e9f8-4d52-b350-9f790baf6617": [
+          1
+        ]
+      }
+    },
+    {
+      "studio": "shader",
+      "path": "motion.duration",
+      "n": 35,
+      "perProject": {
+        "0d1b2f49-a1f5-43a1-bc6b-8e034cfd8815": [
+          4,
+          4,
+          4,
+          4,
+          4
+        ],
+        "1af393fc-c7af-4329-b367-f0165ca6b9ed": [
+          4
+        ],
+        "203763cc-69f4-4a32-8f34-364e39432f14": [
+          4
+        ],
+        "3ceae9eb-31c9-4a2b-9baf-1f062f7a405a": [
+          4
+        ],
+        "44a84c6f-26a5-4d3a-9fa2-73da7ef32b93": [
+          4,
+          4,
+          4,
+          4
+        ],
+        "49e43346-0eaa-4929-9bde-e4a26078c5cf": [
+          4
+        ],
+        "5977260a-02a9-4017-ab25-316bb68645aa": [
+          4
+        ],
+        "598b9854-a301-4a91-bd6b-6b5ee12108f8": [
+          4
+        ],
+        "6dd2a944-fe42-49b3-8128-a3e2992fa825": [
+          4
+        ],
+        "78f8af63-e146-4a83-8fc0-6d464e18b65a": [
+          4
+        ],
+        "7998aa84-29ad-4765-a08a-58bdb80fdfc4": [
+          4,
+          4
+        ],
+        "7cfc8759-b087-494e-9237-04a24b736292": [
+          4
+        ],
+        "8915412f-614e-435c-856b-51d6e55786d8": [
+          4
+        ],
+        "94466acc-0ce7-4abf-928d-0350b723762d": [
+          4,
+          4
+        ],
+        "95b30974-fd1f-46dd-a4aa-78537d4c8b21": [
+          4
+        ],
+        "95d28eea-0774-4e4c-bbc4-3faa6b15bc8f": [
+          4
+        ],
+        "9ea00e32-0b4c-4138-844e-3bcb3d9fa427": [
+          4
+        ],
+        "a0585864-a43f-4d8e-965c-0f57c927931d": [
+          4
+        ],
+        "b45c19c6-662b-405b-929f-9ca590b8f62f": [
+          4
+        ],
+        "c7bb7f88-4556-486f-a975-1331f080b360": [
+          4
+        ],
+        "cc621c77-e466-4b45-a2ac-d2d25a6146c0": [
+          4
+        ],
+        "cef45039-46cb-4bd3-ba4c-903d692655b6": [
+          4,
+          4,
+          4
+        ],
+        "e6b9108c-c1eb-4b69-9552-fc7564d249c7": [
+          4
+        ],
+        "ebf30ef2-e9f8-4d52-b350-9f790baf6617": [
+          4
+        ]
+      }
+    },
+    {
+      "studio": "shader",
+      "path": "motion.fps",
+      "n": 35,
+      "perProject": {
+        "0d1b2f49-a1f5-43a1-bc6b-8e034cfd8815": [
+          30,
+          30,
+          30,
+          30,
+          30
+        ],
+        "1af393fc-c7af-4329-b367-f0165ca6b9ed": [
+          30
+        ],
+        "203763cc-69f4-4a32-8f34-364e39432f14": [
+          30
+        ],
+        "3ceae9eb-31c9-4a2b-9baf-1f062f7a405a": [
+          30
+        ],
+        "44a84c6f-26a5-4d3a-9fa2-73da7ef32b93": [
+          30,
+          30,
+          30,
+          30
+        ],
+        "49e43346-0eaa-4929-9bde-e4a26078c5cf": [
+          30
+        ],
+        "5977260a-02a9-4017-ab25-316bb68645aa": [
+          30
+        ],
+        "598b9854-a301-4a91-bd6b-6b5ee12108f8": [
+          30
+        ],
+        "6dd2a944-fe42-49b3-8128-a3e2992fa825": [
+          30
+        ],
+        "78f8af63-e146-4a83-8fc0-6d464e18b65a": [
+          30
+        ],
+        "7998aa84-29ad-4765-a08a-58bdb80fdfc4": [
+          30,
+          30
+        ],
+        "7cfc8759-b087-494e-9237-04a24b736292": [
+          30
+        ],
+        "8915412f-614e-435c-856b-51d6e55786d8": [
+          30
+        ],
+        "94466acc-0ce7-4abf-928d-0350b723762d": [
+          30,
+          30
+        ],
+        "95b30974-fd1f-46dd-a4aa-78537d4c8b21": [
+          30
+        ],
+        "95d28eea-0774-4e4c-bbc4-3faa6b15bc8f": [
+          30
+        ],
+        "9ea00e32-0b4c-4138-844e-3bcb3d9fa427": [
+          30
+        ],
+        "a0585864-a43f-4d8e-965c-0f57c927931d": [
+          30
+        ],
+        "b45c19c6-662b-405b-929f-9ca590b8f62f": [
+          30
+        ],
+        "c7bb7f88-4556-486f-a975-1331f080b360": [
+          30
+        ],
+        "cc621c77-e466-4b45-a2ac-d2d25a6146c0": [
+          30
+        ],
+        "cef45039-46cb-4bd3-ba4c-903d692655b6": [
+          30,
+          30,
+          30
+        ],
+        "e6b9108c-c1eb-4b69-9552-fc7564d249c7": [
+          30
+        ],
+        "ebf30ef2-e9f8-4d52-b350-9f790baf6617": [
+          30
+        ]
+      }
+    },
+    {
+      "studio": "shader",
+      "path": "post.bloom.intensity",
+      "n": 35,
+      "perProject": {
+        "0d1b2f49-a1f5-43a1-bc6b-8e034cfd8815": [
+          0.48,
+          0.8,
+          0.8,
+          0.64,
+          0.8
+        ],
+        "1af393fc-c7af-4329-b367-f0165ca6b9ed": [
+          1.5
+        ],
+        "203763cc-69f4-4a32-8f34-364e39432f14": [
+          1.5
+        ],
+        "3ceae9eb-31c9-4a2b-9baf-1f062f7a405a": [
+          1.5
+        ],
+        "44a84c6f-26a5-4d3a-9fa2-73da7ef32b93": [
+          1.5,
+          1.5,
+          1.5,
+          1.61
+        ],
+        "49e43346-0eaa-4929-9bde-e4a26078c5cf": [
+          1.5
+        ],
+        "5977260a-02a9-4017-ab25-316bb68645aa": [
+          1.5
+        ],
+        "598b9854-a301-4a91-bd6b-6b5ee12108f8": [
+          1.5
+        ],
+        "6dd2a944-fe42-49b3-8128-a3e2992fa825": [
+          1.5
+        ],
+        "78f8af63-e146-4a83-8fc0-6d464e18b65a": [
+          1.5
+        ],
+        "7998aa84-29ad-4765-a08a-58bdb80fdfc4": [
+          1.5,
+          0.8
+        ],
+        "7cfc8759-b087-494e-9237-04a24b736292": [
+          1.5
+        ],
+        "8915412f-614e-435c-856b-51d6e55786d8": [
+          1.5
+        ],
+        "94466acc-0ce7-4abf-928d-0350b723762d": [
+          1.5,
+          1.5
+        ],
+        "95b30974-fd1f-46dd-a4aa-78537d4c8b21": [
+          1.5
+        ],
+        "95d28eea-0774-4e4c-bbc4-3faa6b15bc8f": [
+          1.5
+        ],
+        "9ea00e32-0b4c-4138-844e-3bcb3d9fa427": [
+          1.5
+        ],
+        "a0585864-a43f-4d8e-965c-0f57c927931d": [
+          1.5
+        ],
+        "b45c19c6-662b-405b-929f-9ca590b8f62f": [
+          2.23
+        ],
+        "c7bb7f88-4556-486f-a975-1331f080b360": [
+          1.5
+        ],
+        "cc621c77-e466-4b45-a2ac-d2d25a6146c0": [
+          1.5
+        ],
+        "cef45039-46cb-4bd3-ba4c-903d692655b6": [
+          1.5,
+          1.5,
+          1.5
+        ],
+        "e6b9108c-c1eb-4b69-9552-fc7564d249c7": [
+          1.5
+        ],
+        "ebf30ef2-e9f8-4d52-b350-9f790baf6617": [
+          1.5
+        ]
+      }
+    },
+    {
+      "studio": "shader",
+      "path": "post.bloom.radius",
+      "n": 35,
+      "perProject": {
+        "0d1b2f49-a1f5-43a1-bc6b-8e034cfd8815": [
+          30,
+          64,
+          64,
+          64,
+          64
+        ],
+        "1af393fc-c7af-4329-b367-f0165ca6b9ed": [
+          64
+        ],
+        "203763cc-69f4-4a32-8f34-364e39432f14": [
+          64
+        ],
+        "3ceae9eb-31c9-4a2b-9baf-1f062f7a405a": [
+          64
+        ],
+        "44a84c6f-26a5-4d3a-9fa2-73da7ef32b93": [
+          64,
+          64,
+          64,
+          140
+        ],
+        "49e43346-0eaa-4929-9bde-e4a26078c5cf": [
+          64
+        ],
+        "5977260a-02a9-4017-ab25-316bb68645aa": [
+          64
+        ],
+        "598b9854-a301-4a91-bd6b-6b5ee12108f8": [
+          64
+        ],
+        "6dd2a944-fe42-49b3-8128-a3e2992fa825": [
+          64
+        ],
+        "78f8af63-e146-4a83-8fc0-6d464e18b65a": [
+          64
+        ],
+        "7998aa84-29ad-4765-a08a-58bdb80fdfc4": [
+          64,
+          64
+        ],
+        "7cfc8759-b087-494e-9237-04a24b736292": [
+          64
+        ],
+        "8915412f-614e-435c-856b-51d6e55786d8": [
+          64
+        ],
+        "94466acc-0ce7-4abf-928d-0350b723762d": [
+          64,
+          64
+        ],
+        "95b30974-fd1f-46dd-a4aa-78537d4c8b21": [
+          64
+        ],
+        "95d28eea-0774-4e4c-bbc4-3faa6b15bc8f": [
+          64
+        ],
+        "9ea00e32-0b4c-4138-844e-3bcb3d9fa427": [
+          64
+        ],
+        "a0585864-a43f-4d8e-965c-0f57c927931d": [
+          64
+        ],
+        "b45c19c6-662b-405b-929f-9ca590b8f62f": [
+          154
+        ],
+        "c7bb7f88-4556-486f-a975-1331f080b360": [
+          64
+        ],
+        "cc621c77-e466-4b45-a2ac-d2d25a6146c0": [
+          64
+        ],
+        "cef45039-46cb-4bd3-ba4c-903d692655b6": [
+          64,
+          64,
+          64
+        ],
+        "e6b9108c-c1eb-4b69-9552-fc7564d249c7": [
+          64
+        ],
+        "ebf30ef2-e9f8-4d52-b350-9f790baf6617": [
+          64
+        ]
+      }
+    },
+    {
+      "studio": "shader",
+      "path": "post.bloom.threshold",
+      "n": 35,
+      "perProject": {
+        "0d1b2f49-a1f5-43a1-bc6b-8e034cfd8815": [
+          0.53,
+          0.75,
+          0.75,
+          0.43,
+          0.75
+        ],
+        "1af393fc-c7af-4329-b367-f0165ca6b9ed": [
+          0.5
+        ],
+        "203763cc-69f4-4a32-8f34-364e39432f14": [
+          0.5
+        ],
+        "3ceae9eb-31c9-4a2b-9baf-1f062f7a405a": [
+          0.5
+        ],
+        "44a84c6f-26a5-4d3a-9fa2-73da7ef32b93": [
+          0.98,
+          0.5,
+          0.96,
+          0.75
+        ],
+        "49e43346-0eaa-4929-9bde-e4a26078c5cf": [
+          0.5
+        ],
+        "5977260a-02a9-4017-ab25-316bb68645aa": [
+          0.5
+        ],
+        "598b9854-a301-4a91-bd6b-6b5ee12108f8": [
+          0.5
+        ],
+        "6dd2a944-fe42-49b3-8128-a3e2992fa825": [
+          0.5
+        ],
+        "78f8af63-e146-4a83-8fc0-6d464e18b65a": [
+          0.5
+        ],
+        "7998aa84-29ad-4765-a08a-58bdb80fdfc4": [
+          0.5,
+          0.69
+        ],
+        "7cfc8759-b087-494e-9237-04a24b736292": [
+          0.5
+        ],
+        "8915412f-614e-435c-856b-51d6e55786d8": [
+          0.5
+        ],
+        "94466acc-0ce7-4abf-928d-0350b723762d": [
+          0.5,
+          0.5
+        ],
+        "95b30974-fd1f-46dd-a4aa-78537d4c8b21": [
+          0.5
+        ],
+        "95d28eea-0774-4e4c-bbc4-3faa6b15bc8f": [
+          0.5
+        ],
+        "9ea00e32-0b4c-4138-844e-3bcb3d9fa427": [
+          0.5
+        ],
+        "a0585864-a43f-4d8e-965c-0f57c927931d": [
+          0.5
+        ],
+        "b45c19c6-662b-405b-929f-9ca590b8f62f": [
+          0.12
+        ],
+        "c7bb7f88-4556-486f-a975-1331f080b360": [
+          0.5
+        ],
+        "cc621c77-e466-4b45-a2ac-d2d25a6146c0": [
+          0.5
+        ],
+        "cef45039-46cb-4bd3-ba4c-903d692655b6": [
+          0.5,
+          0.5,
+          0.5
+        ],
+        "e6b9108c-c1eb-4b69-9552-fc7564d249c7": [
+          0.5
+        ],
+        "ebf30ef2-e9f8-4d52-b350-9f790baf6617": [
+          0.5
+        ]
+      }
+    },
+    {
+      "studio": "shader",
+      "path": "post.blur.aperture",
+      "n": 35,
+      "perProject": {
+        "0d1b2f49-a1f5-43a1-bc6b-8e034cfd8815": [
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25
+        ],
+        "1af393fc-c7af-4329-b367-f0165ca6b9ed": [
+          0.25
+        ],
+        "203763cc-69f4-4a32-8f34-364e39432f14": [
+          0.25
+        ],
+        "3ceae9eb-31c9-4a2b-9baf-1f062f7a405a": [
+          0.25
+        ],
+        "44a84c6f-26a5-4d3a-9fa2-73da7ef32b93": [
+          0.25,
+          0.25,
+          0.25,
+          0.25
+        ],
+        "49e43346-0eaa-4929-9bde-e4a26078c5cf": [
+          0.25
+        ],
+        "5977260a-02a9-4017-ab25-316bb68645aa": [
+          0.25
+        ],
+        "598b9854-a301-4a91-bd6b-6b5ee12108f8": [
+          0.25
+        ],
+        "6dd2a944-fe42-49b3-8128-a3e2992fa825": [
+          0.25
+        ],
+        "78f8af63-e146-4a83-8fc0-6d464e18b65a": [
+          0.25
+        ],
+        "7998aa84-29ad-4765-a08a-58bdb80fdfc4": [
+          0.25,
+          0.25
+        ],
+        "7cfc8759-b087-494e-9237-04a24b736292": [
+          0.25
+        ],
+        "8915412f-614e-435c-856b-51d6e55786d8": [
+          0.25
+        ],
+        "94466acc-0ce7-4abf-928d-0350b723762d": [
+          0.25,
+          0.25
+        ],
+        "95b30974-fd1f-46dd-a4aa-78537d4c8b21": [
+          0.25
+        ],
+        "95d28eea-0774-4e4c-bbc4-3faa6b15bc8f": [
+          0.25
+        ],
+        "9ea00e32-0b4c-4138-844e-3bcb3d9fa427": [
+          0.25
+        ],
+        "a0585864-a43f-4d8e-965c-0f57c927931d": [
+          0.25
+        ],
+        "b45c19c6-662b-405b-929f-9ca590b8f62f": [
+          0.25
+        ],
+        "c7bb7f88-4556-486f-a975-1331f080b360": [
+          0.69
+        ],
+        "cc621c77-e466-4b45-a2ac-d2d25a6146c0": [
+          0.25
+        ],
+        "cef45039-46cb-4bd3-ba4c-903d692655b6": [
+          0.25,
+          0.25,
+          0.25
+        ],
+        "e6b9108c-c1eb-4b69-9552-fc7564d249c7": [
+          0.25
+        ],
+        "ebf30ef2-e9f8-4d52-b350-9f790baf6617": [
+          0.25
+        ]
+      }
+    },
+    {
+      "studio": "shader",
+      "path": "post.blur.focusX",
+      "n": 35,
+      "perProject": {
+        "0d1b2f49-a1f5-43a1-bc6b-8e034cfd8815": [
+          0.5,
+          0.5,
+          0.5,
+          0.5,
+          0.5
+        ],
+        "1af393fc-c7af-4329-b367-f0165ca6b9ed": [
+          0.5
+        ],
+        "203763cc-69f4-4a32-8f34-364e39432f14": [
+          0.5
+        ],
+        "3ceae9eb-31c9-4a2b-9baf-1f062f7a405a": [
+          0.5
+        ],
+        "44a84c6f-26a5-4d3a-9fa2-73da7ef32b93": [
+          0.5,
+          0.5,
+          0.5,
+          0.5
+        ],
+        "49e43346-0eaa-4929-9bde-e4a26078c5cf": [
+          0.5
+        ],
+        "5977260a-02a9-4017-ab25-316bb68645aa": [
+          0.5
+        ],
+        "598b9854-a301-4a91-bd6b-6b5ee12108f8": [
+          0.5
+        ],
+        "6dd2a944-fe42-49b3-8128-a3e2992fa825": [
+          0.5
+        ],
+        "78f8af63-e146-4a83-8fc0-6d464e18b65a": [
+          0.5
+        ],
+        "7998aa84-29ad-4765-a08a-58bdb80fdfc4": [
+          0.5,
+          0.5
+        ],
+        "7cfc8759-b087-494e-9237-04a24b736292": [
+          0.5
+        ],
+        "8915412f-614e-435c-856b-51d6e55786d8": [
+          0.5
+        ],
+        "94466acc-0ce7-4abf-928d-0350b723762d": [
+          0.5,
+          0.5
+        ],
+        "95b30974-fd1f-46dd-a4aa-78537d4c8b21": [
+          0.5
+        ],
+        "95d28eea-0774-4e4c-bbc4-3faa6b15bc8f": [
+          0.5
+        ],
+        "9ea00e32-0b4c-4138-844e-3bcb3d9fa427": [
+          0.5
+        ],
+        "a0585864-a43f-4d8e-965c-0f57c927931d": [
+          0.5
+        ],
+        "b45c19c6-662b-405b-929f-9ca590b8f62f": [
+          0.5
+        ],
+        "c7bb7f88-4556-486f-a975-1331f080b360": [
+          0.5
+        ],
+        "cc621c77-e466-4b45-a2ac-d2d25a6146c0": [
+          0.5
+        ],
+        "cef45039-46cb-4bd3-ba4c-903d692655b6": [
+          0.5,
+          0.5,
+          0.5
+        ],
+        "e6b9108c-c1eb-4b69-9552-fc7564d249c7": [
+          0.5
+        ],
+        "ebf30ef2-e9f8-4d52-b350-9f790baf6617": [
+          0.5
+        ]
+      }
+    },
+    {
+      "studio": "shader",
+      "path": "post.blur.focusY",
+      "n": 35,
+      "perProject": {
+        "0d1b2f49-a1f5-43a1-bc6b-8e034cfd8815": [
+          0.5,
+          0.5,
+          0.5,
+          0.5,
+          0.5
+        ],
+        "1af393fc-c7af-4329-b367-f0165ca6b9ed": [
+          0.5
+        ],
+        "203763cc-69f4-4a32-8f34-364e39432f14": [
+          0.5
+        ],
+        "3ceae9eb-31c9-4a2b-9baf-1f062f7a405a": [
+          0.5
+        ],
+        "44a84c6f-26a5-4d3a-9fa2-73da7ef32b93": [
+          0.5,
+          0.5,
+          0.5,
+          0.5
+        ],
+        "49e43346-0eaa-4929-9bde-e4a26078c5cf": [
+          0.5
+        ],
+        "5977260a-02a9-4017-ab25-316bb68645aa": [
+          0.5
+        ],
+        "598b9854-a301-4a91-bd6b-6b5ee12108f8": [
+          0.5
+        ],
+        "6dd2a944-fe42-49b3-8128-a3e2992fa825": [
+          0.5
+        ],
+        "78f8af63-e146-4a83-8fc0-6d464e18b65a": [
+          0.5
+        ],
+        "7998aa84-29ad-4765-a08a-58bdb80fdfc4": [
+          0.5,
+          0.5
+        ],
+        "7cfc8759-b087-494e-9237-04a24b736292": [
+          0.5
+        ],
+        "8915412f-614e-435c-856b-51d6e55786d8": [
+          0.5
+        ],
+        "94466acc-0ce7-4abf-928d-0350b723762d": [
+          0.5,
+          0.5
+        ],
+        "95b30974-fd1f-46dd-a4aa-78537d4c8b21": [
+          0.5
+        ],
+        "95d28eea-0774-4e4c-bbc4-3faa6b15bc8f": [
+          0.5
+        ],
+        "9ea00e32-0b4c-4138-844e-3bcb3d9fa427": [
+          0.5
+        ],
+        "a0585864-a43f-4d8e-965c-0f57c927931d": [
+          0.5
+        ],
+        "b45c19c6-662b-405b-929f-9ca590b8f62f": [
+          0.5
+        ],
+        "c7bb7f88-4556-486f-a975-1331f080b360": [
+          0.5
+        ],
+        "cc621c77-e466-4b45-a2ac-d2d25a6146c0": [
+          0.5
+        ],
+        "cef45039-46cb-4bd3-ba4c-903d692655b6": [
+          0.5,
+          0.5,
+          0.5
+        ],
+        "e6b9108c-c1eb-4b69-9552-fc7564d249c7": [
+          0.5
+        ],
+        "ebf30ef2-e9f8-4d52-b350-9f790baf6617": [
+          0.5
+        ]
+      }
+    },
+    {
+      "studio": "shader",
+      "path": "post.blur.maxBlur",
+      "n": 35,
+      "perProject": {
+        "0d1b2f49-a1f5-43a1-bc6b-8e034cfd8815": [
+          8,
+          8,
+          8,
+          8,
+          8
+        ],
+        "1af393fc-c7af-4329-b367-f0165ca6b9ed": [
+          8
+        ],
+        "203763cc-69f4-4a32-8f34-364e39432f14": [
+          8
+        ],
+        "3ceae9eb-31c9-4a2b-9baf-1f062f7a405a": [
+          8
+        ],
+        "44a84c6f-26a5-4d3a-9fa2-73da7ef32b93": [
+          8,
+          8,
+          8,
+          8
+        ],
+        "49e43346-0eaa-4929-9bde-e4a26078c5cf": [
+          8
+        ],
+        "5977260a-02a9-4017-ab25-316bb68645aa": [
+          8
+        ],
+        "598b9854-a301-4a91-bd6b-6b5ee12108f8": [
+          8
+        ],
+        "6dd2a944-fe42-49b3-8128-a3e2992fa825": [
+          8
+        ],
+        "78f8af63-e146-4a83-8fc0-6d464e18b65a": [
+          8
+        ],
+        "7998aa84-29ad-4765-a08a-58bdb80fdfc4": [
+          8,
+          8
+        ],
+        "7cfc8759-b087-494e-9237-04a24b736292": [
+          8
+        ],
+        "8915412f-614e-435c-856b-51d6e55786d8": [
+          8
+        ],
+        "94466acc-0ce7-4abf-928d-0350b723762d": [
+          8,
+          8
+        ],
+        "95b30974-fd1f-46dd-a4aa-78537d4c8b21": [
+          8
+        ],
+        "95d28eea-0774-4e4c-bbc4-3faa6b15bc8f": [
+          8
+        ],
+        "9ea00e32-0b4c-4138-844e-3bcb3d9fa427": [
+          8
+        ],
+        "a0585864-a43f-4d8e-965c-0f57c927931d": [
+          8
+        ],
+        "b45c19c6-662b-405b-929f-9ca590b8f62f": [
+          8
+        ],
+        "c7bb7f88-4556-486f-a975-1331f080b360": [
+          8
+        ],
+        "cc621c77-e466-4b45-a2ac-d2d25a6146c0": [
+          8
+        ],
+        "cef45039-46cb-4bd3-ba4c-903d692655b6": [
+          8,
+          8,
+          8
+        ],
+        "e6b9108c-c1eb-4b69-9552-fc7564d249c7": [
+          8
+        ],
+        "ebf30ef2-e9f8-4d52-b350-9f790baf6617": [
+          8
+        ]
+      }
+    },
+    {
+      "studio": "shader",
+      "path": "post.blur.range",
+      "n": 35,
+      "perProject": {
+        "0d1b2f49-a1f5-43a1-bc6b-8e034cfd8815": [
+          0.2,
+          0.2,
+          0.2,
+          0.2,
+          0.2
+        ],
+        "1af393fc-c7af-4329-b367-f0165ca6b9ed": [
+          0.2
+        ],
+        "203763cc-69f4-4a32-8f34-364e39432f14": [
+          0.2
+        ],
+        "3ceae9eb-31c9-4a2b-9baf-1f062f7a405a": [
+          0.2
+        ],
+        "44a84c6f-26a5-4d3a-9fa2-73da7ef32b93": [
+          0.2,
+          0.2,
+          0.2,
+          0.2
+        ],
+        "49e43346-0eaa-4929-9bde-e4a26078c5cf": [
+          0.2
+        ],
+        "5977260a-02a9-4017-ab25-316bb68645aa": [
+          0.2
+        ],
+        "598b9854-a301-4a91-bd6b-6b5ee12108f8": [
+          0.2
+        ],
+        "6dd2a944-fe42-49b3-8128-a3e2992fa825": [
+          0.2
+        ],
+        "78f8af63-e146-4a83-8fc0-6d464e18b65a": [
+          0.2
+        ],
+        "7998aa84-29ad-4765-a08a-58bdb80fdfc4": [
+          0.2,
+          0.2
+        ],
+        "7cfc8759-b087-494e-9237-04a24b736292": [
+          0.2
+        ],
+        "8915412f-614e-435c-856b-51d6e55786d8": [
+          0.2
+        ],
+        "94466acc-0ce7-4abf-928d-0350b723762d": [
+          0.2,
+          0.2
+        ],
+        "95b30974-fd1f-46dd-a4aa-78537d4c8b21": [
+          0.2
+        ],
+        "95d28eea-0774-4e4c-bbc4-3faa6b15bc8f": [
+          0.2
+        ],
+        "9ea00e32-0b4c-4138-844e-3bcb3d9fa427": [
+          0.2
+        ],
+        "a0585864-a43f-4d8e-965c-0f57c927931d": [
+          0.2
+        ],
+        "b45c19c6-662b-405b-929f-9ca590b8f62f": [
+          0.2
+        ],
+        "c7bb7f88-4556-486f-a975-1331f080b360": [
+          0.4
+        ],
+        "cc621c77-e466-4b45-a2ac-d2d25a6146c0": [
+          0.2
+        ],
+        "cef45039-46cb-4bd3-ba4c-903d692655b6": [
+          0.2,
+          0.2,
+          0.2
+        ],
+        "e6b9108c-c1eb-4b69-9552-fc7564d249c7": [
+          0.2
+        ],
+        "ebf30ef2-e9f8-4d52-b350-9f790baf6617": [
+          0.2
+        ]
+      }
+    },
+    {
+      "studio": "shader",
+      "path": "post.chromatic.amount",
+      "n": 35,
+      "perProject": {
+        "0d1b2f49-a1f5-43a1-bc6b-8e034cfd8815": [
+          0.3,
+          0.3,
+          0.3,
+          1,
+          0.3
+        ],
+        "1af393fc-c7af-4329-b367-f0165ca6b9ed": [
+          0.3
+        ],
+        "203763cc-69f4-4a32-8f34-364e39432f14": [
+          0.3
+        ],
+        "3ceae9eb-31c9-4a2b-9baf-1f062f7a405a": [
+          0.3
+        ],
+        "44a84c6f-26a5-4d3a-9fa2-73da7ef32b93": [
+          1,
+          0.3,
+          0.3,
+          1
+        ],
+        "49e43346-0eaa-4929-9bde-e4a26078c5cf": [
+          0.3
+        ],
+        "5977260a-02a9-4017-ab25-316bb68645aa": [
+          0.3
+        ],
+        "598b9854-a301-4a91-bd6b-6b5ee12108f8": [
+          0.3
+        ],
+        "6dd2a944-fe42-49b3-8128-a3e2992fa825": [
+          0.3
+        ],
+        "78f8af63-e146-4a83-8fc0-6d464e18b65a": [
+          0.3
+        ],
+        "7998aa84-29ad-4765-a08a-58bdb80fdfc4": [
+          0.3,
+          0.32
+        ],
+        "7cfc8759-b087-494e-9237-04a24b736292": [
+          0.3
+        ],
+        "8915412f-614e-435c-856b-51d6e55786d8": [
+          0.3
+        ],
+        "94466acc-0ce7-4abf-928d-0350b723762d": [
+          1,
+          0.3
+        ],
+        "95b30974-fd1f-46dd-a4aa-78537d4c8b21": [
+          0.3
+        ],
+        "95d28eea-0774-4e4c-bbc4-3faa6b15bc8f": [
+          0.3
+        ],
+        "9ea00e32-0b4c-4138-844e-3bcb3d9fa427": [
+          0.3
+        ],
+        "a0585864-a43f-4d8e-965c-0f57c927931d": [
+          0.85
+        ],
+        "b45c19c6-662b-405b-929f-9ca590b8f62f": [
+          0.8
+        ],
+        "c7bb7f88-4556-486f-a975-1331f080b360": [
+          1
+        ],
+        "cc621c77-e466-4b45-a2ac-d2d25a6146c0": [
+          0.3
+        ],
+        "cef45039-46cb-4bd3-ba4c-903d692655b6": [
+          0.3,
+          0.3,
+          0.3
+        ],
+        "e6b9108c-c1eb-4b69-9552-fc7564d249c7": [
+          0.3
+        ],
+        "ebf30ef2-e9f8-4d52-b350-9f790baf6617": [
+          0.3
+        ]
+      }
+    },
+    {
+      "studio": "shader",
+      "path": "resolution",
+      "n": 35,
+      "perProject": {
+        "0d1b2f49-a1f5-43a1-bc6b-8e034cfd8815": [
+          1536,
+          4096,
+          1536,
+          1536,
+          1536
+        ],
+        "1af393fc-c7af-4329-b367-f0165ca6b9ed": [
+          4096
+        ],
+        "203763cc-69f4-4a32-8f34-364e39432f14": [
+          1536
+        ],
+        "3ceae9eb-31c9-4a2b-9baf-1f062f7a405a": [
+          1536
+        ],
+        "44a84c6f-26a5-4d3a-9fa2-73da7ef32b93": [
+          1536,
+          1536,
+          1536,
+          1536
+        ],
+        "49e43346-0eaa-4929-9bde-e4a26078c5cf": [
+          1536
+        ],
+        "5977260a-02a9-4017-ab25-316bb68645aa": [
+          1536
+        ],
+        "598b9854-a301-4a91-bd6b-6b5ee12108f8": [
+          1536
+        ],
+        "6dd2a944-fe42-49b3-8128-a3e2992fa825": [
+          1536
+        ],
+        "78f8af63-e146-4a83-8fc0-6d464e18b65a": [
+          1536
+        ],
+        "7998aa84-29ad-4765-a08a-58bdb80fdfc4": [
+          1536,
+          1536
+        ],
+        "7cfc8759-b087-494e-9237-04a24b736292": [
+          4096
+        ],
+        "8915412f-614e-435c-856b-51d6e55786d8": [
+          4096
+        ],
+        "94466acc-0ce7-4abf-928d-0350b723762d": [
+          1536,
+          1536
+        ],
+        "95b30974-fd1f-46dd-a4aa-78537d4c8b21": [
+          1536
+        ],
+        "95d28eea-0774-4e4c-bbc4-3faa6b15bc8f": [
+          1536
+        ],
+        "9ea00e32-0b4c-4138-844e-3bcb3d9fa427": [
+          1536
+        ],
+        "a0585864-a43f-4d8e-965c-0f57c927931d": [
+          4096
+        ],
+        "b45c19c6-662b-405b-929f-9ca590b8f62f": [
+          1536
+        ],
+        "c7bb7f88-4556-486f-a975-1331f080b360": [
+          4096
+        ],
+        "cc621c77-e466-4b45-a2ac-d2d25a6146c0": [
+          1536
+        ],
+        "cef45039-46cb-4bd3-ba4c-903d692655b6": [
+          1536,
+          1536,
+          1536
+        ],
+        "e6b9108c-c1eb-4b69-9552-fc7564d249c7": [
+          1536
+        ],
+        "ebf30ef2-e9f8-4d52-b350-9f790baf6617": [
+          1536
+        ]
+      }
+    },
+    {
+      "studio": "gradient",
+      "path": "layers[*].color.hueDrift",
+      "n": 27,
+      "perProject": {
+        "08207849-95a6-40e7-9479-9439921fc28b": [
+          0
+        ],
+        "0acf88c6-c101-4d07-960a-52e4435acb15": [
+          0
+        ],
+        "0d1b2f49-a1f5-43a1-bc6b-8e034cfd8815": [
+          0,
+          22
+        ],
+        "203763cc-69f4-4a32-8f34-364e39432f14": [
+          0,
+          0
+        ],
+        "36280028-a91c-4353-aca2-fa325d26f2c8": [
+          0
+        ],
+        "3ceae9eb-31c9-4a2b-9baf-1f062f7a405a": [
+          0
+        ],
+        "44a84c6f-26a5-4d3a-9fa2-73da7ef32b93": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "48487401-325c-4b93-b6ae-af102b2845bd": [
+          0
+        ],
+        "598b9854-a301-4a91-bd6b-6b5ee12108f8": [
+          0,
+          0
+        ],
+        "78f8af63-e146-4a83-8fc0-6d464e18b65a": [
+          0,
+          0
+        ],
+        "94466acc-0ce7-4abf-928d-0350b723762d": [
+          0,
+          0
+        ],
+        "95d28eea-0774-4e4c-bbc4-3faa6b15bc8f": [
+          0
+        ],
+        "9dcde1e1-ce55-41e2-84db-a32f9a70d6da": [
+          0
+        ],
+        "a600866c-b7b4-4066-97d9-f37cffc7e7b9": [
+          0
+        ],
+        "c61b2ee5-ecf5-4b4e-8cd4-cc1356839c18": [
+          0
+        ],
+        "cc621c77-e466-4b45-a2ac-d2d25a6146c0": [
+          0
+        ],
+        "d07d192f-aa5f-4292-ab51-f876cfd28f02": [
+          48
+        ],
+        "e4792d5f-5e9f-4731-9394-d05aa978c065": [
+          0
+        ],
+        "eb79304f-7fa5-4ca0-9085-392b8f10a180": [
+          0
+        ]
+      }
+    },
+    {
+      "studio": "gradient",
+      "path": "layers[*].color.hueRotate",
+      "n": 27,
+      "perProject": {
+        "08207849-95a6-40e7-9479-9439921fc28b": [
+          0
+        ],
+        "0acf88c6-c101-4d07-960a-52e4435acb15": [
+          0
+        ],
+        "0d1b2f49-a1f5-43a1-bc6b-8e034cfd8815": [
+          0,
+          0
+        ],
+        "203763cc-69f4-4a32-8f34-364e39432f14": [
+          0,
+          0
+        ],
+        "36280028-a91c-4353-aca2-fa325d26f2c8": [
+          0
+        ],
+        "3ceae9eb-31c9-4a2b-9baf-1f062f7a405a": [
+          0
+        ],
+        "44a84c6f-26a5-4d3a-9fa2-73da7ef32b93": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "48487401-325c-4b93-b6ae-af102b2845bd": [
+          0
+        ],
+        "598b9854-a301-4a91-bd6b-6b5ee12108f8": [
+          0,
+          0
+        ],
+        "78f8af63-e146-4a83-8fc0-6d464e18b65a": [
+          39.1883,
+          0
+        ],
+        "94466acc-0ce7-4abf-928d-0350b723762d": [
+          0,
+          0
+        ],
+        "95d28eea-0774-4e4c-bbc4-3faa6b15bc8f": [
+          0
+        ],
+        "9dcde1e1-ce55-41e2-84db-a32f9a70d6da": [
+          0
+        ],
+        "a600866c-b7b4-4066-97d9-f37cffc7e7b9": [
+          0
+        ],
+        "c61b2ee5-ecf5-4b4e-8cd4-cc1356839c18": [
+          0
+        ],
+        "cc621c77-e466-4b45-a2ac-d2d25a6146c0": [
+          0
+        ],
+        "d07d192f-aa5f-4292-ab51-f876cfd28f02": [
+          0
+        ],
+        "e4792d5f-5e9f-4731-9394-d05aa978c065": [
+          0
+        ],
+        "eb79304f-7fa5-4ca0-9085-392b8f10a180": [
+          0
+        ]
+      }
+    },
+    {
+      "studio": "gradient",
+      "path": "layers[*].color.steps",
+      "n": 27,
+      "perProject": {
+        "08207849-95a6-40e7-9479-9439921fc28b": [
+          0
+        ],
+        "0acf88c6-c101-4d07-960a-52e4435acb15": [
+          0
+        ],
+        "0d1b2f49-a1f5-43a1-bc6b-8e034cfd8815": [
+          0,
+          0
+        ],
+        "203763cc-69f4-4a32-8f34-364e39432f14": [
+          0,
+          0
+        ],
+        "36280028-a91c-4353-aca2-fa325d26f2c8": [
+          0
+        ],
+        "3ceae9eb-31c9-4a2b-9baf-1f062f7a405a": [
+          0
+        ],
+        "44a84c6f-26a5-4d3a-9fa2-73da7ef32b93": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "48487401-325c-4b93-b6ae-af102b2845bd": [
+          0
+        ],
+        "598b9854-a301-4a91-bd6b-6b5ee12108f8": [
+          0,
+          0
+        ],
+        "78f8af63-e146-4a83-8fc0-6d464e18b65a": [
+          0,
+          0
+        ],
+        "94466acc-0ce7-4abf-928d-0350b723762d": [
+          0,
+          0
+        ],
+        "95d28eea-0774-4e4c-bbc4-3faa6b15bc8f": [
+          0
+        ],
+        "9dcde1e1-ce55-41e2-84db-a32f9a70d6da": [
+          0
+        ],
+        "a600866c-b7b4-4066-97d9-f37cffc7e7b9": [
+          0
+        ],
+        "c61b2ee5-ecf5-4b4e-8cd4-cc1356839c18": [
+          0
+        ],
+        "cc621c77-e466-4b45-a2ac-d2d25a6146c0": [
+          0
+        ],
+        "d07d192f-aa5f-4292-ab51-f876cfd28f02": [
+          0
+        ],
+        "e4792d5f-5e9f-4731-9394-d05aa978c065": [
+          0
+        ],
+        "eb79304f-7fa5-4ca0-9085-392b8f10a180": [
+          0
+        ]
+      }
+    },
+    {
+      "studio": "gradient",
+      "path": "layers[*].opacity",
+      "n": 27,
+      "perProject": {
+        "08207849-95a6-40e7-9479-9439921fc28b": [
+          1
+        ],
+        "0acf88c6-c101-4d07-960a-52e4435acb15": [
+          1
+        ],
+        "0d1b2f49-a1f5-43a1-bc6b-8e034cfd8815": [
+          1,
+          1
+        ],
+        "203763cc-69f4-4a32-8f34-364e39432f14": [
+          1,
+          1
+        ],
+        "36280028-a91c-4353-aca2-fa325d26f2c8": [
+          1
+        ],
+        "3ceae9eb-31c9-4a2b-9baf-1f062f7a405a": [
+          1
+        ],
+        "44a84c6f-26a5-4d3a-9fa2-73da7ef32b93": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "48487401-325c-4b93-b6ae-af102b2845bd": [
+          1
+        ],
+        "598b9854-a301-4a91-bd6b-6b5ee12108f8": [
+          1,
+          1
+        ],
+        "78f8af63-e146-4a83-8fc0-6d464e18b65a": [
+          0.65,
+          1
+        ],
+        "94466acc-0ce7-4abf-928d-0350b723762d": [
+          1,
+          1
+        ],
+        "95d28eea-0774-4e4c-bbc4-3faa6b15bc8f": [
+          1
+        ],
+        "9dcde1e1-ce55-41e2-84db-a32f9a70d6da": [
+          1
+        ],
+        "a600866c-b7b4-4066-97d9-f37cffc7e7b9": [
+          1
+        ],
+        "c61b2ee5-ecf5-4b4e-8cd4-cc1356839c18": [
+          1
+        ],
+        "cc621c77-e466-4b45-a2ac-d2d25a6146c0": [
+          1
+        ],
+        "d07d192f-aa5f-4292-ab51-f876cfd28f02": [
+          1
+        ],
+        "e4792d5f-5e9f-4731-9394-d05aa978c065": [
+          1
+        ],
+        "eb79304f-7fa5-4ca0-9085-392b8f10a180": [
+          1
+        ]
+      }
+    },
+    {
+      "studio": "gradient",
+      "path": "layers[*].shape.count",
+      "n": 27,
+      "perProject": {
+        "08207849-95a6-40e7-9479-9439921fc28b": [
+          25
+        ],
+        "0acf88c6-c101-4d07-960a-52e4435acb15": [
+          20
+        ],
+        "0d1b2f49-a1f5-43a1-bc6b-8e034cfd8815": [
+          10,
+          12
+        ],
+        "203763cc-69f4-4a32-8f34-364e39432f14": [
+          20,
+          20
+        ],
+        "36280028-a91c-4353-aca2-fa325d26f2c8": [
+          31
+        ],
+        "3ceae9eb-31c9-4a2b-9baf-1f062f7a405a": [
+          20
+        ],
+        "44a84c6f-26a5-4d3a-9fa2-73da7ef32b93": [
+          11,
+          11,
+          12,
+          18
+        ],
+        "48487401-325c-4b93-b6ae-af102b2845bd": [
+          10
+        ],
+        "598b9854-a301-4a91-bd6b-6b5ee12108f8": [
+          20,
+          20
+        ],
+        "78f8af63-e146-4a83-8fc0-6d464e18b65a": [
+          14,
+          20
+        ],
+        "94466acc-0ce7-4abf-928d-0350b723762d": [
+          13,
+          20
+        ],
+        "95d28eea-0774-4e4c-bbc4-3faa6b15bc8f": [
+          20
+        ],
+        "9dcde1e1-ce55-41e2-84db-a32f9a70d6da": [
+          20
+        ],
+        "a600866c-b7b4-4066-97d9-f37cffc7e7b9": [
+          20
+        ],
+        "c61b2ee5-ecf5-4b4e-8cd4-cc1356839c18": [
+          20
+        ],
+        "cc621c77-e466-4b45-a2ac-d2d25a6146c0": [
+          35
+        ],
+        "d07d192f-aa5f-4292-ab51-f876cfd28f02": [
+          20
+        ],
+        "e4792d5f-5e9f-4731-9394-d05aa978c065": [
+          12
+        ],
+        "eb79304f-7fa5-4ca0-9085-392b8f10a180": [
+          20
+        ]
+      }
+    },
+    {
+      "studio": "gradient",
+      "path": "layers[*].shape.curveExp",
+      "n": 27,
+      "perProject": {
+        "08207849-95a6-40e7-9479-9439921fc28b": [
+          1
+        ],
+        "0acf88c6-c101-4d07-960a-52e4435acb15": [
+          1
+        ],
+        "0d1b2f49-a1f5-43a1-bc6b-8e034cfd8815": [
+          1,
+          1
+        ],
+        "203763cc-69f4-4a32-8f34-364e39432f14": [
+          1,
+          1
+        ],
+        "36280028-a91c-4353-aca2-fa325d26f2c8": [
+          1
+        ],
+        "3ceae9eb-31c9-4a2b-9baf-1f062f7a405a": [
+          1
+        ],
+        "44a84c6f-26a5-4d3a-9fa2-73da7ef32b93": [
+          0.8,
+          0.8,
+          1,
+          1.2
+        ],
+        "48487401-325c-4b93-b6ae-af102b2845bd": [
+          1
+        ],
+        "598b9854-a301-4a91-bd6b-6b5ee12108f8": [
+          1,
+          1
+        ],
+        "78f8af63-e146-4a83-8fc0-6d464e18b65a": [
+          2.3291,
+          1
+        ],
+        "94466acc-0ce7-4abf-928d-0350b723762d": [
+          1,
+          1
+        ],
+        "95d28eea-0774-4e4c-bbc4-3faa6b15bc8f": [
+          1
+        ],
+        "9dcde1e1-ce55-41e2-84db-a32f9a70d6da": [
+          1
+        ],
+        "a600866c-b7b4-4066-97d9-f37cffc7e7b9": [
+          1
+        ],
+        "c61b2ee5-ecf5-4b4e-8cd4-cc1356839c18": [
+          1
+        ],
+        "cc621c77-e466-4b45-a2ac-d2d25a6146c0": [
+          1
+        ],
+        "d07d192f-aa5f-4292-ab51-f876cfd28f02": [
+          1
+        ],
+        "e4792d5f-5e9f-4731-9394-d05aa978c065": [
+          1
+        ],
+        "eb79304f-7fa5-4ca0-9085-392b8f10a180": [
+          1
+        ]
+      }
+    },
+    {
+      "studio": "gradient",
+      "path": "layers[*].shape.detail",
+      "n": 27,
+      "perProject": {
+        "08207849-95a6-40e7-9479-9439921fc28b": [
+          4
+        ],
+        "0acf88c6-c101-4d07-960a-52e4435acb15": [
+          4
+        ],
+        "0d1b2f49-a1f5-43a1-bc6b-8e034cfd8815": [
+          4,
+          4
+        ],
+        "203763cc-69f4-4a32-8f34-364e39432f14": [
+          4,
+          4
+        ],
+        "36280028-a91c-4353-aca2-fa325d26f2c8": [
+          4
+        ],
+        "3ceae9eb-31c9-4a2b-9baf-1f062f7a405a": [
+          4
+        ],
+        "44a84c6f-26a5-4d3a-9fa2-73da7ef32b93": [
+          4,
+          4,
+          4,
+          6
+        ],
+        "48487401-325c-4b93-b6ae-af102b2845bd": [
+          4
+        ],
+        "598b9854-a301-4a91-bd6b-6b5ee12108f8": [
+          4,
+          4
+        ],
+        "78f8af63-e146-4a83-8fc0-6d464e18b65a": [
+          5,
+          4
+        ],
+        "94466acc-0ce7-4abf-928d-0350b723762d": [
+          4,
+          4
+        ],
+        "95d28eea-0774-4e4c-bbc4-3faa6b15bc8f": [
+          4
+        ],
+        "9dcde1e1-ce55-41e2-84db-a32f9a70d6da": [
+          4
+        ],
+        "a600866c-b7b4-4066-97d9-f37cffc7e7b9": [
+          4
+        ],
+        "c61b2ee5-ecf5-4b4e-8cd4-cc1356839c18": [
+          4
+        ],
+        "cc621c77-e466-4b45-a2ac-d2d25a6146c0": [
+          4
+        ],
+        "d07d192f-aa5f-4292-ab51-f876cfd28f02": [
+          4
+        ],
+        "e4792d5f-5e9f-4731-9394-d05aa978c065": [
+          4
+        ],
+        "eb79304f-7fa5-4ca0-9085-392b8f10a180": [
+          4
+        ]
+      }
+    },
+    {
+      "studio": "gradient",
+      "path": "layers[*].shape.gap",
+      "n": 27,
+      "perProject": {
+        "08207849-95a6-40e7-9479-9439921fc28b": [
+          0
+        ],
+        "0acf88c6-c101-4d07-960a-52e4435acb15": [
+          0
+        ],
+        "0d1b2f49-a1f5-43a1-bc6b-8e034cfd8815": [
+          0,
+          0
+        ],
+        "203763cc-69f4-4a32-8f34-364e39432f14": [
+          0,
+          0
+        ],
+        "36280028-a91c-4353-aca2-fa325d26f2c8": [
+          0
+        ],
+        "3ceae9eb-31c9-4a2b-9baf-1f062f7a405a": [
+          0
+        ],
+        "44a84c6f-26a5-4d3a-9fa2-73da7ef32b93": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "48487401-325c-4b93-b6ae-af102b2845bd": [
+          0.62
+        ],
+        "598b9854-a301-4a91-bd6b-6b5ee12108f8": [
+          0,
+          0
+        ],
+        "78f8af63-e146-4a83-8fc0-6d464e18b65a": [
+          0,
+          0
+        ],
+        "94466acc-0ce7-4abf-928d-0350b723762d": [
+          0,
+          0
+        ],
+        "95d28eea-0774-4e4c-bbc4-3faa6b15bc8f": [
+          0
+        ],
+        "9dcde1e1-ce55-41e2-84db-a32f9a70d6da": [
+          0
+        ],
+        "a600866c-b7b4-4066-97d9-f37cffc7e7b9": [
+          0
+        ],
+        "c61b2ee5-ecf5-4b4e-8cd4-cc1356839c18": [
+          0
+        ],
+        "cc621c77-e466-4b45-a2ac-d2d25a6146c0": [
+          0
+        ],
+        "d07d192f-aa5f-4292-ab51-f876cfd28f02": [
+          0
+        ],
+        "e4792d5f-5e9f-4731-9394-d05aa978c065": [
+          0
+        ],
+        "eb79304f-7fa5-4ca0-9085-392b8f10a180": [
+          0
+        ]
+      }
+    }
+  ]
+}

@@ -132,3 +132,41 @@ at the finished wall.
 No board/moodboard UI. No `ControlSpec` schema field. No agent integration. No sweeps
 integration. No persistence format decisions. Each of those is product work that only makes
 sense after a pass.
+
+---
+
+# Findings
+
+## Run 1 — deterministic route + discriminability control (2026-08-05)
+
+Built: `shared/taste/facets.ts` (12 facets), `server/utils/tasteAnalyze.ts` +
+`POST /api/taste/analyze` (deterministic, 6 facets), `POST /api/taste/read` (Fable, BYOK,
+built but not yet run — no key), `app/lib/taste/mapping.ts` (30 entries, validated against
+the real frozen control keys + shader manifest), `app/lib/taste/mine.ts` + `observed.json`
+(383 projects scanned, 47 mined: 35 shader / 26 gradient / 18 VT nodes),
+`app/lib/taste/observedConfigs.ts`, and the instrument at `/dev/taste-wall`.
+37 unit tests green, each with a broken control proven to fail.
+
+**Control 1 — discriminability: PASS, loudly.** Board A (Cinematic Amber Clairobscur
+training set) vs board B (Dotwork Monochrome) through the identical pipeline: A's wall goes
+amber/brown across all three studios; B's goes fully grayscale. Key reads — A: warmth 0.94
+(c 0.87), valueBias 0.24, saturation 0.67; B: saturation **0.02 (c 0.97)**, warmth 0.62 at
+c 0.20 (correctly *low-confidence* — a grayscale image has no hue to read; the confidence
+model behaved). Pixel-level column inequality asserted programmatically (7/7).
+
+**Observed column is characterful:** dark magenta/blue gradients with heavy grain
+(observed `post.grainAmount` median 0.785 over 26 values) and a cyan type ink — visibly a
+*third* taste, distinct from both boards. Divergence check (thin, as predicted):
+valueBias |Δ| = 0.24 elicited-vs-observed; most facets honestly n/a on the deterministic route.
+
+**Honest blemishes:** the dotwork board's density read 1.00/c 1.00 — stipple texture reads
+as maximal busyness to an edge-count analyzer (a *texture* signal leaking into *density*;
+Fable should disambiguate). VT cells clip at density-driven size extremes (no fit-to-box in
+`vtPlacement`). The `/api/dataset-match` + `/api/training-image` `FOLDER_RE` only admits
+`lora_dataset_\d+`, so a custom `taste_board_julien` folder 400s until widened. Two mapped
+shader effects (`post_grain`, `color_temperature`) have zero observed usage, so the observed
+shader column runs on adjust/bloom medians + pooled duotone colors only.
+
+**Still owed for the verdict:** the Fable column (Julien's key into the page field), the
+recognition test on Julien's own board, and the elicited-vs-observed agreement once both
+exist for the same person.
