@@ -1747,7 +1747,11 @@ watch(previewImages, (urls) => {
            hide layer groups whose layer index is beyond the visible-input
            count, so the body stays in sync with the grow-on-connect ports. -->
       <template v-for="group in visibleWidgetGroups" :key="group.title">
-        <div class="px-2 nopan nodrag">
+        <!-- `mt-1.5` on top of the container's `gap-1.5`: this disclosure opens a new
+             group, so it takes the 12px group gap rather than the 6px that separates one
+             widget from the next. Without it, ADVANCED sat as close to the last control
+             as two controls sit to each other. -->
+        <div class="px-2 mt-1.5 nopan nodrag">
           <button
             class="flex items-center gap-1 w-full text-[10px] uppercase tracking-[0.08em] text-white/50 hover:text-white/80 cursor-pointer py-1 transition-colors"
             @click="toggleGroup(group.title)"
@@ -1774,7 +1778,11 @@ watch(previewImages, (urls) => {
            `advanced` in the schema, e.g. the multi-LoRA node's URL overrides
            and sampler knobs, so the node shows only its core controls. -->
       <template v-if="advancedWidgets.length">
-        <div class="px-2 nopan nodrag">
+        <!-- `mt-1.5` on top of the container's `gap-1.5`: this disclosure opens a new
+             group, so it takes the 12px group gap rather than the 6px that separates one
+             widget from the next. Without it, ADVANCED sat as close to the last control
+             as two controls sit to each other. -->
+        <div class="px-2 mt-1.5 nopan nodrag">
           <button
             class="flex items-center gap-1 w-full text-[10px] uppercase tracking-[0.08em] text-white/50 hover:text-white/80 cursor-pointer py-1 transition-colors"
             @click="advancedOpen = !advancedOpen"
@@ -2118,7 +2126,7 @@ watch(previewImages, (urls) => {
          1.4px apart and diagonal clearance at a corner fell to ~7.6px against 10px on the
          flats. The bottom is the only edge with a card corner at each end, so that pinch
          read as "the bottom margin is smaller" when all three margins measure 10px. -->
-    <div v-if="showRunButton" ref="runMenuRoot" class="relative px-2 pb-2 pt-3">
+    <div v-if="showRunButton" ref="runMenuRoot" class="relative px-2 pb-2">
       <div class="flex items-stretch gap-px">
         <button
           class="nopan nodrag flex-1 h-7 rounded-l-[6px] flex items-center justify-center gap-1.5 text-[11px] font-medium transition-[transform,background-color,color] active:scale-[0.96] cursor-pointer"
