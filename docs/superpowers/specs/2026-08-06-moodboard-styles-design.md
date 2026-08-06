@@ -126,10 +126,30 @@ at a LoRA's dataset. Once both exist, trained styles and moodboards are one fami
 have weights, all have readable taste. Not in v1 scope; noted so the endpoint is built
 shareable.
 
+## Ports — what wires in v1, and the pinned design for what follows
+
+**v1 ships one real port: images out.** The node emits a board image (top of pile by
+default, pickable), wirable into anything that accepts IMAGE today — img2img, image
+conditioning, compositor slots. The board's images also join the **@refs registry**, so
+any prompt can reference them by name. The node earns its place in the graph on day one;
+a portless node in a node-graph tool is a decoration, and is explicitly rejected.
+
+**Taste-as-wire is the fast-follow, and its design is pinned now so nothing builds
+incompatible.** Generators gain TWO new inputs together, in one schema change:
+- `prompt_in` — plain text, the *subject/intent* (the Idea node's port, as already scoped
+  in its design: no Replicate node has a wirable prompt today).
+- `style_in` — a **taste-typed** port carrying the READING itself (summary, palette,
+  avoids, fonts), never a pre-flattened string. The consumer compiles: a generator
+  compiles it to the prompt block; a procedural studio compiles it to a config later,
+  when agent fidelity lands. One edge type, every future consumer.
+
+Two ports because subject and style must be wirable *simultaneously* — an Idea node
+saying what, a moodboard saying how it feels, into the same generator. Both inputs are
+**appended to the schema, never inserted** (the multi-LoRA positional-widget lesson;
+guard tests exist). This one substrate change lands the Idea node and the taste wire as
+siblings. Slot-apply remains alongside the wire, same duality as images.
+
 ## Out of scope, deliberately
-- **No output ports on the node in v1** — wiring board images out as generation refs and
-  taste out to other nodes is the node's real endgame (the July wargame's "ours feeds the
-  graph" differentiator) and the **named fast-follow**, not v1.
 - **No font wiring** — suggested fonts are display/edit chips; nothing consumes them yet.
 - **No strength dial** — apply is on/off per slot (prompt blocks don't dial cleanly; a
   wording-based strength is a later experiment).
@@ -159,6 +179,7 @@ paid preview and live Fable read get one manual checklist run (paid-verification
 ## Done when
 A user can add a MoodboardNode from the toolbar, drop images into its modal,
 read+correct+preview, save a named moodboard, see it in the gallery's Moodboards tab,
-apply it to any slot alone or stacked, and the generation's composed prompt carries the
-block — verified live end to end, with the reading editable at every step, and node
-deletion leaving the library entry intact.
+apply it to any slot alone or stacked, **wire a board image out of the node into an
+image-accepting input and reference board images via @refs**, and the generation's
+composed prompt carries the block — verified live end to end, with the reading editable
+at every step, and node deletion leaving the library entry intact.
