@@ -1380,12 +1380,12 @@ async function exportWebEmbed() {
         This effect has no motion parameters.
       </p>
       <div v-show="inspectorTab === 'design'" class="flex flex-col gap-2 rounded-lg border border-white/[0.07] bg-white/[0.03] px-3 py-2.5">
-          <!-- Effect: the hero picker of the pane — it chooses everything below it, so it is
-               deliberately taller, brighter-filled and larger-typed than the ordinary rows
-               rather than one of them. Still a launcher (opens the gallery); "Effect" is a
-               quiet caption and the effect NAME is the headline. -->
+          <!-- Effect: the hero picker of the pane — it chooses everything below it, so it
+               earns its prominence through SIZE alone (taller, larger headline type), NOT a
+               different fill or corner. Same 5% fill and 6px radius as every other control;
+               "Effect" is a quiet caption and the effect NAME is the headline. Launcher. -->
           <button type="button" @click="showEffectGallery = true"
-                  class="group flex h-10 w-full items-center justify-between gap-2 rounded-lg bg-white/[0.07] px-3 text-left transition-colors hover:bg-white/[0.11]">
+                  class="group flex h-10 w-full items-center justify-between gap-2 rounded-[6px] bg-white/[0.05] px-2.5 text-left transition-colors hover:bg-white/[0.08]">
             <span class="text-[10px] uppercase tracking-wide text-white/40">Effect</span>
             <span class="flex min-w-0 items-center gap-2">
               <span class="truncate text-[13px] font-medium text-white/95">{{ effect.label }}</span>
