@@ -55,6 +55,25 @@ const band = computed(() => {
 })
 
 const editing = ref(false)
+/**
+ * A pointer drag is in flight. Drives the handle turning white, and keeps the handle and
+ * ticks visible once the pointer has left the row — a drag with pointer capture routinely
+ * travels past the row's edges, and `group-hover` alone would blink them off mid-gesture.
+ */
+const dragging = ref(false)
+
+/** Where the handle sits, 0..100. Same fraction the band uses, so they cannot disagree. */
+const handlePct = computed(() => fillFraction(num.value, min.value, max.value) * 100)
+
+/**
+ * Ticks as one repeating gradient rather than N elements: a row is 260px of a canvas that
+ * can hold hundreds of nodes, and eight spans per row is eight spans too many. Eight
+ * intervals reads as a scale without turning into a ruler.
+ */
+const TICK_EVERY = 12.5
+const tickStyle = {
+  backgroundImage: `repeating-linear-gradient(to right, rgba(255,255,255,0.22) 0 1px, transparent 1px ${TICK_EVERY}%)`,
+}
 
 /**
  * The element that IS the slider, for both focus and ARIA. It is a leaf on purpose:
@@ -106,6 +125,7 @@ function onPointerDown(e: PointerEvent) {
   // and fired a spurious click-to-position jump. The template never reads it, so
   // it does not need to be reactive either.
   let dragged = false
+  dragging.value = true
   const startX = e.clientX
   const startValue = num.value
   function move(ev: PointerEvent) {
@@ -133,6 +153,7 @@ function onPointerDown(e: PointerEvent) {
     el.removeEventListener('pointercancel', onCancel)
     // Last, so a throw here can never leave the listeners attached.
     if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId)
+    dragging.value = false
   }
   function onCancel(ev: PointerEvent) {
     if (ev.pointerId !== e.pointerId) return
@@ -277,6 +298,25 @@ function onValuePointerDown(e: PointerEvent) {
         class="pointer-events-none absolute inset-y-0"
         :style="{ left: band.left, width: band.width, background: bound ? 'rgba(244,114,182,0.32)' : 'rgba(255,255,255,0.22)' }"
       ></div>
+
+      <!-- Ticks and handle: the row's mechanics, shown only when you are about to use it.
+           At rest the row is a label and a number; on hover it admits to being a slider.
+           Both stay up while `dragging`, because a captured drag routinely travels beyond
+           the row's edges and `group-hover` alone would blink them off mid-gesture.
+           Unbound only — a bound row is driven by its column, so offering the machinery
+           of a drag would be a lie. -->
+      <template v-if="numeric && !bound">
+        <div
+          class="pointer-events-none absolute inset-y-1.5 left-0 right-0 opacity-0 transition-opacity duration-100 group-hover:opacity-100"
+          :class="dragging ? 'opacity-100' : ''"
+          :style="tickStyle"
+        ></div>
+        <div
+          class="pointer-events-none absolute top-1/2 h-3.5 w-[2px] -translate-y-1/2 rounded-full opacity-0 transition-[opacity,background-color] duration-100 group-hover:opacity-100"
+          :class="dragging ? 'bg-white opacity-100' : 'bg-white/60'"
+          :style="{ left: `calc(${handlePct}% - 1px)` }"
+        ></div>
+      </template>
 
       <!-- The track: a childless element carrying the slider role, the tab stop and the
            keyboard, so the row's buttons stay siblings rather than descendants of a
