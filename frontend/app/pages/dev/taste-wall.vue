@@ -70,6 +70,11 @@ const error = ref('')
 
 const boardA = ref<Board | null>(null)
 const boardB = ref<Board | null>(null)
+const uploadsA = ref<File[]>([])
+const uploadsB = ref<File[]>([])
+type PerImage = { palette: string[]; facets: Record<string, number> }
+const perImageA = ref<PerImage[]>([])
+const perImageB = ref<PerImage[]>([])
 const readingA = ref<TasteReading | null>(null)
 const readingB = ref<TasteReading | null>(null)
 const paletteA = ref<string[]>([])
@@ -126,6 +131,34 @@ async function loadBoard(folder: string, count: number): Promise<Board> {
     board.pixels.push({ w: 64, h: 64, data: Array.from(ctx.getImageData(0, 0, 64, 64).data) })
   }
   return board
+}
+
+/** Uploaded files → the same Board shape, fully client-side (files never leave the browser raw). */
+async function loadBoardFromFiles(files: File[], count: number): Promise<Board> {
+  const picked = files.slice(0, count)
+  if (!picked.length) throw new Error('no images in the drop')
+  const board: Board = { folder: `uploaded · ${picked.length} files`, thumbs: [], bigJpegs: [], pixels: [] }
+  for (const file of picked) {
+    const url = URL.createObjectURL(file)
+    try {
+      const img = await loadImage(url)
+      board.thumbs.push(scaled(img, 96).toDataURL('image/jpeg', 0.8))
+      board.bigJpegs.push(scaled(img, 768).toDataURL('image/jpeg', 0.85))
+      const px = document.createElement('canvas')
+      px.width = 64; px.height = 64
+      const ctx = px.getContext('2d')!
+      ctx.drawImage(img, 0, 0, 64, 64)
+      board.pixels.push({ w: 64, h: 64, data: Array.from(ctx.getImageData(0, 0, 64, 64).data) })
+    }
+    finally { URL.revokeObjectURL(url) }
+  }
+  return board
+}
+
+function takeFiles(side: 'A' | 'B', list: FileList | File[] | null | undefined) {
+  const files = Array.from(list ?? []).filter(f => /^image\//.test(f.type))
+  if (!files.length) return
+  ;(side === 'A' ? uploadsA : uploadsB).value = files
 }
 
 // ── Fixed bases + renderers ─────────────────────────────────────────────────
@@ -189,22 +222,30 @@ function renderColumn(
 // ── The two runs ────────────────────────────────────────────────────────────
 async function runAnalyze() {
   const fA = folderFor('A'), fB = folderFor('B')
-  if (!fA || !fB) { error.value = 'pick a board and an anti-board first'; return }
+  if (!uploadsA.value.length && !fA) { error.value = 'drop images on Board A or pick a dataset first'; return }
   error.value = ''
   try {
     busy.value = 'loading boards…'
-    boardA.value = await loadBoard(fA, cap.value)
-    boardB.value = await loadBoard(fB, cap.value)
+    boardA.value = uploadsA.value.length
+      ? await loadBoardFromFiles(uploadsA.value, cap.value)
+      : await loadBoard(fA, cap.value)
+    const wantB = uploadsB.value.length > 0 || !!fB
+    boardB.value = wantB
+      ? (uploadsB.value.length ? await loadBoardFromFiles(uploadsB.value, cap.value) : await loadBoard(fB, cap.value))
+      : null
 
     busy.value = 'analyzing…'
-    const resA = await $fetch<{ reading: TasteReading; palette: string[] }>('/api/taste/analyze', {
+    const resA = await $fetch<{ reading: TasteReading; palette: string[]; perImage: PerImage[] }>('/api/taste/analyze', {
       method: 'POST', body: { pixels: boardA.value.pixels },
     })
-    const resB = await $fetch<{ reading: TasteReading; palette: string[] }>('/api/taste/analyze', {
-      method: 'POST', body: { pixels: boardB.value.pixels },
-    })
-    readingA.value = resA.reading; paletteA.value = resA.palette
-    readingB.value = resB.reading; paletteB.value = resB.palette
+    readingA.value = resA.reading; paletteA.value = resA.palette; perImageA.value = resA.perImage ?? []
+    if (boardB.value) {
+      const resB = await $fetch<{ reading: TasteReading; palette: string[]; perImage: PerImage[] }>('/api/taste/analyze', {
+        method: 'POST', body: { pixels: boardB.value.pixels },
+      })
+      readingB.value = resB.reading; paletteB.value = resB.palette; perImageB.value = resB.perImage ?? []
+    }
+    else { readingB.value = null; paletteB.value = []; perImageB.value = [] }
 
     busy.value = 'rendering wall…'
     await fetchShaderFxCatalog()
@@ -213,7 +254,7 @@ async function runAnalyze() {
     const source = ensureShaderSource(neutral.gradient)
     renderColumn('neutral', neutral, source, font)
     renderColumn('elicitedA', applyTasteToConfigs(resA.reading, resA.palette, bases()), source, font)
-    renderColumn('elicitedB', applyTasteToConfigs(resB.reading, resB.palette, bases()), source, font)
+    if (readingB.value) renderColumn('elicitedB', applyTasteToConfigs(readingB.value, paletteB.value, bases()), source, font)
     renderColumn('observed', observedToConfigs(observedJson as any, bases()), source, font)
     if (fableA.value) renderColumn('fableA', applyTasteToConfigs(fableA.value, paletteA.value, bases()), source, font)
   }
@@ -223,7 +264,7 @@ async function runAnalyze() {
 
 async function runFable() {
   if (!apiKey.value.trim()) { error.value = 'Fable read needs an Anthropic API key (BYOK — no server key configured)'; return }
-  if (!boardA.value || !boardB.value) { error.value = 'run Analyze first (it loads the boards)'; return }
+  if (!boardA.value) { error.value = 'run Analyze first (it loads the boards)'; return }
   error.value = ''
   try {
     busy.value = 'reading A with Fable…'
@@ -231,11 +272,13 @@ async function runFable() {
       method: 'POST', body: { images: boardA.value.bigJpegs.slice(0, 8), apiKey: apiKey.value.trim() },
     })
     fableA.value = resA.reading
-    busy.value = 'reading B with Fable…'
-    const resB = await $fetch<{ reading: TasteReading }>('/api/taste/read', {
-      method: 'POST', body: { images: boardB.value.bigJpegs.slice(0, 8), apiKey: apiKey.value.trim() },
-    })
-    fableB.value = resB.reading
+    if (boardB.value) {
+      busy.value = 'reading B with Fable…'
+      const resB = await $fetch<{ reading: TasteReading }>('/api/taste/read', {
+        method: 'POST', body: { images: boardB.value.bigJpegs.slice(0, 8), apiKey: apiKey.value.trim() },
+      })
+      fableB.value = resB.reading
+    }
 
     busy.value = 'rendering…'
     await fetchShaderFxCatalog()
@@ -298,6 +341,13 @@ const fmt = (v: number | null | undefined) => (v === null || v === undefined ? '
           @input="side === 'A' ? (freeA = ($event.target as HTMLInputElement).value) : (freeB = ($event.target as HTMLInputElement).value)"
           placeholder="…or type a folder name" spellcheck="false"
           style="background:#15151c;color:#ddd;border:1px solid #2a2a35;border-radius:6px;padding:5px;font-size:11px" />
+        <label :data-drop="side"
+          @dragover.prevent @drop.prevent="takeFiles(side, ($event as DragEvent).dataTransfer?.files)"
+          style="border:1px dashed #3a3a48;border-radius:6px;padding:6px 8px;font-size:11px;color:#888;cursor:pointer;text-align:center">
+          {{ (side === 'A' ? uploadsA : uploadsB).length ? `${(side === 'A' ? uploadsA : uploadsB).length} files ready — click Analyze` : '…or drop / click to upload images' }}
+          <input type="file" multiple accept="image/*" :data-upload="side" style="display:none"
+            @change="takeFiles(side, ($event.target as HTMLInputElement).files)" />
+        </label>
       </div>
       <label style="font-size:11px;color:#aaa;display:flex;flex-direction:column;gap:4px">Images / board
         <input v-model.number="cap" type="number" min="1" max="32" data-cap
@@ -342,10 +392,10 @@ const fmt = (v: number | null | undefined) => (v === null || v === undefined ? '
             <td style="font-size:12px;color:#ddd;font-weight:600;padding:4px 8px;vertical-align:top">{{ s.label }}</td>
             <td v-for="c in COLUMNS" :key="c.id" style="padding:4px 8px;vertical-align:top">
               <img v-if="cells[`${s.id}-${c.id}`]" :src="cells[`${s.id}-${c.id}`]" :data-cell="`${s.id}-${c.id}`"
-                :style="{ width: CELL_W + 'px', display: 'block', borderRadius: '6px', background: '#000' }" />
+                :style="{ width: CELL_W + 'px', maxWidth: 'none', display: 'block', borderRadius: '6px', background: '#000' }" />
               <div v-else :data-cell-empty="`${s.id}-${c.id}`"
                 :style="{ width: CELL_W + 'px', height: CELL_H + 'px', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px dashed #2a2a35', borderRadius: '6px', color: '#555', fontSize: '11px' }">
-                {{ c.id === 'fableA' ? 'needs key — run "Read with Fable"' : 'run Analyze' }}
+                {{ c.id === 'fableA' ? 'needs key — run "Read with Fable"' : c.id === 'elicitedB' ? 'optional anti-board' : 'run Analyze' }}
               </div>
             </td>
           </tr>
@@ -381,6 +431,31 @@ const fmt = (v: number | null | undefined) => (v === null || v === undefined ? '
         </div>
       </div>
     </div>
+
+    <!-- Per-image extraction: what the analyzer sees in each image -->
+    <div v-for="side in (['A', 'B'] as const)" :key="`per-${side}`" style="margin:0 0 18px">
+      <template v-if="(side === 'A' ? perImageA : perImageB).length && (side === 'A' ? boardA : boardB)">
+        <h2 style="font-size:13px;margin:0 0 6px">Per-image extraction · {{ side }} <span style="color:#666;font-weight:400">(deterministic, per source)</span></h2>
+        <div :data-per-image="side" style="display:flex;gap:10px;flex-wrap:wrap">
+          <div v-for="(pi, j) in (side === 'A' ? perImageA : perImageB)" :key="j"
+            style="background:#12121a;border:1px solid #22222c;border-radius:8px;padding:8px;width:150px">
+            <img :src="(side === 'A' ? boardA : boardB)!.thumbs[j]" style="width:100%;border-radius:5px;display:block;margin-bottom:6px" />
+            <div style="display:flex;gap:3px;margin-bottom:6px">
+              <div v-for="hex in pi.palette" :key="hex" :title="hex" :style="{ flex: 1, height: '14px', borderRadius: '3px', background: hex }" />
+            </div>
+            <div v-for="(v, fid) in pi.facets" :key="fid" style="display:flex;justify-content:space-between;font-size:9.5px;color:#999">
+              <span>{{ fid }}</span><span style="color:#ccc">{{ (v as number).toFixed(2) }}</span>
+            </div>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- Raw extraction JSON -->
+    <details v-if="readingA" style="margin:0 0 18px" data-raw-json>
+      <summary style="font-size:12px;color:#888;cursor:pointer">Raw extraction JSON (aggregate readings + Fable)</summary>
+      <pre style="font-size:10.5px;color:#9a9;background:#0f0f14;border:1px solid #22222c;border-radius:6px;padding:10px;overflow-x:auto;max-height:400px">{{ JSON.stringify({ deterministicA: readingA, paletteA, fableA, deterministicB: readingB, paletteB, fableB }, null, 2) }}</pre>
+    </details>
 
     <!-- Divergence readout -->
     <h2 style="font-size:13px;margin:0 0 4px">Elicited A vs observed — rough agreement check</h2>
