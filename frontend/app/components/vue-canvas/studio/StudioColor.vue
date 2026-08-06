@@ -10,6 +10,7 @@ const model = defineModel<string>({ required: true })
 
 const open = ref(false)
 const trigger = ref<HTMLElement | null>(null)
+const popEl = ref<HTMLElement | null>(null)
 const popStyle = ref<Record<string, string>>({})
 const h = ref(0), s = ref(0), v = ref(0)
 // Alpha rides alongside the hue/sat/val trio. The model may be 6-digit (opaque, the legacy
@@ -108,11 +109,25 @@ function reposition() {
   const el = trigger.value
   if (!el) return
   const r = el.getBoundingClientRect()
-  const W = 220, est = 300
-  const left = Math.min(r.left, window.innerWidth - W - 8)
+  const M = 8
+  // Measure the popover once it exists rather than assuming 220px — the old hard-coded W
+  // under-clamped whenever the rendered popover was wider (it is cut off in the studio
+  // fill editor, where the swatch sits at the panel's right edge). Falls back to 220 on
+  // the very first frame before the Teleport mounts.
+  const W = popEl.value?.offsetWidth || 220
+  const H = popEl.value?.offsetHeight || 300
+  // Prefer opening rightward from the swatch; if that runs off the right edge, flip so the
+  // popover's RIGHT edge aligns with the swatch's — i.e. open leftward, like most pickers.
+  let left = r.left
+  if (left + W > window.innerWidth - M) left = r.right - W
+  // Then hard-clamp to the viewport so it can never be cut on either side.
+  left = Math.max(M, Math.min(left, window.innerWidth - W - M))
   const below = r.bottom + 6
-  const top = below + est > window.innerHeight ? Math.max(8, r.top - est - 6) : below
-  popStyle.value = { left: `${Math.max(8, left)}px`, top: `${top}px`, width: `${W}px` }
+  const top = below + H > window.innerHeight ? Math.max(M, r.top - H - 6) : below
+  // Width stays fixed at 220 — the popover's saturation pad and bars are `w-full`, so the
+  // box needs a width to resolve against. It is `min`'d to the viewport only as a last
+  // resort on a viewport narrower than the popover itself.
+  popStyle.value = { left: `${left}px`, top: `${top}px`, width: `${Math.min(220, window.innerWidth - 2 * M)}px` }
 }
 function openPicker() {
   hexDraft.value = null // never reopen showing a draft abandoned by an Escape
@@ -178,7 +193,7 @@ function dragHue(e: PointerEvent) {
   </button>
 
   <Teleport to="body">
-    <div v-if="open" data-studio-color-pop :style="popStyle"
+    <div v-if="open" ref="popEl" data-studio-color-pop :style="popStyle"
          class="fixed z-[200] rounded-lg border border-white/10 bg-neutral-900 p-2.5 shadow-xl">
       <div class="relative mb-2 h-32 w-full cursor-crosshair rounded-md"
            :style="{ background: `linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, transparent), ${hueColor}` }"
