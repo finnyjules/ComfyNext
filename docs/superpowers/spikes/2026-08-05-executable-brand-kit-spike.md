@@ -258,3 +258,63 @@ proposes, the kit disposes** — the diffusion post-pass doctrine, arriving in t
 procedural pipeline first, upstream of any product build. This two-stage shape
 (agent composes structure → kit enforces palette/value invariants) is the strongest
 architectural output of the spike so far.
+
+## Run 6 — the briefs converged; the translation to config did not (2026-08-06)
+
+With simplicity bias + full-carrier enforcement + a review round wired, Julien ran again.
+**The briefs are now right** — "Linear gradient with soft turquoise-to-pink-to-peach
+palette, high blur, dreamy flat sky" *is* the board. **The renders still missed**, and his
+one-line verdict — "a clear issue between the brief and how it translates" — is the spike's
+conclusion. Three named fractures in the brief→config link:
+
+1. **Vocabulary gaps:** the agent cannot reach the shapes its own briefs describe. A plain
+   flat ramp isn't reliably expressible over the banded default (the flame silhouettes are
+   the seed structure surviving), and orientation is still absent from the vocabulary
+   (fix in flight in a parallel session), so "clean horizontal bands" rendered vertical.
+2. **Enforcement used the wrong palette source.** The agent chose the brief's designed
+   colours (correct); enforcement then stamped the **k-means measurement** over them —
+   which includes shadow brick/grey clusters, because a pixel histogram is not a designed
+   palette. Doctrine right, source wrong: enforce the *curated* palette (Fable's named
+   colours), keep the measured one as evidence. **Measurement ≠ design.**
+3. **The review round silently never ran** ("review skipped" on all three takes) — a
+   uniform failure swallowed by a catch-all (prime suspect: the union `type` in the strict
+   output schema). The one mechanism built to catch fractures 1–2 was dead, and the error
+   handling hid it. Recorded as a diagnostic anti-pattern: never blanket-catch the
+   verification step.
+
+---
+
+# VERDICT (2026-08-06, after six runs)
+
+**The hinge holds where it was doubted, and bends where it was assumed.**
+
+**PASS — reading taste from evidence.** Deterministic extraction discriminates loudly
+(run 1, 7/7) with honest confidence behavior. Fable's understanding is genuinely good —
+the run-3 summary named Julien's world exactly, and by run 6 the briefs were
+indistinguishable from what a human art director would write. Cluster/avoids machinery
+works. The 383-project observed mining works and shows a real signature.
+
+**PASS — compiling taste into diffusion.** The style block (summary + palette + avoids as
+prose) moved a fixed-seed FLUX render unmistakably into the board's world for $0.003.
+Julien: "that looks pretty good!" — the only output he was happy with. Caveat: tested on a
+board-native subject; the out-of-world subject test remains open.
+
+**FAIL (for now) — compiling taste into procedural studios.** Not because reading fails —
+because **brief→config translation is immature**: agent vocabulary can't express what the
+briefs ask (orientation, plain ramps), enforcement needs curated-not-measured palettes,
+and the see-and-correct loop needs to actually run. Every one of these lands in a *known,
+planned* workstream — the agentic north star's translation-fidelity track (F3 hints, F4
+verification, per-surface intent-corpus gating) plus a palette-curation step in the kit —
+not in a new unknown. The thesis does not die here; it queues behind agent maturity.
+
+**Consequences for the executable brand kit:**
+- Build order inverts the original assumption: **the diffusion channel is the kit's first
+  shippable value** (style block + avoids + LoRA scales — nearly free, proven), while the
+  studio channel gates on agent fidelity per surface.
+- The kit stores TWO palettes: measured (evidence, from pixels) and curated (design, named
+  by Fable, editable by the owner). Enforcement uses curated only.
+- Compose-then-enforce + see-and-correct is the right studio pipeline; it needs the
+  reviewer actually running and an agent vocabulary audit per surface (the taste-wall is
+  the test harness for exactly this).
+- The recognition test on Julien's own board remains open — but is no longer the
+  bottleneck question; translation is.
