@@ -9,6 +9,10 @@
  */
 import { computed, ref, watch } from 'vue'
 import { Sparkles, ChevronRight, X } from 'lucide-vue-next'
+// By path, not auto-import: Nuxt collapses a duplicated path segment, so
+// `studio/StudioSlider.vue` is `VueCanvasStudioSlider` — and a name that does not
+// resolve renders NOTHING, silently. Bit us once already in ComfyNodeWidget.
+import StudioSlider from '~/components/vue-canvas/studio/StudioSlider.vue'
 
 const props = defineProps<{
   modelValue: string   // selected LoRA filename, or "[None]"/empty
@@ -31,8 +35,6 @@ const emit = defineEmits<{
 
 // Strength row shows only when a paired scale exists.
 const hasScale = computed(() => props.scaleMax != null)
-// Trim trailing zeros: 1 → "1", 0.9 → "0.9", 1.05 → "1.05".
-const fmtScale = computed(() => String(parseFloat(Number(props.scaleValue ?? 1).toFixed(2))))
 // Name the folded scale by what it drives, so it reads clearly (and stops
 // colliding with the node's other "strength" sliders) instead of a bare "strength".
 const scaleLabel = computed(() =>
@@ -66,24 +68,24 @@ function openGallery() {
 }
 
 function clearSlot(event: MouseEvent) {
-  // Stop propagation: the × sits inside the card next to (not inside — you
-  // can't nest a button in a button, see the range-input comment below) the
-  // launcher <button>, so a click here must not also open the gallery.
+  // Stop propagation: the × is a SIBLING of the launcher <button> (you can't nest a
+  // button in a button), overlapping its top-right corner, so a click here must not
+  // also open the gallery.
   event.stopPropagation()
   emit('clear')
 }
 </script>
 
 <template>
-  <!-- Card owns the border/bg so the (interactive) strength slider can live
-       inside it — a range input can't be nested in a <button>. The clear (×)
-       control is the same story: it can't nest inside the launcher <button>,
-       so it renders as an absolutely-positioned SIBLING inside this
-       `relative` wrapper instead. -->
-  <div class="nopan nodrag relative w-full rounded border border-white/10 bg-white/[0.04] hover:border-white/20 transition-colors">
+  <!-- No card border and no card fill. The wrapper is now only what the clear (×)
+       needs — it can't nest inside the launcher <button>, so it renders as an
+       absolutely-positioned SIBLING and something has to be `relative`. The launcher
+       and the strength row carry their own fill instead, at the node's 8px inner
+       radius, and sit 6px apart like any two items in a group. A bordered box holding
+       a fill holding a row was three nested surfaces for two controls. -->
+  <div class="nopan nodrag relative flex w-full flex-col gap-1.5">
     <button
-      class="w-full flex items-center gap-2 px-2 py-1.5 rounded-t-[3px] hover:bg-white/[0.05] cursor-pointer text-left group transition-colors"
-      :class="hasScale ? '' : 'rounded-b-[3px]'"
+      class="w-full flex items-center gap-2 px-2 py-1.5 rounded-[8px] bg-white/[0.05] hover:bg-white/[0.08] cursor-pointer text-left group transition-colors"
       :title="selected ? `${selected} — click to change ${noun}` : `Browse your ${noun === 'Character' ? 'Characters' : 'Styles'}`"
       @click="openGallery"
     >
@@ -122,28 +124,21 @@ function clearSlot(event: MouseEvent) {
       <X class="size-2.5" />
     </button>
 
-    <!-- Folded strength slider — labelled above, like the node's other sliders. -->
-    <div v-if="hasScale" class="px-2 pb-1.5 pt-1">
-      <div class="text-[9px] text-muted-foreground tracking-normal mb-0.5">{{ scaleLabel }}</div>
-      <div class="flex items-center gap-2">
-        <input
-          type="range"
-          class="lora-strength nopan nodrag nowheel flex-1 min-w-0"
-          :min="scaleMin ?? 0"
-          :max="scaleMax ?? 1.5"
-          :step="scaleStep ?? 0.05"
-          :value="scaleValue ?? 1"
-          @input="$emit('update:scale', Number(($event.target as HTMLInputElement).value))"
-          @mousedown.stop
-          @click.stop
-        />
-        <span class="text-[9.5px] tabular-nums text-white/70 shrink-0 w-7 text-right">{{ fmtScale }}</span>
-      </div>
+    <!-- The folded strength, as the same 28px row every other control in the node is.
+         It was the last label-above-a-rail control on a node, which is what made this
+         card look older than what surrounds it. `:bindable="false"` because nodes bind
+         by wire, not by Collection column — see ComfyNodeWidget for the same reason. -->
+    <div v-if="hasScale" class="nopan nodrag nowheel">
+      <StudioSlider
+        :label="scaleLabel"
+        :min="scaleMin ?? 0"
+        :max="scaleMax ?? 1.5"
+        :step="scaleStep ?? 0.05"
+        :default="1"
+        :bindable="false"
+        :model-value="scaleValue ?? 1"
+        @update:model-value="$emit('update:scale', Number($event))"
+      />
     </div>
   </div>
 </template>
-
-<style scoped>
-/* Slider visual is unified globally in main.css (input[type=range], the studio look);
-   width comes from `flex-1 min-w-0` in the template. */
-</style>
