@@ -59,13 +59,18 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
         <div class="flex min-h-0 flex-1 flex-col">
           <div class="flex min-h-0 flex-1 items-center justify-center"><slot name="preview" /></div>
           <!-- Agent prompt: bare (no container), docked under the preview — mirrors
-               the Compositor. Its output renders in the controls column at right. -->
-          <div v-if="agent" class="mt-3 shrink-0">
-            <AgentBar
-              :busy="agent.busy.value" :error="agent.error.value" :notice="agent.notice.value"
-              :chips="[]" :placeholder="agentPlaceholder"
-              @submit="agent.ask" @chip="agent.ask"
-            />
+               the Compositor. Its output renders in the controls column at right.
+               A studio with a bespoke agent (Space Type's vibe flow) provides its own
+               bar via the #agentBar slot, so it lands in this SAME centred position
+               instead of floating in the controls column. -->
+          <div v-if="agent || $slots.agentBar" class="mt-3 shrink-0">
+            <slot name="agentBar">
+              <AgentBar
+                :busy="agent.busy.value" :error="agent.error.value" :notice="agent.notice.value"
+                :chips="[]" :placeholder="agentPlaceholder"
+                @submit="agent.ask" @chip="agent.ask"
+              />
+            </slot>
           </div>
           <div class="mt-3 flex shrink-0 items-center gap-2"><slot name="actions" /></div>
         </div>

@@ -1359,7 +1359,10 @@ async function exportWebEmbed() {
         />
       </div>
     </template>
-    <template #controls>
+    <!-- The vibe AI input docks under the preview, centred, like every other studio's
+         agent bar — instead of floating at the top of the controls column. Its proposal
+         (chips / keep / revert) rides with it there. -->
+    <template #agentBar>
       <VibeControlBar
         :busy="vibeBusy"
         :proposal="vibeProposal"
@@ -1368,6 +1371,8 @@ async function exportWebEmbed() {
         @revert="onVibeRevert"
         @focus-control="onVibeFocus"
       />
+    </template>
+    <template #controls>
       <div class="flex shrink-0 gap-1 rounded-lg bg-white/[0.04] p-1 text-[11px]">
         <button type="button" class="flex-1 rounded px-2 py-1"
                 :class="inspectorTab === 'design' ? 'bg-white/15 text-white' : 'text-white/55 hover:text-white/80'"
