@@ -203,3 +203,33 @@ The fixed-composition columns stay on the wall as what they always were: a contr
 instrument, not the product behavior.
 
 **Unrun:** the Composed column live (key-gated; Julien's next run is its first execution).
+
+## Run 3 — first live Fable run: summary nails it, brief translates the wrong thing (2026-08-05)
+
+Julien ran the full Fable path on the pastel board. **The summary was a bullseye** ("the
+sun-bleached pastel world of retro California… vacation stillness rather than street
+bustle") — the show-you-understood moment works. **The composition still failed**, and the
+failure chain is now fully legible:
+
+1. **The brief translated the photos' OBJECTS, not their LIGHT.** Fable wrote "strong
+   horizontal/vertical banding like stucco walls meeting flat sky" — mapping the buildings'
+   geometry into the gradient, when the wanted translation was the sky's soft liquid wash.
+   The agent then *obeyed the brief faithfully* ("clean linear banding, minimal flow
+   distortion"). Garbage-out was loyal to garbage-in.
+2. **"Horizontal" was unexpressible anyway:** the gradient agent's vocabulary exposes no
+   direction/orientation control at all — the render stayed vertical bands. A real
+   vocabulary gap, filed separately.
+3. The agent already owned what Julien wanted — an `aurora` preset ("soft dreamy pastel
+   aurora wash"), plus `marble`/`sunset`/mesh — the brief simply never steered there.
+
+**Correction (`5e2eb50e6`): atmosphere-first, three takes.** The brief instruction now
+demotes photographed objects to palette-only and translates the board's *light and air* by
+default; Fable returns **three briefs** (atmosphere / structure / essence), each forced to
+name an archetype from the studio's real preset menu; the Composed column renders all
+three for the person to choose — one guess was the wrong shape for taste (the explore
+thesis applied to the kit itself).
+
+**Generalizable lesson for the kit:** taste-to-studio translation has a *direction* choice
+(what aspect of the evidence maps to this material?) that is itself a creative call —
+which is exactly why the compile target must be briefs-through-agents with human choice,
+not a deterministic mapping.
