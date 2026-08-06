@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Handle, Position } from '@vue-flow/core'
 import { Layers, Pencil } from 'lucide-vue-next'
 import { textureFx } from '~/lib/texturefx/renderer'
 import { preloadStylize, stylizeTile } from '~/lib/texturefx/stylize'
@@ -101,31 +100,36 @@ function openEditor() {
 }
 
 // Index of the optional `vars` input a Collection's VARS output wires into.
-// Rendering its Handle (below) is what lets that edge anchor and survive reload.
+// Rendering its port (below) is what lets that edge anchor and survive reload.
 const varsInputIndex = computed(() =>
   ((props.data?.inputs as { name?: string }[] | undefined) ?? []).findIndex(i => i?.name === 'vars'))
 </script>
 
 <template>
-  <div
-    class="relative w-[220px] overflow-hidden rounded-xl border border-white/10 bg-neutral-900 text-white shadow-lg"
-    @dblclick.stop="openEditor"
-  >
-    <!-- Variables input: a Collection's VARS output wires here. Rendering this Handle
+  <!-- Ports live OUTSIDE the card, exactly as GradientStudioNode does. The card is
+       `overflow-hidden`, so ports rendered inside it get clipped in half — which is why
+       this node's dots looked like they were sitting inside the body while every other
+       node's tuck against the edge. As siblings they also share the shared NodePort
+       treatment (hit area, hover label, type colour) instead of a bare vue-flow Handle. -->
+  <div class="relative w-fit">
+    <!-- Variables input: a Collection's VARS output wires here. Rendering this port
          lets the VARS edge anchor so it survives reload (fixes edge-lost-on-restart). -->
-    <Handle
+    <VueCanvasNodePort
       v-if="varsInputIndex >= 0"
-      :id="`input-${varsInputIndex}`" type="target" :position="Position.Left"
-      class="!h-3 !w-3 !rounded-full !border-2 !border-[#f472b6]/60 !bg-[#1a1a1a]"
-      :style="{ top: '50%' }"
+      :id="`input-${varsInputIndex}`" type="target" side="left" :index="0"
+      data-type="VARS" label="variables"
     />
 
-    <!-- Output handle: anchors the provenance edge to a generated Image node. -->
-    <Handle
-      id="output-0" type="source" :position="Position.Right"
-      class="!h-3 !w-3 !rounded-full !border-2 !border-white/30 !bg-[#1a1a1a]"
-      :style="{ top: '50%' }"
+    <!-- Output: anchors the provenance edge to a generated Image node. -->
+    <VueCanvasNodePort
+      id="output-0" type="source" side="right" :index="0"
+      data-type="IMAGE" label="image"
     />
+
+  <div
+    class="relative z-10 w-[220px] overflow-hidden rounded-xl border border-white/10 bg-neutral-900 text-white shadow-lg"
+    @dblclick.stop="openEditor"
+  >
 
     <!-- Header -->
     <div class="flex items-center gap-2 border-b border-white/10 px-3 py-2">
@@ -149,5 +153,6 @@ const varsInputIndex = computed(() =>
       </button>
       <StudioRenderButton class="flex-1" :node-id="id" :busy="!!data?.studioBusy" />
     </div>
+  </div>
   </div>
 </template>
