@@ -183,6 +183,32 @@ def _b_veo_3_1_fast(prompt, ar, dur, seed, image, audio, adv):
     return _veo31_fal_input(prompt, ar, dur, seed, image, adv)
 
 
+# ===== Black Forest Labs (FLUX 3 video) =====================================
+
+_FLUX3_AR   = {"16:9", "9:16", "1:1"}
+_FLUX3_DURS = [5, 10, 15, 20]
+
+
+def _b_flux_3(prompt, ar, dur, seed, image, audio, adv):
+    """fal blackforestlabs/flux-3 text-to-video / image-to-video. A wired first
+    frame (image) selects the i2v function via _fal_fn_for_input, so framing
+    follows the image and aspect_ratio is dropped in that mode. Native audio is
+    on by default (the model's headline feature); flip it off for a cheaper,
+    silent render."""
+    inp: dict[str, Any] = {
+        "prompt": prompt,
+        "duration": _dur_or(_FLUX3_DURS, dur, 10),
+        "resolution": _opt_str(adv, "resolution", "720p"),
+        "generate_audio": _opt_bool(adv, "generate_audio", True),
+    }
+    if image:
+        inp["image_url"] = image
+    else:
+        inp["aspect_ratio"] = _ar_or(_FLUX3_AR, ar, "16:9")
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
 # ===== OpenAI (Sora) ========================================================
 
 def _b_sora_2(prompt, ar, dur, seed, image, audio, adv):
@@ -447,6 +473,15 @@ MODELS: list[VideoModel] = [
         replicate_slug="openai/sora-2-pro",
         aspect_ratios=["16:9", "9:16"], durations=[5, 10], default_duration=5,
         modes=["t2v"], build_input=_b_sora_2_pro,
+    ),
+    VideoModel(
+        id="flux-3", label="FLUX 3", brand="BFL",
+        replicate_slug="black-forest-labs/flux-3",
+        aspect_ratios=["16:9", "9:16", "1:1"],
+        durations=[5, 10, 15, 20], default_duration=10,
+        modes=["t2v", "i2v"], build_input=_b_flux_3,
+        provider="fal", fal_app="blackforestlabs/flux-3",
+        fal_fn_by_mode={"t2v": "text-to-video", "firstLast": "image-to-video", "reference": "image-to-video"},
     ),
     VideoModel(
         id="runway-gen-4.5", label="Runway Gen-4.5", brand="Runway",
