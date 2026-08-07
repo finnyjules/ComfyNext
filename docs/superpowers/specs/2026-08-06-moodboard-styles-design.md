@@ -126,9 +126,15 @@ is applied (slot or wire) to a generation whose model accepts image conditioning
 board exemplars attach automatically with the style-only instruction proven on the wall
 ("match palette, light, grain and mood; do not copy subjects or composition") — the
 `nano-gen` path (`image_input`, fal failover) is the proven implementation. Models without
-image conditioning get prose-only, unchanged. **Plan-level recon task: enumerate which of
-the product's generator nodes are ref-capable today** — the mechanism ships v1 on
-whichever ones are; widening model coverage is the fast-follow, not the mechanism.
+image conditioning get prose-only, unchanged — **a moodboard connects to ANY generator;
+what varies per model is payload, never permission.** The ref gate is **derived from the
+catalog's existing `multi-image` tag** ("accepts multiple reference images"), never a
+hard-coded model list — the shared-catalog rule. And the difference is *visible*: the
+moodboard chip on a generator reads "refs ✓" when the board is riding along and stays
+plain when prose-only, so the user can see what's steering without needing to know model
+capabilities. **Plan-level recon task: verify the `multi-image`-tagged nodes actually
+accept refs through their generation path today** — the mechanism ships v1 on whichever
+ones do; widening coverage is the fast-follow, not the mechanism.
 
 ### Edit / evolve
 Opening an existing moodboard from the gallery reopens the same modal: board shown,
