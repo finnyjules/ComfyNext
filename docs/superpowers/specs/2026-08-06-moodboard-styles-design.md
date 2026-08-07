@@ -129,10 +129,20 @@ board exemplars attach automatically with the style-only instruction proven on t
 image conditioning get prose-only, unchanged — **a moodboard connects to ANY generator;
 what varies per model is payload, never permission.** The ref gate is **derived from the
 catalog's existing `multi-image` tag** ("accepts multiple reference images"), never a
-hard-coded model list — the shared-catalog rule. And the difference is *visible*: the
-moodboard chip on a generator reads "refs ✓" when the board is riding along and stays
-plain when prose-only, so the user can see what's steering without needing to know model
-capabilities. **Plan-level recon task: verify the `multi-image`-tagged nodes actually
+hard-coded model list — the shared-catalog rule. (Known tag bug to fix first:
+`nano-banana-pro` demonstrably ingests `image_input` but lacks the tag — the best partner
+model would be excluded by its own gate.) The difference is *visible*: the moodboard chip
+on a generator reads "refs ✓" when the board is riding along and stays plain when
+prose-only.
+
+**Auto-switch on connect (Julien's call, 2026-08-07).** Connecting a moodboard to the
+model-picker generator declares intent — so if the current model can't take refs, the
+node switches to the **moodboard default model** (`nano-banana-pro` — the run-8 proven
+winner; `nano-banana-2` is the half-price challenger pending a one-pair A/B in the paid
+checklist, after which the default may drop to it). The switch is legible, never silent:
+a visible notice on the node ("switched to Nano Banana for full style transfer") with
+one-click revert, and the run cost stays on the Run button per the money-is-explicit
+rule. Switch once at connect time; a subsequent manual model choice always wins. **Plan-level recon task: verify the `multi-image`-tagged nodes actually
 accept refs through their generation path today** — the mechanism ships v1 on whichever
 ones do; widening coverage is the fast-follow, not the mechanism.
 
