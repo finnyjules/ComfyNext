@@ -4701,8 +4701,10 @@ class SeedreamLayerizeNode(IO.ComfyNode):
         layers_json = _json.dumps({"source": "seedream", "width": W, "height": H, "layers": out_layers})
 
         # Preview: the recomposed flat image if fal returned one, else the input.
-        preview_url = fal_refs.first_fal_image_url(result)
-        preview = await download_url_to_image_tensor(preview_url, cls=cls) if preview_url else image
+        preview = image
+        imgs = result.get("images") or []
+        if imgs and isinstance(imgs[0], dict) and imgs[0].get("url"):
+            preview = await download_url_to_image_tensor(imgs[0]["url"], cls=cls)
         ui = save_generation_output(preview, "seedream_layerize")
         if out_layers:
             ui = {**ui, "text": [layers_json]}
