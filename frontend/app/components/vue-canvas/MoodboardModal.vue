@@ -11,7 +11,7 @@
 // entry via useMoodboards() and writes properties.sailor_moodboard back onto
 // the node (the GradientStudioSurface persistence pattern: mutate the node
 // record in the `nodes` array the canvas passed us).
-import { useMoodboards, slugifyMoodboardName } from '~/composables/useMoodboards'
+import { useMoodboards, uniqueMoodboardId } from '~/composables/useMoodboards'
 import { syncMoodboardWidgets, moodboardRefDescriptors } from '~/lib/graph/moodboardApply'
 import { sectionIds, activeSection, type SectionId } from '~/lib/taste/moodboardModal'
 import type { MoodboardEntry } from '~~/shared/taste/moodboard'
@@ -19,7 +19,7 @@ import type { MoodboardEntry } from '~~/shared/taste/moodboard'
 const props = defineProps<{ nodeId?: string | null, nodes?: any[] }>()
 const emit = defineEmits<{ close: [] }>()
 
-const { refresh, save, byId, loaded } = useMoodboards()
+const { refresh, save, byId, loaded, moodboards } = useMoodboards()
 const { getLocalSetting } = useLocalSettings()
 const { aiAvailable } = useAiStatus()
 
@@ -201,7 +201,11 @@ async function saveBoard() {
   saving.value = true
   saveError.value = ''
   const now = new Date().toISOString()
-  const id = savedId.value || slugifyMoodboardName(name.value)
+  // New boards uniquify against the library (moodboard, moodboard-2, …):
+  // a bare slug collides when two boards share a (default) name, and the
+  // second save would overwrite the first entry for every node referencing it.
+  const id = savedId.value
+    || uniqueMoodboardId(name.value, new Set(moodboards.value.map(m => m.id)))
   const entry: MoodboardEntry = {
     id,
     name: name.value.trim(),

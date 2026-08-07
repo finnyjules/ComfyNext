@@ -6,7 +6,8 @@
  * brand-library-optimistic.unit.spec.ts.
  */
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
-import { useMoodboards, slugifyMoodboardName } from '../../app/composables/useMoodboards'
+import { useMoodboards, slugifyMoodboardName, uniqueMoodboardId } from '../../app/composables/useMoodboards'
+import { MOODBOARD_ID_RE } from '../../shared/taste/moodboard'
 import type { MoodboardEntry } from '../../shared/taste/moodboard'
 
 afterEach(() => { vi.unstubAllGlobals() })
@@ -92,5 +93,28 @@ describe('slugifyMoodboardName', () => {
     expect(slugifyMoodboardName('Pastel Miami')).toBe('pastel-miami')
     expect(slugifyMoodboardName('  --Éclair!!  ')).toBe('clair')
     expect(slugifyMoodboardName('___')).toBe('moodboard')
+  })
+})
+
+describe('uniqueMoodboardId', () => {
+  // Found live 2026-08-07: a second board saved under the same (default) name
+  // minted the SAME slug id and silently overwrote the first library entry —
+  // both nodes then showed the second board. New boards must uniquify.
+  it('returns the plain slug when free', () => {
+    expect(uniqueMoodboardId('Pastel Miami', new Set(['other']))).toBe('pastel-miami')
+  })
+
+  it('suffixes -2, -3… when the slug is taken', () => {
+    expect(uniqueMoodboardId('Moodboard', new Set(['moodboard']))).toBe('moodboard-2')
+    expect(uniqueMoodboardId('Moodboard', new Set(['moodboard', 'moodboard-2']))).toBe('moodboard-3')
+  })
+
+  it('stays within the 64-char id limit when suffixing', () => {
+    const long = 'x'.repeat(80)
+    const first = uniqueMoodboardId(long, new Set())
+    expect(first).toMatch(MOODBOARD_ID_RE)
+    const second = uniqueMoodboardId(long, new Set([first]))
+    expect(second).toMatch(MOODBOARD_ID_RE)
+    expect(second).not.toBe(first)
   })
 })

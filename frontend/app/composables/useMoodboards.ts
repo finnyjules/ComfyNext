@@ -58,6 +58,23 @@ export function slugifyMoodboardName(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'moodboard'
 }
 
+/**
+ * Mint an id for a NEW board: the name's slug, suffixed -2, -3… while taken.
+ * Without this, two boards saved under the same (default) name collide on one
+ * id and the second silently overwrites the first library entry — every node
+ * referencing it then shows the wrong board (found live 2026-08-07). Stays
+ * within MOODBOARD_ID_RE's 64-char cap by truncating the base for the suffix.
+ */
+export function uniqueMoodboardId(name: string, taken: ReadonlySet<string>): string {
+  const base = slugifyMoodboardName(name).slice(0, 64)
+  if (!taken.has(base)) return base
+  for (let n = 2; ; n++) {
+    const suffix = `-${n}`
+    const id = base.slice(0, 64 - suffix.length) + suffix
+    if (!taken.has(id)) return id
+  }
+}
+
 export function useMoodboards() {
   if (!loaded.value) void refresh()
   return { moodboards, loaded, refresh, save, remove, byId, slugifyMoodboardName }
