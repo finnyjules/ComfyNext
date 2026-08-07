@@ -120,6 +120,27 @@ Opening an existing moodboard from the gallery reopens the same modal: board sho
 reading editable, **Re-read** button (re-runs Fable over the stored images — evidence
 survives precisely for this), preview again, save.
 
+## The spectrum of commitment — moodboards as the LoRA alternative
+
+The moodboard is the entry tier of a deliberate spectrum:
+
+> **Read it** (free, instant, editable) → **read + reference** (cents: 2–3 board
+> exemplars ride along as image conditioning for models that take style refs — the
+> sref mechanism, v1.1) → **train it** (dollars, when the style earns weights).
+
+Prose carries a style's *world* (palette, light, mood, era, composition) — most
+sref-class aesthetics live entirely there. Weights remain for texture signatures,
+identity, and high-volume consistency. **The stored board folder is shaped like a
+training dataset, so "Train a LoRA from this board" is a one-click upgrade path** —
+same evidence, escalated commitment (fast-follow). The LoRA Trainer becomes taste's
+premium tier, not its entry gate.
+
+**Named use case: sref boards.** Midjourney sref sample grids (usually composite
+images) read fine as dropped screenshots — v1 supports this with zero extra work. A
+future catalog play curates popular aesthetics into **house moodboards** at zero
+training cost; hygiene rule pinned now: derived prose ships, source grids never do —
+each house moodboard's thumbnail is *generated with its own derived style*.
+
 ## Convergence with trained styles (fast-follow, not v1)
 The Style Publisher's "rewrite profile from training images" flow is the same read aimed
 at a LoRA's dataset. Once both exist, trained styles and moodboards are one family — some
