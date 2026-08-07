@@ -915,19 +915,23 @@ export class SceneEngine {
     refreshOpalTime(elapsedSec)
   }
 
-  render(): void {
-    this.renderWithPost(this.scene, this.camera, this.lastDoc?.post ?? DEFAULT_POST)
+  /** `elapsedSec` seeds Grain's hash field (see `PostChain.setSettings`'s doc) — the host's
+   *  live wall-clock seconds, same value already fed to `refreshShaderFields`/`refreshOpal`.
+   *  Defaults to 0 for a caller with no live clock (grain then just freezes at its first frame,
+   *  same graceful degradation as every other `elapsedSec` default in this class). */
+  render(elapsedSec = 0): void {
+    this.renderWithPost(this.scene, this.camera, this.lastDoc?.post ?? DEFAULT_POST, elapsedSec)
   }
 
   /** Render `scene` through the shared PostChain when any effect is on, else a direct
    *  render. Lazily builds the chain and re-sizes it to match the current renderer, so it
    *  works for the viewport AND the output-resolution bake (bloom/grade land in exports). */
-  renderWithPost(scene: THREE.Scene, camera: THREE.Camera, post: PostSettings): void {
+  renderWithPost(scene: THREE.Scene, camera: THREE.Camera, post: PostSettings, elapsedSec = 0): void {
     if (!postEnabled(post)) { this.renderer.render(scene, camera); return }
     const s = this.renderer.getSize(new THREE.Vector2())
     if (!this.postChain) { this.postChain = new PostChain(this.renderer, scene, camera, s.x, s.y); this.postW = s.x; this.postH = s.y }
     else if (this.postW !== s.x || this.postH !== s.y) { this.postChain.setSize(s.x, s.y); this.postW = s.x; this.postH = s.y }
-    this.postChain.setSettings(post)
+    this.postChain.setSettings(post, elapsedSec)
     this.postChain.render(scene, camera)
   }
 

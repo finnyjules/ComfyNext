@@ -71,9 +71,13 @@ import StudioSegmented from '~/components/vue-canvas/studio/StudioSegmented.vue'
 import StudioSelect from '~/components/vue-canvas/studio/StudioSelect.vue'
 import StudioSwitch from '~/components/vue-canvas/studio/StudioSwitch.vue'
 import StudioGradientRamp from '~/components/vue-canvas/studio/StudioGradientRamp.vue'
+import StudioControlPanel from '~/components/vue-canvas/studio/StudioControlPanel.vue'
 import ShaderFillEditor from '~/components/vue-canvas/widgets/ShaderFillEditor.vue'
 import Scene3DMotionTimeline from '~/components/vue-canvas/Scene3DMotionTimeline.vue'
 import CurveEditor from '~/components/vue-canvas/CurveEditor.vue'
+import { POST_SECTIONS } from '~/lib/studio/post/controls'
+import { SCENE_CONTROLS } from '~/lib/scene3d/controls'
+import type { PostSettings } from '~/lib/spacetype/post'
 
 const props = withDefaults(defineProps<{ nodeId: string; nodes?: any[]; edges?: any[] }>(), {
   nodes: () => [], edges: () => [],
@@ -441,6 +445,22 @@ const bgColorProxy = computed<string>({
   get: () => (doc.background === 'transparent' ? lastBgColor.value : doc.background),
   set: (v) => { doc.background = v; lastBgColor.value = v },
 })
+
+// ── Post/Effects panel — StudioControlPanel driven by the shared manifest
+// (postControls({ host: 'three-depth' })), replacing the old hand-written Effects
+// section. Panel keys are `post.<field>`; doc.post is a plain PostSettings object
+// (no makeConfigParams proxy exists for this surface yet — see scene3d/controls.ts's
+// doc), so these two functions ARE the path resolver, mirroring the panel wiring
+// every other schema-driven control on this surface (lightingPresetProxy, etc.) uses.
+function postField(key: string): keyof PostSettings {
+  return key.slice('post.'.length) as keyof PostSettings
+}
+function readPost(key: string): string | number | boolean {
+  return doc.post[postField(key)] as string | number | boolean
+}
+function setPost(key: string, value: string | number | boolean): void {
+  ;(doc.post as Record<string, unknown>)[postField(key)] = value
+}
 
 /** Material edits apply to EVERY selected object — this is what makes "select
  *  the logo's paths, pick gold" one action instead of twelve. Each object keeps
@@ -1397,13 +1417,13 @@ onMounted(() => {
       engine.applyCameraFromDoc(sampled)
       engine.applyObjectOpacities(opacities)
       interaction?.orbit.update()
-      engine.render()
+      engine.render((performance.now() - scene3dMountedAt) / 1000)
       updateLightLabels()
     } else {
       interaction?.setCameraLocked(false)
       interaction?.setPlaybackLocked(false)
       interaction?.orbit.update()
-      engine?.render()
+      engine?.render((performance.now() - scene3dMountedAt) / 1000)
       updateLightLabels()
     }
     raf = requestAnimationFrame(loop)
@@ -3997,88 +4017,21 @@ async function onClose() {
         </div>
       </StudioSection>
 
-      <!-- Shared post-processing — reuses Space Type's PostChain (bloom, colour
-           grade, chromatic aberration, lens blur). Applies to the viewport AND
-           the beauty bake (see passes.ts). -->
-      <StudioSection title="Effects">
-        <div class="flex items-center justify-between">
-          <span class="text-[11px] text-white/55">Ambient occlusion</span>
-          <StudioSwitch v-model="doc.post.gtao" />
-        </div>
-        <template v-if="doc.post.gtao">
-          <StudioSlider v-model="doc.post.gtaoRadius" label="Radius" hint="How far around each point to check for blockers, in scene units" :min="0.05" :max="3" :step="0.05" />
-          <StudioSlider v-model="doc.post.gtaoIntensity" label="Intensity" hint="How dark the occluded areas get" :min="0" :max="2" :step="0.05" />
-          <StudioSlider v-model="doc.post.gtaoThickness" label="Thickness" hint="How solid nearby surfaces are treated as blockers" :min="0.05" :max="2" :step="0.05" />
-        </template>
-
-        <div class="flex items-center justify-between">
-          <span class="text-[11px] text-white/55">Bloom</span>
-          <StudioSwitch v-model="doc.post.bloom" />
-        </div>
-        <template v-if="doc.post.bloom">
-          <StudioSlider v-model="doc.post.bloomStrength" label="Strength" hint="How strong the glow is" :min="0" :max="3" :step="0.05" />
-          <StudioSlider v-model="doc.post.bloomRadius" label="Radius" hint="How far the glow spreads" :min="0" :max="1" :step="0.05" />
-          <StudioSlider v-model="doc.post.bloomThreshold" label="Threshold" hint="How bright a pixel must be before it blooms" :min="0" :max="1" :step="0.05" />
-        </template>
-
-        <div class="flex items-center justify-between">
-          <span class="text-[11px] text-white/55">Color</span>
-          <StudioSwitch v-model="doc.post.color" />
-        </div>
-        <template v-if="doc.post.color">
-          <StudioSlider v-model="doc.post.exposure" label="Exposure" hint="Overall brightness" :min="0.2" :max="2" :step="0.05" />
-          <StudioSlider v-model="doc.post.contrast" label="Contrast" hint="Difference between darks and lights" :min="0" :max="2" :step="0.05" />
-          <StudioSlider v-model="doc.post.saturation" label="Saturation" hint="How vivid the colours are" :min="0" :max="2" :step="0.05" />
-          <StudioSlider v-model="doc.post.hue" label="Hue" hint="Rotates every colour around the wheel" :min="-3.14" :max="3.14" :step="0.05" />
-        </template>
-
-        <div class="flex items-center justify-between">
-          <span class="text-[11px] text-white/55">Chroma</span>
-          <StudioSwitch v-model="doc.post.chroma" />
-        </div>
-        <StudioSlider v-if="doc.post.chroma" v-model="doc.post.chromaAmount" label="Amount" hint="Colour fringing at the edges" :min="0" :max="1.5" :step="0.02" />
-
-        <div class="flex items-center justify-between">
-          <span class="text-[11px] text-white/55">Lens blur</span>
-          <StudioSwitch v-model="doc.post.blur" />
-        </div>
-        <StudioSlider v-if="doc.post.blur" v-model="doc.post.blurAmount" label="Amount" hint="Soft bokeh-style blur" :min="0" :max="0.04" :step="0.002" />
-
-        <div class="flex items-center justify-between">
-          <span class="text-[11px] text-white/55">Film</span>
-          <StudioSwitch v-model="doc.post.film" />
-        </div>
-        <template v-if="doc.post.film">
-          <StudioSlider v-model="doc.post.filmIntensity" label="Intensity" hint="How strong the grain is" :min="0" :max="1" :step="0.01" />
-          <div class="flex items-center justify-between">
-            <span class="text-[11px] text-white/55">Grayscale</span>
-            <StudioSwitch v-model="doc.post.filmGrayscale" />
-          </div>
-        </template>
-
-        <div class="flex items-center justify-between">
-          <span class="text-[11px] text-white/55">Halftone</span>
-          <StudioSwitch v-model="doc.post.halftone" />
-        </div>
-        <template v-if="doc.post.halftone">
-          <StudioSlider v-model="doc.post.halftoneRadius" label="Radius" hint="Size of the print dots" :min="1" :max="20" :step="0.5" />
-          <StudioSlider v-model="doc.post.halftoneScatter" label="Scatter" hint="Randomises dot placement" :min="0" :max="1" :step="0.02" />
-        </template>
-
-        <div class="flex items-center justify-between">
-          <span class="text-[11px] text-white/55">Dot screen</span>
-          <StudioSwitch v-model="doc.post.dotScreen" />
-        </div>
-        <template v-if="doc.post.dotScreen">
-          <StudioSlider v-model="doc.post.dotScreenScale" label="Scale" hint="Size of the dot pattern" :min="0.2" :max="4" :step="0.1" />
-          <StudioSlider v-model="doc.post.dotScreenAngle" label="Angle" hint="Rotates the dot grid" :min="-3.14" :max="3.14" :step="0.05" />
-        </template>
-
-        <div class="flex items-center justify-between">
-          <span class="text-[11px] text-white/55">Glitch</span>
-          <StudioSwitch v-model="doc.post.glitch" />
-        </div>
-      </StudioSection>
+      <!-- Shared post-processing — reuses Space Type's PostChain (bloom, colour grade,
+           chromatic aberration, lens blur, ambient occlusion, duotone, vignette, grain).
+           Applies to the viewport AND the beauty bake (see passes.ts). Schema-driven:
+           SCENE_CONTROLS is scene3d/controls.ts's single source (agent + inspector alike,
+           `...postControls({ host: 'three-depth' })` spliced in there), filtered down to
+           just its post.* members by POST_SECTIONS as the order allow-list — mirrors
+           GradientStudioSurface.vue's Effects panel (passes the full GRADIENT_CONTROLS,
+           not a fresh postControls() call, so both consumers stay the same array). One
+           collapsible card per effect, in POST_SECTIONS order. -->
+      <StudioControlPanel
+        :controls="SCENE_CONTROLS"
+        :order="POST_SECTIONS"
+        :value="(k) => readPost(k)"
+        @set="(k, v) => setPost(k, v)"
+      />
       </template>
       <template v-else>
         <StudioSection title="Motion">

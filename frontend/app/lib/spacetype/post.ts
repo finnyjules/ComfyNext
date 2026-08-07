@@ -11,6 +11,7 @@ import { GlitchPass } from 'three/examples/jsm/postprocessing/GlitchPass.js'
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js'
 import type { PostSettings } from '~~/shared/spacetype/state'
 import { DEFAULT_POST, postEnabled } from '~/lib/spacetype/postSettings'
+import { makeGrainPass, makeVignettePass, makeDuotonePass, applyPostExtras } from '~/lib/studio/post/threePasses'
 
 export type { PostSettings } from '~~/shared/spacetype/state'
 // DEFAULT_POST/postEnabled are plain data/logic and live in postSettings.ts (three-free — see its
@@ -19,12 +20,21 @@ export type { PostSettings } from '~~/shared/spacetype/state'
 export { DEFAULT_POST, postEnabled } from '~/lib/spacetype/postSettings'
 
 /**
- * Shared post-processing for the whole Space Type suite. A Three EffectComposer wraps the engine's
- * render: RenderPass → GTAO → UnrealBloomPass (glow) → Halftone → DotScreen → Film → Glitch → a
- * combined GRADE pass (bokeh blur + chromatic aberration + colour adjust) → OutputPass. Because the
- * final pass writes the canvas, post applies to BOTH the live preview and exports (bake just reads
- * the canvas). When everything is off the engine bypasses this entirely (see postEnabled), so
- * there's zero overhead and byte-identical output.
+ * Shared post-processing for the whole Space Type suite AND Scene3D (3D Studio) — both engines
+ * construct one `PostChain` around their own scene/camera (see spacetype/engine.ts and
+ * scene3d/engine.ts). A Three EffectComposer wraps the engine's render: RenderPass → GTAO →
+ * Duotone → UnrealBloomPass (glow) → Halftone → DotScreen → Film → Glitch → a combined GRADE
+ * pass (bokeh blur + chromatic aberration + colour adjust) → Vignette → Grain → OutputPass.
+ * Duotone/Vignette/Grain are `~/lib/studio/post/threePasses.ts`'s three.js ports of the 2D
+ * chain's catalog effects (Effects Unification Task 2/3) — their relative order (duotone early,
+ * vignette then grain right before OutputPass) matches `POST_CHAIN_ORDER`
+ * (`~/lib/studio/post/manifest.ts`), the single source of truth every post consumer sorts
+ * against; this chain's placement of the pre-existing gtao/bloom/halftone/dotScreen/film/
+ * glitch/grade passes predates that manifest and is not itself chain-order-compliant (a known,
+ * out-of-scope gap — see `postEnabled`'s doc in postSettings.ts). Because the final pass writes
+ * the canvas, post applies to BOTH the live preview and exports (bake just reads the canvas).
+ * When everything is off the engine bypasses this entirely (see postEnabled), so there's zero
+ * overhead and byte-identical output.
  *
  * OutputPass is the chain's permanent terminal pass, always enabled: EffectComposer renders every
  * intermediate pass into off-screen (non-null) render targets, and three.js only bakes tone mapping
@@ -97,7 +107,14 @@ export class PostChain {
   private filmPass: FilmPass
   private glitchPass: GlitchPass
   private gradePass: ShaderPass
+  private duotonePass: ShaderPass
+  private vignettePass: ShaderPass
+  private grainPass: ShaderPass
   private outputPass: OutputPass
+  /** Feeds vignette's aspect-ratio correction (`applyPostExtras`'s `resolution` arg) — kept in
+   *  sync with the composer's own size in `setSize`. A dedicated Vector2 rather than reusing
+   *  `gradePass.uniforms.uResolution` so the two ports stay independent. */
+  private extrasResolution: THREE.Vector2
 
   constructor(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera, width: number, height: number) {
     this.composer = new EffectComposer(renderer)
@@ -144,22 +161,32 @@ export class PostChain {
       vertexShader: GRADE_VERT,
       fragmentShader: GRADE_FRAG,
     })
+    this.duotonePass = makeDuotonePass()
+    this.vignettePass = makeVignettePass()
+    this.grainPass = makeGrainPass()
+    this.extrasResolution = new THREE.Vector2(width, height)
     this.outputPass = new OutputPass()
     this.composer.addPass(this.renderPass)
     this.composer.addPass(this.gtaoPass)
+    this.composer.addPass(this.duotonePass)
     this.composer.addPass(this.bloomPass)
     this.composer.addPass(this.halftonePass)
     this.composer.addPass(this.dotScreenPass)
     this.composer.addPass(this.filmPass)
     this.composer.addPass(this.glitchPass)
     this.composer.addPass(this.gradePass)
-    // order matters: RenderPass → GTAO → Bloom → Halftone → DotScreen → Film → [Glitch] → Grade →
-    // OutputPass. Geometry-aware passes (GTAO) go right after the render — it needs the raw
-    // depth/normal buffers, not anything bloom or the other stylised passes have touched. OutputPass
-    // is the permanent terminal pass (always enabled, never toggled) — it's what converts the
-    // composer's linear-space intermediate result to the renderer's configured tone mapping + output
-    // colour space on the way to the screen (see the class doc above). Grade must stay immediately
-    // before it. Future passes (pixelation) insert between bloom and grade, never after OutputPass.
+    this.composer.addPass(this.vignettePass)
+    this.composer.addPass(this.grainPass)
+    // order matters: RenderPass → GTAO → Duotone → Bloom → Halftone → DotScreen → Film →
+    // [Glitch] → Grade → Vignette → Grain → OutputPass. Geometry-aware passes (GTAO) go right
+    // after the render — it needs the raw depth/normal buffers, not anything bloom or the other
+    // stylised passes have touched. Duotone/Vignette/Grain slot in at their POST_CHAIN_ORDER
+    // positions relative to the pre-existing passes (see the class doc above); Vignette then
+    // Grain go last because they are properties of the film/barrel, not the scene, so they should
+    // see the fully graded image. OutputPass is the permanent terminal pass (always enabled,
+    // never toggled) — it's what converts the composer's linear-space intermediate result to the
+    // renderer's configured tone mapping + output colour space on the way to the screen (see the
+    // class doc above). Grain must stay immediately before it.
     this.composer.addPass(this.outputPass)
   }
 
@@ -169,9 +196,13 @@ export class PostChain {
     this.bloomPass.setSize(width, height)
     this.halftonePass.setSize(width, height)
     ;(this.gradePass.uniforms.uResolution!.value as THREE.Vector2).set(width, height)
+    this.extrasResolution.set(width, height)
   }
 
-  setSettings(p: PostSettings): void {
+  /** `timeSeconds` seeds Grain's hash field (see threePasses.ts's `applyPostExtras` doc) —
+   *  defaults to 0 for a caller with no live clock, which just freezes the grain at its first
+   *  frame rather than erroring. */
+  setSettings(p: PostSettings, timeSeconds = 0): void {
     this.gtaoPass.enabled = p.gtao
     this.gtaoPass.updateGtaoMaterial({ radius: p.gtaoRadius, thickness: p.gtaoThickness })
     this.gtaoPass.blendIntensity = p.gtaoIntensity
@@ -204,6 +235,10 @@ export class PostChain {
     // GlitchPass.goWild is intentionally left at its default (false) — only the on/off toggle
     // is exposed for now, per the task brief.
     this.glitchPass.enabled = p.glitch
+    applyPostExtras(
+      { grain: this.grainPass, vignette: this.vignettePass, duotone: this.duotonePass },
+      p, this.extrasResolution, timeSeconds,
+    )
   }
 
   /** Point the render pass at the current scene/camera (camera swaps per frame) and render. */
@@ -227,6 +262,12 @@ export class PostChain {
     this.glitchPass.dispose()
     this.gradePass.material.dispose()
     ;(this.gradePass as unknown as { fsQuad?: { dispose?: () => void } }).fsQuad?.dispose?.()
+    this.duotonePass.material.dispose()
+    ;(this.duotonePass as unknown as { fsQuad?: { dispose?: () => void } }).fsQuad?.dispose?.()
+    this.vignettePass.material.dispose()
+    ;(this.vignettePass as unknown as { fsQuad?: { dispose?: () => void } }).fsQuad?.dispose?.()
+    this.grainPass.material.dispose()
+    ;(this.grainPass as unknown as { fsQuad?: { dispose?: () => void } }).fsQuad?.dispose?.()
     this.outputPass.dispose()
   }
 }

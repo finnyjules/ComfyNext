@@ -1,5 +1,5 @@
 import type { ControlSpec } from '~/lib/spacetype/effect'
-import { DEFAULT_POST } from '~/lib/spacetype/postSettings'
+import { postControls, POST_SECTIONS } from '~/lib/studio/post/controls'
 import {
   MATERIAL_TYPES, MATERIAL_DEFAULTS, DEFAULT_MATERIAL, LIGHTING_PRESETS, defaultDoc,
   type SceneDoc, type SceneObject, type MaterialType,
@@ -30,15 +30,16 @@ import {
  * BOOLEAN field, and `makeConfigParams` writes straight through the proxy with no
  * coercion, corrupting the document. Use `switch`.
  *
- * Scene3D's OWN booleans are still hand-omitted from this schema: every `post.*` effect
- * enable (bloom/color/chroma/blur/film/halftone/dotScreen/glitch/gtao), plus
- * `material.unlit`, `GlbObject.materialOverride` and `material.relief.invert`. So the
- * agent can tune `post.bloomStrength` but cannot switch bloom on, and can tune
- * `object.material.relief.scale` but cannot flip `relief.invert`. That is now a gap in
- * THIS file, not in the shared schema — declaring them as `switch` controls is the fix
- * whenever someone wants it, and would fold naturally into a migration of Scene3D onto
- * the shared post manifest (`~/lib/studio/post/manifest.ts`), which already declares
- * every one of those post enables.
+ * Scene3D's post-processing block is now DERIVED from the shared manifest
+ * (`postControls({ host: 'three-depth' })`, spliced in below) rather than hand-declared,
+ * matching Gradient/Shape/Texture — so every `post.*` effect enable (bloom/color/duotone/
+ * chroma/blur/film/halftone/dotScreen/glitch/grain/vignette/gtao) IS an agent- and
+ * inspector-reachable `switch` control, not a gap.
+ *
+ * Scene3D's remaining booleans are still hand-omitted from this schema: `material.unlit`,
+ * `GlbObject.materialOverride` and `material.relief.invert`. So the agent can tune
+ * `object.material.relief.scale` but cannot flip `relief.invert`. Declaring them as
+ * `switch` controls is the fix whenever someone wants it.
  *
  * ## Deliberately NOT in this schema
  * - GLB `url` (an asset reference, not a tunable) and `GlbObject.materialOverride`
@@ -55,8 +56,7 @@ import {
  * - `background`, `showFloor`, `output.width/height` — scene-level settings outside the
  *   "at minimum" list this schema was scoped to; add them here in a follow-on if the
  *   agent/Collection story needs them.
- * - Every `post.*` boolean enable, `material.unlit`, `material.relief.invert` — see the
- *   booleans note above.
+ * - `material.unlit`, `material.relief.invert` — see the booleans note above.
  *
  * Must stay free of `three` imports — this module is dynamically imported by the
  * Collection control resolver (see shapefx/controls.ts's identical constraint).
@@ -66,8 +66,10 @@ export type SceneControl = ControlSpec & {
 }
 
 /** Emission order; a control whose group is not listed here is silently dropped by
- *  visibleSceneControls. */
-export const SCENE_SECTIONS = ['Material', 'Lighting', 'Camera', 'Post', 'Transform'] as const
+ *  visibleSceneControls. POST_SECTIONS ('Effects', 'Effects/Bloom', ...) is appended so
+ *  the shared post stack's nested sections land after the hand-declared groups — mirrors
+ *  texturefx/sections.ts's `...POST_SECTIONS` append. */
+export const SCENE_SECTIONS = ['Material', 'Lighting', 'Camera', 'Transform', ...POST_SECTIONS] as const
 
 // ── `when` predicates ────────────────────────────────────────────────────────────
 // Material controls only make sense on an object that actually renders `.material`:
@@ -235,29 +237,12 @@ export const SCENE_CONTROLS: SceneControl[] = [
   slider('camera.fov', 'Field of view', 15, 100, 1, 'Camera', D.camera.fov,
     'Camera field of view — how wide the lens sees'),
 
-  // --- Post (doc-level; numeric only — see the boolean-gap doc above) --------------
-  slider('post.bloomStrength', 'Bloom strength', 0, 3, 0.05, 'Post', DEFAULT_POST.bloomStrength, 'How strong the glow is'),
-  slider('post.bloomRadius', 'Bloom radius', 0, 1, 0.05, 'Post', DEFAULT_POST.bloomRadius, 'How far the glow spreads'),
-  slider('post.bloomThreshold', 'Bloom threshold', 0, 1, 0.05, 'Post', DEFAULT_POST.bloomThreshold,
-    'How bright a pixel must be before it blooms'),
-  slider('post.gtaoRadius', 'GTAO radius', 0.05, 3, 0.05, 'Post', DEFAULT_POST.gtaoRadius,
-    'How far around each point to check for blockers, in scene units'),
-  slider('post.gtaoIntensity', 'GTAO intensity', 0, 2, 0.05, 'Post', DEFAULT_POST.gtaoIntensity,
-    'How dark the occluded areas get'),
-  slider('post.gtaoThickness', 'GTAO thickness', 0.05, 2, 0.05, 'Post', DEFAULT_POST.gtaoThickness,
-    'How solid nearby surfaces are treated as blockers'),
-  slider('post.filmIntensity', 'Film grain intensity', 0, 1, 0.01, 'Post', DEFAULT_POST.filmIntensity, 'How strong the grain is'),
-  slider('post.halftoneRadius', 'Halftone radius', 1, 20, 0.5, 'Post', DEFAULT_POST.halftoneRadius, 'Size of the print dots'),
-  slider('post.halftoneScatter', 'Halftone scatter', 0, 1, 0.02, 'Post', DEFAULT_POST.halftoneScatter,
-    'Randomises dot placement'),
-  slider('post.dotScreenScale', 'Dot screen scale', 0.2, 4, 0.1, 'Post', DEFAULT_POST.dotScreenScale, 'Size of the dot pattern'),
-  slider('post.dotScreenAngle', 'Dot screen angle', -3.14, 3.14, 0.05, 'Post', DEFAULT_POST.dotScreenAngle, 'Rotates the dot grid'),
-  slider('post.exposure', 'Exposure', 0.2, 2, 0.05, 'Post', DEFAULT_POST.exposure, 'Overall brightness'),
-  slider('post.contrast', 'Contrast', 0, 2, 0.05, 'Post', DEFAULT_POST.contrast, 'Difference between darks and lights'),
-  slider('post.saturation', 'Saturation', 0, 2, 0.05, 'Post', DEFAULT_POST.saturation, 'How vivid the colours are'),
-  slider('post.hue', 'Hue', -3.14, 3.14, 0.05, 'Post', DEFAULT_POST.hue, 'Rotates every colour around the wheel'),
-  slider('post.chromaAmount', 'Chroma amount', 0, 1.5, 0.02, 'Post', DEFAULT_POST.chromaAmount, 'Colour fringing at the edges'),
-  slider('post.blurAmount', 'Blur amount', 0, 0.04, 0.002, 'Post', DEFAULT_POST.blurAmount, 'Soft bokeh-style blur'),
+  // --- Post (doc-level; derived from the shared manifest, not hand-declared) -------
+  // Includes ambient occlusion (gtao needs a depth buffer — `three-depth` is the only
+  // host that asks for it) plus every other shared effect (bloom/color/duotone/chroma/
+  // blur/film/halftone/dotScreen/glitch/grain/vignette), each with its own `switch`
+  // enable now that the agent/inspector read from this manifest instead of a hand-list.
+  ...postControls({ host: 'three-depth' }),
 
   // --- Transform (prefix object.) ---------------------------------------------------
   // NOT animatable: Scene3D's existing ObjectMotion preset system (app/lib/scene3d/

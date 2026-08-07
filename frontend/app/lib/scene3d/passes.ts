@@ -113,7 +113,7 @@ export async function renderPasses(
     // baked the field at its very first frame regardless — `t` (now threaded through from
     // the caller's own live clock) fixes that too.
     engine.refreshShaderFields(t, true, width, height)
-    engine.renderWithPost(scene, camera, doc.post)
+    engine.renderWithPost(scene, camera, doc.post, t)
     const beauty = canvas.toDataURL('image/png')
 
     // Data passes must be raw: tone mapping would corrupt the normal colours and
