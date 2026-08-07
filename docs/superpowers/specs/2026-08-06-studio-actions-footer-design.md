@@ -150,7 +150,7 @@ if its list is empty), whose submenu items are:
 | Studio | ① utilities | ② Download ▾ | ③ Render on canvas ▾ |
 |---|---|---|---|
 | Space Type | — | PNG · Video · Export embed | As image · As video · As video (transparent)† · Send to timeline |
-| Scene3D | — | PNG · Video | As image |
+| Scene3D | — | PNG · Video | As image · As video |
 | Texture | Roll | PNG | As image |
 | Gradient | Copy config | PNG · Video · Export embed | As image · As video |
 | Shader | — | PNG · Video · Export embed | As image · As video |
@@ -171,8 +171,13 @@ already have it: their "Export PNG" dispatches `StudioOutput` and drops an Image
 So the canvas side is **pure relabel** — "Export PNG" (Shape, Vector), "Send to canvas"
 (Texture), "Export to Canvas" (Scene3D), "Generate as image/video" (Gradient, Shader),
 and "Render ▾" (Space Type) all become the one **Render on canvas ▾** button. The new
-*behaviour* in this change lives entirely in the Download column (PNG everywhere; video
-on the four studios that already encode).
+*behaviour* in this change: the Download column (PNG everywhere; video on the four studios
+that already encode) plus **Scene3D gaining an *As video* canvas item**. Scene3D already
+bakes and encodes its motion clip through the shared `encodeFrames` pipeline (the file
+lands under `input/`) but only ever *downloaded* it — it never dispatched a `Video` node
+the way the other animated studios do, though the canvas already listens for
+`sailor:scene3dStudioOutput`. That item is a different last line on the same bake+encode,
+so it still respects the "no new render path" rule.
 
 **Vector video is out of scope.** Vector is animated but has no `encodeFrames` wiring —
 it renders per-frame for PNG/SVG but never bakes a clip. A Vector *Download video* would

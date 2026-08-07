@@ -338,8 +338,25 @@ git commit -m "refactor(studio): Space Type footer → StudioActionsFooter (Save
 
 Existing handlers: `saveScene` (Save button removed), `exportToCanvas()` (→ canvas image), `exportVideo()` (existing mp4 FILE download — reuse as `Download video`), refs `baking`, `committing`, `bakeError`, `savedFlash`, `dirty`, `doc.objects.length`. Still-image blob: reuse the `cv.toBlob(…, 'image/png')` path already in the file (~line 221, inside the bake helper) — extract or call the smallest existing fn that returns a PNG Blob of the beauty pass; if none is cleanly reusable, bake then fetch `input/<beauty_image>` and save that.
 
-- [ ] **Step 1:** Add `downloadPng` (reuse the existing still-blob/beauty path + `downloadBlobAsFile`).
-- [ ] **Step 2:** Replace `#actions` with:
+**Scene3D gains an `As video` canvas item.** Its `exportVideo()` (lines ~208–243) already bakes the motion timeline and encodes it via `encodeFrames`, landing a file under `input/` — it just downloads it. Factor the bake+encode into a shared helper and add a second consumer that dispatches a Video node instead of downloading.
+
+- [ ] **Step 1:** Refactor `exportVideo` to extract the bake+encode into `async function bakeSceneVideo(): Promise<{ filename: string; ext: 'mp4'|'webm' } | null>` (everything through `encodeFrames`, returning `encoded` or null on failure/no-motion, with the same `playing`-pause + `engine.setSize` restore in a `finally`). Rewrite `exportVideo` to call it then fetch+download. Add `renderVideoToCanvas` that calls it then dispatches the canvas Video node — mirror the existing `exportToCanvas` dispatch (same `sailor:scene3dStudioOutput` event name and `recordAsset` call it uses for the image) but with `nodeType: 'Video'` and `widgetOverrides: { file: encoded.filename }`, then `closeEditor()`/the same close the image path uses:
+
+```ts
+async function renderVideoToCanvas() {
+  const encoded = await bakeSceneVideo()
+  if (!encoded) return
+  await recordAsset(activeTab.value?.projectUuid, 'video', encoded.filename)
+  window.dispatchEvent(new CustomEvent('sailor:scene3dStudioOutput', {
+    detail: { sourceNodeId: props.nodeId, nodeType: 'Video', widgetOverrides: { file: encoded.filename } },
+  }))
+  // then close the studio, exactly as exportToCanvas does
+}
+```
+
+(Read `exportToCanvas` to copy its exact recordAsset/dispatch/close lines and `activeTab` accessor — Scene3D's image path is the source of truth for the event shape.)
+- [ ] **Step 2:** Add `downloadPng` (reuse the existing still-blob/beauty path + `downloadBlobAsFile`).
+- [ ] **Step 3:** Replace `#actions` with:
 
 ```vue
     <template #actions>
@@ -351,14 +368,15 @@ Existing handlers: `saveScene` (Save button removed), `exportToCanvas()` (→ ca
         ],
         canvas: [
           { label: 'As image', onClick: exportToCanvas, busy: baking, disabled: committing || !doc.objects.length },
+          { label: 'As video', onClick: renderVideoToCanvas, busy: baking, disabled: committing || !doc.objects.length },
         ],
       }" />
     </template>
 ```
 
 Import `StudioActionsFooter`. Remove the two `StudioButton`s and the status `<p>`s. Keep `saveScene` defined only if referenced elsewhere; otherwise remove it and its now-dead wiring (keep auto-persist/dirty tracking).
-- [ ] **Step 3:** Compile 200 + typecheck no new errors.
-- [ ] **Step 4:** Live verify (image drops a node + closes; Download PNG/video save files) and commit `refactor(studio): Scene3D footer → StudioActionsFooter`.
+- [ ] **Step 4:** Compile 200 + typecheck no new errors.
+- [ ] **Step 5:** Live verify (As image drops an Image node + closes; **As video drops a Video node + closes**; Download PNG/video save files) and commit `refactor(studio): Scene3D footer → StudioActionsFooter (+ As video on canvas)`.
 
 ---
 
