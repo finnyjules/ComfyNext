@@ -814,6 +814,38 @@ def _fal_seedream_v4(prompt: str, ar: str, seed: int, adv: dict) -> dict:
     return inp
 
 
+# ---------- Krea ------------------------------------------------------------
+_KREA_AR = {"1:1", "4:3", "3:2", "16:9", "2.35:1", "4:5", "2:3", "9:16"}
+_KREA_CREATIVITY = {"raw", "low", "medium", "high"}
+
+
+def _krea_creativity(adv: dict) -> str:
+    v = _opt_str(adv, "creativity", "medium")
+    return v if v in _KREA_CREATIVITY else "medium"
+
+
+def _b_krea2(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    # Replicate krea/krea-2-large. Native aspect_ratio + creativity enum.
+    inp = {
+        "prompt": prompt,
+        "aspect_ratio": _ar_or(_KREA_AR, ar),
+        "creativity": _krea_creativity(adv),
+    }
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
+def _fal_krea2(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    # fal krea/v2/{large,medium}/text-to-image — same field names as Replicate.
+    inp = {
+        "prompt": prompt,
+        "aspect_ratio": _ar_or(_KREA_AR, ar),
+        "creativity": _krea_creativity(adv),
+    }
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
 # ---------- Catalog (mirrors image-models.ts order) -------------------------
 
 MODELS: list[ImageModel] = [
@@ -905,6 +937,12 @@ MODELS: list[ImageModel] = [
 
     # Reve --------------------------------------------------------------------
     ImageModel("reve-create",        "Reve Create",         "Reve",    "reve/create",                       sorted(_REVE_AR),    _b_reve_create),
+
+    # Krea --------------------------------------------------------------------
+    ImageModel("krea-2-large",  "Krea 2 Large",  "Krea", "krea/krea-2-large",  sorted(_KREA_AR), _b_krea2,
+               fal_slug="krea/v2/large/text-to-image",  fal_build_input=_fal_krea2, primary="fal"),
+    ImageModel("krea-2-medium", "Krea 2 Medium", "Krea", "krea/krea-2-medium", sorted(_KREA_AR), _b_krea2,
+               fal_slug="krea/v2/medium/text-to-image", fal_build_input=_fal_krea2, primary="fal"),
 ]
 
 IMAGE_MODELS_BY_ID: dict[str, ImageModel] = {m.id: m for m in MODELS}
