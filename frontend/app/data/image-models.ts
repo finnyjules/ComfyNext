@@ -500,7 +500,8 @@ export const IMAGE_MODELS: ImageModel[] = [
     aspectRatios: SEEDREAM_AR,
     defaultAspectRatio: '1:1',
     advanced: [
-      { name: 'size', type: 'select', label: 'Size preset', default: '2K', options: ['1K', '2K'] },
+      // Live Replicate schema (verified via a 422, 2026-08-06): 2K | 4K | custom — no 1K.
+      { name: 'size', type: 'select', label: 'Size preset', default: '2K', options: ['2K', '4K'] },
     ],
   },
   {

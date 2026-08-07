@@ -29,7 +29,7 @@ const FLUX_EXTRAS = { num_outputs: 1, output_format: 'png', megapixels: '1', go_
 const MODELS: Record<string, { slug: string; input: Record<string, unknown> }> = {
   'flux-schnell': { slug: MODEL, input: { ...FLUX_EXTRAS, num_inference_steps: 4 } },
   'flux-dev': { slug: 'black-forest-labs/flux-dev', input: { ...FLUX_EXTRAS, num_inference_steps: 28, guidance: 3 } },
-  'seedream-4.5': { slug: 'bytedance/seedream-4.5', input: { size: '1K' } },
+  'seedream-4.5': { slug: 'bytedance/seedream-4.5', input: { size: '2K' } }, // live schema: 2K | 4K | custom — no 1K
 }
 
 interface Body {
