@@ -18,6 +18,22 @@ const MODEL = 'google/nano-banana-pro'
 
 interface Body { prompt?: string; image?: string; images?: string[]; aspect_ratio?: string }
 
+/**
+ * fal failover — Replicate's nano-banana rate-limits under load (E003).
+ * fal hosts the same model: text→image at fal-ai/nano-banana-pro, reference
+ * edit at fal-ai/nano-banana-pro/edit (image_urls accepts data URIs).
+ */
+async function runNanoFal(prompt: string, imageList: string[], aspect_ratio?: string): Promise<string> {
+  const app = imageList.length ? 'fal-ai/nano-banana-pro/edit' : 'fal-ai/nano-banana-pro'
+  const input: Record<string, unknown> = { prompt, num_images: 1, output_format: 'png' }
+  if (imageList.length) input.image_urls = imageList
+  if (aspect_ratio) input.aspect_ratio = aspect_ratio
+  const out = await runFal<{ images?: { url?: string }[] }>(app, input, { pollDeadlineMs: 150_000 })
+  const url = out?.images?.[0]?.url
+  if (!url) throw new Error('fal returned no image')
+  return url
+}
+
 export default defineEventHandler(async (event) => {
   const token = requireReplicateToken()
   const body = await readBody<Body>(event)
@@ -33,8 +49,24 @@ export default defineEventHandler(async (event) => {
   // Optional aspect ratio (e.g. a keyframe preview matching the shot's ratio).
   if (typeof body?.aspect_ratio === 'string' && body.aspect_ratio) input.aspect_ratio = body.aspect_ratio
 
-  const out = await runReplicate(MODEL, input, token, { timeoutMs: 120_000 })
-  const url = firstOutputUrl(out)
-  if (!url) throw createError({ statusCode: 502, message: 'Replicate returned no image' })
-  return { images: [await fetchAsDataUrl(url)], model: MODEL }
+  try {
+    const out = await runReplicate(MODEL, input, token, { timeoutMs: 120_000 })
+    const url = firstOutputUrl(out)
+    if (!url) throw createError({ statusCode: 502, message: 'Replicate returned no image' })
+    return { images: [await fetchAsDataUrl(url)], model: MODEL }
+  }
+  catch (replicateErr: any) {
+    // Failover to fal (same model) — Replicate E003s under demand spikes.
+    if (!getFalToken()) throw replicateErr
+    try {
+      const url = await runNanoFal(prompt, imageList, typeof body?.aspect_ratio === 'string' ? body.aspect_ratio : undefined)
+      return { images: [await fetchAsDataUrl(url)], model: `${MODEL} (via fal)` }
+    }
+    catch (falErr: any) {
+      throw createError({
+        statusCode: 502,
+        message: `replicate: ${replicateErr?.message ?? replicateErr} · fal: ${falErr?.message ?? falErr}`,
+      })
+    }
+  }
 })
