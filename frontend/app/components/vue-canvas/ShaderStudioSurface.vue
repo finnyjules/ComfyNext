@@ -9,6 +9,11 @@ import StudioLayerStack from '~/components/vue-canvas/StudioLayerStack.vue'
 import StudioActionsFooter from '~/components/vue-canvas/studio/StudioActionsFooter.vue'
 import StudioSwitch from '~/components/vue-canvas/studio/StudioSwitch.vue'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
+// Explicit paths: Nuxt auto-import silently no-ops these row adapters here (the known
+// duplicated-path-segment gotcha), so import them by full path like ComfyNodeWidget does.
+import StudioSlider from '~/components/vue-canvas/studio/StudioSlider.vue'
+import StudioSelect from '~/components/vue-canvas/studio/StudioSelect.vue'
+import StudioColorField from '~/components/vue-canvas/studio/StudioColorField.vue'
 import BindableRow from '~/components/vue-canvas/studio/BindableRow.vue'
 import PalettePicker from '~/components/vue-canvas/studio/PalettePicker.vue'
 import CanvasContextMenu from '~/components/vue-canvas/CanvasContextMenu.vue'
@@ -778,27 +783,29 @@ function remapEffectTracks(kind: 'move' | 'insert' | 'remove', a: number, b?: nu
           <span class="min-w-0 flex-1 truncate text-[11px] text-white/90">{{ effectDef?.name ?? 'Pick an effect' }}</span>
           <ChevronRight class="size-3.5 shrink-0 text-white/30" />
         </button>
-        <div v-for="p in effectDef?.params ?? []" :key="p.uniform">
-          <label class="mb-0.5 flex justify-between text-[11px] text-white/60">
-            <span>{{ p.label }}</span>
-            <span v-if="p.type === 'float'" class="text-white/40">{{ numValue(p.uniform).toFixed(2) }}</span>
-          </label>
-          <select
+        <div v-for="p in effectDef?.params ?? []" :key="p.uniform" class="mb-1.5">
+          <!-- enum → select row (map the manifest's numeric value ⟷ its label) -->
+          <StudioSelect
             v-if="p.type === 'enum'"
-            class="mb-2 w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-xs"
-            :value="effectValues[p.uniform]"
-            @change="setParam(p.uniform, Number(($event.target as HTMLSelectElement).value))"
-          >
-            <option v-for="o in p.options" :key="o.value" :value="o.value">{{ o.label }}</option>
-          </select>
-          <div v-else-if="p.type === 'color'" class="mb-2">
-            <StudioColor :model-value="String(effectValues[p.uniform] ?? '#000000')" @update:model-value="v => setParam(p.uniform, v)" />
-          </div>
+            :label="p.label"
+            :options="(p.options ?? []).map(o => o.label)"
+            :model-value="(p.options ?? []).find(o => o.value === numValue(p.uniform))?.label ?? ((p.options ?? [])[0]?.label ?? '')"
+            @update:model-value="(lbl: string) => setParam(p.uniform, (p.options ?? []).find(o => o.label === lbl)?.value ?? 0)"
+          />
+          <!-- color → colour row (label left, swatch/hex right) -->
+          <StudioColorField
+            v-else-if="p.type === 'color'"
+            :label="p.label"
+            :model-value="String(effectValues[p.uniform] ?? '#000000')"
+            @update:model-value="(v: string) => setParam(p.uniform, v)"
+          />
           <!-- Same editor as the post-processing Gradient Map section below: a ramp
                preview plus the shared PalettePicker. The stop list it emits IS what
-               gets stored, so there is one representation, not a UI copy. -->
-          <div v-else-if="p.type === 'gradient'" class="mb-2">
-            <div class="mb-2 h-6 overflow-hidden rounded border border-white/10" :style="{ background: rampCss(stopsValue(p.uniform)) }" />
+               gets stored, so there is one representation, not a UI copy. A multi-stop
+               editor isn't a single-value row, so it keeps its own labelled block. -->
+          <div v-else-if="p.type === 'gradient'">
+            <div class="mb-1 text-[11px] text-white/72">{{ p.label }}</div>
+            <div class="mb-2 h-6 overflow-hidden rounded-[6px] border border-white/10" :style="{ background: rampCss(stopsValue(p.uniform)) }" />
             <PalettePicker
               mode="stops"
               :stop-count="stopsValue(p.uniform).length || 3"
@@ -806,15 +813,19 @@ function remapEffectTracks(kind: 'move' | 'insert' | 'remove', a: number, b?: nu
               @apply-stops="(v: GradientStop[]) => setParam(p.uniform, v.slice(0, p.maxStops ?? 8).map(s => ({ pos: s.pos, color: s.color })))"
             />
           </div>
-          <input
-            v-else type="range" v-studio-reset class="studio-range mb-2 w-full" :min="p.min" :max="p.max" :step="p.step"
-            :value="effectValues[p.uniform]" @input="setParam(p.uniform, Number(($event.target as HTMLInputElement).value))"
+          <!-- float → the 28px row-as-track slider (was a bare label + <input type=range>).
+               No manifest step ⇒ fine 0.01 default so a 0..1 float isn't quantised to its ends. -->
+          <StudioSlider
+            v-else
+            :label="p.label" :min="p.min ?? 0" :max="p.max ?? 1" :step="p.step ?? 0.01" :default="typeof p.default === 'number' ? p.default : undefined" :bindable="false"
+            :model-value="numValue(p.uniform)"
+            @update:model-value="(v: number) => setParam(p.uniform, v)"
           />
-          <div v-if="effectDef?.id === 'ascii_dither' && p.uniform === 'u_shape' && Math.round(numValue(p.uniform)) === 14" class="mb-2">
+          <div v-if="effectDef?.id === 'ascii_dither' && p.uniform === 'u_shape' && Math.round(numValue(p.uniform)) === 14" class="mt-1.5">
             <label class="mb-0.5 block text-[11px] text-white/40">Characters (sorted by density)</label>
             <input
               v-model="activeEffectCfg.customChars" type="text" spellcheck="false" placeholder=" .:-=+*#%@"
-              class="w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 font-mono text-xs tracking-wider"
+              class="w-full rounded-[6px] border border-white/[0.08] bg-white/[0.04] px-2 py-1 font-mono text-xs tracking-wider"
             />
           </div>
         </div>
