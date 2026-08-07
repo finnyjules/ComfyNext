@@ -75,7 +75,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
               />
             </slot>
           </div>
-          <div class="mt-3 flex shrink-0 items-center gap-2"><slot name="actions" /></div>
         </div>
         <div class="flex w-72 shrink-0 flex-col gap-2 overflow-y-auto pr-1 min-h-0">
           <!-- Assistant takeover: the agent's progress / proposal replace the controls
@@ -99,6 +98,13 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
           </template>
           <slot v-else name="controls" />
         </div>
+      </div>
+      <!-- The modal's bottom is reserved for actions: a full-width footer, hairline-topped,
+           with the buttons docked to the right. Every studio's Save / Render / Send-to-canvas
+           lands here via #actions, in the same place, instead of under the preview or floating
+           in the controls column. -->
+      <div v-if="$slots.actions" class="flex shrink-0 items-center justify-end gap-2 border-t border-white/[0.08] px-4 py-3">
+        <slot name="actions" />
       </div>
     </div>
   </div>

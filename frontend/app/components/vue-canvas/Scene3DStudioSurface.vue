@@ -4065,39 +4065,24 @@ async function onClose() {
 
       </template>
 
-      <!-- Sticky action footer: Save + Export, pinned to the bottom-right of the
-           inspector column. mt-auto pins it to the bottom when the column is short;
-           sticky bottom-0 keeps it visible once the inspector scrolls. Stays live
-           while sculpting (Gap 3) — `committing` additionally disables both
-           buttons for exactly as long as a sculpt commit (this Save, or an
-           Apply/Exit/in-panel-Remesh elsewhere in the column) is in flight, the
-           same busy-disables-the-button convention every other async action on
-           this surface already uses (Remesh, Solidify, Merge, To-mesh). -->
-      <!-- pointer-events-none on the bar + pointer-events-auto on just the two
-           buttons (Gap 3/4 fix): this bar's own box is full-width and tall
-           enough (status line + button row) to sit ON TOP of whatever the
-           column has scrolled to underneath it — normally harmless, since the
-           bar's dead space had nothing reachable behind it. The sculpt
-           panel's new Remesh button changed that: at the scroll position
-           sculpt mode opens at by default, Remesh's row lands directly under
-           this bar's left-hand dead space and was silently unclickable (no
-           visual sign, the click just went to this bar instead). Same
-           overlay-pointer-events pattern used for the viewport's HTML
-           overlays elsewhere in this file. -->
-      <div class="sticky bottom-0 z-10 mt-auto border-t border-white/10 bg-[#0e0e10] pb-1 pt-2 pointer-events-none">
-        <p v-if="bakeError && !baking" class="mb-1.5 text-right text-xs text-red-400/90">{{ bakeError }}</p>
-        <p v-else-if="savedFlash" class="mb-1.5 text-right text-xs text-emerald-400/80">Saved ✓</p>
-        <p v-else-if="dirty && !baking" class="mb-1.5 text-right text-xs text-amber-400/70">Not exported to canvas</p>
-        <div class="flex items-center justify-end gap-2">
-          <StudioButton class="pointer-events-auto" variant="secondary" :disabled="baking || committing" @click="saveScene">Save</StudioButton>
-          <StudioButton class="pointer-events-auto" variant="primary" :disabled="baking || committing || !doc.objects.length" @click="exportToCanvas">
-            <span class="flex items-center gap-1.5">
-              <Loader2 v-if="baking" class="h-4 w-4 animate-spin" />
-              {{ baking ? 'Exporting…' : 'Export to Canvas' }}
-            </span>
-          </StudioButton>
-        </div>
-      </div>
+    </template>
+    <!-- Save + Export live in the modal's reserved bottom-right actions footer (shell
+         #actions), like every other studio — not pinned inside the inspector column. The
+         old pointer-events-none/auto workaround is gone with the move: the footer is its
+         own row now, so it no longer overlaps the scrolling column (the sculpt panel's
+         Remesh button that it used to eat is no longer underneath it). `committing` still
+         disables both buttons for the length of a sculpt commit, as before. -->
+    <template #actions>
+      <p v-if="bakeError && !baking" class="text-xs text-red-400/90">{{ bakeError }}</p>
+      <p v-else-if="savedFlash" class="text-xs text-emerald-400/80">Saved ✓</p>
+      <p v-else-if="dirty && !baking" class="text-xs text-amber-400/70">Not exported to canvas</p>
+      <StudioButton variant="secondary" :disabled="baking || committing" @click="saveScene">Save</StudioButton>
+      <StudioButton variant="primary" :disabled="baking || committing || !doc.objects.length" @click="exportToCanvas">
+        <span class="flex items-center gap-1.5">
+          <Loader2 v-if="baking" class="h-4 w-4 animate-spin" />
+          {{ baking ? 'Exporting…' : 'Export to Canvas' }}
+        </span>
+      </StudioButton>
     </template>
   </StudioModalShell>
 </template>

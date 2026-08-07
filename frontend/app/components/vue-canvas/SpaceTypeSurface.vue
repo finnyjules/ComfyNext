@@ -1705,12 +1705,15 @@ async function exportWebEmbed() {
           </div>
         </StudioSection>
 
-        <!-- Sticky action footer: Save + Render, pinned bottom-right of the inspector column
-             (3D Studio pattern). mt-auto pins it when the column is short; sticky bottom-0
-             keeps it visible once the column scrolls. Visible on both inspector tabs. -->
-        <div class="sticky bottom-0 z-10 mt-auto border-t border-white/10 bg-[#0e0e10] pb-1 pt-2">
-          <p v-if="savedFlash" class="mb-1.5 text-right text-xs text-emerald-400/80">Saved ✓</p>
-          <div class="relative flex items-center justify-end gap-2">
+    </template>
+    <!-- Save + Render live in the modal's reserved bottom-right actions footer (shell
+         #actions), like every other studio — not pinned inside the inspector column. The
+         render menu still opens upward (bottom-full), correct from a bottom bar. -->
+    <template #actions>
+          <p v-if="savedFlash" class="text-xs text-emerald-400/80">Saved ✓</p>
+          <p v-if="embedMsg" class="truncate text-xs"
+             :class="embedErr ? 'text-red-300/80' : 'text-white/50'">{{ embedMsg }}</p>
+          <div class="relative flex items-center gap-2">
             <StudioButton variant="secondary" :disabled="baking" @click="saveNow">Save</StudioButton>
             <StudioButton variant="primary" :disabled="baking" @pointerdown.stop @click="renderMenuOpen = !renderMenuOpen">
               <template v-if="baking">Generating…</template>
@@ -1747,10 +1750,6 @@ async function exportWebEmbed() {
                       @click="renderMenuOpen = false; exportWebEmbed()">{{ embedding ? 'Exporting…' : 'Export embed' }}</button>
             </div>
           </div>
-          <!-- A failure must not read like a success. -->
-          <p v-if="embedMsg" class="mt-1.5 truncate text-right text-xs"
-             :class="embedErr ? 'text-red-300/80' : 'text-white/50'">{{ embedMsg }}</p>
-        </div>
     </template>
   </StudioModalShell>
   <SpaceTypeEffectGalleryModal
