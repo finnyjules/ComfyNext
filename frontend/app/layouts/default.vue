@@ -6,7 +6,7 @@ import {
   AudioWaveform, Film, Box, Type, Frame,
   StickyNote, ListChecks, ArrowRight, MessageSquareDashed, Drama, Ellipsis, Table2,
   Shapes, ListVideo,
-  Sparkle, ImagePlus, Brush, Music, Mic, ChevronDown, Palette,
+  Sparkle, ImagePlus, Brush, Music, Mic, ChevronDown, Palette, Images,
 } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import { useDeliverables } from '~/composables/useDeliverables'
@@ -156,6 +156,7 @@ const loadSections = [
     { label: 'Audio', icon: AudioWaveform, nodeType: 'Audio' },
     { label: 'Video', icon: Film, nodeType: 'Video' },
     { label: 'Collection', icon: Table2, nodeType: 'Collection' },
+    { label: 'Moodboard', icon: Images, nodeType: 'Moodboard' },
     { label: '3D', icon: Box, nodeType: 'Mesh', disabled: true, hint: 'coming soon' },
   ] },
 ]
