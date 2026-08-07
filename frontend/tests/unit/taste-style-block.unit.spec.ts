@@ -5,6 +5,8 @@
  * the broken control — fails here), and empty parts must vanish without
  * leaving dangling labels.
  */
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { moodboardStyleBlock, tastedPrompt, tasteStyleBlock } from '~/lib/taste/styleBlock'
 
@@ -78,4 +80,28 @@ describe('moodboardStyleBlock', () => {
     expect(moodboardStyleBlock({ ...reading, avoids: [] })).not.toContain('Avoid')
     expect(moodboardStyleBlock({ ...reading, palette: [] })).not.toContain('Palette')
   })
+})
+
+describe('moodboardStyleBlock — Python-twin parity (shared fixtures, Task B4)', () => {
+  // The Python twin (comfy_extras/nodes_moodboard.py moodboard_style_block)
+  // compiles the SAME block server-side and must produce byte-identical
+  // strings. Both sides assert these shared fixtures — the Python side is
+  // tests-unit/comfy_api_test/moodboard_node_test.py (which also runs the
+  // broken control: a reordered palette join fails parity there).
+  const FIXTURES_DIR = resolve(__dirname, '../../../tests-unit/comfy_api_test/fixtures')
+  const FIXTURE_FILES = [
+    'moodboard_style_block_full.json',
+    'moodboard_style_block_no_avoids.json',
+    'moodboard_style_block_summary_avoids.json',
+  ]
+
+  for (const file of FIXTURE_FILES) {
+    it(`matches the shared fixture ${file}`, () => {
+      const fx = JSON.parse(readFileSync(resolve(FIXTURES_DIR, file), 'utf-8')) as {
+        reading: { summary: string, palette: { name: string, hex: string }[], avoids: string[] }
+        expected: string
+      }
+      expect(moodboardStyleBlock(fx.reading)).toBe(fx.expected)
+    })
+  }
 })

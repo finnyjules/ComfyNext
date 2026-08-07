@@ -118,6 +118,45 @@ export function applyMoodboardToGenerateNode(
 }
 
 /**
+ * The Moodboard node's own widget sync (Plan B, Task B4). The Python twin
+ * (comfy_extras/nodes_moodboard.py) reads two hidden STRING widgets —
+ * `reading_json` (the entry's reading as JSON) and `moodboard_id` — and
+ * widgets_values is POSITIONAL, so the values are written by NAME against the
+ * node's widgetDefs (the /object_info-derived order). When the defs don't
+ * carry the name yet (backend not restarted since the twin landed, so
+ * objectInfo lacks the Moodboard schema), fall back to the canonical schema
+ * order below — it IS the twin's declared order, and the append-only schema
+ * contract keeps it stable.
+ *
+ * Called on modal save AND whenever the node's referenced entry changes
+ * (MoodboardNode.vue watches the entry). `entry` null/undefined clears both
+ * widgets (reference removed).
+ */
+export const MOODBOARD_WIDGET_ORDER = ['reading_json', 'moodboard_id'] as const
+
+export interface MoodboardWidgetTarget {
+  widgetsValues?: any[]
+  widgetDefs?: { name: string }[]
+}
+
+export function syncMoodboardWidgets(
+  nodeData: MoodboardWidgetTarget,
+  entry: Pick<MoodboardEntry, 'id' | 'reading'> | null | undefined,
+): void {
+  if (!Array.isArray(nodeData.widgetsValues)) nodeData.widgetsValues = []
+  const wv = nodeData.widgetsValues
+  const defs = Array.isArray(nodeData.widgetDefs) ? nodeData.widgetDefs : []
+  const write = (name: (typeof MOODBOARD_WIDGET_ORDER)[number], value: string): void => {
+    const defIdx = defs.findIndex(d => d?.name === name)
+    const idx = defIdx >= 0 ? defIdx : MOODBOARD_WIDGET_ORDER.indexOf(name)
+    while (wv.length <= idx) wv.push('')
+    wv[idx] = value
+  }
+  write('reading_json', entry ? JSON.stringify(entry.reading) : '')
+  write('moodboard_id', entry ? entry.id : '')
+}
+
+/**
  * The chip's one-click Revert on the auto-switch notice: clears the marker and
  * the refs payload, returns the model id the caller must restore into the
  * `model` widget (null when there is nothing to revert). The board itself

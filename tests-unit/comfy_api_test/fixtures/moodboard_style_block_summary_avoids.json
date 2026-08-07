@@ -1,0 +1,9 @@
+{
+  "name": "empty palette — whitespace-padded summary trims, no dangling Palette label",
+  "reading": {
+    "summary": "  Hand-inked riso texture  ",
+    "palette": [],
+    "avoids": ["gradients", "gloss", "3D render look"]
+  },
+  "expected": "In the style of: Hand-inked riso texture. Avoid: gradients, gloss, 3D render look."
+}

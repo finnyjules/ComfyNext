@@ -1,0 +1,13 @@
+{
+  "name": "no avoids — summary already dotted keeps ONE period, no dangling Avoid label",
+  "reading": {
+    "summary": "Quiet dawn light over brutalist concrete.",
+    "palette": [
+      { "name": "Fog", "hex": "#C9CDD1" },
+      { "name": "Concrete", "hex": "#8D8A85" },
+      { "name": "Ember", "hex": "#D96C32" }
+    ],
+    "avoids": []
+  },
+  "expected": "In the style of: Quiet dawn light over brutalist concrete. Palette: Fog #C9CDD1, Concrete #8D8A85, Ember #D96C32."
+}

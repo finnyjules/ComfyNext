@@ -320,18 +320,21 @@ const STUDIOS: AgentCapability[] = [
     outputs: [{ name: 'vars', type: 'VARS' }],
     intents: ['variables', 'dataset', 'data table', 'batch generate', 'data merge', 'spreadsheet'],
   },
-  // Moodboard: frontend-only in Plan A (2026-08-06 moodboards plan) — no
-  // backend class_type yet, so frontendOnly:true both synthesizes its palette
-  // entry AND (via studioNodeTypes) puts it in FRONTEND_ONLY_NODE_TYPES so the
-  // Run path strips it. Plan B replaces this with the Python twin + ports.
+  // Moodboard: has a Python twin since Plan B Task B4 (comfy_extras/
+  // nodes_moodboard.py registers class_type 'Moodboard'), so frontendOnly is
+  // FALSE — it must LEAVE FRONTEND_ONLY_NODE_TYPES (the twin compiles the
+  // style block server-side; stripping it would sever the TASTE wire). Like
+  // Scene3DStudio/Compositor, its palette entry now rides on /object_info.
+  // v1 ships the `style` output only — the image output is deferred to @refs
+  // (Task B5; see the plan's decision note).
   {
     nodeType: 'Moodboard',
     kind: 'studio',
-    frontendOnly: true,
+    frontendOnly: false,
     title: 'Moodboard',
-    summary: 'A pile of inspiration images with an editable taste reading (summary + curated palette + avoids) — apply it to generators as a weightless style.',
+    summary: 'A pile of inspiration images with an editable taste reading (summary + curated palette + avoids) — apply it to generators as a weightless style, or wire its style output into a generator\'s style_in.',
     inputs: [],
-    outputs: [],
+    outputs: [{ name: 'style', type: 'TASTE' }],
     intents: ['moodboard', 'mood board', 'inspiration board', 'style board', 'add a moodboard', 'board of reference images', 'collect inspiration images'],
   },
 ]

@@ -2586,6 +2586,7 @@ async def init_builtin_extra_nodes():
         "nodes_subject_track.py",
         "nodes_lip_sync.py",
         "nodes_smart_layout.py",
+        "nodes_moodboard.py",
         "nodes_compositor.py",
         "nodes_pose_mannequin.py",
         "nodes_scene3d.py",

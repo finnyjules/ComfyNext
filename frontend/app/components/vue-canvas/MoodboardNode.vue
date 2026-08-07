@@ -6,6 +6,7 @@
 // persistent state (convertToLiteGraph drops any other data.* field on save).
 // Click (a true click, not a drag) opens the brand-guidelines modal (A6).
 import { useMoodboards } from '~/composables/useMoodboards'
+import { syncMoodboardWidgets } from '~/lib/graph/moodboardApply'
 import PileStack from './PileStack.vue'
 
 const props = defineProps<{ id: string; data: any; selected?: boolean }>()
@@ -15,6 +16,22 @@ onMounted(() => { if (!loaded.value) void refresh() })
 
 const entryId = computed(() => String(props.data?.properties?.sailor_moodboard || ''))
 const entry = computed(() => (entryId.value ? byId(entryId.value) : undefined))
+
+// Task B4: the Python twin reads the reading from the hidden reading_json /
+// moodboard_id widgets — keep them in sync whenever the referenced entry (or
+// its reading) changes, writing by NAME via the shared helper. When the id is
+// set but the entry isn't resolvable yet (library still loading, or deleted),
+// leave the previously-saved widget payload alone — never wipe a good reading
+// on a race; an EMPTY id is an actual reference removal and clears both.
+watch(
+  () => [entryId.value, entry.value?.updatedAt] as const,
+  () => {
+    if (!props.data) return
+    if (entry.value) syncMoodboardWidgets(props.data, entry.value)
+    else if (!entryId.value) syncMoodboardWidgets(props.data, null)
+  },
+  { immediate: true },
+)
 
 // Board image FILENAMES are component-local state (never node data): fetched
 // from the list route whenever the referenced entry's folder changes.
@@ -51,7 +68,16 @@ function onClick(e: MouseEvent) {
 </script>
 
 <template>
-  <div class="w-[220px] select-none cursor-pointer" @pointerdown="onPointerDown" @click="onClick">
+  <div class="relative w-fit">
+    <!-- Task B4: the TASTE style output — anchors the taste wire into a
+         generator's style_in (the GradientStudioNode sibling-port pattern:
+         ports outside the card so nothing clips the dot or its hit area). -->
+    <VueCanvasNodePort
+      id="output-0" type="source" side="right" :index="0"
+      data-type="TASTE" label="style"
+      tooltip="Compiled style block — wire into a generator's style_in"
+    />
+  <div class="relative z-10 w-[220px] select-none cursor-pointer" @pointerdown="onPointerDown" @click="onClick">
     <PileStack v-if="images.length" :images="images" :seed-key="entryId || String(props.id)" :selected="selected">
       <template #rail>
         <span
@@ -75,5 +101,6 @@ function onClick(e: MouseEvent) {
       <div class="text-[13px] font-medium text-white/90 truncate">{{ entry?.name || 'Moodboard' }}</div>
       <div v-if="entry?.reading?.summary" class="text-[11px] text-white/45 truncate">{{ entry.reading.summary }}</div>
     </div>
+  </div>
   </div>
 </template>

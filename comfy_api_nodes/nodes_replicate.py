@@ -95,6 +95,28 @@ from comfy_api_nodes.replicate_refs import (
 )
 
 
+# The taste wire's link type (moodboards Plan B, Task B4). IO.Custom types
+# match by io_type STRING, so this pairs with the Moodboard twin's own
+# IO.Custom("TASTE") output (comfy_extras/nodes_moodboard.py) without a
+# cross-module import. TASTE is not a widget primitive, so a TASTE input is
+# socket-only and occupies NO widgets_values slot (widgetOrder.ts contract).
+_TASTE = IO.Custom("TASTE")
+
+# ── prompt_in fold rule (Task B4 — ONE rule, both generators) ────────────────
+# `prompt_in` (the Idea node's socket) joins AHEAD of the node's own prompt
+# widget: final = prompt_in when the widget is empty, else
+# f"{prompt_in} {prompt}". The widget text is never discarded — a wired idea
+# leads, hand-typed refinement follows. Applied identically by
+# FluxMultiLoRARemoteNode and GenerateImageNode.
+
+
+def _fold_prompt_in(prompt: str, prompt_in: str) -> str:
+    prompt_in = (prompt_in or "").strip()
+    if not prompt_in:
+        return prompt
+    return prompt_in if not (prompt or "").strip() else f"{prompt_in} {prompt}"
+
+
 REPLICATE_API_BASE = "https://api.replicate.com/v1"
 _DEFAULT_POLL_DEADLINE_SEC = 5 * 60      # most image gen finishes well under this
 _VIDEO_POLL_DEADLINE_SEC = 30 * 60       # Kling can take several minutes
@@ -809,6 +831,28 @@ class FluxMultiLoRARemoteNode(IO.ComfyNode):
                     default=0.6, min=0.0, max=1.5, step=0.05,
                     tooltip="Strength of LoRA D. The lightest slot by default.",
                 ),
+                # ── Taste wire + Idea socket (moodboards Plan B, Task B4) ────
+                # APPENDED LAST per the contract above. Both are socket-only
+                # (TASTE is not a widget primitive; prompt_in is force_input),
+                # so NEITHER occupies a widgets_values slot — saved workflows
+                # stay aligned (schema-order test asserts the widget count).
+                _TASTE.Input(
+                    "style_in",
+                    optional=True,
+                    tooltip=(
+                        "Taste wire: a Moodboard node's compiled style block. "
+                        "Prepends ahead of everything in the prompt."
+                    ),
+                ),
+                IO.String.Input(
+                    "prompt_in",
+                    optional=True,
+                    force_input=True,
+                    tooltip=(
+                        "Upstream prompt (the Idea node's socket). Joins ahead "
+                        "of the prompt widget; the widget text is kept."
+                    ),
+                ),
             ],
             outputs=[
                 IO.Image.Output(),
@@ -829,7 +873,18 @@ class FluxMultiLoRARemoteNode(IO.ComfyNode):
         image=None, prompt_strength: float = 0.8,
         lora_c: str = "[None]", lora_c_url: str = "", scale_c: float = 0.7,
         lora_d: str = "[None]", lora_d_url: str = "", scale_d: float = 0.6,
+        style_in: str = "", prompt_in: str = "",
     ):
+        # Task B4 prompt composition — wire first: the folded prompt_in joins
+        # ahead of the widget prompt (see _fold_prompt_in, the ONE shared
+        # rule), then style_in prepends ahead of EVERYTHING (including the
+        # client-injected LoRA style blocks already folded into the prompt
+        # widget by styleInject.ts).
+        prompt = _fold_prompt_in(prompt, prompt_in)
+        style_in = (style_in or "").strip()
+        if style_in:
+            prompt = f"{style_in} {prompt}".strip()
+
         # Resolve each slot to a WEIGHTS reference flux-dev-multi-lora can load.
         # A picker selection → the trained LoRA's weights artifact (.tar) from its
         # sidecar (NOT the private model ref — this model stacks weights, not
@@ -2574,6 +2629,29 @@ class GenerateImageNode(IO.ComfyNode):
                     extra_dict={"sailor_widget": "internal"},
                     tooltip="Moodboard reference-image payload (JSON) for ref-capable models.",
                 ),
+                # ── Taste wire + Idea socket (moodboards Plan B, Task B4) ────
+                # APPENDED LAST (positional widgets_values contract, see the
+                # comment above style_block). Both are socket-only — TASTE is
+                # not a widget primitive and prompt_in is force_input — so
+                # NEITHER occupies a widgets_values slot (schema-order test
+                # asserts the widget count stays unchanged).
+                _TASTE.Input(
+                    "style_in",
+                    optional=True,
+                    tooltip=(
+                        "Taste wire: a Moodboard node's compiled style block. "
+                        "Prepends ahead of everything — style_block included."
+                    ),
+                ),
+                IO.String.Input(
+                    "prompt_in",
+                    optional=True,
+                    force_input=True,
+                    tooltip=(
+                        "Upstream prompt (the Idea node's socket). Joins ahead "
+                        "of the prompt widget; the widget text is kept."
+                    ),
+                ),
             ],
             outputs=[IO.Image.Output()],
             price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.03,"format":{"approximate":true}}'),
@@ -2581,18 +2659,26 @@ class GenerateImageNode(IO.ComfyNode):
 
     @classmethod
     async def execute(cls, model, prompt, aspect_ratio, seed, model_options="{}",
-                      style_block="", style_refs=""):
+                      style_block="", style_refs="", style_in="", prompt_in=""):
         spec = _IMAGE_MODELS_BY_ID.get(model)
         if spec is None:
             raise RuntimeError(
                 f"Unknown image model id: {model!r}. "
                 f"Known: {list(_IMAGE_MODELS_BY_ID)}"
             )
+        # Task B4 prompt composition, wire first: fold prompt_in into the
+        # prompt (the ONE shared rule — see _fold_prompt_in), then style_block
+        # prepends, then style_in (the taste WIRE) prepends ahead of
+        # everything. Final order: style_in · style_block · prompt_in · prompt.
+        prompt = _fold_prompt_in(prompt, prompt_in)
         # Moodboard/style block rides ahead of the subject prompt — same
         # ordering as the FLUX LoRA nodes' client-side prompt fold.
         style_block = (style_block or "").strip()
         if style_block:
             prompt = f"{style_block} {prompt}"
+        style_in = (style_in or "").strip()
+        if style_in:
+            prompt = f"{style_in} {prompt}".strip()
         # Moodboard reference images (Task B3): a validated `style_refs`
         # payload on a ref-capable model ('multi-image' tag) becomes ≤3 data
         # URLs handed to the model builder, plus a style-only instruction so

@@ -51,6 +51,9 @@ export const TYPE_COLORS: Record<string, string> = {
   CONDITIONING: '#fbbf24', // Amber
   MASK: '#34d399',        // Emerald
   CHARACTER: '#f59e0b',   // Amber (cast character reference)
+  // The moodboard taste wire (Plan B, Task B4) — warm ochre, distinct from
+  // CHARACTER's amber and the scalar slates.
+  TASTE: '#d9a35c',
   // A Collection's variable bundle. Studio nodes used to hardcode this pink on
   // the handle itself, which is why the same colour could mean "vars" on one
   // node and nothing in particular on another. NOTE: shares AUDIO's pink —

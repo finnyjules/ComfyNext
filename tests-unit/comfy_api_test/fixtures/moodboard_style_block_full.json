@@ -1,0 +1,12 @@
+{
+  "name": "full reading — summary gains its period, named palette, avoids",
+  "reading": {
+    "summary": "Sun-bleached pastel world",
+    "palette": [
+      { "name": "Blush", "hex": "#F6C1CB" },
+      { "name": "Turquoise", "hex": "#67C4C9" }
+    ],
+    "avoids": ["darkness", "neon"]
+  },
+  "expected": "In the style of: Sun-bleached pastel world. Palette: Blush #F6C1CB, Turquoise #67C4C9. Avoid: darkness, neon."
+}

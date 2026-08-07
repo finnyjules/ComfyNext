@@ -603,4 +603,98 @@ describe('graphToPrompt', () => {
       })
     })
   })
+
+  describe('Moodboard TASTE wire → style_in (moodboards Plan B, Task B4)', () => {
+    // The B4 schemas: the Moodboard twin's two hidden STRING widgets + TASTE
+    // output; the generator's appended socket-only style_in (TASTE) and
+    // prompt_in (force_input STRING) — neither claims a widgets_values slot,
+    // so the generator's positional array is IDENTICAL to the B2 test above.
+    const WIRE_OBJECT_INFO = {
+      Moodboard: {
+        input: {
+          required: {
+            reading_json: ['STRING', { multiline: true, default: '' }],
+          },
+          optional: {
+            moodboard_id: ['STRING', { default: '' }],
+          },
+        },
+        output: ['TASTE'],
+        output_name: ['style'],
+      },
+      GenerateImageNode: {
+        input: {
+          required: {
+            model: [['flux-schnell', 'nano-banana-pro'], { default: 'flux-schnell' }],
+            prompt: ['STRING', { multiline: true, default: '' }],
+            aspect_ratio: [['1:1', '16:9'], { default: '1:1' }],
+            seed: ['INT', { default: 0, min: 0, control_after_generate: true }],
+            model_options: ['STRING', { default: '{}' }],
+          },
+          optional: {
+            style_block: ['STRING', { multiline: true, default: '' }],
+            style_refs: ['STRING', { default: '' }],
+            style_in: ['TASTE', {}],
+            prompt_in: ['STRING', { forceInput: true }],
+          },
+        },
+      },
+    }
+
+    it('a Moodboard wired into style_in serializes to inputs.style_in = [moodboardNodeId, 0]', () => {
+      const readingJson = JSON.stringify({
+        summary: 'Sun-bleached pastel world',
+        palette: [{ name: 'Blush', hex: '#F6C1CB' }],
+        avoids: ['neon'],
+      })
+      const workflow = baseWorkflow({
+        nodes: [
+          {
+            id: 2,
+            type: 'Moodboard',
+            pos: [0, 0],
+            size: [220, 120],
+            widgets_values: [readingJson, 'pastel-miami'],
+            outputs: [{ name: 'style', type: 'TASTE', links: [7] }],
+          },
+          {
+            id: 1,
+            type: 'GenerateImageNode',
+            pos: [300, 0],
+            size: [260, 120],
+            // Same 8 positional values as the B2 test — style_in/prompt_in
+            // being socket-only means NO ninth slot appears (the widget-count
+            // contract, TS side).
+            widgets_values: [
+              'nano-banana-pro', 'a lighthouse at dusk', '16:9', 777, 'randomize', '{}',
+              '', '',
+            ],
+            inputs: [{ name: 'style_in', type: 'TASTE', link: 7 }],
+            outputs: [{ name: 'IMAGE', type: 'IMAGE', links: [] }],
+          },
+        ],
+        links: [[7, 2, 0, 1, 0, 'TASTE']],
+      })
+
+      const prompt = graphToPrompt(workflow, WIRE_OBJECT_INFO)
+
+      // The Moodboard survives into the API prompt as a real class_type…
+      expect(prompt['2']).toEqual({
+        class_type: 'Moodboard',
+        inputs: { reading_json: readingJson, moodboard_id: 'pastel-miami' },
+      })
+      // …and the taste wire lands as a node reference on style_in.
+      expect(prompt['1'].inputs.style_in).toEqual(['2', 0])
+      expect(prompt['1'].inputs).toEqual({
+        model: 'nano-banana-pro',
+        prompt: 'a lighthouse at dusk',
+        aspect_ratio: '16:9',
+        seed: 777,
+        model_options: '{}',
+        style_block: '',
+        style_refs: '',
+        style_in: ['2', 0],
+      })
+    })
+  })
 })

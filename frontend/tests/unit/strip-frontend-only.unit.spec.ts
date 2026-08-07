@@ -75,8 +75,32 @@ describe('stripFrontendOnlyNodes', () => {
     for (const t of ['Collection', 'SpaceType', 'GradientStudio', 'ShaderStudio', 'TextureStudio', 'ShotDirector', 'Character', 'CharacterSheet', 'LipSyncStudio']) {
       expect(FRONTEND_ONLY_NODE_TYPES.has(t)).toBe(true)
     }
-    for (const t of ['Compositor', 'SmartLayout', 'Timeline', 'Image', 'Text', 'Audio', 'Video', 'KSampler']) {
+    // Moodboard has a Python twin since Plan B Task B4 (comfy_extras/
+    // nodes_moodboard.py) — stripping it would sever the TASTE wire, so it
+    // must NOT be in the set anymore.
+    for (const t of ['Moodboard', 'Compositor', 'SmartLayout', 'Timeline', 'Image', 'Text', 'Audio', 'Video', 'KSampler']) {
       expect(FRONTEND_ONLY_NODE_TYPES.has(t)).toBe(false)
     }
+  })
+
+  it('keeps a Moodboard node (backend twin) while stripping true frontend-only nodes', () => {
+    // Moodboard → GenerateImageNode over the TASTE wire must SURVIVE the
+    // strip — the whole point of the twin (Plan B, Task B4).
+    const w = wf(
+      [
+        { id: 1, type: 'Moodboard' },
+        { id: 2, type: 'GenerateImageNode' },
+        { id: 3, type: 'Collection' },
+      ],
+      [
+        [10, 1, 0, 2, 0, 'TASTE'],
+        [11, 3, 0, 2, 1, 'VARS'],
+      ],
+    )
+    const { workflow: out, removedTypes } = stripFrontendOnlyNodes(w, FRONTEND_ONLY_NODE_TYPES)
+    expect(removedTypes).toEqual(['Collection'])
+    expect((out.nodes as any[]).map(n => n.id).sort()).toEqual([1, 2])
+    // The TASTE link survives; the Collection's link is dropped with it.
+    expect((out.links as any[]).map(l => l[0])).toEqual([10])
   })
 })

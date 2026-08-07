@@ -3,6 +3,7 @@ import {
   applyMoodboardToGenerateNode,
   clearMoodboardFromGenerateNode,
   revertMoodboardSwitch,
+  syncMoodboardWidgets,
   MOODBOARD_DEFAULT_MODEL,
   MOODBOARD_MAX_REFS,
 } from '~/lib/graph/moodboardApply'
@@ -194,5 +195,39 @@ describe('clearMoodboardFromGenerateNode', () => {
 
   it('tolerates a node with no properties bag', () => {
     expect(() => clearMoodboardFromGenerateNode({})).not.toThrow()
+  })
+})
+
+describe('syncMoodboardWidgets — the twin\'s hidden widgets, written by name (B4)', () => {
+  it('writes reading_json + moodboard_id onto the widgetDefs-resolved slots', () => {
+    // DECOY ORDER: a leading decoy widget means positional index 0 is WRONG —
+    // an implementation that ignores widgetDefs and hardcodes [0, 1] fails.
+    const nodeData = {
+      widgetDefs: [
+        { name: 'decoy' },
+        { name: 'reading_json' },
+        { name: 'moodboard_id' },
+      ],
+      widgetsValues: ['keep-me', '', ''],
+    }
+    syncMoodboardWidgets(nodeData, ENTRY)
+    expect(nodeData.widgetsValues[0]).toBe('keep-me')
+    expect(nodeData.widgetsValues[1]).toBe(JSON.stringify(ENTRY.reading))
+    expect(nodeData.widgetsValues[2]).toBe('dusty-pastels')
+  })
+
+  it('falls back to the canonical schema order when widgetDefs are missing (backend not restarted)', () => {
+    const nodeData: any = {}
+    syncMoodboardWidgets(nodeData, ENTRY)
+    expect(nodeData.widgetsValues).toEqual([JSON.stringify(ENTRY.reading), 'dusty-pastels'])
+  })
+
+  it('clears both widgets when the reference is removed (entry null)', () => {
+    const nodeData: any = {
+      widgetDefs: [{ name: 'reading_json' }, { name: 'moodboard_id' }],
+      widgetsValues: ['{"summary":"old"}', 'old-board'],
+    }
+    syncMoodboardWidgets(nodeData, null)
+    expect(nodeData.widgetsValues).toEqual(['', ''])
   })
 })

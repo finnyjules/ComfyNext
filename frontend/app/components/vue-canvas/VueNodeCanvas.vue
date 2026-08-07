@@ -1604,13 +1604,22 @@ function createNodeData(nodeType: string, position: { x: number, y: number }, wi
   if (nodeType === 'ShotDirector' && (!data.data.inputs || data.data.inputs.length === 0)) {
     data.data.inputs = [1, 2, 3].map(i => ({ name: `cast_${i}`, type: 'CHARACTER', link: null, optional: true }))
   }
-  // Moodboard: frontend-only pile card referencing a moodboard library entry.
-  // NO ports in Plan A (Plan B adds the Python twin + style/image outputs) —
-  // its only persistent state is the library reference id under properties
-  // (the convertToLiteGraph curated-map gotcha: data.* fields don't survive).
+  // Moodboard: pile card referencing a moodboard library entry, with a Python
+  // twin since Plan B Task B4 (class_type 'Moodboard' compiles the style block
+  // from the hidden reading_json widget). When /object_info carries the twin,
+  // the generic derivation above already yields the real schema widgets
+  // (hidden internal — the custom 'moodboard' face never renders them) AND the
+  // TASTE `style` output; the synthesis below only fills the port in when the
+  // backend hasn't been restarted yet (objectInfo lacks the twin), so the wire
+  // can at least render. v1 has NO image output (deferred to @refs, Task B5).
+  // Persistent state: properties.sailor_moodboard (the library reference id;
+  // convertToLiteGraph's curated map drops other data.* fields) + the two
+  // widgets synced by name via syncMoodboardWidgets (moodboardApply.ts).
   if (nodeType === 'Moodboard') {
     data.data.inputs = []
-    data.data.outputs = []
+    if (!data.data.outputs || data.data.outputs.length === 0) {
+      data.data.outputs = [{ name: 'style', type: 'TASTE', links: null }]
+    }
     if (typeof data.data.properties.sailor_moodboard !== 'string') {
       data.data.properties.sailor_moodboard = ''
     }

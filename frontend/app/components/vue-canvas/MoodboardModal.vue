@@ -12,6 +12,7 @@
 // the node (the GradientStudioSurface persistence pattern: mutate the node
 // record in the `nodes` array the canvas passed us).
 import { useMoodboards, slugifyMoodboardName } from '~/composables/useMoodboards'
+import { syncMoodboardWidgets } from '~/lib/graph/moodboardApply'
 import { sectionIds, activeSection, type SectionId } from '~/lib/taste/moodboardModal'
 import type { MoodboardEntry } from '~~/shared/taste/moodboard'
 
@@ -218,12 +219,15 @@ async function saveBoard() {
     savedId.value = id
     createdAt.value = entry.createdAt
     // Reference the entry from the opening node — properties-only state
-    // (convertToLiteGraph drops anything else on save).
+    // (convertToLiteGraph drops anything else on save) — and sync the Python
+    // twin's hidden reading_json/moodboard_id widgets by name (Task B4), so
+    // graphToPrompt carries the reading to the backend.
     const n = currentNode()
     if (n) {
       n.data ||= {}
       n.data.properties ||= {}
       n.data.properties.sailor_moodboard = id
+      syncMoodboardWidgets(n.data, entry)
     }
     savedFlash.value = true
     setTimeout(() => { savedFlash.value = false }, 1500)
