@@ -22,7 +22,7 @@ import { useCanvasHistory } from '~/composables/useCanvasHistory'
 import { useCanvasGroups, GROUP_COLORS, type CanvasGroup } from '~/composables/useCanvasGroups'
 import { useCanvasAnnotations, STICKY_COLORS, type Annotation, type ArrowEndpoint } from '~/composables/useCanvasAnnotations'
 import { applyArtifactLocks, applyVariantFanOut, backfillStandaloneArtifactImages, buildFilteredWorkflow, collectKeepSet, realignWidgetValues, setNamedWidget } from '~/composables/useFilteredPrompt'
-import { type LocalLayer, ensureLayerFonts, ensureLayerImages, bakeOverlay, createImageLayer, parseIdeogramLayers, drawWiredImageLayer, drawLayerSilhouette } from '~/composables/useCompositorLayers'
+import { type LocalLayer, ensureLayerFonts, ensureLayerImages, bakeOverlay, createImageLayer, parseIdeogramLayers, parseSeedreamLayers, drawWiredImageLayer, drawLayerSilhouette } from '~/composables/useCompositorLayers'
 import { wiredClonerWidgetEntries } from '~/composables/useCloner'
 import { readWiredTreatments } from '~/composables/useWiredTreatments'
 import { planWiredMaskJobs } from '~/composables/wiredMaskPlan'
@@ -2416,16 +2416,25 @@ async function handleEditAsFrame(e: Event) {
   if (!objectInfo.value['Compositor']) return
 
   const isLayerize = src.data?.nodeType === 'LayerizeGraphicNode'
+  const isSeedream = src.data?.nodeType === 'SeedreamLayerizeNode'
   const parsed = isLayerize ? parseIdeogramLayers(String(src.data?.text || '')) : null
+  const seedream = isSeedream ? parseSeedreamLayers(String(src.data?.text || '')) : null
   if (isLayerize && (!parsed || !parsed.textLayers.length)) {
     console.warn('[EditAsFrame] no usable text layers in layers_json')
     if (!parsed) return
+  }
+  if (isSeedream && (!seedream || !seedream.imageLayers.length)) {
+    console.warn('[EditAsFrame] no usable image layers from Seedream layerize')
+    return
   }
 
   const pos = { x: (src.position?.x ?? 0) + (src.data?.size?.[0] ?? 240) + 120, y: src.position?.y ?? 0 }
   // Artboard size = the resolution Ideogram re-rendered at (its text coords
   // are in that space, NOT the input image's) — or layer-1-driven for splits.
-  const frame = createNodeData('Compositor', pos, parsed ? { width: parsed.width, height: parsed.height } : undefined)
+  // Seedream carries its own canvas dims from Task 3's parse.
+  const dims = parsed ? { width: parsed.width, height: parsed.height }
+    : seedream ? { width: seedream.width, height: seedream.height } : undefined
+  const frame = createNodeData('Compositor', pos, dims)
   const frameProps = (frame.data.properties ||= {}) as Record<string, any>
 
   const wire = (outputIdx: number, inputName: string) => {
@@ -2442,7 +2451,14 @@ async function handleEditAsFrame(e: Event) {
     } as any)
   }
 
-  if (parsed) {
+  if (seedream) {
+    frameProps.sailor_frame = { ...(frameProps.sailor_frame || {}), preset: 'custom' }
+    frameProps.sailor_localLayers = seedream.imageLayers
+    // All local image layers, already bottom→top by z-index. No wired inputs.
+    frameProps.sailor_stackOrder = seedream.imageLayers.map((l) => `l:${l.id}`)
+    ensureLayerImages(seedream.imageLayers as any).catch(() => {})
+    nodes.value.push(frame as any)
+  } else if (parsed) {
     frameProps.sailor_frame = { ...(frameProps.sailor_frame || {}), preset: 'custom' }
     frameProps.sailor_localLayers = parsed.textLayers
     // Background at the bottom of the unified stack, every text layer above.
@@ -7074,10 +7090,11 @@ function materializeAutoImageSinks(targetIds: string[]): string[] {
       const outType = String(outputs[i].type).toUpperCase()
       const artifactNodeType = ARTIFACT_NODE_FOR_OUTPUT[outType]
       if (!artifactNodeType) continue
-      // Layerize's layers_json is machine data for "Edit as Frame" (the node
-      // carries it in its own result payload) — don't materialize a Text sink
-      // that would dump raw JSON on the canvas.
-      if (src.data?.nodeType === 'LayerizeGraphicNode' && outputs[i].name === 'layers_json') continue
+      // Layerize's (and Seedream's) layers_json is machine data for "Edit as
+      // Frame" (the node carries it in its own result payload) — don't
+      // materialize a Text sink that would dump raw JSON on the canvas.
+      if ((src.data?.nodeType === 'LayerizeGraphicNode' || src.data?.nodeType === 'SeedreamLayerizeNode')
+        && outputs[i].name === 'layers_json') continue
       const schema = getSchema(artifactNodeType)
       if (!schema) continue
       // Skip if anything is already wired from this exact output handle.

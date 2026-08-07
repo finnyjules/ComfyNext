@@ -1455,12 +1455,16 @@ const lensDiagram = computed(() => {
 // containers converted into editable local text layers). The canvas owns the
 // node/edge creation; we just announce the intent.
 const showEditAsFrame = computed(() =>
-  props.data.nodeType === 'LayerizeGraphicNode' || props.data.nodeType === 'SplitPhotoLayersNode')
+  props.data.nodeType === 'LayerizeGraphicNode'
+  || props.data.nodeType === 'SplitPhotoLayersNode'
+  || props.data.nodeType === 'SeedreamLayerizeNode')
 const editAsFrameReady = computed(() => {
   // Layerize needs its run result — the text layers live in the layers_json
   // payload (mirrored to data.text). Split-photo only wires outputs, so the
-  // Frame can be created before the first run.
-  if (props.data.nodeType === 'LayerizeGraphicNode') return !!(props.data as any).text
+  // Frame can be created before the first run. Seedream also carries its
+  // layers_json in data.text, same as Layerize.
+  if (props.data.nodeType === 'LayerizeGraphicNode' || props.data.nodeType === 'SeedreamLayerizeNode')
+    return !!(props.data as any).text
   return true
 })
 function editAsFrame() {
