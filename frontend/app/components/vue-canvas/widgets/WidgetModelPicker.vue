@@ -84,7 +84,7 @@ function openGallery() {
 
 <template>
   <button
-    class="nopan nodrag w-full flex items-center gap-2 px-2 py-1.5 rounded border border-white/10 bg-white/[0.04] hover:bg-white/[0.08] hover:border-white/20 transition-[transform,background-color,border-color] active:scale-[0.98] cursor-pointer text-left group"
+    class="nopan nodrag w-full flex items-center gap-2 px-2 py-1.5 rounded-[6px] bg-white/[0.05] hover:bg-white/[0.08] transition-[transform,background-color] active:scale-[0.98] cursor-pointer text-left group"
     :title="model
       ? `${model.label} — click to change ${kind === 'shot_preset' ? 'shot' : 'model'}`
       : `Pick a ${kind === 'shot_preset' ? 'shot' : 'model'} (current: ${modelValue || '—'})`"
