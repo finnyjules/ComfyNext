@@ -89,6 +89,24 @@ def save_generation_output(image_tensor: torch.Tensor, filename_prefix: str = "g
     return {"images": out_files, "animated": (False,)}
 
 
+def save_image_to_input(image_tensor: torch.Tensor, filename_prefix: str = "layer") -> str:
+    """Save a single (H,W,C) image tensor as a uniquely-named PNG in the INPUT
+    directory and return its filename. Used for layers that become editable
+    Compositor ImageLayers (which resolve filenames via type='input'). RGBA
+    (4-channel) tensors save with transparency preserved.
+    """
+    in_dir = folder_paths.get_input_directory()
+    full_output_folder, filename, counter, subfolder, _ = folder_paths.get_save_image_path(
+        filename_prefix, in_dir
+    )
+    os.makedirs(full_output_folder, exist_ok=True)
+    img = image_tensor if image_tensor.ndim == 3 else image_tensor[0]
+    arr = np.clip(255.0 * img.cpu().numpy(), 0, 255).astype(np.uint8)
+    file = f"{filename}_{counter:05}_.png"
+    PILImage.fromarray(arr).save(os.path.join(full_output_folder, file), "PNG")
+    return file
+
+
 def save_live_preview_multi(
     images: list[torch.Tensor], node_id: str, labels: list[str] | None = None
 ) -> dict:

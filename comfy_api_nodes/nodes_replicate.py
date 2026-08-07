@@ -62,7 +62,7 @@ from comfy_api_nodes.util.download_helpers import (
     download_url_to_image_tensor,
     download_url_to_video_output,
 )
-from comfy_extras._live_preview import save_live_preview, save_generation_output
+from comfy_extras._live_preview import save_live_preview, save_generation_output, save_image_to_input
 
 # Pure money-path logic (token resolution, LoRA sidecar → runnable ref, output
 # URL parsing) lives in replicate_refs so it can be unit-tested in isolation —
@@ -4649,6 +4649,67 @@ class SplitPhotoLayersNode(IO.ComfyNode):
 
 
 # =============================================================================
+# Use case: Layerize a photo into raster layers (fal Seedream 5 Pro Layerize)
+# =============================================================================
+
+
+class SeedreamLayerizeNode(IO.ComfyNode):
+    """Split a finished image into 2-17 transparent-PNG raster layers via fal
+    Seedream 5 Pro Layerize. Emits a preview + layers_json; "Edit as Frame"
+    turns the layers into editable Compositor image layers."""
+    @classmethod
+    def define_schema(cls):
+        return IO.Schema(
+            node_id="SeedreamLayerizeNode",
+            display_name="Layerize an image",
+            category="api node/image/Replicate",
+            inputs=[
+                IO.Image.Input("image"),
+                IO.String.Input("prompt", multiline=True, default="",
+                                tooltip="Optional guidance for how to split the image."),
+                IO.Combo.Input("image_size", options=["auto", "auto_1K", "auto_1.5K", "auto_2K"],
+                               default="auto", optional=True),
+            ],
+            outputs=[
+                IO.Image.Output(display_name="preview"),
+                IO.String.Output(display_name="layers_json"),
+            ],
+            hidden=[IO.Hidden.unique_id],
+            is_output_node=True,
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.34,"format":{"approximate":true}}'),
+        )
+
+    @classmethod
+    async def execute(cls, image, prompt, image_size="auto"):
+        from comfy_api_nodes import fal_refs
+        from comfy_api_nodes.seedream_layerize import seedream_layerize_input, parse_seedream_layers
+        import json as _json
+
+        inp = seedream_layerize_input(prompt, _image_tensor_to_data_url(image), image_size)
+        result = await fal_refs.run_fal_prediction(
+            "bytedance/seedream/v5/pro/layerize", "", inp, poll_deadline_sec=300)
+        layers, W, H = parse_seedream_layers(result)
+
+        out_layers = []
+        for lyr in layers:
+            tensor = await download_url_to_image_tensor(lyr["url"], cls=cls)
+            fname = save_image_to_input(tensor, "seedream_layer")
+            out_layers.append({
+                "filename": fname, "z_index": lyr["z_index"], "box": lyr["box"],
+                "name": lyr["name"], "description": lyr["description"],
+            })
+        layers_json = _json.dumps({"source": "seedream", "width": W, "height": H, "layers": out_layers})
+
+        # Preview: the recomposed flat image if fal returned one, else the input.
+        preview_url = fal_refs.first_fal_image_url(result)
+        preview = await download_url_to_image_tensor(preview_url, cls=cls) if preview_url else image
+        ui = save_generation_output(preview, "seedream_layerize")
+        if out_layers:
+            ui = {**ui, "text": [layers_json]}
+        return IO.NodeOutput(preview, layers_json, ui=ui)
+
+
+# =============================================================================
 # Use case: Expand / outpaint an image
 # =============================================================================
 
@@ -6098,6 +6159,7 @@ class ReplicateExtension(ComfyExtension):
             FixFacesNode,               # Fix faces in a photo · CodeFormer
             LayerizeGraphicNode,        # Layerize a graphic · Ideogram Layerize
             SplitPhotoLayersNode,       # Split photo into layers · bg-remover + LaMa/Bria Eraser
+            SeedreamLayerizeNode,       # Layerize an image (raster layers) · Seedream 5 Pro Layerize
             OutpaintImageNode,          # Expand / outpaint an image · Flux Fill / Bria Expand
             # Image — analysis
             DescribeImageNode,          # Describe an image · Moondream 2

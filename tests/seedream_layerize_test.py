@@ -61,3 +61,17 @@ def test_parse_prefers_base_layer_dimensions_over_images_fallback():
     }
     _, w, h = parse_seedream_layers(result)
     assert (w, h) == (1024, 768)  # from the base layer, NOT images[0]
+
+
+def test_save_image_to_input_returns_filename(tmp_path, monkeypatch):
+    import numpy as np, torch
+    from comfy_extras import _live_preview
+    monkeypatch.setattr(_live_preview.folder_paths, "get_input_directory", lambda: str(tmp_path))
+    t = torch.zeros((64, 64, 4))  # RGBA, alpha 0 (transparent)
+    fname = _live_preview.save_image_to_input(t, "seedream_layer")
+    assert fname.endswith(".png")
+    saved = tmp_path / fname
+    assert saved.exists()
+    from PIL import Image
+    im = Image.open(saved)
+    assert im.mode == "RGBA"  # transparency preserved
