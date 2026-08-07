@@ -13,7 +13,7 @@ import { resolveReadout } from '~/lib/canvas/capsuleReadout'
 import { resolveNodeIcon, type NodeIcon } from '~/lib/canvas/nodeIcon'
 import { readoutRuleFor, defaultCollapsed } from '~/lib/canvas/capsuleMeta'
 import { isLoraSlotWidgetVisible } from '~/lib/graph/loraSlotVisibility'
-import { loraSlotResetPlan } from '~/lib/graph/loraStyleBlocks'
+import { loraSlotResetPlan, moodboardSlotKey } from '~/lib/graph/loraStyleBlocks'
 import type { CapsuleAction, CapsuleState } from '~/lib/canvas/capsuleAction'
 import { LIVE_PREVIEW_NODE_TYPES } from '~/lib/livePreviewNodes'
 import { allowedAspectRatios, allowedDurations, modelSupportsSeed } from '~/lib/videoModelAdapt'
@@ -546,7 +546,10 @@ const WIDGET_VISIBILITY: Record<string, (widgetName: string, values: any[], defs
   // Flux + LoRAs: four slots, but C and D stay hidden until the immediately
   // preceding slot is filled — a fresh node reads as the two-slot node it replaced.
   // Slot A only browses characters, so style-only users can chain B → C → D.
-  FluxMultiLoRARemoteNode: (name, values, defs) => isLoraSlotWidgetVisible(name, values, defs),
+  // Properties ride along because a moodboard-held slot has NO widget value
+  // ('[None]' picker, blank url) — only `properties.sailor_moodboard_<letter>`
+  // says it's occupied, and without it a moodboard in B never reveals C.
+  FluxMultiLoRARemoteNode: (name, values, defs) => isLoraSlotWidgetVisible(name, values, defs, props.data.properties),
 }
 
 // Sibling of WIDGET_VISIBILITY: per-node option FILTERS for combo widgets.
@@ -933,10 +936,25 @@ const loraScaleByPicker = computed(() => {
 })
 const foldedScaleNames = computed(() =>
   new Set([...loraScaleByPicker.value.values()].map((v) => v.name)))
+
+// A slot holding a MOODBOARD (weightless — moodboards plan 2026-08-06, Task A7)
+// is identified purely by properties.sailor_moodboard_<letter>. The picker card
+// then shows the board's name/thumb and must NOT show a strength row: there are
+// no weights to scale. We suppress by returning no scaleDef for that picker
+// (hasScale keys off scaleMax in WidgetLoraPicker) while foldedScaleNames STILL
+// contains the scale widget — dropping it from the fold would resurrect the
+// standalone scale_<letter> slider below the card, which is worse.
+function moodboardIdForPicker(pickerName: string): string | null {
+  const key = moodboardSlotKey(pickerName)
+  const v = key ? props.data.properties?.[key] : null
+  return typeof v === 'string' && v.trim() !== '' ? v : null
+}
 function loraScaleDef(pickerName: string): any {
+  if (moodboardIdForPicker(pickerName)) return undefined
   return loraScaleByPicker.value.get(pickerName)?.def
 }
 function loraScaleValue(pickerName: string): number | undefined {
+  if (moodboardIdForPicker(pickerName)) return undefined
   const idx = loraScaleByPicker.value.get(pickerName)?.index ?? -1
   return idx >= 0 ? (props.data.widgetsValues?.[idx] as number) : undefined
 }
@@ -982,6 +1000,13 @@ function clearLoraSlot(pickerName: string) {
   const aestheticKey = plan.aestheticKey ?? (plan.picker === 'lora_name' ? 'aesthetic' : null)
   if (aestheticKey && props.data.properties) {
     delete props.data.properties[aestheticKey]
+  }
+
+  // A moodboard-held slot stores its identity here (the widgets above are
+  // already '[None]'/blank for it) — leaving it would keep the card face, the
+  // aesthetic-less slot-filled state, and slot C's visibility all alive.
+  if (plan.moodboardKey && props.data.properties) {
+    delete props.data.properties[plan.moodboardKey]
   }
 }
 
@@ -1754,6 +1779,7 @@ watch(previewImages, (urls) => {
           :is-fixed="isSeedFixed(widget, i)"
           :scale-def="loraScaleDef(widget.name)"
           :scale-value="loraScaleValue(widget.name)"
+          :moodboard-id="moodboardIdForPicker(widget.name) ?? undefined"
           @update:model-value="data.widgetsValues[i] = $event"
           @update:is-fixed="setSeedFixed(widget, i, $event)"
           @update:scale="setLoraScale(widget.name, $event)"

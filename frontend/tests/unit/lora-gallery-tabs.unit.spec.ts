@@ -28,17 +28,22 @@ describe('loraGallerySource', () => {
   const characters = ['char1', 'char2']
   const styles = ['style1']
   const house = ['house1', 'house2', 'house3']
+  const moodboards = ['board1']
 
   it('returns characters for the characters tab', () => {
-    expect(loraGallerySource(characters, styles, house, 'characters')).toBe(characters)
+    expect(loraGallerySource(characters, styles, house, moodboards, 'characters')).toBe(characters)
   })
 
   it('returns styles for the yours tab', () => {
-    expect(loraGallerySource(characters, styles, house, 'yours')).toBe(styles)
+    expect(loraGallerySource(characters, styles, house, moodboards, 'yours')).toBe(styles)
   })
 
   it('returns house items for the house tab', () => {
-    expect(loraGallerySource(characters, styles, house, 'house')).toBe(house)
+    expect(loraGallerySource(characters, styles, house, moodboards, 'house')).toBe(house)
+  })
+
+  it('returns moodboards for the moodboards tab', () => {
+    expect(loraGallerySource(characters, styles, house, moodboards, 'moodboards')).toEqual(moodboards)
   })
 })
 

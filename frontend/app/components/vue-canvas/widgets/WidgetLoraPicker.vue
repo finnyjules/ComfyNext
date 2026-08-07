@@ -7,8 +7,9 @@
  * portable; the gallery modal writes lora_name + aesthetic + prompt back
  * to the node.
  */
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { Sparkles, ChevronRight, X } from 'lucide-vue-next'
+import { useMoodboards } from '~/composables/useMoodboards'
 // By path, not auto-import: Nuxt collapses a duplicated path segment, so
 // `studio/StudioSlider.vue` is `VueCanvasStudioSlider` — and a name that does not
 // resolve renders NOTHING, silently. Bit us once already in ComfyNodeWidget.
@@ -26,6 +27,11 @@ const props = defineProps<{
   scaleMin?: number
   scaleMax?: number
   scaleStep?: number
+  // Moodboard entry id when this slot holds a moodboard instead of a LoRA
+  // (properties.sailor_moodboard_<letter> — moodboards plan 2026-08-06, Task
+  // A7). The pick is weightless, so modelValue stays '[None]': this prop is
+  // what flips the card from the empty state to the board's name + first image.
+  moodboardId?: string
 }>()
 const emit = defineEmits<{
   'update:modelValue': [value: string]
@@ -33,8 +39,31 @@ const emit = defineEmits<{
   clear: []
 }>()
 
-// Strength row shows only when a paired scale exists.
-const hasScale = computed(() => props.scaleMax != null)
+// Moodboard slot: resolve the entry (name) from the app-level library and the
+// board's FIRST image (the entry only stores its folder) from the guarded list
+// route — the MoodboardNode.vue pattern.
+const { byId: moodboardById, loaded: moodboardsLoaded, refresh: refreshMoodboards } = useMoodboards()
+onMounted(() => { if (props.moodboardId && !moodboardsLoaded.value) void refreshMoodboards() })
+watch(() => props.moodboardId, (id) => { if (id && !moodboardsLoaded.value) void refreshMoodboards() })
+const moodboardEntry = computed(() => (props.moodboardId ? moodboardById(props.moodboardId) : undefined))
+const moodboardThumb = ref<string | null>(null)
+watch(() => moodboardEntry.value?.folder, async (folder) => {
+  moodboardThumb.value = null
+  if (!folder) return
+  try {
+    const res = await fetch(`/api/moodboards/images?folder=${encodeURIComponent(folder)}`)
+    if (!res.ok) return
+    const first = ((await res.json()).files ?? [])[0]
+    if (first) moodboardThumb.value =
+      `/api/moodboards/images?folder=${encodeURIComponent(folder)}&file=${encodeURIComponent(first)}`
+  } catch { /* offline dev — sparkle fallback */ }
+}, { immediate: true })
+
+// Strength row shows only when a paired scale exists — and never for a
+// moodboard slot: a moodboard is weightless, there is no strength to scale.
+// (ComfyNode already withholds scaleDef for moodboard slots; this guard keeps
+// the invariant local to the card too.)
+const hasScale = computed(() => props.scaleMax != null && !props.moodboardId)
 // Name the folded scale by what it drives, so it reads clearly (and stops
 // colliding with the node's other "strength" sliders) instead of a bare "strength".
 const scaleLabel = computed(() =>
@@ -45,21 +74,30 @@ const scaleLabel = computed(() =>
 // Noun shown on the button + used to title the gallery. A 'character' picker
 // (e.g. the multi-LoRA node's slot A) browses your characters, not your styles.
 const noun = computed(() => (props.kind === 'character' ? 'Character' : 'Style'))
+// What the FILLED card actually holds — a moodboard slot says so, whatever the
+// slot's own kind framing is.
+const heldNoun = computed(() => (props.moodboardId ? 'Moodboard' : noun.value))
 
 const selected = computed(() => {
+  // Moodboard slot: the picker widget itself is '[None]' (weightless pick), so
+  // the board's name IS the selection. Fall back to a generic label while the
+  // library list is still loading rather than flashing the empty state.
+  if (props.moodboardId) return moodboardEntry.value?.name ?? 'Moodboard'
   const v = (props.modelValue || '').trim()
   if (!v || v === '[None]') return null
   return v.replace(/\.safetensors$/i, '').replace(/_/g, ' ')
 })
 
-// Show the LoRA's generated cover (if any) as the button thumbnail; the <img>
-// errors to the sparkle fallback when no cover exists yet.
+// Show the LoRA's generated cover (or the moodboard's first board image) as
+// the button thumbnail; the <img> errors to the sparkle fallback when no
+// cover exists yet.
 const coverError = ref(false)
 const coverSrc = computed(() => {
+  if (props.moodboardId) return moodboardThumb.value
   const v = (props.modelValue || '').trim()
   return v && v !== '[None]' ? `/api/lora-cover?name=${encodeURIComponent(v)}` : null
 })
-watch(() => props.modelValue, () => { coverError.value = false })
+watch(() => [props.modelValue, props.moodboardId], () => { coverError.value = false })
 
 function openGallery() {
   window.dispatchEvent(new CustomEvent('sailor:openLoraGallery', {
@@ -86,7 +124,7 @@ function clearSlot(event: MouseEvent) {
   <div class="nopan nodrag relative flex w-full flex-col gap-1.5">
     <button
       class="w-full flex items-center gap-2 px-2 py-1.5 rounded-[6px] bg-white/[0.05] hover:bg-white/[0.08] cursor-pointer text-left group transition-colors"
-      :title="selected ? `${selected} — click to change ${noun}` : `Browse your ${noun === 'Character' ? 'Characters' : 'Styles'}`"
+      :title="selected ? `${selected} — click to change ${heldNoun}` : `Browse your ${noun === 'Character' ? 'Characters' : 'Styles'}`"
       @click="openGallery"
     >
       <span class="size-7 rounded-[6px] shrink-0 flex items-center justify-center bg-white/[0.06] overflow-hidden ring-1 ring-inset ring-white/10">
@@ -110,7 +148,7 @@ function clearSlot(event: MouseEvent) {
         <span
           v-if="selected"
           class="text-[9px] text-white/40 truncate uppercase tracking-[0.06em] leading-tight"
-        >{{ noun }}</span>
+        >{{ heldNoun }}</span>
       </span>
       <ChevronRight class="size-3.5 text-white/30 group-hover:text-white/55 shrink-0 transition-colors" />
     </button>
@@ -121,8 +159,8 @@ function clearSlot(event: MouseEvent) {
       v-if="selected"
       type="button"
       class="nopan nodrag absolute -top-1.5 -right-1.5 z-10 size-4 rounded-full bg-[#1c1c1c] border border-white/15 flex items-center justify-center text-white/50 hover:text-white hover:border-white/40 hover:bg-[#2a2a2a] transition-colors cursor-pointer"
-      :aria-label="`Remove this ${noun.toLowerCase()}`"
-      :title="`Remove this ${noun.toLowerCase()}`"
+      :aria-label="`Remove this ${heldNoun.toLowerCase()}`"
+      :title="`Remove this ${heldNoun.toLowerCase()}`"
       @click="clearSlot"
       @mousedown.stop
     >

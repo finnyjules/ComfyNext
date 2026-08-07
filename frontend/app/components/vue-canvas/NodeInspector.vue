@@ -42,7 +42,9 @@ const inspectorWidgets = computed(() => {
   return defs
     .map((widget, index) => ({ widget, index }))
     .filter(({ widget }) => isInspectorWidget(widget))
-    .filter(({ widget }) => isLoraSlotWidgetVisible(widget.name, values, defs))
+    // Properties ride along: a moodboard-held slot's only trace is
+    // properties.sailor_moodboard_<letter> (widgets stay '[None]'/blank).
+    .filter(({ widget }) => isLoraSlotWidgetVisible(widget.name, values, defs, props.node?.data?.properties))
 })
 
 const nodeTitle = computed(() =>

@@ -24,16 +24,34 @@ function valueOf(name: string, values: any[], defs: any[]): unknown {
   return i >= 0 ? values[i] : undefined
 }
 
-/** A slot counts as filled by a real picker selection OR a url override. */
-function slotFilled(slot: string, values: any[], defs: any[]): boolean {
+/**
+ * A slot counts as filled by a real picker selection OR a url override OR a
+ * moodboard reference. A moodboard pick is weightless (moodboards plan
+ * 2026-08-06, Task A7): the picker stays '[None]' and the url stays blank —
+ * its only trace is `properties.sailor_moodboard_<slot>`, so without the
+ * `properties` argument a moodboard in B would never reveal C.
+ */
+export function slotFilled(
+  slot: string,
+  values: any[],
+  defs: any[],
+  properties?: Record<string, any> | null,
+): boolean {
   const pick = valueOf(`lora_${slot}`, values, defs)
   const url = valueOf(`lora_${slot}_url`, values, defs)
   const hasPick = typeof pick === 'string' && pick.trim() !== '' && pick.trim() !== '[None]'
   const hasUrl = typeof url === 'string' && url.trim() !== ''
-  return hasPick || hasUrl
+  const board = properties?.[`sailor_moodboard_${slot}`]
+  const hasBoard = typeof board === 'string' && board.trim() !== ''
+  return hasPick || hasUrl || hasBoard
 }
 
-export function isLoraSlotWidgetVisible(widgetName: string, values: any[], defs: any[]): boolean {
+export function isLoraSlotWidgetVisible(
+  widgetName: string,
+  values: any[],
+  defs: any[],
+  properties?: Record<string, any> | null,
+): boolean {
   const slot = slotOf(widgetName)
   if (!slot) return true                       // not a slot widget → never our business
 
@@ -42,8 +60,8 @@ export function isLoraSlotWidgetVisible(widgetName: string, values: any[], defs:
 
   // Already carries a value — show it, or a saved workflow strands a value
   // that still gets submitted.
-  if (slotFilled(slot, values, defs)) return true
+  if (slotFilled(slot, values, defs, properties)) return true
 
   const prevSlot = SLOTS[idx - 1]
-  return prevSlot ? slotFilled(prevSlot, values, defs) : false
+  return prevSlot ? slotFilled(prevSlot, values, defs, properties) : false
 }

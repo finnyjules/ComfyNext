@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { slotAestheticKey, composeLoraStyle, loraSlotSiblings, loraSlotResetPlan } from '~/lib/graph/loraStyleBlocks'
+import { slotAestheticKey, composeLoraStyle, loraSlotSiblings, loraSlotResetPlan, moodboardSlotKey } from '~/lib/graph/loraStyleBlocks'
 
 /**
  * FluxMultiLoRARemoteNode stacks up to four LoRAs (slots A-D). Before this
@@ -106,24 +106,28 @@ describe('loraSlotSiblings', () => {
 })
 
 describe('loraSlotResetPlan', () => {
-  it('maps each of the four slots to its picker/url/scale/aesthetic names', () => {
+  it('maps each of the four slots to its picker/url/scale/aesthetic/moodboard names', () => {
     expect(loraSlotResetPlan('lora_a')).toEqual({
-      picker: 'lora_a', url: 'lora_a_url', scale: 'scale_a', aestheticKey: 'aesthetic_a',
+      picker: 'lora_a', url: 'lora_a_url', scale: 'scale_a', aestheticKey: 'aesthetic_a', moodboardKey: 'sailor_moodboard_a',
     })
     expect(loraSlotResetPlan('lora_b')).toEqual({
-      picker: 'lora_b', url: 'lora_b_url', scale: 'scale_b', aestheticKey: 'aesthetic_b',
+      picker: 'lora_b', url: 'lora_b_url', scale: 'scale_b', aestheticKey: 'aesthetic_b', moodboardKey: 'sailor_moodboard_b',
     })
     expect(loraSlotResetPlan('lora_c')).toEqual({
-      picker: 'lora_c', url: 'lora_c_url', scale: 'scale_c', aestheticKey: 'aesthetic_c',
+      picker: 'lora_c', url: 'lora_c_url', scale: 'scale_c', aestheticKey: 'aesthetic_c', moodboardKey: 'sailor_moodboard_c',
     })
     expect(loraSlotResetPlan('lora_d')).toEqual({
-      picker: 'lora_d', url: 'lora_d_url', scale: 'scale_d', aestheticKey: 'aesthetic_d',
+      picker: 'lora_d', url: 'lora_d_url', scale: 'scale_d', aestheticKey: 'aesthetic_d', moodboardKey: 'sailor_moodboard_d',
     })
   })
 
-  it('maps lora_name to lora_url/lora_scale with a null aesthetic key', () => {
+  it('clears wipe the moodboard identity key (the plan drives clearLoraSlot)', () => {
+    expect(loraSlotResetPlan('lora_b').moodboardKey).toBe('sailor_moodboard_b')
+  })
+
+  it('maps lora_name to lora_url/lora_scale with null aesthetic + moodboard keys', () => {
     expect(loraSlotResetPlan('lora_name')).toEqual({
-      picker: 'lora_name', url: 'lora_url', scale: 'lora_scale', aestheticKey: null,
+      picker: 'lora_name', url: 'lora_url', scale: 'lora_scale', aestheticKey: null, moodboardKey: null,
     })
   })
 
@@ -133,6 +137,22 @@ describe('loraSlotResetPlan', () => {
       expect(plan.url).toBe('lora_url')
       expect(plan.scale).toBe('lora_scale')
       expect(plan.aestheticKey).toBeNull()
+      expect(plan.moodboardKey).toBeNull()
     }
+  })
+})
+
+describe('moodboardSlotKey', () => {
+  it('maps lora_a..lora_d to sailor_moodboard_<letter>', () => {
+    expect(moodboardSlotKey('lora_a')).toBe('sailor_moodboard_a')
+    expect(moodboardSlotKey('lora_b')).toBe('sailor_moodboard_b')
+    expect(moodboardSlotKey('lora_c')).toBe('sailor_moodboard_c')
+    expect(moodboardSlotKey('lora_d')).toBe('sailor_moodboard_d')
+  })
+
+  it('returns null for the single-LoRA node\'s slot and junk', () => {
+    expect(moodboardSlotKey('lora_name')).toBeNull()
+    expect(moodboardSlotKey('lora_e')).toBeNull()
+    expect(moodboardSlotKey('scale_a')).toBeNull()
   })
 })

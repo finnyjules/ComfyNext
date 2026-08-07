@@ -57,6 +57,12 @@ const props = defineProps<{
   // its schema default without ComfyNode (or this component) hardcoding it.
   scaleDef?: { min?: number; max?: number; step?: number; default?: number }
   scaleValue?: number
+  // For `lora_picker` widgets only: the moodboard entry id this slot holds
+  // (properties.sailor_moodboard_<letter>), when the slot was filled from the
+  // gallery's Moodboards tab. The picker card then shows the board's name +
+  // first image instead of the '[None]' empty state. ComfyNode resolves it —
+  // this component just forwards.
+  moodboardId?: string
 }>()
 const emit = defineEmits<{
   'update:modelValue': [value: any]
@@ -506,6 +512,7 @@ function formatLabel(name: string): string {
         :scale-min="scaleDef?.min"
         :scale-max="scaleDef?.max"
         :scale-step="scaleDef?.step"
+        :moodboard-id="moodboardId"
         @update:model-value="emit('update:modelValue', $event)"
         @update:scale="emit('update:scale', $event)"
         @clear="emit('clear')"

@@ -10,7 +10,7 @@
  * can be unit-tested without a component-mount harness.
  */
 
-export type LoraGalleryTab = 'characters' | 'yours' | 'house'
+export type LoraGalleryTab = 'characters' | 'yours' | 'house' | 'moodboards'
 
 /**
  * Seed the initial tab from the slot's `kind` prop. Slot A (kind: 'character')
@@ -25,16 +25,21 @@ export function initialLoraGalleryTab(kind: 'character' | 'style' | undefined): 
  * Pick which item list backs `visibleItems` for the active tab. `characters`
  * and `styles` are both drawn from the same fetched-and-unfiltered local list
  * (the caller partitions it by `l.kind === 'character'`); `house` is the
- * separate published-style list.
+ * separate published-style list; `moodboards` is the app-level moodboard
+ * library (useMoodboards). The 4th source is a required parameter — not an
+ * optional tail arg — so the compiler flags every call site that hasn't
+ * decided what its moodboard list is.
  */
 export function loraGallerySource<T>(
   characters: T[],
   styles: T[],
   houseItems: T[],
+  moodboards: T[],
   tab: LoraGalleryTab,
 ): T[] {
   if (tab === 'characters') return characters
   if (tab === 'house') return houseItems
+  if (tab === 'moodboards') return moodboards
   return styles
 }
 

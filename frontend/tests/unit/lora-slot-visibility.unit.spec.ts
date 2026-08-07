@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isLoraSlotWidgetVisible } from '~/lib/graph/loraSlotVisibility'
+import { isLoraSlotWidgetVisible, slotFilled } from '~/lib/graph/loraSlotVisibility'
 
 /**
  * FluxMultiLoRARemoteNode has four slots but must look like a two-slot node at
@@ -102,5 +102,31 @@ describe('isLoraSlotWidgetVisible', () => {
     // Proves the rule is "immediately preceding slot", not "any earlier slot".
     const v = values({ lora_b: 'style.safetensors' })
     expect(vis('lora_d', v)).toBe(false)
+  })
+})
+
+describe('moodboard-held slots (weightless fill)', () => {
+  // A moodboard pick leaves the picker at '[None]' and the url blank — the only
+  // trace is properties.sailor_moodboard_<letter>. That must still count as
+  // "filled" or picking a moodboard into B never reveals C.
+  it('slotFilled counts a moodboard property as filling the slot', () => {
+    expect(slotFilled('b', values(), DEFS, { sailor_moodboard_b: 'pastel-miami' })).toBe(true)
+  })
+
+  it('broken control: empty/absent properties leave the slot empty', () => {
+    expect(slotFilled('b', values(), DEFS, {})).toBe(false)
+    expect(slotFilled('b', values(), DEFS)).toBe(false)
+  })
+
+  it('blank or non-string moodboard ids do not fill', () => {
+    expect(slotFilled('b', values(), DEFS, { sailor_moodboard_b: '   ' })).toBe(false)
+    expect(slotFilled('b', values(), DEFS, { sailor_moodboard_b: 42 })).toBe(false)
+  })
+
+  it('reveals C when B holds only a moodboard', () => {
+    expect(isLoraSlotWidgetVisible('lora_c', values(), DEFS, { sailor_moodboard_b: 'pastel-miami' })).toBe(true)
+    expect(isLoraSlotWidgetVisible('scale_c', values(), DEFS, { sailor_moodboard_b: 'pastel-miami' })).toBe(true)
+    // Broken control: same widgets, no moodboard property → still hidden.
+    expect(isLoraSlotWidgetVisible('lora_c', values(), DEFS, {})).toBe(false)
   })
 })

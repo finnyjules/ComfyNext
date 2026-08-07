@@ -26,6 +26,19 @@ export function slotAestheticKey(targetWidget: string): string | null {
   return m ? `aesthetic_${m[1]}` : null
 }
 
+/**
+ * 'lora_b' → 'sailor_moodboard_b' — the per-slot IDENTITY key a moodboard pick
+ * writes next to its aesthetic block (moodboards plan 2026-08-06, Task A7).
+ * A moodboard is weightless: the picker stays '[None]' and no url/scale is
+ * written, so this property is the only trace the slot is occupied — the card
+ * face and slot-visibility both key off it. Mirrors slotAestheticKey: null for
+ * the single-LoRA node's 'lora_name' and anything else non-slot.
+ */
+export function moodboardSlotKey(targetWidget: string): string | null {
+  const m = SLOT_RE.exec(targetWidget)
+  return m ? `sailor_moodboard_${m[1]}` : null
+}
+
 // FluxMultiLoRARemoteNode's slots (lora_a..lora_d) each carry a `lora_<letter>_url`
 // override sibling and a `scale_<letter>` sibling. Derive both from the slot
 // letter so every slot behaves alike — hardcoding just 'lora_a'/'lora_b' left
@@ -48,7 +61,7 @@ export function loraSlotSiblings(target: string): { url: string; scale: string |
  * isn't derived from the lora_<letter> naming scheme.
  */
 export function loraSlotResetPlan(pickerWidgetName: string): {
-  picker: string; url: string; scale: string; aestheticKey: string | null
+  picker: string; url: string; scale: string; aestheticKey: string | null; moodboardKey: string | null
 } {
   const siblings = loraSlotSiblings(pickerWidgetName)
   return {
@@ -56,6 +69,9 @@ export function loraSlotResetPlan(pickerWidgetName: string): {
     url: siblings.url,
     scale: siblings.scale ?? 'lora_scale',
     aestheticKey: slotAestheticKey(pickerWidgetName),
+    // A slot may hold a moodboard instead of a LoRA — clearing must wipe its
+    // identity key too, or the slot still reads as filled after the ×.
+    moodboardKey: moodboardSlotKey(pickerWidgetName),
   }
 }
 

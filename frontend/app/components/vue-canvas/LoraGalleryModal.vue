@@ -17,7 +17,10 @@ import {
   loraGallerySource,
   isCharacterItem,
 } from '~/lib/graph/loraGalleryTabs'
-import { slotAestheticKey, loraSlotSiblings } from '~/lib/graph/loraStyleBlocks'
+import { slotAestheticKey, loraSlotSiblings, moodboardSlotKey } from '~/lib/graph/loraStyleBlocks'
+import { moodboardStyleBlock } from '~/lib/taste/styleBlock'
+import { useMoodboards } from '~/composables/useMoodboards'
+import type { MoodboardEntry } from '~~/shared/taste/moodboard'
 
 const props = defineProps<{
   nodeId: string
@@ -78,6 +81,7 @@ interface LoraItem {
   canGenerateCover: boolean
   duplicateOf: string | null // set on copies (see duplicateItem) — gates Delete
   houseStyle?: HouseStyle    // present only for House-tab entries (drives onConfirm)
+  moodboard?: MoodboardEntry // present only for Moodboards-tab entries (drives onConfirm)
   kind?: string              // 'character' | 'style' (as reported by /api/loras-local) — drives trigger routing in onConfirm, NOT the slot's own kind
 }
 
@@ -103,6 +107,40 @@ const houseItems = computed<LoraItem[]>(() => HOUSE_STYLES.map((s) => ({
   duplicateOf: null,
   houseStyle: s,
 })))
+// Moodboards tab — app-level moodboard library (moodboards plan 2026-08-06,
+// Task A7). Modeled as LoraItem like the House tab, with `moodboard` as the
+// onConfirm discriminator. A board's cover is its FIRST image, resolved via
+// the guarded list route (the entry only stores the folder, not file names) —
+// same pattern as MoodboardNode.vue.
+const { moodboards, refresh: refreshMoodboards } = useMoodboards()
+const moodboardCovers = ref<Record<string, string>>({})
+watch(moodboards, async (list) => {
+  for (const m of list) {
+    if (moodboardCovers.value[m.id]) continue
+    try {
+      const res = await fetch(`/api/moodboards/images?folder=${encodeURIComponent(m.folder)}`)
+      if (!res.ok) continue
+      const first = ((await res.json()).files ?? [])[0]
+      if (first) moodboardCovers.value = {
+        ...moodboardCovers.value,
+        [m.id]: `/api/moodboards/images?folder=${encodeURIComponent(m.folder)}&file=${encodeURIComponent(first)}`,
+      }
+    } catch { /* offline dev — sparkle placeholder */ }
+  }
+}, { immediate: true })
+const moodboardItems = computed<LoraItem[]>(() => moodboards.value.map((m) => ({
+  id: `moodboard:${m.id}`,
+  name: m.name,
+  trigger: null,
+  aesthetic: moodboardStyleBlock(m.reading), // the exact block a pick injects
+  baseModel: null,
+  provider: 'moodboard',
+  sizeBytes: null,
+  coverUrl: moodboardCovers.value[m.id] ?? null,
+  canGenerateCover: false,
+  duplicateOf: null,
+  moodboard: m,
+})))
 // Every slot can browse every library now — no more hard-gating by the
 // slot's own kind. Local LoRAs are fetched unfiltered (see onMounted) and
 // partitioned here at render time.
@@ -116,6 +154,8 @@ const filters = computed(() => {
     { id: 'yours', label: 'Your Styles', count: styleItems.value.length },
   ]
   if (showHouseTab.value) entries.push({ id: 'house', label: 'House Library', count: houseItems.value.length })
+  // Like House: the chip only earns its place once at least one board exists.
+  if (moodboardItems.value.length > 0) entries.push({ id: 'moodboards', label: 'Moodboards', count: moodboardItems.value.length })
   // Hide the strip entirely if there's nothing meaningful to switch between.
   return entries.length > 1 ? entries : undefined
 })
@@ -136,7 +176,7 @@ const currentId = computed<string | null>(() => {
 const focusedId = ref<string | null>(null)
 
 const visibleItems = computed<LoraItem[]>(() => {
-  const source = loraGallerySource(characterItems.value, styleItems.value, houseItems.value, kindTab.value)
+  const source = loraGallerySource(characterItems.value, styleItems.value, houseItems.value, moodboardItems.value, kindTab.value)
   const q = searchQuery.value.trim().toLowerCase()
   if (!q) return source
   return source.filter((l) =>
@@ -149,6 +189,9 @@ const focusedItem = computed<LoraItem | null>(() =>
   visibleItems.value.find((i) => i.id === focusedId.value) ?? null)
 
 onMounted(async () => {
+  // The modal mounts fresh on every open — re-pull the moodboard library so a
+  // board saved since the last open (or in another window) shows up.
+  void refreshMoodboards()
   try {
     const res = await fetch('/api/loras-local')
     if (res.ok) {
@@ -247,6 +290,26 @@ function onConfirm(item: LoraItem) {
     set(targetWidget.value, '[None]')
     if (scaleWidget) set(scaleWidget, houseStyle.suggestedScale ?? 0.8)
     writeAesthetic(data, targetWidget.value, houseStyleStyleBlock(houseStyle))
+    emit('close')
+    return
+  }
+
+  // Moodboard: WEIGHTLESS — no LoRA loads, so no url, and deliberately no
+  // scale write (there is no strength to scale; the picker card suppresses the
+  // slider). The pick is a taste block in `aesthetic_<letter>` plus an
+  // identity key `sailor_moodboard_<letter>` that makes the slot READ as
+  // filled (card face, progressive disclosure) and lets the ✕ clear both.
+  if (item.moodboard) {
+    const entry = item.moodboard
+    stripOrReplacePrevTrig(null)
+    set(targetWidget.value, '[None]')
+    set(loraSlotSiblings(targetWidget.value).url, '')
+    writeAesthetic(data, targetWidget.value, moodboardStyleBlock(entry.reading))
+    const boardKey = moodboardSlotKey(targetWidget.value)
+    if (boardKey) {
+      if (!data.properties) data.properties = {}
+      data.properties[boardKey] = entry.id
+    }
     emit('close')
     return
   }
@@ -418,8 +481,8 @@ async function deleteItem(item: LoraItem) {
 <template>
   <CatalogModal
     :open="true"
-    :title="kindTab === 'house' ? 'House Library' : kindTab === 'characters' ? 'Characters' : 'Your Styles'"
-    :subtitle="loading ? 'Loading…' : (kindTab === 'house' ? `${houseItems.length} published` : kindTab === 'characters' ? `${characterItems.length} trained` : `${styleItems.length} trained`)"
+    :title="kindTab === 'house' ? 'House Library' : kindTab === 'characters' ? 'Characters' : kindTab === 'moodboards' ? 'Moodboards' : 'Your Styles'"
+    :subtitle="loading ? 'Loading…' : (kindTab === 'house' ? `${houseItems.length} published` : kindTab === 'characters' ? `${characterItems.length} trained` : kindTab === 'moodboards' ? `${moodboardItems.length} boards` : `${styleItems.length} trained`)"
     :items="visibleItems"
     :selected-id="currentId"
     :filters="filters"
@@ -427,7 +490,7 @@ async function deleteItem(item: LoraItem) {
     :search-query="searchQuery"
     :search-placeholder="`Search by name, trigger, ${noun.toLowerCase()}…`"
     :confirm-label="focusedItem ? `Use ${focusedItem.name}` : 'Use this'"
-    :empty-message="kindTab === 'house' ? 'No house styles match your search.' : kindTab === 'characters' ? 'No characters yet — tag a trained LoRA as a character in the Characters panel.' : 'No styles yet — create one in the Create a Style tab.'"
+    :empty-message="kindTab === 'house' ? 'No house styles match your search.' : kindTab === 'characters' ? 'No characters yet — tag a trained LoRA as a character in the Characters panel.' : kindTab === 'moodboards' ? 'No moodboards yet — add a Moodboard to the canvas and drop inspiration onto it.' : 'No styles yet — create one in the Create a Style tab.'"
     @close="emit('close')"
     @confirm="(item: any) => onConfirm(item as LoraItem)"
     @update:selected-id="(id: string) => focusedId = id"
@@ -526,11 +589,12 @@ async function deleteItem(item: LoraItem) {
             />
             <div v-else class="text-[15px] font-semibold text-white truncate">{{ (item as LoraItem).name }}</div>
             <div class="text-[11px] text-white/45 mt-0.5">
-              {{ (item as LoraItem).provider === 'replicate' ? 'Trained · Replicate' : (item as LoraItem).provider === 'house' ? 'House style' : 'Local' }}<span v-if="fmtMB((item as LoraItem).sizeBytes)"> · {{ fmtMB((item as LoraItem).sizeBytes) }}</span><span v-if="(item as LoraItem).duplicateOf"> · copy of {{ (item as LoraItem).duplicateOf }}</span>
+              {{ (item as LoraItem).provider === 'replicate' ? 'Trained · Replicate' : (item as LoraItem).provider === 'house' ? 'House style' : (item as LoraItem).provider === 'moodboard' ? 'Moodboard' : 'Local' }}<span v-if="fmtMB((item as LoraItem).sizeBytes)"> · {{ fmtMB((item as LoraItem).sizeBytes) }}</span><span v-if="(item as LoraItem).duplicateOf"> · copy of {{ (item as LoraItem).duplicateOf }}</span>
             </div>
           </div>
-          <!-- House items have no local .json sidecar to PATCH — no Edit affordance. -->
-          <div v-if="!editing && !(item as LoraItem).houseStyle" class="shrink-0 flex items-center gap-1.5">
+          <!-- House/moodboard items have no local .json sidecar to PATCH — no Edit
+               affordance (a moodboard's reading is edited in its own board modal). -->
+          <div v-if="!editing && !(item as LoraItem).houseStyle && !(item as LoraItem).moodboard" class="shrink-0 flex items-center gap-1.5">
             <button
               class="inline-flex items-center gap-1 h-7 px-2 rounded bg-white/[0.06] hover:bg-white/[0.12] text-[11px] text-white/70 hover:text-white transition-colors cursor-pointer disabled:opacity-50"
               title="Make a second style over the same training — same weights, new aesthetic. Free."
