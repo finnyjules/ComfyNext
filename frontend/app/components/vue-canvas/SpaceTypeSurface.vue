@@ -15,6 +15,8 @@ import ShaderFillEditor from '~/components/vue-canvas/widgets/ShaderFillEditor.v
 import { SpaceTypeEngine } from '~/lib/spacetype/engine'
 import { detectWebGL } from '~/lib/spacetype/webgl'
 import { DEFAULT_POST, type PostSettings } from '~/lib/spacetype/post'
+import StudioControlPanel from '~/components/vue-canvas/studio/StudioControlPanel.vue'
+import { postControls, POST_SECTIONS } from '~/lib/studio/post/controls'
 import type { SpaceTypeState } from '~/lib/spacetype/state'
 import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
 import { encodeFrames, type EncodeFramesResult } from '~/lib/engine/encodeVideo'
@@ -167,9 +169,23 @@ const loopDuration = ref(6)
 const transparent = ref(false)
 const bgColor = ref('#0e0e10')
 const projection = ref<'perspective' | 'isometric'>('perspective')
-// Shared post-processing (bloom / colour / chroma / lens blur) — applies to EVERY effect, live in
-// the preview and in exports. Lives on the surface (global), persisted in the node config.
+// Shared post-processing (bloom / colour / chroma / lens blur / halftone / dot screen / glitch /
+// film / grain / vignette / duotone) — applies to EVERY effect, live in the preview and in
+// exports. Lives on the surface (global), persisted in the node config.
 const post = reactive<PostSettings>({ ...DEFAULT_POST })
+// StudioControlPanel driven by the shared manifest (postControls({ host: 'three' }) — Space
+// Type is a three.js host with no depth buffer, so ambient occlusion is withheld). Panel keys
+// are `post.<field>`; these two functions strip the prefix and read/write the reactive `post`
+// object directly — mirrors Scene3DStudioSurface.vue's readPost/setPost over its own doc.post.
+function postField(key: string): keyof PostSettings {
+  return key.slice('post.'.length) as keyof PostSettings
+}
+function readPost(key: string): string | number | boolean {
+  return post[postField(key)] as string | number | boolean
+}
+function setPost(key: string, value: string | number | boolean): void {
+  ;(post as Record<string, unknown>)[postField(key)] = value
+}
 // Off-centre framing (−1…1 = half a frame each way). View-level like projection, so it lives
 // outside the per-effect `params` (which gets wiped on effect switch).
 const panX = ref(0)
@@ -351,13 +367,14 @@ const frozenFieldCount = ref(0)
 // Collapsible control sections. Effect controls declare their `group`; surface-only
 // controls (gradient stops, loop, dimensions, transparent) are injected per section.
 const SECTION_ORDER = SPACE_TYPE_SECTIONS
-// Sections that should start collapsed; everything else starts open. 'Post' is a
-// surface-injected section (not in SPACE_TYPE_SECTIONS) rendered as a standalone card.
+// Sections that should start collapsed; everything else starts open. Post/Effects is
+// now StudioControlPanel-driven (schema `sectionToggle` decides its own open state,
+// per effect) and no longer reads this map — see the panel further down.
 const DEFAULT_COLLAPSED = new Set([
-  'Layout', 'Skew', 'Warp', 'Stroke', 'Doodles', 'Shadow', 'Wave', 'Motion', 'Transform', 'Post', 'Output', 'Camera',
+  'Layout', 'Skew', 'Warp', 'Stroke', 'Doodles', 'Shadow', 'Wave', 'Motion', 'Transform', 'Output', 'Camera',
 ])
 const openSections = reactive<Record<string, boolean>>(
-  Object.fromEntries([...SPACE_TYPE_SECTIONS, 'Post'].map(name => [name, !DEFAULT_COLLAPSED.has(name)])),
+  Object.fromEntries(SPACE_TYPE_SECTIONS.map(name => [name, !DEFAULT_COLLAPSED.has(name)])),
 )
 const sections = computed(() =>
   SECTION_ORDER.map(name => ({ name, controls: effect.value.controls.filter(c => c.group === name) })),
@@ -1849,48 +1866,21 @@ async function exportWebEmbed() {
           </div>
         </StudioSection>
 
-        <!-- Shared post-processing — applies to every effect, live + in exports. -->
-        <StudioSection v-show="inspectorTab === 'design'" title="Post" :open="openSections.Post">
-          <div class="space-y-3">
-            <label data-control class="flex items-center justify-between text-xs text-white/70">
-              <span>Bloom</span><StudioSwitch v-model="post.bloom" />
-            </label>
-            <template v-if="post.bloom">
-              <div data-control class="text-xs"><label class="mb-1 flex justify-between text-white/50"><span>Strength</span><span class="text-white/80">{{ post.bloomStrength.toFixed(2) }}</span></label>
-                <input type="range" min="0" max="3" step="0.05" v-studio-reset v-model.number="post.bloomStrength" class="studio-range w-full" /></div>
-              <div data-control class="text-xs"><label class="mb-1 flex justify-between text-white/50"><span>Radius</span><span class="text-white/80">{{ post.bloomRadius.toFixed(2) }}</span></label>
-                <input type="range" min="0" max="1" step="0.05" v-studio-reset v-model.number="post.bloomRadius" class="studio-range w-full" /></div>
-              <div data-control class="text-xs"><label class="mb-1 flex justify-between text-white/50"><span>Threshold</span><span class="text-white/80">{{ post.bloomThreshold.toFixed(2) }}</span></label>
-                <input type="range" min="0" max="1" step="0.05" v-studio-reset v-model.number="post.bloomThreshold" class="studio-range w-full" /></div>
-            </template>
-
-            <label data-control class="flex items-center justify-between text-xs text-white/70">
-              <span>Color</span><StudioSwitch v-model="post.color" />
-            </label>
-            <template v-if="post.color">
-              <div data-control class="text-xs"><label class="mb-1 flex justify-between text-white/50"><span>Exposure</span><span class="text-white/80">{{ post.exposure.toFixed(2) }}</span></label>
-                <input type="range" min="0.2" max="2" step="0.05" v-studio-reset v-model.number="post.exposure" class="studio-range w-full" /></div>
-              <div data-control class="text-xs"><label class="mb-1 flex justify-between text-white/50"><span>Contrast</span><span class="text-white/80">{{ post.contrast.toFixed(2) }}</span></label>
-                <input type="range" min="0" max="2" step="0.05" v-studio-reset v-model.number="post.contrast" class="studio-range w-full" /></div>
-              <div data-control class="text-xs"><label class="mb-1 flex justify-between text-white/50"><span>Saturation</span><span class="text-white/80">{{ post.saturation.toFixed(2) }}</span></label>
-                <input type="range" min="0" max="2" step="0.05" v-studio-reset v-model.number="post.saturation" class="studio-range w-full" /></div>
-              <div data-control class="text-xs"><label class="mb-1 flex justify-between text-white/50"><span>Hue</span><span class="text-white/80">{{ post.hue.toFixed(2) }}</span></label>
-                <input type="range" min="-3.14" max="3.14" step="0.05" v-studio-reset v-model.number="post.hue" class="studio-range w-full" /></div>
-            </template>
-
-            <label data-control class="flex items-center justify-between text-xs text-white/70">
-              <span>Chroma</span><StudioSwitch v-model="post.chroma" />
-            </label>
-            <div v-if="post.chroma" data-control class="text-xs"><label class="mb-1 flex justify-between text-white/50"><span>Amount</span><span class="text-white/80">{{ post.chromaAmount.toFixed(2) }}</span></label>
-              <input type="range" min="0" max="1.5" step="0.02" v-studio-reset v-model.number="post.chromaAmount" class="studio-range w-full" /></div>
-
-            <label data-control class="flex items-center justify-between text-xs text-white/70">
-              <span>Lens blur</span><StudioSwitch v-model="post.blur" />
-            </label>
-            <div v-if="post.blur" data-control class="text-xs"><label class="mb-1 flex justify-between text-white/50"><span>Amount</span><span class="text-white/80">{{ post.blurAmount.toFixed(3) }}</span></label>
-              <input type="range" min="0" max="0.04" step="0.002" v-studio-reset v-model.number="post.blurAmount" class="studio-range w-full" /></div>
-          </div>
-        </StudioSection>
+        <!-- Shared post-processing (Effects Unification Task 4) — applies to every effect,
+             live + in exports. Schema-driven: postControls({ host: 'three' }) is the single
+             source (Space Type is a three.js host with no depth buffer, so ambient occlusion
+             is withheld), POST_SECTIONS is the order allow-list groupIntoSections() uses.
+             This un-hides Space Type's already-built halftone/dot screen/glitch/film passes
+             (their post.*.enabled fields already existed and post.ts already toggled them,
+             they just had no switch) alongside the new grain/vignette/duotone passes wired
+             in Task 3 — mirrors GradientStudioSurface.vue / Scene3DStudioSurface.vue's panel. -->
+        <StudioControlPanel
+          v-show="inspectorTab === 'design'"
+          :controls="postControls({ host: 'three' })"
+          :order="POST_SECTIONS"
+          :value="(k) => readPost(k)"
+          @set="(k, v) => setPost(k, v)"
+        />
 
     </template>
     <!-- StudioActionsFooter lives in the modal's reserved bottom-right actions footer
