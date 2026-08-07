@@ -247,6 +247,22 @@ def _b_flux_2_flex(prompt: str, ar: str, seed: int, adv: dict) -> dict:
     return inp
 
 
+def _b_flux_2_dev(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    inp = {
+        "prompt": prompt,
+        "aspect_ratio": _ar_or(_FLUX_2_AR, ar),
+        "resolution": _opt_str(adv, "resolution", "1 MP"),
+        "steps": _opt_int(adv, "steps", 30),
+        "guidance": _opt_float(adv, "guidance", 4.5),
+        "safety_tolerance": _opt_int(adv, "safety_tolerance", 2),
+        "prompt_upsampling": _opt_bool(adv, "prompt_upsampling", True),
+        "output_format": _opt_str(adv, "output_format", "webp"),
+        "output_quality": 90,
+    }
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
 def _b_flux_2_klein(prompt: str, ar: str, seed: int, adv: dict) -> dict:
     inp = {
         "prompt": prompt,
@@ -703,6 +719,33 @@ def _fal_flux_pro_v11(prompt: str, ar: str, seed: int, adv: dict) -> dict:
     return inp
 
 
+def _fal_flux_2_out_fmt(adv: dict) -> str:
+    # fal flux-2 accepts only jpeg/png; our TS default is webp.
+    v = _opt_str(adv, "output_format", "png")
+    return "png" if v == "png" else "jpeg"
+
+
+def _fal_flux_2_basic(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    # fal-ai/flux-2-pro and fal-ai/flux-2-max — same input schema.
+    tol = min(5, max(1, _opt_int(adv, "safety_tolerance", 2)))
+    inp = {
+        "prompt": prompt,
+        "image_size": _fal_image_size(ar),
+        "safety_tolerance": str(tol),
+        "output_format": _fal_flux_2_out_fmt(adv),
+    }
+    _maybe_set_seed(inp, seed)
+    return inp
+
+
+def _fal_flux_2_tunable(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    # fal-ai/flux-2-flex and fal-ai/flux-2-dev — adds steps + guidance.
+    inp = _fal_flux_2_basic(prompt, ar, seed, adv)
+    inp["num_inference_steps"] = _opt_int(adv, "steps", 28)
+    inp["guidance_scale"] = float(adv.get("guidance", 3.5))
+    return inp
+
+
 # Replicate ideogram `style_type` values → fal ideogram `style` enum.
 _FAL_IDEOGRAM_STYLE = {
     "Auto": "AUTO", "General": "GENERAL", "Realistic": "REALISTIC", "Design": "DESIGN",
@@ -857,10 +900,15 @@ MODELS: list[ImageModel] = [
     ImageModel("flux-dev",           "Flux Dev",            "BFL", "black-forest-labs/flux-dev",           sorted(_FLUX_DEV_AR),  _b_flux_dev),
     ImageModel("flux-schnell",       "Flux Schnell",        "BFL", "black-forest-labs/flux-schnell",       sorted(_FLUX_DEV_AR),  _b_flux_schnell,
                fal_slug="fal-ai/flux/schnell", fal_build_input=_fal_flux_schnell, primary="fal"),
-    ImageModel("flux-2-max",         "Flux 2 Max",          "BFL", "black-forest-labs/flux-2-max",         sorted(_FLUX_2_AR),    _b_flux_2_max),
-    ImageModel("flux-2-pro",         "Flux 2 Pro",          "BFL", "black-forest-labs/flux-2-pro",         sorted(_FLUX_2_AR),    _b_flux_2_pro),
-    ImageModel("flux-2-flex",        "Flux 2 Flex",         "BFL", "black-forest-labs/flux-2-flex",        sorted(_FLUX_2_AR),    _b_flux_2_flex),
+    ImageModel("flux-2-max",         "Flux 2 Max",          "BFL", "black-forest-labs/flux-2-max",         sorted(_FLUX_2_AR),    _b_flux_2_max,
+               fal_slug="fal-ai/flux-2-max",  fal_build_input=_fal_flux_2_basic),
+    ImageModel("flux-2-pro",         "Flux 2 Pro",          "BFL", "black-forest-labs/flux-2-pro",         sorted(_FLUX_2_AR),    _b_flux_2_pro,
+               fal_slug="fal-ai/flux-2-pro",  fal_build_input=_fal_flux_2_basic),
+    ImageModel("flux-2-flex",        "Flux 2 Flex",         "BFL", "black-forest-labs/flux-2-flex",        sorted(_FLUX_2_AR),    _b_flux_2_flex,
+               fal_slug="fal-ai/flux-2-flex", fal_build_input=_fal_flux_2_tunable),
     ImageModel("flux-2-klein-4b",    "Flux 2 Klein 4B",     "BFL", "black-forest-labs/flux-2-klein-4b",    sorted(_FLUX_KLEIN_AR), _b_flux_2_klein),
+    ImageModel("flux-2-dev",         "Flux 2 Dev",          "BFL", "black-forest-labs/flux-2-dev",         sorted(_FLUX_2_AR),    _b_flux_2_dev,
+               fal_slug="fal-ai/flux-2-dev",  fal_build_input=_fal_flux_2_tunable),
 
     # Google ------------------------------------------------------------------
     ImageModel("nano-banana-pro",    "Nano Banana Pro",     "Google", "google/nano-banana-pro",            sorted(_NANO_BANANA_PRO_AR), _b_nano_banana_pro,

@@ -304,6 +304,25 @@ export const IMAGE_MODELS: ImageModel[] = [
       { ...OUTPUT_FORMAT_WPJ, default: 'jpg' },
     ],
   },
+  {
+    id: 'flux-2-dev',
+    label: 'Flux 2 Dev',
+    brand: 'BFL',
+    replicateSlug: 'black-forest-labs/flux-2-dev',
+    pitch: 'Open-weight Flux 2 — tunable steps and guidance, self-hostable lineage.',
+    tags: ['flagship', 'typography'],
+    pricePerImage: 0.03,
+    aspectRatios: FLUX_2_AR,
+    defaultAspectRatio: '1:1',
+    advanced: [
+      { name: 'resolution', type: 'select', label: 'Resolution', default: '1 MP',
+        options: ['0.5 MP', '1 MP', '2 MP', '4 MP'] },
+      { name: 'steps', type: 'integer', label: 'Steps', default: 28, min: 1, max: 50 },
+      { name: 'guidance', type: 'float', label: 'Guidance', default: 3.5, min: 1.5, max: 10, step: 0.1 },
+      { name: 'safety_tolerance', type: 'integer', label: 'Safety tolerance', default: 2, min: 1, max: 5 },
+      { ...OUTPUT_FORMAT_WPJ, default: 'webp' },
+    ],
+  },
 
   // ===== Krea ===============================================================
   {
