@@ -6,7 +6,7 @@ Replicate call fails over. Still worth pinning: a fal payload these models
 reject burns the fallover attempt too, and the caller has nowhere left to go.
 """
 
-from comfy_api_nodes.image_models import MODELS, _fal_flux_2_basic, _fal_flux_2_tunable
+from comfy_api_nodes.image_models import MODELS, _b_flux_2_dev, _fal_flux_2_basic, _fal_flux_2_tunable
 
 
 def test_flux_2_pro_has_fal_backup():
@@ -42,3 +42,12 @@ def test_flux_2_dev_exists_and_maps_both_providers():
     spec = next(m for m in MODELS if m.id == "flux-2-dev")
     assert spec.replicate_slug == "black-forest-labs/flux-2-dev"
     assert spec.fal_build_input is _fal_flux_2_tunable
+
+
+def test_b_flux_2_dev_defaults_match_card_and_fal():
+    # The TS card's flux-2-dev advanced defaults are steps=28/guidance=3.5,
+    # and _fal_flux_2_tunable defaults the same way — the Replicate builder
+    # must agree so the model renders consistently on either provider.
+    inp = _b_flux_2_dev("x", "1:1", 0, {})
+    assert inp["steps"] == 28
+    assert inp["guidance"] == 3.5
