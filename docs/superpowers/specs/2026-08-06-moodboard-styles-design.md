@@ -24,9 +24,17 @@ drop images and edit the reading; the style gallery is where you apply it.
 
 The spike proved this channel end to end: Fable's reading of a real board was a bullseye,
 and the style block moved a fixed-seed FLUX render unmistakably into the board's world at
-$0.003/image — the single output the spike's user run praised. The procedural channel
-failed its runs (brief→config translation is immature) and explicitly queues behind the
-agent-fidelity workstream. **The verdict inverted the build order: diffusion first.**
+$0.003/image. The procedural channel failed its runs (brief→config translation is
+immature) and explicitly queues behind the agent-fidelity workstream. **The verdict
+inverted the build order: diffusion first.**
+
+**Run 8 (the five-model bake-off) then settled the channel question:** prose alone carries
+a style's world and hues but loses its texture on every FLUX tier ("meets halfway"), while
+**the board's own images riding along as references delivered full transfer including
+texture** (Nano Banana Pro via the existing `nano-gen` route, which now has automatic fal
+failover). The finding — *prose carries the world, references carry the finish* — is why
+references are v1 scope below, not a fast-follow: without them, v1 ships the lukewarm
+version of the experience.
 
 ## The object
 
@@ -90,8 +98,11 @@ opens the same modal). Flow:
      consumption).
    Everything editable before save — the correction *is* the authorship.
 3. **Preview · ~$(price)** — optional paid button (price computed from the model catalog,
-   never hardcoded): fixed-seed pair, neutral vs. tasted, on a fixed test subject —
-   exactly the taste wall's generation row. The confidence moment before commitment.
+   never hardcoded): a neutral-vs-tasted pair on a fixed test subject — the taste wall's
+   generation row, productized. Two quality tiers in a small select, both price-labeled:
+   **fast** (FLUX schnell pair, ~$0.006, prose-only, fixed seed) and **best** (Nano Banana
+   with 2–3 board exemplars as references — the run-8 winner; no seed control on Gemini).
+   The confidence moment before commitment should be allowed to show the *good* version.
 4. **Name + Save.** Images upload to a server-side folder (the training-dataset storage
    pattern, own `moodboard_<ms>` prefix — the dataset routes' `FOLDER_RE` admits only
    `lora_dataset_\d+`, so moodboards get their own minimal list/serve routes rather than
@@ -115,6 +126,15 @@ UI hides for moodboard slots; reveal-next-slot logic treats them as filled.
 style in C. Each contributes its block in slot order via the per-slot `aesthetic_*` keys
 that landed with multi-LoRA.
 
+**References ride along where the model can take them (v1, per run 8).** When a moodboard
+is applied (slot or wire) to a generation whose model accepts image conditioning, 2–3
+board exemplars attach automatically with the style-only instruction proven on the wall
+("match palette, light, grain and mood; do not copy subjects or composition") — the
+`nano-gen` path (`image_input`, fal failover) is the proven implementation. Models without
+image conditioning get prose-only, unchanged. **Plan-level recon task: enumerate which of
+the product's generator nodes are ref-capable today** — the mechanism ships v1 on
+whichever ones are; widening model coverage is the fast-follow, not the mechanism.
+
 ### Edit / evolve
 Opening an existing moodboard from the gallery reopens the same modal: board shown,
 reading editable, **Re-read** button (re-runs Fable over the stored images — evidence
@@ -125,8 +145,8 @@ survives precisely for this), preview again, save.
 The moodboard is the entry tier of a deliberate spectrum:
 
 > **Read it** (free, instant, editable) → **read + reference** (cents: 2–3 board
-> exemplars ride along as image conditioning for models that take style refs — the
-> sref mechanism, v1.1) → **train it** (dollars, when the style earns weights).
+> exemplars ride along as image conditioning — the sref mechanism, **proven in run 8,
+> v1 on ref-capable models**) → **train it** (dollars, when the style earns weights).
 
 Prose carries a style's *world* (palette, light, mood, era, composition) — most
 sref-class aesthetics live entirely there. Weights remain for texture signatures,
@@ -175,6 +195,9 @@ Slot-apply remains alongside the wire, same duality as images: wire it, or pick 
 per-node.
 
 ## Out of scope, deliberately
+- **No kit-finish pass on generated outputs** — the Compositor-grain enforcement proven on
+  the wall ("the kit guarantees the finish") is the named NEXT fast-follow after v1, not
+  in it: it needs a home in the generation result flow, which is its own small design.
 - **No font wiring** — suggested fonts are display/edit chips; nothing consumes them yet.
 - **No strength dial** — apply is on/off per slot (prompt blocks don't dial cleanly; a
   wording-based strength is a later experiment).
@@ -196,10 +219,15 @@ per-node.
 ## Testing
 Unit: block composition (summary+palette+avoids, empty parts omitted — extend the spike's
 `styleBlock` tests), weightless-slot handling in `composeLoraStyle` order/keys, sidecar
-round-trip, folder-route guards (path traversal, prefix). E2E: create-from-drop with a
-mocked read → save → appears in tab → pick into slot B → prompt payload carries the block
-(assert on the composed prompt, not just UI). Broken-control discipline throughout. The
-paid preview and live Fable read get one manual checklist run (paid-verification pattern).
+round-trip, folder-route guards (path traversal, prefix), taste-edge compile (reading →
+block at run time), ref-attachment gating (ref-capable model gets exemplars + style-only
+instruction; non-capable gets prose only — a broken gate must fail), pile-face scatter
+determinism (same ids → same layout). E2E: create-from-drop with a mocked read → save →
+appears in tab → pick into slot B → prompt payload carries the block (assert on the
+composed prompt, not just UI); wire taste edge → same assertion; saved-workflow round-trip
+proving appended inputs shift no positional widget values. Broken-control discipline
+throughout. The paid preview (both tiers) and live Fable read get one manual checklist
+run (paid-verification pattern).
 
 ## Done when
 A user can add a MoodboardNode from the toolbar, drop images into its modal,
