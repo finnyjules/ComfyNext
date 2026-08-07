@@ -23,7 +23,6 @@ import type { GradientStop } from '~/lib/spacetype/gradient'
 import FontPicker from '~/components/vue-canvas/FontPicker.vue'
 import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
-import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
 import StudioActionsFooter from '~/components/vue-canvas/studio/StudioActionsFooter.vue'
 import StudioSlider from '~/components/vue-canvas/studio/StudioSlider.vue'
 import StudioSegmented from '~/components/vue-canvas/studio/StudioSegmented.vue'
@@ -1738,11 +1737,12 @@ async function exportWebEmbed() {
         </StudioSection>
 
     </template>
-    <!-- Save/Render live in the modal's reserved bottom-right actions footer (shell
-         #actions), like every other studio — not pinned inside the inspector column. -->
+    <!-- StudioActionsFooter lives in the modal's reserved bottom-right actions footer
+         (shell #actions), like every other studio — there is no Save button; saving is
+         automatic (see saveNow/savedFlash above). -->
     <template #actions>
       <StudioActionsFooter :spec="{
-        status: { saved: savedFlash, error: embedErr ? embedMsg : null },
+        status: { saved: savedFlash, error: embedErr ? embedMsg : null, notice: embedErr ? null : embedMsg },
         downloads: [
           { label: 'Download PNG', onClick: downloadPng },
           { label: 'Download video', onClick: downloadVideoFile, busy: baking },

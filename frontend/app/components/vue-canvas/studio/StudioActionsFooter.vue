@@ -7,7 +7,7 @@ import { computed } from 'vue'
 const props = defineProps<{ spec: StudioFooterSpec }>()
 const status = computed(() => resolveStatus(props.spec.status))
 const toneClass: Record<string, string> = {
-  error: 'text-red-400/90', saved: 'text-emerald-400/80', saving: 'text-white/50',
+  error: 'text-red-400/90', saved: 'text-emerald-400/80', saving: 'text-white/50', notice: 'text-white/55',
 }
 </script>
 

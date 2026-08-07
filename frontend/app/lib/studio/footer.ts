@@ -15,6 +15,7 @@ export interface StudioFooterStatus {
   saving?: boolean
   saved?: boolean
   error?: string | null
+  notice?: string | null   // neutral progress / success / warning text
 }
 
 /** The whole footer, declarative. Utilities + status sit left; downloads then
@@ -26,12 +27,13 @@ export interface StudioFooterSpec {
   canvas?: StudioFooterAction[]
 }
 
-/** Status precedence: error > saving > saved. Returns null when idle. */
+/** Status precedence: error > notice > saving > saved. Returns null when idle. */
 export function resolveStatus(
   s?: StudioFooterStatus,
-): { text: string; tone: 'error' | 'saved' | 'saving' } | null {
+): { text: string; tone: 'error' | 'notice' | 'saving' | 'saved' } | null {
   if (!s) return null
   if (s.error) return { text: s.error, tone: 'error' }
+  if (s.notice) return { text: s.notice, tone: 'notice' }
   if (s.saving) return { text: 'Saving…', tone: 'saving' }
   if (s.saved) return { text: 'Saved ✓', tone: 'saved' }
   return null
