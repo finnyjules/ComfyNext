@@ -108,3 +108,69 @@ describe('realignWidgetValues — FluxMultiLoRARemoteNode 2→4 slot migration',
     expect(at('scale_d')).toBe(0.6)
   })
 })
+
+/**
+ * Same technique for GenerateImageNode's B2 expansion (moodboards Plan B):
+ * style_block + style_refs are appended LAST as OPTIONAL inputs, so an old
+ * 6-value widgets_values array (model, prompt, aspect_ratio, seed,
+ * seed_control, model_options) must realign onto the new 8-slot schema with
+ * every pre-existing value staying on its own widget and the two new slots
+ * landing on their '' defaults.
+ */
+const GENERATE_OBJECT_INFO = {
+  GenerateImageNode: {
+    input: {
+      required: {
+        model: [['flux-schnell', 'nano-banana-pro'], { default: 'flux-schnell' }],
+        prompt: ['STRING', { multiline: true, default: '' }],
+        aspect_ratio: [ASPECT_RATIOS, { default: '1:1' }],
+        seed: ['INT', { default: 0, min: 0, control_after_generate: true }],
+        model_options: ['STRING', { default: '{}' }],
+      },
+      optional: {
+        // ── B2 style inputs must stay last — see nodes_replicate.py ──
+        style_block: ['STRING', { multiline: true, default: '' }],
+        style_refs: ['STRING', { default: '' }],
+      },
+    },
+  },
+}
+
+const GENERATE_EXPECTED_ORDER = [
+  'model', 'prompt', 'aspect_ratio',
+  'seed', 'seed_control',
+  'model_options',
+  'style_block', 'style_refs',
+]
+
+// A workflow saved before B2: 6 values in the old order.
+const OLD_GENERATE_WIDGETS_VALUES = [
+  'nano-banana-pro', 'a lighthouse at dusk', '16:9', 777, 'randomize', '{"resolution":"2K"}',
+]
+
+describe('realignWidgetValues — GenerateImageNode style_block/style_refs expansion', () => {
+  it('preserves every pre-existing saved value when the style inputs land last', () => {
+    const wf = {
+      nodes: [{ type: 'GenerateImageNode', widgets_values: [...OLD_GENERATE_WIDGETS_VALUES] }],
+    }
+    const out = realignWidgetValues(wf as any, GENERATE_OBJECT_INFO as any)
+    const wv = out.nodes[0].widgets_values as any[]
+    const at = (name: string) => {
+      const i = GENERATE_EXPECTED_ORDER.indexOf(name)
+      expect(i).toBeGreaterThanOrEqual(0)
+      return wv[i]
+    }
+
+    expect(wv).toHaveLength(GENERATE_EXPECTED_ORDER.length)
+    expect(at('model')).toBe('nano-banana-pro')
+    expect(at('prompt')).toBe('a lighthouse at dusk')
+    expect(at('aspect_ratio')).toBe('16:9')
+    expect(at('seed')).toBe(777)
+    expect(at('seed_control')).toBe('randomize')
+    expect(at('model_options')).toBe('{"resolution":"2K"}')
+
+    // The new slots land on their '' defaults — never on a stray saved value.
+    expect(at('style_block')).toBe('')
+    expect(at('style_refs')).toBe('')
+  })
+})

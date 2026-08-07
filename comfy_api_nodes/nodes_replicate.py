@@ -2450,19 +2450,53 @@ class GenerateImageNode(IO.ComfyNode):
                     extra_dict={"sailor_widget": "internal"},
                     tooltip="JSON bag of per-model advanced settings — edited via the gallery modal.",
                 ),
+                # ── Moodboard style inputs (moodboards Plan B, Task B2). APPENDED
+                # LAST — widgets_values is positional, so inserting either of
+                # these earlier would shift every saved value after it onto the
+                # wrong widget (see the schema-order guard test). The frontend
+                # writes style_block BY NAME at submit time (composeLoraStyle →
+                # the node's `properties.aesthetic`); the widget itself stays
+                # hidden (`sailor_widget: "internal"`), like model_options.
+                IO.String.Input(
+                    "style_block",
+                    default="",
+                    multiline=True,
+                    optional=True,
+                    extra_dict={"sailor_widget": "internal"},
+                    tooltip="Style block prepended to the prompt — written by the moodboard/style apply, not by hand.",
+                ),
+                # Reference-image payload (`{folder, files[]}` JSON, input-dir
+                # relative). Threaded to execute but CONSUMED in Task B3 —
+                # declared now so both new inputs land in one schema append.
+                IO.String.Input(
+                    "style_refs",
+                    default="",
+                    multiline=False,
+                    optional=True,
+                    extra_dict={"sailor_widget": "internal"},
+                    tooltip="Moodboard reference-image payload (JSON) for ref-capable models.",
+                ),
             ],
             outputs=[IO.Image.Output()],
             price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.03,"format":{"approximate":true}}'),
         )
 
     @classmethod
-    async def execute(cls, model, prompt, aspect_ratio, seed, model_options="{}"):
+    async def execute(cls, model, prompt, aspect_ratio, seed, model_options="{}",
+                      style_block="", style_refs=""):
         spec = _IMAGE_MODELS_BY_ID.get(model)
         if spec is None:
             raise RuntimeError(
                 f"Unknown image model id: {model!r}. "
                 f"Known: {list(_IMAGE_MODELS_BY_ID)}"
             )
+        # Moodboard/style block rides ahead of the subject prompt — same
+        # ordering as the FLUX LoRA nodes' client-side prompt fold.
+        # `style_refs` is deliberately unused here: Task B3 turns it into
+        # reference images for ref-capable models (accepts_refs gate).
+        style_block = (style_block or "").strip()
+        if style_block:
+            prompt = f"{style_block} {prompt}"
         # Tolerate empty / missing / malformed model_options — every field is
         # optional and the per-model builder applies safe defaults.
         try:

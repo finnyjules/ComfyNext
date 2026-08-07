@@ -11,7 +11,7 @@ import {
 import { toast } from 'vue-sonner'
 import { useDeliverables } from '~/composables/useDeliverables'
 import { peekPendingPromote } from '~/lib/draft/runMeta'
-import { composeLoraStyle } from '~/lib/graph/loraStyleBlocks'
+import { injectLoraStyleIntoPrompt } from '~/lib/graph/styleInject'
 import { applyPendingPromotes } from '~/lib/draft/promote'
 import { healDanglingLinks, stripVarsLinks, collectKeepSet, collectKeepSetDownstream } from '~/composables/useFilteredPrompt'
 import { stripFrontendOnlyNodes } from '~/utils/stripFrontendOnlyNodes'
@@ -550,26 +550,9 @@ function requestShadowParity(workflow: any, label: string) {
 // When `targetIds` is provided, runs only that subset (plus upstream deps).
 // Forgiving filtering happens via buildFilteredWorkflow which mutes everything
 // outside the keep set; LiteGraph already honors mode=2 at queue time.
-// FluxLoRARemoteNode keeps its style/aesthetic in a node PROPERTY
-// (`properties.aesthetic`) rather than a ComfyUI input — that keeps the node
-// schema stable (a new input would de-sync the embedded canvas and scramble
-// widget positions). Here, at submit time, we fold it into the prompt widget
-// (index 0) on the outgoing workflow copy only.
-function injectLoraStyleIntoPrompt(workflow: any) {
-  for (const node of workflow?.nodes || []) {
-    if (node?.type !== 'FluxLoRARemoteNode' && node?.type !== 'FluxMultiLoRARemoteNode') continue
-    // Both keep `prompt` at widget index 0, so the same fold applies.
-    // composeLoraStyle concatenates the node-level `aesthetic` (with its
-    // `tasteProfile` legacy fallback) and, on FluxMultiLoRARemoteNode, every
-    // filled slot's `aesthetic_a`..`aesthetic_d` block — see loraStyleBlocks.ts.
-    const style = composeLoraStyle(node.properties)
-    if (!style) continue
-    const wv = node.widgets_values
-    if (!Array.isArray(wv)) continue
-    const prompt = String(wv[0] ?? '')
-    wv[0] = prompt ? `${style} ${prompt}` : style
-  }
-}
+// Style injection (FLUX LoRA prompt fold + GenerateImageNode's name-resolved
+// style_block write) lives in ~/lib/graph/styleInject.ts so it's unit-testable
+// — the run path calls it on the outgoing workflow copy only (see assembleTake).
 
 async function runVueWorkflow(
   targetIds?: string[],
@@ -726,8 +709,11 @@ async function runVueWorkflow(
 
     // Prepend each FluxLoRARemoteNode's "Style" field (a node property, NOT a
     // ComfyUI input — keeps the schema stable) into its prompt widget at submit
-    // time. The live node's prompt stays clean (we only mutate this copy).
-    injectLoraStyleIntoPrompt(plainWorkflow)
+    // time, and write each GenerateImageNode's composed block into its hidden
+    // style_block widget (resolved BY NAME from the objectInfo widget order —
+    // its prompt is not at index 0). The live node's widgets stay clean (we
+    // only mutate this copy).
+    injectLoraStyleIntoPrompt(plainWorkflow, objectInfo.value)
 
     // Bake any Compositor text/shape overlays into uploaded image layers and
     // wire them into the workflow (mutates plainWorkflow in place).

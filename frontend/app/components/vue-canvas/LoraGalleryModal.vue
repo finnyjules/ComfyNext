@@ -18,6 +18,7 @@ import {
   isCharacterItem,
 } from '~/lib/graph/loraGalleryTabs'
 import { slotAestheticKey, loraSlotSiblings, moodboardSlotKey } from '~/lib/graph/loraStyleBlocks'
+import { applyMoodboardToGenerateNode } from '~/lib/graph/moodboardApply'
 import { moodboardStyleBlock } from '~/lib/taste/styleBlock'
 import { useMoodboards } from '~/composables/useMoodboards'
 import type { MoodboardEntry } from '~~/shared/taste/moodboard'
@@ -26,13 +27,21 @@ const props = defineProps<{
   nodeId: string
   nodes: any[]
   widgetName?: string          // which combo to write (default 'lora_name')
-  kind?: 'character' | 'style'  // 'character' → browse characters, not styles
+  // 'character' → browse characters, not styles; 'moodboard' → open on the
+  // Moodboards tab (the Generate-an-image chip, widgetName 'style_block').
+  kind?: 'character' | 'style' | 'moodboard'
 }>()
 const emit = defineEmits<{ close: [] }>()
 
 // The combo this gallery edits, and whether it browses characters or styles.
 const targetWidget = computed(() => props.widgetName || 'lora_name')
 const isCharacter = computed(() => props.kind === 'character')
+// A NON-slot target: GenerateImageNode's hidden style_block sentinel. There is
+// no picker combo / url sibling to write — a pick lands entirely in node
+// PROPERTIES (aesthetic + sailor_moodboard), so every widgets_values write in
+// onConfirm must be skipped for it (writing '[None]' into the hidden
+// style_block STRING would corrupt the outgoing prompt).
+const isPropertyTarget = computed(() => targetWidget.value === 'style_block')
 
 // One-time migration: before per-slot style blocks existed, only slot B could
 // ever receive a style (slot A was character-only and the House tab was
@@ -283,6 +292,13 @@ function onConfirm(item: LoraItem) {
   // already treats it as "unset" above.
   if (item.houseStyle) {
     const houseStyle = item.houseStyle
+    // Non-slot target (style_block chip): the block is the whole pick — there
+    // is no LoRA slot to load weights into on GenerateImageNode.
+    if (isPropertyTarget.value) {
+      writeAesthetic(data, targetWidget.value, houseStyleStyleBlock(houseStyle))
+      emit('close')
+      return
+    }
     stripOrReplacePrevTrig(null)
     const { url: urlWidget, scale: scaleWidget } = loraSlotSiblings(targetWidget.value)
     const isMultiSlot = scaleWidget !== null
@@ -301,6 +317,14 @@ function onConfirm(item: LoraItem) {
   // filled (card face, progressive disclosure) and lets the ✕ clear both.
   if (item.moodboard) {
     const entry = item.moodboard
+    // Non-slot target (GenerateImageNode's style_block chip): pure property
+    // writes — plain `aesthetic` + node-level `sailor_moodboard` — via the
+    // shared helper the B4 wire will reuse. No widget is touched.
+    if (isPropertyTarget.value) {
+      applyMoodboardToGenerateNode(data, entry)
+      emit('close')
+      return
+    }
     stripOrReplacePrevTrig(null)
     set(targetWidget.value, '[None]')
     set(loraSlotSiblings(targetWidget.value).url, '')
@@ -316,10 +340,15 @@ function onConfirm(item: LoraItem) {
 
   const trig = item.trigger?.trim()
   stripOrReplacePrevTrig(trig)
-  // The URL-override sibling for this slot, cleared so the picked name drives.
-  const urlOverride = loraSlotSiblings(targetWidget.value).url
-  set(targetWidget.value, item.id)
-  set(urlOverride, '')
+  // Non-slot target: no picker combo/url sibling exists — the aesthetic (or a
+  // character trigger, below) is all that can land. Never write item.id into
+  // the hidden style_block widget.
+  if (!isPropertyTarget.value) {
+    // The URL-override sibling for this slot, cleared so the picked name drives.
+    const urlOverride = loraSlotSiblings(targetWidget.value).url
+    set(targetWidget.value, item.id)
+    set(urlOverride, '')
+  }
 
   if (isCharacterItem(item)) {
     // Character: put its trigger in the prompt (activates the LoRA). Leave the

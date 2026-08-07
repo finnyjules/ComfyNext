@@ -14,6 +14,10 @@ import { resolveNodeIcon, type NodeIcon } from '~/lib/canvas/nodeIcon'
 import { readoutRuleFor, defaultCollapsed } from '~/lib/canvas/capsuleMeta'
 import { isLoraSlotWidgetVisible } from '~/lib/graph/loraSlotVisibility'
 import { loraSlotResetPlan, moodboardSlotKey } from '~/lib/graph/loraStyleBlocks'
+import { clearMoodboardFromGenerateNode } from '~/lib/graph/moodboardApply'
+// By path, not auto-import — Nuxt collapses duplicated path segments and an
+// unresolved name renders NOTHING, silently (see WidgetLoraPicker's note).
+import WidgetMoodboardChip from '~/components/vue-canvas/widgets/WidgetMoodboardChip.vue'
 import type { CapsuleAction, CapsuleState } from '~/lib/canvas/capsuleAction'
 import { LIVE_PREVIEW_NODE_TYPES } from '~/lib/livePreviewNodes'
 import { allowedAspectRatios, allowedDurations, modelSupportsSeed } from '~/lib/videoModelAdapt'
@@ -949,6 +953,26 @@ function moodboardIdForPicker(pickerName: string): string | null {
   const v = key ? props.data.properties?.[key] : null
   return typeof v === 'string' && v.trim() !== '' ? v : null
 }
+// GenerateImageNode's moodboard chip (moodboards Plan B, Task B2). NODE-FACE
+// row rather than a sailor_widget-driven ComfyNodeWidget: the backing
+// style_block/style_refs inputs must stay `sailor_widget: "internal"` (hidden
+// — the widget loop filters them), and the chip's state is node PROPERTIES
+// (`sailor_moodboard` + `aesthetic`), not a widget value. Picking goes through
+// the LoRA gallery with kind 'moodboard' and the style_block sentinel target.
+const generateMoodboardId = computed<string | null>(() => {
+  if (props.data.nodeType !== 'GenerateImageNode') return null
+  const v = props.data.properties?.sailor_moodboard
+  return typeof v === 'string' && v.trim() !== '' ? v : null
+})
+function openGenerateMoodboardGallery() {
+  window.dispatchEvent(new CustomEvent('sailor:openLoraGallery', {
+    detail: { nodeId: props.id, widgetName: 'style_block', kind: 'moodboard' },
+  }))
+}
+function clearGenerateMoodboard() {
+  clearMoodboardFromGenerateNode(props.data)
+}
+
 function loraScaleDef(pickerName: string): any {
   if (moodboardIdForPicker(pickerName)) return undefined
   return loraScaleByPicker.value.get(pickerName)?.def
@@ -1786,6 +1810,16 @@ watch(previewImages, (urls) => {
           @clear="clearLoraSlot(widget.name)"
         />
       </template>
+      <!-- Moodboard chip — Generate-an-image only (moodboards Plan B, Task B2).
+           A node-face row, not a widget: its backing style_block input is
+           internal/hidden and the applied board lives in node properties. -->
+      <div v-if="data.nodeType === 'GenerateImageNode'" class="px-2.5">
+        <WidgetMoodboardChip
+          :moodboard-id="generateMoodboardId ?? undefined"
+          @open="openGenerateMoodboardGallery"
+          @clear="clearGenerateMoodboard"
+        />
+      </div>
       <!-- Grouped widgets render under collapsible headers. For Compositor we
            hide layer groups whose layer index is beyond the visible-input
            count, so the body stays in sync with the grow-on-connect ports. -->

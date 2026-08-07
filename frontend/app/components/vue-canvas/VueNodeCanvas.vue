@@ -4396,7 +4396,7 @@ const textEffectGalleryOpenForId = ref<string | null>(null)
 const shotPresetGalleryOpenForId = ref<string | null>(null)
 const loraGalleryOpenForId = ref<string | null>(null)
 const loraGalleryWidgetName = ref<string>('lora_name')
-const loraGalleryKind = ref<'character' | 'style'>('style')
+const loraGalleryKind = ref<'character' | 'style' | 'moodboard'>('style')
 const voiceGalleryOpenForId = ref<string | null>(null)
 const voiceGalleryWidgetName = ref<string>('voice_id')
 const voiceGalleryOptions = ref<string[]>([])
@@ -4434,7 +4434,10 @@ function handleOpenLoraGallery(e: Event) {
   const detail = (e as CustomEvent).detail || {}
   if (!detail.nodeId) return
   loraGalleryWidgetName.value = detail.widgetName || 'lora_name'
-  loraGalleryKind.value = detail.kind === 'character' ? 'character' : 'style'
+  // 'moodboard' opens the gallery straight on the Moodboards tab (the
+  // Generate-an-image chip — moodboards Plan B, Task B2).
+  loraGalleryKind.value = detail.kind === 'character' ? 'character'
+    : detail.kind === 'moodboard' ? 'moodboard' : 'style'
   loraGalleryOpenForId.value = String(detail.nodeId)
 }
 function handleOpenVoiceGallery(e: Event) {

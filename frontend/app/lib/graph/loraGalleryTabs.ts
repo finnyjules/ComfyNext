@@ -15,10 +15,14 @@ export type LoraGalleryTab = 'characters' | 'yours' | 'house' | 'moodboards'
 /**
  * Seed the initial tab from the slot's `kind` prop. Slot A (kind: 'character')
  * still opens on Characters by default — that's its framing, not a gate — and
- * every other slot opens on the user's own styles.
+ * every other slot opens on the user's own styles. `kind: 'moodboard'` (the
+ * Generate-an-image node's chip — moodboards Plan B, Task B2) opens straight
+ * onto the Moodboards tab.
  */
-export function initialLoraGalleryTab(kind: 'character' | 'style' | undefined): LoraGalleryTab {
-  return kind === 'character' ? 'characters' : 'yours'
+export function initialLoraGalleryTab(kind: 'character' | 'style' | 'moodboard' | undefined): LoraGalleryTab {
+  if (kind === 'character') return 'characters'
+  if (kind === 'moodboard') return 'moodboards'
+  return 'yours'
 }
 
 /**

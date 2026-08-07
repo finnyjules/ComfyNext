@@ -546,4 +546,61 @@ describe('graphToPrompt', () => {
       })
     })
   })
+
+  describe('GenerateImageNode style_block (moodboards Plan B, Task B2)', () => {
+    // The node's real widget order: model combo FIRST, prompt second, seed with
+    // a control slot, then the two optional style inputs appended last.
+    const GENERATE_OBJECT_INFO = {
+      GenerateImageNode: {
+        input: {
+          required: {
+            model: [['flux-schnell', 'nano-banana-pro'], { default: 'flux-schnell' }],
+            prompt: ['STRING', { multiline: true, default: '' }],
+            aspect_ratio: [['1:1', '16:9'], { default: '1:1' }],
+            seed: ['INT', { default: 0, min: 0, control_after_generate: true }],
+            model_options: ['STRING', { default: '{}' }],
+          },
+          optional: {
+            style_block: ['STRING', { multiline: true, default: '' }],
+            style_refs: ['STRING', { default: '' }],
+          },
+        },
+      },
+    }
+
+    it('a style_block written by name (positional slot 6) lands in the API payload', () => {
+      const styleBlock = 'In the style of: Sun-bleached pastel still lifes.'
+      const workflow = baseWorkflow({
+        nodes: [
+          {
+            id: 1,
+            type: 'GenerateImageNode',
+            pos: [0, 0],
+            size: [260, 120],
+            // model, prompt, aspect_ratio, seed, seed__control, model_options,
+            // style_block, style_refs — the order widgetSlots derives.
+            widgets_values: [
+              'nano-banana-pro', 'a lighthouse at dusk', '16:9', 777, 'randomize', '{}',
+              styleBlock, '',
+            ],
+            outputs: [{ name: 'IMAGE', type: 'IMAGE', links: [] }],
+          },
+        ],
+        links: [],
+      })
+
+      const prompt = graphToPrompt(workflow, GENERATE_OBJECT_INFO)
+
+      expect(prompt['1'].class_type).toBe('GenerateImageNode')
+      expect(prompt['1'].inputs).toEqual({
+        model: 'nano-banana-pro',
+        prompt: 'a lighthouse at dusk',
+        aspect_ratio: '16:9',
+        seed: 777,
+        model_options: '{}',
+        style_block: styleBlock,
+        style_refs: '',
+      })
+    })
+  })
 })

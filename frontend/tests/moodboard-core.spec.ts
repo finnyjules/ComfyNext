@@ -4,9 +4,9 @@ import path from 'node:path'
 import zlib from 'node:zlib'
 import { fileURLToPath } from 'node:url'
 import { openBlankWorkflow, dropNode, waitForBackend } from './_helpers'
-// The REAL prompt-block composer the app calls at submit time — imported from
-// the same module app/layouts/default.vue uses, not a fixture re-implementation.
-import { composeLoraStyle } from '../app/lib/graph/loraStyleBlocks'
+// The REAL submit-time injection the app calls (app/layouts/default.vue
+// imports this same module) — not a fixture re-implementation.
+import { injectLoraStyleIntoPrompt as realInjectLoraStyle } from '../app/lib/graph/styleInject'
 import { moodboardStyleBlock } from '../app/lib/taste/styleBlock'
 
 // This project is ESM (no __dirname global) — derive it from import.meta.url.
@@ -118,25 +118,12 @@ async function pullSerializedWorkflow(page: Page): Promise<any> {
   })
 }
 
-/**
- * VERBATIM replica of injectLoraStyleIntoPrompt —
- * frontend/app/layouts/default.vue:557-571. That function is component-local
- * (not exported, not window-reachable), so the run-path proof re-runs its
- * exact logic here, on the ACTUAL serialized workflow pulled from the page,
- * calling the REAL imported composeLoraStyle (the very module the app calls).
- * If default.vue's copy drifts, update this replica with it.
- */
-function injectLoraStyleIntoPrompt(workflow: any) {
-  for (const node of workflow?.nodes || []) {
-    if (node?.type !== 'FluxLoRARemoteNode' && node?.type !== 'FluxMultiLoRARemoteNode') continue
-    const style = composeLoraStyle(node.properties)
-    if (!style) continue
-    const wv = node.widgets_values
-    if (!Array.isArray(wv)) continue
-    const prompt = String(wv[0] ?? '')
-    wv[0] = prompt ? `${style} ${prompt}` : style
-  }
-}
+// The run-path injection is now the REAL exported function (Task B2 moved it
+// from default.vue into ~/lib/graph/styleInject.ts) — no more verbatim replica
+// to keep in sync. The objectInfo argument only matters for GenerateImageNode's
+// name-resolved style_block write; the FLUX prompt fold under test here never
+// consults it, so `{}` is exact.
+const injectLoraStyleIntoPrompt = (workflow: any) => realInjectLoraStyle(workflow, {})
 
 // ── run-scoped state (created live, cleaned in afterAll) ────────────────────
 const runTag = Date.now()
@@ -326,8 +313,8 @@ test('moodboard core: create → read → correct → save → apply → compose
     expect(fluxNode.properties?.sailor_moodboard_b).toBe(createdId)
     expect(Array.isArray(fluxNode.widgets_values)).toBe(true)
 
-    // Apply the same injection the app applies at submit time (see the
-    // verbatim replica above; composeLoraStyle is the real import).
+    // Apply the same injection the app applies at submit time — the REAL
+    // exported injectLoraStyleIntoPrompt from ~/lib/graph/styleInject.ts.
     const injected = JSON.parse(JSON.stringify(workflow))
     injectLoraStyleIntoPrompt(injected)
     const wv0 = String((injected.nodes as any[]).find(n => n.type === 'FluxMultiLoRARemoteNode').widgets_values[0])

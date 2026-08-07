@@ -16,7 +16,7 @@ import pytest
 # Pre-import the util shim so nodes_replicate imports cleanly (pre-existing
 # utils/install_util sys.path shadow; required for ComfyUI server import).
 import utils.install_util  # noqa: F401
-from comfy_api_nodes.nodes_replicate import FluxMultiLoRARemoteNode
+from comfy_api_nodes.nodes_replicate import FluxMultiLoRARemoteNode, GenerateImageNode
 
 
 def test_multilora_c_d_inputs_stay_last():
@@ -61,4 +61,45 @@ def test_multilora_picker_slot_order():
             f"LoRA picker slots must appear in A, B, C, D order. "
             f"Found {picker_slots[i]} at index {picker_indices[i]} "
             f"and {picker_slots[i + 1]} at index {picker_indices[i + 1]}."
+        )
+
+
+def test_generate_image_style_inputs_stay_last():
+    """GenerateImageNode's moodboard inputs (style_block, style_refs — Plan B
+    Task B2) must appear strictly AFTER every pre-existing input. The
+    frontend stores widget values positionally; inserting either input
+    mid-schema would silently shift saved values onto the wrong widgets."""
+    schema = GenerateImageNode.define_schema()
+    input_ids = [inp.id for inp in schema.inputs]
+
+    style_inputs = {"style_block", "style_refs"}
+    assert style_inputs <= set(input_ids), (
+        f"GenerateImageNode must declare style_block and style_refs; got {input_ids}"
+    )
+
+    style_indices = [i for i, inp_id in enumerate(input_ids) if inp_id in style_inputs]
+    prior_indices = [i for i, inp_id in enumerate(input_ids) if inp_id not in style_inputs]
+
+    assert min(style_indices) > max(prior_indices), (
+        f"style_block/style_refs must be appended LAST to prevent positional "
+        f"widget_values corruption. First style input "
+        f"'{input_ids[min(style_indices)]}' at index {min(style_indices)} comes "
+        f"before pre-existing input '{input_ids[max(prior_indices)]}' at index "
+        f"{max(prior_indices)}. New inputs must be appended, never inserted."
+    )
+    # style_block before style_refs, so their own relative order can't drift.
+    assert input_ids.index("style_block") < input_ids.index("style_refs")
+
+
+def test_generate_image_style_inputs_are_optional_internal():
+    """Both style inputs are optional, hidden (`sailor_widget: internal`)
+    STRING widgets — the moodboard chip writes them via properties + the
+    submit-time injector, never a visible node control."""
+    schema = GenerateImageNode.define_schema()
+    by_id = {inp.id: inp for inp in schema.inputs}
+    for name in ("style_block", "style_refs"):
+        inp = by_id[name]
+        assert inp.optional is True, f"{name} must be optional"
+        assert (inp.extra_dict or {}).get("sailor_widget") == "internal", (
+            f"{name} must carry sailor_widget: internal"
         )
