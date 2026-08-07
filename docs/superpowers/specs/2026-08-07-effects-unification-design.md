@@ -81,26 +81,38 @@ treated for the 2D-GL host vs a three.js host (the `uniform: null` param drop at
 it wants every effect *except* gtao, with three.js param treatment. The boolean can't
 say that.
 
-Replace `threeD` with an explicit capability. Concretely, `postControls` gains a way to
-say **which effect ids the host supports** (default: all) and **whether to drop
-`uniform: null` params** (the 2D-GL concern), decoupled from gtao inclusion. The precise
-shape is a plan decision, but the behaviour required:
+Replace the `threeD` boolean with a named **host** enum — one value naming what the
+host physically is, which pins both axes (depth availability and param treatment) without
+allowing a nonsensical combination:
 
-- **Gradient/Texture/Shape** (2D GL): supports all except gtao; drops `uniform: null`
-  params. (Equivalent to today's `threeD: false` — must remain byte-identical output.)
-- **Scene3D** (three.js, depth): supports all 12 incl. gtao; keeps params.
-- **Space Type** (three.js, no depth): supports all except gtao; keeps params.
+```ts
+type PostHost = 'gl2d' | 'three' | 'three-depth'
+export function postControls(opts: { host: PostHost }): ControlSpec[]
+```
 
-This is additive and central — one function, one place, so gating a studio is declaring
-its capability, not editing markup. It must not change the three existing 2D studios'
-generated `ControlSpec[]` at all (characterization: snapshot their `postControls` output
-before and after).
+| `host` | Used by | Ambient occlusion (gtao) | `uniform: null` params |
+|---|---|---|---|
+| `'gl2d'` | Gradient, Texture, Shape | excluded | **dropped** (GL-only) |
+| `'three'` | Space Type (three.js, no depth) | excluded | kept |
+| `'three-depth'` | Scene3D (three.js, depth) | included | kept |
+
+- `'gl2d'` must be **byte-identical** to today's `threeD: false` — the three 2D studios'
+  generated `ControlSpec[]` cannot change at all (characterization: snapshot their
+  `postControls` output before and after; assert equal).
+- gtao (the only `threeDOnly` effect) is included **only** for `'three-depth'`.
+- `uniform: null` params are dropped **only** for `'gl2d'` (that drop exists because the
+  2D GL chain, `chain.ts`, has no uniform for those params; the three.js hosts do).
+
+Migrate the three existing call sites (`gradientfx/controls.ts`, `texturefx/controls.ts`,
+`shapefx/controls.ts`) from `{ threeD: false }` to `{ host: 'gl2d' }`. This is additive
+and central — one function, one place — so gating a studio is naming its host, not
+editing markup.
 
 ### 2. UI migration — delete the bespoke sections, render the shared panel
 
 **Space Type** (`SpaceTypeSurface.vue`): delete the hand-written `StudioSection title="Post"`
 (~1705–1745, the 4 inline `StudioSwitch` + `<input type="range">` rows). In its place,
-render a dedicated `StudioControlPanel :controls="postControls(<space-type capability>)"
+render a dedicated `StudioControlPanel :controls="postControls({ host: 'three' })"
 :order="POST_SECTIONS"`, wiring `:value`/`@set` to the `post.*` object — the exact
 pattern Gradient uses at `GradientStudioSurface.vue:1301`. Space Type isn't otherwise on
 `StudioControlPanel`, so this is a *scoped* panel just for the Effects list, sitting
@@ -108,7 +120,7 @@ where the old "Post" section was.
 
 **Scene3D** (`Scene3DStudioSurface.vue`): delete the hand-written `StudioSection title="Effects"`
 (~3991–4069). Replace with the same dedicated `StudioControlPanel` fed
-`postControls(<scene3d capability>)`. Reconcile the agent-facing declarations: Scene3D
+`postControls({ host: 'three-depth' })`. Reconcile the agent-facing declarations: Scene3D
 declares the post sliders in group `'Post'` for the agent at `lib/scene3d/controls.ts:232+`
 while the enable switches lived only in the surface template (`controls.ts:34-36`
 comment). After the migration the manifest is the single declaration for both inspector
@@ -168,7 +180,7 @@ present and off — no rewrite, no compatibility shim.
 
 No component-test framework here (studio precedent), so:
 
-- **Unit**: `postControls(capability)` returns the right effect set per host — Space Type
+- **Unit**: `postControls({ host })` returns the right effect set per host — Space Type
   excludes gtao, Scene3D includes it, and the three 2D studios' output is **unchanged**
   (characterization snapshot before/after). Test the capability filter, not the markup.
 - **Pixel parity (the load-bearing test)**: render grain, vignette, and duotone in Space
