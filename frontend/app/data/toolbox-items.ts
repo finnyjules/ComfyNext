@@ -116,6 +116,7 @@ export const TOOLBOX_SECTIONS: ToolboxSection[] = [
     items: [
       { nodeType: 'Image', label: 'Image', description: 'Universal image artifact. Upload a file, drop one in, or wire upstream — it loads, previews, and (when Export is on) saves.', icon: Image },
       { nodeType: 'Image', label: 'Inpaint', description: 'Paint a region of an image and describe the change — FLUX Fill replaces just that area. Adds an Image node; click its Inpaint button to open the editor.', icon: Brush },
+      { nodeType: 'Moodboard', label: 'Moodboard', description: 'A pile of inspiration images with an editable taste reading — drop references, get a summary and curated palette, apply it to generators as a style.', icon: Images },
     ],
   },
   {

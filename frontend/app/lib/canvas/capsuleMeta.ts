@@ -49,6 +49,8 @@ export const COLLAPSE_TIERS: Record<string, CollapseTier> = {
   collection: 'never',
   'batch-grid': 'never',
   'sketch-pile': 'never',
+  // Moodboard: the pile face IS the resting state — nothing to capsule away.
+  moodboard: 'never',
 
   // Live WebGL preview + manifest-driven sliders on the card itself — the same
   // shape as the studios below, not a fire-and-forget step.

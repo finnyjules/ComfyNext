@@ -223,6 +223,10 @@ export const ARTIFACT_NODE_COMPONENTS: Record<string, string> = {
   // SketchPile: frontend-only sketch results deck — no backend class_type;
   // holds the batch's /view URLs + provenance in properties.sailor_sketch.
   SketchPile: 'sketch-pile',
+  // Moodboard: frontend-only pile card referencing an app-level moodboard
+  // library entry by id (properties.sailor_moodboard) — no backend class_type
+  // in Plan A (Plan B adds the Python twin + ports). Library owns; nodes reference.
+  Moodboard: 'moodboard',
 }
 
 // Reverse mapping: when a node has a dangling output of one of these types,

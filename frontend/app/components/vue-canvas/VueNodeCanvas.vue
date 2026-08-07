@@ -85,6 +85,7 @@ import CharacterSheetNode from '~/components/vue-canvas/CharacterSheetNode.vue'
 import CollectionNode from './CollectionNode.vue'
 import BatchGridNode from './BatchGridNode.vue'
 import SketchPileNode from './SketchPileNode.vue'
+import MoodboardNode from './MoodboardNode.vue'
 import ReferenceNode from '~/components/vue-canvas/ReferenceNode.vue'
 import { buildFilmShotPatch, findShotTarget } from '~/lib/shotdirector/dispatch'
 import { hydrateShotSheet, addRef } from '~/lib/shotdirector/hydrate'
@@ -259,6 +260,7 @@ const nodeTypes = {
   'reference': markRaw(ReferenceNode),
   'batch-grid': markRaw(BatchGridNode),
   'sketch-pile': markRaw(SketchPileNode),
+  'moodboard': markRaw(MoodboardNode),
 } as NodeTypesObject
 const edgeTypes = { comfy: markRaw(ComfyEdge) } as EdgeTypesObject
 const defaultEdgeOptions = { type: 'comfy' }
@@ -1601,6 +1603,17 @@ function createNodeData(nodeType: string, position: { x: number, y: number }, wi
   // Shot Director: three optional CHARACTER cast slots (Task 11 syncs them into the shot sheet).
   if (nodeType === 'ShotDirector' && (!data.data.inputs || data.data.inputs.length === 0)) {
     data.data.inputs = [1, 2, 3].map(i => ({ name: `cast_${i}`, type: 'CHARACTER', link: null, optional: true }))
+  }
+  // Moodboard: frontend-only pile card referencing a moodboard library entry.
+  // NO ports in Plan A (Plan B adds the Python twin + style/image outputs) —
+  // its only persistent state is the library reference id under properties
+  // (the convertToLiteGraph curated-map gotcha: data.* fields don't survive).
+  if (nodeType === 'Moodboard') {
+    data.data.inputs = []
+    data.data.outputs = []
+    if (typeof data.data.properties.sailor_moodboard !== 'string') {
+      data.data.properties.sailor_moodboard = ''
+    }
   }
   // Collection: frontend-only data-table node, one VARS output for wiring
   // rows/columns of named variables into a Smart Layout (or other consumer).

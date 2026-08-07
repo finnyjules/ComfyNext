@@ -320,6 +320,20 @@ const STUDIOS: AgentCapability[] = [
     outputs: [{ name: 'vars', type: 'VARS' }],
     intents: ['variables', 'dataset', 'data table', 'batch generate', 'data merge', 'spreadsheet'],
   },
+  // Moodboard: frontend-only in Plan A (2026-08-06 moodboards plan) — no
+  // backend class_type yet, so frontendOnly:true both synthesizes its palette
+  // entry AND (via studioNodeTypes) puts it in FRONTEND_ONLY_NODE_TYPES so the
+  // Run path strips it. Plan B replaces this with the Python twin + ports.
+  {
+    nodeType: 'Moodboard',
+    kind: 'studio',
+    frontendOnly: true,
+    title: 'Moodboard',
+    summary: 'A pile of inspiration images with an editable taste reading (summary + curated palette + avoids) — apply it to generators as a weightless style.',
+    inputs: [],
+    outputs: [],
+    intents: ['moodboard', 'mood board', 'inspiration board', 'style board', 'add a moodboard', 'board of reference images', 'collect inspiration images'],
+  },
 ]
 
 export const AGENT_CAPABILITIES: AgentCapability[] = [...STUDIOS, ...GENERATORS]
