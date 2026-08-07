@@ -240,3 +240,21 @@ image-accepting input, and reference board images via @refs** — verified live 
 including a saved-workflow round-trip proving the appended inputs shift no positional
 widget values, with the reading editable at every step, and node deletion leaving the
 library entry intact.
+
+## Plan A shipped
+
+**Status (2026-08-06):** Plan A (`2026-08-06-moodboards-a-core.md`) is fully implemented
+on `main` — commit range `fe5d8281c..3d8529883` (A1 library CRUD → A7 gallery tab +
+weightless slot apply), plus the A8 E2E `frontend/tests/moodboard-core.spec.ts` proving
+the whole journey against the live dev server: create → upload → mocked read → edit →
+save → gallery pick into slot B → **the composed prompt carries the block in
+`widgets_values[0]`** (real serialized workflow through the run-path injection, with a
+blank-`aesthetic_b` broken control) → node deletion leaves the library entry intact.
+
+**What remains:**
+- **Plan B** (`2026-08-06-moodboards-b-wires.md`): ports (`style`/`image` out), the
+  Python Moodboard twin, `style_in`/`prompt_in` on the generators, the TASTE edge type,
+  refs-at-generation, @refs exposure of board images.
+- **Paid manual checklist (owed):** one real Fable read on a real board (summary quality
+  + curated palette sanity), and one real generation with a moodboard in a slot (block
+  visible in the served prompt, output plausibly styled).
