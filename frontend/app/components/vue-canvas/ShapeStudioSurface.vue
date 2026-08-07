@@ -23,7 +23,7 @@ import type { ControlSpec } from '~/lib/spacetype/effect'
 import ShaderFillEditor from '~/components/vue-canvas/widgets/ShaderFillEditor.vue'
 import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
-import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
+import StudioActionsFooter from '~/components/vue-canvas/studio/StudioActionsFooter.vue'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
 import StudioColorField from '~/components/vue-canvas/studio/StudioColorField.vue'
 import StudioSwitch from '~/components/vue-canvas/studio/StudioSwitch.vue'
@@ -42,6 +42,8 @@ import { controlsForStudio } from '~/lib/collection/studioControls'
 import type { StudioControlDesc } from '~/lib/collection/studioBindables'
 import { registerStudioParamBaker, unregisterStudioParamBaker } from '~/lib/studio/cascade'
 import { showIfVisible } from '~/lib/studio/sections'
+import { useStudioAutosave } from '~/lib/studio/autosave'
+import { downloadBlobAsFile } from '~/lib/studio/downloadBlob'
 
 // `nodes` is optional (defaults to []) so this surface can be smoke-tested standalone
 // (see the dev lab page) before Task 10 wires it into VueNodeCanvas the way every other
@@ -99,6 +101,10 @@ function closeEditor() {
   try { saveConfig() } catch (e) { console.error('[shape-studio] saveConfig failed', e) }
   emit('close')
 }
+
+// Sticky footer status (StudioActionsFooter): real Saving…/Saved ✓ driven by
+// useStudioAutosave, debounced off `config` — same recipe as GradientStudioSurface.
+const { saving: autoSaving, saved: autoSaved } = useStudioAutosave(() => config.value, saveConfig)
 
 // ── in-product agent — "tune" the shape in natural language, following
 // GradientStudioSurface's useStudioAgent wiring exactly. Shape has no
@@ -434,6 +440,14 @@ async function renderBlobWithOverrides(overrides: Record<string, string | number
   }
 }
 
+// ── real file download (distinct from exportPng, which is the canvas "As image" action:
+// it uploads + drops an Image node + closes the studio). This one just saves a PNG. ─────────
+async function downloadPng() {
+  if (!engine) return
+  const blob = await engine.frameToBlob(canvasW.value, canvasH.value)
+  downloadBlobAsFile(blob, `shape_${Date.now()}.png`)
+}
+
 // ── settings export / import ─────────────────────────────────────────────────────────────
 function exportSettings() {
   const blob = new Blob([JSON.stringify(config.value)], { type: 'application/json' })
@@ -488,14 +502,16 @@ async function onImportFile(e: Event) {
       </div>
     </template>
     <template #actions>
-      <StudioButton variant="secondary" @click="triggerImport">Import settings</StudioButton>
-      <StudioButton variant="secondary" @click="exportSettings">Export settings</StudioButton>
       <input ref="importInput" type="file" accept="application/json" class="hidden" @change="onImportFile" />
-      <span v-if="actionError" class="text-[11px] text-red-400/90">{{ actionError }}</span>
-      <span class="flex-1" />
-      <StudioButton variant="primary" :disabled="!webglOk || exporting" @click="exportPng">
-        {{ exporting ? 'Exporting…' : 'Export PNG' }}
-      </StudioButton>
+      <StudioActionsFooter :spec="{
+        status: { saving: autoSaving, saved: autoSaved, error: actionError || null },
+        utilities: [
+          { label: 'Import settings', onClick: triggerImport },
+          { label: 'Export settings', onClick: exportSettings },
+        ],
+        downloads: [{ label: 'Download PNG', onClick: downloadPng, disabled: !webglOk }],
+        canvas: [{ label: 'As image', onClick: exportPng, busy: exporting, disabled: !webglOk }],
+      }" />
     </template>
     <template #controls>
       <!-- Seed + Re-roll -->
