@@ -391,8 +391,10 @@ async function composeFromBrief(brief: { label: string; text: string }): Promise
 // discipline, generation edition).
 const GEN_SEED = 424242
 const GEN_ASPECT = '16:9' // matches the wall's cell aspect
-const GEN_PRICE_PER_IMAGE = IMAGE_MODELS_BY_ID['flux-schnell']?.pricePerImage ?? 0.003
-const GEN_PAIR_PRICE = `~$${(GEN_PRICE_PER_IMAGE * 2).toFixed(3)}`
+const GEN_MODELS = ['flux-schnell', 'flux-dev'] as const
+const genModel = ref<(typeof GEN_MODELS)[number]>('flux-schnell')
+const genPricePerImage = computed(() => IMAGE_MODELS_BY_ID[genModel.value]?.pricePerImage ?? 0.003)
+const GEN_PAIR_PRICE = computed(() => `~$${(genPricePerImage.value * 2).toFixed(3)}`)
 
 const genPrompt = ref('a small lighthouse on a rocky coast, morning')
 const genBusy = ref(false)
@@ -413,7 +415,7 @@ async function generatePair() {
     try {
       const res = await $fetch<{ images: string[] }>('/api/inpaint/text2img', {
         method: 'POST',
-        body: { prompt: slot.prompt, aspect_ratio: GEN_ASPECT, count: 1, seed: GEN_SEED },
+        body: { prompt: slot.prompt, aspect_ratio: GEN_ASPECT, count: 1, seed: GEN_SEED, model: genModel.value },
       })
       slot.img = res.images?.[0] ?? ''
       if (!slot.img) slot.error = 'endpoint returned no image'
@@ -430,7 +432,7 @@ async function generatePair() {
 // Consistency check: the SAME tasted prompt across three fresh seeds — the
 // dimension where prose-styles are suspected of losing to LoRAs. If the three
 // read as one style, the reading holds; if they scatter, that's the finding.
-const GEN_TRIO_PRICE = `~$${(GEN_PRICE_PER_IMAGE * 3).toFixed(3)}`
+const GEN_TRIO_PRICE = computed(() => `~$${(genPricePerImage.value * 3).toFixed(3)}`)
 const genTrio = reactive<GenSlot[]>([1, 2, 3].map(i => ({ label: `seed ${i}`, prompt: '', img: '', error: '', loading: false })))
 const trioRan = ref(false)
 
@@ -448,7 +450,7 @@ async function generateTrio() {
     try {
       const res = await $fetch<{ images: string[] }>('/api/inpaint/text2img', {
         method: 'POST',
-        body: { prompt, aspect_ratio: GEN_ASPECT, count: 1, seed: GEN_SEED + 1 + i },
+        body: { prompt, aspect_ratio: GEN_ASPECT, count: 1, seed: GEN_SEED + 1 + i, model: genModel.value },
       })
       slot.img = res.images?.[0] ?? ''
       if (!slot.img) slot.error = 'endpoint returned no image'
@@ -591,6 +593,14 @@ const fmt = (v: number | null | undefined) => (v === null || v === undefined ? '
         <label style="font-size:11px;color:#aaa;display:flex;flex-direction:column;gap:4px">Fixed subject prompt
           <input v-model="genPrompt" data-gen-prompt spellcheck="false"
             style="width:340px;background:#15151c;color:#ddd;border:1px solid #2a2a35;border-radius:6px;padding:5px;font-size:11px" />
+        </label>
+        <label style="font-size:11px;color:#aaa;display:flex;flex-direction:column;gap:4px">Model
+          <select v-model="genModel" data-gen-model
+            style="background:#15151c;color:#ddd;border:1px solid #2a2a35;border-radius:6px;padding:5px;font-size:11px">
+            <option v-for="m in GEN_MODELS" :key="m" :value="m">
+              {{ IMAGE_MODELS_BY_ID[m]?.label ?? m }} · ${{ (IMAGE_MODELS_BY_ID[m]?.pricePerImage ?? 0).toFixed(3) }}/img{{ m === 'flux-dev' ? ' · renders texture/grain' : ' · fast, texture-blind' }}
+            </option>
+          </select>
         </label>
         <button :disabled="!summaryA || genBusy || !!busy" data-gen-pair @click="generatePair"
           :title="summaryA ? '' : 'needs a Fable reading — run “Read with Fable” first'"
