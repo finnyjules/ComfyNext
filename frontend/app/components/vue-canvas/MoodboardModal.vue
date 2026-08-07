@@ -13,7 +13,6 @@
 // record in the `nodes` array the canvas passed us).
 import { useMoodboards, uniqueMoodboardId } from '~/composables/useMoodboards'
 import { syncMoodboardWidgets, moodboardRefDescriptors } from '~/lib/graph/moodboardApply'
-import { sectionIds, activeSection, type SectionId } from '~/lib/taste/moodboardModal'
 import type { MoodboardEntry } from '~~/shared/taste/moodboard'
 
 const props = defineProps<{ nodeId?: string | null, nodes?: any[] }>()
@@ -33,8 +32,6 @@ const files = ref<string[]>([])   // stored image filenames (server truth)
 const savedId = ref('')           // library id once saved (slug on first save)
 const createdAt = ref('')
 
-const NAV_LABELS: Record<SectionId, string> = { board: 'Board', reading: 'Reading', palette: 'Palette', avoids: 'Avoids' }
-
 function currentNode() { return props.nodes?.find((n: any) => String(n.id) === String(props.nodeId)) }
 
 onMounted(async () => {
@@ -51,7 +48,6 @@ onMounted(async () => {
     avoids.value = [...entry.reading.avoids]
   }
   await refreshFiles()
-  setupNavObserver()
 })
 
 async function refreshFiles() {
@@ -262,31 +258,6 @@ async function saveBoard() {
   finally { saving.value = false }
 }
 
-// ── floating nav: IntersectionObserver → activeSection ─────────────────────
-const scrollEl = ref<HTMLElement | null>(null)
-const active = ref<string>(sectionIds[0])
-const visibility = new Map<string, boolean>()
-let observer: IntersectionObserver | null = null
-
-function setupNavObserver() {
-  const root = scrollEl.value
-  if (!root || typeof IntersectionObserver === 'undefined') return
-  observer = new IntersectionObserver((entries) => {
-    for (const e of entries) visibility.set((e.target as HTMLElement).dataset.section || '', e.isIntersecting)
-    active.value = activeSection(
-      [...visibility.entries()].map(([id, visible]) => ({ id, visible })),
-      active.value,
-    )
-  }, { root, threshold: 0.05 })
-  for (const el of root.querySelectorAll<HTMLElement>('[data-section]')) observer.observe(el)
-}
-onBeforeUnmount(() => observer?.disconnect())
-
-function goTo(id: string) {
-  scrollEl.value?.querySelector<HTMLElement>(`[data-section="${id}"]`)
-    ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-}
-
 // ── prose textarea autogrow (open text, no box chrome) ─────────────────────
 const summaryEl = ref<HTMLTextAreaElement | null>(null)
 function autogrow() {
@@ -315,89 +286,80 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
     <div
       ref="rootEl" tabindex="-1" role="dialog" aria-modal="true" data-testid="moodboard-modal"
-      class="relative flex h-[820px] max-h-[92vh] w-[960px] max-w-[95vw] flex-col overflow-hidden rounded-xl border border-white/[0.08] bg-[#0e0e10] text-white outline-none"
+      class="relative flex h-[860px] max-h-[92vh] w-[1240px] max-w-[96vw] overflow-hidden rounded-xl border border-white/[0.08] bg-[#0e0e10] text-white outline-none"
     >
-      <!-- header: editable name (the document's title) · esc · close -->
-      <div class="flex shrink-0 items-center gap-2 px-5 pt-3 pb-1">
-        <input
-          v-model="name" data-testid="mb-name" spellcheck="false"
-          class="min-w-0 flex-1 bg-transparent text-[13px] font-medium tracking-[-0.01em] text-white/90 outline-none placeholder:text-white/30"
-          placeholder="Name this moodboard"
-        >
-        <span class="rounded border border-white/10 px-1.5 py-0.5 text-[11px] text-white/30">esc</span>
-        <button type="button" aria-label="Close" class="text-white/45 transition-colors hover:text-white/80" @click="emit('close')">✕</button>
+      <!-- The wall: masonry image columns, natural aspect ratios. The board IS
+           the modal's hero — everything editorial lives in the right rail. -->
+      <div class="min-h-0 flex-1 overflow-y-auto p-3" @dragover.prevent @drop="onDrop">
+        <div class="columns-2 gap-2 md:columns-3">
+          <img
+            v-for="f in files" :key="f" :src="imageUrl(f)" :alt="f" data-testid="mb-board-image"
+            class="mb-2 w-full break-inside-avoid rounded-md" loading="lazy"
+          >
+          <label
+            class="mb-2 flex h-28 w-full break-inside-avoid cursor-pointer items-center justify-center rounded-md border border-dashed border-white/15 text-[11px] text-white/35 transition-colors hover:border-amber-400/40 hover:text-amber-200/70"
+            :class="uploading ? 'pointer-events-none opacity-50' : ''"
+          >
+            <span>{{ uploading ? 'uploading…' : '＋ drop images' }}</span>
+            <input
+              ref="fileInput" type="file" accept="image/png,image/jpeg,image/webp" multiple
+              class="hidden" data-testid="mb-file-input" @change="onPickFiles"
+            >
+          </label>
+        </div>
+        <p v-if="uploadError" class="mt-1 text-[11px] text-red-300/85">{{ uploadError }}</p>
       </div>
 
-      <!-- floating left nav — the only wayfinding in the document -->
-      <nav class="absolute left-5 top-16 z-10 flex flex-col gap-1.5">
-        <button
-          v-for="id in sectionIds" :key="id" type="button"
-          class="text-left text-[11px] tracking-wide transition-colors"
-          :class="active === id ? 'text-amber-300' : 'text-white/35 hover:text-white/60'"
-          @click="goTo(id)"
-        >{{ NAV_LABELS[id] }}</button>
-      </nav>
+      <!-- The rail: name · reading · palette · avoids, actions pinned last -->
+      <div class="flex w-[360px] shrink-0 flex-col border-l border-white/[0.06] bg-white/[0.015]">
+        <div class="flex shrink-0 items-center gap-2 px-5 pt-4">
+          <input
+            v-model="name" data-testid="mb-name" spellcheck="false"
+            class="min-w-0 flex-1 bg-transparent text-[15px] font-semibold tracking-[-0.01em] text-white/90 outline-none placeholder:text-white/30"
+            placeholder="Name this moodboard"
+          >
+          <span class="rounded border border-white/10 px-1.5 py-0.5 text-[11px] text-white/30">esc</span>
+          <button type="button" aria-label="Close" class="text-white/45 transition-colors hover:text-white/80" @click="emit('close')">✕</button>
+        </div>
 
-      <!-- the document -->
-      <div ref="scrollEl" class="min-h-0 flex-1 overflow-y-auto scroll-pt-6 pl-32 pr-10 pb-28">
-        <!-- Board: full-bleed grid + drop cell -->
-        <section data-section="board" class="pt-4" @dragover.prevent @drop="onDrop">
-          <div class="grid grid-cols-4 gap-1.5">
-            <img
-              v-for="f in files" :key="f" :src="imageUrl(f)" :alt="f" data-testid="mb-board-image"
-              class="aspect-square w-full rounded-md object-cover"
-            >
-            <label
-              class="flex aspect-square w-full cursor-pointer items-center justify-center rounded-md border border-dashed border-white/15 text-[11px] text-white/35 transition-colors hover:border-amber-400/40 hover:text-amber-200/70"
-              :class="uploading ? 'pointer-events-none opacity-50' : ''"
-            >
-              <span>{{ uploading ? 'uploading…' : '＋ drop' }}</span>
-              <input
-                ref="fileInput" type="file" accept="image/png,image/jpeg,image/webp" multiple
-                class="hidden" data-testid="mb-file-input" @change="onPickFiles"
-              >
-            </label>
+        <div class="min-h-0 flex-1 overflow-y-auto px-5 pb-4">
+          <!-- Reading -->
+          <div class="mt-5 text-[10.5px] font-medium uppercase tracking-[0.1em] text-white/35">Reading</div>
+          <div class="mt-2 rounded-lg border border-white/[0.06] bg-white/[0.03] px-3.5 py-3">
+            <textarea
+              ref="summaryEl" v-model="summary" data-testid="mb-summary" rows="3" spellcheck="false"
+              class="w-full resize-none overflow-hidden bg-transparent text-[12.5px] leading-[1.75] text-white/85 outline-none placeholder:text-white/25"
+              placeholder="No reading yet — add images to the board and press Read."
+              @input="autogrow"
+            />
           </div>
-          <p v-if="uploadError" class="mt-2 text-[11px] text-red-300/85">{{ uploadError }}</p>
-        </section>
 
-        <!-- Reading: the summary as open, editable prose -->
-        <section data-section="reading" class="pt-10">
-          <textarea
-            ref="summaryEl" v-model="summary" data-testid="mb-summary" rows="3" spellcheck="false"
-            class="w-full resize-none overflow-hidden bg-transparent text-[13px] leading-[1.8] text-white/85 outline-none placeholder:text-white/25"
-            placeholder="No reading yet — add images to the board and press Read."
-            @input="autogrow"
-          />
-        </section>
-
-        <!-- Palette: named strikeable swatches -->
-        <section data-section="palette" class="pt-8">
-          <div class="flex flex-wrap gap-2.5">
+          <!-- Palette -->
+          <div class="mt-6 text-[10.5px] font-medium uppercase tracking-[0.1em] text-white/35">Palette</div>
+          <div class="mt-2 flex flex-wrap gap-2">
             <div
               v-for="(p, i) in palette" :key="`${p.hex}-${i}`" data-testid="mb-swatch"
-              class="group relative w-24 overflow-hidden rounded-lg border border-white/[0.08] bg-white/[0.03]"
+              class="group relative w-[74px] overflow-hidden rounded-lg border border-white/[0.08] bg-white/[0.03]"
             >
-              <div class="h-14 w-full" :style="{ background: p.hex }" />
+              <div class="h-10 w-full" :style="{ background: p.hex }" />
               <button
                 type="button" :aria-label="`Remove ${p.name}`"
-                class="absolute right-1 top-1 hidden h-5 w-5 items-center justify-center rounded-full bg-black/55 text-[10px] text-white/80 backdrop-blur-sm group-hover:flex"
+                class="absolute right-1 top-1 hidden h-4.5 w-4.5 items-center justify-center rounded-full bg-black/55 text-[10px] text-white/80 backdrop-blur-sm group-hover:flex"
                 @click="removeSwatch(i)"
               >✕</button>
-              <div class="px-2 py-1.5">
-                <div class="truncate text-[11px] text-white/80">{{ p.name }}</div>
-                <div class="text-[10px] uppercase tracking-wide text-white/35">{{ p.hex }}</div>
+              <div class="px-1.5 py-1">
+                <div class="truncate text-[10.5px] text-white/80">{{ p.name }}</div>
+                <div class="text-[9.5px] uppercase tracking-wide text-white/35">{{ p.hex }}</div>
               </div>
             </div>
             <p v-if="!palette.length" class="self-center text-[11px] text-white/30">
               The read curates a named palette for this board.
             </p>
           </div>
-        </section>
 
-        <!-- Avoids: chips + add -->
-        <section data-section="avoids" class="pt-8">
-          <div class="flex flex-wrap items-center gap-1.5">
+          <!-- Avoids -->
+          <div class="mt-6 text-[10.5px] font-medium uppercase tracking-[0.1em] text-white/35">Avoids</div>
+          <div class="mt-2 flex flex-wrap items-center gap-1.5">
             <span
               v-for="(a, i) in avoids" :key="`${a}-${i}`" data-testid="mb-avoid"
               class="group inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[11px] text-white/70"
@@ -411,18 +373,16 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
             <span class="inline-flex items-center rounded-full border border-dashed border-white/15 px-2.5 py-1">
               <input
                 v-model="newAvoid" data-testid="mb-avoid-add" placeholder="＋ add"
-                class="w-16 bg-transparent text-[11px] text-white/70 outline-none placeholder:text-white/30 focus:w-28 transition-all"
+                class="w-16 bg-transparent text-[11px] text-white/70 outline-none transition-all placeholder:text-white/30 focus:w-28"
                 @keydown.enter.prevent="addAvoid" @blur="addAvoid"
               >
             </span>
             <p v-if="!avoids.length" class="text-[11px] text-white/30">Things this taste never does.</p>
           </div>
-        </section>
-      </div>
+        </div>
 
-      <!-- floating footer: Re-read · Save -->
-      <div class="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex items-end justify-between gap-3 px-5 pb-4 pt-10 bg-gradient-to-t from-[#0e0e10] via-[#0e0e10]/85 to-transparent">
-        <div class="pointer-events-auto min-w-0 flex flex-col gap-1">
+        <!-- Actions: full-width pills, reference-style -->
+        <div class="flex shrink-0 flex-col gap-2 border-t border-white/[0.06] px-5 py-4">
           <p v-if="!aiAvailable" class="text-[11px] leading-snug text-white/40">
             AI isn’t set up — start the app with NUXT_ANTHROPIC_API_KEY, or paste your own key in Settings → AI.
           </p>
@@ -431,16 +391,14 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
             <button type="button" class="shrink-0 underline decoration-red-300/40 underline-offset-2 hover:text-red-200" @click="runRead">Retry</button>
           </p>
           <p v-if="saveError" class="text-[11px] text-red-300/85">{{ saveError }}</p>
-        </div>
-        <div class="pointer-events-auto flex shrink-0 items-center gap-2">
           <button
             type="button" data-testid="mb-read" :disabled="readBusy || uploading || (!files.length && !sessionBigJpegs.length)"
-            class="rounded-lg border border-white/10 bg-white/[0.04] px-3.5 py-1.5 text-[12px] text-white/75 transition-colors hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-40"
+            class="w-full rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-[12px] text-white/75 transition-colors hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-40"
             @click="runRead"
           >{{ readBusy ? 'Reading…' : hasRead ? 'Re-read' : 'Read' }}</button>
           <button
             type="button" data-testid="mb-save" :disabled="!canSave"
-            class="rounded-lg border border-amber-400/30 bg-amber-500/20 px-4 py-1.5 text-[12px] font-medium text-amber-200 transition-colors hover:bg-amber-500/30 disabled:cursor-not-allowed disabled:opacity-40"
+            class="w-full rounded-full border border-amber-400/30 bg-amber-500/20 px-4 py-2 text-[12px] font-medium text-amber-200 transition-colors hover:bg-amber-500/30 disabled:cursor-not-allowed disabled:opacity-40"
             @click="saveBoard"
           >{{ saving ? 'Saving…' : savedFlash ? 'Saved ✓' : 'Save' }}</button>
         </div>
