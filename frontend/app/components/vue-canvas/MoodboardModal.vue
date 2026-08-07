@@ -160,10 +160,13 @@ async function runRead() {
       ? sessionBigJpegs.value
       : await downscaleStored()
     if (!bigs.length) throw new Error('Add a few images first — the reading comes from the board.')
-    const res = await $fetch<{ reading?: { avoids?: string[] }, summary?: string, palette?: { name: string, hex: string }[] }>(
+    const res = await $fetch<{ reading?: { avoids?: string[] }, name?: string, summary?: string, palette?: { name: string, hex: string }[] }>(
       '/api/taste/read',
       { method: 'POST', body: { images: bigs.slice(0, 8), apiKey: getLocalSetting('Sailor.AI.AnthropicApiKey') ?? '' } },
     )
+    // Adopt Fable's proposed title only while the board still wears the
+    // default name — a name the user typed is authorship and always wins.
+    if (res.name && (!name.value.trim() || name.value.trim() === 'Moodboard')) name.value = res.name
     summary.value = res.summary?.trim() || ''
     palette.value = (res.palette ?? []).map(p => ({ ...p }))
     avoids.value = [...(res.reading?.avoids ?? [])]

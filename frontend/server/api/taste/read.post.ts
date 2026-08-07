@@ -46,9 +46,11 @@ Rules:
   3. label "essence" — your best single call on the set's most distinctive quality, whatever aspect that is.
   Each is ONE dense standalone line and MUST name exactly one composition archetype from this menu (the studio's real vocabulary): "soft liquid marble wash" · "aurora colour wash" · "radial sunset glow" · "soft mesh blobs" · "crisp linear bands" · "embossed oil". Then actual colours, light, and finish.
 - "palette": exactly 4–6 entries [{ "name": "Blush", "hex": "#F6C1CB" }] — the CURATED design palette you would put in a brand book for this world. Name colours like an art director; hex must be #rrggbb.
+- "name": a 2–4 word title for this board, the way a brand book would name the world ("Cobalt Print Intimacy", "Pastel Motel Dusk"). Evocative and specific — never generic words like "moodboard", "style", "aesthetic", "collection".
 
 Return STRICT JSON only — no prose, no markdown fences, exactly this shape:
 {
+  "name": "...",
   "summary": "...",
   "briefs": [ { "label": "atmosphere", "text": "..." }, { "label": "structure", "text": "..." }, { "label": "essence", "text": "..." } ],
   "palette": [ { "name": "Blush", "hex": "#F6C1CB" }, ... 4–6 curated entries ... ],
@@ -77,6 +79,22 @@ const HEX_RE = /^#[0-9a-fA-F]{6}$/
  * and a #rrggbb hex, trim names (Fable's naming stands — no re-casing), clamp
  * to 6. Anything non-array → []. Never throws.
  */
+/**
+ * Sanitize Fable's proposed board name: trim, collapse whitespace, strip
+ * wrapping quotes, cap at 40 chars on a word boundary. '' when unusable —
+ * the modal keeps its current name in that case (and always when the user
+ * has already named the board; correction is authorship).
+ */
+export function parseBoardName(raw: unknown): string {
+  if (typeof raw !== 'string') return ''
+  let name = raw.trim().replace(/^["'“”]+|["'“”]+$/g, '').replace(/\s+/g, ' ').trim()
+  if (name.length > 40) {
+    const cut = name.slice(0, 40)
+    name = (cut.includes(' ') ? cut.slice(0, cut.lastIndexOf(' ')) : cut).trim()
+  }
+  return name
+}
+
 export function parseCuratedPalette(raw: unknown): { name: string, hex: string }[] {
   if (!Array.isArray(raw)) return []
   return raw
@@ -192,6 +210,7 @@ export default defineEventHandler(async (event) => {
 
   return {
     reading: parseReading(obj),
+    name: parseBoardName(obj.name),
     summary: typeof obj.summary === 'string' ? obj.summary.trim() : '',
     briefs,
     palette: parseCuratedPalette(obj.palette),

@@ -20,9 +20,10 @@ g.createError = (opts: { statusCode: number, statusMessage: string }) => {
 }
 
 let parseCuratedPalette: (raw: unknown) => { name: string, hex: string }[]
+let parseBoardName: (raw: unknown) => string
 
 beforeAll(async () => {
-  ({ parseCuratedPalette } = await import('../../server/api/taste/read.post'))
+  ({ parseCuratedPalette, parseBoardName } = await import('../../server/api/taste/read.post'))
 })
 
 describe('parseCuratedPalette', () => {
@@ -39,5 +40,22 @@ describe('parseCuratedPalette', () => {
   it('non-arrays → empty (never throws)', () => {
     expect(parseCuratedPalette(null)).toEqual([])
     expect(parseCuratedPalette('nope')).toEqual([])
+  })
+})
+
+describe('parseBoardName', () => {
+  it('trims, collapses whitespace, strips wrapping quotes', () => {
+    expect(parseBoardName('  Cobalt  Print   World ')).toBe('Cobalt Print World')
+    expect(parseBoardName('"Pastel Dream"')).toBe('Pastel Dream')
+  })
+  it('caps at 40 chars without a mid-word cut', () => {
+    const out = parseBoardName('Extremely Long Evocative Editorial Illustration World Title')
+    expect(out.length).toBeLessThanOrEqual(40)
+    expect(out.endsWith(' ')).toBe(false)
+  })
+  it('junk → empty string (never throws, caller keeps its own name)', () => {
+    expect(parseBoardName(null)).toBe('')
+    expect(parseBoardName(12)).toBe('')
+    expect(parseBoardName('   ')).toBe('')
   })
 })
