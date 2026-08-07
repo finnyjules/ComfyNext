@@ -9,8 +9,7 @@ the vision work in [2026-08-04-per-surface-roadmap-design.md](2026-08-04-per-sur
 Today, getting your aesthetic into Sailor's image generation means training a LoRA or
 hand-writing a taste profile. This adds a third door, and it is the easiest one: **drop a
 moodboard — 5 to 20 images you love — and Sailor reads it.** It shows you, in plain words,
-what it sees; you correct anything it got wrong; you preview the effect on a test render
-for half a cent; you save. From then on the moodboard sits in the style gallery like any
+what it sees; you correct anything it got wrong; you save. From then on the moodboard sits in the style gallery like any
 style, and applying it to a generation steers the output into your board's world.
 
 No training run, no cost beyond pennies, and — unlike every competitor's style tool — the
@@ -48,9 +47,6 @@ brand-kit precedent: server-side entries, referenced by id):
     summary: string,           // "what it sees" — editable prose, the heart of the object
     palette: {name, hex}[],    // CURATED (Fable-named), editable — never raw k-means
     avoids: string[],          // editable chips
-    fonts: string[],           // up to 2 suggested Google families matching the board's
-                               // typographic character — chips, editable, display-only in
-                               // v1 (no wiring into type surfaces yet)
   } }
 ```
 
@@ -87,11 +83,9 @@ opens the same modal).
 
 **The modal reads as a brand-guidelines document, not a form** (Julien's call, mocked and
 approved): a floating section nav on the left (`00 Board · 01 Reading · 02 Palette ·
-03 Avoids · 04 Type · 05 Preview`, active section tracking scroll), scrollable numbered
-sections on the right in the Book grammar — one document grid, hairlines between
-sections, the board opening as full-bleed plates, the fonts set as a real type specimen
-(each family rendered in itself), the preview closing the book as plates. A floating
-footer carries Re-read · Preview (price follows tier) · Save. This is deliberately the
+03 Avoids`, active section tracking scroll), scrollable numbered sections on the right in
+the Book grammar — one document grid, hairlines between sections, the board opening as
+full-bleed plates. A floating footer carries Re-read · Save. This is deliberately the
 same register the future Kits space uses — the moodboard modal is its seed. Content flow:
 
 1. **Drop 5–20 images** (decoded client-side like the taste wall; JPEG-downscaled before
@@ -101,18 +95,9 @@ same register the future Kits space uses — the moodboard modal is its seed. Co
    - the **summary** in an editable text area — displayed as prose, prominently; this is
      the show-you-understood moment the spike proved,
    - the **curated palette** as named, strikeable swatches,
-   - the **avoids** as editable chips (add/remove),
-   - the **suggested fonts** as chips (up to 2 Google families; the font infrastructure —
-     `/api/font-suggest`, FontPicker, the google-fonts pipeline — already exists for later
-     consumption).
+   - the **avoids** as editable chips (add/remove).
    Everything editable before save — the correction *is* the authorship.
-3. **Preview · ~$(price)** — optional paid button (price computed from the model catalog,
-   never hardcoded): a neutral-vs-tasted pair on a fixed test subject — the taste wall's
-   generation row, productized. Two quality tiers in a small select, both price-labeled:
-   **fast** (FLUX schnell pair, ~$0.006, prose-only, fixed seed) and **best** (Nano Banana
-   with 2–3 board exemplars as references — the run-8 winner; no seed control on Gemini).
-   The confidence moment before commitment should be allowed to show the *good* version.
-4. **Name + Save.** Images upload to a server-side folder (the training-dataset storage
+3. **Name + Save.** Images upload to a server-side folder (the training-dataset storage
    pattern, own `moodboard_<ms>` prefix — the dataset routes' `FOLDER_RE` admits only
    `lora_dataset_\d+`, so moodboards get their own minimal list/serve routes rather than
    widening a guard that protects training data). Reading persists as a JSON sidecar in
@@ -147,7 +132,7 @@ whichever ones are; widening model coverage is the fast-follow, not the mechanis
 ### Edit / evolve
 Opening an existing moodboard from the gallery reopens the same modal: board shown,
 reading editable, **Re-read** button (re-runs Fable over the stored images — evidence
-survives precisely for this), preview again, save.
+survives precisely for this), save.
 
 ## The spectrum of commitment — moodboards as the LoRA alternative
 
@@ -183,7 +168,7 @@ tool is a decoration, and is explicitly rejected — and the taste port is the n
 *identity*, so it does not wait for a fast-follow.
 
 - **`style` output (taste-typed)** — the node's primary port, carrying the READING itself
-  (summary, palette, avoids, fonts), never a pre-flattened string. The consumer compiles:
+  (summary, palette, avoids), never a pre-flattened string. The consumer compiles:
   a generator compiles it to the prompt block at run time; a procedural studio compiles
   it to a config later, when agent fidelity lands. One edge type, every future consumer.
 - **`image` output** — a board image (top of pile by default, pickable), wirable into
@@ -207,7 +192,9 @@ per-node.
 - **No kit-finish pass on generated outputs** — the Compositor-grain enforcement proven on
   the wall ("the kit guarantees the finish") is the named NEXT fast-follow after v1, not
   in it: it needs a home in the generation result flow, which is its own small design.
-- **No font wiring** — suggested fonts are display/edit chips; nothing consumes them yet.
+- **No in-modal preview and no fonts section** — cut by Julien ("they serve no purpose"):
+  the first real generation IS the preview, and fonts return only when something consumes
+  them. The reading drops the `fonts` field entirely for v1.
 - **No strength dial** — apply is on/off per slot (prompt blocks don't dial cleanly; a
   wording-based strength is a later experiment).
 - **No facet bars** in the modal — the 12-facet reading is spike instrumentation; the
@@ -222,7 +209,6 @@ per-node.
 - Read fails (no key / refusal / unparseable): modal keeps the board, shows the error
   plainly, offers retry — never saves a moodboard without a reading.
 - Fewer than 5 images: allowed with a soft warning ("more images read better").
-- Preview failure (generation error): error line in the preview slot; save not blocked.
 - A moodboard slot on a deployed server behaves identically (no weights to miss).
 
 ## Testing
@@ -235,12 +221,12 @@ determinism (same ids → same layout). E2E: create-from-drop with a mocked read
 appears in tab → pick into slot B → prompt payload carries the block (assert on the
 composed prompt, not just UI); wire taste edge → same assertion; saved-workflow round-trip
 proving appended inputs shift no positional widget values. Broken-control discipline
-throughout. The paid preview (both tiers) and live Fable read get one manual checklist
+throughout. The live Fable read and one real tasted generation get a manual checklist
 run (paid-verification pattern).
 
 ## Done when
 A user can add a MoodboardNode from the toolbar, drop images into its modal,
-read+correct+preview, save a named moodboard, see it in the gallery's Moodboards tab,
+read+correct, save a named moodboard, see it in the gallery's Moodboards tab,
 apply it to any slot alone or stacked, **wire the node's taste output into a generator's
 `style_in` and see the block in the composed prompt, wire a board image into an
 image-accepting input, and reference board images via @refs** — verified live end to end
