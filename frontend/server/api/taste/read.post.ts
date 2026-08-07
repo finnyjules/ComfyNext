@@ -1,5 +1,5 @@
 /**
- * POST /api/taste/read   (dev-only)
+ * POST /api/taste/read
  *
  * The elicited route of the executable-brand-kit spike: inspiration images →
  * Claude Fable 5 vision → the 12 taste facets as NUMBERS (shared/taste/facets.ts),
@@ -12,7 +12,8 @@
  *
  * Body: { images: string[] (1–8 base64 image data URLs, downscaled client-side),
  *         apiKey?: string }
- * Returns: { reading: TasteReading }
+ * Returns: { reading: TasteReading, summary, briefs, palette: { name, hex }[] }
+ * The palette is CURATED (Fable-named) — never raw k-means.
  *
  * Allowlisted in server/middleware/comfyui-proxy.ts ('/api/taste').
  */
@@ -44,11 +45,13 @@ Rules:
   2. label "structure" — translate the set's geometry/graphic character (only meaningful where the set itself is graphic/poster-like; still honest to attempt).
   3. label "essence" — your best single call on the set's most distinctive quality, whatever aspect that is.
   Each is ONE dense standalone line and MUST name exactly one composition archetype from this menu (the studio's real vocabulary): "soft liquid marble wash" · "aurora colour wash" · "radial sunset glow" · "soft mesh blobs" · "crisp linear bands" · "embossed oil". Then actual colours, light, and finish.
+- "palette": exactly 4–6 entries [{ "name": "Blush", "hex": "#F6C1CB" }] — the CURATED design palette you would put in a brand book for this world. Name colours like an art director; hex must be #rrggbb.
 
 Return STRICT JSON only — no prose, no markdown fences, exactly this shape:
 {
   "summary": "...",
   "briefs": [ { "label": "atmosphere", "text": "..." }, { "label": "structure", "text": "..." }, { "label": "essence", "text": "..." } ],
+  "palette": [ { "name": "Blush", "hex": "#F6C1CB" }, ... 4–6 curated entries ... ],
   "facets": { "<facetId>": { "value": 0..1, "confidence": 0..1, "evidence": [imageIndices] }, ... all 12 ids ... },
   "avoids": ["..."],
   "clusters": null | [ { "label": "...", "imageIndices": [..], "facets": { same shape }, "avoids": ["..."] }, ... ]
@@ -65,6 +68,25 @@ export function extractJsonObject(text: string): Record<string, unknown> | null 
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null
   }
   catch { return null }
+}
+
+const HEX_RE = /^#[0-9a-fA-F]{6}$/
+
+/**
+ * Shape the model's curated palette: keep only entries with a non-empty name
+ * and a #rrggbb hex, trim names (Fable's naming stands — no re-casing), clamp
+ * to 6. Anything non-array → []. Never throws.
+ */
+export function parseCuratedPalette(raw: unknown): { name: string, hex: string }[] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .filter((p): p is Record<string, unknown> => !!p && typeof p === 'object')
+    .map(p => ({
+      name: typeof p.name === 'string' ? p.name.trim() : '',
+      hex: typeof p.hex === 'string' ? p.hex.trim() : '',
+    }))
+    .filter(p => p.name && HEX_RE.test(p.hex))
+    .slice(0, 6)
 }
 
 /** Clamp + shape one raw facets record into TasteReading['facets']. */
@@ -107,8 +129,6 @@ function parseReading(obj: Record<string, unknown>): TasteReading {
 }
 
 export default defineEventHandler(async (event) => {
-  if (!import.meta.dev) throw createError({ statusCode: 404, statusMessage: 'Not found' })
-
   const body = await readBody(event) as { images?: unknown, apiKey?: unknown }
   const apiKey = resolveAnthropicKey(useRuntimeConfig(event).anthropicApiKey, optionalApiKey(body?.apiKey))
 
@@ -174,5 +194,6 @@ export default defineEventHandler(async (event) => {
     reading: parseReading(obj),
     summary: typeof obj.summary === 'string' ? obj.summary.trim() : '',
     briefs,
+    palette: parseCuratedPalette(obj.palette),
   }
 })
