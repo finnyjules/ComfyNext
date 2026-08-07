@@ -1167,6 +1167,7 @@ async function downloadVideoFile() {
     const encoded = await bakeSpaceTypeVideo()
     if (!encoded) return
     const res = await fetch(`/view?${new URLSearchParams({ filename: encoded.filename, type: 'input' })}`)
+    if (!res.ok) throw new Error(`/view returned ${res.status}`)
     downloadBlobAsFile(await res.blob(), `spacetype_${Date.now()}.${encoded.ext}`)
   } catch (e) {
     console.error('[spacetype] video download failed', e)
@@ -1757,7 +1758,7 @@ async function exportWebEmbed() {
         ],
         canvas: [
           { label: 'As image', onClick: generateImage, busy: baking },
-          { label: 'As video', onClick: generateVideo, busy: baking },
+          { label: 'As video', onClick: () => { exportAlpha = false; generateVideo() }, busy: baking },
           ...(exportAlphaAvailable ? [{ label: 'As video (transparent)', subtitle: 'WebM with real transparency · Safari can\'t play it', onClick: () => { exportAlpha = true; generateVideo() } }] : []),
           { label: 'Send to timeline', onClick: sendToTimeline },
         ],

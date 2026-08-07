@@ -252,6 +252,7 @@ async function exportVideo() {
   const encoded = await bakeSceneVideo()
   if (!encoded) return
   const vres = await fetch(`/view?${new URLSearchParams({ filename: encoded.filename, type: 'input' })}`)
+  if (!vres.ok) throw new Error(`/view returned ${vres.status}`)
   const blob = await vres.blob()
   const obj = URL.createObjectURL(blob)
   const a = document.createElement('a'); a.href = obj; a.download = `scene3d-${props.nodeId}.${encoded.ext}`
@@ -276,7 +277,6 @@ watch(playing, (v) => {
 
 const snap = ref(false)
 const lightView = ref(false)  // clay + light-widget preview mode (Task 1/3 engine support)
-const dirty = ref(false)      // doc changed since last bake
 const baking = ref(false)
 const videoBaking = ref(false)  // reentrancy guard for bakeSceneVideo (separate from `baking`, the image-bake guard — footer video actions + the Motion panel's Export video button all funnel through bakeSceneVideo)
 const bakeError = ref('')       // last export failure message (inline "retry")
@@ -1438,7 +1438,6 @@ onBeforeUnmount(() => {
 // Any edit re-dirties and clears a stale bake failure so the amber "unbaked
 // changes" indicator isn't masked by an old red "Bake failed — retry".
 watch(doc, () => {
-  dirty.value = true
   bakeError.value = ''
   // A multi-selection drag has the selected roots temporarily re-parented under
   // the gizmo pivot, and syncObject re-parents EVERY root to its doc parent on
@@ -2860,7 +2859,6 @@ async function bake(): Promise<void> {
       setWidget('depth_image', depth)
       setWidget('normal_image', normal)
       setWidget('scene_state', serializeDoc(doc))
-      dirty.value = false
     } finally {
       if (wasLightView) engine?.setLightView(true)
     }
@@ -2941,6 +2939,7 @@ async function downloadPng() {
   const beauty = widgetStr('beauty_image')
   if (!beauty) return
   const res = await fetch(`/view?${new URLSearchParams({ filename: beauty, type: 'input' })}`)
+  if (!res.ok) throw new Error(`/view returned ${res.status}`)
   const blob = await res.blob()
   downloadBlobAsFile(blob, `scene3d-${props.nodeId}.png`)
 }
