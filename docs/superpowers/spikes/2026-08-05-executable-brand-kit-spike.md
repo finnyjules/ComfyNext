@@ -329,7 +329,30 @@ perfect"**). Then the trio: same tasted prompt, three fresh seeds.
 LoRAs: all three renders held the two hue families, the fog, the thermal glow, for
 $0.009 total. The moodboard-as-LoRA-alternative claim survived its intended killer.
 
-**The gap: grain/texture went missing.** Three layers: (1) **model tier** — FLUX schnell's
+## Run 8 — the model bake-off ends: references win (2026-08-06)
+
+Five models, four channels, one sref board, ~40¢ total. The ledger:
+
+| Model | Channel | Result |
+|---|---|---|
+| FLUX schnell $0.003 | prose | world ✅ hues ✅ texture ❌ (4-step polish) |
+| FLUX dev $0.025 | prose | same — the family resists grain, not the tier |
+| FLUX 2 Pro $0.015 | prose | *worse*: best "prompt adherence" = most literal, least stylized. Adherence ≠ vibe. |
+| Seedream 4.5 $0.04 | prose | wrong instrument: rendered palette hexes as literal text, injected content, blew the hue discipline |
+| **Nano Banana Pro $0.15** | **prose + 4 board images as refs** | **full transfer — world, hues, fog, AND the analog texture. Julien: "YES!!!!"** |
+
+(Also shipped en route: fal failover for nano-gen — Replicate E003s under demand — and two
+live-schema fixes the 422s exposed, including an invalid size option in the product's own
+Seedream node UI.)
+
+**The finding that seals the tier story: prose carries the world; references carry the
+finish; the kit guarantees it.** Channel 4 (board images as conditioning) delivered what no
+amount of prompt wording could, at 50× the price of prose-only — which is exactly why the
+moodboard's spectrum has tiers. The read→reference→train ladder now has live evidence at
+every rung that exists, and the moodboard spec's v1.1 refs tier is promoted from "designed"
+to "proven — build with confidence."
+
+**The gap run 7 found: grain/texture went missing on prose alone.** Three layers: (1) **model tier** — FLUX schnell's
 4-step distillation airbrushes fine texture; dev renders it (the wall now has a model
 picker with live prices, `fd73998cc`, via an opt-in `model` param on text2img that leaves
 its four production callers untouched); (2) prompt mechanics — texture adjectives sit
