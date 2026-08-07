@@ -8,6 +8,7 @@ import { defaultsFromControls, type Params, type ControlSpec } from '~/lib/space
 import { SPACE_TYPE_SECTIONS } from '~/lib/spacetype/sections'
 import { parseFills, serializeFills, FILL_TYPES, type Fill, type FillType } from '~/lib/spacetype/fills'
 import { parseContent, type ContentItem } from '~/lib/spacetype/tile'
+import { loadImageTextures } from '~/lib/spacetype/imageTextures'
 import { fitWithin } from '~/lib/lora/datasetImages'
 import { DEFAULT_SHADER_SPEC, type ShaderSpec } from '~/lib/spacetype/fillTile'
 import ShaderFillEditor from '~/components/vue-canvas/widgets/ShaderFillEditor.vue'
@@ -672,12 +673,31 @@ let rebuildRaf = 0
 // uncoordinated second rebuild via rAF that could land mid-bake or clobber the
 // baker's own capture/restore sequence.
 let bakingOverrides = false
+// Ring's image tiles read env.imageTextures (set on the engine, consumed synchronously
+// by buildScene) — so a preload has to land on the engine BEFORE rebuild() calls
+// engine.build(). Cached by the sorted src list so an unrelated param edit (e.g. a
+// slider drag) doesn't re-fetch/re-decode every image on every rebuild; only an actual
+// content change (add/remove/replace image) bumps the key and reloads.
+let loadedImageSrcKey = ''
+async function ensureRingImageTextures() {
+  if (effectId.value !== 'ring') return
+  const k = contentKey()
+  if (!k) return
+  const items = parseContent(String((params as Record<string, unknown>)[k] ?? '[]'))
+  const srcs = items.filter(i => i.kind === 'image').map(i => (i as any).src).sort()
+  const key = JSON.stringify(srcs)
+  if (key === loadedImageSrcKey) return
+  const map = await loadImageTextures(items)
+  loadedImageSrcKey = key
+  engine?.setImageTextures(map)
+}
 function scheduleRebuild() {
   if (bakingOverrides) return // the sweep baker owns rebuilds while baking — see renderBlobWithOverrides
   if (rebuildRaf) return
   rebuildRaf = requestAnimationFrame(async () => {
     rebuildRaf = 0
     await ensureEffectFonts()
+    await ensureRingImageTextures()
     rebuild()
   })
 }
