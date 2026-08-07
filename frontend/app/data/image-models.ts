@@ -46,7 +46,7 @@ export const TAG_LABELS: Record<ImageModelTag, string> = {
 export type ImageModelBrand =
   | 'BFL' | 'Google' | 'OpenAI' | 'ByteDance' | 'Ideogram'
   | 'Recraft' | 'Stability AI' | 'Alibaba' | 'Tencent' | 'xAI'
-  | 'Pruna' | 'Meta' | 'Bria' | 'Luma' | 'MiniMax' | 'Reve' | 'Other'
+  | 'Pruna' | 'Meta' | 'Bria' | 'Luma' | 'MiniMax' | 'Reve' | 'Krea' | 'Other'
 
 export interface ImageModelAdvancedField {
   name: string
@@ -135,6 +135,7 @@ const HUNYUAN_AR      = ['1:1', '16:9', '21:9', '3:2', '2:3', '4:5', '5:4', '3:4
 const GROK_AR         = ['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '2:1', '1:2']
 const FLUX_FAST_AR    = ['1:1', '16:9', '21:9', '3:2', '2:3', '4:5', '5:4', '3:4', '4:3', '9:16', '9:21']
 const REVE_AR         = ['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3']
+const KREA_AR         = ['1:1', '4:3', '3:2', '16:9', '2.35:1', '4:5', '2:3', '9:16']
 
 // ---- Catalog -------------------------------------------------------------
 
@@ -301,6 +302,39 @@ export const IMAGE_MODELS: ImageModel[] = [
         options: ['0.25', '0.5', '1', '2', '4'] },
       { name: 'go_fast', type: 'boolean', label: 'Extra optimizations', default: false },
       { ...OUTPUT_FORMAT_WPJ, default: 'jpg' },
+    ],
+  },
+
+  // ===== Krea ===============================================================
+  {
+    id: 'krea-2-large',
+    label: 'Krea 2 Large',
+    brand: 'Krea',
+    replicateSlug: 'krea/krea-2-large',
+    pitch: 'Krea\'s foundation model — photoreal, raw aesthetics, strong style transfer.',
+    tags: ['flagship', 'photoreal'],
+    pricePerImage: null,
+    aspectRatios: KREA_AR,
+    defaultAspectRatio: '1:1',
+    advanced: [
+      { name: 'creativity', type: 'select', label: 'Creativity', default: 'medium',
+        options: ['raw', 'low', 'medium', 'high'],
+        description: '"raw" renders only what you describe; "high" takes creative liberty.' },
+    ],
+  },
+  {
+    id: 'krea-2-medium',
+    label: 'Krea 2 Medium',
+    brand: 'Krea',
+    replicateSlug: 'krea/krea-2-medium',
+    pitch: 'Smaller, faster Krea 2 — strong for illustration, anime, and painterly styles.',
+    tags: ['fast'],
+    pricePerImage: null,
+    aspectRatios: KREA_AR,
+    defaultAspectRatio: '1:1',
+    advanced: [
+      { name: 'creativity', type: 'select', label: 'Creativity', default: 'medium',
+        options: ['raw', 'low', 'medium', 'high'] },
     ],
   },
 

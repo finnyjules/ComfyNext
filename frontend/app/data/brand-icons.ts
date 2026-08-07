@@ -96,6 +96,7 @@ export const BRAND_COLORS: Record<string, string> = {
   'Luma':         '#ffcb47',
   'MiniMax':      '#ff5e7e',
   'Reve':         '#c7b1ff',
+  'Krea':         '#7c5cff',
   // Video-only brands
   'Wan':          '#ff7a3d',
   'Kling':        '#3da5ff',
