@@ -1,6 +1,6 @@
 import type { Node, Edge } from '@vue-flow/core'
 import { assembleWorkflowLinks, repairInvalidNodeIds, seedHasControlWidget } from '~/composables/useFilteredPrompt'
-import { schemaOutputsFromInfo, syncNodeOutputsWithSchema } from '~/utils/syncNodeOutputs'
+import { schemaInputsFromInfo, schemaOutputsFromInfo, syncNodeInputsWithSchema, syncNodeOutputsWithSchema } from '~/utils/syncNodeOutputs'
 import { ensureVarsInput } from '~/lib/collection/varsInput'
 import { stashTakesIntoProperties, restoreTakesFromProperties } from '~/lib/canvas/persistTakes'
 import { stashCapsuleIntoProperties, restoreCapsuleFromProperties } from '~/lib/canvas/persistCapsule'
@@ -500,11 +500,17 @@ export function useVueNodes(opts: { groupsBridge?: GroupsBridge; annotationsBrid
           category: objectInfo.value[lgNode.type]?.category || '',
           outputNode: !!objectInfo.value[lgNode.type]?.output_node,
           priceBadge: objectInfo.value[lgNode.type]?.price_badge || null,
-          inputs: lgNode.inputs || [],
           // Append-only schema sync: saves made before a node type grew extra
-          // outputs carry a short snapshot forever — append the missing
-          // trailing outputs from /object_info (never reorder/remove; edges
-          // reference outputs by index). No-op when the type is unknown.
+          // ports carry a short snapshot forever — append the missing trailing
+          // ports from /object_info (never reorder/remove; edges reference
+          // ports by index). No-op when the type is unknown. The VueNodeCanvas
+          // objectInfo watch only covers the load-order where objectInfo
+          // arrives AFTER conversion — this covers project opens in a settled
+          // app (found live: a pre-wire GenerateImageNode had no style_in).
+          inputs: syncNodeInputsWithSchema(
+            lgNode.inputs,
+            schemaInputsFromInfo(objectInfo.value[lgNode.type]),
+          ) ?? (lgNode.inputs || []),
           outputs: syncNodeOutputsWithSchema(
             lgNode.outputs,
             schemaOutputsFromInfo(objectInfo.value[lgNode.type]),
