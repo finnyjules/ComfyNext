@@ -59,8 +59,11 @@ import { EASE_PRESETS, presetKeyForEaseRef, easeRefForPresetKey, easeRefToCurveS
 import type { LoopKind, TransitionPreset, CameraMotion, Direction } from '~/lib/scene3d/motion/types'
 import { detectWebGL } from '~/lib/spacetype/webgl'
 import { useInpaint } from '~/composables/useInpaint'
+import { downloadBlobAsFile } from '~/lib/studio/downloadBlob'
+import { useStudioAutosave } from '~/lib/studio/autosave'
 import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
+import StudioActionsFooter from '~/components/vue-canvas/studio/StudioActionsFooter.vue'
 import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
 import StudioSlider from '~/components/vue-canvas/studio/StudioSlider.vue'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
@@ -198,15 +201,16 @@ function togglePlay() {
   playing.value = !playing.value
   if (playing.value) playStart = performance.now() - playhead.value * 1000
 }
-// Export the Motion timeline as an mp4 (reuses the studios' bake→encode pipeline —
-// same renderMotionFrame path the live preview uses, so the clip matches playback
-// exactly). Renders N = fps*duration frames off-screen at the output resolution,
-// bakes/encodes server-side, downloads the file. Playback is paused for the duration
-// so it can't interleave renders with the export loop.
-// NOTE: no tab store here (unlike ArtifactFrameNode), so this does not record the
-// export to the Assets panel — follow-up for 2b if that's wanted from this surface.
-async function exportVideo() {
-  if (!engine || !sceneHasMotion(doc)) return
+// Bake the Motion timeline to an encoded file (reuses the studios' bake→encode
+// pipeline — same renderMotionFrame path the live preview uses, so the clip matches
+// playback exactly). Renders N = fps*duration frames off-screen at the output
+// resolution, bakes/encodes server-side, and lands a file under input/ — it does NOT
+// download or dispatch anything; that's each caller's job (exportVideo downloads,
+// renderVideoToCanvas dispatches a Video node). Playback is paused for the duration
+// so it can't interleave renders with the export loop, and the viewport render size
+// + Build pose are restored in `finally` regardless of outcome.
+async function bakeSceneVideo(): Promise<{ filename: string; ext: 'mp4' | 'webm' } | null> {
+  if (!engine || !sceneHasMotion(doc)) return null
   const wasPlaying = playing.value; playing.value = false
   try {
     const W = doc.output.width, H = doc.output.height
@@ -221,27 +225,47 @@ async function exportVideo() {
         return await new Promise<Blob>((res, rej) => cv.toBlob(b => b ? res(b) : rej(new Error('toBlob failed')), 'image/png'))
       },
     })
-    let encoded: Awaited<ReturnType<typeof encodeFrames>>
     try {
-      encoded = await encodeFrames({ frames: bake.frames, fps, width: W, height: H })
+      return await encodeFrames({ frames: bake.frames, fps, width: W, height: H })
     } catch {
       bakeError.value = 'Video encode failed'
-      return
+      return null
     }
-    const vres = await fetch(`/view?${new URLSearchParams({ filename: encoded.filename, type: 'input' })}`)
-    const blob = await vres.blob()
-    const obj = URL.createObjectURL(blob)
-    const a = document.createElement('a'); a.href = obj; a.download = `scene3d-${props.nodeId}.${encoded.ext}`
-    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(obj)
   } catch (err) {
     bakeError.value = 'Video export failed'
     console.error('[Scene3D] video export failed:', err)
+    return null
   } finally {
     // restore the viewport render size and Build pose
     engine?.setSize(canvasEl.value?.clientWidth ?? doc.output.width, canvasEl.value?.clientHeight ?? doc.output.height)
     engine?.syncFromDoc(doc); engine?.applyObjectOpacities({})
     playing.value = wasPlaying
   }
+}
+// Download video: bake, then fetch the encoded file back and save it locally.
+// NOTE: no tab store here (unlike ArtifactFrameNode), so this does not record the
+// export to the Assets panel — follow-up for 2b if that's wanted from this surface.
+async function exportVideo() {
+  const encoded = await bakeSceneVideo()
+  if (!encoded) return
+  const vres = await fetch(`/view?${new URLSearchParams({ filename: encoded.filename, type: 'input' })}`)
+  const blob = await vres.blob()
+  const obj = URL.createObjectURL(blob)
+  const a = document.createElement('a'); a.href = obj; a.download = `scene3d-${props.nodeId}.${encoded.ext}`
+  document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(obj)
+}
+// As video (canvas): bake, then dispatch a Video node onto the canvas instead of
+// downloading — mirrors exportToCanvas's dispatch/close exactly (same event name,
+// same commitSculptIfNeeded guard so a live sculpt session isn't left uncommitted),
+// just with a Video node + the encoded filename instead of the beauty image.
+async function renderVideoToCanvas() {
+  if (!(await commitSculptIfNeeded())) return
+  const encoded = await bakeSceneVideo()
+  if (!encoded) return
+  window.dispatchEvent(new CustomEvent('sailor:scene3dStudioOutput', {
+    detail: { sourceNodeId: props.nodeId, nodeType: 'Video', widgetOverrides: { file: encoded.filename } },
+  }))
+  emit('close')
 }
 watch(playing, (v) => {
   if (!v && engine) { engine.syncFromDoc(doc); engine.applyObjectOpacities({}) }
@@ -252,8 +276,6 @@ const lightView = ref(false)  // clay + light-widget preview mode (Task 1/3 engi
 const dirty = ref(false)      // doc changed since last bake
 const baking = ref(false)
 const bakeError = ref('')       // last export failure message (inline "retry")
-const savedFlash = ref(false)   // transient "Saved ✓" confirmation after Save
-let savedTimer: ReturnType<typeof setTimeout> | null = null
 const glbError = reactive<Record<string, boolean>>({})
 const webglOk = ref(true)
 const uploading = ref(false)    // GLB file upload in flight
@@ -2848,34 +2870,50 @@ async function bake(): Promise<void> {
   }
 }
 
-// Save: persist the scene document only (no render/upload). Lets the user
-// checkpoint work and keep editing; the node's output images are unchanged
-// until an explicit Export.
+// persistSceneState: write just the scene document onto the node widget (no
+// render/upload) — the persist half of the old explicit Save button. Driven
+// automatically now by useStudioAutosave below (debounced on real doc edits), and
+// called directly by onClose (after its own syncDocCamera) so the final edit
+// before closing is never left stranded in the debounce (same convention as
+// SpaceTypeSurface's closeEditor).
 //
-// Gap 3 (Sculpt-and-Merge spec §6): a stroke deliberately never writes
-// scene_state (see setSculptOverride's header), so while sculpting, `doc`
-// still holds the PRE-sculpt mesh right up until this runs. Save is a
-// doc-writing action available WHILE sculpting now that the footer stays live
-// (material/transform/motion all do too) — commit the live session first via
-// `commitSculptIfNeeded`, or Save would persist the pre-sculpt mesh and
-// silently discard the strokes. Sculpting stays active either way: unlike
-// Apply/Exit, Save must not kick the user out of the mode they were just in.
-async function saveScene() {
-  if (!(await commitSculptIfNeeded())) return // commit failed/busy — convertError visible, doc left untouched
-  syncDocCamera()
+// Deliberately does NOT call syncDocCamera() itself, unlike the old saveScene:
+// syncDocCamera WRITES doc.camera, and this function is now invoked reactively
+// off a watch(doc) signature (via useStudioAutosave) rather than only on an
+// explicit user click. OrbitControls damping means the live camera keeps
+// settling by sub-pixel amounts for a while after the user lets go, so syncing
+// it here would re-mutate `doc` on every debounced persist, which changes the
+// watched signature again, which reschedules another persist — a self-feeding
+// loop that pinned the footer on "Saving…" forever in live testing (verified:
+// removing the sync here fixed it). The camera still gets captured at every
+// real checkpoint — bake() (Export/Download paths) and onClose below each call
+// syncDocCamera() themselves — so nothing is lost, just no longer sampled by
+// autosave's debounce tick.
+//
+// Gap 3 (Sculpt-and-Merge spec §6): a stroke deliberately never writes `doc` (see
+// setSculptOverride's header) — only commitSculptSession does, when a stroke is
+// committed. So the autosave signature below (`serializeDoc(doc)`) can only change
+// on a genuine doc edit, never mid-stroke, meaning autosave correctly can't fire
+// while a sculpt stroke is in progress — this function does NOT call
+// commitSculptIfNeeded itself. onClose still commits any in-flight sculpt session
+// (via commitAndExitSculpt) BEFORE calling this, so the pre-close write always
+// includes the final strokes; the old saveScene's explicit commit-first guard only
+// mattered for a user-triggered Save mid-sculpt, which no longer exists.
+function persistSceneState() {
   setWidget('scene_state', serializeDoc(doc))
-  savedFlash.value = true
-  if (savedTimer) clearTimeout(savedTimer)
-  savedTimer = setTimeout(() => { savedFlash.value = false }, 1500)
 }
+// Sticky footer status (StudioActionsFooter): real Saving…/Saved ✓ driven by the
+// doc's serialized signature — a string, so it changes only on a real edit (deep
+// watch is a no-op on a primitive but harmless).
+const { saving: autoSaving, saved: autoSaved } = useStudioAutosave(() => serializeDoc(doc), persistSceneState)
 
 // Export to Canvas: bake the three passes onto the node's outputs, drop the
 // beauty render onto the canvas as an Image node (wired from the beauty output,
 // like the other studios' "generate" flow), then return to the canvas. Stays
 // open on failure so the inline error is visible.
 //
-// Same Gap 3 hazard as saveScene above: bake() renders from `doc`, and writes
-// scene_state itself — both would see the pre-sculpt mesh without this.
+// Same Gap 3 hazard as persistSceneState above: bake() renders from `doc`, and
+// writes scene_state itself — both would see the pre-sculpt mesh without this.
 async function exportToCanvas() {
   if (!(await commitSculptIfNeeded())) return
   await bake()
@@ -2887,6 +2925,20 @@ async function exportToCanvas() {
     }))
   }
   emit('close')
+}
+
+// Download PNG: same bake as "As image" above (so sculpt strokes/live camera are
+// captured), but saves the uploaded beauty pass locally instead of dispatching a
+// node — and, unlike the canvas actions, does not close the studio.
+async function downloadPng() {
+  if (!(await commitSculptIfNeeded())) return
+  await bake()
+  if (bakeError.value) return
+  const beauty = widgetStr('beauty_image')
+  if (!beauty) return
+  const res = await fetch(`/view?${new URLSearchParams({ filename: beauty, type: 'input' })}`)
+  const blob = await res.blob()
+  downloadBlobAsFile(blob, `scene3d-${props.nodeId}.png`)
 }
 
 // Esc / ✕: persist the scene (implicit save) and leave — export is explicit now,
@@ -2910,8 +2962,8 @@ async function onClose() {
     await commitAndExitSculpt()
     if (convertError.value) return // commit failed — stay open, error is visible in the Objects aside
   }
-  syncDocCamera()
-  setWidget('scene_state', serializeDoc(doc))
+  syncDocCamera() // persistSceneState deliberately doesn't (see its header) — do it here instead
+  persistSceneState()
   emit('close')
 }
 </script>
@@ -4066,23 +4118,25 @@ async function onClose() {
       </template>
 
     </template>
-    <!-- Save + Export live in the modal's reserved bottom-right actions footer (shell
-         #actions), like every other studio — not pinned inside the inspector column. The
-         old pointer-events-none/auto workaround is gone with the move: the footer is its
+    <!-- StudioActionsFooter lives in the modal's reserved bottom-right actions footer
+         (shell #actions), like every other studio — there is no Save button; saving is
+         automatic and debounced (see useStudioAutosave/persistSceneState above). The old
+         pointer-events-none/auto workaround is gone with the move to a footer: it's its
          own row now, so it no longer overlaps the scrolling column (the sculpt panel's
          Remesh button that it used to eat is no longer underneath it). `committing` still
-         disables both buttons for the length of a sculpt commit, as before. -->
+         disables the canvas actions for the length of a sculpt commit, as before. -->
     <template #actions>
-      <p v-if="bakeError && !baking" class="text-xs text-red-400/90">{{ bakeError }}</p>
-      <p v-else-if="savedFlash" class="text-xs text-emerald-400/80">Saved ✓</p>
-      <p v-else-if="dirty && !baking" class="text-xs text-amber-400/70">Not exported to canvas</p>
-      <StudioButton variant="secondary" :disabled="baking || committing" @click="saveScene">Save</StudioButton>
-      <StudioButton variant="primary" :disabled="baking || committing || !doc.objects.length" @click="exportToCanvas">
-        <span class="flex items-center gap-1.5">
-          <Loader2 v-if="baking" class="h-4 w-4 animate-spin" />
-          {{ baking ? 'Exporting…' : 'Export to Canvas' }}
-        </span>
-      </StudioButton>
+      <StudioActionsFooter :spec="{
+        status: { saving: autoSaving, saved: autoSaved, error: (bakeError && !baking) ? bakeError : null },
+        downloads: [
+          { label: 'Download PNG', onClick: downloadPng, disabled: !doc.objects.length },
+          { label: 'Download video', onClick: exportVideo, busy: baking },
+        ],
+        canvas: [
+          { label: 'As image', onClick: exportToCanvas, busy: baking, disabled: committing || !doc.objects.length },
+          { label: 'As video', onClick: renderVideoToCanvas, busy: baking, disabled: committing || !doc.objects.length },
+        ],
+      }" />
     </template>
   </StudioModalShell>
 </template>
