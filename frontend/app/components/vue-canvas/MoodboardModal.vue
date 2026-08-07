@@ -11,6 +11,7 @@
 // entry via useMoodboards() and writes properties.sailor_moodboard back onto
 // the node (the GradientStudioSurface persistence pattern: mutate the node
 // record in the `nodes` array the canvas passed us).
+import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
 import { useMoodboards, uniqueMoodboardId } from '~/composables/useMoodboards'
 import { syncMoodboardWidgets, moodboardRefDescriptors } from '~/lib/graph/moodboardApply'
 import type { MoodboardEntry } from '~~/shared/taste/moodboard'
@@ -391,16 +392,16 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
             <button type="button" class="shrink-0 underline decoration-red-300/40 underline-offset-2 hover:text-red-200" @click="runRead">Retry</button>
           </p>
           <p v-if="saveError" class="text-[11px] text-red-300/85">{{ saveError }}</p>
-          <button
-            type="button" data-testid="mb-read" :disabled="readBusy || uploading || (!files.length && !sessionBigJpegs.length)"
-            class="w-full rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-[12px] text-white/75 transition-colors hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-40"
-            @click="runRead"
-          >{{ readBusy ? 'Reading…' : hasRead ? 'Re-read' : 'Read' }}</button>
-          <button
-            type="button" data-testid="mb-save" :disabled="!canSave"
-            class="w-full rounded-full border border-amber-400/30 bg-amber-500/20 px-4 py-2 text-[12px] font-medium text-amber-200 transition-colors hover:bg-amber-500/30 disabled:cursor-not-allowed disabled:opacity-40"
-            @click="saveBoard"
-          >{{ saving ? 'Saving…' : savedFlash ? 'Saved ✓' : 'Save' }}</button>
+          <div class="flex items-center justify-end gap-2">
+            <StudioButton
+              data-testid="mb-read" variant="secondary"
+              :disabled="readBusy || uploading || (!files.length && !sessionBigJpegs.length)"
+              @click="runRead"
+            >{{ readBusy ? 'Reading…' : hasRead ? 'Re-read' : 'Read' }}</StudioButton>
+            <StudioButton data-testid="mb-save" variant="primary" :disabled="!canSave" @click="saveBoard">
+              {{ saving ? 'Saving…' : savedFlash ? 'Saved ✓' : 'Save' }}
+            </StudioButton>
+          </div>
         </div>
       </div>
     </div>
