@@ -64,6 +64,8 @@ Every studio control was two stacked lines — a label with a number above, a th
 
 **Foundation only.** Two follow-on plans: four new kinds (`action`, `angle`, `spring`, and `xy` built-but-unapplied, plus a `segmented` kind — decided 2026-08-05, since dropping `segmentedMax` left the app with two answers to "pick one of three" and the schema path got the worse one), then the sweep of the ~167 remaining hand-written `<input type="range">` sites across 35 files.
 
+**Studio sweep + docked actions — 2026-08-06** (commits `3b4f4561e`..`a1efa03ae`). Space Type, Shape, Vector Type and Scene3D moved their remaining bespoke controls onto labelled 28px rows, the Effect picker became the right pane's hero (prominence by size, not restyle), and every studio's AI input now docks under the preview as the one canonical bar (capped width, ✦ + ↑). Finally, **the modal's bottom is now reserved for actions**: `StudioModalShell` renders `#actions` in a full-width, hairline-topped footer with buttons docked bottom-right, so Save / Render / Send-to-canvas land in the same place in every studio instead of floating under the preview or pinned inside the controls column. Verified by compile + isolated harness only — a healthy-pane pass to *see* the accumulated look is still owed.
+
 ## Shared post stack — grain retired, saved docs migrated — LANDED 2026-08-05
 
 Commit `dca456e7d`. Report: [usp-task-8-report.md](../.superpowers/sdd/usp-task-8-report.md).
