@@ -77,6 +77,10 @@ export type ControlSpec = (
   // A draggable cubic-bézier easing graph. Stored as a JSON string "[x1,y1,x2,y2]" (the two
   // control points; P0=(0,0), P3=(1,1)); the surface renders a CurveEditor.
   | { key: string; label: string; kind: 'curve'; default: string; group: string }
+  // An ordered content list (words + images) for the ring layout. Stored as one JSON
+  // string (`ContentItem[]`); the surface renders the content editor; the ring effect
+  // parses it with `parseContent`.
+  | { key: string; label: string; kind: 'contentList'; default: string; group: string }
 ) & ControlMeta
 
 /** Build the param object from a control list's declared defaults. */
@@ -95,7 +99,13 @@ export function defaultsFromControls(controls: ControlSpec[]): Params {
  */
 /** Render-target info passed to buildScene (e.g. the String effect maps a normalized
  *  drawn path into world space and needs the frame aspect). Optional — most effects ignore it. */
-export interface BuildEnv { width: number; height: number; axes?: Record<string, number> }
+export interface BuildEnv {
+  width: number; height: number; axes?: Record<string, number>
+  /** Preloaded image textures keyed by ContentItem.src, for tile layouts. The
+   *  build path is synchronous (withShaderFillContext), so images MUST be loaded
+   *  by the caller (setImageTextures) before build; the effect only reads here. */
+  imageTextures?: Map<string, import('three').Texture>
+}
 
 export interface SpaceTypeEffect {
   id: string

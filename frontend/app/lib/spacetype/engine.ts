@@ -62,6 +62,9 @@ export class SpaceTypeEngine {
   private opts: EngineOptions
   private post: PostSettings = DEFAULT_POST
   private postChain: PostChain | null = null
+  /** Preloaded image textures keyed by ContentItem.src, threaded into BuildEnv for
+   *  tile layouts (e.g. the ring effect). See BuildEnv.imageTextures in effect.ts. */
+  private imageTextures: Map<string, THREE.Texture> = new Map()
   private _lastError: string | null = null
   /** Last build/render error (null when the most recent frame succeeded). */
   get lastError(): string | null { return this._lastError }
@@ -188,6 +191,13 @@ export class SpaceTypeEngine {
     this.postChain.setSettings(post)
   }
 
+  /** Set the preloaded image textures made available to buildScene via BuildEnv.imageTextures.
+   *  Caller must load images (and populate this map) BEFORE calling build/buildKeyed — the
+   *  build path is synchronous, so there's no await inside it to wait on late-arriving images. */
+  setImageTextures(map: Map<string, THREE.Texture>): void {
+    this.imageTextures = map
+  }
+
   private disposeRoot(): void {
     if (!this.root) return
     this.root.traverse((obj) => {
@@ -227,7 +237,7 @@ export class SpaceTypeEngine {
       // `async build()` would risk.
       this.root = withShaderFillContext(
         { ownerId: this.id, w: this.opts.width, h: this.opts.height, bake: this._bake },
-        () => this.effect.buildScene(THREE, params, tex, { width: this.opts.width, height: this.opts.height, axes: texOpts.axes }),
+        () => this.effect.buildScene(THREE, params, tex, { width: this.opts.width, height: this.opts.height, axes: texOpts.axes, imageTextures: this.imageTextures }),
       )
       this.scene.add(this.root)
       this._lastError = null
