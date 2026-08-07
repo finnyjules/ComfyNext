@@ -392,12 +392,35 @@ async function composeFromBrief(brief: { label: string; text: string }): Promise
 // discipline, generation edition).
 const GEN_SEED = 424242
 const GEN_ASPECT = '16:9' // matches the wall's cell aspect
-const GEN_MODELS = ['flux-schnell', 'flux-dev', 'flux-2-pro', 'seedream-4.5'] as const
+const GEN_MODELS = ['flux-schnell', 'flux-dev', 'flux-2-pro', 'seedream-4.5', 'nano-banana-pro'] as const
 const GEN_MODEL_BLURB: Record<string, string> = {
   'flux-schnell': 'fast, texture-blind',
   'flux-dev': 'renders some texture',
   'flux-2-pro': 'newest BFL — best prompt adherence',
   'seedream-4.5': 'cinematic; reads hexes literally',
+  'nano-banana-pro': 'takes the BOARD as style refs · no seed control',
+}
+
+// Nano Banana ingests reference images natively — the tasted leg attaches the
+// board itself (channel 4: prose + pixels, the sref mechanism proper).
+const NANO = 'nano-banana-pro'
+const STYLE_REF_NOTE = ' Use the attached reference images strictly as STYLE references — match their palette, light, grain and mood; do not copy their subjects or composition.'
+function boardRefs(): string[] { return boardA.value?.bigJpegs.slice(0, 4) ?? [] }
+
+async function genOnce(prompt: string, withRefs: boolean, seed: number): Promise<string> {
+  if (genModel.value === NANO) {
+    const refs = withRefs ? boardRefs() : []
+    const res = await $fetch<{ images: string[] }>('/api/inpaint/nano-gen', {
+      method: 'POST',
+      body: { prompt: refs.length ? prompt + STYLE_REF_NOTE : prompt, images: refs, aspect_ratio: GEN_ASPECT },
+    })
+    return res.images?.[0] ?? ''
+  }
+  const res = await $fetch<{ images: string[] }>('/api/inpaint/text2img', {
+    method: 'POST',
+    body: { prompt, aspect_ratio: GEN_ASPECT, count: 1, seed, model: genModel.value },
+  })
+  return res.images?.[0] ?? ''
 }
 const genModel = ref<(typeof GEN_MODELS)[number]>('flux-schnell')
 const genPricePerImage = computed(() => IMAGE_MODELS_BY_ID[genModel.value]?.pricePerImage ?? 0.003)
@@ -421,11 +444,7 @@ async function generatePair() {
   for (const slot of [genNeutral, genTasted]) {
     slot.loading = true; slot.img = ''; slot.error = ''
     try {
-      const res = await $fetch<{ images: string[] }>('/api/inpaint/text2img', {
-        method: 'POST',
-        body: { prompt: slot.prompt, aspect_ratio: GEN_ASPECT, count: 1, seed: GEN_SEED, model: genModel.value },
-      })
-      slot.img = res.images?.[0] ?? ''
+      slot.img = await genOnce(slot.prompt, slot === genTasted, GEN_SEED)
       if (!slot.img) slot.error = 'endpoint returned no image'
     }
     catch (e: any) {
@@ -457,11 +476,7 @@ async function generateTrio() {
     slot.prompt = prompt
     slot.loading = true; slot.img = ''; slot.error = ''
     try {
-      const res = await $fetch<{ images: string[] }>('/api/inpaint/text2img', {
-        method: 'POST',
-        body: { prompt, aspect_ratio: GEN_ASPECT, count: 1, seed: GEN_SEED + 1 + i, model: genModel.value },
-      })
-      slot.img = res.images?.[0] ?? ''
+      slot.img = await genOnce(prompt, true, GEN_SEED + 1 + i)
       if (!slot.img) slot.error = 'endpoint returned no image'
     }
     catch (e: any) { slot.error = e?.data?.message ?? e?.data?.statusMessage ?? e?.message ?? String(e) }
