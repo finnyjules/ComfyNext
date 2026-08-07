@@ -35,6 +35,8 @@ Legend: **bake** = render/export path · **motion** = animatable · **inspector*
 
 Tenth material type: **opalescent** (thin-film / holographic). A `MeshStandardMaterial` + `onBeforeCompile` in the fresnel/gradient mould — a spectral rainbow driven by the view-space normal and fresnel angle, so it flows and shifts as the object turns. Spectrum reuses the gradient stop ramp with a **vivid cyclic default** (a fresh opal is holographic, not the grey `color→gradientB` pair); steered by hue-shift / spectrum-bands / angle-response / rainbow-strength + an optional time flow (per-frame `refreshOpalTime`, gated by `sceneHasOpalFlow` like shaderFill). The five scalars are `ControlSpec`s (so agent + motion derive for free — a small crack in Scene3D's otherwise agent-dark surface). Live-verified: hue-shift 0→254 rotated the render 115° mean across 52/53 samples; strength→0 collapsed to grey (neutralization).
 
+**Fast-follow (`e41cbc90c`): glossy/chrome finish.** Opal is now a `MeshPhysicalMaterial`, so it carries a **clearcoat + reflection** — matte soap-bubble at clearcoat 0, wet chrome-holo as it rises (metalness makes the rainbow tint the reflections). Reuses the existing `clearcoat`/`clearcoatRoughness`/`envMapIntensity` fields (no new data model); those three physical-coat controls just widen from standard/glass to include opalescent. Verified: clearcoat 1 + metalness 1 + roughness 0.1 gave a blown specular highlight (lum 255) over a saturated rainbow (mean sat 58→88).
+
 ## The factory metric (Act 1)
 
 Cost for one parameter to be inspectable + agent-drivable + animatable + sweepable:
