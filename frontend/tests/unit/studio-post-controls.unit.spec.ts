@@ -23,7 +23,7 @@ describe('post manifest', () => {
 
 describe('derived post controls', () => {
   it('emits a switch per effect plus a slider per param', () => {
-    const cs = postControls({ threeD: true })
+    const cs = postControls({ host: 'three-depth' })
     const bloomSwitch = cs.find(c => c.key === 'post.bloom')
     expect(bloomSwitch?.kind).toBe('switch')
     const strength = cs.find(c => c.key === 'post.bloomStrength')
@@ -36,19 +36,19 @@ describe('derived post controls', () => {
   })
 
   it('withholds ambient occlusion from non-3D hosts', () => {
-    const flat = postControls({ threeD: false }).map(c => c.key)
+    const flat = postControls({ host: 'gl2d' }).map(c => c.key)
     expect(flat).not.toContain('post.gtao')
     expect(flat.some(k => k.startsWith('post.gtao'))).toBe(false)
-    expect(postControls({ threeD: true }).map(c => c.key)).toContain('post.gtao')
+    expect(postControls({ host: 'three-depth' }).map(c => c.key)).toContain('post.gtao')
   })
 
   it('drops halftoneScatter (uniform: null) for a flat host — nothing to bind on 2D — but keeps it for 3D', () => {
-    expect(postControls({ threeD: false }).map(c => c.key)).not.toContain('post.halftoneScatter')
-    expect(postControls({ threeD: true }).map(c => c.key)).toContain('post.halftoneScatter')
+    expect(postControls({ host: 'gl2d' }).map(c => c.key)).not.toContain('post.halftoneScatter')
+    expect(postControls({ host: 'three-depth' }).map(c => c.key)).toContain('post.halftoneScatter')
   })
 
   it('defaults each control to the DEFAULT_POST value', () => {
-    for (const c of postControls({ threeD: true })) {
+    for (const c of postControls({ host: 'three-depth' })) {
       const key = c.key.slice('post.'.length) as keyof typeof DEFAULT_POST
       expect(c.default).toEqual(DEFAULT_POST[key])
     }
@@ -65,7 +65,7 @@ describe('post panel shape', () => {
   // — Bloom, Color, Chroma, blur, Film, Halftone, Dot screen, Glitch — with the
   // three effects 3D Studio lacks slotted in where they belong by kind.
   it('is ONE section, holding a nested section per effect, in declaration order', () => {
-    const sections = groupIntoSections(postControls(), POST_SECTIONS)
+    const sections = groupIntoSections(postControls({ host: 'gl2d' }), POST_SECTIONS)
     expect(sections.map(s => s.title)).toEqual(['Effects'])
     expect(sections[0]!.controls).toEqual([])          // the parent is a container only
     expect(sections[0]!.sections.map(s => s.title)).toEqual([
@@ -76,7 +76,7 @@ describe('post panel shape', () => {
 
   // Each effect's card: its switch heads it, its params are the body.
   it('heads each effect section with exactly one sectionToggle switch', () => {
-    const [effects] = groupIntoSections(postControls(), POST_SECTIONS)
+    const [effects] = groupIntoSections(postControls({ host: 'gl2d' }), POST_SECTIONS)
     for (const s of effects!.sections) {
       const toggles = s.controls.filter(c => c.sectionToggle)
       expect(toggles).toHaveLength(1)
@@ -90,7 +90,7 @@ describe('post panel shape', () => {
   // The chevron is the reveal now, not showIf — that is what lets you open a disabled
   // effect and dial it in before switching it on.
   it('leaves params free of showIf so a disabled effect can still be opened', () => {
-    for (const c of postControls({ threeD: true })) {
+    for (const c of postControls({ host: 'three-depth' })) {
       expect((c as { showIf?: unknown }).showIf).toBeUndefined()
     }
   })
@@ -99,8 +99,8 @@ describe('post panel shape', () => {
   // sliders — in the panel, in the agent's vocabulary, and in motion's track list.
   // This is why manifest labels are qualified ("Bloom strength", not "Strength").
   it('gives every control a distinct label', () => {
-    for (const threeD of [false, true]) {
-      const labels = postControls({ threeD }).map(c => c.label)
+    for (const host of ['gl2d', 'three-depth'] as const) {
+      const labels = postControls({ host }).map(c => c.label)
       expect(new Set(labels).size).toBe(labels.length)
     }
   })
@@ -110,6 +110,6 @@ describe('post panel shape', () => {
 // and motion targets. Freeze the derived set so that shows up in review.
 describe('derived control surface', () => {
   it('matches the frozen snapshot', () => {
-    expect(postControls({ threeD: true }).map(c => `${c.kind} ${c.key}`).sort()).toMatchSnapshot()
+    expect(postControls({ host: 'three-depth' }).map(c => `${c.kind} ${c.key}`).sort()).toMatchSnapshot()
   })
 })
