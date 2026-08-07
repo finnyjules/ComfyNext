@@ -470,7 +470,7 @@ describe('ringEffect', () => {
 Run: `cd frontend && npx vitest run tests/unit/spacetype-ring-effect.unit.spec.ts`
 Expected: FAIL — cannot resolve `~/lib/spacetype/effects/ring`.
 
-- [ ] **Step 3: Implement** `ring.ts` per the details above and register it in `effects/index.ts` (import `ringEffect`, add to the `SPACE_TYPE_EFFECTS` array — put it first so it's easy to pick during manual testing).
+- [ ] **Step 3: Implement** `ring.ts` per the details above and register it in `effects/index.ts` (import `ringEffect`, **append it to the END of the `SPACE_TYPE_EFFECTS` array**). Do NOT place it first: `getEffect()` returns `SPACE_TYPE_EFFECTS[0]` as the fallback for an unresolved id, so making `ring` index 0 would change the fallback default from `ribbon` to `ring` — a violation of the "existing docs render unchanged" constraint. Append-at-end preserves the fallback.
 
 - [ ] **Step 4: Run tests + typecheck**
 
