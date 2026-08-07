@@ -211,6 +211,8 @@ function togglePlay() {
 // + Build pose are restored in `finally` regardless of outcome.
 async function bakeSceneVideo(): Promise<{ filename: string; ext: 'mp4' | 'webm' } | null> {
   if (!engine || !sceneHasMotion(doc)) return null
+  if (videoBaking.value) return null
+  videoBaking.value = true
   const wasPlaying = playing.value; playing.value = false
   try {
     const W = doc.output.width, H = doc.output.height
@@ -240,6 +242,7 @@ async function bakeSceneVideo(): Promise<{ filename: string; ext: 'mp4' | 'webm'
     engine?.setSize(canvasEl.value?.clientWidth ?? doc.output.width, canvasEl.value?.clientHeight ?? doc.output.height)
     engine?.syncFromDoc(doc); engine?.applyObjectOpacities({})
     playing.value = wasPlaying
+    videoBaking.value = false
   }
 }
 // Download video: bake, then fetch the encoded file back and save it locally.
@@ -275,6 +278,7 @@ const snap = ref(false)
 const lightView = ref(false)  // clay + light-widget preview mode (Task 1/3 engine support)
 const dirty = ref(false)      // doc changed since last bake
 const baking = ref(false)
+const videoBaking = ref(false)  // reentrancy guard for bakeSceneVideo (separate from `baking`, the image-bake guard — footer video actions + the Motion panel's Export video button all funnel through bakeSceneVideo)
 const bakeError = ref('')       // last export failure message (inline "retry")
 const glbError = reactive<Record<string, boolean>>({})
 const webglOk = ref(true)
@@ -4129,12 +4133,12 @@ async function onClose() {
       <StudioActionsFooter :spec="{
         status: { saving: autoSaving, saved: autoSaved, error: (bakeError && !baking) ? bakeError : null },
         downloads: [
-          { label: 'Download PNG', onClick: downloadPng, disabled: !doc.objects.length },
-          { label: 'Download video', onClick: exportVideo, busy: baking },
+          { label: 'Download PNG', onClick: downloadPng, busy: baking, disabled: !doc.objects.length },
+          { label: 'Download video', onClick: exportVideo, busy: videoBaking },
         ],
         canvas: [
           { label: 'As image', onClick: exportToCanvas, busy: baking, disabled: committing || !doc.objects.length },
-          { label: 'As video', onClick: renderVideoToCanvas, busy: baking, disabled: committing || !doc.objects.length },
+          { label: 'As video', onClick: renderVideoToCanvas, busy: videoBaking, disabled: committing || !doc.objects.length },
         ],
       }" />
     </template>
