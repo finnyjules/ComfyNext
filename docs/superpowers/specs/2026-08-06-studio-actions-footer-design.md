@@ -20,8 +20,12 @@ laid out in three zones left→right:
 2. **Download** (grey secondary): the studio's file outputs — one plain button when
    there's a single format, a `Download ▾` menu when there are several.
 3. **Add to canvas** (blue primary, far right): the one universal deliverable, named
-   the same everywhere. A plain button for static studios, an `Add to canvas ▾`
-   (*As image · As video*, plus *Send to timeline* where supported) for animated ones.
+   the same everywhere. Collapses like the download zone — a plain `Add to canvas` when
+   a studio produces one canvas format, an `Add to canvas ▾` (*As image · As video*,
+   plus *Send to timeline* where supported) when it produces several. The menu lists
+   only formats the studio **already bakes**; this change invents no new render path
+   (the sole exception is Shape/Vector gaining *image*, reusing the blob they already
+   render for their PNG download).
 
 The explicit **Save** button is removed everywhere (all studios already auto-save;
 it was reassurance in 2 of 7). A quiet `Saving… / Saved ✓ / ⚠ error` indicator takes
@@ -113,28 +117,34 @@ item (e.g. `#canvas-menu-extra`) so Space Type can render that sub-option under 
 | Studio | ① utilities | ② downloads | ③ canvas |
 |---|---|---|---|
 | Space Type | — | Embed | As image · As video · Send to timeline |
-| Scene3D | — | Video (mp4) | As image · As video |
+| Scene3D | — | — | Add to canvas (image) |
 | Texture | Roll | PNG | Add to canvas (image) |
 | Gradient | Copy config | Embed | As image · As video |
 | Shader | — | Embed | As image · As video |
 | Shape | Import · Export settings | PNG | Add to canvas (image) ← **new** |
-| Vector | Play/Pause · Import · Export settings | PNG · SVG | As image · As video ← **new** |
+| Vector | Play/Pause · Import · Export settings | ▾ PNG · SVG | Add to canvas (image) ← **new** |
 
 ### The one behaviour addition: Shape & Vector gain canvas output
 
 Both already render a blob for their PNG/SVG download. Adding "Add to canvas" reuses
 that blob through the same `uploadFrameBatch` path the other five studios use — a
-small, well-trodden wiring, not new rendering. Vector is animated (it has Play/Pause
-and motion presets), so it gets the *As image · As video* menu; Shape is static, so a
-plain button. Everything else in this change is relabel + reorganize.
+small, well-trodden wiring, not new rendering. Both land as a **plain `Add to canvas`
+(image)**: neither bakes a video-to-canvas today, and this change invents no new render
+path, so *As video* is out of scope for them (a possible later follow-up for Vector,
+which is animated). Everything else in this change is relabel + reorganize.
+
+The `▾` in the table appears only where a zone already has ≥ 2 items (Space Type /
+Gradient / Shader bake both image and video to canvas; Vector has two download formats),
+per the collapse rule — never as a new capability.
 
 ## Wording (fixed vocabulary)
 
 - Canvas: **Add to canvas** (static) / **Add to canvas ▾** → **As image**, **As video**,
   **Send to timeline**. Retires *Render*, *Export to Canvas*, *Send to canvas*,
   *Generate as image/video*.
-- Download: **Download PNG** / **Download SVG** / **Download video** / **Export embed**,
-  or **Download ▾** when there are ≥ 2. ("Export embed" keeps its name — it produces a
+- Download: **Download PNG** / **Download SVG** / **Export embed** (the formats studios
+  actually produce today), or **Download ▾** when a studio has ≥ 2. ("Export embed"
+  keeps its name — it produces a
   self-contained web snippet, conceptually distinct from a media file.)
 - Utilities keep their names: **Roll**, **Import settings**, **Export settings**,
   **Copy config**, **Play/Pause**.
@@ -165,7 +175,9 @@ No component-test framework here by design (per the studio-control-row precedent
 ## Rollout
 
 1. Build `StudioActionsFooter` + the pure collapse/zone helper (+ unit tests).
-2. Convert one studio as the reference (Vector Type — it has the most zones: utilities,
-   a 2-item download menu, and the new canvas menu), verify live.
+2. Convert one studio as the reference (Vector Type — it exercises the most zones:
+   three utilities, a 2-item `Download ▾` menu, and the new `Add to canvas` button),
+   verify live. Then convert one studio that keeps a canvas *menu* (Gradient) so both
+   collapse states are proven before the sweep.
 3. Sweep the remaining six, each verified live.
 4. Remove the now-dead Save handlers' button wiring (keep the auto-save).
