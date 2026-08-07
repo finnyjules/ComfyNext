@@ -31,6 +31,10 @@ Legend: **bake** = render/export path · **motion** = animatable · **inspector*
 | Inpaint / Region | ✅ backend | — | toolbar | ✅ ops | — |
 | Collection (sweeps) | — | — | ✅ | ✅ | backbone |
 
+### Scene3D — opalescent material — LANDED 2026-08-06 (`50f6f6d02`)
+
+Tenth material type: **opalescent** (thin-film / holographic). A `MeshStandardMaterial` + `onBeforeCompile` in the fresnel/gradient mould — a spectral rainbow driven by the view-space normal and fresnel angle, so it flows and shifts as the object turns. Spectrum reuses the gradient stop ramp with a **vivid cyclic default** (a fresh opal is holographic, not the grey `color→gradientB` pair); steered by hue-shift / spectrum-bands / angle-response / rainbow-strength + an optional time flow (per-frame `refreshOpalTime`, gated by `sceneHasOpalFlow` like shaderFill). The five scalars are `ControlSpec`s (so agent + motion derive for free — a small crack in Scene3D's otherwise agent-dark surface). Live-verified: hue-shift 0→254 rotated the render 115° mean across 52/53 samples; strength→0 collapsed to grey (neutralization).
+
 ## The factory metric (Act 1)
 
 Cost for one parameter to be inspectable + agent-drivable + animatable + sweepable:
