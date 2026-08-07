@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { describe, it, expect } from 'vitest'
-import { IMAGE_MODELS_BY_ID } from '~/data/image-models'
+import { IMAGE_MODELS, IMAGE_MODELS_BY_ID } from '~/data/image-models'
 import { VIDEO_MODELS_BY_ID } from '~/data/video-models'
 
 describe('new model catalog entries', () => {
@@ -20,5 +22,55 @@ describe('new model catalog entries', () => {
     expect(m?.brand).toBe('BFL')
     expect(m?.modes).toEqual(['t2v', 'i2v'])
     expect(m?.durations).toContain(20)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// TS ↔ Python catalog parity — the Python side (comfy_api_nodes/image_models.py)
+// can't be imported from vitest, so read its source text and extract the
+// `ImageModel(...)` entries with a regex, then compare per-model tag lists.
+// Execution-side gates (B3's refs ride-along) key off the Python tags, so a
+// drift here means the UI promises a capability the backend won't honor.
+// ---------------------------------------------------------------------------
+
+const PY_CATALOG_PATH = resolve(__dirname, '../../../comfy_api_nodes/image_models.py')
+
+/** Extract { id: tags[] } from the Python catalog's MODELS list. */
+function pythonTagsById(): Record<string, string[]> {
+  const src = readFileSync(PY_CATALOG_PATH, 'utf-8')
+  const listStart = src.indexOf('MODELS: list[ImageModel] = [')
+  expect(listStart, 'MODELS list not found in image_models.py').toBeGreaterThan(-1)
+  const body = src.slice(listStart)
+  // Split on constructor calls; each chunk runs to the next call (or EOF) and
+  // therefore contains the whole entry, including its `tags=(...)` kwarg.
+  const chunks = body.split('ImageModel(').slice(1)
+  const out: Record<string, string[]> = {}
+  for (const chunk of chunks) {
+    const id = chunk.match(/^\s*"([^"]+)"/)?.[1]
+    if (!id) continue
+    const tagsTuple = chunk.match(/tags=\(([^)]*)\)/)?.[1] ?? ''
+    out[id] = [...tagsTuple.matchAll(/"([^"]+)"/g)].map(m => m[1]!)
+  }
+  return out
+}
+
+describe('image catalog TS ↔ Python parity', () => {
+  const pyTags = pythonTagsById()
+
+  it('both catalogs list the same model ids', () => {
+    const tsIds = IMAGE_MODELS.map(m => m.id).sort()
+    const pyIds = Object.keys(pyTags).sort()
+    expect(pyIds).toEqual(tsIds)
+  })
+
+  it('mirrors every model tag list into the Python catalog, same order', () => {
+    for (const m of IMAGE_MODELS) {
+      expect(pyTags[m.id], `${m.id}: Python tags`).toEqual([...m.tags])
+    }
+  })
+
+  it('nano-banana-pro is ref-capable on both sides', () => {
+    expect(IMAGE_MODELS_BY_ID['nano-banana-pro']?.tags).toContain('multi-image')
+    expect(pyTags['nano-banana-pro']).toContain('multi-image')
   })
 })

@@ -367,7 +367,7 @@ export const IMAGE_MODELS: ImageModel[] = [
     description:
       'Nano Banana on Gemini 3 Pro reasoning with native 4K output. Best for prompts '
       + 'where the model needs to think about the scene before rendering it.',
-    tags: ['4k', 'flagship', 'typography'],
+    tags: ['4k', 'flagship', 'typography', 'multi-image'],
     pricePerImage: 0.15,
     aspectRatios: NANO_BANANA_AR,
     defaultAspectRatio: '1:1',

@@ -50,6 +50,15 @@ class ImageModel:
     # cold-boot + E9828 capacity failures cost 15s–3.5min); the other provider is
     # always the automatic backup. Ignored unless the model is fal-mapped.
     primary: str = "replicate"
+    # Capability tags, mirrored 1:1 (same entries, same order) from the TS
+    # catalog's `tags` array. Execution-side gates key off these — notably
+    # 'multi-image' → accepts_refs() for the moodboard refs ride-along.
+    tags: tuple[str, ...] = ()
+
+
+def accepts_refs(spec: "ImageModel") -> bool:
+    """True when the model accepts multiple reference images ('multi-image')."""
+    return "multi-image" in spec.tags
 
 
 # ---------- Advanced bag helpers --------------------------------------------
@@ -894,103 +903,154 @@ def _fal_krea2(prompt: str, ar: str, seed: int, adv: dict) -> dict:
 MODELS: list[ImageModel] = [
     # BFL ---------------------------------------------------------------------
     ImageModel("flux-1.1-pro",       "Flux 1.1 Pro",        "BFL", "black-forest-labs/flux-1.1-pro",       sorted(_FLUX_PRO_AR),  _b_flux_1_1_pro,
-               fal_slug="fal-ai/flux-pro/v1.1", fal_build_input=_fal_flux_pro_v11, primary="fal"),
-    ImageModel("flux-1.1-pro-ultra", "Flux 1.1 Pro Ultra",  "BFL", "black-forest-labs/flux-1.1-pro-ultra", sorted(_FLUX_ULTRA_AR), _b_flux_1_1_pro_ultra),
-    ImageModel("flux-pro",           "Flux Pro",            "BFL", "black-forest-labs/flux-pro",           sorted(_FLUX_PRO_AR),  _b_flux_pro),
-    ImageModel("flux-dev",           "Flux Dev",            "BFL", "black-forest-labs/flux-dev",           sorted(_FLUX_DEV_AR),  _b_flux_dev),
+               fal_slug="fal-ai/flux-pro/v1.1", fal_build_input=_fal_flux_pro_v11, primary="fal",
+               tags=("flagship", "photoreal")),
+    ImageModel("flux-1.1-pro-ultra", "Flux 1.1 Pro Ultra",  "BFL", "black-forest-labs/flux-1.1-pro-ultra", sorted(_FLUX_ULTRA_AR), _b_flux_1_1_pro_ultra,
+               tags=("4k", "photoreal", "flagship")),
+    ImageModel("flux-pro",           "Flux Pro",            "BFL", "black-forest-labs/flux-pro",           sorted(_FLUX_PRO_AR),  _b_flux_pro,
+               tags=("photoreal",)),
+    ImageModel("flux-dev",           "Flux Dev",            "BFL", "black-forest-labs/flux-dev",           sorted(_FLUX_DEV_AR),  _b_flux_dev,
+               tags=("open-source",)),
     ImageModel("flux-schnell",       "Flux Schnell",        "BFL", "black-forest-labs/flux-schnell",       sorted(_FLUX_DEV_AR),  _b_flux_schnell,
-               fal_slug="fal-ai/flux/schnell", fal_build_input=_fal_flux_schnell, primary="fal"),
+               fal_slug="fal-ai/flux/schnell", fal_build_input=_fal_flux_schnell, primary="fal",
+               tags=("fast", "cheap", "open-source")),
     ImageModel("flux-2-max",         "Flux 2 Max",          "BFL", "black-forest-labs/flux-2-max",         sorted(_FLUX_2_AR),    _b_flux_2_max,
-               fal_slug="fal-ai/flux-2-max",  fal_build_input=_fal_flux_2_basic),
+               fal_slug="fal-ai/flux-2-max",  fal_build_input=_fal_flux_2_basic,
+               tags=("flagship", "photoreal")),
     ImageModel("flux-2-pro",         "Flux 2 Pro",          "BFL", "black-forest-labs/flux-2-pro",         sorted(_FLUX_2_AR),    _b_flux_2_pro,
-               fal_slug="fal-ai/flux-2-pro",  fal_build_input=_fal_flux_2_basic),
+               fal_slug="fal-ai/flux-2-pro",  fal_build_input=_fal_flux_2_basic,
+               tags=("flagship",)),
     ImageModel("flux-2-flex",        "Flux 2 Flex",         "BFL", "black-forest-labs/flux-2-flex",        sorted(_FLUX_2_AR),    _b_flux_2_flex,
-               fal_slug="fal-ai/flux-2-flex", fal_build_input=_fal_flux_2_tunable),
-    ImageModel("flux-2-klein-4b",    "Flux 2 Klein 4B",     "BFL", "black-forest-labs/flux-2-klein-4b",    sorted(_FLUX_KLEIN_AR), _b_flux_2_klein),
+               fal_slug="fal-ai/flux-2-flex", fal_build_input=_fal_flux_2_tunable,
+               tags=("flagship", "typography")),
+    ImageModel("flux-2-klein-4b",    "Flux 2 Klein 4B",     "BFL", "black-forest-labs/flux-2-klein-4b",    sorted(_FLUX_KLEIN_AR), _b_flux_2_klein,
+               tags=("fast", "cheap")),
     ImageModel("flux-2-dev",         "Flux 2 Dev",          "BFL", "black-forest-labs/flux-2-dev",         sorted(_FLUX_2_AR),    _b_flux_2_dev,
-               fal_slug="fal-ai/flux-2-dev",  fal_build_input=_fal_flux_2_tunable),
+               fal_slug="fal-ai/flux-2-dev",  fal_build_input=_fal_flux_2_tunable,
+               tags=("flagship", "typography")),
 
     # Google ------------------------------------------------------------------
     ImageModel("nano-banana-pro",    "Nano Banana Pro",     "Google", "google/nano-banana-pro",            sorted(_NANO_BANANA_PRO_AR), _b_nano_banana_pro,
-               fal_slug="google/nano-banana-pro", fal_build_input=_fal_nano_banana_pro, primary="fal"),
+               fal_slug="google/nano-banana-pro", fal_build_input=_fal_nano_banana_pro, primary="fal",
+               tags=("4k", "flagship", "typography", "multi-image")),
     ImageModel("nano-banana-2",      "Nano Banana 2",       "Google", "google/nano-banana-2",              sorted(_NANO_BANANA_AR),     _b_nano_banana_2,
-               fal_slug="fal-ai/nano-banana-2", fal_build_input=_fal_nano_banana_2, primary="fal"),
-    ImageModel("imagen-4-ultra",     "Imagen 4 Ultra",      "Google", "google/imagen-4-ultra",             sorted(_GOOGLE_AR),          _b_imagen_generic),
-    ImageModel("imagen-4",           "Imagen 4",            "Google", "google/imagen-4",                   sorted(_GOOGLE_AR),          _b_imagen_generic),
-    ImageModel("imagen-4-fast",      "Imagen 4 Fast",       "Google", "google/imagen-4-fast",              sorted(_GOOGLE_AR),          _b_imagen_generic),
-    ImageModel("imagen-3",           "Imagen 3",            "Google", "google/imagen-3",                   sorted(_GOOGLE_AR),          _b_imagen_generic),
-    ImageModel("imagen-3-fast",      "Imagen 3 Fast",       "Google", "google/imagen-3-fast",              sorted(_GOOGLE_AR),          _b_imagen_generic),
+               fal_slug="fal-ai/nano-banana-2", fal_build_input=_fal_nano_banana_2, primary="fal",
+               tags=("typography", "multi-image")),
+    ImageModel("imagen-4-ultra",     "Imagen 4 Ultra",      "Google", "google/imagen-4-ultra",             sorted(_GOOGLE_AR),          _b_imagen_generic,
+               tags=("flagship", "photoreal")),
+    ImageModel("imagen-4",           "Imagen 4",            "Google", "google/imagen-4",                   sorted(_GOOGLE_AR),          _b_imagen_generic,
+               tags=("flagship",)),
+    ImageModel("imagen-4-fast",      "Imagen 4 Fast",       "Google", "google/imagen-4-fast",              sorted(_GOOGLE_AR),          _b_imagen_generic,
+               tags=("fast", "cheap")),
+    ImageModel("imagen-3",           "Imagen 3",            "Google", "google/imagen-3",                   sorted(_GOOGLE_AR),          _b_imagen_generic,
+               tags=("photoreal",)),
+    ImageModel("imagen-3-fast",      "Imagen 3 Fast",       "Google", "google/imagen-3-fast",              sorted(_GOOGLE_AR),          _b_imagen_generic,
+               tags=("fast", "cheap")),
 
     # Ideogram ----------------------------------------------------------------
     ImageModel("ideogram-v3-quality",  "Ideogram V3 Quality",  "Ideogram", "ideogram-ai/ideogram-v3-quality",  sorted(_IDEOGRAM_V3_AR), _b_ideogram_v3,
-               fal_slug="fal-ai/ideogram/v3", fal_build_input=_make_fal_ideogram_v3("QUALITY"), primary="fal"),
+               fal_slug="fal-ai/ideogram/v3", fal_build_input=_make_fal_ideogram_v3("QUALITY"), primary="fal",
+               tags=("flagship", "typography", "design")),
     ImageModel("ideogram-v3-balanced", "Ideogram V3 Balanced", "Ideogram", "ideogram-ai/ideogram-v3-balanced", sorted(_IDEOGRAM_V3_AR), _b_ideogram_v3,
-               fal_slug="fal-ai/ideogram/v3", fal_build_input=_make_fal_ideogram_v3("BALANCED"), primary="fal"),
+               fal_slug="fal-ai/ideogram/v3", fal_build_input=_make_fal_ideogram_v3("BALANCED"), primary="fal",
+               tags=("design", "typography")),
     ImageModel("ideogram-v3-turbo",    "Ideogram V3 Turbo",    "Ideogram", "ideogram-ai/ideogram-v3-turbo",    sorted(_IDEOGRAM_V3_AR), _b_ideogram_v3,
-               fal_slug="fal-ai/ideogram/v3", fal_build_input=_make_fal_ideogram_v3("TURBO"), primary="fal"),
-    ImageModel("ideogram-v2",          "Ideogram V2",          "Ideogram", "ideogram-ai/ideogram-v2",          sorted(_IDEOGRAM_V2_AR), _b_ideogram_v2),
-    ImageModel("ideogram-v2a-turbo",   "Ideogram V2A Turbo",   "Ideogram", "ideogram-ai/ideogram-v2a-turbo",   sorted(_IDEOGRAM_V2_AR), _b_ideogram_v2),
+               fal_slug="fal-ai/ideogram/v3", fal_build_input=_make_fal_ideogram_v3("TURBO"), primary="fal",
+               tags=("fast", "typography")),
+    ImageModel("ideogram-v2",          "Ideogram V2",          "Ideogram", "ideogram-ai/ideogram-v2",          sorted(_IDEOGRAM_V2_AR), _b_ideogram_v2,
+               tags=("typography", "design")),
+    ImageModel("ideogram-v2a-turbo",   "Ideogram V2A Turbo",   "Ideogram", "ideogram-ai/ideogram-v2a-turbo",   sorted(_IDEOGRAM_V2_AR), _b_ideogram_v2,
+               tags=("fast", "cheap", "typography")),
 
     # ByteDance ---------------------------------------------------------------
     ImageModel("seedream-5-pro",     "Seedream 5 Pro",      "ByteDance", "bytedance/seedream-5-pro",        sorted(_SEEDREAM_AR), _b_seedream_5_pro,
-               fal_slug="bytedance/seedream/v5/pro/text-to-image", fal_build_input=_fal_seedream_5_pro, primary="fal"),
+               fal_slug="bytedance/seedream/v5/pro/text-to-image", fal_build_input=_fal_seedream_5_pro, primary="fal",
+               tags=("cinematic", "photoreal", "multi-image")),
     ImageModel("seedream-5-lite",    "Seedream 5 Lite",     "ByteDance", "bytedance/seedream-5-lite",       sorted(_SEEDREAM_AR), _b_seedream_5_lite,
-               fal_slug="fal-ai/bytedance/seedream/v5/lite/text-to-image", fal_build_input=_fal_seedream_5_lite, primary="fal"),
-    ImageModel("seedream-4.5",       "Seedream 4.5",        "ByteDance", "bytedance/seedream-4.5",          sorted(_SEEDREAM_AR), _b_seedream_45),
+               fal_slug="fal-ai/bytedance/seedream/v5/lite/text-to-image", fal_build_input=_fal_seedream_5_lite, primary="fal",
+               tags=("cinematic", "multi-image")),
+    ImageModel("seedream-4.5",       "Seedream 4.5",        "ByteDance", "bytedance/seedream-4.5",          sorted(_SEEDREAM_AR), _b_seedream_45,
+               tags=("cinematic", "photoreal")),
     ImageModel("seedream-4",         "Seedream 4",          "ByteDance", "bytedance/seedream-4",            sorted(_SEEDREAM_AR), _b_seedream_4,
-               fal_slug="fal-ai/bytedance/seedream/v4/text-to-image", fal_build_input=_fal_seedream_v4, primary="fal"),
-    ImageModel("seedream-3",         "Seedream 3",          "ByteDance", "bytedance/seedream-3",            sorted(_SEEDREAM_AR), _b_seedream_3),
+               fal_slug="fal-ai/bytedance/seedream/v4/text-to-image", fal_build_input=_fal_seedream_v4, primary="fal",
+               tags=("multi-image",)),
+    ImageModel("seedream-3",         "Seedream 3",          "ByteDance", "bytedance/seedream-3",            sorted(_SEEDREAM_AR), _b_seedream_3,
+               tags=("cheap",)),
 
     # Recraft -----------------------------------------------------------------
-    ImageModel("recraft-v4-pro",     "Recraft V4 Pro",      "Recraft", "recraft-ai/recraft-v4-pro",         sorted(_RECRAFT_AR), _b_recraft_v4),
-    ImageModel("recraft-v4-pro-svg", "Recraft V4 Pro SVG",  "Recraft", "recraft-ai/recraft-v4-pro-svg",     sorted(_RECRAFT_AR), _b_recraft_v4),
-    ImageModel("recraft-v4",         "Recraft V4",          "Recraft", "recraft-ai/recraft-v4",             sorted(_RECRAFT_AR), _b_recraft_v4),
-    ImageModel("recraft-v4-svg",     "Recraft V4 SVG",      "Recraft", "recraft-ai/recraft-v4-svg",         sorted(_RECRAFT_AR), _b_recraft_v4),
-    ImageModel("recraft-v3",         "Recraft V3",          "Recraft", "recraft-ai/recraft-v3",             sorted(_RECRAFT_AR), _b_recraft_v3),
-    ImageModel("recraft-v3-svg",     "Recraft V3 SVG",      "Recraft", "recraft-ai/recraft-v3-svg",         sorted(_RECRAFT_AR), _b_recraft_v3_svg),
+    ImageModel("recraft-v4-pro",     "Recraft V4 Pro",      "Recraft", "recraft-ai/recraft-v4-pro",         sorted(_RECRAFT_AR), _b_recraft_v4,
+               tags=("flagship", "design")),
+    ImageModel("recraft-v4-pro-svg", "Recraft V4 Pro SVG",  "Recraft", "recraft-ai/recraft-v4-pro-svg",     sorted(_RECRAFT_AR), _b_recraft_v4,
+               tags=("svg", "design", "flagship")),
+    ImageModel("recraft-v4",         "Recraft V4",          "Recraft", "recraft-ai/recraft-v4",             sorted(_RECRAFT_AR), _b_recraft_v4,
+               tags=("design", "typography")),
+    ImageModel("recraft-v4-svg",     "Recraft V4 SVG",      "Recraft", "recraft-ai/recraft-v4-svg",         sorted(_RECRAFT_AR), _b_recraft_v4,
+               tags=("svg", "design")),
+    ImageModel("recraft-v3",         "Recraft V3",          "Recraft", "recraft-ai/recraft-v3",             sorted(_RECRAFT_AR), _b_recraft_v3,
+               tags=("design", "typography")),
+    ImageModel("recraft-v3-svg",     "Recraft V3 SVG",      "Recraft", "recraft-ai/recraft-v3-svg",         sorted(_RECRAFT_AR), _b_recraft_v3_svg,
+               tags=("svg", "design")),
 
     # Stability AI ------------------------------------------------------------
-    ImageModel("stable-diffusion-3.5-large",       "Stable Diffusion 3.5 Large",       "Stability AI", "stability-ai/stable-diffusion-3.5-large",       sorted(_SD35_AR), _b_sd35_large),
-    ImageModel("stable-diffusion-3.5-large-turbo", "Stable Diffusion 3.5 Large Turbo", "Stability AI", "stability-ai/stable-diffusion-3.5-large-turbo", sorted(_SD35_AR), _b_sd35_large_turbo),
-    ImageModel("stable-diffusion-3.5-medium",      "Stable Diffusion 3.5 Medium",      "Stability AI", "stability-ai/stable-diffusion-3.5-medium",      sorted(_SD35_AR), _b_sd35_medium),
+    ImageModel("stable-diffusion-3.5-large",       "Stable Diffusion 3.5 Large",       "Stability AI", "stability-ai/stable-diffusion-3.5-large",       sorted(_SD35_AR), _b_sd35_large,
+               tags=("open-source", "flagship")),
+    ImageModel("stable-diffusion-3.5-large-turbo", "Stable Diffusion 3.5 Large Turbo", "Stability AI", "stability-ai/stable-diffusion-3.5-large-turbo", sorted(_SD35_AR), _b_sd35_large_turbo,
+               tags=("open-source", "fast")),
+    ImageModel("stable-diffusion-3.5-medium",      "Stable Diffusion 3.5 Medium",      "Stability AI", "stability-ai/stable-diffusion-3.5-medium",      sorted(_SD35_AR), _b_sd35_medium,
+               tags=("open-source", "cheap")),
 
     # OpenAI ------------------------------------------------------------------
-    ImageModel("gpt-image-2",        "GPT Image 2",         "OpenAI", "openai/gpt-image-2",                 sorted(_OPENAI_AR), _b_gpt_image_2),
-    ImageModel("gpt-image-1.5",      "GPT Image 1.5",       "OpenAI", "openai/gpt-image-1.5",               sorted(_OPENAI_AR), _b_gpt_image_15),
+    ImageModel("gpt-image-2",        "GPT Image 2",         "OpenAI", "openai/gpt-image-2",                 sorted(_OPENAI_AR), _b_gpt_image_2,
+               tags=("flagship", "typography")),
+    ImageModel("gpt-image-1.5",      "GPT Image 1.5",       "OpenAI", "openai/gpt-image-1.5",               sorted(_OPENAI_AR), _b_gpt_image_15,
+               tags=("typography",)),
 
     # Alibaba -----------------------------------------------------------------
-    ImageModel("qwen-image",         "Qwen Image",          "Alibaba", "qwen/qwen-image",                   sorted(_QWEN_AR), _b_qwen_image),
+    ImageModel("qwen-image",         "Qwen Image",          "Alibaba", "qwen/qwen-image",                   sorted(_QWEN_AR), _b_qwen_image,
+               tags=("typography", "open-source")),
 
     # Tencent -----------------------------------------------------------------
-    ImageModel("hunyuan-image-3",    "Hunyuan Image 3",     "Tencent", "tencent/hunyuan-image-3",           sorted(_HUNYUAN_AR), _b_hunyuan_image_3),
+    ImageModel("hunyuan-image-3",    "Hunyuan Image 3",     "Tencent", "tencent/hunyuan-image-3",           sorted(_HUNYUAN_AR), _b_hunyuan_image_3,
+               tags=("open-source",)),
 
     # xAI ---------------------------------------------------------------------
-    ImageModel("grok-imagine",       "Grok Imagine",        "xAI", "xai/grok-imagine-image",                sorted(_GROK_AR), _b_grok_imagine),
+    ImageModel("grok-imagine",       "Grok Imagine",        "xAI", "xai/grok-imagine-image",                sorted(_GROK_AR), _b_grok_imagine,
+               tags=("cinematic",)),
 
     # Pruna -------------------------------------------------------------------
-    ImageModel("flux-fast",          "Flux Fast (Pruna)",   "Pruna", "prunaai/flux-fast",                   sorted(_FLUX_DEV_AR), _b_flux_fast),
-    ImageModel("p-image",            "P-Image",             "Pruna", "prunaai/p-image",                     sorted(_PIMAGE_AR),   _b_p_image),
-    ImageModel("wan-2.2-image-pruna", "Wan 2.2 Image (Pruna)", "Pruna", "prunaai/wan-2.2-image",            sorted(_WAN22_AR),    _b_wan22_pruna),
+    ImageModel("flux-fast",          "Flux Fast (Pruna)",   "Pruna", "prunaai/flux-fast",                   sorted(_FLUX_DEV_AR), _b_flux_fast,
+               tags=("fast", "cheap")),
+    ImageModel("p-image",            "P-Image",             "Pruna", "prunaai/p-image",                     sorted(_PIMAGE_AR),   _b_p_image,
+               tags=("fast", "cheap")),
+    ImageModel("wan-2.2-image-pruna", "Wan 2.2 Image (Pruna)", "Pruna", "prunaai/wan-2.2-image",            sorted(_WAN22_AR),    _b_wan22_pruna,
+               tags=("cinematic", "fast")),
 
     # Bria --------------------------------------------------------------------
-    ImageModel("bria-fibo",          "Bria Fibo",           "Bria", "bria/fibo",                            sorted(_BRIA_AR), _b_bria_fibo),
-    ImageModel("bria-image-3.2",     "Bria Image 3.2",      "Bria", "bria/image-3.2",                       sorted(_BRIA_AR), _b_bria_image_32),
+    ImageModel("bria-fibo",          "Bria Fibo",           "Bria", "bria/fibo",                            sorted(_BRIA_AR), _b_bria_fibo,
+               tags=("open-source", "photoreal")),
+    ImageModel("bria-image-3.2",     "Bria Image 3.2",      "Bria", "bria/image-3.2",                       sorted(_BRIA_AR), _b_bria_image_32,
+               tags=("photoreal",)),
 
     # Luma --------------------------------------------------------------------
-    ImageModel("photon",             "Photon",              "Luma", "luma/photon",                          sorted(_PHOTON_AR), _b_photon),
-    ImageModel("photon-flash",       "Photon Flash",        "Luma", "luma/photon-flash",                    sorted(_PHOTON_AR), _b_photon),
+    ImageModel("photon",             "Photon",              "Luma", "luma/photon",                          sorted(_PHOTON_AR), _b_photon,
+               tags=("cinematic",)),
+    ImageModel("photon-flash",       "Photon Flash",        "Luma", "luma/photon-flash",                    sorted(_PHOTON_AR), _b_photon,
+               tags=("fast", "cheap")),
 
     # MiniMax -----------------------------------------------------------------
-    ImageModel("minimax-image-01",   "MiniMax Image 01",    "MiniMax", "minimax/image-01",                  sorted(_MINIMAX_AR), _b_minimax_image_01),
+    ImageModel("minimax-image-01",   "MiniMax Image 01",    "MiniMax", "minimax/image-01",                  sorted(_MINIMAX_AR), _b_minimax_image_01,
+               tags=("cheap",)),
 
     # Reve --------------------------------------------------------------------
     ImageModel("reve-create",        "Reve Create",         "Reve",    "reve/create",                       sorted(_REVE_AR),    _b_reve_create),
 
     # Krea --------------------------------------------------------------------
     ImageModel("krea-2-large",  "Krea 2 Large",  "Krea", "krea/krea-2-large",  sorted(_KREA_AR), _b_krea2,
-               fal_slug="krea/v2/large/text-to-image",  fal_build_input=_fal_krea2, primary="fal"),
+               fal_slug="krea/v2/large/text-to-image",  fal_build_input=_fal_krea2, primary="fal",
+               tags=("flagship", "photoreal")),
     ImageModel("krea-2-medium", "Krea 2 Medium", "Krea", "krea/krea-2-medium", sorted(_KREA_AR), _b_krea2,
-               fal_slug="krea/v2/medium/text-to-image", fal_build_input=_fal_krea2, primary="fal"),
+               fal_slug="krea/v2/medium/text-to-image", fal_build_input=_fal_krea2, primary="fal",
+               tags=("fast",)),
 ]
 
 IMAGE_MODELS_BY_ID: dict[str, ImageModel] = {m.id: m for m in MODELS}
