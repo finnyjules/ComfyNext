@@ -23,9 +23,13 @@ const MODEL = 'black-forest-labs/flux-schnell'
 // Opt-in higher tier (taste-wall texture testing): dev renders grain/texture
 // schnell's 4-step distillation airbrushes away. Existing callers omit `model`
 // and get schnell exactly as before.
-const MODELS: Record<string, { slug: string; input: Record<string, number> }> = {
-  'flux-schnell': { slug: MODEL, input: { num_inference_steps: 4 } },
-  'flux-dev': { slug: 'black-forest-labs/flux-dev', input: { num_inference_steps: 28, guidance: 3 } },
+// Each tier owns its FULL extra-input set — models validate strictly, so a
+// field one model wants can 422 another (the fal-enum lesson, Replicate edition).
+const FLUX_EXTRAS = { num_outputs: 1, output_format: 'png', megapixels: '1', go_fast: true }
+const MODELS: Record<string, { slug: string; input: Record<string, unknown> }> = {
+  'flux-schnell': { slug: MODEL, input: { ...FLUX_EXTRAS, num_inference_steps: 4 } },
+  'flux-dev': { slug: 'black-forest-labs/flux-dev', input: { ...FLUX_EXTRAS, num_inference_steps: 28, guidance: 3 } },
+  'seedream-4.5': { slug: 'bytedance/seedream-4.5', input: { size: '1K' } },
 }
 
 interface Body {
@@ -55,12 +59,8 @@ export default defineEventHandler(async (event) => {
       const out = await runReplicate(tier.slug, {
         prompt,
         aspect_ratio,
-        num_outputs: 1,
-        ...tier.input,            // schnell: 4 steps (guidance-distilled) · dev: 28 steps + guidance
-        output_format: 'png',
-        megapixels: '1',
-        go_fast: true,
         seed,
+        ...tier.input,            // schnell: 4 steps · dev: 28 + guidance · seedream: size only
       }, token, { timeoutMs: 180_000 })
       const url = firstOutputUrl(out)
       if (!url) throw createError({ statusCode: 502, message: 'Replicate returned no image' })

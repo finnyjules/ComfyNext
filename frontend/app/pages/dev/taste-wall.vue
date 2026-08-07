@@ -31,6 +31,7 @@ import { drawVectorTypeToCanvas } from '~/lib/vectortype/canvas'
 import { loadVariableFont, type VtFont } from '~/lib/vectortype/font'
 import { DEFAULT_CONFIG, mergeConfig, type VectorTypeConfig } from '~/lib/vectortype/config'
 import { applyTasteToConfigs, CONFIDENCE_FLOOR, enforcePaletteOnGradient } from '~/lib/taste/mapping'
+import { applyEffectChain, type PostEffect } from '~/lib/compositor/postEffects'
 import { tastedPrompt } from '~/lib/taste/styleBlock'
 import { IMAGE_MODELS_BY_ID } from '~/data/image-models'
 import { observedToConfigs, observedFacetProxies } from '~/lib/taste/observedConfigs'
@@ -391,7 +392,7 @@ async function composeFromBrief(brief: { label: string; text: string }): Promise
 // discipline, generation edition).
 const GEN_SEED = 424242
 const GEN_ASPECT = '16:9' // matches the wall's cell aspect
-const GEN_MODELS = ['flux-schnell', 'flux-dev'] as const
+const GEN_MODELS = ['flux-schnell', 'flux-dev', 'seedream-4.5'] as const
 const genModel = ref<(typeof GEN_MODELS)[number]>('flux-schnell')
 const genPricePerImage = computed(() => IMAGE_MODELS_BY_ID[genModel.value]?.pricePerImage ?? 0.003)
 const GEN_PAIR_PRICE = computed(() => `~$${(genPricePerImage.value * 2).toFixed(3)}`)
@@ -407,6 +408,7 @@ async function generatePair() {
   const subject = genPrompt.value.trim()
   if (!subject) { error.value = 'subject prompt is empty'; return }
   genBusy.value = true
+  Object.keys(finished).forEach(k => delete finished[k])
   genNeutral.prompt = subject
   genTasted.prompt = tastedPrompt(subject, { summary: summaryA.value, palette: paletteA.value, avoids: fableA.value?.avoids })
   // Sequential on purpose: cheap, and errors stay attributable per image.
@@ -441,6 +443,7 @@ async function generateTrio() {
   const subject = genPrompt.value.trim()
   if (!subject) { error.value = 'subject prompt is empty'; return }
   genBusy.value = true
+  Object.keys(finished).forEach(k => delete finished[k])
   trioRan.value = true
   const prompt = tastedPrompt(subject, { summary: summaryA.value, palette: paletteA.value, avoids: fableA.value?.avoids })
   for (let i = 0; i < genTrio.length; i++) {
@@ -459,6 +462,42 @@ async function generateTrio() {
     finally { slot.loading = false }
   }
   genBusy.value = false
+}
+
+// Kit finish: the doctrine demo — the model does world and light, the KIT does
+// finish. Runs the tasted renders through the Compositor's own deterministic
+// grain (applyEffectChain, the real product renderer) at the intensity the
+// reading measured. Free, client-side, and no diffusion-only tool can do it.
+const kitFinish = ref(false)
+const finished = reactive<Record<string, string>>({})
+
+function grainIntensity(): number {
+  const texture = fableA.value?.facets.texture?.value ?? readingA.value?.facets.texture?.value ?? 0.5
+  return Math.min(1, Math.max(0.1, texture * 0.6)) // measured texture → grain amount
+}
+
+async function finishOne(key: string, src: string): Promise<void> {
+  if (!src || finished[key]) return
+  const img = await loadImage(src)
+  const c = document.createElement('canvas')
+  c.width = img.naturalWidth; c.height = img.naturalHeight
+  c.getContext('2d')!.drawImage(img, 0, 0)
+  const grain: PostEffect = { ...POST_GRAIN_BASE, amount: grainIntensity() }
+  applyEffectChain(c, [grain], { W: c.width })
+  finished[key] = c.toDataURL('image/jpeg', 0.92)
+}
+const POST_GRAIN_BASE = { type: 'grain', size: 2, visible: true } as PostEffect
+
+async function toggleKitFinish() {
+  kitFinish.value = !kitFinish.value
+  if (!kitFinish.value) return
+  const slots: [string, string][] = [['tasted', genTasted.img], ...genTrio.map((g, i) => [`seed${i}`, g.img] as [string, string])]
+  for (const [key, src] of slots) await finishOne(key, src)
+}
+
+/** What to display for a gen slot, honoring the kit-finish toggle. */
+function genDisplay(key: string, raw: string): string {
+  return kitFinish.value && finished[key] ? finished[key]! : raw
 }
 
 // ── Readings + divergence view models ───────────────────────────────────────
@@ -612,12 +651,17 @@ const fmt = (v: number | null | undefined) => (v === null || v === undefined ? '
           :style="{ background: '#1a1a22', color: summaryA && !genBusy ? '#ddd' : '#555', border: '1px solid #3a3a48', borderRadius: '8px', padding: '8px 16px', fontWeight: 600, cursor: summaryA && !genBusy ? 'pointer' : 'not-allowed' }">
           {{ `Tasted ×3 seeds (paid ${GEN_TRIO_PRICE})` }}
         </button>
+        <button :disabled="!genTasted.img" data-kit-finish @click="toggleKitFinish"
+          title="run the renders through the Compositor's own deterministic grain at the intensity the reading measured — free"
+          :style="{ background: kitFinish ? 'rgba(122,162,247,.18)' : '#1a1a22', color: genTasted.img ? '#ddd' : '#555', border: kitFinish ? '1px solid #7aa2f7' : '1px solid #3a3a48', borderRadius: '8px', padding: '8px 16px', fontWeight: 600, cursor: genTasted.img ? 'pointer' : 'not-allowed' }">
+          {{ kitFinish ? '✓ kit finish (procedural grain)' : '＋ kit finish (free)' }}
+        </button>
         <span v-if="!summaryA" style="font-size:11px;color:#666">needs a Fable reading first</span>
       </div>
       <div style="display:flex;gap:10px;flex-wrap:wrap">
         <div v-for="g in [genNeutral, genTasted]" :key="g.label" :style="{ width: CELL_W + 'px' }">
           <div style="font-size:11px;color:#aaa;font-weight:600;margin-bottom:3px">{{ g.label }}</div>
-          <img v-if="g.img" :src="g.img" :data-gen-img="g.label"
+          <img v-if="g.img" :src="g.label === 'tasted' ? genDisplay('tasted', g.img) : g.img" :data-gen-img="g.label"
             :style="{ width: CELL_W + 'px', maxWidth: 'none', display: 'block', borderRadius: '6px', background: '#000' }" />
           <div v-else :data-gen-empty="g.label"
             :style="{ width: CELL_W + 'px', height: CELL_H + 'px', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px dashed #2a2a35', borderRadius: '6px', color: '#555', fontSize: '11px' }">
@@ -629,8 +673,8 @@ const fmt = (v: number | null | undefined) => (v === null || v === undefined ? '
       <div v-if="trioRan" style="margin-top:12px">
         <div style="font-size:11px;color:#aaa;font-weight:600;margin-bottom:3px">Consistency — same tasted prompt, three fresh seeds</div>
         <div data-gen-trio-row style="display:flex;gap:10px;flex-wrap:wrap">
-          <div v-for="g in genTrio" :key="g.label" :style="{ width: CELL_W + 'px' }">
-            <img v-if="g.img" :src="g.img" :data-gen-img="g.label"
+          <div v-for="(g, gi) in genTrio" :key="g.label" :style="{ width: CELL_W + 'px' }">
+            <img v-if="g.img" :src="genDisplay(`seed${gi}`, g.img)" :data-gen-img="g.label"
               :style="{ width: CELL_W + 'px', maxWidth: 'none', display: 'block', borderRadius: '6px', background: '#000' }" />
             <div v-else
               :style="{ width: CELL_W + 'px', height: CELL_H + 'px', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px dashed #2a2a35', borderRadius: '6px', color: '#555', fontSize: '11px' }">
