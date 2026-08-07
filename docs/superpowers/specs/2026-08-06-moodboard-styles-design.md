@@ -82,11 +82,12 @@ Reached from the node (primary) or from the gallery's **Moodboards** tab
 opens the same modal).
 
 **The modal reads as a brand-guidelines document, not a form** (Julien's call, mocked and
-approved): a floating section nav on the left (`00 Board · 01 Reading · 02 Palette ·
-03 Avoids`, active section tracking scroll), scrollable numbered sections on the right in
-the Book grammar — one document grid, hairlines between sections, the board opening as
-full-bleed plates. A floating footer carries Re-read · Save. This is deliberately the
-same register the future Kits space uses — the moodboard modal is its seed. Content flow:
+approved, then pared down twice): a floating nav on the left (`Board · Reading · Palette ·
+Avoids`, active item tracking scroll) beside clean scrollable content — **no section
+numbers, no subheaders, no dividers**; the nav names things, the content speaks for
+itself. Board opens as full-bleed plates, the reading flows as open prose, swatches and
+chips follow with spacing alone as structure. A floating footer carries Re-read · Save.
+This register is deliberately shared with the future Kits space. Content flow:
 
 1. **Drop 5–20 images** (decoded client-side like the taste wall; JPEG-downscaled before
    upload). Thumbnails appear as a small board.
