@@ -1480,11 +1480,11 @@ const frameCount = computed(() => Math.round((config.value.motion.fps || 30) * (
       <button
         v-if="animated"
         type="button"
-        class="shrink-0 whitespace-nowrap rounded border border-white/10 bg-white/[0.06] px-3 py-1.5 text-[12px] text-white/80 transition hover:bg-white/[0.12]"
+        class="shrink-0 whitespace-nowrap rounded-[6px] border border-white/10 bg-white/[0.06] px-3 py-1.5 text-[12px] text-white/80 transition hover:bg-white/[0.12]"
         @click="playing = !playing"
       >{{ playing ? 'Pause' : 'Play' }}</button>
-      <button type="button" class="shrink-0 whitespace-nowrap rounded border border-white/10 bg-white/[0.06] px-3 py-1.5 text-[12px] text-white/70 transition hover:bg-white/[0.12]" @click="triggerImport">Import settings</button>
-      <button type="button" class="shrink-0 whitespace-nowrap rounded border border-white/10 bg-white/[0.06] px-3 py-1.5 text-[12px] text-white/70 transition hover:bg-white/[0.12]" @click="exportSettings">Export settings</button>
+      <button type="button" class="shrink-0 whitespace-nowrap rounded-[6px] border border-white/10 bg-white/[0.06] px-3 py-1.5 text-[12px] text-white/70 transition hover:bg-white/[0.12]" @click="triggerImport">Import settings</button>
+      <button type="button" class="shrink-0 whitespace-nowrap rounded-[6px] border border-white/10 bg-white/[0.06] px-3 py-1.5 text-[12px] text-white/70 transition hover:bg-white/[0.12]" @click="exportSettings">Export settings</button>
       <input ref="importInput" type="file" accept="application/json" class="hidden" @change="onImportFile" />
       <span v-if="actionError" class="text-[11px] text-red-400/90">{{ actionError }}</span>
       <span class="flex-1" />
@@ -1499,7 +1499,7 @@ const frameCount = computed(() => Math.round((config.value.motion.fps || 30) * (
            output is editable geometry, and the file it writes is the point. -->
       <button
         type="button"
-        class="shrink-0 whitespace-nowrap rounded border border-white/15 bg-white/[0.08] px-3.5 py-1.5 text-[12px] font-medium text-white/85 transition enabled:hover:bg-white/[0.14] disabled:cursor-not-allowed disabled:opacity-40"
+        class="shrink-0 whitespace-nowrap rounded-[6px] border border-white/15 bg-white/[0.08] px-3.5 py-1.5 text-[12px] font-medium text-white/85 transition enabled:hover:bg-white/[0.14] disabled:cursor-not-allowed disabled:opacity-40"
         :disabled="!font || svgExporting"
         :title="svgExportTitle"
         :data-export-tier="fillExportTier"
@@ -1508,7 +1508,7 @@ const frameCount = computed(() => Math.round((config.value.motion.fps || 30) * (
       >{{ svgExporting ? 'Exporting…' : 'Export SVG' }}</button>
       <button
         type="button"
-        class="shrink-0 whitespace-nowrap rounded bg-action px-3.5 py-1.5 text-[12px] font-medium text-white transition enabled:hover:bg-action/85 disabled:cursor-not-allowed disabled:opacity-40"
+        class="shrink-0 whitespace-nowrap rounded-[6px] bg-action px-3.5 py-1.5 text-[12px] font-medium text-white transition enabled:hover:bg-action/85 disabled:cursor-not-allowed disabled:opacity-40"
         :disabled="!font || exporting"
         @click="exportPng"
       >{{ exporting ? 'Exporting…' : 'Export PNG' }}</button>

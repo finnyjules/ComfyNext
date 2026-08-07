@@ -796,10 +796,9 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
       <!-- Disabled while in flight: a double-click otherwise starts two
            full-resolution GL bakes and downloads two files. -->
       <StudioButton :disabled="embedding" @click="exportWebEmbed">{{ embedding ? 'Exporting…' : 'Export embed' }}</StudioButton>
-      <button class="ml-1 rounded px-2 py-1 text-xs text-white/45 hover:text-white/80 hover:bg-white/[0.06] transition"
-              title="Copy this gradient's config JSON (for teaching the agent)" @click="copyConfig">
+      <StudioButton variant="subtle" title="Copy this gradient's config JSON (for teaching the agent)" @click="copyConfig">
         {{ copied ? '✓ Copied' : 'Copy config' }}
-      </button>
+      </StudioButton>
       <!-- A failure must not read like a success. Matches glError's styling. -->
       <span v-if="embedMsg" class="truncate text-xs"
             :class="embedErr ? 'text-red-300/80' : 'opacity-60'">{{ embedMsg }}</span>

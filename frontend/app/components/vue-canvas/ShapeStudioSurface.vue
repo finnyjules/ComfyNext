@@ -493,14 +493,9 @@ async function onImportFile(e: Event) {
       <input ref="importInput" type="file" accept="application/json" class="hidden" @change="onImportFile" />
       <span v-if="actionError" class="text-[11px] text-red-400/90">{{ actionError }}</span>
       <span class="flex-1" />
-      <button
-        type="button"
-        class="rounded bg-action px-3.5 py-1.5 text-[12px] font-medium text-white transition enabled:hover:bg-action/85 disabled:cursor-not-allowed disabled:opacity-40"
-        :disabled="!webglOk || exporting"
-        @click="exportPng"
-      >
+      <StudioButton variant="primary" :disabled="!webglOk || exporting" @click="exportPng">
         {{ exporting ? 'Exporting…' : 'Export PNG' }}
-      </button>
+      </StudioButton>
     </template>
     <template #controls>
       <!-- Seed + Re-roll -->
