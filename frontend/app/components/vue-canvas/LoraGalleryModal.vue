@@ -18,8 +18,6 @@ import {
   isCharacterItem,
 } from '~/lib/graph/loraGalleryTabs'
 import { slotAestheticKey, loraSlotSiblings, moodboardSlotKey } from '~/lib/graph/loraStyleBlocks'
-import { applyMoodboardToGenerateNode } from '~/lib/graph/moodboardApply'
-import { IMAGE_MODELS_BY_ID } from '~/data/image-models'
 import { moodboardStyleBlock } from '~/lib/taste/styleBlock'
 import { useMoodboards } from '~/composables/useMoodboards'
 import type { MoodboardEntry } from '~~/shared/taste/moodboard'
@@ -318,33 +316,17 @@ async function onConfirm(item: LoraItem) {
   // filled (card face, progressive disclosure) and lets the ✕ clear both.
   if (item.moodboard) {
     const entry = item.moodboard
-    // Non-slot target (GenerateImageNode's style_block chip): property writes
-    // via the shared helper the B4 wire will reuse — plus, Task B3, the refs
-    // ride-along and the legible auto-switch. Only the MODEL widget is ever
-    // touched (by name), and only when the helper says a switch happened.
+    // Non-slot target (GenerateImageNode's style_block chip): applying IS
+    // wiring (2026-08-07 amendment) — the pick is expressed as the REAL taste
+    // wire. The canvas (the only owner of nodes/edges) finds-or-creates the
+    // board's Moodboard node beside the generator, draws the TASTE edge into
+    // `style_in`, and runs the shared wire side effects (auto-switch + refs +
+    // chip identity — see `handleMoodboardWire` in VueNodeCanvas.vue). No
+    // property block write here: the wire is the single carrier of the block.
     if (isPropertyTarget.value) {
-      // The board's image files feed the style_refs payload (first 3).
-      let files: string[] = []
-      try {
-        const res = await fetch(`/api/moodboards/images?folder=${encodeURIComponent(entry.folder)}`)
-        if (res.ok) files = ((await res.json()).files ?? []) as string[]
-      } catch { /* offline dev — apply proceeds ref-less, block still lands */ }
-      const mIdx = widgetIndex('model')
-      const modelId = mIdx >= 0 ? String(data.widgetsValues[mIdx] ?? '') : ''
-      const modelTags = (IMAGE_MODELS_BY_ID[modelId]?.tags ?? []) as string[]
-      const writes = applyMoodboardToGenerateNode(data, entry, files, modelId, modelTags)
-      if (writes.model) {
-        // Auto-switch to the moodboard default (legible: the chip shows the
-        // notice + Revert via the sailor_moodboard_switched marker).
-        set('model', writes.model)
-        // Mirror the switched-to model's advanced bag into the hidden
-        // model_options widget (ModelGalleryModal's sync contract) so the
-        // backend doesn't read the previous model's JSON.
-        const optsIdx = widgetIndex('model_options')
-        if (optsIdx >= 0) {
-          data.widgetsValues[optsIdx] = JSON.stringify(data.properties?.modelOptions?.[writes.model] ?? {})
-        }
-      }
+      window.dispatchEvent(new CustomEvent('sailor:moodboardWire', {
+        detail: { nodeId: props.nodeId, entryId: entry.id },
+      }))
       emit('close')
       return
     }

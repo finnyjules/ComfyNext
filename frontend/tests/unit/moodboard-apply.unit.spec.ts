@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   applyMoodboardToGenerateNode,
+  applyMoodboardWireEffects,
   clearMoodboardFromGenerateNode,
   revertMoodboardSwitch,
   syncMoodboardWidgets,
@@ -146,6 +147,67 @@ describe('applyMoodboardToGenerateNode — legible auto-switch (B3)', () => {
     const writes = apply(node, { modelId: 'flux-dev', modelTags: FLUX_TAGS })
     expect(writes.model).toBe(MOODBOARD_DEFAULT_MODEL)
     expect(node.properties.sailor_moodboard_switched).toBe('flux-schnell')
+  })
+})
+
+describe('applyMoodboardWireEffects — the wire-path apply ("Applying IS wiring", B6)', () => {
+  function wireApply(node: any, opts: { files?: string[]; modelId?: string; modelTags?: string[] } = {}) {
+    return applyMoodboardWireEffects(
+      node, ENTRY,
+      opts.files ?? FILES,
+      opts.modelId ?? 'nano-banana-pro',
+      opts.modelTags ?? NANO_TAGS,
+    )
+  }
+
+  it('writes identity + refs but NEVER the prose block (the wire carries it)', () => {
+    const node = { properties: {} as Record<string, any> }
+    const writes = wireApply(node)
+
+    expect(node.properties.sailor_moodboard).toBe('dusty-pastels')
+    expect(JSON.parse(node.properties.style_refs)).toEqual({
+      folder: ENTRY.folder,
+      files: FILES.slice(0, MOODBOARD_MAX_REFS),
+    })
+    // BROKEN CONTROL for the single-carrier rule: an implementation that still
+    // writes the block property (i.e. reuses the property-path apply) fails.
+    expect('aesthetic' in node.properties).toBe(false)
+    expect('aesthetic' in (writes as any)).toBe(false)
+  })
+
+  it('deletes a stale pre-amendment property block (single carrier)', () => {
+    const node = { properties: { aesthetic: 'legacy block from the property era' } as Record<string, any> }
+    wireApply(node)
+    expect('aesthetic' in node.properties).toBe(false)
+    expect(node.properties.sailor_moodboard).toBe('dusty-pastels')
+  })
+
+  it('auto-switches a non-ref model with the same marker semantics as the chip apply', () => {
+    const node = { properties: {} as Record<string, any> }
+    const writes = wireApply(node, { modelId: 'flux-schnell', modelTags: FLUX_TAGS })
+    expect(writes.model).toBe(MOODBOARD_DEFAULT_MODEL)
+    expect(writes.switchedFrom).toBe('flux-schnell')
+    expect(node.properties.sailor_moodboard_switched).toBe('flux-schnell')
+    // Refs ride on the switched-to model's capability.
+    expect(JSON.parse(node.properties.style_refs).folder).toBe(ENTRY.folder)
+  })
+
+  it('manual choice wins on the wire path too (applied board, no marker)', () => {
+    const node = { properties: { sailor_moodboard: 'dusty-pastels' } as Record<string, any> }
+    const writes = wireApply(node, { modelId: 'flux-dev', modelTags: FLUX_TAGS })
+    expect(writes.model).toBeNull()
+    expect('sailor_moodboard_switched' in node.properties).toBe(false)
+    expect(node.properties.style_refs).toBe('')
+  })
+
+  it('the property-path apply still layers the block ON TOP of the wire effects', () => {
+    // applyMoodboardToGenerateNode keeps its pre-amendment shape: identical
+    // writes plus properties.aesthetic (the FLUX-era property carrier).
+    const node = { properties: {} as Record<string, any> }
+    const writes = applyMoodboardToGenerateNode(node, ENTRY, FILES, 'nano-banana-pro', NANO_TAGS)
+    expect(node.properties.aesthetic).toBe(moodboardStyleBlock(ENTRY.reading))
+    expect(writes.aesthetic).toBe(node.properties.aesthetic)
+    expect(node.properties.sailor_moodboard).toBe('dusty-pastels')
   })
 })
 

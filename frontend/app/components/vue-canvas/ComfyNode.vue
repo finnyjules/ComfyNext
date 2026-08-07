@@ -971,6 +971,12 @@ function openGenerateMoodboardGallery() {
 }
 function clearGenerateMoodboard() {
   clearMoodboardFromGenerateNode(props.data)
+  // Applying IS wiring: the ✕ also removes the TASTE edge into this node's
+  // style_in (the Moodboard node itself STAYS on canvas). Edge removal is
+  // canvas-owned — VueNodeCanvas handles this event.
+  window.dispatchEvent(new CustomEvent('sailor:moodboardUnwire', {
+    detail: { nodeId: props.id },
+  }))
 }
 // Task B3: refs badge + auto-switch notice state, both plain node properties
 // written by applyMoodboardToGenerateNode.

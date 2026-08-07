@@ -169,6 +169,43 @@ describe('injectLoraStyleIntoPrompt — GenerateImageNode (by widget NAME)', () 
     expect(wf.nodes[0].widgets_values).toEqual(before)
   })
 
+  it('skips style_block when style_in is CONNECTED — the wire is the single carrier (B6)', () => {
+    // Applying IS wiring: a linked style_in means the Moodboard twin's execute
+    // output already prepends the block server-side. Writing style_block too
+    // would double-prepend — the widget must stay EMPTY.
+    const refsJson = '{"folder":"moodboard_1754000000000","files":["00_a.png"]}'
+    const wf = {
+      nodes: [generateNode({
+        inputs: [{ name: 'style_in', type: 'TASTE', link: 7 }],
+        properties: {
+          aesthetic: 'In the style of: soft riso grain.',
+          style_refs: refsJson,
+        },
+      })],
+    }
+    injectLoraStyleIntoPrompt(wf, OBJECT_INFO)
+    const wv = wf.nodes[0].widgets_values
+    // BROKEN CONTROL: an implementation that writes both carriers fails here.
+    expect(wv[STYLE_BLOCK_INDEX]).toBe('')
+    // …while style_refs still rides the property channel (refs never travel
+    // on the wire — file paths are property-carried).
+    expect(wv[STYLE_REFS_INDEX]).toBe(refsJson)
+    expect(wv[0]).toBe('flux-schnell') // model untouched
+  })
+
+  it('still writes style_block when style_in exists but is UNLINKED (the skip is link-keyed)', () => {
+    // Control for the test above: the same node shape with link: null must get
+    // the block — proving the dedupe keys on the LINK, not on the input's mere
+    // presence (every post-B4 GenerateImageNode carries the style_in input).
+    const wf = {
+      nodes: [generateNode({
+        inputs: [{ name: 'style_in', type: 'TASTE', link: null }],
+      })],
+    }
+    injectLoraStyleIntoPrompt(wf, OBJECT_INFO)
+    expect(wf.nodes[0].widgets_values[STYLE_BLOCK_INDEX]).toBe('In the style of: soft riso grain.')
+  })
+
   it('keeps the FLUX nodes on their existing index-0 prompt fold', () => {
     const wf = {
       nodes: [{

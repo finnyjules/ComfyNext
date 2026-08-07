@@ -20,7 +20,7 @@ import { getTypeColor } from '~/composables/useVueNodes'
 import { portOffset } from '~/lib/canvas/portLayout'
 import { useWireDrag } from '~/composables/useWireDrag'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   id: string
   type: 'source' | 'target'
   side: 'left' | 'right'
@@ -36,9 +36,16 @@ const props = defineProps<{
    * pointer-events declaration beats `pointer-events: none` inherited from an
    * ancestor — so hiding the wrapper leaves a full-size invisible drag target
    * live at the capsule's edge.
+   *
+   * The default MUST be declared here: an absent Boolean prop casts to FALSE
+   * (Vue's boolean-cast rule), so the old `props.connectable !== false`
+   * template guard read `false !== false` and shipped every default port with
+   * `pointer-events: none` — you could finish a wire on such a port (drop
+   * completion uses handle bounds, not hit-testing) but never START one from
+   * it (found live by the moodboard taste-wire drag, 2026-08-07).
    */
   connectable?: boolean
-}>()
+}>(), { connectable: true })
 
 const { isDragging, draggingType } = useWireDrag()
 
@@ -110,7 +117,7 @@ const displayLabel = computed(() => toTitleCase(props.label))
       :id="id"
       :type="type"
       :position="handlePosition"
-      :connectable="props.connectable !== false"
+      :connectable="props.connectable"
       class="!rounded-full !border-none !bg-transparent"
       :style="{
         position: 'absolute',

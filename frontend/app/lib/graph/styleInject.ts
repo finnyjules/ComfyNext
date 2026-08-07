@@ -44,7 +44,15 @@ export function injectLoraStyleIntoPrompt(
     }
 
     if (type !== 'GenerateImageNode') continue
-    const style = composeLoraStyle(node.properties)
+    // Applying IS wiring (2026-08-07 amendment): when the node's `style_in`
+    // input is CONNECTED, the TASTE wire is the single carrier of the prose
+    // block — the Moodboard twin's execute output flows in server-side, so
+    // writing style_block here too would double-prepend the same block.
+    // `style_refs` still rides the property channel below (file paths never
+    // travel on the wire).
+    const styleInLinked = Array.isArray(node.inputs)
+      && node.inputs.some((i: any) => i?.name === 'style_in' && i.link != null)
+    const style = styleInLinked ? '' : composeLoraStyle(node.properties)
     // Task B3: the moodboard refs payload rides in properties.style_refs
     // ('' when the model can't take refs) — injected into its own hidden
     // widget by NAME, exactly like style_block.

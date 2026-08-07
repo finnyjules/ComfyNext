@@ -103,6 +103,42 @@ async function pullNodeData(page: Page, nodeId: string): Promise<PulledNode> {
   }, nodeId)
 }
 
+/** All live nodes' identity/position — the wire steps assert find-or-create. */
+async function pullAllNodes(page: Page): Promise<{ id: string, nodeType: string, properties: Record<string, any>, position: { x: number, y: number } }[]> {
+  return await page.evaluate(() => {
+    let c: any = (document.querySelector('.vue-flow') as any)?.__vueParentComponent
+    while (c && !(c.exposed && typeof c.exposed.getNodes === 'function')) c = c.parent
+    if (!c) throw new Error('VueNodeCanvas exposed surface not reachable')
+    return JSON.parse(JSON.stringify(c.exposed.getNodes().map((n: any) => ({
+      id: String(n.id),
+      nodeType: n.data?.nodeType ?? '',
+      properties: n.data?.properties ?? {},
+      position: { x: n.position?.x ?? 0, y: n.position?.y ?? 0 },
+    }))))
+  })
+}
+
+/** The live node's input index for a named input (handle = `input-<idx>`). */
+async function inputIndexOf(page: Page, nodeId: string, inputName: string): Promise<number> {
+  return await page.evaluate(({ id, inputName }) => {
+    let c: any = (document.querySelector('.vue-flow') as any)?.__vueParentComponent
+    while (c && !(c.exposed && typeof c.exposed.getNodes === 'function')) c = c.parent
+    if (!c) throw new Error('VueNodeCanvas exposed surface not reachable')
+    const n = c.exposed.getNodes().find((n: any) => String(n.id) === String(id))
+    if (!n) throw new Error(`node ${id} not found`)
+    return ((n.data?.inputs ?? []) as any[]).findIndex((i: any) => i?.name === inputName)
+  }, { id: nodeId, inputName })
+}
+
+async function fitCanvas(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    let c: any = (document.querySelector('.vue-flow') as any)?.__vueParentComponent
+    while (c && !(c.exposed && typeof c.exposed.fitView === 'function')) c = c.parent
+    c?.exposed.fitView()
+  })
+  await page.waitForTimeout(300)
+}
+
 async function pullSerializedWorkflow(page: Page): Promise<any> {
   return await page.evaluate(() => {
     let c: any = (document.querySelector('.vue-flow') as any)?.__vueParentComponent
@@ -265,9 +301,12 @@ test('moodboard wires: chip apply auto-switch + refs payload → revert → manu
   })
 
   let styleRefsJson = ''
-  await test.step('apply the board via the chip → auto-switch to nano-banana-pro, marker, refs payload', async () => {
+  let mbWireNodeId = ''
+  await test.step('chip apply IS wiring: board node find-or-created LEFT of the generator + REAL TASTE edge + auto-switch + refs', async () => {
+    const nodesBefore = await page.locator('.vue-flow__node').count()
     await applyBoardViaGallery(page, genNodeId, boardName)
 
+    // The wire effects run AFTER the edge lands, so this poll gates both.
     await expect.poll(async () =>
       (await pullNodeData(page, genNodeId)).properties.sailor_moodboard ?? null).toBe(boardId)
     const { properties, widgetsValues, widgetDefs } = await pullNodeData(page, genNodeId)
@@ -284,8 +323,47 @@ test('moodboard wires: chip apply auto-switch + refs payload → revert → manu
     expect(refs.folder).toBe(seededFolder)
     expect(refs.files).toEqual(seededFiles.slice(0, 3))
 
-    // The block itself landed (weightless apply — properties, not widgets).
-    expect(properties.aesthetic).toBe(expectedBlock)
+    // Applying IS wiring: NO property block — the wire is the single carrier
+    // of the prose (an implementation still writing properties.aesthetic on
+    // the chip path fails here).
+    expect('aesthetic' in properties).toBe(false)
+
+    // The board's Moodboard node was auto-created beside (LEFT of) the
+    // generator — one new node, carrying the board id as its identity.
+    expect(await page.locator('.vue-flow__node').count()).toBe(nodesBefore + 1)
+    const all = await pullAllNodes(page)
+    const mb = all.find(n => n.nodeType === 'Moodboard' && n.properties.sailor_moodboard === boardId)
+    expect(mb, 'chip apply must create the board node').toBeTruthy()
+    mbWireNodeId = mb!.id
+    const gen = all.find(n => n.id === genNodeId)!
+    expect(mb!.position.x).toBeLessThan(gen.position.x)
+    expect(mb!.position.y).toBe(gen.position.y)
+
+    // The REAL edge, in the serialized workflow: style_in carries a link whose
+    // origin is the board node's TASTE output.
+    const workflow = await pullSerializedWorkflow(page)
+    const genLg = (workflow.nodes as any[]).find(n => n.type === 'GenerateImageNode')
+    const styleIn = (genLg.inputs as any[]).find((i: any) => i.name === 'style_in')
+    expect(styleIn?.link, 'style_in must carry a REAL link').not.toBeNull()
+    const link = (workflow.links as any[]).find((l: any) => l[0] === styleIn.link)
+    expect(String(link[1])).toBe(mbWireNodeId)
+    expect(link[5]).toBe('TASTE')
+
+    // …and through the REAL graphToPrompt (the Run path's converter, in-page):
+    // inputs.style_in = [moodboardNodeId, 0] — the B4 technique, now made by a
+    // chip pick instead of a hand-built fixture.
+    const prompt = await page.evaluate(async () => {
+      let c: any = (document.querySelector('.vue-flow') as any)?.__vueParentComponent
+      while (c && !(c.exposed && typeof c.exposed.getWorkflow === 'function')) c = c.parent
+      if (!c) throw new Error('VueNodeCanvas exposed surface not reachable')
+      const workflow = JSON.parse(JSON.stringify(c.exposed.getWorkflow()))
+      const objectInfo = JSON.parse(JSON.stringify(c.exposed.getObjectInfo()))
+      const mod = await import(/* @vite-ignore */ '/_nuxt/lib/graph/graphToPrompt.ts')
+      return mod.graphToPrompt(workflow, objectInfo)
+    })
+    expect(prompt[genNodeId]?.inputs?.style_in).toEqual([mbWireNodeId, 0])
+    expect(prompt[mbWireNodeId]?.class_type).toBe('Moodboard')
+    expect(JSON.parse(prompt[mbWireNodeId]!.inputs.reading_json).summary).toBe(SUMMARY)
   })
 
   await test.step('the chip is legible: switch notice + Revert + "refs ✓"', async () => {
@@ -300,12 +378,13 @@ test('moodboard wires: chip apply auto-switch + refs payload → revert → manu
     await expect(nodeEl.getByTestId('generate-moodboard-revert')).toBeVisible()
   })
 
-  await test.step('the serialized workflow through the REAL injector carries style_block + style_refs (B3 technique)', async () => {
+  await test.step('the REAL injector skips style_block on a WIRED node (single carrier), still writes style_refs', async () => {
     const workflow = await pullSerializedWorkflow(page)
     const gen = (workflow.nodes as any[]).find(n => n.type === 'GenerateImageNode')
     expect(gen, 'serialized workflow must contain the Generate node').toBeTruthy()
     expect(gen.properties?.style_refs).toBe(styleRefsJson)
-    expect(gen.properties?.aesthetic).toBe(expectedBlock)
+    // The wire path never writes the property block.
+    expect(gen.properties?.aesthetic).toBeUndefined()
 
     const slots = widgetSlots('GenerateImageNode', objectInfo)
     const blockIdx = slots.findIndex(s => s.name === 'style_block')
@@ -316,26 +395,44 @@ test('moodboard wires: chip apply auto-switch + refs payload → revert → manu
     const injected = JSON.parse(JSON.stringify(workflow))
     realInjectLoraStyle(injected, objectInfo)
     const injGen = (injected.nodes as any[]).find(n => n.type === 'GenerateImageNode')
-    expect(String(injGen.widgets_values[blockIdx])).toBe(expectedBlock)
+    // style_in is CONNECTED ⇒ the twin's execute output carries the prose over
+    // the wire; the injector must leave style_block EMPTY (no double-prepend).
+    expect(String(injGen.widgets_values[blockIdx] ?? '')).toBe('')
+    // …while refs still ride the property channel (file paths never wire),
     expect(String(injGen.widgets_values[refsIdx])).toBe(styleRefsJson)
-    // …and the switched model is what the payload runs on.
+    // …on the switched model.
     const modelIdx = slots.findIndex(s => s.name === 'model')
     expect(injGen.widgets_values[modelIdx]).toBe(MOODBOARD_DEFAULT_MODEL)
 
-    // BROKEN CONTROL: blank the properties on a copy — the injector must have
-    // nothing to write. If these still carry the payload, the positive
-    // assertions above are vacuous.
+    // BROKEN CONTROL: sever the link on a copy and hand the node a property
+    // block — the injector MUST write it then. Proves the skip above is
+    // LINK-driven, not vacuous (e.g. from an empty style composition).
     const control = JSON.parse(JSON.stringify(workflow))
     const controlGen = (control.nodes as any[]).find(n => n.type === 'GenerateImageNode')
-    controlGen.properties.aesthetic = ''
-    controlGen.properties.style_refs = ''
-    delete controlGen.properties.sailor_moodboard
+    for (const i of controlGen.inputs ?? []) if (i.name === 'style_in') i.link = null
+    controlGen.properties.aesthetic = expectedBlock
     realInjectLoraStyle(control, objectInfo)
-    expect(String(controlGen.widgets_values[blockIdx] ?? '')).not.toContain('In the style of:')
-    expect(String(controlGen.widgets_values[refsIdx] ?? '')).not.toContain(seededFolder)
+    expect(String(controlGen.widgets_values[blockIdx])).toBe(expectedBlock)
   })
 
   await test.step('Revert restores the model and drops the refs (board stays applied)', async () => {
+    // With the auto-created board node beside it, the whole-graph fit parks
+    // the generator's footer (where Revert lives) under the bottom-right
+    // floating panels. Stack the board BELOW the generator so the fitted view
+    // shrinks and the notice row lands in clear canvas (the Reference-node
+    // step's reposition pattern).
+    await page.evaluate(({ genId, mbId }) => {
+      let c: any = (document.querySelector('.vue-flow') as any)?.__vueParentComponent
+      while (c && !(c.exposed && typeof c.exposed.getNodes === 'function')) c = c.parent
+      if (!c) throw new Error('VueNodeCanvas exposed surface not reachable')
+      const nodes = c.exposed.getNodes()
+      const gen = nodes.find((n: any) => String(n.id) === String(genId))
+      const mb = nodes.find((n: any) => String(n.id) === String(mbId))
+      if (gen && mb) mb.position = { x: gen.position.x - 320, y: gen.position.y + 650 }
+    }, { genId: genNodeId, mbId: mbWireNodeId })
+    await page.waitForTimeout(200)
+    await fitCanvas(page)
+
     const nodeEl = page.locator(`.vue-flow__node[data-id="${genNodeId}"]`)
     await nodeEl.getByTestId('generate-moodboard-revert').click()
 
@@ -350,15 +447,117 @@ test('moodboard wires: chip apply auto-switch + refs payload → revert → manu
     await expect(nodeEl.getByTestId('generate-moodboard-switch-notice')).toBeHidden()
   })
 
-  await test.step('re-applying after the manual state never re-switches (manual choice wins)', async () => {
+  await test.step('re-applying after the manual state never re-switches (manual choice wins) and never duplicates node or edge', async () => {
     await applyBoardViaGallery(page, genNodeId, boardName)
+    // The wire effects re-run async — refs land as '' (flux takes none).
+    await expect.poll(async () =>
+      (await pullNodeData(page, genNodeId)).properties.style_refs ?? null).toBe('')
     // Board applied with NO marker == the model is the user's own choice.
     const { properties, widgetsValues, widgetDefs } = await pullNodeData(page, genNodeId)
     expect(widgetsValues[widgetDefs.findIndex(d => d.name === 'model')]).toBe('flux-schnell')
     expect(properties.sailor_moodboard_switched).toBeUndefined()
-    expect(properties.style_refs).toBe('') // flux-schnell can't take refs
     await expect(page.locator(`.vue-flow__node[data-id="${genNodeId}"]`)
       .getByTestId('generate-moodboard-switch-notice')).toBeHidden()
+
+    // FIND-or-create: the same board re-picked reuses its node and its edge.
+    const all = await pullAllNodes(page)
+    expect(all.filter(n => n.nodeType === 'Moodboard').length).toBe(1)
+    const workflow = await pullSerializedWorkflow(page)
+    expect((workflow.links as any[]).filter((l: any) => l?.[5] === 'TASTE').length).toBe(1)
+  })
+
+  await test.step('✕ removes the TASTE edge — the board node STAYS, the chip empties', async () => {
+    await fitCanvas(page)
+    const nodeEl = page.locator(`.vue-flow__node[data-id="${genNodeId}"]`)
+    await nodeEl.getByTestId('generate-moodboard-chip-clear').click()
+
+    await expect.poll(async () =>
+      (await pullNodeData(page, genNodeId)).properties.sailor_moodboard ?? null).toBe(null)
+    const { properties } = await pullNodeData(page, genNodeId)
+    expect(properties.style_refs).toBeUndefined()
+    expect(properties.sailor_moodboard_switched).toBeUndefined()
+
+    // The edge is gone from the serialized graph; the board node survives.
+    const workflow = await pullSerializedWorkflow(page)
+    const genLg = (workflow.nodes as any[]).find(n => n.type === 'GenerateImageNode')
+    expect((genLg.inputs as any[]).find((i: any) => i.name === 'style_in')?.link ?? null).toBeNull()
+    expect((workflow.links as any[]).filter((l: any) => l?.[5] === 'TASTE').length).toBe(0)
+    expect((workflow.nodes as any[]).some(n =>
+      n.type === 'Moodboard' && String(n.id) === mbWireNodeId)).toBe(true)
+    await expect(nodeEl.getByTestId('generate-moodboard-chip-add')).toBeVisible()
+  })
+
+  await test.step('manual TASTE drag (real pointer gesture) re-wires: chip fills + auto-switches', async () => {
+    await fitCanvas(page)
+    const styleInIdx = await inputIndexOf(page, genNodeId, 'style_in')
+    expect(styleInIdx).toBeGreaterThan(-1)
+    const srcHandle = page.locator(
+      `.vue-flow__node[data-id="${mbWireNodeId}"] .vue-flow__handle[data-handleid="output-0"]`)
+    const tgtHandle = page.locator(
+      `.vue-flow__node[data-id="${genNodeId}"] .vue-flow__handle[data-handleid="input-${styleInIdx}"]`)
+    const src = await srcHandle.boundingBox()
+    const tgt = await tgtHandle.boundingBox()
+    expect(src, 'moodboard style handle must be on screen').toBeTruthy()
+    expect(tgt, 'generator style_in handle must be on screen').toBeTruthy()
+
+    const sx = src!.x + src!.width / 2, sy = src!.y + src!.height / 2
+    const tx = tgt!.x + tgt!.width / 2, ty = tgt!.y + tgt!.height / 2
+    await page.mouse.move(sx, sy)
+    await page.mouse.down()
+    await page.mouse.move((sx + tx) / 2, (sy + ty) / 2, { steps: 6 })
+    await page.mouse.move(tx, ty, { steps: 6 })
+    await page.mouse.up()
+
+    // Same side effects as the chip apply: identity + auto-switch + marker +
+    // refs (the ✕ above cleared the manual-choice state, so the switch fires).
+    await expect.poll(async () =>
+      (await pullNodeData(page, genNodeId)).properties.sailor_moodboard ?? null,
+    { timeout: 10_000 }).toBe(boardId)
+    const { properties, widgetsValues, widgetDefs } = await pullNodeData(page, genNodeId)
+    expect(widgetsValues[widgetDefs.findIndex(d => d.name === 'model')]).toBe(MOODBOARD_DEFAULT_MODEL)
+    expect(properties.sailor_moodboard_switched).toBe('flux-schnell')
+    expect(JSON.parse(String(properties.style_refs)).folder).toBe(seededFolder)
+    // The wire path never writes the property block.
+    expect('aesthetic' in properties).toBe(false)
+
+    const workflow = await pullSerializedWorkflow(page)
+    const genLg = (workflow.nodes as any[]).find(n => n.type === 'GenerateImageNode')
+    expect((genLg.inputs as any[]).find((i: any) => i.name === 'style_in')?.link).not.toBeNull()
+  })
+
+  await test.step('manually deleting the TASTE edge empties the chip (board node stays)', async () => {
+    // One edge on the canvas at this point — select it with a real click ON
+    // the path (bbox-center can miss a bezier; getScreenCTM maps a true
+    // path point to screen coords), then the delete key (vue-flow's own
+    // removal path → the edge-change hook).
+    // 30% along the path, NOT the midpoint — the midpoint hosts the edge's
+    // hover "+" (insert-node) affordance, which swallows the click.
+    const clickPoint = await page.locator('.vue-flow__edge path').first().evaluate((el) => {
+      const path = el as unknown as SVGPathElement
+      const p = path.getPointAtLength(path.getTotalLength() * 0.3)
+      const sp = new DOMPoint(p.x, p.y).matrixTransform(path.getScreenCTM()!)
+      return { x: sp.x, y: sp.y }
+    })
+    await page.mouse.click(clickPoint.x, clickPoint.y)
+    await expect(page.locator('.vue-flow__edge.selected')).toHaveCount(1)
+    await page.keyboard.press('Backspace')
+
+    await expect.poll(async () =>
+      (await pullNodeData(page, genNodeId)).properties.sailor_moodboard ?? null,
+    { timeout: 10_000 }).toBe(null)
+    const { properties, widgetsValues, widgetDefs } = await pullNodeData(page, genNodeId)
+    expect(properties.style_refs).toBeUndefined()
+    expect(properties.sailor_moodboard_switched).toBeUndefined()
+    // The model is left where the apply put it — no silent model change on
+    // clear (the picker shows what you're on).
+    expect(widgetsValues[widgetDefs.findIndex(d => d.name === 'model')]).toBe(MOODBOARD_DEFAULT_MODEL)
+
+    const workflow = await pullSerializedWorkflow(page)
+    expect((workflow.links as any[]).filter((l: any) => l?.[5] === 'TASTE').length).toBe(0)
+    expect((workflow.nodes as any[]).some(n =>
+      n.type === 'Moodboard' && String(n.id) === mbWireNodeId)).toBe(true)
+    await expect(page.locator(`.vue-flow__node[data-id="${genNodeId}"]`)
+      .getByTestId('generate-moodboard-chip-add')).toBeVisible()
   })
 
   // ── (b) the Moodboard node twin: widget sync + serialization shape ────────

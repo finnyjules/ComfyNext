@@ -48,8 +48,7 @@ import { MOODBOARD_MAX_REFS } from '~~/shared/taste/moodboard'
 /** The catalog tag that gates reference images. */
 const REF_TAG = 'multi-image'
 
-export interface MoodboardApplyWrites {
-  aesthetic: string
+export interface MoodboardWireWrites {
   sailor_moodboard: string
   /** `{folder, files[]}` JSON when refs ride along; '' when the (final) model
    *  can't take them or the board has no readable files. */
@@ -62,27 +61,41 @@ export interface MoodboardApplyWrites {
   switchedFrom: string | null
 }
 
+export interface MoodboardApplyWrites extends MoodboardWireWrites {
+  aesthetic: string
+}
+
 /** Minimal node-data shape the apply touches — keeps the helper testable. */
 export interface MoodboardApplyTarget {
   properties?: Record<string, any>
 }
 
 /**
- * Write the moodboard's style block + identity + refs payload onto the node.
- * Creates the `properties` bag when missing. Returns the writes it performed
- * so callers (and tests) can assert on them without re-deriving — and so the
- * caller can perform the positional `model` widget write when it switched.
+ * The WIRE-path apply ("Applying IS wiring" amendment, 2026-08-07): every
+ * side effect of applying a moodboard to the Generate-an-image node EXCEPT
+ * the prose block — the TASTE wire (Moodboard.style → style_in) is the single
+ * carrier of the block now, so `properties.aesthetic` is never written here
+ * (a stale one from the pre-wire era is DELETED — leaving it would resurrect
+ * the block through the property channel the moment the wire goes away, and
+ * the submit-time injector would have two carriers to reconcile).
+ *
+ * Still written: `sailor_moodboard` (chip identity — the chip reads props,
+ * never the graph), `style_refs` (property-carried file paths; refs don't
+ * travel on the wire) and the legible auto-switch marker.
  *
  * `files` is the board's image file list (the guarded list route's `files`,
  * already sorted); `modelId`/`modelTags` describe the node's CURRENT model.
+ * Returns the writes it performed so callers (and tests) can assert on them
+ * without re-deriving — and so the caller can perform the positional `model`
+ * widget write when it switched.
  */
-export function applyMoodboardToGenerateNode(
+export function applyMoodboardWireEffects(
   nodeData: MoodboardApplyTarget,
   entry: MoodboardEntry,
   files: string[],
   modelId: string,
   modelTags: string[],
-): MoodboardApplyWrites {
+): MoodboardWireWrites {
   if (!nodeData.properties) nodeData.properties = {}
   const props = nodeData.properties
 
@@ -107,17 +120,37 @@ export function applyMoodboardToGenerateNode(
     props.sailor_moodboard_switched = String(props.sailor_moodboard_switched || modelId)
   }
 
-  const writes: MoodboardApplyWrites = {
-    aesthetic: moodboardStyleBlock(entry.reading),
+  const writes: MoodboardWireWrites = {
     sailor_moodboard: entry.id,
     style_refs: styleRefs,
     model: switching ? MOODBOARD_DEFAULT_MODEL : null,
     switchedFrom: switching ? String(props.sailor_moodboard_switched) : null,
   }
-  props.aesthetic = writes.aesthetic
+  // Single-carrier rule: any pre-amendment property block goes.
+  delete props.aesthetic
   props.sailor_moodboard = writes.sailor_moodboard
   props.style_refs = writes.style_refs
   return writes
+}
+
+/**
+ * The PROPERTY-path apply (pre-amendment shape, kept for the FLUX slot-free
+ * legacy path and for tests pinning the block composition): the wire effects
+ * PLUS the prose block written into `properties.aesthetic`. The chip pick no
+ * longer uses this for GenerateImageNode — applying IS wiring, so the canvas
+ * runs `applyMoodboardWireEffects` and draws the real TASTE edge instead.
+ */
+export function applyMoodboardToGenerateNode(
+  nodeData: MoodboardApplyTarget,
+  entry: MoodboardEntry,
+  files: string[],
+  modelId: string,
+  modelTags: string[],
+): MoodboardApplyWrites {
+  const wire = applyMoodboardWireEffects(nodeData, entry, files, modelId, modelTags)
+  const aesthetic = moodboardStyleBlock(entry.reading)
+  nodeData.properties!.aesthetic = aesthetic
+  return { ...wire, aesthetic }
 }
 
 /**

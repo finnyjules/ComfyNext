@@ -56,6 +56,10 @@ import { sketchPadPromptOverrides } from '~/lib/sketch/sketchPadPrompt'
 import { cleanSketchPrompt } from '~/lib/sketch/sketchIntent'
 import { SKETCH_PROP, buildSketchPilePayload, refreshSketchPile, planKeptCard, type SketchPilePayload } from '~/lib/sketch/sketchPile'
 import { annotatedImageValueFromViewUrl } from '~/lib/promoteTempImages'
+import { applyMoodboardWireEffects, clearMoodboardFromGenerateNode, syncMoodboardWidgets } from '~/lib/graph/moodboardApply'
+import { IMAGE_MODELS_BY_ID } from '~/data/image-models'
+import { useMoodboards } from '~/composables/useMoodboards'
+import type { MoodboardEntry } from '~~/shared/taste/moodboard'
 import ComfyNode from '~/components/vue-canvas/ComfyNode.vue'
 import ComfyNoteNode from '~/components/vue-canvas/ComfyNoteNode.vue'
 import ComfyEdge from '~/components/vue-canvas/ComfyEdge.vue'
@@ -1008,7 +1012,7 @@ provide('runLeafNodeIds', runLeafNodeIds)
 const {
   onConnect, addEdges, fitView, zoomIn: vfZoomIn, zoomOut: vfZoomOut,
   project, removeNodes, removeEdges, viewport: vfViewport, onNodeDragStop, onNodeDrag,
-  onConnectStart, onConnectEnd,
+  onConnectStart, onConnectEnd, onEdgesChange,
 } = useVueFlow()
 
 // Ports label themselves while a compatible wire is being dragged. Bound once,
@@ -2125,6 +2129,10 @@ onConnect((params) => {
   }
   addEdges([{ ...params, sourceHandle, targetHandle, type: 'comfy', data: { dataType } }])
   if (isLookup) registerLookupLink(String(sourceNode.id), String(targetNode.id), { x: connectStartInfo?.x ?? 0, y: connectStartInfo?.y ?? 0 })
+  // Applying IS wiring: a manual TASTE drag onto a generator's style_in fires
+  // the same side effects as a chip apply (auto-switch + refs + chip fill —
+  // minus the block write; the wire carries the block).
+  maybeApplyTasteWire(sourceNode, targetNode, targetHandle)
 })
 
 // ── Port intent popover ──────────────────────────────────────────────────────
@@ -2201,6 +2209,8 @@ function completeConnectionOnNode(anchor: PortAnchor, node: any) {
       target: node.id, targetHandle,
       type: 'comfy', data: { dataType: anchor.portType },
     }])
+    const srcNode = (nodes.value as any[]).find(n => n.id === anchor.nodeId)
+    maybeApplyTasteWire(srcNode, node, targetHandle)
   }
   else {
     const sourceHandle = outputHandleFor(node, anchor.portType)
@@ -2211,6 +2221,8 @@ function completeConnectionOnNode(anchor: PortAnchor, node: any) {
       target: anchor.nodeId, targetHandle: `input-${anchor.portIndex}`,
       type: 'comfy', data: { dataType: String(node.data?.outputs?.[oIdx]?.type ?? '*') },
     }])
+    const tgtNode = (nodes.value as any[]).find(n => n.id === anchor.nodeId)
+    maybeApplyTasteWire(node, tgtNode, `input-${anchor.portIndex}`)
   }
 }
 
@@ -3011,6 +3023,184 @@ function handleOpenMoodboard(e: Event) {
   const detail = (e as CustomEvent).detail
   if (detail?.nodeId) moodboardOpenForId.value = String(detail.nodeId)
 }
+
+// ── Moodboard taste wiring — "Applying IS wiring" (2026-08-07 amendment) ─────
+// Every application of a moodboard to the Generate-an-image node is expressed
+// as the REAL TASTE edge (Moodboard.style → style_in): the chip pick
+// finds-or-creates the board's node and draws the edge; a manual wire drag
+// fires the same side effects; ✕ removes the edge (node stays); a manual edge
+// deletion empties the chip. The wire is the single carrier of the prose
+// block (styleInject skips style_block when style_in is linked) — refs stay
+// property-carried. The chip stays a remote control for the wire: identity
+// lives in properties.sailor_moodboard on BOTH ends, so it never needs a
+// graph traversal.
+const { byId: moodboardById, loaded: moodboardsLoaded, refresh: refreshMoodboards } = useMoodboards()
+
+function generatorStyleInIndex(node: any): number {
+  return ((node?.data?.inputs ?? []) as any[]).findIndex((i: any) => i?.name === 'style_in')
+}
+
+/** Live edges feeding this generator's style_in input. */
+function tasteEdgesInto(generatorId: string): any[] {
+  const gen = (nodes.value as any[]).find(n => String(n.id) === String(generatorId))
+  const idx = generatorStyleInIndex(gen)
+  if (idx < 0) return []
+  return (edges.value as any[]).filter(e =>
+    String(e.target) === String(generatorId) && e.targetHandle === `input-${idx}`)
+}
+
+async function resolveMoodboardEntry(entryId: string): Promise<MoodboardEntry | undefined> {
+  if (!moodboardsLoaded.value) await refreshMoodboards().catch(() => {})
+  let entry = moodboardById(entryId)
+  if (!entry) {
+    // Saved elsewhere since our last load (e.g. another window) — one retry.
+    await refreshMoodboards().catch(() => {})
+    entry = moodboardById(entryId)
+  }
+  return entry
+}
+
+/** The wire-apply side effects shared by the chip pick and a manual TASTE
+ *  drag: auto-switch + marker + refs + chip identity — everything EXCEPT the
+ *  prose block, which the wire itself carries (single-carrier rule). The
+ *  positional model/model_options widget writes live here because the canvas
+ *  owns the live node's widgetDefs. */
+async function runMoodboardWireEffects(gen: any, entry: MoodboardEntry): Promise<void> {
+  let files: string[] = []
+  try {
+    const res = await fetch(`/api/moodboards/images?folder=${encodeURIComponent(entry.folder)}`)
+    if (res.ok) files = ((await res.json()).files ?? []) as string[]
+  } catch { /* offline dev — effects proceed ref-less; the wire still styles */ }
+  const defs = (gen.data?.widgetDefs ?? []) as any[]
+  const wv = gen.data?.widgetsValues
+  const mIdx = defs.findIndex((d: any) => d?.name === 'model')
+  const modelId = mIdx >= 0 && Array.isArray(wv) ? String(wv[mIdx] ?? '') : ''
+  const modelTags = (IMAGE_MODELS_BY_ID[modelId]?.tags ?? []) as string[]
+  const writes = applyMoodboardWireEffects(gen.data, entry, files, modelId, modelTags)
+  if (writes.model && Array.isArray(wv)) {
+    // Legible auto-switch (chip notice + Revert via the marker). Mirror the
+    // switched-to model's advanced bag into the hidden model_options widget
+    // (ModelGalleryModal's sync contract) so the backend doesn't read the
+    // previous model's JSON.
+    if (mIdx >= 0) wv[mIdx] = writes.model
+    const optsIdx = defs.findIndex((d: any) => d?.name === 'model_options')
+    if (optsIdx >= 0) wv[optsIdx] = JSON.stringify(gen.data.properties?.modelOptions?.[writes.model] ?? {})
+  }
+}
+
+/** Chip pick → the REAL taste wire (sailor:moodboardWire, dispatched by
+ *  LoraGalleryModal's moodboard confirm): find-or-create the board's
+ *  Moodboard node beside the generator, sync its hidden widgets, draw the
+ *  TASTE edge into style_in, then run the shared wire side effects. */
+async function handleMoodboardWire(e: Event) {
+  const detail = (e as CustomEvent<{ nodeId: string, entryId: string }>).detail
+  if (!detail?.nodeId || !detail?.entryId) return
+  const gen = (nodes.value as any[]).find(n => String(n.id) === String(detail.nodeId))
+  if (!gen || gen.data?.nodeType !== 'GenerateImageNode') return
+  const entry = await resolveMoodboardEntry(String(detail.entryId))
+  if (!entry) return
+
+  const styleInIdx = generatorStyleInIndex(gen)
+  if (styleInIdx < 0) {
+    console.warn('[Moodboard] generator has no style_in input (stale backend schema?) — not wired')
+    return
+  }
+
+  // Find-or-create the board's node — identity is properties.sailor_moodboard.
+  let mb = (nodes.value as any[]).find(n =>
+    n?.data?.nodeType === 'Moodboard' && n?.data?.properties?.sailor_moodboard === entry.id)
+  if (!mb) {
+    if (!objectInfo.value['Moodboard']) await fetchObjectInfo()
+    mb = createNodeData('Moodboard',
+      { x: (gen.position?.x ?? 0) - 320, y: gen.position?.y ?? 0 },
+      undefined, { sailor_moodboard: entry.id })
+    nodes.value.push(mb)
+    // Let vue-flow register the node + its handles before wiring to it —
+    // otherwise the edge referencing it is pruned as invalid (splice pattern).
+    await nextTick()
+  }
+  syncMoodboardWidgets(mb.data, entry)
+
+  const styleOutIdx = Math.max(0,
+    ((mb.data?.outputs ?? []) as any[]).findIndex((o: any) => o?.name === 'style'))
+  const existing = tasteEdgesInto(String(gen.id))
+  if (!existing.some(e2 => String(e2.source) === String(mb.id))) {
+    addEdges([{
+      source: String(mb.id), sourceHandle: `output-${styleOutIdx}`,
+      target: String(gen.id), targetHandle: `input-${styleInIdx}`,
+      type: 'comfy', data: { dataType: 'TASTE' },
+    }])
+  }
+  // Re-pick replaces: a different board's edge into the same socket goes.
+  // (Removed AFTER the new edge exists, so the removal hook's "still wired"
+  // check keeps the freshly applied state.)
+  const stale = existing.filter(e2 => String(e2.source) !== String(mb.id))
+  if (stale.length) removeEdges(stale.map(e2 => e2.id))
+
+  await runMoodboardWireEffects(gen, entry)
+}
+
+/** Chip ✕ (sailor:moodboardUnwire, dispatched by ComfyNode) → remove the
+ *  TASTE edge(s) into this generator's style_in. The Moodboard node STAYS on
+ *  canvas; the property clear happens in ComfyNode + the removal hook below
+ *  (both idempotent). */
+function handleMoodboardUnwire(e: Event) {
+  const detail = (e as CustomEvent<{ nodeId: string }>).detail
+  if (!detail?.nodeId) return
+  const drop = tasteEdgesInto(String(detail.nodeId))
+  if (drop.length) removeEdges(drop.map(e2 => e2.id))
+}
+
+/** Manual TASTE wire completion (drag onto style_in, or a wire dropped on the
+ *  generator body that completes onto it): same side effects as a chip apply,
+ *  minus the block write. Called from onConnect / completeConnectionOnNode. */
+function maybeApplyTasteWire(sourceNode: any, targetNode: any, targetHandle?: string | null) {
+  if (sourceNode?.data?.nodeType !== 'Moodboard') return
+  if (targetNode?.data?.nodeType !== 'GenerateImageNode') return
+  const idx = parseInt(String(targetHandle ?? '').replace('input-', ''))
+  if (!Number.isFinite(idx) || targetNode.data?.inputs?.[idx]?.name !== 'style_in') return
+  void (async () => {
+    const entryId = String(sourceNode.data?.properties?.sailor_moodboard ?? '')
+    if (!entryId) return // a board-less Moodboard node styles nothing
+    const entry = await resolveMoodboardEntry(entryId)
+    if (!entry) return
+    // Replace semantics: another board's edge into the same socket goes.
+    const stale = (edges.value as any[]).filter(e2 =>
+      String(e2.target) === String(targetNode.id)
+      && e2.targetHandle === `input-${idx}`
+      && String(e2.source) !== String(sourceNode.id))
+    if (stale.length) removeEdges(stale.map(e2 => e2.id))
+    syncMoodboardWidgets(sourceNode.data, entry) // keep the twin's widgets fresh
+    await runMoodboardWireEffects(targetNode, entry)
+  })()
+}
+
+// Manual TASTE wire REMOVAL (edge select + delete, ✕, or deleting the
+// Moodboard node) empties the generator's moodboard state so the chip reads
+// true. Uses the change hook — NOT an absence watcher — because wholesale
+// edge replacement on workflow load (setEdges) emits no remove changes, so a
+// legacy property-applied board on a wire-less loaded graph is never cleared.
+onEdgesChange((changes) => {
+  const genIds = new Set<string>()
+  for (const ch of changes as any[]) {
+    if (ch?.type !== 'remove' || !ch.target) continue
+    const gen = (nodes.value as any[]).find(n => String(n.id) === String(ch.target))
+    if (gen?.data?.nodeType !== 'GenerateImageNode') continue
+    const idx = parseInt(String(ch.targetHandle ?? '').replace('input-', ''))
+    if (!Number.isFinite(idx) || gen.data?.inputs?.[idx]?.name !== 'style_in') continue
+    genIds.add(String(gen.id))
+  }
+  if (!genIds.size) return
+  // Check after the removal (and any same-tick re-wire) has landed: a board
+  // re-pick replaces the edge and keeps state; a bare removal clears it.
+  void nextTick().then(() => {
+    for (const id of genIds) {
+      if (tasteEdgesInto(id).length) continue
+      const gen = (nodes.value as any[]).find(n => String(n.id) === String(id))
+      if (gen?.data) clearMoodboardFromGenerateNode(gen.data)
+    }
+  })
+})
 
 // Texture Studio editor open-state (same pattern as Gradient Studio).
 const textureStudioOpenForId = ref<string | null>(null)
@@ -4595,6 +4785,8 @@ onMounted(() => {
   // Gradient Studio output is generic (sourceNodeId/nodeType/widgetOverrides) — reuse the Space Type handler.
   window.addEventListener('sailor:gradientStudioOutput', handleSpaceTypeOutput)
   window.addEventListener('sailor:openMoodboard', handleOpenMoodboard)
+  window.addEventListener('sailor:moodboardWire', handleMoodboardWire)
+  window.addEventListener('sailor:moodboardUnwire', handleMoodboardUnwire)
   window.addEventListener('sailor:openTextureStudio', handleOpenTextureStudio)
   // Texture Studio output is generic (sourceNodeId/nodeType/widgetOverrides) — reuse the Space Type handler.
   window.addEventListener('sailor:textureStudioOutput', handleSpaceTypeOutput)
@@ -4667,6 +4859,8 @@ onUnmounted(() => {
   window.removeEventListener('sailor:openGradientStudio', handleOpenGradientStudio)
   window.removeEventListener('sailor:gradientStudioOutput', handleSpaceTypeOutput)
   window.removeEventListener('sailor:openMoodboard', handleOpenMoodboard)
+  window.removeEventListener('sailor:moodboardWire', handleMoodboardWire)
+  window.removeEventListener('sailor:moodboardUnwire', handleMoodboardUnwire)
   window.removeEventListener('sailor:openTextureStudio', handleOpenTextureStudio)
   window.removeEventListener('sailor:textureStudioOutput', handleSpaceTypeOutput)
   window.removeEventListener('sailor:openShaderStudio', handleOpenShaderStudio)
