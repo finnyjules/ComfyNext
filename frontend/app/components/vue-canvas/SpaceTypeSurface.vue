@@ -7,6 +7,8 @@ import { ensureBoostFont } from '~/lib/spacetype/effects/boost'
 import { defaultsFromControls, type Params, type ControlSpec } from '~/lib/spacetype/effect'
 import { SPACE_TYPE_SECTIONS } from '~/lib/spacetype/sections'
 import { parseFills, serializeFills, FILL_TYPES, type Fill, type FillType } from '~/lib/spacetype/fills'
+import { parseContent, type ContentItem } from '~/lib/spacetype/tile'
+import { fitWithin } from '~/lib/lora/datasetImages'
 import { DEFAULT_SHADER_SPEC, type ShaderSpec } from '~/lib/spacetype/fillTile'
 import ShaderFillEditor from '~/components/vue-canvas/widgets/ShaderFillEditor.vue'
 import { SpaceTypeEngine } from '~/lib/spacetype/engine'
@@ -229,10 +231,80 @@ function fillNeedsB(f: Fill): boolean { return f.type !== 'solid' }             
 function fillHasAngle(f: Fill): boolean { return f.type === 'ombre' || f.type === 'stripes' }        // direction
 function fillHasDensity(f: Fill): boolean { return f.type === 'grid' || f.type === 'checkerboard' || f.type === 'stripes' || f.type === 'qr' }
 
-// ── Drag-to-reorder for the text rows and fill cards (native DnD from a grip handle, so the
-// row's inputs stay usable). `kind` keeps the two lists from cross-dropping onto each other.
-const drag = reactive<{ kind: 'text' | 'fill' | null; from: number; over: number }>({ kind: null, from: -1, over: -1 })
-function dragStart(kind: 'text' | 'fill', i: number, e: DragEvent) {
+// Content rows for a `contentList` control (the ring effect's word/image list — Expressive
+// Studio Task 5). Mirrors fills/textLines above: edit a local reactive array, sync it back
+// into the (scalar) param as a JSON string via parseContent/JSON.stringify. `contentKey`
+// mirrors `fillKey` (effects have at most one contentList control). Rows key off `item.id`,
+// never array index — reorder/remove must not silently re-point a different row's edits
+// (memory list-addressing-stable-ids).
+const contentItems = reactive<ContentItem[]>([])
+let syncingContent = false
+let contentIdSeq = 0
+function nextContentId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID()
+  contentIdSeq += 1
+  return `content-${contentIdSeq}`
+}
+function contentKey(): string | null {
+  return effect.value.controls.find(c => c.kind === 'contentList')?.key ?? null
+}
+function pullContent() {
+  const k = contentKey()
+  if (!k) return
+  syncingContent = true
+  const parsed = parseContent(String((params as Record<string, unknown>)[k] ?? '[]'))
+  contentItems.splice(0, contentItems.length, ...parsed.map(item => ({ ...item })))
+  // Fallback-counter floor: keeps the non-crypto id path from reusing an id already
+  // present in the freshly-pulled list (crypto.randomUUID is the normal path and doesn't
+  // need this, but stays correct if it's ever unavailable).
+  contentIdSeq = Math.max(contentIdSeq, contentItems.length)
+  syncingContent = false
+}
+watch(contentItems, () => {
+  if (syncingContent) return
+  const k = contentKey(); if (!k) return
+  ;(params as Record<string, unknown>)[k] = JSON.stringify(contentItems)
+}, { deep: true })
+function addContentText() {
+  contentItems.push({ id: nextContentId(), kind: 'word', text: 'TEXT', resolution: 'whole' })
+}
+function removeContentItem(id: string) {
+  const i = contentItems.findIndex(item => item.id === id)
+  if (i >= 0) contentItems.splice(i, 1)
+}
+const contentImageInput = ref<HTMLInputElement | null>(null)
+function pickContentImage() { contentImageInput.value?.click() }
+// Downscale to fitWithin(...,1024) before encoding — datasetImages.ts's doc: trainers/quads
+// never need a 24MP original's pixels, and shipping them costs upload time + heap for nothing.
+function onContentImagePick(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = '' // allow re-picking the same file later
+  if (!file) return
+  const url = URL.createObjectURL(file)
+  const img = new Image()
+  img.onload = () => {
+    URL.revokeObjectURL(url)
+    const fit = fitWithin(img.naturalWidth, img.naturalHeight, 1024)
+    const off = document.createElement('canvas')
+    off.width = fit.width
+    off.height = fit.height
+    const ctx = off.getContext('2d')
+    if (!ctx) return
+    ctx.drawImage(img, 0, 0, fit.width, fit.height)
+    const src = off.toDataURL('image/jpeg', 0.9)
+    const aspect = img.naturalWidth / img.naturalHeight
+    contentItems.push({ id: nextContentId(), kind: 'image', src, aspect })
+  }
+  img.onerror = () => { URL.revokeObjectURL(url) }
+  img.src = url
+}
+
+// ── Drag-to-reorder for the text rows, fill cards, and content rows (native DnD from a grip
+// handle, so the row's inputs stay usable). `kind` keeps the lists from cross-dropping onto
+// each other.
+const drag = reactive<{ kind: 'text' | 'fill' | 'content' | null; from: number; over: number }>({ kind: null, from: -1, over: -1 })
+function dragStart(kind: 'text' | 'fill' | 'content', i: number, e: DragEvent) {
   drag.kind = kind; drag.from = i; drag.over = i
   if (e.dataTransfer) {
     e.dataTransfer.effectAllowed = 'move'
@@ -241,15 +313,16 @@ function dragStart(kind: 'text' | 'fill', i: number, e: DragEvent) {
     if (row) e.dataTransfer.setDragImage(row, 14, 14)
   }
 }
-function dragOver(kind: 'text' | 'fill', i: number, e: DragEvent) {
+function dragOver(kind: 'text' | 'fill' | 'content', i: number, e: DragEvent) {
   if (drag.kind !== kind) return
   e.preventDefault()
   drag.over = i
 }
-function dropRow(kind: 'text' | 'fill', i: number) {
+function dropRow(kind: 'text' | 'fill' | 'content', i: number) {
   if (drag.kind === kind && drag.from !== i && drag.from >= 0) {
     if (kind === 'text') { const [m] = textLines.splice(drag.from, 1); textLines.splice(i, 0, m!) }
-    else { const [m] = fills.splice(drag.from, 1); fills.splice(i, 0, m!) }
+    else if (kind === 'fill') { const [m] = fills.splice(drag.from, 1); fills.splice(i, 0, m!) }
+    else { const [m] = contentItems.splice(drag.from, 1); contentItems.splice(i, 0, m!) }
   }
   dragEnd()
 }
@@ -773,6 +846,7 @@ onMounted(async () => {
   loadConfig()
   pullTextLines()
   pullFills()
+  pullContent()
   await loadSpaceDefaults()
   if (!hadConfig) { const sc = spaceDefaultFor(effectId.value); if (sc) applyDefaultScene(sc) }
   if (!detectWebGL()) { webglOk.value = false; return }
@@ -834,7 +908,7 @@ function applyDefaultScene(scene: Scene) {
   if (scene.panY !== undefined) panY.value = scene.panY
   if (scene.bgColor) bgColor.value = scene.bgColor
   if (scene.gradientStops) gradientStops.splice(0, gradientStops.length, ...scene.gradientStops.map(g => ({ ...g })))
-  pullTextLines(); pullFills()
+  pullTextLines(); pullFills(); pullContent()
 }
 
 // Reset params to the current effect's defaults, carrying over the content keys
@@ -846,6 +920,7 @@ async function applyEffectDefaults() {
   Object.assign(params, next)
   pullTextLines()
   pullFills()
+  pullContent()
   const sc = spaceDefaultFor(effect.value.id)
   if (sc) applyDefaultScene(sc)
   await ensureEffectFonts()
@@ -1601,6 +1676,41 @@ async function exportWebEmbed() {
                   <button type="button" @click="addFill"
                           class="w-full rounded border border-dashed border-white/15 py-1.5 text-[11px] text-white/50 hover:border-white/30 hover:text-white/80">+ Add fill</button>
                   <p class="text-[10px] leading-relaxed text-white/35">Fills apply top-to-bottom and repeat if there are more slots than fills. <span class="text-white/50">Text</span> is the type colour for that fill.</p>
+                </div>
+              </template>
+              <template v-else-if="c.kind === 'contentList'">
+                <div class="space-y-1.5">
+                  <div v-for="(item, i) in contentItems" :key="item.id" data-row
+                       class="flex items-center gap-1.5 rounded-lg border border-white/[0.07] bg-white/[0.02] p-1.5 transition-shadow"
+                       :class="drag.kind === 'content' && drag.over === i && drag.from !== i ? 'ring-1 ring-white/40' : ''"
+                       @dragover="dragOver('content', i, $event)" @drop="dropRow('content', i)">
+                    <span draggable="true" @dragstart="dragStart('content', i, $event)" @dragend="dragEnd"
+                          class="shrink-0 cursor-grab text-white/25 hover:text-white/60 active:cursor-grabbing" title="Drag to reorder" aria-label="Drag to reorder">
+                      <svg width="10" height="16" viewBox="0 0 10 16" fill="currentColor"><circle cx="2.5" cy="4" r="1" /><circle cx="7.5" cy="4" r="1" /><circle cx="2.5" cy="8" r="1" /><circle cx="7.5" cy="8" r="1" /><circle cx="2.5" cy="12" r="1" /><circle cx="7.5" cy="12" r="1" /></svg>
+                    </span>
+                    <template v-if="item.kind === 'word'">
+                      <input type="text" v-model="item.text" placeholder="Text"
+                             class="h-7 min-w-0 flex-1 rounded-[6px] bg-white/[0.05] px-2.5 text-[11px] text-white/90 outline-none transition-colors hover:bg-white/[0.07] focus:bg-white/[0.10]" />
+                      <StudioSegmented class="w-28 shrink-0" :options="['whole', 'letters']" :model-value="item.resolution"
+                                       @update:model-value="(v: string) => { item.resolution = v === 'letters' ? 'letters' : 'whole' }" />
+                    </template>
+                    <template v-else>
+                      <img :src="item.src" alt="" class="h-7 w-7 shrink-0 rounded object-cover" />
+                      <span class="min-w-0 flex-1 truncate text-[11px] text-white/40">Image</span>
+                    </template>
+                    <button type="button" @click="removeContentItem(item.id)" aria-label="Remove item"
+                            class="shrink-0 rounded p-1 text-white/30 hover:bg-white/10 hover:text-rose-300">
+                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></svg>
+                    </button>
+                  </div>
+                  <div class="flex gap-1.5">
+                    <button type="button" @click="addContentText"
+                            class="flex-1 rounded border border-dashed border-white/15 py-1.5 text-[11px] text-white/50 hover:border-white/30 hover:text-white/80">+ Add text</button>
+                    <button type="button" @click="pickContentImage"
+                            class="flex-1 rounded border border-dashed border-white/15 py-1.5 text-[11px] text-white/50 hover:border-white/30 hover:text-white/80">+ Add image</button>
+                  </div>
+                  <input ref="contentImageInput" type="file" accept="image/*" class="hidden" @change="onContentImagePick" />
+                  <p class="text-[10px] leading-relaxed text-white/35">Words and photos ride the ring in this order. <span class="text-white/50">Letters</span> splits a word into one tile per character.</p>
                 </div>
               </template>
               <p v-else-if="c.kind === 'path'" class="text-[10px] leading-relaxed text-white/40">
