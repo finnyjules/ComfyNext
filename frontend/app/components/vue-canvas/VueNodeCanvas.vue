@@ -2995,6 +2995,14 @@ function handleOpenGradientStudio(e: Event) {
   if (detail?.nodeId) gradientStudioOpenForId.value = String(detail.nodeId)
 }
 
+// Moodboard modal open-state (same pattern as Gradient Studio). Opened by a
+// true click on the MoodboardNode pile (sailor:openMoodboard, Task A6).
+const moodboardOpenForId = ref<string | null>(null)
+function handleOpenMoodboard(e: Event) {
+  const detail = (e as CustomEvent).detail
+  if (detail?.nodeId) moodboardOpenForId.value = String(detail.nodeId)
+}
+
 // Texture Studio editor open-state (same pattern as Gradient Studio).
 const textureStudioOpenForId = ref<string | null>(null)
 function handleOpenTextureStudio(e: Event) {
@@ -4574,6 +4582,7 @@ onMounted(() => {
   window.addEventListener('sailor:openGradientStudio', handleOpenGradientStudio)
   // Gradient Studio output is generic (sourceNodeId/nodeType/widgetOverrides) — reuse the Space Type handler.
   window.addEventListener('sailor:gradientStudioOutput', handleSpaceTypeOutput)
+  window.addEventListener('sailor:openMoodboard', handleOpenMoodboard)
   window.addEventListener('sailor:openTextureStudio', handleOpenTextureStudio)
   // Texture Studio output is generic (sourceNodeId/nodeType/widgetOverrides) — reuse the Space Type handler.
   window.addEventListener('sailor:textureStudioOutput', handleSpaceTypeOutput)
@@ -4645,6 +4654,7 @@ onUnmounted(() => {
   window.removeEventListener('sailor:openSpaceType', handleOpenSpaceType)
   window.removeEventListener('sailor:openGradientStudio', handleOpenGradientStudio)
   window.removeEventListener('sailor:gradientStudioOutput', handleSpaceTypeOutput)
+  window.removeEventListener('sailor:openMoodboard', handleOpenMoodboard)
   window.removeEventListener('sailor:openTextureStudio', handleOpenTextureStudio)
   window.removeEventListener('sailor:textureStudioOutput', handleSpaceTypeOutput)
   window.removeEventListener('sailor:openShaderStudio', handleOpenShaderStudio)
@@ -7480,6 +7490,17 @@ defineExpose({
         :nodes="nodes as any[]"
         :edges="edges as any[]"
         @close="gradientStudioOpenForId = null"
+      />
+    </Teleport>
+
+    <!-- Moodboard modal (brand-guidelines document; the library owns the entry,
+         the node only references it via properties.sailor_moodboard) -->
+    <Teleport to="body">
+      <VueCanvasMoodboardModal
+        v-if="moodboardOpenForId"
+        :node-id="moodboardOpenForId"
+        :nodes="nodes as any[]"
+        @close="moodboardOpenForId = null"
       />
     </Teleport>
 
