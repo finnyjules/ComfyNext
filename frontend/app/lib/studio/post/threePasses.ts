@@ -166,24 +166,29 @@ function hexToVec3(hex: string): THREE.Vector3 {
   return new THREE.Vector3(c.r, c.g, c.b)
 }
 
+/** Grain is intentionally STATIC (user-directed): the field does not crawl with
+ *  time. Every host — the 2D studios, Space Type, and Scene3D — shows the same
+ *  frozen grain, so the seed is a fixed constant rather than a live clock.
+ *  `STATIC_GRAIN_SEED` is a fixed, precision-safe value (well under `SEED_MAX`). */
+const STATIC_GRAIN_SEED = 42
+
 /** Set `.enabled` + uniforms on all three passes from a PostSettings snapshot.
- *  `resolution` feeds vignette's aspect-ratio correction; `timeSeconds` seeds
- *  grain's hash field (folded through the same precision-safe range as the 2D
- *  chain's `safeSeed`, since there's no per-document seed concept on this live
- *  three.js path — time stands in for it, so the grain field animates/reseeds
- *  as time advances rather than staying frozen). */
+ *  `resolution` feeds vignette's aspect-ratio correction. `timeSeconds` is retained
+ *  as a reserved hook (a caller could re-derive grain's seed from it to opt into
+ *  animated grain later) but is deliberately UNUSED today — grain stays frozen. */
 export function applyPostExtras(
   passes: PostExtraPasses,
   post: PostSettings,
   resolution: THREE.Vector2,
   timeSeconds: number,
 ): void {
+  void timeSeconds // reserved; grain is static (see STATIC_GRAIN_SEED)
   const { grain, vignette, duotone } = passes
 
   grain.enabled = post.grain
   grain.uniforms.u_amount!.value = post.grainAmount
   grain.uniforms.u_size!.value = post.grainSize
-  grain.uniforms.u_seed!.value = safeSeed(timeSeconds)
+  grain.uniforms.u_seed!.value = safeSeed(STATIC_GRAIN_SEED)
 
   vignette.enabled = post.vignette
   vignette.uniforms.u_amount!.value = post.vignetteAmount

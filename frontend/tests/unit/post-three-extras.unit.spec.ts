@@ -32,7 +32,7 @@ describe('threePasses.ts — three.js grain/vignette/duotone passes', () => {
     expect(duotone.uniforms.tDiffuse).toBeDefined()
   })
 
-  it('wires grain: enabled + amount + size, seed derived from timeSeconds', () => {
+  it('wires grain: enabled + amount + size, with a fixed static seed', () => {
     const grainPass = makeGrainPass()
     const vignettePass = makeVignettePass()
     const duotonePass = makeDuotonePass()
@@ -43,11 +43,11 @@ describe('threePasses.ts — three.js grain/vignette/duotone passes', () => {
     expect(grainPass.enabled).toBe(true)
     expect(grainPass.uniforms.u_amount!.value).toBe(0.76)
     expect(grainPass.uniforms.u_size!.value).toBe(5)
-    expect(typeof grainPass.uniforms.u_seed!.value).toBe('number')
-    expect(Number.isFinite(grainPass.uniforms.u_seed!.value)).toBe(true)
+    // Grain is intentionally static: a fixed seed, NOT derived from timeSeconds.
+    expect(grainPass.uniforms.u_seed!.value).toBe(42)
   })
 
-  it('grain seed is deterministic for a given timeSeconds and changes across time', () => {
+  it('grain seed is STATIC — does not change with timeSeconds (grain never crawls)', () => {
     const grainPass = makeGrainPass()
     const vignettePass = makeVignettePass()
     const duotonePass = makeDuotonePass()
@@ -57,13 +57,10 @@ describe('threePasses.ts — three.js grain/vignette/duotone passes', () => {
     applyPostExtras({ grain: grainPass, vignette: vignettePass, duotone: duotonePass }, post, resolution, 2.0)
     const seedA = grainPass.uniforms.u_seed!.value
 
-    applyPostExtras({ grain: grainPass, vignette: vignettePass, duotone: duotonePass }, post, resolution, 2.0)
-    const seedARepeat = grainPass.uniforms.u_seed!.value
-    expect(seedARepeat).toBe(seedA)
-
+    // A very different time must produce the SAME seed — grain is frozen, not animated.
     applyPostExtras({ grain: grainPass, vignette: vignettePass, duotone: duotonePass }, post, resolution, 9.25)
     const seedB = grainPass.uniforms.u_seed!.value
-    expect(seedB).not.toBe(seedA)
+    expect(seedB).toBe(seedA)
   })
 
   it('wires vignette: enabled + amount/radius/softness + resolution', () => {
