@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { Dices } from 'lucide-vue-next'
+import { useStudioAutosave } from '~/lib/studio/autosave'
 import { textureFx } from '~/lib/texturefx/renderer'
 import { preloadStylize, stylizeTile } from '~/lib/texturefx/stylize'
 import { loadRaster, getRaster, buildSeamlessInputs, rasterViewUrl } from '~/lib/texturefx/raster'
@@ -15,7 +16,7 @@ import type { TextureControl } from '~/lib/texturefx/controls'
 import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
 import StudioControlPanel from '~/components/vue-canvas/studio/StudioControlPanel.vue'
-import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
+import StudioActionsFooter from '~/components/vue-canvas/studio/StudioActionsFooter.vue'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
 import StudioColorField from '~/components/vue-canvas/studio/StudioColorField.vue'
 import StudioSlider from '~/components/vue-canvas/studio/StudioSlider.vue'
@@ -219,6 +220,8 @@ function closeEditor() {
   try { saveParams() } catch (e) { console.error('[texture] save failed', e) }
   emit('close')
 }
+
+const { saving: autoSaving, saved: autoSaved } = useStudioAutosave(() => params, saveParams)
 
 // Controls visible to StudioControlPanel: a control with a `when` predicate is
 // shown only when it returns true for the current params (contextual reveal).
@@ -595,9 +598,12 @@ onBeforeUnmount(() => {
     </template>
 
     <template #actions>
-      <StudioButton variant="secondary" @click="roll"><Dices :size="14" /> Roll · seed {{ params.seed }}</StudioButton>
-      <StudioButton variant="secondary" @click="downloadPng">Download PNG</StudioButton>
-      <StudioButton variant="primary" :disabled="baking" @click="sendToCanvas">{{ baking ? bakeMsg : 'Send to canvas' }}</StudioButton>
+      <StudioActionsFooter :spec="{
+        status: { saving: autoSaving, saved: autoSaved, notice: bakeMsg || null },
+        utilities: [{ label: `Roll · seed ${params.seed}`, onClick: roll, icon: Dices }],
+        downloads: [{ label: 'Download PNG', onClick: downloadPng }],
+        canvas: [{ label: 'As image', onClick: sendToCanvas, busy: baking }],
+      }" />
     </template>
 
     <template #controls>
