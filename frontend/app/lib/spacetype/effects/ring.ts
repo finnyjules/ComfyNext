@@ -60,11 +60,19 @@ export const ringEffect: SpaceTypeEffect = {
     const items = parseContent(String(params.content ?? '[]'))
     const tiles = expandContent(items)
     const layoutCache = new Map<string, CharLayout>()
+    // Register each sourceId's glyph atlas ONCE (on its first mesh) so disposeRoot() frees
+    // it on rebuild — mirrors cylinder.ts's `registered` set. Image tiles are excluded: their
+    // textures are owned by env.imageTextures (engine's setImageTextures/dispose already
+    // tracks + frees them), so tagging userData.tex there would double-dispose.
+    const registered = new Set<string>()
 
     for (const tile of tiles) {
       const geo = new three.PlaneGeometry(1, 1)
       let material: THREE.MeshBasicMaterial
       let aspect = 1
+      // Set only for word/letter tiles — the glyph atlas texture to register on the mesh
+      // below (once per sourceId). Stays undefined for image tiles (engine-owned textures).
+      let glyphTex: THREE.Texture | undefined
 
       if (tile.kind === 'image') {
         const tex = env?.imageTextures?.get(tile.src)
@@ -85,6 +93,7 @@ export const ringEffect: SpaceTypeEffect = {
           layoutCache.set(tile.sourceId, layout)
         }
         material = new three.MeshBasicMaterial({ map: layout.texture, side: three.DoubleSide, transparent: true })
+        glyphTex = layout.texture
 
         if (tile.kind === 'word') {
           const img = layout.texture.image as { width: number; height: number }
@@ -104,6 +113,15 @@ export const ringEffect: SpaceTypeEffect = {
 
       const mesh = new three.Mesh(geo, material)
       mesh.userData.aspect = aspect
+      // Register each sourceId's glyph atlas ONCE (on its first mesh) so disposeRoot() frees
+      // it on rebuild — mirrors cylinder.ts's `registered` set (line 255 there). Image tiles
+      // are excluded: their textures are owned by env.imageTextures (engine's
+      // setImageTextures/dispose already tracks + frees them), so tagging userData.tex here
+      // would cause a double-dispose on the next build.
+      if (glyphTex && !registered.has(tile.sourceId)) {
+        mesh.userData.tex = glyphTex
+        registered.add(tile.sourceId)
+      }
       root.add(mesh)
       quads.push(mesh)
     }
