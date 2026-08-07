@@ -106,4 +106,26 @@ describe('rehydration appends schema-grown ports to saved nodes', () => {
     expect(inputs[0]).toEqual({ name: 'style_in', type: 'TASTE', link: 7 })
     expect(inputs.map((i: any) => i.name)).toEqual(['style_in', 'prompt_in'])
   })
+
+  it('a divergent-era save (image_1..6 ref ports) still gains the taste sockets', () => {
+    // Julien's real node: saved when GenerateImageNode declared image_N link
+    // inputs the current schema no longer has. Those keep their indices (an
+    // edge into image_1 must stay on input-0); the new sockets append after.
+    const vn = useVueNodes()
+    vn.objectInfo.value = OBJECT_INFO
+    vn.convertFromLiteGraph(workflow([{
+      id: 1,
+      type: 'GenerateImageNode',
+      pos: [0, 0],
+      size: [280, 400],
+      inputs: Array.from({ length: 6 }, (_, i) => ({ name: `image_${i + 1}`, type: 'IMAGE', link: null, optional: true })),
+      outputs: [{ name: 'IMAGE', type: 'IMAGE', links: [] }],
+      widgets_values: [],
+      properties: {},
+      mode: 0,
+    }]))
+
+    const names = (vn.nodes.value as any[])[0].data.inputs.map((i: any) => i.name)
+    expect(names).toEqual(['image_1', 'image_2', 'image_3', 'image_4', 'image_5', 'image_6', 'style_in', 'prompt_in'])
+  })
 })

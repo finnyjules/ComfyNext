@@ -15,13 +15,33 @@ describe('syncNodeOutputsWithSchema', () => {
     expect(merged![0]).toBe(frames)
   })
 
-  it('never reorders: saved order is kept even if schema names differ', () => {
+  it('never reorders: saved ports keep their indices, missing schema ports append', () => {
+    // Divergent-era save: the schema no longer contains 'a' at all. Saved
+    // entries stay put (edges reference ports by index), and every schema
+    // port whose NAME the save lacks appends at the tail — a positional
+    // slice would silently drop 'x' here.
     const a = { name: 'a', type: 'IMAGE', links: [1] }
     const merged = syncNodeOutputsWithSchema([a], [
       { name: 'x', type: 'LATENT', links: null },
       { name: 'y', type: 'MASK', links: null },
     ])
-    expect(merged).toEqual([a, { name: 'y', type: 'MASK', links: null }])
+    expect(merged).toEqual([a, { name: 'x', type: 'LATENT', links: null }, { name: 'y', type: 'MASK', links: null }])
+  })
+
+  it('appends by name when the saved snapshot is LONGER than the schema (era drift)', () => {
+    // Found live (moodboards, 2026-08-07): a GenerateImageNode saved in the
+    // image_1..6 ref-port era never gained style_in/prompt_in because the
+    // length check saw 6 >= 2 and bailed. Names, not lengths, decide.
+    const saved = Array.from({ length: 6 }, (_, i) => ({ name: `image_${i + 1}`, type: 'IMAGE', links: null }))
+    const merged = syncNodeOutputsWithSchema(saved, [
+      { name: 'style_in', type: 'TASTE', links: null },
+      { name: 'prompt_in', type: 'STRING', links: null },
+    ])
+    expect(merged!.map(p => p.name)).toEqual([
+      'image_1', 'image_2', 'image_3', 'image_4', 'image_5', 'image_6', 'style_in', 'prompt_in',
+    ])
+    // saved entries by reference — link state untouched
+    expect(merged![0]).toBe(saved[0])
   })
 
   it('no-op (null) when saved already matches schema length', () => {

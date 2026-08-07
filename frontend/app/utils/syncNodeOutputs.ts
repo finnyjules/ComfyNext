@@ -24,11 +24,18 @@ export function schemaOutputsFromInfo(info: any): NodeOutputPort[] {
 }
 
 /**
- * Returns the merged output list when the schema defines MORE outputs than the
- * saved snapshot (saved outputs kept verbatim + missing trailing schema
- * outputs appended), or `null` when no change is needed:
+ * Returns the merged output list when the schema defines outputs the saved
+ * snapshot lacks BY NAME (saved outputs kept verbatim at their indices +
+ * missing schema outputs appended at the tail), or `null` when no change is
+ * needed:
  *  - schema unknown/empty (objectInfo missing the type) → null
- *  - saved already has >= schema outputs (incl. saved-has-more) → null
+ *  - every schema name already present in the save → null
+ *
+ * Names, not lengths: a save can be LONGER than the schema and still be
+ * missing new ports (found live 2026-08-07 — a GenerateImageNode saved in the
+ * image_1..6 ref-port era never gained style_in/prompt_in because a length
+ * check saw 6 >= 2 and bailed). Ports the schema dropped stay in the save
+ * untouched — removing or reindexing would re-point edges.
  */
 export function syncNodeOutputsWithSchema(
   saved: NodeOutputPort[] | undefined | null,
@@ -36,8 +43,10 @@ export function syncNodeOutputsWithSchema(
 ): NodeOutputPort[] | null {
   const have = saved ?? []
   if (!schema?.length) return null
-  if (schema.length <= have.length) return null
-  return [...have, ...schema.slice(have.length)]
+  const names = new Set(have.map(p => p.name))
+  const missing = schema.filter(p => !names.has(p.name))
+  if (!missing.length) return null
+  return [...have, ...missing]
 }
 
 export interface NodeInputPort {
@@ -53,10 +62,12 @@ export function schemaInputsFromInfo(info: any): NodeInputPort[] {
 }
 
 /**
- * Input twin of syncNodeOutputsWithSchema — same append-only contract (edges
- * reference inputs by index via `input-${i}`, so never reorder or remove).
- * Lets old saves pick up inputs a node type grew later (e.g. the
- * GenerateImageNode / EditImageNode reference-image ports).
+ * Input twin of syncNodeOutputsWithSchema — same name-aware append-only
+ * contract (edges reference inputs by index via `input-${i}`, so never
+ * reorder or remove; schema ports missing from the save BY NAME append at
+ * the tail). Lets old saves pick up inputs a node type grew later (e.g. the
+ * GenerateImageNode taste-wire sockets), including saves from a schema era
+ * whose port list has since changed shape entirely.
  */
 export function syncNodeInputsWithSchema(
   saved: NodeInputPort[] | undefined | null,
@@ -64,6 +75,8 @@ export function syncNodeInputsWithSchema(
 ): NodeInputPort[] | null {
   const have = saved ?? []
   if (!schema?.length) return null
-  if (schema.length <= have.length) return null
-  return [...have, ...schema.slice(have.length)]
+  const names = new Set(have.map(p => p.name))
+  const missing = schema.filter(p => !names.has(p.name))
+  if (!missing.length) return null
+  return [...have, ...missing]
 }
