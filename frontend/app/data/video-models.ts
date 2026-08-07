@@ -47,7 +47,7 @@ export const VIDEO_TAG_LABELS: Record<VideoModelTag, string> = {
 
 export type VideoModelBrand =
   | 'Google' | 'OpenAI' | 'Runway' | 'Kling' | 'ByteDance'
-  | 'MiniMax' | 'Wan' | 'Luma' | 'Lightricks' | 'PixVerse' | 'VEED' | 'Other'
+  | 'MiniMax' | 'Wan' | 'Luma' | 'Lightricks' | 'PixVerse' | 'VEED' | 'BFL' | 'Other'
 
 export interface VideoModelAdvancedField {
   name: string
@@ -200,6 +200,29 @@ export const VIDEO_MODELS: VideoModel[] = [
     durations: [5, 10],
     defaultDuration: 5,
     advanced: [],
+  },
+
+  // ===== BFL ===============================================================
+  {
+    id: 'flux-3',
+    label: 'FLUX 3',
+    brand: 'BFL',
+    replicateSlug: 'black-forest-labs/flux-3',
+    pitch: 'BFL\'s multimodal model — up to 20s video with native synchronized audio.',
+    tags: ['flagship', 'audio'],
+    modes: ['t2v', 'i2v'],
+    supportsSeed: true,
+    priceHint: '~$0.20–0.40 / s',
+    aspectRatios: ['16:9', '9:16', '1:1'],
+    defaultAspectRatio: '16:9',
+    durations: [5, 10, 15, 20],
+    defaultDuration: 10,
+    resolutions: ['720p', '1080p'],
+    defaultResolution: '720p',
+    advanced: [
+      { name: 'generate_audio', type: 'boolean', label: 'Generate audio', default: true,
+        description: 'Native synchronized audio. Off is cheaper and silent.' },
+    ],
   },
 
   // ===== Runway ===========================================================
