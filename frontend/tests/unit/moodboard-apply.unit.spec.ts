@@ -4,9 +4,11 @@ import {
   clearMoodboardFromGenerateNode,
   revertMoodboardSwitch,
   syncMoodboardWidgets,
+  moodboardRefDescriptors,
   MOODBOARD_DEFAULT_MODEL,
   MOODBOARD_MAX_REFS,
 } from '~/lib/graph/moodboardApply'
+import { normalizeRefName } from '~/lib/refs/registry'
 import { moodboardStyleBlock } from '~/lib/taste/styleBlock'
 import { IMAGE_MODELS_BY_ID } from '~/data/image-models'
 import type { MoodboardEntry } from '~~/shared/taste/moodboard'
@@ -229,5 +231,30 @@ describe('syncMoodboardWidgets — the twin\'s hidden widgets, written by name (
     }
     syncMoodboardWidgets(nodeData, null)
     expect(nodeData.widgetsValues).toEqual(['', ''])
+  })
+})
+
+describe('moodboardRefDescriptors — @refs names for the flattened board images (B5)', () => {
+  it('maps flat files to mb-<slug>-<i> names, i from 0, entry.filename = the flat file', () => {
+    const refs = moodboardRefDescriptors('dusty-pastels', [
+      'mb_dusty-pastels_0.png', 'mb_dusty-pastels_1.jpg', 'mb_dusty-pastels_2.webp',
+    ])
+    expect(refs).toEqual([
+      { name: 'mb-dusty-pastels-0', entry: { filename: 'mb_dusty-pastels_0.png' } },
+      { name: 'mb-dusty-pastels-1', entry: { filename: 'mb_dusty-pastels_1.jpg' } },
+      { name: 'mb-dusty-pastels-2', entry: { filename: 'mb_dusty-pastels_2.webp' } },
+    ])
+    // Every name is a valid bare @refs handle (registry normalization keeps it).
+    for (const r of refs) expect(normalizeRefName(r.name)).toBe(r.name)
+  })
+
+  it('caps at MOODBOARD_MAX_REFS and drops empty entries', () => {
+    const refs = moodboardRefDescriptors('s', ['a.png', '', 'b.png', 'c.png', 'd.png'])
+    expect(refs.length).toBe(MOODBOARD_MAX_REFS)
+    expect(refs.map(r => r.entry.filename)).toEqual(['a.png', 'b.png', 'c.png'])
+  })
+
+  it('returns [] for an empty board', () => {
+    expect(moodboardRefDescriptors('s', [])).toEqual([])
   })
 })

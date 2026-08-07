@@ -1314,13 +1314,24 @@ async function handleRunVariations(e: Event) {
 // `@` promote button (ArtifactImageNode) → name the currently-displayed image
 // and write it into the project's @refs registry. Writes go straight onto
 // activeProjectDoc.value.assetRegistry so they ride the existing autosave.
+// Also accepts a BATCH form `detail.refs = [{ name, entry }, …]` (moodboard
+// save, Plan B Task B5) — several registry writes, one persist, one toast.
 function onCreateRef(e: Event) {
-  const { name, entry } = (e as CustomEvent).detail || {}
-  if (!name || !entry?.filename || !activeProjectDoc.value) return
-  activeProjectDoc.value.assetRegistry = setRef(activeProjectDoc.value.assetRegistry ?? {}, name, entry)
+  const detail = (e as CustomEvent).detail || {}
+  if (!activeProjectDoc.value) return
+  const batch: { name: string, entry: { filename: string, text?: string } }[]
+    = Array.isArray(detail.refs)
+      ? detail.refs.filter((r: any) => r?.name && r?.entry?.filename)
+      : (detail.name && detail.entry?.filename ? [{ name: detail.name, entry: detail.entry }] : [])
+  if (!batch.length) return
+  let reg = activeProjectDoc.value.assetRegistry ?? {}
+  for (const r of batch) reg = setRef(reg, r.name, r.entry)
+  activeProjectDoc.value.assetRegistry = reg
   markDocEdited()
   persistWorkflows()
-  toast.success(`Reference @${name} created`)
+  toast.success(batch.length === 1
+    ? `Reference @${batch[0]!.name} created`
+    : `${batch.length} board references created (@${batch[0]!.name}…)`)
 }
 
 onMounted(() => {

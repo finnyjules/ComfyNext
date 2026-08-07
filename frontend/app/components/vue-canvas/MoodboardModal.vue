@@ -12,7 +12,7 @@
 // the node (the GradientStudioSurface persistence pattern: mutate the node
 // record in the `nodes` array the canvas passed us).
 import { useMoodboards, slugifyMoodboardName } from '~/composables/useMoodboards'
-import { syncMoodboardWidgets } from '~/lib/graph/moodboardApply'
+import { syncMoodboardWidgets, moodboardRefDescriptors } from '~/lib/graph/moodboardApply'
 import { sectionIds, activeSection, type SectionId } from '~/lib/taste/moodboardModal'
 import type { MoodboardEntry } from '~~/shared/taste/moodboard'
 
@@ -229,6 +229,23 @@ async function saveBoard() {
       n.data.properties.sailor_moodboard = id
       syncMoodboardWidgets(n.data, entry)
     }
+    // Task B5: expose the board's first images as project @refs
+    // (`mb-<slug>-<i>`). The server flattens them into the input ROOT
+    // (subpath filenames 404 in the app's /view-based image widgets), and the
+    // layout's sailor:createRef handler owns the registry write (setRef +
+    // markDocEdited + persistWorkflows) — same decoupling as the ArtifactImage
+    // `@` promote. Best-effort: the save itself already succeeded, so a refs
+    // failure warns instead of surfacing as a save error.
+    try {
+      const { files: flat } = await $fetch<{ files: string[] }>('/api/moodboards/refs', {
+        method: 'POST', body: { folder: folder.value, slug: id },
+      })
+      const refs = moodboardRefDescriptors(id, flat)
+      if (refs.length) {
+        window.dispatchEvent(new CustomEvent('sailor:createRef', { detail: { refs } }))
+      }
+    }
+    catch (e) { console.warn('[moodboard] @refs registration failed', e) }
     savedFlash.value = true
     setTimeout(() => { savedFlash.value = false }, 1500)
   }

@@ -141,6 +141,15 @@ test.afterAll(async ({ request }) => {
     const dir = path.resolve(__dirname, '../../input', createdFolder)
     await fs.promises.rm(dir, { recursive: true, force: true }).catch(() => {})
   }
+  // Save also flattens the board's first images into the input ROOT as
+  // mb_<id>_<i>.png for the @refs registry (Plan B, Task B5) — remove those
+  // run-scoped copies too (id embeds this run's timestamp, so the glob-free
+  // loop can't touch anything else's files).
+  if (createdId) {
+    for (let i = 0; i < 3; i++) {
+      await fs.promises.rm(path.resolve(__dirname, '../../input', `mb_${createdId}_${i}.png`), { force: true }).catch(() => {})
+    }
+  }
 })
 
 test('moodboard core: create → read → correct → save → apply → composed prompt → node delete leaves library intact', async ({ page }) => {

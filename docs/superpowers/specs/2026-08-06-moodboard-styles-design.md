@@ -142,7 +142,19 @@ winner; `nano-banana-2` is the half-price challenger pending a one-pair A/B in t
 checklist, after which the default may drop to it). The switch is legible, never silent:
 a visible notice on the node ("switched to Nano Banana for full style transfer") with
 one-click revert, and the run cost stays on the Run button per the money-is-explicit
-rule. Switch once at connect time; a subsequent manual model choice always wins. **Plan-level recon task: verify the `multi-image`-tagged nodes actually
+rule. Switch once at connect time; a subsequent manual model choice always wins.
+
+**Applying IS wiring (Julien's call, 2026-08-07, post-first-render).** The first real run
+exposed it: the generator was visibly styled by an *unconnected* node — the graph lied by
+omission. Unified rule: every application of a moodboard to the model-picker generator is
+expressed as the REAL taste wire. The chip pick finds-or-creates the board's Moodboard
+node beside the generator and draws the edge into `style_in`; a manual wire drag fires
+the same side effects (auto-switch, refs, chip fill); ✕ removes the edge (node stays).
+The wire is the single carrier of the prose block — the client injector skips
+`style_block` whenever `style_in` is connected (no double-prepending) — while refs stay
+property-carried (file paths from the library). The chip is a remote control for the
+wire, never a parallel invisible channel. FLUX LoRA slot-apply is unchanged (different
+node grammar). **Plan-level recon task: verify the `multi-image`-tagged nodes actually
 accept refs through their generation path today** — the mechanism ships v1 on whichever
 ones do; widening coverage is the fast-follow, not the mechanism.
 
@@ -268,3 +280,54 @@ blank-`aesthetic_b` broken control) → node deletion leaves the library entry i
 - **Paid manual checklist (owed):** one real Fable read on a real board (summary quality
   + curated palette sanity), and one real generation with a moodboard in a slot (block
   visible in the served prompt, output plausibly styled).
+
+## Plan B shipped
+
+**Status (2026-08-07):** Plan B (`2026-08-07-moodboards-b-wires.md`) is fully implemented
+on `main` — commit range `dba12d688..60cca6e24` plus the B5 change:
+
+- **B1** `dba12d688` — nano-banana-pro gains `multi-image` in BOTH catalogs; Python
+  `ImageModel.tags` + `accepts_refs()`; tag parity now enforced across the TS/Python
+  boundary (`catalog-parity.unit.spec.ts` + `image_models_tags_test.py`).
+- **B2** `a68009348` — `style_block`/`style_refs` APPENDED to `GenerateImageNode`
+  (internal, widget-slot-bearing); submit-time injection writes them **by name** via the
+  objectInfo widget order (`lib/graph/styleInject.ts`); moodboard chip on the node face
+  (gallery kind `'moodboard'`, weightless property apply).
+- **B3** `c7cddb493` — refs ride along: `{folder, files[≤3]}` JSON → validated reads from
+  `input/<folder>/` → data URLs into the ref-capable builders (nano as the reference
+  implementation, gated by the catalog tag); **legible auto-switch** to
+  `nano-banana-pro` with the `sailor_moodboard_switched` marker, node notice + one-click
+  Revert; a manual model choice is never overridden.
+- **B4** `60cca6e24` — Python `Moodboard` twin (`comfy_extras/nodes_moodboard.py`:
+  `reading_json`/`moodboard_id` → one TASTE `style` output compiling the block, parity-
+  tested against the TS `moodboardStyleBlock`); `style_in`/`prompt_in` force-input
+  sockets appended to both generators (no widget-slot shift); Moodboard leaves the
+  frontend-only strip set so the TASTE edge survives `graphToPrompt`.
+- **B5** (this change) — **@refs exposure on save**: the board's first 3 images are
+  *flattened into the input ROOT* as `mb_<slug>_<i>.<ext>` (new POST
+  `/api/moodboards/refs`) and registered as `mb-<slug>-<i>` in the project's
+  assetRegistry via the layout's `sailor:createRef` batch handler. Flatten, not
+  subpaths, because ComfyUI's `/view` basenames its `filename` param — verified live
+  2026-08-07: a `moodboard_<ms>/x.png` filename validates and **executes** through the
+  backend graph loader, but 404s in every app widget preview (`/view?filename=…`), so
+  flat names are the only shape that resolves everywhere. E2E
+  `frontend/tests/moodboard-wires.spec.ts`: chip apply on flux-schnell → auto-switch +
+  notice + refs ✓ + `style_block`/`style_refs` in the serialized payload through the
+  REAL injector (with a blanked-properties broken control) → Revert restores →
+  re-apply never re-switches (manual choice wins) → the Moodboard twin's
+  `reading_json` + class_type through the REAL in-page `graphToPrompt` → after modal
+  Save, `mb-<slug>-0..2` land in the persisted registry, resolve via `/view`, and
+  decode in the Reference node's own thumb.
+
+**What remains (owed):**
+- The dev backend already serves the B1–B4 schemas (it was restarted 2026-08-07 02:09,
+  after B4 landed) — the still-owed live piece is a **hand-dragged TASTE wire**
+  (`Moodboard.style → style_in`) plus a run through it; the E2E asserts the
+  serialization shape, not the pointer gesture.
+- **Paid checklist (Julien or a keyed session):** one real nano-banana-pro generation
+  with a moodboard applied (~$0.15 — the marquee moment), and the nano-pro vs
+  nano-banana-2 A/B pair (~$0.13) to settle `MOODBOARD_DEFAULT_MODEL`; record results
+  here.
+- Deferred by name: the node's `image` output port (superseded by @refs in v1), refs on
+  `EditImageNode`, the kit-finish pass, Seedream ref verification beyond schema
+  conformance.

@@ -39,8 +39,11 @@ import type { MoodboardEntry } from '~~/shared/taste/moodboard'
  *  Nano Banana Pro, the reference implementation of the refs ride-along. */
 export const MOODBOARD_DEFAULT_MODEL = 'nano-banana-pro'
 
-/** Refs cap — mirrored by the Python side (_MOODBOARD_MAX_REFS). */
-export const MOODBOARD_MAX_REFS = 3
+/** Refs cap — lives in shared/taste/moodboard.ts since Task B5 (the flatten
+ *  route enforces the same cap); re-exported so existing importers keep their
+ *  path. Mirrored by the Python side (_MOODBOARD_MAX_REFS). */
+export { MOODBOARD_MAX_REFS } from '~~/shared/taste/moodboard'
+import { MOODBOARD_MAX_REFS } from '~~/shared/taste/moodboard'
 
 /** The catalog tag that gates reference images. */
 const REF_TAG = 'multi-image'
@@ -154,6 +157,27 @@ export function syncMoodboardWidgets(
   }
   write('reading_json', entry ? JSON.stringify(entry.reading) : '')
   write('moodboard_id', entry ? entry.id : '')
+}
+
+/**
+ * The @refs exposure of a saved board (Plan B, Task B5): names + registry
+ * entries for the board's flattened images. `flatFiles` is what POST
+ * /api/moodboards/refs returned — input-ROOT filenames (`mb_<slug>_<i>.<ext>`),
+ * flattened because the app's /view-based image widgets basename their
+ * `filename` param (a `moodboard_<ms>/x.png` subpath 404s in every widget
+ * preview even though the backend graph loader resolves it fine — verified
+ * live 2026-08-07). Names follow the spec's `mb-<slug>-<i>` scheme, i from 0,
+ * capped at MOODBOARD_MAX_REFS. Pure — the modal dispatches the result via
+ * the layout's `sailor:createRef` batch handler.
+ */
+export function moodboardRefDescriptors(
+  slug: string,
+  flatFiles: string[],
+): { name: string; entry: { filename: string } }[] {
+  return flatFiles
+    .filter(f => typeof f === 'string' && !!f)
+    .slice(0, MOODBOARD_MAX_REFS)
+    .map((filename, i) => ({ name: `mb-${slug}-${i}`, entry: { filename } }))
 }
 
 /**

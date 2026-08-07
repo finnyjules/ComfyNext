@@ -12,6 +12,13 @@ export interface MoodboardEntry {
 
 export const MOODBOARD_ID_RE = /^[a-z0-9-]{1,64}$/
 export const MOODBOARD_FOLDER_RE = /^moodboard_\d+$/
+
+/** Refs cap — how many board images ride along to a ref-capable model AND how
+ *  many get flattened/registered as project @refs on save (Plan B, B3+B5).
+ *  Mirrored by the Python side's `_MOODBOARD_MAX_REFS`. Shared (not app-side)
+ *  because the flatten route (server/api/moodboards/refs.post.ts) enforces the
+ *  same cap the client-side apply uses. */
+export const MOODBOARD_MAX_REFS = 3
 const HEX_RE = /^#[0-9a-fA-F]{6}$/
 
 export function validateMoodboardEntry(raw: unknown): MoodboardEntry {
