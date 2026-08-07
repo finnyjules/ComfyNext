@@ -88,6 +88,7 @@ interface StudioFooterAction {
   disabled?: boolean
   busy?: boolean               // shows a spinner / busy label on the trigger
   icon?: Component             // optional leading icon (e.g. Dices for Roll)
+  subtitle?: string            // small dim second line, menu items only (e.g. a caveat)
 }
 ```
 
@@ -105,18 +106,29 @@ The component owns:
 - **Busy/disabled**: a `busy` action shows a spinner + optional busy label and is
   disabled; menu triggers disable while any of their actions is busy.
 
-### Escape hatch
+### Space Type's transparency — an action, not a checkbox
 
-Space Type's *As video* item carries a **transparent-background** checkbox + Safari
-warning that modifies the export. The component exposes a named slot keyed to a menu
-item (e.g. `#canvas-menu-extra`) so Space Type can render that sub-option under its
-*As video* row. No other studio uses it.
+Today Space Type's render menu has a floating **Transparent background** *checkbox*
+wedged between the render items. It reads as wrong because it is state sitting in a
+list of actions — every neighbour is a verb, and this one is a form control.
+
+The fix falls straight out of the model: transparency is just a **second video
+action**. When the current frame actually has alpha, the canvas zone offers both
+**As video** and **As video (transparent)** — the latter carrying the Safari caveat
+as its `subtitle` ("WebM with real transparency · Safari can't play it"). When the
+frame has no alpha, only plain **As video** shows; the checkbox — and the disabled
+"turn on Transparent background in Output" teaching state — are gone. A user who wants
+transparency enables it where it's actually configured, in the Output section.
+
+This means **no escape-hatch slot is needed** — the whole thing is expressed in the
+declarative `canvas[]` array as a conditional extra item. The component stays purely
+data-driven; `StudioActionsFooter` never learns the word "alpha".
 
 ## Per-studio footer contents
 
 | Studio | ① utilities | ② downloads | ③ canvas |
 |---|---|---|---|
-| Space Type | — | Embed | As image · As video · Send to timeline |
+| Space Type | — | Embed | ▾ As image · As video (· As video transparent†) · Send to timeline |
 | Scene3D | — | — | Add to canvas (image) |
 | Texture | Roll | PNG | Add to canvas (image) |
 | Gradient | Copy config | Embed | As image · As video |
@@ -137,11 +149,16 @@ The `▾` in the table appears only where a zone already has ≥ 2 items (Space 
 Gradient / Shader bake both image and video to canvas; Vector has two download formats),
 per the collapse rule — never as a new capability.
 
+† **As video (transparent)** is Space Type's alpha export, shown only when the current
+frame has alpha (see the transparency section above) — a conditional extra item in the
+`canvas[]` array, replacing today's floating checkbox.
+
 ## Wording (fixed vocabulary)
 
 - Canvas: **Add to canvas** (static) / **Add to canvas ▾** → **As image**, **As video**,
-  **Send to timeline**. Retires *Render*, *Export to Canvas*, *Send to canvas*,
-  *Generate as image/video*.
+  **As video (transparent)** (alpha frames only), **Send to timeline**. Retires *Render*,
+  *Export to Canvas*, *Send to canvas*, *Generate as image/video*, and the floating
+  *Transparent background* checkbox.
 - Download: **Download PNG** / **Download SVG** / **Export embed** (the formats studios
   actually produce today), or **Download ▾** when a studio has ≥ 2. ("Export embed"
   keeps its name — it produces a
