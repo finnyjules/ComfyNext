@@ -6,7 +6,7 @@ import CatalogModal from '~/components/CatalogModal.vue'
 import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
 import StudioLayerStack from '~/components/vue-canvas/StudioLayerStack.vue'
-import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
+import StudioActionsFooter from '~/components/vue-canvas/studio/StudioActionsFooter.vue'
 import StudioSwitch from '~/components/vue-canvas/studio/StudioSwitch.vue'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
 import BindableRow from '~/components/vue-canvas/studio/BindableRow.vue'
@@ -36,6 +36,8 @@ import { controlsForStudio } from '~/lib/collection/studioControls'
 import type { StudioControlDesc } from '~/lib/collection/studioBindables'
 import { registerStudioParamBaker, unregisterStudioParamBaker } from '~/lib/studio/cascade'
 import { makeListRemap } from '~/lib/studio/listRemap'
+import { useStudioAutosave } from '~/lib/studio/autosave'
+import { downloadBlobAsFile } from '~/lib/studio/downloadBlob'
 import SweepPopover from '~/components/vue-canvas/studio/SweepPopover.vue'
 import { exportEmbedHtml, downloadEmbed } from '~/lib/embed/export'
 import type { ShaderEmbedConfig } from '~/lib/embed/surfaces/shader'
@@ -393,6 +395,12 @@ function loadConfig() { const c = currentNode()?.data?.properties?.sailor_shader
 function saveConfig() { const n = currentNode(); if (!n) return; n.data ||= {}; n.data.properties ||= {}; n.data.properties.sailor_shaderStudio = cloneConfig(config.value) }
 function closeEditor() { try { saveConfig() } catch (e) { console.error('[shader-studio] saveConfig failed', e) } emit('close') }
 
+// Sticky footer status (StudioActionsFooter): real Saving…/Saved ✓ driven by
+// useStudioAutosave, debounced off `config` — the studio's single source of
+// truth, which saveConfig() clones straight onto the node (never written back
+// into `config`, so there's no watch loop). Mirrors Gradient Studio (Task 6).
+const { saving: autoSaving, saved: autoSaved } = useStudioAutosave(() => config.value, saveConfig)
+
 // ── outputs (mirror Gradient Studio) ───────────────────────────────────────────
 async function renderBlob(t01: number): Promise<Blob> {
   const src = resolved.value!
@@ -455,38 +463,108 @@ async function generateImage() {
       saveConfig()
       await recordAsset(activeTab.value?.projectUuid, 'image', filename)
       window.dispatchEvent(new CustomEvent('sailor:shaderStudioOutput', { detail: { sourceNodeId: props.nodeId, nodeType: 'Image', widgetOverrides: { image: filename } } }))
+      // Clear the in-flight message on success so the footer's `notice` (no longer
+      // gated behind `baking` now that StudioActionsFooter reads it unconditionally)
+      // doesn't keep showing "Rendering…" after the fact. closeEditor() unmounts this
+      // surface in normal use, but clear it anyway rather than depend on that timing.
+      bakeMsg.value = ''
       closeEditor()
+    } else {
+      // uploadFrameBatch swallows a failed upload and returns [] — surface it instead
+      // of leaving the footer stuck on "Rendering…" forever.
+      bakeMsg.value = 'Upload failed — see console.'
     }
   } catch (e) { console.error('[shader-studio] image failed', e); bakeMsg.value = 'Failed — see console.' }
   finally { baking.value = false; startPreview() }
+}
+
+/** Bake the current Shader Studio state to frames (at the upstream source's own
+ *  clock, or our own Motion duration/fps when the source is still) and encode
+ *  server-side to a video file under input/. Shared by generateVideo() (dispatches
+ *  a Video node onto the canvas) and downloadVideoFile() (saves the file locally)
+ *  so this frame-bake exists in exactly one place. Callers own baking.value/
+ *  stopPreview/startPreview and the "Add a source first" guard. A bake-stage
+ *  failure (ensureSpaceTypeBake) propagates to the caller; an encode-stage failure
+ *  is caught here (mirrors the original generateVideo's nested try/catch) and
+ *  reported via bakeMsg, returning null so callers treat it as "nothing to
+ *  dispatch/download" without their own catch firing a second, more generic
+ *  message. Mirrors Gradient Studio's bakeGradientVideo (Task 6). */
+async function bakeShaderVideo(): Promise<{ filename: string; ext: 'mp4' | 'webm' } | null> {
+  const src = resolved.value!
+  // Whoever supplies the frames owns the clock: an animated upstream (e.g. a
+  // Gradient Studio loop) overrides our own duration/fps; a still source
+  // leaves our own Motion controls in charge. See resolve.ts's exportClock.
+  const clock = exportClock(src, config.value.motion.duration, config.value.motion.fps)
+  const { w, h } = outputDims(src.width, src.height, config.value.resolution, { upscale: true })
+  const total = Math.max(1, Math.round(clock.fps * clock.duration))
+  const bakeCfg = { fps: clock.fps, loopDuration: clock.duration, W: w, H: h, seed: 'shader', sig: JSON.stringify(config.value) }
+  const bake = await ensureSpaceTypeBake(bakeCfg as any, undefined, {
+    // Normalized (i / total), not i / fps: renderBlob now takes 0..1 so the
+    // last frame lands just before the loop point instead of duplicating
+    // frame 0 — this is what keeps a seamless upstream loop closing on itself.
+    renderFrame: async (i) => { bakeMsg.value = `Baking ${i + 1}/${total}`; return await renderBlob(i / total) },
+  })
+  bakeMsg.value = 'Encoding…'
+  try {
+    return await encodeFrames({ frames: bake.frames, fps: clock.fps, width: w, height: h })
+  } catch (encErr) {
+    bakeMsg.value = 'Encode failed — restart ComfyUI to load the encoder.'
+    console.error('[shader-studio] encode failed', encErr)
+    return null
+  }
 }
 
 async function generateVideo() {
   if (!resolved.value) { bakeMsg.value = 'Add a source first'; return }
   baking.value = true; stopPreview()
   try {
-    const src = resolved.value!
-    // Whoever supplies the frames owns the clock: an animated upstream (e.g. a
-    // Gradient Studio loop) overrides our own duration/fps; a still source
-    // leaves our own Motion controls in charge. See resolve.ts's exportClock.
-    const clock = exportClock(src, config.value.motion.duration, config.value.motion.fps)
-    const { w, h } = outputDims(src.width, src.height, config.value.resolution, { upscale: true })
-    const total = Math.max(1, Math.round(clock.fps * clock.duration))
-    const bakeCfg = { fps: clock.fps, loopDuration: clock.duration, W: w, H: h, seed: 'shader', sig: JSON.stringify(config.value) }
-    const bake = await ensureSpaceTypeBake(bakeCfg as any, undefined, {
-      // Normalized (i / total), not i / fps: renderBlob now takes 0..1 so the
-      // last frame lands just before the loop point instead of duplicating
-      // frame 0 — this is what keeps a seamless upstream loop closing on itself.
-      renderFrame: async (i) => { bakeMsg.value = `Baking ${i + 1}/${total}`; return await renderBlob(i / total) },
-    })
-    bakeMsg.value = 'Encoding…'
-    try {
-      const encoded = await encodeFrames({ frames: bake.frames, fps: clock.fps, width: w, height: h })
-      await recordAsset(activeTab.value?.projectUuid, 'video', encoded.filename)
-      window.dispatchEvent(new CustomEvent('sailor:shaderStudioOutput', { detail: { sourceNodeId: props.nodeId, nodeType: 'Video', widgetOverrides: { file: encoded.filename } } }))
-      closeEditor()
-    } catch (encErr) { bakeMsg.value = 'Encode failed — restart ComfyUI to load the encoder.'; console.error('[shader-studio] encode failed', encErr) }
+    const encoded = await bakeShaderVideo()
+    if (!encoded) return
+    await recordAsset(activeTab.value?.projectUuid, 'video', encoded.filename)
+    window.dispatchEvent(new CustomEvent('sailor:shaderStudioOutput', { detail: { sourceNodeId: props.nodeId, nodeType: 'Video', widgetOverrides: { file: encoded.filename } } }))
+    bakeMsg.value = ''
+    closeEditor()
   } catch (e) { console.error('[shader-studio] video failed', e); bakeMsg.value = 'Failed — see console.' }
+  finally { baking.value = false; startPreview() }
+}
+
+/** Download the current full-res still as a PNG — same render call generateImage()
+ *  uses (renderBlob), just saved locally instead of uploaded/dispatched. Guards +
+ *  sets baking.value like every other renderBlob caller: renderFrame's preview
+ *  loop bails on baking.value mid-await specifically so it can't corrupt the
+ *  shared shaderFx canvas this capture reads from (see renderFrame's comment). */
+async function downloadPng() {
+  if (!resolved.value) { bakeMsg.value = 'Add a source first'; return }
+  baking.value = true; bakeMsg.value = 'Rendering…'; stopPreview()
+  try {
+    const blob = await renderBlob(0)
+    downloadBlobAsFile(blob, `shader_${Date.now()}.png`)
+    bakeMsg.value = ''
+  } catch (e) { console.error('[shader-studio] png download failed', e); bakeMsg.value = 'Failed — see console.' }
+  finally { baking.value = false; startPreview() }
+}
+
+/** Same bake as generateVideo(), but saves the encoded file locally instead of
+ *  dispatching a Video node onto the canvas. Unlike generateVideo/generateImage,
+ *  this never calls closeEditor() — the modal stays open — so bakeMsg MUST be
+ *  cleared on success here, or the footer's notice would show a stale
+ *  "Encoding…" forever instead of returning to idle. */
+async function downloadVideoFile() {
+  if (!resolved.value) { bakeMsg.value = 'Add a source first'; return }
+  baking.value = true; stopPreview()
+  try {
+    const encoded = await bakeShaderVideo()
+    if (!encoded) return
+    // NOT `/input/${filename}` — that path isn't in the Nuxt dev server's
+    // comfyui-proxy PROXY_PREFIXES (server/middleware/comfyui-proxy.ts only
+    // proxies /view, /upload, etc.) and 404s; verified live in Gradient Studio
+    // (Task 6). ComfyUI's own /view endpoint (proxied) serves the same input/
+    // file by filename+type.
+    const res = await fetch(`/view?${new URLSearchParams({ filename: encoded.filename, type: 'input' })}`)
+    if (!res.ok) throw new Error(`/view returned ${res.status}`)
+    downloadBlobAsFile(await res.blob(), `shader_${Date.now()}.${encoded.ext}`)
+    bakeMsg.value = ''
+  } catch (e) { console.error('[shader-studio] video download failed', e); bakeMsg.value = 'Failed — see console.' }
   finally { baking.value = false; startPreview() }
 }
 
@@ -665,15 +743,22 @@ function remapEffectTracks(kind: 'move' | 'insert' | 'remove', a: number, b?: nu
     </template>
 
     <template #actions>
-      <StudioButton variant="primary" :disabled="baking" @click="generateImage">{{ baking ? (bakeMsg || 'Working…') : 'Generate as image' }}</StudioButton>
-      <StudioButton variant="secondary" :disabled="baking" @click="generateVideo">{{ baking ? (bakeMsg || 'Working…') : 'Generate as video' }}</StudioButton>
-      <!-- Disabled while in flight: a double-click otherwise starts two
-           full-resolution GL bakes and downloads two files. -->
-      <StudioButton :disabled="embedding" @click="exportWebEmbed">{{ embedding ? 'Exporting…' : 'Export embed' }}</StudioButton>
-      <!-- A failure must not read like a success. Matches glError's styling. -->
-      <span v-if="embedMsg" class="truncate text-xs"
-            :class="embedErr ? 'text-red-300/80' : 'opacity-60'">{{ embedMsg }}</span>
-      <span v-if="glError" class="ml-2 truncate text-xs text-red-300/80">{{ glError }}</span>
+      <StudioActionsFooter :spec="{
+        status: {
+          saving: autoSaving, saved: autoSaved,
+          error: glError || (embedErr ? embedMsg : null),
+          notice: (!embedErr && embedMsg) ? embedMsg : (bakeMsg || null),
+        },
+        downloads: [
+          { label: 'Download PNG', onClick: downloadPng, disabled: !resolved },
+          { label: 'Download video', onClick: downloadVideoFile, busy: baking, disabled: !resolved },
+          { label: 'Export embed', onClick: exportWebEmbed, busy: embedding },
+        ],
+        canvas: [
+          { label: 'As image', onClick: generateImage, busy: baking, disabled: !resolved },
+          { label: 'As video', onClick: generateVideo, busy: baking, disabled: !resolved },
+        ],
+      }" />
     </template>
 
     <template #controls>
