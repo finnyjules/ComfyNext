@@ -17,15 +17,19 @@ laid out in three zones left→right:
 
 1. **Status + utilities** (quiet, left): an auto-save indicator, then studio-specific
    helpers (Roll, Import/Export settings, Copy config, Play/Pause).
-2. **Download** (grey secondary): the studio's file outputs — one plain button when
-   there's a single format, a `Download ▾` menu when there are several.
-3. **Add to canvas** (blue primary, far right): the one universal deliverable, named
-   the same everywhere. Collapses like the download zone — a plain `Add to canvas` when
-   a studio produces one canvas format, an `Add to canvas ▾` (*As image · As video*,
-   plus *Send to timeline* where supported) when it produces several. The menu lists
-   only formats the studio **already bakes**; this change invents no new render path
-   (the sole exception is Shape/Vector gaining *image*, reusing the blob they already
-   render for their PNG download).
+2. **Download ▾** (grey secondary): a menu button whose submenu lists the studio's file
+   outputs (PNG · SVG · Export embed).
+3. **Render on canvas ▾** (blue primary, far right): a menu button whose submenu lists
+   the studio's canvas outputs (*As image · As video · Send to timeline*).
+
+The two right-hand buttons are **always the same two buttons**, each opening its own
+submenu — no per-studio collapsing between button and menu. It reuses Space Type's
+"Render" verb, which was the good one; the fix was that it had been applied
+inconsistently (five names for the same act) — now every studio renders to the canvas
+through the same button. Submenus list only outputs the studio **already produces** —
+this change invents no new render path (the sole exception is Shape/Vector gaining *As
+image*, reusing the blob they already render for their PNG download). A zone with no
+outputs simply omits its button (e.g. Scene3D has no file download).
 
 The explicit **Save** button is removed everywhere (all studios already auto-save;
 it was reassurance in 2 of 7). A quiet `Saving… / Saved ✓ / ⚠ error` indicator takes
@@ -76,9 +80,9 @@ interface StudioFooterSpec {
   }
   // ── zone ① utilities (quiet, subtle buttons; left, after status) ──
   utilities?: StudioFooterAction[]
-  // ── zone ② downloads (grey secondary; plain button if length 1, ▾ if >1) ──
+  // ── zone ② downloads → "Download ▾" menu button (omitted if empty) ──
   downloads?: StudioFooterAction[]
-  // ── zone ③ add-to-canvas (blue primary; plain if length 1, ▾ if >1) ──
+  // ── zone ③ canvas → "Render on canvas ▾" menu button (omitted if empty) ──
   canvas?: StudioFooterAction[]
 }
 
@@ -96,15 +100,16 @@ The component owns:
 - **Layout**: `status + utilities` left, a `flex-1` spacer, then `downloads` then
   `canvas` docked right. Reuses the existing `StudioModalShell` `#actions` footer row
   (full-width, hairline-topped) — no new chrome.
-- **Button-or-menu collapse**: an array of length 1 renders as a single button
-  (labelled with that one action's `label`); length ≥ 2 renders a `▾` trigger
-  (`Download ▾` / `Add to canvas ▾`) opening an upward menu (`absolute bottom-full
-  right-0`, matching Space Type's current render menu).
-- **Styling**: `canvas` uses `StudioButton variant="primary"` (blue); `downloads`
-  uses `variant="secondary"`; `utilities` use `variant="subtle"`. Menus reuse the
-  existing dark-panel menu styling already in Space Type.
-- **Busy/disabled**: a `busy` action shows a spinner + optional busy label and is
-  disabled; menu triggers disable while any of their actions is busy.
+- **Two menu buttons**: `downloads` renders a `Download ▾` trigger, `canvas` a `Render
+  on canvas ▾` trigger, each opening an upward menu (`absolute bottom-full right-0`,
+  matching Space Type's current render menu) that lists its actions. Always a menu, even
+  for a single item — the two buttons stay structurally identical across every studio. A
+  zone with no actions omits its button entirely.
+- **Styling**: the `Render on canvas ▾` trigger uses `StudioButton variant="primary"`
+  (blue); `Download ▾` uses `variant="secondary"`; `utilities` use `variant="subtle"`.
+  Menus reuse the existing dark-panel menu styling already in Space Type.
+- **Busy/disabled**: a `busy` action shows a spinner + optional busy label on its menu
+  row; a trigger disables while any of its actions is busy.
 
 ### Space Type's transparency — an action, not a checkbox
 
@@ -126,28 +131,27 @@ data-driven; `StudioActionsFooter` never learns the word "alpha".
 
 ## Per-studio footer contents
 
-| Studio | ① utilities | ② downloads | ③ canvas |
+Each studio shows a `Download ▾` and a `Render on canvas ▾` button (either omitted only
+if its list is empty), whose submenu items are:
+
+| Studio | ① utilities | ② Download ▾ | ③ Render on canvas ▾ |
 |---|---|---|---|
-| Space Type | — | Embed | ▾ As image · As video (· As video transparent†) · Send to timeline |
-| Scene3D | — | — | Add to canvas (image) |
-| Texture | Roll | PNG | Add to canvas (image) |
-| Gradient | Copy config | Embed | As image · As video |
-| Shader | — | Embed | As image · As video |
-| Shape | Import · Export settings | PNG | Add to canvas (image) ← **new** |
-| Vector | Play/Pause · Import · Export settings | ▾ PNG · SVG | Add to canvas (image) ← **new** |
+| Space Type | — | Export embed | As image · As video · As video (transparent)† · Send to timeline |
+| Scene3D | — | *(none — button omitted)* | As image |
+| Texture | Roll | PNG | As image |
+| Gradient | Copy config | Export embed | As image · As video |
+| Shader | — | Export embed | As image · As video |
+| Shape | Import · Export settings | PNG | As image ← **new** |
+| Vector | Play/Pause · Import · Export settings | PNG · SVG | As image ← **new** |
 
 ### The one behaviour addition: Shape & Vector gain canvas output
 
-Both already render a blob for their PNG/SVG download. Adding "Add to canvas" reuses
-that blob through the same `uploadFrameBatch` path the other five studios use — a
-small, well-trodden wiring, not new rendering. Both land as a **plain `Add to canvas`
-(image)**: neither bakes a video-to-canvas today, and this change invents no new render
-path, so *As video* is out of scope for them (a possible later follow-up for Vector,
-which is animated). Everything else in this change is relabel + reorganize.
-
-The `▾` in the table appears only where a zone already has ≥ 2 items (Space Type /
-Gradient / Shader bake both image and video to canvas; Vector has two download formats),
-per the collapse rule — never as a new capability.
+Both already render a blob for their PNG/SVG download. Adding an `As image` canvas item
+reuses that blob through the same `uploadFrameBatch` path the other five studios use — a
+small, well-trodden wiring, not new rendering. Neither bakes a video-to-canvas today, so
+their `Render on canvas ▾` lists only *As image* (a possible later follow-up for Vector,
+which is animated — it would add an *As video* item, not change the structure). Everything
+else in this change is relabel + reorganize.
 
 † **As video (transparent)** is Space Type's alpha export, shown only when the current
 frame has alpha (see the transparency section above) — a conditional extra item in the
@@ -155,13 +159,12 @@ frame has alpha (see the transparency section above) — a conditional extra ite
 
 ## Wording (fixed vocabulary)
 
-- Canvas: **Add to canvas** (static) / **Add to canvas ▾** → **As image**, **As video**,
-  **As video (transparent)** (alpha frames only), **Send to timeline**. Retires *Render*,
-  *Export to Canvas*, *Send to canvas*, *Generate as image/video*, and the floating
-  *Transparent background* checkbox.
-- Download: **Download PNG** / **Download SVG** / **Export embed** (the formats studios
-  actually produce today), or **Download ▾** when a studio has ≥ 2. ("Export embed"
-  keeps its name — it produces a
+- Canvas: **Render on canvas ▾** → **As image**, **As video**, **As video (transparent)**
+  (alpha frames only), **Send to timeline**. Retires *Add to canvas*, *Export to Canvas*,
+  *Send to canvas*, *Generate as image/video*, and the floating *Transparent background*
+  checkbox — "Render" is now the one consistent canvas verb.
+- Download: **Download ▾** → **PNG**, **SVG**, **Export embed** (the formats studios
+  actually produce today). ("Export embed" keeps its name inside the menu — it produces a
   self-contained web snippet, conceptually distinct from a media file.)
 - Utilities keep their names: **Roll**, **Import settings**, **Export settings**,
   **Copy config**, **Play/Pause**.
@@ -179,22 +182,23 @@ frame has alpha (see the transparency section above) — a conditional extra ite
 
 No component-test framework here by design (per the studio-control-row precedent), so:
 
-- **Unit**: the button-or-menu collapse logic and zone assembly are pure enough to
-  test in isolation if extracted to a helper (`length 1 → button`, `≥2 → menu`,
-  `busy disables trigger`, error-wins-over-saved status precedence).
-- **Live**: drive the real app — open each of the 7 studios, confirm the footer shows
-  the right zones, that `Add to canvas` actually drops an artifact (assert the upload
-  ran / a node appeared, not just that a button exists), that Download produces the
-  file, and that the Saved ✓ indicator reflects a real edit. Verify Shape & Vector's
-  new canvas path end-to-end. Reverting a wiring under HMR to reproduce a failure is
-  the standard here — a button that *looks* right proves nothing.
+- **Unit**: the zone assembly is pure enough to test in isolation if extracted to a
+  helper (empty zone omits its button, `busy` disables its trigger, error-wins-over-
+  saved status precedence).
+- **Live**: drive the real app — open each of the 7 studios, confirm the footer shows a
+  `Download ▾` and `Render on canvas ▾` (either omitted only when empty), that a `Render
+  on canvas` submenu item actually drops an artifact (assert the upload ran / a node
+  appeared, not just that a button exists), that a Download item produces the file, and
+  that the Saved ✓ indicator reflects a real edit. Verify Shape & Vector's new canvas
+  path end-to-end. Reverting a wiring under HMR to reproduce a failure is the standard
+  here — a button that *looks* right proves nothing.
 
 ## Rollout
 
-1. Build `StudioActionsFooter` + the pure collapse/zone helper (+ unit tests).
-2. Convert one studio as the reference (Vector Type — it exercises the most zones:
-   three utilities, a 2-item `Download ▾` menu, and the new `Add to canvas` button),
-   verify live. Then convert one studio that keeps a canvas *menu* (Gradient) so both
-   collapse states are proven before the sweep.
-3. Sweep the remaining six, each verified live.
+1. Build `StudioActionsFooter` + the pure zone-assembly helper (+ unit tests).
+2. Convert one studio as the reference (Space Type — it exercises the most: a `Download ▾`,
+   the full `Render on canvas ▾` menu with the transparency item, and the removed Save),
+   verify live.
+3. Sweep the remaining six, each verified live — including Shape & Vector's new canvas
+   item end-to-end.
 4. Remove the now-dead Save handlers' button wiring (keep the auto-save).
