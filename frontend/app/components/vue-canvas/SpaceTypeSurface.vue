@@ -14,8 +14,9 @@ import { detectWebGL } from '~/lib/spacetype/webgl'
 import { DEFAULT_POST, type PostSettings } from '~/lib/spacetype/post'
 import type { SpaceTypeState } from '~/lib/spacetype/state'
 import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
-import { encodeFrames } from '~/lib/engine/encodeVideo'
+import { encodeFrames, type EncodeFramesResult } from '~/lib/engine/encodeVideo'
 import { canvasHasAlpha } from '~/lib/engine/hasAlpha'
+import { downloadBlobAsFile } from '~/lib/studio/downloadBlob'
 import { loopMultiplier } from '~/lib/spacetype/loop'
 import { loadGoogleCatalog, googleFontCssUrl, googleAxisList, resolveFontFamily, fontHasWeightAxis, type GoogleFont } from '~/data/google-fonts'
 import type { GradientStop } from '~/lib/spacetype/gradient'
@@ -23,6 +24,7 @@ import FontPicker from '~/components/vue-canvas/FontPicker.vue'
 import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
 import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
+import StudioActionsFooter from '~/components/vue-canvas/studio/StudioActionsFooter.vue'
 import StudioSlider from '~/components/vue-canvas/studio/StudioSlider.vue'
 import StudioSegmented from '~/components/vue-canvas/studio/StudioSegmented.vue'
 import StudioSelect from '~/components/vue-canvas/studio/StudioSelect.vue'
@@ -578,6 +580,11 @@ function texOpts() {
 function rebuild() {
   previewT01 = 0
   engine?.build(params, texOpts())
+  // Skip while baking (generateImage/generateVideo/downloadVideoFile all call
+  // rebuild() at supersampled bake resolution): this refresh reads back the
+  // rendered canvas, and the bake path doesn't need it re-checked mid-bake —
+  // see refreshExportAlpha's doc.
+  if (!baking.value) refreshExportAlpha()
 }
 
 // Structural edits (geometry/material/texture) are expensive (dispose + rebuild + text
@@ -693,8 +700,9 @@ function saveConfig() {
   }
 }
 
-// Sticky footer: explicit Save (with a transient flash) + a Render menu. Closing the
-// studio still auto-saves (closeEditor → saveConfig) — Save is for checkpointing mid-edit.
+// Sticky footer status (StudioActionsFooter): a transient "Saved ✓" flash. Closing the
+// studio still auto-saves (closeEditor → saveConfig); saveNow/savedFlash are kept for
+// any future explicit-checkpoint affordance even though the Save button itself is gone.
 const savedFlash = ref(false)
 let savedFlashTimer: ReturnType<typeof setTimeout> | undefined
 function saveNow() {
@@ -704,23 +712,11 @@ function saveNow() {
   savedFlashTimer = setTimeout(() => { savedFlash.value = false }, 1500)
 }
 
-const renderMenuOpen = ref(false)
-// Capture-phase so Escape closes the menu INSTEAD of the studio: StudioModalShell's own
-// window keydown listener bails when defaultPrevented is set.
-function onRenderMenuKeydown(e: KeyboardEvent) {
-  if (e.key !== 'Escape') return
-  e.preventDefault(); e.stopPropagation()
-  renderMenuOpen.value = false
-}
-function onRenderMenuPointerdown() { renderMenuOpen.value = false }
-
 // Transparent-export detection: read the frame the live preview is ALREADY showing
 // (engine.renderer.domElement) rather than rendering a fresh one just to test it.
 // Space Type is one of the three surfaces whose renderer preserves alpha (see the
 // `transparent`/bgColor Output controls + engine.setBackground) — Shader Studio and
 // Gradient Studio were measured opaque during the embed work and don't get this toggle.
-// Re-checked every time the Render menu opens so it reflects whatever's on screen right
-// before the user decides, without adding a per-frame cost to the preview loop.
 const exportAlphaAvailable = ref(false)
 function detectAlpha(): boolean {
   if (!engine) return false
@@ -748,21 +744,16 @@ function detectAlpha(): boolean {
 }
 // User's choice of transparent export.
 const exportAlpha = ref(false)
-watch(renderMenuOpen, (open) => {
-  if (open) {
-    window.addEventListener('keydown', onRenderMenuKeydown, { capture: true })
-    window.addEventListener('pointerdown', onRenderMenuPointerdown)
-    exportAlphaAvailable.value = detectAlpha()
-    // Don't leave a checked-but-disabled checkbox behind if this render no longer has alpha.
-    if (!exportAlphaAvailable.value) exportAlpha.value = false
-  } else {
-    window.removeEventListener('keydown', onRenderMenuKeydown, { capture: true })
-    window.removeEventListener('pointerdown', onRenderMenuPointerdown)
-  }
-})
+// Re-detect alpha availability (and drop a now-stale "transparent" choice) whenever
+// something that could change it happens: rebuild() (structural/effect edits, guarded
+// there against baking) and the transparent/bgColor watch below. Replaces the old
+// Render-menu-open hook — StudioFooterMenu (Task 2) owns its own open state now, so
+// there's no "menu is about to open" moment left in this component to hang the check on.
+function refreshExportAlpha() {
+  exportAlphaAvailable.value = detectAlpha()
+  if (!exportAlphaAvailable.value) exportAlpha.value = false
+}
 onBeforeUnmount(() => {
-  window.removeEventListener('keydown', onRenderMenuKeydown, { capture: true })
-  window.removeEventListener('pointerdown', onRenderMenuPointerdown)
   clearTimeout(savedFlashTimer)
 })
 
@@ -901,7 +892,7 @@ async function makeAsDefault() {
   }
 }
 // Transparency + background apply live via render-time clear settings (no renderer rebuild).
-watch([transparent, bgColor], () => engine?.setBackground(transparent.value, bgColor.value))
+watch([transparent, bgColor], () => { engine?.setBackground(transparent.value, bgColor.value); refreshExportAlpha() })
 // Projection (perspective ↔ isometric) applies live; also re-render the held preview frame.
 watch(projection, (p) => { engine?.setProjection(p); engine?.renderFrameAt(previewT01, params) })
 // Pan re-frames live (no rebuild) — read by the engine per frame as a camera view-offset.
@@ -1094,44 +1085,85 @@ function sendToTimeline() {
   }))
 }
 
+/**
+ * Bake the current Space Type state (frames at `fps`/`loopDuration`, full-res
+ * unclamped shader fields) and encode it server-side to a video file under
+ * input/. Shared by generateVideo() (dispatches a Video node onto the canvas)
+ * and downloadVideoFile() (saves the file locally) so this frame-bake exists
+ * in exactly one place. Callers own baking.value/stopPreview/startPreview and
+ * engine.setBake(false) cleanup — this only does the bake + encode and either
+ * returns the result or throws (a bake or encode failure look the same to a
+ * caller: nothing to dispatch/download).
+ */
+async function bakeSpaceTypeVideo(): Promise<EncodeFramesResult | null> {
+  if (!engine) return null
+  await ensureEffectFonts()
+  engine.setSize(W.value * BAKE_SS, H.value * BAKE_SS)
+  engine.setFps(fps.value)
+  engine.setLoopDuration(loopDuration.value)
+  // Full-resolution, unclamped shader fields for every exported frame — see
+  // engine.setBake's doc; every renderFrameAt call below inherits it.
+  engine.setBake(true)
+  rebuild()
+  const rates = seamlessLoop.value ? (effect.value.loopRates?.(params) ?? []) : []
+  const k = loopMultiplier(rates)
+  const origFrames = Math.max(1, Math.round(fps.value * loopDuration.value))
+  const loopCfg = k > 1 ? { ...cfg.value, loopDuration: loopDuration.value * k } : cfg.value
+  const bake = await ensureSpaceTypeBake(loopCfg, undefined, {
+    // Unwrapped t01 = i / origFrames runs 0..k so motions keep their per-loop rate across k loops
+    // and land on whole cycles → seamless. k=1 is identical to the previous behavior.
+    renderFrame: async (i) => { engine!.renderFrameAt(i / origFrames, params); return engine!.frameToBlob(W.value, H.value) },
+  })
+  engine.setSize(W.value, H.value)
+  // Gate on exportAlphaAvailable too, not just the checkbox: it's a stale UI value
+  // once the menu closes, and the request-side flag is what actually changes the
+  // server's encoder path (VP9/WebM instead of h264/mp4) — never send it unearned.
+  const wantAlpha = exportAlpha.value && exportAlphaAvailable.value
+  return encodeFrames({ frames: bake.frames, fps: fps.value, width: W.value, height: H.value, alpha: wantAlpha })
+}
+
 async function generateVideo() {
   if (!engine) return
   baking.value = true
   stopPreview()
   try {
-    await ensureEffectFonts()
-    engine.setSize(W.value * BAKE_SS, H.value * BAKE_SS)
-    engine.setFps(fps.value)
-    engine.setLoopDuration(loopDuration.value)
-    // Full-resolution, unclamped shader fields for every exported frame — see
-    // engine.setBake's doc; every renderFrameAt call below inherits it.
-    engine.setBake(true)
-    rebuild()
-    const rates = seamlessLoop.value ? (effect.value.loopRates?.(params) ?? []) : []
-    const k = loopMultiplier(rates)
-    const origFrames = Math.max(1, Math.round(fps.value * loopDuration.value))
-    const loopCfg = k > 1 ? { ...cfg.value, loopDuration: loopDuration.value * k } : cfg.value
-    const bake = await ensureSpaceTypeBake(loopCfg, undefined, {
-      // Unwrapped t01 = i / origFrames runs 0..k so motions keep their per-loop rate across k loops
-      // and land on whole cycles → seamless. k=1 is identical to the previous behavior.
-      renderFrame: async (i) => { engine!.renderFrameAt(i / origFrames, params); return engine!.frameToBlob(W.value, H.value) },
-    })
-    engine.setSize(W.value, H.value)
-    // Gate on exportAlphaAvailable too, not just the checkbox: it's a stale UI value
-    // once the menu closes, and the request-side flag is what actually changes the
-    // server's encoder path (VP9/WebM instead of h264/mp4) — never send it unearned.
-    const wantAlpha = exportAlpha.value && exportAlphaAvailable.value
-    try {
-      const encoded = await encodeFrames({ frames: bake.frames, fps: fps.value, width: W.value, height: H.value, alpha: wantAlpha })
-      await recordAsset(activeTab.value?.projectUuid, 'video', encoded.filename)
-      window.dispatchEvent(new CustomEvent('sailor:spaceTypeOutput', {
-        detail: { sourceNodeId: props.nodeId, nodeType: 'Video', widgetOverrides: { file: encoded.filename } },
-      }))
-      closeEditor()
-    } catch (encErr) {
-      console.error('[spacetype] video encode failed', encErr)
-      alert('Video encode failed — make sure ComfyUI was restarted to load the encoder. See console.')
-    }
+    const encoded = await bakeSpaceTypeVideo()
+    if (!encoded) return
+    await recordAsset(activeTab.value?.projectUuid, 'video', encoded.filename)
+    window.dispatchEvent(new CustomEvent('sailor:spaceTypeOutput', {
+      detail: { sourceNodeId: props.nodeId, nodeType: 'Video', widgetOverrides: { file: encoded.filename } },
+    }))
+    closeEditor()
+  } catch (encErr) {
+    console.error('[spacetype] video encode failed', encErr)
+    alert('Video encode failed — make sure ComfyUI was restarted to load the encoder. See console.')
+  } finally {
+    engine?.setBake(false)
+    baking.value = false
+    startPreview()
+  }
+}
+
+/** Download the still frame the preview is currently showing, at output resolution. */
+async function downloadPng() {
+  if (!engine) return
+  const blob = await engine.frameToBlob(W.value, H.value)
+  downloadBlobAsFile(blob, `spacetype_${Date.now()}.png`)
+}
+
+/** Same bake as generateVideo(), but saves the encoded file locally instead of
+ *  dispatching a Video node onto the canvas. */
+async function downloadVideoFile() {
+  if (!engine) return
+  baking.value = true
+  stopPreview()
+  try {
+    const encoded = await bakeSpaceTypeVideo()
+    if (!encoded) return
+    const res = await fetch(`/input/${encoded.filename}`)
+    downloadBlobAsFile(await res.blob(), `spacetype_${Date.now()}.${encoded.ext}`)
+  } catch (e) {
+    console.error('[spacetype] video download failed', e)
   } finally {
     engine?.setBake(false)
     baking.value = false
@@ -1706,50 +1738,23 @@ async function exportWebEmbed() {
         </StudioSection>
 
     </template>
-    <!-- Save + Render live in the modal's reserved bottom-right actions footer (shell
-         #actions), like every other studio — not pinned inside the inspector column. The
-         render menu still opens upward (bottom-full), correct from a bottom bar. -->
+    <!-- Save/Render live in the modal's reserved bottom-right actions footer (shell
+         #actions), like every other studio — not pinned inside the inspector column. -->
     <template #actions>
-          <p v-if="savedFlash" class="text-xs text-emerald-400/80">Saved ✓</p>
-          <p v-if="embedMsg" class="truncate text-xs"
-             :class="embedErr ? 'text-red-300/80' : 'text-white/50'">{{ embedMsg }}</p>
-          <div class="relative flex items-center gap-2">
-            <StudioButton variant="secondary" :disabled="baking" @click="saveNow">Save</StudioButton>
-            <StudioButton variant="primary" :disabled="baking" @pointerdown.stop @click="renderMenuOpen = !renderMenuOpen">
-              <template v-if="baking">Generating…</template>
-              <template v-else>Render <span class="ml-0.5 inline-block rotate-90">›</span></template>
-            </StudioButton>
-            <div v-if="renderMenuOpen" @pointerdown.stop
-                 class="absolute bottom-full right-0 z-20 mb-1.5 w-60 overflow-hidden rounded-lg border border-white/10 bg-[#1a1a1e] py-1 shadow-xl">
-              <button type="button" class="block w-full px-3 py-1.5 text-left text-xs text-white/85 hover:bg-white/10"
-                      @click="renderMenuOpen = false; generateImage()">Render as image</button>
-              <button type="button" class="block w-full px-3 py-1.5 text-left text-xs text-white/85 hover:bg-white/10"
-                      @click="renderMenuOpen = false; generateVideo()">Render as video</button>
-              <!-- Only offered when the frame the preview is showing right now actually has
-                   alpha (Space Type is one of the three surfaces whose renderer preserves
-                   it) — see detectAlpha(). Disabled + titled rather than hidden, so a user
-                   who wants transparency learns exactly what to change. -->
-              <label class="flex items-center gap-2 px-3 py-1.5 text-xs"
-                     :class="exportAlphaAvailable ? 'text-white/85' : 'cursor-not-allowed text-white/30'"
-                     :title="exportAlphaAvailable
-                       ? 'Exports as WebM with real transparency — Safari cannot play this file.'
-                       : 'No transparency in the current frame — turn on Transparent background in the Output section, or use an effect/background with gaps.'">
-                <input type="checkbox" v-model="exportAlpha" :disabled="!exportAlphaAvailable" />
-                Transparent background
-              </label>
-              <p v-if="exportAlpha && exportAlphaAvailable"
-                 class="px-3 pb-1.5 text-[10px] leading-snug text-amber-300/90">
-                Exports as WebM — Safari will not play this file.
-              </p>
-              <button type="button" class="block w-full px-3 py-1.5 text-left text-xs text-white/85 hover:bg-white/10"
-                      @click="renderMenuOpen = false; sendToTimeline()">Send to timeline</button>
-              <!-- Disabled while in flight: a double-click otherwise starts two
-                   full-resolution GL bakes and downloads two files. -->
-              <button type="button" :disabled="embedding"
-                      class="block w-full px-3 py-1.5 text-left text-xs text-white/85 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
-                      @click="renderMenuOpen = false; exportWebEmbed()">{{ embedding ? 'Exporting…' : 'Export embed' }}</button>
-            </div>
-          </div>
+      <StudioActionsFooter :spec="{
+        status: { saved: savedFlash, error: embedErr ? embedMsg : null },
+        downloads: [
+          { label: 'Download PNG', onClick: downloadPng },
+          { label: 'Download video', onClick: downloadVideoFile, busy: baking },
+          { label: 'Export embed', onClick: exportWebEmbed, busy: embedding },
+        ],
+        canvas: [
+          { label: 'As image', onClick: generateImage, busy: baking },
+          { label: 'As video', onClick: generateVideo, busy: baking },
+          ...(exportAlphaAvailable ? [{ label: 'As video (transparent)', subtitle: 'WebM with real transparency · Safari can\'t play it', onClick: () => { exportAlpha = true; generateVideo() } }] : []),
+          { label: 'Send to timeline', onClick: sendToTimeline },
+        ],
+      }" />
     </template>
   </StudioModalShell>
   <SpaceTypeEffectGalleryModal
