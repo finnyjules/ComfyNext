@@ -318,3 +318,23 @@ not in a new unknown. The thesis does not die here; it queues behind agent matur
   the test harness for exactly this).
 - The recognition test on Julien's own board remains open — but is no longer the
   bottleneck question; translation is.
+
+## Run 7 — sref board: consistency passes, texture finds its owner (2026-08-06)
+
+Julien dropped an sref-derived set (thermal-dusk world: coral-pink against violet-blue,
+fog, film grain, "two hue families that never break" — his words: **"the readout is
+perfect"**). Then the trio: same tasted prompt, three fresh seeds.
+
+**Consistency PASSED** — the dimension where prose-styles were suspected of losing to
+LoRAs: all three renders held the two hue families, the fog, the thermal glow, for
+$0.009 total. The moodboard-as-LoRA-alternative claim survived its intended killer.
+
+**The gap: grain/texture went missing.** Three layers: (1) **model tier** — FLUX schnell's
+4-step distillation airbrushes fine texture; dev renders it (the wall now has a model
+picker with live prices, `fd73998cc`, via an opt-in `model` param on text2img that leaves
+its four production callers untouched); (2) prompt mechanics — texture adjectives sit
+mid-block where attention is weakest; (3) **the structural answer: finish belongs to the
+kit, not the model.** Grain is procedurally free in Sailor (the Compositor post stack, at
+the measured intensity, deterministically). The doctrine finalizes as: **the model does
+world and light; the kit does finish.** No diffusion-only competitor can close the
+texture gap this way.
