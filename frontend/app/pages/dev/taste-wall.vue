@@ -427,6 +427,38 @@ async function generatePair() {
   genBusy.value = false
 }
 
+// Consistency check: the SAME tasted prompt across three fresh seeds — the
+// dimension where prose-styles are suspected of losing to LoRAs. If the three
+// read as one style, the reading holds; if they scatter, that's the finding.
+const GEN_TRIO_PRICE = `~$${(GEN_PRICE_PER_IMAGE * 3).toFixed(3)}`
+const genTrio = reactive<GenSlot[]>([1, 2, 3].map(i => ({ label: `seed ${i}`, prompt: '', img: '', error: '', loading: false })))
+const trioRan = ref(false)
+
+async function generateTrio() {
+  if (!summaryA.value) { error.value = 'needs a Fable reading (run "Read with Fable" first)'; return }
+  const subject = genPrompt.value.trim()
+  if (!subject) { error.value = 'subject prompt is empty'; return }
+  genBusy.value = true
+  trioRan.value = true
+  const prompt = tastedPrompt(subject, { summary: summaryA.value, palette: paletteA.value, avoids: fableA.value?.avoids })
+  for (let i = 0; i < genTrio.length; i++) {
+    const slot = genTrio[i]!
+    slot.prompt = prompt
+    slot.loading = true; slot.img = ''; slot.error = ''
+    try {
+      const res = await $fetch<{ images: string[] }>('/api/inpaint/text2img', {
+        method: 'POST',
+        body: { prompt, aspect_ratio: GEN_ASPECT, count: 1, seed: GEN_SEED + 1 + i },
+      })
+      slot.img = res.images?.[0] ?? ''
+      if (!slot.img) slot.error = 'endpoint returned no image'
+    }
+    catch (e: any) { slot.error = e?.data?.message ?? e?.data?.statusMessage ?? e?.message ?? String(e) }
+    finally { slot.loading = false }
+  }
+  genBusy.value = false
+}
+
 // ── Readings + divergence view models ───────────────────────────────────────
 function facetRows(reading: TasteReading | null) {
   return TASTE_FACETS.map((f) => {
@@ -565,6 +597,11 @@ const fmt = (v: number | null | undefined) => (v === null || v === undefined ? '
           :style="{ background: summaryA && !genBusy ? '#2a2a35' : '#1a1a22', color: summaryA && !genBusy ? '#ddd' : '#555', border: '1px solid #3a3a48', borderRadius: '8px', padding: '8px 16px', fontWeight: 600, cursor: summaryA && !genBusy ? 'pointer' : 'not-allowed' }">
           {{ genBusy ? 'generating…' : `Generate pair (paid ${GEN_PAIR_PRICE})` }}
         </button>
+        <button :disabled="!summaryA || genBusy || !!busy" data-gen-trio @click="generateTrio"
+          :title="summaryA ? 'same tasted prompt, three fresh seeds — the consistency check' : 'needs a Fable reading — run “Read with Fable” first'"
+          :style="{ background: '#1a1a22', color: summaryA && !genBusy ? '#ddd' : '#555', border: '1px solid #3a3a48', borderRadius: '8px', padding: '8px 16px', fontWeight: 600, cursor: summaryA && !genBusy ? 'pointer' : 'not-allowed' }">
+          {{ `Tasted ×3 seeds (paid ${GEN_TRIO_PRICE})` }}
+        </button>
         <span v-if="!summaryA" style="font-size:11px;color:#666">needs a Fable reading first</span>
       </div>
       <div style="display:flex;gap:10px;flex-wrap:wrap">
@@ -578,6 +615,22 @@ const fmt = (v: number | null | undefined) => (v === null || v === undefined ? '
           </div>
           <div v-if="g.error" :data-gen-error="g.label" style="color:#e66;font-size:11px;margin-top:4px;line-height:1.4">{{ g.error }}</div>
         </div>
+      </div>
+      <div v-if="trioRan" style="margin-top:12px">
+        <div style="font-size:11px;color:#aaa;font-weight:600;margin-bottom:3px">Consistency — same tasted prompt, three fresh seeds</div>
+        <div data-gen-trio-row style="display:flex;gap:10px;flex-wrap:wrap">
+          <div v-for="g in genTrio" :key="g.label" :style="{ width: CELL_W + 'px' }">
+            <img v-if="g.img" :src="g.img" :data-gen-img="g.label"
+              :style="{ width: CELL_W + 'px', maxWidth: 'none', display: 'block', borderRadius: '6px', background: '#000' }" />
+            <div v-else
+              :style="{ width: CELL_W + 'px', height: CELL_H + 'px', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px dashed #2a2a35', borderRadius: '6px', color: '#555', fontSize: '11px' }">
+              {{ g.loading ? 'generating…' : g.error ? 'failed' : '…' }}
+            </div>
+            <div style="font-size:10px;color:#666;margin-top:3px">{{ g.label }}</div>
+            <div v-if="g.error" style="color:#e66;font-size:11px;margin-top:2px;line-height:1.4">{{ g.error }}</div>
+          </div>
+        </div>
+        <div style="font-size:10.5px;color:#666;margin-top:5px;max-width:74ch">If the three read as one style, the reading holds across seeds — the dimension where prose-styles are suspected of losing to trained LoRAs.</div>
       </div>
       <details v-if="genTasted.prompt" data-gen-prompts style="margin-top:8px;max-width:740px">
         <summary style="font-size:12px;color:#888;cursor:pointer">Prompts sent</summary>
