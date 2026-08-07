@@ -193,8 +193,19 @@ export class SpaceTypeEngine {
 
   /** Set the preloaded image textures made available to buildScene via BuildEnv.imageTextures.
    *  Caller must load images (and populate this map) BEFORE calling build/buildKeyed — the
-   *  build path is synchronous, so there's no await inside it to wait on late-arriving images. */
+   *  build path is synchronous, so there's no await inside it to wait on late-arriving images.
+   *  Disposes every OUTGOING texture that isn't carried over into the new map (by identity) —
+   *  the cache in SpaceTypeSurface.vue reloads all srcs into fresh THREE.Texture objects on any
+   *  content change, so without this the previous set is orphaned on the GPU every time
+   *  (unbounded leak over an editing session). A texture kept at the same identity in both maps
+   *  is left alone. There's a one-microtask window where `this.imageTextures` holds textures not
+   *  yet consumed by a build — acceptable here because every caller (see rebuildWithRing in
+   *  SpaceTypeSurface.vue) calls build() immediately after this, synchronously. */
   setImageTextures(map: Map<string, THREE.Texture>): void {
+    const keep = new Set(map.values())
+    for (const tex of this.imageTextures.values()) {
+      if (!keep.has(tex)) tex.dispose()
+    }
     this.imageTextures = map
   }
 
@@ -393,6 +404,12 @@ export class SpaceTypeEngine {
   dispose(): void {
     this.clearRootCache()
     this.disposeRoot()
+    // Preloaded ring image textures (see setImageTextures) aren't reachable from the scene
+    // graph disposed above — they're only read out of this.imageTextures by buildScene, not
+    // attached anywhere disposeRoot()/clearRootCache() would find them. Dispose them here too,
+    // or every image tile texture from this engine's lifetime leaks on close.
+    for (const tex of this.imageTextures.values()) tex.dispose()
+    this.imageTextures = new Map()
     this.postChain?.dispose()
     // Drop this engine's shader-fill textures too — every currently-pooled root is being
     // disposed above (clearRootCache), so nothing is left that could need a swap-back-in

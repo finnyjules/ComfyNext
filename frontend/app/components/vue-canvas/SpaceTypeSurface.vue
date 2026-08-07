@@ -679,6 +679,10 @@ let bakingOverrides = false
 // slider drag) doesn't re-fetch/re-decode every image on every rebuild; only an actual
 // content change (add/remove/replace image) bumps the key and reloads.
 let loadedImageSrcKey = ''
+// Monotonic token guarding overlapping preloads: a content edit fired while an older
+// preload is still in flight must not let that older call win the race and stomp the
+// engine's textures/key with a stale set once it finally resolves (finding 2).
+let imageTextureLoadSeq = 0
 async function ensureRingImageTextures() {
   if (effectId.value !== 'ring') return
   const k = contentKey()
@@ -687,9 +691,21 @@ async function ensureRingImageTextures() {
   const srcs = items.filter(i => i.kind === 'image').map(i => (i as any).src).sort()
   const key = JSON.stringify(srcs)
   if (key === loadedImageSrcKey) return
+  const token = ++imageTextureLoadSeq
   const map = await loadImageTextures(items)
+  if (token !== imageTextureLoadSeq) return // a newer call started — its result wins instead
   loadedImageSrcKey = key
   engine?.setImageTextures(map)
+}
+// Shared by every path that (re)builds the engine for a possibly-ring scene: onMounted's
+// initial build, applyEffectDefaults' build, and the debounced rAF path below all need the
+// SAME "preload before build" ordering — see finding 1 (a saved ring scene reopened directly
+// via onMounted/applyEffectDefaults skipped the preload and rendered blank image tiles until
+// the next edit). For a non-ring effect this is exactly a plain rebuild(): the branch below
+// bails out of ensureRingImageTextures synchronously before it can await anything.
+async function rebuildWithRing() {
+  if (effectId.value === 'ring') await ensureRingImageTextures()
+  rebuild()
 }
 function scheduleRebuild() {
   if (bakingOverrides) return // the sweep baker owns rebuilds while baking — see renderBlobWithOverrides
@@ -697,8 +713,7 @@ function scheduleRebuild() {
   rebuildRaf = requestAnimationFrame(async () => {
     rebuildRaf = 0
     await ensureEffectFonts()
-    await ensureRingImageTextures()
-    rebuild()
+    await rebuildWithRing()
   })
 }
 
@@ -877,7 +892,9 @@ onMounted(async () => {
   })
   engine.setPost({ ...post })
   await ensureEffectFonts()
-  rebuild()
+  // Preload ring image textures BEFORE the first build — a reopened saved ring scene
+  // must not paint its first frame with blank image tiles (finding 1).
+  await rebuildWithRing()
   startPreview()
   registerStudioParamBaker(props.nodeId, renderBlobWithOverrides)
   // NOTE: the live frame source for this node is registered by SpaceTypeNode.vue
@@ -944,7 +961,9 @@ async function applyEffectDefaults() {
   const sc = spaceDefaultFor(effect.value.id)
   if (sc) applyDefaultScene(sc)
   await ensureEffectFonts()
-  rebuild()
+  // Effect-switch build — same "preload before build" requirement as onMounted (finding 1):
+  // switching INTO ring (or resetting an existing ring scene) must not paint blank tiles.
+  await rebuildWithRing()
 }
 watch(effectId, async () => {
   // Restoring a saved scene — keep the hydrated params instead of resetting to
