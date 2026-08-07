@@ -1,5 +1,12 @@
+import { createRequire } from 'node:module'
 import { defineConfig } from 'vitest/config'
 import { fileURLToPath } from 'node:url'
+
+// h3 is a transitive dep pnpm keeps out of frontend/node_modules, so server
+// utils that `import ... from 'h3'` don't resolve in unit tests. Alias it to
+// the copy nuxt itself resolves.
+const require = createRequire(import.meta.url)
+const h3Path = require.resolve('h3', { paths: [require.resolve('nuxt/package.json').replace('/package.json', '')] })
 
 // Unit tests for shared timeline logic (types, interpolate, commands) — pure
 // TS, no Vue/Nuxt runtime needed. E2E stays in Playwright (tests/*.spec.ts);
@@ -7,6 +14,7 @@ import { fileURLToPath } from 'node:url'
 export default defineConfig({
   resolve: {
     alias: {
+      'h3': h3Path,
       '~~': fileURLToPath(new URL('.', import.meta.url)),
       '~': fileURLToPath(new URL('./app', import.meta.url)),
     },
