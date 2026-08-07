@@ -236,6 +236,11 @@ function onConfirm(item: ImageModel) {
   node.value!.data.widgetsValues[idx] = item.id
   // 2) Persist the per-model options bag.
   setModelOptions(item.id, draftOptions.value)
+  // 3) Manual model choice wins (moodboards Plan B, Task B3): drop the
+  // moodboard auto-switch marker so a later apply never re-switches over a
+  // model the user picked here on purpose.
+  const p = node.value!.data.properties as Record<string, any> | undefined
+  if (p && 'sailor_moodboard_switched' in p) delete p.sailor_moodboard_switched
   emit('close')
 }
 

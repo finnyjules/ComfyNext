@@ -18,8 +18,15 @@ import { useMoodboards } from '~/composables/useMoodboards'
 const props = defineProps<{
   // Applied board id (properties.sailor_moodboard), empty/undefined when none.
   moodboardId?: string
+  // Task B3: true when properties.style_refs holds a refs payload — the board's
+  // images ride along to the model as style references ("refs ✓").
+  hasRefs?: boolean
+  // Task B3: the auto-switch marker (properties.sailor_moodboard_switched) —
+  // the model id the node was on before the apply switched it to Nano Banana.
+  // Present ⇒ show the legible notice + one-click Revert.
+  switchedFrom?: string
 }>()
-const emit = defineEmits<{ open: []; clear: [] }>()
+const emit = defineEmits<{ open: []; clear: []; revert: [] }>()
 
 const { byId: moodboardById, loaded: moodboardsLoaded, refresh: refreshMoodboards } = useMoodboards()
 onMounted(() => { if (props.moodboardId && !moodboardsLoaded.value) void refreshMoodboards() })
@@ -45,8 +52,8 @@ watch(() => props.moodboardId, () => { thumbError.value = false })
 <template>
   <div class="nopan nodrag" data-testid="generate-moodboard-chip">
     <!-- Filled: name + thumb + ✕ -->
+    <template v-if="moodboardId">
     <div
-      v-if="moodboardId"
       class="w-full flex items-center gap-2 px-2 py-1 rounded-[6px] bg-white/[0.05] group"
     >
       <button
@@ -67,7 +74,16 @@ watch(() => props.moodboardId, () => { thumbError.value = false })
         </span>
         <span class="flex flex-col min-w-0 flex-1 leading-tight">
           <span class="text-[10.5px] font-medium text-white/85 truncate">{{ entry?.name ?? 'Moodboard' }}</span>
-          <span class="text-[8.5px] uppercase tracking-[0.06em] text-white/40">Moodboard</span>
+          <span class="text-[8.5px] uppercase tracking-[0.06em] text-white/40">
+            Moodboard<template v-if="hasRefs">
+              <!-- Task B3: the board's images ride along as style references -->
+              <span
+                class="ml-1 normal-case tracking-normal text-sky-300/80"
+                data-testid="generate-moodboard-refs-badge"
+                title="The board's images ride along as style references"
+              >refs ✓</span>
+            </template>
+          </span>
         </span>
       </button>
       <button
@@ -82,6 +98,30 @@ watch(() => props.moodboardId, () => { thumbError.value = false })
         <X class="size-2.5" />
       </button>
     </div>
+
+    <!-- Task B3: legible auto-switch notice — the apply flipped the model to
+         Nano Banana so the board's refs can ride; Revert restores the previous
+         model and drops the refs (the style block stays applied). -->
+    <div
+      v-if="switchedFrom"
+      class="mt-1 w-full flex items-center gap-1.5 px-2 py-1 rounded-[6px] bg-sky-500/[0.08] ring-1 ring-inset ring-sky-400/15"
+      data-testid="generate-moodboard-switch-notice"
+    >
+      <span class="flex-1 min-w-0 text-[9px] leading-snug text-sky-200/85">
+        Switched to Nano Banana for full style transfer
+      </span>
+      <button
+        type="button"
+        class="shrink-0 px-1.5 py-0.5 rounded-[4px] text-[9px] font-medium text-sky-200/90 hover:text-white bg-sky-400/10 hover:bg-sky-400/20 transition-colors cursor-pointer"
+        :title="`Go back to ${switchedFrom}`"
+        data-testid="generate-moodboard-revert"
+        @click.stop="emit('revert')"
+        @mousedown.stop
+      >
+        Revert
+      </button>
+    </div>
+    </template>
 
     <!-- Empty: small "+ Moodboard" affordance -->
     <button

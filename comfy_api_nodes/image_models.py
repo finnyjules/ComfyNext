@@ -19,13 +19,25 @@ out of v1 — they need a different node-side aspect-ratio control.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Protocol
 
-# Per-model input builder. Receives the shared widgets the node always exposes
-# (prompt, aspect_ratio, seed) plus the per-model `advanced` JSON bag the
-# gallery wrote into the node's `model_options` widget. Returns the dict to
-# POST to Replicate as `input`.
-ModelInputBuilder = Callable[[str, str, int, dict[str, Any]], dict[str, Any]]
+
+class ModelInputBuilder(Protocol):
+    """Per-model input builder. Receives the shared widgets the node always
+    exposes (prompt, aspect_ratio, seed) plus the per-model `advanced` JSON bag
+    the gallery wrote into the node's `model_options` widget. Returns the dict
+    to POST to Replicate as `input`.
+
+    `refs` (moodboards Plan B, Task B3) is an optional list of reference-image
+    data URLs riding along from a moodboard. EVERY builder accepts the param
+    (mechanically, so the dispatch can always pass it), but only the ref-capable
+    models — the ones tagged 'multi-image', see accepts_refs() — actually emit
+    a field for it (`image_input` for the nano-banana family, `image_urls` for
+    the seedream family, per their live Replicate schemas). All other builders
+    ignore it, which the refs guard test asserts with a broken control."""
+
+    def __call__(self, prompt: str, ar: str, seed: int, adv: dict[str, Any],
+                 refs: list[str] | None = None) -> dict[str, Any]: ...
 
 
 @dataclass(frozen=True)
@@ -145,7 +157,7 @@ _REVE_AR      = {"1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3"}
 
 # ===== BFL ==================================================================
 
-def _b_flux_1_1_pro(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _b_flux_1_1_pro(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     inp = {
         "prompt": prompt,
         "aspect_ratio": _ar_or(_FLUX_PRO_AR, ar),
@@ -158,7 +170,7 @@ def _b_flux_1_1_pro(prompt: str, ar: str, seed: int, adv: dict) -> dict:
     return inp
 
 
-def _b_flux_1_1_pro_ultra(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _b_flux_1_1_pro_ultra(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     inp = {
         "prompt": prompt,
         "aspect_ratio": _ar_or(_FLUX_ULTRA_AR, ar),
@@ -170,7 +182,7 @@ def _b_flux_1_1_pro_ultra(prompt: str, ar: str, seed: int, adv: dict) -> dict:
     return inp
 
 
-def _b_flux_pro(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _b_flux_pro(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     inp = {
         "prompt": prompt,
         "aspect_ratio": _ar_or(_FLUX_PRO_AR, ar),
@@ -183,7 +195,7 @@ def _b_flux_pro(prompt: str, ar: str, seed: int, adv: dict) -> dict:
     return inp
 
 
-def _b_flux_dev(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _b_flux_dev(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     inp = {
         "prompt": prompt,
         "aspect_ratio": _ar_or(_FLUX_DEV_AR, ar),
@@ -199,7 +211,7 @@ def _b_flux_dev(prompt: str, ar: str, seed: int, adv: dict) -> dict:
     return inp
 
 
-def _b_flux_schnell(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _b_flux_schnell(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     inp = {
         "prompt": prompt,
         "aspect_ratio": _ar_or(_FLUX_DEV_AR, ar),
@@ -214,7 +226,7 @@ def _b_flux_schnell(prompt: str, ar: str, seed: int, adv: dict) -> dict:
     return inp
 
 
-def _b_flux_2_max(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _b_flux_2_max(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     inp = {
         "prompt": prompt,
         "aspect_ratio": _ar_or(_FLUX_2_AR, ar),
@@ -227,7 +239,7 @@ def _b_flux_2_max(prompt: str, ar: str, seed: int, adv: dict) -> dict:
     return inp
 
 
-def _b_flux_2_pro(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _b_flux_2_pro(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     inp = {
         "prompt": prompt,
         "aspect_ratio": _ar_or(_FLUX_2_AR, ar),
@@ -240,7 +252,7 @@ def _b_flux_2_pro(prompt: str, ar: str, seed: int, adv: dict) -> dict:
     return inp
 
 
-def _b_flux_2_flex(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _b_flux_2_flex(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     inp = {
         "prompt": prompt,
         "aspect_ratio": _ar_or(_FLUX_2_AR, ar),
@@ -256,7 +268,7 @@ def _b_flux_2_flex(prompt: str, ar: str, seed: int, adv: dict) -> dict:
     return inp
 
 
-def _b_flux_2_dev(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _b_flux_2_dev(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     inp = {
         "prompt": prompt,
         "aspect_ratio": _ar_or(_FLUX_2_AR, ar),
@@ -272,7 +284,7 @@ def _b_flux_2_dev(prompt: str, ar: str, seed: int, adv: dict) -> dict:
     return inp
 
 
-def _b_flux_2_klein(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _b_flux_2_klein(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     inp = {
         "prompt": prompt,
         "aspect_ratio": _ar_or(_FLUX_KLEIN_AR, ar),
@@ -287,7 +299,7 @@ def _b_flux_2_klein(prompt: str, ar: str, seed: int, adv: dict) -> dict:
 
 # ===== Google ===============================================================
 
-def _b_nano_banana_pro(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _b_nano_banana_pro(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     inp = {
         "prompt": prompt,
         "aspect_ratio": _ar_or(_NANO_BANANA_PRO_AR, ar),
@@ -295,11 +307,16 @@ def _b_nano_banana_pro(prompt: str, ar: str, seed: int, adv: dict) -> dict:
         "output_format": _opt_str(adv, "output_format", "jpg"),
         "safety_filter_level": _opt_str(adv, "safety_filter_level", "block_only_high"),
     }
+    if refs:
+        # Moodboard style refs (Task B3): Replicate's nano-banana schemas take
+        # a list of image URIs under `image_input` — the same field the nano
+        # edit path already uses (see nodes_replicate._run_nano_banana_edit).
+        inp["image_input"] = list(refs)
     _maybe_set_seed(inp, seed)
     return inp
 
 
-def _b_nano_banana_2(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _b_nano_banana_2(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     inp = {
         "prompt": prompt,
         "aspect_ratio": _ar_or(_NANO_BANANA_AR, ar),
@@ -308,11 +325,14 @@ def _b_nano_banana_2(prompt: str, ar: str, seed: int, adv: dict) -> dict:
         "image_search": _opt_bool(adv, "image_search", False),
         "output_format": _opt_str(adv, "output_format", "jpg"),
     }
+    if refs:
+        # Moodboard style refs (Task B3) — same `image_input` field as Pro.
+        inp["image_input"] = list(refs)
     _maybe_set_seed(inp, seed)
     return inp
 
 
-def _b_imagen_generic(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _b_imagen_generic(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     inp = {
         "prompt": prompt,
         "aspect_ratio": _ar_or(_GOOGLE_AR, ar),
@@ -325,7 +345,7 @@ def _b_imagen_generic(prompt: str, ar: str, seed: int, adv: dict) -> dict:
 
 # ===== Ideogram =============================================================
 
-def _b_ideogram_v3(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _b_ideogram_v3(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     inp = {
         "prompt": prompt,
         "aspect_ratio": _ar_or(_IDEOGRAM_V3_AR, ar),
@@ -338,7 +358,7 @@ def _b_ideogram_v3(prompt: str, ar: str, seed: int, adv: dict) -> dict:
     return inp
 
 
-def _b_ideogram_v2(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _b_ideogram_v2(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     inp = {
         "prompt": prompt,
         "aspect_ratio": _ar_or(_IDEOGRAM_V2_AR, ar),
@@ -351,7 +371,7 @@ def _b_ideogram_v2(prompt: str, ar: str, seed: int, adv: dict) -> dict:
 
 # ===== ByteDance ============================================================
 
-def _b_seedream_45(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _b_seedream_45(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     inp = {
         "prompt": prompt,
         "aspect_ratio": _ar_or(_SEEDREAM_AR, ar),
@@ -361,7 +381,7 @@ def _b_seedream_45(prompt: str, ar: str, seed: int, adv: dict) -> dict:
     return inp
 
 
-def _b_seedream_5_pro(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _b_seedream_5_pro(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     size = _opt_str(adv, "size", "2K")
     if size not in ("1K", "2K"):
         size = "2K"
@@ -370,11 +390,15 @@ def _b_seedream_5_pro(prompt: str, ar: str, seed: int, adv: dict) -> dict:
         "aspect_ratio": _ar_or(_SEEDREAM_AR, ar),
         "size": size,  # 1K | 2K
     }
+    if refs:
+        # Moodboard style refs (Task B3): Replicate's seedream schemas take a
+        # list of image URIs under `image_urls`.
+        inp["image_urls"] = list(refs)
     _maybe_set_seed(inp, seed)
     return inp
 
 
-def _b_seedream_5_lite(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _b_seedream_5_lite(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     size = _opt_str(adv, "size", "2K")
     if size not in ("2K", "3K"):
         size = "2K"  # old stored entries used 1K/2K — clamp to the real 5.0 set
@@ -387,22 +411,28 @@ def _b_seedream_5_lite(prompt: str, ar: str, seed: int, adv: dict) -> dict:
     if _opt_str(adv, "sequential_image_generation", "disabled") == "auto":
         inp["sequential_image_generation"] = "auto"
         inp["max_images"] = max(1, min(15, _opt_int(adv, "max_images", 1)))
+    if refs:
+        # Moodboard style refs (Task B3) — seedream's `image_urls` list.
+        inp["image_urls"] = list(refs)
     _maybe_set_seed(inp, seed)
     return inp
 
 
-def _b_seedream_4(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _b_seedream_4(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     inp = {
         "prompt": prompt,
         "aspect_ratio": _ar_or(_SEEDREAM_AR, ar),
         "size": _opt_str(adv, "size", "2K"),
         "enhance_prompt": _opt_bool(adv, "enhance_prompt", False),
     }
+    if refs:
+        # Moodboard style refs (Task B3) — seedream's `image_urls` list.
+        inp["image_urls"] = list(refs)
     _maybe_set_seed(inp, seed)
     return inp
 
 
-def _b_seedream_3(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _b_seedream_3(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     inp = {
         "prompt": prompt,
         "aspect_ratio": _ar_or(_SEEDREAM_AR, ar),
@@ -421,7 +451,7 @@ def _b_seedream_3(prompt: str, ar: str, seed: int, adv: dict) -> dict:
 # enum form, so this works. If a future Recraft model rejects it we'll
 # switch to a per-model size map then.
 
-def _b_recraft_v4(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _b_recraft_v4(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     inp = {
         "prompt": prompt,
         "aspect_ratio": _ar_or(_RECRAFT_AR, ar),
@@ -430,7 +460,7 @@ def _b_recraft_v4(prompt: str, ar: str, seed: int, adv: dict) -> dict:
     return inp
 
 
-def _b_recraft_v3(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _b_recraft_v3(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     inp = {
         "prompt": prompt,
         "aspect_ratio": _ar_or(_RECRAFT_AR, ar),
@@ -440,7 +470,7 @@ def _b_recraft_v3(prompt: str, ar: str, seed: int, adv: dict) -> dict:
     return inp
 
 
-def _b_recraft_v3_svg(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _b_recraft_v3_svg(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     inp = {
         "prompt": prompt,
         "aspect_ratio": _ar_or(_RECRAFT_AR, ar),
@@ -452,7 +482,7 @@ def _b_recraft_v3_svg(prompt: str, ar: str, seed: int, adv: dict) -> dict:
 
 # ===== Stability AI =========================================================
 
-def _b_sd35_family(prompt: str, ar: str, seed: int, adv: dict, *, cfg_default: float) -> dict:
+def _b_sd35_family(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None, *, cfg_default: float) -> dict:
     inp = {
         "prompt": prompt,
         "aspect_ratio": _ar_or(_SD35_AR, ar),
@@ -466,21 +496,21 @@ def _b_sd35_family(prompt: str, ar: str, seed: int, adv: dict, *, cfg_default: f
     return inp
 
 
-def _b_sd35_large(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _b_sd35_large(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     return _b_sd35_family(prompt, ar, seed, adv, cfg_default=5.0)
 
 
-def _b_sd35_large_turbo(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _b_sd35_large_turbo(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     return _b_sd35_family(prompt, ar, seed, adv, cfg_default=1.0)
 
 
-def _b_sd35_medium(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _b_sd35_medium(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     return _b_sd35_family(prompt, ar, seed, adv, cfg_default=5.0)
 
 
 # ===== OpenAI ===============================================================
 
-def _b_gpt_image_2(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _b_gpt_image_2(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     inp: dict[str, Any] = {
         "prompt": prompt,
         "aspect_ratio": _ar_or(_OPENAI_AR, ar),
@@ -495,7 +525,7 @@ def _b_gpt_image_2(prompt: str, ar: str, seed: int, adv: dict) -> dict:
     return inp
 
 
-def _b_gpt_image_15(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _b_gpt_image_15(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     inp: dict[str, Any] = {
         "prompt": prompt,
         "aspect_ratio": _ar_or(_OPENAI_AR, ar),
@@ -511,7 +541,7 @@ def _b_gpt_image_15(prompt: str, ar: str, seed: int, adv: dict) -> dict:
 
 # ===== Alibaba ==============================================================
 
-def _b_qwen_image(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _b_qwen_image(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     inp: dict[str, Any] = {
         "prompt": prompt,
         "aspect_ratio": _ar_or(_QWEN_AR, ar),
@@ -530,7 +560,7 @@ def _b_qwen_image(prompt: str, ar: str, seed: int, adv: dict) -> dict:
 
 # ===== Tencent ==============================================================
 
-def _b_hunyuan_image_3(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _b_hunyuan_image_3(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     inp = {
         "prompt": prompt,
         "aspect_ratio": _ar_or(_HUNYUAN_AR, ar),
@@ -544,7 +574,7 @@ def _b_hunyuan_image_3(prompt: str, ar: str, seed: int, adv: dict) -> dict:
 
 # ===== xAI ==================================================================
 
-def _b_grok_imagine(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _b_grok_imagine(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     inp = {
         "prompt": prompt,
         "aspect_ratio": _ar_or(_GROK_AR, ar),
@@ -555,7 +585,7 @@ def _b_grok_imagine(prompt: str, ar: str, seed: int, adv: dict) -> dict:
 
 # ===== Pruna ================================================================
 
-def _b_flux_fast(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _b_flux_fast(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     inp = {
         "prompt": prompt,
         "aspect_ratio": _ar_or(_FLUX_DEV_AR, ar),
@@ -569,7 +599,7 @@ def _b_flux_fast(prompt: str, ar: str, seed: int, adv: dict) -> dict:
     return inp
 
 
-def _b_p_image(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _b_p_image(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     inp = {
         "prompt": prompt,
         "aspect_ratio": _ar_or(_PIMAGE_AR, ar),
@@ -579,7 +609,7 @@ def _b_p_image(prompt: str, ar: str, seed: int, adv: dict) -> dict:
     return inp
 
 
-def _b_wan22_pruna(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _b_wan22_pruna(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     inp = {
         "prompt": prompt,
         "aspect_ratio": _ar_or(_WAN22_AR, ar),
@@ -594,7 +624,7 @@ def _b_wan22_pruna(prompt: str, ar: str, seed: int, adv: dict) -> dict:
 
 # ===== Bria =================================================================
 
-def _b_bria_fibo(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _b_bria_fibo(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     inp = {
         "prompt": prompt,
         "aspect_ratio": _ar_or(_BRIA_AR, ar),
@@ -607,7 +637,7 @@ def _b_bria_fibo(prompt: str, ar: str, seed: int, adv: dict) -> dict:
     return inp
 
 
-def _b_bria_image_32(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _b_bria_image_32(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     inp = {
         "prompt": prompt,
         "aspect_ratio": _ar_or(_BRIA_AR, ar),
@@ -624,7 +654,7 @@ def _b_bria_image_32(prompt: str, ar: str, seed: int, adv: dict) -> dict:
 
 # ===== Luma =================================================================
 
-def _b_photon(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _b_photon(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     inp = {
         "prompt": prompt,
         "aspect_ratio": _ar_or(_PHOTON_AR, ar),
@@ -635,7 +665,7 @@ def _b_photon(prompt: str, ar: str, seed: int, adv: dict) -> dict:
 
 # ===== MiniMax ==============================================================
 
-def _b_minimax_image_01(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _b_minimax_image_01(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     inp = {
         "prompt": prompt,
         "aspect_ratio": _ar_or(_MINIMAX_AR, ar),
@@ -648,7 +678,7 @@ def _b_minimax_image_01(prompt: str, ar: str, seed: int, adv: dict) -> dict:
 
 # ===== Reve =================================================================
 
-def _b_reve_create(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _b_reve_create(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     # Reve defaults aspect_ratio to 3:2; mirror that fallback so a 1:1 request
     # (when the user hasn't touched the combo) still lands on a ratio Reve
     # accepts. The gallery's catalog declares 3:2 as the default too.
@@ -696,7 +726,7 @@ def _fal_image_size(ar: str) -> str:
     return _FAL_IMAGE_SIZE_BY_AR.get(ar, "square_hd")
 
 
-def _fal_flux_schnell(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _fal_flux_schnell(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     # fal-ai/flux/schnell — same BFL model as Replicate black-forest-labs/
     # flux-schnell (the highest-traffic model, and the one E9828 hit hardest).
     # Replicate's num_outputs batch → fal's num_images (both cap at 4), so the
@@ -712,7 +742,7 @@ def _fal_flux_schnell(prompt: str, ar: str, seed: int, adv: dict) -> dict:
     return inp
 
 
-def _fal_flux_pro_v11(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _fal_flux_pro_v11(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     # fal-ai/flux-pro/v1.1 — same underlying BFL model as Replicate flux-1.1-pro.
     # safety_tolerance here is a STRING "1".."6" (Replicate takes an int).
     tol = _opt_int(adv, "safety_tolerance", 2)
@@ -734,7 +764,7 @@ def _fal_flux_2_out_fmt(adv: dict) -> str:
     return "png" if v == "png" else "jpeg"
 
 
-def _fal_flux_2_basic(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _fal_flux_2_basic(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     # fal-ai/flux-2-pro and fal-ai/flux-2-max — same input schema.
     tol = min(5, max(1, _opt_int(adv, "safety_tolerance", 2)))
     inp = {
@@ -747,7 +777,7 @@ def _fal_flux_2_basic(prompt: str, ar: str, seed: int, adv: dict) -> dict:
     return inp
 
 
-def _fal_flux_2_tunable(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _fal_flux_2_tunable(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     # fal-ai/flux-2-flex and fal-ai/flux-2-dev — adds steps + guidance.
     inp = _fal_flux_2_basic(prompt, ar, seed, adv)
     inp["num_inference_steps"] = _opt_int(adv, "steps", 28)
@@ -764,7 +794,7 @@ _FAL_IDEOGRAM_STYLE = {
 def _make_fal_ideogram_v3(rendering_speed: str) -> ModelInputBuilder:
     """One fal endpoint (fal-ai/ideogram/v3) fronts all three Replicate tiers;
     the quality/balanced/turbo split maps to fal's `rendering_speed`."""
-    def _build(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+    def _build(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
         inp = {
             "prompt": prompt,
             "image_size": _fal_image_size(ar),
@@ -787,7 +817,7 @@ def _fal_output_format(adv: dict, default: str = "png") -> str:
     return "jpeg" if v == "jpg" else v
 
 
-def _fal_nano_banana_2(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _fal_nano_banana_2(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     # fal-ai/nano-banana-2 — same Gemini 3.1 Flash Image model as Replicate
     # google/nano-banana-2. fal takes our aspect-ratio strings natively
     # (including the 4:1/1:8 extremes), so no image_size mapping needed.
@@ -807,7 +837,7 @@ def _fal_nano_banana_2(prompt: str, ar: str, seed: int, adv: dict) -> dict:
     return inp
 
 
-def _fal_nano_banana_pro(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _fal_nano_banana_pro(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     # google/nano-banana-pro on fal — aspect-ratio enum matches ours exactly.
     # Replicate's safety_filter_level has no fal equivalent (fal uses numeric
     # safety_tolerance); leave fal's default rather than guess a mapping.
@@ -825,7 +855,7 @@ def _fal_nano_banana_pro(prompt: str, ar: str, seed: int, adv: dict) -> dict:
     return inp
 
 
-def _fal_seedream_5_pro(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _fal_seedream_5_pro(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     # bytedance/seedream/v5/pro/text-to-image (no fal-ai/ prefix). fal sizes via
     # image_size presets; the user's explicit aspect ratio wins over the 1K/2K
     # advanced knob. NOTE: no seed parameter on this fal endpoint — generation is
@@ -838,7 +868,7 @@ def _fal_seedream_5_pro(prompt: str, ar: str, seed: int, adv: dict) -> dict:
     }
 
 
-def _fal_seedream_5_lite(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _fal_seedream_5_lite(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     # fal-ai/bytedance/seedream/v5/lite/text-to-image. Replicate's batch knobs
     # (sequential_image_generation auto + max_images ≤15) map to fal's
     # max_images (≤6). No seed parameter here either.
@@ -853,7 +883,7 @@ def _fal_seedream_5_lite(prompt: str, ar: str, seed: int, adv: dict) -> dict:
     return inp
 
 
-def _fal_seedream_v4(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _fal_seedream_v4(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     # fal-ai/bytedance/seedream/v4/text-to-image — exact counterpart of Replicate
     # bytedance/seedream-4.
     inp = {
@@ -876,7 +906,7 @@ def _krea_creativity(adv: dict) -> str:
     return v if v in _KREA_CREATIVITY else "medium"
 
 
-def _b_krea2(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _b_krea2(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     # Replicate krea/krea-2-large. Native aspect_ratio + creativity enum.
     inp = {
         "prompt": prompt,
@@ -887,7 +917,7 @@ def _b_krea2(prompt: str, ar: str, seed: int, adv: dict) -> dict:
     return inp
 
 
-def _fal_krea2(prompt: str, ar: str, seed: int, adv: dict) -> dict:
+def _fal_krea2(prompt: str, ar: str, seed: int, adv: dict, refs: list[str] | None = None) -> dict:
     # fal krea/v2/{large,medium}/text-to-image — same field names as Replicate.
     inp = {
         "prompt": prompt,

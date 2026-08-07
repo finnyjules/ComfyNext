@@ -45,6 +45,7 @@ const OBJECT_INFO = {
 // 0 model · 1 prompt · 2 aspect_ratio · 3 seed · 4 seed__control ·
 // 5 model_options · 6 style_block · 7 style_refs
 const STYLE_BLOCK_INDEX = 6
+const STYLE_REFS_INDEX = 7
 
 function generateNode(overrides: Record<string, any> = {}) {
   return {
@@ -115,6 +116,54 @@ describe('injectLoraStyleIntoPrompt — GenerateImageNode (by widget NAME)', () 
       },
     }
     const wf = { nodes: [generateNode()] }
+    const before = [...wf.nodes[0].widgets_values]
+    injectLoraStyleIntoPrompt(wf, staleInfo)
+    expect(wf.nodes[0].widgets_values).toEqual(before)
+  })
+
+  it('writes properties.style_refs into the style_refs slot, by name (Task B3)', () => {
+    const refsJson = '{"folder":"moodboard_1754000000000","files":["00_a.png","01_b.jpg"]}'
+    const wf = {
+      nodes: [generateNode({
+        properties: {
+          aesthetic: 'In the style of: soft riso grain.',
+          style_refs: refsJson,
+        },
+      })],
+    }
+    injectLoraStyleIntoPrompt(wf, OBJECT_INFO)
+    const wv = wf.nodes[0].widgets_values
+    expect(wv[STYLE_REFS_INDEX]).toBe(refsJson)
+    expect(wv[STYLE_BLOCK_INDEX]).toBe('In the style of: soft riso grain.')
+    expect(wv[0]).toBe('flux-schnell') // model untouched
+  })
+
+  it('injects refs even when there is no style block, and skips empty refs', () => {
+    const refsJson = '{"folder":"moodboard_1","files":["a.png"]}'
+    const withRefsOnly = { nodes: [generateNode({ properties: { style_refs: refsJson } })] }
+    injectLoraStyleIntoPrompt(withRefsOnly, OBJECT_INFO)
+    expect(withRefsOnly.nodes[0].widgets_values[STYLE_REFS_INDEX]).toBe(refsJson)
+    expect(withRefsOnly.nodes[0].widgets_values[STYLE_BLOCK_INDEX]).toBe('')
+
+    // '' is the tag-gated "no refs" write — never injected.
+    const withEmptyRefs = {
+      nodes: [generateNode({ properties: { aesthetic: 'Block.', style_refs: '' } })],
+    }
+    injectLoraStyleIntoPrompt(withEmptyRefs, OBJECT_INFO)
+    expect(withEmptyRefs.nodes[0].widgets_values[STYLE_REFS_INDEX]).toBe('')
+  })
+
+  it('stale backend (no style_refs input) — refs are skipped without corruption', () => {
+    const staleInfo = {
+      GenerateImageNode: {
+        input: { required: (OBJECT_INFO.GenerateImageNode.input.required as any) },
+      },
+    }
+    const wf = {
+      nodes: [generateNode({
+        properties: { style_refs: '{"folder":"moodboard_1","files":["a.png"]}' },
+      })],
+    }
     const before = [...wf.nodes[0].widgets_values]
     injectLoraStyleIntoPrompt(wf, staleInfo)
     expect(wf.nodes[0].widgets_values).toEqual(before)

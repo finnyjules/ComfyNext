@@ -45,11 +45,17 @@ export function injectLoraStyleIntoPrompt(
 
     if (type !== 'GenerateImageNode') continue
     const style = composeLoraStyle(node.properties)
-    if (!style) continue
+    // Task B3: the moodboard refs payload rides in properties.style_refs
+    // ('' when the model can't take refs) — injected into its own hidden
+    // widget by NAME, exactly like style_block.
+    const refs = typeof node.properties?.style_refs === 'string'
+      ? node.properties.style_refs
+      : ''
+    if (!style && !refs) continue
     const wv = node.widgets_values
     if (!Array.isArray(wv)) continue
 
-    // Resolve `style_block`'s positional slot from the schema — by NAME.
+    // Resolve the positional slots from the schema — by NAME.
     let slots: { name: string; control?: true }[]
     try {
       slots = widgetSlots('GenerateImageNode', objectInfo)
@@ -59,17 +65,22 @@ export function injectLoraStyleIntoPrompt(
       console.warn('[styleInject] GenerateImageNode missing from objectInfo — style block not injected')
       continue
     }
-    const idx = slots.findIndex((s) => s.name === 'style_block')
-    if (idx < 0) {
-      // Backend still serving the pre-B2 schema (needs a restart) — the input
-      // doesn't exist server-side, so writing anywhere would corrupt values.
-      console.warn('[styleInject] style_block not in GenerateImageNode schema (stale backend?) — style block not injected')
-      continue
-    }
     // A workflow saved pre-B2 may carry a short array; pad up to the slot.
     // (realignWidgetValues normally handles this, but stay safe standalone —
     // style_block/style_refs both default to ''.)
-    while (wv.length <= idx) wv.push('')
-    wv[idx] = style
+    const writeSlot = (name: string, value: string): void => {
+      const idx = slots.findIndex((s) => s.name === name)
+      if (idx < 0) {
+        // Backend still serving a pre-B2/B3 schema (needs a restart) — the
+        // input doesn't exist server-side, so writing anywhere would corrupt
+        // values.
+        console.warn(`[styleInject] ${name} not in GenerateImageNode schema (stale backend?) — not injected`)
+        return
+      }
+      while (wv.length <= idx) wv.push('')
+      wv[idx] = value
+    }
+    if (style) writeSlot('style_block', style)
+    if (refs) writeSlot('style_refs', refs)
   }
 }

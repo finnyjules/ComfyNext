@@ -14,7 +14,7 @@ import { resolveNodeIcon, type NodeIcon } from '~/lib/canvas/nodeIcon'
 import { readoutRuleFor, defaultCollapsed } from '~/lib/canvas/capsuleMeta'
 import { isLoraSlotWidgetVisible } from '~/lib/graph/loraSlotVisibility'
 import { loraSlotResetPlan, moodboardSlotKey } from '~/lib/graph/loraStyleBlocks'
-import { clearMoodboardFromGenerateNode } from '~/lib/graph/moodboardApply'
+import { clearMoodboardFromGenerateNode, revertMoodboardSwitch } from '~/lib/graph/moodboardApply'
 // By path, not auto-import — Nuxt collapses duplicated path segments and an
 // unresolved name renders NOTHING, silently (see WidgetLoraPicker's note).
 import WidgetMoodboardChip from '~/components/vue-canvas/widgets/WidgetMoodboardChip.vue'
@@ -972,6 +972,31 @@ function openGenerateMoodboardGallery() {
 function clearGenerateMoodboard() {
   clearMoodboardFromGenerateNode(props.data)
 }
+// Task B3: refs badge + auto-switch notice state, both plain node properties
+// written by applyMoodboardToGenerateNode.
+const generateMoodboardHasRefs = computed<boolean>(() => {
+  const v = props.data.properties?.style_refs
+  return typeof v === 'string' && v.trim() !== ''
+})
+const generateMoodboardSwitchedFrom = computed<string | null>(() => {
+  const v = props.data.properties?.sailor_moodboard_switched
+  return typeof v === 'string' && v.trim() !== '' ? v : null
+})
+// One-click Revert on the auto-switch notice: the pure helper clears the
+// marker + refs and hands back the model to restore; the positional widget
+// writes (model + its options mirror) stay here where widgetDefs live.
+function revertGenerateMoodboardSwitch() {
+  const prev = revertMoodboardSwitch(props.data)
+  if (!prev) return
+  const mIdx = widgetIndex('model')
+  if (mIdx >= 0 && props.data.widgetsValues) props.data.widgetsValues[mIdx] = prev
+  const optsIdx = widgetIndex('model_options')
+  if (optsIdx >= 0 && props.data.widgetsValues) {
+    props.data.widgetsValues[optsIdx] = JSON.stringify(
+      (props.data.properties as any)?.modelOptions?.[prev] ?? {},
+    )
+  }
+}
 
 function loraScaleDef(pickerName: string): any {
   if (moodboardIdForPicker(pickerName)) return undefined
@@ -1816,8 +1841,11 @@ watch(previewImages, (urls) => {
       <div v-if="data.nodeType === 'GenerateImageNode'" class="px-2.5">
         <WidgetMoodboardChip
           :moodboard-id="generateMoodboardId ?? undefined"
+          :has-refs="generateMoodboardHasRefs"
+          :switched-from="generateMoodboardSwitchedFrom ?? undefined"
           @open="openGenerateMoodboardGallery"
           @clear="clearGenerateMoodboard"
+          @revert="revertGenerateMoodboardSwitch"
         />
       </div>
       <!-- Grouped widgets render under collapsible headers. For Compositor we

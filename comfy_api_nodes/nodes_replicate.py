@@ -47,6 +47,7 @@ import io
 import json
 import mimetypes
 import os
+import re
 import time
 
 import aiohttp
@@ -2311,6 +2312,7 @@ from comfy_api_nodes.image_models import (
     IMAGE_MODELS_BY_ID as _IMAGE_MODELS_BY_ID,
     ALL_ASPECT_RATIOS as _IMAGE_GEN_ASPECT_RATIOS,
     DEFAULT_MODEL_ID as _IMAGE_DEFAULT_MODEL_ID,
+    accepts_refs as _accepts_refs,
 )
 
 # The combo serializes the model `id` (e.g. "flux-1.1-pro") so we can rename
@@ -2332,16 +2334,26 @@ def _fal_available(spec) -> bool:
         return False
 
 
-def _provider_order(spec) -> list[str]:
+def _provider_order(spec, prefer_replicate: bool = False) -> list[str]:
     """Providers to try, in order. fal is only ever included when it's actually
-    available; `spec.primary` decides which of the two goes first."""
+    available; `spec.primary` decides which of the two goes first.
+
+    `prefer_replicate` (moodboards Plan B, Task B3): when moodboard refs are
+    riding along, the REPLICATE builders are the ones that emit them (their
+    schemas take `image_input`/`image_urls` on the t2i endpoint; fal's t2i
+    endpoints don't, and an unverified fal field is a silent-fallover trap —
+    see the enum-mismatch incident). A fal-primary ref-capable model therefore
+    flips to Replicate-first for that run; fal stays as the backup, where the
+    fallover print makes the ref drop legible."""
     if not _fal_available(spec):
         return ["replicate"]
+    if prefer_replicate:
+        return ["replicate", "fal"]
     return ["fal", "replicate"] if getattr(spec, "primary", "replicate") == "fal" else ["replicate", "fal"]
 
 
-async def _replicate_image_urls(spec, prompt, aspect_ratio, seed, advanced) -> list:
-    input_dict = spec.build_input(prompt, aspect_ratio, int(seed or 0), advanced)
+async def _replicate_image_urls(spec, prompt, aspect_ratio, seed, advanced, refs=None) -> list:
+    input_dict = spec.build_input(prompt, aspect_ratio, int(seed or 0), advanced, refs)
     print(
         f"[GenerateImage] replicate model={spec.id!r} slug={spec.replicate_slug!r} "
         f"input_keys={list(input_dict)} advanced={advanced}",
@@ -2357,12 +2369,15 @@ async def _replicate_image_urls(spec, prompt, aspect_ratio, seed, advanced) -> l
     return urls
 
 
-async def _fal_image_urls(spec, prompt, aspect_ratio, seed, advanced) -> list:
+async def _fal_image_urls(spec, prompt, aspect_ratio, seed, advanced, refs=None) -> list:
     from comfy_api_nodes import fal_refs
-    fal_input = spec.fal_build_input(prompt, aspect_ratio, int(seed or 0), advanced)
+    fal_input = spec.fal_build_input(prompt, aspect_ratio, int(seed or 0), advanced, refs)
     print(
         f"[GenerateImage] fal model={spec.id!r} endpoint={spec.fal_slug!r} "
-        f"input_keys={list(fal_input)}",
+        f"input_keys={list(fal_input)}"
+        # No fal t2i builder emits refs (their schemas take none) — say so
+        # rather than dropping them silently on the fallover path.
+        + (" (moodboard refs NOT sent — fal t2i takes none)" if refs else ""),
         flush=True,
     )
     # Bound the wait: a stuck/queued fal job shouldn't block the fallover to the
@@ -2376,16 +2391,17 @@ async def _fal_image_urls(spec, prompt, aspect_ratio, seed, advanced) -> list:
     return urls
 
 
-async def _dispatch_image(spec, prompt, aspect_ratio, seed, advanced) -> list:
+async def _dispatch_image(spec, prompt, aspect_ratio, seed, advanced, refs=None) -> list:
     """Run the model on its primary provider, falling over to the other on ANY
     failure. Returns output image URLs. Raises a combined error only if EVERY
-    available provider fails."""
+    available provider fails. `refs` (moodboard style references, data URLs)
+    flips the order Replicate-first — the provider whose builders emit them."""
     runners = {"replicate": _replicate_image_urls, "fal": _fal_image_urls}
-    order = _provider_order(spec)
+    order = _provider_order(spec, prefer_replicate=bool(refs))
     errors: list[str] = []
     for prov in order:
         try:
-            return await runners[prov](spec, prompt, aspect_ratio, seed, advanced)
+            return await runners[prov](spec, prompt, aspect_ratio, seed, advanced, refs)
         except Exception as e:
             errors.append(f"{prov}: {e}")
             # Only worth announcing a fallover when another provider remains.
@@ -2396,6 +2412,88 @@ async def _dispatch_image(spec, prompt, aspect_ratio, seed, advanced) -> list:
                     flush=True,
                 )
     raise RuntimeError("Image generation failed — " + "; ".join(errors))
+
+
+# ── Moodboard style references (moodboards Plan B, Task B3) ──────────────────
+#
+# The frontend's moodboard apply writes a small JSON payload into the node's
+# hidden `style_refs` widget: {"folder": "moodboard_<ms>", "files": [...]} —
+# input-dir-relative paths, never base64 (saved-project size is a contract).
+# The node reads ≤3 of those files from `<repo-root>/input/<folder>/`, turns
+# them into data URLs and hands them to the ref-capable model builders.
+#
+# The guards are a Python port of the frontend's moodboard route guards
+# (shared/taste/moodboard.ts MOODBOARD_FOLDER_RE + server/utils/
+# moodboardImages.ts safeImageFile): folder must be a `moodboard_<ms>` name —
+# NEVER a lora_dataset_* folder — and every file a bare image name with no
+# traversal.
+
+_MOODBOARD_FOLDER_RE = re.compile(r"^moodboard_\d+$")
+_MOODBOARD_IMAGE_EXT_RE = re.compile(r"\.(png|jpe?g|webp)$", re.IGNORECASE)
+_MOODBOARD_REF_MIME = {
+    "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp",
+}
+_MOODBOARD_MAX_REFS = 3
+_STYLE_REFS_INSTRUCTION = (
+    "Use the attached reference images strictly as STYLE references — match "
+    "their palette, light, grain and mood; do not copy their subjects or "
+    "composition."
+)
+
+
+def _safe_moodboard_file(name) -> bool:
+    """Port of server/utils/moodboardImages.ts safeImageFile: a bare image
+    filename — no slashes, no backslashes, no `..` — with an image extension."""
+    if not name or not isinstance(name, str):
+        return False
+    if "/" in name or "\\" in name or ".." in name:
+        return False
+    return bool(_MOODBOARD_IMAGE_EXT_RE.search(name))
+
+
+def _parse_style_refs(style_refs) -> tuple[str, list[str]] | None:
+    """Parse + validate the `style_refs` widget JSON. Returns (folder, files)
+    with files capped at _MOODBOARD_MAX_REFS, or None when the payload is
+    empty, malformed, or fails the folder/file guards. Never raises — a bad
+    payload must degrade to a plain (ref-less) generation, not kill the run."""
+    if not style_refs or not str(style_refs).strip():
+        return None
+    try:
+        payload = json.loads(style_refs)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    folder = payload.get("folder")
+    files = payload.get("files")
+    if not isinstance(folder, str) or not _MOODBOARD_FOLDER_RE.match(folder):
+        return None
+    if not isinstance(files, list):
+        return None
+    good = [f for f in files if _safe_moodboard_file(f)][:_MOODBOARD_MAX_REFS]
+    if not good:
+        return None
+    return folder, good
+
+
+def _moodboard_ref_data_urls(folder: str, files: list[str], input_dir: str | None = None) -> list[str]:
+    """Read ≤3 validated moodboard images from `<input>/<folder>/` and return
+    them as data URLs. Unreadable files are skipped (logged) — a board whose
+    image was deleted still styles via its text block."""
+    base = input_dir if input_dir is not None else folder_paths.get_input_directory()
+    out: list[str] = []
+    for name in files[:_MOODBOARD_MAX_REFS]:
+        path = os.path.join(base, folder, name)
+        try:
+            with open(path, "rb") as f:
+                data = f.read()
+        except OSError:
+            print(f"[GenerateImage] moodboard ref unreadable, skipping: {folder}/{name}", flush=True)
+            continue
+        ext = name.rsplit(".", 1)[-1].lower()
+        mime = _MOODBOARD_REF_MIME.get(ext, "image/png")
+        out.append(f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}")
+    return out
 
 
 class GenerateImageNode(IO.ComfyNode):
@@ -2492,11 +2590,19 @@ class GenerateImageNode(IO.ComfyNode):
             )
         # Moodboard/style block rides ahead of the subject prompt — same
         # ordering as the FLUX LoRA nodes' client-side prompt fold.
-        # `style_refs` is deliberately unused here: Task B3 turns it into
-        # reference images for ref-capable models (accepts_refs gate).
         style_block = (style_block or "").strip()
         if style_block:
             prompt = f"{style_block} {prompt}"
+        # Moodboard reference images (Task B3): a validated `style_refs`
+        # payload on a ref-capable model ('multi-image' tag) becomes ≤3 data
+        # URLs handed to the model builder, plus a style-only instruction so
+        # the model borrows palette/light/grain — never subjects/composition.
+        refs = None
+        parsed_refs = _parse_style_refs(style_refs)
+        if parsed_refs and _accepts_refs(spec):
+            refs = _moodboard_ref_data_urls(*parsed_refs) or None
+            if refs:
+                prompt = f"{prompt} {_STYLE_REFS_INSTRUCTION}".strip()
         # Tolerate empty / missing / malformed model_options — every field is
         # optional and the per-model builder applies safe defaults.
         try:
@@ -2512,7 +2618,7 @@ class GenerateImageNode(IO.ComfyNode):
         # collapse to Replicate-only. See _dispatch_image / _provider_order.
         # _all_output_urls handles num_outputs>1 (sketch preset) as a batch, so
         # save_generation_output emits one ui file per image either way.
-        urls = await _dispatch_image(spec, prompt, aspect_ratio, seed, advanced)
+        urls = await _dispatch_image(spec, prompt, aspect_ratio, seed, advanced, refs=refs)
         tensor = torch.cat(
             [await download_url_to_image_tensor(u, cls=cls) for u in urls], dim=0
         )
