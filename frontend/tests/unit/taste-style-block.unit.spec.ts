@@ -6,7 +6,7 @@
  * leaving dangling labels.
  */
 import { describe, expect, it } from 'vitest'
-import { tastedPrompt, tasteStyleBlock } from '~/lib/taste/styleBlock'
+import { moodboardStyleBlock, tastedPrompt, tasteStyleBlock } from '~/lib/taste/styleBlock'
 
 const FULL = {
   summary: 'sun-bleached pastel retro California',
@@ -60,5 +60,22 @@ describe('tastedPrompt', () => {
   })
   it('returns the bare trimmed subject when the block is empty', () => {
     expect(tastedPrompt('  a lighthouse  ', {})).toBe('a lighthouse')
+  })
+})
+
+describe('moodboardStyleBlock', () => {
+  const reading = {
+    summary: 'Sun-bleached pastel world.',
+    palette: [{ name: 'Blush', hex: '#F6C1CB' }, { name: 'Turquoise', hex: '#67C4C9' }],
+    avoids: ['darkness', 'neon'],
+  }
+  it('composes summary + named palette + avoids in spec order', () => {
+    expect(moodboardStyleBlock(reading)).toBe(
+      'In the style of: Sun-bleached pastel world. Palette: Blush #F6C1CB, Turquoise #67C4C9. Avoid: darkness, neon.',
+    )
+  })
+  it('omits empty parts — broken control: a dangling "Avoid:" must fail this', () => {
+    expect(moodboardStyleBlock({ ...reading, avoids: [] })).not.toContain('Avoid')
+    expect(moodboardStyleBlock({ ...reading, palette: [] })).not.toContain('Palette')
   })
 })
