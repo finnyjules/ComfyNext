@@ -7,13 +7,15 @@ import { MESH_MAX_POINTS, buildMeshPoints, defaultMesh } from '~/lib/gradientfx/
 import { randomSeed } from '~/lib/gradientfx/rng'
 import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
 import { encodeFrames } from '~/lib/engine/encodeVideo'
+import { useStudioAutosave } from '~/lib/studio/autosave'
+import { downloadBlobAsFile } from '~/lib/studio/downloadBlob'
 import { animatableTargets, dropTracksForLayer, remapTracksOnInsert, remapTracksOnReorder } from '~/lib/gradientfx/motion'
 import { GRADIENT_CONTROLS } from '~/lib/gradientfx/controls'
 import { layerLabels } from '~/lib/gradientfx/layerLabel'
 import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
 import StudioLayerStack from '~/components/vue-canvas/StudioLayerStack.vue'
-import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
+import StudioActionsFooter from '~/components/vue-canvas/studio/StudioActionsFooter.vue'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
 import BindableRow from '~/components/vue-canvas/studio/BindableRow.vue'
 import PalettePicker from '~/components/vue-canvas/studio/PalettePicker.vue'
@@ -523,6 +525,15 @@ function saveConfig() {
   n.data.properties.sailor_gradientStudio = cloneConfig(config.value)
 }
 
+// Sticky footer status (StudioActionsFooter): real Saving…/Saved ✓ driven by
+// useStudioAutosave, debounced off `config` — the studio's single source of
+// truth, which saveConfig() clones straight onto the node (never written back
+// into `config`, so there's no watch loop). Nothing mutates `config` on a
+// per-frame/rAF cadence (renderFrame/loop only READ it to draw the preview),
+// so watching the live ref directly (rather than a serialized signature, as
+// Space Type/Scene3D need for their reactive sibling refs) is safe here.
+const { saving: autoSaving, saved: autoSaved } = useStudioAutosave(() => config.value, saveConfig)
+
 // Copy the current config JSON to the clipboard — for teaching the agent: build
 // the look you want, click Copy, paste it back with the prompt it should satisfy.
 const copied = ref(false)
@@ -556,6 +567,11 @@ async function generateImage() {
       window.dispatchEvent(new CustomEvent('sailor:gradientStudioOutput', {
         detail: { sourceNodeId: props.nodeId, nodeType: 'Image', widgetOverrides: { image: filename } },
       }))
+      // Clear the in-flight message on success so the footer's `notice` (no longer
+      // gated behind `baking` now that StudioActionsFooter reads it unconditionally)
+      // doesn't keep showing "Rendering…" after the fact. closeEditor() unmounts this
+      // surface in normal use, but clear it anyway rather than depend on that timing.
+      bakeMsg.value = ''
       closeEditor()
     }
   } catch (e) { console.error('[gradient] image generate failed', e); bakeMsg.value = 'Failed — see console.' }
@@ -608,30 +624,78 @@ async function renderBlobWithOverrides(overrides: Record<string, string | number
   }
 }
 
+/** Bake the current Gradient state to frames at `motion.fps`/`motion.duration`
+ *  and encode server-side to a video file under input/. Shared by generateVideo()
+ *  (dispatches a Video node onto the canvas) and downloadVideoFile() (saves the
+ *  file locally) so this frame-bake exists in exactly one place. Callers own
+ *  baking.value/stopPreview/startPreview. A bake-stage failure (ensureSpaceTypeBake)
+ *  propagates to the caller; an encode-stage failure is caught here (mirrors the
+ *  original generateVideo's nested try/catch) and reported via bakeMsg, returning
+ *  null so callers treat it as "nothing to dispatch/download" without their own
+ *  catch firing a second, more generic message. */
+async function bakeGradientVideo(): Promise<{ filename: string; ext: 'mp4' | 'webm' } | null> {
+  const m = config.value.motion
+  const { w, h } = { w: m.size && aspectRatio(config.value.canvas.aspect) >= 1 ? Math.round(m.size * aspectRatio(config.value.canvas.aspect)) : m.size, h: m.size }
+  const total = Math.max(1, Math.round(m.fps * m.duration))
+  const bakeCfg = { fps: m.fps, loopDuration: m.duration, W: w, H: h, seed: config.value.seed, sig: JSON.stringify(config.value) }
+  const bake = await ensureSpaceTypeBake(bakeCfg as any, undefined, {
+    renderFrame: async (i) => {
+      bakeMsg.value = `Baking ${i + 1}/${total}`
+      return gradientFx.renderToBlob(config.value, w, h, (i / m.fps))
+    },
+  })
+  bakeMsg.value = 'Encoding…'
+  try {
+    return await encodeFrames({ frames: bake.frames, fps: m.fps, width: w, height: h })
+  } catch (encErr) {
+    bakeMsg.value = 'Encode failed — restart ComfyUI to load the encoder.'
+    console.error('[gradient] encode failed', encErr)
+    return null
+  }
+}
+
 async function generateVideo() {
   baking.value = true
   stopPreview()
   try {
-    const m = config.value.motion
-    const { w, h } = { w: m.size && aspectRatio(config.value.canvas.aspect) >= 1 ? Math.round(m.size * aspectRatio(config.value.canvas.aspect)) : m.size, h: m.size }
-    const total = Math.max(1, Math.round(m.fps * m.duration))
-    const bakeCfg = { fps: m.fps, loopDuration: m.duration, W: w, H: h, seed: config.value.seed, sig: JSON.stringify(config.value) }
-    const bake = await ensureSpaceTypeBake(bakeCfg as any, undefined, {
-      renderFrame: async (i) => {
-        bakeMsg.value = `Baking ${i + 1}/${total}`
-        return gradientFx.renderToBlob(config.value, w, h, (i / m.fps))
-      },
-    })
-    bakeMsg.value = 'Encoding…'
-    try {
-      const encoded = await encodeFrames({ frames: bake.frames, fps: m.fps, width: w, height: h })
-      await recordAsset(activeTab.value?.projectUuid, 'video', encoded.filename)
-      window.dispatchEvent(new CustomEvent('sailor:gradientStudioOutput', {
-        detail: { sourceNodeId: props.nodeId, nodeType: 'Video', widgetOverrides: { file: encoded.filename } },
-      }))
-      closeEditor()
-    } catch (encErr) { bakeMsg.value = 'Encode failed — restart ComfyUI to load the encoder.'; console.error('[gradient] encode failed', encErr) }
+    const encoded = await bakeGradientVideo()
+    if (!encoded) return
+    await recordAsset(activeTab.value?.projectUuid, 'video', encoded.filename)
+    window.dispatchEvent(new CustomEvent('sailor:gradientStudioOutput', {
+      detail: { sourceNodeId: props.nodeId, nodeType: 'Video', widgetOverrides: { file: encoded.filename } },
+    }))
+    bakeMsg.value = ''
+    closeEditor()
   } catch (e) { console.error('[gradient] video generate failed', e); bakeMsg.value = 'Failed — see console.' }
+  finally { baking.value = false; startPreview() }
+}
+
+/** Download the current full-res still as a PNG — same render call generateImage()
+ *  uses (renderCurrentBlob), just saved locally instead of dispatched to the canvas. */
+async function downloadPng() {
+  const blob = await renderCurrentBlob()
+  if (blob) downloadBlobAsFile(blob, `gradient_${Date.now()}.png`)
+}
+
+/** Same bake as generateVideo(), but saves the encoded file locally instead of
+ *  dispatching a Video node onto the canvas. Unlike generateVideo/generateImage,
+ *  this never calls closeEditor() — the modal stays open (see the plan) — so
+ *  bakeMsg MUST be cleared on success here, or the footer's notice would show a
+ *  stale "Encoding…" forever instead of returning to idle. */
+async function downloadVideoFile() {
+  baking.value = true
+  stopPreview()
+  try {
+    const encoded = await bakeGradientVideo()
+    if (!encoded) return
+    // NOT `/input/${filename}` — that path isn't in the Nuxt dev server's
+    // comfyui-proxy PROXY_PREFIXES (server/middleware/comfyui-proxy.ts only
+    // proxies /view, /upload, etc.) and 404s; verified live. ComfyUI's own
+    // /view endpoint (proxied) serves the same input/ file by filename+type.
+    const res = await fetch(`/view?${new URLSearchParams({ filename: encoded.filename, type: 'input' })}`)
+    downloadBlobAsFile(await res.blob(), `gradient_${Date.now()}.${encoded.ext}`)
+    bakeMsg.value = ''
+  } catch (e) { console.error('[gradient] video download failed', e); bakeMsg.value = 'Failed — see console.' }
   finally { baking.value = false; startPreview() }
 }
 
@@ -787,22 +851,23 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
     </template>
 
     <template #actions>
-      <StudioButton variant="primary" :disabled="baking" @click="generateImage">
-        {{ baking ? (bakeMsg || 'Working…') : 'Generate as image' }}
-      </StudioButton>
-      <StudioButton variant="secondary" :disabled="baking" @click="generateVideo">
-        {{ baking ? (bakeMsg || 'Working…') : 'Generate as video' }}
-      </StudioButton>
-      <!-- Disabled while in flight: a double-click otherwise starts two
-           full-resolution GL bakes and downloads two files. -->
-      <StudioButton :disabled="embedding" @click="exportWebEmbed">{{ embedding ? 'Exporting…' : 'Export embed' }}</StudioButton>
-      <StudioButton variant="subtle" title="Copy this gradient's config JSON (for teaching the agent)" @click="copyConfig">
-        {{ copied ? '✓ Copied' : 'Copy config' }}
-      </StudioButton>
-      <!-- A failure must not read like a success. Matches glError's styling. -->
-      <span v-if="embedMsg" class="truncate text-xs"
-            :class="embedErr ? 'text-red-300/80' : 'opacity-60'">{{ embedMsg }}</span>
-      <span v-if="glError" class="ml-2 truncate text-xs text-red-300/80">{{ glError }}</span>
+      <StudioActionsFooter :spec="{
+        status: {
+          saving: autoSaving, saved: autoSaved,
+          error: glError || (embedErr ? embedMsg : null),
+          notice: (!embedErr && embedMsg) ? embedMsg : (bakeMsg || null),
+        },
+        utilities: [{ label: copied ? '✓ Copied' : 'Copy config', onClick: copyConfig }],
+        downloads: [
+          { label: 'Download PNG', onClick: downloadPng },
+          { label: 'Download video', onClick: downloadVideoFile, busy: baking },
+          { label: 'Export embed', onClick: exportWebEmbed, busy: embedding },
+        ],
+        canvas: [
+          { label: 'As image', onClick: generateImage, busy: baking },
+          { label: 'As video', onClick: generateVideo, busy: baking },
+        ],
+      }" />
     </template>
 
     <template #controls>
