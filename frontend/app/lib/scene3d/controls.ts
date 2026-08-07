@@ -99,15 +99,20 @@ const isPhongMaterial = (doc: SceneDoc, obj?: SceneObject): boolean =>
 const hasPbrSurface = (doc: SceneDoc, obj?: SceneObject): boolean => {
   if (!isEditableMaterial(doc, obj)) return false
   const t = materialTypeOf(obj)
-  if (t === 'standard' || t === 'glass' || t === 'image') return true
+  if (t === 'standard' || t === 'glass' || t === 'image' || t === 'opalescent') return true
   if (t === 'shaderFill') return !(obj && obj.kind !== 'light' && obj.material.unlit === true)
   return false
 }
 
-// Base `color` reads on standard/glass/phong/toon/fresnel; matcap/gradient/image/
-// shaderFill materials each drive colour a different way (matcap id, gradient ramp,
-// uploaded texture, catalog effect) and never read `.color` in the UI.
-const COLOR_TYPES: MaterialType[] = ['standard', 'glass', 'phong', 'toon', 'fresnel']
+// Opalescent (thin-film / holographic) — its own spectral block. Mirrors the surface's
+// `matType === 'opalescent'` branch.
+const isOpalMaterial = (doc: SceneDoc, obj?: SceneObject): boolean =>
+  isEditableMaterial(doc, obj) && materialTypeOf(obj) === 'opalescent'
+
+// Base `color` reads on standard/glass/phong/toon/fresnel and as the opalescent lit substrate
+// tint; matcap/gradient/image/shaderFill materials each drive colour a different way (matcap id,
+// gradient ramp, uploaded texture, catalog effect) and never read `.color` in the UI.
+const COLOR_TYPES: MaterialType[] = ['standard', 'glass', 'phong', 'toon', 'fresnel', 'opalescent']
 const hasBaseColor = (doc: SceneDoc, obj?: SceneObject): boolean =>
   isEditableMaterial(doc, obj) && COLOR_TYPES.includes(materialTypeOf(obj))
 
@@ -180,6 +185,20 @@ export const SCENE_CONTROLS: SceneControl[] = [
   slider('object.material.shininess', 'Shininess', 0, 200, 1, 'Material', MATERIAL_DEFAULTS.shininess,
     'How tight and glossy the highlight is — higher is sharper', { when: isPhongMaterial }),
   color('object.material.specular', 'Specular', MATERIAL_DEFAULTS.specular, 'Material', { when: isPhongMaterial }),
+
+  // Opalescent — thin-film / holographic. The spectrum itself is the shared `gradientStops`
+  // ramp (edited in the surface's stop editor, like the gradient material); these five scalars
+  // steer how it maps onto the surface and are the agent-/motion-animatable knobs.
+  slider('object.material.opalHueShift', 'Hue shift', 0, 360, 1, 'Material', MATERIAL_DEFAULTS.opalHueShift!,
+    'Rotates the whole rainbow around the colour wheel', { when: isOpalMaterial, summary: 2 }),
+  slider('object.material.opalFrequency', 'Spectrum bands', 0.5, 5, 0.05, 'Material', MATERIAL_DEFAULTS.opalFrequency!,
+    'How many rainbow bands wrap the surface', { when: isOpalMaterial }),
+  slider('object.material.opalAngleMix', 'Angle response', 0, 1, 0.01, 'Material', MATERIAL_DEFAULTS.opalAngleMix!,
+    'Blends the flow from surface-shape-driven to viewing-angle-driven', { when: isOpalMaterial }),
+  slider('object.material.opalFlowSpeed', 'Flow speed', 0, 2, 0.01, 'Material', MATERIAL_DEFAULTS.opalFlowSpeed!,
+    'Animates the spectrum over time — 0 keeps it still', { when: isOpalMaterial }),
+  slider('object.material.opalStrength', 'Rainbow strength', 0, 1, 0.01, 'Material', MATERIAL_DEFAULTS.opalStrength!,
+    'How much rainbow shows over the base colour', { when: isOpalMaterial, summary: 1 }),
 
   // Surface relief — a grayscale height field perturbing the lit normal (see config.ts's
   // ReliefSpec doc). `source` picks the origin; scale/contrast/tiling tune it. Orthogonal

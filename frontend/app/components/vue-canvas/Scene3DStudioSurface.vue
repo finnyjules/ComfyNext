@@ -17,8 +17,8 @@ import {
 } from 'lucide-vue-next'
 import {
   parseDoc, serializeDoc, createPrimitive, createGlbObject, createLight, createGroup,
-  LIGHTING_PRESETS, MATERIAL_TYPES, MATERIAL_DEFAULTS, LIGHT_KINDS, LIGHT_DEFAULTS, lightIntensityMax, gradientAngles, gradientStopsOf,
-  DEFAULT_FONT_URL, sceneHasShaderFill,
+  LIGHTING_PRESETS, MATERIAL_TYPES, MATERIAL_DEFAULTS, LIGHT_KINDS, LIGHT_DEFAULTS, lightIntensityMax, gradientAngles, gradientStopsOf, opalStopsOf,
+  DEFAULT_FONT_URL, sceneHasShaderFill, sceneHasOpalFlow,
   type SceneDoc, type SceneObject, type PrimitiveObject, type PrimitiveKind, type MaterialType, type GradientStop, type LightKind, type LightObject, type ReliefSpec, type SceneMaterial, type Vec3,
 } from '~/lib/scene3d/config'
 import { MATCAP_IDS, matcapThumb, onTextureError } from '~/lib/scene3d/materials'
@@ -495,6 +495,12 @@ const matGradientShading = matParam('gradientShading')
 const matGradientType = matParam('gradientType')
 const matGradientOffset = matParam('gradientOffset')
 const matGradientSpread = matParam('gradientSpread')
+// Opalescent scalars (the spectrum itself reuses matGradientStops below).
+const matOpalHueShift = matParam('opalHueShift')
+const matOpalFrequency = matParam('opalFrequency')
+const matOpalAngleMix = matParam('opalAngleMix')
+const matOpalFlowSpeed = matParam('opalFlowSpeed')
+const matOpalStrength = matParam('opalStrength')
 
 // Direction angles read through gradientAngles() so an untouched material still
 // reflects its legacy `gradientAxis` seed; writing always stores explicit angles.
@@ -527,6 +533,14 @@ const matGradientStops = computed<GradientStop[]>({
   // selected material — the array (and its stop objects) must not become one
   // mutable reference shared across objects, same hazard cloneMaterial's fix
   // above documents for `relief`/`shader`.
+  set: (v) => applyMaterial((m) => { m.gradientStops = v.map((s) => ({ ...s })) }),
+})
+// Opalescent reads the SAME `gradientStops` field but falls back to the vivid cyclic default
+// (opalStopsOf), never the grey color→gradientB pair — so a fresh opal shows a rainbow, and the
+// ramp editor is populated for editing. Writes land on `gradientStops` exactly like the gradient
+// editor, so switching between the two material types carries the palette across.
+const matOpalStops = computed<GradientStop[]>({
+  get: () => (selected.value ? opalStopsOf(selected.value.material) : []),
   set: (v) => applyMaterial((m) => { m.gradientStops = v.map((s) => ({ ...s })) }),
 })
 const matClearcoat = matParam('clearcoat')
@@ -1351,6 +1365,9 @@ onMounted(() => {
       const hasShaderFill = sceneHasShaderFill(doc)
       if (hasShaderFill) engine.refreshShaderFields((performance.now() - scene3dMountedAt) / 1000)
       shaderFrozenCount.value = hasShaderFill ? engine.frozenFieldCount : 0
+      // Same gate shape as shaderFill: only a flowing opal (opalFlowSpeed > 0) needs a per-frame
+      // uTime write; a still opal or an opal-free scene skips it entirely.
+      if (sceneHasOpalFlow(doc)) engine.refreshOpal((performance.now() - scene3dMountedAt) / 1000)
     }
     if (playing.value && engine) {
       const dur = doc.motion.duration
@@ -3716,6 +3733,24 @@ async function onClose() {
             <label class="mb-1 block text-[11px] text-white/55">Shading</label>
             <StudioSegmented v-model="matGradientShading" :options="['smooth', 'faceted', 'prismatic']" />
           </div>
+        </template>
+
+        <!-- opalescent: thin-film / holographic. Spectrum reuses the SAME gradient-stop editor
+             (bound to matGradientStops, which reads material.gradientStops) so switching between
+             gradient and opalescent keeps the palette; the scalars steer how it maps + flows. -->
+        <template v-else-if="matEditable && matType === 'opalescent'">
+          <StudioGradientRamp v-model="matOpalStops" />
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] text-white/55">Base tint</span>
+            <StudioColor v-model="matColor" />
+          </div>
+          <StudioSlider v-model="matOpalHueShift" label="Hue shift" hint="Rotates the whole rainbow around the colour wheel" :min="0" :max="360" :step="1" />
+          <StudioSlider v-model="matOpalFrequency" label="Spectrum bands" hint="How many rainbow bands wrap the surface" :min="0.5" :max="5" :step="0.05" />
+          <StudioSlider v-model="matOpalAngleMix" label="Angle response" hint="Blends the flow from surface-shape-driven to viewing-angle-driven" :min="0" :max="1" :step="0.01" />
+          <StudioSlider v-model="matOpalStrength" label="Rainbow strength" hint="How much rainbow shows over the base colour" :min="0" :max="1" :step="0.01" />
+          <StudioSlider v-model="matOpalFlowSpeed" label="Flow speed" hint="Animates the spectrum over time — 0 keeps it still" :min="0" :max="2" :step="0.01" />
+          <StudioSlider v-model="matRoughness" label="Roughness" hint="How matte or glossy the surface is" :min="0" :max="1" :step="0.01" />
+          <StudioSlider v-model="matMetalness" label="Metalness" hint="Blends between plastic-like and metal reflections" :min="0" :max="1" :step="0.01" />
         </template>
 
         <!-- image -->

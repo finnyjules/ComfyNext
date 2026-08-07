@@ -12,7 +12,7 @@ import * as THREE from 'three'
 // degrades to opaque rather than turning the object white.
 import { stripAlpha } from '~/lib/color/convert'
 import {
-  MATERIAL_DEFAULTS, gradientAngles, gradientDirection, gradientStopsOf,
+  MATERIAL_DEFAULTS, gradientAngles, gradientDirection, gradientStopsOf, opalStopsOf,
   type GradientStop, type ReliefSpec, type SceneMaterial,
 } from './config'
 import { toHeightPixels } from './relief'
@@ -107,6 +107,13 @@ export function onTextureError(cb: (filename: string) => void): () => void {
 }
 /** Materials currently holding an image texture — used to drop `map` on load failure. */
 const imageMaterials = new Set<THREE.MeshStandardMaterial>()
+
+/** Every live opalescent material, across every open Scene3D engine. Walked by `refreshOpalTime`
+ *  once per host frame to write wall-clock seconds into each `uOpalTime` uniform — the only
+ *  per-frame cost the opal material has, and only paid when the doc has a flowing opal (see
+ *  `sceneHasOpalFlow`). Not owner-scoped like `shaderFillMaterials`: `uOpalTime` is just a shared
+ *  monotonic clock, so a second open engine writing it is harmless. */
+const opalMaterials = new Set<THREE.MeshStandardMaterial>()
 
 // ── Shader-fill field textures (object anchor only) ──────────────────────────
 // A live request is clamped to this square regardless of the mesh's actual screen size —
@@ -517,6 +524,41 @@ const GRADIENT_FACET_FRAG_BODY = /* glsl */ `#include <color_fragment>
   diffuseColor.rgb = gradSample(t);
 }`
 
+// ── Opalescent: thin-film / holographic spectrum ────────────────────────────
+// A MeshStandardMaterial like fresnel/gradient — the full lit pipeline still runs, so the form
+// reads as a soft 3D body, not a flat decal. Unlike gradient (a SPATIAL ramp along a world
+// axis), the opal driver `s` comes from the view-space NORMAL and the FRESNEL angle, so the
+// spectrum flows and shifts as the object turns — the opal signature. It samples the SAME ramp
+// LUT the gradient material uses (buildRampTexture over gradientStopsOf), so any palette works.
+//
+// Injects ONLY in the fragment shader, at `emissivemap_fragment` (exactly where fresnel injects)
+// — that is AFTER `normal`/`vViewPosition` are computed but BEFORE `material.diffuseColor` is
+// assigned from `diffuseColor` in `lights_physical_fragment`, so overwriting `diffuseColor.rgb`
+// here feeds the rainbow through the standard lighting. No vertex injection and no custom
+// varyings: `normal` (view space) and `vViewPosition` are three's own built-ins.
+const OPAL_FRAG_DECL = /* glsl */ `#include <common>
+uniform sampler2D uRamp;
+uniform float uHueShift;   // spectrum rotation, pre-normalised to 0..1 (degrees/360)
+uniform float uFrequency;  // rainbow bands across the surface
+uniform float uAngleMix;   // 0 = normal-driven, 1 = fresnel/view-driven
+uniform float uStrength;   // rainbow vs the lit base colour
+uniform float uOpalTime;   // wall-clock seconds (0 for a still opal)
+uniform float uFlow;`      /* time drift speed; s advances by uOpalTime*uFlow */
+const OPAL_FRAG_BODY = /* glsl */ `#include <emissivemap_fragment>
+{
+  vec3 nrm = normalize( normal );
+  vec3 vdir = normalize( vViewPosition );
+  // fres: 0 face-on (centre), 1 at the grazing rim — the classic opal edge shift.
+  float fres = pow( 1.0 - clamp( abs( dot( nrm, vdir ) ), 0.0, 1.0 ), 1.5 );
+  // nterm: 0..1 from the view-space normal's up component — a smooth field across the body
+  // that turns with the object.
+  float nterm = nrm.y * 0.5 + 0.5;
+  float s = mix( nterm, fres, clamp( uAngleMix, 0.0, 1.0 ) );
+  s = fract( s * uFrequency + uHueShift + uOpalTime * uFlow );
+  vec3 rainbow = texture2D( uRamp, vec2( s, 0.5 ) ).rgb;
+  diffuseColor.rgb = mix( diffuseColor.rgb, rainbow, clamp( uStrength, 0.0, 1.0 ) );
+}`
+
 // ── Gradient ramp LUT ────────────────────────────────────────────────────────
 const RAMP_WIDTH = 256
 
@@ -706,6 +748,35 @@ export function materialFor(mat: SceneMaterial, geometry?: THREE.BufferGeometry,
       g.userData.gradUniforms = gradUniforms
       g.userData.rampSig = rampSignature(stops)
       m = g
+      break
+    }
+    case 'opalescent': {
+      const stops = opalStopsOf(mat)
+      // Uniform objects live outside the compile closure so updateMaterial can mutate their
+      // `.value` before or after first compile — exactly the gradient/fresnel pattern.
+      const opalUniforms: Record<string, { value: unknown }> = {
+        uRamp: { value: buildRampTexture(stops) },
+        uHueShift: { value: (mat.opalHueShift ?? MATERIAL_DEFAULTS.opalHueShift) / 360 },
+        uFrequency: { value: mat.opalFrequency ?? MATERIAL_DEFAULTS.opalFrequency },
+        uAngleMix: { value: mat.opalAngleMix ?? MATERIAL_DEFAULTS.opalAngleMix },
+        uStrength: { value: mat.opalStrength ?? MATERIAL_DEFAULTS.opalStrength },
+        uOpalTime: { value: 0 },
+        uFlow: { value: mat.opalFlowSpeed ?? MATERIAL_DEFAULTS.opalFlowSpeed },
+      }
+      const o = new THREE.MeshStandardMaterial({
+        color: stripAlpha(mat.color), roughness: mat.roughness, metalness: mat.metalness,
+      })
+      o.onBeforeCompile = (shader) => {
+        Object.assign(shader.uniforms, opalUniforms)
+        shader.fragmentShader = shader.fragmentShader
+          .replace('#include <common>', OPAL_FRAG_DECL)
+          .replace('#include <emissivemap_fragment>', OPAL_FRAG_BODY)
+      }
+      o.customProgramCacheKey = () => 'scene3d-opalescent'
+      o.userData.opalUniforms = opalUniforms
+      o.userData.rampSig = rampSignature(stops)
+      opalMaterials.add(o)
+      m = o
       break
     }
     case 'image': {
@@ -919,6 +990,32 @@ export function updateMaterial(m: THREE.Material, mat: SceneMaterial): boolean {
       if (u.uMode) u.uMode.value = (mat.gradientShading ?? MATERIAL_DEFAULTS.gradientShading) === 'prismatic' ? 2 : 1
       return true
     }
+    case 'opalescent': {
+      // The spectrum LUT + steering scalars all live in injected uniforms shared by reference
+      // with the compiled program — mutate in place. Colour/roughness/metalness are real
+      // MeshStandardMaterial fields (the lit substrate). uOpalTime is written per-frame by
+      // refreshOpalTime, never here.
+      const o = m as THREE.MeshStandardMaterial
+      o.color.set(stripAlpha(mat.color)); o.roughness = mat.roughness; o.metalness = mat.metalness
+      const u = m.userData.opalUniforms as {
+        uRamp: { value: THREE.DataTexture }
+        uHueShift: { value: number }; uFrequency: { value: number }; uAngleMix: { value: number }
+        uStrength: { value: number }; uFlow: { value: number }
+      }
+      // Rebuild the LUT only when the stops actually moved, disposing the one we replace.
+      const sig = rampSignature(opalStopsOf(mat))
+      if (sig !== m.userData.rampSig) {
+        u.uRamp.value?.dispose()
+        u.uRamp.value = buildRampTexture(opalStopsOf(mat))
+        m.userData.rampSig = sig
+      }
+      u.uHueShift.value = (mat.opalHueShift ?? MATERIAL_DEFAULTS.opalHueShift) / 360
+      u.uFrequency.value = mat.opalFrequency ?? MATERIAL_DEFAULTS.opalFrequency
+      u.uAngleMix.value = mat.opalAngleMix ?? MATERIAL_DEFAULTS.opalAngleMix
+      u.uStrength.value = mat.opalStrength ?? MATERIAL_DEFAULTS.opalStrength
+      u.uFlow.value = mat.opalFlowSpeed ?? MATERIAL_DEFAULTS.opalFlowSpeed
+      return true
+    }
     case 'image': {
       const s = m as THREE.MeshStandardMaterial
       s.roughness = mat.roughness; s.metalness = mat.metalness
@@ -946,9 +1043,12 @@ export function disposeMaterial(m: THREE.Material): void {
   if ((m as THREE.MeshToonMaterial).isMaterial && (m as any).gradientMap) (m as any).gradientMap.dispose()
   if (m.userData.matType === 'image') imageMaterials.delete(m as THREE.MeshStandardMaterial)
   if (m.userData.matType === 'shaderFill') shaderFillMaterials.delete(m)
+  if (m.userData.matType === 'opalescent') opalMaterials.delete(m as THREE.MeshStandardMaterial)
   reliefHealPending.delete(m) // a disposed material still awaiting its relief heal must not leak
-  // The gradient ramp LUT is owned by exactly one material.
+  // The gradient ramp LUT is owned by exactly one material — as is the opal ramp (its own
+  // uniform bucket), so dispose whichever this material carries.
   const ramp = (m.userData.gradUniforms as { uRamp?: { value?: THREE.Texture } } | undefined)?.uRamp?.value
+    ?? (m.userData.opalUniforms as { uRamp?: { value?: THREE.Texture } } | undefined)?.uRamp?.value
   if (ramp) ramp.dispose()
   // Bump/height texture: EXCLUSIVELY owned by this material — every relief texture (image OR
   // shader) is a private per-material canvas + Texture (see the C1/C2 redesign doc at the top
@@ -970,6 +1070,17 @@ export function disposeMaterial(m: THREE.Material): void {
   // back out of `identity`.
   if (map) { map.dispose(); if (m.userData.matType === 'image' && m.userData.imageFilename) imageCache.delete(m.userData.imageFilename as string) }
   m.dispose()
+}
+
+/** Write wall-clock seconds into every live opalescent material's `uOpalTime` uniform so its
+ *  spectrum drifts. Call once per host frame, BEFORE `engine.render()`, and only when the doc
+ *  actually has a flowing opal (see `sceneHasOpalFlow`) — with `uFlow` 0 the term is multiplied
+ *  out, so a still opal costs nothing and the gate keeps ordinary scenes off this path. */
+export function refreshOpalTime(elapsedSec: number): void {
+  opalMaterials.forEach((mm) => {
+    const u = mm.userData.opalUniforms as { uOpalTime?: { value: number } } | undefined
+    if (u?.uOpalTime) u.uOpalTime.value = elapsedSec
+  })
 }
 
 /** Advance every shaderFill material OWNED BY `ownerId` (one Scene3D engine instance) to time

@@ -39,8 +39,8 @@ export const DEFAULT_FONT_URL = '/fonts/ABCROM-Bold.otf'
 // no amount of roughness tuning on the PBR types (standard/glass) can reproduce — that
 // hard-dot look is a distinct retro-CG aesthetic worth keeping on its own terms. Do not
 // "modernise" it away in favour of Standard.
-export type MaterialType = 'standard' | 'phong' | 'toon' | 'matcap' | 'glass' | 'fresnel' | 'gradient' | 'image' | 'shaderFill'
-export const MATERIAL_TYPES: MaterialType[] = ['standard', 'phong', 'toon', 'matcap', 'glass', 'fresnel', 'gradient', 'image', 'shaderFill']
+export type MaterialType = 'standard' | 'phong' | 'toon' | 'matcap' | 'glass' | 'fresnel' | 'gradient' | 'opalescent' | 'image' | 'shaderFill'
+export const MATERIAL_TYPES: MaterialType[] = ['standard', 'phong', 'toon', 'matcap', 'glass', 'fresnel', 'gradient', 'opalescent', 'image', 'shaderFill']
 
 /** One stop of the gradient ramp. `pos` is 0..1 along the ramp direction. */
 export interface GradientStop { pos: number; color: string }
@@ -152,6 +152,15 @@ export interface SceneMaterial {
   iridescence?: number          // 0–1
   iridescenceIOR?: number       // 1–2.33
   envMapIntensity?: number      // 0–3
+  // Opalescent (thin-film / holographic) — all `opalescent` only. The spectrum is the SAME
+  // `gradientStops` ramp the gradient material uses (gradientStopsOf), so switching between the
+  // two material types preserves the palette. These five scalars steer how that ramp maps onto
+  // the surface. Absent = MATERIAL_DEFAULTS (a plain non-opal material never reads them).
+  opalHueShift?: number         // 0–360, rotates the whole spectrum
+  opalFrequency?: number        // 0.5–5, how many rainbow bands wrap the surface
+  opalAngleMix?: number         // 0–1, normal-driven ↔ view/fresnel-driven flow
+  opalFlowSpeed?: number        // 0–2, time drift; 0 = a still opal (no per-frame cost)
+  opalStrength?: number         // 0–1, rainbow vs the soft lit base
 }
 
 export interface SceneObjectBase {
@@ -277,6 +286,19 @@ export function sceneHasShaderFill(doc: SceneDoc): boolean {
   })
 }
 
+/** True when the scene has at least one opalescent material with a non-zero flow speed — the
+ *  only case that needs a per-frame `uTime` write. A still opal (flow 0, the default) is a
+ *  view-driven-only material and pays nothing per frame, so it's excluded exactly like an
+ *  ordinary scene is excluded from `sceneHasShaderFill`. Same light/group/GLB skip rules. */
+export function sceneHasOpalFlow(doc: SceneDoc): boolean {
+  return doc.objects.some((o) => {
+    if (o.kind === 'light' || o.kind === 'group') return false
+    if (o.kind === 'glb' && o.materialOverride !== true) return false
+    const m = o.material
+    return m.type === 'opalescent' && (m.opalFlowSpeed ?? MATERIAL_DEFAULTS.opalFlowSpeed) > 0
+  })
+}
+
 export type LightingPreset = 'studio' | 'soft' | 'dramatic' | 'flat'
 export interface SceneLighting {
   preset: LightingPreset
@@ -382,6 +404,11 @@ export const MATERIAL_DEFAULTS = {
   iridescence: 0,
   iridescenceIOR: 1.3,
   envMapIntensity: 1,
+  opalHueShift: 0,
+  opalFrequency: 1.5,
+  opalAngleMix: 0.6,
+  opalFlowSpeed: 0,
+  opalStrength: 1,
   reliefScale: 0.25,
   reliefContrast: 1,
   reliefTiling: 1,
@@ -443,6 +470,28 @@ export function gradientStopsOf(mat: SceneMaterial): GradientStop[] {
     { pos: 0, color: mat.color },
     { pos: 1, color: mat.gradientB ?? MATERIAL_DEFAULTS.gradientB },
   ]
+}
+
+/** A full-hue-wheel spectrum, CYCLIC (first stop == last) so the opal shader's `fract()` wrap has
+ *  no colour seam. This is the opalescent default — unlike the gradient material, an opal with no
+ *  authored stops must look holographic out of the box, not like the grey `color`→`gradientB`
+ *  pair `gradientStopsOf` synthesizes (which reads as a flat grey sphere). */
+export const OPAL_DEFAULT_STOPS: GradientStop[] = [
+  { pos: 0, color: '#ff2d55' },
+  { pos: 0.17, color: '#ffcc00' },
+  { pos: 0.34, color: '#34ffab' },
+  { pos: 0.5, color: '#31d9ff' },
+  { pos: 0.66, color: '#5e5cff' },
+  { pos: 0.83, color: '#d451ff' },
+  { pos: 1, color: '#ff2d55' },
+]
+
+/** Spectrum stops for an opalescent material — authored stops if present, else the vivid cyclic
+ *  default (NOT the grey synthesized pair). Kept separate from `gradientStopsOf` so the gradient
+ *  material's back-compat grey fallback is untouched. */
+export function opalStopsOf(mat: SceneMaterial): GradientStop[] {
+  if (mat.gradientStops && mat.gradientStops.length >= GRADIENT_STOPS_MIN) return mat.gradientStops
+  return OPAL_DEFAULT_STOPS
 }
 
 export function defaultDoc(): SceneDoc {
@@ -743,6 +792,11 @@ export function parseDoc(json: string): SceneDoc {
     if (typeof m?.iridescence === 'number') out.iridescence = num(m.iridescence, MATERIAL_DEFAULTS.iridescence)
     if (typeof m?.iridescenceIOR === 'number') out.iridescenceIOR = num(m.iridescenceIOR, MATERIAL_DEFAULTS.iridescenceIOR)
     if (typeof m?.envMapIntensity === 'number') out.envMapIntensity = num(m.envMapIntensity, MATERIAL_DEFAULTS.envMapIntensity)
+    if (typeof m?.opalHueShift === 'number') out.opalHueShift = num(m.opalHueShift, MATERIAL_DEFAULTS.opalHueShift)
+    if (typeof m?.opalFrequency === 'number') out.opalFrequency = num(m.opalFrequency, MATERIAL_DEFAULTS.opalFrequency)
+    if (typeof m?.opalAngleMix === 'number') out.opalAngleMix = num(m.opalAngleMix, MATERIAL_DEFAULTS.opalAngleMix)
+    if (typeof m?.opalFlowSpeed === 'number') out.opalFlowSpeed = num(m.opalFlowSpeed, MATERIAL_DEFAULTS.opalFlowSpeed)
+    if (typeof m?.opalStrength === 'number') out.opalStrength = num(m.opalStrength, MATERIAL_DEFAULTS.opalStrength)
     // normalizeShaderSpec is already tolerant of junk (falls back to DEFAULT_SHADER_SPEC's
     // fields piecewise) — only gate on `m.shader` being present at all, same "copy only when
     // present" rule as every other optional field above.

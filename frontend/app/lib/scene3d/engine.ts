@@ -16,7 +16,7 @@ import { LIGHT_DEFAULTS, DEFAULT_FONT_URL } from './config'
 import { orderParentsFirst } from './hierarchy'
 import { loadGlb } from './glb'
 import { loadFont, fontCacheGet, textOutline, shapeOutline, type Font } from '~/lib/scene3d/outlines'
-import { materialFor, updateMaterial, disposeMaterial, refreshSceneShaderFields } from './materials'
+import { materialFor, updateMaterial, disposeMaterial, refreshSceneShaderFields, refreshOpalTime } from './materials'
 import { applyModifiers } from '~/lib/scene3d/modifiers'
 import { PRIMITIVE_PARAMS, paramValue, MODIFIER_SPECS, modifierValue } from '~/lib/scene3d/primParams'
 import { pathToShapes } from './svgPath'
@@ -905,6 +905,14 @@ export class SceneEngine {
    *  rAF loop), so every call site before this parameter existed is unaffected. */
   refreshShaderFields(elapsedSec: number, bake = false, w?: number, h?: number): void {
     this._frozenFieldCount = refreshSceneShaderFields(this.id, elapsedSec, 30, bake, w, h).frozenCount
+  }
+
+  /** Advance every live opalescent material's spectrum clock to `elapsedSec`. Same "no
+   *  engine-local clock, host feeds wall-clock seconds" shape as `refreshShaderFields`; call once
+   *  per host frame BEFORE render(), and only when the doc has a flowing opal (`sceneHasOpalFlow`),
+   *  so a still or opal-free scene never pays it. */
+  refreshOpal(elapsedSec: number): void {
+    refreshOpalTime(elapsedSec)
   }
 
   render(): void {
