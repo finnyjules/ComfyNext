@@ -273,8 +273,6 @@ function removeContentItem(id: string) {
   const i = contentItems.findIndex(item => item.id === id)
   if (i >= 0) contentItems.splice(i, 1)
 }
-const contentImageInput = ref<HTMLInputElement | null>(null)
-function pickContentImage() { contentImageInput.value?.click() }
 // Downscale to fitWithin(...,1024) before encoding — datasetImages.ts's doc: trainers/quads
 // never need a 24MP original's pixels, and shipping them costs upload time + heap for nothing.
 function onContentImagePick(e: Event) {
@@ -1745,10 +1743,11 @@ async function exportWebEmbed() {
                   <div class="flex gap-1.5">
                     <button type="button" @click="addContentText"
                             class="flex-1 rounded border border-dashed border-white/15 py-1.5 text-[11px] text-white/50 hover:border-white/30 hover:text-white/80">+ Add text</button>
-                    <button type="button" @click="pickContentImage"
-                            class="flex-1 rounded border border-dashed border-white/15 py-1.5 text-[11px] text-white/50 hover:border-white/30 hover:text-white/80">+ Add image</button>
+                    <label
+                            class="flex-1 cursor-pointer rounded border border-dashed border-white/15 py-1.5 text-center text-[11px] text-white/50 hover:border-white/30 hover:text-white/80">+ Add image
+                      <input type="file" accept="image/*" class="hidden" @change="onContentImagePick" />
+                    </label>
                   </div>
-                  <input ref="contentImageInput" type="file" accept="image/*" class="hidden" @change="onContentImagePick" />
                   <p class="text-[10px] leading-relaxed text-white/35">Words and photos ride the ring in this order. <span class="text-white/50">Letters</span> splits a word into one tile per character.</p>
                 </div>
               </template>
