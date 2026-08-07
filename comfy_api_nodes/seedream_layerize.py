@@ -6,8 +6,6 @@ the fal call, per-layer download, and input-dir save.
 """
 from __future__ import annotations
 
-from typing import Any
-
 _IMAGE_SIZES = {"auto", "auto_1K", "auto_1.5K", "auto_2K"}
 
 

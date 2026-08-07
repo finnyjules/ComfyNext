@@ -52,3 +52,12 @@ def test_parse_element_layer_carries_absolute_box_and_name():
 
 def test_parse_empty_result_is_empty_not_crash():
     assert parse_seedream_layers({}) == ([], 0, 0)
+
+
+def test_parse_prefers_base_layer_dimensions_over_images_fallback():
+    result = {
+        "images": [{"url": "http://x/flat.png", "width": 999, "height": 999}],
+        "layers": [{"image": {"url": "http://x/bg.png", "width": 1024, "height": 768}, "z_index": 0}],
+    }
+    _, w, h = parse_seedream_layers(result)
+    assert (w, h) == (1024, 768)  # from the base layer, NOT images[0]
