@@ -17,6 +17,7 @@ import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
 import { encodeFrames, type EncodeFramesResult } from '~/lib/engine/encodeVideo'
 import { canvasHasAlpha } from '~/lib/engine/hasAlpha'
 import { downloadBlobAsFile } from '~/lib/studio/downloadBlob'
+import { useStudioAutosave } from '~/lib/studio/autosave'
 import { loopMultiplier } from '~/lib/spacetype/loop'
 import { loadGoogleCatalog, googleFontCssUrl, googleAxisList, resolveFontFamily, fontHasWeightAxis, type GoogleFont } from '~/data/google-fonts'
 import type { GradientStop } from '~/lib/spacetype/gradient'
@@ -699,17 +700,26 @@ function saveConfig() {
   }
 }
 
-// Sticky footer status (StudioActionsFooter): a transient "Saved ✓" flash. Closing the
-// studio still auto-saves (closeEditor → saveConfig); saveNow/savedFlash are kept for
-// any future explicit-checkpoint affordance even though the Save button itself is gone.
-const savedFlash = ref(false)
-let savedFlashTimer: ReturnType<typeof setTimeout> | undefined
-function saveNow() {
-  saveConfig()
-  savedFlash.value = true
-  clearTimeout(savedFlashTimer)
-  savedFlashTimer = setTimeout(() => { savedFlash.value = false }, 1500)
+// Sticky footer status (StudioActionsFooter): real Saving…/Saved ✓ driven by
+// useStudioAutosave (Task AF-3b), debounced off the same fields saveConfig()
+// serializes onto the node. gradientStops/post are reactive objects — spreading
+// them into the signature (rather than passing the live refs) makes the watched
+// getter a plain JSON string, so `deep: true` inside the composable is inert but
+// harmless. Closing the studio still calls saveConfig() directly (closeEditor /
+// onBeforeUnmount below) so the FINAL edit is never left stranded in the debounce.
+function autosaveSignature() {
+  return JSON.stringify({
+    effectId: effectId.value,
+    params,
+    gradientStops,
+    post,
+    fps: fps.value, loopDuration: loopDuration.value,
+    dimsKey: dimsKey.value, W: W.value, H: H.value, transparent: transparent.value, bgColor: bgColor.value,
+    projection: projection.value,
+    panX: panX.value, panY: panY.value,
+  })
 }
+const { saving: autoSaving, saved: autoSaved } = useStudioAutosave(autosaveSignature, saveConfig)
 
 // Transparent-export detection: read the frame the live preview is ALREADY showing
 // (engine.renderer.domElement) rather than rendering a fresh one just to test it.
@@ -752,9 +762,6 @@ function refreshExportAlpha() {
   exportAlphaAvailable.value = detectAlpha()
   if (!exportAlphaAvailable.value) exportAlpha.value = false
 }
-onBeforeUnmount(() => {
-  clearTimeout(savedFlashTimer)
-})
 
 function closeEditor() { saveConfig(); emit('close') }
 
@@ -1739,10 +1746,10 @@ async function exportWebEmbed() {
     </template>
     <!-- StudioActionsFooter lives in the modal's reserved bottom-right actions footer
          (shell #actions), like every other studio — there is no Save button; saving is
-         automatic (see saveNow/savedFlash above). -->
+         automatic and debounced (see useStudioAutosave above). -->
     <template #actions>
       <StudioActionsFooter :spec="{
-        status: { saved: savedFlash, error: embedErr ? embedMsg : null, notice: embedErr ? null : embedMsg },
+        status: { saving: autoSaving, saved: autoSaved, error: embedErr ? embedMsg : null, notice: embedErr ? null : embedMsg },
         downloads: [
           { label: 'Download PNG', onClick: downloadPng },
           { label: 'Download video', onClick: downloadVideoFile, busy: baking },
