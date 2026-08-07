@@ -98,10 +98,10 @@ export const SHAPE_CONTROLS: ShapeControl[] = [
   color('style.background', 'Background', DEFAULT_CONFIG.style.background, 'Style'),
 
   // --- Shared post stack (Bloom/Color/Duotone/...) -----------------------------
-  // threeD: false — Shape is 3D-rendered but has no depth/normal buffers wired for
+  // host: 'gl2d' — Shape is 3D-rendered but has no depth/normal buffers wired for
   // ambient occlusion (see engine.ts's applyPost call), so gtao's controls are
   // withheld the same way Gradient/Texture withhold them.
-  ...postControls({ threeD: false }),
+  ...postControls({ host: 'gl2d' }),
 ]
 
 /** Controls applicable to this config, in SHAPE_SECTIONS order. */

@@ -149,7 +149,7 @@ export const GRADIENT_CONTROLS: GradientControl[] = [
   // to carry (Task 8). Tagged here rather than inside postControls() itself: that
   // function is shared by Texture/Shape too, and this capsule-summary behavior is
   // specific to how Gradient's collapsed node reads out, not a shared-stack default.
-  ...postControls({ threeD: false }).map(c => c.key === 'post.grainAmount' ? { ...c, summary: 2 } : c),
+  ...postControls({ host: 'gl2d' }).map(c => c.key === 'post.grainAmount' ? { ...c, summary: 2 } : c),
 ]
 
 /** Per-stop / per-mesh-point colour controls — runtime cardinality. */

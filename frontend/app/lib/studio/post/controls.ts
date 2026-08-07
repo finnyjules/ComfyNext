@@ -48,10 +48,14 @@ export const POST_SECTION = 'Effects'
 /** The nested section path for one effect — 'Effects/Bloom'. */
 const sectionFor = (label: string) => `${POST_SECTION}/${label}`
 
-export function postControls(opts: { threeD?: boolean } = {}): ControlSpec[] {
+export type PostHost = 'gl2d' | 'three' | 'three-depth'
+
+export function postControls(opts: { host: PostHost }): ControlSpec[] {
+  const includeDepthOnly = opts.host === 'three-depth' // gtao needs a depth buffer
+  const keepNullUniformParams = opts.host !== 'gl2d'   // three.js hosts render these via EffectComposer
   const out: ControlSpec[] = []
   for (const e of POST_EFFECTS) {
-    if (e.threeDOnly && !opts.threeD) continue
+    if (e.threeDOnly && !includeDepthOnly) continue
     const group = sectionFor(e.label)
     out.push({
       key: `post.${e.enableKey}`,
@@ -68,7 +72,7 @@ export function postControls(opts: { threeD?: boolean } = {}): ControlSpec[] {
       // offer the agent a knob, that provably cannot affect a pixel). 3D hosts
       // keep them: gtao renders via EffectComposer, not this params list's frag.
       // (The 3D side of this rule is forward work — see the doc comment above.)
-      if (p.uniform === null && !opts.threeD) continue
+      if (p.uniform === null && !keepNullUniformParams) continue
       if (p.kind === 'color') {
         out.push({
           key: `post.${p.settingsKey}`, label: p.label, kind: 'color',

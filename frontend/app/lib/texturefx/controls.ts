@@ -100,7 +100,7 @@ export const TEXTURE_CONTROLS: TextureControl[] = [
   //     TextureFxRenderer.render() (see renderer.ts), before the surface's separate
   //     stylizeTile() dither/posterize/duotone pass — the two are independent stages,
   //     not layered by this control list's order. ---------------------------------
-  ...postControls({ threeD: false }),
+  ...postControls({ host: 'gl2d' }),
 ]
 
 // Numeric seed lives outside the control list (driven by the Roll button).
