@@ -80,6 +80,7 @@ import { LIVE_FIELD_CEILING } from '~/lib/shaderfill/descriptor'
 import { onFieldCatalogReady } from '~/lib/shaderfill/field'
 import ShaderFillEditor from '~/components/vue-canvas/widgets/ShaderFillEditor.vue'
 import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
+import StudioActionsFooter from '~/components/vue-canvas/studio/StudioActionsFooter.vue'
 import StudioLayerStack from '~/components/vue-canvas/StudioLayerStack.vue'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
@@ -96,6 +97,8 @@ import { makeConfigParams } from '~/lib/agent/configParams'
 import { mapControlSpecToDesc } from '~/lib/collection/studioControls'
 import type { StudioControlDesc } from '~/lib/collection/studioBindables'
 import { registerStudioParamBaker, unregisterStudioParamBaker } from '~/lib/studio/cascade'
+import { useStudioAutosave } from '~/lib/studio/autosave'
+import { downloadBlobAsFile } from '~/lib/studio/downloadBlob'
 
 const props = withDefaults(defineProps<{ nodeId: string; nodes?: any[]; edges?: any[] }>(), {
   nodes: () => [], edges: () => [],
@@ -150,6 +153,15 @@ function closeEditor() {
   try { saveConfig() } catch (e) { console.error('[vector-type] saveConfig failed', e) }
   emit('close')
 }
+
+// Sticky footer status (StudioActionsFooter): real Saving…/Saved ✓ driven by
+// useStudioAutosave, debounced off everything `saveConfig` persists — same
+// recipe as ShapeStudioSurface/GradientStudioSurface. Vector Type is 2D (no
+// camera/orbit to exclude), so every field here is a real user edit.
+const { saving: autoSaving, saved: autoSaved } = useStudioAutosave(
+  () => ({ config: config.value, canvasW: canvasW.value, canvasH: canvasH.value, aspectKey: aspectKey.value, background: background.value }),
+  saveConfig,
+)
 
 // ── the font ────────────────────────────────────────────────────────────────
 // The axis sliders are DERIVED from the loaded file's own `fvar`, so nothing
@@ -451,7 +463,6 @@ const fillTypeIsShader = computed(() => {
  * day, not the day someone remembers.
  */
 const stackExportTier = computed(() => vtExportTier(config.value, layerNames.value))
-const fillExportTier = computed(() => stackExportTier.value.tier)
 /** One sentence naming the layer(s) that force a raster export, else `null` —
  *  which is also the flag both notes below are rendered on. */
 const rasterNote = computed(() => vtRasterNote(stackExportTier.value))
@@ -1211,6 +1222,21 @@ async function exportPng() {
   }
 }
 
+// ── real file download (distinct from exportPng, which is the canvas "As
+// image" action: it uploads + drops an Image node + closes the studio). This
+// one just saves a PNG, sharing renderFullResBlob so the two never disagree
+// on framing. ─────────────────────────────────────────────────────────────
+async function downloadPng() {
+  try {
+    const blob = await renderFullResBlob(previewTime.value)
+    if (!blob) return
+    downloadBlobAsFile(blob, `vectortype_${Date.now()}.png`)
+  } catch (e) {
+    console.error('[vector-type] PNG download failed', e)
+    setActionError('Download failed — please try again')
+  }
+}
+
 /**
  * Export SVG — Sailor's first vector deliverable.
  *
@@ -1477,41 +1503,26 @@ const frameCount = computed(() => Math.round((config.value.motion.fps || 30) * (
     </template>
 
     <template #actions>
-      <button
-        v-if="animated"
-        type="button"
-        class="shrink-0 whitespace-nowrap rounded-[6px] border border-white/10 bg-white/[0.06] px-3 py-1.5 text-[12px] text-white/80 transition hover:bg-white/[0.12]"
-        @click="playing = !playing"
-      >{{ playing ? 'Pause' : 'Play' }}</button>
-      <button type="button" class="shrink-0 whitespace-nowrap rounded-[6px] border border-white/10 bg-white/[0.06] px-3 py-1.5 text-[12px] text-white/70 transition hover:bg-white/[0.12]" @click="triggerImport">Import settings</button>
-      <button type="button" class="shrink-0 whitespace-nowrap rounded-[6px] border border-white/10 bg-white/[0.06] px-3 py-1.5 text-[12px] text-white/70 transition hover:bg-white/[0.12]" @click="exportSettings">Export settings</button>
       <input ref="importInput" type="file" accept="application/json" class="hidden" @change="onImportFile" />
-      <span v-if="actionError" class="text-[11px] text-red-400/90">{{ actionError }}</span>
-      <span class="flex-1" />
-      <!-- WHERE THE CONSEQUENCE LANDS. The same fact as the Paint-section note,
-           said again at the button that produces the file — a user who set the
-           fill an hour ago is not expected to remember. -->
-      <span v-if="rasterNote" data-testid="vt-export-tier-export-note"
-            class="min-w-0 max-w-[24rem] text-right text-[10.5px] leading-snug text-amber-100/70">
-        {{ rasterNote }}. Every other layer, and every outline, stays editable vector.
-      </span>
-      <!-- Vector first, then raster: this is the only studio in the product whose
-           output is editable geometry, and the file it writes is the point. -->
-      <button
-        type="button"
-        class="shrink-0 whitespace-nowrap rounded-[6px] border border-white/15 bg-white/[0.08] px-3.5 py-1.5 text-[12px] font-medium text-white/85 transition enabled:hover:bg-white/[0.14] disabled:cursor-not-allowed disabled:opacity-40"
-        :disabled="!font || svgExporting"
-        :title="svgExportTitle"
-        :data-export-tier="fillExportTier"
-        aria-label="Export SVG"
-        @click="exportSvg"
-      >{{ svgExporting ? 'Exporting…' : 'Export SVG' }}</button>
-      <button
-        type="button"
-        class="shrink-0 whitespace-nowrap rounded-[6px] bg-action px-3.5 py-1.5 text-[12px] font-medium text-white transition enabled:hover:bg-action/85 disabled:cursor-not-allowed disabled:opacity-40"
-        :disabled="!font || exporting"
-        @click="exportPng"
-      >{{ exporting ? 'Exporting…' : 'Export PNG' }}</button>
+      <StudioActionsFooter :spec="{
+        status: { saving: autoSaving, saved: autoSaved, error: actionError || null },
+        utilities: [
+          ...(animated ? [{ label: playing ? 'Pause' : 'Play', onClick: () => { playing = !playing } }] : []),
+          { label: 'Import settings', onClick: triggerImport },
+          { label: 'Export settings', onClick: exportSettings },
+        ],
+        downloads: [
+          { label: 'Download PNG', onClick: downloadPng, disabled: !font },
+          // WHERE THE CONSEQUENCE LANDS. Same fact as the Paint-section note
+          // (`vt-export-tier-note`), said again on the row that produces the
+          // file — a user who set the fill an hour ago is not expected to
+          // remember. `svgExportTitle` folds the raster caveat, if any, into
+          // one sentence; `subtitle` is StudioFooterMenu's dim second line,
+          // the same slot SpaceTypeSurface uses for its transparent-video caveat.
+          { label: 'Download SVG', onClick: exportSvg, busy: svgExporting, disabled: !font, subtitle: svgExportTitle },
+        ],
+        canvas: [{ label: 'As image', onClick: exportPng, busy: exporting, disabled: !font }],
+      }" />
     </template>
 
     <template #controls>
