@@ -557,7 +557,7 @@ async function generateImage() {
   stopPreview()
   try {
     const blob = await renderCurrentBlob()
-    if (!blob) return
+    if (!blob) { bakeMsg.value = ''; return }
     const { uploadFrameBatch } = await import('~/lib/studio/frameUpload')
     const [filename] = await uploadFrameBatch([blob], 'gradient_img')
     if (filename) {
@@ -573,6 +573,10 @@ async function generateImage() {
       // surface in normal use, but clear it anyway rather than depend on that timing.
       bakeMsg.value = ''
       closeEditor()
+    } else {
+      // uploadFrameBatch swallows a failed upload and returns [] — surface it instead of
+      // leaving the footer stuck on "Rendering…" forever.
+      bakeMsg.value = 'Upload failed — see console.'
     }
   } catch (e) { console.error('[gradient] image generate failed', e); bakeMsg.value = 'Failed — see console.' }
   finally { baking.value = false; startPreview() }
@@ -693,6 +697,7 @@ async function downloadVideoFile() {
     // proxies /view, /upload, etc.) and 404s; verified live. ComfyUI's own
     // /view endpoint (proxied) serves the same input/ file by filename+type.
     const res = await fetch(`/view?${new URLSearchParams({ filename: encoded.filename, type: 'input' })}`)
+    if (!res.ok) throw new Error(`/view returned ${res.status}`)
     downloadBlobAsFile(await res.blob(), `gradient_${Date.now()}.${encoded.ext}`)
     bakeMsg.value = ''
   } catch (e) { console.error('[gradient] video download failed', e); bakeMsg.value = 'Failed — see console.' }
