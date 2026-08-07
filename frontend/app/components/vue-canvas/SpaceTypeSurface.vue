@@ -1166,7 +1166,7 @@ async function downloadVideoFile() {
   try {
     const encoded = await bakeSpaceTypeVideo()
     if (!encoded) return
-    const res = await fetch(`/input/${encoded.filename}`)
+    const res = await fetch(`/view?${new URLSearchParams({ filename: encoded.filename, type: 'input' })}`)
     downloadBlobAsFile(await res.blob(), `spacetype_${Date.now()}.${encoded.ext}`)
   } catch (e) {
     console.error('[spacetype] video download failed', e)
