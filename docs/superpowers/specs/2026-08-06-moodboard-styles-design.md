@@ -83,7 +83,16 @@ nice-to-have, not v1-required.
 ### Create / edit — the modal
 Reached from the node (primary) or from the gallery's **Moodboards** tab
 (**"＋ New moodboard"** creates a node-less library entry; editing an applied moodboard
-opens the same modal). Flow:
+opens the same modal).
+
+**The modal reads as a brand-guidelines document, not a form** (Julien's call, mocked and
+approved): a floating section nav on the left (`00 Board · 01 Reading · 02 Palette ·
+03 Avoids · 04 Type · 05 Preview`, active section tracking scroll), scrollable numbered
+sections on the right in the Book grammar — one document grid, hairlines between
+sections, the board opening as full-bleed plates, the fonts set as a real type specimen
+(each family rendered in itself), the preview closing the book as plates. A floating
+footer carries Re-read · Preview (price follows tier) · Save. This is deliberately the
+same register the future Kits space uses — the moodboard modal is its seed. Content flow:
 
 1. **Drop 5–20 images** (decoded client-side like the taste wall; JPEG-downscaled before
    upload). Thumbnails appear as a small board.
