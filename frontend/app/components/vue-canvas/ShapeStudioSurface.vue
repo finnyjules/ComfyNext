@@ -104,7 +104,13 @@ function closeEditor() {
 
 // Sticky footer status (StudioActionsFooter): real Saving…/Saved ✓ driven by
 // useStudioAutosave, debounced off `config` — same recipe as GradientStudioSurface.
-const { saving: autoSaving, saved: autoSaved } = useStudioAutosave(() => config.value, saveConfig)
+// Watch everything saveConfig persists EXCEPT orbit — orbit is camera state that
+// mutates continuously during a drag, and watching it would thrash autosave (the
+// Scene3D lesson). canvasW/H/aspectKey are real user edits and must autosave.
+const { saving: autoSaving, saved: autoSaved } = useStudioAutosave(
+  () => ({ config: config.value, canvasW: canvasW.value, canvasH: canvasH.value, aspectKey: aspectKey.value }),
+  saveConfig,
+)
 
 // ── in-product agent — "tune" the shape in natural language, following
 // GradientStudioSurface's useStudioAgent wiring exactly. Shape has no
