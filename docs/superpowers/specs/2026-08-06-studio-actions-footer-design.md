@@ -17,19 +17,27 @@ laid out in three zones left→right:
 
 1. **Status + utilities** (quiet, left): an auto-save indicator, then studio-specific
    helpers (Roll, Import/Export settings, Copy config, Play/Pause).
-2. **Download ▾** (grey secondary): a menu button whose submenu lists the studio's file
-   outputs (PNG · SVG · Export embed).
-3. **Render on canvas ▾** (blue primary, far right): a menu button whose submenu lists
-   the studio's canvas outputs (*As image · As video · Send to timeline*).
+2. **Download ▾** (grey secondary): a menu button whose submenu saves the studio's output
+   as a file — **PNG** on every studio, plus **Video** on animated ones, **SVG** on
+   Vector, and **Export embed** where it exists.
+3. **Render on canvas ▾** (blue primary, far right): a menu button whose submenu drops the
+   result onto the canvas as an artifact node — *As image · As video · Send to timeline*.
 
 The two right-hand buttons are **always the same two buttons**, each opening its own
-submenu — no per-studio collapsing between button and menu. It reuses Space Type's
-"Render" verb, which was the good one; the fix was that it had been applied
+submenu — no per-studio collapsing between button and menu. "Render on canvas" reuses
+Space Type's "Render" verb, which was the good one; the fix was that it had been applied
 inconsistently (five names for the same act) — now every studio renders to the canvas
-through the same button. Submenus list only outputs the studio **already produces** —
-this change invents no new render path (the sole exception is Shape/Vector gaining *As
-image*, reusing the blob they already render for their PNG download). A zone with no
-outputs simply omits its button (e.g. Scene3D has no file download).
+through the same button.
+
+**Discovery that reshaped this:** Shape's and Vector's "Export PNG" buttons never
+downloaded a file — they already `dispatch sailor:{shape,vectorType}StudioOutput` and
+drop an **Image node on the canvas**. They were mislabeled canvas actions. So no studio
+needs a *new canvas path* — every studio already puts an image on the canvas. The only
+genuinely new wiring is on the **download** side: a `Download PNG` on every studio
+(reusing the image blob it already renders) and a `Download video` on the four studios
+that already run the shared `encodeFrames` encoder (Space Type, Gradient, Shader; Scene3D
+already writes an mp4 file). Vector's *video* download is **out of scope** — Vector has no
+video encoder yet, so that is a separate feature, not a footer relabel.
 
 The explicit **Save** button is removed everywhere (all studios already auto-save;
 it was reassurance in 2 of 7). A quiet `Saving… / Saved ✓ / ⚠ error` indicator takes
@@ -54,12 +62,17 @@ Two facts discovered while surveying the seven footers:
 | Studio | Save? | "put on canvas" verb | file downloads | utilities |
 |---|---|---|---|---|
 | Space Type | Save | **Render ▾** (image/video/timeline) | Export embed (in menu) | — |
-| Scene3D | Save | **Export to Canvas** | — (mp4 via bake) | — |
+| Scene3D | Save | **Export to Canvas** | mp4 (Motion export) | — |
 | Texture | — | **Send to canvas** | Download PNG | Roll |
 | Gradient | — | **Generate as image / video** | Export embed | Copy config |
 | Shader | — | **Generate as image / video** | Export embed | — |
-| Shape | — | — *(none)* | **Export PNG** (a download) | Import/Export settings |
-| Vector | — | — *(none)* | **Export PNG / SVG** (downloads) | Play, Import/Export settings |
+| Shape | — | **Export PNG** *(actually → canvas!)* | — | Import/Export settings |
+| Vector | — | **Export PNG** *(actually → canvas!)* | SVG (real file) | Play, Import/Export settings |
+
+The two rows that read worst are Shape and Vector: their **"Export PNG" dispatches a
+`StudioOutput` event and creates an Image node on the canvas** — it never writes a file.
+A button named like a download that silently does the opposite is the sharpest edge of
+the inconsistency.
 
 ## Target: `StudioActionsFooter`
 
@@ -136,22 +149,35 @@ if its list is empty), whose submenu items are:
 
 | Studio | ① utilities | ② Download ▾ | ③ Render on canvas ▾ |
 |---|---|---|---|
-| Space Type | — | Export embed | As image · As video · As video (transparent)† · Send to timeline |
-| Scene3D | — | *(none — button omitted)* | As image |
+| Space Type | — | PNG · Video · Export embed | As image · As video · As video (transparent)† · Send to timeline |
+| Scene3D | — | PNG · Video | As image |
 | Texture | Roll | PNG | As image |
-| Gradient | Copy config | Export embed | As image · As video |
-| Shader | — | Export embed | As image · As video |
-| Shape | Import · Export settings | PNG | As image ← **new** |
-| Vector | Play/Pause · Import · Export settings | PNG · SVG | As image ← **new** |
+| Gradient | Copy config | PNG · Video · Export embed | As image · As video |
+| Shader | — | PNG · Video · Export embed | As image · As video |
+| Shape | Import · Export settings | PNG | As image |
+| Vector | Play/Pause · Import · Export settings | PNG · SVG | As image |
 
-### The one behaviour addition: Shape & Vector gain canvas output
+Bold = genuinely new wiring. Every **PNG** in the Download column is new (studios reused
+the image blob they already render for the canvas, saved to a file instead of uploaded);
+**Video** in Space Type / Gradient / Shader is new (they already run `encodeFrames` for
+the canvas — the download variant saves the encoded blob instead of dispatching a Video
+node); Scene3D's Video reuses its existing mp4 export. Everything in the *Render on canvas*
+column already exists today under a different name.
 
-Both already render a blob for their PNG/SVG download. Adding an `As image` canvas item
-reuses that blob through the same `uploadFrameBatch` path the other five studios use — a
-small, well-trodden wiring, not new rendering. Neither bakes a video-to-canvas today, so
-their `Render on canvas ▾` lists only *As image* (a possible later follow-up for Vector,
-which is animated — it would add an *As video* item, not change the structure). Everything
-else in this change is relabel + reorganize.
+### Not a new canvas path — a relabel
+
+The earlier draft of this spec claimed Shape & Vector would *gain* canvas output. They
+already have it: their "Export PNG" dispatches `StudioOutput` and drops an Image node.
+So the canvas side is **pure relabel** — "Export PNG" (Shape, Vector), "Send to canvas"
+(Texture), "Export to Canvas" (Scene3D), "Generate as image/video" (Gradient, Shader),
+and "Render ▾" (Space Type) all become the one **Render on canvas ▾** button. The new
+*behaviour* in this change lives entirely in the Download column (PNG everywhere; video
+on the four studios that already encode).
+
+**Vector video is out of scope.** Vector is animated but has no `encodeFrames` wiring —
+it renders per-frame for PNG/SVG but never bakes a clip. A Vector *Download video* would
+be a new encoder path, tracked as a follow-up, not part of this footer pass. Its
+`Render on canvas ▾` also stays *As image* only for the same reason.
 
 † **As video (transparent)** is Space Type's alpha export, shown only when the current
 frame has alpha (see the transparency section above) — a conditional extra item in the
@@ -163,19 +189,23 @@ frame has alpha (see the transparency section above) — a conditional extra ite
   (alpha frames only), **Send to timeline**. Retires *Add to canvas*, *Export to Canvas*,
   *Send to canvas*, *Generate as image/video*, and the floating *Transparent background*
   checkbox — "Render" is now the one consistent canvas verb.
-- Download: **Download ▾** → **PNG**, **SVG**, **Export embed** (the formats studios
-  actually produce today). ("Export embed" keeps its name inside the menu — it produces a
-  self-contained web snippet, conceptually distinct from a media file.)
+- Download: **Download ▾** → **PNG** (every studio), **Video** (animated studios that
+  encode: Space Type, Scene3D, Gradient, Shader), **SVG** (Vector), **Export embed** (Space
+  Type, Gradient, Shader). ("Export embed" keeps its name inside the menu — it produces a
+  self-contained web snippet, conceptually distinct from a media file.) A Download item
+  saves a file and leaves the studio open; a Render-on-canvas item drops a node and closes
+  the studio, matching today's behaviour.
 - Utilities keep their names: **Roll**, **Import settings**, **Export settings**,
   **Copy config**, **Play/Pause**.
 - Status: **Saving…** / **Saved ✓** / **⚠ {error}**.
 
 ## Non-goals
 
-- No change to *what* any studio renders or to the render/bake pipelines.
+- No change to *what* any studio renders or to the render/bake pipelines — the new
+  `Download PNG` / `Download video` items reuse each studio's existing blob/encoder, only
+  saving to a file instead of uploading; no new renderer or encoder is written.
+- No Vector video export (no encoder exists — separate follow-up).
 - No change to auto-save behaviour (only the redundant Save *button* is removed).
-- No new download formats beyond what each studio already produces (plus the two new
-  canvas paths for Shape/Vector).
 - Not touching the node-card / non-modal surfaces; this is the studio modal footer only.
 
 ## Testing / verification
