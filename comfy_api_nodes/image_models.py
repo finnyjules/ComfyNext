@@ -742,7 +742,7 @@ def _fal_flux_2_tunable(prompt: str, ar: str, seed: int, adv: dict) -> dict:
     # fal-ai/flux-2-flex and fal-ai/flux-2-dev — adds steps + guidance.
     inp = _fal_flux_2_basic(prompt, ar, seed, adv)
     inp["num_inference_steps"] = _opt_int(adv, "steps", 28)
-    inp["guidance_scale"] = float(adv.get("guidance", 3.5))
+    inp["guidance_scale"] = _opt_float(adv, "guidance", 3.5)
     return inp
 
 
