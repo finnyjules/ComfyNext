@@ -45,4 +45,18 @@ describe('opalescent controls — gating', () => {
     expect(shows(doc, obj, 'object.material.roughness')).toBe(true)
     expect(shows(doc, obj, 'object.material.metalness')).toBe(true)
   })
+
+  it('offers the glossy-coat / reflection knobs on an opalescent material', () => {
+    const obj = objWithType('opalescent')
+    expect(shows(doc, obj, 'object.material.clearcoat')).toBe(true)
+    expect(shows(doc, obj, 'object.material.clearcoatRoughness')).toBe(true)
+    expect(shows(doc, obj, 'object.material.envMapIntensity')).toBe(true)
+  })
+
+  it('still offers the coat knobs on standard, and withholds the opal-only sheen/transmission from opal', () => {
+    expect(shows(doc, objWithType('standard'), 'object.material.clearcoat')).toBe(true)
+    // opal is NOT the full physical block — sheen/transmission stay standard+glass only
+    expect(shows(doc, objWithType('opalescent'), 'object.material.transmission')).toBe(false)
+    expect(shows(doc, objWithType('opalescent'), 'object.material.sheen')).toBe(false)
+  })
 })

@@ -3750,7 +3750,11 @@ async function onClose() {
           <StudioSlider v-model="matOpalStrength" label="Rainbow strength" hint="How much rainbow shows over the base colour" :min="0" :max="1" :step="0.01" />
           <StudioSlider v-model="matOpalFlowSpeed" label="Flow speed" hint="Animates the spectrum over time — 0 keeps it still" :min="0" :max="2" :step="0.01" />
           <StudioSlider v-model="matRoughness" label="Roughness" hint="How matte or glossy the surface is" :min="0" :max="1" :step="0.01" />
-          <StudioSlider v-model="matMetalness" label="Metalness" hint="Blends between plastic-like and metal reflections" :min="0" :max="1" :step="0.01" />
+          <StudioSlider v-model="matMetalness" label="Metalness" hint="Blends between plastic-like and metal reflections — high turns the rainbow into chrome" :min="0" :max="1" :step="0.01" />
+          <!-- Finish: matte soap-bubble at clearcoat 0, wet chrome-holo as it rises. -->
+          <StudioSlider v-model="matClearcoat" label="Clearcoat" hint="Adds a thin glossy varnish layer on top — the wet look" :min="0" :max="1" :step="0.01" />
+          <StudioSlider v-model="matClearcoatRoughness" label="Coat roughness" hint="How blurred or sharp that varnish coat looks" :min="0" :max="1" :step="0.01" />
+          <StudioSlider v-model="matEnvMapIntensity" label="Reflection intensity" hint="How strongly reflections from the surroundings show" :min="0" :max="3" :step="0.05" />
         </template>
 
         <!-- image -->

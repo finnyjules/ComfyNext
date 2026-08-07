@@ -763,9 +763,16 @@ export function materialFor(mat: SceneMaterial, geometry?: THREE.BufferGeometry,
         uOpalTime: { value: 0 },
         uFlow: { value: mat.opalFlowSpeed ?? MATERIAL_DEFAULTS.opalFlowSpeed },
       }
-      const o = new THREE.MeshStandardMaterial({
+      // MeshPhysicalMaterial (a superset of Standard — same meshphysical fragment base, so the
+      // emissivemap injection point is identical) so opal can carry a clearcoat + reflection
+      // punch: matte soap-bubble at clearcoat 0, wet chrome-holo as it rises. metalness (already
+      // exposed) makes the rainbow tint the reflections.
+      const o = new THREE.MeshPhysicalMaterial({
         color: stripAlpha(mat.color), roughness: mat.roughness, metalness: mat.metalness,
       })
+      o.clearcoat = mat.clearcoat ?? MATERIAL_DEFAULTS.clearcoat
+      o.clearcoatRoughness = mat.clearcoatRoughness ?? MATERIAL_DEFAULTS.clearcoatRoughness
+      o.envMapIntensity = mat.envMapIntensity ?? MATERIAL_DEFAULTS.envMapIntensity
       o.onBeforeCompile = (shader) => {
         Object.assign(shader.uniforms, opalUniforms)
         shader.fragmentShader = shader.fragmentShader
@@ -992,11 +999,18 @@ export function updateMaterial(m: THREE.Material, mat: SceneMaterial): boolean {
     }
     case 'opalescent': {
       // The spectrum LUT + steering scalars all live in injected uniforms shared by reference
-      // with the compiled program — mutate in place. Colour/roughness/metalness are real
-      // MeshStandardMaterial fields (the lit substrate). uOpalTime is written per-frame by
-      // refreshOpalTime, never here.
-      const o = m as THREE.MeshStandardMaterial
+      // with the compiled program — mutate in place. Colour/roughness/metalness + the physical
+      // coat/reflection are real MeshPhysicalMaterial fields (the lit substrate). uOpalTime is
+      // written per-frame by refreshOpalTime, never here.
+      const o = m as THREE.MeshPhysicalMaterial
       o.color.set(stripAlpha(mat.color)); o.roughness = mat.roughness; o.metalness = mat.metalness
+      // clearcoat crossing zero toggles three's USE_CLEARCOAT define → three self-recompiles,
+      // which re-runs our onBeforeCompile against the SAME opalUniforms objects (held outside the
+      // closure) and re-injects — so the rainbow survives the coat turning on/off. No manual
+      // needsUpdate bump (that would double-recompile at the crossing).
+      o.clearcoat = mat.clearcoat ?? MATERIAL_DEFAULTS.clearcoat
+      o.clearcoatRoughness = mat.clearcoatRoughness ?? MATERIAL_DEFAULTS.clearcoatRoughness
+      o.envMapIntensity = mat.envMapIntensity ?? MATERIAL_DEFAULTS.envMapIntensity
       const u = m.userData.opalUniforms as {
         uRamp: { value: THREE.DataTexture }
         uHueShift: { value: number }; uFrequency: { value: number }; uAngleMix: { value: number }

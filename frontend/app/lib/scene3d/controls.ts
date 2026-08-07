@@ -109,6 +109,13 @@ const hasPbrSurface = (doc: SceneDoc, obj?: SceneObject): boolean => {
 const isOpalMaterial = (doc: SceneDoc, obj?: SceneObject): boolean =>
   isEditableMaterial(doc, obj) && materialTypeOf(obj) === 'opalescent'
 
+// The glossy-coat / reflection knobs (clearcoat, coat roughness, reflection intensity) apply to
+// the physical materials AND to opalescent (now a MeshPhysicalMaterial) — matte soap-bubble at
+// clearcoat 0, wet chrome-holo as it rises. NOT the whole physical block (sheen/transmission/etc
+// stay standard+glass only), just these three.
+const hasReflectiveCoat = (doc: SceneDoc, obj?: SceneObject): boolean =>
+  isPhysicalMaterial(doc, obj) || isOpalMaterial(doc, obj)
+
 // Base `color` reads on standard/glass/phong/toon/fresnel and as the opalescent lit substrate
 // tint; matcap/gradient/image/shaderFill materials each drive colour a different way (matcap id,
 // gradient ramp, uploaded texture, catalog effect) and never read `.color` in the UI.
@@ -157,9 +164,9 @@ export const SCENE_CONTROLS: SceneControl[] = [
 
   // Physical block — standard + glass only.
   slider('object.material.clearcoat', 'Clearcoat', 0, 1, 0.01, 'Material', MATERIAL_DEFAULTS.clearcoat,
-    'Adds a thin glossy varnish layer on top', { when: isPhysicalMaterial }),
+    'Adds a thin glossy varnish layer on top', { when: hasReflectiveCoat }),
   slider('object.material.clearcoatRoughness', 'Coat roughness', 0, 1, 0.01, 'Material', MATERIAL_DEFAULTS.clearcoatRoughness,
-    'How blurred or sharp that varnish coat looks', { when: isPhysicalMaterial }),
+    'How blurred or sharp that varnish coat looks', { when: hasReflectiveCoat }),
   slider('object.material.sheen', 'Sheen', 0, 1, 0.01, 'Material', MATERIAL_DEFAULTS.sheen,
     'Soft fabric-like edge highlight', { when: isPhysicalMaterial }),
   color('object.material.sheenColor', 'Sheen colour', MATERIAL_DEFAULTS.sheenColor, 'Material', { when: isPhysicalMaterial }),
@@ -173,7 +180,7 @@ export const SCENE_CONTROLS: SceneControl[] = [
   slider('object.material.iridescenceIOR', 'Iridescence IOR', 1, 2.33, 0.01, 'Material', MATERIAL_DEFAULTS.iridescenceIOR,
     'Tunes which colours the bubble film shifts to', { when: isPhysicalMaterial }),
   slider('object.material.envMapIntensity', 'Reflection intensity', 0, 3, 0.05, 'Material', MATERIAL_DEFAULTS.envMapIntensity,
-    'How strongly reflections from the surroundings show', { when: isPhysicalMaterial }),
+    'How strongly reflections from the surroundings show', { when: hasReflectiveCoat }),
   slider('object.material.ior', 'IOR', 1, 2.33, 0.01, 'Material', MATERIAL_DEFAULTS.ior,
     'How strongly light bends passing through', { when: isPhysicalMaterial }),
   slider('object.material.transmission', 'Transmission', 0, 1, 0.01, 'Material', MATERIAL_DEFAULTS.transmission,

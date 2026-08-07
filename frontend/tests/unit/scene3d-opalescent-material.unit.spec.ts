@@ -68,6 +68,45 @@ describe('opalescent material — build', () => {
   })
 })
 
+describe('opalescent glossy finish (physical coat + reflection)', () => {
+  it('builds on MeshPhysicalMaterial so a clearcoat is available', () => {
+    const m = materialFor(opal())
+    expect((m as THREE.MeshPhysicalMaterial).isMeshPhysicalMaterial).toBe(true)
+    disposeMaterial(m)
+  })
+
+  it('applies clearcoat / coat roughness / reflection intensity from the doc', () => {
+    const m = materialFor(opal({ clearcoat: 0.8, clearcoatRoughness: 0.15, envMapIntensity: 2.5 })) as THREE.MeshPhysicalMaterial
+    expect(m.clearcoat).toBe(0.8)
+    expect(m.clearcoatRoughness).toBe(0.15)
+    expect(m.envMapIntensity).toBe(2.5)
+    disposeMaterial(m)
+  })
+
+  it('defaults to a matte coat (clearcoat 0) so old opals render unchanged', () => {
+    const m = materialFor(opal()) as THREE.MeshPhysicalMaterial
+    expect(m.clearcoat).toBe(MATERIAL_DEFAULTS.clearcoat) // 0
+    disposeMaterial(m)
+  })
+
+  it('updates the coat/reflection in place', () => {
+    const m = materialFor(opal({ clearcoat: 0 })) as THREE.MeshPhysicalMaterial
+    const ok = updateMaterial(m, opal({ clearcoat: 1, clearcoatRoughness: 0.05, envMapIntensity: 3 }))
+    expect(ok).toBe(true)
+    expect(m.clearcoat).toBe(1)
+    expect(m.clearcoatRoughness).toBe(0.05)
+    expect(m.envMapIntensity).toBe(3)
+    disposeMaterial(m)
+  })
+
+  it('still injects the spectral rainbow on the physical base', () => {
+    const m = materialFor(opal({ clearcoat: 1 }))
+    const shader = compile(m)
+    expect(shader.fragmentShader).toContain('diffuseColor.rgb = mix(')
+    disposeMaterial(m)
+  })
+})
+
 describe('opalescent spectrum default', () => {
   it('falls back to the vivid cyclic default, NOT the grey color→gradientB pair', () => {
     const stops = opalStopsOf({ type: 'opalescent', color: '#9aa3af', roughness: 0.6, metalness: 0 })
