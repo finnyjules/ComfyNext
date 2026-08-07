@@ -30,6 +30,7 @@ const MODELS: Record<string, { slug: string; input: Record<string, unknown> }> =
   'flux-schnell': { slug: MODEL, input: { ...FLUX_EXTRAS, num_inference_steps: 4 } },
   'flux-dev': { slug: 'black-forest-labs/flux-dev', input: { ...FLUX_EXTRAS, num_inference_steps: 28, guidance: 3 } },
   'seedream-4.5': { slug: 'bytedance/seedream-4.5', input: { size: '2K' } }, // live schema: 2K | 4K | custom — no 1K
+  'flux-2-pro': { slug: 'black-forest-labs/flux-2-pro', input: { resolution: '1 MP', output_format: 'png' } },
 }
 
 interface Body {

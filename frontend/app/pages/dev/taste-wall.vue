@@ -392,7 +392,13 @@ async function composeFromBrief(brief: { label: string; text: string }): Promise
 // discipline, generation edition).
 const GEN_SEED = 424242
 const GEN_ASPECT = '16:9' // matches the wall's cell aspect
-const GEN_MODELS = ['flux-schnell', 'flux-dev', 'seedream-4.5'] as const
+const GEN_MODELS = ['flux-schnell', 'flux-dev', 'flux-2-pro', 'seedream-4.5'] as const
+const GEN_MODEL_BLURB: Record<string, string> = {
+  'flux-schnell': 'fast, texture-blind',
+  'flux-dev': 'renders some texture',
+  'flux-2-pro': 'newest BFL — best prompt adherence',
+  'seedream-4.5': 'cinematic; reads hexes literally',
+}
 const genModel = ref<(typeof GEN_MODELS)[number]>('flux-schnell')
 const genPricePerImage = computed(() => IMAGE_MODELS_BY_ID[genModel.value]?.pricePerImage ?? 0.003)
 const GEN_PAIR_PRICE = computed(() => `~$${(genPricePerImage.value * 2).toFixed(3)}`)
@@ -637,7 +643,7 @@ const fmt = (v: number | null | undefined) => (v === null || v === undefined ? '
           <select v-model="genModel" data-gen-model
             style="background:#15151c;color:#ddd;border:1px solid #2a2a35;border-radius:6px;padding:5px;font-size:11px">
             <option v-for="m in GEN_MODELS" :key="m" :value="m">
-              {{ IMAGE_MODELS_BY_ID[m]?.label ?? m }} · ${{ (IMAGE_MODELS_BY_ID[m]?.pricePerImage ?? 0).toFixed(3) }}/img{{ m === 'flux-dev' ? ' · renders texture/grain' : ' · fast, texture-blind' }}
+              {{ IMAGE_MODELS_BY_ID[m]?.label ?? m }} · ${{ (IMAGE_MODELS_BY_ID[m]?.pricePerImage ?? 0).toFixed(3) }}/img · {{ GEN_MODEL_BLURB[m] }}
             </option>
           </select>
         </label>
