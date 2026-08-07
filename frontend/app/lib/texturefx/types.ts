@@ -70,7 +70,7 @@ export type FillsByRole = Record<string, Fill>
 // config object (Params is flat, see ~~/shared/spacetype/state.ts), so unlike
 // Gradient's `cfg.post: PostSettings` field + ensureConfigDefaults backfill,
 // post settings live as flat `post.<key>` entries in Params (added to
-// TEXTURE_CONTROLS by controls.ts's `...postControls({ threeD: false })`, so
+// TEXTURE_CONTROLS by controls.ts's `...postControls({ host: 'gl2d' })`, so
 // textureDefaults()/loadParams()'s `{ ...textureDefaults(), ...cloneParams(p) }`
 // merge already backfills a legacy config's missing post.* keys the same way
 // it backfills any other control default — see TextureStudioSurface.vue's

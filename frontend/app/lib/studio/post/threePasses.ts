@@ -192,7 +192,12 @@ export function applyPostExtras(
   ;(vignette.uniforms.u_resolution!.value as THREE.Vector2).copy(resolution)
 
   duotone.enabled = post.duotone
-  ;(duotone.uniforms.u_shadow!.value as THREE.Vector3).copy(hexToVec3(post.duotoneShadow))
-  ;(duotone.uniforms.u_highlight!.value as THREE.Vector3).copy(hexToVec3(post.duotoneHighlight))
-  duotone.uniforms.u_contrast!.value = post.duotoneMix
+  // Guarded: hexToVec3 allocates a THREE.Color + THREE.Vector3 per call, and Scene3D
+  // calls applyPostExtras every frame — skip the conversion/uniform writes entirely
+  // when duotone is off rather than paying that allocation ~240x/sec for nothing.
+  if (post.duotone) {
+    ;(duotone.uniforms.u_shadow!.value as THREE.Vector3).copy(hexToVec3(post.duotoneShadow))
+    ;(duotone.uniforms.u_highlight!.value as THREE.Vector3).copy(hexToVec3(post.duotoneHighlight))
+    duotone.uniforms.u_contrast!.value = post.duotoneMix
+  }
 }

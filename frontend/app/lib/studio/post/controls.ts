@@ -13,13 +13,13 @@ import { POST_EFFECTS } from './manifest'
  *
  * Keys are FROZEN: persisted Collection bindings are `params.post.<key>`.
  *
- * `opts.threeD` is FORWARD WORK, not a live capability: no shipping host passes
- * it. Scene3D still hand-writes its own 21 post sliders (scene3d/controls.ts),
- * so the `threeD` branch here, `PostEffectDef.threeDOnly`, and the "3D hosts
- * keep `uniform: null` params" rule below are exercised only by tests. They
- * encode the withholding rules a Scene3D migration onto this manifest would
- * need, so that migration doesn't have to rediscover them — read them as a
- * design note, not as something running in the product.
+ * `opts.host` (`'gl2d' | 'three' | 'three-depth'`) is a live capability: both
+ * three.js studios now consume this shared panel — Space Type via `{ host: 'three' }`
+ * and Scene3D via `{ host: 'three-depth' }` (scene3d/controls.ts no longer hand-writes
+ * its own post sliders) — and Texture/Gradient/Shape reach it via `{ host: 'gl2d' }`.
+ * The `host` branch here, `PostEffectDef.threeDOnly`, and the "3D hosts keep
+ * `uniform: null` params" rule below gate which effects and params each host's
+ * panel actually offers.
  *
  * Must stay free of `three` imports — reachable from the Collection control
  * resolver's dynamic import graph (same constraint as scene3d/controls.ts).

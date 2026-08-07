@@ -27,19 +27,14 @@ export const DEFAULT_POST: PostSettings = {
 /**
  * True when ANY post effect is on — the engine renders through the composer only then.
  *
- * KNOWN GAP, deliberately left as-is: this now counts `grain || vignette || duotone`,
- * which the shared 2D chain (~/lib/studio/post/chain.ts) renders but the three-based
- * `PostChain` (./post.ts) has no pass for. Scene3D (scene3d/engine.ts) and Space Type
- * (spacetype/engine.ts) gate their EffectComposer route on this function, so a document
- * with ONLY one of those three set pays a full composer round-trip that adds nothing to
- * the picture. Neither studio's UI can produce such a document today — their panels
- * expose no switch for any of the three — but `parsePost` round-trips the fields, so a
- * hand-edited or imported document can reach it.
- *
- * Not "fixed" by narrowing the predicate: it is the honest answer to "is any post effect
- * on", and the three hosts that DO render those effects (Gradient/Texture/Shape) need it
- * to keep saying yes. The real close is either a pass for the three in ./post.ts or
- * migrating those hosts onto the shared chain — both out of scope where this was found.
+ * Counts all twelve effects, including `grain || vignette || duotone`: as of the
+ * effects-unification work, the three-based `PostChain` (./post.ts, via
+ * threePasses.ts's makeGrainPass/makeVignettePass/makeDuotonePass) has a pass for
+ * all three, and both three.js studios' UIs expose the switches — Space Type
+ * (spacetype/engine.ts) and Scene3D (scene3d/engine.ts, via the shared post panel
+ * from ./controls.ts) alike. Narrowing this predicate to drop any of the twelve
+ * would silently stop those studios from opening the composer for a document that
+ * needs it.
  */
 export function postEnabled(p: PostSettings): boolean {
   return !!(p.bloom || p.color || p.chroma || p.blur || p.film || p.halftone

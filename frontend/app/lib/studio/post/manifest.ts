@@ -25,13 +25,12 @@ export interface PostEffectDef {
   /** Catalog effect id in shader_effects/, or null for effects with no frag
    *  (ambient occlusion renders from depth+normal buffers in EffectComposer). */
   frag: string | null
-  /** Depth/normal-buffer effects. Withheld from every non-3D host.
-   *  FORWARD WORK, not a live capability: nothing ships a 3D host on this
-   *  manifest yet — Scene3D still hand-writes its own 21 post sliders (see
-   *  scene3d/controls.ts). This flag, `postControls({ threeD: true })`'s branch
-   *  and the "3D hosts keep uniform: null params" rule are called only from
-   *  tests, and exist so a future Scene3D migration onto the shared stack has
-   *  the withholding rule already declared here rather than rediscovering it. */
+  /** Depth/normal-buffer effects (currently just ambient occlusion). Withheld
+   *  from every host except `'three-depth'` — Scene3D, which has a depth buffer
+   *  to read (see `postControls({ host: 'three-depth' })` in controls.ts). Both
+   *  three.js studios now consume this shared panel: Space Type as `{ host: 'three' }`,
+   *  Scene3D as `{ host: 'three-depth' }` — Scene3D no longer hand-writes its own
+   *  post sliders. */
   threeDOnly?: boolean
   /** Catalog uniforms pinned to a constant this stack needs but no user control
    *  owns. Applied by chain.ts BETWEEN the catalog-defaults seed and the params
