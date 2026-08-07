@@ -367,6 +367,48 @@ export function parseIdeogramLayers(json: string): IdeogramImport | null {
   return { width: W, height: H, textLayers }
 }
 
+// ── Seedream Layerize import ─────────────────────────────────────────────────
+// Convert the layers_json emitted by SeedreamLayerizeNode into Compositor image
+// layers. Each layer's PNG lives in the input dir (referenced by `filename`);
+// geometry follows the shared convention — x/y are normalized centers, w AND h
+// normalize to WIDTH. A boxless layer (the base) fills the canvas. Ordered
+// bottom→top by z. Schema sample:
+//   { source: "seedream", width, height, layers: [{
+//       filename, z_index, box: [left,top,right,bottom]|null, name, description }] }
+export interface SeedreamImport { width: number; height: number; imageLayers: ImageLayer[] }
+
+/** Convert a SeedreamLayerizeNode `layers_json` into Compositor image layers.
+ *  Each layer's PNG lives in the input dir (referenced by `filename`); geometry
+ *  follows the shared convention — x/y are normalized centers, w AND h normalize
+ *  to WIDTH. A boxless layer (the base) fills the canvas. Ordered bottom→top by z. */
+export function parseSeedreamLayers(json: string): SeedreamImport | null {
+  let root: any
+  try { root = JSON.parse(json) } catch { return null }
+  const W = Number(root?.width), H = Number(root?.height)
+  const raw: any[] = Array.isArray(root?.layers) ? root.layers : []
+  if (!W || !H || !raw.length) return null
+  const sorted = [...raw].sort((a, b) => (Number(a?.z_index) || 0) - (Number(b?.z_index) || 0))
+  const imageLayers: ImageLayer[] = []
+  for (const l of sorted) {
+    const filename = String(l?.filename || '')
+    if (!filename) continue
+    const box = Array.isArray(l?.box) && l.box.length === 4 ? l.box.map(Number) : null
+    let x = 0.5, y = 0.5, w = 1, h = H / W
+    if (box) {
+      const [left, top, right, bottom] = box
+      x = ((left + right) / 2) / W
+      y = ((top + bottom) / 2) / H
+      w = (right - left) / W
+      h = (bottom - top) / W        // width-normalized, per LayerCommon convention
+    }
+    imageLayers.push(createImageLayer(filename, 1, {
+      x, y, w, h, opacity: 1, name: String(l?.name || '') || undefined,
+    }))
+  }
+  if (!imageLayers.length) return null
+  return { width: W, height: H, imageLayers }
+}
+
 // ── Factories ───────────────────────────────────────────────────────────────
 
 export function createTextLayer(partial: Partial<TextLayer> = {}): TextLayer {
