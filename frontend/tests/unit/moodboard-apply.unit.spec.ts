@@ -115,7 +115,8 @@ describe('applyMoodboardToGenerateNode — legible auto-switch (B3)', () => {
     const node = { properties: {} as Record<string, any> }
     const writes = apply(node, { modelId: 'flux-schnell', modelTags: FLUX_TAGS })
 
-    expect(MOODBOARD_DEFAULT_MODEL).toBe('nano-banana-pro')
+    // nano-banana-2 verified live 2026-08-07 — full transfer at ~half pro's price.
+    expect(MOODBOARD_DEFAULT_MODEL).toBe('nano-banana-2')
     expect(writes.model).toBe(MOODBOARD_DEFAULT_MODEL)
     expect(writes.switchedFrom).toBe('flux-schnell')
     expect(node.properties.sailor_moodboard_switched).toBe('flux-schnell')

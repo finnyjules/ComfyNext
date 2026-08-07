@@ -36,8 +36,10 @@ import { IMAGE_MODELS_BY_ID } from '~/data/image-models'
 import type { MoodboardEntry } from '~~/shared/taste/moodboard'
 
 /** The model an apply switches to when the current one can't take refs —
- *  Nano Banana Pro, the reference implementation of the refs ride-along. */
-export const MOODBOARD_DEFAULT_MODEL = 'nano-banana-pro'
+ *  Nano Banana 2, verified live (2026-08-07) to carry full pattern-level
+ *  board transfer at roughly half Nano Banana Pro's price. Pro stays a
+ *  manual pick for renders that warrant it. */
+export const MOODBOARD_DEFAULT_MODEL = 'nano-banana-2'
 
 /** Refs cap — lives in shared/taste/moodboard.ts since Task B5 (the flatten
  *  route enforces the same cap); re-exported so existing importers keep their

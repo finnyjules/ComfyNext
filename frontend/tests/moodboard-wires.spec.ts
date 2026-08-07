@@ -314,7 +314,9 @@ test('moodboard wires: chip apply auto-switch + refs payload → revert → manu
     // The switch: model widget flipped to the moodboard default, previous
     // model recorded in the marker (legible + revertable).
     expect(widgetsValues[widgetDefs.findIndex(d => d.name === 'model')]).toBe(MOODBOARD_DEFAULT_MODEL)
-    expect(MOODBOARD_DEFAULT_MODEL).toBe('nano-banana-pro')
+    // nano-banana-2 verified live 2026-08-07: full pattern-level transfer at
+    // roughly half pro's price, so the cheap tier is the default.
+    expect(MOODBOARD_DEFAULT_MODEL).toBe('nano-banana-2')
     expect(properties.sailor_moodboard_switched).toBe('flux-schnell')
 
     // The refs payload: {folder, files[≤3]} over the seeded board's images.
