@@ -20,6 +20,7 @@ import {
   Pencil,
   Blend,
   Layers,
+  Layers3,
   SquareStack,
   Expand,
   Maximize2,
@@ -74,6 +75,7 @@ export const GENERATOR_NODE_ICONS: Record<string, Component> = {
   RestorePhotoNode:     Wand2,
   FixFacesNode:         Smile,
   LayerizeGraphicNode:  Layers,
+  SeedreamLayerizeNode: Layers3,
   SplitPhotoLayersNode: SquareStack,
   OutpaintImageNode:    Expand,
   RotateCameraNode:     RotateCw,
@@ -145,6 +147,7 @@ export const NODE_MODEL_BRAND: Record<string, string | null> = {
   RestorePhotoNode:     'BFL',                // Flux Kontext · Restore
   FixFacesNode:         null,                 // CodeFormer
   LayerizeGraphicNode:  'Ideogram',           // Ideogram Layerize
+  SeedreamLayerizeNode: 'ByteDance',          // Seedream 5 Pro Layerize
   SplitPhotoLayersNode: null,                 // pipeline: bg-remover + LaMa/Bria Eraser
   OutpaintImageNode:    'BFL',                // default engine is Flux Fill (Bria Expand optional)
 

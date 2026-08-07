@@ -44,6 +44,7 @@ export const ACTION_CATALOG: Record<string, ActionEntry> = {
   ProductShotNode:       { useCase: 'Make a product shot',            model: 'SDXL Ad-Inpaint',                          intent: 'edit' },
   RemoveBackgroundNode:  { useCase: 'Remove background',              model: '851-labs/bg-remover',                      intent: 'edit' },
   LayerizeGraphicNode:   { useCase: 'Layerize a graphic',             model: 'Ideogram Layerize',                        intent: 'edit' },
+  SeedreamLayerizeNode:  { useCase: 'Layerize an image',              model: 'Seedream 5 Pro Layerize',                  intent: 'edit' },
   SplitPhotoLayersNode:  { useCase: 'Split photo into layers',        model: 'BG Remover + LaMa / Bria Eraser',          intent: 'edit' },
   OutpaintImageNode:     { useCase: 'Expand / outpaint an image',     model: 'Flux Fill / Bria Expand',                  intent: 'edit' },
   BlendSceneNode:        { useCase: 'Blend a composite into a scene', model: 'Flux Kontext Pro / Flux 2 Pro / Nano Banana', intent: 'edit' },

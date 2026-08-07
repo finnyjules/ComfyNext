@@ -507,6 +507,7 @@ export const NODE_DESCRIPTIONS: Record<string, string> = {
   'SaveVideo': 'Saves a video to a file on disk in a chosen format.',
   'SaveWEBM': 'Saves a sequence of images as a WebM video file.',
   'ScaleROPE': 'Adjusts the AI model\'s position encoding to handle different image resolutions.',
+  'SeedreamLayerizeNode': 'Splits a finished image into 2-17 independent transparent-PNG raster layers (background plus separate elements), editable as Compositor image layers, using Seedream 5 Pro Layerize.',
   'SelfAttentionGuidance': 'Adjusts the AI model to improve image sharpness and reduce artifacts.',
   'SetClipHooks': 'Configures advanced hooks on the text encoder for custom behavior.',
   'SetFirstSigma': 'Sets the starting noise level for a custom noise schedule.',
