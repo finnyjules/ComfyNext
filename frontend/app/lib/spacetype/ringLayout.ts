@@ -33,3 +33,18 @@ export function ringTransform(i: number, n: number, p: RingParams, t01: number):
   rotY = Math.atan2(Math.sin(rotY), Math.cos(rotY))
   return { x, y: 0, z, rotY, scale: p.cardSize }
 }
+
+export interface BentOffset { tangent: number; inward: number }
+
+/** Map a card point at tangential offset `s` (from the card centre) onto the ring
+ *  arc of radius `R`, at bend factor `bend` (0 flat, 1 fully wrapped). Pure. */
+export function bentOffset(s: number, R: number, bend: number): BentOffset {
+  if (R <= 0) return { tangent: s, inward: 0 }
+  const phi = s / R
+  const tangentArc = R * Math.sin(phi)
+  const inwardArc = R * (1 - Math.cos(phi))
+  return {
+    tangent: s + (tangentArc - s) * bend,
+    inward: inwardArc * bend,
+  }
+}
