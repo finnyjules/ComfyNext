@@ -205,3 +205,56 @@ export function buildLoftGeometry(opts: {
   }
   return { positions, along, indices: new Uint32Array(indices) }
 }
+
+export type LoftShape = 'oval' | 'capsule' | 'rectangle' | 'polygon' | 'star'
+export interface ShapeParams { rectRadius: number; polySides: number; starDepth: number }
+
+/** Perimeter of a rounded rectangle in the box [-1,1]², radius `r` (0..1 of the half-extent). */
+function roundedRectPath(r: number): Vec2[] {
+  const rr = Math.min(1, Math.max(0, r))
+  const out: Vec2[] = []
+  const ARC = 8
+  // corners: (+x+y), (-x+y), (-x-y), (+x-y); centre of each corner arc is inset by rr
+  const corners = [
+    { cx: 1 - rr, cy: 1 - rr, a0: 0 },
+    { cx: -1 + rr, cy: 1 - rr, a0: Math.PI / 2 },
+    { cx: -1 + rr, cy: -1 + rr, a0: Math.PI },
+    { cx: 1 - rr, cy: -1 + rr, a0: (3 * Math.PI) / 2 },
+  ]
+  for (const c of corners) {
+    for (let i = 0; i <= ARC; i++) {
+      const a = c.a0 + (i / ARC) * (Math.PI / 2)
+      out.push({ x: c.cx + Math.cos(a) * rr, y: c.cy + Math.sin(a) * rr })
+    }
+  }
+  return out
+}
+
+export function shapeContour(shape: LoftShape, params: ShapeParams, points: number): Vec2[] {
+  switch (shape) {
+    case 'oval': {
+      const out: Vec2[] = []
+      for (let i = 0; i < points; i++) { const a = (i / points) * Math.PI * 2; out.push({ x: Math.cos(a), y: Math.sin(a) }) }
+      return out
+    }
+    case 'capsule':   // stadium = rounded rect at full corner radius; stretches to a stadium once width/height scale it
+      return resampleContour(roundedRectPath(1), points)
+    case 'rectangle':
+      return resampleContour(roundedRectPath(params.rectRadius), points)
+    case 'polygon':
+    case 'star': {
+      const n = Math.max(3, Math.round(params.polySides))
+      const isStar = shape === 'star'
+      const verts = isStar ? n * 2 : n
+      const inner = isStar ? Math.max(0.05, 1 - Math.min(0.9, Math.max(0, params.starDepth))) : 1
+      const raw: Vec2[] = []
+      for (let i = 0; i < verts; i++) {
+        const a = (i / verts) * Math.PI * 2 - Math.PI / 2
+        const rad = isStar && i % 2 === 1 ? inner : 1
+        raw.push({ x: Math.cos(a) * rad, y: Math.sin(a) * rad })
+      }
+      return resampleContour(raw, points)
+    }
+  }
+}
+
