@@ -182,6 +182,23 @@ export function regionToRect(region: Region, m: GridMetrics): Rect {
   }
 }
 
+/** Overhang variant of `regionToRect`: same arithmetic, no clamping. `col`/`row`
+ * can be ≤ 0 and spans can run past the grid — the element is placed with raw
+ * region math and left for the canvas to clip. Spans still floor at 1 (a
+ * zero/negative span is nonsensical, not an overhang). */
+export function regionToRectRaw(region: Region, m: GridMetrics): Rect {
+  const col = Math.round(region.col)
+  const row = Math.round(region.row)
+  const colSpan = Math.max(1, Math.round(region.colSpan))
+  const rowSpan = Math.max(1, Math.round(region.rowSpan))
+  return {
+    x: m.originX + (col - 1) * (m.cellW + m.gutterX),
+    y: m.originY + (row - 1) * (m.cellH + m.gutterY),
+    w: colSpan * m.cellW + (colSpan - 1) * m.gutterX,
+    h: rowSpan * m.cellH + (rowSpan - 1) * m.gutterY,
+  }
+}
+
 /** Extend a region's rect to the canvas edge on each side its region touches —
  * full-bleed semantics. A region spanning the full grid covers the whole
  * canvas; a half-grid region bleeds on its three outer sides and keeps the

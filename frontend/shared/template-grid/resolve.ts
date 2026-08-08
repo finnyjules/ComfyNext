@@ -4,7 +4,7 @@
 
 import {
   FONT_FLOOR, MIN_VISIBLE, bleedToEdges, classifyFormat, fineGridDims, gridMetrics,
-  regionToRect, remapRegion,
+  regionToRect, regionToRectRaw, remapRegion,
 } from './grid'
 import type { GridMetrics, Rect } from './grid'
 import { defaultClassRegion } from './layouts'
@@ -64,6 +64,16 @@ export interface ResolvedLayout {
 const ZERO_RECT: Rect = { x: 0, y: 0, w: 0, h: 0 }
 const MIN_MARK = 8   // px; marks smaller than this are culled outright
 
+/** Intersection of a rect with the canvas bounds — used to size-check an
+ * `overhang` element's cull decision against what's actually visible, not its
+ * raw (possibly off-canvas) rect. A no-op for any normal (in-grid) rect, since
+ * `regionToRect` already clamps it fully inside the canvas. */
+function intersectCanvas(rect: Rect, formatW: number, formatH: number): Rect {
+  const x0 = Math.max(rect.x, 0), y0 = Math.max(rect.y, 0)
+  const x1 = Math.min(rect.x + rect.w, formatW), y1 = Math.min(rect.y + rect.h, formatH)
+  return { x: x0, y: y0, w: Math.max(0, x1 - x0), h: Math.max(0, y1 - y0) }
+}
+
 /** Shared per-element fit/cull pass given a final pixel rect. The caller owns
  * how `rect` was derived — ungrouped elements use region→rect (with optional
  * `grow` region extension applied first); section children pass a rect already
@@ -86,6 +96,11 @@ function fitElementAtRect(
   // Spreading the ElementV2 union widens it; content is a string on every
   // variant, so the cast back is sound.
   if (co != null) el = { ...el, content: co } as ElementV2
+  // Overhang elements carry a raw (possibly off-canvas) rect — size-based
+  // culling below evaluates the on-canvas INTERSECTION, not the raw rect, so
+  // a partially off-canvas element isn't culled for that alone. A no-op for
+  // any normal (already-clamped) rect: intersection === rect.
+  const vis = intersectCanvas(rect, format.w, format.h)
   if (el.type === 'text') {
     const lineHeight = el.style?.lineHeight ?? 1.1
     const overflow = el.overflow ?? 'shrink-then-truncate'
@@ -94,7 +109,7 @@ function fitElementAtRect(
     // satori render all see the same final string.
     if (el.style?.transform === 'uppercase') content = content.toUpperCase()
     const maxFontSize = typeSize(el.level, template, formatKey, el.style?.fontSize)
-    if (rect.h < FONT_FLOOR * lineHeight) {
+    if (vis.h < FONT_FLOOR * lineHeight) {
       return { el, region, rect, culled: true, cullReason: 'too-small' }
     }
     // An explicit fontSize is the user's exact target — don't auto-shrink it.
@@ -107,12 +122,13 @@ function fitElementAtRect(
   }
 
   if (el.type === 'image' && el.collapse === 'mark') {
+    const visSide = Math.min(vis.w, vis.h)
+    if (visSide < MIN_MARK) return { el, region, rect, culled: true, cullReason: 'too-small' }
     const side = Math.min(rect.w, rect.h)
-    if (side < MIN_MARK) return { el, region, rect, culled: true, cullReason: 'too-small' }
     const markRect = { x: rect.x + (rect.w - side) / 2, y: rect.y + (rect.h - side) / 2, w: side, h: side }
     return { el, region, rect: markRect, culled: false, mark: true }
   }
-  if (rect.w < MIN_VISIBLE || rect.h < MIN_VISIBLE) {
+  if (vis.w < MIN_VISIBLE || vis.h < MIN_VISIBLE) {
     return { el, region, rect, culled: true, cullReason: 'too-small' }
   }
   const outRect = allowBleed && el.bleed ? bleedToEdges(rect, region, m, format.w, format.h) : rect
@@ -187,6 +203,12 @@ export function resolveFormat(
     const explicit = el.overrides?.[oid]?.region ?? el.regionByClass?.[cls]
     if (explicit) {
       regions.set(el.id, explicit)
+    } else if (el.overhang) {
+      // remapRegion clamps col/row/span into the target grid (see its bounds
+      // above) — that would strip the declared off-canvas placement before
+      // it ever reaches regionToRectRaw. Overhang is raw placement math, so
+      // the authored region passes through untouched.
+      regions.set(el.id, el.region)
     } else if (cls === 'strip' || cls === 'skyscraper') {
       regions.set(el.id, defaultClassRegion(el, cls, m, taken))
     } else {
@@ -203,13 +225,18 @@ export function resolveFormat(
     let region = regions.get(el.id) ?? null
     if (!region) return { el, region: null, rect: ZERO_RECT, culled: true, cullReason: 'no-slot' }
 
+    // `overhang` uses raw (unclamped) region math — the canvas clips at
+    // render; culling still applies, based on the on-canvas intersection
+    // (see fitElementAtRect).
+    const toRect = (r: Region): Rect => el.overhang ? regionToRectRaw(r, m) : regionToRect(r, m)
+
     // `grow` extends the region downward until the copy fits (ungrouped only).
     if (el.type === 'text' && (el.overflow ?? 'shrink-then-truncate') === 'grow') {
       const lineHeight = el.style?.lineHeight ?? 1.1
       let content = String(resolveTokens(el.content, props, brand) ?? '')
       if (el.style?.transform === 'uppercase') content = content.toUpperCase()
       const maxFontSize = typeSize(el.level, template, formatKey, el.style?.fontSize)
-      let rect = regionToRect(region, m)
+      let rect = toRect(region)
       const fullFits = () => {
         const lines = wrapLines(content, maxFontSize, rect.w)
         const okLines = el.maxLines == null || lines.length <= el.maxLines
@@ -217,10 +244,10 @@ export function resolveFormat(
       }
       while (!fullFits() && region.row + region.rowSpan - 1 < m.rows) {
         region = { ...region, rowSpan: region.rowSpan + 1 }
-        rect = regionToRect(region, m)
+        rect = toRect(region)
       }
     }
-    return fitElementAtRect(el, region, regionToRect(region, m), ctx, props, brand, true)
+    return fitElementAtRect(el, region, toRect(region), ctx, props, brand, true)
   }
 
   // Resolve one section — a frame box (when styled) drawn behind its children,

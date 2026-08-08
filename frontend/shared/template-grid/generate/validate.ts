@@ -25,6 +25,7 @@ export function validateGenerated(result: StagingResult, cols: number, rows: num
   const reasons: string[] = []
   const els = result.elements
   for (const e of els) {
+    if (e.overhang) continue   // declared escape — off-grid is the point
     const { col, colSpan, row, rowSpan } = e.region
     if (col < 1 || row < 1 || col + colSpan - 1 > cols || row + rowSpan - 1 > rows) {
       reasons.push(`off-grid: ${e.id}`)

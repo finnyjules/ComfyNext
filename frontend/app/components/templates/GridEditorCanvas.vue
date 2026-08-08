@@ -915,6 +915,7 @@ function onSectionHandlePointerUp(e: PointerEvent) {
       :style="{
         width: format.w + 'px',
         height: format.h + 'px',
+        overflow: 'hidden',
         transform: `scale(${scale})`,
         transformOrigin: 'center',
         cursor: frameDrawArmed ? 'crosshair' : undefined,

@@ -20,6 +20,12 @@ describe('validateGenerated', () => {
     expect(r.ok).toBe(false)
     expect(r.reasons.join(' ')).toMatch(/off-grid/)
   })
+  it('passes an off-grid region when overhang is declared', () => {
+    const els = [{ ...t('a', 'display', { col: 10, colSpan: 6, row: 1, rowSpan: 2 }), overhang: true }]
+    const r = validateGenerated({ elements: els }, 12, 16)
+    expect(r.ok).toBe(true)
+    expect(r.reasons.join(' ')).not.toMatch(/off-grid/)
+  })
   it('fails when more than three type sizes are used', () => {
     const els = [
       t('a', 'display', { col: 1, colSpan: 12, row: 1, rowSpan: 2 }),

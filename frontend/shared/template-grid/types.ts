@@ -119,6 +119,13 @@ export interface ElementV2Base {
    *  outer sides, keeps the grid line on the inner side. Ignores safe
    *  areas — for backgrounds that should fill behind platform UI chrome. */
   bleed?: boolean
+  /** Bleed's aggressive sibling: place this element with RAW (unclamped)
+   *  region math instead of the grid-clamped default — a region can start
+   *  at col ≤ 0 or span past the grid, cropping off the canvas edge (a Swiss
+   *  overhang). The canvas clips at render (editor artboard + Satori root);
+   *  the element is only culled when its on-canvas intersection is empty or
+   *  too small, never for being partially off-canvas. */
+  overhang?: boolean
   /** Consulted only when this element is a Stack child. */
   layoutSizing?: { main: SizeMode; cross: SizeMode }
   /** Whether this element was placed by a staging (regenerated on re-roll) or
