@@ -6,7 +6,6 @@ import {
   buildLoftGeometry, buildRamp, shapeContour, rampFromFill, buildSlicedLoftGeometry,
   type Vec2, type LoftShape,
 } from '../loftGeometry'
-import { defaultFillsFor } from '../palette'
 import { textOutline, fontCacheGet, fontSourceUrl, type Font } from '~/lib/scene3d/outlines'
 
 /**
@@ -41,7 +40,10 @@ const controls: ControlSpec[] = [
   { key: 'fillOpacity', label: 'Fill opacity', kind: 'slider', min: 0.05, max: 1, step: 0.05, default: 1, group: 'Style', showIf: { key: 'render', equals: 'fill' } },
   { key: 'mode', label: 'Space', kind: 'select', options: ['3d', 'flat'], default: '3d', group: 'Style' },
   { key: 'colorSource', label: 'Colour source', kind: 'select', options: ['fill', 'stops'], default: 'fill', group: 'Color' },
-  { key: 'fills', label: 'Fill', kind: 'fillList', default: defaultFillsFor(1, 'loft'), group: 'Color', showIf: { key: 'colorSource', equals: 'fill' } },
+  // Default to an ombre (smooth A→B) fill so a fresh loft shows a gradient along the sweep,
+  // matching the "oval + gradient" default choice — the shared palette has no 'gradient' type,
+  // and rampFromFill maps ombre A→B the same way.
+  { key: 'fills', label: 'Fill', kind: 'fillList', default: JSON.stringify([{ type: 'ombre', a: '#3b5bff', b: '#ff2ea6', textColor: '#ffffff', angle: 90, density: 8 }]), group: 'Color', showIf: { key: 'colorSource', equals: 'fill' } },
   { key: 'flow', label: 'Flow', kind: 'slider', min: 0, max: 4, step: 1, default: 0, group: 'Motion' },
   { key: 'spin', label: 'Spin', kind: 'slider', min: 0, max: 4, step: 1, default: 0, group: 'Motion' },
   { key: 'scale', label: 'Scale', kind: 'slider', min: 0.4, max: 2.5, step: 0.05, default: 1, group: 'Transform' },
