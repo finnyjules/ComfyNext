@@ -1079,8 +1079,12 @@ export function useGridEditor(
   }
 
   function asV3(): TemplateV3 { convertToV3(); return template.value as TemplateV3 }
-  // Image wiring lands in Task 15 — for now the generation context is just brand.
-  function genCtx() { return { brand: effectiveBrand.value as unknown as BrandKit } }
+  // The first wired image (if any) threads into image-surface generation
+  // (duotone-photo) so it has a source to work with.
+  function genCtx() {
+    const img = (sampleProps.value?.image_layer_1 as string | undefined) || undefined
+    return { brand: effectiveBrand.value as unknown as BrandKit, image: img }
+  }
 
   function shuffleLayout() { commit(shuffle(asV3(), genCtx())) }
   function surpriseLayout() { commit(surprise(asV3(), genCtx())) }

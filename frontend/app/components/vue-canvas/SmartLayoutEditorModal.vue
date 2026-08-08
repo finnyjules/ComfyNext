@@ -13,8 +13,10 @@ import type { ComputedRef } from 'vue'
 import type { AnyTemplate, Template } from '~~/server/templates/schema'
 import type { BrandKit } from '~~/shared/brand/types'
 import { autopopulateV2 } from '~~/shared/template-grid/autopopulate'
+import { autopopulateTiers } from '~~/shared/template-grid/generate/tiers'
+import { generate } from '~~/shared/template-grid/generate/generate'
 import { makeStarterTemplate } from '~~/shared/template-grid/starter'
-import type { TemplateV2 } from '~~/shared/template-grid/types'
+import type { TemplateV2, TemplateV3 } from '~~/shared/template-grid/types'
 import { BINDINGS_PROP, COLLECTION_PROP, VARS_TYPE } from '~/lib/collection/types'
 import type { CollectionData, VarBindings } from '~/lib/collection/types'
 import { resolveBindings, splitResolvedValues } from '~/lib/collection/resolve'
@@ -83,6 +85,21 @@ onMounted(() => {
     // still gets placed). autopopulateV2 skips sockets already referenced, so
     // this is safe to run whether the layout is empty or full.
     autopopulateV2(layout as TemplateV2, initialProps.value)
+
+    // Generation: if the layout has no staged elements yet, seed tiers from the
+    // wired sockets and lay out one composition so the editor opens on a real
+    // poster rather than a blank grid.
+    const v3 = layout as unknown as TemplateV3
+    const hasStaged = (v3.elements ?? []).some(e => e.origin === 'staging')
+    if (!hasStaged && !v3.tiers) {
+      v3.tiers = autopopulateTiers(initialProps.value)
+      if (Object.keys(v3.tiers).length > 0) {
+        const seeded = generate({ ...v3, version: 3, sections: v3.sections ?? [] },
+          { staging: 'tower', surface: 'flat', seed: 1, brand: initialBrand.value as any })
+        Object.assign(layout, seeded)
+      }
+    }
+
     initial.value = layout
     jsonDraft.value = JSON.stringify(layout, null, 2)
     return

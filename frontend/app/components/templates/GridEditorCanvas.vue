@@ -985,6 +985,7 @@ function onSectionHandlePointerUp(e: PointerEvent) {
       </div>
       <div
         v-else
+        :data-el-id="r.el.id"
         :style="[rectStyle(r), clipStyle(r), { cursor: repositionId === r.el.id ? 'grab' : r.el.locked ? 'default' : 'move' }]"
         class="group"
         :class="repositionId === r.el.id
