@@ -36,6 +36,7 @@ const controls: ControlSpec[] = [
   { key: 'font', label: 'Font', kind: 'font', default: 'google:Archivo Black@700', group: 'Style', showIf: { key: 'shape', equals: 'word' } },
   { key: 'render', label: 'Render', kind: 'select', options: ['stroke', 'fill'], default: 'fill', group: 'Style' },
   { key: 'strokeOpacity', label: 'Stroke opacity', kind: 'slider', min: 0.02, max: 1, step: 0.02, default: 0.4, group: 'Style', showIf: { key: 'render', equals: 'stroke' } },
+  { key: 'strokeWidth', label: 'Stroke width', kind: 'slider', min: 0.005, max: 0.3, step: 0.005, default: 0.04, group: 'Style', showIf: { key: 'render', equals: 'stroke' } },
   { key: 'fillOpacity', label: 'Fill opacity', kind: 'slider', min: 0.05, max: 1, step: 0.05, default: 1, group: 'Style', showIf: { key: 'render', equals: 'fill' } },
   { key: 'mode', label: 'Space', kind: 'select', options: ['3d', 'flat'], default: '3d', group: 'Style' },
   { key: 'colorSource', label: 'Colour source', kind: 'select', options: ['fill', 'stops'], default: 'fill', group: 'Color' },
@@ -176,9 +177,10 @@ export const loftEffect: SpaceTypeEffect = {
     const cap = shape !== 'word'
     // Copies now drives both densities: continuous surface resolution (K, above) when spacing is
     // 0, and ring count when spacing > 0 — one slider, no separate Elements control.
+    const strokeWidth = n(params, 'strokeWidth')
     const geo = spacing > 0
-      ? buildSlicedLoftGeometry({ stations, props, baseContours, closed, render, elements: Math.max(2, Math.round(n(params, 'copies'))), spacing, cap })
-      : buildLoftGeometry({ stations, props, baseContours, closed, render, cap })
+      ? buildSlicedLoftGeometry({ stations, props, baseContours, closed, render, elements: Math.max(2, Math.round(n(params, 'copies'))), spacing, cap, strokeWidth })
+      : buildLoftGeometry({ stations, props, baseContours, closed, render, cap, strokeWidth })
 
     const g = new three.BufferGeometry()
     g.setAttribute('position', new three.BufferAttribute(geo.positions, 3))
@@ -200,7 +202,9 @@ export const loftEffect: SpaceTypeEffect = {
       side: three.DoubleSide,
     })
 
-    const obj = render === 'stroke' ? new three.LineSegments(g, mat) : new three.Mesh(g, mat)
+    // Both modes are triangle meshes now — stroke renders as a ribbon (real adjustable width;
+    // WebGL ignores gl_LineWidth) rather than GL LineSegments.
+    const obj = new three.Mesh(g, mat)
     obj.frustumCulled = false
     root.add(obj)
     root.userData.tex = ramp

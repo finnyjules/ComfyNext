@@ -125,6 +125,42 @@ export function resampleContour(pts: Vec2[], points: number): Vec2[] {
 
 export interface LoftGeometry { positions: Float32Array; along: Float32Array; indices: Uint32Array }
 
+/** Expand a closed 2D contour (already width/height-scaled + rolled, in the station's
+ *  normal/binormal plane) into inner/outer edge points offset by ±halfWidth along each
+ *  point's in-plane normal (perpendicular to the local outline direction). Returns 2·P
+ *  points as [inner0, outer0, inner1, outer1, …]. Corner artifacts at very sharp concave
+ *  vertices are accepted for v1. */
+function ribbonEdges(pts2d: Vec2[], halfWidth: number): Vec2[] {
+  const P = pts2d.length, out: Vec2[] = []
+  for (let k = 0; k < P; k++) {
+    const prev = pts2d[(k - 1 + P) % P]!, next = pts2d[(k + 1) % P]!
+    const dx = next.x - prev.x, dy = next.y - prev.y
+    const len = Math.hypot(dx, dy) || 1
+    const nx = -dy / len, ny = dx / len                   // in-plane normal
+    const p = pts2d[k]!
+    out.push({ x: p.x - nx * halfWidth, y: p.y - ny * halfWidth })   // inner
+    out.push({ x: p.x + nx * halfWidth, y: p.y + ny * halfWidth })   // outer
+  }
+  return out
+}
+
+/** Scaled+rolled 2D contour point for cross-section vertex `v` at a station's props — the
+ *  same lx/ly + roll math the fill/cap ring loop uses, factored so the stroke ribbon path
+ *  can share it. */
+function rolledPoint2D(v: Vec2, pr: StopProps, cr: number, sr: number): Vec2 {
+  const lx = v.x * pr.width, ly = v.y * pr.height
+  return { x: lx * cr - ly * sr, y: lx * sr + ly * cr }
+}
+
+/** Place a 2D point (in the station's normal/binormal plane) into 3D world space. */
+function place2D(st: Station, q: Vec2): Vec3 {
+  return {
+    x: st.pos.x + q.x * st.normal.x + q.y * st.binormal.x,
+    y: st.pos.y + q.x * st.normal.y + q.y * st.binormal.y,
+    z: st.pos.z + q.x * st.normal.z + q.y * st.binormal.z,
+  }
+}
+
 export function buildLoftGeometry(opts: {
   stations: Station[]
   props: StopProps[]
@@ -132,11 +168,51 @@ export function buildLoftGeometry(opts: {
   closed: boolean
   render: 'stroke' | 'fill'
   cap?: boolean
+  strokeWidth?: number
 }): LoftGeometry {
   const { stations, props, baseContours, closed, render } = opts
   const K = stations.length
   const C = baseContours.length
   const P = C > 0 ? baseContours[0]!.length : 0
+  const strokeWidth = opts.strokeWidth ?? 0
+
+  if (render === 'stroke' && strokeWidth > 0) {
+    // Ribbon: 2 vertices (inner, outer) per contour point per ring.
+    const positions = new Float32Array(K * C * P * 2 * 3)
+    const along = new Float32Array(K * C * P * 2)
+    const ridx = (i: number, c: number, p: number, side: 0 | 1) => (((i * C + c) * P + p) * 2 + side)
+    const halfWidth = strokeWidth / 2
+    for (let i = 0; i < K; i++) {
+      const st = stations[i]!, pr = props[i]!
+      const cr = Math.cos((pr.roll * Math.PI) / 180), sr = Math.sin((pr.roll * Math.PI) / 180)
+      for (let c = 0; c < C; c++) {
+        const contour = baseContours[c]!
+        const pts2d = contour.map(v => rolledPoint2D(v, pr, cr, sr))
+        const edges = ribbonEdges(pts2d, halfWidth)   // [inner0, outer0, inner1, outer1, ...]
+        for (let p = 0; p < P; p++) {
+          const inner = edges[p * 2]!, outer = edges[p * 2 + 1]!
+          const wIn = place2D(st, inner), wOut = place2D(st, outer)
+          const oi = ridx(i, c, p, 0), oo = ridx(i, c, p, 1)
+          positions[oi * 3] = wIn.x; positions[oi * 3 + 1] = wIn.y; positions[oi * 3 + 2] = wIn.z
+          positions[oo * 3] = wOut.x; positions[oo * 3 + 1] = wOut.y; positions[oo * 3 + 2] = wOut.z
+          along[oi] = st.t; along[oo] = st.t
+        }
+      }
+    }
+    const indices: number[] = []
+    for (let i = 0; i < K; i++) {
+      for (let c = 0; c < C; c++) {
+        for (let p = 0; p < P; p++) {
+          const np = (p + 1) % P
+          const a = ridx(i, c, p, 0), b = ridx(i, c, p, 1), d = ridx(i, c, np, 0), e = ridx(i, c, np, 1)
+          // quad (inner_k, outer_k, outer_{k+1}, inner_{k+1}) → two triangles
+          indices.push(a, b, e, a, e, d)
+        }
+      }
+    }
+    return { positions, along, indices: new Uint32Array(indices) }
+  }
+
   const positions = new Float32Array(K * C * P * 3)
   const along = new Float32Array(K * C * P)
   const idx = (i: number, c: number, p: number) => (i * C + c) * P + p
@@ -148,13 +224,10 @@ export function buildLoftGeometry(opts: {
       const contour = baseContours[c]!
       for (let p = 0; p < P; p++) {
         const v = contour[p]!
-        let lx = v.x * pr.width, ly = v.y * pr.height
-        const rx = lx * cr - ly * sr, ry = lx * sr + ly * cr        // roll about tangent
-        const wx = st.pos.x + rx * st.normal.x + ry * st.binormal.x
-        const wy = st.pos.y + rx * st.normal.y + ry * st.binormal.y
-        const wz = st.pos.z + rx * st.normal.z + ry * st.binormal.z
+        const q = rolledPoint2D(v, pr, cr, sr)
+        const w = place2D(st, q)
         const o = idx(i, c, p)
-        positions[o * 3] = wx; positions[o * 3 + 1] = wy; positions[o * 3 + 2] = wz
+        positions[o * 3] = w.x; positions[o * 3 + 1] = w.y; positions[o * 3 + 2] = w.z
         along[o] = st.t
       }
     }
@@ -265,7 +338,7 @@ export function shapeContour(shape: LoftShape, params: ShapeParams, points: numb
 export function buildSlicedLoftGeometry(opts: {
   stations: Station[]; props: StopProps[]; baseContours: Vec2[][]
   closed: boolean; render: 'stroke' | 'fill'; elements: number; spacing: number
-  cap?: boolean
+  cap?: boolean; strokeWidth?: number
 }): LoftGeometry {
   const { stations, props, baseContours, render, elements, spacing } = opts
   const K = stations.length
@@ -274,10 +347,7 @@ export function buildSlicedLoftGeometry(opts: {
   const E = Math.max(1, Math.round(elements))
   const gap = Math.min(0.95, Math.max(0, spacing))
   const half = 0.5 * (1 - gap) / E
-  const ringsPerBand = render === 'fill' ? 2 : 1
-  const nVerts = E * ringsPerBand * C * P
-  const positions = new Float32Array(nVerts * 3)
-  const along = new Float32Array(nVerts)
+  const strokeWidth = opts.strokeWidth ?? 0
   // Interpolate (not round) so two rings whose t's straddle a single station index still land at
   // distinct 3D positions — rounding collapses a band to zero thickness once `elements` reaches
   // the station count (K), since both t's then round to the same nearest station.
@@ -299,6 +369,43 @@ export function buildSlicedLoftGeometry(opts: {
     const pa = props[i]!, pb = props[j]!
     return { width: pa.width + (pb.width - pa.width) * a, height: pa.height + (pb.height - pa.height) * a, roll: pa.roll + (pb.roll - pa.roll) * a }
   }
+
+  if (render === 'stroke' && strokeWidth > 0) {
+    // Ribbon: one ring per band (as line mode), 2 vertices (inner, outer) per contour point.
+    const halfWidth = strokeWidth / 2
+    const positions = new Float32Array(E * C * P * 2 * 3)
+    const along = new Float32Array(E * C * P * 2)
+    const ridx = (band: number, c: number, p: number, side: 0 | 1) => (((band * C + c) * P + p) * 2 + side)
+    for (let i = 0; i < E; i++) {
+      const tc = (i + 0.5) / E
+      const st = stationAt(tc), pr = propsAt(tc)
+      const cr = Math.cos((pr.roll * Math.PI) / 180), sr = Math.sin((pr.roll * Math.PI) / 180)
+      for (let c = 0; c < C; c++) {
+        const pts2d = baseContours[c]!.map(v => rolledPoint2D(v, pr, cr, sr))
+        const edges = ribbonEdges(pts2d, halfWidth)
+        for (let p = 0; p < P; p++) {
+          const inner = edges[p * 2]!, outer = edges[p * 2 + 1]!
+          const wIn = place2D(st, inner), wOut = place2D(st, outer)
+          const oi = ridx(i, c, p, 0), oo = ridx(i, c, p, 1)
+          positions[oi * 3] = wIn.x; positions[oi * 3 + 1] = wIn.y; positions[oi * 3 + 2] = wIn.z
+          positions[oo * 3] = wOut.x; positions[oo * 3 + 1] = wOut.y; positions[oo * 3 + 2] = wOut.z
+          along[oi] = tc; along[oo] = tc
+        }
+      }
+    }
+    const indices: number[] = []
+    for (let i = 0; i < E; i++) for (let c = 0; c < C; c++) for (let p = 0; p < P; p++) {
+      const np = (p + 1) % P
+      const a = ridx(i, c, p, 0), b = ridx(i, c, p, 1), d = ridx(i, c, np, 0), e = ridx(i, c, np, 1)
+      indices.push(a, b, e, a, e, d)
+    }
+    return { positions, along, indices: new Uint32Array(indices) }
+  }
+
+  const ringsPerBand = render === 'fill' ? 2 : 1
+  const nVerts = E * ringsPerBand * C * P
+  const positions = new Float32Array(nVerts * 3)
+  const along = new Float32Array(nVerts)
   let vo = 0
   for (let i = 0; i < E; i++) {
     const tc = (i + 0.5) / E

@@ -20,13 +20,13 @@ describe('loftEffect', () => {
     expect(drawable).toBeGreaterThan(0)
     expect(root.userData.loftState).toBeTruthy()
   })
-  it('stroke kind builds LineSegments', () => {
+  it('stroke kind builds a Mesh (ribbon geometry — WebGL ignores GL line width)', () => {
     const params = dfc(loftEffect.controls)
     params.render = 'stroke'
     const root = loftEffect.buildScene(THREE as any, params, new THREE.Texture(), { width: 800, height: 800 })
-    let lines = 0
-    root.traverse(o => { if ((o as any).isLineSegments) lines++ })
-    expect(lines).toBeGreaterThan(0)
+    let meshes = 0
+    root.traverse(o => { if ((o as any).isMesh) meshes++ })
+    expect(meshes).toBeGreaterThan(0)
   })
   it('update(spin>0) rotates without throwing', () => {
     const params = dfc(loftEffect.controls)

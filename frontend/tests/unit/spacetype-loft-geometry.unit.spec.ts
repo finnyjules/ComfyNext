@@ -229,3 +229,30 @@ describe('cross-section caps (fill)', () => {
     expect(b.positions.length).toBe(a.positions.length)
   })
 })
+
+describe('stroke ribbons (width)', () => {
+  const P = 10
+  const stopsFix = [
+    { id:'a', x:0, y:0.5, z:0, width:1, height:1, roll:0, color:'#000000' },
+    { id:'b', x:1, y:0.5, z:0, width:1, height:1, roll:0, color:'#ffffff' },
+  ]
+  const contour = shapeContour('oval', { rectRadius:0.5, polySides:5, starDepth:0.5 }, P)
+  const st = sampleSpine(stopsFix as any, false, 8)
+  const props = st.map(() => ({ width:1, height:1, roll:0 }))
+
+  it('strokeWidth>0 emits a ribbon: 2x vertices and triangle indices (6 per contour edge)', () => {
+    const g = buildLoftGeometry({ stations: st, props, baseContours:[contour], closed:false, render:'stroke', strokeWidth:0.06 })
+    expect(g.positions.length).toBe(8 * 1 * P * 2 * 3)        // 2x verts (inner+outer)
+    expect(g.indices.length).toBe(8 * 1 * P * 6)              // 2 tris per edge * 3
+  })
+  it('inner and outer edges are offset apart (ribbon has width)', () => {
+    const g = buildLoftGeometry({ stations: st, props, baseContours:[contour], closed:false, render:'stroke', strokeWidth:0.1 })
+    // vertex 0 (inner p0) vs vertex 1 (outer p0) should differ by ~strokeWidth
+    const d = Math.hypot(g.positions[0]-g.positions[3], g.positions[1]-g.positions[4], g.positions[2]-g.positions[5])
+    expect(d).toBeGreaterThan(0.05); expect(d).toBeLessThan(0.2)
+  })
+  it('strokeWidth 0 keeps line-segment output (back-compat)', () => {
+    const g = buildLoftGeometry({ stations: st, props, baseContours:[contour], closed:false, render:'stroke', strokeWidth:0 })
+    expect(g.indices.length).toBe(8 * 1 * P * 2)             // line-segment pairs
+  })
+})
