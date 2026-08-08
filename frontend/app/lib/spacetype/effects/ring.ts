@@ -5,6 +5,7 @@ import { ringTransform, bentOffset, type RingParams } from '../ringLayout'
 import { layoutChars, type CharLayout } from '../charLayout'
 import { resolveFontFamily, fontHasWeightAxis } from '~/lib/font/resolveFamily'
 import { fillShaderTexture, fillIsTextured, fillTiling, fillPrimary, normalizeFill, type Fill } from '../fills'
+import { fillIsShader } from '../fillTile'
 
 /**
  * RING — the Expressive Studio keystone effect: photos and words ride one
@@ -189,19 +190,30 @@ export const ringEffect: SpaceTypeEffect = {
     // paints THROUGH it as `map` (textured fill) or a tinted `color` (solid fill) below.
     // `wordFillMap` is left null for a solid fill (fillShaderTexture/canvas work is
     // skipped entirely — no cost, and no `document` dependency, when every ring doc's
-    // word fill is the solid default). Cloned + given its own `.repeat` (like cylinder's
-    // pattern-fill clone) so this build's tiling doesn't mutate the shared module cache;
-    // registered on `root.userData.tex` for disposeRoot() to free on rebuild — the SAME
-    // texture is reused by every word/letter mesh below, so it's registered ONCE here,
-    // not per-mesh (that would double-dispose).
+    // word fill is the solid default). A SHADER fill's texture is ANIMATED — fills.ts's
+    // `refreshLiveShaderFills` mutates that exact cached Texture's `.image`/`.needsUpdate`
+    // in place every frame, so it must be sampled live (NOT cloned, which would freeze it
+    // on whatever frame existed at clone time) and must NOT be registered on
+    // `root.userData.tex` (the shader-fill cache owns its disposal for the engine's whole
+    // lifetime, not this one root/rebuild) — mirrors cylinder.ts:146-159. Any other
+    // textured fill (gradient/ombre/grid/noise) is static, so it's cloned + given its own
+    // `.repeat` (like cylinder's pattern-fill clone) so this build's tiling doesn't mutate
+    // the shared module cache; registered on `root.userData.tex` for disposeRoot() to free
+    // on rebuild — the SAME texture is reused by every word/letter mesh below, so it's
+    // registered ONCE here, not per-mesh (that would double-dispose) — mirrors
+    // cylinder.ts:160-169.
     const wf = resolveWordFill(params)
     const wfTextured = fillIsTextured(wf)
     let wordFillMap: THREE.Texture | null = null
     if (wfTextured) {
-      wordFillMap = fillShaderTexture(three, wf).clone()
-      wordFillMap.needsUpdate = true
-      wordFillMap.repeat.set(fillTiling(wf), fillTiling(wf))
-      root.userData.tex = wordFillMap
+      if (fillIsShader(wf)) {
+        wordFillMap = fillShaderTexture(three, wf)
+      } else {
+        wordFillMap = fillShaderTexture(three, wf).clone()
+        wordFillMap.needsUpdate = true
+        wordFillMap.repeat.set(fillTiling(wf), fillTiling(wf))
+        root.userData.tex = wordFillMap
+      }
     }
 
     for (const tile of tiles) {
