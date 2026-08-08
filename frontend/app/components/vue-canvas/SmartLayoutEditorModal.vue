@@ -14,7 +14,7 @@ import type { AnyTemplate, Template } from '~~/server/templates/schema'
 import type { BrandKit } from '~~/shared/brand/types'
 import { autopopulateV2 } from '~~/shared/template-grid/autopopulate'
 import { autopopulateTiers, omitConsumedProps } from '~~/shared/template-grid/generate/tiers'
-import { generate } from '~~/shared/template-grid/generate/generate'
+import { generate, migrateGen } from '~~/shared/template-grid/generate/generate'
 import { makeStarterTemplate } from '~~/shared/template-grid/starter'
 import type { TemplateV2, TemplateV3 } from '~~/shared/template-grid/types'
 import { BINDINGS_PROP, COLLECTION_PROP, VARS_TYPE } from '~/lib/collection/types'
@@ -81,6 +81,10 @@ onMounted(() => {
   const version = (layout as any).version
   if (version === 2 || version === 3) {
     const v3 = layout as unknown as TemplateV3
+    // Round-1 templates persisted `gen.surface`; migrate on open so the
+    // editor's theme UI (and any shuffle/surprise before a fresh re-roll)
+    // reads `gen.theme` immediately instead of waiting for the next re-roll.
+    if (v3.gen) v3.gen = migrateGen(v3.gen)
     const hasStaged = (v3.elements ?? []).some(e => e.origin === 'staging')
 
     // "Fresh" = a just-created starter with no hand-authored content yet: no
@@ -98,6 +102,13 @@ onMounted(() => {
       && !hasStaged && !v3.tiers
 
     if (isFresh) {
+      // A fresh layout starts with the starter's default (looser) margin —
+      // tighten it to a poster-like 3% of the master's short side. Fresh-path
+      // only: reopening an existing (already-authored) layout never touches
+      // a margin the user may have hand-tuned.
+      const masterFmt = v3.formats[v3.master]
+      if (masterFmt) v3.grid.margin = Math.round(0.03 * Math.min(masterFmt.w, masterFmt.h))
+
       // Generation: seed tiers from the wired text sockets and lay out one
       // composition so the editor opens on a real poster rather than a blank
       // grid.
@@ -105,7 +116,7 @@ onMounted(() => {
       if (Object.keys(tiers).length > 0) {
         v3.tiers = tiers
         const seeded = generate({ ...v3, version: 3, sections: v3.sections ?? [] },
-          { staging: 'tower', surface: 'flat', seed: 1, brand: initialBrand.value as any })
+          { staging: 'tower', theme: 'paper', seed: 1, brand: initialBrand.value as any })
         Object.assign(layout, seeded)
       }
       // Any socket NOT consumed by tiers (wired images, or extra text layers

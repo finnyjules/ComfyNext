@@ -1058,7 +1058,7 @@ export function useGridEditor(
     // Clipping is opt-in (inspector toggle) so grouped children never vanish.
   }
 
-  // -- Generation (staging × surface) -----------------------------------------
+  // -- Generation (staging × theme) --------------------------------------------
   // Deterministic re-generation from the axis tuple (Tasks 1–10's pure engine).
   // Every action commits its own history step immediately — `commit()` mirrors
   // the brief's `commit(next)` helper by assigning `template` then forcing an
@@ -1069,12 +1069,12 @@ export function useGridEditor(
   const editorMode = ref<'layout' | 'freeform'>('layout')
 
   const genStaging = computed(() => (template.value as TemplateV3).gen?.staging ?? 'tower')
-  const genSurface = computed(() => (template.value as TemplateV3).gen?.surface ?? 'flat')
+  const genTheme = computed(() => (template.value as TemplateV3).gen?.theme ?? 'paper')
   const genSeed = computed(() => (template.value as TemplateV3).gen?.seed ?? 1)
   const genLocks = computed(() => (template.value as TemplateV3).gen?.locks ?? {})
-  // Whether a `needsImage` surface (e.g. duotone-photo) has a source to work
-  // with — mirrors genCtx()'s image lookup so the surface chip list and
-  // generate.ts's surprise() pool agree on which surfaces are selectable.
+  // Whether a wired image is available — no longer gates generation (themes
+  // don't need one; that concept died with duotone-photo) but still useful
+  // for other image-dependent affordances.
   const hasGenImage = computed(() => Boolean(sampleProps.value?.image_layer_1))
 
   function commit(next: TemplateV3) {
@@ -1084,8 +1084,8 @@ export function useGridEditor(
   }
 
   function asV3(): TemplateV3 { convertToV3(); return template.value as TemplateV3 }
-  // The first wired image (if any) threads into image-surface generation
-  // (duotone-photo) so it has a source to work with.
+  // The first wired image (if any) threads through genCtx() for callers that
+  // still need it; theme generation itself no longer consults it.
   function genCtx() {
     const img = (sampleProps.value?.image_layer_1 as string | undefined) || undefined
     return { brand: effectiveBrand.value as unknown as BrandKit, image: img }
@@ -1096,17 +1096,17 @@ export function useGridEditor(
 
   function setStaging(id: string) {
     const t = asV3()
-    commit(generate(t, { staging: id, surface: t.gen?.surface ?? 'flat', seed: t.gen?.seed ?? 1, ...genCtx() }))
+    commit(generate(t, { staging: id, theme: t.gen?.theme ?? 'paper', seed: t.gen?.seed ?? 1, ...genCtx() }))
   }
-  function setSurface(id: string) {
+  function setTheme(id: string) {
     const t = asV3()
-    commit(generate(t, { staging: t.gen?.staging ?? 'tower', surface: id, seed: t.gen?.seed ?? 1, ...genCtx() }))
+    commit(generate(t, { staging: t.gen?.staging ?? 'tower', theme: id, seed: t.gen?.seed ?? 1, ...genCtx() }))
   }
-  function toggleLock(axis: 'staging' | 'surface') {
+  function toggleLock(axis: 'staging' | 'theme') {
     const t = asV3()
     const locks = { ...(t.gen?.locks ?? {}) }
     locks[axis] = !locks[axis]
-    commit({ ...t, gen: { ...(t.gen ?? { staging: 'tower', surface: 'flat', seed: 1 }), locks } })
+    commit({ ...t, gen: { ...(t.gen ?? { staging: 'tower', theme: 'paper', seed: 1 }), locks } })
   }
 
   // Both helpers read/write item 0 of the tier's (normalized) list — single-
@@ -1121,7 +1121,7 @@ export function useGridEditor(
     const items = normalized[id] ?? [{ content: '' }]
     const tiers = { ...normalized, [id]: [{ ...items[0], type: { ...items[0]?.type, ...patch } }, ...items.slice(1)] }
     // Re-generate in place so the type change is visible immediately (same tuple).
-    commit(generate({ ...t, tiers }, { staging: t.gen?.staging ?? 'tower', surface: t.gen?.surface ?? 'flat', seed: t.gen?.seed ?? 1, ...genCtx() }))
+    commit(generate({ ...t, tiers }, { staging: t.gen?.staging ?? 'tower', theme: t.gen?.theme ?? 'paper', seed: t.gen?.seed ?? 1, ...genCtx() }))
   }
   function addTierItem(id: TierId, content = '') {
     const t = asV3()
@@ -1129,7 +1129,7 @@ export function useGridEditor(
     const items = normalized[id] ?? []
     const tiers = { ...normalized, [id]: [{ content: content || items[0]?.content || id.toUpperCase(), type: items[0]?.type }, ...items.slice(1)] }
     const seed = t.gen?.seed ?? 1
-    commit(generate({ ...t, tiers }, { staging: t.gen?.staging ?? 'tower', surface: t.gen?.surface ?? 'flat', seed, ...genCtx() }))
+    commit(generate({ ...t, tiers }, { staging: t.gen?.staging ?? 'tower', theme: t.gen?.theme ?? 'paper', seed, ...genCtx() }))
   }
 
   // -- Undo / redo ------------------------------------------------------------
@@ -1219,8 +1219,8 @@ export function useGridEditor(
     setSectionStyle, setSectionClip, renameSection, renameElement, toggleSectionLayout, wrapSelectionInSection, addSectionAt, frameDrawArmed,
     toggleSectionExpressive, setSectionExpressive,
     commitNow, undo, redo, canUndo, canRedo,
-    editorMode, genStaging, genSurface, genSeed, genLocks, hasGenImage,
-    setStaging, setSurface, toggleLock, shuffleLayout, surpriseLayout,
+    editorMode, genStaging, genTheme, genSeed, genLocks, hasGenImage,
+    setStaging, setTheme, toggleLock, shuffleLayout, surpriseLayout,
     tierType, setTierType, addTierItem,
   }
 }

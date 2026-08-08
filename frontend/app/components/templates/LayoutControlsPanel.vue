@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { STAGINGS } from '~~/shared/template-grid/generate/stagings'
-import { SURFACES } from '~~/shared/template-grid/generate/surfaces'
+import { THEMES } from '~~/shared/template-grid/generate/themes'
 
 const ctx = inject<any>('gridEditor')
 </script>
@@ -13,7 +13,7 @@ const ctx = inject<any>('gridEditor')
       <div class="flex items-center justify-between mb-1.5">
         <span class="text-[9px] uppercase tracking-wide text-white/40">Staging</span>
         <button class="text-[10px]" :class="ctx.genLocks.value.staging ? 'text-action' : 'text-white/30'"
-          title="Lock staging so Surprise only rolls the surface" @click="ctx.toggleLock('staging')">
+          title="Lock staging so Surprise only rolls the theme" @click="ctx.toggleLock('staging')">
           {{ ctx.genLocks.value.staging ? '🔒' : '🔓' }}
         </button>
       </div>
@@ -27,24 +27,17 @@ const ctx = inject<any>('gridEditor')
 
     <div>
       <div class="flex items-center justify-between mb-1.5">
-        <span class="text-[9px] uppercase tracking-wide text-white/40">Surface</span>
-        <button class="text-[10px]" :class="ctx.genLocks.value.surface ? 'text-action' : 'text-white/30'"
-          title="Lock surface so Surprise only rolls the staging" @click="ctx.toggleLock('surface')">
-          {{ ctx.genLocks.value.surface ? '🔒' : '🔓' }}
+        <span class="text-[9px] uppercase tracking-wide text-white/40">Theme</span>
+        <button class="text-[10px]" :class="ctx.genLocks.value.theme ? 'text-action' : 'text-white/30'"
+          title="Lock theme so Surprise only rolls the staging" @click="ctx.toggleLock('theme')">
+          {{ ctx.genLocks.value.theme ? '🔒' : '🔓' }}
         </button>
       </div>
       <div class="flex flex-wrap gap-1.5">
-        <button v-for="s in SURFACES" :key="s.id"
-          :title="s.needsImage && !ctx.hasGenImage.value ? 'Wire an image first' : s.name"
-          :disabled="s.needsImage && !ctx.hasGenImage.value"
-          class="h-8 px-2 rounded-md text-[10px] font-semibold border transition-colors"
-          :class="[
-            s.needsImage && !ctx.hasGenImage.value
-              ? 'opacity-30 cursor-not-allowed border-white/10 text-white/40'
-              : 'cursor-pointer',
-            ctx.genSurface.value === s.id ? 'bg-white text-black border-white' : 'border-white/10 text-white/60 hover:text-white',
-          ]"
-          @click="!(s.needsImage && !ctx.hasGenImage.value) && ctx.setSurface(s.id)">{{ s.name }}</button>
+        <button v-for="s in THEMES" :key="s.id" :title="s.name"
+          class="h-8 px-2 rounded-md text-[10px] font-semibold border transition-colors cursor-pointer"
+          :class="ctx.genTheme.value === s.id ? 'bg-white text-black border-white' : 'border-white/10 text-white/60 hover:text-white'"
+          @click="ctx.setTheme(s.id)">{{ s.name }}</button>
       </div>
     </div>
 

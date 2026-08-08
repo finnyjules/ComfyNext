@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { generate, shuffle, surprise } from '~~/shared/template-grid/generate/generate'
+import { generate, shuffle, surprise, migrateGen } from '~~/shared/template-grid/generate/generate'
 import { validateGenerated } from '~~/shared/template-grid/generate/validate'
 import { STAGINGS } from '~~/shared/template-grid/generate/stagings'
+import { THEMES } from '~~/shared/template-grid/generate/themes'
 import type { TemplateV3, ElementV2 } from '~~/shared/template-grid/types'
 
 function base(): TemplateV3 {
@@ -22,63 +23,124 @@ function base(): TemplateV3 {
   }
 }
 
-describe('generate orchestrator', () => {
-  it('emits staging elements, sets the surface background, and stamps gen', () => {
-    const t = generate(base(), { staging: 'tower', surface: 'holographic', seed: 100 })
-    expect(t.elements.length).toBeGreaterThan(0)
-    expect(t.elements.every(e => e.origin === 'staging')).toBe(true)
-    expect(t.background?.fill).toContain('linear-gradient')
-    expect(t.gen).toMatchObject({ staging: 'tower', surface: 'holographic', seed: 100 })
+describe('generate orchestrator — themes', () => {
+  // (a) fresh generate stamps brand from the theme, tokenizes ink + background
+  it('(a) fresh generate stamps brand.background/foreground from the theme and tokenizes ink + background', () => {
+    const t = generate(base(), { staging: 'tower', theme: 'paper', seed: 1 })
+    expect(t.brand?.background).toBe('#f2f0ef')
+    expect(t.brand?.foreground).toBe('#111111')
+    const hero = t.elements.find(e => e.id === 'tier_hero_0') as any
+    expect(hero.style.color).toBe('{{ brand.foreground }}')
+    expect(t.background?.fill).toBe('{{ brand.background }}')
+    expect(t.gen).toMatchObject({ staging: 'tower', theme: 'paper', seed: 1 })
   })
-  it('is deterministic for the same tuple', () => {
-    const a = generate(base(), { staging: 'split', surface: 'flat', seed: 7 })
-    const b = generate(base(), { staging: 'split', surface: 'flat', seed: 7 })
+
+  // (b) same-theme regen never rewrites a hand edit; a theme switch re-stamps
+  it('(b) same-theme regeneration preserves a hand-edited brand; switching theme re-stamps', () => {
+    const t0 = generate(base(), { staging: 'tower', theme: 'paper', seed: 1 })
+    const edited: TemplateV3 = { ...t0, brand: { ...t0.brand, background: '#ff00aa' } }
+    const same = generate(edited, { staging: 'tower', theme: 'paper', seed: 2 })
+    expect(same.brand?.background).toBe('#ff00aa')
+
+    const switched = generate(edited, { staging: 'tower', theme: 'black', seed: 3 })
+    expect(switched.brand?.background).toBe('#000000')
+    expect(switched.brand?.foreground).toBe('#f2f0ef')
+  })
+
+  // (c) legacy `surface` gen migrates through shuffle without erroring
+  it('(c) legacy gen.surface shuffles without error and lands on theme paper', () => {
+    const t = generate(base(), { staging: 'tower', theme: 'paper', seed: 1 })
+    const legacy = { ...t, gen: { staging: 'tower', surface: 'flat', seed: 1 } as any }
+    const rolled = shuffle(legacy)
+    expect(rolled.gen?.theme).toBe('paper')
+  })
+
+  it('(c2) migrateGen maps every round-1 surface id to its theme', () => {
+    expect(migrateGen({ staging: 'tower', surface: 'tint', seed: 1 } as any)?.theme).toBe('red')
+    expect(migrateGen({ staging: 'tower', surface: 'split-field', seed: 1 } as any)?.theme).toBe('black')
+    expect(migrateGen(undefined)).toBeUndefined()
+    expect(migrateGen({ staging: 'tower', theme: 'blue', seed: 1 })).toEqual({ staging: 'tower', theme: 'blue', seed: 1 })
+  })
+
+  // (d) accentOnHero only touches tier_hero_0
+  it('(d) accentOnHero colours only tier_hero_0 with the accent token', () => {
+    const t = generate(base(), { staging: 'tower', theme: 'paper', seed: 1, accentOnHero: true })
+    const hero = t.elements.find(e => e.id === 'tier_hero_0') as any
+    const anchor = t.elements.find(e => e.id === 'tier_anchor_0') as any
+    expect(hero.style.color).toBe('{{ brand.accent }}')
+    expect(anchor.style.color).toBe('{{ brand.foreground }}')
+  })
+
+  // (e) luminance guard: a clashing opts.brand kit gets a literal ink injected
+  it('(e) luminance guard injects a literal ink when the effective brand clashes', () => {
+    const t = generate(base(), { staging: 'tower', theme: 'white', seed: 1, brand: { foreground: '#ffffff' } })
+    const hero = t.elements.find(e => e.id === 'tier_hero_0') as any
+    expect(hero.style.color).toBe('#111111')
+  })
+
+  // (f) a tier's own type.color always wins
+  it('(f) tier type.color beats the theme ink and the guard', () => {
+    const withColor: TemplateV3 = { ...base(), tiers: { ...base().tiers, hero: { content: 'MAT + FEST', type: { color: '#ff0000' } } } }
+    const t = generate(withColor, { staging: 'tower', theme: 'paper', seed: 1 })
+    const hero = t.elements.find(e => e.id === 'tier_hero_0') as any
+    expect(hero.style.color).toBe('#ff0000')
+
+    const guardTripped = generate(withColor, { staging: 'tower', theme: 'white', seed: 1, brand: { foreground: '#ffffff' } })
+    const heroGuard = guardTripped.elements.find(e => e.id === 'tier_hero_0') as any
+    expect(heroGuard.style.color).toBe('#ff0000')
+  })
+
+  // (g) determinism
+  it('(g) is deterministic for the same tuple', () => {
+    const a = generate(base(), { staging: 'split', theme: 'paper', seed: 7 })
+    const b = generate(base(), { staging: 'split', theme: 'paper', seed: 7 })
     expect(JSON.stringify(a.elements)).toBe(JSON.stringify(b.elements))
+    expect(JSON.stringify(a.brand)).toBe(JSON.stringify(b.brand))
   })
+
   it('preserves freeform elements across a re-roll', () => {
-    let t = generate(base(), { staging: 'tower', surface: 'flat', seed: 1 })
+    let t = generate(base(), { staging: 'tower', theme: 'paper', seed: 1 })
     const freeform: ElementV2 = { id: 'note', type: 'text', content: 'hand-added', level: 'body',
       priority: 9, region: { col: 1, colSpan: 3, row: 14, rowSpan: 1 }, origin: 'freeform' }
     t = { ...t, elements: [...t.elements, freeform] }
     const rolled = shuffle(t)
     expect(rolled.elements.find(e => e.id === 'note')?.origin).toBe('freeform')
   })
+
   it('tier type overrides survive a re-roll', () => {
-    const t0 = generate(base(), { staging: 'tower', surface: 'flat', seed: 1 })
+    const t0 = generate(base(), { staging: 'tower', theme: 'paper', seed: 1 })
     const withType: TemplateV3 = { ...t0, tiers: { ...t0.tiers, hero: { content: 'MAT + FEST', type: { letterSpacing: -3 } } } }
     const rolled = surprise(withType)
     const hero = rolled.elements.find(e => e.id === 'tier_hero_0') as any
     expect(hero.style.letterSpacing).toBe(-3)
   })
+
   it('shuffle keeps a locked staging but may change the seed', () => {
-    const t = generate(base(), { staging: 'frame', surface: 'flat', seed: 1 })
+    const t = generate(base(), { staging: 'frame', theme: 'paper', seed: 1 })
     const locked: TemplateV3 = { ...t, gen: { ...t.gen!, locks: { staging: true } } }
     const rolled = shuffle(locked)
     expect(rolled.gen?.staging).toBe('frame')
   })
-  it('applies surface contrast to text colour unless the tier set its own', () => {
-    const light = generate(base(), { staging: 'tower', surface: 'flat', seed: 1 })
-    const hero = light.elements.find(e => e.id === 'tier_hero_0') as any
-    expect(hero.style.color).toBe('{{ brand.secondary }}')
 
-    const dark = generate(base(), { staging: 'tower', surface: 'duotone-photo', seed: 1, image: 'x.png' })
-    const heroDark = dark.elements.find(e => e.id === 'tier_hero_0') as any
-    expect(heroDark.style.color).toBe('{{ brand.foreground }}')
+  it('shuffle keeps {staging, theme}, only the seed (and re-stamped elements) change', () => {
+    const t = generate(base(), { staging: 'frame', theme: 'blue', seed: 1 })
+    const rolled = shuffle(t)
+    expect(rolled.gen?.staging).toBe('frame')
+    expect(rolled.gen?.theme).toBe('blue')
+    expect(rolled.gen?.seed).not.toBe(1)
+  })
 
-    const withColor: TemplateV3 = { ...base(), tiers: { ...base().tiers, hero: { content: 'MAT + FEST', type: { color: '#ff0000' } } } }
-    const explicit = generate(withColor, { staging: 'tower', surface: 'flat', seed: 1 })
-    const heroExplicit = explicit.elements.find(e => e.id === 'tier_hero_0') as any
-    expect(heroExplicit.style.color).toBe('#ff0000')
+  it('surprise re-rolls both axes from all 6 stagings × all 7 themes, honouring locks', () => {
+    const t = generate(base(), { staging: 'frame', theme: 'blue', seed: 1 })
+    const lockedTheme: TemplateV3 = { ...t, gen: { ...t.gen!, locks: { theme: true } } }
+    const rolled = surprise(lockedTheme)
+    expect(rolled.gen?.theme).toBe('blue')
+    expect(STAGINGS.map(s => s.id)).toContain(rolled.gen?.staging)
+    expect(THEMES.map(th => th.id)).toContain(rolled.gen?.theme)
   })
-  it('replaces the background on re-roll instead of merging stale fields', () => {
-    let t = generate(base(), { staging: 'tower', surface: 'duotone-photo', seed: 1, image: 'photo.png' })
-    expect(t.background.image).toBe('photo.png')
-    const t2 = generate(t, { staging: 'tower', surface: 'flat', seed: 1 })
-    expect(t2.background.fill).toBeTruthy()
-    expect(t2.background.image).toBeUndefined()
-  })
+
   it('writes template.order as staged ids (compose order) then preserved ids', () => {
-    let t = generate(base(), { staging: 'tower', surface: 'flat', seed: 1 })
+    let t = generate(base(), { staging: 'tower', theme: 'paper', seed: 1 })
     const freeform: ElementV2 = { id: 'note', type: 'text', content: 'hand-added', level: 'body',
       priority: 9, region: { col: 1, colSpan: 3, row: 14, rowSpan: 1 }, origin: 'freeform' }
     t = { ...t, elements: [...t.elements, freeform] }
@@ -89,6 +151,7 @@ describe('generate orchestrator', () => {
     expect(rolled.order?.slice(0, stagedIds.length)).toEqual(stagedIds)
     expect(rolled.order).toContain('note')
   })
+
   it('generates a validator-clean result for the standard 4-tier fixture (no unvalidated ship on exhausted re-rolls)', () => {
     const standard: TemplateV3 = {
       ...base(),
@@ -100,7 +163,7 @@ describe('generate orchestrator', () => {
       },
     }
     for (const s of STAGINGS) {
-      const t = generate(standard, { staging: s.id, surface: 'flat', seed: 1 })
+      const t = generate(standard, { staging: s.id, theme: 'paper', seed: 1 })
       const cols = t.grid.columns ?? 12
       const rows = t.grid.rows ?? 16
       const staged = t.elements.filter(e => e.origin === 'staging')

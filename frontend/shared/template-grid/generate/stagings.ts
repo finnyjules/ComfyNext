@@ -44,9 +44,9 @@ const HERO_SCALE_KNOB: KnobSpec = { id: 'heroScale', pick: [0.10, 0.14, 0.18] }
  *  list. `index` is this item's position in that filtered list, not its raw
  *  position in the stored tier — a disabled/empty item 0 never shifts a
  *  valid item 1's id. `origin:'staging'` marks it regenerable. No default
- *  colour here — `applyContrast` (in generate.ts) fills it from the
- *  surface's light/dark contrast unless the tier's own `spec.type.color`
- *  already won. */
+ *  colour here — `generate.ts` injects the theme's ink (`brand.foreground`,
+ *  or `brand.accent` on the hero when `accentOnHero`) post-compose unless
+ *  the tier's own `spec.type.color` already won. */
 export function tierText(
   id: TierId, index: number, item: TierSpec, region: Region, priority: number,
   opts: { level?: TextLevel; style?: TextStyleV2; overflow?: TextOverflow } = {},

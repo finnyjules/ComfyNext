@@ -5,7 +5,7 @@ import { TIER_ORDER, DEFAULT_TIER_LEVELS, tierEntries, autopopulateTiers, omitCo
 describe('schema: tiers/gen/origin fields', () => {
   it('round-trips optional generation fields on a template', () => {
     const hero: TierSpec = { content: 'MAT + FEST', type: { fontWeight: 700 }, enabled: true }
-    const gen: GenState = { staging: 'tower', surface: 'holographic', seed: 4821, locks: { staging: true } }
+    const gen: GenState = { staging: 'tower', theme: 'paper', seed: 4821, locks: { staging: true } }
     const tpl = {
       version: 3, id: 't1', name: 'T', master: '3x4',
       formats: { '3x4': { w: 1080, h: 1440 } },

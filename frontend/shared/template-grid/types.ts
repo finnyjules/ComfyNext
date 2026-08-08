@@ -75,10 +75,13 @@ export type Tiers = Partial<Record<TierId, TierSpec | TierSpec[]>>
 /** The reproducible generation tuple stamped on a generated template. */
 export interface GenState {
   staging: string
-  surface: string
+  theme: string
   seed: number
   knobs?: Record<string, unknown>
-  locks?: { staging?: boolean; surface?: boolean }
+  locks?: { staging?: boolean; theme?: boolean }
+  /** When true, the hero tier (`tier_hero_0`) reads in the theme's accent
+   *  colour instead of the default ink — a poster-style callout. */
+  accentOnHero?: boolean
 }
 
 export interface GridSpec {

@@ -21,14 +21,14 @@ describe('useGridEditor generation actions', () => {
     expect(t.elements.some(e => e.origin === 'staging')).toBe(true)
     expect(t.gen?.staging).toBeTruthy()
   })
-  it('setSurface holds the staging (axis independence)', () => {
+  it('setTheme holds the staging (axis independence)', () => {
     const ctx = editorWithTiers()
     ctx.surpriseLayout()
     const staging = (ctx.template.value as TemplateV3).gen!.staging
-    ctx.setSurface('tint')
+    ctx.setTheme('red')
     const t = ctx.template.value as TemplateV3
     expect(t.gen?.staging).toBe(staging)
-    expect(t.gen?.surface).toBe('tint')
+    expect(t.gen?.theme).toBe('red')
   })
   it('shuffle is undoable', () => {
     const ctx = editorWithTiers()
