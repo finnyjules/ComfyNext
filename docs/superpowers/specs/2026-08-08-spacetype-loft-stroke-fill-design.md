@@ -13,6 +13,9 @@ Two render refinements to the Loft effect:
    always spans the whole sweep. Let the **fills list spread across the sweep**
    (fill 1 → start, last fill → end), with a **Blend vs Per-circle** toggle:
    smooth gradient across the whole composition, or hard-edged solid colour bands.
+3. **Filled cross-sections** — Fill mode currently makes hollow tube walls, not
+   solid filled circles. Cap the cross-section face so fill produces solid discs
+   (and each spaced ring becomes a solid coin).
 
 Deferred to round 3b (separate spec): the on-preview bezier spine editor and the
 "edit all stops at once" master controls.
@@ -80,16 +83,43 @@ samples the ramp at its centre, `steps` yields distinct solid-coloured rings and
 `params.fillMode`. Everything downstream (DataTexture, `aAlong` sampling, `flow`)
 is unchanged.
 
+## C. Filled cross-sections (solid discs) — the "Fill doesn't make filled circles" fix
+
+**Problem:** fill mode today skins only the **side wall** between consecutive
+cross-sections (`buildLoftGeometry`/`buildSlicedLoftGeometry` connect ring→ring
+around the contour). The cross-section **face is never triangulated**, so a
+discrete ring is a hollow washer/tube-segment, not a solid filled disc — and the
+continuous tube has open ends.
+
+**Fix:** in fill mode, **cap the cross-section** by fan-triangulating the contour
+interior from its centroid (centroid + each contour edge → one triangle):
+- **Sliced (spacing > 0):** cap BOTH rings of each band → each element becomes a
+  solid **puck/coin** (side wall + two end caps). This is the "filled circles".
+- **Continuous (spacing = 0):** cap the first and last cross-section → a closed
+  solid tube (no open ends). Interior cross-sections stay uncapped (capping them
+  would create internal walls).
+- The centroid fan is valid for every parametric shape (oval/capsule/rectangle/
+  polygon/star are all star-shaped from their centre). Cap vertices reuse the
+  station's frame + `aAlong` so the gradient/flow still apply.
+- **Word caveat:** a word's multi-contour glyphs (letters + holes) are NOT
+  star-shaped, so the centroid fan would fill counters and overlap. Word-mode fill
+  keeps the swept-wall look for now (proper glyph triangulation via
+  `THREE.ShapeGeometry`/earcut is a follow-up) — note it, don't cap words.
+
+This is stroke-independent and applies whether or not `strokeWidth` (A) is used.
+
 ## Files
 
 **Modify:**
-- `app/lib/spacetype/loftGeometry.ts` — add the outline→ribbon helper + wire it
+- `app/lib/spacetype/loftGeometry.ts` — (A) add the outline→ribbon helper + wire it
   into the stroke path of `buildLoftGeometry` and `buildSlicedLoftGeometry`
-  (a `strokeWidth` field on their opts); rewrite `rampFromFill` for multi-fill
-  stops + `mode`.
+  (a `strokeWidth` field on their opts); (B) rewrite `rampFromFill` for multi-fill
+  stops + `mode`; (C) add centroid-fan cross-section **cap** emission to the fill
+  path of both builders (both caps per band when sliced; end caps only when
+  continuous), skipped for word contours.
 - `app/lib/spacetype/effects/loft.ts` — add `strokeWidth`, `fillMode` controls;
   pass `strokeWidth` into the geometry builders (stroke) and `fillMode` into
-  `rampFromFill`; both modes now build a `Mesh`.
+  `rampFromFill`; both render modes now build a `Mesh`.
 
 **New/updated tests:**
 - `rampFromFill`: multi-fill blend (endpoints = first/last stop; midpoint between);
@@ -99,6 +129,9 @@ is unchanged.
   strip index count; `aAlong` preserved.
 - stroke geometry: `buildLoftGeometry`/`buildSlicedLoftGeometry` with `strokeWidth`
   emit ribbon Mesh geometry (vertex/index counts), not line indices.
+- cross-section caps: sliced fill emits 2 caps per band (each cap = centroid + P
+  fan triangles → P triangles); continuous fill emits exactly 2 caps total (ends);
+  cap vertices carry the band/station `aAlong`; word contours emit NO caps.
 - effect: `strokeWidth`/`fillMode` controls present with correct `showIf`; stroke
   build produces a Mesh; `fillMode` switches the ramp.
 
