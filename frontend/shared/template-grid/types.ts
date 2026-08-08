@@ -55,6 +55,28 @@ export interface FormatSpec {
 // 1-based, inclusive spans: { col: 1, colSpan: 6 } fills columns 1..6.
 export interface Region { col: number; colSpan: number; row: number; rowSpan: number }
 
+/** Importance tier ids, most→least important. */
+export type TierId = 'hero' | 'anchor' | 'support' | 'fineprint'
+
+/** One importance tier: what it says + how it's typeset. Placement is decided
+ *  by the staging, so tier type survives a re-roll. `content` supports
+ *  {{ props.* }} / {{ brand.* }} like any element content. */
+export interface TierSpec {
+  content: string
+  type?: Partial<TextStyleV2>
+  enabled?: boolean
+}
+export type Tiers = Partial<Record<TierId, TierSpec>>
+
+/** The reproducible generation tuple stamped on a generated template. */
+export interface GenState {
+  staging: string
+  surface: string
+  seed: number
+  knobs?: Record<string, unknown>
+  locks?: { staging?: boolean; surface?: boolean }
+}
+
 export interface GridSpec {
   gutter: number; margin: number; baseline: number  // master px
   /** Per-axis gutters (master px). `column` = space between columns (horizontal),
@@ -95,6 +117,10 @@ export interface ElementV2Base {
   bleed?: boolean
   /** Consulted only when this element is a Stack child. */
   layoutSizing?: { main: SizeMode; cross: SizeMode }
+  /** Whether this element was placed by a staging (regenerated on re-roll) or
+   *  added by hand in Freeform mode (preserved across re-rolls). Absent ⇒
+   *  treated as 'freeform' (legacy elements are never clobbered). */
+  origin?: 'staging' | 'freeform'
 }
 
 export interface TextStyleV2 {
@@ -178,6 +204,11 @@ export interface TemplateV2 {
    *  templates render identically. Children inside a section keep their own
    *  order via the section's `children` array. */
   order?: string[]
+  /** Importance-tier content + type, decoupled from placement. Present when the
+   *  layout is generatable; absent on hand-authored legacy layouts. */
+  tiers?: Tiers
+  /** Last generation tuple — lets Shuffle/Surprise reproduce and re-roll. */
+  gen?: GenState
 }
 
 /**
