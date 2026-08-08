@@ -60,6 +60,7 @@ import { effectiveColumns, makeLookupResolver } from '~/lib/collection/lookup'
 import SweepPopover from '~/components/vue-canvas/studio/SweepPopover.vue'
 import { exportEmbedHtml, downloadEmbed } from '~/lib/embed/export'
 import type { SpaceTypeEmbedConfig } from '~/lib/embed/surfaces/spacetype'
+import { presetStops, serializeStops } from '~/lib/spacetype/loftStops'
 // fontSourceUrl already resolves a `google:Family@weight` token to the
 // `/api/scene3d/google-font-file` proxy URL for the 3D Studio's text-extrude
 // path (see outlines.ts's own doc) — reused here rather than inventing a
@@ -449,6 +450,17 @@ const openSections = reactive<Record<string, boolean>>(
 const sections = computed(() =>
   SECTION_ORDER.map(name => ({ name, controls: effect.value.controls.filter(c => c.group === name) })),
 )
+
+// Loft's Spine preset select stamps params.stops with the chosen preset's curve —
+// confirm before clobbering hand-edited stops. ProfileStopsEditor re-hydrates its
+// working array from params.stops (guarded watch), so this write updates the UI too.
+watch(() => params.spinePreset, (preset) => {
+  if (effect.value.id !== 'loft') return
+  if (!preset || preset === 'custom') return
+  const hasEdits = String(params.stops || '').length > 2
+  if (hasEdits && !window.confirm('Replace the current stops with the ' + preset + ' preset?')) return
+  params.stops = serializeStops(presetStops(preset as any))
+})
 
 // Inspector tabs — Design (everything) vs Motion (the effect's Motion-group controls),
 // matching 3D Studio's Build|Motion split. Motion sections render open, not collapsible.
