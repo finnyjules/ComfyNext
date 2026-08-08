@@ -72,7 +72,7 @@ import { fontSourceUrl, loadFont, fontCacheGet } from '~/lib/scene3d/outlines'
 // CARRY_ON_SWITCH, e.g. Ribbon's default 'Inter') into a `google:`-prefixed value so
 // fontSourceUrl treats it as fetchable rather than a bogus local path — MUST be applied
 // identically here and in loft.ts's wordContours, or the two fontCacheGet cache keys diverge.
-import { outlineFontValue } from '~/lib/spacetype/effects/loft'
+import { outlineFontValue, resolveShape } from '~/lib/spacetype/effects/loft'
 
 const props = defineProps<{ nodeId: string; nodes: any[]; edges?: any[] }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
@@ -714,7 +714,7 @@ async function ensureFont(value: string) {
 async function ensureEffectFonts() {
   await ensureFont(String(params.font))
   if (effectId.value === 'boost') { try { await ensureBoostFont(String(params.font)) } catch { /* fallback */ } }
-  if (effectId.value === 'loft' && params.shape === 'word') {
+  if (effectId.value === 'loft' && resolveShape(params) === 'word') {
     const url = fontSourceUrl(outlineFontValue(String(params.font || '')))
     if (!fontCacheGet(url)) { try { await loadFont(url) } catch { /* buildScene falls back to a plain oval contour */ } }
   }

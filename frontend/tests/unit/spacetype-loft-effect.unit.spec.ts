@@ -12,7 +12,7 @@ describe('loftEffect', () => {
   })
   it('buildScene returns a root with drawable geometry (shape kind, fill)', () => {
     const params = dfc(loftEffect.controls)
-    params.render = 'fill'; params.profileKind = 'shape'
+    params.render = 'fill'
     const dummyTex = new THREE.Texture()
     const root = loftEffect.buildScene(THREE as any, params, dummyTex, { width: 800, height: 800 })
     let drawable = 0
