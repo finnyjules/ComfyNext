@@ -45,7 +45,7 @@ import {
   isVectorPattern,
   multiplyAffine,
 } from '~/lib/vector/svg'
-import { type Paint, isFill, isGradient, sortedClampedStops } from '~/lib/compositor/paint'
+import { type Paint, isFill, isGradient, isImageFill, sortedClampedStops } from '~/lib/compositor/paint'
 import {
   type Fill,
   checkerCellIsB,
@@ -354,6 +354,10 @@ function withTransform(m: Affine | undefined): { transform?: Affine } {
  * path for `solid` and for a gradient.
  */
 export function paintToVectorPaint(paint: Paint | undefined, opts: VectorPaintOptions): VectorPaint | null {
+  // ImageFill has no vector form yet — a real <image>-in-<pattern> embed is a
+  // flagged fast-follow. Return null so the shape exports unfilled rather than
+  // letting the object fall through to the solid-string arm.
+  if (isImageFill(paint)) return null
   if (typeof paint === 'string') return paint
   if (isGradient(paint)) {
     return gradientFor(

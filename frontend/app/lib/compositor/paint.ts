@@ -14,6 +14,7 @@
  */
 import { type Fill, effectiveTileFill, fillTileBox } from '~/lib/spacetype/fillTile'
 import { gradientUnitAxis, orderGradientStops } from '~/lib/vector/svg'
+import { getFillBitmap } from '~/lib/paint/imageFillCache'
 
 export interface GradientStop { offset: number; color: string } // offset 0..1
 export interface LinearGradient { type: 'linear'; angle: number; stops: GradientStop[] } // angle in degrees
@@ -70,10 +71,19 @@ export function paintTileBox(paint: Paint, w: number, h: number): HTMLCanvasElem
   if (isFill(paint)) return fillTileBox(effectiveTileFill(paint), W, H)
   const c = document.createElement('canvas'); c.width = W; c.height = H
   const ctx = c.getContext('2d')!
-  // ImageFill rendering is a follow-up task (this one only introduces the
-  // type + guard). Fail loudly rather than letting `ctx.fillStyle = paint`
-  // silently coerce an ImageFill object into a bogus CSS color string.
-  if (isImageFill(paint)) throw new Error('paintTileBox: ImageFill rendering is not yet implemented')
+  if (isImageFill(paint)) {
+    const img = getFillBitmap(paint.src)
+    const iw = img ? (img.naturalWidth || img.width) : 0
+    const ih = img ? (img.naturalHeight || img.height) : 0
+    if (img && iw && ih) {
+      // corner-origin single tile: 'tile' collapses to cover for this incidental
+      // path (only shader-input/material previews reach paintTileBox).
+      const fit = paint.fit === 'tile' ? 'cover' : paint.fit
+      const { dx, dy, dw, dh } = imageFillRect(fit, iw, ih, W, H, paint.scale ?? 1, paint.offset ?? { x: 0, y: 0 })
+      ctx.drawImage(img, dx, dy, dw, dh)
+    }
+    return c   // transparent when unloaded
+  }
   if (!isGradient(paint)) {
     ctx.fillStyle = paint; ctx.fillRect(0, 0, W, H); return c
   }

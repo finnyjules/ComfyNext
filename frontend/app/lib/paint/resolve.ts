@@ -20,7 +20,8 @@
  */
 import { type Fill, type ShaderSpec, fillTileBox, fillIsShader } from '~/lib/spacetype/fillTile'
 import { resolveField } from '~/lib/shaderfill/field'
-import { type Paint, type ImageFill, isGradient, isFill, isImageFill } from '~/lib/compositor/paint'
+import { type Paint, type ImageFill, isGradient, isFill, isImageFill, imageFillRect } from '~/lib/compositor/paint'
+import { getFillBitmap } from '~/lib/paint/imageFillCache'
 // What the SVG export makes of a paint — the ORACLE for `spread: 'extend'` (see
 // `PaintSpread` and `fillSpreadKind` below). Import edge runs one way only:
 // `toVector` imports the spine, the paint model and `fillTile`, and imports
@@ -112,11 +113,8 @@ export function resolvePaint(
    *  only ever reachable through the `Fill` arm. */
   spread: PaintSpread = 'box',
 ): string | CanvasGradient | CanvasPattern {
+  if (isImageFill(paint)) return resolveImageFill(ctx, paint, box)
   if (isFill(paint)) return resolveFill(ctx, paint, box, field, spread)
-  // ImageFill rendering is a follow-up task (this one only introduces the
-  // type + guard + hasPaint). Fail loudly instead of returning the ImageFill
-  // object where a `string | CanvasGradient | CanvasPattern` is expected.
-  if (isImageFill(paint)) throw new Error('resolvePaint: ImageFill rendering is not yet implemented')
   if (!isGradient(paint)) return paint
   const stops = [...paint.stops].sort((a, b) => a.offset - b.offset)
   let g: CanvasGradient
@@ -133,6 +131,52 @@ export function resolvePaint(
   }
   for (const s of stops) g.addColorStop(Math.max(0, Math.min(1, s.offset)), s.color)
   return g
+}
+
+/** An `ImageFill` → a `CanvasPattern` (centered-origin, this module's convention).
+ *  cover/contain/stretch paint one box-sized tile; tile repeats a cell whose width
+ *  spans `scale` of the box. Returns 'transparent' until the bitmap is cached. */
+function resolveImageFill(
+  ctx: CanvasRenderingContext2D,
+  paint: ImageFill,
+  box: { w: number; h: number },
+): string | CanvasPattern {
+  const img = getFillBitmap(paint.src)
+  const iw = img ? (img.naturalWidth || img.width) : 0
+  const ih = img ? (img.naturalHeight || img.height) : 0
+  if (!img || !iw || !ih) return 'transparent'
+  const bw = Math.max(box.w, 1e-3), bh = Math.max(box.h, 1e-3)
+  const m = typeof ctx.getTransform === 'function' ? ctx.getTransform() : null
+  const sx = m ? (Math.hypot(m.a, m.b) || 1) : 1, sy = m ? (Math.hypot(m.c, m.d) || 1) : 1
+  const k = Math.min(1, FILL_TILE_CAP / Math.max(bw * sx, bh * sy, 1))
+  const scale = paint.scale && paint.scale > 0 ? paint.scale : 1
+  const offset = paint.offset ?? { x: 0, y: 0 }
+
+  if (paint.fit === 'tile') {
+    const cellW = Math.max(1, Math.round(bw * scale * sx * k))
+    const cellH = Math.max(1, Math.round(cellW * (ih / iw)))
+    const cell = document.createElement('canvas'); cell.width = cellW; cell.height = cellH
+    cell.getContext('2d')!.drawImage(img, 0, 0, cellW, cellH)
+    const pat = ctx.createPattern(cell, 'repeat')
+    if (!pat) return 'transparent'
+    if (typeof DOMMatrix !== 'undefined' && pat.setTransform) {
+      pat.setTransform(new DOMMatrix()
+        .translateSelf(-bw / 2 + offset.x * bw, -bh / 2 + offset.y * bh)
+        .scaleSelf(1 / (sx * k), 1 / (sy * k)))
+    }
+    return pat
+  }
+
+  const tw = Math.max(1, Math.round(bw * sx * k)), th = Math.max(1, Math.round(bh * sy * k))
+  const tile = document.createElement('canvas'); tile.width = tw; tile.height = th
+  const { dx, dy, dw, dh } = imageFillRect(paint.fit, iw, ih, tw, th, scale, offset)
+  tile.getContext('2d')!.drawImage(img, dx, dy, dw, dh)
+  const pat = ctx.createPattern(tile, 'no-repeat')
+  if (!pat) return 'transparent'
+  if (typeof DOMMatrix !== 'undefined' && pat.setTransform) {
+    pat.setTransform(new DOMMatrix().translateSelf(-bw / 2, -bh / 2).scaleSelf(bw / tw, bh / th))
+  }
+  return pat
 }
 
 // A Type-Studio Fill → a 2D pattern that spans the shape's box ONCE (drawing is
