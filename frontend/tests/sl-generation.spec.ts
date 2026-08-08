@@ -151,6 +151,16 @@ test.describe('Smart Layout generation (wired Shuffle/Surprise)', () => {
     const initialStaged = await staged.allInnerTexts()
     expect(initialStaged.length).toBeGreaterThan(0)
 
+    // Task 15 Critical fix: autopopulateV2 and the tier-seed+generate path
+    // are mutually exclusive on a fresh layout — the wired text_layer_1 must
+    // appear ONCE (as a tier_* staging element), never ALSO as a leftover
+    // autopopulateV2 freeform element with id "text_layer_1" carrying the
+    // same wired string.
+    const freeformDup = modal.locator('[data-el-id="text_layer_1"]')
+    expect(await freeformDup.count()).toBe(0)
+    const summerSaleNodes = modal.locator('text="Summer Sale"')
+    expect(await summerSaleNodes.count()).toBe(1)
+
     // Surprise re-rolls both axes under a new seed — click it twice and
     // assert the displayed seed actually changes each time (not merely "it
     // rendered" — see memory: graceful fallback hides integration failure).

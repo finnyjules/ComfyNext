@@ -13,7 +13,7 @@ import type { ComputedRef } from 'vue'
 import type { AnyTemplate, Template } from '~~/server/templates/schema'
 import type { BrandKit } from '~~/shared/brand/types'
 import { autopopulateV2 } from '~~/shared/template-grid/autopopulate'
-import { autopopulateTiers } from '~~/shared/template-grid/generate/tiers'
+import { autopopulateTiers, TIER_ORDER } from '~~/shared/template-grid/generate/tiers'
 import { generate } from '~~/shared/template-grid/generate/generate'
 import { makeStarterTemplate } from '~~/shared/template-grid/starter'
 import type { TemplateV2, TemplateV3 } from '~~/shared/template-grid/types'
@@ -80,24 +80,49 @@ onMounted(() => {
   const layout = readLayout()
   const version = (layout as any).version
   if (version === 2 || version === 3) {
-    // Seed a default element for each connected socket the layout doesn't yet
-    // reference (per-socket, so an image wired into an existing text layout
-    // still gets placed). autopopulateV2 skips sockets already referenced, so
-    // this is safe to run whether the layout is empty or full.
-    autopopulateV2(layout as TemplateV2, initialProps.value)
-
-    // Generation: if the layout has no staged elements yet, seed tiers from the
-    // wired sockets and lay out one composition so the editor opens on a real
-    // poster rather than a blank grid.
     const v3 = layout as unknown as TemplateV3
     const hasStaged = (v3.elements ?? []).some(e => e.origin === 'staging')
-    if (!hasStaged && !v3.tiers) {
-      v3.tiers = autopopulateTiers(initialProps.value)
-      if (Object.keys(v3.tiers).length > 0) {
+
+    // "Fresh" = a just-created starter with no hand-authored content yet: no
+    // top-level elements, no sections, no staged elements, no tiers already
+    // seeded (mirrors makeStarterTemplate's `elements: []`). Only a fresh
+    // layout is eligible for tier-seed+generate below — autopopulateV2's
+    // freeform per-socket placement and generate()'s staged tiers must stay
+    // MUTUALLY EXCLUSIVE for the same socket, or a wired text prop renders
+    // twice (once as a freeform element, once as a staging tier — Task 15
+    // Critical). Any layout that's NOT provably fresh (existing elements,
+    // sections, staged elements, or tiers) falls back to today's exact
+    // autopopulateV2-only behavior — never generate over hand-authored work.
+    const isFresh = (layout.elements?.length ?? 0) === 0
+      && (!v3.sections || v3.sections.length === 0)
+      && !hasStaged && !v3.tiers
+
+    if (isFresh) {
+      // Generation: seed tiers from the wired text sockets and lay out one
+      // composition so the editor opens on a real poster rather than a blank
+      // grid.
+      const tiers = autopopulateTiers(initialProps.value)
+      const consumedKeys = new Set<string>()
+      TIER_ORDER.forEach((id, i) => { if (tiers[id]) consumedKeys.add(`text_layer_${i + 1}`) })
+      if (Object.keys(tiers).length > 0) {
+        v3.tiers = tiers
         const seeded = generate({ ...v3, version: 3, sections: v3.sections ?? [] },
           { staging: 'tower', surface: 'flat', seed: 1, brand: initialBrand.value as any })
         Object.assign(layout, seeded)
       }
+      // Any socket NOT consumed by tiers (wired images, or extra text layers
+      // beyond the 4 importance tiers) still needs its default freeform
+      // element placed — same seeding as the non-fresh path, just excluding
+      // the sockets tiers already rendered.
+      const remainingProps = Object.fromEntries(
+        Object.entries(initialProps.value).filter(([key]) => !consumedKeys.has(key)))
+      autopopulateV2(layout as TemplateV2, remainingProps)
+    } else {
+      // Seed a default element for each connected socket the layout doesn't
+      // yet reference (per-socket, so an image wired into an existing text
+      // layout still gets placed). autopopulateV2 skips sockets already
+      // referenced, so this is safe to run whether the layout is empty or full.
+      autopopulateV2(layout as TemplateV2, initialProps.value)
     }
 
     initial.value = layout
