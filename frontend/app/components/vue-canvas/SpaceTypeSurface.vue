@@ -6,8 +6,8 @@ import { getEffect } from '~/lib/spacetype/effects'
 import { ensureBoostFont } from '~/lib/spacetype/effects/boost'
 import { defaultsFromControls, type Params, type ControlSpec } from '~/lib/spacetype/effect'
 import { SPACE_TYPE_SECTIONS } from '~/lib/spacetype/sections'
-import { parseFills, serializeFills, FILL_TYPES, type Fill, type FillType } from '~/lib/spacetype/fills'
-import { parseContent, type ContentItem } from '~/lib/spacetype/tile'
+import { parseFills, serializeFills, FILL_TYPES, DEFAULT_FILL, type Fill, type FillType } from '~/lib/spacetype/fills'
+import { parseContent, type ContentItem, type CardFillKind } from '~/lib/spacetype/tile'
 import { loadImageTextures } from '~/lib/spacetype/imageTextures'
 import { fitWithin } from '~/lib/lora/datasetImages'
 import { DEFAULT_SHADER_SPEC, type ShaderSpec } from '~/lib/spacetype/fillTile'
@@ -218,8 +218,13 @@ function removeTextRow(i: number) { textLines.splice(i, 1); if (!textLines.lengt
 // (single source of truth — keeps the dropdown in sync with the renderable types).
 const fills = reactive<Fill[]>([])
 let syncingFills = false
+// The ring effect's `wordFill` control is declared `kind: 'fillList'` too (ring.ts, Task 2 —
+// reuses the kind for grouping/labelling only), but it stores a single bare `Fill` object, not
+// an array. It must never be picked up here: pullFills()/serializeFills() speak array shape, and
+// routing wordFill through them would parse it as an (empty) array and clobber a real saved fill
+// with the default (Task 2 review finding). See the dedicated wordFill state block below.
 function fillKey(): string | null {
-  return effect.value.controls.find(c => c.kind === 'fillList')?.key ?? null
+  return effect.value.controls.find(c => c.kind === 'fillList' && c.key !== WORD_FILL_KEY)?.key ?? null
 }
 function pullFills() {
   const k = fillKey()
@@ -248,6 +253,53 @@ function fillNeedsB(f: Fill): boolean { return f.type !== 'solid' }             
 function fillHasAngle(f: Fill): boolean { return f.type === 'ombre' || f.type === 'stripes' }        // direction
 function fillHasDensity(f: Fill): boolean { return f.type === 'grid' || f.type === 'checkerboard' || f.type === 'stripes' || f.type === 'qr' }
 
+// ── Word fill (ring effect's `wordFill` control) — a single bare `Fill` JSON object,
+// NOT the fillList array shape above. Mirrors pullFills/watch(fills) but reads/writes
+// params.wordFill directly as one object (parse/stringify), never through
+// parseFills/serializeFills — see the doc on fillKey()'s exclusion above for why.
+const WORD_FILL_KEY = 'wordFill'
+const wordFill = reactive<Fill>({ ...DEFAULT_FILL })
+let syncingWordFill = false
+function hasWordFillControl(): boolean {
+  return effect.value.controls.some(c => c.key === WORD_FILL_KEY)
+}
+function pullWordFill() {
+  if (!hasWordFillControl()) return
+  syncingWordFill = true
+  const raw = (params as Record<string, unknown>)[WORD_FILL_KEY]
+  let parsed: Fill = { ...DEFAULT_FILL }
+  if (typeof raw === 'string' && raw) {
+    try {
+      const v = JSON.parse(raw)
+      if (v && typeof v === 'object' && typeof v.type === 'string') parsed = { ...DEFAULT_FILL, ...v }
+    } catch { /* malformed — keep default */ }
+  }
+  Object.assign(wordFill, parsed)
+  syncingWordFill = false
+}
+watch(wordFill, () => {
+  if (syncingWordFill) return
+  if (!hasWordFillControl()) return
+  ;(params as Record<string, unknown>)[WORD_FILL_KEY] = JSON.stringify(wordFill)
+}, { deep: true })
+// Fill kinds a ring card offers — a deliberate subset of FILL_TYPES (no shader/checkerboard/
+// stripes/qr), plus 'image' (the ring-only kind that isn't a renderable Fill.type at all).
+const CARD_FILL_KINDS: CardFillKind[] = ['image', 'solid', 'gradient', 'ombre', 'grid', 'noise']
+// Same subset, minus 'image' — word fill has no photo option.
+const WORD_FILL_TYPES: FillType[] = ['solid', 'gradient', 'ombre', 'grid', 'noise']
+// Switching a card INTO a non-image fill kind: seed a fresh Fill (of that type) the first
+// time, then just repoint `.type` on later switches so any colours already dialled in survive
+// bouncing between e.g. gradient and ombre. Switching to 'image' leaves any existing `.fill`
+// alone (harmless — the render path ignores it while fillKind is 'image') so it's still there
+// if the user switches back.
+function setCardFillKind(item: ContentItem, k: CardFillKind) {
+  if (item.kind !== 'card') return
+  item.fillKind = k
+  if (k === 'image') return
+  if (!item.fill) item.fill = { ...DEFAULT_FILL, type: k }
+  else item.fill.type = k
+}
+
 // Content rows for a `contentList` control (the ring effect's word/image list — Expressive
 // Studio Task 5). Mirrors fills/textLines above: edit a local reactive array, sync it back
 // into the (scalar) param as a JSON string via parseContent/JSON.stringify. `contentKey`
@@ -270,7 +322,14 @@ function pullContent() {
   if (!k) return
   syncingContent = true
   const parsed = parseContent(String((params as Record<string, unknown>)[k] ?? '[]'))
-  contentItems.splice(0, contentItems.length, ...parsed.map(item => ({ ...item })))
+  // Backfill a missing `.fill` on a non-image card (e.g. a hand-edited/AI-proposed doc that set
+  // `fillKind` without one) — the render side (ring.ts's normalizeFill) already defaults this,
+  // but the editor below needs a real Fill object to bind its colour/angle/density rows to.
+  contentItems.splice(0, contentItems.length, ...parsed.map(item => (
+    item.kind === 'card' && item.fillKind !== 'image' && !item.fill
+      ? { ...item, fill: { ...DEFAULT_FILL, type: item.fillKind } }
+      : { ...item }
+  )))
   // Fallback-counter floor: keeps the non-crypto id path from reusing an id already
   // present in the freshly-pulled list (crypto.randomUUID is the normal path and doesn't
   // need this, but stays correct if it's ever unavailable).
@@ -285,17 +344,20 @@ watch(contentItems, () => {
 function addContentText() {
   contentItems.push({ id: nextContentId(), kind: 'word', text: 'TEXT', resolution: 'whole' })
 }
+// "+ Add card" — a solid-fill card by default; the row's own fill-kind dropdown (see
+// setCardFillKind) is how the user gets to Image (and its per-row upload) or any other kind.
+function addContentCard() {
+  contentItems.push({ id: nextContentId(), kind: 'card', fillKind: 'solid', fill: { ...DEFAULT_FILL, type: 'solid' } })
+}
 function removeContentItem(id: string) {
   const i = contentItems.findIndex(item => item.id === id)
   if (i >= 0) contentItems.splice(i, 1)
 }
-// Downscale to fitWithin(...,1024) before encoding — datasetImages.ts's doc: trainers/quads
+// Downscale to fitWithin(...,1024) before storing — datasetImages.ts's doc: trainers/quads
 // never need a 24MP original's pixels, and shipping them costs upload time + heap for nothing.
-function onContentImagePick(e: Event) {
-  const input = e.target as HTMLInputElement
-  const file = input.files?.[0]
-  input.value = '' // allow re-picking the same file later
-  if (!file) return
+// Shared by both image-pick sites below: loads a File, downscales it onto an offscreen
+// canvas, and hands back a data URL + aspect ratio.
+function loadCardImageFile(file: File, onLoaded: (src: string, aspect: number) => void) {
   const url = URL.createObjectURL(file)
   const img = new Image()
   img.onload = () => {
@@ -307,12 +369,19 @@ function onContentImagePick(e: Event) {
     const ctx = off.getContext('2d')
     if (!ctx) return
     ctx.drawImage(img, 0, 0, fit.width, fit.height)
-    const src = off.toDataURL('image/jpeg', 0.9)
-    const aspect = img.naturalWidth / img.naturalHeight
-    contentItems.push({ id: nextContentId(), kind: 'image', src, aspect })
+    onLoaded(off.toDataURL('image/jpeg', 0.9), img.naturalWidth / img.naturalHeight)
   }
   img.onerror = () => { URL.revokeObjectURL(url) }
   img.src = url
+}
+// Per-row upload for an existing card whose fillKind is (or was just switched to) 'image' —
+// writes item.src/item.aspect on the SAME row rather than pushing a new content item.
+function onCardImagePick(item: ContentItem, e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = '' // allow re-picking the same file later
+  if (!file || item.kind !== 'card') return
+  loadCardImageFile(file, (src, aspect) => { item.src = src; item.aspect = aspect })
 }
 
 // ── Drag-to-reorder for the text rows, fill cards, and content rows (native DnD from a grip
@@ -703,7 +772,12 @@ async function ensureRingImageTextures() {
   const k = contentKey()
   if (!k) return
   const items = parseContent(String((params as Record<string, unknown>)[k] ?? '[]'))
-  const srcs = items.filter(i => i.kind === 'image').map(i => (i as any).src).sort()
+  // Pre-Task-4 this read `i.kind === 'image'` — dead since Task 1 migrated that legacy shape
+  // to `kind:'card', fillKind:'image'` (parseContent above already performs the migration),
+  // so no item ever matched and the ring's image cards silently never preloaded.
+  const srcs = items
+    .filter((i): i is Extract<ContentItem, { kind: 'card' }> => i.kind === 'card' && i.fillKind === 'image')
+    .map(i => i.src).sort()
   const key = JSON.stringify(srcs)
   if (key === loadedImageSrcKey) return
   const token = ++imageTextureLoadSeq
@@ -897,6 +971,7 @@ onMounted(async () => {
   pullTextLines()
   pullFills()
   pullContent()
+  pullWordFill()
   await loadSpaceDefaults()
   if (!hadConfig) { const sc = spaceDefaultFor(effectId.value); if (sc) applyDefaultScene(sc) }
   if (!detectWebGL()) { webglOk.value = false; return }
@@ -960,7 +1035,7 @@ function applyDefaultScene(scene: Scene) {
   if (scene.panY !== undefined) panY.value = scene.panY
   if (scene.bgColor) bgColor.value = scene.bgColor
   if (scene.gradientStops) gradientStops.splice(0, gradientStops.length, ...scene.gradientStops.map(g => ({ ...g })))
-  pullTextLines(); pullFills(); pullContent()
+  pullTextLines(); pullFills(); pullContent(); pullWordFill()
 }
 
 // Reset params to the current effect's defaults, carrying over the content keys
@@ -973,6 +1048,7 @@ async function applyEffectDefaults() {
   pullTextLines()
   pullFills()
   pullContent()
+  pullWordFill()
   const sc = spaceDefaultFor(effect.value.id)
   if (sc) applyDefaultScene(sc)
   await ensureEffectFonts()
@@ -1656,6 +1732,26 @@ async function exportWebEmbed() {
                         class="mt-0.5 self-start rounded-[6px] px-2 py-1 text-[11px] text-white/50 hover:bg-white/10 hover:text-white/80">+ Add text</button>
                 <p class="mt-1 text-[10px] text-white/40">Multiple texts alternate per repeat.</p>
               </template>
+              <template v-else-if="c.kind === 'fillList' && c.key === WORD_FILL_KEY">
+                <!-- Word fill: ONE Fill, bound to the local `wordFill` reactive object (synced
+                     to params.wordFill as a bare JSON object above — never through
+                     fills/parseFills/serializeFills, which speak the array shape). Glyph-masked
+                     onto the ring's words (ring.ts) the same way cylinder.ts masks its text. -->
+                <div class="space-y-1.5 rounded-lg border border-white/[0.07] bg-white/[0.02] p-2.5">
+                  <StudioSelect :options="WORD_FILL_TYPES" :model-value="wordFill.type"
+                                @update:model-value="(v: string) => setFillType(wordFill, v as FillType)" />
+                  <div class="space-y-1.5">
+                    <StudioColorField :label="fillNeedsB(wordFill) ? 'Color 1' : 'Fill'" :model-value="wordFill.a"
+                                      @update:model-value="(v: string) => { wordFill.a = v }" />
+                    <StudioColorField v-if="fillNeedsB(wordFill)" label="Color 2" :model-value="wordFill.b"
+                                      @update:model-value="(v: string) => { wordFill.b = v }" />
+                  </div>
+                  <div v-if="fillHasAngle(wordFill) || fillHasDensity(wordFill)" class="space-y-1.5">
+                    <StudioSlider v-if="fillHasAngle(wordFill)" v-model="wordFill.angle" label="Fade angle" :min="0" :max="180" :step="5" />
+                    <StudioSlider v-if="fillHasDensity(wordFill)" v-model="wordFill.density" label="Density" :min="1" :max="32" :step="1" />
+                  </div>
+                </div>
+              </template>
               <template v-else-if="c.kind === 'fillList'">
                 <div class="space-y-2">
                   <div v-for="(f, i) in fills" :key="i" data-row
@@ -1735,37 +1831,57 @@ async function exportWebEmbed() {
               <template v-else-if="c.kind === 'contentList'">
                 <div class="space-y-1.5">
                   <div v-for="(item, i) in contentItems" :key="item.id" data-row
-                       class="flex items-center gap-1.5 rounded-lg border border-white/[0.07] bg-white/[0.02] p-1.5 transition-shadow"
+                       class="rounded-lg border border-white/[0.07] bg-white/[0.02] p-1.5 transition-shadow"
                        :class="drag.kind === 'content' && drag.over === i && drag.from !== i ? 'ring-1 ring-white/40' : ''"
                        @dragover="dragOver('content', i, $event)" @drop="dropRow('content', i)">
-                    <span draggable="true" @dragstart="dragStart('content', i, $event)" @dragend="dragEnd"
-                          class="shrink-0 cursor-grab text-white/25 hover:text-white/60 active:cursor-grabbing" title="Drag to reorder" aria-label="Drag to reorder">
-                      <svg width="10" height="16" viewBox="0 0 10 16" fill="currentColor"><circle cx="2.5" cy="4" r="1" /><circle cx="7.5" cy="4" r="1" /><circle cx="2.5" cy="8" r="1" /><circle cx="7.5" cy="8" r="1" /><circle cx="2.5" cy="12" r="1" /><circle cx="7.5" cy="12" r="1" /></svg>
-                    </span>
-                    <template v-if="item.kind === 'word'">
-                      <input type="text" v-model="item.text" placeholder="Text"
-                             class="h-7 min-w-0 flex-1 rounded-[6px] bg-white/[0.05] px-2.5 text-[11px] text-white/90 outline-none transition-colors hover:bg-white/[0.07] focus:bg-white/[0.10]" />
-                      <StudioSegmented class="w-28 shrink-0" :options="['whole', 'letters']" :model-value="item.resolution"
-                                       @update:model-value="(v: string) => { item.resolution = v === 'letters' ? 'letters' : 'whole' }" />
-                    </template>
-                    <template v-else>
-                      <img :src="item.src" alt="" class="h-7 w-7 shrink-0 rounded object-cover" />
-                      <span class="min-w-0 flex-1 truncate text-[11px] text-white/40">Image</span>
-                    </template>
-                    <button type="button" @click="removeContentItem(item.id)" aria-label="Remove item"
-                            class="shrink-0 rounded p-1 text-white/30 hover:bg-white/10 hover:text-rose-300">
-                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></svg>
-                    </button>
+                    <div class="flex items-center gap-1.5">
+                      <span draggable="true" @dragstart="dragStart('content', i, $event)" @dragend="dragEnd"
+                            class="shrink-0 cursor-grab text-white/25 hover:text-white/60 active:cursor-grabbing" title="Drag to reorder" aria-label="Drag to reorder">
+                        <svg width="10" height="16" viewBox="0 0 10 16" fill="currentColor"><circle cx="2.5" cy="4" r="1" /><circle cx="7.5" cy="4" r="1" /><circle cx="2.5" cy="8" r="1" /><circle cx="7.5" cy="8" r="1" /><circle cx="2.5" cy="12" r="1" /><circle cx="7.5" cy="12" r="1" /></svg>
+                      </span>
+                      <template v-if="item.kind === 'word'">
+                        <input type="text" v-model="item.text" placeholder="Text"
+                               class="h-7 min-w-0 flex-1 rounded-[6px] bg-white/[0.05] px-2.5 text-[11px] text-white/90 outline-none transition-colors hover:bg-white/[0.07] focus:bg-white/[0.10]" />
+                        <StudioSegmented class="w-28 shrink-0" :options="['whole', 'letters']" :model-value="item.resolution"
+                                         @update:model-value="(v: string) => { item.resolution = v === 'letters' ? 'letters' : 'whole' }" />
+                      </template>
+                      <!-- Card: fill-kind picker (Image · Solid · Gradient · Ombre · Grid · Noise) —
+                           a deliberate subset of FILL_TYPES (see CARD_FILL_KINDS), Image being the
+                           ring-only kind that isn't a renderable Fill.type at all. -->
+                      <StudioSelect v-else class="min-w-0 flex-1" :options="CARD_FILL_KINDS" :model-value="item.fillKind"
+                                    @update:model-value="(v: string) => setCardFillKind(item, v as CardFillKind)" />
+                      <button type="button" @click="removeContentItem(item.id)" aria-label="Remove item"
+                              class="shrink-0 rounded p-1 text-white/30 hover:bg-white/10 hover:text-rose-300">
+                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></svg>
+                      </button>
+                    </div>
+                    <!-- Card body: image upload/thumbnail (writes item.src/item.aspect), or the
+                         same colour/angle/density fill editor used above, bound to item.fill. -->
+                    <div v-if="item.kind === 'card'" class="mt-2 pl-6">
+                      <div v-if="item.fillKind === 'image'" class="flex items-center gap-1.5">
+                        <img v-if="item.src" :src="item.src" alt="" class="h-9 w-9 shrink-0 rounded object-cover" />
+                        <label class="flex-1 cursor-pointer rounded border border-dashed border-white/15 py-1.5 text-center text-[11px] text-white/50 hover:border-white/30 hover:text-white/80">
+                          {{ item.src ? 'Replace image' : 'Upload image' }}
+                          <input type="file" accept="image/*" class="hidden" @change="(e: Event) => onCardImagePick(item, e)" />
+                        </label>
+                      </div>
+                      <div v-else-if="item.fill" class="space-y-1.5">
+                        <StudioColorField :label="fillNeedsB(item.fill) ? 'Color 1' : 'Fill'" :model-value="item.fill.a"
+                                          @update:model-value="(v: string) => { item.fill!.a = v }" />
+                        <StudioColorField v-if="fillNeedsB(item.fill)" label="Color 2" :model-value="item.fill.b"
+                                          @update:model-value="(v: string) => { item.fill!.b = v }" />
+                        <StudioSlider v-if="fillHasAngle(item.fill)" v-model="item.fill!.angle" label="Fade angle" :min="0" :max="180" :step="5" />
+                        <StudioSlider v-if="fillHasDensity(item.fill)" v-model="item.fill!.density" label="Density" :min="1" :max="32" :step="1" />
+                      </div>
+                    </div>
                   </div>
                   <div class="flex gap-1.5">
                     <button type="button" @click="addContentText"
                             class="flex-1 rounded border border-dashed border-white/15 py-1.5 text-[11px] text-white/50 hover:border-white/30 hover:text-white/80">+ Add text</button>
-                    <label
-                            class="flex-1 cursor-pointer rounded border border-dashed border-white/15 py-1.5 text-center text-[11px] text-white/50 hover:border-white/30 hover:text-white/80">+ Add image
-                      <input type="file" accept="image/*" class="hidden" @change="onContentImagePick" />
-                    </label>
+                    <button type="button" @click="addContentCard"
+                            class="flex-1 rounded border border-dashed border-white/15 py-1.5 text-[11px] text-white/50 hover:border-white/30 hover:text-white/80">+ Add card</button>
                   </div>
-                  <p class="text-[10px] leading-relaxed text-white/35">Words and photos ride the ring in this order. <span class="text-white/50">Letters</span> splits a word into one tile per character.</p>
+                  <p class="text-[10px] leading-relaxed text-white/35">Words and cards ride the ring in this order. <span class="text-white/50">Letters</span> splits a word into one tile per character.</p>
                 </div>
               </template>
               <p v-else-if="c.kind === 'path'" class="text-[10px] leading-relaxed text-white/40">
