@@ -732,28 +732,33 @@ function renderFrame() {
   }
   try {
     const p = params.value
+    const framed = isSheetFramed(p)
     const s = sheetFromParams(p)
-    // On the Tile preset the output is a material sample, so fill the card edge to
-    // edge as it always has. Once a sheet is chosen the card shows that sheet's
-    // shape, letterboxed — otherwise a 9:16 pattern would look 3:2 on the canvas.
-    const box = isSheetFramed(p)
+    // Unframed (Tile preset): the output is a material sample, so the card is a window
+    // onto the infinite field at the pre-sheet density — a PREVIEW_H-sized tile
+    // repeat-filling the 3:2 card, exactly as ctx.createPattern did before the sheet
+    // existed. Framed: the card shows the sheet's own aspect and density, letterboxed,
+    // otherwise a 9:16 pattern would look 3:2 on the canvas.
+    const view = framed ? s : { w: PREVIEW_W, h: PREVIEW_H, tile: PREVIEW_H }
+    const box = framed
       ? fitLetterbox(s, PREVIEW_W, PREVIEW_H)
       : { w: PREVIEW_W, h: PREVIEW_H, x: 0, y: 0 }
     // Render the seamless tile SQUARE (so cells stay square / undistorted), then
     // repeat-fill. Drawing a square tile straight into a 3:2 canvas stretched the
     // pattern horizontally.
-    const TILE = Math.max(32, Math.min(256, Math.round(s.tile * (box.w / s.w))))
+    const TILE = Math.max(32, Math.min(256, Math.round(view.tile * (box.w / view.w))))
     const base = textureFx.render(p, TILE, TILE, 0)
     const out = stylizeTile(base, p, TILE, TILE)
     const ctx = canvas.getContext('2d')!
     ctx.clearRect(0, 0, PREVIEW_W, PREVIEW_H)
     ctx.save()
-    ctx.beginPath()
-    ctx.rect(box.x, box.y, box.w, box.h)
-    ctx.clip()
-    ctx.translate(box.x, box.y)
-    drawSheet(ctx, out, s, box.w, box.h)
-    ctx.restore()
+    try {
+      ctx.beginPath()
+      ctx.rect(box.x, box.y, box.w, box.h)
+      ctx.clip()
+      ctx.translate(box.x, box.y)
+      drawSheet(ctx, out, view, box.w, box.h)
+    } finally { ctx.restore() }
     glError.value = null
   }
   catch (e: any) {
@@ -762,7 +767,10 @@ function renderFrame() {
 }
 ```
 
-Note the unframed branch passes `box.w = PREVIEW_W` while `s.w` may be 1024, so `drawSheet`'s scale is `220/1024` — the tile lands at ~PREVIEW-appropriate size and repeat-fills the card exactly as the old `createPattern` did.
+Two things this shape is load-bearing for, both found by review of an earlier draft:
+
+- **`view`, not `s`.** On the Tile preset `s.w === s.tile`, so `s.tile * (box.w / s.w)` collapses to `box.w` and `tilePx` cancels out algebraically — the card would draw ONE 220px tile cropped to 148 tall instead of the 148px tile repeating 2×1. Hard-coding `view` from `PREVIEW_W`/`PREVIEW_H` on the unframed branch removes any dependence on the sheet.
+- **`try/finally` around the clip.** `canvas.width`/`height` are only reassigned when they differ from the constants, so the 2D context persists across calls. A throw inside the clipped section without `restore()` leaves it permanently clipped and translated for every later frame.
 
 - [ ] **Step 2: Verify it compiles**
 
