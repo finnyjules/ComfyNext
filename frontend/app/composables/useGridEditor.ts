@@ -16,6 +16,7 @@ import type { BrandKit } from '~~/shared/brand/types'
 import { applyArchetype, classifyFormat, fineGridDims, formatDims, gridDims, gridMetrics, gutterBox, marginBox, regionToRect, remapRegion, resolveFormat } from '~~/shared/template-grid'
 import type { Rect } from '~~/shared/template-grid/grid'
 import type { Archetype } from '~~/shared/template-grid/archetypes'
+import { generate, shuffle, surprise } from '~~/shared/template-grid/generate/generate'
 import { deriveOutputs, type ResolvedLayout } from '~~/shared/template-grid/resolve'
 import {
   addChildToStack, allElements, DEFAULT_AUTOLAYOUT, effectiveOrder, groupIntoSection, removeChildFromStack, sectionRegionFor,
@@ -24,7 +25,7 @@ import {
 import { isLayoutStack, isV3 } from '~~/shared/template-grid/types'
 import type {
   AnyGridTemplate, AutoLayout, ElementV2, ImageElementV2, OutputSpec, Region, SectionV3,
-  ShapeElementV2, SizeMode, TemplateV2, TemplateV3, TextElementV2,
+  ShapeElementV2, SizeMode, TemplateV2, TemplateV3, TextElementV2, TextStyleV2, TierId,
 } from '~~/shared/template-grid/types'
 import { defaultExpressiveBoxParams, type ExpressiveBoxParams } from '~~/shared/text-layout/boxes'
 
@@ -1056,6 +1057,67 @@ export function useGridEditor(
     // Clipping is opt-in (inspector toggle) so grouped children never vanish.
   }
 
+  // -- Generation (staging × surface) -----------------------------------------
+  // Deterministic re-generation from the axis tuple (Tasks 1–10's pure engine).
+  // Every action commits its own history step immediately — `commit()` mirrors
+  // the brief's `commit(next)` helper by assigning `template` then forcing an
+  // undo checkpoint via the real `commitNow` (defined below; hoisted), so a
+  // shuffle/surprise/etc. is always one atomic undo step, never merged into
+  // the next debounced edit.
+
+  const editorMode = ref<'layout' | 'freeform'>('layout')
+
+  const genStaging = computed(() => (template.value as TemplateV3).gen?.staging ?? 'tower')
+  const genSurface = computed(() => (template.value as TemplateV3).gen?.surface ?? 'flat')
+  const genSeed = computed(() => (template.value as TemplateV3).gen?.seed ?? 0)
+  const genLocks = computed(() => (template.value as TemplateV3).gen?.locks ?? {})
+
+  function commit(next: TemplateV3) {
+    template.value = next
+    commitNow()
+  }
+
+  function asV3(): TemplateV3 { convertToV3(); return template.value as TemplateV3 }
+  // Image wiring lands in Task 15 — for now the generation context is just brand.
+  function genCtx() { return { brand: effectiveBrand.value as unknown as BrandKit } }
+
+  function shuffleLayout() { commit(shuffle(asV3(), genCtx())) }
+  function surpriseLayout() { commit(surprise(asV3(), genCtx())) }
+
+  function setStaging(id: string) {
+    const t = asV3()
+    commit(generate(t, { staging: id, surface: t.gen?.surface ?? 'flat', seed: t.gen?.seed ?? 1, ...genCtx() }))
+  }
+  function setSurface(id: string) {
+    const t = asV3()
+    commit(generate(t, { staging: t.gen?.staging ?? 'tower', surface: id, seed: t.gen?.seed ?? 1, ...genCtx() }))
+  }
+  function toggleLock(axis: 'staging' | 'surface') {
+    const t = asV3()
+    const locks = { ...(t.gen?.locks ?? {}) }
+    locks[axis] = !locks[axis]
+    commit({ ...t, gen: { ...(t.gen ?? { staging: 'tower', surface: 'flat', seed: 1 }), locks } })
+  }
+
+  function tierType(id: TierId): Partial<TextStyleV2> {
+    return (template.value as TemplateV3).tiers?.[id]?.type ?? {}
+  }
+  function setTierType(id: TierId, patch: Partial<TextStyleV2>) {
+    const t = asV3()
+    const tiers = { ...(t.tiers ?? {}) }
+    const spec = tiers[id] ?? { content: '' }
+    tiers[id] = { ...spec, type: { ...spec.type, ...patch } }
+    // Re-generate in place so the type change is visible immediately (same tuple).
+    commit(generate({ ...t, tiers }, { staging: t.gen?.staging ?? 'tower', surface: t.gen?.surface ?? 'flat', seed: t.gen?.seed ?? 1, ...genCtx() }))
+  }
+  function addTierItem(id: TierId, content = '') {
+    const t = asV3()
+    const tiers = { ...(t.tiers ?? {}) }
+    tiers[id] = { content: content || tiers[id]?.content || id.toUpperCase(), type: tiers[id]?.type }
+    const seed = t.gen?.seed ?? 1
+    commit(generate({ ...t, tiers }, { staging: t.gen?.staging ?? 'tower', surface: t.gen?.surface ?? 'flat', seed, ...genCtx() }))
+  }
+
   // -- Undo / redo ------------------------------------------------------------
   // History holds JSON snapshots of `template`. `cursor` points at the entry
   // matching the last *committed* state; the live template may have drifted
@@ -1143,6 +1205,9 @@ export function useGridEditor(
     setSectionStyle, setSectionClip, renameSection, renameElement, toggleSectionLayout, wrapSelectionInSection, addSectionAt, frameDrawArmed,
     toggleSectionExpressive, setSectionExpressive,
     commitNow, undo, redo, canUndo, canRedo,
+    editorMode, genStaging, genSurface, genSeed, genLocks,
+    setStaging, setSurface, toggleLock, shuffleLayout, surpriseLayout,
+    tierType, setTierType, addTierItem,
   }
 }
 
