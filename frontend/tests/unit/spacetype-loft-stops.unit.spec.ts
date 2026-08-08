@@ -18,6 +18,20 @@ describe('parseStops', () => {
     const [s] = parseStops('[{"x":0.2,"y":0.2,"z":0,"width":1,"height":1,"radius":0.5,"sides":32,"roll":0,"color":"#fff"}]')
     expect(typeof s!.id).toBe('string'); expect(s!.id.length).toBeGreaterThan(0)
   })
+  it('fallback returns a fresh clone (mutation does not poison DEFAULT_STOPS)', () => {
+    const before = DEFAULT_STOPS.map(s => s.x)
+    const got = parseStops('garbage')
+    got[0]!.x = 0.123
+    expect(DEFAULT_STOPS.map(s => s.x)).toEqual(before)   // unchanged
+  })
+  it('reassigns duplicate ids on parse', () => {
+    const dup = JSON.stringify([
+      { id: 'x', x: 0.2, y: 0.5, z: 0, width: 1, height: 1, radius: 0.5, sides: 32, roll: 0, color: '#fff' },
+      { id: 'x', x: 0.8, y: 0.5, z: 0, width: 1, height: 1, radius: 0.5, sides: 32, roll: 0, color: '#000' },
+    ])
+    const out = parseStops(dup)
+    expect(new Set(out.map(s => s.id)).size).toBe(out.length)
+  })
 })
 
 describe('presetStops', () => {

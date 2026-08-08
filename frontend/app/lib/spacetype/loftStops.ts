@@ -43,9 +43,19 @@ export function serializeStops(stops: LoftStop[]): string { return JSON.stringif
 
 export function parseStops(json: unknown): LoftStop[] {
   let arr: any
-  try { arr = typeof json === 'string' ? JSON.parse(json) : json } catch { return DEFAULT_STOPS }
-  if (!Array.isArray(arr) || arr.length === 0) return DEFAULT_STOPS
-  return arr.map(sanitizeStop)
+  try { arr = typeof json === 'string' ? JSON.parse(json) : json } catch { return DEFAULT_STOPS.map(s => ({ ...s })) }
+  if (!Array.isArray(arr) || arr.length === 0) return DEFAULT_STOPS.map(s => ({ ...s }))
+
+  // Sanitize stops and enforce unique ids
+  const seenIds = new Set<string>()
+  return arr.map(raw => {
+    const stop = sanitizeStop(raw)
+    if (seenIds.has(stop.id)) {
+      stop.id = newId()
+    }
+    seenIds.add(stop.id)
+    return stop
+  })
 }
 
 const RAINBOW = ['#3b5bff', '#ff2ea6', '#ff5a1f', '#ffd23f', '#2ec7a0', '#8a5bff']
