@@ -463,6 +463,7 @@ function onPickImage(url: string) {
         </template>
         <template v-else-if="selectedElement || selectedSection">
           <div class="min-h-0 flex-1 overflow-y-auto pt-2">
+            <TemplatesTierTypePanel v-if="ctx.editorMode.value === 'layout'" />
             <TemplatesGridPropertyPanel v-if="selectedElement" />
             <TemplatesSectionInspector v-if="selectedSection" />
           </div>
@@ -474,6 +475,7 @@ function onPickImage(url: string) {
             <p class="text-[11px] text-white/35 mt-0.5">Grid, spacing and background</p>
           </div>
           <div class="min-h-0 flex-1 overflow-y-auto">
+            <TemplatesLayoutControlsPanel v-if="ctx.editorMode.value === 'layout'" />
             <!-- Grid -->
             <div class="px-4 py-3.5 flex flex-col gap-3 border-b border-white/[0.06]">
               <p class="text-[10px] uppercase tracking-[0.12em] text-white/35">Grid</p>
@@ -594,6 +596,17 @@ function onPickImage(url: string) {
         <div class="flex items-center gap-2">
         <div class="flex items-center gap-1 bg-[#1a1a1a]/95 rounded-[12px] p-1.5 border border-[#2a2a2a] shadow-lg">
 
+        <!-- Mode toggle: Layout (generatable) vs Freeform (manual) -->
+        <div class="flex items-center bg-white/[0.05] rounded-lg p-0.5 mr-1">
+          <button class="h-7 px-2.5 rounded-md text-[11px] font-semibold transition-colors cursor-pointer"
+            :class="ctx.editorMode.value === 'layout' ? 'bg-action text-white' : 'text-white/50 hover:text-white'"
+            @click="ctx.editorMode.value = 'layout'">Layout</button>
+          <button class="h-7 px-2.5 rounded-md text-[11px] font-semibold transition-colors cursor-pointer"
+            :class="ctx.editorMode.value === 'freeform' ? 'bg-action text-white' : 'text-white/50 hover:text-white'"
+            @click="ctx.editorMode.value = 'freeform'">Freeform</button>
+        </div>
+        <div class="w-px h-5 bg-white/10 mx-0.5" />
+
         <!-- Brand -->
         <div class="relative">
           <button
@@ -658,33 +671,45 @@ function onPickImage(url: string) {
 
         <div class="w-px h-5 bg-white/10 mx-0.5" />
 
-        <button
-          class="h-8 px-2.5 rounded-md flex items-center gap-1.5 text-[12px] text-white/70 hover:bg-white/10 hover:text-white transition-colors cursor-pointer"
-          @click="ctx.addText()"
-        >
-          <TypeIcon class="size-3.5" /> Text
-        </button>
-        <button
-          class="h-8 px-2.5 rounded-md flex items-center gap-1.5 text-[12px] text-white/70 hover:bg-white/10 hover:text-white transition-colors cursor-pointer"
-          title="Add an image — pick from the canvas or your assets"
-          @click="imagePickerOpen = true"
-        >
-          <ImagePlus class="size-3.5" /> Image
-        </button>
-        <button
-          class="h-8 px-2.5 rounded-md flex items-center gap-1.5 text-[12px] text-white/70 hover:bg-white/10 hover:text-white transition-colors cursor-pointer"
-          @click="ctx.addShape()"
-        >
-          <Square class="size-3.5" /> Shape
-        </button>
-        <button
-          class="h-8 px-2.5 rounded-md flex items-center gap-1.5 text-[12px] transition-colors cursor-pointer"
-          :class="ctx.frameDrawArmed.value ? 'bg-white/15 text-white' : selectedId ? 'text-emerald-300 hover:bg-emerald-500/15 hover:text-emerald-200' : 'text-white/70 hover:bg-white/10 hover:text-white'"
-          :title="selectedId ? 'Wrap the selection in a Section frame' : 'Draw a frame — click, then drag on the canvas'"
-          @click="onSectionTool()"
-        >
-          <Frame class="size-3.5" /> Section
-        </button>
+        <template v-if="ctx.editorMode.value === 'layout'">
+          <button v-for="tier in (['hero','anchor','support','fineprint'] as const)" :key="tier"
+            class="h-8 px-2.5 rounded-md flex items-center gap-1.5 text-[12px] text-white/70 hover:bg-white/10 hover:text-white transition-colors cursor-pointer capitalize"
+            :title="`Add a ${tier} item`"
+            @click="ctx.addTierItem(tier)">+ {{ tier === 'hero' ? 'Headline' : tier === 'anchor' ? 'Anchor' : tier === 'support' ? 'List' : 'Detail' }}</button>
+          <button class="h-8 px-2.5 rounded-md flex items-center gap-1.5 text-[12px] text-white/70 hover:bg-white/10 hover:text-white transition-colors cursor-pointer"
+            title="Add an image" @click="imagePickerOpen = true">
+            <ImagePlus class="size-3.5" /> Image
+          </button>
+        </template>
+        <template v-else>
+          <button
+            class="h-8 px-2.5 rounded-md flex items-center gap-1.5 text-[12px] text-white/70 hover:bg-white/10 hover:text-white transition-colors cursor-pointer"
+            @click="ctx.addText()"
+          >
+            <TypeIcon class="size-3.5" /> Text
+          </button>
+          <button
+            class="h-8 px-2.5 rounded-md flex items-center gap-1.5 text-[12px] text-white/70 hover:bg-white/10 hover:text-white transition-colors cursor-pointer"
+            title="Add an image — pick from the canvas or your assets"
+            @click="imagePickerOpen = true"
+          >
+            <ImagePlus class="size-3.5" /> Image
+          </button>
+          <button
+            class="h-8 px-2.5 rounded-md flex items-center gap-1.5 text-[12px] text-white/70 hover:bg-white/10 hover:text-white transition-colors cursor-pointer"
+            @click="ctx.addShape()"
+          >
+            <Square class="size-3.5" /> Shape
+          </button>
+          <button
+            class="h-8 px-2.5 rounded-md flex items-center gap-1.5 text-[12px] transition-colors cursor-pointer"
+            :class="ctx.frameDrawArmed.value ? 'bg-white/15 text-white' : selectedId ? 'text-emerald-300 hover:bg-emerald-500/15 hover:text-emerald-200' : 'text-white/70 hover:bg-white/10 hover:text-white'"
+            :title="selectedId ? 'Wrap the selection in a Section frame' : 'Draw a frame — click, then drag on the canvas'"
+            @click="onSectionTool()"
+          >
+            <Frame class="size-3.5" /> Section
+          </button>
+        </template>
         </div>
 
         <!-- Zoom -->
