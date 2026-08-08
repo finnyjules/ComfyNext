@@ -15,7 +15,7 @@ export interface StudioOption {
 }
 
 export const STUDIO_OPTIONS: StudioOption[] = [
-  ...(SPACE_TYPE_ENABLED ? [{ label: 'Type', icon: CaseSensitive, special: 'space-type' }] : []),
+  ...(SPACE_TYPE_ENABLED ? [{ label: 'Expressive', icon: CaseSensitive, special: 'space-type' }] : []),
   { label: 'Gradient', icon: Blend, nodeType: 'GradientStudio' },
   { label: 'Shader', icon: Aperture, nodeType: 'ShaderStudio' },
   { label: 'Pattern', icon: Grid3x3, nodeType: 'TextureStudio' },
