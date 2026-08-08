@@ -32,11 +32,16 @@ export const TILE_PX_OPTIONS: string[] = ['128', '256', '512', '1024', '2048']
 const MIN_DIM = 64
 const MAX_DIM = 8192
 
+// Deliberately looser than the UI (sheetW/sheetH sliders floor at 128): this also
+// clamps hand-edited params.json and Collection-bound values, which never pass
+// through the slider at all.
 function clampDim(v: number): number {
   if (!Number.isFinite(v)) return 1024
   return Math.max(MIN_DIM, Math.min(MAX_DIM, Math.round(v)))
 }
 
+// Deliberately looser than the UI (TILE_PX_OPTIONS tops out at 2048): same reason
+// as clampDim — hand-edited or Collection-bound tilePx values skip the <select>.
 function clampTile(v: number): number {
   if (!Number.isFinite(v) || v <= 0) return 1024
   return Math.max(MIN_DIM, Math.min(4096, Math.round(v / 64) * 64))
@@ -74,9 +79,15 @@ export function isTileable(s: Sheet): boolean {
  * True when the user chose a real sheet rather than "just give me the tile".
  * The node card uses this to decide between a full-bleed material swatch and a
  * letterboxed frame — a bare tile has no aspect worth honouring.
+ *
+ * Must recognise the same labels sheetFromParams does — an unrecognised preset
+ * label (future/legacy build) falls through to the square-tile case there, so
+ * it has to fall through to "not framed" here too, or the two disagree and the
+ * node card letterboxes a square swatch instead of drawing it full-bleed.
  */
 export function isSheetFramed(p: Params): boolean {
-  return String(p.sheetPreset ?? SHEET_PRESET_TILE) !== SHEET_PRESET_TILE
+  const preset = String(p.sheetPreset ?? SHEET_PRESET_TILE)
+  return preset === SHEET_PRESET_CUSTOM || Object.prototype.hasOwnProperty.call(SHEET_SIZES, preset)
 }
 
 /** Largest rect with the sheet's aspect that fits in boxW x boxH, centred. */

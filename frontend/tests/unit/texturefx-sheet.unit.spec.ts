@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { TEXTURE_CONTROLS, textureDefaults } from '~/lib/texturefx/controls'
 import {
-  SHEET_PRESET_CUSTOM, SHEET_PRESET_TILE, SHEET_PRESETS, TILE_PX_OPTIONS,
+  SHEET_PRESET_CUSTOM, SHEET_PRESET_TILE, SHEET_PRESETS, SHEET_SIZES, TILE_PX_OPTIONS,
   fitLetterbox, isSheetFramed, isTileable, repeatsFor, sheetFromParams, tilePositions,
 } from '~/lib/texturefx/sheet'
 import type { Params } from '~/lib/spacetype/effect'
@@ -41,6 +41,15 @@ describe('sheetFromParams — presets and custom', () => {
 
   it('falls back to a square tile sheet for an unknown preset label', () => {
     const p = { ...textureDefaults(), sheetPreset: 'Nonsense', tilePx: '512' } as Params
+    expect(sheetFromParams(p)).toEqual({ w: 512, h: 512, tile: 512 })
+  })
+
+  // isSheetFramed and sheetFromParams must recognise presets identically — an
+  // unrecognised label resolves to a square tile sheet, so it must also read as
+  // "not framed", or the node card letterboxes a square swatch into a 3:2 frame.
+  it('agrees with sheetFromParams on an unrecognised preset label', () => {
+    const p = { ...textureDefaults(), sheetPreset: 'Nonsense', tilePx: '512' } as Params
+    expect(isSheetFramed(p)).toBe(false)
     expect(sheetFromParams(p)).toEqual({ w: 512, h: 512, tile: 512 })
   })
 
@@ -121,5 +130,35 @@ describe('control declarations', () => {
   it('declares the four Output controls in the Output group', () => {
     const keys = TEXTURE_CONTROLS.filter(c => c.group === 'Output').map(c => c.key)
     expect(keys).toEqual(['sheetPreset', 'sheetW', 'sheetH', 'tilePx'])
+  })
+})
+
+// SHEET_SIZES keys are BOTH the UI label and the persisted identity: a saved
+// pattern's params.sheetPreset is the literal string. Renaming a label, or
+// normalising the × (U+00D7) or any other punctuation to ASCII, makes every
+// already-saved pattern using that preset fall through the unknown-label branch
+// in sheetFromParams and silently re-export at 1024x1024 instead of its real
+// size. These assertions lock the exact strings so a copy-edit fails CI instead
+// of quietly corrupting exported dimensions for existing users. If you actually
+// need to rename a label, that is a data migration, not a rename.
+describe('SHEET_SIZES / SHEET_PRESETS — persisted identity', () => {
+  it('locks the exact preset label list', () => {
+    expect(SHEET_PRESETS).toEqual([
+      'Tile · square',
+      '1920 × 1080 (16:9)',
+      '1080 × 1920 (9:16)',
+      '2048 × 2048',
+      '3840 × 2160 (4K)',
+      'Custom',
+    ])
+  })
+
+  it('locks the exact SHEET_SIZES keys and dimensions', () => {
+    expect(SHEET_SIZES).toEqual({
+      '1920 × 1080 (16:9)': [1920, 1080],
+      '1080 × 1920 (9:16)': [1080, 1920],
+      '2048 × 2048': [2048, 2048],
+      '3840 × 2160 (4K)': [3840, 2160],
+    })
   })
 })

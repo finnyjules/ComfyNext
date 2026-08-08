@@ -100,12 +100,12 @@ export const TEXTURE_CONTROLS: TextureControl[] = [
   //     exactly one tile — 1024x1024 from a 1024 tile, i.e. what this studio produced
   //     before the sheet existed, so every already-saved pattern exports unchanged.
   //     lib/texturefx/sheet.ts resolves these into the {w,h,tile} every render path uses.
-  { key: 'sheetPreset', label: 'Sheet', kind: 'select', options: [...SHEET_PRESETS], default: SHEET_PRESET_TILE, group: 'Output' },
-  { key: 'sheetW', label: 'Width', kind: 'slider', min: 128, max: 8192, step: 64, default: 1024, group: 'Output', when: (p) => String(p.sheetPreset) === SHEET_PRESET_CUSTOM },
-  { key: 'sheetH', label: 'Height', kind: 'slider', min: 128, max: 8192, step: 64, default: 1024, group: 'Output', when: (p) => String(p.sheetPreset) === SHEET_PRESET_CUSTOM },
+  { key: 'sheetPreset', label: 'Sheet', kind: 'select', options: [...SHEET_PRESETS], default: SHEET_PRESET_TILE, group: 'Output', hint: 'Picks the exported FILE\'s dimensions, not the look of the pattern. To change the motif itself, use the Content/Lattice/Stylize controls instead.' },
+  { key: 'sheetW', label: 'Width', kind: 'slider', min: 128, max: 8192, step: 64, default: 1024, group: 'Output', when: (p) => String(p.sheetPreset) === SHEET_PRESET_CUSTOM, hint: 'Sets the exported file\'s pixel width when Sheet is Custom. Does not change the pattern\'s appearance.' },
+  { key: 'sheetH', label: 'Height', kind: 'slider', min: 128, max: 8192, step: 64, default: 1024, group: 'Output', when: (p) => String(p.sheetPreset) === SHEET_PRESET_CUSTOM, hint: 'Sets the exported file\'s pixel height when Sheet is Custom. Does not change the pattern\'s appearance.' },
   // Tile size is the density dial: the same motif reads fine or coarse depending on how
   // many times the tile fits the sheet.
-  { key: 'tilePx', label: 'Tile size', kind: 'select', options: [...TILE_PX_OPTIONS], default: '1024', group: 'Output' },
+  { key: 'tilePx', label: 'Tile size', kind: 'select', options: [...TILE_PX_OPTIONS], default: '1024', group: 'Output', hint: 'Sets how large one repeating tile is in the exported file. To make the motif itself finer or coarser, use Cells instead.' },
 
   // --- Post (shared stack: bloom/color/duotone/chroma/blur/film/halftone/dotScreen/
   //     glitch/grain/vignette — ambient occlusion withheld, 2D host). Runs INSIDE

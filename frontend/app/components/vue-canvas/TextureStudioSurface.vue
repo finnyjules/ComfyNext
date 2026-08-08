@@ -302,7 +302,6 @@ function renderSheetPreview() {
   const box = fitLetterbox(s, SHEET_PREVIEW_BOX, SHEET_PREVIEW_BOX)
   el.width = box.w; el.height = box.h
   const ctx = el.getContext('2d')!
-  ctx.clearRect(0, 0, el.width, el.height)
   // Render the tile at roughly its on-screen size — never the sheet's true tile size,
   // or previewing a 4K sheet would cost a 4K render.
   const px = Math.max(32, Math.min(512, Math.round(s.tile * (box.w / s.w))))
@@ -508,9 +507,9 @@ async function exportBlob(): Promise<Blob> {
 // no separate rebuild step needed — `exportBlob` reads `params` fresh each
 // call), render one full-res frame via the shared `exportBlob` capture path,
 // then restore the snapshots in `finally` regardless of success/failure.
-// `exportBlob` calls `textureFx.render(params, ...)` directly with `params`
-// as an argument and only awaits the `toBlob` callback, so no `nextTick`/rAF
-// wait is needed between the override-write and the capture call.
+// `exportBlob` delegates to `bakeSheetBlob(params)`, which reads `params` fresh
+// and awaits its own render + `toBlob` internally, so no `nextTick`/rAF wait is
+// needed between the override-write and the capture call.
 async function renderBlobWithOverrides(overrides: Record<string, string | number>): Promise<Blob | null> {
   const keys = Object.keys(overrides)
   const snapshot = new Map<string, unknown>()
@@ -552,7 +551,10 @@ async function downloadPng() {
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob); a.download = `texture_${params.seed}.png`; a.click()
     URL.revokeObjectURL(a.href)
-  } catch (e) { console.error('[texture] PNG download failed', e) }
+  } catch (e) {
+    console.error('[texture] PNG download failed', e)
+    bakeMsg.value = 'Failed — see console.'
+  }
 }
 
 // Keyboard shortcut: Escape closes the editor.
@@ -599,7 +601,7 @@ onBeforeUnmount(() => {
                   :class="seams ? 'border-white bg-white/10 text-white' : 'border-white/15 text-white/55 hover:bg-white/10'"
                   @click="toggleSeams">Highlight seams</button>
         </div>
-        <div v-if="params.mode === 'raster'" class="flex flex-col items-center gap-2">
+        <div v-if="onDesign && params.mode === 'raster'" class="flex flex-col items-center gap-2">
           <div class="flex items-center gap-2 text-xs">
             <input ref="fileInput" type="file" accept="image/*" class="hidden" @change="onImportFile">
             <button type="button"
