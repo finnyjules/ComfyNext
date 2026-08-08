@@ -15,9 +15,10 @@ import GradientEditor from '~/components/vue-canvas/compositor/GradientEditor.vu
 import ShaderFillEditor from '~/components/vue-canvas/widgets/ShaderFillEditor.vue'
 import { type Fill, type FillType, type ShaderSpec, FILL_TYPES, DEFAULT_FILL, DEFAULT_SHADER_SPEC, fillTileCanvas } from '~/lib/spacetype/fillTile'
 import { rollPaintItem, gradientFromPaint } from '~/lib/compositor/fillPalette'
-import { type Paint, type Gradient, isFill, isGradient } from '~/composables/useCompositorLayers'
+import { type Paint, type Gradient, type ImageFill, isFill, isGradient, isImageFill } from '~/composables/useCompositorLayers'
 import type { BrandKit } from '~~/shared/brand/types'
 import { brandSwatches as kitSwatches } from '~~/shared/brand/resolve'
+import FillImagePicker from '~/components/vue-canvas/compositor/FillImagePicker.vue'
 
 const props = withDefaults(defineProps<{ modelValue: Paint | undefined; allowNone?: boolean; nested?: boolean }>(), { allowNone: false, nested: false })
 const emit = defineEmits<{ 'update:modelValue': [Paint] }>()
@@ -28,12 +29,16 @@ const emit = defineEmits<{ 'update:modelValue': [Paint] }>()
  *  rather than a user picking "shader" again and having it silently collapsed
  *  on save. */
 const availableTypes = computed<FillType[]>(() => props.nested ? FILL_TYPES.filter((t) => t !== 'shader') : FILL_TYPES)
+// Excludes 'image' when nested — the nested instance edits a shader's `spec.input`,
+// and an ImageFill as a shader input reaches descriptor.ts's inputKey / paintTileBox,
+// which do not render it (mirrors the 'shader' exclusion above for the same reason).
 
 const open = ref(false)
 const previewRef = ref<HTMLCanvasElement | null>(null)
 
 /** Normalize whatever Paint we were handed into an editable Fill. */
 function toFill(p: Paint | undefined): Fill {
+  if (isImageFill(p)) return { ...DEFAULT_FILL, type: 'solid', a: '#3b82f6' }  // parked; image UI reads imageFill ref, not this
   if (isFill(p)) return { ...DEFAULT_FILL, ...p }
   if (isGradient(p)) {
     const stops = p.stops ?? []
@@ -58,6 +63,36 @@ function toGrad(p: Paint | undefined, f: Fill): Gradient {
 const fill = reactive<Fill>(toFill(props.modelValue))
 const grad = ref<Gradient>(toGrad(props.modelValue, fill))
 watch(() => props.modelValue, (v) => { Object.assign(fill, toFill(v)); grad.value = toGrad(v, fill); drawPreview() })
+
+// The type dropdown offers a synthetic 'image' entry on top of the Fill types.
+type UiType = FillType | 'image'
+const imageFill = ref<ImageFill | null>(isImageFill(props.modelValue) ? { ...props.modelValue } : null)
+const pickerOpen = ref(false)
+const currentType = computed<UiType>(() => isImageFill(props.modelValue) ? 'image' : fill.type)
+
+watch(() => props.modelValue, (v) => {
+  if (isImageFill(v)) { imageFill.value = { ...v }; pickerOpen.value = false }
+})
+
+function setUiType(t: UiType) {
+  if (t === 'image') {
+    if (!imageFill.value) { imageFill.value = { type: 'image', src: '', fit: 'cover', scale: 1, offset: { x: 0, y: 0 } }; pickerOpen.value = true }
+    emit('update:modelValue', { ...imageFill.value })
+    return
+  }
+  // leaving image → fall back to the normal Fill path
+  imageFill.value = null
+  setType(t as FillType)
+}
+
+function pushImage(patch: Partial<ImageFill>) {
+  const next: ImageFill = { type: 'image', src: '', fit: 'cover', scale: 1, offset: { x: 0, y: 0 }, ...imageFill.value, ...patch }
+  imageFill.value = next
+  emit('update:modelValue', { ...next })
+}
+function onPick(src: string) { pickerOpen.value = false; pushImage({ src }) }
+
+const uiTypes = computed<UiType[]>(() => props.nested ? availableTypes.value : [...availableTypes.value, 'image'])
 
 /** Editable Fill → the Paint we emit (solid → hex, patterns → Fill object). Gradient
  *  is emitted from `grad` (the native multi-stop Gradient), not collapsed here.
@@ -159,7 +194,7 @@ watch(grad, drawPreview, { deep: true })
         <canvas ref="previewRef" width="28" height="28" class="h-full w-full" />
       </button>
       <button type="button" class="flex-1 h-8 rounded border border-[#2a2a2a] bg-[#1a1a1a] px-2 text-left text-xs text-white/85 capitalize flex items-center justify-between cursor-pointer" @click="open = !open">
-        <span>{{ isNone ? 'No fill' : fill.type }}</span>
+        <span>{{ isNone ? 'No fill' : currentType }}</span>
         <ChevronDown class="size-3.5 text-white/35 transition-transform" :class="open ? 'rotate-180' : ''" />
       </button>
       <button type="button" class="h-8 w-8 shrink-0 grid place-items-center rounded border border-[#2a2a2a] bg-[#1a1a1a] text-white/55 hover:text-white cursor-pointer" title="Shuffle a palette fill" @click="shuffle">
@@ -180,12 +215,48 @@ watch(grad, drawPreview, { deep: true })
         />
       </div>
 
-      <select :value="fill.type" class="w-full rounded bg-white/10 px-2 py-1.5 text-xs text-white/90 outline-none capitalize cursor-pointer"
-        @change="setType(($event.target as HTMLSelectElement).value as FillType)">
-        <option v-for="t in availableTypes" :key="t" :value="t">{{ t }}</option>
+      <select :value="currentType" class="w-full rounded bg-white/10 px-2 py-1.5 text-xs text-white/90 outline-none capitalize cursor-pointer"
+        @change="setUiType(($event.target as HTMLSelectElement).value as any)">
+        <option v-for="t in uiTypes" :key="t" :value="t">{{ t }}</option>
       </select>
 
-      <GradientEditor v-if="fill.type === 'gradient'" :model-value="grad" @update:model-value="onGrad" />
+      <template v-if="currentType === 'image'">
+        <div v-if="imageFill?.src && !pickerOpen" class="flex items-center gap-2">
+          <div class="h-10 w-10 shrink-0 rounded border border-white/10 overflow-hidden bg-[#1a1a1a]">
+            <img :src="imageFill.src" class="h-full w-full object-cover" alt="" />
+          </div>
+          <button type="button" class="text-[11px] text-white/70 hover:text-white underline cursor-pointer" @click="pickerOpen = true">Replace image</button>
+        </div>
+        <FillImagePicker v-else @pick="onPick" />
+
+        <template v-if="imageFill?.src">
+          <div class="grid grid-cols-4 gap-1">
+            <button v-for="f in (['cover','contain','tile','stretch'] as const)" :key="f" type="button"
+              class="h-7 rounded border text-[10px] capitalize cursor-pointer"
+              :class="imageFill.fit === f ? 'border-white/60 bg-white/10 text-white' : 'border-white/10 bg-[#1a1a1a] text-white/60 hover:text-white'"
+              @click="pushImage({ fit: f })">{{ f }}</button>
+          </div>
+          <div>
+            <div class="flex items-center justify-between text-[9px] uppercase tracking-[0.1em] text-white/35 mb-1">
+              <span>Scale</span><span class="tabular-nums normal-case">{{ (imageFill.scale ?? 1).toFixed(2) }}×</span>
+            </div>
+            <input type="range" min="0.1" max="4" step="0.05" :value="imageFill.scale ?? 1" class="w-full accent-white cursor-pointer"
+              @input="pushImage({ scale: Number(($event.target as HTMLInputElement).value) })" />
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <label class="text-[9px] uppercase tracking-[0.1em] text-white/35">Offset X
+              <input type="range" min="-0.5" max="0.5" step="0.01" :value="imageFill.offset?.x ?? 0" class="w-full accent-white cursor-pointer"
+                @input="pushImage({ offset: { x: Number(($event.target as HTMLInputElement).value), y: imageFill.offset?.y ?? 0 } })" />
+            </label>
+            <label class="text-[9px] uppercase tracking-[0.1em] text-white/35">Offset Y
+              <input type="range" min="-0.5" max="0.5" step="0.01" :value="imageFill.offset?.y ?? 0" class="w-full accent-white cursor-pointer"
+                @input="pushImage({ offset: { x: imageFill.offset?.x ?? 0, y: Number(($event.target as HTMLInputElement).value) } })" />
+            </label>
+          </div>
+        </template>
+      </template>
+
+      <GradientEditor v-else-if="fill.type === 'gradient'" :model-value="grad" @update:model-value="onGrad" />
 
       <ShaderFillEditor v-else-if="fill.type === 'shader'" :model-value="fill.shader ?? DEFAULT_SHADER_SPEC" @update:model-value="onShaderSpec" />
 
