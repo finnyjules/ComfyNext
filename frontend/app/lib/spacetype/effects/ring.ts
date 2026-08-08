@@ -42,6 +42,7 @@ const controls: ControlSpec[] = [
   { key: 'direction', label: 'Direction', kind: 'select', options: ['cw', 'ccw'], default: 'cw', group: 'Motion' },
   { key: 'backFade', label: 'Back fade', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0, group: 'Look' },
   { key: 'bend', label: 'Bend', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0, group: 'Ribbon' },
+  { key: 'cornerRadius', label: 'Corner radius', kind: 'slider', min: 0, max: 0.5, step: 0.01, default: 0.06, group: 'Ribbon' },
 ]
 
 // Per-card plane subdivision along its width so `applyBend` (below) can curve
@@ -93,7 +94,7 @@ export const ringEffect: SpaceTypeEffect = {
   id: 'ring',
   label: 'Ring',
   controls,
-  liveKeys: ['radius', 'ringTilt', 'cardSize', 'perspective', 'speed', 'direction', 'padding', 'ringOpening', 'backFade', 'bend'],
+  liveKeys: ['radius', 'ringTilt', 'cardSize', 'perspective', 'speed', 'direction', 'padding', 'ringOpening', 'backFade', 'bend', 'cornerRadius'],
   loopRates(params) {
     return [Math.max(1, Math.round(Number(params.speed) || 1))]
   },
@@ -126,11 +127,43 @@ export const ringEffect: SpaceTypeEffect = {
       // Set only for word/letter tiles — the glyph atlas texture to register on the mesh
       // below (once per sourceId). Stays undefined for image tiles (engine-owned textures).
       let glyphTex: THREE.Texture | undefined
+      // Set only for image tiles that got a rounded-rect corner mask attached below — stashed
+      // onto mesh.userData.matUniforms so `update` can drive `uCorner` live from the slider.
+      let cornerUniforms: { uCorner: { value: number }; uAspect: { value: number } } | undefined
 
       if (tile.kind === 'image') {
         const tex = env?.imageTextures?.get(tile.src)
         material = new three.MeshBasicMaterial({ map: tex ?? null, side: three.DoubleSide, transparent: true })
         aspect = tile.aspect
+
+        // Rounded-rect alpha mask — IMAGE TILES ONLY (glyph/letter/word tiles have no panel to
+        // round, so they never get this). Guarded on `tex`: a null map means USE_MAP is never
+        // defined in the compiled shader, so the injected code's `vMapUv` varying wouldn't exist
+        // (a real GL compile error, not a no-op) — setImageTextures' contract guarantees a real
+        // texture by build time, so this only protects a would-be no-texture edge case.
+        // UV varying: three@0.171.0's meshbasic fragment shader declares `vMapUv` (not `vUv`)
+        // for USE_MAP — see uv_pars_fragment.glsl.js: `varying vec2 vMapUv;` under `#ifdef
+        // USE_MAP`, decoupled from the generic `vUv` since ~three r152's per-map UV transforms.
+        if (tex) {
+          const uniforms = { uCorner: { value: Number(params.cornerRadius) || 0 }, uAspect: { value: aspect } }
+          material.onBeforeCompile = (shader) => {
+            shader.uniforms.uCorner = uniforms.uCorner
+            shader.uniforms.uAspect = uniforms.uAspect
+            shader.fragmentShader = 'uniform float uCorner;\nuniform float uAspect;\n' + shader.fragmentShader.replace(
+              '#include <dithering_fragment>',
+              `#include <dithering_fragment>
+               {
+                 vec2 p = (vMapUv - 0.5) * vec2(uAspect, 1.0);      // centered, aspect-corrected
+                 vec2 half = vec2(0.5 * uAspect, 0.5);
+                 float r = clamp(uCorner, 0.0, 0.5) * min(half.x, half.y) * 2.0;
+                 vec2 q = abs(p) - (half - vec2(r));
+                 float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+                 if (d > 0.0) discard;                               // outside the rounded rect
+               }`,
+            )
+          }
+          cornerUniforms = uniforms
+        }
       } else {
         let layout = layoutCache.get(tile.sourceId)
         if (!layout) {
@@ -171,6 +204,7 @@ export const ringEffect: SpaceTypeEffect = {
       const mesh = new three.Mesh(geo, material)
       mesh.userData.aspect = aspect
       mesh.userData.baseX = baseX
+      if (cornerUniforms) mesh.userData.matUniforms = cornerUniforms
       // Register each sourceId's glyph atlas ONCE (on its first mesh) so disposeRoot() frees
       // it on rebuild — mirrors cylinder.ts's `registered` set (line 255 there). Image tiles
       // are excluded: their textures are owned by env.imageTextures (engine's
@@ -218,6 +252,10 @@ export const ringEffect: SpaceTypeEffect = {
       const aspect = Number(quad.userData.aspect ?? 1)
       quad.scale.set(aspect * tf.scale * (1 - padding), tf.scale, 1)
       applyBend(quad, aspect, cardSize, padding, radius, bend)
+      // Live corner-radius drive — only image quads carry `matUniforms` (see buildScene);
+      // glyph/letter/word quads have no mask attached and are silently skipped here.
+      const matUniforms = quad.userData.matUniforms as { uCorner: { value: number } } | undefined
+      if (matUniforms) matUniforms.uCorner.value = n(params, 'cornerRadius')
     }
 
     // Ring opening drives the primary X reveal; ring tilt is now a lean on Z
