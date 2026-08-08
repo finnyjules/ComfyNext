@@ -461,12 +461,18 @@ const sections = computed(() =>
 // Loft's Spine preset select stamps params.stops with the chosen preset's curve —
 // confirm before clobbering hand-edited stops. ProfileStopsEditor re-hydrates its
 // working array from params.stops (guarded watch), so this write updates the UI too.
+// loftStopsDirty tracks REAL hand-edits (flipped by the profileStops editor's
+// @update:model-value, which only fires on genuine user interaction — its inbound
+// re-hydrate watch does not emit). A brand-new/unedited loft stamps without a dialog;
+// the confirm only fires once the user has actually touched the stops since the last
+// preset stamp or load.
+const loftStopsDirty = ref(false)
 watch(() => params.spinePreset, (preset) => {
   if (effect.value.id !== 'loft') return
   if (!preset || preset === 'custom') return
-  const hasEdits = String(params.stops || '').length > 2
-  if (hasEdits && !window.confirm('Replace the current stops with the ' + preset + ' preset?')) return
+  if (loftStopsDirty.value && !window.confirm('Replace the current stops with the ' + preset + ' preset?')) return
   params.stops = serializeStops(presetStops(preset as any))
+  loftStopsDirty.value = false
 })
 
 // Inspector tabs — Design (everything) vs Motion (the effect's Motion-group controls),
@@ -1927,7 +1933,7 @@ async function exportWebEmbed() {
               <CurveEditor v-else-if="c.kind === 'curve'" :model-value="String(params[c.key])"
                            @update:model-value="(val: string) => { params[c.key] = val }" />
               <ProfileStopsEditor v-else-if="c.kind === 'profileStops'" :model-value="String(params[c.key])"
-                                  @update:model-value="(val: string) => { params[c.key] = val }" />
+                                  @update:model-value="(val: string) => { params[c.key] = val; if (c.key === 'stops') loftStopsDirty = true }" />
               <!-- Font is excluded here: its bound state now lives inside FontPicker's row
                    (like a bound colour), so it does not need this shared pink block. -->
               <div v-else-if="(c.kind === 'color' || c.kind === 'select') && boundColumnFor(c.key)"
