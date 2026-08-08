@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { sampleSpine, interpStopProps, interpStopColor, buildRamp } from '../../app/lib/spacetype/loftGeometry'
+import { sampleSpine, interpStopProps, interpStopColor, buildRamp, parametricProfileContour, resampleContour } from '../../app/lib/spacetype/loftGeometry'
 import type { LoftStop } from '../../app/lib/spacetype/loftStops'
 
 const stops: LoftStop[] = [
@@ -63,5 +63,24 @@ describe('interpStopColor / buildRamp', () => {
     expect(ramp.length).toBe(256 * 4)
     expect([ramp[0], ramp[1], ramp[2], ramp[3]]).toEqual([0, 0, 0, 255])
     expect([ramp[255 * 4], ramp[255 * 4 + 1], ramp[255 * 4 + 2]]).toEqual([255, 255, 255])
+  })
+})
+
+describe('parametricProfileContour', () => {
+  it('returns `points` vertices bounded to the unit box', () => {
+    const c = parametricProfileContour({ width: 1, height: 1, radius: 0.5, sides: 32, roll: 0 }, 64)
+    expect(c.length).toBe(64)
+    for (const p of c) { expect(Math.abs(p.x)).toBeLessThanOrEqual(1.001); expect(Math.abs(p.y)).toBeLessThanOrEqual(1.001) }
+  })
+  it('high sides + full radius ≈ ellipse (all radii ~1)', () => {
+    const c = parametricProfileContour({ width: 1, height: 1, radius: 1, sides: 64, roll: 0 }, 64)
+    for (const p of c) expect(Math.hypot(p.x, p.y)).toBeCloseTo(1, 0)
+  })
+})
+
+describe('resampleContour', () => {
+  it('resamples to the requested count, closed', () => {
+    const src = [{ x: -1, y: -1 }, { x: 1, y: -1 }, { x: 1, y: 1 }, { x: -1, y: 1 }]
+    expect(resampleContour(src, 40).length).toBe(40)
   })
 })

@@ -98,3 +98,46 @@ export function buildRamp(stops: LoftStop[], size: number): Uint8ClampedArray {
   }
   return out
 }
+
+// A superellipse-ish rounded profile in unit space. `sides` chooses the corner sharpness
+// exponent (low → polygonal, high → smooth ellipse); `radius` blends between a rect (0) and the
+// rounded form (1). width/height are applied later per-station, so this is unit-normalised.
+export function parametricProfileContour(p: StopProps, points: number): Vec2[] {
+  const sides = Math.max(3, Math.round(p.sides))
+  const n = Math.pow(2, 1 + (sides / 64) * 5)   // exponent 2..~64 → superellipse sharpness
+  const out: Vec2[] = []
+  for (let i = 0; i < points; i++) {
+    const a = (i / points) * Math.PI * 2
+    const ca = Math.cos(a), sa = Math.sin(a)
+    // superellipse: |x|^n + |y|^n = 1
+    const ex = Math.sign(ca) * Math.pow(Math.abs(ca), 2 / n)
+    const ey = Math.sign(sa) * Math.pow(Math.abs(sa), 2 / n)
+    // radius blends the sharp unit box (cos/sin scaled to box) with the superellipse
+    const bx = ca / Math.max(Math.abs(ca), Math.abs(sa) || 1e-6)
+    const by = sa / Math.max(Math.abs(ca), Math.abs(sa) || 1e-6)
+    out.push({ x: bx + (ex - bx) * p.radius, y: by + (ey - by) * p.radius })
+  }
+  return out
+}
+
+export function resampleContour(pts: Vec2[], points: number): Vec2[] {
+  if (pts.length === 0) return []
+  // cumulative arc length around the closed loop
+  const cum: number[] = [0]
+  for (let i = 1; i <= pts.length; i++) {
+    const a = pts[i - 1]!, b = pts[i % pts.length]!
+    cum.push(cum[i - 1]! + Math.hypot(b.x - a.x, b.y - a.y))
+  }
+  const total = cum[cum.length - 1]! || 1
+  const out: Vec2[] = []
+  for (let i = 0; i < points; i++) {
+    const target = (i / points) * total
+    let seg = 1
+    while (seg < cum.length && cum[seg]! < target) seg++
+    const a = pts[(seg - 1) % pts.length]!, b = pts[seg % pts.length]!
+    const segLen = (cum[seg]! - cum[seg - 1]!) || 1
+    const f = (target - cum[seg - 1]!) / segLen
+    out.push({ x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f })
+  }
+  return out
+}
