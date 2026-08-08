@@ -23,8 +23,9 @@ export interface Staging {
 
 /** Build a placed text element for a tier. Level defaults from the tier but a
  *  staging may override (e.g. force the hero to display). `origin:'staging'`
- *  marks it regenerable. Foreground colour binds to the brand token so surfaces
- *  can flip contrast. */
+ *  marks it regenerable. No default colour here — `applyContrast` (in
+ *  generate.ts) fills it from the surface's light/dark contrast unless the
+ *  tier's own `spec.type.color` already won. */
 export function tierText(
   id: TierId, tiers: Tiers, region: Region, priority: number,
   opts: { level?: TextLevel; style?: TextStyleV2 } = {},
@@ -40,7 +41,6 @@ export function tierText(
     origin: 'staging',
     role: id.toUpperCase(),
     style: {
-      color: '{{ brand.foreground }}',
       ...opts.style,
       ...spec.type,   // tier's own type wins — survives re-roll
     },

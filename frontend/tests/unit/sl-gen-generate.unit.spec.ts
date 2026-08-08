@@ -54,4 +54,25 @@ describe('generate orchestrator', () => {
     const rolled = shuffle(locked)
     expect(rolled.gen?.staging).toBe('frame')
   })
+  it('applies surface contrast to text colour unless the tier set its own', () => {
+    const light = generate(base(), { staging: 'tower', surface: 'flat', seed: 1 })
+    const hero = light.elements.find(e => e.id === 'tier_hero') as any
+    expect(hero.style.color).toBe('{{ brand.secondary }}')
+
+    const dark = generate(base(), { staging: 'tower', surface: 'duotone-photo', seed: 1, image: 'x.png' })
+    const heroDark = dark.elements.find(e => e.id === 'tier_hero') as any
+    expect(heroDark.style.color).toBe('{{ brand.foreground }}')
+
+    const withColor: TemplateV3 = { ...base(), tiers: { ...base().tiers, hero: { content: 'MAT + FEST', type: { color: '#ff0000' } } } }
+    const explicit = generate(withColor, { staging: 'tower', surface: 'flat', seed: 1 })
+    const heroExplicit = explicit.elements.find(e => e.id === 'tier_hero') as any
+    expect(heroExplicit.style.color).toBe('#ff0000')
+  })
+  it('replaces the background on re-roll instead of merging stale fields', () => {
+    let t = generate(base(), { staging: 'tower', surface: 'duotone-photo', seed: 1, image: 'photo.png' })
+    expect(t.background.image).toBe('photo.png')
+    const t2 = generate(t, { staging: 'tower', surface: 'flat', seed: 1 })
+    expect(t2.background.fill).toBeTruthy()
+    expect(t2.background.image).toBeUndefined()
+  })
 })

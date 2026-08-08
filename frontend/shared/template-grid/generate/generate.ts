@@ -52,7 +52,7 @@ export function generate(template: TemplateV3, opts: GenOpts): TemplateV3 {
   const preserved = template.elements.filter(e => e.origin !== 'staging')
   return {
     ...template,
-    background: { ...template.background, ...surf.background },
+    background: { ...surf.background },
     elements: [...staged, ...preserved],
     gen: {
       staging: staging.id,
