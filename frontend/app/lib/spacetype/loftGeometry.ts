@@ -6,7 +6,7 @@ export interface Station { pos: Vec3; normal: Vec3; binormal: Vec3; t: number }
 export interface StopProps { width: number; height: number; radius: number; sides: number; roll: number }
 
 // Map an editor-space stop (x,y in 0..1, z in -1..1) into a centred world point. The engine's
-// camera frames roughly ±5 units, so scale to that. y is flipped: canvas y-down → world y-up.
+// camera frames roughly ±4 units, so scale to that. y is flipped: canvas y-down → world y-up.
 function stopToWorld(s: LoftStop): Vec3 {
   return { x: (s.x - 0.5) * 8, y: (0.5 - s.y) * 8, z: s.z * 4 }
 }
@@ -43,12 +43,16 @@ export function sampleSpine(stops: LoftStop[], closed: boolean, count: number): 
   // Parallel-transport frame: seed a reference "up", rotate it minimally along the curve so the
   // profile doesn't spin wildly at inflections (a plain Frenet frame flips at zero curvature).
   let ref: Vec3 = { x: 0, y: 1, z: 0 }
+  let prevTangent: Vec3 = { x: 1, y: 0, z: 0 }
   const denom = count > 1 ? count - 1 : 1
   for (let i = 0; i < count; i++) {
     const t = i / denom
     const pos = sampleCurve(pts, closed, closed ? (i / count) : t)
     const ahead = sampleCurve(pts, closed, (closed ? (i / count) : t) + 0.001)
-    const tangent = norm(sub(ahead, pos))
+    const rawT = sub(ahead, pos)
+    const tlen = Math.hypot(rawT.x, rawT.y, rawT.z)
+    const tangent = tlen < 1e-6 ? prevTangent : norm(rawT)
+    prevTangent = tangent
     // project ref perpendicular to tangent
     const dot = ref.x * tangent.x + ref.y * tangent.y + ref.z * tangent.z
     let normal = norm({ x: ref.x - tangent.x * dot, y: ref.y - tangent.y * dot, z: ref.z - tangent.z * dot })

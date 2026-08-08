@@ -16,6 +16,7 @@ describe('sampleSpine', () => {
       expect(Math.abs(dot)).toBeLessThan(1e-3)                     // normal ⟂ binormal
       const nlen = Math.hypot(s.normal.x, s.normal.y, s.normal.z)
       expect(nlen).toBeCloseTo(1, 3)                               // unit length
+      expect(Math.hypot(s.binormal.x, s.binormal.y, s.binormal.z)).toBeCloseTo(1, 3)  // binormal unit length
     }
     expect(st[0]!.t).toBeCloseTo(0); expect(st[19]!.t).toBeCloseTo(1)
   })
@@ -23,6 +24,23 @@ describe('sampleSpine', () => {
     const st = sampleSpine(stops, true, 24)
     const d = Math.hypot(st[0]!.pos.x - st[st.length - 1]!.pos.x, st[0]!.pos.y - st[st.length - 1]!.pos.y)
     expect(d).toBeLessThan(0.6)   // closed loop returns toward start
+  })
+  it('coincident adjacent stops still yield unit-length orthonormal frames', () => {
+    const dup: LoftStop[] = [
+      { id: 'a', x: 0.5, y: 0.5, z: 0, width: 1, height: 1, radius: 0.5, sides: 32, roll: 0, color: '#000000' },
+      { id: 'b', x: 0.5, y: 0.5, z: 0, width: 1, height: 1, radius: 0.5, sides: 32, roll: 0, color: '#ffffff' },
+      { id: 'c', x: 0.9, y: 0.5, z: 0, width: 1, height: 1, radius: 0.5, sides: 32, roll: 0, color: '#ff0000' },
+    ]
+    for (const s of sampleSpine(dup, false, 24)) {
+      expect(Math.hypot(s.normal.x, s.normal.y, s.normal.z)).toBeCloseTo(1, 3)
+      expect(Math.hypot(s.binormal.x, s.binormal.y, s.binormal.z)).toBeCloseTo(1, 3)
+    }
+  })
+  it('single stop yields valid unit-length frames', () => {
+    const one: LoftStop[] = [{ id: 'a', x: 0.5, y: 0.5, z: 0, width: 1, height: 1, radius: 0.5, sides: 32, roll: 0, color: '#000000' }]
+    const st = sampleSpine(one, false, 5)
+    expect(st.length).toBe(5)
+    for (const s of st) expect(Math.hypot(s.binormal.x, s.binormal.y, s.binormal.z)).toBeCloseTo(1, 3)
   })
 })
 
