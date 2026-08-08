@@ -86,12 +86,6 @@ function onCanvasPointer(e: PointerEvent) {
       <label class="flex items-center justify-between text-[10px] text-white/50">Height
         <input type="range" min="0.05" max="6" step="0.05" :value="selected.height"
                @input="(e) => set('height', Number((e.target as HTMLInputElement).value))" /></label>
-      <label class="flex items-center justify-between text-[10px] text-white/50">Radius
-        <input type="range" min="0" max="1" step="0.02" :value="selected.radius"
-               @input="(e) => set('radius', Number((e.target as HTMLInputElement).value))" /></label>
-      <label class="flex items-center justify-between text-[10px] text-white/50">Sides
-        <input type="range" min="3" max="64" step="1" :value="selected.sides"
-               @input="(e) => set('sides', Number((e.target as HTMLInputElement).value))" /></label>
       <label class="flex items-center justify-between text-[10px] text-white/50">Roll
         <input type="range" min="-180" max="180" step="1" :value="selected.roll"
                @input="(e) => set('roll', Number((e.target as HTMLInputElement).value))" /></label>

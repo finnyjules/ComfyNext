@@ -1,8 +1,8 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
-import { parseStops, DEFAULT_STOPS_JSON, type LoftStop } from '../loftStops'
+import { parseStops, DEFAULT_STOPS_JSON } from '../loftStops'
 import {
-  sampleSpine, interpStopProps, parametricProfileContour, resampleContour,
+  sampleSpine, interpStopProps, resampleContour,
   buildLoftGeometry, buildRamp, shapeContour, rampFromFill, buildSlicedLoftGeometry,
   type Vec2, type LoftShape,
 } from '../loftGeometry'
@@ -82,16 +82,6 @@ export function outlineFontValue(font: string | undefined): string {
   if (!v) return 'google:Archivo Black@700'
   if (v.startsWith('google:') || v.includes('/')) return v
   return 'google:' + v
-}
-
-/** Build the cross-section contours for these params. Shape kind only here; word mode overrides
- *  `baseContours` in buildScene. Exported for unit tests.
- *  @deprecated superseded by `shapeContour` (loftGeometry.ts) driven by the `shape` control;
- *  kept only so existing callers/tests referencing the old parametric-stop-based profile
- *  (`sides`/`radius` per stop) keep working until Task 5 removes those stop fields. */
-export function loftContours(params: Params, stops: LoftStop[]): Vec2[][] {
-  const props = interpStopProps(stops, 0)
-  return [resampleContour(parametricProfileContour(props, PROFILE_POINTS), PROFILE_POINTS)]
 }
 
 /** Migrate the old `profileKind` control ('shape'|'word') to the new `shape` control

@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { sampleSpine, interpStopProps, interpStopColor, buildRamp, parametricProfileContour, resampleContour, buildLoftGeometry, buildSlicedLoftGeometry, shapeContour } from '../../app/lib/spacetype/loftGeometry'
+import { sampleSpine, interpStopProps, interpStopColor, buildRamp, resampleContour, buildLoftGeometry, buildSlicedLoftGeometry, shapeContour } from '../../app/lib/spacetype/loftGeometry'
 import type { LoftStop } from '../../app/lib/spacetype/loftStops'
 
 const stops: LoftStop[] = [
-  { id: 'a', x: 0, y: 0.5, z: 0, width: 1, height: 1, radius: 0.5, sides: 32, roll: 0, color: '#000000' },
-  { id: 'b', x: 1, y: 0.5, z: 0, width: 3, height: 1, radius: 0.5, sides: 32, roll: 90, color: '#ffffff' },
+  { id: 'a', x: 0, y: 0.5, z: 0, width: 1, height: 1, roll: 0, color: '#000000' },
+  { id: 'b', x: 1, y: 0.5, z: 0, width: 3, height: 1, roll: 90, color: '#ffffff' },
 ]
 
 describe('sampleSpine', () => {
@@ -27,9 +27,9 @@ describe('sampleSpine', () => {
   })
   it('coincident adjacent stops still yield unit-length orthonormal frames', () => {
     const dup: LoftStop[] = [
-      { id: 'a', x: 0.5, y: 0.5, z: 0, width: 1, height: 1, radius: 0.5, sides: 32, roll: 0, color: '#000000' },
-      { id: 'b', x: 0.5, y: 0.5, z: 0, width: 1, height: 1, radius: 0.5, sides: 32, roll: 0, color: '#ffffff' },
-      { id: 'c', x: 0.9, y: 0.5, z: 0, width: 1, height: 1, radius: 0.5, sides: 32, roll: 0, color: '#ff0000' },
+      { id: 'a', x: 0.5, y: 0.5, z: 0, width: 1, height: 1, roll: 0, color: '#000000' },
+      { id: 'b', x: 0.5, y: 0.5, z: 0, width: 1, height: 1, roll: 0, color: '#ffffff' },
+      { id: 'c', x: 0.9, y: 0.5, z: 0, width: 1, height: 1, roll: 0, color: '#ff0000' },
     ]
     for (const s of sampleSpine(dup, false, 24)) {
       expect(Math.hypot(s.normal.x, s.normal.y, s.normal.z)).toBeCloseTo(1, 3)
@@ -37,7 +37,7 @@ describe('sampleSpine', () => {
     }
   })
   it('single stop yields valid unit-length frames', () => {
-    const one: LoftStop[] = [{ id: 'a', x: 0.5, y: 0.5, z: 0, width: 1, height: 1, radius: 0.5, sides: 32, roll: 0, color: '#000000' }]
+    const one: LoftStop[] = [{ id: 'a', x: 0.5, y: 0.5, z: 0, width: 1, height: 1, roll: 0, color: '#000000' }]
     const st = sampleSpine(one, false, 5)
     expect(st.length).toBe(5)
     for (const s of st) expect(Math.hypot(s.binormal.x, s.binormal.y, s.binormal.z)).toBeCloseTo(1, 3)
@@ -66,25 +66,6 @@ describe('interpStopColor / buildRamp', () => {
   })
 })
 
-describe('parametricProfileContour', () => {
-  it('returns `points` vertices bounded to the unit box', () => {
-    const c = parametricProfileContour({ width: 1, height: 1, radius: 0.5, sides: 32, roll: 0 }, 64)
-    expect(c.length).toBe(64)
-    for (const p of c) { expect(Math.abs(p.x)).toBeLessThanOrEqual(1.001); expect(Math.abs(p.y)).toBeLessThanOrEqual(1.001) }
-  })
-  it('high sides + full radius ≈ ellipse (all radii ~1)', () => {
-    const c = parametricProfileContour({ width: 1, height: 1, radius: 1, sides: 64, roll: 0 }, 64)
-    for (const p of c) expect(Math.hypot(p.x, p.y)).toBeCloseTo(1, 2)
-  })
-  it('higher sides is rounder than lower sides', () => {
-    const maxDev = (sides: number) => {
-      const c = parametricProfileContour({ width: 1, height: 1, radius: 1, sides, roll: 0 }, 64)
-      return Math.max(...c.map(p => Math.abs(Math.hypot(p.x, p.y) - 1)))
-    }
-    expect(maxDev(64)).toBeLessThan(maxDev(3))
-  })
-})
-
 describe('resampleContour', () => {
   it('resamples to the requested count, closed', () => {
     const src = [{ x: -1, y: -1 }, { x: 1, y: -1 }, { x: 1, y: 1 }, { x: -1, y: 1 }]
@@ -102,16 +83,16 @@ describe('resampleContour', () => {
 
 function fixtureStations(K: number) {
   return sampleSpine([
-    { id: 'a', x: 0, y: 0.5, z: 0, width: 1, height: 1, radius: 0.5, sides: 32, roll: 0, color: '#000' },
-    { id: 'b', x: 1, y: 0.5, z: 0, width: 1, height: 1, radius: 0.5, sides: 32, roll: 0, color: '#fff' },
+    { id: 'a', x: 0, y: 0.5, z: 0, width: 1, height: 1, roll: 0, color: '#000' },
+    { id: 'b', x: 1, y: 0.5, z: 0, width: 1, height: 1, roll: 0, color: '#fff' },
   ], false, K)
 }
 
 describe('buildLoftGeometry', () => {
   const K = 10, P = 16
   const stations = fixtureStations(K)
-  const props = stations.map(() => ({ width: 1, height: 1, radius: 0.5, sides: 32, roll: 0 }))
-  const contour = parametricProfileContour({ width: 1, height: 1, radius: 0.5, sides: 32, roll: 0 }, P)
+  const props = stations.map(() => ({ width: 1, height: 1, roll: 0 }))
+  const contour = shapeContour('oval', { rectRadius: 0.5, polySides: 5, starDepth: 0.5 }, P)
 
   it('fill: K*C*P verts and (K-1)*C*P*6 indices (open)', () => {
     const g = buildLoftGeometry({ stations, props, baseContours: [contour], closed: false, render: 'fill' })
@@ -135,16 +116,16 @@ describe('buildLoftGeometry', () => {
   it('fill: first quad wires the intended neighbours (topology, not just count)', () => {
     const P = 4
     const st = fixtureStations(3)
-    const pr = st.map(() => ({ width: 1, height: 1, radius: 0.5, sides: 32, roll: 0 }))
-    const contour = parametricProfileContour({ width: 1, height: 1, radius: 0.5, sides: 32, roll: 0 }, P)
+    const pr = st.map(() => ({ width: 1, height: 1, roll: 0 }))
+    const contour = shapeContour('oval', { rectRadius: 0.5, polySides: 5, starDepth: 0.5 }, P)
     const g = buildLoftGeometry({ stations: st, props: pr, baseContours: [contour], closed: false, render: 'fill' })
     expect(Array.from(g.indices.slice(0, 6))).toEqual([0, 1, 5, 0, 5, 4])
   })
   it('stroke: first station closes its contour loop (topology)', () => {
     const P = 4
     const st = fixtureStations(3)
-    const pr = st.map(() => ({ width: 1, height: 1, radius: 0.5, sides: 32, roll: 0 }))
-    const contour = parametricProfileContour({ width: 1, height: 1, radius: 0.5, sides: 32, roll: 0 }, P)
+    const pr = st.map(() => ({ width: 1, height: 1, roll: 0 }))
+    const contour = shapeContour('oval', { rectRadius: 0.5, polySides: 5, starDepth: 0.5 }, P)
     const g = buildLoftGeometry({ stations: st, props: pr, baseContours: [contour], closed: false, render: 'stroke' })
     expect(Array.from(g.indices.slice(0, 8))).toEqual([0, 1, 1, 2, 2, 3, 3, 0])
   })
@@ -153,11 +134,11 @@ describe('buildLoftGeometry', () => {
 describe('buildSlicedLoftGeometry', () => {
   const P = 12, ELEMENTS = 5
   const stopsFix = [
-    { id:'a', x:0, y:0.5, z:0, width:1, height:1, radius:0.5, sides:32, roll:0, color:'#000000' },
-    { id:'b', x:1, y:0.5, z:0, width:1, height:1, radius:0.5, sides:32, roll:0, color:'#ffffff' },
+    { id:'a', x:0, y:0.5, z:0, width:1, height:1, roll:0, color:'#000000' },
+    { id:'b', x:1, y:0.5, z:0, width:1, height:1, roll:0, color:'#ffffff' },
   ]
   const stations = sampleSpine(stopsFix as any, false, 200)
-  const props = stations.map(() => ({ width:1, height:1, radius:0.5, sides:32, roll:0 }))
+  const props = stations.map(() => ({ width:1, height:1, roll:0 }))
   const contour = shapeContour('oval', { rectRadius:0.5, polySides:5, starDepth:0.5 }, P)
 
   it('fill: emits ELEMENTS separate bands (each 2 rings skinned) → vertex + index counts scale with ELEMENTS', () => {

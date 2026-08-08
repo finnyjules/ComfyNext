@@ -6,7 +6,7 @@ export interface LoftStop {
   id: string
   x: number; y: number; z: number
   width: number; height: number
-  radius: number; sides: number; roll: number
+  roll: number
   color: string
 }
 
@@ -32,8 +32,6 @@ function sanitizeStop(raw: any): LoftStop {
     z: clamp(num(raw?.z, 0), -1, 1),
     width: clamp(num(raw?.width, 1), 0.01, 8),
     height: clamp(num(raw?.height, 1), 0.01, 8),
-    radius: clamp(num(raw?.radius, 0.5), 0, 1),
-    sides: Math.round(clamp(num(raw?.sides, 32), 3, 64)),
     roll: num(raw?.roll, 0),
     color: hex6(raw?.color),
   }
@@ -64,7 +62,7 @@ export function presetStops(preset: SpinePreset): LoftStop[] {
   const N = 6
   const at = (i: number) => i / (N - 1)
   const mk = (i: number, x: number, y: number, z: number, roll = 0): LoftStop => ({
-    id: newId(), x, y, z, width: 1, height: 1, radius: 0.5, sides: 32, roll,
+    id: newId(), x, y, z, width: 1, height: 1, roll,
     color: RAINBOW[i % RAINBOW.length]!,
   })
   const stops: LoftStop[] = []

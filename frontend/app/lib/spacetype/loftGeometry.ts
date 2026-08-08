@@ -5,7 +5,7 @@ import { parseFills, fillPrimary } from './fills'
 export interface Vec2 { x: number; y: number }
 export interface Vec3 { x: number; y: number; z: number }
 export interface Station { pos: Vec3; normal: Vec3; binormal: Vec3; t: number }
-export interface StopProps { width: number; height: number; radius: number; sides: number; roll: number }
+export interface StopProps { width: number; height: number; roll: number }
 
 // Map an editor-space stop (x,y in 0..1, z in -1..1) into a centred world point. The engine's
 // camera frames roughly ±4 units, so scale to that. y is flipped: canvas y-down → world y-up.
@@ -78,7 +78,7 @@ function bracket(stops: LoftStop[], t: number): { a: LoftStop; b: LoftStop; f: n
 export function interpStopProps(stops: LoftStop[], t: number): StopProps {
   const { a, b, f } = bracket(stops, t)
   const l = (p: keyof StopProps) => (a[p as keyof LoftStop] as number) + ((b[p as keyof LoftStop] as number) - (a[p as keyof LoftStop] as number)) * f
-  return { width: l('width'), height: l('height'), radius: l('radius'), sides: l('sides'), roll: l('roll') }
+  return { width: l('width'), height: l('height'), roll: l('roll') }
 }
 
 function hexToRgb(hex: string): [number, number, number] {
@@ -97,28 +97,6 @@ export function buildRamp(stops: LoftStop[], size: number): Uint8ClampedArray {
   for (let i = 0; i < size; i++) {
     const [r, g, b] = interpStopColor(stops, size > 1 ? i / (size - 1) : 0)
     out[i * 4] = Math.round(r * 255); out[i * 4 + 1] = Math.round(g * 255); out[i * 4 + 2] = Math.round(b * 255); out[i * 4 + 3] = 255
-  }
-  return out
-}
-
-// A superellipse-ish rounded profile in unit space. `sides` chooses the corner sharpness
-// exponent (low → polygonal, high → smooth ellipse); `radius` blends between a rect (0) and the
-// rounded form (1). width/height are applied later per-station, so this is unit-normalised.
-export function parametricProfileContour(p: StopProps, points: number): Vec2[] {
-  const sides = Math.min(64, Math.max(3, Math.round(p.sides)))
-  // HIGH sides → n≈2 (circle); LOW sides → high n (boxy). Matches the spec + the doc comment above.
-  const n = Math.pow(2, 1 + ((64 - sides) / 61) * 5)   // sides 64→n=2, sides 3→n=64
-  const out: Vec2[] = []
-  for (let i = 0; i < points; i++) {
-    const a = (i / points) * Math.PI * 2
-    const ca = Math.cos(a), sa = Math.sin(a)
-    // superellipse: |x|^n + |y|^n = 1
-    const ex = Math.sign(ca) * Math.pow(Math.abs(ca), 2 / n)
-    const ey = Math.sign(sa) * Math.pow(Math.abs(sa), 2 / n)
-    // radius blends the sharp unit box (cos/sin scaled to box) with the superellipse
-    const bx = ca / Math.max(Math.abs(ca), Math.abs(sa) || 1e-6)
-    const by = sa / Math.max(Math.abs(ca), Math.abs(sa) || 1e-6)
-    out.push({ x: bx + (ex - bx) * p.radius, y: by + (ey - by) * p.radius })
   }
   return out
 }

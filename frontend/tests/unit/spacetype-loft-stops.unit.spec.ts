@@ -7,7 +7,7 @@ describe('parseStops', () => {
     expect(parseStops(s)).toEqual(DEFAULT_STOPS)
   })
   it('strips alpha from stop colours', () => {
-    const [s] = parseStops('[{"id":"a","x":0.5,"y":0.5,"z":0,"width":1,"height":1,"radius":0.5,"sides":32,"roll":0,"color":"#ff000080"}]')
+    const [s] = parseStops('[{"id":"a","x":0.5,"y":0.5,"z":0,"width":1,"height":1,"roll":0,"color":"#ff000080"}]')
     expect(s!.color).toBe('#ff0000')
   })
   it('is tolerant of garbage → falls back to defaults', () => {
@@ -15,7 +15,7 @@ describe('parseStops', () => {
     expect(parseStops('[]')).toEqual(DEFAULT_STOPS)   // never zero stops
   })
   it('assigns a stable id when missing', () => {
-    const [s] = parseStops('[{"x":0.2,"y":0.2,"z":0,"width":1,"height":1,"radius":0.5,"sides":32,"roll":0,"color":"#fff"}]')
+    const [s] = parseStops('[{"x":0.2,"y":0.2,"z":0,"width":1,"height":1,"roll":0,"color":"#fff"}]')
     expect(typeof s!.id).toBe('string'); expect(s!.id.length).toBeGreaterThan(0)
   })
   it('fallback returns a fresh clone (mutation does not poison DEFAULT_STOPS)', () => {
@@ -26,8 +26,8 @@ describe('parseStops', () => {
   })
   it('reassigns duplicate ids on parse', () => {
     const dup = JSON.stringify([
-      { id: 'x', x: 0.2, y: 0.5, z: 0, width: 1, height: 1, radius: 0.5, sides: 32, roll: 0, color: '#fff' },
-      { id: 'x', x: 0.8, y: 0.5, z: 0, width: 1, height: 1, radius: 0.5, sides: 32, roll: 0, color: '#000' },
+      { id: 'x', x: 0.2, y: 0.5, z: 0, width: 1, height: 1, roll: 0, color: '#fff' },
+      { id: 'x', x: 0.8, y: 0.5, z: 0, width: 1, height: 1, roll: 0, color: '#000' },
     ])
     const out = parseStops(dup)
     expect(new Set(out.map(s => s.id)).size).toBe(out.length)
