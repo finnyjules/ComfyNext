@@ -132,4 +132,20 @@ describe('buildLoftGeometry', () => {
     expect(g.along[0]).toBeCloseTo(0)
     expect(g.along[g.along.length - 1]).toBeCloseTo(1)
   })
+  it('fill: first quad wires the intended neighbours (topology, not just count)', () => {
+    const P = 4
+    const st = fixtureStations(3)
+    const pr = st.map(() => ({ width: 1, height: 1, radius: 0.5, sides: 32, roll: 0 }))
+    const contour = parametricProfileContour({ width: 1, height: 1, radius: 0.5, sides: 32, roll: 0 }, P)
+    const g = buildLoftGeometry({ stations: st, props: pr, baseContours: [contour], closed: false, render: 'fill' })
+    expect(Array.from(g.indices.slice(0, 6))).toEqual([0, 1, 5, 0, 5, 4])
+  })
+  it('stroke: first station closes its contour loop (topology)', () => {
+    const P = 4
+    const st = fixtureStations(3)
+    const pr = st.map(() => ({ width: 1, height: 1, radius: 0.5, sides: 32, roll: 0 }))
+    const contour = parametricProfileContour({ width: 1, height: 1, radius: 0.5, sides: 32, roll: 0 }, P)
+    const g = buildLoftGeometry({ stations: st, props: pr, baseContours: [contour], closed: false, render: 'stroke' })
+    expect(Array.from(g.indices.slice(0, 8))).toEqual([0, 1, 1, 2, 2, 3, 3, 0])
+  })
 })
