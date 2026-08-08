@@ -162,4 +162,26 @@ describe('buildSlicedLoftGeometry', () => {
     // idx(0,0,0,0)=0, idx(0,0,0,1)=1, idx(0,1,0,0)=P, idx(0,1,0,1)=P+1  → quad (a,b,e,a,e,d)
     expect(Array.from(g.indices.slice(0, 6))).toEqual([0, 1, P + 1, 0, P + 1, P])
   })
+  it('fill bands keep non-zero thickness when elements == station count (interpolated, not rounded)', () => {
+    const K = 40
+    const st = sampleSpine([
+      { id:'a', x:0, y:0.5, z:0, width:1, height:1, roll:0, color:'#000000' },
+      { id:'b', x:1, y:0.5, z:0, width:1, height:1, roll:0, color:'#ffffff' },
+    ] as any, false, K)
+    const pr = st.map(() => ({ width:1, height:1, roll:0 }))
+    const P = 8
+    const contour = shapeContour('oval', { rectRadius:0.5, polySides:5, starDepth:0.5 }, P)
+    const g = buildSlicedLoftGeometry({ stations: st, props: pr, baseContours:[contour], closed:false, render:'fill', elements: K, spacing: 0.5 })
+    // every band: ring0 vertex 0 vs ring1 vertex 0 must be at different positions (thickness>0)
+    for (let band = 0; band < K; band++) {
+      const ring0Off = (band * 2) * P * 3
+      const ring1Off = (band * 2 + 1) * P * 3
+      const d = Math.hypot(
+        g.positions[ring0Off]! - g.positions[ring1Off]!,
+        g.positions[ring0Off + 1]! - g.positions[ring1Off + 1]!,
+        g.positions[ring0Off + 2]! - g.positions[ring1Off + 2]!,
+      )
+      expect(d).toBeGreaterThan(1e-4)
+    }
+  })
 })

@@ -25,7 +25,6 @@ const controls: ControlSpec[] = [
   { key: 'closed', label: 'Closed loop', kind: 'switch', default: false, group: 'Layout' },
   { key: 'copies', label: 'Copies', kind: 'slider', min: 6, max: 400, step: 1, default: 120, group: 'Layout' },
   { key: 'spacing', label: 'Spacing', kind: 'slider', min: 0, max: 0.9, step: 0.02, default: 0.35, group: 'Layout' },
-  { key: 'elements', label: 'Elements', kind: 'slider', min: 4, max: 120, step: 1, default: 40, group: 'Layout', showIf: { key: 'spacing', notEquals: 0 } },
   // shape picker replaces the old profileKind — word is now one of the shape options
   { key: 'shape', label: 'Shape', kind: 'select', options: ['oval', 'capsule', 'rectangle', 'polygon', 'star', 'word'], default: 'oval', group: 'Style' },
   { key: 'rectRadius', label: 'Corner radius', kind: 'slider', min: 0, max: 1, step: 0.02, default: 0.4, group: 'Style', showIf: { key: 'shape', equals: 'rectangle' } },
@@ -170,8 +169,10 @@ export const loftEffect: SpaceTypeEffect = {
 
     const render = String(params.render) === 'stroke' ? 'stroke' : 'fill'
     const spacing = n(params, 'spacing')
+    // Copies now drives both densities: continuous surface resolution (K, above) when spacing is
+    // 0, and ring count when spacing > 0 — one slider, no separate Elements control.
     const geo = spacing > 0
-      ? buildSlicedLoftGeometry({ stations, props, baseContours, closed, render, elements: n(params, 'elements'), spacing })
+      ? buildSlicedLoftGeometry({ stations, props, baseContours, closed, render, elements: Math.max(2, Math.round(n(params, 'copies'))), spacing })
       : buildLoftGeometry({ stations, props, baseContours, closed, render })
 
     const g = new three.BufferGeometry()

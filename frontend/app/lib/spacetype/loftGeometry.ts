@@ -253,8 +253,27 @@ export function buildSlicedLoftGeometry(opts: {
   const nVerts = E * ringsPerBand * C * P
   const positions = new Float32Array(nVerts * 3)
   const along = new Float32Array(nVerts)
-  const stationAt = (t: number) => stations[Math.min(K - 1, Math.max(0, Math.round(t * (K - 1))))]!
-  const propsAt = (t: number) => props[Math.min(K - 1, Math.max(0, Math.round(t * (K - 1))))]!
+  // Interpolate (not round) so two rings whose t's straddle a single station index still land at
+  // distinct 3D positions — rounding collapses a band to zero thickness once `elements` reaches
+  // the station count (K), since both t's then round to the same nearest station.
+  const clamp01 = (x: number) => Math.min(1, Math.max(0, x))
+  const stationAt = (t: number): Station => {
+    const f = clamp01(t) * (K - 1)
+    const i = Math.min(K - 1, Math.floor(f))
+    const j = Math.min(K - 1, i + 1)
+    const a = f - i
+    const sa = stations[i]!, sb = stations[j]!
+    const lerp3 = (pa: Vec3, pb: Vec3): Vec3 => ({ x: pa.x + (pb.x - pa.x) * a, y: pa.y + (pb.y - pa.y) * a, z: pa.z + (pb.z - pa.z) * a })
+    return { pos: lerp3(sa.pos, sb.pos), normal: norm(lerp3(sa.normal, sb.normal)), binormal: norm(lerp3(sa.binormal, sb.binormal)), t: sa.t + (sb.t - sa.t) * a }
+  }
+  const propsAt = (t: number): StopProps => {
+    const f = clamp01(t) * (K - 1)
+    const i = Math.min(K - 1, Math.floor(f))
+    const j = Math.min(K - 1, i + 1)
+    const a = f - i
+    const pa = props[i]!, pb = props[j]!
+    return { width: pa.width + (pb.width - pa.width) * a, height: pa.height + (pb.height - pa.height) * a, roll: pa.roll + (pb.roll - pa.roll) * a }
+  }
   let vo = 0
   for (let i = 0; i < E; i++) {
     const tc = (i + 0.5) / E
