@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { Dices } from 'lucide-vue-next'
 import { useStudioAutosave } from '~/lib/studio/autosave'
 import { textureFx } from '~/lib/texturefx/renderer'
@@ -270,6 +270,7 @@ function promoteControlFromPanel(c: ControlSpec) {
 const TILE = 256
 
 function renderPreview() {
+  if (inspectorTab.value === 'output') return renderSheetPreview()
   const el = canvas.value; if (!el) return
   const n = repeat.value
   el.width = TILE * n; el.height = TILE * n
@@ -290,6 +291,27 @@ function renderPreview() {
     }
   }
 }
+
+// The Output tab shows what actually exports: the sheet's aspect, at the sheet's
+// density. The canvas element IS the sheet (scaled down), so no letterbox bars are
+// drawn here — the CSS box centres it. fitLetterbox only picks a sane pixel size.
+const SHEET_PREVIEW_BOX = 720
+function renderSheetPreview() {
+  const el = canvas.value; if (!el) return
+  const s = sheet.value
+  const box = fitLetterbox(s, SHEET_PREVIEW_BOX, SHEET_PREVIEW_BOX)
+  el.width = box.w; el.height = box.h
+  const ctx = el.getContext('2d')!
+  ctx.clearRect(0, 0, el.width, el.height)
+  // Render the tile at roughly its on-screen size — never the sheet's true tile size,
+  // or previewing a 4K sheet would cost a 4K render.
+  const px = Math.max(32, Math.min(512, Math.round(s.tile * (box.w / s.w))))
+  const tile = stylizeTile(textureFx.render(params, px, px, 0), params, px, px)
+  drawSheet(ctx, tile, s, box.w, box.h)
+}
+
+// Switching tabs changes what the canvas is showing, not just which controls are listed.
+watch(inspectorTab, () => renderPreview())
 
 function roll() { params.seed = Math.floor(Math.random() * 1e6); renderPreview() }
 function setRepeat(n: number) { repeat.value = n; renderPreview() }
@@ -566,7 +588,7 @@ onBeforeUnmount(() => {
     <template #preview>
       <div class="flex h-full flex-col items-center justify-center gap-3 p-4">
         <canvas ref="canvas" class="max-h-[60vh] max-w-full rounded-lg border border-white/10" />
-        <div class="flex items-center gap-2 text-xs">
+        <div v-if="onDesign" class="flex items-center gap-2 text-xs">
           <button v-for="n in [1, 2, 3]" :key="n"
                   type="button"
                   class="rounded border px-2 py-1 transition-colors"
