@@ -2,7 +2,10 @@ import { describe, it, expect } from 'vitest'
 import { STAGINGS, getStaging, type StagingInput } from '~~/shared/template-grid/generate/stagings'
 import { validateGenerated } from '~~/shared/template-grid/generate/validate'
 import { makeRng } from '~~/shared/template-grid/generate/rng'
-import type { Tiers } from '~~/shared/template-grid/types'
+import { resolveFormat } from '~~/shared/template-grid/resolve'
+import { fineGridDims } from '~~/shared/template-grid/grid'
+import { makeStarterTemplate } from '~~/shared/template-grid/starter'
+import type { TemplateV3, Tiers } from '~~/shared/template-grid/types'
 
 const LEVELS = ['caption', 'body', 'subhead', 'headline', 'display']
 const HERO_SCALES = [0.10, 0.14, 0.18] as const
@@ -207,5 +210,69 @@ describe('staging: dramatic hero + anchor type', () => {
       expect(Math.abs(anchor.style.fontSize - Math.round(0.45 * hero.style.fontSize))).toBeLessThanOrEqual(1)
       expect(anchor.style.letterSpacing).toBeLessThan(0)
     })
+  }
+})
+
+/** Round-2a Task 5c regression: a freshly generated Smart Layout must never
+ *  truncate the hero to a single character + ellipsis. Reproduces the real
+ *  live-editor path — `SmartLayoutEditorModal`'s fresh-open promotes the v2
+ *  starter to `{ ...v2, version: 3 }` before calling `generate()` (see
+ *  `app/components/vue-canvas/SmartLayoutEditorModal.vue`) — then runs the
+ *  staging's raw `compose()` output through the real resolver
+ *  (`resolveFormat`) on the starter's master format (1x1, 1080×1080, margin
+ *  72), for every staging × every `heroScale` roll.
+ *
+ *  Root cause this guards: `generate()` used to compose staging regions in a
+ *  hardcoded 12×16 authoring grid, independent of the grid `resolveFormat`
+ *  actually interprets `el.region` against (`fineGridDims` of the master
+ *  format — 78×78 once a fresh layout is promoted to v3, since nothing sets
+ *  `grid.columns`/`rows`). A region authored as "full width" (colSpan: 12)
+ *  read against a 78-wide grid lands at ~15% of the canvas — combined with
+ *  the hero's explicit dramatic `style.fontSize` disabling `fitText`'s
+ *  auto-shrink (an explicit size is meant to be honoured exactly), the fit
+ *  pass had zero degrees of freedom and fell straight through to
+ *  `shrink-then-truncate`'s truncate step, producing "S…". */
+describe('staging: dramatic hero never truncates (resolver-level, starter square)', () => {
+  const HERO_CONTENT = 'Summer Sale'
+  const REGRESSION_TIERS: Tiers = {
+    hero: [{ content: HERO_CONTENT }],
+    anchor: [{ content: 'June 1—30' }],
+    support: [{ content: 'In stores now' }],
+    fineprint: [{ content: 'Terms apply' }],
+  }
+
+  function resolvedHeroFor(stagingId: string, heroScale: number) {
+    const staging = getStaging(stagingId)!
+    const starter = makeStarterTemplate('t') as any
+    starter.tiers = REGRESSION_TIERS
+    // Mirrors SmartLayoutEditorModal's fresh-open: `{ ...v2, version: 3 }`,
+    // no `sections`/`grid.columns`/`grid.rows` added — the exact promotion
+    // that exposes the coordinate-space mismatch.
+    const v3ified: TemplateV3 = { ...starter, version: 3, sections: [] }
+    const masterFormat = v3ified.formats[v3ified.master]!
+    const { cols, rows } = fineGridDims(v3ified, masterFormat)
+    const canvas = { w: masterFormat.w, h: masterFormat.h }
+    const result = staging.compose({
+      tiers: REGRESSION_TIERS, cols, rows, canvas,
+      rng: makeRng(1), knobs: { heroScale },
+    })
+    const t: TemplateV3 = { ...v3ified, elements: result.elements, order: result.elements.map(e => e.id) }
+    const resolved = resolveFormat(t, v3ified.master)
+    return resolved.elements.find(e => e.el.id.startsWith('tier_hero'))
+  }
+
+  for (const staging of STAGINGS) {
+    for (const heroScale of HERO_SCALES) {
+      it(`${staging.id} heroScale=${heroScale}: hero fits its full content, not truncated`, () => {
+        const hero = resolvedHeroFor(staging.id, heroScale)
+        expect(hero).toBeTruthy()
+        expect(hero!.culled).toBe(false)
+        // `fitText` only rewrites `content` on the truncate path (an ellipsis
+        // + fewer words/chars than the source) — every non-truncating
+        // outcome (fits fully, or clips visually but keeps the full string)
+        // leaves `content` byte-identical to what was authored.
+        expect(hero!.text?.content).toBe(HERO_CONTENT)
+      })
+    }
   }
 })

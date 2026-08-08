@@ -1,4 +1,6 @@
-import type { BrandKit, ElementV2, Region, TextLevel, TextStyleV2, Tiers, TierId, TierSpec } from '../types'
+import type {
+  BrandKit, ElementV2, Region, TextLevel, TextOverflow, TextStyleV2, Tiers, TierId, TierSpec,
+} from '../types'
 import type { Rng } from './rng'
 import type { KnobSpec } from './knobs'
 import { DEFAULT_TIER_LEVELS, tierEntries } from './tiers'
@@ -47,7 +49,7 @@ const HERO_SCALE_KNOB: KnobSpec = { id: 'heroScale', pick: [0.10, 0.14, 0.18] }
  *  already won. */
 export function tierText(
   id: TierId, index: number, item: TierSpec, region: Region, priority: number,
-  opts: { level?: TextLevel; style?: TextStyleV2 } = {},
+  opts: { level?: TextLevel; style?: TextStyleV2; overflow?: TextOverflow } = {},
 ): ElementV2 {
   return {
     id: `tier_${id}_${index}`,
@@ -58,6 +60,7 @@ export function tierText(
     region,
     origin: 'staging',
     role: id.toUpperCase(),
+    ...(opts.overflow ? { overflow: opts.overflow } : {}),
     style: {
       ...opts.style,
       ...item.type,   // tier's own type wins — survives re-roll
@@ -165,7 +168,7 @@ const tower: Staging = {
     if (hero.length) {
       els.push(tierText('hero', 0, hero[0]!,
         clampRegion({ ...full, row: 2, rowSpan: Math.round(rows * 0.4) }, cols, rows), 1,
-        { level: 'display', style: { align, valign: 'top', fontWeight: 700, ...drama.hero } }))
+        { level: 'display', overflow: 'grow', style: { align, valign: 'top', fontWeight: 700, ...drama.hero } }))
     }
     const support = items('support')
     if (support.length) {
@@ -204,7 +207,7 @@ const split: Staging = {
     if (hero.length) {
       els.push(tierText('hero', 0, hero[0]!,
         clampRegion({ col: 1, colSpan: cols, row: 2, rowSpan: Math.round(rows * 0.22) }, cols, rows), 1,
-        { level: 'display', style: { align: 'left', valign: 'top', fontWeight: 700, ...drama.hero } }))
+        { level: 'display', overflow: 'grow', style: { align: 'left', valign: 'top', fontWeight: 700, ...drama.hero } }))
     }
     const support = items('support')
     if (support.length) {
@@ -252,7 +255,7 @@ const frame: Staging = {
       // with the right-rail support/fine print, regardless of row overlap.
       els.push(tierText('hero', 0, hero[0]!,
         clampRegion({ col: 1, colSpan: half, row: heroTop, rowSpan: Math.round(rows * 0.28) }, cols, rows), 1,
-        { level: 'display', style: { align: 'left', valign: 'top', fontWeight: 700, ...drama.hero } }))
+        { level: 'display', overflow: 'grow', style: { align: 'left', valign: 'top', fontWeight: 700, ...drama.hero } }))
     }
     const support = items('support')
     if (support.length) {
@@ -300,7 +303,7 @@ const centered: Staging = {
     if (hero.length) {
       els.push(tierText('hero', 0, hero[0]!,
         clampRegion({ col: 1, colSpan: cols, row: Math.round(rows * 0.32), rowSpan: Math.round(rows * 0.3) }, cols, rows), 1,
-        { level: 'display', style: { align: 'center', valign: 'middle', fontWeight: 700, ...drama.hero } }))
+        { level: 'display', overflow: 'grow', style: { align: 'center', valign: 'middle', fontWeight: 700, ...drama.hero } }))
     }
     const anchor = items('anchor')
     if (anchor.length) {
@@ -323,10 +326,14 @@ const centered: Staging = {
 const editorial: Staging = {
   id: 'editorial', name: 'Editorial',
   blurb: 'Left type column against an open right field.',
-  knobs: [{ id: 'colw', pick: [6, 7, 8] }, HERO_SCALE_KNOB],
+  // Fraction of `cols`, not an absolute count — the authoring grid's column
+  // count varies by format class/version (6 on a v2 square, 78 on a
+  // baseline-derived v3 grid), so a fixed literal like `7` reads as "most of
+  // the canvas" on one and "a sliver" on the other. ~50–67% of the width.
+  knobs: [{ id: 'colw', pick: [0.5, 0.58, 0.67] }, HERO_SCALE_KNOB],
   compose({ tiers, cols, rows, canvas, knobs }) {
     const els: ElementV2[] = []
-    const colw = Math.min(Number(knobs.colw ?? 7), cols - 1)
+    const colw = Math.min(Math.max(1, Math.round(cols * Number(knobs.colw ?? 0.58))), cols - 1)
     const entries = tierEntries(tiers)
     const items = (id: TierId) => tierItems(entries, id)
     const drama = dramaticType(knobs, canvas)
@@ -335,7 +342,7 @@ const editorial: Staging = {
     if (hero.length) {
       els.push(tierText('hero', 0, hero[0]!,
         clampRegion({ col: 1, colSpan: colw, row: 2, rowSpan: Math.round(rows * 0.34) }, cols, rows), 1,
-        { level: 'display', style: { align: 'left', valign: 'top', fontWeight: 700, ...drama.hero } }))
+        { level: 'display', overflow: 'grow', style: { align: 'left', valign: 'top', fontWeight: 700, ...drama.hero } }))
     }
     const support = items('support')
     if (support.length) {
@@ -382,7 +389,7 @@ const index: Staging = {
     if (hero.length) {
       els.push(tierText('hero', 0, hero[0]!,
         clampRegion({ col: 1, colSpan: cols, row: heroRow, rowSpan: Math.round(rows * 0.3) }, cols, rows), 1,
-        { level: 'display', style: { align: 'left', valign: 'top', fontWeight: 700, ...drama.hero } }))
+        { level: 'display', overflow: 'grow', style: { align: 'left', valign: 'top', fontWeight: 700, ...drama.hero } }))
     }
     const support = items('support')
     if (support.length) {

@@ -1,4 +1,5 @@
 import type { BrandKit, ElementV2, TemplateV3 } from '../types'
+import { fineGridDims } from '../grid'
 import { makeRng } from './rng'
 import { resolveKnobs } from './knobs'
 import { getStaging, STAGINGS, type StagingResult } from './stagings'
@@ -27,11 +28,21 @@ function applyContrast(els: ElementV2[], contrast: 'light' | 'dark'): ElementV2[
 export function generate(template: TemplateV3, opts: GenOpts): TemplateV3 {
   const staging = getStaging(opts.staging) ?? STAGINGS[0]!
   const surface = getSurface(opts.surface) ?? SURFACES[0]!
-  const cols = template.grid.columns ?? 12
-  const rows = template.grid.rows ?? 16
   const tiers = template.tiers ?? {}
   const masterFormat = template.formats[template.master]
   const canvas = { w: masterFormat?.w ?? 1080, h: masterFormat?.h ?? 1080 }
+  // Stagings author element regions in the SAME grid coordinate space that
+  // `resolveFormat` will later interpret them in — `fineGridDims` of the
+  // master format (the exact `masterDims` resolve.ts computes: the v2
+  // per-class cell grid, or v3's fixed baseline-derived grid). A mismatch
+  // here silently collapses regions: `remapRegion`'s scale factor is
+  // (target dims / masterDims), so composing in a coordinate space that
+  // doesn't match masterDims either shrinks every region toward a sliver
+  // (masterDims too large — e.g. a fixed 12×16 authoring grid read against a
+  // 78×78 v3 fine grid puts a "full width" colSpan:12 element at ~15% of
+  // the canvas) or over-clamps it (masterDims too small). `template.grid.
+  // columns`/`rows`, when explicitly set, still win via `fineGridDims`.
+  const { cols, rows } = masterFormat ? fineGridDims(template, masterFormat) : { cols: 12, rows: 16 }
 
   // Surface first (its own salted stream), then staging with knob re-roll on
   // validation failure.
