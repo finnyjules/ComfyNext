@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import { expandContent, parseContent } from '../tile'
-import { ringTransform, type RingParams } from '../ringLayout'
+import { ringTransform, bentOffset, type RingParams } from '../ringLayout'
 import { layoutChars, type CharLayout } from '../charLayout'
 
 /**
@@ -41,7 +41,38 @@ const controls: ControlSpec[] = [
   { key: 'speed', label: 'Speed', kind: 'slider', min: 0, max: 6, step: 1, default: 1, group: 'Motion' },
   { key: 'direction', label: 'Direction', kind: 'select', options: ['cw', 'ccw'], default: 'cw', group: 'Motion' },
   { key: 'backFade', label: 'Back fade', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0, group: 'Look' },
+  { key: 'bend', label: 'Bend', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0, group: 'Ribbon' },
 ]
+
+// Per-card plane subdivision along its width so `applyBend` (below) can curve
+// each card to the ring instead of only tilting it flat. 1 segment tall keeps
+// the vertical edges straight (bend only wraps tangentially around the ring).
+const BEND_SEGMENTS = 16
+
+/** Bend one card's local plane geometry to hug the ring's curvature.
+ *  See ring.ts's module doc / task-3-brief.md for the full derivation:
+ *  the mesh is placed with a NON-uniform `scale.x = aspect*cardSize*(1-padding)`
+ *  (scale.z stays 1), so bending in unit-local space would distort under that
+ *  scale — instead we bend in world-width space (`localX * w`) and divide back
+ *  by `w` so `scale.x` restores the intended world width. Cached via `bendSig`
+ *  on the mesh so unchanged params skip the per-vertex work every frame. */
+function applyBend(mesh: THREE.Mesh, aspect: number, cardSize: number, padding: number, R: number, bend: number) {
+  const sig = `${bend.toFixed(3)}|${aspect.toFixed(3)}|${cardSize.toFixed(3)}|${padding.toFixed(3)}|${R.toFixed(3)}`
+  if (mesh.userData.bendSig === sig) return
+  mesh.userData.bendSig = sig
+  const geo = mesh.geometry as THREE.PlaneGeometry
+  const pos = geo.attributes.position as THREE.BufferAttribute
+  const baseX = mesh.userData.baseX as Float32Array // captured at build: the flat local X per vertex
+  const w = aspect * cardSize * (1 - padding)
+  for (let k = 0; k < pos.count; k++) {
+    const lx = baseX[k]!
+    if (bend <= 0 || w <= 0) { pos.setX(k, lx); pos.setZ(k, 0); continue }
+    const o = bentOffset(lx * w, R, bend)
+    pos.setX(k, o.tangent / w)
+    pos.setZ(k, -o.inward)
+  }
+  pos.needsUpdate = true
+}
 
 interface RingState { quads: THREE.Mesh[] }
 
@@ -62,7 +93,7 @@ export const ringEffect: SpaceTypeEffect = {
   id: 'ring',
   label: 'Ring',
   controls,
-  liveKeys: ['radius', 'ringTilt', 'cardSize', 'perspective', 'speed', 'direction', 'padding', 'ringOpening', 'backFade'],
+  liveKeys: ['radius', 'ringTilt', 'cardSize', 'perspective', 'speed', 'direction', 'padding', 'ringOpening', 'backFade', 'bend'],
   loopRates(params) {
     return [Math.max(1, Math.round(Number(params.speed) || 1))]
   },
@@ -84,7 +115,12 @@ export const ringEffect: SpaceTypeEffect = {
     const registered = new Set<string>()
 
     for (const tile of tiles) {
-      const geo = new three.PlaneGeometry(1, 1)
+      const geo = new three.PlaneGeometry(1, 1, BEND_SEGMENTS, 1)
+      // Captured BEFORE any UV edits (position is independent of uv) — the
+      // flat, undistorted local X per vertex, so `applyBend`/`update` can
+      // recompute the bent geometry from scratch each time params change.
+      const basePos = geo.attributes.position as THREE.BufferAttribute
+      const baseX = Float32Array.from({ length: basePos.count }, (_, k) => basePos.getX(k))
       let material: THREE.MeshBasicMaterial
       let aspect = 1
       // Set only for word/letter tiles — the glyph atlas texture to register on the mesh
@@ -120,9 +156,13 @@ export const ringEffect: SpaceTypeEffect = {
           aspect = g?.aspect ?? 1
           const u0 = g?.u0 ?? 0
           const u1 = g?.u1 ?? 1
+          // Proportional remap (not min/max): with BEND_SEGMENTS the plane has
+          // interior vertices at intermediate u, not just 0/1 — map each into
+          // the glyph's [u0,u1] sub-rect by its position along the strip. For
+          // the old 1-segment case (u ∈ {0,1}) this is identical to min/max.
           const uv = geo.attributes.uv as THREE.BufferAttribute
           for (let k = 0; k < uv.count; k++) {
-            uv.setX(k, uv.getX(k) < 0.5 ? u0 : u1)
+            uv.setX(k, u0 + (u1 - u0) * uv.getX(k))
           }
           uv.needsUpdate = true
         }
@@ -130,6 +170,7 @@ export const ringEffect: SpaceTypeEffect = {
 
       const mesh = new three.Mesh(geo, material)
       mesh.userData.aspect = aspect
+      mesh.userData.baseX = baseX
       // Register each sourceId's glyph atlas ONCE (on its first mesh) so disposeRoot() frees
       // it on rebuild — mirrors cylinder.ts's `registered` set (line 255 there). Image tiles
       // are excluded: their textures are owned by env.imageTextures (engine's
@@ -165,6 +206,8 @@ export const ringEffect: SpaceTypeEffect = {
     const padding = n(params, 'padding')
     const backFade = n(params, 'backFade')
     const radius = n(params, 'radius')
+    const cardSize = n(params, 'cardSize')
+    const bend = n(params, 'bend')
 
     const count = st.quads.length
     for (let i = 0; i < count; i++) {
@@ -174,6 +217,7 @@ export const ringEffect: SpaceTypeEffect = {
       quad.rotation.set(0, tf.rotY, 0)
       const aspect = Number(quad.userData.aspect ?? 1)
       quad.scale.set(aspect * tf.scale * (1 - padding), tf.scale, 1)
+      applyBend(quad, aspect, cardSize, padding, radius, bend)
     }
 
     // Ring opening drives the primary X reveal; ring tilt is now a lean on Z

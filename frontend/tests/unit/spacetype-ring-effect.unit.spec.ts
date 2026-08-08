@@ -46,4 +46,12 @@ describe('ringEffect', () => {
     const { SPACE_TYPE_EFFECTS } = await import('~/lib/spacetype/effects/index')
     expect(SPACE_TYPE_EFFECTS.some(e => e.id === 'ring')).toBe(true)
   })
+
+  it('bend builds and updates without error', () => {
+    const items = [{ id: 'i0', kind: 'image', src: 'data:0' }, { id: 'i1', kind: 'image', src: 'data:1' }]
+    const params = { ...defaultsFromControls(ringEffect.controls), content: JSON.stringify(items), bend: 1 }
+    const root = ringEffect.buildScene(THREE, params, new THREE.Texture(), { width: 960, height: 540, imageTextures: new Map() })
+    expect(() => ringEffect.update!(0.25, params, root)).not.toThrow()
+    expect((root as any).userData.ringState.quads).toHaveLength(2)
+  })
 })
