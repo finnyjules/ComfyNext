@@ -103,8 +103,9 @@ export function buildRamp(stops: LoftStop[], size: number): Uint8ClampedArray {
 // exponent (low → polygonal, high → smooth ellipse); `radius` blends between a rect (0) and the
 // rounded form (1). width/height are applied later per-station, so this is unit-normalised.
 export function parametricProfileContour(p: StopProps, points: number): Vec2[] {
-  const sides = Math.max(3, Math.round(p.sides))
-  const n = Math.pow(2, 1 + (sides / 64) * 5)   // exponent 2..~64 → superellipse sharpness
+  const sides = Math.min(64, Math.max(3, Math.round(p.sides)))
+  // HIGH sides → n≈2 (circle); LOW sides → high n (boxy). Matches the spec + the doc comment above.
+  const n = Math.pow(2, 1 + ((64 - sides) / 61) * 5)   // sides 64→n=2, sides 3→n=64
   const out: Vec2[] = []
   for (let i = 0; i < points; i++) {
     const a = (i / points) * Math.PI * 2

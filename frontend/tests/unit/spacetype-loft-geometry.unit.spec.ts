@@ -74,7 +74,14 @@ describe('parametricProfileContour', () => {
   })
   it('high sides + full radius ≈ ellipse (all radii ~1)', () => {
     const c = parametricProfileContour({ width: 1, height: 1, radius: 1, sides: 64, roll: 0 }, 64)
-    for (const p of c) expect(Math.hypot(p.x, p.y)).toBeCloseTo(1, 0)
+    for (const p of c) expect(Math.hypot(p.x, p.y)).toBeCloseTo(1, 2)
+  })
+  it('higher sides is rounder than lower sides', () => {
+    const maxDev = (sides: number) => {
+      const c = parametricProfileContour({ width: 1, height: 1, radius: 1, sides, roll: 0 }, 64)
+      return Math.max(...c.map(p => Math.abs(Math.hypot(p.x, p.y) - 1)))
+    }
+    expect(maxDev(64)).toBeLessThan(maxDev(3))
   })
 })
 
@@ -82,5 +89,13 @@ describe('resampleContour', () => {
   it('resamples to the requested count, closed', () => {
     const src = [{ x: -1, y: -1 }, { x: 1, y: -1 }, { x: 1, y: 1 }, { x: -1, y: 1 }]
     expect(resampleContour(src, 40).length).toBe(40)
+  })
+  it('spaces points ~evenly by arc length', () => {
+    const sq = [{ x: -1, y: -1 }, { x: 1, y: -1 }, { x: 1, y: 1 }, { x: -1, y: 1 }]  // perimeter 8
+    const r = resampleContour(sq, 8)
+    const d: number[] = []
+    for (let i = 0; i < 8; i++) { const a = r[i]!, b = r[(i + 1) % 8]!; d.push(Math.hypot(b.x - a.x, b.y - a.y)) }
+    const mean = d.reduce((s, x) => s + x, 0) / 8
+    for (const x of d) expect(Math.abs(x - mean)).toBeLessThan(0.35)
   })
 })
