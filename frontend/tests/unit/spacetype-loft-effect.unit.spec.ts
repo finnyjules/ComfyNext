@@ -33,4 +33,13 @@ describe('loftEffect', () => {
     expect(() => loftEffect.update(0.5, params, root)).not.toThrow()
     expect(root.rotation.y).not.toBe(0)
   })
+  it('stashes the ramp texture under userData.tex so the engine disposes it (both modes)', () => {
+    for (const render of ['fill', 'stroke'] as const) {
+      const params = defaultsFromControls(loftEffect.controls)
+      params.render = render
+      const root = loftEffect.buildScene(THREE as any, params, new THREE.Texture(), { width: 800, height: 800 })
+      expect(root.userData.tex).toBeTruthy()
+      expect((root.userData.tex as any).isTexture).toBe(true)
+    }
+  })
 })

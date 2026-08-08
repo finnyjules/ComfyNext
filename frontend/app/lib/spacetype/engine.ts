@@ -213,7 +213,7 @@ export class SpaceTypeEngine {
     if (!this.root) return
     this.root.traverse((obj) => {
       const mesh = obj as THREE.Mesh
-      if (mesh.isMesh) {
+      if (mesh.isMesh || (obj as any).isLineSegments) {
         mesh.geometry?.dispose()
         const mat = mesh.material
         if (Array.isArray(mat)) mat.forEach(m => m.dispose())

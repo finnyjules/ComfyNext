@@ -169,4 +169,33 @@ describe('SpaceTypeEngine root cache', () => {
     expect(() => e.buildKeyed('k2', eff('b'), {}, TEX)).not.toThrow()
     expect(builds.b).toBe(1)
   })
+
+  // Regression (loft findings): disposeRoot()'s geometry/material disposal used to gate on
+  // `isMesh` only. THREE.LineSegments (used by loft's stroke render mode) sets `isLineSegments`,
+  // not `isMesh`, so its geometry/material were silently skipped and leaked on every rebuild.
+  // build() (unlike buildKeyed, which pools roots) calls disposeRoot() on the previously
+  // mounted root at the top of every call — the direct seam to exercise disposeRoot().
+  it('disposes geometry and material for LineSegments children, not just Mesh', () => {
+    const e = engine()
+    const lineEffect: SpaceTypeEffect = {
+      id: 'lines', label: 'lines', controls: [],
+      buildScene: (three) => new three.LineSegments(
+        new three.BufferGeometry(),
+        new three.LineBasicMaterial(),
+      ),
+      update: () => {},
+    }
+    e.setEffect(lineEffect)
+    e.build({}, {} as any)
+    const mounted = e.scene.children[0] as THREE.LineSegments
+    const geoSpy = vi.spyOn(mounted.geometry, 'dispose')
+    const matSpy = vi.spyOn(mounted.material as THREE.Material, 'dispose')
+
+    // A second build() call disposes the previously mounted root via disposeRoot().
+    e.setEffect(eff('b'))
+    e.build({}, {} as any)
+
+    expect(geoSpy).toHaveBeenCalled()
+    expect(matSpy).toHaveBeenCalled()
+  })
 })

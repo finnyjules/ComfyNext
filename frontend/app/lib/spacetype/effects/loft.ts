@@ -108,8 +108,7 @@ export const loftEffect: SpaceTypeEffect = {
     const obj = render === 'stroke' ? new three.LineSegments(g, mat) : new three.Mesh(g, mat)
     obj.frustumCulled = false
     root.add(obj)
-    root.userData.loftGeo = g
-    root.userData.loftRamp = ramp
+    root.userData.tex = ramp
     root.userData.loftState = { mat } satisfies LoftState
     return root
   },
