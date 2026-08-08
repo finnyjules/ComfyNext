@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { TemplateV3, TierSpec, GenState } from '~~/shared/template-grid/types'
+import { TIER_ORDER, DEFAULT_TIER_LEVELS, tierEntries, autopopulateTiers } from '~~/shared/template-grid/generate/tiers'
 
 describe('schema: tiers/gen/origin fields', () => {
   it('round-trips optional generation fields on a template', () => {
@@ -21,5 +22,29 @@ describe('schema: tiers/gen/origin fields', () => {
     expect(back.gen?.seed).toBe(4821)
     expect(back.gen?.locks?.staging).toBe(true)
     expect(back.elements[0]?.origin).toBe('staging')
+  })
+})
+
+describe('tier model', () => {
+  it('orders tiers by importance', () => {
+    expect(TIER_ORDER).toEqual(['hero', 'anchor', 'support', 'fineprint'])
+  })
+  it('maps each tier to a default level with descending scale', () => {
+    const order = ['caption', 'body', 'subhead', 'headline', 'display']
+    const idx = (t: keyof typeof DEFAULT_TIER_LEVELS) => order.indexOf(DEFAULT_TIER_LEVELS[t])
+    expect(idx('hero')).toBeGreaterThan(idx('anchor'))
+    expect(idx('anchor')).toBeGreaterThan(idx('support'))
+    expect(idx('support')).toBeGreaterThanOrEqual(idx('fineprint'))
+  })
+  it('tierEntries returns only enabled tiers, in importance order', () => {
+    const entries = tierEntries({ fineprint: { content: 'f' }, hero: { content: 'h' }, anchor: { content: 'a', enabled: false } })
+    expect(entries.map(e => e.id)).toEqual(['hero', 'fineprint'])
+  })
+  it('autopopulates tiers from wired text sockets', () => {
+    const t = autopopulateTiers({ text_layer_1: 'HERO', text_layer_2: 'DATE', text_layer_3: 'list' })
+    expect(t.hero?.content).toBe('HERO')
+    expect(t.anchor?.content).toBe('DATE')
+    expect(t.support?.content).toBe('list')
+    expect(t.fineprint).toBeUndefined()
   })
 })
