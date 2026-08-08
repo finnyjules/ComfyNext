@@ -30,6 +30,8 @@ export function generate(template: TemplateV3, opts: GenOpts): TemplateV3 {
   const cols = template.grid.columns ?? 12
   const rows = template.grid.rows ?? 16
   const tiers = template.tiers ?? {}
+  const masterFormat = template.formats[template.master]
+  const canvas = { w: masterFormat?.w ?? 1080, h: masterFormat?.h ?? 1080 }
 
   // Surface first (its own salted stream), then staging with knob re-roll on
   // validation failure.
@@ -44,7 +46,7 @@ export function generate(template: TemplateV3, opts: GenOpts): TemplateV3 {
   for (let attempt = 0; attempt < 8; attempt++) {
     const rng = makeRng(opts.seed + attempt, 'staging-knobs')
     knobs = resolveKnobs(staging.knobs, rng, attempt === 0 ? (opts.knobs ?? {}) : {})
-    staged = staging.compose({ tiers, cols, rows, rng: makeRng(opts.seed + attempt, 'staging'), knobs, brand: opts.brand })
+    staged = staging.compose({ tiers, cols, rows, canvas, rng: makeRng(opts.seed + attempt, 'staging'), knobs, brand: opts.brand })
     if (validateGenerated(staged, cols, rows).ok) break
   }
   staged = applyContrast(staged, surf.contrast)

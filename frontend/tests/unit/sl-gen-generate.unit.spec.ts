@@ -45,7 +45,7 @@ describe('generate orchestrator', () => {
     const t0 = generate(base(), { staging: 'tower', surface: 'flat', seed: 1 })
     const withType: TemplateV3 = { ...t0, tiers: { ...t0.tiers, hero: { content: 'MAT + FEST', type: { letterSpacing: -3 } } } }
     const rolled = surprise(withType)
-    const hero = rolled.elements.find(e => e.id === 'tier_hero') as any
+    const hero = rolled.elements.find(e => e.id === 'tier_hero_0') as any
     expect(hero.style.letterSpacing).toBe(-3)
   })
   it('shuffle keeps a locked staging but may change the seed', () => {
@@ -56,16 +56,16 @@ describe('generate orchestrator', () => {
   })
   it('applies surface contrast to text colour unless the tier set its own', () => {
     const light = generate(base(), { staging: 'tower', surface: 'flat', seed: 1 })
-    const hero = light.elements.find(e => e.id === 'tier_hero') as any
+    const hero = light.elements.find(e => e.id === 'tier_hero_0') as any
     expect(hero.style.color).toBe('{{ brand.secondary }}')
 
     const dark = generate(base(), { staging: 'tower', surface: 'duotone-photo', seed: 1, image: 'x.png' })
-    const heroDark = dark.elements.find(e => e.id === 'tier_hero') as any
+    const heroDark = dark.elements.find(e => e.id === 'tier_hero_0') as any
     expect(heroDark.style.color).toBe('{{ brand.foreground }}')
 
     const withColor: TemplateV3 = { ...base(), tiers: { ...base().tiers, hero: { content: 'MAT + FEST', type: { color: '#ff0000' } } } }
     const explicit = generate(withColor, { staging: 'tower', surface: 'flat', seed: 1 })
-    const heroExplicit = explicit.elements.find(e => e.id === 'tier_hero') as any
+    const heroExplicit = explicit.elements.find(e => e.id === 'tier_hero_0') as any
     expect(heroExplicit.style.color).toBe('#ff0000')
   })
   it('replaces the background on re-roll instead of merging stale fields', () => {

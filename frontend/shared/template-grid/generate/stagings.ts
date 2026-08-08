@@ -1,12 +1,15 @@
-import type { BrandKit, ElementV2, Region, TextLevel, TextStyleV2, Tiers, TierId } from '../types'
+import type { BrandKit, ElementV2, Region, TextLevel, TextStyleV2, Tiers, TierId, TierSpec } from '../types'
 import type { Rng } from './rng'
 import type { KnobSpec } from './knobs'
-import { DEFAULT_TIER_LEVELS, tierEntries, normalizeTiers } from './tiers'
+import { DEFAULT_TIER_LEVELS, tierEntries } from './tiers'
 
 export interface StagingInput {
   tiers: Tiers
   cols: number
   rows: number
+  /** Master format px (the design-time output). Drives the hero/anchor
+   *  dramatic type override — `typeSize` still reflows it per output format. */
+  canvas: { w: number; h: number }
   rng: Rng
   knobs: Record<string, unknown>
   brand?: BrandKit
@@ -21,24 +24,25 @@ export interface Staging {
   compose(input: StagingInput): ElementV2[]
 }
 
-/** Build a placed text element for a tier. Level defaults from the tier but a
- *  staging may override (e.g. force the hero to display). `origin:'staging'`
- *  marks it regenerable. No default colour here — `applyContrast` (in
- *  generate.ts) fills it from the surface's light/dark contrast unless the
- *  tier's own `spec.type.color` already won.
- *
- *  Reads item 0 of the tier's (normalized) list — single-item behaviour is
- *  preserved exactly; multi-item tiers are consumed by stagings elsewhere
- *  (Task 3), not here. */
+/** Every staging rolls this knob — the user-directed drama lever: how big the
+ *  hero reads relative to the canvas. */
+const HERO_SCALE_KNOB: KnobSpec = { id: 'heroScale', pick: [0.10, 0.14, 0.18] }
+
+/** Build a placed text element for ONE item of a tier's (already-filtered)
+ *  list. `index` is this item's position in that filtered list, not its raw
+ *  position in the stored tier — a disabled/empty item 0 never shifts a
+ *  valid item 1's id. `origin:'staging'` marks it regenerable. No default
+ *  colour here — `applyContrast` (in generate.ts) fills it from the
+ *  surface's light/dark contrast unless the tier's own `spec.type.color`
+ *  already won. */
 export function tierText(
-  id: TierId, tiers: Tiers, region: Region, priority: number,
+  id: TierId, index: number, item: TierSpec, region: Region, priority: number,
   opts: { level?: TextLevel; style?: TextStyleV2 } = {},
 ): ElementV2 {
-  const spec = normalizeTiers(tiers)[id]![0]!
   return {
-    id: `tier_${id}`,
+    id: `tier_${id}_${index}`,
     type: 'text',
-    content: spec.content,
+    content: item.content,
     level: opts.level ?? DEFAULT_TIER_LEVELS[id],
     priority,
     region,
@@ -46,7 +50,7 @@ export function tierText(
     role: id.toUpperCase(),
     style: {
       ...opts.style,
-      ...spec.type,   // tier's own type wins — survives re-roll
+      ...item.type,   // tier's own type wins — survives re-roll
     },
   }
 }
@@ -62,6 +66,57 @@ function clampRegion(r: Region, cols: number, rows: number): Region {
   }
 }
 
+/** Hero/anchor dramatic type: hero's `style.fontSize` is a whole master-px
+ *  override — `heroScale` (10-18% of canvas height) is the user-directed
+ *  "much bigger hero" lever, with a tight `lineHeight` and slightly negative
+ *  `letterSpacing` for a poster-like set. Anchor tracks proportionally
+ *  underneath it (tight setting). Computed once per `compose()` call so
+ *  every staging gets identical drama for a given knob roll; a tier's own
+ *  `type` (spread last in `tierText`) still wins. */
+function dramaticType(knobs: Record<string, unknown>, canvas: { w: number; h: number }):
+  { hero: TextStyleV2; anchor: TextStyleV2 } {
+  const heroScale = Number(knobs.heroScale ?? 0.14)
+  const heroFontSize = Math.round(heroScale * canvas.h)
+  const anchorFontSize = Math.round(0.45 * heroFontSize)
+  return {
+    hero: { fontSize: heroFontSize, lineHeight: 0.92, letterSpacing: -Math.round(0.03 * heroFontSize) },
+    anchor: { fontSize: anchorFontSize, letterSpacing: -Math.round(0.02 * anchorFontSize) },
+  }
+}
+
+/** Enabled, non-empty items for one tier, filtered-list order — the source
+ *  of truth for both element ids and distribution (NOT raw storage index). */
+function tierItems(entries: Array<{ id: TierId; items: TierSpec[] }>, id: TierId): TierSpec[] {
+  return entries.find(e => e.id === id)?.items ?? []
+}
+
+/** Support-style distribution: item *i* stacks at `base.row + i * base.rowSpan`
+ *  (clamped to the grid). Nothing is dropped — an overflow item just keeps
+ *  stacking downward (clamping shrinks its span rather than losing it). */
+function stackVertical(
+  id: TierId, items: TierSpec[], base: Region, cols: number, rows: number,
+  priority: number, opts: { level?: TextLevel; style?: TextStyleV2 } = {},
+): ElementV2[] {
+  return items.map((item, i) => tierText(id, i, item,
+    clampRegion({ ...base, row: base.row + i * base.rowSpan }, cols, rows), priority, opts))
+}
+
+/** Fine-print distribution for tower/centered: items alternate between the
+ *  left and right corner regions by index (0→left, 1→right, 2→left one row
+ *  down, …) — nothing dropped, overflow keeps stacking downward within its
+ *  corner. */
+function stackCorners(
+  id: TierId, items: TierSpec[], left: Region, right: Region, cols: number, rows: number,
+  priority: number, opts: { level?: TextLevel; style?: TextStyleV2 } = {},
+): ElementV2[] {
+  return items.map((item, i) => {
+    const base = i % 2 === 0 ? left : right
+    const layer = Math.floor(i / 2)
+    return tierText(id, i, item,
+      clampRegion({ ...base, row: base.row + layer * base.rowSpan }, cols, rows), priority, opts)
+  })
+}
+
 /**
  * Tower — hero stacked at the top, fine print pinned to the corners, anchor
  * (date) blown up at the bottom. The MAT+FEST composition.
@@ -70,34 +125,41 @@ const tower: Staging = {
   id: 'tower',
   name: 'Tower',
   blurb: 'Hero stacked top, anchor as a bottom slab; corners hold the fine print.',
-  knobs: [{ id: 'align', pick: ['left', 'right'] }],
-  compose({ tiers, cols, rows, knobs }) {
+  knobs: [{ id: 'align', pick: ['left', 'right'] }, HERO_SCALE_KNOB],
+  compose({ tiers, cols, rows, canvas, knobs }) {
     const els: ElementV2[] = []
     const left = knobs.align !== 'right'
     const entries = tierEntries(tiers)
-    const has = (id: TierId) => entries.some(e => e.id === id)
+    const items = (id: TierId) => tierItems(entries, id)
+    const drama = dramaticType(knobs, canvas)
     const full = { col: 1, colSpan: cols }
     const align: TextStyleV2['align'] = left ? 'left' : 'right'
+    const half = Math.round(cols / 2)
 
-    if (has('fineprint')) {
-      els.push(tierText('fineprint', tiers,
-        clampRegion({ ...full, row: 1, rowSpan: 1 }, cols, rows), 4,
-        { style: { align, valign: 'top' } }))
+    const fine = items('fineprint')
+    if (fine.length) {
+      els.push(...stackCorners('fineprint', fine,
+        { col: 1, colSpan: half, row: 1, rowSpan: 1 },
+        { col: half + 1, colSpan: cols - half, row: 1, rowSpan: 1 },
+        cols, rows, 4, { style: { align, valign: 'top' } }))
     }
-    if (has('hero')) {
-      els.push(tierText('hero', tiers,
+    const hero = items('hero')
+    if (hero.length) {
+      els.push(tierText('hero', 0, hero[0]!,
         clampRegion({ ...full, row: 2, rowSpan: Math.round(rows * 0.4) }, cols, rows), 1,
-        { level: 'display', style: { align, valign: 'top', fontWeight: 700 } }))
+        { level: 'display', style: { align, valign: 'top', fontWeight: 700, ...drama.hero } }))
     }
-    if (has('support')) {
-      els.push(tierText('support', tiers,
-        clampRegion({ col: 1, colSpan: Math.round(cols / 2), row: Math.round(rows * 0.56), rowSpan: 2 }, cols, rows), 3,
-        { style: { align: 'left', valign: 'top' } }))
+    const support = items('support')
+    if (support.length) {
+      els.push(...stackVertical('support', support,
+        { col: 1, colSpan: half, row: Math.round(rows * 0.56), rowSpan: 1 },
+        cols, rows, 3, { style: { align: 'left', valign: 'top' } }))
     }
-    if (has('anchor')) {
-      els.push(tierText('anchor', tiers,
+    const anchor = items('anchor')
+    if (anchor.length) {
+      els.push(tierText('anchor', 0, anchor[0]!,
         clampRegion({ ...full, row: Math.round(rows * 0.72), rowSpan: Math.round(rows * 0.2) }, cols, rows), 2,
-        { level: 'headline', style: { align, valign: 'bottom', fontWeight: 700 } }))
+        { level: 'headline', style: { align, valign: 'bottom', fontWeight: 700, ...drama.anchor } }))
     }
     return els
   },
@@ -111,32 +173,38 @@ const split: Staging = {
   id: 'split',
   name: 'Split',
   blurb: 'Hero broken across a diagonal of whitespace.',
-  knobs: [{ id: 'drop', pick: [2, 3, 4] }],
-  compose({ tiers, cols, rows, knobs }) {
+  knobs: [{ id: 'drop', pick: [2, 3, 4] }, HERO_SCALE_KNOB],
+  compose({ tiers, cols, rows, canvas, knobs }) {
     const els: ElementV2[] = []
     const half = Math.round(cols / 2)
     const drop = Number(knobs.drop ?? 3)
     const entries = tierEntries(tiers)
-    const has = (id: TierId) => entries.some(e => e.id === id)
-    if (has('hero')) {
-      els.push(tierText('hero', tiers,
+    const items = (id: TierId) => tierItems(entries, id)
+    const drama = dramaticType(knobs, canvas)
+
+    const hero = items('hero')
+    if (hero.length) {
+      els.push(tierText('hero', 0, hero[0]!,
         clampRegion({ col: 1, colSpan: cols, row: 2, rowSpan: Math.round(rows * 0.22) }, cols, rows), 1,
-        { level: 'display', style: { align: 'left', valign: 'top', fontWeight: 700 } }))
+        { level: 'display', style: { align: 'left', valign: 'top', fontWeight: 700, ...drama.hero } }))
     }
-    if (has('support')) {
-      els.push(tierText('support', tiers,
-        clampRegion({ col: 1, colSpan: half, row: Math.round(rows * 0.44), rowSpan: 3 }, cols, rows), 3,
-        { style: { align: 'left', valign: 'top' } }))
+    const support = items('support')
+    if (support.length) {
+      els.push(...stackVertical('support', support,
+        { col: 1, colSpan: half, row: Math.round(rows * 0.44), rowSpan: 2 },
+        cols, rows, 3, { style: { align: 'left', valign: 'top' } }))
     }
-    if (has('anchor')) {
-      els.push(tierText('anchor', tiers,
+    const anchor = items('anchor')
+    if (anchor.length) {
+      els.push(tierText('anchor', 0, anchor[0]!,
         clampRegion({ col: 1, colSpan: cols, row: rows - drop - 2, rowSpan: 2 }, cols, rows), 2,
-        { level: 'headline', style: { align: 'left', valign: 'bottom', fontWeight: 700 } }))
+        { level: 'headline', style: { align: 'left', valign: 'bottom', fontWeight: 700, ...drama.anchor } }))
     }
-    if (has('fineprint')) {
-      els.push(tierText('fineprint', tiers,
-        clampRegion({ col: half, colSpan: cols - half + 1, row: rows, rowSpan: 1 }, cols, rows), 4,
-        { style: { align: 'right', valign: 'bottom' } }))
+    const fine = items('fineprint')
+    if (fine.length) {
+      els.push(...stackVertical('fineprint', fine,
+        { col: half, colSpan: cols - half + 1, row: rows - 1, rowSpan: 1 },
+        cols, rows, 4, { style: { align: 'right', valign: 'bottom' } }))
     }
     return els
   },
@@ -151,32 +219,40 @@ const frame: Staging = {
   id: 'frame',
   name: 'Frame',
   blurb: 'Hero anchored to a corner; the open field carries the surface.',
-  knobs: [{ id: 'corner', pick: ['tl', 'bl'] }],
-  compose({ tiers, cols, rows, knobs }) {
+  knobs: [{ id: 'corner', pick: ['tl', 'bl'] }, HERO_SCALE_KNOB],
+  compose({ tiers, cols, rows, canvas, knobs }) {
     const els: ElementV2[] = []
     const heroTop = knobs.corner === 'bl' ? Math.round(rows * 0.55) : 2
     const half = Math.round(cols / 2)
     const entries = tierEntries(tiers)
-    const has = (id: TierId) => entries.some(e => e.id === id)
-    if (has('hero')) {
-      els.push(tierText('hero', tiers,
-        clampRegion({ col: 1, colSpan: half + 1, row: heroTop, rowSpan: Math.round(rows * 0.28) }, cols, rows), 1,
-        { level: 'display', style: { align: 'left', valign: 'top', fontWeight: 700 } }))
+    const items = (id: TierId) => tierItems(entries, id)
+    const drama = dramaticType(knobs, canvas)
+
+    const hero = items('hero')
+    if (hero.length) {
+      // colSpan stops at `half` (not half+1) so it never shares a column
+      // with the right-rail support/fine print, regardless of row overlap.
+      els.push(tierText('hero', 0, hero[0]!,
+        clampRegion({ col: 1, colSpan: half, row: heroTop, rowSpan: Math.round(rows * 0.28) }, cols, rows), 1,
+        { level: 'display', style: { align: 'left', valign: 'top', fontWeight: 700, ...drama.hero } }))
     }
-    if (has('support')) {
-      els.push(tierText('support', tiers,
-        clampRegion({ col: half + 1, colSpan: cols - half, row: Math.round(rows * 0.42), rowSpan: 3 }, cols, rows), 3,
-        { style: { align: 'right', valign: 'top' } }))
+    const support = items('support')
+    if (support.length) {
+      els.push(...stackVertical('support', support,
+        { col: half + 1, colSpan: cols - half, row: Math.round(rows * 0.42), rowSpan: 3 },
+        cols, rows, 3, { style: { align: 'right', valign: 'top' } }))
     }
-    if (has('anchor')) {
-      els.push(tierText('anchor', tiers,
+    const anchor = items('anchor')
+    if (anchor.length) {
+      els.push(tierText('anchor', 0, anchor[0]!,
         clampRegion({ col: 1, colSpan: cols, row: rows - 2, rowSpan: 2 }, cols, rows), 2,
-        { level: 'headline', style: { align: 'left', valign: 'bottom', fontWeight: 700 } }))
+        { level: 'headline', style: { align: 'left', valign: 'bottom', fontWeight: 700, ...drama.anchor } }))
     }
-    if (has('fineprint')) {
-      els.push(tierText('fineprint', tiers,
-        clampRegion({ col: half + 1, colSpan: cols - half, row: 1, rowSpan: 1 }, cols, rows), 4,
-        { style: { align: 'right', valign: 'top' } }))
+    const fine = items('fineprint')
+    if (fine.length) {
+      els.push(...stackVertical('fineprint', fine,
+        { col: half + 1, colSpan: cols - half, row: 1, rowSpan: 1 },
+        cols, rows, 4, { style: { align: 'right', valign: 'top' } }))
     }
     return els
   },
@@ -187,23 +263,39 @@ const frame: Staging = {
 const centered: Staging = {
   id: 'centered', name: 'Centered',
   blurb: 'Hero centred with symmetric air above and below.',
-  knobs: [],
-  compose({ tiers, cols, rows }) {
+  knobs: [HERO_SCALE_KNOB],
+  compose({ tiers, cols, rows, canvas, knobs }) {
     const els: ElementV2[] = []
     const entries = tierEntries(tiers)
-    const has = (id: TierId) => entries.some(e => e.id === id)
-    if (has('fineprint')) els.push(tierText('fineprint', tiers,
-      clampRegion({ col: 1, colSpan: cols, row: 1, rowSpan: 1 }, cols, rows), 4,
-      { style: { align: 'center', valign: 'top' } }))
-    if (has('hero')) els.push(tierText('hero', tiers,
-      clampRegion({ col: 1, colSpan: cols, row: Math.round(rows * 0.32), rowSpan: Math.round(rows * 0.3) }, cols, rows), 1,
-      { level: 'display', style: { align: 'center', valign: 'middle', fontWeight: 700 } }))
-    if (has('anchor')) els.push(tierText('anchor', tiers,
-      clampRegion({ col: 1, colSpan: cols, row: Math.round(rows * 0.66), rowSpan: 2 }, cols, rows), 2,
-      { level: 'headline', style: { align: 'center', valign: 'top' } }))
-    if (has('support')) els.push(tierText('support', tiers,
-      clampRegion({ col: Math.round((cols - Math.round(cols * 0.5)) / 2) + 1, colSpan: Math.round(cols * 0.5), row: rows - 2, rowSpan: 2 }, cols, rows), 3,
-      { style: { align: 'center', valign: 'bottom' } }))
+    const items = (id: TierId) => tierItems(entries, id)
+    const drama = dramaticType(knobs, canvas)
+    const half = Math.round(cols / 2)
+
+    const fine = items('fineprint')
+    if (fine.length) {
+      els.push(...stackCorners('fineprint', fine,
+        { col: 1, colSpan: half, row: 1, rowSpan: 1 },
+        { col: half + 1, colSpan: cols - half, row: 1, rowSpan: 1 },
+        cols, rows, 4, { style: { align: 'center', valign: 'top' } }))
+    }
+    const hero = items('hero')
+    if (hero.length) {
+      els.push(tierText('hero', 0, hero[0]!,
+        clampRegion({ col: 1, colSpan: cols, row: Math.round(rows * 0.32), rowSpan: Math.round(rows * 0.3) }, cols, rows), 1,
+        { level: 'display', style: { align: 'center', valign: 'middle', fontWeight: 700, ...drama.hero } }))
+    }
+    const anchor = items('anchor')
+    if (anchor.length) {
+      els.push(tierText('anchor', 0, anchor[0]!,
+        clampRegion({ col: 1, colSpan: cols, row: Math.round(rows * 0.66), rowSpan: 2 }, cols, rows), 2,
+        { level: 'headline', style: { align: 'center', valign: 'top', ...drama.anchor } }))
+    }
+    const support = items('support')
+    if (support.length) {
+      els.push(...stackVertical('support', support,
+        { col: Math.round((cols - Math.round(cols * 0.5)) / 2) + 1, colSpan: Math.round(cols * 0.5), row: rows - 2, rowSpan: 2 },
+        cols, rows, 3, { style: { align: 'center', valign: 'bottom' } }))
+    }
     return els
   },
 }
@@ -213,24 +305,38 @@ const centered: Staging = {
 const editorial: Staging = {
   id: 'editorial', name: 'Editorial',
   blurb: 'Left type column against an open right field.',
-  knobs: [{ id: 'colw', pick: [6, 7, 8] }],
-  compose({ tiers, cols, rows, knobs }) {
+  knobs: [{ id: 'colw', pick: [6, 7, 8] }, HERO_SCALE_KNOB],
+  compose({ tiers, cols, rows, canvas, knobs }) {
     const els: ElementV2[] = []
     const colw = Math.min(Number(knobs.colw ?? 7), cols - 1)
     const entries = tierEntries(tiers)
-    const has = (id: TierId) => entries.some(e => e.id === id)
-    if (has('hero')) els.push(tierText('hero', tiers,
-      clampRegion({ col: 1, colSpan: colw, row: 2, rowSpan: Math.round(rows * 0.34) }, cols, rows), 1,
-      { level: 'display', style: { align: 'left', valign: 'top', fontWeight: 700 } }))
-    if (has('support')) els.push(tierText('support', tiers,
-      clampRegion({ col: 1, colSpan: colw, row: 2 + Math.round(rows * 0.34), rowSpan: 4 }, cols, rows), 3,
-      { style: { align: 'left', valign: 'top' } }))
-    if (has('fineprint')) els.push(tierText('fineprint', tiers,
-      clampRegion({ col: colw + 1, colSpan: cols - colw, row: 2, rowSpan: 2 }, cols, rows), 4,
-      { style: { align: 'right', valign: 'top' } }))
-    if (has('anchor')) els.push(tierText('anchor', tiers,
-      clampRegion({ col: colw + 1, colSpan: cols - colw, row: rows - 3, rowSpan: 3 }, cols, rows), 2,
-      { level: 'headline', style: { align: 'right', valign: 'bottom', fontWeight: 700 } }))
+    const items = (id: TierId) => tierItems(entries, id)
+    const drama = dramaticType(knobs, canvas)
+
+    const hero = items('hero')
+    if (hero.length) {
+      els.push(tierText('hero', 0, hero[0]!,
+        clampRegion({ col: 1, colSpan: colw, row: 2, rowSpan: Math.round(rows * 0.34) }, cols, rows), 1,
+        { level: 'display', style: { align: 'left', valign: 'top', fontWeight: 700, ...drama.hero } }))
+    }
+    const support = items('support')
+    if (support.length) {
+      els.push(...stackVertical('support', support,
+        { col: 1, colSpan: colw, row: 2 + Math.round(rows * 0.34), rowSpan: 2 },
+        cols, rows, 3, { style: { align: 'left', valign: 'top' } }))
+    }
+    const fine = items('fineprint')
+    if (fine.length) {
+      els.push(...stackVertical('fineprint', fine,
+        { col: colw + 1, colSpan: cols - colw, row: 2, rowSpan: 2 },
+        cols, rows, 4, { style: { align: 'right', valign: 'top' } }))
+    }
+    const anchor = items('anchor')
+    if (anchor.length) {
+      els.push(tierText('anchor', 0, anchor[0]!,
+        clampRegion({ col: colw + 1, colSpan: cols - colw, row: rows - 3, rowSpan: 3 }, cols, rows), 2,
+        { level: 'headline', style: { align: 'right', valign: 'bottom', fontWeight: 700, ...drama.anchor } }))
+    }
     return els
   },
 }
@@ -240,24 +346,38 @@ const editorial: Staging = {
 const index: Staging = {
   id: 'index', name: 'Index',
   blurb: 'Top rail of meta, hero mid-canvas, indexed support column.',
-  knobs: [{ id: 'heroRow', pick: [4, 5, 6] }],
-  compose({ tiers, cols, rows, knobs }) {
+  knobs: [{ id: 'heroRow', pick: [4, 5, 6] }, HERO_SCALE_KNOB],
+  compose({ tiers, cols, rows, canvas, knobs }) {
     const els: ElementV2[] = []
     const heroRow = Number(knobs.heroRow ?? 5)
     const entries = tierEntries(tiers)
-    const has = (id: TierId) => entries.some(e => e.id === id)
-    if (has('fineprint')) els.push(tierText('fineprint', tiers,
-      clampRegion({ col: 1, colSpan: cols, row: 1, rowSpan: 1 }, cols, rows), 4,
-      { style: { align: 'left', valign: 'top' } }))
-    if (has('hero')) els.push(tierText('hero', tiers,
-      clampRegion({ col: 1, colSpan: cols, row: heroRow, rowSpan: Math.round(rows * 0.3) }, cols, rows), 1,
-      { level: 'display', style: { align: 'left', valign: 'top', fontWeight: 700 } }))
-    if (has('support')) els.push(tierText('support', tiers,
-      clampRegion({ col: 1, colSpan: Math.round(cols / 2), row: Math.round(rows * 0.68), rowSpan: 3 }, cols, rows), 3,
-      { style: { align: 'left', valign: 'top' } }))
-    if (has('anchor')) els.push(tierText('anchor', tiers,
-      clampRegion({ col: 1, colSpan: cols, row: rows - 2, rowSpan: 2 }, cols, rows), 2,
-      { level: 'headline', style: { align: 'left', valign: 'bottom', fontWeight: 700 } }))
+    const items = (id: TierId) => tierItems(entries, id)
+    const drama = dramaticType(knobs, canvas)
+
+    const fine = items('fineprint')
+    if (fine.length) {
+      els.push(...stackVertical('fineprint', fine,
+        { col: 1, colSpan: cols, row: 1, rowSpan: 1 },
+        cols, rows, 4, { style: { align: 'left', valign: 'top' } }))
+    }
+    const hero = items('hero')
+    if (hero.length) {
+      els.push(tierText('hero', 0, hero[0]!,
+        clampRegion({ col: 1, colSpan: cols, row: heroRow, rowSpan: Math.round(rows * 0.3) }, cols, rows), 1,
+        { level: 'display', style: { align: 'left', valign: 'top', fontWeight: 700, ...drama.hero } }))
+    }
+    const support = items('support')
+    if (support.length) {
+      els.push(...stackVertical('support', support,
+        { col: 1, colSpan: Math.round(cols / 2), row: Math.round(rows * 0.68), rowSpan: 1 },
+        cols, rows, 3, { style: { align: 'left', valign: 'top' } }))
+    }
+    const anchor = items('anchor')
+    if (anchor.length) {
+      els.push(tierText('anchor', 0, anchor[0]!,
+        clampRegion({ col: 1, colSpan: cols, row: rows - 2, rowSpan: 2 }, cols, rows), 2,
+        { level: 'headline', style: { align: 'left', valign: 'bottom', fontWeight: 700, ...drama.anchor } }))
+    }
     return els
   },
 }

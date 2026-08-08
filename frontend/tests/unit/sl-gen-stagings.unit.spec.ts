@@ -4,33 +4,38 @@ import { makeRng } from '~~/shared/template-grid/generate/rng'
 import type { Tiers } from '~~/shared/template-grid/types'
 
 const LEVELS = ['caption', 'body', 'subhead', 'headline', 'display']
+const HERO_SCALES = [0.10, 0.14, 0.18] as const
+const CANVAS = { w: 1080, h: 1440 }
 const TIERS: Tiers = {
-  hero: { content: 'MAT + FEST' },
-  anchor: { content: '15—26 June' },
-  support: { content: 'Street food · Dining' },
-  fineprint: { content: 'Slakthus · Hall 3' },
+  hero: [{ content: 'MAT + FEST' }],
+  anchor: [{ content: '15—26 June' }],
+  support: [{ content: 'Street food · Dining' }, { content: 'Live music · Market' }],
+  fineprint: [{ content: 'Slakthus · Hall 3' }, { content: 'Free entry · All ages' }],
 }
 function input(over: Partial<StagingInput> = {}): StagingInput {
-  return { tiers: TIERS, cols: 12, rows: 16, rng: makeRng(1), knobs: {}, ...over }
+  return { tiers: TIERS, cols: 12, rows: 16, rng: makeRng(1), knobs: {}, canvas: CANVAS, ...over }
 }
 
 describe('staging: tower', () => {
   const tower = getStaging('tower')!
   it('is registered', () => { expect(tower).toBeTruthy() })
-  it('places one element per enabled tier, tagged staging origin', () => {
+  it('places one element per enabled tier item, tagged staging origin', () => {
     const els = tower.compose(input())
-    expect(els).toHaveLength(4)
+    // 1 hero + 1 anchor + 2 support + 2 fineprint
+    expect(els).toHaveLength(6)
     expect(els.every(e => e.origin === 'staging')).toBe(true)
   })
   it('carries each tier content through', () => {
     const els = tower.compose(input())
     expect(els.map(e => (e as any).content)).toContain('MAT + FEST')
     expect(els.map(e => (e as any).content)).toContain('Slakthus · Hall 3')
+    expect(els.map(e => (e as any).content)).toContain('Live music · Market')
+    expect(els.map(e => (e as any).content)).toContain('Free entry · All ages')
   })
   it('gives the hero the largest type level', () => {
     const els = tower.compose(input())
-    const hero = els.find(e => e.id === 'tier_hero')! as any
-    const fine = els.find(e => e.id === 'tier_fineprint')! as any
+    const hero = els.find(e => e.id === 'tier_hero_0')! as any
+    const fine = els.find(e => e.id === 'tier_fineprint_0')! as any
     expect(LEVELS.indexOf(hero.level)).toBeGreaterThan(LEVELS.indexOf(fine.level))
   })
   it('keeps every region inside the grid', () => {
@@ -47,7 +52,6 @@ describe('staging: tower', () => {
 })
 
 describe('staging: split + frame registered and valid', () => {
-  const LEVELS = ['caption', 'body', 'subhead', 'headline', 'display']
   for (const id of ['split', 'frame']) {
     it(`${id} places tiers inside the grid with hero largest`, () => {
       const s = getStaging(id)!
@@ -58,8 +62,8 @@ describe('staging: split + frame registered and valid', () => {
         expect(e.region.col + e.region.colSpan - 1).toBeLessThanOrEqual(12)
         expect(e.region.row + e.region.rowSpan - 1).toBeLessThanOrEqual(16)
       }
-      const hero = els.find(e => e.id === 'tier_hero')! as any
-      const fine = els.find(e => e.id === 'tier_fineprint')! as any
+      const hero = els.find(e => e.id === 'tier_hero_0')! as any
+      const fine = els.find(e => e.id === 'tier_fineprint_0')! as any
       expect(LEVELS.indexOf(hero.level)).toBeGreaterThanOrEqual(LEVELS.indexOf(fine.level))
     })
   }
@@ -87,6 +91,13 @@ describe('staging: full library', () => {
     }
     expect(shapes.size).toBe(STAGINGS.length) // no two stagings are identical
   })
+  it('every staging declares a heroScale knob', () => {
+    for (const s of STAGINGS) {
+      const knob = s.knobs.find(k => k.id === 'heroScale')
+      expect(knob, `${s.id} is missing heroScale knob`).toBeTruthy()
+      expect(knob!.pick).toEqual([0.10, 0.14, 0.18])
+    }
+  })
 })
 
 describe('staging: no intra-staging overlap', () => {
@@ -107,6 +118,69 @@ describe('staging: no intra-staging overlap', () => {
             .toBe(false)
         }
       }
+    })
+  }
+})
+
+describe('staging: tier lists — every item renders, nothing dropped', () => {
+  for (const s of STAGINGS) {
+    it(`${s.id}: renders both support items at distinct regions`, () => {
+      const els = s.compose(input())
+      const s0 = els.find(e => e.id === 'tier_support_0') as any
+      const s1 = els.find(e => e.id === 'tier_support_1') as any
+      expect(s0, `${s.id} missing tier_support_0`).toBeTruthy()
+      expect(s1, `${s.id} missing tier_support_1`).toBeTruthy()
+      expect(s0.region).not.toEqual(s1.region)
+      expect(s0.content).toBe('Street food · Dining')
+      expect(s1.content).toBe('Live music · Market')
+    })
+    it(`${s.id}: renders both fineprint items at distinct regions`, () => {
+      const els = s.compose(input())
+      const f0 = els.find(e => e.id === 'tier_fineprint_0') as any
+      const f1 = els.find(e => e.id === 'tier_fineprint_1') as any
+      expect(f0, `${s.id} missing tier_fineprint_0`).toBeTruthy()
+      expect(f1, `${s.id} missing tier_fineprint_1`).toBeTruthy()
+      expect(f0.region).not.toEqual(f1.region)
+      expect(f0.content).toBe('Slakthus · Hall 3')
+      expect(f1.content).toBe('Free entry · All ages')
+    })
+  }
+
+  it('disabled item 0 with a valid item 1 renders the valid item (filtered list is the source of truth)', () => {
+    const tiersWithDisabledHero: Tiers = {
+      ...TIERS,
+      hero: [{ content: 'DISABLED HERO', enabled: false }, { content: 'REAL HERO' }],
+    }
+    const tower = getStaging('tower')!
+    const els = tower.compose(input({ tiers: tiersWithDisabledHero }))
+    const hero = els.find(e => e.id === 'tier_hero_0') as any
+    expect(hero).toBeTruthy()
+    expect(hero.content).toBe('REAL HERO')
+    expect(els.some(e => (e as any).content === 'DISABLED HERO')).toBe(false)
+  })
+})
+
+describe('staging: dramatic hero + anchor type', () => {
+  for (const s of STAGINGS) {
+    it(`${s.id}: hero fontSize follows the heroScale knob × canvas.h`, () => {
+      for (const heroScale of HERO_SCALES) {
+        const els = s.compose(input({ knobs: { heroScale } }))
+        const hero = els.find(e => e.id === 'tier_hero_0')! as any
+        expect(hero.style.fontSize).toBe(Math.round(heroScale * CANVAS.h))
+      }
+    })
+    it(`${s.id}: hero has tight lineHeight and negative letterSpacing`, () => {
+      const els = s.compose(input())
+      const hero = els.find(e => e.id === 'tier_hero_0')! as any
+      expect(hero.style.lineHeight).toBe(0.92)
+      expect(hero.style.letterSpacing).toBeLessThan(0)
+    })
+    it(`${s.id}: anchor fontSize tracks 0.45 × hero fontSize`, () => {
+      const els = s.compose(input())
+      const hero = els.find(e => e.id === 'tier_hero_0')! as any
+      const anchor = els.find(e => e.id === 'tier_anchor_0')! as any
+      expect(Math.abs(anchor.style.fontSize - Math.round(0.45 * hero.style.fontSize))).toBeLessThanOrEqual(1)
+      expect(anchor.style.letterSpacing).toBeLessThan(0)
     })
   }
 })
