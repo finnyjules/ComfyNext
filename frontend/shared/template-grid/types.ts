@@ -160,6 +160,17 @@ export interface TextStyleV2 {
   orientation?: 'horizontal' | 'up' | 'down'
 }
 
+/** True when `style.orientation` requests vertical ('up'/'down') AND actually
+ *  applies. Expressive (word-level) placement takes over layout entirely, so
+ *  a lingering `orientation` on an expressive style is a graceful no-op:
+ *  expressive wins, orientation is ignored — rather than stamping a rotation
+ *  the expressive path never renders. Single source of truth for the
+ *  resolver's fit pass and both render surfaces (satori translate + the
+ *  editor canvas). */
+export function isVerticalTextStyle(style?: TextStyleV2): boolean {
+  return !style?.expressive && (style?.orientation === 'up' || style?.orientation === 'down')
+}
+
 export interface TextElementV2 extends ElementV2Base {
   type: 'text'
   content: string                // supports {{ props.* }} / {{ brand.* }}

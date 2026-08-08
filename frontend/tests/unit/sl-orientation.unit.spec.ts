@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { resolveFormat } from '~~/shared/template-grid/resolve'
-import type { TemplateV2 } from '~~/shared/template-grid/types'
+import { isVerticalTextStyle } from '~~/shared/template-grid/types'
+import type { GridExpressiveParams, TemplateV2, TemplateV3, TextElementV2 } from '~~/shared/template-grid/types'
 
 // A TALL narrow region (1 col × 5 rows on the square master's 6x6 grid) — a
 // vertical title running up the edge: 136px wide, 776px tall. Long enough
@@ -68,5 +69,111 @@ describe('resolveFormat: text orientation', () => {
     const withStyle = resolveFormat(fixture('horizontal'), '1x1')
     const noStyle = resolveFormat(fixture(), '1x1')
     expect(strip(withStyle)).toEqual(strip(noStyle))
+  })
+})
+
+const EXPRESSIVE: GridExpressiveParams = {
+  wordsPerLine: 2, placement: 'random', jitterX: 0, jitterY: 0, seed: 1,
+}
+
+// Same tall narrow region as `fixture`, but with an expressive word-layout
+// style — the combo case where `orientation` should be a no-op (expressive
+// wins layout entirely; a stamped ±90 rotation would corrupt the UNswapped
+// outer box both renderers apply it to).
+function expressiveFixture(orientation?: 'horizontal' | 'up' | 'down'): TemplateV2 {
+  return {
+    version: 2, id: 't', name: 't', master: '1x1',
+    formats: { '1x1': { w: 1080, h: 1080 } },
+    grid: { gutter: 24, margin: 72, baseline: 12 },
+    typeScale: { base: 28, ratio: 1.414 },
+    elements: [
+      {
+        id: 'title', type: 'text', content: 'Artisan Roasted Coffee Beans From The Highlands',
+        level: 'display', priority: 1,
+        region: { col: 1, colSpan: 1, row: 1, rowSpan: 5 },
+        style: { expressive: EXPRESSIVE, ...(orientation ? { orientation } : {}) },
+      },
+    ],
+  }
+}
+
+describe('resolveFormat: expressive + orientation combo (orientation is a no-op)', () => {
+  it('expressive + orientation:"up" resolves with NO stamped rotation', () => {
+    const r = resolveFormat(expressiveFixture('up'), '1x1')
+    const title = r.elements.find(e => e.el.id === 'title')!
+    expect(title.rotation).toBeUndefined()
+  })
+
+  it('expressive + orientation:"up" is byte-identical to expressive-only (minus the orientation key on the source element)', () => {
+    const withOrientation = resolveFormat(expressiveFixture('up'), '1x1')
+    const control = resolveFormat(expressiveFixture(), '1x1')
+    const strip = (r: ReturnType<typeof resolveFormat>) =>
+      r.elements.map(e => ({ region: e.region, rect: e.rect, culled: e.culled, text: e.text, rotation: e.rotation }))
+    expect(strip(withOrientation)).toEqual(strip(control))
+  })
+})
+
+// Section-child (expressive scatter) path — same combo, but the text child
+// sits under a `section.expressive` box-scatter, going through the
+// `fitElementAtRect` call at resolve.ts's section-child site (not the
+// top-level ungrouped path above). Cheap to build from the same pattern as
+// template-grid-expressive-section.unit.spec.ts's `tpl` helper.
+function sectionFixture(orientation?: 'horizontal' | 'up' | 'down'): TemplateV3 {
+  const title: TextElementV2 = {
+    id: 'title', type: 'text', content: 'Artisan Roasted Coffee Beans From The Highlands',
+    level: 'display', priority: 1,
+    region: { col: 1, colSpan: 18, row: 1, rowSpan: 90 },
+    style: { expressive: EXPRESSIVE, ...(orientation ? { orientation } : {}) },
+  }
+  return {
+    version: 3, id: 't', name: 't', master: '1x1',
+    formats: { '1x1': { w: 1000, h: 1000 } },
+    grid: { gutter: 0, margin: 0, baseline: 10 },
+    typeScale: { base: 28, ratio: 1.414 },
+    elements: [],
+    sections: [{
+      id: 'sec', name: 'sec',
+      region: { col: 1, colSpan: 100, row: 1, rowSpan: 100 },
+      expressive: { placement: 'scatter', jitter: 0, rotation: 0, seed: 3 },
+      children: [title],
+    }],
+  }
+}
+
+describe('resolveFormat: expressive-section child + orientation combo (no-op)', () => {
+  it('section-scattered expressive child with orientation:"up" has NO stamped ±90 rotation beyond the scatter\'s own tilt (0 here)', () => {
+    const r = resolveFormat(sectionFixture('up'), '1x1')
+    const title = r.elements.find(e => e.el.id === 'title')!
+    // rotation===0 params → scatter's own tilt is 0/omitted; a leaked ±90
+    // from the orientation guard gap would show up here.
+    expect(title.rotation ?? 0).toBe(0)
+  })
+
+  it('section-scattered expressive child resolves identically with or without orientation set', () => {
+    const withOrientation = resolveFormat(sectionFixture('up'), '1x1')
+    const control = resolveFormat(sectionFixture(), '1x1')
+    const strip = (r: ReturnType<typeof resolveFormat>) =>
+      r.elements.map(e => ({ rect: e.rect, culled: e.culled, text: e.text, rotation: e.rotation }))
+    expect(strip(withOrientation)).toEqual(strip(control))
+  })
+})
+
+describe('isVerticalTextStyle (shared predicate)', () => {
+  it('true for orientation "up" with no expressive', () => {
+    expect(isVerticalTextStyle({ orientation: 'up' })).toBe(true)
+  })
+
+  it('true for orientation "down" with no expressive', () => {
+    expect(isVerticalTextStyle({ orientation: 'down' })).toBe(true)
+  })
+
+  it('false for orientation "up" when expressive is also set — expressive wins', () => {
+    expect(isVerticalTextStyle({ orientation: 'up', expressive: EXPRESSIVE })).toBe(false)
+  })
+
+  it('false for horizontal/absent orientation', () => {
+    expect(isVerticalTextStyle({})).toBe(false)
+    expect(isVerticalTextStyle(undefined)).toBe(false)
+    expect(isVerticalTextStyle({ orientation: 'horizontal' })).toBe(false)
   })
 })

@@ -11,7 +11,7 @@ import { dragRegion, pointToCell, resizeRegion } from '~~/shared/template-grid/e
 import { gridExpressiveLayout, expressiveVOffset } from '~~/shared/template-grid/expressive'
 import { verticalTextBox } from '~~/shared/template-grid/grid'
 import type { ResolvedElement } from '~~/shared/template-grid/resolve'
-import { isV3 } from '~~/shared/template-grid/types'
+import { isV3, isVerticalTextStyle } from '~~/shared/template-grid/types'
 import type { Region } from '~~/shared/template-grid/types'
 import CanvasContextMenu, { type MenuItem } from '~/components/vue-canvas/CanvasContextMenu.vue'
 import { columnLabelForElement, isBoundToken, nextFreeSocket, tokenizeElementContent } from '~/lib/collection/layoutPromote'
@@ -277,8 +277,7 @@ const culled = computed(() => resolved.value.elements.filter(r => r.culled && r.
  *  keep operating on the un-rotated region like every other element. */
 function isVerticalText(r: ResolvedElement): boolean {
   const el = r.el
-  return el.type === 'text' && !el.style?.expressive
-    && (el.style?.orientation === 'up' || el.style?.orientation === 'down')
+  return el.type === 'text' && isVerticalTextStyle(el.style)
 }
 
 function rectStyle(r: ResolvedElement): Record<string, string> {

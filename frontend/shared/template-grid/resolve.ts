@@ -18,7 +18,7 @@ import type { TokenScope } from './tokens'
 import type {
   AnyGridTemplate, ElementV2, FormatClass, FormatSpec, OutputSpec, Region, SectionV3, TemplateV2,
 } from './types'
-import { isV3, isLayoutStack } from './types'
+import { isV3, isLayoutStack, isVerticalTextStyle } from './types'
 import { solveStack } from './autolayout'
 import type { StackBox, StackItem } from './autolayout'
 
@@ -114,8 +114,12 @@ function fitElementAtRect(
     // region's height, not its (narrow) width. The element's own rect stays
     // the region rect — only the fit's w/h and the too-small check swap axes;
     // rendering applies `rotation` around the unswapped box's center.
-    const orientation = el.style?.orientation
-    const vertical = orientation === 'up' || orientation === 'down'
+    // Expressive (word-level) placement takes over layout entirely, so a
+    // lingering `orientation` on an expressive style is a no-op here too
+    // (isVerticalTextStyle excludes it) — otherwise this would fit a fontSize
+    // for a swap that never renders and stamp a rotation the renderers then
+    // apply to the wrong (unswapped) box.
+    const vertical = isVerticalTextStyle(el.style)
     const fitFloorVis = vertical ? vis.w : vis.h
     if (fitFloorVis < FONT_FLOOR * lineHeight) {
       return { el, region, rect, culled: true, cullReason: 'too-small' }
@@ -128,7 +132,7 @@ function fitElementAtRect(
       maxLines: el.maxLines, autoShrink: el.style?.fontSize == null,
     })
     const outRect = allowBleed && el.bleed ? bleedToEdges(rect, region, m, format.w, format.h) : rect
-    const rotation = orientation === 'up' ? -90 : orientation === 'down' ? 90 : undefined
+    const rotation = vertical ? (el.style?.orientation === 'up' ? -90 : 90) : undefined
     return { el, region, rect: outRect, culled: false, text, ...(rotation != null ? { rotation } : {}) }
   }
 

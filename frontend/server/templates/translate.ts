@@ -15,6 +15,7 @@ import { resolveTokens } from '../../shared/template-grid/tokens'
 import type {
   AnyGridTemplate, ImageElementV2, ShapeElementV2, TemplateV2, TextElementV2,
 } from '../../shared/template-grid/types'
+import { isVerticalTextStyle } from '../../shared/template-grid/types'
 import type {
   AspectSpec, BackgroundSpec, ImageElement, LayoutElement, Length, RenderBrand,
   RenderProps, ShapeElement, Template, TextElement,
@@ -322,8 +323,7 @@ function v2ElementNode(r: ResolvedElement, props: RenderProps, brand: RenderBran
   // box so satori's own reflow wraps against the same width it was fitted
   // for, instead of the narrow unswapped rect. `base`'s rotation is skipped
   // here to avoid rotating twice (once generically, once on that swapped box).
-  const vertical = r.el.type === 'text' && !(r.el as TextElementV2).style?.expressive
-    && ((r.el as TextElementV2).style?.orientation === 'up' || (r.el as TextElementV2).style?.orientation === 'down')
+  const vertical = r.el.type === 'text' && isVerticalTextStyle((r.el as TextElementV2).style)
   const base: Record<string, unknown> = {
     position: 'absolute',
     left: `${r.rect.x}px`, top: `${r.rect.y}px`,
