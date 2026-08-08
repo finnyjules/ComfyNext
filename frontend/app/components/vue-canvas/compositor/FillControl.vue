@@ -19,7 +19,7 @@ import { type Paint, type Gradient, type ImageFill, isFill, isGradient, isImageF
 import type { BrandKit } from '~~/shared/brand/types'
 import { brandSwatches as kitSwatches } from '~~/shared/brand/resolve'
 import FillImagePicker from '~/components/vue-canvas/compositor/FillImagePicker.vue'
-import { getFillBitmap, ensureFillBitmaps } from '~/lib/paint/imageFillCache'
+import { getFillBitmap, ensureFillBitmaps, hasFillBitmapFailed } from '~/lib/paint/imageFillCache'
 import { imageFillRect } from '~/lib/compositor/paint'
 
 const props = withDefaults(defineProps<{ modelValue: Paint | undefined; allowNone?: boolean; nested?: boolean; allowImage?: boolean }>(), { allowNone: false, nested: false, allowImage: false })
@@ -183,7 +183,7 @@ function drawPreview() {
       ctx.drawImage(img, dx, dy, dw, dh)
     } else {
       ctx.fillStyle = '#333'; ctx.fillRect(0, 0, cv.width, cv.height)
-      ensureFillBitmaps([imageFill.value.src]).then(() => drawPreview())
+      if (!hasFillBitmapFailed(imageFill.value.src)) ensureFillBitmaps([imageFill.value.src]).then(() => drawPreview())
     }
     return
   }

@@ -5,7 +5,7 @@
 import { ref, watch, onMounted } from 'vue'
 import { fillTileCanvas } from '~/lib/spacetype/fillTile'
 import { type Paint, isFill, isGradient, isImageFill } from '~/composables/useCompositorLayers'
-import { getFillBitmap, ensureFillBitmaps } from '~/lib/paint/imageFillCache'
+import { getFillBitmap, ensureFillBitmaps, hasFillBitmapFailed } from '~/lib/paint/imageFillCache'
 import { imageFillRect } from '~/lib/compositor/paint'
 
 const props = withDefaults(defineProps<{ paint: Paint | undefined; size?: number }>(), { size: 14 })
@@ -36,7 +36,7 @@ function draw() {
       ctx.drawImage(img, dx, dy, dw, dh)
     } else {
       ctx.fillStyle = '#333'; ctx.fillRect(0, 0, w, h)
-      ensureFillBitmaps([p.src]).then(draw)
+      if (!hasFillBitmapFailed(p.src)) ensureFillBitmaps([p.src]).then(draw)
     }
     return
   }
