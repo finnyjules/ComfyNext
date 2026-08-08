@@ -297,16 +297,28 @@ describe('useGridEditor', () => {
 
   // -- Nudge -----------------------------------------------------------------
 
-  it('nudgeSelected moves the region by whole cells, clamped', () => {
+  it('nudgeSelected moves the region by whole cells', () => {
     const ed = useGridEditor(fixture())
     ed.selectedId.value = 'subhead'   // region col1 colSpan4 row6 rowSpan1
     ed.nudgeSelected(1, 0)
     expect(ed.template.value.elements[1].region.col).toBe(2)
     ed.nudgeSelected(0, -1)
     expect(ed.template.value.elements[1].region.row).toBe(5)
-    // clamp at the grid edge (row can't exceed rows - rowSpan + 1 = 6)
+    expect(ed.template.value.elements[1].overhang).toBeFalsy()
+  })
+
+  it('nudgeSelected past the grid edge is unclamped (overhang) but sanity-capped at ±2x the grid span', () => {
+    const ed = useGridEditor(fixture())
+    ed.selectedId.value = 'subhead'   // region col1 colSpan4 row6 rowSpan1 (rows = 6)
+    // In-bounds max row for rowSpan1 is 6 — a huge nudge now overshoots
+    // instead of clamping there, and sets overhang.
     ed.nudgeSelected(0, 99)
-    expect(ed.template.value.elements[1].region.row).toBe(6)
+    expect(ed.template.value.elements[1].region.row).toBe(18)   // (6 - 1 + 1) + 2*6 sanity cap
+    expect(ed.template.value.elements[1].overhang).toBe(true)
+    // Nudging back fully inside clears it.
+    ed.nudgeSelected(0, -13)
+    expect(ed.template.value.elements[1].region.row).toBe(5)
+    expect(ed.template.value.elements[1].overhang).toBeFalsy()
   })
 
   // -- Undo / redo -----------------------------------------------------------

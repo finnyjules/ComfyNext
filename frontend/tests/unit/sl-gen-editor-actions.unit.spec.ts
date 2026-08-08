@@ -226,4 +226,60 @@ describe('useGridEditor generation actions', () => {
     const t2 = ctx.template.value as TemplateV3
     expect(t2.brand?.accent).toBe('#123456')
   })
+
+  // -- Round-2a Task 10: editor unclamp + auto-overhang -----------------------
+
+  it('nudgeSelected past the canvas edge goes negative and sets overhang', () => {
+    const ctx = useGridEditor(makeStarterTemplate('nudge-overhang'))
+    ctx.addText()   // default placement lands at col 1 (selects the new element)
+    const id = ctx.selectedId.value!
+    const before = ctx.template.value.elements.find(e => e.id === id)!.region
+    expect(before.col).toBe(1)
+    ctx.nudgeSelected(-2, 0)
+    ctx.nudgeSelected(-2, 0)
+    const el = ctx.template.value.elements.find(e => e.id === id)!
+    expect(el.region.col).toBeLessThan(0)
+    expect(el.overhang).toBe(true)
+  })
+
+  it('nudging back fully inside clears overhang', () => {
+    const ctx = useGridEditor(makeStarterTemplate('nudge-overhang-clear'))
+    ctx.addText()
+    const id = ctx.selectedId.value!
+    ctx.nudgeSelected(-2, 0)
+    ctx.nudgeSelected(-2, 0)
+    expect(ctx.template.value.elements.find(e => e.id === id)!.overhang).toBe(true)
+    ctx.nudgeSelected(4, 0)   // back to the original in-bounds col
+    const el = ctx.template.value.elements.find(e => e.id === id)!
+    expect(el.region.col).toBe(1)
+    expect(el.overhang).toBeFalsy()
+  })
+
+  it('nudgeSelected sanity-clamps a runaway drag at roughly ±2x the grid span', () => {
+    const ctx = useGridEditor(makeStarterTemplate('nudge-runaway'))
+    ctx.addText()
+    const id = ctx.selectedId.value!
+    ctx.nudgeSelected(-1000, 0)   // absurd single nudge
+    const el = ctx.template.value.elements.find(e => e.id === id)!
+    // Sanity floor is generous but finite — nowhere near -1000.
+    expect(el.region.col).toBeGreaterThan(-100)
+    expect(el.overhang).toBe(true)
+    const clampedCol = el.region.col
+    ctx.nudgeSelected(-1000, 0)   // repeat — must not drift further
+    expect(ctx.template.value.elements.find(e => e.id === id)!.region.col).toBe(clampedCol)
+  })
+
+  it('duplicateElement of an in-bounds element still lands in-bounds (clamp kept)', () => {
+    const ctx = useGridEditor(makeStarterTemplate('duplicate-clamped'))
+    ctx.addText()
+    const id = ctx.selectedId.value!
+    const dupId = ctx.duplicateElement(id)!
+    const dup = ctx.template.value.elements.find(e => e.id === dupId)!
+    const m = ctx.metrics.value
+    expect(dup.region.col).toBeGreaterThanOrEqual(1)
+    expect(dup.region.col + dup.region.colSpan - 1).toBeLessThanOrEqual(m.cols)
+    expect(dup.region.row).toBeGreaterThanOrEqual(1)
+    expect(dup.region.row + dup.region.rowSpan - 1).toBeLessThanOrEqual(m.rows)
+    expect(dup.overhang).toBeFalsy()
+  })
 })

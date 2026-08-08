@@ -579,16 +579,34 @@ export function useGridEditor(
 
   // -- Nudge ------------------------------------------------------------------
 
-  /** Move the selected element's region by whole cells (clamped). Region
-   * target follows the master/class rule via setRegion. */
+  /** Move the selected element's region by whole cells. UNCLAMPED — dragging
+   * or nudging an element past the canvas edge is allowed (Task 5's raw-region
+   * -math engine support for `overhang`); it just sets `overhang: true` below
+   * instead of snapping back in-bounds, and clears it once the element is
+   * fully back inside. A generous sanity clamp (±2× the grid span, applied on
+   * top of the old in-bounds bounds) still stops a runaway repeated nudge from
+   * flying off to infinity. Region target follows the master/class rule via
+   * setRegion. */
   function nudgeSelected(dCol: number, dRow: number) {
     const r = selectedResolved.value?.region
     if (!r || !selectedId.value) return
     const m = metrics.value
-    const col = Math.min(m.cols - r.colSpan + 1, Math.max(1, r.col + dCol))
-    const row = Math.min(m.rows - r.rowSpan + 1, Math.max(1, r.row + dRow))
+    const minCol = 1
+    const maxCol = m.cols - r.colSpan + 1
+    const minRow = 1
+    const maxRow = m.rows - r.rowSpan + 1
+    const col = Math.max(minCol - 2 * m.cols, Math.min(maxCol + 2 * m.cols, r.col + dCol))
+    const row = Math.max(minRow - 2 * m.rows, Math.min(maxRow + 2 * m.rows, r.row + dRow))
     if (col === r.col && row === r.row) return
     setRegion(selectedId.value, { ...r, col, row })
+    const el = elById(selectedId.value)
+    if (!el) return
+    const inBounds = col >= minCol && col <= maxCol && row >= minRow && row <= maxRow
+    if (inBounds) {
+      if (el.overhang) delete el.overhang
+    } else {
+      el.overhang = true
+    }
   }
 
   // Array order is z-order (later = on top) — same contract as
