@@ -43,6 +43,7 @@ import {
 } from '~/lib/compositor/postEffects'
 import { applyDof, dofAvailable, dofShouldRun } from '~/lib/compositor/dofPass'
 import { depthImageFor, requestDepth } from '~/lib/compositor/depthRegistry'
+import { ensureFillBitmaps } from '~/lib/paint/imageFillCache'
 
 // Throwaway 2D context used only for text measurement (localLayerBox mutates the
 // ctx font), so it never touches a real render target.
@@ -71,7 +72,7 @@ export {
   type GradientStop, type LinearGradient, type RadialGradient, type Gradient, type Paint, type ImageFill,
   isGradient, isFill, isImageFill,
 } from '~/lib/compositor/paint'
-import { type Paint, isFill } from '~/lib/compositor/paint'
+import { type Paint, isFill, isImageFill } from '~/lib/compositor/paint'
 
 // Layer effects (Figma-style). All distances normalized to canvas width, like
 // every other dimension here, so they survive resize/export unchanged.
@@ -576,6 +577,18 @@ export function imageLayerUrl(filename: string): string {
   return `/view?${new URLSearchParams({ filename, type: 'input' })}`
 }
 
+/** Every ImageFill `src` referenced by a layer's fill or stroke, de-duplicated.
+ *  Drives the preload so the synchronous resolve arm has the bitmap in hand. */
+export function collectFillImageSrcs(layers: LocalLayer[]): string[] {
+  const out = new Set<string>()
+  for (const l of layers) {
+    for (const p of [(l as any).fill, (l as any).stroke]) {
+      if (isImageFill(p) && p.src) out.add(p.src)
+    }
+  }
+  return [...out]
+}
+
 /** Preload every image layer's bitmap into the module cache so the synchronous
  *  `drawLocalLayer` can paint it. Resolves once all are loaded (or errored). */
 export async function ensureLayerImages(layers: LocalLayer[]): Promise<void> {
@@ -592,6 +605,7 @@ export async function ensureLayerImages(layers: LocalLayer[]): Promise<void> {
       im.src = url
     }))
   }
+  jobs.push(ensureFillBitmaps(collectFillImageSrcs(layers)))
   if (jobs.length) await Promise.all(jobs)
 }
 
