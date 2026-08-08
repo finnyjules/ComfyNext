@@ -35,7 +35,7 @@ Reproduce, as a single parametric effect:
 | --- | --- |
 | Dimensionality | **3D-native, with a flat 2D mode as a subset.** Build 3D first; 2D is the spine collapsed to a plane, viewed head-on. |
 | Copy style | **Both stroked outlines and solid fill, as a toggle.** |
-| Profile | **One parametric shape** (width, height, corner-radius, sides). Its params keyframe per stop. No arbitrary shape-morphing. |
+| Profile | **One cross-section, two kinds — parametric shape OR a word.** Parametric = a rounded shape (width, height, corner-radius, sides). Word = the word's glyph outlines become the swept cross-section, lofted into a 3D form that follows the spine. The kind is a global toggle for the whole spine, not per-stop (per-stop outline-morphing is out of scope). No arbitrary shape-morphing within a kind. |
 | Spine editing | **Stops ARE the curve.** A preset menu stamps a starting set of stops (helix/wave/arch/S-curve/loop); every stop is then free-hand editable. Presets are pure generators, not a locked mode. |
 | Stops editor | **Option B — build the full `profileStops` ControlSpec kind + editor UI now.** Arbitrary add/remove/reorder of rich stops. |
 
@@ -70,6 +70,10 @@ interface LoftStop {
 
 interface LoftParams {
   stops: LoftStop[]
+  profileKind: 'shape' | 'word'   // global cross-section kind for the whole spine
+  text: string          // word mode: the word whose outline is swept
+  font: string          // word mode: font (reuse the shared FontPicker scheme)
+  weight: number        // word mode: weight
   spinePreset: 'custom' | 'helix' | 'wave' | 'arch' | 's-curve' | 'loop'
   closed: boolean
   copies: number        // ~10 (discrete ribbons) … ~400 (dense line-field)
@@ -83,6 +87,11 @@ interface LoftParams {
   // + standard Space Type camera + universal post-stack params
 }
 ```
+
+In **word** mode a `LoftStop`'s `width`/`height` act as cross-section scale and
+`radius`/`sides` are ignored (their controls hide via `showIf` on `profileKind`);
+`roll` and `color` keyframe as before. So per-stop you keyframe scale, twist, and
+colour of the word along the sweep, while the glyph outline itself is constant.
 
 ## Controls & UI
 
@@ -107,6 +116,11 @@ AI-editability, defaults, and seamless-loop export all derive automatically
 generator function `presetStops(preset): LoftStop[]`. Selecting a preset
 replaces the current stops (with a confirm if the user has edited them).
 
+**Profile kind** (`select` — shape/word). When `word`, reveal (`showIf`) a `text`
+control plus a shared `font` picker + `weight` slider; the per-stop `radius`/
+`sides` rows hide. Reuse the existing shared FontPicker + TTF-proxy scheme and the
+Scene3D glyph→Shape path so the word becomes real outline contours.
+
 Global controls (existing kinds): `closed` (switch), `copies` (slider),
 `mode` (select flat/3d), `render` (select stroke/fill), `strokeWidth`,
 `strokeOpacity`, `fillOpacity` (sliders, shown via `showIf` on `render`),
@@ -120,9 +134,20 @@ Global controls (existing kinds): `closed` (switch), `copies` (slider),
 1. Build the spine curve (Catmull-Rom through stop XYZ; closed if `closed`).
 2. Sample K stations along the spine by arc length. Per station, interpolate the
    profile params and colour from the bracketing stops.
-3. Build the parametric profile outline for each station (width/height/radius/
-   sides → a ring of points), oriented by the Frenet/parallel-transport frame
-   plus the station's `roll`.
+3. Build the cross-section for each station, oriented by the Frenet/
+   parallel-transport frame plus the station's `roll`, scaled by the station's
+   width/height:
+   - **shape kind** — the parametric outline (width/height/radius/sides → a ring
+     of points).
+   - **word kind** — the word's glyph outlines as one or more closed contours
+     (letters + counters/holes), from the shared font→path machinery. The
+     contour set is the constant cross-section; per-station scale/roll/colour
+     still apply.
+   `THREE.ExtrudeGeometry` with an `extrudePath` is the reference for a
+   *constant* cross-section swept along a curve, but per-stop keyframed variation
+   (scale/roll/colour changing along the spine) needs the custom station-sampling
+   + skinning below, so we don't use vanilla ExtrudeGeometry for the varying case.
+   Multi-contour glyphs (holes) are skinned per contour.
 4. **Stroke mode:** each ring → a `LineLoop`; merge into one `BufferGeometry`
    (`LineSegments`) with per-vertex gradient colour and `strokeOpacity`
    transparency. Dense + translucent = the img-1 line-field.
@@ -130,7 +155,11 @@ Global controls (existing kinds): `closed` (switch), `copies` (slider),
    `BufferGeometry` mesh, vertex colours from the gradient, `fillOpacity`. A
    proper loft surface (img 3/5), not stacked flat copies.
 6. **Flat (2D) mode:** force `z = 0`, orient profiles in the picture plane,
-   render with the head-on orthographic path. 3D is a superset.
+   render with the head-on orthographic path. 3D is a superset. **Word kind is
+   3D-primary:** a word cross-section swept perpendicular to a flat spine is seen
+   edge-on and degenerates to a line. Resolution deferred to the plan; likely
+   flat+word orients the word face-on to camera and the sweep produces trailing
+   offset copies rather than a perpendicular extrusion. Shape kind is unaffected.
 
 `update(t01, params, root)` advances `flow` (phase travel of the sampled stations
 along the spine) and `spin` (turntable rotation of the root). Per-scene state
@@ -165,7 +194,8 @@ them doesn't trigger a structural rebuild.
 
 **Reused:** curve-editor canvas, `StudioColor`, `StudioControl` auto-UI,
 `stripAlpha` (`frontend/app/lib/color/convert.ts:178`), `loopRates`/`liveKeys`,
-universal post stack, existing camera controls.
+universal post stack, existing camera controls, the shared FontPicker + TTF-proxy
+scheme, and the Scene3D glyph→Shape (Text+Shape) path for word-mode contours.
 
 ## Gotchas / constraints
 
@@ -187,6 +217,10 @@ universal post stack, existing camera controls.
   stop colours at stop `t`s; `stripAlpha` applied to every stop colour.
 - Unit: geometry builder produces the expected vertex/segment counts for a given
   `copies` in both stroke and fill modes; flat mode zeroes `z`.
+- Unit: word mode resolves a word into ≥1 closed contour (and holes for glyphs
+  like 'o'/'e'); `radius`/`sides` are ignored while `width`/`height` scale the
+  cross-section; switching `profileKind` shape↔word rebuilds without leaking the
+  old geometry.
 - Parity/regression: pair a golden thumbnail with an input-correlation check
   (per house convention — goldens alone pass flat-wash bugs).
 - Runtime (the real proof): drive the live effect in the Space Type surface,
@@ -196,9 +230,10 @@ universal post stack, existing camera controls.
 
 ## Out of scope (YAGNI)
 
-- Arbitrary shape-identity morphing between stops (oval→star). Profile is one
-  parametric family.
-- Text/photo content on the loft. This is an abstract-geometry effect; text is
-  not part of v1.
+- Arbitrary shape-identity morphing between stops (oval→star, or shape→word).
+  Profile kind is global; within a kind the outline is constant.
+- Per-stop different words. Word mode sweeps one word for the whole spine.
+- Photo content on the loft. The two cross-section kinds are parametric shape and
+  word; images are not part of v1.
 - A full 3D drag gizmo. 3D position is XY-on-canvas + a depth field per stop.
 - Import of external paths as the spine.
