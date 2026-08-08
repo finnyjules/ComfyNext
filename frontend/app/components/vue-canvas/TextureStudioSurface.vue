@@ -80,6 +80,21 @@ const fileInput = ref<HTMLInputElement | null>(null)
 const generating = ref(false)
 const genError = ref('')
 
+// Inspector tabs — Design (the pattern) vs Output (the sheet it gets printed on),
+// matching Type Studio's and Gradient Studio's Design|Motion strip. Pattern Studio
+// has no motion, so Output takes that slot in the family.
+const inspectorTab = ref<'design' | 'output'>('design')
+const onDesign = computed(() => inspectorTab.value === 'design')
+
+const sheet = computed(() => sheetFromParams(params))
+const sheetRepeats = computed(() => repeatsFor(sheet.value))
+const sheetTileable = computed(() => isTileable(sheet.value))
+// Whole numbers read as "4", partials as "3.75" — the point of the readout is telling
+// those two apart at a glance.
+function fmtRepeat(n: number): string {
+  return Number.isInteger(n) ? String(n) : n.toFixed(2)
+}
+
 async function onGenerate() {
   const prompt = String(params.texturePrompt ?? '').trim()
   if (!prompt || generating.value) return
@@ -231,6 +246,8 @@ const { saving: autoSaving, saved: autoSaved } = useStudioAutosave(() => params,
 // (shared with every other adopter), driven by TEXTURE_SECTIONS as the order.
 function controlVisible(c: ControlSpec): boolean {
   const tc = c as TextureControl
+  // Tab gate: the Output group is the Output tab, everything else is Design.
+  if ((c.group === 'Output') !== (inspectorTab.value === 'output')) return false
   // `showIf` too, not just `when`: the shared post stack's param rows declare it so
   // they appear only once their effect's switch is on. Checking `when` alone showed
   // all 21 of them permanently.
@@ -606,6 +623,14 @@ onBeforeUnmount(() => {
     </template>
 
     <template #controls>
+      <div class="flex shrink-0 gap-1 rounded-lg bg-white/[0.04] p-1 text-[11px]">
+        <button type="button" class="flex-1 rounded px-2 py-1"
+                :class="inspectorTab === 'design' ? 'bg-white/15 text-white' : 'text-white/55 hover:text-white/80'"
+                @click="inspectorTab = 'design'">Design</button>
+        <button type="button" class="flex-1 rounded px-2 py-1"
+                :class="inspectorTab === 'output' ? 'bg-white/15 text-white' : 'text-white/55 hover:text-white/80'"
+                @click="inspectorTab = 'output'">Output</button>
+      </div>
       <StudioControlPanel
         :controls="TEXTURE_CONTROLS"
         :order="TEXTURE_SECTIONS"
@@ -618,9 +643,25 @@ onBeforeUnmount(() => {
         @menu="(e: MouseEvent, c: ControlSpec) => openVarMenu(e, c)"
       />
 
+      <!-- Not controls — the consequences of the controls above. The chip is the only
+           thing that tells you whether the exported PNG itself repeats edge-to-edge;
+           any sheet is allowed, this just says what you got. -->
+      <div v-if="inspectorTab === 'output'" class="flex flex-col gap-1 px-1 pt-1 text-[11px]">
+        <div class="text-white/70">{{ sheet.w }} × {{ sheet.h }} px</div>
+        <div class="text-white/45">
+          {{ fmtRepeat(sheetRepeats.x) }} × {{ fmtRepeat(sheetRepeats.y) }} repeats
+        </div>
+        <div class="pt-0.5">
+          <span class="rounded px-1.5 py-0.5"
+                :class="sheetTileable ? 'bg-white/10 text-white/70' : 'bg-white/[0.04] text-white/35'">
+            {{ sheetTileable ? 'tiles edge-to-edge' : 'not self-tiling' }}
+          </span>
+        </div>
+      </div>
+
       <!-- Fills panel: per-role solid/gradient fill pickers (not driven by TEXTURE_CONTROLS). -->
       <!-- Hidden in raster mode (raster has no ink/ground roles). -->
-      <StudioSection v-if="params.mode !== 'raster'" title="Fills">
+      <StudioSection v-if="onDesign && params.mode !== 'raster'" title="Fills">
         <!-- One fill role (A / B / …). `gap-1.5` matches the 6px item rhythm the studio
              rows use, so the header, Type, Color and Opacity are evenly spaced instead of
              relying on the removed label wrappers' incidental margins. -->
