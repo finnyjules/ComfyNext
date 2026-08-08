@@ -34,6 +34,7 @@ import StudioSlider from '~/components/vue-canvas/studio/StudioSlider.vue'
 import StudioSegmented from '~/components/vue-canvas/studio/StudioSegmented.vue'
 import StudioSelect from '~/components/vue-canvas/studio/StudioSelect.vue'
 import CurveEditor from '~/components/vue-canvas/CurveEditor.vue'
+import ProfileStopsEditor from '~/components/vue-canvas/ProfileStopsEditor.vue'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
 import StudioColorField from '~/components/vue-canvas/studio/StudioColorField.vue'
 import StudioRow from '~/components/vue-canvas/studio/StudioRow.vue'
@@ -1891,6 +1892,8 @@ async function exportWebEmbed() {
               </p>
               <CurveEditor v-else-if="c.kind === 'curve'" :model-value="String(params[c.key])"
                            @update:model-value="(val: string) => { params[c.key] = val }" />
+              <ProfileStopsEditor v-else-if="c.kind === 'profileStops'" :model-value="String(params[c.key])"
+                                  @update:model-value="(val: string) => { params[c.key] = val }" />
               <!-- Font is excluded here: its bound state now lives inside FontPicker's row
                    (like a bound colour), so it does not need this shared pink block. -->
               <div v-else-if="(c.kind === 'color' || c.kind === 'select') && boundColumnFor(c.key)"
