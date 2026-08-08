@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { generate, shuffle, surprise } from '~~/shared/template-grid/generate/generate'
+import { validateGenerated } from '~~/shared/template-grid/generate/validate'
+import { STAGINGS } from '~~/shared/template-grid/generate/stagings'
 import type { TemplateV3, ElementV2 } from '~~/shared/template-grid/types'
 
 function base(): TemplateV3 {
@@ -86,5 +88,24 @@ describe('generate orchestrator', () => {
     expect(rolled.order).toEqual([...stagedIds, ...preservedIds])
     expect(rolled.order?.slice(0, stagedIds.length)).toEqual(stagedIds)
     expect(rolled.order).toContain('note')
+  })
+  it('generates a validator-clean result for the standard 4-tier fixture (no unvalidated ship on exhausted re-rolls)', () => {
+    const standard: TemplateV3 = {
+      ...base(),
+      tiers: {
+        hero: { content: 'MAT + FEST' },
+        anchor: { content: '15—26 June' },
+        support: [{ content: 'Street food · Dining' }, { content: 'Live music · Market' }],
+        fineprint: [{ content: 'Slakthus · Hall 3' }, { content: 'Free entry · All ages' }],
+      },
+    }
+    for (const s of STAGINGS) {
+      const t = generate(standard, { staging: s.id, surface: 'flat', seed: 1 })
+      const cols = t.grid.columns ?? 12
+      const rows = t.grid.rows ?? 16
+      const staged = t.elements.filter(e => e.origin === 'staging')
+      const { ok, reasons } = validateGenerated({ elements: staged }, cols, rows)
+      expect(ok, `${s.id}: ${reasons.join(' ')}`).toBe(true)
+    }
   })
 })

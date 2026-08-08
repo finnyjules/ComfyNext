@@ -3,11 +3,17 @@ import type { TextLevel, TierId, Tiers, TierSpec } from '../types'
 /** Most → least important. */
 export const TIER_ORDER: TierId[] = ['hero', 'anchor', 'support', 'fineprint']
 
-/** Default type-scale level per tier. hero is the biggest; fineprint the smallest. */
+/** Default type-scale level per tier. hero is the biggest; fineprint the smallest.
+ *  Only 3 distinct levels (display, headline, caption) — support shares
+ *  fineprint's size. "Few sizes, big jumps": hero and anchor already carry
+ *  explicit fontSize overrides from the drama system (heroScale × canvas,
+ *  0.45 × hero), so their shared `level` here is cosmetic; support and
+ *  fineprint have no such override, so their level IS the rendered size —
+ *  keeping SWISS_LIMITS.maxTypeSizes (3) satisfied by construction. */
 export const DEFAULT_TIER_LEVELS: Record<TierId, TextLevel> = {
   hero: 'display',
   anchor: 'headline',
-  support: 'subhead',
+  support: 'caption',
   fineprint: 'caption',
 }
 

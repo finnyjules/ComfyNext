@@ -105,15 +105,16 @@ describe('staging: no intra-staging overlap', () => {
   // Round 1 checked this with a local pairwise scan; round 2a moved collision
   // detection into validateGenerated (declared `overlaps` pairs are exempt).
   // None of the six current stagings declare any, so this still guards
-  // exactly what it guarded before — now via the real validator. Scoped to
-  // "overlap:" reasons only — off-grid/type-size are separately covered.
+  // exactly what it guarded before — now via the real validator. The standard
+  // 4-tier (2-support/2-fineprint) fixture must validate CLEAN end to end
+  // (off-grid + overlap + type-size-count all pass) — proving the whole
+  // pipeline, not just the collision check.
   for (const s of STAGINGS) {
-    it(`${s.id}: no two elements share a grid cell under default knobs`, () => {
+    it(`${s.id}: validates clean (no overlap, off-grid, or type-size violations) under default knobs`, () => {
       const result = s.compose(input())
       expect(result.overlaps ?? []).toEqual([])
-      const { reasons } = validateGenerated(result, 12, 16)
-      const overlapReasons = reasons.filter(r => r.startsWith('overlap:'))
-      expect(overlapReasons, overlapReasons.join(' ')).toEqual([])
+      const { ok, reasons } = validateGenerated(result, 12, 16)
+      expect(ok, reasons.join(' ')).toBe(true)
     })
   }
 })

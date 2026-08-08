@@ -36,6 +36,10 @@ describe('tier model', () => {
     expect(idx('anchor')).toBeGreaterThan(idx('support'))
     expect(idx('support')).toBeGreaterThanOrEqual(idx('fineprint'))
   })
+  it('uses only 3 distinct default levels — support shares fineprint\'s size ("few sizes, big jumps"; hero/anchor carry explicit fontSize overrides from the drama system)', () => {
+    expect(DEFAULT_TIER_LEVELS.support).toBe(DEFAULT_TIER_LEVELS.fineprint)
+    expect(new Set(Object.values(DEFAULT_TIER_LEVELS)).size).toBe(3)
+  })
   it('tierEntries returns only enabled tiers, in importance order', () => {
     const entries = tierEntries({ fineprint: { content: 'f' }, hero: { content: 'h' }, anchor: { content: 'a', enabled: false } })
     expect(entries.map(e => e.id)).toEqual(['hero', 'fineprint'])
