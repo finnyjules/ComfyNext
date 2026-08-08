@@ -272,6 +272,27 @@ Editorial and Centered fold into Stacked/Frame/Lockup rather than surviving
 as-is. Every staging passes the new geometry assertions; the intra-staging
 *undeclared*-overlap test still runs across the whole library.
 
+### Craft constants — dramatic hierarchy, tight setting (user-directed)
+
+The hierarchy must be **much** more dramatic than round 1, and the setting
+tighter. Pinned mechanics (land in plan 2a so the existing six stagings get
+them immediately; 2b builds on them):
+
+- **Hero is sized by canvas fraction, not the typescale ladder.** Stagings set
+  the hero's `style.fontSize` (master px, which still reflows per format) from
+  a `heroScale` knob: `fontSize = heroScale × master height`, domain
+  **{0.10, 0.14, 0.18}** per line. The modular scale keeps governing
+  anchor/support/fineprint.
+- **Big jumps between tiers:** anchor ≈ 0.4–0.5 × hero; support and fineprint
+  stay small and dense — no mid-sized timidity. (≤3 distinct sizes still holds.)
+- **Tight setting:** hero `lineHeight` **0.92** (stacked lines nearly touch),
+  hero `letterSpacing = −0.03 × fontSize` (px); anchor −0.02×; small caps meta
+  gets neutral-to-positive tracking. These are staging defaults — the tier
+  Type panel still overrides everything, and overrides survive re-rolls.
+- **Tight frame:** freshly generated layouts set grid margins to
+  ~**3% of min(canvas dimension)** (stamped on the fresh-generate path only —
+  never mutating a layout the user already has).
+
 ---
 
 ## Migration & compatibility
