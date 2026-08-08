@@ -43,6 +43,7 @@ const controls: ControlSpec[] = [
   // matching the "oval + gradient" default choice — the shared palette has no 'gradient' type,
   // and rampFromFill maps ombre A→B the same way.
   { key: 'fills', label: 'Fill', kind: 'fillList', default: JSON.stringify([{ type: 'ombre', a: '#3b5bff', b: '#ff2ea6', textColor: '#ffffff', angle: 90, density: 8 }]), group: 'Color', showIf: { key: 'colorSource', equals: 'fill' } },
+  { key: 'fillMode', label: 'Fill mode', kind: 'select', options: ['blend', 'steps'], default: 'blend', group: 'Color', showIf: { key: 'colorSource', equals: 'fill' } },
   { key: 'flow', label: 'Flow', kind: 'slider', min: 0, max: 4, step: 1, default: 0, group: 'Motion' },
   { key: 'spin', label: 'Spin', kind: 'slider', min: 0, max: 4, step: 1, default: 0, group: 'Motion' },
   { key: 'scale', label: 'Scale', kind: 'slider', min: 0.4, max: 2.5, step: 0.05, default: 1, group: 'Transform' },
@@ -182,7 +183,9 @@ export const loftEffect: SpaceTypeEffect = {
 
     // Uint8Array(...) copy: three's DataTexture types data as BufferSource (concrete ArrayBuffer);
     // buildRamp/rampFromFill's bare Uint8ClampedArray return widens to <ArrayBufferLike> under TS 5.7+ libs.
-    const rampBytes = String(params.colorSource) === 'stops' ? buildRamp(stops, 256) : rampFromFill(three, String(params.fills ?? ''), 256)
+    const rampBytes = String(params.colorSource) === 'stops'
+      ? buildRamp(stops, 256)
+      : rampFromFill(three as any, String(params.fills ?? ''), 256, String(params.fillMode) === 'steps' ? 'steps' : 'blend')
     const ramp = new three.DataTexture(new Uint8Array(rampBytes), 256, 1, three.RGBAFormat)
     ramp.needsUpdate = true
     const opacity = render === 'stroke' ? n(params, 'strokeOpacity') : n(params, 'fillOpacity')

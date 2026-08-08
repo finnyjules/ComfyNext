@@ -315,25 +315,38 @@ function hexToRgbTuple(hex: string): [number, number, number] {
   return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)]
 }
 
-/** A 1-D colour ramp (size*4 RGBA) built from the FIRST fill in the shared fills list.
- *  solid → flat primary; gradient/ombre → a→b across the ramp; patterned (grid/noise/shader)
- *  → flat primary (surface patterns are a later follow-up). */
-export function rampFromFill(three: typeof THREE, fillsJson: string, size: number): Uint8ClampedArray {
-  const out = new Uint8ClampedArray(size * 4)
+/** A 1-D colour ramp (size*4 RGBA) built from ALL fills in the shared fills list,
+ *  spread evenly as colour stops. solid/pattern → 1 primary stop; gradient/ombre → 2 stops (a, b).
+ *  `blend` mode interpolates stops smoothly; `steps` mode hard-bands (stop j owns t∈[j/M, (j+1)/M)). */
+export function rampFromFill(three: typeof THREE, fillsJson: string, size: number, mode: 'blend' | 'steps' = 'blend'): Uint8ClampedArray {
   let fills: any[]
   try { fills = parseFills(fillsJson) } catch { fills = [] }
-  const fill: any = fills[0] ?? { type: 'solid', color: '#888888' }
-  const type = String(fill.type)
-  const ab = (type === 'gradient' || type === 'ombre') && fill.a && fill.b
-  const a = ab ? hexToRgbTuple(fill.a) : null
-  const b = ab ? hexToRgbTuple(fill.b) : null
-  let flat: [number, number, number]
-  try { const c = fillPrimary(three, fill); flat = [Math.round(c.r * 255), Math.round(c.g * 255), Math.round(c.b * 255)] }
-  catch { flat = [136, 136, 136] }
+  const stops: [number, number, number][] = []
+  for (const f of fills) {
+    const type = String(f?.type)
+    if ((type === 'gradient' || type === 'ombre') && f.a && f.b) {
+      stops.push(hexToRgbTuple(f.a), hexToRgbTuple(f.b))
+    } else {
+      let c: [number, number, number]
+      try { const col = fillPrimary(three, f); c = [Math.round(col.r * 255), Math.round(col.g * 255), Math.round(col.b * 255)] }
+      catch { c = [136, 136, 136] }
+      stops.push(c)
+    }
+  }
+  if (stops.length === 0) stops.push([136, 136, 136])
+  const M = stops.length
+  const out = new Uint8ClampedArray(size * 4)
   for (let i = 0; i < size; i++) {
     const t = size > 1 ? i / (size - 1) : 0
-    const [r, g, bl] = ab && a && b ? [a[0] + (b[0]-a[0])*t, a[1] + (b[1]-a[1])*t, a[2] + (b[2]-a[2])*t] : flat
-    out[i*4] = Math.round(r); out[i*4+1] = Math.round(g); out[i*4+2] = Math.round(bl); out[i*4+3] = 255
+    let rgb: [number, number, number]
+    if (M === 1) rgb = stops[0]!
+    else if (mode === 'steps') rgb = stops[Math.min(M - 1, Math.floor(t * M))]!
+    else {
+      const x = t * (M - 1), j0 = Math.min(M - 1, Math.floor(x)), j1 = Math.min(M - 1, j0 + 1), a = x - j0
+      const c0 = stops[j0]!, c1 = stops[j1]!
+      rgb = [c0[0] + (c1[0] - c0[0]) * a, c0[1] + (c1[1] - c0[1]) * a, c0[2] + (c1[2] - c0[2]) * a]
+    }
+    out[i * 4] = Math.round(rgb[0]); out[i * 4 + 1] = Math.round(rgb[1]); out[i * 4 + 2] = Math.round(rgb[2]); out[i * 4 + 3] = 255
   }
   return out
 }
