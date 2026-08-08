@@ -21,7 +21,9 @@ export interface TileTransform {
 }
 
 export function ringTransform(i: number, n: number, p: RingParams, t01: number): TileTransform {
-  const base = (2 * Math.PI * i) / Math.max(1, n)
+  // Negative winding: tiles advance CLOCKWISE so a content sequence (e.g. the
+  // letters of a word) reads in order around the ring instead of reversed.
+  const base = -(2 * Math.PI * i) / Math.max(1, n)
   const spin = p.direction * 2 * Math.PI * Math.round(p.speed) * t01
   const ang = base + spin
   const x = Math.cos(ang) * p.radius

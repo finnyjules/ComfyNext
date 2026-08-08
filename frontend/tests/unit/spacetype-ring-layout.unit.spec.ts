@@ -10,12 +10,13 @@ describe('ringTransform', () => {
       const t = ringTransform(i, n, P, 0)
       return Math.atan2(t.z, t.x)
     })
-    // consecutive angular gaps are equal (2π/n), within fp tolerance
+    // consecutive angular steps have equal magnitude (2π/n) — winding-agnostic
+    // (the ring winds clockwise so text reads in order; sign of the step is not asserted)
     const gap = (2 * Math.PI) / n
     for (let i = 1; i < n; i++) {
       let d = angles[i]! - angles[i - 1]!
-      d = ((d % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)
-      expect(Math.abs(d - gap)).toBeLessThan(1e-6)
+      d = Math.atan2(Math.sin(d), Math.cos(d)) // normalize to (-π, π]
+      expect(Math.abs(Math.abs(d) - gap)).toBeLessThan(1e-6)
     }
   })
 
