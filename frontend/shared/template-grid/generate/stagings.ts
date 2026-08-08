@@ -1,7 +1,7 @@
 import type { BrandKit, ElementV2, Region, TextLevel, TextStyleV2, Tiers, TierId } from '../types'
 import type { Rng } from './rng'
 import type { KnobSpec } from './knobs'
-import { DEFAULT_TIER_LEVELS, tierEntries } from './tiers'
+import { DEFAULT_TIER_LEVELS, tierEntries, normalizeTiers } from './tiers'
 
 export interface StagingInput {
   tiers: Tiers
@@ -25,12 +25,16 @@ export interface Staging {
  *  staging may override (e.g. force the hero to display). `origin:'staging'`
  *  marks it regenerable. No default colour here — `applyContrast` (in
  *  generate.ts) fills it from the surface's light/dark contrast unless the
- *  tier's own `spec.type.color` already won. */
+ *  tier's own `spec.type.color` already won.
+ *
+ *  Reads item 0 of the tier's (normalized) list — single-item behaviour is
+ *  preserved exactly; multi-item tiers are consumed by stagings elsewhere
+ *  (Task 3), not here. */
 export function tierText(
   id: TierId, tiers: Tiers, region: Region, priority: number,
   opts: { level?: TextLevel; style?: TextStyleV2 } = {},
 ): ElementV2 {
-  const spec = tiers[id]!
+  const spec = normalizeTiers(tiers)[id]![0]!
   return {
     id: `tier_${id}`,
     type: 'text',

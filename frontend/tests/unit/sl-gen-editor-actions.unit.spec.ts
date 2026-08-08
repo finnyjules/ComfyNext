@@ -43,7 +43,7 @@ describe('useGridEditor generation actions', () => {
     ctx.convertToV3()
     ctx.addTierItem('hero', 'BIG NEWS')
     const t = ctx.template.value as TemplateV3
-    expect(t.tiers?.hero?.content).toBe('BIG NEWS')
+    expect(t.tiers?.hero?.[0]?.content).toBe('BIG NEWS')
   })
   it('surpriseLayout marks the doc dirty', () => {
     const ctx = editorWithTiers()

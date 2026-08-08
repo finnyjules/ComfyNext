@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import type { TemplateV3, TierSpec, GenState } from '~~/shared/template-grid/types'
-import { TIER_ORDER, DEFAULT_TIER_LEVELS, tierEntries, autopopulateTiers, omitConsumedProps } from '~~/shared/template-grid/generate/tiers'
+import type { TemplateV3, TierSpec, GenState, Tiers } from '~~/shared/template-grid/types'
+import { TIER_ORDER, DEFAULT_TIER_LEVELS, tierEntries, autopopulateTiers, omitConsumedProps, normalizeTiers, appendTierItem } from '~~/shared/template-grid/generate/tiers'
 
 describe('schema: tiers/gen/origin fields', () => {
   it('round-trips optional generation fields on a template', () => {
@@ -42,10 +42,53 @@ describe('tier model', () => {
   })
   it('autopopulates tiers from wired text sockets', () => {
     const t = autopopulateTiers({ text_layer_1: 'HERO', text_layer_2: 'DATE', text_layer_3: 'list' })
-    expect(t.hero?.content).toBe('HERO')
-    expect(t.anchor?.content).toBe('DATE')
-    expect(t.support?.content).toBe('list')
+    expect(t.hero).toEqual([{ content: 'HERO' }])
+    expect(t.anchor?.[0]?.content).toBe('DATE')
+    expect(t.support?.[0]?.content).toBe('list')
     expect(t.fineprint).toBeUndefined()
+  })
+  it('tierEntries returns items arrays, in importance order, skipping disabled/empty items', () => {
+    const entries = tierEntries({
+      fineprint: { content: 'f' },
+      hero: [{ content: 'h1' }, { content: '' }, { content: 'h2', enabled: false }, { content: 'h3' }],
+      anchor: { content: 'a', enabled: false },
+    })
+    expect(entries.map(e => e.id)).toEqual(['hero', 'fineprint'])
+    const heroEntry = entries.find(e => e.id === 'hero')!
+    expect(heroEntry.items.map(i => i.content)).toEqual(['h1', 'h3'])
+    const fineprintEntry = entries.find(e => e.id === 'fineprint')!
+    expect(fineprintEntry.items).toEqual([{ content: 'f' }])
+  })
+})
+
+describe('normalizeTiers', () => {
+  it('wraps a round-1 single TierSpec into a one-item array', () => {
+    const n = normalizeTiers({ hero: { content: 'HERO' } })
+    expect(n.hero).toEqual([{ content: 'HERO' }])
+  })
+  it('passes an existing array through unchanged', () => {
+    const n = normalizeTiers({ hero: [{ content: 'A' }, { content: 'B' }] })
+    expect(n.hero).toEqual([{ content: 'A' }, { content: 'B' }])
+  })
+  it('drops empty arrays and tolerates undefined input', () => {
+    const n = normalizeTiers({ hero: [], anchor: { content: 'A' } })
+    expect(n.hero).toBeUndefined()
+    expect(n.anchor).toEqual([{ content: 'A' }])
+    expect(normalizeTiers(undefined)).toEqual({})
+  })
+})
+
+describe('appendTierItem', () => {
+  it('appends a second item to an existing round-1 single, preserving order, without mutating input', () => {
+    const original: Tiers = { hero: { content: 'A' } }
+    const next = appendTierItem(original, 'hero', { content: 'B' })
+    expect(next.hero).toEqual([{ content: 'A' }, { content: 'B' }])
+    // input untouched
+    expect(original.hero).toEqual({ content: 'A' })
+  })
+  it('appends to an empty tier, creating a one-item list', () => {
+    const next = appendTierItem({}, 'anchor', { content: 'X' })
+    expect(next.anchor).toEqual([{ content: 'X' }])
   })
 })
 

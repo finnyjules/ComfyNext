@@ -66,7 +66,11 @@ export interface TierSpec {
   type?: Partial<TextStyleV2>
   enabled?: boolean
 }
-export type Tiers = Partial<Record<TierId, TierSpec>>
+/** Stored form: round-1 templates hold one `TierSpec` per tier; round-2+
+ *  supports a list (multiple items in one tier, e.g. a second meta-cluster).
+ *  Read sites normalize via `normalizeTiers` so both shapes flow through
+ *  identically — no stored-data rewrite needed. */
+export type Tiers = Partial<Record<TierId, TierSpec | TierSpec[]>>
 
 /** The reproducible generation tuple stamped on a generated template. */
 export interface GenState {

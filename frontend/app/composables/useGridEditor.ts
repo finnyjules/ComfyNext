@@ -17,6 +17,7 @@ import { applyArchetype, classifyFormat, fineGridDims, formatDims, gridDims, gri
 import type { Rect } from '~~/shared/template-grid/grid'
 import type { Archetype } from '~~/shared/template-grid/archetypes'
 import { generate, shuffle, surprise } from '~~/shared/template-grid/generate/generate'
+import { normalizeTiers } from '~~/shared/template-grid/generate/tiers'
 import { deriveOutputs, type ResolvedLayout } from '~~/shared/template-grid/resolve'
 import {
   addChildToStack, allElements, DEFAULT_AUTOLAYOUT, effectiveOrder, groupIntoSection, removeChildFromStack, sectionRegionFor,
@@ -1108,21 +1109,25 @@ export function useGridEditor(
     commit({ ...t, gen: { ...(t.gen ?? { staging: 'tower', surface: 'flat', seed: 1 }), locks } })
   }
 
+  // Both helpers read/write item 0 of the tier's (normalized) list — single-
+  // item behaviour preserved exactly; any further items ride along
+  // untouched. Multi-item authoring UI is Task 3, not here.
   function tierType(id: TierId): Partial<TextStyleV2> {
-    return (template.value as TemplateV3).tiers?.[id]?.type ?? {}
+    return normalizeTiers((template.value as TemplateV3).tiers)[id]?.[0]?.type ?? {}
   }
   function setTierType(id: TierId, patch: Partial<TextStyleV2>) {
     const t = asV3()
-    const tiers = { ...(t.tiers ?? {}) }
-    const spec = tiers[id] ?? { content: '' }
-    tiers[id] = { ...spec, type: { ...spec.type, ...patch } }
+    const normalized = normalizeTiers(t.tiers)
+    const items = normalized[id] ?? [{ content: '' }]
+    const tiers = { ...normalized, [id]: [{ ...items[0], type: { ...items[0]?.type, ...patch } }, ...items.slice(1)] }
     // Re-generate in place so the type change is visible immediately (same tuple).
     commit(generate({ ...t, tiers }, { staging: t.gen?.staging ?? 'tower', surface: t.gen?.surface ?? 'flat', seed: t.gen?.seed ?? 1, ...genCtx() }))
   }
   function addTierItem(id: TierId, content = '') {
     const t = asV3()
-    const tiers = { ...(t.tiers ?? {}) }
-    tiers[id] = { content: content || tiers[id]?.content || id.toUpperCase(), type: tiers[id]?.type }
+    const normalized = normalizeTiers(t.tiers)
+    const items = normalized[id] ?? []
+    const tiers = { ...normalized, [id]: [{ content: content || items[0]?.content || id.toUpperCase(), type: items[0]?.type }, ...items.slice(1)] }
     const seed = t.gen?.seed ?? 1
     commit(generate({ ...t, tiers }, { staging: t.gen?.staging ?? 'tower', surface: t.gen?.surface ?? 'flat', seed, ...genCtx() }))
   }
