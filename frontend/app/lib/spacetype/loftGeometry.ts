@@ -415,11 +415,9 @@ export function buildSlicedLoftGeometry(opts: {
       const cr = Math.cos((pr.roll*Math.PI)/180), sr = Math.sin((pr.roll*Math.PI)/180)
       for (let c = 0; c < C; c++) for (let p = 0; p < P; p++) {
         const v = baseContours[c]![p]!
-        const lx = v.x*pr.width, ly = v.y*pr.height
-        const rx = lx*cr - ly*sr, ry = lx*sr + ly*cr
-        positions[vo*3]   = st.pos.x + rx*st.normal.x + ry*st.binormal.x
-        positions[vo*3+1] = st.pos.y + rx*st.normal.y + ry*st.binormal.y
-        positions[vo*3+2] = st.pos.z + rx*st.normal.z + ry*st.binormal.z
+        const q = rolledPoint2D(v, pr, cr, sr)
+        const w = place2D(st, q)
+        positions[vo*3] = w.x; positions[vo*3+1] = w.y; positions[vo*3+2] = w.z
         along[vo] = tc
         vo++
       }
