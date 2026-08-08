@@ -167,7 +167,10 @@ export const ringEffect: SpaceTypeEffect = {
   id: 'ring',
   label: 'Showcase',
   controls,
-  liveKeys: ['layout', 'radius', 'ringTilt', 'cardSize', 'perspective', 'speed', 'direction', 'padding', 'ringOpening', 'backFade', 'bend', 'cornerRadius'],
+  // Layout-specific placement keys (sphereRadius/tunnel*/grid*) are LIVE too: they're read in
+  // update() via the layout's place(), never at build, so dragging them should re-place, not rebuild
+  // — matching ring's own radius/tilt drag feel.
+  liveKeys: ['layout', 'radius', 'ringTilt', 'cardSize', 'perspective', 'speed', 'direction', 'padding', 'ringOpening', 'backFade', 'bend', 'cornerRadius', 'sphereRadius', 'tunnelDepth', 'tunnelSpread', 'gridCols', 'gridGap'],
   loopRates(params) {
     // Backfill layout-control defaults (sphereRadius/tunnelDepth/…) so a doc that
     // lacks a layout's key — e.g. a pre-Showcase ring doc switched to another layout —

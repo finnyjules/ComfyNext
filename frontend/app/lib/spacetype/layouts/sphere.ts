@@ -16,7 +16,10 @@ export const sphereLayout: ShowcaseLayout = {
     const y = 1 - 2 * (i + 0.5) / Math.max(1, n)
     const rad = Math.sqrt(Math.max(0, 1 - y * y))
     const th = i * GA + spin
-    return { x: Math.cos(th) * rad * R, y: y * R, z: Math.sin(th) * rad * R, rotY: Math.atan2(Math.sin(th), Math.cos(th)), scale: Number(p.cardSize) }
+    // Face outward-horizontally: a quad's +Z normal turned by rotY becomes (sin rotY, 0, cos rotY);
+    // we want it = the outward radial (cos th, 0, sin th), so rotY = atan2(cos th, sin th) (= π/2−th,
+    // wrapped) — same convention as the ring. NOT atan2(sin,cos), which points the card tangentially.
+    return { x: Math.cos(th) * rad * R, y: y * R, z: Math.sin(th) * rad * R, rotY: Math.atan2(Math.cos(th), Math.sin(th)), scale: Number(p.cardSize) }
   },
   loopRates(p) { return [Math.max(1, Math.round(Number(p.speed) || 1))] },
 }

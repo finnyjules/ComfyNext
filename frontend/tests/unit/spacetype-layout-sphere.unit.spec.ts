@@ -17,4 +17,14 @@ describe('sphere layout', () => {
   it('scale follows cardSize', () => {
     expect(sphereLayout.place(0, 4, { ...P, cardSize: 2 } as any, 0).scale).toBeCloseTo(2, 6)
   })
+  it('cards face outward: a tile whose azimuth is th has its +Z normal pointing radially out', () => {
+    // For any tile at t01=0 (spin=0), azimuth th = i·GA. Outward radial = (cos th, 0, sin th);
+    // the quad normal after rotation.y=rotY is (sin rotY, 0, cos rotY) — assert they match.
+    for (let i = 0; i < 6; i++) {
+      const t = sphereLayout.place(i, 9, P as any, 0)
+      const th = Math.atan2(t.z, t.x)                 // the tile's horizontal azimuth
+      expect(Math.sin(t.rotY)).toBeCloseTo(Math.cos(th), 5)   // normal.x == outward.x
+      expect(Math.cos(t.rotY)).toBeCloseTo(Math.sin(th), 5)   // normal.z == outward.z
+    }
+  })
 })
