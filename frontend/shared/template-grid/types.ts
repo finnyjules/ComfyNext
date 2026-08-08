@@ -8,6 +8,8 @@ import type { ExpressiveParams } from '../text-layout/expressive'
 export type { ExpressiveParams } from '../text-layout/expressive'
 import type { ExpressiveBoxParams } from '../text-layout/boxes'
 export type { ExpressiveBoxParams } from '../text-layout/boxes'
+import type { PhotoTreatment } from './treatment'
+export type { PhotoTreatment, TreatmentKind } from './treatment'
 
 /** Manual per-word offset, stored as FRACTIONS of the element box
  *  (dx × boxWidth px) so a nudge scales proportionally across formats. */
@@ -188,7 +190,14 @@ export interface ImageElementV2 extends ElementV2Base {
   content: string
   focal?: { x: number; y: number }   // 0–1 cover-crop focus, default center
   collapse?: 'mark'                   // logo-style: render as centered square mark when small
-  style?: { fit?: 'cover' | 'contain' | 'stretch'; borderRadius?: number }
+  style?: {
+    fit?: 'cover' | 'contain' | 'stretch'
+    borderRadius?: number
+    /** OPT-IN photo treatment (grayscale/duotone/grain). Absent ⇒ none.
+     *  Never set by generate/shuffle/surprise — it rides the element like
+     *  any other style field. @see ./treatment.ts */
+    treatment?: PhotoTreatment
+  }
 }
 
 export interface ShapeElementV2 extends ElementV2Base {

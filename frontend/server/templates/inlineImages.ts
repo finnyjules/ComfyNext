@@ -6,9 +6,23 @@
  *  2. inlining makes failures loud: a dead URL rejects the whole render so
  *     the caller (runBatch item, backend run) surfaces a retryable error.
  * `data:` URIs pass through untouched; non-http schemes are left as-is.
+ *
+ * Also the choke point for the photo-treatment SERVER BAKE (see
+ * shared/template-grid/treatment.ts): translate.ts tags an `<img>` node's
+ * props with `__treatment` when its kind ('duotone'/'grain') can't be
+ * expressed as a satori CSS filter. This module bakes it into the actual
+ * pixels with `sharp` right here, before the data URI is built — and always
+ * strips the tag so satori never sees a prop it doesn't understand.
  */
 
-interface TreeNode { type?: string; props?: { src?: string; children?: unknown } }
+import sharp from 'sharp'
+
+import type { TreatmentBakeTag } from '../../shared/template-grid/treatment'
+
+interface TreeNode {
+  type?: string
+  props?: { src?: string; children?: unknown; __treatment?: TreatmentBakeTag }
+}
 
 function collectImgNodes(node: unknown, out: TreeNode[] = []): TreeNode[] {
   if (!node || typeof node !== 'object') return out
@@ -28,21 +42,84 @@ export async function defaultImageFetcher(url: string): Promise<{ data: ArrayBuf
   return { data: await res.arrayBuffer(), contentType: res.headers.get('content-type') || 'image/png' }
 }
 
-/** Mutates the tree in place: every http(s) img src becomes a data URI.
- *  Duplicate URLs are fetched once. Throws on the first failed fetch. */
+function hexToRgb(hex: string): { r: number; g: number; b: number } {
+  const clean = hex.replace('#', '').trim()
+  const full = clean.length === 3 ? clean.split('').map(c => c + c).join('') : clean
+  const n = Number.parseInt(full, 16) || 0
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 }
+}
+
+/** Deterministic per-pixel noise (dims-seeded, not Math.random) — a re-render
+ *  of the SAME source image is stable rather than shimmering between runs. */
+function makeNoiseTile(w: number, h: number, alpha: number): Buffer {
+  const out = Buffer.alloc(w * h * 4)
+  let seed = (w * 374761393 + h * 668265263) >>> 0
+  const next = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296 }
+  const a = Math.round(255 * alpha)
+  for (let i = 0; i < w * h; i++) {
+    const v = Math.floor(next() * 255)
+    out[i * 4] = v; out[i * 4 + 1] = v; out[i * 4 + 2] = v; out[i * 4 + 3] = a
+  }
+  return out
+}
+
+/** Bake a treatment satori/resvg can't express as a CSS filter into the
+ *  actual image bytes. 'grayscale' never reaches here — it's a plain CSS
+ *  `filter` set directly in translate.ts (confirmed by the render-path GATE
+ *  probe). Always returns PNG bytes regardless of the source format. */
+export async function bakeTreatment(
+  data: ArrayBuffer, treatment: TreatmentBakeTag,
+): Promise<ArrayBuffer> {
+  const intensity = Math.max(0, Math.min(1, treatment.intensity))
+  const input = Buffer.from(data)
+  let out: Buffer
+
+  if (treatment.kind === 'duotone') {
+    const ink = hexToRgb(treatment.ink)
+    // NOTE: don't pre-`.greyscale()` — sharp's `.tint()` already extracts
+    // luminance and recolours from it; feeding it an already-greyscaled
+    // (chroma-stripped) source makes the LAB colorize step a no-op and the
+    // output stays flat gray (verified empirically against sharp 0.35).
+    const duotoned = await sharp(input).tint(ink).png().toBuffer()
+    out = intensity >= 0.999
+      ? duotoned
+      : await sharp(input)
+          .composite([{ input: await sharp(duotoned).ensureAlpha(intensity).toBuffer(), blend: 'over' }])
+          .png()
+          .toBuffer()
+  } else {
+    const meta = await sharp(input).metadata()
+    const w = meta.width ?? 1
+    const h = meta.height ?? 1
+    const noisePng = await sharp(makeNoiseTile(w, h, intensity), { raw: { width: w, height: h, channels: 4 } })
+      .png()
+      .toBuffer()
+    out = await sharp(input).composite([{ input: noisePng, blend: 'overlay' }]).png().toBuffer()
+  }
+  return out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength)
+}
+
+/** Mutates the tree in place: every http(s) img src becomes a data URI, with
+ *  any tagged photo treatment ('duotone'/'grain') baked into the bytes first.
+ *  Duplicate URLs are fetched once (the raw bytes are cached and re-baked per
+ *  node — cheap relative to the network fetch, and correct when the same
+ *  source is reused with different treatments). Throws on the first failed
+ *  fetch. `__treatment` is always stripped, whether or not it was applied. */
 export async function inlineTreeImages(tree: unknown, fetcher: ImageFetcher = defaultImageFetcher): Promise<void> {
   const imgs = collectImgNodes(tree)
-  const byUrl = new Map<string, TreeNode[]>()
-  for (const n of imgs) {
+  const cache = new Map<string, Promise<{ data: ArrayBuffer; contentType: string }>>()
+  await Promise.all(imgs.map(async (n) => {
+    const treatment = n.props?.__treatment
+    if (n.props && '__treatment' in n.props) delete n.props.__treatment
     const src = n.props!.src!
-    if (!/^https?:\/\//.test(src)) continue
-    const list = byUrl.get(src) ?? []
-    list.push(n)
-    byUrl.set(src, list)
-  }
-  await Promise.all([...byUrl.entries()].map(async ([url, nodes]) => {
-    const { data, contentType } = await fetcher(url)
-    const dataUri = `data:${contentType};base64,${Buffer.from(data).toString('base64')}`
-    for (const n of nodes) n.props!.src = dataUri
+    if (!/^https?:\/\//.test(src)) return
+    let pending = cache.get(src)
+    if (!pending) { pending = fetcher(src); cache.set(src, pending) }
+    let { data, contentType } = await pending
+    if (treatment) {
+      data = await bakeTreatment(data, treatment)
+      contentType = 'image/png'
+    }
+    n.props!.src = `data:${contentType};base64,${Buffer.from(data).toString('base64')}`
   }))
 }

@@ -13,6 +13,7 @@ import { verticalTextBox } from '~~/shared/template-grid/grid'
 import type { ResolvedElement } from '~~/shared/template-grid/resolve'
 import { isV3, isVerticalTextStyle } from '~~/shared/template-grid/types'
 import type { Region } from '~~/shared/template-grid/types'
+import { editorImgFilter, treatmentOverlay } from '~~/shared/template-grid/treatment'
 import CanvasContextMenu, { type MenuItem } from '~/components/vue-canvas/CanvasContextMenu.vue'
 import { columnLabelForElement, isBoundToken, nextFreeSocket, tokenizeElementContent } from '~/lib/collection/layoutPromote'
 import type { SmartLayoutBindingContext } from '~/lib/collection/layoutBinding'
@@ -433,16 +434,29 @@ function imageStyle(r: ResolvedElement): Record<string, string> {
   if (el.type !== 'image') return {}
   const fit = el.style?.fit ?? 'cover'
   const focal = el.focal ?? { x: 0.5, y: 0.5 }
+  const filter = editorImgFilter(el.style?.treatment)
   return {
     width: '100%', height: '100%', display: 'block',
     objectFit: fit === 'contain' ? 'contain' : fit === 'stretch' ? 'fill' : 'cover',
     objectPosition: `${Math.round(focal.x * 100)}% ${Math.round(focal.y * 100)}%`,
     borderRadius: `${el.style?.borderRadius ?? 0}px`,
+    ...(filter ? { filter } : {}),
   }
 }
 
 function imageSrc(r: ResolvedElement): string {
   return r.el.type === 'image' ? resolve(r.el.content) : ''
+}
+
+/** Live approximation for treatment kinds a filter alone can't express
+ *  (duotone's ink tint, grain's noise texture) — an absolutely-positioned
+ *  overlay sibling of the <img>. Null when the treatment is 'none'/absent
+ *  or 'grayscale' (filter-only, see imageStyle). */
+function treatmentOverlayStyle(r: ResolvedElement): Record<string, string | number> | null {
+  const el = r.el
+  if (el.type !== 'image') return null
+  const ink = effectiveBrand.value.foreground ?? '#111111'
+  return treatmentOverlay(el.style?.treatment, ink)?.style ?? null
 }
 
 // -- Turn into variable: context menu -----------------------------------------
@@ -1083,8 +1097,14 @@ function onSectionHandlePointerUp(e: PointerEvent) {
           />
         </template>
         <template v-else-if="r.el.type === 'image'">
-          <div class="size-full overflow-hidden">
-            <img v-if="imageSrc(r)" :src="imageSrc(r)" :style="imageStyle(r)" draggable="false">
+          <div class="size-full overflow-hidden relative">
+            <template v-if="imageSrc(r)">
+              <img :src="imageSrc(r)" :style="imageStyle(r)" draggable="false">
+              <!-- Live approximation for treatments no CSS filter alone can
+                   express (duotone/grain) — the server bakes the faithful
+                   version into the actual pixels, see inlineImages.ts. -->
+              <div v-if="treatmentOverlayStyle(r)" :style="treatmentOverlayStyle(r)!" />
+            </template>
             <div v-else class="size-full bg-white/[0.05] border border-dashed border-white/15 flex items-center justify-center text-center text-white/30 text-xs p-2">
               {{ r.mark ? 'mark' : 'image — wired preview appears after the first run' }}
             </div>

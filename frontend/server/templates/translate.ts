@@ -12,6 +12,7 @@ import { resolveFormat } from '../../shared/template-grid/resolve'
 import type { ResolvedElement } from '../../shared/template-grid/resolve'
 import { gridExpressiveLayout, expressiveVOffset } from '../../shared/template-grid/expressive'
 import { resolveTokens } from '../../shared/template-grid/tokens'
+import { needsServerBake, treatmentCssFilter, treatmentIntensity } from '../../shared/template-grid/treatment'
 import type {
   AnyGridTemplate, ImageElementV2, ShapeElementV2, TemplateV2, TextElementV2,
 } from '../../shared/template-grid/types'
@@ -421,18 +422,34 @@ function v2ElementNode(r: ResolvedElement, props: RenderProps, brand: RenderBran
       if (!src || src.includes('{{')) {
         return el('div', { style: { ...base, background: 'rgba(255,255,255,0.04)', borderRadius: s.borderRadius ?? 0 } })
       }
+      // Photo treatment (opt-in, see shared/template-grid/treatment.ts): the
+      // GATE probe confirmed satori/resvg honour a plain CSS `filter` on an
+      // <img>, so 'grayscale' rides the style object below. 'duotone'/'grain'
+      // aren't expressible as a faithful filter — they're tagged here for
+      // server/templates/inlineImages.ts to bake into the actual image bytes
+      // at inline time; the tag never reaches satori (inlineImages strips it).
+      const filter = treatmentCssFilter(s.treatment)
+      const imgProps: SatoriNode['props'] = {
+        src,
+        width: '100%' as unknown as number,
+        height: '100%' as unknown as number,
+        style: {
+          objectFit: fit === 'contain' ? 'contain' : fit === 'stretch' ? 'fill' : 'cover',
+          objectPosition: `${Math.round(focal.x * 100)}% ${Math.round(focal.y * 100)}%`,
+          width: '100%', height: '100%',
+          ...(filter ? { filter } : {}),
+        },
+      }
+      if (needsServerBake(s.treatment)) {
+        imgProps.__treatment = {
+          kind: s.treatment!.kind as 'duotone' | 'grain',
+          intensity: treatmentIntensity(s.treatment),
+          ink: String(resolveTokens(brand.foreground ?? '#111111', props, brand)),
+        }
+      }
       return el('div', {
         style: { ...base, overflow: 'hidden', borderRadius: s.borderRadius ?? 0 },
-        children: el('img', {
-          src,
-          width: '100%' as unknown as number,
-          height: '100%' as unknown as number,
-          style: {
-            objectFit: fit === 'contain' ? 'contain' : fit === 'stretch' ? 'fill' : 'cover',
-            objectPosition: `${Math.round(focal.x * 100)}% ${Math.round(focal.y * 100)}%`,
-            width: '100%', height: '100%',
-          },
-        }),
+        children: el('img', imgProps),
       })
     }
     case 'shape': {

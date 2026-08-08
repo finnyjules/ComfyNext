@@ -11,7 +11,7 @@ import VariableGlyph from '~/components/vue-canvas/studio/VariableGlyph.vue'
 import { useGoogleFontPreview } from '~/composables/useTemplateFonts'
 import { useCopyAssist } from '~/composables/useCopyAssist'
 import type { GridEditorContext } from '~/composables/useGridEditor'
-import type { Region, TextElementV2 } from '~~/shared/template-grid/types'
+import type { PhotoTreatment, Region, TextElementV2, TreatmentKind } from '~~/shared/template-grid/types'
 import { BRAND_LOGO_SLOT_KEYS } from '~~/shared/brand/types'
 import { paletteSlug } from '~~/shared/brand/resolve'
 import { defaultExpressiveParams } from '~~/shared/text-layout/expressive'
@@ -240,6 +240,23 @@ function placeHere() {
 
 function styleOf(): Record<string, any> {
   return (el.value as any)?.style ?? {}
+}
+
+// -- Photo treatment (opt-in, image elements only) ---------------------------
+// Never touched by generate/shuffle/surprise (see
+// shared/template-grid/treatment.ts) — a plain style-field write here.
+const imageTreatment = computed<PhotoTreatment>(() => (styleOf().treatment as PhotoTreatment | undefined) ?? { kind: 'none' })
+
+function setTreatment(kind: TreatmentKind) {
+  if (!el.value) return
+  patchStyle(el.value.id, {
+    treatment: kind === 'none' ? undefined : { kind, intensity: imageTreatment.value.intensity ?? 1 },
+  })
+}
+
+function setTreatmentIntensity(intensity: number) {
+  if (!el.value || imageTreatment.value.kind === 'none') return
+  patchStyle(el.value.id, { treatment: { kind: imageTreatment.value.kind, intensity } })
 }
 
 const textEl = computed(() => (el.value?.type === 'text' ? el.value as TextElementV2 : null))
@@ -1103,6 +1120,38 @@ const btnRowCls = 'flex-1 h-7 rounded text-[11px] transition-colors cursor-point
           @change="(f) => patchElement(el!.id, { focal: f })"
         />
       </div>
+      </StudioSection>
+
+      <!-- Treatment: OPT-IN only — absent/none is the default, and neither
+           generate/shuffle/surprise ever touch this (see
+           shared/template-grid/treatment.ts). -->
+      <StudioSection title="Treatment" badge="FX">
+        <div>
+          <p :class="labelCls" class="mb-1.5">Kind</p>
+          <select
+            :value="imageTreatment.kind ?? 'none'" :class="inputCls"
+            @change="(e: any) => setTreatment(e.target.value)"
+          >
+            <option value="none">None</option>
+            <option value="grayscale">Grayscale</option>
+            <option value="duotone">Duotone</option>
+            <option value="grain">Grain</option>
+          </select>
+        </div>
+        <div v-if="imageTreatment.kind && imageTreatment.kind !== 'none'">
+          <p :class="labelCls" class="mb-1">Intensity</p>
+          <div class="flex items-center gap-2">
+            <input
+              type="range" min="0" max="1" step="0.05" :value="imageTreatment.intensity ?? 1"
+              class="flex-1"
+              @input="(e: any) => setTreatmentIntensity(Number(e.target.value))"
+            >
+            <span class="text-[11px] text-white/50 tabular-nums w-8">{{ Math.round((imageTreatment.intensity ?? 1) * 100) }}%</span>
+          </div>
+          <p v-if="imageTreatment.kind === 'duotone' || imageTreatment.kind === 'grain'" class="mt-1 text-[11px] text-white/35">
+            Preview approximates; the final render bakes the true {{ imageTreatment.kind }}.
+          </p>
+        </div>
       </StudioSection>
     </template>
 
