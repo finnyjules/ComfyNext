@@ -4,7 +4,7 @@
 
 import {
   FONT_FLOOR, MIN_VISIBLE, bleedToEdges, classifyFormat, fineGridDims, gridMetrics,
-  regionToRect, regionToRectRaw, remapRegion,
+  regionToRect, regionToRectRaw, remapRegion, remapRegionRaw,
 } from './grid'
 import type { GridMetrics, Rect } from './grid'
 import { defaultClassRegion } from './layouts'
@@ -203,14 +203,21 @@ export function resolveFormat(
     const explicit = el.overrides?.[oid]?.region ?? el.regionByClass?.[cls]
     if (explicit) {
       regions.set(el.id, explicit)
+    } else if (cls === 'strip' || cls === 'skyscraper') {
+      // Strip/skyscraper formats always use the hand-authored class slot —
+      // for every element, overhang included. Slots are in-bounds by
+      // construction, so overhang is moot here; going through
+      // defaultClassRegion (rather than the raw remap below) also reserves
+      // the slot in `taken` so siblings can't double-book it.
+      regions.set(el.id, defaultClassRegion(el, cls, m, taken))
     } else if (el.overhang) {
       // remapRegion clamps col/row/span into the target grid (see its bounds
       // above) — that would strip the declared off-canvas placement before
-      // it ever reaches regionToRectRaw. Overhang is raw placement math, so
-      // the authored region passes through untouched.
-      regions.set(el.id, el.region)
-    } else if (cls === 'strip' || cls === 'skyscraper') {
-      regions.set(el.id, defaultClassRegion(el, cls, m, taken))
+      // it ever reaches regionToRectRaw. remapRegionRaw does the same
+      // proportional rescale (so V2's per-class grids still reflow
+      // correctly) without the clamp, leaving the raw placement for
+      // regionToRectRaw / the canvas clip.
+      regions.set(el.id, remapRegionRaw(el.region, masterDims, m))
     } else {
       regions.set(el.id, remapRegion(el.region, masterDims, m))
     }

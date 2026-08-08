@@ -915,7 +915,6 @@ function onSectionHandlePointerUp(e: PointerEvent) {
       :style="{
         width: format.w + 'px',
         height: format.h + 'px',
-        overflow: 'hidden',
         transform: `scale(${scale})`,
         transformOrigin: 'center',
         cursor: frameDrawArmed ? 'crosshair' : undefined,
@@ -974,7 +973,12 @@ function onSectionHandlePointerUp(e: PointerEvent) {
         :style="{ left: drawRect.x + 'px', top: drawRect.y + 'px', width: drawRect.w + 'px', height: drawRect.h + 'px' }"
       />
 
-      <!-- Elements (resolver output; culled ones don't render) -->
+      <!-- Elements (resolver output; culled ones don't render). Clipped to the
+           artboard bounds here — and ONLY here — so overhang/bleed content is
+           cut at the canvas edge without clipping the selection/resize handle
+           overlays that live outside this wrapper (they need to render past
+           the edge for edge-flush elements). -->
+      <div class="absolute inset-0 overflow-hidden">
       <template v-for="r in visible" :key="r.el.id">
       <!-- Section frame: a non-interactive box drawn behind its children
            (edited via the section box, not as a standalone element). -->
@@ -1046,6 +1050,7 @@ function onSectionHandlePointerUp(e: PointerEvent) {
         >Double-click to reposition</div>
       </div>
       </template>
+      </div>
 
       <!-- v3 section frames (drag/resize the box; children ride it) -->
       <template v-if="isV3Mode && !previewMode">

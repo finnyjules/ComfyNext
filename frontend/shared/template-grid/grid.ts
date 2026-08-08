@@ -240,3 +240,26 @@ export function remapRegion(
     rowSpan: Math.max(1, Math.min(to.rows - row + 1, Math.round(r.rowSpan * sr))),
   }
 }
+
+/** Overhang variant of `remapRegion`: same rescale arithmetic, no clamping.
+ * `remapRegion`'s bounds (`Math.max(1, ...)` on col/row, `Math.min(to.cols -
+ * col + 1, ...)` on spans) would strip a declared off-canvas placement before
+ * it ever reaches `regionToRectRaw` — proportional reflow across differently
+ * shaped per-class grids (V2) still has to happen for overhang elements, it
+ * just can't be clamped afterward. Spans still floor at 1 (a zero/negative
+ * span is nonsensical, not an overhang). */
+export function remapRegionRaw(
+  r: Region,
+  from: { cols: number; rows: number },
+  to: { cols: number; rows: number },
+): Region {
+  const sc = to.cols / from.cols
+  const sr = to.rows / from.rows
+  const col = Math.round((r.col - 1) * sc) + 1
+  const row = Math.round((r.row - 1) * sr) + 1
+  return {
+    col, row,
+    colSpan: Math.max(1, Math.round(r.colSpan * sc)),
+    rowSpan: Math.max(1, Math.round(r.rowSpan * sr)),
+  }
+}
