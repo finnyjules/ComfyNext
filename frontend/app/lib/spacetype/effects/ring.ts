@@ -1,8 +1,9 @@
 import * as THREE from 'three'
 import { defaultsFromControls, type ControlSpec, type Params, type SpaceTypeEffect } from '../effect'
 import { expandContent, parseContent } from '../tile'
-import { ringTransform, bentOffset, type RingParams } from '../ringLayout'
+import { bentOffset } from '../ringLayout'
 import { layoutChars, type CharLayout } from '../charLayout'
+import { SHOWCASE_LAYOUTS, getLayout } from '../layouts/index'
 import { resolveFontFamily, fontHasWeightAxis } from '~/lib/font/resolveFamily'
 import { fillShaderTexture, fillIsTextured, fillTiling, fillPrimary, normalizeFill, type Fill } from '../fills'
 import { fillIsShader } from '../fillTile'
@@ -21,6 +22,11 @@ import { fillIsShader } from '../fillTile'
  */
 
 const controls: ControlSpec[] = [
+  // Showcase host dispatch — which pluggable layout places the tiles (ring/…, see
+  // ../layouts/index.ts). Each layout contributes its own controls (radius/ringTilt/
+  // ringOpening for 'ring', gated `showIf: { key:'layout', equals:'ring' }`) via the
+  // flatMap spread at the end of this array — NOT declared here.
+  { key: 'layout', label: 'Layout', kind: 'select', options: SHOWCASE_LAYOUTS.map(l => l.id), default: 'ring', group: 'Ribbon' },
   {
     key: 'content',
     label: 'Content',
@@ -46,13 +52,10 @@ const controls: ControlSpec[] = [
   // Structural (rebuilds the word/letter materials + fill texture) — NOT in `liveKeys`.
   // Replaces `typeColor` (removed): see `resolveWordFill`'s migration for old docs.
   { key: 'wordFill', label: 'Word fill', kind: 'fillList', default: '{"type":"solid","a":"#ffffff","b":"#000000","textColor":"#ffffff","angle":45,"density":8}', group: 'Color' },
-  { key: 'radius', label: 'Ring size', kind: 'slider', min: 2, max: 12, step: 0.1, default: 5, group: 'Ribbon' },
   { key: 'repeat', label: 'Repeater', kind: 'slider', min: 1, max: 8, step: 1, default: 1, group: 'Ribbon' },
   { key: 'padding', label: 'Padding', kind: 'slider', min: 0, max: 0.9, step: 0.01, default: 0, group: 'Ribbon' },
-  { key: 'ringTilt', label: 'Ring tilt', kind: 'slider', min: -1.2, max: 1.2, step: 0.01, default: -0.28, group: 'Transform' },
   { key: 'cardSize', label: 'Card size', kind: 'slider', min: 0.3, max: 3, step: 0.05, default: 1.4, group: 'Ribbon' },
   { key: 'perspective', label: 'Perspective', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0.4, group: 'Transform' },
-  { key: 'ringOpening', label: 'Ring opening', kind: 'slider', min: -1, max: 1, step: 0.01, default: 0.55, group: 'Transform' },
   { key: 'speed', label: 'Speed', kind: 'slider', min: 0, max: 6, step: 1, default: 1, group: 'Motion' },
   { key: 'direction', label: 'Direction', kind: 'select', options: ['cw', 'ccw'], default: 'cw', group: 'Motion' },
   { key: 'backFade', label: 'Back fade', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0, group: 'Look' },
@@ -66,6 +69,10 @@ const controls: ControlSpec[] = [
   // crop/distort its glyphs. Structural (rebuilds the mesh's shape/UVs) — a select has
   // no continuous drag, so rebuild-per-choice is fine; NOT in `liveKeys`.
   { key: 'cardRatio', label: 'Card ratio', kind: 'select', options: ['native', '1:1', '4:3', '3:4', '16:9', '9:16'], default: 'native', group: 'Ribbon' },
+  // Every layout's own controls (e.g. ring's radius/ringTilt/ringOpening, each gated
+  // `showIf: { key:'layout', equals:<that layout's id> }`) — concatenated here so
+  // RING_DEFAULTS (declared below, AFTER this array) backfills their defaults too.
+  ...SHOWCASE_LAYOUTS.flatMap(l => l.controls),
 ]
 
 // Ratio-string → aspect (w/h) for `cardRatio`. `native` is handled separately (falls
@@ -155,12 +162,14 @@ const OPEN_MAX = 1.4
 const _tmpVec = new THREE.Vector3()
 
 export const ringEffect: SpaceTypeEffect = {
+  // id stays 'ring' for saved-doc compat; the effect is Showcase, and 'ring' is now
+  // the default layout (see the `layout` control + ../layouts/index.ts).
   id: 'ring',
-  label: 'Ring',
+  label: 'Showcase',
   controls,
-  liveKeys: ['radius', 'ringTilt', 'cardSize', 'perspective', 'speed', 'direction', 'padding', 'ringOpening', 'backFade', 'bend', 'cornerRadius'],
+  liveKeys: ['layout', 'radius', 'ringTilt', 'cardSize', 'perspective', 'speed', 'direction', 'padding', 'ringOpening', 'backFade', 'bend', 'cornerRadius'],
   loopRates(params) {
-    return [Math.max(1, Math.round(Number(params.speed) || 1))]
+    return getLayout(String(params.layout ?? 'ring')).loopRates?.(params) ?? [1]
   },
 
   buildScene(three, params, _textTexture, env) {
@@ -467,13 +476,7 @@ export const ringEffect: SpaceTypeEffect = {
     const st = root?.userData?.ringState as RingState | undefined
     if (!st || !root) return
 
-    const rp: RingParams = {
-      radius: n(params, 'radius'),
-      ringTilt: n(params, 'ringTilt'),
-      cardSize: n(params, 'cardSize'),
-      speed: n(params, 'speed'),
-      direction: String(params.direction) === 'ccw' ? -1 : 1,
-    }
+    const layout = getLayout(String(params.layout ?? 'ring'))
 
     const padding = n(params, 'padding')
     const backFade = n(params, 'backFade')
@@ -484,7 +487,7 @@ export const ringEffect: SpaceTypeEffect = {
     const count = st.quads.length
     for (let i = 0; i < count; i++) {
       const quad = st.quads[i]!
-      const tf = ringTransform(i, count, rp, t01)
+      const tf = layout.place(i, count, params, t01)
       quad.position.set(tf.x, tf.y, tf.z)
       quad.rotation.set(0, tf.rotY, 0)
       const aspect = Number(quad.userData.aspect ?? 1)

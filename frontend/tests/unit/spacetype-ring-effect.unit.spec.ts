@@ -242,4 +242,23 @@ describe('ringEffect', () => {
       expect(Number.isFinite(q.scale.x)).toBe(true)
     }
   })
+
+  // Showcase host (Task 2 — see docs/superpowers/sdd/task-2-brief.md): the renamed
+  // 'ring' effect now dispatches placement to a pluggable layout via a `layout`
+  // control. `id` stays 'ring' for saved-doc compat; only `label` changes.
+  it('effect label is Showcase, id stays ring, layout control defaults to ring', () => {
+    expect(ringEffect.label).toBe('Showcase')
+    expect(ringEffect.id).toBe('ring')
+    const layoutCtl = ringEffect.controls.find(c => c.key === 'layout')
+    expect(layoutCtl?.default).toBe('ring')
+    expect((layoutCtl as any).options).toContain('ring')
+  })
+
+  it('builds + updates under layout=ring identical to before (image-only doc)', () => {
+    const items = [{ id: 'i0', kind: 'card', fillKind: 'image', src: 'data:0' }]
+    const params = { ...defaultsFromControls(ringEffect.controls), content: JSON.stringify(items) }
+    const root = ringEffect.buildScene(THREE, params, new THREE.Texture(), { width: 960, height: 540, imageTextures: new Map() })
+    expect(() => ringEffect.update!(0.25, params, root)).not.toThrow()
+    expect((root as any).userData.ringState.quads).toHaveLength(1)
+  })
 })
