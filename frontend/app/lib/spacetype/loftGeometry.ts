@@ -142,3 +142,66 @@ export function resampleContour(pts: Vec2[], points: number): Vec2[] {
   }
   return out
 }
+
+export interface LoftGeometry { positions: Float32Array; along: Float32Array; indices: Uint32Array }
+
+export function buildLoftGeometry(opts: {
+  stations: Station[]
+  props: StopProps[]
+  baseContours: Vec2[][]
+  closed: boolean
+  render: 'stroke' | 'fill'
+}): LoftGeometry {
+  const { stations, props, baseContours, closed, render } = opts
+  const K = stations.length
+  const C = baseContours.length
+  const P = C > 0 ? baseContours[0]!.length : 0
+  const positions = new Float32Array(K * C * P * 3)
+  const along = new Float32Array(K * C * P)
+  const idx = (i: number, c: number, p: number) => (i * C + c) * P + p
+
+  for (let i = 0; i < K; i++) {
+    const st = stations[i]!, pr = props[i]!
+    const cr = Math.cos((pr.roll * Math.PI) / 180), sr = Math.sin((pr.roll * Math.PI) / 180)
+    for (let c = 0; c < C; c++) {
+      const contour = baseContours[c]!
+      for (let p = 0; p < P; p++) {
+        const v = contour[p]!
+        let lx = v.x * pr.width, ly = v.y * pr.height
+        const rx = lx * cr - ly * sr, ry = lx * sr + ly * cr        // roll about tangent
+        const wx = st.pos.x + rx * st.normal.x + ry * st.binormal.x
+        const wy = st.pos.y + rx * st.normal.y + ry * st.binormal.y
+        const wz = st.pos.z + rx * st.normal.z + ry * st.binormal.z
+        const o = idx(i, c, p)
+        positions[o * 3] = wx; positions[o * 3 + 1] = wy; positions[o * 3 + 2] = wz
+        along[o] = st.t
+      }
+    }
+  }
+
+  let indices: number[] = []
+  if (render === 'fill') {
+    const lastRing = closed ? K : K - 1
+    for (let i = 0; i < lastRing; i++) {
+      const ni = (i + 1) % K
+      for (let c = 0; c < C; c++) {
+        for (let p = 0; p < P; p++) {
+          const np = (p + 1) % P
+          const a = idx(i, c, p), b = idx(i, c, np), d = idx(ni, c, p), e = idx(ni, c, np)
+          indices.push(a, b, e, a, e, d)          // two triangles per quad
+        }
+      }
+    }
+  } else {
+    // stroke: close each station's contour loop with line segments
+    for (let i = 0; i < K; i++) {
+      for (let c = 0; c < C; c++) {
+        for (let p = 0; p < P; p++) {
+          const np = (p + 1) % P
+          indices.push(idx(i, c, p), idx(i, c, np))
+        }
+      }
+    }
+  }
+  return { positions, along, indices: new Uint32Array(indices) }
+}

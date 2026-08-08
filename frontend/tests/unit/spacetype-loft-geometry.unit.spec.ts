@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { sampleSpine, interpStopProps, interpStopColor, buildRamp, parametricProfileContour, resampleContour } from '../../app/lib/spacetype/loftGeometry'
+import { sampleSpine, interpStopProps, interpStopColor, buildRamp, parametricProfileContour, resampleContour, buildLoftGeometry } from '../../app/lib/spacetype/loftGeometry'
 import type { LoftStop } from '../../app/lib/spacetype/loftStops'
 
 const stops: LoftStop[] = [
@@ -97,5 +97,39 @@ describe('resampleContour', () => {
     for (let i = 0; i < 8; i++) { const a = r[i]!, b = r[(i + 1) % 8]!; d.push(Math.hypot(b.x - a.x, b.y - a.y)) }
     const mean = d.reduce((s, x) => s + x, 0) / 8
     for (const x of d) expect(Math.abs(x - mean)).toBeLessThan(0.35)
+  })
+})
+
+function fixtureStations(K: number) {
+  return sampleSpine([
+    { id: 'a', x: 0, y: 0.5, z: 0, width: 1, height: 1, radius: 0.5, sides: 32, roll: 0, color: '#000' },
+    { id: 'b', x: 1, y: 0.5, z: 0, width: 1, height: 1, radius: 0.5, sides: 32, roll: 0, color: '#fff' },
+  ], false, K)
+}
+
+describe('buildLoftGeometry', () => {
+  const K = 10, P = 16
+  const stations = fixtureStations(K)
+  const props = stations.map(() => ({ width: 1, height: 1, radius: 0.5, sides: 32, roll: 0 }))
+  const contour = parametricProfileContour({ width: 1, height: 1, radius: 0.5, sides: 32, roll: 0 }, P)
+
+  it('fill: K*C*P verts and (K-1)*C*P*6 indices (open)', () => {
+    const g = buildLoftGeometry({ stations, props, baseContours: [contour], closed: false, render: 'fill' })
+    expect(g.positions.length).toBe(K * 1 * P * 3)
+    expect(g.along.length).toBe(K * 1 * P)
+    expect(g.indices.length).toBe((K - 1) * 1 * P * 6)
+  })
+  it('fill closed: K*C*P*6 indices', () => {
+    const g = buildLoftGeometry({ stations, props, baseContours: [contour], closed: true, render: 'fill' })
+    expect(g.indices.length).toBe(K * 1 * P * 6)
+  })
+  it('stroke: K*C*P*2 line indices', () => {
+    const g = buildLoftGeometry({ stations, props, baseContours: [contour], closed: false, render: 'stroke' })
+    expect(g.indices.length).toBe(K * 1 * P * 2)
+  })
+  it('along runs 0→1 across stations', () => {
+    const g = buildLoftGeometry({ stations, props, baseContours: [contour], closed: false, render: 'stroke' })
+    expect(g.along[0]).toBeCloseTo(0)
+    expect(g.along[g.along.length - 1]).toBeCloseTo(1)
   })
 })
