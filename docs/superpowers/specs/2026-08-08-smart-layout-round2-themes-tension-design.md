@@ -94,6 +94,13 @@ export const THEME_PALETTE: string[]  // the shared swatches, used for field, in
   staging decision.
 - **Overrides:** field, ink, and accent can each be overridden from the palette
   (or hex) in the Layout controls; *Auto* is the default for ink.
+- **Override semantics (pinned):** the Layout-control overrides and the Brand
+  popover edit the SAME storage — the stamped `template.brand` values; they are
+  one layer, not two. Persistence: Shuffle/Surprise never touch them; picking a
+  *different theme* re-stamps (choosing a theme means adopting its system). Full
+  colour precedence, bottom → top: theme stamp → user overrides (Layout controls
+  / popover, same thing) → project brand kit → per-element `type.color` (which
+  also survives re-rolls).
 
 ### Brand integration (the part backpocket doesn't have)
 
