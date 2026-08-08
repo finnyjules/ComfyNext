@@ -4,6 +4,7 @@ import { expandContent, parseContent } from '../tile'
 import { ringTransform, bentOffset, type RingParams } from '../ringLayout'
 import { layoutChars, type CharLayout } from '../charLayout'
 import { resolveFontFamily, fontHasWeightAxis } from '~/lib/font/resolveFamily'
+import { fillShaderTexture, fillIsTextured, fillTiling, fillPrimary, normalizeFill, type Fill } from '../fills'
 
 /**
  * RING — the Expressive Studio keystone effect: photos and words ride one
@@ -35,7 +36,15 @@ const controls: ControlSpec[] = [
   { key: 'typeWeight', label: 'Type weight', kind: 'slider', min: 100, max: 900, step: 10, default: 700, group: 'Type' },
   { key: 'typeYScale', label: 'Type size', kind: 'slider', min: 40, max: 320, step: 2, default: 160, group: 'Type' },
   { key: 'tracking', label: 'Tracking', kind: 'slider', min: -20, max: 80, step: 1, default: 0, group: 'Type' },
-  { key: 'typeColor', label: 'Type colour', kind: 'color', default: '#ffffff', group: 'Color' },
+  // GLOBAL WORD FILL (Task 2 of "Ring fills") — the ONE fill (solid/gradient/ombre/grid/
+  // noise/…) painting every word/letter tile on the ring, masked to the glyph shape via
+  // the glyph atlas as `alphaMap` — mirrors cylinder.ts:143-250. Stored as a single `Fill`
+  // JSON object (NOT a fillList array — this is one global fill, not a per-slot palette),
+  // so it's parsed by `resolveWordFill` below, not `parseFills` (which expects the
+  // fillList on-disk shape, a JSON ARRAY, and would silently discard a bare object).
+  // Structural (rebuilds the word/letter materials + fill texture) — NOT in `liveKeys`.
+  // Replaces `typeColor` (removed): see `resolveWordFill`'s migration for old docs.
+  { key: 'wordFill', label: 'Word fill', kind: 'fillList', default: '{"type":"solid","a":"#ffffff","b":"#000000","textColor":"#ffffff","angle":45,"density":8}', group: 'Color' },
   { key: 'radius', label: 'Ring size', kind: 'slider', min: 2, max: 12, step: 0.1, default: 5, group: 'Ribbon' },
   { key: 'repeat', label: 'Repeater', kind: 'slider', min: 1, max: 8, step: 1, default: 1, group: 'Ribbon' },
   { key: 'padding', label: 'Padding', kind: 'slider', min: 0, max: 0.9, step: 0.01, default: 0, group: 'Ribbon' },
@@ -106,6 +115,33 @@ interface RingState { quads: THREE.Mesh[] }
 // to the control's declared default.
 function n(p: Params, k: string): number { return Number(p[k] ?? RING_DEFAULTS[k]) }
 
+// Resolve the ONE global word fill for this build (see the `wordFill` control's doc
+// above). `wordFill` stores a single Fill as a bare JSON object — NOT the fillList's
+// JSON-array shape — so it's parsed here directly via `normalizeFill` rather than
+// `parseFills` (which treats a non-array string as junk and silently falls back to
+// its own module default, discarding whatever the user actually authored). Tolerant
+// of BOTH a bare object and an array (`[fill]`) on the wire, in case anything upstream
+// (e.g. a future fillList-shaped editor) ever serializes it that way.
+//
+// Migration: docs saved before this control existed have no `wordFill` key at all —
+// only the OLD `typeColor` control (now removed). Those docs keep rendering their
+// saved colour by lifting `typeColor` into an equivalent solid Fill. A doc with
+// neither key (never customized) falls back to the same solid-white default the
+// control itself declares.
+function resolveWordFill(params: Params): Fill {
+  const raw = params.wordFill
+  if (typeof raw === 'string' && raw) {
+    try {
+      const v = JSON.parse(raw)
+      return normalizeFill(Array.isArray(v) ? v[0] : v)
+    } catch { /* fall through to legacy/default below */ }
+  }
+  if (params.typeColor !== undefined && params.typeColor !== null && params.typeColor !== '') {
+    return { type: 'solid', a: String(params.typeColor), b: '#000000', textColor: '#ffffff', angle: 45, density: 8 }
+  }
+  return { type: 'solid', a: '#ffffff', b: '#000000', textColor: '#ffffff', angle: 45, density: 8 }
+}
+
 // Ring opening's max lean off top-down (radians, ~80deg): opening 1 reveals the
 // full circle face-on to the camera path; opening 0 collapses the ring to
 // head-on. See `update`/`buildScene`'s `root.rotation.set(...)` call.
@@ -148,6 +184,26 @@ export const ringEffect: SpaceTypeEffect = {
     const family = resolveFontFamily(String(params.font))
     const hasWght = fontHasWeightAxis(family)
 
+    // The ONE global word fill, resolved ONCE for the whole build (not per tile) —
+    // mirrors cylinder.ts:142-170. Rasterise the glyph atlas WHITE (pure mask); the fill
+    // paints THROUGH it as `map` (textured fill) or a tinted `color` (solid fill) below.
+    // `wordFillMap` is left null for a solid fill (fillShaderTexture/canvas work is
+    // skipped entirely — no cost, and no `document` dependency, when every ring doc's
+    // word fill is the solid default). Cloned + given its own `.repeat` (like cylinder's
+    // pattern-fill clone) so this build's tiling doesn't mutate the shared module cache;
+    // registered on `root.userData.tex` for disposeRoot() to free on rebuild — the SAME
+    // texture is reused by every word/letter mesh below, so it's registered ONCE here,
+    // not per-mesh (that would double-dispose).
+    const wf = resolveWordFill(params)
+    const wfTextured = fillIsTextured(wf)
+    let wordFillMap: THREE.Texture | null = null
+    if (wfTextured) {
+      wordFillMap = fillShaderTexture(three, wf).clone()
+      wordFillMap.needsUpdate = true
+      wordFillMap.repeat.set(fillTiling(wf), fillTiling(wf))
+      root.userData.tex = wordFillMap
+    }
+
     for (const tile of tiles) {
       const geo = new three.PlaneGeometry(1, 1, BEND_SEGMENTS, 1)
       // Captured BEFORE any UV edits (position is independent of uv) — the
@@ -164,7 +220,15 @@ export const ringEffect: SpaceTypeEffect = {
       // onto mesh.userData.matUniforms so `update` can drive `uCorner` live from the slider.
       let cornerUniforms: { uCorner: { value: number }; uAspect: { value: number } } | undefined
 
-      if (tile.kind === 'image') {
+      // NOTE (Task 2 scope note, not this task's real work): Task 1 (tile.ts) renamed the
+      // `image` ExpandedTile to `card` (`fillKind: 'image'|'solid'|'gradient'|…`). This
+      // predicate is updated from the old `=== 'image'` to `=== 'card'` ONLY so existing
+      // card/image ring docs keep routing here instead of falling into the word/letter
+      // branch below (which would wrongly try to rasterise a card as text). The BODY of
+      // this branch is untouched — it still only handles an image card (`tile.src`) and
+      // has no dispatch on `fillKind` for solid/gradient/ombre/grid/noise cards; that
+      // dispatch is Task 3's job (see task-3-brief.md).
+      if (tile.kind === 'card') {
         const tex = env?.imageTextures?.get(tile.src)
         material = new three.MeshBasicMaterial({ map: tex ?? null, side: three.DoubleSide, transparent: true })
 
@@ -249,17 +313,34 @@ export const ringEffect: SpaceTypeEffect = {
             fontSizePx: n(params, 'typeYScale'),
             tracking: n(params, 'tracking'),
             scaleX: 1,
-            color: String(params.typeColor),
+            // The fill (solid/gradient/ombre/grid/noise) paints the glyphs — see `wf`
+            // above — so rasterise the atlas WHITE and treat it as a pure shape mask,
+            // same as cylinder.ts:140-141/172-182. `typeColor` (the old flat-colour
+            // control this replaces) no longer feeds the atlas at all.
+            color: '#ffffff',
             axes: hasWght ? { wght: n(params, 'typeWeight') } : undefined,
           })
+          // Glyph atlas lives on uv CHANNEL 1 (glyph region); channel 0 (0…1, PlaneGeometry's
+          // default, untouched below) carries the word fill — mirrors cylinder.ts:193-194.
+          layout.texture.channel = 1
           layoutCache.set(tile.sourceId, layout)
         }
-        material = new three.MeshBasicMaterial({ map: layout.texture, side: three.DoubleSide, transparent: true })
         glyphTex = layout.texture
 
+        // uv (channel 0) stays PlaneGeometry's default 0…1 so the fill map tiles across the
+        // whole tile. uv1 (channel 1, the alphaMap channel) carries the glyph atlas's region:
+        // the full 0…1 atlas for a `word` tile, or one glyph's [u0,u1] sub-rect for a `letter`
+        // tile — this is the same sub-rect remap the old code applied to channel 0, MOVED to
+        // channel 1 (see ring's module doc / task-2-brief.md).
+        const uv0 = geo.attributes.uv as THREE.BufferAttribute
+        const uv1 = new Float32Array(uv0.count * 2)
         if (tile.kind === 'word') {
           const img = layout.texture.image as { width: number; height: number }
           aspect = img.height > 0 ? img.width / img.height : 1
+          for (let k = 0; k < uv0.count; k++) {
+            uv1[k * 2] = uv0.getX(k)
+            uv1[k * 2 + 1] = uv0.getY(k)
+          }
         } else {
           const g = layout.glyphs[tile.letterIndex]
           aspect = g?.aspect ?? 1
@@ -269,12 +350,26 @@ export const ringEffect: SpaceTypeEffect = {
           // interior vertices at intermediate u, not just 0/1 — map each into
           // the glyph's [u0,u1] sub-rect by its position along the strip. For
           // the old 1-segment case (u ∈ {0,1}) this is identical to min/max.
-          const uv = geo.attributes.uv as THREE.BufferAttribute
-          for (let k = 0; k < uv.count; k++) {
-            uv.setX(k, u0 + (u1 - u0) * uv.getX(k))
+          for (let k = 0; k < uv0.count; k++) {
+            uv1[k * 2] = u0 + (u1 - u0) * uv0.getX(k)
+            uv1[k * 2 + 1] = uv0.getY(k)
           }
-          uv.needsUpdate = true
         }
+        geo.setAttribute('uv1', new three.BufferAttribute(uv1, 2))
+
+        // The glyph atlas is ALWAYS the `alphaMap` (shape mask, channel 1). A textured word
+        // fill (gradient/ombre/grid/noise/shader) paints through it as `map` (channel 0,
+        // white-tinted so the texture's own colours show through unmodified); a solid word
+        // fill has no map — it's a flat `color` fill masked by the same alphaMap. Mirrors
+        // task-2-brief.md's Step 2 material / cylinder.ts:243-245's textured/solid split.
+        material = new three.MeshBasicMaterial({
+          map: wfTextured ? wordFillMap : null,
+          color: wfTextured ? new three.Color('#ffffff') : fillPrimary(three, wf),
+          alphaMap: layout.texture,
+          transparent: true,
+          alphaTest: 0.5,
+          side: three.DoubleSide,
+        })
       }
 
       const mesh = new three.Mesh(geo, material)

@@ -71,7 +71,7 @@ describe('ringEffect', () => {
     }
   })
 
-  // Global word type controls (font/typeWeight/typeYScale/tracking/typeColor — see
+  // Global word type controls (font/typeWeight/typeYScale/tracking — see
   // docs/superpowers/specs/2026-08-07-ring-word-type-controls-design.md). `layoutChars`
   // (word/letter tile rasterisation) calls `document.createElement('canvas')`, which
   // throws under this suite's `node` test environment (no jsdom/happy-dom, no canvas
@@ -82,8 +82,11 @@ describe('ringEffect', () => {
   // tile kind — without hitting the canvas ReferenceError. This still proves: (a) the
   // new controls don't crash buildScene when set to non-default values, (b) quad count
   // is unaffected by the type controls, and (c) legacy docs missing the keys fall back
-  // to RING_DEFAULTS instead of producing NaN.
-  it('non-default type controls (font/weight/size/tracking/colour) build without throwing', () => {
+  // to RING_DEFAULTS instead of producing NaN. `typeColor` is no longer a real control
+  // (superseded by `wordFill`, Task 2) but is still set here as a LEGACY key: it exercises
+  // `resolveWordFill`'s migration fallback (a pre-wordFill doc keeps its saved colour) —
+  // still only through the unconditional pre-loop resolution, since these are image tiles.
+  it('non-default type controls + legacy typeColor build without throwing', () => {
     const items = [{ id: 'i0', kind: 'image', src: 'data:0' }, { id: 'i1', kind: 'image', src: 'data:1' }]
     const params = {
       ...defaultsFromControls(ringEffect.controls),
@@ -134,6 +137,35 @@ describe('ringEffect', () => {
   // being read ONLY inside `if (tile.kind === 'image')` — the `else` branch (word/letter)
   // never references `params.cardRatio` at all, so there is nothing for a word doc to pick
   // up even when the control is set to a non-native value.
+
+  // Word fill (Task 2 of "Ring fills" — see docs/superpowers/sdd/task-2-brief.md): the ONE
+  // global fill (solid/gradient/ombre/grid/noise/…) that paints every word/letter tile on
+  // the ring, masked to the glyph shape. `typeColor` (the old flat-colour control) is gone;
+  // `wordFill` replaces it. Word-tile RENDER can't be exercised headlessly (layoutChars
+  // throws — see the comment above), so this only asserts the control declaration itself —
+  // the actual glyph-masked-fill wiring is exercised indirectly by every card/image-doc
+  // build above still succeeding unchanged (buildScene resolves `wordFill` unconditionally,
+  // before the tile loop, so a bad resolution would break those too).
+  it('declares a wordFill control with a solid-white default, and drops typeColor', () => {
+    const wordFill = ringEffect.controls.find(c => c.key === 'wordFill')
+    expect(wordFill).toBeDefined()
+    expect(wordFill?.default).toBe('{"type":"solid","a":"#ffffff","b":"#000000","textColor":"#ffffff","angle":45,"density":8}')
+    expect(wordFill?.group).toBe('Color')
+    expect(ringEffect.liveKeys).not.toContain('wordFill')
+    expect(ringEffect.controls.find(c => c.key === 'typeColor')).toBeUndefined()
+  })
+
+  // Regression (Task 1 landed a tile.ts rename: the old `image` ExpandedTile is now `card`).
+  // A card/image ring doc must still build — this is the word-fill branch's sibling path,
+  // proving buildScene's unconditional `resolveWordFill`/word-fill-texture resolution (now
+  // running before the tile loop for EVERY doc, not just word docs) doesn't regress a doc
+  // that has no words at all.
+  it('a card/image-only doc still builds one quad per card (regression)', () => {
+    const params = imageParams(3)
+    const root = ringEffect.buildScene(THREE, params, new THREE.Texture(), { width: 960, height: 540, imageTextures: new Map() })
+    const st = (root as any).userData.ringState
+    expect(st.quads).toHaveLength(3)
+  })
 
   it('legacy doc missing the new type keys builds finite (RING_DEFAULTS backfill)', () => {
     const legacy = {
