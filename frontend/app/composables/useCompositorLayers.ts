@@ -68,8 +68,8 @@ export function _registerMotionPainter(impl: MotionPainter) { _motionPainterImpl
 // reference `Paint` without pointing back up at this composable — re-exported
 // here unchanged so this file's ~40 existing importers don't need to move.
 export {
-  type GradientStop, type LinearGradient, type RadialGradient, type Gradient, type Paint,
-  isGradient, isFill,
+  type GradientStop, type LinearGradient, type RadialGradient, type Gradient, type Paint, type ImageFill,
+  isGradient, isFill, isImageFill,
 } from '~/lib/compositor/paint'
 import { type Paint, isFill } from '~/lib/compositor/paint'
 

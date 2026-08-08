@@ -20,7 +20,7 @@
  */
 import { type Fill, type ShaderSpec, fillTileBox, fillIsShader } from '~/lib/spacetype/fillTile'
 import { resolveField } from '~/lib/shaderfill/field'
-import { type Paint, isGradient, isFill } from '~/lib/compositor/paint'
+import { type Paint, type ImageFill, isGradient, isFill, isImageFill } from '~/lib/compositor/paint'
 // What the SVG export makes of a paint — the ORACLE for `spread: 'extend'` (see
 // `PaintSpread` and `fillSpreadKind` below). Import edge runs one way only:
 // `toVector` imports the spine, the paint model and `fillTile`, and imports
@@ -90,6 +90,7 @@ export function fillSpreadKind(fill: Fill): 'pad' | 'repeat' {
 }
 
 export function hasPaint(paint: Paint | undefined): boolean {
+  if (isImageFill(paint)) return !!paint.src
   if (isFill(paint)) return true                        // a fill always paints (solid → fill.a)
   if (isGradient(paint)) return paint.stops.length > 0
   return !!paint && paint !== 'none' && paint !== 'transparent'
@@ -112,6 +113,10 @@ export function resolvePaint(
   spread: PaintSpread = 'box',
 ): string | CanvasGradient | CanvasPattern {
   if (isFill(paint)) return resolveFill(ctx, paint, box, field, spread)
+  // ImageFill rendering is a follow-up task (this one only introduces the
+  // type + guard + hasPaint). Fail loudly instead of returning the ImageFill
+  // object where a `string | CanvasGradient | CanvasPattern` is expected.
+  if (isImageFill(paint)) throw new Error('resolvePaint: ImageFill rendering is not yet implemented')
   if (!isGradient(paint)) return paint
   const stops = [...paint.stops].sort((a, b) => a.offset - b.offset)
   let g: CanvasGradient

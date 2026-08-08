@@ -19,7 +19,14 @@ export interface GradientStop { offset: number; color: string } // offset 0..1
 export interface LinearGradient { type: 'linear'; angle: number; stops: GradientStop[] } // angle in degrees
 export interface RadialGradient { type: 'radial'; stops: GradientStop[] }
 export type Gradient = LinearGradient | RadialGradient
-export type Paint = string | Gradient | Fill
+export interface ImageFill {
+  type: 'image'
+  src: string                              // snapshot URL of the picked node's image
+  fit: 'cover' | 'contain' | 'tile' | 'stretch'
+  scale?: number                           // default 1
+  offset?: { x: number; y: number }        // fraction of box, 0-centered; default {0,0}
+}
+export type Paint = string | Gradient | Fill | ImageFill
 
 export function isGradient(p: Paint | undefined): p is Gradient {
   return !!p && typeof p === 'object' && ((p as Gradient).type === 'linear' || (p as Gradient).type === 'radial')
@@ -27,6 +34,10 @@ export function isGradient(p: Paint | undefined): p is Gradient {
 // A Fill is distinguished from a Gradient by its `a`/`density` fields (Gradient has `stops`).
 export function isFill(p: Paint | undefined): p is Fill {
   return !!p && typeof p === 'object' && 'a' in p && 'density' in p
+}
+// An ImageFill is the only Paint whose discriminant `type` is 'image'.
+export function isImageFill(p: Paint | undefined): p is ImageFill {
+  return !!p && typeof p === 'object' && (p as ImageFill).type === 'image' && 'src' in p
 }
 
 /** Sort a gradient's stops by offset and clamp each to 0..1 (non-finite offsets sink to 0).
@@ -59,6 +70,10 @@ export function paintTileBox(paint: Paint, w: number, h: number): HTMLCanvasElem
   if (isFill(paint)) return fillTileBox(effectiveTileFill(paint), W, H)
   const c = document.createElement('canvas'); c.width = W; c.height = H
   const ctx = c.getContext('2d')!
+  // ImageFill rendering is a follow-up task (this one only introduces the
+  // type + guard). Fail loudly rather than letting `ctx.fillStyle = paint`
+  // silently coerce an ImageFill object into a bogus CSS color string.
+  if (isImageFill(paint)) throw new Error('paintTileBox: ImageFill rendering is not yet implemented')
   if (!isGradient(paint)) {
     ctx.fillStyle = paint; ctx.fillRect(0, 0, W, H); return c
   }

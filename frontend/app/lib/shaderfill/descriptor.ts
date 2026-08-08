@@ -4,7 +4,7 @@
  * the node environment; all rendering lives in ./field.ts.
  */
 import { effectiveTilePaint, type ShaderSpec } from '~/lib/spacetype/fillTile'
-import { isGradient, sortedClampedStops, type Paint } from '~/lib/compositor/paint'
+import { isGradient, isImageFill, sortedClampedStops, type Paint } from '~/lib/compositor/paint'
 import type { EffectDef, GradientStop, ParamValue } from '~/lib/shaderfx/types'
 import { cleanStops, isParamHex } from '~/lib/shaderfx/params'
 
@@ -74,6 +74,11 @@ export function inputKey(p: Paint): string {
     const angle = eff.type === 'linear' ? eff.angle : null
     return encode(['g', eff.type, angle, stops])
   }
+  // An ImageFill can't yet reach a shader's `input` (no wiring exists to nest
+  // one inside a Fill) — this task only introduces the type + guard, not that
+  // integration. Fail loudly instead of silently reading `.a`/`.b`/`.angle`/
+  // `.density` off an object that doesn't have them.
+  if (isImageFill(eff)) throw new Error('inputKey: ImageFill as a shader input is not yet supported')
   return encode(['f', eff.type, eff.a, eff.b, eff.angle, eff.density])
 }
 
