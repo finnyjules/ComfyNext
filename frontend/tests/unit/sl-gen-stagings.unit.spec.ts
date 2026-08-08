@@ -45,3 +45,27 @@ describe('staging: tower', () => {
     expect(tower.compose(input({ rng: makeRng(3) }))).toEqual(tower.compose(input({ rng: makeRng(3) })))
   })
 })
+
+describe('staging: split + frame registered and valid', () => {
+  const LEVELS = ['caption', 'body', 'subhead', 'headline', 'display']
+  for (const id of ['split', 'frame']) {
+    it(`${id} places tiers inside the grid with hero largest`, () => {
+      const s = getStaging(id)!
+      expect(s).toBeTruthy()
+      const els = s.compose(input())
+      expect(els.length).toBeGreaterThanOrEqual(3)
+      for (const e of els) {
+        expect(e.region.col + e.region.colSpan - 1).toBeLessThanOrEqual(12)
+        expect(e.region.row + e.region.rowSpan - 1).toBeLessThanOrEqual(16)
+      }
+      const hero = els.find(e => e.id === 'tier_hero')! as any
+      const fine = els.find(e => e.id === 'tier_fineprint')! as any
+      expect(LEVELS.indexOf(hero.level)).toBeGreaterThanOrEqual(LEVELS.indexOf(fine.level))
+    })
+  }
+  it('split differs from tower placement', () => {
+    const t = getStaging('tower')!.compose(input())
+    const s = getStaging('split')!.compose(input())
+    expect(JSON.stringify(s.map(e => e.region))).not.toBe(JSON.stringify(t.map(e => e.region)))
+  })
+})

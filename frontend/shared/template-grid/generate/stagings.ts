@@ -99,7 +99,82 @@ const tower: Staging = {
   },
 }
 
-export const STAGINGS: Staging[] = [tower]
+/**
+ * Split — hero broken across a diagonal of air: first half flush-left high,
+ * second half flush-right lower. Anchor sits bottom-left, fine print bottom-right.
+ */
+const split: Staging = {
+  id: 'split',
+  name: 'Split',
+  blurb: 'Hero broken across a diagonal of whitespace.',
+  knobs: [{ id: 'drop', pick: [2, 3, 4] }],
+  compose({ tiers, cols, rows, knobs }) {
+    const els: ElementV2[] = []
+    const half = Math.round(cols / 2)
+    const drop = Number(knobs.drop ?? 3)
+    if (tiers.hero) {
+      els.push(tierText('hero', tiers,
+        clampRegion({ col: 1, colSpan: cols, row: 2, rowSpan: Math.round(rows * 0.22) }, cols, rows), 1,
+        { level: 'display', style: { align: 'left', valign: 'top', fontWeight: 700 } }))
+    }
+    if (tiers.support) {
+      els.push(tierText('support', tiers,
+        clampRegion({ col: 1, colSpan: half, row: Math.round(rows * 0.44), rowSpan: 3 }, cols, rows), 3,
+        { style: { align: 'left', valign: 'top' } }))
+    }
+    if (tiers.anchor) {
+      els.push(tierText('anchor', tiers,
+        clampRegion({ col: 1, colSpan: cols, row: rows - drop - 2, rowSpan: 2 }, cols, rows), 2,
+        { level: 'headline', style: { align: 'left', valign: 'bottom', fontWeight: 700 } }))
+    }
+    if (tiers.fineprint) {
+      els.push(tierText('fineprint', tiers,
+        clampRegion({ col: half, colSpan: cols - half + 1, row: rows, rowSpan: 1 }, cols, rows), 4,
+        { style: { align: 'right', valign: 'bottom' } }))
+    }
+    return els
+  },
+}
+
+/**
+ * Frame — hero anchored to the top-left corner with generous air below (that
+ * air is where an image surface reads). Anchor bottom-left; support/fine print
+ * hug the right edge.
+ */
+const frame: Staging = {
+  id: 'frame',
+  name: 'Frame',
+  blurb: 'Hero anchored to a corner; the open field carries the surface.',
+  knobs: [{ id: 'corner', pick: ['tl', 'bl'] }],
+  compose({ tiers, cols, rows, knobs }) {
+    const els: ElementV2[] = []
+    const heroTop = knobs.corner === 'bl' ? Math.round(rows * 0.55) : 2
+    const half = Math.round(cols / 2)
+    if (tiers.hero) {
+      els.push(tierText('hero', tiers,
+        clampRegion({ col: 1, colSpan: half + 1, row: heroTop, rowSpan: Math.round(rows * 0.28) }, cols, rows), 1,
+        { level: 'display', style: { align: 'left', valign: 'top', fontWeight: 700 } }))
+    }
+    if (tiers.support) {
+      els.push(tierText('support', tiers,
+        clampRegion({ col: half + 1, colSpan: cols - half, row: Math.round(rows * 0.42), rowSpan: 3 }, cols, rows), 3,
+        { style: { align: 'right', valign: 'top' } }))
+    }
+    if (tiers.anchor) {
+      els.push(tierText('anchor', tiers,
+        clampRegion({ col: 1, colSpan: cols, row: rows - 2, rowSpan: 2 }, cols, rows), 2,
+        { level: 'headline', style: { align: 'left', valign: 'bottom', fontWeight: 700 } }))
+    }
+    if (tiers.fineprint) {
+      els.push(tierText('fineprint', tiers,
+        clampRegion({ col: half + 1, colSpan: cols - half, row: 1, rowSpan: 1 }, cols, rows), 4,
+        { style: { align: 'right', valign: 'top' } }))
+    }
+    return els
+  },
+}
+
+export const STAGINGS: Staging[] = [tower, split, frame]
 
 export function getStaging(id: string): Staging | undefined {
   return STAGINGS.find(s => s.id === id)
