@@ -179,6 +179,15 @@ async function runRead() {
 }
 
 // ── palette strikes + avoid chips ───────────────────────────────────────────
+/** Text colour for labels printed directly on a swatch: ink on light colours,
+ *  near-white on dark ones (relative-luminance threshold, sRGB-weighted). */
+function inkOn(hex: string): string {
+  const m = /^#([0-9a-f]{6})/i.exec(hex)
+  if (!m) return 'rgba(255,255,255,0.92)'
+  const n = parseInt(m[1]!, 16)
+  const lum = (0.2126 * (n >> 16) + 0.7152 * ((n >> 8) & 0xFF) + 0.0722 * (n & 0xFF)) / 255
+  return lum > 0.55 ? 'rgba(18,18,22,0.88)' : 'rgba(255,255,255,0.92)'
+}
 function removeSwatch(i: number) { palette.value = palette.value.filter((_, idx) => idx !== i) }
 function removeAvoid(i: number) { avoids.value = avoids.value.filter((_, idx) => idx !== i) }
 const newAvoid = ref('')
@@ -337,23 +346,23 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
           <!-- Palette -->
           <div class="mt-6 text-[10.5px] font-medium uppercase tracking-[0.1em] text-white/35">Palette</div>
-          <div class="mt-2 flex flex-wrap gap-2">
+          <div class="mt-2 grid grid-cols-2 gap-2">
             <div
               v-for="(p, i) in palette" :key="`${p.hex}-${i}`" data-testid="mb-swatch"
-              class="group relative w-[74px] overflow-hidden rounded-lg border border-white/[0.08] bg-white/[0.03]"
+              class="group relative h-[88px] overflow-hidden rounded-lg ring-1 ring-inset ring-white/10"
+              :style="{ background: p.hex }"
             >
-              <div class="h-10 w-full" :style="{ background: p.hex }" />
               <button
                 type="button" :aria-label="`Remove ${p.name}`"
-                class="absolute right-1 top-1 hidden h-4.5 w-4.5 items-center justify-center rounded-full bg-black/55 text-[10px] text-white/80 backdrop-blur-sm group-hover:flex"
+                class="absolute right-1.5 top-1.5 hidden h-5 w-5 items-center justify-center rounded-full bg-black/55 text-[10px] text-white/80 backdrop-blur-sm group-hover:flex"
                 @click="removeSwatch(i)"
               >✕</button>
-              <div class="px-1.5 py-1">
-                <div class="truncate text-[10.5px] text-white/80">{{ p.name }}</div>
-                <div class="text-[9.5px] uppercase tracking-wide text-white/35">{{ p.hex }}</div>
+              <div class="absolute inset-x-0 bottom-0 px-2.5 py-2" :style="{ color: inkOn(p.hex) }">
+                <div class="truncate text-[12px] font-medium">{{ p.name }}</div>
+                <div class="text-[10px] uppercase tracking-wide opacity-60">{{ p.hex }}</div>
               </div>
             </div>
-            <p v-if="!palette.length" class="self-center text-[11px] text-white/30">
+            <p v-if="!palette.length" class="col-span-2 text-[11px] text-white/30">
               The read curates a named palette for this board.
             </p>
           </div>
