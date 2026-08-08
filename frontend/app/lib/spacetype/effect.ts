@@ -81,6 +81,9 @@ export type ControlSpec = (
   // string (`ContentItem[]`); the surface renders the content editor; the ring effect
   // parses it with `parseContent`.
   | { key: string; label: string; kind: 'contentList'; default: string; group: string }
+  // A rich list of loft "stops" (position + profile params + colour), stored as one JSON string
+  // (ParamValue is scalar). The surface renders ProfileStopsEditor; loft.ts parses it with parseStops.
+  | { key: string; label: string; kind: 'profileStops'; default: string; group: string }
 ) & ControlMeta
 
 /** Build the param object from a control list's declared defaults. */
