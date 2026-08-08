@@ -358,9 +358,9 @@ export const ringEffect: SpaceTypeEffect = {
                  // with uAspect = the card's own aspect, so corners round on the card's
                  // shape, not a cropped photo — independent of the map_fragment crop above.
                  vec2 p = (vCardUv - 0.5) * vec2(uAspect, 1.0);      // centered, aspect-corrected
-                 vec2 half = vec2(0.5 * uAspect, 0.5);
-                 float r = clamp(uCorner, 0.0, 0.5) * min(half.x, half.y) * 2.0;
-                 vec2 q = abs(p) - (half - vec2(r));
+                 vec2 hs = vec2(0.5 * uAspect, 0.5);   // half-size; NOT 'half' (a reserved GLSL word — fails to compile)
+                 float r = clamp(uCorner, 0.0, 0.5) * min(hs.x, hs.y) * 2.0;
+                 vec2 q = abs(p) - (hs - vec2(r));
                  float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
                  if (d > 0.0) discard;                               // outside the rounded rect
                }`,
