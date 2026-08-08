@@ -169,7 +169,11 @@ export const ringEffect: SpaceTypeEffect = {
   controls,
   liveKeys: ['layout', 'radius', 'ringTilt', 'cardSize', 'perspective', 'speed', 'direction', 'padding', 'ringOpening', 'backFade', 'bend', 'cornerRadius'],
   loopRates(params) {
-    return getLayout(String(params.layout ?? 'ring')).loopRates?.(params) ?? [1]
+    // Backfill layout-control defaults (sphereRadius/tunnelDepth/…) so a doc that
+    // lacks a layout's key — e.g. a pre-Showcase ring doc switched to another layout —
+    // reads the declared default, not `Number(undefined)=NaN`. Layouts read params
+    // directly (not via `n()`), so the backfill has to happen here, at the dispatch.
+    return getLayout(String(params.layout ?? 'ring')).loopRates?.({ ...RING_DEFAULTS, ...params }) ?? [1]
   },
 
   buildScene(three, params, _textTexture, env) {
@@ -477,6 +481,12 @@ export const ringEffect: SpaceTypeEffect = {
     if (!st || !root) return
 
     const layout = getLayout(String(params.layout ?? 'ring'))
+    // Params backfilled with control defaults for the layout's OWN keys — a layout
+    // reads params directly (`Number(p.sphereRadius)`), so a doc missing that key
+    // (e.g. a pre-Showcase ring doc switched to Sphere) would otherwise place at NaN.
+    // params wins over defaults, so this is a no-op for keys the doc already has
+    // (ring parity: layout='ring' reads the same radius/tilt it always did).
+    const lp = { ...RING_DEFAULTS, ...params }
 
     const padding = n(params, 'padding')
     const backFade = n(params, 'backFade')
@@ -487,7 +497,7 @@ export const ringEffect: SpaceTypeEffect = {
     const count = st.quads.length
     for (let i = 0; i < count; i++) {
       const quad = st.quads[i]!
-      const tf = layout.place(i, count, params, t01)
+      const tf = layout.place(i, count, lp, t01)
       quad.position.set(tf.x, tf.y, tf.z)
       quad.rotation.set(0, tf.rotY, 0)
       const aspect = Number(quad.userData.aspect ?? 1)
