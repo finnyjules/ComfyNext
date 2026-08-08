@@ -173,6 +173,34 @@ describe('inputKey (Paint-widened: string | Gradient | Fill must never collide)'
   const radial: Gradient = { type: 'radial', stops: [{ offset: 0, color: '#000000' }, { offset: 1, color: '#ffffff' }] }
   const fill: Fill = { ...DEFAULT_FILL, type: 'gradient', a: '#000000', b: '#ffffff' }
 
+  it('ImageFill encodes deterministically — does not throw, and distinct images key distinctly', () => {
+    const imageA = { type: 'image' as const, src: 'A', fit: 'cover' as const, scale: 1, offset: { x: 0, y: 0 } }
+    const imageB = { type: 'image' as const, src: 'B', fit: 'cover' as const, scale: 1, offset: { x: 0, y: 0 } }
+    const imageDiffFit = { type: 'image' as const, src: 'A', fit: 'tile' as const, scale: 1, offset: { x: 0, y: 0 } }
+    const imageSame = { type: 'image' as const, src: 'A', fit: 'cover' as const, scale: 1, offset: { x: 0, y: 0 } }
+
+    // Should not throw
+    const keyA = inputKey(imageA)
+    const keyB = inputKey(imageB)
+    const keyDiffFit = inputKey(imageDiffFit)
+    const keySame = inputKey(imageSame)
+
+    // All should be strings
+    expect(typeof keyA).toBe('string')
+    expect(typeof keyB).toBe('string')
+    expect(typeof keyDiffFit).toBe('string')
+    expect(typeof keySame).toBe('string')
+
+    // Different src should produce different keys
+    expect(keyA).not.toBe(keyB)
+
+    // Different fit should produce different keys
+    expect(keyA).not.toBe(keyDiffFit)
+
+    // Structurally equal image fills should produce the same key
+    expect(keyA).toBe(keySame)
+  })
+
   it('a string, a linear gradient, a radial gradient, and a Fill all key distinctly — the four-way collision proof', () => {
     const str = '#000000'
     const keys = new Set([inputKey(str), inputKey(linear), inputKey(radial), inputKey(fill)])

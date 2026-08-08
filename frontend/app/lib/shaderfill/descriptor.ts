@@ -74,11 +74,7 @@ export function inputKey(p: Paint): string {
     const angle = eff.type === 'linear' ? eff.angle : null
     return encode(['g', eff.type, angle, stops])
   }
-  // An ImageFill can't yet reach a shader's `input` (no wiring exists to nest
-  // one inside a Fill) — this task only introduces the type + guard, not that
-  // integration. Fail loudly instead of silently reading `.a`/`.b`/`.angle`/
-  // `.density` off an object that doesn't have them.
-  if (isImageFill(eff)) throw new Error('inputKey: ImageFill as a shader input is not yet supported')
+  if (isImageFill(eff)) return encode(['i', eff.src, eff.fit, eff.scale ?? 1, eff.offset?.x ?? 0, eff.offset?.y ?? 0])
   return encode(['f', eff.type, eff.a, eff.b, eff.angle, eff.density])
 }
 
