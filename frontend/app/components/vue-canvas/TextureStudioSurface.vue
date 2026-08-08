@@ -8,6 +8,8 @@ import { loadRaster, getRaster, buildSeamlessInputs, rasterViewUrl } from '~/lib
 import { TEXTURE_CONTROLS, textureDefaults } from '~/lib/texturefx/controls'
 import { TEXTURE_SECTIONS } from '~/lib/texturefx/sections'
 import { cloneParams } from '~/lib/texturefx/types'
+import { bakeSheetBlob } from '~/lib/texturefx/bake'
+import { drawSheet, fitLetterbox, isTileable, repeatsFor, sheetFromParams } from '~/lib/texturefx/sheet'
 import { rolesFor } from '~/lib/texturefx/roles'
 import { fillForRole } from '~/lib/texturefx/fills'
 import type { Fill } from '~/lib/texturefx/types'
@@ -452,12 +454,9 @@ function stopSpec(rk: string, i: number, si: number): ControlSpec {
   } as ControlSpec
 }
 
-// Render the full-res tile and apply stylize, then encode. 1024 is a multiple of
-// 64 so dither stays seamless.
+// Full-resolution sheet — shared with the node's headless bake, see lib/texturefx/bake.ts.
 async function exportBlob(): Promise<Blob> {
-  const styled = stylizeTile(textureFx.render(params, 1024, 1024, 0), params, 1024, 1024)
-  return await new Promise<Blob>((res, rej) =>
-    styled.toBlob((b) => (b ? res(b) : rej(new Error('toBlob failed'))), 'image/png'))
+  return await bakeSheetBlob(params)
 }
 
 // Studio param-baker (Slice 2a Task 8c) — bakes ONE frame with a set of

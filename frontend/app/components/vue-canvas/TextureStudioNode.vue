@@ -5,6 +5,8 @@ import { textureFx } from '~/lib/texturefx/renderer'
 import { preloadStylize, stylizeTile } from '~/lib/texturefx/stylize'
 import { textureDefaults } from '~/lib/texturefx/controls'
 import { loadRaster, getRaster } from '~/lib/texturefx/raster'
+import { bakeSheetBlob } from '~/lib/texturefx/bake'
+import { drawSheet, fitLetterbox, isSheetFramed, sheetFromParams } from '~/lib/texturefx/sheet'
 import type { Params } from '~/lib/spacetype/effect'
 import { registerStudioBaker, unregisterStudioBaker } from '~/lib/studio/cascade'
 import StudioRenderButton from '~/components/vue-canvas/StudioRenderButton.vue'
@@ -74,12 +76,12 @@ watch(params, () => {
   timer = setTimeout(renderFrame, 60)
 }, { deep: true })
 
-// Headless full-res seamless tile for the render cascade (generative — no input).
-const BAKE_TILE = 1024
+// Headless full-res sheet for the render cascade (generative — no input). Same bake
+// as the studio's exportBlob, so the cascade and the studio agree.
 async function bakeOutput(): Promise<Blob | null> {
   await preloadStylize().catch(() => {})
-  const styled = stylizeTile(textureFx.render(params.value, BAKE_TILE, BAKE_TILE, 0), params.value, BAKE_TILE, BAKE_TILE)
-  return await new Promise<Blob | null>(res => styled.toBlob(b => res(b), 'image/png'))
+  try { return await bakeSheetBlob(params.value) }
+  catch (e) { console.error('[texture] headless bake failed', e); return null }
 }
 
 onMounted(() => {
