@@ -192,7 +192,7 @@ const centered: Staging = {
       clampRegion({ col: 1, colSpan: cols, row: Math.round(rows * 0.66), rowSpan: 2 }, cols, rows), 2,
       { level: 'headline', style: { align: 'center', valign: 'top' } }))
     if (tiers.support) els.push(tierText('support', tiers,
-      clampRegion({ col: Math.round(cols * 0.25), colSpan: Math.round(cols * 0.5), row: rows - 2, rowSpan: 2 }, cols, rows), 3,
+      clampRegion({ col: Math.round((cols - Math.round(cols * 0.5)) / 2) + 1, colSpan: Math.round(cols * 0.5), row: rows - 2, rowSpan: 2 }, cols, rows), 3,
       { style: { align: 'center', valign: 'bottom' } }))
     return els
   },
@@ -211,7 +211,7 @@ const editorial: Staging = {
       clampRegion({ col: 1, colSpan: colw, row: 2, rowSpan: Math.round(rows * 0.34) }, cols, rows), 1,
       { level: 'display', style: { align: 'left', valign: 'top', fontWeight: 700 } }))
     if (tiers.support) els.push(tierText('support', tiers,
-      clampRegion({ col: 1, colSpan: colw, row: Math.round(rows * 0.4), rowSpan: 4 }, cols, rows), 3,
+      clampRegion({ col: 1, colSpan: colw, row: 2 + Math.round(rows * 0.34), rowSpan: 4 }, cols, rows), 3,
       { style: { align: 'left', valign: 'top' } }))
     if (tiers.fineprint) els.push(tierText('fineprint', tiers,
       clampRegion({ col: colw + 1, colSpan: cols - colw, row: 2, rowSpan: 2 }, cols, rows), 4,

@@ -88,3 +88,25 @@ describe('staging: full library', () => {
     expect(shapes.size).toBe(STAGINGS.length) // no two stagings are identical
   })
 })
+
+describe('staging: no intra-staging overlap', () => {
+  function overlaps(a: { col: number; row: number; colSpan: number; rowSpan: number },
+                     b: { col: number; row: number; colSpan: number; rowSpan: number }) {
+    const ax2 = a.col + a.colSpan - 1, ay2 = a.row + a.rowSpan - 1
+    const bx2 = b.col + b.colSpan - 1, by2 = b.row + b.rowSpan - 1
+    return a.col <= bx2 && b.col <= ax2 && a.row <= by2 && b.row <= ay2
+  }
+  for (const s of STAGINGS) {
+    it(`${s.id}: no two elements share a grid cell under default knobs`, () => {
+      const els = s.compose(input())
+      for (let i = 0; i < els.length; i++) {
+        for (let j = i + 1; j < els.length; j++) {
+          const a = els[i]!, b = els[j]!
+          expect(overlaps(a.region, b.region),
+            `${a.id} (${JSON.stringify(a.region)}) overlaps ${b.id} (${JSON.stringify(b.region)})`)
+            .toBe(false)
+        }
+      }
+    })
+  }
+})
