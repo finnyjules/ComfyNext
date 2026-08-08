@@ -1,7 +1,7 @@
 import type { BrandKit, ElementV2, TemplateV3 } from '../types'
 import { makeRng } from './rng'
 import { resolveKnobs } from './knobs'
-import { getStaging, STAGINGS } from './stagings'
+import { getStaging, STAGINGS, type StagingResult } from './stagings'
 import { getSurface, SURFACES } from './surfaces'
 import { validateGenerated } from './validate'
 
@@ -41,21 +41,22 @@ export function generate(template: TemplateV3, opts: GenOpts): TemplateV3 {
     image: opts.image,
   })
 
-  let staged: ElementV2[] = []
+  let stagingResult: StagingResult = { elements: [] }
   let knobs: Record<string, unknown> = {}
   for (let attempt = 0; attempt < 8; attempt++) {
     const rng = makeRng(opts.seed + attempt, 'staging-knobs')
     knobs = resolveKnobs(staging.knobs, rng, attempt === 0 ? (opts.knobs ?? {}) : {})
-    staged = staging.compose({ tiers, cols, rows, canvas, rng: makeRng(opts.seed + attempt, 'staging'), knobs, brand: opts.brand })
-    if (validateGenerated(staged, cols, rows).ok) break
+    stagingResult = staging.compose({ tiers, cols, rows, canvas, rng: makeRng(opts.seed + attempt, 'staging'), knobs, brand: opts.brand })
+    if (validateGenerated(stagingResult, cols, rows).ok) break
   }
-  staged = applyContrast(staged, surf.contrast)
+  const staged: ElementV2[] = applyContrast(stagingResult.elements, surf.contrast)
 
   const preserved = template.elements.filter(e => e.origin !== 'staging')
   return {
     ...template,
     background: { ...surf.background },
     elements: [...staged, ...preserved],
+    order: [...staged.map(e => e.id), ...preserved.map(e => e.id)],
     gen: {
       staging: staging.id,
       surface: surface.id,

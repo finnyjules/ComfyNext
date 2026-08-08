@@ -15,13 +15,23 @@ export interface StagingInput {
   brand?: BrandKit
 }
 
+/** What a staging hands back to the orchestrator: elements ordered
+ *  back→front (the staged z-order), plus an optional declaration of which
+ *  element-id pairs are INTENTIONALLY overlapping (e.g. an overprinted
+ *  title, text laid behind a photo). `overlaps` pairs are exempted from the
+ *  validator's collision check — undeclared collisions still fail. */
+export interface StagingResult {
+  elements: ElementV2[]
+  overlaps?: Array<[string, string]>
+}
+
 export interface Staging {
   id: string
   name: string
   blurb: string
   knobs: KnobSpec[]
   supports?: { minTiers?: number; maxTiers?: number; surfaces?: string[] }
-  compose(input: StagingInput): ElementV2[]
+  compose(input: StagingInput): StagingResult
 }
 
 /** Every staging rolls this knob — the user-directed drama lever: how big the
@@ -169,7 +179,7 @@ const tower: Staging = {
         clampRegion({ ...full, row: Math.round(rows * 0.72), rowSpan: Math.round(rows * 0.2) }, cols, rows), 2,
         { level: 'headline', style: { align, valign: 'bottom', fontWeight: 700, ...drama.anchor } }))
     }
-    return els
+    return { elements: els }
   },
 }
 
@@ -214,7 +224,7 @@ const split: Staging = {
         { col: half, colSpan: cols - half + 1, row: rows - 1, rowSpan: 1 },
         cols, rows, 4, { style: { align: 'right', valign: 'bottom' } }))
     }
-    return els
+    return { elements: els }
   },
 }
 
@@ -262,7 +272,7 @@ const frame: Staging = {
         { col: half + 1, colSpan: cols - half, row: 1, rowSpan: 1 },
         cols, rows, 4, { style: { align: 'right', valign: 'top' } }))
     }
-    return els
+    return { elements: els }
   },
 }
 
@@ -304,7 +314,7 @@ const centered: Staging = {
         { col: Math.round((cols - Math.round(cols * 0.5)) / 2) + 1, colSpan: Math.round(cols * 0.5), row: rows - 2, rowSpan: 2 },
         cols, rows, 3, { style: { align: 'center', valign: 'bottom' } }))
     }
-    return els
+    return { elements: els }
   },
 }
 
@@ -345,7 +355,7 @@ const editorial: Staging = {
         clampRegion({ col: colw + 1, colSpan: cols - colw, row: rows - 3, rowSpan: 3 }, cols, rows), 2,
         { level: 'headline', style: { align: 'right', valign: 'bottom', fontWeight: 700, ...drama.anchor } }))
     }
-    return els
+    return { elements: els }
   },
 }
 
@@ -386,7 +396,7 @@ const index: Staging = {
         clampRegion({ col: 1, colSpan: cols, row: rows - 2, rowSpan: 2 }, cols, rows), 2,
         { level: 'headline', style: { align: 'left', valign: 'bottom', fontWeight: 700, ...drama.anchor } }))
     }
-    return els
+    return { elements: els }
   },
 }
 

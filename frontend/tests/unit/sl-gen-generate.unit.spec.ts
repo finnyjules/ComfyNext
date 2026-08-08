@@ -75,4 +75,16 @@ describe('generate orchestrator', () => {
     expect(t2.background.fill).toBeTruthy()
     expect(t2.background.image).toBeUndefined()
   })
+  it('writes template.order as staged ids (compose order) then preserved ids', () => {
+    let t = generate(base(), { staging: 'tower', surface: 'flat', seed: 1 })
+    const freeform: ElementV2 = { id: 'note', type: 'text', content: 'hand-added', level: 'body',
+      priority: 9, region: { col: 1, colSpan: 3, row: 14, rowSpan: 1 }, origin: 'freeform' }
+    t = { ...t, elements: [...t.elements, freeform] }
+    const rolled = shuffle(t)
+    const stagedIds = rolled.elements.filter(e => e.origin === 'staging').map(e => e.id)
+    const preservedIds = rolled.elements.filter(e => e.origin !== 'staging').map(e => e.id)
+    expect(rolled.order).toEqual([...stagedIds, ...preservedIds])
+    expect(rolled.order?.slice(0, stagedIds.length)).toEqual(stagedIds)
+    expect(rolled.order).toContain('note')
+  })
 })
