@@ -1069,8 +1069,12 @@ export function useGridEditor(
 
   const genStaging = computed(() => (template.value as TemplateV3).gen?.staging ?? 'tower')
   const genSurface = computed(() => (template.value as TemplateV3).gen?.surface ?? 'flat')
-  const genSeed = computed(() => (template.value as TemplateV3).gen?.seed ?? 0)
+  const genSeed = computed(() => (template.value as TemplateV3).gen?.seed ?? 1)
   const genLocks = computed(() => (template.value as TemplateV3).gen?.locks ?? {})
+  // Whether a `needsImage` surface (e.g. duotone-photo) has a source to work
+  // with — mirrors genCtx()'s image lookup so the surface chip list and
+  // generate.ts's surprise() pool agree on which surfaces are selectable.
+  const hasGenImage = computed(() => Boolean(sampleProps.value?.image_layer_1))
 
   function commit(next: TemplateV3) {
     template.value = next
@@ -1210,7 +1214,7 @@ export function useGridEditor(
     setSectionStyle, setSectionClip, renameSection, renameElement, toggleSectionLayout, wrapSelectionInSection, addSectionAt, frameDrawArmed,
     toggleSectionExpressive, setSectionExpressive,
     commitNow, undo, redo, canUndo, canRedo,
-    editorMode, genStaging, genSurface, genSeed, genLocks,
+    editorMode, genStaging, genSurface, genSeed, genLocks, hasGenImage,
     setStaging, setSurface, toggleLock, shuffleLayout, surpriseLayout,
     tierType, setTierType, addTierItem,
   }

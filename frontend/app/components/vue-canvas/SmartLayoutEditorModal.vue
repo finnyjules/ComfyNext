@@ -13,7 +13,7 @@ import type { ComputedRef } from 'vue'
 import type { AnyTemplate, Template } from '~~/server/templates/schema'
 import type { BrandKit } from '~~/shared/brand/types'
 import { autopopulateV2 } from '~~/shared/template-grid/autopopulate'
-import { autopopulateTiers, TIER_ORDER } from '~~/shared/template-grid/generate/tiers'
+import { autopopulateTiers, omitConsumedProps } from '~~/shared/template-grid/generate/tiers'
 import { generate } from '~~/shared/template-grid/generate/generate'
 import { makeStarterTemplate } from '~~/shared/template-grid/starter'
 import type { TemplateV2, TemplateV3 } from '~~/shared/template-grid/types'
@@ -102,8 +102,6 @@ onMounted(() => {
       // composition so the editor opens on a real poster rather than a blank
       // grid.
       const tiers = autopopulateTiers(initialProps.value)
-      const consumedKeys = new Set<string>()
-      TIER_ORDER.forEach((id, i) => { if (tiers[id]) consumedKeys.add(`text_layer_${i + 1}`) })
       if (Object.keys(tiers).length > 0) {
         v3.tiers = tiers
         const seeded = generate({ ...v3, version: 3, sections: v3.sections ?? [] },
@@ -114,15 +112,23 @@ onMounted(() => {
       // beyond the 4 importance tiers) still needs its default freeform
       // element placed — same seeding as the non-fresh path, just excluding
       // the sockets tiers already rendered.
-      const remainingProps = Object.fromEntries(
-        Object.entries(initialProps.value).filter(([key]) => !consumedKeys.has(key)))
+      const remainingProps = omitConsumedProps(initialProps.value, tiers)
       autopopulateV2(layout as TemplateV2, remainingProps)
     } else {
       // Seed a default element for each connected socket the layout doesn't
       // yet reference (per-socket, so an image wired into an existing text
       // layout still gets placed). autopopulateV2 skips sockets already
       // referenced, so this is safe to run whether the layout is empty or full.
-      autopopulateV2(layout as TemplateV2, initialProps.value)
+      //
+      // When the layout already has generated tiers (from a prior fresh-open
+      // generate), each consumed socket is rendered by the tier as LITERAL
+      // content with an id like `tier_hero` — not a `{{ props.text_layer_1
+      // }}` binding — so refsSocket() can't see it as referenced here.
+      // Exclude tier-consumed sockets the same way the fresh path does, or
+      // reopening a saved generated layout duplicates the hero text
+      // (Task 15 dedup only covered the fresh path — this is the reopen fix).
+      const props2 = v3.tiers ? omitConsumedProps(initialProps.value, v3.tiers) : initialProps.value
+      autopopulateV2(layout as TemplateV2, props2)
     }
 
     initial.value = layout

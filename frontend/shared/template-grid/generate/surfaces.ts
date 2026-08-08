@@ -38,7 +38,7 @@ const tint: Surface = {
   knobs: [{ id: 'fill', pick: ['#e0492f', '#1a1a1a', '#2f6fe0'] }],
   apply: ({ knobs }) => {
     const fill = String(knobs.fill ?? '#e0492f')
-    return { background: { fill }, contrast: fill === '#1a1a1a' ? 'dark' : 'dark' }
+    return { background: { fill }, contrast: 'dark' }
   },
 }
 

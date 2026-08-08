@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { TemplateV3, TierSpec, GenState } from '~~/shared/template-grid/types'
-import { TIER_ORDER, DEFAULT_TIER_LEVELS, tierEntries, autopopulateTiers } from '~~/shared/template-grid/generate/tiers'
+import { TIER_ORDER, DEFAULT_TIER_LEVELS, tierEntries, autopopulateTiers, omitConsumedProps } from '~~/shared/template-grid/generate/tiers'
 
 describe('schema: tiers/gen/origin fields', () => {
   it('round-trips optional generation fields on a template', () => {
@@ -46,5 +46,34 @@ describe('tier model', () => {
     expect(t.anchor?.content).toBe('DATE')
     expect(t.support?.content).toBe('list')
     expect(t.fineprint).toBeUndefined()
+  })
+})
+
+describe('omitConsumedProps (reopen dedup)', () => {
+  it('removes props consumed by tiers, keeps the rest', () => {
+    const tiers = { hero: { content: 'HERO' }, anchor: { content: 'DATE' } }
+    const props = {
+      text_layer_1: 'HERO',
+      text_layer_2: 'DATE',
+      text_layer_3: 'list',
+      image_layer_1: 'https://example.com/a.png',
+    }
+    const out = omitConsumedProps(props, tiers)
+    expect(out).toEqual({
+      text_layer_3: 'list',
+      image_layer_1: 'https://example.com/a.png',
+    })
+  })
+
+  it('is a no-op when no tiers are seeded', () => {
+    const props = { text_layer_1: 'HERO', image_layer_1: 'https://example.com/a.png' }
+    expect(omitConsumedProps(props, {})).toEqual(props)
+  })
+
+  it('leaves a prop alone when its mapped tier is absent', () => {
+    const props = { text_layer_1: 'HERO', text_layer_2: 'DATE' }
+    // only anchor seeded — text_layer_1 (hero) stays, text_layer_2 (anchor) drops
+    const out = omitConsumedProps(props, { anchor: { content: 'DATE' } })
+    expect(out).toEqual({ text_layer_1: 'HERO' })
   })
 })

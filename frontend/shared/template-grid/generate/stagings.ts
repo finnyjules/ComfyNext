@@ -112,22 +112,24 @@ const split: Staging = {
     const els: ElementV2[] = []
     const half = Math.round(cols / 2)
     const drop = Number(knobs.drop ?? 3)
-    if (tiers.hero) {
+    const entries = tierEntries(tiers)
+    const has = (id: TierId) => entries.some(e => e.id === id)
+    if (has('hero')) {
       els.push(tierText('hero', tiers,
         clampRegion({ col: 1, colSpan: cols, row: 2, rowSpan: Math.round(rows * 0.22) }, cols, rows), 1,
         { level: 'display', style: { align: 'left', valign: 'top', fontWeight: 700 } }))
     }
-    if (tiers.support) {
+    if (has('support')) {
       els.push(tierText('support', tiers,
         clampRegion({ col: 1, colSpan: half, row: Math.round(rows * 0.44), rowSpan: 3 }, cols, rows), 3,
         { style: { align: 'left', valign: 'top' } }))
     }
-    if (tiers.anchor) {
+    if (has('anchor')) {
       els.push(tierText('anchor', tiers,
         clampRegion({ col: 1, colSpan: cols, row: rows - drop - 2, rowSpan: 2 }, cols, rows), 2,
         { level: 'headline', style: { align: 'left', valign: 'bottom', fontWeight: 700 } }))
     }
-    if (tiers.fineprint) {
+    if (has('fineprint')) {
       els.push(tierText('fineprint', tiers,
         clampRegion({ col: half, colSpan: cols - half + 1, row: rows, rowSpan: 1 }, cols, rows), 4,
         { style: { align: 'right', valign: 'bottom' } }))
@@ -150,22 +152,24 @@ const frame: Staging = {
     const els: ElementV2[] = []
     const heroTop = knobs.corner === 'bl' ? Math.round(rows * 0.55) : 2
     const half = Math.round(cols / 2)
-    if (tiers.hero) {
+    const entries = tierEntries(tiers)
+    const has = (id: TierId) => entries.some(e => e.id === id)
+    if (has('hero')) {
       els.push(tierText('hero', tiers,
         clampRegion({ col: 1, colSpan: half + 1, row: heroTop, rowSpan: Math.round(rows * 0.28) }, cols, rows), 1,
         { level: 'display', style: { align: 'left', valign: 'top', fontWeight: 700 } }))
     }
-    if (tiers.support) {
+    if (has('support')) {
       els.push(tierText('support', tiers,
         clampRegion({ col: half + 1, colSpan: cols - half, row: Math.round(rows * 0.42), rowSpan: 3 }, cols, rows), 3,
         { style: { align: 'right', valign: 'top' } }))
     }
-    if (tiers.anchor) {
+    if (has('anchor')) {
       els.push(tierText('anchor', tiers,
         clampRegion({ col: 1, colSpan: cols, row: rows - 2, rowSpan: 2 }, cols, rows), 2,
         { level: 'headline', style: { align: 'left', valign: 'bottom', fontWeight: 700 } }))
     }
-    if (tiers.fineprint) {
+    if (has('fineprint')) {
       els.push(tierText('fineprint', tiers,
         clampRegion({ col: half + 1, colSpan: cols - half, row: 1, rowSpan: 1 }, cols, rows), 4,
         { style: { align: 'right', valign: 'top' } }))
@@ -182,16 +186,18 @@ const centered: Staging = {
   knobs: [],
   compose({ tiers, cols, rows }) {
     const els: ElementV2[] = []
-    if (tiers.fineprint) els.push(tierText('fineprint', tiers,
+    const entries = tierEntries(tiers)
+    const has = (id: TierId) => entries.some(e => e.id === id)
+    if (has('fineprint')) els.push(tierText('fineprint', tiers,
       clampRegion({ col: 1, colSpan: cols, row: 1, rowSpan: 1 }, cols, rows), 4,
       { style: { align: 'center', valign: 'top' } }))
-    if (tiers.hero) els.push(tierText('hero', tiers,
+    if (has('hero')) els.push(tierText('hero', tiers,
       clampRegion({ col: 1, colSpan: cols, row: Math.round(rows * 0.32), rowSpan: Math.round(rows * 0.3) }, cols, rows), 1,
       { level: 'display', style: { align: 'center', valign: 'middle', fontWeight: 700 } }))
-    if (tiers.anchor) els.push(tierText('anchor', tiers,
+    if (has('anchor')) els.push(tierText('anchor', tiers,
       clampRegion({ col: 1, colSpan: cols, row: Math.round(rows * 0.66), rowSpan: 2 }, cols, rows), 2,
       { level: 'headline', style: { align: 'center', valign: 'top' } }))
-    if (tiers.support) els.push(tierText('support', tiers,
+    if (has('support')) els.push(tierText('support', tiers,
       clampRegion({ col: Math.round((cols - Math.round(cols * 0.5)) / 2) + 1, colSpan: Math.round(cols * 0.5), row: rows - 2, rowSpan: 2 }, cols, rows), 3,
       { style: { align: 'center', valign: 'bottom' } }))
     return els
@@ -207,16 +213,18 @@ const editorial: Staging = {
   compose({ tiers, cols, rows, knobs }) {
     const els: ElementV2[] = []
     const colw = Math.min(Number(knobs.colw ?? 7), cols - 1)
-    if (tiers.hero) els.push(tierText('hero', tiers,
+    const entries = tierEntries(tiers)
+    const has = (id: TierId) => entries.some(e => e.id === id)
+    if (has('hero')) els.push(tierText('hero', tiers,
       clampRegion({ col: 1, colSpan: colw, row: 2, rowSpan: Math.round(rows * 0.34) }, cols, rows), 1,
       { level: 'display', style: { align: 'left', valign: 'top', fontWeight: 700 } }))
-    if (tiers.support) els.push(tierText('support', tiers,
+    if (has('support')) els.push(tierText('support', tiers,
       clampRegion({ col: 1, colSpan: colw, row: 2 + Math.round(rows * 0.34), rowSpan: 4 }, cols, rows), 3,
       { style: { align: 'left', valign: 'top' } }))
-    if (tiers.fineprint) els.push(tierText('fineprint', tiers,
+    if (has('fineprint')) els.push(tierText('fineprint', tiers,
       clampRegion({ col: colw + 1, colSpan: cols - colw, row: 2, rowSpan: 2 }, cols, rows), 4,
       { style: { align: 'right', valign: 'top' } }))
-    if (tiers.anchor) els.push(tierText('anchor', tiers,
+    if (has('anchor')) els.push(tierText('anchor', tiers,
       clampRegion({ col: colw + 1, colSpan: cols - colw, row: rows - 3, rowSpan: 3 }, cols, rows), 2,
       { level: 'headline', style: { align: 'right', valign: 'bottom', fontWeight: 700 } }))
     return els
@@ -232,16 +240,18 @@ const index: Staging = {
   compose({ tiers, cols, rows, knobs }) {
     const els: ElementV2[] = []
     const heroRow = Number(knobs.heroRow ?? 5)
-    if (tiers.fineprint) els.push(tierText('fineprint', tiers,
+    const entries = tierEntries(tiers)
+    const has = (id: TierId) => entries.some(e => e.id === id)
+    if (has('fineprint')) els.push(tierText('fineprint', tiers,
       clampRegion({ col: 1, colSpan: cols, row: 1, rowSpan: 1 }, cols, rows), 4,
       { style: { align: 'left', valign: 'top' } }))
-    if (tiers.hero) els.push(tierText('hero', tiers,
+    if (has('hero')) els.push(tierText('hero', tiers,
       clampRegion({ col: 1, colSpan: cols, row: heroRow, rowSpan: Math.round(rows * 0.3) }, cols, rows), 1,
       { level: 'display', style: { align: 'left', valign: 'top', fontWeight: 700 } }))
-    if (tiers.support) els.push(tierText('support', tiers,
+    if (has('support')) els.push(tierText('support', tiers,
       clampRegion({ col: 1, colSpan: Math.round(cols / 2), row: Math.round(rows * 0.68), rowSpan: 3 }, cols, rows), 3,
       { style: { align: 'left', valign: 'top' } }))
-    if (tiers.anchor) els.push(tierText('anchor', tiers,
+    if (has('anchor')) els.push(tierText('anchor', tiers,
       clampRegion({ col: 1, colSpan: cols, row: rows - 2, rowSpan: 2 }, cols, rows), 2,
       { level: 'headline', style: { align: 'left', valign: 'bottom', fontWeight: 700 } }))
     return els

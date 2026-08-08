@@ -34,10 +34,17 @@ const ctx = inject<any>('gridEditor')
         </button>
       </div>
       <div class="flex flex-wrap gap-1.5">
-        <button v-for="s in SURFACES" :key="s.id" :title="s.name"
-          class="h-8 px-2 rounded-md text-[10px] font-semibold border transition-colors cursor-pointer"
-          :class="ctx.genSurface.value === s.id ? 'bg-white text-black border-white' : 'border-white/10 text-white/60 hover:text-white'"
-          @click="ctx.setSurface(s.id)">{{ s.name }}</button>
+        <button v-for="s in SURFACES" :key="s.id"
+          :title="s.needsImage && !ctx.hasGenImage.value ? 'Wire an image first' : s.name"
+          :disabled="s.needsImage && !ctx.hasGenImage.value"
+          class="h-8 px-2 rounded-md text-[10px] font-semibold border transition-colors"
+          :class="[
+            s.needsImage && !ctx.hasGenImage.value
+              ? 'opacity-30 cursor-not-allowed border-white/10 text-white/40'
+              : 'cursor-pointer',
+            ctx.genSurface.value === s.id ? 'bg-white text-black border-white' : 'border-white/10 text-white/60 hover:text-white',
+          ]"
+          @click="!(s.needsImage && !ctx.hasGenImage.value) && ctx.setSurface(s.id)">{{ s.name }}</button>
       </div>
     </div>
 

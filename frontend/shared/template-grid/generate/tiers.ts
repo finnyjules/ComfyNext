@@ -33,3 +33,17 @@ export function autopopulateTiers(props: Record<string, string>): Tiers {
   })
   return tiers
 }
+
+/** Remove props already rendered by a tier, mirroring autopopulateTiers's
+ *  exact mapping (text_layer_N <-> TIER_ORDER[N-1]). Tier elements render
+ *  LITERAL content with ids like `tier_hero` — not a `{{ props.text_layer_1
+ *  }}` binding — so autopopulateV2's refsSocket() can't see them as
+ *  referenced. Without this, autopopulateV2 appends a duplicate freeform
+ *  element for a socket a tier already owns (dupe hero text on reopen). */
+export function omitConsumedProps(props: Record<string, string>, tiers: Tiers): Record<string, string> {
+  const consumed = new Set<string>()
+  TIER_ORDER.forEach((id, i) => {
+    if (tiers[id]) consumed.add(`text_layer_${i + 1}`)
+  })
+  return Object.fromEntries(Object.entries(props).filter(([key]) => !consumed.has(key)))
+}

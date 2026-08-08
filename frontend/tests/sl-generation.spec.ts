@@ -185,4 +185,68 @@ test.describe('Smart Layout generation (wired Shuffle/Surprise)', () => {
     // Staged elements are still present after both re-rolls.
     await expect.poll(async () => await staged.count()).toBeGreaterThan(0)
   })
+
+  test('reopening a saved generated layout does not duplicate the hero text', async ({ page }) => {
+    // Merge-blocker regression: Task 15's dedup only covered the FRESH-open
+    // path. On reopen, the layout already has `tiers` + staged elements, so
+    // the old `else` branch ran autopopulateV2 over ALL props (including the
+    // one the tier already renders literally) and appended a duplicate
+    // freeform peer on top of the tier text. See omitConsumedProps in
+    // shared/template-grid/generate/tiers.ts.
+    await clearCanvas(page)
+
+    const textId = await addNodeAndGetId(page, 'Text')
+    await setWidgetByName(page, textId, 'text', 'Summer Sale')
+    await nudgeNode(page, textId, -500, -300)
+
+    const slId = await addNodeAndGetId(page, 'SmartLayout')
+
+    await fitCanvas(page)
+    const textLayerIdx = await inputIndexOf(page, slId, 'text_layer_1')
+    expect(textLayerIdx).toBeGreaterThan(-1)
+
+    const srcHandle = page.locator(`.vue-flow__node[data-id="${textId}"] .vue-flow__handle[data-handleid="output-0"]`)
+    const tgtHandle = page.locator(`.vue-flow__node[data-id="${slId}"] .vue-flow__handle[data-handleid="input-${textLayerIdx}"]`)
+    const src = await srcHandle.boundingBox()
+    const tgt = await tgtHandle.boundingBox()
+    expect(src, 'Text output handle must be on screen').toBeTruthy()
+    expect(tgt, 'SmartLayout text_layer_1 handle must be on screen').toBeTruthy()
+
+    const sx = src!.x + src!.width - 2, sy = src!.y + src!.height / 2
+    const tx = tgt!.x + 2, ty = tgt!.y + tgt!.height / 2
+    await page.mouse.move(sx, sy)
+    await page.mouse.down()
+    await page.mouse.move((sx + tx) / 2, (sy + ty) / 2, { steps: 6 })
+    await page.mouse.move(tx, ty, { steps: 6 })
+    await page.mouse.up()
+
+    await expect.poll(async () => await page.locator('.vue-flow__edge').count()).toBeGreaterThan(0)
+
+    // First open: fresh layout self-seeds tiers + generates.
+    await openSmartLayoutEditor(page, slId)
+    let modal = page.locator('div.fixed.inset-0').last()
+    await expect(modal).toBeVisible({ timeout: 10_000 })
+    await expect.poll(async () => await modal.locator('[data-el-id^="tier_"]').count(), { timeout: 10_000 }).toBeGreaterThan(0)
+    expect(await modal.locator('text="Summer Sale"').count()).toBe(1)
+
+    // Save & close writes the generated layout (tiers + staged elements) back
+    // to the node's widget.
+    const saveBtn = modal.getByRole('button', { name: 'Save & close' })
+    await expect(saveBtn).toBeVisible()
+    await saveBtn.click()
+    await expect(modal).not.toBeVisible({ timeout: 10_000 })
+
+    // Reopen the same node: the layout is now non-fresh (has tiers + staged
+    // elements). The hero text must still appear exactly once — no leftover
+    // freeform "text_layer_1" element duplicating "tier_hero"'s content.
+    await openSmartLayoutEditor(page, slId)
+    modal = page.locator('div.fixed.inset-0').last()
+    await expect(modal).toBeVisible({ timeout: 10_000 })
+    await expect.poll(async () => await modal.locator('[data-el-id^="tier_"]').count(), { timeout: 10_000 }).toBeGreaterThan(0)
+
+    const freeformDup = modal.locator('[data-el-id="text_layer_1"]')
+    expect(await freeformDup.count()).toBe(0)
+    const summerSaleNodes = modal.locator('text="Summer Sale"')
+    expect(await summerSaleNodes.count()).toBe(1)
+  })
 })
