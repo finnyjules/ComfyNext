@@ -1,5 +1,6 @@
 import { defaultsFromControls, type ControlSpec, type Params } from '~/lib/spacetype/effect'
 import { DITHER_PATTERNS, LATTICES, MODES, MOTIFS, PLACEMENTS, SEAM_METHODS, SHAPE_FAMILIES, STYLIZE_KINDS, TILE_FAMILIES } from '~/lib/texturefx/types'
+import { SHEET_PRESET_CUSTOM, SHEET_PRESET_TILE, SHEET_PRESETS, TILE_PX_OPTIONS } from '~/lib/texturefx/sheet'
 import { postControls } from '~/lib/studio/post/controls'
 
 // Texture controls extend the shared ControlSpec with an optional `when`
@@ -94,6 +95,17 @@ export const TEXTURE_CONTROLS: TextureControl[] = [
   { key: 'duoShadow', label: 'Shadow hue', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0.62, group: 'Stylize', when: (p) => String(p.stylize) === 'duotone' },
   { key: 'duoLight', label: 'Light hue', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0.12, group: 'Stylize', when: (p) => String(p.stylize) === 'duotone' },
   { key: 'duoContrast', label: 'Duotone contrast', kind: 'slider', min: 0, max: 2, step: 0.01, default: 0.5, group: 'Stylize', when: (p) => String(p.stylize) === 'duotone' },
+
+  // --- Output: the exported sheet. `Tile · square` (the default) makes the sheet
+  //     exactly one tile — 1024x1024 from a 1024 tile, i.e. what this studio produced
+  //     before the sheet existed, so every already-saved pattern exports unchanged.
+  //     lib/texturefx/sheet.ts resolves these into the {w,h,tile} every render path uses.
+  { key: 'sheetPreset', label: 'Sheet', kind: 'select', options: [...SHEET_PRESETS], default: SHEET_PRESET_TILE, group: 'Output' },
+  { key: 'sheetW', label: 'Width', kind: 'slider', min: 128, max: 8192, step: 64, default: 1024, group: 'Output', when: (p) => String(p.sheetPreset) === SHEET_PRESET_CUSTOM },
+  { key: 'sheetH', label: 'Height', kind: 'slider', min: 128, max: 8192, step: 64, default: 1024, group: 'Output', when: (p) => String(p.sheetPreset) === SHEET_PRESET_CUSTOM },
+  // Tile size is the density dial: the same motif reads fine or coarse depending on how
+  // many times the tile fits the sheet.
+  { key: 'tilePx', label: 'Tile size', kind: 'select', options: [...TILE_PX_OPTIONS], default: '1024', group: 'Output' },
 
   // --- Post (shared stack: bloom/color/duotone/chroma/blur/film/halftone/dotScreen/
   //     glitch/grain/vignette — ambient occlusion withheld, 2D host). Runs INSIDE
