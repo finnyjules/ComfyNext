@@ -5,7 +5,7 @@
 
 import { regionToRect } from './grid'
 import type { GridMetrics, Rect } from './grid'
-import type { Region, SectionV3 } from './types'
+import type { ElementV2, Region, SectionV3 } from './types'
 
 /** Pixel rect of a section's box on the given metrics — what the editor draws
  * as the section frame/handle. The same drag/resize helpers operate on
@@ -64,6 +64,31 @@ export function regionInBounds(r: Region, m: GridMetrics): boolean {
   const minRow = 1
   const maxRow = m.rows - r.rowSpan + 1
   return r.col >= minCol && r.col <= maxCol && r.row >= minRow && r.row <= maxRow
+}
+
+/** Auto-`overhang` rule for an element drag/nudge — shared by the keyboard
+ * path (`nudgeSelected`, useGridEditor.ts) and the mouse-drag path
+ * (`onElementPointerMove`, GridEditorCanvas.vue) so both apply it
+ * identically. `overhang` is a single flag on the element, not scoped per
+ * format/output, but `setRegion` writes to one of THREE different places
+ * depending on scope (`el.region` on the master with 'class' scope,
+ * `el.regionByClass[cls]` on a non-master format with 'class' scope, or
+ * `el.overrides[oid].region` with 'output' scope) — see setRegion's own
+ * precedence. An off-grid edit at ANY scope always SETS the flag (so the
+ * canvas draws the clip), but it can only be auto-CLEARED when the edit that
+ * just landed in-bounds wrote the MASTER region: clearing it from a
+ * class/output-scoped edit would wrongly un-flag a master region that's
+ * still off-grid on another format/output. Pass `wroteMasterRegion` as
+ * whatever the caller computed setRegion's target to be (mirror its own
+ * `regionScope !== 'output' && isMaster` check). */
+export function applyOverhangFlag(
+  el: Pick<ElementV2, 'overhang'>, region: Region, m: GridMetrics, wroteMasterRegion: boolean,
+): void {
+  if (regionInBounds(region, m)) {
+    if (wroteMasterRegion && el.overhang) delete el.overhang
+  } else {
+    el.overhang = true
+  }
 }
 
 /** Resize a region from a corner handle by a template-px delta, snapped to

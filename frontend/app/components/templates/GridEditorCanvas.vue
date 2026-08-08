@@ -7,7 +7,7 @@
  */
 import type { GridEditorContext } from '~/composables/useGridEditor'
 import { colorToRgba } from '~~/shared/template-grid/color'
-import { dragRegion, pointToCell, regionInBounds, resizeRegion } from '~~/shared/template-grid/editor'
+import { applyOverhangFlag, dragRegion, pointToCell, resizeRegion } from '~~/shared/template-grid/editor'
 import { gridExpressiveLayout, expressiveVOffset } from '~~/shared/template-grid/expressive'
 import { verticalTextBox } from '~~/shared/template-grid/grid'
 import type { ResolvedElement } from '~~/shared/template-grid/resolve'
@@ -25,7 +25,7 @@ const binding = inject<SmartLayoutBindingContext | null>('smartLayoutBinding', n
 const {
   template, format, formatClass, currentFormat, currentOutputId, metrics, resolved, selectedId,
   sampleProps, effectiveBrand, setRegion, patchElement, patchStyle, elById,
-  isV3Mode, resolvedSections, selectedSectionId, setSectionRegion,
+  isV3Mode, resolvedSections, selectedSectionId, setSectionRegion, isMaster, regionScope,
   moveChildIntoStack, moveChildOutOfStack,
   scale, zoomBy, setContainerSize, containerSize,
   frameDrawArmed, addSectionAt,
@@ -633,15 +633,13 @@ function onElementPointerMove(e: PointerEvent) {
   if (cur && (cur.col !== next.col || cur.row !== next.row)) {
     dragState.moved = true
     setRegion(dragState.id, next)
-    // Same auto-flag rule as keyboard nudge (nudgeSelected, useGridEditor.ts):
-    // fully back inside the grid clears `overhang`, extending past it sets it.
+    // Same shared auto-flag rule as keyboard nudge (nudgeSelected,
+    // useGridEditor.ts) — see applyOverhangFlag for the master-vs-class/
+    // output scope rule (2a final-fix 8).
     const el = elById(dragState.id)
     if (el) {
-      if (regionInBounds(next, metrics.value)) {
-        if (el.overhang) delete el.overhang
-      } else {
-        el.overhang = true
-      }
+      const wroteMasterRegion = regionScope.value !== 'output' && isMaster.value
+      applyOverhangFlag(el, next, metrics.value, wroteMasterRegion)
     }
   }
 }

@@ -1,10 +1,11 @@
 import type { BrandKit, ElementV2, GenState, TemplateV3 } from '../types'
 import { fineGridDims } from '../grid'
 import { effectiveBrand } from '../../brand/resolve'
+import { effectiveOrder } from '../sections'
 import { makeRng } from './rng'
 import { resolveKnobs } from './knobs'
 import { getStaging, STAGINGS, type StagingResult } from './stagings'
-import { getTheme, THEMES, resolveInk, contrastRatio, SURFACE_TO_THEME } from './themes'
+import { BRAND_AXIS_KEYS, getTheme, THEMES, resolveInk, contrastRatio, themeBrandDefaults, SURFACE_TO_THEME } from './themes'
 import { validateGenerated } from './validate'
 
 interface GenOpts {
@@ -92,29 +93,60 @@ export function generate(template: TemplateV3, opts: GenOpts): TemplateV3 {
     if (validateGenerated(stagingResult, cols, rows).ok) break
   }
 
-  // Stamp on change only: a theme switch (or a brand missing any of the
-  // three keys) writes background/foreground/accent from the theme. Same-
-  // theme regeneration (Shuffle, knob/tier edits) never rewrites them — a
-  // user's hand-edited brand colours survive.
+  // Stamp on change: an explicit theme switch overwrites every un-pinned
+  // axis key from the theme; same-theme regeneration (Shuffle, knob/tier
+  // edits) only backfills keys the brand is MISSING (clearing one key in the
+  // popover then shuffling no longer clobbers the other two — round-2a fix).
+  // A key in `gen.brandEdits` (hand-edited via setBrandOverride/setBrand) is
+  // PINNED: no trigger here — including a same-call theme switch during
+  // Surprise — ever overwrites it. `setTheme` (an explicit theme PICK, not a
+  // roll) clears `brandEdits` itself before calling generate(), adopting the
+  // new theme's system wholesale.
   const priorThemeId = gen?.theme
   const brandDefaults = template.brand ?? {}
-  const needsStamp = opts.theme !== priorThemeId
-    || brandDefaults.background == null || brandDefaults.foreground == null || brandDefaults.accent == null
-  const brand: BrandKit = needsStamp
-    ? { ...brandDefaults, background: theme.field, foreground: resolveInk(theme.field), accent: theme.defaultAccent }
-    : brandDefaults
+  const themeChanged = opts.theme !== priorThemeId
+  const brandEdits = new Set(gen?.brandEdits ?? [])
+  const themeDefaults = themeBrandDefaults(theme)
+  const brand: BrandKit = { ...brandDefaults }
+  for (const key of BRAND_AXIS_KEYS) {
+    if (brandEdits.has(key)) continue
+    if (themeChanged || brandDefaults[key] == null) brand[key] = themeDefaults[key]
+  }
 
   // Luminance guard: check the EFFECTIVE merge (this brand ← the active/wired
   // opts.brand) — a user's brand kit can clash with the theme even when the
-  // theme's own field/ink pairing is fine on its own.
+  // theme's own field/ink pairing is fine on its own. `contrastRatio` returns
+  // NaN when either colour isn't a hex `relLuminance` can parse (free-text
+  // Brand-popover values, rgb()/gradients, a StudioColor #rrggbbaa is fine —
+  // relLuminance strips its alpha); a NaN comparison is always false, but
+  // `Number.isFinite` makes the "skip an unparseable value" intent explicit
+  // rather than relying on that fallthrough.
   const effective = effectiveBrand(brand, opts.brand)
   const effectiveField = effective.background ?? theme.field
   const effectiveInk = effective.foreground ?? resolveInk(effectiveField)
-  const ink = contrastRatio(effectiveInk, effectiveField) < 3
+  const ratio = contrastRatio(effectiveInk, effectiveField)
+  const ink = Number.isFinite(ratio) && ratio < 3
     ? resolveInk(effectiveField)
     : '{{ brand.foreground }}'
 
   const staged: ElementV2[] = applyInk(stagingResult.elements, { accentOnHero: opts.accentOnHero, ink })
+
+  // Z-order: rebuild only the staged block. The previous relative order of
+  // every non-staging id (freeform elements + sections) is preserved — a
+  // hand-arranged z-order (e.g. a freeform photo sent to back) survives a
+  // regeneration instead of jumping back to front. The staged block composes
+  // in `staged`'s own order and reoccupies wherever staged ids previously
+  // sat (front-of-list for a template that had none yet — e.g. first
+  // generate() call, or every prior staged element was removed).
+  const prevOrder = effectiveOrder(template)
+  const prevStagedIds = new Set(template.elements.filter(e => e.origin === 'staging').map(e => e.id))
+  const nonStagedOrder = prevOrder.filter(id => !prevStagedIds.has(id))
+  const firstStagedIdx = prevOrder.findIndex(id => prevStagedIds.has(id))
+  const insertAt = firstStagedIdx < 0
+    ? 0
+    : prevOrder.slice(0, firstStagedIdx).filter(id => !prevStagedIds.has(id)).length
+  const newStagedIds = staged.map(e => e.id)
+  const order = [...nonStagedOrder.slice(0, insertAt), ...newStagedIds, ...nonStagedOrder.slice(insertAt)]
 
   const preserved = template.elements.filter(e => e.origin !== 'staging')
   return {
@@ -122,7 +154,7 @@ export function generate(template: TemplateV3, opts: GenOpts): TemplateV3 {
     brand,
     background: { fill: '{{ brand.background }}' },
     elements: [...staged, ...preserved],
-    order: [...staged.map(e => e.id), ...preserved.map(e => e.id)],
+    order,
     gen: {
       staging: staging.id,
       theme: theme.id,
@@ -130,6 +162,7 @@ export function generate(template: TemplateV3, opts: GenOpts): TemplateV3 {
       knobs,
       locks: gen?.locks,
       ...(opts.accentOnHero !== undefined ? { accentOnHero: opts.accentOnHero } : {}),
+      ...(gen?.brandEdits?.length ? { brandEdits: gen.brandEdits } : {}),
     },
   }
 }

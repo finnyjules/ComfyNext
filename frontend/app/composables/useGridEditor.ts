@@ -14,10 +14,11 @@ import { computed, ref, watch, type Ref } from 'vue'
 import { effectiveBrand as mergeBrand } from '~~/shared/brand/resolve'
 import type { BrandKit } from '~~/shared/brand/types'
 import { applyArchetype, classifyFormat, fineGridDims, formatDims, gridDims, gridMetrics, gutterBox, marginBox, regionToRect, remapRegion, resolveFormat } from '~~/shared/template-grid'
+import { applyOverhangFlag } from '~~/shared/template-grid/editor'
 import type { Rect } from '~~/shared/template-grid/grid'
 import type { Archetype } from '~~/shared/template-grid/archetypes'
 import { generate, shuffle, surprise } from '~~/shared/template-grid/generate/generate'
-import { getTheme, resolveInk } from '~~/shared/template-grid/generate/themes'
+import { BRAND_AXIS_KEYS, getTheme, themeBrandDefaults, type BrandAxisKey } from '~~/shared/template-grid/generate/themes'
 import { appendTierItem, normalizeTiers } from '~~/shared/template-grid/generate/tiers'
 import { deriveOutputs, type ResolvedLayout } from '~~/shared/template-grid/resolve'
 import {
@@ -341,7 +342,12 @@ export function useGridEditor(
     loadTemplate(applyArchetype(template.value, arch))
   }
 
-  /** Patch the template's brand kit. Empty-string values clear a key. */
+  /** Patch the template's brand kit. Empty-string values clear a key.
+   *  Touching one of the three axis keys (background/foreground/accent) also
+   *  regenerates with the same tuple — parity with `setBrandOverride`, so the
+   *  luminance guard re-evaluates and the change is visible immediately —
+   *  and records/clears `gen.brandEdits` the same way setBrandOverride does
+   *  (pinned on a real value, un-pinned on clear — FIX 3). */
   function setBrand(patch: Record<string, string | undefined>) {
     const brand = (template.value.brand ??= {})
     for (const [k, v] of Object.entries(patch)) {
@@ -350,6 +356,22 @@ export function useGridEditor(
     }
     if (!Object.keys(brand).length) delete template.value.brand
     dirty.value = true
+
+    const touchedAxis = BRAND_AXIS_KEYS.filter(k => k in patch)
+    if (!touchedAxis.length) return
+    const t = asV3()
+    const gen = t.gen ?? { staging: 'tower', theme: 'paper', seed: 1 }
+    const brandEdits = new Set(gen.brandEdits ?? [])
+    for (const k of touchedAxis) {
+      const v = patch[k]
+      if (v == null || v === '') brandEdits.delete(k)
+      else brandEdits.add(k)
+    }
+    const nextGen = { ...gen, brandEdits: brandEdits.size ? [...brandEdits] : undefined }
+    commit(generate({ ...t, gen: nextGen }, {
+      staging: nextGen.staging, theme: nextGen.theme, seed: nextGen.seed,
+      accentOnHero: nextGen.accentOnHero, ...genCtx(),
+    }))
   }
 
   /** Set the document/canvas background fill (colour or CSS gradient) and/or
@@ -583,10 +605,11 @@ export function useGridEditor(
    * or nudging an element past the canvas edge is allowed (Task 5's raw-region
    * -math engine support for `overhang`); it just sets `overhang: true` below
    * instead of snapping back in-bounds, and clears it once the element is
-   * fully back inside. A generous sanity clamp (±2× the grid span, applied on
-   * top of the old in-bounds bounds) still stops a runaway repeated nudge from
-   * flying off to infinity. Region target follows the master/class rule via
-   * setRegion. */
+   * fully back inside — see `applyOverhangFlag` for the master-vs-class/output
+   * scope rule (2a final-fix 8). A generous sanity clamp (±2× the grid span,
+   * applied on top of the old in-bounds bounds) still stops a runaway
+   * repeated nudge from flying off to infinity. Region target follows the
+   * master/class rule via setRegion. */
   function nudgeSelected(dCol: number, dRow: number) {
     const r = selectedResolved.value?.region
     if (!r || !selectedId.value) return
@@ -598,15 +621,14 @@ export function useGridEditor(
     const col = Math.max(minCol - 2 * m.cols, Math.min(maxCol + 2 * m.cols, r.col + dCol))
     const row = Math.max(minRow - 2 * m.rows, Math.min(maxRow + 2 * m.rows, r.row + dRow))
     if (col === r.col && row === r.row) return
-    setRegion(selectedId.value, { ...r, col, row })
+    const next = { ...r, col, row }
+    setRegion(selectedId.value, next)
     const el = elById(selectedId.value)
     if (!el) return
-    const inBounds = col >= minCol && col <= maxCol && row >= minRow && row <= maxRow
-    if (inBounds) {
-      if (el.overhang) delete el.overhang
-    } else {
-      el.overhang = true
-    }
+    // Mirrors setRegion's own precedence: 'output' scope never touches
+    // el.region; 'class' scope only writes el.region on the master format.
+    const wroteMasterRegion = regionScope.value !== 'output' && isMaster.value
+    applyOverhangFlag(el, next, m, wroteMasterRegion)
   }
 
   // Array order is z-order (later = on top) — same contract as
@@ -1114,9 +1136,15 @@ export function useGridEditor(
     const t = asV3()
     commit(generate(t, { staging: id, theme: t.gen?.theme ?? 'paper', seed: t.gen?.seed ?? 1, accentOnHero: t.gen?.accentOnHero, ...genCtx() }))
   }
+  /** Picking a theme (as opposed to Surprise rolling a new one) is adopting
+   *  its whole colour system — so an explicit theme switch clears any pinned
+   *  `brandEdits` before regenerating; generate()'s stamp-on-change guard
+   *  then re-stamps all three axis keys unopposed (FIX 3). */
   function setTheme(id: string) {
     const t = asV3()
-    commit(generate(t, { staging: t.gen?.staging ?? 'tower', theme: id, seed: t.gen?.seed ?? 1, accentOnHero: t.gen?.accentOnHero, ...genCtx() }))
+    const gen = t.gen ? { ...t.gen } : t.gen
+    if (gen) delete gen.brandEdits
+    commit(generate({ ...t, gen }, { staging: t.gen?.staging ?? 'tower', theme: id, seed: t.gen?.seed ?? 1, accentOnHero: t.gen?.accentOnHero, ...genCtx() }))
   }
   function toggleLock(axis: 'staging' | 'theme') {
     const t = asV3()
@@ -1140,43 +1168,47 @@ export function useGridEditor(
   /** Override (or, with `hex: null`, restore) one brand colour directly on the
    *  template, then regenerate with the same tuple so the luminance guard
    *  re-evaluates against the new value. Restoring reads the CURRENT theme's
-   *  stamped value (field / resolveInk(field) / defaultAccent) — not the
-   *  theme's default regardless of override, so it matches what a plain
-   *  theme switch would have stamped. */
-  function setBrandOverride(key: 'background' | 'foreground' | 'accent', hex: string | null) {
+   *  stamped value (themeBrandDefaults) — not the theme's default regardless
+   *  of override, so it matches what a plain theme switch would have
+   *  stamped. Setting a hex PINS the key in `gen.brandEdits` (FIX 3) so it
+   *  survives Shuffle/Surprise even across a Surprise-rolled theme change;
+   *  restoring un-pins it. */
+  function setBrandOverride(key: BrandAxisKey, hex: string | null) {
     const t = asV3()
     // A template with no prior generate() call has no `gen` at all — default
     // one (matching opts.theme below) so generate()'s stamp-on-change guard
     // sees a matching theme and doesn't treat this as a theme switch.
     const gen = t.gen ?? { staging: 'tower', theme: 'paper', seed: 1 }
     const theme = getTheme(gen.theme) ?? getTheme('paper')!
-    const restored = key === 'background' ? theme.field
-      : key === 'foreground' ? resolveInk(theme.field)
-        : theme.defaultAccent
     // Also fill the OTHER two keys from the theme when they're missing (same
     // cold-start case): the stamp guard also fires when `brand` is missing
     // ANY of the three keys, which would still clobber the key we're setting
     // here even with a matching theme. A brand that already has a key keeps
     // its value — only the gaps are filled.
-    const themeDefaults: BrandKit = { background: theme.field, foreground: resolveInk(theme.field), accent: theme.defaultAccent }
-    const brand = { ...themeDefaults, ...(t.brand ?? {}), [key]: hex ?? restored }
-    commit(generate({ ...t, brand, gen }, {
-      staging: gen.staging, theme: gen.theme, seed: gen.seed,
-      accentOnHero: gen.accentOnHero, ...genCtx(),
+    const themeDefaults = themeBrandDefaults(theme)
+    const brand = { ...themeDefaults, ...(t.brand ?? {}), [key]: hex ?? themeDefaults[key] }
+    const brandEdits = new Set(gen.brandEdits ?? [])
+    if (hex == null) brandEdits.delete(key)
+    else brandEdits.add(key)
+    const nextGen = { ...gen, brandEdits: brandEdits.size ? [...brandEdits] : undefined }
+    commit(generate({ ...t, brand, gen: nextGen }, {
+      staging: nextGen.staging, theme: nextGen.theme, seed: nextGen.seed,
+      accentOnHero: nextGen.accentOnHero, ...genCtx(),
     }))
   }
 
-  // Both helpers read/write item 0 of the tier's (normalized) list — single-
-  // item behaviour preserved exactly; any further items ride along
-  // untouched. Multi-item authoring UI is Task 3, not here.
-  function tierType(id: TierId): Partial<TextStyleV2> {
-    return normalizeTiers((template.value as TemplateV3).tiers)[id]?.[0]?.type ?? {}
+  // Read/write a single item of the tier's (normalized) list — `index`
+  // defaults to 0 (the pre-Task-3-panel single-item behaviour, preserved
+  // exactly). Every other item rides along untouched.
+  function tierType(id: TierId, index = 0): Partial<TextStyleV2> {
+    return normalizeTiers((template.value as TemplateV3).tiers)[id]?.[index]?.type ?? {}
   }
-  function setTierType(id: TierId, patch: Partial<TextStyleV2>) {
+  function setTierType(id: TierId, patch: Partial<TextStyleV2>, index = 0) {
     const t = asV3()
     const normalized = normalizeTiers(t.tiers)
     const items = normalized[id] ?? [{ content: '' }]
-    const tiers = { ...normalized, [id]: [{ ...items[0], type: { ...items[0]?.type, ...patch } }, ...items.slice(1)] }
+    const nextItems = items.map((item, i) => (i === index ? { ...item, type: { ...item.type, ...patch } } : item))
+    const tiers = { ...normalized, [id]: nextItems }
     // Re-generate in place so the type change is visible immediately (same tuple).
     commit(generate({ ...t, tiers }, { staging: t.gen?.staging ?? 'tower', theme: t.gen?.theme ?? 'paper', seed: t.gen?.seed ?? 1, accentOnHero: t.gen?.accentOnHero, ...genCtx() }))
   }

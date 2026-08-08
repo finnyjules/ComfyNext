@@ -75,8 +75,9 @@ export function verifySmartLayout(t: TemplateV3): LayoutIssue[] {
     const r = el.region
     const label = el.role ?? el.type
 
-    // Off-grid — bleed is an intentional edge extension, so skip it.
-    if (cols > 0 && !el.bleed) {
+    // Off-grid — bleed is an intentional edge extension and overhang is a
+    // declared off-canvas placement (Task 10/2a-5), so skip both.
+    if (cols > 0 && !el.bleed && !el.overhang) {
       if (r.col < 1 || r.row < 1 || r.col + r.colSpan - 1 > cols || r.row + r.rowSpan - 1 > rows) {
         issues.push({ level: 'warn', target: el.id, message: `${label} extends off-canvas (outside the ${cols}×${rows} grid)` })
       }

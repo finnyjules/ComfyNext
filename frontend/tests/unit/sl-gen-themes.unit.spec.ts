@@ -8,6 +8,8 @@ import {
   resolveInk,
   contrastRatio,
   SURFACE_TO_THEME,
+  BRAND_AXIS_KEYS,
+  themeBrandDefaults,
 } from '../../shared/template-grid/generate/themes'
 
 describe('Smart Layout themes module', () => {
@@ -94,6 +96,31 @@ describe('Smart Layout themes module', () => {
       const lum = relLuminance('#dd2200')
       expect(lum).toBeLessThan(0.2)
     })
+
+    // Round-2a final-fix 1: relLuminance is TOTAL — never throws, even on
+    // unparseable input (rgb()/free-text from the Brand popover, malformed
+    // hex). A StudioColor #rrggbbaa (8-digit) is a REAL case (not just
+    // malformed-input defense): the picker always emits an alpha suffix.
+    it('never throws on malformed or non-hex input — returns NaN', () => {
+      expect(() => relLuminance('rgb(0,0,0)')).not.toThrow()
+      expect(Number.isNaN(relLuminance('rgb(0,0,0)'))).toBe(true)
+      expect(() => relLuminance('#11')).not.toThrow()
+      expect(Number.isNaN(relLuminance('#11'))).toBe(true)
+      expect(() => relLuminance('not-a-color')).not.toThrow()
+      expect(Number.isNaN(relLuminance('not-a-color'))).toBe(true)
+      expect(() => relLuminance('')).not.toThrow()
+      expect(Number.isNaN(relLuminance(''))).toBe(true)
+    })
+
+    it('strips a trailing alpha pair — #rrggbbaa treated as its #rrggbb', () => {
+      expect(relLuminance('#ffffffff')).toBeCloseTo(relLuminance('#ffffff'), 6)
+      expect(relLuminance('#dd2200ff')).toBeCloseTo(relLuminance('#dd2200'), 6)
+      expect(relLuminance('#dd220080')).toBeCloseTo(relLuminance('#dd2200'), 6)
+    })
+
+    it('strips a trailing alpha nibble — #rgba treated as its #rgb', () => {
+      expect(relLuminance('#ffff')).toBeCloseTo(relLuminance('#fff'), 6)
+    })
   })
 
   describe('resolveInk', () => {
@@ -142,6 +169,29 @@ describe('Smart Layout themes module', () => {
     it('returns high contrast for black and white', () => {
       const ratio = contrastRatio('#000000', '#ffffff')
       expect(ratio).toBeGreaterThan(20)
+    })
+  })
+
+  describe('resolveInk / contrastRatio never throw on malformed input (relLuminance is total)', () => {
+    it('resolveInk falls back to light ink instead of throwing', () => {
+      expect(() => resolveInk('rgb(0,0,0)')).not.toThrow()
+      expect(resolveInk('rgb(0,0,0)')).toBe('#f2f0ef')
+    })
+    it('contrastRatio returns NaN (not a throw) when either colour is unparseable', () => {
+      expect(() => contrastRatio('rgb(0,0,0)', '#ffffff')).not.toThrow()
+      expect(Number.isNaN(contrastRatio('rgb(0,0,0)', '#ffffff'))).toBe(true)
+    })
+  })
+
+  describe('themeBrandDefaults (the ONE "what does this theme stamp" helper)', () => {
+    it('returns background/foreground/accent matching the theme fields', () => {
+      const blue = getTheme('blue')!
+      expect(themeBrandDefaults(blue)).toEqual({
+        background: '#1d4ed8', foreground: resolveInk('#1d4ed8'), accent: '#f2f0ef',
+      })
+    })
+    it('BRAND_AXIS_KEYS lists exactly the three axis keys', () => {
+      expect(BRAND_AXIS_KEYS).toEqual(['background', 'foreground', 'accent'])
     })
   })
 

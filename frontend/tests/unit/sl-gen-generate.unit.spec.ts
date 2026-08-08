@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { generate, shuffle, surprise, migrateGen } from '~~/shared/template-grid/generate/generate'
 import { validateGenerated } from '~~/shared/template-grid/generate/validate'
 import { STAGINGS } from '~~/shared/template-grid/generate/stagings'
-import { THEMES } from '~~/shared/template-grid/generate/themes'
+import { THEMES, resolveInk } from '~~/shared/template-grid/generate/themes'
 import type { TemplateV3, ElementV2 } from '~~/shared/template-grid/types'
 
 function base(): TemplateV3 {
@@ -165,6 +165,79 @@ describe('generate orchestrator — themes', () => {
     expect(rolled.order).toEqual([...stagedIds, ...preservedIds])
     expect(rolled.order?.slice(0, stagedIds.length)).toEqual(stagedIds)
     expect(rolled.order).toContain('note')
+  })
+
+  // -- Round-2a final-fix wave --------------------------------------------
+
+  // FIX 1: relLuminance is total (never throws) — generate() must survive a
+  // malformed/free-text effective brand value instead of crashing.
+  it('FIX 1: does not throw when opts.brand carries a malformed/non-hex colour', () => {
+    expect(() => generate(base(), { staging: 'tower', theme: 'paper', seed: 1, brand: { background: '#ff00aaff' } })).not.toThrow()
+    expect(() => generate(base(), { staging: 'tower', theme: 'paper', seed: 1, brand: { foreground: 'rgb(0,0,0)' } })).not.toThrow()
+    expect(() => generate(base(), { staging: 'tower', theme: 'paper', seed: 1, brand: { background: '#11' } })).not.toThrow()
+  })
+
+  it('FIX 1: an #rrggbbaa effective brand value is treated as its #rrggbb (no spurious guard trip)', () => {
+    // white-on-white theme clash normally trips the guard (see test (e));
+    // an alpha-suffixed WHITE foreground should behave identically to '#ffffff'.
+    const withAlpha = generate(base(), { staging: 'tower', theme: 'white', seed: 1, brand: { foreground: '#ffffffff' } })
+    const withoutAlpha = generate(base(), { staging: 'tower', theme: 'white', seed: 1, brand: { foreground: '#ffffff' } })
+    const heroA = withAlpha.elements.find(e => e.id === 'tier_hero_0') as any
+    const heroB = withoutAlpha.elements.find(e => e.id === 'tier_hero_0') as any
+    expect(heroA.style.color).toBe(heroB.style.color)
+    expect(heroA.style.color).toBe('#111111')   // guard tripped in both cases
+  })
+
+  // FIX 2: missing-key backfill fills ONLY the missing key(s), not all three.
+  it('FIX 2: same-theme regen with one brand key cleared backfills ONLY that key', () => {
+    const t0 = generate(base(), { staging: 'tower', theme: 'blue', seed: 1 })
+    expect(t0.brand?.background).toBe('#1d4ed8')
+    const handEdited = { ...t0.brand, background: '#ff00aa', accent: '#00ffcc' }
+    const { foreground: _drop, ...clearedForeground } = handEdited
+    const withGap: TemplateV3 = { ...t0, brand: clearedForeground as any }
+    const restamped = generate(withGap, { staging: 'tower', theme: 'blue', seed: 2 })
+    // The missing key is backfilled from the theme...
+    expect(restamped.brand?.foreground).toBe(resolveInk('#1d4ed8'))
+    // ...but the two PRESENT hand-edited keys survive untouched.
+    expect(restamped.brand?.background).toBe('#ff00aa')
+    expect(restamped.brand?.accent).toBe('#00ffcc')
+  })
+
+  // FIX 3: brandEdits pins a key across every stamping trigger, including a
+  // theme change picked up mid-Surprise; an explicit setTheme (not exercised
+  // here — that's the composable's job, see sl-gen-editor-actions) is the
+  // only thing that's supposed to clear it.
+  it('FIX 3: a key listed in gen.brandEdits survives a theme change inside generate()', () => {
+    const t0 = generate(base(), { staging: 'tower', theme: 'paper', seed: 1 })
+    const pinned: TemplateV3 = {
+      ...t0, brand: { ...t0.brand, background: '#ff00aa' },
+      gen: { ...t0.gen!, brandEdits: ['background'] },
+    }
+    const switched = generate(pinned, { staging: 'tower', theme: 'black', seed: 2 })
+    expect(switched.brand?.background).toBe('#ff00aa')   // pinned — theme change didn't touch it
+    expect(switched.brand?.foreground).toBe('#f2f0ef')   // unpinned key DID re-stamp
+    expect(switched.gen?.brandEdits).toEqual(['background'])   // carried through
+  })
+
+  it('FIX 3: an unpinned brand persists across a theme change exactly as before (no regression)', () => {
+    const t0 = generate(base(), { staging: 'tower', theme: 'paper', seed: 1 })
+    const edited: TemplateV3 = { ...t0, brand: { ...t0.brand, background: '#ff00aa' } }
+    const switched = generate(edited, { staging: 'tower', theme: 'black', seed: 2 })
+    expect(switched.brand?.background).toBe('#000000')   // no brandEdits pin -> normal re-stamp
+  })
+
+  // FIX 4: a hand-arranged z-order (freeform sent to back) survives a re-roll
+  // instead of jumping back to the front on every regeneration.
+  it('FIX 4: a freeform element moved to the FRONT of order stays there across shuffle', () => {
+    let t = generate(base(), { staging: 'tower', theme: 'paper', seed: 1 })
+    const freeform: ElementV2 = { id: 'note', type: 'text', content: 'hand-added', level: 'body',
+      priority: 9, region: { col: 1, colSpan: 3, row: 14, rowSpan: 1 }, origin: 'freeform' }
+    t = { ...t, elements: [...t.elements, freeform] }
+    // Simulate "sent to back" (order[0] = back of z-order) — 'note' first.
+    const stagedIds = t.elements.filter(e => e.origin === 'staging').map(e => e.id)
+    t = { ...t, order: ['note', ...stagedIds] }
+    const rolled = shuffle(t)
+    expect(rolled.order?.[0]).toBe('note')
   })
 
   it('generates a validator-clean result for the standard 4-tier fixture (no unvalidated ship on exhausted re-rolls)', () => {

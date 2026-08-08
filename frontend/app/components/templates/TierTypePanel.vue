@@ -4,25 +4,25 @@ import type { TierId } from '~~/shared/template-grid/types'
 const ctx = inject<any>('gridEditor')
 
 // Round-2 element ids are indexed (`tier_hero_0`, `tier_support_2`, …) —
-// pull just the tier name out. The trailing index is parsed alongside for
-// potential future per-item addressing, but `ctx.setTierType` only ever
-// writes item 0 of the tier's list (see useGridEditor.ts), so every edit
-// here applies to the tier's whole first item regardless of which indexed
-// element is selected.
-const TIER_ID_RE = /^tier_([a-z]+)/
-const tierId = computed<TierId | null>(() => {
-  const id = ctx?.selectedElement?.value?.id as string | undefined
-  const m = id ? TIER_ID_RE.exec(id) : null
-  return m ? (m[1] as TierId) : null
+// parse BOTH the tier name and its item index so an edit here targets
+// exactly the selected item (ctx.setTierType/tierType thread `index`
+// through to `items[index]` — see useGridEditor.ts).
+const TIER_ID_RE = /^tier_([a-z]+)_(\d+)/
+const parsed = computed<{ id: TierId; index: number } | null>(() => {
+  const rawId = ctx?.selectedElement?.value?.id as string | undefined
+  const m = rawId ? TIER_ID_RE.exec(rawId) : null
+  return m ? { id: m[1] as TierId, index: Number(m[2]) } : null
 })
-const t = computed(() => tierId.value ? ctx.tierType(tierId.value) : {})
+const tierId = computed<TierId | null>(() => parsed.value?.id ?? null)
+const tierIndex = computed(() => parsed.value?.index ?? 0)
+const t = computed(() => tierId.value ? ctx.tierType(tierId.value, tierIndex.value) : {})
 const orientation = computed(() => t.value.orientation || 'horizontal')
-function patch(p: Record<string, unknown>) { if (tierId.value) ctx.setTierType(tierId.value, p) }
+function patch(p: Record<string, unknown>) { if (tierId.value) ctx.setTierType(tierId.value, p, tierIndex.value) }
 </script>
 
 <template>
   <div v-if="tierId" class="px-4 py-3.5 flex flex-col gap-2.5">
-    <p class="text-[10px] uppercase tracking-[0.12em] text-white/35">Type · {{ tierId }}</p>
+    <p class="text-[10px] uppercase tracking-[0.12em] text-white/35">Type · {{ tierId }}<span v-if="tierIndex > 0"> · item {{ tierIndex + 1 }}</span></p>
     <div>
       <span class="text-[10px] text-white/40">Font</span>
       <TemplatesFontPicker :model-value="t.fontFamily || 'Inter'" @update:model-value="(f: string) => patch({ fontFamily: f })" />

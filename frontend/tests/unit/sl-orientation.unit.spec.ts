@@ -158,6 +158,51 @@ describe('resolveFormat: expressive-section child + orientation combo (no-op)', 
   })
 })
 
+// Round-2a final-fix 5: overflow:'grow' × vertical orientation. A 2-col
+// region on the square master's 6x6 grid, starting at rowSpan 2 — the exact
+// fontSize/content/colSpan combo below is a verified divergence point
+// (found by scanning the parameter space): the OLD (unswapped) grow loop
+// maxes rowSpan out to 6 — the whole grid — because it measures wrapLines
+// against the FIXED colSpan-derived width while comparing the needed height
+// against the growing rowSpan-derived one; the fix (swap both dimensions
+// when the text is vertical) converges one row sooner (5) because it
+// measures wrap width against the GROWING (rowSpan-derived) dimension. This
+// mirrors the reported repro (a vertical hero's rowSpan growing to the whole
+// grid) at the scale a 6-row v2 grid can actually exhibit it.
+const GROW_CONTENT = 'THE ANNUAL GATHERING'
+const GROW_FONT_SIZE = 128
+function growFixture(orientation?: 'horizontal' | 'up' | 'down'): TemplateV2 {
+  return {
+    version: 2, id: 't', name: 't', master: '1x1',
+    formats: { '1x1': { w: 1080, h: 1080 } },
+    grid: { gutter: 24, margin: 72, baseline: 12 },
+    typeScale: { base: 28, ratio: 1.414 },
+    elements: [
+      {
+        id: 'title', type: 'text', content: GROW_CONTENT,
+        level: 'display', priority: 1, overflow: 'grow',
+        region: { col: 1, colSpan: 2, row: 1, rowSpan: 2 },
+        style: { fontSize: GROW_FONT_SIZE, ...(orientation ? { orientation } : {}) },
+      },
+    ],
+  }
+}
+
+describe('resolveFormat: overflow "grow" × vertical orientation (swapped-axis fit)', () => {
+  it('vertical grow converges before maxing rowSpan out to the whole 6-row grid', () => {
+    const r = resolveFormat(growFixture('up'), '1x1')
+    const title = r.elements.find(e => e.el.id === 'title')!
+    expect(title.region!.rowSpan).toBe(5)
+    expect(title.region!.rowSpan).toBeLessThan(6)
+  })
+
+  it('horizontal grow is UNCHANGED by the fix — same content/font/colSpan still maxes rowSpan to 6 as before', () => {
+    const r = resolveFormat(growFixture(), '1x1')
+    const title = r.elements.find(e => e.el.id === 'title')!
+    expect(title.region!.rowSpan).toBe(6)
+  })
+})
+
 describe('isVerticalTextStyle (shared predicate)', () => {
   it('true for orientation "up" with no expressive', () => {
     expect(isVerticalTextStyle({ orientation: 'up' })).toBe(true)

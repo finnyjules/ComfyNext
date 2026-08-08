@@ -96,7 +96,10 @@ export async function bakeTreatment(
       .toBuffer()
     out = await sharp(input).composite([{ input: noisePng, blend: 'overlay' }]).png().toBuffer()
   }
-  return out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength)
+  // sharp's toBuffer() is typed as Node's Buffer, whose `.buffer` is
+  // `ArrayBufferLike` (ArrayBuffer | SharedArrayBuffer) — this cast matches
+  // the same slice-to-ArrayBuffer pattern used in render-template.post.ts.
+  return out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength) as ArrayBuffer
 }
 
 /** Mutates the tree in place: every http(s) img src becomes a data URI, with

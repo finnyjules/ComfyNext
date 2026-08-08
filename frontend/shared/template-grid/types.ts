@@ -84,6 +84,12 @@ export interface GenState {
   /** When true, the hero tier (`tier_hero_0`) reads in the theme's accent
    *  colour instead of the default ink — a poster-style callout. */
   accentOnHero?: boolean
+  /** Brand axis keys (background/foreground/accent) the user has hand-edited
+   *  via `setBrandOverride`/`setBrand` — PINNED across every stamping trigger
+   *  (a theme switch, Surprise's theme re-roll, missing-key backfill) until
+   *  either restored (hex: null) removes the key, or an explicit `setTheme`
+   *  clears the whole list (picking a theme = adopting its system). */
+  brandEdits?: Array<'background' | 'foreground' | 'accent'>
 }
 
 export interface GridSpec {

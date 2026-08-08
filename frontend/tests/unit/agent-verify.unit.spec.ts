@@ -54,6 +54,20 @@ describe('verifySmartLayout', () => {
     expect(r.some(i => /off-canvas/i.test(i.message))).toBe(false)
   })
 
+  // FIX 6: a declared `overhang` (2a Task 10/5's off-canvas placement, e.g. a
+  // deliberately nudged/dragged element) is intentional too — same as bleed.
+  // Region is genuinely off-grid (col < 1) so this exercises the actual
+  // off-canvas branch, not a no-op.
+  it('does NOT flag off-canvas when overhang is set (declared, e.g. via nudge/drag)', () => {
+    const r = verifySmartLayout(base([txt({ overhang: true, region: { col: -3, colSpan: 2, row: 1, rowSpan: 2 } } as any)]))
+    expect(r.some(i => /off-canvas/i.test(i.message))).toBe(false)
+  })
+
+  it('still flags off-canvas when neither bleed nor overhang is set (control)', () => {
+    const r = verifySmartLayout(base([txt({ region: { col: -3, colSpan: 2, row: 1, rowSpan: 2 } } as any)]))
+    expect(r.some(i => /off-canvas/i.test(i.message))).toBe(true)
+  })
+
   it('flags low-contrast text (dark text on the default dark canvas)', () => {
     const r = verifySmartLayout(base([txt({ style: { color: '#111111' } } as Partial<ElementV2>)]))
     expect(r.some(i => /contrast/i.test(i.message))).toBe(true)

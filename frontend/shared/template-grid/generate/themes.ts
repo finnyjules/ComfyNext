@@ -32,26 +32,33 @@ export function getTheme(id: string): Theme | undefined {
  * WCAG 2.x Relative Luminance
  * https://www.w3.org/TR/WCAG20/#relativeluminancedef
  *
- * Supports #rgb and #rrggbb hex format (case-insensitive).
- * Returns a value in [0, 1].
+ * Supports #rgb, #rrggbb, #rgba and #rrggbbaa hex format (case-insensitive) —
+ * a trailing alpha pair/nibble is stripped (StudioColor emits #rrggbbaa; the
+ * theme's own field/accent never carry one, but a user's brand kit can).
+ * TOTAL: never throws. Anything else unparseable (rgb()/gradients/free text
+ * from the Brand popover, kit values, malformed hex) returns NaN — callers
+ * must guard for that rather than assume a real luminance.
  */
 export function relLuminance(hex: string): number {
   // Normalize: remove # and convert to lowercase
-  const clean = hex.toLowerCase().replace('#', '')
+  let clean = hex.toLowerCase().replace('#', '')
+  // Strip a trailing alpha pair/nibble: #rrggbbaa → #rrggbb, #rgba → #rgb.
+  if (clean.length === 8) clean = clean.slice(0, 6)
+  else if (clean.length === 4) clean = clean.slice(0, 3)
 
   // Parse hex: support both #rgb and #rrggbb
   let r: number, g: number, b: number
-  if (clean.length === 3) {
+  if (clean.length === 3 && /^[0-9a-f]{3}$/.test(clean)) {
     // #rgb → expand to #rrggbb
-    r = parseInt(clean[0] + clean[0], 16) / 255
-    g = parseInt(clean[1] + clean[1], 16) / 255
-    b = parseInt(clean[2] + clean[2], 16) / 255
-  } else if (clean.length === 6) {
+    r = parseInt(clean[0]! + clean[0]!, 16) / 255
+    g = parseInt(clean[1]! + clean[1]!, 16) / 255
+    b = parseInt(clean[2]! + clean[2]!, 16) / 255
+  } else if (clean.length === 6 && /^[0-9a-f]{6}$/.test(clean)) {
     r = parseInt(clean.slice(0, 2), 16) / 255
     g = parseInt(clean.slice(2, 4), 16) / 255
     b = parseInt(clean.slice(4, 6), 16) / 255
   } else {
-    throw new Error(`Invalid hex color: ${hex}`)
+    return NaN
   }
 
   // sRGB linearization
@@ -94,6 +101,23 @@ export function contrastRatio(a: string, b: string): number {
   const lMin = Math.min(lumA, lumB)
 
   return (lMax + 0.05) / (lMin + 0.05)
+}
+
+/** The three brand colours a "what does the brand look like right now"
+ *  question always resolves through — background/foreground/accent. */
+export type BrandAxisKey = 'background' | 'foreground' | 'accent'
+export const BRAND_AXIS_KEYS: readonly BrandAxisKey[] = ['background', 'foreground', 'accent']
+
+/**
+ * The three brand colours a theme stamps: field → background,
+ * resolveInk(field) → foreground, defaultAccent → accent. ONE definition of
+ * "what does this theme's brand look like" — `generate()`'s stamp-on-change
+ * guard and the editor's `setBrandOverride`/`setBrand` restore-path both read
+ * this instead of each re-deriving the same three-key mapping (three places
+ * doing that independently is how they drift).
+ */
+export function themeBrandDefaults(theme: Theme): Record<BrandAxisKey, string> {
+  return { background: theme.field, foreground: resolveInk(theme.field), accent: theme.defaultAccent }
 }
 
 /**

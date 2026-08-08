@@ -227,6 +227,110 @@ describe('useGridEditor generation actions', () => {
     expect(t2.brand?.accent).toBe('#123456')
   })
 
+  // -- Round-2a final-fix 3: brandEdits PIN hand-edited keys across rolls -----
+
+  it('FIX 3: setBrandOverride pins the key — it survives repeated Surprise rolls even once the theme itself changes', () => {
+    const ctx = editorWithTiers()
+    ctx.surpriseLayout()
+    ctx.setBrandOverride('background', '#ff00aa')
+    expect((ctx.template.value as TemplateV3).gen?.brandEdits).toEqual(['background'])
+    const startTheme = (ctx.template.value as TemplateV3).gen?.theme
+    let themeChanged = false
+    for (let i = 0; i < 40 && !themeChanged; i++) {
+      ctx.surpriseLayout()   // theme axis unlocked by default — free to re-roll
+      if ((ctx.template.value as TemplateV3).gen?.theme !== startTheme) themeChanged = true
+    }
+    expect(themeChanged).toBe(true)   // sanity: this run actually exercised a theme change
+    expect((ctx.template.value as TemplateV3).brand?.background).toBe('#ff00aa')
+  })
+
+  it('FIX 3: an explicit setTheme clears brandEdits and re-stamps the previously-pinned key', () => {
+    const ctx = editorWithTiers()
+    ctx.surpriseLayout()
+    ctx.setBrandOverride('background', '#ff00aa')
+    expect((ctx.template.value as TemplateV3).gen?.brandEdits).toContain('background')
+    ctx.setTheme('green')
+    const t = ctx.template.value as TemplateV3
+    expect(t.gen?.brandEdits ?? []).not.toContain('background')
+    expect(t.brand?.background).toBe('#2e6f40')   // theme 'green' field — re-stamped, no longer pinned
+  })
+
+  it('FIX 3: setBrandOverride(key, null) restores AND un-pins the key', () => {
+    const ctx = editorWithTiers()
+    ctx.surpriseLayout()
+    ctx.setBrandOverride('background', '#ff00aa')
+    expect((ctx.template.value as TemplateV3).gen?.brandEdits).toContain('background')
+    ctx.setBrandOverride('background', null)
+    expect((ctx.template.value as TemplateV3).gen?.brandEdits ?? []).not.toContain('background')
+  })
+
+  it('FIX 2 (composable): clearing one brand key via setBrand backfills ONLY that key, not the other two', () => {
+    const ctx = editorWithTiers()
+    ctx.surpriseLayout()
+    ctx.setBrandOverride('background', '#ff00aa')
+    ctx.setBrandOverride('accent', '#00ffcc')
+    ctx.setBrand({ background: '' })   // clear via the generic brand patch (empty string = clear)
+    const t = ctx.template.value as TemplateV3
+    expect(t.brand?.background).toBeTruthy()       // backfilled from the theme, not left blank
+    expect(t.brand?.background).not.toBe('#ff00aa')
+    expect(t.brand?.accent).toBe('#00ffcc')         // untouched
+  })
+
+  it('minor: setBrand touching an axis key regenerates + pins brandEdits (parity with setBrandOverride)', () => {
+    const ctx = editorWithTiers()
+    ctx.surpriseLayout()
+    ctx.setBrand({ background: '#123123' })
+    const t = ctx.template.value as TemplateV3
+    expect(t.brand?.background).toBe('#123123')
+    expect(t.gen?.brandEdits).toContain('background')
+  })
+
+  // -- Round-2a final-fix 7: setTierType/tierType address a SPECIFIC item ----
+
+  it('setTierType(id, patch, index) patches ONLY that item — item 0 untouched, survives a re-roll', () => {
+    const ctx = editorWithTiers()
+    ctx.surpriseLayout()
+    ctx.addTierItem('support', 'Second line')   // support now: 0='Food', 1='Second line'
+    ctx.setTierType('support', { letterSpacing: -2 }, 1)
+
+    let t = ctx.template.value as TemplateV3
+    const support = t.tiers?.support
+    const items = Array.isArray(support) ? support : support ? [support] : []
+    expect(items[0]?.type?.letterSpacing).toBeUndefined()
+    expect(items[1]?.type?.letterSpacing).toBe(-2)
+
+    const el0 = t.elements.find(e => e.id === 'tier_support_0') as any
+    const el1 = t.elements.find(e => e.id === 'tier_support_1') as any
+    expect(el0?.style?.letterSpacing).toBeUndefined()
+    expect(el1?.style?.letterSpacing).toBe(-2)
+
+    ctx.shuffleLayout()
+    t = ctx.template.value as TemplateV3
+    const support2 = t.tiers?.support
+    const items2 = Array.isArray(support2) ? support2 : support2 ? [support2] : []
+    expect(items2[1]?.type?.letterSpacing).toBe(-2)
+    expect(items2[0]?.type?.letterSpacing).toBeUndefined()
+  })
+
+  it('tierType(id, index) reads the addressed item, not always item 0', () => {
+    const ctx = editorWithTiers()
+    ctx.surpriseLayout()
+    ctx.addTierItem('support', 'Second line')
+    ctx.setTierType('support', { letterSpacing: -2 }, 1)
+    expect(ctx.tierType('support', 1).letterSpacing).toBe(-2)
+    expect(ctx.tierType('support', 0).letterSpacing).toBeUndefined()
+    expect(ctx.tierType('support').letterSpacing).toBeUndefined()   // default index 0, unchanged behaviour
+  })
+
+  it('setTierType with the default index (0) matches the pre-fix single-item behaviour', () => {
+    const ctx = editorWithTiers()
+    ctx.surpriseLayout()
+    ctx.setTierType('anchor', { letterSpacing: -1 })
+    const t = ctx.template.value as TemplateV3
+    const hero = t.elements.find(e => e.id === 'tier_anchor_0') as any
+    expect(hero?.style?.letterSpacing).toBe(-1)
+  })
+
   // -- Round-2a Task 10: editor unclamp + auto-overhang -----------------------
 
   it('nudgeSelected past the canvas edge goes negative and sets overhang', () => {
@@ -267,6 +371,44 @@ describe('useGridEditor generation actions', () => {
     const clampedCol = el.region.col
     ctx.nudgeSelected(-1000, 0)   // repeat — must not drift further
     expect(ctx.template.value.elements.find(e => e.id === id)!.region.col).toBe(clampedCol)
+  })
+
+  // -- Round-2a final-fix 8: overhang flag is global but regions are per-scope
+
+  it('a class-scoped (non-master) edit landing back in-bounds does NOT clear a master-set overhang flag; a subsequent MASTER edit does', () => {
+    const ctx = useGridEditor(makeStarterTemplate('overhang-scope'))
+    ctx.addText()
+    const id = ctx.selectedId.value!
+
+    // 1. Master off-grid nudge — sets overhang, el.region goes off-grid.
+    ctx.nudgeSelected(-2, 0)
+    ctx.nudgeSelected(-2, 0)
+    expect(ctx.template.value.elements.find(e => e.id === id)!.overhang).toBe(true)
+    const masterRegionOffGrid = ctx.template.value.elements.find(e => e.id === id)!.region.col
+
+    // 2. Switch to a non-master output — regionScope resets to 'class'.
+    ctx.addOutput('9x16')
+    expect(ctx.isMaster.value).toBe(false)
+    expect(ctx.regionScope.value).toBe('class')
+
+    // Nudge back to exactly the in-bounds edge for THIS scope — writes
+    // el.regionByClass[cls], never touching el.region.
+    const rClass = ctx.selectedResolved.value!.region!
+    const maxColClass = ctx.metrics.value.cols - rClass.colSpan + 1
+    ctx.nudgeSelected(maxColClass - rClass.col, 0)
+    const afterClassEdit = ctx.template.value.elements.find(e => e.id === id)!
+    expect(afterClassEdit.overhang).toBe(true)             // STAYS — master region is still off-grid
+    expect(afterClassEdit.region.col).toBe(masterRegionOffGrid)   // el.region untouched by the class-scoped edit
+
+    // 3. Back to the master output — a master-scoped edit landing in-bounds
+    // is the ONLY thing that may clear the flag.
+    ctx.selectOutput('1x1')
+    expect(ctx.isMaster.value).toBe(true)
+    const rMaster = ctx.selectedResolved.value!.region!
+    const maxColMaster = ctx.metrics.value.cols - rMaster.colSpan + 1
+    ctx.nudgeSelected(maxColMaster - rMaster.col, 0)
+    const afterMasterEdit = ctx.template.value.elements.find(e => e.id === id)!
+    expect(afterMasterEdit.overhang).toBeFalsy()
   })
 
   it('duplicateElement of an in-bounds element still lands in-bounds (clamp kept)', () => {

@@ -258,11 +258,21 @@ export function resolveFormat(
       let content = String(resolveTokens(el.content, props, brand) ?? '')
       if (el.style?.transform === 'uppercase') content = content.toUpperCase()
       const maxFontSize = typeSize(el.level, template, formatKey, el.style?.fontSize)
+      // Vertical orientation swaps which axis is "wrap width" vs "stacking
+      // height" — same swap fitElementAtRect's fitText call applies below.
+      // Without this, fullFits() measures wrapLines against the FIXED
+      // colSpan-derived width while comparing against the growing
+      // rowSpan-derived height: for a narrow vertical column that wraps into
+      // many short lines, that pair never converges until rowSpan maxes out
+      // the whole grid (repro'd: rowSpan 2→6 on a 6-row grid).
+      const vertical = isVerticalTextStyle(el.style)
       let rect = toRect(region)
       const fullFits = () => {
-        const lines = wrapLines(content, maxFontSize, rect.w)
+        const wrapW = vertical ? rect.h : rect.w
+        const stackH = vertical ? rect.w : rect.h
+        const lines = wrapLines(content, maxFontSize, wrapW)
         const okLines = el.maxLines == null || lines.length <= el.maxLines
-        return okLines && lines.length * maxFontSize * lineHeight <= rect.h
+        return okLines && lines.length * maxFontSize * lineHeight <= stackH
       }
       while (!fullFits() && region.row + region.rowSpan - 1 < m.rows) {
         region = { ...region, rowSpan: region.rowSpan + 1 }
