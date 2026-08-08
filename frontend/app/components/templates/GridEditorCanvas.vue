@@ -7,7 +7,7 @@
  */
 import type { GridEditorContext } from '~/composables/useGridEditor'
 import { colorToRgba } from '~~/shared/template-grid/color'
-import { dragRegion, pointToCell, resizeRegion } from '~~/shared/template-grid/editor'
+import { dragRegion, pointToCell, regionInBounds, resizeRegion } from '~~/shared/template-grid/editor'
 import { gridExpressiveLayout, expressiveVOffset } from '~~/shared/template-grid/expressive'
 import { verticalTextBox } from '~~/shared/template-grid/grid'
 import type { ResolvedElement } from '~~/shared/template-grid/resolve'
@@ -23,7 +23,7 @@ const ctx = inject<GridEditorContext>('gridEditor')!
 const binding = inject<SmartLayoutBindingContext | null>('smartLayoutBinding', null)
 const {
   template, format, formatClass, currentFormat, currentOutputId, metrics, resolved, selectedId,
-  sampleProps, effectiveBrand, setRegion, patchElement, patchStyle,
+  sampleProps, effectiveBrand, setRegion, patchElement, patchStyle, elById,
   isV3Mode, resolvedSections, selectedSectionId, setSectionRegion,
   moveChildIntoStack, moveChildOutOfStack,
   scale, zoomBy, setContainerSize, containerSize,
@@ -605,16 +605,30 @@ function onElementPointerMove(e: PointerEvent) {
   }
   if (!dragState) return
   const s = scale.value || 1
+  // Unclamped: an element may be dragged past the canvas edge (Task 10 —
+  // overhang), unlike a section frame (onSectionPointerMove below, which
+  // stays clamped — SectionV3 has no overhang semantics).
   const next = dragRegion(
     dragState.startRegion,
     (e.clientX - dragState.startClientX) / s,
     (e.clientY - dragState.startClientY) / s,
     metrics.value,
+    { unclamped: true },
   )
   const cur = resolved.value.elements.find(r => r.el.id === dragState!.id)?.region
   if (cur && (cur.col !== next.col || cur.row !== next.row)) {
     dragState.moved = true
     setRegion(dragState.id, next)
+    // Same auto-flag rule as keyboard nudge (nudgeSelected, useGridEditor.ts):
+    // fully back inside the grid clears `overhang`, extending past it sets it.
+    const el = elById(dragState.id)
+    if (el) {
+      if (regionInBounds(next, metrics.value)) {
+        if (el.overhang) delete el.overhang
+      } else {
+        el.overhang = true
+      }
+    }
   }
 }
 

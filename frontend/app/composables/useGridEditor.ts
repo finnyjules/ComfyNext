@@ -1273,7 +1273,7 @@ export function useGridEditor(
     addText, addImage, addShape, removeElement, moveElement, moveElementTo, moveLayer, moveLayerTo,
     bringForward, sendBackward, bringToFront, sendToBack, duplicateSection, copySelected, pasteClipboard,
     toggleHidden, toggleLocked, isHidden, isLocked,
-    duplicateElement, nudgeSelected,
+    duplicateElement, nudgeSelected, elById,
     isV3Mode, sections, selectedSectionId, selectedSection, resolvedSections,
     setSectionRegion, nudgeSection, removeSection, alignSelected, convertToV3, addSection, groupSelectedInto, ungroupSelectedSection,
     wrapSelectionInStack, updateStackLayout, updateChildSizing, moveChildIntoStack, moveChildOutOfStack, selectedStack,

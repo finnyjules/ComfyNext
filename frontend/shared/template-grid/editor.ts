@@ -24,13 +24,46 @@ export function pointToCell(x: number, y: number, m: GridMetrics): { col: number
   }
 }
 
-/** Move a region by a template-px delta, snapped to whole cells. Span preserved. */
-export function dragRegion(start: Region, dxPx: number, dyPx: number, m: GridMetrics): Region {
+/** Move a region by a template-px delta, snapped to whole cells. Span preserved.
+ *
+ * Clamped by default (used for section-frame dragging — `SectionV3` has no
+ * `overhang` semantics, see resolve.ts, so a section's box must always stay
+ * on the grid). Pass `{ unclamped: true }` for element dragging, which
+ * mirrors `nudgeSelected`'s bounds math exactly (useGridEditor.ts): the same
+ * `[1, cols-colSpan+1]` in-bounds range is widened to a generous sanity clamp
+ * `[min-2*cols, max+2*cols]` so a runaway drag can't fly off to infinity, but
+ * the region is otherwise allowed past the canvas edge — the caller is
+ * responsible for setting/clearing `el.overhang` from the result (see
+ * `regionInBounds` below). */
+export function dragRegion(
+  start: Region, dxPx: number, dyPx: number, m: GridMetrics, opts?: { unclamped?: boolean },
+): Region {
   const dCols = Math.round(dxPx / (m.cellW + m.gutterX))
   const dRows = Math.round(dyPx / (m.cellH + m.gutterY))
-  const col = Math.min(m.cols - start.colSpan + 1, Math.max(1, start.col + dCols))
-  const row = Math.min(m.rows - start.rowSpan + 1, Math.max(1, start.row + dRows))
+  const minCol = 1
+  const maxCol = m.cols - start.colSpan + 1
+  const minRow = 1
+  const maxRow = m.rows - start.rowSpan + 1
+  if (opts?.unclamped) {
+    const col = Math.max(minCol - 2 * m.cols, Math.min(maxCol + 2 * m.cols, start.col + dCols))
+    const row = Math.max(minRow - 2 * m.rows, Math.min(maxRow + 2 * m.rows, start.row + dRows))
+    return { ...start, col, row }
+  }
+  const col = Math.min(maxCol, Math.max(minCol, start.col + dCols))
+  const row = Math.min(maxRow, Math.max(minRow, start.row + dRows))
   return { ...start, col, row }
+}
+
+/** Whether a region's box is fully on the grid (no overhang) — the same
+ * in-bounds test `nudgeSelected` inlines (useGridEditor.ts:594-604), pulled
+ * out here so the mouse-drag path can apply the identical auto-overhang rule
+ * a keyboard nudge does. */
+export function regionInBounds(r: Region, m: GridMetrics): boolean {
+  const minCol = 1
+  const maxCol = m.cols - r.colSpan + 1
+  const minRow = 1
+  const maxRow = m.rows - r.rowSpan + 1
+  return r.col >= minCol && r.col <= maxCol && r.row >= minRow && r.row <= maxRow
 }
 
 /** Resize a region from a corner handle by a template-px delta, snapped to
