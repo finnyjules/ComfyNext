@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
+import { defaultsFromControls, type ControlSpec, type Params, type SpaceTypeEffect } from '../effect'
 import { expandContent, parseContent } from '../tile'
 import { ringTransform, bentOffset, type RingParams } from '../ringLayout'
 import { layoutChars, type CharLayout } from '../charLayout'
@@ -45,6 +45,13 @@ const controls: ControlSpec[] = [
   { key: 'cornerRadius', label: 'Corner radius', kind: 'slider', min: 0, max: 0.5, step: 0.01, default: 0.06, group: 'Ribbon' },
 ]
 
+// Docs saved before the "Ring tune-up" feature only have the original 7 keys
+// (content, radius, ringTilt, cardSize, perspective, speed, direction) — the
+// newer keys below are absent (undefined), not merely zero. The app's load
+// path does not backfill control defaults onto a hydrated doc, so `n()` below
+// falls back to these declared defaults for any missing key.
+const RING_DEFAULTS = defaultsFromControls(controls)
+
 // Per-card plane subdivision along its width so `applyBend` (below) can curve
 // each card to the ring instead of only tilting it flat. 1 segment tall keeps
 // the vertical edges straight (bend only wraps tangentially around the ring).
@@ -77,7 +84,10 @@ function applyBend(mesh: THREE.Mesh, aspect: number, cardSize: number, padding: 
 
 interface RingState { quads: THREE.Mesh[] }
 
-function n(p: Params, k: string): number { return Number(p[k]) }
+// `??` (nullish), not `||`: a legitimately-saved 0 (e.g. ringOpening=0 = head-on)
+// must be preserved — only a genuinely-missing (undefined/null) key falls back
+// to the control's declared default.
+function n(p: Params, k: string): number { return Number(p[k] ?? RING_DEFAULTS[k]) }
 
 // Ring opening's max lean off top-down (radians, ~80deg): opening 1 reveals the
 // full circle face-on to the camera path; opening 0 collapses the ring to
@@ -145,7 +155,7 @@ export const ringEffect: SpaceTypeEffect = {
         // for USE_MAP — see uv_pars_fragment.glsl.js: `varying vec2 vMapUv;` under `#ifdef
         // USE_MAP`, decoupled from the generic `vUv` since ~three r152's per-map UV transforms.
         if (tex) {
-          const uniforms = { uCorner: { value: Number(params.cornerRadius) || 0 }, uAspect: { value: aspect } }
+          const uniforms = { uCorner: { value: n(params, 'cornerRadius') }, uAspect: { value: aspect } }
           material.onBeforeCompile = (shader) => {
             shader.uniforms.uCorner = uniforms.uCorner
             shader.uniforms.uAspect = uniforms.uAspect

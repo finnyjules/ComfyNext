@@ -54,4 +54,20 @@ describe('ringEffect', () => {
     expect(() => ringEffect.update!(0.25, params, root)).not.toThrow()
     expect((root as any).userData.ringState.quads).toHaveLength(2)
   })
+
+  it('renders finite (no NaN) for a pre-tuneup doc missing the new keys', () => {
+    const legacy = {
+      content: JSON.stringify([{ id: 'i0', kind: 'image', src: 'data:0' }, { id: 'i1', kind: 'image', src: 'data:1' }]),
+      radius: 5, ringTilt: -0.28, cardSize: 1.4, perspective: 0.4, speed: 1, direction: 'cw',
+    }
+    const root = ringEffect.buildScene(THREE, legacy as any, new THREE.Texture(), { width: 960, height: 540, imageTextures: new Map() })
+    ringEffect.update!(0.25, legacy as any, root)
+    expect(Number.isFinite(root.rotation.x)).toBe(true)
+    expect(Number.isFinite(root.rotation.z)).toBe(true)
+    for (const q of (root as any).userData.ringState.quads) {
+      expect(Number.isFinite(q.scale.x)).toBe(true)
+      const pos = (q.geometry.attributes.position as any).array as Float32Array
+      expect(pos.every((v: number) => Number.isFinite(v))).toBe(true)
+    }
+  })
 })
