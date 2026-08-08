@@ -2,9 +2,9 @@ import { describe, it, expect } from 'vitest'
 import { expandContent, parseContent, type ContentItem } from '~/lib/spacetype/tile'
 
 describe('expandContent', () => {
-  it('image → one image tile, aspect defaults to 1', () => {
-    const out = expandContent([{ id: 'a', kind: 'image', src: 'data:x' }])
-    expect(out).toEqual([{ kind: 'image', sourceId: 'a', src: 'data:x', aspect: 1 }])
+  it('card/image → one card tile, aspect defaults to 1', () => {
+    const out = expandContent([{ id: 'a', kind: 'card', fillKind: 'image', src: 'data:x' }])
+    expect(out).toEqual([{ kind: 'card', sourceId: 'a', fillKind: 'image', src: 'data:x', fill: undefined, aspect: 1 }])
   })
 
   it('whole word → one word tile', () => {
@@ -27,12 +27,12 @@ describe('expandContent', () => {
 
   it('mixed list preserves order and total count', () => {
     const items: ContentItem[] = [
-      { id: 'i1', kind: 'image', src: 'data:1', aspect: 1.5 },
+      { id: 'i1', kind: 'card', fillKind: 'image', src: 'data:1', aspect: 1.5 },
       { id: 'w1', kind: 'word', text: 'HI', resolution: 'letters' },
-      { id: 'i2', kind: 'image', src: 'data:2' },
+      { id: 'i2', kind: 'card', fillKind: 'image', src: 'data:2' },
     ]
     const out = expandContent(items)
-    expect(out.map(t => t.kind)).toEqual(['image', 'letter', 'letter', 'image'])
+    expect(out.map(t => t.kind)).toEqual(['card', 'letter', 'letter', 'card'])
     expect(out.map(t => t.sourceId)).toEqual(['i1', 'w1', 'w1', 'i2'])
   })
 
@@ -45,5 +45,21 @@ describe('expandContent', () => {
     expect(parseContent('not json')).toEqual([])
     expect(parseContent('{}')).toEqual([])
     expect(parseContent('[{"id":"a","kind":"image","src":"x"}]')).toHaveLength(1)
+  })
+
+  it('migrates a legacy image item to a card/image fill', () => {
+    const items = parseContent(JSON.stringify([{ id: 'i', kind: 'image', src: 'data:x', aspect: 1.5 }]))
+    expect(items).toEqual([{ id: 'i', kind: 'card', fillKind: 'image', src: 'data:x', aspect: 1.5 }])
+  })
+
+  it('expands a gradient card to one card tile carrying its fill', () => {
+    const fill = { type: 'gradient', a: '#fff', b: '#000', angle: 45 } as any
+    const out = expandContent([{ id: 'c', kind: 'card', fillKind: 'gradient', fill }])
+    expect(out).toEqual([{ kind: 'card', sourceId: 'c', fillKind: 'gradient', aspect: 1, src: undefined, fill }])
+  })
+
+  it('legacy image expands to a card tile (kind card, fillKind image)', () => {
+    const out = expandContent(parseContent(JSON.stringify([{ id: 'i', kind: 'image', src: 'data:x', aspect: 2 }])))
+    expect(out[0]).toMatchObject({ kind: 'card', fillKind: 'image', src: 'data:x', aspect: 2 })
   })
 })
