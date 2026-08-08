@@ -25,7 +25,8 @@
 ## File Structure
 
 **Create:**
-- `frontend/app/lib/texturefx/sheet.ts` — the only place sheet dimensions and repeat geometry are computed. Pure except for `drawSheet`.
+- `frontend/app/lib/texturefx/sheet.ts` — the only place sheet dimensions and repeat geometry are computed. Pure except for `drawSheet`. Renderer-free on purpose: `controls.ts` imports it, which puts it in the Collection resolver's import graph.
+- `frontend/app/lib/texturefx/bake.ts` — the one full-resolution bake, shared by the studio export and the node's headless bake. Depends on the GL renderer, so it is imported only by the two Vue components.
 - `frontend/tests/unit/texturefx-sheet.unit.spec.ts` — resolver tests.
 
 **Modify:**
@@ -374,83 +375,111 @@ cd /Users/julien/Documents/GitHub/Sailor && git add frontend/app/lib/texturefx/s
 
 ---
 
-### Task 2: Both export paths honour the sheet
+### Task 2: One bake path, used by both exporters
 
 **Files:**
+- Create: `frontend/app/lib/texturefx/bake.ts`
 - Modify: `frontend/app/components/vue-canvas/TextureStudioSurface.vue:455-461` (`exportBlob`)
 - Modify: `frontend/app/components/vue-canvas/TextureStudioNode.vue:77-83` (`bakeOutput`)
 
 **Interfaces:**
-- Consumes: `sheetFromParams`, `drawSheet` from Task 1.
-- Produces: nothing new. `sendToCanvas`, `downloadPng` and `renderBlobWithOverrides` already route through `exportBlob`, so they inherit the sheet with no edit.
+- Consumes: `sheetFromParams`, `drawSheet`, `Sheet` from Task 1.
+- Produces: `renderSheetCanvas(p: Params, s?: Sheet): HTMLCanvasElement` and `bakeSheetBlob(p: Params): Promise<Blob>` from `~/lib/texturefx/bake`.
+- `sendToCanvas`, `downloadPng` and `renderBlobWithOverrides` already route through `exportBlob`, so they inherit the sheet with no edit.
 
-This task has no unit test — it is canvas work. Task 1's `tilePositions` tests cover the geometry; Task 6 verifies the actual exported pixels.
+**Why a separate module and not `sheet.ts`:** `controls.ts` imports `sheet.ts`, and `controls.ts` is reachable from the Collection resolver's dynamic import graph (see the header comment in `lib/texturefx/types.ts`). Pulling the WebGL renderer into `sheet.ts` would drag GL into that graph. `bake.ts` is imported only by the two Vue components, so it can depend on the renderer freely.
 
-- [ ] **Step 1: Rewrite `exportBlob` in the surface**
+This task has no unit test — it is canvas work, and jsdom/happy-dom has no WebGL. Task 1's `tilePositions` tests cover the geometry; Task 6 verifies the actual exported pixels.
 
-Add to the imports at the top of `TextureStudioSurface.vue` (after the `types` import on line 10):
+- [ ] **Step 1: Create the bake module**
 
-```ts
-import { drawSheet, fitLetterbox, isTileable, repeatsFor, sheetFromParams } from '~/lib/texturefx/sheet'
-```
-
-(`fitLetterbox`, `isTileable` and `repeatsFor` are used by Tasks 3 and 4 — import them now so the import line is written once.)
-
-Replace lines 455-461 entirely:
+Create `frontend/app/lib/texturefx/bake.ts`:
 
 ```ts
-// Render the tile at its full size, stylize it, then repeat-fill the sheet. The tile
-// is always square so cells stay undistorted; the sheet's aspect comes from how much
-// of that repeating field we keep. Tile sizes are multiples of 64 so dither stays
-// seamless (see TILE_PX_OPTIONS).
-async function exportBlob(): Promise<Blob> {
-  const sheet = sheetFromParams(params)
-  const tile = stylizeTile(
-    textureFx.render(params, sheet.tile, sheet.tile, 0), params, sheet.tile, sheet.tile)
+import { textureFx } from '~/lib/texturefx/renderer'
+import { stylizeTile } from '~/lib/texturefx/stylize'
+import { drawSheet, sheetFromParams, type Sheet } from '~/lib/texturefx/sheet'
+import type { Params } from '~/lib/spacetype/effect'
+
+// The single full-resolution bake. Both exporters — the studio's Download/As-image
+// and the node's headless cascade bake — call this, so they cannot disagree about
+// what a pattern exports.
+//
+// Deliberately NOT in sheet.ts: controls.ts imports sheet.ts and is reachable from
+// the Collection resolver's dynamic import graph, which must stay free of the GL
+// renderer (see the header comment in types.ts).
+
+/**
+ * Render the seamless tile at its full size, stylize it (dither/posterize/duotone),
+ * then repeat-fill the sheet. The tile is always square so cells stay undistorted;
+ * the sheet's aspect comes from how much of that repeating field is kept. Tile sizes
+ * are multiples of 64 so dither stays seamless across the repeat.
+ */
+export function renderSheetCanvas(p: Params, s: Sheet = sheetFromParams(p)): HTMLCanvasElement {
+  const tile = stylizeTile(textureFx.render(p, s.tile, s.tile, 0), p, s.tile, s.tile)
   const out = document.createElement('canvas')
-  out.width = sheet.w
-  out.height = sheet.h
+  out.width = s.w
+  out.height = s.h
   const ctx = out.getContext('2d')
   if (!ctx) throw new Error('2d context unavailable')
-  drawSheet(ctx, tile, sheet, sheet.w, sheet.h)
+  drawSheet(ctx, tile, s, s.w, s.h)
+  return out
+}
+
+/** PNG-encode a full-resolution sheet. */
+export async function bakeSheetBlob(p: Params): Promise<Blob> {
+  const out = renderSheetCanvas(p)
   return await new Promise<Blob>((res, rej) =>
     out.toBlob((b) => (b ? res(b) : rej(new Error('toBlob failed'))), 'image/png'))
 }
 ```
 
-- [ ] **Step 2: Rewrite `bakeOutput` in the node**
+- [ ] **Step 2: Rewrite `exportBlob` in the surface**
+
+Add to the imports at the top of `TextureStudioSurface.vue` (after the `types` import on line 10):
+
+```ts
+import { bakeSheetBlob } from '~/lib/texturefx/bake'
+import { drawSheet, fitLetterbox, isTileable, repeatsFor, sheetFromParams } from '~/lib/texturefx/sheet'
+```
+
+(`drawSheet`, `fitLetterbox`, `isTileable` and `repeatsFor` are used by Tasks 3 and 4 — import them now so the import lines are written once.)
+
+Replace lines 455-461 entirely:
+
+```ts
+// Full-resolution sheet — shared with the node's headless bake, see lib/texturefx/bake.ts.
+async function exportBlob(): Promise<Blob> {
+  return await bakeSheetBlob(params)
+}
+```
+
+- [ ] **Step 3: Rewrite `bakeOutput` in the node**
 
 Add to the imports at the top of `TextureStudioNode.vue` (after the `raster` import on line 7):
 
 ```ts
+import { bakeSheetBlob } from '~/lib/texturefx/bake'
 import { drawSheet, fitLetterbox, isSheetFramed, sheetFromParams } from '~/lib/texturefx/sheet'
 ```
 
-(`fitLetterbox` and `isSheetFramed` are used by Task 5.)
+(`drawSheet`, `fitLetterbox` and `isSheetFramed` are used by Task 5.)
 
 Replace lines 77-83 entirely:
 
 ```ts
-// Headless full-res sheet for the render cascade (generative — no input). Same
-// resolver as the studio's exportBlob, so the cascade and the studio agree.
+// Headless full-res sheet for the render cascade (generative — no input). Same bake
+// as the studio's exportBlob, so the cascade and the studio agree.
 async function bakeOutput(): Promise<Blob | null> {
   await preloadStylize().catch(() => {})
-  const sheet = sheetFromParams(params.value)
-  const tile = stylizeTile(
-    textureFx.render(params.value, sheet.tile, sheet.tile, 0), params.value, sheet.tile, sheet.tile)
-  const out = document.createElement('canvas')
-  out.width = sheet.w
-  out.height = sheet.h
-  const ctx = out.getContext('2d')
-  if (!ctx) return null
-  drawSheet(ctx, tile, sheet, sheet.w, sheet.h)
-  return await new Promise<Blob | null>(res => out.toBlob(b => res(b), 'image/png'))
+  try { return await bakeSheetBlob(params.value) }
+  catch (e) { console.error('[texture] headless bake failed', e); return null }
 }
 ```
 
-The `BAKE_TILE` const on line 78 is now unused — delete it.
+The `BAKE_TILE` const on line 78 is now unused — delete it. Note `stylizeTile` and `textureFx` are still used by `renderFrame` in this file, so leave those imports alone.
 
-- [ ] **Step 3: Typecheck the two files**
+- [ ] **Step 4: Typecheck the two files**
 
 ```bash
 cd /Users/julien/Documents/GitHub/Sailor/frontend && npx vue-tsc --noEmit -p tsconfig.json 2>&1 | grep -E "TextureStudio|texturefx" || echo "no texture errors"
@@ -458,7 +487,7 @@ cd /Users/julien/Documents/GitHub/Sailor/frontend && npx vue-tsc --noEmit -p tsc
 
 Expected: `no texture errors`. The project has a large pre-existing error baseline (~328); only errors naming these files matter. If an error names `Sheet`, `tilePositions` or `sheetFromParams`, it is yours — do not wave it through as pre-existing.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 cd /Users/julien/Documents/GitHub/Sailor && git add frontend/app/components/vue-canvas/TextureStudioSurface.vue frontend/app/components/vue-canvas/TextureStudioNode.vue && git commit -m "feat(pattern-studio): export and headless bake render the sheet"
