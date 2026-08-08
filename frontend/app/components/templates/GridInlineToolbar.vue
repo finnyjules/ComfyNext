@@ -22,7 +22,7 @@ const s = () => props.element?.style ?? {}
 </script>
 
 <template>
-  <div class="flex items-center gap-1.5 rounded-lg border border-white/10 bg-[#1b1b1f] px-2 py-1.5 shadow-xl text-[13px]">
+  <div data-toolbar class="flex items-center gap-1.5 rounded-lg border border-white/10 bg-[#1b1b1f] px-2 py-1.5 shadow-xl text-[13px]">
     <template v-if="element?.type === 'text'">
       <input
         type="number"

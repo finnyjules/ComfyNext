@@ -74,6 +74,39 @@ async function nudgeNode(page: Page, nodeId: string, dx: number, dy: number): Pr
   }, { id: nodeId, dx, dy })
 }
 
+/** Point falls inside `box` (inclusive), used to steer clear of staged
+ *  elements when hunting for genuinely empty artboard space. */
+function pointInBox(p: { x: number; y: number }, box: { x: number; y: number; width: number; height: number }): boolean {
+  return p.x >= box.x && p.x <= box.x + box.width && p.y >= box.y && p.y <= box.y + box.height
+}
+
+/** Finds a click point inside the artboard that doesn't land on any of the
+ *  given element boxes — tries the four artboard corners (inset a few px so
+ *  the click isn't swallowed by an edge-flush element) before falling back
+ *  to the artboard's own centre-adjacent offsets. Generated layouts vary, so
+ *  this can't hardcode a single "known empty" spot. */
+function findEmptyPoint(
+  artboardBox: { x: number; y: number; width: number; height: number },
+  elementBoxes: Array<{ x: number; y: number; width: number; height: number }>,
+): { x: number; y: number } {
+  const inset = 10
+  const candidates = [
+    // Bottom corners first — a contextual toolbar (when something's
+    // selected) floats ABOVE the selection, so it's likelier to intrude on
+    // the top corners than the bottom ones.
+    { x: artboardBox.x + inset, y: artboardBox.y + artboardBox.height - inset },
+    { x: artboardBox.x + artboardBox.width - inset, y: artboardBox.y + artboardBox.height - inset },
+    { x: artboardBox.x + artboardBox.width / 2, y: artboardBox.y + artboardBox.height - inset },
+    { x: artboardBox.x + inset, y: artboardBox.y + inset },
+    { x: artboardBox.x + artboardBox.width - inset, y: artboardBox.y + inset },
+    { x: artboardBox.x + inset, y: artboardBox.y + artboardBox.height / 2 },
+  ]
+  for (const c of candidates) {
+    if (!elementBoxes.some(b => pointInBox(c, b))) return c
+  }
+  throw new Error('No empty artboard point found — every candidate overlaps a staged element')
+}
+
 /** The project's default canvas can carry leftover nodes from a prior run
  *  against this same (persistent, non-mocked) dev server. Clear it so the
  *  test starts from a genuinely empty graph — otherwise a stray node can sit
@@ -150,6 +183,41 @@ test.describe('Smart Layout generation (wired Shuffle/Surprise)', () => {
     await expect.poll(async () => await staged.count(), { timeout: 10_000 }).toBeGreaterThan(0)
     const initialStaged = await staged.allInnerTexts()
     expect(initialStaged.length).toBeGreaterThan(0)
+
+    // Round-2a Task 5 fix-round regression: click-to-deselect. Clicking a
+    // staged element hands the right panel to the element/tier inspector;
+    // clicking a genuinely empty spot on the artboard must hand it back to
+    // the canvas-level "Canvas" panel. The clip wrapper added around the
+    // elements loop (GridEditorCanvas.vue) intercepts empty-canvas clicks,
+    // so this previously never fired — verified against real pointer
+    // clicks, not synthetic events (see memory: synthetic pointer events
+    // prove nothing). Placed here (right after staged elements first
+    // appear) rather than at the end of the journey so it doesn't ride on
+    // the content-correctness assertions below.
+    const canvasHeading = modal.locator('p.text-sm.font-medium.text-white\\/85', { hasText: 'Canvas' })
+    const tierInspector = modal.locator('text=/^Type ·/')
+
+    await staged.first().click()
+    await expect(tierInspector).toBeVisible()
+    await expect(canvasHeading).toBeHidden()
+
+    const artboardBox = await modal.locator('[data-artboard]').boundingBox()
+    expect(artboardBox, 'artboard bounding box must be measurable').toBeTruthy()
+    const elementBoxes = await staged.evaluateAll(els => els.map(e => {
+      const r = e.getBoundingClientRect()
+      return { x: r.x, y: r.y, width: r.width, height: r.height }
+    }))
+    // The contextual toolbar floats above the selected element (outside the
+    // artboard's own bounds when the selection sits near the top) and must
+    // also be avoided — a click that lands on it is a toolbar click, not an
+    // empty-canvas click, regardless of which panel it happens to leave up.
+    const toolbarBox = await modal.locator('[data-toolbar]').boundingBox()
+    if (toolbarBox) elementBoxes.push(toolbarBox)
+    const emptyPoint = findEmptyPoint(artboardBox!, elementBoxes)
+
+    await page.mouse.click(emptyPoint.x, emptyPoint.y)
+    await expect(canvasHeading).toBeVisible()
+    await expect(tierInspector).toBeHidden()
 
     // Task 15 Critical fix: autopopulateV2 and the tier-seed+generate path
     // are mutually exclusive on a fresh layout — the wired text_layer_1 must

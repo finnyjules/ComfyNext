@@ -771,9 +771,20 @@ function onHandlePointerUp(e: PointerEvent) {
   resizeState = null
 }
 
+// Deselect on a genuinely empty canvas click. Can't use `e.target ===
+// e.currentTarget` any more — the elements loop is wrapped in a clip div
+// (see the `overflow-hidden` wrapper below) that covers the whole artboard,
+// so empty-area clicks land on THAT wrapper, never on the artboard/container
+// themselves. Structural check instead: deselect unless the click landed
+// inside actual interactive content (an element, a section frame, a resize
+// handle, or the floating toolbar).
 function onCanvasClick(e: MouseEvent) {
   if (suppressClick) { suppressClick = false; return }   // just finished drawing a frame
-  if (e.target === e.currentTarget) { selectedId.value = null; selectedSectionId.value = null }
+  const target = e.target as HTMLElement
+  if (!target.closest('[data-el-id], [data-section-id], [data-handle], [data-toolbar]')) {
+    selectedId.value = null
+    selectedSectionId.value = null
+  }
 }
 
 // -- Contextual toolbar (Task 4) ---------------------------------------------
@@ -911,6 +922,7 @@ function onSectionHandlePointerUp(e: PointerEvent) {
     <!-- Scaled wrapper; inner div is template coordinate space. -->
     <div
       ref="artboardRef"
+      data-artboard
       class="relative shrink-0 shadow-[0_8px_32px_rgba(0,0,0,0.45)]"
       :style="{
         width: format.w + 'px',
@@ -1057,6 +1069,7 @@ function onSectionHandlePointerUp(e: PointerEvent) {
         <div
           v-for="rs in resolvedSections"
           :key="rs.section.id"
+          :data-section-id="rs.section.id"
           class="absolute"
           :style="{
             left: rs.rect.x + 'px', top: rs.rect.y + 'px',
@@ -1083,6 +1096,7 @@ function onSectionHandlePointerUp(e: PointerEvent) {
             <div
               v-for="dir in (['nw', 'ne', 'sw', 'se'] as const)"
               :key="dir"
+              data-handle
               class="absolute size-3 bg-white border border-[#34D399] rounded-sm"
               :style="{
                 top:    dir.startsWith('n') ? '-6px' : 'auto',
@@ -1116,6 +1130,7 @@ function onSectionHandlePointerUp(e: PointerEvent) {
         <div
           v-for="dir in HANDLE_DIRS"
           :key="dir"
+          data-handle
           class="absolute size-3 bg-white border border-action rounded-sm pointer-events-auto"
           :style="handleStyle(dir)"
           @pointerdown="(e) => onHandlePointerDown(e, resizeHandleTarget!, dir)"
@@ -1150,6 +1165,7 @@ function onSectionHandlePointerUp(e: PointerEvent) {
       <button
         v-for="r in culled"
         :key="r.el.id"
+        :data-el-id="r.el.id"
         class="px-2 py-1 rounded bg-amber-500/10 border border-amber-500/25 text-[10px] text-amber-200/90 hover:bg-amber-500/20 transition-colors cursor-pointer"
         :title="r.cullReason === 'no-slot'
           ? 'No slot in this format class — select it and set a region in the properties panel to place it here'
