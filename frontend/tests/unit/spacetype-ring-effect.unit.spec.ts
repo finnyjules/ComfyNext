@@ -70,4 +70,53 @@ describe('ringEffect', () => {
       expect(pos.every((v: number) => Number.isFinite(v))).toBe(true)
     }
   })
+
+  // Global word type controls (font/typeWeight/typeYScale/tracking/typeColor — see
+  // docs/superpowers/specs/2026-08-07-ring-word-type-controls-design.md). `layoutChars`
+  // (word/letter tile rasterisation) calls `document.createElement('canvas')`, which
+  // throws under this suite's `node` test environment (no jsdom/happy-dom, no canvas
+  // polyfill — confirmed empirically: `document` is undefined here). So these tests use
+  // IMAGE content (whose tile path never calls layoutChars) to exercise the actual code
+  // under test — buildScene's unconditional `resolveFontFamily`/`fontHasWeightAxis`
+  // resolution of the new params, which runs once before the tile loop regardless of
+  // tile kind — without hitting the canvas ReferenceError. This still proves: (a) the
+  // new controls don't crash buildScene when set to non-default values, (b) quad count
+  // is unaffected by the type controls, and (c) legacy docs missing the keys fall back
+  // to RING_DEFAULTS instead of producing NaN.
+  it('non-default type controls (font/weight/size/tracking/colour) build without throwing', () => {
+    const items = [{ id: 'i0', kind: 'image', src: 'data:0' }, { id: 'i1', kind: 'image', src: 'data:1' }]
+    const params = {
+      ...defaultsFromControls(ringEffect.controls),
+      content: JSON.stringify(items),
+      font: 'Roboto Flex',
+      typeWeight: 900,
+      typeYScale: 240,
+      tracking: 40,
+      typeColor: '#ff0000',
+    }
+    let root: THREE.Object3D | undefined
+    expect(() => {
+      root = ringEffect.buildScene(THREE, params, new THREE.Texture(), { width: 960, height: 540, imageTextures: new Map() })
+    }).not.toThrow()
+    const st = (root as any).userData.ringState
+    expect(st.quads).toHaveLength(2)
+  })
+
+  it('legacy doc missing the new type keys builds finite (RING_DEFAULTS backfill)', () => {
+    const legacy = {
+      content: JSON.stringify([{ id: 'i0', kind: 'image', src: 'data:0' }]),
+      radius: 5, ringTilt: -0.28, cardSize: 1.4, perspective: 0.4, speed: 1, direction: 'cw',
+      // font, typeWeight, typeYScale, tracking, typeColor deliberately absent
+    }
+    expect('font' in legacy).toBe(false)
+    expect('typeWeight' in legacy).toBe(false)
+    const root = ringEffect.buildScene(THREE, legacy as any, new THREE.Texture(), { width: 960, height: 540, imageTextures: new Map() })
+    ringEffect.update!(0, legacy as any, root)
+    expect(Number.isFinite(root.rotation.x)).toBe(true)
+    const st = (root as any).userData.ringState
+    expect(st.quads).toHaveLength(1)
+    for (const q of st.quads) {
+      expect(Number.isFinite(q.scale.x)).toBe(true)
+    }
+  })
 })

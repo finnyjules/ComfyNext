@@ -3,6 +3,7 @@ import { defaultsFromControls, type ControlSpec, type Params, type SpaceTypeEffe
 import { expandContent, parseContent } from '../tile'
 import { ringTransform, bentOffset, type RingParams } from '../ringLayout'
 import { layoutChars, type CharLayout } from '../charLayout'
+import { resolveFontFamily, fontHasWeightAxis } from '~/lib/font/resolveFamily'
 
 /**
  * RING — the Expressive Studio keystone effect: photos and words ride one
@@ -17,12 +18,6 @@ import { layoutChars, type CharLayout } from '../charLayout'
  * headless export) share this singleton effect module.
  */
 
-// Hardcoded rasterisation opts for word/letter tiles — the ring effect has no
-// `font` control of its own (content items don't carry per-word typography yet).
-const WORD_FONT_FAMILY = 'Inter'
-const WORD_FONT_WEIGHT = 700
-const WORD_FONT_SIZE_PX = 160
-
 const controls: ControlSpec[] = [
   {
     key: 'content',
@@ -31,6 +26,16 @@ const controls: ControlSpec[] = [
     default: '[{"id":"d1","kind":"word","text":"NATURAL","resolution":"whole"},{"id":"d2","kind":"word","text":"FRESH","resolution":"letters"}]',
     group: 'Type',
   },
+  // Global word type controls — one set of typography for every word/letter tile
+  // on the ring (per-word typography is a possible later expansion, out of scope
+  // here). Defaults reproduce the values these replaced (the old hardcoded
+  // WORD_FONT_FAMILY/WEIGHT/SIZE_PX 'Inter'/700/160), so existing ring docs render
+  // unchanged. Structural (rasterise the glyph atlas) — see `liveKeys` below.
+  { key: 'font', label: 'Font', kind: 'font', default: 'Inter', group: 'Type' },
+  { key: 'typeWeight', label: 'Type weight', kind: 'slider', min: 100, max: 900, step: 10, default: 700, group: 'Type' },
+  { key: 'typeYScale', label: 'Type size', kind: 'slider', min: 40, max: 320, step: 2, default: 160, group: 'Type' },
+  { key: 'tracking', label: 'Tracking', kind: 'slider', min: -20, max: 80, step: 1, default: 0, group: 'Type' },
+  { key: 'typeColor', label: 'Type colour', kind: 'color', default: '#ffffff', group: 'Color' },
   { key: 'radius', label: 'Ring size', kind: 'slider', min: 2, max: 12, step: 0.1, default: 5, group: 'Ribbon' },
   { key: 'repeat', label: 'Repeater', kind: 'slider', min: 1, max: 8, step: 1, default: 1, group: 'Ribbon' },
   { key: 'padding', label: 'Padding', kind: 'slider', min: 0, max: 0.9, step: 0.01, default: 0, group: 'Ribbon' },
@@ -124,6 +129,12 @@ export const ringEffect: SpaceTypeEffect = {
     // textures are owned by env.imageTextures (engine's setImageTextures/dispose already
     // tracks + frees them), so tagging userData.tex there would double-dispose.
     const registered = new Set<string>()
+    // Global word type controls (see `controls` above) — resolved ONCE for the whole
+    // build, not per tile, mirroring cylinder.ts:172-182. `hasWght` gates whether the
+    // weight slider drives a variable-font axis or falls back to a fixed 400 (matches
+    // cylinder's non-variable-font fallback).
+    const family = resolveFontFamily(String(params.font))
+    const hasWght = fontHasWeightAxis(family)
 
     for (const tile of tiles) {
       const geo = new three.PlaneGeometry(1, 1, BEND_SEGMENTS, 1)
@@ -179,12 +190,13 @@ export const ringEffect: SpaceTypeEffect = {
         if (!layout) {
           layout = layoutChars({
             text: tile.text,
-            fontFamily: WORD_FONT_FAMILY,
-            fontWeight: WORD_FONT_WEIGHT,
-            fontSizePx: WORD_FONT_SIZE_PX,
-            tracking: 0,
+            fontFamily: family,
+            fontWeight: hasWght ? n(params, 'typeWeight') : 400,
+            fontSizePx: n(params, 'typeYScale'),
+            tracking: n(params, 'tracking'),
             scaleX: 1,
-            color: '#ffffff',
+            color: String(params.typeColor),
+            axes: hasWght ? { wght: n(params, 'typeWeight') } : undefined,
           })
           layoutCache.set(tile.sourceId, layout)
         }
