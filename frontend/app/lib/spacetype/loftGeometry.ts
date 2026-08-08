@@ -131,6 +131,7 @@ export function buildLoftGeometry(opts: {
   baseContours: Vec2[][]
   closed: boolean
   render: 'stroke' | 'fill'
+  cap?: boolean
 }): LoftGeometry {
   const { stations, props, baseContours, closed, render } = opts
   const K = stations.length
@@ -181,6 +182,29 @@ export function buildLoftGeometry(opts: {
           indices.push(idx(i, c, p), idx(i, c, np))
         }
       }
+    }
+  }
+
+  // Cap the two open ends of the swept surface with a centroid-fan disc so Fill mode reads as a
+  // solid, not a hollow tube — closed loops have no ends to cap.
+  if (render === 'fill' && opts.cap && !closed) {
+    const capStations = [0, K - 1]
+    const extraPos: number[] = [], extraAlong: number[] = []
+    let capVo = K * C * P                       // next vertex index after the grid
+    for (const i of capStations) {
+      const st = stations[i]!
+      for (let c = 0; c < C; c++) {
+        const cIdx = capVo++
+        extraPos.push(st.pos.x, st.pos.y, st.pos.z); extraAlong.push(st.t)
+        for (let p = 0; p < P; p++) { const np = (p + 1) % P; indices.push(cIdx, idx(i, c, p), idx(i, c, np)) }
+      }
+    }
+    if (extraPos.length) {
+      const mergedPos = new Float32Array(positions.length + extraPos.length)
+      mergedPos.set(positions); mergedPos.set(extraPos, positions.length)
+      const mergedAlong = new Float32Array(along.length + extraAlong.length)
+      mergedAlong.set(along); mergedAlong.set(extraAlong, along.length)
+      return { positions: mergedPos, along: mergedAlong, indices: new Uint32Array(indices) }
     }
   }
   return { positions, along, indices: new Uint32Array(indices) }
@@ -241,6 +265,7 @@ export function shapeContour(shape: LoftShape, params: ShapeParams, points: numb
 export function buildSlicedLoftGeometry(opts: {
   stations: Station[]; props: StopProps[]; baseContours: Vec2[][]
   closed: boolean; render: 'stroke' | 'fill'; elements: number; spacing: number
+  cap?: boolean
 }): LoftGeometry {
   const { stations, props, baseContours, render, elements, spacing } = opts
   const K = stations.length
@@ -305,6 +330,30 @@ export function buildSlicedLoftGeometry(opts: {
     for (let i = 0; i < E; i++) for (let c = 0; c < C; c++) for (let p = 0; p < P; p++) {
       const np = (p+1)%P
       indices.push(idx(i,0,c,p), idx(i,0,c,np))
+    }
+  }
+
+  // Cap BOTH rings of every band with a centroid-fan disc so each slice reads as a solid puck,
+  // not a hollow ring — every band has two open ends (it's a short skinned tube segment).
+  if (render === 'fill' && opts.cap) {
+    const extraPos: number[] = [], extraAlong: number[] = []
+    let capVo = nVerts                          // next index after the band grid
+    for (let i = 0; i < E; i++) {
+      const tc = (i + 0.5) / E
+      const ts = [tc - half, tc + half]
+      for (let ring = 0; ring < ringsPerBand; ring++) {
+        const st = stationAt(ts[ring]!)         // interpolated station (same helper the rings use)
+        for (let c = 0; c < C; c++) {
+          const cIdx = capVo++
+          extraPos.push(st.pos.x, st.pos.y, st.pos.z); extraAlong.push(tc)
+          for (let p = 0; p < P; p++) { const np = (p + 1) % P; indices.push(cIdx, idx(i, ring, c, p), idx(i, ring, c, np)) }
+        }
+      }
+    }
+    if (extraPos.length) {
+      const mp = new Float32Array(positions.length + extraPos.length); mp.set(positions); mp.set(extraPos, positions.length)
+      const ma = new Float32Array(along.length + extraAlong.length); ma.set(along); ma.set(extraAlong, along.length)
+      return { positions: mp, along: ma, indices: new Uint32Array(indices) }
     }
   }
   return { positions, along, indices: new Uint32Array(indices) }

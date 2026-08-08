@@ -185,3 +185,47 @@ describe('buildSlicedLoftGeometry', () => {
     }
   })
 })
+
+describe('cross-section caps (fill)', () => {
+  const P = 12
+  const stopsFix = [
+    { id:'a', x:0, y:0.5, z:0, width:1, height:1, roll:0, color:'#000000' },
+    { id:'b', x:1, y:0.5, z:0, width:1, height:1, roll:0, color:'#ffffff' },
+  ]
+  const contour = shapeContour('oval', { rectRadius:0.5, polySides:5, starDepth:0.5 }, P)
+
+  it('continuous fill caps: exactly 2 end caps → +2 centroid verts and +2*P cap triangles', () => {
+    const K = 10
+    const st = sampleSpine(stopsFix as any, false, K)
+    const props = st.map(() => ({ width:1, height:1, roll:0 }))
+    const base = buildLoftGeometry({ stations: st, props, baseContours:[contour], closed:false, render:'fill' })
+    const capped = buildLoftGeometry({ stations: st, props, baseContours:[contour], closed:false, render:'fill', cap:true })
+    expect(capped.positions.length).toBe(base.positions.length + 2 * 1 * 3)      // +2 centroid verts (C=1)
+    expect(capped.indices.length).toBe(base.indices.length + 2 * 1 * P * 3)      // +2 caps * P tris * 3
+  })
+  it('closed continuous fill: no caps (closed tube has no ends)', () => {
+    const K = 12
+    const st = sampleSpine(stopsFix as any, true, K)
+    const props = st.map(() => ({ width:1, height:1, roll:0 }))
+    const a = buildLoftGeometry({ stations: st, props, baseContours:[contour], closed:true, render:'fill' })
+    const b = buildLoftGeometry({ stations: st, props, baseContours:[contour], closed:true, render:'fill', cap:true })
+    expect(b.positions.length).toBe(a.positions.length)
+    expect(b.indices.length).toBe(a.indices.length)
+  })
+  it('sliced fill caps: 2 caps per band → +2*E centroids and +2*E*P cap triangles', () => {
+    const E = 5
+    const st = sampleSpine(stopsFix as any, false, 200)
+    const props = st.map(() => ({ width:1, height:1, roll:0 }))
+    const base = buildSlicedLoftGeometry({ stations: st, props, baseContours:[contour], closed:false, render:'fill', elements:E, spacing:0.4 })
+    const capped = buildSlicedLoftGeometry({ stations: st, props, baseContours:[contour], closed:false, render:'fill', elements:E, spacing:0.4, cap:true })
+    expect(capped.positions.length).toBe(base.positions.length + 2 * E * 1 * 3)
+    expect(capped.indices.length).toBe(base.indices.length + 2 * E * 1 * P * 3)
+  })
+  it('cap ignored in stroke mode', () => {
+    const st = sampleSpine(stopsFix as any, false, 10)
+    const props = st.map(() => ({ width:1, height:1, roll:0 }))
+    const a = buildLoftGeometry({ stations: st, props, baseContours:[contour], closed:false, render:'stroke' })
+    const b = buildLoftGeometry({ stations: st, props, baseContours:[contour], closed:false, render:'stroke', cap:true })
+    expect(b.positions.length).toBe(a.positions.length)
+  })
+})

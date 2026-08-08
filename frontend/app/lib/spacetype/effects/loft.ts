@@ -170,11 +170,15 @@ export const loftEffect: SpaceTypeEffect = {
 
     const render = String(params.render) === 'stroke' ? 'stroke' : 'fill'
     const spacing = n(params, 'spacing')
+    // Cap the cross-section ends so Fill mode reads as solid discs, not hollow tube walls — word
+    // mode's glyph contours (e.g. multi-contour letters with counters) aren't star-shaped around
+    // a single centroid, so a fan cap would self-intersect; skip caps there.
+    const cap = shape !== 'word'
     // Copies now drives both densities: continuous surface resolution (K, above) when spacing is
     // 0, and ring count when spacing > 0 — one slider, no separate Elements control.
     const geo = spacing > 0
-      ? buildSlicedLoftGeometry({ stations, props, baseContours, closed, render, elements: Math.max(2, Math.round(n(params, 'copies'))), spacing })
-      : buildLoftGeometry({ stations, props, baseContours, closed, render })
+      ? buildSlicedLoftGeometry({ stations, props, baseContours, closed, render, elements: Math.max(2, Math.round(n(params, 'copies'))), spacing, cap })
+      : buildLoftGeometry({ stations, props, baseContours, closed, render, cap })
 
     const g = new three.BufferGeometry()
     g.setAttribute('position', new three.BufferAttribute(geo.positions, 3))
