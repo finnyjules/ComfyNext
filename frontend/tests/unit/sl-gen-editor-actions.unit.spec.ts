@@ -214,4 +214,16 @@ describe('useGridEditor generation actions', () => {
     ctx.undo()
     expect((ctx.template.value as TemplateV3).brand?.background).toBe(before)
   })
+
+  it('setBrandOverride on a cold-start template (no prior generate) is not discarded by the stamp guard', () => {
+    const ctx = useGridEditor(makeStarterTemplate('cold-start-brand'))
+    ctx.convertToV3()
+    // No surpriseLayout/setTheme/etc. before this — `gen` doesn't exist yet.
+    ctx.setBrandOverride('accent', '#123456')
+    const t = ctx.template.value as TemplateV3
+    expect(t.brand?.accent).toBe('#123456')
+    ctx.shuffleLayout()
+    const t2 = ctx.template.value as TemplateV3
+    expect(t2.brand?.accent).toBe('#123456')
+  })
 })

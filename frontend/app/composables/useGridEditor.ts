@@ -1127,14 +1127,24 @@ export function useGridEditor(
    *  theme switch would have stamped. */
   function setBrandOverride(key: 'background' | 'foreground' | 'accent', hex: string | null) {
     const t = asV3()
-    const theme = getTheme(t.gen?.theme ?? 'paper') ?? getTheme('paper')!
+    // A template with no prior generate() call has no `gen` at all — default
+    // one (matching opts.theme below) so generate()'s stamp-on-change guard
+    // sees a matching theme and doesn't treat this as a theme switch.
+    const gen = t.gen ?? { staging: 'tower', theme: 'paper', seed: 1 }
+    const theme = getTheme(gen.theme) ?? getTheme('paper')!
     const restored = key === 'background' ? theme.field
       : key === 'foreground' ? resolveInk(theme.field)
         : theme.defaultAccent
-    const brand = { ...(t.brand ?? {}), [key]: hex ?? restored }
-    commit(generate({ ...t, brand }, {
-      staging: t.gen?.staging ?? 'tower', theme: t.gen?.theme ?? 'paper', seed: t.gen?.seed ?? 1,
-      accentOnHero: t.gen?.accentOnHero, ...genCtx(),
+    // Also fill the OTHER two keys from the theme when they're missing (same
+    // cold-start case): the stamp guard also fires when `brand` is missing
+    // ANY of the three keys, which would still clobber the key we're setting
+    // here even with a matching theme. A brand that already has a key keeps
+    // its value — only the gaps are filled.
+    const themeDefaults: BrandKit = { background: theme.field, foreground: resolveInk(theme.field), accent: theme.defaultAccent }
+    const brand = { ...themeDefaults, ...(t.brand ?? {}), [key]: hex ?? restored }
+    commit(generate({ ...t, brand, gen }, {
+      staging: gen.staging, theme: gen.theme, seed: gen.seed,
+      accentOnHero: gen.accentOnHero, ...genCtx(),
     }))
   }
 
