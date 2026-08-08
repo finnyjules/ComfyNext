@@ -48,7 +48,19 @@ const controls: ControlSpec[] = [
   { key: 'backFade', label: 'Back fade', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0, group: 'Look' },
   { key: 'bend', label: 'Bend', kind: 'slider', min: 0, max: 1, step: 0.01, default: 0, group: 'Ribbon' },
   { key: 'cornerRadius', label: 'Corner radius', kind: 'slider', min: 0, max: 0.5, step: 0.01, default: 0.06, group: 'Ribbon' },
+  // Forces IMAGE tiles to a fixed card aspect, cover-cropped (no distortion) — see
+  // docs/superpowers/specs/2026-08-07-ring-card-ratio-design.md. `native` (default)
+  // reproduces current behaviour (each image keeps its own aspect), so existing ring
+  // docs render unchanged. Words/letters ignore this entirely (see the image-tile
+  // branch in buildScene below) — a word forced into a non-text aspect would
+  // crop/distort its glyphs. Structural (rebuilds the mesh's shape/UVs) — a select has
+  // no continuous drag, so rebuild-per-choice is fine; NOT in `liveKeys`.
+  { key: 'cardRatio', label: 'Card ratio', kind: 'select', options: ['native', '1:1', '4:3', '3:4', '16:9', '9:16'], default: 'native', group: 'Ribbon' },
 ]
+
+// Ratio-string → aspect (w/h) for `cardRatio`. `native` is handled separately (falls
+// back to the tile's own aspect) since it isn't a fixed number.
+const CARD_RATIOS: Record<string, number> = { '1:1': 1, '4:3': 4 / 3, '3:4': 3 / 4, '16:9': 16 / 9, '9:16': 9 / 16 }
 
 // Docs saved before the "Ring tune-up" feature only have the original 7 keys
 // (content, radius, ringTilt, cardSize, perspective, speed, direction) — the
@@ -155,7 +167,20 @@ export const ringEffect: SpaceTypeEffect = {
       if (tile.kind === 'image') {
         const tex = env?.imageTextures?.get(tile.src)
         material = new three.MeshBasicMaterial({ map: tex ?? null, side: three.DoubleSide, transparent: true })
-        aspect = tile.aspect
+
+        // Card ratio: `native` keeps the image's own aspect (current behaviour);
+        // any other option forces the CARD's shape to that ratio while the photo
+        // itself is cover-cropped to fill it (see uvScale below) — no distortion.
+        // `aspect` (mesh.userData.aspect) drives the live scale/bend/corner-SDF
+        // downstream, so setting it to `cardR` here is what makes ring cards
+        // uniform under a non-native ratio.
+        const ratioKey = String(params.cardRatio ?? 'native')
+        const A = tile.aspect
+        const cardR = ratioKey === 'native' ? A : (CARD_RATIOS[ratioKey] ?? A)
+        aspect = cardR
+        // Cover-crop: sample a centered sub-rect of the native image (aspect A) so
+        // it fills a cardR card without stretching. native → [1,1] (no crop).
+        const uvScale: [number, number] = A >= cardR ? [cardR / A, 1] : [1, A / cardR]
 
         // Rounded-rect alpha mask — IMAGE TILES ONLY (glyph/letter/word tiles have no panel to
         // round, so they never get this). Guarded on `tex`: a null map means USE_MAP is never
@@ -166,14 +191,43 @@ export const ringEffect: SpaceTypeEffect = {
         // for USE_MAP — see uv_pars_fragment.glsl.js: `varying vec2 vMapUv;` under `#ifdef
         // USE_MAP`, decoupled from the generic `vUv` since ~three r152's per-map UV transforms.
         if (tex) {
-          const uniforms = { uCorner: { value: n(params, 'cornerRadius') }, uAspect: { value: aspect } }
+          const uniforms = {
+            uCorner: { value: n(params, 'cornerRadius') },
+            uAspect: { value: aspect },
+            uUvScale: { value: new three.Vector2(uvScale[0], uvScale[1]) },
+          }
           material.onBeforeCompile = (shader) => {
             shader.uniforms.uCorner = uniforms.uCorner
             shader.uniforms.uAspect = uniforms.uAspect
-            shader.fragmentShader = 'uniform float uCorner;\nuniform float uAspect;\n' + shader.fragmentShader.replace(
+            shader.uniforms.uUvScale = uniforms.uUvScale
+            shader.fragmentShader = 'uniform float uCorner;\nuniform float uAspect;\nuniform vec2 uUvScale;\n' + shader.fragmentShader.replace(
+              '#include <map_fragment>',
+              // Same as three@0.171.0's map_fragment chunk (verified against
+              // node_modules/three/src/renderers/shaders/ShaderChunk/map_fragment.glsl.js),
+              // with ONLY the sampled UV changed to the cover-cropped coordinate — every
+              // other line (DECODE_VIDEO_TEXTURE branch included) is untouched.
+              `#ifdef USE_MAP
+
+	vec4 sampledDiffuseColor = texture2D( map, (vMapUv - 0.5) * uUvScale + 0.5 );
+
+	#ifdef DECODE_VIDEO_TEXTURE
+
+		// use inline sRGB decode until browsers properly support SRGB8_ALPHA8 with video textures (#26516)
+
+		sampledDiffuseColor = sRGBTransferEOTF( sampledDiffuseColor );
+
+	#endif
+
+	diffuseColor *= sampledDiffuseColor;
+
+#endif`,
+            ).replace(
               '#include <dithering_fragment>',
               `#include <dithering_fragment>
                {
+                 // Corner SDF uses the UNCROPPED vMapUv (card space, 0..1) with uAspect =
+                 // cardR, so corners round on the card's shape, not the cropped photo —
+                 // independent of the map_fragment crop above by design.
                  vec2 p = (vMapUv - 0.5) * vec2(uAspect, 1.0);      // centered, aspect-corrected
                  vec2 half = vec2(0.5 * uAspect, 0.5);
                  float r = clamp(uCorner, 0.0, 0.5) * min(half.x, half.y) * 2.0;

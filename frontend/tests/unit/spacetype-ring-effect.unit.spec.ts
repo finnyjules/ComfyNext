@@ -102,6 +102,39 @@ describe('ringEffect', () => {
     expect(st.quads).toHaveLength(2)
   })
 
+  // Card ratio (see docs/superpowers/specs/2026-08-07-ring-card-ratio-design.md): image
+  // tile's `tile.aspect` comes from the content item's `aspect` (default 1 if absent) —
+  // set it to a non-1 value so a 'native' vs '1:1' comparison is actually meaningful
+  // (native alone wouldn't distinguish "overridden" from "coincidentally already 1").
+  it('cardRatio 1:1 forces the image quad to a square, overriding its native aspect', () => {
+    const items = [{ id: 'i0', kind: 'image', src: 'data:0', aspect: 1.5 }]
+    const params = { ...defaultsFromControls(ringEffect.controls), content: JSON.stringify(items), cardRatio: '1:1' }
+    let root: THREE.Object3D | undefined
+    expect(() => {
+      root = ringEffect.buildScene(THREE, params, new THREE.Texture(), { width: 960, height: 540, imageTextures: new Map() })
+    }).not.toThrow()
+    const st = (root as any).userData.ringState
+    expect(st.quads).toHaveLength(1)
+    expect(st.quads[0].userData.aspect).toBe(1)
+  })
+
+  it('cardRatio native preserves the image tile\'s own aspect (unchanged behaviour)', () => {
+    const items = [{ id: 'i0', kind: 'image', src: 'data:0', aspect: 1.5 }]
+    const params = { ...defaultsFromControls(ringEffect.controls), content: JSON.stringify(items), cardRatio: 'native' }
+    const root = ringEffect.buildScene(THREE, params, new THREE.Texture(), { width: 960, height: 540, imageTextures: new Map() })
+    const st = (root as any).userData.ringState
+    expect(st.quads[0].userData.aspect).toBe(1.5)
+  })
+
+  // Words/letters never consult cardRatio (see the image-only branch in buildScene) — a
+  // word tile's aspect is derived purely from its rasterised glyph atlas. `layoutChars`
+  // calls `document.createElement('canvas')`, which throws under this suite's `node` test
+  // environment (see the comment above on the type-controls tests), so a full word-tile
+  // build can't be exercised headlessly here. Structurally this is enforced by cardRatio
+  // being read ONLY inside `if (tile.kind === 'image')` — the `else` branch (word/letter)
+  // never references `params.cardRatio` at all, so there is nothing for a word doc to pick
+  // up even when the control is set to a non-native value.
+
   it('legacy doc missing the new type keys builds finite (RING_DEFAULTS backfill)', () => {
     const legacy = {
       content: JSON.stringify([{ id: 'i0', kind: 'image', src: 'data:0' }]),
