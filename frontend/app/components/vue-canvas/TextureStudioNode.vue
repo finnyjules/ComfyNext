@@ -50,27 +50,34 @@ function renderFrame() {
   try {
     const p = params.value
     const s = sheetFromParams(p)
+    const framed = isSheetFramed(p)
     // On the Tile preset the output is a material sample, so fill the card edge to
     // edge as it always has. Once a sheet is chosen the card shows that sheet's
     // shape, letterboxed — otherwise a 9:16 pattern would look 3:2 on the canvas.
-    const box = isSheetFramed(p)
+    const box = framed
       ? fitLetterbox(s, PREVIEW_W, PREVIEW_H)
       : { w: PREVIEW_W, h: PREVIEW_H, x: 0, y: 0 }
+    // Unframed (Tile preset): the card is a material swatch — a window onto the
+    // infinite field at the pre-sheet density, i.e. a PREVIEW_H-sized tile
+    // repeat-filling the 3:2 card, exactly as ctx.createPattern did before the sheet
+    // existed. Framed: the card shows the sheet's own aspect and density, letterboxed.
+    const view = framed ? s : { w: PREVIEW_W, h: PREVIEW_H, tile: PREVIEW_H }
     // Render the seamless tile SQUARE (so cells stay square / undistorted), then
     // repeat-fill. Drawing a square tile straight into a 3:2 canvas stretched the
     // pattern horizontally.
-    const TILE = Math.max(32, Math.min(256, Math.round(s.tile * (box.w / s.w))))
+    const TILE = Math.max(32, Math.min(256, Math.round(view.tile * (box.w / view.w))))
     const base = textureFx.render(p, TILE, TILE, 0)
     const out = stylizeTile(base, p, TILE, TILE)
     const ctx = canvas.getContext('2d')!
     ctx.clearRect(0, 0, PREVIEW_W, PREVIEW_H)
     ctx.save()
-    ctx.beginPath()
-    ctx.rect(box.x, box.y, box.w, box.h)
-    ctx.clip()
-    ctx.translate(box.x, box.y)
-    drawSheet(ctx, out, s, box.w, box.h)
-    ctx.restore()
+    try {
+      ctx.beginPath()
+      ctx.rect(box.x, box.y, box.w, box.h)
+      ctx.clip()
+      ctx.translate(box.x, box.y)
+      drawSheet(ctx, out, view, box.w, box.h)
+    } finally { ctx.restore() }
     glError.value = null
   }
   catch (e: any) {
