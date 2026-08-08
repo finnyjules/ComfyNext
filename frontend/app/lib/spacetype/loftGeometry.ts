@@ -278,11 +278,9 @@ export function buildSlicedLoftGeometry(opts: {
   const stationAt = (t: number) => stations[Math.min(K - 1, Math.max(0, Math.round(t * (K - 1))))]!
   const propsAt = (t: number) => props[Math.min(K - 1, Math.max(0, Math.round(t * (K - 1))))]!
   let vo = 0
-  const bandRingT: number[][] = []
   for (let i = 0; i < E; i++) {
     const tc = (i + 0.5) / E
     const ts = render === 'fill' ? [tc - half, tc + half] : [tc]
-    bandRingT.push(ts)
     for (const t of ts) {
       const st = stationAt(t), pr = propsAt(t)
       const cr = Math.cos((pr.roll*Math.PI)/180), sr = Math.sin((pr.roll*Math.PI)/180)

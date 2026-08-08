@@ -176,4 +176,9 @@ describe('buildSlicedLoftGeometry', () => {
     const g = buildSlicedLoftGeometry({ stations, props, baseContours: [contour], closed:false, render:'stroke', elements: ELEMENTS, spacing: 0.4 })
     expect(g.indices.length).toBe(ELEMENTS * 1 * P * 2)
   })
+  it('fill: band 0 first quad wires ring0↔ring1 of the SAME band (topology, not just count)', () => {
+    const g = buildSlicedLoftGeometry({ stations, props, baseContours: [contour], closed:false, render:'fill', elements: ELEMENTS, spacing: 0.4 })
+    // idx(0,0,0,0)=0, idx(0,0,0,1)=1, idx(0,1,0,0)=P, idx(0,1,0,1)=P+1  → quad (a,b,e,a,e,d)
+    expect(Array.from(g.indices.slice(0, 6))).toEqual([0, 1, P + 1, 0, P + 1, P])
+  })
 })
