@@ -1074,6 +1074,7 @@ export function useGridEditor(
 
   function commit(next: TemplateV3) {
     template.value = next
+    dirty.value = true
     commitNow()
   }
 

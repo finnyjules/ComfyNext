@@ -45,4 +45,16 @@ describe('useGridEditor generation actions', () => {
     const t = ctx.template.value as TemplateV3
     expect(t.tiers?.hero?.content).toBe('BIG NEWS')
   })
+  it('surpriseLayout marks the doc dirty', () => {
+    const ctx = editorWithTiers()
+    ctx.dirty.value = false // reset past setup's own dirty-setting (convertToV3)
+    ctx.surpriseLayout()
+    expect(ctx.dirty.value).toBe(true)
+  })
+  it('shuffleLayout marks the doc dirty', () => {
+    const ctx = editorWithTiers()
+    ctx.dirty.value = false // reset past setup's own dirty-setting (convertToV3)
+    ctx.shuffleLayout()
+    expect(ctx.dirty.value).toBe(true)
+  })
 })
