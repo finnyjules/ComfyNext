@@ -94,6 +94,26 @@ export function paintTileBox(paint: Paint, w: number, h: number): HTMLCanvasElem
   return c
 }
 
+/** Destination rect (tile px) to draw a source image into a tw×th tile per `fit`,
+ *  then zoomed by `scale` and shifted by `offset` (fraction of the tile). Pure.
+ *  `'tile'` is NOT handled here — the caller builds a repeating cell instead. */
+export function imageFillRect(
+  fit: 'cover' | 'contain' | 'stretch',
+  iw: number, ih: number, tw: number, th: number,
+  scale = 1, offset: { x: number; y: number } = { x: 0, y: 0 },
+): { dx: number; dy: number; dw: number; dh: number } {
+  const s = scale > 0 ? scale : 1
+  let dw: number, dh: number
+  if (fit === 'stretch') { dw = tw * s; dh = th * s }
+  else {
+    const base = fit === 'cover' ? Math.max(tw / iw, th / ih) : Math.min(tw / iw, th / ih)
+    dw = iw * base * s; dh = ih * base * s
+  }
+  const dx = (tw - dw) / 2 + (offset.x || 0) * tw
+  const dy = (th - dh) / 2 + (offset.y || 0) * th
+  return { dx, dy, dw, dh }
+}
+
 /** Pure helper (no canvas) so unit tests in the node/no-DOM vitest environment can
  *  exercise stop sorting + clamping without invoking `paintTileBox` itself. */
 export const __test__ = { sortedClampedStops }
