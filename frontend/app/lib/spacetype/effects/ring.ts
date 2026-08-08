@@ -228,55 +228,106 @@ export const ringEffect: SpaceTypeEffect = {
       // Set only for word/letter tiles — the glyph atlas texture to register on the mesh
       // below (once per sourceId). Stays undefined for image tiles (engine-owned textures).
       let glyphTex: THREE.Texture | undefined
-      // Set only for image tiles that got a rounded-rect corner mask attached below — stashed
-      // onto mesh.userData.matUniforms so `update` can drive `uCorner` live from the slider.
+      // Set only for a fill card whose textured fill is a STATIC (non-shader) pattern — the
+      // per-tile cloned texture to register on the mesh below for disposeRoot() to free. A
+      // shader fill's texture is cache-owned (never registered, see the branch above); an
+      // image card's texture is env.imageTextures-owned (also never registered here).
+      let fillTexForDisposal: THREE.Texture | undefined
+      // Set for every card tile (image or fill) that got a rounded-rect corner mask attached
+      // below — stashed onto mesh.userData.matUniforms so `update` can drive `uCorner` live
+      // from the slider.
       let cornerUniforms: { uCorner: { value: number }; uAspect: { value: number } } | undefined
 
-      // NOTE (Task 2 scope note, not this task's real work): Task 1 (tile.ts) renamed the
-      // `image` ExpandedTile to `card` (`fillKind: 'image'|'solid'|'gradient'|…`). This
-      // predicate is updated from the old `=== 'image'` to `=== 'card'` ONLY so existing
-      // card/image ring docs keep routing here instead of falling into the word/letter
-      // branch below (which would wrongly try to rasterise a card as text). The BODY of
-      // this branch is untouched — it still only handles an image card (`tile.src`) and
-      // has no dispatch on `fillKind` for solid/gradient/ombre/grid/noise cards; that
-      // dispatch is Task 3's job (see task-3-brief.md).
+      // Task 1 (tile.ts) renamed the `image` ExpandedTile to `card`
+      // (`fillKind: 'image'|'solid'|'gradient'|'ombre'|'grid'|'noise'`). Task 2 only
+      // updated the routing predicate; Task 3 (here) is the real dispatch on `fillKind`:
+      // an image card behaves exactly as before, everything else builds a `Fill` from
+      // `tile.fill` via the same fills.ts helpers cylinder.ts's word fill uses (textured
+      // → `map`, solid → `color`, no map). Corner rounding now applies to EVERY card tile
+      // (fills round too), via a varying (`vCardUv`, below) that doesn't depend on the
+      // material having a `map` — a solid fill card has none.
       if (tile.kind === 'card') {
-        const tex = env?.imageTextures?.get(tile.src)
-        material = new three.MeshBasicMaterial({ map: tex ?? null, side: three.DoubleSide, transparent: true })
-
-        // Card ratio: `native` keeps the image's own aspect (current behaviour);
-        // any other option forces the CARD's shape to that ratio while the photo
-        // itself is cover-cropped to fill it (see uvScale below) — no distortion.
-        // `aspect` (mesh.userData.aspect) drives the live scale/bend/corner-SDF
-        // downstream, so setting it to `cardR` here is what makes ring cards
-        // uniform under a non-native ratio.
         const ratioKey = String(params.cardRatio ?? 'native')
-        const A = tile.aspect
-        const cardR = ratioKey === 'native' ? A : (CARD_RATIOS[ratioKey] ?? A)
-        aspect = cardR
-        // Cover-crop: sample a centered sub-rect of the native image (aspect A) so
-        // it fills a cardR card without stretching. native → [1,1] (no crop).
-        const uvScale: [number, number] = A >= cardR ? [cardR / A, 1] : [1, A / cardR]
+        // Cover-crop scale for the SAMPLED map — only an image tile crops (its native
+        // photo aspect vs. the forced card aspect); a fill has no source image to crop,
+        // so it stays [1,1] (fills the card 1:1, no sub-rect sampling).
+        let uvScale: [number, number] = [1, 1]
+        let tex: THREE.Texture | null | undefined
 
-        // Rounded-rect alpha mask — IMAGE TILES ONLY (glyph/letter/word tiles have no panel to
-        // round, so they never get this). Guarded on `tex`: a null map means USE_MAP is never
-        // defined in the compiled shader, so the injected code's `vMapUv` varying wouldn't exist
-        // (a real GL compile error, not a no-op) — setImageTextures' contract guarantees a real
-        // texture by build time, so this only protects a would-be no-texture edge case.
-        // UV varying: three@0.171.0's meshbasic fragment shader declares `vMapUv` (not `vUv`)
-        // for USE_MAP — see uv_pars_fragment.glsl.js: `varying vec2 vMapUv;` under `#ifdef
-        // USE_MAP`, decoupled from the generic `vUv` since ~three r152's per-map UV transforms.
-        if (tex) {
-          const uniforms = {
-            uCorner: { value: n(params, 'cornerRadius') },
-            uAspect: { value: aspect },
-            uUvScale: { value: new three.Vector2(uvScale[0], uvScale[1]) },
+        if (tile.fillKind === 'image') {
+          tex = env?.imageTextures?.get(tile.src)
+          material = new three.MeshBasicMaterial({ map: tex ?? null, side: three.DoubleSide, transparent: true })
+
+          // Card ratio: `native` keeps the image's own aspect (current behaviour);
+          // any other option forces the CARD's shape to that ratio while the photo
+          // itself is cover-cropped to fill it (see uvScale below) — no distortion.
+          // `aspect` (mesh.userData.aspect) drives the live scale/bend/corner-SDF
+          // downstream, so setting it to `cardR` here is what makes ring cards
+          // uniform under a non-native ratio.
+          const A = tile.aspect
+          const cardR = ratioKey === 'native' ? A : (CARD_RATIOS[ratioKey] ?? A)
+          aspect = cardR
+          // Cover-crop: sample a centered sub-rect of the native image (aspect A) so
+          // it fills a cardR card without stretching. native → [1,1] (no crop).
+          uvScale = A >= cardR ? [cardR / A, 1] : [1, A / cardR]
+        } else {
+          // solid/gradient/ombre/grid/noise — mirrors cylinder.ts's/the word-fill branch
+          // below's textured/solid split, but OPAQUE (no alphaMap: a fill card paints
+          // its whole rect, there's no glyph shape to mask against).
+          const fill = normalizeFill(tile.fill)
+          const textured = fillIsTextured(fill)
+          let map: THREE.Texture | null = null
+          let color = new three.Color('#ffffff')
+          if (textured) {
+            if (fillIsShader(fill)) {
+              // ANIMATED — sample the live cache texture directly, never cloned/registered
+              // for disposal (fills.ts's owner-scoped cache owns it) — see cylinder.ts:146-159.
+              map = fillShaderTexture(three, fill)
+            } else {
+              // Static pattern — clone so this tile's own `.repeat` doesn't mutate the
+              // shared module cache; registered below (per-tile) for disposeRoot() to free.
+              map = fillShaderTexture(three, fill).clone()
+              map.needsUpdate = true
+              map.repeat.set(fillTiling(fill), fillTiling(fill))
+              fillTexForDisposal = map
+            }
+          } else {
+            color = fillPrimary(three, fill)
           }
-          material.onBeforeCompile = (shader) => {
-            shader.uniforms.uCorner = uniforms.uCorner
-            shader.uniforms.uAspect = uniforms.uAspect
-            shader.uniforms.uUvScale = uniforms.uUvScale
-            shader.fragmentShader = 'uniform float uCorner;\nuniform float uAspect;\nuniform vec2 uUvScale;\n' + shader.fragmentShader.replace(
+          material = new three.MeshBasicMaterial({ map, color, side: three.DoubleSide, transparent: false })
+          // A fill card has no source photo/ratio of its own — square by default, forced
+          // to `cardRatio` like an image card when the control isn't `native`.
+          aspect = ratioKey !== 'native' ? (CARD_RATIOS[ratioKey] ?? 1) : 1
+        }
+
+        // Rounded-rect mask — EVERY card tile (image or fill; glyph/letter/word tiles have
+        // no panel to round, so they never get this). Uses its OWN raw-uv varying
+        // (`vCardUv`, from the `uv` vertex attribute, which three.js always declares —
+        // see WebGLProgram.js — unlike `vMapUv`, which only exists under `USE_MAP`) so the
+        // mask works whether or not this material has a `map` (a solid fill card has
+        // none). The cover-crop (`uUvScale`) still only touches the SAMPLED map, so it's
+        // injected only for an image tile that actually has a texture.
+        const uniforms = {
+          uCorner: { value: n(params, 'cornerRadius') },
+          uAspect: { value: aspect },
+          uUvScale: { value: new three.Vector2(uvScale[0], uvScale[1]) },
+        }
+        material.onBeforeCompile = (shader) => {
+          shader.uniforms.uCorner = uniforms.uCorner
+          shader.uniforms.uAspect = uniforms.uAspect
+          shader.uniforms.uUvScale = uniforms.uUvScale
+          shader.vertexShader = 'varying vec2 vCardUv;\n' + shader.vertexShader.replace(
+            '#include <uv_vertex>',
+            '#include <uv_vertex>\n\tvCardUv = uv;',
+          )
+          let frag = 'varying vec2 vCardUv;\nuniform float uCorner;\nuniform float uAspect;\nuniform vec2 uUvScale;\n' + shader.fragmentShader
+          if (tile.fillKind === 'image' && tex) {
+            // UV varying: three@0.171.0's meshbasic fragment shader declares `vMapUv` (not
+            // `vUv`) for USE_MAP — see uv_pars_fragment.glsl.js: `varying vec2 vMapUv;`
+            // under `#ifdef USE_MAP`, decoupled from the generic `vUv` since ~three
+            // r152's per-map UV transforms. Only reachable here (tex truthy ⇒ USE_MAP is
+            // defined), so `vMapUv` is guaranteed to exist.
+            frag = frag.replace(
               '#include <map_fragment>',
               // Same as three@0.171.0's map_fragment chunk (verified against
               // node_modules/three/src/renderers/shaders/ShaderChunk/map_fragment.glsl.js),
@@ -297,24 +348,25 @@ export const ringEffect: SpaceTypeEffect = {
 	diffuseColor *= sampledDiffuseColor;
 
 #endif`,
-            ).replace(
-              '#include <dithering_fragment>',
-              `#include <dithering_fragment>
+            )
+          }
+          shader.fragmentShader = frag.replace(
+            '#include <dithering_fragment>',
+            `#include <dithering_fragment>
                {
-                 // Corner SDF uses the UNCROPPED vMapUv (card space, 0..1) with uAspect =
-                 // cardR, so corners round on the card's shape, not the cropped photo —
-                 // independent of the map_fragment crop above by design.
-                 vec2 p = (vMapUv - 0.5) * vec2(uAspect, 1.0);      // centered, aspect-corrected
+                 // Corner SDF on vCardUv (card space, 0..1, independent of any map/crop)
+                 // with uAspect = the card's own aspect, so corners round on the card's
+                 // shape, not a cropped photo — independent of the map_fragment crop above.
+                 vec2 p = (vCardUv - 0.5) * vec2(uAspect, 1.0);      // centered, aspect-corrected
                  vec2 half = vec2(0.5 * uAspect, 0.5);
                  float r = clamp(uCorner, 0.0, 0.5) * min(half.x, half.y) * 2.0;
                  vec2 q = abs(p) - (half - vec2(r));
                  float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
                  if (d > 0.0) discard;                               // outside the rounded rect
                }`,
-            )
-          }
-          cornerUniforms = uniforms
+          )
         }
+        cornerUniforms = uniforms
       } else {
         let layout = layoutCache.get(tile.sourceId)
         if (!layout) {
@@ -397,6 +449,9 @@ export const ringEffect: SpaceTypeEffect = {
         mesh.userData.tex = glyphTex
         registered.add(tile.sourceId)
       }
+      // Static-pattern fill card texture (see fillTexForDisposal's doc above) — one clone
+      // per tile, so registered per-mesh (no sourceId dedup needed, unlike the glyph atlas).
+      if (fillTexForDisposal) mesh.userData.tex = fillTexForDisposal
       root.add(mesh)
       quads.push(mesh)
     }
@@ -435,8 +490,9 @@ export const ringEffect: SpaceTypeEffect = {
       const aspect = Number(quad.userData.aspect ?? 1)
       quad.scale.set(aspect * tf.scale * (1 - padding), tf.scale, 1)
       applyBend(quad, aspect, cardSize, padding, radius, bend)
-      // Live corner-radius drive — only image quads carry `matUniforms` (see buildScene);
-      // glyph/letter/word quads have no mask attached and are silently skipped here.
+      // Live corner-radius drive — every card quad (image or fill) carries `matUniforms`
+      // (see buildScene); glyph/letter/word quads have no mask attached and are silently
+      // skipped here.
       const matUniforms = quad.userData.matUniforms as { uCorner: { value: number } } | undefined
       if (matUniforms) matUniforms.uCorner.value = n(params, 'cornerRadius')
     }

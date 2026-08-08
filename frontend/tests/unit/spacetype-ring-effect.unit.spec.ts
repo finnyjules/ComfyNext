@@ -167,6 +167,64 @@ describe('ringEffect', () => {
     expect(st.quads).toHaveLength(3)
   })
 
+  // Task 3 ("Ring fills" — task-3-brief.md): a card tile can be a generated fill
+  // (solid/gradient/ombre/grid/noise) instead of an image. `fillShaderTexture` rasterises
+  // a TEXTURED fill (gradient/ombre/grid/noise) via `document.createElement('canvas')`,
+  // which throws under this suite's `node` env (no jsdom/happy-dom/canvas polyfill — the
+  // same constraint documented above for word/letter tiles). A SOLID fill card takes the
+  // `fillPrimary` path instead (a plain `THREE.Color`, no canvas), so SOLID is what's
+  // exercised headlessly here — it's the solid/textured DISPATCH itself (ring.ts's card
+  // branch) under test, not any one fill's pixels.
+  it('a solid fill card builds one opaque quad (no image, no canvas)', () => {
+    const items = [{ id: 'c0', kind: 'card', fillKind: 'solid', fill: { type: 'solid', a: '#ff0000', b: '#000000', textColor: '#ffffff', angle: 45, density: 8 } }]
+    const params = { ...defaultsFromControls(ringEffect.controls), content: JSON.stringify(items) }
+    let root: THREE.Object3D | undefined
+    expect(() => {
+      root = ringEffect.buildScene(THREE, params, new THREE.Texture(), { width: 960, height: 540, imageTextures: new Map() })
+    }).not.toThrow()
+    const st = (root as any).userData.ringState
+    expect(st.quads).toHaveLength(1)
+    const mesh = st.quads[0]
+    const mat = mesh.material as THREE.MeshBasicMaterial
+    expect(mat.map).toBeNull()
+    expect(mat.color.getHexString()).toBe('ff0000')
+    expect(mesh.userData.aspect).toBe(1)          // square by default (cardRatio 'native')
+    expect(mesh.userData.matUniforms).toBeDefined() // corner-radius mask now attaches to fill cards too
+  })
+
+  it('a fill card with no tile.fill falls back to a sensible default solid (no throw)', () => {
+    const items = [{ id: 'c0', kind: 'card', fillKind: 'solid' }]
+    const params = { ...defaultsFromControls(ringEffect.controls), content: JSON.stringify(items) }
+    let root: THREE.Object3D | undefined
+    expect(() => {
+      root = ringEffect.buildScene(THREE, params, new THREE.Texture(), { width: 960, height: 540, imageTextures: new Map() })
+    }).not.toThrow()
+    expect((root as any).userData.ringState.quads).toHaveLength(1)
+  })
+
+  it('an image card in the new card/fillKind shape still builds one quad (regression)', () => {
+    const items = [{ id: 'i0', kind: 'card', fillKind: 'image', src: 'data:0', aspect: 1.5 }]
+    const params = { ...defaultsFromControls(ringEffect.controls), content: JSON.stringify(items) }
+    const root = ringEffect.buildScene(THREE, params, new THREE.Texture(), { width: 960, height: 540, imageTextures: new Map() })
+    const st = (root as any).userData.ringState
+    expect(st.quads).toHaveLength(1)
+    expect(st.quads[0].userData.aspect).toBe(1.5) // unchanged image-tile aspect behaviour
+  })
+
+  it('mixed image + solid-fill cards build the right quad count', () => {
+    const items = [
+      { id: 'i0', kind: 'card', fillKind: 'image', src: 'data:0' },
+      { id: 'c0', kind: 'card', fillKind: 'solid', fill: { type: 'solid', a: '#00ff00', b: '#000000', textColor: '#ffffff', angle: 45, density: 8 } },
+      { id: 'i1', kind: 'card', fillKind: 'image', src: 'data:1' },
+    ]
+    const params = { ...defaultsFromControls(ringEffect.controls), content: JSON.stringify(items) }
+    let root: THREE.Object3D | undefined
+    expect(() => {
+      root = ringEffect.buildScene(THREE, params, new THREE.Texture(), { width: 960, height: 540, imageTextures: new Map() })
+    }).not.toThrow()
+    expect((root as any).userData.ringState.quads).toHaveLength(3)
+  })
+
   it('legacy doc missing the new type keys builds finite (RING_DEFAULTS backfill)', () => {
     const legacy = {
       content: JSON.stringify([{ id: 'i0', kind: 'image', src: 'data:0' }]),
