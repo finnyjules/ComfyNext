@@ -1,10 +1,12 @@
 <script setup lang="ts">
 // Tiny canvas that previews any compositor Paint (solid / gradient / ombre / grid /
-// noise / checkerboard / stripes / qr / image-tint colour) — used in the layer list
-// so a layer's fill is identifiable at a glance. Mirrors FillControl's drawPreview.
+// noise / checkerboard / stripes / qr / image-tint colour / image fill) — used in the
+// layer list so a layer's fill is identifiable at a glance. Mirrors FillControl's drawPreview.
 import { ref, watch, onMounted } from 'vue'
 import { fillTileCanvas } from '~/lib/spacetype/fillTile'
-import { type Paint, isFill, isGradient } from '~/composables/useCompositorLayers'
+import { type Paint, isFill, isGradient, isImageFill } from '~/composables/useCompositorLayers'
+import { getFillBitmap, ensureFillBitmaps } from '~/lib/paint/imageFillCache'
+import { imageFillRect } from '~/lib/compositor/paint'
 
 const props = withDefaults(defineProps<{ paint: Paint | undefined; size?: number }>(), { size: 14 })
 const cv = ref<HTMLCanvasElement | null>(null)
@@ -27,6 +29,17 @@ function draw() {
   const w = c.width, h = c.height
   ctx.clearRect(0, 0, w, h)
   const p = props.paint
+  if (isImageFill(p)) {
+    const img = getFillBitmap(p.src)
+    if (img) {
+      const { dx, dy, dw, dh } = imageFillRect('cover', img.naturalWidth || img.width, img.naturalHeight || img.height, w, h)
+      ctx.drawImage(img, dx, dy, dw, dh)
+    } else {
+      ctx.fillStyle = '#333'; ctx.fillRect(0, 0, w, h)
+      ensureFillBitmaps([p.src]).then(draw)
+    }
+    return
+  }
   if (isGradient(p)) { drawGradient(ctx, p, w, h); return }
   if (isFill(p)) { try { ctx.drawImage(fillTileCanvas(p, Math.max(w, h)), 0, 0, w, h) } catch { /* no canvas */ } return }
   const solid = typeof p === 'string' && p && p !== 'none' && p !== 'transparent' ? p : null

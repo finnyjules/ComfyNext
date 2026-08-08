@@ -4691,7 +4691,7 @@ onUnmounted(() => {
           <template v-if="selectedLocal.kind === 'rect' || selectedLocal.kind === 'ellipse'">
             <div>
               <div class="panel-label mb-1.5">Fill</div>
-              <FillControl allow-none :model-value="(selectedLocal as any).fill"
+              <FillControl allow-none allow-image :model-value="(selectedLocal as any).fill"
                 @update:model-value="(v: any) => setLocal(selectedLocal!.id, { fill: v })" />
             </div>
             <div>
@@ -4714,7 +4714,7 @@ onUnmounted(() => {
           <template v-if="selectedLocal.kind === 'polygon'">
             <div>
               <div class="panel-label mb-1.5">Fill</div>
-              <FillControl allow-none :model-value="(selectedLocal as any).fill"
+              <FillControl allow-none allow-image :model-value="(selectedLocal as any).fill"
                 @update:model-value="(v: any) => setLocal(selectedLocal!.id, { fill: v })" />
             </div>
             <div>
@@ -4743,7 +4743,7 @@ onUnmounted(() => {
           <template v-if="selectedLocal.kind === 'star'">
             <div>
               <div class="panel-label mb-1.5">Fill</div>
-              <FillControl allow-none :model-value="(selectedLocal as any).fill"
+              <FillControl allow-none allow-image :model-value="(selectedLocal as any).fill"
                 @update:model-value="(v: any) => setLocal(selectedLocal!.id, { fill: v })" />
             </div>
             <div>
@@ -4793,7 +4793,7 @@ onUnmounted(() => {
           <template v-if="selectedLocal.kind === 'path'">
             <div>
               <div class="panel-label mb-1.5">Fill</div>
-              <FillControl allow-none :model-value="(selectedLocal as any).fill"
+              <FillControl allow-none allow-image :model-value="(selectedLocal as any).fill"
                 @update:model-value="(v: any) => setLocal(selectedLocal!.id, { fill: v })" />
             </div>
             <div>
@@ -4807,7 +4807,7 @@ onUnmounted(() => {
           <template v-if="selectedLocal.kind === 'brush'">
             <div>
               <div class="panel-label mb-1.5">Fill</div>
-              <FillControl :model-value="(selectedLocal as any).fill"
+              <FillControl allow-image :model-value="(selectedLocal as any).fill"
                 @update:model-value="(v: any) => setLocal(selectedLocal!.id, { fill: v })" />
               <button
                 class="mt-2 w-full flex items-center justify-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/70 hover:text-white/90 cursor-pointer transition-colors"

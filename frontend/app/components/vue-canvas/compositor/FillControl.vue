@@ -19,8 +19,10 @@ import { type Paint, type Gradient, type ImageFill, isFill, isGradient, isImageF
 import type { BrandKit } from '~~/shared/brand/types'
 import { brandSwatches as kitSwatches } from '~~/shared/brand/resolve'
 import FillImagePicker from '~/components/vue-canvas/compositor/FillImagePicker.vue'
+import { getFillBitmap, ensureFillBitmaps } from '~/lib/paint/imageFillCache'
+import { imageFillRect } from '~/lib/compositor/paint'
 
-const props = withDefaults(defineProps<{ modelValue: Paint | undefined; allowNone?: boolean; nested?: boolean }>(), { allowNone: false, nested: false })
+const props = withDefaults(defineProps<{ modelValue: Paint | undefined; allowNone?: boolean; nested?: boolean; allowImage?: boolean }>(), { allowNone: false, nested: false, allowImage: false })
 const emit = defineEmits<{ 'update:modelValue': [Paint] }>()
 
 /** The type list this instance offers. `nested` is set on the fill editor that
@@ -92,7 +94,7 @@ function pushImage(patch: Partial<ImageFill>) {
 }
 function onPick(src: string) { pickerOpen.value = false; pushImage({ src }) }
 
-const uiTypes = computed<UiType[]>(() => props.nested ? availableTypes.value : [...availableTypes.value, 'image'])
+const uiTypes = computed<UiType[]>(() => (props.allowImage && !props.nested) ? [...availableTypes.value, 'image'] : availableTypes.value)
 
 /** Editable Fill → the Paint we emit (solid → hex, patterns → Fill object). Gradient
  *  is emitted from `grad` (the native multi-stop Gradient), not collapsed here.
@@ -174,6 +176,17 @@ function drawPreview() {
   const cv = previewRef.value; if (!cv) return
   const ctx = cv.getContext('2d'); if (!ctx) return
   ctx.clearRect(0, 0, cv.width, cv.height)
+  if (currentType.value === 'image' && imageFill.value?.src) {
+    const img = getFillBitmap(imageFill.value.src)
+    if (img) {
+      const { dx, dy, dw, dh } = imageFillRect('cover', img.naturalWidth || img.width, img.naturalHeight || img.height, cv.width, cv.height)
+      ctx.drawImage(img, dx, dy, dw, dh)
+    } else {
+      ctx.fillStyle = '#333'; ctx.fillRect(0, 0, cv.width, cv.height)
+      ensureFillBitmaps([imageFill.value.src]).then(() => drawPreview())
+    }
+    return
+  }
   if (isNone.value) {
     ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1
     ctx.beginPath(); ctx.moveTo(1, cv.height - 1); ctx.lineTo(cv.width - 1, 1); ctx.stroke()
@@ -185,6 +198,7 @@ function drawPreview() {
 onMounted(drawPreview)
 watch(fill, drawPreview, { deep: true })
 watch(grad, drawPreview, { deep: true })
+watch(imageFill, drawPreview, { deep: true })
 </script>
 
 <template>
