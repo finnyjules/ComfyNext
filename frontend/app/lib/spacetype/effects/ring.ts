@@ -255,7 +255,7 @@ export const ringEffect: SpaceTypeEffect = {
         let tex: THREE.Texture | null | undefined
 
         if (tile.fillKind === 'image') {
-          tex = env?.imageTextures?.get(tile.src)
+          tex = tile.src ? env?.imageTextures?.get(tile.src) : undefined
           material = new three.MeshBasicMaterial({ map: tex ?? null, side: three.DoubleSide, transparent: true })
 
           // Card ratio: `native` keeps the image's own aspect (current behaviour);
@@ -294,7 +294,7 @@ export const ringEffect: SpaceTypeEffect = {
           } else {
             color = fillPrimary(three, fill)
           }
-          material = new three.MeshBasicMaterial({ map, color, side: three.DoubleSide, transparent: false })
+          material = new three.MeshBasicMaterial({ map, color, side: three.DoubleSide, transparent: true })
           // A fill card has no source photo/ratio of its own — square by default, forced
           // to `cardRatio` like an image card when the control isn't `native`.
           aspect = ratioKey !== 'native' ? (CARD_RATIOS[ratioKey] ?? 1) : 1
