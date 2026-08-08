@@ -146,6 +146,34 @@ describe('staging: tier lists — every item renders, nothing dropped', () => {
     })
   }
 
+  it('tower: a single support item keeps the round-1 generous rowSpan (2), not the 2-item compact one', () => {
+    const tiersWithOneSupport: Tiers = { ...TIERS, support: [{ content: 'Street food · Dining' }] }
+    const els = getStaging('tower')!.compose(input({ tiers: tiersWithOneSupport }))
+    const support0 = els.find(e => e.id === 'tier_support_0')! as any
+    expect(support0.region.rowSpan).toBe(2)
+  })
+
+  it('split: a single support item keeps the round-1 generous rowSpan (3), not the 2-item compact one', () => {
+    const tiersWithOneSupport: Tiers = { ...TIERS, support: [{ content: 'Street food · Dining' }] }
+    const els = getStaging('split')!.compose(input({ tiers: tiersWithOneSupport }))
+    const support0 = els.find(e => e.id === 'tier_support_0')! as any
+    expect(support0.region.rowSpan).toBe(3)
+  })
+
+  it('editorial: a single support item keeps the round-1 generous rowSpan (4), not the 2-item compact one', () => {
+    const tiersWithOneSupport: Tiers = { ...TIERS, support: [{ content: 'Street food · Dining' }] }
+    const els = getStaging('editorial')!.compose(input({ tiers: tiersWithOneSupport }))
+    const support0 = els.find(e => e.id === 'tier_support_0')! as any
+    expect(support0.region.rowSpan).toBe(4)
+  })
+
+  it('index: a single support item keeps the round-1 generous rowSpan (3), not the 2-item compact one', () => {
+    const tiersWithOneSupport: Tiers = { ...TIERS, support: [{ content: 'Street food · Dining' }] }
+    const els = getStaging('index')!.compose(input({ tiers: tiersWithOneSupport }))
+    const support0 = els.find(e => e.id === 'tier_support_0')! as any
+    expect(support0.region.rowSpan).toBe(3)
+  })
+
   it('disabled item 0 with a valid item 1 renders the valid item (filtered list is the source of truth)', () => {
     const tiersWithDisabledHero: Tiers = {
       ...TIERS,

@@ -90,15 +90,23 @@ function tierItems(entries: Array<{ id: TierId; items: TierSpec[] }>, id: TierId
   return entries.find(e => e.id === id)?.items ?? []
 }
 
-/** Support-style distribution: item *i* stacks at `base.row + i * base.rowSpan`
+/** Support-style distribution: item *i* stacks at `base.row + i * rowSpan`
  *  (clamped to the grid). Nothing is dropped — an overflow item just keeps
- *  stacking downward (clamping shrinks its span rather than losing it). */
+ *  stacking downward (clamping shrinks its span rather than losing it).
+ *
+ *  `singleRowSpan`, when given, is the box height used ONLY when there's
+ *  exactly one item — the round-1 generous span. `base.rowSpan` stays the
+ *  compact multi-item value, used whenever 2+ items must share the slot. A
+ *  lone item gets the bigger box back instead of the space reserved for
+ *  stacking it never needs. */
 function stackVertical(
   id: TierId, items: TierSpec[], base: Region, cols: number, rows: number,
   priority: number, opts: { level?: TextLevel; style?: TextStyleV2 } = {},
+  singleRowSpan?: number,
 ): ElementV2[] {
+  const rowSpan = items.length === 1 && singleRowSpan !== undefined ? singleRowSpan : base.rowSpan
   return items.map((item, i) => tierText(id, i, item,
-    clampRegion({ ...base, row: base.row + i * base.rowSpan }, cols, rows), priority, opts))
+    clampRegion({ ...base, row: base.row + i * rowSpan, rowSpan }, cols, rows), priority, opts))
 }
 
 /** Fine-print distribution for tower/centered: items alternate between the
@@ -153,7 +161,7 @@ const tower: Staging = {
     if (support.length) {
       els.push(...stackVertical('support', support,
         { col: 1, colSpan: half, row: Math.round(rows * 0.56), rowSpan: 1 },
-        cols, rows, 3, { style: { align: 'left', valign: 'top' } }))
+        cols, rows, 3, { style: { align: 'left', valign: 'top' } }, 2))
     }
     const anchor = items('anchor')
     if (anchor.length) {
@@ -192,7 +200,7 @@ const split: Staging = {
     if (support.length) {
       els.push(...stackVertical('support', support,
         { col: 1, colSpan: half, row: Math.round(rows * 0.44), rowSpan: 2 },
-        cols, rows, 3, { style: { align: 'left', valign: 'top' } }))
+        cols, rows, 3, { style: { align: 'left', valign: 'top' } }, 3))
     }
     const anchor = items('anchor')
     if (anchor.length) {
@@ -323,7 +331,7 @@ const editorial: Staging = {
     if (support.length) {
       els.push(...stackVertical('support', support,
         { col: 1, colSpan: colw, row: 2 + Math.round(rows * 0.34), rowSpan: 2 },
-        cols, rows, 3, { style: { align: 'left', valign: 'top' } }))
+        cols, rows, 3, { style: { align: 'left', valign: 'top' } }, 4))
     }
     const fine = items('fineprint')
     if (fine.length) {
@@ -370,7 +378,7 @@ const index: Staging = {
     if (support.length) {
       els.push(...stackVertical('support', support,
         { col: 1, colSpan: Math.round(cols / 2), row: Math.round(rows * 0.68), rowSpan: 1 },
-        cols, rows, 3, { style: { align: 'left', valign: 'top' } }))
+        cols, rows, 3, { style: { align: 'left', valign: 'top' } }, 3))
     }
     const anchor = items('anchor')
     if (anchor.length) {
