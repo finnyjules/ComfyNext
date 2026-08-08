@@ -17,7 +17,8 @@ import { applyArchetype, classifyFormat, fineGridDims, formatDims, gridDims, gri
 import type { Rect } from '~~/shared/template-grid/grid'
 import type { Archetype } from '~~/shared/template-grid/archetypes'
 import { generate, shuffle, surprise } from '~~/shared/template-grid/generate/generate'
-import { normalizeTiers } from '~~/shared/template-grid/generate/tiers'
+import { getTheme, resolveInk } from '~~/shared/template-grid/generate/themes'
+import { appendTierItem, normalizeTiers } from '~~/shared/template-grid/generate/tiers'
 import { deriveOutputs, type ResolvedLayout } from '~~/shared/template-grid/resolve'
 import {
   addChildToStack, allElements, DEFAULT_AUTOLAYOUT, effectiveOrder, groupIntoSection, removeChildFromStack, sectionRegionFor,
@@ -1072,6 +1073,7 @@ export function useGridEditor(
   const genTheme = computed(() => (template.value as TemplateV3).gen?.theme ?? 'paper')
   const genSeed = computed(() => (template.value as TemplateV3).gen?.seed ?? 1)
   const genLocks = computed(() => (template.value as TemplateV3).gen?.locks ?? {})
+  const genAccentOnHero = computed(() => (template.value as TemplateV3).gen?.accentOnHero ?? false)
 
   function commit(next: TemplateV3) {
     template.value = next
@@ -1105,6 +1107,37 @@ export function useGridEditor(
     commit({ ...t, gen: { ...(t.gen ?? { staging: 'tower', theme: 'paper', seed: 1 }), locks } })
   }
 
+  /** Toggle whether the hero tier reads in the theme's accent colour instead
+   *  of the default ink. Regenerates with the same staging/theme/seed tuple
+   *  — only the flag (stamped into `gen.accentOnHero`) changes. */
+  function toggleAccentOnHero() {
+    const t = asV3()
+    const next = !(t.gen?.accentOnHero ?? false)
+    commit(generate(t, {
+      staging: t.gen?.staging ?? 'tower', theme: t.gen?.theme ?? 'paper', seed: t.gen?.seed ?? 1,
+      accentOnHero: next, ...genCtx(),
+    }))
+  }
+
+  /** Override (or, with `hex: null`, restore) one brand colour directly on the
+   *  template, then regenerate with the same tuple so the luminance guard
+   *  re-evaluates against the new value. Restoring reads the CURRENT theme's
+   *  stamped value (field / resolveInk(field) / defaultAccent) — not the
+   *  theme's default regardless of override, so it matches what a plain
+   *  theme switch would have stamped. */
+  function setBrandOverride(key: 'background' | 'foreground' | 'accent', hex: string | null) {
+    const t = asV3()
+    const theme = getTheme(t.gen?.theme ?? 'paper') ?? getTheme('paper')!
+    const restored = key === 'background' ? theme.field
+      : key === 'foreground' ? resolveInk(theme.field)
+        : theme.defaultAccent
+    const brand = { ...(t.brand ?? {}), [key]: hex ?? restored }
+    commit(generate({ ...t, brand }, {
+      staging: t.gen?.staging ?? 'tower', theme: t.gen?.theme ?? 'paper', seed: t.gen?.seed ?? 1,
+      accentOnHero: t.gen?.accentOnHero, ...genCtx(),
+    }))
+  }
+
   // Both helpers read/write item 0 of the tier's (normalized) list — single-
   // item behaviour preserved exactly; any further items ride along
   // untouched. Multi-item authoring UI is Task 3, not here.
@@ -1119,13 +1152,17 @@ export function useGridEditor(
     // Re-generate in place so the type change is visible immediately (same tuple).
     commit(generate({ ...t, tiers }, { staging: t.gen?.staging ?? 'tower', theme: t.gen?.theme ?? 'paper', seed: t.gen?.seed ?? 1, accentOnHero: t.gen?.accentOnHero, ...genCtx() }))
   }
-  function addTierItem(id: TierId, content = '') {
+  /** Append a new item onto a tier's list (true append — earlier items are
+   *  untouched, so "add another support line" no longer overwrites item 0;
+   *  see appendTierItem). Regenerates with the same tuple. Returns the new
+   *  item's index within the tier. */
+  function addTierItem(id: TierId, content = ''): number {
     const t = asV3()
-    const normalized = normalizeTiers(t.tiers)
-    const items = normalized[id] ?? []
-    const tiers = { ...normalized, [id]: [{ content: content || items[0]?.content || id.toUpperCase(), type: items[0]?.type }, ...items.slice(1)] }
+    const existing = normalizeTiers(t.tiers)[id] ?? []
+    const tiers = appendTierItem(t.tiers ?? {}, id, { content: content || id.toUpperCase() })
     const seed = t.gen?.seed ?? 1
     commit(generate({ ...t, tiers }, { staging: t.gen?.staging ?? 'tower', theme: t.gen?.theme ?? 'paper', seed, accentOnHero: t.gen?.accentOnHero, ...genCtx() }))
+    return existing.length
   }
 
   // -- Undo / redo ------------------------------------------------------------
@@ -1215,8 +1252,8 @@ export function useGridEditor(
     setSectionStyle, setSectionClip, renameSection, renameElement, toggleSectionLayout, wrapSelectionInSection, addSectionAt, frameDrawArmed,
     toggleSectionExpressive, setSectionExpressive,
     commitNow, undo, redo, canUndo, canRedo,
-    editorMode, genStaging, genTheme, genSeed, genLocks,
-    setStaging, setTheme, toggleLock, shuffleLayout, surpriseLayout,
+    editorMode, genStaging, genTheme, genSeed, genLocks, genAccentOnHero,
+    setStaging, setTheme, toggleLock, toggleAccentOnHero, shuffleLayout, surpriseLayout, setBrandOverride,
     tierType, setTierType, addTierItem,
   }
 }
