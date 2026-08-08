@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Page, type Locator } from '@playwright/test'
 import { waitForBackend, openBlankWorkflow, dropNode, openSmartLayoutEditor } from './_helpers'
 
 /**
@@ -76,6 +76,27 @@ async function readLiveElement(page: Page, elId: string): Promise<any> {
     const el = all.find((e: any) => e.id === id)
     return el ? JSON.parse(JSON.stringify(el)) : null
   }, elId)
+}
+
+/** Live computed `color` of a staged text element. `data-el-id` sits on an
+ *  unstyled positioning wrapper — plain text sets `color` on its inner
+ *  content div (`textStyle` in GridEditorCanvas.vue), expressive text on its
+ *  word-container div (`expressiveContainerStyle`) — either way it's the
+ *  wrapper's first `div` child, so this doesn't need to know which case
+ *  applies. Reads the RESOLVED colour (browser-computed rgb(...)), not the
+ *  raw `{{ brand.foreground }}` token stored in the template. */
+async function elementColor(modal: Locator, elId: string): Promise<string> {
+  return await modal.locator(`[data-el-id="${elId}"]`).evaluate((wrapper) => {
+    const target = wrapper.querySelector('div') ?? wrapper
+    return getComputedStyle(target as Element).color
+  })
+}
+
+/** Live computed `background-color` of the artboard itself — `data-artboard`
+ *  carries the theme's field colour directly via `backgroundStyle` (see
+ *  GridEditorCanvas.vue), no descendant lookup needed. */
+async function artboardBackground(modal: Locator): Promise<string> {
+  return await modal.locator('[data-artboard]').evaluate(el => getComputedStyle(el).backgroundColor)
 }
 
 /** The live node's input index for a named input (handle = `input-<idx>`). */
@@ -279,6 +300,68 @@ test.describe('Smart Layout generation (wired Shuffle/Surprise)', () => {
     expect(await freeformDup.count()).toBe(0)
     const summerSaleNodes = modal.locator('text="Summer Sale"')
     expect(await summerSaleNodes.count()).toBe(1)
+
+    // Round-2a Task 12: theme switch (Task 1/7 theme model + Task 8/9
+    // stamping). LayoutControlsPanel (theme/ink/accent swatches) only
+    // occupies the right panel's "Canvas" slot while nothing is selected —
+    // exactly the state the click-to-deselect check above just proved, so
+    // no extra editor open/close is needed to reach it.
+    const heroId = 'tier_hero_0'
+    const inkBeforeTheme = await elementColor(modal, heroId)
+    const bgBeforeTheme = await artboardBackground(modal)
+    expect(bgBeforeTheme).not.toBe('rgb(221, 34, 0)') // sanity: fresh open defaults to the paper theme, not red
+
+    const redSwatch = modal.locator('[data-layout-controls] [data-theme-swatch="red"]')
+    await redSwatch.click()
+    await expect.poll(() => artboardBackground(modal)).toBe('rgb(221, 34, 0)') // #dd2200
+    // resolveInk('#dd2200') picks the theme's LIGHT ink (dark field) — the
+    // hero's colour must actually re-resolve, not just the artboard fill.
+    await expect.poll(() => elementColor(modal, heroId)).not.toBe(inkBeforeTheme)
+    expect(await elementColor(modal, heroId)).toBe('rgb(242, 240, 239)') // #f2f0ef
+
+    // Brand-override sanity: an Ink swatch click overrides the theme's
+    // auto-resolved ink directly (setBrandOverride), independent of the
+    // theme axis — the hero must track the override, not the theme default.
+    const blackInkSwatch = modal.locator('[data-layout-controls] [data-ink-swatch="#000000"]')
+    await blackInkSwatch.click()
+    await expect.poll(() => elementColor(modal, heroId)).toBe('rgb(0, 0, 0)')
+
+    // Append tier item (Task 2/3 multi-item tiers with append): "+ List"
+    // appends onto the support tier's list rather than overwriting item 0 —
+    // clicking it (once or twice, depending on whether the staging already
+    // seeded a first support item) must leave BOTH tier_support_0 AND
+    // tier_support_1 on canvas, not one item repeatedly overwritten.
+    const supportBefore = await modal.locator('[data-el-id^="tier_support_"]').count()
+    const addList = modal.getByRole('button', { name: '+ List' })
+    await expect(addList).toBeVisible()
+    for (let i = supportBefore; i < 2; i++) {
+      await addList.click()
+      await expect.poll(async () => await modal.locator('[data-el-id^="tier_support_"]').count()).toBeGreaterThan(i)
+    }
+    await expect(modal.locator('[data-el-id="tier_support_0"]')).toBeVisible()
+    await expect(modal.locator('[data-el-id="tier_support_1"]')).toBeVisible()
+
+    // Accent on headline (Task 11 opt-in treatment): toggling colours the
+    // hero tier in the theme's accent instead of the resolved ink.
+    const accentToggle = modal.getByRole('button', { name: 'Accent on headline' })
+    await accentToggle.click()
+    await expect.poll(() => elementColor(modal, heroId)).toBe('rgb(242, 240, 239)') // red theme's untouched default accent, #f2f0ef
+
+    // Toggle back off so the ink override (black, set above) is what's on
+    // screen again — this sets up the Shuffle check below to actually
+    // exercise the ink override, not the untouched accent value (which
+    // Shuffle would trivially leave unchanged either way).
+    await accentToggle.click()
+    await expect.poll(() => elementColor(modal, heroId)).toBe('rgb(0, 0, 0)')
+
+    // Shuffle preserves brand overrides: shuffle() keeps the same theme id,
+    // so generate()'s stamp-on-theme-change-only guard never fires and the
+    // hand-set ink survives — while the seed still changes underneath it.
+    const seedBeforeShuffle = await modal.locator('text=/seed \\d+/').innerText()
+    const shuffleBtn = modal.getByRole('button', { name: /Shuffle/ })
+    await shuffleBtn.click()
+    await expect.poll(async () => await modal.locator('text=/seed \\d+/').innerText()).not.toBe(seedBeforeShuffle)
+    expect(await elementColor(modal, heroId)).toBe('rgb(0, 0, 0)')
 
     // Surprise re-rolls both axes under a new seed — click it twice and
     // assert the displayed seed actually changes each time (not merely "it

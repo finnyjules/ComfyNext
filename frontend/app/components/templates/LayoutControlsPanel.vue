@@ -16,7 +16,7 @@ const isAutoInk = computed(() => currentForeground.value === currentThemeInk.val
 </script>
 
 <template>
-  <div class="px-4 py-3.5 flex flex-col gap-3 border-b border-white/[0.06]">
+  <div data-layout-controls class="px-4 py-3.5 flex flex-col gap-3 border-b border-white/[0.06]">
     <p class="text-[10px] uppercase tracking-[0.12em] text-white/35">Layout</p>
 
     <div>
@@ -44,7 +44,7 @@ const isAutoInk = computed(() => currentForeground.value === currentThemeInk.val
         </button>
       </div>
       <div class="flex flex-wrap gap-1.5">
-        <button v-for="th in THEMES" :key="th.id" :title="th.name"
+        <button v-for="th in THEMES" :key="th.id" :title="th.name" :data-theme-swatch="th.id"
           class="size-6 rounded-full border cursor-pointer transition"
           :class="ctx.genTheme.value === th.id ? 'border-white ring-1 ring-action' : 'border-white/20 hover:border-white/50'"
           :style="{ background: th.field }" @click="ctx.setTheme(th.id)" />
@@ -57,7 +57,7 @@ const isAutoInk = computed(() => currentForeground.value === currentThemeInk.val
         <button class="h-6 px-2 rounded-full text-[10px] font-semibold border transition-colors cursor-pointer"
           :class="isAutoInk ? 'border-white ring-1 ring-action text-white' : 'border-white/20 text-white/50 hover:border-white/50 hover:text-white'"
           title="Auto — resolved from the theme's field colour" @click="ctx.setBrandOverride('foreground', null)">Auto</button>
-        <button v-for="hex in THEME_PALETTE" :key="hex" :title="hex"
+        <button v-for="hex in THEME_PALETTE" :key="hex" :title="hex" :data-ink-swatch="hex"
           class="size-6 rounded-full border cursor-pointer transition"
           :class="currentForeground === hex ? 'border-white ring-1 ring-action' : 'border-white/20 hover:border-white/50'"
           :style="{ background: hex }" @click="ctx.setBrandOverride('foreground', hex)" />
@@ -74,7 +74,7 @@ const isAutoInk = computed(() => currentForeground.value === currentThemeInk.val
         </button>
       </div>
       <div class="flex flex-wrap gap-1.5">
-        <button v-for="hex in THEME_PALETTE" :key="hex" :title="hex"
+        <button v-for="hex in THEME_PALETTE" :key="hex" :title="hex" :data-accent-swatch="hex"
           class="size-6 rounded-full border cursor-pointer transition"
           :class="currentAccent === hex ? 'border-white ring-1 ring-action' : 'border-white/20 hover:border-white/50'"
           :style="{ background: hex }" @click="ctx.setBrandOverride('accent', hex)" />
