@@ -69,3 +69,22 @@ describe('staging: split + frame registered and valid', () => {
     expect(JSON.stringify(s.map(e => e.region))).not.toBe(JSON.stringify(t.map(e => e.region)))
   })
 })
+
+describe('staging: full library', () => {
+  it('registers all six stagings', () => {
+    expect(STAGINGS.map(s => s.id).sort()).toEqual(
+      ['centered', 'editorial', 'frame', 'index', 'split', 'tower'])
+  })
+  it('every staging produces distinct placement and stays in-grid', () => {
+    const shapes = new Set<string>()
+    for (const s of STAGINGS) {
+      const els = s.compose(input())
+      for (const e of els) {
+        expect(e.region.col + e.region.colSpan - 1).toBeLessThanOrEqual(12)
+        expect(e.region.row + e.region.rowSpan - 1).toBeLessThanOrEqual(16)
+      }
+      shapes.add(JSON.stringify(els.map(e => [e.id, e.region])))
+    }
+    expect(shapes.size).toBe(STAGINGS.length) // no two stagings are identical
+  })
+})

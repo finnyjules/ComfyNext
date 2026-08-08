@@ -174,7 +174,81 @@ const frame: Staging = {
   },
 }
 
-export const STAGINGS: Staging[] = [tower, split, frame]
+/** Centered — hero centred with symmetric air; anchor below; fine print pinned
+ *  to top and bottom edges. Quiet, poster-like. */
+const centered: Staging = {
+  id: 'centered', name: 'Centered',
+  blurb: 'Hero centred with symmetric air above and below.',
+  knobs: [],
+  compose({ tiers, cols, rows }) {
+    const els: ElementV2[] = []
+    if (tiers.fineprint) els.push(tierText('fineprint', tiers,
+      clampRegion({ col: 1, colSpan: cols, row: 1, rowSpan: 1 }, cols, rows), 4,
+      { style: { align: 'center', valign: 'top' } }))
+    if (tiers.hero) els.push(tierText('hero', tiers,
+      clampRegion({ col: 1, colSpan: cols, row: Math.round(rows * 0.32), rowSpan: Math.round(rows * 0.3) }, cols, rows), 1,
+      { level: 'display', style: { align: 'center', valign: 'middle', fontWeight: 700 } }))
+    if (tiers.anchor) els.push(tierText('anchor', tiers,
+      clampRegion({ col: 1, colSpan: cols, row: Math.round(rows * 0.66), rowSpan: 2 }, cols, rows), 2,
+      { level: 'headline', style: { align: 'center', valign: 'top' } }))
+    if (tiers.support) els.push(tierText('support', tiers,
+      clampRegion({ col: Math.round(cols * 0.25), colSpan: Math.round(cols * 0.5), row: rows - 2, rowSpan: 2 }, cols, rows), 3,
+      { style: { align: 'center', valign: 'bottom' } }))
+    return els
+  },
+}
+
+/** Editorial — a left type column (hero + support stacked) beside an open right
+ *  field; anchor bottom-right, fine print top-right. */
+const editorial: Staging = {
+  id: 'editorial', name: 'Editorial',
+  blurb: 'Left type column against an open right field.',
+  knobs: [{ id: 'colw', pick: [6, 7, 8] }],
+  compose({ tiers, cols, rows, knobs }) {
+    const els: ElementV2[] = []
+    const colw = Math.min(Number(knobs.colw ?? 7), cols - 1)
+    if (tiers.hero) els.push(tierText('hero', tiers,
+      clampRegion({ col: 1, colSpan: colw, row: 2, rowSpan: Math.round(rows * 0.34) }, cols, rows), 1,
+      { level: 'display', style: { align: 'left', valign: 'top', fontWeight: 700 } }))
+    if (tiers.support) els.push(tierText('support', tiers,
+      clampRegion({ col: 1, colSpan: colw, row: Math.round(rows * 0.4), rowSpan: 4 }, cols, rows), 3,
+      { style: { align: 'left', valign: 'top' } }))
+    if (tiers.fineprint) els.push(tierText('fineprint', tiers,
+      clampRegion({ col: colw + 1, colSpan: cols - colw, row: 2, rowSpan: 2 }, cols, rows), 4,
+      { style: { align: 'right', valign: 'top' } }))
+    if (tiers.anchor) els.push(tierText('anchor', tiers,
+      clampRegion({ col: colw + 1, colSpan: cols - colw, row: rows - 3, rowSpan: 3 }, cols, rows), 2,
+      { level: 'headline', style: { align: 'right', valign: 'bottom', fontWeight: 700 } }))
+    return els
+  },
+}
+
+/** Index — a numbered/enumerated feel: fine print as a top rail, hero mid, and
+ *  support as a left index column with the anchor beneath it. */
+const index: Staging = {
+  id: 'index', name: 'Index',
+  blurb: 'Top rail of meta, hero mid-canvas, indexed support column.',
+  knobs: [{ id: 'heroRow', pick: [4, 5, 6] }],
+  compose({ tiers, cols, rows, knobs }) {
+    const els: ElementV2[] = []
+    const heroRow = Number(knobs.heroRow ?? 5)
+    if (tiers.fineprint) els.push(tierText('fineprint', tiers,
+      clampRegion({ col: 1, colSpan: cols, row: 1, rowSpan: 1 }, cols, rows), 4,
+      { style: { align: 'left', valign: 'top' } }))
+    if (tiers.hero) els.push(tierText('hero', tiers,
+      clampRegion({ col: 1, colSpan: cols, row: heroRow, rowSpan: Math.round(rows * 0.3) }, cols, rows), 1,
+      { level: 'display', style: { align: 'left', valign: 'top', fontWeight: 700 } }))
+    if (tiers.support) els.push(tierText('support', tiers,
+      clampRegion({ col: 1, colSpan: Math.round(cols / 2), row: Math.round(rows * 0.68), rowSpan: 3 }, cols, rows), 3,
+      { style: { align: 'left', valign: 'top' } }))
+    if (tiers.anchor) els.push(tierText('anchor', tiers,
+      clampRegion({ col: 1, colSpan: cols, row: rows - 2, rowSpan: 2 }, cols, rows), 2,
+      { level: 'headline', style: { align: 'left', valign: 'bottom', fontWeight: 700 } }))
+    return els
+  },
+}
+
+export const STAGINGS: Staging[] = [tower, split, frame, centered, editorial, index]
 
 export function getStaging(id: string): Staging | undefined {
   return STAGINGS.find(s => s.id === id)
