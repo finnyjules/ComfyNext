@@ -24,16 +24,28 @@ interface GenOpts {
 
 const DEFAULT_THEME_ID = 'paper'
 
-/** Round-1 templates persisted `gen.surface`; round-2 reads `gen.theme`. One
- *  migration point — maps a stored gen (either shape) forward through
- *  `SURFACE_TO_THEME` so a legacy doc regenerates without erroring. Called at
- *  the top of `generate()`/`shuffle()`/`surprise()`. */
+/** Rename the nested round-1 axis lock `locks.surface` → `locks.theme`,
+ *  dropping the stale key. Idempotent: a locks object already carrying
+ *  `theme` is returned as-is (its value wins over any stray `surface`). */
+function migrateLocks(locks: GenState['locks'] | undefined): GenState['locks'] | undefined {
+  const raw = locks as (Record<string, boolean> | undefined)
+  if (!raw || !('surface' in raw)) return locks
+  const { surface, ...rest } = raw
+  return { ...rest, theme: raw.theme ?? surface }
+}
+
+/** Round-1 templates persisted `gen.surface` (and `gen.locks.surface`);
+ *  round-2 reads `gen.theme`/`gen.locks.theme`. One migration point — maps a
+ *  stored gen (either shape) forward through `SURFACE_TO_THEME` so a legacy
+ *  doc regenerates without erroring, and its axis lock survives the rename.
+ *  Called at the top of `generate()`/`shuffle()`/`surprise()`. */
 export function migrateGen(gen: (GenState & { surface?: string }) | undefined): GenState | undefined {
-  if (!gen || gen.theme) return gen as GenState | undefined
+  if (!gen) return gen
+  if (gen.theme) return { ...gen, locks: migrateLocks(gen.locks) } as GenState
   const legacySurface = gen.surface
-  if (!legacySurface) return gen as GenState
+  if (!legacySurface) return { ...gen, locks: migrateLocks(gen.locks) } as GenState
   const { surface: _surface, ...rest } = gen
-  return { ...rest, theme: SURFACE_TO_THEME[legacySurface] ?? DEFAULT_THEME_ID }
+  return { ...rest, theme: SURFACE_TO_THEME[legacySurface] ?? DEFAULT_THEME_ID, locks: migrateLocks(gen.locks) }
 }
 
 /** Inject the staged text ink post-compose: `ink` (a `{{ brand.foreground }}`

@@ -1072,10 +1072,6 @@ export function useGridEditor(
   const genTheme = computed(() => (template.value as TemplateV3).gen?.theme ?? 'paper')
   const genSeed = computed(() => (template.value as TemplateV3).gen?.seed ?? 1)
   const genLocks = computed(() => (template.value as TemplateV3).gen?.locks ?? {})
-  // Whether a wired image is available — no longer gates generation (themes
-  // don't need one; that concept died with duotone-photo) but still useful
-  // for other image-dependent affordances.
-  const hasGenImage = computed(() => Boolean(sampleProps.value?.image_layer_1))
 
   function commit(next: TemplateV3) {
     template.value = next
@@ -1096,11 +1092,11 @@ export function useGridEditor(
 
   function setStaging(id: string) {
     const t = asV3()
-    commit(generate(t, { staging: id, theme: t.gen?.theme ?? 'paper', seed: t.gen?.seed ?? 1, ...genCtx() }))
+    commit(generate(t, { staging: id, theme: t.gen?.theme ?? 'paper', seed: t.gen?.seed ?? 1, accentOnHero: t.gen?.accentOnHero, ...genCtx() }))
   }
   function setTheme(id: string) {
     const t = asV3()
-    commit(generate(t, { staging: t.gen?.staging ?? 'tower', theme: id, seed: t.gen?.seed ?? 1, ...genCtx() }))
+    commit(generate(t, { staging: t.gen?.staging ?? 'tower', theme: id, seed: t.gen?.seed ?? 1, accentOnHero: t.gen?.accentOnHero, ...genCtx() }))
   }
   function toggleLock(axis: 'staging' | 'theme') {
     const t = asV3()
@@ -1121,7 +1117,7 @@ export function useGridEditor(
     const items = normalized[id] ?? [{ content: '' }]
     const tiers = { ...normalized, [id]: [{ ...items[0], type: { ...items[0]?.type, ...patch } }, ...items.slice(1)] }
     // Re-generate in place so the type change is visible immediately (same tuple).
-    commit(generate({ ...t, tiers }, { staging: t.gen?.staging ?? 'tower', theme: t.gen?.theme ?? 'paper', seed: t.gen?.seed ?? 1, ...genCtx() }))
+    commit(generate({ ...t, tiers }, { staging: t.gen?.staging ?? 'tower', theme: t.gen?.theme ?? 'paper', seed: t.gen?.seed ?? 1, accentOnHero: t.gen?.accentOnHero, ...genCtx() }))
   }
   function addTierItem(id: TierId, content = '') {
     const t = asV3()
@@ -1129,7 +1125,7 @@ export function useGridEditor(
     const items = normalized[id] ?? []
     const tiers = { ...normalized, [id]: [{ content: content || items[0]?.content || id.toUpperCase(), type: items[0]?.type }, ...items.slice(1)] }
     const seed = t.gen?.seed ?? 1
-    commit(generate({ ...t, tiers }, { staging: t.gen?.staging ?? 'tower', theme: t.gen?.theme ?? 'paper', seed, ...genCtx() }))
+    commit(generate({ ...t, tiers }, { staging: t.gen?.staging ?? 'tower', theme: t.gen?.theme ?? 'paper', seed, accentOnHero: t.gen?.accentOnHero, ...genCtx() }))
   }
 
   // -- Undo / redo ------------------------------------------------------------
@@ -1219,7 +1215,7 @@ export function useGridEditor(
     setSectionStyle, setSectionClip, renameSection, renameElement, toggleSectionLayout, wrapSelectionInSection, addSectionAt, frameDrawArmed,
     toggleSectionExpressive, setSectionExpressive,
     commitNow, undo, redo, canUndo, canRedo,
-    editorMode, genStaging, genTheme, genSeed, genLocks, hasGenImage,
+    editorMode, genStaging, genTheme, genSeed, genLocks,
     setStaging, setTheme, toggleLock, shuffleLayout, surpriseLayout,
     tierType, setTierType, addTierItem,
   }

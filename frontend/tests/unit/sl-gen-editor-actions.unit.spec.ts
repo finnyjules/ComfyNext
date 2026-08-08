@@ -57,4 +57,48 @@ describe('useGridEditor generation actions', () => {
     ctx.shuffleLayout()
     expect(ctx.dirty.value).toBe(true)
   })
+  it('setStaging preserves accentOnHero on regeneration', () => {
+    const ctx = editorWithTiers()
+    ctx.surpriseLayout()
+    const t = ctx.template.value as TemplateV3
+    t.gen = { ...t.gen!, accentOnHero: true }
+    ctx.setStaging('frame')
+    const t2 = ctx.template.value as TemplateV3
+    const hero = t2.elements.find(e => e.id === 'tier_hero_0') as any
+    expect(hero?.style?.color).toBe('{{ brand.accent }}')
+    expect(t2.gen?.accentOnHero).toBe(true)
+  })
+  it('setTheme preserves accentOnHero on regeneration', () => {
+    const ctx = editorWithTiers()
+    ctx.surpriseLayout()
+    const t = ctx.template.value as TemplateV3
+    t.gen = { ...t.gen!, accentOnHero: true }
+    ctx.setTheme('blue')
+    const t2 = ctx.template.value as TemplateV3
+    const hero = t2.elements.find(e => e.id === 'tier_hero_0') as any
+    expect(hero?.style?.color).toBe('{{ brand.accent }}')
+    expect(t2.gen?.accentOnHero).toBe(true)
+  })
+  it('setTierType preserves accentOnHero on regeneration', () => {
+    const ctx = editorWithTiers()
+    ctx.surpriseLayout()
+    const t = ctx.template.value as TemplateV3
+    t.gen = { ...t.gen!, accentOnHero: true }
+    ctx.setTierType('anchor', { letterSpacing: -1 })
+    const t2 = ctx.template.value as TemplateV3
+    const hero = t2.elements.find(e => e.id === 'tier_hero_0') as any
+    expect(hero?.style?.color).toBe('{{ brand.accent }}')
+    expect(t2.gen?.accentOnHero).toBe(true)
+  })
+  it('addTierItem preserves accentOnHero on regeneration', () => {
+    const ctx = editorWithTiers()
+    ctx.surpriseLayout()
+    const t = ctx.template.value as TemplateV3
+    t.gen = { ...t.gen!, accentOnHero: true }
+    ctx.addTierItem('support', 'More food')
+    const t2 = ctx.template.value as TemplateV3
+    const hero = t2.elements.find(e => e.id === 'tier_hero_0') as any
+    expect(hero?.style?.color).toBe('{{ brand.accent }}')
+    expect(t2.gen?.accentOnHero).toBe(true)
+  })
 })

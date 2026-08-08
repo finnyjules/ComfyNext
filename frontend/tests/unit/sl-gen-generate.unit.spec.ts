@@ -62,6 +62,21 @@ describe('generate orchestrator — themes', () => {
     expect(migrateGen({ staging: 'tower', theme: 'blue', seed: 1 })).toEqual({ staging: 'tower', theme: 'blue', seed: 1 })
   })
 
+  // (c3) legacy `locks.surface` renames to `locks.theme` (and stays honoured)
+  it('(c3) migrateGen renames locks.surface to locks.theme so a legacy lock survives surprise()', () => {
+    const t: TemplateV3 = {
+      ...base(),
+      gen: { staging: 'tower', surface: 'tint', seed: 1, locks: { surface: true } } as any,
+    }
+    const rolled = surprise(t)
+    expect(rolled.gen?.theme).toBe('red')
+    expect(rolled.gen?.locks).toEqual({ theme: true })
+
+    // idempotent: a doc already on `locks.theme` is untouched
+    const already = migrateGen({ staging: 'tower', theme: 'blue', seed: 1, locks: { theme: true } })
+    expect(already?.locks).toEqual({ theme: true })
+  })
+
   // (d) accentOnHero only touches tier_hero_0
   it('(d) accentOnHero colours only tier_hero_0 with the accent token', () => {
     const t = generate(base(), { staging: 'tower', theme: 'paper', seed: 1, accentOnHero: true })
