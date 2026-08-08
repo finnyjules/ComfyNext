@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import * as THREE from 'three'
 import { loftEffect } from '../../app/lib/spacetype/effects/loft'
-import { defaultsFromControls } from '../../app/lib/spacetype/effect'
+import { defaultsFromControls as dfc } from '../../app/lib/spacetype/effect'
 
 describe('loftEffect', () => {
   it('registers with id "loft" and required section groups', () => {
@@ -9,7 +9,7 @@ describe('loftEffect', () => {
     for (const c of loftEffect.controls) expect(typeof c.group).toBe('string')
   })
   it('buildScene returns a root with drawable geometry (shape kind, fill)', () => {
-    const params = defaultsFromControls(loftEffect.controls)
+    const params = dfc(loftEffect.controls)
     params.render = 'fill'; params.profileKind = 'shape'
     const dummyTex = new THREE.Texture()
     const root = loftEffect.buildScene(THREE as any, params, dummyTex, { width: 800, height: 800 })
@@ -19,7 +19,7 @@ describe('loftEffect', () => {
     expect(root.userData.loftState).toBeTruthy()
   })
   it('stroke kind builds LineSegments', () => {
-    const params = defaultsFromControls(loftEffect.controls)
+    const params = dfc(loftEffect.controls)
     params.render = 'stroke'
     const root = loftEffect.buildScene(THREE as any, params, new THREE.Texture(), { width: 800, height: 800 })
     let lines = 0
@@ -27,7 +27,7 @@ describe('loftEffect', () => {
     expect(lines).toBeGreaterThan(0)
   })
   it('update(spin>0) rotates without throwing', () => {
-    const params = defaultsFromControls(loftEffect.controls)
+    const params = dfc(loftEffect.controls)
     params.spin = 2
     const root = loftEffect.buildScene(THREE as any, params, new THREE.Texture(), { width: 800, height: 800 })
     expect(() => loftEffect.update(0.5, params, root)).not.toThrow()
@@ -35,11 +35,30 @@ describe('loftEffect', () => {
   })
   it('stashes the ramp texture under userData.tex so the engine disposes it (both modes)', () => {
     for (const render of ['fill', 'stroke'] as const) {
-      const params = defaultsFromControls(loftEffect.controls)
+      const params = dfc(loftEffect.controls)
       params.render = render
       const root = loftEffect.buildScene(THREE as any, params, new THREE.Texture(), { width: 800, height: 800 })
       expect(root.userData.tex).toBeTruthy()
       expect((root.userData.tex as any).isTexture).toBe(true)
     }
+  })
+})
+
+describe('loft motion contract', () => {
+  it('liveKeys are flow+spin (no rebuild on motion edits)', () => {
+    expect(loftEffect.liveKeys).toEqual(expect.arrayContaining(['flow', 'spin']))
+  })
+  it('loopRates reflects active motions', () => {
+    const p = dfc(loftEffect.controls); p.flow = 2; p.spin = 3
+    expect(loftEffect.loopRates!(p).sort()).toEqual([2, 3])
+    const p0 = dfc(loftEffect.controls)
+    expect(loftEffect.loopRates!(p0)).toEqual([])   // static poster
+  })
+  it('flow offsets the ramp uniform continuously and returns home at t=1', () => {
+    const p = dfc(loftEffect.controls); p.flow = 1
+    const root = loftEffect.buildScene(THREE as any, p, new THREE.Texture(), { width: 800, height: 800 })
+    loftEffect.update(0, p, root); const u0 = (root.userData.loftState.mat.uniforms.uFlow.value)
+    loftEffect.update(0.999, p, root); const u1 = (root.userData.loftState.mat.uniforms.uFlow.value)
+    expect(u0).toBeCloseTo(0); expect(u1).toBeCloseTo(0.999)
   })
 })
