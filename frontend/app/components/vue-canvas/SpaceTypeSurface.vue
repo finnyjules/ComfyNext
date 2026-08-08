@@ -710,13 +710,13 @@ async function ensureFont(value: string) {
 // to the parametric contour for the rebuild that's already in flight; the NEXT structural
 // change (or, for a reopened saved word-mode config, this very awaited call before the first
 // build) picks up the real glyph outlines. Never throws: a failed font load leaves the cache
-// cold and buildScene's `?? loftContours(...)` fallback keeps handling it.
+// cold and buildScene's `?? [shapeContour('oval', ...)]` fallback keeps handling it.
 async function ensureEffectFonts() {
   await ensureFont(String(params.font))
   if (effectId.value === 'boost') { try { await ensureBoostFont(String(params.font)) } catch { /* fallback */ } }
-  if (effectId.value === 'loft' && params.profileKind === 'word') {
+  if (effectId.value === 'loft' && params.shape === 'word') {
     const url = fontSourceUrl(outlineFontValue(String(params.font || '')))
-    if (!fontCacheGet(url)) { try { await loadFont(url) } catch { /* buildScene falls back to loftContours */ } }
+    if (!fontCacheGet(url)) { try { await loadFont(url) } catch { /* buildScene falls back to a plain oval contour */ } }
   }
 }
 

@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import * as THREE from 'three'
-import { loftEffect } from '../../app/lib/spacetype/effects/loft'
+import { loftEffect, resolveShape } from '../../app/lib/spacetype/effects/loft'
 import { defaultsFromControls as dfc } from '../../app/lib/spacetype/effect'
+
+function defaultFromControls() { return dfc(loftEffect.controls) }
 
 describe('loftEffect', () => {
   it('registers with id "loft" and required section groups', () => {
@@ -60,5 +62,28 @@ describe('loft motion contract', () => {
     loftEffect.update(0, p, root); const u0 = (root.userData.loftState.mat.uniforms.uFlow.value)
     loftEffect.update(0.999, p, root); const u1 = (root.userData.loftState.mat.uniforms.uFlow.value)
     expect(u0).toBeCloseTo(0); expect(u1).toBeCloseTo(0.999)
+  })
+})
+
+describe('loft refinements', () => {
+  it('resolveShape migrates old profileKind', () => {
+    expect(resolveShape({ shape: 'star' } as any)).toBe('star')
+    expect(resolveShape({ profileKind: 'word' } as any)).toBe('word')
+    expect(resolveShape({ profileKind: 'shape' } as any)).toBe('oval')
+    expect(resolveShape({} as any)).toBe('oval')
+  })
+  it('spacing>0 builds discrete sliced geometry (more/mesh objects than continuous is not required, but drawable)', () => {
+    const p = defaultFromControls()
+    p.spacing = 0.4; p.shape = 'oval'; p.colorSource = 'fill'
+    const root = loftEffect.buildScene(THREE as any, p, new THREE.Texture(), { width: 800, height: 800 })
+    let drawable = 0; root.traverse((o: any) => { if (o.isMesh || o.isLineSegments) drawable++ })
+    expect(drawable).toBeGreaterThan(0)
+  })
+  it('colorSource fill vs stops both produce a ramp texture on userData.tex', () => {
+    for (const cs of ['fill', 'stops']) {
+      const p = defaultFromControls(); (p as any).colorSource = cs
+      const root = loftEffect.buildScene(THREE as any, p, new THREE.Texture(), { width: 800, height: 800 })
+      expect((root.userData.tex as any).isTexture).toBe(true)
+    }
   })
 })

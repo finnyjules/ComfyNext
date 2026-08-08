@@ -3,8 +3,10 @@ import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import { parseStops, DEFAULT_STOPS_JSON, type LoftStop } from '../loftStops'
 import {
   sampleSpine, interpStopProps, parametricProfileContour, resampleContour,
-  buildLoftGeometry, buildRamp, type Vec2,
+  buildLoftGeometry, buildRamp, shapeContour, rampFromFill, buildSlicedLoftGeometry,
+  type Vec2, type LoftShape,
 } from '../loftGeometry'
+import { defaultFillsFor } from '../palette'
 import { textOutline, fontCacheGet, fontSourceUrl, type Font } from '~/lib/scene3d/outlines'
 
 /**
@@ -23,14 +25,23 @@ const controls: ControlSpec[] = [
   { key: 'spinePreset', label: 'Spine preset', kind: 'select', options: ['custom', 'helix', 'wave', 'arch', 's-curve', 'loop'], default: 'helix', group: 'Layout' },
   { key: 'closed', label: 'Closed loop', kind: 'switch', default: false, group: 'Layout' },
   { key: 'copies', label: 'Copies', kind: 'slider', min: 6, max: 400, step: 1, default: 120, group: 'Layout' },
-  { key: 'profileKind', label: 'Profile', kind: 'select', options: ['shape', 'word'], default: 'shape', group: 'Style' },
-  // word-mode fields (revealed via showIf on profileKind)
-  { key: 'text', label: 'Word', kind: 'text', default: 'LOFT', group: 'Style', showIf: { key: 'profileKind', equals: 'word' } },
-  { key: 'font', label: 'Font', kind: 'font', default: 'google:Archivo Black@700', group: 'Style', showIf: { key: 'profileKind', equals: 'word' } },
+  { key: 'spacing', label: 'Spacing', kind: 'slider', min: 0, max: 0.9, step: 0.02, default: 0.35, group: 'Layout' },
+  { key: 'elements', label: 'Elements', kind: 'slider', min: 4, max: 120, step: 1, default: 40, group: 'Layout', showIf: { key: 'spacing', notEquals: 0 } },
+  // shape picker replaces the old profileKind — word is now one of the shape options
+  { key: 'shape', label: 'Shape', kind: 'select', options: ['oval', 'capsule', 'rectangle', 'polygon', 'star', 'word'], default: 'oval', group: 'Style' },
+  { key: 'rectRadius', label: 'Corner radius', kind: 'slider', min: 0, max: 1, step: 0.02, default: 0.4, group: 'Style', showIf: { key: 'shape', equals: 'rectangle' } },
+  { key: 'polySides', label: 'Sides', kind: 'slider', min: 3, max: 16, step: 1, default: 5, group: 'Style', showIf: { key: 'shape', equals: 'polygon' } },
+  { key: 'starSides', label: 'Points', kind: 'slider', min: 3, max: 16, step: 1, default: 5, group: 'Style', showIf: { key: 'shape', equals: 'star' } },
+  { key: 'starDepth', label: 'Star depth', kind: 'slider', min: 0, max: 0.9, step: 0.02, default: 0.5, group: 'Style', showIf: { key: 'shape', equals: 'star' } },
+  // word-mode fields (revealed via showIf on shape)
+  { key: 'text', label: 'Word', kind: 'text', default: 'LOFT', group: 'Style', showIf: { key: 'shape', equals: 'word' } },
+  { key: 'font', label: 'Font', kind: 'font', default: 'google:Archivo Black@700', group: 'Style', showIf: { key: 'shape', equals: 'word' } },
   { key: 'render', label: 'Render', kind: 'select', options: ['stroke', 'fill'], default: 'fill', group: 'Style' },
   { key: 'strokeOpacity', label: 'Stroke opacity', kind: 'slider', min: 0.02, max: 1, step: 0.02, default: 0.4, group: 'Style', showIf: { key: 'render', equals: 'stroke' } },
   { key: 'fillOpacity', label: 'Fill opacity', kind: 'slider', min: 0.05, max: 1, step: 0.05, default: 1, group: 'Style', showIf: { key: 'render', equals: 'fill' } },
   { key: 'mode', label: 'Space', kind: 'select', options: ['3d', 'flat'], default: '3d', group: 'Style' },
+  { key: 'colorSource', label: 'Colour source', kind: 'select', options: ['fill', 'stops'], default: 'fill', group: 'Color' },
+  { key: 'fills', label: 'Fill', kind: 'fillList', default: defaultFillsFor(1, 'loft'), group: 'Color', showIf: { key: 'colorSource', equals: 'fill' } },
   { key: 'flow', label: 'Flow', kind: 'slider', min: 0, max: 4, step: 1, default: 0, group: 'Motion' },
   { key: 'spin', label: 'Spin', kind: 'slider', min: 0, max: 4, step: 1, default: 0, group: 'Motion' },
   { key: 'scale', label: 'Scale', kind: 'slider', min: 0.4, max: 2.5, step: 0.05, default: 1, group: 'Transform' },
@@ -74,10 +85,24 @@ export function outlineFontValue(font: string | undefined): string {
 }
 
 /** Build the cross-section contours for these params. Shape kind only here; word mode overrides
- *  `baseContours` in buildScene. Exported for unit tests. */
+ *  `baseContours` in buildScene. Exported for unit tests.
+ *  @deprecated superseded by `shapeContour` (loftGeometry.ts) driven by the `shape` control;
+ *  kept only so existing callers/tests referencing the old parametric-stop-based profile
+ *  (`sides`/`radius` per stop) keep working until Task 5 removes those stop fields. */
 export function loftContours(params: Params, stops: LoftStop[]): Vec2[][] {
   const props = interpStopProps(stops, 0)
   return [resampleContour(parametricProfileContour(props, PROFILE_POINTS), PROFILE_POINTS)]
+}
+
+/** Migrate the old `profileKind` control ('shape'|'word') to the new `shape` control
+ *  (oval/capsule/rectangle/polygon/star/word). Returns the raw `shape` value when it's one of
+ *  the valid options; otherwise falls back to migrating `profileKind` ('word'→'word', else
+ *  'oval'). Exported for unit tests. */
+export function resolveShape(params: Params): LoftShape | 'word' {
+  const s = String(params.shape ?? '')
+  if (['oval', 'capsule', 'rectangle', 'polygon', 'star', 'word'].includes(s)) return s as LoftShape | 'word'
+  const pk = String(params.profileKind ?? '')   // migrate old docs
+  return pk === 'word' ? 'word' : 'oval'
 }
 
 /**
@@ -137,21 +162,25 @@ export const loftEffect: SpaceTypeEffect = {
     const props = stations.map(st => interpStopProps(flatStops, st.t))
     // Word mode: sweep the word's glyph outlines instead of the parametric shape. buildScene
     // stays SYNCHRONOUS — wordContours only ever reads the font from the sync `fontCacheGet`
-    // peek, never awaits `loadFont` — so on a cold cache it falls back to the parametric
-    // contour for one rebuild until the host (SpaceTypeSurface's `ensureEffectFonts`, awaited
-    // before every rebuild call site) warms the cache and reschedules a rebuild; the async
-    // font work never happens inside buildScene itself.
+    // peek, never awaits `loadFont` — so on a cold cache it falls back to a plain oval contour
+    // for one rebuild until the host (SpaceTypeSurface's `ensureEffectFonts`, awaited before
+    // every rebuild call site) warms the cache and reschedules a rebuild; the async font work
+    // never happens inside buildScene itself.
     // NOTE (fast-follow, not built here): a word swept perpendicular to a FLAT spine degenerates
     // toward a line, since the profile plane is orthogonal to the (z=0) sweep direction — word
     // mode is 3D-primary. Flat+word still renders (falls through to the same framing as shape
     // mode) rather than crashing; camera-facing framing for that combination is left for later.
-    const isWord = String(params.profileKind) === 'word'
-    const baseContours = isWord
-      ? (wordContours(three as any, params, PROFILE_POINTS) ?? loftContours(params, flatStops))
-      : loftContours(params, flatStops)
+    const shape = resolveShape(params)
+    const shapeParams = { rectRadius: n(params, 'rectRadius'), polySides: shape === 'star' ? n(params, 'starSides') : n(params, 'polySides'), starDepth: n(params, 'starDepth') }
+    const baseContours = shape === 'word'
+      ? (wordContours(three as any, params, PROFILE_POINTS) ?? [shapeContour('oval', shapeParams, PROFILE_POINTS)])
+      : [shapeContour(shape, shapeParams, PROFILE_POINTS)]
 
     const render = String(params.render) === 'stroke' ? 'stroke' : 'fill'
-    const geo = buildLoftGeometry({ stations, props, baseContours, closed, render })
+    const spacing = n(params, 'spacing')
+    const geo = spacing > 0
+      ? buildSlicedLoftGeometry({ stations, props, baseContours, closed, render, elements: n(params, 'elements'), spacing })
+      : buildLoftGeometry({ stations, props, baseContours, closed, render })
 
     const g = new three.BufferGeometry()
     g.setAttribute('position', new three.BufferAttribute(geo.positions, 3))
@@ -159,8 +188,9 @@ export const loftEffect: SpaceTypeEffect = {
     g.setIndex(new three.BufferAttribute(geo.indices, 1))
 
     // Uint8Array(...) copy: three's DataTexture types data as BufferSource (concrete ArrayBuffer);
-    // buildRamp's bare Uint8ClampedArray return widens to <ArrayBufferLike> under TS 5.7+ libs.
-    const ramp = new three.DataTexture(new Uint8Array(buildRamp(stops, 256)), 256, 1, three.RGBAFormat)
+    // buildRamp/rampFromFill's bare Uint8ClampedArray return widens to <ArrayBufferLike> under TS 5.7+ libs.
+    const rampBytes = String(params.colorSource) === 'stops' ? buildRamp(stops, 256) : rampFromFill(three, String(params.fills ?? ''), 256)
+    const ramp = new three.DataTexture(new Uint8Array(rampBytes), 256, 1, three.RGBAFormat)
     ramp.needsUpdate = true
     const opacity = render === 'stroke' ? n(params, 'strokeOpacity') : n(params, 'fillOpacity')
     const mat = new three.ShaderMaterial({
