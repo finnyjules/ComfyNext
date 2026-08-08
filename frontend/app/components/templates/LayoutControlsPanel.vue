@@ -1,8 +1,18 @@
 <script setup lang="ts">
 import { STAGINGS } from '~~/shared/template-grid/generate/stagings'
-import { THEMES } from '~~/shared/template-grid/generate/themes'
+import { getTheme, resolveInk, THEME_PALETTE, THEMES } from '~~/shared/template-grid/generate/themes'
 
 const ctx = inject<any>('gridEditor')
+
+// Ink/Accent swatches read the live brand kit to show what's actually
+// applied — `setBrandOverride` writes template.brand directly, independent
+// of the theme axis, so "current" here is the brand value, not the theme's
+// stamped default (that's only used to resolve what "Auto" means).
+const currentTheme = computed(() => getTheme(ctx.genTheme.value) ?? getTheme('paper')!)
+const currentThemeInk = computed(() => resolveInk(currentTheme.value.field))
+const currentForeground = computed(() => ctx.template.value?.brand?.foreground)
+const currentAccent = computed(() => ctx.template.value?.brand?.accent)
+const isAutoInk = computed(() => currentForeground.value === currentThemeInk.value)
 </script>
 
 <template>
@@ -34,10 +44,40 @@ const ctx = inject<any>('gridEditor')
         </button>
       </div>
       <div class="flex flex-wrap gap-1.5">
-        <button v-for="s in THEMES" :key="s.id" :title="s.name"
-          class="h-8 px-2 rounded-md text-[10px] font-semibold border transition-colors cursor-pointer"
-          :class="ctx.genTheme.value === s.id ? 'bg-white text-black border-white' : 'border-white/10 text-white/60 hover:text-white'"
-          @click="ctx.setTheme(s.id)">{{ s.name }}</button>
+        <button v-for="th in THEMES" :key="th.id" :title="th.name"
+          class="size-6 rounded-full border cursor-pointer transition"
+          :class="ctx.genTheme.value === th.id ? 'border-white ring-1 ring-action' : 'border-white/20 hover:border-white/50'"
+          :style="{ background: th.field }" @click="ctx.setTheme(th.id)" />
+      </div>
+    </div>
+
+    <div>
+      <span class="text-[9px] uppercase tracking-wide text-white/40 block mb-1.5">Ink</span>
+      <div class="flex flex-wrap gap-1.5 items-center">
+        <button class="h-6 px-2 rounded-full text-[10px] font-semibold border transition-colors cursor-pointer"
+          :class="isAutoInk ? 'border-white ring-1 ring-action text-white' : 'border-white/20 text-white/50 hover:border-white/50 hover:text-white'"
+          title="Auto — resolved from the theme's field colour" @click="ctx.setBrandOverride('foreground', null)">Auto</button>
+        <button v-for="hex in THEME_PALETTE" :key="hex" :title="hex"
+          class="size-6 rounded-full border cursor-pointer transition"
+          :class="currentForeground === hex ? 'border-white ring-1 ring-action' : 'border-white/20 hover:border-white/50'"
+          :style="{ background: hex }" @click="ctx.setBrandOverride('foreground', hex)" />
+      </div>
+    </div>
+
+    <div>
+      <div class="flex items-center justify-between mb-1.5">
+        <span class="text-[9px] uppercase tracking-wide text-white/40">Accent</span>
+        <button class="text-[10px] font-semibold px-1.5 h-5 rounded transition-colors cursor-pointer"
+          :class="ctx.genAccentOnHero.value ? 'bg-action text-white' : 'bg-white/[0.04] text-white/40 hover:text-white/70'"
+          title="Colour the headline tier in the accent instead of the ink" @click="ctx.toggleAccentOnHero()">
+          Accent on headline
+        </button>
+      </div>
+      <div class="flex flex-wrap gap-1.5">
+        <button v-for="hex in THEME_PALETTE" :key="hex" :title="hex"
+          class="size-6 rounded-full border cursor-pointer transition"
+          :class="currentAccent === hex ? 'border-white ring-1 ring-action' : 'border-white/20 hover:border-white/50'"
+          :style="{ background: hex }" @click="ctx.setBrandOverride('accent', hex)" />
       </div>
     </div>
 
