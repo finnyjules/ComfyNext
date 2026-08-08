@@ -104,7 +104,11 @@ export async function bakeTreatment(
  *  Duplicate URLs are fetched once (the raw bytes are cached and re-baked per
  *  node — cheap relative to the network fetch, and correct when the same
  *  source is reused with different treatments). Throws on the first failed
- *  fetch. `__treatment` is always stripped, whether or not it was applied. */
+ *  fetch (a dead URL should fail the render loudly). Treatment is cosmetic
+ *  and opt-in, so a bake failure (corrupt/unsupported source image, e.g. a
+ *  CMYK JPEG sharp can't decode) does NOT fail the render — it falls back to
+ *  the untreated fetched image and logs a warning instead. `__treatment` is
+ *  always stripped, whether or not it was applied. */
 export async function inlineTreeImages(tree: unknown, fetcher: ImageFetcher = defaultImageFetcher): Promise<void> {
   const imgs = collectImgNodes(tree)
   const cache = new Map<string, Promise<{ data: ArrayBuffer; contentType: string }>>()
@@ -117,8 +121,12 @@ export async function inlineTreeImages(tree: unknown, fetcher: ImageFetcher = de
     if (!pending) { pending = fetcher(src); cache.set(src, pending) }
     let { data, contentType } = await pending
     if (treatment) {
-      data = await bakeTreatment(data, treatment)
-      contentType = 'image/png'
+      try {
+        data = await bakeTreatment(data, treatment)
+        contentType = 'image/png'
+      } catch (err) {
+        console.warn(`[inlineImages] treatment bake failed (kind=${treatment.kind}, src=${src}) — falling back to untreated image`, err)
+      }
     }
     n.props!.src = `data:${contentType};base64,${Buffer.from(data).toString('base64')}`
   }))

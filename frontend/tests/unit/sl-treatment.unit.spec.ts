@@ -98,6 +98,14 @@ describe('treatment: default + pure mapping', () => {
     expect(overlay?.style.opacity).toBe(0.6)
   })
 
+  it('duotone editor grayscale filter scales with intensity — matches the bake direction', () => {
+    // Server bake at intensity 0 blends the tint over the ORIGINAL (near-colour)
+    // image; the editor preview must trend the same way, not hardcode full gray.
+    expect(editorImgFilter({ kind: 'duotone', intensity: 0 })).toBe('grayscale(0)')
+    expect(editorImgFilter({ kind: 'duotone', intensity: 0.5 })).toBe('grayscale(0.5)')
+    expect(editorImgFilter({ kind: 'duotone', intensity: 1 })).toBe('grayscale(1)')
+  })
+
   it('grain editor preview: no filter, a noise-texture overlay instead', () => {
     expect(editorImgFilter({ kind: 'grain' })).toBeUndefined()
     const overlay = treatmentOverlay({ kind: 'grain', intensity: 0.8 }, '#111111')
@@ -276,5 +284,19 @@ describe('treatment: fallback branch — sharp bake (duotone/grain)', () => {
     const { data, info } = await sharp(decoded).raw().toBuffer({ resolveWithObject: true })
     const idx = (4 * info.width + 4) * info.channels
     expect(data[idx + 1]).toBeGreaterThan(data[idx])   // green-tinted
+  })
+
+  it('a bake failure (corrupt/unsupported image) falls back to the untreated fetched image instead of failing the whole render', async () => {
+    const garbage = new TextEncoder().encode('not-a-real-image-these-are-garbage-bytes').buffer as ArrayBuffer
+    const node: any = {
+      type: 'img',
+      props: { src: 'http://x/corrupt.jpg', __treatment: { kind: 'duotone', intensity: 1, ink: '#00ff00' } },
+    }
+    await expect(inlineTreeImages({ type: 'div', props: { children: node } },
+      async () => ({ data: garbage, contentType: 'image/jpeg' }))).resolves.toBeUndefined()
+
+    expect(node.props.__treatment).toBeUndefined()
+    // Falls back to the ORIGINAL fetched (untreated) bytes — not baked, not thrown.
+    expect(node.props.src).toBe(`data:image/jpeg;base64,${Buffer.from(garbage).toString('base64')}`)
   })
 })

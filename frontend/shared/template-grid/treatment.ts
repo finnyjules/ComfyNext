@@ -68,7 +68,10 @@ export function needsServerBake(t?: PhotoTreatment): boolean {
 export function editorImgFilter(t?: PhotoTreatment): string | undefined {
   if (!hasTreatment(t)) return undefined
   if (t!.kind === 'grayscale') return treatmentCssFilter(t)
-  if (t!.kind === 'duotone') return 'grayscale(1)'
+  // Scale by intensity so the preview trends the SAME direction as the server
+  // bake: intensity 0 blends the tint over the original (near-colour) image,
+  // intensity 1 is fully desaturated before the ink-tint overlay is applied.
+  if (t!.kind === 'duotone') return `grayscale(${treatmentIntensity(t)})`
   return undefined
 }
 
