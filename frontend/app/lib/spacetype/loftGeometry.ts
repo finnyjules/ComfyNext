@@ -1,4 +1,6 @@
 import type { LoftStop } from './loftStops'
+import * as THREE from 'three'
+import { parseFills, fillPrimary } from './fills'
 
 export interface Vec2 { x: number; y: number }
 export interface Vec3 { x: number; y: number; z: number }
@@ -256,5 +258,33 @@ export function shapeContour(shape: LoftShape, params: ShapeParams, points: numb
       return resampleContour(raw, points)
     }
   }
+}
+
+function hexToRgbTuple(hex: string): [number, number, number] {
+  const h = String(hex).replace('#', '').slice(0, 6).padEnd(6, '0')
+  return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)]
+}
+
+/** A 1-D colour ramp (size*4 RGBA) built from the FIRST fill in the shared fills list.
+ *  solid → flat primary; gradient/ombre → a→b across the ramp; patterned (grid/noise/shader)
+ *  → flat primary (surface patterns are a later follow-up). */
+export function rampFromFill(three: typeof THREE, fillsJson: string, size: number): Uint8ClampedArray {
+  const out = new Uint8ClampedArray(size * 4)
+  let fills: any[]
+  try { fills = parseFills(fillsJson) } catch { fills = [] }
+  const fill: any = fills[0] ?? { type: 'solid', color: '#888888' }
+  const type = String(fill.type)
+  const ab = (type === 'gradient' || type === 'ombre') && fill.a && fill.b
+  const a = ab ? hexToRgbTuple(fill.a) : null
+  const b = ab ? hexToRgbTuple(fill.b) : null
+  let flat: [number, number, number]
+  try { const c = fillPrimary(three, fill); flat = [Math.round(c.r * 255), Math.round(c.g * 255), Math.round(c.b * 255)] }
+  catch { flat = [136, 136, 136] }
+  for (let i = 0; i < size; i++) {
+    const t = size > 1 ? i / (size - 1) : 0
+    const [r, g, bl] = ab && a && b ? [a[0] + (b[0]-a[0])*t, a[1] + (b[1]-a[1])*t, a[2] + (b[2]-a[2])*t] : flat
+    out[i*4] = Math.round(r); out[i*4+1] = Math.round(g); out[i*4+2] = Math.round(bl); out[i*4+3] = 255
+  }
+  return out
 }
 
