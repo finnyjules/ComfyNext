@@ -68,6 +68,11 @@ import { presetStops, serializeStops } from '~/lib/spacetype/loftStops'
 // same module's async fetch+parse and its sync cache peek — loft's word mode
 // (buildScene) reads the peek synchronously; this file does the async warming.
 import { fontSourceUrl, loadFont, fontCacheGet } from '~/lib/scene3d/outlines'
+// outlineFontValue normalizes a bare family (carried over from another effect via
+// CARRY_ON_SWITCH, e.g. Ribbon's default 'Inter') into a `google:`-prefixed value so
+// fontSourceUrl treats it as fetchable rather than a bogus local path — MUST be applied
+// identically here and in loft.ts's wordContours, or the two fontCacheGet cache keys diverge.
+import { outlineFontValue } from '~/lib/spacetype/effects/loft'
 
 const props = defineProps<{ nodeId: string; nodes: any[]; edges?: any[] }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
@@ -704,7 +709,7 @@ async function ensureEffectFonts() {
   await ensureFont(String(params.font))
   if (effectId.value === 'boost') { try { await ensureBoostFont(String(params.font)) } catch { /* fallback */ } }
   if (effectId.value === 'loft' && params.profileKind === 'word') {
-    const url = fontSourceUrl(String(params.font || ''))
+    const url = fontSourceUrl(outlineFontValue(String(params.font || '')))
     if (!fontCacheGet(url)) { try { await loadFont(url) } catch { /* buildScene falls back to loftContours */ } }
   }
 }

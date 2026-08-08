@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url'
 import * as THREE from 'three'
 // @ts-expect-error — three vendors this lib without type declarations.
 import opentype from 'three/examples/jsm/libs/opentype.module.js'
-import { wordContoursFromShapes } from '../../app/lib/spacetype/effects/loft'
+import { wordContoursFromShapes, outlineFontValue } from '../../app/lib/spacetype/effects/loft'
 import { textOutline } from '../../app/lib/scene3d/outlines'
 
 const fixture = fileURLToPath(new URL('../fixtures/inter-subset-var.ttf', import.meta.url))
@@ -62,4 +62,15 @@ describe('wordContoursFromShapes', () => {
   it('returns an empty array for no shapes', () => {
     expect(wordContoursFromShapes(THREE as any, [], 16)).toEqual([])
   })
+})
+
+// Root cause: CARRY_ON_SWITCH carries 'font' across an effect switch verbatim. Ribbon's default
+// is a bare family ('Inter', no `google:` prefix); loft's word mode needs a fetchable value.
+// outlineFontValue normalizes both sides (wordContours here + SpaceTypeSurface's
+// ensureEffectFonts) so the two fontCacheGet cache keys land on the SAME url.
+describe('outlineFontValue', () => {
+  it('wraps a bare family as a google value', () => { expect(outlineFontValue('Inter')).toBe('google:Inter') })
+  it('passes google values through', () => { expect(outlineFontValue('google:Archivo Black@700')).toBe('google:Archivo Black@700') })
+  it('passes local paths through', () => { expect(outlineFontValue('/fonts/x.ttf')).toBe('/fonts/x.ttf') })
+  it('empty → default', () => { expect(outlineFontValue('')).toBe('google:Archivo Black@700') })
 })

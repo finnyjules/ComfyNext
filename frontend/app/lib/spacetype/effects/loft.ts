@@ -60,6 +60,19 @@ void main() {
 }
 `
 
+/** Coerce a font value into something the scene3d opentype outline loader can fetch.
+ *  google: values and real local paths pass through; a bare family name (e.g. 'Inter',
+ *  carried over from another effect via CARRY_ON_SWITCH) becomes `google:<family>` so the
+ *  proxy can serve a TTF. Empty → the loft word default.
+ *  NOTE: a `var:` variable-font id is not handled — not a realistic value for this control's
+ *  `kind:'font'` picker, which only ever emits bare families or `google:Fam@W`. */
+export function outlineFontValue(font: string | undefined): string {
+  const v = String(font ?? '').trim()
+  if (!v) return 'google:Archivo Black@700'
+  if (v.startsWith('google:') || v.includes('/')) return v
+  return 'google:' + v
+}
+
 /** Build the cross-section contours for these params. Shape kind only here; word mode overrides
  *  `baseContours` in buildScene. Exported for unit tests. */
 export function loftContours(params: Params, stops: LoftStop[]): Vec2[][] {
@@ -98,7 +111,7 @@ export function wordContoursFromShapes(three: typeof THREE, shapes: THREE.Shape[
  */
 export function wordContours(three: typeof THREE, params: Params, points: number): Vec2[][] | null {
   const value = String(params.font || '')
-  const font = fontCacheGet(fontSourceUrl(value)) as Font | null
+  const font = fontCacheGet(fontSourceUrl(outlineFontValue(value))) as Font | null
   if (!font) return null
   const shapes = textOutline(String(params.text || ' '), font, { size: 1, letterSpacing: 0 })
   if (!shapes.length) return null
