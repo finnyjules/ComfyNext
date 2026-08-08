@@ -64,8 +64,10 @@ import { presetStops, serializeStops } from '~/lib/spacetype/loftStops'
 // fontSourceUrl already resolves a `google:Family@weight` token to the
 // `/api/scene3d/google-font-file` proxy URL for the 3D Studio's text-extrude
 // path (see outlines.ts's own doc) — reused here rather than inventing a
-// second font-fetch path for the embed export.
-import { fontSourceUrl } from '~/lib/scene3d/outlines'
+// second font-fetch path for the embed export. loadFont/fontCacheGet are the
+// same module's async fetch+parse and its sync cache peek — loft's word mode
+// (buildScene) reads the peek synchronously; this file does the async warming.
+import { fontSourceUrl, loadFont, fontCacheGet } from '~/lib/scene3d/outlines'
 
 const props = defineProps<{ nodeId: string; nodes: any[]; edges?: any[] }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
@@ -687,9 +689,24 @@ async function ensureFont(value: string) {
 
 // Boost needs the font's vector OUTLINE (via fontkit), not just the CSS face. Preload it
 // before rebuild so buildScene has the glyph shapes; never throws (falls back internally).
+//
+// Loft's word mode needs the SAME kind of thing — real glyph outlines, not just the CSS face —
+// but reads them via scene3d/outlines' opentype-backed cache instead of boost's fontkit path.
+// `loft.ts`'s `wordContours` only ever does a SYNCHRONOUS `fontCacheGet` peek (buildScene must
+// stay sync), so this is the one place — every rebuild entry point in this file funnels through
+// `ensureEffectFonts()` before it calls `rebuild()`/`rebuildWithRing()` — that actually awaits
+// `loadFont` and warms that cache. A cold cache just means buildScene's word branch falls back
+// to the parametric contour for the rebuild that's already in flight; the NEXT structural
+// change (or, for a reopened saved word-mode config, this very awaited call before the first
+// build) picks up the real glyph outlines. Never throws: a failed font load leaves the cache
+// cold and buildScene's `?? loftContours(...)` fallback keeps handling it.
 async function ensureEffectFonts() {
   await ensureFont(String(params.font))
   if (effectId.value === 'boost') { try { await ensureBoostFont(String(params.font)) } catch { /* fallback */ } }
+  if (effectId.value === 'loft' && params.profileKind === 'word') {
+    const url = fontSourceUrl(String(params.font || ''))
+    if (!fontCacheGet(url)) { try { await loadFont(url) } catch { /* buildScene falls back to loftContours */ } }
+  }
 }
 
 function texOpts() {

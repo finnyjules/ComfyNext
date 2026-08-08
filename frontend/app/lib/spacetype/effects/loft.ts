@@ -5,6 +5,7 @@ import {
   sampleSpine, interpStopProps, parametricProfileContour, resampleContour,
   buildLoftGeometry, buildRamp, type Vec2,
 } from '../loftGeometry'
+import { textOutline, fontCacheGet, fontSourceUrl, type Font } from '~/lib/scene3d/outlines'
 
 /**
  * LOFT — sweep a keyframed cross-section (a parametric shape or, in word mode, a word's glyph
@@ -66,6 +67,44 @@ export function loftContours(params: Params, stops: LoftStop[]): Vec2[][] {
   return [resampleContour(parametricProfileContour(props, PROFILE_POINTS), PROFILE_POINTS)]
 }
 
+/**
+ * Flatten THREE.Shape[] (outer + holes) into resampled unit-space contours centred on origin.
+ * A glyph with a counter (e.g. 'o') produces TWO raw contours — its outer bowl and its hole —
+ * and `buildLoftGeometry` indexes every contour by ONE shared point count derived from
+ * `baseContours[0].length`, so every contour returned here MUST be resampled to the same
+ * `points` (carried forward from Task 4's review: an unequal-length contour reads out of
+ * bounds). Exported for unit tests.
+ */
+export function wordContoursFromShapes(three: typeof THREE, shapes: THREE.Shape[], points: number): Vec2[][] {
+  const raw: Vec2[][] = []
+  for (const shape of shapes) {
+    raw.push(shape.getPoints(points).map(p => ({ x: p.x, y: p.y })))
+    for (const hole of shape.holes) raw.push(hole.getPoints(points).map(p => ({ x: p.x, y: p.y })))
+  }
+  if (!raw.length) return []
+  // normalise to unit box (max extent → 1), centred
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  for (const c of raw) for (const p of c) { minX = Math.min(minX, p.x); minY = Math.min(minY, p.y); maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y) }
+  const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2
+  const scale = 2 / Math.max(maxX - minX, maxY - minY, 1e-6)
+  return raw.map(c => resampleContour(c.map(p => ({ x: (p.x - cx) * scale, y: (p.y - cy) * scale })), points))
+}
+
+/**
+ * Word cross-section for the current params, or null when the font isn't cached yet — buildScene
+ * MUST stay synchronous, so this reads `fontCacheGet` (a sync peek) rather than awaiting
+ * `loadFont`; the host (SpaceTypeSurface's `ensureEffectFonts`) is what actually warms the
+ * cache and re-triggers a rebuild once the font lands. Exported for unit tests.
+ */
+export function wordContours(three: typeof THREE, params: Params, points: number): Vec2[][] | null {
+  const value = String(params.font || '')
+  const font = fontCacheGet(fontSourceUrl(value)) as Font | null
+  if (!font) return null
+  const shapes = textOutline(String(params.text || ' '), font, { size: 1, letterSpacing: 0 })
+  if (!shapes.length) return null
+  return wordContoursFromShapes(three, shapes, points)
+}
+
 export const loftEffect: SpaceTypeEffect = {
   id: 'loft',
   label: 'Loft',
@@ -83,7 +122,20 @@ export const loftEffect: SpaceTypeEffect = {
     const K = Math.max(2, Math.floor(n(params, 'copies')))
     const stations = sampleSpine(flatStops, closed, K)
     const props = stations.map(st => interpStopProps(flatStops, st.t))
-    const baseContours = loftContours(params, flatStops)          // word mode replaces this in Task 8
+    // Word mode: sweep the word's glyph outlines instead of the parametric shape. buildScene
+    // stays SYNCHRONOUS — wordContours only ever reads the font from the sync `fontCacheGet`
+    // peek, never awaits `loadFont` — so on a cold cache it falls back to the parametric
+    // contour for one rebuild until the host (SpaceTypeSurface's `ensureEffectFonts`, awaited
+    // before every rebuild call site) warms the cache and reschedules a rebuild; the async
+    // font work never happens inside buildScene itself.
+    // NOTE (fast-follow, not built here): a word swept perpendicular to a FLAT spine degenerates
+    // toward a line, since the profile plane is orthogonal to the (z=0) sweep direction — word
+    // mode is 3D-primary. Flat+word still renders (falls through to the same framing as shape
+    // mode) rather than crashing; camera-facing framing for that combination is left for later.
+    const isWord = String(params.profileKind) === 'word'
+    const baseContours = isWord
+      ? (wordContours(three as any, params, PROFILE_POINTS) ?? loftContours(params, flatStops))
+      : loftContours(params, flatStops)
 
     const render = String(params.render) === 'stroke' ? 'stroke' : 'fill'
     const geo = buildLoftGeometry({ stations, props, baseContours, closed, render })
