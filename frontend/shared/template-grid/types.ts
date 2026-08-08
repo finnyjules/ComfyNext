@@ -153,6 +153,11 @@ export interface TextStyleV2 {
    *  words are placed individually by the shared engine — identical in the
    *  editor DOM and the Satori export. Absent ⇒ normal flow (unchanged). */
   expressive?: GridExpressiveParams
+  /** Vertical type — a title running up/down the region's edge. `up` rotates
+   *  -90° (reads bottom→top); `down` rotates 90° (reads top→bottom). Absent/
+   *  'horizontal' ⇒ normal flow (unchanged). The copy-fit pass runs against
+   *  the region's SWAPPED axis so line length fits the region's height. */
+  orientation?: 'horizontal' | 'up' | 'down'
 }
 
 export interface TextElementV2 extends ElementV2Base {

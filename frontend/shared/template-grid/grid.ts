@@ -199,6 +199,22 @@ export function regionToRectRaw(region: Region, m: GridMetrics): Rect {
   }
 }
 
+/** Render-surface box for vertically-oriented text (`TextStyleV2.orientation`
+ * 'up'/'down'). The resolver's `ResolvedElement.rect` stays the plain region
+ * rect (unswapped) — this derives the SWAPPED, re-centered box the two
+ * renderers (translate.ts / GridEditorCanvas.vue) lay the text content out
+ * in, so real CSS/Satori text reflow wraps against the same w/h the resolver
+ * fitted against (`{w: rect.h, h: rect.w}`), instead of the narrow original
+ * width. Swapping w/h shrinks/grows the box around its own center — since
+ * that center is placed to coincide with the original rect's center, rotating
+ * this box 90° lands its visual footprint back on the region rect exactly. */
+export function verticalTextBox(rect: Rect): Rect {
+  const cx = rect.x + rect.w / 2
+  const cy = rect.y + rect.h / 2
+  const w = rect.h, h = rect.w
+  return { x: cx - w / 2, y: cy - h / 2, w, h }
+}
+
 /** Extend a region's rect to the canvas edge on each side its region touches —
  * full-bleed semantics. A region spanning the full grid covers the whole
  * canvas; a half-grid region bleeds on its three outer sides and keeps the

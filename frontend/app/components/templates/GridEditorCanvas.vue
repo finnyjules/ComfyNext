@@ -9,6 +9,7 @@ import type { GridEditorContext } from '~/composables/useGridEditor'
 import { colorToRgba } from '~~/shared/template-grid/color'
 import { dragRegion, pointToCell, resizeRegion } from '~~/shared/template-grid/editor'
 import { gridExpressiveLayout, expressiveVOffset } from '~~/shared/template-grid/expressive'
+import { verticalTextBox } from '~~/shared/template-grid/grid'
 import type { ResolvedElement } from '~~/shared/template-grid/resolve'
 import { isV3 } from '~~/shared/template-grid/types'
 import type { Region } from '~~/shared/template-grid/types'
@@ -267,6 +268,19 @@ const visible = computed(() => resolved.value.elements.filter(r => !r.culled))
 // "dropped here" chips.
 const culled = computed(() => resolved.value.elements.filter(r => r.culled && r.cullReason !== 'hidden'))
 
+/** Vertical orientation ('up'/'down' — plain-flow text only; expressive word
+ *  placement doesn't wrap paragraphs, so it's untouched). The resolver fitted
+ *  this element's text against the SWAPPED axis; rendering swaps the box too
+ *  (see textStyle) so the browser's own wrap uses the same width. That inner
+ *  box carries its own rotation — this outer positioned box stays un-rotated
+ *  (plain region rect) to avoid rotating twice, and so drag/resize/selection
+ *  keep operating on the un-rotated region like every other element. */
+function isVerticalText(r: ResolvedElement): boolean {
+  const el = r.el
+  return el.type === 'text' && !el.style?.expressive
+    && (el.style?.orientation === 'up' || el.style?.orientation === 'down')
+}
+
 function rectStyle(r: ResolvedElement): Record<string, string> {
   return {
     position: 'absolute',
@@ -274,8 +288,9 @@ function rectStyle(r: ResolvedElement): Record<string, string> {
     top: `${r.rect.y}px`,
     width: `${r.rect.w}px`,
     height: `${r.rect.h}px`,
-    // Expressive section children carry a derived tilt.
-    ...(r.rotation ? { transform: `rotate(${r.rotation}deg)`, transformOrigin: 'center center' } : {}),
+    // Expressive section children carry a derived tilt. Oriented text rotates
+    // its own inner content box instead (see textStyle) — skip it here.
+    ...(r.rotation && !isVerticalText(r) ? { transform: `rotate(${r.rotation}deg)`, transformOrigin: 'center center' } : {}),
   }
 }
 
@@ -305,6 +320,21 @@ function textStyle(r: ResolvedElement): Record<string, string | number> {
   const numLines = Math.max(1, r.text?.lines?.length ?? 1)
   const fontSize = r.text?.fontSize ?? 16
   const lineHeight = valign === 'justify' ? (r.rect.h / numLines) / fontSize : (s.lineHeight ?? 1.1)
+  // Vertical orientation: swap this box's own w/h (parent-relative, so the
+  // swapped box re-centers on the parent's — i.e. the region's — center) and
+  // rotate it back onto the region footprint. Matches the resolver's swapped
+  // fit pass and translate.ts's verticalTextBox so the browser's real wrap
+  // uses the same width satori's reflow does.
+  const orientBox = isVerticalText(r)
+    ? (() => {
+        const b = verticalTextBox({ x: 0, y: 0, w: r.rect.w, h: r.rect.h })
+        return {
+          position: 'absolute' as const,
+          left: `${b.x}px`, top: `${b.y}px`, width: `${b.w}px`, height: `${b.h}px`,
+          transform: `rotate(${r.rotation}deg)`, transformOrigin: 'center center',
+        }
+      })()
+    : { width: '100%', height: '100%' }
   return {
     color: resolve(s.color ?? '#fff'),
     fontSize: `${fontSize}px`,
@@ -313,7 +343,7 @@ function textStyle(r: ResolvedElement): Record<string, string | number> {
     textAlign: align,
     lineHeight,
     letterSpacing: s.letterSpacing != null ? `${s.letterSpacing}px` : 'normal',
-    width: '100%', height: '100%',
+    ...orientBox,
     display: 'flex', flexDirection: 'column',
     justifyContent: valign === 'bottom' ? 'flex-end' : valign === 'middle' ? 'center' : 'flex-start',
     alignItems: align === 'center' ? 'center' : align === 'right' ? 'flex-end' : align === 'justify' ? 'stretch' : 'flex-start',
@@ -1124,7 +1154,7 @@ function onSectionHandlePointerUp(e: PointerEvent) {
           width: resizeHandleTarget.rect.w + 'px',
           height: resizeHandleTarget.rect.h + 'px',
           zIndex: '40',
-          ...(resizeHandleTarget.rotation ? { transform: `rotate(${resizeHandleTarget.rotation}deg)`, transformOrigin: 'center center' } : {}),
+          ...(resizeHandleTarget.rotation && !isVerticalText(resizeHandleTarget) ? { transform: `rotate(${resizeHandleTarget.rotation}deg)`, transformOrigin: 'center center' } : {}),
         }"
       >
         <div

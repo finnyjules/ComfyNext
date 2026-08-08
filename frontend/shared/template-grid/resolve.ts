@@ -109,16 +109,27 @@ function fitElementAtRect(
     // satori render all see the same final string.
     if (el.style?.transform === 'uppercase') content = content.toUpperCase()
     const maxFontSize = typeSize(el.level, template, formatKey, el.style?.fontSize)
-    if (vis.h < FONT_FLOOR * lineHeight) {
+    // Vertical orientation (title running up/down the region's edge): the
+    // copy-fit pass runs against the SWAPPED rect so line length fits the
+    // region's height, not its (narrow) width. The element's own rect stays
+    // the region rect — only the fit's w/h and the too-small check swap axes;
+    // rendering applies `rotation` around the unswapped box's center.
+    const orientation = el.style?.orientation
+    const vertical = orientation === 'up' || orientation === 'down'
+    const fitFloorVis = vertical ? vis.w : vis.h
+    if (fitFloorVis < FONT_FLOOR * lineHeight) {
       return { el, region, rect, culled: true, cullReason: 'too-small' }
     }
     // An explicit fontSize is the user's exact target — don't auto-shrink it.
     const text = fitText({
-      content, maxFontSize, w: rect.w, h: rect.h, lineHeight, overflow,
+      content, maxFontSize,
+      w: vertical ? rect.h : rect.w, h: vertical ? rect.w : rect.h,
+      lineHeight, overflow,
       maxLines: el.maxLines, autoShrink: el.style?.fontSize == null,
     })
     const outRect = allowBleed && el.bleed ? bleedToEdges(rect, region, m, format.w, format.h) : rect
-    return { el, region, rect: outRect, culled: false, text }
+    const rotation = orientation === 'up' ? -90 : orientation === 'down' ? 90 : undefined
+    return { el, region, rect: outRect, culled: false, text, ...(rotation != null ? { rotation } : {}) }
   }
 
   if (el.type === 'image' && el.collapse === 'mark') {

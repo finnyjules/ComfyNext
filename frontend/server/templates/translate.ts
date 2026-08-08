@@ -7,6 +7,7 @@
  */
 
 import { colorToRgba } from '../../shared/template-grid/color'
+import { verticalTextBox } from '../../shared/template-grid/grid'
 import { resolveFormat } from '../../shared/template-grid/resolve'
 import type { ResolvedElement } from '../../shared/template-grid/resolve'
 import { gridExpressiveLayout, expressiveVOffset } from '../../shared/template-grid/expressive'
@@ -314,13 +315,22 @@ function templateV1ToSatori(
 // resolver; this only turns resolved rects into satori nodes.
 
 function v2ElementNode(r: ResolvedElement, props: RenderProps, brand: RenderBrand, formatClass?: string): SatoriNode | null {
+  // Vertical orientation (plain-flow text only — expressive word placement
+  // doesn't wrap paragraphs, so it isn't affected). The resolver already
+  // fitted this element's text against the SWAPPED axis (rect.h as line
+  // length); the plain-text branch below lays it out in a matching swapped
+  // box so satori's own reflow wraps against the same width it was fitted
+  // for, instead of the narrow unswapped rect. `base`'s rotation is skipped
+  // here to avoid rotating twice (once generically, once on that swapped box).
+  const vertical = r.el.type === 'text' && !(r.el as TextElementV2).style?.expressive
+    && ((r.el as TextElementV2).style?.orientation === 'up' || (r.el as TextElementV2).style?.orientation === 'down')
   const base: Record<string, unknown> = {
     position: 'absolute',
     left: `${r.rect.x}px`, top: `${r.rect.y}px`,
     width: `${r.rect.w}px`, height: `${r.rect.h}px`,
     display: 'flex',
     // Expressive section children carry a derived tilt (Satori honours transform).
-    ...(r.rotation ? { transform: `rotate(${r.rotation}deg)`, transformOrigin: 'center' } : {}),
+    ...(r.rotation && !vertical ? { transform: `rotate(${r.rotation}deg)`, transformOrigin: 'center' } : {}),
   }
   switch (r.el.type) {
     case 'text': {
@@ -372,9 +382,23 @@ function v2ElementNode(r: ResolvedElement, props: RenderProps, brand: RenderBran
           })),
         })
       }
+      // Vertical orientation: lay the text out in the SWAPPED, re-centered box
+      // (grid.ts's verticalTextBox) so satori reflows against rect.h (the
+      // dimension the resolver fitted for), then rotate that box back onto
+      // the region's footprint — mirrors GridEditorCanvas.vue's textStyle.
+      const orientBox = vertical
+        ? (() => {
+            const b = verticalTextBox(r.rect)
+            return {
+              left: `${b.x}px`, top: `${b.y}px`, width: `${b.w}px`, height: `${b.h}px`,
+              transform: `rotate(${r.rotation}deg)`, transformOrigin: 'center',
+            }
+          })()
+        : {}
       return el('div', {
         style: {
           ...base,
+          ...orientBox,
           ...fontStyle,
           textAlign: align,
           flexDirection: 'column',
