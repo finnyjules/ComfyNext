@@ -260,6 +260,61 @@ export function shapeContour(shape: LoftShape, params: ShapeParams, points: numb
   }
 }
 
+export function buildSlicedLoftGeometry(opts: {
+  stations: Station[]; props: StopProps[]; baseContours: Vec2[][]
+  closed: boolean; render: 'stroke' | 'fill'; elements: number; spacing: number
+}): LoftGeometry {
+  const { stations, props, baseContours, render, elements, spacing } = opts
+  const K = stations.length
+  const C = baseContours.length
+  const P = C > 0 ? baseContours[0]!.length : 0
+  const E = Math.max(1, Math.round(elements))
+  const gap = Math.min(0.95, Math.max(0, spacing))
+  const half = 0.5 * (1 - gap) / E
+  const ringsPerBand = render === 'fill' ? 2 : 1
+  const nVerts = E * ringsPerBand * C * P
+  const positions = new Float32Array(nVerts * 3)
+  const along = new Float32Array(nVerts)
+  const stationAt = (t: number) => stations[Math.min(K - 1, Math.max(0, Math.round(t * (K - 1))))]!
+  const propsAt = (t: number) => props[Math.min(K - 1, Math.max(0, Math.round(t * (K - 1))))]!
+  let vo = 0
+  const bandRingT: number[][] = []
+  for (let i = 0; i < E; i++) {
+    const tc = (i + 0.5) / E
+    const ts = render === 'fill' ? [tc - half, tc + half] : [tc]
+    bandRingT.push(ts)
+    for (const t of ts) {
+      const st = stationAt(t), pr = propsAt(t)
+      const cr = Math.cos((pr.roll*Math.PI)/180), sr = Math.sin((pr.roll*Math.PI)/180)
+      for (let c = 0; c < C; c++) for (let p = 0; p < P; p++) {
+        const v = baseContours[c]![p]!
+        const lx = v.x*pr.width, ly = v.y*pr.height
+        const rx = lx*cr - ly*sr, ry = lx*sr + ly*cr
+        positions[vo*3]   = st.pos.x + rx*st.normal.x + ry*st.binormal.x
+        positions[vo*3+1] = st.pos.y + rx*st.normal.y + ry*st.binormal.y
+        positions[vo*3+2] = st.pos.z + rx*st.normal.z + ry*st.binormal.z
+        along[vo] = tc
+        vo++
+      }
+    }
+  }
+  const indices: number[] = []
+  const idx = (band: number, ring: number, c: number, p: number) => ((band*ringsPerBand + ring)*C + c)*P + p
+  if (render === 'fill') {
+    for (let i = 0; i < E; i++) for (let c = 0; c < C; c++) for (let p = 0; p < P; p++) {
+      const np = (p+1)%P
+      const a = idx(i,0,c,p), b = idx(i,0,c,np), d = idx(i,1,c,p), e = idx(i,1,c,np)
+      indices.push(a,b,e, a,e,d)
+    }
+  } else {
+    for (let i = 0; i < E; i++) for (let c = 0; c < C; c++) for (let p = 0; p < P; p++) {
+      const np = (p+1)%P
+      indices.push(idx(i,0,c,p), idx(i,0,c,np))
+    }
+  }
+  return { positions, along, indices: new Uint32Array(indices) }
+}
+
 function hexToRgbTuple(hex: string): [number, number, number] {
   const h = String(hex).replace('#', '').slice(0, 6).padEnd(6, '0')
   return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)]

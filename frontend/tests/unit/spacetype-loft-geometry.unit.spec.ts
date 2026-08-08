@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { sampleSpine, interpStopProps, interpStopColor, buildRamp, parametricProfileContour, resampleContour, buildLoftGeometry } from '../../app/lib/spacetype/loftGeometry'
+import { sampleSpine, interpStopProps, interpStopColor, buildRamp, parametricProfileContour, resampleContour, buildLoftGeometry, buildSlicedLoftGeometry, shapeContour } from '../../app/lib/spacetype/loftGeometry'
 import type { LoftStop } from '../../app/lib/spacetype/loftStops'
 
 const stops: LoftStop[] = [
@@ -147,5 +147,33 @@ describe('buildLoftGeometry', () => {
     const contour = parametricProfileContour({ width: 1, height: 1, radius: 0.5, sides: 32, roll: 0 }, P)
     const g = buildLoftGeometry({ stations: st, props: pr, baseContours: [contour], closed: false, render: 'stroke' })
     expect(Array.from(g.indices.slice(0, 8))).toEqual([0, 1, 1, 2, 2, 3, 3, 0])
+  })
+})
+
+describe('buildSlicedLoftGeometry', () => {
+  const P = 12, ELEMENTS = 5
+  const stopsFix = [
+    { id:'a', x:0, y:0.5, z:0, width:1, height:1, radius:0.5, sides:32, roll:0, color:'#000000' },
+    { id:'b', x:1, y:0.5, z:0, width:1, height:1, radius:0.5, sides:32, roll:0, color:'#ffffff' },
+  ]
+  const stations = sampleSpine(stopsFix as any, false, 200)
+  const props = stations.map(() => ({ width:1, height:1, radius:0.5, sides:32, roll:0 }))
+  const contour = shapeContour('oval', { rectRadius:0.5, polySides:5, starDepth:0.5 }, P)
+
+  it('fill: emits ELEMENTS separate bands (each 2 rings skinned) → vertex + index counts scale with ELEMENTS', () => {
+    const g = buildSlicedLoftGeometry({ stations, props, baseContours: [contour], closed:false, render:'fill', elements: ELEMENTS, spacing: 0.4 })
+    // each band = 2 rings of P verts
+    expect(g.positions.length).toBe(ELEMENTS * 2 * P * 3)
+    expect(g.indices.length).toBe(ELEMENTS * 1 * P * 6)   // (rings-1)=1 quad-row per band
+  })
+  it('bands do not touch: consecutive band centres are gapped', () => {
+    const g = buildSlicedLoftGeometry({ stations, props, baseContours: [contour], closed:false, render:'fill', elements: ELEMENTS, spacing: 0.4 })
+    // along holds each band's centre t; there should be ELEMENTS distinct values
+    const along = new Set(Array.from(g.along).map(v => Math.round(v*1000)/1000))
+    expect(along.size).toBe(ELEMENTS)
+  })
+  it('stroke: each band is one outline ring → ELEMENTS*P*2 line indices', () => {
+    const g = buildSlicedLoftGeometry({ stations, props, baseContours: [contour], closed:false, render:'stroke', elements: ELEMENTS, spacing: 0.4 })
+    expect(g.indices.length).toBe(ELEMENTS * 1 * P * 2)
   })
 })
