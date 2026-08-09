@@ -1132,8 +1132,16 @@ export function useGridEditor(
   // present (even as `''`, "connected but no resolvable preview URL") iff
   // the socket has an upstream edge; an unwired socket never gets the key at
   // all. So presence-of-key, not truthiness-of-value, is the wiring check.
+  // Presence-only read of the same wiring signal `genCtx()` uses — exposed
+  // for the panel (Round-2b Task 6) so `LayoutControlsPanel` can disable
+  // needsImage staging chips without duplicating the presence check. MUST
+  // read the identical source (`'image_layer_1' in sampleProps.value`), not
+  // a truthiness check — an image socket wired to nothing resolvable still
+  // keys in as `''`, which is "wired" for gating purposes.
+  const genHasImage = computed(() => sampleProps.value != null && 'image_layer_1' in sampleProps.value)
+
   function genCtx() {
-    const wired = sampleProps.value != null && 'image_layer_1' in sampleProps.value
+    const wired = genHasImage.value
     return { brand: effectiveBrand.value as unknown as BrandKit, image: wired ? '{{ props.image_layer_1 }}' : undefined }
   }
 
@@ -1320,7 +1328,7 @@ export function useGridEditor(
     setSectionStyle, setSectionClip, renameSection, renameElement, toggleSectionLayout, wrapSelectionInSection, addSectionAt, frameDrawArmed,
     toggleSectionExpressive, setSectionExpressive,
     commitNow, undo, redo, canUndo, canRedo,
-    editorMode, genStaging, genTheme, genSeed, genLocks, genAccentOnHero,
+    editorMode, genStaging, genTheme, genSeed, genLocks, genAccentOnHero, genHasImage,
     setStaging, setTheme, toggleLock, toggleAccentOnHero, shuffleLayout, surpriseLayout, setBrandOverride,
     tierType, setTierType, addTierItem,
   }

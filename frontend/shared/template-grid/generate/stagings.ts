@@ -1310,6 +1310,20 @@ export function getStaging(id: string): Staging | undefined {
   return STAGINGS.find(s => s.id === id)
 }
 
+/** Panel-grouping metadata: which family each staging belongs to, for the
+ *  `LayoutControlsPanel` chip grid (tiny `Type / Photo / Field / Texture`
+ *  section labels) — lives next to `STAGINGS` so the panel never hardcodes
+ *  a second copy of the registry. Order here is display order within a
+ *  family; family key order is display order of the sections themselves.
+ *  Every registered staging id must appear in exactly ONE family — asserted
+ *  in `sl-gen-staging-families.unit.spec.ts`. */
+export const STAGING_FAMILIES: Record<string, string[]> = {
+  Type: ['statement', 'manifesto', 'index', 'stacked'],
+  Photo: ['tower', 'split', 'frame', 'corner'],
+  Field: ['cover', 'lockup', 'band_header', 'band_footer'],
+  Texture: ['repeat', 'wall'],
+}
+
 /** Retired staging ids, mapped forward at the `migrateGen` choke point
  *  (`generate.ts`) — mirrors `SURFACE_TO_THEME`'s shape one level up: never
  *  leave a stored `gen.staging` naming a retired/renamed id dangling.

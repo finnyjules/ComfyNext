@@ -1,8 +1,18 @@
 <script setup lang="ts">
-import { STAGINGS } from '~~/shared/template-grid/generate/stagings'
+import { STAGING_FAMILIES, STAGINGS } from '~~/shared/template-grid/generate/stagings'
 import { getTheme, resolveInk, THEME_PALETTE, THEMES } from '~~/shared/template-grid/generate/themes'
 
 const ctx = inject<any>('gridEditor')
+
+// Group the flat STAGINGS list into the family sections declared next to the
+// registry (STAGING_FAMILIES) — the panel never hardcodes a second copy of
+// staging→family membership.
+const stagingFamilies = computed(() => {
+  return Object.entries(STAGING_FAMILIES).map(([family, ids]) => ({
+    family,
+    stagings: ids.map(id => STAGINGS.find(s => s.id === id)).filter((s): s is typeof STAGINGS[number] => !!s),
+  }))
+})
 
 // Ink/Accent swatches read the live brand kit to show what's actually
 // applied — `setBrandOverride` writes template.brand directly, independent
@@ -27,11 +37,18 @@ const isAutoInk = computed(() => currentForeground.value === currentThemeInk.val
           {{ ctx.genLocks.value.staging ? '🔒' : '🔓' }}
         </button>
       </div>
-      <div class="flex flex-wrap gap-1.5">
-        <button v-for="s in STAGINGS" :key="s.id" :title="s.blurb"
-          class="h-8 px-2 rounded-md text-[10px] font-semibold border transition-colors cursor-pointer"
-          :class="ctx.genStaging.value === s.id ? 'bg-white text-black border-white' : 'border-white/10 text-white/60 hover:text-white'"
-          @click="ctx.setStaging(s.id)">{{ s.name }}</button>
+      <div class="flex flex-col gap-2">
+        <div v-for="group in stagingFamilies" :key="group.family">
+          <p class="text-[9px] uppercase text-white/30 mb-1">{{ group.family }}</p>
+          <div class="flex flex-wrap gap-1.5">
+            <button v-for="s in group.stagings" :key="s.id"
+              :title="s.supports?.needsImage && !ctx.genHasImage.value ? 'wire an image first' : s.blurb"
+              :disabled="s.supports?.needsImage && !ctx.genHasImage.value"
+              class="h-8 px-2 rounded-md text-[10px] font-semibold border transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-30"
+              :class="ctx.genStaging.value === s.id ? 'bg-white text-black border-white' : 'border-white/10 text-white/60 hover:text-white'"
+              @click="ctx.setStaging(s.id)">{{ s.name }}</button>
+          </div>
+        </div>
       </div>
     </div>
 

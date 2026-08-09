@@ -99,6 +99,35 @@ async function artboardBackground(modal: Locator): Promise<string> {
   return await modal.locator('[data-artboard]').evaluate(el => getComputedStyle(el).backgroundColor)
 }
 
+/** Live computed `font-size` (px, numeric) of a staged text element — reads
+ *  the wrapper's inner content div, same shape as `elementColor`. Both the
+ *  element's declared `fontSize` (GridEditorCanvas.vue's `textStyle()`,
+ *  master-canvas px) and `data-artboard`'s own declared `height` (below) are
+ *  in the SAME unscaled coordinate space — the artboard's `transform:
+ *  scale(...)` sizes it visually but never changes either element's own
+ *  computed style values — so the two are directly comparable px numbers. */
+async function elementFontSizePx(modal: Locator, elId: string): Promise<number> {
+  return await modal.locator(`[data-el-id="${elId}"]`).evaluate((wrapper) => {
+    const target = wrapper.querySelector('div') ?? wrapper
+    return parseFloat(getComputedStyle(target as Element).fontSize)
+  })
+}
+
+/** Live computed `opacity` of a staged element (text or image wrapper). */
+async function elementOpacity(modal: Locator, elId: string): Promise<string> {
+  return await modal.locator(`[data-el-id="${elId}"]`).evaluate((wrapper) => {
+    const target = wrapper.querySelector('div') ?? wrapper
+    return getComputedStyle(target as Element).opacity
+  })
+}
+
+/** `data-artboard`'s own declared height in px (master canvas px — see
+ *  `elementFontSizePx`'s doc comment for why this is the right unit to
+ *  compare a font-size against, not the transform-scaled bounding box). */
+async function artboardHeightPx(modal: Locator): Promise<number> {
+  return await modal.locator('[data-artboard]').evaluate(el => parseFloat(getComputedStyle(el).height))
+}
+
 /** The live node's input index for a named input (handle = `input-<idx>`). */
 async function inputIndexOf(page: Page, nodeId: string, inputName: string): Promise<number> {
   return await page.evaluate(({ id, inputName }) => {
@@ -386,6 +415,54 @@ test.describe('Smart Layout generation (wired Shuffle/Surprise)', () => {
 
     // Staged elements are still present after both re-rolls.
     await expect.poll(async () => await staged.count()).toBeGreaterThan(0)
+
+    // Round-2b Task 6 functional gate: the 14-staging library, live in the
+    // panel — family grouping, needsImage gating, and Family A/D's dramatic-
+    // scale + texture behaviors. Still in the deselected "Canvas" panel
+    // state from above (LayoutControlsPanel's staging chips only occupy that
+    // slot), so no extra deselect click is needed.
+    const layoutControls = modal.locator('[data-layout-controls]')
+
+    // This journey's harness only wires a Text socket (text_layer_1) — no
+    // image — so `ctx.genHasImage` is false throughout. That's the "no
+    // image wired" branch: the four Field-family chips (Family C, all
+    // `supports.needsImage`) must render disabled with the gating tooltip,
+    // proving `genHasImage` reads the same wiring signal `genCtx()` does.
+    for (const name of ['Cover', 'Lockup', 'Band header', 'Band footer']) {
+      const chip = layoutControls.getByRole('button', { name, exact: true })
+      await expect(chip).toBeDisabled()
+      expect(await chip.getAttribute('title')).toBe('wire an image first')
+    }
+
+    // Statement (Family A/Type): hero computed font-size ≥ 0.10 × canvas
+    // height — the heroScale knob's floor (`HERO_SCALE_KNOB` picks
+    // [0.10, 0.14, 0.18]) — proves the "much bigger hero" lever is actually
+    // live in the rendered DOM, not just the pure `generate()` engine
+    // (already unit-tested in sl-gen-stagings.unit.spec.ts).
+    await layoutControls.getByRole('button', { name: 'Statement', exact: true }).click()
+    await expect.poll(async () => await modal.locator('[data-el-id="tier_hero_0"]').count()).toBeGreaterThan(0)
+    const statementHeroFont = await elementFontSizePx(modal, 'tier_hero_0')
+    const canvasHeight = await artboardHeightPx(modal)
+    expect(statementHeroFont).toBeGreaterThanOrEqual(0.10 * canvasHeight)
+
+    // Repeat (Family D/Texture): the hero's words run down the left edge as
+    // a column of copies, all but one dimmed to a murmur.
+    await layoutControls.getByRole('button', { name: 'Repeat', exact: true }).click()
+    const repeatEls = modal.locator('[data-el-id^="repeat_"]')
+    await expect.poll(async () => await repeatEls.count()).toBeGreaterThan(4)
+    const repeatOpacities = await repeatEls.evaluateAll(els => els.map((e) => {
+      const target = e.querySelector('div') ?? e
+      return getComputedStyle(target as Element).opacity
+    }))
+    expect(repeatOpacities.filter(o => o === '1')).toHaveLength(1)
+
+    // Wall (Family D/Texture): the hero's words tile the whole canvas as a
+    // dim texture, with the real hero bright and readable on top.
+    await layoutControls.getByRole('button', { name: 'Wall', exact: true }).click()
+    const wallEls = modal.locator('[data-el-id^="wall_"]')
+    await expect.poll(async () => await wallEls.count()).toBeGreaterThan(4)
+    await expect.poll(async () => await modal.locator('[data-el-id="tier_hero_0"]').count()).toBeGreaterThan(0)
+    expect(await elementOpacity(modal, 'tier_hero_0')).toBe('1')
   })
 
   test('reopening a saved generated layout does not duplicate the hero text', async ({ page }) => {
