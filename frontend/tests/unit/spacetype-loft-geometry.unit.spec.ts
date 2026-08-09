@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { sampleSpine, interpStopProps, interpStopColor, buildRamp, resampleContour, buildLoftGeometry, buildSlicedLoftGeometry, shapeContour } from '../../app/lib/spacetype/loftGeometry'
 import type { LoftStop } from '../../app/lib/spacetype/loftStops'
+import { autoSmoothStops } from '../../app/lib/spacetype/loftStops'
 
 const stops: LoftStop[] = [
   { id: 'a', x: 0, y: 0.5, z: 0, width: 1, height: 1, roll: 0, color: '#000000' },
@@ -41,6 +42,25 @@ describe('sampleSpine', () => {
     const st = sampleSpine(one, false, 5)
     expect(st.length).toBe(5)
     for (const s of st) expect(Math.hypot(s.binormal.x, s.binormal.y, s.binormal.z)).toBeCloseTo(1, 3)
+  })
+})
+
+describe('sampleSpine bezier', () => {
+  const S = (x:number,y:number,extra:any={}) => ({ id:`s${x}${y}`, x, y, z:0, width:1, height:1, roll:0, color:'#fff', ...extra })
+  it('still yields orthonormal unit frames + endpoints t=0/1 (bezier)', () => {
+    const st = sampleSpine([S(0,0.5), S(0.5,0.2), S(1,0.5)] as any, false, 20)
+    for (const s of st) { expect(Math.hypot(s.normal.x,s.normal.y,s.normal.z)).toBeCloseTo(1,3); expect(Math.hypot(s.binormal.x,s.binormal.y,s.binormal.z)).toBeCloseTo(1,3) }
+    expect(st[0]!.t).toBeCloseTo(0); expect(st[19]!.t).toBeCloseTo(1)
+  })
+  it('a manual tangent handle bends the curve vs the auto version', () => {
+    const base = [S(0,0.5), S(0.5,0.5), S(1,0.5)]
+    const bent = [S(0,0.5), S(0.5,0.5,{ manual:true, ta: Math.PI/2, hlf:0.4, hlb:0.4 }), S(1,0.5)]
+    const a = sampleSpine(base as any, false, 40)[20]!.pos
+    const b = sampleSpine(bent as any, false, 40)[20]!.pos
+    expect(Math.hypot(a.x-b.x, a.y-b.y, a.z-b.z)).toBeGreaterThan(0.1)   // the manual handle moved the curve
+  })
+  it('legacy stops (no tangents) sample without throwing', () => {
+    expect(() => sampleSpine([S(0,0.2), S(1,0.8)] as any, false, 10)).not.toThrow()
   })
 })
 

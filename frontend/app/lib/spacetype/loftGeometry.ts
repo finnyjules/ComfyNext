@@ -1,4 +1,4 @@
-import type { LoftStop } from './loftStops'
+import { autoSmoothStops, type LoftStop } from './loftStops'
 import * as THREE from 'three'
 import { parseFills, fillPrimary } from './fills'
 
@@ -7,30 +7,54 @@ export interface Vec3 { x: number; y: number; z: number }
 export interface Station { pos: Vec3; normal: Vec3; binormal: Vec3; t: number }
 export interface StopProps { width: number; height: number; roll: number }
 
-// Map an editor-space stop (x,y in 0..1, z in -1..1) into a centred world point. The engine's
-// camera frames roughly ±4 units, so scale to that. y is flipped: canvas y-down → world y-up.
-function stopToWorld(s: LoftStop): Vec3 {
-  return { x: (s.x - 0.5) * 8, y: (0.5 - s.y) * 8, z: s.z * 4 }
+/** An editor-space point: x/y in 0..1, z in -1..1 — same coordinate space as `LoftStop`, but
+ *  bezier control points are derived points, not stops. */
+interface Ed { x: number; y: number; z: number }
+
+// Map an editor-space point into a centred world point. The engine's camera frames roughly ±4
+// units, so scale to that. y is flipped: canvas y-down → world y-up.
+function worldFromEditor(e: Ed): Vec3 {
+  return { x: (e.x - 0.5) * 8, y: (0.5 - e.y) * 8, z: e.z * 4 }
 }
 
-function catmullRom(p0: number, p1: number, p2: number, p3: number, t: number): number {
-  const t2 = t * t, t3 = t2 * t
-  return 0.5 * ((2 * p1) + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (-p0 + 3 * p1 - 3 * p2 + p3) * t3)
+function bez(p0: number, p1: number, p2: number, p3: number, t: number): number {
+  const u = 1 - t
+  return u * u * u * p0 + 3 * u * u * t * p1 + 3 * u * t * t * p2 + t * t * t * p3
 }
 
-function sampleCurve(pts: Vec3[], closed: boolean, u: number): Vec3 {
-  // u in [0,1] over the whole polyline of control points
-  const n = pts.length
-  const seg = closed ? n : n - 1
+// Control points for the editor-space cubic bezier segment s→e, built from each stop's tangent
+// handles (angle `ta` + forward/backward handle lengths `hlf`/`hlb`). Missing fields default to a
+// zero-length handle, which degenerates the segment to a straight line — safe for legacy stops.
+function segEditor(s: LoftStop, e: LoftStop): { p1: Ed; p2: Ed } {
+  const taS = s.ta ?? 0, hlfS = s.hlf ?? 0
+  const taE = e.ta ?? 0, hlbE = e.hlb ?? 0
+  return {
+    p1: { x: s.x + Math.cos(taS) * hlfS, y: s.y + Math.sin(taS) * hlfS, z: s.z },
+    p2: { x: e.x - Math.cos(taE) * hlbE, y: e.y - Math.sin(taE) * hlbE, z: e.z },
+  }
+}
+
+// Evaluate the piecewise bezier at overall parameter `u` ∈ roughly [0,1] (may run slightly past
+// the ends — callers probe `u+0.001` past the last station to get an "ahead" tangent sample; that
+// overshoot extrapolates the last/first segment's cubic rather than snapping to a duplicate
+// point, so the tangent stays meaningful right at the endpoints).
+function posAtU(sm: LoftStop[], n: number, seg: number, closed: boolean, u: number): Ed {
   const f = u * seg
   let i = Math.floor(f)
-  const local = f - i
-  const idx = (k: number) => closed ? ((k % n) + n) % n : Math.min(Math.max(k, 0), n - 1)
-  const P0 = pts[idx(i - 1)]!, P1 = pts[idx(i)]!, P2 = pts[idx(i + 1)]!, P3 = pts[idx(i + 2)]!
+  let local = f - i
+  if (closed) {
+    i = ((i % n) + n) % n
+  } else if (i < 0) {
+    i = 0; local = 0
+  } else if (i > seg - 1) {
+    local = local + (i - (seg - 1)); i = seg - 1
+  }
+  const a = sm[i]!, b = sm[(i + 1) % n]!
+  const { p1, p2 } = segEditor(a, b)
   return {
-    x: catmullRom(P0.x, P1.x, P2.x, P3.x, local),
-    y: catmullRom(P0.y, P1.y, P2.y, P3.y, local),
-    z: catmullRom(P0.z, P1.z, P2.z, P3.z, local),
+    x: bez(a.x, p1.x, p2.x, b.x, local),
+    y: bez(a.y, p1.y, p2.y, b.y, local),
+    z: bez(a.z, p1.z, p2.z, b.z, local),
   }
 }
 
@@ -39,8 +63,13 @@ function cross(a: Vec3, b: Vec3): Vec3 { return { x: a.y * b.z - a.z * b.y, y: a
 function norm(a: Vec3): Vec3 { const l = Math.hypot(a.x, a.y, a.z) || 1; return { x: a.x / l, y: a.y / l, z: a.z / l } }
 
 export function sampleSpine(stops: LoftStop[], closed: boolean, count: number): Station[] {
-  const pts = stops.map(stopToWorld)
-  if (pts.length === 1) pts.push({ ...pts[0]!, x: pts[0]!.x + 0.001 })
+  // Auto-smooth non-manual stops into Catmull-Rom-equivalent tangent handles; manual stops keep
+  // theirs. A single stop has no segment to sample, so duplicate it (tiny offset) like before.
+  let raw = stops
+  if (raw.length === 1) raw = [raw[0]!, { ...raw[0]!, id: `${raw[0]!.id}_dup`, x: raw[0]!.x + 0.001 }]
+  const sm = autoSmoothStops(raw)
+  const n = sm.length
+  const seg = closed ? n : n - 1
   const stations: Station[] = []
   // Parallel-transport frame: seed a reference "up", rotate it minimally along the curve so the
   // profile doesn't spin wildly at inflections (a plain Frenet frame flips at zero curvature).
@@ -49,8 +78,9 @@ export function sampleSpine(stops: LoftStop[], closed: boolean, count: number): 
   const denom = count > 1 ? count - 1 : 1
   for (let i = 0; i < count; i++) {
     const t = i / denom
-    const pos = sampleCurve(pts, closed, closed ? (i / count) : t)
-    const ahead = sampleCurve(pts, closed, (closed ? (i / count) : t) + 0.001)
+    const u = closed ? (i / count) : t
+    const pos = worldFromEditor(posAtU(sm, n, seg, closed, u))
+    const ahead = worldFromEditor(posAtU(sm, n, seg, closed, u + 0.001))
     const rawT = sub(ahead, pos)
     const tlen = Math.hypot(rawT.x, rawT.y, rawT.z)
     const tangent = tlen < 1e-6 ? prevTangent : norm(rawT)
