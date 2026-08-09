@@ -1,0 +1,147 @@
+import { toHeightPixels } from '~/lib/scene3d/relief'
+
+/**
+ * Displacement-map spec attached to an image layer. Presence on the layer = active:
+ * the layer stops drawing its own pixels and instead warps everything below it.
+ */
+export interface DisplaceMapSpec {
+  /** How a map pixel's value becomes a push direction. */
+  read: 'height' | 'channels'
+  /** Max push in SCREEN px (dpr-invariant); the renderer scales it to device px. */
+  amount: number
+  /** Height mode only: flip high/low. */
+  invert?: boolean
+  /** Blur the offset field by this px radius before warping (smooths jaggies). 0 = off. */
+  softness?: number
+}
+
+export const DEFAULT_DISPLACE_MAP: DisplaceMapSpec = {
+  read: 'height',
+  amount: 40,
+  invert: false,
+  softness: 2,
+}
+
+/**
+ * Turn a map image into a per-pixel offset field.
+ * Returns a Float32Array of length w*h*2, interleaved [dx0,dy0,dx1,dy1,...], each
+ * component normalized to roughly [-1,1] (the resample multiplies by `amount`).
+ * The map's own alpha gates the offset — transparent map pixels push nothing — so a
+ * small pasted image only distorts the backdrop under its footprint.
+ */
+export function buildDisplacementField(
+  map: Uint8ClampedArray,
+  w: number,
+  h: number,
+  spec: DisplaceMapSpec,
+): Float32Array {
+  const field = new Float32Array(w * h * 2)
+  if (w < 1 || h < 1) return field
+
+  if (spec.read === 'channels') {
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const p = (y * w + x) * 4
+        const a = map[p + 3]! / 255
+        const o = (y * w + x) * 2
+        field[o] = (map[p]! / 255 - 0.5) * 2 * a
+        field[o + 1] = (map[p + 1]! / 255 - 0.5) * 2 * a
+      }
+    }
+  } else {
+    // Height: grayscale height field; push along its gradient (steepest ascent).
+    const height = toHeightPixels(map, spec.invert ?? false)
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const xl = x > 0 ? x - 1 : x
+        const xr = x < w - 1 ? x + 1 : x
+        const yt = y > 0 ? y - 1 : y
+        const yb = y < h - 1 ? y + 1 : y
+        const hl = height[(y * w + xl) * 4]!
+        const hr = height[(y * w + xr) * 4]!
+        const ht = height[(yt * w + x) * 4]!
+        const hb = height[(yb * w + x) * 4]!
+        // Central difference, normalized: /255 → ~[-1,1]; /(span||1) halves at the borders.
+        const gx = (hr - hl) / (255 * ((xr - xl) || 1))
+        const gy = (hb - ht) / (255 * ((yb - yt) || 1))
+        const p = (y * w + x) * 4
+        const a = map[p + 3]! / 255
+        const o = (y * w + x) * 2
+        field[o] = gx * a
+        field[o + 1] = gy * a
+      }
+    }
+  }
+
+  const soft = Math.round(spec.softness ?? 0)
+  if (soft >= 1) blurFieldInPlace(field, w, h, soft)
+  return field
+}
+
+/** Separable box blur of the interleaved (dx,dy) field, radius r px, edge-clamped. In place. */
+function blurFieldInPlace(field: Float32Array, w: number, h: number, r: number): void {
+  const tmp = new Float32Array(field.length)
+  // Horizontal pass → tmp.
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let sx = 0, sy = 0, n = 0
+      for (let k = -r; k <= r; k++) {
+        const cx = Math.min(w - 1, Math.max(0, x + k))
+        sx += field[(y * w + cx) * 2]!; sy += field[(y * w + cx) * 2 + 1]!; n++
+      }
+      tmp[(y * w + x) * 2] = sx / n; tmp[(y * w + x) * 2 + 1] = sy / n
+    }
+  }
+  // Vertical pass → field.
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let sx = 0, sy = 0, n = 0
+      for (let k = -r; k <= r; k++) {
+        const cy = Math.min(h - 1, Math.max(0, y + k))
+        sx += tmp[(cy * w + x) * 2]!; sy += tmp[(cy * w + x) * 2 + 1]!; n++
+      }
+      field[(y * w + x) * 2] = sx / n; field[(y * w + x) * 2 + 1] = sy / n
+    }
+  }
+}
+
+/**
+ * Resample a backdrop through an offset field. For each output pixel:
+ *   sampleUV = (x,y) + field*amount, edge-clamped, bilinear.
+ * amount is in the same px space as the src buffer (device px at render time).
+ * amount 0 returns the source byte-identical.
+ */
+export function resampleBilinear(
+  src: Uint8ClampedArray,
+  field: Float32Array,
+  amount: number,
+  w: number,
+  h: number,
+): Uint8ClampedArray {
+  const out = new Uint8ClampedArray(w * h * 4)
+  const sample = (sxRaw: number, syRaw: number, ch: number): number => {
+    const sx = sxRaw < 0 ? 0 : sxRaw > w - 1 ? w - 1 : sxRaw
+    const sy = syRaw < 0 ? 0 : syRaw > h - 1 ? h - 1 : syRaw
+    const x0 = Math.floor(sx), y0 = Math.floor(sy)
+    const x1 = Math.min(w - 1, x0 + 1), y1 = Math.min(h - 1, y0 + 1)
+    const fx = sx - x0, fy = sy - y0
+    const i00 = (y0 * w + x0) * 4 + ch, i10 = (y0 * w + x1) * 4 + ch
+    const i01 = (y1 * w + x0) * 4 + ch, i11 = (y1 * w + x1) * 4 + ch
+    const top = src[i00]! * (1 - fx) + src[i10]! * fx
+    const bot = src[i01]! * (1 - fx) + src[i11]! * fx
+    return top * (1 - fy) + bot * fy
+  }
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const fo = (y * w + x) * 2
+      const sx = x + field[fo]! * amount
+      const sy = y + field[fo + 1]! * amount
+      const po = (y * w + x) * 4
+      out[po] = sample(sx, sy, 0)
+      out[po + 1] = sample(sx, sy, 1)
+      out[po + 2] = sample(sx, sy, 2)
+      out[po + 3] = sample(sx, sy, 3)
+    }
+  }
+  return out
+}
