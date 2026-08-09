@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { librariesByFoundry, libraryFontUrl, resolveLibraryFace, libraryFamily } from '../../app/data/library-fonts'
+import { librariesByFoundry, libraryFontUrl, resolveLibraryFace, libraryFamily, libraryToken } from '../../app/data/library-fonts'
 
 describe('library catalog', () => {
   it('groups families under both foundries', () => {
@@ -27,5 +27,10 @@ describe('library catalog', () => {
   it('returns null for an unknown family', () => {
     expect(libraryFamily('No Such Family 123')).toBeNull()
     expect(resolveLibraryFace('No Such Family 123', 400)).toBeNull()
+  })
+  it('builds local: tokens', () => {
+    expect(libraryToken('PP Mori')).toBe('local:PP Mori')
+    expect(libraryToken('PP Mori', 700)).toBe('local:PP Mori@700')
+    expect(libraryToken('PP Mori', 700, true)).toBe('local:PP Mori@700i')
   })
 })

@@ -67,12 +67,13 @@ import { presetStops, serializeStops } from '~/lib/spacetype/loftStops'
 // second font-fetch path for the embed export. loadFont/fontCacheGet are the
 // same module's async fetch+parse and its sync cache peek — loft's word mode
 // (buildScene) reads the peek synchronously; this file does the async warming.
-import { fontSourceUrl, loadFont, fontCacheGet } from '~/lib/scene3d/outlines'
+import { fontSourceUrl, loadFont, fontCacheGet, parseLibraryFontValue } from '~/lib/scene3d/outlines'
 // outlineFontValue normalizes a bare family (carried over from another effect via
 // CARRY_ON_SWITCH, e.g. Ribbon's default 'Inter') into a `google:`-prefixed value so
 // fontSourceUrl treats it as fetchable rather than a bogus local path — MUST be applied
 // identically here and in loft.ts's wordContours, or the two fontCacheGet cache keys diverge.
 import { outlineFontValue, resolveShape } from '~/lib/spacetype/effects/loft'
+import { libraryToken, resolveLibraryFace } from '~/data/library-fonts'
 
 const props = defineProps<{ nodeId: string; nodes: any[]; edges?: any[] }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
@@ -653,16 +654,31 @@ function selectFont(key: string, family: string) {
   ;(params as Record<string, unknown>)[key] = family
   onEdit(key, family)
 }
-// FontPicker emits a discriminated payload; Type Studio only ever passes Google
-// families through (no `pinned` prop), so the pinned branch never fires here.
-function onFontSelect(key: string, payload: { kind: 'google'; family: string } | { kind: 'pinned'; value: string }) {
-  if (payload.kind === 'google') selectFont(key, payload.family)
+// A `local:` token carries its real family name directly (no catalog lookup needed,
+// unlike a Google value which may be a legacy VARIABLE_FONTS id) — used everywhere
+// `resolveFontFamily(String(params.font))` used to stand alone, so the CSS-render path
+// (fontIsVariable/varAxisList/texOpts/ensureFont) treats a library pick like any other.
+function displayFontFamily(value: string): string {
+  const local = parseLibraryFontValue(value)
+  return local ? local.family : resolveFontFamily(value)
+}
+// FontPicker emits a discriminated payload; Type Studio passes through Google AND
+// library picks (no `pinned` prop), so the pinned branch never fires here.
+function onFontSelect(key: string, payload: { kind: 'google'; family: string } | { kind: 'pinned'; value: string } | { kind: 'library'; family: string; foundry: string }) {
+  if (payload.kind === 'google') { selectFont(key, payload.family); return }
+  if (payload.kind === 'library') {
+    // Seed a real weight so downstream weight edits (the Type-weight slider, which
+    // reuses the SAME discrete-weight-snapping mechanism as a static multi-weight
+    // Google family) have something concrete to snap around.
+    const face = resolveLibraryFace(payload.family, 400, false)
+    selectFont(key, libraryToken(payload.family, face?.weight))
+  }
 }
 // Whether the currently-selected font has a continuous Weight axis (variable font).
 // Drives the Type-weight slider's visibility (hidden for static families).
 const fontIsVariable = computed(() => {
   void fontCatalog.value // re-evaluate once the catalog resolves
-  return fontHasWeightAxis(resolveFontFamily(String(params.font)))
+  return fontHasWeightAxis(displayFontFamily(String(params.font)))
 })
 
 // Variable-font axes BEYOND weight (width / slant / optical-size / custom). Weight stays on
@@ -671,7 +687,7 @@ const fontIsVariable = computed(() => {
 const fontAxes = reactive<Record<string, number>>({})
 const varAxisList = computed(() => {
   void fontCatalog.value
-  const f = fontCatalog.value.find(g => g.family === resolveFontFamily(String(params.font)))
+  const f = fontCatalog.value.find(g => g.family === displayFontFamily(String(params.font)))
   return f ? googleAxisList(f).filter(a => a.tag !== 'wght') : []
 })
 function syncFontAxes() {
@@ -685,6 +701,15 @@ watch(fontAxes, () => rebuild(), { deep: true })
 
 const loadedFontFamilies = new Set<string>()
 async function ensureFont(value: string) {
+  // A `local:` token needs its family's @font-face rules injected (the CSS-world half
+  // of the font library — mirrors useUploadedFonts.ensure()) rather than a Google Fonts
+  // <link>; resolveFontFamily doesn't understand the token, so branch before it.
+  const local = parseLibraryFontValue(value)
+  if (local) {
+    useLibraryFonts().ensure(local.family)
+    try { await document.fonts.load(`700 32px "${local.family}"`) } catch { /* best-effort */ }
+    return
+  }
   const family = resolveFontFamily(value)
   if (!loadedFontFamilies.has(family)) {
     const key = family.replace(/[^a-zA-Z0-9]/g, '_')
@@ -721,7 +746,7 @@ async function ensureEffectFonts() {
 }
 
 function texOpts() {
-  const family = resolveFontFamily(String(params.font))
+  const family = displayFontFamily(String(params.font))
   // Static families have no weight axis — pin to 400 so we don't faux-bold a single cut.
   const weight = fontHasWeightAxis(family) ? Number(params.typeWeight ?? 700) : 400
   // Multiple texts (one per line) → an N-row atlas the effect alternates between.

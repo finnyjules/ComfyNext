@@ -26,8 +26,9 @@ import { toHeightPixels, heightGradient, RELIEF_FLAT_THRESHOLD } from '~/lib/sce
 import { DEFAULT_SHADER_SPEC, normalizeShaderSpec, type ShaderSpec } from '~/lib/spacetype/fillTile'
 import { fetchShaderFxCatalog } from '~/lib/shaderfx/catalog'
 import { LIVE_FIELD_CEILING } from '~/lib/shaderfill/descriptor'
-import { AVAILABLE_FONTS, loadFont, fontDisplayName, fontCacheGet, parseGoogleFontValue } from '~/lib/scene3d/outlines'
+import { AVAILABLE_FONTS, loadFont, fontDisplayName, fontCacheGet, parseGoogleFontValue, parseLibraryFontValue } from '~/lib/scene3d/outlines'
 import { loadGoogleCatalog, type GoogleFont } from '~/data/google-fonts'
+import { libraryToken, resolveLibraryFace, libraryFamily } from '~/data/library-fonts'
 import FontPicker from '~/components/vue-canvas/FontPicker.vue'
 import { PRIM_GROUPS } from '~/lib/scene3d/primGroups'
 import { SceneEngine, baseSizeFor, baseVertexCountFor, buildGeometry } from '~/lib/scene3d/engine'
@@ -1143,10 +1144,20 @@ const textValue = computed<string>({
 // FontPicker emits a discriminated payload (mirrors SpaceTypeSurface's usage):
 // a pinned pick is one of our local AVAILABLE_FONTS urls (today's behavior,
 // unchanged); a google pick writes the bare `google:Family` token — no weight
-// suffix on first pick, matching the plan.
-function onFontPick(payload: { kind: 'google'; family: string } | { kind: 'pinned'; value: string }) {
+// suffix on first pick, matching the plan; a library pick writes a `local:Family`
+// token seeded to the family's nearest-regular face weight (real weight present
+// for the Weight select below, same reasoning as SpaceTypeSurface's onFontSelect).
+function onFontPick(payload: { kind: 'google'; family: string } | { kind: 'pinned'; value: string } | { kind: 'library'; family: string; foundry: string }) {
   const o = selectedText.value
   if (!o) return
+  if (payload.kind === 'library') {
+    const existing = parseLibraryFontValue(o.content?.font ?? '')
+    const face = resolveLibraryFace(payload.family, existing?.weight ?? 400, existing?.italic ?? false)
+    const font = libraryToken(payload.family, face?.weight, face?.italic)
+    if (o.content) o.content.font = font
+    else o.content = { text: 'Text', font }
+    return
+  }
   let font: string
   if (payload.kind === 'pinned') {
     font = payload.value
@@ -1191,6 +1202,32 @@ const fontWeight = computed<string>({
     const parsed = selectedGoogleFont.value
     if (!o || !parsed) return
     const font = `google:${parsed.family}@${w}`
+    if (o.content) o.content.font = font
+    else o.content = { text: 'Text', font }
+  },
+})
+// Parallel to selectedGoogleFont/fontWeightOptions/fontWeight above, for the licensed
+// library scheme — non-null only when the selected text's font is a `local:` token.
+// The library is static committed data (no catalog fetch needed): weights come
+// straight from the manifest's faces for the family, unique + sorted ascending.
+const selectedLibraryFont = computed(() => {
+  const font = selectedText.value?.content?.font
+  return font ? parseLibraryFontValue(font) : null
+})
+const libraryWeightOptions = computed<string[]>(() => {
+  const parsed = selectedLibraryFont.value
+  if (!parsed) return []
+  const fam = libraryFamily(parsed.family)
+  const weights = fam?.faces.length ? [...new Set(fam.faces.map((f) => f.weight))].sort((a, b) => a - b) : [400]
+  return weights.map(String)
+})
+const libraryFontWeight = computed<string>({
+  get: () => String(selectedLibraryFont.value?.weight ?? 400),
+  set: (w) => {
+    const o = selectedText.value
+    const parsed = selectedLibraryFont.value
+    if (!o || !parsed) return
+    const font = libraryToken(parsed.family, Number(w), parsed.italic)
     if (o.content) o.content.font = font
     else o.content = { text: 'Text', font }
   },
@@ -3414,6 +3451,9 @@ async function onClose() {
           </div>
           <div v-if="selectedGoogleFont">
             <StudioSelect label="Weight" v-model="fontWeight" :options="fontWeightOptions" />
+          </div>
+          <div v-if="selectedLibraryFont">
+            <StudioSelect label="Weight" v-model="libraryFontWeight" :options="libraryWeightOptions" />
           </div>
         </div>
 

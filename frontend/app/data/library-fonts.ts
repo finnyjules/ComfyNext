@@ -60,6 +60,13 @@ export function resolveLibraryFace(family: string, weight = 400, italic?: boolea
     Math.abs(f.weight - weight) < Math.abs(best.weight - weight) ? f : best, pool[0]!)
 }
 
+/** Build a `local:` outline token. Weight/italic omitted → nearest resolves later. */
+export function libraryToken(family: string, weight?: number, italic?: boolean): string {
+  let t = `local:${family}`
+  if (weight !== undefined) t += `@${weight}${italic ? 'i' : ''}`
+  return t
+}
+
 /** Install this module into the two resolver hooks. Called once at startup. */
 export function registerLibraryFonts(): void {
   setLibraryFamilies(LIBRARY_FONTS.families.map(f => ({
