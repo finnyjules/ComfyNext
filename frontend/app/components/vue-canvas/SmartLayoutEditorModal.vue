@@ -115,8 +115,18 @@ onMounted(() => {
       const tiers = autopopulateTiers(initialProps.value)
       if (Object.keys(tiers).length > 0) {
         v3.tiers = tiers
+        // Round-2b: thread the image-socket CONTENT TOKEN (not the resolved
+        // preview URL held in `initialProps.value.image_layer_1`) whenever
+        // that socket is wired — same presence-vs-value distinction as
+        // `useGridEditor`'s `genCtx()`. `undefined` here is fine even though
+        // `generate()`'s staging pool at seed 1 is fixed to 'tower' (no
+        // needsImage gating on this call) — it keeps this seed call
+        // consistent with every later shuffle/surprise/setStaging call.
+        const wiredImage = 'image_layer_1' in initialProps.value
+          ? '{{ props.image_layer_1 }}'
+          : undefined
         const seeded = generate({ ...v3, version: 3, sections: v3.sections ?? [] },
-          { staging: 'tower', theme: 'paper', seed: 1, brand: initialBrand.value as any })
+          { staging: 'tower', theme: 'paper', seed: 1, brand: initialBrand.value as any, image: wiredImage })
         Object.assign(layout, seeded)
       }
       // Any socket NOT consumed by tiers (wired images, or extra text layers

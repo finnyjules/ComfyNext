@@ -169,6 +169,11 @@ export interface TextStyleV2 {
    *  'horizontal' ⇒ normal flow (unchanged). The copy-fit pass runs against
    *  the region's SWAPPED axis so line length fits the region's height. */
   orientation?: 'horizontal' | 'up' | 'down'
+  /** Whole-element opacity, 0–1. Absent/undefined ⇒ fully opaque (1) —
+   *  byte-identical to before this field existed. Round-2b's texture
+   *  stagings (Family D — `repeat`/`wall`) dim all-but-one copy of a
+   *  repeated hero to build a type-as-texture field. */
+  opacity?: number
 }
 
 /** True when `style.orientation` requests vertical ('up'/'down') AND actually
@@ -180,6 +185,17 @@ export interface TextStyleV2 {
  *  editor canvas). */
 export function isVerticalTextStyle(style?: TextStyleV2): boolean {
   return !style?.expressive && (style?.orientation === 'up' || style?.orientation === 'down')
+}
+
+/** `style.opacity`, as a style-object fragment ready to spread — `{opacity:
+ *  n}` when set, `{}` when absent. A plain passthrough (no derived math,
+ *  unlike `panel`'s colour+opacity blend), but pulled into one function
+ *  anyway so both render surfaces (satori translate + the editor canvas)
+ *  make the identical read — same pattern as `isVerticalTextStyle` above.
+ *  Spreading `{}` means an absent opacity never stamps a literal key onto
+ *  the output style object (byte-identical to before this field existed). */
+export function textOpacityStyle(style?: TextStyleV2): { opacity?: number } {
+  return style?.opacity != null ? { opacity: style.opacity } : {}
 }
 
 export interface TextElementV2 extends ElementV2Base {

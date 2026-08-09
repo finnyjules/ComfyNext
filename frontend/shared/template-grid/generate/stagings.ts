@@ -1,5 +1,5 @@
 import type {
-  BrandKit, ElementV2, Region, TextLevel, TextOverflow, TextStyleV2, Tiers, TierId, TierSpec,
+  BrandKit, ElementV2, ImageElementV2, Region, TextLevel, TextOverflow, TextStyleV2, Tiers, TierId, TierSpec,
 } from '../types'
 import type { Rng } from './rng'
 import type { KnobSpec } from './knobs'
@@ -15,6 +15,14 @@ export interface StagingInput {
   rng: Rng
   knobs: Record<string, unknown>
   brand?: BrandKit
+  /** The wired image-socket CONTENT token (e.g. `'{{ props.image_layer_1 }}'`),
+   *  threaded from `generate()`'s `opts.image` — undefined when no image is
+   *  wired. A Family B/C staging (Task 3/4) passes this straight into
+   *  `tierImage`'s `content` param; `getStaging`'s caller only needs
+   *  PRESENCE (see `Staging.supports.needsImage` + `surprise()`'s pool
+   *  filter) — the actual token value is what makes it resolvable at
+   *  render/preview time via `resolveTokens`. */
+  image?: string
 }
 
 /** What a staging hands back to the orchestrator: elements ordered
@@ -32,7 +40,18 @@ export interface Staging {
   name: string
   blurb: string
   knobs: KnobSpec[]
-  supports?: { minTiers?: number; maxTiers?: number; surfaces?: string[] }
+  supports?: {
+    minTiers?: number
+    maxTiers?: number
+    surfaces?: string[]
+    /** Family C ("Photo-as-field") stagings: the composition IS the photo
+     *  (full-bleed field, band, etc.) — degrading to no-photo would leave an
+     *  empty/placeholder canvas, unlike Family B ("Photo-as-block") which
+     *  degrades gracefully by just dropping the photo block. `surprise()`'s
+     *  pool excludes these when `ctx.image` is absent, so the auto-roll
+     *  never lands on one with nothing to show. */
+    needsImage?: boolean
+  }
   compose(input: StagingInput): StagingResult
 }
 
@@ -65,6 +84,35 @@ export function tierText(
       ...opts.style,
       ...item.type,   // tier's own type wins — survives re-roll
     },
+  }
+}
+
+/** Build a placed image element for one staging-owned photo slot. `slot` is a
+ *  short staging-local name (e.g. `'0'`, `'right'`) — the id is always
+ *  `img_<slot>` per the naming convention every staged element follows.
+ *  `content` is the CONTENT token (`StagingInput.image`, e.g.
+ *  `'{{ props.image_layer_1 }}'`) — callers pass it straight through, never
+ *  a resolved URL. Defaults to `fit:'cover'` and a centered focal point;
+ *  `opts.bleed`/`opts.overhang` pass through to the element flags a Family
+ *  B/C staging needs (full-bleed photo fields, corner-pinned overhang crops)
+ *  — see the family tables. No staging calls this yet (Round-2b Tasks 3–4
+ *  are the first consumers); exported now so the interface lands ahead of
+ *  its callers. */
+export function tierImage(
+  slot: string, content: string, region: Region, priority: number,
+  opts: { bleed?: boolean; overhang?: boolean } = {},
+): ImageElementV2 {
+  return {
+    id: `img_${slot}`,
+    type: 'image',
+    content,
+    priority,
+    region,
+    origin: 'staging',
+    focal: { x: 0.5, y: 0.5 },
+    style: { fit: 'cover' },
+    ...(opts.bleed ? { bleed: true } : {}),
+    ...(opts.overhang ? { overhang: true } : {}),
   }
 }
 

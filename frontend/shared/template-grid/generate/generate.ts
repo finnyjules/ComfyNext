@@ -17,9 +17,12 @@ interface GenOpts {
   /** Colour the hero tier (`tier_hero_0`) in the theme's accent instead of
    *  the default ink. */
   accentOnHero?: boolean
-  /** Unused by theme generation (no image gating — that concept died with
-   *  duotone-photo) but kept accepted so callers threading a wired image for
-   *  OTHER purposes don't need a special-cased call shape. */
+  /** The wired image-socket CONTENT token (e.g. `'{{ props.image_layer_1
+   *  }}'`), or undefined when no image is wired — threaded straight into
+   *  `StagingInput.image` (Family B/C stagings place it via `tierImage`) and
+   *  read by `surprise()`'s pool filter to exclude `supports.needsImage`
+   *  stagings when absent. Theme selection itself still doesn't gate on it
+   *  (no image gating there — that concept died with duotone-photo). */
   image?: string
 }
 
@@ -89,7 +92,7 @@ export function generate(template: TemplateV3, opts: GenOpts): TemplateV3 {
   for (let attempt = 0; attempt < 8; attempt++) {
     const rng = makeRng(opts.seed + attempt, 'staging-knobs')
     knobs = resolveKnobs(staging.knobs, rng, attempt === 0 ? (opts.knobs ?? {}) : {})
-    stagingResult = staging.compose({ tiers, cols, rows, canvas, rng: makeRng(opts.seed + attempt, 'staging'), knobs, brand: opts.brand })
+    stagingResult = staging.compose({ tiers, cols, rows, canvas, rng: makeRng(opts.seed + attempt, 'staging'), knobs, brand: opts.brand, image: opts.image })
     if (validateGenerated(stagingResult, cols, rows).ok) break
   }
 
@@ -182,12 +185,24 @@ export function shuffle(template: TemplateV3, ctx: { brand?: BrandKit; image?: s
 }
 
 /** Re-roll BOTH axes under a new seed, honouring per-axis locks. Theme pool
- *  is all 7 themes — no image gating, that concept died with duotone-photo. */
+ *  is all 7 themes — no image gating, that concept died with duotone-photo.
+ *  The STAGING pool, unlike theme, DOES gate on image presence: a
+ *  `supports.needsImage` staging (Family C — the photo IS the composition)
+ *  is excluded when `ctx.image` is absent, so a no-image roll never lands on
+ *  one that would render an empty/placeholder field. The filter runs BEFORE
+ *  the seeded pick (same seed + same filtered pool ⇒ same staging every
+ *  time) — deterministic, same shape as the round-1 needsImage filter for
+ *  surfaces. Falls back to the unfiltered list only in the degenerate case
+ *  where filtering would empty the pool (every staging needs an image and
+ *  none is wired) rather than crash on an empty pick. */
 export function surprise(template: TemplateV3, ctx: { brand?: BrandKit; image?: string } = {}): TemplateV3 {
   const gen = migrateGen(template.gen)
   const seed = nextSeed(gen?.seed ?? 1)
   const pick = makeRng(seed, 'axes')
-  const staging = gen?.locks?.staging ? gen.staging : pick.pick(STAGINGS).id
+  const stagingPool = STAGINGS.filter(s => ctx.image || !s.supports?.needsImage)
+  const staging = gen?.locks?.staging
+    ? gen.staging
+    : pick.pick(stagingPool.length ? stagingPool : STAGINGS).id
   const theme = gen?.locks?.theme ? (gen!.theme ?? DEFAULT_THEME_ID) : pick.pick(THEMES).id
   return generate(template, { staging, theme, seed, accentOnHero: gen?.accentOnHero, brand: ctx.brand, image: ctx.image })
 }

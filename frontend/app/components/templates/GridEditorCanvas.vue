@@ -11,7 +11,7 @@ import { applyOverhangFlag, dragRegion, pointToCell, resizeRegion } from '~~/sha
 import { gridExpressiveLayout, expressiveVOffset } from '~~/shared/template-grid/expressive'
 import { verticalTextBox } from '~~/shared/template-grid/grid'
 import type { ResolvedElement } from '~~/shared/template-grid/resolve'
-import { isV3, isVerticalTextStyle } from '~~/shared/template-grid/types'
+import { isV3, isVerticalTextStyle, textOpacityStyle } from '~~/shared/template-grid/types'
 import type { Region } from '~~/shared/template-grid/types'
 import { editorImgFilter, treatmentOverlay } from '~~/shared/template-grid/treatment'
 import CanvasContextMenu, { type MenuItem } from '~/components/vue-canvas/CanvasContextMenu.vue'
@@ -353,6 +353,7 @@ function textStyle(r: ResolvedElement): Record<string, string | number> {
     ...(panel?.fill
       ? { background: colorToRgba(resolve(panel.fill), panel.opacity ?? 1), borderRadius: `${panel.radius ?? 0}px` }
       : {}),
+    ...textOpacityStyle(s),
   }
 }
 
@@ -414,6 +415,7 @@ function expressiveContainerStyle(r: ResolvedElement): Record<string, string | n
     ...(panel?.fill
       ? { background: colorToRgba(resolve(panel.fill), panel.opacity ?? 1), borderRadius: `${panel.radius ?? 0}px` }
       : {}),
+    ...textOpacityStyle(s),
   }
 }
 

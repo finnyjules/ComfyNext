@@ -1122,11 +1122,19 @@ export function useGridEditor(
   }
 
   function asV3(): TemplateV3 { convertToV3(); return template.value as TemplateV3 }
-  // The first wired image (if any) threads through genCtx() for callers that
-  // still need it; theme generation itself no longer consults it.
+  // Round-2b: `opts.image` is now the CONTENT TOKEN a staging places
+  // (`'{{ props.image_layer_1 }}'`), not the resolved preview URL — pool
+  // filtering (surprise's needsImage gate) and Family B/C stagings only need
+  // to know the socket is WIRED, and the token is what resolves correctly at
+  // both editor-preview time (against sampleProps) and real render time
+  // (against the node's actual props). `sampleProps.image_layer_1` is keyed
+  // in by GridEditorShell from the modal's `initialProps` — the key is
+  // present (even as `''`, "connected but no resolvable preview URL") iff
+  // the socket has an upstream edge; an unwired socket never gets the key at
+  // all. So presence-of-key, not truthiness-of-value, is the wiring check.
   function genCtx() {
-    const img = (sampleProps.value?.image_layer_1 as string | undefined) || undefined
-    return { brand: effectiveBrand.value as unknown as BrandKit, image: img }
+    const wired = sampleProps.value != null && 'image_layer_1' in sampleProps.value
+    return { brand: effectiveBrand.value as unknown as BrandKit, image: wired ? '{{ props.image_layer_1 }}' : undefined }
   }
 
   function shuffleLayout() { commit(shuffle(asV3(), genCtx())) }

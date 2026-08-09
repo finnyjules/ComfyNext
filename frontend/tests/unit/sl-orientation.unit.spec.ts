@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { resolveFormat } from '~~/shared/template-grid/resolve'
-import { isVerticalTextStyle } from '~~/shared/template-grid/types'
+import { isVerticalTextStyle, textOpacityStyle } from '~~/shared/template-grid/types'
 import type { GridExpressiveParams, TemplateV2, TemplateV3, TextElementV2 } from '~~/shared/template-grid/types'
+import { templateToSatori } from '~~/server/templates/translate'
 
 // A TALL narrow region (1 col × 5 rows on the square master's 6x6 grid) — a
 // vertical title running up the edge: 136px wide, 776px tall. Long enough
@@ -220,5 +221,83 @@ describe('isVerticalTextStyle (shared predicate)', () => {
     expect(isVerticalTextStyle({})).toBe(false)
     expect(isVerticalTextStyle(undefined)).toBe(false)
     expect(isVerticalTextStyle({ orientation: 'horizontal' })).toBe(false)
+  })
+})
+
+// -- Round-2b Task 1: text opacity ------------------------------------------
+// `TextStyleV2.opacity` is a plain style passthrough — `textOpacityStyle`
+// (types.ts, right beside `isVerticalTextStyle` above) is the single shared
+// read both render surfaces make: `translate.ts`'s satori `fontStyle` object
+// spreads it, and `GridEditorCanvas.vue`'s `textStyle()`/
+// `expressiveContainerStyle()` spread the identical function. Testing the
+// shared function directly is a proxy for "both surfaces agree" only because
+// both surfaces are wired to call the SAME function (verified by reading
+// server/templates/translate.ts and app/components/templates/
+// GridEditorCanvas.vue) — same precedent as `isVerticalTextStyle` above.
+// `templateToSatori` is exercised end-to-end for the satori side since it's
+// importable and needs no DOM; `GridEditorCanvas.vue` is a `<script setup>`
+// SFC with no component-mount test infra in this repo (no @vue/test-utils
+// dependency), so its side is covered by the shared-function test plus the
+// direct source wiring.
+describe('textOpacityStyle (shared passthrough, both render surfaces)', () => {
+  it('returns {opacity: n} when style.opacity is set', () => {
+    expect(textOpacityStyle({ opacity: 0.25 })).toEqual({ opacity: 0.25 })
+    expect(textOpacityStyle({ opacity: 0 })).toEqual({ opacity: 0 })
+    expect(textOpacityStyle({ opacity: 1 })).toEqual({ opacity: 1 })
+  })
+
+  it('returns {} (no opacity key at all) when absent — not {opacity: undefined}', () => {
+    expect(textOpacityStyle({})).toEqual({})
+    expect(textOpacityStyle(undefined)).toEqual({})
+    expect(Object.keys(textOpacityStyle({}))).toEqual([])
+  })
+})
+
+function opacityFixture(opacity?: number): TemplateV2 {
+  return {
+    version: 2, id: 't', name: 't', master: '1x1',
+    formats: { '1x1': { w: 1080, h: 1080 } },
+    grid: { gutter: 24, margin: 72, baseline: 12 },
+    typeScale: { base: 28, ratio: 1.414 },
+    elements: [
+      {
+        id: 'title', type: 'text', content: 'Dimmed copy',
+        level: 'headline', priority: 1,
+        region: { col: 1, colSpan: 6, row: 1, rowSpan: 2 },
+        ...(opacity != null ? { style: { opacity } } : {}),
+      },
+    ],
+  }
+}
+
+function findTitleStyle(t: TemplateV2): Record<string, unknown> {
+  const { tree } = templateToSatori(t as any, '1x1', {})
+  const kids = tree.props.children as any[]
+  const node = kids.find((n: any) => n?.props?.children === 'Dimmed copy')
+  return node.props.style as Record<string, unknown>
+}
+
+describe('translate.ts (satori): style.opacity → the satori node style object', () => {
+  it('style.opacity: 0.25 → the satori node style includes opacity: 0.25', () => {
+    expect(findTitleStyle(opacityFixture(0.25)).opacity).toBe(0.25)
+  })
+
+  it('absent opacity → no opacity key at all (byte-identical to before this field existed)', () => {
+    const style = findTitleStyle(opacityFixture())
+    expect('opacity' in style).toBe(false)
+  })
+
+  it('opacity flows through the expressive word-layout branch too (same shared fontStyle object)', () => {
+    const t = opacityFixture(0.4)
+    ;(t.elements[0] as TextElementV2).style = {
+      opacity: 0.4,
+      expressive: { wordsPerLine: 2, placement: 'random', jitterX: 0, jitterY: 0, seed: 1 },
+    }
+    const { tree } = templateToSatori(t as any, '1x1', {})
+    const kids = tree.props.children as any[]
+    // Expressive text renders as a container of per-word divs, not a bare
+    // string child — find it by its distinctive per-word children shape.
+    const node = kids.find((n: any) => Array.isArray(n?.props?.children))
+    expect((node.props.style as Record<string, unknown>).opacity).toBe(0.4)
   })
 })

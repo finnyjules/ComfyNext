@@ -16,7 +16,7 @@ import { needsServerBake, treatmentCssFilter, treatmentIntensity } from '../../s
 import type {
   AnyGridTemplate, ImageElementV2, ShapeElementV2, TemplateV2, TextElementV2,
 } from '../../shared/template-grid/types'
-import { isVerticalTextStyle } from '../../shared/template-grid/types'
+import { isVerticalTextStyle, textOpacityStyle } from '../../shared/template-grid/types'
 import type {
   AspectSpec, BackgroundSpec, ImageElement, LayoutElement, Length, RenderBrand,
   RenderProps, ShapeElement, Template, TextElement,
@@ -360,6 +360,7 @@ function v2ElementNode(r: ResolvedElement, props: RenderProps, brand: RenderBran
         fontFamily: String(resolveTokens(s.fontFamily ?? 'Inter', props, brand)),
         lineHeight: justifyY ? (r.rect.h / numLines) / r.text!.fontSize : (s.lineHeight ?? 1.1),
         letterSpacing: s.letterSpacing != null ? `${s.letterSpacing}px` : undefined,
+        ...textOpacityStyle(s),
       }
       // Expressive: place each word absolutely from the shared engine. Uses the
       // same per-glyph width estimate as the editor, so export matches the editor.
