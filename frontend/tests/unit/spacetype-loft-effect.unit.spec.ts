@@ -72,6 +72,16 @@ describe('loft refinements', () => {
     expect(resolveShape({ profileKind: 'shape' } as any)).toBe('oval')
     expect(resolveShape({} as any)).toBe('oval')
   })
+  it('resolveShape: circle passes through; legacy capsule migrates to rectangle', () => {
+    expect(resolveShape({ shape: 'circle' } as any)).toBe('circle')
+    expect(resolveShape({ shape: 'capsule' } as any)).toBe('rectangle')
+  })
+  it('shape=circle builds drawable geometry (uniform round cross-section)', () => {
+    const p = defaultFromControls(); (p as any).shape = 'circle'
+    const root = loftEffect.buildScene(THREE as any, p, new THREE.Texture(), { width: 800, height: 800 })
+    let drawable = 0; root.traverse((o: any) => { if (o.isMesh) drawable++ })
+    expect(drawable).toBeGreaterThan(0)
+  })
   it('spacing>0 builds discrete sliced geometry (more/mesh objects than continuous is not required, but drawable)', () => {
     const p = defaultFromControls()
     p.spacing = 0.4; p.shape = 'oval'; p.colorSource = 'fill'

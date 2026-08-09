@@ -6,11 +6,16 @@ const params = { rectRadius: 0.5, polySides: 5, starDepth: 0.5 }
 
 describe('shapeContour', () => {
   it('every shape returns exactly `points` vertices', () => {
-    for (const s of ['oval','capsule','rectangle','polygon','star'] as const)
+    for (const s of ['circle','oval','rectangle','polygon','star'] as const)
       expect(shapeContour(s, params, P).length).toBe(P)
   })
   it('oval is a unit circle (all radii ~1)', () => {
     for (const p of shapeContour('oval', params, P)) expect(Math.hypot(p.x, p.y)).toBeCloseTo(1, 3)
+  })
+  it('circle is a unit circle (all radii ~1), same as oval', () => {
+    const P = 48
+    const c = shapeContour('circle', { rectRadius: 0.5, polySides: 5, starDepth: 0.5 }, P)
+    for (const p of c) expect(Math.hypot(p.x, p.y)).toBeCloseTo(1, 3)
   })
   it('rectangle reaches into the corners (max extent > oval)', () => {
     const maxR = (pts: {x:number;y:number}[]) => Math.max(...pts.map(p => Math.hypot(p.x, p.y)))

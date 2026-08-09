@@ -26,7 +26,7 @@ const controls: ControlSpec[] = [
   { key: 'spinePreset', label: 'Spine preset', kind: 'select', options: ['custom', 'helix', 'wave', 'arch', 's-curve', 'loop'], default: 'helix', group: 'Layout' },
   { key: 'closed', label: 'Closed loop', kind: 'switch', default: false, group: 'Layout' },
   // shape picker replaces the old profileKind — word is now one of the shape options
-  { key: 'shape', label: 'Shape', kind: 'select', options: ['oval', 'capsule', 'rectangle', 'polygon', 'star', 'word'], default: 'oval', group: 'Style' },
+  { key: 'shape', label: 'Shape', kind: 'select', options: ['circle', 'oval', 'rectangle', 'polygon', 'star', 'word'], default: 'oval', group: 'Style' },
   { key: 'rectRadius', label: 'Corner radius', kind: 'slider', min: 0, max: 1, step: 0.02, default: 0.4, group: 'Style', showIf: { key: 'shape', equals: 'rectangle' } },
   { key: 'polySides', label: 'Sides', kind: 'slider', min: 3, max: 16, step: 1, default: 5, group: 'Style', showIf: { key: 'shape', equals: 'polygon' } },
   { key: 'starSides', label: 'Points', kind: 'slider', min: 3, max: 16, step: 1, default: 5, group: 'Style', showIf: { key: 'shape', equals: 'star' } },
@@ -96,12 +96,14 @@ export function outlineFontValue(font: string | undefined): string {
 }
 
 /** Migrate the old `profileKind` control ('shape'|'word') to the new `shape` control
- *  (oval/capsule/rectangle/polygon/star/word). Returns the raw `shape` value when it's one of
- *  the valid options; otherwise falls back to migrating `profileKind` ('word'→'word', else
- *  'oval'). Exported for unit tests. */
+ *  (circle/oval/rectangle/polygon/star/word). Returns the raw `shape` value when it's one of
+ *  the valid options; migrates the legacy `capsule` shape (retired in favour of a
+ *  full-radius Rectangle) to `'rectangle'`; otherwise falls back to migrating `profileKind`
+ *  ('word'→'word', else 'oval'). Exported for unit tests. */
 export function resolveShape(params: Params): LoftShape | 'word' {
   const s = String(params.shape ?? '')
-  if (['oval', 'capsule', 'rectangle', 'polygon', 'star', 'word'].includes(s)) return s as LoftShape | 'word'
+  if (s === 'capsule') return 'rectangle'   // legacy migrate: capsule → full-radius rectangle
+  if (['circle', 'oval', 'rectangle', 'polygon', 'star', 'word'].includes(s)) return s as LoftShape | 'word'
   const pk = String(params.profileKind ?? '')   // migrate old docs
   return pk === 'word' ? 'word' : 'oval'
 }
@@ -160,7 +162,18 @@ export const loftEffect: SpaceTypeEffect = {
 
     const K = Math.max(2, Math.floor(n(params, 'copies')))
     const stations = sampleSpine(flatStops, closed, K)
-    const props = stations.map(st => interpStopProps(flatStops, st.t))
+    const rawShape = String(params.shape ?? '')
+    const shape = resolveShape(params)
+    // Circle scales UNIFORMLY (height := width) so it stays perfectly round regardless of the
+    // Width/Height stop values — the roundness comes from this scale-lock, not the contour
+    // (the contour is the same unit circle 'oval' uses).
+    const props = stations.map(st => {
+      const p = interpStopProps(flatStops, st.t)
+      return shape === 'circle' ? { ...p, height: p.width } : p
+    })
+    // Legacy capsule → full corner radius, so an old capsule still renders as a pill even
+    // though it now resolves to 'rectangle'.
+    const rectRadius = rawShape === 'capsule' ? 1 : n(params, 'rectRadius')
     // Word mode: sweep the word's glyph outlines instead of the parametric shape. buildScene
     // stays SYNCHRONOUS — wordContours only ever reads the font from the sync `fontCacheGet`
     // peek, never awaits `loadFont` — so on a cold cache it falls back to a plain oval contour
@@ -171,8 +184,7 @@ export const loftEffect: SpaceTypeEffect = {
     // toward a line, since the profile plane is orthogonal to the (z=0) sweep direction — word
     // mode is 3D-primary. Flat+word still renders (falls through to the same framing as shape
     // mode) rather than crashing; camera-facing framing for that combination is left for later.
-    const shape = resolveShape(params)
-    const shapeParams = { rectRadius: n(params, 'rectRadius'), polySides: shape === 'star' ? n(params, 'starSides') : n(params, 'polySides'), starDepth: n(params, 'starDepth') }
+    const shapeParams = { rectRadius, polySides: shape === 'star' ? n(params, 'starSides') : n(params, 'polySides'), starDepth: n(params, 'starDepth') }
     const baseContours = shape === 'word'
       ? (wordContours(three as any, params, PROFILE_POINTS) ?? [shapeContour('oval', shapeParams, PROFILE_POINTS)])
       : [shapeContour(shape, shapeParams, PROFILE_POINTS)]

@@ -301,7 +301,7 @@ export function buildLoftGeometry(opts: {
   return { positions, along, across, indices: new Uint32Array(indices) }
 }
 
-export type LoftShape = 'oval' | 'capsule' | 'rectangle' | 'polygon' | 'star'
+export type LoftShape = 'circle' | 'oval' | 'rectangle' | 'polygon' | 'star'
 export interface ShapeParams { rectRadius: number; polySides: number; starDepth: number }
 
 /** Perimeter of a rounded rectangle in the box [-1,1]², radius `r` (0..1 of the half-extent). */
@@ -327,13 +327,12 @@ function roundedRectPath(r: number): Vec2[] {
 
 export function shapeContour(shape: LoftShape, params: ShapeParams, points: number): Vec2[] {
   switch (shape) {
+    case 'circle':
     case 'oval': {
       const out: Vec2[] = []
       for (let i = 0; i < points; i++) { const a = (i / points) * Math.PI * 2; out.push({ x: Math.cos(a), y: Math.sin(a) }) }
       return out
     }
-    case 'capsule':   // stadium = rounded rect at full corner radius; stretches to a stadium once width/height scale it
-      return resampleContour(roundedRectPath(1), points)
     case 'rectangle':
       return resampleContour(roundedRectPath(params.rectRadius), points)
     case 'polygon':
