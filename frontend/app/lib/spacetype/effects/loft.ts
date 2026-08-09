@@ -3,7 +3,8 @@ import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
 import { parseStops, DEFAULT_STOPS_JSON } from '../loftStops'
 import {
   sampleSpine, interpStopProps, resampleContour,
-  buildLoftGeometry, buildRamp, shapeContour, rampFromFill, buildSlicedLoftGeometry,
+  buildLoftGeometry, buildRamp, shapeContour, buildSlicedLoftGeometry,
+  build2DFillRamp, fillsAngle, stretchAcross,
   type Vec2, type LoftShape,
 } from '../loftGeometry'
 import { textOutline, fontCacheGet, fontSourceUrl, type Font } from '~/lib/scene3d/outlines'
@@ -18,6 +19,7 @@ import { textOutline, fontCacheGet, fontSourceUrl, type Font } from '~/lib/scene
  */
 
 const PROFILE_POINTS = 48   // vertices resampled per contour
+const RAMP_ACROSS = 64, RAMP_ALONG = 256
 
 const controls: ControlSpec[] = [
   { key: 'stops', label: 'Stops', kind: 'profileStops', default: DEFAULT_STOPS_JSON, group: 'Layout' },
@@ -63,17 +65,19 @@ function n(p: Params, k: string): number { return Number(p[k]) }
 
 const VERT = `
 attribute float aAlong;
+attribute float aAcross;
 varying float vAlong;
-void main() { vAlong = aAlong; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
+varying float vAcross;
+void main() { vAlong = aAlong; vAcross = aAcross; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
 `
 const FRAG = `
 uniform sampler2D uRamp;
 uniform float uFlow;
 uniform float uOpacity;
 varying float vAlong;
+varying float vAcross;
 void main() {
-  float u = fract(vAlong + uFlow);
-  vec3 c = texture2D(uRamp, vec2(u, 0.5)).rgb;
+  vec3 c = texture2D(uRamp, vec2(vAcross, fract(vAlong + uFlow))).rgb;
   gl_FragColor = vec4(c, uOpacity);
 }
 `
@@ -182,21 +186,23 @@ export const loftEffect: SpaceTypeEffect = {
     // Copies now drives both densities: continuous surface resolution (K, above) when spacing is
     // 0, and ring count when spacing > 0 — one slider, no separate Elements control.
     const strokeWidth = n(params, 'strokeWidth')
+    const gradientAngle = String(params.colorSource) === 'fill' ? fillsAngle(String(params.fills ?? '')) : 90
     const geo = spacing > 0
-      ? buildSlicedLoftGeometry({ stations, props, baseContours, closed, render, elements: Math.max(2, Math.round(n(params, 'copies'))), spacing, cap, strokeWidth })
-      : buildLoftGeometry({ stations, props, baseContours, closed, render, cap, strokeWidth })
+      ? buildSlicedLoftGeometry({ stations, props, baseContours, closed, render, elements: Math.max(2, Math.round(n(params, 'copies'))), spacing, cap, strokeWidth, gradientAngle })
+      : buildLoftGeometry({ stations, props, baseContours, closed, render, cap, strokeWidth, gradientAngle })
 
     const g = new three.BufferGeometry()
     g.setAttribute('position', new three.BufferAttribute(geo.positions, 3))
     g.setAttribute('aAlong', new three.BufferAttribute(geo.along, 1))
+    g.setAttribute('aAcross', new three.BufferAttribute(geo.across, 1))
     g.setIndex(new three.BufferAttribute(geo.indices, 1))
 
     // Uint8Array(...) copy: three's DataTexture types data as BufferSource (concrete ArrayBuffer);
-    // buildRamp/rampFromFill's bare Uint8ClampedArray return widens to <ArrayBufferLike> under TS 5.7+ libs.
+    // buildRamp/build2DFillRamp's bare Uint8ClampedArray return widens to <ArrayBufferLike> under TS 5.7+ libs.
     const rampBytes = String(params.colorSource) === 'stops'
-      ? buildRamp(stops, 256)
-      : rampFromFill(three as any, String(params.fills ?? ''), 256, String(params.fillMode) === 'steps' ? 'steps' : 'blend')
-    const ramp = new three.DataTexture(new Uint8Array(rampBytes), 256, 1, three.RGBAFormat)
+      ? stretchAcross(buildRamp(stops, RAMP_ALONG), RAMP_ACROSS)
+      : build2DFillRamp(three as any, String(params.fills ?? ''), String(params.fillMode) === 'steps' ? 'steps' : 'blend', RAMP_ACROSS, RAMP_ALONG)
+    const ramp = new three.DataTexture(new Uint8Array(rampBytes), RAMP_ACROSS, RAMP_ALONG, three.RGBAFormat)
     ramp.needsUpdate = true
     const opacity = render === 'stroke' ? n(params, 'strokeOpacity') : n(params, 'fillOpacity')
     const mat = new three.ShaderMaterial({

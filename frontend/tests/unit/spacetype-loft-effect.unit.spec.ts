@@ -104,3 +104,22 @@ describe('loft control placement + defaults (user-visibility fixes)', () => {
     expect(fills[0].a).not.toBe(fills[1].a)   // two distinct colours → a real blend
   })
 })
+
+describe('loft 2D colour texture', () => {
+  it('buildScene uploads a 2-D DataTexture (width>1 && height>1) and geometry has aAcross', () => {
+    const p = defaultFromControls()
+    const root = loftEffect.buildScene(THREE as any, p, new THREE.Texture(), { width: 800, height: 800 })
+    const tex = root.userData.tex as any
+    expect(tex.image.width).toBeGreaterThan(1)
+    expect(tex.image.height).toBeGreaterThan(1)
+    let hasAcross = false
+    root.traverse((o: any) => { if (o.geometry?.getAttribute?.('aAcross')) hasAcross = true })
+    expect(hasAcross).toBe(true)
+  })
+  it('colorSource=stops still produces a 2-D texture', () => {
+    const p = defaultFromControls(); (p as any).colorSource = 'stops'
+    const root = loftEffect.buildScene(THREE as any, p, new THREE.Texture(), { width: 800, height: 800 })
+    const tex = root.userData.tex as any
+    expect(tex.image.width).toBeGreaterThan(1); expect(tex.image.height).toBeGreaterThan(1)
+  })
+})
