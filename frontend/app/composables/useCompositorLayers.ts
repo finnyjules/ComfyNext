@@ -73,6 +73,7 @@ export {
   isGradient, isFill, isImageFill,
 } from '~/lib/compositor/paint'
 import { type Paint, isFill, isImageFill } from '~/lib/compositor/paint'
+import { buildDisplacementField, resampleBilinear, type DisplaceMapSpec } from '~/lib/compositor/displace'
 
 // Layer effects (Figma-style). All distances normalized to canvas width, like
 // every other dimension here, so they survive resize/export unchanged.
@@ -284,6 +285,7 @@ export interface ImageLayer extends LayerCommon {
   tint?: Paint            // optional fill blended over the image, clipped to its alpha
   tintBlend?: string      // blend mode for the tint (same names as layer blend)
   tintOpacity?: number    // 0..1 tint strength; default 1
+  displaceMap?: DisplaceMapSpec // present ⇒ layer is a lens warping everything below
 }
 
 export interface PolygonLayer extends LayerCommon {
@@ -1481,6 +1483,51 @@ function applyBackdropBlur(
   ctx.restore()
 }
 
+// Displacement map: the layer's pixels are NOT drawn — instead they warp the backdrop
+// already painted below this layer. Called from paintLayerStack's item loop. `ghost` draws
+// a faint preview of the map in the editor so the layer doesn't appear to vanish (never in bake).
+function applyDisplaceFromLayer(
+  ctx: CanvasRenderingContext2D,
+  layer: ImageLayer,
+  W: number,
+  H: number,
+  opts?: { ghost?: boolean },
+) {
+  const spec = layer.displaceMap
+  if (!spec) return
+  const dev = ctx.canvas
+  const w = dev.width, h = dev.height
+  if (w < 1 || h < 1) return
+  const t = ctx.getTransform()
+
+  // 1. Snapshot the backdrop below this layer (device pixels; getImageData ignores transform).
+  const src = ctx.getImageData(0, 0, w, h)
+
+  // 2. Render the map layer (full colour, its transform baked in) to a device-sized offscreen.
+  const off = document.createElement('canvas')
+  off.width = w; off.height = h
+  const octx = off.getContext('2d')
+  if (!octx) return
+  octx.setTransform(t)
+  const mapGhost = { ...layer, opacity: 1, effects: undefined, blend: undefined, displaceMap: undefined } as LocalLayer
+  drawLocalLayerSelf(octx, mapGhost, W, H)
+  const mapData = octx.getImageData(0, 0, w, h)
+
+  // 3+4. Build the offset field and resample the backdrop. amount is SCREEN px → scale to device.
+  const field = buildDisplacementField(mapData.data, w, h, spec)
+  const amountDev = spec.amount * (t.a || 1)
+  const outArr = resampleBilinear(src.data, field, amountDev, w, h)
+
+  // 5. Write the warped backdrop back (putImageData is always device-space).
+  ctx.putImageData(new ImageData(outArr, w, h), 0, 0)
+
+  // Editor affordance: faint ghost of the map so it's visible/selectable. Never in bake.
+  if (opts?.ghost) {
+    const g = { ...layer, opacity: 0.14, effects: undefined, blend: undefined, displaceMap: undefined } as LocalLayer
+    drawLocalLayerSelf(ctx, g, W, H)
+  }
+}
+
 /** Every Paint slot a local layer can carry, kind-specific — walked by paintLayerStack's
  *  pre-pass (below) to find shader fills BEFORE anything paints, so beginFieldFrame sees
  *  the same set resolveFill will actually ask for during the pass. */
@@ -1650,6 +1697,14 @@ export function paintLayerStack(
       const gc = groups ? resolveGroupCascade(layer.groupId, groups) : null
       if (layerHidden(layer) || gc?.hidden) continue
       if (skip?.(layer)) continue
+
+      // Displacement map: consume this image layer as a lens over everything below.
+      // Placed before mask/blend/motion — a map layer ignores all of those.
+      if (layer.kind === 'image' && (layer as ImageLayer).displaceMap) {
+        applyDisplaceFromLayer(ctx, layer as ImageLayer, W, H, { ghost: !bake })
+        continue
+      }
+
       const opacityMul = gc ? gc.opacity : 1
 
       const ref = layerMaskRef(layer)
