@@ -87,10 +87,11 @@ describe('staging: split + frame registered and valid', () => {
 })
 
 describe('staging: full library', () => {
-  it('registers all eleven stagings', () => {
+  it('registers all fifteen stagings', () => {
     expect(STAGINGS.map(s => s.id).sort()).toEqual([
-      'centered', 'corner', 'editorial', 'frame', 'index', 'ledger',
-      'manifesto', 'split', 'stacked', 'statement', 'tower',
+      'band_footer', 'band_header', 'centered', 'corner', 'cover', 'editorial',
+      'frame', 'index', 'ledger', 'lockup', 'manifesto', 'split', 'stacked',
+      'statement', 'tower',
     ])
   })
   it('every staging produces distinct placement and stays in-grid', () => {
@@ -117,15 +118,22 @@ describe('staging: full library', () => {
 describe('staging: no intra-staging overlap', () => {
   // Round 1 checked this with a local pairwise scan; round 2a moved collision
   // detection into validateGenerated (declared `overlaps` pairs are exempt).
-  // None of the six current stagings declare any, so this still guards
-  // exactly what it guarded before — now via the real validator. The standard
-  // 4-tier (2-support/2-fineprint) fixture must validate CLEAN end to end
-  // (off-grid + overlap + type-size-count all pass) — proving the whole
-  // pipeline, not just the collision check.
+  // Under `input()` (no `image` wired) every staging from Families A/B, plus
+  // Family C's `cover`/`lockup`, declares zero overlaps — their only declared
+  // pairs name `img_0`, which doesn't exist without a wired image. Family C's
+  // `band_header`/`band_footer` are the one legitimate exception (round-2b
+  // Task 4): `band_0` is a background shape that renders regardless of photo
+  // presence, and hero/anchor/(fineprint|support) genuinely — and
+  // intentionally — sit on top of it, so those pairs stay declared with or
+  // without an image. Either way, the standard 4-tier (2-support/2-fineprint)
+  // fixture must validate CLEAN end to end (off-grid + overlap + type-size-
+  // count all pass) — proving the whole pipeline, not just the collision
+  // check.
+  const BAND_FAMILY_IDS = new Set(['band_header', 'band_footer'])
   for (const s of STAGINGS) {
     it(`${s.id}: validates clean (no overlap, off-grid, or type-size violations) under default knobs`, () => {
       const result = s.compose(input())
-      expect(result.overlaps ?? []).toEqual([])
+      if (!BAND_FAMILY_IDS.has(s.id)) expect(result.overlaps ?? []).toEqual([])
       const { ok, reasons } = validateGenerated(result, 12, 16)
       expect(ok, reasons.join(' ')).toBe(true)
     })
@@ -206,12 +214,14 @@ describe('staging: dramatic hero + anchor type', () => {
   // `manifesto` inverts the usual mass relationship (Family A table + the
   // round-2b self-review correction): the ANCHOR is the giant heroScale-sized
   // element (the numeral-as-graphic move) and the HERO is the small ~0.45×
-  // corner mark — the opposite of every other staging. Its own describe below
-  // asserts that inversion directly; here it's just exempted from the
-  // hero-is-the-giant-one generic checks so this loop still guards the other
-  // nine.
+  // corner mark — the opposite of every other staging. `lockup` (Family C,
+  // round-2b Task 4) scales its hero to HALF heroScale (a small title+date
+  // jewel, not a giant overprint) — a different divergence from the same
+  // generic "hero === heroScale × canvas.h" assumption. Both get their own
+  // dedicated describe block below; this loop still guards every other
+  // staging unchanged.
   for (const s of STAGINGS) {
-    if (s.id === 'manifesto') continue
+    if (s.id === 'manifesto' || s.id === 'lockup') continue
     it(`${s.id}: hero fontSize follows the heroScale knob × canvas.h`, () => {
       for (const heroScale of HERO_SCALES) {
         const els = s.compose(input({ knobs: { heroScale } })).elements
@@ -253,6 +263,27 @@ describe('staging: dramatic hero + anchor type', () => {
     const anchor = els.find(e => e.id === 'tier_anchor_0')! as any
     expect(Math.abs(hero.style.fontSize - Math.round(0.45 * anchor.style.fontSize))).toBeLessThanOrEqual(1)
     expect(hero.style.letterSpacing).toBeLessThan(0)
+  })
+
+  it('lockup: hero fontSize follows the HALVED (0.5×heroScale) relationship — a small jewel, not a giant overprint', () => {
+    for (const heroScale of HERO_SCALES) {
+      const els = getStaging('lockup')!.compose(input({ knobs: { heroScale } })).elements
+      const hero = els.find(e => e.id === 'tier_hero_0')! as any
+      expect(hero.style.fontSize).toBe(Math.round(0.5 * heroScale * CANVAS.h))
+    }
+  })
+  it('lockup: hero has tight lineHeight and negative letterSpacing, same drama shape at the smaller scale', () => {
+    const els = getStaging('lockup')!.compose(input()).elements
+    const hero = els.find(e => e.id === 'tier_hero_0')! as any
+    expect(hero.style.lineHeight).toBe(0.92)
+    expect(hero.style.letterSpacing).toBeLessThan(0)
+  })
+  it('lockup: anchor fontSize tracks 0.45 × the (already-halved) hero fontSize', () => {
+    const els = getStaging('lockup')!.compose(input()).elements
+    const hero = els.find(e => e.id === 'tier_hero_0')! as any
+    const anchor = els.find(e => e.id === 'tier_anchor_0')! as any
+    expect(Math.abs(anchor.style.fontSize - Math.round(0.45 * hero.style.fontSize))).toBeLessThanOrEqual(1)
+    expect(anchor.style.letterSpacing).toBeLessThan(0)
   })
 })
 
@@ -678,6 +709,284 @@ describe('staging: corner — pinned photo, crop overhang, vertical hero', () =>
       const result = corner.compose(input({ image }))
       const { ok, reasons } = validateGenerated(result, 12, 16)
       expect(ok, reasons.join(' ')).toBe(true)
+    }
+  })
+  // Task 3 review minor: every crop x heroOrientation combo, not just each
+  // knob varied alone, run through the real validator (image + no-image).
+  it('every crop x heroOrientation combo validates clean, image and no-image', () => {
+    for (const crop of ['bottom', 'none'] as const) {
+      for (const heroOrientation of ['horizontal', 'up'] as const) {
+        for (const image of [IMAGE_TOKEN, undefined]) {
+          const result = corner.compose(input({ knobs: { crop, heroOrientation }, image }))
+          const { ok, reasons } = validateGenerated(result, 12, 16)
+          expect(ok, `crop:${crop} heroOrientation:${heroOrientation} image:${!!image} — ${reasons.join(' ')}`).toBe(true)
+        }
+      }
+    }
+  })
+})
+
+// Round-2b Task 4 — Family C, photo-as-field (cover/lockup/band_header/
+// band_footer). The overprint/band family: heaviest user of declared
+// overlaps + scrims. All four `supports.needsImage: true` — Task 1's
+// surprise-pool filter excludes them without a wired image. Per the family
+// table + task brief, `cover`/`lockup` overprint a FULL-BLEED photo (every
+// text element declares an overlap with it, since it covers the whole
+// grid); `band_header`/`band_footer` split a solid colour band from a
+// full-bleed photo (`bandSize` scales both regions from one knob), with
+// band text declaring overlap against `band_0` and photo text declaring
+// overlap against `img_0`.
+const FIELD_IDS = ['cover', 'lockup', 'band_header', 'band_footer'] as const
+const BAND_IDS = ['band_header', 'band_footer'] as const
+
+describe('staging: Family C — registration + needsImage + knobs', () => {
+  it('all four are registered and declare supports.needsImage', () => {
+    for (const id of FIELD_IDS) {
+      const s = getStaging(id)!
+      expect(s, `${id} not registered`).toBeTruthy()
+      expect(s.supports?.needsImage).toBe(true)
+    }
+  })
+  it('every Family C staging declares heroScale plus its own knobs', () => {
+    expect(getStaging('cover')!.knobs.map(k => k.id).sort()).toEqual(['heroScale', 'scrim'])
+    expect(getStaging('lockup')!.knobs.map(k => k.id).sort()).toEqual(['heroScale', 'scrim'])
+    expect(getStaging('band_header')!.knobs.map(k => k.id).sort()).toEqual(['bandSize', 'heroScale', 'scrim'])
+    expect(getStaging('band_footer')!.knobs.map(k => k.id).sort()).toEqual(['bandSize', 'heroScale'])
+  })
+})
+
+describe('staging: Family C — img_0/band_0 presence, no crash without an image', () => {
+  for (const id of FIELD_IDS) {
+    it(`${id}: a direct compose() with no image doesn't crash and validates clean`, () => {
+      const result = getStaging(id)!.compose(input())
+      expect(result.elements.length).toBeGreaterThan(0)
+      expect(result.elements.find(e => e.id === 'img_0')).toBeUndefined()
+      const { ok, reasons } = validateGenerated(result, 12, 16)
+      expect(ok, reasons.join(' ')).toBe(true)
+    })
+  }
+  it('cover/lockup: no img_0 without a wired image; present with one', () => {
+    for (const id of ['cover', 'lockup'] as const) {
+      const withImage = getStaging(id)!.compose(input({ image: IMAGE_TOKEN })).elements.find(e => e.id === 'img_0')
+      expect(withImage).toBeTruthy()
+      expect((withImage as any).content).toBe(IMAGE_TOKEN)
+    }
+  })
+  it('band_header/band_footer: band_0 always renders (image or not); img_0 tracks image presence', () => {
+    for (const id of BAND_IDS) {
+      for (const image of [IMAGE_TOKEN, undefined]) {
+        const els = getStaging(id)!.compose(input({ image })).elements
+        expect(els.find(e => e.id === 'band_0'), `${id} missing band_0`).toBeTruthy()
+        const img = els.find(e => e.id === 'img_0')
+        if (image) expect(img).toBeTruthy()
+        else expect(img).toBeUndefined()
+      }
+    }
+  })
+})
+
+describe('staging: Family C — cover/lockup full-bleed img_0 spans the whole grid', () => {
+  for (const id of ['cover', 'lockup'] as const) {
+    it(`${id}: img_0 region spans the full grid and carries bleed:true`, () => {
+      const els = getStaging(id)!.compose(input({ image: IMAGE_TOKEN })).elements
+      const img = els.find(e => e.id === 'img_0')! as any
+      expect(img.bleed).toBe(true)
+      expect(img.region).toEqual({ col: 1, colSpan: 12, row: 1, rowSpan: 16 })
+    })
+  }
+})
+
+describe('staging: Family C — cover/lockup scrim knob maps to hero style.panel', () => {
+  for (const id of ['cover', 'lockup'] as const) {
+    it(`${id}: scrim:"panel" sets hero style.panel to the token fill at 0.55 opacity`, () => {
+      const els = getStaging(id)!.compose(input({ knobs: { scrim: 'panel' } })).elements
+      const hero = els.find(e => e.id === 'tier_hero_0')! as any
+      expect(hero.style.panel).toEqual({ fill: '{{ brand.background }}', opacity: 0.55 })
+    })
+    it(`${id}: scrim:"none" leaves hero style.panel unset`, () => {
+      const els = getStaging(id)!.compose(input({ knobs: { scrim: 'none' } })).elements
+      const hero = els.find(e => e.id === 'tier_hero_0')! as any
+      expect(hero.style.panel).toBeUndefined()
+    })
+  }
+})
+
+describe('staging: Family C — band_header scrim knob maps to support style.panel', () => {
+  const bandHeader = getStaging('band_header')!
+  it('scrim:"panel" sets support style.panel to the token fill at 0.55 opacity', () => {
+    const els = bandHeader.compose(input({ knobs: { scrim: 'panel' } })).elements
+    const support = els.find(e => e.id === 'tier_support_0')! as any
+    expect(support.style.panel).toEqual({ fill: '{{ brand.background }}', opacity: 0.55 })
+  })
+  it('scrim:"none" leaves support style.panel unset', () => {
+    const els = bandHeader.compose(input({ knobs: { scrim: 'none' } })).elements
+    const support = els.find(e => e.id === 'tier_support_0')! as any
+    expect(support.style.panel).toBeUndefined()
+  })
+})
+
+describe('staging: Family C — lockup carries the serif voice (title + date jewel)', () => {
+  const lockup = getStaging('lockup')!
+  it('hero and anchor default to Playfair Display', () => {
+    const els = lockup.compose(input()).elements
+    const hero = els.find(e => e.id === 'tier_hero_0')! as any
+    const anchor = els.find(e => e.id === 'tier_anchor_0')! as any
+    expect(hero.style.fontFamily).toBe('Playfair Display')
+    expect(anchor.style.fontFamily).toBe('Playfair Display')
+  })
+  it("an item's own type override still wins over the serif voice default", () => {
+    const tiers: Tiers = { ...TIERS, hero: [{ content: 'MAT + FEST', type: { fontFamily: 'Inter' } }] }
+    const els = lockup.compose(input({ tiers })).elements
+    const hero = els.find(e => e.id === 'tier_hero_0')! as any
+    expect(hero.style.fontFamily).toBe('Inter')
+  })
+})
+
+describe('staging: Family C — band geometry scales with the bandSize knob', () => {
+  const BAND_SIZES = [0.24, 0.28, 0.34] as const
+  it('band_header: band_0 rows [0..bandSize], img_0 rows [bandSize..1], both full width', () => {
+    for (const bandSize of BAND_SIZES) {
+      const els = getStaging('band_header')!.compose(input({ knobs: { bandSize }, image: IMAGE_TOKEN })).elements
+      const band = els.find(e => e.id === 'band_0')!.region
+      const img = els.find(e => e.id === 'img_0')!.region
+      expect(band.col).toBe(1); expect(band.colSpan).toBe(12)
+      expect(band.row).toBe(1)
+      expect(img.row).toBe(band.row + band.rowSpan)
+      expect(img.row + img.rowSpan - 1).toBe(16)
+      expect(img.col).toBe(1); expect(img.colSpan).toBe(12)
+    }
+  })
+  it('band_footer: img_0 rows [0..1-bandSize], band_0 rows [1-bandSize..1], both full width', () => {
+    for (const bandSize of BAND_SIZES) {
+      const els = getStaging('band_footer')!.compose(input({ knobs: { bandSize }, image: IMAGE_TOKEN })).elements
+      const img = els.find(e => e.id === 'img_0')!.region
+      const band = els.find(e => e.id === 'band_0')!.region
+      expect(img.col).toBe(1); expect(img.colSpan).toBe(12)
+      expect(img.row).toBe(1)
+      expect(band.row).toBe(img.row + img.rowSpan)
+      expect(band.row + band.rowSpan - 1).toBe(16)
+      expect(band.col).toBe(1); expect(band.colSpan).toBe(12)
+    }
+  })
+  it('band_header: a bigger bandSize grows the band and shrinks the photo', () => {
+    const small = getStaging('band_header')!.compose(input({ knobs: { bandSize: 0.24 }, image: IMAGE_TOKEN })).elements
+    const big = getStaging('band_header')!.compose(input({ knobs: { bandSize: 0.34 }, image: IMAGE_TOKEN })).elements
+    const bandSmall = small.find(e => e.id === 'band_0')!.region
+    const bandBig = big.find(e => e.id === 'band_0')!.region
+    const imgSmall = small.find(e => e.id === 'img_0')!.region
+    const imgBig = big.find(e => e.id === 'img_0')!.region
+    expect(bandBig.rowSpan).toBeGreaterThan(bandSmall.rowSpan)
+    expect(imgBig.rowSpan).toBeLessThan(imgSmall.rowSpan)
+  })
+})
+
+describe('staging: Family C — every text-on-photo/band pair is declared, validates clean', () => {
+  for (const id of FIELD_IDS) {
+    for (const tiersLabel of ['2/2-item', '1-item'] as const) {
+      const tiers = tiersLabel === '1-item' ? ONE_EACH_TIERS : TIERS
+      it(`${id}: validates clean with an image — ${tiersLabel}`, () => {
+        const result = getStaging(id)!.compose(input({ tiers, image: IMAGE_TOKEN }))
+        const { ok, reasons } = validateGenerated(result, 12, 16)
+        expect(ok, reasons.join(' ')).toBe(true)
+      })
+    }
+  }
+  it('cover: every placed text element (hero, anchor, support x2, fineprint x2) declares an overlap with img_0', () => {
+    const result = getStaging('cover')!.compose(input({ image: IMAGE_TOKEN }))
+    const textIds = result.elements.filter(e => e.type === 'text').map(e => e.id)
+    expect(textIds.length).toBe(6)
+    for (const id of textIds) {
+      expect(result.overlaps, `${id} not declared against img_0`).toContainEqual([id, 'img_0'])
+    }
+  })
+  it('lockup: every placed text element declares an overlap with img_0', () => {
+    const result = getStaging('lockup')!.compose(input({ image: IMAGE_TOKEN }))
+    const textIds = result.elements.filter(e => e.type === 'text').map(e => e.id)
+    expect(textIds.length).toBe(6)
+    for (const id of textIds) {
+      expect(result.overlaps, `${id} not declared against img_0`).toContainEqual([id, 'img_0'])
+    }
+  })
+  it('band_header: hero/anchor/fineprint declare overlap with band_0; support declares overlap with img_0', () => {
+    const result = getStaging('band_header')!.compose(input({ image: IMAGE_TOKEN }))
+    for (const id of ['tier_hero_0', 'tier_anchor_0', 'tier_fineprint_0', 'tier_fineprint_1']) {
+      expect(result.overlaps, `${id} not declared against band_0`).toContainEqual([id, 'band_0'])
+    }
+    for (const id of ['tier_support_0', 'tier_support_1']) {
+      expect(result.overlaps, `${id} not declared against img_0`).toContainEqual([id, 'img_0'])
+    }
+  })
+  it('band_footer: hero/anchor/support declare overlap with band_0; fineprint declares overlap with img_0', () => {
+    const result = getStaging('band_footer')!.compose(input({ image: IMAGE_TOKEN }))
+    for (const id of ['tier_hero_0', 'tier_anchor_0', 'tier_support_0', 'tier_support_1']) {
+      expect(result.overlaps, `${id} not declared against band_0`).toContainEqual([id, 'band_0'])
+    }
+    for (const id of ['tier_fineprint_0', 'tier_fineprint_1']) {
+      expect(result.overlaps, `${id} not declared against img_0`).toContainEqual([id, 'img_0'])
+    }
+  })
+})
+
+describe('staging: Family C — z-order: photo/band first (back), text last (front)', () => {
+  for (const id of ['cover', 'lockup'] as const) {
+    it(`${id}: img_0 precedes every text element`, () => {
+      const els = getStaging(id)!.compose(input({ image: IMAGE_TOKEN })).elements
+      const imgIndex = els.findIndex(e => e.id === 'img_0')
+      expect(imgIndex).toBe(0)
+      const firstTextIndex = els.findIndex(e => e.type === 'text')
+      expect(imgIndex).toBeLessThan(firstTextIndex)
+    })
+  }
+  for (const id of BAND_IDS) {
+    it(`${id}: band_0 (and img_0, when present) precede every text element`, () => {
+      const els = getStaging(id)!.compose(input({ image: IMAGE_TOKEN })).elements
+      const bandIndex = els.findIndex(e => e.id === 'band_0')
+      const imgIndex = els.findIndex(e => e.id === 'img_0')
+      const firstTextIndex = els.findIndex(e => e.type === 'text')
+      expect(bandIndex).toBeGreaterThanOrEqual(0)
+      expect(imgIndex).toBeGreaterThanOrEqual(0)
+      expect(bandIndex).toBeLessThan(firstTextIndex)
+      expect(imgIndex).toBeLessThan(firstTextIndex)
+    })
+  }
+})
+
+describe('staging: Family C — determinism', () => {
+  for (const id of FIELD_IDS) {
+    it(`${id}: identical seed produces identical output, with and without an image`, () => {
+      const s = getStaging(id)!
+      expect(s.compose(input({ rng: makeRng(3) })).elements)
+        .toEqual(s.compose(input({ rng: makeRng(3) })).elements)
+      expect(s.compose(input({ rng: makeRng(3), image: IMAGE_TOKEN })).elements)
+        .toEqual(s.compose(input({ rng: makeRng(3), image: IMAGE_TOKEN })).elements)
+    })
+  }
+})
+
+// NEGATIVE CONTROLS (carried forward from Task 3's review): declared overlaps
+// are only meaningful if the validator actually rejects the SAME composition
+// once they're stripped — proving the collision check is real, not vacuous.
+// Required for `frame` (Family B, round-2b Task 3) and `cover` (Family C,
+// this task).
+describe('staging: NEGATIVE CONTROL — stripping declared overlaps flips the validator to ok:false', () => {
+  it('frame: stripping overlaps makes validateGenerated reject, naming the (tier_hero_0, img_0) collision', () => {
+    const result = getStaging('frame')!.compose(input({ image: IMAGE_TOKEN }))
+    expect(result.overlaps).toEqual([['tier_hero_0', 'img_0']]) // sanity: declaration exists
+    const stripped = { ...result, overlaps: [] }
+    const { ok, reasons } = validateGenerated(stripped, 12, 16)
+    expect(ok).toBe(false)
+    expect(reasons.some(r => r.includes('tier_hero_0') && r.includes('img_0'))).toBe(true)
+  })
+  it('cover: stripping overlaps makes validateGenerated reject, naming EVERY text/img_0 collision', () => {
+    const result = getStaging('cover')!.compose(input({ image: IMAGE_TOKEN }))
+    const textIds = result.elements.filter(e => e.type === 'text').map(e => e.id)
+    expect(textIds.length).toBeGreaterThan(0) // sanity: there's something to collide
+    expect(result.overlaps!.length).toBe(textIds.length) // sanity: every one was declared
+    const stripped = { ...result, overlaps: [] }
+    const { ok, reasons } = validateGenerated(stripped, 12, 16)
+    expect(ok).toBe(false)
+    for (const id of textIds) {
+      expect(reasons.some(r => r.includes(id) && r.includes('img_0')), `no collision reason named ${id}`).toBe(true)
     }
   })
 })

@@ -843,9 +843,342 @@ const stacked: Staging = {
   },
 }
 
+// Round-2b Task 4 — Family C, photo-as-field (cover/lockup/band_header/
+// band_footer). Unlike Family B (photo optional — the photo's area just
+// becomes air), the photo/band field IS the composition here: all four
+// declare `supports.needsImage`, so `surprise()`'s pool filter (Task 1)
+// excludes them when nothing is wired. A DIRECT `generate(staging:'cover')`
+// call with no image still must not crash — `image` absent simply omits the
+// `img_0`/`band_0`-adjacent element and every overlap pair that names it;
+// every text tier keeps the region it would have had with a photo (same
+// degrade contract Family B established), so the validator still passes on
+// the resulting text-only composition. `img_0` (cover/lockup) covers the
+// WHOLE grid, so EVERY placed text element geometrically collides with it —
+// not just the one the family table calls out — so every one of them is
+// declared, or the validator's undeclared-collision check fails on every
+// pair. Back→front z-order throughout: the photo/band goes in first (back),
+// text last (front).
+
+/**
+ * Cover — the full-bleed photo IS the field: a centered hero overprints it
+ * mid-canvas (with an optional `scrim` legibility panel), a small anchor
+ * sits right under it, a support tagline rides below that, and fine print
+ * pins the top corners. The classic magazine-cover overprint move
+ * (backpocket-6/10).
+ */
+const cover: Staging = {
+  id: 'cover',
+  name: 'Cover',
+  blurb: 'A full-bleed photo with an overprinted title — the classic magazine-cover move.',
+  knobs: [{ id: 'scrim', pick: ['none', 'panel'] }, HERO_SCALE_KNOB],
+  supports: { needsImage: true },
+  compose({ tiers, cols, rows, canvas, knobs, image }) {
+    const els: ElementV2[] = []
+    const overlaps: Array<[string, string]> = []
+    const entries = tierEntries(tiers)
+    const items = (id: TierId) => tierItems(entries, id)
+    const drama = dramaticType(knobs, canvas)
+    const scrim = knobs.scrim === 'panel' ? { panel: { fill: '{{ brand.background }}', opacity: 0.55 } } : {}
+    const full = { col: 1, colSpan: cols }
+
+    if (image) {
+      els.push(tierImage('0', image, { ...full, row: 1, rowSpan: rows }, 2, { bleed: true }))
+    }
+    const fine = items('fineprint')
+    if (fine.length) {
+      const half = Math.round(cols / 2)
+      const fineEls = stackCorners('fineprint', fine,
+        { col: 1, colSpan: half, row: 1, rowSpan: 1 },
+        { col: half + 1, colSpan: cols - half, row: 1, rowSpan: 1 },
+        cols, rows, 4, { style: { align: 'center', valign: 'top' } })
+      els.push(...fineEls)
+      if (image) for (const e of fineEls) overlaps.push([e.id, 'img_0'])
+    }
+    const heroRows = rowBand(0.36, 0.60, rows)
+    const hero = items('hero')
+    if (hero.length) {
+      els.push(tierText('hero', 0, hero[0]!,
+        clampRegion({ ...full, ...heroRows }, cols, rows), 1,
+        { level: 'display', overflow: 'grow',
+          style: { align: 'center', valign: 'middle', fontWeight: 700, ...drama.hero, ...scrim } }))
+      if (image) overlaps.push(['tier_hero_0', 'img_0'])
+    }
+    const anchorRow = heroRows.row + heroRows.rowSpan
+    const anchor = items('anchor')
+    if (anchor.length) {
+      els.push(tierText('anchor', 0, anchor[0]!,
+        clampRegion({ ...full, row: anchorRow, rowSpan: 2 }, cols, rows), 2,
+        { level: 'headline', style: { align: 'center', valign: 'top', ...drama.anchor } }))
+      if (image) overlaps.push(['tier_anchor_0', 'img_0'])
+    }
+    const support = items('support')
+    if (support.length) {
+      const supportEls = stackVertical('support', support,
+        { ...full, row: anchorRow + 2, rowSpan: 1 },
+        cols, rows, 3, { style: { align: 'center', valign: 'top' } }, 2)
+      els.push(...supportEls)
+      if (image) for (const e of supportEls) overlaps.push([e.id, 'img_0'])
+    }
+    return { elements: els, ...(overlaps.length ? { overlaps } : {}) }
+  },
+}
+
+/**
+ * Lockup — the same full-bleed photo field as `cover`, but the type block is
+ * a SMALL centered "title + date" jewel instead of a giant overprint: hero
+ * at HALF `heroScale`, anchor tight underneath. Family-table self-review
+ * correction: lockup (not manifesto) carries the family's serif voice —
+ * hero + anchor set in `'Playfair Display'` via `opts.style` (a VOICE
+ * DEFAULT; a tier's own `type.fontFamily`, spread last in `tierText`, still
+ * wins — same contract as every other voice default in this file).
+ */
+const lockup: Staging = {
+  id: 'lockup',
+  name: 'Lockup',
+  blurb: 'A small centered title + date jewel over a full-bleed photo, set in serif.',
+  knobs: [{ id: 'scrim', pick: ['none', 'panel'] }, HERO_SCALE_KNOB],
+  supports: { needsImage: true },
+  compose({ tiers, cols, rows, canvas, knobs, image }) {
+    const els: ElementV2[] = []
+    const overlaps: Array<[string, string]> = []
+    const entries = tierEntries(tiers)
+    const items = (id: TierId) => tierItems(entries, id)
+    const heroScale = Number(knobs.heroScale ?? 0.14)
+    const heroFontSize = Math.round(0.5 * heroScale * canvas.h)
+    const anchorFontSize = Math.round(0.45 * heroFontSize)
+    const scrim = knobs.scrim === 'panel' ? { panel: { fill: '{{ brand.background }}', opacity: 0.55 } } : {}
+    const full = { col: 1, colSpan: cols }
+
+    if (image) {
+      els.push(tierImage('0', image, { ...full, row: 1, rowSpan: rows }, 2, { bleed: true }))
+    }
+    const jewelRows = rowBand(0.42, 0.58, rows)
+    const heroRowSpan = Math.max(1, Math.round(jewelRows.rowSpan * 0.6))
+    const anchorRowSpan = Math.max(1, jewelRows.rowSpan - heroRowSpan)
+    const hero = items('hero')
+    if (hero.length) {
+      els.push(tierText('hero', 0, hero[0]!,
+        clampRegion({ ...full, row: jewelRows.row, rowSpan: heroRowSpan }, cols, rows), 1,
+        { level: 'display', overflow: 'grow',
+          style: {
+            align: 'center', valign: 'bottom', fontWeight: 700,
+            fontSize: heroFontSize, lineHeight: 0.92, letterSpacing: -Math.round(0.03 * heroFontSize),
+            fontFamily: 'Playfair Display', ...scrim,
+          } }))
+      if (image) overlaps.push(['tier_hero_0', 'img_0'])
+    }
+    const anchor = items('anchor')
+    if (anchor.length) {
+      els.push(tierText('anchor', 0, anchor[0]!,
+        clampRegion({ ...full, row: jewelRows.row + heroRowSpan, rowSpan: anchorRowSpan }, cols, rows), 2,
+        { level: 'headline',
+          style: {
+            align: 'center', valign: 'top',
+            fontSize: anchorFontSize, letterSpacing: -Math.round(0.02 * anchorFontSize),
+            fontFamily: 'Playfair Display',
+          } }))
+      if (image) overlaps.push(['tier_anchor_0', 'img_0'])
+    }
+    const fine = items('fineprint')
+    if (fine.length) {
+      const half = Math.round(cols / 2)
+      const fineEls = stackCorners('fineprint', fine,
+        { col: 1, colSpan: half, row: 1, rowSpan: 1 },
+        { col: half + 1, colSpan: cols - half, row: 1, rowSpan: 1 },
+        cols, rows, 4, { style: { align: 'center', valign: 'top' } })
+      els.push(...fineEls)
+      if (image) for (const e of fineEls) overlaps.push([e.id, 'img_0'])
+    }
+    const support = items('support')
+    if (support.length) {
+      const supportEls = stackVertical('support', support,
+        { ...full, row: jewelRows.row + jewelRows.rowSpan + 1, rowSpan: 1 },
+        cols, rows, 3, { style: { align: 'center', valign: 'top' } }, 2)
+      els.push(...supportEls)
+      if (image) for (const e of supportEls) overlaps.push([e.id, 'img_0'])
+    }
+    return { elements: els, ...(overlaps.length ? { overlaps } : {}) }
+  },
+}
+
+/**
+ * Band header — a solid colour band across the TOP holds hero (left) +
+ * anchor (right) + fine print (a thinner strip under them); a full-bleed
+ * photo fills the rest of the canvas below it. `bandSize` scales both the
+ * band's row span AND where the photo starts — one knob drives both regions
+ * so they can never drift apart. `band_0` is a background shape (declared
+ * overlap with each band text, text in front); `support` sits on the PHOTO
+ * itself, bottom-left, where the `scrim` knob applies (a legibility panel
+ * behind it — same shape as cover/lockup's hero scrim, just on a different
+ * element for this staging).
+ */
+const bandHeader: Staging = {
+  id: 'band_header',
+  name: 'Band header',
+  blurb: 'A solid band across the top holds the type; a full-bleed photo fills the rest.',
+  knobs: [
+    { id: 'bandSize', pick: [0.24, 0.28, 0.34] },
+    { id: 'scrim', pick: ['none', 'panel'] },
+    HERO_SCALE_KNOB,
+  ],
+  supports: { needsImage: true },
+  compose({ tiers, cols, rows, canvas, knobs, image }) {
+    const els: ElementV2[] = []
+    const overlaps: Array<[string, string]> = []
+    const entries = tierEntries(tiers)
+    const items = (id: TierId) => tierItems(entries, id)
+    const drama = dramaticType(knobs, canvas)
+    const bandSize = Number(knobs.bandSize ?? 0.28)
+    const scrim = knobs.scrim === 'panel' ? { panel: { fill: '{{ brand.background }}', opacity: 0.55 } } : {}
+    const full = { col: 1, colSpan: cols }
+
+    const bandRows = rowBand(0, bandSize, rows)
+    const photoRows = rowBand(bandSize, 1, rows)
+
+    els.push({
+      id: 'band_0', type: 'shape', shape: 'rect', priority: 5, origin: 'staging',
+      region: clampRegion({ ...full, ...bandRows }, cols, rows),
+      style: { fill: '{{ brand.background }}' },
+      bleed: true,
+    })
+    if (image) {
+      els.push(tierImage('0', image, clampRegion({ ...full, ...photoRows }, cols, rows), 2, { bleed: true }))
+    }
+    // The band splits into an upper hero/anchor row and a thinner fine-print
+    // strip under it — three DISTINCT sub-regions inside the band, so hero/
+    // anchor/fine only ever collide with band_0 (declared), never each other.
+    const fine = items('fineprint')
+    const fineRowSpan = fine.length ? Math.max(1, Math.round(bandRows.rowSpan * 0.3)) : 0
+    const bodyRowSpan = Math.max(1, bandRows.rowSpan - fineRowSpan)
+    const heroCols = colBand(0, 0.5, cols)
+    const anchorCols = colBand(0.5, 1, cols)
+    const hero = items('hero')
+    if (hero.length) {
+      els.push(tierText('hero', 0, hero[0]!,
+        clampRegion({ ...heroCols, row: bandRows.row, rowSpan: bodyRowSpan }, cols, rows), 1,
+        { level: 'display', overflow: 'grow', style: { align: 'left', valign: 'middle', fontWeight: 700, ...drama.hero } }))
+      overlaps.push(['tier_hero_0', 'band_0'])
+    }
+    const anchor = items('anchor')
+    if (anchor.length) {
+      els.push(tierText('anchor', 0, anchor[0]!,
+        clampRegion({ ...anchorCols, row: bandRows.row, rowSpan: bodyRowSpan }, cols, rows), 2,
+        { level: 'headline', style: { align: 'right', valign: 'middle', fontWeight: 700, ...drama.anchor } }))
+      overlaps.push(['tier_anchor_0', 'band_0'])
+    }
+    if (fine.length) {
+      const half = Math.round(cols / 2)
+      const fineEls = stackCorners('fineprint', fine,
+        { col: 1, colSpan: half, row: bandRows.row + bodyRowSpan, rowSpan: 1 },
+        { col: half + 1, colSpan: cols - half, row: bandRows.row + bodyRowSpan, rowSpan: 1 },
+        cols, rows, 4, { style: { align: 'left', valign: 'top' } })
+      els.push(...fineEls)
+      for (const e of fineEls) overlaps.push([e.id, 'band_0'])
+    }
+    const support = items('support')
+    if (support.length) {
+      const supportRowSpan = Math.max(2, Math.round(photoRows.rowSpan * 0.25))
+      const supportCols = colBand(0, 0.3, cols)
+      const supportEls = stackVertical('support', support,
+        { ...supportCols, row: photoRows.row + photoRows.rowSpan - supportRowSpan, rowSpan: 1 },
+        cols, rows, 3, { style: { align: 'left', valign: 'bottom', ...scrim } }, supportRowSpan)
+      els.push(...supportEls)
+      if (image) for (const e of supportEls) overlaps.push([e.id, 'img_0'])
+    }
+    return { elements: els, ...(overlaps.length ? { overlaps } : {}) }
+  },
+}
+
+/**
+ * Band footer — the mirror of `band_header`: a full-bleed photo fills the
+ * TOP of the canvas, a solid colour band across the bottom holds hero
+ * (left) + anchor (right). `support` takes the "row under hero/anchor"
+ * slot inside the band that `band_header` gave to fine print; fine print
+ * instead plays the role `band_header` gave support — riding the photo as a
+ * caption just above the band (declared overlap with `img_0`). `bandSize`
+ * mirrors `band_header`'s knob: it's the band's OWN fraction of the grid,
+ * measured from the bottom edge up, so the photo always fills whatever the
+ * band doesn't.
+ */
+const bandFooter: Staging = {
+  id: 'band_footer',
+  name: 'Band footer',
+  blurb: 'A full-bleed photo above a solid colour band that holds the type.',
+  knobs: [{ id: 'bandSize', pick: [0.24, 0.28, 0.34] }, HERO_SCALE_KNOB],
+  supports: { needsImage: true },
+  compose({ tiers, cols, rows, canvas, knobs, image }) {
+    const els: ElementV2[] = []
+    const overlaps: Array<[string, string]> = []
+    const entries = tierEntries(tiers)
+    const items = (id: TierId) => tierItems(entries, id)
+    const drama = dramaticType(knobs, canvas)
+    const bandSize = Number(knobs.bandSize ?? 0.28)
+    const full = { col: 1, colSpan: cols }
+
+    const photoRows = rowBand(0, 1 - bandSize, rows)
+    const bandRows = rowBand(1 - bandSize, 1, rows)
+
+    if (image) {
+      els.push(tierImage('0', image, clampRegion({ ...full, ...photoRows }, cols, rows), 2, { bleed: true }))
+    }
+    els.push({
+      id: 'band_0', type: 'shape', shape: 'rect', priority: 5, origin: 'staging',
+      region: clampRegion({ ...full, ...bandRows }, cols, rows),
+      style: { fill: '{{ brand.background }}' },
+      bleed: true,
+    })
+    // Reserved by ITEM COUNT (one compact row per item), not a fixed
+    // percentage — a percentage split can under-reserve for 2+ support items
+    // on the smallest `bandSize` band, pushing the last one past the grid
+    // edge (the exact round-1 collapse-bug class rowBand/colBand's own
+    // comment warns about, just one level up: sizing a stack off a fraction
+    // of the CONTAINER instead of what the stack actually needs).
+    const support = items('support')
+    const supportRowSpan = support.length ? Math.max(1, support.length) : 0
+    const bodyRowSpan = Math.max(1, bandRows.rowSpan - supportRowSpan)
+    const heroCols = colBand(0, 0.5, cols)
+    const anchorCols = colBand(0.5, 1, cols)
+    const hero = items('hero')
+    if (hero.length) {
+      els.push(tierText('hero', 0, hero[0]!,
+        clampRegion({ ...heroCols, row: bandRows.row, rowSpan: bodyRowSpan }, cols, rows), 1,
+        { level: 'display', overflow: 'grow', style: { align: 'left', valign: 'middle', fontWeight: 700, ...drama.hero } }))
+      overlaps.push(['tier_hero_0', 'band_0'])
+    }
+    const anchor = items('anchor')
+    if (anchor.length) {
+      els.push(tierText('anchor', 0, anchor[0]!,
+        clampRegion({ ...anchorCols, row: bandRows.row, rowSpan: bodyRowSpan }, cols, rows), 2,
+        { level: 'headline', style: { align: 'right', valign: 'middle', fontWeight: 700, ...drama.anchor } }))
+      overlaps.push(['tier_anchor_0', 'band_0'])
+    }
+    if (support.length) {
+      // rowSpan:1 per item — combined with the reservation above this always
+      // lands the last item exactly on the band's last row, never past it.
+      const supportEls = stackVertical('support', support,
+        { col: 1, colSpan: cols, row: bandRows.row + bodyRowSpan, rowSpan: 1 },
+        cols, rows, 3, { style: { align: 'left', valign: 'top' } })
+      els.push(...supportEls)
+      for (const e of supportEls) overlaps.push([e.id, 'band_0'])
+    }
+    const fine = items('fineprint')
+    if (fine.length) {
+      const captionRowSpan = Math.max(1, Math.round(photoRows.rowSpan * 0.12))
+      const captionStart = Math.max(photoRows.row, photoRows.row + photoRows.rowSpan - fine.length * captionRowSpan)
+      const fineEls = stackVertical('fineprint', fine,
+        { ...full, row: captionStart, rowSpan: captionRowSpan },
+        cols, rows, 4, { style: { align: 'left', valign: 'top' } })
+      els.push(...fineEls)
+      if (image) for (const e of fineEls) overlaps.push([e.id, 'img_0'])
+    }
+    return { elements: els, ...(overlaps.length ? { overlaps } : {}) }
+  },
+}
+
 export const STAGINGS: Staging[] = [
   tower, split, frame, corner, centered, editorial, index,
   statement, manifesto, ledger, stacked,
+  cover, lockup, bandHeader, bandFooter,
 ]
 
 export function getStaging(id: string): Staging | undefined {

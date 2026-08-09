@@ -190,11 +190,17 @@ describe('surprise(): pool excludes supports.needsImage stagings when no image i
   })
 })
 
-// Sanity: confirm the real six stagings (round-1/2a) are untouched by this
-// task — none of them declare needsImage, matching the family tables (Family
-// A/B/D don't require an image; only the not-yet-built Family C does).
+// Sanity: confirm every staging OUTSIDE Family C is untouched by this task —
+// none of them declare needsImage, matching the family tables (Family A/B/D
+// don't require an image; only Family C does — built in round-2b Task 4,
+// after this task's own probe-based tests above were written. `[...
+// originalStagings]` reads whatever's in the live `STAGINGS` registry at
+// THIS FILE's import time, so it now includes Family C's four real
+// stagings too — excluded here since needsImage:true is exactly what they're
+// supposed to declare).
+const FAMILY_C_IDS = new Set(['cover', 'lockup', 'band_header', 'band_footer'])
 describe('existing stagings: none declare supports.needsImage (unaffected by this task)', () => {
-  for (const s of [...originalStagings]) {
+  for (const s of originalStagings.filter(s => !FAMILY_C_IDS.has(s.id))) {
     it(`${s.id}: supports.needsImage is not set`, () => {
       expect(s.supports?.needsImage).toBeFalsy()
     })

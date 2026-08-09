@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { generate, shuffle, surprise, migrateGen } from '~~/shared/template-grid/generate/generate'
 import { validateGenerated } from '~~/shared/template-grid/generate/validate'
-import { STAGINGS } from '~~/shared/template-grid/generate/stagings'
+import { getStaging, STAGINGS } from '~~/shared/template-grid/generate/stagings'
+import { makeRng } from '~~/shared/template-grid/generate/rng'
 import { THEMES, resolveInk } from '~~/shared/template-grid/generate/themes'
 import type { TemplateV3, ElementV2 } from '~~/shared/template-grid/types'
 
@@ -250,12 +251,30 @@ describe('generate orchestrator — themes', () => {
         fineprint: [{ content: 'Slakthus · Hall 3' }, { content: 'Free entry · All ages' }],
       },
     }
+    // Reconstructing `{ elements: staged }` from the generated TEMPLATE loses
+    // any `overlaps` the staging declared — `ElementV2` carries no such
+    // field, only `StagingResult` does, and that's transient inside
+    // `generate()`. That was harmless while every declared overlap was
+    // image-gated (no `image` is threaded in this test, so those stagings
+    // always declared zero) — Family C's `band_header`/`band_footer`
+    // (round-2b Task 4) break the assumption: `band_0` renders regardless of
+    // photo, so their hero/anchor/(fineprint|support) overlaps stay declared
+    // with or without one. Recomposing directly via the staging (same
+    // tiers/cols/rows/canvas, and the EXACT knobs `generate()` resolved,
+    // read back off `t.gen.knobs`) reproduces what `generate()`'s own
+    // internal retry loop actually validated, overlaps included — still
+    // proving the real invariant (never ships an unvalidated result).
     for (const s of STAGINGS) {
       const t = generate(standard, { staging: s.id, theme: 'paper', seed: 1 })
       const cols = t.grid.columns ?? 12
       const rows = t.grid.rows ?? 16
-      const staged = t.elements.filter(e => e.origin === 'staging')
-      const { ok, reasons } = validateGenerated({ elements: staged }, cols, rows)
+      const masterFormat = t.formats[t.master]!
+      const canvas = { w: masterFormat.w, h: masterFormat.h }
+      const result = getStaging(s.id)!.compose({
+        tiers: standard.tiers ?? {}, cols, rows, canvas,
+        rng: makeRng(1, 'staging'), knobs: t.gen?.knobs ?? {},
+      })
+      const { ok, reasons } = validateGenerated(result, cols, rows)
       expect(ok, `${s.id}: ${reasons.join(' ')}`).toBe(true)
     }
   })
