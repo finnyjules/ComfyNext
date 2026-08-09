@@ -505,3 +505,63 @@ export function rampFromFill(three: typeof THREE, fillsJson: string, size: numbe
   return out
 }
 
+type RGB = [number, number, number]
+function fillAcrossSampler(three: typeof THREE, fill: any): (u: number) => RGB {
+  const type = String(fill?.type)
+  if ((type === 'gradient' || type === 'ombre') && fill.a && fill.b) {
+    const a = hexToRgbTuple(fill.a), b = hexToRgbTuple(fill.b)
+    return (u) => [a[0] + (b[0]-a[0])*u, a[1] + (b[1]-a[1])*u, a[2] + (b[2]-a[2])*u]
+  }
+  let c: RGB
+  try { const col = fillPrimary(three, fill); c = [col.r*255, col.g*255, col.b*255] } catch { c = [136,136,136] }
+  return () => c
+}
+
+export function fillsAngle(fillsJson: string): number {
+  let fills: any[]; try { fills = parseFills(fillsJson) } catch { return 90 }
+  const g = fills.find(f => { const t = String(f?.type); return t === 'gradient' || t === 'ombre' })
+  const a = g ? Number(g.angle) : NaN
+  return Number.isFinite(a) ? a : 90
+}
+
+export function build2DFillRamp(three: typeof THREE, fillsJson: string, mode: 'blend' | 'steps', acrossSize: number, alongSize: number): Uint8ClampedArray {
+  let fills: any[]; try { fills = parseFills(fillsJson) } catch { fills = [] }
+  if (!fills.length) fills = [{ type: 'solid' }]
+  const samplers = fills.map(f => fillAcrossSampler(three, f))
+  const N = samplers.length
+  const out = new Uint8ClampedArray(acrossSize * alongSize * 4)
+  for (let vy = 0; vy < alongSize; vy++) {
+    const v = alongSize > 1 ? vy / (alongSize - 1) : 0
+    let lo: number, hi: number, f: number
+    if (N === 1) { lo = 0; hi = 0; f = 0 }
+    else if (mode === 'steps') { lo = hi = Math.min(N-1, Math.floor(v * N)); f = 0 }
+    else { const x = v*(N-1); lo = Math.min(N-1, Math.floor(x)); hi = Math.min(N-1, lo+1); f = x - lo }
+    const sLo = samplers[lo]!, sHi = samplers[hi]!
+    for (let ux = 0; ux < acrossSize; ux++) {
+      const u = acrossSize > 1 ? ux / (acrossSize - 1) : 0
+      const cLo = sLo(u), cHi = sHi(u)
+      const o = (vy * acrossSize + ux) * 4
+      out[o]   = Math.round(cLo[0] + (cHi[0]-cLo[0])*f)
+      out[o+1] = Math.round(cLo[1] + (cHi[1]-cLo[1])*f)
+      out[o+2] = Math.round(cLo[2] + (cHi[2]-cLo[2])*f)
+      out[o+3] = 255
+    }
+  }
+  return out
+}
+
+/** Turn a 1-D along ramp (alongSize*4 RGBA) into a 2-D texture (acrossSize×alongSize) with each
+ *  along pixel replicated across every column — used by the per-stop colour source. */
+export function stretchAcross(ramp1d: Uint8ClampedArray, acrossSize: number): Uint8ClampedArray {
+  const alongSize = ramp1d.length / 4
+  const out = new Uint8ClampedArray(acrossSize * alongSize * 4)
+  for (let vy = 0; vy < alongSize; vy++) {
+    const s = vy*4
+    for (let ux = 0; ux < acrossSize; ux++) {
+      const o = (vy*acrossSize + ux)*4
+      out[o] = ramp1d[s]!; out[o+1] = ramp1d[s+1]!; out[o+2] = ramp1d[s+2]!; out[o+3] = 255
+    }
+  }
+  return out
+}
+
