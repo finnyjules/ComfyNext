@@ -7,7 +7,14 @@
  * function bodies, so this stays importable by the CPU-only `lib/` modules.
  */
 const cache = new Map<string, HTMLImageElement>()
-const inFlight = new Set<string>()
+// A MAP, not a Set: a second `ensureFillBitmaps` for a src already decoding must
+// AWAIT the same pending load, not skip it and return an immediately-resolved
+// promise. The preview drawers chain `.then(redraw)`, and redraw re-calls
+// `ensureFillBitmaps` while the bitmap is still loading — a synchronous resolve
+// there is an infinite microtask loop that starves the event loop so the
+// `<img>.onload` macrotask never runs (a hard tab freeze on selecting an image
+// fill). Sharing the pending promise makes `.then(redraw)` fire once, on settle.
+const inFlight = new Map<string, Promise<void>>()
 const failed = new Set<string>()
 
 /** A decoded bitmap for `src`, or null if it isn't loaded yet / failed. */
@@ -30,15 +37,23 @@ export function ensureFillBitmaps(srcs: string[], onReady?: () => void): Promise
   const jobs: Promise<unknown>[] = []
   for (const src of srcs) {
     if (!src) continue
-    if (getFillBitmap(src) || inFlight.has(src) || failed.has(src)) continue
-    inFlight.add(src)
-    jobs.push(new Promise((res) => {
-      const im = new Image()
-      im.crossOrigin = 'anonymous'
-      im.onload = () => { failed.delete(src); cache.set(src, im); inFlight.delete(src); onReady?.(); res(null) }
-      im.onerror = () => { failed.add(src); inFlight.delete(src); res(null) }
-      im.src = src
-    }))
+    if (getFillBitmap(src) || failed.has(src)) continue
+    // Reuse the in-flight load if one exists; otherwise start it. Either way the
+    // job resolves only when THIS src's decode actually settles.
+    let job = inFlight.get(src)
+    if (!job) {
+      job = new Promise<void>((res) => {
+        const im = new Image()
+        im.crossOrigin = 'anonymous'
+        im.onload = () => { failed.delete(src); cache.set(src, im); inFlight.delete(src); res() }
+        im.onerror = () => { failed.add(src); inFlight.delete(src); res() }
+        im.src = src
+      })
+      inFlight.set(src, job)
+    }
+    // `onReady` keeps its "per successful decode" contract — fire only if the
+    // src actually landed in the cache, never on an error settle.
+    jobs.push(onReady ? job.then(() => { if (getFillBitmap(src)) onReady() }) : job)
   }
   return jobs.length ? Promise.all(jobs).then(() => {}) : Promise.resolve()
 }
