@@ -9,6 +9,7 @@
  * internally; closes + clears the search on select.
  */
 import { loadGoogleCatalog, type GoogleFont } from '~/data/google-fonts'
+import { filterLibraryGroups } from '~/data/library-fonts'
 import StudioSwitch from '~/components/vue-canvas/studio/StudioSwitch.vue'
 import VariableGlyph from '~/components/vue-canvas/studio/VariableGlyph.vue'
 
@@ -35,7 +36,10 @@ const emit = defineEmits<{
   (e: 'promote'): void
   (e: 'menu', ev: MouseEvent): void
   (e: 'goToCollection'): void
-  (e: 'select', payload: { kind: 'google'; family: string } | { kind: 'pinned'; value: string }): void
+  (e: 'select', payload:
+    | { kind: 'google'; family: string }
+    | { kind: 'pinned'; value: string }
+    | { kind: 'library'; family: string; foundry: string }): void
 }>()
 
 // Full Google Fonts catalog (~1900 families), fetched once via the shared proxy and
@@ -70,6 +74,21 @@ function selectPinned(value: string) {
   emit('select', { kind: 'pinned', value })
   closePicker()
 }
+
+// Source tabs: Google catalog vs. the licensed Pangram/Off-Type library. The
+// library list comes from the static manifest (no network) via filterLibraryGroups.
+type FontPickerTab = 'google' | 'pangram'
+const activeTab = ref<FontPickerTab>('google')
+const { ensure: ensureLibFace } = useLibraryFonts()
+const filteredLibrary = computed(() => filterLibraryGroups(fontSearch.value))
+function selectLibrary(family: string, foundry: string) {
+  emit('select', { kind: 'library', family, foundry })
+  closePicker()
+}
+// Preview each visible library family in its own face once the Pangram tab is open.
+watch([activeTab, filteredLibrary], () => {
+  if (activeTab.value === 'pangram') for (const g of filteredLibrary.value) for (const f of g.families) ensureLibFace(f.family)
+})
 
 // ✨ Describe-a-font search: type a description ("fonts like the Knicks logo"),
 // an LLM suggests real Google families (grounded against fontCatalog), shown atop
@@ -126,49 +145,74 @@ watch(fontPickerOpen, (open) => { if (!open && fontSuggestRan.value) clearFontSu
               :disabled="fontSuggestLoading" @click="runFontSuggest"
               class="shrink-0 whitespace-nowrap rounded border border-white/[0.08] bg-white/[0.04] px-2 py-1 hover:border-white/25 disabled:opacity-40">✨ Ask AI</button>
     </div>
-    <label v-if="showVariableToggle" class="mb-1 flex items-center justify-between px-1 py-0.5 text-[11px] text-white/55">
-      <span>Variable fonts only</span>
-      <StudioSwitch v-model="variableOnly" />
-    </label>
-    <!-- ✨ Suggested (from a description) -->
-    <div v-if="fontSuggestLoading || fontSuggestError || fontSuggestions.length || fontSuggestRan" class="mb-1">
-      <p class="px-2 pb-0.5 pt-1 text-[10px] uppercase tracking-wider text-white/40">✨ Suggested</p>
-      <p v-if="fontSuggestLoading" class="px-2 py-1 text-white/40">Finding fonts…</p>
-      <p v-else-if="fontSuggestError" class="px-2 py-1 text-white/40">{{ fontSuggestError }}</p>
-      <p v-else-if="!fontSuggestions.length" class="px-2 py-1 text-white/40">No matches — try describing the style differently.</p>
-      <button v-for="s in fontSuggestions" :key="'s' + s.family" type="button"
-              @click="selectGoogle(s.family)"
-              class="flex w-full items-center gap-2 rounded px-2 py-1 text-left hover:bg-white/10"
-              :class="{ 'bg-white/15': modelValue === s.family }">
-        <span class="min-w-0 flex-1">
-          <span class="block truncate" :style="{ fontFamily: s.family }">{{ s.family }}</span>
-          <span class="block truncate text-[10px] text-white/40">{{ s.reason }}</span>
-        </span>
-        <span class="ml-auto shrink-0 text-[9px] uppercase tracking-wide text-white/40">{{ s.category }}</span>
-      </button>
-      <div class="mx-2 my-1 border-t border-white/10" />
+    <!-- Source tabs -->
+    <div class="mb-1 flex items-center gap-1 px-1">
+      <button type="button" @click="activeTab = 'google'"
+              class="rounded px-2 py-0.5 text-[11px]"
+              :class="activeTab === 'google' ? 'bg-white/15 text-white/90' : 'text-white/50 hover:text-white/80'">Google</button>
+      <button type="button" @click="activeTab = 'pangram'"
+              class="rounded px-2 py-0.5 text-[11px]"
+              :class="activeTab === 'pangram' ? 'bg-white/15 text-white/90' : 'text-white/50 hover:text-white/80'">Pangram</button>
     </div>
-    <!-- Pinned (caller-provided, e.g. Sailor house fonts) — above the catalog. -->
-    <div v-if="pinned?.length" class="mb-1">
-      <p class="px-2 pb-0.5 pt-1 text-[10px] uppercase tracking-wider text-white/40">Sailor</p>
-      <button v-for="p in pinned" :key="'p' + p.value" type="button"
-              @click="selectPinned(p.value)"
-              class="flex w-full items-center gap-2 rounded px-2 py-1 text-left hover:bg-white/10"
-              :class="{ 'bg-white/15': modelValue === p.value }">
-        <span class="truncate">{{ p.label }}</span>
-      </button>
+    <div v-if="activeTab === 'google'">
+      <label v-if="showVariableToggle" class="mb-1 flex items-center justify-between px-1 py-0.5 text-[11px] text-white/55">
+        <span>Variable fonts only</span>
+        <StudioSwitch v-model="variableOnly" />
+      </label>
+      <!-- ✨ Suggested (from a description) -->
+      <div v-if="fontSuggestLoading || fontSuggestError || fontSuggestions.length || fontSuggestRan" class="mb-1">
+        <p class="px-2 pb-0.5 pt-1 text-[10px] uppercase tracking-wider text-white/40">✨ Suggested</p>
+        <p v-if="fontSuggestLoading" class="px-2 py-1 text-white/40">Finding fonts…</p>
+        <p v-else-if="fontSuggestError" class="px-2 py-1 text-white/40">{{ fontSuggestError }}</p>
+        <p v-else-if="!fontSuggestions.length" class="px-2 py-1 text-white/40">No matches — try describing the style differently.</p>
+        <button v-for="s in fontSuggestions" :key="'s' + s.family" type="button"
+                @click="selectGoogle(s.family)"
+                class="flex w-full items-center gap-2 rounded px-2 py-1 text-left hover:bg-white/10"
+                :class="{ 'bg-white/15': modelValue === s.family }">
+          <span class="min-w-0 flex-1">
+            <span class="block truncate" :style="{ fontFamily: s.family }">{{ s.family }}</span>
+            <span class="block truncate text-[10px] text-white/40">{{ s.reason }}</span>
+          </span>
+          <span class="ml-auto shrink-0 text-[9px] uppercase tracking-wide text-white/40">{{ s.category }}</span>
+        </button>
+        <div class="mx-2 my-1 border-t border-white/10" />
+      </div>
+      <!-- Pinned (caller-provided, e.g. Sailor house fonts) — above the catalog. -->
+      <div v-if="pinned?.length" class="mb-1">
+        <p class="px-2 pb-0.5 pt-1 text-[10px] uppercase tracking-wider text-white/40">Sailor</p>
+        <button v-for="p in pinned" :key="'p' + p.value" type="button"
+                @click="selectPinned(p.value)"
+                class="flex w-full items-center gap-2 rounded px-2 py-1 text-left hover:bg-white/10"
+                :class="{ 'bg-white/15': modelValue === p.value }">
+          <span class="truncate">{{ p.label }}</span>
+        </button>
+      </div>
+      <div class="max-h-48 overflow-y-auto">
+        <button v-for="f in filteredFonts" :key="f.family" type="button"
+                @click="selectGoogle(f.family)"
+                class="flex w-full items-center gap-2 rounded px-2 py-1 text-left hover:bg-white/10"
+                :class="{ 'bg-white/15': modelValue === f.family }">
+          <span class="truncate">{{ f.family }}</span>
+          <span v-if="isVar(f)" :title="`Variable axes: ${varAxes(f)}`"
+                class="ml-auto shrink-0 rounded bg-white/15 px-1 py-px text-[9px] font-medium uppercase tracking-wide text-white/70">var</span>
+        </button>
+        <p v-if="!fontCatalog.length" class="px-2 py-1 text-white/40">Loading fonts…</p>
+        <p v-else-if="!filteredFonts.length" class="px-2 py-1 text-white/40">No matches</p>
+      </div>
     </div>
-    <div class="max-h-48 overflow-y-auto">
-      <button v-for="f in filteredFonts" :key="f.family" type="button"
-              @click="selectGoogle(f.family)"
-              class="flex w-full items-center gap-2 rounded px-2 py-1 text-left hover:bg-white/10"
-              :class="{ 'bg-white/15': modelValue === f.family }">
-        <span class="truncate">{{ f.family }}</span>
-        <span v-if="isVar(f)" :title="`Variable axes: ${varAxes(f)}`"
-              class="ml-auto shrink-0 rounded bg-white/15 px-1 py-px text-[9px] font-medium uppercase tracking-wide text-white/70">var</span>
-      </button>
-      <p v-if="!fontCatalog.length" class="px-2 py-1 text-white/40">Loading fonts…</p>
-      <p v-else-if="!filteredFonts.length" class="px-2 py-1 text-white/40">No matches</p>
+    <!-- Pangram / Off-Type -->
+    <div v-if="activeTab === 'pangram'" class="max-h-48 overflow-y-auto">
+      <template v-for="g in filteredLibrary" :key="g.foundry.id">
+        <p class="px-2 pb-0.5 pt-1 text-[10px] uppercase tracking-wider text-white/40">{{ g.foundry.label }}</p>
+        <button v-for="f in g.families" :key="f.id" type="button"
+                @click="selectLibrary(f.family, f.foundry)"
+                class="flex w-full items-center gap-2 rounded px-2 py-1 text-left hover:bg-white/10"
+                :class="{ 'bg-white/15': modelValue === f.family }">
+          <span class="truncate" :style="{ fontFamily: f.family }">{{ f.family }}</span>
+          <span class="ml-auto shrink-0 text-[9px] uppercase tracking-wide text-white/40">{{ f.faces.length }}</span>
+        </button>
+      </template>
+      <p v-if="!filteredLibrary.length" class="px-2 py-1 text-white/40">No matches</p>
     </div>
   </div>
 </template>

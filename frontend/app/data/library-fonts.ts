@@ -21,6 +21,20 @@ export function librariesByFoundry(): { foundry: LibraryFoundry; families: Libra
   }))
 }
 
+/**
+ * Search filter over the library catalog, grouped by foundry — pure, no DOM/network.
+ * Shared by every library-font picker (FontPicker's Pangram tab first, more to follow)
+ * so the "narrow families by substring, drop empty foundry groups" rule lives in one
+ * place instead of being re-typed per component.
+ */
+export function filterLibraryGroups(query: string): { foundry: LibraryFoundry; families: LibraryFamily[] }[] {
+  const q = query.trim().toLowerCase()
+  return librariesByFoundry().map(g => ({
+    foundry: g.foundry,
+    families: q ? g.families.filter(f => f.family.toLowerCase().includes(q)) : g.families,
+  })).filter(g => g.families.length)
+}
+
 export function libraryFamily(family: string): LibraryFamily | null {
   return byFamily.get(family) ?? null
 }
