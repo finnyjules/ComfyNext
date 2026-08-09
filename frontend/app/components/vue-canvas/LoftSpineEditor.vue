@@ -87,8 +87,13 @@ function toNorm(e: PointerEvent): { x: number; y: number } {
   const y = (e.clientY - (props.canvas?.getBoundingClientRect().top ?? 0)) / box.height
   return { x: Math.min(1, Math.max(0, x)), y: Math.min(1, Math.max(0, y)) }
 }
-const px = (nx: number) => box.left + nx * box.width
-const py = (ny: number) => box.top + ny * box.height
+// The <svg> is itself absolutely positioned at (box.left, box.top) (see :style below),
+// so its internal origin already sits at the canvas top-left. Map normalized→svg-internal
+// with box.width/height ONLY — adding box.left/top again double-counts the offset and
+// shifts every node/handle away from the cursor whenever the canvas is letterboxed in a
+// wider/taller preview (dormant only while box.left/top are ~0).
+const px = (nx: number) => nx * box.width
+const py = (ny: number) => ny * box.height
 
 // Hit threshold in normalized units (~10 px on each axis).
 const hitX = () => 10 / box.width
