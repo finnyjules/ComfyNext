@@ -90,6 +90,14 @@ export interface GenState {
    *  either restored (hex: null) removes the key, or an explicit `setTheme`
    *  clears the whole list (picking a theme = adopting its system). */
   brandEdits?: Array<'background' | 'foreground' | 'accent'>
+  /** Round-2b FIX 1: the outcome of `generate()`'s re-roll loop — the BEST
+   *  (fewest-reasons) of up to 8 attempts, not necessarily a clean pass.
+   *  `ok: false` means every attempt still had at least one validator
+   *  reason (an off-grid region, an undeclared collision, or too many
+   *  distinct text sizes) — the shipped composition is the least-bad
+   *  attempt, not a validated one. Surfaced so a caller can flag it rather
+   *  than the failure staying silent. */
+  validation?: { ok: boolean; reasons: string[] }
 }
 
 export interface GridSpec {
@@ -204,6 +212,15 @@ export interface TextElementV2 extends ElementV2Base {
   level: TextLevel               // resolved via the type scale, never a raw px size
   overflow?: TextOverflow        // default 'shrink-then-truncate'
   maxLines?: number
+  /** Ceiling on `overflow:'grow'`'s region extension, in rowSpan units — the
+   *  resolver's grow loop (resolve.ts) stops once `region.rowSpan` reaches
+   *  this value, even if the grid still has room below. Round-2b FIX 8: a
+   *  "big hero" staging (statement/tower/frame/index/stacked/corner) sets
+   *  this to the SIBLING BOUNDARY row minus the hero's own start row — the
+   *  row the next staged element (still within the grid) begins at — so a
+   *  long headline growing to fit never grows PAST that sibling. Absent ⇒
+   *  grow to the grid edge (unchanged pre-existing behaviour). */
+  growLimit?: number
   style?: TextStyleV2
 }
 

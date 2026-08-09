@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { TierId } from '~~/shared/template-grid/types'
+import { resolveTierDisplayStyle } from '~~/shared/template-grid/generate/tierDisplay'
 
 const ctx = inject<any>('gridEditor')
 
@@ -17,6 +18,13 @@ const tierId = computed<TierId | null>(() => parsed.value?.id ?? null)
 const tierIndex = computed(() => parsed.value?.index ?? 0)
 const t = computed(() => tierId.value ? ctx.tierType(tierId.value, tierIndex.value) : {})
 const orientation = computed(() => t.value.orientation || 'horizontal')
+// FIX 9 (round-2b): the panel's shown values resolve off the SELECTED
+// element's actual rendered style (staging voice default + the tier's own
+// override, the tier override already winning — see tierDisplay.ts) rather
+// than the raw tier-only `t` merged with a generic hardcoded guess. A tier
+// that hasn't overridden a field now shows what's REALLY on screen (e.g.
+// lockup's Playfair Display voice default) instead of "Inter"/400/blank.
+const display = computed(() => resolveTierDisplayStyle(ctx?.selectedElement?.value ?? null))
 function patch(p: Record<string, unknown>) { if (tierId.value) ctx.setTierType(tierId.value, p, tierIndex.value) }
 </script>
 
@@ -25,25 +33,25 @@ function patch(p: Record<string, unknown>) { if (tierId.value) ctx.setTierType(t
     <p class="text-[10px] uppercase tracking-[0.12em] text-white/35">Type · {{ tierId }}<span v-if="tierIndex > 0"> · item {{ tierIndex + 1 }}</span></p>
     <div>
       <span class="text-[10px] text-white/40">Font</span>
-      <TemplatesFontPicker :model-value="t.fontFamily || 'Inter'" @update:model-value="(f: string) => patch({ fontFamily: f })" />
+      <TemplatesFontPicker :model-value="display.fontFamily" @update:model-value="(f: string) => patch({ fontFamily: f })" />
     </div>
     <label class="flex items-center justify-between">
       <span class="text-[11px] text-white/55">Weight</span>
       <select class="h-7 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[11px] text-white"
-        :value="t.fontWeight || 400" @change="(e: any) => patch({ fontWeight: Number(e.target.value) })">
+        :value="display.fontWeight" @change="(e: any) => patch({ fontWeight: Number(e.target.value) })">
         <option :value="400">Regular</option>
         <option :value="700">Bold</option>
       </select>
     </label>
     <label class="flex items-center justify-between">
       <span class="text-[11px] text-white/55">Tracking</span>
-      <input type="number" step="0.5" :value="t.letterSpacing ?? 0"
+      <input type="number" step="0.5" :value="display.letterSpacing"
         class="w-20 h-7 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[11px] text-white text-right"
         @change="(e: any) => patch({ letterSpacing: Number(e.target.value) })">
     </label>
     <label class="flex items-center justify-between">
       <span class="text-[11px] text-white/55">Colour</span>
-      <input type="text" :value="t.color ?? ''" placeholder="{{ brand.foreground }}"
+      <input type="text" :value="display.color" placeholder="brand default"
         class="w-32 h-7 px-2 bg-white/[0.04] border border-white/[0.06] rounded text-[11px] text-white font-mono"
         @change="(e: any) => patch({ color: e.target.value })">
     </label>

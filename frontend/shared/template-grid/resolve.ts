@@ -274,7 +274,14 @@ export function resolveFormat(
         const okLines = el.maxLines == null || lines.length <= el.maxLines
         return okLines && lines.length * maxFontSize * lineHeight <= stackH
       }
-      while (!fullFits() && region.row + region.rowSpan - 1 < m.rows) {
+      // `growLimit` (round-2b FIX 8) caps the extension below the grid edge
+      // — a "big hero" staging sets it to the row its next sibling starts
+      // at, so a long headline growing to fit never grows PAST that
+      // sibling's declared position (undetected by validateGenerated, which
+      // only checks the STATIC compose()-time region, not this runtime
+      // grow).
+      while (!fullFits() && region.row + region.rowSpan - 1 < m.rows
+        && (el.growLimit == null || region.rowSpan < el.growLimit)) {
         region = { ...region, rowSpan: region.rowSpan + 1 }
         rect = toRect(region)
       }

@@ -368,6 +368,20 @@ describe('applySmartLayoutCommand — setElementStyle', () => {
     expect(r.ok).toBe(false)
   })
 
+  // FIX 5 (round-2b final fix wave): `opacity` (whole-element fade — the
+  // knob Family D's repeat/wall stagings already stamp on their dimmed
+  // copies) and `orientation` (vertical title — corner's heroOrientation:
+  // 'up' knob) were on ElementV2's style TYPE but missing from the agent's
+  // own STYLE_KEYS allow-list, so an agent could never set either.
+  it('sets opacity and orientation on a text element', () => {
+    const r = applySmartLayoutCommand(fixtureWithElements(), { op: 'setElementStyle', target: 'a', args: { patch: { opacity: 0.25, orientation: 'up' } } })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    const el = r.template.elements.find(e => e.id === 'a')!
+    expect(el.type === 'text' ? el.style?.opacity : null).toBe(0.25)
+    expect(el.type === 'text' ? el.style?.orientation : null).toBe('up')
+  })
+
   it('rejects an unknown element', () => {
     const r = applySmartLayoutCommand(fixtureWithElements(), { op: 'setElementStyle', target: 'zzz', args: { patch: { color: '#fff' } } })
     expect(r.ok).toBe(false)
@@ -407,6 +421,19 @@ describe('applySmartLayoutCommand — setElementProps', () => {
     if (!r.ok) return
     const el = r.template.elements.find(e => e.id === 'a')!
     expect(el.type === 'text' ? el.level : null).toBe('display')
+  })
+
+  // FIX 5 (round-2b final fix wave): `overhang` (raw unclamped region math,
+  // letting an element crop off the canvas edge — the same flag a real
+  // mouse-drag past the artboard edge sets, see sl-generation.spec.ts) was
+  // missing from PROP_KEYS.text, so an agent could never place a
+  // deliberately off-canvas element.
+  it('sets overhang on a text element', () => {
+    const r = applySmartLayoutCommand(fixtureWithElements(), { op: 'setElementProps', target: 'a', args: { patch: { overhang: true } } })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    const el = r.template.elements.find(e => e.id === 'a')!
+    expect(el.overhang).toBe(true)
   })
 
   it('rejects a prop not valid for the element type (level on shape)', () => {
@@ -845,6 +872,20 @@ describe('applySmartLayoutCommand — setText', () => {
     const spec = describeSmartLayout(fixture()).commands.find(c => c.op === 'setText')
     expect(spec).toBeDefined()
     expect(typeof spec?.hint).toBe('string')
+  })
+
+  // FIX 5 (round-2b final fix wave): the hint strings are the agent's ONLY
+  // window into what's a valid patch key — a key present in STYLE_KEYS/
+  // PROP_KEYS but absent from the hint is effectively undiscoverable.
+  it('setElementStyle hint mentions opacity and orientation', () => {
+    const spec = describeSmartLayout(fixture()).commands.find(c => c.op === 'setElementStyle')
+    expect(spec?.hint).toMatch(/\bopacity\b/)
+    expect(spec?.hint).toMatch(/\borientation\b/)
+  })
+
+  it('setElementProps hint mentions overhang', () => {
+    const spec = describeSmartLayout(fixture()).commands.find(c => c.op === 'setElementProps')
+    expect(spec?.hint).toMatch(/\boverhang\b/)
   })
 })
 

@@ -44,7 +44,7 @@ function migrateLocks(locks: GenState['locks'] | undefined): GenState['locks'] |
  *  split) — `hasImage` is whatever the CURRENT call wired (`opts.image`/
  *  `ctx.image`), not whatever was wired when the doc was originally saved,
  *  since a retired id regenerates against today's inputs, not yesterday's. */
-function migrateStaging(id: string, hasImage: boolean): string {
+export function migrateStaging(id: string, hasImage: boolean): string {
   const mapped = STAGING_MIGRATIONS[id]
   if (!mapped) return id
   return typeof mapped === 'string' ? mapped : (hasImage ? mapped.withImage : mapped.without)
@@ -91,7 +91,13 @@ function applyInk(els: ElementV2[], opts: { accentOnHero?: boolean; ink: string 
 /** Deterministically produce a generated TemplateV3 from the axis tuple. */
 export function generate(template: TemplateV3, opts: GenOpts): TemplateV3 {
   const gen = migrateGen(template.gen, { hasImage: Boolean(opts.image) })
-  const staging = getStaging(opts.staging) ?? STAGINGS[0]!
+  // FIX 11+14 (round-2b final fix wave): `opts.staging` is a caller-supplied
+  // value that may itself name a retired id (e.g. a UI call site that reads
+  // `t.gen.staging` directly instead of going through `migrateGen`) — run it
+  // through the same migration map `template.gen.staging` gets via
+  // `migrateGen` above, so a stale id never reaches `getStaging` and falls
+  // through to the STAGINGS[0] default.
+  const staging = getStaging(migrateStaging(opts.staging, Boolean(opts.image))) ?? STAGINGS[0]!
   const theme = getTheme(opts.theme) ?? getTheme(DEFAULT_THEME_ID)!
   const tiers = template.tiers ?? {}
   const masterFormat = template.formats[template.master]
@@ -109,14 +115,34 @@ export function generate(template: TemplateV3, opts: GenOpts): TemplateV3 {
   // columns`/`rows`, when explicitly set, still win via `fineGridDims`.
   const { cols, rows } = masterFormat ? fineGridDims(template, masterFormat) : { cols: 12, rows: 16 }
 
+  // FIX 1 (round-2b final fix wave): keep the BEST attempt across all 8
+  // re-rolls (fewest validation reasons), not blindly whichever ran last —
+  // a staging whose geometry can't move under any knob roll (a bug FIX 1's
+  // stagings.ts changes address directly) used to silently ship its LAST
+  // failed attempt with no signal anything was wrong. `gen.validation`
+  // stamps the outcome either way so a caller (a panel, a future audit) can
+  // surface a still-invalid composition instead of it reading as clean.
   let stagingResult: StagingResult = { elements: [] }
   let knobs: Record<string, unknown> = {}
+  let bestResult: StagingResult = { elements: [] }
+  let bestKnobs: Record<string, unknown> = {}
+  let bestReasons: string[] = []
+  let validated = false
   for (let attempt = 0; attempt < 8; attempt++) {
     const rng = makeRng(opts.seed + attempt, 'staging-knobs')
-    knobs = resolveKnobs(staging.knobs, rng, attempt === 0 ? (opts.knobs ?? {}) : {})
-    stagingResult = staging.compose({ tiers, cols, rows, canvas, rng: makeRng(opts.seed + attempt, 'staging'), knobs, brand: opts.brand, image: opts.image })
-    if (validateGenerated(stagingResult, cols, rows).ok) break
+    const attemptKnobs = resolveKnobs(staging.knobs, rng, attempt === 0 ? (opts.knobs ?? {}) : {})
+    const attemptResult = staging.compose({ tiers, cols, rows, canvas, rng: makeRng(opts.seed + attempt, 'staging'), knobs: attemptKnobs, brand: opts.brand, image: opts.image })
+    const { ok, reasons } = validateGenerated(attemptResult, cols, rows)
+    if (attempt === 0 || reasons.length < bestReasons.length) {
+      bestResult = attemptResult
+      bestKnobs = attemptKnobs
+      bestReasons = reasons
+    }
+    if (ok) { validated = true; break }
   }
+  stagingResult = bestResult
+  knobs = bestKnobs
+  const validation = { ok: validated, reasons: bestReasons }
 
   // Stamp on change: an explicit theme switch overwrites every un-pinned
   // axis key from the theme; same-theme regeneration (Shuffle, knob/tier
@@ -186,6 +212,7 @@ export function generate(template: TemplateV3, opts: GenOpts): TemplateV3 {
       seed: opts.seed,
       knobs,
       locks: gen?.locks,
+      validation,
       ...(opts.accentOnHero !== undefined ? { accentOnHero: opts.accentOnHero } : {}),
       ...(gen?.brandEdits?.length ? { brandEdits: gen.brandEdits } : {}),
     },

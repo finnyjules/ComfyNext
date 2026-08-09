@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { generate, shuffle, surprise, migrateGen } from '~~/shared/template-grid/generate/generate'
+import { generate, migrateStaging, shuffle, surprise, migrateGen } from '~~/shared/template-grid/generate/generate'
 import { validateGenerated } from '~~/shared/template-grid/generate/validate'
-import { getStaging, STAGINGS } from '~~/shared/template-grid/generate/stagings'
+import { getStaging, STAGINGS, type Staging } from '~~/shared/template-grid/generate/stagings'
+import { resolveKnobs } from '~~/shared/template-grid/generate/knobs'
 import { makeRng } from '~~/shared/template-grid/generate/rng'
 import { THEMES, resolveInk } from '~~/shared/template-grid/generate/themes'
 import type { TemplateV3, ElementV2 } from '~~/shared/template-grid/types'
@@ -330,5 +331,115 @@ describe('generate orchestrator — themes', () => {
       const { ok, reasons } = validateGenerated(result, cols, rows)
       expect(ok, `${s.id}: ${reasons.join(' ')}`).toBe(true)
     }
+  })
+})
+
+// FIX 1 (round-2b final fix wave), second half: the re-roll loop used to
+// ship whichever of the 8 attempts ran LAST, valid or not — no signal the
+// composition was ever invalid. Now it keeps the BEST (fewest validator
+// reasons) attempt across all 8, and stamps `gen.validation` either way so
+// a caller can tell a still-invalid composition from a clean one instead of
+// it shipping silently.
+describe('generate orchestrator — FIX 1: best-attempt re-roll + gen.validation stamp', () => {
+  // A staging that can NEVER validate clean — `n` fully-overlapping text
+  // elements at the SAME region, `n` driven by a knob so different attempts
+  // (different seeded knob draws) produce a DIFFERENT number of collision
+  // pairs (n*(n-1)/2). Registered into STAGINGS only for the duration of
+  // this describe block (removed in `afterEach`-equivalent try/finally per
+  // test) so it never leaks into the real registry other test files assert
+  // an exact count against (`sl-gen-stagings.unit.spec.ts`'s "registers
+  // exactly the 14 sorted staging ids").
+  const IMPOSSIBLE_ID = '__test_fix1_impossible__'
+  const impossible: Staging = {
+    id: IMPOSSIBLE_ID,
+    name: 'Test impossible',
+    blurb: 'Deliberately unvalidatable — every knob draw still collides.',
+    knobs: [{ id: 'n', pick: [2, 3, 4, 5, 6, 7, 8, 9] }],
+    compose({ knobs, cols, rows }) {
+      const n = Math.max(2, Number(knobs.n ?? 2))
+      const els: ElementV2[] = []
+      for (let i = 0; i < n; i++) {
+        els.push({
+          id: `dup_${i}`, type: 'text', content: 'X', level: 'body', priority: 1,
+          region: { col: 1, colSpan: cols, row: 1, rowSpan: rows }, origin: 'staging',
+        })
+      }
+      return { elements: els }
+    },
+  }
+
+  /** Independently replays generate()'s own attempt loop (same rng seeding
+   *  formula: `makeRng(seed+attempt,'staging-knobs')` for knobs, `makeRng
+   *  (seed+attempt,'staging')` for compose) to compute ground truth for
+   *  "which attempt has the fewest reasons" — cross-validated against what
+   *  `generate()` actually stamps, not just re-asserting the same call. */
+  function bestReasonsCountIndependently(seed: number, cols: number, rows: number): number {
+    let best = Number.POSITIVE_INFINITY
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const rng = makeRng(seed + attempt, 'staging-knobs')
+      const knobs = resolveKnobs(impossible.knobs, rng, {})
+      const result = impossible.compose({
+        tiers: {}, cols, rows, canvas: { w: 1080, h: 1080 }, rng: makeRng(seed + attempt, 'staging'), knobs,
+      })
+      const { reasons } = validateGenerated(result, cols, rows)
+      best = Math.min(best, reasons.length)
+    }
+    return best
+  }
+
+  it('stamps gen.validation.ok:false and reasons for a deliberately-impossible composition, keeping the FEWEST-reasons attempt (not the last)', () => {
+    STAGINGS.push(impossible)
+    try {
+      const seed = 7
+      const t = generate(base(), { staging: IMPOSSIBLE_ID, theme: 'paper', seed })
+      const cols = t.grid.columns ?? 12
+      const rows = t.grid.rows ?? 16
+      const expectedBest = bestReasonsCountIndependently(seed, cols, rows)
+
+      expect(t.gen?.validation).toBeTruthy()
+      expect(t.gen!.validation!.ok).toBe(false)
+      expect(t.gen!.validation!.reasons.length).toBeGreaterThan(0)
+      // The core "best, not last" claim: the SHIPPED reason count equals the
+      // independently-computed MINIMUM across all 8 attempts.
+      expect(t.gen!.validation!.reasons.length).toBe(expectedBest)
+
+      // And the shipped elements really are that best attempt's own
+      // output — reconstruct via the count-implied `n` (dup_0..dup_{n-1}).
+      const dupCount = t.elements.filter(e => e.id.startsWith('dup_')).length
+      expect(dupCount * (dupCount - 1) / 2).toBe(expectedBest)
+    } finally {
+      const i = STAGINGS.indexOf(impossible)
+      if (i >= 0) STAGINGS.splice(i, 1)
+    }
+  })
+
+  it('a validator-clean staging still stamps gen.validation.ok:true with zero reasons', () => {
+    const t = generate(base(), { staging: 'tower', theme: 'paper', seed: 1 })
+    expect(t.gen?.validation).toEqual({ ok: true, reasons: [] })
+  })
+})
+
+// MINOR #11+#14 (round-2b): `migrateStaging` is now exported so useGridEditor
+// can run its own `t.gen.staging` reads through it as defence-in-depth, and
+// `generate()` itself runs `opts.staging` (not just `template.gen.staging`)
+// through the SAME migration — a caller passing a retired id directly (not
+// via a stored `gen`) still resolves to the mapped staging instead of
+// silently falling through to `STAGINGS[0]`.
+describe('generate orchestrator — MINOR #11+14: migrateStaging is exported + opts.staging is migrated too', () => {
+  it('migrateStaging maps a retired id forward (exported, callable directly)', () => {
+    expect(migrateStaging('editorial', false)).toBe('stacked')
+    expect(migrateStaging('ledger', false)).toBe('index')
+    expect(migrateStaging('centered', false)).toBe('stacked')
+    expect(migrateStaging('centered', true)).toBe('lockup')
+    expect(migrateStaging('tower', false)).toBe('tower') // pass-through for a live id
+  })
+
+  it('generate() migrates a retired opts.staging id even when NOT read off a stored gen', () => {
+    // `staging: 'ledger'` passed directly as an opt — not via `template.gen`
+    // (this template has no prior `gen` at all) — must resolve through
+    // `migrateStaging` to 'index', not silently fall through to
+    // `STAGINGS[0]` (tower) because `getStaging('ledger')` finds nothing.
+    const t = generate(base(), { staging: 'ledger', theme: 'paper', seed: 1 })
+    expect(t.gen?.staging).toBe('index')
   })
 })

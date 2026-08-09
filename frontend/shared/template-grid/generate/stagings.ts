@@ -68,7 +68,7 @@ const HERO_SCALE_KNOB: KnobSpec = { id: 'heroScale', pick: [0.10, 0.14, 0.18] }
  *  the tier's own `spec.type.color` already won. */
 export function tierText(
   id: TierId, index: number, item: TierSpec, region: Region, priority: number,
-  opts: { level?: TextLevel; style?: TextStyleV2; overflow?: TextOverflow; overhang?: boolean } = {},
+  opts: { level?: TextLevel; style?: TextStyleV2; overflow?: TextOverflow; overhang?: boolean; growLimit?: number } = {},
 ): ElementV2 {
   return {
     id: `tier_${id}_${index}`,
@@ -81,6 +81,7 @@ export function tierText(
     role: id.toUpperCase(),
     ...(opts.overflow ? { overflow: opts.overflow } : {}),
     ...(opts.overhang ? { overhang: true } : {}),
+    ...(opts.growLimit != null ? { growLimit: opts.growLimit } : {}),
     style: {
       ...opts.style,
       ...item.type,   // tier's own type wins — survives re-roll
@@ -242,9 +243,13 @@ const tower: Staging = {
     const heroRows = rowBand(0.10, 0.44, rows)
     const hero = items('hero')
     if (hero.length) {
+      // FIX 8 (round-2b): cap `grow` at the photo block's own row band — the
+      // next sibling below the hero, still inside the grid — so a long
+      // headline never grows down into it.
+      const growLimit = rowBand(0.48, 0.72, rows).row - heroRows.row
       els.push(tierText('hero', 0, hero[0]!,
         clampRegion({ ...full, ...heroRows }, cols, rows), 1,
-        { level: 'display', overflow: 'grow', style: { align, valign: 'top', fontWeight: 700, ...drama.hero } }))
+        { level: 'display', overflow: 'grow', growLimit, style: { align, valign: 'top', fontWeight: 700, ...drama.hero } }))
     }
     // Computed regardless of `image` presence — degrade keeps support's
     // position anchored to where the photo WOULD sit (the table's contract:
@@ -256,14 +261,28 @@ const tower: Staging = {
     if (image) {
       els.push(tierImage('0', image, photoRegion, 2))
     }
+    // Computed BEFORE support (round-2b FIX 1) so support's compact rowSpan
+    // can size itself against the REAL floor — where the anchor slab starts
+    // — instead of a hardcoded /2 that only happened to work for exactly 2
+    // items. At n=3 the old `photoRegion.rowSpan / 2` math stacked a 3rd
+    // item straight into the anchor's rows (support_2 + anchor collision).
+    const anchorRows = rowBand(0.76, 0.94, rows)
     const support = items('support')
     if (support.length) {
       const supportCols = colBand(0, 0.28, cols)
+      // Table B: "support left of the photo, sharing its row band" — the
+      // compact per-item span is however many rows fit between the photo's
+      // top and the anchor slab's top, divided evenly across every support
+      // item (not a fixed half of the photo's own span). A lone item still
+      // gets the photo's full generous span back via `singleRowSpan`.
+      const availableRows = Math.max(1, anchorRows.row - photoRegion.row)
+      const supportRowSpan = Math.max(1, Math.floor(availableRows / support.length))
+      // FIX 13 (round-2b): honour the `align` knob, mirroring hero/anchor/
+      // fineprint above — was hardcoded 'left' regardless of the knob.
       els.push(...stackVertical('support', support,
-        { ...supportCols, row: photoRegion.row, rowSpan: Math.max(1, Math.round(photoRegion.rowSpan / 2)) },
-        cols, rows, 3, { style: { align: 'left', valign: 'top' } }, photoRegion.rowSpan))
+        { ...supportCols, row: photoRegion.row, rowSpan: supportRowSpan },
+        cols, rows, 3, { style: { align, valign: 'top' } }, photoRegion.rowSpan))
     }
-    const anchorRows = rowBand(0.76, 0.94, rows)
     const anchor = items('anchor')
     if (anchor.length) {
       els.push(tierText('anchor', 0, anchor[0]!,
@@ -325,8 +344,16 @@ const split: Staging = {
     }
     const fine = items('fineprint')
     if (fine.length) {
+      // Bottom-anchored (round-2b FIX 1): a literal `row: rows - 1` base
+      // clamps every item past the 2nd back onto the SAME last row once the
+      // stack overflows the grid — at n=3 fineprint_2 clamps down onto
+      // fineprint_1's row. `rows - n + 1` starts the stack far enough above
+      // the bottom edge that its LAST item (base.row + (n-1)*1) lands
+      // exactly on `rows`; at n=2 this is `rows - 1`, byte-identical to the
+      // literal it replaces.
+      const fineBaseRow = rows - fine.length + 1
       els.push(...stackVertical('fineprint', fine,
-        { ...textCols, row: rows - 1, rowSpan: 1 },
+        { ...textCols, row: fineBaseRow, rowSpan: 1 },
         cols, rows, 4, { style: { align, valign: 'bottom' } }))
     }
     return { elements: els }
@@ -370,9 +397,14 @@ const frame: Staging = {
     const heroCols = colBand(0, 0.55, cols)
     const hero = items('hero')
     if (hero.length) {
+      // FIX 8 (round-2b): support sits directly below the hero's box
+      // (`row: heroRows.row + heroRows.rowSpan`, see below) — the sibling
+      // boundary row IS where the hero's own span already ends, so the cap
+      // equals the initial rowSpan.
       els.push(tierText('hero', 0, hero[0]!,
         clampRegion({ ...heroCols, ...heroRows }, cols, rows), 1,
-        { level: 'display', overflow: 'grow', style: { align: 'left', valign: 'top', fontWeight: 700, ...drama.hero } }))
+        { level: 'display', overflow: 'grow', growLimit: heroRows.rowSpan,
+          style: { align: 'left', valign: 'top', fontWeight: 700, ...drama.hero } }))
       if (image) overlaps.push(['tier_hero_0', 'img_0'])
     }
     const support = items('support')
@@ -445,8 +477,16 @@ const corner: Staging = {
     const heroRegion = crop ? { ...heroBase, rowSpan: heroBase.rowSpan + cropExtra } : clampRegion(heroBase, cols, rows)
     const hero = items('hero')
     if (hero.length) {
+      // FIX 8 (round-2b): unlike the other big-hero stagings, `heroBase`
+      // (either orientation) has no sibling sharing its column range below
+      // it — the grid edge itself is the only real boundary, so the cap
+      // just mirrors that (a no-op relative to the pre-existing
+      // grid-edge-stops-grow behaviour; `crop`'s own overhang extension is
+      // baked into `heroRegion` at compose time, before this runtime cap
+      // ever applies).
+      const growLimit = rows - heroBase.row + 1
       els.push(tierText('hero', 0, hero[0]!, heroRegion, 1,
-        { level: 'display', overflow: 'grow', overhang: crop,
+        { level: 'display', overflow: 'grow', overhang: crop, growLimit,
           style: {
             align: 'left', valign: 'bottom', fontWeight: 700, ...drama.hero,
             ...(vertical ? { orientation: 'up' as const } : {}),
@@ -501,8 +541,11 @@ const statement: Staging = {
       const region = crop
         ? { col: cropCol, colSpan: cols - cropCol + 1, ...heroRows }
         : clampRegion({ col: 1, colSpan: cols, ...heroRows }, cols, rows)
+      // FIX 8 (round-2b): cap `grow` at the support column's row band — the
+      // next sibling below the hero, still inside the grid.
+      const growLimit = rowBand(0.58, 0.72, rows).row - heroRows.row
       els.push(tierText('hero', 0, hero[0]!, region, 1,
-        { level: 'display', overflow: 'grow', overhang: crop,
+        { level: 'display', overflow: 'grow', overhang: crop, growLimit,
           style: { align: 'left', valign: 'top', fontWeight: 700, ...drama.hero } }))
     }
     const anchor = items('anchor')
@@ -523,9 +566,17 @@ const statement: Staging = {
     }
     const fine = items('fineprint')
     if (fine.length) {
+      // Bottom-anchored (round-2b FIX 1): growing DOWNWARD from a literal
+      // `row: rows` clamps every layer past the first back onto that SAME
+      // last row — at n=3 fineprint_2 lands on fineprint_0's cell. Starting
+      // `ceil(n/2) - 1` rows ABOVE the bottom edge instead means the last
+      // layer's downward growth lands exactly on `rows`, never past it (n=1
+      // and n=2 both still resolve to the original `row: rows`, so the
+      // common 1/2-item case is byte-identical to before).
+      const fineBaseRow = rows - Math.ceil(fine.length / 2) + 1
       els.push(...stackCorners('fineprint', fine,
-        { col: 1, colSpan: half, row: rows, rowSpan: 1 },
-        { col: half + 1, colSpan: cols - half, row: rows, rowSpan: 1 },
+        { col: 1, colSpan: half, row: fineBaseRow, rowSpan: 1 },
+        { col: half + 1, colSpan: cols - half, row: fineBaseRow, rowSpan: 1 },
         cols, rows, 4, { style: { align: 'left', valign: 'bottom' } }))
     }
     return { elements: els }
@@ -573,9 +624,14 @@ const manifesto: Staging = {
     })
     const hero = items('hero')
     if (hero.length) {
+      // FIX 8 (round-2b, DECIDED policy): manifesto's hero is a small corner
+      // mark by IDENTITY — the anchor is the giant element here (inverted
+      // mass). Growing it to fit is anti-design (it would eat into the rule
+      // + giant-anchor band below), so it shrinks-to-fit instead of growing;
+      // 'shrink' keeps the size and clips rather than truncating the string.
       els.push(tierText('hero', 0, hero[0]!,
         clampRegion({ col: 1, colSpan: Math.round(cols * 0.35), row: 1, rowSpan: Math.max(1, ruleRow - 1) }, cols, rows), 1,
-        { level: 'headline', overflow: 'grow', style: { align: 'left', valign: 'top', fontWeight: 700, ...drama.anchor } }))
+        { level: 'headline', overflow: 'shrink', style: { align: 'left', valign: 'top', fontWeight: 700, ...drama.anchor } }))
     }
     const anchor = items('anchor')
     if (anchor.length) {
@@ -642,17 +698,21 @@ const index: Staging = {
     }
     const heroRows = rowBand(0.28, 0.55, rows)
     const hero = items('hero')
+    // Literal 0.60 fraction (carried decision) — NOT `heroRows.row +
+    // heroRows.rowSpan`; the table's start is pinned to the grid, not to
+    // wherever the hero band's own fractions happen to land it. Computed
+    // before the hero push (round-2b FIX 8) so the hero's `grow` cap can
+    // read it — the ruled table is the sibling boundary a growing hero must
+    // never reach.
+    const tableBase = Math.max(1, Math.round(0.60 * rows) + 1)
     if (hero.length) {
       els.push(tierText('hero', 0, hero[0]!,
         clampRegion({ col: 1, colSpan: cols, ...heroRows }, cols, rows), 1,
-        { level: 'display', overflow: 'grow', style: { align: 'left', valign: 'top', fontWeight: 700, ...drama.hero } }))
+        { level: 'display', overflow: 'grow', growLimit: tableBase - heroRows.row,
+          style: { align: 'left', valign: 'top', fontWeight: 700, ...drama.hero } }))
     }
     const support = items('support')
     const step = Math.max(2, Math.round(0.06 * rows))
-    // Literal 0.60 fraction (carried decision) — NOT `heroRows.row +
-    // heroRows.rowSpan`; the table's start is pinned to the grid, not to
-    // wherever the hero band's own fractions happen to land it.
-    const tableBase = Math.max(1, Math.round(0.60 * rows) + 1)
     const rowCount = Math.ceil(support.length / 2)
     for (let r = 0; r < rowCount; r++) {
       const rowStart = tableBase + r * step
@@ -714,9 +774,13 @@ const stacked: Staging = {
     const heroRows = rowBand(0.08, 0.40, rows)
     const hero = items('hero')
     if (hero.length) {
+      // FIX 8 (round-2b): the anchor sits directly below the hero's box
+      // (`anchorRow = heroRows.row + heroRows.rowSpan`, see below) — the
+      // sibling boundary IS where the hero's own span already ends.
       els.push(tierText('hero', 0, hero[0]!,
         clampRegion({ col: 1, colSpan: cols, ...heroRows }, cols, rows), 1,
-        { level: 'display', overflow: 'grow', style: { align, valign: 'top', fontWeight: 700, ...drama.hero } }))
+        { level: 'display', overflow: 'grow', growLimit: heroRows.rowSpan,
+          style: { align, valign: 'top', fontWeight: 700, ...drama.hero } }))
     }
     const anchorRow = heroRows.row + heroRows.rowSpan
     const anchor = items('anchor')
@@ -728,17 +792,20 @@ const stacked: Staging = {
     const bottomRow = Math.max(anchorRow + 3, Math.round(rows * 0.75))
     const nearCols = colBand(0, 0.35, cols)
     const farCols = colBand(0.65, 1, cols)
+    // FIX 13 (round-2b): support/fineprint honour the `align` knob (mirror
+    // like hero/anchor above) — were hardcoded 'left' regardless of the
+    // knob, even though their COLUMN already flips with it.
     const support = items('support')
     if (support.length) {
       els.push(...stackVertical('support', support,
         { ...(right ? farCols : nearCols), row: bottomRow, rowSpan: 1 },
-        cols, rows, 3, { style: { align: 'left', valign: 'top' } }, 2))
+        cols, rows, 3, { style: { align, valign: 'top' } }, 2))
     }
     const fine = items('fineprint')
     if (fine.length) {
       els.push(...stackVertical('fineprint', fine,
         { ...(right ? nearCols : farCols), row: bottomRow, rowSpan: 1 },
-        cols, rows, 4, { style: { align: 'left', valign: 'top' } }))
+        cols, rows, 4, { style: { align, valign: 'top' } }))
     }
     return { elements: els }
   },
@@ -1134,15 +1201,21 @@ function regionsIntersect(a: Region, b: Region): boolean {
  * full-strength — the backpocket-4 "one line lit, the rest a murmur" move.
  * A photo, when `input.image` is wired, runs right through the column
  * mid-canvas — pushed AFTER the repeats so it prints IN FRONT (text runs
- * behind glass), with a declared `(repeat_i, img_0)` overlap for every copy
- * whose row band the photo's region genuinely crosses (computed via
- * `regionsIntersect`, not a blanket declare-everything). No `tier_hero_0`
- * exists in this staging's own right — the repeated copies ARE the hero's
- * presence — so it sits OUTSIDE the generic hero-drama test loop in
- * `sl-gen-stagings.unit.spec.ts` (see that file's exclusion list). Anchor,
- * support, and fine print stay clear of the repeat column entirely — pinned
- * to the column-DISJOINT right band (`[0.55C..C]`) at the bottom, so they
- * never collide with a repeat copy regardless of how many `step` produces.
+ * behind glass), with a declared `(repeat_<id>, img_0)` overlap for every
+ * copy whose row band the photo's region genuinely crosses (computed via
+ * `regionsIntersect`, not a blanket declare-everything). Round-2b FIX 2+3:
+ * the one full-opacity ("hot") copy takes the canonical id `tier_hero_0`
+ * instead of `repeat_<hotIndex>` — it IS the hero (same content + role),
+ * just placed inside the repeated column — so `accentOnHero` and
+ * TierTypePanel can address it like any other staging's hero. It still
+ * sits OUTSIDE the generic hero-drama test loop in
+ * `sl-gen-stagings.unit.spec.ts` (see that file's exclusion list) because
+ * it's sized/typeset at ANCHOR scale (`drama.anchor`, `DEFAULT_TIER_LEVELS.
+ * anchor`), not the usual hero-scale drama every other staging's
+ * `tier_hero_0` carries. Anchor, support, and fine print stay clear of the
+ * repeat column entirely — pinned to the column-DISJOINT right band
+ * (`[0.55C..C]`) at the bottom, so they never collide with a repeat copy
+ * regardless of how many `step` produces.
  */
 const repeat: Staging = {
   id: 'repeat',
@@ -1164,10 +1237,19 @@ const repeat: Staging = {
     const stepRows = Math.max(2, Math.round(Number(knobs.step ?? 0.06) * rows))
     const regions = repeatColumn(cols, rows, stepRows)
     const hotIndex = Math.min(Math.max(0, Number(knobs.hot ?? 0)), regions.length - 1)
+    // FIX 2+3 (round-2b final fix wave): the full-opacity "hot" copy takes
+    // the id `tier_hero_0` instead of `repeat_<hotIndex>` — it already
+    // carries the hero's own content + `role: 'HERO'`, so this is the same
+    // element under its canonical id, not a new one. That's what lets
+    // `applyInk`'s `accentOnHero` (keyed on `e.id === 'tier_hero_0'`) reach
+    // it, and gives TierTypePanel's `tier_<id>_<index>` id parser something
+    // to address. Every OTHER copy keeps its original `repeat_<i>` id
+    // (index NOT renumbered around the hot one).
+    const idFor = (i: number) => (i === hotIndex ? 'tier_hero_0' : `repeat_${i}`)
     if (hero.length) {
       regions.forEach((region, i) => {
         els.push({
-          id: `repeat_${i}`,
+          id: idFor(i),
           type: 'text',
           content: hero[0]!.content,
           level: DEFAULT_TIER_LEVELS.anchor,
@@ -1186,7 +1268,7 @@ const repeat: Staging = {
     if (image) {
       els.push(tierImage('0', image, photoRegion, 2))
       regions.forEach((region, i) => {
-        if (regionsIntersect(region, photoRegion)) overlaps.push([`repeat_${i}`, 'img_0'])
+        if (regionsIntersect(region, photoRegion)) overlaps.push([idFor(i), 'img_0'])
       })
     }
 
@@ -1198,24 +1280,33 @@ const repeat: Staging = {
     const leftCell = { col: rightCols.col, colSpan: rightHalf }
     const rightCell = { col: rightCols.col + rightHalf, colSpan: Math.max(1, rightCols.colSpan - rightHalf) }
     const bottomRows = rowBand(0.75, 1, rows)
+    // FIX 1 (round-2b): the bottom cluster now reserves rows by ITEM COUNT
+    // (`stackCorners` packs 2-per-row, so n items need `ceil(n/2)` rows) —
+    // not a flat +1/+2 that only happened to work for exactly 2 items each.
+    // At n=3 the old hardcoded offsets let support's 2nd ROW (item 2, alone)
+    // land on fineprint's own row (support_2 + fineprint_0 collision).
     const support = items('support')
+    const supportRowsNeeded = support.length ? Math.ceil(support.length / 2) : 0
     if (support.length) {
       els.push(...stackCorners('support', support,
         { ...leftCell, row: bottomRows.row, rowSpan: 1 },
         { ...rightCell, row: bottomRows.row, rowSpan: 1 },
         cols, rows, 3, { style: { align: 'left', valign: 'top' } }))
     }
+    const fineStartRow = bottomRows.row + supportRowsNeeded
     const fine = items('fineprint')
+    const fineRowsNeeded = fine.length ? Math.ceil(fine.length / 2) : 0
     if (fine.length) {
       els.push(...stackCorners('fineprint', fine,
-        { ...leftCell, row: bottomRows.row + 1, rowSpan: 1 },
-        { ...rightCell, row: bottomRows.row + 1, rowSpan: 1 },
+        { ...leftCell, row: fineStartRow, rowSpan: 1 },
+        { ...rightCell, row: fineStartRow, rowSpan: 1 },
         cols, rows, 4, { style: { align: 'left', valign: 'top' } }))
     }
+    const anchorStartRow = fineStartRow + fineRowsNeeded
     const anchor = items('anchor')
     if (anchor.length) {
       els.push(tierText('anchor', 0, anchor[0]!,
-        clampRegion({ ...rightCols, row: bottomRows.row + 2, rowSpan: Math.max(1, bottomRows.rowSpan - 2) }, cols, rows), 2,
+        clampRegion({ ...rightCols, row: anchorStartRow, rowSpan: Math.max(1, bottomRows.row + bottomRows.rowSpan - anchorStartRow) }, cols, rows), 2,
         { level: 'headline', style: { align: 'left', valign: 'bottom', fontWeight: 700, ...drama.anchor } }))
     }
     return { elements: els, ...(overlaps.length ? { overlaps } : {}) }

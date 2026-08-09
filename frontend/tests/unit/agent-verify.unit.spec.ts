@@ -88,6 +88,28 @@ describe('verifySmartLayout', () => {
     expect(r.some(i => /narrow|headline/i.test(i.message))).toBe(true)
   })
 
+  // FIX 4 (round-2b final fix wave): a Smart Layout staging's own hero is
+  // narrow-by-DESIGN in two real families — manifesto's small corner mark
+  // and corner's vertical hero column — and the library already validated
+  // its own geometry (`validateGenerated`, off-grid + collision + type-size
+  // checks). Re-litigating narrowness here just produces false flags on
+  // those; `origin: 'staging'` is the signal that distinguishes "the
+  // library placed this on purpose" from a hand-authored/agent-edited
+  // headline this heuristic still needs to catch.
+  it('does NOT flag a narrow display headline when origin is "staging" (library already validated its geometry)', () => {
+    const r = verifySmartLayout(base([txt({
+      level: 'display', origin: 'staging', region: { col: 1, colSpan: 4, row: 1, rowSpan: 2 },
+    } as Partial<ElementV2>)]))
+    expect(r.some(i => /narrow|headline/i.test(i.message))).toBe(false)
+  })
+
+  it('still flags a narrow display headline when origin is "freeform" (control — the skip is origin-specific, not blanket)', () => {
+    const r = verifySmartLayout(base([txt({
+      level: 'display', origin: 'freeform', region: { col: 1, colSpan: 4, row: 1, rowSpan: 2 },
+    } as Partial<ElementV2>)]))
+    expect(r.some(i => /narrow|headline/i.test(i.message))).toBe(true)
+  })
+
   it('a full-width white display headline on dark is clean', () => {
     const r = verifySmartLayout(base([txt({ level: 'display', style: { color: '#ffffff' }, region: { col: 1, colSpan: COLS, row: 1, rowSpan: 10 } } as Partial<ElementV2>)]))
     expect(r).toEqual([])

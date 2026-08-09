@@ -173,6 +173,22 @@ describe('useGridEditor generation actions', () => {
     expect(t.gen?.theme).toBe(theme)
   })
 
+  // MINOR #11+14 (round-2b final fix wave): `currentGenOpts`'s
+  // `migrateStaging` call is defence-in-depth — a doc whose `gen.staging`
+  // still names a retired id (`ledger`, pre-round-2b-Task-5's rename to
+  // `index`) must regenerate under the MAPPED id when any in-place action
+  // (not just a fresh open, which goes through `migrateGen`) re-triggers
+  // `generate()`, rather than crashing or silently falling through to
+  // `STAGINGS[0]` because `getStaging('ledger')` finds nothing.
+  it('toggleAccentOnHero migrates a stored retired staging id forward (defence-in-depth)', () => {
+    const ctx = editorWithTiers()
+    const t = ctx.template.value as TemplateV3
+    t.gen = { staging: 'ledger', theme: 'paper', seed: 1 }
+    ctx.toggleAccentOnHero()
+    const after = ctx.template.value as TemplateV3
+    expect(after.gen?.staging).toBe('index')
+  })
+
   it('toggleAccentOnHero is undoable', () => {
     const ctx = editorWithTiers()
     ctx.surpriseLayout()

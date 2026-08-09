@@ -446,9 +446,14 @@ test.describe('Smart Layout generation (wired Shuffle/Surprise)', () => {
     expect(statementHeroFont).toBeGreaterThanOrEqual(0.10 * canvasHeight)
 
     // Repeat (Family D/Texture): the hero's words run down the left edge as
-    // a column of copies, all but one dimmed to a murmur.
+    // a column of copies, all but one dimmed to a murmur. Round-2b FIX 2+3:
+    // the one full-opacity ("hot") copy now carries the canonical id
+    // `tier_hero_0` instead of `repeat_<hotIndex>` (so accentOnHero and
+    // TierTypePanel can address it) — the selector below covers both id
+    // shapes so the dimmed `repeat_*` copies AND the hot `tier_hero_0` copy
+    // are counted together as "the column of copies".
     await layoutControls.getByRole('button', { name: 'Repeat', exact: true }).click()
-    const repeatEls = modal.locator('[data-el-id^="repeat_"]')
+    const repeatEls = modal.locator('[data-el-id^="repeat_"], [data-el-id="tier_hero_0"]')
     await expect.poll(async () => await repeatEls.count()).toBeGreaterThan(4)
     const repeatOpacities = await repeatEls.evaluateAll(els => els.map((e) => {
       const target = e.querySelector('div') ?? e

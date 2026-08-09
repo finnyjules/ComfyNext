@@ -217,11 +217,14 @@ describe('staging: dramatic hero + anchor type', () => {
   // round-2b Task 4) scales its hero to HALF heroScale (a small title+date
   // jewel, not a giant overprint) — a different divergence from the same
   // generic "hero === heroScale × canvas.h" assumption. `repeat` (Family D,
-  // round-2b Task 5) has no `tier_hero_0` at all — the hero's words ARE the
-  // repeated `repeat_i` column, not a single dramatic element — so it gets
-  // its own dedicated block too, excluded here for the same "find would
-  // return undefined" reason. Each gets its own dedicated describe block
-  // below; this loop still guards every other staging unchanged.
+  // round-2b Task 5) DOES carry a `tier_hero_0` since FIX 2+3 (the hot
+  // repeated copy — see the dedicated `copyEls`-based describe blocks above)
+  // but it's sized at ANCHOR scale (`drama.anchor`, `DEFAULT_TIER_LEVELS.
+  // anchor`) rather than the usual hero-scale drama every other staging's
+  // `tier_hero_0` carries, so the generic `fontSize === heroScale ×
+  // canvas.h` assertion below would legitimately fail for it — excluded for
+  // that reason, not absence. Each gets its own dedicated describe block;
+  // this loop still guards every other staging unchanged.
   for (const s of STAGINGS) {
     if (s.id === 'manifesto' || s.id === 'lockup' || s.id === 'repeat') continue
     it(`${s.id}: hero fontSize follows the heroScale knob × canvas.h`, () => {
@@ -356,6 +359,83 @@ describe('staging: dramatic hero never truncates (resolver-level, starter square
       })
     }
   }
+})
+
+// FIX 8 (round-2b final fix wave, DECIDED policy): a "big hero" staging's
+// `overflow:'grow'` used to have no ceiling — a long headline would grow
+// straight down through the region resolve.ts's grow loop was fitting it
+// into, past whatever sibling element the STATIC compose()-time layout
+// (validateGenerated's own domain) had already placed below it, since
+// growth is a RUNTIME (resolve-time) extension the compose-time validator
+// never sees. `manifesto`'s hero is the opposite case: its identity IS the
+// small corner mark (the anchor plays the giant role there), so growing it
+// at all is anti-design — it shrinks-to-fit instead.
+const BIG_HERO_GROW_LIMIT_IDS = ['statement', 'tower', 'frame', 'index', 'stacked', 'corner'] as const
+
+describe('staging: FIX 8 — grow-vs-siblings policy (growLimit stamped + manifesto shrinks)', () => {
+  it('every big-hero staging stamps a positive growLimit on its hero, alongside overflow:"grow"', () => {
+    for (const id of BIG_HERO_GROW_LIMIT_IDS) {
+      const els = getStaging(id)!.compose(input()).elements
+      const hero = els.find(e => e.id === 'tier_hero_0')! as any
+      expect(hero.overflow, `${id} hero overflow`).toBe('grow')
+      expect(hero.growLimit, `${id} hero growLimit`).toBeGreaterThan(0)
+    }
+  })
+  it('manifesto\'s hero uses overflow:"shrink" (never "grow") and carries no growLimit — the small corner mark never grows', () => {
+    const els = getStaging('manifesto')!.compose(input()).elements
+    const hero = els.find(e => e.id === 'tier_hero_0')! as any
+    expect(hero.overflow).toBe('shrink')
+    expect(hero.growLimit).toBeUndefined()
+  })
+})
+
+describe('staging: FIX 8 — grow never overtakes the sibling boundary (resolver-level, starter square, long hero)', () => {
+  // Long enough that fitText's shrink-toward-floor pass still can't make it
+  // fit the hero's initial box at ANY sane font size — the resolver's grow
+  // loop (resolve.ts) is forced to actually extend rowSpan repeatedly,
+  // which is the only way `growLimit` (a cap on that extension) can ever be
+  // exercised by a test.
+  const LONG_HERO = 'A Very Long Headline That Needs Many Lines To Fit Inside A Small Region Without Growing Endlessly Downward Past Its Neighbours Every Single Time'
+  const LONG_TIERS: Tiers = {
+    hero: [{ content: LONG_HERO }],
+    anchor: [{ content: 'June 1—30' }],
+    support: [{ content: 'In stores now' }],
+    fineprint: [{ content: 'Terms apply' }],
+  }
+
+  function resolvedElsFor(stagingId: string) {
+    const staging = getStaging(stagingId)!
+    const starter = makeStarterTemplate('t') as any
+    starter.tiers = LONG_TIERS
+    const v3ified: TemplateV3 = { ...starter, version: 3, sections: [] }
+    const masterFormat = v3ified.formats[v3ified.master]!
+    const { cols, rows } = fineGridDims(v3ified, masterFormat)
+    const canvas = { w: masterFormat.w, h: masterFormat.h }
+    const composed = staging.compose({ tiers: LONG_TIERS, cols, rows, canvas, rng: makeRng(1), knobs: {} })
+    const t: TemplateV3 = { ...v3ified, elements: composed.elements, order: composed.elements.map(e => e.id) }
+    return { composed, resolved: resolveFormat(t, v3ified.master) }
+  }
+
+  for (const id of BIG_HERO_GROW_LIMIT_IDS) {
+    it(`${id}: a long hero's grown rowSpan never exceeds its growLimit cap`, () => {
+      const { composed, resolved } = resolvedElsFor(id)
+      const hero = composed.elements.find(e => e.id === 'tier_hero_0')! as any
+      const heroResolved = resolved.elements.find(e => e.el.id === 'tier_hero_0')!
+      expect(heroResolved.region, `${id} hero has no resolved region`).toBeTruthy()
+      expect(heroResolved.region!.rowSpan).toBeLessThanOrEqual(hero.growLimit)
+    })
+  }
+
+  it("manifesto: a long hero shrinks (rowSpan never grows past its authored span) and never overlaps the date/anchor", () => {
+    const { composed, resolved } = resolvedElsFor('manifesto')
+    const heroAuthoredRowSpan = composed.elements.find(e => e.id === 'tier_hero_0')!.region.rowSpan
+    const heroResolved = resolved.elements.find(e => e.el.id === 'tier_hero_0')!
+    const anchorResolved = resolved.elements.find(e => e.el.id === 'tier_anchor_0')!
+    expect(heroResolved.region, 'manifesto hero has no resolved region').toBeTruthy()
+    expect(anchorResolved.region, 'manifesto anchor has no resolved region').toBeTruthy()
+    expect(heroResolved.region!.rowSpan).toBe(heroAuthoredRowSpan)
+    expect(heroResolved.region!.row + heroResolved.region!.rowSpan - 1).toBeLessThan(anchorResolved.region!.row)
+  })
 })
 
 // Round-2b Task 2 — Family A, the type-dominant staging family. Four new
@@ -543,6 +623,20 @@ describe('staging: stacked', () => {
     expect(heroL.style.align).toBe('left')
     expect(heroR.style.align).toBe('right')
   })
+  // FIX 13 (round-2b): support/fineprint honour the `align` knob too —
+  // mirrors hero/anchor above, not hardcoded 'left' like before the fix.
+  it('align:"right" also flips support + fineprint text alignment', () => {
+    const left = stacked.compose(input({ knobs: { align: 'left' } })).elements
+    const right = stacked.compose(input({ knobs: { align: 'right' } })).elements
+    const supportL = left.find(e => e.id === 'tier_support_0')! as any
+    const supportR = right.find(e => e.id === 'tier_support_0')! as any
+    const fineL = left.find(e => e.id === 'tier_fineprint_0')! as any
+    const fineR = right.find(e => e.id === 'tier_fineprint_0')! as any
+    expect(supportL.style.align).toBe('left')
+    expect(supportR.style.align).toBe('right')
+    expect(fineL.style.align).toBe('left')
+    expect(fineR.style.align).toBe('right')
+  })
 })
 
 // Round-2b Task 3 — Family B, photo-as-block. tower/split/frame are
@@ -651,6 +745,16 @@ describe('staging: tower — geometry per Table B (walked on the 12x16 fixture)'
       expect(s0).toEqual({ col: 1, colSpan: 3, row: 9, rowSpan: 2 })
       expect(s1).toEqual({ col: 1, colSpan: 3, row: 11, rowSpan: 2 })
     }
+  })
+  // FIX 13 (round-2b): support honours the `align` knob, mirroring hero/
+  // fineprint above — was hardcoded 'left' regardless of the knob.
+  it('align:"right" flips support text alignment too (mirrors hero/fineprint)', () => {
+    const left = tower.compose(input({ knobs: { align: 'left' } })).elements
+    const right = tower.compose(input({ knobs: { align: 'right' } })).elements
+    const supportL = left.find(e => e.id === 'tier_support_0')! as any
+    const supportR = right.find(e => e.id === 'tier_support_0')! as any
+    expect(supportL.style.align).toBe('left')
+    expect(supportR.style.align).toBe('right')
   })
 })
 
@@ -1084,6 +1188,17 @@ describe('staging: Family D — registration + knobs + no needsImage', () => {
   })
 })
 
+// FIX 2+3 (round-2b final fix wave): the one full-opacity ("hot") copy now
+// carries the canonical id `tier_hero_0` instead of `repeat_<hotIndex>` —
+// every OTHER copy keeps its original `repeat_<i>` id (not renumbered
+// around the hot one). `copyEls` below is the shared "every copy, hot or
+// not" selector the repeat describe blocks use in place of a bare
+// `id.startsWith('repeat_')` filter, which now undercounts by exactly the
+// hot copy.
+function copyEls(els: any[]): any[] {
+  return els.filter(e => e.id.startsWith('repeat_') || e.id === 'tier_hero_0')
+}
+
 describe('staging: repeat — copy count, exactly one full-opacity copy', () => {
   const repeat = getStaging('repeat')!
   it('produces floor(rows / stepRows) copies, computed independently of the composer', () => {
@@ -1091,25 +1206,33 @@ describe('staging: repeat — copy count, exactly one full-opacity copy', () => 
       const els = repeat.compose(input({ knobs: { step } })).elements
       const stepRows = Math.max(2, Math.round(step * 16))
       const expectedN = Math.max(1, Math.floor(16 / stepRows))
-      const copies = els.filter(e => e.id.startsWith('repeat_'))
-      expect(copies).toHaveLength(expectedN)
+      expect(copyEls(els)).toHaveLength(expectedN)
     }
   })
-  it('exactly one copy is full opacity (the hot index); the rest sit at 0.25', () => {
+  it('exactly one copy is full opacity (the hot index, id tier_hero_0); the rest sit at 0.25 under repeat_<i>', () => {
     for (const hot of [0, 1, 2] as const) {
       const els = repeat.compose(input({ knobs: { hot } })).elements
-      const copies = els.filter(e => e.id.startsWith('repeat_')) as any[]
+      const copies = copyEls(els)
       const fullOpacity = copies.filter(c => c.style.opacity === 1)
       const dimmed = copies.filter(c => c.style.opacity === 0.25)
       expect(fullOpacity).toHaveLength(1)
+      expect(fullOpacity[0]!.id).toBe('tier_hero_0')
       expect(dimmed).toHaveLength(copies.length - 1)
+      expect(dimmed.every((c: any) => c.id.startsWith('repeat_'))).toBe(true)
     }
   })
-  it("copies carry the hero tier's content, flush-left", () => {
-    const els = repeat.compose(input()).elements
+  it("copies carry the hero tier's content, flush-left, whichever id they land on", () => {
+    // hot:1 keeps index 0 as a dimmed `repeat_0` (not renamed) — the OTHER
+    // half of the id contract, alongside the hot-copy check above.
+    const els = repeat.compose(input({ knobs: { hot: 1 } })).elements
     const copy0 = els.find(e => e.id === 'repeat_0')! as any
     expect(copy0.content).toBe('MAT + FEST')
     expect(copy0.style.align).toBe('left')
+    expect(copy0.style.opacity).toBe(0.25)
+    const hero = els.find(e => e.id === 'tier_hero_0')! as any
+    expect(hero.content).toBe('MAT + FEST')
+    expect(hero.style.align).toBe('left')
+    expect(hero.style.opacity).toBe(1)
   })
   it('validates clean under default knobs — 2/2-item and 1-item tier sets, no image', () => {
     for (const tiers of [TIERS, ONE_EACH_TIERS]) {
@@ -1133,21 +1256,25 @@ describe('staging: repeat — photo in front, declared per genuinely intersectin
   it('with an image: img_0 is present and pushed AFTER every repeat copy (photo in front)', () => {
     const els = repeat.compose(input({ image: IMAGE_TOKEN })).elements
     expect(els.find(e => e.id === 'img_0')).toBeTruthy()
-    const repeatIndices = els.map((e, i) => (e.id.startsWith('repeat_') ? i : -1)).filter(i => i >= 0)
-    const lastRepeatIndex = Math.max(...repeatIndices)
+    const copyIndices = els.map((e, i) => (copyEls([e]).length ? i : -1)).filter(i => i >= 0)
+    const lastCopyIndex = Math.max(...copyIndices)
     const imgIndex = els.findIndex(e => e.id === 'img_0')
-    expect(imgIndex).toBeGreaterThan(lastRepeatIndex)
+    expect(imgIndex).toBeGreaterThan(lastCopyIndex)
   })
-  it('declares (repeat_i, img_0) for exactly the copies whose region genuinely intersects the photo', () => {
+  it('declares (<copy id>, img_0) for exactly the copies whose region genuinely intersects the photo', () => {
     const result = repeat.compose(input({ image: IMAGE_TOKEN }))
     const copyCols = colBandT(0, 0.55, 12)
     const stepRows = Math.max(2, Math.round(0.06 * 16))
     const n = Math.max(1, Math.floor(16 / stepRows))
+    // Default input() knobs = {} -> `knobs.hot ?? 0` = 0, matching the
+    // production default — copy index 0 is the hot one (id tier_hero_0).
+    const hotIndex = 0
+    const idFor = (i: number) => (i === hotIndex ? 'tier_hero_0' : `repeat_${i}`)
     const photoRegion = { ...colBandT(0.45, 0.95, 12), ...rowBandT(0.30, 0.62, 16) }
     const expectedIds: string[] = []
     for (let i = 0; i < n; i++) {
       const region = { ...copyCols, row: i * stepRows + 1, rowSpan: stepRows }
-      if (intersectsT(region, photoRegion)) expectedIds.push(`repeat_${i}`)
+      if (intersectsT(region, photoRegion)) expectedIds.push(idFor(i))
     }
     expect(expectedIds.length).toBeGreaterThan(0) // sanity: something really intersects
     const declaredIds = (result.overlaps ?? []).map(([a]) => a).sort()
@@ -1245,6 +1372,76 @@ describe('staging: FULL LIBRARY — validator matrix (every staging x tier-count
           const result = s.compose(input({ tiers, image }))
           const { ok, reasons } = validateGenerated(result, 12, 16)
           expect(ok, reasons.join(' ')).toBe(true)
+        })
+      }
+    }
+  }
+})
+
+// FIX 7 (round-2b final fix wave) — the matrix hole that hid FIX 1: the
+// block above only ever exercised 1-item and 2-item tiers, on the coarse
+// 12x16 AUTHORING fixture, under each staging's DEFAULT (unrolled) knobs.
+// None of those three narrowings is how a real document behaves — a real
+// item count varies with what the user actually typed, the real grid is
+// `fineGridDims` of the production 1080x1080 starter master (78x78, not
+// 12x16 — the exact coordinate space `generate()`'s own doc comment warns a
+// mismatch here silently misplaces regions), and Shuffle rolls every knob,
+// not just the default. FIX 1's four geometry bugs (tower support+anchor,
+// split/statement fineprint self-collisions, repeat's support+fineprint
+// collision) ONLY reproduced at n=3 items and were invisible to the old
+// matrix's n∈{1,2} ceiling — this block closes that hole: n ∈ {1,2,3,5}
+// (support AND fineprint together), the REAL 78x78 grid, and every
+// staging's FULL knob cartesian (not just the default draw) — so a
+// staging whose geometry can't move under ANY knob roll (the exact "8
+// re-rolls fail identically" failure mode FIX 1 fixes) can no longer hide
+// behind an untested knob combination or item count. Confirmed RED against
+// pre-fix stagings.ts (tower/split/statement/repeat's n=3 cells failed with
+// the documented collision pairs); GREEN after FIX 1's geometry changes.
+describe('staging: FULL LIBRARY — 78x78 production grid x full knob cartesian x item count {1,2,3,5} x image presence (FIX 7)', () => {
+  const starter = makeStarterTemplate('t')
+  const v3ified: TemplateV3 = { ...starter, version: 3, sections: [] }
+  const masterFormat = v3ified.formats[v3ified.master]!
+  const { cols, rows } = fineGridDims(v3ified, masterFormat)
+  const PROD_CANVAS = { w: masterFormat.w, h: masterFormat.h }
+  const NEEDS_IMAGE_IDS = new Set<string>(FIELD_IDS)
+  const N_VALUES = [1, 2, 3, 5] as const
+
+  /** n items in BOTH support and fineprint (the two tiers every FIX 1 bug
+   *  actually landed in); hero/anchor stay single-item — varying them isn't
+   *  what exposed the bug class. */
+  function nTiers(n: number): Tiers {
+    return {
+      hero: [{ content: 'MAT + FEST' }],
+      anchor: [{ content: '15—26 June' }],
+      support: Array.from({ length: n }, (_, i) => ({ content: `Support item ${i}` })),
+      fineprint: Array.from({ length: n }, (_, i) => ({ content: `Fine print item ${i}` })),
+    }
+  }
+
+  /** Cartesian product of every knob's `pick` domain — every discrete value
+   *  Shuffle could ever roll for this staging, not just its default draw. */
+  function knobCombos(specs: readonly { id: string; pick: readonly unknown[] }[]): Record<string, unknown>[] {
+    return specs.reduce<Record<string, unknown>[]>((acc, spec) => {
+      const out: Record<string, unknown>[] = []
+      for (const base of acc) for (const v of spec.pick) out.push({ ...base, [spec.id]: v })
+      return out
+    }, [{}])
+  }
+
+  for (const s of STAGINGS) {
+    for (const n of N_VALUES) {
+      for (const imageLabel of ['image', 'no-image'] as const) {
+        if (imageLabel === 'no-image' && NEEDS_IMAGE_IDS.has(s.id)) continue
+        const image = imageLabel === 'image' ? IMAGE_TOKEN : undefined
+        it(`${s.id}: n=${n} support+fineprint, ${imageLabel} — every knob combo validates clean at 78x78`, () => {
+          const tiers = nTiers(n)
+          const failures: string[] = []
+          for (const knobs of knobCombos(s.knobs)) {
+            const result = s.compose({ tiers, cols, rows, canvas: PROD_CANVAS, rng: makeRng(1), knobs, image })
+            const { ok, reasons } = validateGenerated(result, cols, rows)
+            if (!ok) failures.push(`knobs=${JSON.stringify(knobs)} -> ${reasons.join(', ')}`)
+          }
+          expect(failures, failures.join('\n')).toEqual([])
         })
       }
     }

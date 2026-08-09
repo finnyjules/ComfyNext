@@ -17,7 +17,7 @@ import { applyArchetype, classifyFormat, fineGridDims, formatDims, gridDims, gri
 import { applyOverhangFlag } from '~~/shared/template-grid/editor'
 import type { Rect } from '~~/shared/template-grid/grid'
 import type { Archetype } from '~~/shared/template-grid/archetypes'
-import { generate, shuffle, surprise } from '~~/shared/template-grid/generate/generate'
+import { generate, migrateStaging, shuffle, surprise } from '~~/shared/template-grid/generate/generate'
 import { BRAND_AXIS_KEYS, getTheme, themeBrandDefaults, type BrandAxisKey } from '~~/shared/template-grid/generate/themes'
 import { appendTierItem, normalizeTiers } from '~~/shared/template-grid/generate/tiers'
 import { deriveOutputs, type ResolvedLayout } from '~~/shared/template-grid/resolve'
@@ -368,10 +368,10 @@ export function useGridEditor(
       else brandEdits.add(k)
     }
     const nextGen = { ...gen, brandEdits: brandEdits.size ? [...brandEdits] : undefined }
-    commit(generate({ ...t, gen: nextGen }, {
-      staging: nextGen.staging, theme: nextGen.theme, seed: nextGen.seed,
-      accentOnHero: nextGen.accentOnHero, ...genCtx(),
-    }))
+    // `nextGen` only differs from `gen` in `brandEdits` — staging/theme/seed/
+    // accentOnHero are unchanged, so `currentGenOpts(t)` (reading the
+    // pre-brandEdits `t.gen`) already produces the identical tuple.
+    commit(generate({ ...t, gen: nextGen }, { ...currentGenOpts(t), ...genCtx() }))
   }
 
   /** Set the document/canvas background fill (colour or CSS gradient) and/or
@@ -1145,12 +1145,31 @@ export function useGridEditor(
     return { brand: effectiveBrand.value as unknown as BrandKit, image: wired ? '{{ props.image_layer_1 }}' : undefined }
   }
 
+  /** The staging/theme/seed/accentOnHero tuple every in-place `generate()`
+   *  regeneration needs, read off the CURRENT `gen` state — one helper
+   *  instead of the same four-field literal repeated at six call sites
+   *  (MINOR #11+#14). A caller overrides just the field it's changing by
+   *  spreading this FIRST, e.g. `{ ...currentGenOpts(t), staging: id }`.
+   *  `staging` runs through `migrateStaging` as defence-in-depth — belt and
+   *  suspenders alongside `generate()`'s own `migrateGen`/`migrateStaging`
+   *  calls, in case a future call site ever reads `t.gen.staging` without
+   *  going through either. */
+  function currentGenOpts(t: TemplateV3): { staging: string; theme: string; seed: number; accentOnHero: boolean | undefined } {
+    const gen = t.gen ?? { staging: 'tower', theme: 'paper', seed: 1 }
+    return {
+      staging: migrateStaging(gen.staging ?? 'tower', genHasImage.value),
+      theme: gen.theme ?? 'paper',
+      seed: gen.seed ?? 1,
+      accentOnHero: gen.accentOnHero,
+    }
+  }
+
   function shuffleLayout() { commit(shuffle(asV3(), genCtx())) }
   function surpriseLayout() { commit(surprise(asV3(), genCtx())) }
 
   function setStaging(id: string) {
     const t = asV3()
-    commit(generate(t, { staging: id, theme: t.gen?.theme ?? 'paper', seed: t.gen?.seed ?? 1, accentOnHero: t.gen?.accentOnHero, ...genCtx() }))
+    commit(generate(t, { ...currentGenOpts(t), staging: id, ...genCtx() }))
   }
   /** Picking a theme (as opposed to Surprise rolling a new one) is adopting
    *  its whole colour system — so an explicit theme switch clears any pinned
@@ -1160,7 +1179,7 @@ export function useGridEditor(
     const t = asV3()
     const gen = t.gen ? { ...t.gen } : t.gen
     if (gen) delete gen.brandEdits
-    commit(generate({ ...t, gen }, { staging: t.gen?.staging ?? 'tower', theme: id, seed: t.gen?.seed ?? 1, accentOnHero: t.gen?.accentOnHero, ...genCtx() }))
+    commit(generate({ ...t, gen }, { ...currentGenOpts(t), theme: id, ...genCtx() }))
   }
   function toggleLock(axis: 'staging' | 'theme') {
     const t = asV3()
@@ -1175,10 +1194,7 @@ export function useGridEditor(
   function toggleAccentOnHero() {
     const t = asV3()
     const next = !(t.gen?.accentOnHero ?? false)
-    commit(generate(t, {
-      staging: t.gen?.staging ?? 'tower', theme: t.gen?.theme ?? 'paper', seed: t.gen?.seed ?? 1,
-      accentOnHero: next, ...genCtx(),
-    }))
+    commit(generate(t, { ...currentGenOpts(t), accentOnHero: next, ...genCtx() }))
   }
 
   /** Override (or, with `hex: null`, restore) one brand colour directly on the
@@ -1207,10 +1223,9 @@ export function useGridEditor(
     if (hex == null) brandEdits.delete(key)
     else brandEdits.add(key)
     const nextGen = { ...gen, brandEdits: brandEdits.size ? [...brandEdits] : undefined }
-    commit(generate({ ...t, brand, gen: nextGen }, {
-      staging: nextGen.staging, theme: nextGen.theme, seed: nextGen.seed,
-      accentOnHero: nextGen.accentOnHero, ...genCtx(),
-    }))
+    // `nextGen` only differs from `gen`/`t.gen` in `brandEdits` — same
+    // "already-identical tuple" reasoning as `setBrand` above.
+    commit(generate({ ...t, brand, gen: nextGen }, { ...currentGenOpts(t), ...genCtx() }))
   }
 
   // Read/write a single item of the tier's (normalized) list — `index`
@@ -1226,7 +1241,7 @@ export function useGridEditor(
     const nextItems = items.map((item, i) => (i === index ? { ...item, type: { ...item.type, ...patch } } : item))
     const tiers = { ...normalized, [id]: nextItems }
     // Re-generate in place so the type change is visible immediately (same tuple).
-    commit(generate({ ...t, tiers }, { staging: t.gen?.staging ?? 'tower', theme: t.gen?.theme ?? 'paper', seed: t.gen?.seed ?? 1, accentOnHero: t.gen?.accentOnHero, ...genCtx() }))
+    commit(generate({ ...t, tiers }, { ...currentGenOpts(t), ...genCtx() }))
   }
   /** Append a new item onto a tier's list (true append — earlier items are
    *  untouched, so "add another support line" no longer overwrites item 0;
@@ -1236,8 +1251,7 @@ export function useGridEditor(
     const t = asV3()
     const existing = normalizeTiers(t.tiers)[id] ?? []
     const tiers = appendTierItem(t.tiers ?? {}, id, { content: content || id.toUpperCase() })
-    const seed = t.gen?.seed ?? 1
-    commit(generate({ ...t, tiers }, { staging: t.gen?.staging ?? 'tower', theme: t.gen?.theme ?? 'paper', seed, accentOnHero: t.gen?.accentOnHero, ...genCtx() }))
+    commit(generate({ ...t, tiers }, { ...currentGenOpts(t), ...genCtx() }))
     return existing.length
   }
 

@@ -84,8 +84,15 @@ export function verifySmartLayout(t: TemplateV3): LayoutIssue[] {
     }
 
     if (el.type === 'text') {
-      // A prominent heading squeezed into a small width won't read as one.
-      if ((el.level === 'display' || el.level === 'headline') && cols > 0 && r.colSpan < cols * HEADLINE_MIN_WIDTH) {
+      // A prominent heading squeezed into a small width won't read as one —
+      // UNLESS a Smart Layout staging placed it that way on purpose (a
+      // library composer's own geometry already passed `validateGenerated`,
+      // so this heuristic re-litigating it just produces false flags: e.g.
+      // `manifesto`'s hero is INTENTIONALLY a small corner mark at
+      // `headline` level, and `corner`'s vertical hero is intentionally a
+      // narrow tall column — round-2b FIX 4).
+      if ((el.level === 'display' || el.level === 'headline') && cols > 0 && r.colSpan < cols * HEADLINE_MIN_WIDTH
+        && el.origin !== 'staging') {
         issues.push({ level: 'warn', target: el.id, message: `${label} is narrow for a ${el.level} — widen it so it reads as a headline` })
       }
       // Contrast against its backdrop (a panel/scrim if present, else the canvas).
