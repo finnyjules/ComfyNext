@@ -1049,6 +1049,9 @@ function applyHistorySnapshot(snap: string) {
   if (typeof p.panY === 'number') panY.value = p.panY
   if (typeof p.dimsKey === 'string') dimsKey.value = p.dimsKey
   if (typeof p.W === 'number' && typeof p.H === 'number') { W.value = p.W; H.value = p.H }
+  // W/H have no reactive watcher (only imperative call sites), so a restored Custom size
+  // won't reach the live engine on its own — resize it explicitly, as onCustomDims() does.
+  engine?.setSize(W.value, H.value)
   pullTextLines(); pullFills(); pullContent(); pullWordFill()
   lastSnapshot = snap
   nextTick(() => { restoringHistory = false })
