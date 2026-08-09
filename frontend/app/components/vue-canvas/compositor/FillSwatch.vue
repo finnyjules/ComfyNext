@@ -5,7 +5,7 @@
 import { ref, watch, onMounted } from 'vue'
 import { fillTileCanvas } from '~/lib/spacetype/fillTile'
 import { type Paint, isFill, isGradient, isImageFill } from '~/composables/useCompositorLayers'
-import { getFillBitmap, ensureFillBitmaps, hasFillBitmapFailed } from '~/lib/paint/imageFillCache'
+import { getFillBitmap, ensureFillBitmaps } from '~/lib/paint/imageFillCache'
 import { imageFillRect } from '~/lib/compositor/paint'
 
 const props = withDefaults(defineProps<{ paint: Paint | undefined; size?: number }>(), { size: 14 })
@@ -36,7 +36,10 @@ function draw() {
       ctx.drawImage(img, dx, dy, dw, dh)
     } else {
       ctx.fillStyle = '#333'; ctx.fillRect(0, 0, w, h)
-      if (!hasFillBitmapFailed(p.src)) ensureFillBitmaps([p.src]).then(draw)
+      // onReady fires once, only on a real decode — safe for an empty src (the
+      // fill-type-just-picked state) and a failed/in-flight one. A
+      // `.then(draw)` re-arm here infinite-loops on those and freezes the tab.
+      ensureFillBitmaps([p.src], draw)
     }
     return
   }
