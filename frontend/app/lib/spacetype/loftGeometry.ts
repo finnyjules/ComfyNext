@@ -123,7 +123,14 @@ export function resampleContour(pts: Vec2[], points: number): Vec2[] {
   return out
 }
 
-export interface LoftGeometry { positions: Float32Array; along: Float32Array; indices: Uint32Array }
+export interface LoftGeometry { positions: Float32Array; along: Float32Array; across: Float32Array; indices: Uint32Array }
+
+/** Position of a UNIT cross-section point `v` (before width/height/roll scaling) projected onto
+ *  the gradient axis (cosA,sinA), normalised to [0,1] and clamped. Drives colour-across (aAcross). */
+function acrossCoord(v: Vec2, cosA: number, sinA: number): number {
+  const p = (v.x * cosA + v.y * sinA + 1) / 2
+  return p < 0 ? 0 : p > 1 ? 1 : p
+}
 
 /** Expand a closed 2D contour (already width/height-scaled + rolled, in the station's
  *  normal/binormal plane) into inner/outer edge points offset by ±halfWidth along each
@@ -169,17 +176,22 @@ export function buildLoftGeometry(opts: {
   render: 'stroke' | 'fill'
   cap?: boolean
   strokeWidth?: number
+  gradientAngle?: number
 }): LoftGeometry {
   const { stations, props, baseContours, closed, render } = opts
   const K = stations.length
   const C = baseContours.length
   const P = C > 0 ? baseContours[0]!.length : 0
   const strokeWidth = opts.strokeWidth ?? 0
+  const gradientAngle = opts.gradientAngle ?? 90
+  const aRad = gradientAngle * Math.PI / 180
+  const cosA = Math.cos(aRad), sinA = Math.sin(aRad)
 
   if (render === 'stroke' && strokeWidth > 0) {
     // Ribbon: 2 vertices (inner, outer) per contour point per ring.
     const positions = new Float32Array(K * C * P * 2 * 3)
     const along = new Float32Array(K * C * P * 2)
+    const across = new Float32Array(K * C * P * 2)
     const ridx = (i: number, c: number, p: number, side: 0 | 1) => (((i * C + c) * P + p) * 2 + side)
     const halfWidth = strokeWidth / 2
     for (let i = 0; i < K; i++) {
@@ -190,12 +202,14 @@ export function buildLoftGeometry(opts: {
         const pts2d = contour.map(v => rolledPoint2D(v, pr, cr, sr))
         const edges = ribbonEdges(pts2d, halfWidth)   // [inner0, outer0, inner1, outer1, ...]
         for (let p = 0; p < P; p++) {
+          const v = contour[p]!    // original UNIT contour point (pre width/height/roll)
           const inner = edges[p * 2]!, outer = edges[p * 2 + 1]!
           const wIn = place2D(st, inner), wOut = place2D(st, outer)
           const oi = ridx(i, c, p, 0), oo = ridx(i, c, p, 1)
           positions[oi * 3] = wIn.x; positions[oi * 3 + 1] = wIn.y; positions[oi * 3 + 2] = wIn.z
           positions[oo * 3] = wOut.x; positions[oo * 3 + 1] = wOut.y; positions[oo * 3 + 2] = wOut.z
           along[oi] = st.t; along[oo] = st.t
+          across[oi] = acrossCoord(v, cosA, sinA); across[oo] = acrossCoord(v, cosA, sinA)
         }
       }
     }
@@ -210,11 +224,12 @@ export function buildLoftGeometry(opts: {
         }
       }
     }
-    return { positions, along, indices: new Uint32Array(indices) }
+    return { positions, along, across, indices: new Uint32Array(indices) }
   }
 
   const positions = new Float32Array(K * C * P * 3)
   const along = new Float32Array(K * C * P)
+  const across = new Float32Array(K * C * P)
   const idx = (i: number, c: number, p: number) => (i * C + c) * P + p
 
   for (let i = 0; i < K; i++) {
@@ -229,6 +244,7 @@ export function buildLoftGeometry(opts: {
         const o = idx(i, c, p)
         positions[o * 3] = w.x; positions[o * 3 + 1] = w.y; positions[o * 3 + 2] = w.z
         along[o] = st.t
+        across[o] = acrossCoord(v, cosA, sinA)
       }
     }
   }
@@ -262,13 +278,13 @@ export function buildLoftGeometry(opts: {
   // solid, not a hollow tube — closed loops have no ends to cap.
   if (render === 'fill' && opts.cap && !closed) {
     const capStations = [0, K - 1]
-    const extraPos: number[] = [], extraAlong: number[] = []
+    const extraPos: number[] = [], extraAlong: number[] = [], extraAcross: number[] = []
     let capVo = K * C * P                       // next vertex index after the grid
     for (const i of capStations) {
       const st = stations[i]!
       for (let c = 0; c < C; c++) {
         const cIdx = capVo++
-        extraPos.push(st.pos.x, st.pos.y, st.pos.z); extraAlong.push(st.t)
+        extraPos.push(st.pos.x, st.pos.y, st.pos.z); extraAlong.push(st.t); extraAcross.push(0.5)
         for (let p = 0; p < P; p++) { const np = (p + 1) % P; indices.push(cIdx, idx(i, c, p), idx(i, c, np)) }
       }
     }
@@ -277,10 +293,12 @@ export function buildLoftGeometry(opts: {
       mergedPos.set(positions); mergedPos.set(extraPos, positions.length)
       const mergedAlong = new Float32Array(along.length + extraAlong.length)
       mergedAlong.set(along); mergedAlong.set(extraAlong, along.length)
-      return { positions: mergedPos, along: mergedAlong, indices: new Uint32Array(indices) }
+      const mergedAcross = new Float32Array(across.length + extraAcross.length)
+      mergedAcross.set(across); mergedAcross.set(extraAcross, across.length)
+      return { positions: mergedPos, along: mergedAlong, across: mergedAcross, indices: new Uint32Array(indices) }
     }
   }
-  return { positions, along, indices: new Uint32Array(indices) }
+  return { positions, along, across, indices: new Uint32Array(indices) }
 }
 
 export type LoftShape = 'oval' | 'capsule' | 'rectangle' | 'polygon' | 'star'
@@ -338,7 +356,7 @@ export function shapeContour(shape: LoftShape, params: ShapeParams, points: numb
 export function buildSlicedLoftGeometry(opts: {
   stations: Station[]; props: StopProps[]; baseContours: Vec2[][]
   closed: boolean; render: 'stroke' | 'fill'; elements: number; spacing: number
-  cap?: boolean; strokeWidth?: number
+  cap?: boolean; strokeWidth?: number; gradientAngle?: number
 }): LoftGeometry {
   const { stations, props, baseContours, render, elements, spacing } = opts
   const K = stations.length
@@ -348,6 +366,9 @@ export function buildSlicedLoftGeometry(opts: {
   const gap = Math.min(0.95, Math.max(0, spacing))
   const half = 0.5 * (1 - gap) / E
   const strokeWidth = opts.strokeWidth ?? 0
+  const gradientAngle = opts.gradientAngle ?? 90
+  const aRad = gradientAngle * Math.PI / 180
+  const cosA = Math.cos(aRad), sinA = Math.sin(aRad)
   // Interpolate (not round) so two rings whose t's straddle a single station index still land at
   // distinct 3D positions — rounding collapses a band to zero thickness once `elements` reaches
   // the station count (K), since both t's then round to the same nearest station.
@@ -375,6 +396,7 @@ export function buildSlicedLoftGeometry(opts: {
     const halfWidth = strokeWidth / 2
     const positions = new Float32Array(E * C * P * 2 * 3)
     const along = new Float32Array(E * C * P * 2)
+    const across = new Float32Array(E * C * P * 2)
     const ridx = (band: number, c: number, p: number, side: 0 | 1) => (((band * C + c) * P + p) * 2 + side)
     for (let i = 0; i < E; i++) {
       const tc = (i + 0.5) / E
@@ -384,12 +406,14 @@ export function buildSlicedLoftGeometry(opts: {
         const pts2d = baseContours[c]!.map(v => rolledPoint2D(v, pr, cr, sr))
         const edges = ribbonEdges(pts2d, halfWidth)
         for (let p = 0; p < P; p++) {
+          const v = baseContours[c]![p]!    // original UNIT contour point (pre width/height/roll)
           const inner = edges[p * 2]!, outer = edges[p * 2 + 1]!
           const wIn = place2D(st, inner), wOut = place2D(st, outer)
           const oi = ridx(i, c, p, 0), oo = ridx(i, c, p, 1)
           positions[oi * 3] = wIn.x; positions[oi * 3 + 1] = wIn.y; positions[oi * 3 + 2] = wIn.z
           positions[oo * 3] = wOut.x; positions[oo * 3 + 1] = wOut.y; positions[oo * 3 + 2] = wOut.z
           along[oi] = tc; along[oo] = tc
+          across[oi] = acrossCoord(v, cosA, sinA); across[oo] = acrossCoord(v, cosA, sinA)
         }
       }
     }
@@ -399,13 +423,14 @@ export function buildSlicedLoftGeometry(opts: {
       const a = ridx(i, c, p, 0), b = ridx(i, c, p, 1), d = ridx(i, c, np, 0), e = ridx(i, c, np, 1)
       indices.push(a, b, e, a, e, d)
     }
-    return { positions, along, indices: new Uint32Array(indices) }
+    return { positions, along, across, indices: new Uint32Array(indices) }
   }
 
   const ringsPerBand = render === 'fill' ? 2 : 1
   const nVerts = E * ringsPerBand * C * P
   const positions = new Float32Array(nVerts * 3)
   const along = new Float32Array(nVerts)
+  const across = new Float32Array(nVerts)
   let vo = 0
   for (let i = 0; i < E; i++) {
     const tc = (i + 0.5) / E
@@ -419,6 +444,7 @@ export function buildSlicedLoftGeometry(opts: {
         const w = place2D(st, q)
         positions[vo*3] = w.x; positions[vo*3+1] = w.y; positions[vo*3+2] = w.z
         along[vo] = tc
+        across[vo] = acrossCoord(v, cosA, sinA)
         vo++
       }
     }
@@ -441,7 +467,7 @@ export function buildSlicedLoftGeometry(opts: {
   // Cap BOTH rings of every band with a centroid-fan disc so each slice reads as a solid puck,
   // not a hollow ring — every band has two open ends (it's a short skinned tube segment).
   if (render === 'fill' && opts.cap) {
-    const extraPos: number[] = [], extraAlong: number[] = []
+    const extraPos: number[] = [], extraAlong: number[] = [], extraAcross: number[] = []
     let capVo = nVerts                          // next index after the band grid
     for (let i = 0; i < E; i++) {
       const tc = (i + 0.5) / E
@@ -450,7 +476,7 @@ export function buildSlicedLoftGeometry(opts: {
         const st = stationAt(ts[ring]!)         // interpolated station (same helper the rings use)
         for (let c = 0; c < C; c++) {
           const cIdx = capVo++
-          extraPos.push(st.pos.x, st.pos.y, st.pos.z); extraAlong.push(tc)
+          extraPos.push(st.pos.x, st.pos.y, st.pos.z); extraAlong.push(tc); extraAcross.push(0.5)
           for (let p = 0; p < P; p++) { const np = (p + 1) % P; indices.push(cIdx, idx(i, ring, c, p), idx(i, ring, c, np)) }
         }
       }
@@ -458,10 +484,11 @@ export function buildSlicedLoftGeometry(opts: {
     if (extraPos.length) {
       const mp = new Float32Array(positions.length + extraPos.length); mp.set(positions); mp.set(extraPos, positions.length)
       const ma = new Float32Array(along.length + extraAlong.length); ma.set(along); ma.set(extraAlong, along.length)
-      return { positions: mp, along: ma, indices: new Uint32Array(indices) }
+      const mc = new Float32Array(across.length + extraAcross.length); mc.set(across); mc.set(extraAcross, across.length)
+      return { positions: mp, along: ma, across: mc, indices: new Uint32Array(indices) }
     }
   }
-  return { positions, along, indices: new Uint32Array(indices) }
+  return { positions, along, across, indices: new Uint32Array(indices) }
 }
 
 function hexToRgbTuple(hex: string): [number, number, number] {

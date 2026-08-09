@@ -256,3 +256,37 @@ describe('stroke ribbons (width)', () => {
     expect(g.indices.length).toBe(8 * 1 * P * 2)             // line-segment pairs
   })
 })
+
+describe('aAcross coordinate', () => {
+  const P = 12
+  const stopsFix = [
+    { id:'a', x:0, y:0.5, z:0, width:1, height:1, roll:0, color:'#000000' },
+    { id:'b', x:1, y:0.5, z:0, width:1, height:1, roll:0, color:'#ffffff' },
+  ]
+  const contour = shapeContour('oval', { rectRadius:0.5, polySides:5, starDepth:0.5 }, P)
+  const st = sampleSpine(stopsFix as any, false, 8)
+  const props = st.map(() => ({ width:1, height:1, roll:0 }))
+
+  it('across is present, same length as along, all in [0,1]', () => {
+    const g = buildLoftGeometry({ stations: st, props, baseContours:[contour], closed:false, render:'fill', gradientAngle:90 })
+    expect(g.across.length).toBe(g.along.length)
+    for (const a of g.across) { expect(a).toBeGreaterThanOrEqual(0); expect(a).toBeLessThanOrEqual(1) }
+  })
+  it('angle 90 (vertical): the top contour point → ~1, bottom → ~0', () => {
+    // oval point 0 is at angle 0 = (+1,0); the y-extremes are at p≈P/4 and p≈3P/4
+    const g = buildLoftGeometry({ stations: st, props, baseContours:[contour], closed:false, render:'fill', gradientAngle:90 })
+    // gather across for the first ring's P points
+    const ring0 = Array.from(g.across.slice(0, P))
+    expect(Math.max(...ring0)).toBeGreaterThan(0.9)   // top of oval → ~1
+    expect(Math.min(...ring0)).toBeLessThan(0.1)      // bottom → ~0
+  })
+  it('sliced fill caps: centroid across = 0.5', () => {
+    const s2 = sampleSpine(stopsFix as any, false, 200)
+    const p2 = s2.map(() => ({ width:1, height:1, roll:0 }))
+    const g = buildSlicedLoftGeometry({ stations: s2, props: p2, baseContours:[contour], closed:false, render:'fill', elements:4, spacing:0.4, cap:true, gradientAngle:90 })
+    // the last 4*2 vertices are cap centroids (2 per band, 4 bands) — but count precisely:
+    // grid = 4 bands * 2 rings * 1 contour * P; caps appended after → each centroid across = 0.5
+    const gridVerts = 4 * 2 * 1 * P
+    for (let i = gridVerts; i < g.across.length; i++) expect(g.across[i]).toBeCloseTo(0.5)
+  })
+})
