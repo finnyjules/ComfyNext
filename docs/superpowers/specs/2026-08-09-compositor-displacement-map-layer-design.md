@@ -85,7 +85,7 @@ Absent = ordinary image layer.
 ```ts
 export interface DisplaceMapSpec {
   read: 'height' | 'channels'   // default 'height'
-  amount: number                // max push in device px; range 0–200, default 40
+  amount: number                // max push in SCREEN px (dpr-invariant); range 0–200, default 40
   invert?: boolean              // height mode: flip high/low; default false
   softness?: number             // blur the field before warping (smooths jaggies); px, default 2
 }
