@@ -137,23 +137,72 @@ export function parseGoogleFontValue(value: string): { family: string; weight?: 
 /** A local path passes through untouched; a `google:` value hits our proxy. */
 export function fontSourceUrl(value: string): string {
   const parsed = parseGoogleFontValue(value)
-  if (!parsed) return value
-  // css2 convention (matched server-side): spaces become `+`, not %20 — but
-  // percent-encode everything else first so an arbitrary family string (e.g.
-  // containing `&` or `#`) can't inject extra query params.
-  const familyParam = encodeURIComponent(parsed.family).replace(/%20/g, '+')
-  const weightParam = parsed.weight !== undefined ? `&weight=${parsed.weight}` : ''
-  return `/api/scene3d/google-font-file?family=${familyParam}${weightParam}`
+  if (parsed) {
+    // css2 convention (matched server-side): spaces become `+`, not %20 — but
+    // percent-encode everything else first so an arbitrary family string (e.g.
+    // containing `&` or `#`) can't inject extra query params.
+    const familyParam = encodeURIComponent(parsed.family).replace(/%20/g, '+')
+    const weightParam = parsed.weight !== undefined ? `&weight=${parsed.weight}` : ''
+    return `/api/scene3d/google-font-file?family=${familyParam}${weightParam}`
+  }
+  const local = parseLibraryFontValue(value)
+  if (local) {
+    const id = libraryFaceResolver?.(local.family, local.weight, local.italic)
+    if (id) return `/api/library-font/${encodeURIComponent(id)}`
+    return value // catalog not ready / unknown — let the fetch fail and fall back
+  }
+  return value
 }
 
 /** Human-readable label for a font value, for UI display. */
 export function fontDisplayName(value: string): string {
   const parsed = parseGoogleFontValue(value)
   if (parsed) return parsed.family
+  const local = parseLibraryFontValue(value)
+  if (local) return local.family
   const known = AVAILABLE_FONTS.find((f) => f.url === value)
   if (known) return known.label
   // Unrecognised local url: fall back to the filename rather than the full path.
   return value.split('/').pop() || value
+}
+
+// ---------------------------------------------------------------------------
+// Library fonts scheme
+//
+// `local:Family` / `local:Family@weight` / `local:Family@weightI` — the local
+// licensed library. Like `google:`, the token never hits the network directly:
+// a resolver installed by app/data/library-fonts.ts maps (family, weight,
+// italic) to a stable face id, which fontSourceUrl turns into a call against
+// /api/library-font/<id>. Kept as an injected resolver so this module stays
+// free of the manifest import (and out of the embed bundle's network checks).
+// ---------------------------------------------------------------------------
+
+const LOCAL_PREFIX = 'local:'
+
+type LibraryFaceResolver = (family: string, weight: number | undefined, italic: boolean | undefined) => string | null
+let libraryFaceResolver: LibraryFaceResolver | null = null
+
+/** Install the (family,weight,italic) → faceId resolver. */
+export function setLibraryFaceResolver(fn: LibraryFaceResolver | null): void {
+  libraryFaceResolver = fn
+}
+
+/** Split a `local:Family` / `local:Family@700` / `local:Family@700i` value. */
+export function parseLibraryFontValue(value: string): { family: string; weight?: number; italic?: boolean } | null {
+  if (!value.startsWith(LOCAL_PREFIX)) return null
+  const rest = value.slice(LOCAL_PREFIX.length)
+  const at = rest.indexOf('@')
+  const family = (at === -1 ? rest : rest.slice(0, at)).trim()
+  if (!family) return null
+  if (at === -1) return { family }
+  let spec = rest.slice(at + 1).trim()
+  let italic: boolean | undefined
+  if (/i$/i.test(spec)) { italic = true; spec = spec.slice(0, -1) }
+  const weight = spec === '' ? NaN : Number(spec)
+  const out: { family: string; weight?: number; italic?: boolean } = { family }
+  if (Number.isFinite(weight)) out.weight = Math.round(weight)
+  if (italic) out.italic = true
+  return out
 }
 
 // ---------------------------------------------------------------------------

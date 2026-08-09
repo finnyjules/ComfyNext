@@ -91,7 +91,7 @@ void main() {
 export function outlineFontValue(font: string | undefined): string {
   const v = String(font ?? '').trim()
   if (!v) return 'google:Archivo Black@700'
-  if (v.startsWith('google:') || v.includes('/')) return v
+  if (v.startsWith('google:') || v.startsWith('local:') || v.includes('/')) return v
   return 'google:' + v
 }
 
