@@ -218,6 +218,11 @@ export function buildLoftGeometry(opts: {
   strokeWidth?: number
   gradientAngle?: number
   capAngle?: number
+  // Flat "stacked circles": render each station as its OWN flat filled disc (a camera-facing
+  // centroid-fan), layered front-to-back by `stackDepth` — instead of a hollow swept tube whose
+  // near/far walls collapse into one plane and z-fight. Used for flat + fill.
+  stackDiscs?: boolean
+  stackDepth?: number
 }): LoftGeometry {
   const { stations, props, baseContours, closed, render } = opts
   const K = stations.length
@@ -263,6 +268,43 @@ export function buildLoftGeometry(opts: {
           // quad (inner_k, outer_k, outer_{k+1}, inner_{k+1}) → two triangles
           indices.push(a, b, e, a, e, d)
         }
+      }
+    }
+    return { positions, along, across, indices: new Uint32Array(indices) }
+  }
+
+  if (render === 'fill' && opts.stackDiscs) {
+    // Stacked flat circles: one camera-facing centroid-fan disc per station, layered in depth by
+    // `stackDepth` (centered on z=0 so the stack stays roughly head-on) so overlapping discs
+    // occlude cleanly via the depth buffer instead of z-fighting. Each disc is a SINGLE flat
+    // surface — no near/far-wall doubling — so the marbling of the collapsed tube can't occur.
+    const depth = opts.stackDepth ?? 0
+    const per = P + 1                                   // P ring verts + 1 centroid, per (station, contour)
+    const N = K * C * per
+    const positions = new Float32Array(N * 3)
+    const along = new Float32Array(N)
+    const across = new Float32Array(N)
+    const indices: number[] = []
+    for (let i = 0; i < K; i++) {
+      const st = stations[i]!, pr = props[i]!
+      const cr = Math.cos((pr.roll * Math.PI) / 180), sr = Math.sin((pr.roll * Math.PI) / 180)
+      const zoff = K > 1 ? (i / (K - 1) - 0.5) * depth : 0
+      for (let c = 0; c < C; c++) {
+        const contour = baseContours[c]!
+        const base = (i * C + c) * per
+        for (let p = 0; p < P; p++) {
+          const v = contour[p]!
+          const w = place2D(st, rolledPoint2D(v, pr, cr, sr))
+          const o = base + p
+          positions[o * 3] = w.x; positions[o * 3 + 1] = w.y; positions[o * 3 + 2] = w.z + zoff
+          along[o] = st.t
+          across[o] = acrossCoord(v, cosA, sinA)
+        }
+        const cIdx = base + P                            // disc centre
+        positions[cIdx * 3] = st.pos.x; positions[cIdx * 3 + 1] = st.pos.y; positions[cIdx * 3 + 2] = st.pos.z + zoff
+        along[cIdx] = st.t
+        across[cIdx] = 0.5
+        for (let p = 0; p < P; p++) { const np = (p + 1) % P; indices.push(cIdx, base + p, base + np) }
       }
     }
     return { positions, along, across, indices: new Uint32Array(indices) }

@@ -87,6 +87,51 @@ describe('sampleSpine faceCamera (flat mode)', () => {
   })
 })
 
+describe('buildLoftGeometry stacked discs (flat fill)', () => {
+  const stations = sampleSpine(
+    [
+      { id: 'a', x: 0.3, y: 0.5, z: 0, width: 1, height: 1, roll: 0, color: '#000000' },
+      { id: 'b', x: 0.7, y: 0.5, z: 0, width: 1, height: 1, roll: 0, color: '#000000' },
+    ] as LoftStop[], false, 6, true,   // faceCamera → flat frame
+  )
+  const K = stations.length
+  const props = stations.map(() => ({ width: 1, height: 1, roll: 0, rectRadius: 0, polySides: 6, starDepth: 0.5 } as any))
+  const circle = shapeContour('circle', { rectRadius: 0, polySides: 6, starDepth: 0.5 }, 24)
+  const build = (stackDepth: number) => buildLoftGeometry({
+    stations, props, baseContours: [circle], closed: false, render: 'fill', cap: true, stackDiscs: true, stackDepth,
+  })
+
+  it('emits one centroid-fan disc per station (P triangles each), not a tube wall', () => {
+    const g = build(0.8)
+    const P = circle.length
+    // K discs × P fan triangles × 3 indices; K × (P+1) vertices.
+    expect(g.indices.length).toBe(K * P * 3)
+    expect(g.positions.length).toBe(K * (P + 1) * 3)
+  })
+  it('layers the discs in depth (distinct z per station, centered on 0)', () => {
+    const g = build(1.0)
+    const P = circle.length
+    const centreZ = (i: number) => g.positions[((i * 1 + 0) * (P + 1) + P) * 3 + 2]!   // C=1
+    const zs = Array.from({ length: K }, (_, i) => centreZ(i))
+    expect(new Set(zs.map(z => z.toFixed(4))).size).toBe(K)                 // all distinct
+    expect(zs[0]! + zs[K - 1]!).toBeCloseTo(0, 5)                           // centered on z=0
+    expect(Math.max(...zs) - Math.min(...zs)).toBeCloseTo(1.0, 5)          // spans stackDepth
+  })
+  it('stackDepth 0 collapses to a single plane (all discs coplanar)', () => {
+    const g = build(0)
+    for (let k = 0; k < g.positions.length; k += 3) expect(g.positions[k + 2]).toBeCloseTo(0, 6)
+  })
+  it('every disc carries a full across-gradient (0..1) with a 0.5 centre', () => {
+    const g = build(0.8)
+    const P = circle.length
+    // First disc's ring across spans the gradient; its centre is 0.5.
+    const ring = Array.from({ length: P }, (_, p) => g.across[p]!)
+    expect(Math.min(...ring)).toBeLessThan(0.1)
+    expect(Math.max(...ring)).toBeGreaterThan(0.9)
+    expect(g.across[P]).toBeCloseTo(0.5, 6)
+  })
+})
+
 describe('interpStopProps', () => {
   it('interpolates width monotonically end to end', () => {
     expect(interpStopProps(stops, 0).width).toBeCloseTo(1)
