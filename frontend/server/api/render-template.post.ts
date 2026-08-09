@@ -21,6 +21,7 @@ import { inlineTreeImages } from '~~/server/templates/inlineImages'
 import { templateToSatori } from '~~/server/templates/translate'
 import { TEMPLATE_FONTS } from '~~/shared/template-fonts'
 import { resolveTokens } from '~~/shared/template-grid/tokens'
+import { resolveLibraryFaceByFamily } from '~~/server/utils/libraryFontManifest'
 
 interface LoadedFont {
   name: string
@@ -74,6 +75,27 @@ async function loadUploadedFonts(): Promise<LoadedFont[]> {
         bytesByFile.set(file, data)
       }
       out.push({ name: fam.family, data, weight: Number(weight) as 400 | 700, style: 'normal' })
+    }
+  }
+  return out
+}
+
+// Pangram/Off-Type library families: resolve straight from the committed
+// manifest to an on-disk OTF (no network). Checked before Google so a
+// library family is never also attempted as a Google family (which would
+// 404 — the manifest's family names aren't Google families).
+async function loadLibraryFonts(families: string[]): Promise<LoadedFont[]> {
+  const out: LoadedFont[] = []
+  for (const family of families) {
+    for (const weight of [400, 700] as const) {
+      const face = resolveLibraryFaceByFamily(family, weight, false)
+      if (!face) continue
+      try {
+        const buf = await readFile(face.path)
+        out.push({ name: family, data: toArrayBuffer(buf), weight, style: 'normal' })
+      } catch {
+        // File missing on disk despite manifest entry — skip this weight.
+      }
     }
   }
   return out
@@ -139,15 +161,19 @@ function collectFamilies(template: unknown, brand: Record<string, unknown>): str
 
 async function loadFonts(template: unknown, brand: Record<string, unknown>): Promise<LoadedFont[]> {
   const merged = { ...((template as any)?.brand ?? {}), ...brand }
-  // Tiers: curated → uploaded → Google. Google fills only families in neither
-  // local set, so an uploaded family wins a name collision with a Google one.
+  // Tiers: curated → uploaded → library → Google. Google fills only families
+  // in none of the local sets, so a library (or uploaded) family wins a name
+  // collision with a Google one, and is never ALSO attempted as Google.
   const curated = await loadCuratedFonts()
   const uploaded = await loadUploadedFonts()
-  const localNames = new Set([...curated, ...uploaded].map(f => f.name))
+  const referenced = collectFamilies(template, merged)
+  const library = await loadLibraryFonts(referenced.filter(n =>
+    !curated.some(f => f.name === n) && !uploaded.some(f => f.name === n)))
+  const localNames = new Set([...curated, ...uploaded, ...library].map(f => f.name))
   const extra = (await Promise.all(
-    collectFamilies(template, merged).filter(n => !localNames.has(n)).map(loadGoogleFamily),
+    referenced.filter(n => !localNames.has(n)).map(loadGoogleFamily),
   )).flat()
-  return [...curated, ...uploaded, ...extra]
+  return [...curated, ...uploaded, ...library, ...extra]
 }
 
 export default defineEventHandler(async (event) => {

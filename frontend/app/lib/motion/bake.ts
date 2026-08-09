@@ -4,12 +4,13 @@
  * existing /upload/image batch helper, and produce the motion_params payload
  * the Compositor backend node consumes.
  */
-import type { LocalLayer, StackItem } from '~/composables/useCompositorLayers'
+import type { LocalLayer, TextLayer, StackItem } from '~/composables/useCompositorLayers'
 import {
   paintLayerStack, ensureLayerFonts, ensureLayerImages,
 } from '~/composables/useCompositorLayers'
 import './paint' // ensure the motion painter is registered
 import { uploadFrameBatch } from '~/lib/studio/frameUpload'
+import { useLibraryFonts } from '~/composables/useLibraryFonts'
 import type { FrameMotion } from './types'
 
 /**
@@ -52,6 +53,7 @@ export async function bakeMotionFrames(
   // before the stack is painted.
   prepareFrame?: (t: number) => Promise<void>,
 ): Promise<Blob[]> {
+  for (const l of localLayers) if (l.kind === 'text') useLibraryFonts().ensure((l as TextLayer).fontFamily)
   await ensureLayerFonts(localLayers, W)
   await ensureLayerImages(localLayers)
   // Snapshot the stack and layer list ONCE — buildItems() and localLayers

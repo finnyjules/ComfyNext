@@ -29,3 +29,27 @@ export function resolveLibraryFontPath(id: string, fontsRoot: string): string | 
 export function libraryFontsRoot(): string {
   return process.env.SAILOR_FONTS_ROOT || resolve(process.cwd(), '..', m.fontsRoot)
 }
+
+/**
+ * Resolve a family (+ optional weight/italic) to an on-disk OTF path via the
+ * manifest. Server-side mirror of the client's `resolveLibraryFace` (same
+ * nearest-weight-honouring-slant logic in app/data/library-fonts.ts) — used
+ * by the satori template renderer so library families don't fall through to
+ * a Google-fonts lookup that 404s.
+ */
+export function resolveLibraryFaceByFamily(
+  family: string,
+  weight = 400,
+  italic = false,
+  fontsRoot = libraryFontsRoot(),
+): { path: string; weight: number; italic: boolean } | null {
+  const fam = m.families.find(f => f.family === family)
+  if (!fam || !fam.faces.length) return null
+  const slant = fam.faces.filter(f => f.italic === italic)
+  const pool = slant.length ? slant : fam.faces
+  const face = pool.reduce((best, f) =>
+    Math.abs(f.weight - weight) < Math.abs(best.weight - weight) ? f : best, pool[0]!)
+  const path = resolveLibraryFontPath(face.id, fontsRoot)
+  if (!path) return null
+  return { path, weight: face.weight, italic: face.italic }
+}

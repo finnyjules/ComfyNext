@@ -7,6 +7,7 @@ import {
 import { getTypeColor } from '~/composables/useVueNodes'
 import { useLocalLayerEditor } from '~/composables/useLocalLayerEditor'
 import { type LocalLayer, type TextLayer, type StackItem, drawWiredImageLayer, ensureLayerFonts, ensureLayerImages, paintLayerStack, hasAnimatedShaderFill } from '~/composables/useCompositorLayers'
+import { libraryFamily } from '~/data/library-fonts'
 import { paintPrimaryColor } from '~/lib/spacetype/fillTile'
 import { readWiredTreatments } from '~/composables/useWiredTreatments'
 import type { Cloner } from '~/composables/useCloner'
@@ -584,7 +585,11 @@ watch(
     JSON.stringify(editor.localGroups.value),
   ] as const,
   async () => {
-    for (const l of editor.localLayers.value) if (l.kind === 'text') ensureGoogleFont((l as TextLayer).fontFamily)
+    for (const l of editor.localLayers.value) if (l.kind === 'text') {
+      const fam = (l as TextLayer).fontFamily
+      if (libraryFamily(fam)) useLibraryFonts().ensure(fam)
+      else ensureGoogleFont(fam)
+    }
     await ensureLayerFonts(editor.localLayers.value, box.value.w)
     await ensureLayerImages(editor.localLayers.value)
     renderStack()
