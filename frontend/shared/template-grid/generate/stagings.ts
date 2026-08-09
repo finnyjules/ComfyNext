@@ -198,7 +198,22 @@ function dramaticType(knobs: Record<string, unknown>, canvas: { w: number; h: nu
   const smallFontSize = Math.round(SMALL_TEXT_SCALE * canvas.h)
   return {
     hero: { fontSize: heroFontSize, lineHeight: 0.92, letterSpacing: -Math.round(0.03 * heroFontSize) },
-    anchor: { fontSize: anchorFontSize, letterSpacing: -Math.round(0.02 * anchorFontSize) },
+    // `lineHeight: 0.92` (round-2b clip-fix): matches hero's own tight,
+    // poster-set line height — the doc comment above already promised
+    // anchor "tracks proportionally underneath it (tight setting)" but the
+    // returned object never actually carried a `lineHeight`, silently
+    // falling back to the generic 1.1 default everywhere it's consumed
+    // (`resolve.ts`'s `fitText` AND `translate.ts`'s render both read
+    // `el.style?.lineHeight ?? 1.1`). At heroScale's new 0.22 ceiling a
+    // 15-char date (`'15—26 June 2022'`) wraps to 2 lines in `statement`'s
+    // full-width band — the fit math required `2 × 143 × 1.1 ≈ 315px` but
+    // only ~263px of band was available, clipping the first line's
+    // ascenders clean off the top (a bottom-`valign` box grows its excess
+    // UPWARD, out of `overflow:hidden`). At the INTENDED 0.92 the same 2
+    // lines need `2 × 143 × 0.92 ≈ 263px` — matching the available band to
+    // within a pixel. Fixing the omission benefits every staging's anchor
+    // (all read `...drama.anchor`), not just statement.
+    anchor: { fontSize: anchorFontSize, lineHeight: 0.92, letterSpacing: -Math.round(0.02 * anchorFontSize) },
     // No `letterSpacing` override — "normal tracking" per the spec, and
     // omitting it (rather than stamping an explicit 0) renders byte-identical
     // (`letterSpacing != null ? px : 'normal'` in both render surfaces) while
@@ -638,27 +653,44 @@ const statement: Staging = {
     // text grows upward out of a too-short box).
     const fineBaseRow = fine.length ? Math.max(1, rows - Math.ceil(fine.length / 2) * fineStep + 1) : rows + 1
 
-    // Anchor's top edge (round-2b-drama): hoisted above BOTH the anchor and
-    // support blocks — support's own compact growth (below) needs this same
-    // ceiling to stay clear of the anchor slab, the same reason fine print's
-    // zone was hoisted above the anchor.
-    const anchorTop = Math.max(1, Math.round(0.74 * rows) + 1)
+    // Anchor's top edge (round-2b-drama, widened again round-2b-clip-fix):
+    // hoisted above BOTH the anchor and support blocks — support's own
+    // compact growth (below) needs this same ceiling to stay clear of the
+    // anchor slab, the same reason fine print's zone was hoisted above the
+    // anchor. 0.74 → 0.72: support's own row band (`rowBand(0.58, 0.72,
+    // rows)` below) already ends at 0.72 — moving the anchor's ceiling down
+    // to meet it exactly (rather than leaving a spare ~2% gap) recovers a
+    // couple more rows of height for the anchor slab with no collision
+    // (`supportHeadroom` below already clamps support's own growth against
+    // whatever `anchorTop` resolves to, so support never has to shrink for
+    // this).
+    const anchorTop = Math.max(1, Math.round(0.72 * rows) + 1)
 
     const anchor = items('anchor')
     if (anchor.length) {
-      // Row band widened 0.80-0.92 → 0.74-.. (round-2b-drama): a huge
-      // full-width date slab still needs HEIGHT, not just width — at the
-      // new heroScale ceiling (0.22) a 15-char date can wrap to 2 lines
-      // (`anchorFontSize` ≈143px at 1440), and the old 12%-of-canvas band
-      // (~168px) only fit about half of that (~315px needed), clipping the
-      // wrapped line's top clean off (bottom-`valign` keeps the LAST line
-      // pinned to the box's bottom edge and lets the excess grow upward,
-      // out of the box). Reaches for a generous 24% (~346px at 1440) but
-      // stops one row above fine print's own (item-count-dependent) zone
-      // rather than a fixed 0.98 — a static bottom bound collided with fine
-      // print's bottom-anchored cells once fine print's zone grew past 2
-      // items (`fineBaseRow` above).
-      const anchorBottomWant = Math.round(0.98 * rows)
+      // Row band widened 0.80-0.92 → 0.74-.. (round-2b-drama) → 0.72-..
+      // (round-2b-clip-fix): a huge full-width date slab still needs
+      // HEIGHT, not just width — at the new heroScale ceiling (0.22) a
+      // 15-char date can wrap to 2 lines (`anchorFontSize` ≈143px at 1440).
+      // The 0.74 band (~263px) turned out to be sized almost EXACTLY for 2
+      // lines at the anchor's INTENDED tight `lineHeight:0.92` (2×143×0.92
+      // ≈263px) — but `dramaticType`'s `anchor` was missing that
+      // `lineHeight` override (see its own comment), so the fit math
+      // actually ran at the generic 1.1 default (2×143×1.1 ≈315px),
+      // clipping the wrapped line's top clean off (bottom-`valign` keeps
+      // the LAST line pinned to the box's bottom edge and lets the excess
+      // grow upward, out of the box). With that omission now fixed, 0.74
+      // already fits with ~0.1px to spare — too tight to trust across real
+      // satori rendering variance, so this pass ALSO reclaims the ~2% of
+      // headroom up to support's real band edge (0.72, see `anchorTop`
+      // above) as a safety margin, plus widens the bottom target 0.98 →
+      // 0.94 — a static bottom bound collided with fine print's
+      // bottom-anchored cells once fine print's zone grew past 2 items
+      // (`fineBaseRow` above), so the bottom edge still stops one row above
+      // fine print's own (item-count-dependent) zone regardless of this
+      // fraction; 0.94 just makes that the common case instead of the edge
+      // case.
+      const anchorBottomWant = Math.round(0.94 * rows)
       const anchorBottom = Math.max(anchorTop, Math.min(anchorBottomWant, fineBaseRow - 1))
       const anchorRows = { row: anchorTop, rowSpan: anchorBottom - anchorTop + 1 }
       // Full width (round-2b-drama): was `colBand(0, 0.6, cols)` — the

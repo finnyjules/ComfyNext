@@ -470,6 +470,66 @@ describe('staging: statement anchor never truncates (resolver-level, 1080×1440 
   }
 })
 
+/** Round-2b-clip-fix regression: the previous block's fixture resolves
+ *  against a SQUARE master (the starter's default `1x1`), so
+ *  `dramaticType`'s `heroFontSize = heroScale × canvas.h` never got tall
+ *  enough to wrap the anchor to 2 lines — it never actually exercised the
+ *  clip. This fixture uses a PORTRAIT 1080×1440 master (matching the live
+ *  render repro that produced `after-statement.png`: hero huge, anchor
+ *  "15—26 June 2022" wrapping to 2 lines at heroScale's 0.22 ceiling), and
+ *  asserts the resolved anchor never clips — line count × fontSize ×
+ *  lineHeight must fit inside the resolved rect height, not just that the
+ *  full string survived (the truncation guard above) or the box happens to
+ *  be full-width (the region guard above) — neither catches a box that's
+ *  merely too SHORT. */
+describe('staging: statement anchor never clips vertically (portrait 1080×1440 master, resolver-level)', () => {
+  const ANCHOR_CONTENT = '15—26 June 2022'
+  const REGRESSION_TIERS: Tiers = {
+    hero: [{ content: 'MAT + FEST' }],
+    anchor: [{ content: ANCHOR_CONTENT }],
+    support: [{ content: 'Street food · Fine dining · New cuisines' }, { content: 'Local breweries · Food tastings' }],
+    fineprint: [
+      { content: 'SLAKTHUSOMRÅDET' }, { content: 'HALL 3 · 2022' }, { content: 'VÄLKOMMEN TILL OMRÅDET' },
+    ],
+  }
+  const MASTER_KEY = '4x5'
+
+  function resolvedAnchorFor(heroScale: number) {
+    const t: TemplateV3 = {
+      version: 3, id: 'clip-fix-repro', name: 'Clip fix repro', master: MASTER_KEY,
+      formats: { [MASTER_KEY]: { w: 1080, h: 1440 } },
+      grid: { gutter: 16, margin: Math.round(0.03 * 1080), baseline: 12 },
+      typeScale: { base: 14, ratio: 1.5 },
+      background: {}, elements: [], sections: [], tiers: REGRESSION_TIERS,
+    }
+    const staging = getStaging('statement')!
+    const masterFormat = t.formats[t.master]!
+    const { cols, rows } = fineGridDims(t, masterFormat)
+    const canvas = { w: masterFormat.w, h: masterFormat.h }
+    const result = staging.compose({
+      tiers: REGRESSION_TIERS, cols, rows, canvas,
+      rng: makeRng(1), knobs: { heroScale },
+    })
+    const staged: TemplateV3 = { ...t, elements: result.elements, order: result.elements.map(e => e.id) }
+    const resolved = resolveFormat(staged, MASTER_KEY)
+    return resolved.elements.find(e => e.el.id === 'tier_anchor_0')!
+  }
+
+  for (const heroScale of HERO_SCALES) {
+    it(`heroScale=${heroScale}: fitted anchor text is not flagged clipped`, () => {
+      const anchor = resolvedAnchorFor(heroScale)
+      expect(anchor.text?.clipped).toBe(false)
+    })
+    it(`heroScale=${heroScale}: fitted lines × fontSize × lineHeight fits the resolved rect height`, () => {
+      const anchor = resolvedAnchorFor(heroScale)
+      const { fontSize, lines } = anchor.text!
+      const lineHeight = (anchor.el as any).style?.lineHeight ?? 1.1
+      const requiredHeight = lines.length * fontSize * lineHeight
+      expect(requiredHeight).toBeLessThanOrEqual(anchor.rect.h)
+    })
+  }
+})
+
 // FIX 8 (round-2b final fix wave, DECIDED policy): a "big hero" staging's
 // `overflow:'grow'` used to have no ceiling — a long headline would grow
 // straight down through the region resolve.ts's grow loop was fitting it
