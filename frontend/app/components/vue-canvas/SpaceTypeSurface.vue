@@ -986,6 +986,101 @@ function autosaveSignature() {
 }
 const { saving: autoSaving, saved: autoSaved } = useStudioAutosave(autosaveSignature, saveConfig)
 
+// ── Undo / redo ──────────────────────────────────────────────────────────────
+// Studio-wide history (ported from Scene3DStudioSurface): a stack of serialized-doc
+// snapshots — the SAME string autosaveSignature() produces, i.e. the WHOLE editor
+// state (params + fills + gradientStops + post + framing + output) — coalesced by a
+// short debounce so one drag / slider sweep collapses into ONE undo step. A restore
+// mutates the reactive state in place; `restoringHistory` suppresses the history push
+// its own change would otherwise queue. Stacks are PER-EFFECT: an effect switch clears
+// them (resetHistory) so a snapshot only ever carries the current effect's control set
+// and a restore never has to rebuild a different effect — which is why applyHistory-
+// Snapshot never touches effectId (so the effectId watcher can't fire underneath it).
+const undoStack: string[] = []
+const redoStack: string[] = []
+let lastSnapshot = ''
+let restoringHistory = false
+let histTimer: ReturnType<typeof setTimeout> | null = null
+function commitHistory() {
+  histTimer = null
+  const cur = autosaveSignature()
+  if (cur === lastSnapshot) return
+  undoStack.push(lastSnapshot)
+  if (undoStack.length > 100) undoStack.shift()
+  redoStack.length = 0
+  lastSnapshot = cur
+}
+function scheduleHistory() {
+  if (restoringHistory || hydrating) return   // don't record restores or first-load hydration
+  if (histTimer) clearTimeout(histTimer)
+  histTimer = setTimeout(commitHistory, 350)
+}
+// Re-seed the baseline; no undo step spans this point. Called after a fresh open and
+// after an effect switch (each starts a clean per-effect history).
+function resetHistory() {
+  if (histTimer) { clearTimeout(histTimer); histTimer = null }
+  undoStack.length = 0
+  redoStack.length = 0
+  lastSnapshot = autosaveSignature()
+}
+// Restore a snapshot produced by autosaveSignature(): apply every field loadConfig
+// applies EXCEPT effectId (stacks are per-effect → effectId is invariant here), then
+// re-derive the editor-local mirrors (fills/textLines/content/wordFill) from the
+// restored params. `restoringHistory` blocks the re-entrant history push; the
+// structuralSignature watcher still fires and rebuilds the engine. Released on the
+// next tick, AFTER Vue has flushed the watchers our mutations queued (same ordering
+// Scene3D relies on), so the autosave-signature watch sees the flag still set.
+function applyHistorySnapshot(snap: string) {
+  let p: any
+  try { p = JSON.parse(snap) } catch { return }
+  restoringHistory = true
+  if (p.params && typeof p.params === 'object') {
+    for (const k of Object.keys(params)) delete (params as Record<string, unknown>)[k]
+    Object.assign(params, p.params)
+  }
+  if (Array.isArray(p.gradientStops)) gradientStops.splice(0, gradientStops.length, ...p.gradientStops.map((s: any) => ({ ...s })))
+  if (p.post && typeof p.post === 'object') Object.assign(post, p.post)
+  if (typeof p.fps === 'number') fps.value = p.fps
+  if (typeof p.loopDuration === 'number') loopDuration.value = p.loopDuration
+  if (typeof p.transparent === 'boolean') transparent.value = p.transparent
+  if (typeof p.bgColor === 'string') bgColor.value = p.bgColor
+  if (p.projection === 'perspective' || p.projection === 'isometric') projection.value = p.projection
+  if (typeof p.panX === 'number') panX.value = p.panX
+  if (typeof p.panY === 'number') panY.value = p.panY
+  if (typeof p.dimsKey === 'string') dimsKey.value = p.dimsKey
+  if (typeof p.W === 'number' && typeof p.H === 'number') { W.value = p.W; H.value = p.H }
+  pullTextLines(); pullFills(); pullContent(); pullWordFill()
+  lastSnapshot = snap
+  nextTick(() => { restoringHistory = false })
+}
+function undoStudio() {
+  if (histTimer) { clearTimeout(histTimer); commitHistory() }   // flush a pending in-progress edit first
+  const snap = undoStack.pop()
+  if (snap === undefined) return
+  redoStack.push(autosaveSignature())
+  applyHistorySnapshot(snap)
+}
+function redoStudio() {
+  const snap = redoStack.pop()
+  if (snap === undefined) return
+  undoStack.push(autosaveSignature())
+  applyHistorySnapshot(snap)
+}
+// Own Cmd/Ctrl+Z (Shift = redo; Cmd+Y = redo) at CAPTURE so the canvas graph's undo
+// doesn't fire while the studio is open. Skipped while typing in a field (native undo
+// wins there). Registered/unregistered with the studio's mount lifecycle below.
+function onStudioKey(e: KeyboardEvent) {
+  const tag = (e.target as HTMLElement)?.tagName
+  const inField = tag === 'INPUT' || tag === 'TEXTAREA' || !!(e.target as HTMLElement)?.isContentEditable
+  if ((e.metaKey || e.ctrlKey) && !e.altKey && !inField) {
+    const k = e.key.toLowerCase()
+    if (k === 'z') { e.preventDefault(); e.stopImmediatePropagation(); if (e.shiftKey) redoStudio(); else undoStudio(); return }
+    if (k === 'y') { e.preventDefault(); e.stopImmediatePropagation(); redoStudio(); return }
+  }
+}
+// Coalesce EVERY editor-state change into history (the same serialization autosave watches).
+watch(autosaveSignature, scheduleHistory)
+
 // Transparent-export detection: read the frame the live preview is ALREADY showing
 // (engine.renderer.domElement) rather than rendering a fresh one just to test it.
 // Space Type is one of the three surfaces whose renderer preserves alpha (see the
@@ -1054,6 +1149,10 @@ onMounted(async () => {
   // must not paint its first frame with blank image tiles (finding 1).
   await rebuildWithRing()
   startPreview()
+  // Cmd/Ctrl+Z undo/redo is owned by the studio while it's open (capture-phase) and
+  // seeded to the just-hydrated state so the first edit is the first undo step.
+  window.addEventListener('keydown', onStudioKey, true)
+  resetHistory()
   registerStudioParamBaker(props.nodeId, renderBlobWithOverrides)
   // NOTE: the live frame source for this node is registered by SpaceTypeNode.vue
   // (the always-mounted node), NOT here. The node stays mounted while this modal
@@ -1068,6 +1167,8 @@ onBeforeUnmount(() => {
   // there's no lingering head-on render to undo — flipping the flag here is belt-and-
   // suspenders for any late synchronous renderFrameAt call in this same teardown.
   spineEditActive.value = false
+  window.removeEventListener('keydown', onStudioKey, true)
+  if (histTimer) clearTimeout(histTimer)
   saveConfig(); if (rebuildRaf) cancelAnimationFrame(rebuildRaf); stopPreview(); engine?.dispose(); engine = null
   unregisterStudioParamBaker(props.nodeId)
 })
@@ -1134,6 +1235,7 @@ watch(effectId, async () => {
   if (hydrating) { hydrating = false; return }
   engine?.setEffect(effect.value)
   await applyEffectDefaults()
+  resetHistory()   // per-effect history: the new effect starts with a clean, single baseline
 })
 
 const capturingThumb = ref(false)
