@@ -74,6 +74,11 @@ varying float vAlong;
 varying float vAcross;
 void main() { vAlong = aAlong; vAcross = aAcross; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
 `
+// Along-axis texel-centre bounds. Mapping along [0,1] onto [lo,hi] keeps the endpoints off the
+// wrap seam: without it, fract(1.0)=0.0 makes the LAST station (e.g. the end cap) sample ramp row
+// 0 — i.e. fill 1, identical to the START cap — instead of the final fill.
+const ALONG_LO = (0.5 / RAMP_ALONG).toFixed(6)
+const ALONG_HI = (1 - 0.5 / RAMP_ALONG).toFixed(6)
 const FRAG = `
 uniform sampler2D uRamp;
 uniform float uFlow;
@@ -81,7 +86,9 @@ uniform float uOpacity;
 varying float vAlong;
 varying float vAcross;
 void main() {
-  vec3 c = texture2D(uRamp, vec2(vAcross, fract(vAlong + uFlow))).rgb;
+  // Static: along 0→first fill, 1→last fill (no wrap). Flow (uFlow) still scrolls + wraps via fract.
+  float a = fract(mix(${ALONG_LO}, ${ALONG_HI}, clamp(vAlong, 0.0, 1.0)) + uFlow);
+  vec3 c = texture2D(uRamp, vec2(vAcross, a)).rgb;
   gl_FragColor = vec4(c, uOpacity);
 }
 `
