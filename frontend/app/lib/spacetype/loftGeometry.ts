@@ -62,7 +62,13 @@ function sub(a: Vec3, b: Vec3): Vec3 { return { x: a.x - b.x, y: a.y - b.y, z: a
 function cross(a: Vec3, b: Vec3): Vec3 { return { x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x } }
 function norm(a: Vec3): Vec3 { const l = Math.hypot(a.x, a.y, a.z) || 1; return { x: a.x / l, y: a.y / l, z: a.z / l } }
 
-export function sampleSpine(stops: LoftStop[], closed: boolean, count: number): Station[] {
+export function sampleSpine(stops: LoftStop[], closed: boolean, count: number, faceCamera = false): Station[] {
+  // `faceCamera` (flat mode): instead of orienting each cross-section perpendicular to the spine
+  // (beads-on-a-wire — a circle then stands edge-on and reads as a tilted oval), lock every
+  // station's frame to the fixed screen plane (normal = world +X, binormal = world +Y) so each
+  // cross-section lies flat facing the camera and a circle renders as a true circle. Positions are
+  // unchanged; only the section's orientation is fixed. Roll still rotates the shape within that
+  // facing plane.
   // Auto-smooth non-manual stops into Catmull-Rom-equivalent tangent handles; manual stops keep
   // theirs. A single stop has no segment to sample, so duplicate it (tiny offset) like before.
   let raw = stops
@@ -91,7 +97,11 @@ export function sampleSpine(stops: LoftStop[], closed: boolean, count: number): 
     if (!Number.isFinite(normal.x)) normal = { x: 1, y: 0, z: 0 }
     const binormal = norm(cross(tangent, normal))
     ref = normal   // carry forward for minimal twist
-    stations.push({ pos, normal, binormal, t })
+    if (faceCamera) {
+      stations.push({ pos, normal: { x: 1, y: 0, z: 0 }, binormal: { x: 0, y: 1, z: 0 }, t })
+    } else {
+      stations.push({ pos, normal, binormal, t })
+    }
   }
   return stations
 }

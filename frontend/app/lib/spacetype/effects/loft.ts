@@ -162,7 +162,9 @@ export const loftEffect: SpaceTypeEffect = {
     const flatStops = flat ? stops.map(s => ({ ...s, z: 0 })) : stops
 
     const K = Math.max(2, Math.floor(n(params, 'copies')))
-    const stations = sampleSpine(flatStops, closed, K)
+    // flat = a stack of camera-facing cross-sections (each shape lies in the screen plane, so a
+    // circle stays a circle) rather than sections swept perpendicular to the spine.
+    const stations = sampleSpine(flatStops, closed, K, flat)
     const rawShape = String(params.shape ?? '')
     const shape = resolveShape(params)
     // Circle scales UNIFORMLY (height := width) so it stays perfectly round regardless of the

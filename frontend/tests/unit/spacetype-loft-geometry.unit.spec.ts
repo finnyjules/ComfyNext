@@ -64,6 +64,29 @@ describe('sampleSpine bezier', () => {
   })
 })
 
+describe('sampleSpine faceCamera (flat mode)', () => {
+  // A spine that dives into depth (z varies) so the perpendicular frame is genuinely tilted —
+  // this is what makes a circle read as an oval in 3D mode, and what flat mode must override.
+  const depthStops: LoftStop[] = [
+    { id: 'a', x: 0.2, y: 0.3, z: 0,   width: 1, height: 1, roll: 0, color: '#000000' },
+    { id: 'b', x: 0.5, y: 0.6, z: 0.8, width: 1, height: 1, roll: 0, color: '#000000' },
+    { id: 'c', x: 0.8, y: 0.4, z: 0.2, width: 1, height: 1, roll: 0, color: '#000000' },
+  ]
+  it('locks every cross-section to the camera-facing xy plane', () => {
+    for (const s of sampleSpine(depthStops, false, 12, true)) {
+      expect(s.normal).toEqual({ x: 1, y: 0, z: 0 })
+      expect(s.binormal).toEqual({ x: 0, y: 1, z: 0 })
+    }
+  })
+  it('without faceCamera the perpendicular frame genuinely tilts out of that plane', () => {
+    // Proves the override does real work — the default frame is NOT already axis-aligned here.
+    const tilted = sampleSpine(depthStops, false, 12).some(
+      s => Math.abs(s.normal.z) > 1e-3 || Math.abs(s.binormal.z) > 1e-3,
+    )
+    expect(tilted).toBe(true)
+  })
+})
+
 describe('interpStopProps', () => {
   it('interpolates width monotonically end to end', () => {
     expect(interpStopProps(stops, 0).width).toBeCloseTo(1)
