@@ -80,5 +80,9 @@ export function presetStops(preset: SpinePreset): LoftStop[] {
   return stops
 }
 
+export function applyToAllStops<K extends keyof LoftStop>(stops: LoftStop[], key: K, value: LoftStop[K]): LoftStop[] {
+  return stops.map(s => ({ ...s, [key]: value }))
+}
+
 export const DEFAULT_STOPS: LoftStop[] = presetStops('helix')
 export const DEFAULT_STOPS_JSON: string = serializeStops(DEFAULT_STOPS)

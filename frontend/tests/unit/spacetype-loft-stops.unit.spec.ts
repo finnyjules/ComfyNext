@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseStops, serializeStops, presetStops, DEFAULT_STOPS, type LoftStop } from '../../app/lib/spacetype/loftStops'
+import { parseStops, serializeStops, presetStops, applyToAllStops, DEFAULT_STOPS, type LoftStop } from '../../app/lib/spacetype/loftStops'
 
 describe('parseStops', () => {
   it('round-trips serialize→parse', () => {
@@ -31,6 +31,17 @@ describe('parseStops', () => {
     ])
     const out = parseStops(dup)
     expect(new Set(out.map(s => s.id)).size).toBe(out.length)
+  })
+})
+
+describe('applyToAllStops', () => {
+  it('sets one field on every stop, leaving others (and identity) intact', () => {
+    const stops = parseStops('garbage')   // DEFAULT_STOPS clone
+    const out = applyToAllStops(stops, 'width', 2.5)
+    expect(out.every(s => s.width === 2.5)).toBe(true)
+    expect(out.map(s => s.id)).toEqual(stops.map(s => s.id))   // ids preserved
+    expect(out).not.toBe(stops)                                 // new array
+    expect(stops.every(s => s.width === 2.5)).toBe(false)       // input not mutated (unless it already was)
   })
 })
 

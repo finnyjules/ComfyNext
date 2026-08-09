@@ -1,7 +1,7 @@
 <!-- frontend/app/components/vue-canvas/ProfileStopsEditor.vue -->
 <script setup lang="ts">
 import { computed, reactive, watch } from 'vue'
-import { parseStops, serializeStops, type LoftStop } from '~/lib/spacetype/loftStops'
+import { applyToAllStops, parseStops, serializeStops, type LoftStop } from '~/lib/spacetype/loftStops'
 import StudioColor from './studio/StudioColor.vue'
 
 const props = defineProps<{ modelValue: string }>()
@@ -38,6 +38,11 @@ function removeStop(id: string) {
 function set<K extends keyof LoftStop>(k: K, v: LoftStop[K]) {
   const s = selected.value; if (!s) return
   ;(s[k] as LoftStop[K]) = v
+  commit()
+}
+function setAll<K extends keyof LoftStop>(k: K, v: LoftStop[K]) {
+  const next = applyToAllStops(stops, k, v)
+  stops.splice(0, stops.length, ...next)
   commit()
 }
 
@@ -90,6 +95,18 @@ function onCanvasPointer(e: PointerEvent) {
         <input type="range" min="-180" max="180" step="1" :value="selected.roll"
                @input="(e) => set('roll', Number((e.target as HTMLInputElement).value))" /></label>
       <StudioColor :model-value="selected.color" @update:model-value="(v: string) => set('color', v)" />
+    </div>
+
+    <!-- master controls: stamp one value onto every stop -->
+    <div class="flex flex-col gap-1 rounded border border-white/10 p-2">
+      <div class="text-[9px] uppercase tracking-[0.1em] text-white/35">Set all stops</div>
+      <label class="flex items-center justify-between text-[10px] text-white/50">Width
+        <input type="range" min="0.05" max="6" step="0.05" @input="(e) => setAll('width', Number((e.target as HTMLInputElement).value))" /></label>
+      <label class="flex items-center justify-between text-[10px] text-white/50">Height
+        <input type="range" min="0.05" max="6" step="0.05" @input="(e) => setAll('height', Number((e.target as HTMLInputElement).value))" /></label>
+      <label class="flex items-center justify-between text-[10px] text-white/50">Roll
+        <input type="range" min="-180" max="180" step="1" @input="(e) => setAll('roll', Number((e.target as HTMLInputElement).value))" /></label>
+      <StudioColor :model-value="selected?.color ?? '#ffffff'" @update:model-value="(v: string) => setAll('color', v)" />
     </div>
   </div>
 </template>
