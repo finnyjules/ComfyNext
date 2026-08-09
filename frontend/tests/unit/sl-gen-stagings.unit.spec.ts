@@ -87,9 +87,9 @@ describe('staging: split + frame registered and valid', () => {
 })
 
 describe('staging: full library', () => {
-  it('registers all ten stagings', () => {
+  it('registers all eleven stagings', () => {
     expect(STAGINGS.map(s => s.id).sort()).toEqual([
-      'centered', 'editorial', 'frame', 'index', 'ledger',
+      'centered', 'corner', 'editorial', 'frame', 'index', 'ledger',
       'manifesto', 'split', 'stacked', 'statement', 'tower',
     ])
   })
@@ -156,11 +156,15 @@ describe('staging: tier lists — every item renders, nothing dropped', () => {
     })
   }
 
-  it('tower: a single support item keeps the round-1 generous rowSpan (2), not the 2-item compact one', () => {
+  it('tower (Round-2b Table B rebuild): a single support item keeps the photo\'s FULL row span (4), not the 2-item compact half-span', () => {
+    // Table B: "support left of the photo ([0..0.28C] × photo's rows)" — the
+    // photo's row band is rowBand(0.48, 0.72, 16) = rowSpan 4 (rows 9-12 on
+    // the 12x16 fixture); a lone support item gets that whole band back,
+    // exactly like every other staging's "generous single-item span" pattern.
     const tiersWithOneSupport: Tiers = { ...TIERS, support: [{ content: 'Street food · Dining' }] }
     const els = getStaging('tower')!.compose(input({ tiers: tiersWithOneSupport })).elements
     const support0 = els.find(e => e.id === 'tier_support_0')! as any
-    expect(support0.region.rowSpan).toBe(2)
+    expect(support0.region.rowSpan).toBe(4)
   })
 
   it('split: a single support item keeps the round-1 generous rowSpan (3), not the 2-item compact one', () => {
@@ -457,5 +461,223 @@ describe('staging: stacked', () => {
     const heroR = right.find(e => e.id === 'tier_hero_0')! as any
     expect(heroL.style.align).toBe('left')
     expect(heroR.style.align).toBe('right')
+  })
+})
+
+// Round-2b Task 3 — Family B, photo-as-block. tower/split/frame are
+// REBUILT in place (round-1 bodies replaced, ids/knob-names-as-a-concept
+// kept but the actual knob SETS are regenerated per the family table — see
+// the task report for the full old->new knob diff); `corner` is new. Per
+// the table's degrade rule: no `input.image` -> no `img_0` element, and
+// every text tier keeps the position it would have had WITH a photo (the
+// photo's area just becomes air) — none of these composers reflow text
+// based on image presence.
+const IMAGE_TOKEN = '{{ props.image_layer_1 }}'
+const PHOTO_BLOCK_IDS = ['tower', 'split', 'frame', 'corner'] as const
+
+describe('staging: Family B — photo-as-block registration', () => {
+  it('corner is registered', () => {
+    expect(getStaging('corner')).toBeTruthy()
+  })
+  it('every Family B staging declares heroScale plus its own knobs', () => {
+    expect(getStaging('tower')!.knobs.map(k => k.id).sort()).toEqual(['align', 'heroScale'])
+    expect(getStaging('split')!.knobs.map(k => k.id).sort()).toEqual(['heroScale', 'side'])
+    expect(getStaging('frame')!.knobs.map(k => k.id).sort()).toEqual(['heroScale'])
+    expect(getStaging('corner')!.knobs.map(k => k.id).sort()).toEqual(['crop', 'heroOrientation', 'heroScale'])
+  })
+})
+
+describe('staging: Family B — img_0 presence tracks input.image', () => {
+  for (const id of PHOTO_BLOCK_IDS) {
+    it(`${id}: places img_0 (origin staging, content = the token, fit cover) when image is wired`, () => {
+      const els = getStaging(id)!.compose(input({ image: IMAGE_TOKEN })).elements
+      const img = els.find(e => e.id === 'img_0') as any
+      expect(img, `${id} missing img_0 with an image wired`).toBeTruthy()
+      expect(img.type).toBe('image')
+      expect(img.content).toBe(IMAGE_TOKEN)
+      expect(img.origin).toBe('staging')
+      expect(img.style?.fit).toBe('cover')
+    })
+    it(`${id}: places NO img_0 when no image is wired (degrade)`, () => {
+      const els = getStaging(id)!.compose(input()).elements
+      expect(els.find(e => e.id === 'img_0')).toBeUndefined()
+    })
+    it(`${id}: text tiers keep identical regions with and without an image (degrade doesn't reflow)`, () => {
+      const withImage = getStaging(id)!.compose(input({ image: IMAGE_TOKEN })).elements
+        .filter(e => e.type === 'text').map(e => [e.id, e.region])
+      const withoutImage = getStaging(id)!.compose(input()).elements
+        .filter(e => e.type === 'text').map(e => [e.id, e.region])
+      expect(withImage).toEqual(withoutImage)
+    })
+  }
+})
+
+describe('staging: Family B — validator matrix (1-item / 2-item x image / no-image)', () => {
+  for (const id of PHOTO_BLOCK_IDS) {
+    for (const tiersLabel of ['2/2-item', '1-item'] as const) {
+      const tiers = tiersLabel === '1-item' ? ONE_EACH_TIERS : TIERS
+      for (const imageLabel of ['image', 'no-image'] as const) {
+        const image = imageLabel === 'image' ? IMAGE_TOKEN : undefined
+        it(`${id}: validates clean — ${tiersLabel}, ${imageLabel}`, () => {
+          const result = getStaging(id)!.compose(input({ tiers, image }))
+          const { ok, reasons } = validateGenerated(result, 12, 16)
+          expect(ok, reasons.join(' ')).toBe(true)
+        })
+      }
+    }
+  }
+})
+
+describe('staging: Family B — determinism', () => {
+  for (const id of PHOTO_BLOCK_IDS) {
+    it(`${id}: identical seed produces identical output, with and without an image`, () => {
+      const s = getStaging(id)!
+      expect(s.compose(input({ rng: makeRng(3) })).elements)
+        .toEqual(s.compose(input({ rng: makeRng(3) })).elements)
+      expect(s.compose(input({ rng: makeRng(3), image: IMAGE_TOKEN })).elements)
+        .toEqual(s.compose(input({ rng: makeRng(3), image: IMAGE_TOKEN })).elements)
+    })
+  }
+})
+
+describe('staging: tower — geometry per Table B (walked on the 12x16 fixture)', () => {
+  const tower = getStaging('tower')!
+  it('fineprint sits corners row 0, hero rows [0.10..0.44] full width', () => {
+    const els = tower.compose(input()).elements
+    const fine0 = els.find(e => e.id === 'tier_fineprint_0')!.region
+    const fine1 = els.find(e => e.id === 'tier_fineprint_1')!.region
+    const hero = els.find(e => e.id === 'tier_hero_0')!.region
+    expect(fine0).toEqual({ col: 1, colSpan: 6, row: 1, rowSpan: 1 })
+    expect(fine1).toEqual({ col: 7, colSpan: 6, row: 1, rowSpan: 1 })
+    expect(hero).toEqual({ col: 1, colSpan: 12, row: 3, rowSpan: 5 })
+  })
+  it('photo block is centered [0.48..0.72]x[0.30C..0.70C] when an image is wired', () => {
+    const els = tower.compose(input({ image: IMAGE_TOKEN })).elements
+    const img = els.find(e => e.id === 'img_0')!.region
+    expect(img).toEqual({ col: 5, colSpan: 4, row: 9, rowSpan: 4 })
+  })
+  it('anchor is a bottom-flush full-width slab [0.76..0.94]', () => {
+    const els = tower.compose(input()).elements
+    const anchor = els.find(e => e.id === 'tier_anchor_0')!.region
+    expect(anchor).toEqual({ col: 1, colSpan: 12, row: 13, rowSpan: 3 })
+  })
+  it('support sits left of the photo, sharing its row band, regardless of image presence', () => {
+    const withImage = tower.compose(input({ image: IMAGE_TOKEN })).elements
+    const withoutImage = tower.compose(input()).elements
+    for (const els of [withImage, withoutImage]) {
+      const s0 = els.find(e => e.id === 'tier_support_0')!.region
+      const s1 = els.find(e => e.id === 'tier_support_1')!.region
+      expect(s0).toEqual({ col: 1, colSpan: 3, row: 9, rowSpan: 2 })
+      expect(s1).toEqual({ col: 1, colSpan: 3, row: 11, rowSpan: 2 })
+    }
+  })
+})
+
+describe('staging: split — hard split, no overlaps, photo bleeds full height', () => {
+  const split = getStaging('split')!
+  it('img_0 spans the full row height and carries bleed:true', () => {
+    const els = split.compose(input({ image: IMAGE_TOKEN })).elements
+    const img = els.find(e => e.id === 'img_0')! as any
+    expect(img.bleed).toBe(true)
+    expect(img.region.row).toBe(1)
+    expect(img.region.rowSpan).toBe(16)
+  })
+  it('default (no side override): photo takes the right half, text column the left half', () => {
+    const els = split.compose(input({ image: IMAGE_TOKEN })).elements
+    const img = els.find(e => e.id === 'img_0')! as any
+    const hero = els.find(e => e.id === 'tier_hero_0')! as any
+    expect(img.region.col).toBeGreaterThan(hero.region.col + hero.region.colSpan - 1)
+  })
+  it('side:"left" mirrors the whole layout — photo moves to the left half', () => {
+    const mirrored = split.compose(input({ image: IMAGE_TOKEN, knobs: { side: 'left' } })).elements
+    const img = mirrored.find(e => e.id === 'img_0')! as any
+    const hero = mirrored.find(e => e.id === 'tier_hero_0')! as any
+    expect(img.region.col).toBe(1)
+    expect(hero.region.col).toBeGreaterThan(img.region.col + img.region.colSpan - 1)
+    expect(hero.style.align).toBe('right')
+  })
+  it('declares no overlaps — the split is hard by construction', () => {
+    const result = split.compose(input({ image: IMAGE_TOKEN }))
+    expect(result.overlaps ?? []).toEqual([])
+  })
+})
+
+describe('staging: frame — declared (hero, img_0) overlap, img behind hero', () => {
+  const frame = getStaging('frame')!
+  it('declares the (tier_hero_0, img_0) overlap when an image is wired, and validates clean', () => {
+    const result = frame.compose(input({ image: IMAGE_TOKEN }))
+    expect(result.overlaps).toEqual([['tier_hero_0', 'img_0']])
+    const { ok, reasons } = validateGenerated(result, 12, 16)
+    expect(ok, reasons.join(' ')).toBe(true)
+  })
+  it('img_0 precedes tier_hero_0 in elements — img behind, hero in front (back->front z-order)', () => {
+    const els = frame.compose(input({ image: IMAGE_TOKEN })).elements
+    const imgIndex = els.findIndex(e => e.id === 'img_0')
+    const heroIndex = els.findIndex(e => e.id === 'tier_hero_0')
+    expect(imgIndex).toBeGreaterThanOrEqual(0)
+    expect(imgIndex).toBeLessThan(heroIndex)
+  })
+  it('declares no overlap when no image is wired (nothing to overlap)', () => {
+    const result = frame.compose(input())
+    expect(result.overlaps ?? []).toEqual([])
+  })
+  it("hero's region genuinely crosses the photo's edge (the overlap is real, not just declared)", () => {
+    const els = frame.compose(input({ image: IMAGE_TOKEN })).elements
+    const hero = els.find(e => e.id === 'tier_hero_0')!.region
+    const img = els.find(e => e.id === 'img_0')!.region
+    const colsOverlap = hero.col <= img.col + img.colSpan - 1 && img.col <= hero.col + hero.colSpan - 1
+    const rowsOverlap = hero.row <= img.row + img.rowSpan - 1 && img.row <= hero.row + hero.rowSpan - 1
+    expect(colsOverlap && rowsOverlap).toBe(true)
+  })
+})
+
+describe('staging: corner — pinned photo, crop overhang, vertical hero', () => {
+  const corner = getStaging('corner')!
+  it('photo is pinned top-right and bleeds', () => {
+    const els = corner.compose(input({ image: IMAGE_TOKEN })).elements
+    const img = els.find(e => e.id === 'img_0')! as any
+    expect(img.bleed).toBe(true)
+    expect(img.region.row).toBe(1)
+    expect(img.region.col + img.region.colSpan - 1).toBe(12) // touches the right edge
+  })
+  it('crop:"none" (default) keeps the hero fully in-grid, no overhang', () => {
+    const els = corner.compose(input({ knobs: { crop: 'none' } })).elements
+    const hero = els.find(e => e.id === 'tier_hero_0')! as any
+    expect(hero.overhang).toBeFalsy()
+    expect(hero.region.row + hero.region.rowSpan - 1).toBeLessThanOrEqual(16)
+  })
+  it('crop:"bottom" extends the hero rowSpan past the grid with overhang:true', () => {
+    const els = corner.compose(input({ knobs: { crop: 'bottom' } })).elements
+    const hero = els.find(e => e.id === 'tier_hero_0')! as any
+    expect(hero.overhang).toBe(true)
+    expect(hero.region.row + hero.region.rowSpan - 1).toBeGreaterThan(16)
+  })
+  it('heroOrientation:"horizontal" (default) leaves style.orientation unset', () => {
+    const els = corner.compose(input()).elements
+    const hero = els.find(e => e.id === 'tier_hero_0')! as any
+    expect(hero.style.orientation).toBeUndefined()
+  })
+  it('heroOrientation:"up" sets style.orientation and swaps to a tall, narrow region along the left edge', () => {
+    const horizontal = corner.compose(input()).elements.find(e => e.id === 'tier_hero_0')!.region
+    const els = corner.compose(input({ knobs: { heroOrientation: 'up' } })).elements
+    const hero = els.find(e => e.id === 'tier_hero_0')! as any
+    expect(hero.style.orientation).toBe('up')
+    expect(hero.region.col).toBe(1)
+    expect(hero.region.colSpan).toBeLessThan(horizontal.colSpan) // narrow
+    expect(hero.region.rowSpan).toBeGreaterThan(horizontal.rowSpan) // tall
+  })
+  it('heroOrientation:"up" combined with crop:"bottom" still overhangs past the grid', () => {
+    const els = corner.compose(input({ knobs: { heroOrientation: 'up', crop: 'bottom' } })).elements
+    const hero = els.find(e => e.id === 'tier_hero_0')! as any
+    expect(hero.overhang).toBe(true)
+    expect(hero.style.orientation).toBe('up')
+    expect(hero.region.row + hero.region.rowSpan - 1).toBeGreaterThan(16)
+  })
+  it('validates clean under the default crop:"none" / heroOrientation:"horizontal" knobs, image and no-image', () => {
+    for (const image of [IMAGE_TOKEN, undefined]) {
+      const result = corner.compose(input({ image }))
+      const { ok, reasons } = validateGenerated(result, 12, 16)
+      expect(ok, reasons.join(' ')).toBe(true)
+    }
   })
 })

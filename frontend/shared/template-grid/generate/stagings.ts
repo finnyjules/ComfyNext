@@ -208,15 +208,21 @@ function stackCorners(
 }
 
 /**
- * Tower — hero stacked at the top, fine print pinned to the corners, anchor
- * (date) blown up at the bottom. The MAT+FEST composition.
+ * Tower — hero stacked at the top, a centered photo block mid-canvas, anchor
+ * (date) as a bottom slab, fine print pinned to the corners. Family B
+ * (round-2b Table B) rebuild: the photo only appears when `input.image` is
+ * wired (`tierImage`, id `img_0`); without one the block's rows/cols are
+ * simply air — hero/anchor/support keep their table positions, nothing
+ * reflows. Support sits left of the photo, sized off the photo's OWN row
+ * band (`photoRegion`), not a literal fraction — so degrade never depends on
+ * whether the image actually rendered.
  */
 const tower: Staging = {
   id: 'tower',
   name: 'Tower',
-  blurb: 'Hero stacked top, anchor as a bottom slab; corners hold the fine print.',
+  blurb: 'Hero stacked top, a centered photo block, anchor as a bottom slab; corners hold the fine print.',
   knobs: [{ id: 'align', pick: ['left', 'right'] }, HERO_SCALE_KNOB],
-  compose({ tiers, cols, rows, canvas, knobs }) {
+  compose({ tiers, cols, rows, canvas, knobs, image }) {
     const els: ElementV2[] = []
     const left = knobs.align !== 'right'
     const entries = tierEntries(tiers)
@@ -233,22 +239,35 @@ const tower: Staging = {
         { col: half + 1, colSpan: cols - half, row: 1, rowSpan: 1 },
         cols, rows, 4, { style: { align, valign: 'top' } }))
     }
+    const heroRows = rowBand(0.10, 0.44, rows)
     const hero = items('hero')
     if (hero.length) {
       els.push(tierText('hero', 0, hero[0]!,
-        clampRegion({ ...full, row: 2, rowSpan: Math.round(rows * 0.4) }, cols, rows), 1,
+        clampRegion({ ...full, ...heroRows }, cols, rows), 1,
         { level: 'display', overflow: 'grow', style: { align, valign: 'top', fontWeight: 700, ...drama.hero } }))
+    }
+    // Computed regardless of `image` presence — degrade keeps support's
+    // position anchored to where the photo WOULD sit (the table's contract:
+    // "support left of the photo" reads off the photo's row band, not the
+    // photo element itself).
+    const photoRows = rowBand(0.48, 0.72, rows)
+    const photoCols = colBand(0.30, 0.70, cols)
+    const photoRegion = clampRegion({ ...photoCols, ...photoRows }, cols, rows)
+    if (image) {
+      els.push(tierImage('0', image, photoRegion, 2))
     }
     const support = items('support')
     if (support.length) {
+      const supportCols = colBand(0, 0.28, cols)
       els.push(...stackVertical('support', support,
-        { col: 1, colSpan: half, row: Math.round(rows * 0.56), rowSpan: 1 },
-        cols, rows, 3, { style: { align: 'left', valign: 'top' } }, 2))
+        { ...supportCols, row: photoRegion.row, rowSpan: Math.max(1, Math.round(photoRegion.rowSpan / 2)) },
+        cols, rows, 3, { style: { align: 'left', valign: 'top' } }, photoRegion.rowSpan))
     }
+    const anchorRows = rowBand(0.76, 0.94, rows)
     const anchor = items('anchor')
     if (anchor.length) {
       els.push(tierText('anchor', 0, anchor[0]!,
-        clampRegion({ ...full, row: Math.round(rows * 0.72), rowSpan: Math.round(rows * 0.2) }, cols, rows), 2,
+        clampRegion({ ...full, ...anchorRows }, cols, rows), 2,
         { level: 'headline', style: { align, valign: 'bottom', fontWeight: 700, ...drama.anchor } }))
     }
     return { elements: els }
@@ -256,93 +275,198 @@ const tower: Staging = {
 }
 
 /**
- * Split — hero broken across a diagonal of air: first half flush-left high,
- * second half flush-right lower. Anchor sits bottom-left, fine print bottom-right.
+ * Split — a hard vertical split: a full-height photo owns one half, a flush
+ * type column owns the other (hero top, anchor mid, support low, fine print
+ * bottom). Family B rebuild: no declared overlaps — the split is hard by
+ * construction (photo/text column fractions never share a column). `side`
+ * mirrors which half the photo takes (`'left'` flips it; default/`'right'`
+ * matches the table). Degrade (`image` absent): the text column is unmoved,
+ * the photo's half is just air.
  */
 const split: Staging = {
   id: 'split',
   name: 'Split',
-  blurb: 'Hero broken across a diagonal of whitespace.',
-  knobs: [{ id: 'drop', pick: [2, 3, 4] }, HERO_SCALE_KNOB],
-  compose({ tiers, cols, rows, canvas, knobs }) {
+  blurb: 'Hard vertical split: a full-height photo against a flush type column.',
+  knobs: [{ id: 'side', pick: ['left', 'right'] }, HERO_SCALE_KNOB],
+  compose({ tiers, cols, rows, canvas, knobs, image }) {
     const els: ElementV2[] = []
-    const half = Math.round(cols / 2)
-    const drop = Number(knobs.drop ?? 3)
+    const photoLeft = knobs.side === 'left'
+    const photoCols = photoLeft ? colBand(0, 0.5, cols) : colBand(0.5, 1, cols)
+    const textCols = photoLeft ? colBand(0.5, 1, cols) : colBand(0, 0.5, cols)
+    const align: TextStyleV2['align'] = photoLeft ? 'right' : 'left'
     const entries = tierEntries(tiers)
     const items = (id: TierId) => tierItems(entries, id)
     const drama = dramaticType(knobs, canvas)
 
+    if (image) {
+      els.push(tierImage('0', image,
+        clampRegion({ ...photoCols, row: 1, rowSpan: rows }, cols, rows), 2, { bleed: true }))
+    }
+    const heroRows = rowBand(0.06, 0.30, rows)
     const hero = items('hero')
     if (hero.length) {
       els.push(tierText('hero', 0, hero[0]!,
-        clampRegion({ col: 1, colSpan: cols, row: 2, rowSpan: Math.round(rows * 0.22) }, cols, rows), 1,
-        { level: 'display', overflow: 'grow', style: { align: 'left', valign: 'top', fontWeight: 700, ...drama.hero } }))
+        clampRegion({ ...textCols, ...heroRows }, cols, rows), 1,
+        { level: 'display', overflow: 'grow', style: { align, valign: 'top', fontWeight: 700, ...drama.hero } }))
     }
-    const support = items('support')
-    if (support.length) {
-      els.push(...stackVertical('support', support,
-        { col: 1, colSpan: half, row: Math.round(rows * 0.44), rowSpan: 2 },
-        cols, rows, 3, { style: { align: 'left', valign: 'top' } }, 3))
-    }
+    const anchorRow = heroRows.row + heroRows.rowSpan
     const anchor = items('anchor')
     if (anchor.length) {
       els.push(tierText('anchor', 0, anchor[0]!,
-        clampRegion({ col: 1, colSpan: cols, row: rows - drop - 2, rowSpan: 2 }, cols, rows), 2,
-        { level: 'headline', style: { align: 'left', valign: 'bottom', fontWeight: 700, ...drama.anchor } }))
+        clampRegion({ ...textCols, row: anchorRow, rowSpan: 2 }, cols, rows), 2,
+        { level: 'headline', style: { align, valign: 'top', fontWeight: 700, ...drama.anchor } }))
+    }
+    const supportRows = rowBand(0.60, 0.80, rows)
+    const support = items('support')
+    if (support.length) {
+      els.push(...stackVertical('support', support,
+        { ...textCols, row: supportRows.row, rowSpan: 1 },
+        cols, rows, 3, { style: { align, valign: 'top' } }, supportRows.rowSpan))
     }
     const fine = items('fineprint')
     if (fine.length) {
       els.push(...stackVertical('fineprint', fine,
-        { col: half, colSpan: cols - half + 1, row: rows - 1, rowSpan: 1 },
-        cols, rows, 4, { style: { align: 'right', valign: 'bottom' } }))
+        { ...textCols, row: rows - 1, rowSpan: 1 },
+        cols, rows, 4, { style: { align, valign: 'bottom' } }))
     }
     return { elements: els }
   },
 }
 
 /**
- * Frame — hero anchored to the top-left corner with generous air below (that
- * air is where an image surface reads). Anchor bottom-left; support/fine print
- * hug the right edge.
+ * Frame — a center-right photo with a top-left hero whose box crosses the
+ * photo's edge (the first declared text-over-photo overlap in the family).
+ * Family B rebuild: `(tier_hero_0, img_0)` is declared ONLY when an image is
+ * actually placed — with `image` absent there's no `img_0` to overlap, so
+ * the pair is omitted rather than dangling. The image is pushed FIRST so it
+ * sits behind the hero (img before hero in `elements`, back→front).
  */
 const frame: Staging = {
   id: 'frame',
   name: 'Frame',
-  blurb: 'Hero anchored to a corner; the open field carries the surface.',
-  knobs: [{ id: 'corner', pick: ['tl', 'bl'] }, HERO_SCALE_KNOB],
-  compose({ tiers, cols, rows, canvas, knobs }) {
+  blurb: 'A center-right photo framed by a top-left hero that crosses its edge.',
+  knobs: [HERO_SCALE_KNOB],
+  compose({ tiers, cols, rows, canvas, knobs, image }) {
     const els: ElementV2[] = []
-    const heroTop = knobs.corner === 'bl' ? Math.round(rows * 0.55) : 2
-    const half = Math.round(cols / 2)
     const entries = tierEntries(tiers)
     const items = (id: TierId) => tierItems(entries, id)
     const drama = dramaticType(knobs, canvas)
+    const overlaps: Array<[string, string]> = []
 
-    const hero = items('hero')
-    if (hero.length) {
-      // colSpan stops at `half` (not half+1) so it never shares a column
-      // with the right-rail support/fine print, regardless of row overlap.
-      els.push(tierText('hero', 0, hero[0]!,
-        clampRegion({ col: 1, colSpan: half, row: heroTop, rowSpan: Math.round(rows * 0.28) }, cols, rows), 1,
-        { level: 'display', overflow: 'grow', style: { align: 'left', valign: 'top', fontWeight: 700, ...drama.hero } }))
-    }
-    const support = items('support')
-    if (support.length) {
-      els.push(...stackVertical('support', support,
-        { col: half + 1, colSpan: cols - half, row: Math.round(rows * 0.42), rowSpan: 3 },
-        cols, rows, 3, { style: { align: 'right', valign: 'top' } }))
-    }
-    const anchor = items('anchor')
-    if (anchor.length) {
-      els.push(tierText('anchor', 0, anchor[0]!,
-        clampRegion({ col: 1, colSpan: cols, row: rows - 2, rowSpan: 2 }, cols, rows), 2,
-        { level: 'headline', style: { align: 'left', valign: 'bottom', fontWeight: 700, ...drama.anchor } }))
+    const photoRows = rowBand(0.10, 0.60, rows)
+    const photoCols = colBand(0.45, 0.95, cols)
+    const photoRegion = clampRegion({ ...photoCols, ...photoRows }, cols, rows)
+    if (image) {
+      els.push(tierImage('0', image, photoRegion, 2))
     }
     const fine = items('fineprint')
     if (fine.length) {
+      const fineCols = colBand(0.60, 1, cols)
       els.push(...stackVertical('fineprint', fine,
-        { col: half + 1, colSpan: cols - half, row: 1, rowSpan: 1 },
+        { ...fineCols, row: 1, rowSpan: 1 },
         cols, rows, 4, { style: { align: 'right', valign: 'top' } }))
+    }
+    const heroRows = rowBand(0.04, 0.30, rows)
+    const heroCols = colBand(0, 0.55, cols)
+    const hero = items('hero')
+    if (hero.length) {
+      els.push(tierText('hero', 0, hero[0]!,
+        clampRegion({ ...heroCols, ...heroRows }, cols, rows), 1,
+        { level: 'display', overflow: 'grow', style: { align: 'left', valign: 'top', fontWeight: 700, ...drama.hero } }))
+      if (image) overlaps.push(['tier_hero_0', 'img_0'])
+    }
+    const support = items('support')
+    if (support.length) {
+      const supportCols = colBand(0, 0.45, cols)
+      els.push(...stackVertical('support', support,
+        { ...supportCols, row: heroRows.row + heroRows.rowSpan, rowSpan: 2 },
+        cols, rows, 3, { style: { align: 'left', valign: 'top' } }, 4))
+    }
+    const anchorRows = rowBand(0.84, 0.96, rows)
+    const anchor = items('anchor')
+    if (anchor.length) {
+      els.push(tierText('anchor', 0, anchor[0]!,
+        clampRegion({ col: 1, colSpan: cols, ...anchorRows }, cols, rows), 2,
+        { level: 'headline', style: { align: 'left', valign: 'bottom', fontWeight: 700, ...drama.anchor } }))
+    }
+    return { elements: els, ...(overlaps.length ? { overlaps } : {}) }
+  },
+}
+
+/**
+ * Corner — a photo pinned to the top-right corner (bleeding top+right), a
+ * big hero anchoring the bottom-left. New Family B staging (round-2b
+ * self-review correction folded the backpocket-19 "Reel" vertical-type move
+ * in here): `crop:'bottom'` pushes the hero's rowSpan past the grid with
+ * `overhang:true`; `heroOrientation:'up'` swaps the hero into a tall,
+ * narrow region running the left edge and sets `style.orientation:'up'` —
+ * the two knobs compose (a vertical hero can still crop past the bottom).
+ */
+const corner: Staging = {
+  id: 'corner',
+  name: 'Corner',
+  blurb: 'A photo pinned to the top-right corner; a big hero anchors the opposite corner.',
+  knobs: [
+    { id: 'crop', pick: ['bottom', 'none'] },
+    { id: 'heroOrientation', pick: ['horizontal', 'up'] },
+    HERO_SCALE_KNOB,
+  ],
+  compose({ tiers, cols, rows, canvas, knobs, image }) {
+    const els: ElementV2[] = []
+    const entries = tierEntries(tiers)
+    const items = (id: TierId) => tierItems(entries, id)
+    const drama = dramaticType(knobs, canvas)
+    const vertical = knobs.heroOrientation === 'up'
+    const crop = knobs.crop === 'bottom'
+
+    const photoRows = rowBand(0, 0.42, rows)
+    const photoCols = colBand(0.55, 1, cols)
+    const photoRegion = clampRegion({ ...photoCols, ...photoRows }, cols, rows)
+    if (image) {
+      els.push(tierImage('0', image, photoRegion, 2, { bleed: true }))
+    }
+    const fine = items('fineprint')
+    if (fine.length) {
+      const fineCols = colBand(0, 0.30, cols)
+      const fineRows = rowBand(0, 0.12, rows)
+      els.push(...stackVertical('fineprint', fine,
+        { ...fineCols, row: fineRows.row, rowSpan: 1 },
+        cols, rows, 4, { style: { align: 'left', valign: 'top' } }, fineRows.rowSpan))
+    }
+    // Two mutually-exclusive base regions: the default horizontal "big
+    // bottom-left" box, or (heroOrientation:'up') a tall narrow strip along
+    // the left edge — both stay clear of the photo/fine/anchor/support
+    // regions below, so `crop`'s extension (rowSpan past the grid) never
+    // needs a declared overlap either.
+    const heroBase = vertical
+      ? { ...colBand(0, 0.18, cols), ...rowBand(0.20, 0.95, rows) }
+      : { ...colBand(0, 0.55, cols), ...rowBand(0.55, 0.90, rows) }
+    const cropExtra = Math.max(3, Math.round(0.06 * rows))
+    const heroRegion = crop ? { ...heroBase, rowSpan: heroBase.rowSpan + cropExtra } : clampRegion(heroBase, cols, rows)
+    const hero = items('hero')
+    if (hero.length) {
+      els.push(tierText('hero', 0, hero[0]!, heroRegion, 1,
+        { level: 'display', overflow: 'grow', overhang: crop,
+          style: {
+            align: 'left', valign: 'bottom', fontWeight: 700, ...drama.hero,
+            ...(vertical ? { orientation: 'up' as const } : {}),
+          } }))
+    }
+    const anchorRows = rowBand(0.46, 0.55, rows)
+    const anchorCols = colBand(0.45, 1, cols)
+    const anchor = items('anchor')
+    if (anchor.length) {
+      els.push(tierText('anchor', 0, anchor[0]!,
+        clampRegion({ ...anchorCols, ...anchorRows }, cols, rows), 2,
+        { level: 'headline', style: { align: 'right', valign: 'top', fontWeight: 700, ...drama.anchor } }))
+    }
+    const support = items('support')
+    if (support.length) {
+      const supportCols = colBand(0.60, 1, cols)
+      const supportRows = rowBand(0.62, 0.98, rows)
+      els.push(...stackVertical('support', support,
+        { ...supportCols, row: supportRows.row, rowSpan: 3 },
+        cols, rows, 3, { style: { align: 'right', valign: 'top' } }, supportRows.rowSpan))
     }
     return { elements: els }
   },
@@ -720,7 +844,7 @@ const stacked: Staging = {
 }
 
 export const STAGINGS: Staging[] = [
-  tower, split, frame, centered, editorial, index,
+  tower, split, frame, corner, centered, editorial, index,
   statement, manifesto, ledger, stacked,
 ]
 
