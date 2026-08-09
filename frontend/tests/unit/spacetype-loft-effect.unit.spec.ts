@@ -87,3 +87,20 @@ describe('loft refinements', () => {
     }
   })
 })
+
+describe('loft control placement + defaults (user-visibility fixes)', () => {
+  const ctrl = (k: string) => loftEffect.controls.find(c => c.key === k)!
+  it("Count (copies) + Spacing live in the OPEN 'Style' section, not the collapsed 'Layout'", () => {
+    // Layout starts collapsed (DEFAULT_COLLAPSED) — the item-count control must be somewhere visible.
+    expect(ctrl('copies').group).toBe('Style')
+    expect(ctrl('copies').label).toBe('Count')
+    expect(ctrl('spacing').group).toBe('Style')
+  })
+  it('default fills = TWO solid stops (1 fill = uniform model; fresh loft shows a blend)', () => {
+    const fills = JSON.parse(String(ctrl('fills').default))
+    expect(Array.isArray(fills)).toBe(true)
+    expect(fills.length).toBe(2)
+    expect(fills.every((f: any) => f.type === 'solid')).toBe(true)
+    expect(fills[0].a).not.toBe(fills[1].a)   // two distinct colours → a real blend
+  })
+})

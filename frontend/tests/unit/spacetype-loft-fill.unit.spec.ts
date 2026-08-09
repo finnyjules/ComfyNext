@@ -30,4 +30,8 @@ describe('rampFromFill — multi-fill spread', () => {
     expect(rampFromFill(THREE as any, JSON.stringify([{type:'solid',a:'#fff'}]), 32).length).toBe(32*4)
     expect(rampFromFill(THREE as any, 'garbage', 16).length).toBe(16*4)
   })
+  it('single solid fill → uniform ramp (1 fill = one colour everywhere)', () => {
+    const r = rampFromFill(THREE as any, JSON.stringify([{ type: 'solid', a: '#ff0000' }]), 64, 'blend')
+    for (let i = 0; i < 64; i++) expect(rgbAt(r, i)).toEqual([255, 0, 0])
+  })
 })

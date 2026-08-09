@@ -23,8 +23,6 @@ const controls: ControlSpec[] = [
   { key: 'stops', label: 'Stops', kind: 'profileStops', default: DEFAULT_STOPS_JSON, group: 'Layout' },
   { key: 'spinePreset', label: 'Spine preset', kind: 'select', options: ['custom', 'helix', 'wave', 'arch', 's-curve', 'loop'], default: 'helix', group: 'Layout' },
   { key: 'closed', label: 'Closed loop', kind: 'switch', default: false, group: 'Layout' },
-  { key: 'copies', label: 'Copies', kind: 'slider', min: 6, max: 400, step: 1, default: 120, group: 'Layout' },
-  { key: 'spacing', label: 'Spacing', kind: 'slider', min: 0, max: 0.9, step: 0.02, default: 0.35, group: 'Layout' },
   // shape picker replaces the old profileKind — word is now one of the shape options
   { key: 'shape', label: 'Shape', kind: 'select', options: ['oval', 'capsule', 'rectangle', 'polygon', 'star', 'word'], default: 'oval', group: 'Style' },
   { key: 'rectRadius', label: 'Corner radius', kind: 'slider', min: 0, max: 1, step: 0.02, default: 0.4, group: 'Style', showIf: { key: 'shape', equals: 'rectangle' } },
@@ -39,11 +37,17 @@ const controls: ControlSpec[] = [
   { key: 'strokeWidth', label: 'Stroke width', kind: 'slider', min: 0.005, max: 0.3, step: 0.005, default: 0.04, group: 'Style', showIf: { key: 'render', equals: 'stroke' } },
   { key: 'fillOpacity', label: 'Fill opacity', kind: 'slider', min: 0.05, max: 1, step: 0.05, default: 1, group: 'Style', showIf: { key: 'render', equals: 'fill' } },
   { key: 'mode', label: 'Space', kind: 'select', options: ['3d', 'flat'], default: '3d', group: 'Style' },
+  // Count (the number of items in the blend) + Spacing live in the OPEN Style section, not the
+  // collapsed Layout section — otherwise the item-count control is hidden. Copies is the underlying
+  // key; the visible label is "Count".
+  { key: 'copies', label: 'Count', kind: 'slider', min: 6, max: 400, step: 1, default: 120, group: 'Style' },
+  { key: 'spacing', label: 'Spacing', kind: 'slider', min: 0, max: 0.9, step: 0.02, default: 0.35, group: 'Style' },
   { key: 'colorSource', label: 'Colour source', kind: 'select', options: ['fill', 'stops'], default: 'fill', group: 'Color' },
-  // Default to an ombre (smooth A→B) fill so a fresh loft shows a gradient along the sweep,
-  // matching the "oval + gradient" default choice — the shared palette has no 'gradient' type,
-  // and rampFromFill maps ombre A→B the same way.
-  { key: 'fills', label: 'Fill', kind: 'fillList', default: JSON.stringify([{ type: 'ombre', a: '#3b5bff', b: '#ff2ea6', textColor: '#ffffff', angle: 90, density: 8 }]), group: 'Color', showIf: { key: 'colorSource', equals: 'fill' } },
+  // Default to TWO solid fills. Each fill is one colour stop, spread first→last and blended between,
+  // so a fresh loft shows a blue→pink blend AND matches the "each fill = one colour" model
+  // (1 fill = uniform, 2 = endpoints blend, N = spread). Gradient/ombre fills are still accepted —
+  // they contribute their a→b as two stops (see rampFromFill).
+  { key: 'fills', label: 'Fill', kind: 'fillList', default: JSON.stringify([{ type: 'solid', a: '#3b5bff', b: '#3b5bff', textColor: '#ffffff', angle: 90, density: 8 }, { type: 'solid', a: '#ff2ea6', b: '#ff2ea6', textColor: '#ffffff', angle: 90, density: 8 }]), group: 'Color', showIf: { key: 'colorSource', equals: 'fill' } },
   { key: 'fillMode', label: 'Fill mode', kind: 'select', options: ['blend', 'steps'], default: 'blend', group: 'Color', showIf: { key: 'colorSource', equals: 'fill' } },
   { key: 'flow', label: 'Flow', kind: 'slider', min: 0, max: 4, step: 1, default: 0, group: 'Motion' },
   { key: 'spin', label: 'Spin', kind: 'slider', min: 0, max: 4, step: 1, default: 0, group: 'Motion' },
