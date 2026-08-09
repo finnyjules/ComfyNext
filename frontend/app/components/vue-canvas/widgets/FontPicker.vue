@@ -8,15 +8,16 @@
  */
 import { VARIABLE_FONTS, type VariableFont } from '~/data/variable-fonts'
 import { loadGoogleCatalog, type GoogleFont } from '~/data/google-fonts'
+import { filterLibraryGroups } from '~/data/library-fonts'
 import { onClickOutside } from '@vueuse/core'
 
 const props = defineProps<{
-  selectedKey: string   // 'var:<id>' or 'goog:<family>' — highlights the active row
+  selectedKey: string   // 'var:<id>' or 'goog:<family>' or 'lib:<family>' — highlights the active row
   label: string         // current font name shown on the trigger
   sublabel?: string     // 'Variable' | 'Google'
 }>()
 const emit = defineEmits<{
-  pick: [payload: { source: 'variable'; id: string } | { source: 'google'; font: GoogleFont }]
+  pick: [payload: { source: 'variable'; id: string } | { source: 'google'; font: GoogleFont } | { source: 'library'; family: string }]
 }>()
 
 const LIMIT = 60
@@ -30,6 +31,13 @@ const loading = ref(false)
 
 const { suggestions, loading: suggestLoading, error: suggestError, hasRun: suggestRan, suggest, clear: clearSuggest } = useFontSuggest()
 const { ensure: ensureGoogleFont } = useGoogleFontPreview()
+const { ensure: ensureLibFace } = useLibraryFonts()
+
+// Source tabs: Google catalog vs. the licensed Pangram/Off-Type library (mirrors
+// the main FontPicker's Google|Pangram split). Opens on Pangram when the current
+// selection is already a library family.
+type FontPickerTab = 'google' | 'pangram'
+const activeTab = ref<FontPickerTab>('google')
 
 function ensureCatalog() {
   if (catalog.value.length || loading.value) return
@@ -62,6 +70,7 @@ function toggle() {
   open.value = !open.value
   if (!open.value) return
   query.value = ''
+  activeTab.value = props.selectedKey.startsWith('lib:') ? 'pangram' : 'google'
   nextTick(() => searchEl.value?.focus())
   if (!catalog.value.length) {
     loading.value = true
@@ -90,8 +99,15 @@ const googleMatches = computed(() => {
 })
 const googleShown = computed(() => googleMatches.value.slice(0, LIMIT))
 
+const filteredLibrary = computed(() => filterLibraryGroups(query.value))
+// Preview each visible library family in its own face once the Pangram tab is open.
+watch([activeTab, filteredLibrary], () => {
+  if (activeTab.value === 'pangram') for (const g of filteredLibrary.value) for (const f of g.families) ensureLibFace(f.family)
+})
+
 function pickVariable(f: VariableFont) { emit('pick', { source: 'variable', id: f.id }); close() }
 function pickGoogle(f: GoogleFont) { emit('pick', { source: 'google', font: f }); close() }
+function pickLibrary(family: string) { emit('pick', { source: 'library', family }); close() }
 </script>
 
 <template>
@@ -113,7 +129,11 @@ function pickGoogle(f: GoogleFont) { emit('pick', { source: 'google', font: f })
         />
         <button type="button" class="fp__sparkle" title="Suggest fonts from a description" :disabled="suggestLoading" @click="runSuggest">✨ Ask AI</button>
       </div>
-      <div class="fp__list">
+      <div class="fp__tabs">
+        <button type="button" class="fp__tab" :class="{ 'fp__tab--active': activeTab === 'google' }" @click="activeTab = 'google'">Google</button>
+        <button type="button" class="fp__tab" :class="{ 'fp__tab--active': activeTab === 'pangram' }" @click="activeTab = 'pangram'">Pangram</button>
+      </div>
+      <div v-if="activeTab === 'google'" class="fp__list">
         <template v-if="suggestLoading || suggestError || suggestions.length || suggestRan">
           <div class="fp__group">✨ Suggested</div>
           <div v-if="suggestLoading" class="fp__more">Finding fonts…</div>
@@ -168,6 +188,25 @@ function pickGoogle(f: GoogleFont) { emit('pick', { source: 'google', font: f })
           +{{ googleMatches.length - googleShown.length }} more — keep typing to narrow
         </div>
         <div v-if="!loading && q && !featured.length && !googleMatches.length" class="fp__more">
+          No fonts match “{{ query }}”.
+        </div>
+      </div>
+      <div v-else class="fp__list">
+        <template v-for="g in filteredLibrary" :key="g.foundry.id">
+          <div class="fp__group">{{ g.foundry.label }}</div>
+          <button
+            v-for="f in g.families"
+            :key="f.id"
+            type="button"
+            class="fp__row"
+            :class="{ 'fp__row--sel': selectedKey === 'lib:' + f.family }"
+            @click="pickLibrary(f.family)"
+          >
+            <span class="fp__row-name" :style="{ fontFamily: f.family }">{{ f.family }}</span>
+            <span class="fp__row-meta">{{ f.faces.length }}</span>
+          </button>
+        </template>
+        <div v-if="!filteredLibrary.length" class="fp__more">
           No fonts match “{{ query }}”.
         </div>
       </div>
@@ -233,6 +272,14 @@ function pickGoogle(f: GoogleFont) { emit('pick', { source: 'google', font: f })
 }
 .fp__sparkle:hover { border-color: rgba(255,255,255,0.25); }
 .fp__sparkle:disabled { opacity: 0.4; cursor: default; }
+.fp__tabs { display: flex; align-items: center; gap: 4px; padding: 0 1px; }
+.fp__tab {
+  background: none; border: none; cursor: pointer;
+  border-radius: 5px; padding: 3px 8px;
+  font-size: 11px; color: rgba(255,255,255,0.5);
+}
+.fp__tab:hover { color: rgba(255,255,255,0.8); }
+.fp__tab--active { background: rgba(255,255,255,0.15); color: rgba(255,255,255,0.9); }
 .fp__list { max-height: 220px; overflow-y: auto; display: flex; flex-direction: column; }
 .fp__group {
   display: flex; justify-content: space-between; align-items: center;

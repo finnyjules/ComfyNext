@@ -67,6 +67,7 @@ import { paintPrimaryColor } from '~/lib/spacetype/fillTile'
 import FontPicker from '~/components/vue-canvas/widgets/FontPicker.vue'
 import { VARIABLE_FONTS } from '~/data/variable-fonts'
 import type { GoogleFont } from '~/data/google-fonts'
+import { libraryFamily } from '~/data/library-fonts'
 import { defaultExpressiveParams, type ExpressiveParams } from '~~/shared/text-layout/expressive'
 import { PenTool, Brush, FileUp, Sparkles, Wand2, Lasso, Undo2, Redo2, ChevronRight, ChevronDown, GripVertical, Play, Palette, Check, RefreshCw } from 'lucide-vue-next'
 import type { ComputedRef } from 'vue'
@@ -88,6 +89,7 @@ const props = defineProps<{
 const emit = defineEmits<{ close: [] }>()
 
 const { ensure: ensureGoogleFont } = useGoogleFontPreview()
+const { ensure: ensureLibraryFont } = useLibraryFonts()
 
 // Record generated stills/videos as the current project's assets (Assets panel)
 // — mirrors GradientStudioSurface's "outputs" idiom exactly.
@@ -102,11 +104,19 @@ const BLEND_MODES = ['normal', 'multiply', 'screen', 'overlay', 'soft_light',
 const fontPickerKey = computed(() => {
   const fam = (selectedLocal.value as any)?.fontFamily || ''
   const v = VARIABLE_FONTS.find(f => f.family === fam)
-  return v ? 'var:' + v.id : 'goog:' + fam
+  if (v) return 'var:' + v.id
+  if (libraryFamily(fam)) return 'lib:' + fam
+  return 'goog:' + fam
 })
-function onPickFont(payload: { source: 'variable'; id: string } | { source: 'google'; font: GoogleFont }) {
+function onPickFont(payload: { source: 'variable'; id: string } | { source: 'google'; font: GoogleFont } | { source: 'library'; family: string }) {
   const id = selectedLocalId.value
   if (!id) return
+  if (payload.source === 'library') {
+    if (!payload.family) return
+    ensureLibraryFont(payload.family)
+    setLocal(id, { fontFamily: payload.family })
+    return
+  }
   const family = payload.source === 'variable'
     ? (VARIABLE_FONTS.find(f => f.id === payload.id)?.family ?? '')
     : payload.font.family
@@ -1935,7 +1945,10 @@ watch(
     JSON.stringify(localGroups.value),
   ] as const,
   async () => {
-    for (const l of localLayers.value) if (l.kind === 'text') ensureGoogleFont((l as TextLayer).fontFamily)
+    for (const l of localLayers.value) if (l.kind === 'text') {
+      ensureGoogleFont((l as TextLayer).fontFamily)
+      ensureLibraryFont((l as TextLayer).fontFamily)
+    }
     await ensureLayerFonts(localLayers.value, canvasDisplay.w)
     await ensureLayerImages(localLayers.value)
     renderStack()
