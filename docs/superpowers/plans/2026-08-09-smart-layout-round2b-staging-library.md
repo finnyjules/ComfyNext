@@ -52,7 +52,7 @@ Regions given as fractions of the grid (cols C, rows R); composers convert with 
 |---|---|---|
 | `cover` | `img_0` FULL BLEED [0..R]×[0..C] (bleed, back). Hero centered on the photo [0.36..0.60], centered align, **declared overlap (hero, img_0)**; hero gets a scrim knob (`panel` w/ theme field at low opacity) OR overprint (no scrim) — knob `scrim: ['none','panel']`. Anchor small centered below hero. Fineprint corners. | The overprint move (backpocket-6/10). |
 | `lockup` | Full-bleed photo; a small centered title+date jewel: hero at REDUCED scale (0.5×heroScale) + anchor tight under it, both centered [0.42..0.58]; declared overlaps for both on img_0. | knobs: `scrim`. |
-| `band_header` | Solid BAND: `band_0` shape rows [0..0.28] full width filled `{{ brand.background }}`… then hero+anchor+meta INSIDE the band (hero left, anchor right, fineprint under), photo fills [0.28..R] full-bleed below. Band is a shape element behind its text (declared overlaps with each band text). | knobs: `bandSize: [0.24, 0.28, 0.34]`. |
+| `band_header` | Solid BAND: `band_0` shape rows [0..0.28] full width filled `{{ brand.background }}`… then hero+anchor+meta INSIDE the band (hero left, anchor right, fineprint under), photo fills [0.28..R] full-bleed below. Band is a shape element behind its text (declared overlaps with each band text). | knobs: `bandSize: [0.24, 0.28, 0.34]`, `scrim` (applies to the support text on the photo). |
 | `band_footer` | Mirror: photo [0..0.66] full bleed; band [0.66..R]; hero left in band, anchor right, caption on the photo bottom-left above the band (declared overlap with img_0). | knobs: bandSize. |
 
 ### Family D — Texture (type repetition; no photo required, uses one if present)
