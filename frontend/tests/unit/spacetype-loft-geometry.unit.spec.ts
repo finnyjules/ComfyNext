@@ -250,6 +250,93 @@ describe('cross-section caps (fill)', () => {
   })
 })
 
+describe('cap angle (mitred end caps)', () => {
+  const P = 12
+  const stopsFix = [
+    { id:'a', x:0, y:0.5, z:0, width:1, height:1, roll:0, color:'#000000' },
+    { id:'b', x:1, y:0.5, z:0, width:1, height:1, roll:0, color:'#ffffff' },
+  ]
+  const contour = shapeContour('oval', { rectRadius:0.5, polySides:5, starDepth:0.5 }, P)
+
+  it('capAngle=0 is byte-identical to building with no capAngle opt at all (continuous)', () => {
+    const K = 10
+    const st = sampleSpine(stopsFix as any, false, K)
+    const props = st.map(() => ({ width:1, height:1, roll:0 }))
+    const noOpt = buildLoftGeometry({ stations: st, props, baseContours:[contour], closed:false, render:'fill', cap:true })
+    const zero = buildLoftGeometry({ stations: st, props, baseContours:[contour], closed:false, render:'fill', cap:true, capAngle:0 })
+    expect(zero.positions.length).toBe(noOpt.positions.length)
+    expect(zero.indices.length).toBe(noOpt.indices.length)
+    for (let i = 0; i < noOpt.positions.length; i++) expect(zero.positions[i]).toBeCloseTo(noOpt.positions[i]!, 9)
+    for (let i = 0; i < noOpt.indices.length; i++) expect(zero.indices[i]).toBe(noOpt.indices[i])
+  })
+
+  it('capAngle=0 is byte-identical to building with no capAngle opt at all (sliced)', () => {
+    const E = 5
+    const st = sampleSpine(stopsFix as any, false, 200)
+    const props = st.map(() => ({ width:1, height:1, roll:0 }))
+    const noOpt = buildSlicedLoftGeometry({ stations: st, props, baseContours:[contour], closed:false, render:'fill', elements:E, spacing:0.4, cap:true })
+    const zero = buildSlicedLoftGeometry({ stations: st, props, baseContours:[contour], closed:false, render:'fill', elements:E, spacing:0.4, cap:true, capAngle:0 })
+    expect(zero.positions.length).toBe(noOpt.positions.length)
+    expect(zero.indices.length).toBe(noOpt.indices.length)
+    for (let i = 0; i < noOpt.positions.length; i++) expect(zero.positions[i]).toBeCloseTo(noOpt.positions[i]!, 9)
+    for (let i = 0; i < noOpt.indices.length; i++) expect(zero.indices[i]).toBe(noOpt.indices[i])
+  })
+
+  it('capAngle=45 shears the outer cap ring along the station tangent (continuous)', () => {
+    const K = 10
+    const st = sampleSpine(stopsFix as any, false, K)
+    const props = st.map(() => ({ width:1, height:1, roll:0 }))
+    const zero = buildLoftGeometry({ stations: st, props, baseContours:[contour], closed:false, render:'fill', cap:true, capAngle:0 })
+    const sheared = buildLoftGeometry({ stations: st, props, baseContours:[contour], closed:false, render:'fill', cap:true, capAngle:45 })
+    // Unsheared cap ring vertices are literally the shared wall vertices — station0, contour0,
+    // point p=3 (oval point at angle 90°, i.e. (0,1)) has a non-zero binormal component so the
+    // shear (proportional to it) is non-zero there.
+    const p = 3
+    const wallIdx = p                                    // idx(0,0,p) with C=1
+    const basePos = [zero.positions[wallIdx*3]!, zero.positions[wallIdx*3+1]!, zero.positions[wallIdx*3+2]!]
+    // sheared layout after the K*P grid: cap0 = [centroid, P ring verts...]; ring vertex p is at
+    // offset (gridVerts + 1 + p).
+    const gridVerts = K * 1 * P
+    const shearedRingVertIdx = gridVerts + 1 + p
+    const shearedPos = [sheared.positions[shearedRingVertIdx*3]!, sheared.positions[shearedRingVertIdx*3+1]!, sheared.positions[shearedRingVertIdx*3+2]!]
+    const dx = shearedPos[0]-basePos[0], dy = shearedPos[1]-basePos[1], dz = shearedPos[2]-basePos[2]
+    const moved = Math.hypot(dx, dy, dz)
+    expect(moved).toBeGreaterThan(0.05)
+    // the displacement should be (nearly) parallel to the station's tangent T = normal × binormal
+    const s0 = st[0]!
+    const tx = s0.normal.y*s0.binormal.z - s0.normal.z*s0.binormal.y
+    const ty = s0.normal.z*s0.binormal.x - s0.normal.x*s0.binormal.z
+    const tz = s0.normal.x*s0.binormal.y - s0.normal.y*s0.binormal.x
+    const tlen = Math.hypot(tx, ty, tz) || 1
+    const dot = (dx*tx + dy*ty + dz*tz) / tlen
+    expect(Math.abs(dot)).toBeCloseTo(moved, 3)   // displacement is (anti)parallel to tangent
+  })
+
+  it('sliced: interior band-end caps are NOT sheared — only band0-ring0 and the last band-ring1 move', () => {
+    const E = 2
+    const st = sampleSpine(stopsFix as any, false, 200)
+    const props = st.map(() => ({ width:1, height:1, roll:0 }))
+    const zero = buildSlicedLoftGeometry({ stations: st, props, baseContours:[contour], closed:false, render:'fill', elements:E, spacing:0.4, cap:true, capAngle:0 })
+    const sheared = buildSlicedLoftGeometry({ stations: st, props, baseContours:[contour], closed:false, render:'fill', elements:E, spacing:0.4, cap:true, capAngle:60 })
+    const nVerts = E * 2 * 1 * P
+    // capAngle=0 layout: 4 rings in loop order (i0r0, i0r1, i1r0, i1r1), each = 1 centroid vertex.
+    const zeroCentroid = (k: number) => [zero.positions[(nVerts+k)*3]!, zero.positions[(nVerts+k)*3+1]!, zero.positions[(nVerts+k)*3+2]!]
+    // sheared layout: i0r0 is OUTER (band0's first ring) → centroid + P ring verts; i0r1 and i1r0
+    // are interior → 1 centroid each (unchanged path); i1r1 is OUTER (last band's last ring) →
+    // centroid + P ring verts.
+    let o = nVerts
+    o += (P + 1)                       // skip i0r0's sheared block
+    const centroidI0r1 = o; o += 1
+    const centroidI1r0 = o; o += 1
+    // (i1r1's sheared block follows — not needed here)
+    const shearedI0r1 = [sheared.positions[centroidI0r1*3]!, sheared.positions[centroidI0r1*3+1]!, sheared.positions[centroidI0r1*3+2]!]
+    const shearedI1r0 = [sheared.positions[centroidI1r0*3]!, sheared.positions[centroidI1r0*3+1]!, sheared.positions[centroidI1r0*3+2]!]
+    const zeroI0r1 = zeroCentroid(1), zeroI1r0 = zeroCentroid(2)
+    expect(shearedI0r1[0]).toBeCloseTo(zeroI0r1[0]!, 9); expect(shearedI0r1[1]).toBeCloseTo(zeroI0r1[1]!, 9); expect(shearedI0r1[2]).toBeCloseTo(zeroI0r1[2]!, 9)
+    expect(shearedI1r0[0]).toBeCloseTo(zeroI1r0[0]!, 9); expect(shearedI1r0[1]).toBeCloseTo(zeroI1r0[1]!, 9); expect(shearedI1r0[2]).toBeCloseTo(zeroI1r0[2]!, 9)
+  })
+})
+
 describe('stroke ribbons (width)', () => {
   const P = 10
   const stopsFix = [

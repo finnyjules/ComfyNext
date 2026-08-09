@@ -207,6 +207,7 @@ export function buildLoftGeometry(opts: {
   cap?: boolean
   strokeWidth?: number
   gradientAngle?: number
+  capAngle?: number
 }): LoftGeometry {
   const { stations, props, baseContours, closed, render } = opts
   const K = stations.length
@@ -305,17 +306,41 @@ export function buildLoftGeometry(opts: {
   }
 
   // Cap the two open ends of the swept surface with a centroid-fan disc so Fill mode reads as a
-  // solid, not a hollow tube — closed loops have no ends to cap.
+  // solid, not a hollow tube — closed loops have no ends to cap. Both capped stations (0, K-1)
+  // are OUTER ends here (the continuous builder has no interior band-end caps), so `capAngle`
+  // shears both when non-zero. At capAngle=0 this stays the ORIGINAL shared-fan path unchanged
+  // (byte-identical) — the sheared path only runs when shear !== 0, and it duplicates the ring
+  // into its own appended vertices rather than moving the shared wall-ring verts.
   if (render === 'fill' && opts.cap && !closed) {
     const capStations = [0, K - 1]
+    const capAngle = opts.capAngle ?? 0
+    const shear = capAngle !== 0 ? Math.tan((capAngle * Math.PI) / 180) : 0
     const extraPos: number[] = [], extraAlong: number[] = [], extraAcross: number[] = []
     let capVo = K * C * P                       // next vertex index after the grid
     for (const i of capStations) {
       const st = stations[i]!
+      const pr = props[i]!
+      const cr = Math.cos((pr.roll * Math.PI) / 180), sr = Math.sin((pr.roll * Math.PI) / 180)
+      const tangent = shear !== 0 ? norm(cross(st.normal, st.binormal)) : null
       for (let c = 0; c < C; c++) {
         const cIdx = capVo++
         extraPos.push(st.pos.x, st.pos.y, st.pos.z); extraAlong.push(st.t); extraAcross.push(0.5)
-        for (let p = 0; p < P; p++) { const np = (p + 1) % P; indices.push(cIdx, idx(i, c, p), idx(i, c, np)) }
+        if (shear === 0) {
+          for (let p = 0; p < P; p++) { const np = (p + 1) % P; indices.push(cIdx, idx(i, c, p), idx(i, c, np)) }
+        } else {
+          const contour = baseContours[c]!
+          const ringStart = capVo
+          for (let p = 0; p < P; p++) {
+            const v = contour[p]!
+            const q = rolledPoint2D(v, pr, cr, sr)
+            const base = place2D(st, q)
+            extraPos.push(base.x + shear * q.y * tangent!.x, base.y + shear * q.y * tangent!.y, base.z + shear * q.y * tangent!.z)
+            extraAlong.push(st.t)
+            extraAcross.push(acrossCoord(v, cosA, sinA))
+            capVo++
+          }
+          for (let p = 0; p < P; p++) { const np = (p + 1) % P; indices.push(cIdx, ringStart + p, ringStart + np) }
+        }
       }
     }
     if (extraPos.length) {
@@ -385,7 +410,7 @@ export function shapeContour(shape: LoftShape, params: ShapeParams, points: numb
 export function buildSlicedLoftGeometry(opts: {
   stations: Station[]; props: StopProps[]; baseContours: Vec2[][]
   closed: boolean; render: 'stroke' | 'fill'; elements: number; spacing: number
-  cap?: boolean; strokeWidth?: number; gradientAngle?: number
+  cap?: boolean; strokeWidth?: number; gradientAngle?: number; capAngle?: number
 }): LoftGeometry {
   const { stations, props, baseContours, render, elements, spacing } = opts
   const K = stations.length
@@ -494,8 +519,14 @@ export function buildSlicedLoftGeometry(opts: {
   }
 
   // Cap BOTH rings of every band with a centroid-fan disc so each slice reads as a solid puck,
-  // not a hollow ring — every band has two open ends (it's a short skinned tube segment).
+  // not a hollow ring — every band has two open ends (it's a short skinned tube segment). Only
+  // the two OUTER caps of the whole sweep — band 0's first ring and the last band's last ring —
+  // are eligible for `capAngle` shear; every interior band-end cap keeps the original shared-fan
+  // path unconditionally (even when capAngle !== 0), so interior caps never move. At capAngle=0
+  // every ring uses the original path unchanged (byte-identical).
   if (render === 'fill' && opts.cap) {
+    const capAngle = opts.capAngle ?? 0
+    const shear = capAngle !== 0 ? Math.tan((capAngle * Math.PI) / 180) : 0
     const extraPos: number[] = [], extraAlong: number[] = [], extraAcross: number[] = []
     let capVo = nVerts                          // next index after the band grid
     for (let i = 0; i < E; i++) {
@@ -503,10 +534,31 @@ export function buildSlicedLoftGeometry(opts: {
       const ts = [tc - half, tc + half]
       for (let ring = 0; ring < ringsPerBand; ring++) {
         const st = stationAt(ts[ring]!)         // interpolated station (same helper the rings use)
+        const isOuter = (i === 0 && ring === 0) || (i === E - 1 && ring === ringsPerBand - 1)
+        const useShear = shear !== 0 && isOuter
+        const pr = useShear ? propsAt(ts[ring]!) : null
+        const cr = pr ? Math.cos((pr.roll * Math.PI) / 180) : 0
+        const sr = pr ? Math.sin((pr.roll * Math.PI) / 180) : 0
+        const tangent = useShear ? norm(cross(st.normal, st.binormal)) : null
         for (let c = 0; c < C; c++) {
           const cIdx = capVo++
           extraPos.push(st.pos.x, st.pos.y, st.pos.z); extraAlong.push(tc); extraAcross.push(0.5)
-          for (let p = 0; p < P; p++) { const np = (p + 1) % P; indices.push(cIdx, idx(i, ring, c, p), idx(i, ring, c, np)) }
+          if (!useShear) {
+            for (let p = 0; p < P; p++) { const np = (p + 1) % P; indices.push(cIdx, idx(i, ring, c, p), idx(i, ring, c, np)) }
+          } else {
+            const contour = baseContours[c]!
+            const ringStart = capVo
+            for (let p = 0; p < P; p++) {
+              const v = contour[p]!
+              const q = rolledPoint2D(v, pr!, cr, sr)
+              const base = place2D(st, q)
+              extraPos.push(base.x + shear * q.y * tangent!.x, base.y + shear * q.y * tangent!.y, base.z + shear * q.y * tangent!.z)
+              extraAlong.push(tc)
+              extraAcross.push(acrossCoord(v, cosA, sinA))
+              capVo++
+            }
+            for (let p = 0; p < P; p++) { const np = (p + 1) % P; indices.push(cIdx, ringStart + p, ringStart + np) }
+          }
         }
       }
     }

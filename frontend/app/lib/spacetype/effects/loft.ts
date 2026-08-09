@@ -38,6 +38,7 @@ const controls: ControlSpec[] = [
   { key: 'strokeOpacity', label: 'Stroke opacity', kind: 'slider', min: 0.02, max: 1, step: 0.02, default: 0.4, group: 'Style', showIf: { key: 'render', equals: 'stroke' } },
   { key: 'strokeWidth', label: 'Stroke width', kind: 'slider', min: 0.005, max: 0.3, step: 0.005, default: 0.04, group: 'Style', showIf: { key: 'render', equals: 'stroke' } },
   { key: 'fillOpacity', label: 'Fill opacity', kind: 'slider', min: 0.05, max: 1, step: 0.05, default: 1, group: 'Style', showIf: { key: 'render', equals: 'fill' } },
+  { key: 'capAngle', label: 'End cap angle', kind: 'slider', min: -80, max: 80, step: 1, default: 0, group: 'Style', showIf: { key: 'render', equals: 'fill' } },
   { key: 'mode', label: 'Space', kind: 'select', options: ['3d', 'flat'], default: '3d', group: 'Style' },
   // Count (the number of items in the blend) + Spacing live in the OPEN Style section, not the
   // collapsed Layout section — otherwise the item-count control is hidden. Copies is the underlying
@@ -199,9 +200,10 @@ export const loftEffect: SpaceTypeEffect = {
     // 0, and ring count when spacing > 0 — one slider, no separate Elements control.
     const strokeWidth = n(params, 'strokeWidth')
     const gradientAngle = String(params.colorSource) === 'fill' ? fillsAngle(String(params.fills ?? '')) : 90
+    const capAngle = n(params, 'capAngle')
     const geo = spacing > 0
-      ? buildSlicedLoftGeometry({ stations, props, baseContours, closed, render, elements: Math.max(2, Math.round(n(params, 'copies'))), spacing, cap, strokeWidth, gradientAngle })
-      : buildLoftGeometry({ stations, props, baseContours, closed, render, cap, strokeWidth, gradientAngle })
+      ? buildSlicedLoftGeometry({ stations, props, baseContours, closed, render, elements: Math.max(2, Math.round(n(params, 'copies'))), spacing, cap, strokeWidth, gradientAngle, capAngle })
+      : buildLoftGeometry({ stations, props, baseContours, closed, render, cap, strokeWidth, gradientAngle, capAngle })
 
     const g = new three.BufferGeometry()
     g.setAttribute('position', new three.BufferAttribute(geo.positions, 3))
