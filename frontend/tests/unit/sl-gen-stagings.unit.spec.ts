@@ -19,6 +19,14 @@ const TIERS: Tiers = {
 function input(over: Partial<StagingInput> = {}): StagingInput {
   return { tiers: TIERS, cols: 12, rows: 16, rng: makeRng(1), knobs: {}, canvas: CANVAS, ...over }
 }
+/** Single-item-per-tier fixture — the other half of the "1-item AND
+ *  2/2-item" validator contract every Family A staging must satisfy. */
+const ONE_EACH_TIERS: Tiers = {
+  hero: [{ content: 'MAT + FEST' }],
+  anchor: [{ content: '15—26 June' }],
+  support: [{ content: 'Street food · Dining' }],
+  fineprint: [{ content: 'Slakthus · Hall 3' }],
+}
 
 describe('staging: tower', () => {
   const tower = getStaging('tower')!
@@ -79,9 +87,11 @@ describe('staging: split + frame registered and valid', () => {
 })
 
 describe('staging: full library', () => {
-  it('registers all six stagings', () => {
-    expect(STAGINGS.map(s => s.id).sort()).toEqual(
-      ['centered', 'editorial', 'frame', 'index', 'split', 'tower'])
+  it('registers all ten stagings', () => {
+    expect(STAGINGS.map(s => s.id).sort()).toEqual([
+      'centered', 'editorial', 'frame', 'index', 'ledger',
+      'manifesto', 'split', 'stacked', 'statement', 'tower',
+    ])
   })
   it('every staging produces distinct placement and stays in-grid', () => {
     const shapes = new Set<string>()
@@ -189,7 +199,15 @@ describe('staging: tier lists — every item renders, nothing dropped', () => {
 })
 
 describe('staging: dramatic hero + anchor type', () => {
+  // `manifesto` inverts the usual mass relationship (Family A table + the
+  // round-2b self-review correction): the ANCHOR is the giant heroScale-sized
+  // element (the numeral-as-graphic move) and the HERO is the small ~0.45×
+  // corner mark — the opposite of every other staging. Its own describe below
+  // asserts that inversion directly; here it's just exempted from the
+  // hero-is-the-giant-one generic checks so this loop still guards the other
+  // nine.
   for (const s of STAGINGS) {
+    if (s.id === 'manifesto') continue
     it(`${s.id}: hero fontSize follows the heroScale knob × canvas.h`, () => {
       for (const heroScale of HERO_SCALES) {
         const els = s.compose(input({ knobs: { heroScale } })).elements
@@ -211,6 +229,27 @@ describe('staging: dramatic hero + anchor type', () => {
       expect(anchor.style.letterSpacing).toBeLessThan(0)
     })
   }
+
+  it('manifesto: hero fontSize follows the INVERTED (0.45×) relationship — anchor is the giant one', () => {
+    for (const heroScale of HERO_SCALES) {
+      const els = getStaging('manifesto')!.compose(input({ knobs: { heroScale } })).elements
+      const anchor = els.find(e => e.id === 'tier_anchor_0')! as any
+      expect(anchor.style.fontSize).toBe(Math.round(heroScale * CANVAS.h))
+    }
+  })
+  it('manifesto: anchor has tight lineHeight and negative letterSpacing (it plays the hero role)', () => {
+    const els = getStaging('manifesto')!.compose(input()).elements
+    const anchor = els.find(e => e.id === 'tier_anchor_0')! as any
+    expect(anchor.style.lineHeight).toBe(0.92)
+    expect(anchor.style.letterSpacing).toBeLessThan(0)
+  })
+  it('manifesto: hero fontSize tracks 0.45 × anchor fontSize (it plays the anchor role)', () => {
+    const els = getStaging('manifesto')!.compose(input()).elements
+    const hero = els.find(e => e.id === 'tier_hero_0')! as any
+    const anchor = els.find(e => e.id === 'tier_anchor_0')! as any
+    expect(Math.abs(hero.style.fontSize - Math.round(0.45 * anchor.style.fontSize))).toBeLessThanOrEqual(1)
+    expect(hero.style.letterSpacing).toBeLessThan(0)
+  })
 })
 
 /** Round-2a Task 5c regression: a freshly generated Smart Layout must never
@@ -275,4 +314,148 @@ describe('staging: dramatic hero never truncates (resolver-level, starter square
       })
     }
   }
+})
+
+// Round-2b Task 2 — Family A, the type-dominant staging family. Four new
+// composers appended additively to the registry (existing six untouched).
+// Per the family table's self-review + task brief: no photos, capacity
+// hero 1/anchor 1/support n/fineprint n (overflow stacks downward), and
+// `index`'s ruled-table rule shapes are `rule_<i>` — one per support item.
+
+describe('staging: statement', () => {
+  const statement = getStaging('statement')!
+  it('is registered', () => { expect(statement).toBeTruthy() })
+  it('places one element per enabled tier item, tagged staging origin', () => {
+    const els = statement.compose(input()).elements
+    expect(els).toHaveLength(6)
+    expect(els.every(e => e.origin === 'staging')).toBe(true)
+  })
+  it('validates clean under default knobs — 2/2-item tier set', () => {
+    const { ok, reasons } = validateGenerated(statement.compose(input()), 12, 16)
+    expect(ok, reasons.join(' ')).toBe(true)
+  })
+  it('validates clean under default knobs — 1-item tier set', () => {
+    const { ok, reasons } = validateGenerated(statement.compose(input({ tiers: ONE_EACH_TIERS })), 12, 16)
+    expect(ok, reasons.join(' ')).toBe(true)
+  })
+  it('is deterministic per seed', () => {
+    expect(statement.compose(input({ rng: makeRng(3) })).elements)
+      .toEqual(statement.compose(input({ rng: makeRng(3) })).elements)
+  })
+  it('crop:"left" gives the hero overhang, off-grid on the left edge', () => {
+    const els = statement.compose(input({ knobs: { crop: 'left' } })).elements
+    const hero = els.find(e => e.id === 'tier_hero_0')! as any
+    expect(hero.overhang).toBe(true)
+    expect(hero.region.col).toBeLessThan(1)
+  })
+  it('crop:"none" keeps the hero fully in-grid, no overhang', () => {
+    const els = statement.compose(input({ knobs: { crop: 'none' } })).elements
+    const hero = els.find(e => e.id === 'tier_hero_0')! as any
+    expect(hero.overhang).toBeFalsy()
+    expect(hero.region.col).toBeGreaterThanOrEqual(1)
+  })
+  it("an item's own type override still wins over the staging's voice defaults", () => {
+    const tiers: Tiers = { ...TIERS, hero: [{ content: 'MAT + FEST', type: { color: '#ff0000' } }] }
+    const els = statement.compose(input({ tiers })).elements
+    const hero = els.find(e => e.id === 'tier_hero_0')! as any
+    expect(hero.style.color).toBe('#ff0000')
+  })
+})
+
+describe('staging: manifesto', () => {
+  const manifesto = getStaging('manifesto')!
+  it('is registered', () => { expect(manifesto).toBeTruthy() })
+  it('places one element per enabled tier item, plus the rule_0 hairline shape', () => {
+    const els = manifesto.compose(input()).elements
+    expect(els).toHaveLength(7) // hero + anchor + 2 support + 2 fineprint + rule_0
+    const rule = els.find(e => e.id === 'rule_0')! as any
+    expect(rule.type).toBe('shape')
+    expect(rule.shape).toBe('rect')
+  })
+  it('validates clean under default knobs — 2/2-item tier set', () => {
+    const { ok, reasons } = validateGenerated(manifesto.compose(input()), 12, 16)
+    expect(ok, reasons.join(' ')).toBe(true)
+  })
+  it('validates clean under default knobs — 1-item tier set', () => {
+    const { ok, reasons } = validateGenerated(manifesto.compose(input({ tiers: ONE_EACH_TIERS })), 12, 16)
+    expect(ok, reasons.join(' ')).toBe(true)
+  })
+  it('is deterministic per seed', () => {
+    expect(manifesto.compose(input({ rng: makeRng(3) })).elements)
+      .toEqual(manifesto.compose(input({ rng: makeRng(3) })).elements)
+  })
+  it('anchor fontSize equals the heroScale sizing (inverted mass — the numeral is the graphic)', () => {
+    for (const heroScale of HERO_SCALES) {
+      const els = manifesto.compose(input({ knobs: { heroScale } })).elements
+      const anchor = els.find(e => e.id === 'tier_anchor_0')! as any
+      expect(anchor.style.fontSize).toBe(Math.round(heroScale * CANVAS.h))
+    }
+  })
+  it('voice:"serif" sets the anchor fontFamily to Playfair Display', () => {
+    const els = manifesto.compose(input({ knobs: { voice: 'serif' } })).elements
+    const anchor = els.find(e => e.id === 'tier_anchor_0')! as any
+    expect(anchor.style.fontFamily).toBe('Playfair Display')
+  })
+  it('voice:"grotesk" leaves the anchor fontFamily unset (inherits brand)', () => {
+    const els = manifesto.compose(input({ knobs: { voice: 'grotesk' } })).elements
+    const anchor = els.find(e => e.id === 'tier_anchor_0')! as any
+    expect(anchor.style.fontFamily).toBeUndefined()
+  })
+})
+
+describe('staging: ledger', () => {
+  const ledger = getStaging('ledger')!
+  it('is registered', () => { expect(ledger).toBeTruthy() })
+  it('places one rule_i hairline shape per support item, none extra', () => {
+    const els = ledger.compose(input()).elements
+    const rule0 = els.find(e => e.id === 'rule_0')! as any
+    const rule1 = els.find(e => e.id === 'rule_1')! as any
+    expect(rule0.type).toBe('shape')
+    expect(rule1.type).toBe('shape')
+    expect(els.filter(e => e.type === 'shape')).toHaveLength(2) // 2 support items, 2 rules
+  })
+  it('validates clean under default knobs — 2/2-item tier set', () => {
+    const { ok, reasons } = validateGenerated(ledger.compose(input()), 12, 16)
+    expect(ok, reasons.join(' ')).toBe(true)
+  })
+  it('validates clean under default knobs — 1-item tier set', () => {
+    const { ok, reasons } = validateGenerated(ledger.compose(input({ tiers: ONE_EACH_TIERS })), 12, 16)
+    expect(ok, reasons.join(' ')).toBe(true)
+    const els = ledger.compose(input({ tiers: ONE_EACH_TIERS })).elements
+    expect(els.filter(e => e.type === 'shape')).toHaveLength(1) // 1 support item, 1 rule
+  })
+  it('is deterministic per seed', () => {
+    expect(ledger.compose(input({ rng: makeRng(3) })).elements)
+      .toEqual(ledger.compose(input({ rng: makeRng(3) })).elements)
+  })
+})
+
+describe('staging: stacked', () => {
+  const stacked = getStaging('stacked')!
+  it('is registered', () => { expect(stacked).toBeTruthy() })
+  it('places one element per enabled tier item, tagged staging origin', () => {
+    const els = stacked.compose(input()).elements
+    expect(els).toHaveLength(6)
+    expect(els.every(e => e.origin === 'staging')).toBe(true)
+  })
+  it('validates clean under default knobs — 2/2-item tier set', () => {
+    const { ok, reasons } = validateGenerated(stacked.compose(input()), 12, 16)
+    expect(ok, reasons.join(' ')).toBe(true)
+  })
+  it('validates clean under default knobs — 1-item tier set', () => {
+    const { ok, reasons } = validateGenerated(stacked.compose(input({ tiers: ONE_EACH_TIERS })), 12, 16)
+    expect(ok, reasons.join(' ')).toBe(true)
+  })
+  it('is deterministic per seed', () => {
+    expect(stacked.compose(input({ rng: makeRng(3) })).elements)
+      .toEqual(stacked.compose(input({ rng: makeRng(3) })).elements)
+  })
+  it('align:"right" mirrors the flush side (hero/anchor text align flips)', () => {
+    const left = stacked.compose(input({ knobs: { align: 'left' } })).elements
+    const right = stacked.compose(input({ knobs: { align: 'right' } })).elements
+    const heroL = left.find(e => e.id === 'tier_hero_0')! as any
+    const heroR = right.find(e => e.id === 'tier_hero_0')! as any
+    expect(heroL.style.align).toBe('left')
+    expect(heroR.style.align).toBe('right')
+  })
 })

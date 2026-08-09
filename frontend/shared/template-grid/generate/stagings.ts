@@ -68,7 +68,7 @@ const HERO_SCALE_KNOB: KnobSpec = { id: 'heroScale', pick: [0.10, 0.14, 0.18] }
  *  the tier's own `spec.type.color` already won. */
 export function tierText(
   id: TierId, index: number, item: TierSpec, region: Region, priority: number,
-  opts: { level?: TextLevel; style?: TextStyleV2; overflow?: TextOverflow } = {},
+  opts: { level?: TextLevel; style?: TextStyleV2; overflow?: TextOverflow; overhang?: boolean } = {},
 ): ElementV2 {
   return {
     id: `tier_${id}_${index}`,
@@ -80,6 +80,7 @@ export function tierText(
     origin: 'staging',
     role: id.toUpperCase(),
     ...(opts.overflow ? { overflow: opts.overflow } : {}),
+    ...(opts.overhang ? { overhang: true } : {}),
     style: {
       ...opts.style,
       ...item.type,   // tier's own type wins — survives re-roll
@@ -125,6 +126,26 @@ function clampRegion(r: Region, cols: number, rows: number): Region {
     colSpan: Math.max(1, Math.min(r.colSpan, cols - col + 1)),
     rowSpan: Math.max(1, Math.min(r.rowSpan, rows - row + 1)),
   }
+}
+
+/** Family A's tables give REGIONS as `[aFrac..bFrac]` — start/end fractions
+ *  of the grid, not a start+span pair like the round-1 composers use. These
+ *  two helpers convert that notation with `Math.round`, offsetting the start
+ *  edge by one grid unit past its rounded fraction (`round(aFrac*n) + 1`)
+ *  so two ADJACENT bands from the same table row (e.g. a hero ending at 0.55
+ *  and a support column starting at 0.58) never round to the same grid line
+ *  and collide — the round-1 collision class this task's family tables are
+ *  most exposed to, since they're authored as continuous zones instead of
+ *  composer-picked absolute offsets. */
+function rowBand(aFrac: number, bFrac: number, rows: number): { row: number; rowSpan: number } {
+  const row = Math.max(1, Math.round(aFrac * rows) + 1)
+  const end = Math.max(row, Math.round(bFrac * rows))
+  return { row, rowSpan: end - row + 1 }
+}
+function colBand(aFrac: number, bFrac: number, cols: number): { col: number; colSpan: number } {
+  const col = Math.max(1, Math.round(aFrac * cols) + 1)
+  const end = Math.max(col, Math.round(bFrac * cols))
+  return { col, colSpan: end - col + 1 }
 }
 
 /** Hero/anchor dramatic type: hero's `style.fontSize` is a whole master-px
@@ -455,7 +476,253 @@ const index: Staging = {
   },
 }
 
-export const STAGINGS: Staging[] = [tower, split, frame, centered, editorial, index]
+/**
+ * Statement — a giant flush-left hero owns the upper half of the canvas; a
+ * `crop` knob lets it bleed off the left edge for the flagship "giant type"
+ * look, or sit fully in-grid. Anchor sits small bottom-left, a support
+ * column hugs the right edge, fine print pins the bottom corners.
+ */
+const statement: Staging = {
+  id: 'statement',
+  name: 'Statement',
+  blurb: 'A giant flush-left hero owns the upper half — crop it to the edge, or keep it in-grid.',
+  knobs: [{ id: 'crop', pick: ['left', 'none'] }, HERO_SCALE_KNOB],
+  compose({ tiers, cols, rows, canvas, knobs }) {
+    const els: ElementV2[] = []
+    const entries = tierEntries(tiers)
+    const items = (id: TierId) => tierItems(entries, id)
+    const drama = dramaticType(knobs, canvas)
+    const half = Math.round(cols / 2)
+    const crop = knobs.crop === 'left'
+
+    const hero = items('hero')
+    if (hero.length) {
+      const heroRows = rowBand(0.06, 0.55, rows)
+      // `-0.04*cols` rounds to 0 (not negative) on a coarse authoring grid —
+      // clamp to at least -1 so `crop:'left'` always produces a real
+      // off-grid column, never a boundary-touching zero.
+      const cropCol = Math.min(-1, Math.round(-0.04 * cols))
+      const region = crop
+        ? { col: cropCol, colSpan: cols - cropCol + 1, ...heroRows }
+        : clampRegion({ col: 1, colSpan: cols, ...heroRows }, cols, rows)
+      els.push(tierText('hero', 0, hero[0]!, region, 1,
+        { level: 'display', overflow: 'grow', overhang: crop,
+          style: { align: 'left', valign: 'top', fontWeight: 700, ...drama.hero } }))
+    }
+    const anchor = items('anchor')
+    if (anchor.length) {
+      const anchorRows = rowBand(0.80, 0.92, rows)
+      const anchorCols = colBand(0, 0.6, cols)
+      els.push(tierText('anchor', 0, anchor[0]!,
+        clampRegion({ ...anchorCols, ...anchorRows }, cols, rows), 2,
+        { level: 'headline', style: { align: 'left', valign: 'bottom', fontWeight: 700, ...drama.anchor } }))
+    }
+    const support = items('support')
+    if (support.length) {
+      const supportRows = rowBand(0.58, 0.72, rows)
+      const supportCols = colBand(0.55, 1, cols)
+      els.push(...stackVertical('support', support,
+        { ...supportCols, row: supportRows.row, rowSpan: 1 },
+        cols, rows, 3, { style: { align: 'left', valign: 'top' } }, supportRows.rowSpan))
+    }
+    const fine = items('fineprint')
+    if (fine.length) {
+      els.push(...stackCorners('fineprint', fine,
+        { col: 1, colSpan: half, row: rows, rowSpan: 1 },
+        { col: half + 1, colSpan: cols - half, row: rows, rowSpan: 1 },
+        cols, rows, 4, { style: { align: 'left', valign: 'bottom' } }))
+    }
+    return { elements: els }
+  },
+}
+
+/**
+ * Manifesto — inverted mass: the ANCHOR (a date, usually) is the giant
+ * display-scale element, while the hero sits small in the top-left corner.
+ * A hairline rule separates the small-hero band from the giant-anchor band;
+ * fine print rides just under the rule. `voice` swaps the anchor's family to
+ * a serif numeral for the "date as graphic" look.
+ */
+const manifesto: Staging = {
+  id: 'manifesto',
+  name: 'Manifesto',
+  blurb: 'Inverted mass — the anchor reads giant, the hero stays a small corner mark.',
+  knobs: [
+    { id: 'ruleWeight', pick: [1, 2, 3] },
+    { id: 'voice', pick: ['grotesk', 'serif'] },
+    HERO_SCALE_KNOB,
+  ],
+  compose({ tiers, cols, rows, canvas, knobs }) {
+    const els: ElementV2[] = []
+    const entries = tierEntries(tiers)
+    const items = (id: TierId) => tierItems(entries, id)
+    const drama = dramaticType(knobs, canvas)
+    const serif = knobs.voice === 'serif'
+    const ruleWeight = Math.max(1, Math.min(3, Number(knobs.ruleWeight ?? 2)))
+    const ruleRow = Math.max(1, Math.round(0.10 * rows))
+    const afterRule = ruleRow + ruleWeight
+    const anchorCols = colBand(0, 0.65, cols)
+    const supportCols = colBand(0.65, 1, cols)
+    // Fine print rides the rows directly under the rule, one row per item
+    // (stackVertical's compact spacing) — the giant anchor/support body must
+    // start AFTER all of them, not just the first, or a 2nd+ fine-print item
+    // lands on the same row as the anchor.
+    const fine = items('fineprint')
+    const bodyStart = afterRule + Math.max(1, fine.length)
+
+    els.push({
+      id: 'rule_0', type: 'shape', shape: 'rect', priority: 5, origin: 'staging',
+      region: clampRegion({ col: 1, colSpan: cols, row: ruleRow, rowSpan: ruleWeight }, cols, rows),
+      style: { fill: '{{ brand.foreground }}' },
+    })
+    const hero = items('hero')
+    if (hero.length) {
+      els.push(tierText('hero', 0, hero[0]!,
+        clampRegion({ col: 1, colSpan: Math.round(cols * 0.35), row: 1, rowSpan: Math.max(1, ruleRow - 1) }, cols, rows), 1,
+        { level: 'headline', overflow: 'grow', style: { align: 'left', valign: 'top', fontWeight: 700, ...drama.anchor } }))
+    }
+    const anchor = items('anchor')
+    if (anchor.length) {
+      const anchorRows = rowBand(0.14, 0.44, rows)
+      els.push(tierText('anchor', 0, anchor[0]!,
+        clampRegion({ ...anchorCols, row: Math.max(anchorRows.row, bodyStart), rowSpan: anchorRows.rowSpan }, cols, rows), 2,
+        { level: 'display', overflow: 'grow',
+          style: {
+            align: 'left', valign: 'top', fontWeight: 700, ...drama.hero,
+            ...(serif ? { fontFamily: 'Playfair Display' } : {}),
+          } }))
+    }
+    const support = items('support')
+    if (support.length) {
+      const supportStart = Math.max(rowBand(0.14, 0.44, rows).row, bodyStart)
+      els.push(...stackVertical('support', support,
+        { ...supportCols, row: supportStart, rowSpan: 1 },
+        cols, rows, 3, { style: { align: 'left', valign: 'top' } }, 4))
+    }
+    if (fine.length) {
+      els.push(...stackVertical('fineprint', fine,
+        { col: 1, colSpan: cols, row: afterRule, rowSpan: 1 },
+        cols, rows, 4, { style: { align: 'left', valign: 'top' } }))
+    }
+    return { elements: els }
+  },
+}
+
+/**
+ * Ledger — fine print rides a top rail, the hero sits mid-canvas, and the
+ * support tier lays out as a ruled table: each item gets its own row with a
+ * hairline `rule_i` under it. Anchor closes the composition at the bottom.
+ * (Family table A calls this composition `index` — renamed here because a
+ * DIFFERENT `index` staging is already registered from round 1; see the
+ * task report for the naming collision this avoids.)
+ */
+const ledger: Staging = {
+  id: 'ledger',
+  name: 'Ledger',
+  blurb: 'Top rail of meta, hero mid-canvas, a ruled table for the support list.',
+  knobs: [HERO_SCALE_KNOB],
+  compose({ tiers, cols, rows, canvas, knobs }) {
+    const els: ElementV2[] = []
+    const entries = tierEntries(tiers)
+    const items = (id: TierId) => tierItems(entries, id)
+    const drama = dramaticType(knobs, canvas)
+    const half = Math.round(cols / 2)
+
+    const fine = items('fineprint')
+    if (fine.length) {
+      els.push(...stackVertical('fineprint', fine,
+        { col: 1, colSpan: cols, row: 1, rowSpan: 1 },
+        cols, rows, 4, { style: { align: 'left', valign: 'top' } }))
+    }
+    const heroRows = rowBand(0.28, 0.55, rows)
+    const hero = items('hero')
+    if (hero.length) {
+      els.push(tierText('hero', 0, hero[0]!,
+        clampRegion({ col: 1, colSpan: cols, ...heroRows }, cols, rows), 1,
+        { level: 'display', overflow: 'grow', style: { align: 'left', valign: 'top', fontWeight: 700, ...drama.hero } }))
+    }
+    const support = items('support')
+    const step = Math.max(2, Math.round(0.06 * rows))
+    const tableBase = heroRows.row + heroRows.rowSpan
+    support.forEach((item, i) => {
+      const rowStart = tableBase + i * step
+      els.push(tierText('support', i, item,
+        clampRegion({ col: 1, colSpan: half, row: rowStart, rowSpan: Math.max(1, step - 1) }, cols, rows), 3,
+        { style: { align: 'left', valign: 'top' } }))
+      els.push({
+        id: `rule_${i}`, type: 'shape', shape: 'rect', priority: 5, origin: 'staging',
+        region: clampRegion({ col: 1, colSpan: cols, row: rowStart + step - 1, rowSpan: 1 }, cols, rows),
+        style: { fill: '{{ brand.foreground }}' },
+      })
+    })
+    const anchor = items('anchor')
+    if (anchor.length) {
+      const lastRuleRow = support.length ? tableBase + (support.length - 1) * step + step - 1 : tableBase
+      const anchorRow = Math.min(rows, lastRuleRow + 1)
+      els.push(tierText('anchor', 0, anchor[0]!,
+        clampRegion({ col: 1, colSpan: cols, row: anchorRow, rowSpan: Math.max(1, rows - anchorRow + 1) }, cols, rows), 2,
+        { level: 'headline', style: { align: 'left', valign: 'bottom', fontWeight: 700, ...drama.anchor } }))
+    }
+    return { elements: els }
+  },
+}
+
+/**
+ * Stacked — a single flush-left block, generous whitespace, no tricks: hero
+ * then anchor immediately under it, with air below before a small support
+ * corner and a fine-print corner opposite it. `align` flips the flush side
+ * (and mirrors which corner support/fine print land in).
+ */
+const stacked: Staging = {
+  id: 'stacked',
+  name: 'Stacked',
+  blurb: 'One flush-left block — hero, then anchor, then generous air.',
+  knobs: [{ id: 'align', pick: ['left', 'right'] }, HERO_SCALE_KNOB],
+  compose({ tiers, cols, rows, canvas, knobs }) {
+    const els: ElementV2[] = []
+    const entries = tierEntries(tiers)
+    const items = (id: TierId) => tierItems(entries, id)
+    const drama = dramaticType(knobs, canvas)
+    const right = knobs.align === 'right'
+    const align: TextStyleV2['align'] = right ? 'right' : 'left'
+
+    const heroRows = rowBand(0.08, 0.40, rows)
+    const hero = items('hero')
+    if (hero.length) {
+      els.push(tierText('hero', 0, hero[0]!,
+        clampRegion({ col: 1, colSpan: cols, ...heroRows }, cols, rows), 1,
+        { level: 'display', overflow: 'grow', style: { align, valign: 'top', fontWeight: 700, ...drama.hero } }))
+    }
+    const anchorRow = heroRows.row + heroRows.rowSpan
+    const anchor = items('anchor')
+    if (anchor.length) {
+      els.push(tierText('anchor', 0, anchor[0]!,
+        clampRegion({ col: 1, colSpan: cols, row: anchorRow, rowSpan: 2 }, cols, rows), 2,
+        { level: 'headline', style: { align, valign: 'top', fontWeight: 700, ...drama.anchor } }))
+    }
+    const bottomRow = Math.max(anchorRow + 3, Math.round(rows * 0.75))
+    const nearCols = colBand(0, 0.35, cols)
+    const farCols = colBand(0.65, 1, cols)
+    const support = items('support')
+    if (support.length) {
+      els.push(...stackVertical('support', support,
+        { ...(right ? farCols : nearCols), row: bottomRow, rowSpan: 1 },
+        cols, rows, 3, { style: { align: 'left', valign: 'top' } }, 2))
+    }
+    const fine = items('fineprint')
+    if (fine.length) {
+      els.push(...stackVertical('fineprint', fine,
+        { ...(right ? nearCols : farCols), row: bottomRow, rowSpan: 1 },
+        cols, rows, 4, { style: { align: 'left', valign: 'top' } }))
+    }
+    return { elements: els }
+  },
+}
+
+export const STAGINGS: Staging[] = [
+  tower, split, frame, centered, editorial, index,
+  statement, manifesto, ledger, stacked,
+]
 
 export function getStaging(id: string): Staging | undefined {
   return STAGINGS.find(s => s.id === id)
