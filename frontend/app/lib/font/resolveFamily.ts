@@ -54,6 +54,7 @@ export function setFontCatalog(cat: GoogleFontLike[] | null): void {
 export function resolveFontFamily(value: string): string {
   if (!value) return 'Inter'
   if (catalog?.some(f => f.family === value)) return value
+  if (libraryFamilies.some(f => f.family === value)) return value
   const legacy = LEGACY_FONT_IDS[value]
   if (legacy) return legacy
   return value // assume it's already a family name (catalog may not be loaded yet)
@@ -64,6 +65,18 @@ export function resolveFontFamily(value: string): string {
  *  catalog loads. */
 export function fontHasWeightAxis(family: string): boolean {
   const f = catalog?.find(g => g.family === family)
+    ?? libraryFamilies.find(g => g.family === family)
   if (!f) return true
   return f.axes.some(a => a.tag === 'wght') || f.weights.length > 1
+}
+
+// --- Library fonts (local licensed families) ---------------------------------
+// Registered separately from the Google catalog so the two never clobber each
+// other via setFontCatalog. resolveFontFamily / fontHasWeightAxis consult both.
+let libraryFamilies: GoogleFontLike[] = []
+
+/** Populate (or clear) the library-family registry. app/data/library-fonts.ts
+ *  calls this once at startup with the manifest families. */
+export function setLibraryFamilies(fams: GoogleFontLike[]): void {
+  libraryFamilies = fams
 }
