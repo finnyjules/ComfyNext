@@ -15,6 +15,7 @@ The mechanism: a **generator script** reads every OTF, extracts its real name/we
 - **Format:** OTF only. TTF/WOFF/WOFF2/EOT in the bundles are ignored.
 - **Storage (git):** files stay in `Assets/Fonts/` (newly gitignored); **only the manifest is committed**. Served via a Nitro route. No 200 MB copy, no git-history bloat. (Approach A.)
 - **Selection UX:** picker lists **families**; weight is chosen via the existing weight control — the same family+weight model Google Fonts already uses across the app. Every face remains reachable.
+- **Picker layout:** top-level **tabs by source**. Main/widget pickers: **Google | Pangram** (Off-Type as a labeled section inside the Pangram tab). Template picker adds a third **Brand** tab for uploaded fonts.
 
 ## Background: the two font worlds (already in the codebase)
 
@@ -135,13 +136,23 @@ The single consumer-facing surface over the manifest (one declaration, many cons
 
 ### Component 7 — Picker integration (the three `FontPicker.vue`s)
 
-A shared helper (`libraryFontGroups()`) provides foundry-grouped entries; each picker adapts to its own selection-key format:
+The pickers move to **top-level tabs by source** instead of one long grouped list. A shared helper (`libraryFontGroups()`) provides the foundry-grouped entries each tab renders; each picker adapts to its own selection-key format.
 
-- `app/components/vue-canvas/FontPicker.vue` — add **Pangram** and **Off-Type** grouped sections (searchable) above Google. Emits a new `library` select kind; callers map it to a `local:` token (outline consumers) or a family name (CSS consumers).
-- `app/components/vue-canvas/widgets/FontPicker.vue` — add a `lib:<family>` source alongside `var:`/`goog:`.
-- `app/components/templates/FontPicker.vue` — merge the library into `ALL_FONTS` as its own section (library → uploaded → curated → google).
+**Tab structure:**
 
-Search spans all foundries. Optional nicety (kept light): render each family's name in its own face in the CSS-world pickers once `ensure()`d.
+- **Google tab** — the existing Google Fonts catalog + AI "describe-a-font" suggest, unchanged.
+- **Pangram tab** — the whole local library. Pangram families first, then a labeled **Off-Type** section beneath them. (Off-Type is folded into this tab, not given its own tab.)
+- **Brand tab** — *template picker only* — the uploaded/brand fonts (`useUploadedFonts`), given their own tab rather than merged into the library list.
+
+Search is **per active tab** (each tab filters its own source). The remembered/active tab defaults to whichever source the current value belongs to, so opening the picker on a Pangram font lands on the Pangram tab.
+
+Per-picker:
+
+- `app/components/vue-canvas/FontPicker.vue` — the primary picker. Two tabs (Google | Pangram). Emits a new `library` select kind; callers map it to a `local:` token (outline consumers) or a family name (CSS consumers). Existing `pinned`/"Sailor" strip is preserved above the tab body if present.
+- `app/components/vue-canvas/widgets/FontPicker.vue` — Google | Pangram tabs; adds a `lib:<family>` source alongside `var:`/`goog:`.
+- `app/components/templates/FontPicker.vue` — three tabs (Google | Pangram | Brand). Replaces the current single merged `ALL_FONTS` list; the curated `TEMPLATE_FONTS` fold into the Google tab's pinned area (or a small "Curated" group there).
+
+Optional nicety (kept light): render each family's name in its own face in the CSS-world pickers once `ensure()`d.
 
 ## Known overlaps / edge cases
 
