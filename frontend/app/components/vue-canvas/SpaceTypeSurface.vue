@@ -40,6 +40,8 @@ import StudioColorField from '~/components/vue-canvas/studio/StudioColorField.vu
 import StudioRow from '~/components/vue-canvas/studio/StudioRow.vue'
 import StudioSwitch from '~/components/vue-canvas/studio/StudioSwitch.vue'
 import StringPathEditor from '~/components/vue-canvas/StringPathEditor.vue'
+import LoftSpineEditor from '~/components/vue-canvas/LoftSpineEditor.vue'
+import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
 import VibeControlBar from '~/components/vue-canvas/VibeControlBar.vue'
 import SpaceTypeEffectGalleryModal from '~/components/vue-canvas/SpaceTypeEffectGalleryModal.vue'
 import { useVibeControl } from '~/composables/useVibeControl'
@@ -887,7 +889,7 @@ function startPreview() {
     const k = loopMultiplier(effect.value.loopRates?.(params) ?? [])
     const frame = Math.floor(((ts - previewStart) / 1000) * fps.value) % (base * k)
     previewT01 = frame / base
-    engine?.renderFrameAt(previewT01, params)
+    engine?.renderFrameAt(previewT01, effectiveRenderParams())
     renderError.value = engine?.lastError ?? null
     frozenFieldCount.value = engine?.frozenFieldCount ?? 0
     raf = requestAnimationFrame(tick)
@@ -1062,6 +1064,10 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  // stopPreview() below cancels the rAF loop that reads effectiveRenderParams(), so
+  // there's no lingering head-on render to undo — flipping the flag here is belt-and-
+  // suspenders for any late synchronous renderFrameAt call in this same teardown.
+  spineEditActive.value = false
   saveConfig(); if (rebuildRaf) cancelAnimationFrame(rebuildRaf); stopPreview(); engine?.dispose(); engine = null
   unregisterStudioParamBaker(props.nodeId)
 })
@@ -1171,12 +1177,12 @@ async function makeAsDefault() {
 // Transparency + background apply live via render-time clear settings (no renderer rebuild).
 watch([transparent, bgColor], () => { engine?.setBackground(transparent.value, bgColor.value); refreshExportAlpha() })
 // Projection (perspective ↔ isometric) applies live; also re-render the held preview frame.
-watch(projection, (p) => { engine?.setProjection(p); engine?.renderFrameAt(previewT01, params) })
+watch(projection, (p) => { engine?.setProjection(p); engine?.renderFrameAt(previewT01, effectiveRenderParams()) })
 // Pan re-frames live (no rebuild) — read by the engine per frame as a camera view-offset.
-watch([panX, panY], () => { engine?.setPan(panX.value, panY.value); engine?.renderFrameAt(previewT01, params) })
+watch([panX, panY], () => { engine?.setPan(panX.value, panY.value); engine?.renderFrameAt(previewT01, effectiveRenderParams()) })
 // Post-processing applies live (composer uniforms; no scene rebuild). Re-render the held frame so a
 // paused preview updates immediately too.
-watch(post, () => { engine?.setPost({ ...post }); engine?.renderFrameAt(previewT01, params) }, { deep: true })
+watch(post, () => { engine?.setPost({ ...post }); engine?.renderFrameAt(previewT01, effectiveRenderParams()) }, { deep: true })
 // Loop length affects the engine's frameCount used during bake.
 watch(loopDuration, d => engine?.setLoopDuration(d))
 // fps affects the engine's frameCount used during bake/preview.
@@ -1202,6 +1208,33 @@ watch(frontLocked, (fl) => {
 // lock). immediate so a freshly-opened Streamer comes up orthographic; a saved node's stored
 // projection is applied afterward in the load path and still wins.
 watch(effectId, (id) => { if (id === 'streamer') projection.value = 'isometric' }, { immediate: true })
+
+// "Edit spine" mode (Loft only): an on-preview overlay (LoftSpineEditor) for dragging
+// spine stops directly. While active, the preview is forced head-on (rotateX/Y/Z = 0)
+// so screen-space maps 1:1 to the spine's x/y plane — otherwise a tilted/rotated loft
+// would make on-screen drags land nowhere near the dragged stop's actual x/y.
+//
+// Non-destructive override: `effectiveRenderParams()` is a TRANSIENT read-time copy,
+// never a write to `params` itself. The engine's `renderFrameAt` only ever READS
+// params.rotateX/Y/Z (SpaceTypeEngine.renderFrameAt, engine.ts) — it holds no state of
+// its own — so swapping in a spread copy with the three fields zeroed is enough to force
+// the view for however long spineEditActive stays true, with zero risk of the zeroed
+// values leaking into saveConfig()/autosaveSignature() (which read the real `params`
+// object directly and never see this override). The moment spineEditActive flips back to
+// false — toggle off, effect switch, or unmount — every call site reading through this
+// helper goes back to the user's real transform on its own; there is nothing to restore.
+const spineEditActive = ref(false)
+function effectiveRenderParams(): Params {
+  if (spineEditActive.value) return { ...params, rotateX: 0, rotateY: 0, rotateZ: 0 }
+  return params
+}
+// Exit hygiene: leaving the loft effect (switch away, or a fresh effect load) must not
+// leave the preview stuck head-on for a DIFFERENT effect's camera. onBeforeUnmount below
+// also guards the component-teardown case; neither needs to touch `params`.
+watch(effectId, (id) => { if (id !== 'loft') spineEditActive.value = false })
+// Force an immediate repaint on toggle (rather than waiting for the next rAF tick) so
+// entering/exiting head-on view reads as instant, not a one-frame lag.
+watch(spineEditActive, () => { engine?.renderFrameAt(previewT01, effectiveRenderParams()) })
 
 const cfg = computed(() => ({
   effectId: effect.value.id, params: { ...params }, fps: fps.value, loopDuration: loopDuration.value,
@@ -1667,6 +1700,13 @@ async function exportWebEmbed() {
           :canvas="canvas"
           @update:model-value="(v: string) => (params.path = v)"
         />
+        <LoftSpineEditor
+          v-if="spineEditActive && effect.id === 'loft'"
+          :model-value="String(params.stops)"
+          :canvas="canvas"
+          :closed="!!params.closed"
+          @update:model-value="(v: string) => { params.stops = v; loftStopsDirty = true }"
+        />
       </div>
     </template>
     <!-- The vibe AI input docks under the preview, centred, like every other studio's
@@ -1957,8 +1997,14 @@ async function exportWebEmbed() {
               </p>
               <CurveEditor v-else-if="c.kind === 'curve'" :model-value="String(params[c.key])"
                            @update:model-value="(val: string) => { params[c.key] = val }" />
-              <ProfileStopsEditor v-else-if="c.kind === 'profileStops'" :model-value="String(params[c.key])"
-                                  @update:model-value="(val: string) => { params[c.key] = val; if (c.key === 'stops') loftStopsDirty = true }" />
+              <template v-else-if="c.kind === 'profileStops'">
+                <ProfileStopsEditor :model-value="String(params[c.key])"
+                                    @update:model-value="(val: string) => { params[c.key] = val; if (c.key === 'stops') loftStopsDirty = true }" />
+                <StudioButton v-if="effect.id === 'loft'" class="mt-1.5" :variant="spineEditActive ? 'primary' : 'secondary'"
+                              @click="spineEditActive = !spineEditActive">
+                  {{ spineEditActive ? 'Editing spine on preview — click to stop' : 'Edit spine on preview' }}
+                </StudioButton>
+              </template>
               <!-- Font is excluded here: its bound state now lives inside FontPicker's row
                    (like a bound colour), so it does not need this shared pink block. -->
               <div v-else-if="(c.kind === 'color' || c.kind === 'select') && boundColumnFor(c.key)"

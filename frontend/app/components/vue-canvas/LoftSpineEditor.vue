@@ -14,9 +14,17 @@ import { parseStops, serializeStops, autoSmoothStops, type LoftStop } from '~/li
  * hand-tune that stop's curve, which flips it to manual. Click empty canvas to append a new
  * stop; Delete removes the selected one. Every other field (z, width, height, roll, color, id)
  * passes through untouched — this editor only ever writes x, y, ta, hlf, hlb, manual.
+ *
+ * `closed` (optional, default false) mirrors params.closed on the Loft effect: when true, the
+ * drawn spine gets one extra closing segment from the last stop back to the first, matching
+ * sampleSpine's own closed-loop wrap (loftGeometry.ts). Purely cosmetic here — it does not add
+ * or remove a stop, only how the path is drawn.
  */
 
-const props = defineProps<{ modelValue: string; canvas: HTMLCanvasElement | null }>()
+const props = withDefaults(
+  defineProps<{ modelValue: string; canvas: HTMLCanvasElement | null; closed?: boolean }>(),
+  { closed: false },
+)
 const emit = defineEmits<{ (e: 'update:modelValue', v: string): void }>()
 
 const rootEl = ref<HTMLDivElement | null>(null)
@@ -225,6 +233,10 @@ function deleteSelected() {
 }
 
 // ---- SVG path data (matches loftGeometry.ts's segEditor/posAtU handle pairing) ----
+// When `closed`, append one more cubic segment wrapping n-1 -> 0 (last stop back to the
+// first), using the same fwdHandle/backHandle pairing as every other segment — this is
+// exactly the extra "seg" sampleSpine (loftGeometry.ts) walks when `closed` is true (see
+// `const seg = closed ? n : n - 1`), so the drawn spine matches the rendered closed loft.
 function pathD(pts: LoftStop[]): string {
   if (pts.length < 2) return ''
   let d = `M ${px(pts[0]!.x)} ${py(pts[0]!.y)}`
@@ -232,6 +244,12 @@ function pathD(pts: LoftStop[]): string {
     const a = pts[i]!, b = pts[i + 1]!
     const c1 = fwdHandle(a)      // segEditor: p1 = a + forward(a.ta, a.hlf)
     const c2 = backHandle(b)     // segEditor: p2 = b - forward(b.ta, b.hlb)
+    d += ` C ${px(c1.x)} ${py(c1.y)} ${px(c2.x)} ${py(c2.y)} ${px(b.x)} ${py(b.y)}`
+  }
+  if (props.closed) {
+    const a = pts[pts.length - 1]!, b = pts[0]!
+    const c1 = fwdHandle(a)
+    const c2 = backHandle(b)
     d += ` C ${px(c1.x)} ${py(c1.y)} ${px(c2.x)} ${py(c2.y)} ${px(b.x)} ${py(b.y)}`
   }
   return d
