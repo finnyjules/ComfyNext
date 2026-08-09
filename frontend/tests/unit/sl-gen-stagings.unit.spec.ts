@@ -87,18 +87,19 @@ describe('staging: split + frame registered and valid', () => {
 })
 
 describe('staging: full library', () => {
-  it('registers all fifteen stagings', () => {
+  it('registers exactly the 14 sorted staging ids (round-2b final registry)', () => {
     expect(STAGINGS.map(s => s.id).sort()).toEqual([
-      'band_footer', 'band_header', 'centered', 'corner', 'cover', 'editorial',
-      'frame', 'index', 'ledger', 'lockup', 'manifesto', 'split', 'stacked',
-      'statement', 'tower',
+      'band_footer', 'band_header', 'corner', 'cover', 'frame', 'index',
+      'lockup', 'manifesto', 'repeat', 'split', 'stacked', 'statement',
+      'tower', 'wall',
     ])
   })
-  it('every staging produces distinct placement and stays in-grid', () => {
+  it('every staging produces distinct placement and stays in-grid (overhang-exempt regions skipped)', () => {
     const shapes = new Set<string>()
     for (const s of STAGINGS) {
       const els = s.compose(input()).elements
       for (const e of els) {
+        if (e.overhang) continue
         expect(e.region.col + e.region.colSpan - 1).toBeLessThanOrEqual(12)
         expect(e.region.row + e.region.rowSpan - 1).toBeLessThanOrEqual(16)
       }
@@ -129,11 +130,15 @@ describe('staging: no intra-staging overlap', () => {
   // fixture must validate CLEAN end to end (off-grid + overlap + type-size-
   // count all pass) — proving the whole pipeline, not just the collision
   // check.
-  const BAND_FAMILY_IDS = new Set(['band_header', 'band_footer'])
+  // `wall` (round-2b Task 5, Family D) joins the exception list for the same
+  // reason as the band family: its `wall_i` texture tiles the ENTIRE grid
+  // height, so every other placed element unavoidably lands on some wall
+  // row band — those overlaps stay declared regardless of image/knobs.
+  const DECLARES_OVERLAPS_BY_DESIGN = new Set(['band_header', 'band_footer', 'wall'])
   for (const s of STAGINGS) {
     it(`${s.id}: validates clean (no overlap, off-grid, or type-size violations) under default knobs`, () => {
       const result = s.compose(input())
-      if (!BAND_FAMILY_IDS.has(s.id)) expect(result.overlaps ?? []).toEqual([])
+      if (!DECLARES_OVERLAPS_BY_DESIGN.has(s.id)) expect(result.overlaps ?? []).toEqual([])
       const { ok, reasons } = validateGenerated(result, 12, 16)
       expect(ok, reasons.join(' ')).toBe(true)
     })
@@ -182,18 +187,12 @@ describe('staging: tier lists — every item renders, nothing dropped', () => {
     expect(support0.region.rowSpan).toBe(3)
   })
 
-  it('editorial: a single support item keeps the round-1 generous rowSpan (4), not the 2-item compact one', () => {
-    const tiersWithOneSupport: Tiers = { ...TIERS, support: [{ content: 'Street food · Dining' }] }
-    const els = getStaging('editorial')!.compose(input({ tiers: tiersWithOneSupport })).elements
-    const support0 = els.find(e => e.id === 'tier_support_0')! as any
-    expect(support0.region.rowSpan).toBe(4)
-  })
-
-  it('index: a single support item keeps the round-1 generous rowSpan (3), not the 2-item compact one', () => {
+  it('index (round-2b ruled-table rebuild): a single support item has no row partner, so it spans the FULL row width, not a half-cell', () => {
     const tiersWithOneSupport: Tiers = { ...TIERS, support: [{ content: 'Street food · Dining' }] }
     const els = getStaging('index')!.compose(input({ tiers: tiersWithOneSupport })).elements
     const support0 = els.find(e => e.id === 'tier_support_0')! as any
-    expect(support0.region.rowSpan).toBe(3)
+    expect(support0.region.col).toBe(1)
+    expect(support0.region.colSpan).toBe(12) // full width — no partner this row
   })
 
   it('disabled item 0 with a valid item 1 renders the valid item (filtered list is the source of truth)', () => {
@@ -217,11 +216,14 @@ describe('staging: dramatic hero + anchor type', () => {
   // corner mark — the opposite of every other staging. `lockup` (Family C,
   // round-2b Task 4) scales its hero to HALF heroScale (a small title+date
   // jewel, not a giant overprint) — a different divergence from the same
-  // generic "hero === heroScale × canvas.h" assumption. Both get their own
-  // dedicated describe block below; this loop still guards every other
-  // staging unchanged.
+  // generic "hero === heroScale × canvas.h" assumption. `repeat` (Family D,
+  // round-2b Task 5) has no `tier_hero_0` at all — the hero's words ARE the
+  // repeated `repeat_i` column, not a single dramatic element — so it gets
+  // its own dedicated block too, excluded here for the same "find would
+  // return undefined" reason. Each gets its own dedicated describe block
+  // below; this loop still guards every other staging unchanged.
   for (const s of STAGINGS) {
-    if (s.id === 'manifesto' || s.id === 'lockup') continue
+    if (s.id === 'manifesto' || s.id === 'lockup' || s.id === 'repeat') continue
     it(`${s.id}: hero fontSize follows the heroScale knob × canvas.h`, () => {
       for (const heroScale of HERO_SCALES) {
         const els = s.compose(input({ knobs: { heroScale } })).elements
@@ -336,6 +338,11 @@ describe('staging: dramatic hero never truncates (resolver-level, starter square
   }
 
   for (const staging of STAGINGS) {
+    // `repeat` (Family D, round-2b Task 5) has no `tier_hero_*` element at
+    // all — the hero's words ARE the repeated `repeat_i` column — so there's
+    // nothing for `.startsWith('tier_hero')` to find; skip it here rather
+    // than asserting a `resolvedHeroFor` result that can never exist.
+    if (staging.id === 'repeat') continue
     for (const heroScale of HERO_SCALES) {
       it(`${staging.id} heroScale=${heroScale}: hero fits its full content, not truncated`, () => {
         const hero = resolvedHeroFor(staging.id, heroScale)
@@ -436,32 +443,75 @@ describe('staging: manifesto', () => {
     const anchor = els.find(e => e.id === 'tier_anchor_0')! as any
     expect(anchor.style.fontFamily).toBeUndefined()
   })
+  // Carried-decision regression (round-2b manifesto): the ruleWeight knob
+  // must actually MOVE rule_0's region — a knob that resolves but never
+  // reaches the geometry is a silent no-op.
+  it('ruleWeight knob changes rule_0\'s region rowSpan (the knob actually reaches the geometry)', () => {
+    const heights = [1, 2, 3].map((ruleWeight) => {
+      const els = manifesto.compose(input({ knobs: { ruleWeight } })).elements
+      const rule = els.find(e => e.id === 'rule_0')!
+      return rule.region.rowSpan
+    })
+    expect(heights).toEqual([1, 2, 3])
+    expect(new Set(heights).size).toBe(3) // three distinct heights, not a flat no-op
+  })
 })
 
-describe('staging: ledger', () => {
-  const ledger = getStaging('ledger')!
-  it('is registered', () => { expect(ledger).toBeTruthy() })
-  it('places one rule_i hairline shape per support item, none extra', () => {
-    const els = ledger.compose(input()).elements
-    const rule0 = els.find(e => e.id === 'rule_0')! as any
-    const rule1 = els.find(e => e.id === 'rule_1')! as any
-    expect(rule0.type).toBe('shape')
-    expect(rule1.type).toBe('shape')
-    expect(els.filter(e => e.type === 'shape')).toHaveLength(2) // 2 support items, 2 rules
+// Round-2b Task 5: `index`'s composer body is REBUILT wholesale — this is
+// the ruled-table design Task 2 had registered under a temporary `ledger`
+// id (a naming-collision workaround against round-1's `index`; see that
+// task's report). `STAGING_MIGRATIONS.ledger === 'index'` covers any gen
+// that briefly persisted the temp id (see the migration describe block in
+// sl-gen-generate.unit.spec.ts). Three carried decisions from the ledger,
+// asserted directly here: (1) the SECOND COLUMN — support items pair
+// two-per-row (even index left cell, odd index right cell of the SAME row),
+// an odd leftover spans the full row instead of sitting alone in a half
+// cell; (2) one `rule_r` per ROW, not per item; (3) `tableBase` is the
+// LITERAL 0.60 fraction of the grid, not wherever the hero band happens to
+// end.
+describe('staging: index (ruled-table rebuild, round-2b Task 5)', () => {
+  const idx = getStaging('index')!
+  it('is registered', () => { expect(idx).toBeTruthy() })
+  it('2 support items pair into ONE row, in the left/right cells of the same row band — one rule', () => {
+    const els = idx.compose(input()).elements // TIERS fixture: 2 support items
+    const s0 = els.find(e => e.id === 'tier_support_0')!.region
+    const s1 = els.find(e => e.id === 'tier_support_1')!.region
+    expect(s0.row).toBe(s1.row) // same row band
+    expect(s0.col).toBe(1) // left cell
+    expect(s0.colSpan).toBeLessThan(12) // NOT full width — a half cell
+    expect(s1.col).toBeGreaterThan(s0.col + s0.colSpan - 1) // right cell, disjoint from the left
+    expect(els.filter(e => e.type === 'shape')).toHaveLength(1) // one rule for the one row
+  })
+  it('3 support items produce TWO rows: row 0 the pair, row 1 the odd leftover spanning the full width — two rules', () => {
+    const threeSupport: Tiers = { ...TIERS, support: [...TIERS.support!, { content: 'Third item' }] }
+    const els = idx.compose(input({ tiers: threeSupport })).elements
+    const s0 = els.find(e => e.id === 'tier_support_0')!.region
+    const s1 = els.find(e => e.id === 'tier_support_1')!.region
+    const s2 = els.find(e => e.id === 'tier_support_2')!.region
+    expect(s0.row).toBe(s1.row) // row 0: the pair
+    expect(s2.row).toBeGreaterThan(s0.row) // row 1: the leftover, a new row
+    expect(s2.col).toBe(1)
+    expect(s2.colSpan).toBe(12) // leftover spans the full row, no stranded half-cell
+    expect(els.filter(e => e.type === 'shape')).toHaveLength(2) // one rule per ROW (2 rows), not per item (3)
+  })
+  it('tableBase sits at the literal 0.60 fraction of the grid (12x16 fixture: round(0.60*16)+1 = 11)', () => {
+    const els = idx.compose(input()).elements
+    const s0 = els.find(e => e.id === 'tier_support_0')!.region
+    expect(s0.row).toBe(11)
   })
   it('validates clean under default knobs — 2/2-item tier set', () => {
-    const { ok, reasons } = validateGenerated(ledger.compose(input()), 12, 16)
+    const { ok, reasons } = validateGenerated(idx.compose(input()), 12, 16)
     expect(ok, reasons.join(' ')).toBe(true)
   })
   it('validates clean under default knobs — 1-item tier set', () => {
-    const { ok, reasons } = validateGenerated(ledger.compose(input({ tiers: ONE_EACH_TIERS })), 12, 16)
+    const { ok, reasons } = validateGenerated(idx.compose(input({ tiers: ONE_EACH_TIERS })), 12, 16)
     expect(ok, reasons.join(' ')).toBe(true)
-    const els = ledger.compose(input({ tiers: ONE_EACH_TIERS })).elements
-    expect(els.filter(e => e.type === 'shape')).toHaveLength(1) // 1 support item, 1 rule
+    const els = idx.compose(input({ tiers: ONE_EACH_TIERS })).elements
+    expect(els.filter(e => e.type === 'shape')).toHaveLength(1) // 1 support item, 1 row, 1 rule
   })
   it('is deterministic per seed', () => {
-    expect(ledger.compose(input({ rng: makeRng(3) })).elements)
-      .toEqual(ledger.compose(input({ rng: makeRng(3) })).elements)
+    expect(idx.compose(input({ rng: makeRng(3) })).elements)
+      .toEqual(idx.compose(input({ rng: makeRng(3) })).elements)
   })
 })
 
@@ -989,4 +1039,214 @@ describe('staging: NEGATIVE CONTROL — stripping declared overlaps flips the va
       expect(reasons.some(r => r.includes(id) && r.includes('img_0')), `no collision reason named ${id}`).toBe(true)
     }
   })
+})
+
+// Round-2b Task 5 — Family D, texture (repeat/wall) + registry finalization.
+// `repeat` runs the hero's own words down the left edge, one line lit; `wall`
+// tiles them across the whole canvas as a dim texture with the real hero
+// bright on top. Neither declares `supports.needsImage` — `repeat` uses a
+// wired photo if present, `wall` never touches one at all. Every geometry
+// check below is computed INDEPENDENTLY of the composer's own helpers
+// (`repeatColumn`/`wallGrid` stay file-private in stagings.ts) — these local
+// `rowBandT`/`colBandT` reimplementations mirror the same fraction-to-grid
+// formula the codebase uses everywhere else (`frame`'s "hero's region
+// genuinely crosses the photo's edge" test below uses the same pattern).
+function rowBandT(aFrac: number, bFrac: number, rows: number): { row: number; rowSpan: number } {
+  const row = Math.max(1, Math.round(aFrac * rows) + 1)
+  const end = Math.max(row, Math.round(bFrac * rows))
+  return { row, rowSpan: end - row + 1 }
+}
+function colBandT(aFrac: number, bFrac: number, cols: number): { col: number; colSpan: number } {
+  const col = Math.max(1, Math.round(aFrac * cols) + 1)
+  const end = Math.max(col, Math.round(bFrac * cols))
+  return { col, colSpan: end - col + 1 }
+}
+function intersectsT(a: { col: number; colSpan: number; row: number; rowSpan: number }, b: typeof a): boolean {
+  const ax2 = a.col + a.colSpan - 1, ay2 = a.row + a.rowSpan - 1
+  const bx2 = b.col + b.colSpan - 1, by2 = b.row + b.rowSpan - 1
+  return a.col <= bx2 && b.col <= ax2 && a.row <= by2 && b.row <= ay2
+}
+
+describe('staging: Family D — registration + knobs + no needsImage', () => {
+  it('repeat and wall are registered', () => {
+    expect(getStaging('repeat')).toBeTruthy()
+    expect(getStaging('wall')).toBeTruthy()
+  })
+  it('repeat declares heroScale + step + hot', () => {
+    expect(getStaging('repeat')!.knobs.map(k => k.id).sort()).toEqual(['heroScale', 'hot', 'step'])
+  })
+  it('wall declares heroScale + wallScale', () => {
+    expect(getStaging('wall')!.knobs.map(k => k.id).sort()).toEqual(['heroScale', 'wallScale'])
+  })
+  it('neither declares supports.needsImage — no photo required', () => {
+    expect(getStaging('repeat')!.supports?.needsImage).toBeFalsy()
+    expect(getStaging('wall')!.supports?.needsImage).toBeFalsy()
+  })
+})
+
+describe('staging: repeat — copy count, exactly one full-opacity copy', () => {
+  const repeat = getStaging('repeat')!
+  it('produces floor(rows / stepRows) copies, computed independently of the composer', () => {
+    for (const step of [0.06, 0.09] as const) {
+      const els = repeat.compose(input({ knobs: { step } })).elements
+      const stepRows = Math.max(2, Math.round(step * 16))
+      const expectedN = Math.max(1, Math.floor(16 / stepRows))
+      const copies = els.filter(e => e.id.startsWith('repeat_'))
+      expect(copies).toHaveLength(expectedN)
+    }
+  })
+  it('exactly one copy is full opacity (the hot index); the rest sit at 0.25', () => {
+    for (const hot of [0, 1, 2] as const) {
+      const els = repeat.compose(input({ knobs: { hot } })).elements
+      const copies = els.filter(e => e.id.startsWith('repeat_')) as any[]
+      const fullOpacity = copies.filter(c => c.style.opacity === 1)
+      const dimmed = copies.filter(c => c.style.opacity === 0.25)
+      expect(fullOpacity).toHaveLength(1)
+      expect(dimmed).toHaveLength(copies.length - 1)
+    }
+  })
+  it("copies carry the hero tier's content, flush-left", () => {
+    const els = repeat.compose(input()).elements
+    const copy0 = els.find(e => e.id === 'repeat_0')! as any
+    expect(copy0.content).toBe('MAT + FEST')
+    expect(copy0.style.align).toBe('left')
+  })
+  it('validates clean under default knobs — 2/2-item and 1-item tier sets, no image', () => {
+    for (const tiers of [TIERS, ONE_EACH_TIERS]) {
+      const { ok, reasons } = validateGenerated(repeat.compose(input({ tiers })), 12, 16)
+      expect(ok, reasons.join(' ')).toBe(true)
+    }
+  })
+  it('is deterministic per seed', () => {
+    expect(repeat.compose(input({ rng: makeRng(3) })).elements)
+      .toEqual(repeat.compose(input({ rng: makeRng(3) })).elements)
+  })
+})
+
+describe('staging: repeat — photo in front, declared per genuinely intersecting copy', () => {
+  const repeat = getStaging('repeat')!
+  it('with no image: no img_0, no overlaps', () => {
+    const result = repeat.compose(input())
+    expect(result.elements.find(e => e.id === 'img_0')).toBeUndefined()
+    expect(result.overlaps ?? []).toEqual([])
+  })
+  it('with an image: img_0 is present and pushed AFTER every repeat copy (photo in front)', () => {
+    const els = repeat.compose(input({ image: IMAGE_TOKEN })).elements
+    expect(els.find(e => e.id === 'img_0')).toBeTruthy()
+    const repeatIndices = els.map((e, i) => (e.id.startsWith('repeat_') ? i : -1)).filter(i => i >= 0)
+    const lastRepeatIndex = Math.max(...repeatIndices)
+    const imgIndex = els.findIndex(e => e.id === 'img_0')
+    expect(imgIndex).toBeGreaterThan(lastRepeatIndex)
+  })
+  it('declares (repeat_i, img_0) for exactly the copies whose region genuinely intersects the photo', () => {
+    const result = repeat.compose(input({ image: IMAGE_TOKEN }))
+    const copyCols = colBandT(0, 0.55, 12)
+    const stepRows = Math.max(2, Math.round(0.06 * 16))
+    const n = Math.max(1, Math.floor(16 / stepRows))
+    const photoRegion = { ...colBandT(0.45, 0.95, 12), ...rowBandT(0.30, 0.62, 16) }
+    const expectedIds: string[] = []
+    for (let i = 0; i < n; i++) {
+      const region = { ...copyCols, row: i * stepRows + 1, rowSpan: stepRows }
+      if (intersectsT(region, photoRegion)) expectedIds.push(`repeat_${i}`)
+    }
+    expect(expectedIds.length).toBeGreaterThan(0) // sanity: something really intersects
+    const declaredIds = (result.overlaps ?? []).map(([a]) => a).sort()
+    expect(declaredIds).toEqual(expectedIds.sort())
+    const { ok, reasons } = validateGenerated(result, 12, 16)
+    expect(ok, reasons.join(' ')).toBe(true)
+  })
+  it('validates clean — 2/2-item and 1-item tier sets, with an image', () => {
+    for (const tiers of [TIERS, ONE_EACH_TIERS]) {
+      const { ok, reasons } = validateGenerated(repeat.compose(input({ tiers, image: IMAGE_TOKEN })), 12, 16)
+      expect(ok, reasons.join(' ')).toBe(true)
+    }
+  })
+})
+
+describe('staging: wall — full-canvas tiling, dim opacity, overhang, hero bright on top', () => {
+  const wall = getStaging('wall')!
+  it('wall_i rows cover at least 90% of the grid height', () => {
+    const wallEls = wall.compose(input()).elements.filter(e => e.id.startsWith('wall_'))
+    const totalRowSpan = wallEls.reduce((sum, e) => sum + e.region.rowSpan, 0)
+    expect(totalRowSpan).toBeGreaterThanOrEqual(Math.ceil(16 * 0.9))
+  })
+  it('every wall_i sits at opacity 0.18', () => {
+    const wallEls = wall.compose(input()).elements.filter(e => e.id.startsWith('wall_')) as any[]
+    expect(wallEls.length).toBeGreaterThan(0)
+    for (const e of wallEls) expect(e.style.opacity).toBe(0.18)
+  })
+  it('every wall_i overhangs BOTH edges (col < 1 AND col+colSpan-1 > cols) and carries overhang:true', () => {
+    const wallEls = wall.compose(input()).elements.filter(e => e.id.startsWith('wall_'))
+    for (const e of wallEls) {
+      expect(e.overhang).toBe(true)
+      expect(e.region.col).toBeLessThan(1)
+      expect(e.region.col + e.region.colSpan - 1).toBeGreaterThan(12)
+    }
+  })
+  it('the real tier_hero_0 sits centered, bright (no opacity override)', () => {
+    const hero = wall.compose(input()).elements.find(e => e.id === 'tier_hero_0')! as any
+    expect(hero.style.opacity).toBeUndefined()
+    expect(hero.style.align).toBe('center')
+  })
+  it('hero is pushed AFTER the wall rows (bright, in front)', () => {
+    const els = wall.compose(input()).elements
+    const wallIndices = els.map((e, i) => (e.id.startsWith('wall_') ? i : -1)).filter(i => i >= 0)
+    const heroIndex = els.findIndex(e => e.id === 'tier_hero_0')
+    expect(heroIndex).toBeGreaterThan(Math.max(...wallIndices))
+  })
+  it('declares a (tier_hero_0, wall_i) overlap for every wall row the hero genuinely crosses', () => {
+    const result = wall.compose(input())
+    const hero = result.elements.find(e => e.id === 'tier_hero_0')!.region
+    const wallEls = result.elements.filter(e => e.id.startsWith('wall_'))
+    const expected = wallEls.filter(w => intersectsT(hero, w.region)).map(w => w.id)
+    expect(expected.length).toBeGreaterThan(0) // sanity: the wall really tiles under the hero
+    for (const id of expected) {
+      expect(result.overlaps, `missing (tier_hero_0, ${id})`).toContainEqual(['tier_hero_0', id])
+    }
+  })
+  it('validates clean under default knobs — 2/2-item and 1-item tier sets', () => {
+    for (const tiers of [TIERS, ONE_EACH_TIERS]) {
+      const { ok, reasons } = validateGenerated(wall.compose(input({ tiers })), 12, 16)
+      expect(ok, reasons.join(' ')).toBe(true)
+    }
+  })
+  it('is deterministic per seed', () => {
+    expect(wall.compose(input({ rng: makeRng(3) })).elements)
+      .toEqual(wall.compose(input({ rng: makeRng(3) })).elements)
+  })
+})
+
+describe('staging: NEGATIVE CONTROL — wall: stripping declared overlaps flips the validator to ok:false', () => {
+  it('stripping overlaps makes validateGenerated reject, naming a hero/wall collision', () => {
+    const result = getStaging('wall')!.compose(input())
+    expect((result.overlaps ?? []).length).toBeGreaterThan(0) // sanity: declarations exist
+    const stripped = { ...result, overlaps: [] }
+    const { ok, reasons } = validateGenerated(stripped, 12, 16)
+    expect(ok).toBe(false)
+    expect(reasons.some(r => r.includes('tier_hero_0') && r.includes('wall_'))).toBe(true)
+  })
+})
+
+// FULL LIBRARY — the round-2b closing invariant: every staging, at every
+// capacity (1-item and 2/2-item tiers), with and without a wired image,
+// validates clean. `needsImage` stagings (Family C) skip the no-image cell
+// — their whole composition IS the photo, so there's nothing meaningful to
+// validate there (Family C's own describe block already covers the crash-
+// proofing for that case).
+describe('staging: FULL LIBRARY — validator matrix (every staging x tier-count x image presence)', () => {
+  const NEEDS_IMAGE_IDS = new Set<string>(FIELD_IDS)
+  for (const s of STAGINGS) {
+    for (const tiersLabel of ['2/2-item', '1-item'] as const) {
+      const tiers = tiersLabel === '1-item' ? ONE_EACH_TIERS : TIERS
+      for (const imageLabel of ['image', 'no-image'] as const) {
+        if (imageLabel === 'no-image' && NEEDS_IMAGE_IDS.has(s.id)) continue
+        const image = imageLabel === 'image' ? IMAGE_TOKEN : undefined
+        it(`${s.id}: validates clean — ${tiersLabel}, ${imageLabel}`, () => {
+          const result = s.compose(input({ tiers, image }))
+          const { ok, reasons } = validateGenerated(result, 12, 16)
+          expect(ok, reasons.join(' ')).toBe(true)
+        })
+      }
+    }
+  }
 })

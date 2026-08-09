@@ -63,6 +63,41 @@ describe('generate orchestrator — themes', () => {
     expect(migrateGen({ staging: 'tower', theme: 'blue', seed: 1 })).toEqual({ staging: 'tower', theme: 'blue', seed: 1 })
   })
 
+  // (c-migrations, round-2b Task 5) retired staging ids migrate at the same
+  // choke point as surface->theme — a stored gen naming `editorial`,
+  // `centered`, or `ledger` (the temp id `index`'s ruled-table rebuild
+  // shipped under, per Task 2's naming-collision workaround) resolves to a
+  // live registry id instead of `getStaging` failing to find it.
+  it('(c-mig-1) migrateGen maps unconditional retirements forward: editorial -> stacked, ledger -> index', () => {
+    expect(migrateGen({ staging: 'editorial', theme: 'paper', seed: 1 })?.staging).toBe('stacked')
+    expect(migrateGen({ staging: 'ledger', theme: 'paper', seed: 1 })?.staging).toBe('index')
+    expect(migrateGen({ staging: 'tower', theme: 'paper', seed: 1 })?.staging).toBe('tower') // untouched
+  })
+  it('(c-mig-2) migrateGen maps centered by CURRENT image presence: withImage -> lockup, without -> stacked', () => {
+    expect(migrateGen({ staging: 'centered', theme: 'paper', seed: 1 }, { hasImage: true })?.staging).toBe('lockup')
+    expect(migrateGen({ staging: 'centered', theme: 'paper', seed: 1 }, { hasImage: false })?.staging).toBe('stacked')
+    expect(migrateGen({ staging: 'centered', theme: 'paper', seed: 1 })?.staging).toBe('stacked') // default: no image
+  })
+  it('(c-mig-3) a stored gen naming a retired staging shuffles cleanly, without throwing, onto its mapped id', () => {
+    const legacyEditorial: TemplateV3 = { ...base(), gen: { staging: 'editorial', theme: 'paper', seed: 1 } }
+    expect(() => shuffle(legacyEditorial)).not.toThrow()
+    expect(shuffle(legacyEditorial).gen?.staging).toBe('stacked')
+
+    const legacyLedger: TemplateV3 = { ...base(), gen: { staging: 'ledger', theme: 'paper', seed: 1 } }
+    expect(shuffle(legacyLedger).gen?.staging).toBe('index')
+
+    const legacyCentered: TemplateV3 = { ...base(), gen: { staging: 'centered', theme: 'paper', seed: 1 } }
+    expect(shuffle(legacyCentered).gen?.staging).toBe('stacked') // no image wired at this call
+    expect(shuffle(legacyCentered, { image: '{{ props.image_layer_1 }}' }).gen?.staging).toBe('lockup')
+  })
+  it('(c-mig-4) STAGINGS registry is exactly the 14 sorted ids (round-2b final registry)', () => {
+    expect(STAGINGS.map(s => s.id).sort()).toEqual([
+      'band_footer', 'band_header', 'corner', 'cover', 'frame', 'index',
+      'lockup', 'manifesto', 'repeat', 'split', 'stacked', 'statement',
+      'tower', 'wall',
+    ])
+  })
+
   // (c3) legacy `locks.surface` renames to `locks.theme` (and stays honoured)
   it('(c3) migrateGen renames locks.surface to locks.theme so a legacy lock survives surprise()', () => {
     const t: TemplateV3 = {

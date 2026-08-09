@@ -472,134 +472,6 @@ const corner: Staging = {
   },
 }
 
-/** Centered — hero centred with symmetric air; anchor below; fine print pinned
- *  to top and bottom edges. Quiet, poster-like. */
-const centered: Staging = {
-  id: 'centered', name: 'Centered',
-  blurb: 'Hero centred with symmetric air above and below.',
-  knobs: [HERO_SCALE_KNOB],
-  compose({ tiers, cols, rows, canvas, knobs }) {
-    const els: ElementV2[] = []
-    const entries = tierEntries(tiers)
-    const items = (id: TierId) => tierItems(entries, id)
-    const drama = dramaticType(knobs, canvas)
-    const half = Math.round(cols / 2)
-
-    const fine = items('fineprint')
-    if (fine.length) {
-      els.push(...stackCorners('fineprint', fine,
-        { col: 1, colSpan: half, row: 1, rowSpan: 1 },
-        { col: half + 1, colSpan: cols - half, row: 1, rowSpan: 1 },
-        cols, rows, 4, { style: { align: 'center', valign: 'top' } }))
-    }
-    const hero = items('hero')
-    if (hero.length) {
-      els.push(tierText('hero', 0, hero[0]!,
-        clampRegion({ col: 1, colSpan: cols, row: Math.round(rows * 0.32), rowSpan: Math.round(rows * 0.3) }, cols, rows), 1,
-        { level: 'display', overflow: 'grow', style: { align: 'center', valign: 'middle', fontWeight: 700, ...drama.hero } }))
-    }
-    const anchor = items('anchor')
-    if (anchor.length) {
-      els.push(tierText('anchor', 0, anchor[0]!,
-        clampRegion({ col: 1, colSpan: cols, row: Math.round(rows * 0.66), rowSpan: 2 }, cols, rows), 2,
-        { level: 'headline', style: { align: 'center', valign: 'top', ...drama.anchor } }))
-    }
-    const support = items('support')
-    if (support.length) {
-      els.push(...stackVertical('support', support,
-        { col: Math.round((cols - Math.round(cols * 0.5)) / 2) + 1, colSpan: Math.round(cols * 0.5), row: rows - 2, rowSpan: 2 },
-        cols, rows, 3, { style: { align: 'center', valign: 'bottom' } }))
-    }
-    return { elements: els }
-  },
-}
-
-/** Editorial — a left type column (hero + support stacked) beside an open right
- *  field; anchor bottom-right, fine print top-right. */
-const editorial: Staging = {
-  id: 'editorial', name: 'Editorial',
-  blurb: 'Left type column against an open right field.',
-  // Fraction of `cols`, not an absolute count — the authoring grid's column
-  // count varies by format class/version (6 on a v2 square, 78 on a
-  // baseline-derived v3 grid), so a fixed literal like `7` reads as "most of
-  // the canvas" on one and "a sliver" on the other. ~50–67% of the width.
-  knobs: [{ id: 'colw', pick: [0.5, 0.58, 0.67] }, HERO_SCALE_KNOB],
-  compose({ tiers, cols, rows, canvas, knobs }) {
-    const els: ElementV2[] = []
-    const colw = Math.min(Math.max(1, Math.round(cols * Number(knobs.colw ?? 0.58))), cols - 1)
-    const entries = tierEntries(tiers)
-    const items = (id: TierId) => tierItems(entries, id)
-    const drama = dramaticType(knobs, canvas)
-
-    const hero = items('hero')
-    if (hero.length) {
-      els.push(tierText('hero', 0, hero[0]!,
-        clampRegion({ col: 1, colSpan: colw, row: 2, rowSpan: Math.round(rows * 0.34) }, cols, rows), 1,
-        { level: 'display', overflow: 'grow', style: { align: 'left', valign: 'top', fontWeight: 700, ...drama.hero } }))
-    }
-    const support = items('support')
-    if (support.length) {
-      els.push(...stackVertical('support', support,
-        { col: 1, colSpan: colw, row: 2 + Math.round(rows * 0.34), rowSpan: 2 },
-        cols, rows, 3, { style: { align: 'left', valign: 'top' } }, 4))
-    }
-    const fine = items('fineprint')
-    if (fine.length) {
-      els.push(...stackVertical('fineprint', fine,
-        { col: colw + 1, colSpan: cols - colw, row: 2, rowSpan: 2 },
-        cols, rows, 4, { style: { align: 'right', valign: 'top' } }))
-    }
-    const anchor = items('anchor')
-    if (anchor.length) {
-      els.push(tierText('anchor', 0, anchor[0]!,
-        clampRegion({ col: colw + 1, colSpan: cols - colw, row: rows - 3, rowSpan: 3 }, cols, rows), 2,
-        { level: 'headline', style: { align: 'right', valign: 'bottom', fontWeight: 700, ...drama.anchor } }))
-    }
-    return { elements: els }
-  },
-}
-
-/** Index — a numbered/enumerated feel: fine print as a top rail, hero mid, and
- *  support as a left index column with the anchor beneath it. */
-const index: Staging = {
-  id: 'index', name: 'Index',
-  blurb: 'Top rail of meta, hero mid-canvas, indexed support column.',
-  knobs: [{ id: 'heroRow', pick: [4, 5, 6] }, HERO_SCALE_KNOB],
-  compose({ tiers, cols, rows, canvas, knobs }) {
-    const els: ElementV2[] = []
-    const heroRow = Number(knobs.heroRow ?? 5)
-    const entries = tierEntries(tiers)
-    const items = (id: TierId) => tierItems(entries, id)
-    const drama = dramaticType(knobs, canvas)
-
-    const fine = items('fineprint')
-    if (fine.length) {
-      els.push(...stackVertical('fineprint', fine,
-        { col: 1, colSpan: cols, row: 1, rowSpan: 1 },
-        cols, rows, 4, { style: { align: 'left', valign: 'top' } }))
-    }
-    const hero = items('hero')
-    if (hero.length) {
-      els.push(tierText('hero', 0, hero[0]!,
-        clampRegion({ col: 1, colSpan: cols, row: heroRow, rowSpan: Math.round(rows * 0.3) }, cols, rows), 1,
-        { level: 'display', overflow: 'grow', style: { align: 'left', valign: 'top', fontWeight: 700, ...drama.hero } }))
-    }
-    const support = items('support')
-    if (support.length) {
-      els.push(...stackVertical('support', support,
-        { col: 1, colSpan: Math.round(cols / 2), row: Math.round(rows * 0.68), rowSpan: 1 },
-        cols, rows, 3, { style: { align: 'left', valign: 'top' } }, 3))
-    }
-    const anchor = items('anchor')
-    if (anchor.length) {
-      els.push(tierText('anchor', 0, anchor[0]!,
-        clampRegion({ col: 1, colSpan: cols, row: rows - 2, rowSpan: 2 }, cols, rows), 2,
-        { level: 'headline', style: { align: 'left', valign: 'bottom', fontWeight: 700, ...drama.anchor } }))
-    }
-    return { elements: els }
-  },
-}
-
 /**
  * Statement — a giant flush-left hero owns the upper half of the canvas; a
  * `crop` knob lets it bleed off the left edge for the flagship "giant type"
@@ -733,17 +605,27 @@ const manifesto: Staging = {
 }
 
 /**
- * Ledger — fine print rides a top rail, the hero sits mid-canvas, and the
- * support tier lays out as a ruled table: each item gets its own row with a
- * hairline `rule_i` under it. Anchor closes the composition at the bottom.
- * (Family table A calls this composition `index` — renamed here because a
- * DIFFERENT `index` staging is already registered from round 1; see the
- * task report for the naming collision this avoids.)
+ * Index — fine print rides a top rail, the hero sits mid-canvas, and the
+ * support tier lays out as a ruled TABLE: items pair up two-per-row (the
+ * defining Slakthus move) — even item `2r` takes the LEFT cell
+ * `[0..0.5C]`, odd item `2r+1` takes the RIGHT cell `[0.5C..C]` of the SAME
+ * row band; an odd leftover (last row, no partner) spans the full row
+ * width instead of sitting stranded in one cell. One hairline `rule_r`
+ * closes each ROW — not each item — so a 2-item tier produces exactly one
+ * rule (both items share row 0), and a 3-item tier produces two (row 0's
+ * pair + row 1's lone spanning leftover). Anchor closes the composition at
+ * the bottom. `tableBase` is the LITERAL 0.60 fraction of the grid — not
+ * derived from where the hero happens to end — so the table's start never
+ * drifts if the hero band's own fractions are retuned later.
+ * (Round-2b Task 5: this replaces the round-1 `index` staging's body
+ * wholesale — Task 2 had registered this ruled-table design under a
+ * temporary `ledger` id to avoid clobbering round-1's `index` mid-family;
+ * `STAGING_MIGRATIONS` maps any stored `ledger` gen forward to `index`.)
  */
-const ledger: Staging = {
-  id: 'ledger',
-  name: 'Ledger',
-  blurb: 'Top rail of meta, hero mid-canvas, a ruled table for the support list.',
+const index: Staging = {
+  id: 'index',
+  name: 'Index',
+  blurb: 'Top rail of meta, hero mid-canvas, a two-column ruled table for the support list.',
   knobs: [HERO_SCALE_KNOB],
   compose({ tiers, cols, rows, canvas, knobs }) {
     const els: ElementV2[] = []
@@ -767,21 +649,40 @@ const ledger: Staging = {
     }
     const support = items('support')
     const step = Math.max(2, Math.round(0.06 * rows))
-    const tableBase = heroRows.row + heroRows.rowSpan
-    support.forEach((item, i) => {
-      const rowStart = tableBase + i * step
-      els.push(tierText('support', i, item,
-        clampRegion({ col: 1, colSpan: half, row: rowStart, rowSpan: Math.max(1, step - 1) }, cols, rows), 3,
-        { style: { align: 'left', valign: 'top' } }))
+    // Literal 0.60 fraction (carried decision) — NOT `heroRows.row +
+    // heroRows.rowSpan`; the table's start is pinned to the grid, not to
+    // wherever the hero band's own fractions happen to land it.
+    const tableBase = Math.max(1, Math.round(0.60 * rows) + 1)
+    const rowCount = Math.ceil(support.length / 2)
+    for (let r = 0; r < rowCount; r++) {
+      const rowStart = tableBase + r * step
+      const rowSpan = Math.max(1, step - 1)
+      const i0 = 2 * r
+      const i1 = 2 * r + 1
+      const hasPair = i1 < support.length
+      if (hasPair) {
+        els.push(tierText('support', i0, support[i0]!,
+          clampRegion({ col: 1, colSpan: half, row: rowStart, rowSpan }, cols, rows), 3,
+          { style: { align: 'left', valign: 'top' } }))
+        els.push(tierText('support', i1, support[i1]!,
+          clampRegion({ col: half + 1, colSpan: cols - half, row: rowStart, rowSpan }, cols, rows), 3,
+          { style: { align: 'left', valign: 'top' } }))
+      } else {
+        // Odd leftover, no partner this row — spans the full width instead
+        // of sitting alone in the (now-empty) left cell.
+        els.push(tierText('support', i0, support[i0]!,
+          clampRegion({ col: 1, colSpan: cols, row: rowStart, rowSpan }, cols, rows), 3,
+          { style: { align: 'left', valign: 'top' } }))
+      }
       els.push({
-        id: `rule_${i}`, type: 'shape', shape: 'rect', priority: 5, origin: 'staging',
+        id: `rule_${r}`, type: 'shape', shape: 'rect', priority: 5, origin: 'staging',
         region: clampRegion({ col: 1, colSpan: cols, row: rowStart + step - 1, rowSpan: 1 }, cols, rows),
         style: { fill: '{{ brand.foreground }}' },
       })
-    })
+    }
     const anchor = items('anchor')
     if (anchor.length) {
-      const lastRuleRow = support.length ? tableBase + (support.length - 1) * step + step - 1 : tableBase
+      const lastRuleRow = support.length ? tableBase + (rowCount - 1) * step + step - 1 : tableBase
       const anchorRow = Math.min(rows, lastRuleRow + 1)
       els.push(tierText('anchor', 0, anchor[0]!,
         clampRegion({ col: 1, colSpan: cols, row: anchorRow, rowSpan: Math.max(1, rows - anchorRow + 1) }, cols, rows), 2,
@@ -1175,12 +1076,255 @@ const bandFooter: Staging = {
   },
 }
 
+// Round-2b Task 5 — Family D, texture (type repetition). No photo is
+// REQUIRED (neither declares `supports.needsImage`) — `repeat` uses one if
+// `input.image` is wired, `wall` never touches it at all. Both build their
+// copies from the hero tier's item 0 ONLY (no per-copy rng — deterministic
+// by construction) via two LOCAL, pure helpers (`repeatColumn`, `wallGrid`)
+// kept file-private since nothing outside this staging pair needs them.
+
+/** `repeat`'s left-edge column of copies: `N = floor(rows / stepRows)` bands
+ *  stacked top-to-bottom, each `[i*stepRows .. (i+1)*stepRows] x [0..0.55C]`
+ *  (flush-left). Pure — no rng, no side effects; `stepRows` is already the
+ *  knob-resolved row count (the caller converts the `step` knob's fraction
+ *  before calling in, so this helper stays a plain tiling function). */
+function repeatColumn(cols: number, rows: number, stepRows: number): Region[] {
+  const copyCols = colBand(0, 0.55, cols)
+  const n = Math.max(1, Math.floor(rows / stepRows))
+  const out: Region[] = []
+  for (let i = 0; i < n; i++) {
+    out.push(clampRegion({ ...copyCols, row: i * stepRows + 1, rowSpan: stepRows }, cols, rows))
+  }
+  return out
+}
+
+/** `wall`'s full-canvas tiling: consecutive row bands of height `wallRowSpan`
+ *  covering the ENTIRE grid height (the last band's span is clamped to
+ *  whatever remains, never overshoots `rows`), each overhanging both side
+ *  edges (`col` a couple of units negative, `col+colSpan-1` a couple of
+ *  units past `cols`) for the edge-to-edge texture look. Pure — no rng. */
+function wallGrid(cols: number, rows: number, wallRowSpan: number): Region[] {
+  const overCol = Math.min(-1, Math.round(-0.02 * cols))
+  const overEndCol = Math.max(cols + 1, Math.round(1.04 * cols))
+  const overColSpan = overEndCol - overCol + 1
+  const count = Math.max(1, Math.ceil(rows / wallRowSpan))
+  const out: Region[] = []
+  for (let i = 0; i < count; i++) {
+    const rowSpan = Math.min(wallRowSpan, rows - i * wallRowSpan)
+    if (rowSpan <= 0) break
+    out.push({ col: overCol, colSpan: overColSpan, row: i * wallRowSpan + 1, rowSpan })
+  }
+  return out
+}
+
+/** True when two regions share at least one grid cell — the same test
+ *  `validateGenerated`'s collision check runs; used here to compute WHICH
+ *  declared-overlap pairs are actually real (an intersecting `repeat_i`/
+ *  `wall_i`), never a blanket "declare everything". */
+function regionsIntersect(a: Region, b: Region): boolean {
+  const ax2 = a.col + a.colSpan - 1, ay2 = a.row + a.rowSpan - 1
+  const bx2 = b.col + b.colSpan - 1, by2 = b.row + b.rowSpan - 1
+  return a.col <= bx2 && b.col <= ax2 && a.row <= by2 && b.row <= ay2
+}
+
+/**
+ * Repeat — the hero's own words run down the left edge as a column of
+ * anchor-scale copies (`repeat_0..N-1`, back→front, one per `repeatColumn`
+ * band): all but one sit at `opacity: 0.25`, the `hot` knob's index reads
+ * full-strength — the backpocket-4 "one line lit, the rest a murmur" move.
+ * A photo, when `input.image` is wired, runs right through the column
+ * mid-canvas — pushed AFTER the repeats so it prints IN FRONT (text runs
+ * behind glass), with a declared `(repeat_i, img_0)` overlap for every copy
+ * whose row band the photo's region genuinely crosses (computed via
+ * `regionsIntersect`, not a blanket declare-everything). No `tier_hero_0`
+ * exists in this staging's own right — the repeated copies ARE the hero's
+ * presence — so it sits OUTSIDE the generic hero-drama test loop in
+ * `sl-gen-stagings.unit.spec.ts` (see that file's exclusion list). Anchor,
+ * support, and fine print stay clear of the repeat column entirely — pinned
+ * to the column-DISJOINT right band (`[0.55C..C]`) at the bottom, so they
+ * never collide with a repeat copy regardless of how many `step` produces.
+ */
+const repeat: Staging = {
+  id: 'repeat',
+  name: 'Repeat',
+  blurb: 'The hero\'s words run down the left edge, one line lit, the rest a murmur — a photo can cut through it.',
+  knobs: [
+    { id: 'step', pick: [0.06, 0.09] },
+    { id: 'hot', pick: [0, 1, 2] },
+    HERO_SCALE_KNOB,
+  ],
+  compose({ tiers, cols, rows, canvas, knobs, image }) {
+    const els: ElementV2[] = []
+    const overlaps: Array<[string, string]> = []
+    const entries = tierEntries(tiers)
+    const items = (id: TierId) => tierItems(entries, id)
+    const drama = dramaticType(knobs, canvas)
+    const hero = items('hero')
+
+    const stepRows = Math.max(2, Math.round(Number(knobs.step ?? 0.06) * rows))
+    const regions = repeatColumn(cols, rows, stepRows)
+    const hotIndex = Math.min(Math.max(0, Number(knobs.hot ?? 0)), regions.length - 1)
+    if (hero.length) {
+      regions.forEach((region, i) => {
+        els.push({
+          id: `repeat_${i}`,
+          type: 'text',
+          content: hero[0]!.content,
+          level: DEFAULT_TIER_LEVELS.anchor,
+          priority: 1,
+          region,
+          origin: 'staging',
+          role: 'HERO',
+          style: { align: 'left', valign: 'top', ...drama.anchor, opacity: i === hotIndex ? 1 : 0.25, ...hero[0]!.type },
+        })
+      })
+    }
+
+    const photoRows = rowBand(0.30, 0.62, rows)
+    const photoCols = colBand(0.45, 0.95, cols)
+    const photoRegion = clampRegion({ ...photoCols, ...photoRows }, cols, rows)
+    if (image) {
+      els.push(tierImage('0', image, photoRegion, 2))
+      regions.forEach((region, i) => {
+        if (regionsIntersect(region, photoRegion)) overlaps.push([`repeat_${i}`, 'img_0'])
+      })
+    }
+
+    // Anchor/support/fine live in the column DISJOINT from the repeats
+    // (`[0.55C..C]`) — they never need a declared overlap against a repeat
+    // copy or the photo, whatever `step`/`hot` rolled.
+    const rightCols = colBand(0.55, 1, cols)
+    const rightHalf = Math.max(1, Math.round(rightCols.colSpan / 2))
+    const leftCell = { col: rightCols.col, colSpan: rightHalf }
+    const rightCell = { col: rightCols.col + rightHalf, colSpan: Math.max(1, rightCols.colSpan - rightHalf) }
+    const bottomRows = rowBand(0.75, 1, rows)
+    const support = items('support')
+    if (support.length) {
+      els.push(...stackCorners('support', support,
+        { ...leftCell, row: bottomRows.row, rowSpan: 1 },
+        { ...rightCell, row: bottomRows.row, rowSpan: 1 },
+        cols, rows, 3, { style: { align: 'left', valign: 'top' } }))
+    }
+    const fine = items('fineprint')
+    if (fine.length) {
+      els.push(...stackCorners('fineprint', fine,
+        { ...leftCell, row: bottomRows.row + 1, rowSpan: 1 },
+        { ...rightCell, row: bottomRows.row + 1, rowSpan: 1 },
+        cols, rows, 4, { style: { align: 'left', valign: 'top' } }))
+    }
+    const anchor = items('anchor')
+    if (anchor.length) {
+      els.push(tierText('anchor', 0, anchor[0]!,
+        clampRegion({ ...rightCols, row: bottomRows.row + 2, rowSpan: Math.max(1, bottomRows.rowSpan - 2) }, cols, rows), 2,
+        { level: 'headline', style: { align: 'left', valign: 'bottom', fontWeight: 700, ...drama.anchor } }))
+    }
+    return { elements: els, ...(overlaps.length ? { overlaps } : {}) }
+  },
+}
+
+/**
+ * Wall — the hero's words tile the ENTIRE grid as a dim `wall_i` texture
+ * (`wallGrid`, `opacity: 0.18`, support-scale type, overhanging BOTH side
+ * edges every row for the edge-to-edge look — backpocket-20), with the REAL
+ * `tier_hero_0` bright and centered on top `[0.38..0.62]`. Because the wall
+ * tiles the full canvas height, EVERY other placed element's row band lands
+ * on some `wall_i` — there is no dodging it — so every one of them (hero,
+ * anchor, support, fine print) declares its real, geometry-checked overlap
+ * against the specific `wall_i` band(s) it crosses (`declareWallOverlaps`),
+ * the same "the field IS the composition" contract Family C's `cover`
+ * established for `img_0`. Back→front: the wall goes in first, the bright
+ * hero/anchor/support/fine print sit in front of it.
+ */
+const wall: Staging = {
+  id: 'wall',
+  name: 'Wall',
+  blurb: 'The hero\'s words tile the whole canvas as a dim wall of type, with the real line bright on top.',
+  knobs: [{ id: 'wallScale', pick: [0.05, 0.07] }, HERO_SCALE_KNOB],
+  compose({ tiers, cols, rows, canvas, knobs }) {
+    const els: ElementV2[] = []
+    const overlaps: Array<[string, string]> = []
+    const entries = tierEntries(tiers)
+    const items = (id: TierId) => tierItems(entries, id)
+    const drama = dramaticType(knobs, canvas)
+    const hero = items('hero')
+
+    const wallRowSpan = Math.max(1, Math.round(Number(knobs.wallScale ?? 0.05) * rows))
+    const wallRegions = hero.length ? wallGrid(cols, rows, wallRowSpan) : []
+    wallRegions.forEach((region, i) => {
+      els.push({
+        id: `wall_${i}`, type: 'text', content: hero[0]!.content,
+        level: DEFAULT_TIER_LEVELS.support, priority: 6, region, origin: 'staging', role: 'HERO',
+        overhang: true,
+        style: { align: 'left', valign: 'top', opacity: 0.18, ...hero[0]!.type },
+      })
+    })
+    const declareWallOverlaps = (id: string, region: Region) => {
+      wallRegions.forEach((w, i) => { if (regionsIntersect(region, w)) overlaps.push([id, `wall_${i}`]) })
+    }
+
+    const heroRows = rowBand(0.38, 0.62, rows)
+    if (hero.length) {
+      const heroRegion = clampRegion({ col: 1, colSpan: cols, ...heroRows }, cols, rows)
+      els.push(tierText('hero', 0, hero[0]!, heroRegion, 1,
+        { level: 'display', overflow: 'grow', style: { align: 'center', valign: 'middle', fontWeight: 700, ...drama.hero } }))
+      declareWallOverlaps('tier_hero_0', heroRegion)
+    }
+    const anchorRow = heroRows.row + heroRows.rowSpan
+    const anchor = items('anchor')
+    if (anchor.length) {
+      const anchorRegion = clampRegion({ col: 1, colSpan: cols, row: anchorRow, rowSpan: 2 }, cols, rows)
+      els.push(tierText('anchor', 0, anchor[0]!, anchorRegion, 2,
+        { level: 'headline', style: { align: 'center', valign: 'top', fontWeight: 700, ...drama.anchor } }))
+      declareWallOverlaps('tier_anchor_0', anchorRegion)
+    }
+    const support = items('support')
+    if (support.length) {
+      const supportEls = stackVertical('support', support,
+        { col: 1, colSpan: cols, row: Math.min(rows, anchorRow + 2), rowSpan: 1 },
+        cols, rows, 3, { style: { align: 'center', valign: 'top' } }, 2)
+      els.push(...supportEls)
+      for (const e of supportEls) declareWallOverlaps(e.id, e.region)
+    }
+    const half = Math.round(cols / 2)
+    const fine = items('fineprint')
+    if (fine.length) {
+      const fineEls = stackCorners('fineprint', fine,
+        { col: 1, colSpan: half, row: 1, rowSpan: 1 },
+        { col: half + 1, colSpan: cols - half, row: 1, rowSpan: 1 },
+        cols, rows, 4, { style: { align: 'left', valign: 'top' } })
+      els.push(...fineEls)
+      for (const e of fineEls) declareWallOverlaps(e.id, e.region)
+    }
+    return { elements: els, ...(overlaps.length ? { overlaps } : {}) }
+  },
+}
+
 export const STAGINGS: Staging[] = [
-  tower, split, frame, corner, centered, editorial, index,
-  statement, manifesto, ledger, stacked,
+  tower, split, frame, corner,
+  index, statement, manifesto, stacked,
   cover, lockup, bandHeader, bandFooter,
+  repeat, wall,
 ]
 
 export function getStaging(id: string): Staging | undefined {
   return STAGINGS.find(s => s.id === id)
+}
+
+/** Retired staging ids, mapped forward at the `migrateGen` choke point
+ *  (`generate.ts`) — mirrors `SURFACE_TO_THEME`'s shape one level up: never
+ *  leave a stored `gen.staging` naming a retired/renamed id dangling.
+ *  `editorial`/`centered` retire per the round-2b family-table self-review
+ *  (folded into `stacked`/`lockup`); `ledger` was `index`'s ruled-table
+ *  design under a temporary id (Task 2's naming-collision workaround, see
+ *  that task's report) — now that round-1 `index` has been replaced
+ *  wholesale, `ledger` has nowhere else to go but `index`.
+ *  `centered`'s target depends on whether an image is wired at migration
+ *  time (a `withImage`/`without` split, same shape `STAGING_MIGRATIONS`'s
+ *  type declares) — `lockup` degrades gracefully without a photo, but it's
+ *  still the wrong LOOK for a doc that never had one; `stacked` is the safe
+ *  type-only fallback in that case. */
+export const STAGING_MIGRATIONS: Record<string, string | { withImage: string; without: string }> = {
+  editorial: 'stacked',
+  centered: { withImage: 'lockup', without: 'stacked' },
+  ledger: 'index',
 }

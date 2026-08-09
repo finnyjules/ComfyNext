@@ -4,7 +4,7 @@ import { effectiveBrand } from '../../brand/resolve'
 import { effectiveOrder } from '../sections'
 import { makeRng } from './rng'
 import { resolveKnobs } from './knobs'
-import { getStaging, STAGINGS, type StagingResult } from './stagings'
+import { getStaging, STAGINGS, STAGING_MIGRATIONS, type StagingResult } from './stagings'
 import { BRAND_AXIS_KEYS, getTheme, THEMES, resolveInk, contrastRatio, themeBrandDefaults, SURFACE_TO_THEME } from './themes'
 import { validateGenerated } from './validate'
 
@@ -38,18 +38,40 @@ function migrateLocks(locks: GenState['locks'] | undefined): GenState['locks'] |
   return { ...rest, theme: raw.theme ?? surface }
 }
 
+/** Maps a stored `gen.staging` forward through `STAGING_MIGRATIONS` when it
+ *  names a retired/renamed id; passes any other id through unchanged. The
+ *  `centered` entry is image-presence-dependent (a `{withImage, without}`
+ *  split) — `hasImage` is whatever the CURRENT call wired (`opts.image`/
+ *  `ctx.image`), not whatever was wired when the doc was originally saved,
+ *  since a retired id regenerates against today's inputs, not yesterday's. */
+function migrateStaging(id: string, hasImage: boolean): string {
+  const mapped = STAGING_MIGRATIONS[id]
+  if (!mapped) return id
+  return typeof mapped === 'string' ? mapped : (hasImage ? mapped.withImage : mapped.without)
+}
+
 /** Round-1 templates persisted `gen.surface` (and `gen.locks.surface`);
  *  round-2 reads `gen.theme`/`gen.locks.theme`. One migration point — maps a
  *  stored gen (either shape) forward through `SURFACE_TO_THEME` so a legacy
  *  doc regenerates without erroring, and its axis lock survives the rename.
- *  Called at the top of `generate()`/`shuffle()`/`surprise()`. */
-export function migrateGen(gen: (GenState & { surface?: string }) | undefined): GenState | undefined {
+ *  Round-2b: the same choke point also resolves `gen.staging` through
+ *  `STAGING_MIGRATIONS` (`migrateStaging`) — a stored gen naming a retired
+ *  staging id (`editorial`/`centered`/`ledger`) regenerates cleanly under
+ *  its mapped id instead of `getStaging` failing to find it. Called at the
+ *  top of `generate()`/`shuffle()`/`surprise()`; `ctx.hasImage` threads
+ *  whether an image is wired at THIS call, needed only for `centered`'s
+ *  image-dependent split. */
+export function migrateGen(
+  gen: (GenState & { surface?: string }) | undefined,
+  ctx: { hasImage?: boolean } = {},
+): GenState | undefined {
   if (!gen) return gen
-  if (gen.theme) return { ...gen, locks: migrateLocks(gen.locks) } as GenState
+  const staging = migrateStaging(gen.staging, Boolean(ctx.hasImage))
+  if (gen.theme) return { ...gen, staging, locks: migrateLocks(gen.locks) } as GenState
   const legacySurface = gen.surface
-  if (!legacySurface) return { ...gen, locks: migrateLocks(gen.locks) } as GenState
+  if (!legacySurface) return { ...gen, staging, locks: migrateLocks(gen.locks) } as GenState
   const { surface: _surface, ...rest } = gen
-  return { ...rest, theme: SURFACE_TO_THEME[legacySurface] ?? DEFAULT_THEME_ID, locks: migrateLocks(gen.locks) }
+  return { ...rest, staging, theme: SURFACE_TO_THEME[legacySurface] ?? DEFAULT_THEME_ID, locks: migrateLocks(gen.locks) }
 }
 
 /** Inject the staged text ink post-compose: `ink` (a `{{ brand.foreground }}`
@@ -68,7 +90,7 @@ function applyInk(els: ElementV2[], opts: { accentOnHero?: boolean; ink: string 
 
 /** Deterministically produce a generated TemplateV3 from the axis tuple. */
 export function generate(template: TemplateV3, opts: GenOpts): TemplateV3 {
-  const gen = migrateGen(template.gen)
+  const gen = migrateGen(template.gen, { hasImage: Boolean(opts.image) })
   const staging = getStaging(opts.staging) ?? STAGINGS[0]!
   const theme = getTheme(opts.theme) ?? getTheme(DEFAULT_THEME_ID)!
   const tiers = template.tiers ?? {}
@@ -177,7 +199,7 @@ function nextSeed(seed: number): number {
 
 /** Re-roll knobs (and unlocked axes stay put) under a new seed. */
 export function shuffle(template: TemplateV3, ctx: { brand?: BrandKit; image?: string } = {}): TemplateV3 {
-  const gen = migrateGen(template.gen) ?? { staging: STAGINGS[0]!.id, theme: DEFAULT_THEME_ID, seed: 1 }
+  const gen = migrateGen(template.gen, { hasImage: Boolean(ctx.image) }) ?? { staging: STAGINGS[0]!.id, theme: DEFAULT_THEME_ID, seed: 1 }
   return generate(template, {
     staging: gen.staging, theme: gen.theme ?? DEFAULT_THEME_ID, seed: nextSeed(gen.seed),
     accentOnHero: gen.accentOnHero, brand: ctx.brand, image: ctx.image,
@@ -196,7 +218,7 @@ export function shuffle(template: TemplateV3, ctx: { brand?: BrandKit; image?: s
  *  where filtering would empty the pool (every staging needs an image and
  *  none is wired) rather than crash on an empty pick. */
 export function surprise(template: TemplateV3, ctx: { brand?: BrandKit; image?: string } = {}): TemplateV3 {
-  const gen = migrateGen(template.gen)
+  const gen = migrateGen(template.gen, { hasImage: Boolean(ctx.image) })
   const seed = nextSeed(gen?.seed ?? 1)
   const pick = makeRng(seed, 'axes')
   const stagingPool = STAGINGS.filter(s => ctx.image || !s.supports?.needsImage)
