@@ -56,8 +56,16 @@ export interface Staging {
 }
 
 /** Every staging rolls this knob — the user-directed drama lever: how big the
- *  hero reads relative to the canvas. */
-const HERO_SCALE_KNOB: KnobSpec = { id: 'heroScale', pick: [0.10, 0.14, 0.18] }
+ *  hero reads relative to the canvas. Round-2b-drama revision (2026-08-09,
+ *  user-directed live-output pass — "hero should be huge"): the domain moved
+ *  UP a full notch from `{0.10, 0.14, 0.18}` to `{0.14, 0.18, 0.22}` — the
+ *  old top (18%) is now the new floor. */
+const HERO_SCALE_KNOB: KnobSpec = { id: 'heroScale', pick: [0.14, 0.18, 0.22] }
+
+/** The backpocket meta-cluster scale — support/fineprint are pinned here
+ *  regardless of `heroScale`, so "fine print" always reads genuinely fine
+ *  even as the hero gets huge. ~20px at 1440 master height. */
+const SMALL_TEXT_SCALE = 0.014
 
 /** Build a placed text element for ONE item of a tier's (already-filtered)
  *  list. `index` is this item's position in that filtered list, not its raw
@@ -149,21 +157,54 @@ function colBand(aFrac: number, bFrac: number, cols: number): { col: number; col
   return { col, colSpan: end - col + 1 }
 }
 
-/** Hero/anchor dramatic type: hero's `style.fontSize` is a whole master-px
- *  override — `heroScale` (10-18% of canvas height) is the user-directed
- *  "much bigger hero" lever, with a tight `lineHeight` and slightly negative
- *  `letterSpacing` for a poster-like set. Anchor tracks proportionally
- *  underneath it (tight setting). Computed once per `compose()` call so
- *  every staging gets identical drama for a given knob roll; a tier's own
- *  `type` (spread last in `tierText`) still wins. */
+/** A "compact" per-item row step, scaled to the actual grid resolution — a
+ *  literal `rowSpan: 1` (the round-1-era compact-multi-item spacing
+ *  throughout this file) is a generous ~1/16th of the canvas on the coarse
+ *  authoring fixture (12x16) but only ~1/100th on the REAL production fine
+ *  grid (`fineGridDims` derives 78-100+ rows for a typical master), where it
+ *  visibly crowds/overlaps adjacent stacked lines at any real font size —
+ *  worse now that support/fineprint are pinned to a fixed
+ *  `SMALL_TEXT_SCALE` px rather than the coarse-grid-tuned modular scale.
+ *  `round(0.035 * rows)` is 1 at rows=16 (byte-identical to the literal it
+ *  replaces on every existing coarse-fixture test) and ~3-4 at rows=78-115
+ *  (comfortably fits a ~20px line, even wrapped to two). Used only where a
+ *  caller has already audited the siblings below/around it for the bigger
+ *  footprint — NOT a blanket replacement of every `rowSpan: 1` in this file
+ *  (see the round-2b-drama report for the ones still open). */
+function compactRowSpan(rows: number): number {
+  return Math.max(1, Math.round(0.035 * rows))
+}
+
+/** Hero/anchor/small dramatic type: hero's `style.fontSize` is a whole
+ *  master-px override — `heroScale` (14-22% of canvas height) is the
+ *  user-directed "much bigger hero" lever, with a tight `lineHeight` and
+ *  slightly negative `letterSpacing` for a poster-like set. Anchor tracks
+ *  proportionally underneath it (tight setting). `small` is the ONE source
+ *  for support/fineprint's pinned tiny scale (`SMALL_TEXT_SCALE` ×
+ *  canvas.h, normal tracking) — every staging spreads `...drama.small` into
+ *  its support/fineprint style objects so the two smallest tiers always
+ *  read genuinely small, independent of how big `heroScale` rolled. Both
+ *  tiers share the SAME fontSize value on purpose — `verify.ts`'s
+ *  distinct-size counter (`fontSize ?? level`) then buckets them together,
+ *  keeping the composition at 3 distinct sizes (hero, anchor, small) instead
+ *  of 4. Computed once per `compose()` call so every staging gets identical
+ *  drama for a given knob roll; a tier's own `type` (spread last in
+ *  `tierText`) still wins. */
 function dramaticType(knobs: Record<string, unknown>, canvas: { w: number; h: number }):
-  { hero: TextStyleV2; anchor: TextStyleV2 } {
+  { hero: TextStyleV2; anchor: TextStyleV2; small: TextStyleV2 } {
   const heroScale = Number(knobs.heroScale ?? 0.14)
   const heroFontSize = Math.round(heroScale * canvas.h)
   const anchorFontSize = Math.round(0.45 * heroFontSize)
+  const smallFontSize = Math.round(SMALL_TEXT_SCALE * canvas.h)
   return {
     hero: { fontSize: heroFontSize, lineHeight: 0.92, letterSpacing: -Math.round(0.03 * heroFontSize) },
     anchor: { fontSize: anchorFontSize, letterSpacing: -Math.round(0.02 * anchorFontSize) },
+    // No `letterSpacing` override — "normal tracking" per the spec, and
+    // omitting it (rather than stamping an explicit 0) renders byte-identical
+    // (`letterSpacing != null ? px : 'normal'` in both render surfaces) while
+    // leaving a genuinely untouched item's resolved style undistinguishable
+    // from before this pin existed.
+    small: { fontSize: smallFontSize },
   }
 }
 
@@ -181,30 +222,40 @@ function tierItems(entries: Array<{ id: TierId; items: TierSpec[] }>, id: TierId
  *  exactly one item — the round-1 generous span. `base.rowSpan` stays the
  *  compact multi-item value, used whenever 2+ items must share the slot. A
  *  lone item gets the bigger box back instead of the space reserved for
- *  stacking it never needs. */
+ *  stacking it never needs.
+ *
+ *  Round-2b-drama: `opts.overflow` defaults to `'shrink'` (never `'grow'` —
+ *  every caller is `support`/`fineprint`, exclusively). Support/fineprint
+ *  now carry `drama.small`'s explicit `style.fontSize`, which disables
+ *  `fitText`'s auto-shrink the same way the anchor's explicit size does —
+ *  left at the default `'shrink-then-truncate'` policy, a compact multi-item
+ *  box that doesn't fit would ellipsize ("New cuisine…") instead of just
+ *  clipping. Same fix, same reason, as the anchor's `overflow:'shrink'`. */
 function stackVertical(
   id: TierId, items: TierSpec[], base: Region, cols: number, rows: number,
-  priority: number, opts: { level?: TextLevel; style?: TextStyleV2 } = {},
+  priority: number, opts: { level?: TextLevel; style?: TextStyleV2; overflow?: TextOverflow } = {},
   singleRowSpan?: number,
 ): ElementV2[] {
   const rowSpan = items.length === 1 && singleRowSpan !== undefined ? singleRowSpan : base.rowSpan
+  const withOverflow = { ...opts, overflow: opts.overflow ?? 'shrink' as const }
   return items.map((item, i) => tierText(id, i, item,
-    clampRegion({ ...base, row: base.row + i * rowSpan, rowSpan }, cols, rows), priority, opts))
+    clampRegion({ ...base, row: base.row + i * rowSpan, rowSpan }, cols, rows), priority, withOverflow))
 }
 
 /** Fine-print distribution for tower/centered: items alternate between the
  *  left and right corner regions by index (0→left, 1→right, 2→left one row
  *  down, …) — nothing dropped, overflow keeps stacking downward within its
- *  corner. */
+ *  corner. `opts.overflow` defaults to `'shrink'` — see `stackVertical`. */
 function stackCorners(
   id: TierId, items: TierSpec[], left: Region, right: Region, cols: number, rows: number,
-  priority: number, opts: { level?: TextLevel; style?: TextStyleV2 } = {},
+  priority: number, opts: { level?: TextLevel; style?: TextStyleV2; overflow?: TextOverflow } = {},
 ): ElementV2[] {
+  const withOverflow = { ...opts, overflow: opts.overflow ?? 'shrink' as const }
   return items.map((item, i) => {
     const base = i % 2 === 0 ? left : right
     const layer = Math.floor(i / 2)
     return tierText(id, i, item,
-      clampRegion({ ...base, row: base.row + layer * base.rowSpan }, cols, rows), priority, opts)
+      clampRegion({ ...base, row: base.row + layer * base.rowSpan }, cols, rows), priority, withOverflow)
   })
 }
 
@@ -233,14 +284,27 @@ const tower: Staging = {
     const align: TextStyleV2['align'] = left ? 'left' : 'right'
     const half = Math.round(cols / 2)
 
+    // Computed BEFORE fine print (round-2b-drama) so fine print's compact
+    // per-layer step can be bounded against the REAL ceiling — where hero
+    // starts — the same "read the real floor/ceiling, not a fixed literal"
+    // fix FIX 1 already applied to support below.
+    const heroRows = rowBand(0.10, 0.44, rows)
     const fine = items('fineprint')
     if (fine.length) {
+      // `compactRowSpan` (round-2b-drama): was a literal `rowSpan: 1` — fine
+      // at the coarse authoring fixture, crowded at the real fine grid now
+      // that fine print is pinned to a fixed px size. Bounded by the actual
+      // headroom above `heroRows.row` (divided across however many layers
+      // this item count needs) so it can never grow down into the hero —
+      // the unbounded `compactRowSpan(rows)` collided there at n=5.
+      const fineLayers = Math.max(1, Math.ceil(fine.length / 2))
+      const fineHeadroom = Math.max(1, heroRows.row - 1)
+      const fineStep = Math.max(1, Math.min(compactRowSpan(rows), Math.floor(fineHeadroom / fineLayers)))
       els.push(...stackCorners('fineprint', fine,
-        { col: 1, colSpan: half, row: 1, rowSpan: 1 },
-        { col: half + 1, colSpan: cols - half, row: 1, rowSpan: 1 },
-        cols, rows, 4, { style: { align, valign: 'top' } }))
+        { col: 1, colSpan: half, row: 1, rowSpan: fineStep },
+        { col: half + 1, colSpan: cols - half, row: 1, rowSpan: fineStep },
+        cols, rows, 4, { style: { ...drama.small, align, valign: 'top' } }))
     }
-    const heroRows = rowBand(0.10, 0.44, rows)
     const hero = items('hero')
     if (hero.length) {
       // FIX 8 (round-2b): cap `grow` at the photo block's own row band — the
@@ -281,13 +345,13 @@ const tower: Staging = {
       // fineprint above — was hardcoded 'left' regardless of the knob.
       els.push(...stackVertical('support', support,
         { ...supportCols, row: photoRegion.row, rowSpan: supportRowSpan },
-        cols, rows, 3, { style: { align, valign: 'top' } }, photoRegion.rowSpan))
+        cols, rows, 3, { style: { ...drama.small, align, valign: 'top' } }, photoRegion.rowSpan))
     }
     const anchor = items('anchor')
     if (anchor.length) {
       els.push(tierText('anchor', 0, anchor[0]!,
         clampRegion({ ...full, ...anchorRows }, cols, rows), 2,
-        { level: 'headline', style: { align, valign: 'bottom', fontWeight: 700, ...drama.anchor } }))
+        { level: 'headline', overflow: 'shrink', style: { align, valign: 'bottom', fontWeight: 700, ...drama.anchor } }))
     }
     return { elements: els }
   },
@@ -333,14 +397,14 @@ const split: Staging = {
     if (anchor.length) {
       els.push(tierText('anchor', 0, anchor[0]!,
         clampRegion({ ...textCols, row: anchorRow, rowSpan: 2 }, cols, rows), 2,
-        { level: 'headline', style: { align, valign: 'top', fontWeight: 700, ...drama.anchor } }))
+        { level: 'headline', overflow: 'shrink', style: { align, valign: 'top', fontWeight: 700, ...drama.anchor } }))
     }
     const supportRows = rowBand(0.60, 0.80, rows)
     const support = items('support')
     if (support.length) {
       els.push(...stackVertical('support', support,
         { ...textCols, row: supportRows.row, rowSpan: 1 },
-        cols, rows, 3, { style: { align, valign: 'top' } }, supportRows.rowSpan))
+        cols, rows, 3, { style: { ...drama.small, align, valign: 'top' } }, supportRows.rowSpan))
     }
     const fine = items('fineprint')
     if (fine.length) {
@@ -354,7 +418,7 @@ const split: Staging = {
       const fineBaseRow = rows - fine.length + 1
       els.push(...stackVertical('fineprint', fine,
         { ...textCols, row: fineBaseRow, rowSpan: 1 },
-        cols, rows, 4, { style: { align, valign: 'bottom' } }))
+        cols, rows, 4, { style: { ...drama.small, align, valign: 'bottom' } }))
     }
     return { elements: els }
   },
@@ -391,7 +455,7 @@ const frame: Staging = {
       const fineCols = colBand(0.60, 1, cols)
       els.push(...stackVertical('fineprint', fine,
         { ...fineCols, row: 1, rowSpan: 1 },
-        cols, rows, 4, { style: { align: 'right', valign: 'top' } }))
+        cols, rows, 4, { style: { ...drama.small, align: 'right', valign: 'top' } }))
     }
     const heroRows = rowBand(0.04, 0.30, rows)
     const heroCols = colBand(0, 0.55, cols)
@@ -412,14 +476,14 @@ const frame: Staging = {
       const supportCols = colBand(0, 0.45, cols)
       els.push(...stackVertical('support', support,
         { ...supportCols, row: heroRows.row + heroRows.rowSpan, rowSpan: 2 },
-        cols, rows, 3, { style: { align: 'left', valign: 'top' } }, 4))
+        cols, rows, 3, { style: { ...drama.small, align: 'left', valign: 'top' } }, 4))
     }
     const anchorRows = rowBand(0.84, 0.96, rows)
     const anchor = items('anchor')
     if (anchor.length) {
       els.push(tierText('anchor', 0, anchor[0]!,
         clampRegion({ col: 1, colSpan: cols, ...anchorRows }, cols, rows), 2,
-        { level: 'headline', style: { align: 'left', valign: 'bottom', fontWeight: 700, ...drama.anchor } }))
+        { level: 'headline', overflow: 'shrink', style: { align: 'left', valign: 'bottom', fontWeight: 700, ...drama.anchor } }))
     }
     return { elements: els, ...(overlaps.length ? { overlaps } : {}) }
   },
@@ -463,7 +527,7 @@ const corner: Staging = {
       const fineRows = rowBand(0, 0.12, rows)
       els.push(...stackVertical('fineprint', fine,
         { ...fineCols, row: fineRows.row, rowSpan: 1 },
-        cols, rows, 4, { style: { align: 'left', valign: 'top' } }, fineRows.rowSpan))
+        cols, rows, 4, { style: { ...drama.small, align: 'left', valign: 'top' } }, fineRows.rowSpan))
     }
     // Two mutually-exclusive base regions: the default horizontal "big
     // bottom-left" box, or (heroOrientation:'up') a tall narrow strip along
@@ -498,7 +562,7 @@ const corner: Staging = {
     if (anchor.length) {
       els.push(tierText('anchor', 0, anchor[0]!,
         clampRegion({ ...anchorCols, ...anchorRows }, cols, rows), 2,
-        { level: 'headline', style: { align: 'right', valign: 'top', fontWeight: 700, ...drama.anchor } }))
+        { level: 'headline', overflow: 'shrink', style: { align: 'right', valign: 'top', fontWeight: 700, ...drama.anchor } }))
     }
     const support = items('support')
     if (support.length) {
@@ -506,7 +570,7 @@ const corner: Staging = {
       const supportRows = rowBand(0.62, 0.98, rows)
       els.push(...stackVertical('support', support,
         { ...supportCols, row: supportRows.row, rowSpan: 3 },
-        cols, rows, 3, { style: { align: 'right', valign: 'top' } }, supportRows.rowSpan))
+        cols, rows, 3, { style: { ...drama.small, align: 'right', valign: 'top' } }, supportRows.rowSpan))
     }
     return { elements: els }
   },
@@ -548,36 +612,84 @@ const statement: Staging = {
         { level: 'display', overflow: 'grow', overhang: crop, growLimit,
           style: { align: 'left', valign: 'top', fontWeight: 700, ...drama.hero } }))
     }
+    // Fine print's bottom-anchored zone computed BEFORE the anchor band
+    // (round-2b-drama) so the anchor's bottom edge can stop one row above
+    // it — a fixed fraction can't know how tall fine print's own zone will
+    // be (it grows with item count), so a static bottom bound either
+    // undershoots the anchor's height or collides with fine print. Bottom-
+    // anchored (round-2b FIX 1): growing DOWNWARD from a literal `row: rows`
+    // clamps every layer past the first back onto that SAME last row — at
+    // n=3 fineprint_2 lands on fineprint_0's cell. Starting `ceil(n/2) - 1`
+    // steps ABOVE the bottom edge instead means the last layer's downward
+    // growth lands exactly on `rows`, never past it. `fineStep`
+    // (`compactRowSpan`, round-2b-drama) replaces the per-layer literal
+    // `rowSpan: 1` — fine at the coarse authoring fixture, crowded at the
+    // real fine grid now that fine print is pinned to a fixed px size.
+    const fine = items('fineprint')
+    const fineStep = compactRowSpan(rows)
+    // Bottom of the deepest layer = fineBaseRow + (layers-1)*fineStep +
+    // fineStep - 1 = fineBaseRow + layers*fineStep - 1, wanted to equal
+    // `rows` exactly — `fineBaseRow = rows - layers*fineStep + 1`. At
+    // fineStep=1 this is byte-identical to the pre-existing `rows -
+    // ceil(n/2) + 1`; at fineStep>1 (round-2b-drama) the `+1` correction
+    // matters — its absence clamped the deepest layer's rowSpan down to a
+    // sliver at the grid edge (`clampRegion` shrinking it to fit), which
+    // then visually overlapped the layer above it (its `valign:'bottom'`
+    // text grows upward out of a too-short box).
+    const fineBaseRow = fine.length ? Math.max(1, rows - Math.ceil(fine.length / 2) * fineStep + 1) : rows + 1
+
+    // Anchor's top edge (round-2b-drama): hoisted above BOTH the anchor and
+    // support blocks — support's own compact growth (below) needs this same
+    // ceiling to stay clear of the anchor slab, the same reason fine print's
+    // zone was hoisted above the anchor.
+    const anchorTop = Math.max(1, Math.round(0.74 * rows) + 1)
+
     const anchor = items('anchor')
     if (anchor.length) {
-      const anchorRows = rowBand(0.80, 0.92, rows)
-      const anchorCols = colBand(0, 0.6, cols)
+      // Row band widened 0.80-0.92 → 0.74-.. (round-2b-drama): a huge
+      // full-width date slab still needs HEIGHT, not just width — at the
+      // new heroScale ceiling (0.22) a 15-char date can wrap to 2 lines
+      // (`anchorFontSize` ≈143px at 1440), and the old 12%-of-canvas band
+      // (~168px) only fit about half of that (~315px needed), clipping the
+      // wrapped line's top clean off (bottom-`valign` keeps the LAST line
+      // pinned to the box's bottom edge and lets the excess grow upward,
+      // out of the box). Reaches for a generous 24% (~346px at 1440) but
+      // stops one row above fine print's own (item-count-dependent) zone
+      // rather than a fixed 0.98 — a static bottom bound collided with fine
+      // print's bottom-anchored cells once fine print's zone grew past 2
+      // items (`fineBaseRow` above).
+      const anchorBottomWant = Math.round(0.98 * rows)
+      const anchorBottom = Math.max(anchorTop, Math.min(anchorBottomWant, fineBaseRow - 1))
+      const anchorRows = { row: anchorTop, rowSpan: anchorBottom - anchorTop + 1 }
+      // Full width (round-2b-drama): was `colBand(0, 0.6, cols)` — the
+      // diagnosed anchor-truncation repro ("15—26 June 2022" → "15—2…")
+      // happened in exactly this [0..0.6C] band. The backpocket move is a
+      // huge full-width date slab; row bands already keep it clear of
+      // support (0.58-0.72) above.
+      const anchorCols = colBand(0, 1, cols)
       els.push(tierText('anchor', 0, anchor[0]!,
         clampRegion({ ...anchorCols, ...anchorRows }, cols, rows), 2,
-        { level: 'headline', style: { align: 'left', valign: 'bottom', fontWeight: 700, ...drama.anchor } }))
+        { level: 'headline', overflow: 'shrink', style: { align: 'left', valign: 'bottom', fontWeight: 700, ...drama.anchor } }))
     }
     const support = items('support')
     if (support.length) {
       const supportRows = rowBand(0.58, 0.72, rows)
       const supportCols = colBand(0.55, 1, cols)
+      // `compactRowSpan` (round-2b-drama): was a literal `rowSpan: 1` —
+      // bounded by the real headroom up to `anchorTop` (divided across the
+      // item count) so it can never grow down into the now-taller anchor
+      // slab — the unbounded `compactRowSpan(rows)` collided there at n=5.
+      const supportHeadroom = Math.max(1, anchorTop - supportRows.row)
+      const supportStep = Math.max(1, Math.min(compactRowSpan(rows), Math.floor(supportHeadroom / support.length)))
       els.push(...stackVertical('support', support,
-        { ...supportCols, row: supportRows.row, rowSpan: 1 },
-        cols, rows, 3, { style: { align: 'left', valign: 'top' } }, supportRows.rowSpan))
+        { ...supportCols, row: supportRows.row, rowSpan: supportStep },
+        cols, rows, 3, { style: { ...drama.small, align: 'left', valign: 'top' } }, supportRows.rowSpan))
     }
-    const fine = items('fineprint')
     if (fine.length) {
-      // Bottom-anchored (round-2b FIX 1): growing DOWNWARD from a literal
-      // `row: rows` clamps every layer past the first back onto that SAME
-      // last row — at n=3 fineprint_2 lands on fineprint_0's cell. Starting
-      // `ceil(n/2) - 1` rows ABOVE the bottom edge instead means the last
-      // layer's downward growth lands exactly on `rows`, never past it (n=1
-      // and n=2 both still resolve to the original `row: rows`, so the
-      // common 1/2-item case is byte-identical to before).
-      const fineBaseRow = rows - Math.ceil(fine.length / 2) + 1
       els.push(...stackCorners('fineprint', fine,
-        { col: 1, colSpan: half, row: fineBaseRow, rowSpan: 1 },
-        { col: half + 1, colSpan: cols - half, row: fineBaseRow, rowSpan: 1 },
-        cols, rows, 4, { style: { align: 'left', valign: 'bottom' } }))
+        { col: 1, colSpan: half, row: fineBaseRow, rowSpan: fineStep },
+        { col: half + 1, colSpan: cols - half, row: fineBaseRow, rowSpan: fineStep },
+        cols, rows, 4, { style: { ...drama.small, align: 'left', valign: 'bottom' } }))
     }
     return { elements: els }
   },
@@ -649,12 +761,12 @@ const manifesto: Staging = {
       const supportStart = Math.max(rowBand(0.14, 0.44, rows).row, bodyStart)
       els.push(...stackVertical('support', support,
         { ...supportCols, row: supportStart, rowSpan: 1 },
-        cols, rows, 3, { style: { align: 'left', valign: 'top' } }, 4))
+        cols, rows, 3, { style: { ...drama.small, align: 'left', valign: 'top' } }, 4))
     }
     if (fine.length) {
       els.push(...stackVertical('fineprint', fine,
         { col: 1, colSpan: cols, row: afterRule, rowSpan: 1 },
-        cols, rows, 4, { style: { align: 'left', valign: 'top' } }))
+        cols, rows, 4, { style: { ...drama.small, align: 'left', valign: 'top' } }))
     }
     return { elements: els }
   },
@@ -694,7 +806,7 @@ const index: Staging = {
     if (fine.length) {
       els.push(...stackVertical('fineprint', fine,
         { col: 1, colSpan: cols, row: 1, rowSpan: 1 },
-        cols, rows, 4, { style: { align: 'left', valign: 'top' } }))
+        cols, rows, 4, { style: { ...drama.small, align: 'left', valign: 'top' } }))
     }
     const heroRows = rowBand(0.28, 0.55, rows)
     const hero = items('hero')
@@ -723,16 +835,16 @@ const index: Staging = {
       if (hasPair) {
         els.push(tierText('support', i0, support[i0]!,
           clampRegion({ col: 1, colSpan: half, row: rowStart, rowSpan }, cols, rows), 3,
-          { style: { align: 'left', valign: 'top' } }))
+          { overflow: 'shrink', style: { ...drama.small, align: 'left', valign: 'top' } }))
         els.push(tierText('support', i1, support[i1]!,
           clampRegion({ col: half + 1, colSpan: cols - half, row: rowStart, rowSpan }, cols, rows), 3,
-          { style: { align: 'left', valign: 'top' } }))
+          { overflow: 'shrink', style: { ...drama.small, align: 'left', valign: 'top' } }))
       } else {
         // Odd leftover, no partner this row — spans the full width instead
         // of sitting alone in the (now-empty) left cell.
         els.push(tierText('support', i0, support[i0]!,
           clampRegion({ col: 1, colSpan: cols, row: rowStart, rowSpan }, cols, rows), 3,
-          { style: { align: 'left', valign: 'top' } }))
+          { overflow: 'shrink', style: { ...drama.small, align: 'left', valign: 'top' } }))
       }
       els.push({
         id: `rule_${r}`, type: 'shape', shape: 'rect', priority: 5, origin: 'staging',
@@ -746,7 +858,7 @@ const index: Staging = {
       const anchorRow = Math.min(rows, lastRuleRow + 1)
       els.push(tierText('anchor', 0, anchor[0]!,
         clampRegion({ col: 1, colSpan: cols, row: anchorRow, rowSpan: Math.max(1, rows - anchorRow + 1) }, cols, rows), 2,
-        { level: 'headline', style: { align: 'left', valign: 'bottom', fontWeight: 700, ...drama.anchor } }))
+        { level: 'headline', overflow: 'shrink', style: { align: 'left', valign: 'bottom', fontWeight: 700, ...drama.anchor } }))
     }
     return { elements: els }
   },
@@ -787,7 +899,7 @@ const stacked: Staging = {
     if (anchor.length) {
       els.push(tierText('anchor', 0, anchor[0]!,
         clampRegion({ col: 1, colSpan: cols, row: anchorRow, rowSpan: 2 }, cols, rows), 2,
-        { level: 'headline', style: { align, valign: 'top', fontWeight: 700, ...drama.anchor } }))
+        { level: 'headline', overflow: 'shrink', style: { align, valign: 'top', fontWeight: 700, ...drama.anchor } }))
     }
     const bottomRow = Math.max(anchorRow + 3, Math.round(rows * 0.75))
     const nearCols = colBand(0, 0.35, cols)
@@ -799,13 +911,13 @@ const stacked: Staging = {
     if (support.length) {
       els.push(...stackVertical('support', support,
         { ...(right ? farCols : nearCols), row: bottomRow, rowSpan: 1 },
-        cols, rows, 3, { style: { align, valign: 'top' } }, 2))
+        cols, rows, 3, { style: { ...drama.small, align, valign: 'top' } }, 2))
     }
     const fine = items('fineprint')
     if (fine.length) {
       els.push(...stackVertical('fineprint', fine,
         { ...(right ? nearCols : farCols), row: bottomRow, rowSpan: 1 },
-        cols, rows, 4, { style: { align, valign: 'top' } }))
+        cols, rows, 4, { style: { ...drama.small, align, valign: 'top' } }))
     }
     return { elements: els }
   },
@@ -858,7 +970,7 @@ const cover: Staging = {
       const fineEls = stackCorners('fineprint', fine,
         { col: 1, colSpan: half, row: 1, rowSpan: 1 },
         { col: half + 1, colSpan: cols - half, row: 1, rowSpan: 1 },
-        cols, rows, 4, { style: { align: 'center', valign: 'top' } })
+        cols, rows, 4, { style: { ...drama.small, align: 'center', valign: 'top' } })
       els.push(...fineEls)
       if (image) for (const e of fineEls) overlaps.push([e.id, 'img_0'])
     }
@@ -876,14 +988,14 @@ const cover: Staging = {
     if (anchor.length) {
       els.push(tierText('anchor', 0, anchor[0]!,
         clampRegion({ ...full, row: anchorRow, rowSpan: 2 }, cols, rows), 2,
-        { level: 'headline', style: { align: 'center', valign: 'top', ...drama.anchor } }))
+        { level: 'headline', overflow: 'shrink', style: { align: 'center', valign: 'top', ...drama.anchor } }))
       if (image) overlaps.push(['tier_anchor_0', 'img_0'])
     }
     const support = items('support')
     if (support.length) {
       const supportEls = stackVertical('support', support,
         { ...full, row: anchorRow + 2, rowSpan: 1 },
-        cols, rows, 3, { style: { align: 'center', valign: 'top' } }, 2)
+        cols, rows, 3, { style: { ...drama.small, align: 'center', valign: 'top' } }, 2)
       els.push(...supportEls)
       if (image) for (const e of supportEls) overlaps.push([e.id, 'img_0'])
     }
@@ -914,6 +1026,10 @@ const lockup: Staging = {
     const heroScale = Number(knobs.heroScale ?? 0.14)
     const heroFontSize = Math.round(0.5 * heroScale * canvas.h)
     const anchorFontSize = Math.round(0.45 * heroFontSize)
+    // lockup sets its own half-scale hero/anchor fontSize above (a serif
+    // "jewel" look) — `dramaticType` is only consulted here for `.small`,
+    // the shared support/fineprint pin every staging uses identically.
+    const drama = dramaticType(knobs, canvas)
     const scrim = knobs.scrim === 'panel' ? { panel: { fill: '{{ brand.background }}', opacity: 0.55 } } : {}
     const full = { col: 1, colSpan: cols }
 
@@ -939,7 +1055,7 @@ const lockup: Staging = {
     if (anchor.length) {
       els.push(tierText('anchor', 0, anchor[0]!,
         clampRegion({ ...full, row: jewelRows.row + heroRowSpan, rowSpan: anchorRowSpan }, cols, rows), 2,
-        { level: 'headline',
+        { level: 'headline', overflow: 'shrink',
           style: {
             align: 'center', valign: 'top',
             fontSize: anchorFontSize, letterSpacing: -Math.round(0.02 * anchorFontSize),
@@ -953,7 +1069,7 @@ const lockup: Staging = {
       const fineEls = stackCorners('fineprint', fine,
         { col: 1, colSpan: half, row: 1, rowSpan: 1 },
         { col: half + 1, colSpan: cols - half, row: 1, rowSpan: 1 },
-        cols, rows, 4, { style: { align: 'center', valign: 'top' } })
+        cols, rows, 4, { style: { ...drama.small, align: 'center', valign: 'top' } })
       els.push(...fineEls)
       if (image) for (const e of fineEls) overlaps.push([e.id, 'img_0'])
     }
@@ -961,7 +1077,7 @@ const lockup: Staging = {
     if (support.length) {
       const supportEls = stackVertical('support', support,
         { ...full, row: jewelRows.row + jewelRows.rowSpan + 1, rowSpan: 1 },
-        cols, rows, 3, { style: { align: 'center', valign: 'top' } }, 2)
+        cols, rows, 3, { style: { ...drama.small, align: 'center', valign: 'top' } }, 2)
       els.push(...supportEls)
       if (image) for (const e of supportEls) overlaps.push([e.id, 'img_0'])
     }
@@ -1031,7 +1147,7 @@ const bandHeader: Staging = {
     if (anchor.length) {
       els.push(tierText('anchor', 0, anchor[0]!,
         clampRegion({ ...anchorCols, row: bandRows.row, rowSpan: bodyRowSpan }, cols, rows), 2,
-        { level: 'headline', style: { align: 'right', valign: 'middle', fontWeight: 700, ...drama.anchor } }))
+        { level: 'headline', overflow: 'shrink', style: { align: 'right', valign: 'middle', fontWeight: 700, ...drama.anchor } }))
       overlaps.push(['tier_anchor_0', 'band_0'])
     }
     if (fine.length) {
@@ -1039,7 +1155,7 @@ const bandHeader: Staging = {
       const fineEls = stackCorners('fineprint', fine,
         { col: 1, colSpan: half, row: bandRows.row + bodyRowSpan, rowSpan: 1 },
         { col: half + 1, colSpan: cols - half, row: bandRows.row + bodyRowSpan, rowSpan: 1 },
-        cols, rows, 4, { style: { align: 'left', valign: 'top' } })
+        cols, rows, 4, { style: { ...drama.small, align: 'left', valign: 'top' } })
       els.push(...fineEls)
       for (const e of fineEls) overlaps.push([e.id, 'band_0'])
     }
@@ -1049,7 +1165,7 @@ const bandHeader: Staging = {
       const supportCols = colBand(0, 0.3, cols)
       const supportEls = stackVertical('support', support,
         { ...supportCols, row: photoRows.row + photoRows.rowSpan - supportRowSpan, rowSpan: 1 },
-        cols, rows, 3, { style: { align: 'left', valign: 'bottom', ...scrim } }, supportRowSpan)
+        cols, rows, 3, { style: { ...drama.small, align: 'left', valign: 'bottom', ...scrim } }, supportRowSpan)
       els.push(...supportEls)
       if (image) for (const e of supportEls) overlaps.push([e.id, 'img_0'])
     }
@@ -1117,7 +1233,7 @@ const bandFooter: Staging = {
     if (anchor.length) {
       els.push(tierText('anchor', 0, anchor[0]!,
         clampRegion({ ...anchorCols, row: bandRows.row, rowSpan: bodyRowSpan }, cols, rows), 2,
-        { level: 'headline', style: { align: 'right', valign: 'middle', fontWeight: 700, ...drama.anchor } }))
+        { level: 'headline', overflow: 'shrink', style: { align: 'right', valign: 'middle', fontWeight: 700, ...drama.anchor } }))
       overlaps.push(['tier_anchor_0', 'band_0'])
     }
     if (support.length) {
@@ -1125,7 +1241,7 @@ const bandFooter: Staging = {
       // lands the last item exactly on the band's last row, never past it.
       const supportEls = stackVertical('support', support,
         { col: 1, colSpan: cols, row: bandRows.row + bodyRowSpan, rowSpan: 1 },
-        cols, rows, 3, { style: { align: 'left', valign: 'top' } })
+        cols, rows, 3, { style: { ...drama.small, align: 'left', valign: 'top' } })
       els.push(...supportEls)
       for (const e of supportEls) overlaps.push([e.id, 'band_0'])
     }
@@ -1135,7 +1251,7 @@ const bandFooter: Staging = {
       const captionStart = Math.max(photoRows.row, photoRows.row + photoRows.rowSpan - fine.length * captionRowSpan)
       const fineEls = stackVertical('fineprint', fine,
         { ...full, row: captionStart, rowSpan: captionRowSpan },
-        cols, rows, 4, { style: { align: 'left', valign: 'top' } })
+        cols, rows, 4, { style: { ...drama.small, align: 'left', valign: 'top' } })
       els.push(...fineEls)
       if (image) for (const e of fineEls) overlaps.push([e.id, 'img_0'])
     }
@@ -1291,7 +1407,7 @@ const repeat: Staging = {
       els.push(...stackCorners('support', support,
         { ...leftCell, row: bottomRows.row, rowSpan: 1 },
         { ...rightCell, row: bottomRows.row, rowSpan: 1 },
-        cols, rows, 3, { style: { align: 'left', valign: 'top' } }))
+        cols, rows, 3, { style: { ...drama.small, align: 'left', valign: 'top' } }))
     }
     const fineStartRow = bottomRows.row + supportRowsNeeded
     const fine = items('fineprint')
@@ -1300,14 +1416,14 @@ const repeat: Staging = {
       els.push(...stackCorners('fineprint', fine,
         { ...leftCell, row: fineStartRow, rowSpan: 1 },
         { ...rightCell, row: fineStartRow, rowSpan: 1 },
-        cols, rows, 4, { style: { align: 'left', valign: 'top' } }))
+        cols, rows, 4, { style: { ...drama.small, align: 'left', valign: 'top' } }))
     }
     const anchorStartRow = fineStartRow + fineRowsNeeded
     const anchor = items('anchor')
     if (anchor.length) {
       els.push(tierText('anchor', 0, anchor[0]!,
         clampRegion({ ...rightCols, row: anchorStartRow, rowSpan: Math.max(1, bottomRows.row + bottomRows.rowSpan - anchorStartRow) }, cols, rows), 2,
-        { level: 'headline', style: { align: 'left', valign: 'bottom', fontWeight: 700, ...drama.anchor } }))
+        { level: 'headline', overflow: 'shrink', style: { align: 'left', valign: 'bottom', fontWeight: 700, ...drama.anchor } }))
     }
     return { elements: els, ...(overlaps.length ? { overlaps } : {}) }
   },
@@ -1365,14 +1481,14 @@ const wall: Staging = {
     if (anchor.length) {
       const anchorRegion = clampRegion({ col: 1, colSpan: cols, row: anchorRow, rowSpan: 2 }, cols, rows)
       els.push(tierText('anchor', 0, anchor[0]!, anchorRegion, 2,
-        { level: 'headline', style: { align: 'center', valign: 'top', fontWeight: 700, ...drama.anchor } }))
+        { level: 'headline', overflow: 'shrink', style: { align: 'center', valign: 'top', fontWeight: 700, ...drama.anchor } }))
       declareWallOverlaps('tier_anchor_0', anchorRegion)
     }
     const support = items('support')
     if (support.length) {
       const supportEls = stackVertical('support', support,
         { col: 1, colSpan: cols, row: Math.min(rows, anchorRow + 2), rowSpan: 1 },
-        cols, rows, 3, { style: { align: 'center', valign: 'top' } }, 2)
+        cols, rows, 3, { style: { ...drama.small, align: 'center', valign: 'top' } }, 2)
       els.push(...supportEls)
       for (const e of supportEls) declareWallOverlaps(e.id, e.region)
     }
@@ -1382,7 +1498,7 @@ const wall: Staging = {
       const fineEls = stackCorners('fineprint', fine,
         { col: 1, colSpan: half, row: 1, rowSpan: 1 },
         { col: half + 1, colSpan: cols - half, row: 1, rowSpan: 1 },
-        cols, rows, 4, { style: { align: 'left', valign: 'top' } })
+        cols, rows, 4, { style: { ...drama.small, align: 'left', valign: 'top' } })
       els.push(...fineEls)
       for (const e of fineEls) declareWallOverlaps(e.id, e.region)
     }

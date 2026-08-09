@@ -252,6 +252,19 @@ const COLUMN_GUIDES_KEY = 'Sailor.SmartLayout.ColumnGuides'
 const ROW_GUIDES_KEY = 'Sailor.SmartLayout.RowGuides'
 const columnGuidesOn = ref(getLocalSetting(COLUMN_GUIDES_KEY) !== 'false')
 const rowGuidesOn = ref(getLocalSetting(ROW_GUIDES_KEY) !== 'false')
+// Round-2b-drama (2026-08-09): discoverability rename — the toolbar's "+"
+// buttons used to read "Headline / Anchor / List / Detail", which don't
+// match the TierId vocabulary (`hero`/`anchor`/`support`/`fineprint`) used
+// everywhere else in Smart Layout (knobs, `dramaticType`, the content
+// panel). Renamed to the tier names themselves so a user can connect what
+// they click here to what they see elsewhere.
+const TIER_DISPLAY_NAMES: Record<'hero' | 'anchor' | 'support' | 'fineprint', string> = {
+  hero: 'Hero', anchor: 'Anchor', support: 'Support', fineprint: 'Fine print',
+}
+function tierDisplayName(tier: 'hero' | 'anchor' | 'support' | 'fineprint'): string {
+  return TIER_DISPLAY_NAMES[tier]
+}
+
 function toggleColumnGuides() {
   columnGuidesOn.value = !columnGuidesOn.value
   setLocalSetting(COLUMN_GUIDES_KEY, String(columnGuidesOn.value))
@@ -673,9 +686,9 @@ function onPickImage(url: string) {
 
         <template v-if="ctx.editorMode.value === 'layout'">
           <button v-for="tier in (['hero','anchor','support','fineprint'] as const)" :key="tier"
-            class="h-8 px-2.5 rounded-md flex items-center gap-1.5 text-[12px] text-white/70 hover:bg-white/10 hover:text-white transition-colors cursor-pointer capitalize"
-            :title="`Add a ${tier} item`"
-            @click="ctx.addTierItem(tier)">+ {{ tier === 'hero' ? 'Headline' : tier === 'anchor' ? 'Anchor' : tier === 'support' ? 'List' : 'Detail' }}</button>
+            class="h-8 px-2.5 rounded-md flex items-center gap-1.5 text-[12px] text-white/70 hover:bg-white/10 hover:text-white transition-colors cursor-pointer"
+            :title="`Add another ${tierDisplayName(tier).toLowerCase()} item — each click appends`"
+            @click="ctx.addTierItem(tier)">+ {{ tierDisplayName(tier) }}</button>
           <button class="h-8 px-2.5 rounded-md flex items-center gap-1.5 text-[12px] text-white/70 hover:bg-white/10 hover:text-white transition-colors cursor-pointer"
             title="Add an image" @click="imagePickerOpen = true">
             <ImagePlus class="size-3.5" /> Image

@@ -8,7 +8,10 @@ import { makeStarterTemplate } from '~~/shared/template-grid/starter'
 import type { TemplateV3, Tiers } from '~~/shared/template-grid/types'
 
 const LEVELS = ['caption', 'body', 'subhead', 'headline', 'display']
-const HERO_SCALES = [0.10, 0.14, 0.18] as const
+// Round-2b-drama revision (2026-08-09, user-directed live-output pass —
+// "hero should be huge"): domain moved up a notch, {0.10,0.14,0.18} →
+// {0.14,0.18,0.22} — the old top is now the new floor.
+const HERO_SCALES = [0.14, 0.18, 0.22] as const
 const CANVAS = { w: 1080, h: 1440 }
 const TIERS: Tiers = {
   hero: [{ content: 'MAT + FEST' }],
@@ -111,7 +114,7 @@ describe('staging: full library', () => {
     for (const s of STAGINGS) {
       const knob = s.knobs.find(k => k.id === 'heroScale')
       expect(knob, `${s.id} is missing heroScale knob`).toBeTruthy()
-      expect(knob!.pick).toEqual([0.10, 0.14, 0.18])
+      expect(knob!.pick).toEqual([0.14, 0.18, 0.22])
     }
   })
 })
@@ -292,6 +295,55 @@ describe('staging: dramatic hero + anchor type', () => {
   })
 })
 
+/** Round-2b-drama (2026-08-09, user-directed): the diagnosed anchor-
+ *  truncation bug ("15—26 June 2022" rendering "15—2…" in statement's
+ *  [0..0.6C] band) traced to the DEFAULT `overflow` policy
+ *  (`shrink-then-truncate`) ellipsizing the string once the box couldn't fit
+ *  it — anchor always carries an explicit `style.fontSize` (from
+ *  `dramaticType`), which disables `fitText`'s auto-shrink entirely
+ *  (`resolve.ts`'s `autoShrink: el.style?.fontSize == null`), so the
+ *  "shrink" it names never actually shrinks the font — it just skips the
+ *  ellipsis truncation and clips visually (`overflow:hidden` in the DOM)
+ *  while keeping the full string. Every staging's anchor now declares
+ *  `overflow: 'shrink'` for exactly that reason. */
+describe('staging: anchor never truncates (overflow policy)', () => {
+  for (const s of STAGINGS) {
+    it(`${s.id}: anchor declares overflow:'shrink' (or 'grow', which also never truncates)`, () => {
+      const els = s.compose(input()).elements
+      const anchor = els.find(e => e.id === 'tier_anchor_0') as any
+      expect(anchor, `${s.id} missing tier_anchor_0`).toBeTruthy()
+      expect(['shrink', 'grow']).toContain(anchor.overflow)
+    })
+  }
+})
+
+/** Round-2b-drama: support AND fineprint are pinned to the SAME tiny
+ *  `SMALL_TEXT_SCALE × canvas.h` fontSize (normal tracking) regardless of
+ *  `heroScale` — "fineprint should be super small" — computed once in
+ *  `dramaticType`'s `.small` and spread into every staging's support/
+ *  fineprint style. Sharing one fontSize value keeps `verify.ts`'s
+ *  distinct-size counter (`fontSize ?? level`) at 3 buckets (hero, anchor,
+ *  small) rather than 4. */
+describe('staging: support + fineprint pinned to the small backpocket scale', () => {
+  for (const s of STAGINGS) {
+    it(`${s.id}: support and fineprint fontSize === round(0.014 × canvas.h), normal tracking`, () => {
+      const els = s.compose(input()).elements
+      const expected = Math.round(0.014 * CANVAS.h)
+      const support = els.filter(e => e.id.startsWith('tier_support_')) as any[]
+      const fine = els.filter(e => e.id.startsWith('tier_fineprint_')) as any[]
+      for (const e of [...support, ...fine]) {
+        expect(e.style.fontSize, `${s.id} ${e.id}`).toBe(expected)
+        // Normal tracking — no explicit override (undefined renders
+        // byte-identical to an explicit 0; see dramaticType's `.small`).
+        expect(e.style.letterSpacing, `${s.id} ${e.id}`).toBeUndefined()
+      }
+    })
+  }
+  it('the pinned small fontSize is ~20px at the 1440 master height (the backpocket meta-cluster scale)', () => {
+    expect(Math.round(0.014 * CANVAS.h)).toBe(20)
+  })
+})
+
 /** Round-2a Task 5c regression: a freshly generated Smart Layout must never
  *  truncate the hero to a single character + ellipsis. Reproduces the real
  *  live-editor path — `SmartLayoutEditorModal`'s fresh-open promotes the v2
@@ -358,6 +410,63 @@ describe('staging: dramatic hero never truncates (resolver-level, starter square
         expect(hero!.text?.content).toBe(HERO_CONTENT)
       })
     }
+  }
+})
+
+/** Round-2b-drama regression: the diagnosed bug — statement's anchor
+ *  "15—26 June 2022" rendering "15—2…" in its old [0..0.6C] band. Resolves
+ *  the REAL pipeline (compose → resolveFormat) against a 1080×1440 output
+ *  format on the starter's 1x1 (square) master — `fineGridDims` derives the
+ *  fine grid from the MASTER only (78×78, `resolveFormat` above's docblock),
+ *  so this exercises the exact coordinate space a fresh layout resolves
+ *  against, just targeting a portrait output. Guards both halves of the
+ *  fix: `overflow:'shrink'` (never ellipsis-truncates) AND the anchor's
+ *  band now being full-width [0..C] (the backpocket full-width date slab).
+ */
+describe('staging: statement anchor never truncates (resolver-level, 1080×1440 output)', () => {
+  const HERO_CONTENT = 'Statement content that runs long enough to matter'
+  const ANCHOR_CONTENT = '15—26 June 2022'
+  const REGRESSION_TIERS: Tiers = {
+    hero: [{ content: HERO_CONTENT }],
+    anchor: [{ content: ANCHOR_CONTENT }],
+    support: [{ content: 'Street food · Fine dining' }],
+    fineprint: [{ content: 'Slakthusområdet' }],
+  }
+  const OUTPUT_FORMAT = 'portrait_1440'
+
+  function resolvedAnchorFor(heroScale: number) {
+    const staging = getStaging('statement')!
+    const starter = makeStarterTemplate('t') as any
+    starter.tiers = REGRESSION_TIERS
+    starter.formats[OUTPUT_FORMAT] = { w: 1080, h: 1440 }
+    const v3ified: TemplateV3 = { ...starter, version: 3, sections: [] }
+    const masterFormat = v3ified.formats[v3ified.master]!
+    const { cols, rows } = fineGridDims(v3ified, masterFormat)
+    const canvas = { w: masterFormat.w, h: masterFormat.h }
+    const result = staging.compose({
+      tiers: REGRESSION_TIERS, cols, rows, canvas,
+      rng: makeRng(1), knobs: { heroScale },
+    })
+    const t: TemplateV3 = { ...v3ified, elements: result.elements, order: result.elements.map(e => e.id) }
+    const resolved = resolveFormat(t, OUTPUT_FORMAT)
+    return resolved.elements.find(e => e.el.id === 'tier_anchor_0')
+  }
+
+  for (const heroScale of HERO_SCALES) {
+    it(`heroScale=${heroScale}: fitted anchor text contains the FULL date string, never an ellipsis`, () => {
+      const anchor = resolvedAnchorFor(heroScale)
+      expect(anchor).toBeTruthy()
+      expect(anchor!.text?.content).toBe(ANCHOR_CONTENT)
+      expect(anchor!.text?.content).not.toContain('…')
+    })
+    it(`heroScale=${heroScale}: anchor region is full-width [0..C]`, () => {
+      const anchor = resolvedAnchorFor(heroScale)
+      expect(anchor!.region.col).toBe(1)
+      const starter = makeStarterTemplate('t') as any
+      const v3ified: TemplateV3 = { ...starter, version: 3, sections: [] }
+      const { cols } = fineGridDims(v3ified, v3ified.formats[v3ified.master]!)
+      expect(anchor!.region.colSpan).toBe(cols)
+    })
   }
 })
 

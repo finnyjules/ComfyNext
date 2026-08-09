@@ -355,13 +355,14 @@ test.describe('Smart Layout generation (wired Shuffle/Surprise)', () => {
     await blackInkSwatch.click()
     await expect.poll(() => elementColor(modal, heroId)).toBe('rgb(0, 0, 0)')
 
-    // Append tier item (Task 2/3 multi-item tiers with append): "+ List"
-    // appends onto the support tier's list rather than overwriting item 0 —
-    // clicking it (once or twice, depending on whether the staging already
-    // seeded a first support item) must leave BOTH tier_support_0 AND
-    // tier_support_1 on canvas, not one item repeatedly overwritten.
+    // Append tier item (Task 2/3 multi-item tiers with append): "+ Support"
+    // (round-2b-drama rename — was "+ List") appends onto the support tier's
+    // list rather than overwriting item 0 — clicking it (once or twice,
+    // depending on whether the staging already seeded a first support item)
+    // must leave BOTH tier_support_0 AND tier_support_1 on canvas, not one
+    // item repeatedly overwritten.
     const supportBefore = await modal.locator('[data-el-id^="tier_support_"]').count()
-    const addList = modal.getByRole('button', { name: '+ List' })
+    const addList = modal.getByRole('button', { name: '+ Support' })
     await expect(addList).toBeVisible()
     for (let i = supportBefore; i < 2; i++) {
       await addList.click()

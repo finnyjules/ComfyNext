@@ -281,10 +281,16 @@ them immediately; 2b builds on them):
 - **Hero is sized by canvas fraction, not the typescale ladder.** Stagings set
   the hero's `style.fontSize` (master px, which still reflows per format) from
   a `heroScale` knob: `fontSize = heroScale × master height`, domain
-  **{0.10, 0.14, 0.18}** per line. The modular scale keeps governing
-  anchor/support/fineprint.
+  ~~**{0.10, 0.14, 0.18}**~~ **{0.14, 0.18, 0.22}** per line (round-2b-drama
+  revision, 2026-08-09, user-directed against live output — "hero should be
+  huge": the domain moved up a full notch, the old top is the new floor). The
+  modular scale keeps governing anchor/support/fineprint.
 - **Big jumps between tiers:** anchor ≈ 0.4–0.5 × hero; support and fineprint
-  stay small and dense — no mid-sized timidity. (≤3 distinct sizes still holds.)
+  stay small and dense — no mid-sized timidity. (≤3 distinct sizes still
+  holds.) Round-2b-drama pins support AND fineprint to the SAME explicit
+  `fontSize = round(0.014 × canvas.h)` (≈20px at 1440) — "fineprint should be
+  super small" — independent of `heroScale`, rather than leaving them to the
+  level-derived modular-scale size.
 - **Tight setting:** hero `lineHeight` **0.92** (stacked lines nearly touch),
   hero `letterSpacing = −0.03 × fontSize` (px); anchor −0.02×; small caps meta
   gets neutral-to-positive tracking. These are staging defaults — the tier
