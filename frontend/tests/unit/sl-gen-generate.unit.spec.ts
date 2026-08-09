@@ -90,6 +90,24 @@ describe('generate orchestrator — themes', () => {
     expect(shuffle(legacyCentered).gen?.staging).toBe('stacked') // no image wired at this call
     expect(shuffle(legacyCentered, { image: '{{ props.image_layer_1 }}' }).gen?.staging).toBe('lockup')
   })
+  // (c-mig-modal, round-2b Task 5 fix) SmartLayoutEditorModal.vue's onMounted
+  // migrates `v3.gen` on open using the SAME presence-object call form the
+  // modal now uses (`migrateGen(v3.gen, { hasImage })`, hoisted from the
+  // `'image_layer_1' in initialProps.value` check computed later in the same
+  // function). This mirrors the modal's exact call shape so a legacy stored
+  // `gen.staging: 'centered'` doc reopened WITH a wired image resolves to
+  // `lockup`, not `stacked` — the bug was calling `migrateGen(v3.gen)` with no
+  // context at all, which silently defaulted to `hasImage: false`.
+  it('(c-mig-modal) modal reopen call form: migrateGen(v3.gen, { hasImage }) resolves centered+image -> lockup', () => {
+    const initialProps: Record<string, string> = { image_layer_1: 'https://example.com/photo.png' }
+    const hasImage = 'image_layer_1' in initialProps
+    const storedGen = { staging: 'centered', theme: 'paper', seed: 1 } as any
+    expect(migrateGen(storedGen, { hasImage })?.staging).toBe('lockup')
+
+    const noImageProps: Record<string, string> = {}
+    const hasImage2 = 'image_layer_1' in noImageProps
+    expect(migrateGen(storedGen, { hasImage: hasImage2 })?.staging).toBe('stacked')
+  })
   it('(c-mig-4) STAGINGS registry is exactly the 14 sorted ids (round-2b final registry)', () => {
     expect(STAGINGS.map(s => s.id).sort()).toEqual([
       'band_footer', 'band_header', 'corner', 'cover', 'frame', 'index',

@@ -84,7 +84,12 @@ onMounted(() => {
     // Round-1 templates persisted `gen.surface`; migrate on open so the
     // editor's theme UI (and any shuffle/surprise before a fresh re-roll)
     // reads `gen.theme` immediately instead of waiting for the next re-roll.
-    if (v3.gen) v3.gen = migrateGen(v3.gen)
+    // `hasImage` must be threaded through here too — `gen.staging: 'centered'`
+    // is part of the `{withImage, without}` split, and without this context a
+    // legacy doc with a wired image would migrate to the wrong (imageless)
+    // staging id (Round-2b Task 5 fix).
+    const hasImage = 'image_layer_1' in initialProps.value
+    if (v3.gen) v3.gen = migrateGen(v3.gen, { hasImage })
     const hasStaged = (v3.elements ?? []).some(e => e.origin === 'staging')
 
     // "Fresh" = a just-created starter with no hand-authored content yet: no
