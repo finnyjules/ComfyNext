@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseStops, serializeStops, presetStops, applyToAllStops, DEFAULT_STOPS, type LoftStop } from '../../app/lib/spacetype/loftStops'
+import { parseStops, serializeStops, presetStops, applyToAllStops, autoSmoothStops, DEFAULT_STOPS, type LoftStop } from '../../app/lib/spacetype/loftStops'
 
 describe('parseStops', () => {
   it('round-trips serialize→parse', () => {
@@ -59,5 +59,27 @@ describe('presetStops', () => {
       expect(new Set(stops.map(s => s.id)).size).toBe(stops.length)
       for (const s of stops) { expect(s.width).toBeGreaterThan(0); expect(s.color).toMatch(/^#[0-9a-f]{6}$/i) }
     }
+  })
+})
+
+describe('autoSmoothStops', () => {
+  const S = (x: number, y: number, extra: any = {}) => ({ id: `s${x}${y}`, x, y, z: 0, width: 1, height: 1, roll: 0, color: '#fff', ...extra })
+  it('derives ta/hlf/hlb for auto stops from neighbours', () => {
+    const out = autoSmoothStops([S(0, 0.5), S(0.5, 0.5), S(1, 0.5)])
+    // middle stop's tangent points along +x (neighbours are horizontal) → ta ≈ 0
+    expect(Math.abs(Math.sin(out[1]!.ta!))).toBeLessThan(0.1)
+    expect(out[1]!.hlf!).toBeGreaterThan(0)
+    expect(out[1]!.hlb!).toBeGreaterThan(0)
+  })
+  it('leaves manual stops untouched', () => {
+    const manual = S(0.5, 0.5, { manual: true, ta: 1.2345, hlf: 0.4, hlb: 0.4 })
+    const out = autoSmoothStops([S(0, 0.5), manual, S(1, 0.5)])
+    expect(out[1]!.ta).toBe(1.2345); expect(out[1]!.hlf).toBe(0.4)
+  })
+  it('returns a new array; endpoints get handles too (from their single neighbour)', () => {
+    const stops = [S(0, 0.2), S(1, 0.8)]
+    const out = autoSmoothStops(stops)
+    expect(out).not.toBe(stops)
+    expect(out[0]!.ta).toBeDefined(); expect(out[1]!.ta).toBeDefined()
   })
 })

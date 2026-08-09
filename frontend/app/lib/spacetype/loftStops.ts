@@ -8,6 +8,10 @@ export interface LoftStop {
   width: number; height: number
   roll: number
   color: string
+  ta?: number
+  hlf?: number
+  hlb?: number
+  manual?: boolean
 }
 
 let _idSeq = 0
@@ -34,6 +38,10 @@ function sanitizeStop(raw: any): LoftStop {
     height: clamp(num(raw?.height, 1), 0.01, 8),
     roll: num(raw?.roll, 0),
     color: hex6(raw?.color),
+    ...(raw?.ta !== undefined ? { ta: num(raw.ta, 0) } : {}),
+    ...(raw?.hlf !== undefined ? { hlf: num(raw.hlf, 0) } : {}),
+    ...(raw?.hlb !== undefined ? { hlb: num(raw.hlb, 0) } : {}),
+    ...(raw?.manual ? { manual: true } : {}),
   }
 }
 
@@ -82,6 +90,25 @@ export function presetStops(preset: SpinePreset): LoftStop[] {
 
 export function applyToAllStops<K extends keyof LoftStop>(stops: LoftStop[], key: K, value: LoftStop[K]): LoftStop[] {
   return stops.map(s => ({ ...s, [key]: value }))
+}
+
+/** Derive smooth bezier tangents (angle + handle lengths, in x/y editor space) for every
+ *  non-manual stop from its neighbours — a Catmull-Rom-equivalent auto-smooth. Manual stops keep
+ *  their handles. Returns a new array. */
+export function autoSmoothStops(stops: LoftStop[]): LoftStop[] {
+  const n = stops.length
+  return stops.map((s, i) => {
+    if (s.manual) return { ...s }
+    const prev = stops[(i - 1 + n) % n]!, next = stops[(i + 1) % n]!
+    const p = i === 0 ? s : prev, q = i === n - 1 ? s : next
+    const dx = q.x - p.x, dy = q.y - p.y
+    const ta = Math.atan2(dy, dx)
+    const dPrev = Math.hypot(s.x - prev.x, s.y - prev.y)
+    const dNext = Math.hypot(next.x - s.x, next.y - s.y)
+    const hlf = (i === n - 1 ? dPrev : dNext) / 3
+    const hlb = (i === 0 ? dNext : dPrev) / 3
+    return { ...s, ta, hlf, hlb }
+  })
 }
 
 export const DEFAULT_STOPS: LoftStop[] = presetStops('helix')
