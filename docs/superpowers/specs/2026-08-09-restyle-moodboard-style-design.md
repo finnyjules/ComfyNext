@@ -132,6 +132,8 @@ path.
 
 For `RestyleFromImageNode`:
 - Attach `style_block` + `style_refs` (the images + taste).
+- **Disconnect any edge feeding the `style_image` input** as part of the apply
+  (remove it from the edge set), so no ignored-but-live wire remains.
 - **Do not** run the model-switch branch; **do not** set the revert marker.
   Restyle's engine selector is not the shared image-model catalog, and its
   default (Nano Banana 2) is already multi-image capable.
@@ -144,8 +146,12 @@ the ref/block attachment runs for both.
 - The moodboard chip renders on the restyle node the same as on Generate
   ("MOODBOARD  refs ✓").
 - **No** "Switched to Nano Banana…" banner on restyle (there is no switch).
-- When a board is attached, the single `style_image` slot is shown as overridden
-  — dimmed with a tooltip: "Moodboard is providing the style."
+- When a board is attached, **any edge feeding the `style_image` slot is
+  disconnected** (removed from the graph) as part of the apply, so there is no
+  live-but-ignored wire. The slot then renders as disabled with a tooltip:
+  "Moodboard is providing the style." Removing the moodboard re-enables the slot
+  (the user re-wires a style image if they want one — the disconnected edge is
+  not restored automatically).
 
 ## Edge cases
 
@@ -155,8 +161,9 @@ the ref/block attachment runs for both.
   clears the hidden widgets (via the relaxed `:3204` cleanup).
 - **Malformed / empty `style_refs`:** degrades to the no-board path; never
   raises.
-- **Both a moodboard AND a wired single `style_image`:** the moodboard wins on
-  the Nano Banana engine (style_image ignored), per the approved decision.
+- **Both a moodboard AND a wired single `style_image`:** on apply, the
+  `style_image` edge is disconnected so only the moodboard remains. The backend
+  still ignores any `style_image` value when refs are present, as a safety net.
 
 ## Shared guard note (regression risk)
 
@@ -184,6 +191,9 @@ consumer of the moodboard wire before finishing to confirm none is missed.
 - Restyle apply attaches `style_refs`/`style_block` and does **not** set the
   `sailor_moodboard_switched` marker (assert with a deliberately-broken control
   that would set it).
+- Restyle apply **removes an existing edge into `style_image`** (seed the graph
+  with such an edge, apply a board, assert the edge is gone and the slot
+  disabled).
 - Edge-removal clears the hidden widgets on restyle.
 
 **Live verification (owed, not run at implementation time):**
