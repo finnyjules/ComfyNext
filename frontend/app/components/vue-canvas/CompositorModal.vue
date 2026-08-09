@@ -42,6 +42,7 @@ import { deriveMasterClock, slotPhase01 } from '~/lib/compositor/masterClock'
 import {
   onDepthChange, depthImageFor, requestDepth, depthSourceFromViewUrl,
 } from '~/lib/compositor/depthRegistry'
+import { DEFAULT_DISPLACE_MAP } from '~/lib/compositor/displace'
 import { imageUrlForNode } from '~/lib/canvas/nodeImage'
 import { DEFAULT_FRAME_MOTION, type FrameMotion } from '~/lib/motion/types'
 import { LIVE_FIELD_CEILING } from '~/lib/shaderfill/descriptor'
@@ -2151,6 +2152,19 @@ function toggleBgBlur(l: any) {
   if (!l) return
   if (bgBlur(l)) setLocal(l.id, { effects: (l.effects || []).filter((e: any) => e.type !== 'background_blur') })
   else setBgBlur(l, 0.02)
+}
+
+// ── Displacement map (this image layer warps everything below it) ───────────
+function localDisplace(l: any): any | undefined { return l?.displaceMap }
+function setLocalDisplace(l: any, patch: Record<string, any>) {
+  if (!l) return
+  const cur = localDisplace(l) || { ...DEFAULT_DISPLACE_MAP }
+  setLocal(l.id, { displaceMap: { ...cur, ...patch } })
+}
+function toggleLocalDisplace(l: any) {
+  if (!l) return
+  if (localDisplace(l)) setLocal(l.id, { displaceMap: undefined })
+  else setLocalDisplace(l, {})
 }
 
 // Blend modes shared with the backend Compositor's layer{N}_blend combo (and
@@ -4897,7 +4911,7 @@ onUnmounted(() => {
                 class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                 @input="setLocal(selectedLocal!.id, { rotation: parseFloat(($event.target as HTMLInputElement).value) || 0 })" />
             </div>
-            <div>
+            <div v-if="!localDisplace(selectedLocal)">
               <div class="panel-label mb-1.5">Opacity</div>
               <input type="number" min="0" max="100" step="1" :value="Math.round(selectedLocal.opacity * 100)"
                 class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
@@ -4932,7 +4946,7 @@ onUnmounted(() => {
           </div>
 
           <!-- Blend mode (vs layers below; same modes as wired layers) -->
-          <div>
+          <div v-if="!localDisplace(selectedLocal)">
             <div class="panel-label mb-1.5">Blend</div>
             <select :value="(selectedLocal as any).blend || 'normal'"
               class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none cursor-pointer"
@@ -5055,6 +5069,47 @@ onUnmounted(() => {
               <input type="number" min="0" step="0.5" :value="Math.round((bgBlur(selectedLocal)?.radius || 0) * 1000) / 10"
                 class="flex-1 bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                 @input="setBgBlur(selectedLocal!, Math.max(0, (parseFloat(($event.target as HTMLInputElement).value) || 0) / 100))" />
+            </div>
+          </div>
+
+          <!-- Displacement map: turn this image into a lens that warps everything below it -->
+          <div v-if="selectedLocal?.kind === 'image'" class="mt-3">
+            <div class="flex items-center justify-between">
+              <div class="panel-label">Displacement map</div>
+              <button type="button"
+                class="text-xs px-2 py-1 rounded border border-white/[0.06] text-white/80 hover:bg-white/[0.06]"
+                :class="localDisplace(selectedLocal) ? 'bg-[#2563eb]/30 text-white' : 'bg-white/[0.04]'"
+                @click="toggleLocalDisplace(selectedLocal)">
+                {{ localDisplace(selectedLocal) ? 'On' : 'Off' }}
+              </button>
+            </div>
+            <div v-if="localDisplace(selectedLocal)" class="mt-2 flex flex-col gap-2">
+              <div>
+                <div class="panel-label mb-1.5">Read</div>
+                <select :value="localDisplace(selectedLocal).read"
+                  class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none cursor-pointer"
+                  @change="setLocalDisplace(selectedLocal, { read: ($event.target as HTMLSelectElement).value })">
+                  <option value="height">Height (brightness)</option>
+                  <option value="channels">Channels (R→x, G→y)</option>
+                </select>
+              </div>
+              <div>
+                <div class="panel-label mb-1.5">Amount</div>
+                <input type="number" min="0" max="200" step="1" :value="localDisplace(selectedLocal).amount"
+                  class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                  @input="setLocalDisplace(selectedLocal, { amount: Math.max(0, Math.min(200, parseFloat(($event.target as HTMLInputElement).value) || 0)) })" />
+              </div>
+              <div>
+                <div class="panel-label mb-1.5">Softness</div>
+                <input type="number" min="0" max="20" step="1" :value="localDisplace(selectedLocal).softness ?? 0"
+                  class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
+                  @input="setLocalDisplace(selectedLocal, { softness: Math.max(0, Math.min(20, parseFloat(($event.target as HTMLInputElement).value) || 0)) })" />
+              </div>
+              <label v-if="localDisplace(selectedLocal).read === 'height'" class="flex items-center gap-2 text-xs text-white/80">
+                <input type="checkbox" :checked="!!localDisplace(selectedLocal).invert"
+                  @change="setLocalDisplace(selectedLocal, { invert: ($event.target as HTMLInputElement).checked })" />
+                Invert
+              </label>
             </div>
           </div>
 
