@@ -960,7 +960,8 @@ function moodboardIdForPicker(pickerName: string): string | null {
 // (`sailor_moodboard` + `aesthetic`), not a widget value. Picking goes through
 // the LoRA gallery with kind 'moodboard' and the style_block sentinel target.
 const generateMoodboardId = computed<string | null>(() => {
-  if (props.data.nodeType !== 'GenerateImageNode') return null
+  if (props.data.nodeType !== 'GenerateImageNode'
+      && props.data.nodeType !== 'RestyleFromImageNode') return null
   const v = props.data.properties?.sailor_moodboard
   return typeof v === 'string' && v.trim() !== '' ? v : null
 })
@@ -1609,7 +1610,10 @@ watch(previewImages, (urls) => {
       :index="i"
       :data-type="port.slot.type"
       :label="port.slot.name"
-      :tooltip="getInputTooltip(data.nodeType, port.slot.name)"
+      :tooltip="data.nodeType === 'RestyleFromImageNode' && generateMoodboardId && port.slot.name === 'style_image'
+        ? 'Moodboard is providing the style'
+        : getInputTooltip(data.nodeType, port.slot.name)"
+      :disabled="data.nodeType === 'RestyleFromImageNode' && !!generateMoodboardId && port.slot.name === 'style_image'"
       :connectable="!isCapsule"
     />
     <VueCanvasNodePort
@@ -1848,7 +1852,7 @@ watch(previewImages, (urls) => {
       <!-- Moodboard chip — Generate-an-image only (moodboards Plan B, Task B2).
            A node-face row, not a widget: its backing style_block input is
            internal/hidden and the applied board lives in node properties. -->
-      <div v-if="data.nodeType === 'GenerateImageNode'" class="px-2.5">
+      <div v-if="data.nodeType === 'GenerateImageNode' || data.nodeType === 'RestyleFromImageNode'" class="px-2.5">
         <WidgetMoodboardChip
           :moodboard-id="generateMoodboardId ?? undefined"
           :has-refs="generateMoodboardHasRefs"

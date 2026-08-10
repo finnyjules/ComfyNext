@@ -45,7 +45,10 @@ const props = withDefaults(defineProps<{
    * it (found live by the moodboard taste-wire drag, 2026-08-07).
    */
   connectable?: boolean
-}>(), { connectable: true })
+  /** Greyed + non-connectable: the slot is overridden (e.g. a moodboard is
+   *  providing the style, so style_image is inert). */
+  disabled?: boolean
+}>(), { connectable: true, disabled: false })
 
 const { isDragging, draggingType } = useWireDrag()
 
@@ -92,7 +95,7 @@ const displayLabel = computed(() => toTitleCase(props.label))
     <span
       class="node-port__dot pointer-events-none absolute left-1/2 top-1/2 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 bg-[#1a1a1a] transition-shadow duration-150"
       :style="{
-        borderColor: color,
+        borderColor: disabled ? '#4b5563' : color,
         boxShadow: forceLabel ? `0 0 0 3px ${color}44` : undefined,
       }"
     />
@@ -117,7 +120,7 @@ const displayLabel = computed(() => toTitleCase(props.label))
       :id="id"
       :type="type"
       :position="handlePosition"
-      :connectable="props.connectable"
+      :connectable="props.connectable && !disabled"
       class="!rounded-full !border-none !bg-transparent"
       :style="{
         position: 'absolute',
