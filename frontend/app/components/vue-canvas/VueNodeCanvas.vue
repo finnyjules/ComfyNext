@@ -56,7 +56,7 @@ import { sketchPadPromptOverrides } from '~/lib/sketch/sketchPadPrompt'
 import { cleanSketchPrompt } from '~/lib/sketch/sketchIntent'
 import { SKETCH_PROP, buildSketchPilePayload, refreshSketchPile, planKeptCard, type SketchPilePayload } from '~/lib/sketch/sketchPile'
 import { annotatedImageValueFromViewUrl } from '~/lib/promoteTempImages'
-import { applyMoodboardWireEffects, clearMoodboardFromGenerateNode, syncMoodboardWidgets } from '~/lib/graph/moodboardApply'
+import { applyMoodboardWireEffects, applyMoodboardToRestyleNode, clearMoodboardFromGenerateNode, syncMoodboardWidgets } from '~/lib/graph/moodboardApply'
 import { IMAGE_MODELS_BY_ID } from '~/data/image-models'
 import { useMoodboards } from '~/composables/useMoodboards'
 import type { MoodboardEntry } from '~~/shared/taste/moodboard'
@@ -3056,6 +3056,23 @@ function generatorStyleInIndex(node: any): number {
   return ((node?.data?.inputs ?? []) as any[]).findIndex((i: any) => i?.name === 'style_in')
 }
 
+/** Node types that accept a moodboard style channel — the single source of
+ *  truth for the four wire gates below. */
+const MOODBOARD_TARGET_TYPES = new Set(['GenerateImageNode', 'RestyleFromImageNode'])
+function nodeTakesMoodboard(nodeType: any): boolean {
+  return MOODBOARD_TARGET_TYPES.has(String(nodeType))
+}
+
+/** Remove any edge feeding a node's `style_image` input — a moodboard overrides
+ *  it (2026-08-09 restyle spec). */
+function disconnectStyleImageEdge(node: any): void {
+  const idx = ((node?.data?.inputs ?? []) as any[]).findIndex((i: any) => i?.name === 'style_image')
+  if (idx < 0) return
+  const drop = (edges.value as any[]).filter(e2 =>
+    String(e2.target) === String(node.id) && e2.targetHandle === `input-${idx}`)
+  if (drop.length) removeEdges(drop.map(e2 => e2.id))
+}
+
 /** Live edges feeding this generator's style_in input. */
 function tasteEdgesInto(generatorId: string): any[] {
   const gen = (nodes.value as any[]).find(n => String(n.id) === String(generatorId))
@@ -3087,6 +3104,14 @@ async function runMoodboardWireEffects(gen: any, entry: MoodboardEntry): Promise
     const res = await fetch(`/api/moodboards/images?folder=${encodeURIComponent(entry.folder)}`)
     if (res.ok) files = ((await res.json()).files ?? []) as string[]
   } catch { /* offline dev — effects proceed ref-less; the wire still styles */ }
+  // Restyle: no model switch — its engine (Nano Banana 2) is already
+  // multi-image and its selector is not the shared catalog. Attach the board
+  // (identity + refs) and disconnect any wired single style image.
+  if (gen.data?.nodeType === 'RestyleFromImageNode') {
+    applyMoodboardToRestyleNode(gen.data, entry, files)
+    disconnectStyleImageEdge(gen)
+    return
+  }
   const defs = (gen.data?.widgetDefs ?? []) as any[]
   const wv = gen.data?.widgetsValues
   const mIdx = defs.findIndex((d: any) => d?.name === 'model')
@@ -3112,7 +3137,7 @@ async function handleMoodboardWire(e: Event) {
   const detail = (e as CustomEvent<{ nodeId: string, entryId: string }>).detail
   if (!detail?.nodeId || !detail?.entryId) return
   const gen = (nodes.value as any[]).find(n => String(n.id) === String(detail.nodeId))
-  if (!gen || gen.data?.nodeType !== 'GenerateImageNode') return
+  if (!gen || !nodeTakesMoodboard(gen.data?.nodeType)) return
   const entry = await resolveMoodboardEntry(String(detail.entryId))
   if (!entry) return
 
@@ -3172,7 +3197,7 @@ function handleMoodboardUnwire(e: Event) {
  *  minus the block write. Called from onConnect / completeConnectionOnNode. */
 function maybeApplyTasteWire(sourceNode: any, targetNode: any, targetHandle?: string | null) {
   if (sourceNode?.data?.nodeType !== 'Moodboard') return
-  if (targetNode?.data?.nodeType !== 'GenerateImageNode') return
+  if (!nodeTakesMoodboard(targetNode?.data?.nodeType)) return
   const idx = parseInt(String(targetHandle ?? '').replace('input-', ''))
   if (!Number.isFinite(idx) || targetNode.data?.inputs?.[idx]?.name !== 'style_in') return
   void (async () => {
@@ -3201,7 +3226,7 @@ onEdgesChange((changes) => {
   for (const ch of changes as any[]) {
     if (ch?.type !== 'remove' || !ch.target) continue
     const gen = (nodes.value as any[]).find(n => String(n.id) === String(ch.target))
-    if (gen?.data?.nodeType !== 'GenerateImageNode') continue
+    if (!nodeTakesMoodboard(gen?.data?.nodeType)) continue
     const idx = parseInt(String(ch.targetHandle ?? '').replace('input-', ''))
     if (!Number.isFinite(idx) || gen.data?.inputs?.[idx]?.name !== 'style_in') continue
     genIds.add(String(gen.id))
