@@ -5091,6 +5091,7 @@ onUnmounted(() => {
                   @change="setLocalDisplace(selectedLocal, { read: ($event.target as HTMLSelectElement).value })">
                   <option value="height">Height (brightness)</option>
                   <option value="channels">Channels (R→x, G→y)</option>
+                  <option value="bulge">Bulge (white out / black in)</option>
                 </select>
               </div>
               <div>
@@ -5105,7 +5106,7 @@ onUnmounted(() => {
                   class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none"
                   @input="setLocalDisplace(selectedLocal, { softness: Math.max(0, Math.min(20, parseFloat(($event.target as HTMLInputElement).value) || 0)) })" />
               </div>
-              <label v-if="localDisplace(selectedLocal).read === 'height'" class="flex items-center gap-2 text-xs text-white/80">
+              <label v-if="localDisplace(selectedLocal).read === 'height' || localDisplace(selectedLocal).read === 'bulge'" class="flex items-center gap-2 text-xs text-white/80">
                 <input type="checkbox" :checked="!!localDisplace(selectedLocal).invert"
                   @change="setLocalDisplace(selectedLocal, { invert: ($event.target as HTMLInputElement).checked })" />
                 Invert

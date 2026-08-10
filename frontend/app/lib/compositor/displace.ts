@@ -6,7 +6,7 @@ import { toHeightPixels } from '~/lib/scene3d/relief'
  */
 export interface DisplaceMapSpec {
   /** How a map pixel's value becomes a push direction. */
-  read: 'height' | 'channels'
+  read: 'height' | 'channels' | 'bulge'
   /** Max push in SCREEN px (dpr-invariant); the renderer scales it to device px. */
   amount: number
   /** Height mode only: flip high/low. */
@@ -47,6 +47,39 @@ export function buildDisplacementField(
         const o = (y * w + x) * 2
         field[o] = (map[p]! / 255 - 0.5) * 2 * a
         field[o + 1] = (map[p + 1]! / 255 - 0.5) * 2 * a
+      }
+    }
+  } else if (spec.read === 'bulge') {
+    // Bulge/pinch lens: push the backdrop radially from the map's (alpha-weighted) centre —
+    // outward where the map is bright, inward where dark. Absolute brightness matters, so flat
+    // areas act (unlike height). Value-based, so dpr-invariant (pixelScale not needed).
+    let sumA = 0, sumX = 0, sumY = 0
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const a = map[(y * w + x) * 4 + 3]!
+        sumA += a; sumX += a * x; sumY += a * y
+      }
+    }
+    if (sumA > 0) {
+      const cx = sumX / sumA, cy = sumY / sumA
+      // Farthest corner from the centroid normalises magnitude into ~[-1, 1].
+      let rmax = 0
+      for (const c of [[0, 0], [w - 1, 0], [0, h - 1], [w - 1, h - 1]] as const) {
+        const d = Math.hypot(c[0] - cx, c[1] - cy)
+        if (d > rmax) rmax = d
+      }
+      if (rmax > 0) {
+        const height = toHeightPixels(map, spec.invert ?? false) // reuse luma (+invert)
+        for (let y = 0; y < h; y++) {
+          for (let x = 0; x < w; x++) {
+            const p = (y * w + x) * 4
+            const signed = (height[p]! / 255 - 0.5) * 2 // white → +1 (out), black → -1 (in)
+            const a = map[p + 3]! / 255
+            const o = (y * w + x) * 2
+            field[o] = ((x - cx) / rmax) * signed * a
+            field[o + 1] = ((y - cy) / rmax) * signed * a
+          }
+        }
       }
     }
   } else {

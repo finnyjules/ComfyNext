@@ -109,6 +109,55 @@ describe('buildDisplacementField dpr compensation', () => {
   })
 })
 
+describe('buildDisplacementField bulge mode', () => {
+  const solid = (w: number, h: number, v: number): Uint8ClampedArray => {
+    const a = new Uint8ClampedArray(w * h * 4)
+    for (let i = 0; i < w * h; i++) { const p = i * 4; a[p] = v; a[p + 1] = v; a[p + 2] = v; a[p + 3] = 255 }
+    return a
+  }
+
+  it('solid white pushes the backdrop OUTWARD from centre', () => {
+    const w = 5, h = 5
+    const f = buildDisplacementField(solid(w, h, 255), w, h, { read: 'bulge', amount: 40, softness: 0 })
+    // centre ~ (2,2): right-of-centre pushes +x, left pushes -x, below +y, above -y.
+    expect(dx(f, w, 4, 2)).toBeGreaterThan(0)
+    expect(dx(f, w, 0, 2)).toBeLessThan(0)
+    expect(dy(f, w, 2, 4)).toBeGreaterThan(0)
+    expect(dy(f, w, 2, 0)).toBeLessThan(0)
+    // at the exact centre, ~0
+    expect(Math.hypot(dx(f, w, 2, 2), dy(f, w, 2, 2))).toBeLessThan(1e-6)
+  })
+
+  it('solid black pulls INWARD (opposite of white)', () => {
+    const w = 5, h = 5
+    const white = buildDisplacementField(solid(w, h, 255), w, h, { read: 'bulge', amount: 40, softness: 0 })
+    const black = buildDisplacementField(solid(w, h, 0), w, h, { read: 'bulge', amount: 40, softness: 0 })
+    expect(Math.sign(dx(white, w, 4, 2))).toBe(-Math.sign(dx(black, w, 4, 2)))
+    expect(dx(black, w, 4, 2)).toBeLessThan(0) // right-of-centre pulled toward centre
+  })
+
+  it('mid-gray produces a ~zero field', () => {
+    const w = 5, h = 5
+    const f = buildDisplacementField(solid(w, h, 128), w, h, { read: 'bulge', amount: 40, softness: 0 })
+    for (let i = 0; i < f.length; i++) expect(Math.abs(f[i]!)).toBeLessThan(0.01)
+  })
+
+  it('invert flips out/in', () => {
+    const w = 5, h = 5
+    const normal = buildDisplacementField(solid(w, h, 255), w, h, { read: 'bulge', amount: 40, invert: false, softness: 0 })
+    const inv = buildDisplacementField(solid(w, h, 255), w, h, { read: 'bulge', amount: 40, invert: true, softness: 0 })
+    expect(Math.sign(dx(normal, w, 4, 2))).toBe(-Math.sign(dx(inv, w, 4, 2)))
+  })
+
+  it('alpha gates: transparent white map pushes nothing', () => {
+    const w = 4, h = 4
+    const a = new Uint8ClampedArray(w * h * 4)
+    for (let i = 0; i < w * h; i++) { const p = i * 4; a[p] = 255; a[p + 1] = 255; a[p + 2] = 255; a[p + 3] = 0 }
+    const f = buildDisplacementField(a, w, h, { read: 'bulge', amount: 40, softness: 0 })
+    for (let i = 0; i < f.length; i++) expect(f[i]).toBeCloseTo(0, 6)
+  })
+})
+
 describe('resampleBilinear', () => {
   const W = 4, H = 4
   // A distinct value per pixel so shifts are detectable: r = x*10, g = y*10.
