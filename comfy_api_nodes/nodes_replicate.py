@@ -3094,8 +3094,9 @@ class RestyleFromImageNode(IO.ComfyNode):
                 IO.Combo.Input("model", options=_RESTYLE_MODELS, default="Nano Banana 2"),
                 IO.Image.Input("content_image",
                                tooltip="The image to restyle — its subject/composition is kept."),
-                IO.Image.Input("style_image",
-                               tooltip="The reference image whose look/style is copied onto the content."),
+                IO.Image.Input("style_image", optional=True,
+                               tooltip="The reference image whose look/style is copied onto the content. "
+                                       "Ignored when a moodboard is wired into style_in."),
                 IO.String.Input("prompt", multiline=True, default="",
                                 tooltip="Optional extra guidance (e.g. 'watercolor', 'cyberpunk neon'). "
                                         "Leave blank to let the style image speak for itself."),
@@ -3109,6 +3110,25 @@ class RestyleFromImageNode(IO.ComfyNode):
                                        "Ignored by the original Nano Banana and IP-Adapter."),
                 IO.Int.Input("seed", default=0, min=0, max=0xFFFFFFFF, advanced=True, tooltip="0 = random."),
                 IO.Combo.Input("output_format", options=["png", "jpg"], default="png", advanced=True),
+                # ── Moodboard style source (2026-08-09) ──────────────────────
+                # Reference-image payload written by the frontend at submit time
+                # (properties.style_refs → this hidden widget, by NAME). A
+                # moodboard here OVERRIDES the single style_image.
+                IO.String.Input(
+                    "style_refs",
+                    default="",
+                    multiline=False,
+                    optional=True,
+                    extra_dict={"sailor_widget": "internal"},
+                    tooltip="Moodboard reference-image payload (JSON) — the board's ≤3 images.",
+                ),
+                # Taste wire: the Moodboard node's compiled style block flows in
+                # here and folds into the restyle instruction as extra direction.
+                _TASTE.Input(
+                    "style_in",
+                    optional=True,
+                    tooltip="Taste wire: a Moodboard node's compiled style block.",
+                ),
             ],
             outputs=[IO.Image.Output()],
             hidden=[IO.Hidden.unique_id],
@@ -3117,19 +3137,45 @@ class RestyleFromImageNode(IO.ComfyNode):
         )
 
     @classmethod
-    async def execute(cls, model, content_image, style_image, prompt="",
-                      structure_strength=0.65, resolution="1K", seed=0, output_format="png"):
+    async def execute(cls, model, content_image, style_image=None, prompt="",
+                      structure_strength=0.65, resolution="1K", seed=0,
+                      output_format="png", style_in="", style_refs=""):
         content_url = _image_tensor_to_data_url(content_image)
-        style_url = _image_tensor_to_data_url(style_image)
         guidance = (prompt or "").strip()
+        taste = (style_in or "").strip()
+
+        # Moodboard style source (2026-08-09): a validated style_refs payload
+        # overrides the single style_image. Up to 3 board images become the
+        # style references and the taste block (the TASTE wire) rides along as
+        # extra style direction.
+        parsed_refs = _parse_style_refs(style_refs)
+        board_urls = _moodboard_ref_data_urls(*parsed_refs) if parsed_refs else []
+
+        # A restyle needs SOME style source. With no board and no style image
+        # there is nothing to restyle toward — fail loudly rather than crash in
+        # the tensor encoder.
+        if not board_urls and style_image is None:
+            raise RuntimeError(
+                "Restyle needs a style image or a wired moodboard — neither was provided."
+            )
+
+        extra_direction = f"{guidance} {taste}".strip() if taste else guidance
 
         if model in _NANO_BANANA_SLUGS:
-            # First image = content, second = style reference. The baked
-            # instruction keeps the content's layout and only swaps the look.
-            instruction = build_restyle_instruction(structure_strength, guidance)
+            if board_urls:
+                # Content first, then the board images as STYLE-only refs.
+                instruction = (
+                    f"{build_restyle_instruction(structure_strength, extra_direction)} "
+                    f"{_STYLE_REFS_INSTRUCTION}"
+                ).strip()
+                image_input = [content_url, *board_urls]
+            else:
+                # Original single-style-image path.
+                instruction = build_restyle_instruction(structure_strength, extra_direction)
+                image_input = [content_url, _image_tensor_to_data_url(style_image)]
             input_dict = {
                 "prompt": instruction,
-                "image_input": [content_url, style_url],
+                "image_input": image_input,
                 "output_format": output_format,
             }
             # Only the newer models accept a resolution dial; passing it to the
@@ -3137,11 +3183,13 @@ class RestyleFromImageNode(IO.ComfyNode):
             if model != "Nano Banana":
                 input_dict["resolution"] = resolution
             slug = _NANO_BANANA_SLUGS[model]
-        else:  # Style Transfer · IP-Adapter
+        else:  # Style Transfer · IP-Adapter — single style image only
+            # IP-Adapter cannot take multiple references, so a moodboard
+            # degrades to its FIRST image; the taste block folds into the prompt.
+            style_url = board_urls[0] if board_urls else _image_tensor_to_data_url(style_image)
+            base_prompt = guidance or "a high quality image"
             input_dict = {
-                # fofr/style-transfer needs a non-empty prompt; fall back to a
-                # neutral one so the style image drives the result.
-                "prompt": guidance or "a high quality image",
+                "prompt": f"{base_prompt} {taste}".strip() if taste else base_prompt,
                 "style_image": style_url,
                 "structure_image": content_url,
                 "structure_denoising_strength": float(structure_strength),
