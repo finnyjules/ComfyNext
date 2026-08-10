@@ -243,3 +243,29 @@ export function clearMoodboardFromGenerateNode(nodeData: MoodboardApplyTarget): 
   delete nodeData.properties.style_refs
   delete nodeData.properties.sailor_moodboard_switched
 }
+
+/**
+ * The RESTYLE path (2026-08-09): attach a moodboard as the style source to a
+ * RestyleFromImageNode. Unlike the Generate helper this NEVER switches the
+ * model or sets an auto-switch marker — restyle's engine defaults to Nano
+ * Banana 2 (already multi-image) and its selector is not the shared image-model
+ * catalog. The board's ≤3 images ride as style_refs; the prose taste block
+ * travels on the TASTE wire (style_in), so it is not written here. Any stale
+ * `aesthetic` is deleted (single-carrier rule).
+ */
+export function applyMoodboardToRestyleNode(
+  nodeData: MoodboardApplyTarget,
+  entry: MoodboardEntry,
+  files: string[],
+): { sailor_moodboard: string; style_refs: string } {
+  if (!nodeData.properties) nodeData.properties = {}
+  const props = nodeData.properties
+  const refFiles = files.filter(f => typeof f === 'string' && f).slice(0, MOODBOARD_MAX_REFS)
+  const styleRefs = refFiles.length > 0
+    ? JSON.stringify({ folder: entry.folder, files: refFiles })
+    : ''
+  delete props.aesthetic
+  props.sailor_moodboard = entry.id
+  props.style_refs = styleRefs
+  return { sailor_moodboard: entry.id, style_refs: styleRefs }
+}

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   applyMoodboardToGenerateNode,
+  applyMoodboardToRestyleNode,
   applyMoodboardWireEffects,
   clearMoodboardFromGenerateNode,
   revertMoodboardSwitch,
@@ -294,6 +295,36 @@ describe('syncMoodboardWidgets — the twin\'s hidden widgets, written by name (
     }
     syncMoodboardWidgets(nodeData, null)
     expect(nodeData.widgetsValues).toEqual(['', ''])
+  })
+})
+
+describe('applyMoodboardToRestyleNode — restyle path, no model switch (2026-08-09)', () => {
+  it('writes style_refs JSON {folder, files[≤3]} and the board identity', () => {
+    const node = { properties: {} as Record<string, any> }
+    const writes = applyMoodboardToRestyleNode(node, ENTRY, FILES)
+    const parsed = JSON.parse(node.properties.style_refs)
+    expect(parsed).toEqual({ folder: ENTRY.folder, files: FILES.slice(0, MOODBOARD_MAX_REFS) })
+    expect(node.properties.sailor_moodboard).toBe(ENTRY.id)
+    expect(writes.sailor_moodboard).toBe(ENTRY.id)
+  })
+
+  it('never sets the auto-switch marker (restyle does not switch models)', () => {
+    const node = { properties: {} as Record<string, any> }
+    applyMoodboardToRestyleNode(node, ENTRY, FILES)
+    expect(node.properties.sailor_moodboard_switched).toBeUndefined()
+  })
+
+  it('deletes a stale aesthetic property (single-carrier rule)', () => {
+    const node = { properties: { aesthetic: 'old block' } as Record<string, any> }
+    applyMoodboardToRestyleNode(node, ENTRY, FILES)
+    expect(node.properties.aesthetic).toBeUndefined()
+  })
+
+  it('empty file list → empty style_refs', () => {
+    const node = { properties: {} as Record<string, any> }
+    const writes = applyMoodboardToRestyleNode(node, ENTRY, [])
+    expect(writes.style_refs).toBe('')
+    expect(node.properties.style_refs).toBe('')
   })
 })
 
