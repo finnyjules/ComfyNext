@@ -78,6 +78,37 @@ describe('buildDisplacementField', () => {
   })
 })
 
+describe('buildDisplacementField dpr compensation', () => {
+  it('height mode: pixelScale scales the field so a denser (retina) render warps the same in screen px', () => {
+    // Smooth horizontal ramp brightness = k*x; on a fixed grid, a larger step+pixelScale
+    // must yield a proportionally larger field (the dpr compensation knob).
+    const w = 9, h = 3
+    const ramp = new Uint8ClampedArray(w * h * 4)
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const v = Math.round((x / (w - 1)) * 255); const p = (y * w + x) * 4
+      ramp[p] = v; ramp[p + 1] = v; ramp[p + 2] = v; ramp[p + 3] = 255
+    }
+    const at1 = buildDisplacementField(ramp, w, h, { read: 'height', amount: 40, softness: 0 }, 1)
+    const at2 = buildDisplacementField(ramp, w, h, { read: 'height', amount: 40, softness: 0 }, 2)
+    // Interior pixel, away from clamped borders.
+    const i = (1 * w + 4) * 2
+    expect(at1[i]!).toBeGreaterThan(0)
+    expect(at2[i]!).toBeGreaterThan(0)
+    // pixelScale 2 compensates for a 2x-denser render: field ~2x the pixelScale-1 field.
+    expect(at2[i]! / at1[i]!).toBeGreaterThan(1.6)
+    expect(at2[i]! / at1[i]!).toBeLessThan(2.4)
+  })
+
+  it('channels mode ignores pixelScale (already dpr-invariant)', () => {
+    const w = 4, h = 4
+    const map = new Uint8ClampedArray(w * h * 4)
+    for (let i = 0; i < w * h; i++) { const p = i * 4; map[p] = 200; map[p + 1] = 60; map[p + 2] = 0; map[p + 3] = 255 }
+    const a = buildDisplacementField(map, w, h, { read: 'channels', amount: 40, softness: 0 }, 1)
+    const b = buildDisplacementField(map, w, h, { read: 'channels', amount: 40, softness: 0 }, 3)
+    expect(Array.from(a)).toEqual(Array.from(b))
+  })
+})
+
 describe('resampleBilinear', () => {
   const W = 4, H = 4
   // A distinct value per pixel so shifts are detectable: r = x*10, g = y*10.

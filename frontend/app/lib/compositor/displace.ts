@@ -34,6 +34,7 @@ export function buildDisplacementField(
   w: number,
   h: number,
   spec: DisplaceMapSpec,
+  pixelScale = 1,
 ): Float32Array {
   const field = new Float32Array(w * h * 2)
   if (w < 1 || h < 1) return field
@@ -50,20 +51,25 @@ export function buildDisplacementField(
     }
   } else {
     // Height: grayscale height field; push along its gradient (steepest ascent).
+    // pixelScale compensates for the map render's dpr: adjacent device pixels are
+    // 1/pixelScale screen-px apart, so a denser (retina) map render would otherwise
+    // measure a shallower gradient per screen-px than a dpr-1 render. Sampling `step`
+    // device px apart and multiplying by pixelScale keeps the gradient a slope per
+    // screen-px regardless of render dpr.
     const height = toHeightPixels(map, spec.invert ?? false)
+    const step = Math.max(1, Math.round(pixelScale))
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
-        const xl = x > 0 ? x - 1 : x
-        const xr = x < w - 1 ? x + 1 : x
-        const yt = y > 0 ? y - 1 : y
-        const yb = y < h - 1 ? y + 1 : y
+        const xl = x - step > 0 ? x - step : 0
+        const xr = x + step < w - 1 ? x + step : w - 1
+        const yt = y - step > 0 ? y - step : 0
+        const yb = y + step < h - 1 ? y + step : h - 1
         const hl = height[(y * w + xl) * 4]!
         const hr = height[(y * w + xr) * 4]!
         const ht = height[(yt * w + x) * 4]!
         const hb = height[(yb * w + x) * 4]!
-        // Central difference, normalized: /255 → ~[-1,1]; /(span||1) halves at the borders.
-        const gx = (hr - hl) / (255 * ((xr - xl) || 1))
-        const gy = (hb - ht) / (255 * ((yb - yt) || 1))
+        const gx = ((hr - hl) * pixelScale) / (255 * ((xr - xl) || 1))
+        const gy = ((hb - ht) * pixelScale) / (255 * ((yb - yt) || 1))
         const p = (y * w + x) * 4
         const a = map[p + 3]! / 255
         const o = (y * w + x) * 2

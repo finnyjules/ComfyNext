@@ -1514,7 +1514,7 @@ function applyDisplaceFromLayer(
   const mapData = octx.getImageData(0, 0, w, h)
 
   // 3+4. Build the offset field and resample the backdrop. amount is SCREEN px → scale to device.
-  const field = buildDisplacementField(mapData.data, w, h, spec)
+  const field = buildDisplacementField(mapData.data, w, h, spec, t.a || 1)
   const amountDev = spec.amount * (t.a || 1)
   const outArr = resampleBilinear(src.data, field, amountDev, w, h)
 
