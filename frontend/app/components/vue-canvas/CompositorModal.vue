@@ -44,6 +44,7 @@ import {
 } from '~/lib/compositor/depthRegistry'
 import { DEFAULT_DISPLACE_MAP } from '~/lib/compositor/displace'
 import { imageUrlForNode } from '~/lib/canvas/nodeImage'
+import { imageUrlToFile } from '~/lib/canvas/imageUrlToFile'
 import { DEFAULT_FRAME_MOTION, type FrameMotion } from '~/lib/motion/types'
 import { LIVE_FIELD_CEILING } from '~/lib/shaderfill/descriptor'
 import '~/lib/motion/paint' // registers the motion painter for paintLayerStack(t)
@@ -341,7 +342,7 @@ const {
   boxPx, handlePositions: localHandlePositions,
   startScale: onLocalScalePointerDown, startRotate: onLocalRotatePointerDown, startResize: onLocalResizePointerDown,
   onCanvasPointerDown, onCanvasDblClick,
-  addText, addRect, addEllipse, addLine, addPolygon, addStar, addImageFromFile, addImageFromName,
+  addText, addRect, addEllipse, addLine, addPolygon, addStar, addImageFromFile, addImageFromName, addImageFromCanvasSrc,
   addPathLayers, addPathFromSvg, deleteLayers,
   background, setBackground,
   postEffects, setPostEffects,
@@ -3394,12 +3395,7 @@ async function pastedNodeImageFile(): Promise<File | null> {
   for (const n of clip.nodes) {
     const url = imageUrlForNode(n)
     if (!url) continue
-    const res = await fetch(url)
-    if (!res.ok) throw new Error(`image fetch failed (${res.status})`)
-    const blob = await res.blob()
-    if (!blob.type.startsWith('image/')) throw new Error(`not an image (${blob.type || 'unknown'})`)
-    const name = new URLSearchParams(url.split('?')[1] ?? '').get('filename') || 'pasted.png'
-    return new File([blob], name, { type: blob.type })
+    return imageUrlToFile(url, 'pasted.png')
   }
   return null
 }

@@ -25,6 +25,7 @@ import { nudgeLayers, duplicateLayers, snapAngle, computeSnapAdjust, mapKeyToEdi
 import { extractForCopy, materializePaste, setClipboard, getClipboard, hasClipboard } from '~/lib/compositor/layerClipboard'
 import { resizeBox, type Handle, type Box } from '~/lib/compositor/resizeBox'
 import { unionBox, cornerOf, anchorOf, groupScaleFactor, scaleLayerAbout, type Handle as GHandle, type Box as GBox } from '~/lib/compositor/groupResize'
+import { imageUrlToFile } from '~/lib/canvas/imageUrlToFile'
 import { inject, type Ref } from 'vue'
 import type { BrandKit } from '~~/shared/brand/types'
 
@@ -686,6 +687,13 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     addLocal(createImageLayer(name, aspect, partial as any))
   }
 
+  // Add an image layer from a canvas node's image URL (a snapshot: the URL is
+  // fetched + uploaded to the input dir, exactly like drag-drop/paste).
+  async function addImageFromCanvasSrc(src: string) {
+    if (!src) return
+    await addImageFromFile(await imageUrlToFile(src))
+  }
+
   // Insert pre-built path layers (e.g. from SVG import / pen tool / AI vector).
   // All layers from one import are added together; the topmost is selected.
   function addPathLayers(layers: PathLayer[]) {
@@ -741,7 +749,7 @@ export function useLocalLayerEditor(opts: EditorOpts) {
     selectionBox, selectionHandles, startGroupResize,
     hitTest, startScale, startRotate, startResize,
     onCanvasPointerDown, onCanvasDblClick,
-    addText, addRect, addEllipse, addLine, addPolygon, addStar, addImageFromFile, addImageFromName,
+    addText, addRect, addEllipse, addLine, addPolygon, addStar, addImageFromFile, addImageFromName, addImageFromCanvasSrc,
     addPathLayers, addPathFromSvg, deleteLayers, commit, recordHistory,
     background, setBackground,
     postEffects, setPostEffects,
