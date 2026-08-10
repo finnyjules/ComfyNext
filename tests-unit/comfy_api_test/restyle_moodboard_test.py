@@ -94,3 +94,29 @@ async def test_no_style_source_raises(captured):
         await RestyleFromImageNode.execute(
             model="Nano Banana 2", content_image="C", style_image=None,
         )
+
+
+@pytest.mark.asyncio
+async def test_empty_board_with_taste_does_taste_only_restyle(captured, monkeypatch):
+    # The board is wired but its images were deleted, so the loader returns [].
+    # The frontend has already disconnected style_image on apply. The still-usable
+    # taste block must carry the restyle — content only, taste in the prompt.
+    monkeypatch.setattr(nr, "_moodboard_ref_data_urls", lambda *a, **k: [])
+    await RestyleFromImageNode.execute(
+        model="Nano Banana 2", content_image="C", style_image=None,
+        style_refs=_refs(), style_in="dusty pastel palette",
+    )
+    assert captured["input"]["image_input"] == ["DATA:C"]
+    assert "dusty pastel palette" in captured["input"]["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_ip_adapter_empty_board_taste_only_raises(captured, monkeypatch):
+    # IP-Adapter's style_image can't be fed by a taste block, so an empty board
+    # with no style image is a hard error even when taste is present.
+    monkeypatch.setattr(nr, "_moodboard_ref_data_urls", lambda *a, **k: [])
+    with pytest.raises(RuntimeError):
+        await RestyleFromImageNode.execute(
+            model="Style Transfer · IP-Adapter", content_image="C", style_image=None,
+            style_refs=_refs(), style_in="mood text",
+        )

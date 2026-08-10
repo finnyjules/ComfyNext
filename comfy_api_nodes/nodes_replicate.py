@@ -3151,10 +3151,10 @@ class RestyleFromImageNode(IO.ComfyNode):
         parsed_refs = _parse_style_refs(style_refs)
         board_urls = _moodboard_ref_data_urls(*parsed_refs) if parsed_refs else []
 
-        # A restyle needs SOME style source. With no board and no style image
-        # there is nothing to restyle toward — fail loudly rather than crash in
-        # the tensor encoder.
-        if not board_urls and style_image is None:
+        # A restyle needs SOME style source. With no board, no style image and
+        # no taste block there is nothing to restyle toward — fail loudly rather
+        # than crash in the tensor encoder.
+        if not board_urls and style_image is None and not taste:
             raise RuntimeError(
                 "Restyle needs a style image or a wired moodboard — neither was provided."
             )
@@ -3169,10 +3169,17 @@ class RestyleFromImageNode(IO.ComfyNode):
                     f"{_STYLE_REFS_INSTRUCTION}"
                 ).strip()
                 image_input = [content_url, *board_urls]
-            else:
+            elif style_image is not None:
                 # Original single-style-image path.
                 instruction = build_restyle_instruction(structure_strength, extra_direction)
                 image_input = [content_url, _image_tensor_to_data_url(style_image)]
+            else:
+                # Board wired but its images are gone (or never readable) and the
+                # frontend dropped style_image on apply. The taste block — the
+                # only style source left, guaranteed non-empty by the guard above
+                # — carries the restyle with no reference image.
+                instruction = build_restyle_instruction(structure_strength, extra_direction)
+                image_input = [content_url]
             input_dict = {
                 "prompt": instruction,
                 "image_input": image_input,
@@ -3184,6 +3191,14 @@ class RestyleFromImageNode(IO.ComfyNode):
                 input_dict["resolution"] = resolution
             slug = _NANO_BANANA_SLUGS[model]
         else:  # Style Transfer · IP-Adapter — single style image only
+            # IP-Adapter's style_image can't be fed by a taste block, so with no
+            # board image and no style image there's nothing to transfer from —
+            # a taste-only restyle is impossible on this engine.
+            if not board_urls and style_image is None:
+                raise RuntimeError(
+                    "Style Transfer needs a style image or a moodboard image — "
+                    "a taste block alone can't feed IP-Adapter."
+                )
             # IP-Adapter cannot take multiple references, so a moodboard
             # degrades to its FIRST image; the taste block folds into the prompt.
             style_url = board_urls[0] if board_urls else _image_tensor_to_data_url(style_image)
