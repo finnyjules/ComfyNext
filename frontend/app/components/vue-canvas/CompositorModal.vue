@@ -3346,6 +3346,7 @@ function handleKeydown(e: KeyboardEvent) {
   const ae = document.activeElement
   const typing = ae instanceof Element && ae.matches('input, textarea, [contenteditable]')
   if (e.key === 'Escape') {
+    if (addMenuOpen.value) { addMenuOpen.value = false; return }
     if (editingId.value) { endEdit(); return }
     if (typing) return
     // The busy guard now lives inside exitSmartMode itself.

@@ -780,7 +780,7 @@ function onKeydown(e: KeyboardEvent) {
   if (!editMode.value) return
   const ae = document.activeElement
   const typing = ae instanceof Element && ae.matches('input, textarea, [contenteditable]')
-  if (e.key === 'Escape') { if (editor.editingId.value) editor.endEdit(); else exitEdit() }
+  if (e.key === 'Escape') { if (addMenuOpen.value) { addMenuOpen.value = false; return } if (editor.editingId.value) editor.endEdit(); else exitEdit() }
   else if ((e.key === 'Delete' || e.key === 'Backspace') && editor.selectedId.value && !typing) {
     e.preventDefault(); editor.deleteLocal(editor.selectedId.value)
   }
