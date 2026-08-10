@@ -51,6 +51,7 @@ import '~/lib/motion/paint' // registers the motion painter for paintLayerStack(
 import { bakeAndUpload, motionSourceKey, type MotionParams } from '~/lib/motion/bake'
 import CompositorMotionTimeline from '~/components/vue-canvas/compositor/CompositorMotionTimeline.vue'
 import MotionLayerEditor from '~/components/vue-canvas/compositor/MotionLayerEditor.vue'
+import AddImageSourcePopover from '~/components/vue-canvas/compositor/AddImageSourcePopover.vue'
 import CompositorClonerPanel from '~/components/vue-canvas/compositor/CompositorClonerPanel.vue'
 import FillControl from '~/components/vue-canvas/compositor/FillControl.vue'
 import FillSwatch from '~/components/vue-canvas/compositor/FillSwatch.vue'
@@ -3307,6 +3308,12 @@ async function onAddImageFile(e: Event) {
   input.value = ''
   if (file) { try { await addImageFromFile(file) } catch (err) { console.error('[Compositor] add image failed:', err) } }
 }
+const addMenuOpen = ref(false)
+function onUploadChoice() { addMenuOpen.value = false; triggerAddImage() }
+async function onPickCanvasImage(src: string) {
+  addMenuOpen.value = false
+  try { await addImageFromCanvasSrc(src) } catch (err) { console.error('[Compositor] add canvas image failed:', err) }
+}
 
 // ── Fill a brush layer with an image ────────────────────────────────────────
 // Reuses the add-image flow, then clips the freshly-added image to the brush
@@ -4170,9 +4177,12 @@ onUnmounted(() => {
         >
           <Lasso class="size-4" />
         </button>
-        <button class="flex items-center justify-center size-8 rounded hover:bg-white/10 text-white/80 cursor-pointer" title="Add image" @click="triggerAddImage">
-          <ImageIcon class="size-4" />
-        </button>
+        <div class="relative inline-flex">
+          <button class="flex items-center justify-center size-8 rounded hover:bg-white/10 text-white/80 cursor-pointer" title="Add image" @click="addMenuOpen = !addMenuOpen">
+            <ImageIcon class="size-4" />
+          </button>
+          <AddImageSourcePopover :open="addMenuOpen" @upload="onUploadChoice" @pick="onPickCanvasImage" @close="addMenuOpen = false" />
+        </div>
         <BrandImagePicker @add="(name, aspect) => addImageFromName(name, aspect)" />
         <button
           class="flex items-center justify-center size-8 rounded cursor-pointer"

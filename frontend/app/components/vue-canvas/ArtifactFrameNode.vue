@@ -13,6 +13,7 @@ import { readWiredTreatments } from '~/composables/useWiredTreatments'
 import type { Cloner } from '~/composables/useCloner'
 import CompositorInlineToolbar from '~/components/vue-canvas/CompositorInlineToolbar.vue'
 import StudioRenderButton from '~/components/vue-canvas/StudioRenderButton.vue'
+import AddImageSourcePopover from '~/components/vue-canvas/compositor/AddImageSourcePopover.vue'
 import { registerStudioBaker, unregisterStudioBaker } from '~/lib/studio/cascade'
 import { encodeFrames } from '~/lib/engine/encodeVideo'
 import { resolveWiredSourceKind } from '~/lib/studio/frameResolve'
@@ -607,6 +608,12 @@ async function onAddImageFile(e: Event) {
   input.value = ''
   if (file) { try { await editor.addImageFromFile(file) } catch (err) { console.error('[Frame] add image:', err) } }
 }
+const addMenuOpen = ref(false)
+function onUploadChoice() { addMenuOpen.value = false; triggerAddImage() }
+async function onPickCanvasImage(src: string) {
+  addMenuOpen.value = false
+  try { await editor.addImageFromCanvasSrc(src) } catch (err) { console.error('[Frame] add canvas image:', err) }
+}
 
 // ── Actions ──────────────────────────────────────────────────────────────────
 function openEditor() { window.dispatchEvent(new CustomEvent('sailor:openCompositor', { detail: { nodeId: props.id } })) }
@@ -975,7 +982,10 @@ onUnmounted(() => {
         <button class="nopan nodrag size-6 rounded flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10" title="Add rectangle" @click="editor.addRect()"><Square class="size-3" /></button>
         <button class="nopan nodrag size-6 rounded flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10" title="Add ellipse" @click="editor.addEllipse()"><Circle class="size-3" /></button>
         <button class="nopan nodrag size-6 rounded flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10" title="Add line" @click="editor.addLine()"><Minus class="size-3" /></button>
-        <button class="nopan nodrag size-6 rounded flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10" title="Add image" @click="triggerAddImage"><ImagePlus class="size-3" /></button>
+        <div class="relative inline-flex">
+          <button class="nopan nodrag size-6 rounded flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10" title="Add image" @click="addMenuOpen = !addMenuOpen"><ImagePlus class="size-3" /></button>
+          <AddImageSourcePopover :open="addMenuOpen" @upload="onUploadChoice" @pick="onPickCanvasImage" @close="addMenuOpen = false" />
+        </div>
         <input ref="imageInputRef" type="file" accept="image/*" class="hidden" @change="onAddImageFile" />
         <BrandImagePicker @add="(name, aspect) => editor.addImageFromName(name, aspect)" />
         <span class="w-px h-4 bg-white/10 mx-0.5" />
