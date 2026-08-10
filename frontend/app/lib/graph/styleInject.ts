@@ -23,6 +23,11 @@ import { widgetSlots } from '~/lib/graph/widgetOrder'
 
 const PROMPT_INDEX0_NODES = new Set(['FluxLoRARemoteNode', 'FluxMultiLoRARemoteNode'])
 
+// Nodes that carry a moodboard via the hidden style_block/style_refs widgets +
+// the style_in TASTE wire. GenerateImageNode has both widgets; restyle has only
+// style_refs (its taste block travels the wire).
+const STYLE_CHANNEL_NODES = new Set(['GenerateImageNode', 'RestyleFromImageNode'])
+
 export function injectLoraStyleIntoPrompt(
   workflow: any,
   objectInfo: Record<string, any>,
@@ -43,7 +48,7 @@ export function injectLoraStyleIntoPrompt(
       continue
     }
 
-    if (type !== 'GenerateImageNode') continue
+    if (!STYLE_CHANNEL_NODES.has(type)) continue
     // Applying IS wiring (2026-08-07 amendment): when the node's `style_in`
     // input is CONNECTED, the TASTE wire is the single carrier of the prose
     // block — the Moodboard twin's execute output flows in server-side, so
@@ -66,11 +71,11 @@ export function injectLoraStyleIntoPrompt(
     // Resolve the positional slots from the schema — by NAME.
     let slots: { name: string; control?: true }[]
     try {
-      slots = widgetSlots('GenerateImageNode', objectInfo)
+      slots = widgetSlots(type, objectInfo)
     } catch {
       // Node type absent from /object_info (schema cache not loaded) — nowhere
       // safe to write. Skip rather than guess a position.
-      console.warn('[styleInject] GenerateImageNode missing from objectInfo — style block not injected')
+      console.warn(`[styleInject] ${type} missing from objectInfo — style block not injected`)
       continue
     }
     // A workflow saved pre-B2 may carry a short array; pad up to the slot.
@@ -82,7 +87,7 @@ export function injectLoraStyleIntoPrompt(
         // Backend still serving a pre-B2/B3 schema (needs a restart) — the
         // input doesn't exist server-side, so writing anywhere would corrupt
         // values.
-        console.warn(`[styleInject] ${name} not in GenerateImageNode schema (stale backend?) — not injected`)
+        console.warn(`[styleInject] ${name} not in ${type} schema (stale backend?) — not injected`)
         return
       }
       while (wv.length <= idx) wv.push('')

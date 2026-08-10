@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { injectLoraStyleIntoPrompt } from '~/lib/graph/styleInject'
+import { widgetSlots } from '~/lib/graph/widgetOrder'
 
 /**
  * GenerateImageNode style injection (moodboards Plan B, Task B2).
@@ -36,6 +37,24 @@ const OBJECT_INFO = {
       required: {
         prompt: ['STRING', { multiline: true, default: '' }],
         lora_name: [['x.safetensors', '[None]'], { default: '[None]' }],
+      },
+    },
+  },
+  RestyleFromImageNode: {
+    input: {
+      required: {
+        model: [['Nano Banana 2']],
+        content_image: ['IMAGE'],
+      },
+      optional: {
+        style_image: ['IMAGE'],
+        prompt: ['STRING', { multiline: true }],
+        structure_strength: ['FLOAT'],
+        resolution: [['1K', '2K', '4K']],
+        seed: ['INT'],
+        output_format: [['png', 'jpg']],
+        style_refs: ['STRING', { multiline: false }],
+        style_in: ['TASTE'],
       },
     },
   },
@@ -218,5 +237,42 @@ describe('injectLoraStyleIntoPrompt — GenerateImageNode (by widget NAME)', () 
     injectLoraStyleIntoPrompt(wf, OBJECT_INFO)
     expect(wf.nodes[0].widgets_values[0]).toBe('In the style of: gouache. a dog')
     expect(wf.nodes[0].widgets_values[1]).toBe('x.safetensors')
+  })
+})
+
+function restyleNode(props: Record<string, any>, wv: any[]) {
+  return {
+    type: 'RestyleFromImageNode',
+    // style_image, prompt, structure_strength, seed, output_format, style_refs
+    // are the widgetized inputs (model is model-combo, content_image/style_in
+    // are sockets); the factory pads to the resolved slot.
+    widgets_values: wv,
+    inputs: [{ name: 'style_in', link: 42 }], // wire linked → block rides the wire
+    properties: props,
+  }
+}
+
+describe('injectLoraStyleIntoPrompt — RestyleFromImageNode (style_refs channel)', () => {
+  it('injects style_refs into a RestyleFromImageNode by name', () => {
+    const node = restyleNode(
+      { style_refs: JSON.stringify({ folder: 'moodboard_1', files: ['a.png'] }) },
+      [],
+    )
+    const wf = { nodes: [node] }
+    injectLoraStyleIntoPrompt(wf, OBJECT_INFO)
+    const slots = widgetSlots('RestyleFromImageNode', OBJECT_INFO)
+    const idx = slots.findIndex((s: any) => s.name === 'style_refs')
+    expect(node.widgets_values[idx]).toBe(node.properties.style_refs)
+  })
+
+  it('does not write a style_block for restyle (wire carries the block)', () => {
+    const node = restyleNode(
+      { style_refs: JSON.stringify({ folder: 'moodboard_1', files: ['a.png'] }) },
+      [],
+    )
+    injectLoraStyleIntoPrompt({ nodes: [node] }, OBJECT_INFO)
+    const slots = widgetSlots('RestyleFromImageNode', OBJECT_INFO)
+    const blockIdx = slots.findIndex((s: any) => s.name === 'style_block')
+    expect(blockIdx).toBe(-1) // restyle has no style_block slot at all
   })
 })
