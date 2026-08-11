@@ -12,11 +12,12 @@
 // chain is not applied on their draw path yet — offering Vignette there would write a
 // setting that silently never renders.
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { defaultPostEffect, type PostEffect } from '~/lib/compositor/postEffects'
+import { defaultPostEffect, type PostEffect, type GradientMapStop } from '~/lib/compositor/postEffects'
 import { dofAvailable, dofUnavailableReason } from '~/lib/compositor/dofPass'
 import {
   depthMessageFor, depthStatusFor, onDepthChange, requestDepth, type DepthRef,
 } from '~/lib/compositor/depthRegistry'
+import StudioGradientRamp from '~/components/vue-canvas/studio/StudioGradientRamp.vue'
 
 const props = defineProps<{
   effects: PostEffect[]
@@ -45,7 +46,7 @@ const depthMessage = computed(() => {
 function retryDepth() { if (props.depthSource) requestDepth(props.depthSource) }
 
 interface ParamSpec { key: string; label: string; min: number; max: number; step: number }
-interface SectionSpec { type: PostEffect['type']; label: string; params: ParamSpec[]; colors?: [string, string][] }
+interface SectionSpec { type: PostEffect['type']; label: string; params: ParamSpec[]; colors?: [string, string][]; ramp?: boolean }
 const SECTIONS: SectionSpec[] = [
   { type: 'adjust', label: 'Adjust', params: [
     { key: 'brightness', label: 'Brightness', min: 0, max: 2, step: 0.01 },
@@ -69,6 +70,10 @@ const SECTIONS: SectionSpec[] = [
   ] },
   { type: 'duotone', label: 'Duotone', colors: [['shadows', 'Shadows'], ['highlights', 'Highlights']], params: [
     { key: 'mix', label: 'Mix', min: 0, max: 1, step: 0.01 },
+  ] },
+  { type: 'gradientMap', label: 'Gradient Map', ramp: true, params: [
+    { key: 'mix', label: 'Mix', min: 0, max: 1, step: 0.01 },
+    { key: 'contrast', label: 'Contrast', min: -1, max: 1, step: 0.01 },
   ] },
   // Blades < 3 renders a circular iris; 6 gives hexagonal bokeh. Highlight boost is
   // what turns bright defocused points into discs rather than grey mush.
@@ -95,7 +100,7 @@ function toggle(type: PostEffect['type']) {
   if (fx(type)) emit('update', props.effects.filter(e => e.type !== type))
   else emit('update', [...props.effects, defaultPostEffect(type)])
 }
-function patch(type: PostEffect['type'], key: string, value: number | string) {
+function patch(type: PostEffect['type'], key: string, value: number | string | GradientMapStop[]) {
   const cur = (fx(type) ?? defaultPostEffect(type)) as Record<string, any>
   emit('update', [
     ...props.effects.filter(e => e.type !== type),
@@ -143,6 +148,11 @@ function fmt(v: unknown, step: number): string {
             <div class="panel-sublabel truncate">{{ label }}</div>
           </div>
         </div>
+        <StudioGradientRamp
+          v-if="s.ramp"
+          :model-value="(fx(s.type)!.stops as GradientMapStop[])"
+          @update:model-value="(v: GradientMapStop[]) => patch(s.type, 'stops', v)"
+        />
         <div v-for="p in s.params" :key="p.key" class="flex items-center gap-2">
           <div class="panel-sublabel w-16 shrink-0">{{ p.label }}</div>
           <input type="range" :min="p.min" :max="p.max" :step="p.step" :value="fx(s.type)![p.key]"
