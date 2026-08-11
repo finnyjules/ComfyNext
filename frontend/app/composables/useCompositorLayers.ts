@@ -39,7 +39,7 @@ import { type PaintStroke, stampStrokes, strokeBounds } from '~/lib/compositor/b
 import {
   applyEffectChain, applyStackPost, chainActive, isChainEffect,
   type AdjustEffect, type BloomEffect, type DofEffect, type DuotoneEffect,
-  type GrainEffect, type PostEffect, type VignetteEffect,
+  type GradientMapEffect, type GrainEffect, type PostEffect, type VignetteEffect,
 } from '~/lib/compositor/postEffects'
 import { applyDof, dofAvailable, dofShouldRun } from '~/lib/compositor/dofPass'
 import { depthImageFor, requestDepth } from '~/lib/compositor/depthRegistry'
@@ -108,10 +108,10 @@ export interface BackgroundBlurEffect {
   radius: number  // blur radius, normalized to canvas width
   visible: boolean
 }
-export type { AdjustEffect, BloomEffect, DofEffect, DuotoneEffect, GrainEffect, PostEffect, VignetteEffect }
+export type { AdjustEffect, BloomEffect, DofEffect, DuotoneEffect, GradientMapEffect, GrainEffect, PostEffect, VignetteEffect }
 export type LayerEffect =
   | DropShadowEffect | LayerBlurEffect | InnerShadowEffect | BackgroundBlurEffect
-  | AdjustEffect | BloomEffect | GrainEffect | VignetteEffect | DuotoneEffect
+  | AdjustEffect | BloomEffect | GrainEffect | VignetteEffect | DuotoneEffect | GradientMapEffect
   // GPU-stage. Lives in the same per-layer effects array as the rest, but is routed by
   // GPU_TYPES rather than CHAIN_TYPES so applyEffectChain never sees it.
   | DofEffect

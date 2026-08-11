@@ -5,7 +5,7 @@
  * width; `opts.W` is the logical width, `opts.scale` device px per logical px.
  *
  * Fixed chain order (applyEffectChain is the single source of truth):
- *   adjust → duotone → bloom → vignette → grain
+ *   adjust → duotone → gradientMap → bloom → vignette → grain
  */
 
 export interface AdjustEffect {
@@ -43,6 +43,14 @@ export interface DuotoneEffect {
   mix: number         // 0..1 — blend between original and duotone result
   visible: boolean
 }
+export interface GradientMapStop { pos: number; color: string }
+export interface GradientMapEffect {
+  type: 'gradientMap'
+  stops: GradientMapStop[]  // {pos 0..1, hex}; sorted at apply; >= 1 stop
+  contrast: number          // -1..1, 0 = neutral (luminance stretch around 0.5)
+  mix: number               // 0..1 — blend original -> mapped
+  visible: boolean
+}
 /** Depth of field. GPU-only — applied to layer content BEFORE the 2D chain, because
  *  defocus happens at the lens (grain is on the negative, vignette is the barrel).
  *  Needs a depth map; renders through untouched without one. */
@@ -57,7 +65,7 @@ export interface DofEffect {
   bloomStrength: number  // 0..4 — highlight boost before accumulation
   visible: boolean
 }
-export type PostEffect = AdjustEffect | BloomEffect | GrainEffect | VignetteEffect | DuotoneEffect | DofEffect
+export type PostEffect = AdjustEffect | BloomEffect | GrainEffect | VignetteEffect | DuotoneEffect | GradientMapEffect | DofEffect
 
 export const POST_EFFECT_DEFAULTS: Record<PostEffect['type'], PostEffect> = {
   adjust: { type: 'adjust', brightness: 1, contrast: 1, saturation: 1, hue: 0, visible: true },
@@ -65,6 +73,11 @@ export const POST_EFFECT_DEFAULTS: Record<PostEffect['type'], PostEffect> = {
   grain: { type: 'grain', amount: 0.25, size: 2, visible: true },
   vignette: { type: 'vignette', amount: 0.5, size: 0.5, softness: 0.5, visible: true },
   duotone: { type: 'duotone', shadows: '#1a1a40', highlights: '#ffe8d6', mix: 1, visible: true },
+  gradientMap: {
+    type: 'gradientMap',
+    stops: [{ pos: 0, color: '#1a1a40' }, { pos: 0.5, color: '#c0397a' }, { pos: 1, color: '#ffe8d6' }],
+    contrast: 0, mix: 0.85, visible: true,
+  },
   dof: {
     type: 'dof', focus: 0.5, range: 0.15, aperture: 0.02,
     bladeCount: 6, bladeRotation: 0, bloomThreshold: 0.75, bloomStrength: 1.5,
@@ -82,6 +95,7 @@ export const POST_FX_PARAM_CLAMP: Record<string, Record<string, [number, number]
   grain: { amount: [0, 1], size: [1, 8] },
   vignette: { amount: [0, 1], size: [0, 1], softness: [0, 1] },
   duotone: { mix: [0, 1] },
+  gradientMap: { contrast: [-1, 1], mix: [0, 1] },
   dof: {
     focus: [0, 1], range: [0, 1], aperture: [0, 1],
     bladeCount: [0, 12], bladeRotation: [0, 360],
@@ -89,7 +103,7 @@ export const POST_FX_PARAM_CLAMP: Record<string, Record<string, [number, number]
   },
 }
 
-const CHAIN_TYPES = new Set<string>(['adjust', 'duotone', 'bloom', 'vignette', 'grain'])
+const CHAIN_TYPES = new Set<string>(['adjust', 'duotone', 'gradientMap', 'bloom', 'vignette', 'grain'])
 export const isChainEffect = (e: { type: string }): e is PostEffect => CHAIN_TYPES.has(e.type)
 export const chainActive = (effects?: { type: string; visible?: boolean }[]): boolean =>
   !!effects?.some(e => e.visible !== false && CHAIN_TYPES.has(e.type))
@@ -168,6 +182,44 @@ export function duotoneInPlace(
   }
 }
 
+/** Gradient-map RGB by luminance across an arbitrary multi-stop ramp; alpha
+ *  untouched. `contrast` (-1..1) stretches luminance around 0.5 before the
+ *  lookup; `mix` blends toward the mapped colour. Mirrors gradient_map.frag but
+ *  runs on the CPU (a gradient map is cheap; no GPU stage needed). */
+export function gradientMapInPlace(
+  data: Uint8ClampedArray,
+  stops: GradientMapStop[],
+  contrast: number,
+  mix: number,
+): void {
+  const m = clamp01(mix)
+  if (m === 0 || !stops.length) return
+  const ramp = stops.map(s => ({ pos: clamp01(s.pos), rgb: hexToRgb(s.color) }))
+    .sort((a, b) => a.pos - b.pos)
+  const c = 1 + clamp(contrast, -1, 1)
+  const n = ramp.length
+  for (let i = 0; i < data.length; i += 4) {
+    let lum = (0.2126 * data[i]! + 0.7152 * data[i + 1]! + 0.0722 * data[i + 2]!) / 255
+    lum = clamp01((lum - 0.5) * c + 0.5)
+    let r: number, g: number, b: number
+    if (lum <= ramp[0]!.pos) { r = ramp[0]!.rgb.r; g = ramp[0]!.rgb.g; b = ramp[0]!.rgb.b }
+    else if (lum >= ramp[n - 1]!.pos) { r = ramp[n - 1]!.rgb.r; g = ramp[n - 1]!.rgb.g; b = ramp[n - 1]!.rgb.b }
+    else {
+      let hi = 1
+      while (hi < n && ramp[hi]!.pos < lum) hi++
+      const a = ramp[hi - 1]!, bb = ramp[hi]!
+      const span = bb.pos - a.pos
+      const f = span <= 1e-6 ? 0 : (lum - a.pos) / span
+      r = a.rgb.r + (bb.rgb.r - a.rgb.r) * f
+      g = a.rgb.g + (bb.rgb.g - a.rgb.g) * f
+      b = a.rgb.b + (bb.rgb.b - a.rgb.b) * f
+    }
+    data[i] = data[i]! + (r - data[i]!) * m
+    data[i + 1] = data[i + 1]! + (g - data[i + 1]!) * m
+    data[i + 2] = data[i + 2]! + (b - data[i + 2]!) * m
+  }
+}
+
 /** Radial-gradient stops (fractions of the half-diagonal) for a vignette.
  *  softness 0 still keeps a minimal ramp so the edge never bands. */
 export function vignetteStops(size: number, softness: number): { inner: number; outer: number } {
@@ -211,7 +263,7 @@ export function grainTile(): HTMLCanvasElement {
 
 /**
  * Apply the visible chain effects to an offscreen canvas, in the fixed order
- * adjust → duotone → bloom → vignette → grain. Mutates `off` in place; every
+ * adjust → duotone → gradientMap → bloom → vignette → grain. Mutates `off` in place; every
  * op runs in identity transform space (the caller's ctx transform is preserved).
  * `opts.W` = logical canvas width (normalized params scale by it);
  * `opts.scale` = device px per logical px (default 1 — pass the ctx transform's
@@ -247,6 +299,16 @@ export function applyEffectChain(
   if (duotone && duotone.mix > 0) {
     const img = ctx.getImageData(0, 0, off.width, off.height)
     duotoneInPlace(img.data, hexToRgb(duotone.shadows), hexToRgb(duotone.highlights), duotone.mix)
+    ctx.save()
+    ctx.setTransform(1, 0, 0, 1, 0, 0)
+    ctx.putImageData(img, 0, 0)
+    ctx.restore()
+  }
+
+  const gradientMap = find<GradientMapEffect>('gradientMap')
+  if (gradientMap && gradientMap.mix > 0 && gradientMap.stops.length) {
+    const img = ctx.getImageData(0, 0, off.width, off.height)
+    gradientMapInPlace(img.data, gradientMap.stops, gradientMap.contrast, gradientMap.mix)
     ctx.save()
     ctx.setTransform(1, 0, 0, 1, 0, 0)
     ctx.putImageData(img, 0, 0)
