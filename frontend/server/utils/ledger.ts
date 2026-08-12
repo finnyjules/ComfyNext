@@ -229,25 +229,40 @@ export function createLedger(db: LedgerDb) {
   async function expireCredits(now?: string): Promise<{ expiredCredits: number }> {
     await db.query('BEGIN')
     try {
-      const { rows } = await db.query(
-        `SELECT id, user_id, remaining_credits FROM ledger_entries
+      const nowStr = now ?? new Date().toISOString()
+      // Find affected users without locking.
+      const { rows: userRows } = await db.query(
+        `SELECT DISTINCT user_id FROM ledger_entries
          WHERE kind = 'credit' AND remaining_credits > 0
            AND expires_at IS NOT NULL AND expires_at <= $1
-         ORDER BY user_id, id
-         FOR UPDATE`, [now ?? new Date().toISOString()])
+         ORDER BY user_id`, [nowStr])
       let total = 0
-      for (const row of rows) {
-        // Lock the wallet, then post a normal expiry debit for the leftover.
-        const w = await db.query(
-          `UPDATE wallets SET balance_credits = balance_credits - $2, updated_at = now()
-           WHERE user_id = $1 RETURNING balance_credits`, [row.user_id, row.remaining_credits])
+      for (const userRow of userRows) {
+        const userId = userRow.user_id
+        // Lock the wallet first (matching debit/settle lock order).
         await db.query(
-          `INSERT INTO ledger_entries (user_id, kind, amount, reason, idempotency_key, balance_after)
-           VALUES ($1, 'debit', $2, 'expiry', $3, $4)`,
-          [row.user_id, row.remaining_credits, `expire:${row.id}`, Number(w.rows[0].balance_credits)])
-        await db.query(
-          `UPDATE ledger_entries SET remaining_credits = 0 WHERE id = $1`, [row.id])
-        total += row.remaining_credits
+          `SELECT balance_credits FROM wallets WHERE user_id = $1 FOR UPDATE`, [userId])
+        // Now lock and read this user's expiring credits.
+        const { rows: creditRows } = await db.query(
+          `SELECT id, remaining_credits FROM ledger_entries
+           WHERE kind = 'credit' AND remaining_credits > 0
+             AND expires_at IS NOT NULL AND expires_at <= $2
+             AND user_id = $1
+           ORDER BY id
+           FOR UPDATE`, [userId, nowStr])
+        for (const row of creditRows) {
+          // Post a normal expiry debit for the leftover.
+          const w = await db.query(
+            `UPDATE wallets SET balance_credits = balance_credits - $2, updated_at = now()
+             WHERE user_id = $1 RETURNING balance_credits`, [userId, row.remaining_credits])
+          await db.query(
+            `INSERT INTO ledger_entries (user_id, kind, amount, reason, idempotency_key, balance_after)
+             VALUES ($1, 'debit', $2, 'expiry', $3, $4)`,
+            [userId, row.remaining_credits, `expire:${row.id}`, w.rows[0].balance_credits])
+          await db.query(
+            `UPDATE ledger_entries SET remaining_credits = 0 WHERE id = $1`, [row.id])
+          total += row.remaining_credits
+        }
       }
       await db.query('COMMIT')
       return { expiredCredits: total }
