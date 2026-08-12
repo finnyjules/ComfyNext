@@ -61,7 +61,10 @@ export default defineEventHandler(async (event) => {
         const result = await runFal('fal-ai/flux-pro/v1/fill', {
           image_url: body.image,
           mask_url: body.mask,
-          prompt,
+          // fal rejects an empty prompt ("Prompt is required"); an empty prompt
+          // here means "remove" (see the dev/Replicate path, which allows it), so
+          // fall back to a neutral seamless-fill instruction.
+          prompt: falFillPrompt(prompt),
           seed,
           output_format: 'png',
         })
