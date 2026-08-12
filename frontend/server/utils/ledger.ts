@@ -132,5 +132,99 @@ export function createLedger(db: LedgerDb) {
     }
   }
 
-  return { ensureUser, getBalance, getAvailable, credit, debit }
+  async function hold(
+    userId: string, estimate: number, idempotencyKey: string,
+  ): Promise<{ ok: true, holdId: number } | { ok: false, reason: 'insufficient' }> {
+    assertAmount(estimate)
+    await db.query('BEGIN')
+    try {
+      const existing = await db.query(
+        `SELECT id FROM holds WHERE user_id = $1 AND idempotency_key = $2`,
+        [userId, idempotencyKey])
+      if (existing.rows.length) {
+        await db.query('COMMIT')
+        return { ok: true, holdId: Number(existing.rows[0].id) }
+      }
+      const { rows } = await db.query(
+        `SELECT balance_credits, reserved_credits FROM wallets WHERE user_id = $1 FOR UPDATE`,
+        [userId])
+      if (!rows.length) throw new Error(`ledger.hold: no wallet for ${userId} — call ensureUser first`)
+      if (estimate > rows[0].balance_credits - rows[0].reserved_credits) {
+        await db.query('ROLLBACK')
+        return { ok: false, reason: 'insufficient' }
+      }
+      await db.query(
+        `UPDATE wallets SET reserved_credits = reserved_credits + $2, updated_at = now()
+         WHERE user_id = $1`, [userId, estimate])
+      const ins = await db.query(
+        `INSERT INTO holds (user_id, amount, idempotency_key) VALUES ($1, $2, $3) RETURNING id`,
+        [userId, estimate, idempotencyKey])
+      await db.query('COMMIT')
+      return { ok: true, holdId: Number(ins.rows[0].id) }
+    } catch (e) {
+      await db.query('ROLLBACK')
+      throw e
+    }
+  }
+
+  /** Load a hold row and lock it. Returns null if missing. */
+  async function lockHold(holdId: number) {
+    const { rows } = await db.query(
+      `SELECT id, user_id, amount, state FROM holds WHERE id = $1 FOR UPDATE`, [holdId])
+    return rows[0] ?? null
+  }
+
+  async function settle(holdId: number, actual: number, reason: string): Promise<LedgerResult> {
+    assertAmount(actual)
+    await db.query('BEGIN')
+    try {
+      const h = await lockHold(holdId)
+      if (!h) throw new Error(`ledger.settle: hold ${holdId} not found`)
+      if (h.state !== 'open') {
+        // Replay: return the balance-after of the original settle debit.
+        const replayed = await replayOf(h.user_id, 'debit', `settle:${holdId}`)
+        await db.query('COMMIT')
+        return replayed !== null
+          ? { ok: true, balance: replayed }
+          : { ok: true, balance: await getBalance(h.user_id) } // was released, no debit
+      }
+      // Drop the reservation, then debit the actual amount unconditionally:
+      // the provider job already ran — overruns overdraw and reconciliation flags them.
+      await db.query(
+        `UPDATE wallets SET reserved_credits = reserved_credits - $2,
+                            balance_credits = balance_credits - $3, updated_at = now()
+         WHERE user_id = $1`, [h.user_id, h.amount, actual])
+      const balance = await getBalance(h.user_id)
+      await consumeFifo(h.user_id, actual)
+      await db.query(
+        `INSERT INTO ledger_entries (user_id, kind, amount, reason, idempotency_key, balance_after)
+         VALUES ($1, 'debit', $2, $3, $4, $5)`,
+        [h.user_id, actual, reason, `settle:${holdId}`, balance])
+      await db.query(`UPDATE holds SET state = 'settled' WHERE id = $1`, [holdId])
+      await db.query('COMMIT')
+      return { ok: true, balance }
+    } catch (e) {
+      await db.query('ROLLBACK')
+      throw e
+    }
+  }
+
+  async function release(holdId: number): Promise<void> {
+    await db.query('BEGIN')
+    try {
+      const h = await lockHold(holdId)
+      if (!h) throw new Error(`ledger.release: hold ${holdId} not found`)
+      if (h.state !== 'open') { await db.query('COMMIT'); return } // idempotent no-op
+      await db.query(
+        `UPDATE wallets SET reserved_credits = reserved_credits - $2, updated_at = now()
+         WHERE user_id = $1`, [h.user_id, h.amount])
+      await db.query(`UPDATE holds SET state = 'released' WHERE id = $1`, [holdId])
+      await db.query('COMMIT')
+    } catch (e) {
+      await db.query('ROLLBACK')
+      throw e
+    }
+  }
+
+  return { ensureUser, getBalance, getAvailable, credit, debit, hold, settle, release }
 }
