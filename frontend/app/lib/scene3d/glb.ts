@@ -19,6 +19,16 @@ export function loadGlb(url: string): Promise<THREE.Group> {
   return p.then((g) => g.clone(true))
 }
 
+/** Drop every cached parsed GLB. Needed after a WebGL context loss: the cached
+ *  `THREE.Group`'s geometries/materials live on the LOST GPU context, and
+ *  `clone(true)` shares them by reference — so a scene rebuilt from the cache
+ *  would bind dead buffers. Clearing forces a fresh fetch+parse (new geometry
+ *  objects → fresh GPU uploads) on the next `loadGlb`. See SceneEngine's
+ *  context-restore handler. */
+export function clearGlbCache(): void {
+  cache.clear()
+}
+
 async function fetchAndParse(url: string): Promise<THREE.Group> {
   const res = await fetch(url)
   if (!res.ok) throw new Error(`glb fetch failed: ${res.status}`)

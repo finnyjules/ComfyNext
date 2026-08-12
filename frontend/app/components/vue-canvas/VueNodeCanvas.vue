@@ -7799,6 +7799,12 @@ defineExpose({
       />
     </Teleport>
 
+    <!-- Dev-only live WebGL context counter (vs the browser cap that, once
+         exceeded, silently kills the oldest context — a studio/node "crash"). -->
+    <Teleport to="body">
+      <VueCanvasWebGLContextBadge />
+    </Teleport>
+
     <!-- Scene3D Studio editor modal (real backend node — bakes into widgets) -->
     <Teleport to="body">
       <VueCanvasScene3DStudioSurface

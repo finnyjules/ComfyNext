@@ -198,6 +198,13 @@ function getImageTexture(filename: string, colorSpace: THREE.ColorSpace = THREE.
 interface ReliefSourceEntry { canvas: HTMLCanvasElement; ready: boolean; subs: Set<() => void> }
 const reliefSourceCache = new Map<string, ReliefSourceEntry>()
 
+/** Long-edge cap for a relief SOURCE image (px). Bump is a low-frequency height
+ *  field, so 2048 is already more detail than the derivative can show; the cap
+ *  bounds the per-image memory cost (canvas + getImageData + height buffer + GPU
+ *  texture) so a big photo used as a bump map can't spike memory into a context
+ *  loss. Purely a downscale ceiling — smaller images are untouched. */
+export const RELIEF_SOURCE_MAX = 2048
+
 /** Fetch + decode an input-dir image exactly once per filename, however many materials
  *  reference it (C2 fix). `onReady` is queued if the decode hasn't completed yet; if it HAS
  *  (`entry.ready`), the caller is responsible for invoking its own paint immediately — this
@@ -214,10 +221,19 @@ function getReliefImageSource(filename: string, onReady: () => void): ReliefSour
   const img = new Image()
   img.crossOrigin = 'anonymous'
   img.onload = () => {
-    canvas.width = img.naturalWidth
-    canvas.height = img.naturalHeight
+    // Cap the source to RELIEF_SOURCE_MAX on its long edge. A bump map is a
+    // low-frequency height field — a full-resolution photo buys no visible relief
+    // but costs a full-res canvas, a full-res getImageData + a second full-res
+    // height buffer in toHeightPixels, and a large GPU texture. Left uncapped, a
+    // multi-megapixel upload spikes memory hard enough to help lose the WebGL
+    // context (the whole point of this hardening pass). Aspect is preserved so
+    // tiling/UVs are unchanged; drawImage does the downscale in one step.
+    const long = Math.max(img.naturalWidth, img.naturalHeight)
+    const s = long > RELIEF_SOURCE_MAX ? RELIEF_SOURCE_MAX / long : 1
+    canvas.width = Math.max(1, Math.round(img.naturalWidth * s))
+    canvas.height = Math.max(1, Math.round(img.naturalHeight * s))
     const ctx = canvas.getContext('2d')
-    if (ctx) ctx.drawImage(img, 0, 0)
+    if (ctx) ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
     entry!.ready = true
     const subs = entry!.subs
     entry!.subs = new Set()

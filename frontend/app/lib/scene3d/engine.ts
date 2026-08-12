@@ -14,7 +14,8 @@ import { roundedLatheGeometry, roundedPolyGeometry, roundedHullGeometry } from '
 import type { SceneDoc, SceneObject, SceneMaterial, Vec3, LightingPreset, PrimitiveKind, PrimitiveObject, PrimitiveContent, GlbObject, LightObject } from './config'
 import { LIGHT_DEFAULTS, DEFAULT_FONT_URL } from './config'
 import { orderParentsFirst } from './hierarchy'
-import { loadGlb } from './glb'
+import { loadGlb, clearGlbCache } from './glb'
+import { registerWebGLContext, type WebGLContextHandle } from '~/lib/webgl/contextRegistry'
 import { loadFont, fontCacheGet, textOutline, shapeOutline, type Font } from '~/lib/scene3d/outlines'
 import { materialFor, updateMaterial, disposeMaterial, refreshSceneShaderFields, refreshOpalTime } from './materials'
 import { applyModifiers } from '~/lib/scene3d/modifiers'
@@ -422,6 +423,21 @@ export class SceneEngine {
   lightView = false
   private selectedId: string | null = null
   private lastDoc: SceneDoc | null = null
+  /** The canvas the renderer draws into — kept so the context-loss listeners can
+   *  be removed on dispose. */
+  private readonly canvas: HTMLCanvasElement
+  /** True between `webglcontextlost` and `webglcontextrestored`. While set,
+   *  `render()` is a no-op (drawing into a lost context throws/warns), and the
+   *  host's rAF loop keeps spinning harmlessly until the context comes back. */
+  private _contextLost = false
+  get contextLost(): boolean { return this._contextLost }
+  /** Optional host hooks. The studio wires these to pause chrome / re-warm GLBs
+   *  and surface a brief "recovering" state — but recovery itself is fully
+   *  self-contained in the engine, so they are not required for correctness. */
+  onContextLost: (() => void) | null = null
+  onContextRestored: (() => void) | null = null
+  /** Registry handle for the app-wide live-context count (see contextRegistry). */
+  private readonly ctxHandle: WebGLContextHandle
   private postChain: PostChain | null = null
   private postW = 0
   private postH = 0
@@ -450,10 +466,7 @@ export class SceneEngine {
     try { RectAreaLightUniformsLib.init() } catch { /* no GL context (unit tests) */ }
     this.scene = new THREE.Scene()
     this.camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 200)
-    const pmrem = new THREE.PMREMGenerator(this.renderer)
-    this.envTarget = pmrem.fromScene(new RoomEnvironment(), 0.04)
-    this.scene.environment = this.envTarget.texture
-    pmrem.dispose()
+    this.buildEnvironment()
     this.sun = new THREE.DirectionalLight(0xffffff, 1.4)
     this.sun.castShadow = true
     this.sun.shadow.mapSize.set(2048, 2048)
@@ -475,6 +488,73 @@ export class SceneEngine {
     this.shadowGround.position.y = -0.005 // just under y=0 so it never z-fights the grid
     this.shadowGround.receiveShadow = true
     this.scene.add(this.sun, this.ambient, this.grid, this.shadowGround)
+    this.canvas = canvas
+    canvas.addEventListener('webglcontextlost', this.handleContextLost, false)
+    canvas.addEventListener('webglcontextrestored', this.handleContextRestored, false)
+    this.ctxHandle = registerWebGLContext('Scene3D')
+  }
+
+  /** (Re)build the PMREM environment map from RoomEnvironment. Split out of the
+   *  constructor so context-restore can rebuild it — the render target is a GPU
+   *  resource lost with the context. Disposes any prior target first. */
+  private buildEnvironment(): void {
+    this.envTarget?.dispose()
+    const pmrem = new THREE.PMREMGenerator(this.renderer)
+    this.envTarget = pmrem.fromScene(new RoomEnvironment(), 0.04)
+    this.scene.environment = this.envTarget.texture
+    pmrem.dispose()
+  }
+
+  // WebGL context loss leaves the renderer permanently blank with NO throwable
+  // error (three only console.logs "Context Lost."), so without these handlers a
+  // dropped context — a background tab reclaim, too many live WebGL contexts
+  // across the canvas's nodes, a large texture upload, or a driver reset — reads
+  // to the user as "the studio crashed." preventDefault() is REQUIRED: without
+  // it the browser never fires `webglcontextrestored`, so recovery is impossible.
+  private readonly handleContextLost = (e: Event): void => {
+    e.preventDefault()
+    this._contextLost = true
+    this.onContextLost?.()
+  }
+
+  private readonly handleContextRestored = (): void => {
+    this.restoreGLResources()
+    this._contextLost = false
+    this.onContextRestored?.()
+  }
+
+  /** Rebuild every GPU-side resource after the context is restored. three itself
+   *  re-inits the renderer on `webglcontextrestored`, but resources built outside
+   *  its own upload path do NOT come back: the PMREM env target, the RectAreaLight
+   *  LTC textures, the PostChain's render targets, and — critically — cached GLB
+   *  geometry shared by reference across roots. We rebuild the env + LTC, drop the
+   *  PostChain and GLB cache, then fully tear down and re-sync every object root
+   *  from `lastDoc` so all geometry/material/texture uploads happen fresh against
+   *  the live context (rather than trusting three's stale per-buffer cache). */
+  private restoreGLResources(): void {
+    try { RectAreaLightUniformsLib.init() } catch { /* no-op on a headless/lost path */ }
+    this.buildEnvironment()
+    this.postChain?.dispose()
+    this.postChain = null
+    this.postW = this.postH = 0
+    // Cached GLBs live on the lost context and are shared by reference (loadGlb
+    // clones the hierarchy but not the geometry) — clear so the re-sync re-parses.
+    clearGlbCache()
+    // Flatten nested roots before disposing so none is freed twice, then rebuild
+    // from the doc: syncFromDoc recreates missing roots (new geometry/material →
+    // fresh GPU buffers), and re-kicks any GLB/font/mesh async loads.
+    for (const root of this.objectRoots.values()) this.scene.add(root)
+    for (const root of this.objectRoots.values()) disposeTree(root)
+    this.objectRoots.clear()
+    this.glbTokens.clear()
+    this.fontTokens.clear()
+    this.meshTokens.clear()
+    const doc = this.lastDoc
+    if (doc) {
+      this.syncFromDoc(doc)
+      this.applyCameraFromDoc(doc)
+      this.render()
+    }
   }
 
   setSize(width: number, height: number): void {
@@ -920,6 +1000,10 @@ export class SceneEngine {
    *  Defaults to 0 for a caller with no live clock (grain then just freezes at its first frame,
    *  same graceful degradation as every other `elapsedSec` default in this class). */
   render(elapsedSec = 0): void {
+    // Drawing into a lost context throws/warns and can't produce a frame; the
+    // host rAF keeps calling this harmlessly until `handleContextRestored` clears
+    // the flag and rebuilds, at which point rendering resumes on its own.
+    if (this._contextLost) return
     this.renderWithPost(this.scene, this.camera, this.lastDoc?.post ?? DEFAULT_POST, elapsedSec)
   }
 
@@ -977,6 +1061,8 @@ export class SceneEngine {
   }
 
   dispose(): void {
+    this.canvas.removeEventListener('webglcontextlost', this.handleContextLost, false)
+    this.canvas.removeEventListener('webglcontextrestored', this.handleContextRestored, false)
     // Invalidate pending GLB/font loads first: their .then() checks these
     // token maps, so clearing makes any in-flight load bail instead of
     // attaching to a disposed root.
@@ -995,7 +1081,14 @@ export class SceneEngine {
     this.envTarget?.dispose()
     this.postChain?.dispose()
     this.postChain = null
+    // forceContextLoss() BEFORE dispose(): dispose() alone leaves the GL context
+    // alive until GC, so opening/closing studios silently piles up zombie contexts
+    // toward the browser's ~16 cap (past which the oldest is killed — a "crash").
+    // forceContextLoss frees the slot now. Guarded: it throws if the context is
+    // already lost (our own handler may have fired), which must not abort teardown.
+    try { this.renderer.forceContextLoss() } catch { /* already lost */ }
     this.renderer.dispose()
+    this.ctxHandle.release()
   }
 }
 

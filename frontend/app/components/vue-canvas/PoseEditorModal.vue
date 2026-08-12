@@ -17,6 +17,7 @@ import {
   type PoseState, type PoseRotations,
 } from '~/composables/usePoseRig'
 import { useInpaint, loadImage, imageToDataUrl, capDims } from '~/composables/useInpaint'
+import { registerWebGLContext, type WebGLContextHandle } from '~/lib/webgl/contextRegistry'
 
 const props = defineProps<{ nodeId: string; nodes: any[]; edges: any[] }>()
 const emit = defineEmits<{ close: [] }>()
@@ -65,6 +66,7 @@ const presetNames = Object.keys(POSE_PRESETS)
 const stageRef = ref<HTMLDivElement | null>(null)
 let THREE: any = null
 let renderer: any = null
+let ctxHandle: WebGLContextHandle | null = null
 let scene: any = null
 let camera: any = null
 let orbit: any = null
@@ -93,6 +95,7 @@ async function initThree() {
   // (readRenderTargetPixels), so we never read the main framebuffer. Keeping it
   // on forces a slower compositor path and can cause flicker.
   renderer = new THREE.WebGLRenderer({ antialias: true })
+  ctxHandle = registerWebGLContext('PoseEditor')
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
   renderer.setSize(w, h)
   renderer.setClearColor(0x0d0d0f, 1)
@@ -403,6 +406,7 @@ onBeforeUnmount(() => {
   } catch { /* ignore */ }
   if (renderer?.domElement?.parentNode) renderer.domElement.parentNode.removeChild(renderer.domElement)
   renderer = null; scene = null; camera = null; orbit = null; control = null; gizmo = null
+  ctxHandle?.release(); ctxHandle = null
 })
 </script>
 

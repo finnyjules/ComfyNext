@@ -2,6 +2,7 @@
 import { Handle, Position } from '@vue-flow/core'
 import { Box, Loader2, Download, RotateCcw, AlertTriangle } from 'lucide-vue-next'
 import { getTypeColor } from '~/composables/useVueNodes'
+import { registerWebGLContext, type WebGLContextHandle } from '~/lib/webgl/contextRegistry'
 
 // 3D Model viewer artifact (Model3D node). Loads a GLB from a URL and renders it
 // in an interactive Three.js viewer (orbit/zoom). The URL is resolved from this
@@ -75,6 +76,8 @@ let orbit: any = null
 let modelRoot: any = null
 let rafId = 0
 let inited = false
+let ctxHandle: WebGLContextHandle | null = null
+let visObserver: IntersectionObserver | null = null
 
 async function initViewer() {
   const el = stageRef.value
@@ -83,6 +86,7 @@ async function initViewer() {
   THREE = await import('three')
   const { OrbitControls } = await import('three/addons/controls/OrbitControls.js')
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
+  ctxHandle = registerWebGLContext('Artifact3D')
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
   renderer.setSize(W, H)
   el.appendChild(renderer.domElement)
@@ -99,6 +103,17 @@ async function initViewer() {
 
   const tick = () => { rafId = requestAnimationFrame(tick); orbit.update(); renderer.render(scene, camera) }
   tick()
+  // Pause the render loop while the node is scrolled off the canvas viewport:
+  // an off-screen orbit preview has nothing to animate, so a 60fps render loop
+  // per hidden GLB node is pure wasted GPU work (and memory pressure that helps
+  // push the tab toward the WebGL-context cap). The context itself is kept so
+  // scrolling back is instant — no reload thrash. Resumes on re-entry.
+  visObserver = new IntersectionObserver((entries) => {
+    const visible = entries[0]?.isIntersecting ?? true
+    if (visible && !rafId) tick()
+    else if (!visible && rafId) { cancelAnimationFrame(rafId); rafId = 0 }
+  })
+  visObserver.observe(el)
   if (glbUrl.value) loadModel(glbUrl.value)
 }
 
@@ -148,10 +163,12 @@ watch(glbUrl, (u) => { if (u && renderer) loadModel(u) })
 
 onMounted(() => { initViewer() })
 onBeforeUnmount(() => {
+  visObserver?.disconnect(); visObserver = null
   cancelAnimationFrame(rafId); rafId = 0
   try { orbit?.dispose?.(); renderer?.forceContextLoss?.(); renderer?.dispose?.() } catch { /* ignore */ }
   if (renderer?.domElement?.parentNode) renderer.domElement.parentNode.removeChild(renderer.domElement)
   renderer = null; scene = null; camera = null; orbit = null; modelRoot = null
+  ctxHandle?.release(); ctxHandle = null
 })
 </script>
 
