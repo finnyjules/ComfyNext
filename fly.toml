@@ -13,8 +13,10 @@ primary_region = "cdg"   # Paris. Change to your nearest region if you like.
 [env]
   HOST = "0.0.0.0"
   PORT = "3000"
-  # The ComfyUI canvas iframe loads from this origin (the :8188 service below).
-  NUXT_PUBLIC_COMFY_ORIGIN = "https://vessell.fly.dev:8188"
+  # DISABLED with Service B below: this origin pointed the canvas iframe at the
+  # publicly exposed ComfyUI port. Restore both only after the engine sits
+  # behind the authenticated Nitro proxy (consumer-product roadmap Stage 5).
+  # NUXT_PUBLIC_COMFY_ORIGIN = "https://vessell.fly.dev:8188"
 
 # Persistent storage for outputs, uploads, and user settings/workflows.
 [[mounts]]
@@ -46,23 +48,31 @@ primary_region = "cdg"   # Paris. Change to your nearest region if you like.
     grace_period = "30s"
 
 ###############################################################################
-# Service B — ComfyUI canvas, exposed as a second origin on :8188
+# Service B — ComfyUI canvas — DISABLED (security)
+#
+# This block exposed the UNAUTHENTICATED ComfyUI API on public :8188: anyone
+# who found the hostname could queue prompts on the operator's provider keys
+# and read every generated file. A deploy without this block runs the app UI
+# but not the canvas iframe — acceptable until the engine is reachable only
+# through the authenticated Nitro proxy (consumer-product roadmap Stage 5),
+# at which point the iframe origin becomes a proxied path, not a second port.
+# (Hosting provider is undecided; if Fly is dropped, delete this file.)
 ###############################################################################
-[[services]]
-  internal_port = 8188
-  protocol = "tcp"
-  auto_stop_machines = false
-  auto_start_machines = true
-  min_machines_running = 1
-
-  [[services.ports]]
-    port = 8188
-    handlers = ["tls", "http"]
-
-  [[services.tcp_checks]]
-    interval = "15s"
-    timeout = "2s"
-    grace_period = "60s"
+# [[services]]
+#   internal_port = 8188
+#   protocol = "tcp"
+#   auto_stop_machines = false
+#   auto_start_machines = true
+#   min_machines_running = 1
+#
+#   [[services.ports]]
+#     port = 8188
+#     handlers = ["tls", "http"]
+#
+#   [[services.tcp_checks]]
+#     interval = "15s"
+#     timeout = "2s"
+#     grace_period = "60s"
 
 [[vm]]
   size = "shared-cpu-2x"

@@ -15,6 +15,9 @@ export default defineNuxtConfig({
     // Server-only. Set via NUXT_REPLICATE_TOKEN env var.
     // Used by /api/cloud-train/* routes; never exposed to the browser.
     replicateToken: '',
+    // Server-only fal.ai key. Set via NUXT_FAL_TOKEN (FAL_KEY in frontend/.env
+    // still works as a fallback — see server/utils/falStorage.ts).
+    falToken: '',
     // Max trainings the queue runner keeps in flight on Replicate at once.
     // Override via NUXT_TRAINING_MAX_CONCURRENCY. Default 2.
     trainingMaxConcurrency: '2',

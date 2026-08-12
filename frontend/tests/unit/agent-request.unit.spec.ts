@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import {
   MAX_PHRASE_CHARS,
   optionalApiKey,
@@ -81,6 +81,30 @@ describe('resolveAnthropicKey', () => {
   })
   it('treats whitespace-only keys as absent', () => {
     expect(() => resolveAnthropicKey('   ', '  ')).toThrow()
+  })
+
+  describe('hosted mode (Clerk key present)', () => {
+    const KEY = 'NUXT_CLERK_SECRET_KEY'
+    const saved = process.env[KEY]
+    afterEach(() => {
+      if (saved === undefined) delete process.env[KEY]
+      else process.env[KEY] = saved
+    })
+
+    it('ignores the client BYOK key — the server key is the only path', () => {
+      process.env[KEY] = 'sk_test_hosted'
+      expect(resolveAnthropicKey('sk-server', 'sk-client')).toBe('sk-server')
+    })
+
+    it('throws 503 when only a client key exists', () => {
+      process.env[KEY] = 'sk_test_hosted'
+      try {
+        resolveAnthropicKey(undefined, 'sk-client')
+        expect.unreachable('should have thrown')
+      } catch (e: any) {
+        expect(e.statusCode).toBe(503)
+      }
+    })
   })
 })
 

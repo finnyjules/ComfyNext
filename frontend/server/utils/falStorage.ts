@@ -15,7 +15,14 @@
 const FAL_INITIATE = 'https://rest.alpha.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3'
 
 export function getFalToken(): string | null {
-  return process.env.FAL_KEY?.trim() || process.env.NUXT_FAL_TOKEN?.trim() || null
+  // Prefer runtimeConfig (NUXT_FAL_TOKEN), matching how the Replicate token is
+  // loaded. The raw FAL_KEY env read stays as a fallback so existing
+  // frontend/.env files (and the Python nodes that share them) keep working.
+  let fromConfig: string | undefined
+  try {
+    fromConfig = (useRuntimeConfig() as { falToken?: string }).falToken
+  } catch { /* outside the Nitro runtime (unit tests) — fall through to env */ }
+  return fromConfig?.trim() || process.env.NUXT_FAL_TOKEN?.trim() || process.env.FAL_KEY?.trim() || null
 }
 
 /**

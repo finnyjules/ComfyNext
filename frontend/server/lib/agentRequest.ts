@@ -5,6 +5,7 @@
  * Errors are plain Error objects with statusCode so h3 renders them as HTTP
  * errors and unit tests don't need h3.
  */
+import { isHosted } from '../utils/deployMode'
 
 /** ~100k tokens of prompt text; the client-built canvas prompt includes the
  *  full surface snapshot, so this is generous but bounded. */
@@ -39,9 +40,12 @@ export function optionalApiKey(v: unknown): string | undefined {
 
 /** Shared-key resolution: the client's own key (BYOK override) wins, else the
  *  server's env key. 503 (not 400) when neither — the request was fine, the
- *  deployment isn't. */
+ *  deployment isn't. In hosted mode the BYOK override is ignored entirely:
+ *  per-request plaintext keys must not ride through shared infrastructure,
+ *  and the operator's server key is the only path. */
 export function resolveAnthropicKey(serverKey: string | undefined, clientKey: string | undefined): string {
-  const key = (clientKey || '').trim() || (serverKey || '').trim()
+  const byok = isHosted() ? '' : (clientKey || '').trim()
+  const key = byok || (serverKey || '').trim()
   if (!key) {
     throw Object.assign(
       new Error("AI assist isn't configured on this server. Set NUXT_ANTHROPIC_API_KEY when starting the app, or paste your own key in Settings → AI."),
