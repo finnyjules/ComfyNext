@@ -5,6 +5,7 @@ import { makeTextTexture } from './textTexture'
 import { PostChain, DEFAULT_POST, postEnabled, type PostSettings } from './post'
 import { stripAlpha } from '~/lib/color/convert'
 import { refreshLiveShaderFills, withShaderFillContext, clearShaderFillOwner, updateLiveScreenSize } from './fills'
+import { registerWebGLContext, type WebGLContextHandle } from '~/lib/webgl/contextRegistry'
 
 export interface EngineOptions {
   effect: SpaceTypeEffect
@@ -45,6 +46,7 @@ let _nextEngineId = 1
 
 export class SpaceTypeEngine {
   readonly renderer: THREE.WebGLRenderer
+  private readonly ctxHandle: WebGLContextHandle
   readonly scene: THREE.Scene
   /** Stable per-instance id, never reused. Threads through fills.ts's owner-scoped shader
    *  field cache (withShaderFillContext / refreshLiveShaderFills / clearShaderFillOwner) so
@@ -102,6 +104,7 @@ export class SpaceTypeEngine {
     this.orthoCam.up.set(0, 1, 0)
     this.orthoCam.lookAt(0, 0, 0)
     this.applyBackground()
+    this.ctxHandle = registerWebGLContext('SpaceType')
   }
 
   private get activeCam(): THREE.Camera {
@@ -417,8 +420,9 @@ export class SpaceTypeEngine {
     clearShaderFillOwner(this.id)
     // Free the underlying WebGL context promptly (renderer.dispose alone leaves it
     // alive until GC — with one context per node that hits the browser's ~16 cap).
-    this.renderer.forceContextLoss()
+    try { this.renderer.forceContextLoss() } catch { /* already lost */ }
     this.renderer.dispose()
+    this.ctxHandle.release()
   }
 }
 
