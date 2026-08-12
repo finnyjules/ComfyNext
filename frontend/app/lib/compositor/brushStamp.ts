@@ -22,6 +22,35 @@ export function toWidthNorm(nx: number, ny: number, w: number, h: number): { x: 
   return { x: nx, y: ny * (h / w) }
 }
 
+/**
+ * Convert a mask stroke captured in ABSOLUTE artboard (width-normalized) space
+ * into the target layer's LOCAL frame, so the mask FOLLOWS the layer when it is
+ * moved or rotated. The renderer (applyStrokeMask) replays the same transform the
+ * content uses — `translate(x*W, y*H)` then `rotate(rotation)` (paintLayer's
+ * applyXform for the base instance) — so a local point maps back to exactly the
+ * artboard pixel it was painted on at capture time.
+ *
+ * `aspect` = artboard H/W. A layer's Y position is a fraction of HEIGHT while
+ * strokes are width-normalized on BOTH axes, so the layer origin sits at
+ * width-normalized (x, y*aspect). Only translation and rotation are inverted here
+ * (scale/skew are not part of an image layer's content transform — its size lives
+ * in w/h, and applyXform's own scale is the cloner's, 1 for the base instance).
+ */
+export function maskStrokeToLocal(
+  stroke: PaintStroke,
+  xf: { x: number; y: number; rotation: number },
+  aspect: number,
+): PaintStroke {
+  const rot = -((xf.rotation || 0) * Math.PI) / 180 // inverse rotation
+  const cos = Math.cos(rot), sin = Math.sin(rot)
+  const cx = xf.x, cy = xf.y * aspect
+  const points = stroke.points.map(p => {
+    const ox = p.x - cx, oy = p.y - cy
+    return { x: ox * cos - oy * sin, y: ox * sin + oy * cos }
+  })
+  return { ...stroke, points }
+}
+
 /** Catmull-Rom resample: smooth a polyline through its points. Endpoints are kept
  *  exactly; interior gets `samples` interpolated points per segment. */
 export function smoothPoints(points: { x: number; y: number }[], samples = 8): { x: number; y: number }[] {

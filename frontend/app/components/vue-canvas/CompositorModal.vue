@@ -27,7 +27,7 @@ import AgentProgress from '~/components/agent/AgentProgress.vue'
 import AgentSweep from '~/components/agent/AgentSweep.vue'
 import { useVectorPen, buildPathLayerFromAnchors } from '~/composables/useVectorPen'
 import { useBrushPaint } from '~/composables/useBrushPaint'
-import { toWidthNorm, brushBoxFromStrokes, strokeRadiusPx, type PaintStroke } from '~/lib/compositor/brushStamp'
+import { toWidthNorm, brushBoxFromStrokes, strokeRadiusPx, maskStrokeToLocal, type PaintStroke } from '~/lib/compositor/brushStamp'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
 import { useVectorNodeEdit } from '~/composables/useVectorNodeEdit'
 import { generateVectorFromText, vectorizeImage, urlToDataUrl } from '~/composables/useVectorAi'
@@ -943,6 +943,15 @@ function rowLabel(row: any) {
   if (l.name) return l.name
   return l.kind === 'text' ? (l.text?.split('\n')[0] || 'Text') : l.kind
 }
+// Row icon → live image preview when the layer resolves to a still image.
+// Wired live sources (streams) and non-image locals fall through to their icon.
+function rowThumbUrl(row: any): string | null {
+  if (row.kind === 'wired') return row.layer?.live ? null : ((row.layer?.url as string) || null)
+  if ((row.kind === 'local' || row.kind === 'child') && row.layer?.kind === 'image' && row.layer?.filename) {
+    return imageLayerUrl(row.layer.filename)
+  }
+  return null
+}
 
 // ── Drag-and-drop reorder (unified z-order + group membership / nesting) ──────
 function setStackOrder(topFirstKeys: StackKey[]) {
@@ -1465,6 +1474,11 @@ watch(layers, (ls) => {
     const next = pruneSlotKeyedRecord(cloners, live, k => (/^\d+$/.test(k) ? Number(k) : null))
     if (next) props.sailor_wiredCloners = next
   }
+  const names = props.sailor_wiredNames as Record<string, unknown> | undefined
+  if (names) {
+    const next = pruneSlotKeyedRecord(names, live, k => (/^\d+$/.test(k) ? Number(k) : null))
+    if (next) props.sailor_wiredNames = next
+  }
 }, { immediate: true })
 function toggleWiredFlag(propKey: 'sailor_hiddenWired' | 'sailor_lockedWired', slot: number) {
   const cur = readSlotArr(propKey)
@@ -1475,6 +1489,33 @@ function setWiredHidden(slot: number, hidden: boolean) {
   const cur = readSlotArr('sailor_hiddenWired')
   if (cur.includes(slot) === hidden) return
   writeSlotArr('sailor_hiddenWired', hidden ? [...cur, slot] : cur.filter(s => s !== slot))
+}
+// ── Wired-layer names ────────────────────────────────────────────────────────
+// Wired image layers have no LocalLayer to hang a `name` on, so custom names
+// live in a slot→name map on the node's properties (pruned with the other
+// slot-keyed state when a wire is removed — see the watch(layers) above).
+function readSlotNames(): Record<number, string> {
+  return ((compositor.value?.data?.properties as any)?.sailor_wiredNames as Record<number, string> | undefined) ?? {}
+}
+const wiredNames = computed<Record<number, string>>(() => readSlotNames())
+function wiredLabel(slot: number): string { return wiredNames.value[slot]?.trim() || `Layer ${slot}` }
+const editingWiredSlot = ref<number | null>(null)
+const wiredNameDraft = ref('')
+function startWiredRename(slot: number) {
+  editingWiredSlot.value = slot
+  wiredNameDraft.value = readSlotNames()[slot] ?? ''
+}
+function commitWiredRename() {
+  const slot = editingWiredSlot.value
+  const node = compositor.value
+  if (slot != null && node) {
+    if (!node.data.properties) node.data.properties = {}
+    const next = { ...readSlotNames() }
+    const name = wiredNameDraft.value.trim()
+    if (name) next[slot] = name; else delete next[slot]
+    ;(node.data.properties as any).sailor_wiredNames = next
+  }
+  editingWiredSlot.value = null
 }
 /** Persist a full bottom→top stack order. */
 function writeStackOrder(arr: StackKey[]) {
@@ -2188,7 +2229,7 @@ const FONT_WEIGHTS = [
 function layerLabelByKey(key: StackKey): string {
   const r = resolveStackKey(key)
   if (!r) return key
-  if (r.type === 'wired') return `Layer ${(r.layer as Layer).slot}`
+  if (r.type === 'wired') return wiredLabel((r.layer as Layer).slot)
   return `${r.layer.kind} ${String(r.layer.id).slice(-4)}`
 }
 // Candidate mask sources for the selected layer: every other present layer (cross-source).
@@ -2504,7 +2545,11 @@ async function onBrushPointerUp() {
     }
     const sel = selectedLocal.value
     if (sel && sel.kind !== 'brush') {
-      setLocal(sel.id, { maskStrokes: [...(sel.maskStrokes ?? []), s] })
+      // Store the stroke in the layer's LOCAL frame so the mask follows the layer
+      // when it's moved/rotated (applyStrokeMask replays the same translate+rotate).
+      const aspect = canvasDisplay.h / Math.max(1, canvasDisplay.w)
+      const local = maskStrokeToLocal(s, { x: sel.x ?? 0.5, y: sel.y ?? 0.5, rotation: sel.rotation ?? 0 }, aspect)
+      setLocal(sel.id, { maskStrokes: [...(sel.maskStrokes ?? []), local] })
     }
     return
   }
@@ -3500,8 +3545,13 @@ onUnmounted(() => {
                 title="Expand/collapse" @click.stop="toggleGroup(row.groupId)">
                 <component :is="expandedGroups.has(row.groupId) ? ChevronDown : ChevronRight" class="size-3.5" />
               </button>
-              <!-- Icon -->
+              <!-- Icon / thumbnail -->
               <Group v-if="row.kind === 'group'" class="size-3.5 text-white/60 shrink-0" />
+              <!-- Live image preview for image layers (local + wired), so the row reads at a glance -->
+              <img v-else-if="rowThumbUrl(row)" :src="rowThumbUrl(row)!"
+                class="rounded object-cover shrink-0 ring-1 ring-white/10 bg-white/[0.03]"
+                :class="row.kind === 'child' ? 'size-3.5' : 'size-4'"
+                alt="" draggable="false" />
               <ImageIcon v-else-if="row.kind === 'wired'" class="size-3.5 text-white/60 shrink-0" />
               <!-- Fill swatch (so a layer's colour/gradient/pattern is identifiable at a glance), else the kind icon -->
               <FillSwatch v-else-if="rowFill(row.layer)" :paint="rowFill(row.layer)!" :size="row.kind === 'child' ? 12 : 14" />
@@ -3530,7 +3580,20 @@ onUnmounted(() => {
               />
               <span v-else-if="row.kind === 'group'" class="text-sm truncate flex-1" title="Double-click to rename"
                 @dblclick.stop="startGroupRename(row.groupId)">{{ groupLabel(row.groupId) }} <span class="text-white/40">· {{ row.count }}</span></span>
-              <span v-else-if="row.kind === 'wired'" class="text-sm truncate flex-1" :class="rowHidden(row) ? 'text-white/35' : ''">Layer {{ row.slot }}</span>
+              <input
+                v-else-if="row.kind === 'wired' && editingWiredSlot === row.slot"
+                v-model="wiredNameDraft"
+                :ref="(el: any) => el?.focus?.()"
+                class="flex-1 min-w-0 bg-white/[0.06] rounded px-1 text-sm outline-none"
+                @click.stop @mousedown.stop
+                @keydown.enter.prevent="commitWiredRename"
+                @keydown.esc.prevent="editingWiredSlot = null"
+                @blur="commitWiredRename"
+              />
+              <span v-else-if="row.kind === 'wired'" class="text-sm truncate flex-1"
+                :class="rowHidden(row) ? 'text-white/35' : ''"
+                title="Double-click to rename"
+                @dblclick.stop="startWiredRename(row.slot)">{{ wiredLabel(row.slot) }}</span>
               <span v-else class="truncate flex-1 capitalize" :class="[row.kind === 'child' ? 'text-[13px] text-white/65' : 'text-sm', rowHidden(row) ? 'text-white/35 line-through decoration-white/20' : '']"
                 title="Double-click to rename"
                 @dblclick.stop="startLayerRename(row.layer.id)">{{ rowLabel(row) }}</span>

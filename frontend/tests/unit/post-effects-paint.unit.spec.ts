@@ -102,6 +102,20 @@ describe('paintLayer routing', () => {
     expect(main.fill).toHaveBeenCalled()
     expect(main.drawImage).not.toHaveBeenCalled()
   })
+  it('effected offscreen matches DEVICE resolution, not logical W×H (retina/hi-res stays crisp)', () => {
+    // Retina/hi-res: the main ctx is a 40×40 device canvas driven through a 2×
+    // transform for a logical 20×20 artboard. The chain-effect offscreen must be
+    // sized to the device canvas (40×40) and drawn through that same transform, or
+    // the layer rasterizes at logical 20×20 and gets upscaled → visibly softer.
+    const main = stubCtx('main')
+    main.canvas = { width: 40, height: 40 }
+    main.getTransform = () => ({ a: 2, b: 0, c: 0, d: 2, e: 0, f: 0 })
+    const items: StackItem[] = [{ type: 'local', key: 'l:r1', layer: rect([{ ...defaultPostEffect('gradientMap') }]) }]
+    paintLayerStack(main, 20, 20, items, [(items[0] as any).layer])
+    const off = main.drawImage.mock.calls[0][0]
+    expect(off.width).toBe(40)
+    expect(off.height).toBe(40)
+  })
 })
 
 describe('paintLayerStack doc-level post', () => {

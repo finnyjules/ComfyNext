@@ -4,7 +4,7 @@
  * nested layer groups. Mounts the real CompositorModal with a fixture node.
  * Reachable only at /dev/frame-lab. */
 import CompositorModal from '~/components/vue-canvas/CompositorModal.vue'
-import { createTextLayer, createRectLayer } from '~/composables/useCompositorLayers'
+import { createTextLayer, createRectLayer, createImageLayer } from '~/composables/useCompositorLayers'
 
 // Text layers exercising every new control.
 const plain = createTextLayer({ text: 'Plain text', x: 0.5, y: 0.12, fontSize: 0.06, color: '#ffffff' })
@@ -13,6 +13,11 @@ const underlined = createTextLayer({ text: 'Underlined', x: 0.5, y: 0.36, fontSi
 const struck = createTextLayer({ text: 'Strikethrough', x: 0.5, y: 0.48, fontSize: 0.06, strikethrough: true, color: '#ff99f7' })
 const upper = createTextLayer({ text: 'uppercased', x: 0.5, y: 0.60, fontSize: 0.06, textTransform: 'uppercase', color: '#0e6bff' })
 const combo = createTextLayer({ text: 'all at once', x: 0.5, y: 0.72, fontSize: 0.06, textTransform: 'capitalize', underline: true, letterSpacing: 0.12, color: '#f2ff5a' })
+
+// A local image layer — exercises the layer-list thumbnail (its own pixels) and
+// double-click rename. `filename` points at a real ComfyUI input image so the
+// /view thumbnail actually loads.
+const pic = createImageLayer('frame_img_1786433110820_0000.png', 1.5, { x: 0.5, y: 0.5, w: 0.4, h: 0.4 / 1.5 } as any)
 
 // Nested groups: A = [a1,a2], B = [b1] ; A and B nested under C ("Header").
 const a1 = createTextLayer({ id: 'a1', text: 'Title', x: 0.3, y: 0.85, fontSize: 0.05 } as any)
@@ -41,7 +46,7 @@ const node = reactive({
     widgetsValues: [], widgetDefs: [{ name: 'width' }, { name: 'height' }],
     images: [] as string[],
     properties: {
-      sailor_localLayers: [plain, tracked, underlined, struck, upper, combo, a1, a2, b1],
+      sailor_localLayers: [pic, plain, tracked, underlined, struck, upper, combo, a1, a2, b1],
       sailor_localGroups: [
         { id: 'A', parentId: 'C', name: 'Row' },
         { id: 'B', parentId: 'C', name: 'Side' },
@@ -52,7 +57,18 @@ const node = reactive({
     mode: 0,
   },
 })
-const nodes = [node]
+// A wired image source (an Image node feeding input-0 ⇒ slot 1). Exercises the
+// wired-layer thumbnail and the new wired rename (double-click "Layer 1").
+const imgSrc = reactive({
+  id: 'img1',
+  data: {
+    nodeType: 'Image',
+    images: ['/view?filename=1786471194089_pasted-1786471194089.png&type=input'],
+    widgetsValues: [], widgetDefs: [],
+  },
+})
+const edges = [{ source: 'img1', target: 'n1', sourceHandle: 'output-0', targetHandle: 'input-0' }]
+const nodes = [node, imgSrc]
 </script>
 
 <template>
@@ -60,6 +76,6 @@ const nodes = [node]
     <div class="absolute inset-0 grid place-items-center text-white/[0.06] text-[80px] font-bold select-none">
       frame lab
     </div>
-    <CompositorModal :node-id="'n1'" :nodes="nodes" :edges="[]" @close="() => {}" />
+    <CompositorModal :node-id="'n1'" :nodes="nodes" :edges="edges" @close="() => {}" />
   </div>
 </template>

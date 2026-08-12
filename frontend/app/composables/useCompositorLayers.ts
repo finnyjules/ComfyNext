@@ -905,16 +905,27 @@ function applyStrokeMask(ctx: CanvasRenderingContext2D, layer: LocalLayer, W: nu
   mask.width = Math.max(1, dev.width); mask.height = Math.max(1, dev.height)
   const mctx = mask.getContext('2d')
   if (!mctx) return
-  mctx.setTransform(t)
   const strokes = layer.maskStrokes ?? []
-  // `base = W`: strokes are normalized to the artboard width, which is W logical
-  // px in this transform space (mirrors renderStack's stampStrokes call).
-  if ((layer.maskBase ?? 'visible') === 'visible') {
-    // Fully visible everywhere; a plain brush stroke carves a hole (hide) and an
-    // eraser stroke paints white back (restore). Invert `erase` so stampStrokes'
-    // destination-out carve fires for plain strokes and its white paint for erase.
+  const visibleBase = (layer.maskBase ?? 'visible') === 'visible'
+  // Base fill = "visible everywhere". It covers the WHOLE device buffer and is NOT
+  // part of the layer's local frame, so it is stamped in raw device space — never
+  // through the layer transform (which would place a W×H rect at the layer center).
+  if (visibleBase) {
+    mctx.setTransform(1, 0, 0, 1, 0, 0)
     mctx.fillStyle = '#fff'
-    mctx.fillRect(0, 0, W, H)
+    mctx.fillRect(0, 0, mask.width, mask.height)
+  }
+  // Strokes are stored in the layer's LOCAL frame (see maskStrokeToLocal): replay
+  // the layer's own translate+rotate — the SAME transform paintLayer's applyXform
+  // applies to the content — so the mask tracks the layer under move/rotate. `base
+  // = W`: strokes are width-normalized (W px in this transform space).
+  mctx.setTransform(t)
+  mctx.translate((layer.x ?? 0.5) * W, (layer.y ?? 0.5) * H)
+  if (layer.rotation) mctx.rotate((layer.rotation * Math.PI) / 180)
+  if (visibleBase) {
+    // A plain brush stroke carves a hole (hide) and an eraser stroke paints white
+    // back (restore). Invert `erase` so stampStrokes' destination-out carve fires
+    // for plain strokes and its white paint for erase.
     const inverted = strokes.map(s => ({ ...s, erase: !s.erase }))
     stampStrokes(mctx, inverted, W)
   } else {
@@ -964,7 +975,7 @@ export function localBlendOp(layer: { blend?: string }): GlobalCompositeOperatio
 // take the inverse of the content alpha, draw it with canvas shadow params (the
 // shadow spills inward across the silhouette edge), keep only the part inside
 // the content (destination-in), then stamp that over the content.
-function compositeInnerShadow(off: HTMLCanvasElement, fx: InnerShadowEffect, W: number) {
+function compositeInnerShadow(off: HTMLCanvasElement, fx: InnerShadowEffect, W: number, scale = 1) {
   const mk = () => {
     const c = document.createElement('canvas')
     c.width = off.width; c.height = off.height
@@ -980,9 +991,9 @@ function compositeInnerShadow(off: HTMLCanvasElement, fx: InnerShadowEffect, W: 
   ictx.globalCompositeOperation = 'destination-out'
   ictx.drawImage(off, 0, 0)
   sctx.shadowColor = fx.color
-  sctx.shadowBlur = Math.max(0, fx.blur * W)
-  sctx.shadowOffsetX = fx.x * W
-  sctx.shadowOffsetY = fx.y * W
+  sctx.shadowBlur = Math.max(0, fx.blur * W * scale)
+  sctx.shadowOffsetX = fx.x * W * scale
+  sctx.shadowOffsetY = fx.y * W * scale
   sctx.drawImage(inv, 0, 0)
   sctx.shadowColor = 'transparent'
   sctx.globalCompositeOperation = 'destination-in'
@@ -1120,29 +1131,47 @@ function paintLayer(
     // text, shapes, vectors and images, and because bakeOverlay() renders through
     // here the effects are baked into generation exactly as previewed.
     if (shadow || blur || inner || chain.length) {
+      // Size the offscreen to the DEVICE canvas and render it through the current
+      // transform `t`, exactly like the mask path (drawLocalLayer) and the brush
+      // path do. Sizing to logical W×H instead would rasterize the layer at preview
+      // resolution and then upscale it to the device canvas on the stamp below —
+      // visibly softening any layer that carries an effect (a gradient map is the
+      // most obvious, since it preserves detail rather than blurring it away). On a
+      // dpr=1 display (t.a === 1, device === logical) this is byte-identical to the
+      // old logical-sized path.
+      const t = ctx.getTransform()
+      const s = t.a || 1
+      const dev = ctx.canvas
       const off = document.createElement('canvas')
-      off.width = Math.max(1, Math.round(W))
-      off.height = Math.max(1, Math.round(H))
+      off.width = Math.max(1, dev.width)
+      off.height = Math.max(1, dev.height)
       const octx = off.getContext('2d')
       if (octx) {
-        // This offscreen's raw pixel space IS frame-pixel space 1:1 (off is sized
-        // exactly W×H, no dpr) — capture it as the frame base BEFORE the shape's own
-        // local transform below, so a frame-anchored fill painted on `octx` samples
-        // the shared field at the correct frame-space location (see resolveShaderFill).
-        _fieldCtx = { ..._fieldCtx, base: octx.getTransform() }
+        octx.setTransform(t)
+        // Frame base for shader fills = the device transform, captured BEFORE the
+        // shape's own local transform below (matches the fast path at line ~1157),
+        // so a frame-anchored fill samples the shared field at the correct
+        // frame-space location under any ctx scale (see resolveShaderFill).
+        _fieldCtx = { ..._fieldCtx, base: t }
         applyXform(octx, lx, ly, lrot, ls)
         drawContent(octx)
-        if (inner) compositeInnerShadow(off, inner, W)
-        if (chain.length) applyEffectChain(off, chain, { W })
+        if (inner) compositeInnerShadow(off, inner, W, s)
+        // scale = device px per logical px, so bloom radius / grain size land at the
+        // right physical size on a device-resolution buffer (mirrors applyStackPost).
+        if (chain.length) applyEffectChain(off, chain, { W, scale: s })
         ctx.save()
+        // `off` already holds device pixels — stamp it 1:1 in device space, not under
+        // `t` (which would upscale it a second time). Shadow/blur are specified in
+        // device px here, so their logical W-normalized params scale by `s`.
+        ctx.setTransform(1, 0, 0, 1, 0, 0)
         ctx.globalAlpha = lop
         ctx.globalCompositeOperation = blendOp
-        if (blur) ctx.filter = `blur(${Math.max(0, blur.radius * W)}px)`
+        if (blur) ctx.filter = `blur(${Math.max(0, blur.radius * W * s)}px)`
         if (shadow) {
           ctx.shadowColor = shadow.color
-          ctx.shadowBlur = Math.max(0, shadow.blur * W)
-          ctx.shadowOffsetX = shadow.x * W
-          ctx.shadowOffsetY = shadow.y * W
+          ctx.shadowBlur = Math.max(0, shadow.blur * W * s)
+          ctx.shadowOffsetX = shadow.x * W * s
+          ctx.shadowOffsetY = shadow.y * W * s
         }
         ctx.drawImage(off, 0, 0)
         ctx.restore()
