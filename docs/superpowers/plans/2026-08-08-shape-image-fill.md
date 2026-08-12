@@ -652,10 +652,10 @@ function pushImage(patch: Partial<ImageFill>) {
 function onPick(src: string) { pickerOpen.value = false; pushImage({ src }) }
 ```
 
-Also extend the type list the dropdown renders:
+Also extend the type list the dropdown renders. **Exclude `'image'` when `nested`** — the nested instance edits a shader's `spec.input`, and an `ImageFill` as a shader input reaches `descriptor.ts inputKey` / `paintTileBox`, which do not render it. This mirrors how the nested editor already excludes `'shader'` (`availableTypes` at FillControl.vue:30):
 
 ```ts
-const uiTypes = computed<UiType[]>(() => [...availableTypes.value, 'image'])
+const uiTypes = computed<UiType[]>(() => props.nested ? availableTypes.value : [...availableTypes.value, 'image'])
 ```
 
 - [ ] **Step 3: Wire `'image'` into `FillControl.vue` — template**

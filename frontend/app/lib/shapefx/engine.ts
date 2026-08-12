@@ -10,6 +10,7 @@ import { buildSurfaceTexture } from './surface'
 import { withShaderFillContext, clearShaderFillOwner, refreshLiveShaderFills } from '~/lib/spacetype/fills'
 import { hashSeed } from '~/lib/spacetype/rng'
 import { postNeeded, POST_VERT, POST_FRAG } from './post'
+import { registerWebGLContext, type WebGLContextHandle } from '~/lib/webgl/contextRegistry'
 import type { ShapeConfig } from './config'
 import { applyPost } from '~/lib/studio/post/chain'
 import { DEFAULT_POST, postEnabled } from '~/lib/studio/post/settings'
@@ -64,6 +65,7 @@ let _nextShapeEngineId = 1
 
 export class ShapeEngine {
   readonly renderer: THREE.WebGLRenderer
+  private readonly ctxHandle: WebGLContextHandle
   readonly scene: THREE.Scene
   /** Stable per-instance id, never reused — scopes this engine's shader fills in fills.ts's
    *  owner-scoped cache (see SpaceTypeEngine.id's doc in ../spacetype/engine.ts for the full
@@ -118,6 +120,7 @@ export class ShapeEngine {
     this.orthoCam = new THREE.OrthographicCamera(-ORTHO_HALF_H * a, ORTHO_HALF_H * a, ORTHO_HALF_H, -ORTHO_HALF_H, 0.1, 100)
     this.orthoCam.position.set(0, 0, CAM_Z)
     this.orthoCam.lookAt(0, 0, 0)
+    this.ctxHandle = registerWebGLContext('Shape')
   }
 
   private get cam(): THREE.Camera {
@@ -410,6 +413,11 @@ export class ShapeEngine {
     this.blitMat?.dispose()
     this.blitTex?.dispose()
     this.blitScene = null; this.blitCam = null; this.blitMat = null; this.blitTex = null
+    // forceContextLoss() BEFORE dispose() frees the GL context slot immediately
+    // rather than at GC — see the Scene3D engine's dispose for why this matters
+    // against the browser's ~16-context cap. Guarded: throws if already lost.
+    try { this.renderer.forceContextLoss() } catch { /* already lost */ }
     this.renderer.dispose()
+    this.ctxHandle.release()
   }
 }
