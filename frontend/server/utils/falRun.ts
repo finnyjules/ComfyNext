@@ -10,6 +10,7 @@
  * getFalToken() from falStorage.ts.
  */
 import { getFalToken } from './falStorage'
+import { logSpend } from './spendLog'
 
 const FAL_QUEUE_BASE = 'https://queue.fal.run'
 
@@ -42,6 +43,7 @@ export async function runFal<T = unknown>(
     throw new Error(`fal submit ${submitRes.status}: ${t || submitRes.statusText}`)
   }
   const submit = await submitRes.json() as FalSubmit
+  const startedAt = Date.now()
   const rid = submit.request_id
   const statusUrl = submit.status_url || `${appBase}/requests/${rid}/status`
   const resultUrl = submit.response_url || `${appBase}/requests/${rid}`
@@ -62,6 +64,7 @@ export async function runFal<T = unknown>(
     const status = await sRes.json() as { status?: string }
     if (status.status === 'IN_QUEUE' || status.status === 'IN_PROGRESS') continue
     if (status.status === 'COMPLETED') {
+      logSpend({ provider: 'fal', model: app, ok: true, ms: Date.now() - startedAt })
       const rRes = await fetch(resultUrl, { headers })
       if (!rRes.ok) {
         const t = await rRes.text().catch(() => '')
@@ -69,6 +72,7 @@ export async function runFal<T = unknown>(
       }
       return await rRes.json() as T
     }
+    logSpend({ provider: 'fal', model: app, ok: false, ms: Date.now() - startedAt })
     throw new Error(`fal request ${rid} ended in ${status.status}: ${JSON.stringify(status)}`)
   }
   throw new Error(`fal request timed out (id=${rid})`)

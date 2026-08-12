@@ -3,6 +3,8 @@
  * the create-then-poll flow already used by /api/cloud-train/*, but waits inline
  * (SVG generation/vectorize finish in seconds) and returns the raw `output`.
  */
+import { logSpend } from './spendLog'
+
 interface Prediction {
   id: string
   status: 'starting' | 'processing' | 'succeeded' | 'failed' | 'canceled'
@@ -38,6 +40,7 @@ export async function runReplicate(
   const timeoutMs = opts.timeoutMs ?? 90_000
   const pollMs = opts.pollMs ?? 1200
   const version = await latestVersion(model, token)
+  const startedAt = Date.now()
 
   const createRes = await fetch('https://api.replicate.com/v1/predictions', {
     method: 'POST',
@@ -60,6 +63,7 @@ export async function runReplicate(
     if (!pollRes.ok) continue
     pred = await pollRes.json() as Prediction
   }
+  logSpend({ provider: 'replicate', model, ok: pred.status === 'succeeded', ms: Date.now() - startedAt })
   if (pred.status !== 'succeeded') {
     throw createError({ statusCode: 502, message: `Replicate prediction ${pred.status}: ${pred.error || 'unknown error'}` })
   }
