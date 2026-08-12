@@ -186,15 +186,17 @@ test.describe('SmartLayout node in the canvas', () => {
     await openBlankWorkflow(page)
   })
 
-  test('dropping a SmartLayout node onto the canvas renders it with edit button', async ({ page }) => {
+  test('dropping a SmartLayout node onto the canvas renders it with a design button', async ({ page }) => {
     await dropNode(page, 'SmartLayout', { x: 700, y: 400 })
-    // Body shows the "Edit layout" affordance.
+    // A freshly-dropped node has no elements yet, so the body shows the empty
+    // state's hero "Design layout" affordance (populated nodes show "Edit
+    // layout" + "Batch export" instead — see SmartLayoutNodeBody.vue).
     const node = page.locator('.vue-flow__node', { hasText: 'Smart Layout' }).first()
     await expect(node).toBeVisible({ timeout: 10_000 })
-    await expect(node.getByRole('button', { name: /Edit layout/i })).toBeVisible()
+    await expect(node.getByRole('button', { name: /Design layout/i })).toBeVisible()
   })
 
-  test('clicking Edit layout opens the SmartLayout editor modal', async ({ page }) => {
+  test('clicking Design layout opens the SmartLayout editor modal', async ({ page }) => {
     await dropNode(page, 'SmartLayout', { x: 700, y: 400 })
     const node = page.locator('.vue-flow__node', { hasText: 'Smart Layout' }).first()
     await expect(node).toBeVisible({ timeout: 10_000 })
@@ -203,29 +205,30 @@ test.describe('SmartLayout node in the canvas', () => {
     await page.mouse.move(640, 300)
     await page.mouse.wheel(0, 600)
     await page.waitForTimeout(300)
-    await node.getByRole('button', { name: /Edit layout/i }).click()
-    // The SmartLayout modal renders a heavy editor with aspects on the left.
-    // We assert the modal overlay exists by checking for the highest-z fixed inset element.
+    // Fresh node → empty state → the hero button reads "Design layout".
+    await node.getByRole('button', { name: /Design layout/i }).click()
+    // The SmartLayout modal renders a heavy editor. We assert the modal overlay
+    // exists by checking for the highest-z fixed inset element.
     const modal = page.locator('div.fixed.inset-0').last()
     await expect(modal).toBeVisible({ timeout: 5_000 })
 
-    // Fresh empty layout → the archetype gallery is shown over the canvas.
-    // Pick one to populate the layout and reveal the canvas.
-    await expect(modal.getByText('Start from a layout')).toBeVisible()
-    await modal.getByText('Hero + headline band').click()
+    // Fresh empty layout → the editor opens on the format picker (FormatPicker.vue):
+    // choose which deliverables to design for, then start on a blank canvas.
+    await expect(modal.getByText('What are you designing for?')).toBeVisible()
+    // Square (1x1) is pre-selected as the master; add the 728×90 leaderboard so
+    // the format list below shows more than one row, then start designing.
+    await modal.getByText('Leaderboard').click()
+    await modal.getByRole('button', { name: /Start designing/ }).click()
 
-    // The visual grid editor: format tab strip (incl. IAB sizes) + canvas.
-    await expect(modal.getByRole('button', { name: /728x90/ })).toBeVisible()
-    await expect(modal.getByText(/square · \d+×\d+ grid/)).toBeVisible()   // canvas readout
+    // The visual grid editor is now live: the left format list shows the chosen
+    // formats, and the Save & close action + zoom controls confirm the canvas.
+    // (Zoom is gated by the shell's `started` ref, so it only appears once the
+    // picker has been dismissed — a good proxy for "the editor is open".)
     await expect(modal.getByRole('button', { name: 'Save & close' })).toBeVisible()
-    // Zoom controls present.
     await expect(modal.getByTitle('Zoom in')).toBeVisible()
+    await expect(modal.getByText('Leaderboard')).toBeVisible()   // chosen format row
 
-    // Switching to a strip format updates the canvas readout + class.
-    await modal.getByRole('button', { name: /728x90/ }).click()
-    await expect(modal.getByText(/728 × 90 · strip/)).toBeVisible()
-
-    // The JSON escape hatch still exists.
+    // The JSON escape hatch still exists (topbar "JSON" → live previews + raw JSON).
     await modal.getByRole('button', { name: 'JSON', exact: true }).click()
     await expect(modal.getByText('Layout JSON')).toBeVisible()
     await modal.getByRole('button', { name: 'Back to visual' }).click()
