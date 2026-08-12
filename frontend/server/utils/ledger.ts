@@ -226,5 +226,36 @@ export function createLedger(db: LedgerDb) {
     }
   }
 
-  return { ensureUser, getBalance, getAvailable, credit, debit, hold, settle, release }
+  async function expireCredits(now?: string): Promise<{ expiredCredits: number }> {
+    await db.query('BEGIN')
+    try {
+      const { rows } = await db.query(
+        `SELECT id, user_id, remaining_credits FROM ledger_entries
+         WHERE kind = 'credit' AND remaining_credits > 0
+           AND expires_at IS NOT NULL AND expires_at <= $1
+         ORDER BY user_id, id
+         FOR UPDATE`, [now ?? new Date().toISOString()])
+      let total = 0
+      for (const row of rows) {
+        // Lock the wallet, then post a normal expiry debit for the leftover.
+        const w = await db.query(
+          `UPDATE wallets SET balance_credits = balance_credits - $2, updated_at = now()
+           WHERE user_id = $1 RETURNING balance_credits`, [row.user_id, row.remaining_credits])
+        await db.query(
+          `INSERT INTO ledger_entries (user_id, kind, amount, reason, idempotency_key, balance_after)
+           VALUES ($1, 'debit', $2, 'expiry', $3, $4)`,
+          [row.user_id, row.remaining_credits, `expire:${row.id}`, Number(w.rows[0].balance_credits)])
+        await db.query(
+          `UPDATE ledger_entries SET remaining_credits = 0 WHERE id = $1`, [row.id])
+        total += row.remaining_credits
+      }
+      await db.query('COMMIT')
+      return { expiredCredits: total }
+    } catch (e) {
+      await db.query('ROLLBACK')
+      throw e
+    }
+  }
+
+  return { ensureUser, getBalance, getAvailable, credit, debit, hold, settle, release, expireCredits }
 }
