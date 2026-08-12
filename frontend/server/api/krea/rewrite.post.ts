@@ -11,6 +11,7 @@
  *
  * Allowlisted in server/middleware/comfyui-proxy.ts via '/api/krea'.
  */
+import { assertRateLimit } from '../../lib/rateLimit'
 
 const MODEL = 'meta/meta-llama-3-8b-instruct'
 
@@ -26,6 +27,7 @@ const INSTRUCTIONS = [
 ].join('\n')
 
 export default defineEventHandler(async (event) => {
+  assertRateLimit(event, 'krea-rewrite', 30)
   const token = requireReplicateToken()
 
   const body = await readBody(event) as { name?: string, aesthetic?: string, keywords?: string[] }

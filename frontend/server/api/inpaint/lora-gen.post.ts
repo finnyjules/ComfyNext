@@ -13,6 +13,7 @@
  */
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+import { assertRateLimit } from '../../lib/rateLimit'
 
 function safeBase(name: string): string | null {
   const base = (name || '').replace(/\.safetensors$/i, '')
@@ -29,6 +30,7 @@ interface Body {
 }
 
 export default defineEventHandler(async (event) => {
+  assertRateLimit(event, 'inpaint-lora-gen', 30)
   const token = requireReplicateToken()
   const body = await readBody<Body>(event)
 

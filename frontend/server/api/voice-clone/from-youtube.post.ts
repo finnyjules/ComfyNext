@@ -17,11 +17,13 @@
 import { execFile } from 'node:child_process'
 import os from 'node:os'
 import path from 'node:path'
+import { assertRateLimit } from '../../lib/rateLimit'
 
 const CLIP_CAP_SEC = 60
 const CLIP_MIN_SEC = 10  // MiniMax voice cloning rejects clips shorter than this ("too short")
 
 export default defineEventHandler(async (event) => {
+  assertRateLimit(event, 'voice-clone-youtube', 3, 600_000)
   const body = await readBody(event) as { url?: string, startSec?: number, endSec?: number }
   const url = (body?.url || '').trim()
   const startSec = Number(body?.startSec)

@@ -23,6 +23,8 @@
  * (runReplicate/firstOutputUrl/requireReplicateToken are auto-imported from
  * server/utils/replicate.ts).
  */
+import { assertRateLimit } from '../../lib/rateLimit'
+
 // Dev tier only; pro tier now dispatches to fal (fal-ai/flux-pro/v1/fill).
 const MODELS = {
   dev: 'black-forest-labs/flux-fill-dev',
@@ -40,6 +42,7 @@ interface Body {
 }
 
 export default defineEventHandler(async (event) => {
+  assertRateLimit(event, 'inpaint-flux-fill', 30)
   const body = await readBody<Body>(event)
 
   if (!body?.image) throw createError({ statusCode: 400, message: 'image is required' })

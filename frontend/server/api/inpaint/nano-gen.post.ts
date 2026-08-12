@@ -14,6 +14,8 @@
  * shape as /api/inpaint/text2img. Under /api/inpaint → already proxy-allowlisted.
  * Helpers auto-imported from server/utils/replicate.ts.
  */
+import { assertRateLimit } from '../../lib/rateLimit'
+
 const MODEL = 'google/nano-banana-pro'
 
 interface Body { prompt?: string; image?: string; images?: string[]; aspect_ratio?: string }
@@ -35,6 +37,7 @@ async function runNanoFal(prompt: string, imageList: string[], aspect_ratio?: st
 }
 
 export default defineEventHandler(async (event) => {
+  assertRateLimit(event, 'inpaint-nano-gen', 30)
   const token = requireReplicateToken()
   const body = await readBody<Body>(event)
 

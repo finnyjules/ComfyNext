@@ -1,4 +1,5 @@
 import { buildSamInput, type SamRequestBody } from '../../utils/samInput'
+import { assertRateLimit } from '../../lib/rateLimit'
 
 /**
  * POST /api/inpaint/segment  (v3 click-to-select)
@@ -47,6 +48,7 @@ import { buildSamInput, type SamRequestBody } from '../../utils/samInput'
 const SAM_MODEL = 'meta/sam-2'
 
 export default defineEventHandler(async (event) => {
+  assertRateLimit(event, 'inpaint-segment', 60)
   const token = requireReplicateToken()
   const body = await readBody<SamRequestBody>(event)
   if (!body?.image) throw createError({ statusCode: 400, message: 'image is required' })

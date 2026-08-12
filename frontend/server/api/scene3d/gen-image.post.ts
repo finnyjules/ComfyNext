@@ -4,12 +4,15 @@
 // Mirrors the auto-import convention of /api/inpaint/flux-fill.post.ts
 // (runFal/firstFalImageUrl from server/utils/falRun.ts, shapeImagePrompt from
 // server/utils/scene3dGen.ts — both auto-imported by Nitro from server/utils).
+import { assertRateLimit } from '../../lib/rateLimit'
+
 interface Body {
   prompt?: string
   seed?: number
 }
 
 export default defineEventHandler(async (event) => {
+  assertRateLimit(event, 'scene3d-gen-image', 30)
   const body = await readBody<Body>(event)
   const prompt = (body?.prompt ?? '').trim()
   if (!prompt) throw createError({ statusCode: 400, message: 'prompt is required' })

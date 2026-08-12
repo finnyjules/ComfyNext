@@ -17,11 +17,14 @@
  * kicks off a prediction. Returns the prediction id; the frontend polls
  * /status with that id.
  */
+import { assertRateLimit } from '../../lib/rateLimit'
+
 function sanitize(name: string): string {
   return (name || '').toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'my-lora'
 }
 
 export default defineEventHandler(async (event) => {
+  assertRateLimit(event, 'cloud-train', 3, 600_000)
   const token = requireReplicateToken()
 
   const body = await readBody(event) as {

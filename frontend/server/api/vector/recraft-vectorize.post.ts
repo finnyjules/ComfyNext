@@ -9,9 +9,12 @@
  * Use this when trace quality matters; default interactive vectorize should
  * prefer the free local /api/vector/trace.
  */
+import { assertRateLimit } from '../../lib/rateLimit'
+
 const MODEL = 'recraft-ai/recraft-vectorize'
 
 export default defineEventHandler(async (event) => {
+  assertRateLimit(event, 'recraft-vectorize', 60)
   const token = requireReplicateToken()
   const body = await readBody(event) as { image?: string }
   if (!body.image) throw createError({ statusCode: 400, message: 'image is required (data URL or URL)' })

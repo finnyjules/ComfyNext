@@ -15,6 +15,8 @@
  *
  * Returns: { images: string[] }  — data URLs (base64), to dodge CORS.
  */
+import { assertRateLimit } from '../../lib/rateLimit'
+
 const MODEL = 'google/nano-banana-2'
 
 // The instruction that survived the de-risking spike. Image 1 = character
@@ -35,6 +37,7 @@ const BASE_PROMPT =
 interface Body { character?: string; pose?: string; prompt?: string; count?: number }
 
 export default defineEventHandler(async (event) => {
+  assertRateLimit(event, 'inpaint-pose', 30)
   const token = requireReplicateToken()
   const body = await readBody<Body>(event)
 

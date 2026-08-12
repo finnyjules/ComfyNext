@@ -17,6 +17,8 @@
  * Helpers (runReplicate/firstOutputUrl/fetchAsDataUrl/requireReplicateToken)
  * are auto-imported from server/utils/replicate.ts.
  */
+import { assertRateLimit } from '../../lib/rateLimit'
+
 const MODEL = '851-labs/background-remover'
 
 interface Body {
@@ -24,6 +26,7 @@ interface Body {
 }
 
 export default defineEventHandler(async (event) => {
+  assertRateLimit(event, 'inpaint-remove-bg', 60)
   const token = requireReplicateToken()
   const body = await readBody<Body>(event)
 

@@ -13,11 +13,14 @@
  *
  * Returns: { images: string[] }  — data URLs (base64), to dodge CORS like /flux-fill.
  */
+import { assertRateLimit } from '../../lib/rateLimit'
+
 const MODEL = 'black-forest-labs/flux-kontext-dev'
 
 interface Body { image?: string; prompt?: string; count?: number; seed?: number }
 
 export default defineEventHandler(async (event) => {
+  assertRateLimit(event, 'inpaint-kontext', 30)
   const token = requireReplicateToken()
   const body = await readBody<Body>(event)
 

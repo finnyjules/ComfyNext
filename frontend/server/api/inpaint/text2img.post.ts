@@ -19,6 +19,8 @@
  * Helpers (runReplicate/firstOutputUrl/fetchAsDataUrl/requireReplicateToken)
  * are auto-imported from server/utils/replicate.ts.
  */
+import { assertRateLimit } from '../../lib/rateLimit'
+
 const MODEL = 'black-forest-labs/flux-schnell'
 // Opt-in higher tier (taste-wall texture testing): dev renders grain/texture
 // schnell's 4-step distillation airbrushes away. Existing callers omit `model`
@@ -42,6 +44,7 @@ interface Body {
 }
 
 export default defineEventHandler(async (event) => {
+  assertRateLimit(event, 'inpaint-text2img', 30)
   const token = requireReplicateToken()
   const body = await readBody<Body>(event)
 

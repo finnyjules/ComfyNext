@@ -13,6 +13,7 @@
  */
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+import { assertRateLimit } from '../lib/rateLimit'
 
 function safeBase(name: string): string | null {
   const base = (name || '').replace(/\.safetensors$/i, '')
@@ -20,6 +21,7 @@ function safeBase(name: string): string | null {
 }
 
 export default defineEventHandler(async (event) => {
+  assertRateLimit(event, 'lora-cover', 30)
   const token = requireReplicateToken()
 
   const body = await readBody(event) as { name?: string }

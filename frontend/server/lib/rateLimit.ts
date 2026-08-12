@@ -22,9 +22,9 @@ export function _resetRateLimits(): void {
 }
 
 /** Route guard: 30 calls/min per client IP per route by default. */
-export function assertRateLimit(event: H3Event, name: string, max = 30): void {
+export function assertRateLimit(event: H3Event, name: string, max = 30, windowMs = 60_000): void {
   const ip = event.node.req.socket?.remoteAddress ?? 'local'
-  if (!takeToken(`${name}:${ip}`, max, 60_000)) {
+  if (!takeToken(`${name}:${ip}`, max, windowMs)) {
     throw Object.assign(new Error(`Too many ${name} requests — wait a minute and retry`), { statusCode: 429 })
   }
 }

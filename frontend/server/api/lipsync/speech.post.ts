@@ -8,10 +8,12 @@
  */
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+import { assertRateLimit } from '../../lib/rateLimit'
 
 const SPEECH_MODEL = 'minimax/speech-02-turbo'
 
 export default defineEventHandler(async (event) => {
+  assertRateLimit(event, 'lipsync-speech', 6)
   const token = requireReplicateToken()
   const body = await readBody(event) as { text?: string, voiceId?: string }
   const text = (body?.text || '').trim()

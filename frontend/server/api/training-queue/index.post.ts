@@ -17,12 +17,14 @@
  * }
  */
 import { jobStore, type NewTrainingJob } from '../../utils/trainingQueue'
+import { assertRateLimit } from '../../lib/rateLimit'
 
 function sanitize(name: string): string {
   return (name || '').replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/^_+|_+$/g, '') || 'my_lora'
 }
 
 export default defineEventHandler(async (event) => {
+  assertRateLimit(event, 'training-queue', 3, 600_000)
   const body = await readBody(event) as Partial<NewTrainingJob> & { displayName?: string }
 
   if (body.kind !== 'lora' && body.kind !== 'voice') {

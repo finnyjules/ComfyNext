@@ -3,10 +3,12 @@
 // time), no SDK. The browser can't call Brave directly (CORS + key exposure);
 // this normalizes the payload down to what the picker grid needs.
 import { normalizeBraveImageResults, probeImageDimensions } from '~~/server/utils/imageSearch'
+import { assertRateLimit } from '../lib/rateLimit'
 
 const BRAVE_IMAGES = 'https://api.search.brave.com/res/v1/images/search'
 
 export default defineEventHandler(async (event) => {
+  assertRateLimit(event, 'image-search', 60)
   const body = await readBody(event)
   const { apiKey, query, count } = body || {}
 

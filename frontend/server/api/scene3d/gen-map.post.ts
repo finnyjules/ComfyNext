@@ -12,12 +12,15 @@
 // Mirrors the auto-import convention of gen-image.post.ts (runFal/firstFalImageUrl from
 // server/utils/falRun.ts, shapeReliefPrompt from server/utils/scene3dRelief.ts — both
 // auto-imported by Nitro from server/utils, no import statements needed).
+import { assertRateLimit } from '../../lib/rateLimit'
+
 interface Body {
   prompt?: string
   seed?: number
 }
 
 export default defineEventHandler(async (event) => {
+  assertRateLimit(event, 'scene3d-gen-map', 30)
   const body = await readBody<Body>(event)
   const seed = Number.isFinite(body?.seed) ? Math.round(body!.seed as number) : Math.floor(Date.now() % 2_000_000_000)
 

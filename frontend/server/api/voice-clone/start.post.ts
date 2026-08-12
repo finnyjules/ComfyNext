@@ -13,7 +13,10 @@
  * voice works in the Generate speech node. Returns the prediction id; the
  * frontend polls /voice-clone/status with it (plus the user-chosen name).
  */
+import { assertRateLimit } from '../../lib/rateLimit'
+
 export default defineEventHandler(async (event) => {
+  assertRateLimit(event, 'voice-clone', 3, 600_000)
   const token = requireReplicateToken()
 
   const body = await readBody(event) as {

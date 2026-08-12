@@ -3,6 +3,8 @@
 //
 // resolve3dModel is auto-imported from server/utils/scene3dGen.ts; runFal from
 // server/utils/falRun.ts — same auto-import convention as /api/inpaint/flux-fill.post.ts.
+import { assertRateLimit } from '../../lib/rateLimit'
+
 interface Body {
   imageUrl?: string
   model?: string
@@ -11,6 +13,7 @@ interface Body {
 }
 
 export default defineEventHandler(async (event) => {
+  assertRateLimit(event, 'scene3d-gen-3d', 6)
   const body = await readBody<Body>(event)
   const imageUrl = (body?.imageUrl ?? '').trim()
   if (!imageUrl) throw createError({ statusCode: 400, message: 'imageUrl is required' })
