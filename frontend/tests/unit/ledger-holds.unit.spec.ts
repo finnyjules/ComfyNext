@@ -16,6 +16,15 @@ async function ledgerWithUser(credits: number) {
   return ledger
 }
 
+async function dbAndLedgerWithUser(credits: number) {
+  const db = new PGlite()
+  await db.exec(schema)
+  const ledger = createLedger(db)
+  await ledger.ensureUser('u1')
+  if (credits) await ledger.credit('u1', credits, 'topup', 'seed')
+  return { db, ledger }
+}
+
 describe('ledger: holds', () => {
   it('hold reserves; available drops, balance does not', async () => {
     const l = await ledgerWithUser(1000)
@@ -37,7 +46,7 @@ describe('ledger: holds', () => {
     const h = await l.hold('u1', 600, 'job1')
     if (!h.ok) throw new Error('hold failed')
     const s = await l.settle(h.holdId, 450, 'training')
-    expect(s).toEqual({ ok: true, balance: 550 })
+    expect(s).toEqual({ ok: true, balance: 550, settled: true })
     expect(await l.getAvailable('u1')).toBe(550) // reservation gone
   })
 
@@ -46,7 +55,7 @@ describe('ledger: holds', () => {
     const h = await l.hold('u1', 600, 'job1')
     if (!h.ok) throw new Error('hold failed')
     const s = await l.settle(h.holdId, 700, 'training')
-    expect(s).toEqual({ ok: true, balance: -100 })
+    expect(s).toEqual({ ok: true, balance: -100, settled: true })
   })
 
   it('release frees the reservation with no debit; double release is a no-op', async () => {
@@ -74,6 +83,22 @@ describe('ledger: holds', () => {
     const s1 = await l.settle(h.holdId, 450, 'training')
     const s2 = await l.settle(h.holdId, 450, 'training')
     expect(s1).toEqual(s2)
+    expect(s1).toEqual({ ok: true, balance: 550, settled: true })
+    expect(s2).toEqual({ ok: true, balance: 550, settled: true })
     expect(await l.getBalance('u1')).toBe(550)
+  })
+
+  it('settle after release is distinguishable from a real settle: settled:false, no charge', async () => {
+    const { db, ledger: l } = await dbAndLedgerWithUser(1000)
+    const h = await l.hold('u1', 600, 'job1')
+    if (!h.ok) throw new Error('hold failed')
+    await l.release(h.holdId)
+    const s = await l.settle(h.holdId, 450, 'training')
+    expect(s).toEqual({ ok: true, balance: 1000, settled: false })
+    expect(await l.getBalance('u1')).toBe(1000)
+    expect(await l.getAvailable('u1')).toBe(1000)
+    const { rows } = await db.query(
+      `SELECT id FROM ledger_entries WHERE user_id = 'u1' AND idempotency_key LIKE 'settle:%'`)
+    expect(rows).toEqual([])
   })
 })

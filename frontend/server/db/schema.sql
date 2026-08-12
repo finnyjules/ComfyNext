@@ -19,6 +19,10 @@ CREATE TABLE IF NOT EXISTS wallets (
 -- carries a cached copy. `remaining_credits`/`expires_at` are credit-row-only:
 -- debits consume credit rows FIFO by expiry so subscription grants (Phase 2+)
 -- burn before purchased packs.
+-- NOTE: a future wallet-history UI will need to page this table by
+-- (user_id, id DESC) — the UNIQUE (user_id, kind, idempotency_key) index
+-- below cannot serve that sort; add a dedicated index on (user_id, id DESC)
+-- when that UI lands.
 CREATE TABLE IF NOT EXISTS ledger_entries (
   id                 bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   user_id            text NOT NULL REFERENCES users(id),
