@@ -61,6 +61,10 @@ export function createLedger(db: LedgerDb) {
     })
   }
 
+  // getBalance/getAvailable stay OUTSIDE runExclusive on purpose: settle()
+  // calls getBalance from inside the mutex — wrapping it would self-deadlock.
+  // Consequence: a concurrent read may observe an in-flight transaction's
+  // uncommitted same-session state. Harmless for money (writes are serialized).
   async function getBalance(userId: string): Promise<number> {
     const { rows } = await db.query(
       `SELECT balance_credits FROM wallets WHERE user_id = $1`, [userId])
