@@ -4,7 +4,7 @@
  * with Postgres + SELECT…FOR UPDATE without changing any caller. Idempotency
  * keys dedupe retries/double-submits. No holds in the spike → available == balance.
  */
-export type LedgerResult = { ok: true; balance: number } | { ok: false; reason: 'insufficient' }
+import type { LedgerResult } from './ledger'
 
 interface Wallet { balance: number }
 
