@@ -20,7 +20,7 @@ import { ref } from 'vue'
 import { toast } from 'vue-sonner'
 
 import { useCharacters, useTrainingJobs, characterStatus } from '~/composables/useCharacters'
-import type { CharacterRecord, CharacterState, CharacterStateStatus, CharacterPanel, PanelSlot, StressResult } from '#shared/characters/types'
+import type { CharacterRecord, CharacterState, CharacterPanel, PanelSlot, StressResult } from '#shared/characters/types'
 import { emptyState, panelFilename, sortStatesLockedFirst } from '#shared/characters/types'
 import { useSheetGeneration, type SheetSource } from '~/composables/useSheetGeneration'
 import { uploadRefFilename, viewRefUrl } from '~/lib/shotdirector/refUpload'
@@ -50,16 +50,6 @@ function activeState(c: CharacterRecord): CharacterState | undefined {
 /** Looks chip row order: stress-tested (locked) looks lead, so the reliable ones are easy to find. */
 function sortedStates(c: CharacterRecord): CharacterState[] {
   return sortStatesLockedFirst(c.states)
-}
-
-// ── Status chip (draft grey / testing amber / locked action-blue check) ────
-function statusChipLabel(status: CharacterStateStatus): string {
-  return status === 'draft' ? 'Draft' : status === 'testing' ? 'Testing…' : 'Locked'
-}
-function statusChipClass(status: CharacterStateStatus): string {
-  if (status === 'testing') return 'bg-amber-400/15 text-amber-400/90'
-  if (status === 'locked') return 'bg-action/15 text-action'
-  return 'bg-white/10 text-white/50'
 }
 
 /** Data URL → File, shared by sheet generation (composite) and dress (kept photo). */
@@ -150,6 +140,10 @@ async function deleteState(c: CharacterRecord, variant: CharacterState) {
   if (result === 'stale') { toast.error(STALE_MESSAGE); return }
   if (result === 'error') { toast.error('Couldn\'t delete the look — try again'); return }
   selectedStateId.value[c.slug] = 'default'
+  // The deleted state's key can never be selected again — drop every
+  // vkey-keyed module map's entry for it (tiles judging a sheet that no
+  // longer exists, an open dress panel, a cached sheet-generation session…).
+  pruneVkeyEntries(k => k === vkey(c, variant))
 }
 
 // ── New variant ─────────────────────────────────────────────────────────
@@ -166,9 +160,12 @@ function cancelNewVariant(c: CharacterRecord) {
   addingVariant.value.delete(c.slug)
 }
 
-async function createState(c: CharacterRecord) {
+/** Returns whether the look was created — callers (e.g. the modal's "Dress
+ *  her" creator) that need to act on the new look afterward should check this
+ *  before re-resolving it, rather than assuming success. */
+async function createState(c: CharacterRecord): Promise<boolean> {
   const label = (newVariantName.value[c.slug] || '').trim()
-  if (!label) return
+  if (!label) return false
   const variant: CharacterState = {
     ...emptyState('v-' + Date.now().toString(36), label),
     descriptor: (newVariantDescriptor.value[c.slug] || '').trim(),
@@ -176,11 +173,12 @@ async function createState(c: CharacterRecord) {
   const { replaceStates } = useCharacters()
   const states = [...c.states, variant]
   const result = await replaceStates(c.slug, states, c.updatedAt)
-  if (result === 'stale') { toast.error(STALE_MESSAGE); return }
-  if (result === 'error') { toast.error('Couldn\'t add the look — try again'); return }
+  if (result === 'stale') { toast.error(STALE_MESSAGE); return false }
+  if (result === 'error') { toast.error('Couldn\'t add the look — try again'); return false }
   addingVariant.value.delete(c.slug)
   selectedStateId.value[c.slug] = variant.id
   toast.success(`Added look "${label}"`)
+  return true
 }
 
 // ── Sheet generation (per variant) ──────────────────────────────────────
@@ -203,7 +201,7 @@ async function buildSource(c: CharacterRecord, variant: CharacterState): Promise
   const def = c.states.find(v => v.id === 'default') ?? c.states[0]
   const cover = def ? coverUrl(c, def.id) : null
   if (!cover) {
-    toast.error('Add a reference photo to the Default variant first')
+    toast.error('Add a photo to this look first')
     return null
   }
   try {
@@ -213,17 +211,6 @@ async function buildSource(c: CharacterRecord, variant: CharacterState): Promise
     toast.error('Couldn\'t load the cover photo — try again')
     return null
   }
-}
-
-function sheetCostLabel(c: CharacterRecord): string {
-  const { jobs } = useTrainingJobs()
-  return characterStatus(c, jobs.value) === 'ready' ? '~$0.12' : '~$0.32'
-}
-
-/** Panel filename → /view URL for a state's saved composite panel, or null. */
-function panelUrl(state: CharacterState, slot: PanelSlot): string | null {
-  const filename = panelFilename(state, slot)
-  return filename ? viewRefUrl(filename) : null
 }
 
 /**
@@ -288,6 +275,9 @@ async function generateSheet(c: CharacterRecord, variant: CharacterState) {
     })
     if (result === 'stale') { toast.error(STALE_MESSAGE); return }
     if (result === 'error') { toast.error('Couldn\'t save the sheet — try again'); return }
+    // A previous test grid (if any) judged a sheet that no longer exists —
+    // it can't be trusted to gate readiness for the new one.
+    clearStressTiles(c, variant)
     toast.success(`Generated ${built.panels.length}-shot sheet for ${variant.label}`)
   } finally {
     expanding.value.delete(key)
@@ -331,8 +321,11 @@ async function rerollTile(c: CharacterRecord, variant: CharacterState, slot: Pan
       expectedUpdatedAt: variant.updatedAt,
       patch: { panels, sheetImage, status: 'draft', stressResult: null },
     })
-    if (result === 'stale') toast.error(STALE_MESSAGE)
-    else if (result === 'error') toast.error('Couldn\'t save the reroll — try again')
+    if (result === 'stale') { toast.error(STALE_MESSAGE); return }
+    if (result === 'error') { toast.error('Couldn\'t save the reroll — try again'); return }
+    // Same reasoning as generateSheet: the sheet this reroll just replaced
+    // is what any existing test tiles were judging — stale now.
+    clearStressTiles(c, variant)
   } finally {
     expanding.value.delete(key)
   }
@@ -344,7 +337,10 @@ async function rerollTile(c: CharacterRecord, variant: CharacterState, slot: Pan
 // all 10 tiles, and a failed tile stops the rest of the queue instead of
 // spending on tiles likely to fail the same way. Tile state is
 // module-level (not persisted) — a reload clears an unfinished grid.
-const stressTiles = ref<Record<string, StressTile[]>>({})
+// Exported at module level (not just via the composable's return object) so
+// unit tests can seed/assert against it directly — see clearStressTiles's
+// test in character-studio-composable.unit.spec.ts.
+export const stressTiles = ref<Record<string, StressTile[]>>({})
 const stressBusy = ref<Set<string>>(new Set())
 
 function stressTilesFor(c: CharacterRecord, variant: CharacterState): StressTile[] | null {
@@ -352,6 +348,20 @@ function stressTilesFor(c: CharacterRecord, variant: CharacterState): StressTile
 }
 function stressPassCount(c: CharacterRecord, variant: CharacterState): number {
   return (stressTilesFor(c, variant) ?? []).filter(t => t.pass === true).length
+}
+
+/**
+ * Invalidate a look's in-memory test grid — the tiles judged a sheet that no
+ * longer exists (a new/rerolled sheet was just saved), or the tester wants to
+ * start over from the confirm screen ("Test again"). Clearing never spends
+ * money by itself — it just drops the grid so the confirm screen renders
+ * again; a fresh `runStressTest` call is the only thing that generates.
+ * Exported so `generateSheet`/`rerollTile` (below) and the modal's
+ * "Test again" button share one invalidation path, and so it's unit-testable
+ * directly against the module-level `stressTiles` ref.
+ */
+export function clearStressTiles(c: CharacterRecord, state: CharacterState): void {
+  delete stressTiles.value[vkey(c, state)]
 }
 
 /**
@@ -379,8 +389,8 @@ async function runStressTest(c: CharacterRecord, variant: CharacterState) {
     try {
       sheetDataUrl = await fetchAsDataUrl(viewRefUrl(variant.sheetImage))
     } catch {
-      toast.error('Couldn\'t load the reference sheet — try again')
-      delete stressTiles.value[k]
+      toast.error('Couldn\'t load the sheet — try again')
+      clearStressTiles(c, variant)
       return
     }
     let testingPatchSent = false
@@ -409,7 +419,7 @@ async function runStressTest(c: CharacterRecord, variant: CharacterState) {
         tile.loading = false
         tile.error = true
         console.warn('[useCharacterStudio] stress tile failed', e)
-        toast.error(`Stress tile ${tile.idx + 1} of 10 failed — stopped`)
+        toast.error(`Test image ${tile.idx + 1} of 10 failed — stopped`)
         break
       }
     }
@@ -435,8 +445,10 @@ async function autoReadyIfComplete(c: CharacterRecord, state: CharacterState) {
     stateId: state.id, expectedUpdatedAt: live.updatedAt, patch: buildLockPatch(outcome, new Date().toISOString()),
   })
   if (result === 'stale') { toast.error(STALE_MESSAGE); return }
-  if (result === 'error') { toast.error('Couldn\'t lock — try again'); return }
-  toast.success(`Locked ${state.label} · ${outcome.passes}/10`)
+  if (result === 'error') { toast.error('Couldn\'t save the result — try again'); return }
+  // No success toast here — the modal's own "«Name» is ready" watcher
+  // (CharacterStudioModal.vue, watching readiness() flip to 'ready') is the
+  // one announcement; a second toast here would double up.
 }
 
 /**
@@ -517,24 +529,6 @@ function toggleDress(c: CharacterRecord, variant: CharacterState) {
   if (dressText.value[k] === undefined) dressText.value[k] = variant.descriptor || ''
 }
 
-async function onGarmentFile(k: string, e: Event) {
-  const file = (e.target as HTMLInputElement).files?.[0]
-  if (!file) return
-  dressError.value[k] = null
-  try { dressGarment.value[k] = await fileToDataUrl(file) }
-  catch { dressError.value[k] = 'Couldn\'t read that image' }
-  ;(e.target as HTMLInputElement).value = ''
-}
-
-function fileToDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader()
-    r.onload = () => resolve(r.result as string)
-    r.onerror = () => reject(r.error)
-    r.readAsDataURL(file)
-  })
-}
-
 /** Enable Generate only when there's something to dress them in. */
 function canDress(k: string): boolean {
   const mode = dressMode.value[k] ?? 'garment'
@@ -594,23 +588,53 @@ function trainIdentity(c: CharacterRecord) {
   openTab({ type: 'train', label: `Train: ${c.name}` })
 }
 
+// ── Eviction ─────────────────────────────────────────────────────────────
+// Every vkey-keyed module map above (stress tiles/busy, cached sheet-gen
+// sessions, expanding, dress open/mode/garment/text/result/busy/error) can
+// outlive the state or character it was keyed to — a deleted look leaves its
+// key behind (harmless but leaked), and a deleted character leaves every one
+// of its looks' keys behind. `match` runs against each map's keys so one
+// function serves both: an exact-vkey match for a single deleted state
+// (deleteState, below) and a `${slug}:` prefix match for a whole deleted
+// character (the modal's delete-character flow, which owns removeCharacter).
+function pruneVkeyEntries(match: (k: string) => boolean): void {
+  for (const k of Object.keys(stressTiles.value)) if (match(k)) delete stressTiles.value[k]
+  for (const k of [...stressBusy.value]) if (match(k)) stressBusy.value.delete(k)
+  for (const k of [...sheetGens.keys()]) if (match(k)) sheetGens.delete(k)
+  for (const k of [...expanding.value]) if (match(k)) expanding.value.delete(k)
+  for (const k of [...dressOpen.value]) if (match(k)) dressOpen.value.delete(k)
+  for (const k of Object.keys(dressMode.value)) if (match(k)) delete dressMode.value[k]
+  for (const k of Object.keys(dressGarment.value)) if (match(k)) delete dressGarment.value[k]
+  for (const k of Object.keys(dressText.value)) if (match(k)) delete dressText.value[k]
+  for (const k of Object.keys(dressResult.value)) if (match(k)) delete dressResult.value[k]
+  for (const k of [...dressBusy.value]) if (match(k)) dressBusy.value.delete(k)
+  for (const k of Object.keys(dressError.value)) if (match(k)) delete dressError.value[k]
+}
+
+/** Called by the modal right before it removes a character (`removeCharacter`
+ *  is store-level and knows nothing about these studio-local maps) — drops
+ *  every look's leftover key for that slug. */
+export function pruneCharacterVkeys(slug: string): void {
+  pruneVkeyEntries(k => k.startsWith(`${slug}:`))
+}
+
 export function useCharacterStudio() {
   return {
     // state CRUD + selection
-    selectedStateId, selectState, activeState, sortedStates,
-    statusChipLabel, statusChipClass,
-    replaceState, saveDescriptor, addRefFiles, removeRef, setCover, deleteState,
+    selectState, activeState, sortedStates,
+    saveDescriptor, addRefFiles, removeRef, setCover, deleteState,
     addingVariant, newVariantName, newVariantDescriptor, startNewVariant, cancelNewVariant, createState,
     // sheet generation
-    expanding, sheetFor, buildSource, sheetCostLabel, panelUrl, generateSheet, rerollTile,
+    expanding, generateSheet, rerollTile,
     // stress + ready
     stressTiles, stressBusy, stressTilesFor, stressPassCount, runStressTest,
-    markTile, exitTestMode, autoReadyIfComplete,
+    markTile, exitTestMode, clearStressTiles,
     // dress
     dressCost, dressOpen, dressMode, dressGarment, dressText, dressResult, dressBusy, dressError,
-    vkey, akey, toggleDress, onGarmentFile, canDress, runDress, keepDress,
+    vkey, akey, toggleDress, runDress, keepDress,
     // train
     trainIdentity,
-    STALE_MESSAGE,
+    // eviction (character-delete flow prunes every vkey belonging to a slug)
+    pruneCharacterVkeys,
   }
 }
