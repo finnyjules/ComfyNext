@@ -36,10 +36,11 @@ const { characters, refresh, patchCharacter, removeCharacter, coverUrl } = useCh
 
 // useTrainingJobs() itself fires an eager, unconditional fetch on every call
 // (no de-dupe) — safe to call once at setup like this, but NEVER from inside
-// a template expression: the composable's own sheetCostLabel() does exactly
-// that internally, so calling it from a template creates a render→fetch→
+// a template expression: a cost-label helper that calls useTrainingJobs()
+// internally and gets invoked from a template creates a render→fetch→
 // mutate→render loop (reproduced live: it floods /api/training-queue and
-// exhausts the tab). sheetCost() below reads the already-fetched `jobs` ref
+// exhausts the tab — this is why sheetCost lives here as a local, not in the
+// composable). sheetCost() below reads the already-fetched `jobs` ref
 // directly instead of re-invoking useTrainingJobs() on every render.
 const { jobs, setPolling } = useTrainingJobs()
 onMounted(() => setPolling(true))
@@ -50,14 +51,14 @@ function sheetCost(c: CharacterRecord): string {
 
 const {
   selectState, activeState, sortedStates,
-  saveDescriptor, addRefFiles, removeRef, setCover,
-  addingVariant, newVariantName, newVariantDescriptor, startNewVariant, cancelNewVariant, createState,
+  saveDescriptor, addRefFiles, removeRef, setCover, deleteState,
+  newVariantName, newVariantDescriptor, startNewVariant, cancelNewVariant, createState,
   expanding, generateSheet, rerollTile,
-  stressTilesFor, stressPassCount, runStressTest,
+  stressBusy, stressTilesFor, stressPassCount, runStressTest, clearStressTiles,
   markTile, exitTestMode,
   dressCost, dressOpen, dressMode, dressGarment, dressText, dressResult, dressBusy, dressError,
-  vkey, akey, toggleDress, runDress, keepDress,
-  trainIdentity,
+  vkey, toggleDress, runDress, keepDress,
+  trainIdentity, pruneCharacterVkeys,
 } = useCharacterStudio()
 
 // ── Slug in play (create mode swaps this in place once the character exists) ──
@@ -215,15 +216,25 @@ async function submitDressHer() {
   dressCreateError.value = null
   try {
     newVariantDescriptor.value[c.slug] = dressCreateText.value.trim()
-    await createState(c)
-    const variant = activeState(c)
+    // createState awaits a refresh() that replaces `characters.value` wholesale
+    // — `c` is now a detached snapshot whose `.states` doesn't include the
+    // look that was just created. Re-resolve from the live computed instead
+    // of reading off the stale `c`, or this dresses the Default look by
+    // accident (activeState's fallback when the id it's looking for isn't
+    // in `.states`).
+    if (!(await createState(c))) return
+    const fresh = character.value
+    if (!fresh) return
+    const beforeIds = new Set(c.states.map(s => s.id))
+    const variant = fresh.states.find(s => !beforeIds.has(s.id)) ?? activeState(fresh)
     if (!variant) return
-    toggleDress(c, variant)
-    const k = vkey(c, variant)
+    if (activeState(fresh)?.id !== variant.id) selectState(fresh, variant.id)
+    toggleDress(fresh, variant)
+    const k = vkey(fresh, variant)
     dressMode.value[k] = dressCreateMode.value
     if (dressCreateMode.value === 'garment') dressGarment.value[k] = dressCreateGarment.value
     dressText.value[k] = dressCreateText.value.trim()
-    await runDress(c, variant)
+    await runDress(fresh, variant)
     if (dressError.value[k]) { dressCreateError.value = dressError.value[k]; return }
   } finally {
     dressCreateBusy.value = false
@@ -241,9 +252,18 @@ async function keepNewLookDress() {
 
 // ── Test mode ────────────────────────────────────────────────────────────
 const testMode = ref(false)
+// Set on entry, read by the auto-ready watcher below: only a look that
+// wasn't already Ready when testing started should auto-exit+toast on
+// hitting 'ready' — a look that WAS already Ready (re-testing, which is
+// legitimate: server demotion happens via the content-edit path or a fresh
+// lock patch with the new result) starts the watch source at 'ready'
+// already, and without this flag that null→'ready' transition on entry
+// alone reads as "just became ready" and bounces straight back out.
+const enteredUnready = ref(false)
 
 function enterTestMode() {
   if (!character.value?.states.length || !state.value?.sheetImage) return
+  enteredUnready.value = state.value ? readiness(state.value).key !== 'ready' : true
   testMode.value = true
 }
 async function confirmRunTest() {
@@ -257,24 +277,39 @@ async function backToSheet() {
   const s = state.value
   if (c && s) await exitTestMode(c, s)
   testMode.value = false
+  enteredUnready.value = false
+}
+/** Money gate stays intact — this only drops the in-memory tile grid, which
+ *  re-renders the confirm screen; nothing here generates. */
+function onTestAgain() {
+  const c = character.value
+  const s = state.value
+  if (!c || !s) return
+  clearStressTiles(c, s)
 }
 async function onRailSelect(v: CharacterState) {
-  if (testMode.value && character.value && state.value) {
-    await exitTestMode(character.value, state.value)
+  const c = character.value
+  if (!c) return
+  if (testMode.value && state.value) {
+    await exitTestMode(c, state.value)
     testMode.value = false
+    enteredUnready.value = false
   }
-  selectState(character.value!, v.id)
+  selectState(c, v.id)
 }
 
 // Auto-ready: markTile already fires autoReadyIfComplete internally. Watch
-// readiness so the moment a state flips to 'ready' WHILE testing, we
-// announce it and drop back to the sheet — the only new behavior here.
+// readiness so the moment a state flips to 'ready' WHILE testing (and it
+// wasn't already ready when this test round started — see enteredUnready
+// above), we announce it and drop back to the sheet — the only new behavior
+// here.
 watch(
   () => (testMode.value && ready.value ? ready.value.key : null),
   (key: ReadinessKey | null, prev) => {
-    if (key === 'ready' && prev !== 'ready' && character.value) {
+    if (key === 'ready' && prev !== 'ready' && enteredUnready.value && character.value) {
       toast.success(`${character.value.name} is ready`)
       testMode.value = false
+      enteredUnready.value = false
     }
   },
 )
@@ -298,12 +333,24 @@ function onTrainIdentity() {
   menuOpen.value = false
   trainIdentity(c)
 }
+async function onDeleteLook() {
+  const c = character.value
+  const s = state.value
+  if (!c || !s || s.id === 'default') return
+  menuOpen.value = false
+  await deleteState(c, s)
+}
 async function onDeleteCharacter() {
   const c = character.value
   if (!c) return
   menuOpen.value = false
   if (!window.confirm(`Delete character "${c.name}"? Shots casting them will show an error.`)) return
   if (!(await removeCharacter(c.slug))) { toast.error('Couldn\'t delete the character — try again'); return }
+  // removeCharacter is store-level and knows nothing about this composable's
+  // studio-local, vkey-keyed maps (stress tiles, dress state, cached
+  // sheet-gen sessions…) — every look this character had leaves a leftover
+  // key behind unless we prune them here before the modal closes.
+  pruneCharacterVkeys(c.slug)
   emit('close')
 }
 
@@ -615,6 +662,9 @@ async function onDrawerFiles(e: Event) {
                   <button type="button" class="flex w-full items-center gap-1.5 rounded px-2.5 py-1.5 text-left text-[11px] text-white/85 hover:bg-white/10 cursor-pointer" @click="onTrainIdentity">
                     <Shirt class="size-3" /> Train identity
                   </button>
+                  <button v-if="state && state.id !== 'default'" type="button" class="flex w-full items-center gap-1.5 rounded px-2.5 py-1.5 text-left text-[11px] text-red-400/80 hover:bg-white/10 cursor-pointer" @click="onDeleteLook">
+                    <X class="size-3" /> Delete look
+                  </button>
                   <button type="button" class="flex w-full items-center gap-1.5 rounded px-2.5 py-1.5 text-left text-[11px] text-red-400/80 hover:bg-white/10 cursor-pointer" @click="onDeleteCharacter">
                     <X class="size-3" /> Delete character
                   </button>
@@ -630,6 +680,11 @@ async function onDrawerFiles(e: Event) {
               </StudioButton>
             </template>
             <template v-else>
+              <StudioButton
+                v-if="state && stressTilesFor(character, state) && !stressBusy.has(vkey(character, state))"
+                variant="secondary"
+                @click="onTestAgain"
+              >Test again</StudioButton>
               <span class="flex-1" />
               <StudioButton variant="secondary" @click="backToSheet">Back to sheet</StudioButton>
             </template>
