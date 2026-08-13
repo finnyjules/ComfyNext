@@ -17,6 +17,7 @@
     "test:ui": "playwright test --ui"
   },
   "dependencies": {
+    "@clerk/backend": "3.16.4",
     "@clerk/nuxt": "^3.0.7",
     "@faker-js/faker": "^10.3.0",
     "@fontsource/anton": "^5.2.7",

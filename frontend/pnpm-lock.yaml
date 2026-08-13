@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@clerk/backend':
+        specifier: 3.16.4
+        version: 3.16.4(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@clerk/nuxt':
         specifier: ^3.0.7
         version: 3.0.7(magicast@0.5.2)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(vue@3.5.30(typescript@5.9.3))
