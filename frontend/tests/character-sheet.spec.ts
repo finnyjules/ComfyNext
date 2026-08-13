@@ -279,4 +279,40 @@ test.describe('Character sheet: images and video consume the same identity asset
     // (c) the looks rail lists the fixture's states.
     await expect(modal.getByText('Default', { exact: true })).toBeVisible()
   })
+
+  test('Scenario D (studio): entering test mode on an already-Ready look shows the confirm screen and spends nothing', async ({ page }) => {
+    test.setTimeout(30_000)
+
+    // Pins the auto-ready watcher regression: fixture-cal's default state is
+    // already `status: 'locked'` (readiness 'ready') going in. Before the
+    // fix, `enterTestMode` flipping the watch source from its idle `null`
+    // straight to 'ready' read as "just became ready" and the watcher
+    // immediately toasted + exited test mode — the confirm screen (and the
+    // money gate it protects) never had a chance to render.
+    let shotCalls = 0
+    await page.route('**/api/cloud-train/character-shot', async (route) => {
+      shotCalls++
+      await route.fulfill({ json: { imageDataUrl: 'data:image/png;base64,e2e' } })
+    })
+
+    await page.getByRole('button', { name: 'Characters', exact: true }).click()
+    const nameEl = page.getByText('Cal', { exact: true }).first()
+    await expect(nameEl).toBeVisible({ timeout: 10_000 })
+    await nameEl.click()
+
+    const modal = page.getByRole('dialog')
+    await expect(modal).toBeVisible({ timeout: 10_000 })
+
+    await modal.getByRole('button', { name: /Test 10 poses/ }).click()
+
+    // The confirm screen renders and — this is the regression — stays put
+    // rather than bouncing back to the sheet a moment later.
+    const confirmText = modal.getByText('10 test images', { exact: false })
+    await expect(confirmText).toBeVisible({ timeout: 5_000 })
+    await page.waitForTimeout(500)
+    await expect(confirmText).toBeVisible()
+
+    // No click on "Confirm" happened, so nothing should have generated.
+    expect(shotCalls).toBe(0)
+  })
 })
