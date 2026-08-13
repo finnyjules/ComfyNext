@@ -1,0 +1,51 @@
+# Stage 1 hosted smoke test — run-book
+
+**Plain summary:** boot Sailor in hosted mode on this machine, sign in as the
+first real user, and watch the wallet appear with the 200-credit welcome
+bonus. This is the proof that Clerk, the auth middleware, user sync, and the
+Neon ledger all work end to end.
+
+**Status 2026-08-13:** steps 1–3 (the automated preconditions) were run and
+verified by the controller during the Stage 1 build — a hosted server is
+ALREADY RUNNING on port 3100 (from a worktree at
+`/private/tmp/claude-501/sailor-hosted-smoke`, so the daily local server on
+:3000 is untouched). Julien's part is steps 4–8.
+
+## One-time setup (VERIFIED — already done, server left running)
+
+1. Hosted server from an isolated worktree (never a second server in the main
+   checkout — two dev servers share `.nuxt` and corrupt each other):
+
+```bash
+git worktree add --detach /private/tmp/claude-501/sailor-hosted-smoke HEAD && ln -s "$PWD/frontend/node_modules" /private/tmp/claude-501/sailor-hosted-smoke/frontend/node_modules && cd /private/tmp/claude-501/sailor-hosted-smoke/frontend && env $(grep -vE '^#|^$' /Users/julien/Documents/GitHub/Sailor/frontend/.env.hosted | xargs) ./node_modules/.bin/nuxt dev --port 3100
+```
+
+   (Note: `./node_modules/.bin/nuxt dev` directly, NOT `npm run dev` — the
+   `predev` embed build fails in a fresh worktree because `.nuxt/tsconfig.json`
+   doesn't exist yet.)
+
+2. Hosted mode armed — **verified:** `curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3100/api/wallet` → `401` (not `{"mode":"local"}`).
+3. Engine paths guarded — **verified:** `curl -s -o /dev/null -w "%{http_code}" -X POST http://127.0.0.1:3100/prompt` → `401`. Sign-in page renders with Clerk state serialized (`clerk-initial-state` present in SSR HTML) — **verified**, and the local :3000 server still returns `{"mode":"local"}` — **verified**.
+
+## The smoke (Julien)
+
+4. Open http://127.0.0.1:3100/sign-in — the Clerk widget should render (Email + Google).
+5. Sign up with your email. Expect redirect + a session.
+6. Visit http://127.0.0.1:3100/account — expect **200 available · 200 total** (signup bonus via lazy sync; the bonus amount is provisional pending the pricing call).
+7. In the Neon console → Tables → `users`: your Clerk user id row exists (email arrives via webhook later; the lazy sync path may leave it null until then — that's expected).
+8. In the Clerk dashboard → Users: the same user.
+
+## Webhook leg (optional now, required before launch)
+
+9. Clerk dashboard → Webhooks: add an endpoint (needs a public URL — defer to
+   the deployed environment or use a tunnel), subscribe to `user.created`, set
+   `CLERK_WEBHOOK_SIGNING_SECRET` in the hosted env. Until then, the lazy
+   first-request sync covers user creation (idempotent — both can fire).
+
+## Teardown (when done)
+
+```bash
+pkill -f "sailor-hosted-smoke/frontend" ; git worktree remove --force /private/tmp/claude-501/sailor-hosted-smoke
+```
+
+The daily local server on :3000 is never touched by any of this.
