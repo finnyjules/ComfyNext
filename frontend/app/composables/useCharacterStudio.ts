@@ -30,7 +30,7 @@ import { usePendingTrainerSeed } from '~/composables/usePendingTrainerSeed'
 import { useTabs } from '~/composables/useTabs'
 import { buildDressPrompt, DRESS_COST_USD, type DressMode } from '~/lib/wardrobe/dress'
 import { freshTiles, stressOutcome, canLock, type StressTile } from '~/lib/characters/stress'
-import { buildStressTileRequest, buildTestingPatch, buildLockPatch } from '~/lib/characters/stressFlow'
+import { buildStressTileRequest, buildTestingPatch, buildLockPatch, refPhotoRequest, type RefPhotoPose } from '~/lib/characters/stressFlow'
 
 // Shared conflict-toast wording — every patchState call in this flow shows
 // the same message on a 'stale' result (someone else's edit landed first).
@@ -129,6 +129,45 @@ async function removeRef(c: CharacterRecord, variant: CharacterState, idx: numbe
 
 async function setCover(c: CharacterRecord, variant: CharacterState, idx: number) {
   await replaceState(c, variant, { coverIndex: idx })
+}
+
+/**
+ * Generate a new reference photo of the character from the look's cover
+ * (drawer tile, ~$0.08 per shot) — one Ideogram Character call anchored to
+ * the same cover-resolution rule as `buildSource` (this look's cover, else
+ * the Default look's cover), and appended to the look's photo pool on
+ * success. Re-entrancy guarded per vkey like the other money-spending
+ * flows; fires ONLY when the caller (the modal's pose menu) has already
+ * decided to spend — this function never retries on failure.
+ */
+const refPhotoBusy = ref<Set<string>>(new Set())
+
+async function generateRefPhoto(c: CharacterRecord, variant: CharacterState, pose: RefPhotoPose) {
+  const { coverUrl } = useCharacters()
+  const k = vkey(c, variant)
+  if (refPhotoBusy.value.has(k)) return
+  const cover = coverUrl(c, variant.id) ?? coverUrl(c, null)
+  if (!cover) {
+    toast.error('Add a photo to this look first')
+    return
+  }
+  refPhotoBusy.value.add(k)
+  try {
+    const coverDataUrl = await fetchAsDataUrl(cover)
+    const res = await fetch('/api/cloud-train/character-shot', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(refPhotoRequest(pose, coverDataUrl)),
+    })
+    if (!res.ok) throw new Error(`character-shot ${res.status}`)
+    const { imageDataUrl } = await res.json() as { imageDataUrl?: string }
+    if (!imageDataUrl) throw new Error('no image returned')
+    const name = await uploadRefFilename(dataUrlToFile(imageDataUrl, 'gen-ref.png'))
+    await replaceState(c, variant, { refImages: [...variant.refImages, name] })
+  } catch (e) {
+    console.warn('[useCharacterStudio] generateRefPhoto failed', e)
+    toast.error('Couldn\'t generate a photo — try again')
+  } finally {
+    refPhotoBusy.value.delete(k)
+  }
 }
 
 async function deleteState(c: CharacterRecord, variant: CharacterState) {
@@ -630,6 +669,7 @@ function trainIdentity(c: CharacterRecord) {
 function pruneVkeyEntries(match: (k: string) => boolean): void {
   for (const k of Object.keys(stressTiles.value)) if (match(k)) delete stressTiles.value[k]
   for (const k of [...stressBusy.value]) if (match(k)) stressBusy.value.delete(k)
+  for (const k of [...refPhotoBusy.value]) if (match(k)) refPhotoBusy.value.delete(k)
   for (const k of [...sheetGens.keys()]) if (match(k)) sheetGens.delete(k)
   for (const k of [...expanding.value]) if (match(k)) expanding.value.delete(k)
   for (const k of [...dressOpen.value]) if (match(k)) dressOpen.value.delete(k)
@@ -653,6 +693,7 @@ export function useCharacterStudio() {
     // state CRUD + selection
     selectState, activeState, sortedStates,
     saveDescriptor, addRefFiles, removeRef, setCover, deleteState,
+    refPhotoBusy, generateRefPhoto,
     addingVariant, newVariantName, newVariantDescriptor, startNewVariant, cancelNewVariant, createState,
     // sheet generation
     expanding, generateSheet, rerollTile,

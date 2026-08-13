@@ -39,6 +39,54 @@ export function buildStressTileRequest(
   }
 }
 
+// ── Generate a reference photo from the look's cover (drawer tile) ────────
+// Same call pattern as the stress flow above, but a single on-demand shot
+// instead of a 10-tile grid, and anchored to the look's COVER (not a baked
+// sheet) — this is meant to run before a sheet exists, to grow the photo
+// pool a sheet would build from.
+export const REF_PHOTO_SUFFIX = ', the exact same person as the reference'
+
+export type RefPhotoPose = 'portrait' | 'profile' | 'full-body'
+
+interface RefPhotoPoseSpec {
+  id: RefPhotoPose
+  label: string
+  prompt: string
+  aspectRatio: string
+}
+
+/** The 3 choices offered on the drawer tile's menu — 'portrait' is the default. */
+export const REF_PHOTO_POSES: RefPhotoPoseSpec[] = [
+  {
+    id: 'portrait',
+    label: 'Clean portrait',
+    prompt: 'close-up portrait, facing camera directly, neutral expression, soft even studio light, plain neutral background',
+    aspectRatio: '1:1',
+  },
+  {
+    id: 'profile',
+    label: 'Profile',
+    prompt: 'profile view close-up, looking to the side, soft even light, plain background',
+    aspectRatio: '1:1',
+  },
+  {
+    id: 'full-body',
+    label: 'Full body',
+    prompt: 'full-body shot standing naturally, arms relaxed, soft daylight, plain seamless background',
+    aspectRatio: '3:4',
+  },
+]
+
+/** Assemble the POST body for a drawer-tile "generate a reference photo" call. */
+export function refPhotoRequest(pose: RefPhotoPose, coverDataUrl: string): StressTileRequest {
+  const spec = REF_PHOTO_POSES.find(p => p.id === pose) ?? REF_PHOTO_POSES[0]!
+  return {
+    referenceImageDataUrl: coverDataUrl,
+    prompt: spec.prompt + REF_PHOTO_SUFFIX,
+    aspectRatio: spec.aspectRatio,
+  }
+}
+
 /** Patch sent the moment the FIRST tile lands: draft → testing. */
 export function buildTestingPatch(): Partial<CharacterState> {
   return { status: 'testing' }

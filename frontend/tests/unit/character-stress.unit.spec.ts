@@ -12,6 +12,8 @@ import {
   buildStressTileRequest,
   buildTestingPatch,
   buildLockPatch,
+  refPhotoRequest,
+  REF_PHOTO_SUFFIX,
 } from '~/lib/characters/stressFlow'
 
 describe('stress module', () => {
@@ -237,6 +239,39 @@ describe('stressFlow', () => {
       const outcome = { passes: 10, total: 10, at: '' }
       buildLockPatch(outcome, 'stamp')
       expect(outcome.at).toBe('')
+    })
+  })
+
+  describe('refPhotoRequest', () => {
+    it('portrait: exact prompt + same-person suffix, 1:1', () => {
+      const req = refPhotoRequest('portrait', 'data:image/png;base64,cover')
+      expect(req).toEqual({
+        referenceImageDataUrl: 'data:image/png;base64,cover',
+        prompt: 'close-up portrait, facing camera directly, neutral expression, soft even studio light, plain neutral background' + REF_PHOTO_SUFFIX,
+        aspectRatio: '1:1',
+      })
+    })
+
+    it('profile: exact prompt + same-person suffix, 1:1', () => {
+      const req = refPhotoRequest('profile', 'data:image/png;base64,cover')
+      expect(req).toEqual({
+        referenceImageDataUrl: 'data:image/png;base64,cover',
+        prompt: 'profile view close-up, looking to the side, soft even light, plain background' + REF_PHOTO_SUFFIX,
+        aspectRatio: '1:1',
+      })
+    })
+
+    it('full-body: exact prompt + same-person suffix, 3:4', () => {
+      const req = refPhotoRequest('full-body', 'data:image/png;base64,cover')
+      expect(req).toEqual({
+        referenceImageDataUrl: 'data:image/png;base64,cover',
+        prompt: 'full-body shot standing naturally, arms relaxed, soft daylight, plain seamless background' + REF_PHOTO_SUFFIX,
+        aspectRatio: '3:4',
+      })
+    })
+
+    it('suffix is exactly ", the exact same person as the reference"', () => {
+      expect(REF_PHOTO_SUFFIX).toBe(', the exact same person as the reference')
     })
   })
 })

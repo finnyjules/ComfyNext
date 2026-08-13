@@ -26,6 +26,7 @@ import { readiness, type ReadinessKey } from '~/lib/characters/readiness'
 import { compositeLayout, COMPOSITE_W, COMPOSITE_H } from '~/lib/characters/sheetComposite'
 import { viewRefUrl } from '~/lib/shotdirector/refUpload'
 import { canLock, stressOutcome } from '~/lib/characters/stress'
+import { REF_PHOTO_POSES, type RefPhotoPose } from '~/lib/characters/stressFlow'
 import { imageUrlToFile } from '~/lib/canvas/imageUrlToFile'
 import type { CharacterRecord, CharacterState } from '#shared/characters/types'
 import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
@@ -56,6 +57,7 @@ function sheetCost(_c: CharacterRecord): string {
 const {
   selectState, activeState, sortedStates,
   saveDescriptor, addRefFiles, removeRef, setCover, deleteState,
+  refPhotoBusy, generateRefPhoto,
   newVariantName, newVariantDescriptor, startNewVariant, cancelNewVariant, createState,
   expanding, generateSheet, rerollTile,
   stressBusy, stressTilesFor, stressPassCount, runStressTest, clearStressTiles,
@@ -379,6 +381,21 @@ async function onDrawerFiles(e: Event) {
   if (!c || !s) return
   await addRefFiles(c, s, e)
 }
+
+// "Generate photo · ~$0.08" tile — a tiny pose menu, same idiom as the ⋯
+// menu above (onClickOutside-dismissed dropdown). Money only spends on the
+// explicit pose click, never on opening the menu.
+const refPhotoMenuOpen = ref(false)
+const refPhotoMenuRoot = ref<HTMLElement | null>(null)
+onClickOutside(refPhotoMenuRoot, () => { refPhotoMenuOpen.value = false })
+
+async function onGenerateRefPhoto(pose: RefPhotoPose) {
+  const c = character.value
+  const s = state.value
+  refPhotoMenuOpen.value = false
+  if (!c || !s) return
+  await generateRefPhoto(c, s, pose)
+}
 </script>
 
 <template>
@@ -632,6 +649,27 @@ async function onDrawerFiles(e: Event) {
                   <label class="flex size-8 shrink-0 cursor-pointer items-center justify-center rounded border border-dashed border-white/15 text-[13px] text-white/40 hover:border-white/30">
                     +<input type="file" accept="image/*" multiple class="hidden" @change="onDrawerFiles">
                   </label>
+                  <div ref="refPhotoMenuRoot" class="relative shrink-0">
+                    <button
+                      type="button"
+                      title="Generate photo · ~$0.08"
+                      class="flex size-8 items-center justify-center rounded border border-dashed border-white/15 text-white/40 hover:border-white/30 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+                      :disabled="!!state && refPhotoBusy.has(vkey(character, state))"
+                      @click="refPhotoMenuOpen = !refPhotoMenuOpen"
+                    >
+                      <Loader2 v-if="state && refPhotoBusy.has(vkey(character, state))" class="size-3.5 animate-spin" />
+                      <Sparkles v-else class="size-3.5" />
+                    </button>
+                    <div v-if="refPhotoMenuOpen" class="absolute bottom-full left-0 z-10 mb-1.5 w-36 rounded-lg border border-white/10 bg-[#1a1a1a] p-1 shadow-2xl">
+                      <div class="px-2.5 pb-1 pt-0.5 text-[9.5px] text-white/35">Generate photo · ~$0.08</div>
+                      <button
+                        v-for="opt in REF_PHOTO_POSES" :key="opt.id"
+                        type="button"
+                        class="block w-full cursor-pointer rounded px-2.5 py-1.5 text-left text-[11px] text-white/85 hover:bg-white/10"
+                        @click="onGenerateRefPhoto(opt.id)"
+                      >{{ opt.label }}</button>
+                    </div>
+                  </div>
                   <span class="ml-1 text-[10px] text-white/35">their photos</span>
                 </div>
               </template>
