@@ -30,7 +30,7 @@ const { sheet, result, setFace, setVoice, update } = useLipSync(
   persist,
 )
 
-const { characters, coverUrl } = useCharacters()
+const { characters, coverUrl, portraitUrl } = useCharacters()
 
 // ── First-open guide ────────────────────────────────────────────────────────
 const showIntro = computed(() => !sheet.value.face.src && !sheet.value.voice.text && !sheet.value.voice.src)
@@ -53,9 +53,9 @@ const faceTab = ref<FaceTab>(sheet.value.face.kind ?? 'image')
 function selectCharacter(slug: string, name: string) {
   const c = characters.value.find(x => x.slug === slug)
   if (!c) return
-  const cover = coverUrl(c)
-  if (!cover) return
-  setFace({ kind: 'character', src: cover, characterSlug: slug })
+  const src = portraitUrl(c, null)
+  if (!src) return
+  setFace({ kind: 'character', src, characterSlug: slug })
 }
 
 const fileInputImage = ref<HTMLInputElement | null>(null)
