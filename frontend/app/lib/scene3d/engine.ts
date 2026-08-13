@@ -7,12 +7,12 @@ import * as THREE from 'three'
 // 8-digit hex as WHITE (console warning, no throw), so picker colours are stripped to 6
 // digits here — surfaces without transparency degrade to opaque rather than going white.
 import { stripAlpha } from '~/lib/color/convert'
-import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js'
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js'
 import { roundedLatheGeometry, roundedPolyGeometry, roundedHullGeometry } from '~/lib/scene3d/roundedGeometry'
-import type { SceneDoc, SceneObject, SceneMaterial, Vec3, LightingPreset, PrimitiveKind, PrimitiveObject, PrimitiveContent, GlbObject, LightObject } from './config'
+import type { SceneDoc, SceneObject, SceneMaterial, Vec3, LightingPreset, PrimitiveKind, PrimitiveObject, PrimitiveContent, GlbObject, LightObject, EnvironmentKind } from './config'
 import { LIGHT_DEFAULTS, DEFAULT_FONT_URL } from './config'
+import { buildEnvironmentScene } from './environments'
 import { orderParentsFirst } from './hierarchy'
 import { loadGlb, clearGlbCache } from './glb'
 import { registerWebGLContext, type WebGLContextHandle } from '~/lib/webgl/contextRegistry'
@@ -402,6 +402,9 @@ export class SceneEngine {
   private sun: THREE.DirectionalLight
   private ambient: THREE.AmbientLight
   private envTarget: THREE.WebGLRenderTarget | null = null
+  /** The environment kind the current envTarget was built from — compared in
+   *  syncFromDoc so the (expensive) PMREM rebuild only runs on an actual switch. */
+  private envKind: EnvironmentKind = 'room'
   private glbTokens = new Map<string, number>() // id → load generation (drop stale async loads)
   private fontTokens = new Map<string, number>() // id → font-load generation, same drop-stale contract as glbTokens
   private meshTokens = new Map<string, number>()
@@ -494,14 +497,18 @@ export class SceneEngine {
     this.ctxHandle = registerWebGLContext('Scene3D')
   }
 
-  /** (Re)build the PMREM environment map from RoomEnvironment. Split out of the
-   *  constructor so context-restore can rebuild it — the render target is a GPU
-   *  resource lost with the context. Disposes any prior target first. */
-  private buildEnvironment(): void {
+  /** (Re)build the PMREM environment map for `kind` (default: current kind, which
+   *  is what context-restore wants). Split out of the constructor so restore can
+   *  rebuild it — the render target is a GPU resource lost with the context.
+   *  Disposes the prior target AND the throwaway source scene. */
+  private buildEnvironment(kind: EnvironmentKind = this.envKind): void {
+    this.envKind = kind
     this.envTarget?.dispose()
     const pmrem = new THREE.PMREMGenerator(this.renderer)
-    this.envTarget = pmrem.fromScene(new RoomEnvironment(), 0.04)
+    const envScene = buildEnvironmentScene(kind)
+    this.envTarget = pmrem.fromScene(envScene, 0.04)
     this.scene.environment = this.envTarget.texture
+    envScene.dispose()
     pmrem.dispose()
   }
 
@@ -631,6 +638,7 @@ export class SceneEngine {
     this.sun.intensity = doc.lighting.sunIntensity
     this.sun.castShadow = preset.shadow
     this.ambient.intensity = doc.lighting.ambient
+    if (doc.lighting.environment !== this.envKind) this.buildEnvironment(doc.lighting.environment)
     this.scene.environmentIntensity = preset.envIntensity
     this.scene.background = doc.background === 'transparent' ? null : new THREE.Color(stripAlpha(doc.background))
     // Floor = the reference grid + the shadow-catcher ground. Off ⇒ a clean floating
