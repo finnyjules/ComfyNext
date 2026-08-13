@@ -3,24 +3,7 @@
 // still makes fetch() calls to these paths (e.g. /queue, /comfyui/settings).
 
 import { resolveWorkerTarget } from '../utils/workerRoute'
-
-// Prefixes to proxy (without trailing slashes — matching uses startsWith)
-const PROXY_PREFIXES = [
-  '/comfyui',
-  '/extensions',
-  '/api',
-  '/queue',
-  '/prompt',
-  '/interrupt',
-  '/history',
-  '/system_stats',
-  '/view',
-  '/upload',
-  '/object_info',
-  '/global_subgraphs',
-  '/gate',
-  '/sailor',
-]
+import { PROXY_PREFIXES } from '../utils/authGuard'
 
 // Paths under PROXY_PREFIXES that should be handled by Nitro routes, not proxied
 const NITRO_API_PATHS = ['/api/explain', '/api/pipeline-suggest', '/api/font-suggest', '/api/secrets', '/api/render-template', '/api/lora-preview', '/api/replicate-cover', '/api/google-fonts', '/api/loras-local', '/api/lora-cover', '/api/community-workflow', '/api/voices-local', '/api/voice-preview-file', '/api/vibe', '/api/agent-plan', '/api/agent-review', '/api/image-search', '/api/image-fetch', '/api/copy-assist', '/api/ai-status', '/api/dataset-match', '/api/training-image']
