@@ -1,12 +1,13 @@
 <script setup lang="ts">
 // Cast picker: choose a character from the registry. Emits pick(slug, name, stateId);
-// the caller owns adding it to sheet.cast. Cards with >1 variant expand an inline
-// variant chip row on click instead of picking immediately; single-variant cards
+// the caller owns adding it to sheet.cast. Cards with >1 look expand an inline
+// look chip row on click instead of picking immediately; single-look cards
 // pick directly (stateId: null — the default state is implied).
 import { computed, ref } from 'vue'
 import { Check, X } from 'lucide-vue-next'
 import { useCharacters } from '~/composables/useCharacters'
-import { normalizeStateId, identityRefs, sortStatesLockedFirst, draftBadge, type CharacterRecord, type CharacterState } from '#shared/characters/types'
+import { normalizeStateId, identityRefs, sortStatesLockedFirst, type CharacterRecord, type CharacterState } from '#shared/characters/types'
+import { readiness } from '~/lib/characters/readiness'
 
 const props = defineProps<{ excludeSlugs: string[] }>()
 const emit = defineEmits<{ pick: [slug: string, name: string, stateId: string | null], close: [] }>()
@@ -21,8 +22,14 @@ const visible = computed<CharacterRecord[]>(() => {
     .filter(c => !query || c.name.toLowerCase().includes(query))
 })
 
-/** slug of the card whose variant row is expanded, if any. */
+/** slug of the card whose look row is expanded, if any. */
 const expandedSlug = ref<string | null>(null)
+
+function toneClass(tone: 'grey' | 'amber' | 'blue'): string {
+  if (tone === 'amber') return 'bg-amber-300/10 text-amber-300'
+  if (tone === 'blue') return 'bg-action/15 text-action'
+  return 'bg-white/10 text-white/50'
+}
 
 /** Identity assets across every look (sheet + refs), not just refImages — a
  *  sheet-only look casts fine but has no refImages, so counting refImages
@@ -31,8 +38,8 @@ function refCount(c: CharacterRecord): number {
   return c.states.reduce((n, v) => n + identityRefs(v).length, 0)
 }
 
-/** Variant chip row order: locked (stress-tested) looks lead. */
-function sortedVariants(c: CharacterRecord): CharacterState[] {
+/** Look chip row order: readiest looks lead. */
+function sortedLooks(c: CharacterRecord): CharacterState[] {
   return sortStatesLockedFirst(c.states)
 }
 
@@ -44,7 +51,7 @@ function onCardClick(c: CharacterRecord) {
   emit('pick', c.slug, c.name, null)
 }
 
-function pickVariant(c: CharacterRecord, stateId: string) {
+function pickLook(c: CharacterRecord, stateId: string) {
   emit('pick', c.slug, c.name, normalizeStateId(stateId))
 }
 </script>
@@ -73,24 +80,28 @@ function pickVariant(c: CharacterRecord, stateId: string) {
             <div class="mt-1.5 truncate text-[12px] text-white/85">{{ c.name }}</div>
             <div class="text-[10px] text-white/40">
               {{ refCount(c) }} reference{{ refCount(c) === 1 ? '' : 's' }}
-              <span v-if="c.states.length > 1">· {{ c.states.length }} variants</span>
+              <span v-if="c.states.length > 1">· {{ c.states.length }} looks</span>
             </div>
-            <!-- Single-variant cards pick directly (no expand row) — badge right on the card. -->
-            <div v-if="c.states.length === 1 && draftBadge(c.states[0]!.status)" class="text-[9px] text-amber-400/80">
-              {{ draftBadge(c.states[0]!.status) }}
+            <!-- Single-look cards pick directly (no expand row) — readiness badge right on the card. -->
+            <div
+              v-if="c.states.length === 1"
+              class="mt-1 inline-block rounded px-1.5 py-0.5 text-[9px] font-medium"
+              :class="toneClass(readiness(c.states[0]!).tone)"
+            >
+              {{ readiness(c.states[0]!).label }}
             </div>
           </button>
-          <!-- Variant chip row: only for multi-variant cards, expanded on click -->
+          <!-- Look chip row: only for multi-look cards, expanded on click -->
           <div v-if="expandedSlug === c.slug" class="col-span-3 -mt-1 flex flex-wrap gap-1.5 rounded-lg border border-white/10 bg-white/[0.02] p-2">
             <button
-              v-for="v in sortedVariants(c)" :key="v.id"
+              v-for="v in sortedLooks(c)" :key="v.id"
               class="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.05] py-0.5 pl-0.5 pr-2 text-[11px] text-white/80 hover:border-white/25"
-              @click="pickVariant(c, v.id)"
+              @click="pickLook(c, v.id)"
             >
               <img v-if="portraitUrl(c, v.id) ?? coverUrl(c, v.id)" :src="portraitUrl(c, v.id) ?? coverUrl(c, v.id)!" class="h-5 w-5 rounded-full object-cover" :alt="v.label">
               {{ v.label }}
-              <Check v-if="v.status === 'locked'" class="size-3 text-action" />
-              <span v-else class="text-[9px] text-amber-400/80">{{ draftBadge(v.status) }}</span>
+              <Check v-if="readiness(v).key === 'ready'" class="size-3 text-action" />
+              <span v-else class="text-[9px]" :class="toneClass(readiness(v).tone)">{{ readiness(v).label }}</span>
             </button>
           </div>
         </div>

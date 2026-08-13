@@ -457,7 +457,6 @@ export const TOOLBOX_SECTIONS: ToolboxSection[] = [
       { nodeType: 'FilmShotNode',         label: 'Film a Shot',        description: 'Direct a video like a cinematographer — 28 shot presets (push-in, dolly zoom, god shot…) write the camera language for you. Cloud.', icon: Clapperboard },
       { nodeType: 'AnimatedNoise',        label: 'Animated Noise',     description: 'Generate a clip of evolving value noise — pans, breathes, or swirls.', icon: Hourglass },
       { nodeType: 'Character',            label: 'Character',          description: 'A castable person — wire into a Shot Director.', icon: Drama },
-      { nodeType: 'CharacterSheet',       label: 'Character Sheet',    description: 'Expand one photo (or a trained LoRA) into a 4-shot reference sheet and save it as a castable character.', icon: Images },
     ],
   },
 ]

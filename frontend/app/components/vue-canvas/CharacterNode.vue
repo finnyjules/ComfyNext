@@ -7,7 +7,8 @@ import { Drama } from 'lucide-vue-next'
 import { useCharacters } from '~/composables/useCharacters'
 import CharacterPickerModal from '~/components/vue-canvas/CharacterPickerModal.vue'
 import { emitCharacterEvent } from '~/lib/characters/bus'
-import { normalizeStateId, pickState, identityRefs, sortStatesLockedFirst, draftBadge, type CharacterState } from '#shared/characters/types'
+import { normalizeStateId, pickState, identityRefs, sortStatesLockedFirst, type CharacterState } from '#shared/characters/types'
+import { readiness } from '~/lib/characters/readiness'
 
 const props = defineProps<{
   id: string
@@ -49,12 +50,13 @@ const activeState = computed<CharacterState | undefined>(() => character.value ?
  *  sheet-only look (refImages: []) casts fine but would otherwise read as "0 references". */
 const identityCount = computed(() => identityRefs(activeState.value).length)
 
-/** Variant select order: locked (stress-tested) looks lead. */
-const sortedVariantStates = computed<CharacterState[]>(() => sortStatesLockedFirst(character.value?.states ?? []))
+/** Look select order: readiest looks lead. */
+const sortedLookStates = computed<CharacterState[]>(() => sortStatesLockedFirst(character.value?.states ?? []))
 
-/** Native <select> can't carry an icon, so the flag is text on the option itself. */
-function variantOptionLabel(v: CharacterState): string {
-  return v.status === 'locked' ? `${v.label} ✓ locked` : `${v.label} — ${draftBadge(v.status)}`
+/** Native <select> can't carry an icon or tone color, so readiness is text on the option itself. */
+function lookOptionLabel(v: CharacterState): string {
+  const r = readiness(v)
+  return r.key === 'ready' ? `${v.label} ✓ ${r.label}` : `${v.label} — ${r.label}`
 }
 
 function pick(s: string, name: string, pickedStateId: string | null) {
@@ -65,7 +67,7 @@ function pick(s: string, name: string, pickedStateId: string | null) {
   emitCharacterEvent('castEdgesChanged')
 }
 
-function onVariantChange(e: Event) {
+function onLookChange(e: Event) {
   if (!props.data.properties) props.data.properties = {}
   const b = binding.value
   if (!b) return
@@ -107,14 +109,14 @@ function onVariantChange(e: Event) {
             <p class="text-[10px] text-white/40">{{ identityCount }} identity source{{ identityCount === 1 ? '' : 's' }}</p>
           </div>
         </div>
-        <!-- Variant select: only when the character has more than one variant -->
+        <!-- Look select: only when the character has more than one look -->
         <select
           v-if="character.states.length > 1"
           :value="stateId ?? character.states.find(v => v.id === 'default')?.id ?? ''"
           class="mt-2 w-full rounded border border-white/10 bg-[#0e0e10] px-1.5 py-1 text-[11px] text-white/70 outline-none focus:border-white/25"
-          @change="onVariantChange"
+          @change="onLookChange"
         >
-          <option v-for="v in sortedVariantStates" :key="v.id" :value="v.id" class="bg-neutral-900">{{ variantOptionLabel(v) }}</option>
+          <option v-for="v in sortedLookStates" :key="v.id" :value="v.id" class="bg-neutral-900">{{ lookOptionLabel(v) }}</option>
         </select>
         <p v-if="!identityCount" class="mt-1.5 text-[10px] leading-tight text-amber-400/80">
           No reference photos — add some in the Characters panel.

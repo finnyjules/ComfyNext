@@ -45,7 +45,6 @@ export const COLLAPSE_TIERS: Record<string, CollapseTier> = {
   'artifact-frame': 'never',
   'artifact-timeline': 'never',
   'artifact-3d': 'never',
-  'character-sheet': 'never',
   collection: 'never',
   'batch-grid': 'never',
   'sketch-pile': 'never',

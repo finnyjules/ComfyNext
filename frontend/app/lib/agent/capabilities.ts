@@ -290,8 +290,12 @@ const STUDIOS: AgentCapability[] = [
     intents: ['seedance', 'direct a video', 'shot director', 'film a shot', 'video shot', 'shot sheet', 'camera direction', 'direct a shot', 'video direction', 'seedance prompt', 'shot-director'] },
   { nodeType: 'Character', kind: 'studio', frontendOnly: true, title: 'Character', summary: 'Castable character card — references a saved character for casting into a Shot Director.', inputs: [], outputs: [{ name: 'character', type: 'CHARACTER' }],
     intents: ['character', 'cast a character', 'add a character', 'character card', 'use this character', 'reuse a character', 'pick a saved character'] },
-  { nodeType: 'CharacterSheet', kind: 'studio', frontendOnly: true, title: 'Character Sheet', summary: 'Expandable character sheet — builds a castable character from a reference image.', inputs: [{ name: 'image', type: 'IMAGE', optional: true }], outputs: [{ name: 'character', type: 'CHARACTER' }],
-    intents: ['character sheet', 'build a character', 'create a character from image', 'character builder', 'turn this image into a character', 'make a castable character', 'new character from reference'] },
+  // CharacterSheet is retired (Task 5) — its sheet-builder flow now lives in
+  // the Character Studio, reached from the Character card's picker, not from
+  // a standalone creatable node. No STUDIOS entry means it's no longer
+  // agent-plannable or toolbox-creatable; it stays in FRONTEND_ONLY_NODE_TYPES
+  // below (explicit add, same as LipSyncStudio) so a saved graph's old
+  // CharacterSheet node still gets stripped before a backend Run.
   { nodeType: 'SpaceType', kind: 'studio', frontendOnly: true, title: 'Expressive Studio', summary: 'Arrange type, photos, and fills as tiles in looping 3D layouts (ring, and more) — pick a layout, add words/images/gradients, animate + bake. Kinetic typography + card showcases in one.', inputs: [], outputs: [{ name: 'output', type: '*' }],
     intents: ['kinetic typography', 'animated text', 'animate text', 'animate the word', 'animated word', 'animate this text', '3d text', '3d text effect', 'text animation', 'spinning text', 'text on a sphere', 'text tunnel', 'glitchy text', 'melting text', 'spiral text', 'elastic stretchy text', 'ribbon text', 'type studio', 'animated title', 'motion typography', 'extruded text', 'text on a cylinder', 'text intro animation', 'photo carousel', 'card showcase', 'image ring', 'cover flow', 'orbiting cards', 'looping layout'] },
   { nodeType: 'Scene3DStudio', kind: 'studio', frontendOnly: false, title: '3D Studio', summary: 'Compose a 3D scene (primitives, imported GLB models, lights) in a fullscreen editor; outputs baked beauty, depth and normal renders for img2img / ControlNet conditioning.', inputs: [{ name: 'glb_url', type: 'STRING', optional: true }], outputs: [{ name: 'beauty', type: 'IMAGE' }, { name: 'depth', type: 'IMAGE' }, { name: 'normal', type: 'IMAGE' }],
@@ -359,10 +363,17 @@ export const AGENT_CAPABILITIES: AgentCapability[] = [...STUDIOS, ...GENERATORS]
  * pre-existing gap in the agent's capability palette (not this file's
  * concern to fix); it's added here explicitly so the Run-time strip stays
  * correct regardless.
+ *
+ * `CharacterSheet` is the same situation for a different reason: it's
+ * retired (Task 5, no longer creatable — see the STUDIOS comment above) so
+ * it deliberately has no AGENT_CAPABILITIES entry, but old saved graphs can
+ * still contain one and it still has no backend class_type — added
+ * explicitly so a Run doesn't try to execute it.
  */
 export const FRONTEND_ONLY_NODE_TYPES: Set<string> = new Set([
   ...studioNodeTypes().map(n => n.name),
   'LipSyncStudio',
   'Reference',
   'BatchGrid',
+  'CharacterSheet',
 ])

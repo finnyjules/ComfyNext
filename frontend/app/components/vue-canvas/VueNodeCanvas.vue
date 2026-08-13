@@ -86,7 +86,6 @@ import ShotDirectorSurface from '~/components/vue-canvas/ShotDirectorSurface.vue
 import LipSyncStudioNode from '~/components/vue-canvas/LipSyncStudioNode.vue'
 import LipSyncSurface from '~/components/vue-canvas/LipSyncSurface.vue'
 import CharacterNode from '~/components/vue-canvas/CharacterNode.vue'
-import CharacterSheetNode from '~/components/vue-canvas/CharacterSheetNode.vue'
 import CollectionNode from './CollectionNode.vue'
 import BatchGridNode from './BatchGridNode.vue'
 import SketchPileNode from './SketchPileNode.vue'
@@ -261,7 +260,7 @@ const nodeTypes = {
   'scene3d-studio': markRaw(Scene3DStudioNode),
   'shot-director': markRaw(ShotDirectorNode),
   'subgraph-io': markRaw(SubgraphIONode), 'character': markRaw(CharacterNode),
-  'character-sheet': markRaw(CharacterSheetNode), 'lip-sync': markRaw(LipSyncStudioNode),
+  'lip-sync': markRaw(LipSyncStudioNode),
   'collection': markRaw(CollectionNode),
   'reference': markRaw(ReferenceNode),
   'batch-grid': markRaw(BatchGridNode),

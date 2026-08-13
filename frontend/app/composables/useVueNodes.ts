@@ -205,10 +205,11 @@ export const ARTIFACT_NODE_COMPONENTS: Record<string, string> = {
   // Character: frontend-only card representing a castable person from the
   // registry (Task 5) — no backend class_type, wires CHARACTER into ShotDirector.
   Character: 'character',
-  // Character Sheet: frontend-only card that expands one photo (or a trained
-  // LoRA) into a canonical 4-shot reference sheet, then saves it as a castable
-  // Character — no backend class_type, reopen to re-edit.
-  CharacterSheet: 'character-sheet',
+  // Character Sheet is retired (Task 5, sheet-builder folded into the
+  // Character Studio) — deliberately absent here. A saved graph's old
+  // CharacterSheet node falls through the `|| 'comfy'` default below and
+  // renders as a generic node-box; its cast wiring (castEdges.ts) reads
+  // node.type/properties directly and is unaffected by which component draws it.
   // Lip-Sync Studio: frontend-only config node for driving a face (character/
   // image/video) with a voice (typed TTS/uploaded audio/clip URL) via a
   // guardrailed sheet UI — no backend class_type, reopen to re-edit. Dispatches

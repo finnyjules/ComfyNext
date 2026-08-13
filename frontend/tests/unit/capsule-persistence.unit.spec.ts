@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { useVueNodes } from '~/composables/useVueNodes'
 import { stashCapsuleIntoProperties, restoreCapsuleFromProperties } from '~/lib/canvas/persistCapsule'
+import { wireCastFor, type CastNodeLite } from '~/lib/shotdirector/castEdges'
 
 // The class of bug this file exists for: convertToLiteGraph writes a CURATED
 // field map, so any node.data field nobody explicitly stashed is silently
@@ -123,6 +124,41 @@ describe('capsule state survives the save/load conversion', () => {
     const b = useVueNodes()
     b.convertFromLiteGraph(JSON.parse(JSON.stringify(saved)))
     expect((b.nodes.value as any[])[0].data.properties.sailor_characterBinding).toEqual(binding)
+  })
+
+  it('a saved CharacterSheet node (Task 5: node retired, saved graphs still have one) round-trips its binding and still casts', () => {
+    // CharacterSheetNode.vue is gone and 'CharacterSheet' is no longer a
+    // registered vue-flow component (VueNodeCanvas.vue) or an
+    // ARTIFACT_NODE_COMPONENTS entry (useVueNodes.ts) — a saved node of this
+    // type now renders via the 'comfy' generic-node fallback. None of that
+    // touches the graph model: convertToLiteGraph/convertFromLiteGraph still
+    // read/write node.type and properties.sailor_characterBinding verbatim,
+    // and castEdges.ts's wireCastFor still recognizes nodeType 'CharacterSheet'
+    // (that check is deliberately untouched — see castEdges.ts:22).
+    const a = useVueNodes()
+    const binding = { slug: 'vera', name: 'Vera', stateId: null }
+    a.convertFromLiteGraph(workflow([lgNode({ type: 'CharacterSheet', properties: { sailor_characterBinding: binding } })]))
+    const saved = a.convertToLiteGraph()
+    expect(saved.nodes[0]!.type).toBe('CharacterSheet')
+    expect((saved.nodes[0]!.properties as any).sailor_characterBinding).toEqual(binding)
+
+    const b = useVueNodes()
+    b.convertFromLiteGraph(JSON.parse(JSON.stringify(saved)))
+    const reloaded = (b.nodes.value as any[])[0]
+    expect(reloaded.data.nodeType).toBe('CharacterSheet')
+    expect(reloaded.data.properties.sailor_characterBinding).toEqual(binding)
+
+    // Cast wiring reads node.type + properties directly (VueNodeCanvas.vue's
+    // characterBindingOf), independent of which component renders the node —
+    // reproduce that lite-mapping here and confirm wireCastFor still yields
+    // the cast member for a Shot Director wired to this reloaded node.
+    const liteNodes: CastNodeLite[] = [
+      { id: String(reloaded.id), nodeType: reloaded.data.nodeType, binding },
+    ]
+    const cast = wireCastFor('sd-1', liteNodes, [
+      { source: String(reloaded.id), target: 'sd-1', targetHandle: 'input-0' },
+    ])
+    expect(cast).toEqual([{ slug: 'vera', name: 'Vera', via: 'wire', stateId: null }])
   })
 
   it('drops a stale stash when the node returns to its defaults', () => {
