@@ -2,12 +2,16 @@ import { test, expect, type Page } from '@playwright/test'
 import { openBlankWorkflow, waitForBackend } from './_helpers'
 
 /**
- * Character sheet E2E (character-system plan, Task 15 — final verification).
+ * Character sheet E2E (character-system plan, Task 15 — final verification;
+ * re-verified against the Character Studio workbench redesign, Task 6).
  *
  * Proves the plan's acceptance property end-to-end: casting a character into
  * a Shot Director (video) AND using a character "in image" both resolve to
  * the SAME identity asset — the state's composite sheet filename. Two
- * consumers, one asset.
+ * consumers, one asset. Scenario C (added for the workbench redesign) proves
+ * the roster→studio-modal surface itself: opening a character renders the
+ * new workbench with the quiet readiness vocabulary and nothing from the
+ * retired locked/draft/stress/variant wording.
  *
  * `/api/characters-local` is route-intercepted with a fixture character
  * (`fixture-cal`) whose default state already has a locked `sheetImage` and
@@ -18,6 +22,19 @@ import { openBlankWorkflow, waitForBackend } from './_helpers'
  * widgets synchronously before it ever dispatches the run, and the app's own
  * cost-confirm gate (`runVueWorkflow`) blocks queuing until a user clicks
  * "Confirm" — which this spec never does.
+ *
+ * Scenario A deliberately keeps driving Shot Director's own "+ Cast" picker
+ * (`CharacterPickerModal`, `via: 'picker'` in `sheet.cast`) rather than the
+ * roster's "Shot" button. The roster button (`CharacterRosterPanel.castInShot`
+ * → `addCharacterCastNode`) only drops an unwired `Character` node on the
+ * canvas — turning that into a cast member requires a real canvas wire drag
+ * into a Shot Director's cast input (`castEdges.ts`'s `via: 'wire'` path),
+ * which this codebase deliberately avoids in E2E (see
+ * `tests/*-cast-edges.unit.spec.ts` for that path's coverage, and the
+ * "no synthetic-wire hack" rationale below). Neither `ShotDirectorSurface.vue`
+ * nor `CharacterPickerModal.vue` changed in the workbench redesign (W1-W5
+ * touched only the roster panel, the studio modal, and the retired library
+ * panel/CharacterSheetNode), so this scenario is unaffected by it.
  *
  * Page state (node data, including widgets with `sailor_widget: "internal"`
  * that never render in the DOM, like FilmShotNode's `model_options`) is read
@@ -115,6 +132,11 @@ test.describe('Character sheet: images and video consume the same identity asset
     await blockBackendSpend(page)
     await waitForBackend(page)
     await openBlankWorkflow(page)
+    // Neutralize Clerk's dev-mode "claim your app" banner (#clerk-components,
+    // global via the @clerk/nuxt module in nuxt.config.ts) — unrelated to
+    // this spec, but its fixed-position anchor can sit on top of dialog
+    // footer buttons and intercept clicks meant for them.
+    await page.addStyleTag({ content: '#clerk-components { display: none !important; }' })
   })
 
   test('Scenario A (video): Shot Director cast + Generate writes the FilmShotNode from the sheet + descriptor', async ({ page }) => {
@@ -178,18 +200,24 @@ test.describe('Character sheet: images and video consume the same identity asset
     expect(modelOptions.image_urls[0]).toContain('type=input')
   })
 
-  test('Scenario B (image): "Use in image" wires the SAME sheet filename into a ConsistentFaceNode', async ({ page }) => {
+  test('Scenario B (image): roster "Image" button wires the SAME sheet filename into a ConsistentFaceNode', async ({ page }) => {
     test.setTimeout(60_000)
 
-    // Open the Characters panel (real UI toolbar button).
+    // Open the Characters panel (real UI toolbar button) — CharacterRosterPanel.
     await page.getByRole('button', { name: 'Characters', exact: true }).click()
-    const characterRow = page.getByText('Cal', { exact: true }).first()
-    await expect(characterRow).toBeVisible({ timeout: 10_000 })
-    await characterRow.click() // expand the row to reveal its actions
+    const nameEl = page.getByText('Cal', { exact: true }).first()
+    await expect(nameEl).toBeVisible({ timeout: 10_000 })
 
-    // fixture-cal has no loraName, so "Use in image" fires straight to the
-    // sheet path (no lora/sheet menu — see CharacterLibraryPanel's useInImage).
-    await page.getByRole('button', { name: 'Use in image', exact: true }).click()
+    // Scope to the card (its "cursor-pointer" wrapper — clicking the card
+    // body opens the studio modal instead, see Scenario C) so this can't
+    // collide with any other "Image" label elsewhere in the app chrome
+    // (e.g. the Add-node toolbar's "Image" node type).
+    const card = nameEl.locator('xpath=ancestor::div[contains(@class, "cursor-pointer")][1]')
+
+    // fixture-cal has no loraName, so the roster's "Image" button fires
+    // straight to the sheet path (no lora/sheet menu — see
+    // CharacterRosterPanel's useInImage).
+    await card.getByRole('button', { name: 'Image', exact: true }).click()
 
     // Poll until both nodes exist AND the Image node's widget schema has
     // arrived (widgetDefs populates asynchronously off the object_info
@@ -214,5 +242,41 @@ test.describe('Character sheet: images and video consume the same identity asset
     const edges = await pullEdges(page)
     const wired = edges.some((e: any) => String(e.source) === String(imageNode.id) && String(e.target) === String(faceNode.id))
     expect(wired, 'Image node should be wired into the ConsistentFaceNode').toBe(true)
+  })
+
+  test('Scenario C (studio): clicking a roster card opens the workbench with quiet readiness vocabulary', async ({ page }) => {
+    test.setTimeout(30_000)
+
+    // Open the Characters panel and click the card body (not a StudioButton
+    // — those stop propagation) to open CharacterStudioModal.
+    await page.getByRole('button', { name: 'Characters', exact: true }).click()
+    const nameEl = page.getByText('Cal', { exact: true }).first()
+    await expect(nameEl).toBeVisible({ timeout: 10_000 })
+    await nameEl.click()
+
+    const modal = page.getByRole('dialog')
+    await expect(modal).toBeVisible({ timeout: 10_000 })
+
+    // (a) the header readiness badge (the workbench's one `rounded-full` chip)
+    // reads exactly one of the four readiness() vocabulary words. fixture-cal's
+    // default state is status: 'locked', so this should read "Ready".
+    const badge = modal.locator('span.rounded-full')
+    await expect(badge).toBeVisible()
+    // Leading whitespace is real: the badge's optional <Check> icon sits
+    // before {{ ready.label }} in the template, and Vue's default whitespace
+    // handling ('condense') collapses the gap to a single space rather than
+    // removing it — trim before matching the vocabulary.
+    const badgeText = (await badge.innerText()).trim()
+    expect(badgeText).toMatch(/^(Ready|Not built|Not tested|\d+\/\d+ poses)$/)
+
+    // (b) none of the retired locked/draft/stress/variant vocabulary leaks
+    // into the rendered modal — readiness() is the ONLY source of status
+    // wording (see this file's — and CharacterStudioModal.vue's — header
+    // comment). innerText (not textContent) so hidden nodes don't trip it.
+    const modalText = await modal.innerText()
+    expect(modalText).not.toMatch(/locked|draft|stress|variant/i)
+
+    // (c) the looks rail lists the fixture's states.
+    await expect(modal.getByText('Default', { exact: true })).toBeVisible()
   })
 })
