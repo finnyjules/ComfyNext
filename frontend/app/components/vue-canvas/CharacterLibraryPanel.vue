@@ -213,11 +213,10 @@ async function deleteVariant(c: CharacterRecord, variant: CharacterState) {
   if (variant.id === 'default') return
   if (!window.confirm(`Delete look "${variant.label}"?`)) return
   const states = c.states.filter(v => v.id !== variant.id)
-  if (await replaceStates(c.slug, states)) {
-    selectedVariantId.value[c.slug] = 'default'
-  } else {
-    toast.error('Couldn\'t delete the look — try again')
-  }
+  const result = await replaceStates(c.slug, states, c.updatedAt)
+  if (result === 'stale') { toast.error(STALE_MESSAGE); return }
+  if (result === 'error') { toast.error('Couldn\'t delete the look — try again'); return }
+  selectedVariantId.value[c.slug] = 'default'
 }
 
 // ── New variant ─────────────────────────────────────────────────────────
@@ -242,13 +241,12 @@ async function createVariant(c: CharacterRecord) {
     descriptor: (newVariantDescriptor.value[c.slug] || '').trim(),
   }
   const states = [...c.states, variant]
-  if (await replaceStates(c.slug, states)) {
-    addingVariant.value.delete(c.slug)
-    selectedVariantId.value[c.slug] = variant.id
-    toast.success(`Added look "${label}"`)
-  } else {
-    toast.error('Couldn\'t add the look — try again')
-  }
+  const result = await replaceStates(c.slug, states, c.updatedAt)
+  if (result === 'stale') { toast.error(STALE_MESSAGE); return }
+  if (result === 'error') { toast.error('Couldn\'t add the look — try again'); return }
+  addingVariant.value.delete(c.slug)
+  selectedVariantId.value[c.slug] = variant.id
+  toast.success(`Added look "${label}"`)
 }
 
 // ── Sheet generation (per variant) ──────────────────────────────────────

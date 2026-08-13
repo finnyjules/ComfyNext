@@ -11,6 +11,7 @@ export default defineEventHandler(async (event) => {
     slug?: string, name?: string, notes?: string, loraName?: string | null,
     trigger?: string | null,
     states?: CharacterState[], statePatch?: StatePatchBody, remove?: true,
+    expectedUpdatedAt?: string,
   }
   const slug = (body?.slug || '').trim()
   if (!slug || slug.includes('/') || slug.includes('\\') || slug.includes('..')) {
@@ -42,6 +43,16 @@ export default defineEventHandler(async (event) => {
   }
 
   if (Array.isArray(body.states)) {
+    // Record-level staleness guard, mirroring applyStatePatch's per-state
+    // check above — full-array replaces (create/delete-variant) otherwise
+    // clobber a concurrent edit with no warning. Omitted expectedUpdatedAt
+    // keeps legacy callers working unguarded.
+    // NOTE: no Nitro test harness for this route (established pattern, see
+    // the statePatch branch above) — covered indirectly via
+    // characters-composable.unit.spec.ts at the store layer.
+    if (typeof body.expectedUpdatedAt === 'string' && body.expectedUpdatedAt !== record.updatedAt) {
+      throw createError({ statusCode: 409, message: 'Character was modified by someone else' })
+    }
     const states = body.states
     const ids = states.map(v => v?.id)
     if (states.length === 0

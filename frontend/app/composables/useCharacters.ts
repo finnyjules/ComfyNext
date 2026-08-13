@@ -149,15 +149,21 @@ export function useCharacters() {
     finally { await refresh() } // even on stale/error — pull the truth
   }
 
-  async function replaceStates(slug: string, states: CharacterState[]): Promise<boolean> {
+  /**
+   * Full-array structural replace (create/delete-variant). `expectedUpdatedAt`
+   * mirrors patchState's record-level staleness guard: pass the character's
+   * current `updatedAt` and a concurrent edit landing first 409s instead of
+   * being silently clobbered by this replace.
+   */
+  async function replaceStates(slug: string, states: CharacterState[], expectedUpdatedAt?: string): Promise<'ok' | 'stale' | 'error'> {
     try {
       const res = await fetch('/api/characters-local', {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ slug, states }),
+        body: JSON.stringify({ slug, states, ...(expectedUpdatedAt !== undefined ? { expectedUpdatedAt } : {}) }),
       })
-      return res.ok
-    } catch { return false }
-    finally { await refresh() } // even on failure — pull the truth
+      return res.ok ? 'ok' : res.status === 409 ? 'stale' : 'error'
+    } catch { return 'error' }
+    finally { await refresh() } // even on stale/error — pull the truth
   }
 
   async function removeCharacter(slug: string): Promise<boolean> {

@@ -172,6 +172,31 @@ describe('useCharacters', () => {
     expect(characters.value).toHaveLength(1)
   })
 
+  it('replaceStates sends expectedUpdatedAt in the PATCH body when given', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ characters: [REVA] }) })
+    vi.stubGlobal('fetch', fetchMock)
+    const { useCharacters } = await import('~/composables/useCharacters')
+    const { replaceStates } = useCharacters()
+    await replaceStates('reva', REVA.states as any, '2026-08-01T00:00:00.000Z')
+    const [, opts] = fetchMock.mock.calls[0]!
+    expect(JSON.parse(opts.body)).toEqual({
+      slug: 'reva', states: REVA.states, expectedUpdatedAt: '2026-08-01T00:00:00.000Z',
+    })
+  })
+
+  it('replaceStates returns "stale" on a 409 response and still refreshes', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ status: 409, ok: false })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ characters: [REVA] }) })
+    vi.stubGlobal('fetch', fetchMock)
+    const { useCharacters } = await import('~/composables/useCharacters')
+    const { replaceStates, characters } = useCharacters()
+    const result = await replaceStates('reva', REVA.states as any, '2026-08-01T00:00:00.000Z')
+    expect(result).toBe('stale')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(characters.value).toHaveLength(1)
+  })
+
   it('characterStatus derives draft/training/ready from lora link + job queue', async () => {
     const { characterStatus } = await import('~/composables/useCharacters')
     const ready = { ...REVA, loraName: 'reva-lora' }
