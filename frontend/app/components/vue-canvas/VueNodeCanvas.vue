@@ -3817,14 +3817,14 @@ async function warmSketch(): Promise<void> {
   window.dispatchEvent(new CustomEvent('sailor:runFiltered', { detail: { targetIds: [warmPadNodeId], direction: 'self', skipCostConfirm: true } }))
 }
 
-// Character Library panel "Use in image": ready characters (linked LoRA) get a
-// prefilled FluxLoRARemoteNode; drafts get a wired Image → ConsistentFaceNode pair
-// seeded from the default variant's cover photo. Always re-fetches the registry
+// Character Library panel "Use in image": the panel now asks explicitly
+// (Task 12) — 'lora' always means the trained FluxLoRARemoteNode (errors if
+// the character has no loraName yet, rather than silently falling back to
+// the sheet); 'sheet' always means the wired Image → ConsistentFaceNode pair
+// seeded from the default variant's cover photo, even for characters that DO
+// have a LoRA. No silent fork either way. Always re-fetches the registry
 // (same pattern as handleShotDirectorGenerate) rather than trusting the panel's cache.
 async function handleAddCharacterImageGen(payload: CharacterBusEvents['addCharacterImageGen']) {
-  // TODO(T12): the sheet/lora `use` fork isn't fully wired yet — 'sheet' and any
-  // other value resolve the same way below (LoRA node only when use === 'lora'
-  // AND the character has a trained LoRA; else the Image → ConsistentFaceNode pair).
   const { slug, use } = payload ?? {}
   if (!slug) return
   const store = useCharacters()
@@ -3837,7 +3837,11 @@ async function handleAddCharacterImageGen(payload: CharacterBusEvents['addCharac
 
   const pos = project({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
 
-  if (use === 'lora' && character.loraName) {
+  if (use === 'lora') {
+    if (!character.loraName) {
+      toast.error(`No trained identity for ${character.name} yet — train one first`)
+      return
+    }
     nodes.value.push(createNodeData('FluxLoRARemoteNode', pos, {
       prompt: character.trigger ? `${character.trigger}, ` : '',
       lora_name: character.loraName,
@@ -3852,9 +3856,14 @@ async function handleAddCharacterImageGen(payload: CharacterBusEvents['addCharac
     return
   }
 
+  // imgNode must be pushed before faceNode is minted: mintNodeId() only
+  // dedupes against nodes.value at call time, and both createNodeData calls
+  // land in the same millisecond often enough that Date.now() collides —
+  // the second call would silently reuse imgNode's id if it ran first.
   const imgNode = createNodeData('Image', pos, { image: cover })
+  nodes.value.push(imgNode)
   const faceNode = createNodeData('ConsistentFaceNode', { x: pos.x + (imgNode.data?.size?.[0] ?? 220) + 80, y: pos.y })
-  nodes.value.push(imgNode, faceNode)
+  nodes.value.push(faceNode)
 
   const ins = (faceNode.data?.inputs ?? []) as any[]
   const inIdx = ins.findIndex((i) => i.name === 'reference_image')

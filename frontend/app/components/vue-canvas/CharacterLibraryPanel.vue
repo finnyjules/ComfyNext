@@ -28,6 +28,7 @@ let absorbRanThisSession = false
  */
 import { Drama, Images, Loader2, RefreshCcw, Shirt, Sparkles, Upload, X } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
+import { onClickOutside } from '@vueuse/core'
 
 import {
   useCharacters, useTrainingJobs, characterStatus, IN_FLIGHT_STATUSES, slugish,
@@ -135,10 +136,50 @@ function loraChip(c: CharacterRecord): string {
 }
 
 // ── Actions row ─────────────────────────────────────────────────────────
-function useInImage(c: CharacterRecord) {
-  // The 'sheet' vs 'lora' use fork is wired for real in Task 12; pass 'sheet' now.
-  emitCharacterEvent('addCharacterImageGen', { slug: c.slug, use: 'sheet' })
+// "Use in image" is a visible choice, not a silent fork (Task 12): a
+// LoRA-less character just sends the sheet (nothing else it could do), but a
+// character WITH a trained LoRA gets an explicit two-option menu so the
+// canvas never silently prefers one path over the other. The menu is
+// teleported to <body> in screen space (same idiom as ArtifactImageNode's
+// edit/next menus) so it isn't clipped by this panel's overflow-y-auto list;
+// the anchor button is captured from the click event rather than a template
+// ref, since template refs inside v-for come back as arrays, not elements.
+const useInImageMenuSlug = ref<string | null>(null)
+const useInImageMenuAnchor = ref<HTMLElement | null>(null)
+const useInImageMenuPanelRef = ref<HTMLElement | null>(null)
+const useInImageMenuStyle = ref<Record<string, string>>({})
+onClickOutside(useInImageMenuAnchor, () => { useInImageMenuSlug.value = null }, { ignore: [useInImageMenuPanelRef] })
+
+function useInImage(c: CharacterRecord, e: MouseEvent) {
+  if (!c.loraName) {
+    emitCharacterEvent('addCharacterImageGen', { slug: c.slug, use: 'sheet' })
+    return
+  }
+  if (useInImageMenuSlug.value === c.slug) { useInImageMenuSlug.value = null; return }
+  const btn = e.currentTarget as HTMLElement
+  useInImageMenuAnchor.value = btn
+  const r = btn.getBoundingClientRect()
+  const MENU_W = 220
+  const left = Math.max(8, Math.min(r.left, window.innerWidth - MENU_W - 8))
+  const top = Math.min(r.bottom + 4, window.innerHeight - 120)
+  useInImageMenuStyle.value = { left: `${left}px`, top: `${top}px`, width: `${MENU_W}px` }
+  useInImageMenuSlug.value = c.slug
 }
+
+function chooseUseInImage(c: CharacterRecord, use: 'sheet' | 'lora') {
+  emitCharacterEvent('addCharacterImageGen', { slug: c.slug, use })
+  useInImageMenuSlug.value = null
+}
+
+const useInImageMenuCharacter = computed(() =>
+  useInImageMenuSlug.value ? characters.value.find(c => c.slug === useInImageMenuSlug.value) ?? null : null,
+)
+
+function onUseInImageMenuKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape' && useInImageMenuSlug.value) { useInImageMenuSlug.value = null }
+}
+onMounted(() => window.addEventListener('keydown', onUseInImageMenuKeydown))
+onUnmounted(() => window.removeEventListener('keydown', onUseInImageMenuKeydown))
 function castInShot(c: CharacterRecord) {
   // normalizeStateId collapses the sentinel 'default' selection (and '' /
   // undefined) to null — the Character node's own UI (CharacterNode.vue)
@@ -589,7 +630,7 @@ function tileColor(seed: string): string {
           <div v-if="expandedSlug === c.slug" class="border-t border-white/[0.06] p-2 space-y-2.5">
             <!-- Actions row -->
             <div class="flex gap-1.5">
-              <button class="flex-1 rounded bg-white/[0.06] px-2 py-1.5 text-[10.5px] text-white/75 hover:bg-white/[0.12] cursor-pointer" @click="useInImage(c)">
+              <button class="flex-1 rounded bg-white/[0.06] px-2 py-1.5 text-[10.5px] text-white/75 hover:bg-white/[0.12] cursor-pointer" @click="useInImage(c, $event)">
                 Use in image
               </button>
               <button class="flex-1 rounded bg-white/[0.06] px-2 py-1.5 text-[10.5px] text-white/75 hover:bg-white/[0.12] cursor-pointer" @click="castInShot(c)">
@@ -810,5 +851,30 @@ function tileColor(seed: string): string {
         </div>
       </div>
     </div>
+
+    <!-- Use-in-image: sheet vs LoRA (only when the character has a trained LoRA) -->
+    <Teleport to="body">
+      <div
+        v-if="useInImageMenuCharacter"
+        ref="useInImageMenuPanelRef"
+        class="fixed z-[300] rounded-lg border border-white/10 bg-[#1a1a1a] p-1 shadow-2xl"
+        :style="useInImageMenuStyle"
+      >
+        <button
+          class="block w-full rounded px-2.5 py-1.5 text-left text-[11px] text-white/85 hover:bg-white/10 cursor-pointer"
+          @click="chooseUseInImage(useInImageMenuCharacter, 'sheet')"
+        >
+          Reference sheet
+          <div class="text-[10px] text-white/40">works everywhere · sends the sheet</div>
+        </button>
+        <button
+          class="block w-full rounded px-2.5 py-1.5 text-left text-[11px] text-white/85 hover:bg-white/10 cursor-pointer"
+          @click="chooseUseInImage(useInImageMenuCharacter, 'lora')"
+        >
+          Trained identity (LoRA)
+          <div class="text-[10px] text-white/40">Flux only · uses the trigger word</div>
+        </button>
+      </div>
+    </Teleport>
   </div>
 </template>
