@@ -53,9 +53,12 @@ export function applyStatePatch(record: CharacterRecord, body: StatePatchBody, n
   }
 
   // Lock rule: locking requires a passing full stress result, from the
-  // patch or already on the state.
+  // patch or already on the state. But if this same patch touches content,
+  // the state.stressResult fallback is stale by definition (it validated
+  // the OLD content) — a re-lock alongside a content edit must carry its
+  // own fresh stressResult in the patch.
   if (next.status === 'locked') {
-    const sr = patch.stressResult ?? state.stressResult
+    const sr = touchesContent ? patch.stressResult : (patch.stressResult ?? state.stressResult)
     if (!sr || sr.passes !== sr.total || sr.total < 10) {
       return { ok: false, code: 400, message: 'Locking requires a passing full stress result (>=10/10)' }
     }

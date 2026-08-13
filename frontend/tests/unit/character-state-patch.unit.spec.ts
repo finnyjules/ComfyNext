@@ -46,3 +46,19 @@ it('content edits on a locked state revert it to draft and clear stressResult', 
   expect(r.ok && r.record.states[0]!.status).toBe('draft')
   expect(r.ok && r.record.states[0]!.stressResult).toBe(null)
 })
+it('content edit + re-lock in one patch requires a fresh stressResult, not the stale one on state', () => {
+  const locked = rec()
+  locked.states[0]! = { ...locked.states[0]!, status: 'locked', stressResult: { passes: 10, total: 10, at: 'T1' } }
+  const r = applyStatePatch(locked, { stateId: 'default', patch: { descriptor: 'x', status: 'locked' } }, 'T2')
+  expect(r).toMatchObject({ ok: false, code: 400 })
+})
+it('content edit + re-lock with a fresh passing stressResult in the same patch succeeds', () => {
+  const locked = rec()
+  locked.states[0]! = { ...locked.states[0]!, status: 'locked', stressResult: { passes: 10, total: 10, at: 'T1' } }
+  const r = applyStatePatch(locked, {
+    stateId: 'default',
+    patch: { descriptor: 'x', status: 'locked', stressResult: { passes: 10, total: 10, at: 'T2' } },
+  }, 'T2')
+  expect(r.ok && r.record.states[0]!.status).toBe('locked')
+  expect(r.ok && r.record.states[0]!.stressResult).toMatchObject({ passes: 10, total: 10, at: 'T2' })
+})
