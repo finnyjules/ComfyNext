@@ -8,6 +8,7 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { parseSidecar } from '~~/server/utils/loraPrompt'
 import { parseCharacterRecord, slugifyCharacterName, type CharacterRecord } from '~~/server/utils/characterRegistry'
+import { emptyState } from '#shared/characters/types'
 
 export default defineEventHandler(async () => {
   const lorasDir = path.resolve(process.cwd(), '..', 'models', 'loras')
@@ -71,7 +72,7 @@ export default defineEventHandler(async () => {
       loraName: c.weightsFilename,
       trigger: c.trigger,
       notes: '',
-      variants: [{ id: 'default', label: 'Default', descriptor: '', refImages: [], coverIndex: 0 }],
+      states: [emptyState('default', 'Default')],
       createdAt: now,
       updatedAt: now,
     }

@@ -2,18 +2,19 @@ import { describe, expect, it } from 'vitest'
 import {
   healRefImages, parseCharacterRecord, slugifyCharacterName, validRefFilename,
   type CharacterRecord,
-  type CharacterVariant,
+  type CharacterState,
 } from '~~/server/utils/characterRegistry'
 
-function V(over: Partial<CharacterVariant> = {}): CharacterVariant {
+function V(over: Partial<CharacterState> = {}): CharacterState {
   return {
-    id: 'default', label: 'Default', descriptor: '', refImages: ['a.png'], coverIndex: 0, ...over,
+    id: 'default', label: 'Default', descriptor: '', refImages: ['a.png'], coverIndex: 0,
+    panels: [], sheetImage: null, status: 'draft', stressResult: null, updatedAt: '', ...over,
   }
 }
 
 function rec(over: Partial<CharacterRecord> = {}): CharacterRecord {
   return {
-    name: 'Reva', slug: 'reva', variants: [V()],
+    name: 'Reva', slug: 'reva', states: [V()],
     loraName: null, trigger: null, notes: '', createdAt: 't', updatedAt: 't', ...over,
   }
 }
@@ -35,7 +36,7 @@ describe('parseCharacterRecord', () => {
   })
   it('defaults missing fields (old/partial records hydrate safely)', () => {
     const r = parseCharacterRecord('{"name":"X"}', 'x')
-    expect(r).toMatchObject({ name: 'X', slug: 'x', variants: [{ id: 'default', label: 'Default', descriptor: '', refImages: [], coverIndex: 0 }], loraName: null, notes: '' })
+    expect(r).toMatchObject({ name: 'X', slug: 'x', states: [{ id: 'default', label: 'Default', descriptor: '', refImages: [], coverIndex: 0 }], loraName: null, notes: '' })
   })
   it('returns null for non-objects and invalid JSON', () => {
     expect(parseCharacterRecord('null', 'x')).toBeNull()
@@ -43,7 +44,7 @@ describe('parseCharacterRecord', () => {
   })
   it('drops non-string and path-escaping ref filenames on parse', () => {
     const raw = JSON.stringify({ name: 'X', refImages: ['ok.png', '../evil.png', 5, 'sub/dir.png'] })
-    expect(parseCharacterRecord(raw, 'x')?.variants[0]!.refImages).toEqual(['ok.png'])
+    expect(parseCharacterRecord(raw, 'x')?.states[0]!.refImages).toEqual(['ok.png'])
   })
 })
 
@@ -58,59 +59,116 @@ describe('validRefFilename', () => {
 })
 
 describe('healRefImages', () => {
-  it('drops refs whose file is gone and clamps coverIndex in each variant', () => {
-    const { record, dropped } = healRefImages(rec({ variants: [V({ refImages: ['a.png', 'b.png'], coverIndex: 1 })] }), f => f === 'b.png')
-    expect(record.variants[0]!.refImages).toEqual(['b.png'])
-    expect(record.variants[0]!.coverIndex).toBe(0)
+  it('drops refs whose file is gone and clamps coverIndex in each state', () => {
+    const { record, dropped } = healRefImages(rec({ states: [V({ refImages: ['a.png', 'b.png'], coverIndex: 1 })] }), f => f === 'b.png')
+    expect(record.states[0]!.refImages).toEqual(['b.png'])
+    expect(record.states[0]!.coverIndex).toBe(0)
     expect(dropped).toBe(1)
   })
   it('no-ops when all files exist', () => {
-    const { record, dropped } = healRefImages(rec({ variants: [V({ refImages: ['a.png', 'b.png'] })] }), () => true)
-    expect(record.variants[0]!.refImages).toEqual(['a.png', 'b.png'])
+    const { record, dropped } = healRefImages(rec({ states: [V({ refImages: ['a.png', 'b.png'] })] }), () => true)
+    expect(record.states[0]!.refImages).toEqual(['a.png', 'b.png'])
     expect(dropped).toBe(0)
   })
 })
 
-describe('variant migration', () => {
-  it('legacy top-level refImages hydrate into a Default variant', () => {
+describe('state migration', () => {
+  it('legacy top-level refImages hydrate into a Default state', () => {
     const raw = JSON.stringify({ name: 'X', refImages: ['a.png', 'b.png'], coverIndex: 1 })
     const r = parseCharacterRecord(raw, 'x')!
-    expect(r.variants).toEqual([{ id: 'default', label: 'Default', descriptor: '', refImages: ['a.png', 'b.png'], coverIndex: 1 }])
+    expect(r.states).toEqual([V({ refImages: ['a.png', 'b.png'], coverIndex: 1 })])
     expect(r).not.toHaveProperty('refImages')
   })
-  it('records with neither shape get one empty Default variant', () => {
-    expect(parseCharacterRecord('{"name":"X"}', 'x')!.variants).toEqual([
-      { id: 'default', label: 'Default', descriptor: '', refImages: [], coverIndex: 0 },
+  it('records with neither shape get one empty Default state', () => {
+    expect(parseCharacterRecord('{"name":"X"}', 'x')!.states).toEqual([
+      V({ refImages: [] }),
     ])
   })
-  it('variant refs are hygiene-filtered and coverIndex clamped per variant', () => {
+  it('state refs are hygiene-filtered and coverIndex clamped per state', () => {
     const raw = JSON.stringify({ name: 'X', variants: [
       { id: 'default', label: 'Default', descriptor: '', refImages: ['ok.png', '../evil.png'], coverIndex: 5 },
       { id: 'v1', label: 'Raincoat', descriptor: 'yellow raincoat', refImages: ['r.png'], coverIndex: 0 },
     ] })
     const r = parseCharacterRecord(raw, 'x')!
-    expect(r.variants[0]!.refImages).toEqual(['ok.png'])
-    expect(r.variants[0]!.coverIndex).toBe(0)
-    expect(r.variants[1]!.label).toBe('Raincoat')
+    expect(r.states[0]!.refImages).toEqual(['ok.png'])
+    expect(r.states[0]!.coverIndex).toBe(0)
+    expect(r.states[1]!.label).toBe('Raincoat')
   })
-  it('a default variant is always present and first', () => {
+  it('a default state is always present and first', () => {
     const raw = JSON.stringify({ name: 'X', variants: [{ id: 'v1', label: 'B', descriptor: '', refImages: [], coverIndex: 0 }] })
     const r = parseCharacterRecord(raw, 'x')!
-    expect(r.variants[0]!.id).toBe('default')
-    expect(r.variants).toHaveLength(2)
+    expect(r.states[0]!.id).toBe('default')
+    expect(r.states).toHaveLength(2)
   })
 })
 
-describe('healRefImages across variants', () => {
-  it('drops vanished refs in every variant and reports the total', () => {
+describe('healRefImages across states', () => {
+  it('drops vanished refs in every state and reports the total', () => {
     const record = parseCharacterRecord(JSON.stringify({ name: 'X', variants: [
       V({ refImages: ['a.png', 'b.png'], coverIndex: 1 }),
       V({ id: 'v1', label: 'Alt', refImages: ['c.png'] }),
     ] }), 'x')!
     const { record: healed, dropped } = healRefImages(record, f => f === 'b.png')
-    expect(healed.variants[0]!.refImages).toEqual(['b.png'])
-    expect(healed.variants[0]!.coverIndex).toBe(0)
-    expect(healed.variants[1]!.refImages).toEqual([])
+    expect(healed.states[0]!.refImages).toEqual(['b.png'])
+    expect(healed.states[0]!.coverIndex).toBe(0)
+    expect(healed.states[1]!.refImages).toEqual([])
     expect(dropped).toBe(2)
+  })
+})
+
+describe('three-era migration', () => {
+  it('migrates era-1 legacy top-level refImages into a default draft state', () => {
+    const rec = parseCharacterRecord(JSON.stringify({ name: 'Cal', refImages: ['a.png'], coverIndex: 0 }), 'cal')!
+    expect(rec.states).toHaveLength(1)
+    expect(rec.states[0]).toMatchObject({
+      id: 'default', refImages: ['a.png'], panels: [], sheetImage: null, status: 'draft', stressResult: null,
+    })
+  })
+
+  it('migrates era-2 variants into draft states, preserving descriptor/refs/cover', () => {
+    const rec = parseCharacterRecord(JSON.stringify({
+      name: 'Cal',
+      variants: [
+        { id: 'default', label: 'Default', descriptor: '', refImages: ['a.png', 'b.png'], coverIndex: 1 },
+        { id: 'wet', label: 'Wet', descriptor: 'soaked jacket', refImages: ['w.png'], coverIndex: 0 },
+      ],
+    }), 'cal')!
+    expect(rec.states.map(s => s.id)).toEqual(['default', 'wet'])
+    expect(rec.states[1]).toMatchObject({ descriptor: 'soaked jacket', status: 'draft', panels: [], sheetImage: null })
+  })
+
+  it('parses era-3 states natively, dropping invalid panels and unknown statuses', () => {
+    const rec = parseCharacterRecord(JSON.stringify({
+      name: 'Cal',
+      states: [{
+        id: 'default', label: 'Default', descriptor: '', refImages: [], coverIndex: 0,
+        panels: [{ slot: 'portrait', filename: 'p.png' }, { slot: 'nope', filename: 'x.png' }, { slot: 'body-front', filename: '../evil' }],
+        sheetImage: 'sheet.png', status: 'locked', stressResult: { passes: 10, total: 10, at: 't' }, updatedAt: 'u',
+      }],
+    }), 'cal')!
+    expect(rec.states[0]!.panels).toEqual([{ slot: 'portrait', filename: 'p.png' }])
+    expect(rec.states[0]!.status).toBe('locked')
+    const bad = parseCharacterRecord(JSON.stringify({
+      name: 'Cal', states: [{ id: 'default', label: 'D', refImages: [], coverIndex: 0, panels: [], sheetImage: null, status: 'gold', stressResult: null }],
+    }), 'cal')!
+    expect(bad.states[0]!.status).toBe('draft')
+  })
+
+  it('healRefImages heals panels and demotes a locked state whose sheet vanished', () => {
+    const rec = parseCharacterRecord(JSON.stringify({
+      name: 'Cal',
+      states: [{
+        id: 'default', label: 'D', descriptor: '', refImages: ['a.png', 'gone.png'], coverIndex: 1,
+        panels: [{ slot: 'portrait', filename: 'p.png' }, { slot: 'body-back', filename: 'gone2.png' }],
+        sheetImage: 'gone3.png', status: 'locked', stressResult: { passes: 10, total: 10, at: 't' }, updatedAt: '',
+      }],
+    }), 'cal')!
+    const { record, dropped } = healRefImages(rec, f => !f.startsWith('gone'))
+    expect(dropped).toBe(3)
+    const s = record.states[0]!
+    expect(s.refImages).toEqual(['a.png'])
+    expect(s.panels).toEqual([{ slot: 'portrait', filename: 'p.png' }])
+    expect(s.sheetImage).toBe(null)
+    expect(s.status).toBe('draft')   // locked promise broken — back to draft
   })
 })

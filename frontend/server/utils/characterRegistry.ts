@@ -4,29 +4,21 @@
  * a cast ref is exactly `/view?filename=<name>&type=input`, which the Shot
  * Director ref chain already resolves. Pure (fs-free) so it unit-tests like
  * loraPrompt.ts; the endpoints own the IO.
+ *
+ * On-disk records span three eras — parse-time migration only, the JSON files
+ * themselves are never rewritten by this module:
+ *   era 1: top-level `refImages`/`coverIndex` (oldest)
+ *   era 2: `variants: [{id,label,descriptor,refImages,coverIndex}]` (current disk format)
+ *   era 3: `states: CharacterState[]` (new; what writes produce from now on)
  */
+import type { CharacterPanel, CharacterRecord, CharacterState, StressResult } from '#shared/characters/types'
+import { emptyState } from '#shared/characters/types'
 
-export interface CharacterVariant {
-  id: string
-  label: string
-  /** Look descriptor folded into sheet-generation prompts ("short bob, yellow raincoat"). */
-  descriptor: string
-  refImages: string[]
-  coverIndex: number
-}
+export type { CharacterRecord, CharacterState }
+export { defaultState } from '#shared/characters/types'
 
-export interface CharacterRecord {
-  name: string
-  slug: string
-  /** Ordered variants, each with its own reference sheet. */
-  variants: CharacterVariant[]
-  /** Optional link to a trained LoRA sidecar in models/loras (opt-in). */
-  loraName: string | null
-  trigger: string | null
-  notes: string
-  createdAt: string
-  updatedAt: string
-}
+const PANEL_SLOTS = new Set(['body-front', 'body-back', 'portrait', 'face-neutral', 'face-smile'])
+const STATUSES = new Set(['draft', 'testing', 'locked'])
 
 export function slugifyCharacterName(name: string): string {
   return name
@@ -43,46 +35,67 @@ export function validRefFilename(name: string): boolean {
     && !name.includes('/') && !name.includes('\\') && !name.includes('..')
 }
 
+/** Hygiene-parse a single raw state/variant object into a well-formed CharacterState. */
+export function stateHygiene(v: Record<string, unknown>): CharacterState | null {
+  if (typeof v.id !== 'string' || !v.id || typeof v.label !== 'string' || !v.label) return null
+  const refImages = (Array.isArray(v.refImages) ? v.refImages : [])
+    .filter((f): f is string => validRefFilename(f as string))
+  const cover = typeof v.coverIndex === 'number' ? v.coverIndex : 0
+  const panels = (Array.isArray(v.panels) ? v.panels : [])
+    .filter((p): p is CharacterPanel =>
+      !!p && typeof p === 'object'
+      && PANEL_SLOTS.has((p as CharacterPanel).slot)
+      && validRefFilename((p as CharacterPanel).filename))
+  const sheetImage = typeof v.sheetImage === 'string' && validRefFilename(v.sheetImage) ? v.sheetImage : null
+  const sr = v.stressResult as StressResult | null | undefined
+  return {
+    id: v.id, label: v.label,
+    descriptor: typeof v.descriptor === 'string' ? v.descriptor : '',
+    refImages,
+    coverIndex: Math.min(Math.max(0, cover), Math.max(0, refImages.length - 1)),
+    panels,
+    sheetImage,
+    status: STATUSES.has(v.status as string) ? v.status as CharacterState['status'] : 'draft',
+    stressResult: sr && typeof sr === 'object' && typeof sr.passes === 'number' && typeof sr.total === 'number'
+      ? { passes: sr.passes, total: sr.total, at: typeof sr.at === 'string' ? sr.at : '' } : null,
+    updatedAt: typeof v.updatedAt === 'string' ? v.updatedAt : '',
+  }
+}
+
 export function parseCharacterRecord(raw: string, slug: string): CharacterRecord | null {
   let obj: unknown
   try { obj = JSON.parse(raw) } catch { return null }
   if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null
   const r = obj as Record<string, unknown>
 
-  const hygiene = (v: Record<string, unknown>): CharacterVariant | null => {
-    if (typeof v.id !== 'string' || !v.id || typeof v.label !== 'string' || !v.label) return null
-    const refImages = (Array.isArray(v.refImages) ? v.refImages : [])
-      .filter((f): f is string => validRefFilename(f as string))
-    const cover = typeof v.coverIndex === 'number' ? v.coverIndex : 0
-    return {
-      id: v.id, label: v.label,
-      descriptor: typeof v.descriptor === 'string' ? v.descriptor : '',
-      refImages,
-      coverIndex: Math.min(Math.max(0, cover), Math.max(0, refImages.length - 1)),
-    }
+  let states = (Array.isArray(r.states) ? r.states : [])
+    .map(v => stateHygiene(v as Record<string, unknown>))
+    .filter((v): v is CharacterState => !!v)
+
+  if (!states.length && Array.isArray(r.variants)) {
+    // era 2: variants lack panels/status/etc — stateHygiene fills the defaults.
+    states = (r.variants as unknown[])
+      .map(v => stateHygiene(v as Record<string, unknown>))
+      .filter((v): v is CharacterState => !!v)
   }
 
-  let variants = (Array.isArray(r.variants) ? r.variants : [])
-    .map(v => hygiene(v as Record<string, unknown>))
-    .filter((v): v is CharacterVariant => !!v)
-
-  if (!variants.length && Array.isArray(r.refImages)) {
-    // Legacy single-sheet record → Default variant (migration is parse-time;
-    // the next write persists the new shape).
-    const legacy = hygiene({ id: 'default', label: 'Default', descriptor: '', refImages: r.refImages, coverIndex: r.coverIndex ?? 0 })
-    if (legacy) variants = [legacy]
+  if (!states.length && Array.isArray(r.refImages)) {
+    // era 1: legacy single-sheet record → Default state (migration is
+    // parse-time; the next write persists the new shape).
+    const legacy = stateHygiene({ id: 'default', label: 'Default', descriptor: '', refImages: r.refImages, coverIndex: r.coverIndex ?? 0 })
+    if (legacy) states = [legacy]
   }
 
-  if (!variants.some(v => v.id === 'default')) {
-    variants.unshift({ id: 'default', label: 'Default', descriptor: '', refImages: [], coverIndex: 0 })
+  if (!states.some(v => v.id === 'default')) {
+    states.unshift(emptyState('default', 'Default'))
   } else {
-    variants = [...variants.filter(v => v.id === 'default'), ...variants.filter(v => v.id !== 'default')]
+    states = [...states.filter(v => v.id === 'default'), ...states.filter(v => v.id !== 'default')]
   }
 
   return {
     name: typeof r.name === 'string' && r.name.trim() ? r.name.trim() : slug,
     slug,
-    variants,
+    states,
     loraName: typeof r.loraName === 'string' && r.loraName ? r.loraName : null,
     trigger: typeof r.trigger === 'string' && r.trigger ? r.trigger : null,
     notes: typeof r.notes === 'string' ? r.notes : '',
@@ -91,29 +104,43 @@ export function parseCharacterRecord(raw: string, slug: string): CharacterRecord
   }
 }
 
-/** Drop refs whose input-dir file vanished across ALL variants (self-healing list). */
+/**
+ * Self-healing pass over a record's states: drop refs and panels whose
+ * input-dir file vanished, and null out a vanished sheetImage. A locked (or
+ * testing) state whose sheet vanished had its identity promise broken — it
+ * demotes back to draft and its stress result is cleared.
+ */
 export function healRefImages(
   record: CharacterRecord,
   exists: (filename: string) => boolean,
 ): { record: CharacterRecord, dropped: number } {
   let totalDropped = 0
-  const healed = record.variants.map(v => {
-    const kept = v.refImages.filter(exists)
-    const dropped = v.refImages.length - kept.length
-    totalDropped += dropped
+  const healed = record.states.map((v) => {
+    const keptRefs = v.refImages.filter(exists)
+    totalDropped += v.refImages.length - keptRefs.length
+
+    const keptPanels = v.panels.filter(p => exists(p.filename))
+    totalDropped += v.panels.length - keptPanels.length
+
+    const sheetVanished = v.sheetImage !== null && !exists(v.sheetImage)
+    if (sheetVanished) totalDropped += 1
+    const sheetImage = sheetVanished ? null : v.sheetImage
+
+    const demoted = sheetVanished && v.status !== 'draft'
+
     return {
       ...v,
-      refImages: kept,
-      coverIndex: Math.min(v.coverIndex, Math.max(0, kept.length - 1)),
+      refImages: keptRefs,
+      coverIndex: Math.min(v.coverIndex, Math.max(0, keptRefs.length - 1)),
+      panels: keptPanels,
+      sheetImage,
+      status: demoted ? 'draft' as const : v.status,
+      stressResult: demoted ? null : v.stressResult,
     }
   })
   if (!totalDropped) return { record, dropped: 0 }
   return {
-    record: { ...record, variants: healed },
+    record: { ...record, states: healed },
     dropped: totalDropped,
   }
-}
-
-export function defaultVariant(record: CharacterRecord): CharacterVariant {
-  return record.variants.find(v => v.id === 'default') ?? record.variants[0]!
 }

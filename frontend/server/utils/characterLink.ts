@@ -10,6 +10,7 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { parseCharacterRecord, slugifyCharacterName, type CharacterRecord } from '~~/server/utils/characterRegistry'
+import { emptyState } from '#shared/characters/types'
 
 export interface LinkDecisionInput {
   loraName: string | null
@@ -110,7 +111,7 @@ export async function linkTrainedCharacter(opts: { displayName: string, weightsF
     const record: CharacterRecord = {
       name: displayName,
       slug: newSlug,
-      variants: [{ id: 'default', label: 'Default', descriptor: '', refImages: [], coverIndex: 0 }],
+      states: [emptyState('default', 'Default')],
       loraName: weightsFilename,
       trigger,
       notes: '',
@@ -125,7 +126,7 @@ export async function linkTrainedCharacter(opts: { displayName: string, weightsF
   const record: CharacterRecord = {
     name: displayName,
     slug,
-    variants: [{ id: 'default', label: 'Default', descriptor: '', refImages: [], coverIndex: 0 }],
+    states: [emptyState('default', 'Default')],
     loraName: weightsFilename,
     trigger,
     notes: '',

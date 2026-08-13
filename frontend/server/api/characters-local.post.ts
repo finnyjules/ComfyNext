@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import { slugifyCharacterName, type CharacterRecord, type CharacterVariant } from '~~/server/utils/characterRegistry'
+import { slugifyCharacterName, type CharacterRecord } from '~~/server/utils/characterRegistry'
+import { emptyState } from '#shared/characters/types'
 
 export default defineEventHandler(async (event) => {
   const body = await readBody(event) as { name?: string }
@@ -17,7 +18,7 @@ export default defineEventHandler(async (event) => {
   const now = new Date().toISOString()
   const record: CharacterRecord = {
     name, slug,
-    variants: [{ id: 'default', label: 'Default', descriptor: '', refImages: [], coverIndex: 0 }],
+    states: [emptyState('default', 'Default')],
     loraName: null, trigger: null, notes: '', createdAt: now, updatedAt: now,
   }
   await fs.writeFile(file, JSON.stringify(record, null, 2))
