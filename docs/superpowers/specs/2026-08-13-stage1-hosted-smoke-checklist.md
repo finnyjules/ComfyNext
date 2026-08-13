@@ -7,9 +7,18 @@ Neon ledger all work end to end.
 
 **Status 2026-08-13:** steps 1–3 (the automated preconditions) were run and
 verified by the controller during the Stage 1 build — a hosted server is
-ALREADY RUNNING on port 3100 (from a worktree at
+ALREADY RUNNING on port 3100 at commit `7feedadef` (from a worktree at
 `/private/tmp/claude-501/sailor-hosted-smoke`, so the daily local server on
-:3000 is untouched). Julien's part is steps 4–8.
+:3000 is untouched). The final whole-branch review found and fixed one
+Critical (middleware ordering silently killed the authenticated path — the
+guard now verifies sessions itself via `@clerk/backend`), re-verified live,
+verdict READY. Julien's part is steps 4–8.
+
+**Debug tip (from the final review):** the guard fails closed — bad keys, a
+Clerk outage, or a JWKS fetch failure all look like a 401, not a 5xx. If
+step 6 401s persistently after a successful sign-in, check the :3100 boot
+log for Clerk errors before debugging the auth flow. An expired session
+hitting an API path also 401s until a page reload lets Clerk refresh it.
 
 ## One-time setup (VERIFIED — already done, server left running)
 
