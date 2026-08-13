@@ -83,6 +83,16 @@ export function createLedger(db: LedgerDb) {
       throw new Error(`ledger amount must be a positive integer, got ${amount}`)
   }
 
+  /**
+   * A 23505 on the (user_id, kind, idempotency_key) unique index means another
+   * SESSION committed this exact operation between our replay check and our
+   * insert (e.g. the same Stripe webhook delivered to two app instances). The
+   * per-instance mutex cannot see that race — only the index can.
+   */
+  function isUniqueViolation(e: unknown): boolean {
+    return typeof e === 'object' && e !== null && (e as { code?: string }).code === '23505'
+  }
+
   /** Replay lookup: if this (user, kind, key) was already applied, return its balance-after. */
   async function replayOf(userId: string, kind: 'credit' | 'debit', key: string): Promise<number | null> {
     const { rows } = await db.query(
@@ -118,6 +128,10 @@ export function createLedger(db: LedgerDb) {
         return { ok: true, balance }
       } catch (e) {
         await db.query('ROLLBACK')
+        if (isUniqueViolation(e)) {
+          const winner = await replayOf(userId, 'credit', idempotencyKey)
+          if (winner !== null) return { ok: true, balance: winner }
+        }
         throw e
       }
     })
@@ -183,6 +197,10 @@ export function createLedger(db: LedgerDb) {
         return { ok: true, balance }
       } catch (e) {
         await db.query('ROLLBACK')
+        if (isUniqueViolation(e)) {
+          const winner = await replayOf(userId, 'debit', idempotencyKey)
+          if (winner !== null) return { ok: true, balance: winner }
+        }
         throw e
       }
     })

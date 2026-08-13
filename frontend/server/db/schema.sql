@@ -12,17 +12,16 @@ CREATE TABLE IF NOT EXISTS wallets (
   user_id          text PRIMARY KEY REFERENCES users(id),
   balance_credits  integer NOT NULL DEFAULT 0,
   reserved_credits integer NOT NULL DEFAULT 0,  -- sum of open holds
-  updated_at       timestamptz NOT NULL DEFAULT now()
+  updated_at       timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT wallets_reserved_nonneg CHECK (reserved_credits >= 0)
 );
 
 -- Append-only double-entry log. Every balance change is a row here; wallets
 -- carries a cached copy. `remaining_credits`/`expires_at` are credit-row-only:
 -- debits consume credit rows FIFO by expiry so subscription grants (Phase 2+)
 -- burn before purchased packs.
--- NOTE: a future wallet-history UI will need to page this table by
--- (user_id, id DESC) — the UNIQUE (user_id, kind, idempotency_key) index
--- below cannot serve that sort; add a dedicated index on (user_id, id DESC)
--- when that UI lands.
+-- The (user_id, id DESC) index serves the wallet-history UI's paging; the
+-- UNIQUE (user_id, kind, idempotency_key) index cannot serve that sort.
 CREATE TABLE IF NOT EXISTS ledger_entries (
   id                 bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   user_id            text NOT NULL REFERENCES users(id),
@@ -42,6 +41,9 @@ CREATE INDEX IF NOT EXISTS ledger_entries_fifo
   ON ledger_entries (user_id, expires_at, id)
   WHERE kind = 'credit' AND remaining_credits > 0;
 
+CREATE INDEX IF NOT EXISTS ledger_entries_wallet_history
+  ON ledger_entries (user_id, id DESC);
+
 CREATE TABLE IF NOT EXISTS holds (
   id              bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   user_id         text NOT NULL REFERENCES users(id),
@@ -51,6 +53,10 @@ CREATE TABLE IF NOT EXISTS holds (
   created_at      timestamptz NOT NULL DEFAULT now(),
   UNIQUE (user_id, idempotency_key)
 );
+
+-- The expiry sweep and any stuck-hold monitor scan open holds by age.
+CREATE INDEX IF NOT EXISTS holds_state_created
+  ON holds (state, created_at);
 
 CREATE TABLE IF NOT EXISTS price_book (
   version text NOT NULL,
