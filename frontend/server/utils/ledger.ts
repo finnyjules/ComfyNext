@@ -45,12 +45,23 @@ export function createLedger(db: LedgerDb) {
     return result
   }
 
-  async function ensureUser(userId: string): Promise<void> {
+  /**
+   * `email`, if given, is written inside this same mutex-serialized
+   * transaction — not as a separate statement — so it can't land inside
+   * another concurrent caller's open BEGIN…COMMIT window on the shared
+   * session and get silently reverted by that caller's rollback.
+   */
+  async function ensureUser(userId: string, email?: string | null): Promise<void> {
     return runExclusive(async () => {
       await db.query('BEGIN')
       try {
         await db.query(
           `INSERT INTO users (id) VALUES ($1) ON CONFLICT (id) DO NOTHING`, [userId])
+        if (email) {
+          await db.query(
+            `UPDATE users SET email = $2 WHERE id = $1 AND (email IS NULL OR email <> $2)`,
+            [userId, email])
+        }
         await db.query(
           `INSERT INTO wallets (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`, [userId])
         await db.query('COMMIT')
