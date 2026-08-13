@@ -5,7 +5,7 @@ import {
   createLight, LIGHT_KINDS, LIGHT_DEFAULTS, lightIntensityDefault, lightIntensityMax,
   createGroup, sceneHasShaderFill,
   DEFAULT_FONT_URL,
-  createSvgPathObject, contentDigest, NOT_PLACEABLE_KINDS,
+  createSvgPathObject, contentDigest, NOT_PLACEABLE_KINDS, ENVIRONMENT_KINDS,
   type GradientStop, type SceneMaterial, type PrimitiveObject,
 } from '~/lib/scene3d/config'
 import { PRIM_GROUPS } from '~/lib/scene3d/primGroups'
@@ -540,5 +540,27 @@ describe('scene3d lights model', () => {
     const doc = defaultDoc()
     doc.objects = [createGroup(doc.objects)]
     expect(sceneHasShaderFill(doc)).toBe(false)
+  })
+
+  describe('lighting environment', () => {
+    it('defaults to room', () => {
+      expect(defaultDoc().lighting.environment).toBe('room')
+    })
+
+    it('round-trips every environment kind', () => {
+      for (const kind of ENVIRONMENT_KINDS) {
+        const doc = defaultDoc()
+        doc.lighting.environment = kind
+        expect(parseDoc(serializeDoc(doc)).lighting.environment).toBe(kind)
+      }
+    })
+
+    it('normalizes missing and invalid environment to room', () => {
+      const raw = JSON.parse(serializeDoc(defaultDoc()))
+      delete raw.lighting.environment
+      expect(parseDoc(JSON.stringify(raw)).lighting.environment).toBe('room')
+      raw.lighting.environment = 'disco'
+      expect(parseDoc(JSON.stringify(raw)).lighting.environment).toBe('room')
+    })
   })
 })

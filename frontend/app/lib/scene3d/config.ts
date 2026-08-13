@@ -300,8 +300,10 @@ export function sceneHasOpalFlow(doc: SceneDoc): boolean {
 }
 
 export type LightingPreset = 'studio' | 'soft' | 'dramatic' | 'flat'
+export type EnvironmentKind = 'room' | 'darkStrips' | 'softbox' | 'colorGels'
 export interface SceneLighting {
   preset: LightingPreset
+  environment: EnvironmentKind
   sunAzimuth: number
   sunElevation: number
   sunIntensity: number
@@ -340,6 +342,7 @@ export const PRIMITIVE_KINDS: PrimitiveKind[] = [
 export const NOT_PLACEABLE_KINDS: PrimitiveKind[] = ['svgPath', 'mesh']
 
 export const LIGHTING_PRESETS: LightingPreset[] = ['studio', 'soft', 'dramatic', 'flat']
+export const ENVIRONMENT_KINDS: EnvironmentKind[] = ['room', 'darkStrips', 'softbox', 'colorGels']
 
 const LOOP_KINDS: LoopKind[] = ['none', 'spin', 'bob', 'pulse', 'orbit', 'sway', 'tumble']
 const TRANSITION_PRESETS: TransitionPreset[] = ['move', 'rise', 'scale', 'fade', 'pop']
@@ -499,7 +502,7 @@ export function defaultDoc(): SceneDoc {
     version: 1,
     objects: [],
     camera: { position: [4, 3, 6], target: [0, 0.5, 0], fov: 45 },
-    lighting: { preset: 'studio', sunAzimuth: 35, sunElevation: 55, sunIntensity: 1.4, ambient: 0.5 },
+    lighting: { preset: 'studio', environment: 'room', sunAzimuth: 35, sunElevation: 55, sunIntensity: 1.4, ambient: 0.5 },
     background: '#1b1e24',
     showFloor: true,
     post: { ...DEFAULT_POST },
@@ -911,6 +914,7 @@ export function parseDoc(json: string): SceneDoc {
     },
     lighting: {
       preset: LIGHTING_PRESETS.includes(raw.lighting?.preset) ? raw.lighting.preset : d.lighting.preset,
+      environment: ENVIRONMENT_KINDS.includes(raw.lighting?.environment) ? raw.lighting.environment : d.lighting.environment,
       sunAzimuth: typeof raw.lighting?.sunAzimuth === 'number' ? raw.lighting.sunAzimuth : d.lighting.sunAzimuth,
       sunElevation: typeof raw.lighting?.sunElevation === 'number' ? raw.lighting.sunElevation : d.lighting.sunElevation,
       sunIntensity: typeof raw.lighting?.sunIntensity === 'number' ? raw.lighting.sunIntensity : d.lighting.sunIntensity,
