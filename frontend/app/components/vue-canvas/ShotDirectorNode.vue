@@ -8,6 +8,7 @@ import { hydrateShotSheet } from '~/lib/shotdirector/hydrate'
 import { compileShot } from '~/lib/shotdirector/compile'
 import { getProfile } from '~/lib/shotdirector/profiles'
 import { registerStudioBaker, unregisterStudioBaker } from '~/lib/studio/cascade'
+import { useCharacters } from '~/composables/useCharacters'
 
 const props = defineProps<{
   id: string
@@ -21,10 +22,14 @@ const props = defineProps<{
 }>()
 
 const profile = getProfile('seedance-2.0')
+const { stateDescriptors } = useCharacters()
 
 const config = computed(() => hydrateShotSheet(props.data?.properties?.sailor_shotDirector))
 
-const compiled = computed(() => compileShot(config.value, profile))
+const compiled = computed(() => {
+  const castDescriptors = stateDescriptors(config.value.cast.map(m => ({ slug: m.slug, stateId: m.stateId })))
+  return compileShot(config.value, profile, { castDescriptors })
+})
 
 const subject = computed(() => config.value.subject.trim() || 'Untitled shot')
 
