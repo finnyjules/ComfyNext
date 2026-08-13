@@ -38,6 +38,8 @@ export default defineNuxtConfig({
       // falls back to http://127.0.0.1:8188. In production set via
       // NUXT_PUBLIC_COMFY_ORIGIN (e.g. https://sailor.fly.dev:8188).
       comfyOrigin: '',
+      // Mirrors server deployMode at build/dev start: hosted iff Clerk keys present.
+      hostedMode: !!process.env.NUXT_CLERK_SECRET_KEY,
     },
   },
 
