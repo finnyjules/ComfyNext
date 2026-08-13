@@ -100,9 +100,9 @@ import { getProfile } from '~/lib/shotdirector/profiles'
 import { hydrateLipSyncSheet } from '~/lib/lipsync/hydrate'
 import { compileLipSync } from '~/lib/lipsync/compile'
 import { materializeCast } from '~/lib/shotdirector/cast'
-import { viewRefUrl, uploadRefFile } from '~/lib/shotdirector/refUpload'
-import { coverFirstRefs } from '~/composables/useCharacters'
-import { normalizeStateId } from '#shared/characters/types'
+import { uploadRefFile } from '~/lib/shotdirector/refUpload'
+import { useCharacters } from '~/composables/useCharacters'
+import { defaultState, identityRefs, normalizeStateId } from '#shared/characters/types'
 import { upstreamSeedScope } from '~/lib/artifact/nextSteps'
 import { runStudioCascade, planStudiosToBakeForRun, hasStudioBaker, isStudioNode, isArtifactNode, type CascadeDeps } from '~/lib/studio/cascade'
 import { getScene3DRebaker } from '~/lib/scene3d/rebake'
@@ -3422,23 +3422,10 @@ async function handleShotDirectorGenerate(e: Event) {
   let effectiveSheet = sheet
   let castIssues: import('~/lib/shotdirector/rules').ValidationIssue[] = []
   if (sheet.cast.length) {
-    // Live link: resolve cast refs from the registry at generate time, honoring
-    // each member's stateId (mirrors useCharacters' resolveStateRefs: named
-    // state if present, else the 'default' state, else the first one).
-    let resolved: Record<string, string[]> = {}
-    try {
-      const res = await fetch('/api/characters-local')
-      type StateLite = { id: string, refImages: string[], coverIndex: number }
-      const data = res.ok ? await res.json() as { characters?: { slug: string, states?: StateLite[] }[] } : {}
-      const bySlug = new Map((data.characters ?? []).map(c => [c.slug, c]))
-      resolved = Object.fromEntries(sheet.cast.map((m) => {
-        const states = bySlug.get(m.slug)?.states ?? []
-        const state = (m.stateId ? states.find(v => v.id === m.stateId) : undefined)
-          ?? states.find(v => v.id === 'default') ?? states[0]
-        // Cover-first so materializeCast's single cover ref is the chosen cover.
-        return [m.slug, coverFirstRefs(state).map(f => viewRefUrl(f))]
-      }))
-    } catch { /* resolved stays empty → zero-ref errors below */ }
+    const store = useCharacters()
+    await store.refresh()  // generate-time truth, same guarantee the old re-fetch gave
+    const picks = sheet.cast.map(m => ({ slug: m.slug, stateId: m.stateId }))
+    const resolved = store.resolveStateRefs(picks)
     const mat = materializeCast(sheet, resolved, getProfile('seedance-2.0'))
     effectiveSheet = mat.sheet
     castIssues = mat.issues
@@ -3833,18 +3820,14 @@ async function warmSketch(): Promise<void> {
 // seeded from the default variant's cover photo. Always re-fetches the registry
 // (same pattern as handleShotDirectorGenerate) rather than trusting the panel's cache.
 async function handleAddCharacterImageGen(payload: CharacterBusEvents['addCharacterImageGen']) {
-  // TODO(T12): the sheet/lora `use` fork isn't wired yet — both currently
-  // resolve the same way below (LoRA node if trained, else the cover image).
-  const { slug } = payload ?? {}
+  // TODO(T12): the sheet/lora `use` fork isn't fully wired yet — 'sheet' and any
+  // other value resolve the same way below (LoRA node only when use === 'lora'
+  // AND the character has a trained LoRA; else the Image → ConsistentFaceNode pair).
+  const { slug, use } = payload ?? {}
   if (!slug) return
-  type StateLite = { id: string, refImages: string[], coverIndex: number }
-  type CharacterLite = { slug: string, name: string, loraName: string | null, trigger: string | null, states?: StateLite[] }
-  let character: CharacterLite | undefined
-  try {
-    const res = await fetch('/api/characters-local')
-    const data = res.ok ? await res.json() as { characters?: CharacterLite[] } : {}
-    character = (data.characters ?? []).find(c => c.slug === slug)
-  } catch { /* character stays undefined — toast below */ }
+  const store = useCharacters()
+  await store.refresh()
+  const character = store.characters.value.find(c => c.slug === slug)
   if (!character) {
     toast.error('Couldn\'t load the character — try again')
     return
@@ -3852,7 +3835,7 @@ async function handleAddCharacterImageGen(payload: CharacterBusEvents['addCharac
 
   const pos = project({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
 
-  if (character.loraName) {
+  if (use === 'lora' && character.loraName) {
     nodes.value.push(createNodeData('FluxLoRARemoteNode', pos, {
       prompt: character.trigger ? `${character.trigger}, ` : '',
       lora_name: character.loraName,
@@ -3861,9 +3844,7 @@ async function handleAddCharacterImageGen(payload: CharacterBusEvents['addCharac
     return
   }
 
-  const states = character.states ?? []
-  const def = states.find(v => v.id === 'default') ?? states[0]
-  const cover = def?.refImages[def.coverIndex] ?? def?.refImages[0]
+  const cover = identityRefs(defaultState(character))[0]
   if (!cover) {
     toast.error(`Add a photo to ${character.name} first`)
     return
