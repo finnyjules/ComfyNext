@@ -26,7 +26,22 @@ const props = defineProps<{
 const { characters, coverUrl, refresh } = useCharacters()
 
 // ── Saved state ──────────────────────────────────────────────────────────
-const slug = computed<string | null>(() => props.data?.properties?.sailor_characterSlug ?? null)
+// Reads the single sailor_characterBinding property, falling back to the
+// legacy sailor_character{Slug,Name} props for nodes saved before the binding
+// existed. This node only ever populates the default state, so its own
+// binding's stateId is always null. Writes only ever produce the binding.
+const binding = computed<{ slug: string; name: string } | null>(() => {
+  const b = props.data?.properties?.sailor_characterBinding
+  if (b && typeof b.slug === 'string') {
+    return { slug: b.slug, name: typeof b.name === 'string' ? b.name : b.slug }
+  }
+  const legacySlug = props.data?.properties?.sailor_characterSlug
+  if (typeof legacySlug === 'string') {
+    return { slug: legacySlug, name: props.data?.properties?.sailor_characterName || legacySlug }
+  }
+  return null
+})
+const slug = computed<string | null>(() => binding.value?.slug ?? null)
 const savedCharacter = computed(() => characters.value.find(c => c.slug === slug.value) ?? null)
 // This node only ever populates the character's default state (see save()
 // below), so the reference count for the saved-state summary comes from
@@ -270,8 +285,7 @@ async function save() {
 
     if (!props.data.properties) (props.data as any).properties = {}
     const properties = props.data.properties as Record<string, any>
-    properties.sailor_characterSlug = targetSlug
-    properties.sailor_characterName = targetName
+    properties.sailor_characterBinding = { slug: targetSlug, name: targetName, stateId: null }
     // TODO(T9): the PATCH above still sends the legacy top-level `refImages`
     // body shape (full write-shape migration to `states` is Task 9) — pull
     // the store's truth now that the write landed, instead of the dead
@@ -292,6 +306,8 @@ async function save() {
 
 function resetToNewSheet() {
   if (!props.data.properties) return
+  delete props.data.properties.sailor_characterBinding
+  // Also clear the legacy props (read-fallback), so a pre-binding node fully resets.
   delete props.data.properties.sailor_characterSlug
   delete props.data.properties.sailor_characterName
   charName.value = ''
@@ -343,7 +359,7 @@ function resetToNewSheet() {
         </div>
       </template>
       <p v-else class="text-[11px] leading-tight text-red-400/80">
-        Character "{{ data?.properties?.sailor_characterName || slug }}" was deleted.
+        Character "{{ binding?.name || slug }}" was deleted.
       </p>
       <button
         class="mt-2 w-full rounded bg-white/10 px-2.5 py-1.5 text-[11px] text-white/80 transition hover:bg-white/20"

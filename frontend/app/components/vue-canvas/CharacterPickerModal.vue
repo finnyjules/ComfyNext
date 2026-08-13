@@ -1,17 +1,15 @@
 <script setup lang="ts">
-// Cast picker: choose a character from the registry. Emits pick(slug, name, variantId?);
+// Cast picker: choose a character from the registry. Emits pick(slug, name, stateId);
 // the caller owns adding it to sheet.cast. Cards with >1 variant expand an inline
 // variant chip row on click instead of picking immediately; single-variant cards
-// pick directly (variantId omitted — the default variant is implied).
+// pick directly (stateId: null — the default state is implied).
 import { computed, ref } from 'vue'
 import { X } from 'lucide-vue-next'
 import { useCharacters } from '~/composables/useCharacters'
-import type { CharacterRecord } from '#shared/characters/types'
+import { normalizeStateId, type CharacterRecord } from '#shared/characters/types'
 
 const props = defineProps<{ excludeSlugs: string[] }>()
-// TODO(T6): variantId param stays name-compatible with existing callers
-// (CharacterNode.vue's pick()) until the CastMember/property rename lands.
-const emit = defineEmits<{ pick: [slug: string, name: string, variantId?: string], close: [] }>()
+const emit = defineEmits<{ pick: [slug: string, name: string, stateId: string | null], close: [] }>()
 
 const { characters, loading, coverUrl, refresh } = useCharacters()
 void refresh()
@@ -35,11 +33,11 @@ function onCardClick(c: CharacterRecord) {
     expandedSlug.value = expandedSlug.value === c.slug ? null : c.slug
     return
   }
-  emit('pick', c.slug, c.name)
+  emit('pick', c.slug, c.name, null)
 }
 
-function pickVariant(c: CharacterRecord, variantId: string) {
-  emit('pick', c.slug, c.name, variantId === 'default' ? undefined : variantId)
+function pickVariant(c: CharacterRecord, stateId: string) {
+  emit('pick', c.slug, c.name, normalizeStateId(stateId))
 }
 </script>
 

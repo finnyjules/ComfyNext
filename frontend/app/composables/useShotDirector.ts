@@ -19,7 +19,7 @@ export interface UseShotDirectorReturn {
   addReference: (kind: RefKind, src: string, role: ShotSheet['references'][number]['role']) => void
   removeReference: (kind: RefKind, slot: number) => void
   rerollSeed: () => void
-  addCastMember: (slug: string, name: string, via?: 'wire' | 'picker', variantId?: string) => void
+  addCastMember: (slug: string, name: string, via?: 'wire' | 'picker', stateId?: string | null) => void
   removeCastMember: (slug: string) => void
 }
 
@@ -27,14 +27,14 @@ export interface UseShotDirectorReturn {
  * Creates a reactive Shot Director sheet with compilation and persistence.
  * @param initial - Raw data to hydrate (e.g., node.data.properties.sailor_shotDirector)
  * @param persist - Callback to persist the sheet after mutations
- * @param resolveCast - Optional callback to resolve cast member { slug, variantId? } picks to reference URLs, keyed by slug
+ * @param resolveCast - Optional callback to resolve cast member { slug, stateId } picks to reference URLs, keyed by slug
  * @param castWarnings - Optional callback producing extra warning issues for the cast (e.g. a deleted variant that silently fell back to Default)
  */
 export function useShotDirector(
   initial: unknown,
   persist: (sheet: ShotSheet) => void,
-  resolveCast?: (picks: { slug: string; variantId?: string }[]) => Record<string, string[]>,
-  castWarnings?: (picks: { slug: string; name: string; variantId?: string }[]) => ValidationIssue[],
+  resolveCast?: (picks: { slug: string; stateId: string | null }[]) => Record<string, string[]>,
+  castWarnings?: (picks: { slug: string; name: string; stateId: string | null }[]) => ValidationIssue[],
 ): UseShotDirectorReturn {
   const sheet = ref<ShotSheet>(hydrateShotSheet(initial))
   const profile = getProfile('seedance-2.0')
@@ -44,7 +44,7 @@ export function useShotDirector(
     if (!s.cast.length || !resolveCast) {
       return compileShot(s, profile)
     }
-    const picks = s.cast.map(m => ({ slug: m.slug, name: m.name, variantId: m.variantId }))
+    const picks = s.cast.map(m => ({ slug: m.slug, name: m.name, stateId: m.stateId }))
     const resolved = resolveCast(picks)
     const warnings = castWarnings?.(picks) ?? []
     const { sheet: materialized, issues: castIssues } = materializeCast(s, resolved, profile)
@@ -70,10 +70,9 @@ export function useShotDirector(
     update(s => ({ ...s, format: { ...s.format, seed: Math.floor(Math.random() * 2_147_483_646) + 1 } }))
   }
 
-  const addCastMember = (slug: string, name: string, via: 'wire' | 'picker' = 'picker', variantId?: string) => {
-    if (variantId === 'default') variantId = undefined
+  const addCastMember = (slug: string, name: string, via: 'wire' | 'picker' = 'picker', stateId: string | null = null) => {
     if (sheet.value.cast.some(m => m.slug === slug)) return
-    update(s => ({ ...s, cast: [...s.cast, { slug, name, via, ...(variantId ? { variantId } : {}) }] }))
+    update(s => ({ ...s, cast: [...s.cast, { slug, name, via, stateId }] }))
   }
 
   const removeCastMember = (slug: string) => {

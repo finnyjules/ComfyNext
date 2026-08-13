@@ -10,8 +10,8 @@ const U = (n: string) => `/view?filename=${n}&type=input`
 function sheetWithCast() {
   const s = createDefaultShotSheet()
   s.cast = [
-    { slug: 'reva', name: 'Reva', via: 'picker' },
-    { slug: 'marcus', name: 'Marcus', via: 'wire' },
+    { slug: 'reva', name: 'Reva', via: 'picker', stateId: null },
+    { slug: 'marcus', name: 'Marcus', via: 'wire', stateId: null },
   ]
   return s
 }
@@ -89,9 +89,9 @@ describe('materializeCast', () => {
     expect(errs[0]!.message).toBe('Reva has no reference photos — add some to their character sheet.')
   })
 
-  it('mentions the selected variant in the zero-refs error when the member has a variantId', () => {
+  it('mentions the selected variant in the zero-refs error when the member has a stateId', () => {
     const s = createDefaultShotSheet()
-    s.cast = [{ slug: 'reva', name: 'Reva', via: 'picker', variantId: 'raincoat' }]
+    s.cast = [{ slug: 'reva', name: 'Reva', via: 'picker', stateId: 'raincoat' }]
     const { issues } = materializeCast(s, { reva: [] }, SEEDANCE_PROFILE)
     const err = issues.find(i => i.level === 'error' && i.code === 'cast-member-no-refs')
     expect(err!.message).toBe('Reva has no reference photos in the selected variant — add some to their character sheet.')
@@ -100,9 +100,9 @@ describe('materializeCast', () => {
   it('errors on duplicates and on more than CAST_MAX members', () => {
     const s = createDefaultShotSheet()
     s.cast = [
-      { slug: 'a', name: 'A', via: 'picker' }, { slug: 'a', name: 'A', via: 'wire' },
-      { slug: 'b', name: 'B', via: 'picker' }, { slug: 'c', name: 'C', via: 'picker' },
-      { slug: 'd', name: 'D', via: 'picker' },
+      { slug: 'a', name: 'A', via: 'picker', stateId: null }, { slug: 'a', name: 'A', via: 'wire', stateId: null },
+      { slug: 'b', name: 'B', via: 'picker', stateId: null }, { slug: 'c', name: 'C', via: 'picker', stateId: null },
+      { slug: 'd', name: 'D', via: 'picker', stateId: null },
     ]
     const { issues } = materializeCast(s, { a: [U('1')], b: [U('2')], c: [U('3')], d: [U('4')] }, SEEDANCE_PROFILE)
     expect(issues.some(i => i.code === 'cast-duplicate')).toBe(true)
@@ -144,21 +144,25 @@ describe('hydrate back-compat', () => {
   it('old sheets without cast hydrate to []', () => {
     expect(hydrateShotSheet({ subject: 'x' }).cast).toEqual([])
   })
-  it('cast entries survive hydration', () => {
+  it('cast entries survive hydration with stateId: null', () => {
     const cast = [{ slug: 'reva', name: 'Reva', via: 'picker' }]
+    expect(hydrateShotSheet({ cast }).cast).toEqual([{ slug: 'reva', name: 'Reva', via: 'picker', stateId: null }])
+  })
+  it('a persisted stateId (current shape) survives hydration directly', () => {
+    const cast = [{ slug: 'reva', name: 'Reva', via: 'picker', stateId: 'raincoat' }]
     expect(hydrateShotSheet({ cast }).cast).toEqual(cast)
   })
-  it('cast entries keep a string variantId', () => {
-    const cast = [{ slug: 'reva', name: 'Reva', via: 'picker', variantId: 'raincoat' }]
-    expect(hydrateShotSheet({ cast }).cast).toEqual(cast)
+  it('migrates a legacy persisted variantId to stateId', () => {
+    const cast = [{ slug: 'reva', name: 'Reva', via: 'picker', variantId: 'wet' }]
+    expect(hydrateShotSheet({ cast }).cast).toEqual([{ slug: 'reva', name: 'Reva', via: 'picker', stateId: 'wet' }])
   })
-  it('drops a non-string variantId', () => {
+  it('drops a non-string variantId, defaulting stateId to null', () => {
     const cast = [{ slug: 'reva', name: 'Reva', via: 'picker', variantId: 42 }]
-    expect(hydrateShotSheet({ cast }).cast).toEqual([{ slug: 'reva', name: 'Reva', via: 'picker' }])
+    expect(hydrateShotSheet({ cast }).cast).toEqual([{ slug: 'reva', name: 'Reva', via: 'picker', stateId: null }])
   })
-  it('normalizes variantId "default" string away during hydration', () => {
+  it('normalizes legacy variantId "default" to stateId: null during hydration', () => {
     const cast = [{ slug: 'reva', name: 'Reva', via: 'picker', variantId: 'default' }]
-    expect(hydrateShotSheet({ cast }).cast).toEqual([{ slug: 'reva', name: 'Reva', via: 'picker' }])
+    expect(hydrateShotSheet({ cast }).cast).toEqual([{ slug: 'reva', name: 'Reva', via: 'picker', stateId: null }])
   })
 })
 

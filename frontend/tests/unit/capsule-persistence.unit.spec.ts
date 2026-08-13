@@ -109,6 +109,22 @@ describe('capsule state survives the save/load conversion', () => {
     expect(props.sailor_capsule).toEqual({ collapsed: true })
   })
 
+  it('round-trips a Character node\'s sailor_characterBinding property (Task 6)', () => {
+    // convertToLiteGraph writes a curated field map, so any node.data.properties
+    // key nobody explicitly stashed can be silently dropped on save — this is
+    // the same class of bug the file exists for, applied to the single-key
+    // character binding that replaced sailor_characterSlug/Name/VariantId.
+    const a = useVueNodes()
+    const binding = { slug: 'reva', name: 'Reva', stateId: 'wet' }
+    a.convertFromLiteGraph(workflow([lgNode({ properties: { sailor_characterBinding: binding } })]))
+    const saved = a.convertToLiteGraph()
+    expect((saved.nodes[0]!.properties as any).sailor_characterBinding).toEqual(binding)
+
+    const b = useVueNodes()
+    b.convertFromLiteGraph(JSON.parse(JSON.stringify(saved)))
+    expect((b.nodes.value as any[])[0].data.properties.sailor_characterBinding).toEqual(binding)
+  })
+
   it('drops a stale stash when the node returns to its defaults', () => {
     const a = useVueNodes()
     a.convertFromLiteGraph(workflow([lgNode({ properties: { sailor_capsule: { collapsed: true } } })]))

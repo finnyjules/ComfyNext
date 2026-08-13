@@ -6,7 +6,6 @@ import { computed, ref } from 'vue'
 import { X, Plus, Copy, Check, Sparkles } from 'lucide-vue-next'
 import { useShotDirector } from '~/composables/useShotDirector'
 import { useCharacters, missingStateIssues } from '~/composables/useCharacters'
-import { normalizeStateId } from '#shared/characters/types'
 import {
   SHOT_TYPE_PHRASE, CAMERA_MOVE_PHRASE, ROLES_BY_KIND,
   type RefKind, type RefRole, type CastMember,
@@ -34,20 +33,18 @@ function persist(s: any) {
 }
 
 const { resolveStateRefs, coverUrl, characters } = useCharacters()
-// TODO(T6): useShotDirector's cast picks are still variantId-keyed (the
-// CastMember/property rename lands in Task 6) — convert at this boundary.
 const { sheet, result, addReference, removeReference, update, rerollSeed, addCastMember, removeCastMember } = useShotDirector(
   node.value?.data?.properties?.sailor_shotDirector,
   persist,
-  picks => resolveStateRefs(picks.map(p => ({ slug: p.slug, stateId: normalizeStateId(p.variantId ?? null) }))),
-  picks => missingStateIssues(picks.map(p => ({ slug: p.slug, name: p.name, stateId: normalizeStateId(p.variantId ?? null) })), characters.value),
+  picks => resolveStateRefs(picks),
+  picks => missingStateIssues(picks, characters.value),
 )
 
 /** True when this member's picked variant was deleted (falls back to Default). */
 function variantMissing(m: CastMember): boolean {
-  if (!m.variantId) return false
+  if (!m.stateId) return false
   const c = characters.value.find(x => x.slug === m.slug)
-  return !!c && !c.states.some(v => v.id === m.variantId)
+  return !!c && !c.states.some(v => v.id === m.stateId)
 }
 
 // ── First-open guide ───────────────────────────────────────────────────────────
@@ -62,20 +59,20 @@ const showIntro = computed(() =>
 const castPickerOpen = ref(false)
 function castCover(m: CastMember): string | null {
   const c = characters.value.find(x => x.slug === m.slug)
-  return c ? coverUrl(c, m.variantId) : null
+  return c ? coverUrl(c, m.stateId) : null
 }
 /** Variant label for a non-default pick, e.g. "Vera · Raincoat" in the chip. */
 function variantLabel(m: CastMember): string | null {
-  if (!m.variantId) return null
+  if (!m.stateId) return null
   const c = characters.value.find(x => x.slug === m.slug)
-  const v = c?.states.find(x => x.id === m.variantId)
+  const v = c?.states.find(x => x.id === m.stateId)
   return v ? v.label : null
 }
 /** The photos each cast member contributes, with their [ImageN] tag range —
  *  so "what is [Image2]?" is answerable by looking at the Cast section. */
 const castRefRows = computed(() => {
   let tag = 1
-  const resolved = resolveStateRefs(sheet.value.cast.map(m => ({ slug: m.slug, stateId: normalizeStateId(m.variantId ?? null) })))
+  const resolved = resolveStateRefs(sheet.value.cast.map(m => ({ slug: m.slug, stateId: m.stateId })))
   return sheet.value.cast.map((m) => {
     // One cover per member is what actually gets sent (CAST_REF_CAP) — showing
     // the cover here keeps the preview honest and matches the video output.
@@ -525,7 +522,7 @@ function patchDialogue(i: number, patch: { speaker?: string; line?: string }) {
               <CharacterPickerModal
                 v-if="castPickerOpen"
                 :exclude-slugs="sheet.cast.map(m => m.slug)"
-                @pick="(slug, name, variantId) => { addCastMember(slug, name, 'picker', variantId); castPickerOpen = false }"
+                @pick="(slug, name, stateId) => { addCastMember(slug, name, 'picker', stateId); castPickerOpen = false }"
                 @close="castPickerOpen = false"
               />
 

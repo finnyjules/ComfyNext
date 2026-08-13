@@ -55,7 +55,7 @@ export function materializeCast(
     // generate-time resolver), so slice(0, CAST_REF_CAP) is the cover.
     const srcs = (resolved[m.slug] ?? []).slice(0, CAST_REF_CAP)
     if (!srcs.length) {
-      const message = m.variantId
+      const message = m.stateId
         ? `${m.name} has no reference photos in the selected variant — add some to their character sheet.`
         : `${m.name} has no reference photos — add some to their character sheet.`
       issues.push({ level: 'error', code: 'cast-member-no-refs', message })

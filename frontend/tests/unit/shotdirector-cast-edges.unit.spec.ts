@@ -4,8 +4,8 @@ import { syncCast, wireCastFor } from '~/lib/shotdirector/castEdges'
 const N = (
   id: string, slug: string | null, name = slug ?? '',
   nodeType: 'Character' | 'CharacterSheet' = 'Character',
-  variantId?: string | null,
-) => ({ id, nodeType, characterSlug: slug, characterName: name, characterVariantId: variantId ?? null })
+  stateId: string | null = null,
+) => ({ id, nodeType, binding: slug ? { slug, name, stateId } : null })
 const SD = { id: 'sd1', nodeType: 'ShotDirector' }
 const E = (source: string, handle: string) => ({ source, target: 'sd1', targetHandle: handle })
 
@@ -14,8 +14,8 @@ describe('wireCastFor', () => {
     const nodes = [SD, N('c1', 'reva', 'Reva'), N('c2', 'marcus', 'Marcus')]
     const edges = [E('c2', 'input-1'), E('c1', 'input-0')]
     expect(wireCastFor('sd1', nodes, edges)).toEqual([
-      { slug: 'reva', name: 'Reva', via: 'wire' },
-      { slug: 'marcus', name: 'Marcus', via: 'wire' },
+      { slug: 'reva', name: 'Reva', via: 'wire', stateId: null },
+      { slug: 'marcus', name: 'Marcus', via: 'wire', stateId: null },
     ])
   })
   it('skips slugless Character nodes and non-character sources', () => {
@@ -25,34 +25,34 @@ describe('wireCastFor', () => {
   it('treats a saved CharacterSheet node like a Character node', () => {
     const nodes = [SD, N('c1', 'reva', 'Reva', 'CharacterSheet')]
     expect(wireCastFor('sd1', nodes, [E('c1', 'input-0')])).toEqual([
-      { slug: 'reva', name: 'Reva', via: 'wire' },
+      { slug: 'reva', name: 'Reva', via: 'wire', stateId: null },
     ])
   })
   it('dedupes same node wired into multiple cast inputs, keeping first occurrence', () => {
     const nodes = [SD, N('c1', 'reva', 'Reva')]
     const edges = [E('c1', 'input-0'), E('c1', 'input-1')]
     expect(wireCastFor('sd1', nodes, edges)).toEqual([
-      { slug: 'reva', name: 'Reva', via: 'wire' },
+      { slug: 'reva', name: 'Reva', via: 'wire', stateId: null },
     ])
   })
-  it('carries characterVariantId through as variantId', () => {
+  it('carries a binding stateId through', () => {
     const nodes = [SD, N('c1', 'reva', 'Reva', 'Character', 'raincoat')]
     expect(wireCastFor('sd1', nodes, [E('c1', 'input-0')])).toEqual([
-      { slug: 'reva', name: 'Reva', via: 'wire', variantId: 'raincoat' },
+      { slug: 'reva', name: 'Reva', via: 'wire', stateId: 'raincoat' },
     ])
   })
-  it('omits variantId when the node has none', () => {
-    const nodes = [SD, N('c1', 'reva', 'Reva')]
+  it('normalizes the literal "default" binding stateId to null in one place', () => {
+    const nodes = [SD, N('c1', 'reva', 'Reva', 'Character', 'default')]
     expect(wireCastFor('sd1', nodes, [E('c1', 'input-0')])).toEqual([
-      { slug: 'reva', name: 'Reva', via: 'wire' },
+      { slug: 'reva', name: 'Reva', via: 'wire', stateId: null },
     ])
   })
 })
 
 describe('syncCast', () => {
-  const reva = { slug: 'reva', name: 'Reva', via: 'picker' as const }
-  const marcusWire = { slug: 'marcus', name: 'Marcus', via: 'wire' as const }
-  const zoeWire = { slug: 'zoe', name: 'Zoe', via: 'wire' as const }
+  const reva = { slug: 'reva', name: 'Reva', via: 'picker' as const, stateId: null }
+  const marcusWire = { slug: 'marcus', name: 'Marcus', via: 'wire' as const, stateId: null }
+  const zoeWire = { slug: 'zoe', name: 'Zoe', via: 'wire' as const, stateId: null }
 
   it('keeps picker entries, replaces wire entries', () => {
     expect(syncCast([reva, marcusWire], [])).toEqual([reva])
@@ -64,6 +64,11 @@ describe('syncCast', () => {
   it('returns null when nothing changed', () => {
     expect(syncCast([marcusWire], [marcusWire])).toBeNull()
   })
+  it('sentinel-bug regression guard: a persisted member with stateId: null and a wire member with stateId: null are `same` — no permanent rewrite loop', () => {
+    const persisted = { slug: 'marcus', name: 'Marcus', via: 'wire' as const, stateId: null }
+    const wire = { slug: 'marcus', name: 'Marcus', via: 'wire' as const, stateId: null }
+    expect(syncCast([persisted], [wire])).toBeNull()
+  })
   it('preserves existing order — a wire member before a picker member stays first', () => {
     // existing [wireA(marcus), picker(reva)] + wire list still containing marcus
     // → no change, order preserved (not reshuffled to picker-first).
@@ -72,12 +77,12 @@ describe('syncCast', () => {
   it('appends genuinely new wire members at the end, keeping prior order', () => {
     expect(syncCast([marcusWire], [marcusWire, zoeWire])).toEqual([marcusWire, zoeWire])
   })
-  it('treats a variantId change on a wire member as a change, updating in place', () => {
-    const marcusRaincoat = { ...marcusWire, variantId: 'raincoat' }
+  it('treats a stateId change on a wire member as a change, updating in place', () => {
+    const marcusRaincoat = { ...marcusWire, stateId: 'raincoat' }
     expect(syncCast([marcusWire], [marcusRaincoat])).toEqual([marcusRaincoat])
   })
-  it('no change when the wire member variantId is identical', () => {
-    const marcusRaincoat = { ...marcusWire, variantId: 'raincoat' }
+  it('no change when the wire member stateId is identical', () => {
+    const marcusRaincoat = { ...marcusWire, stateId: 'raincoat' }
     expect(syncCast([marcusRaincoat], [{ ...marcusRaincoat }])).toBeNull()
   })
 })

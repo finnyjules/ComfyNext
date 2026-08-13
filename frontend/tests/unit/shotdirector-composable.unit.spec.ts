@@ -191,12 +191,12 @@ describe('useShotDirector cast', () => {
 
   it('addCastMember persists cast and result materializes refs + clause', () => {
     let persisted: ShotSheet | undefined
-    const resolve = (picks: { slug: string; variantId?: string }[]) =>
+    const resolve = (picks: { slug: string; stateId: string | null }[]) =>
       Object.fromEntries(picks.map(({ slug: s }) => [s, [U(`${s}.png`)]]))
     const { sheet, result, addCastMember } = useShotDirector(createDefaultShotSheet(), (s) => { persisted = s }, resolve)
 
     addCastMember('reva', 'Reva')
-    expect(sheet.value.cast).toEqual([{ slug: 'reva', name: 'Reva', via: 'picker' }])
+    expect(sheet.value.cast).toEqual([{ slug: 'reva', name: 'Reva', via: 'picker', stateId: null }])
     expect(persisted?.cast).toHaveLength(1)
     // persisted sheet holds NO materialized cast refs
     expect(persisted?.references.some(r => r.castSlug)).toBe(false)
@@ -219,34 +219,36 @@ describe('useShotDirector cast', () => {
     expect(result.value.issues.some(i => i.code === 'cast-member-no-refs' && i.level === 'error')).toBe(true)
   })
 
-  it('addCastMember stores an optional variantId and passes it to resolveCast', () => {
-    let seenPicks: { slug: string; variantId?: string }[] = []
-    const resolve = (picks: { slug: string; variantId?: string }[]) => {
+  it('addCastMember stores a stateId and passes it to resolveCast', () => {
+    let seenPicks: { slug: string; stateId: string | null }[] = []
+    const resolve = (picks: { slug: string; stateId: string | null }[]) => {
       seenPicks = picks
       return Object.fromEntries(picks.map(({ slug: s }) => [s, [U(`${s}.png`)]]))
     }
     const { sheet, result, addCastMember } = useShotDirector(createDefaultShotSheet(), () => {}, resolve)
 
     addCastMember('reva', 'Reva', 'picker', 'raincoat')
-    expect(sheet.value.cast).toEqual([{ slug: 'reva', name: 'Reva', via: 'picker', variantId: 'raincoat' }])
+    expect(sheet.value.cast).toEqual([{ slug: 'reva', name: 'Reva', via: 'picker', stateId: 'raincoat' }])
     void result.value // force the computed to evaluate resolveCast
     // picks also carry `name` for the castWarnings channel — assert structurally
-    expect(seenPicks).toMatchObject([{ slug: 'reva', variantId: 'raincoat' }])
+    expect(seenPicks).toMatchObject([{ slug: 'reva', stateId: 'raincoat' }])
   })
 
-  it('addCastMember normalizes variantId "default" to undefined', () => {
-    let seenPicks: { slug: string; variantId?: string }[] = []
-    const resolve = (picks: { slug: string; variantId?: string }[]) => {
+  it('a null stateId (default state) round-trips as null — addCastMember does not re-normalize', () => {
+    // The 'default' sentinel is understood exactly once, by normalizeStateId at
+    // the caller boundary (CharacterPickerModal / the character bus); addCastMember
+    // trusts whatever stateId it's handed.
+    let seenPicks: { slug: string; stateId: string | null }[] = []
+    const resolve = (picks: { slug: string; stateId: string | null }[]) => {
       seenPicks = picks
       return Object.fromEntries(picks.map(({ slug: s }) => [s, [U(`${s}.png`)]]))
     }
     const { sheet, result, addCastMember } = useShotDirector(createDefaultShotSheet(), () => {}, resolve)
 
-    addCastMember('reva', 'Reva', 'picker', 'default')
-    expect(sheet.value.cast).toEqual([{ slug: 'reva', name: 'Reva', via: 'picker' }])
+    addCastMember('reva', 'Reva', 'picker', null)
+    expect(sheet.value.cast).toEqual([{ slug: 'reva', name: 'Reva', via: 'picker', stateId: null }])
     void result.value // force the computed to evaluate resolveCast
-    expect(seenPicks).toMatchObject([{ slug: 'reva' }])
-    expect(seenPicks[0].variantId).toBeUndefined()
+    expect(seenPicks).toMatchObject([{ slug: 'reva', stateId: null }])
   })
 })
 
@@ -257,7 +259,7 @@ describe('useShotDirector castWarnings channel', () => {
       createDefaultShotSheet(),
       () => {},
       () => ({ vera: [U('r1.png')] }),
-      picks => picks.some(p => p.variantId === 'v-gone')
+      picks => picks.some(p => p.stateId === 'v-gone')
         ? [{ level: 'warning' as const, code: 'cast-variant-missing', message: 'Vera\'s selected look no longer exists — using their Default look.' }]
         : [],
     )

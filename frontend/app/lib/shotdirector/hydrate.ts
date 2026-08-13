@@ -6,6 +6,7 @@ import {
   createDefaultShotSheet, CAMERA_MOVE_PHRASE, MOVE_DIRECTIONS,
   type CameraDirection, type CameraMove, type CastMember, type Ref, type RefKind, type ShotSheet,
 } from './types'
+import { normalizeStateId } from '#shared/characters/types'
 
 function obj(v: unknown): Record<string, unknown> {
   return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {}
@@ -47,11 +48,19 @@ export function hydrateShotSheet(raw: unknown): ShotSheet {
     style: str(r.style, d.style),
     camera: hydrateCamera(cam, d),
     constraints: arr<string>(r.constraints),
-    cast: arr<CastMember>(r.cast)
+    cast: arr<Record<string, unknown>>(r.cast)
       .filter(c =>
         c && typeof c.slug === 'string' && typeof c.name === 'string'
         && (c.via === 'wire' || c.via === 'picker'))
-      .map(c => ({ slug: c.slug, name: c.name, via: c.via, ...(typeof c.variantId === 'string' && c.variantId !== 'default' ? { variantId: c.variantId } : {}) })),
+      .map(c => ({
+        slug: c.slug as string,
+        name: c.name as string,
+        via: c.via as CastMember['via'],
+        // Old sheets carry `variantId` (some with the literal 'default'); new
+        // ones carry `stateId` directly. normalizeStateId is the one place
+        // that understands the 'default' sentinel.
+        stateId: normalizeStateId((typeof c.stateId === 'string' ? c.stateId : undefined) ?? (typeof c.variantId === 'string' ? c.variantId : undefined)),
+      })),
     references: arr<Ref>(r.references),
     firstFrame: typeof r.firstFrame === 'string' ? r.firstFrame : undefined,
     lastFrame: typeof r.lastFrame === 'string' ? r.lastFrame : undefined,

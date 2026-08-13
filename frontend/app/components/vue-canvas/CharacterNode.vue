@@ -7,6 +7,7 @@ import { Drama } from 'lucide-vue-next'
 import { useCharacters } from '~/composables/useCharacters'
 import CharacterPickerModal from '~/components/vue-canvas/CharacterPickerModal.vue'
 import { emitCharacterEvent } from '~/lib/characters/bus'
+import { normalizeStateId } from '#shared/characters/types'
 
 const props = defineProps<{
   id: string
@@ -20,18 +21,33 @@ const props = defineProps<{
 const { characters, coverUrl } = useCharacters()
 const pickerOpen = ref(false)
 
-const slug = computed<string | null>(() => props.data?.properties?.sailor_characterSlug ?? null)
+/** Reads the single sailor_characterBinding property, falling back to the
+ *  three legacy sailor_character{Slug,Name,VariantId} props for nodes saved
+ *  before the binding existed. Writes only ever produce the binding. */
+const binding = computed<{ slug: string; name: string; stateId: string | null } | null>(() => {
+  const b = props.data?.properties?.sailor_characterBinding
+  if (b && typeof b.slug === 'string') {
+    return { slug: b.slug, name: typeof b.name === 'string' ? b.name : b.slug, stateId: normalizeStateId(b.stateId ?? null) }
+  }
+  const legacySlug = props.data?.properties?.sailor_characterSlug
+  if (typeof legacySlug === 'string') {
+    return {
+      slug: legacySlug,
+      name: props.data?.properties?.sailor_characterName || legacySlug,
+      stateId: normalizeStateId(props.data?.properties?.sailor_characterVariantId ?? null),
+    }
+  }
+  return null
+})
+
+const slug = computed<string | null>(() => binding.value?.slug ?? null)
 const character = computed(() => characters.value.find(c => c.slug === slug.value) ?? null)
-// TODO(T6): sailor_characterVariantId stays as-is until CastMember/property
-// rename lands; the bus payload converts at its own boundary where needed.
-const variantId = computed<string | null>(() => props.data?.properties?.sailor_characterVariantId ?? null)
+const stateId = computed<string | null>(() => binding.value?.stateId ?? null)
 const refCount = computed(() => character.value?.states.reduce((n, v) => n + v.refImages.length, 0) ?? 0)
 
-function pick(s: string, name: string, pickedVariantId?: string) {
+function pick(s: string, name: string, pickedStateId: string | null) {
   if (!props.data.properties) props.data.properties = {}
-  props.data.properties.sailor_characterSlug = s
-  props.data.properties.sailor_characterName = name
-  props.data.properties.sailor_characterVariantId = pickedVariantId ?? null
+  props.data.properties.sailor_characterBinding = { slug: s, name, stateId: normalizeStateId(pickedStateId) }
   pickerOpen.value = false
   // Nudge any wired Shot Directors to re-sync their cast.
   emitCharacterEvent('castEdgesChanged')
@@ -39,8 +55,10 @@ function pick(s: string, name: string, pickedVariantId?: string) {
 
 function onVariantChange(e: Event) {
   if (!props.data.properties) props.data.properties = {}
+  const b = binding.value
+  if (!b) return
   const v = (e.target as HTMLSelectElement).value
-  props.data.properties.sailor_characterVariantId = (v && v !== 'default') ? v : null
+  props.data.properties.sailor_characterBinding = { slug: b.slug, name: b.name, stateId: normalizeStateId(v) }
   emitCharacterEvent('castEdgesChanged')
 }
 </script>
@@ -65,7 +83,7 @@ function onVariantChange(e: Event) {
       <template v-if="character">
         <div class="flex items-center gap-2">
           <img
-            v-if="coverUrl(character, variantId ?? undefined)" :src="coverUrl(character, variantId ?? undefined)!" :alt="character.name"
+            v-if="coverUrl(character, stateId ?? undefined)" :src="coverUrl(character, stateId ?? undefined)!" :alt="character.name"
             class="h-10 w-10 shrink-0 rounded object-cover"
           >
           <div v-else class="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-white/[0.06]">
@@ -79,7 +97,7 @@ function onVariantChange(e: Event) {
         <!-- Variant select: only when the character has more than one variant -->
         <select
           v-if="character.states.length > 1"
-          :value="variantId ?? character.states.find(v => v.id === 'default')?.id ?? ''"
+          :value="stateId ?? character.states.find(v => v.id === 'default')?.id ?? ''"
           class="mt-2 w-full rounded border border-white/10 bg-[#0e0e10] px-1.5 py-1 text-[11px] text-white/70 outline-none focus:border-white/25"
           @change="onVariantChange"
         >
@@ -90,7 +108,7 @@ function onVariantChange(e: Event) {
         </p>
       </template>
       <p v-else-if="slug" class="text-[11px] leading-tight text-red-400/80">
-        Character "{{ data?.properties?.sailor_characterName || slug }}" was deleted.
+        Character "{{ binding?.name || slug }}" was deleted.
       </p>
       <p v-else class="text-[11px] text-white/40">No character picked.</p>
 

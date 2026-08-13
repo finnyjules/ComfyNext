@@ -102,6 +102,7 @@ import { compileLipSync } from '~/lib/lipsync/compile'
 import { materializeCast } from '~/lib/shotdirector/cast'
 import { viewRefUrl, uploadRefFile } from '~/lib/shotdirector/refUpload'
 import { coverFirstRefs } from '~/composables/useCharacters'
+import { normalizeStateId } from '#shared/characters/types'
 import { upstreamSeedScope } from '~/lib/artifact/nextSteps'
 import { runStudioCascade, planStudiosToBakeForRun, hasStudioBaker, isStudioNode, isArtifactNode, type CascadeDeps } from '~/lib/studio/cascade'
 import { getScene3DRebaker } from '~/lib/scene3d/rebake'
@@ -3422,9 +3423,8 @@ async function handleShotDirectorGenerate(e: Event) {
   let castIssues: import('~/lib/shotdirector/rules').ValidationIssue[] = []
   if (sheet.cast.length) {
     // Live link: resolve cast refs from the registry at generate time, honoring
-    // each member's variantId (mirrors useCharacters' resolveStateRefs: named
+    // each member's stateId (mirrors useCharacters' resolveStateRefs: named
     // state if present, else the 'default' state, else the first one).
-    // TODO(T6): m.variantId stays as-is (CastMember rename lands in Task 6).
     let resolved: Record<string, string[]> = {}
     try {
       const res = await fetch('/api/characters-local')
@@ -3433,7 +3433,7 @@ async function handleShotDirectorGenerate(e: Event) {
       const bySlug = new Map((data.characters ?? []).map(c => [c.slug, c]))
       resolved = Object.fromEntries(sheet.cast.map((m) => {
         const states = bySlug.get(m.slug)?.states ?? []
-        const state = (m.variantId ? states.find(v => v.id === m.variantId) : undefined)
+        const state = (m.stateId ? states.find(v => v.id === m.stateId) : undefined)
           ?? states.find(v => v.id === 'default') ?? states[0]
         // Cover-first so materializeCast's single cover ref is the chosen cover.
         return [m.slug, coverFirstRefs(state).map(f => viewRefUrl(f))]
@@ -3489,15 +3489,34 @@ async function handleShotDirectorGenerate(e: Event) {
   }))
 }
 
+/** Reads a Character/CharacterSheet node's single sailor_characterBinding
+ *  property, falling back (read-time only) to the three legacy
+ *  sailor_character{Slug,Name,VariantId} props for nodes saved before the
+ *  binding existed. Writes only ever produce the binding. */
+function characterBindingOf(n: any): { slug: string; name: string; stateId: string | null } | null {
+  const props = n?.data?.properties
+  const b = props?.sailor_characterBinding
+  if (b && typeof b.slug === 'string') {
+    return { slug: b.slug, name: typeof b.name === 'string' ? b.name : b.slug, stateId: normalizeStateId(b.stateId ?? null) }
+  }
+  const legacySlug = props?.sailor_characterSlug
+  if (typeof legacySlug === 'string') {
+    return {
+      slug: legacySlug,
+      name: props?.sailor_characterName || legacySlug,
+      stateId: normalizeStateId(props?.sailor_characterVariantId ?? null),
+    }
+  }
+  return null
+}
+
 /** Edge ⇄ cast sync: canvas wires (Character → Shot Director input-N) are one
  *  editor of sheet.cast (via:'wire'); the picker (Task 10) is the other.
  *  Recomputed on every edge/property change so the two stay consistent. */
 function syncAllShotDirectorCasts() {
   const liteNodes = (nodes.value as any[]).map(n => ({
     id: String(n.id), nodeType: n.data?.nodeType as string | undefined,
-    characterSlug: n.data?.properties?.sailor_characterSlug ?? null,
-    characterName: n.data?.properties?.sailor_characterName ?? null,
-    characterVariantId: n.data?.properties?.sailor_characterVariantId ?? null,
+    binding: characterBindingOf(n),
   }))
   const liteEdges = (edges.value as any[]).map(e => ({
     source: String(e.source), target: String(e.target), targetHandle: e.targetHandle ?? null,
@@ -3522,7 +3541,7 @@ function handleUncastCharacter(payload: CharacterBusEvents['uncastCharacter']) {
   const drop = (edges.value as any[]).filter((ed) => {
     if (String(ed.target) !== String(nodeId)) return false
     const src = (nodes.value as any[]).find(n => String(n.id) === String(ed.source))
-    return src?.data?.properties?.sailor_characterSlug === slug
+    return characterBindingOf(src)?.slug === slug
   })
   if (drop.length) removeEdges(drop.map((d: any) => d.id))
 }
@@ -3874,17 +3893,9 @@ async function handleAddCharacterImageGen(payload: CharacterBusEvents['addCharac
 function handleAddCharacterCastNode(payload: CharacterBusEvents['addCharacterCastNode']) {
   const { slug, name, stateId } = payload ?? {}
   if (!slug || !name) return
-  // TODO(T6): sailor_characterVariantId stays as-is until the CastMember/
-  // property rename lands — convert the bus's stateId back at this boundary.
-  // Defense in depth: normalize the 'default' sentinel away here too, in case
-  // some other emitter of this event forgets to (see CharacterLibraryPanel's
-  // castInShot for why 'default' must never reach sailor_characterVariantId).
-  const variantId = (stateId && stateId !== 'default') ? stateId : undefined
   const pos = project({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
   nodes.value.push(createNodeData('Character', pos, undefined, {
-    sailor_characterSlug: slug,
-    sailor_characterName: name,
-    ...(variantId ? { sailor_characterVariantId: variantId } : {}),
+    sailor_characterBinding: { slug, name, stateId: normalizeStateId(stateId ?? null) },
   }))
   emitCharacterEvent('castEdgesChanged')
 }
