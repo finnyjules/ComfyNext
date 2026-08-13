@@ -52,6 +52,30 @@ it('content edit + re-lock in one patch requires a fresh stressResult, not the s
   const r = applyStatePatch(locked, { stateId: 'default', patch: { descriptor: 'x', status: 'locked' } }, 'T2')
   expect(r).toMatchObject({ ok: false, code: 400 })
 })
+// Route-shape guard (Task 9): the route's legacy top-level `refImages`/
+// `coverIndex` alias was deleted from characters-local.patch.ts — every
+// per-state write now goes through `applyStatePatch` (the `statePatch` body
+// branch) or a full `states` replace. There is no server-side code left that
+// reads `body.refImages` outside of `body.states[i].refImages`, so a body
+// shaped like the old alias (`{ slug, refImages: [...] }`, no `statePatch`
+// key) is inert at the route: `applyStatePatch` is simply never invoked, and
+// nothing mutates. This is asserted at the unit level here because the pure
+// `applyStatePatch` function has no knowledge of "top level" vs "state
+// patch" — that framing only exists in the route, which is why this is a
+// comment rather than a route-level test (route tests would need Nitro).
+it('applyStatePatch never reads/expects a top-level refImages field — it only understands { stateId, patch }', () => {
+  const before = rec()
+  // Calling applyStatePatch with an (invalid) body shaped like the old
+  // top-level alias must fail the same way any other bogus body would —
+  // there is no special-case handling of `refImages` outside `patch`.
+  const bogus = { stateId: 'default', refImages: ['x.png'] } as unknown as { stateId: string, patch: Record<string, unknown> }
+  const r = applyStatePatch(before, { ...bogus, patch: {} }, 'T2')
+  // An empty patch is a valid no-op patch — it succeeds, but the stray
+  // top-level `refImages` on the body is silently ignored (not applied),
+  // proving there's no alias handling inside applyStatePatch itself.
+  expect(r.ok && r.record.states[0]!.refImages).toEqual(['a.png'])
+})
+
 it('content edit + re-lock with a fresh passing stressResult in the same patch succeeds', () => {
   const locked = rec()
   locked.states[0]! = { ...locked.states[0]!, status: 'locked', stressResult: { passes: 10, total: 10, at: 'T1' } }
