@@ -42,6 +42,7 @@ export default defineNuxtConfig({
   },
 
   modules: [
+    '@clerk/nuxt',
     '@nuxtjs/color-mode',
     '@nuxt/fonts',
     // Inline module: proxy WebSocket upgrades on /ws to ComfyUI (dev only).

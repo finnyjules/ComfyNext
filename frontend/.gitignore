@@ -22,6 +22,8 @@ logs/
 .env
 .env.local
 .env.*.local
+.env.hosted
+.env.pre-clerk-backup
 
 # OS
 .DS_Store
@@ -40,3 +42,6 @@ server/templates/fonts/user/
 
 # Emitted by `npm run build:embed`
 public/embed/
+
+# clerk configuration (can include secrets)
+/.clerk/
