@@ -258,6 +258,13 @@ async function backToSheet() {
   if (c && s) await exitTestMode(c, s)
   testMode.value = false
 }
+async function onRailSelect(v: CharacterState) {
+  if (testMode.value && character.value && state.value) {
+    await exitTestMode(character.value, state.value)
+    testMode.value = false
+  }
+  selectState(character.value!, v.id)
+}
 
 // Auto-ready: markTile already fires autoReadyIfComplete internally. Watch
 // readiness so the moment a state flips to 'ready' WHILE testing, we
@@ -379,7 +386,7 @@ async function onDrawerFiles(e: Event) {
                 :class="(state && state.id === v.id)
                   ? 'border-action/50 bg-action/10 text-white'
                   : 'border-white/[0.06] bg-white/[0.02] text-white/70 hover:bg-white/[0.05]'"
-                @click="selectState(character, v.id)"
+                @click="onRailSelect(v)"
               >
                 <div class="truncate text-[11.5px]">{{ v.label }}</div>
                 <div class="mt-0.5 text-[9.5px] text-white/35">{{ readiness(v).label }}</div>
