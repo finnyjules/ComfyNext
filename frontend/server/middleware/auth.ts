@@ -9,18 +9,61 @@
  * The lazy sync must never block or fail the request — sync errors are
  * logged and retried on a later request.
  */
+import { createClerkClient } from '@clerk/backend'
+import { toWebRequest } from 'h3'
 import { deployMode } from '../utils/deployMode'
 import { guardDecision } from '../utils/authGuard'
 import { ensureUserWithBonus } from '../utils/userSync'
 import { getLiveLedger } from '../utils/ledgerLive'
 import type { H3Event } from 'h3'
 
+/**
+ * context.auth is set by Clerk's module middleware, which Nitro runs AFTER
+ * scanned middleware (this file) — so it is always undefined here. Do not
+ * use this in this file's handler; see resolveHostedUserId, which verifies
+ * the session directly via @clerk/backend instead of reading context.auth.
+ * Kept exported: its unit tests stand and it documents the context shape
+ * Clerk sets for downstream (module-middleware-ordered) handlers.
+ */
 export function resolveClerkUserId(event: H3Event): string | null {
   const auth = (event.context as any).auth
   if (typeof auth !== 'function') return null
   try {
     const a = auth()
     return a?.userId ?? null
+  } catch {
+    return null
+  }
+}
+
+type ClerkClientLike = { authenticateRequest: (req: Request) => Promise<{ toAuth: () => { userId: string | null } | null }> }
+
+// Lazily-created hosted Clerk client (never constructed in local mode).
+let clerkClient: ClerkClientLike | null = null
+function getClerkClient(): ClerkClientLike {
+  if (!clerkClient) {
+    clerkClient = createClerkClient({
+      secretKey: process.env.NUXT_CLERK_SECRET_KEY!,
+      publishableKey: process.env.NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
+    })
+  }
+  return clerkClient
+}
+
+// Test-only injection point — bypasses the real Clerk client construction
+// (and its secretKey env requirement) so tests can substitute a stub.
+export function __setClerkClientForTests(client: ClerkClientLike | null): void {
+  clerkClient = client
+}
+
+/** Hosted-mode session resolution. Runs BEFORE Clerk's own module middleware
+ * (Nitro: scanned middleware precede module handlers), so we cannot read
+ * event.context.auth here — we verify the session token ourselves. */
+export async function resolveHostedUserId(event: H3Event): Promise<string | null> {
+  try {
+    const state = await getClerkClient().authenticateRequest(toWebRequest(event))
+    const auth = state.toAuth()
+    return auth?.userId ?? null
   } catch {
     return null
   }
@@ -37,12 +80,12 @@ export function shouldLazySync(userId: string): boolean {
 }
 export function __resetLazySyncForTests(): void { lazySynced = new Set() }
 
-export default defineEventHandler((event) => {
+export default defineEventHandler(async (event) => {
   const mode = deployMode()
   if (mode === 'local') return
 
   const path = event.path ?? ''
-  const userId = resolveClerkUserId(event)
+  const userId = await resolveHostedUserId(event)
   const decision = guardDecision(path, mode, userId)
 
   if (decision.kind === 'reject') {

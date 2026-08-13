@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 /**
  * auth.ts calls defineEventHandler at module scope (a Nitro auto-import that
@@ -15,12 +15,21 @@ g.createError = (opts: { statusCode: number, message?: string, statusMessage?: s
 }
 
 let resolveClerkUserId: (event: any) => string | null
+let resolveHostedUserId: (event: any) => Promise<string | null>
 let shouldLazySync: (userId: string) => boolean
 let __resetLazySyncForTests: () => void
+let __setClerkClientForTests: (client: any) => void
 
 beforeAll(async () => {
-  ({ resolveClerkUserId, shouldLazySync, __resetLazySyncForTests } = await import('../../server/middleware/auth'))
+  ({ resolveClerkUserId, resolveHostedUserId, shouldLazySync, __resetLazySyncForTests, __setClerkClientForTests } = await import('../../server/middleware/auth'))
 })
+
+// A minimal event whose toWebRequest(event) short-circuits to event.web.request
+// (h3's toWebRequest returns event.web?.request when present), so tests never
+// need to construct a full node request.
+function fakeEvent(): any {
+  return { web: { request: new Request('http://localhost/api/wallet') } }
+}
 
 describe('resolveClerkUserId', () => {
   it('reads userId from a Clerk auth context', () => {
@@ -35,6 +44,38 @@ describe('resolveClerkUserId', () => {
   it('returns null when auth() throws (malformed token)', () => {
     const bad = { context: { auth: () => { throw new Error('bad token') } } }
     expect(resolveClerkUserId(bad as any)).toBeNull()
+  })
+})
+
+describe('resolveHostedUserId', () => {
+  afterEach(() => {
+    __setClerkClientForTests(null)
+  })
+
+  it('returns the userId when authenticateRequest resolves a signed-in state', async () => {
+    __setClerkClientForTests({
+      authenticateRequest: async () => ({ toAuth: () => ({ userId: 'user_1' }) }),
+    })
+    expect(await resolveHostedUserId(fakeEvent())).toBe('user_1')
+  })
+
+  it('returns null when toAuth() is null or has no userId', async () => {
+    __setClerkClientForTests({
+      authenticateRequest: async () => ({ toAuth: () => null }),
+    })
+    expect(await resolveHostedUserId(fakeEvent())).toBeNull()
+
+    __setClerkClientForTests({
+      authenticateRequest: async () => ({ toAuth: () => ({ userId: null }) }),
+    })
+    expect(await resolveHostedUserId(fakeEvent())).toBeNull()
+  })
+
+  it('returns null when authenticateRequest throws', async () => {
+    __setClerkClientForTests({
+      authenticateRequest: async () => { throw new Error('network error') },
+    })
+    expect(await resolveHostedUserId(fakeEvent())).toBeNull()
   })
 })
 

@@ -56,7 +56,10 @@ export default defineEventHandler(async (event) => {
         },
         onSuccess: (id) => {
           void adapters.debitOnSuccess(u, credits, version, id)
-            .then(r => meterStore.resolve(id, r.ok ? 'settled' : 'voided'))
+            .then((r) => {
+              if (!r.ok) console.error('[meter] SETTLE DEBIT REFUSED (insufficient) — job ran uncharged', { promptId: id, user: u, credits })
+              meterStore.resolve(id, r.ok ? 'settled' : 'voided')
+            })
             .catch((e) => {
               // Job ran but the charge failed — money bug, must be loud.
               console.error('[meter] DEBIT FAILED after successful run', { promptId: id, user: u, credits }, e)
