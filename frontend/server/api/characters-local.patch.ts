@@ -5,12 +5,11 @@ import {
   type CharacterRecord, type CharacterState,
 } from '~~/server/utils/characterRegistry'
 import { applyStatePatch, type StatePatchBody } from '~~/server/utils/characterStatePatch'
-import { defaultState } from '#shared/characters/types'
 
 export default defineEventHandler(async (event) => {
   const body = await readBody(event) as {
     slug?: string, name?: string, notes?: string, loraName?: string | null,
-    trigger?: string | null, refImages?: string[], coverIndex?: number,
+    trigger?: string | null,
     states?: CharacterState[], statePatch?: StatePatchBody, remove?: true,
   }
   const slug = (body?.slug || '').trim()
@@ -81,21 +80,10 @@ export default defineEventHandler(async (event) => {
     record.trigger = candidate.trigger
   }
 
-  // Legacy alias: refImages/coverIndex at top level write through to the
-  // Default state. Existing callers (save-as-character, CharacterSheetNode,
-  // panel uploads) still send this shape.
-  if (Array.isArray(body.refImages)) {
-    if (!body.refImages.every(validRefFilename)) {
-      throw createError({ statusCode: 400, message: 'Invalid ref filename' })
-    }
-    const def = defaultState(record)
-    def.refImages = body.refImages
-    def.coverIndex = Math.min(Math.max(0, def.coverIndex), Math.max(0, def.refImages.length - 1))
-  }
-  if (typeof body.coverIndex === 'number') {
-    const def = defaultState(record)
-    def.coverIndex = Math.min(Math.max(0, body.coverIndex), Math.max(0, def.refImages.length - 1))
-  }
+  // NOTE: the legacy top-level `refImages`/`coverIndex` alias (write-through
+  // to the Default state) was removed in Task 9 — every caller now goes
+  // through `statePatch` (applyStatePatch, above) or a full `states` replace.
+  // `applyStatePatch` is the only remaining per-state mutation path.
 
   record.updatedAt = new Date().toISOString()
   await fs.writeFile(file, JSON.stringify(record, null, 2))

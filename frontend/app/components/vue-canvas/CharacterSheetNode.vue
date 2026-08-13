@@ -9,8 +9,10 @@ import { Handle, Position } from '@vue-flow/core'
 import { Images, Loader2, RefreshCcw, Upload } from 'lucide-vue-next'
 import { useCharacters } from '~/composables/useCharacters'
 import { useSheetGeneration, type SheetSource } from '~/composables/useSheetGeneration'
-import { uploadRefFile } from '~/lib/shotdirector/refUpload'
+import { uploadRefFilename } from '~/lib/shotdirector/refUpload'
+import { bakeCompositeSheet } from '~/lib/characters/sheetComposite'
 import { emitCharacterEvent } from '~/lib/characters/bus'
+import type { CharacterPanel, PanelSlot } from '#shared/characters/types'
 import { toast } from 'vue-sonner'
 
 const props = defineProps<{
@@ -22,7 +24,7 @@ const props = defineProps<{
   }
 }>()
 
-const { characters, coverUrl, refresh } = useCharacters()
+const { characters, coverUrl, patchCharacter, patchState } = useCharacters()
 
 // ── Saved state ──────────────────────────────────────────────────────────
 // Reads the single sailor_characterBinding property, falling back to the
@@ -42,14 +44,14 @@ const binding = computed<{ slug: string; name: string } | null>(() => {
 })
 const slug = computed<string | null>(() => binding.value?.slug ?? null)
 const savedCharacter = computed(() => characters.value.find(c => c.slug === slug.value) ?? null)
-// This node only ever populates the character's default state (see save()
-// below), so the reference count for the saved-state summary comes from
-// that state specifically — mirrors useCharacters' own default-state fallback.
+// This node only ever populates the character's default state's `panels`
+// (see save() below), so the saved-state summary counts panels, not the
+// legacy refImages pool — mirrors useCharacters' own default-state fallback.
 const savedRefCount = computed(() => {
   const c = savedCharacter.value
   if (!c) return 0
   const state = c.states.find(v => v.id === 'default') ?? c.states[0]
-  return state?.refImages.length ?? 0
+  return state?.panels.length ?? 0
 })
 
 // ── Wired upstream source (optional IMAGE input) ────────────────────────
@@ -146,13 +148,15 @@ const hasSource = computed(() => sourceMode.value === 'photo' ? !!sourceDataUrl.
 const charName = ref('')
 
 // ── Panels (Higgsfield 5-panel sheet) ───────────────────────────────────
-// TODO(T9): still driven positionally (index i / reroll(i)) — full wiring
-// to the CharacterState `panels` model (upload → composite → patchState) is
-// Task 9. This is the mechanical adaptation to the new panels-shaped return.
+// `shots` is index-aligned with HIGGSFIELD_PANELS (useSheetGeneration seeds
+// one PanelShot per spec, in order), so `shots.value[i].spec.slot` is a
+// real slot lookup, not a coincidental index — save()/runShot() below
+// address panels by slot for the CharacterState.panels model.
 const { panels: shots, reset: resetShots, expandAll, rerollPanel } = useSheetGeneration()
 const expanding = ref(false)
 
 const hasAnyShot = computed(() => shots.value.some(s => s.dataUrl))
+const hasFullSheet = computed(() => shots.value.length > 0 && shots.value.every(s => s.dataUrl))
 const canExpand = computed(() => hasSource.value && charName.value.trim().length > 0 && !expanding.value)
 
 function currentSource(): SheetSource | null {
@@ -168,16 +172,15 @@ function currentSource(): SheetSource | null {
 async function runShot(idx: number) {
   const source = currentSource()
   if (!source) return
-  // TODO(T9): index→slot mapping relies on positional parity with
-  // HIGGSFIELD_PANELS; real UI should address panels by slot directly.
   const slot = shots.value[idx]?.spec.slot
   if (!slot) return
   try {
     await rerollPanel(slot, source)
   } catch (e) {
     // rerollPanel throws for a derived-panel reroll with no portrait yet
-    // (nothing to derive from) — surface it the same way a failed shot does.
+    // (nothing to derive from) — surface it, don't just log it.
     console.warn('[CharacterSheet] reroll failed', e)
+    toast.error(e instanceof Error ? e.message : 'Reroll failed — try again')
   }
 }
 
@@ -214,38 +217,31 @@ function dataUrlToFile(dataUrl: string, name: string): File {
   return new File([arr], name, { type: mime })
 }
 
-async function urlToFile(url: string, name: string): Promise<File> {
-  if (url.startsWith('data:')) return dataUrlToFile(url, name)
-  const res = await fetch(url)
-  if (!res.ok) throw new Error(`fetch ${res.status}`)
-  const blob = await res.blob()
-  return new File([blob], name, { type: blob.type || 'image/png' })
-}
-
 async function save() {
   if (saving.value) return
   const name = charName.value.trim()
-  if (!name || !hasSource.value) return
+  if (!name || !hasSource.value || !hasFullSheet.value) return
 
   saving.value = true
   saveError.value = null
   let createdSlug: string | null = null
   try {
-    // Upload source + every generated shot (source first, so it's the cover).
-    const uploads: string[] = []
-    if (sourceMode.value === 'photo' && sourceDataUrl.value) {
-      const sourceFile = dataUrlToFile(sourceDataUrl.value, 'source.png')
-      const sourceUrl = await uploadRefFile(sourceFile)
-      uploads.push(new URLSearchParams(sourceUrl.split('?')[1]).get('filename')!)
-    }
-    let shotIdx = 0
+    // Upload every generated panel by slot, then bake the composite sheet
+    // from the same in-memory data URLs — the single identity asset that
+    // replaces the old flat refImages list.
+    const panelDataUrls = {} as Record<PanelSlot, string>
+    const panels: CharacterPanel[] = []
     for (const shot of shots.value) {
       if (!shot.dataUrl) continue
-      const file = await urlToFile(shot.dataUrl, `sheet_${shotIdx++}.png`)
-      const refUrl = await uploadRefFile(file)
-      uploads.push(new URLSearchParams(refUrl.split('?')[1]).get('filename')!)
+      panelDataUrls[shot.spec.slot] = shot.dataUrl
+      const file = dataUrlToFile(shot.dataUrl, `sheet_${shot.spec.slot}.png`)
+      const filename = await uploadRefFilename(file)
+      panels.push({ slot: shot.spec.slot, filename })
     }
-    if (uploads.length === 0) throw new Error('nothing to save — add a source photo or generate a sheet first')
+    if (!panels.length) throw new Error('nothing to save — generate a sheet first')
+
+    const compositeFile = await bakeCompositeSheet(panelDataUrls)
+    const sheetImage = await uploadRefFilename(compositeFile)
 
     // LoRA mode attaches to the character that already owns this LoRA
     // (post-unification, absorb guarantees one exists) — POSTing would 409.
@@ -273,36 +269,29 @@ async function save() {
       targetSlug = newSlug
     }
 
-    // Legacy refImages alias writes through to the Default variant — a full
-    // replace, same semantics as the panel's "Regenerate sheet".
-    const patchBody: Record<string, any> = { slug: targetSlug, refImages: uploads }
     if (sourceMode.value === 'lora' && selectedLora.value) {
-      patchBody.loraName = selectedLora.value.filename
-      patchBody.trigger = selectedLora.value.trigger
+      await patchCharacter(targetSlug, { loraName: selectedLora.value.filename, trigger: selectedLora.value.trigger })
     }
-    const patched = await fetch('/api/characters-local', {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patchBody),
+
+    const result = await patchState(targetSlug, {
+      stateId: 'default',
+      patch: { panels, sheetImage, status: 'draft', stressResult: null },
     })
-    if (!patched.ok) {
-      // Don't leave an orphan zero-ref character behind — but ONLY clean up a
-      // record this save created; never delete a pre-existing character.
+    if (result !== 'ok') {
+      // Don't leave an orphan zero-panel character behind — but ONLY clean up
+      // a record this save created; never delete a pre-existing character.
       if (createdSlug) {
         await fetch('/api/characters-local', {
           method: 'PATCH', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ slug: createdSlug, remove: true }),
         }).catch(() => {})
       }
-      throw new Error(`attach refs ${patched.status}`)
+      throw new Error(result === 'stale' ? 'Someone else edited this character — reloaded, try again' : `attach panels (${result})`)
     }
 
     if (!props.data.properties) (props.data as any).properties = {}
     const properties = props.data.properties as Record<string, any>
     properties.sailor_characterBinding = { slug: targetSlug, name: targetName, stateId: null }
-    // TODO(T9): the PATCH above still sends the legacy top-level `refImages`
-    // body shape (full write-shape migration to `states` is Task 9) — pull
-    // the store's truth now that the write landed, instead of the dead
-    // sailor:charactersChanged event.
-    await refresh()
     emitCharacterEvent('castEdgesChanged')
     toast.success(
       createdSlug ? `Saved ${targetName} to characters` : `Updated ${targetName}'s reference sheet`,
@@ -487,7 +476,8 @@ function resetToNewSheet() {
       <!-- Save button -->
       <button
         class="w-full rounded bg-action/15 px-2.5 py-1.5 text-[11px] font-medium text-action transition hover:bg-action/25 disabled:cursor-not-allowed disabled:opacity-40"
-        :disabled="saving || !charName.trim() || !hasSource"
+        :disabled="saving || !charName.trim() || !hasSource || !hasFullSheet"
+        :title="!hasFullSheet ? 'Expand the full 5-shot sheet before saving' : undefined"
         @click.stop="save"
       >
         <span v-if="saving" class="inline-flex items-center gap-1.5">

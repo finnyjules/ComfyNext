@@ -52,7 +52,7 @@ const maskColor = computed(() => getTypeColor('MASK'))
 
 // The agent is reviewing THIS node → show the white scanning overlay.
 const { analyzingNodeIds } = useAgentActivity()
-const { refresh: refreshCharacters } = useCharacters()
+const { patchState } = useCharacters()
 const isAnalyzing = computed(() => analyzingNodeIds.value.has(props.id))
 
 // Vue Flow injects nodes/edges so we can ask "is anything wired to my image
@@ -493,23 +493,19 @@ async function saveAsCharacter() {
     })
     if (!created.ok) throw new Error(`create ${created.status}`)
     const { slug } = await created.json() as { slug: string }
-    const patched = await fetch('/api/characters-local', {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ slug, refImages: [filename] }),
-    })
-    if (!patched.ok) {
+    // This seeds the Default state's legacy free-form ref POOL (not the
+    // Higgsfield `panels`/`sheetImage` composite — this node saves a single
+    // photo, not a generated sheet), via the same statePatch path every
+    // other per-state mutation now uses.
+    const result = await patchState(slug, { stateId: 'default', patch: { refImages: [filename], coverIndex: 0 } })
+    if (result !== 'ok') {
       // Don't leave an orphan zero-ref character behind.
       await fetch('/api/characters-local', {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ slug, remove: true }),
       }).catch(() => {})
-      throw new Error(`attach ref ${patched.status}`)
+      throw new Error(`attach ref (${result})`)
     }
-    // TODO(T9): this PATCH still sends the legacy top-level `refImages` body
-    // shape (full write-shape migration to `states` is Task 9) — pull the
-    // store's truth now that the write landed, instead of the dead
-    // sailor:charactersChanged event.
-    await refreshCharacters()
     toast.success(`Saved ${name} to characters`, { description: 'Castable in the Shot Director' })
   } catch (e) {
     console.warn('[saveAsCharacter]', e)

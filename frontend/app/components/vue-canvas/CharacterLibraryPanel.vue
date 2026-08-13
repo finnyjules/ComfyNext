@@ -1,30 +1,17 @@
 <script lang="ts">
-import { ref } from 'vue'
-
 /**
- * True module-level state for the absorb-on-load + one-time sheet auto-gen
- * orchestration (see the block below in <script setup> for the logic). This
- * MUST live in a plain (non-setup) <script> block: variables declared
- * directly inside <script setup> are re-initialized on every component
- * instance (it compiles to a fresh setup() call per mount), so a `let`
- * declared there does NOT survive the panel being closed/reopened — and this
- * panel's parent (layouts/default.vue) mounts it behind a v-if, so it
- * genuinely unmounts/remounts on every toggle. Without this being real
- * module scope, closing and reopening the panel would silently re-run
- * absorb + auto-gen every time, defeating the one-time-per-session and
- * sanctioned-spend guarantees.
- *
- * `autoGenQueue` lives here too for the same reason: it holds the failed
- * rows the Retry UI reads from. If it were `<script setup>` state (re-created
- * per mount), closing the panel while a row was still showing "failed" would
- * wipe the queue on remount — and since `absorbRanThisSession` above already
- * blocks runAbsorbOnce from firing again, that failed row would vanish with
- * no way to retry it until a full page reload.
+ * True module-level state for the absorb-on-load orchestration (see the
+ * block below in <script setup> for the logic). This MUST live in a plain
+ * (non-setup) <script> block: variables declared directly inside
+ * <script setup> are re-initialized on every component instance (it
+ * compiles to a fresh setup() call per mount), so a `let` declared there
+ * does NOT survive the panel being closed/reopened — and this panel's
+ * parent (layouts/default.vue) mounts it behind a v-if, so it genuinely
+ * unmounts/remounts on every toggle. Without this being real module scope,
+ * closing and reopening the panel would silently re-run absorb every time,
+ * defeating the one-time-per-session guarantee.
  */
 let absorbRanThisSession = false
-const autoGenInFlight = new Set<string>() // slugs currently generating (guards re-entrancy)
-interface AutoGenRow { slug: string, name: string, error: boolean }
-const autoGenQueue = ref<AutoGenRow[]>([])
 </script>
 
 <script setup lang="ts">
@@ -46,10 +33,11 @@ import {
   useCharacters, useTrainingJobs, characterStatus, IN_FLIGHT_STATUSES, slugish,
   type CharacterStatus,
 } from '~/composables/useCharacters'
-import type { CharacterRecord, CharacterState } from '#shared/characters/types'
-import { emptyState, normalizeStateId } from '#shared/characters/types'
+import type { CharacterRecord, CharacterState, CharacterPanel, PanelSlot } from '#shared/characters/types'
+import { emptyState, normalizeStateId, panelFilename } from '#shared/characters/types'
 import { useSheetGeneration, type SheetSource } from '~/composables/useSheetGeneration'
-import { uploadRefFile, viewRefUrl } from '~/lib/shotdirector/refUpload'
+import { uploadRefFilename, viewRefUrl } from '~/lib/shotdirector/refUpload'
+import { bakeCompositeSheet } from '~/lib/characters/sheetComposite'
 import { HIGGSFIELD_PANELS } from '~/data/character-shot-scenes'
 import { usePendingTrainerSeed } from '~/composables/usePendingTrainerSeed'
 import { buildDressPrompt, DRESS_COST_USD, type DressMode } from '~/lib/wardrobe/dress'
@@ -57,124 +45,39 @@ import { emitCharacterEvent } from '~/lib/characters/bus'
 
 defineEmits<{ close: [] }>()
 
-const { characters, loading, error: charactersError, coverUrl, refresh } = useCharacters()
+const {
+  characters, loading, error: charactersError, coverUrl, refresh,
+  patchState, replaceStates, removeCharacter,
+} = useCharacters()
 const { jobs, setPolling } = useTrainingJobs()
 const { openTab } = useTabs()
 
 onMounted(() => { setPolling(true); void runAbsorbOnce() })
 onUnmounted(() => setPolling(false))
 
-// TODO(T8): callers below (createCharacter/patchChar) become direct store
-// mutations in Task 8; for now this just pulls the truth from the server,
-// mirroring what the old sailor:charactersChanged listener did.
-function changed() { void refresh() }
+// Shared conflict-toast wording — every patchState call in this panel shows
+// the same message on a 'stale' result (someone else's edit landed first).
+const STALE_MESSAGE = 'Someone else edited this character — reloaded, try again'
 
-// ── Absorb-on-load + one-time sheet auto-gen ───────────────────────────────
-// This is the one place auto-spend is sanctioned: newly absorbed LoRA
-// characters (from U2's migration, or any future manual drop into
-// models/loras) get their Default sheet rendered automatically, once.
-// `absorbRanThisSession` / `autoGenInFlight` are true module-level state
-// (declared in the plain <script> block above) so this fires once per app
-// session, not once per panel open.
-// AutoGenRow / autoGenQueue live in the module-level <script> block above
-// (see the comment there for why) — not re-declared here.
-const autoGenActive = ref(false)
-
+// ── Absorb-on-load ──────────────────────────────────────────────────────────
+// Free: pulls newly-dropped LoRAs (U2's migration, or a manual drop into
+// models/loras) into character records so they show up in the library. This
+// used to also auto-generate each new character's Default sheet — real money,
+// spent with no explicit click — which Task 9 removes entirely; "Generate
+// sheet" is now always a user action. `absorbRanThisSession` is true
+// module-level state (declared in the plain <script> block above) so this
+// still only fires once per app session, not once per panel open (the panel
+// unmounts/remounts on every toggle — see that block's comment).
 async function runAbsorbOnce() {
   if (absorbRanThisSession) return
   absorbRanThisSession = true
   try {
     const res = await fetch('/api/characters-local/absorb', { method: 'POST' })
     if (!res.ok) return
-    const { created } = await res.json() as { created: string[], existing: string[] }
     await refresh()
-
-    // Auto-gen targets: characters from `created` (brand-new absorb records)
-    // PLUS any ready character whose Default variant has no full generated
-    // sheet yet — this covers U2's migration run, which created the 4 real
-    // LoRA records (Millie, Sheila, Jene, Reva) before this orchestration
-    // existed, so they'd otherwise show up under `existing` and never get
-    // sheets. In practice the migration seeded each Default variant with a
-    // single non-canonical cover photo (not the 4-shot canonical sheet), so
-    // "has no sheet yet" is measured as "fewer than the canonical shot count"
-    // rather than a literal-zero check — otherwise 3 of the 4 characters
-    // (which have exactly 1 migrated cover ref) would be silently skipped.
-    // This still can't re-fire indefinitely: once a character's Default
-    // variant reaches the full canonical count (from this auto-gen or a
-    // manual "Generate sheet"), it's never a target again.
-    void created // reported by absorb for logging/telemetry parity only.
-    const targets = characters.value.filter((c) => {
-      if (characterStatus(c, jobs.value) !== 'ready' || !c.loraName) return false
-      const def = c.states.find(v => v.id === 'default')
-      return !!def && def.refImages.length < HIGGSFIELD_PANELS.length
-    })
-    if (!targets.length) return
-
-    autoGenQueue.value = targets.map(c => ({ slug: c.slug, name: c.name, error: false }))
-    await runAutoGenQueue()
   } catch (err) {
     console.warn('[CharacterLibraryPanel] absorb-on-load failed', err)
   }
-}
-
-async function autoGenerateDefaultSheet(c: CharacterRecord): Promise<boolean> {
-  if (!c.loraName || autoGenInFlight.has(c.slug)) return false
-  autoGenInFlight.add(c.slug)
-  try {
-    const def = c.states.find(v => v.id === 'default') ?? c.states[0]
-    if (!def) return false
-    // TODO(T9): still writing the legacy flat `refImages` shape from the
-    // panels array positionally — full migration to CharacterState.panels
-    // (upload → composite → patchState) is Task 9.
-    const gen = useSheetGeneration()
-    await gen.expandAll({ mode: 'lora', loraFilename: c.loraName, trigger: c.trigger })
-    const shots = gen.panels.value.filter(s => s.dataUrl)
-    if (!shots.length) return false
-    const names: string[] = []
-    for (const shot of shots) {
-      const file = dataUrlToFile(shot.dataUrl!, `sheet_${Date.now()}_${names.length}.png`)
-      const url = await uploadRefFile(file)
-      names.push(new URLSearchParams(url.split('?')[1]).get('filename')!)
-    }
-    // Live-read pattern (same as generateSheet/replaceVariant): re-derive the
-    // live character right before the PATCH in case a concurrent edit landed
-    // during the (long) generation await.
-    const live = characters.value.find(x => x.slug === c.slug) ?? c
-    const liveDef = live.states.find(v => v.id === 'default') ?? live.states[0]
-    if (!liveDef) return false
-    const states = live.states.map(v => v.id === liveDef.id ? { ...v, refImages: names, coverIndex: 0 } : v)
-    const ok = await patchChar(c.slug, { states })
-    return ok && shots.length === HIGGSFIELD_PANELS.length
-  } finally {
-    autoGenInFlight.delete(c.slug)
-  }
-}
-
-async function runAutoGenQueue() {
-  if (autoGenActive.value || !autoGenQueue.value.length) return
-  autoGenActive.value = true
-  try {
-    // Sequential — mirrors expandAll's own sequential-per-shot behavior, one
-    // character at a time, so failures are isolated and reported per-row.
-    for (const row of autoGenQueue.value) {
-      const c = characters.value.find(x => x.slug === row.slug)
-      if (!c) { row.error = true; continue }
-      const ok = await autoGenerateDefaultSheet(c)
-      row.error = !ok
-    }
-  } finally {
-    autoGenActive.value = false
-    // Drop fully-succeeded rows; keep failures visible for Retry.
-    autoGenQueue.value = autoGenQueue.value.filter(r => r.error)
-  }
-}
-
-async function retryAutoGen(row: AutoGenRow) {
-  const c = characters.value.find(x => x.slug === row.slug)
-  if (!c) return
-  const ok = await autoGenerateDefaultSheet(c)
-  row.error = !ok
-  if (ok) autoGenQueue.value = autoGenQueue.value.filter(r => r.slug !== row.slug)
 }
 
 // ── Create / delete character ───────────────────────────────────────────────
@@ -187,7 +90,7 @@ async function createCharacter() {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
   })
   if (res.ok) {
-    changed()
+    void refresh()
     expandedSlug.value = (await res.json()).slug
     toast.success(`Created ${name}`, { description: 'Add reference photos to make them ready' })
   }
@@ -195,19 +98,9 @@ async function createCharacter() {
   else toast.error('Couldn\'t create the character — try again')
 }
 
-async function patchChar(slug: string, patch: Record<string, unknown>): Promise<boolean> {
-  const res = await fetch('/api/characters-local', {
-    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ slug, ...patch }),
-  })
-  if (res.ok) changed()
-  else toast.error('Couldn\'t update the character — try again')
-  return res.ok
-}
-
 async function deleteCharacter(c: CharacterRecord) {
   if (!window.confirm(`Delete character "${c.name}"? Shots casting them will show an error.`)) return
-  await patchChar(c.slug, { remove: true })
+  if (!(await removeCharacter(c.slug))) toast.error('Couldn\'t delete the character — try again')
 }
 
 function toggleExpanded(c: CharacterRecord) {
@@ -281,16 +174,16 @@ function activeVariant(c: CharacterRecord): CharacterState | undefined {
 }
 
 // ── Variant ref upload / cover / remove ────────────────────────────────
-async function replaceVariant(c: CharacterRecord, variantId: string, patch: Partial<CharacterState>) {
-  // Race: `c` is a click-time closure over `characters.value`. A concurrent
-  // store refresh during any await before this point (e.g. a concurrent edit
-  // on this or another variant) reassigns `characters.value`, and this PATCH
-  // does a full-array replace server-side — so building from the stale
-  // `c.states` would silently clobber that concurrent edit.
-  // Re-derive the live character right before building the patch body.
-  const live = characters.value.find(x => x.slug === c.slug) ?? c
-  const states = live.states.map(v => v.id === variantId ? { ...v, ...patch } : v)
-  await patchChar(c.slug, { states })
+// `variant` is captured at click time (its `updatedAt`) and sent as
+// `expectedUpdatedAt` — a concurrent edit landing during a (possibly long)
+// upload now fails the PATCH with a 'stale' toast instead of silently
+// clobbering it, so there's no need to defensively re-derive "the live
+// variant" before writing (the old stale-closure guard pattern).
+async function replaceVariant(c: CharacterRecord, variant: CharacterState, patch: Partial<CharacterState>): Promise<boolean> {
+  const result = await patchState(c.slug, { stateId: variant.id, expectedUpdatedAt: variant.updatedAt, patch })
+  if (result === 'stale') { toast.error(STALE_MESSAGE); return false }
+  if (result === 'error') { toast.error('Couldn\'t update the character — try again'); return false }
+  return true
 }
 
 async function addRefFiles(c: CharacterRecord, variant: CharacterState, e: Event) {
@@ -299,47 +192,31 @@ async function addRefFiles(c: CharacterRecord, variant: CharacterState, e: Event
   const names: string[] = []
   let failed = 0
   for (const f of files) {
-    try {
-      const url = await uploadRefFile(f)
-      names.push(new URLSearchParams(url.split('?')[1]).get('filename')!)
-    } catch { failed++ }
+    try { names.push(await uploadRefFilename(f)) } catch { failed++ }
   }
   if (failed) toast.error(`${failed} of ${files.length} upload${files.length === 1 ? '' : 's'} failed`, { description: names.length ? 'The rest were added' : undefined })
-  // Re-read the live variant's refImages before appending — the upload loop
-  // above can be long-running, so `variant` may be a stale closure (same
-  // stale-closure race as replaceVariant/rerollTile).
   if (names.length) {
-    const liveVariant = characters.value.find(x => x.slug === c.slug)?.states.find(v => v.id === variant.id) ?? variant
-    await replaceVariant(c, variant.id, { refImages: [...liveVariant.refImages, ...names] })
+    await replaceVariant(c, variant, { refImages: [...variant.refImages, ...names] })
   }
   ;(e.target as HTMLInputElement).value = ''
 }
 
 async function removeRef(c: CharacterRecord, variant: CharacterState, idx: number) {
-  // Live-read the variant's refImages before filtering — same stale-closure
-  // race as addRefFiles/rerollTile: `variant` is a click-time closure, and a
-  // concurrent charactersChanged refresh (e.g. another edit in flight) can
-  // reassign characters.value before this runs, so filtering the stale array
-  // would silently resurrect whatever the concurrent edit removed/changed.
-  const liveVariant = characters.value.find(x => x.slug === c.slug)?.states.find(v => v.id === variant.id) ?? variant
-  await replaceVariant(c, variant.id, { refImages: liveVariant.refImages.filter((_, i) => i !== idx) })
+  await replaceVariant(c, variant, { refImages: variant.refImages.filter((_, i) => i !== idx) })
 }
 
 async function setCover(c: CharacterRecord, variant: CharacterState, idx: number) {
-  await replaceVariant(c, variant.id, { coverIndex: idx })
+  await replaceVariant(c, variant, { coverIndex: idx })
 }
 
 async function deleteVariant(c: CharacterRecord, variant: CharacterState) {
   if (variant.id === 'default') return
-  // window.confirm blocks synchronously but can sit open indefinitely while
-  // the user reads it, during which characters.value can be reassigned —
-  // same stale-closure race as replaceVariant, and this builds its own
-  // array directly (not via replaceVariant), so re-derive live here too.
   if (!window.confirm(`Delete look "${variant.label}"?`)) return
-  const live = characters.value.find(x => x.slug === c.slug) ?? c
-  const states = live.states.filter(v => v.id !== variant.id)
-  if (await patchChar(c.slug, { states })) {
+  const states = c.states.filter(v => v.id !== variant.id)
+  if (await replaceStates(c.slug, states)) {
     selectedVariantId.value[c.slug] = 'default'
+  } else {
+    toast.error('Couldn\'t delete the look — try again')
   }
 }
 
@@ -364,14 +241,13 @@ async function createVariant(c: CharacterRecord) {
     ...emptyState('v-' + Date.now().toString(36), label),
     descriptor: (newVariantDescriptor.value[c.slug] || '').trim(),
   }
-  // Same stale-closure race as replaceVariant — re-derive the live character
-  // right before building the patch body.
-  const live = characters.value.find(x => x.slug === c.slug) ?? c
-  const states = [...live.states, variant]
-  if (await patchChar(c.slug, { states })) {
+  const states = [...c.states, variant]
+  if (await replaceStates(c.slug, states)) {
     addingVariant.value.delete(c.slug)
     selectedVariantId.value[c.slug] = variant.id
     toast.success(`Added look "${label}"`)
+  } else {
+    toast.error('Couldn\'t add the look — try again')
   }
 }
 
@@ -421,6 +297,54 @@ function sheetCostLabel(c: CharacterRecord): string {
   return statusFor(c) === 'ready' ? '~$0.12' : '~$0.32'
 }
 
+/** Panel filename → /view URL for a state's saved composite panel, or null. */
+function panelUrl(state: CharacterState, slot: PanelSlot): string | null {
+  const filename = panelFilename(state, slot)
+  return filename ? viewRefUrl(filename) : null
+}
+
+/**
+ * Data URLs for all 5 canonical slots, ready to bake into a composite:
+ * prefer whatever this browser session already generated (`gen.panels`,
+ * fresh from expandAll/rerollPanel) and fall back to fetching the state's
+ * already-saved panel file for any slot this session hasn't touched (e.g.
+ * rerolling a single tile after a reload, before regenerating the rest).
+ * Returns null if any slot has neither — the composite can't be completed.
+ */
+async function resolvePanelDataUrls(
+  variant: CharacterState, gen: ReturnType<typeof useSheetGeneration>,
+): Promise<Record<PanelSlot, string> | null> {
+  const out = {} as Record<PanelSlot, string>
+  for (const spec of HIGGSFIELD_PANELS) {
+    const fresh = gen.panels.value.find(p => p.spec.slot === spec.slot)?.dataUrl
+    if (fresh) { out[spec.slot] = fresh; continue }
+    const filename = panelFilename(variant, spec.slot)
+    if (!filename) return null
+    try { out[spec.slot] = await fetchAsDataUrl(viewRefUrl(filename)) }
+    catch { return null }
+  }
+  return out
+}
+
+/** Upload every generated panel (by slot) + bake and upload the composite. */
+async function uploadPanelsAndComposite(
+  shots: { spec: { slot: PanelSlot }, dataUrl: string | null }[],
+): Promise<{ panels: CharacterPanel[], sheetImage: string } | null> {
+  const panelDataUrls = {} as Record<PanelSlot, string>
+  const panels: CharacterPanel[] = []
+  for (const shot of shots) {
+    if (!shot.dataUrl) continue
+    panelDataUrls[shot.spec.slot] = shot.dataUrl
+    const file = dataUrlToFile(shot.dataUrl, `sheet_${shot.spec.slot}.png`)
+    const filename = await uploadRefFilename(file)
+    panels.push({ slot: shot.spec.slot, filename })
+  }
+  if (!panels.length) return null
+  const compositeFile = await bakeCompositeSheet(panelDataUrls)
+  const sheetImage = await uploadRefFilename(compositeFile)
+  return { panels, sheetImage }
+}
+
 async function generateSheet(c: CharacterRecord, variant: CharacterState) {
   const key = `${c.slug}:${variant.id}`
   if (expanding.value.has(key)) return
@@ -430,49 +354,52 @@ async function generateSheet(c: CharacterRecord, variant: CharacterState) {
   try {
     const gen = sheetFor(c, variant)
     await gen.expandAll(source)
-    const shots = gen.panels.value.filter(s => s.dataUrl)
-    if (!shots.length) { toast.error('Sheet generation failed — try again'); return }
-    const names: string[] = []
-    for (const shot of shots) {
-      const file = dataUrlToFile(shot.dataUrl!, `sheet_${Date.now()}_${names.length}.png`)
-      const url = await uploadRefFile(file)
-      names.push(new URLSearchParams(url.split('?')[1]).get('filename')!)
-    }
-    await replaceVariant(c, variant.id, { refImages: names, coverIndex: 0 })
-    toast.success(`Generated ${names.length}-shot sheet for ${variant.label}`)
+    if (!gen.panels.value.every(s => s.dataUrl)) { toast.error('Sheet generation failed — try again'); return }
+    const built = await uploadPanelsAndComposite(gen.panels.value)
+    if (!built) { toast.error('Sheet generation failed — try again'); return }
+    const result = await patchState(c.slug, {
+      stateId: variant.id,
+      expectedUpdatedAt: variant.updatedAt,
+      patch: { panels: built.panels, sheetImage: built.sheetImage, status: 'draft', stressResult: null },
+    })
+    if (result === 'stale') { toast.error(STALE_MESSAGE); return }
+    if (result === 'error') { toast.error('Couldn\'t save the sheet — try again'); return }
+    toast.success(`Generated ${built.panels.length}-shot sheet for ${variant.label}`)
   } finally {
     expanding.value.delete(key)
   }
 }
 
-async function rerollTile(c: CharacterRecord, variant: CharacterState, idx: number) {
+async function rerollTile(c: CharacterRecord, variant: CharacterState, slot: PanelSlot) {
   const source = await buildSource(c, variant)
   if (!source) return
   const gen = sheetFor(c, variant)
-  // TODO(T9): idx→slot mapping relies on positional parity with
-  // HIGGSFIELD_PANELS (refImages[idx] mirrors panels[idx]); full wiring to
-  // CharacterState.panels (addressed by slot, not index) is Task 9.
-  const slot = HIGGSFIELD_PANELS[idx]?.slot
-  if (!slot) return
   try {
     await gen.rerollPanel(slot, source)
   } catch (e) {
+    // rerollPanel throws for a derived-panel reroll with no portrait
+    // generated yet this session (nothing to derive from) — surface it.
     console.warn('[CharacterLibraryPanel] reroll failed', e)
+    toast.error(e instanceof Error ? e.message : 'Reroll failed — try again')
     return
   }
-  const shot = gen.panels.value[idx]
-  if (!shot?.dataUrl) return
-  const file = dataUrlToFile(shot.dataUrl, `sheet_${Date.now()}_${idx}.png`)
-  const url = await uploadRefFile(file)
-  const name = new URLSearchParams(url.split('?')[1]).get('filename')!
-  // Re-read the live variant's refImages (not the captured `variant` closure)
-  // before splicing — same stale-closure race as replaceVariant, but here the
-  // patch itself is derived from refImages, so replaceVariant's own live-read
-  // of `states` isn't enough to protect it.
-  const liveVariant = characters.value.find(x => x.slug === c.slug)?.states.find(v => v.id === variant.id) ?? variant
-  const refImages = [...liveVariant.refImages]
-  refImages[idx] = name
-  await replaceVariant(c, variant.id, { refImages })
+  const rerolled = gen.panels.value.find(p => p.spec.slot === slot)
+  if (!rerolled?.dataUrl) return
+  const panelDataUrls = await resolvePanelDataUrls(variant, gen)
+  if (!panelDataUrls) { toast.error('Couldn\'t rebuild the full sheet — try Generate sheet instead'); return }
+  const filename = await uploadRefFilename(dataUrlToFile(rerolled.dataUrl, `sheet_${slot}.png`))
+  const compositeFile = await bakeCompositeSheet(panelDataUrls)
+  const sheetImage = await uploadRefFilename(compositeFile)
+  const panels = variant.panels.some(p => p.slot === slot)
+    ? variant.panels.map(p => p.slot === slot ? { slot, filename } : p)
+    : [...variant.panels, { slot, filename }]
+  const result = await patchState(c.slug, {
+    stateId: variant.id,
+    expectedUpdatedAt: variant.updatedAt,
+    patch: { panels, sheetImage, status: 'draft', stressResult: null },
+  })
+  if (result === 'stale') toast.error(STALE_MESSAGE)
+  else if (result === 'error') toast.error('Couldn\'t save the reroll — try again')
 }
 
 function dataUrlToFile(dataUrl: string, name: string): File {
@@ -565,11 +492,10 @@ async function keepDress(c: CharacterRecord, variant: CharacterState) {
   const dataUrl = dressResult.value[k]
   if (!dataUrl) return
   const file = dataUrlToFile(dataUrl, `dressed_${Date.now()}.png`)
-  const url = await uploadRefFile(file)
-  const name = new URLSearchParams(url.split('?')[1]).get('filename')!
+  const name = await uploadRefFilename(file)
   // Prepend as the new cover so this look leads with its dressed photo.
-  const liveVariant = characters.value.find(x => x.slug === c.slug)?.states.find(v => v.id === variant.id) ?? variant
-  await replaceVariant(c, variant.id, { refImages: [name, ...liveVariant.refImages], coverIndex: 0 })
+  const ok = await replaceVariant(c, variant, { refImages: [name, ...variant.refImages], coverIndex: 0 })
+  if (!ok) return
   dressOpen.value.delete(k)
   dressResult.value[k] = null
   dressGarment.value[k] = null
@@ -606,23 +532,6 @@ function tileColor(seed: string): string {
       >
         <X class="size-4 text-white/60" />
       </button>
-    </div>
-
-    <!-- Auto-gen banner: one-time sheet render for merged/absorbed LoRA characters -->
-    <div v-if="autoGenActive || autoGenQueue.length" class="border-b border-white/10 bg-white/[0.04] px-3 py-2 space-y-1.5">
-      <div v-if="autoGenActive" class="flex items-center gap-1.5 text-[11px] text-white/70">
-        <Loader2 class="size-3 animate-spin shrink-0" />
-        <span>Rendering reference sheets for {{ autoGenQueue.length }} merged character{{ autoGenQueue.length === 1 ? '' : 's' }}… (~$0.12 each)</span>
-      </div>
-      <template v-if="!autoGenActive">
-        <div v-for="row in autoGenQueue" :key="row.slug" class="flex items-center justify-between gap-2 text-[11px]">
-          <span class="text-red-400/90 truncate">{{ row.name }} — sheet generation failed</span>
-          <button
-            class="shrink-0 rounded bg-white/10 px-2 py-0.5 text-[10.5px] text-white/75 hover:bg-white/20 cursor-pointer"
-            @click="retryAutoGen(row)"
-          >Retry</button>
-        </div>
-      </template>
     </div>
 
     <div class="flex-1 overflow-y-auto">
@@ -737,44 +646,70 @@ function tileColor(seed: string): string {
 
             <!-- Active look sheet -->
             <template v-if="activeVariant(c)">
-              <div class="grid grid-cols-4 gap-1.5">
-                <div v-for="(f, i) in activeVariant(c)!.refImages" :key="f" class="group relative aspect-square overflow-hidden rounded">
-                  <img :src="`/view?filename=${encodeURIComponent(f)}&type=input`" class="h-full w-full object-cover">
-                  <!-- persistent cover badge: the single photo sent to video -->
-                  <span
-                    v-if="i === activeVariant(c)!.coverIndex"
-                    class="pointer-events-none absolute left-0.5 top-0.5 rounded bg-white/90 px-1 text-[8px] font-semibold text-neutral-900"
-                  >Cover</span>
-                  <!-- provenance caption inferred from filename -->
-                  <span
-                    v-if="photoKind(f)"
-                    class="pointer-events-none absolute bottom-0.5 right-0.5 rounded bg-black/60 px-1 text-[8px] text-white/55"
-                  >{{ photoKind(f) }}</span>
-                  <button
-                    v-if="!expanding.has(`${c.slug}:${activeVariant(c)!.id}`)"
-                    class="absolute inset-0 hidden items-center justify-center bg-black/50 group-hover:flex cursor-pointer"
-                    title="Re-roll this shot"
-                    @click="rerollTile(c, activeVariant(c)!, i)"
-                  >
-                    <RefreshCcw class="size-3.5 text-white/85" />
-                  </button>
-                  <button
-                    class="absolute right-0.5 top-0.5 hidden rounded bg-black/70 px-1 text-[10px] text-white/80 group-hover:block cursor-pointer"
-                    @click="removeRef(c, activeVariant(c)!, i)"
-                  >×</button>
-                  <button
-                    v-if="i !== activeVariant(c)!.coverIndex"
-                    class="absolute bottom-0.5 left-0.5 hidden rounded bg-black/70 px-1 text-[9px] text-white/70 group-hover:block cursor-pointer"
-                    @click="setCover(c, activeVariant(c)!, i)"
-                  >set cover</button>
+              <!-- Composite reference sheet: the 5 canonical Higgsfield panels -->
+              <div>
+                <div class="mb-1 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-white/40">
+                  <Images class="size-3" /> Reference sheet
                 </div>
-                <label class="flex aspect-square cursor-pointer items-center justify-center rounded border border-dashed border-white/15 text-[16px] text-white/40 hover:border-white/30">
-                  +<input type="file" accept="image/*" multiple class="hidden" @change="addRefFiles(c, activeVariant(c)!, $event)">
-                </label>
+                <div class="grid grid-cols-5 gap-1.5">
+                  <div
+                    v-for="spec in HIGGSFIELD_PANELS" :key="spec.slot"
+                    class="group relative aspect-square overflow-hidden rounded bg-white/[0.04]"
+                  >
+                    <img
+                      v-if="panelUrl(activeVariant(c)!, spec.slot)"
+                      :src="panelUrl(activeVariant(c)!, spec.slot)!"
+                      class="h-full w-full object-cover"
+                    >
+                    <div v-else class="flex h-full items-center justify-center px-1 text-center text-[8px] leading-tight text-white/25">
+                      {{ spec.slot }}
+                    </div>
+                    <button
+                      v-if="panelUrl(activeVariant(c)!, spec.slot) && !expanding.has(`${c.slug}:${activeVariant(c)!.id}`)"
+                      class="absolute inset-0 hidden items-center justify-center bg-black/50 group-hover:flex cursor-pointer"
+                      title="Re-roll this shot"
+                      @click="rerollTile(c, activeVariant(c)!, spec.slot)"
+                    >
+                      <RefreshCcw class="size-3.5 text-white/85" />
+                    </button>
+                  </div>
+                </div>
               </div>
-              <p class="text-[10px] leading-relaxed text-white/35">
-                The <span class="text-white/55">Cover</span> is the single photo sent to video — pick the clearest one. The rest are angle views for training.
-              </p>
+
+              <!-- Manual reference photos (upload pool) -->
+              <div>
+                <div class="mb-1 text-[10px] font-medium uppercase tracking-wide text-white/40">Uploaded photos</div>
+                <div class="grid grid-cols-4 gap-1.5">
+                  <div v-for="(f, i) in activeVariant(c)!.refImages" :key="f" class="group relative aspect-square overflow-hidden rounded">
+                    <img :src="`/view?filename=${encodeURIComponent(f)}&type=input`" class="h-full w-full object-cover">
+                    <!-- persistent cover badge: the single photo sent to video (before a sheet exists) -->
+                    <span
+                      v-if="i === activeVariant(c)!.coverIndex"
+                      class="pointer-events-none absolute left-0.5 top-0.5 rounded bg-white/90 px-1 text-[8px] font-semibold text-neutral-900"
+                    >Cover</span>
+                    <!-- provenance caption inferred from filename -->
+                    <span
+                      v-if="photoKind(f)"
+                      class="pointer-events-none absolute bottom-0.5 right-0.5 rounded bg-black/60 px-1 text-[8px] text-white/55"
+                    >{{ photoKind(f) }}</span>
+                    <button
+                      class="absolute right-0.5 top-0.5 hidden rounded bg-black/70 px-1 text-[10px] text-white/80 group-hover:block cursor-pointer"
+                      @click="removeRef(c, activeVariant(c)!, i)"
+                    >×</button>
+                    <button
+                      v-if="i !== activeVariant(c)!.coverIndex"
+                      class="absolute bottom-0.5 left-0.5 hidden rounded bg-black/70 px-1 text-[9px] text-white/70 group-hover:block cursor-pointer"
+                      @click="setCover(c, activeVariant(c)!, i)"
+                    >set cover</button>
+                  </div>
+                  <label class="flex aspect-square cursor-pointer items-center justify-center rounded border border-dashed border-white/15 text-[16px] text-white/40 hover:border-white/30">
+                    +<input type="file" accept="image/*" multiple class="hidden" @change="addRefFiles(c, activeVariant(c)!, $event)">
+                  </label>
+                </div>
+                <p class="text-[10px] leading-relaxed text-white/35">
+                  The <span class="text-white/55">Cover</span> is the fallback identity photo used before a reference sheet exists. The rest are angle views for training.
+                </p>
+              </div>
 
               <div class="flex items-center gap-1.5">
                 <button
@@ -784,7 +719,7 @@ function tileColor(seed: string): string {
                 >
                   <Loader2 v-if="expanding.has(`${c.slug}:${activeVariant(c)!.id}`)" class="size-3 animate-spin" />
                   <Images v-else class="size-3" />
-                  <span>{{ activeVariant(c)!.refImages.length ? 'Regenerate sheet' : 'Generate sheet' }} · {{ sheetCostLabel(c) }}</span>
+                  <span>{{ activeVariant(c)!.panels.length ? 'Regenerate sheet' : 'Generate sheet' }} · {{ sheetCostLabel(c) }}</span>
                 </button>
                 <!-- Dress: only for non-default looks (the Default is the identity base) -->
                 <button
