@@ -564,6 +564,7 @@ async function keepDress(c: CharacterRecord, variant: CharacterState) {
   const k = vkey(c, variant)
   const dataUrl = dressResult.value[k]
   if (!dataUrl) return
+  const mode = dressMode.value[k] ?? 'garment'
   const file = dataUrlToFile(dataUrl, `dressed_${Date.now()}.png`)
   const name = await uploadRefFilename(file)
   // Prepend as the new cover so this look leads with its dressed photo.
@@ -573,6 +574,34 @@ async function keepDress(c: CharacterRecord, variant: CharacterState) {
   dressResult.value[k] = null
   dressGarment.value[k] = null
   toast.success(`Dressed ${c.name} · ${variant.label}`)
+  // Auto-descriptor (best-effort, garment mode only — text mode already carries
+  // an outfit description as its own input, nothing to caption). Never blocks
+  // the keep UX and never overwrites user-authored text.
+  if (mode === 'garment') void autoDescribeGarment(c, variant, dataUrl)
+}
+
+/**
+ * Best-effort garment captioner (Change: auto-descriptor after a garment
+ * dress). Fires in the background after keepDress lands — never awaited by
+ * the caller. Skips silently on any failure (missing key, non-200, empty
+ * caption) and never overwrites a descriptor the user already typed; the
+ * live look is re-checked right before writing since this runs after an
+ * async network round-trip, not just at call time.
+ */
+async function autoDescribeGarment(c: CharacterRecord, variant: CharacterState, imageDataUrl: string): Promise<void> {
+  try {
+    const res = await $fetch<{ descriptor?: string }>('/api/wardrobe/describe', {
+      method: 'POST', body: { imageDataUrl },
+    })
+    const descriptor = (res?.descriptor ?? '').trim()
+    if (!descriptor) return
+    const live = liveState(c.slug, variant.id) ?? variant
+    if (live.descriptor?.trim()) return
+    const { patchState } = useCharacters()
+    await patchState(c.slug, { stateId: variant.id, expectedUpdatedAt: live.updatedAt, patch: { descriptor } })
+  } catch (err) {
+    console.warn('[useCharacterStudio] auto-descriptor skipped', err)
+  }
 }
 
 // ── Train ────────────────────────────────────────────────────────────────

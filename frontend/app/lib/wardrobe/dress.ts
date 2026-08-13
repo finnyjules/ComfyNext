@@ -32,3 +32,25 @@ export function buildDressPrompt(opts: DressOptions): string {
   if (!outfit) return ''
   return `Change the person's outfit to ${outfit}. ${PRESERVE}`
 }
+
+const WRAPPING_QUOTES_RE = /^["'“”‘’]+|["'“”‘’]+$/g
+
+/**
+ * Sanitize a vision model's raw garment caption before it's written as a
+ * look's `descriptor` (auto-descriptor after a garment dress, see
+ * useCharacterStudio.ts's runDress flow). Trims, strips wrapping quotes and
+ * a trailing period, and caps length. Rejects (→ null) anything empty or
+ * multi-line — the model occasionally prefaces its answer with a sentence,
+ * and a preamble is worse than no descriptor at all.
+ */
+export function sanitizeCaption(raw: string | null | undefined, maxChars = 90): string | null {
+  if (typeof raw !== 'string') return null
+  const trimmed = raw.trim()
+  if (!trimmed) return null
+  if (trimmed.includes('\n')) return null
+  let s = trimmed.replace(WRAPPING_QUOTES_RE, '').trim()
+  s = s.replace(/\.+$/, '').trim()
+  if (!s) return null
+  if (s.length > maxChars) s = s.slice(0, maxChars).trim()
+  return s || null
+}
