@@ -10,6 +10,7 @@ import { getProfile, type ModelProfile } from '~/lib/shotdirector/profiles'
 import type { RefKind, ShotSheet } from '~/lib/shotdirector/types'
 import { materializeCast } from '~/lib/shotdirector/cast'
 import type { ValidationIssue } from '~/lib/shotdirector/rules'
+import { useCharacters } from '~/composables/useCharacters'
 
 export interface UseShotDirectorReturn {
   sheet: Ref<ShotSheet>
@@ -38,6 +39,7 @@ export function useShotDirector(
 ): UseShotDirectorReturn {
   const sheet = ref<ShotSheet>(hydrateShotSheet(initial))
   const profile = getProfile('seedance-2.0')
+  const store = useCharacters()
 
   const result = computed(() => {
     const s = sheet.value
@@ -48,7 +50,8 @@ export function useShotDirector(
     const resolved = resolveCast(picks)
     const warnings = castWarnings?.(picks) ?? []
     const { sheet: materialized, issues: castIssues } = materializeCast(s, resolved, profile)
-    const compiled = compileShot(materialized, profile)
+    const castDescriptors = store.stateDescriptors(s.cast.map(m => ({ slug: m.slug, stateId: m.stateId })))
+    const compiled = compileShot(materialized, profile, { castDescriptors })
     return { ...compiled, issues: [...warnings, ...castIssues, ...compiled.issues] }
   })
 

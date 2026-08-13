@@ -110,7 +110,7 @@ export function buildPrompt(sheet: ShotSheet, profile: ModelProfile): string {
   return segments.join(' ')
 }
 
-export function compileShot(sheet: ShotSheet, profile: ModelProfile): CompileResult {
+export function compileShot(sheet: ShotSheet, profile: ModelProfile, opts?: { castDescriptors?: Record<string, string> }): CompileResult {
   const caps: RefCaps = {
     maxRefImages: profile.maxRefImages,
     maxRefVideos: profile.maxRefVideos,
@@ -118,7 +118,7 @@ export function compileShot(sheet: ShotSheet, profile: ModelProfile): CompileRes
     supportsFirstLastFrame: profile.supportsFirstLastFrame,
   }
   const issues = validateShotSheet(sheet, caps)
-  const clause = castClause(sheet, profile)
+  const clause = castClause(sheet, profile, opts?.castDescriptors)
   const base = buildPrompt(sheet, profile)
   const prompt = clause ? `${clause} ${base}` : base
   const wordCount = countWords(prompt)

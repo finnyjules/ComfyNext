@@ -89,12 +89,12 @@ describe('materializeCast', () => {
     expect(errs[0]!.message).toBe('Reva has no reference photos — add some to their character sheet.')
   })
 
-  it('mentions the selected variant in the zero-refs error when the member has a stateId', () => {
+  it('mentions the selected look in the zero-refs error when the member has a stateId', () => {
     const s = createDefaultShotSheet()
     s.cast = [{ slug: 'reva', name: 'Reva', via: 'picker', stateId: 'raincoat' }]
     const { issues } = materializeCast(s, { reva: [] }, SEEDANCE_PROFILE)
     const err = issues.find(i => i.level === 'error' && i.code === 'cast-member-no-refs')
-    expect(err!.message).toBe('Reva has no reference photos in the selected variant — add some to their character sheet.')
+    expect(err!.message).toBe('Reva has no reference photos in the selected look — add some to their character sheet.')
   })
 
   it('errors on duplicates and on more than CAST_MAX members', () => {
@@ -120,6 +120,43 @@ describe('castClause', () => {
   it('is empty with no cast refs', () => {
     expect(castClause(createDefaultShotSheet(), SEEDANCE_PROFILE)).toBe('')
   })
+
+  it('renders the descriptor in parens after the name when present', () => {
+    const s = sheetWithCast()
+    const { sheet } = materializeCast(s, { reva: [U('r1')], marcus: [U('m1')] }, SEEDANCE_PROFILE)
+    expect(castClause(sheet, SEEDANCE_PROFILE, { reva: 'soaked navy jacket, wet hair' }))
+      .toBe('Characters: Reva (soaked navy jacket, wet hair) @Image1; Marcus @Image2.')
+  })
+
+  it('falls back to the plain form for an empty-string descriptor', () => {
+    const s = sheetWithCast()
+    const { sheet } = materializeCast(s, { reva: [U('r1')], marcus: [U('m1')] }, SEEDANCE_PROFILE)
+    expect(castClause(sheet, SEEDANCE_PROFILE, { reva: '' }))
+      .toBe('Characters: Reva @Image1; Marcus @Image2.')
+  })
+
+  it('falls back to the plain form when descriptors is absent entirely', () => {
+    const s = sheetWithCast()
+    const { sheet } = materializeCast(s, { reva: [U('r1')], marcus: [U('m1')] }, SEEDANCE_PROFILE)
+    expect(castClause(sheet, SEEDANCE_PROFILE))
+      .toBe('Characters: Reva @Image1; Marcus @Image2.')
+  })
+
+  it('trims whitespace-padded descriptor text', () => {
+    const s = sheetWithCast()
+    s.cast = [s.cast[0]!]
+    const { sheet } = materializeCast(s, { reva: [U('r1')] }, SEEDANCE_PROFILE)
+    expect(castClause(sheet, SEEDANCE_PROFILE, { reva: '  soaked navy jacket  ' }))
+      .toBe('Characters: Reva (soaked navy jacket) @Image1.')
+  })
+
+  it('treats a whitespace-only descriptor as absent', () => {
+    const s = sheetWithCast()
+    s.cast = [s.cast[0]!]
+    const { sheet } = materializeCast(s, { reva: [U('r1')] }, SEEDANCE_PROFILE)
+    expect(castClause(sheet, SEEDANCE_PROFILE, { reva: '   ' }))
+      .toBe('Characters: Reva @Image1.')
+  })
 })
 
 describe('compileShot cast integration', () => {
@@ -137,6 +174,26 @@ describe('compileShot cast integration', () => {
     s.subject = 'a lighthouse'
     s.action = 'stands in fog'
     expect(compileShot(s, SEEDANCE_PROFILE).prompt.startsWith('Characters:')).toBe(false)
+  })
+
+  it('splices the descriptor into the clause via opts.castDescriptors and counts it in the word budget', () => {
+    const s = sheetWithCast()
+    s.subject = 'two friends'
+    s.action = 'walk along a pier'
+    const { sheet } = materializeCast(s, { reva: [U('r1')], marcus: [U('m1')] }, SEEDANCE_PROFILE)
+    const withDescriptor = compileShot(sheet, SEEDANCE_PROFILE, { castDescriptors: { reva: 'soaked navy jacket, wet hair' } })
+    const without = compileShot(sheet, SEEDANCE_PROFILE)
+    expect(withDescriptor.prompt.startsWith('Characters: Reva (soaked navy jacket, wet hair) @Image1; Marcus @Image2.')).toBe(true)
+    expect(withDescriptor.wordCount).toBeGreaterThan(without.wordCount)
+  })
+
+  it('with no opts passed, prompt is unchanged (back-compat guard: same as calling without the 3rd arg)', () => {
+    const s = sheetWithCast()
+    s.subject = 'two friends'
+    s.action = 'walk along a pier'
+    const { sheet } = materializeCast(s, { reva: [U('r1')], marcus: [U('m1')] }, SEEDANCE_PROFILE)
+    expect(compileShot(sheet, SEEDANCE_PROFILE, undefined).prompt).toBe(compileShot(sheet, SEEDANCE_PROFILE).prompt)
+    expect(compileShot(sheet, SEEDANCE_PROFILE).prompt).toContain('Characters: Reva @Image1; Marcus @Image2.')
   })
 })
 

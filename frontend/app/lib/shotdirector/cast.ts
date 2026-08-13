@@ -56,7 +56,7 @@ export function materializeCast(
     const srcs = (resolved[m.slug] ?? []).slice(0, CAST_REF_CAP)
     if (!srcs.length) {
       const message = m.stateId
-        ? `${m.name} has no reference photos in the selected variant — add some to their character sheet.`
+        ? `${m.name} has no reference photos in the selected look — add some to their character sheet.`
         : `${m.name} has no reference photos — add some to their character sheet.`
       issues.push({ level: 'error', code: 'cast-member-no-refs', message })
       continue
@@ -77,8 +77,13 @@ function renumber(refs: Ref[]): Ref[] {
   })
 }
 
-/** "Characters: Reva @Image1 @Image2; Marcus @Image3." from cast-tagged refs. */
-export function castClause(sheet: ShotSheet, profile: ModelProfile): string {
+/**
+ * "Characters: Reva (soaked navy jacket, wet hair) @Image1 @Image2; Marcus @Image3."
+ * from cast-tagged refs. `descriptors` (slug → text, from useCharacters().stateDescriptors)
+ * is optional — omitted/empty/whitespace-only descriptors fall back to today's plain
+ * "Name @ImageN" form, so callers that don't pass it get byte-identical output.
+ */
+export function castClause(sheet: ShotSheet, profile: ModelProfile, descriptors?: Record<string, string>): string {
   const bySlug = new Map<string, string[]>()
   for (const r of sheet.references) {
     if (r.kind !== 'image' || !r.castSlug) continue
@@ -90,6 +95,10 @@ export function castClause(sheet: ShotSheet, profile: ModelProfile): string {
   // Deliberately follow sheet.cast order (identity source of truth), not reference slot order.
   const parts = sheet.cast
     .filter(m => bySlug.has(m.slug))
-    .map(m => `${m.name} ${bySlug.get(m.slug)!.join(' ')}`)
+    .map((m) => {
+      const tags = bySlug.get(m.slug)!.join(' ')
+      const d = descriptors?.[m.slug]?.trim()
+      return d ? `${m.name} (${d}) ${tags}` : `${m.name} ${tags}`
+    })
   return `Characters: ${parts.join('; ')}.`
 }

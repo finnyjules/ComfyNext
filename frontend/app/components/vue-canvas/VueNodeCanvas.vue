@@ -3421,6 +3421,7 @@ async function handleShotDirectorGenerate(e: Event) {
 
   let effectiveSheet = sheet
   let castIssues: import('~/lib/shotdirector/rules').ValidationIssue[] = []
+  let castDescriptors: Record<string, string> = {}
   if (sheet.cast.length) {
     const store = useCharacters()
     await store.refresh()  // generate-time truth, same guarantee the old re-fetch gave
@@ -3429,8 +3430,9 @@ async function handleShotDirectorGenerate(e: Event) {
     const mat = materializeCast(sheet, resolved, getProfile('seedance-2.0'))
     effectiveSheet = mat.sheet
     castIssues = mat.issues
+    castDescriptors = store.stateDescriptors(picks)
   }
-  const result = compileShot(effectiveSheet, getProfile('seedance-2.0'))
+  const result = compileShot(effectiveSheet, getProfile('seedance-2.0'), { castDescriptors })
   const errors = [...castIssues, ...result.issues].filter(i => i.level === 'error')
   if (errors.length) {
     studio.data.shotError = errors[0]!.message
