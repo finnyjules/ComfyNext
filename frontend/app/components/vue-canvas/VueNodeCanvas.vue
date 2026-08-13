@@ -27,6 +27,7 @@ import { wiredClonerWidgetEntries } from '~/composables/useCloner'
 import { readWiredTreatments } from '~/composables/useWiredTreatments'
 import { planWiredMaskJobs } from '~/composables/wiredMaskPlan'
 import { resolveClipSource, type ClipSource } from '~~/shared/timeline/resolveClipSource'
+import { onCharacterEvent, emitCharacterEvent, type CharacterBusEvents } from '~/lib/characters/bus'
 import { summarizeNodeErrors } from '~/lib/validationErrors'
 import { resolveWiredInput } from '~/lib/shaderstudio/source'
 import { ensureVarsInput } from '~/lib/collection/varsInput'
@@ -3421,20 +3422,21 @@ async function handleShotDirectorGenerate(e: Event) {
   let castIssues: import('~/lib/shotdirector/rules').ValidationIssue[] = []
   if (sheet.cast.length) {
     // Live link: resolve cast refs from the registry at generate time, honoring
-    // each member's variantId (mirrors useCharacters' resolveVariantRefs: named
-    // variant if present, else the 'default' variant, else the first one).
+    // each member's variantId (mirrors useCharacters' resolveStateRefs: named
+    // state if present, else the 'default' state, else the first one).
+    // TODO(T6): m.variantId stays as-is (CastMember rename lands in Task 6).
     let resolved: Record<string, string[]> = {}
     try {
       const res = await fetch('/api/characters-local')
-      type VariantLite = { id: string, refImages: string[], coverIndex?: number }
-      const data = res.ok ? await res.json() as { characters?: { slug: string, variants?: VariantLite[] }[] } : {}
+      type StateLite = { id: string, refImages: string[], coverIndex: number }
+      const data = res.ok ? await res.json() as { characters?: { slug: string, states?: StateLite[] }[] } : {}
       const bySlug = new Map((data.characters ?? []).map(c => [c.slug, c]))
       resolved = Object.fromEntries(sheet.cast.map((m) => {
-        const variants = bySlug.get(m.slug)?.variants ?? []
-        const variant = (m.variantId ? variants.find(v => v.id === m.variantId) : undefined)
-          ?? variants.find(v => v.id === 'default') ?? variants[0]
+        const states = bySlug.get(m.slug)?.states ?? []
+        const state = (m.variantId ? states.find(v => v.id === m.variantId) : undefined)
+          ?? states.find(v => v.id === 'default') ?? states[0]
         // Cover-first so materializeCast's single cover ref is the chosen cover.
-        return [m.slug, coverFirstRefs(variant).map(f => viewRefUrl(f))]
+        return [m.slug, coverFirstRefs(state).map(f => viewRefUrl(f))]
       }))
     } catch { /* resolved stays empty → zero-ref errors below */ }
     const mat = materializeCast(sheet, resolved, getProfile('seedance-2.0'))
@@ -3514,8 +3516,8 @@ function syncAllShotDirectorCasts() {
 
 /** Uncast from the surface (Task 7's chip 'x'): remove the actual wire so the
  *  canvas stays the source of truth for wired members. */
-function handleUncastCharacter(e: Event) {
-  const { nodeId, slug } = (e as CustomEvent<{ nodeId: string, slug: string }>).detail ?? {}
+function handleUncastCharacter(payload: CharacterBusEvents['uncastCharacter']) {
+  const { nodeId, slug } = payload ?? {}
   if (!nodeId || !slug) return
   const drop = (edges.value as any[]).filter((ed) => {
     if (String(ed.target) !== String(nodeId)) return false
@@ -3811,11 +3813,13 @@ async function warmSketch(): Promise<void> {
 // prefilled FluxLoRARemoteNode; drafts get a wired Image → ConsistentFaceNode pair
 // seeded from the default variant's cover photo. Always re-fetches the registry
 // (same pattern as handleShotDirectorGenerate) rather than trusting the panel's cache.
-async function handleAddCharacterImageGen(e: Event) {
-  const { slug } = (e as CustomEvent<{ slug: string }>).detail ?? {}
+async function handleAddCharacterImageGen(payload: CharacterBusEvents['addCharacterImageGen']) {
+  // TODO(T12): the sheet/lora `use` fork isn't wired yet — both currently
+  // resolve the same way below (LoRA node if trained, else the cover image).
+  const { slug } = payload ?? {}
   if (!slug) return
-  type VariantLite = { id: string, refImages: string[], coverIndex: number }
-  type CharacterLite = { slug: string, name: string, loraName: string | null, trigger: string | null, variants?: VariantLite[] }
+  type StateLite = { id: string, refImages: string[], coverIndex: number }
+  type CharacterLite = { slug: string, name: string, loraName: string | null, trigger: string | null, states?: StateLite[] }
   let character: CharacterLite | undefined
   try {
     const res = await fetch('/api/characters-local')
@@ -3838,8 +3842,8 @@ async function handleAddCharacterImageGen(e: Event) {
     return
   }
 
-  const variants = character.variants ?? []
-  const def = variants.find(v => v.id === 'default') ?? variants[0]
+  const states = character.states ?? []
+  const def = states.find(v => v.id === 'default') ?? states[0]
   const cover = def?.refImages[def.coverIndex] ?? def?.refImages[0]
   if (!cover) {
     toast.error(`Add a photo to ${character.name} first`)
@@ -3867,20 +3871,22 @@ async function handleAddCharacterImageGen(e: Event) {
 
 // Character Library panel "Cast in shot": drop a picked Character card on the
 // canvas so it can be wired into a Shot Director's cast slots (Task 11 syncs the edge).
-function handleAddCharacterCastNode(e: Event) {
-  const { slug, name, variantId: rawVariantId } = (e as CustomEvent<{ slug: string, name: string, variantId?: string }>).detail ?? {}
+function handleAddCharacterCastNode(payload: CharacterBusEvents['addCharacterCastNode']) {
+  const { slug, name, stateId } = payload ?? {}
   if (!slug || !name) return
+  // TODO(T6): sailor_characterVariantId stays as-is until the CastMember/
+  // property rename lands — convert the bus's stateId back at this boundary.
   // Defense in depth: normalize the 'default' sentinel away here too, in case
-  // some other caller of this event forgets to (see CharacterLibraryPanel's
+  // some other emitter of this event forgets to (see CharacterLibraryPanel's
   // castInShot for why 'default' must never reach sailor_characterVariantId).
-  const variantId = rawVariantId === 'default' ? undefined : rawVariantId
+  const variantId = (stateId && stateId !== 'default') ? stateId : undefined
   const pos = project({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
   nodes.value.push(createNodeData('Character', pos, undefined, {
     sailor_characterSlug: slug,
     sailor_characterName: name,
     ...(variantId ? { sailor_characterVariantId: variantId } : {}),
   }))
-  window.dispatchEvent(new CustomEvent('sailor:castEdgesChanged'))
+  emitCharacterEvent('castEdgesChanged')
 }
 
 // Studio render cascade: a studio node's footer "Render" button re-bakes it and
@@ -4811,6 +4817,10 @@ function handleAddAnnotationEvent(event: Event) {
   }
 }
 
+// Character bus unsubscribe handles (Task 5) — populated in onMounted, torn
+// down in onUnmounted alongside the window-event listeners below.
+let characterBusOff: Array<() => void> = []
+
 onMounted(() => {
   window.addEventListener('sailor:addNode', handleAddNode)
   if (import.meta.dev) window.addEventListener('sailor:test:setNodeData', handleTestSetNodeData)
@@ -4850,10 +4860,12 @@ onMounted(() => {
   window.addEventListener('sailor:shotDirectorGenerate', handleShotDirectorGenerate)
   window.addEventListener('sailor:openLipSync', handleOpenLipSync)
   window.addEventListener('sailor:lipSyncGenerate', handleLipSyncGenerate)
-  window.addEventListener('sailor:castEdgesChanged', syncAllShotDirectorCasts)
-  window.addEventListener('sailor:uncastCharacter', handleUncastCharacter)
-  window.addEventListener('sailor:addCharacterImageGen', handleAddCharacterImageGen)
-  window.addEventListener('sailor:addCharacterCastNode', handleAddCharacterCastNode)
+  characterBusOff = [
+    onCharacterEvent('castEdgesChanged', syncAllShotDirectorCasts),
+    onCharacterEvent('uncastCharacter', handleUncastCharacter),
+    onCharacterEvent('addCharacterImageGen', handleAddCharacterImageGen),
+    onCharacterEvent('addCharacterCastNode', handleAddCharacterCastNode),
+  ]
   window.addEventListener('sailor:studioRender', handleStudioRender)
   window.addEventListener('sailor:editAsFrame', handleEditAsFrame)
   window.addEventListener('sailor:openInpaint', handleOpenInpaint)
@@ -4917,10 +4929,8 @@ onUnmounted(() => {
   window.removeEventListener('sailor:shotDirectorGenerate', handleShotDirectorGenerate)
   window.removeEventListener('sailor:openLipSync', handleOpenLipSync)
   window.removeEventListener('sailor:lipSyncGenerate', handleLipSyncGenerate)
-  window.removeEventListener('sailor:castEdgesChanged', syncAllShotDirectorCasts)
-  window.removeEventListener('sailor:uncastCharacter', handleUncastCharacter)
-  window.removeEventListener('sailor:addCharacterImageGen', handleAddCharacterImageGen)
-  window.removeEventListener('sailor:addCharacterCastNode', handleAddCharacterCastNode)
+  characterBusOff.forEach(off => off())
+  characterBusOff = []
   window.removeEventListener('sailor:spaceTypeOutput', handleSpaceTypeOutput)
   window.removeEventListener('sailor:studioRender', handleStudioRender)
   window.removeEventListener('sailor:editAsFrame', handleEditAsFrame)

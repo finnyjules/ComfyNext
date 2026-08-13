@@ -6,6 +6,7 @@ import { Handle, Position } from '@vue-flow/core'
 import { Drama } from 'lucide-vue-next'
 import { useCharacters } from '~/composables/useCharacters'
 import CharacterPickerModal from '~/components/vue-canvas/CharacterPickerModal.vue'
+import { emitCharacterEvent } from '~/lib/characters/bus'
 
 const props = defineProps<{
   id: string
@@ -21,8 +22,10 @@ const pickerOpen = ref(false)
 
 const slug = computed<string | null>(() => props.data?.properties?.sailor_characterSlug ?? null)
 const character = computed(() => characters.value.find(c => c.slug === slug.value) ?? null)
+// TODO(T6): sailor_characterVariantId stays as-is until CastMember/property
+// rename lands; the bus payload converts at its own boundary where needed.
 const variantId = computed<string | null>(() => props.data?.properties?.sailor_characterVariantId ?? null)
-const refCount = computed(() => character.value?.variants.reduce((n, v) => n + v.refImages.length, 0) ?? 0)
+const refCount = computed(() => character.value?.states.reduce((n, v) => n + v.refImages.length, 0) ?? 0)
 
 function pick(s: string, name: string, pickedVariantId?: string) {
   if (!props.data.properties) props.data.properties = {}
@@ -30,15 +33,15 @@ function pick(s: string, name: string, pickedVariantId?: string) {
   props.data.properties.sailor_characterName = name
   props.data.properties.sailor_characterVariantId = pickedVariantId ?? null
   pickerOpen.value = false
-  // Nudge any wired Shot Directors to re-sync their cast (Task 11 listens).
-  window.dispatchEvent(new CustomEvent('sailor:castEdgesChanged'))
+  // Nudge any wired Shot Directors to re-sync their cast.
+  emitCharacterEvent('castEdgesChanged')
 }
 
 function onVariantChange(e: Event) {
   if (!props.data.properties) props.data.properties = {}
   const v = (e.target as HTMLSelectElement).value
   props.data.properties.sailor_characterVariantId = (v && v !== 'default') ? v : null
-  window.dispatchEvent(new CustomEvent('sailor:castEdgesChanged'))
+  emitCharacterEvent('castEdgesChanged')
 }
 </script>
 
@@ -75,12 +78,12 @@ function onVariantChange(e: Event) {
         </div>
         <!-- Variant select: only when the character has more than one variant -->
         <select
-          v-if="character.variants.length > 1"
-          :value="variantId ?? character.variants.find(v => v.id === 'default')?.id ?? ''"
+          v-if="character.states.length > 1"
+          :value="variantId ?? character.states.find(v => v.id === 'default')?.id ?? ''"
           class="mt-2 w-full rounded border border-white/10 bg-[#0e0e10] px-1.5 py-1 text-[11px] text-white/70 outline-none focus:border-white/25"
           @change="onVariantChange"
         >
-          <option v-for="v in character.variants" :key="v.id" :value="v.id" class="bg-neutral-900">{{ v.label }}</option>
+          <option v-for="v in character.states" :key="v.id" :value="v.id" class="bg-neutral-900">{{ v.label }}</option>
         </select>
         <p v-if="!refCount" class="mt-1.5 text-[10px] leading-tight text-amber-400/80">
           No reference photos — add some in the Characters panel.

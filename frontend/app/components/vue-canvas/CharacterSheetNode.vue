@@ -11,6 +11,7 @@ import { useCharacters } from '~/composables/useCharacters'
 import { useSheetGeneration, type SheetSource } from '~/composables/useSheetGeneration'
 import { uploadRefFile } from '~/lib/shotdirector/refUpload'
 import { CHARACTER_SHEET_CANONICAL } from '~/data/character-shot-scenes'
+import { emitCharacterEvent } from '~/lib/characters/bus'
 import { toast } from 'vue-sonner'
 
 const props = defineProps<{
@@ -22,19 +23,19 @@ const props = defineProps<{
   }
 }>()
 
-const { characters, coverUrl } = useCharacters()
+const { characters, coverUrl, refresh } = useCharacters()
 
 // ── Saved state ──────────────────────────────────────────────────────────
 const slug = computed<string | null>(() => props.data?.properties?.sailor_characterSlug ?? null)
 const savedCharacter = computed(() => characters.value.find(c => c.slug === slug.value) ?? null)
-// This node only ever populates the character's default variant (see save()
+// This node only ever populates the character's default state (see save()
 // below), so the reference count for the saved-state summary comes from
-// that variant specifically — mirrors useCharacters' own default-variant fallback.
+// that state specifically — mirrors useCharacters' own default-state fallback.
 const savedRefCount = computed(() => {
   const c = savedCharacter.value
   if (!c) return 0
-  const variant = c.variants.find(v => v.id === 'default') ?? c.variants[0]
-  return variant?.refImages.length ?? 0
+  const state = c.states.find(v => v.id === 'default') ?? c.states[0]
+  return state?.refImages.length ?? 0
 })
 
 // ── Wired upstream source (optional IMAGE input) ────────────────────────
@@ -271,8 +272,12 @@ async function save() {
     const properties = props.data.properties as Record<string, any>
     properties.sailor_characterSlug = targetSlug
     properties.sailor_characterName = targetName
-    window.dispatchEvent(new CustomEvent('sailor:charactersChanged'))
-    window.dispatchEvent(new CustomEvent('sailor:castEdgesChanged'))
+    // TODO(T9): the PATCH above still sends the legacy top-level `refImages`
+    // body shape (full write-shape migration to `states` is Task 9) — pull
+    // the store's truth now that the write landed, instead of the dead
+    // sailor:charactersChanged event.
+    await refresh()
+    emitCharacterEvent('castEdgesChanged')
     toast.success(
       createdSlug ? `Saved ${targetName} to characters` : `Updated ${targetName}'s reference sheet`,
       { description: 'Castable in the Shot Director' },
@@ -294,7 +299,7 @@ function resetToNewSheet() {
   usingWiredSource.value = false
   resetShots()
   saveError.value = null
-  window.dispatchEvent(new CustomEvent('sailor:castEdgesChanged'))
+  emitCharacterEvent('castEdgesChanged')
 }
 </script>
 

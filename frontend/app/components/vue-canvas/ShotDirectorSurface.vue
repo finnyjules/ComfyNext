@@ -5,7 +5,8 @@
 import { computed, ref } from 'vue'
 import { X, Plus, Copy, Check, Sparkles } from 'lucide-vue-next'
 import { useShotDirector } from '~/composables/useShotDirector'
-import { useCharacters, missingVariantIssues } from '~/composables/useCharacters'
+import { useCharacters, missingStateIssues } from '~/composables/useCharacters'
+import { normalizeStateId } from '#shared/characters/types'
 import {
   SHOT_TYPE_PHRASE, CAMERA_MOVE_PHRASE, ROLES_BY_KIND,
   type RefKind, type RefRole, type CastMember,
@@ -17,6 +18,7 @@ import StudioSection from '~/components/vue-canvas/StudioSection.vue'
 import CharacterPickerModal from '~/components/vue-canvas/CharacterPickerModal.vue'
 import ShotViewfinder from '~/components/vue-canvas/ShotViewfinder.vue'
 import ShotCameraPicker from '~/components/vue-canvas/ShotCameraPicker.vue'
+import { emitCharacterEvent } from '~/lib/characters/bus'
 
 const props = defineProps<{ nodeId: string; nodes: any[] }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
@@ -31,19 +33,21 @@ function persist(s: any) {
   n.data.properties.sailor_shotDirector = s
 }
 
-const { resolveVariantRefs, coverUrl, characters } = useCharacters()
+const { resolveStateRefs, coverUrl, characters } = useCharacters()
+// TODO(T6): useShotDirector's cast picks are still variantId-keyed (the
+// CastMember/property rename lands in Task 6) — convert at this boundary.
 const { sheet, result, addReference, removeReference, update, rerollSeed, addCastMember, removeCastMember } = useShotDirector(
   node.value?.data?.properties?.sailor_shotDirector,
   persist,
-  picks => resolveVariantRefs(picks),
-  picks => missingVariantIssues(picks, characters.value),
+  picks => resolveStateRefs(picks.map(p => ({ slug: p.slug, stateId: normalizeStateId(p.variantId ?? null) }))),
+  picks => missingStateIssues(picks.map(p => ({ slug: p.slug, name: p.name, stateId: normalizeStateId(p.variantId ?? null) })), characters.value),
 )
 
 /** True when this member's picked variant was deleted (falls back to Default). */
 function variantMissing(m: CastMember): boolean {
   if (!m.variantId) return false
   const c = characters.value.find(x => x.slug === m.slug)
-  return !!c && !c.variants.some(v => v.id === m.variantId)
+  return !!c && !c.states.some(v => v.id === m.variantId)
 }
 
 // ── First-open guide ───────────────────────────────────────────────────────────
@@ -64,14 +68,14 @@ function castCover(m: CastMember): string | null {
 function variantLabel(m: CastMember): string | null {
   if (!m.variantId) return null
   const c = characters.value.find(x => x.slug === m.slug)
-  const v = c?.variants.find(x => x.id === m.variantId)
+  const v = c?.states.find(x => x.id === m.variantId)
   return v ? v.label : null
 }
 /** The photos each cast member contributes, with their [ImageN] tag range —
  *  so "what is [Image2]?" is answerable by looking at the Cast section. */
 const castRefRows = computed(() => {
   let tag = 1
-  const resolved = resolveVariantRefs(sheet.value.cast.map(m => ({ slug: m.slug, variantId: m.variantId })))
+  const resolved = resolveStateRefs(sheet.value.cast.map(m => ({ slug: m.slug, stateId: normalizeStateId(m.variantId ?? null) })))
   return sheet.value.cast.map((m) => {
     // One cover per member is what actually gets sent (CAST_REF_CAP) — showing
     // the cover here keeps the preview honest and matches the video output.
@@ -88,7 +92,7 @@ function onRemoveCast(m: CastMember) {
   // same-slug wire can be lingering (picker-add then wire: dedupe keeps the
   // picker entry but the edge stays), and a stray edge left behind would
   // resurrect the cast member on the next edge sync.
-  window.dispatchEvent(new CustomEvent('sailor:uncastCharacter', { detail: { nodeId: props.nodeId, slug: m.slug } }))
+  emitCharacterEvent('uncastCharacter', { nodeId: props.nodeId, slug: m.slug })
   removeCastMember(m.slug)
 }
 

@@ -11,6 +11,7 @@ import RefNameDialog from '~/components/vue-canvas/RefNameDialog.vue'
 import { useNextStepsStrip, type FixChip } from '~/composables/useNextStepsStrip'
 import { projectTake, discardOthers, type Take } from '~/composables/useTakes'
 import { uploadRefFile } from '~/lib/shotdirector/refUpload'
+import { useCharacters } from '~/composables/useCharacters'
 import { ACTION_HINTS } from '~/lib/artifact/nextSteps'
 import { setPendingPromote } from '~/lib/draft/runMeta'
 import { promoteOverridesFor } from '~/lib/draft/promote'
@@ -51,6 +52,7 @@ const maskColor = computed(() => getTypeColor('MASK'))
 
 // The agent is reviewing THIS node → show the white scanning overlay.
 const { analyzingNodeIds } = useAgentActivity()
+const { refresh: refreshCharacters } = useCharacters()
 const isAnalyzing = computed(() => analyzingNodeIds.value.has(props.id))
 
 // Vue Flow injects nodes/edges so we can ask "is anything wired to my image
@@ -503,7 +505,11 @@ async function saveAsCharacter() {
       }).catch(() => {})
       throw new Error(`attach ref ${patched.status}`)
     }
-    window.dispatchEvent(new CustomEvent('sailor:charactersChanged'))
+    // TODO(T9): this PATCH still sends the legacy top-level `refImages` body
+    // shape (full write-shape migration to `states` is Task 9) — pull the
+    // store's truth now that the write landed, instead of the dead
+    // sailor:charactersChanged event.
+    await refreshCharacters()
     toast.success(`Saved ${name} to characters`, { description: 'Castable in the Shot Director' })
   } catch (e) {
     console.warn('[saveAsCharacter]', e)
