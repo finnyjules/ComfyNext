@@ -1,6 +1,8 @@
 /**
- * Character Studio orchestration — extracted from CharacterLibraryPanel.vue
- * verbatim (Task 2 of the Character Studio workbench plan). Owns state CRUD
+ * Character Studio orchestration — extracted from the original library
+ * panel verbatim (Task 2 of the Character Studio workbench plan; that panel
+ * was retired in Task 4, replaced by CharacterRosterPanel.vue +
+ * CharacterStudioModal.vue). Owns state CRUD
  * + selection, sheet generation, the stress-test flow (+ auto-ready and
  * partial-persistence, the only new logic in this extraction), and
  * dress/train. Panel-only concerns (character create/delete, roster

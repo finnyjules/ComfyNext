@@ -4162,7 +4162,7 @@ function dismissRunResult() {
           leave-to-class="-translate-x-full"
         >
           <div v-if="charactersPanelOpen" class="absolute top-0 left-0 bottom-0 w-[350px] z-40">
-            <VueCanvasCharacterLibraryPanel @close="charactersPanelOpen = false" />
+            <VueCanvasCharacterRosterPanel @close="charactersPanelOpen = false" />
           </div>
         </Transition>
 
