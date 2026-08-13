@@ -6,12 +6,12 @@
 import { computed, ref } from 'vue'
 import { Check, X } from 'lucide-vue-next'
 import { useCharacters } from '~/composables/useCharacters'
-import { normalizeStateId, sortStatesLockedFirst, draftBadge, type CharacterRecord, type CharacterState } from '#shared/characters/types'
+import { normalizeStateId, identityRefs, sortStatesLockedFirst, draftBadge, type CharacterRecord, type CharacterState } from '#shared/characters/types'
 
 const props = defineProps<{ excludeSlugs: string[] }>()
 const emit = defineEmits<{ pick: [slug: string, name: string, stateId: string | null], close: [] }>()
 
-const { characters, loading, coverUrl, refresh } = useCharacters()
+const { characters, loading, coverUrl, portraitUrl, refresh } = useCharacters()
 void refresh()
 const q = ref('')
 const visible = computed<CharacterRecord[]>(() => {
@@ -24,8 +24,11 @@ const visible = computed<CharacterRecord[]>(() => {
 /** slug of the card whose variant row is expanded, if any. */
 const expandedSlug = ref<string | null>(null)
 
+/** Identity assets across every look (sheet + refs), not just refImages — a
+ *  sheet-only look casts fine but has no refImages, so counting refImages
+ *  alone would misreport a perfectly castable character as "0 references". */
 function refCount(c: CharacterRecord): number {
-  return c.states.reduce((n, v) => n + v.refImages.length, 0)
+  return c.states.reduce((n, v) => n + identityRefs(v).length, 0)
 }
 
 /** Variant chip row order: locked (stress-tested) looks lead. */
@@ -65,7 +68,7 @@ function pickVariant(c: CharacterRecord, stateId: string) {
             @click="onCardClick(c)"
           >
             <div class="aspect-square w-full overflow-hidden rounded bg-white/[0.05]">
-              <img v-if="coverUrl(c)" :src="coverUrl(c)!" class="h-full w-full object-cover" :alt="c.name">
+              <img v-if="portraitUrl(c) ?? coverUrl(c)" :src="portraitUrl(c) ?? coverUrl(c)!" class="h-full w-full object-cover" :alt="c.name">
             </div>
             <div class="mt-1.5 truncate text-[12px] text-white/85">{{ c.name }}</div>
             <div class="text-[10px] text-white/40">
@@ -84,7 +87,7 @@ function pickVariant(c: CharacterRecord, stateId: string) {
               class="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.05] py-0.5 pl-0.5 pr-2 text-[11px] text-white/80 hover:border-white/25"
               @click="pickVariant(c, v.id)"
             >
-              <img v-if="coverUrl(c, v.id)" :src="coverUrl(c, v.id)!" class="h-5 w-5 rounded-full object-cover" :alt="v.label">
+              <img v-if="portraitUrl(c, v.id) ?? coverUrl(c, v.id)" :src="portraitUrl(c, v.id) ?? coverUrl(c, v.id)!" class="h-5 w-5 rounded-full object-cover" :alt="v.label">
               {{ v.label }}
               <Check v-if="v.status === 'locked'" class="size-3 text-action" />
               <span v-else class="text-[9px] text-amber-400/80">{{ draftBadge(v.status) }}</span>

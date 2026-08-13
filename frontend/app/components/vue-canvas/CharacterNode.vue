@@ -7,7 +7,7 @@ import { Drama } from 'lucide-vue-next'
 import { useCharacters } from '~/composables/useCharacters'
 import CharacterPickerModal from '~/components/vue-canvas/CharacterPickerModal.vue'
 import { emitCharacterEvent } from '~/lib/characters/bus'
-import { normalizeStateId, sortStatesLockedFirst, draftBadge, type CharacterState } from '#shared/characters/types'
+import { normalizeStateId, pickState, identityRefs, sortStatesLockedFirst, draftBadge, type CharacterState } from '#shared/characters/types'
 
 const props = defineProps<{
   id: string
@@ -18,7 +18,7 @@ const props = defineProps<{
   }
 }>()
 
-const { characters, coverUrl } = useCharacters()
+const { characters, coverUrl, portraitUrl } = useCharacters()
 const pickerOpen = ref(false)
 
 /** Reads the single sailor_characterBinding property, falling back to the
@@ -43,7 +43,11 @@ const binding = computed<{ slug: string; name: string; stateId: string | null } 
 const slug = computed<string | null>(() => binding.value?.slug ?? null)
 const character = computed(() => characters.value.find(c => c.slug === slug.value) ?? null)
 const stateId = computed<string | null>(() => binding.value?.stateId ?? null)
-const refCount = computed(() => character.value?.states.reduce((n, v) => n + v.refImages.length, 0) ?? 0)
+/** The state this card actually casts (binding's stateId, falling back to default) — same resolution the caster uses. */
+const activeState = computed<CharacterState | undefined>(() => character.value ? pickState(character.value, stateId.value) : undefined)
+/** Castable check must count identity assets (sheet + refs), not just refImages — a
+ *  sheet-only look (refImages: []) casts fine but would otherwise read as "0 references". */
+const identityCount = computed(() => identityRefs(activeState.value).length)
 
 /** Variant select order: locked (stress-tested) looks lead. */
 const sortedVariantStates = computed<CharacterState[]>(() => sortStatesLockedFirst(character.value?.states ?? []))
@@ -91,7 +95,8 @@ function onVariantChange(e: Event) {
       <template v-if="character">
         <div class="flex items-center gap-2">
           <img
-            v-if="coverUrl(character, stateId ?? undefined)" :src="coverUrl(character, stateId ?? undefined)!" :alt="character.name"
+            v-if="portraitUrl(character, stateId ?? undefined) ?? coverUrl(character, stateId ?? undefined)"
+            :src="portraitUrl(character, stateId ?? undefined) ?? coverUrl(character, stateId ?? undefined)!" :alt="character.name"
             class="h-10 w-10 shrink-0 rounded object-cover"
           >
           <div v-else class="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-white/[0.06]">
@@ -99,7 +104,7 @@ function onVariantChange(e: Event) {
           </div>
           <div class="min-w-0">
             <p class="truncate text-[12px] text-white/90" :title="character.name">{{ character.name }}</p>
-            <p class="text-[10px] text-white/40">{{ refCount }} reference{{ refCount === 1 ? '' : 's' }}</p>
+            <p class="text-[10px] text-white/40">{{ identityCount }} identity source{{ identityCount === 1 ? '' : 's' }}</p>
           </div>
         </div>
         <!-- Variant select: only when the character has more than one variant -->
@@ -111,7 +116,7 @@ function onVariantChange(e: Event) {
         >
           <option v-for="v in sortedVariantStates" :key="v.id" :value="v.id" class="bg-neutral-900">{{ variantOptionLabel(v) }}</option>
         </select>
-        <p v-if="!refCount" class="mt-1.5 text-[10px] leading-tight text-amber-400/80">
+        <p v-if="!identityCount" class="mt-1.5 text-[10px] leading-tight text-amber-400/80">
           No reference photos — add some in the Characters panel.
         </p>
       </template>

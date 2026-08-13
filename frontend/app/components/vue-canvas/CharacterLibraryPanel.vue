@@ -244,6 +244,20 @@ async function replaceVariant(c: CharacterRecord, variant: CharacterState, patch
   return true
 }
 
+/**
+ * Inline descriptor editor (Task: remediation loop). Descriptor is otherwise
+ * write-once — set at look creation and never editable again — even though
+ * the stress-failure hint tells the user to "edit the descriptor" to fix a
+ * failing look. Saves on blur/Enter, and only when the trimmed value
+ * actually changed (no-op patch avoided). Locked-state demote-on-content-edit
+ * is server-side (characterStatePatch.ts) — nothing extra needed here.
+ */
+async function saveDescriptor(c: CharacterRecord, variant: CharacterState, e: Event) {
+  const value = (e.target as HTMLInputElement).value.trim()
+  if (value === variant.descriptor) return
+  await replaceVariant(c, variant, { descriptor: value })
+}
+
 async function addRefFiles(c: CharacterRecord, variant: CharacterState, e: Event) {
   const files = Array.from((e.target as HTMLInputElement).files ?? [])
   if (!files.length) return
@@ -427,35 +441,46 @@ async function generateSheet(c: CharacterRecord, variant: CharacterState) {
 }
 
 async function rerollTile(c: CharacterRecord, variant: CharacterState, slot: PanelSlot) {
-  const source = await buildSource(c, variant)
-  if (!source) return
-  const gen = sheetFor(c, variant)
+  // Same key + guard as generateSheet — re-entrancy protection AND it drives
+  // the same `expanding`-keyed busy UI (reroll overlay hidden, Generate sheet
+  // button spinner/disabled) so a reroll and a full regenerate can't race
+  // each other on the same variant.
+  const key = `${c.slug}:${variant.id}`
+  if (expanding.value.has(key)) return
+  expanding.value.add(key)
   try {
-    await gen.rerollPanel(slot, source)
-  } catch (e) {
-    // rerollPanel throws for a derived-panel reroll with no portrait
-    // generated yet this session (nothing to derive from) — surface it.
-    console.warn('[CharacterLibraryPanel] reroll failed', e)
-    toast.error(e instanceof Error ? e.message : 'Reroll failed — try again')
-    return
+    const source = await buildSource(c, variant)
+    if (!source) return
+    const gen = sheetFor(c, variant)
+    try {
+      await gen.rerollPanel(slot, source)
+    } catch (e) {
+      // rerollPanel throws for a derived-panel reroll with no portrait
+      // generated yet this session (nothing to derive from) — surface it.
+      console.warn('[CharacterLibraryPanel] reroll failed', e)
+      toast.error(e instanceof Error ? e.message : 'Reroll failed — try again')
+      return
+    }
+    const rerolled = gen.panels.value.find(p => p.spec.slot === slot)
+    if (!rerolled?.dataUrl) { toast.error('Reroll failed — try again'); return }
+    const panelDataUrls = await resolvePanelDataUrls(variant, gen)
+    if (!panelDataUrls) { toast.error('Couldn\'t rebuild the full sheet — try Generate sheet instead'); return }
+    const filename = await uploadRefFilename(dataUrlToFile(rerolled.dataUrl, `sheet_${slot}.png`))
+    const compositeFile = await bakeCompositeSheet(panelDataUrls)
+    const sheetImage = await uploadRefFilename(compositeFile)
+    const panels = variant.panels.some(p => p.slot === slot)
+      ? variant.panels.map(p => p.slot === slot ? { slot, filename } : p)
+      : [...variant.panels, { slot, filename }]
+    const result = await patchState(c.slug, {
+      stateId: variant.id,
+      expectedUpdatedAt: variant.updatedAt,
+      patch: { panels, sheetImage, status: 'draft', stressResult: null },
+    })
+    if (result === 'stale') toast.error(STALE_MESSAGE)
+    else if (result === 'error') toast.error('Couldn\'t save the reroll — try again')
+  } finally {
+    expanding.value.delete(key)
   }
-  const rerolled = gen.panels.value.find(p => p.spec.slot === slot)
-  if (!rerolled?.dataUrl) return
-  const panelDataUrls = await resolvePanelDataUrls(variant, gen)
-  if (!panelDataUrls) { toast.error('Couldn\'t rebuild the full sheet — try Generate sheet instead'); return }
-  const filename = await uploadRefFilename(dataUrlToFile(rerolled.dataUrl, `sheet_${slot}.png`))
-  const compositeFile = await bakeCompositeSheet(panelDataUrls)
-  const sheetImage = await uploadRefFilename(compositeFile)
-  const panels = variant.panels.some(p => p.slot === slot)
-    ? variant.panels.map(p => p.slot === slot ? { slot, filename } : p)
-    : [...variant.panels, { slot, filename }]
-  const result = await patchState(c.slug, {
-    stateId: variant.id,
-    expectedUpdatedAt: variant.updatedAt,
-    patch: { panels, sheetImage, status: 'draft', stressResult: null },
-  })
-  if (result === 'stale') toast.error(STALE_MESSAGE)
-  else if (result === 'error') toast.error('Couldn\'t save the reroll — try again')
 }
 
 function dataUrlToFile(dataUrl: string, name: string): File {
@@ -800,6 +825,23 @@ function tileColor(seed: string): string {
 
             <!-- Active look sheet -->
             <template v-if="activeVariant(c)">
+              <!-- Descriptor: editable at any time, not just at look creation — the
+                   stress-failure hint below tells the user to "edit the descriptor",
+                   so there must be somewhere to do that. Keyed by id+updatedAt so the
+                   uncontrolled input's DOM value resets when the look or its saved
+                   descriptor changes (e.g. switching looks, or a save landing). -->
+              <div>
+                <div class="mb-1 text-[10px] font-medium uppercase tracking-wide text-white/40">Descriptor</div>
+                <input
+                  :key="`${activeVariant(c)!.id}:${activeVariant(c)!.updatedAt}`"
+                  :value="activeVariant(c)!.descriptor"
+                  placeholder="Look descriptor — e.g. soaked navy jacket, wet hair"
+                  class="w-full bg-white/[0.04] border border-white/10 rounded px-2 py-1 text-[11px] text-white/85 placeholder-white/30 outline-none focus:border-white/25"
+                  @blur="saveDescriptor(c, activeVariant(c)!, $event)"
+                  @keydown.enter="($event.target as HTMLInputElement).blur()"
+                >
+              </div>
+
               <!-- Composite reference sheet: the 5 canonical Higgsfield panels -->
               <div>
                 <div class="mb-1 flex items-center justify-between text-[10px] font-medium uppercase tracking-wide text-white/40">

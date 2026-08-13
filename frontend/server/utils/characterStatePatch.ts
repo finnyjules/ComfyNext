@@ -44,11 +44,16 @@ export function applyStatePatch(record: CharacterRecord, body: StatePatchBody, n
 
   let next: CharacterState = { ...state, ...patch }
 
-  // Content-edit rule: a locked state whose content the patch touches
-  // demotes to draft (stressResult cleared) unless the same patch also
-  // explicitly re-locks it — the lock rule below then re-validates that.
+  // Content-edit rule: a non-draft state (locked OR testing) whose content
+  // the patch touches demotes to draft (stressResult cleared) unless the
+  // same patch also explicitly re-locks it — the lock rule below then
+  // re-validates that. Testing must be treated the same as locked here: a
+  // content edit landing mid-test would otherwise leave a stale passing
+  // stressResult sitting on the state, which a LATER bare
+  // { status: 'locked' } patch could consume via the state.stressResult
+  // fallback below — locking on a result that never validated this content.
   const touchesContent = Object.keys(patch).some(k => CONTENT_KEYS.has(k))
-  if (state.status === 'locked' && touchesContent && patch.status !== 'locked') {
+  if (state.status !== 'draft' && touchesContent && patch.status !== 'locked') {
     next = { ...next, status: 'draft', stressResult: null }
   }
 

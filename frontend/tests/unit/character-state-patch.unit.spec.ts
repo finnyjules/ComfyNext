@@ -86,3 +86,26 @@ it('content edit + re-lock with a fresh passing stressResult in the same patch s
   expect(r.ok && r.record.states[0]!.status).toBe('locked')
   expect(r.ok && r.record.states[0]!.stressResult).toMatchObject({ passes: 10, total: 10, at: 'T2' })
 })
+
+// Hardening (final-review Finding 4): a content edit landing while a state is
+// 'testing' — not just 'locked' — must also demote it and clear its
+// stressResult. Without this, a content edit mid-test leaves a stale 10/10
+// stressResult sitting on a 'testing' state, which a LATER bare
+// { status: 'locked' } patch (no fresh stressResult in the patch) can then
+// consume via the `patch.stressResult ?? state.stressResult` fallback —
+// locking on a result that never validated the edited content.
+it('content edits on a testing state also demote it to draft and clear stressResult', () => {
+  const testing = rec()
+  testing.states[0]! = { ...testing.states[0]!, status: 'testing', stressResult: { passes: 10, total: 10, at: 'T1' } }
+  const r = applyStatePatch(testing, { stateId: 'default', patch: { descriptor: 'new coat' } }, 'T2')
+  expect(r.ok && r.record.states[0]!.status).toBe('draft')
+  expect(r.ok && r.record.states[0]!.stressResult).toBe(null)
+})
+it('a bare re-lock after a testing-state content edit 400s — the stale stressResult was cleared', () => {
+  const testing = rec()
+  testing.states[0]! = { ...testing.states[0]!, status: 'testing', stressResult: { passes: 10, total: 10, at: 'T1' } }
+  const afterEdit = applyStatePatch(testing, { stateId: 'default', patch: { descriptor: 'new coat' } }, 'T2')
+  expect(afterEdit.ok).toBe(true)
+  const relock = applyStatePatch((afterEdit as { ok: true, record: typeof testing }).record, { stateId: 'default', patch: { status: 'locked' } }, 'T3')
+  expect(relock).toMatchObject({ ok: false, code: 400 })
+})
