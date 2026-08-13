@@ -47,8 +47,10 @@ const { characters, refresh, patchCharacter, removeCharacter, coverUrl } = useCh
 const { jobs, setPolling } = useTrainingJobs()
 onMounted(() => setPolling(true))
 onUnmounted(() => setPolling(false))
-function sheetCost(c: CharacterRecord): string {
-  return characterStatus(c, jobs.value) === 'ready' ? '~$0.12' : '~$0.32'
+// Flat: sheets always build from the cover photo now (LoRA no longer a
+// sheet source — it drifted), so the price no longer depends on training.
+function sheetCost(_c: CharacterRecord): string {
+  return '~$0.32'
 }
 
 const {

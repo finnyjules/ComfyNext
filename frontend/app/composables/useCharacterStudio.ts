@@ -19,7 +19,7 @@
 import { ref } from 'vue'
 import { toast } from 'vue-sonner'
 
-import { useCharacters, useTrainingJobs, characterStatus } from '~/composables/useCharacters'
+import { useCharacters } from '~/composables/useCharacters'
 import type { CharacterRecord, CharacterState, CharacterPanel, PanelSlot, StressResult } from '#shared/characters/types'
 import { emptyState, panelFilename, sortStatesLockedFirst } from '#shared/characters/types'
 import { useSheetGeneration, type SheetSource } from '~/composables/useSheetGeneration'
@@ -193,13 +193,14 @@ const expanding = ref<Set<string>>(new Set())
 
 async function buildSource(c: CharacterRecord, variant: CharacterState): Promise<SheetSource | null> {
   const { coverUrl } = useCharacters()
-  const { jobs } = useTrainingJobs()
-  const status = characterStatus(c, jobs.value)
-  if (status === 'ready' && c.loraName) {
-    return { mode: 'lora', loraFilename: c.loraName, trigger: c.trigger, descriptor: variant.descriptor || undefined }
-  }
-  const def = c.states.find(v => v.id === 'default') ?? c.states[0]
-  const cover = def ? coverUrl(c, def.id) : null
+  // Sheets ALWAYS build from a cover photo, never from a trained LoRA. The
+  // cover is the identity's ground truth; a LoRA is a lossy memory of it and
+  // drifts (a rebuild once turned a brunette blonde). LoRAs stay for the jobs
+  // they're uniquely good at downstream (stylized renders, wide shots) — not
+  // for authoring the identity document itself.
+  // Prefer THIS look's cover (a dressed look's cover wears the outfit); fall
+  // back to the Default look's cover for fresh looks with no photos yet.
+  const cover = coverUrl(c, variant.id) ?? coverUrl(c, null)
   if (!cover) {
     toast.error('Add a photo to this look first')
     return null
