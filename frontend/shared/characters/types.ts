@@ -79,6 +79,24 @@ export function identityRefs(state?: CharacterState): string[] {
   return state.sheetImage ? [state.sheetImage, ...rest] : rest
 }
 
+/** Visible text for a non-locked state's flag in cast/state pickers — never hidden, just badged. */
+export const DRAFT_BADGE_TEXT = 'draft — not stress-tested'
+
+/**
+ * Cast/state pickers (CharacterPickerModal, CharacterNode's variant select,
+ * the library panel's Looks row) surface a stress-tested look first: a
+ * stable sort putting 'locked' states ahead of 'draft'/'testing', otherwise
+ * preserving order. Does not mutate the input.
+ */
+export function sortStatesLockedFirst<T extends { status: CharacterStateStatus }>(states: T[]): T[] {
+  return [...states].sort((a, b) => (a.status === 'locked' ? 0 : 1) - (b.status === 'locked' ? 0 : 1))
+}
+
+/** Badge text for a state's status — null once locked (nothing to flag), the shared warning otherwise. */
+export function draftBadge(status: CharacterStateStatus): string | null {
+  return status === 'locked' ? null : DRAFT_BADGE_TEXT
+}
+
 export function emptyState(id: string, label: string): CharacterState {
   return {
     id, label, descriptor: '', refImages: [], coverIndex: 0,

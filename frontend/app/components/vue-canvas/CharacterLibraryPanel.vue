@@ -26,7 +26,7 @@ let absorbRanThisSession = false
  * panel entirely — casting/using a character now dispatches events for the
  * canvas (Task 7) and identity training (Task 8) to pick up.
  */
-import { Drama, Images, Loader2, RefreshCcw, Shirt, Sparkles, Upload, X } from 'lucide-vue-next'
+import { Check, Drama, FlaskConical, Images, Loader2, RefreshCcw, Shirt, Sparkles, Upload, X } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import { onClickOutside } from '@vueuse/core'
 
@@ -34,8 +34,8 @@ import {
   useCharacters, useTrainingJobs, characterStatus, IN_FLIGHT_STATUSES, slugish,
   type CharacterStatus,
 } from '~/composables/useCharacters'
-import type { CharacterRecord, CharacterState, CharacterPanel, PanelSlot } from '#shared/characters/types'
-import { emptyState, normalizeStateId, panelFilename } from '#shared/characters/types'
+import type { CharacterRecord, CharacterState, CharacterStateStatus, CharacterPanel, PanelSlot } from '#shared/characters/types'
+import { emptyState, normalizeStateId, panelFilename, sortStatesLockedFirst, draftBadge } from '#shared/characters/types'
 import { useSheetGeneration, type SheetSource } from '~/composables/useSheetGeneration'
 import { uploadRefFilename, viewRefUrl } from '~/lib/shotdirector/refUpload'
 import { bakeCompositeSheet } from '~/lib/characters/sheetComposite'
@@ -43,6 +43,8 @@ import { HIGGSFIELD_PANELS } from '~/data/character-shot-scenes'
 import { usePendingTrainerSeed } from '~/composables/usePendingTrainerSeed'
 import { buildDressPrompt, DRESS_COST_USD, type DressMode } from '~/lib/wardrobe/dress'
 import { emitCharacterEvent } from '~/lib/characters/bus'
+import { freshTiles, stressOutcome, canLock, type StressTile } from '~/lib/characters/stress'
+import { buildStressTileRequest, buildTestingPatch, buildLockPatch } from '~/lib/characters/stressFlow'
 
 defineEmits<{ close: [] }>()
 
@@ -212,6 +214,21 @@ function selectVariant(c: CharacterRecord, id: string) {
 function activeVariant(c: CharacterRecord): CharacterState | undefined {
   const id = selectedVariantId.value[c.slug] ?? 'default'
   return c.states.find(v => v.id === id) ?? c.states.find(v => v.id === 'default') ?? c.states[0]
+}
+
+/** Looks chip row order: stress-tested (locked) looks lead, so the reliable ones are easy to find. */
+function sortedStates(c: CharacterRecord): CharacterState[] {
+  return sortStatesLockedFirst(c.states)
+}
+
+// ── Status chip (draft grey / testing amber / locked action-blue check) ────
+function statusChipLabel(status: CharacterStateStatus): string {
+  return status === 'draft' ? 'Draft' : status === 'testing' ? 'Testing…' : 'Locked'
+}
+function statusChipClass(status: CharacterStateStatus): string {
+  if (status === 'testing') return 'bg-amber-400/15 text-amber-400/90'
+  if (status === 'locked') return 'bg-action/15 text-action'
+  return 'bg-white/10 text-white/50'
 }
 
 // ── Variant ref upload / cover / remove ────────────────────────────────
@@ -452,6 +469,98 @@ function dataUrlToFile(dataUrl: string, name: string): File {
   return new File([arr], name, { type: mime })
 }
 
+// ── Stress test: 10-tile identity-fidelity grid that gates Lock ────────────
+// Sequential + abort-on-first-failure — the same money guard as expandAll
+// (useSheetGeneration): the reference sheet is fetched ONCE and reused for
+// all 10 tiles, and a failed tile stops the rest of the queue instead of
+// spending on tiles likely to fail the same way. Tile state is
+// component-local (not persisted) — a reload clears an unfinished grid.
+const stressTiles = ref<Record<string, StressTile[]>>({})
+const stressBusy = ref<Set<string>>(new Set())
+
+function stressTilesFor(c: CharacterRecord, variant: CharacterState): StressTile[] | null {
+  return stressTiles.value[vkey(c, variant)] ?? null
+}
+function stressPassCount(c: CharacterRecord, variant: CharacterState): number {
+  return (stressTilesFor(c, variant) ?? []).filter(t => t.pass === true).length
+}
+
+/**
+ * Both patchState calls in this flow (the mid-run testing transition and the
+ * final lock) must send the state's CURRENT server updatedAt, not whatever
+ * was captured when the button was clicked — the testing-transition patch
+ * itself advances updatedAt, so a lock call re-using the stale click-time
+ * value would 409 against its own prior write. Resolve fresh from the
+ * reactive store (patchState refreshes it internally on every call).
+ */
+function liveState(slug: string, stateId: string): CharacterState | undefined {
+  return characters.value.find(x => x.slug === slug)?.states.find(s => s.id === stateId)
+}
+
+async function runStressTest(c: CharacterRecord, variant: CharacterState) {
+  const k = vkey(c, variant)
+  if (stressBusy.value.has(k) || !variant.sheetImage) return
+  stressBusy.value.add(k)
+  const tiles = freshTiles()
+  stressTiles.value[k] = tiles
+  try {
+    let sheetDataUrl: string
+    try {
+      sheetDataUrl = await fetchAsDataUrl(viewRefUrl(variant.sheetImage))
+    } catch {
+      toast.error('Couldn\'t load the reference sheet — try again')
+      delete stressTiles.value[k]
+      return
+    }
+    let testingPatchSent = false
+    for (const tile of tiles) {
+      tile.loading = true
+      try {
+        const req = buildStressTileRequest(sheetDataUrl, tile.scene, tile.idx)
+        const res = await fetch('/api/cloud-train/character-shot', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req),
+        })
+        if (!res.ok) throw new Error(`character-shot ${res.status}`)
+        const { imageDataUrl } = await res.json() as { imageDataUrl?: string }
+        if (!imageDataUrl) throw new Error('no image returned')
+        tile.dataUrl = imageDataUrl
+        tile.loading = false
+        if (!testingPatchSent) {
+          testingPatchSent = true
+          const live = liveState(c.slug, variant.id) ?? variant
+          const result = await patchState(c.slug, {
+            stateId: variant.id, expectedUpdatedAt: live.updatedAt, patch: buildTestingPatch(),
+          })
+          if (result === 'stale') { toast.error(STALE_MESSAGE); break }
+          if (result === 'error') toast.error('Couldn\'t update the character — try again')
+        }
+      } catch (e) {
+        tile.loading = false
+        tile.error = true
+        console.warn('[CharacterLibraryPanel] stress tile failed', e)
+        toast.error(`Stress tile ${tile.idx + 1} of 10 failed — stopped`)
+        break
+      }
+    }
+  } finally {
+    stressBusy.value.delete(k)
+  }
+}
+
+async function lockStress(c: CharacterRecord, variant: CharacterState) {
+  const tiles = stressTilesFor(c, variant)
+  if (!tiles || !canLock(tiles)) return
+  const outcome = stressOutcome(tiles)
+  if (!outcome) return
+  const live = liveState(c.slug, variant.id) ?? variant
+  const result = await patchState(c.slug, {
+    stateId: variant.id, expectedUpdatedAt: live.updatedAt, patch: buildLockPatch(outcome, new Date().toISOString()),
+  })
+  if (result === 'stale') { toast.error(STALE_MESSAGE); return }
+  if (result === 'error') { toast.error('Couldn\'t lock — try again'); return }
+  toast.success(`Locked ${variant.label} · ${outcome.passes}/10`)
+}
+
 // ── Wardrobe: dress a character into a look ────────────────────────────────
 // A look's cover is generated by dressing the character's Default (identity)
 // cover — via nano-banana-pro, with a garment reference photo (two images) or a
@@ -645,13 +754,19 @@ function tileColor(seed: string): string {
               </div>
               <div class="flex flex-wrap gap-1.5">
                 <button
-                  v-for="v in c.states" :key="v.id"
-                  class="rounded-full px-2.5 py-1 text-[10.5px] cursor-pointer transition-colors"
+                  v-for="v in sortedStates(c)" :key="v.id"
+                  class="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10.5px] cursor-pointer transition-colors"
                   :class="(selectedVariantId[c.slug] ?? 'default') === v.id
                     ? 'bg-white/20 text-white ring-1 ring-white/30'
                     : 'bg-white/[0.05] text-white/60 hover:bg-white/[0.1]'"
+                  :title="draftBadge(v.status) ?? 'Locked — stress-tested'"
                   @click="selectVariant(c, v.id)"
                 >
+                  <Check v-if="v.status === 'locked'" class="size-2.5 shrink-0 text-action" />
+                  <span
+                    v-else class="size-1.5 shrink-0 rounded-full"
+                    :class="v.status === 'testing' ? 'bg-amber-400/80' : 'bg-white/25'"
+                  />
                   {{ v.label }} <span class="text-white/40">· {{ v.refImages.length }}</span>
                 </button>
                 <button
@@ -687,8 +802,15 @@ function tileColor(seed: string): string {
             <template v-if="activeVariant(c)">
               <!-- Composite reference sheet: the 5 canonical Higgsfield panels -->
               <div>
-                <div class="mb-1 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-white/40">
-                  <Images class="size-3" /> Reference sheet
+                <div class="mb-1 flex items-center justify-between text-[10px] font-medium uppercase tracking-wide text-white/40">
+                  <span class="flex items-center gap-1.5"><Images class="size-3" /> Reference sheet</span>
+                  <span
+                    class="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-medium normal-case tracking-normal"
+                    :class="statusChipClass(activeVariant(c)!.status)"
+                  >
+                    <Check v-if="activeVariant(c)!.status === 'locked'" class="size-2.5" />
+                    {{ statusChipLabel(activeVariant(c)!.status) }}
+                  </span>
                 </div>
                 <div class="grid grid-cols-5 gap-1.5">
                   <div
@@ -713,6 +835,77 @@ function tileColor(seed: string): string {
                     </button>
                   </div>
                 </div>
+                <p v-if="draftBadge(activeVariant(c)!.status)" class="mt-1 text-[10px] text-white/35">
+                  {{ draftBadge(activeVariant(c)!.status) }}
+                </p>
+              </div>
+
+              <!-- Stress test: 10-tile identity-fidelity grid that gates Lock -->
+              <div v-if="activeVariant(c)!.sheetImage">
+                <div class="mb-1 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-white/40">
+                  <FlaskConical class="size-3" /> Stress test
+                </div>
+
+                <button
+                  v-if="!stressTilesFor(c, activeVariant(c)!)"
+                  class="w-full rounded bg-white/10 px-2.5 py-1.5 text-[11px] text-white/80 hover:bg-white/20 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                  :disabled="stressBusy.has(vkey(c, activeVariant(c)!))"
+                  @click="runStressTest(c, activeVariant(c)!)"
+                >
+                  {{ activeVariant(c)!.status === 'locked' ? 'Re-test' : 'Stress test' }} · ~$0.80
+                </button>
+
+                <template v-else>
+                  <div class="grid grid-cols-5 gap-1.5">
+                    <div
+                      v-for="tile in stressTilesFor(c, activeVariant(c)!)!" :key="tile.idx"
+                      class="relative aspect-square overflow-hidden rounded bg-white/[0.04]"
+                    >
+                      <img v-if="tile.dataUrl" :src="tile.dataUrl" class="h-full w-full object-cover">
+                      <div v-else-if="tile.loading" class="flex h-full items-center justify-center">
+                        <Loader2 class="size-3.5 animate-spin text-white/40" />
+                      </div>
+                      <div v-else-if="tile.error" class="flex h-full items-center justify-center px-1 text-center text-[8px] leading-tight text-red-400/70">
+                        Failed
+                      </div>
+                      <div v-else class="flex h-full items-center justify-center text-[10px] text-white/15">·</div>
+
+                      <div v-if="tile.dataUrl" class="absolute inset-x-0 bottom-0 flex justify-center gap-1 bg-black/55 py-0.5">
+                        <button
+                          class="rounded p-0.5 cursor-pointer"
+                          :class="tile.pass === true ? 'bg-action text-white' : 'text-white/50 hover:text-white/85'"
+                          title="Recognizable"
+                          @click="tile.pass = tile.pass === true ? null : true"
+                        >
+                          <Check class="size-3" />
+                        </button>
+                        <button
+                          class="rounded p-0.5 cursor-pointer"
+                          :class="tile.pass === false ? 'bg-red-500/85 text-white' : 'text-white/50 hover:text-white/85'"
+                          title="Not recognizable"
+                          @click="tile.pass = tile.pass === false ? null : false"
+                        >
+                          <X class="size-3" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="mt-1.5 flex items-center justify-between gap-2">
+                    <span class="text-[10px] text-white/45">{{ stressPassCount(c, activeVariant(c)!) }}/10 recognizable</span>
+                    <button
+                      class="shrink-0 rounded bg-action px-2.5 py-1 text-[10.5px] font-medium text-white hover:bg-action/85 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-action"
+                      :disabled="!canLock(stressTilesFor(c, activeVariant(c)!)!)"
+                      @click="lockStress(c, activeVariant(c)!)"
+                    >Lock</button>
+                  </div>
+                  <p
+                    v-if="stressOutcome(stressTilesFor(c, activeVariant(c)!)!) && !canLock(stressTilesFor(c, activeVariant(c)!)!)"
+                    class="mt-1 text-[10px] leading-relaxed text-amber-400/80"
+                  >
+                    Fix the description, not the model — edit the descriptor or reroll a panel, then re-test.
+                  </p>
+                </template>
               </div>
 
               <!-- Manual reference photos (upload pool) -->

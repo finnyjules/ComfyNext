@@ -4,9 +4,9 @@
 // variant chip row on click instead of picking immediately; single-variant cards
 // pick directly (stateId: null — the default state is implied).
 import { computed, ref } from 'vue'
-import { X } from 'lucide-vue-next'
+import { Check, X } from 'lucide-vue-next'
 import { useCharacters } from '~/composables/useCharacters'
-import { normalizeStateId, type CharacterRecord } from '#shared/characters/types'
+import { normalizeStateId, sortStatesLockedFirst, draftBadge, type CharacterRecord, type CharacterState } from '#shared/characters/types'
 
 const props = defineProps<{ excludeSlugs: string[] }>()
 const emit = defineEmits<{ pick: [slug: string, name: string, stateId: string | null], close: [] }>()
@@ -26,6 +26,11 @@ const expandedSlug = ref<string | null>(null)
 
 function refCount(c: CharacterRecord): number {
   return c.states.reduce((n, v) => n + v.refImages.length, 0)
+}
+
+/** Variant chip row order: locked (stress-tested) looks lead. */
+function sortedVariants(c: CharacterRecord): CharacterState[] {
+  return sortStatesLockedFirst(c.states)
 }
 
 function onCardClick(c: CharacterRecord) {
@@ -67,16 +72,22 @@ function pickVariant(c: CharacterRecord, stateId: string) {
               {{ refCount(c) }} reference{{ refCount(c) === 1 ? '' : 's' }}
               <span v-if="c.states.length > 1">· {{ c.states.length }} variants</span>
             </div>
+            <!-- Single-variant cards pick directly (no expand row) — badge right on the card. -->
+            <div v-if="c.states.length === 1 && draftBadge(c.states[0]!.status)" class="text-[9px] text-amber-400/80">
+              {{ draftBadge(c.states[0]!.status) }}
+            </div>
           </button>
           <!-- Variant chip row: only for multi-variant cards, expanded on click -->
           <div v-if="expandedSlug === c.slug" class="col-span-3 -mt-1 flex flex-wrap gap-1.5 rounded-lg border border-white/10 bg-white/[0.02] p-2">
             <button
-              v-for="v in c.states" :key="v.id"
+              v-for="v in sortedVariants(c)" :key="v.id"
               class="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.05] py-0.5 pl-0.5 pr-2 text-[11px] text-white/80 hover:border-white/25"
               @click="pickVariant(c, v.id)"
             >
               <img v-if="coverUrl(c, v.id)" :src="coverUrl(c, v.id)!" class="h-5 w-5 rounded-full object-cover" :alt="v.label">
               {{ v.label }}
+              <Check v-if="v.status === 'locked'" class="size-3 text-action" />
+              <span v-else class="text-[9px] text-amber-400/80">{{ draftBadge(v.status) }}</span>
             </button>
           </div>
         </div>

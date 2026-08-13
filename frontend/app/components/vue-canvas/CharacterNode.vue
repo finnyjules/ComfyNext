@@ -7,7 +7,7 @@ import { Drama } from 'lucide-vue-next'
 import { useCharacters } from '~/composables/useCharacters'
 import CharacterPickerModal from '~/components/vue-canvas/CharacterPickerModal.vue'
 import { emitCharacterEvent } from '~/lib/characters/bus'
-import { normalizeStateId } from '#shared/characters/types'
+import { normalizeStateId, sortStatesLockedFirst, draftBadge, type CharacterState } from '#shared/characters/types'
 
 const props = defineProps<{
   id: string
@@ -44,6 +44,14 @@ const slug = computed<string | null>(() => binding.value?.slug ?? null)
 const character = computed(() => characters.value.find(c => c.slug === slug.value) ?? null)
 const stateId = computed<string | null>(() => binding.value?.stateId ?? null)
 const refCount = computed(() => character.value?.states.reduce((n, v) => n + v.refImages.length, 0) ?? 0)
+
+/** Variant select order: locked (stress-tested) looks lead. */
+const sortedVariantStates = computed<CharacterState[]>(() => sortStatesLockedFirst(character.value?.states ?? []))
+
+/** Native <select> can't carry an icon, so the flag is text on the option itself. */
+function variantOptionLabel(v: CharacterState): string {
+  return v.status === 'locked' ? `${v.label} ✓ locked` : `${v.label} — ${draftBadge(v.status)}`
+}
 
 function pick(s: string, name: string, pickedStateId: string | null) {
   if (!props.data.properties) props.data.properties = {}
@@ -101,7 +109,7 @@ function onVariantChange(e: Event) {
           class="mt-2 w-full rounded border border-white/10 bg-[#0e0e10] px-1.5 py-1 text-[11px] text-white/70 outline-none focus:border-white/25"
           @change="onVariantChange"
         >
-          <option v-for="v in character.states" :key="v.id" :value="v.id" class="bg-neutral-900">{{ v.label }}</option>
+          <option v-for="v in sortedVariantStates" :key="v.id" :value="v.id" class="bg-neutral-900">{{ variantOptionLabel(v) }}</option>
         </select>
         <p v-if="!refCount" class="mt-1.5 text-[10px] leading-tight text-amber-400/80">
           No reference photos — add some in the Characters panel.

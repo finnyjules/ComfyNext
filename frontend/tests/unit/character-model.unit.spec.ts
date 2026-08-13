@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   coverFirstRefs, defaultState, emptyState, identityRefs,
   normalizeStateId, panelFilename, pickState,
+  sortStatesLockedFirst, draftBadge, DRAFT_BADGE_TEXT,
 } from '#shared/characters/types'
 
 const state = (over: Partial<ReturnType<typeof emptyState>> = {}) => ({ ...emptyState('default', 'Default'), ...over })
@@ -49,5 +50,41 @@ describe('panelFilename', () => {
     const s = state({ panels: [{ slot: 'portrait', filename: 'p.png' }] })
     expect(panelFilename(s, 'portrait')).toBe('p.png')
     expect(panelFilename(s, 'body-back')).toBe(null)
+  })
+})
+
+describe('sortStatesLockedFirst', () => {
+  it('moves locked states to the front, preserving relative order otherwise', () => {
+    const draft1 = state({ id: 'a', status: 'draft' })
+    const testing = state({ id: 'b', status: 'testing' })
+    const locked1 = state({ id: 'c', status: 'locked' })
+    const draft2 = state({ id: 'd', status: 'draft' })
+    const locked2 = state({ id: 'e', status: 'locked' })
+    const sorted = sortStatesLockedFirst([draft1, testing, locked1, draft2, locked2])
+    expect(sorted.map(s => s.id)).toEqual(['c', 'e', 'a', 'b', 'd'])
+  })
+
+  it('does not mutate the input array', () => {
+    const list = [state({ id: 'a', status: 'draft' }), state({ id: 'b', status: 'locked' })]
+    const original = [...list]
+    sortStatesLockedFirst(list)
+    expect(list).toEqual(original)
+  })
+
+  it('no locked states → order unchanged', () => {
+    const list = [state({ id: 'a', status: 'draft' }), state({ id: 'b', status: 'testing' })]
+    expect(sortStatesLockedFirst(list).map(s => s.id)).toEqual(['a', 'b'])
+  })
+})
+
+describe('draftBadge', () => {
+  it('null for a locked state — no badge needed', () => {
+    expect(draftBadge('locked')).toBeNull()
+  })
+  it('flags draft with the exact visible text', () => {
+    expect(draftBadge('draft')).toBe(DRAFT_BADGE_TEXT)
+  })
+  it('flags testing too — not yet locked means not yet stress-tested to lock', () => {
+    expect(draftBadge('testing')).toBe(DRAFT_BADGE_TEXT)
   })
 })

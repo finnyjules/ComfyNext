@@ -7,6 +7,12 @@ import {
   stressOutcome,
   canLock,
 } from '~/lib/characters/stress'
+import {
+  STRESS_PROMPT_SUFFIX,
+  buildStressTileRequest,
+  buildTestingPatch,
+  buildLockPatch,
+} from '~/lib/characters/stressFlow'
 
 describe('stress module', () => {
   describe('stressScenes', () => {
@@ -173,6 +179,64 @@ describe('stress module', () => {
         tile.pass = true
       })
       expect(canLock(tiles)).toBe(true)
+    })
+  })
+})
+
+describe('stressFlow', () => {
+  describe('buildStressTileRequest', () => {
+    it('appends the identity-anchor suffix to the scene prompt', () => {
+      const scenes = stressScenes()
+      const req = buildStressTileRequest('data:image/png;base64,sheet', scenes[0]!, 0)
+      expect(req.prompt).toBe(scenes[0]!.prompt + STRESS_PROMPT_SUFFIX)
+      expect(req.prompt.endsWith(', the exact same person as the reference sheet')).toBe(true)
+    })
+
+    it('passes the sheet data URL through as referenceImageDataUrl', () => {
+      const scenes = stressScenes()
+      const req = buildStressTileRequest('data:image/png;base64,sheet', scenes[0]!, 0)
+      expect(req.referenceImageDataUrl).toBe('data:image/png;base64,sheet')
+    })
+
+    it('derives aspectRatio from the scene framing via aspectForFraming', () => {
+      const full = { prompt: 'full body shot', framing: 'full' as const }
+      const closeup = { prompt: 'closeup shot', framing: 'closeup' as const }
+      // full framing is always 3:4 regardless of idx (mirrors aspectForFraming)
+      expect(buildStressTileRequest('sheet', full, 0).aspectRatio).toBe('3:4')
+      expect(buildStressTileRequest('sheet', full, 7).aspectRatio).toBe('3:4')
+      // non-full framings cycle CHARACTER_SHOT_ASPECTS by idx
+      expect(buildStressTileRequest('sheet', closeup, 0).aspectRatio).toBe('1:1')
+      expect(buildStressTileRequest('sheet', closeup, 1).aspectRatio).toBe('3:4')
+      expect(buildStressTileRequest('sheet', closeup, 2).aspectRatio).toBe('4:3')
+    })
+  })
+
+  describe('buildTestingPatch', () => {
+    it('is the draft-to-testing transition sent on the first tile landing', () => {
+      expect(buildTestingPatch()).toEqual({ status: 'testing' })
+    })
+  })
+
+  describe('buildLockPatch', () => {
+    it('carries status locked and the exact stressResult with the stamped at', () => {
+      const tiles = freshTiles()
+      tiles.forEach(tile => {
+        tile.dataUrl = 'data:image/png;base64,fake'
+        tile.pass = true
+      })
+      tiles[3]!.pass = false
+      const outcome = stressOutcome(tiles)!
+      const patch = buildLockPatch(outcome, '2026-08-13T00:00:00.000Z')
+      expect(patch).toEqual({
+        status: 'locked',
+        stressResult: { passes: 9, total: 10, at: '2026-08-13T00:00:00.000Z' },
+      })
+    })
+
+    it('does not mutate the passed-in outcome', () => {
+      const outcome = { passes: 10, total: 10, at: '' }
+      buildLockPatch(outcome, 'stamp')
+      expect(outcome.at).toBe('')
     })
   })
 })
