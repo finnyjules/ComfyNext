@@ -137,6 +137,13 @@ describe('SCENE_CONTROLS integrity', () => {
     expect(resolvedValues['object.scale.1']).toBe(3)
     expect(resolvedValues['object.scale.2']).toBe(4)
   })
+
+  it('exposes lighting.environment as a select over ENVIRONMENT_KINDS', () => {
+    const c = SCENE_CONTROLS.find((c) => c.key === 'lighting.environment')
+    expect(c).toBeTruthy()
+    expect(c!.kind).toBe('select')
+    expect((c as any).options).toEqual(['room', 'darkStrips', 'softbox', 'colorGels'])
+  })
 })
 
 describe('visibleSceneControls', () => {

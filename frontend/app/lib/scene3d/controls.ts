@@ -1,7 +1,7 @@
 import type { ControlSpec } from '~/lib/spacetype/effect'
 import { postControls, POST_SECTIONS } from '~/lib/studio/post/controls'
 import {
-  MATERIAL_TYPES, MATERIAL_DEFAULTS, DEFAULT_MATERIAL, LIGHTING_PRESETS, defaultDoc,
+  MATERIAL_TYPES, MATERIAL_DEFAULTS, DEFAULT_MATERIAL, LIGHTING_PRESETS, ENVIRONMENT_KINDS, defaultDoc,
   type SceneDoc, type SceneObject, type MaterialType,
 } from './config'
 
@@ -224,6 +224,7 @@ export const SCENE_CONTROLS: SceneControl[] = [
 
   // --- Lighting (doc-level; no active object needed) -------------------------------
   select('lighting.preset', 'Lighting preset', [...LIGHTING_PRESETS], D.lighting.preset, 'Lighting'),
+  select('lighting.environment', 'Environment', [...ENVIRONMENT_KINDS], D.lighting.environment, 'Lighting'),
   slider('lighting.sunAzimuth', 'Sun azimuth', 0, 360, 1, 'Lighting', D.lighting.sunAzimuth,
     'Compass direction the sunlight comes from'),
   slider('lighting.sunElevation', 'Sun elevation', 5, 90, 1, 'Lighting', D.lighting.sunElevation,
