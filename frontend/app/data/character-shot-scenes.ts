@@ -140,7 +140,11 @@ export const HIGGSFIELD_PANELS: SheetPanelSpec[] = [
   { slot: 'portrait', kind: 'portrait-gen', aspect: '3:4',
     prompt: 'solo, one person only, large three-quarter view portrait, head and shoulders filling the frame, neutral expression, mouth closed, sharp facial detail, soft even studio light, plain neutral grey studio background' },
   { slot: 'body-front', kind: 'derived-edit', aspect: '3:4',
-    prompt: 'Show the same person as a full-body figure from the front, standing naturally with arms relaxed, with the head removed — the figure ends cleanly at the neckline, no head or face visible. Keep the exact same wardrobe and body type. Plain neutral grey studio background, even soft light, photorealistic.' },
+    // Framing language, not removal language: nano-banana partially ignored
+    // "head removed" on the FRONT view twice in a row (chin/mouth survived),
+    // while the back view complies every time. Cropping instructions
+    // ("framed from the shoulders down") bind harder than surgical edits.
+    prompt: 'Show the same person as a full-body figure from the front, standing naturally with arms relaxed, framed strictly from the shoulders down — the head, face and hair are entirely outside the top edge of the frame, no head visible. Keep the exact same wardrobe and body type. Plain neutral grey studio background, even soft light, photorealistic.' },
   { slot: 'body-back', kind: 'derived-edit', aspect: '3:4',
     prompt: 'Show the same person as a full-body figure from behind, standing naturally with arms relaxed, with the head removed — the figure ends cleanly at the neckline, no head visible. Keep the exact same wardrobe and body type. Plain neutral grey studio background, even soft light, photorealistic.' },
   { slot: 'face-neutral', kind: 'derived-edit', aspect: '1:1',

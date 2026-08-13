@@ -33,13 +33,21 @@ describe('HIGGSFIELD_PANELS', () => {
     expect(portrait.prompt).toMatch(/solo, one person only/)
   })
 
-  it('both body panels remove the head so any face can be composited on top', () => {
+  it('both body panels exclude the head so any face can be composited on top', () => {
     const bodyPanels = HIGGSFIELD_PANELS.filter((p) => p.slot === 'body-front' || p.slot === 'body-back')
     expect(bodyPanels).toHaveLength(2)
     for (const p of bodyPanels) {
-      expect(p.prompt).toMatch(/head removed/)
       expect(p.prompt).toMatch(/no head/)
     }
+    // Front uses FRAMING language ("shoulders down", head outside the frame) —
+    // nano-banana twice ignored removal language on the front view while the
+    // back view complied; cropping instructions bind harder than edits.
+    const front = HIGGSFIELD_PANELS.find((p) => p.slot === 'body-front')!
+    expect(front.prompt).toMatch(/framed strictly from the shoulders down/)
+    expect(front.prompt).toMatch(/outside the top edge of the frame/)
+    // Back keeps the removal phrasing that has worked every time — don't churn it.
+    const back = HIGGSFIELD_PANELS.find((p) => p.slot === 'body-back')!
+    expect(back.prompt).toMatch(/head removed/)
   })
 
   it('face-smile shows teeth', () => {
