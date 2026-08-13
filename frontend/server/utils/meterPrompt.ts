@@ -20,7 +20,7 @@ export class MeterError extends Error {
 
 export interface MeterDeps {
   priceGraph: (prompt: any) => { credits: number; version: string; breakdown: any[] }
-  getAvailable: (userId: string) => number
+  getAvailable: (userId: string) => number | Promise<number>
   register: (promptId: string, charge: { userId: string; credits: number; version: string }) => void
   forward: (body: any) => Promise<{ prompt_id: string }>
   settle: (promptId: string, userId: string, credits: number, version: string) => void
@@ -35,7 +35,7 @@ export async function meterPrompt(userId: string | null, body: any, deps: MeterD
   }
 
   const price = deps.priceGraph(body.prompt)
-  const available = deps.getAvailable(userId)
+  const available = await deps.getAvailable(userId)
   if (price.credits > available) {
     throw new MeterError('insufficient', 'Not enough credits', { available, required: price.credits })
   }

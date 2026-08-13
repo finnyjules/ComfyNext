@@ -7,20 +7,28 @@
  */
 import { meterPrompt, MeterError } from '~~/server/utils/meterPrompt'
 import { priceGraph } from '~~/server/utils/priceBook'
-import { mockLedger } from '~~/server/utils/mockLedger'
 import { meterStore } from '~~/server/utils/meterStore'
 import { settleOnCompletion } from '~~/server/utils/settleWatcher'
 import { resolveSpikeUser, stripForeignComfyOrgCreds } from '~~/server/utils/spikeAuth'
+import { deployMode } from '~~/server/utils/deployMode'
+import { buildLedgerAdapters } from '~~/server/utils/meterWiring'
+import { getLiveLedger } from '~~/server/utils/ledgerLive'
 
 const COMFY = 'http://127.0.0.1:8188'
 
 export default defineEventHandler(async (event) => {
   const body = await readBody(event)
-  const userId = resolveSpikeUser(getHeaders(event) as Record<string, string | undefined>)
+  const mode = deployMode()
+  // Hosted: the middleware attached the Clerk user. Local: spike header as before.
+  const userId = mode === 'hosted'
+    ? (event.context.userId ?? null)
+    : resolveSpikeUser(getHeaders(event) as Record<string, string | undefined>)
+
+  const adapters = buildLedgerAdapters(mode, mode === 'hosted' ? getLiveLedger() : undefined)
 
   const deps = {
     priceGraph,
-    getAvailable: (u: string) => mockLedger.getAvailable(u),
+    getAvailable: (u: string) => adapters.getAvailable(u),
     register: (promptId: string, charge: { userId: string; credits: number; version: string }) =>
       meterStore.register(promptId, charge),
     forward: async (b: any) => {
@@ -47,8 +55,13 @@ export default defineEventHandler(async (event) => {
           return hist[id] ?? null
         },
         onSuccess: (id) => {
-          const r = mockLedger.debit(u, credits, `graph_run:${version}`, id)
-          meterStore.resolve(id, r.ok ? 'settled' : 'voided')
+          void adapters.debitOnSuccess(u, credits, version, id)
+            .then(r => meterStore.resolve(id, r.ok ? 'settled' : 'voided'))
+            .catch((e) => {
+              // Job ran but the charge failed — money bug, must be loud.
+              console.error('[meter] DEBIT FAILED after successful run', { promptId: id, user: u, credits }, e)
+              meterStore.resolve(id, 'voided')
+            })
         },
         onError: (id) => meterStore.resolve(id, 'voided'),
       })
