@@ -16,7 +16,7 @@
  * text.
  */
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { Check, ChevronRight, Loader2, MoreHorizontal, Plus, RefreshCcw, Shirt, Sparkles, Upload, X } from 'lucide-vue-next'
+import { Check, ChevronRight, ImagePlus, Loader2, MoreHorizontal, Plus, RefreshCcw, Shirt, Sparkles, Upload, X } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import { onClickOutside } from '@vueuse/core'
 
@@ -26,8 +26,10 @@ import { readiness, type ReadinessKey } from '~/lib/characters/readiness'
 import { compositeLayout, COMPOSITE_W, COMPOSITE_H } from '~/lib/characters/sheetComposite'
 import { viewRefUrl } from '~/lib/shotdirector/refUpload'
 import { canLock, stressOutcome } from '~/lib/characters/stress'
+import { imageUrlToFile } from '~/lib/canvas/imageUrlToFile'
 import type { CharacterRecord, CharacterState } from '#shared/characters/types'
 import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
+import FillImagePicker from '~/components/vue-canvas/compositor/FillImagePicker.vue'
 
 const props = defineProps<{ slug: string | null; createMode?: boolean }>()
 const emit = defineEmits<{ close: [] }>()
@@ -112,7 +114,7 @@ const createError = ref<string | null>(null)
 async function onCreatePhoto(e: Event) {
   const input = e.target as HTMLInputElement
   const name = createName.value.trim()
-  if (!name) { createError.value = 'Name her first'; input.value = ''; return }
+  if (!name) { createError.value = 'Name them first'; input.value = ''; return }
   if (!input.files?.length) return
   creating.value = true
   createError.value = null
@@ -146,7 +148,7 @@ function isExpanding(c: CharacterRecord, s: CharacterState): boolean {
   return expanding.value.has(`${c.slug}:${s.id}`)
 }
 
-// ── + New look: two inline creators (Describe / Dress her) ────────────────
+// ── + New look: two inline creators (Describe / Dress them) ────────────────
 const newLookOpen = ref(false)
 const newLookTab = ref<'describe' | 'dress'>('describe')
 
@@ -193,6 +195,20 @@ async function onDressCreateFile(e: Event) {
   try { dressCreateGarment.value = await fileToDataUrl(file) }
   catch { dressCreateError.value = 'Couldn\'t read that image' }
   ;(e.target as HTMLInputElement).value = ''
+}
+
+// "Pick from canvas" — mirrors the Frame "Add image" kit (FillImagePicker +
+// imageUrlToFile): convert the picked canvas image to a File, then feed it
+// through the same fileToDataUrl path the upload input uses.
+const dressPickerOpen = ref(false)
+async function onDressPickFromCanvas(src: string) {
+  dressPickerOpen.value = false
+  try {
+    const file = await imageUrlToFile(src, 'garment.png')
+    dressCreateGarment.value = await fileToDataUrl(file)
+  } catch {
+    dressCreateError.value = 'Couldn\'t use that image'
+  }
 }
 
 const canDressCreate = computed(() => {
@@ -383,12 +399,12 @@ async function onDrawerFiles(e: Event) {
           <div class="flex flex-1 flex-col items-center justify-center gap-4 p-8">
             <input
               v-model="createName"
-              placeholder="Her name"
+              placeholder="Character name"
               class="w-72 rounded border border-white/10 bg-white/[0.04] px-3 py-2 text-center text-[13px] text-white/90 placeholder-white/30 outline-none focus:border-white/25"
             >
             <label class="flex w-72 cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-white/15 py-10 text-[12px] text-white/40 hover:border-white/30 hover:text-white/65">
               <Upload class="size-5" />
-              {{ creating ? 'Creating…' : 'Drop or choose her first photo' }}
+              {{ creating ? 'Creating…' : 'Drop or choose their first photo' }}
               <input type="file" accept="image/*" class="hidden" :disabled="creating" @change="onCreatePhoto">
             </label>
             <p v-if="createError" class="text-[11px] text-red-400/80">{{ createError }}</p>
@@ -448,7 +464,7 @@ async function onDrawerFiles(e: Event) {
                 <ChevronRight class="ml-auto size-3 shrink-0 transition-transform" :class="{ 'rotate-90': newLookOpen }" />
               </button>
 
-              <!-- + New look: Describe / Dress her -->
+              <!-- + New look: Describe / Dress them -->
               <div v-if="newLookOpen" class="rounded-md border border-white/10 bg-black/20 p-2 space-y-1.5">
                 <div class="flex gap-1 rounded bg-black/30 p-0.5">
                   <button
@@ -462,7 +478,7 @@ async function onDrawerFiles(e: Event) {
                     class="flex-1 rounded py-1 text-[10px] transition-colors cursor-pointer"
                     :class="newLookTab === 'dress' ? 'bg-white/12 text-white/90' : 'text-white/45 hover:text-white/70'"
                     @click="newLookTab = 'dress'"
-                  >Dress her</button>
+                  >Dress them</button>
                 </div>
 
                 <template v-if="newLookTab === 'describe'">
@@ -473,7 +489,7 @@ async function onDrawerFiles(e: Event) {
                   >
                   <input
                     v-model="newVariantDescriptor[character.slug]"
-                    placeholder="What she wears in this look"
+                    placeholder="What they wear in this look — it travels into every shot."
                     class="w-full bg-white/[0.04] border border-white/10 rounded px-2 py-1 text-[10.5px] text-white/85 placeholder-white/30 outline-none focus:border-white/25"
                   >
                   <div class="flex justify-end gap-1.5 pt-0.5">
@@ -503,10 +519,27 @@ async function onDrawerFiles(e: Event) {
                         <img :src="dressCreateGarment" class="h-9 w-9 rounded object-cover border border-white/10">
                         <button type="button" class="text-[9.5px] text-white/40 hover:text-white/70 cursor-pointer" @click="dressCreateGarment = null">Remove</button>
                       </div>
-                      <label v-else class="flex cursor-pointer items-center justify-center gap-1 rounded border border-dashed border-white/15 py-2 text-[10px] text-white/45 hover:border-white/30">
-                        <Upload class="size-3" /> Upload a photo
-                        <input type="file" accept="image/*" class="hidden" @change="onDressCreateFile">
-                      </label>
+                      <div v-else class="flex items-center gap-1.5">
+                        <label class="flex flex-1 cursor-pointer items-center justify-center gap-1 rounded border border-dashed border-white/15 py-2 text-[10px] text-white/45 hover:border-white/30">
+                          <Upload class="size-3" /> Upload a photo
+                          <input type="file" accept="image/*" class="hidden" @change="onDressCreateFile">
+                        </label>
+                        <StudioButton variant="secondary" @click="dressPickerOpen = true">
+                          <span class="inline-flex items-center gap-1"><ImagePlus class="size-3" /> Pick from canvas</span>
+                        </StudioButton>
+                      </div>
+                      <Teleport to="body">
+                        <div
+                          v-if="dressPickerOpen"
+                          class="fixed inset-0 z-[200] flex items-center justify-center bg-black/40"
+                          @click.self="dressPickerOpen = false"
+                        >
+                          <div class="w-72 rounded-lg border border-white/10 bg-[#1a1a1a] p-3 shadow-2xl">
+                            <div class="mb-2 text-[12px] font-medium text-white/80">Pick from canvas</div>
+                            <FillImagePicker @pick="onDressPickFromCanvas" />
+                          </div>
+                        </div>
+                      </Teleport>
                     </template>
                     <input
                       v-model="dressCreateText"
@@ -568,7 +601,7 @@ async function onDrawerFiles(e: Event) {
                       <template v-else>
                         <p class="text-[12px] text-white/40">Build a sheet to start working with this look.</p>
                         <StudioButton variant="primary" :disabled="!state" @click="state && generateSheet(character, state)">
-                          Build her sheet · {{ sheetCost(character) }}
+                          Build the sheet · {{ sheetCost(character) }}
                         </StudioButton>
                       </template>
                     </div>
@@ -580,7 +613,7 @@ async function onDrawerFiles(e: Event) {
                   v-if="state"
                   :key="`${state.id}:${state.updatedAt}`"
                   :value="state.descriptor"
-                  placeholder="What she wears in this look — it travels into every shot."
+                  placeholder="What they wear in this look — it travels into every shot."
                   class="w-full rounded border border-white/10 bg-transparent px-2.5 py-1.5 text-[11.5px] italic text-white/70 placeholder-white/30 outline-none focus:border-white/25"
                   @blur="saveDescriptor(character, state, $event)"
                   @keydown.enter="($event.target as HTMLInputElement).blur()"
@@ -597,7 +630,7 @@ async function onDrawerFiles(e: Event) {
                   <label class="flex size-8 shrink-0 cursor-pointer items-center justify-center rounded border border-dashed border-white/15 text-[13px] text-white/40 hover:border-white/30">
                     +<input type="file" accept="image/*" multiple class="hidden" @change="onDrawerFiles">
                   </label>
-                  <span class="ml-1 text-[10px] text-white/35">her photos</span>
+                  <span class="ml-1 text-[10px] text-white/35">their photos</span>
                 </div>
               </template>
 
@@ -627,10 +660,10 @@ async function onDrawerFiles(e: Event) {
                       <div v-else class="flex h-full items-center justify-center text-[11px] text-white/15">·</div>
 
                       <div v-if="tile.dataUrl" class="absolute inset-x-0 bottom-0 flex justify-center gap-1 bg-black/55 py-0.5">
-                        <button type="button" class="rounded p-0.5 cursor-pointer" :class="tile.pass === true ? 'bg-action text-white' : 'text-white/50 hover:text-white/85'" title="Yes, that's her" @click="markTile(character, state, tile.idx, true)">
+                        <button type="button" class="rounded p-0.5 cursor-pointer" :class="tile.pass === true ? 'bg-action text-white' : 'text-white/50 hover:text-white/85'" title="Yes, that's them" @click="markTile(character, state, tile.idx, true)">
                           <Check class="size-3.5" />
                         </button>
-                        <button type="button" class="rounded p-0.5 cursor-pointer" :class="tile.pass === false ? 'bg-red-500/85 text-white' : 'text-white/50 hover:text-white/85'" title="Not her" @click="markTile(character, state, tile.idx, false)">
+                        <button type="button" class="rounded p-0.5 cursor-pointer" :class="tile.pass === false ? 'bg-red-500/85 text-white' : 'text-white/50 hover:text-white/85'" title="Not them" @click="markTile(character, state, tile.idx, false)">
                           <X class="size-3.5" />
                         </button>
                       </div>
@@ -638,10 +671,10 @@ async function onDrawerFiles(e: Event) {
                   </div>
 
                   <p class="text-[11px] text-white/45">
-                    <b class="text-white/85">{{ stressPassCount(character, state) }} of {{ stressTilesFor(character, state)!.length }} held up so far</b> — mark each: is this her?
+                    <b class="text-white/85">{{ stressPassCount(character, state) }} of {{ stressTilesFor(character, state)!.length }} held up so far</b> — mark each: is this {{ character.name }}?
                   </p>
                   <p v-if="showFailureHint" class="text-[10.5px] leading-relaxed text-amber-400/80">
-                    Fix the description, not the model — edit what she wears, redo a panel, then test again.
+                    Fix the description, not the model — edit what they wear, redo a panel, then test again.
                   </p>
                 </template>
               </template>
@@ -676,7 +709,7 @@ async function onDrawerFiles(e: Event) {
                 @click="state && generateSheet(character, state)"
               >
                 <Loader2 v-if="state && isExpanding(character, state)" class="size-3 animate-spin" />
-                {{ state?.sheetImage ? 'Rebuild sheet' : 'Build her sheet' }} · {{ sheetCost(character) }}
+                {{ state?.sheetImage ? 'Rebuild sheet' : 'Build the sheet' }} · {{ sheetCost(character) }}
               </StudioButton>
             </template>
             <template v-else>
