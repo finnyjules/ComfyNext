@@ -42,7 +42,11 @@ export default defineNuxtConfig({
   },
 
   modules: [
-    '@clerk/nuxt',
+    // Clerk loads ONLY in hosted mode (deployMode contract: no Clerk keys in
+    // env ⇒ local mode, exactly the pre-accounts behavior). Loading it
+    // without keys either 500s every request (keyless disabled) or silently
+    // creates a throwaway "keyless" Clerk app with an onboarding popup.
+    ...(process.env.NUXT_CLERK_SECRET_KEY ? ['@clerk/nuxt'] : []),
     '@nuxtjs/color-mode',
     '@nuxt/fonts',
     // Inline module: proxy WebSocket upgrades on /ws to ComfyUI (dev only).
