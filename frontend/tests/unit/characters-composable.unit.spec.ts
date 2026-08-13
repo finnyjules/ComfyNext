@@ -3,19 +3,21 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 const REVA = {
   name: 'Reva',
   slug: 'reva',
-  variants: [
-    { id: 'default', label: 'Default', descriptor: '', refImages: ['r1.png', 'r2.png'], coverIndex: 1 },
-    { id: 'punk', label: 'Punk', descriptor: 'shaved head, leather jacket', refImages: ['p1.png'], coverIndex: 0 },
+  states: [
+    { id: 'default', label: 'Default', descriptor: '', refImages: ['r1.png', 'r2.png'], coverIndex: 1, panels: [], sheetImage: null, status: 'draft', stressResult: null, updatedAt: '' },
+    { id: 'punk', label: 'Punk', descriptor: 'shaved head, leather jacket', refImages: ['p1.png'], coverIndex: 0, panels: [], sheetImage: null, status: 'draft', stressResult: null, updatedAt: '' },
   ],
   loraName: null,
   trigger: null,
   notes: '',
+  createdAt: '',
+  updatedAt: '',
 }
 
 describe('useCharacters', () => {
   afterEach(() => { vi.unstubAllGlobals(); vi.resetModules() })
 
-  it('fetches once, resolves refs to /view URLs, and computes coverUrl from the default variant', async () => {
+  it('fetches once, resolves refs to /view URLs, and computes coverUrl from the default state', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ characters: [REVA] }) })
     vi.stubGlobal('fetch', fetchMock)
     const { useCharacters } = await import('~/composables/useCharacters')
@@ -60,26 +62,47 @@ describe('useCharacters', () => {
     expect(error.value).toContain('500')
   })
 
-  it('resolveVariantRefs picks the named variant and falls back to default for unknown ids', async () => {
+  it('resolveStateRefs picks the named state and falls back to default for unknown ids', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ characters: [REVA] }) })
     vi.stubGlobal('fetch', fetchMock)
     const { useCharacters } = await import('~/composables/useCharacters')
-    const { refresh, resolveVariantRefs } = useCharacters()
+    const { refresh, resolveStateRefs } = useCharacters()
     await refresh()
 
-    expect(resolveVariantRefs([{ slug: 'reva', variantId: 'punk' }])).toEqual({
+    expect(resolveStateRefs([{ slug: 'reva', stateId: 'punk' }])).toEqual({
       reva: ['/view?filename=p1.png&type=input'],
     })
-    // Unknown variant id falls back to the default variant (cover-first: r2 leads).
-    expect(resolveVariantRefs([{ slug: 'reva', variantId: 'nonexistent' }])).toEqual({
+    // Unknown state id falls back to the default state (cover-first: r2 leads).
+    expect(resolveStateRefs([{ slug: 'reva', stateId: 'nonexistent' }])).toEqual({
       reva: ['/view?filename=r2.png&type=input', '/view?filename=r1.png&type=input'],
     })
-    // No variantId → default variant (cover-first).
-    expect(resolveVariantRefs([{ slug: 'reva' }])).toEqual({
+    // null stateId → default state (cover-first).
+    expect(resolveStateRefs([{ slug: 'reva', stateId: null }])).toEqual({
       reva: ['/view?filename=r2.png&type=input', '/view?filename=r1.png&type=input'],
     })
     // Unknown slug → empty array.
-    expect(resolveVariantRefs([{ slug: 'ghost' }])).toEqual({ ghost: [] })
+    expect(resolveStateRefs([{ slug: 'ghost', stateId: null }])).toEqual({ ghost: [] })
+  })
+
+  it('resolveStateRefs is identity-first: sheet leads when set, else cover-first', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ characters: [] }) }))
+    const { useCharacters } = await import('~/composables/useCharacters')
+    const { characters, resolveStateRefs } = useCharacters()
+    // Seed characters ref directly — no need to round-trip through refresh().
+    characters.value = [{
+      ...REVA,
+      states: [
+        { ...REVA.states[0]!, sheetImage: 'sheet.png' },
+        REVA.states[1]!,
+      ],
+    }]
+    expect(resolveStateRefs([{ slug: 'reva', stateId: null }])).toEqual({
+      reva: [
+        '/view?filename=sheet.png&type=input',
+        '/view?filename=r2.png&type=input',
+        '/view?filename=r1.png&type=input',
+      ],
+    })
   })
 
   it('coverFirstRefs orders the cover first and tolerates edge coverIndexes', async () => {
@@ -92,7 +115,7 @@ describe('useCharacters', () => {
     expect(coverFirstRefs({ refImages: ['a', 'b', 'c'], coverIndex: 9 })).toEqual(['c', 'a', 'b']) // clamped high
   })
 
-  it('coverUrl(c, variantId) returns the named variant cover, falling back to default', async () => {
+  it('coverUrl(c, stateId) returns the named state cover, falling back to default', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ characters: [REVA] }) })
     vi.stubGlobal('fetch', fetchMock)
     const { useCharacters } = await import('~/composables/useCharacters')
@@ -102,6 +125,51 @@ describe('useCharacters', () => {
     expect(coverUrl(c, 'punk')).toBe('/view?filename=p1.png&type=input')
     expect(coverUrl(c, 'nonexistent')).toBe('/view?filename=r2.png&type=input')
     expect(coverUrl(c)).toBe('/view?filename=r2.png&type=input')
+  })
+
+  it('portraitUrl prefers the portrait panel, falling back to the state cover', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ characters: [] }) }))
+    const { useCharacters } = await import('~/composables/useCharacters')
+    const { characters, portraitUrl } = useCharacters()
+    characters.value = [{
+      ...REVA,
+      states: [
+        { ...REVA.states[0]!, panels: [{ slot: 'portrait', filename: 'portrait.png' }] },
+        REVA.states[1]!,
+      ],
+    }]
+    const c = characters.value[0]!
+    expect(portraitUrl(c)).toBe('/view?filename=portrait.png&type=input')
+    // No portrait panel on 'punk' → falls back to its cover.
+    expect(portraitUrl(c, 'punk')).toBe('/view?filename=p1.png&type=input')
+  })
+
+  it('stateDescriptors maps slug → descriptor, dropping empty/whitespace ones', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ characters: [] }) }))
+    const { useCharacters } = await import('~/composables/useCharacters')
+    const { characters, stateDescriptors } = useCharacters()
+    characters.value = [
+      REVA,
+      { ...REVA, slug: 'blank', states: [{ ...REVA.states[0]!, descriptor: '   ' }] },
+    ]
+    expect(stateDescriptors([
+      { slug: 'reva', stateId: 'punk' },
+      { slug: 'blank', stateId: null },
+      { slug: 'ghost', stateId: null },
+    ])).toEqual({ reva: 'shaved head, leather jacket' })
+  })
+
+  it('patchState returns "stale" on a 409 response and still refreshes', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ status: 409, ok: false })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ characters: [REVA] }) })
+    vi.stubGlobal('fetch', fetchMock)
+    const { useCharacters } = await import('~/composables/useCharacters')
+    const { patchState, characters } = useCharacters()
+    const result = await patchState('reva', { stateId: 'default', patch: { descriptor: 'x' } })
+    expect(result).toBe('stale')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(characters.value).toHaveLength(1)
   })
 
   it('characterStatus derives draft/training/ready from lora link + job queue', async () => {
@@ -171,24 +239,24 @@ describe('useTrainingJobs', () => {
   })
 })
 
-describe('missingVariantIssues', () => {
+describe('missingStateIssues', () => {
   const catalog = [
-    { slug: 'vera', variants: [{ id: 'default' }, { id: 'v-abc' }] },
+    { slug: 'vera', states: [{ id: 'default' }, { id: 'v-abc' }] },
   ]
 
-  it('warns when a picked variant no longer exists on a known character', async () => {
-    const { missingVariantIssues } = await import('~/composables/useCharacters')
-    const issues = missingVariantIssues([{ slug: 'vera', name: 'Vera', variantId: 'v-deleted' }], catalog)
+  it('warns when a picked state no longer exists on a known character', async () => {
+    const { missingStateIssues } = await import('~/composables/useCharacters')
+    const issues = missingStateIssues([{ slug: 'vera', name: 'Vera', stateId: 'v-deleted' }], catalog)
     expect(issues).toHaveLength(1)
-    expect(issues[0]).toMatchObject({ level: 'warning', code: 'cast-variant-missing' })
+    expect(issues[0]).toMatchObject({ level: 'warning', code: 'cast-state-missing' })
     expect(issues[0]!.message).toContain('Vera')
   })
 
-  it('stays silent for existing variants, default picks, and unknown characters', async () => {
-    const { missingVariantIssues } = await import('~/composables/useCharacters')
-    expect(missingVariantIssues([{ slug: 'vera', name: 'Vera', variantId: 'v-abc' }], catalog)).toEqual([])
-    expect(missingVariantIssues([{ slug: 'vera', name: 'Vera' }], catalog)).toEqual([])
+  it('stays silent for existing states, default picks, and unknown characters', async () => {
+    const { missingStateIssues } = await import('~/composables/useCharacters')
+    expect(missingStateIssues([{ slug: 'vera', name: 'Vera', stateId: 'v-abc' }], catalog)).toEqual([])
+    expect(missingStateIssues([{ slug: 'vera', name: 'Vera', stateId: null }], catalog)).toEqual([])
     // unknown slug: zero-refs error covers it downstream — no duplicate warning
-    expect(missingVariantIssues([{ slug: 'ghost', name: 'Ghost', variantId: 'v-x' }], catalog)).toEqual([])
+    expect(missingStateIssues([{ slug: 'ghost', name: 'Ghost', stateId: 'v-x' }], catalog)).toEqual([])
   })
 })
