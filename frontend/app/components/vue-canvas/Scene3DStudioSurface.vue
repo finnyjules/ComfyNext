@@ -19,7 +19,7 @@ import {
   parseDoc, serializeDoc, createPrimitive, createGlbObject, createLight, createGroup,
   LIGHTING_PRESETS, MATERIAL_TYPES, MATERIAL_DEFAULTS, LIGHT_KINDS, LIGHT_DEFAULTS, lightIntensityMax, gradientAngles, gradientStopsOf, opalStopsOf,
   DEFAULT_FONT_URL, sceneHasShaderFill, sceneHasOpalFlow,
-  type SceneDoc, type SceneObject, type PrimitiveObject, type PrimitiveKind, type MaterialType, type GradientStop, type LightKind, type LightObject, type ReliefSpec, type SceneMaterial, type Vec3,
+  type SceneDoc, type SceneObject, type PrimitiveObject, type PrimitiveKind, type MaterialType, type GradientStop, type LightKind, type LightObject, type ReliefSpec, type SceneMaterial, type Vec3, type EnvironmentKind,
 } from '~/lib/scene3d/config'
 import { MATCAP_IDS, matcapThumb, onTextureError } from '~/lib/scene3d/materials'
 import { toHeightPixels, heightGradient, RELIEF_FLAT_THRESHOLD } from '~/lib/scene3d/relief'
@@ -426,6 +426,16 @@ function enumProxy<T extends string>(get: () => T, set: (v: T) => void) {
 }
 const lightingPresetProxy = enumProxy(() => doc.lighting.preset, (v) => { doc.lighting.preset = v })
 
+// Environment scene (procedural backdrop the lights render into) — StudioSegmented
+// binds raw strings, so map the doc's EnvironmentKind to short display labels and back.
+const ENV_OPTIONS = ['room', 'dark', 'softbox', 'gels'] as const
+const ENV_BY_LABEL: Record<string, EnvironmentKind> = { room: 'room', dark: 'darkStrips', softbox: 'softbox', gels: 'colorGels' }
+const ENV_LABEL: Record<EnvironmentKind, string> = { room: 'room', darkStrips: 'dark', softbox: 'softbox', colorGels: 'gels' }
+const environmentProxy = computed<string>({
+  get: () => ENV_LABEL[doc.lighting.environment],
+  set: (v) => { doc.lighting.environment = ENV_BY_LABEL[v] ?? 'room' },
+})
+
 const OUTPUT_OPTIONS = ['1024×1024', '1344×768', '768×1344']
 const outputProxy = computed<string>({
   get: () => `${doc.output.width}×${doc.output.height}`,
@@ -482,6 +492,24 @@ function applyMaterial(mutate: (m: SceneMaterial) => void) {
     if (o.kind === 'glb' && o.materialOverride !== true) continue
     mutate(o.material)
   }
+}
+
+/** One-click prism look: tuned glass + the dark-strips environment + black bg.
+ *  Apply-values action, not a mode — every slider stays live afterwards. */
+function applyPrismPreset(): void {
+  applyMaterial((m) => {
+    m.type = 'glass'
+    m.color = '#ffffff'
+    m.roughness = 0
+    m.metalness = 0
+    m.transmission = 1
+    m.ior = 1.55
+    m.thickness = 1.5
+    m.dispersion = 3.5
+    m.attenuationDistance = 0
+  })
+  doc.lighting.environment = 'darkStrips'
+  doc.background = '#000000'
 }
 
 // Selection field proxies — nullable-safe so vue-tsc stays happy without template narrowing.
@@ -3684,6 +3712,10 @@ async function onClose() {
           <details class="group" :open="transparencyOpen" @toggle="transparencyOpen = ($event.target as HTMLDetailsElement).open">
             <summary class="flex cursor-pointer select-none items-center gap-1.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 list-none hover:text-white/60 [&::-webkit-details-marker]:hidden"><span class="inline-block text-white/30 transition-transform group-open:rotate-90">›</span>Transparency</summary>
             <div class="space-y-3 pt-1">
+              <div class="flex items-center justify-between">
+                <span class="text-[11px] text-white/55">Prism look</span>
+                <StudioButton variant="secondary" @click="applyPrismPreset">Prism</StudioButton>
+              </div>
               <StudioSlider v-model="matOpacity" label="Opacity" hint="How see-through the whole surface is" :min="0" :max="1" :step="0.01" />
               <StudioSlider v-model="matTransmission" label="Transmission" hint="Lets light pass through, like glass" :min="0" :max="1" :step="0.01" />
               <StudioSlider v-model="matIor" label="IOR" hint="How strongly light bends passing through" :min="1" :max="2.33" :step="0.01" />
@@ -4035,6 +4067,10 @@ async function onClose() {
         <div>
           <label class="mb-1 block text-[11px] text-white/55">Preset</label>
           <StudioSegmented v-model="lightingPresetProxy" :options="LIGHTING_PRESETS" />
+        </div>
+        <div>
+          <label class="mb-1 block text-[11px] text-white/55">Environment</label>
+          <StudioSegmented v-model="environmentProxy" :options="[...ENV_OPTIONS]" />
         </div>
         <StudioSlider v-model="doc.lighting.sunAzimuth" label="Sun azimuth" hint="Compass direction the sunlight comes from" :min="0" :max="360" :step="1" />
         <StudioSlider v-model="doc.lighting.sunElevation" label="Sun elevation" hint="How high the sun sits above the horizon" :min="5" :max="90" :step="1" />
