@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { CHARACTER_SHOT_SCENES, CHARACTER_SHEET_CANONICAL, type CharacterShotScene, pickScenes, aspectForFraming, syntheticCount } from '~/data/character-shot-scenes'
+import { CHARACTER_SHOT_SCENES, HIGGSFIELD_PANELS, type CharacterShotScene, pickScenes, aspectForFraming, syntheticCount } from '~/data/character-shot-scenes'
 
 const byTier = (t: CharacterShotScene['framing']) =>
   CHARACTER_SHOT_SCENES.filter((s) => s.framing === t)
@@ -21,10 +21,35 @@ describe('CHARACTER_SHOT_SCENES', () => {
   })
 })
 
-describe('CHARACTER_SHEET_CANONICAL', () => {
-  it('every canonical sheet prompt carries a solo constraint (guards against Flux subject duplication)', () => {
-    for (const s of CHARACTER_SHEET_CANONICAL) {
-      expect(s.prompt).toMatch(/\bsolo\b/)
+describe('HIGGSFIELD_PANELS', () => {
+  it('has exactly the 5 slots in canonical order: portrait, body-front, body-back, face-neutral, face-smile', () => {
+    expect(HIGGSFIELD_PANELS.map((p) => p.slot)).toEqual([
+      'portrait', 'body-front', 'body-back', 'face-neutral', 'face-smile',
+    ])
+  })
+
+  it('the portrait-gen prompt carries a solo constraint (guards against Flux subject duplication)', () => {
+    const portrait = HIGGSFIELD_PANELS.find((p) => p.kind === 'portrait-gen')!
+    expect(portrait.prompt).toMatch(/solo, one person only/)
+  })
+
+  it('both body panels remove the head so any face can be composited on top', () => {
+    const bodyPanels = HIGGSFIELD_PANELS.filter((p) => p.slot === 'body-front' || p.slot === 'body-back')
+    expect(bodyPanels).toHaveLength(2)
+    for (const p of bodyPanels) {
+      expect(p.prompt).toMatch(/head removed/)
+      expect(p.prompt).toMatch(/no head/)
+    }
+  })
+
+  it('face-smile shows teeth', () => {
+    const smile = HIGGSFIELD_PANELS.find((p) => p.slot === 'face-smile')!
+    expect(smile.prompt).toMatch(/teeth/)
+  })
+
+  it('every derived-edit prompt anchors identity back to the portrait with "the same"', () => {
+    for (const p of HIGGSFIELD_PANELS.filter((p) => p.kind === 'derived-edit')) {
+      expect(p.prompt).toMatch(/the same/)
     }
   })
 })

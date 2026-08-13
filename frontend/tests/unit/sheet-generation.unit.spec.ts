@@ -1,34 +1,126 @@
-import { describe, expect, it } from 'vitest'
-import { buildScenePrompt } from '~/composables/useSheetGeneration'
-import type { CharacterShotScene } from '~/data/character-shot-scenes'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { buildDerivedPrompt, buildPortraitPrompt, useSheetGeneration, type SheetSource } from '~/composables/useSheetGeneration'
+import { HIGGSFIELD_PANELS } from '~/data/character-shot-scenes'
 
-const scene: CharacterShotScene = {
-  prompt: 'close-up portrait, facing camera directly, neutral expression',
-  framing: 'closeup',
-}
+const portraitSpec = HIGGSFIELD_PANELS.find((p) => p.slot === 'portrait')!
+const bodyFrontSpec = HIGGSFIELD_PANELS.find((p) => p.slot === 'body-front')!
 
-describe('buildScenePrompt', () => {
-  it('joins trigger + descriptor + scene prompt, comma-separated', () => {
-    expect(buildScenePrompt(scene, { trigger: 'ohwx woman', descriptor: 'shaved head, leather jacket' }))
-      .toBe('ohwx woman, shaved head, leather jacket, close-up portrait, facing camera directly, neutral expression')
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
+describe('buildPortraitPrompt', () => {
+  it('joins trigger + descriptor + panel prompt, comma-separated', () => {
+    expect(buildPortraitPrompt(portraitSpec, { trigger: 'ohwx woman', descriptor: 'shaved head, leather jacket' }))
+      .toBe(`ohwx woman, shaved head, leather jacket, ${portraitSpec.prompt}`)
   })
 
   it('descriptor only (no trigger) — photo mode with a variant descriptor', () => {
-    expect(buildScenePrompt(scene, { descriptor: 'red dress' }))
-      .toBe('red dress, close-up portrait, facing camera directly, neutral expression')
+    expect(buildPortraitPrompt(portraitSpec, { descriptor: 'red dress' }))
+      .toBe(`red dress, ${portraitSpec.prompt}`)
   })
 
   it('trigger only (no descriptor) — LoRA mode, default variant', () => {
-    expect(buildScenePrompt(scene, { trigger: 'ohwx woman' }))
-      .toBe('ohwx woman, close-up portrait, facing camera directly, neutral expression')
+    expect(buildPortraitPrompt(portraitSpec, { trigger: 'ohwx woman' }))
+      .toBe(`ohwx woman, ${portraitSpec.prompt}`)
   })
 
-  it('scene only — no trigger, no descriptor', () => {
-    expect(buildScenePrompt(scene, {})).toBe('close-up portrait, facing camera directly, neutral expression')
+  it('panel prompt only — no trigger, no descriptor', () => {
+    expect(buildPortraitPrompt(portraitSpec, {})).toBe(portraitSpec.prompt)
   })
 
   it('ignores a null trigger (loraGen source shape uses trigger: string | null)', () => {
-    expect(buildScenePrompt(scene, { trigger: null, descriptor: undefined }))
-      .toBe('close-up portrait, facing camera directly, neutral expression')
+    expect(buildPortraitPrompt(portraitSpec, { trigger: null, descriptor: undefined })).toBe(portraitSpec.prompt)
+  })
+})
+
+describe('buildDerivedPrompt', () => {
+  it('appends the descriptor as a wardrobe clause when present', () => {
+    expect(buildDerivedPrompt(bodyFrontSpec, 'a red leather jacket'))
+      .toBe(`${bodyFrontSpec.prompt} The person wears a red leather jacket.`)
+  })
+
+  it('returns the bare panel prompt when no descriptor', () => {
+    expect(buildDerivedPrompt(bodyFrontSpec)).toBe(bodyFrontSpec.prompt)
+  })
+})
+
+describe('useSheetGeneration — expandAll (money guard)', () => {
+  const photoSource: SheetSource = { mode: 'photo', referenceImageDataUrl: 'data:image/png;base64,REF' }
+
+  it('portrait failure aborts before any derived call', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === '/api/cloud-train/character-shot') {
+        return { ok: false, status: 500, json: async () => ({}) } as Response
+      }
+      throw new Error(`unexpected fetch: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const gen = useSheetGeneration()
+    await gen.expandAll(photoSource)
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(gen.panels.value[0]!.error).toBe(true)
+    // No derived call ran for any of the 4 remaining panels.
+    expect(gen.panels.value.slice(1).every((p) => p.dataUrl === null && !p.loading && !p.error)).toBe(true)
+  })
+
+  it('portrait success + body-front failure stops before body-back', async () => {
+    let nanoCalls = 0
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === '/api/cloud-train/character-shot') {
+        return { ok: true, status: 200, json: async () => ({ imageDataUrl: 'data:image/png;base64,PORTRAIT' }) } as Response
+      }
+      if (url === '/api/inpaint/nano-gen') {
+        nanoCalls++
+        return { ok: false, status: 500, json: async () => ({}) } as Response
+      }
+      throw new Error(`unexpected fetch: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const gen = useSheetGeneration()
+    await gen.expandAll(photoSource)
+
+    expect(nanoCalls).toBe(1) // only body-front was attempted
+    expect(gen.panels.value[0]!.dataUrl).toBe('data:image/png;base64,PORTRAIT')
+    expect(gen.panels.value[1]!.error).toBe(true) // body-front
+    expect(gen.panels.value[2]!.dataUrl).toBeNull() // body-back never ran
+    expect(gen.panels.value[2]!.loading).toBe(false)
+  })
+})
+
+describe('useSheetGeneration — rerollPanel', () => {
+  const photoSource: SheetSource = { mode: 'photo', referenceImageDataUrl: 'data:image/png;base64,REF' }
+
+  it('derived reroll with a present portrait issues exactly one nano-gen call carrying the portrait dataUrl in images', async () => {
+    const fetchMock = vi.fn(async (url: string, init: any) => {
+      if (url === '/api/inpaint/nano-gen') {
+        const body = JSON.parse(init.body)
+        expect(body.images).toEqual(['data:image/png;base64,PORTRAIT'])
+        return { ok: true, status: 200, json: async () => ({ images: ['data:image/png;base64,SMILE'] }) } as Response
+      }
+      throw new Error(`unexpected fetch: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const gen = useSheetGeneration()
+    gen.panels.value[0]!.dataUrl = 'data:image/png;base64,PORTRAIT' // portrait already generated
+
+    await gen.rerollPanel('face-smile', photoSource)
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const face = gen.panels.value.find((p) => p.spec.slot === 'face-smile')!
+    expect(face.dataUrl).toBe('data:image/png;base64,SMILE')
+  })
+
+  it('derived reroll with no portrait yet errors without calling fetch', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const gen = useSheetGeneration()
+    await expect(gen.rerollPanel('face-smile', photoSource)).rejects.toThrow()
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 })

@@ -1,3 +1,5 @@
+import type { PanelSlot } from '#shared/characters/types'
+
 /**
  * Scene / pose / lighting prompts that drive VARIATION for a character training
  * set, used with ideogram-character. The reference image preserves the identity,
@@ -110,18 +112,39 @@ export function syntheticCount(datasetCount: number, realIncluded: number): numb
   return Math.max(0, datasetCount - realIncluded)
 }
 
+export interface SheetPanelSpec {
+  slot: PanelSlot
+  kind: 'portrait-gen' | 'derived-edit'
+  prompt: string
+  aspect: '1:1' | '3:4'
+}
+
 /**
- * The Character Sheet Builder's fixed 4-shot canonical set — not a training
+ * The Character Sheet Builder's Higgsfield 5-panel method — not a training
  * dataset (that's CHARACTER_SHOT_SCENES above), but a small, consistent
- * reference sheet: front, three-quarter, profile, full-body. Always exactly
- * these 4, in this order, so "Expand sheet" is a flat, predictable ~$0.32.
+ * reference sheet built in two stages:
+ *  1. `portrait-gen` — one large ¾ portrait, generated fresh. This is the
+ *     identity source for everything else.
+ *  2. `derived-edit` — two headless full-body panels (front/back) and two
+ *     face close-ups (neutral/smile), each produced by editing the portrait
+ *     via nano-banana rather than generating independently, so identity
+ *     can't drift shot to shot. "The same" anchors every derived prompt back
+ *     to the portrait's subject.
+ * Always exactly these 5, in this order, so "Expand sheet" is a flat,
+ * predictable cost.
  */
-// Every prompt carries "solo, one person only": Flux character LoRAs are prone
-// to duplicating the subject in medium/full framings without an explicit
-// single-subject constraint (guarded by unit test).
-export const CHARACTER_SHEET_CANONICAL: CharacterShotScene[] = [
-  { prompt: 'solo, one person only, close-up portrait, facing camera directly, neutral expression, soft even light, plain background', framing: 'closeup' },
-  { prompt: 'solo, one person only, three-quarter view medium shot, natural relaxed pose, soft daylight, plain background', framing: 'medium' },
-  { prompt: 'solo, one person only, profile view close-up, looking to the side, soft even light, plain background', framing: 'closeup' },
-  { prompt: 'solo, one person only, full-body shot, standing naturally, arms relaxed, soft daylight, plain seamless background', framing: 'full' },
+// The portrait prompt carries "solo, one person only": Flux character LoRAs
+// are prone to duplicating the subject in medium/full framings without an
+// explicit single-subject constraint (guarded by unit test).
+export const HIGGSFIELD_PANELS: SheetPanelSpec[] = [
+  { slot: 'portrait', kind: 'portrait-gen', aspect: '3:4',
+    prompt: 'solo, one person only, large three-quarter view portrait, head and shoulders filling the frame, neutral expression, mouth closed, sharp facial detail, soft even studio light, plain neutral grey studio background' },
+  { slot: 'body-front', kind: 'derived-edit', aspect: '3:4',
+    prompt: 'Show the same person as a full-body figure from the front, standing naturally with arms relaxed, with the head removed — the figure ends cleanly at the neckline, no head or face visible. Keep the exact same wardrobe and body type. Plain neutral grey studio background, even soft light, photorealistic.' },
+  { slot: 'body-back', kind: 'derived-edit', aspect: '3:4',
+    prompt: 'Show the same person as a full-body figure from behind, standing naturally with arms relaxed, with the head removed — the figure ends cleanly at the neckline, no head visible. Keep the exact same wardrobe and body type. Plain neutral grey studio background, even soft light, photorealistic.' },
+  { slot: 'face-neutral', kind: 'derived-edit', aspect: '1:1',
+    prompt: 'Close-up of the same face, neutral expression, mouth closed, looking at camera, sharp detail on the eyes and skin, soft even studio light, plain neutral grey background, photorealistic.' },
+  { slot: 'face-smile', kind: 'derived-edit', aspect: '1:1',
+    prompt: 'Close-up of the same face with a natural open smile showing teeth, looking at camera, sharp detail on the eyes, teeth and skin, soft even studio light, plain neutral grey background, photorealistic.' },
 ]

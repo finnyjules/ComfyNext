@@ -13,7 +13,10 @@ export function viewRefUrl(name: string): string {
   return `/view?${new URLSearchParams({ filename: name, type: 'input' })}`
 }
 
-export async function uploadRefFile(file: File): Promise<string> {
+/** Upload a file to the ComfyUI input dir, returning the bare filename (not
+ *  a /view URL) — the shape callers need when they're about to store the
+ *  filename directly (e.g. a CharacterState panel) rather than render it. */
+export async function uploadRefFilename(file: File): Promise<string> {
   const fd = new FormData()
   // Timestamped name avoids clobbering same-named uploads ('image.png').
   fd.append('image', file, `sd-ref_${Date.now()}_${file.name}`)
@@ -21,5 +24,9 @@ export async function uploadRefFile(file: File): Promise<string> {
   if (!res.ok) throw new Error(`upload ${res.status}`)
   const name = (await res.json())?.name
   if (!name) throw new Error('upload returned no name')
-  return viewRefUrl(name)
+  return name
+}
+
+export async function uploadRefFile(file: File): Promise<string> {
+  return viewRefUrl(await uploadRefFilename(file))
 }

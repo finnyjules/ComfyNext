@@ -1,21 +1,28 @@
 /**
- * Shared reference-sheet generation machinery: given a source (an uploaded
- * photo or a trained character LoRA) and a fixed scene list, expands each
- * scene into a generated shot. Extracted from CharacterSheetNode.vue so any
- * future sheet-driven surface (e.g. per-variant re-generation) can reuse the
- * same sequential-expand + money-guard behavior instead of re-implementing it.
+ * Higgsfield 5-panel generation pipeline: a large ¾ PORTRAIT is generated
+ * first (photo mode → /api/cloud-train/character-shot, LoRA mode →
+ * useInpaint().loraGen) — that portrait is the identity source. Every other
+ * panel (two headless full-body, two face close-ups) is then DERIVED from the
+ * portrait via a nano-banana edit call (/api/inpaint/nano-gen), not generated
+ * independently, so identity can't drift panel to panel.
+ *
+ * Sequential + abort-on-first-failure (the money guard): a portrait failure
+ * means zero derived calls happen; a failed derived panel stops the rest of
+ * the queue rather than spending on panels likely to fail the same way.
  *
  * Descriptor-aware: an optional variant `descriptor` (e.g. "shaved head,
- * leather jacket") is threaded into every scene prompt alongside the LoRA
- * trigger, so a sheet can be generated for a specific character variant.
+ * leather jacket") is threaded into the portrait prompt (alongside the LoRA
+ * trigger) and appended as a wardrobe clause to every derived prompt, so a
+ * sheet can be generated for a specific character variant.
  */
 import { ref } from 'vue'
 import { useInpaint } from '~/composables/useInpaint'
-import type { CharacterShotScene } from '~/data/character-shot-scenes'
+import { HIGGSFIELD_PANELS, type SheetPanelSpec } from '~/data/character-shot-scenes'
+import type { PanelSlot } from '#shared/characters/types'
 
-export interface SheetShot {
+export interface PanelShot {
+  spec: SheetPanelSpec
   dataUrl: string | null
-  scene: CharacterShotScene
   loading: boolean
   error: boolean
 }
@@ -25,34 +32,50 @@ export type SheetSource =
   | { mode: 'lora'; loraFilename: string; trigger: string | null; descriptor?: string }
 
 /**
- * Pure prompt builder: trigger (LoRA identity token), variant descriptor, and
- * the scene prompt itself, comma-joined — falsy pieces (missing trigger, no
- * descriptor) are dropped rather than leaving stray commas.
+ * Pure prompt builder for the portrait-gen panel: trigger (LoRA identity
+ * token), variant descriptor, then the panel prompt itself, comma-joined —
+ * falsy pieces (missing trigger, no descriptor) are dropped rather than
+ * leaving stray commas.
  */
-export function buildScenePrompt(scene: CharacterShotScene, opts: { trigger?: string | null; descriptor?: string }): string {
-  return [opts.trigger, opts.descriptor, scene.prompt].filter(Boolean).join(', ')
+export function buildPortraitPrompt(spec: SheetPanelSpec, opts: { trigger?: string | null; descriptor?: string }): string {
+  return [opts.trigger, opts.descriptor, spec.prompt].filter(Boolean).join(', ')
 }
 
-function freshShots(scenes: CharacterShotScene[]): SheetShot[] {
-  return scenes.map(scene => ({ dataUrl: null, scene, loading: false, error: false }))
+/**
+ * Pure prompt builder for a derived-edit panel: the panel prompt with an
+ * optional wardrobe clause appended when a variant descriptor is present.
+ */
+export function buildDerivedPrompt(spec: SheetPanelSpec, descriptor?: string): string {
+  return descriptor ? `${spec.prompt} The person wears ${descriptor}.` : spec.prompt
 }
 
-export function useSheetGeneration(scenes: CharacterShotScene[]) {
+function freshPanels(): PanelShot[] {
+  return HIGGSFIELD_PANELS.map(spec => ({ spec, dataUrl: null, loading: false, error: false }))
+}
+
+export function useSheetGeneration() {
   const { loraGen } = useInpaint()
-  const shots = ref<SheetShot[]>(freshShots(scenes))
+  const panels = ref<PanelShot[]>(freshPanels())
 
   function reset() {
-    shots.value = freshShots(scenes)
+    panels.value = freshPanels()
   }
 
-  async function generatePhotoShot(scene: CharacterShotScene, source: Extract<SheetSource, { mode: 'photo' }>): Promise<string> {
+  async function generatePortrait(spec: SheetPanelSpec, source: SheetSource): Promise<string> {
+    if (source.mode === 'lora') {
+      const prompt = buildPortraitPrompt(spec, { trigger: source.trigger, descriptor: source.descriptor })
+      const images = await loraGen(source.loraFilename, prompt, spec.aspect)
+      const url = images?.[0]
+      if (!url) throw new Error('no image returned')
+      return url
+    }
     const res = await fetch('/api/cloud-train/character-shot', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         referenceImageDataUrl: source.referenceImageDataUrl,
-        prompt: buildScenePrompt(scene, { descriptor: source.descriptor }),
-        aspectRatio: scene.framing === 'full' ? '3:4' : '1:1',
+        prompt: buildPortraitPrompt(spec, { descriptor: source.descriptor }),
+        aspectRatio: spec.aspect,
       }),
     })
     if (!res.ok) throw new Error(`character-shot ${res.status}`)
@@ -61,40 +84,78 @@ export function useSheetGeneration(scenes: CharacterShotScene[]) {
     return imageDataUrl
   }
 
-  async function generateLoraShot(scene: CharacterShotScene, source: Extract<SheetSource, { mode: 'lora' }>): Promise<string> {
-    const prompt = buildScenePrompt(scene, { trigger: source.trigger, descriptor: source.descriptor })
-    const aspectRatio = scene.framing === 'full' ? '3:4' : '1:1'
-    const images = await loraGen(source.loraFilename, prompt, aspectRatio)
+  async function generateDerived(spec: SheetPanelSpec, portraitDataUrl: string, descriptor?: string): Promise<string> {
+    const res = await fetch('/api/inpaint/nano-gen', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt: buildDerivedPrompt(spec, descriptor),
+        images: [portraitDataUrl],
+        aspect_ratio: spec.aspect,
+      }),
+    })
+    if (!res.ok) throw new Error(`nano-gen ${res.status}`)
+    const { images } = await res.json() as { images?: string[] }
     const url = images?.[0]
     if (!url) throw new Error('no image returned')
     return url
   }
 
-  async function runShot(idx: number, source: SheetSource) {
-    const shot = shots.value[idx]
-    if (!shot) return
-    shot.loading = true
-    shot.error = false
+  /** Run one panel by index. `portraitDataUrl` is the identity source a
+   *  derived-edit panel edits from — required for 'derived-edit' panels,
+   *  unused for 'portrait-gen'. Returns whether it succeeded. */
+  async function runPanel(idx: number, source: SheetSource, portraitDataUrl: string | null): Promise<boolean> {
+    const panel = panels.value[idx]
+    if (!panel) return false
+    panel.loading = true
+    panel.error = false
     try {
-      const dataUrl = source.mode === 'lora' ? await generateLoraShot(shot.scene, source) : await generatePhotoShot(shot.scene, source)
-      shot.dataUrl = dataUrl
+      const dataUrl = panel.spec.kind === 'portrait-gen'
+        ? await generatePortrait(panel.spec, source)
+        : await generateDerived(panel.spec, portraitDataUrl!, source.descriptor)
+      panel.dataUrl = dataUrl
+      return true
     } catch (e) {
-      console.warn('[useSheetGeneration] shot failed', e)
-      shot.error = true
+      console.warn('[useSheetGeneration] panel failed', e)
+      panel.error = true
+      return false
     } finally {
-      shot.loading = false
+      panel.loading = false
     }
   }
 
   async function expandAll(source: SheetSource) {
-    // Sequential — concurrency 1 is fine for a small fixed shot set.
-    for (let i = 0; i < shots.value.length; i++) {
-      await runShot(i, source)
-      // Failed shot usually means the rest would fail too — don't spend on them.
-      const shot = shots.value[i]
-      if (!shot || shot.error) break
+    // Sequential — portrait first, then derived panels edit off of it.
+    // Abort-on-first-failure: a failed panel usually means the rest would
+    // fail too (or, for the portrait, that there's nothing to derive from
+    // yet) — don't spend on them.
+    let portraitDataUrl: string | null = null
+    for (let i = 0; i < panels.value.length; i++) {
+      const ok = await runPanel(i, source, portraitDataUrl)
+      if (!ok) break
+      const panel = panels.value[i]
+      if (panel?.spec.kind === 'portrait-gen') portraitDataUrl = panel.dataUrl
     }
   }
 
-  return { shots, reset, runShot, expandAll }
+  /**
+   * Re-render a single panel. A portrait reroll regenerates the identity
+   * source itself; a derived-panel reroll re-edits from whatever portrait is
+   * CURRENTLY on the sheet (not a freshly regenerated one) — it errors if no
+   * portrait has been generated yet, since there's nothing to derive from.
+   */
+  async function rerollPanel(slot: PanelSlot, source: SheetSource) {
+    const idx = panels.value.findIndex(p => p.spec.slot === slot)
+    if (idx < 0) return
+    const panel = panels.value[idx]!
+    if (panel.spec.kind === 'derived-edit') {
+      const portrait = panels.value.find(p => p.spec.kind === 'portrait-gen')
+      if (!portrait?.dataUrl) throw new Error('Generate the portrait before rerolling a derived panel')
+      await runPanel(idx, source, portrait.dataUrl)
+    } else {
+      await runPanel(idx, source, null)
+    }
+  }
+
+  return { panels, reset, expandAll, rerollPanel }
 }

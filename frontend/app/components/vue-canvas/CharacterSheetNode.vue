@@ -10,7 +10,6 @@ import { Images, Loader2, RefreshCcw, Upload } from 'lucide-vue-next'
 import { useCharacters } from '~/composables/useCharacters'
 import { useSheetGeneration, type SheetSource } from '~/composables/useSheetGeneration'
 import { uploadRefFile } from '~/lib/shotdirector/refUpload'
-import { CHARACTER_SHEET_CANONICAL } from '~/data/character-shot-scenes'
 import { emitCharacterEvent } from '~/lib/characters/bus'
 import { toast } from 'vue-sonner'
 
@@ -146,8 +145,11 @@ const hasSource = computed(() => sourceMode.value === 'photo' ? !!sourceDataUrl.
 // ── Name ─────────────────────────────────────────────────────────────────
 const charName = ref('')
 
-// ── Shots ────────────────────────────────────────────────────────────────
-const { shots, reset: resetShots, runShot: runShotOn, expandAll } = useSheetGeneration(CHARACTER_SHEET_CANONICAL)
+// ── Panels (Higgsfield 5-panel sheet) ───────────────────────────────────
+// TODO(T9): still driven positionally (index i / reroll(i)) — full wiring
+// to the CharacterState `panels` model (upload → composite → patchState) is
+// Task 9. This is the mechanical adaptation to the new panels-shaped return.
+const { panels: shots, reset: resetShots, expandAll, rerollPanel } = useSheetGeneration()
 const expanding = ref(false)
 
 const hasAnyShot = computed(() => shots.value.some(s => s.dataUrl))
@@ -166,7 +168,17 @@ function currentSource(): SheetSource | null {
 async function runShot(idx: number) {
   const source = currentSource()
   if (!source) return
-  await runShotOn(idx, source)
+  // TODO(T9): index→slot mapping relies on positional parity with
+  // HIGGSFIELD_PANELS; real UI should address panels by slot directly.
+  const slot = shots.value[idx]?.spec.slot
+  if (!slot) return
+  try {
+    await rerollPanel(slot, source)
+  } catch (e) {
+    // rerollPanel throws for a derived-panel reroll with no portrait yet
+    // (nothing to derive from) — surface it the same way a failed shot does.
+    console.warn('[CharacterSheet] reroll failed', e)
+  }
 }
 
 async function expandSheet() {
