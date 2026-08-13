@@ -1,16 +1,17 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import {
-  parseCharacterRecord, validRefFilename,
+  parseCharacterRecord, stateHygiene, validRefFilename,
   type CharacterRecord, type CharacterState,
 } from '~~/server/utils/characterRegistry'
+import { applyStatePatch, type StatePatchBody } from '~~/server/utils/characterStatePatch'
 import { defaultState } from '#shared/characters/types'
 
 export default defineEventHandler(async (event) => {
   const body = await readBody(event) as {
     slug?: string, name?: string, notes?: string, loraName?: string | null,
     trigger?: string | null, refImages?: string[], coverIndex?: number,
-    states?: CharacterState[], remove?: true,
+    states?: CharacterState[], statePatch?: StatePatchBody, remove?: true,
   }
   const slug = (body?.slug || '').trim()
   if (!slug || slug.includes('/') || slug.includes('\\') || slug.includes('..')) {
@@ -33,6 +34,14 @@ export default defineEventHandler(async (event) => {
   if (body.loraName !== undefined) record.loraName = body.loraName || null
   if (body.trigger !== undefined) record.trigger = body.trigger || null
 
+  if (body.statePatch) {
+    const result = applyStatePatch(record, body.statePatch, new Date().toISOString())
+    if (!result.ok) throw createError({ statusCode: result.code, message: result.message })
+    record = result.record
+    await fs.writeFile(file, JSON.stringify(record, null, 2))
+    return { ok: true }
+  }
+
   if (Array.isArray(body.states)) {
     const states = body.states
     const ids = states.map(v => v?.id)
@@ -48,23 +57,16 @@ export default defineEventHandler(async (event) => {
     if (ids.filter(id => id === 'default').length !== 1) {
       throw createError({ statusCode: 400, message: 'Exactly one default state is required' })
     }
+    // Run each submitted state through the same hygiene used on parse —
+    // preserves caller-supplied panels/sheetImage/status/stressResult/
+    // updatedAt instead of clobbering them with a hardcoded literal.
+    const hygienic = states.map(v => stateHygiene(v as unknown as Record<string, unknown>))
+    if (hygienic.some(v => !v)) {
+      throw createError({ statusCode: 400, message: 'Invalid state' })
+    }
     const candidate: CharacterRecord = {
       ...record,
-      states: states.map(v => ({
-        id: v.id,
-        label: v.label,
-        descriptor: typeof v.descriptor === 'string' ? v.descriptor : '',
-        refImages: v.refImages,
-        coverIndex: typeof v.coverIndex === 'number' ? v.coverIndex : 0,
-        // Panels/sheet/status/stressResult are Task 3's surface — mechanical
-        // rename here just keeps this route compiling; stateHygiene fills
-        // the same defaults on the round-trip parse below anyway.
-        panels: [],
-        sheetImage: null,
-        status: 'draft' as const,
-        stressResult: null,
-        updatedAt: '',
-      })),
+      states: hygienic as CharacterState[],
     }
     // Round-trip through the same hygiene parse used on read — 400 if a
     // state got dropped or altered rather than silently persisting drift.
