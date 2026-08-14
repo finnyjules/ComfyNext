@@ -401,15 +401,12 @@ def nano_gen(prompt: str, images: list[str], label: str, retries: int = 1) -> Pa
     return None
 
 
-def _fal_call_once(prompt: str, image_urls: list[str], fal_key: str, poll_deadline_s: float = 150.0) -> bytes:
-    """One fal queue submit->poll->fetch cycle. Field names and flow mirror
+def _fal_submit(prompt: str, image_urls: list[str], headers: dict, app_base: str) -> tuple[str, str, str]:
+    """Submit only. Returns (rid, status_url, result_url). Field names mirror
     frontend/server/utils/falRun.ts::runFal + nano-gen.post.ts::runNanoFal
-    EXACTLY (app id, input keys, status/response URL fallbacks, 202/200
-    polling semantics) — copied rather than reinvented per the memory note
-    that a mismatched fal field silently fails only at result time, not at
-    submit time."""
-    headers = {"Authorization": f"Key {fal_key}", "Content-Type": "application/json"}
-    app_base = f"{FAL_QUEUE_BASE}/{FAL_APP}"
+    EXACTLY (app id, input keys, status/response URL fallbacks) — copied
+    rather than reinvented per the memory note that a mismatched fal field
+    silently fails only at result time, not at submit time."""
     # Matches runNanoFal(): { prompt, num_images: 1, output_format: 'png', image_urls }
     # + aspect_ratio when provided.
     input_payload = {
@@ -419,11 +416,11 @@ def _fal_call_once(prompt: str, image_urls: list[str], fal_key: str, poll_deadli
         "image_urls": image_urls,
         "aspect_ratio": "3:4",
     }
-
     # NOTE: must send `headers` (with Authorization) here, NOT the generic
     # http_post_json() helper — that helper only sets Content-Type and was
     # written for the (locally-authenticated) dev-server routes. Using it
-    # here silently drops the Authorization header and fal 401s.
+    # here silently drops the Authorization header and fal 401s (round 2's
+    # first bug).
     submit_req = urllib.request.Request(
         app_base, data=json.dumps(input_payload).encode("utf-8"), headers=headers, method="POST"
     )
@@ -432,7 +429,16 @@ def _fal_call_once(prompt: str, image_urls: list[str], fal_key: str, poll_deadli
     rid = submit["request_id"]
     status_url = submit.get("status_url") or f"{app_base}/requests/{rid}/status"
     result_url = submit.get("response_url") or f"{app_base}/requests/{rid}"
+    return rid, status_url, result_url
 
+
+def _fal_poll_and_fetch(rid: str, status_url: str, result_url: str, headers: dict, poll_deadline_s: float = 150.0) -> bytes:
+    """Poll an ALREADY-SUBMITTED request to completion and download the
+    image. Never resubmits — a timeout here just means the caller can call
+    this again on the exact same rid/status_url/result_url. This is the
+    round-2 fix: round 2's retry wrapped submit+poll+fetch together, so a
+    timeout mid-poll could trigger a second, separately-billed submission
+    for the same call."""
     deadline = time.time() + poll_deadline_s
     while time.time() < deadline:
         time.sleep(1.5)
@@ -460,26 +466,38 @@ def _fal_call_once(prompt: str, image_urls: list[str], fal_key: str, poll_deadli
                 raise RuntimeError("fal returned no image")
             return http_get_bytes(url)
         raise RuntimeError(f"fal request {rid} ended in {status}: {status_body}")
-    raise RuntimeError(f"fal request timed out (id={rid})")
+    raise TimeoutError(f"fal poll timed out (id={rid}) — same rid can be re-polled, not resubmitted")
 
 
 def nano_gen_fal(prompt: str, image_urls: list[str], label: str, fal_key: str, retries: int = 1) -> Path | None:
-    """Direct fal call (no dev server) for round 2. Same stop-on-repeated-
-    failure contract as nano_gen(): retry once max, then stop rather than
-    switch providers or burn more money."""
+    """Direct fal call (no dev server). Submits EXACTLY ONCE. On failure,
+    retries by re-polling the SAME request id (never resubmits) up to
+    `retries` times, then stops rather than switching providers or burning
+    more money. This is the round-3 fix for round 2's possible-duplicate-
+    submission bug."""
+    headers = {"Authorization": f"Key {fal_key}", "Content-Type": "application/json"}
+    app_base = f"{FAL_QUEUE_BASE}/{FAL_APP}"
+
+    try:
+        rid, status_url, result_url = _fal_submit(prompt, image_urls, headers, app_base)
+    except (urllib.error.URLError, urllib.error.HTTPError, RuntimeError, TimeoutError, KeyError) as exc:
+        print(f"[{label}] submit failed: {exc} — STOPPING, not retrying submit.")
+        return None
+    print(f"[{label}] submitted (request_id={rid})")
+
     for attempt in range(retries + 1):
         try:
-            img_bytes = _fal_call_once(prompt, image_urls, fal_key)
+            img_bytes = _fal_poll_and_fetch(rid, status_url, result_url, headers)
             path = OUT / f"gen-{label}.png"
             path.write_bytes(img_bytes)
             print(f"[{label}] saved -> {path} (fal-ai/nano-banana-pro/edit)")
             return path
-        except (urllib.error.URLError, urllib.error.HTTPError, RuntimeError, TimeoutError, KeyError) as exc:
-            print(f"[{label}] attempt {attempt + 1} failed: {exc}")
+        except (urllib.error.URLError, urllib.error.HTTPError, RuntimeError, TimeoutError) as exc:
+            print(f"[{label}] poll attempt {attempt + 1} failed: {exc}")
             if attempt < retries:
                 time.sleep(3)
                 continue
-            print(f"[{label}] giving up after {attempt + 1} attempt(s) — STOPPING, not switching providers.")
+            print(f"[{label}] giving up after {attempt + 1} poll attempt(s) — STOPPING, not switching providers.")
             return None
     return None
 
@@ -538,6 +556,42 @@ def run_generations_v2(portrait_url: str, default_front: Path, extreme_front: Pa
         [portrait_url, extreme_front_url],
         "v2-extreme-ref",
         fal_key,
+    )
+    return results
+
+
+# --- Round 3 (inverted edit): the grey figure is now the image BEING
+# EDITED (image_urls[0]); Jene's portrait supplies identity (image_urls[1]).
+# Exactly 2 calls, ~$0.30. Prompt is identical for both calls — only the
+# figure image differs (default vs extreme).
+PROMPT_V3 = (
+    "Turn the grey reference figure in the first image into a photorealistic "
+    "person, keeping the figure's exact body proportions, height and build "
+    "unchanged. Take the face, hair and identity from the person in the "
+    "second image. The person wears a plain fitted black tank top and plain "
+    "black trousers. Full-body view, the entire figure visible head to toe, "
+    "camera at chest height, plain light grey studio background."
+)
+
+
+def run_generations_v3(portrait_url: str, default_front: Path, extreme_front: Path, fal_key: str):
+    """Round 3: inverted edit. image_urls = [figure, portrait] (figure is
+    edited, portrait supplies identity) — the opposite order from rounds 1-2.
+    Exactly 2 calls: default-inverted, extreme-inverted. No control call this
+    round (round 2's control is reused for the contact sheet instead)."""
+    default_front_url = image_to_data_url(default_front)
+    extreme_front_url = image_to_data_url(extreme_front)
+
+    results = {}
+    results["default-inverted"] = nano_gen_fal(
+        PROMPT_V3, [default_front_url, portrait_url], "v3-default-inverted", fal_key
+    )
+    if results["default-inverted"] is None:
+        print("v3 default-inverted call failed after retry — stopping before spending more.")
+        return results
+
+    results["extreme-inverted"] = nano_gen_fal(
+        PROMPT_V3, [extreme_front_url, portrait_url], "v3-extreme-inverted", fal_key
     )
     return results
 
@@ -612,6 +666,63 @@ def build_contact_sheet(
     print(f"wrote {path}")
 
 
+def build_contact_sheet_v3(
+    portrait_path_bytes: bytes,
+    default_front: Path,
+    extreme_front: Path,
+    round2_control: Path,
+    gen_results: dict[str, Path | None],
+    out_name: str = "probe-contact-sheet-v3.png",
+) -> None:
+    """Round 3 layout: row 1 = default figure, extreme figure, portrait;
+    row 2 = default-inverted output, extreme-inverted output, round 2's
+    control image again (for comparison against the un-inverted baseline)."""
+    cell_w, cell_h = 300, 400
+
+    def load(pathlike, from_bytes=False) -> Image.Image:
+        img = Image.open(pathlike) if not from_bytes else Image.open(__import__("io").BytesIO(pathlike))
+        img = img.convert("RGB")
+        img.thumbnail((cell_w, cell_h))
+        bg = Image.new("RGB", (cell_w, cell_h), "white")
+        bg.paste(img, ((cell_w - img.width) // 2, (cell_h - img.height) // 2))
+        return bg
+
+    row1 = [
+        (load(default_front), "default figure"),
+        (load(extreme_front), "extreme figure"),
+        (load(portrait_path_bytes, from_bytes=True), "portrait (input)"),
+    ]
+    row2 = [
+        (
+            load(gen_results["default-inverted"]) if gen_results.get("default-inverted") else Image.new("RGB", (cell_w, cell_h), "grey"),
+            "default-inverted",
+        ),
+        (
+            load(gen_results["extreme-inverted"]) if gen_results.get("extreme-inverted") else Image.new("RGB", (cell_w, cell_h), "grey"),
+            "extreme-inverted",
+        ),
+        (
+            load(round2_control) if round2_control.exists() else Image.new("RGB", (cell_w, cell_h), "grey"),
+            "round2 control (ref)",
+        ),
+    ]
+
+    label_h = 28
+    sheet = Image.new("RGB", (cell_w * 3, (cell_h + label_h) * 2), "white")
+    draw = ImageDraw.Draw(sheet)
+    font = ImageFont.load_default()
+    for row_idx, row in enumerate([row1, row2]):
+        for col_idx, (img, caption) in enumerate(row):
+            x = col_idx * cell_w
+            y = row_idx * (cell_h + label_h)
+            draw.text((x + 6, y + 4), caption, fill="black", font=font)
+            sheet.paste(img, (x, y + label_h))
+
+    path = OUT / out_name
+    sheet.save(path)
+    print(f"wrote {path}")
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -647,7 +758,7 @@ def main_round2() -> None:
     Dev server is down (unrelated Nitro bug in frontend/server/plugins/
     trainingQueue.ts — see .superpowers/sdd/task-1-report.md) — this round
     does NOT touch it: portrait comes straight off disk and generations go
-    straight to fal's queue API (see nano_gen_fal / _fal_call_once)."""
+    straight to fal's queue API (see nano_gen_fal / _fal_submit / _fal_poll_and_fetch)."""
     default_front = OUT / "figure-default-front.png"
     extreme_front = OUT / "figure-extreme-front.png"
     if not default_front.exists() or not extreme_front.exists():
@@ -670,10 +781,44 @@ def main_round2() -> None:
     print("done. See out/probe-contact-sheet-v2.png.")
 
 
+def main_round3() -> None:
+    """Inverted-edit re-probe: the grey figure is now the image being
+    edited; Jene's portrait supplies identity. Exactly 2 calls (~$0.30).
+    Reuses round 1's figure renders and round 2's control image. Same
+    disk-portrait / direct-fal path as round 2, but with the fixed
+    submit-once / re-poll-same-rid retry semantics in nano_gen_fal()."""
+    default_front = OUT / "figure-default-front.png"
+    extreme_front = OUT / "figure-extreme-front.png"
+    round2_control = OUT / "gen-v2-control.png"
+    if not default_front.exists() or not extreme_front.exists():
+        raise RuntimeError(
+            "round 3 reuses round 1's figure renders — run `./venv/bin/python probe.py` "
+            "(round 1) first so out/figure-{default,extreme}-front.png exist."
+        )
+    if not round2_control.exists():
+        raise RuntimeError(
+            "round 3's contact sheet reuses round 2's control image — run "
+            "`./venv/bin/python probe.py --round2` first so out/gen-v2-control.png exists."
+        )
+
+    print("== Round 3: paid fal calls (~$0.30, 2 calls, inverted edit) ==")
+    fal_key = read_fal_key()  # never printed/logged
+    portrait_url = fetch_portrait_data_url_from_disk()
+    portrait_bytes = base64.b64decode(portrait_url.split(",", 1)[1])
+    gen_results = run_generations_v3(portrait_url, default_front, extreme_front, fal_key)
+
+    print("== Contact sheet v3 ==")
+    build_contact_sheet_v3(portrait_bytes, default_front, extreme_front, round2_control, gen_results)
+
+    print("done. See out/probe-contact-sheet-v3.png.")
+
+
 if __name__ == "__main__":
     import sys
 
-    if "--round2" in sys.argv:
+    if "--round3" in sys.argv:
+        main_round3()
+    elif "--round2" in sys.argv:
         main_round2()
     else:
         main()
