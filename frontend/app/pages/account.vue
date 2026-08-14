@@ -4,6 +4,7 @@
 // Stage-1 smoke-test destination; the full account/billing UI comes with
 // the launch-surfaces stage.
 import { ArrowLeft } from 'lucide-vue-next'
+import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
 import { hostedModeEnabled } from '~/lib/hostedMode'
 
 const hosted = hostedModeEnabled(useRuntimeConfig().public)
