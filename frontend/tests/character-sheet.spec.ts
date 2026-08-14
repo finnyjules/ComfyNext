@@ -315,4 +315,79 @@ test.describe('Character sheet: images and video consume the same identity asset
     // No click on "Confirm" happened, so nothing should have generated.
     expect(shotCalls).toBe(0)
   })
+
+  test('Scenario E (body): Body chip opens the editor, a slider push changes the phrase line, and Save PATCHes bodyShape', async ({ page }) => {
+    test.setTimeout(30_000)
+
+    // Route handlers stack last-registered-first: these run before
+    // beforeEach's, so PATCH bodies are captured here and `route.fallback()`
+    // hands GET/other methods back to `mockCharactersLocal`. `/prompt` and
+    // `/upload/image` stay counted-then-fallen-back to the beforeEach stubs
+    // so this scenario can prove zero calls without duplicating the guard.
+    let patchBody: any = null
+    await page.route('**/api/characters-local', async (route) => {
+      if (route.request().method() === 'PATCH') {
+        patchBody = route.request().postDataJSON()
+        await route.fulfill({ json: { ok: true } })
+      } else {
+        await route.fallback()
+      }
+    })
+    let promptCalls = 0
+    await page.route('**/prompt', async (route) => { promptCalls++; await route.fallback() })
+    let uploadCalls = 0
+    await page.route('**/upload/image', async (route) => { uploadCalls++; await route.fallback() })
+
+    await page.getByRole('button', { name: 'Characters', exact: true }).click()
+    const nameEl = page.getByText('Cal', { exact: true }).first()
+    await expect(nameEl).toBeVisible({ timeout: 10_000 })
+    await nameEl.click()
+
+    // Only the workbench dialog is open at this point — unambiguous.
+    const studio = page.getByRole('dialog')
+    await expect(studio).toBeVisible({ timeout: 10_000 })
+    await studio.getByRole('button', { name: 'Body', exact: true }).click()
+
+    // BodyEditorModal now stacks on top of the workbench dialog (both
+    // `role="dialog"`), so scope by its header text ("Body — Cal") rather
+    // than the bare role.
+    const bodyModal = page.getByRole('dialog').filter({ hasText: 'Body — Cal' })
+    await expect(bodyModal).toBeVisible({ timeout: 10_000 })
+
+    // Sliders render — don't couple to the WebGL stage (fail-soft per the
+    // component's own header comment; headless Chromium may or may not
+    // produce a usable context). One range input per BODY_SLIDERS entry.
+    const sliders = bodyModal.locator('input[type="range"]')
+    await expect(sliders).toHaveCount(8)
+
+    // Phrase line: fixture-cal has no bodyShape, so every slider seeds at
+    // the neutral 0.5 default and bodyPhrase's dead zone emits nothing.
+    const phraseLine = bodyModal.getByText('Reads as').locator('xpath=following-sibling::p[1]')
+    await expect(phraseLine).toHaveText('Nothing — reads as an average build.')
+
+    // Push "build" (BODY_SLIDERS[2]) to an extreme low value — bodyPhrase's
+    // build band for v < 0.15 reads "a very slim, slight build". Range
+    // inputs need a real 'input' event (v-model's listener) after the value
+    // write; .fill() doesn't support type=range.
+    const buildSlider = sliders.nth(2)
+    await buildSlider.evaluate((el: HTMLInputElement) => {
+      el.value = '0.05'
+      el.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await expect(phraseLine).toHaveText('a very slim, slight build')
+
+    // Save — closes the modal and PATCHes bodyShape with the set key at the
+    // set value; the intercepted PATCH captured above proves it, not a UI guess.
+    await bodyModal.getByRole('button', { name: 'Save body', exact: true }).click()
+    await expect(bodyModal).toBeHidden({ timeout: 10_000 })
+
+    expect(patchBody, 'Save should PATCH /api/characters-local').toBeTruthy()
+    expect(patchBody.slug).toBe('fixture-cal')
+    expect(patchBody.bodyShape).toBeTruthy()
+    expect(patchBody.bodyShape.build).toBeCloseTo(0.05, 2)
+
+    // No uploads, no generation.
+    expect(promptCalls).toBe(0)
+    expect(uploadCalls).toBe(0)
+  })
 })
