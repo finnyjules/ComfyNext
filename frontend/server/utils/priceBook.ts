@@ -4,9 +4,20 @@
  * for any graph with a terminal output node; premium provider nodes add their
  * per-node cost on top. Phase 3 moves this table to the Postgres `price_book`.
  */
-export const PRICE_BOOK_VERSION = 'spike-v2'
+export const PRICE_BOOK_VERSION = 'spike-v3'
 
 const BASE_RENDER_CREDITS = 1
+
+/**
+ * Category prices for LoRA-family inference (pricing call 2026-08-13).
+ * Personal fine-tune slugs (e.g. finnyjules/*) can never be enumerated in a
+ * static slug table, so LoRA renders are priced by CATEGORY: the dispatching
+ * route/node knows it is a LoRA call even when the slug is user-specific.
+ * Stage 4's direct-route metering must use these for any LoRA-remote
+ * inference whose slug misses MODEL_COSTS.
+ */
+export const LORA_RENDER_CREDITS = 8      // ~$0.04 observed median, 2× markup
+export const RESTYLE_LORA_CREDITS = 18    // ~$0.09 observed median, 2× markup
 
 // Terminal output nodes that mean "the GPU produced a deliverable" → base render.
 const OUTPUT_CLASS_TYPES = new Set([
@@ -15,11 +26,15 @@ const OUTPUT_CLASS_TYPES = new Set([
 
 // Premium provider actions, from the costs doc. Flat per-node for the spike.
 const PREMIUM_ACTION_CREDITS: Record<string, number> = {
-  EditImageNode: 12,       // Nano-Banana-2 edit
+  EditImageNode: 23,       // nano-banana-pro edit era: $0.15 observed — was 12 (≈0% margin) and half the direct-route price for the same action
   GenerateVideoNode: 60,   // mid video / 5s
-  FilmShotNode: 160,       // Seedance 720p / 5s
-  LipSyncNode: 30,
+  FilmShotNode: 160,       // Seedance 720p / 5s — flagged 4× over policy; re-verify against a live invoice before repricing down
+  LipSyncNode: 150,        // observed $1.00/run — was 30 (a 70¢ LOSS per run); 150 ≈ 1.5× on a 6–10s clip
   LoraTrainingNode: 600,
+  // LoRA-family inference — was entirely unpriced (50% of observed spend):
+  RestyleWithLoRANode: RESTYLE_LORA_CREDITS,
+  FluxLoRARemoteNode: LORA_RENDER_CREDITS,
+  FluxMultiLoRARemoteNode: LORA_RENDER_CREDITS,
 }
 
 export interface GraphPrice {

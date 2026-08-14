@@ -17,6 +17,27 @@ describe('price book: graph pricer (unchanged spike behavior)', () => {
   it('no output node → zero credits', () => {
     expect(priceGraph({ 1: { class_type: 'KSampler' } }).credits).toBe(0)
   })
+
+  // spike-v3 (pricing call 2026-08-13): the LoRA family was 50% of observed
+  // spend and completely unpriced — priced as a CATEGORY (slug-independent,
+  // personal fine-tunes can never live in a static slug table).
+  it('LoRA-family nodes are priced', () => {
+    const p = priceGraph({
+      1: { class_type: 'SaveImage' },
+      2: { class_type: 'RestyleWithLoRANode' },
+      3: { class_type: 'FluxLoRARemoteNode' },
+      4: { class_type: 'FluxMultiLoRARemoteNode' },
+    })
+    expect(p.credits).toBe(1 + 18 + 8 + 8)
+  })
+
+  // spike-v3: the two below-policy prices from the pricing analysis.
+  // LipSync observed $1.00/run (was 30cr = 70¢ loss); EditImage's graph path
+  // was 12cr against a 23cr direct-route price for the same action.
+  it('LipSync and EditImage are priced above provider cost', () => {
+    expect(priceGraph({ 1: { class_type: 'SaveImage' }, 2: { class_type: 'LipSyncNode' } }).credits).toBe(151)
+    expect(priceGraph({ 1: { class_type: 'SaveImage' }, 2: { class_type: 'EditImageNode' } }).credits).toBe(24)
+  })
 })
 
 describe('price book: model costs', () => {

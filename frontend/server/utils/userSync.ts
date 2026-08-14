@@ -10,8 +10,9 @@
  */
 import type { createLedger } from './ledger'
 
-/** PROVISIONAL until the pricing call (roadmap gap 28) — $2 of credits. */
-export const SIGNUP_BONUS_CREDITS = 200
+/** DECIDED at the pricing call 2026-08-13: ~3 median sessions, ≤$0.65 real
+ * exposure per free signup. (Was provisionally 200 during Stage 1.) */
+export const SIGNUP_BONUS_CREDITS = 100
 
 export async function ensureUserWithBonus(
   ledger: ReturnType<typeof createLedger>,
