@@ -37,5 +37,6 @@ describe('guardDecision', () => {
     expect(PROXY_PREFIXES).toContain('/api')
     expect(PROXY_PREFIXES).toContain('/prompt')
     expect(PUBLIC_API_PATHS).toContain('/api/webhooks/clerk')
+    expect(PUBLIC_API_PATHS).toContain('/api/webhooks/stripe')
   })
 })
