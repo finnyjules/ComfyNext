@@ -15,3 +15,8 @@ export function getStripe(): Stripe {
   }
   return stripe
 }
+
+/** Test seam (mirrors __setClerkClientForTests in auth.ts). */
+export function __setStripeForTests(client: Stripe | null): void {
+  stripe = client
+}
