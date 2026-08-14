@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { partialResultPatch, shouldAutoReady, clearStressTiles, stressTiles, buildSourceDescriptor } from '~/composables/useCharacterStudio'
+import { partialResultPatch, shouldAutoReady, clearStressTiles, stressTiles, buildSourceDescriptor, buildSourceBodyPhrase } from '~/composables/useCharacterStudio'
 import { freshTiles } from '~/lib/characters/stress'
 import type { CharacterRecord, CharacterState } from '#shared/characters/types'
 
@@ -42,34 +42,36 @@ describe('clearStressTiles', () => {
   })
 })
 
-describe('buildSourceDescriptor (feeds buildSource\'s SheetSource.descriptor)', () => {
-  it('joins the variant descriptor with the body phrase when bodyShape is set', () => {
-    const c = { bodyShape: { build: 0.8 } } as CharacterRecord
-    const variant = { descriptor: 'soaked jacket' } as CharacterState
-    expect(buildSourceDescriptor(c, variant)).toBe('soaked jacket; a noticeably heavyset build')
+describe('buildSourceDescriptor (feeds buildSource\'s SheetSource.descriptor — wardrobe ONLY, never the body phrase)', () => {
+  it('trims and returns the variant descriptor', () => {
+    const variant = { descriptor: '  soaked jacket  ' } as CharacterState
+    expect(buildSourceDescriptor(variant)).toBe('soaked jacket')
   })
 
-  it('bodyShape-only (empty descriptor) yields the phrase alone', () => {
-    const c = { bodyShape: { build: 0.8 } } as CharacterRecord
+  it('empty descriptor yields undefined, matching the prior `descriptor || undefined` behavior', () => {
     const variant = { descriptor: '' } as CharacterState
-    expect(buildSourceDescriptor(c, variant)).toBe('a noticeably heavyset build')
+    expect(buildSourceDescriptor(variant)).toBeUndefined()
   })
 
-  it('null bodyShape yields exactly the variant descriptor (back-compat)', () => {
+  it('whitespace-only descriptor yields undefined', () => {
+    const variant = { descriptor: '   ' } as CharacterState
+    expect(buildSourceDescriptor(variant)).toBeUndefined()
+  })
+})
+
+describe('buildSourceBodyPhrase (feeds buildSource\'s SheetSource.bodyPhrase — kept OUT of the wardrobe descriptor)', () => {
+  it('returns the graded body phrase when bodyShape is set', () => {
+    const c = { bodyShape: { build: 0.8 } } as CharacterRecord
+    expect(buildSourceBodyPhrase(c)).toBe('a noticeably heavyset build')
+  })
+
+  it('null bodyShape yields undefined', () => {
     const c = { bodyShape: null } as CharacterRecord
-    const variant = { descriptor: 'soaked jacket' } as CharacterState
-    expect(buildSourceDescriptor(c, variant)).toBe('soaked jacket')
+    expect(buildSourceBodyPhrase(c)).toBeUndefined()
   })
 
-  it('neutral bodyShape (dead-zone sliders) yields exactly the variant descriptor (back-compat)', () => {
+  it('neutral bodyShape (dead-zone sliders) yields undefined', () => {
     const c = { bodyShape: { build: 0.5 } } as CharacterRecord
-    const variant = { descriptor: 'soaked jacket' } as CharacterState
-    expect(buildSourceDescriptor(c, variant)).toBe('soaked jacket')
-  })
-
-  it('empty descriptor + no bodyShape yields undefined, matching the prior `descriptor || undefined` behavior', () => {
-    const c = { bodyShape: null } as CharacterRecord
-    const variant = { descriptor: '' } as CharacterState
-    expect(buildSourceDescriptor(c, variant)).toBeUndefined()
+    expect(buildSourceBodyPhrase(c)).toBeUndefined()
   })
 })

@@ -232,14 +232,24 @@ function sheetFor(c: CharacterRecord, variant: CharacterState) {
 const expanding = ref<Set<string>>(new Set())
 
 /**
- * Descriptor channel for sheet generation: the variant's state descriptor
- * joined with the character's graded body phrase — pure, so it's unit-tested
- * directly. Empty/null bodyShape contributes nothing, collapsing back to the
- * prior `variant.descriptor || undefined` behavior byte-for-byte.
+ * Wardrobe-only descriptor channel for sheet generation — pure, so it's
+ * unit-tested directly. This feeds SheetSource.descriptor, which prompt
+ * builders wrap as "The person wears …" — a body phrase must NEVER be joined
+ * in here (that produced nonsense like "wears … a noticeably heavyset
+ * build"). See buildSourceBodyPhrase for the separate body channel.
  */
-export function buildSourceDescriptor(c: CharacterRecord, variant: CharacterState): string | undefined {
-  const joined = [variant.descriptor?.trim(), bodyPhrase(c.bodyShape)].filter(Boolean).join('; ')
-  return joined || undefined
+export function buildSourceDescriptor(variant: CharacterState): string | undefined {
+  const d = variant.descriptor?.trim()
+  return d || undefined
+}
+
+/**
+ * Body-phrase channel for sheet generation: the character's graded body
+ * phrase — pure, so it's unit-tested directly. Empty/null bodyShape
+ * contributes nothing (SheetSource.bodyPhrase stays undefined).
+ */
+export function buildSourceBodyPhrase(c: CharacterRecord): string | undefined {
+  return bodyPhrase(c.bodyShape) || undefined
 }
 
 async function buildSource(c: CharacterRecord, variant: CharacterState): Promise<SheetSource | null> {
@@ -258,7 +268,7 @@ async function buildSource(c: CharacterRecord, variant: CharacterState): Promise
   }
   try {
     const dataUrl = await fetchAsDataUrl(cover)
-    return { mode: 'photo', referenceImageDataUrl: dataUrl, descriptor: buildSourceDescriptor(c, variant) }
+    return { mode: 'photo', referenceImageDataUrl: dataUrl, descriptor: buildSourceDescriptor(variant), bodyPhrase: buildSourceBodyPhrase(c) }
   } catch {
     toast.error('Couldn\'t load the cover photo — try again')
     return null

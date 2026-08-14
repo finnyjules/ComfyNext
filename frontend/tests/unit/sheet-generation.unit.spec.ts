@@ -32,6 +32,16 @@ describe('buildPortraitPrompt', () => {
   it('ignores a null trigger (loraGen source shape uses trigger: string | null)', () => {
     expect(buildPortraitPrompt(portraitSpec, { trigger: null, descriptor: undefined })).toBe(portraitSpec.prompt)
   })
+
+  it('wardrobe descriptor + body phrase — both comma-joined ahead of the panel prompt', () => {
+    expect(buildPortraitPrompt(portraitSpec, { trigger: 'ohwx woman', descriptor: 'shaved head, leather jacket', bodyPhrase: 'a noticeably heavyset build' }))
+      .toBe(`ohwx woman, shaved head, leather jacket, a noticeably heavyset build, ${portraitSpec.prompt}`)
+  })
+
+  it('body phrase only (no descriptor, no trigger)', () => {
+    expect(buildPortraitPrompt(portraitSpec, { bodyPhrase: 'a noticeably heavyset build' }))
+      .toBe(`a noticeably heavyset build, ${portraitSpec.prompt}`)
+  })
 })
 
 describe('buildDerivedPrompt', () => {
@@ -42,6 +52,25 @@ describe('buildDerivedPrompt', () => {
 
   it('returns the bare panel prompt when no descriptor', () => {
     expect(buildDerivedPrompt(bodyFrontSpec)).toBe(bodyFrontSpec.prompt)
+  })
+
+  // Critical 1: the body phrase must NEVER be folded into the "The person
+  // wears …" wardrobe clause — a body isn't clothing. It gets appended as
+  // its own sentence instead, composed here as full-string assertions for
+  // all three combinations.
+  it('wardrobe + body phrase — two separate sentences, body phrase NOT inside the wears-clause', () => {
+    expect(buildDerivedPrompt(bodyFrontSpec, 'a red leather jacket', 'a noticeably heavyset build'))
+      .toBe(`${bodyFrontSpec.prompt} The person wears a red leather jacket. They have a noticeably heavyset build.`)
+  })
+
+  it('body phrase only — no wears-clause at all when descriptor is absent', () => {
+    expect(buildDerivedPrompt(bodyFrontSpec, undefined, 'a noticeably heavyset build'))
+      .toBe(`${bodyFrontSpec.prompt} They have a noticeably heavyset build.`)
+  })
+
+  it('wardrobe only — unchanged when no body phrase (byte-identical to pre-body-phrase behavior)', () => {
+    expect(buildDerivedPrompt(bodyFrontSpec, 'a red leather jacket', undefined))
+      .toBe(`${bodyFrontSpec.prompt} The person wears a red leather jacket.`)
   })
 })
 

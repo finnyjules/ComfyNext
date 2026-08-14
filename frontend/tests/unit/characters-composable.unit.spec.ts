@@ -168,9 +168,11 @@ describe('useCharacters', () => {
       { ...REVA, slug: 'cal', bodyShape: { build: 0.8 } },
     ]
     // punk state descriptor is 'shaved head, leather jacket' — joined with the
-    // build-0.8 phrase ('a noticeably heavyset build') via '; '.
+    // build-0.8 phrase ('a noticeably heavyset build') via ', ' (the '; '
+    // delimiter is reserved for the outer cast clause list — castClause joins
+    // per-character entries with '; ', so the inner join here must not reuse it).
     expect(stateDescriptors([{ slug: 'cal', stateId: 'punk' }]))
-      .toEqual({ cal: 'shaved head, leather jacket; a noticeably heavyset build' })
+      .toEqual({ cal: 'shaved head, leather jacket, a noticeably heavyset build' })
   })
 
   it('stateDescriptors: bodyShape-only (empty descriptor) yields the phrase alone', async () => {

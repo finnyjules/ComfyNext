@@ -116,7 +116,10 @@ export function useCharacters() {
    * slug → descriptor for each pick's resolved state, joined with the
    * character's graded body phrase (empty/null bodyShape contributes
    * nothing, so this collapses to the bare state descriptor — unchanged
-   * from before the body phrase existed).
+   * from before the body phrase existed). Inner join is ', ' — this whole
+   * result gets folded into a cast clause list that's already delimited by
+   * '; ', so reusing '; ' here would read ambiguously against that outer
+   * delimiter.
    */
   function stateDescriptors(picks: { slug: string; stateId: string | null }[]): Record<string, string> {
     const bySlug = new Map(characters.value.map(c => [c.slug, c]))
@@ -124,7 +127,7 @@ export function useCharacters() {
     for (const { slug, stateId } of picks) {
       const c = bySlug.get(slug)
       const state = c ? pickState(c, stateId) : undefined
-      const joined = [state?.descriptor?.trim(), bodyPhrase(c?.bodyShape)].filter(Boolean).join('; ')
+      const joined = [state?.descriptor?.trim(), bodyPhrase(c?.bodyShape)].filter(Boolean).join(', ')
       if (joined) out[slug] = joined
     }
     return out

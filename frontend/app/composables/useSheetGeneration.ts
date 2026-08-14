@@ -13,7 +13,10 @@
  * Descriptor-aware: an optional variant `descriptor` (e.g. "shaved head,
  * leather jacket") is threaded into the portrait prompt (alongside the LoRA
  * trigger) and appended as a wardrobe clause to every derived prompt, so a
- * sheet can be generated for a specific character variant.
+ * sheet can be generated for a specific character variant. A separate
+ * `bodyPhrase` (graded body-shape prose, see lib/characters/bodyPhrase.ts)
+ * rides alongside it but is kept out of the wardrobe clause — a body isn't
+ * something a person "wears" — and is appended as its own sentence instead.
  */
 import { ref } from 'vue'
 import { useInpaint } from '~/composables/useInpaint'
@@ -28,25 +31,31 @@ export interface PanelShot {
 }
 
 export type SheetSource =
-  | { mode: 'photo'; referenceImageDataUrl: string; descriptor?: string }
-  | { mode: 'lora'; loraFilename: string; trigger: string | null; descriptor?: string }
+  | { mode: 'photo'; referenceImageDataUrl: string; descriptor?: string; bodyPhrase?: string }
+  | { mode: 'lora'; loraFilename: string; trigger: string | null; descriptor?: string; bodyPhrase?: string }
 
 /**
  * Pure prompt builder for the portrait-gen panel: trigger (LoRA identity
- * token), variant descriptor, then the panel prompt itself, comma-joined —
- * falsy pieces (missing trigger, no descriptor) are dropped rather than
- * leaving stray commas.
+ * token), variant descriptor, graded body phrase, then the panel prompt
+ * itself, comma-joined — falsy pieces (missing trigger, no descriptor, no
+ * body phrase) are dropped rather than leaving stray commas.
  */
-export function buildPortraitPrompt(spec: SheetPanelSpec, opts: { trigger?: string | null; descriptor?: string }): string {
-  return [opts.trigger, opts.descriptor, spec.prompt].filter(Boolean).join(', ')
+export function buildPortraitPrompt(spec: SheetPanelSpec, opts: { trigger?: string | null; descriptor?: string; bodyPhrase?: string }): string {
+  return [opts.trigger, opts.descriptor, opts.bodyPhrase, spec.prompt].filter(Boolean).join(', ')
 }
 
 /**
  * Pure prompt builder for a derived-edit panel: the panel prompt with an
- * optional wardrobe clause appended when a variant descriptor is present.
+ * optional wardrobe clause (descriptor) appended, followed by an optional
+ * body clause (bodyPhrase) as its OWN sentence — a body isn't clothing, so it
+ * must not get folded into the "The person wears …" clause (that produced
+ * nonsense like "wears … a noticeably heavyset build").
  */
-export function buildDerivedPrompt(spec: SheetPanelSpec, descriptor?: string): string {
-  return descriptor ? `${spec.prompt} The person wears ${descriptor}.` : spec.prompt
+export function buildDerivedPrompt(spec: SheetPanelSpec, descriptor?: string, bodyPhrase?: string): string {
+  let out = spec.prompt
+  if (descriptor) out += ` The person wears ${descriptor}.`
+  if (bodyPhrase) out += ` They have ${bodyPhrase}.`
+  return out
 }
 
 function freshPanels(): PanelShot[] {
@@ -63,7 +72,7 @@ export function useSheetGeneration() {
 
   async function generatePortrait(spec: SheetPanelSpec, source: SheetSource): Promise<string> {
     if (source.mode === 'lora') {
-      const prompt = buildPortraitPrompt(spec, { trigger: source.trigger, descriptor: source.descriptor })
+      const prompt = buildPortraitPrompt(spec, { trigger: source.trigger, descriptor: source.descriptor, bodyPhrase: source.bodyPhrase })
       const images = await loraGen(source.loraFilename, prompt, spec.aspect)
       const url = images?.[0]
       if (!url) throw new Error('no image returned')
@@ -74,7 +83,7 @@ export function useSheetGeneration() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         referenceImageDataUrl: source.referenceImageDataUrl,
-        prompt: buildPortraitPrompt(spec, { descriptor: source.descriptor }),
+        prompt: buildPortraitPrompt(spec, { descriptor: source.descriptor, bodyPhrase: source.bodyPhrase }),
         aspectRatio: spec.aspect,
       }),
     })
@@ -84,12 +93,12 @@ export function useSheetGeneration() {
     return imageDataUrl
   }
 
-  async function generateDerived(spec: SheetPanelSpec, portraitDataUrl: string, descriptor?: string): Promise<string> {
+  async function generateDerived(spec: SheetPanelSpec, portraitDataUrl: string, descriptor?: string, bodyPhrase?: string): Promise<string> {
     const res = await fetch('/api/inpaint/nano-gen', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        prompt: buildDerivedPrompt(spec, descriptor),
+        prompt: buildDerivedPrompt(spec, descriptor, bodyPhrase),
         images: [portraitDataUrl],
         aspect_ratio: spec.aspect,
       }),
@@ -112,7 +121,7 @@ export function useSheetGeneration() {
     try {
       const dataUrl = panel.spec.kind === 'portrait-gen'
         ? await generatePortrait(panel.spec, source)
-        : await generateDerived(panel.spec, portraitDataUrl!, source.descriptor)
+        : await generateDerived(panel.spec, portraitDataUrl!, source.descriptor, source.bodyPhrase)
       panel.dataUrl = dataUrl
       return true
     } catch (e) {
