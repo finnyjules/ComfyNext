@@ -2,7 +2,8 @@
  * Compiles a character's bodyShape sliders (0..1 each) into a graded prose
  * fragment for prompts. Pure — imports only the shared types. Proven by a
  * 4-round paid probe: image body refs don't steer generation, but graded
- * body TEXT does. NOT wired into any prompt builder yet — that's the next
+ * Wired into prompts since B3/fix-wave: rides SheetSource.bodyPhrase into panel prompts
+ * and joins the cast clause via stateDescriptors.
  * task; this module is the mechanism only.
  *
  * Band semantics (per slider, most-extreme band checked first so containing
