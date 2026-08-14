@@ -596,6 +596,44 @@ def run_generations_v3(portrait_url: str, default_front: Path, extreme_front: Pa
     return results
 
 
+# --- Round 4 (text-driven body change): no grey figure at all — just the
+# portrait plus a text description of a heavier build, testing whether text
+# alone can shift body while identity (face/hair) holds. Exactly 2 calls,
+# ~$0.30. "Moderate" and "extreme" only differ in the body-description
+# sentence; everything else (wardrobe/framing pins, identity instruction) is
+# identical.
+PROMPT_V4_MODERATE = (
+    "Show the same person as a full-body photorealistic figure, standing "
+    "naturally. She has a noticeably heavyset, overweight build — full "
+    "figure, rounded torso, thick arms and legs. Keep her face, hair and "
+    "identity exactly as shown. She wears a plain fitted black tank top and "
+    "plain black trousers. Full-body view, the entire figure visible head to "
+    "toe, camera at chest height, plain light grey studio background."
+)
+PROMPT_V4_EXTREME = (
+    "Show the same person as a full-body photorealistic figure, standing "
+    "naturally. She is very overweight — a heavy, plus-size build with a "
+    "large rounded belly, wide hips, full arms and a double chin. Keep her "
+    "face, hair and identity exactly as shown. She wears a plain fitted "
+    "black tank top and plain black trousers. Full-body view, the entire "
+    "figure visible head to toe, camera at chest height, plain light grey "
+    "studio background."
+)
+
+
+def run_generations_v4(portrait_url: str, fal_key: str):
+    """Round 4: text-only body change, no grey figure involved at all.
+    Exactly 2 calls: moderate, extreme. Both take only the portrait as input."""
+    results = {}
+    results["moderate"] = nano_gen_fal(PROMPT_V4_MODERATE, [portrait_url], "v4-moderate", fal_key)
+    if results["moderate"] is None:
+        print("v4 moderate call failed after retry — stopping before spending more.")
+        return results
+
+    results["extreme"] = nano_gen_fal(PROMPT_V4_EXTREME, [portrait_url], "v4-extreme", fal_key)
+    return results
+
+
 # ---------------------------------------------------------------------------
 # Contact sheet
 # ---------------------------------------------------------------------------
@@ -723,6 +761,56 @@ def build_contact_sheet_v3(
     print(f"wrote {path}")
 
 
+def build_contact_sheet_v4(
+    portrait_path_bytes: bytes,
+    round2_control: Path,
+    gen_results: dict[str, Path | None],
+    out_name: str = "probe-contact-sheet-v4.png",
+) -> None:
+    """Round 4 layout (2x2, no grey figures involved this round): row 1 =
+    portrait, round 2's control image (normal-build baseline); row 2 =
+    moderate output, extreme output."""
+    cell_w, cell_h = 300, 400
+
+    def load(pathlike, from_bytes=False) -> Image.Image:
+        img = Image.open(pathlike) if not from_bytes else Image.open(__import__("io").BytesIO(pathlike))
+        img = img.convert("RGB")
+        img.thumbnail((cell_w, cell_h))
+        bg = Image.new("RGB", (cell_w, cell_h), "white")
+        bg.paste(img, ((cell_w - img.width) // 2, (cell_h - img.height) // 2))
+        return bg
+
+    row1 = [
+        (load(portrait_path_bytes, from_bytes=True), "portrait (input)"),
+        (load(round2_control) if round2_control.exists() else Image.new("RGB", (cell_w, cell_h), "grey"), "round2 control (normal build)"),
+    ]
+    row2 = [
+        (
+            load(gen_results["moderate"]) if gen_results.get("moderate") else Image.new("RGB", (cell_w, cell_h), "grey"),
+            "moderate (heavyset)",
+        ),
+        (
+            load(gen_results["extreme"]) if gen_results.get("extreme") else Image.new("RGB", (cell_w, cell_h), "grey"),
+            "extreme (very overweight)",
+        ),
+    ]
+
+    label_h = 28
+    sheet = Image.new("RGB", (cell_w * 2, (cell_h + label_h) * 2), "white")
+    draw = ImageDraw.Draw(sheet)
+    font = ImageFont.load_default()
+    for row_idx, row in enumerate([row1, row2]):
+        for col_idx, (img, caption) in enumerate(row):
+            x = col_idx * cell_w
+            y = row_idx * (cell_h + label_h)
+            draw.text((x + 6, y + 4), caption, fill="black", font=font)
+            sheet.paste(img, (x, y + label_h))
+
+    path = OUT / out_name
+    sheet.save(path)
+    print(f"wrote {path}")
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -813,10 +901,36 @@ def main_round3() -> None:
     print("done. See out/probe-contact-sheet-v3.png.")
 
 
+def main_round4() -> None:
+    """Text-driven body change: no grey figure involved at all — just the
+    portrait plus a text description of a heavier build, testing whether
+    text alone can shift body while identity holds. Exactly 2 calls
+    (~$0.30). Reuses round 2's control image for the contact sheet baseline."""
+    round2_control = OUT / "gen-v2-control.png"
+    if not round2_control.exists():
+        raise RuntimeError(
+            "round 4's contact sheet reuses round 2's control image — run "
+            "`./venv/bin/python probe.py --round2` first so out/gen-v2-control.png exists."
+        )
+
+    print("== Round 4: paid fal calls (~$0.30, 2 calls, text-driven body change) ==")
+    fal_key = read_fal_key()  # never printed/logged
+    portrait_url = fetch_portrait_data_url_from_disk()
+    portrait_bytes = base64.b64decode(portrait_url.split(",", 1)[1])
+    gen_results = run_generations_v4(portrait_url, fal_key)
+
+    print("== Contact sheet v4 ==")
+    build_contact_sheet_v4(portrait_bytes, round2_control, gen_results)
+
+    print("done. See out/probe-contact-sheet-v4.png.")
+
+
 if __name__ == "__main__":
     import sys
 
-    if "--round3" in sys.argv:
+    if "--round4" in sys.argv:
+        main_round4()
+    elif "--round3" in sys.argv:
         main_round3()
     elif "--round2" in sys.argv:
         main_round2()
