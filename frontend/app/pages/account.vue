@@ -20,13 +20,19 @@ const route = useRoute()
 const purchaseState = computed(() => route.query.purchase === 'success' ? 'success' : route.query.purchase === 'cancelled' ? 'cancelled' : null)
 
 const buying = ref<string | null>(null)
+const checkoutError = ref<string | null>(null)
 async function buy(packId: string) {
   buying.value = packId
+  checkoutError.value = null
   try {
     const res = await $fetch<{ url: string }>('/api/billing/checkout', { method: 'POST', body: { packId } })
     window.location.href = res.url
-  } catch (e) {
+  } catch (e: any) {
     console.error('checkout failed', e)
+    const status = e?.statusCode ?? e?.response?.status
+    checkoutError.value = status === 401
+      ? 'Your session expired — reload the page and sign in again.'
+      : `Checkout could not start${status ? ` (error ${status})` : ''}. Nothing was charged — try again in a moment.`
     buying.value = null
   }
 }
@@ -74,6 +80,9 @@ if (import.meta.client) {
       </div>
 
       <h2 class="mt-8 text-[11px] font-medium uppercase tracking-wide text-white/50">Add credits</h2>
+      <div v-if="checkoutError" class="mt-3 rounded-[8px] border border-red-400/40 bg-red-400/10 p-3 text-[12.5px] text-red-200/90">
+        {{ checkoutError }}
+      </div>
       <div class="mt-3 grid grid-cols-1 gap-2.5">
         <button
           v-for="pack in packs" :key="pack.id"
