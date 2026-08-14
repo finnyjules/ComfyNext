@@ -316,6 +316,7 @@ describe('scene3d engine deferred geometry', () => {
     objectRoots: new Map<string, THREE.Object3D>(),
     glbTokens: new Map<string, number>(),
     fontTokens: new Map<string, number>(),
+    decalTokens: new Map<string, number>(),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     geometryForObject: (SceneEngine.prototype as any).geometryForObject,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -387,6 +388,7 @@ describe('scene3d engine light view clay mode', () => {
     objectRoots: new Map<string, THREE.Object3D>(),
     glbTokens: new Map<string, number>(),
     fontTokens: new Map<string, number>(),
+    decalTokens: new Map<string, number>(),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     geometryForObject: (SceneEngine.prototype as any).geometryForObject,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -449,6 +451,7 @@ describe('scene3d engine GLB material override', () => {
     objectRoots: new Map<string, THREE.Object3D>(),
     glbTokens: new Map<string, number>(),
     fontTokens: new Map<string, number>(),
+    decalTokens: new Map<string, number>(),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     geometryForObject: (SceneEngine.prototype as any).geometryForObject,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -698,6 +701,7 @@ describe('scene3d engine text font async re-sync', () => {
     objectRoots: new Map<string, THREE.Object3D>(),
     glbTokens: new Map<string, number>(),
     fontTokens: new Map<string, number>(),
+    decalTokens: new Map<string, number>(),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     geometryForObject: (SceneEngine.prototype as any).geometryForObject,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -819,6 +823,7 @@ describe('scene3d engine mesh decode async re-sync', () => {
     objectRoots: new Map<string, THREE.Object3D>(),
     glbTokens: new Map<string, number>(),
     fontTokens: new Map<string, number>(),
+    decalTokens: new Map<string, number>(),
     meshTokens: new Map<string, number>(),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     geometryForObject: (SceneEngine.prototype as any).geometryForObject,
@@ -922,6 +927,7 @@ describe('scene3d engine sculpt override clear (C2)', () => {
     objectRoots: new Map<string, THREE.Object3D>(),
     glbTokens: new Map<string, number>(),
     fontTokens: new Map<string, number>(),
+    decalTokens: new Map<string, number>(),
     meshTokens: new Map<string, number>(),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     geometryForObject: (SceneEngine.prototype as any).geometryForObject,
