@@ -60,9 +60,9 @@ From Python only (no app changes):
 
 ## 6 · Testing + verification
 
-- Unit: slider→morph mapping table (pure), Save-body payload assembly (pure parts), registry hygiene for the two new fields, PATCH round-trip, two-image request assembly for body panels (call-count + body assertions in the existing sheet-generation suite style).
+- Unit (amended): the `bodyPhrase` compiler (per-slider bands, neutral→empty, graded progression, round-4 anchor phrasings), slider→morph-preview mapping (pure), registry hygiene for `bodyShape`, PATCH round-trip, and prompt-assembly assertions (body phrase present in sheet-panel prompts + cast clause when set; byte-identical golden output when null).
 - The GLB loads in a component-level check (dev harness page for the modal, like `/dev/character-studio`).
-- OWED (paid): the probe itself (Task 0, ~$0.40, Julien judges), and one post-build sheet rebuild with a deliberately extreme body to confirm end-to-end transfer (broken-control style: extreme vs default must differ visibly).
+- DONE (paid): the probe — 4 rounds, ~$1.75, text mechanism Julien-confirmed. OWED (paid): one post-build sheet rebuild with an extreme bodyShape confirming the phrase steers the real pipeline (broken-control style: extreme vs neutral must differ visibly).
 - E2E: open Body editor from the studio, assert sliders render + Save persists `bodyShape` via intercepted PATCH (no generation).
 
 ## Non-goals
