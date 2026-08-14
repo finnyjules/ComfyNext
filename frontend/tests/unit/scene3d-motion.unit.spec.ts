@@ -419,6 +419,17 @@ describe('scene3d motion — frame source factory', () => {
     const src = makeScene3DFrameSource({ getClock: () => ({ duration: 4, fps: 30, width: 8, height: 8 }), renderAt: () => null })
     await expect(src.getFrame(0, 8, 8)).rejects.toThrow()
   })
+  // renderAt may be async (the settled path awaits decal texture builds before
+  // rendering); getFrame must await it so the null guard sees the resolved value,
+  // not a truthy pending Promise.
+  it('getFrame awaits an async renderAt', async () => {
+    const src = makeScene3DFrameSource({ getClock: () => ({ duration: 4, fps: 30, width: 8, height: 8 }), renderAt: async () => fakeCanvas })
+    expect(await src.getFrame(0.5, 8, 8)).toBe(fakeCanvas)
+  })
+  it('getFrame throws when an async renderAt resolves null', async () => {
+    const src = makeScene3DFrameSource({ getClock: () => ({ duration: 4, fps: 30, width: 8, height: 8 }), renderAt: async () => null })
+    await expect(src.getFrame(0, 8, 8)).rejects.toThrow(/not ready/)
+  })
 })
 
 import { bandSegments, resizeTransition, setClipOffset, snapSeconds } from '~/lib/scene3d/motion/timeline'

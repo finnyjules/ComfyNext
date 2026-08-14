@@ -12,8 +12,10 @@ import type { StudioFrameSource } from '~/lib/studio/frameSource'
 
 export interface Scene3DFrameSourceDeps {
   getClock: () => { duration: number; fps: number; width: number; height: number }
-  /** Render at normalized loop time t01 (0..1) and return the canvas, or null if the engine is not ready. */
-  renderAt: (t01: number, w: number, h: number) => HTMLCanvasElement | null
+  /** Render at normalized loop time t01 (0..1) and return the canvas, or null if
+   *  the engine is not ready. May be async: the settled render path awaits decal
+   *  texture builds before its one-shot render (see renderMotionFrameSettled). */
+  renderAt: (t01: number, w: number, h: number) => HTMLCanvasElement | null | Promise<HTMLCanvasElement | null>
 }
 
 /** Live frame puller for a 3D Studio node — mirrors spacetype/frameSource.ts.
@@ -28,7 +30,9 @@ export function makeScene3DFrameSource(deps: Scene3DFrameSourceDeps): StudioFram
     get width() { return deps.getClock().width },
     get height() { return deps.getClock().height },
     getFrame: async (t01, w, h) => {
-      const surface = deps.renderAt(t01, w, h)
+      // Await, don't just return: a pending Promise is truthy, so the not-ready
+      // guard below must see the RESOLVED value.
+      const surface = await deps.renderAt(t01, w, h)
       // Fail loudly here rather than returning null: a not-yet-mounted engine
       // would otherwise surface several frames later as an opaque WebGL
       // "invalid texture source" error at the consumer's upload call.

@@ -10,7 +10,7 @@ import { minHeightForPorts } from '~/lib/canvas/portLayout'
 import { parseDoc } from '~/lib/scene3d/config'
 import { SceneEngine } from '~/lib/scene3d/engine'
 import { renderPasses } from '~/lib/scene3d/passes'
-import { sceneHasMotion, renderMotionFrame, renderMotionFrameSettled } from '~/lib/scene3d/motion/render'
+import { sceneHasMotion, renderMotionFrameSettled } from '~/lib/scene3d/motion/render'
 import { makeScene3DFrameSource } from '~/lib/scene3d/motion/frameSource'
 import { registerStudioFrameSource, unregisterStudioFrameSource } from '~/lib/studio/frameSource'
 import { registerScene3DRebaker, unregisterScene3DRebaker } from '~/lib/scene3d/rebake'
@@ -111,10 +111,14 @@ function syncRegistration() {
         const d = sceneDoc.value
         return { duration: d.motion.duration, fps: d.motion.fps, width: d.output.width, height: d.output.height }
       },
+      // Settled, not plain renderMotionFrame: decal meshes attach on a microtask
+      // after syncFromDoc (texture aspect), and a downstream Frame's bake pulls
+      // each frame exactly once — a synchronous render made the sticker pop in a
+      // few frames into the pulled sequence. getFrame already awaits this.
       renderAt: (t01, w, h) => {
         const eng = ensureHeadless(w, h)
         if (!eng) return null
-        return renderMotionFrame(eng, sceneDoc.value, t01)
+        return renderMotionFrameSettled(eng, sceneDoc.value, t01)
       },
     }))
     registered = true
@@ -135,8 +139,15 @@ let previewTimer: ReturnType<typeof setTimeout> | null = null
 // (see renderMotionFrameSettled), and this path renders exactly ONCE — a
 // synchronous render therefore produced a thumbnail with every decal missing,
 // warm texture cache or not.
+//
+// Generation counter: overlapping runs share the headless engine, so the first
+// finisher used to dispose it under the second, and an OLDER run finishing last
+// could stamp a stale livePreviewUrl over the newer one. Only the latest run may
+// write the URL or dispose.
+let previewGen = 0
 async function renderPreview(): Promise<void> {
   if (typeof document === 'undefined') return
+  const gen = ++previewGen
   const doc = sceneDoc.value
   if (!doc.objects.length) { livePreviewUrl.value = null; return }
   const scale = Math.min(1, 384 / Math.max(doc.output.width, doc.output.height))
@@ -144,14 +155,18 @@ async function renderPreview(): Promise<void> {
   const h = Math.max(1, Math.round(doc.output.height * scale))
   const eng = ensureHeadless(w, h)
   if (!eng) return
-  try { livePreviewUrl.value = (await renderMotionFrameSettled(eng, doc, 0)).toDataURL('image/png') }
+  try {
+    const url = (await renderMotionFrameSettled(eng, doc, 0)).toDataURL('image/png')
+    if (gen === previewGen) livePreviewUrl.value = url
+  }
   catch { /* transient WebGL hiccup — keep the previous preview */ }
   finally {
-    // Free the context when nothing else needs it (no active frame source).
-    // Identity-checked: the await above yields, so unmount (or a newer preview)
-    // may already have disposed and replaced this engine — disposing it twice
-    // would double-release the shared WebGL context handle.
-    if (!registered && headlessEngine === eng) { eng.dispose(); headlessEngine = null; headlessCanvas = null }
+    // Free the context when nothing else needs it (no active frame source, no
+    // newer preview run still using this engine). Identity-checked: the await
+    // above yields, so unmount may already have disposed and replaced this
+    // engine — disposing it twice would double-release the shared WebGL
+    // context handle.
+    if (gen === previewGen && !registered && headlessEngine === eng) { eng.dispose(); headlessEngine = null; headlessCanvas = null }
   }
 }
 function schedulePreview(): void {
