@@ -10,8 +10,9 @@ import { stripAlpha } from '~/lib/color/convert'
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js'
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js'
 import { roundedLatheGeometry, roundedPolyGeometry, roundedHullGeometry } from '~/lib/scene3d/roundedGeometry'
-import type { SceneDoc, SceneObject, SceneMaterial, Vec3, LightingPreset, PrimitiveKind, PrimitiveObject, PrimitiveContent, GlbObject, LightObject, EnvironmentKind } from './config'
+import type { SceneDoc, SceneObject, SceneMaterial, Vec3, LightingPreset, PrimitiveKind, PrimitiveObject, PrimitiveContent, GlbObject, LightObject, DecalObject, EnvironmentKind } from './config'
 import { LIGHT_DEFAULTS, DEFAULT_FONT_URL } from './config'
+import { buildDecalMesh, decalTextureFor, decalKeyFor } from './decals'
 import { buildEnvironmentScene } from './environments'
 import { orderParentsFirst } from './hierarchy'
 import { loadGlb, clearGlbCache } from './glb'
@@ -408,6 +409,7 @@ export class SceneEngine {
   private glbTokens = new Map<string, number>() // id → load generation (drop stale async loads)
   private fontTokens = new Map<string, number>() // id → font-load generation, same drop-stale contract as glbTokens
   private meshTokens = new Map<string, number>()
+  private decalTokens = new Map<string, number>()
   private token = 0
   /** While a sculpt session is live, `geometryForObject` returns geometry built
    *  directly from THESE arrays (by reference, no copy) instead of decoding
@@ -625,6 +627,7 @@ export class SceneEngine {
         this.glbTokens.delete(id)
         this.fontTokens.delete(id)
         this.meshTokens.delete(id)
+        this.decalTokens.delete(id)
       }
     }
     // Parents first: a child's root cannot be added to a parent root that has
@@ -765,6 +768,7 @@ export class SceneEngine {
     const sourceKey = obj.kind === 'primitive' ? `primitive:${obj.primitive}`
       : obj.kind === 'glb' ? `glb:${obj.url}`
       : obj.kind === 'group' ? 'group'
+      : obj.kind === 'decal' ? 'decal'
       : `light:${obj.light}`
     let root = this.objectRoots.get(obj.id)
     if (root && root.userData.sourceKey !== sourceKey) {
@@ -785,6 +789,7 @@ export class SceneEngine {
       this.objectRoots.delete(obj.id)
       this.glbTokens.delete(obj.id)
       this.fontTokens.delete(obj.id)
+      this.decalTokens.delete(obj.id)
       root = undefined
     }
     if (!root) {
@@ -814,6 +819,8 @@ export class SceneEngine {
         }).catch(() => { /* surface shows the error state; the group stays empty */ })
       } else if (obj.kind === 'group') {
         root = new THREE.Group() // an empty transform node — no geometry, no light, no marker
+      } else if (obj.kind === 'decal') {
+        root = new THREE.Group() // decal mesh is added async once the texture resolves
       } else {
         const group = new THREE.Group()
         const light = lightFor(obj)
@@ -938,6 +945,46 @@ export class SceneEngine {
       root.userData.widget = widget
       widget.visible = this.lightView
       setWidgetSelected(widget, obj.id === this.selectedId)
+    } else if (obj.kind === 'decal') {
+      // Stamped every sync so an async texture load applies the LATEST state.
+      root.userData.decalObj = obj
+      // Geometry is baked in TARGET-LOCAL space, so this root must sit at
+      // identity under the TARGET root — undo the generic transform application
+      // above, and follow targetId rather than parentId (a stray reparent must
+      // not detach the sticker from its surface).
+      root.position.set(0, 0, 0); root.rotation.set(0, 0, 0); root.scale.set(1, 1, 1)
+      const targetRoot = this.objectRoots.get(obj.targetId)
+      if (targetRoot && root.parent !== targetRoot) targetRoot.add(root)
+      const targetMesh = targetRoot as THREE.Mesh | undefined
+      if (!targetMesh || !(targetMesh as any).isMesh) {
+        // Target missing or still a placeholder group — render nothing this sync;
+        // the next doc-driven sync retries.
+        return
+      }
+      const existing = root.children[0] as THREE.Mesh | undefined
+      if (existing) (existing.material as THREE.MeshStandardMaterial).opacity = obj.opacity
+      const key = decalKeyFor(obj, targetMesh.userData.geoKey)
+      if (root.userData.decalKey === key) return
+      const tok = ++this.token
+      this.decalTokens.set(obj.id, tok)
+      decalTextureFor(obj.content).then((tex) => {
+        if (this.decalTokens.get(obj.id) !== tok) return // stale (superseded/removed)
+        const r = this.objectRoots.get(obj.id)
+        if (!r) return
+        const latest = (r.userData.decalObj as DecalObject | undefined) ?? obj
+        const tRoot = this.objectRoots.get(latest.targetId) as THREE.Mesh | undefined
+        if (!tRoot || !(tRoot as any).isMesh) return
+        const old = r.children[0] as THREE.Mesh | undefined
+        if (old) {
+          r.remove(old)
+          old.geometry.dispose()
+          ;(old.material as THREE.Material).dispose() // does NOT dispose .map — the texture cache owns it
+        }
+        r.add(buildDecalMesh(tRoot, latest, tex))
+        // Key recomputed at completion: the target's geometry may have changed
+        // while the texture loaded.
+        r.userData.decalKey = decalKeyFor(latest, tRoot.userData.geoKey)
+      }).catch(() => { /* texture failed; cache evicted, next sync retries */ })
     }
   }
 

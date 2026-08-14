@@ -4,7 +4,7 @@ import { applyMotionToDoc } from './apply'
 
 export function sceneHasMotion(doc: SceneDoc): boolean {
   for (const o of doc.objects) {
-    if (o.kind === 'light') continue
+    if (o.kind === 'light' || o.kind === 'decal') continue
     const m = o.motion
     if (m && ((m.loop && m.loop.kind !== 'none') || m.in || m.out)) return true
   }

@@ -22,7 +22,7 @@ const EASE_OUT = { kind: 'bezier' as const, cps: [0, 0, 0.58, 1] as [number, num
  *    "does anything in this scene move", and a hand-authored child motion moves
  *    the scene whether or not its group has motion of its own. */
 export function templateTargets(doc: SceneDoc): SceneObject[] {
-  return rootObjects(doc.objects).filter(o => o.kind !== 'light')
+  return rootObjects(doc.objects).filter(o => o.kind !== 'light' && o.kind !== 'decal')
 }
 
 /** Stamp `make(i)` onto every template target, and CLEAR object motion on every
@@ -39,7 +39,7 @@ function stampTemplate(doc: SceneDoc, make: (i: number) => ObjectMotion): void {
   const targets = templateTargets(doc)
   const targetIds = new Set(targets.map((o) => o.id))
   for (const o of doc.objects) {
-    if (o.kind === 'light' || targetIds.has(o.id)) continue
+    if (o.kind === 'light' || o.kind === 'decal' || targetIds.has(o.id)) continue
     delete o.motion
   }
   targets.forEach((o, i) => { o.motion = make(i) })
