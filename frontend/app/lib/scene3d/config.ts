@@ -260,7 +260,27 @@ export interface GroupObject extends SceneObjectBase {
   kind: 'group'
 }
 
-export type SceneObject = PrimitiveObject | GlbObject | LightObject | GroupObject
+export type DecalContent =
+  | { type: 'image'; image: string }   // input-dir filename, same store as material.image
+  | { type: 'text'; text: string; font: string; color: string } // font: google:Fam@W | local:id
+
+/** A sticker/label projected onto a primitive's surface. Base fields are
+ *  reinterpreted: `position` = projection point and `rotation` = projector
+ *  orientation, both in the TARGET'S local space (the engine bakes the decal
+ *  geometry target-local and parents it under the target root, so the sticker
+ *  follows the solid with no reprojection). `scale` is unused, like a light's.
+ *  `parentId` is kept equal to `targetId`; the engine follows `targetId`. */
+export interface DecalObject extends SceneObjectBase {
+  kind: 'decal'
+  targetId: string
+  content: DecalContent
+  size: number     // decal width, target-local units (height derives from texture aspect)
+  depth: number    // projection box depth — how far the sticker wraps around curvature
+  spin: number     // radians around the surface normal
+  opacity: number  // 0..1
+}
+
+export type SceneObject = PrimitiveObject | GlbObject | LightObject | GroupObject | DecalObject
 
 /** True when any object in `doc` currently needs the Scene3D per-frame shader-field
  *  refresh (`refreshSceneShaderFields` in materials.ts) — either it RENDERS a shaderFill
@@ -278,7 +298,7 @@ export type SceneObject = PrimitiveObject | GlbObject | LightObject | GroupObjec
  *  GLB's material only applies with `materialOverride` on — both still excluded. */
 export function sceneHasShaderFill(doc: SceneDoc): boolean {
   return doc.objects.some((o) => {
-    if (o.kind === 'light' || o.kind === 'group') return false
+    if (o.kind === 'light' || o.kind === 'group' || o.kind === 'decal') return false
     if (o.kind === 'glb' && o.materialOverride !== true) return false
     const m = o.material
     if (m.type === 'shaderFill' && !!m.shader) return true
@@ -292,7 +312,7 @@ export function sceneHasShaderFill(doc: SceneDoc): boolean {
  *  ordinary scene is excluded from `sceneHasShaderFill`. Same light/group/GLB skip rules. */
 export function sceneHasOpalFlow(doc: SceneDoc): boolean {
   return doc.objects.some((o) => {
-    if (o.kind === 'light' || o.kind === 'group') return false
+    if (o.kind === 'light' || o.kind === 'group' || o.kind === 'decal') return false
     if (o.kind === 'glb' && o.materialOverride !== true) return false
     const m = o.material
     return m.type === 'opalescent' && (m.opalFlowSpeed ?? MATERIAL_DEFAULTS.opalFlowSpeed) > 0
@@ -610,6 +630,28 @@ export function createGroup(existing: SceneObject[]): GroupObject {
   }
 }
 
+export const DECAL_DEFAULTS = {
+  size: 0.6, depth: 0.25, spin: 0, opacity: 1,
+  text: 'LABEL', color: '#1a1a1a', font: 'google:Inter@700',
+} as const
+
+export function createDecal(
+  targetId: string,
+  pose: { position: Vec3; rotation: Vec3 },
+  content: DecalContent,
+  existing: SceneObject[],
+): DecalObject {
+  const label = content.type === 'text' ? 'Text decal' : 'Sticker'
+  return {
+    id: newId(), name: numberedName(label, existing), kind: 'decal',
+    visible: true, position: pose.position, rotation: pose.rotation, scale: [1, 1, 1],
+    material: { ...DEFAULT_MATERIAL }, // dummy, never rendered — same as lights/groups
+    parentId: targetId, targetId, content,
+    size: DECAL_DEFAULTS.size, depth: DECAL_DEFAULTS.depth,
+    spin: DECAL_DEFAULTS.spin, opacity: DECAL_DEFAULTS.opacity,
+  }
+}
+
 export function serializeDoc(doc: SceneDoc): string {
   return JSON.stringify(doc)
 }
@@ -851,6 +893,14 @@ export function parseDoc(json: string): SceneDoc {
     if (raw.fillRule === 'evenodd') c.fillRule = 'evenodd'
     return Object.keys(c).length ? c : undefined
   }
+  const parseDecalContent = (raw: any): DecalContent | undefined => {
+    if (!raw || typeof raw !== 'object') return undefined
+    if (raw.type === 'image' && typeof raw.image === 'string') return { type: 'image', image: raw.image }
+    if (raw.type === 'text' && typeof raw.text === 'string') {
+      return { type: 'text', text: raw.text, font: str(raw.font, DECAL_DEFAULTS.font), color: str(raw.color, DECAL_DEFAULTS.color) }
+    }
+    return undefined // unusable content ⇒ the object is dropped (same as an unknown kind)
+  }
   const objects: SceneObject[] = Array.isArray(raw.objects)
     ? raw.objects.flatMap((o: any): SceneObject[] => {
         if (!o || typeof o.id !== 'string') return []
@@ -897,16 +947,33 @@ export function parseDoc(json: string): SceneDoc {
         if (o.kind === 'group') {
           return [{ ...common, kind: 'group' as const }]
         }
+        if (o.kind === 'decal' && typeof o.targetId === 'string') {
+          const content = parseDecalContent(o.content)
+          if (!content) return []
+          return [{
+            ...common, kind: 'decal' as const, targetId: o.targetId, content,
+            size: num(o.size, DECAL_DEFAULTS.size), depth: num(o.depth, DECAL_DEFAULTS.depth),
+            spin: num(o.spin, DECAL_DEFAULTS.spin),
+            opacity: Math.min(1, Math.max(0, num(o.opacity, DECAL_DEFAULTS.opacity))),
+            // parentId invariant: the hierarchy edge always mirrors the projection target,
+            // whatever a stored doc claims — the engine follows targetId either way.
+            parentId: o.targetId,
+          }]
+        }
         return []
       })
     : []
+  // A decal whose target didn't survive parsing (or wasn't a primitive to begin
+  // with) is unplaceable — drop it before hierarchy sanitization sees it.
+  const byId = new Map(objects.map((o) => [o.id, o]))
+  const survivors = objects.filter((o) => o.kind !== 'decal' || byId.get(o.targetId)?.kind === 'primitive')
   // Runs on the fully-parsed set so both invariants see every surviving
   // object: a group dropped by an older build leaves children pointing at a
   // dead id, and any input at all could carry a cycle.
-  sanitizeHierarchy(objects)
+  sanitizeHierarchy(survivors)
   const doc: SceneDoc = {
     version: 1,
-    objects,
+    objects: survivors,
     camera: {
       position: vec3(raw.camera?.position, d.camera.position),
       target: vec3(raw.camera?.target, d.camera.target),
