@@ -8,7 +8,11 @@ const props = defineProps<{ doc: SceneDoc; selectedId: string | null; playhead: 
 const emit = defineEmits<{ (e: 'select', id: string): void }>()
 
 const duration = computed(() => props.doc.motion.duration)
-const rows = computed(() => props.doc.objects.filter(o => o.kind !== 'light'))
+// Lights carry no motion. Neither do decals: a decal is a projection baked into
+// its target's surface — it rides the target's own motion and has no
+// independent transform to animate (the engine pins its root to identity), so a
+// timeline row for one would edit a clip nothing ever plays.
+const rows = computed(() => props.doc.objects.filter(o => o.kind !== 'light' && o.kind !== 'decal'))
 const pct = (f: number) => `${(f * 100).toFixed(3)}%`
 
 function seg(o: SceneObject) { return bandSegments(o.motion, duration.value) }

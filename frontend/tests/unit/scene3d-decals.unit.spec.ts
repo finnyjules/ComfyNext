@@ -1,10 +1,12 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import * as THREE from 'three'
 import {
-  parseDoc, serializeDoc, defaultDoc, createDecal, createPrimitive,
+  parseDoc, serializeDoc, defaultDoc, createDecal, createPrimitive, createLight,
   DECAL_DEFAULTS, type DecalObject,
 } from '~/lib/scene3d/config'
-import { eulerFromNormal, decalKeyFor } from '~/lib/scene3d/decals'
+import {
+  eulerFromNormal, decalKeyFor, DecalTextureRegistry, DECAL_TEX_CACHE_MAX,
+} from '~/lib/scene3d/decals'
 
 function docWith(objects: any[]) {
   return JSON.stringify({ ...JSON.parse(serializeDoc(defaultDoc())), objects })
@@ -42,6 +44,34 @@ describe('scene3d decals — doc model', () => {
       { type: 'text', text: 'X', font: 'f', color: '#000' }, []) }
     const back = parseDoc(docWith([box, orphan]))
     expect(back.objects.some(o => o.kind === 'decal')).toBe(false)
+  })
+
+  it('drops a decal whose target EXISTS but is a light', () => {
+    // The other arm of the same survivor filter: `byId.get(targetId)` is
+    // truthy here, so only the `.kind === 'primitive'` half rejects it. A light
+    // has no geometry to project onto — keeping it would leave a decal root
+    // parented to a light forever, invisible and un-fixable from the panel.
+    const lamp = createLight('point', [])
+    const d = { ...createDecal(lamp.id, { position: [0, 0, 0], rotation: [0, 0, 0] },
+      { type: 'text', text: 'X', font: 'f', color: '#000' }, []) }
+    const back = parseDoc(docWith([lamp, d]))
+    expect(back.objects.some(o => o.kind === 'decal')).toBe(false)
+    expect(back.objects.some(o => o.id === lamp.id)).toBe(true) // the light itself survives
+  })
+
+  it('coerces a stored decal whose parentId diverged from its targetId', () => {
+    // The hierarchy edge must always mirror the projection target: the engine
+    // follows targetId, everything else (grouping, transforms, delete cascade)
+    // follows parentId. A doc hand-edited — or written by a build where a
+    // reparent could split them — must not load with the two disagreeing.
+    const box = createPrimitive('box')
+    const other = createPrimitive('sphere')
+    const d = createDecal(box.id, { position: [0, 0, 0.5], rotation: [0, 0, 0] },
+      { type: 'text', text: 'Z', font: 'f', color: '#000' }, [box])
+    const back = parseDoc(docWith([box, other, { ...d, parentId: other.id }]))
+    const parsed = back.objects.find(o => o.kind === 'decal') as DecalObject
+    expect(parsed.targetId).toBe(box.id)
+    expect(parsed.parentId).toBe(box.id)
   })
 
   it('tolerates junk fields and fills defaults', () => {
@@ -83,5 +113,101 @@ describe('scene3d decals — projector math', () => {
     expect(decalKeyFor({ ...base, spin: 1 }, 'geo1')).not.toBe(k)
     expect(decalKeyFor(base, 'geo2')).not.toBe(k)
     expect(decalKeyFor({ ...base, content: { ...base.content, text: 'B' } }, 'geo1')).not.toBe(k)
+  })
+})
+
+describe('scene3d decals — texture registry (LRU + refcount)', () => {
+  // Plain THREE.Texture, no GL context needed: dispose() only fires an event
+  // and flips a version counter, which is exactly what we assert on.
+  const makeTex = () => new THREE.Texture()
+  const spy = (t: THREE.Texture) => vi.spyOn(t, 'dispose')
+
+  it('caches by key and re-uses the same promise', async () => {
+    const reg = new DecalTextureRegistry(4)
+    let built = 0
+    const make = () => { built++; return Promise.resolve(makeTex()) }
+    const a = reg.get('k', make)
+    const b = reg.get('k', make)
+    expect(a).toBe(b)
+    expect(built).toBe(1)
+    await a
+    expect(reg.size).toBe(1)
+  })
+
+  it('evicts least-recently-used past the cap and disposes the unreferenced texture', async () => {
+    const reg = new DecalTextureRegistry(2)
+    const t1 = makeTex(); const t2 = makeTex(); const t3 = makeTex()
+    const d1 = spy(t1)
+    await reg.get('a', () => Promise.resolve(t1))
+    await reg.get('b', () => Promise.resolve(t2))
+    await reg.get('c', () => Promise.resolve(t3)) // pushes 'a' out
+    expect(reg.size).toBe(2)
+    expect(d1).toHaveBeenCalledTimes(1)   // nothing referenced it
+    expect(reg.isCached(t1)).toBe(false)
+    expect(reg.isCached(t2)).toBe(true)
+  })
+
+  it('a cache HIT refreshes recency, so the untouched key is the one evicted', async () => {
+    const reg = new DecalTextureRegistry(2)
+    const t1 = makeTex(); const t2 = makeTex(); const t3 = makeTex()
+    const d1 = spy(t1); const d2 = spy(t2)
+    await reg.get('a', () => Promise.resolve(t1))
+    await reg.get('b', () => Promise.resolve(t2))
+    reg.get('a', () => Promise.reject(new Error('should not rebuild'))) // touch 'a'
+    await reg.get('c', () => Promise.resolve(t3))
+    expect(d1).not.toHaveBeenCalled()
+    expect(d2).toHaveBeenCalledTimes(1)
+  })
+
+  it('NEVER disposes a texture a live decal mesh still references', async () => {
+    const reg = new DecalTextureRegistry(1)
+    const t1 = makeTex(); const t2 = makeTex()
+    const d1 = spy(t1)
+    await reg.get('a', () => Promise.resolve(t1))
+    reg.acquire(t1)                                  // a decal mesh is painting with it
+    await reg.get('b', () => Promise.resolve(t2))    // evicts 'a'
+    expect(reg.isCached(t1)).toBe(false)
+    expect(d1).not.toHaveBeenCalled()                // still on screen
+    reg.release(t1)                                  // that mesh goes away
+    expect(d1).toHaveBeenCalledTimes(1)              // evicted AND unreferenced ⇒ freed
+  })
+
+  it('releases refcount to zero before disposing (two meshes, one texture)', async () => {
+    const reg = new DecalTextureRegistry(1)
+    const t1 = makeTex(); const t2 = makeTex()
+    const d1 = spy(t1)
+    await reg.get('a', () => Promise.resolve(t1))
+    reg.acquire(t1); reg.acquire(t1)
+    await reg.get('b', () => Promise.resolve(t2)) // evict 'a' while doubly referenced
+    reg.release(t1)
+    expect(reg.refCount(t1)).toBe(1)
+    expect(d1).not.toHaveBeenCalled()
+    reg.release(t1)
+    expect(d1).toHaveBeenCalledTimes(1)
+  })
+
+  it('a release while the texture is STILL cached never disposes it', async () => {
+    const reg = new DecalTextureRegistry(4)
+    const t1 = makeTex()
+    const d1 = spy(t1)
+    await reg.get('a', () => Promise.resolve(t1))
+    reg.acquire(t1)
+    reg.release(t1)                       // mesh rebuilt; the cache still owns the texture
+    expect(d1).not.toHaveBeenCalled()
+    expect(reg.isCached(t1)).toBe(true)
+  })
+
+  it('evicts a failed load so the next sync retries', async () => {
+    const reg = new DecalTextureRegistry(4)
+    await expect(reg.get('a', () => Promise.reject(new Error('404')))).rejects.toThrow('404')
+    await Promise.resolve() // let the internal catch run
+    expect(reg.size).toBe(0)
+    const t = makeTex()
+    await expect(reg.get('a', () => Promise.resolve(t))).resolves.toBe(t)
+  })
+
+  it('the shared registry is bounded', () => {
+    expect(DECAL_TEX_CACHE_MAX).toBeLessThanOrEqual(64)
+    expect(DECAL_TEX_CACHE_MAX).toBeGreaterThan(0)
   })
 })

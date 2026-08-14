@@ -183,6 +183,12 @@ export class SceneInteraction {
        *  for the duration of such a drag (see `pivotDragActive`), so this is its
        *  cue to run the sync that re-parents the roots to their doc parents. */
       onPivotDragEnd?: () => void
+      /** Fired when the INTERACTION layer drops an armed placement on its own
+       *  (a right-click in the viewport) rather than the surface calling
+       *  `cancelPlacement`. The surface's own `placingDecal` state — crosshair
+       *  cursor, hint banner, the panel's "Click a surface…" label — would
+       *  otherwise stay armed with nothing left to consume it. */
+      onPlacementCancelled?: () => void
       onCameraChange?: () => void
     },
   ) {
@@ -286,6 +292,7 @@ export class SceneInteraction {
     domElement.addEventListener('pointerdown', this.onDown)
     domElement.addEventListener('pointermove', this.onMove)
     domElement.addEventListener('pointerup', this.onUp)
+    domElement.addEventListener('contextmenu', this.onContextMenu)
   }
 
   /** Recomputes `orbit.enabled` from the three locks. Called whenever any
@@ -407,8 +414,28 @@ export class SceneInteraction {
     if (!dragging || e.shiftKey) this.shiftDown = e.shiftKey
   }
 
+  /** Right-click cancels an armed decal placement (Escape's twin — placement is
+   *  a one-shot mode you arm from the panel and must be able to drop without
+   *  touching the keyboard). Tracked down/up rather than acting on the
+   *  pointerdown so a right-DRAG, which is OrbitControls' pan, still pans
+   *  instead of silently disarming the mode mid-gesture — the same
+   *  moved-more-than-4px test `onUp` already uses for left clicks. */
+  private rightDownAt: [number, number] | null = null
+
+  /** Swallow the browser menu for the right-click that cancelled placement (and
+   *  for any right-click while it is armed — the surface shows no context menu
+   *  of its own, and the native one over the canvas is never wanted mid-mode). */
+  private onContextMenu = (e: MouseEvent) => {
+    if (this.placementActive || this.suppressNextContextMenu) {
+      this.suppressNextContextMenu = false
+      e.preventDefault()
+    }
+  }
+  private suppressNextContextMenu = false
+
   private onDown = (e: PointerEvent) => {
     this.shiftDown = e.shiftKey
+    if (e.button === 2 && this.placementActive) { this.rightDownAt = [e.clientX, e.clientY]; return }
     if (e.button !== 0) return
     this.downAt = [e.clientX, e.clientY]
     // NOTE: do not reset gizmoDragged here — the gizmos' earlier-registered
@@ -417,6 +444,18 @@ export class SceneInteraction {
   }
 
   private onUp = (e: PointerEvent) => {
+    if (e.button === 2) {
+      const down = this.rightDownAt
+      this.rightDownAt = null
+      // A right CLICK (not a pan drag) while placement is armed cancels it.
+      if (down && this.placement && Math.hypot(e.clientX - down[0], e.clientY - down[1]) <= 4) {
+        this.endPlacement()
+        this.callbacks.onPlacementCancelled?.()
+        this.suppressNextContextMenu = true // browsers that fire contextmenu on mouseUP
+        e.preventDefault()
+      }
+      return
+    }
     // Only treat as a click if the pointer didn't drag (orbit/gizmo own drags).
     if (e.button !== 0) return
     if (!this.downAt) return
@@ -732,6 +771,7 @@ export class SceneInteraction {
     this.domElement.removeEventListener('pointerdown', this.onDown)
     this.domElement.removeEventListener('pointermove', this.onMove)
     this.domElement.removeEventListener('pointerup', this.onUp)
+    this.domElement.removeEventListener('contextmenu', this.onContextMenu)
     for (const tc of this.gizmos) {
       tc.detach()
       // dispose() frees child geometry/materials but does not unparent _root.

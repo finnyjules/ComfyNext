@@ -516,7 +516,10 @@ function setPost(key: string, value: string | number | boolean): void {
  *  controls.ts, which already draws the line in the same place. */
 function applyMaterial(mutate: (m: SceneMaterial) => void) {
   for (const o of selectedObjects.value) {
-    if (o.kind === 'light' || o.kind === 'group') continue
+    // Decals join lights and groups: a decal's own `material` is never rendered
+    // (buildDecalMesh builds its material from the texture + opacity), so an
+    // edit made while one sits in a multi-selection would be banked invisibly.
+    if (o.kind === 'light' || o.kind === 'group' || o.kind === 'decal') continue
     if (o.kind === 'glb' && o.materialOverride !== true) continue
     mutate(o.material)
   }
@@ -1512,6 +1515,9 @@ onMounted(() => {
     // run the one that was owed now that the roots are back in the scene, so
     // they land under their real parents again.
     onPivotDragEnd: () => { engine?.syncFromDoc(doc) },
+    // A right-click in the viewport dropped the armed placement — clear the
+    // surface's half of that mode (crosshair, hint banner, "Click a surface…").
+    onPlacementCancelled: () => { placingDecal.value = null },
   })
   interaction.orbit.target.set(...doc.camera.target)
   engine.syncFromDoc(doc)
@@ -1741,18 +1747,21 @@ function onKey(e: KeyboardEvent) {
   }
   // Never hijack other modified chords (Cmd+R reload, Ctrl/Alt combos).
   if (e.metaKey || e.ctrlKey || e.altKey) return
+  // An armed decal placement owns Esc first — it is the most transient mode on
+  // the surface, and leaving it armed after an Escape would consume the user's
+  // next click somewhere they didn't intend. Deliberately ABOVE the `inField`
+  // bail: placement is armed straight from the decal panel, so the focus is
+  // very often still in the Label input, and Escape there has no native
+  // meaning worth protecting.
+  if (e.key === 'Escape' && placingDecal.value) {
+    e.preventDefault()
+    e.stopImmediatePropagation()
+    cancelDecalPlacement()
+    return
+  }
   if (inField) return
   // (No W/E/R mode shortcuts — the combined gizmo moves/rotates/scales at once.)
   if (e.key === 'Escape') {
-    // An armed decal placement owns Esc first — it is the most transient mode on
-    // the surface, and leaving it armed after an Escape would consume the user's
-    // next click somewhere they didn't intend.
-    if (placingDecal.value) {
-      e.preventDefault()
-      e.stopImmediatePropagation()
-      cancelDecalPlacement()
-      return
-    }
     // Open primitive/light/decal/generate menu owns Esc: close it, never the modal.
     if (primMenuOpen.value || lightMenuOpen.value || decalMenuOpen.value || genOpen.value) {
       e.preventDefault()
@@ -4467,7 +4476,12 @@ async function onClose() {
           </template>
         </StudioSection>
 
-        <StudioSection v-if="motionOn && selected" title="Object motion">
+        <!-- Decals excluded: the engine pins a decal root to identity under its
+             target (the projection is baked in target-local space), so it rides
+             the target's motion and has no transform of its own to animate —
+             offering the controls would write a clip nothing ever plays. Same
+             exclusion the motion timeline's rows make. -->
+        <StudioSection v-if="motionOn && selected && selected.kind !== 'decal'" title="Object motion">
           <div>
             <StudioSelect label="Loop" :model-value="selected.motion?.loop?.kind ?? 'none'" :options="LOOP_OPTIONS"
               @update:model-value="(v: string) => setObjectLoop(selected!, v as LoopKind)" />

@@ -39,3 +39,23 @@ export function renderMotionFrame(engine: SceneEngine, doc: SceneDoc, t01: numbe
   engine.render()
   return engine.renderer.domElement as HTMLCanvasElement
 }
+
+/** `renderMotionFrame` for HEADLESS, one-shot callers (card thumbnails, the
+ *  footer Render's pass bake): sync the SAME sampled doc the render will use,
+ *  await the engine's async asset builds (decal meshes only attach on a later
+ *  microtask — their geometry needs the texture's aspect ratio, so even a warm
+ *  cache resolves asynchronously), then render normally. The inner
+ *  `renderMotionFrame`'s own `syncFromDoc` re-diffs to the identical keys, so
+ *  it kicks off no new work and the decals are already in the tree.
+ *
+ *  Live surfaces deliberately do NOT use this: their rAF loop renders again
+ *  every frame, so a mesh that attaches a microtask late shows up on the next
+ *  one at no cost. */
+export async function renderMotionFrameSettled(
+  engine: SceneEngine, doc: SceneDoc, t01: number,
+): Promise<HTMLCanvasElement> {
+  const { doc: sampled } = applyMotionToDoc(doc, t01)
+  engine.syncFromDoc(sampled)
+  await engine.settleAsyncAssets()
+  return renderMotionFrame(engine, doc, t01)
+}

@@ -10,7 +10,7 @@ import { minHeightForPorts } from '~/lib/canvas/portLayout'
 import { parseDoc } from '~/lib/scene3d/config'
 import { SceneEngine } from '~/lib/scene3d/engine'
 import { renderPasses } from '~/lib/scene3d/passes'
-import { sceneHasMotion, renderMotionFrame } from '~/lib/scene3d/motion/render'
+import { sceneHasMotion, renderMotionFrame, renderMotionFrameSettled } from '~/lib/scene3d/motion/render'
 import { makeScene3DFrameSource } from '~/lib/scene3d/motion/frameSource'
 import { registerStudioFrameSource, unregisterStudioFrameSource } from '~/lib/studio/frameSource'
 import { registerScene3DRebaker, unregisterScene3DRebaker } from '~/lib/scene3d/rebake'
@@ -131,7 +131,11 @@ function syncRegistration() {
 // beauty_image (what execute() replays on Run) still updates on Render / editor close.
 const livePreviewUrl = ref<string | null>(null)
 let previewTimer: ReturnType<typeof setTimeout> | null = null
-function renderPreview(): void {
+// `async` for the decals' sake: they attach on a microtask after syncFromDoc
+// (see renderMotionFrameSettled), and this path renders exactly ONCE — a
+// synchronous render therefore produced a thumbnail with every decal missing,
+// warm texture cache or not.
+async function renderPreview(): Promise<void> {
   if (typeof document === 'undefined') return
   const doc = sceneDoc.value
   if (!doc.objects.length) { livePreviewUrl.value = null; return }
@@ -140,11 +144,14 @@ function renderPreview(): void {
   const h = Math.max(1, Math.round(doc.output.height * scale))
   const eng = ensureHeadless(w, h)
   if (!eng) return
-  try { livePreviewUrl.value = renderMotionFrame(eng, doc, 0).toDataURL('image/png') }
+  try { livePreviewUrl.value = (await renderMotionFrameSettled(eng, doc, 0)).toDataURL('image/png') }
   catch { /* transient WebGL hiccup — keep the previous preview */ }
   finally {
     // Free the context when nothing else needs it (no active frame source).
-    if (!registered) { eng.dispose(); headlessEngine = null; headlessCanvas = null }
+    // Identity-checked: the await above yields, so unmount (or a newer preview)
+    // may already have disposed and replaced this engine — disposing it twice
+    // would double-release the shared WebGL context handle.
+    if (!registered && headlessEngine === eng) { eng.dispose(); headlessEngine = null; headlessCanvas = null }
   }
 }
 function schedulePreview(): void {
@@ -188,6 +195,12 @@ async function rebakePasses(): Promise<void> {
   const eng = ensureHeadless(width, height)
   if (!eng) throw new Error('WebGL unavailable')
   eng.syncFromDoc(doc)
+  // Decal meshes only attach once their texture resolves — always a later
+  // microtask, warm cache or not (the projection needs the texture's aspect
+  // ratio). renderPasses below renders the scene as it stands RIGHT NOW, with
+  // no second frame to catch up on, so without this every uploaded pass would
+  // be missing every decal.
+  await eng.settleAsyncAssets()
   eng.applyCameraFromDoc(doc)
   // Item 5 fix (final review, residual): this used to advance a shaderFill field's clock by
   // WALL-CLOCK time since the headless engine was constructed — completely unrelated to what

@@ -12,7 +12,7 @@ import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLigh
 import { roundedLatheGeometry, roundedPolyGeometry, roundedHullGeometry } from '~/lib/scene3d/roundedGeometry'
 import type { SceneDoc, SceneObject, SceneMaterial, Vec3, LightingPreset, PrimitiveKind, PrimitiveObject, PrimitiveContent, GlbObject, LightObject, DecalObject, EnvironmentKind } from './config'
 import { LIGHT_DEFAULTS, DEFAULT_FONT_URL } from './config'
-import { buildDecalMesh, decalTextureFor, decalKeyFor } from './decals'
+import { buildDecalMesh, decalTextureFor, decalKeyFor, decalContentKey, releaseDecalTexture } from './decals'
 import { buildEnvironmentScene } from './environments'
 import { orderParentsFirst } from './hierarchy'
 import { loadGlb, clearGlbCache } from './glb'
@@ -388,6 +388,12 @@ const PRESETS: Record<LightingPreset, { envIntensity: number; shadow: boolean }>
  *  collision to guard against — just a stable, never-reused id per engine instance. */
 let _nextSceneEngineId = 1
 
+/** Decal contents whose texture load already failed and was reported. Every
+ *  doc-driven sync retries the load (the cache evicts failures), so the warn
+ *  has to be de-duped per content or a broken sticker filename floods the
+ *  console. Module-level, like the texture cache it mirrors. */
+const warnedDecalTextures = new Set<string>()
+
 export class SceneEngine {
   readonly renderer: THREE.WebGLRenderer
   readonly scene: THREE.Scene
@@ -410,6 +416,12 @@ export class SceneEngine {
   private fontTokens = new Map<string, number>() // id → font-load generation, same drop-stale contract as glbTokens
   private meshTokens = new Map<string, number>()
   private decalTokens = new Map<string, number>()
+  /** In-flight decal builds, keyed `id#token`. Entries are added by the decal
+   *  branch of `syncObject` and removed when the build settles — `settleAsyncAssets`
+   *  awaits them so a HEADLESS caller (which renders immediately after
+   *  `syncFromDoc`, with no rAF loop to catch up on a later frame) doesn't bake
+   *  a frame with every decal missing. */
+  private pendingDecals = new Map<string, Promise<void>>()
   private token = 0
   /** While a sculpt session is live, `geometryForObject` returns geometry built
    *  directly from THESE arrays (by reference, no copy) instead of decoding
@@ -968,7 +980,8 @@ export class SceneEngine {
       if (root.userData.decalKey === key) return
       const tok = ++this.token
       this.decalTokens.set(obj.id, tok)
-      decalTextureFor(obj.content).then((tex) => {
+      const pendingKey = `${obj.id}#${tok}`
+      const build: Promise<void> = decalTextureFor(obj.content).then((tex) => {
         if (this.decalTokens.get(obj.id) !== tok) return // stale (superseded/removed)
         const r = this.objectRoots.get(obj.id)
         if (!r) return
@@ -979,13 +992,50 @@ export class SceneEngine {
         if (old) {
           r.remove(old)
           old.geometry.dispose()
-          ;(old.material as THREE.Material).dispose() // does NOT dispose .map — the texture cache owns it
+          ;(old.material as THREE.Material).dispose() // does NOT dispose .map — the registry owns it
+          releaseDecalTexture(old.userData.decalTexture as THREE.Texture | undefined)
         }
         r.add(buildDecalMesh(tRoot, latest, tex))
         // Key recomputed at completion: the target's geometry may have changed
         // while the texture loaded.
         r.userData.decalKey = decalKeyFor(latest, tRoot.userData.geoKey)
-      }).catch(() => { /* texture failed; cache evicted, next sync retries */ })
+      }).catch((err) => {
+        // Texture failed; the cache evicted the entry so the next sync retries.
+        // Warned once per content so a retry loop can't flood the console, but
+        // a silent miss (the decal simply never appears) is impossible to
+        // diagnose from the viewport.
+        const ck = decalContentKey(obj.content)
+        if (!warnedDecalTextures.has(ck)) {
+          warnedDecalTextures.add(ck)
+          console.warn('[scene3d] decal texture failed to load', ck, err)
+        }
+      })
+      this.pendingDecals.set(pendingKey, build)
+      // Registered BEFORE settleAsyncAssets ever awaits `build`, so this
+      // deletion runs first when it settles and the settle loop sees a drained
+      // map rather than spinning its rounds out.
+      void build.finally(() => { if (this.pendingDecals.get(pendingKey) === build) this.pendingDecals.delete(pendingKey) })
+    }
+  }
+
+  /** Await every async asset build kicked off by the syncs so far — today, the
+   *  decal meshes, whose geometry can only be projected once the texture
+   *  resolves (aspect ratio) and therefore always attach on a later microtask,
+   *  warm cache or not.
+   *
+   *  HEADLESS callers must await this between `syncFromDoc` and their render:
+   *  they render exactly once, so anything not yet attached is simply absent
+   *  from the baked pixels — card thumbnails and the footer Render's uploaded
+   *  passes both silently dropped every decal before this existed. Live
+   *  surfaces need no call: their rAF loop re-renders continuously and picks
+   *  the mesh up on the next frame.
+   *
+   *  Re-checked after each round because a settled build can leave more work
+   *  queued (a decal whose target mesh only became projectable once an earlier
+   *  build ran). Bounded so a pathological cycle can't hang a bake. */
+  async settleAsyncAssets(): Promise<void> {
+    for (let round = 0; round < 10 && this.pendingDecals.size; round++) {
+      await Promise.all([...this.pendingDecals.values()])
     }
   }
 
@@ -1171,11 +1221,12 @@ function disposeTree(root: THREE.Object3D): void {
         if (!x) return
         // GLB materials own GPU textures (map, normalMap, roughnessMap, ...).
         // Dispose every texture-valued property before the material itself —
-        // EXCEPT on a decal mesh, whose .map is decals.ts's module-level
-        // texCache entry, shared across every decal using that content AND
-        // across SceneEngine instances (the headless bake engine shares the
-        // cache with the live viewport engine). Disposing it here would free a
-        // texture other live decals still reference.
+        // EXCEPT on a decal mesh, whose .map is the shared decal texture
+        // registry's, held by every decal using that content AND across
+        // SceneEngine instances (the headless bake engine shares the cache
+        // with the live viewport engine). Disposing it here would free a
+        // texture other live decals still reference; the registry frees it
+        // once the last mesh releases (below) and the cache has dropped it.
         if (!m.userData?.sharedMapMaterial) {
           for (const value of Object.values(x)) {
             if (value instanceof THREE.Texture) value.dispose()
@@ -1183,6 +1234,9 @@ function disposeTree(root: THREE.Object3D): void {
         }
         x.dispose()
       })
+      // Once per MESH, not per material: this mesh no longer paints with the
+      // shared texture it acquired in buildDecalMesh.
+      if (m.userData?.sharedMapMaterial) releaseDecalTexture(m.userData.decalTexture as THREE.Texture | undefined)
     }
   })
 }
