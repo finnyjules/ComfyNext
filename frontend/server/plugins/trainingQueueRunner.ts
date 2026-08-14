@@ -7,6 +7,8 @@
  * naturally resumes any in-flight jobs (resume-after-restart) and starts any
  * still-queued ones. A module singleton guards against Nitro HMR spawning
  * duplicate intervals in dev.
+ *
+ * Renamed from trainingQueue.ts 2026-08-13 (see commit bc052731c).
  */
 import { jobStore } from '../utils/trainingQueue'
 import { tickQueue } from '../utils/trainingRunner'

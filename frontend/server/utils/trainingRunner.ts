@@ -1,8 +1,8 @@
 /**
  * Scheduling core for the training queue. Pure: the store and the Replicate
  * provider are injected, so the concurrency/lifecycle logic unit-tests without
- * the Nitro runtime or network. server/plugins/trainingQueue.ts wires the real
- * store + provider and ticks this on an interval.
+ * the Nitro runtime or network. server/plugins/trainingQueueRunner.ts wires the
+ * real store + provider and ticks this on an interval.
  */
 import { isActive, type TrainingJob, type TrainingStatus } from './trainingQueue'
 

@@ -4,8 +4,8 @@
  * The browser no longer holds training jobs in memory and polls them — that's
  * what made closing the window abort a training. Instead every job is persisted
  * here as a small JSON file under the models dir, and a server-side runner
- * (server/plugins/trainingQueue.ts) starts/polls/finalizes them. The browser
- * becomes a pure viewer via /api/training-queue.
+ * (server/plugins/trainingQueueRunner.ts) starts/polls/finalizes them. The
+ * browser becomes a pure viewer via /api/training-queue.
  *
  * Pure Node (fs/path/crypto only) so it unit-tests without the Nitro runtime.
  */

@@ -106,7 +106,12 @@ async function requestClose() {
   emit('close')
 }
 function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape') void requestClose()
+  if (e.key !== 'Escape') return
+  // The Body editor is a child modal with its own Escape handler
+  // (BodyEditorModal.vue) that closes just itself — while it's open, this
+  // handler must not also close the whole studio out from under it.
+  if (bodyEditorOpen.value) return
+  void requestClose()
 }
 onMounted(() => window.addEventListener('keydown', onKeydown))
 onUnmounted(() => window.removeEventListener('keydown', onKeydown))

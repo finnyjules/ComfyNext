@@ -3,7 +3,7 @@
  *
  * Enqueue a training job. The browser has already zipped + uploaded the dataset
  * (→ datasetUrl) and, for LoRA, generated the aesthetic. We just persist the
- * job as `queued`; the runner (server/plugins/trainingQueue.ts) starts it.
+ * job as `queued`; the runner (server/plugins/trainingQueueRunner.ts) starts it.
  *
  * Body: {
  *   kind: 'lora' | 'voice',

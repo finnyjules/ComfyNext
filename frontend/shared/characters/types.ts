@@ -44,7 +44,7 @@ export interface CharacterRecord {
   states: CharacterState[]
   loraName: string | null
   trigger: string | null
-  /** Sparse — only sliders the user touched are present. null = untouched entirely. */
+  /** Dense after first save — all sliders present; neutral 0.5 values emit no phrase. null = untouched entirely. */
   bodyShape: Partial<Record<BodySliderId, number>> | null
   notes: string
   createdAt: string

@@ -354,6 +354,16 @@ test.describe('Character sheet: images and video consume the same identity asset
     const bodyModal = page.getByRole('dialog').filter({ hasText: 'Body — Cal' })
     await expect(bodyModal).toBeVisible({ timeout: 10_000 })
 
+    // Escape while the Body editor is open must close only the editor, not
+    // the whole studio underneath it (Important 2 regression: the studio's
+    // window keydown handler used to fire on every Escape regardless of
+    // bodyEditorOpen, closing the studio out from under the editor).
+    await page.keyboard.press('Escape')
+    await expect(bodyModal).toBeHidden({ timeout: 5_000 })
+    await expect(studio).toBeVisible()
+    await studio.getByRole('button', { name: 'Body', exact: true }).click()
+    await expect(bodyModal).toBeVisible({ timeout: 10_000 })
+
     // Sliders render — don't couple to the WebGL stage (fail-soft per the
     // component's own header comment; headless Chromium may or may not
     // produce a usable context). One range input per BODY_SLIDERS entry.

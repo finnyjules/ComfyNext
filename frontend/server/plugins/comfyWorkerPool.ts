@@ -2,7 +2,7 @@
  * Reaper for the ComfyUI worker pool. Runs inside the Nitro server: every 60s
  * it SIGTERMs any self-spawned worker (has a pid — adopted workers never
  * carry one) that's been idle (ready, no touchWorker()) for more than 15
- * minutes. Mirrors server/plugins/trainingQueue.ts's globalThis-guarded
+ * minutes. Mirrors server/plugins/trainingQueueRunner.ts's globalThis-guarded
  * singleton timer so Nitro HMR in dev never stacks duplicate intervals.
  */
 import { listWorkers, shouldReap, removeWorker, getWorkerProcess } from '../utils/comfyWorkerPool'
