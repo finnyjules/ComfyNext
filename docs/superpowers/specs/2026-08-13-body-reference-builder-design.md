@@ -26,7 +26,7 @@ From Python only (no app changes):
 - Generate body panels via the existing `/api/inpaint/nano-gen` mechanics: {no reference control} × {default figure} × {exaggerated figure} against Jene's portrait (~$0.40 total). Julien judges: did proportions follow the figure?
 - **Gate:** clear transfer → proceed with Anny. Weak/no transfer → fall back to the metaball skin over the existing `usePoseRig` capsule table (same sliders, same editor shell; document the decision) and re-probe once with the metaball render before building.
 
-## 2 · One-time bake → static GLB
+## 2 · One-time bake → static GLB (preview-only after amendment)
 
 - `scripts/bake-body-model/` (Python, committed; run manually, output committed): loads Anny, evaluates each slider's morph delta against the base body, exports ONE GLB with the base mesh + 8 morph targets (+ nothing else: no textures, no skeleton needed for v1's fixed neutral stance). Target size ≤ ~4 MB; decimate if needed (silhouette fidelity matters, vertex count doesn't).
 - The GLB ships as a static asset under `frontend/public/models/body-reference.glb` (or the established static-asset location — implementer matches convention). Provenance + licenses recorded in a sibling `ATTRIBUTION.md` (Anny Apache-2.0 code, MakeHuman CC0 assets).
@@ -38,7 +38,7 @@ From Python only (no app changes):
 - Modal chrome mirrors the Pose Editor / studio modal idiom (Teleport, overlay, Escape/backdrop through one close handler).
 - Stage: the GLB in grey (`MeshStandardMaterial`, neutral studio look), OrbitControls, fixed neutral stance.
 - Panel: 8 sliders (live `morphTargetInfluences`) + 4 presets (Slim / Average / Athletic / Broad — value sets tuned during implementation on the real figure). Free & instant; copy states so ("Free & instant — nothing is generated while you slide").
-- **Save body**: renders front + back views off-screen (same renderer, two camera angles), composites side-by-side into ONE PNG (reuse the composite/bake canvas patterns), uploads via `uploadRefFilename`, then persists `{ bodyShape, bodyImage }` (§4). Free.
+- **Save body** (amended): persists `{ bodyShape }` via `patchCharacter` — nothing rendered, nothing uploaded. The figure is preview-only. Free and instant.
 - Cancel discards. Reopening restores sliders from `bodyShape`.
 - Quiet-readiness language rules apply (no machine words).
 
@@ -47,10 +47,10 @@ From Python only (no app changes):
 - `CharacterRecord` gains ONE character-level field (not per state):
   - `bodyShape: Record<string, number> | null` — slider id → 0..1 value (re-editable source of truth; the compiled phrase is always derived, never stored)
   - ~~`bodyImage`~~ — DELETED by amendment: no baked reference exists in the text mechanism
-- Registry hygiene parses/heals them like other filename fields (vanished `bodyImage` file → null; `bodyShape` kept). Parse-time default null (no migration needed for existing records).
-- PATCH: the existing top-level-fields branch (`name/notes/loraName/trigger`) accepts `bodyShape`/`bodyImage`.
-- Editing the body (new `bodyImage`) makes existing sheets stale in the honest sense only: nothing is auto-regenerated and nothing auto-demotes — the next sheet rebuild uses the new reference. (Body ≠ per-state content; the state machine's demote-on-content-edit does not fire. If Julien later wants body edits to demote all looks, that's a follow-up decision.)
-- Store: `useCharacters().patchCharacter` extends to the two fields.
+- Registry hygiene: `bodyShape` values clamped to [0,1], unknown keys dropped; parse-time default null (no migration for existing records). No filename plumbing (amended — there is no bodyImage).
+- PATCH: the existing top-level-fields branch (`name/notes/loraName/trigger`) accepts `bodyShape` (object or explicit null to clear).
+- Editing the body changes FUTURE prompts only: nothing auto-regenerates and no look demotes — the next sheet rebuild and the next shot pick up the new phrase. (If Julien later wants body edits to demote looks, that's a follow-up decision.)
+- Store: `useCharacters().patchCharacter` extends to the field.
 
 ## 5 · Consumption (AMENDED: text, not images)
 
