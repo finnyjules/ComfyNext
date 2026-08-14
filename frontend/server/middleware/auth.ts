@@ -10,7 +10,7 @@
  * logged and retried on a later request.
  */
 import { createClerkClient } from '@clerk/backend'
-import { toWebRequest } from 'h3'
+import { getRequestURL, getRequestHeaders } from 'h3'
 import { deployMode } from '../utils/deployMode'
 import { guardDecision } from '../utils/authGuard'
 import { ensureUserWithBonus } from '../utils/userSync'
@@ -58,10 +58,22 @@ export function __setClerkClientForTests(client: ClerkClientLike | null): void {
 
 /** Hosted-mode session resolution. Runs BEFORE Clerk's own module middleware
  * (Nitro: scanned middleware precede module handlers), so we cannot read
- * event.context.auth here — we verify the session token ourselves. */
+ * event.context.auth here — we verify the session token ourselves.
+ *
+ * CRITICAL: session auth needs only URL + headers (cookies / Authorization).
+ * Passing the real request (toWebRequest) wraps the BODY stream, and any
+ * downstream route calling readBody/readRawBody then deadlocks forever —
+ * this froze the checkout button live (and would freeze every guarded POST).
+ * We hand Clerk a synthetic body-less Request instead. */
 export async function resolveHostedUserId(event: H3Event): Promise<string | null> {
   try {
-    const state = await getClerkClient().authenticateRequest(toWebRequest(event))
+    const url = getRequestURL(event)
+    const headers = new Headers()
+    for (const [k, v] of Object.entries(getRequestHeaders(event))) {
+      if (typeof v === 'string') headers.set(k, v)
+    }
+    const bodylessRequest = new Request(url, { method: 'GET', headers })
+    const state = await getClerkClient().authenticateRequest(bodylessRequest)
     const auth = state.toAuth()
     return auth?.userId ?? null
   } catch {
