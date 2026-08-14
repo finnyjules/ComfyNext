@@ -353,13 +353,19 @@ export class SceneInteraction {
    *  no code path left to hide it again. */
   private updateGizmoVisibility(): void {
     for (const tc of this.gizmos) {
-      tc.getHelper().visible = this.sculptModeActive ? false : !!tc.object
+      tc.getHelper().visible = this.sculptModeActive || this.placementActive ? false : !!tc.object
     }
   }
 
   /** Recomputes every gizmo's `enabled` from the mutual-exclusion/playback locks
    *  plus `sculptModeActive` (the gizmo has no meaning for the whole sculpt-mode
-   *  session — its object is being deformed by brush strokes, not transformed).
+   *  session — its object is being deformed by brush strokes, not transformed)
+   *  and `placementActive` (see `beginPlacement`/`endPlacement`: while a decal
+   *  placement is armed, the target object is very often the CURRENTLY
+   *  SELECTED one, so its gizmo's invisible pickers span a wide area around it
+   *  — three raycasts them ahead of `onUp`'s own raycast against
+   *  `engine.objectRoots` and, on a hit, sets the drag flag that makes `onUp`
+   *  bail at the `wasGizmoDrag` guard before placement ever sees the click).
    *  Never write `tc.enabled` directly (see the field comments).
    *
    *  A gizmo that is MID-DRAG is skipped rather than disabled: three's
@@ -371,7 +377,9 @@ export class SceneInteraction {
   private updateGizmosEnabled(): void {
     for (const tc of this.gizmos) {
       if (tc.dragging) continue
-      tc.enabled = !this.playbackLocked && !this.sculptModeActive && (!this.dragOwner || this.dragOwner === tc)
+      tc.enabled =
+        !this.playbackLocked && !this.sculptModeActive && !this.placementActive &&
+        (!this.dragOwner || this.dragOwner === tc)
     }
   }
 
@@ -436,7 +444,9 @@ export class SceneInteraction {
         const targetRoot = this.engine.objectRoots.get(hitId)
         if (!targetRoot) continue
         const lp = targetRoot.worldToLocal(hit.point.clone())
-        this.placement = null // consumed — a miss (loop exhausts) keeps placement armed; Escape cancels
+        // Consumed — a miss (loop exhausts) keeps placement armed; Escape cancels.
+        // Restores the gizmos `beginPlacement` suppressed, same as cancelPlacement.
+        this.endPlacement()
         cb({
           targetId: hitId,
           localPoint: [lp.x, lp.y, lp.z],
@@ -504,16 +514,45 @@ export class SceneInteraction {
    *  to a `PlacementHit` (in the hit target's local space) and fires `cb`
    *  instead of the normal select flow. `valid` can reject a hit (e.g. a decal
    *  or light sitting on top of the intended surface) — rejecting falls
-   *  through to the NEXT raycast hit rather than cancelling placement. */
+   *  through to the NEXT raycast hit rather than cancelling placement.
+   *
+   *  Also disables and hides every gizmo for the duration: the placement
+   *  TARGET is very often the object that is CURRENTLY selected (the default
+   *  state right after adding a primitive), and TransformControls' invisible
+   *  pickers span a wide area around the object — left enabled, a click meant
+   *  for placement gets raycast-hit by the gizmo first, which latches the drag
+   *  flag and makes `onUp` bail before placement's own raycast ever runs.
+   *  `enabled = false` alone stops the interception (three's onPointerDown/Up
+   *  bail on `!enabled` — see TransformControls.js), but does NOT hide the
+   *  helper (its visibility is driven by attach/detach and per-handle axis
+   *  state, never by `enabled`), so the visual hide has to be forced through
+   *  `updateGizmoVisibility` same as the sculpt-mode session lock. */
   beginPlacement(valid: (id: string) => boolean, cb: (hit: PlacementHit) => void): void {
     this.placement = { valid, cb }
+    this.updateGizmosEnabled()
+    this.updateGizmoVisibility()
   }
 
-  /** Drop out of placement mode without resolving a hit. The only other way
-   *  placement clears is consuming a valid hit — a miss (click on empty space
-   *  or an object `valid` rejects) leaves it armed. */
+  /** Drop out of placement mode without resolving a hit and restore the
+   *  gizmos to the current selection state. The only other way placement
+   *  clears is consuming a valid hit (also routed through `endPlacement`,
+   *  from `onUp`) — a miss (click on empty space or an object `valid`
+   *  rejects) leaves it armed. */
   cancelPlacement(): void {
+    this.endPlacement()
+  }
+
+  /** Clear `placement` and restore the gizmos — shared by `cancelPlacement`
+   *  and `onUp`'s successful-hit branch, so both exits from placement mode
+   *  release the gizmo suppression `beginPlacement` applied. Restoring just
+   *  means re-running the same enabled/visibility recompute every other lock
+   *  uses: `select`/`selectMany` already left the gizmos attached to (or
+   *  detached from) the right objects the whole time — placement only ever
+   *  suppressed `enabled`/visibility on top of that, never touched attachment. */
+  private endPlacement(): void {
     this.placement = null
+    this.updateGizmosEnabled()
+    this.updateGizmoVisibility()
   }
 
   get placementActive(): boolean { return this.placement !== null }
