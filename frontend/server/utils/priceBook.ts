@@ -16,8 +16,11 @@ const BASE_RENDER_CREDITS = 1
  * Stage 4's direct-route metering must use these for any LoRA-remote
  * inference whose slug misses MODEL_COSTS.
  */
-export const LORA_RENDER_CREDITS = 8      // ~$0.04 observed median, 2× markup
-export const RESTYLE_LORA_CREDITS = 18    // ~$0.09 observed median, 2× markup
+// NOTE: no commas in trailing comments on `export const` lines — mlly's regex
+// export scanner splits declarations on commas, so ", 2× markup" registered a
+// phantom auto-import named `2` and broke the entire Nitro dev build.
+export const LORA_RENDER_CREDITS = 8      // ~$0.04 observed median — 2× markup
+export const RESTYLE_LORA_CREDITS = 18    // ~$0.09 observed median — 2× markup
 
 // Terminal output nodes that mean "the GPU produced a deliverable" → base render.
 const OUTPUT_CLASS_TYPES = new Set([
