@@ -67,11 +67,16 @@ export function __setClerkClientForTests(client: ClerkClientLike | null): void {
  * We hand Clerk a synthetic body-less Request instead. */
 export async function resolveHostedUserId(event: H3Event): Promise<string | null> {
   try {
-    const url = getRequestURL(event)
+    // Defensive extraction: a malformed event must fail auth, not crash —
+    // and unit tests exercise this with minimal fake events.
+    let url = 'http://127.0.0.1/'
+    try { url = getRequestURL(event).toString() } catch { /* fall through */ }
     const headers = new Headers()
-    for (const [k, v] of Object.entries(getRequestHeaders(event))) {
-      if (typeof v === 'string') headers.set(k, v)
-    }
+    try {
+      for (const [k, v] of Object.entries(getRequestHeaders(event))) {
+        if (typeof v === 'string') headers.set(k, v)
+      }
+    } catch { /* no headers — auth will simply fail */ }
     const bodylessRequest = new Request(url, { method: 'GET', headers })
     const state = await getClerkClient().authenticateRequest(bodylessRequest)
     const auth = state.toAuth()
