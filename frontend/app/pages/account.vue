@@ -84,12 +84,13 @@ if (import.meta.client) {
         {{ checkoutError }}
       </div>
       <div class="mt-3 grid grid-cols-1 gap-2.5">
-        <button
+        <!-- Cards are inert; the explicit Buy button is the only affordance
+             (user feedback: card-as-button hid the affordance, and the
+             accent border on Creator read as a SELECTED state). Emphasis
+             now lives in the button variant, not the card chrome. -->
+        <div
           v-for="pack in packs" :key="pack.id"
-          class="flex items-center gap-3 rounded-[8px] border p-4 text-left transition"
-          :class="pack.id === 'creator' ? 'border-action/60 bg-action/5 hover:bg-action/10' : 'border-white/10 bg-white/[0.04] hover:bg-white/[0.08]'"
-          :disabled="buying !== null"
-          @click="buy(pack.id)"
+          class="flex items-center gap-4 rounded-[8px] border border-white/10 bg-white/[0.04] p-4"
         >
           <div class="flex-1">
             <div class="flex items-center gap-2">
@@ -102,8 +103,14 @@ if (import.meta.client) {
               <span v-if="pack.bonusCredits" class="text-emerald-300/80">— includes {{ pack.bonusCredits.toLocaleString('en-US') }} free</span>
             </div>
           </div>
-          <span class="text-[18px] font-semibold tabular-nums">${{ pack.usd }}</span>
-        </button>
+          <StudioButton
+            :variant="pack.id === 'creator' ? 'primary' : 'secondary'"
+            :disabled="buying !== null"
+            @click="buy(pack.id)"
+          >
+            {{ buying === pack.id ? 'Opening…' : `Buy for $${pack.usd}` }}
+          </StudioButton>
+        </div>
       </div>
       <p class="mt-3 text-[11px] leading-relaxed text-white/35">
         1 credit = 1¢, always. Bonus credits expire after 30 days; purchased credits after 12 months.
