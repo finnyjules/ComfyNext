@@ -1559,7 +1559,7 @@ watch(selectedIds, (ids) => {
   // writes a number nothing honours — and a light that resists scaling alone but
   // accepts it next to a cube is the more confusing of the two behaviours.
   const anyLight = ids.some((id) => doc.objects.find((o) => o.id === id)?.kind === 'light')
-  interaction?.selectMany([...ids], anyLight)
+  interaction?.selectMany([...ids], { noScale: anyLight })
   engine?.setSelected(ids[ids.length - 1] ?? null)
   // Minor 4 fix (final review): an open Generate panel stays bound to whichever object it was
   // opened for via reliefGenBusy/reliefGenPrompt's shared id-keying, but its BUTTON just reads

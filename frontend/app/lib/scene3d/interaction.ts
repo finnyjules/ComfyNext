@@ -26,6 +26,12 @@ import type { SceneEngine } from './engine'
 
 export interface TransformSnapshot { position: Vec3; rotation: Vec3; scale: Vec3 }
 
+/** One-shot click-to-place result: a raycast hit against `engine.objectRoots`,
+ *  reported in the TARGET object's own local space (the target being whichever
+ *  scene object the click landed on — a primitive root IS the mesh, so no
+ *  extra conversion is needed for `localNormal`). */
+export interface PlacementHit { targetId: string; localPoint: Vec3; localNormal: Vec3 }
+
 type GizmoMode = 'translate' | 'rotate' | 'scale'
 
 /** Orbit is enabled only when NO concern holds a lock. Pure so it's
@@ -153,6 +159,13 @@ export class SceneInteraction {
   // mid-drag (see there for the pointer-capture leak that would cause).
   private playbackLocked = false
   private dragOwner: TransformControls | null = null
+  // One-shot click-to-place: armed by `beginPlacement`, consumed by the next
+  // qualifying click in `onUp` (or left armed indefinitely on a miss — only
+  // `cancelPlacement` clears it otherwise). `valid` lets the caller reject a
+  // hit (e.g. a decal or light sitting on top of the intended surface) without
+  // dropping out of placement mode; `cb` fires once, with the hit already
+  // resolved into the target's local space.
+  private placement: { valid: (id: string) => boolean; cb: (hit: PlacementHit) => void } | null = null
 
   constructor(
     private engine: SceneEngine,
@@ -412,6 +425,27 @@ export class SceneInteraction {
     this.raycaster.setFromCamera(ndc, this.engine.camera)
     const roots = [...this.engine.objectRoots.values()].filter((r) => r.visible)
     const hits = this.raycaster.intersectObjects(roots, true)
+    if (this.placement) {
+      const { valid, cb } = this.placement
+      for (const hit of hits) {
+        if (!hit.face || hit.object.userData.isGizmoHelper) continue
+        let node: THREE.Object3D | null = hit.object
+        while (node && !node.userData.sceneId) node = node.parent
+        const hitId = node?.userData.sceneId as string | undefined
+        if (!hitId || !valid(hitId)) continue // a decal/light on top of the surface — fall through to the next hit
+        const targetRoot = this.engine.objectRoots.get(hitId)
+        if (!targetRoot) continue
+        const lp = targetRoot.worldToLocal(hit.point.clone())
+        this.placement = null // consumed — a miss (loop exhausts) keeps placement armed; Escape cancels
+        cb({
+          targetId: hitId,
+          localPoint: [lp.x, lp.y, lp.z],
+          localNormal: [hit.face.normal.x, hit.face.normal.y, hit.face.normal.z],
+        })
+        return
+      }
+      return // clicked empty space or an invalid object: stay in placement mode
+    }
     let id: string | null = null
     for (const hit of hits) {
       let node: THREE.Object3D | null = hit.object
@@ -466,6 +500,24 @@ export class SceneInteraction {
     })
   }
 
+  /** Arm one-shot click-to-place: the next qualifying click in `onUp` resolves
+   *  to a `PlacementHit` (in the hit target's local space) and fires `cb`
+   *  instead of the normal select flow. `valid` can reject a hit (e.g. a decal
+   *  or light sitting on top of the intended surface) — rejecting falls
+   *  through to the NEXT raycast hit rather than cancelling placement. */
+  beginPlacement(valid: (id: string) => boolean, cb: (hit: PlacementHit) => void): void {
+    this.placement = { valid, cb }
+  }
+
+  /** Drop out of placement mode without resolving a hit. The only other way
+   *  placement clears is consuming a valid hit — a miss (click on empty space
+   *  or an object `valid` rejects) leaves it armed. */
+  cancelPlacement(): void {
+    this.placement = null
+  }
+
+  get placementActive(): boolean { return this.placement !== null }
+
   setSnap(enabled: boolean): void {
     for (const tc of this.gizmos) {
       tc.setTranslationSnap(enabled ? 0.25 : null)
@@ -485,17 +537,18 @@ export class SceneInteraction {
   /** Attach the gizmo to `ids`. One id behaves exactly as before. Two or more
    *  build a pivot at the bounds centre of their roots and attach that instead.
    *
-   *  `isLight` means ANY selected object is a light, not just the primary:
+   *  `opts.noScale` means ANY selected object is a light, not just the primary:
    *  LightObject's scale is never read by the engine, so scaling a light writes
    *  a number nothing will ever honour. Suppressing the scale gizmo for a mixed
    *  selection costs the user nothing (the meshes in it can still be moved and
    *  rotated) and keeps the multi-select rule identical to the single-select
    *  one — a light that can't be scaled alone but can be scaled next to a cube
-   *  reads as a bug either way round. */
-  selectMany(ids: string[], isLight = false): void {
+   *  reads as a bug either way round. `opts.noGizmo` (a decal anywhere in the
+   *  selection) suppresses ALL three gizmos on the pivot the same way. */
+  selectMany(ids: string[], opts: { noScale?: boolean; noGizmo?: boolean } = {}): void {
     this.teardownPivot()
     this.selectedIds = [...ids]
-    if (ids.length <= 1) { this.select(ids[0] ?? null, isLight); return }
+    if (ids.length <= 1) { this.select(ids[0] ?? null, opts); return }
     // Fewer than two live roots (an id whose object was removed between the doc
     // edit and this call) can't drive a pivot — fall back to a single selection
     // rather than a pivot that would move one object with the ceremony of many.
@@ -509,7 +562,7 @@ export class SceneInteraction {
       // describing. Prefer the last id that still HAS a root, since attaching to
       // one that doesn't shows no gizmo at all.
       const live = [...ids].reverse().find((id) => this.engine.objectRoots.has(id))
-      this.select(live ?? ids[ids.length - 1] ?? null, isLight)
+      this.select(live ?? ids[ids.length - 1] ?? null, opts)
       return
     }
     const pivot = new THREE.Object3D()
@@ -519,7 +572,8 @@ export class SceneInteraction {
     this.reseatPivot()
     for (const tc of this.gizmos) {
       const mode = (tc as unknown as { userData: Record<string, unknown> }).userData.mode
-      if (isLight && mode === 'scale') tc.detach()
+      if (opts.noGizmo) tc.detach()
+      else if (opts.noScale && mode === 'scale') tc.detach()
       else tc.attach(pivot)
     }
     this.updateGizmoVisibility()
@@ -615,7 +669,7 @@ export class SceneInteraction {
     if (wasHolding) this.callbacks.onPivotDragEnd?.()
   }
 
-  select(id: string | null, isLight = false): void {
+  select(id: string | null, opts: { noScale?: boolean; noGizmo?: boolean } = {}): void {
     // Idempotent in the selectMany path (which tears down first), and the safety
     // net for any caller that drops straight from a multi-selection to a single
     // one — a pivot left behind would still own roots the engine parents itself.
@@ -624,12 +678,9 @@ export class SceneInteraction {
     const root = id ? this.engine.objectRoots.get(id) : undefined
     for (const tc of this.gizmos) {
       const mode = (tc as unknown as { userData: Record<string, unknown> }).userData.mode
-      if (root) {
-        if (isLight && mode === 'scale') tc.detach()
-        else tc.attach(root)
-      } else {
-        tc.detach()
-      }
+      if (!root || opts.noGizmo) tc.detach()
+      else if (opts.noScale && mode === 'scale') tc.detach()
+      else tc.attach(root)
     }
     this.updateGizmoVisibility()
   }
