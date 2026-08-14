@@ -9,8 +9,41 @@ import { hostedModeEnabled } from '~/lib/hostedMode'
 const hosted = hostedModeEnabled(useRuntimeConfig().public)
 if (!hosted) navigateTo('/', { replace: true })
 
-const { data: wallet } = await useFetch<{ mode: string; balance?: number; available?: number }>(
+const { data: wallet, refresh: refreshWallet } = await useFetch<{ mode: string; balance?: number; available?: number }>(
   '/api/wallet', { server: false })
+
+const { data: packsData } = await useFetch<{ packs: { id: string; usd: number; credits: number; baseCredits: number; bonusCredits: number; label: string; caption: string }[] }>(
+  '/api/billing/packs', { server: false })
+const packs = computed(() => packsData.value?.packs ?? [])
+
+const route = useRoute()
+const purchaseState = computed(() => route.query.purchase === 'success' ? 'success' : route.query.purchase === 'cancelled' ? 'cancelled' : null)
+
+const buying = ref<string | null>(null)
+async function buy(packId: string) {
+  buying.value = packId
+  try {
+    const res = await $fetch<{ url: string }>('/api/billing/checkout', { method: 'POST', body: { packId } })
+    window.location.href = res.url
+  } catch (e) {
+    console.error('checkout failed', e)
+    buying.value = null
+  }
+}
+
+// After a success redirect, poll the wallet a few times so the webhook's
+// grant appears without a manual reload (webhook may lag the redirect).
+if (import.meta.client) {
+  watch(purchaseState, (s) => {
+    if (s !== 'success') return
+    let tries = 0
+    const t = setInterval(async () => {
+      tries += 1
+      await refreshWallet()
+      if (tries >= 10) clearInterval(t)
+    }, 2000)
+  }, { immediate: true })
+}
 </script>
 
 <template>
@@ -32,6 +65,41 @@ const { data: wallet } = await useFetch<{ mode: string; balance?: number; availa
         </div>
         <div v-else class="mt-1 text-[13px] text-white/40">Wallet unavailable.</div>
       </div>
+
+      <div v-if="purchaseState === 'success'" class="mt-4 rounded-[8px] border border-emerald-400/40 bg-emerald-400/10 p-3 text-[12.5px] text-emerald-200/90">
+        Payment received — your credits are on the way (a few seconds; this page refreshes automatically).
+      </div>
+      <div v-else-if="purchaseState === 'cancelled'" class="mt-4 rounded-[8px] border border-white/10 bg-white/[0.04] p-3 text-[12.5px] text-white/55">
+        Checkout cancelled — nothing was charged.
+      </div>
+
+      <h2 class="mt-8 text-[11px] font-medium uppercase tracking-wide text-white/50">Add credits</h2>
+      <div class="mt-3 grid grid-cols-1 gap-2.5">
+        <button
+          v-for="pack in packs" :key="pack.id"
+          class="flex items-center gap-3 rounded-[8px] border p-4 text-left transition"
+          :class="pack.id === 'creator' ? 'border-action/60 bg-action/5 hover:bg-action/10' : 'border-white/10 bg-white/[0.04] hover:bg-white/[0.08]'"
+          :disabled="buying !== null"
+          @click="buy(pack.id)"
+        >
+          <div class="flex-1">
+            <div class="flex items-center gap-2">
+              <span class="text-[14px] font-semibold">{{ pack.label }}</span>
+              <span v-if="pack.id === 'creator'" class="rounded-full border border-action/50 px-2 py-px font-mono text-[9px] uppercase tracking-wider text-action">Most popular</span>
+            </div>
+            <div class="text-[12px] text-white/55">{{ pack.caption }}</div>
+            <div class="mt-1 text-[12px] tabular-nums text-white/70">
+              {{ pack.credits.toLocaleString('en-US') }} credits
+              <span v-if="pack.bonusCredits" class="text-emerald-300/80">— includes {{ pack.bonusCredits.toLocaleString('en-US') }} free</span>
+            </div>
+          </div>
+          <span class="text-[18px] font-semibold tabular-nums">${{ pack.usd }}</span>
+        </button>
+      </div>
+      <p class="mt-3 text-[11px] leading-relaxed text-white/35">
+        1 credit = 1¢, always. Bonus credits expire after 30 days; purchased credits after 12 months.
+        Payments are processed by Stripe — Sailor never sees your card.
+      </p>
     </div>
   </div>
 </template>
