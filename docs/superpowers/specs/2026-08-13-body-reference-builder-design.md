@@ -1,12 +1,12 @@
 # Body Reference Builder — Anny-based Character Body Editor
 
-**Date:** 2026-08-13
-**Status:** Approved design, pending implementation plan
+**Date:** 2026-08-13 (amended same day after the probe gate)
+**Status:** Approved design — AMENDED per probe results; implementation in progress
 **Extends:** [2026-08-13-character-studio-workbench-design.md](2026-08-13-character-studio-workbench-design.md) (the Character Studio this lives in) and the sheet pipeline from [2026-08-12-character-system-unification-design.md](2026-08-12-character-system-unification-design.md)
 
 ## Plain-language summary
 
-Today a character's body shape is invented: the sheet's full-body panels are derived from a head-and-shoulders portrait, so the image model guesses everything below the frame. This feature adds a **Body editor** to the Character Studio — a video-game-style character creator: a grey 3D human figure morphed in real time by eight sliders (Frame, Height, Build, Muscle, Shoulders, Chest, Waist, Hips) plus four presets. Saving bakes a front+back render into a **body reference image** stored on the character; from then on the sheet's body panels are generated as two-image edits — portrait for identity, body reference for proportions — so every look and every shot inherits the same body. Sliding, saving, and rendering are free; only the sheet generations that consume the reference cost money, as they already do.
+Today a character's body shape is invented: the sheet's full-body panels are derived from a head-and-shoulders portrait, so the image model guesses everything below the frame. This feature adds a **Body editor** to the Character Studio — a video-game-style character creator: a grey 3D human figure morphed in real time by eight sliders (Frame, Height, Build, Muscle, Shoulders, Chest, Waist, Hips) plus four presets. **AMENDED after the probe (4 rounds, ~$1.75):** the image-reference mechanism failed in both directions — edit models would not take proportions from a grey figure, with or without inversion — but **text passed decisively**: graded body language changed Jene's build progressively while her identity held (round 4, Julien-confirmed). The sliders therefore compile to **words, not pixels**: a pure `bodyPhrase` compiler turns slider values into graded body language that joins every sheet-panel prompt and every shot's cast clause. The grey figure stays in the editor as a **display-only live preview** of what the words mean — its pixels never reach generation. Sliding and saving are free; there is no baked body image at all. Probe assets: `docs/superpowers/specs/assets/2026-08-13-body-probe/` (contact sheets v1–v4).
 
 The figure is **Anny** (Naver Labs) — an open-source parametric human body (code Apache-2.0; the MakeHuman-derived mesh and blendshapes CC0/public domain). Anny runs ONLY in a one-time offline bake script; the app ships a small static GLB and drives it with plain three.js morph targets.
 
@@ -44,19 +44,19 @@ From Python only (no app changes):
 
 ## 4 · Data model + API
 
-- `CharacterRecord` gains two CHARACTER-level fields (not per state):
-  - `bodyShape: Record<string, number> | null` — slider id → 0..1 value (re-editable source of truth)
-  - `bodyImage: string | null` — baked reference filename in the input dir (`validRefFilename`)
+- `CharacterRecord` gains ONE character-level field (not per state):
+  - `bodyShape: Record<string, number> | null` — slider id → 0..1 value (re-editable source of truth; the compiled phrase is always derived, never stored)
+  - ~~`bodyImage`~~ — DELETED by amendment: no baked reference exists in the text mechanism
 - Registry hygiene parses/heals them like other filename fields (vanished `bodyImage` file → null; `bodyShape` kept). Parse-time default null (no migration needed for existing records).
 - PATCH: the existing top-level-fields branch (`name/notes/loraName/trigger`) accepts `bodyShape`/`bodyImage`.
 - Editing the body (new `bodyImage`) makes existing sheets stale in the honest sense only: nothing is auto-regenerated and nothing auto-demotes — the next sheet rebuild uses the new reference. (Body ≠ per-state content; the state machine's demote-on-content-edit does not fire. If Julien later wants body edits to demote all looks, that's a follow-up decision.)
 - Store: `useCharacters().patchCharacter` extends to the two fields.
 
-## 5 · Sheet consumption
+## 5 · Consumption (AMENDED: text, not images)
 
-- In `useSheetGeneration`'s derived-panel step: when the character has `bodyImage`, the two body panels (`body-front`, `body-back`) send `images: [portraitDataUrl, bodyReferenceDataUrl]` with the prompt extended: "Match the body proportions of the grey reference figure in the second image." (exact phrasing tuned during the probe). Faces panels unchanged (single image).
-- No `bodyImage` → exactly today's single-image behavior.
-- The probe's winning phrasing is recorded in the spec's implementation notes when known.
+- A pure compiler `bodyPhrase(bodyShape): string` maps slider values to graded body language (per-slider bands, e.g. build 0.7 → "a noticeably heavyset build", 1.0 → "a very heavy, plus-size build"; near-0.5 sliders emit nothing). Round 4's proven phrasings are the calibration anchors.
+- The phrase joins: (a) the portrait + body-panel prompts in sheet generation (alongside the descriptor), and (b) the shot prompt's cast clause (same slot where the descriptor rides). No image plumbing changes anywhere.
+- `bodyShape` null or all-neutral → empty phrase → byte-identical behavior to today (golden back-compat).
 
 ## 6 · Testing + verification
 
