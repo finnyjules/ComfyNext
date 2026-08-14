@@ -85,6 +85,12 @@ export default defineEventHandler(async (event) => {
   if (mode === 'local') return
 
   const path = event.path ?? ''
+  // Public and unguarded paths short-circuit BEFORE any session resolution:
+  // authenticateRequest's toWebRequest(event) wraps the request body stream,
+  // and webhook routes (Svix/Stripe signature verification) must read the
+  // RAW body themselves — touching it here deadlocks their readRawBody.
+  if (guardDecision(path, mode, null).kind === 'pass') return
+
   const userId = await resolveHostedUserId(event)
   const decision = guardDecision(path, mode, userId)
 
