@@ -11,8 +11,8 @@
  *   era 2: `variants: [{id,label,descriptor,refImages,coverIndex}]` (current disk format)
  *   era 3: `states: CharacterState[]` (new; what writes produce from now on)
  */
-import type { CharacterPanel, CharacterRecord, CharacterState, StressResult } from '#shared/characters/types'
-import { emptyState } from '#shared/characters/types'
+import type { BodySliderId, CharacterPanel, CharacterRecord, CharacterState, StressResult } from '#shared/characters/types'
+import { BODY_SLIDERS, emptyState } from '#shared/characters/types'
 
 export type { CharacterRecord, CharacterState }
 export { defaultState } from '#shared/characters/types'
@@ -33,6 +33,26 @@ export function slugifyCharacterName(name: string): string {
 export function validRefFilename(name: string): boolean {
   return typeof name === 'string' && name.length > 0
     && !name.includes('/') && !name.includes('\\') && !name.includes('..')
+}
+
+/**
+ * Hygiene-parse a raw bodyShape value: non-object (incl. array/null/undefined)
+ * → null; otherwise keep only known BODY_SLIDERS keys with finite numeric
+ * values, clamped to [0,1]. Unknown keys are dropped by construction (only
+ * known keys are ever read). Shared by parseCharacterRecord and the PATCH
+ * endpoint so hygiene lives in one place.
+ */
+export function sanitizeBodyShape(v: unknown): Partial<Record<BodySliderId, number>> | null {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null
+  const src = v as Record<string, unknown>
+  const out: Partial<Record<BodySliderId, number>> = {}
+  for (const key of BODY_SLIDERS) {
+    const val = src[key]
+    if (typeof val === 'number' && Number.isFinite(val)) {
+      out[key] = Math.min(1, Math.max(0, val))
+    }
+  }
+  return out
 }
 
 /** Hygiene-parse a single raw state/variant object into a well-formed CharacterState. */
@@ -98,6 +118,7 @@ export function parseCharacterRecord(raw: string, slug: string): CharacterRecord
     states,
     loraName: typeof r.loraName === 'string' && r.loraName ? r.loraName : null,
     trigger: typeof r.trigger === 'string' && r.trigger ? r.trigger : null,
+    bodyShape: sanitizeBodyShape(r.bodyShape),
     notes: typeof r.notes === 'string' ? r.notes : '',
     createdAt: typeof r.createdAt === 'string' ? r.createdAt : '',
     updatedAt: typeof r.updatedAt === 'string' ? r.updatedAt : '',

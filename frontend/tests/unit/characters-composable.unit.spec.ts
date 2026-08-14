@@ -9,6 +9,7 @@ const REVA = {
   ],
   loraName: null,
   trigger: null,
+  bodyShape: null,
   notes: '',
   createdAt: '',
   updatedAt: '',
@@ -195,6 +196,26 @@ describe('useCharacters', () => {
     expect(result).toBe('stale')
     expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(characters.value).toHaveLength(1)
+  })
+
+  it('patchCharacter sends bodyShape in the PATCH body', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ characters: [REVA] }) })
+    vi.stubGlobal('fetch', fetchMock)
+    const { useCharacters } = await import('~/composables/useCharacters')
+    const { patchCharacter } = useCharacters()
+    await patchCharacter('reva', { bodyShape: { frame: 0.8, height: 0.2 } })
+    const [, opts] = fetchMock.mock.calls[0]!
+    expect(JSON.parse(opts.body)).toEqual({ slug: 'reva', bodyShape: { frame: 0.8, height: 0.2 } })
+  })
+
+  it('patchCharacter sends an explicit null bodyShape to clear it', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ characters: [REVA] }) })
+    vi.stubGlobal('fetch', fetchMock)
+    const { useCharacters } = await import('~/composables/useCharacters')
+    const { patchCharacter } = useCharacters()
+    await patchCharacter('reva', { bodyShape: null })
+    const [, opts] = fetchMock.mock.calls[0]!
+    expect(JSON.parse(opts.body)).toEqual({ slug: 'reva', bodyShape: null })
   })
 
   it('characterStatus derives draft/training/ready from lora link + job queue', async () => {

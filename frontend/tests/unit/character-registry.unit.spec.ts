@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  healRefImages, parseCharacterRecord, slugifyCharacterName, validRefFilename,
+  healRefImages, parseCharacterRecord, sanitizeBodyShape, slugifyCharacterName, validRefFilename,
   type CharacterRecord,
   type CharacterState,
 } from '~~/server/utils/characterRegistry'
@@ -15,7 +15,7 @@ function V(over: Partial<CharacterState> = {}): CharacterState {
 function rec(over: Partial<CharacterRecord> = {}): CharacterRecord {
   return {
     name: 'Reva', slug: 'reva', states: [V()],
-    loraName: null, trigger: null, notes: '', createdAt: 't', updatedAt: 't', ...over,
+    loraName: null, trigger: null, bodyShape: null, notes: '', createdAt: 't', updatedAt: 't', ...over,
   }
 }
 
@@ -45,6 +45,33 @@ describe('parseCharacterRecord', () => {
   it('drops non-string and path-escaping ref filenames on parse', () => {
     const raw = JSON.stringify({ name: 'X', refImages: ['ok.png', '../evil.png', 5, 'sub/dir.png'] })
     expect(parseCharacterRecord(raw, 'x')?.states[0]!.refImages).toEqual(['ok.png'])
+  })
+  it('legacy records with no bodyShape field default it to null', () => {
+    const raw = JSON.stringify({ name: 'X', refImages: [] })
+    expect(parseCharacterRecord(raw, 'x')?.bodyShape).toBeNull()
+  })
+  it('clamps bodyShape values to [0,1] and drops unknown keys on parse', () => {
+    const raw = JSON.stringify(rec({ bodyShape: { frame: 0.5, height: -1, build: 2, notASlider: 0.9 } }))
+    expect(parseCharacterRecord(raw, 'reva')?.bodyShape).toEqual({ frame: 0.5, height: 0, build: 1 })
+  })
+})
+
+describe('sanitizeBodyShape', () => {
+  it('non-object (incl. null/array/undefined) → null', () => {
+    expect(sanitizeBodyShape(null)).toBeNull()
+    expect(sanitizeBodyShape(undefined)).toBeNull()
+    expect(sanitizeBodyShape('nope')).toBeNull()
+    expect(sanitizeBodyShape([0.5])).toBeNull()
+  })
+  it('clamps out-of-range values to [0,1]', () => {
+    expect(sanitizeBodyShape({ frame: -0.5, hips: 1.5 })).toEqual({ frame: 0, hips: 1 })
+  })
+  it('drops unknown keys and non-numeric values', () => {
+    expect(sanitizeBodyShape({ frame: 0.6, madeUp: 0.4, waist: 'huge', muscle: Number.NaN }))
+      .toEqual({ frame: 0.6 })
+  })
+  it('an empty valid object stays an empty object, not null', () => {
+    expect(sanitizeBodyShape({})).toEqual({})
   })
 })
 

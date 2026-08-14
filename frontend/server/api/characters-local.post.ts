@@ -19,7 +19,7 @@ export default defineEventHandler(async (event) => {
   const record: CharacterRecord = {
     name, slug,
     states: [emptyState('default', 'Default')],
-    loraName: null, trigger: null, notes: '', createdAt: now, updatedAt: now,
+    loraName: null, trigger: null, bodyShape: null, notes: '', createdAt: now, updatedAt: now,
   }
   await fs.writeFile(file, JSON.stringify(record, null, 2))
   return record

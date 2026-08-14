@@ -1,15 +1,17 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import {
-  parseCharacterRecord, stateHygiene, validRefFilename,
+  parseCharacterRecord, sanitizeBodyShape, stateHygiene, validRefFilename,
   type CharacterRecord, type CharacterState,
 } from '~~/server/utils/characterRegistry'
 import { applyStatePatch, type StatePatchBody } from '~~/server/utils/characterStatePatch'
+import type { BodySliderId } from '#shared/characters/types'
 
 export default defineEventHandler(async (event) => {
   const body = await readBody(event) as {
     slug?: string, name?: string, notes?: string, loraName?: string | null,
     trigger?: string | null,
+    bodyShape?: Partial<Record<BodySliderId, number>> | null,
     states?: CharacterState[], statePatch?: StatePatchBody, remove?: true,
     expectedUpdatedAt?: string,
   }
@@ -33,6 +35,8 @@ export default defineEventHandler(async (event) => {
   if (typeof body.notes === 'string') record.notes = body.notes
   if (body.loraName !== undefined) record.loraName = body.loraName || null
   if (body.trigger !== undefined) record.trigger = body.trigger || null
+  // Explicit null clears; an object goes through the same clamp/drop hygiene as parse.
+  if (body.bodyShape !== undefined) record.bodyShape = body.bodyShape === null ? null : sanitizeBodyShape(body.bodyShape)
 
   if (body.statePatch) {
     const result = applyStatePatch(record, body.statePatch, new Date().toISOString())

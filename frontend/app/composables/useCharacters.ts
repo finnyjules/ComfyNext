@@ -5,7 +5,7 @@
  * refreshes internally — there is no changed-event to dispatch or listen for.
  */
 import { ref } from 'vue'
-import type { CharacterRecord, CharacterState } from '#shared/characters/types'
+import type { BodySliderId, CharacterRecord, CharacterState } from '#shared/characters/types'
 import { coverFirstRefs, identityRefs, panelFilename, pickState } from '#shared/characters/types'
 import { viewRefUrl } from '~/lib/shotdirector/refUpload'
 
@@ -126,7 +126,10 @@ export function useCharacters() {
 
   async function patchCharacter(
     slug: string,
-    fields: { name?: string; notes?: string; loraName?: string | null; trigger?: string | null },
+    fields: {
+      name?: string; notes?: string; loraName?: string | null; trigger?: string | null
+      bodyShape?: Partial<Record<BodySliderId, number>> | null
+    },
   ): Promise<boolean> {
     try {
       const res = await fetch('/api/characters-local', {

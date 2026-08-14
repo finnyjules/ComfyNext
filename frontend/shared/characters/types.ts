@@ -30,12 +30,22 @@ export interface CharacterState {
   updatedAt: string
 }
 
+/**
+ * Body-shape sliders (0..1 each). Character-level, not per-state — a body
+ * doesn't change with wardrobe. `bodyPhrase` (app/lib/characters/bodyPhrase.ts)
+ * compiles a set of these into graded prose fed to prompt builders.
+ */
+export const BODY_SLIDERS = ['frame', 'height', 'build', 'muscle', 'shoulders', 'chest', 'waist', 'hips'] as const
+export type BodySliderId = typeof BODY_SLIDERS[number]
+
 export interface CharacterRecord {
   name: string
   slug: string
   states: CharacterState[]
   loraName: string | null
   trigger: string | null
+  /** Sparse — only sliders the user touched are present. null = untouched entirely. */
+  bodyShape: Partial<Record<BodySliderId, number>> | null
   notes: string
   createdAt: string
   updatedAt: string

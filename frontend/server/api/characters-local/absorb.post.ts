@@ -71,6 +71,7 @@ export default defineEventHandler(async () => {
       slug: bySlug,
       loraName: c.weightsFilename,
       trigger: c.trigger,
+      bodyShape: null,
       notes: '',
       states: [emptyState('default', 'Default')],
       createdAt: now,
