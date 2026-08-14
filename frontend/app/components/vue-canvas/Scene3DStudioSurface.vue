@@ -14,13 +14,16 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 import * as THREE from 'three'
 import {
   Box, Boxes, Plus, Loader2, Upload, Lightbulb, Sparkles, Shuffle, Group, Ungroup, ClipboardPaste, Paintbrush, Combine,
+  Sticker, Type as TypeIcon, Image as ImageIcon,
 } from 'lucide-vue-next'
 import {
-  parseDoc, serializeDoc, createPrimitive, createGlbObject, createLight, createGroup,
+  parseDoc, serializeDoc, createPrimitive, createGlbObject, createLight, createGroup, createDecal,
   LIGHTING_PRESETS, MATERIAL_TYPES, MATERIAL_DEFAULTS, LIGHT_KINDS, LIGHT_DEFAULTS, lightIntensityMax, gradientAngles, gradientStopsOf, opalStopsOf,
-  DEFAULT_FONT_URL, sceneHasShaderFill, sceneHasOpalFlow,
+  DEFAULT_FONT_URL, DECAL_DEFAULTS, sceneHasShaderFill, sceneHasOpalFlow,
   type SceneDoc, type SceneObject, type PrimitiveObject, type PrimitiveKind, type MaterialType, type GradientStop, type LightKind, type LightObject, type ReliefSpec, type SceneMaterial, type Vec3, type EnvironmentKind,
+  type DecalObject, type DecalContent,
 } from '~/lib/scene3d/config'
+import { eulerFromNormal } from '~/lib/scene3d/decals'
 import { MATCAP_IDS, matcapThumb, onTextureError } from '~/lib/scene3d/materials'
 import { toHeightPixels, heightGradient, RELIEF_FLAT_THRESHOLD } from '~/lib/scene3d/relief'
 import { DEFAULT_SHADER_SPEC, normalizeShaderSpec, type ShaderSpec } from '~/lib/spacetype/fillTile'
@@ -45,7 +48,7 @@ import { mergeMeshes, type MergeOp } from '~/lib/scene3d/voxel/merge'
 import Scene3DObjectRow from './studio/Scene3DObjectRow.vue'
 import { totalClones, clampedClones } from '~/lib/scene3d/modifiers'
 import { PRIMITIVE_PARAMS, paramValue, MODIFIER_SPECS, modifierValue } from '~/lib/scene3d/primParams'
-import { SceneInteraction } from '~/lib/scene3d/interaction'
+import { SceneInteraction, type PlacementHit } from '~/lib/scene3d/interaction'
 import { loadGlb, GLB_SIZE_CAP_BYTES } from '~/lib/scene3d/glb'
 import { fitGlbGroup } from '~/lib/scene3d/fitGlb'
 import { svgToLeafPaths, outlineStrokes, type SvgLeafPath } from '~/composables/useVectorSvg'
@@ -161,6 +164,8 @@ const matOverride = computed<boolean>({
 const matEditable = computed(() => selectedIsPrimitive.value || matOverride.value)
 const selectedIsLight = computed(() => selected.value?.kind === 'light')
 const selectedLight = computed<LightObject | null>(() => (selected.value?.kind === 'light' ? selected.value : null))
+const selectedIsDecal = computed(() => selected.value?.kind === 'decal')
+const selectedDecal = computed<DecalObject | null>(() => (selected.value?.kind === 'decal' ? selected.value : null))
 const activeTab = ref<'build' | 'motion'>('build')  // inspector tab: Build (existing sections) vs Motion (Task 5)
 
 // ── Motion panel state (Task 5) ──────────────────────────────────────────────
@@ -333,6 +338,18 @@ function onLightMenuOutside(e: PointerEvent) {
 watch(lightMenuOpen, (open) => {
   if (open) window.addEventListener('pointerdown', onLightMenuOutside, true)
   else window.removeEventListener('pointerdown', onLightMenuOutside, true)
+})
+
+// ── Add-decal menu ──────────────────────────────────────────────────────────
+// Same outside-click mechanic as the primitive/light menus above (the `[data-prim-menu]`
+// hit test is the whole bottom pill, shared by all three).
+const decalMenuOpen = ref(false)
+function onDecalMenuOutside(e: PointerEvent) {
+  if (!(e.target as HTMLElement)?.closest?.('[data-prim-menu]')) decalMenuOpen.value = false
+}
+watch(decalMenuOpen, (open) => {
+  if (open) window.addEventListener('pointerdown', onDecalMenuOutside, true)
+  else window.removeEventListener('pointerdown', onDecalMenuOutside, true)
 })
 
 // ── Generate panel (text → image review → make 3D → insert) ────────────────
@@ -756,6 +773,53 @@ const lightWidth = lightParam('width')
 const lightHeight = lightParam('height')
 const lightCastShadow = lightParam('castShadow')
 
+// Decal field proxies — same shape as lightParam (flat on the object, defaults
+// from DECAL_DEFAULTS so a slider always has a number).
+function decalParam<K extends 'size' | 'depth' | 'spin' | 'opacity'>(key: K) {
+  return computed<number>({
+    get: () => selectedDecal.value?.[key] ?? DECAL_DEFAULTS[key],
+    set: (v) => { if (selectedDecal.value) selectedDecal.value[key] = v },
+  })
+}
+const decalSize = decalParam('size')
+const decalDepth = decalParam('depth')
+const decalOpacity = decalParam('opacity')
+// Spin is stored in RADIANS on the doc (the engine feeds it straight to the
+// projector) but a degrees slider is the only readable form of "rotate the
+// sticker on the surface" — convert at the boundary, both ways.
+const decalSpinDeg = computed<number>({
+  get: () => Math.round(((selectedDecal.value?.spin ?? 0) * 180) / Math.PI),
+  set: (v) => { if (selectedDecal.value) selectedDecal.value.spin = (v * Math.PI) / 180 },
+})
+const decalText = computed<string>({
+  get: () => (selectedDecal.value?.content.type === 'text' ? selectedDecal.value.content.text : ''),
+  set: (v) => { const c = selectedDecal.value?.content; if (c?.type === 'text') c.text = v },
+})
+const decalFont = computed<string>(() =>
+  selectedDecal.value?.content.type === 'text' ? selectedDecal.value.content.font : DECAL_DEFAULTS.font)
+const decalColor = computed<string>({
+  get: () => (selectedDecal.value?.content.type === 'text' ? selectedDecal.value.content.color : DECAL_DEFAULTS.color),
+  set: (v) => { const c = selectedDecal.value?.content; if (c?.type === 'text') c.color = v },
+})
+// Decal text is rasterised to a canvas by decals.ts, which resolves ONLY the
+// `google:Fam@W` token scheme (parseFontToken falls back to Inter/700 for
+// anything else). So a pinned/library pick is refused rather than written: a
+// silently-Inter render would be a control that lies. FontPicker has no
+// google-only mode today — the section states the restriction inline instead.
+function onDecalFontPick(payload: { kind: 'google'; family: string } | { kind: 'pinned'; value: string } | { kind: 'library'; family: string; foundry: string }) {
+  const c = selectedDecal.value?.content
+  if (c?.type !== 'text') return
+  if (payload.kind !== 'google') {
+    console.warn('[scene3d-studio] decal labels render Google fonts only — pick ignored', payload)
+    return
+  }
+  // Same keep-the-weight-on-a-re-pick rule as onFontPick above.
+  const existing = parseGoogleFontValue(c.font)
+  c.font = existing && existing.family === payload.family && existing.weight !== undefined
+    ? `google:${payload.family}@${existing.weight}`
+    : `google:${payload.family}`
+}
+
 // Transparency group defaults open for glass. StudioSection's isOpen/@toggle
 // pattern, scoped to the one sub-group with a dynamic default: the watch
 // re-applies the default on material-type switches, @toggle keeps user toggles
@@ -783,6 +847,24 @@ function triggerTexUpload() { texFileInput.value?.click() }
 function texViewUrl(filename: string) {
   return `/view?${new URLSearchParams({ filename, type: 'input' }).toString()}`
 }
+// Shared transport behind BOTH image pickers on this surface (material texture
+// below, decal sticker in the Decal section): file → dataURL → ComfyUI input dir,
+// resolving to the stored filename or `null` if anything in that chain failed.
+// Deliberately owns no UI state — each caller keeps its own spinner/error
+// treatment, which is the only thing the two differ on.
+async function uploadInputImage(file: File): Promise<string | null> {
+  try {
+    const dataUrl = await new Promise<string>((res, rej) => {
+      const r = new FileReader()
+      r.onload = () => res(String(r.result))
+      r.onerror = () => rej(new Error('read failed'))
+      r.readAsDataURL(file)
+    })
+    return await inpaint.uploadDataUrl(dataUrl, `scene3d_tex_${props.nodeId}`)
+  } catch {
+    return null
+  }
+}
 async function onTexFilePicked(e: Event) {
   const file = (e.target as HTMLInputElement).files?.[0]
   ;(e.target as HTMLInputElement).value = ''
@@ -793,13 +875,8 @@ async function onTexFilePicked(e: Event) {
   texUploading.value = target.id
   delete texUploadError[target.id]
   try {
-    const dataUrl = await new Promise<string>((res, rej) => {
-      const r = new FileReader()
-      r.onload = () => res(String(r.result))
-      r.onerror = () => rej(new Error('read failed'))
-      r.readAsDataURL(file)
-    })
-    const filename = await inpaint.uploadDataUrl(dataUrl, `scene3d_tex_${props.nodeId}`)
+    const filename = await uploadInputImage(file)
+    if (filename === null) throw new Error('upload failed')
     delete texLoadError[filename]
     target.material.image = filename
   } catch {
@@ -1558,8 +1635,12 @@ watch(selectedIds, (ids) => {
   // LightObject's scale is never read, so scaling a light in a mixed selection
   // writes a number nothing honours — and a light that resists scaling alone but
   // accepts it next to a cube is the more confusing of the two behaviours.
-  const anyLight = ids.some((id) => doc.objects.find((o) => o.id === id)?.kind === 'light')
-  interaction?.selectMany([...ids], { noScale: anyLight })
+  // A decal in the selection suppresses the gizmo entirely: its `position`/
+  // `rotation` are the projection point and projector orientation in the
+  // TARGET'S local space, so a world-space gizmo drag would write numbers that
+  // mean something else — repositioning goes through click-to-place instead.
+  const kinds = new Set(ids.map((id) => doc.objects.find((o) => o.id === id)?.kind))
+  interaction?.selectMany([...ids], { noScale: kinds.has('light'), noGizmo: kinds.has('decal') })
   engine?.setSelected(ids[ids.length - 1] ?? null)
   // Minor 4 fix (final review): an open Generate panel stays bound to whichever object it was
   // opened for via reliefGenBusy/reliefGenPrompt's shared id-keying, but its BUTTON just reads
@@ -1652,12 +1733,22 @@ function onKey(e: KeyboardEvent) {
   if (inField) return
   // (No W/E/R mode shortcuts — the combined gizmo moves/rotates/scales at once.)
   if (e.key === 'Escape') {
-    // Open primitive/light/generate menu owns Esc: close it, never the modal.
-    if (primMenuOpen.value || lightMenuOpen.value || genOpen.value) {
+    // An armed decal placement owns Esc first — it is the most transient mode on
+    // the surface, and leaving it armed after an Escape would consume the user's
+    // next click somewhere they didn't intend.
+    if (placingDecal.value) {
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      cancelDecalPlacement()
+      return
+    }
+    // Open primitive/light/decal/generate menu owns Esc: close it, never the modal.
+    if (primMenuOpen.value || lightMenuOpen.value || decalMenuOpen.value || genOpen.value) {
       e.preventDefault()
       e.stopImmediatePropagation()
       primMenuOpen.value = false
       lightMenuOpen.value = false
+      decalMenuOpen.value = false
       genOpen.value = false
       return
     }
@@ -2630,6 +2721,89 @@ function addLight(kind: LightKind) {
   // immediately instead of leaving the user to find the toggle.
   if (doc.objects.filter((obj) => obj.kind === 'light').length === 1) lightView.value = true
 }
+// ── Decals: click-to-place flow ──────────────────────────────────────────────
+// A decal has no meaningful default pose (it lives on a surface, in that
+// surface's local space), so adding one arms a one-shot placement on the
+// viewport instead of pushing an object straight into the doc. `null` = not
+// placing; `content` set = placing a NEW decal; `decalId` set = repositioning an
+// existing one.
+const placingDecal = ref<null | { content?: DecalContent; decalId?: string }>(null)
+const decalFileInput = ref<HTMLInputElement | null>(null)
+// Non-null while a "Replace image" pick is in flight — tells onDecalFilePicked to
+// swap the content of THAT decal in place rather than starting a new placement.
+// Holds the id, not the object, for the same capture-before-await reason
+// onTexFilePicked captures `selected`.
+const decalReplaceTarget = ref<string | null>(null)
+
+// Only solids can carry a sticker: groups have no geometry, lights aren't
+// pickable, and a decal-on-a-decal has no surface to project onto. (GLBs are out
+// too — the engine bakes decal geometry from a primitive's own buffer geometry.)
+function isDecalTarget(id: string): boolean {
+  return doc.objects.find((o) => o.id === id)?.kind === 'primitive'
+}
+function beginDecalPlacement(spec: { content?: DecalContent; decalId?: string }) {
+  placingDecal.value = spec
+  decalMenuOpen.value = false
+  interaction?.beginPlacement(isDecalTarget, onDecalPlaced)
+}
+function cancelDecalPlacement() {
+  interaction?.cancelPlacement()
+  placingDecal.value = null
+}
+function onDecalPlaced(hit: PlacementHit) {
+  const spec = placingDecal.value
+  placingDecal.value = null
+  if (!spec) return
+  const pose = { position: hit.localPoint, rotation: eulerFromNormal(hit.localNormal) }
+  if (spec.decalId) {
+    const d = doc.objects.find((o) => o.id === spec.decalId)
+    // Repositioning can land on a DIFFERENT target, so targetId/parentId move
+    // together — the invariant createDecal establishes (the engine follows
+    // targetId, the hierarchy follows parentId; they must never diverge).
+    if (d?.kind === 'decal') {
+      d.targetId = hit.targetId
+      d.parentId = hit.targetId
+      d.position = pose.position
+      d.rotation = pose.rotation
+    }
+    return
+  }
+  const o = createDecal(hit.targetId, pose, spec.content!, doc.objects)
+  doc.objects.push(o)
+  selectedId.value = o.id
+}
+function addTextDecal() {
+  beginDecalPlacement({ content: { type: 'text', text: DECAL_DEFAULTS.text, font: DECAL_DEFAULTS.font, color: DECAL_DEFAULTS.color } })
+}
+function triggerDecalReplace() {
+  const d = selectedDecal.value
+  if (!d || d.content.type !== 'image') return
+  decalReplaceTarget.value = d.id
+  decalFileInput.value?.click()
+}
+async function onDecalFilePicked(e: Event) {
+  const file = (e.target as HTMLInputElement).files?.[0]
+  ;(e.target as HTMLInputElement).value = ''
+  // Read (and clear) the replace mode BEFORE the await — the same input element
+  // serves both the toolbar's "Image sticker" and the section's "Replace image".
+  const replaceId = decalReplaceTarget.value
+  decalReplaceTarget.value = null
+  if (!file) return
+  const filename = await uploadInputImage(file)
+  if (!filename) {
+    // No inline error surface here (unlike the material texture, which has a
+    // selected object to hang one on) — a failed upload simply arms nothing.
+    console.warn('[scene3d-studio] decal image upload failed')
+    return
+  }
+  if (replaceId) {
+    const d = doc.objects.find((o) => o.id === replaceId)
+    if (d?.kind === 'decal') d.content = { type: 'image', image: filename }
+    return
+  }
+  beginDecalPlacement({ content: { type: 'image', image: filename } })
+}
+
 function addGlb(url: string) {
   if (!url) return
   const o = createGlbObject(url, doc.objects)
@@ -2716,6 +2890,9 @@ function cloneObject(src: SceneObject, existing: SceneObject[] = doc.objects): S
     case 'glb': copy = createGlbObject(src.url, existing); break
     case 'light': copy = createLight(src.light, existing); break
     case 'group': copy = createGroup(existing); break
+    // Pose/content are re-supplied by the Object.assign + spread below; passing
+    // them here only so createDecal can name the copy ("Sticker 2" vs "Text decal 2").
+    case 'decal': copy = createDecal(src.targetId, { position: [...src.position] as Vec3, rotation: [...src.rotation] as Vec3 }, JSON.parse(JSON.stringify(src.content)), existing); break
     default: {
       const _exhaustive: never = src
       throw new Error(`cloneObject: unhandled kind ${(_exhaustive as SceneObject).kind}`)
@@ -2745,6 +2922,17 @@ function cloneObject(src: SceneObject, existing: SceneObject[] = doc.objects): S
       color: src.color, intensity: src.intensity, distance: src.distance, decay: src.decay,
       angle: src.angle, penumbra: src.penumbra, width: src.width, height: src.height, castShadow: src.castShadow,
     } : {}),
+    // Decal fields, same flat-on-the-object shape as the light fields above.
+    // `content` is JSON round-tripped for the aliasing reason params/motion are.
+    // The +15° spin offset is what makes the copy VISIBLE: a decal duplicated at
+    // its source's exact pose is coplanar with it and z-fights instead of
+    // appearing (duplicateObject's usual +0.5 position nudge is no help — a
+    // decal's position is a point on the target's surface, and offsetting it
+    // would slide the sticker somewhere arbitrary).
+    ...(src.kind === 'decal' ? {
+      targetId: src.targetId, content: JSON.parse(JSON.stringify(src.content)),
+      size: src.size, depth: src.depth, spin: src.spin + Math.PI / 12, opacity: src.opacity,
+    } : {}),
     // Preserve containment: a duplicate should land beside its source, not
     // escape to the root — the same "escaping" failure mode Step 1's delete
     // cascade guards against, just for duplicate instead of delete. (Not in the
@@ -2765,7 +2953,19 @@ function duplicateObject(id: string) {
   // passed straight through as the `make` factory.
   const clones = cloneSubtree(doc.objects, id, (s, existing) => cloneObject(s, existing))
   const copy = clones[0]!
-  copy.position = [src.position[0] + 0.5, src.position[1], src.position[2] + 0.5]
+  // A decal's `position` is a point ON the target's surface, not a free
+  // transform — nudging it would slide the sticker off the face it was placed
+  // on. Its copy is separated by the spin offset in cloneObject instead.
+  if (copy.kind !== 'decal') copy.position = [src.position[0] + 0.5, src.position[1], src.position[2] + 0.5]
+  // cloneSubtree remaps `parentId` through its id map but knows nothing about a
+  // decal's `targetId` — without this, duplicating a PRIMITIVE would hand its
+  // sticker copies a parentId pointing at the new solid and a targetId still
+  // pointing at the old one, and the engine (which follows targetId) would
+  // project them onto the original. createDecal's invariant is that the two are
+  // equal, so re-deriving targetId from the already-remapped parentId restores it
+  // for both cases: duplicating the decal itself (root parentId untouched → same
+  // target, correct) and duplicating its target (remapped → new target).
+  for (const clone of clones) if (clone.kind === 'decal' && clone.parentId) clone.targetId = clone.parentId
   doc.objects.push(...clones)
   selectedId.value = copy.id
   // Same eager warm-up as addGlb so a failing GLB source flags the duplicate too.
@@ -3076,8 +3276,19 @@ async function onClose() {
 <template>
   <StudioModalShell title="3D Studio" @close="onClose">
     <template #preview>
-      <div ref="viewportEl" class="relative h-full w-full min-h-0">
+      <div ref="viewportEl" class="relative h-full w-full min-h-0" :class="placingDecal ? 'cursor-crosshair' : ''">
         <canvas v-if="webglOk" ref="canvasEl" class="h-full w-full" />
+        <!-- Decal image picker. Lives here, OUTSIDE the bottom toolbar's v-if, because
+             both callers need it: the toolbar's "Image sticker" and the Decal section's
+             "Replace image" (which is reachable in Motion mode, where the toolbar is
+             replaced by the timeline). -->
+        <input ref="decalFileInput" type="file" accept="image/*" class="hidden" @change="onDecalFilePicked" />
+        <!-- Placement mode hint: the armed state is otherwise invisible apart from
+             the crosshair cursor, and the click it consumes is destructive-feeling. -->
+        <div v-if="placingDecal"
+             class="pointer-events-none absolute left-1/2 top-3 z-20 -translate-x-1/2 rounded-full bg-black/70 px-3 py-1 text-[11px] text-white/85">
+          Click a surface to place — Esc to cancel
+        </div>
         <div v-else class="flex h-full items-center justify-center text-sm text-white/50">
           WebGL is unavailable — the 3D Studio needs a WebGL-capable browser.
         </div>
@@ -3133,7 +3344,7 @@ async function onClose() {
               type="button"
               class="flex h-8 items-center gap-1.5 rounded px-2.5 text-[12px] transition-colors cursor-pointer"
               :class="primMenuOpen ? 'bg-white/15 text-white' : 'text-white/70 hover:bg-white/10 hover:text-white'"
-              @click="lightMenuOpen = false; genOpen = false; primMenuOpen = !primMenuOpen"
+              @click="lightMenuOpen = false; decalMenuOpen = false; genOpen = false; primMenuOpen = !primMenuOpen"
             >
               <Plus class="size-4" /> Primitive
             </button>
@@ -3153,7 +3364,7 @@ async function onClose() {
               type="button"
               class="flex h-8 items-center gap-1.5 rounded px-2.5 text-[12px] transition-colors cursor-pointer"
               :class="lightMenuOpen ? 'bg-white/15 text-white' : 'text-white/70 hover:bg-white/10 hover:text-white'"
-              @click="primMenuOpen = false; genOpen = false; lightMenuOpen = !lightMenuOpen"
+              @click="primMenuOpen = false; decalMenuOpen = false; genOpen = false; lightMenuOpen = !lightMenuOpen"
             >
               <Lightbulb class="size-4" /> Light
             </button>
@@ -3161,8 +3372,17 @@ async function onClose() {
             <button
               type="button"
               class="flex h-8 items-center gap-1.5 rounded px-2.5 text-[12px] transition-colors cursor-pointer"
+              :class="decalMenuOpen ? 'bg-white/15 text-white' : 'text-white/70 hover:bg-white/10 hover:text-white'"
+              @click="primMenuOpen = false; lightMenuOpen = false; genOpen = false; decalMenuOpen = !decalMenuOpen"
+            >
+              <Sticker class="size-4" /> Decal
+            </button>
+            <div class="mx-0.5 h-5 w-px bg-white/10" />
+            <button
+              type="button"
+              class="flex h-8 items-center gap-1.5 rounded px-2.5 text-[12px] transition-colors cursor-pointer"
               :class="genOpen ? 'bg-white/15 text-white' : 'text-white/70 hover:bg-white/10 hover:text-white'"
-              @click="primMenuOpen = false; lightMenuOpen = false; genOpen = !genOpen"
+              @click="primMenuOpen = false; lightMenuOpen = false; decalMenuOpen = false; genOpen = !genOpen"
             >
               <Sparkles class="size-4" /> Generate
             </button>
@@ -3204,6 +3424,29 @@ async function onClose() {
               >
                 <Lightbulb class="size-4 shrink-0 opacity-70" />
                 {{ LIGHT_KIND_LABELS[k] }}
+              </button>
+            </div>
+
+            <!-- Decal menu: same popup mechanic as the light menu. Both entries ARM a
+                 placement rather than adding an object — the click on the viewport is
+                 what creates the decal. -->
+            <div
+              v-if="decalMenuOpen"
+              class="absolute bottom-full right-0 z-30 mb-2 w-44 rounded-lg border border-white/10 bg-[#161616] p-2 shadow-2xl"
+            >
+              <button
+                type="button"
+                class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-white/80 transition-colors hover:bg-white/10 hover:text-white cursor-pointer"
+                @click="addTextDecal"
+              >
+                <TypeIcon class="size-4 shrink-0 opacity-70" /> Text label
+              </button>
+              <button
+                type="button"
+                class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-white/80 transition-colors hover:bg-white/10 hover:text-white cursor-pointer"
+                @click="decalMenuOpen = false; decalFileInput?.click()"
+              >
+                <ImageIcon class="size-4 shrink-0 opacity-70" /> Image sticker
               </button>
             </div>
 
@@ -3419,7 +3662,10 @@ async function onClose() {
             <input v-model.number="rotZ" type="number" step="1" aria-label="Rotation Z" class="studio-num" />
           </div>
         </div>
-        <div v-if="selected && !selectedIsLight">
+        <!-- A decal's `scale` is unused by the engine exactly as a light's is (its
+             on-surface footprint comes from `size`), so the same gate covers both —
+             otherwise these three inputs would write numbers nothing reads. -->
+        <div v-if="selected && !selectedIsLight && !selectedIsDecal">
           <label class="mb-1 block text-[11px] text-white/55">Size</label>
           <div class="grid grid-cols-3 gap-1.5">
             <input v-model.number="sizeX" type="number" step="0.05" aria-label="Size X" class="studio-num" />
@@ -4053,6 +4299,45 @@ async function onClose() {
             </div>
           </div>
         </template>
+      </StudioSection>
+
+      <!-- Decal: content (text or image) then the four projection params. There is no
+           gizmo for a decal (see the selection watch) — "Reposition" re-arms the same
+           click-to-place flow the toolbar uses. -->
+      <StudioSection v-if="selectedIsDecal" title="Decal" @pointerdown.capture="onControlsPointerDown">
+        <div class="space-y-3">
+          <template v-if="selectedDecal?.content.type === 'text'">
+            <div>
+              <label class="mb-1 block text-[11px] text-white/55">Label</label>
+              <input v-model="decalText" type="text" aria-label="Decal label" class="studio-num" style="text-align: left" />
+            </div>
+            <div>
+              <label class="mb-1 block text-[11px] text-white/55">Font</label>
+              <FontPicker
+                :model-value="fontDisplayName(decalFont)"
+                :show-variable-toggle="false"
+                @select="onDecalFontPick"
+              />
+              <p class="mt-1 text-[11px] text-white/35">Decal labels use Google fonts.</p>
+            </div>
+            <div class="flex items-center justify-between">
+              <span class="text-[11px] text-white/55">Color</span>
+              <StudioColor v-model="decalColor" />
+            </div>
+          </template>
+          <template v-else-if="selectedDecal?.content.type === 'image'">
+            <img :src="texViewUrl(selectedDecal.content.image)" alt=""
+              class="h-16 w-full rounded bg-white/5 object-contain" />
+            <StudioButton @click="triggerDecalReplace">Replace image</StudioButton>
+          </template>
+          <StudioSlider v-model="decalSize" label="Size" hint="Sticker width on the surface" :min="0.05" :max="3" :step="0.01" />
+          <StudioSlider v-model="decalSpinDeg" label="Spin" hint="Rotation around the surface normal" :min="-180" :max="180" :step="1" />
+          <StudioSlider v-model="decalDepth" label="Wrap" hint="How far the sticker wraps around curved surfaces" :min="0.05" :max="2" :step="0.01" />
+          <StudioSlider v-model="decalOpacity" label="Opacity" hint="How solid the sticker sits on the surface" :min="0" :max="1" :step="0.01" />
+          <StudioButton :disabled="!!placingDecal" @click="beginDecalPlacement({ decalId: selectedDecal!.id })">
+            {{ placingDecal ? 'Click a surface…' : 'Reposition' }}
+          </StudioButton>
+        </div>
       </StudioSection>
 
       <StudioSection title="Camera">

@@ -3,7 +3,7 @@
 // itself by name), which is why this is a real component rather than more
 // markup inside the surface.
 import { computed, ref } from 'vue'
-import { Box, Lightbulb, Folder, ChevronRight, ChevronDown, Eye, EyeOff, Copy, Trash2, RotateCcw } from 'lucide-vue-next'
+import { Box, Lightbulb, Folder, Sticker, ChevronRight, ChevronDown, Eye, EyeOff, Copy, Trash2, RotateCcw } from 'lucide-vue-next'
 import type { SceneObject } from '~/lib/scene3d/config'
 import { childrenOf } from '~/lib/scene3d/hierarchy'
 
@@ -27,7 +27,10 @@ const children = computed(() => childrenOf(props.objects, props.object.id))
 // document on a disclosure click and sync a cosmetic toggle across windows.
 const expanded = ref(true)
 const icon = computed(() =>
-  props.object.kind === 'light' ? Lightbulb : props.object.kind === 'group' ? Folder : Box)
+  props.object.kind === 'light' ? Lightbulb
+  : props.object.kind === 'group' ? Folder
+  : props.object.kind === 'decal' ? Sticker
+  : Box)
 </script>
 
 <template>
