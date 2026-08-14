@@ -8,6 +8,7 @@ import { getStripe } from '~~/server/utils/stripeClient'
 import { packById } from '~~/server/utils/packs'
 import { ensureStripeCustomer } from '~~/server/utils/stripeCustomers'
 import { getSharedLedgerDb } from '~~/server/utils/ledgerDb'
+import { getLiveLedger } from '~~/server/utils/ledgerLive'
 
 export default defineEventHandler(async (event) => {
   if (!isHosted()) throw createError({ statusCode: 404, message: 'Not found' })
@@ -19,11 +20,16 @@ export default defineEventHandler(async (event) => {
   if (!pack) throw createError({ statusCode: 400, message: 'Unknown pack' })
 
   const stripe = getStripe()
-  const customerId = await ensureStripeCustomer(getSharedLedgerDb(), stripe, userId)
+  const customerId = await ensureStripeCustomer(getLiveLedger(), getSharedLedgerDb(), stripe, userId)
 
   const origin = getRequestHeader(event, 'origin') ?? `http://${getRequestHeader(event, 'host') ?? '127.0.0.1:3000'}`
   const session = await stripe.checkout.sessions.create({
     mode: 'payment',
+    // Card-only, enforced in CODE: async methods (ACH-style) complete with
+    // payment_status 'unpaid' + a later async_payment_succeeded event we do
+    // not handle — money taken, credits never granted, silently. A dashboard
+    // toggle must never be able to open that path (final-review finding).
+    payment_method_types: ['card'],
     customer: customerId,
     line_items: [{
       quantity: 1,

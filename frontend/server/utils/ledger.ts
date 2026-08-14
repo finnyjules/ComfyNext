@@ -392,5 +392,17 @@ export function createLedger(db: LedgerDb) {
     })
   }
 
-  return { ensureUser, getBalance, getAvailable, credit, debit, hold, settle, release, expireCredits }
+  /**
+   * Serialize a NON-ledger write against this instance's transaction mutex.
+   * On the shared hosted session, any raw write issued outside the mutex can
+   * land INSIDE another caller's open BEGIN..COMMIT (node-postgres queues
+   * per-connection) — vanishing on that transaction's rollback or aborting
+   * it on a constraint error. NEVER call ledger methods inside fn (they take
+   * the same mutex — self-deadlock, like getBalance inside settle).
+   */
+  function withLock<T>(fn: () => Promise<T>): Promise<T> {
+    return runExclusive(fn)
+  }
+
+  return { ensureUser, getBalance, getAvailable, credit, debit, hold, settle, release, expireCredits, withLock }
 }

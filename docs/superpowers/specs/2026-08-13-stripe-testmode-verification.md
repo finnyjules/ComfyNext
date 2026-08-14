@@ -1,6 +1,6 @@
 # Stripe test-mode verification — run-book + results
 
-**Plain summary:** Stripe's signed webhooks were fired at a real hosted Sailor server and the money landed in (and left) the real Neon ledger correctly: a Creator-pack purchase granted exactly 2,750 credits once (a replayed delivery granted nothing), and refunds clawed credits back — including the partial-shortfall path, live. Two real bugs were found and fixed by doing this live: an auth-middleware deadlock on webhook bodies, and Stripe's current API not embedding itemized refunds. One item is blocked on a bad paste: the `sk_test_` key in `.env.hosted` is invalid (128 chars — should be ~107), which blocks the checkout-session route and the itemized-refund fetch until re-pasted.
+**Plain summary:** Stripe's signed webhooks were fired at a real hosted Sailor server and the money landed in (and left) the real Neon ledger correctly: a Creator-pack purchase granted exactly 2,750 credits once (a replayed delivery granted nothing), and refunds clawed credits back — including the partial-shortfall path, live. Two real bugs were found and fixed by doing this live: an auth-middleware deadlock on webhook bodies, and Stripe's current API not embedding itemized refunds. After the operator re-pasted a valid key, every remaining leg was verified live: the itemized per-refund-id clawback (two partial refunds on one charge clawed exactly their own deltas, keyed by `re_` ids), and the real browser purchase — Julien bought the Studio pack through the actual checkout route, Stripe's hosted page, and the test card; 7,200 credits landed in Neon.
 
 ## Setup used (repeatable)
 
@@ -26,15 +26,17 @@
 1. `fix(auth) 59afa6bab` — public-path body-stream deadlock (above). The Stage 1 smoke could not have caught it (no signed-body POST to a public path existed before Stripe).
 2. `fix(billing) 88669c4ab` — **current Stripe API versions do NOT embed `refunds.data` on the charge**, so the multi-partial-refund-safe path never ran; the handler now fetches itemized refunds via `stripe.refunds.list` (dep-injected), keeping debits keyed by `re_` ids. Unit-proven (10/10); live proof pending the key fix below.
 
-## BLOCKED on operator action
+## COMPLETED after the key fix (2026-08-13 late / 2026-08-14)
 
-- **`STRIPE_SECRET_KEY` in `frontend/.env.hosted` is invalid** (length 128 — a real `sk_test_` is ~107; Stripe rejects it). Until re-pasted correctly: the checkout-session route (`/api/billing/checkout`) and the itemized-refund fetch cannot run live. Re-copy from dashboard.stripe.com → Developers → API keys (test mode) and replace the line.
+- **Invalid-key interlude:** the first `sk_test_` paste was malformed (128 chars vs ~107). While broken, the fetch-failure fallback proved itself live (`REFUND LIST FETCH FAILED` ×2, loud, cumulative fallback ran). Re-pasted, validated via `balance.retrieve` (livemode:false) without printing.
+- **Itemized clawback live:** one $10 payment, partial refunds of 250¢ then 400¢ → debits `250|re_…sKwHq7p` and `400|re_…2Ny6xB3` — keyed by refund ids, second refund clawed only its own delta. Replay of the charge.refunded event: balance unchanged.
+- **Real browser purchase (Julien):** Studio pack via /account → checkout route → Stripe hosted page → 4242 test card → webhook → `pack_purchase:studio|7200` keyed by event id; wallet 1,800 → 9,000.
+- **Three human-caught defects fixed along the way** (each invisible to compile/200 checks): (1) guarded-POST body-stream deadlock — Clerk auth wrapped the body, `readBody` hung, buttons froze silently; fixed with a body-less synthetic Request (a56320b8b + defensive follow-up); (2) I-beam cursor + chip-looking buttons — `select-none` + `enabled:cursor-pointer` + new `outline` StudioButton variant (940c86188); (3) `<StudioButton>` silently unresolved — NOT auto-imported, rendered as inert text; explicit import (5bbc1c566); the SSR log had `Failed to resolve component` ×7 the whole time.
+- **Final-review blockers landed:** `stripe_customers` write serialized under the ledger mutex (`ledger.withLock`, ON CONFLICT DO NOTHING — a raw write on the shared session could interleave into an open money transaction) and `payment_method_types: ['card']` enforced in code (async payment methods would complete `unpaid` + fire an unhandled `async_payment_succeeded` — money taken, credits never granted — one dashboard toggle away if left to defaults).
 
-## Remaining live checks (after key fix)
+## Stale-server gotchas that burned this run (teardown section is the cure)
 
-1. Re-run the two-partial-refund scenario → debits keyed by `re_` ids, second refund claws only its own delta.
-2. `POST /api/billing/checkout` (signed-in browser) → Stripe-hosted page → test card `4242 4242 4242 4242` → redirect + wallet bump. (Julien click-through; the webhook leg is already proven.)
-3. Browser look at the /account buy-credits section (framing rules).
+Two rounds of "the fix didn't work" were a PRE-FIX server still holding :3100 — `pkill -f <worktree-path>` does not match node children (relative argv) and the replacement server silently took another port. Kill by open-file discovery, verify the listener pid's start time, purge `.nuxt` if in doubt.
 
 ## Test-wallet bookkeeping
 
