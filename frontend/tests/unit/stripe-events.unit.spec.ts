@@ -111,4 +111,40 @@ describe('handleStripeEvent', () => {
     expect(res).toEqual({ handled: true, action: 'clawback_partial' })
     expect(d.debit).toHaveBeenCalledWith('user_1', 100, 'refund_clawback', 'evt_8')
   })
+
+  // Live finding (test-mode run 2026-08-13): current Stripe API versions do
+  // NOT embed refunds.data on the charge — the fallback was the LIVE path.
+  // When a listRefunds dep is provided, absent refunds.data must be fetched
+  // from the API so debits stay keyed by refund ids (multi-partial-refund
+  // safe), with the cumulative fallback reserved for fetch failure.
+  it('refunds.data absent + listRefunds dep: fetches and keys by refund ids', async () => {
+    const d = deps({
+      listRefunds: vi.fn().mockResolvedValue([
+        { id: 're_20', amount: 300 },
+        { id: 're_21', amount: 700 },
+      ]),
+    })
+    const res = await handleStripeEvent({
+      id: 'evt_9', type: 'charge.refunded',
+      data: { object: { id: 'ch_5', customer: 'cus_9', amount_refunded: 1000 } },
+    }, d)
+    expect(res).toEqual({ handled: true, action: 'clawback' })
+    expect(d.listRefunds).toHaveBeenCalledWith('ch_5')
+    expect(d.debit).toHaveBeenCalledWith('user_1', 300, 'refund_clawback', 're_20')
+    expect(d.debit).toHaveBeenCalledWith('user_1', 700, 'refund_clawback', 're_21')
+    expect(d.debit).not.toHaveBeenCalledWith('user_1', expect.any(Number), 'refund_clawback', 'evt_9')
+  })
+
+  it('listRefunds failure falls back to cumulative, loudly', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const d = deps({ listRefunds: vi.fn().mockRejectedValue(new Error('api down')) })
+    const res = await handleStripeEvent({
+      id: 'evt_10', type: 'charge.refunded',
+      data: { object: { id: 'ch_6', customer: 'cus_9', amount_refunded: 400 } },
+    }, d)
+    expect(res).toEqual({ handled: true, action: 'clawback' })
+    expect(d.debit).toHaveBeenCalledWith('user_1', 400, 'refund_clawback', 'evt_10')
+    expect(spy).toHaveBeenCalledWith(expect.stringContaining('REFUND LIST FETCH FAILED'), expect.anything())
+    spy.mockRestore()
+  })
 })

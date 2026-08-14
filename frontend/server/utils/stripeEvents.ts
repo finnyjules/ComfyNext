@@ -27,6 +27,10 @@ export interface StripeEventDeps {
   debit(userId: string, credits: number, reason: string, key: string): Promise<{ ok: boolean; reason?: string }>
   getAvailable(userId: string): Promise<number>
   lookupUserByCustomer(customerId: string): Promise<string | null>
+  /** Fetch a charge's itemized refunds from the Stripe API. Current API
+   * versions do not embed refunds.data on the charge (live finding), so
+   * without this the multi-partial-refund-safe path never runs. */
+  listRefunds?(chargeId: string): Promise<Array<{ id: string; amount: number }>>
 }
 
 import { packById } from './packs'
@@ -54,9 +58,19 @@ export async function handleStripeEvent(
     const userId = await deps.lookupUserByCustomer(String(customerId))
     if (!userId) return { handled: false }
 
-    const itemized: Array<{ id: string; amount: number }> = Array.isArray(c?.refunds?.data) ? c.refunds.data : []
-    // Fallback synthesizes a single "refund" keyed by the event id — see
-    // the module doc comment above for why this over-claws on a charge's
+    let itemized: Array<{ id: string; amount: number }> = Array.isArray(c?.refunds?.data) ? c.refunds.data : []
+    // Current Stripe API versions do NOT embed refunds.data on the charge
+    // (live finding, test-mode run 2026-08-13) — fetch the itemized list so
+    // debits stay keyed by refund ids (multi-partial-refund safe).
+    if (itemized.length === 0 && c?.id && deps.listRefunds) {
+      try {
+        itemized = await deps.listRefunds(String(c.id))
+      } catch (e) {
+        console.error('[stripe] REFUND LIST FETCH FAILED — falling back to cumulative clawback', { chargeId: c.id, eventId: evt.id, error: e })
+      }
+    }
+    // Last-resort fallback synthesizes a single "refund" keyed by the event
+    // id — see the module doc comment for why this over-claws on a charge's
     // later partial refunds and is only exact for the first/only one.
     const refunds = itemized.length > 0
       ? itemized

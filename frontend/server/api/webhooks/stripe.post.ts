@@ -36,6 +36,10 @@ export default defineEventHandler(async (event) => {
         `SELECT user_id FROM stripe_customers WHERE stripe_customer_id = $1`, [cusId])
       return rows.length ? rows[0].user_id : null
     },
+    listRefunds: async (chargeId) => {
+      const res = await getStripe().refunds.list({ charge: chargeId, limit: 100 })
+      return res.data.map(r => ({ id: r.id, amount: r.amount }))
+    },
   })
   return { ok: true, ...result }
 })
