@@ -30,6 +30,8 @@ import CanvasStatusBar, { type RunResult } from '~/components/CanvasStatusBar.vu
 import AgentCanvasPromptBar from '~/components/agent/CanvasPromptBar.vue'
 import { ARTIFACT_NODE_FOR_SOURCE, type ActionSource } from '~/data/action-catalog'
 import { estimateUsdForNodes, vueNodesToEstimateInput, type CostEstimate } from '~/lib/costEstimate'
+import { formatCostBadge, formatCostLong } from '~/lib/pricing'
+import { hostedModeEnabled } from '~/lib/hostedMode'
 import { tallyReplicateUsd } from '~/lib/graph/runCost'
 import { summarizeNodeErrors } from '~/lib/validationErrors'
 import { promoteTempImageInputs } from '~/lib/promoteTempImages'
@@ -2814,6 +2816,37 @@ const promptNodeInfo = ref<Record<string, { nodeId: string, nodeType: string }>>
 let queuePollTimer: ReturnType<typeof setInterval> | null = null
 const credits = ref<number | null>(null)
 
+// ── Hosted-mode wallet pill ─────────────────────────────────────────────
+// In hosted mode the pill shows OUR wallet (Neon ledger via /api/wallet) and
+// clicking it opens /account. The comfy.org credits plumbing (bridge
+// credits_update events + purchase modal below) is deliberately KEPT intact
+// — it is what local mode still shows, and hosted may re-use it for Comfy
+// API nodes later.
+const hostedShell = hostedModeEnabled(useRuntimeConfig().public)
+const hostedWallet = ref<number | null>(null)
+async function refreshHostedWallet() {
+  if (!hostedShell) return
+  try {
+    const w = await $fetch<{ mode: string; available?: number }>('/api/wallet')
+    hostedWallet.value = w.mode === 'hosted' && typeof w.available === 'number' ? w.available : null
+  } catch { hostedWallet.value = null /* signed out or transient — pill shows em dash */ }
+}
+if (import.meta.client && hostedShell) {
+  onMounted(() => {
+    refreshHostedWallet()
+    window.addEventListener('focus', refreshHostedWallet)
+  })
+  onUnmounted(() => window.removeEventListener('focus', refreshHostedWallet))
+}
+const creditsPillText = computed(() => {
+  if (hostedShell) return hostedWallet.value !== null ? `${hostedWallet.value.toLocaleString()} credits` : '— credits'
+  return credits.value !== null ? `${credits.value.toLocaleString()} credits` : '— credits'
+})
+function onCreditsPillClick() {
+  if (hostedShell) { navigateTo('/account'); return }
+  openAddCredits()
+}
+
 // Watch credits for the post-run delta. Must come after `credits` is declared.
 // Multiple credit-billed runs can be in flight at once, each with its own entry
 // in pendingCredits (which SURVIVES finishRun — see PendingCredit above).
@@ -3671,10 +3704,10 @@ function dismissRunResult() {
     >
       <div class="w-[360px] bg-[#1a1a1a] border border-[#2a2a2a] rounded-xl shadow-2xl p-4">
         <div class="text-sm font-semibold text-white mb-1">
-          This run costs ~${{ costConfirmHead.estimate.usd.toFixed(2) }}
+          This run costs {{ formatCostLong(costConfirmHead.estimate.usd, hostedShell) }}
         </div>
         <div v-if="costConfirmHead.iterations > 1" class="text-[11px] text-white/50 mb-2">
-          {{ costConfirmHead.iterations }} runs × ~${{ (costConfirmHead.estimate.usd / costConfirmHead.iterations).toFixed(2) }} each
+          {{ costConfirmHead.iterations }} runs × {{ formatCostLong(costConfirmHead.estimate.usd / costConfirmHead.iterations, hostedShell) }} each
         </div>
         <div class="max-h-[160px] overflow-y-auto mb-3 space-y-1">
           <div
@@ -3683,7 +3716,7 @@ function dismissRunResult() {
             class="flex items-center justify-between gap-3 text-[11px] text-white/60"
           >
             <span class="truncate">{{ item.label }}</span>
-            <span class="tabular-nums shrink-0">${{ item.usd.toFixed(2) }}</span>
+            <span class="tabular-nums shrink-0">{{ formatCostBadge(item.usd, false, hostedShell) }}</span>
           </div>
         </div>
         <div class="flex items-center justify-end gap-2">
@@ -3931,9 +3964,9 @@ function dismissRunResult() {
         <div class="flex items-center gap-2 pr-4 shrink-0">
           <button
             class="flex items-center gap-1.5 bg-[#1a1a1a] rounded-full px-3 py-1.5 border border-[#2a2a2a] cursor-pointer hover:bg-[#222] transition-colors"
-            @click="openAddCredits"
+            @click="onCreditsPillClick"
           >
-            <span class="text-xs font-medium text-white/70">{{ credits !== null ? `${credits.toLocaleString()} credits` : '— credits' }}</span>
+            <span class="text-xs font-medium text-white/70">{{ creditsPillText }}</span>
           </button>
           <button
             class="flex items-center gap-1.5 bg-[#1a1a1a] rounded-full px-3 py-1.5 border border-[#2a2a2a] cursor-pointer hover:bg-[#222] transition-colors"
@@ -4229,7 +4262,7 @@ function dismissRunResult() {
             <Play class="size-3.5 text-white fill-white" />
             <span class="text-sm font-semibold text-white">Run</span>
             <span v-if="runEstimate" class="text-[11px] font-medium text-white/75 tabular-nums">
-              ~${{ runEstimate.usd.toFixed(2) }}
+              {{ formatCostBadge(runEstimate.usd, true, hostedShell) }}
             </span>
           </button>
           <button

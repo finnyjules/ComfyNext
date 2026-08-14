@@ -6,6 +6,8 @@ import { getTypeColor, fetchObjectInfo } from '~/composables/useVueNodes'
 import { ACTION_CATALOG } from '~/data/action-catalog'
 import { getGeneratorIcon } from '~/data/generator-icons'
 import { parseBadgeUsd } from '~/lib/costEstimate'
+import { formatCostBadge } from '~/lib/pricing'
+import { hostedModeEnabled } from '~/lib/hostedMode'
 
 // Visual half of the unified `Video` artifact node. Same state machine as
 // the Image / Audio cards. Result lands in `data.images` (PreviewVideo's
@@ -198,12 +200,13 @@ const NEXT_ACTIONS = [
 // Truthful $ hints from the same price_badge the nodes themselves show —
 // fetched once on mount, same mechanism SelectionActionChips used.
 const priceHints = ref<Record<string, string>>({})
+const hostedPricing = hostedModeEnabled(useRuntimeConfig().public)
 onMounted(async () => {
   const info = await fetchObjectInfo()
   const out: Record<string, string> = {}
   for (const action of [...REFINE_ACTIONS, ...NEXT_ACTIONS]) {
     const cost = parseBadgeUsd(info?.[action.nodeType]?.price_badge?.expr)
-    if (cost) out[action.nodeType] = `${cost.approximate ? '~' : ''}$${cost.usd.toFixed(2)}`
+    if (cost) out[action.nodeType] = formatCostBadge(cost.usd, cost.approximate, hostedPricing)
   }
   priceHints.value = out
 })

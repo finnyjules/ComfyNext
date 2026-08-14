@@ -10,6 +10,8 @@ import { MoreHorizontal } from 'lucide-vue-next'
 import { ACTION_CATALOG, CHIPS_BY_DOMAIN, type ActionDomain } from '~/data/action-catalog'
 import { getGeneratorIcon } from '~/data/generator-icons'
 import { parseBadgeUsd } from '~/lib/costEstimate'
+import { formatCostBadge } from '~/lib/pricing'
+import { hostedModeEnabled } from '~/lib/hostedMode'
 import { fetchObjectInfo } from '~/composables/useVueNodes'
 
 const props = defineProps<{ nodeId: string; domain: ActionDomain; output: string }>()
@@ -20,12 +22,13 @@ const chips = CHIPS_BY_DOMAIN[props.domain] ?? []
 // no hand-maintained price list to drift. objectInfo is cached; this await
 // resolves instantly after the canvas's first fetch.
 const hints = ref<Record<string, string>>({})
+const hostedPricing = hostedModeEnabled(useRuntimeConfig().public)
 onMounted(async () => {
   const info = await fetchObjectInfo()
   const out: Record<string, string> = {}
   for (const chip of chips) {
     const cost = parseBadgeUsd(info?.[chip.nodeType]?.price_badge?.expr)
-    if (cost) out[chip.nodeType] = `${cost.approximate ? '~' : ''}$${cost.usd.toFixed(2)}`
+    if (cost) out[chip.nodeType] = formatCostBadge(cost.usd, cost.approximate, hostedPricing)
   }
   hints.value = out
 })

@@ -17,6 +17,8 @@ import { setPendingPromote } from '~/lib/draft/runMeta'
 import { promoteOverridesFor } from '~/lib/draft/promote'
 import { annotatedImageValueFromViewUrl } from '~/lib/promoteTempImages'
 import { parseBadgeUsd } from '~/lib/costEstimate'
+import { formatCostBadge } from '~/lib/pricing'
+import { hostedModeEnabled } from '~/lib/hostedMode'
 import { toast } from 'vue-sonner'
 
 // The visual half of the unified `Image` artifact node. State is derived from
@@ -776,9 +778,10 @@ function applyFix(chip: FixChip) {
 
 // Promote button price hint — this node's own price badge (a promote reruns
 // the SAME generator at full quality, so its badge is the right estimate).
+const hostedPricing = hostedModeEnabled(useRuntimeConfig().public)
 const promoteUsdLabel = computed(() => {
   const cost = parseBadgeUsd((props.data as any)?.priceBadge?.expr)
-  return cost ? ` ~$${cost.usd.toFixed(2)}` : null
+  return cost ? ` ${formatCostBadge(cost.usd, true, hostedPricing)}` : null
 })
 </script>
 
