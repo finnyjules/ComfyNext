@@ -4,7 +4,7 @@
 
 **Goal (AMENDED post-probe):** A game-style Body editor — eight sliders that COMPILE TO GRADED BODY TEXT riding the proven descriptor channel into every sheet and shot prompt, with the Anny grey figure as a free display-only preview of what the words mean.
 
-**Architecture:** One-time offline Python bake (Anny, CC0 topology) → static GLB with 8 morph targets → three.js editor modal (live `morphTargetInfluences`) → free front+back composite upload → `bodyShape`/`bodyImage` on `CharacterRecord` → body panels become two-image nano-banana edits (portrait = identity, body render = proportions). A ~$0.40 probe precedes everything.
+**Architecture (AMENDED):** `bodyShape` slider values on `CharacterRecord` → pure `bodyPhrase` compiler → graded body text rides the existing descriptor channel into sheet-panel prompts and the shot cast clause (zero downstream signature changes). The Anny GLB (one-time offline bake, CC0 topology) is a display-only live preview in the editor. The probe (4 rounds, done) chose this mechanism.
 
 **Tech Stack:** Python scratch venv (`anny`, trimesh/pyrender — bake only, never runtime), three.js GLTFLoader + morph targets, existing endpoints (`/api/inpaint/nano-gen`), existing store/PATCH plumbing.
 
@@ -15,9 +15,9 @@
 - **Working dir** `frontend/` for app code; `scripts/bake-body-model/` for bake tooling (repo root). Tests: `npx vitest run tests/unit/<file>`.
 - **License guard (absolute):** only the MakeHuman/MPFB2 (CC0) or SOMA (Apache-2.0) topology. The SMPL-X-topology variant is non-commercial — it must never be selected, downloaded into the repo, or shipped. Every task touching Anny asserts this in code comments and the report.
 - **No runtime Python/Anny dependency** — the app consumes only the committed GLB.
-- **Money:** the probe (~$0.40) and nothing else in this plan spends. Sliding/saving/rendering are free and must stay free. Generation calls only from explicit user clicks (existing sheet-build flow).
+- **Money:** the probe (done, ~$1.75 across 4 rounds) was this plan's only spend. Sliding/saving/rendering are free and must stay free. Generation calls only from explicit user clicks (existing sheet-build flow).
 - **Quiet-readiness language:** no locked/draft/stress/variant in user-facing strings; body-editor copy uses the spec's wording.
-- **One shape per CHARACTER** (`bodyShape`, `bodyImage` on the record, not per state). Body edits do NOT demote look statuses (spec §4).
+- **One shape per CHARACTER** (`bodyShape` on the record, not per state). Body edits do NOT demote look statuses (spec §4).
 - Shared main-direct checkout; parallel sessions commit concurrently: stage only your files, record exact SHAs, review packages built per-commit.
 - Ignore `frontend/.claude/worktrees/**`.
 
@@ -29,13 +29,13 @@
 | `scripts/bake-body-model/bake.py` (new) | Task 2: GLB export (base + 8 morph targets). |
 | `scripts/bake-body-model/ATTRIBUTION.md` (new) | Licenses + provenance. |
 | `frontend/public/models/body-reference.glb` (new, committed binary) | The figure the app loads. |
-| `frontend/shared/characters/types.ts` | +`bodyShape`/`bodyImage` on `CharacterRecord`. |
-| `frontend/server/utils/characterRegistry.ts` | Parse/heal the two fields. |
-| `frontend/server/api/characters-local.patch.ts` | Top-level-fields branch accepts them. |
+| `frontend/shared/characters/types.ts` | +`bodyShape` on `CharacterRecord` (+`BODY_SLIDERS`). |
+| `frontend/server/utils/characterRegistry.ts` | Clamp/drop hygiene for `bodyShape`. |
+| `frontend/server/api/characters-local.patch.ts` | Top-level-fields branch accepts `bodyShape`. |
 | `frontend/app/lib/characters/bodyShape.ts` (new) | Pure: slider ids, presets, `bodyShape` ⇄ morph-influence mapping, save-payload assembly. |
-| `frontend/app/components/vue-canvas/BodyEditorModal.vue` (new) | The editor (three.js stage + sliders + presets + save bake). |
+| `frontend/app/components/vue-canvas/BodyEditorModal.vue` (new) | The editor (figure preview + sliders + presets + live phrase line; Save = patch only). |
 | `frontend/app/components/vue-canvas/CharacterStudioModal.vue` | "Body" chip next to the readiness badge opens it. |
-| `frontend/app/composables/useSheetGeneration.ts` | Two-image body panels when `bodyImage` present. |
+| `frontend/app/lib/characters/bodyPhrase.ts` (new) | Pure slider→graded-text compiler (the mechanism). |
 | `frontend/app/pages/dev/body-editor.vue` (new) | Dev harness. |
 
 ---
