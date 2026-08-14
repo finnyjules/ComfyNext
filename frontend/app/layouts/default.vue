@@ -2840,11 +2840,14 @@ if (import.meta.client && hostedShell) {
 }
 const creditsPillText = computed(() => {
   if (hostedShell) return hostedWallet.value !== null ? `${hostedWallet.value.toLocaleString()} credits` : '— credits'
-  return credits.value !== null ? `${credits.value.toLocaleString()} credits` : '— credits'
+  // Local mode: the operator pays providers directly — no credits to show.
+  // The comfy.org credits plumbing (credits ref, bridge events, purchase
+  // modal via UserPopup) stays dormant but intact in case it's needed again.
+  return 'Local mode'
 })
 function onCreditsPillClick() {
-  if (hostedShell) { navigateTo('/account'); return }
-  openAddCredits()
+  if (hostedShell) navigateTo('/account')
+  // Local mode: informational pill, no action.
 }
 
 // Watch credits for the post-run delta. Must come after `credits` is declared.
@@ -3963,7 +3966,8 @@ function dismissRunResult() {
         <!-- Right side: credits + run + running count -->
         <div class="flex items-center gap-2 pr-4 shrink-0">
           <button
-            class="flex items-center gap-1.5 bg-[#1a1a1a] rounded-full px-3 py-1.5 border border-[#2a2a2a] cursor-pointer hover:bg-[#222] transition-colors"
+            class="flex items-center gap-1.5 bg-[#1a1a1a] rounded-full px-3 py-1.5 border border-[#2a2a2a] transition-colors"
+            :class="hostedShell ? 'cursor-pointer hover:bg-[#222]' : 'cursor-default'"
             @click="onCreditsPillClick"
           >
             <span class="text-xs font-medium text-white/70">{{ creditsPillText }}</span>
