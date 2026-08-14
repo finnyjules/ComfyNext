@@ -4,9 +4,23 @@
  * EVENT id — the ledger's idempotency replay makes redelivered webhooks
  * no-ops, and the 23505 catch covers concurrent duplicate delivery.
  *
- * Refund clawback is best-effort: debit up to the available balance and
- * report a shortfall (the user may have spent the credits — recovering the
- * remainder is a manual/abuse-policy concern, logged loudly, never silent).
+ * Refund clawback is best-effort and per-refund: `charge.amount_refunded` is
+ * CUMULATIVE across every refund on the charge, and each partial refund
+ * fires its own event, so keying by the event id would over-claw on a
+ * charge's second partial refund. Instead we iterate the itemized
+ * `charge.refunds.data` array and debit EACH REFUND keyed by its own Stripe
+ * refund id — the ledger's idempotency replay then makes a refund already
+ * processed by an earlier event a no-op, and a newly-seen refund claws
+ * exactly its own amount. When `refunds.data` is absent (older API version
+ * / unexpanded event), we fall back to the old cumulative-amount-keyed-by-
+ * event-id behavior, which is exact for a charge's first/only refund but
+ * over-claws on later partial refunds of the same charge.
+ *
+ * Every debit's result is checked: debit up to the available balance, and
+ * if the debit is refused (e.g. the wallet drained between the availability
+ * check and the ledger's own locked check) or is capped short of what's
+ * owed, log loudly and count it as a shortfall — recovering the remainder
+ * is a manual/abuse-policy concern, never silently swallowed.
  */
 export interface StripeEventDeps {
   credit(userId: string, credits: number, reason: string, key: string): Promise<{ ok: boolean }>
@@ -39,16 +53,40 @@ export async function handleStripeEvent(
     if (!customerId) return { handled: false }
     const userId = await deps.lookupUserByCustomer(String(customerId))
     if (!userId) return { handled: false }
-    const owed = Math.floor(Number(c?.amount_refunded ?? 0)) // cents = base credits (1cr = 1¢)
-    if (owed <= 0) return { handled: false }
-    const available = await deps.getAvailable(userId)
-    const take = Math.min(owed, available)
-    if (take > 0) await deps.debit(userId, take, 'refund_clawback', evt.id)
-    if (take < owed) {
-      console.error('[stripe] REFUND CLAWBACK SHORTFALL', { userId, owed, recovered: take, eventId: evt.id })
-      return { handled: true, action: 'clawback_partial' }
+
+    const itemized: Array<{ id: string; amount: number }> = Array.isArray(c?.refunds?.data) ? c.refunds.data : []
+    // Fallback synthesizes a single "refund" keyed by the event id — see
+    // the module doc comment above for why this over-claws on a charge's
+    // later partial refunds and is only exact for the first/only one.
+    const refunds = itemized.length > 0
+      ? itemized
+      : [{ id: evt.id, amount: Math.floor(Number(c?.amount_refunded ?? 0)) }] // cents = base credits (1cr = 1¢)
+
+    let attempted = false
+    let anyShortfall = false
+    for (const refund of refunds) {
+      const wanted = Math.floor(Number(refund?.amount ?? 0))
+      if (wanted <= 0) continue
+      attempted = true
+      const available = await deps.getAvailable(userId)
+      const take = Math.min(wanted, available)
+      let recovered = 0
+      if (take > 0) {
+        const result = await deps.debit(userId, take, 'refund_clawback', String(refund.id))
+        if (result.ok) {
+          recovered = take
+        } else {
+          console.error('[stripe] CLAWBACK DEBIT REFUSED', { userId, refundId: refund.id, wanted, eventId: evt.id })
+        }
+      }
+      if (recovered < wanted) {
+        anyShortfall = true
+        console.error('[stripe] REFUND CLAWBACK SHORTFALL', { userId, refundId: refund.id, wanted, recovered, eventId: evt.id })
+      }
     }
-    return { handled: true, action: 'clawback' }
+
+    if (!attempted) return { handled: false }
+    return { handled: true, action: anyShortfall ? 'clawback_partial' : 'clawback' }
   }
 
   return { handled: false }

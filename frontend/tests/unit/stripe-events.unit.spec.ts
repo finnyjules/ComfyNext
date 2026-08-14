@@ -56,4 +56,59 @@ describe('handleStripeEvent', () => {
     const d = deps()
     expect((await handleStripeEvent({ id: 'evt_5', type: 'invoice.created', data: { object: {} } }, d)).handled).toBe(false)
   })
+
+  it('a refused debit is never treated as recovered — result must be checked', async () => {
+    const d = deps({ debit: vi.fn().mockResolvedValue({ ok: false, reason: 'insufficient' }) })
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const res = await handleStripeEvent({
+      id: 'evt_6', type: 'charge.refunded',
+      data: { object: { id: 'ch_2', customer: 'cus_9', amount_refunded: 500, refunds: { data: [{ id: 're_1', amount: 500 }] } } },
+    }, d)
+    expect(res).toEqual({ handled: true, action: 'clawback_partial' })
+    expect(d.debit).toHaveBeenCalledWith('user_1', 500, 'refund_clawback', 're_1')
+    expect(spy).toHaveBeenCalledWith('[stripe] CLAWBACK DEBIT REFUSED', { userId: 'user_1', refundId: 're_1', wanted: 500, eventId: 'evt_6' })
+    spy.mockRestore()
+  })
+
+  it('a second charge.refunded event claws back only the NEW refund, keyed by refund id not event id', async () => {
+    const d = deps()
+    // First event: charge has one refund so far.
+    const res1 = await handleStripeEvent({
+      id: 'evt_7a', type: 'charge.refunded',
+      data: { object: { id: 'ch_3', customer: 'cus_9', amount_refunded: 500, refunds: { data: [{ id: 're_10', amount: 500 }] } } },
+    }, d)
+    expect(res1).toEqual({ handled: true, action: 'clawback' })
+    expect(d.debit).toHaveBeenNthCalledWith(1, 'user_1', 500, 'refund_clawback', 're_10')
+
+    // Second event: a NEW partial refund lands on the same charge.
+    // amount_refunded is now cumulative (1500), but refunds.data carries
+    // both refunds individually — only re_11 should claw new money; re_10
+    // is replayed (its key already exists, so the ledger's idempotency
+    // makes that call a no-op in production) but must still be keyed by
+    // re_10, never by the event id.
+    const res2 = await handleStripeEvent({
+      id: 'evt_7b', type: 'charge.refunded',
+      data: {
+        object: {
+          id: 'ch_3', customer: 'cus_9', amount_refunded: 1500,
+          refunds: { data: [{ id: 're_10', amount: 500 }, { id: 're_11', amount: 1000 }] },
+        },
+      },
+    }, d)
+    expect(res2).toEqual({ handled: true, action: 'clawback' })
+    expect(d.debit).toHaveBeenNthCalledWith(2, 'user_1', 500, 'refund_clawback', 're_10')
+    expect(d.debit).toHaveBeenNthCalledWith(3, 'user_1', 1000, 'refund_clawback', 're_11')
+    expect(d.debit).not.toHaveBeenCalledWith('user_1', expect.any(Number), 'refund_clawback', 'evt_7a')
+    expect(d.debit).not.toHaveBeenCalledWith('user_1', expect.any(Number), 'refund_clawback', 'evt_7b')
+  })
+
+  it('refunds.data absent falls back to the cumulative amount, keyed by the EVENT id', async () => {
+    const d = deps({ getAvailable: vi.fn().mockResolvedValue(100) })
+    const res = await handleStripeEvent({
+      id: 'evt_8', type: 'charge.refunded',
+      data: { object: { id: 'ch_4', customer: 'cus_9', amount_refunded: 2500 } },
+    }, d)
+    expect(res).toEqual({ handled: true, action: 'clawback_partial' })
+    expect(d.debit).toHaveBeenCalledWith('user_1', 100, 'refund_clawback', 'evt_8')
+  })
 })
