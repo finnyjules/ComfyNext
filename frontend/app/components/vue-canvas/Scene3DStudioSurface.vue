@@ -117,7 +117,18 @@ const selectedObjects = computed<SceneObject[]>(() =>
 // A one-object "group" is a legal state groupObjects would happily create, but
 // it is pointless (nothing to keep together) and the toolbar deliberately
 // doesn't offer it — hence >= 2, not >= 1.
-const canGroup = computed(() => selectedIds.value.length >= 2)
+// Decals are never groupable: `groupObjects` re-parents members under the new
+// group and rebases their position/rotation into it, but a decal's position and
+// rotation are the projection point and projector orientation in its TARGET'S
+// local space — rebasing them re-projects the sticker to a meaningless pose, and
+// the moved parentId would also drop it out of its target's delete cascade
+// (which is parentId-based, see removeObject/descendantIds). Grouping a decal's
+// TARGET already carries the sticker along, since the engine parents decal
+// geometry under the target's root. Derived once so the button and the action
+// (and the Cmd+G shortcut behind it) can never disagree about what will group.
+const groupableIds = computed(() =>
+  selectedIds.value.filter((id) => doc.objects.find((o) => o.id === id)?.kind !== 'decal'))
+const canGroup = computed(() => groupableIds.value.length >= 2)
 const canUngroup = computed(() => selectedObjects.value.some((o) => o.kind === 'group'))
 const canConvertToMesh = computed(() =>
   selectedObjects.value.length === 1
@@ -1800,7 +1811,9 @@ function onKey(e: KeyboardEvent) {
  *  PRIMARY selection lives, so grouping inside an existing group nests rather
  *  than escaping to the root. */
 function groupSelection() {
-  const ids = selectedIds.value
+  // Decal-free (see groupableIds) — a decal in the selection is skipped, not a
+  // reason to refuse the whole group.
+  const ids = groupableIds.value
   if (ids.length < 2) return
   const primary = doc.objects.find((o) => o.id === ids[ids.length - 1]!)
   const group = createGroup(doc.objects)
@@ -2742,9 +2755,16 @@ function isDecalTarget(id: string): boolean {
   return doc.objects.find((o) => o.id === id)?.kind === 'primitive'
 }
 function beginDecalPlacement(spec: { content?: DecalContent; decalId?: string }) {
+  // Without a live interaction (WebGL unavailable, or before onMounted) nothing
+  // can ever consume the placement — arming `placingDecal` would strand the
+  // surface in crosshair-and-hint mode with no click that could clear it.
+  if (!interaction) return
+  // Any armed replace is stale by now: a placement and a content-swap are
+  // mutually exclusive modes, and this is the last point where both could be set.
+  decalReplaceTarget.value = null
   placingDecal.value = spec
   decalMenuOpen.value = false
-  interaction?.beginPlacement(isDecalTarget, onDecalPlaced)
+  interaction.beginPlacement(isDecalTarget, onDecalPlaced)
 }
 function cancelDecalPlacement() {
   interaction?.cancelPlacement()
@@ -2779,6 +2799,15 @@ function triggerDecalReplace() {
   const d = selectedDecal.value
   if (!d || d.content.type !== 'image') return
   decalReplaceTarget.value = d.id
+  decalFileInput.value?.click()
+}
+// Toolbar ▸ "Image sticker". Clears any replace flag first: dismissing the OS file
+// dialog fires no event at all, so a cancelled "Replace image" leaves
+// decalReplaceTarget set — without this reset the next ADD would silently swap
+// that older decal's image instead of placing a new sticker.
+function triggerDecalImageAdd() {
+  decalReplaceTarget.value = null
+  decalMenuOpen.value = false
   decalFileInput.value?.click()
 }
 async function onDecalFilePicked(e: Event) {
@@ -2837,6 +2866,15 @@ function removeObject(id: string) {
 // itself after save+reload only because serializeDoc writes two independent copies to JSON.
 // duplicateObject's very next line already deep-clones params/modifiers with a comment about
 // exactly this hazard; material just never got the same treatment.
+// Fold an angle into [-π, π] so the Spin slider (-180°..180°) can still represent
+// it. Uses the sign-safe double-modulo rather than a bare `%`: JS's `%` keeps the
+// SIGN OF THE DIVIDEND, so `((v + π) % 2π) - π` returns values below -π for
+// negative angles — exactly the range the slider would clamp away, silently
+// changing the duplicate's rotation on the first drag.
+const TAU = Math.PI * 2
+function wrapAngle(v: number): number {
+  return (((v + Math.PI) % TAU) + TAU) % TAU - Math.PI
+}
 function cloneMaterial(mat: SceneMaterial): SceneMaterial {
   const copy: SceneMaterial = { ...mat }
   if (mat.relief) {
@@ -2931,7 +2969,7 @@ function cloneObject(src: SceneObject, existing: SceneObject[] = doc.objects): S
     // would slide the sticker somewhere arbitrary).
     ...(src.kind === 'decal' ? {
       targetId: src.targetId, content: JSON.parse(JSON.stringify(src.content)),
-      size: src.size, depth: src.depth, spin: src.spin + Math.PI / 12, opacity: src.opacity,
+      size: src.size, depth: src.depth, spin: wrapAngle(src.spin + Math.PI / 12), opacity: src.opacity,
     } : {}),
     // Preserve containment: a duplicate should land beside its source, not
     // escape to the root — the same "escaping" failure mode Step 1's delete
@@ -3277,7 +3315,12 @@ async function onClose() {
   <StudioModalShell title="3D Studio" @close="onClose">
     <template #preview>
       <div ref="viewportEl" class="relative h-full w-full min-h-0" :class="placingDecal ? 'cursor-crosshair' : ''">
+        <!-- NOTHING may be inserted between these two: they are one v-if/v-else pair
+             (a sibling with its own v-if in the gap would steal the v-else). -->
         <canvas v-if="webglOk" ref="canvasEl" class="h-full w-full" />
+        <div v-else class="flex h-full items-center justify-center text-sm text-white/50">
+          WebGL is unavailable — the 3D Studio needs a WebGL-capable browser.
+        </div>
         <!-- Decal image picker. Lives here, OUTSIDE the bottom toolbar's v-if, because
              both callers need it: the toolbar's "Image sticker" and the Decal section's
              "Replace image" (which is reachable in Motion mode, where the toolbar is
@@ -3288,9 +3331,6 @@ async function onClose() {
         <div v-if="placingDecal"
              class="pointer-events-none absolute left-1/2 top-3 z-20 -translate-x-1/2 rounded-full bg-black/70 px-3 py-1 text-[11px] text-white/85">
           Click a surface to place — Esc to cancel
-        </div>
-        <div v-else class="flex h-full items-center justify-center text-sm text-white/50">
-          WebGL is unavailable — the 3D Studio needs a WebGL-capable browser.
         </div>
         <!-- Overlay toolbar: snap only — the combined gizmo (Spline-style) moves,
              rotates, and scales without mode switching, so no mode buttons.
@@ -3444,7 +3484,7 @@ async function onClose() {
               <button
                 type="button"
                 class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-white/80 transition-colors hover:bg-white/10 hover:text-white cursor-pointer"
-                @click="decalMenuOpen = false; decalFileInput?.click()"
+                @click="triggerDecalImageAdd"
               >
                 <ImageIcon class="size-4 shrink-0 opacity-70" /> Image sticker
               </button>
@@ -4309,7 +4349,8 @@ async function onClose() {
           <template v-if="selectedDecal?.content.type === 'text'">
             <div>
               <label class="mb-1 block text-[11px] text-white/55">Label</label>
-              <input v-model="decalText" type="text" aria-label="Decal label" class="studio-num" style="text-align: left" />
+              <input v-model="decalText" type="text" placeholder="Label" aria-label="Decal label"
+                class="w-full rounded border border-white/10 bg-white/5 px-2 py-1.5 text-[12px] text-white/85 outline-none focus:border-white/25" />
             </div>
             <div>
               <label class="mb-1 block text-[11px] text-white/55">Font</label>
@@ -4328,13 +4369,13 @@ async function onClose() {
           <template v-else-if="selectedDecal?.content.type === 'image'">
             <img :src="texViewUrl(selectedDecal.content.image)" alt=""
               class="h-16 w-full rounded bg-white/5 object-contain" />
-            <StudioButton @click="triggerDecalReplace">Replace image</StudioButton>
+            <StudioButton class="w-full" @click="triggerDecalReplace">Replace image</StudioButton>
           </template>
           <StudioSlider v-model="decalSize" label="Size" hint="Sticker width on the surface" :min="0.05" :max="3" :step="0.01" />
           <StudioSlider v-model="decalSpinDeg" label="Spin" hint="Rotation around the surface normal" :min="-180" :max="180" :step="1" />
           <StudioSlider v-model="decalDepth" label="Wrap" hint="How far the sticker wraps around curved surfaces" :min="0.05" :max="2" :step="0.01" />
           <StudioSlider v-model="decalOpacity" label="Opacity" hint="How solid the sticker sits on the surface" :min="0" :max="1" :step="0.01" />
-          <StudioButton :disabled="!!placingDecal" @click="beginDecalPlacement({ decalId: selectedDecal!.id })">
+          <StudioButton class="w-full" :disabled="!!placingDecal" @click="beginDecalPlacement({ decalId: selectedDecal!.id })">
             {{ placingDecal ? 'Click a surface…' : 'Reposition' }}
           </StudioButton>
         </div>
