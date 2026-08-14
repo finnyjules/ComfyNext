@@ -40,20 +40,22 @@ async function buy(packId: string) {
 // After a success redirect, poll the wallet a few times so the webhook's
 // grant appears without a manual reload (webhook may lag the redirect).
 if (import.meta.client) {
+  let pollTimer: ReturnType<typeof setInterval> | null = null
   watch(purchaseState, (s) => {
     if (s !== 'success') return
     let tries = 0
-    const t = setInterval(async () => {
+    pollTimer = setInterval(async () => {
       tries += 1
       await refreshWallet()
-      if (tries >= 10) clearInterval(t)
+      if (tries >= 10 && pollTimer) clearInterval(pollTimer)
     }, 2000)
   }, { immediate: true })
+  onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
 }
 </script>
 
 <template>
-  <div v-if="hosted" class="min-h-screen bg-background text-white">
+  <div v-if="hosted" class="min-h-screen bg-background text-white antialiased">
     <div class="mx-auto max-w-md px-6 py-10">
       <NuxtLink to="/" class="mb-8 inline-flex items-center gap-1.5 text-[12px] text-white/40 transition hover:text-white/80">
         <ArrowLeft class="size-3.5" />
@@ -72,17 +74,21 @@ if (import.meta.client) {
         <div v-else class="mt-1 text-[13px] text-white/40">Wallet unavailable.</div>
       </div>
 
-      <div v-if="purchaseState === 'success'" class="mt-4 rounded-[8px] border border-emerald-400/40 bg-emerald-400/10 p-3 text-[12.5px] text-emerald-200/90">
-        Payment received — your credits are on the way (a few seconds; this page refreshes automatically).
-      </div>
-      <div v-else-if="purchaseState === 'cancelled'" class="mt-4 rounded-[8px] border border-white/10 bg-white/[0.04] p-3 text-[12.5px] text-white/55">
-        Checkout cancelled — nothing was charged.
-      </div>
+      <Transition name="banner">
+        <div v-if="purchaseState === 'success'" class="mt-4 rounded-[8px] border border-emerald-400/40 bg-emerald-400/10 p-3 text-[12.5px] text-emerald-200/90">
+          Payment received — your credits are on the way (a few seconds; this page refreshes automatically).
+        </div>
+        <div v-else-if="purchaseState === 'cancelled'" class="mt-4 rounded-[8px] border border-white/10 bg-white/[0.04] p-3 text-[12.5px] text-white/55">
+          Checkout cancelled — nothing was charged.
+        </div>
+      </Transition>
 
       <h2 class="mt-8 text-[11px] font-medium uppercase tracking-wide text-white/50">Add credits</h2>
-      <div v-if="checkoutError" class="mt-3 rounded-[8px] border border-red-400/40 bg-red-400/10 p-3 text-[12.5px] text-red-200/90">
-        {{ checkoutError }}
-      </div>
+      <Transition name="banner">
+        <div v-if="checkoutError" class="mt-3 rounded-[8px] border border-red-400/40 bg-red-400/10 p-3 text-[12.5px] text-red-200/90">
+          {{ checkoutError }}
+        </div>
+      </Transition>
       <div class="mt-3 grid grid-cols-1 gap-2.5">
         <!-- Cards are inert; the explicit Buy button is the only affordance
              (user feedback: card-as-button hid the affordance, and the
@@ -112,10 +118,20 @@ if (import.meta.client) {
           </StudioButton>
         </div>
       </div>
-      <p class="mt-3 text-[11px] leading-relaxed text-white/35">
+      <p class="mt-3 text-pretty text-[11px] leading-relaxed text-white/35">
         1 credit = 1¢, always. Bonus credits expire after 30 days; purchased credits after 12 months.
         Payments are processed by Stripe — Sailor never sees your card.
       </p>
     </div>
   </div>
 </template>
+
+<style scoped>
+/* Banner enter/exit: subtle 4px rise, specific properties only (never
+   transition: all). No `appear` on the Transition, so banners present at
+   first render (e.g. ?purchase=success) skip the animation. */
+.banner-enter-active { transition: opacity 180ms cubic-bezier(0.2, 0, 0, 1), translate 180ms cubic-bezier(0.2, 0, 0, 1); }
+.banner-leave-active { transition: opacity 120ms ease-out, translate 120ms ease-out; }
+.banner-enter-from { opacity: 0; translate: 0 4px; }
+.banner-leave-to { opacity: 0; translate: 0 2px; }
+</style>

@@ -12,8 +12,11 @@ const CLS: Record<string, string> = {
 </script>
 
 <template>
+  <!-- enabled:active:scale-[0.96]: tactile press (0.96 exactly — smaller feels
+       exaggerated). after: pseudo extends the vertical hit area to ~40px
+       without widening it (adjacent footer buttons must never overlap). -->
   <button type="button" :disabled="disabled"
-          class="shrink-0 whitespace-nowrap rounded-[6px] px-3.5 py-1.5 text-[12px] font-medium transition disabled:cursor-not-allowed disabled:opacity-40"
+          class="relative shrink-0 whitespace-nowrap rounded-[6px] px-3.5 py-1.5 text-[12px] font-medium transition after:absolute after:inset-x-0 after:-inset-y-[5px] after:content-[''] enabled:active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-40"
           :class="CLS[variant]">
     <slot />
   </button>
