@@ -16,7 +16,7 @@
  * text.
  */
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { Check, ChevronRight, ImagePlus, Loader2, MoreHorizontal, Plus, RefreshCcw, Shirt, Sparkles, Upload, X } from 'lucide-vue-next'
+import { Check, ChevronRight, ImagePlus, Loader2, MoreHorizontal, Plus, RefreshCcw, Ruler, Shirt, Sparkles, Upload, X } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import { onClickOutside } from '@vueuse/core'
 
@@ -31,6 +31,7 @@ import { imageUrlToFile } from '~/lib/canvas/imageUrlToFile'
 import type { CharacterRecord, CharacterState } from '#shared/characters/types'
 import StudioButton from '~/components/vue-canvas/studio/StudioButton.vue'
 import FillImagePicker from '~/components/vue-canvas/compositor/FillImagePicker.vue'
+import BodyEditorModal from '~/components/vue-canvas/BodyEditorModal.vue'
 
 const props = defineProps<{ slug: string | null; createMode?: boolean }>()
 const emit = defineEmits<{ close: [] }>()
@@ -396,6 +397,9 @@ async function onGenerateRefPhoto(pose: RefPhotoPose) {
   if (!c || !s) return
   await generateRefPhoto(c, s, pose)
 }
+
+// ── Body editor (Task 5) ─────────────────────────────────────────────────
+const bodyEditorOpen = ref(false)
 </script>
 
 <template>
@@ -449,6 +453,13 @@ async function onGenerateRefPhoto(pose: RefPhotoPose) {
               <Check v-if="ready.key === 'ready'" class="size-2.5" />
               {{ ready.label }}
             </span>
+            <button
+              type="button"
+              class="inline-flex items-center gap-1 rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-medium text-white/50 transition hover:bg-white/[0.16] hover:text-white/80 cursor-pointer"
+              @click="bodyEditorOpen = true"
+            >
+              <Ruler class="size-2.5" /> Body
+            </button>
             <span v-if="testMode" class="text-[11px] text-white/40">· {{ state?.label }}</span>
             <span class="flex-1" />
             <span class="rounded border border-white/10 px-1.5 py-0.5 text-[11px] text-white/30">esc</span>
@@ -456,6 +467,8 @@ async function onGenerateRefPhoto(pose: RefPhotoPose) {
               <X class="h-4 w-4" />
             </button>
           </div>
+
+          <BodyEditorModal v-if="bodyEditorOpen && character" :slug="character.slug" @close="bodyEditorOpen = false" />
 
           <!-- Body -->
           <div class="flex min-h-0 flex-1">
