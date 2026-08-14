@@ -36,11 +36,20 @@ from PIL import Image, ImageDraw, ImageFont
 import anny
 
 HERE = Path(__file__).resolve().parent
+REPO_ROOT = HERE.parent.parent
 OUT = HERE / "out"
 OUT.mkdir(exist_ok=True)
 
 DEV_SERVER = "http://127.0.0.1:3000"  # NEVER localhost — see CLAUDE.md / project memory
 CHARACTER_SLUG = "jene"
+
+# Round 2 runs with the dev server down (unrelated Nitro bug) — no API fetch,
+# no /api/inpaint/nano-gen. Portrait comes straight off disk, generations go
+# straight to fal's queue API.
+PORTRAIT_PATH = REPO_ROOT / "input" / "sd-ref_1786656610019_sheet_portrait.png"
+ENV_PATH = REPO_ROOT / "frontend" / ".env"
+FAL_QUEUE_BASE = "https://queue.fal.run"
+FAL_APP = "fal-ai/nano-banana-pro/edit"  # matches runNanoFal's `imageList.length` branch in nano-gen.post.ts
 
 RENDER_W, RENDER_H = 768, 1024
 GREY = [160, 160, 160, 255]
@@ -306,6 +315,34 @@ def image_to_data_url(path: Path) -> str:
     return f"data:image/png;base64,{b64}"
 
 
+def fetch_portrait_data_url_from_disk() -> str:
+    """Round 2: no dev server, so read Jene's portrait panel straight off
+    disk instead of GET /api/characters-local + /view. Same file the dev
+    server would have served — verified against the panels listing in round 1
+    (slug 'jene', slot 'portrait' -> sd-ref_1786656610019_sheet_portrait.png)."""
+    if not PORTRAIT_PATH.exists():
+        raise RuntimeError(f"portrait not found at {PORTRAIT_PATH}")
+    return image_to_data_url(PORTRAIT_PATH)
+
+
+def read_fal_key() -> str:
+    """Read FAL_KEY straight out of frontend/.env. Never logged, never
+    returned in any printed/committed artifact — held only in memory for the
+    Authorization header."""
+    if not ENV_PATH.exists():
+        raise RuntimeError(f"{ENV_PATH} not found — can't read FAL_KEY")
+    for line in ENV_PATH.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        if key.strip() == "FAL_KEY":
+            value = value.strip().strip('"').strip("'")
+            if value:
+                return value
+    raise RuntimeError(f"FAL_KEY not set in {ENV_PATH}")
+
+
 BODY_FRONT_PROMPT = (
     "Show the same person as a full-body figure from the front, standing "
     "naturally with arms relaxed, framed strictly from the shoulders down — "
@@ -314,6 +351,23 @@ BODY_FRONT_PROMPT = (
     "neutral grey studio background, even soft light, photorealistic."
 )
 REF_SUFFIX = " Match the body proportions of the grey reference figure in the second image."
+
+# --- Round 2 (sharpened probe): pin wardrobe + framing identically across all
+# three calls so clothing/zoom choices can't be mistaken for proportion
+# transfer, and use stronger, more explicit proportion-matching language for
+# the two ref calls. Round 1 (out/gen-*.png, out/probe-contact-sheet.png) is
+# left untouched; round 2 writes gen-v2-*.png / probe-contact-sheet-v2.png.
+WARDROBE_PIN = " The person wears a plain fitted black tank top and plain black trousers."
+FRAMING_PIN = (
+    " Full-body view, the entire figure visible head to toe, camera at chest "
+    "height, plain light grey studio background."
+)
+BODY_FRONT_PROMPT_V2 = BODY_FRONT_PROMPT + WARDROBE_PIN + FRAMING_PIN
+REF_SUFFIX_V2 = (
+    " The person's height and build must match the grey reference figure in "
+    "the second image exactly — same shoulder width, same waist, same "
+    "overall height-to-width proportions."
+)
 
 
 def nano_gen(prompt: str, images: list[str], label: str, retries: int = 1) -> Path | None:
@@ -347,6 +401,89 @@ def nano_gen(prompt: str, images: list[str], label: str, retries: int = 1) -> Pa
     return None
 
 
+def _fal_call_once(prompt: str, image_urls: list[str], fal_key: str, poll_deadline_s: float = 150.0) -> bytes:
+    """One fal queue submit->poll->fetch cycle. Field names and flow mirror
+    frontend/server/utils/falRun.ts::runFal + nano-gen.post.ts::runNanoFal
+    EXACTLY (app id, input keys, status/response URL fallbacks, 202/200
+    polling semantics) — copied rather than reinvented per the memory note
+    that a mismatched fal field silently fails only at result time, not at
+    submit time."""
+    headers = {"Authorization": f"Key {fal_key}", "Content-Type": "application/json"}
+    app_base = f"{FAL_QUEUE_BASE}/{FAL_APP}"
+    # Matches runNanoFal(): { prompt, num_images: 1, output_format: 'png', image_urls }
+    # + aspect_ratio when provided.
+    input_payload = {
+        "prompt": prompt,
+        "num_images": 1,
+        "output_format": "png",
+        "image_urls": image_urls,
+        "aspect_ratio": "3:4",
+    }
+
+    # NOTE: must send `headers` (with Authorization) here, NOT the generic
+    # http_post_json() helper — that helper only sets Content-Type and was
+    # written for the (locally-authenticated) dev-server routes. Using it
+    # here silently drops the Authorization header and fal 401s.
+    submit_req = urllib.request.Request(
+        app_base, data=json.dumps(input_payload).encode("utf-8"), headers=headers, method="POST"
+    )
+    with urllib.request.urlopen(submit_req, timeout=60) as resp:
+        submit = json.loads(resp.read().decode("utf-8"))
+    rid = submit["request_id"]
+    status_url = submit.get("status_url") or f"{app_base}/requests/{rid}/status"
+    result_url = submit.get("response_url") or f"{app_base}/requests/{rid}"
+
+    deadline = time.time() + poll_deadline_s
+    while time.time() < deadline:
+        time.sleep(1.5)
+        req = urllib.request.Request(status_url, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                status_body = json.loads(resp.read().decode("utf-8"))
+                code = resp.status
+        except urllib.error.HTTPError as e:
+            if 400 <= e.code < 500:
+                raise RuntimeError(f"fal status {e.code} (not retryable): {e.read().decode('utf-8', 'ignore')}")
+            continue  # 5xx transient
+        if code not in (200, 202):
+            continue
+        status = status_body.get("status")
+        if status in ("IN_QUEUE", "IN_PROGRESS"):
+            continue
+        if status == "COMPLETED":
+            req2 = urllib.request.Request(result_url, headers=headers)
+            with urllib.request.urlopen(req2, timeout=60) as resp2:
+                result = json.loads(resp2.read().decode("utf-8"))
+            images = result.get("images")
+            url = images[0]["url"] if images else None
+            if not url:
+                raise RuntimeError("fal returned no image")
+            return http_get_bytes(url)
+        raise RuntimeError(f"fal request {rid} ended in {status}: {status_body}")
+    raise RuntimeError(f"fal request timed out (id={rid})")
+
+
+def nano_gen_fal(prompt: str, image_urls: list[str], label: str, fal_key: str, retries: int = 1) -> Path | None:
+    """Direct fal call (no dev server) for round 2. Same stop-on-repeated-
+    failure contract as nano_gen(): retry once max, then stop rather than
+    switch providers or burn more money."""
+    for attempt in range(retries + 1):
+        try:
+            img_bytes = _fal_call_once(prompt, image_urls, fal_key)
+            path = OUT / f"gen-{label}.png"
+            path.write_bytes(img_bytes)
+            print(f"[{label}] saved -> {path} (fal-ai/nano-banana-pro/edit)")
+            return path
+        except (urllib.error.URLError, urllib.error.HTTPError, RuntimeError, TimeoutError, KeyError) as exc:
+            print(f"[{label}] attempt {attempt + 1} failed: {exc}")
+            if attempt < retries:
+                time.sleep(3)
+                continue
+            print(f"[{label}] giving up after {attempt + 1} attempt(s) — STOPPING, not switching providers.")
+            return None
+    return None
+
+
 def run_generations(portrait_url: str, default_front: Path, extreme_front: Path):
     default_front_url = image_to_data_url(default_front)
     extreme_front_url = image_to_data_url(extreme_front)
@@ -366,6 +503,41 @@ def run_generations(portrait_url: str, default_front: Path, extreme_front: Path)
 
     results["extreme-ref"] = nano_gen(
         BODY_FRONT_PROMPT + REF_SUFFIX, [portrait_url, extreme_front_url], "extreme-ref"
+    )
+    return results
+
+
+def run_generations_v2(portrait_url: str, default_front: Path, extreme_front: Path, fal_key: str):
+    """Round 2: identical wardrobe + framing pins on all three calls, and
+    stronger explicit proportion-matching language on the two ref calls.
+    Dev server is down (unrelated Nitro bug) — calls fal's queue API
+    directly instead of POST /api/inpaint/nano-gen. Writes
+    gen-v2-{control,default-ref,extreme-ref}.png, leaving round 1's
+    gen-{...}.png outputs untouched."""
+    default_front_url = image_to_data_url(default_front)
+    extreme_front_url = image_to_data_url(extreme_front)
+
+    results = {}
+    results["control"] = nano_gen_fal(BODY_FRONT_PROMPT_V2, [portrait_url], "v2-control", fal_key)
+    if results["control"] is None:
+        print("v2 control call failed after retry — stopping before spending more.")
+        return results
+
+    results["default-ref"] = nano_gen_fal(
+        BODY_FRONT_PROMPT_V2 + REF_SUFFIX_V2,
+        [portrait_url, default_front_url],
+        "v2-default-ref",
+        fal_key,
+    )
+    if results["default-ref"] is None:
+        print("v2 default-ref call failed after retry — stopping before spending more.")
+        return results
+
+    results["extreme-ref"] = nano_gen_fal(
+        BODY_FRONT_PROMPT_V2 + REF_SUFFIX_V2,
+        [portrait_url, extreme_front_url],
+        "v2-extreme-ref",
+        fal_key,
     )
     return results
 
@@ -392,6 +564,7 @@ def build_contact_sheet(
     default_front: Path,
     extreme_front: Path,
     gen_results: dict[str, Path | None],
+    out_name: str = "probe-contact-sheet.png",
 ) -> None:
     cell_w, cell_h = 300, 400
 
@@ -434,7 +607,7 @@ def build_contact_sheet(
             draw.text((x + 6, y + 4), caption, fill="black", font=font)
             sheet.paste(img, (x, y + label_h))
 
-    path = OUT / "probe-contact-sheet.png"
+    path = OUT / out_name
     sheet.save(path)
     print(f"wrote {path}")
 
@@ -464,5 +637,43 @@ def main() -> None:
     print("done. See out/ for all artifacts.")
 
 
+def main_round2() -> None:
+    """Sharpened re-probe: wardrobe + framing pinned identically across all
+    three calls, stronger explicit proportion-matching language on the two
+    ref calls. Reuses the existing figure renders from round 1
+    (out/figure-{default,extreme}-front.png must already exist — run `main`
+    first, or just rely on them already being on disk from round 1).
+
+    Dev server is down (unrelated Nitro bug in frontend/server/plugins/
+    trainingQueue.ts — see .superpowers/sdd/task-1-report.md) — this round
+    does NOT touch it: portrait comes straight off disk and generations go
+    straight to fal's queue API (see nano_gen_fal / _fal_call_once)."""
+    default_front = OUT / "figure-default-front.png"
+    extreme_front = OUT / "figure-extreme-front.png"
+    if not default_front.exists() or not extreme_front.exists():
+        raise RuntimeError(
+            "round 2 reuses round 1's figure renders — run `./venv/bin/python probe.py` "
+            "(round 1) first so out/figure-{default,extreme}-front.png exist."
+        )
+
+    print("== Round 2: paid fal calls (~$0.40, 3 calls, wardrobe+framing pinned) ==")
+    fal_key = read_fal_key()  # never printed/logged
+    portrait_url = fetch_portrait_data_url_from_disk()
+    portrait_bytes = base64.b64decode(portrait_url.split(",", 1)[1])
+    gen_results = run_generations_v2(portrait_url, default_front, extreme_front, fal_key)
+
+    print("== Contact sheet v2 ==")
+    build_contact_sheet(
+        portrait_bytes, default_front, extreme_front, gen_results, out_name="probe-contact-sheet-v2.png"
+    )
+
+    print("done. See out/probe-contact-sheet-v2.png.")
+
+
 if __name__ == "__main__":
-    main()
+    import sys
+
+    if "--round2" in sys.argv:
+        main_round2()
+    else:
+        main()
