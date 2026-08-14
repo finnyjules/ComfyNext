@@ -110,7 +110,7 @@ if (import.meta.client) {
             </div>
           </div>
           <StudioButton
-            :variant="pack.id === 'creator' ? 'primary' : 'secondary'"
+            :variant="pack.id === 'creator' ? 'primary' : 'outline'"
             :disabled="buying !== null"
             @click="buy(pack.id)"
           >
