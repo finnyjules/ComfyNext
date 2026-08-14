@@ -120,5 +120,11 @@ export function buildDecalMesh(targetMesh: THREE.Mesh, obj: DecalObject, texture
   const mesh = new THREE.Mesh(geo, mat)
   mesh.castShadow = false
   mesh.receiveShadow = true
+  // texture is the module-level texCache entry, shared across every decal that
+  // uses this content AND across SceneEngine instances (the headless bake
+  // engine shares the same cache as the live viewport engine) — the engine's
+  // disposeTree must dispose this mesh's geometry + material only, never its
+  // .map, or it frees a texture other live decals still reference.
+  mesh.userData.sharedMapMaterial = true
   return mesh
 }

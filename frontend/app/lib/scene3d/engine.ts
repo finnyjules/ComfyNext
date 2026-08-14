@@ -558,6 +558,7 @@ export class SceneEngine {
     this.glbTokens.clear()
     this.fontTokens.clear()
     this.meshTokens.clear()
+    this.decalTokens.clear()
     const doc = this.lastDoc
     if (doc) {
       this.syncFromDoc(doc)
@@ -1169,9 +1170,16 @@ function disposeTree(root: THREE.Object3D): void {
       mats.forEach((x) => {
         if (!x) return
         // GLB materials own GPU textures (map, normalMap, roughnessMap, ...).
-        // Dispose every texture-valued property before the material itself.
-        for (const value of Object.values(x)) {
-          if (value instanceof THREE.Texture) value.dispose()
+        // Dispose every texture-valued property before the material itself —
+        // EXCEPT on a decal mesh, whose .map is decals.ts's module-level
+        // texCache entry, shared across every decal using that content AND
+        // across SceneEngine instances (the headless bake engine shares the
+        // cache with the live viewport engine). Disposing it here would free a
+        // texture other live decals still reference.
+        if (!m.userData?.sharedMapMaterial) {
+          for (const value of Object.values(x)) {
+            if (value instanceof THREE.Texture) value.dispose()
+          }
         }
         x.dispose()
       })
