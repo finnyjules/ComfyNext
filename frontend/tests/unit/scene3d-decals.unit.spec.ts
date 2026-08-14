@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest'
+import * as THREE from 'three'
 import {
   parseDoc, serializeDoc, defaultDoc, createDecal, createPrimitive,
   DECAL_DEFAULTS, type DecalObject,
 } from '~/lib/scene3d/config'
+import { eulerFromNormal, decalKeyFor } from '~/lib/scene3d/decals'
 
 function docWith(objects: any[]) {
   return JSON.stringify({ ...JSON.parse(serializeDoc(defaultDoc())), objects })
@@ -57,5 +59,29 @@ describe('scene3d decals — doc model', () => {
     const box = createPrimitive('box')
     const back = parseDoc(docWith([box, { id: 'd2', kind: 'decal', targetId: box.id, content: { type: 'image' } }]))
     expect(back.objects.some(o => o.kind === 'decal')).toBe(false)
+  })
+})
+
+describe('scene3d decals — projector math', () => {
+  it.each([
+    [[0, 0, 1]], [[0, 0, -1]], [[1, 0, 0]], [[0, 1, 0]], [[0.5, 0.5, 0.7071]],
+  ] as const)('eulerFromNormal(%j): applying the euler to +Z recovers the normal', (n) => {
+    const e = eulerFromNormal([n[0], n[1], n[2]])
+    const v = new THREE.Vector3(0, 0, 1)
+      .applyEuler(new THREE.Euler(e[0], e[1], e[2], 'XYZ'))
+    const expected = new THREE.Vector3(...n).normalize()
+    expect(v.distanceTo(expected)).toBeLessThan(1e-6)
+  })
+
+  it('decalKeyFor changes with pose/content/target geometry, not opacity', () => {
+    const base = { kind: 'decal', id: 'd', name: 'D', visible: true, targetId: 't',
+      position: [0,0,0], rotation: [0,0,0], scale: [1,1,1], material: {} as any,
+      content: { type: 'text', text: 'A', font: 'f', color: '#000' },
+      size: 0.6, depth: 0.25, spin: 0, opacity: 1 } as any
+    const k = decalKeyFor(base, 'geo1')
+    expect(decalKeyFor({ ...base, opacity: 0.3 }, 'geo1')).toBe(k)
+    expect(decalKeyFor({ ...base, spin: 1 }, 'geo1')).not.toBe(k)
+    expect(decalKeyFor(base, 'geo2')).not.toBe(k)
+    expect(decalKeyFor({ ...base, content: { ...base.content, text: 'B' } }, 'geo1')).not.toBe(k)
   })
 })
