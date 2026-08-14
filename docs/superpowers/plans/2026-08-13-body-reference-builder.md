@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. **HARD HUMAN GATE after Task 1:** Tasks 2–6 may not start until Julien has judged the probe images and said "Anny transfers" (or the fallback decision is recorded).
 
-**Goal:** A game-style Body editor in the Character Studio — eight sliders morphing an Anny-derived grey figure whose baked front+back render pins every sheet's body-panel proportions.
+**Goal (AMENDED post-probe):** A game-style Body editor — eight sliders that COMPILE TO GRADED BODY TEXT riding the proven descriptor channel into every sheet and shot prompt, with the Anny grey figure as a free display-only preview of what the words mean.
 
 **Architecture:** One-time offline Python bake (Anny, CC0 topology) → static GLB with 8 morph targets → three.js editor modal (live `morphTargetInfluences`) → free front+back composite upload → `bodyShape`/`bodyImage` on `CharacterRecord` → body panels become two-image nano-banana edits (portrait = identity, body render = proportions). A ~$0.40 probe precedes everything.
 
@@ -60,51 +60,12 @@
 - [ ] **Step 5: Commit the tooling** (scripts + README + gitignore; NOT the venv, NOT out/ — but DO copy `phenotypes.txt`, `slider-mapping.md`, and `probe-contact-sheet.png` into `docs/superpowers/specs/assets/2026-08-13-body-probe/` and commit those three): `git commit -m "feat(body): Anny probe — phenotype listing + transfer test assets"`
 - [ ] **Step 6: STOP. Present the contact sheet to Julien** (the controller surfaces it). The gate question: does the extreme-ref output visibly follow the short/broad figure while control and default-ref look alike? **Tasks 2–6 wait for his verdict.** If NO transfer: record the fallback decision in the spec (metaball skin over `usePoseRig`), and the controller re-plans Task 2 accordingly.
 
-### Task 2: The bake → committed GLB *(gated on Task 1 verdict)*
+### Task 2: `bodyShape` field + the `bodyPhrase` compiler *(the mechanism core — AMENDED)*
 
 **Files:**
-- Create: `scripts/bake-body-model/bake.py`, `scripts/bake-body-model/ATTRIBUTION.md`
-- Create (committed output): `frontend/public/models/body-reference.glb`
-- Test: `frontend/tests/unit/body-model-asset.unit.spec.ts` (new)
-
-**Interfaces:**
-- Consumes: Task 1's locked `slider-mapping.md` (the 8 real phenotype names).
-- Produces: a GLB whose mesh has EXACTLY 8 morph targets named with our slider ids: `frame`, `height`, `build`, `muscle`, `shoulders`, `chest`, `waist`, `hips` (targetNames in the mesh extras, standard glTF). Base = default body. Each target = the mesh delta at that phenotype's max (value 1.0), all others default. ≤ 5 MB (decimate preserving silhouette if over).
-
-- [ ] **Step 1: Write the failing asset test** — `frontend/tests/unit/body-model-asset.unit.spec.ts`:
-
-```ts
-import { describe, expect, it } from 'vitest'
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
-
-const GLB = resolve(__dirname, '../../public/models/body-reference.glb')
-const SLIDERS = ['frame', 'height', 'build', 'muscle', 'shoulders', 'chest', 'waist', 'hips']
-
-describe('body-reference.glb', () => {
-  it('exists, is under 5MB, and carries exactly the 8 slider morph targets', () => {
-    const buf = readFileSync(GLB)
-    expect(buf.length).toBeLessThan(5 * 1024 * 1024)
-    // GLB: 12-byte header, then JSON chunk (length LE uint32 at 12, type 'JSON' at 16)
-    const jsonLen = buf.readUInt32LE(12)
-    const json = JSON.parse(buf.subarray(20, 20 + jsonLen).toString('utf8'))
-    const mesh = json.meshes?.[0]
-    expect(mesh).toBeTruthy()
-    const names: string[] = mesh.extras?.targetNames ?? []
-    expect(names).toEqual(SLIDERS)
-    expect(mesh.primitives[0].targets).toHaveLength(8)
-  })
-})
-```
-
-- [ ] **Step 2: RED** (file missing) → **Step 3: implement `bake.py`** (evaluate base + 8 deltas via the anny API per Task 1's mapping; export via trimesh's glTF exporter with morph targets — if trimesh's morph support is insufficient, write the glTF JSON+bin directly (the structure is small) or use `pygltflib`; renderer-independent). Run it; commit the GLB.
-- [ ] **Step 4: GREEN** → **Step 5:** `ATTRIBUTION.md` (Anny Apache-2.0, MakeHuman assets CC0, topology used, bake date/command). Commit: `git commit -m "feat(body): baked Anny body GLB — 8 morph targets, CC0 topology"`
-
-### Task 3: Data + API for `bodyShape`/`bodyImage`
-
-**Files:**
-- Modify: `frontend/shared/characters/types.ts` (CharacterRecord + `emptyState` untouched; add fields + a `BODY_SLIDERS` const), `frontend/server/utils/characterRegistry.ts` (parse + heal), `frontend/server/api/characters-local.patch.ts` (top-level branch), `frontend/app/composables/useCharacters.ts` (`patchCharacter` fields)
-- Test: extend `tests/unit/character-model.unit.spec.ts`, `tests/unit/character-registry.unit.spec.ts`, `tests/unit/characters-composable.unit.spec.ts`
+- Modify: `frontend/shared/characters/types.ts` (`BODY_SLIDERS`, `BodySliderId`, `bodyShape` on CharacterRecord), `frontend/server/utils/characterRegistry.ts` (clamp/drop hygiene), `frontend/server/api/characters-local.patch.ts` (top-level branch accepts `bodyShape`), `frontend/app/composables/useCharacters.ts` (`patchCharacter`)
+- Create: `frontend/app/lib/characters/bodyPhrase.ts`
+- Test: `frontend/tests/unit/body-phrase.unit.spec.ts` (new) + extend `character-registry` and `characters-composable` suites
 
 **Interfaces:**
 - Produces:
@@ -112,61 +73,74 @@ describe('body-reference.glb', () => {
 // shared/characters/types.ts
 export const BODY_SLIDERS = ['frame', 'height', 'build', 'muscle', 'shoulders', 'chest', 'waist', 'hips'] as const
 export type BodySliderId = typeof BODY_SLIDERS[number]
-export interface CharacterRecord { /* existing */ bodyShape: Partial<Record<BodySliderId, number>> | null; bodyImage: string | null }
+// CharacterRecord gains: bodyShape: Partial<Record<BodySliderId, number>> | null
+
+// app/lib/characters/bodyPhrase.ts (pure)
+export function bodyPhrase(shape: Partial<Record<BodySliderId, number>> | null | undefined): string
 ```
-- Registry: parse clamps values to [0,1] and drops unknown keys; `healRefImages` nulls a vanished `bodyImage` (counted in `dropped`; no status side effects). PATCH: `{ slug, bodyShape }` / `{ slug, bodyImage }` accepted in the top-level-fields branch (bodyImage through `validRefFilename`; explicit `null` clears). Store: `patchCharacter(slug, { …existing, bodyShape?, bodyImage? })`.
+- Band tables (exact; 0.5 ± 0.1 is the neutral dead zone emitting nothing; join non-empty fragments with ', '):
+  - build: <0.15 'a very slim, slight build' · <0.4 'a slim build' · >0.85 'a very heavy, plus-size build with a full figure' · >0.6 'a noticeably heavyset build'
+  - height: <0.15 'very short in stature' · <0.4 'short in stature' · >0.85 'very tall' · >0.6 'tall'
+  - muscle: >0.85 'a strongly muscular physique' · >0.6 'an athletic, toned physique' · <0.15 'a soft, undefined physique'
+  - shoulders: >0.6 'broad shoulders' · <0.4 'narrow shoulders'
+  - chest: >0.6 'a full chest' · <0.4 'a flat chest'
+  - waist: >0.6 'a thick waist' · <0.4 'a narrow waist'
+  - hips: >0.6 'wide hips' · <0.4 'narrow hips'
+  - frame: >0.6 'a masculine frame' · <0.4 'a feminine frame'
+  (Order of fragments = BODY_SLIDERS order. Round-4 anchors: build 0.7 territory ≈ "noticeably heavyset", 1.0 ≈ "very heavy, plus-size".)
 
-- [ ] **Step 1: Failing tests** — registry: record with `bodyShape: {build: 1.4, nope: 0.5}` parses to `{build: 1}` (clamped, unknown dropped); `bodyImage: '../evil'` → null; heal drops vanished bodyImage without touching state statuses. Model suite: fields default null on parse of legacy records. Composable: `patchCharacter` sends the fields in the PATCH body (fetch-stub assertion).
-- [ ] **Step 2: RED → implement → GREEN** (`npx vitest run tests/unit/character-model.unit.spec.ts tests/unit/character-registry.unit.spec.ts tests/unit/characters-composable.unit.spec.ts`).
-- [ ] **Step 3: Commit** — `git commit -m "feat(body): bodyShape + bodyImage on the character record"`
+- [ ] **Step 1: Failing tests** — `bodyPhrase(null)` = '' ; all-0.5 = '' ; `{build: 1, height: 0.1}` = 'very short in stature, a very heavy, plus-size build with a full figure'... assert EXACT strings per band boundary (test 0.6/0.85/0.4/0.15 edges), fragment order, comma joining. Registry: bodyShape clamped to [0,1], unknown keys dropped, defaults null on legacy parse. Composable: patchCharacter sends `bodyShape` (fetch-stub body assertion) and explicit null clears.
+- [ ] **Step 2: RED → implement → GREEN** — `npx vitest run tests/unit/body-phrase.unit.spec.ts tests/unit/character-registry.unit.spec.ts tests/unit/characters-composable.unit.spec.ts tests/unit/character-model.unit.spec.ts`
+- [ ] **Step 3: Commit** — `git commit -m "feat(body): bodyShape field + bodyPhrase compiler — sliders speak"`
 
-### Task 4: `bodyShape.ts` pure module + Body editor modal
+### Task 3: The phrase rides the descriptor channel
 
 **Files:**
-- Create: `frontend/app/lib/characters/bodyShape.ts`, `frontend/app/components/vue-canvas/BodyEditorModal.vue`, `frontend/app/pages/dev/body-editor.vue`
-- Modify: `frontend/app/components/vue-canvas/CharacterStudioModal.vue` (a "Body" chip beside the readiness badge; opens the editor; visible whenever a character is loaded)
+- Modify: `frontend/app/composables/useCharacters.ts` (`stateDescriptors` appends the character's phrase), `frontend/app/composables/useCharacterStudio.ts` (`buildSource` appends the phrase to the descriptor it passes into `SheetSource`)
+- Test: extend `tests/unit/characters-composable.unit.spec.ts` + `tests/unit/character-studio-composable.unit.spec.ts`
+
+**Interfaces:**
+- Consumes: `bodyPhrase` (Task 2). NO signature changes anywhere downstream — the phrase joins the EXISTING descriptor strings:
+  - `stateDescriptors(picks)`: per pick, `[state.descriptor, bodyPhrase(c.bodyShape)].filter(nonEmpty).join('; ')` — so the cast clause renders `Cal (soaked jacket; a noticeably heavyset build) @Image1`.
+  - `buildSource(...)`: the returned `descriptor` becomes the same join — so every sheet panel prompt (portrait + derived) carries it via the existing `buildPortraitPrompt`/`buildDerivedPrompt` plumbing untouched.
+- Golden back-compat: null/neutral bodyShape → joins collapse to today's exact strings (assert).
+
+- [ ] **Step 1: Failing tests** — stateDescriptors with a bodyShape character yields the joined string; with null bodyShape yields exactly the state descriptor (byte-equal to current assertions — existing tests must stay green untouched); buildSource passes the joined descriptor into the SheetSource (stub-level assertion in the studio-composable suite style).
+- [ ] **Step 2: RED → implement → GREEN** — same suites + `tests/unit/shotdirector-cast.unit.spec.ts` (goldens untouched).
+- [ ] **Step 3: Commit** — `git commit -m "feat(body): body phrase joins the descriptor channel — sheets and shots inherit it"`
+
+### Task 4: The preview bake → committed GLB *(preview-only; fail-soft)*
+
+**Files:**
+- Create: `scripts/bake-body-model/bake.py`, `scripts/bake-body-model/ATTRIBUTION.md`
+- Create (committed output): `frontend/public/models/body-reference.glb`
+- Test: `frontend/tests/unit/body-model-asset.unit.spec.ts` (new)
+
+Same contract as the pre-amendment plan: 8 morph targets named exactly per `BODY_SLIDERS` order, base = default body, ≤5MB, CC0/SOMA topology ONLY (assert in ATTRIBUTION.md + bake.py comment; never SMPL-X). The asset test (verbatim from the original Task 2 Step 1: GLB header parse, `mesh.extras.targetNames` equals BODY_SLIDERS, 8 targets, <5MB). **Fail-soft rule:** if the bake fights tooling for more than a reasonable effort, report DONE_WITH_CONCERNS with the blocker — Task 5 ships slider-only (no figure) and the figure follows later; the mechanism (Tasks 2-3) is already independent of this asset.
+
+- [ ] Steps: failing asset test (RED) → implement bake.py (trimesh/pygltflib or direct glTF JSON+bin authoring; Task 1's venv + slider-mapping.md) → run → commit GLB → GREEN → ATTRIBUTION.md → `git commit -m "feat(body): baked Anny preview GLB — 8 morph targets, CC0 topology"`
+
+### Task 5: The Body editor modal (sliders → words, figure previews them)
+
+**Files:**
+- Create: `frontend/app/lib/characters/bodyShape.ts` (presets + influence mapping), `frontend/app/components/vue-canvas/BodyEditorModal.vue`, `frontend/app/pages/dev/body-editor.vue`
+- Modify: `frontend/app/components/vue-canvas/CharacterStudioModal.vue` ("Body" chip beside the readiness badge)
 - Test: `frontend/tests/unit/body-shape.unit.spec.ts` (new)
 
 **Interfaces:**
-- Produces:
-```ts
-// bodyShape.ts (pure)
-export interface BodyPreset { id: string; label: string; values: Partial<Record<BodySliderId, number>> }
-export const BODY_PRESETS: BodyPreset[]  // Slim / Average / Athletic / Broad (tuned on the real figure during implementation; Average = all 0.5)
-export function influencesFor(shape: Partial<Record<BodySliderId, number>> | null): number[]  // ordered per BODY_SLIDERS; missing → 0.5 default; 0.5 maps to influence per the bake's delta convention (document: influence = value when targets are authored at max — i.e. influence = clamp01(value))
-export function defaultBodyShape(): Record<BodySliderId, number>  // all 0.5
-```
-- Modal contract: `<BodyEditorModal :slug="string" @close />` — loads the GLB once (module-level cache), sliders bound to a local copy of `character.bodyShape ?? defaultBodyShape()`, presets apply value sets, **Save body** = render front (+Y 180° for back) via the same renderer offscreen → side-by-side composite canvas → `uploadRefFilename` → `patchCharacter(slug, { bodyShape, bodyImage })` → close. Cancel/Escape/backdrop discard through one handler. Copy: "Free & instant — nothing is generated while you slide." Dev harness mounts it with the first character.
+- `bodyShape.ts` (pure): `BODY_PRESETS` (Slim/Average/Athletic/Broad; Average = all 0.5; others tuned on the real figure), `influencesFor(shape): number[]` (BODY_SLIDERS order, missing → 0.5, clamped), `defaultBodyShape()` (all 0.5).
+- Modal: `<BodyEditorModal :slug="string" @close />` — GLB stage (module-cached load, grey MeshStandardMaterial, OrbitControls, `morphTargetInfluences = influencesFor(local)` live) IF the asset exists (Task 4 fail-soft: no asset → sliders + phrase preview only); 8 sliders + 4 preset buttons; **a live phrase line under the sliders showing exactly what the sliders will write** (`bodyPhrase(local)` — or "Nothing — she reads as average build" when empty); Save = `patchCharacter(slug, { bodyShape: local })` → close (free, instant, copy says so); Cancel/Escape/backdrop discard via one handler; reopening restores from the record. Quiet-language rules.
 
-- [ ] **Step 1: Failing tests** — `influencesFor(null)` = eight 0.5s ordered per `BODY_SLIDERS`; explicit values pass through clamped; presets contain the four ids and Average is all-0.5; every preset value ∈ [0,1].
-- [ ] **Step 2: RED → implement module → GREEN.**
-- [ ] **Step 3: Build the modal** (three.js: GLTFLoader, `MeshStandardMaterial({ color: 0x8a8f9c })` override, OrbitControls, `mesh.morphTargetInfluences = influencesFor(local)` on each input; save bake per the contract; StudioButton actions; quiet copy).
-- [ ] **Step 4: Wire the studio chip**; verify live on `/dev/body-editor` (figure renders, sliders morph in real time, Save uploads + patches — all free; confirm the PATCH in the network panel).
-- [ ] **Step 5:** `npx vue-tsc --noEmit 2>&1 | grep -E "BodyEditor|bodyShape" | head` → zero. Commit: `git commit -m "feat(body): Body editor modal — live Anny morphs, free save"`
+- [ ] Steps: failing bodyShape.ts tests (influences order/defaults/clamps, preset ids, Average all-0.5) → RED → implement module → GREEN → build modal + chip + dev page → live check on `/dev/body-editor` (sliders morph figure AND rewrite the phrase line in real time; Save PATCHes — network-verified; all free) → `npx vue-tsc --noEmit 2>&1 | grep -E "BodyEditor|bodyShape|bodyPhrase" | head` → zero → `git commit -m "feat(body): Body editor — sliders write words, the figure shows what they mean"`
 
-### Task 5: Sheet body panels consume the reference
+### Task 6: E2E + docs
 
 **Files:**
-- Modify: `frontend/app/composables/useSheetGeneration.ts` (derived-edit call for `body-front`/`body-back`), `frontend/app/composables/useCharacterStudio.ts` (thread the character's `bodyImage` dataUrl into `expandAll`/`rerollPanel` source)
-- Test: extend `tests/unit/sheet-generation.unit.spec.ts`
+- Modify: `frontend/tests/character-sheet.spec.ts`, `docs/STATE.md` (dashboard controller-owned — skip)
 
-**Interfaces:**
-- Consumes: `SheetSource` gains optional `bodyReferenceDataUrl?: string` (both modes).
-- Produces: when set AND the panel slot is `body-front`/`body-back`: `images: [portraitDataUrl, bodyReferenceDataUrl]`, prompt + `' Match the body proportions of the grey reference figure in the second image.'` (exported const `BODY_MATCH_SUFFIX` — single source, also used by the probe's Task-1 phrasing notes). Face panels and no-bodyImage behavior byte-identical to today.
-
-- [ ] **Step 1: Failing tests** (fetch-stub style, existing suite conventions): with `bodyReferenceDataUrl` set, body-front's nano-gen body has 2 images and the suffixed prompt; face-neutral still has 1 image and no suffix; without it, all panels identical to current assertions (guard: existing tests untouched and green).
-- [ ] **Step 2: RED → implement → GREEN** (`npx vitest run tests/unit/sheet-generation.unit.spec.ts tests/unit/character-studio-composable.unit.spec.ts`).
-- [ ] **Step 3: Commit** — `git commit -m "feat(body): sheet body panels match the saved body reference"`
-
-### Task 6: E2E + docs + owed-verification note
-
-**Files:**
-- Modify: `frontend/tests/character-sheet.spec.ts` (scenario: studio → Body chip → modal renders, sliders present, Save fires PATCH with `bodyShape` — intercepted, no uploads/generation), `docs/STATE.md`
-- Dashboard: controller-owned — skip.
-
-- [ ] **Step 1:** E2E scenario (route-intercept PATCH + `/upload/image`; assert the PATCH body carries all 8 slider keys). Run `npx playwright test tests/character-sheet.spec.ts` ×2.
-- [ ] **Step 2:** Full targeted suite (the character/sheet/body files named in Tasks 2–5) + `npx nuxt typecheck` plan-symbol grep (`bodyShape|BodyEditor|body-reference`) → 0.
-- [ ] **Step 3:** STATE.md: Body builder LANDED sub-block + OWED: one post-build extreme-vs-default sheet rebuild (broken-control, paid) confirming end-to-end transfer in the real pipeline. Commit: `git commit -m "feat(body): E2E + docs — body reference builder landed"`
+- [ ] E2E scenario: studio → Body chip → modal renders; drag a slider (or set via the page) → the phrase preview line changes; Save → intercepted PATCH carries `bodyShape` with all set keys; no uploads, no generation. Run ×2.
+- [ ] Full targeted suite (body-phrase, body-shape, body-model-asset, character-model/registry/composable, character-studio-composable, sheet-generation, shotdirector-cast) + typecheck plan-symbol grep (`bodyShape|bodyPhrase|BodyEditor`) → 0.
+- [ ] STATE.md: Body builder LANDED sub-block (probe story: 4 rounds ~$1.75, figure-channel dead, text channel proven; sliders→words; figure preview) + OWED: one extreme-vs-neutral sheet rebuild (paid, broken-control) confirming the phrase steers the real pipeline. Commit: `git commit -m "feat(body): E2E + docs — body builder landed"`
 
 ## Self-review notes (applied)
 
