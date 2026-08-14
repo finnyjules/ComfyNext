@@ -31,6 +31,7 @@ import { useTabs } from '~/composables/useTabs'
 import { buildDressPrompt, DRESS_COST_USD, type DressMode } from '~/lib/wardrobe/dress'
 import { freshTiles, stressOutcome, canLock, type StressTile } from '~/lib/characters/stress'
 import { buildStressTileRequest, buildTestingPatch, buildLockPatch, refPhotoRequest, type RefPhotoPose } from '~/lib/characters/stressFlow'
+import { bodyPhrase } from '~/lib/characters/bodyPhrase'
 
 // Shared conflict-toast wording — every patchState call in this flow shows
 // the same message on a 'stale' result (someone else's edit landed first).
@@ -230,6 +231,17 @@ function sheetFor(c: CharacterRecord, variant: CharacterState) {
 }
 const expanding = ref<Set<string>>(new Set())
 
+/**
+ * Descriptor channel for sheet generation: the variant's state descriptor
+ * joined with the character's graded body phrase — pure, so it's unit-tested
+ * directly. Empty/null bodyShape contributes nothing, collapsing back to the
+ * prior `variant.descriptor || undefined` behavior byte-for-byte.
+ */
+export function buildSourceDescriptor(c: CharacterRecord, variant: CharacterState): string | undefined {
+  const joined = [variant.descriptor?.trim(), bodyPhrase(c.bodyShape)].filter(Boolean).join('; ')
+  return joined || undefined
+}
+
 async function buildSource(c: CharacterRecord, variant: CharacterState): Promise<SheetSource | null> {
   const { coverUrl } = useCharacters()
   // Sheets ALWAYS build from a cover photo, never from a trained LoRA. The
@@ -246,7 +258,7 @@ async function buildSource(c: CharacterRecord, variant: CharacterState): Promise
   }
   try {
     const dataUrl = await fetchAsDataUrl(cover)
-    return { mode: 'photo', referenceImageDataUrl: dataUrl, descriptor: variant.descriptor || undefined }
+    return { mode: 'photo', referenceImageDataUrl: dataUrl, descriptor: buildSourceDescriptor(c, variant) }
   } catch {
     toast.error('Couldn\'t load the cover photo — try again')
     return null

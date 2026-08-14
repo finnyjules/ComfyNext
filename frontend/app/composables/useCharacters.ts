@@ -8,6 +8,7 @@ import { ref } from 'vue'
 import type { BodySliderId, CharacterRecord, CharacterState } from '#shared/characters/types'
 import { coverFirstRefs, identityRefs, panelFilename, pickState } from '#shared/characters/types'
 import { viewRefUrl } from '~/lib/shotdirector/refUpload'
+import { bodyPhrase } from '~/lib/characters/bodyPhrase'
 
 export { coverFirstRefs } from '#shared/characters/types'
 
@@ -111,15 +112,20 @@ export function useCharacters() {
     return f ? viewRefUrl(f) : null
   }
 
-  /** slug → descriptor for each pick's resolved state, dropping empty/whitespace descriptors. */
+  /**
+   * slug → descriptor for each pick's resolved state, joined with the
+   * character's graded body phrase (empty/null bodyShape contributes
+   * nothing, so this collapses to the bare state descriptor — unchanged
+   * from before the body phrase existed).
+   */
   function stateDescriptors(picks: { slug: string; stateId: string | null }[]): Record<string, string> {
     const bySlug = new Map(characters.value.map(c => [c.slug, c]))
     const out: Record<string, string> = {}
     for (const { slug, stateId } of picks) {
       const c = bySlug.get(slug)
       const state = c ? pickState(c, stateId) : undefined
-      const descriptor = state?.descriptor ?? ''
-      if (descriptor.trim()) out[slug] = descriptor
+      const joined = [state?.descriptor?.trim(), bodyPhrase(c?.bodyShape)].filter(Boolean).join('; ')
+      if (joined) out[slug] = joined
     }
     return out
   }

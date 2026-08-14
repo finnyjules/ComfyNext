@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { partialResultPatch, shouldAutoReady, clearStressTiles, stressTiles } from '~/composables/useCharacterStudio'
+import { partialResultPatch, shouldAutoReady, clearStressTiles, stressTiles, buildSourceDescriptor } from '~/composables/useCharacterStudio'
 import { freshTiles } from '~/lib/characters/stress'
 import type { CharacterRecord, CharacterState } from '#shared/characters/types'
 
@@ -39,5 +39,37 @@ describe('clearStressTiles', () => {
     delete stressTiles.value[key]
     expect(() => clearStressTiles(c, s)).not.toThrow()
     expect(stressTiles.value[key]).toBeUndefined()
+  })
+})
+
+describe('buildSourceDescriptor (feeds buildSource\'s SheetSource.descriptor)', () => {
+  it('joins the variant descriptor with the body phrase when bodyShape is set', () => {
+    const c = { bodyShape: { build: 0.8 } } as CharacterRecord
+    const variant = { descriptor: 'soaked jacket' } as CharacterState
+    expect(buildSourceDescriptor(c, variant)).toBe('soaked jacket; a noticeably heavyset build')
+  })
+
+  it('bodyShape-only (empty descriptor) yields the phrase alone', () => {
+    const c = { bodyShape: { build: 0.8 } } as CharacterRecord
+    const variant = { descriptor: '' } as CharacterState
+    expect(buildSourceDescriptor(c, variant)).toBe('a noticeably heavyset build')
+  })
+
+  it('null bodyShape yields exactly the variant descriptor (back-compat)', () => {
+    const c = { bodyShape: null } as CharacterRecord
+    const variant = { descriptor: 'soaked jacket' } as CharacterState
+    expect(buildSourceDescriptor(c, variant)).toBe('soaked jacket')
+  })
+
+  it('neutral bodyShape (dead-zone sliders) yields exactly the variant descriptor (back-compat)', () => {
+    const c = { bodyShape: { build: 0.5 } } as CharacterRecord
+    const variant = { descriptor: 'soaked jacket' } as CharacterState
+    expect(buildSourceDescriptor(c, variant)).toBe('soaked jacket')
+  })
+
+  it('empty descriptor + no bodyShape yields undefined, matching the prior `descriptor || undefined` behavior', () => {
+    const c = { bodyShape: null } as CharacterRecord
+    const variant = { descriptor: '' } as CharacterState
+    expect(buildSourceDescriptor(c, variant)).toBeUndefined()
   })
 })

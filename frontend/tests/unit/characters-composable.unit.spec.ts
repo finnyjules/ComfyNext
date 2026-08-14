@@ -160,6 +160,40 @@ describe('useCharacters', () => {
     ])).toEqual({ reva: 'shaved head, leather jacket' })
   })
 
+  it('stateDescriptors joins the state descriptor with the body phrase when bodyShape is set', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ characters: [] }) }))
+    const { useCharacters } = await import('~/composables/useCharacters')
+    const { characters, stateDescriptors } = useCharacters()
+    characters.value = [
+      { ...REVA, slug: 'cal', bodyShape: { build: 0.8 } },
+    ]
+    // punk state descriptor is 'shaved head, leather jacket' — joined with the
+    // build-0.8 phrase ('a noticeably heavyset build') via '; '.
+    expect(stateDescriptors([{ slug: 'cal', stateId: 'punk' }]))
+      .toEqual({ cal: 'shaved head, leather jacket; a noticeably heavyset build' })
+  })
+
+  it('stateDescriptors: bodyShape-only (empty descriptor) yields the phrase alone', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ characters: [] }) }))
+    const { useCharacters } = await import('~/composables/useCharacters')
+    const { characters, stateDescriptors } = useCharacters()
+    characters.value = [
+      { ...REVA, slug: 'cal', bodyShape: { build: 0.8 } },
+    ]
+    // default state has an empty descriptor — only the phrase should appear.
+    expect(stateDescriptors([{ slug: 'cal', stateId: 'default' }]))
+      .toEqual({ cal: 'a noticeably heavyset build' })
+  })
+
+  it('stateDescriptors: null bodyShape yields exactly the state descriptor (back-compat)', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ characters: [] }) }))
+    const { useCharacters } = await import('~/composables/useCharacters')
+    const { characters, stateDescriptors } = useCharacters()
+    characters.value = [REVA] // REVA.bodyShape is null
+    expect(stateDescriptors([{ slug: 'reva', stateId: 'punk' }]))
+      .toEqual({ reva: 'shaved head, leather jacket' })
+  })
+
   it('patchState returns "stale" on a 409 response and still refreshes', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({ status: 409, ok: false })
