@@ -762,9 +762,13 @@ function texOpts() {
   // Tiling effects (ribbon/stripes/field) keep buildRibbonLabel's trailing gap so repeated
   // text has space between copies.
   const rawWords = effectId.value === 'coil' || effectId.value === 'elastic' || effectId.value === 'echo'
-  // Effects may opt out of the suite's force-uppercase default by declaring a `textCase` control
-  // set to 'asis'; everything else stays uppercase (backwards compatible).
-  const asis = String(params.textCase ?? 'upper') === 'asis'
+  // Effects may opt out of the suite's force-uppercase default by declaring a `textCase` control.
+  // When the param is unset (defaults aren't seeded onto the load path), fall back to THAT control's
+  // declared default rather than a hardcoded 'upper' — otherwise an effect whose control defaults to
+  // 'asis' still force-uppercases until the user toggles it. Effects with no textCase control keep
+  // 'upper' (backwards compatible).
+  const textCaseDefault = String(effect.value.controls.find(c => c.key === 'textCase')?.default ?? 'upper')
+  const asis = String(params.textCase ?? textCaseDefault) === 'asis'
   const caseMode = asis ? 'as-typed' : 'upper'
   const cased = (t: string) => (asis ? t : t.toUpperCase())
   const labels = multiAware
@@ -2121,10 +2125,10 @@ async function exportWebEmbed() {
               <StudioColor v-else-if="c.kind === 'color'" :model-value="String(params[c.key])"
                            @update:model-value="(val: string) => { params[c.key] = val; rebuild(); onEdit(c.key, val) }" />
               <StudioSegmented v-else-if="c.kind === 'select' && (c.options?.length ?? 0) <= 3"
-                               :options="c.options ?? []" :model-value="String(params[c.key])"
+                               :options="c.options ?? []" :model-value="String(params[c.key] ?? c.default)"
                                @update:model-value="(v: string) => { params[c.key] = v; rebuild(); onEdit(c.key, v) }" />
               <StudioSelect v-else-if="c.kind === 'select'"
-                            :options="c.options ?? []" :model-value="String(params[c.key])"
+                            :options="c.options ?? []" :model-value="String(params[c.key] ?? c.default)"
                             @update:model-value="(v: string) => { params[c.key] = v; rebuild(); onEdit(c.key, v) }" />
               <template v-else-if="c.kind === 'font'">
                 <FontPicker

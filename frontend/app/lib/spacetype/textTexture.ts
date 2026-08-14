@@ -59,6 +59,20 @@ export function makeTextTexture(opts: TextTextureOptions): THREE.CanvasTexture {
   applyFont()
   const widths = labels.map(l => Math.max(1, ctx.measureText(l).width))
   const maxLabelW = Math.max(...widths, 1)
+  // Natural (untracked) width of the first label ÷ its tracked width. Tiling effects use this to
+  // treat Tracking as pure letter-spacing instead of a horizontal squeeze: because the whole word
+  // texture is force-fit to a fixed tile, widening it via Tracking otherwise just compresses the
+  // glyphs. Scaling the tile count by this ratio holds the glyph width constant (see stripes.ts
+  // span mode). 1 when letterSpacing is unsupported or tracking is 0.
+  let naturalWidthFrac = 1
+  if ('letterSpacing' in ctx) {
+    const lsCtx = ctx as CanvasRenderingContext2D & { letterSpacing: string }
+    const savedLS = lsCtx.letterSpacing
+    lsCtx.letterSpacing = '0px'
+    const untracked = Math.max(1, ctx.measureText(labels[0] ?? ' ').width)
+    lsCtx.letterSpacing = savedLS
+    naturalWidthFrac = untracked / widths[0]!
+  }
   const measured = Math.max(2, Math.ceil(maxLabelW))
   const w = Math.max(2, Math.ceil(measured * scaleX))
   // Per-row width fraction (each text's width ÷ the widest), so effects can size their
@@ -116,6 +130,7 @@ export function makeTextTexture(opts: TextTextureOptions): THREE.CanvasTexture {
   tex.userData.wordInkFracs = wordInkFracs
   tex.userData.inkHeightFrac = inkHeightFrac
   tex.userData.inkVMid = inkVMid
+  tex.userData.naturalWidthFrac = naturalWidthFrac
   tex.userData.gradient = (opts.gradientOn && opts.gradientStops && opts.gradientStops.some(s => s.on))
     ? makeGradientTexture(opts.gradientStops, opts.typeColor)
     : undefined

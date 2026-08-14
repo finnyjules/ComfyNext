@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import type { ControlSpec, Params, SpaceTypeEffect } from '../effect'
-import { buildRibbonGeometryData, ribbonInstance, scrollOffset, textVariantForBand } from '../ribbonGeometry'
+import { buildRibbonGeometryData, ribbonInstance, loopTiles, textVariantForBand } from '../ribbonGeometry'
 import { parseFills, fillShaderTexture, fillTiling, fillTextColor, fillAnchor, fillScreenVec } from '../fills'
 import { defaultFillsFor } from '../palette'
 import { stripAlpha } from '~/lib/color/convert'
@@ -8,10 +8,21 @@ import { stripAlpha } from '~/lib/color/convert'
 const controls: ControlSpec[] = [
   { key: 'text', label: 'Text', kind: 'textList', default: 'Sailor', group: 'Type' },
   { key: 'font', label: 'Font', kind: 'font', default: 'Inter', group: 'Type' },
+  // Respect the typed casing by default ('asis'); 'upper' restores the old force-uppercase look.
+  // The suite force-uppercases only when an effect declares NO textCase control (see
+  // SpaceTypeSurface's `params.textCase ?? 'upper'`), so pre-existing Stripes looks stay uppercase.
+  { key: 'textCase', label: 'Case', kind: 'select', options: ['upper', 'asis'], default: 'asis', group: 'Type' },
   { key: 'typeHeight', label: 'Type height', kind: 'slider', min: 40, max: 320, step: 2, default: 180, group: 'Type' },
   { key: 'tracking', label: 'Tracking', kind: 'slider', min: -20, max: 80, step: 1, default: 0, group: 'Type' },
   { key: 'typeStroke', label: 'Type stroke', kind: 'slider', min: 0, max: 12, step: 0.5, default: 0, group: 'Type' },
   { key: 'textRepeat', label: 'Text repeat', kind: 'slider', min: 1, max: 16, step: 1, default: 4, group: 'Type' },
+  // 'repeat' → every stripe tiles the whole word (original). 'span' → ONE giant word as tall as
+  // the whole stripe stack, sliced horizontally so each stripe shows a band of it (venetian-blind).
+  { key: 'textLayout', label: 'Text layout', kind: 'select', options: ['repeat', 'span'], default: 'repeat', group: 'Type' },
+  // Span-only: pull the giant word in from the top & bottom edges so it stops looking vertically
+  // stretched. 0 = fills the whole stack (original span behaviour); higher = shorter word centred
+  // in the stack with blank margin stripes above/below. Hidden in 'repeat' mode.
+  { key: 'spanPad', label: 'Vertical padding', kind: 'slider', min: 0, max: 0.7, step: 0.02, default: 0, group: 'Type', showIf: { key: 'textLayout', equals: 'span' } },
   { key: 'stripeCount', label: 'Stripe count', kind: 'slider', min: 3, max: 40, step: 1, default: 9, group: 'Ribbon' },
   { key: 'stripeHeight', label: 'Stripe height', kind: 'slider', min: 0.4, max: 3, step: 0.05, default: 1.0, group: 'Ribbon' },
   { key: 'stripeSpacing', label: 'Y spacing', kind: 'slider', min: 0.2, max: 2.5, step: 0.05, default: 1.05, group: 'Ribbon' },
@@ -112,11 +123,36 @@ export const stripesEffect: SpaceTypeEffect = {
     const root = new three.Group()
     const stripes: StripeRow[] = []
 
-    const uRepeat = Number(textTexture.userData?.uRepeat ?? n(params, 'textRepeat')) || 1
     const count = Math.max(1, Math.floor(n(params, 'stripeCount')))
     const xSpacing = n(params, 'stripeSpaceX')
     // Multiple texts → N-row atlas; stripe i shows row i%N via the texture's V transform.
     const numTexts = Math.max(1, Math.floor(Number(textTexture.userData?.numTexts ?? 1)))
+
+    // 'span' layout: slice ONE giant word across the whole stack. We map each stripe onto a
+    // 1/count-tall band of the first word's INK box (inkVMid ± inkHeightFrac/2, both precomputed
+    // by makeTextTexture) so the letters fill the stack top-to-bottom with no blank end stripes,
+    // rather than the full 0..1 tile which would leave the glyph's vertical margins as empty stripes.
+    const spanMode = String(params.textLayout) === 'span'
+    const inkFrac = Math.min(1, Number(textTexture.userData?.inkHeightFrac) || 0.7)
+    const spanLo = (Number(textTexture.userData?.inkVMid) || 0.5) - inkFrac / 2
+    // Vertical padding: the word occupies the central `spanFit` fraction of the stack; the rest is
+    // blank margin stripes top & bottom. spanFit=1 (pad 0) ⇒ fills the stack (original behaviour).
+    // Guard undefined/NaN → 0 pad: nodes saved before this control lack the key (defaults aren't
+    // applied on the load path), and NaN here would poison every stripe's texture offset.
+    const spanPad = Number(params.spanPad)
+    const spanFit = Math.max(0.3, 1 - (Number.isFinite(spanPad) ? spanPad : 0))
+
+    // Span mode holds the glyph width constant against Tracking. Tracking widens the word texture;
+    // force-fitting that wider texture back into the same tile is what squishes the letters. Scaling
+    // the horizontal tiling by naturalWidthFrac (untracked ÷ tracked width) keeps the per-glyph tile
+    // width fixed, so Tracking reads as real letter-spacing and the word's own width follows it.
+    // Repeat mode keeps the raw textRepeat so every existing look is unchanged. Clamped to a sane
+    // band; falls back to 1 for textures built before this field existed.
+    const natFrac = spanMode ? Math.min(5, Math.max(0.2, Number(textTexture.userData?.naturalWidthFrac) || 1)) : 1
+    // Dividing the tiling by spanFit shrinks the word HORIZONTALLY by the same factor Vertical
+    // padding shrinks it vertically, so the glyphs scale UNIFORMLY (keep their aspect) and padding
+    // just adds top/bottom margin instead of squashing the letters shorter-but-same-width.
+    const uRepeat = (Number(textTexture.userData?.uRepeat ?? n(params, 'textRepeat')) || 1) * natFrac / (spanMode ? spanFit : 1)
 
     // Cycling per-band fills (solid/gradient/grid/noise) + per-band text colour.
     const fills = parseFills(params.fills)
@@ -151,7 +187,15 @@ export const stripesEffect: SpaceTypeEffect = {
       tex.needsUpdate = true
       tex.wrapS = three.RepeatWrapping
       // Alternate texts across stripes — first string on the TOP stripe (shared convention).
-      if (numTexts > 1) {
+      if (spanMode) {
+        // Stripe i samples its band of the ink box. i=0 is the BOTTOM stripe (ribbonInstance
+        // y = (i−center)·spacing), so offset grows with i ⇒ the TOP stripe (i=count−1) gets the
+        // highest V = the tops of the letters. Reads as one upright word. The ink box is mapped
+        // across only the central `spanFit` fraction of stripes; stripes outside land on the
+        // transparent margin around the glyph (via wrapT clamp) ⇒ blank padding bands.
+        tex.repeat.y = inkFrac / (count * spanFit)
+        tex.offset.y = spanLo + ((i / count - (1 - spanFit) / 2) / spanFit) * inkFrac
+      } else if (numTexts > 1) {
         tex.repeat.y = 1 / numTexts
         tex.offset.y = textVariantForBand(i, count, numTexts) / numTexts
       }
@@ -224,9 +268,15 @@ export const stripesEffect: SpaceTypeEffect = {
   update(t01, params, root) {
     const stripes = (root?.userData?.stripeRows as StripeRow[] | undefined) ?? []
     const speed = n(params, 'speed')
+    // Span slices ONE word across a small effective uRepeat (aspect-corrected for Tracking, and
+    // textRepeat is usually 1), so round(speed·uRepeat) hits 0 tiles/loop and the word sits still
+    // below ~0.5 speed. Floor the seamless loop to 1 word-period/loop whenever speed>0 so any
+    // nonzero speed scrolls (0 still = frozen). Repeat mode keeps the exact original quantization.
+    const spanMode = String(params.textLayout) === 'span'
     for (const s of stripes) {
-      // Text scrolls along the band; integer speed keeps it seamless.
-      s.tex.offset.x = -scrollOffset(t01, speed, s.uRepeat) * s.dir
+      // Text scrolls along the band; integer tiles/loop keep it seamless.
+      const tiles = spanMode && speed > 0 ? Math.max(1, Math.round(speed * s.uRepeat)) : loopTiles(speed, s.uRepeat)
+      s.tex.offset.x = -(t01 * tiles) * s.dir
       // Grid/noise fill drifts with the text (same offset → same direction & pace).
       s.uFillScroll.value = s.tex.offset.x
       // Per-stripe in-place rotation (each band around its own sub-group origin).
