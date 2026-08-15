@@ -78,9 +78,11 @@ export const GRADIENT_CONTROLS: GradientControl[] = [
   slider('layer.ramp.sweep', 'Sweep', 20, 360, 1, 'Gradient', 'Conic arc in degrees', { when: (c) => c.canvas.layout === 'conic' }),
   { key: 'layer.ramp.closeLoop', label: 'Close loop', kind: 'switch', default: false, group: 'Gradient', when: (c) => c.canvas.layout === 'conic', hint: 'Wrap the ramp so the first and last colour meet seamlessly' } as GradientControl,
 
-  // --- Repeat / Falloff (every layout) --------------------------------------
-  { key: 'layer.color.repeat', label: 'Repeat', kind: 'select', options: ['once', 'mirror', 'tile'], default: 'once', group: 'Layer', hint: 'Repeat the ramp: once / mirror (reflect) / tile ×N' } as GradientControl,
-  slider('layer.color.repeatCount', 'Repeat count', 2, 16, 1, 'Layer', undefined, { when: (c) => (c.layers?.[0]?.color?.repeat ?? 'once') === 'tile' }),
+  // --- Repeat (simple primitives only — u_repeat is only read in the simple-primitive
+  //     shader branch; it's a no-op on the 6 legacy layouts) / Falloff (every layout,
+  //     baked into buildRampLut) ------------------------------------------------------
+  { key: 'layer.color.repeat', label: 'Repeat', kind: 'select', options: ['once', 'mirror', 'tile'], default: 'once', group: 'Layer', when: isSimple, hint: 'Repeat the ramp: once / mirror (reflect) / tile ×N' } as GradientControl,
+  slider('layer.color.repeatCount', 'Repeat count', 2, 16, 1, 'Layer', undefined, { when: (c) => isSimple(c) && (c.layers?.[0]?.color?.repeat ?? 'once') === 'tile' }),
   { key: 'layer.color.falloff', label: 'Falloff', kind: 'select', options: ['linear', 'ease', 'smooth'], default: 'linear', group: 'Layer', hint: 'Ramp interpolation curve — smooth kills banding on long ramps' } as GradientControl,
 
   // --- Colours: runtime cardinality, synthesized in visibleGradientControls --

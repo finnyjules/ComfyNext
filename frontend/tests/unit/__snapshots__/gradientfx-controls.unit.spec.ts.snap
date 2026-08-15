@@ -187,19 +187,6 @@ exports[`gradientAgentControls characterization > emits stable full specs for la
     "step": 0.01,
   },
   {
-    "default": "once",
-    "group": "Layer",
-    "hint": "Repeat the ramp: once / mirror (reflect) / tile ×N",
-    "key": "layer.color.repeat",
-    "kind": "select",
-    "label": "Repeat",
-    "options": [
-      "once",
-      "mirror",
-      "tile",
-    ],
-  },
-  {
     "default": "linear",
     "group": "Layer",
     "hint": "Ramp interpolation curve — smooth kills banding on long ramps",
@@ -900,19 +887,6 @@ exports[`gradientAgentControls characterization > emits stable full specs for la
     "step": 1,
   },
   {
-    "default": "once",
-    "group": "Layer",
-    "hint": "Repeat the ramp: once / mirror (reflect) / tile ×N",
-    "key": "layer.color.repeat",
-    "kind": "select",
-    "label": "Repeat",
-    "options": [
-      "once",
-      "mirror",
-      "tile",
-    ],
-  },
-  {
     "default": "linear",
     "group": "Layer",
     "hint": "Ramp interpolation curve — smooth kills banding on long ramps",
@@ -1565,19 +1539,6 @@ exports[`gradientAgentControls characterization > emits stable full specs for la
     "max": 100,
     "min": 0,
     "step": 1,
-  },
-  {
-    "default": "once",
-    "group": "Layer",
-    "hint": "Repeat the ramp: once / mirror (reflect) / tile ×N",
-    "key": "layer.color.repeat",
-    "kind": "select",
-    "label": "Repeat",
-    "options": [
-      "once",
-      "mirror",
-      "tile",
-    ],
   },
   {
     "default": "linear",
@@ -2250,19 +2211,6 @@ exports[`gradientAgentControls characterization > emits stable full specs for la
     "step": 0.01,
   },
   {
-    "default": "once",
-    "group": "Layer",
-    "hint": "Repeat the ramp: once / mirror (reflect) / tile ×N",
-    "key": "layer.color.repeat",
-    "kind": "select",
-    "label": "Repeat",
-    "options": [
-      "once",
-      "mirror",
-      "tile",
-    ],
-  },
-  {
     "default": "linear",
     "group": "Layer",
     "hint": "Ramp interpolation curve — smooth kills banding on long ramps",
@@ -2933,19 +2881,6 @@ exports[`gradientAgentControls characterization > emits stable full specs for la
     "step": 0.01,
   },
   {
-    "default": "once",
-    "group": "Layer",
-    "hint": "Repeat the ramp: once / mirror (reflect) / tile ×N",
-    "key": "layer.color.repeat",
-    "kind": "select",
-    "label": "Repeat",
-    "options": [
-      "once",
-      "mirror",
-      "tile",
-    ],
-  },
-  {
     "default": "linear",
     "group": "Layer",
     "hint": "Ramp interpolation curve — smooth kills banding on long ramps",
@@ -3610,19 +3545,6 @@ exports[`gradientAgentControls characterization > emits stable specs with includ
     "max": 1,
     "min": 0,
     "step": 0.01,
-  },
-  {
-    "default": "once",
-    "group": "Layer",
-    "hint": "Repeat the ramp: once / mirror (reflect) / tile ×N",
-    "key": "layer.color.repeat",
-    "kind": "select",
-    "label": "Repeat",
-    "options": [
-      "once",
-      "mirror",
-      "tile",
-    ],
   },
   {
     "default": "linear",

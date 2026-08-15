@@ -359,6 +359,10 @@ export function defaultConfig(seed = randomSeed()): GradientConfig {
   const c = stripeConfig(seed)
   c.canvas.layout = 'ramp'
   c.canvas.margin = 0
+  // stripeConfig's innerRadius (0.4) is a stripe-radial artifact — the three authored
+  // presets (ripple/stack/liquid/mesh/stripe itself when radial) all use 0. A fresh
+  // doc switched to Radial should start as a full disc, not a 40%-radius ring.
+  c.canvas.innerRadius = 0
   c.layers = [c.layers[0]!]
   c.layers[0]!.ramp = { ...RAMP_DEFAULTS, angle: 90 }
   c.layers[0]!.color.stops = [

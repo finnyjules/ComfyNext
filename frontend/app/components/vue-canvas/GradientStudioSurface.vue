@@ -66,6 +66,9 @@ const isSimpleRamp = computed(() => ['ramp', 'radialRamp', 'conic'].includes(con
 const isRampAngle = computed(() => config.value.canvas.layout === 'ramp' || config.value.canvas.layout === 'conic')
 const isRampRadial = computed(() => config.value.canvas.layout === 'radialRamp')
 const isConic = computed(() => config.value.canvas.layout === 'conic')
+// Center + inner radius are used by the stripe polar layouts (radial/orbit) AND the
+// simple radial/conic primitives — NOT plain linear ramp, which has no origin.
+const usesCenter = computed(() => isRadial.value || isRampRadial.value || isConic.value)
 // Layers are named for what they are ("Wave", "Bands"), not their position, so a
 // reorder moves a recognisable name instead of renumbering the whole stack.
 const layerNames = computed(() => layerLabels(config.value))
@@ -945,7 +948,7 @@ function onColor(key: 'repeat' | 'repeatCount' | 'falloff', value: number | stri
             <input v-model.number="config.canvas.margin" type="range" min="0" max="0.45" step="0.01" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('canvas.margin', config.canvas.margin)" />
           </BindableRow>
         </template>
-        <template v-if="isRadial">
+        <template v-if="usesCenter">
           <BindableRow control-key="canvas.innerRadius" label="Inner radius" kind="slider" :min="0" :max="0.9" :step="0.01" :bound="boundColumnFor('canvas.innerRadius')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
             <label class="mb-1 flex justify-between text-xs text-white/60"><span>Inner radius</span><span class="text-white/40">{{ config.canvas.innerRadius.toFixed(2) }}</span></label>
             <input v-model.number="config.canvas.innerRadius" type="range" min="0" max="0.9" step="0.01" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('canvas.innerRadius', config.canvas.innerRadius)" />
@@ -1313,20 +1316,23 @@ function onColor(key: 'repeat' | 'repeatCount' | 'falloff', value: number | stri
           <label class="mb-1 flex justify-between text-xs text-white/60"><span>Hue rotate</span><span class="text-white/40">{{ Math.round(layer.color.hueRotate) }}°</span></label>
           <input v-model.number="layer.color.hueRotate" type="range" min="0" max="360" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('layer.color.hueRotate', layer.color.hueRotate)" />
         </BindableRow>
-        <!-- Repeat/falloff — universal (unlike gradientDir/mapping above, not gated
-             behind !isMesh): ensureConfigDefaults backfills both on every layer
-             regardless of layout, so mesh's palette ramp gets a repeat/falloff too. -->
-        <BindableRow control-key="layer.color.repeat" label="Repeat" kind="select" :options="['once', 'mirror', 'tile']" :bound="boundColumnFor('layer.color.repeat')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-          <label class="mb-1 block text-xs text-white/60">Repeat</label>
-          <select :value="layer.color.repeat ?? 'once'" class="mb-2 w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-xs" @change="onColor('repeat', ($event.target as HTMLSelectElement).value)">
-            <option value="once">Once</option><option value="mirror">Mirror</option><option value="tile">Tile</option>
-          </select>
-        </BindableRow>
-        <template v-if="(layer.color.repeat ?? 'once') === 'tile'">
-          <BindableRow control-key="layer.color.repeatCount" label="Repeat count" kind="slider" :min="2" :max="16" :step="1" :bound="boundColumnFor('layer.color.repeatCount')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
-            <label class="mb-1 flex justify-between text-xs text-white/60"><span>Repeat count</span><span class="text-white/40">{{ layer.color.repeatCount ?? 4 }}</span></label>
-            <input :value="layer.color.repeatCount ?? 4" type="range" min="2" max="16" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onColor('repeatCount', ($event.target as HTMLInputElement).valueAsNumber)" />
+        <!-- Repeat — only the three simple primitives read u_repeat in the shader; on
+             the 6 legacy layouts (linear/radial/orbit/stack/liquid/mesh) it's a no-op,
+             so gate it behind isSimpleRamp. Falloff stays universal below: it's baked
+             into buildRampLut, which every layout's ramp goes through. -->
+        <template v-if="isSimpleRamp">
+          <BindableRow control-key="layer.color.repeat" label="Repeat" kind="select" :options="['once', 'mirror', 'tile']" :bound="boundColumnFor('layer.color.repeat')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
+            <label class="mb-1 block text-xs text-white/60">Repeat</label>
+            <select :value="layer.color.repeat ?? 'once'" class="mb-2 w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-xs" @change="onColor('repeat', ($event.target as HTMLSelectElement).value)">
+              <option value="once">Once</option><option value="mirror">Mirror</option><option value="tile">Tile</option>
+            </select>
           </BindableRow>
+          <template v-if="(layer.color.repeat ?? 'once') === 'tile'">
+            <BindableRow control-key="layer.color.repeatCount" label="Repeat count" kind="slider" :min="2" :max="16" :step="1" :bound="boundColumnFor('layer.color.repeatCount')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
+              <label class="mb-1 flex justify-between text-xs text-white/60"><span>Repeat count</span><span class="text-white/40">{{ layer.color.repeatCount ?? 4 }}</span></label>
+              <input :value="layer.color.repeatCount ?? 4" type="range" min="2" max="16" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onColor('repeatCount', ($event.target as HTMLInputElement).valueAsNumber)" />
+            </BindableRow>
+          </template>
         </template>
         <BindableRow control-key="layer.color.falloff" label="Falloff" kind="select" :options="['linear', 'ease', 'smooth']" :bound="boundColumnFor('layer.color.falloff')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
           <label class="mb-1 block text-xs text-white/60">Falloff</label>

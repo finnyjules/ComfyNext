@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Pencil, Sparkles } from 'lucide-vue-next'
 import { gradientFx } from '~/lib/gradientfx/renderer'
 import { defaultConfig } from '~/lib/gradientfx/randomize'
-import { aspectRatio, type GradientConfig } from '~/lib/gradientfx/types'
+import { aspectRatio, LAYOUT_LABELS, type GradientConfig } from '~/lib/gradientfx/types'
 import { registerStudioBaker, unregisterStudioBaker } from '~/lib/studio/cascade'
 import { registerStudioFrameSource, unregisterStudioFrameSource } from '~/lib/studio/frameSource'
 import { makeGradientFrameSource } from '~/lib/gradientfx/frameSource'
@@ -138,7 +138,7 @@ const varsInputIndex = computed(() =>
     <div class="flex items-center gap-2 border-b border-white/10 px-3 py-2">
       <Sparkles class="h-3.5 w-3.5 text-white/70" />
       <span class="text-xs font-medium text-white/80">Gradient Studio</span>
-      <span class="ml-auto truncate text-[10px] uppercase tracking-wide text-white/40">{{ config.canvas.layout }}</span>
+      <span class="ml-auto truncate text-[10px] tracking-wide text-white/40">{{ LAYOUT_LABELS[config.canvas.layout] ?? config.canvas.layout }}</span>
     </div>
 
     <!-- Live preview -->
