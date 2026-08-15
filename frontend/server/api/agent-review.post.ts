@@ -10,6 +10,7 @@ import { assertRateLimit } from '../lib/rateLimit'
 import { modelForTier } from '../lib/aiModels'
 import { MAX_IMAGE_CHARS, MAX_PROMPT_CHARS, optionalApiKey, optionalString, optionalTier, requireString, resolveAnthropicKey } from '../lib/agentRequest'
 import { extractModelText } from '../lib/modelText'
+import { meterAssist } from '../utils/anthropicMeter'
 
 interface ReviewBody {
   apiKey?: string
@@ -39,6 +40,8 @@ export default defineEventHandler(async (event) => {
   const m = /^data:([^;]+);base64,(.*)$/s.exec(image)
   const mediaType = m?.[1] ?? 'image/png'
   const data = m?.[2] ?? image
+
+  await meterAssist(event)
 
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',

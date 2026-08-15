@@ -20,6 +20,7 @@
  */
 import { extractModelText } from '../../lib/modelText'
 import { resolveAnthropicKey, optionalApiKey, MAX_IMAGE_CHARS } from '../../lib/agentRequest'
+import { meterAssist } from '../../utils/anthropicMeter'
 import { sanitizeCaption } from '~/lib/wardrobe/dress'
 
 const IMG_DATA_URL_RE = /^data:(image\/(?:png|jpe?g|webp));base64,([A-Za-z0-9+/=]+)$/
@@ -36,6 +37,8 @@ export default defineEventHandler(async (event) => {
   if (raw.length > MAX_IMAGE_CHARS) throw createError({ statusCode: 400, statusMessage: 'image is too large' })
   // Normalise jpg → jpeg for Anthropic's media_type.
   const mediaType = m[1] === 'image/jpg' ? 'image/jpeg' : m[1]
+
+  await meterAssist(event)
 
   let res: Response
   try {

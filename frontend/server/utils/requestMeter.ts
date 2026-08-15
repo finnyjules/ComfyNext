@@ -155,7 +155,7 @@ export function resolveCredits(model: string, hint?: number): number | null {
 
 export interface MeterTicket { settle(jobId: string): Promise<void> }
 
-type LedgerLike = {
+export type LedgerLike = {
   getAvailable(userId: string): Promise<number>
   debit(userId: string, amount: number, reason: string, idempotencyKey: string): Promise<{ ok: boolean }>
 }
@@ -166,7 +166,13 @@ let ledgerOverride: LedgerLike | null = null
 export function __setLedgerForTests(ledger: LedgerLike | null): void {
   ledgerOverride = ledger
 }
-function getLedger(): LedgerLike {
+/**
+ * Exported so other chokepoints (e.g. anthropicMeter.ts's flat-rate assist
+ * metering) can share this exact ledger resolution — including the
+ * __setLedgerForTests override above — instead of importing ledgerLive
+ * directly and bypassing that test seam.
+ */
+export function getLedger(): LedgerLike {
   return ledgerOverride ?? getLiveLedger()
 }
 

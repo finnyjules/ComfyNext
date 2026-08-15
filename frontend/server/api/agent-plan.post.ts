@@ -14,6 +14,7 @@ import { assertRateLimit } from '../lib/rateLimit'
 import { modelForTier } from '../lib/aiModels'
 import { MAX_PROMPT_CHARS, optionalApiKey, optionalTier, requireString, resolveAnthropicKey } from '../lib/agentRequest'
 import { extractModelText } from '../lib/modelText'
+import { meterAssist } from '../utils/anthropicMeter'
 
 interface AgentPlanBody {
   apiKey?: string
@@ -32,6 +33,8 @@ export default defineEventHandler(async (event) => {
   if (!schema || typeof schema !== 'object') {
     throw createError({ statusCode: 400, statusMessage: 'schema (object) is required' })
   }
+
+  await meterAssist(event)
 
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',

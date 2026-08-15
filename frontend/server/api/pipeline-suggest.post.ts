@@ -3,6 +3,7 @@
 // Haiku + structured outputs keep this fast and a fraction of a cent per ask.
 import { assertRateLimit } from '../lib/rateLimit'
 import { optionalApiKey, resolveAnthropicKey } from '../lib/agentRequest'
+import { meterAssist } from '../utils/anthropicMeter'
 
 const SUGGESTION_SCHEMA = {
   type: 'object',
@@ -87,6 +88,8 @@ Rules:
 - "widgets" holds only the values you want to override based on the intent; otherwise []. Enum values must come from that widget's listed options.
 - Edge endpoints are "anchor" or "<id>.<portName>" using the exact port names from the catalog. Every edge must connect type-compatible ports.
 - "note" is one short sentence shown to the user.${repair}`
+
+  await meterAssist(event)
 
   try {
     const res = await fetch('https://api.anthropic.com/v1/messages', {

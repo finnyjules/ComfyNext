@@ -1,6 +1,7 @@
 import { modelForTier } from '../lib/aiModels'
 import { assertRateLimit } from '../lib/rateLimit'
 import { optionalApiKey, resolveAnthropicKey } from '../lib/agentRequest'
+import { meterAssist } from '../utils/anthropicMeter'
 
 export default defineEventHandler(async (event) => {
   assertRateLimit(event, 'explain')
@@ -11,6 +12,8 @@ export default defineEventHandler(async (event) => {
   if (!graphData || typeof graphData !== 'string') {
     throw createError({ statusCode: 400, message: 'Missing graph data' })
   }
+
+  await meterAssist(event)
 
   try {
     const res = await fetch('https://api.anthropic.com/v1/messages', {

@@ -7,6 +7,7 @@ import { groundSuggestions } from '../utils/fontMatch'
 import { extractModelText } from '../lib/modelText'
 import { assertRateLimit } from '../lib/rateLimit'
 import { optionalApiKey, resolveAnthropicKey } from '../lib/agentRequest'
+import { meterAssist } from '../utils/anthropicMeter'
 
 const SUGGEST_SCHEMA = {
   type: 'object',
@@ -61,6 +62,8 @@ Rules:
 - Match the FORM, not just the vibe. Don't default to generic "elegant serif" picks (Playfair Display, Cormorant) unless the analysis truly calls for a high-contrast fashion serif.
 - Only real Google Fonts families, spelled exactly as Google Fonts spells them. Favor variety across the matching style; avoid near-duplicates.
 - Each "reason" (≤12 words) must tie the font to a SPECIFIC trait from your analysis.`
+
+  await meterAssist(event)
 
   let suggestions: { family: string; reason: string }[]
   try {

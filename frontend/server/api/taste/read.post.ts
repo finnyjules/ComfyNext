@@ -19,6 +19,7 @@
  */
 import { extractModelText } from '../../lib/modelText'
 import { resolveAnthropicKey, optionalApiKey, MAX_IMAGE_CHARS } from '../../lib/agentRequest'
+import { meterAssist } from '../../utils/anthropicMeter'
 import { TASTE_FACETS, FACET_IDS, facetReading, type FacetId, type TasteReading } from '../../../shared/taste/facets'
 
 const IMG_DATA_URL_RE = /^data:(image\/(?:png|jpe?g|webp));base64,([A-Za-z0-9+/=]+)$/
@@ -164,6 +165,8 @@ export default defineEventHandler(async (event) => {
     const mediaType = m[1] === 'image/jpg' ? 'image/jpeg' : m[1]
     return { type: 'image', source: { type: 'base64', media_type: mediaType, data: m[2] } }
   })
+
+  await meterAssist(event)
 
   let res: Response
   try {

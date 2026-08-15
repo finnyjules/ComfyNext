@@ -18,6 +18,7 @@
  */
 import { extractModelText } from '../../lib/modelText'
 import { resolveAnthropicKey, optionalApiKey, MAX_IMAGE_CHARS } from '../../lib/agentRequest'
+import { meterAssist } from '../../utils/anthropicMeter'
 
 const IMG_DATA_URL_RE = /^data:(image\/(?:png|jpe?g|webp));base64,([A-Za-z0-9+/=]+)$/
 
@@ -63,6 +64,8 @@ export default defineEventHandler(async (event) => {
   const label = typeof body?.styleLabel === 'string' && body.styleLabel.trim()
     ? `\n\nStyle name (context only, do not quote): ${body.styleLabel.trim()}`
     : ''
+
+  await meterAssist(event)
 
   let res: Response
   try {

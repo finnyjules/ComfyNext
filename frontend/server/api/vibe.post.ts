@@ -5,6 +5,7 @@ import { createError, defineEventHandler, readBody } from 'h3'
 import { assertRateLimit } from '../lib/rateLimit'
 import { VIBE_SCHEMA, buildVibePrompt } from '~/lib/vibePrompt'
 import { MAX_PHRASE_CHARS, MAX_PROMPT_CHARS, optionalApiKey, optionalString, requireString, resolveAnthropicKey } from '../lib/agentRequest'
+import { meterAssist } from '../utils/anthropicMeter'
 
 export default defineEventHandler(async (event) => {
   assertRateLimit(event, 'vibe', 60)
@@ -19,6 +20,8 @@ export default defineEventHandler(async (event) => {
   }
 
   const prompt = buildVibePrompt(controls, phrase, effectLabel, guidance)
+
+  await meterAssist(event)
 
   try {
     const res = await fetch('https://api.anthropic.com/v1/messages', {

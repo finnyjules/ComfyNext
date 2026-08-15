@@ -4,6 +4,7 @@
 import { buildCopyAssistPrompt, copyAssistSchema } from '../lib/copyAssist'
 import { assertRateLimit } from '../lib/rateLimit'
 import { MAX_PHRASE_CHARS, optionalApiKey, requireString, resolveAnthropicKey } from '../lib/agentRequest'
+import { meterAssist } from '../utils/anthropicMeter'
 import type { CopyAssistMode, CopyAssistRequest } from '../lib/copyAssist'
 
 const MODES: CopyAssistMode[] = ['variations', 'brief', 'translate']
@@ -56,6 +57,8 @@ export default defineEventHandler(async (event) => {
 
   const prompt = buildCopyAssistPrompt(req)
   const schema = copyAssistSchema(mode)
+
+  await meterAssist(event)
 
   try {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
