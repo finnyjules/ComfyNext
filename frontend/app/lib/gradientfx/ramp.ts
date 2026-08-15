@@ -1,6 +1,6 @@
 // Gradient ramp helpers: parse hex, build a 256px RGBA LUT from color stops.
 
-import type { ColorStop } from './types'
+import type { ColorStop, FalloffKind } from './types'
 
 export interface RGB { r: number; g: number; b: number }
 
@@ -51,11 +51,17 @@ export function hslToRgb(h: number, s: number, l: number): RGB {
 
 const LUT_W = 256
 
+function shapeF(f: number, falloff: FalloffKind): number {
+  if (falloff === 'ease')   return f * f * (3 - 2 * f)                 // smoothstep
+  if (falloff === 'smooth') return f * f * f * (f * (f * 6 - 15) + 10) // smootherstep
+  return f                                                            // linear (default)
+}
+
 /**
  * Build a 256×1 RGBA8 lookup of the gradient (linear interpolation between
  * sorted stops). Returned as a Uint8Array the renderer uploads as a texture.
  */
-export function buildRampLut(stops: ColorStop[]): Uint8Array {
+export function buildRampLut(stops: ColorStop[], falloff: FalloffKind = 'linear'): Uint8Array {
   const out = new Uint8Array(LUT_W * 4)
   const sorted = [...stops].filter(s => s && typeof s.pos === 'number')
     .sort((a, b) => a.pos - b.pos)
@@ -72,11 +78,12 @@ export function buildRampLut(stops: ColorStop[]): Uint8Array {
     }
     const span = b.pos - a.pos
     const f = span > 1e-6 ? (t - a.pos) / span : 0
+    const fc = shapeF(f, falloff)
     const ca = hexToRgb(a.color), cb = hexToRgb(b.color)
     const o = i * 4
-    out[o] = ca.r + (cb.r - ca.r) * f
-    out[o + 1] = ca.g + (cb.g - ca.g) * f
-    out[o + 2] = ca.b + (cb.b - ca.b) * f
+    out[o] = ca.r + (cb.r - ca.r) * fc
+    out[o + 1] = ca.g + (cb.g - ca.g) * fc
+    out[o + 2] = ca.b + (cb.b - ca.b) * fc
     out[o + 3] = 255
   }
   return out
