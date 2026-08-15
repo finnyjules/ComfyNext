@@ -121,6 +121,19 @@ export const POST_EFFECTS: PostEffectDef[] = [
     ],
   },
   {
+    // Two-noise-field UV warp ported from shapefx/post.ts. u_resolution and
+    // u_seed are both set directly by chain.ts's render loop before any
+    // catalog-default seeding runs (see chain.ts's per-effect uniform block),
+    // so distort.frag reads real resolution and this chain's real seed without
+    // needing either uniform declared as a param here. distortAmount 0..1 →
+    // u_amount identity (the frag scales to a 45px budget itself, same as the
+    // old shapefx uDistort convention).
+    id: 'distort', label: 'Distort', enableKey: 'distort', frag: 'distort',
+    params: [
+      { kind: 'slider', uniform: 'u_amount', settingsKey: 'distortAmount', label: 'Distort amount', min: 0, max: 1, step: 0.02, hint: 'Wobbles the whole image with noise' },
+    ],
+  },
+  {
     // "Film" is the existing FilmPass-driven scanline/screen look (see
     // spacetype/post.ts), which crt_scanlines.frag is the catalog's equivalent
     // of — NOT film_grain.frag (that one covers the separate `grain` effect
@@ -236,6 +249,6 @@ export const POST_EFFECTS: PostEffectDef[] = [
  *  the graded image; grain and vignette last because they are on the film and
  *  the barrel, not in the scene. */
 export const POST_CHAIN_ORDER = [
-  'gtao', 'color', 'duotone', 'bloom', 'chroma', 'blur',
+  'gtao', 'color', 'duotone', 'bloom', 'chroma', 'blur', 'distort',
   'halftone', 'dotScreen', 'glitch', 'film', 'vignette', 'grain',
 ]

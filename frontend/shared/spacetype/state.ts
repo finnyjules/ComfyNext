@@ -17,6 +17,7 @@ export interface PostSettings {
   color: boolean; exposure: number; contrast: number; saturation: number; hue: number
   chroma: boolean; chromaAmount: number
   blur: boolean; blurAmount: number
+  distort: boolean; distortAmount: number
   film: boolean; filmIntensity: number; filmGrayscale: boolean
   halftone: boolean; halftoneRadius: number; halftoneScatter: number
   dotScreen: boolean; dotScreenScale: number; dotScreenAngle: number

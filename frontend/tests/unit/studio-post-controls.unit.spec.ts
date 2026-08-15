@@ -5,8 +5,8 @@ import { DEFAULT_POST } from '~/lib/studio/post/settings'
 import { groupIntoSections } from '~/lib/studio/sections'
 
 describe('post manifest', () => {
-  it('declares the twelve effects', () => {
-    expect(POST_EFFECTS).toHaveLength(12)
+  it('declares the thirteen effects', () => {
+    expect(POST_EFFECTS).toHaveLength(13)
   })
 
   it('orders every effect exactly once in the chain', () => {
@@ -69,7 +69,7 @@ describe('post panel shape', () => {
     expect(sections.map(s => s.title)).toEqual(['Effects'])
     expect(sections[0]!.controls).toEqual([])          // the parent is a container only
     expect(sections[0]!.sections.map(s => s.title)).toEqual([
-      'Bloom', 'Color', 'Duotone', 'Chroma', 'Blur', 'Film',
+      'Bloom', 'Color', 'Duotone', 'Chroma', 'Blur', 'Distort', 'Film',
       'Halftone', 'Dot screen', 'Glitch', 'Grain', 'Vignette',
     ])
   })
