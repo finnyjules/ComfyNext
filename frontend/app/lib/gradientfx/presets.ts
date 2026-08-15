@@ -10,7 +10,7 @@
  * "aurora" / "frosted" are deliberately NOT presets — they're prompt recipes
  * (mesh + palette, any preset + focus.blur) the model composes from these.
  */
-import { defaultConfig, liquidConfig, liquidPresetConfig, meshConfig, rippleConfig, stackConfig } from './randomize'
+import { liquidConfig, liquidPresetConfig, meshConfig, rippleConfig, stackConfig, stripeConfig } from './randomize'
 import { AUTHORED_PRESETS } from './presetConfigs'
 import { makeRng, randomSeed } from './rng'
 import { cloneConfig, ensureConfigDefaults, type GradientConfig } from './types'
@@ -31,7 +31,7 @@ const BUILDERS: Record<GradientPresetName, (seed: string) => GradientConfig> = {
   ripple: s => rippleConfig(s),
   stack: s => stackConfig(s),
   mesh: s => meshConfig(s),
-  linear: s => defaultConfig(s),
+  linear: s => stripeConfig(s),
 }
 
 /** Offered preset names = the fallback builders ∪ any user-authored-only styles

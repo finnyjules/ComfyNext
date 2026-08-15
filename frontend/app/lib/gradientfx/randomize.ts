@@ -5,7 +5,8 @@ import { buildMeshPoints, defaultMesh, recolorMeshPoints } from './mesh'
 import { hslToRgb, rgbToHex } from './ramp'
 import { makeRng, randomSeed, type Rng } from './rng'
 import {
-  BLEND_MODES, DEFAULT_CENTER, DEFAULT_FLOW, DEFAULT_LIGHT, DIRECTIONS, LAYOUTS, MAPPINGS, SHAPE_KINDS, cloneConfig,
+  BLEND_MODES, DEFAULT_CENTER, DEFAULT_FLOW, DEFAULT_LIGHT, DIRECTIONS, LAYOUTS, MAPPINGS, RAMP_DEFAULTS, SHAPE_KINDS,
+  cloneConfig, ensureConfigDefaults,
   type CenterOffset, type ColorConfig, type ColorStop, type FlowConfig, type GradientConfig, type LayerConfig,
   type LayoutKind, type LightConfig, type MeshConfig, type ShapeConfig,
 } from './types'
@@ -331,8 +332,9 @@ export function liquidPresetConfig(name: LiquidPreset, seed = randomSeed()): Gra
   }
 }
 
-/** A sensible default config (used for a brand-new node before any randomize). */
-export function defaultConfig(seed = randomSeed()): GradientConfig {
+/** The stripe archetype — the historical default (staggered full-height bands).
+ *  Kept as its own builder because the `linear` PRESET points here. */
+export function stripeConfig(seed = randomSeed()): GradientConfig {
   return {
     seed,
     post: { ...DEFAULT_POST },
@@ -350,6 +352,22 @@ export function defaultConfig(seed = randomSeed()): GradientConfig {
     motion: { tracks: [], duration: 4, fps: 30, size: 1080 },
     locks: {},
   }
+}
+
+/** New-document default: a plain two/three-stop Linear ramp. */
+export function defaultConfig(seed = randomSeed()): GradientConfig {
+  const c = stripeConfig(seed)
+  c.canvas.layout = 'ramp'
+  c.canvas.margin = 0
+  c.layers = [c.layers[0]!]
+  c.layers[0]!.ramp = { ...RAMP_DEFAULTS, angle: 90 }
+  c.layers[0]!.color.stops = [
+    { color: '#5b8def', pos: 0 },
+    { color: '#a06bf0', pos: 0.5 },
+    { color: '#ef6ba0', pos: 1 },
+  ]
+  c.layers[0]!.color.mapping = 'across'
+  return ensureConfigDefaults(c)
 }
 
 /** Fully random config from a seed (deterministic). */

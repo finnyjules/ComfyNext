@@ -1,16 +1,23 @@
 import { describe, it, expect } from 'vitest'
 import { animatableTargets, applyMotion } from '../../app/lib/gradientfx/motion'
-import { defaultConfig } from '../../app/lib/gradientfx/randomize'
+import { defaultConfig, stripeConfig } from '../../app/lib/gradientfx/randomize'
 import { ensureConfigDefaults, resolvePost } from '../../app/lib/gradientfx/types'
 import { getByPath } from '../../app/lib/studio/path'
 
 /**
- * Raw defaultConfig() leaves cfg.focus and layers[0].mesh undefined; the real
+ * Raw stripeConfig() leaves cfg.focus and layers[0].mesh undefined; the real
  * app always normalizes through ensureConfigDefaults on load (see
  * gradientfx-controls.unit.spec.ts's cfgWithLayout helper). Build every test
  * config the same way so focus.* and mesh.* paths actually resolve.
+ *
+ * stripeConfig, not defaultConfig: defaultConfig now opens a brand-new document
+ * on the flat Linear ramp (`layout:'ramp'`, Task 7), which has no Shape/Relief
+ * group at all, so it can't characterize the shape/relief motion targets this
+ * file pins below. stripeConfig is the historical stripe-shaped default
+ * (byte-identical to what defaultConfig used to return) that still exercises
+ * them.
  */
-const cfg = () => ensureConfigDefaults(defaultConfig() as any) as any
+const cfg = () => ensureConfigDefaults(stripeConfig() as any) as any
 
 describe('animatableTargets', () => {
   it('returns absolute paths that resolve on the config', () => {

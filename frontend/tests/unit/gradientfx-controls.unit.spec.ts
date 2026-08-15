@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { gradientAgentControls } from '../../app/lib/gradientfx/agentControls'
-import { defaultConfig } from '../../app/lib/gradientfx/randomize'
+import { defaultConfig, stripeConfig } from '../../app/lib/gradientfx/randomize'
 import { makeConfigParams } from '../../app/lib/agent/configParams'
 import { ensureConfigDefaults } from '~/lib/gradientfx/types'
 import { GRADIENT_CONTROLS, GRADIENT_SECTIONS, visibleGradientControls } from '../../app/lib/gradientfx/controls'
@@ -20,10 +20,18 @@ import { GRADIENT_CONTROLS, GRADIENT_SECTIONS, visibleGradientControls } from '.
  * the random seed has no effect on gradientAgentControls's output (it never
  * reads cfg.seed, and every slider's `default` field is hardcoded to 0), so the
  * snapshots below are deterministic despite the random seed.
+ *
+ * `defaultConfig` now opens a brand-new document on the simple Linear ramp
+ * (`layout:'ramp'`), not the stripe archetype — see Task 7. The per-layout
+ * characterizations below (`linear`/`radial`/`orbit`/`liquid`/`mesh`) build off
+ * `stripeConfig` instead, the historical stripe-shaped default that's still
+ * byte-identical to what `defaultConfig` used to return, so those snapshots stay
+ * pinned. `defaultConfig` itself is characterized separately, under its own
+ * `layout:'ramp'`, in the `ramp default` block below.
  */
 
 function cfgWithLayout(layout: string) {
-  const c: any = defaultConfig()
+  const c: any = stripeConfig()
   c.canvas.layout = layout
   // Match how the app actually loads a config: loadConfig() always normalizes
   // through ensureConfigDefaults, which backfills focus/center/light/flow and
@@ -67,6 +75,29 @@ describe('gradientAgentControls characterization', () => {
     expect(colours).toHaveLength(stops)
     expect(colours[0]!.key).toBe('layer.color.stops.0.color')
     expect(colours[0]!.label).toBe('Colour 1')
+  })
+})
+
+describe('gradientAgentControls characterization — ramp default (Task 7)', () => {
+  // A brand-new document opens on defaultConfig(), which is now `layout:'ramp'`.
+  // This pins the intended vocabulary move: the ramp is flat, so Shape/Relief
+  // drop out, and the simple axis controls (angle, repeat/falloff) take over.
+  it('emits stable full specs for the ramp default', () => {
+    expect(gradientAgentControls(defaultConfig() as any)).toMatchSnapshot()
+  })
+
+  it('shows the ramp axis + repeat/falloff controls', () => {
+    const keys = gradientAgentControls(defaultConfig() as any).map((c) => c.key)
+    expect(keys).toContain('layer.ramp.angle')
+    expect(keys).toContain('layer.color.repeat')
+    expect(keys).toContain('layer.color.falloff')
+  })
+
+  it('withholds Shape and Relief controls — a ramp is flat', () => {
+    const keys = gradientAgentControls(defaultConfig() as any).map((c) => c.key)
+    for (const c of GRADIENT_CONTROLS) {
+      if (c.group === 'Shape' || c.group === 'Relief') expect(keys, c.key).not.toContain(c.key)
+    }
   })
 })
 

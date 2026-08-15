@@ -11,7 +11,7 @@ import { makeConfigParams } from '~/lib/agent/configParams'
 import { makeRng, mulberry32, xmur3 } from '~/lib/gradientfx/rng'
 import { buildField } from '~/lib/gradientfx/field'
 import { buildRampLut, hexToRgb, hslToRgb, rgbToHsl } from '~/lib/gradientfx/ramp'
-import { LIQUID_PRESETS, buildConfig, defaultConfig, liquidConfig, liquidPresetConfig, reroll, rippleConfig, stackConfig } from '~/lib/gradientfx/randomize'
+import { LIQUID_PRESETS, buildConfig, defaultConfig, liquidConfig, liquidPresetConfig, reroll, rippleConfig, stackConfig, stripeConfig } from '~/lib/gradientfx/randomize'
 import { applyMotion, trackValue } from '~/lib/gradientfx/motion'
 import type { MotionTrack, ShapeConfig } from '~/lib/gradientfx/types'
 
@@ -276,12 +276,15 @@ describe('gradientfx focus / soft-focus post stage', () => {
     expect(DEFAULT_FOCUS.shape).toBe('off')
   })
   it('ensureConfigDefaults backfills focus, merging a partial (agent-patched) object', () => {
-    const c = defaultConfig('#f1') as any
+    // stripeConfig, not defaultConfig: defaultConfig now runs ensureConfigDefaults
+    // internally (Task 7), so its focus is already backfilled — this test needs an
+    // un-normalized config to characterize the backfill itself.
+    const c = stripeConfig('#f1') as any
     expect(c.focus).toBeUndefined()
     ensureConfigDefaults(c)
     expect(c.focus).toEqual(DEFAULT_FOCUS)
     // partial focus (e.g. tuner set only blur) is completed, not clobbered
-    const c2 = defaultConfig('#f2') as any
+    const c2 = stripeConfig('#f2') as any
     c2.focus = { blur: 60 }
     ensureConfigDefaults(c2)
     expect(c2.focus.blur).toBe(60)
