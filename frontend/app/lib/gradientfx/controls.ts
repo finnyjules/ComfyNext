@@ -31,14 +31,22 @@ export type GradientControl = ControlSpec & {
  *  POST_SECTIONS (Bloom, Color, Duotone, ...) is appended so the shared post
  *  stack's sections land after Focus — see the `post` field below. */
 export const GRADIENT_SECTIONS = [
-  'Preset', 'Canvas', 'Colours', 'Flow', 'Liquid', 'Mesh', 'Shape', 'Relief', 'Layer', 'Focus',
+  'Preset', 'Canvas', 'Gradient', 'Colours', 'Flow', 'Liquid', 'Mesh', 'Shape', 'Relief', 'Layer', 'Focus',
   ...POST_SECTIONS,
 ] as const
 
 const isRadial = (c: GradientConfig) => c.canvas.layout === 'radial' || c.canvas.layout === 'orbit'
 const isLiquid = (c: GradientConfig) => c.canvas.layout === 'liquid'
 const isMesh = (c: GradientConfig) => c.canvas.layout === 'mesh'
-const isBanded = (c: GradientConfig) => !isLiquid(c) && !isMesh(c)
+const isSimple = (c: GradientConfig) =>
+  c.canvas.layout === 'ramp' || c.canvas.layout === 'radialRamp' || c.canvas.layout === 'conic'
+// Banded = the stripe/ring family only. Was `!isLiquid && !isMesh` (exclusion),
+// which would leak Shape/Relief/Margin onto the flat simple primitives.
+const isBanded = (c: GradientConfig) =>
+  c.canvas.layout === 'linear' || c.canvas.layout === 'radial' || c.canvas.layout === 'orbit' || c.canvas.layout === 'stack'
+// Center offset is used by the stripe polar layouts AND the simple radial/conic.
+const usesCenter = (c: GradientConfig) => isRadial(c) || c.canvas.layout === 'radialRamp' || c.canvas.layout === 'conic'
+const isRampLinear = (c: GradientConfig) => c.canvas.layout === 'ramp' || c.canvas.layout === 'conic'
 
 /** Mirrors agentControls.ts's helper exactly, including the inert `default: 0`. */
 function slider(
@@ -59,9 +67,21 @@ export const GRADIENT_CONTROLS: GradientControl[] = [
   { key: 'canvas.layout', label: 'Layout', kind: 'select', options: [...LAYOUTS], default: 'linear', group: 'Canvas', hint: 'Overall composition: linear/radial/orbit/stack/liquid/mesh' },
   slider('canvas.margin', 'Margin', 0, 0.45, 0.01, 'Canvas', undefined, { when: isBanded }),
   { key: 'canvas.background', label: 'Background', kind: 'color', default: '#000000', group: 'Canvas' },
-  slider('canvas.innerRadius', 'Inner radius', 0, 0.9, 0.01, 'Canvas', undefined, { when: isRadial }),
-  slider('canvas.center.x', 'Center X', -0.5, 0.5, 0.01, 'Canvas', undefined, { when: isRadial }),
-  slider('canvas.center.y', 'Center Y', -0.5, 0.5, 0.01, 'Canvas', undefined, { when: isRadial }),
+  slider('canvas.innerRadius', 'Inner radius', 0, 0.9, 0.01, 'Canvas', undefined, { when: usesCenter }),
+  slider('canvas.center.x', 'Center X', -0.5, 0.5, 0.01, 'Canvas', undefined, { when: usesCenter }),
+  slider('canvas.center.y', 'Center Y', -0.5, 0.5, 0.01, 'Canvas', undefined, { when: usesCenter }),
+
+  // --- Gradient axis (simple primitives: ramp / radialRamp / conic) ---------
+  slider('layer.ramp.angle', 'Angle', 0, 360, 1, 'Gradient', 'Direction of the ramp (linear) / start rotation (conic)', { when: isRampLinear }),
+  slider('layer.ramp.radius', 'Radius', 0.05, 2, 0.01, 'Gradient', 'Radial ramp size; 1 ≈ touches the frame edge', { when: (c) => c.canvas.layout === 'radialRamp' }),
+  { key: 'layer.ramp.shape', label: 'Radial shape', kind: 'select', options: ['circle', 'ellipse'], default: 'circle', group: 'Gradient', when: (c) => c.canvas.layout === 'radialRamp', hint: 'circle = aspect-corrected round; ellipse = stretched to the frame' } as GradientControl,
+  slider('layer.ramp.sweep', 'Sweep', 20, 360, 1, 'Gradient', 'Conic arc in degrees', { when: (c) => c.canvas.layout === 'conic' }),
+  { key: 'layer.ramp.closeLoop', label: 'Close loop', kind: 'switch', default: false, group: 'Gradient', when: (c) => c.canvas.layout === 'conic', hint: 'Wrap the ramp so the first and last colour meet seamlessly' } as GradientControl,
+
+  // --- Repeat / Falloff (every layout) --------------------------------------
+  { key: 'layer.color.repeat', label: 'Repeat', kind: 'select', options: ['once', 'mirror', 'tile'], default: 'once', group: 'Layer', hint: 'Repeat the ramp: once / mirror (reflect) / tile ×N' } as GradientControl,
+  slider('layer.color.repeatCount', 'Repeat count', 2, 16, 1, 'Layer', undefined, { when: (c) => (c.layers?.[0]?.color?.repeat ?? 'once') === 'tile' }),
+  { key: 'layer.color.falloff', label: 'Falloff', kind: 'select', options: ['linear', 'ease', 'smooth'], default: 'linear', group: 'Layer', hint: 'Ramp interpolation curve — smooth kills banding on long ramps' } as GradientControl,
 
   // --- Colours: runtime cardinality, synthesized in visibleGradientControls --
 
