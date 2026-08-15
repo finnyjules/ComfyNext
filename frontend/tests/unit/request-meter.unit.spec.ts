@@ -223,3 +223,18 @@ describe('preflightMeter', () => {
     }
   })
 })
+
+// Review escalation 2026-08-14: unknown owners REFUSE — only allowlisted
+// personal-LoRA orgs get category pricing, so a typo'd public org can never
+// silently underprice as an 8cr LoRA render.
+describe('resolveCredits owner allowlist (fail-closed)', () => {
+  it('allowlisted personal org prices as LoRA category', () => {
+    expect(resolveCredits('finnyjules/jules-jene')).toBe(8)
+  })
+  it("typo'd public org refuses instead of pricing as LoRA", () => {
+    expect(resolveCredits('black-forset-labs/flux-dev')).toBeNull()
+  })
+  it('never-seen owner refuses', () => {
+    expect(resolveCredits('stranger/some-model')).toBeNull()
+  })
+})

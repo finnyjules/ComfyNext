@@ -21,7 +21,7 @@
  */
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { deployMode } from './deployMode'
-import { costForModel, LORA_RENDER_CREDITS, MODEL_COSTS } from './priceBook'
+import { costForModel, LORA_RENDER_CREDITS, LORA_SLUG_OWNERS, MODEL_COSTS } from './priceBook'
 import { getLiveLedger } from './ledgerLive'
 
 export interface MeterContext { userId: string; priceHintCredits?: number }
@@ -81,11 +81,10 @@ export function resolveCredits(model: string, hint?: number): number | null {
 
   const owner = model.split('/')[0]
   const hasOwnerSegment = owner.length > 0 && owner !== model
-  if (hasOwnerSegment) {
-    const knownPublicOrgs = new Set(Object.keys(MODEL_COSTS).map((slug) => slug.split('/')[0]))
-    if (!knownPublicOrgs.has(owner)) return LORA_RENDER_CREDITS
-  }
-
+  if (hasOwnerSegment && LORA_SLUG_OWNERS.includes(owner)) return LORA_RENDER_CREDITS
+  // Unknown owner that is neither a booked public org nor an allowlisted
+  // personal-LoRA org: REFUSE (null). A typo'd public slug must fail loudly
+  // upstream rather than silently underprice as an 8cr LoRA render.
   return null
 }
 

@@ -19,6 +19,15 @@ const BASE_RENDER_CREDITS = 1
 // NOTE: no commas in trailing comments on `export const` lines — mlly's regex
 // export scanner splits declarations on commas, so ", 2× markup" registered a
 // phantom auto-import named `2` and broke the entire Nitro dev build.
+/**
+ * Owner orgs whose slugs are PERSONAL fine-tunes priced at the LoRA category.
+ * Explicit allowlist — review escalation 2026-08-14: inferring "not a known
+ * public org ⇒ LoRA" silently underpriced typo'd public slugs at 8cr. Any
+ * owner in neither MODEL_COSTS nor this list now REFUSES (fail closed).
+ * Hosted per-user fine-tune orgs join this list when that feature lands.
+ */
+export const LORA_SLUG_OWNERS = ['finnyjules']
+
 export const LORA_RENDER_CREDITS = 8      // ~$0.04 observed median — 2× markup
 export const RESTYLE_LORA_CREDITS = 18    // ~$0.09 observed median — 2× markup
 
