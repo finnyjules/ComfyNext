@@ -97,6 +97,13 @@ export interface ModelCost {
   note?: string
 }
 
+// Single source of truth for the voice-clone slug — trainingProviders.ts and
+// voice-clone/start.post.ts both import this instead of hand-typing the
+// string a second time (the old duplication drifted from a comment alone).
+// This constant and the 'minimax/voice-cloning' row below MUST stay the same
+// string; a unit test in training-meter.unit.spec.ts asserts that.
+export const VOICE_CLONE_MODEL = 'minimax/voice-cloning'
+
 export const MODEL_COSTS: Record<string, ModelCost> = {
   // — image generation —
   'black-forest-labs/flux-schnell': { usd: 0.003, credits: 1, confidence: 'verified' },

@@ -15,8 +15,12 @@
  */
 import { assertRateLimit } from '../../lib/rateLimit'
 import { preflightMeter } from '../../utils/requestMeter'
+import { VOICE_CLONE_MODEL } from '../../utils/priceBook'
 
-export const CLONE_MODEL = 'minimax/voice-cloning'
+// Re-exported (not re-declared) so status.get.ts's `import { CLONE_MODEL }
+// from './start.post'` keeps working — VOICE_CLONE_MODEL in priceBook.ts is
+// now the single source of truth for this slug (see trainingProviders.ts).
+export const CLONE_MODEL = VOICE_CLONE_MODEL
 
 export default defineEventHandler(async (event) => {
   assertRateLimit(event, 'voice-clone', 3, 600_000)

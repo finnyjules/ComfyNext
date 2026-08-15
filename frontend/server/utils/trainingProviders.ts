@@ -15,7 +15,9 @@ import os from 'node:os'
 import type { TrainingJob } from './trainingQueue'
 import type { ProviderResult, RunnerProvider } from './trainingRunner'
 import { linkTrainedCharacter } from './characterLink'
-import { preflightMeterFor } from './requestMeter'
+import { MeterRefusalError, preflightMeterFor } from './requestMeter'
+import { deployMode } from './deployMode'
+import { VOICE_CLONE_MODEL } from './priceBook'
 
 const exec = promisify(execCb)
 
@@ -202,9 +204,6 @@ function safeVoiceId(id: string): string | null {
   return /^[a-zA-Z0-9_-]+$/.test(s) ? s : null
 }
 
-/** Matches the MODEL_COSTS key in priceBook.ts — keep in sync. */
-const VOICE_MODEL = 'minimax/voice-cloning'
-
 async function startVoice(job: TrainingJob, token: string): Promise<ProviderResult> {
   const p = job.params as Record<string, any>
   const input: Record<string, any> = {
@@ -214,7 +213,7 @@ async function startVoice(job: TrainingJob, token: string): Promise<ProviderResu
     need_noise_reduction: !!p.needNoiseReduction,
     need_volume_normalization: !!p.needVolumeNormalization,
   }
-  const res = await fetch(`${REPLICATE}/models/${VOICE_MODEL}/predictions`, {
+  const res = await fetch(`${REPLICATE}/models/${VOICE_CLONE_MODEL}/predictions`, {
     method: 'POST',
     headers: authHeaders(token, true),
     body: JSON.stringify({ input }),
@@ -294,27 +293,67 @@ async function pollVoice(job: TrainingJob, token: string): Promise<ProviderResul
  * that queued it (server/api/training-queue/index.post.ts), is threaded
  * through explicitly via preflightMeterFor instead.
  *
- * Local mode never sets job.userId, so an absent userId means "don't meter
- * this job" — guarded below rather than calling preflightMeterFor with an
- * empty string. Pricing comes from MODEL_COSTS via resolveCredits inside
- * preflightMeterFor: the LoRA family maps to one of the 'ostris/*-lora-
- * trainer' rows (600cr, matching LoraTrainingNode's graph-table price) and
- * voice maps to 'minimax/voice-cloning'. A slug the book doesn't recognize
- * REFUSES (preflightMeterFor throws) rather than inventing a fallback price.
+ * OWNERSHIP POLICY (mode-based, not key-presence-based — review escalation
+ * 2026-08-15): job.userId is `string | null | undefined` on the TrainingJob
+ * type, but JSON.stringify DROPS keys whose value is `undefined` — so BOTH a
+ * legacy job persisted before userId existed on the record AND a job
+ * enqueued in local mode (which explicitly writes `userId: null`) end up
+ * indistinguishable on disk from "the key is simply absent". A truthy check
+ * on job.userId alone can't tell "no owner because local mode" from "no
+ * owner because hosted mode lost the attribution" — and a hosted server
+ * restarting with queued/legacy jobs like that would run them for free
+ * (600cr of hardware time, unattributed). So the gate is deployMode(), not
+ * job.userId's presence:
+ *   - hosted + job.userId is NOT a string (undefined, null, or missing) →
+ *     fail closed. Do not call the provider at all — refuse before any
+ *     hardware spend, for ANY job without an owner, legacy record or
+ *     local-enqueued leftover alike.
+ *   - hosted + job.userId IS a string → meter normally via preflightMeterFor.
+ *   - local mode → always unmetered (preflightMeterFor's own deployMode()
+ *     check also returns null here, so this is belt-and-suspenders).
+ * Pricing comes from MODEL_COSTS via resolveCredits inside preflightMeterFor:
+ * the LoRA family maps to one of the 'ostris/*-lora-trainer' rows (600cr,
+ * matching LoraTrainingNode's graph-table price) and voice maps to
+ * VOICE_CLONE_MODEL ('minimax/voice-cloning'). A slug the book doesn't
+ * recognize REFUSES (preflightMeterFor throws) rather than inventing a
+ * fallback price.
  *
  * Settle only fires once the provider has confirmed the job actually
  * started (a replicateId came back) — a start() that throws before that
  * (network error, bad request, Replicate rejection, etc.) leaves the ticket
  * unsettled, so nothing is charged for a job that never started. A refusal
- * (e.g. insufficient credits) propagates out of start(), which the runner's
- * existing tickQueue catch already turns into a 'failed' job carrying the
- * refusal's message — see trainingRunner.ts's `try { ... } catch` around
- * provider.start(job) in its queued-job loop.
+ * (e.g. insufficient credits, or the ownership guard above) propagates out
+ * of start(), which the runner's existing tickQueue catch already turns
+ * into a 'failed' job carrying the refusal's message — see
+ * trainingRunner.ts's `try { ... } catch` around provider.start(job) in its
+ * queued-job loop.
  */
 async function startWithMetering(job: TrainingJob, token: string): Promise<ProviderResult> {
-  const model = job.kind === 'voice' ? VOICE_MODEL : loraTrainerModel((job.params as Record<string, any>)?.family)
+  const model = job.kind === 'voice' ? VOICE_CLONE_MODEL : loraTrainerModel((job.params as Record<string, any>)?.family)
+  const hasOwner = typeof job.userId === 'string'
 
-  const ticket = job.userId ? await preflightMeterFor(job.userId, model) : null
+  if (deployMode() === 'hosted' && !hasOwner) {
+    throw new Error('training requires a signed-in account — re-queue this training')
+  }
+
+  let ticket: Awaited<ReturnType<typeof preflightMeterFor>> = null
+  if (hasOwner) {
+    try {
+      ticket = await preflightMeterFor(job.userId as string, model)
+    } catch (err) {
+      // Surface the {required, available} numbers in the message itself —
+      // the runner's failed-job record only carries err.message (see the
+      // doc above), so a bare 'insufficient credits' string loses the
+      // actionable detail that was right there on the refusal.
+      if (err instanceof MeterRefusalError) {
+        const data = err.data as { required?: number; available?: number } | undefined
+        if (data && typeof data.required === 'number' && typeof data.available === 'number') {
+          throw new Error(`insufficient credits — need ${data.required}, have ${data.available}`)
+        }
+      }
+      throw err
+    }
+  }
 
   const result = job.kind === 'voice' ? await startVoice(job, token) : await startLora(job, token)
 

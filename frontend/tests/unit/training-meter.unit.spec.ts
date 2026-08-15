@@ -14,6 +14,13 @@
  *     completion — hardware time is consumed regardless of final quality.
  *     Local-mode jobs (no userId) must never touch the ledger at all.
  *
+ * OWNERSHIP GUARD (fix-wave, 2026-08-15): the skip above is gated on
+ * deployMode(), not on job.userId's mere presence — JSON.stringify drops
+ * `undefined` keys, so a legacy pre-deploy job and a local-mode job (which
+ * writes an explicit `userId: null`) are indistinguishable on disk from "key
+ * absent". In hosted mode ANY job without a string userId now refuses before
+ * the provider is ever called, instead of quietly running for free.
+ *
  * This file was written first per the task's TDD requirement — on the
  * unmodified tree (before this task's edits) it fails because
  * preflightMeterFor doesn't exist yet and trainingProviders.ts's start()
@@ -30,7 +37,7 @@ import {
   MeterRefusalError,
   preflightMeterFor,
 } from '~~/server/utils/requestMeter'
-import { MODEL_COSTS } from '~~/server/utils/priceBook'
+import { MODEL_COSTS, VOICE_CLONE_MODEL } from '~~/server/utils/priceBook'
 import { createReplicateProvider } from '~~/server/utils/trainingProviders'
 import type { TrainingJob } from '~~/server/utils/trainingQueue'
 import { createJobStore } from '~~/server/utils/trainingQueue'
@@ -171,9 +178,8 @@ function stubVoiceStartFetches(predictionId = 'pred_abc') {
 }
 
 describe('trainingProviders.createReplicateProvider().start — debit-at-start metering', () => {
-  it('local-mode job (no userId): starts on Replicate but never touches the ledger', async () => {
-    setHosted() // ledger IS reachable — proves the skip is the userId guard, not deployMode
-    fakeLedger.getAvailable.mockResolvedValue(10_000)
+  it('local mode, no userId: runs unmetered (provider called, ledger never touched)', async () => {
+    setLocal()
     stubLoraStartFetches('train_local')
 
     const provider = createReplicateProvider(() => 'tok')
@@ -181,6 +187,37 @@ describe('trainingProviders.createReplicateProvider().start — debit-at-start m
 
     expect(result.replicateId).toBe('train_local')
     expect(fakeLedger.getAvailable).not.toHaveBeenCalled()
+    expect(fakeLedger.debit).not.toHaveBeenCalled()
+  })
+
+  it('hosted mode, absent userId (legacy/keyless job): refuses BEFORE touching Replicate, never starts the provider', async () => {
+    setHosted() // ledger IS reachable — proves the refusal is deployMode-driven, not a ledger failure
+    fakeLedger.getAvailable.mockResolvedValue(10_000)
+    const fetchSpy = vi.fn(async () => res(200, {}))
+    vi.stubGlobal('fetch', fetchSpy)
+
+    const provider = createReplicateProvider(() => 'tok')
+    await expect(provider.start(job({ userId: undefined }))).rejects.toMatchObject({
+      message: expect.stringContaining('re-queue this training'),
+    })
+
+    expect(fetchSpy).not.toHaveBeenCalled() // provider.start's Replicate calls never fired
+    expect(fakeLedger.getAvailable).not.toHaveBeenCalled()
+    expect(fakeLedger.debit).not.toHaveBeenCalled()
+  })
+
+  it('hosted mode, explicit-null userId (local-mode-shaped record replayed on a hosted server): same refusal as absent', async () => {
+    setHosted()
+    fakeLedger.getAvailable.mockResolvedValue(10_000)
+    const fetchSpy = vi.fn(async () => res(200, {}))
+    vi.stubGlobal('fetch', fetchSpy)
+
+    const provider = createReplicateProvider(() => 'tok')
+    await expect(provider.start(job({ userId: null }))).rejects.toMatchObject({
+      message: expect.stringContaining('re-queue this training'),
+    })
+
+    expect(fetchSpy).not.toHaveBeenCalled()
     expect(fakeLedger.debit).not.toHaveBeenCalled()
   })
 
@@ -226,14 +263,16 @@ describe('trainingProviders.createReplicateProvider().start — debit-at-start m
     )
   })
 
-  it('insufficient credits: refuses BEFORE touching Replicate, throws with "insufficient credits" (what tickQueue records on the failed job)', async () => {
+  it('insufficient credits: refuses BEFORE touching Replicate, message carries the required/available numbers (what tickQueue records on the failed job — it only reads err.message)', async () => {
     setHosted()
-    fakeLedger.getAvailable.mockResolvedValue(0)
+    fakeLedger.getAvailable.mockResolvedValue(37)
     const fetchSpy = vi.fn(async () => res(200, {}))
     vi.stubGlobal('fetch', fetchSpy)
 
     const provider = createReplicateProvider(() => 'tok')
-    await expect(provider.start(job({ userId: 'u1' }))).rejects.toMatchObject({ message: 'insufficient credits' })
+    await expect(provider.start(job({ userId: 'u1' }))).rejects.toMatchObject({
+      message: 'insufficient credits — need 600, have 37',
+    })
 
     expect(fetchSpy).not.toHaveBeenCalled() // never reached Replicate — no hardware spend happened
     expect(fakeLedger.debit).not.toHaveBeenCalled()
@@ -282,5 +321,14 @@ describe('trainingQueue userId field (threaded from enqueue to the runner)', () 
     const store = createJobStore(path.join(dir, 'jobs.json'))
     const j = await store.add(sampleInput)
     expect(j.userId).toBeNull()
+  })
+})
+
+// --- priceBook.ts: VOICE_CLONE_MODEL / MODEL_COSTS parity ------------------
+
+describe('priceBook VOICE_CLONE_MODEL', () => {
+  it('names a row that actually exists in MODEL_COSTS (single source of truth for the slug)', () => {
+    expect(MODEL_COSTS[VOICE_CLONE_MODEL]).toBeDefined()
+    expect(VOICE_CLONE_MODEL).toBe('minimax/voice-cloning')
   })
 })
