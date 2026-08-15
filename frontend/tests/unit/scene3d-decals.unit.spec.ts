@@ -5,8 +5,9 @@ import {
   DECAL_DEFAULTS, type DecalObject,
 } from '~/lib/scene3d/config'
 import {
-  eulerFromNormal, decalKeyFor, DecalTextureRegistry, DECAL_TEX_CACHE_MAX,
+  eulerFromNormal, decalKeyFor, DecalTextureRegistry, DECAL_TEX_CACHE_MAX, canvasFontPlanFor,
 } from '~/lib/scene3d/decals'
+import { setLibraryFaceResolver } from '~/lib/scene3d/outlines'
 
 function docWith(objects: any[]) {
   return JSON.stringify({ ...JSON.parse(serializeDoc(defaultDoc())), objects })
@@ -209,5 +210,38 @@ describe('scene3d decals — texture registry (LRU + refcount)', () => {
   it('the shared registry is bounded', () => {
     expect(DECAL_TEX_CACHE_MAX).toBeLessThanOrEqual(64)
     expect(DECAL_TEX_CACHE_MAX).toBeGreaterThan(0)
+  })
+})
+
+describe('decal canvas font plan', () => {
+  it('google token routes to the css2 path with its weight', () => {
+    expect(canvasFontPlanFor('google:Space Grotesk@500'))
+      .toEqual({ kind: 'google', family: 'Space Grotesk', weight: 500 })
+    expect(canvasFontPlanFor('google:Inter'))
+      .toEqual({ kind: 'google', family: 'Inter', weight: 700 })
+  })
+
+  it('library token routes to a file plan via the installed resolver', () => {
+    setLibraryFaceResolver((family, weight) => (family === 'Neue Montreal' ? `nm-${weight ?? 400}` : null))
+    try {
+      expect(canvasFontPlanFor('local:Neue Montreal@700')).toEqual({
+        kind: 'file',
+        cssFamily: 'decal-local_Neue_Montreal_700',
+        url: '/api/library-font/nm-700',
+      })
+    } finally { setLibraryFaceResolver(null) }
+  })
+
+  it('library token with no resolver (or unknown family) falls back to Inter', () => {
+    expect(canvasFontPlanFor('local:Ghost Family')).toEqual({ kind: 'google', family: 'Inter', weight: 700 })
+  })
+
+  it('pinned font URL routes to a file plan keyed by the sanitized url', () => {
+    const plan = canvasFontPlanFor('/fonts/SpaceGrotesk.ttf')
+    expect(plan).toEqual({ kind: 'file', cssFamily: 'decal-_fonts_SpaceGrotesk_ttf', url: '/fonts/SpaceGrotesk.ttf' })
+  })
+
+  it('garbage falls back to Inter', () => {
+    expect(canvasFontPlanFor('not a font token')).toEqual({ kind: 'google', family: 'Inter', weight: 700 })
   })
 })

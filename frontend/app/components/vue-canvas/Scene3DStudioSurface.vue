@@ -815,16 +815,23 @@ const decalColor = computed<string>({
   get: () => (selectedDecal.value?.content.type === 'text' ? selectedDecal.value.content.color : DECAL_DEFAULTS.color),
   set: (v) => { const c = selectedDecal.value?.content; if (c?.type === 'text') c.color = v },
 })
-// Decal text is rasterised to a canvas by decals.ts, which resolves ONLY the
-// `google:Fam@W` token scheme (parseFontToken falls back to Inter/700 for
-// anything else). So a pinned/library pick is refused rather than written: a
-// silently-Inter render would be a control that lies. FontPicker has no
-// google-only mode today — the section states the restriction inline instead.
+// Decal text is rasterised to a canvas by decals.ts, which routes every token
+// kind: google → css2 stylesheet, library/pinned → FontFace from the font
+// file (canvasFontPlanFor). Mirrors onFontPick's per-kind handling so the
+// decal Font control accepts exactly what the 3D Text one does.
 function onDecalFontPick(payload: { kind: 'google'; family: string } | { kind: 'pinned'; value: string } | { kind: 'library'; family: string; foundry: string }) {
   const c = selectedDecal.value?.content
   if (c?.type !== 'text') return
-  if (payload.kind !== 'google') {
-    console.warn('[scene3d-studio] decal labels render Google fonts only — pick ignored', payload)
+  if (payload.kind === 'library') {
+    // Same keep-the-weight rule as onFontPick: a re-pick of the same family
+    // keeps the chosen weight; resolveLibraryFace snaps to a real face.
+    const existing = parseLibraryFontValue(c.font)
+    const face = resolveLibraryFace(payload.family, existing?.weight ?? 400, existing?.italic ?? false)
+    c.font = libraryToken(payload.family, face?.weight, face?.italic)
+    return
+  }
+  if (payload.kind === 'pinned') {
+    c.font = payload.value
     return
   }
   // Same keep-the-weight-on-a-re-pick rule as onFontPick above.
@@ -4368,7 +4375,6 @@ async function onClose() {
                 :show-variable-toggle="false"
                 @select="onDecalFontPick"
               />
-              <p class="mt-1 text-[11px] text-white/35">Decal labels use Google fonts.</p>
             </div>
             <div class="flex items-center justify-between">
               <span class="text-[11px] text-white/55">Color</span>

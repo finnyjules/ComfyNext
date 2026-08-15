@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { DecalGeometry } from 'three/examples/jsm/geometries/DecalGeometry.js'
 import type { DecalContent, DecalObject, Vec3 } from './config'
-import { parseGoogleFontValue } from './outlines'
+import { parseGoogleFontValue, parseLibraryFontValue, fontSourceUrl } from './outlines'
 import { quickGoogleCssUrl } from '~/data/google-fonts'
 
 /** Projector orientation for a decal: +Z looks along the outward surface
@@ -133,14 +133,56 @@ function loadImageTexture(filename: string): Promise<THREE.Texture> {
   })
 }
 
-// Reuses outlines.ts's parseGoogleFontValue for the `google:Fam@W` token
-// (it already handles a missing/malformed weight suffix); a non-google font
-// value or a parse miss falls back to Inter/700, matching the DECAL_DEFAULTS
-// font.
-function parseFontToken(font: string): { family: string; weight: number } {
-  const parsed = parseGoogleFontValue(font)
-  if (parsed) return { family: parsed.family, weight: parsed.weight ?? 700 }
-  return { family: 'Inter', weight: 700 }
+/** How a decal label's font token reaches the 2D canvas. Two routes:
+ *  - `google` — inject the css2 stylesheet and draw with the real family name
+ *    (weight matters: css2 serves per-weight faces).
+ *  - `file` — a font FILE the browser knows nothing about (a `local:` Pangram
+ *    library token resolved to `/api/library-font/<id>`, or a pinned
+ *    AVAILABLE_FONTS url). Registered via `FontFace` under a synthetic
+ *    `cssFamily` derived from the token — synthetic because the file IS one
+ *    concrete face; drawing it under its real family name at weight 400 could
+ *    collide with a same-named css2 registration, and drawing at the token's
+ *    weight would make the canvas synthetically re-bold an already-bold file.
+ *  Anything unresolvable (library token with no resolver/unknown family,
+ *  garbage) falls back to Inter/700, matching DECAL_DEFAULTS.font. Pure —
+ *  vitest covers the routing; only ensureCanvasFont/ensureFileFont touch the DOM. */
+export function canvasFontPlanFor(font: string):
+  | { kind: 'google'; family: string; weight: number }
+  | { kind: 'file'; cssFamily: string; url: string } {
+  const google = parseGoogleFontValue(font)
+  if (google) return { kind: 'google', family: google.family, weight: google.weight ?? 700 }
+  const lib = parseLibraryFontValue(font)
+  if (lib) {
+    const url = fontSourceUrl(font)
+    // fontSourceUrl echoes the token back when the library resolver isn't
+    // installed or doesn't know the family — that's the fall-back signal.
+    if (url !== font) return { kind: 'file', cssFamily: sanitizeCssFamily(font), url }
+    return { kind: 'google', family: 'Inter', weight: 700 }
+  }
+  // Pinned AVAILABLE_FONTS entries are plain font-file urls.
+  if (font.startsWith('/') || font.startsWith('http')) {
+    return { kind: 'file', cssFamily: sanitizeCssFamily(font), url: font }
+  }
+  return { kind: 'google', family: 'Inter', weight: 700 }
+}
+
+function sanitizeCssFamily(token: string): string {
+  return `decal-${token.replace(/^local:/, 'local_').replace(/[^A-Za-z0-9_-]+/g, '_')}`
+}
+
+// One FontFace registration per cssFamily, shared for the page's lifetime.
+// Failures evict so a transient 404 (e.g. library catalog still loading)
+// retries on the next label render instead of caching the miss forever.
+const fileFontLoads = new Map<string, Promise<void>>()
+async function ensureFileFont(cssFamily: string, url: string): Promise<void> {
+  let p = fileFontLoads.get(cssFamily)
+  if (!p) {
+    const face = new FontFace(cssFamily, `url("${url}")`)
+    p = face.load().then((loaded) => { document.fonts.add(loaded) })
+    fileFontLoads.set(cssFamily, p)
+    p.catch(() => fileFontLoads.delete(cssFamily))
+  }
+  return p
 }
 
 async function ensureCanvasFont(family: string, weight: number): Promise<void> {
@@ -158,8 +200,24 @@ async function ensureCanvasFont(family: string, weight: number): Promise<void> {
 }
 
 async function makeTextDecalTexture(content: Extract<DecalContent, { type: 'text' }>): Promise<THREE.Texture> {
-  const { family, weight } = parseFontToken(content.font)
-  await ensureCanvasFont(family, weight)
+  const plan = canvasFontPlanFor(content.font)
+  let family: string
+  let weight: number
+  if (plan.kind === 'file') {
+    family = plan.cssFamily
+    weight = 400 // the file carries its real weight — 400 avoids synthetic bolding
+    try {
+      await ensureFileFont(plan.cssFamily, plan.url)
+    } catch {
+      // Unfetchable/unparseable file: draw with the default instead of tofu.
+      family = 'Inter'; weight = 700
+      await ensureCanvasFont(family, weight)
+    }
+  } else {
+    family = plan.family
+    weight = plan.weight
+    await ensureCanvasFont(family, weight)
+  }
   const pad = 32, fontPx = 192
   const measure = document.createElement('canvas').getContext('2d')!
   measure.font = `${weight} ${fontPx}px "${family}", sans-serif`
