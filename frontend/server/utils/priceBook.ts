@@ -108,6 +108,7 @@ export const MODEL_COSTS: Record<string, ModelCost> = {
   'krea/krea-2-medium': { usd: 0.035, credits: 7, confidence: 'estimate' },
   'fal-ai/nano-banana-pro': { usd: 0.15, credits: 23, confidence: 'verified', note: '1.5× markup — premium tier' },
   'fal-ai/nano-banana-pro/edit': { usd: 0.15, credits: 23, confidence: 'estimate', note: 'assumed same as generate' },
+  'ideogram-ai/ideogram-character': { usd: 0.08, credits: 16, confidence: 'estimate', note: 'identity-preserving shot from a reference photo; 2x markup — re-verify against a live invoice' },
   // — inpaint / edit —
   'black-forest-labs/flux-kontext-dev': { usd: 0.025, credits: 5, confidence: 'estimate', note: 'assumed flux-dev rate' },
   'black-forest-labs/flux-fill-dev': { usd: 0.04, credits: 8, confidence: 'estimate' },

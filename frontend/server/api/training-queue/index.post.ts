@@ -43,6 +43,12 @@ export default defineEventHandler(async (event) => {
     trigger: body.trigger ?? null,
     aesthetic: body.aesthetic ?? null,
     loraKind: body.loraKind,
+    // Captured here (not resolved later by the runner) because the runner
+    // ticks with no request in flight — see trainingQueue.ts's userId doc
+    // and trainingProviders.ts's charging-policy doc. Local mode: auth
+    // middleware never sets event.context.userId, so this is null and the
+    // runner metering nothing for local jobs.
+    userId: event.context.userId ?? null,
   })
 
   return { job }

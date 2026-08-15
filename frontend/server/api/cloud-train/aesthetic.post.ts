@@ -18,9 +18,14 @@
  * trainer just skips the profile and falls back to the trigger word alone.
  *
  * Must be allowlisted in server/middleware/comfyui-proxy.ts (NITRO_API_PATHS).
+ *
+ * Paid: creates a real Replicate prediction on QWEN_MODEL. Gate before
+ * dispatch, settle only once the prediction has confirmed success (mirrors
+ * lora-cover.post.ts's synchronous create-then-poll-then-settle shape).
  */
 
 import { parseAestheticOutput } from './aesthetic-parse'
+import { preflightMeter } from '../../utils/requestMeter'
 
 const QWEN_MODEL = 'lucataco/qwen2-vl-7b-instruct'
 
@@ -43,6 +48,9 @@ export default defineEventHandler(async (event) => {
   if (!imageDataUrl || !/^data:image\//.test(imageDataUrl)) {
     throw createError({ statusCode: 400, message: 'imageDataUrl (a data: image URI) is required' })
   }
+
+  // Paid: gate on balance/price before creating the Replicate prediction.
+  const ticket = await preflightMeter(QWEN_MODEL)
 
   // Resolve the model's latest version (community model → versioned predictions).
   const modelRes = await fetch(`https://api.replicate.com/v1/models/${QWEN_MODEL}`, {
@@ -88,6 +96,7 @@ export default defineEventHandler(async (event) => {
   if (pred.status !== 'succeeded') {
     throw createError({ statusCode: 502, message: `Aesthetic generation ${pred.status}: ${String(pred.error ?? '')}` })
   }
+  await ticket?.settle('rep:' + pred.id)
 
   // Qwen returns the text as an array of token strings (or occasionally a string).
   const raw = Array.isArray(pred.output) ? pred.output.join('') : String(pred.output ?? '')

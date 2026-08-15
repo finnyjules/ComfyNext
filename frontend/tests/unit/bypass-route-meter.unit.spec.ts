@@ -33,17 +33,11 @@ const serverRoot = fileURLToPath(new URL('../../server', import.meta.url))
 const PROVIDER_FETCH_PATTERNS = ['api.replicate.com', 'fal.run', 'queue.fal.run']
 
 /**
- * Task 5 owns training (cloud-train/* + trainingProviders.ts) — those files
- * already dispatch provider work with no metering wired in, but wiring it is
- * explicitly out of scope for Task 4. Allowlisted here so this guard doesn't
- * block Task 4 on Task 5's work; Task 5 removes these two entries once it
- * wires preflightMeter/METER-EXEMPT into those files itself.
+ * Task 5 landed training's metering (cloud-train/* + trainingProviders.ts —
+ * see their own preflightMeter/settleModel/METER-EXEMPT markers), so the
+ * allowlist that used to carve those files out while Task 4 shipped first is
+ * gone: this guard now scans every file in server/, no exceptions.
  */
-const TASK5_TRAINING_ALLOWLIST = [
-  'api/cloud-train', // start/status/upload/caption/aesthetic/character-shot.post.ts
-  'utils/trainingProviders.ts',
-]
-
 function walk(dir: string, acc: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name)
@@ -51,10 +45,6 @@ function walk(dir: string, acc: string[] = []): string[] {
     else if (p.endsWith('.ts')) acc.push(p)
   }
   return acc
-}
-
-function isAllowlisted(relPath: string): boolean {
-  return TASK5_TRAINING_ALLOWLIST.some(a => relPath.startsWith(a) || relPath.includes(`/${a}`))
 }
 
 describe('bypass-route meter coverage guard', () => {
@@ -76,10 +66,6 @@ describe('bypass-route meter coverage guard', () => {
 
   for (const file of providerFetchFiles) {
     const rel = relative(serverRoot, file)
-    if (isAllowlisted(rel)) {
-      it.skip(`${rel} — Task 5 training file, allowlisted`, () => {})
-      continue
-    }
     it(`${rel} references preflightMeter/settleModel or carries a METER-EXEMPT: marker`, () => {
       const src = readFileSync(file, 'utf8')
       const covered = src.includes('preflightMeter') || src.includes('settleModel') || src.includes('METER-EXEMPT:')

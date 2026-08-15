@@ -15,6 +15,7 @@ import os from 'node:os'
 import type { TrainingJob } from './trainingQueue'
 import type { ProviderResult, RunnerProvider } from './trainingRunner'
 import { linkTrainedCharacter } from './characterLink'
+import { preflightMeterFor } from './requestMeter'
 
 const exec = promisify(execCb)
 
@@ -201,6 +202,9 @@ function safeVoiceId(id: string): string | null {
   return /^[a-zA-Z0-9_-]+$/.test(s) ? s : null
 }
 
+/** Matches the MODEL_COSTS key in priceBook.ts — keep in sync. */
+const VOICE_MODEL = 'minimax/voice-cloning'
+
 async function startVoice(job: TrainingJob, token: string): Promise<ProviderResult> {
   const p = job.params as Record<string, any>
   const input: Record<string, any> = {
@@ -210,7 +214,7 @@ async function startVoice(job: TrainingJob, token: string): Promise<ProviderResu
     need_noise_reduction: !!p.needNoiseReduction,
     need_volume_normalization: !!p.needVolumeNormalization,
   }
-  const res = await fetch(`${REPLICATE}/models/minimax/voice-cloning/predictions`, {
+  const res = await fetch(`${REPLICATE}/models/${VOICE_MODEL}/predictions`, {
     method: 'POST',
     headers: authHeaders(token, true),
     body: JSON.stringify({ input }),
@@ -276,10 +280,57 @@ async function pollVoice(job: TrainingJob, token: string): Promise<ProviderResul
 
 // --- dispatch ----------------------------------------------------------------
 
+/**
+ * CHARGING POLICY (binding): a training/voice-clone job debits at successful
+ * JOB START, not completion — the provider bills hardware time the moment
+ * the job starts, regardless of whether the resulting weights/voice turn out
+ * useful. So we meter around the real startLora/startVoice call, not around
+ * pollLora/pollVoice's eventual 'succeeded' branch.
+ *
+ * This runner ticks on a timer (server/plugins/trainingQueueRunner.ts) with
+ * no HTTP request in flight, so there is no AsyncLocalStorage context for
+ * preflightMeter to read a userId from (see requestMeter.ts's module doc on
+ * ALS propagation) — job.userId, captured at enqueue time from the request
+ * that queued it (server/api/training-queue/index.post.ts), is threaded
+ * through explicitly via preflightMeterFor instead.
+ *
+ * Local mode never sets job.userId, so an absent userId means "don't meter
+ * this job" — guarded below rather than calling preflightMeterFor with an
+ * empty string. Pricing comes from MODEL_COSTS via resolveCredits inside
+ * preflightMeterFor: the LoRA family maps to one of the 'ostris/*-lora-
+ * trainer' rows (600cr, matching LoraTrainingNode's graph-table price) and
+ * voice maps to 'minimax/voice-cloning'. A slug the book doesn't recognize
+ * REFUSES (preflightMeterFor throws) rather than inventing a fallback price.
+ *
+ * Settle only fires once the provider has confirmed the job actually
+ * started (a replicateId came back) — a start() that throws before that
+ * (network error, bad request, Replicate rejection, etc.) leaves the ticket
+ * unsettled, so nothing is charged for a job that never started. A refusal
+ * (e.g. insufficient credits) propagates out of start(), which the runner's
+ * existing tickQueue catch already turns into a 'failed' job carrying the
+ * refusal's message — see trainingRunner.ts's `try { ... } catch` around
+ * provider.start(job) in its queued-job loop.
+ */
+async function startWithMetering(job: TrainingJob, token: string): Promise<ProviderResult> {
+  const model = job.kind === 'voice' ? VOICE_MODEL : loraTrainerModel((job.params as Record<string, any>)?.family)
+
+  const ticket = job.userId ? await preflightMeterFor(job.userId, model) : null
+
+  const result = job.kind === 'voice' ? await startVoice(job, token) : await startLora(job, token)
+
+  if (ticket && result.replicateId) {
+    // Debit key: train:<training id> — never the reserved settle:/expire:
+    // prefixes. Reason (`provider:<slug>`) is set inside preflightMeterFor's
+    // ticket.
+    await ticket.settle(`train:${result.replicateId}`)
+  }
+  return result
+}
+
 /** Build a RunnerProvider that reads a fresh token per call via getToken(). */
 export function createReplicateProvider(getToken: () => string): RunnerProvider {
   return {
-    start: (job) => job.kind === 'voice' ? startVoice(job, getToken()) : startLora(job, getToken()),
+    start: (job) => startWithMetering(job, getToken()),
     poll: (job) => job.kind === 'voice' ? pollVoice(job, getToken()) : pollLora(job, getToken()),
   }
 }

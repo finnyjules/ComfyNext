@@ -171,27 +171,24 @@ function getLedger(): LedgerLike {
 }
 
 /**
- * Local mode → null (no-op ticket, no ledger touched at all). Hosted mode
- * fails closed at every step: no bound context, no price, or insufficient
- * balance all refuse the request rather than letting spend through unpriced
- * or unmetered.
+ * Shared core for both preflightMeter (ALS-bound userId) and preflightMeterFor
+ * (explicit userId, for callers with no request/ALS context). Local mode →
+ * null (no-op ticket, no ledger touched at all). Hosted mode fails closed at
+ * every step: no price or insufficient balance both refuse rather than
+ * letting spend through unpriced or unmetered.
  */
-export async function preflightMeter(model: string): Promise<MeterTicket | null> {
+async function preflightForUser(userId: string, model: string, priceHintCredits?: number): Promise<MeterTicket | null> {
   if (deployMode() === 'local') return null
 
-  const ctx = currentMeterContext()
-  if (!ctx) throw new MeterRefusalError('unmetered spend refused', 500)
-
-  const credits = resolveCredits(model, ctx.priceHintCredits)
+  const credits = resolveCredits(model, priceHintCredits)
   if (credits === null) throw new MeterRefusalError(`unpriced model refused: ${model}`, 500)
 
   const ledger = getLedger()
-  const available = await ledger.getAvailable(ctx.userId)
+  const available = await ledger.getAvailable(userId)
   if (available < credits) {
     throw new MeterRefusalError('insufficient credits', 402, { required: credits, available })
   }
 
-  const userId = ctx.userId
   return {
     async settle(jobId: string): Promise<void> {
       try {
@@ -204,6 +201,36 @@ export async function preflightMeter(model: string): Promise<MeterTicket | null>
       }
     },
   }
+}
+
+/**
+ * Local mode → null (no-op ticket, no ledger touched at all). Hosted mode
+ * fails closed at every step: no bound context, no price, or insufficient
+ * balance all refuse the request rather than letting spend through unpriced
+ * or unmetered.
+ */
+export async function preflightMeter(model: string): Promise<MeterTicket | null> {
+  if (deployMode() === 'local') return null
+
+  const ctx = currentMeterContext()
+  if (!ctx) throw new MeterRefusalError('unmetered spend refused', 500)
+
+  return preflightForUser(ctx.userId, model, ctx.priceHintCredits)
+}
+
+/**
+ * Context-free variant of preflightMeter for callers with no request in
+ * flight — e.g. server/plugins/trainingQueueRunner.ts's timer-driven runner,
+ * which starts training jobs on a tick with no AsyncLocalStorage context to
+ * read a userId from (see this module's doc on ALS propagation). The caller
+ * supplies userId explicitly (threaded through from wherever the job was
+ * enqueued — see trainingQueue.ts's TrainingJob.userId). Same checks as
+ * preflightMeter minus the ALS lookup; ticket shape and settle semantics are
+ * identical. Never call this without a real userId — there is no "unbound
+ * context" refusal here to catch that mistake for you, unlike preflightMeter.
+ */
+export async function preflightMeterFor(userId: string, model: string): Promise<MeterTicket | null> {
+  return preflightForUser(userId, model)
 }
 
 /**

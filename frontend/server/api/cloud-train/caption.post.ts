@@ -19,7 +19,12 @@
  *
  * One-time, cheap (~$0.002, a few seconds per image). Lives under the
  * already-allowlisted /api/cloud-train prefix (server/middleware/comfyui-proxy).
+ *
+ * Paid: creates a real Replicate prediction on QWEN_MODEL. Gate before
+ * dispatch, settle only once the prediction has confirmed success (mirrors
+ * lora-cover.post.ts's synchronous create-then-poll-then-settle shape).
  */
+import { preflightMeter } from '../../utils/requestMeter'
 
 const QWEN_MODEL = 'lucataco/qwen2-vl-7b-instruct'
 
@@ -60,6 +65,9 @@ export default defineEventHandler(async (event) => {
   const prompt = body.mode === 'character'
     ? characterPrompt(body.trigger || '')
     : STYLE_PROMPT
+
+  // Paid: gate on balance/price before creating the Replicate prediction.
+  const ticket = await preflightMeter(QWEN_MODEL)
 
   // Resolve the model's latest version (community model → versioned predictions).
   const modelRes = await fetch(`https://api.replicate.com/v1/models/${QWEN_MODEL}`, {
@@ -104,6 +112,7 @@ export default defineEventHandler(async (event) => {
   if (pred.status !== 'succeeded') {
     throw createError({ statusCode: 502, message: `Caption generation ${pred.status}: ${String(pred.error ?? '')}` })
   }
+  await ticket?.settle('rep:' + pred.id)
 
   // Qwen returns the text as an array of token strings (or occasionally a string).
   const raw = Array.isArray(pred.output) ? pred.output.join('') : String(pred.output ?? '')

@@ -16,8 +16,18 @@
  * Fetches the latest version of the chosen Replicate trainer model, then
  * kicks off a prediction. Returns the prediction id; the frontend polls
  * /status with that id.
+ *
+ * Paid (the most expensive action in the app, 600cr): creates a real
+ * Replicate TRAINING. CHARGING POLICY (binding): debits at successful job
+ * START, not completion — the provider bills hardware time the moment the
+ * training starts regardless of how the resulting weights turn out, so we
+ * settle right after Replicate confirms the training was created, not after
+ * it finishes. Priced via MODEL_COSTS' 'ostris/*-lora-trainer' rows (same
+ * 600cr as the queue path in trainingProviders.ts and LoraTrainingNode's
+ * graph-table price) — an unrecognized trainer slug fails closed.
  */
 import { assertRateLimit } from '../../lib/rateLimit'
+import { preflightMeter } from '../../utils/requestMeter'
 
 function sanitize(name: string): string {
   return (name || '').toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'my-lora'
@@ -45,6 +55,11 @@ export default defineEventHandler(async (event) => {
   const trainerModel = body.family === 'flux'
     ? 'ostris/flux-dev-lora-trainer'
     : 'ostris/sdxl-lora-trainer'
+
+  // Paid: gate on balance/price before spending any hardware time. See the
+  // module doc's charging policy — settled below once the training is
+  // actually created, not once it finishes.
+  const ticket = await preflightMeter(trainerModel)
 
   // Fetch the latest version hash for this trainer.
   const modelRes = await fetch(`https://api.replicate.com/v1/models/${trainerModel}`, {
@@ -133,6 +148,9 @@ export default defineEventHandler(async (event) => {
   }
 
   const training = await trainRes.json() as { id: string; status: string }
+  // Debit-on-successful-start: the training was just created on Replicate,
+  // so hardware time is now being consumed — settle now, not on completion.
+  await ticket?.settle('train:' + training.id)
   return {
     id: training.id,
     status: training.status,

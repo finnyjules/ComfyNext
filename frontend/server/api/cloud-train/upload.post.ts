@@ -7,6 +7,10 @@
  *
  * The Replicate token lives in runtimeConfig (server-only env var
  * NUXT_REPLICATE_TOKEN) and is never exposed to the browser.
+ *
+ * METER-EXEMPT: this is a file-storage upload (Replicate's Files API), not a
+ * model prediction or training — no GPU/hardware job is created here, so
+ * there is nothing to meter.
  */
 export default defineEventHandler(async (event) => {
   const token = requireReplicateToken()

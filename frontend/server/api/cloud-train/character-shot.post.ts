@@ -14,7 +14,12 @@
  * The result is downloaded server-side and returned as a data URL so the browser
  * can drop it straight into the training set (no CORS dance on the CDN url).
  * ~$0.08 per shot. Lives under the already-allowlisted /api/cloud-train prefix.
+ *
+ * Paid: creates a real Replicate prediction on MODEL. Gate before dispatch,
+ * settle only once the prediction has confirmed success (mirrors
+ * lora-cover.post.ts's synchronous create-then-poll-then-settle shape).
  */
+import { preflightMeter } from '../../utils/requestMeter'
 
 const MODEL = 'ideogram-ai/ideogram-character'
 const VALID_AR = new Set(['1:1', '16:9', '9:16', '4:3', '3:4', '16:10', '10:16'])
@@ -37,6 +42,9 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, message: 'prompt is required' })
   }
   const aspect_ratio = VALID_AR.has(body?.aspectRatio || '') ? body!.aspectRatio : '1:1'
+
+  // Paid: gate on balance/price before creating the Replicate prediction.
+  const ticket = await preflightMeter(MODEL)
 
   const input: Record<string, any> = {
     prompt,
@@ -80,6 +88,7 @@ export default defineEventHandler(async (event) => {
   if (pred.status !== 'succeeded') {
     throw createError({ statusCode: 502, message: `Character shot ${pred.status}: ${String(pred.error ?? '')}` })
   }
+  await ticket?.settle('rep:' + pred.id)
 
   const url = Array.isArray(pred.output) ? pred.output[0] : pred.output
   if (typeof url !== 'string' || !url) {

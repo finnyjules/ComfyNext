@@ -8,6 +8,11 @@
  *
  * Safe to call repeatedly — the download step is a no-op once the file is
  * already on disk.
+ *
+ * METER-EXEMPT: poll/finalize only — this never creates a new provider job.
+ * The training this polls was already billed at successful START by
+ * /api/cloud-train/start (this legacy direct path) or by the training-queue
+ * runner (trainingProviders.ts), per the debit-at-start charging policy.
  */
 import { promises as fs } from 'node:fs'
 import { exec as execCb } from 'node:child_process'

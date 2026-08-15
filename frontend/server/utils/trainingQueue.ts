@@ -40,6 +40,16 @@ export interface TrainingJob {
   aesthetic?: string | null
   /** 'character' tags the LoRA as an identity; otherwise a style. */
   loraKind?: 'style' | 'character'
+  /**
+   * Hosted-mode user id that queued this job, captured at enqueue time from
+   * event.context.userId (see server/api/training-queue/index.post.ts).
+   * The queue runner (server/plugins/trainingQueueRunner.ts) starts jobs on
+   * a timer with no request/ALS context, so it can't resolve "who's paying"
+   * any other way — this is threaded to preflightMeterFor explicitly (see
+   * trainingProviders.ts). Local mode never sets it; absent/null means
+   * "don't meter this job", not "meter it for nobody".
+   */
+  userId?: string | null
   /** Replicate training/prediction id once started. */
   replicateId?: string | null
   /** owner/model destination (LoRA only). */
@@ -56,7 +66,7 @@ export interface TrainingJob {
 /** Fields a caller supplies when enqueuing. The store fills in the rest. */
 export type NewTrainingJob =
   Pick<TrainingJob, 'kind' | 'outputName' | 'displayName' | 'datasetUrl' | 'params'>
-  & Partial<Pick<TrainingJob, 'trigger' | 'aesthetic' | 'loraKind' | 'id' | 'status'>>
+  & Partial<Pick<TrainingJob, 'trigger' | 'aesthetic' | 'loraKind' | 'id' | 'status' | 'userId'>>
 
 export interface JobStore {
   list(): Promise<TrainingJob[]>
@@ -143,6 +153,7 @@ export function createJobStore(filePath: string): JobStore {
           trigger: input.trigger ?? null,
           aesthetic: input.aesthetic ?? null,
           loraKind: input.loraKind,
+          userId: input.userId ?? null,
           replicateId: null,
           destination: null,
           progressPct: 0,
