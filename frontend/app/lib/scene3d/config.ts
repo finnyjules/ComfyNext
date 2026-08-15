@@ -21,7 +21,7 @@ import { normalizeShaderSpec, DEFAULT_SHADER_SPEC, type ShaderSpec } from '~/lib
 import { sanitizeHierarchy } from './hierarchy'
 // Harmony palette (gradient material only) — pure color theory, no three. See rampStopsOf.
 import { harmonize, toStops, HARMONY_TYPES, type HarmonyType } from '~/lib/color/harmony'
-import { oklchToHex } from '~/lib/color/convert'
+import { oklchToHexInGamut } from '~/lib/color/convert'
 
 export type PrimitiveKind =
   | 'box' | 'sphere' | 'cylinder' | 'cone' | 'torus' | 'plane'
@@ -523,7 +523,7 @@ export function rampStopsOf(mat: SceneMaterial): GradientStop[] {
   const sat = mat.paletteSat ?? MATERIAL_DEFAULTS.paletteSat
   const light = mat.paletteLight ?? MATERIAL_DEFAULTS.paletteLight
   const scheme = mat.paletteHarmony ?? MATERIAL_DEFAULTS.paletteHarmony
-  const seedHex = oklchToHex(light, sat * 0.4, hue)
+  const seedHex = oklchToHexInGamut(light, sat * 0.4, hue)
   const N = 5
   return toStops(harmonize(seedHex, scheme, N), N)
 }

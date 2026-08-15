@@ -8,7 +8,7 @@
 // 2D chain (frontend/app/lib/studio/post/chain.ts) is verified live in Tasks 3/4.
 import { describe, it, expect } from 'vitest'
 import * as THREE from 'three'
-import { makeGrainPass, makeVignettePass, makeDuotonePass, applyPostExtras } from '~/lib/studio/post/threePasses'
+import { makeGrainPass, makeVignettePass, makeDuotonePass, makeDistortPass, applyPostExtras } from '~/lib/studio/post/threePasses'
 import { DEFAULT_POST } from '~/lib/studio/post/settings'
 import type { PostSettings } from '~~/shared/spacetype/state'
 
@@ -30,6 +30,17 @@ describe('threePasses.ts — three.js grain/vignette/duotone passes', () => {
     expect(grain.uniforms.tDiffuse).toBeDefined()
     expect(vignette.uniforms.tDiffuse).toBeDefined()
     expect(duotone.uniforms.tDiffuse).toBeDefined()
+  })
+
+  // Fix 1 (final review): distort is wired inline in PostChain (spacetype/post.ts),
+  // not through applyPostExtras — PostChain needs a real WebGL context to test, so
+  // this factory test is the durable check, same limitation as the other passes.
+  it('makeDistortPass constructs with tDiffuse/u_resolution/u_amount(0)/u_seed uniforms', () => {
+    const distort = makeDistortPass()
+    expect(distort.uniforms.tDiffuse).toBeDefined()
+    expect(distort.uniforms.u_resolution).toBeDefined()
+    expect(distort.uniforms.u_amount!.value).toBe(0)
+    expect(distort.uniforms.u_seed).toBeDefined()
   })
 
   it('wires grain: enabled + amount + size, with a fixed static seed', () => {

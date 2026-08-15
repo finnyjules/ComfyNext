@@ -302,7 +302,8 @@ function addFaceExtentAttributes(geo: THREE.BufferGeometry): void {
     // Stable per-face random from the face centroid — no seed, deterministic.
     const cx = pos.getX(v) + pos.getX(v + 1) + pos.getX(v + 2)
     const cy = pos.getY(v) + pos.getY(v + 1) + pos.getY(v + 2)
-    let h = Math.sin(cx * 127.1 + cy * 311.7) * 43758.5453
+    const cz = pos.getZ(v) + pos.getZ(v + 1) + pos.getZ(v + 2)
+    let h = Math.sin(cx * 127.1 + cy * 311.7 + cz * 74.7) * 43758.5453
     h = h - Math.floor(h)
     for (let k = 0; k < 3; k++) rand[v + k] = h
   }

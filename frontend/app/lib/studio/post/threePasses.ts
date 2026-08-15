@@ -97,6 +97,48 @@ const DUOTONE_FRAG = [
   '}',
 ].join('\n')
 
+// Ported from app/lib/shapefx/post.ts's POST_FRAG (two decorrelated value-noise
+// fields drive a UV displacement, scaled to the same ~45px budget as the old SVG
+// filter). Adapted to the ShaderPass tDiffuse/vUv convention like the passes above.
+const DISTORT_FRAG = [
+  'uniform sampler2D tDiffuse;',
+  'uniform vec2 u_resolution;',
+  'uniform float u_amount;', // 0..1
+  'uniform float u_seed;',
+  'varying vec2 vUv;',
+  'float dvhash(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }',
+  'float dvnoise(vec2 p){',
+  '  vec2 i = floor(p), f = fract(p);',
+  '  float a = dvhash(i), b = dvhash(i + vec2(1.0, 0.0)), c = dvhash(i + vec2(0.0, 1.0)), d = dvhash(i + vec2(1.0, 1.0));',
+  '  vec2 u = f * f * (3.0 - 2.0 * f);',
+  '  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);',
+  '}',
+  'void main(){',
+  '  vec2 uv = vUv;',
+  '  if (u_amount > 0.0) {',
+  '    float n1 = dvnoise(uv * 6.0 + u_seed);',
+  '    float n2 = dvnoise(uv * 6.0 - u_seed + 17.3);',
+  '    vec2 px = (vec2(n1, n2) - 0.5) * (u_amount * 45.0);',
+  '    uv += px / max(u_resolution, vec2(1.0));',
+  '  }',
+  '  vec4 src = texture2D(tDiffuse, clamp(uv, 0.0, 1.0));',
+  '  gl_FragColor = vec4(clamp(src.rgb, 0.0, 1.0), src.a);',
+  '}',
+].join('\n')
+
+export function makeDistortPass(): ShaderPass {
+  return new ShaderPass({
+    uniforms: {
+      tDiffuse: { value: null },
+      u_resolution: { value: new THREE.Vector2(1, 1) },
+      u_amount: { value: 0 },
+      u_seed: { value: 3.7 }, // static warp; matches the catalog distort.frag's seed default
+    },
+    vertexShader: PASS_VERT,
+    fragmentShader: DISTORT_FRAG,
+  })
+}
+
 export function makeGrainPass(): ShaderPass {
   return new ShaderPass({
     uniforms: {

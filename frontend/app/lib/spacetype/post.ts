@@ -11,7 +11,7 @@ import { GlitchPass } from 'three/examples/jsm/postprocessing/GlitchPass.js'
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js'
 import type { PostSettings } from '~~/shared/spacetype/state'
 import { DEFAULT_POST, postEnabled } from '~/lib/spacetype/postSettings'
-import { makeGrainPass, makeVignettePass, makeDuotonePass, applyPostExtras } from '~/lib/studio/post/threePasses'
+import { makeGrainPass, makeVignettePass, makeDuotonePass, makeDistortPass, applyPostExtras } from '~/lib/studio/post/threePasses'
 
 export type { PostSettings } from '~~/shared/spacetype/state'
 // DEFAULT_POST/postEnabled are plain data/logic and live in postSettings.ts (three-free — see its
@@ -108,6 +108,7 @@ export class PostChain {
   private glitchPass: GlitchPass
   private gradePass: ShaderPass
   private duotonePass: ShaderPass
+  private distortPass: ShaderPass
   private vignettePass: ShaderPass
   private grainPass: ShaderPass
   private outputPass: OutputPass
@@ -162,6 +163,8 @@ export class PostChain {
       fragmentShader: GRADE_FRAG,
     })
     this.duotonePass = makeDuotonePass()
+    this.distortPass = makeDistortPass()
+    this.distortPass.enabled = false
     this.vignettePass = makeVignettePass()
     this.grainPass = makeGrainPass()
     this.extrasResolution = new THREE.Vector2(width, height)
@@ -175,18 +178,21 @@ export class PostChain {
     this.composer.addPass(this.filmPass)
     this.composer.addPass(this.glitchPass)
     this.composer.addPass(this.gradePass)
+    this.composer.addPass(this.distortPass)
     this.composer.addPass(this.vignettePass)
     this.composer.addPass(this.grainPass)
     // order matters: RenderPass → GTAO → Duotone → Bloom → Halftone → DotScreen → Film →
-    // [Glitch] → Grade → Vignette → Grain → OutputPass. Geometry-aware passes (GTAO) go right
-    // after the render — it needs the raw depth/normal buffers, not anything bloom or the other
-    // stylised passes have touched. Duotone/Vignette/Grain slot in at their POST_CHAIN_ORDER
-    // positions relative to the pre-existing passes (see the class doc above); Vignette then
-    // Grain go last because they are properties of the film/barrel, not the scene, so they should
-    // see the fully graded image. OutputPass is the permanent terminal pass (always enabled,
-    // never toggled) — it's what converts the composer's linear-space intermediate result to the
-    // renderer's configured tone mapping + output colour space on the way to the screen (see the
-    // class doc above). Grain must stay immediately before it.
+    // [Glitch] → Grade → Distort → Vignette → Grain → OutputPass. Geometry-aware passes (GTAO) go
+    // right after the render — it needs the raw depth/normal buffers, not anything bloom or the
+    // other stylised passes have touched. Duotone/Vignette/Grain slot in at their POST_CHAIN_ORDER
+    // positions relative to the pre-existing passes (see the class doc above); Distort is a final-
+    // image UV warp, so it sits after Grade (it needs the graded image, not the raw render) and
+    // before Vignette/Grain, which are properties of the film/barrel and should see the warped
+    // frame. Vignette then Grain go last because they are properties of the film/barrel, not the
+    // scene, so they should see the fully graded image. OutputPass is the permanent terminal pass
+    // (always enabled, never toggled) — it's what converts the composer's linear-space
+    // intermediate result to the renderer's configured tone mapping + output colour space on the
+    // way to the screen (see the class doc above). Grain must stay immediately before it.
     this.composer.addPass(this.outputPass)
   }
 
@@ -196,6 +202,7 @@ export class PostChain {
     this.bloomPass.setSize(width, height)
     this.halftonePass.setSize(width, height)
     ;(this.gradePass.uniforms.uResolution!.value as THREE.Vector2).set(width, height)
+    ;(this.distortPass.uniforms.u_resolution!.value as THREE.Vector2).set(width, height)
     this.extrasResolution.set(width, height)
   }
 
@@ -219,6 +226,8 @@ export class PostChain {
     u.uContrast!.value = p.color ? p.contrast : 1
     u.uSaturation!.value = p.color ? p.saturation : 1
     u.uHue!.value = p.color ? p.hue : 0
+    this.distortPass.enabled = p.distort
+    this.distortPass.uniforms.u_amount!.value = p.distort ? p.distortAmount : 0
     this.filmPass.enabled = p.film
     // FilmPass types `uniforms` as a loose `object`; `material.uniforms` is the same object
     // (UniformsUtils.clone'd once, shared with the ShaderMaterial) but properly typed.
@@ -264,6 +273,8 @@ export class PostChain {
     ;(this.gradePass as unknown as { fsQuad?: { dispose?: () => void } }).fsQuad?.dispose?.()
     this.duotonePass.material.dispose()
     ;(this.duotonePass as unknown as { fsQuad?: { dispose?: () => void } }).fsQuad?.dispose?.()
+    this.distortPass.material.dispose()
+    ;(this.distortPass as unknown as { fsQuad?: { dispose?: () => void } }).fsQuad?.dispose?.()
     this.vignettePass.material.dispose()
     ;(this.vignettePass as unknown as { fsQuad?: { dispose?: () => void } }).fsQuad?.dispose?.()
     this.grainPass.material.dispose()
