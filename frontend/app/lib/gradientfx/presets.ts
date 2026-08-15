@@ -10,7 +10,7 @@
  * "aurora" / "frosted" are deliberately NOT presets — they're prompt recipes
  * (mesh + palette, any preset + focus.blur) the model composes from these.
  */
-import { liquidConfig, liquidPresetConfig, meshConfig, rippleConfig, stackConfig, stripeConfig } from './randomize'
+import { defaultConfig, liquidConfig, liquidPresetConfig, meshConfig, rippleConfig, stackConfig, stripeConfig } from './randomize'
 import { AUTHORED_PRESETS } from './presetConfigs'
 import { makeRng, randomSeed } from './rng'
 import { cloneConfig, ensureConfigDefaults, type GradientConfig } from './types'
@@ -18,6 +18,7 @@ import { cloneConfig, ensureConfigDefaults, type GradientConfig } from './types'
 export type GradientPresetName =
   | 'marble' | 'oil' | 'ink' | 'lava' | 'satin'  // liquid surface looks
   | 'liquid' | 'ripple' | 'stack' | 'mesh' | 'linear' // layout archetypes
+  | 'dawn' | 'halo' | 'spectrum' // simple-primitive authored presets
 
 /** Algorithmic fallback builders — used only when the user hasn't authored that
  *  preset yet (AUTHORED_PRESETS wins). */
@@ -32,6 +33,9 @@ const BUILDERS: Record<GradientPresetName, (seed: string) => GradientConfig> = {
   stack: s => stackConfig(s),
   mesh: s => meshConfig(s),
   linear: s => stripeConfig(s),
+  dawn: s => defaultConfig(s),
+  halo: s => { const c = defaultConfig(s); c.canvas.layout = 'radialRamp'; return c },
+  spectrum: s => { const c = defaultConfig(s); c.canvas.layout = 'conic'; c.layers[0]!.ramp = { angle: 0, radius: 1, shape: 'circle', sweep: 360, closeLoop: true }; return c },
 }
 
 /** Offered preset names = the fallback builders ∪ any user-authored-only styles
