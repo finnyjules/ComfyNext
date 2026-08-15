@@ -5,13 +5,15 @@ import { ConvexGeometry } from 'three/examples/jsm/geometries/ConvexGeometry.js'
 // from shapefx/rng.ts on purpose: shapefx is retired in Phase 2, so scene3d must
 // not depend on it. Deterministic in the numeric seed.
 function rngFor(seed: number): () => number {
-  let h = 1779033703 ^ String(seed).length
   const s = `gem|${seed}`
+  let h = 1779033703 ^ s.length
   for (let i = 0; i < s.length; i++) {
     h = Math.imul(h ^ s.charCodeAt(i), 3432918353)
     h = (h << 13) | (h >>> 19)
   }
-  let a = (Math.imul(h ^ (h >>> 16), 2246822507) ^ (h >>> 13)) >>> 0
+  h = Math.imul(h ^ (h >>> 16), 2246822507)
+  h = Math.imul(h ^ (h >>> 13), 3266489909)
+  let a = (h ^= h >>> 16) >>> 0
   return () => {
     a |= 0; a = (a + 0x6d2b79f5) | 0
     let t = Math.imul(a ^ (a >>> 15), 1 | a)
