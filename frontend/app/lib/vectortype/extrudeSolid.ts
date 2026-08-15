@@ -105,7 +105,7 @@ const isZeroHandle = (h: paper.Point | null | undefined): boolean =>
  * holes survive as holes under `nonzero` — a solid extrude of an 'A' still has
  * whatever is left of its counter.
  */
-function paperToCommands(item: paper.PathItem | null | undefined): VectorCommand[] {
+export function paperToCommands(item: paper.PathItem | null | undefined): VectorCommand[] {
   if (!item) return []
   const parts: paper.Path[] = item.className === 'CompoundPath'
     ? ((item.children ?? []) as paper.Path[])
