@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import * as THREE from 'three'
 import { gemPoints, gemGeometry } from '~/lib/scene3d/gem'
+import { PRIMITIVE_KINDS } from '~/lib/scene3d/config'
+import { PRIMITIVE_PARAMS } from '~/lib/scene3d/primParams'
+import { geometryFor } from '~/lib/scene3d/engine'
 
 describe('scene3d gem geometry', () => {
   it('gemPoints is deterministic for a seed', () => {
@@ -32,6 +35,20 @@ describe('scene3d gem geometry', () => {
     // depth 0 + spread 0 collapses points onto a plane → hull degenerates
     const geo = gemGeometry(4, 0, 0, 0)
     expect(geo.getAttribute('position').count).toBeGreaterThanOrEqual(12)
+    geo.dispose()
+  })
+})
+
+describe('scene3d gem registration', () => {
+  it('gem is a registered, param-carrying kind', () => {
+    expect(PRIMITIVE_KINDS).toContain('gem')
+    expect(PRIMITIVE_PARAMS.gem.map(p => p.key)).toEqual(['points', 'spread', 'depth', 'gemSeed'])
+  })
+
+  it('geometryFor builds the gem hull from params', () => {
+    const geo = geometryFor('gem', { points: 24, spread: 0.6, depth: 1, gemSeed: 2 })
+    expect(geo.getAttribute('position').count).toBeGreaterThanOrEqual(12)
+    expect(geo.getAttribute('uv')).toBeTruthy()
     geo.dispose()
   })
 })

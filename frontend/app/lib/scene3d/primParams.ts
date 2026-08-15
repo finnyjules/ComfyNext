@@ -147,6 +147,14 @@ export const PRIMITIVE_PARAMS: Record<PrimitiveKind, ParamSpec[]> = {
   // A stored vertex buffer has nothing parametric left to expose — sculpting or
   // merging is what produced it. The Geometry panel renders empty.
   mesh: [],
+  // Convex-hull gem (see gem.ts). Point count drives facet density; spread widens
+  // the stone; depth stretches it along Z; gemSeed re-rolls the hull.
+  gem: [
+    { key: 'points', label: 'Facets', hint: 'How many points form the stone — more gives finer facets', min: 4, max: 40, step: 1, default: 14 },
+    { key: 'spread', label: 'Spread', hint: 'Tight, pointy stone → wide, full one', min: 0, max: 1, step: 0.01, default: 0.5 },
+    { key: 'depth', label: 'Depth', hint: 'Flat, cut-gem slab → deep, chunky stone', min: 0.2, max: 2, step: 0.01, default: 1 },
+    { key: 'gemSeed', label: 'Seed', hint: 'Shuffles the facets into a different stone', min: 0, max: 99, step: 1, default: 0 },
+  ],
 }
 
 /** Resolve one value from a spec list: a stored value clamped to its range,

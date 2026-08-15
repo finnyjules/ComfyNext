@@ -26,6 +26,7 @@ import { buildLightWidget, setWidgetSelected, disposeWidget } from '~/lib/scene3
 import { PostChain, postEnabled, DEFAULT_POST, type PostSettings } from '~/lib/spacetype/post'
 import { meshCacheGet, loadMesh } from '~/lib/scene3d/meshCache'
 import { geometryFromMeshData } from '~/lib/scene3d/mesh'
+import { gemGeometry } from './gem'
 
 /** Unit vector toward the sun for azimuth (deg, around Y) / elevation (deg above horizon). */
 export function sunDirection(azimuthDeg: number, elevationDeg: number): Vec3 {
@@ -184,6 +185,8 @@ export function geometryFor(
       const data = meshCacheGet(content?.meshKey)
       return data ? geometryFromMeshData(data) : new THREE.BoxGeometry(0.3, 0.3, 0.3)
     }
+    case 'gem':
+      return gemGeometry(p('points'), p('spread'), p('depth'), p('gemSeed'))
   }
 }
 

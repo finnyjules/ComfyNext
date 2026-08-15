@@ -27,6 +27,7 @@ export type PrimitiveKind =
   | 'torusKnot' | 'ring'
   | 'text' | 'shape' | 'svgPath'
   | 'mesh'
+  | 'gem'
 export type Vec3 = [number, number, number]
 
 // Mirrors AVAILABLE_FONTS[0].url in outlines.ts. Duplicated as a literal rather
@@ -351,6 +352,7 @@ export const PRIMITIVE_KINDS: PrimitiveKind[] = [
   'icosahedron', 'octahedron', 'dodecahedron',
   'torusKnot', 'ring',
   'text', 'shape', 'svgPath', 'mesh',
+  'gem',
 ]
 
 /** Kinds with no blank form to place from the add menu — they only exist

@@ -41,4 +41,10 @@ export const PRIM_GROUPS: { label: string; kinds: PrimGroupItem[] }[] = [
     { kind: 'text', label: 'Text', icon: Type },
     { kind: 'shape', label: 'Shape', icon: Hexagon },
   ] },
+  // gem is appended last in PRIMITIVE_KINDS (after mesh, which NOT_PLACEABLE_KINDS
+  // exempts) — the config drift test asserts PRIM_GROUPS mirrors that exact order,
+  // so this entry must stay last rather than living beside icosahedron/octahedron.
+  { label: 'Gem', kinds: [
+    { kind: 'gem', label: 'Gem', icon: Gem },
+  ] },
 ]

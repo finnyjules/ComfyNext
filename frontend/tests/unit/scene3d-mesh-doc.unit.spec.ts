@@ -29,7 +29,9 @@ describe('mesh primitive in the document', () => {
   })
 
   it('is appended last, never reordered — stored indices are a contract', () => {
-    expect(PRIMITIVE_KINDS[PRIMITIVE_KINDS.length - 1]).toBe('mesh')
+    // `gem` was appended after `mesh` (see scene3d-gem.unit.spec.ts's registration
+    // test), so mesh is second-to-last rather than last.
+    expect(PRIMITIVE_KINDS[PRIMITIVE_KINDS.length - 2]).toBe('mesh')
   })
 
   it('declares no geometry parameters', () => {
