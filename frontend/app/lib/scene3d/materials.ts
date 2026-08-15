@@ -12,7 +12,7 @@ import * as THREE from 'three'
 // degrades to opaque rather than turning the object white.
 import { stripAlpha } from '~/lib/color/convert'
 import {
-  MATERIAL_DEFAULTS, gradientAngles, gradientDirection, gradientStopsOf, opalStopsOf,
+  MATERIAL_DEFAULTS, gradientAngles, gradientDirection, gradientStopsOf, rampStopsOf, opalStopsOf,
   type GradientStop, type ReliefSpec, type SceneMaterial,
 } from './config'
 import { toHeightPixels } from './relief'
@@ -735,7 +735,7 @@ export function materialFor(mat: SceneMaterial, geometry?: THREE.BufferGeometry,
       // switches between them with the uMode uniform (in-place). Crossing the
       // smooth↔facet boundary rebuilds via identityKey.
       const facetProgram = shading !== 'smooth'
-      const stops = gradientStopsOf(mat)
+      const stops = rampStopsOf(mat)
       const { yaw, pitch } = gradientAngles(mat)
       const gradUniforms: Record<string, { value: unknown }> = {
         uRamp: { value: buildRampTexture(stops) },
@@ -999,10 +999,10 @@ export function updateMaterial(m: THREE.Material, mat: SceneMaterial): boolean {
       }
       // The LUT is the only expensive part — rebuild it only when the stops
       // actually moved, and dispose the texture we're replacing.
-      const sig = rampSignature(gradientStopsOf(mat))
+      const sig = rampSignature(rampStopsOf(mat))
       if (sig !== m.userData.rampSig) {
         u.uRamp.value?.dispose()
-        u.uRamp.value = buildRampTexture(gradientStopsOf(mat))
+        u.uRamp.value = buildRampTexture(rampStopsOf(mat))
         m.userData.rampSig = sig
       }
       const { yaw, pitch } = gradientAngles(mat)

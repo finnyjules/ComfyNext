@@ -19,6 +19,9 @@ import type { PostSettings } from '~/lib/spacetype/post'
 // `FILL_TYPES` — see materials.ts for how the field itself gets rendered onto a mesh.
 import { normalizeShaderSpec, DEFAULT_SHADER_SPEC, type ShaderSpec } from '~/lib/spacetype/fillTile'
 import { sanitizeHierarchy } from './hierarchy'
+// Harmony palette (gradient material only) — pure color theory, no three. See rampStopsOf.
+import { harmonize, toStops, HARMONY_TYPES, type HarmonyType } from '~/lib/color/harmony'
+import { oklchToHex } from '~/lib/color/convert'
 
 export type PrimitiveKind =
   | 'box' | 'sphere' | 'cylinder' | 'cone' | 'torus' | 'plane'
@@ -111,6 +114,14 @@ export interface SceneMaterial {
    *  (low-poly look); prismatic = the full ramp runs across EACH facet
    *  individually (ShapeStudio's cut-gem shimmer). */
   gradientShading?: 'smooth' | 'faceted' | 'prismatic'
+  /** When 'harmony', the gradient ramp is GENERATED from paletteHue/Sat/Light +
+   *  paletteHarmony instead of the authored `gradientStops` — see rampStopsOf.
+   *  Absent/'manual' keeps the authored stops, so old docs are unchanged. */
+  paletteMode?: 'manual' | 'harmony'
+  paletteHue?: number       // 0..360, seed hue
+  paletteSat?: number       // 0..1, mapped to OKLCH chroma 0..0.4
+  paletteLight?: number     // 0..1, OKLCH lightness of the seed
+  paletteHarmony?: HarmonyType
   /** Multi-stop ramp, 2–8 entries sorted by `pos`. Absent synthesizes the
    *  two-stop pair [color, gradientB] — so old documents render identically. */
   gradientStops?: GradientStop[]
@@ -410,6 +421,11 @@ export const MATERIAL_DEFAULTS = {
   gradientB: '#1c2740',
   gradientAxis: 'y' as const,
   gradientShading: 'smooth' as const,
+  paletteMode: 'manual' as const,
+  paletteHue: 210,
+  paletteSat: 0.5,
+  paletteLight: 0.6,
+  paletteHarmony: 'analogous' as HarmonyType,
   gradientType: 'linear' as const,
   // Yaw/pitch defaults are the angles derived from the default axis ('y').
   gradientYaw: 0,
@@ -495,6 +511,21 @@ export function gradientStopsOf(mat: SceneMaterial): GradientStop[] {
     { pos: 0, color: mat.color },
     { pos: 1, color: mat.gradientB ?? MATERIAL_DEFAULTS.gradientB },
   ]
+}
+
+/** Ramp stops for the RENDER path: a harmony-generated dark→light ramp when
+ *  paletteMode is 'harmony', else the authored/synthesized stops. Kept separate
+ *  from gradientStopsOf (the editor's by-reference model) so the ramp editor is
+ *  untouched while the rendered ramp can be generated. Pure — no three. */
+export function rampStopsOf(mat: SceneMaterial): GradientStop[] {
+  if (mat.paletteMode !== 'harmony') return gradientStopsOf(mat)
+  const hue = mat.paletteHue ?? MATERIAL_DEFAULTS.paletteHue
+  const sat = mat.paletteSat ?? MATERIAL_DEFAULTS.paletteSat
+  const light = mat.paletteLight ?? MATERIAL_DEFAULTS.paletteLight
+  const scheme = mat.paletteHarmony ?? MATERIAL_DEFAULTS.paletteHarmony
+  const seedHex = oklchToHex(light, sat * 0.4, hue)
+  const N = 5
+  return toStops(harmonize(seedHex, scheme, N), N)
 }
 
 /** A full-hue-wheel spectrum, CYCLIC (first stop == last) so the opal shader's `fract()` wrap has
@@ -811,6 +842,11 @@ export function parseDoc(json: string): SceneDoc {
     if (typeof m?.gradientB === 'string') out.gradientB = m.gradientB
     if (m?.gradientAxis === 'x' || m?.gradientAxis === 'y' || m?.gradientAxis === 'z') out.gradientAxis = m.gradientAxis
     if (m?.gradientShading === 'smooth' || m?.gradientShading === 'faceted' || m?.gradientShading === 'prismatic') out.gradientShading = m.gradientShading
+    if (m?.paletteMode === 'manual' || m?.paletteMode === 'harmony') out.paletteMode = m.paletteMode
+    if (typeof m?.paletteHue === 'number') out.paletteHue = num(m.paletteHue, MATERIAL_DEFAULTS.paletteHue)
+    if (typeof m?.paletteSat === 'number') out.paletteSat = num(m.paletteSat, MATERIAL_DEFAULTS.paletteSat)
+    if (typeof m?.paletteLight === 'number') out.paletteLight = num(m.paletteLight, MATERIAL_DEFAULTS.paletteLight)
+    if (typeof m?.paletteHarmony === 'string' && HARMONY_TYPES.includes(m.paletteHarmony)) out.paletteHarmony = m.paletteHarmony
     // Stops: clamp positions, sort, and drop the whole array unless 2–8 valid
     // entries survive — a dropped array falls back to the synthesized pair.
     if (Array.isArray(m?.gradientStops) && m.gradientStops.length <= GRADIENT_STOPS_MAX) {
