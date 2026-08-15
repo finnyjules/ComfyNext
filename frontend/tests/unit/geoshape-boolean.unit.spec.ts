@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { composite } from '~/lib/geoshape/boolean'
 import { DEFAULT_CONFIG } from '~/lib/geoshape/config'
-import { shapesToSVG } from '~/lib/vector/svg'
+import { commandsToPathData, shapesToSVG } from '~/lib/vector/svg'
 
 // two overlapping squares as the base+placement stand-in
 const SQUARE = 'M -50 -50 L 50 -50 L 50 50 L -50 50 Z'
@@ -9,6 +9,17 @@ const twoOverlap = [
   { x: -20, y: 0, scale: 1, rotate: 0, skew: 0 },
   { x: 20, y: 0, scale: 1, rotate: 0, skew: 0 },
 ]
+
+// A local, detached PaperScope for test-side proofs (composite()'s own scope is
+// module-private). Headless setup mirrors boolean.ts's own pattern.
+let _paperMod: typeof paper | null = null
+async function paperScope(): Promise<paper.PaperScope> {
+  if (!_paperMod) _paperMod = ((await import('paper')) as unknown as { default: typeof paper }).default
+  const scope = new _paperMod.PaperScope()
+  scope.setup(new scope.Size(1024, 1024))
+  scope.activate()
+  return scope
+}
 
 describe('geoshape boolean composite', () => {
   it('evenodd hole: overlap becomes negative space (multiple subpaths, evenodd)', async () => {
@@ -19,6 +30,28 @@ describe('geoshape boolean composite', () => {
     // an even-odd union of two overlapping squares has an interior hole → >1 subpath (M appears ≥2×)
     const ms = (shapes[0]!.commands.filter(c => c.command === 'moveTo')).length
     expect(ms).toBeGreaterThanOrEqual(2)
+  })
+  it('evenodd hole: the overlap centre is a real HOLE, not just extra subpaths', async () => {
+    // placements offset the SQUARE (x∈[-50,50]) by ±20, so the left clone covers
+    // x∈[-70,30] and the right clone covers x∈[-30,70]. Their shared overlap band
+    // is x∈[-30,30], centred on the origin.
+    const shapes = await composite(SQUARE, twoOverlap, { ...DEFAULT_CONFIG, fillMode: 'evenodd', overlapMode: 'hole', symmetry: false, clipMask: 'none' })
+    const sc = await paperScope()
+    try {
+      const p = new sc.CompoundPath(commandsToPathData(shapes[0]!.commands))
+      // paper.js's real style property is `fillRule` (Style.itemDefaults.fillRule);
+      // `_contains` reads it via `getFillRule()`. Confirmed by reading paper's
+      // source directly — the `windingRule` name useVectorSvg.ts:457 reads back
+      // does not exist anywhere in paper.js; only `fillRule` does.
+      p.fillRule = 'evenodd'
+      // shared overlap centre: not contained -> it's a hole
+      expect(p.contains(new sc.Point(0, 0))).toBe(false)
+      // deep inside the left square only (x=-60, well outside the [-30,30] overlap
+      // band and inside the left square's [-70,30] extent): must be solid fill
+      expect(p.contains(new sc.Point(-60, 0))).toBe(true)
+    } finally {
+      sc.project.clear()
+    }
   })
   it('overlapMode shape: the intersection is emitted as a separate filled shape', async () => {
     const shapes = await composite(SQUARE, twoOverlap, { ...DEFAULT_CONFIG, overlapMode: 'shape', overlapFill: '#ff0000', symmetry: false, clipMask: 'none' })
@@ -35,5 +68,19 @@ describe('geoshape boolean composite', () => {
     const unclipped = await composite(SQUARE, wide, { ...DEFAULT_CONFIG, overlapMode: 'hole', clipMask: 'none' })
     const bbox = (s: any[]) => s.flatMap(x => x.commands).flatMap((c: any) => c.args).filter((_: any, i: number) => i % 2 === 0)
     expect(Math.max(...bbox(clipped).map(Math.abs))).toBeLessThan(Math.max(...bbox(unclipped).map(Math.abs)))
+  })
+  it('symmetry works in the default evenodd/hole mode (regression)', async () => {
+    const shapes = await composite(SQUARE, twoOverlap, { ...DEFAULT_CONFIG, symmetry: true, clipMask: 'none' })
+    expect(shapes.length).toBeGreaterThanOrEqual(1)
+    // non-empty geometry survived the mirror (the bug produced 0 commands: uniting
+    // the self-overlapping evenodd compound emptied the mark)
+    expect(shapes[0]!.commands.length).toBeGreaterThan(0)
+    // mirroring at the clone level doubles the subpath count (2 clones -> 4
+    // subpaths, since evenodd keeps every clone as its own subpath)
+    const ms = shapes[0]!.commands.filter(c => c.command === 'moveTo').length
+    expect(ms).toBe(4)
+    const svg = shapesToSVG(shapes)
+    // the SVG actually carries real path data, not an empty mark
+    expect(svg).toMatch(/<path d="M-?\d/)
   })
 })

@@ -76,6 +76,22 @@ export async function composite(baseD: string, placements: ClonePlacement[], cfg
     })
     if (!clones.length) return []
 
+    // Symmetry is applied at the clone level (mirror every clone and add the copies)
+    // rather than uniting the composited result: uniting a self-overlapping evenodd
+    // compound is undefined in paper's boolean resolver (it ignores fillRule) and
+    // empties the mark. mirror(A∪B) = mirror(A)∪mirror(B), so this is equivalent for
+    // every fillMode and safe for evenodd.
+    if (cfg.symmetry) {
+      const sm = new sc.Matrix()
+      if (cfg.symmetryAxis === 'vertical') sm.scale(-1, 1); else sm.scale(1, -1)
+      sm.translate(
+        cfg.symmetryAxis === 'vertical' ? cfg.symmetrySpacing : 0,
+        cfg.symmetryAxis === 'horizontal' ? cfg.symmetrySpacing : 0,
+      )
+      const mirrored = clones.map((c) => { const mc = c.clone(); mc.transform(sm); return mc })
+      clones.push(...mirrored)
+    }
+
     // 2. overlap-as-shape: the region covered by >=2 clones = union of
     // pairwise intersections, computed off the RAW clones BEFORE the fold
     // below — `intersect` does not consume its operands, but the evenodd
@@ -120,28 +136,7 @@ export async function composite(baseD: string, placements: ClonePlacement[], cfg
       }
     }
 
-    // 4. symmetry mirror: reflect the accumulated geometry across the chosen
-    // axis (offset by symmetrySpacing) and unite the reflection back in.
-    const mirror = (item: paper.PathItem): paper.PathItem => {
-      const m = new sc.Matrix()
-      if (cfg.symmetryAxis === 'vertical') m.scale(-1, 1)
-      else m.scale(1, -1)
-      m.translate(
-        cfg.symmetryAxis === 'vertical' ? cfg.symmetrySpacing : 0,
-        cfg.symmetryAxis === 'horizontal' ? cfg.symmetrySpacing : 0,
-      )
-      const mi = item.clone()
-      mi.transform(m)
-      const u = (item as any).unite(mi)
-      mi.remove()
-      return u
-    }
-    if (cfg.symmetry) {
-      acc = mirror(acc)
-      if (overlap) overlap = mirror(overlap)
-    }
-
-    // 5. clip mask: intersect the accumulated geometry (and overlap, if any)
+    // 4. clip mask: intersect the accumulated geometry (and overlap, if any)
     // with a centered circle/square/hexagon.
     if (cfg.clipMask !== 'none') {
       const r = cfg.clipMaskSize
@@ -155,7 +150,7 @@ export async function composite(baseD: string, placements: ClonePlacement[], cfg
       clip.remove()
     }
 
-    // 6. paper → VectorShape[]. evenodd sets the fill-rule; shape mode adds
+    // 5. paper → VectorShape[]. evenodd sets the fill-rule; shape mode adds
     // the overlap as a second shape painted with `overlapFill`.
     const fillRule: 'evenodd' | 'nonzero' = cfg.fillMode === 'evenodd' ? 'evenodd' : 'nonzero'
     const out: VectorShape[] = [{

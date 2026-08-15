@@ -99,6 +99,9 @@ const str = (v: unknown, d: string): string => (typeof v === 'string' ? v : d)
 const oneOf = <T extends string>(v: unknown, allowed: readonly T[], d: T): T =>
   (typeof v === 'string' && (allowed as readonly string[]).includes(v)) ? (v as T) : d
 const bool = (v: unknown, d: boolean): boolean => (typeof v === 'boolean' ? v : d)
+/** Clamp a numeric field into [min, max] (rounded) so junk input can't blow up an O(n²) fold. */
+const clampNum = (v: unknown, d: number, min: number, max: number): number =>
+  Math.min(max, Math.max(min, Math.round(num(v, d))))
 
 const SHAPES = ['polygon', 'star', 'hexagon', 'irregular'] as const
 const LAYOUTS = ['radial', 'grid', 'linear'] as const
@@ -171,7 +174,7 @@ export function mergeConfig(raw: unknown): GeoShapeConfig {
     starInner: num(o.starInner, d.starInner),
     irregularSeed: num(o.irregularSeed, d.irregularSeed),
     size: num(o.size, d.size),
-    count: num(o.count, d.count),
+    count: clampNum(o.count, d.count, 1, 200),
     layout: oneOf(o.layout, LAYOUTS, d.layout),
     radius: num(o.radius, d.radius),
     spacing: num(o.spacing, d.spacing),
@@ -198,8 +201,8 @@ export function mergeConfig(raw: unknown): GeoShapeConfig {
     fill: paint(o.fill, d.fill),
     stroke: o.stroke === null ? null : (typeof o.stroke === 'string' ? o.stroke : d.stroke),
     overlapFill: paint(o.overlapFill, d.overlapFill),
-    gridCols: num(o.gridCols, d.gridCols),
-    gridRows: num(o.gridRows, d.gridRows),
+    gridCols: clampNum(o.gridCols, d.gridCols, 1, 24),
+    gridRows: clampNum(o.gridRows, d.gridRows, 1, 24),
     locks,
   }
 }
