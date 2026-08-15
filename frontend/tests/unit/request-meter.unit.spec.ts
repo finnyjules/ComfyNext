@@ -14,6 +14,7 @@
  * starts from a known (unbound) context and opts in explicitly.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { isError } from 'h3'
 import {
   MeterRefusalError,
   __resetMeterContextForTests,
@@ -271,6 +272,38 @@ describe('preflightMeter', () => {
       )
     } finally {
       spy.mockRestore()
+    }
+  })
+})
+
+// Final-review fix: h3's isError is a duck-check on
+// `constructor.__h3_error__`, not `instanceof H3Error` — a MeterRefusalError
+// that fails this check gets rewrapped by h3's toNodeListener catch with
+// `unhandled = true`, and Nitro's prod error handler then strips
+// message/data and replaces them with a generic "Server Error" before the
+// response reaches the client. Assert against the REAL h3 `isError`, not a
+// reimplementation of the duck-check, so this test tracks h3's actual
+// behavior across upgrades.
+describe('MeterRefusalError is h3-shaped', () => {
+  it('isError(real h3) recognizes MeterRefusalError', () => {
+    expect(isError(new MeterRefusalError('insufficient credits', 402, { required: 5, available: 1 }))).toBe(true)
+  })
+
+  it('a thrown 402 refusal still carries {required, available} in .data', async () => {
+    setHosted()
+    bindMeterContext({ userId: 'u1' })
+    const priced = 'black-forest-labs/flux-dev'
+    const required = MODEL_COSTS[priced].credits
+    fakeLedger.getAvailable.mockResolvedValue(required - 1)
+
+    try {
+      await preflightMeter(priced)
+      throw new Error('expected preflightMeter to throw')
+    } catch (err) {
+      expect(isError(err)).toBe(true)
+      expect((err as MeterRefusalError).fatal).toBe(false)
+      expect((err as MeterRefusalError).unhandled).toBe(false)
+      expect((err as MeterRefusalError).data).toEqual({ required, available: required - 1 })
     }
   })
 })

@@ -12,7 +12,7 @@
  *
  * CRITICAL ALS propagation gotcha (found live during Task 3, verified
  * against real h3 dispatch — see requestMeter.unit.spec.ts's h3-shaped
- * regression test and tests/unit/meter-context-h3.integration.spec.ts):
+ * regression test and tests/unit/meter-context-h3-integration.unit.spec.ts):
  * AsyncLocalStorage#enterWith mutates the store for "whatever is currently
  * the active async context frame". A sibling h3 middleware/route handler
  * invoked via a SEPARATE `await` from Nitro's dispatcher subscribes its own
@@ -120,13 +120,38 @@ export function __resetMeterContextForTests(): void {
   clearMeterContext()
 }
 
+/**
+ * h3's `isError` is a duck-check — `input?.constructor?.__h3_error__ ===
+ * true` (h3@1.15.8 dist/index.mjs ~line 140) — NOT `instanceof H3Error`.
+ * Without the static marker below, `toNodeListener`'s catch (same file,
+ * ~line 2318/2419) sees `isError(_error) === false`, wraps this error in a
+ * FRESH H3Error via `createError`, and — critically — sets `unhandled =
+ * true` on that wrapper because the original wasn't recognized as an H3
+ * error. Nitro's prod error handler (nitropack/dist/runtime/internal/
+ * error/prod.mjs) treats `unhandled` as `isSensitive` and replaces
+ * `message`/`data` with a generic "Server Error" + `undefined` before the
+ * response ever reaches the client — so a 402 with {required, available}
+ * silently became an opaque 500-shaped body. The fields below mirror
+ * h3's real `H3Error` class (same file, ~line 36) closely enough that
+ * `isError` recognizes this class AND h3/Nitro's serialization path finds
+ * everything it expects: `statusMessage` (used for the HTTP status line
+ * and echoed into the JSON body), `fatal`/`unhandled` (both must stay
+ * `false` so this error is never treated as sensitive). `cause` is also on
+ * H3Error, but it's already declared on the base `Error` class (ES2022
+ * lib) — no re-declaration needed, `super(message)` covers it.
+ */
 export class MeterRefusalError extends Error {
+  static __h3_error__ = true
   statusCode: number
+  statusMessage?: string
   data?: unknown
+  fatal = false
+  unhandled = false
   constructor(message: string, statusCode: number, data?: unknown) {
     super(message)
     this.name = 'MeterRefusalError'
     this.statusCode = statusCode
+    this.statusMessage = message
     this.data = data
   }
 }

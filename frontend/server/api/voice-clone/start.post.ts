@@ -14,8 +14,10 @@
  * frontend polls /voice-clone/status with it (plus the user-chosen name).
  */
 import { assertRateLimit } from '../../lib/rateLimit'
-import { preflightMeter } from '../../utils/requestMeter'
+import { currentMeterContext, preflightMeter } from '../../utils/requestMeter'
 import { VOICE_CLONE_MODEL } from '../../utils/priceBook'
+import { deployMode } from '../../utils/deployMode'
+import { recordVoiceCloneOwner } from '../../utils/voiceCloneOwners'
 
 // Re-exported (not re-declared) so status.get.ts's `import { CLONE_MODEL }
 // from './start.post'` keeps working — VOICE_CLONE_MODEL in priceBook.ts is
@@ -64,5 +66,14 @@ export default defineEventHandler(async (event) => {
   }
 
   const pred = await res.json() as { id: string; status: string }
+
+  // Bind this prediction to the user who paid the preflight, so
+  // status.get.ts's debit-on-success settle can verify the poller is the
+  // owner before charging anyone (see voiceCloneOwners.ts's module doc).
+  if (deployMode() === 'hosted') {
+    const userId = currentMeterContext()?.userId
+    if (userId) recordVoiceCloneOwner(pred.id, userId)
+  }
+
   return { id: pred.id, status: pred.status }
 })

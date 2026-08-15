@@ -14,7 +14,9 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { CLONE_MODEL } from './start.post'
-import { settleModel } from '../../utils/requestMeter'
+import { currentMeterContext, settleModel } from '../../utils/requestMeter'
+import { deployMode } from '../../utils/deployMode'
+import { decideVoiceCloneSettle } from '../../utils/voiceCloneOwners'
 
 /** MiniMax voice ids are word-ish; keep only path-safe chars for the filename. */
 function safeId(id: string): string | null {
@@ -59,7 +61,26 @@ export default defineEventHandler(async (event) => {
     // Debit-on-success: settle the flat CLONE_MODEL price now that Replicate
     // has confirmed the clone actually completed. jobId doubles as the
     // ledger's idempotency key, so repeated polls after success are a no-op.
-    await settleModel(CLONE_MODEL, 'rep:' + pred.id)
+    //
+    // Ownership gate (final-review fix): this route settles for whoever
+    // polls it with a prediction id, so without a check user B polling
+    // user A's id would charge user A's ledger to user B's benefit — and
+    // because ledger idempotency is per-user, BOTH could end up charged.
+    // Only settle when the polling context user matches the user who paid
+    // start.post.ts's preflight for this exact prediction id (see
+    // voiceCloneOwners.ts). Note: this only gates the DEBIT — reading this
+    // route's status/output for a prediction id you don't own is still
+    // possible; that's a Stage-5 tenant-isolation rider, not solved here.
+    const decision = deployMode() === 'hosted'
+      ? decideVoiceCloneSettle(pred.id, currentMeterContext()?.userId)
+      : { settle: true as const }
+    if (decision.settle) {
+      await settleModel(CLONE_MODEL, 'rep:' + pred.id)
+    } else if (decision.reason === 'unknown-owner') {
+      console.warn('[meter] voice-clone settle skipped — ownership unknown (restart?)', { predictionId: pred.id })
+    } else {
+      console.warn('[meter] voice-clone settle skipped — poller is not the owner', { predictionId: pred.id })
+    }
 
     const safe = safeId(pred.output.voice_id)
     if (!safe) {
