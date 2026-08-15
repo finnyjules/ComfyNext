@@ -12,17 +12,22 @@
  *
  * CRITICAL ALS propagation gotcha (found live during Task 3, verified
  * against real h3 dispatch — see requestMeter.unit.spec.ts's h3-shaped
- * regression test): AsyncLocalStorage#enterWith mutates the store for
- * "whatever is currently the active async context frame", but a sibling
- * h3 middleware/route handler invoked via a SEPARATE `await` from Nitro's
- * dispatcher subscribes its own continuation at CALL time — i.e. before
- * auth.ts's internal `await resolveHostedUserId(event)` even runs. If
- * bindMeterContext called a *fresh* enterWith AFTER that internal await
- * (the naive approach), the new store would never reach the next
- * middleware/route handler: verified with a minimal real-h3 repro where a
- * downstream handler saw `null` despite enterWith having already run.
- * enterWith called BEFORE a callee's first internal await, by contrast,
- * DOES propagate correctly to the awaiting caller and everything scheduled
+ * regression test and tests/unit/meter-context-h3.integration.spec.ts):
+ * AsyncLocalStorage#enterWith mutates the store for "whatever is currently
+ * the active async context frame". A sibling h3 middleware/route handler
+ * invoked via a SEPARATE `await` from Nitro's dispatcher subscribes its own
+ * continuation once the handler's synchronous prefix suspends — i.e. the
+ * dispatcher's continuation is created AFTER that synchronous prefix
+ * (which includes the internal `await resolveHostedUserId(event)`'s own
+ * suspension), not before it. If bindMeterContext called a *fresh*
+ * enterWith AFTER that internal await (the naive approach), the enterWith
+ * would run on a continuation descended from the internal await — a frame
+ * the dispatcher's own (already-created) continuation is not an ancestor
+ * of — so the new store would never reach the next middleware/route
+ * handler: verified with a minimal real-h3 repro where a downstream
+ * handler saw `null` despite enterWith having already run. enterWith
+ * called BEFORE a callee's first internal await, by contrast, DOES
+ * propagate correctly to the awaiting caller and everything scheduled
  * after it — because invoking a function runs its synchronous prefix
  * (including any enterWith there) before the caller's `await` even
  * subscribes.
@@ -72,6 +77,9 @@ export function bindMeterContext(ctx: MeterContext): void {
   if (box) {
     box.current = ctx
   } else {
+    if (process.env.NODE_ENV !== 'test') {
+      console.warn('[meter] bindMeterContext without a cleared box — context may not propagate; call clearMeterContext() first')
+    }
     als.enterWith({ current: ctx })
   }
 }

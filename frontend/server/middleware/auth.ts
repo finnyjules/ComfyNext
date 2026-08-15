@@ -98,6 +98,14 @@ export function shouldLazySync(userId: string): boolean {
 }
 export function __resetLazySyncForTests(): void { lazySynced = new Set() }
 
+// GUARD: this must remain a plain-function defineEventHandler (no
+// await-before-body wrapper), and clearMeterContext() below must stay the
+// first statement on the hosted path — before any await (the local-mode
+// check above it is synchronous, so it doesn't break this). The
+// request-meter box's propagation to downstream middleware/route handlers
+// depends on clearMeterContext's enterWith running in this handler's
+// synchronous prefix; see requestMeter.ts's module doc for why moving it
+// after an await (or wrapping this handler) breaks context delivery.
 export default defineEventHandler(async (event) => {
   const mode = deployMode()
   if (mode === 'local') return
