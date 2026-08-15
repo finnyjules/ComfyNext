@@ -165,6 +165,11 @@ export class PostChain {
     this.duotonePass = makeDuotonePass()
     this.distortPass = makeDistortPass()
     this.distortPass.enabled = false
+    // Initialise u_resolution here (not only in setSize, which fires on resize):
+    // makeDistortPass defaults it to (1,1), and the distort frag divides its pixel
+    // displacement by u_resolution — so without this the first render (before any
+    // resize) over-warps ~1000×. gradePass initialises uResolution the same way above.
+    ;(this.distortPass.uniforms.u_resolution!.value as THREE.Vector2).set(width, height)
     this.vignettePass = makeVignettePass()
     this.grainPass = makeGrainPass()
     this.extrasResolution = new THREE.Vector2(width, height)
