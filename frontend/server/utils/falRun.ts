@@ -11,6 +11,7 @@
  */
 import { getFalToken } from './falStorage'
 import { logSpend } from './spendLog'
+import { preflightMeter } from './requestMeter'
 
 const FAL_QUEUE_BASE = 'https://queue.fal.run'
 
@@ -30,6 +31,7 @@ export async function runFal<T = unknown>(
   input: Record<string, unknown>,
   opts: FalRunOptions = {},
 ): Promise<T> {
+  const ticket = await preflightMeter(app)
   const token = getFalToken()
   if (!token) throw new Error('FAL_KEY is not set (add it to frontend/.env)')
   const headers = { Authorization: `Key ${token}`, 'Content-Type': 'application/json' }
@@ -70,6 +72,7 @@ export async function runFal<T = unknown>(
         const t = await rRes.text().catch(() => '')
         throw new Error(`fal result ${rRes.status}: ${t}`)
       }
+      if (ticket) await ticket.settle('fal:' + rid)
       return await rRes.json() as T
     }
     logSpend({ provider: 'fal', model: app, ok: false, ms: Date.now() - startedAt })

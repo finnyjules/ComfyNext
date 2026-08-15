@@ -4,6 +4,7 @@
  * (SVG generation/vectorize finish in seconds) and returns the raw `output`.
  */
 import { logSpend } from './spendLog'
+import { preflightMeter } from './requestMeter'
 
 interface Prediction {
   id: string
@@ -37,6 +38,7 @@ export async function runReplicate(
   token: string,
   opts: { timeoutMs?: number; pollMs?: number } = {},
 ): Promise<unknown> {
+  const ticket = await preflightMeter(model)
   const timeoutMs = opts.timeoutMs ?? 90_000
   const pollMs = opts.pollMs ?? 1200
   const version = await latestVersion(model, token)
@@ -67,6 +69,7 @@ export async function runReplicate(
   if (pred.status !== 'succeeded') {
     throw createError({ statusCode: 502, message: `Replicate prediction ${pred.status}: ${pred.error || 'unknown error'}` })
   }
+  if (ticket) await ticket.settle('rep:' + pred.id)
   return pred.output
 }
 
