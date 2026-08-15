@@ -205,3 +205,38 @@ export async function preflightMeter(model: string): Promise<MeterTicket | null>
     },
   }
 }
+
+/**
+ * Settle a known-priced model for the CURRENT context user without a fresh
+ * preflight — for async jobs whose success is confirmed on a later request
+ * (e.g. voice-clone status polling). The idempotency key makes repeated
+ * status polls after success a no-op. A refused debit (balance drained
+ * between start and completion) delivers the job UNCHARGED and logs loudly —
+ * never blocks the user's result. Local mode: no-op.
+ */
+export async function settleModel(model: string, jobId: string): Promise<void> {
+  if (deployMode() === 'local') return
+
+  const ctx = currentMeterContext()
+  if (!ctx) {
+    console.error('[meter] settleModel without context', { model, jobId })
+    return
+  }
+
+  const credits = resolveCredits(model, ctx.priceHintCredits)
+  if (credits === null) {
+    console.error('[meter] settleModel: unpriced model', { model, jobId, userId: ctx.userId })
+    return
+  }
+
+  const userId = ctx.userId
+  const ledger = getLedger()
+  try {
+    const result = await ledger.debit(userId, credits, `provider:${model}`, jobId)
+    if (!result.ok) {
+      console.error('[meter] DEBIT FAILED after successful job', { userId, model, credits, jobId, result })
+    }
+  } catch (e) {
+    console.error('[meter] DEBIT FAILED after successful job', { userId, model, credits, jobId, error: e })
+  }
+}

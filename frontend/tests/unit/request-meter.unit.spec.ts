@@ -23,6 +23,7 @@ import {
   currentMeterContext,
   preflightMeter,
   resolveCredits,
+  settleModel,
   setMeterPriceHint,
 } from '../../server/utils/requestMeter'
 import { LORA_RENDER_CREDITS, MODEL_COSTS } from '../../server/utils/priceBook'
@@ -286,5 +287,97 @@ describe('resolveCredits owner allowlist (fail-closed)', () => {
   })
   it('never-seen owner refuses', () => {
     expect(resolveCredits('stranger/some-model')).toBeNull()
+  })
+})
+
+// Task 4: settleModel — debit-only settlement for async jobs whose success
+// is confirmed on a LATER request (voice-clone/status polling the prediction
+// started, but only preflight-gated, by voice-clone/start).
+describe('settleModel', () => {
+  it('local mode: no-op, never touches the ledger', async () => {
+    setLocal()
+    await settleModel('finnyjules/jules-jene', 'rep:pred1')
+    expect(fakeLedger.debit).not.toHaveBeenCalled()
+  })
+
+  it('hosted: debits the current context user with exact args', async () => {
+    setHosted()
+    bindMeterContext({ userId: 'u1' })
+
+    await settleModel('finnyjules/jules-jene', 'rep:pred1')
+
+    expect(fakeLedger.debit).toHaveBeenCalledWith('u1', LORA_RENDER_CREDITS, 'provider:finnyjules/jules-jene', 'rep:pred1')
+  })
+
+  it('hosted, priced model with a hint: hint is ignored in favor of the priced entry', async () => {
+    setHosted()
+    bindMeterContext({ userId: 'u1' })
+    const priced = 'black-forest-labs/flux-dev'
+
+    await settleModel(priced, 'rep:pred2')
+
+    expect(fakeLedger.debit).toHaveBeenCalledWith('u1', MODEL_COSTS[priced].credits, `provider:${priced}`, 'rep:pred2')
+  })
+
+  it('hosted, no bound context: logs loudly, does not throw, never touches the ledger', async () => {
+    setHosted()
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      await expect(settleModel('finnyjules/jules-jene', 'rep:pred3')).resolves.toBeUndefined()
+      expect(spy).toHaveBeenCalledWith(
+        expect.stringContaining('[meter] settleModel without context'),
+        expect.anything(),
+      )
+      expect(fakeLedger.debit).not.toHaveBeenCalled()
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('hosted, unpriced model with no hint: logs loudly, does not throw, never touches the ledger', async () => {
+    setHosted()
+    bindMeterContext({ userId: 'u1' })
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      await expect(settleModel('black-forest-labs/not-in-book', 'rep:pred4')).resolves.toBeUndefined()
+      expect(spy).toHaveBeenCalled()
+      expect(fakeLedger.debit).not.toHaveBeenCalled()
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('hosted: a refused debit (ledger throws) logs loudly and does not throw — job stays delivered unmetered', async () => {
+    setHosted()
+    bindMeterContext({ userId: 'u1' })
+    fakeLedger.debit.mockRejectedValue(new Error('ledger exploded'))
+
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      await expect(settleModel('finnyjules/jules-jene', 'rep:pred5')).resolves.toBeUndefined()
+      expect(spy).toHaveBeenCalledWith(
+        expect.stringContaining('[meter] DEBIT FAILED after successful job'),
+        expect.anything(),
+      )
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('hosted: a refused debit (ledger resolves ok:false) logs loudly and does not throw', async () => {
+    setHosted()
+    bindMeterContext({ userId: 'u1' })
+    fakeLedger.debit.mockResolvedValue({ ok: false })
+
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      await expect(settleModel('finnyjules/jules-jene', 'rep:pred6')).resolves.toBeUndefined()
+      expect(spy).toHaveBeenCalledWith(
+        expect.stringContaining('[meter] DEBIT FAILED after successful job'),
+        expect.anything(),
+      )
+    } finally {
+      spy.mockRestore()
+    }
   })
 })

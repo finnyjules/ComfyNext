@@ -80,13 +80,13 @@ describe('bypass-route meter coverage guard', () => {
       it.skip(`${rel} — Task 5 training file, allowlisted`, () => {})
       continue
     }
-    it(`${rel} references preflightMeter or carries a METER-EXEMPT: marker`, () => {
+    it(`${rel} references preflightMeter/settleModel or carries a METER-EXEMPT: marker`, () => {
       const src = readFileSync(file, 'utf8')
-      const covered = src.includes('preflightMeter') || src.includes('METER-EXEMPT:')
+      const covered = src.includes('preflightMeter') || src.includes('settleModel') || src.includes('METER-EXEMPT:')
       expect(
         covered,
         `${rel} fetches a provider host (${PROVIDER_FETCH_PATTERNS.join(', ')}) but has ` +
-        'neither a preflightMeter reference nor a METER-EXEMPT: marker — unmetered spend risk.',
+        'neither a preflightMeter/settleModel reference nor a METER-EXEMPT: marker — unmetered spend risk.',
       ).toBe(true)
     })
   }

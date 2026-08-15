@@ -13,6 +13,8 @@
  */
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+import { CLONE_MODEL } from './start.post'
+import { settleModel } from '../../utils/requestMeter'
 
 /** MiniMax voice ids are word-ish; keep only path-safe chars for the filename. */
 function safeId(id: string): string | null {
@@ -32,9 +34,10 @@ export default defineEventHandler(async (event) => {
   const name = String(query.name ?? '').trim()
   if (!id) throw createError({ statusCode: 400, message: 'Missing id' })
 
-  // METER-EXEMPT: polls the status of a prediction started (and metered) by
-  // /api/voice-clone/start — this route only reads state and persists the
-  // result locally, it never creates provider work of its own.
+  // SETTLES: this route polls a prediction started (but only preflight-
+  // gated, not charged) by /api/voice-clone/start — debit-on-success means
+  // the actual ledger debit happens here, in the succeeded branch below,
+  // once Replicate confirms the clone actually completed. See settleModel.
   const res = await fetch(`https://api.replicate.com/v1/predictions/${id}`, {
     headers: { Authorization: `Token ${token}` },
   })
@@ -53,6 +56,11 @@ export default defineEventHandler(async (event) => {
   let persistError: string | null = null
 
   if (pred.status === 'succeeded' && pred.output?.voice_id) {
+    // Debit-on-success: settle the flat CLONE_MODEL price now that Replicate
+    // has confirmed the clone actually completed. jobId doubles as the
+    // ledger's idempotency key, so repeated polls after success are a no-op.
+    await settleModel(CLONE_MODEL, 'rep:' + pred.id)
+
     const safe = safeId(pred.output.voice_id)
     if (!safe) {
       persistError = `Replicate returned an unsafe voice_id: ${pred.output.voice_id}`
