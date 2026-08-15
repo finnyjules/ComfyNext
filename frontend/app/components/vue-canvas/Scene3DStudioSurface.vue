@@ -24,6 +24,7 @@ import {
   type DecalObject, type DecalContent,
 } from '~/lib/scene3d/config'
 import { eulerFromNormal } from '~/lib/scene3d/decals'
+import { HARMONY_TYPES, HARMONY_LABELS } from '~/lib/color/harmony'
 import { MATCAP_IDS, matcapThumb, onTextureError } from '~/lib/scene3d/materials'
 import { toHeightPixels, heightGradient, RELIEF_FLAT_THRESHOLD } from '~/lib/scene3d/relief'
 import { DEFAULT_SHADER_SPEC, normalizeShaderSpec, type ShaderSpec } from '~/lib/spacetype/fillTile'
@@ -575,6 +576,14 @@ const matGradientShading = matParam('gradientShading')
 const matGradientType = matParam('gradientType')
 const matGradientOffset = matParam('gradientOffset')
 const matGradientSpread = matParam('gradientSpread')
+// Palette: when paletteMode is 'harmony' the ramp is GENERATED from these
+// scalars (see rampStopsOf in config.ts) instead of the authored gradientStops
+// the ramp editor writes — same matParam proxy pattern as every other field here.
+const matPaletteMode = matParam('paletteMode')
+const matPaletteHue = matParam('paletteHue')
+const matPaletteSat = matParam('paletteSat')
+const matPaletteLight = matParam('paletteLight')
+const matPaletteHarmony = matParam('paletteHarmony')
 // Opalescent scalars (the spectrum itself reuses matGradientStops below).
 const matOpalHueShift = matParam('opalHueShift')
 const matOpalFrequency = matParam('opalFrequency')
@@ -4101,7 +4110,29 @@ async function onClose() {
 
         <!-- gradient -->
         <template v-else-if="matEditable && matType === 'gradient'">
-          <StudioGradientRamp v-model="matGradientStops" />
+          <!-- Palette: Manual keeps the authored ramp editor below; Harmony instead
+               GENERATES the ramp from hue/sat/light + a harmony scheme (rampStopsOf
+               in config.ts) — the two are mutually exclusive views onto the same
+               `gradientStops` field, so only one editor shows at a time. -->
+          <div>
+            <label class="mb-1 block text-[11px] text-white/55">Palette</label>
+            <StudioSegmented v-model="matPaletteMode" :options="['manual', 'harmony']" />
+          </div>
+          <template v-if="matPaletteMode === 'harmony'">
+            <StudioSlider v-model="matPaletteHue" label="Hue" hint="Seed hue the harmony scheme is built from" :min="0" :max="360" :step="1" />
+            <StudioSlider v-model="matPaletteSat" label="Saturation" hint="How vivid the generated colours are" :min="0" :max="1" :step="0.01" />
+            <StudioSlider v-model="matPaletteLight" label="Lightness" hint="How light or dark the generated colours are" :min="0.2" :max="0.9" :step="0.01" />
+            <div>
+              <label class="mb-1 block text-[11px] text-white/55">Harmony</label>
+              <select
+                v-model="matPaletteHarmony"
+                class="w-full rounded border border-white/10 bg-white/[0.04] px-2 py-1.5 text-[12px] text-white/85 outline-none focus:border-white/25"
+              >
+                <option v-for="h in HARMONY_TYPES" :key="h" :value="h">{{ HARMONY_LABELS[h] }}</option>
+              </select>
+            </div>
+          </template>
+          <StudioGradientRamp v-else v-model="matGradientStops" />
           <div>
             <label class="mb-1 block text-[11px] text-white/55">Type</label>
             <StudioSegmented v-model="matGradientType" :options="['linear', 'radial']" />
@@ -4125,7 +4156,7 @@ async function onClose() {
                primitive geometry bakes; imported GLB meshes always ramp smooth. -->
           <div v-if="selectedIsPrimitive">
             <label class="mb-1 block text-[11px] text-white/55">Shading</label>
-            <StudioSegmented v-model="matGradientShading" :options="['smooth', 'faceted', 'prismatic']" />
+            <StudioSegmented v-model="matGradientShading" :options="['smooth', 'faceted', 'prismatic', 'scatter', 'ombre']" />
           </div>
         </template>
 
