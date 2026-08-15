@@ -13,7 +13,10 @@ import { DEFAULT_POST, type PostSettings } from '~/lib/studio/post/settings'
 /** Maximum number of stacked layers the render core composites. */
 export const LAYER_MAX = 6
 
-export type LayoutKind = 'linear' | 'radial' | 'orbit' | 'stack' | 'liquid' | 'mesh'
+export type LayoutKind = 'ramp' | 'radialRamp' | 'conic' | 'linear' | 'radial' | 'orbit' | 'stack' | 'liquid' | 'mesh'
+export type RampShape = 'circle' | 'ellipse'
+export type RepeatKind = 'once' | 'mirror' | 'tile'
+export type FalloffKind = 'linear' | 'ease' | 'smooth'
 export type ShapeKind = 'bands' | 'pyramid' | 'wave' | 'noise'
 export type RingShape = 'circle' | 'diamond' | 'square'
 export type MappingKind = 'across' | 'perbar' | 'field'
@@ -82,6 +85,24 @@ export interface ShapeConfig {
   ringShape?: RingShape
 }
 
+/** Per-layer axis for the simple primitives (ramp / radialRamp / conic).
+ *  Optional for back-compat; a layer without it uses RAMP_DEFAULTS. Per-layer,
+ *  not per-canvas, so stacked layers can each carry their own angle. */
+export interface RampConfig {
+  /** Linear ramp direction / conic start rotation, degrees 0..360. */
+  angle: number
+  /** Radial ramp size, 0.05..2 (1 ≈ touches frame edge). */
+  radius: number
+  /** Radial contour: circle (aspect-corrected) or ellipse (frame-stretched). */
+  shape: RampShape
+  /** Conic arc, degrees 20..360. */
+  sweep: number
+  /** Conic: wrap the ramp so first==last colour meet seamlessly. */
+  closeLoop: boolean
+}
+
+export const RAMP_DEFAULTS: RampConfig = { angle: 90, radius: 1, shape: 'circle', sweep: 360, closeLoop: false }
+
 export interface ColorConfig {
   stops: ColorStop[]
   /** Gradient ramp axis: vertical (up-down) or horizontal (left-right). */
@@ -93,6 +114,12 @@ export interface ColorConfig {
   hueDrift: number
   /** Global hue rotation, degrees. */
   hueRotate: number
+  /** Ramp repetition across the axis: once (default) / mirror (reflect) / tile ×N. */
+  repeat?: RepeatKind
+  /** Tile count when repeat === 'tile', 2..16. */
+  repeatCount?: number
+  /** LUT interpolation curve: linear (default) / ease / smooth. */
+  falloff?: FalloffKind
 }
 
 /** One color control point of a mesh gradient — position in 0..1, hex color. */
@@ -125,6 +152,8 @@ export interface LayerConfig {
   enabled?: boolean
   /** Mesh-layout points (only layer 0, only when canvas.layout === 'mesh'). */
   mesh?: MeshConfig
+  /** Simple-primitive axis (only ramp/radialRamp/conic layouts). */
+  ramp?: RampConfig
 }
 
 export interface CanvasConfig {
@@ -269,7 +298,12 @@ export interface GradientConfig {
 
 export const ASPECTS = ['14:9', '16:9', '9:16', '1:1', '4:5', '3:2', '21:9'] as const
 export const SHAPE_KINDS: ShapeKind[] = ['bands', 'wave', 'noise', 'pyramid']
-export const LAYOUTS: LayoutKind[] = ['linear', 'radial', 'orbit', 'stack', 'liquid', 'mesh']
+export const LAYOUTS: LayoutKind[] = ['ramp', 'radialRamp', 'conic', 'linear', 'radial', 'orbit', 'stack', 'liquid', 'mesh']
+export const LAYOUT_LABELS: Record<LayoutKind, string> = {
+  ramp: 'Linear', radialRamp: 'Radial', conic: 'Conic',
+  linear: 'Linear stripes', radial: 'Radial stripes',
+  orbit: 'Orbit', stack: 'Stack', liquid: 'Liquid', mesh: 'Mesh',
+}
 export const RING_SHAPES: RingShape[] = ['circle', 'diamond', 'square']
 export const MAPPINGS: MappingKind[] = ['across', 'perbar', 'field']
 export const DIRECTIONS: Direction[] = ['up', 'right', 'down', 'left']
@@ -405,6 +439,18 @@ export function ensureConfigDefaults(cfg: GradientConfig): GradientConfig {
   // too, but backfilling here keeps the editor's bindings non-null).
   if (cfg.canvas.layout === 'mesh' && cfg.layers[0]?.color?.stops && !cfg.layers[0].mesh) {
     cfg.layers[0].mesh = defaultMesh(cfg.layers[0].color.stops, cfg.seed)
+  }
+  // Backfill simple-primitive axis + universal repeat/falloff. Defaults reproduce
+  // pre-feature behaviour so legacy blobs render byte-identical.
+  const SIMPLE = cfg.canvas.layout === 'ramp' || cfg.canvas.layout === 'radialRamp' || cfg.canvas.layout === 'conic'
+  for (const L of cfg.layers) {
+    if (!L) continue
+    if (SIMPLE && !L.ramp) L.ramp = { ...RAMP_DEFAULTS }
+    if (L.color) {
+      if (L.color.repeat == null) L.color.repeat = 'once'
+      if (L.color.repeatCount == null) L.color.repeatCount = 4
+      if (L.color.falloff == null) L.color.falloff = 'linear'
+    }
   }
   migrateMotionTracks(cfg)
   return cfg
