@@ -22,4 +22,19 @@ describe('geoshape arrange', () => {
     const p = arrange({ ...DEFAULT_CONFIG, layout: 'grid', gridCols: 3, gridRows: 2 })
     expect(p).toHaveLength(6)
   })
+  it('radial angle is correct (catches a radians mixup)', () => {
+    const p = arrange({ ...DEFAULT_CONFIG, layout: 'radial', count: 4, radius: 100, spin: 0, angleStep: 90 })
+    const expectedAngleDeg = [0, 90]
+    for (const [i, deg] of expectedAngleDeg.entries()) {
+      const rad = deg * Math.PI / 180
+      expect(p[i]!.x).toBeCloseTo(100 * Math.cos(rad), 1)
+      expect(p[i]!.y).toBeCloseTo(100 * Math.sin(rad), 1)
+    }
+  })
+  it('count:1 returns a single finite placement (no NaN scale)', () => {
+    const p = arrange({ ...DEFAULT_CONFIG, layout: 'radial', count: 1, scaleStart: 1, scaleEnd: 2 })
+    expect(p).toHaveLength(1)
+    expect(Number.isFinite(p[0]!.scale)).toBe(true)
+    expect(p[0]!.scale).toBeCloseTo(1, 3)
+  })
 })
