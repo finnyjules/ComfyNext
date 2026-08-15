@@ -12,6 +12,7 @@
  * Allowlisted in server/middleware/comfyui-proxy.ts via '/api/krea'.
  */
 import { assertRateLimit } from '../../lib/rateLimit'
+import { preflightMeter } from '../../utils/requestMeter'
 
 const MODEL = 'meta/meta-llama-3-8b-instruct'
 
@@ -40,6 +41,11 @@ export default defineEventHandler(async (event) => {
 
   const prompt = `${INSTRUCTIONS}\n\nReference name: ${name}\nReference aesthetic: ${aesthetic}\nReference keywords: ${keywords}`
 
+  // Paid: creates a Replicate prediction on MODEL. Gate before dispatch;
+  // settle only on confirmed 'succeeded' below (the non-fatal failure path
+  // returns nulls without ever settling — no debit for an unusable rewrite).
+  const ticket = await preflightMeter(MODEL)
+
   const headers = { Authorization: `Token ${token}`, 'Content-Type': 'application/json', Prefer: 'wait' }
   const createRes = await fetch(`https://api.replicate.com/v1/models/${MODEL}/predictions`, {
     method: 'POST',
@@ -60,8 +66,9 @@ export default defineEventHandler(async (event) => {
     if (p.ok) pred = await p.json()
   }
   if (pred.status !== 'succeeded') {
-    return { name: null, aesthetic: null } // non-fatal
+    return { name: null, aesthetic: null } // non-fatal — never settled
   }
+  await ticket?.settle('rep:' + pred.id)
 
   const text = Array.isArray(pred.output) ? pred.output.join('') : String(pred.output ?? '')
   const m = text.match(/\{[\s\S]*\}/)

@@ -9,6 +9,7 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { assertRateLimit } from '../../lib/rateLimit'
+import { preflightMeter } from '../../utils/requestMeter'
 
 const SPEECH_MODEL = 'minimax/speech-02-turbo'
 
@@ -20,6 +21,10 @@ export default defineEventHandler(async (event) => {
   const voiceId = (body?.voiceId || '').trim()
   if (!text) throw createError({ statusCode: 400, message: 'text is required' })
   if (!voiceId) throw createError({ statusCode: 400, message: 'voiceId is required' })
+
+  // Paid: creates a Replicate prediction on SPEECH_MODEL. Gate before dispatch;
+  // settle only once the prediction has actually reached 'succeeded' below.
+  const ticket = await preflightMeter(SPEECH_MODEL)
 
   const headers = { Authorization: `Token ${token}`, 'Content-Type': 'application/json' }
 
@@ -49,6 +54,7 @@ export default defineEventHandler(async (event) => {
   if (pred.status !== 'succeeded') {
     throw createError({ statusCode: 502, message: `Speech generation ${pred.status}: ${String(pred.error ?? '')}` })
   }
+  await ticket?.settle('rep:' + pred.id)
 
   const url = Array.isArray(pred.output) ? pred.output[0] : pred.output
   if (!url) throw createError({ statusCode: 502, message: 'speech gen returned no audio' })

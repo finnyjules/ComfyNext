@@ -14,6 +14,7 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { assertRateLimit } from '../lib/rateLimit'
+import { preflightMeter } from '../utils/requestMeter'
 
 function safeBase(name: string): string | null {
   const base = (name || '').replace(/\.safetensors$/i, '')
@@ -57,6 +58,12 @@ export default defineEventHandler(async (event) => {
       ].filter(Boolean).join(' ')
     : [profile, trigger ? `${trigger},` : '', 'a portrait'].filter(Boolean).join(' ')
 
+  // Paid: runs the trained LoRA model once on Replicate. modelRef is a
+  // personal fine-tune slug (owner is the sidecar's trained account, e.g.
+  // finnyjules/*), so resolveCredits prices it via the LoRA category rather
+  // than a MODEL_COSTS row. Gate before dispatch; settle on confirmed success.
+  const ticket = await preflightMeter(modelRef)
+
   const headers = { Authorization: `Token ${token}`, 'Content-Type': 'application/json' }
 
   // Resolve the model's latest version, then run it (private models 404 on the
@@ -98,6 +105,7 @@ export default defineEventHandler(async (event) => {
   if (pred.status !== 'succeeded') {
     throw createError({ statusCode: 502, message: `Cover generation ${pred.status}: ${String(pred.error ?? '')}` })
   }
+  await ticket?.settle('rep:' + pred.id)
 
   const out = pred.output
   const imgUrl = Array.isArray(out) ? out[0] : (typeof out === 'string' ? out : null)

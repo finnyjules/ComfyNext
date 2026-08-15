@@ -14,10 +14,21 @@
  * frontend polls /voice-clone/status with it (plus the user-chosen name).
  */
 import { assertRateLimit } from '../../lib/rateLimit'
+import { preflightMeter } from '../../utils/requestMeter'
+
+const CLONE_MODEL = 'minimax/voice-cloning'
 
 export default defineEventHandler(async (event) => {
   assertRateLimit(event, 'voice-clone', 3, 600_000)
   const token = requireReplicateToken()
+
+  // Paid: creates a Replicate prediction on CLONE_MODEL. This route doesn't
+  // poll inline (the frontend polls /voice-clone/status separately), so there
+  // is no later request in this same execution to settle from once the
+  // prediction reaches a terminal state. The provider bills as soon as the
+  // job is accepted (compute is consumed regardless of the eventual
+  // outcome), so settle right after Replicate confirms creation below.
+  const ticket = await preflightMeter(CLONE_MODEL)
 
   const body = await readBody(event) as {
     voiceFileUrl?: string
@@ -37,7 +48,7 @@ export default defineEventHandler(async (event) => {
   }
 
   const res = await fetch(
-    'https://api.replicate.com/v1/models/minimax/voice-cloning/predictions',
+    `https://api.replicate.com/v1/models/${CLONE_MODEL}/predictions`,
     {
       method: 'POST',
       headers: { Authorization: `Token ${token}`, 'Content-Type': 'application/json' },
@@ -50,5 +61,6 @@ export default defineEventHandler(async (event) => {
   }
 
   const pred = await res.json() as { id: string; status: string }
+  await ticket?.settle('rep:' + pred.id)
   return { id: pred.id, status: pred.status }
 })

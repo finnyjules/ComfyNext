@@ -125,6 +125,15 @@ export const MODEL_COSTS: Record<string, ModelCost> = {
   'fal-ai/triposr': { usd: 0.02, credits: 4, confidence: 'estimate' },
   // — audio / speech —
   'minimax/speech-02-turbo': { usd: 0.03, credits: 6, confidence: 'verified', note: '$0.06/1k chars — priced per ~500-char clip' },
+  'minimax/voice-cloning': { usd: 3, credits: 450, confidence: 'estimate', note: '$3/voice observed on Replicate pricing (2026-08); one-time per clone, not per-generation' },
+  // Lip-sync engine identifiers from comfy_api_nodes/nodes_replicate.py's
+  // LipSyncNode (_lipsync_build_input) — that Python-side dispatch is priced
+  // flat via PREMIUM_ACTION_CREDITS.LipSyncNode today, NOT via these rows; no
+  // Stage-4 bypass route in server/api currently calls either slug directly.
+  // Rows added ahead of that migration per the per-engine v1 pricing policy
+  // below — duration-aware pricing is a hardening rider.
+  'veed/fabric-1.0': { usd: 0.75, credits: 113, confidence: 'estimate', note: 'flat v1 price per ~5s clip at 1.5x — duration-aware pricing is a hardening rider' },
+  'kwaivgi/kling-lip-sync': { usd: 0.07, credits: 14, confidence: 'estimate', note: 'flat v1 price per ~5s clip at 2x — duration-aware pricing is a hardening rider' },
   // — LLM utility (per-token, pennies) —
   'meta/meta-llama-3-8b-instruct': { usd: 0.001, credits: 1, confidence: 'estimate' },
   'lucataco/qwen2-vl-7b-instruct': { usd: 0.003, credits: 1, confidence: 'estimate' },

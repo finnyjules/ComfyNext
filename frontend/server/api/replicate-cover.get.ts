@@ -20,6 +20,8 @@ export default defineEventHandler(async (event) => {
 
   let info: any
   try {
+    // METER-EXEMPT: reads a model's public page metadata (cover image) — no
+    // prediction/training/generation is created.
     const r = await fetch(`https://api.replicate.com/v1/models/${slug}`, {
       headers: { Authorization: `Token ${token}` },
     })

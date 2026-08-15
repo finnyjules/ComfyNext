@@ -32,6 +32,9 @@ export default defineEventHandler(async (event) => {
   const name = String(query.name ?? '').trim()
   if (!id) throw createError({ statusCode: 400, message: 'Missing id' })
 
+  // METER-EXEMPT: polls the status of a prediction started (and metered) by
+  // /api/voice-clone/start — this route only reads state and persists the
+  // result locally, it never creates provider work of its own.
   const res = await fetch(`https://api.replicate.com/v1/predictions/${id}`, {
     headers: { Authorization: `Token ${token}` },
   })
