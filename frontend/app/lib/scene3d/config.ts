@@ -113,7 +113,7 @@ export interface SceneMaterial {
   /** smooth = one ramp across the object; faceted = one flat ramp tone per facet
    *  (low-poly look); prismatic = the full ramp runs across EACH facet
    *  individually (ShapeStudio's cut-gem shimmer). */
-  gradientShading?: 'smooth' | 'faceted' | 'prismatic'
+  gradientShading?: 'smooth' | 'faceted' | 'prismatic' | 'scatter' | 'ombre'
   /** When 'harmony', the gradient ramp is GENERATED from paletteHue/Sat/Light +
    *  paletteHarmony instead of the authored `gradientStops` — see rampStopsOf.
    *  Absent/'manual' keeps the authored stops, so old docs are unchanged. */
@@ -841,7 +841,7 @@ export function parseDoc(json: string): SceneDoc {
     if (typeof m?.fresnelPower === 'number') out.fresnelPower = num(m.fresnelPower, MATERIAL_DEFAULTS.fresnelPower)
     if (typeof m?.gradientB === 'string') out.gradientB = m.gradientB
     if (m?.gradientAxis === 'x' || m?.gradientAxis === 'y' || m?.gradientAxis === 'z') out.gradientAxis = m.gradientAxis
-    if (m?.gradientShading === 'smooth' || m?.gradientShading === 'faceted' || m?.gradientShading === 'prismatic') out.gradientShading = m.gradientShading
+    if (['smooth', 'faceted', 'prismatic', 'scatter', 'ombre'].includes(m?.gradientShading)) out.gradientShading = m.gradientShading
     if (m?.paletteMode === 'manual' || m?.paletteMode === 'harmony') out.paletteMode = m.paletteMode
     if (typeof m?.paletteHue === 'number') out.paletteHue = num(m.paletteHue, MATERIAL_DEFAULTS.paletteHue)
     if (typeof m?.paletteSat === 'number') out.paletteSat = num(m.paletteSat, MATERIAL_DEFAULTS.paletteSat)

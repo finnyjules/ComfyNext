@@ -512,15 +512,18 @@ const GRADIENT_SMOOTH_FRAG_BODY = /* glsl */ `#include <color_fragment>
 const GRADIENT_FACET_VERT_DECL = /* glsl */ `#include <common>
 attribute vec3 aFaceMin;
 attribute vec3 aFaceMax;
+attribute float aFaceRand;
 varying vec3 vGradPos;
 flat varying vec3 vGradFlat;
 flat varying vec3 vFaceMin;
-flat varying vec3 vFaceMax;`
+flat varying vec3 vFaceMax;
+flat varying float vFaceRand;`
 const GRADIENT_FACET_VERT_BODY = /* glsl */ `#include <begin_vertex>
 vGradPos = position;
 vGradFlat = position;
 vFaceMin = aFaceMin;
-vFaceMax = aFaceMax;`
+vFaceMax = aFaceMax;
+vFaceRand = aFaceRand;`
 const GRADIENT_FACET_FRAG_DECL = /* glsl */ `#include <common>
 ${GRADIENT_UNIFORM_DECL}
 uniform int uMode;
@@ -528,17 +531,31 @@ varying vec3 vGradPos;
 flat varying vec3 vGradFlat;
 flat varying vec3 vFaceMin;
 flat varying vec3 vFaceMax;
+flat varying float vFaceRand;
 ${GRADIENT_RAMP_FN}`
 const GRADIENT_FACET_FRAG_BODY = /* glsl */ `#include <color_fragment>
 {
-  // Prismatic (2): normalise within THIS face's own extent → the full ramp per
-  // facet. Faceted (1): one flat tone per face, sampled at the provoking vertex
-  // against the whole-object box. Both project the same way.
-  float t = uMode == 2
-    ? gradT(vGradPos, vFaceMin, vFaceMax)
-    : gradT(vGradFlat, uBoxMin, uBoxMax);
-  diffuseColor.rgb = gradSample(t);
+  float t;
+  if (uMode == 2) {
+    // prismatic: full ramp across THIS face's own extent
+    t = gradT(vGradPos, vFaceMin, vFaceMax);
+  } else if (uMode == 3) {
+    // scatter: one random discrete swatch per face (6 buckets)
+    t = (floor(vFaceRand * 6.0) + 0.5) / 6.0;
+  } else if (uMode == 4) {
+    // ombre: per-face ramp sample nudged by a per-face dither → stippled bands
+    t = gradT(vGradFlat, uBoxMin, uBoxMax) + (vFaceRand - 0.5) * 0.15;
+  } else {
+    // faceted (1): one flat tone per face against the whole-object box
+    t = gradT(vGradFlat, uBoxMin, uBoxMax);
+  }
+  diffuseColor.rgb = gradSample(clamp(t, 0.0, 1.0));
 }`
+
+// uMode uniform for the facet program: faceted (1, default) / prismatic (2) /
+// scatter (3) / ombre (4) — see GRADIENT_FACET_FRAG_BODY above.
+const FACET_UMODE: Record<string, number> = { faceted: 1, prismatic: 2, scatter: 3, ombre: 4 }
+const facetUMode = (shading: string | undefined): number => FACET_UMODE[shading ?? 'faceted'] ?? 1
 
 // ── Opalescent: thin-film / holographic spectrum ────────────────────────────
 // A MeshStandardMaterial like fresnel/gradient — the full lit pipeline still runs, so the form
@@ -746,7 +763,7 @@ export function materialFor(mat: SceneMaterial, geometry?: THREE.BufferGeometry,
         uOffset: { value: mat.gradientOffset ?? MATERIAL_DEFAULTS.gradientOffset },
         uSpread: { value: mat.gradientSpread ?? MATERIAL_DEFAULTS.gradientSpread },
       }
-      if (facetProgram) gradUniforms.uMode = { value: shading === 'prismatic' ? 2 : 1 }
+      if (facetProgram) gradUniforms.uMode = { value: facetUMode(shading) }
       const g = new THREE.MeshStandardMaterial({ roughness: mat.roughness, metalness: mat.metalness })
       g.onBeforeCompile = (shader) => {
         Object.assign(shader.uniforms, gradUniforms)
@@ -1010,7 +1027,7 @@ export function updateMaterial(m: THREE.Material, mat: SceneMaterial): boolean {
       u.uType.value = (mat.gradientType ?? MATERIAL_DEFAULTS.gradientType) === 'radial' ? 1 : 0
       u.uOffset.value = mat.gradientOffset ?? MATERIAL_DEFAULTS.gradientOffset
       u.uSpread.value = mat.gradientSpread ?? MATERIAL_DEFAULTS.gradientSpread
-      if (u.uMode) u.uMode.value = (mat.gradientShading ?? MATERIAL_DEFAULTS.gradientShading) === 'prismatic' ? 2 : 1
+      if (u.uMode) u.uMode.value = facetUMode(mat.gradientShading ?? MATERIAL_DEFAULTS.gradientShading)
       return true
     }
     case 'opalescent': {

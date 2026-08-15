@@ -286,6 +286,7 @@ function addFaceExtentAttributes(geo: THREE.BufferGeometry): void {
   const n = pos.count
   const min = new Float32Array(n * 3)
   const max = new Float32Array(n * 3)
+  const rand = new Float32Array(n)
   for (let v = 0; v < n; v += 3) {
     for (let axis = 0; axis < 3; axis++) {
       const a = pos.getComponent(v, axis)
@@ -298,9 +299,16 @@ function addFaceExtentAttributes(geo: THREE.BufferGeometry): void {
         max[(v + k) * 3 + axis] = hi
       }
     }
+    // Stable per-face random from the face centroid — no seed, deterministic.
+    const cx = pos.getX(v) + pos.getX(v + 1) + pos.getX(v + 2)
+    const cy = pos.getY(v) + pos.getY(v + 1) + pos.getY(v + 2)
+    let h = Math.sin(cx * 127.1 + cy * 311.7) * 43758.5453
+    h = h - Math.floor(h)
+    for (let k = 0; k < 3; k++) rand[v + k] = h
   }
   geo.setAttribute('aFaceMin', new THREE.BufferAttribute(min, 3))
   geo.setAttribute('aFaceMax', new THREE.BufferAttribute(max, 3))
+  geo.setAttribute('aFaceRand', new THREE.BufferAttribute(rand, 1))
 }
 
 /** Geometry for a kind + params at a shading variant: the smooth factory output,
