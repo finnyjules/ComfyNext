@@ -10,14 +10,43 @@
  * the route handler (agent tools, node executors, etc.) and none of those
  * layers should need a userId parameter added just to make metering work.
  *
- * IMPORTANT ALS caveat: bindMeterContext uses enterWith, which is NOT
- * call-scoped — the store it sets persists on the current async execution
- * context for everything that runs after it (that's what makes it usable
- * from Nitro's per-request middleware chain in the first place: bind once
- * in auth middleware, read it anywhere downstream in that request). It also
- * means nothing here can auto-clear the context at request end; Nitro's
- * per-request AsyncLocalStorage entry point provides that isolation. Test
- * code must reset explicitly (see __resetMeterContextForTests).
+ * CRITICAL ALS propagation gotcha (found live during Task 3, verified
+ * against real h3 dispatch — see requestMeter.unit.spec.ts's h3-shaped
+ * regression test): AsyncLocalStorage#enterWith mutates the store for
+ * "whatever is currently the active async context frame", but a sibling
+ * h3 middleware/route handler invoked via a SEPARATE `await` from Nitro's
+ * dispatcher subscribes its own continuation at CALL time — i.e. before
+ * auth.ts's internal `await resolveHostedUserId(event)` even runs. If
+ * bindMeterContext called a *fresh* enterWith AFTER that internal await
+ * (the naive approach), the new store would never reach the next
+ * middleware/route handler: verified with a minimal real-h3 repro where a
+ * downstream handler saw `null` despite enterWith having already run.
+ * enterWith called BEFORE a callee's first internal await, by contrast,
+ * DOES propagate correctly to the awaiting caller and everything scheduled
+ * after it — because invoking a function runs its synchronous prefix
+ * (including any enterWith there) before the caller's `await` even
+ * subscribes.
+ *
+ * The fix: never re-enter after the first await. Store a single mutable
+ * BOX (`{ current: MeterContext | null }`) via enterWith, always as the
+ * very first synchronous operation of a request (clearMeterContext, called
+ * first in auth.ts, before any internal await). Every later update
+ * (bindMeterContext, setMeterPriceHint) MUTATES that same box's `.current`
+ * in place instead of calling enterWith again — so the box reference
+ * already correctly propagated to every downstream continuation simply
+ * reflects the new value when read, no re-entry required.
+ *
+ * clearMeterContext ALWAYS creates a brand-new box (never mutates an
+ * inherited one) — this is also what makes clear-then-bind safe against
+ * cross-request bleed: enterWith is not call-scoped, so a later request on
+ * the same async chain could otherwise inherit a PREVIOUS request's box
+ * object; starting every request with a fresh box severs that link before
+ * anything of this request's own gets attached to it.
+ *
+ * Nothing here can auto-clear the context at request end; Nitro's
+ * per-request entry point (auth.ts calling clearMeterContext first) is
+ * what provides that isolation. Test code must reset explicitly (see
+ * __resetMeterContextForTests).
  */
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { deployMode } from './deployMode'
@@ -26,16 +55,42 @@ import { getLiveLedger } from './ledgerLive'
 
 export interface MeterContext { userId: string; priceHintCredits?: number }
 
-const als = new AsyncLocalStorage<MeterContext | null>()
+interface MeterContextBox { current: MeterContext | null }
 
-/** auth middleware calls this once per request (after resolving the user). */
+const als = new AsyncLocalStorage<MeterContextBox>()
+
+/**
+ * auth middleware calls this once per request (after resolving the user).
+ * Mutates the box already bound by clearMeterContext in place — see the
+ * module doc's ALS propagation gotcha for why this must NOT call
+ * enterWith itself in the common (already-cleared) case. Falls back to
+ * enterWith only when no box exists yet (standalone/test callers that
+ * invoke this without a prior clearMeterContext in the same call).
+ */
 export function bindMeterContext(ctx: MeterContext): void {
-  als.enterWith(ctx)
+  const box = als.getStore()
+  if (box) {
+    box.current = ctx
+  } else {
+    als.enterWith({ current: ctx })
+  }
+}
+
+/**
+ * Clears any bound context by entering a FRESH box (never mutates an
+ * inherited one — see the module doc). Review escalation 2026-08-14: auth
+ * middleware must call this on EVERY hosted request, before any
+ * short-circuit, so no request can ever inherit a predecessor's identity —
+ * only requests that pass the guard and resolve a user get a freshly bound
+ * context afterward (via bindMeterContext mutating THIS box).
+ */
+export function clearMeterContext(): void {
+  als.enterWith({ current: null })
 }
 
 /** Chokepoints (preflightMeter, routes) read the currently bound context. */
 export function currentMeterContext(): MeterContext | null {
-  return als.getStore() ?? null
+  return als.getStore()?.current ?? null
 }
 
 /**
@@ -44,15 +99,17 @@ export function currentMeterContext(): MeterContext | null {
  * resolveCredits can fall back to when the model itself is unpriced.
  */
 export function setMeterPriceHint(credits: number): void {
-  const ctx = als.getStore()
-  if (!ctx) return
-  ctx.priceHintCredits = credits
+  const box = als.getStore()
+  if (!box?.current) return
+  box.current.priceHintCredits = credits
 }
 
 /** Test-only seam: clears the bound context so tests don't bleed into each
- * other via enterWith's non-call-scoped persistence. */
+ * other via enterWith's non-call-scoped persistence. Thin alias over the
+ * production clearMeterContext — kept as a separate export so test call
+ * sites read as test-only regardless of what production code does. */
 export function __resetMeterContextForTests(): void {
-  als.enterWith(null)
+  clearMeterContext()
 }
 
 export class MeterRefusalError extends Error {

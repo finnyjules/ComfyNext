@@ -19,6 +19,7 @@ import {
   __resetMeterContextForTests,
   __setLedgerForTests,
   bindMeterContext,
+  clearMeterContext,
   currentMeterContext,
   preflightMeter,
   resolveCredits,
@@ -82,6 +83,55 @@ describe('bindMeterContext / currentMeterContext / setMeterPriceHint', () => {
 
   it('setMeterPriceHint does not throw when no context is bound', () => {
     expect(() => setMeterPriceHint(42)).not.toThrow()
+  })
+
+  /**
+   * Regression for the ALS propagation bug found live during Task 3 (see
+   * the module doc's CRITICAL ALS propagation gotcha). Reproduces the
+   * exact shape of Nitro's real dispatch: a "middleware" that clears the
+   * context synchronously (no prior await, matching auth.ts calling
+   * clearMeterContext as its first statement), then does an internal
+   * await (like resolveHostedUserId's network call) BEFORE binding — and
+   * a separate "next middleware" awaited from the SAME outer caller,
+   * exactly like Nitro's `await mw(event); await next(event)` stack.
+   * Verified against real h3 too (not just this synthetic shape) before
+   * landing the fix; a naive `bindMeterContext` that called a fresh
+   * `enterWith` after the internal await failed this same shape.
+   */
+  it('propagates a context bound after an internal await to a SEPARATE later-awaited call (real h3 dispatch shape)', async () => {
+    async function middleware(): Promise<void> {
+      clearMeterContext()
+      await new Promise((r) => setTimeout(r, 0)) // internal await, like resolveHostedUserId
+      bindMeterContext({ userId: 'user_1' })
+    }
+    async function nextHandler(): Promise<ReturnType<typeof currentMeterContext>> {
+      return currentMeterContext()
+    }
+
+    await middleware()
+    // A SEPARATE call, awaited from the same outer scope as `middleware()`
+    // above — exactly how Nitro invokes the next middleware/route handler.
+    const seen = await nextHandler()
+
+    expect(seen).toEqual({ userId: 'user_1' })
+  })
+
+  it('a hosted request that never binds (public path) is cleared, not stale, for a SEPARATE later-awaited call', async () => {
+    bindMeterContext({ userId: 'stale_user' })
+
+    async function middleware(): Promise<void> {
+      clearMeterContext()
+      await new Promise((r) => setTimeout(r, 0))
+      // No bindMeterContext call here — mirrors the public-path short-circuit.
+    }
+    async function nextHandler(): Promise<ReturnType<typeof currentMeterContext>> {
+      return currentMeterContext()
+    }
+
+    await middleware()
+    const seen = await nextHandler()
+
+    expect(seen).toBeNull()
   })
 })
 

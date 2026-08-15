@@ -19,9 +19,17 @@ let resolveHostedUserId: (event: any) => Promise<string | null>
 let shouldLazySync: (userId: string) => boolean
 let __resetLazySyncForTests: () => void
 let __setClerkClientForTests: (client: any) => void
+let authHandler: (event: any) => Promise<void>
+
+let bindMeterContext: (ctx: { userId: string }) => void
+let currentMeterContext: () => { userId: string } | null
+let __resetMeterContextForTests: () => void
 
 beforeAll(async () => {
-  ({ resolveClerkUserId, resolveHostedUserId, shouldLazySync, __resetLazySyncForTests, __setClerkClientForTests } = await import('../../server/middleware/auth'))
+  const authModule = await import('../../server/middleware/auth')
+  ;({ resolveClerkUserId, resolveHostedUserId, shouldLazySync, __resetLazySyncForTests, __setClerkClientForTests } = authModule)
+  authHandler = authModule.default as unknown as (event: any) => Promise<void>
+  ;({ bindMeterContext, currentMeterContext, __resetMeterContextForTests } = await import('../../server/utils/requestMeter'))
 })
 
 // A minimal event whose toWebRequest(event) short-circuits to event.web.request
@@ -85,5 +93,80 @@ describe('shouldLazySync', () => {
     expect(shouldLazySync('user_x')).toBe(true)
     expect(shouldLazySync('user_x')).toBe(false)
     expect(shouldLazySync('user_y')).toBe(true)
+  })
+})
+
+/**
+ * Task 3 (Stage 4 metering) + review-escalation amendment: the auth
+ * middleware must clear-then-bind the request-meter context on EVERY
+ * hosted request — clear first (before the public-path short-circuit), so
+ * a stale context from a previous request on the same async chain can
+ * never bill the wrong user (enterWith is not call-scoped — see
+ * requestMeter.ts), then bind a fresh context only in the attach branch.
+ */
+describe('auth middleware binds/clears the meter context', () => {
+  const KEY = 'NUXT_CLERK_SECRET_KEY'
+  const savedKey = process.env[KEY]
+
+  function setHosted(): void {
+    process.env[KEY] = 'sk_test_hosted'
+  }
+  function setLocal(): void {
+    delete process.env[KEY]
+  }
+
+  // Minimal fake event: `path` drives guardDecision, `context` is what the
+  // attach branch mutates, `web.request` is what h3's getRequestURL /
+  // getRequestHeaders read (the resolveHostedUserId test pattern above).
+  function hostedEvent(path: string): any {
+    return { path, context: {}, web: { request: new Request(`http://localhost${path}`) } }
+  }
+
+  afterEach(() => {
+    __setClerkClientForTests(null)
+    __resetLazySyncForTests()
+    __resetMeterContextForTests()
+    if (savedKey === undefined) delete process.env[KEY]
+    else process.env[KEY] = savedKey
+  })
+
+  it('binds currentMeterContext().userId on an authed hosted (attach) request', async () => {
+    setHosted()
+    __setClerkClientForTests({
+      authenticateRequest: async () => ({ toAuth: () => ({ userId: 'user_1' }) }),
+    })
+    // Pre-consume the once-per-process lazy-sync seam so the handler's
+    // attach branch doesn't fire a live ensureUserWithBonus/ledger call.
+    shouldLazySync('user_1')
+
+    const event = hostedEvent('/queue')
+    await authHandler(event)
+
+    expect(currentMeterContext()?.userId).toBe('user_1')
+    expect(event.context.userId).toBe('user_1')
+  })
+
+  it('clears a stale bound context on a hosted PUBLIC-path request', async () => {
+    setHosted()
+    bindMeterContext({ userId: 'stale_user' })
+    expect(currentMeterContext()?.userId).toBe('stale_user')
+
+    // A public path (webhooks) short-circuits via guardDecision's 'pass'
+    // before any session resolution — clearMeterContext must still have
+    // run first, or the previous request's identity would leak through.
+    const event = hostedEvent('/api/webhooks/clerk')
+    await authHandler(event)
+
+    expect(currentMeterContext()).toBeNull()
+  })
+
+  it('leaves the meter context null on a local-mode request', async () => {
+    setLocal()
+    __resetMeterContextForTests()
+
+    const event = hostedEvent('/queue')
+    await authHandler(event)
+
+    expect(currentMeterContext()).toBeNull()
   })
 })

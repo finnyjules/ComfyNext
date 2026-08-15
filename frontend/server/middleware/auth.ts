@@ -15,6 +15,7 @@ import { deployMode } from '../utils/deployMode'
 import { guardDecision } from '../utils/authGuard'
 import { ensureUserWithBonus } from '../utils/userSync'
 import { getLiveLedger } from '../utils/ledgerLive'
+import { bindMeterContext, clearMeterContext } from '../utils/requestMeter'
 import type { H3Event } from 'h3'
 
 /**
@@ -101,6 +102,14 @@ export default defineEventHandler(async (event) => {
   const mode = deployMode()
   if (mode === 'local') return
 
+  // Clear-then-bind on EVERY hosted request (review escalation 2026-08-14):
+  // als.enterWith is not call-scoped, so a stale context left by a previous
+  // request on the same async chain could bill the wrong user under HTTP
+  // pipelining/multiplexing. Clearing FIRST — before the public-path
+  // short-circuit below — means every hosted request starts context-less;
+  // only the attach branch below re-binds a freshly resolved user.
+  clearMeterContext()
+
   const path = event.path ?? ''
   // Public and unguarded paths short-circuit BEFORE any session resolution:
   // authenticateRequest's toWebRequest(event) wraps the request body stream,
@@ -116,6 +125,7 @@ export default defineEventHandler(async (event) => {
   }
   if (decision.kind === 'attach') {
     event.context.userId = decision.userId
+    bindMeterContext({ userId: decision.userId })
     if (shouldLazySync(decision.userId)) {
       void ensureUserWithBonus(getLiveLedger(), decision.userId)
         .catch((e) => {
