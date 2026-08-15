@@ -38,7 +38,7 @@ import { exportEmbedHtml, downloadEmbed } from '~/lib/embed/export'
 import type { GradientEmbedConfig } from '~/lib/embed/surfaces/gradient'
 import { clampExportDims } from '~/lib/gradientfx/exportDims'
 import {
-  ASPECTS, BLEND_MODES, DEFAULT_FOCUS, DIRECTIONS, GRADIENT_DIRS, LAYER_MAX, LAYOUTS, MAPPINGS, MIRROR_KINDS, RING_SHAPES, SHAPE_KINDS,
+  ASPECTS, BLEND_MODES, DEFAULT_FOCUS, DIRECTIONS, GRADIENT_DIRS, LAYER_MAX, LAYOUTS, LAYOUT_LABELS, MAPPINGS, MIRROR_KINDS, RAMP_DEFAULTS, RING_SHAPES, SHAPE_KINDS,
   aspectRatio, cloneConfig, ensureConfigDefaults, type GradientConfig, type LayoutKind, type MeshConfig, type ShapeKind,
 } from '~/lib/gradientfx/types'
 
@@ -60,6 +60,12 @@ const isRadial = computed(() => config.value.canvas.layout === 'radial' || confi
 const isStack = computed(() => config.value.canvas.layout === 'stack')
 const isLiquid = computed(() => config.value.canvas.layout === 'liquid')
 const isMesh = computed(() => config.value.canvas.layout === 'mesh')
+// Gradient axis block — the three simple primitives share one "Gradient" section;
+// which controls it shows depends on which of the three is active.
+const isSimpleRamp = computed(() => ['ramp', 'radialRamp', 'conic'].includes(config.value.canvas.layout))
+const isRampAngle = computed(() => config.value.canvas.layout === 'ramp' || config.value.canvas.layout === 'conic')
+const isRampRadial = computed(() => config.value.canvas.layout === 'radialRamp')
+const isConic = computed(() => config.value.canvas.layout === 'conic')
 // Layers are named for what they are ("Wave", "Bands"), not their position, so a
 // reorder moves a recognisable name instead of renumbering the whole stack.
 const layerNames = computed(() => layerLabels(config.value))
@@ -805,6 +811,30 @@ function setLayout(l: LayoutKind) {
   if (l === 'mesh') { activeLayer.value = 0; ensureMesh() }
 }
 function setShape(s: ShapeKind) { layer.value.shape.type = s }
+
+// Simple-primitive axis (ramp/radialRamp/conic). `layer.ramp` is optional for
+// back-compat and isn't backfilled by setLayout (only ensureConfigDefaults does
+// that, at load) — so a layer that has never carried an axis needs the FULL
+// RAMP_DEFAULTS seeded on first touch, not just the one field being edited.
+// The renderer falls back to RAMP_DEFAULTS wholesale when `ramp` is absent
+// (`L.ramp ?? RAMP_DEFAULTS`), so a partial object here would leave the other
+// axis fields undefined instead of defaulted.
+// `onEdit` only accepts string|number (it write-throughs to a bound Collection
+// cell), so closeLoop's boolean skips that call — same posture as the
+// direction/mapping buttons above, which mutate config directly with no bind path.
+function onRamp(key: 'angle' | 'radius' | 'shape' | 'sweep' | 'closeLoop', value: number | string | boolean) {
+  const L = layer.value
+  if (!L.ramp) L.ramp = { ...RAMP_DEFAULTS }
+  ;(L.ramp as any)[key] = value
+  if (typeof value !== 'boolean') onEdit(`layer.ramp.${key}`, value)
+}
+// Repeat/falloff live on `layer.color`, which is never optional, so — unlike
+// onRamp — there's no container to seed first.
+function onColor(key: 'repeat' | 'repeatCount' | 'falloff', value: number | string) {
+  const L = layer.value
+  ;(L.color as any)[key] = value
+  onEdit(`layer.color.${key}`, value)
+}
 </script>
 
 <template>
@@ -904,9 +934,9 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
           <button class="text-white/30 hover:text-white/70" @click="toggleLock('layout')"><component :is="locked('layout') ? Lock : Unlock" class="h-3 w-3" /></button>
         </label>
         <div class="mb-2 grid grid-cols-3 gap-1">
-          <button v-for="l in LAYOUTS" :key="l" class="rounded px-1 py-1 text-[11px] capitalize transition"
+          <button v-for="l in LAYOUTS" :key="l" class="rounded px-1 py-1 text-[11px] transition"
                   :class="config.canvas.layout === l ? 'bg-white/20 text-white' : 'bg-white/[0.04] text-white/55 hover:bg-white/10'"
-                  @click="setLayout(l)">{{ l }}</button>
+                  @click="setLayout(l)">{{ LAYOUT_LABELS[l] }}</button>
         </div>
         <!-- Margin insets the band/ring layouts; the liquid & mesh fields fill the frame, so hide it there. -->
         <template v-if="!isLiquid && !isMesh">
@@ -933,6 +963,40 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
         <BindableRow control-key="canvas.background" label="Background" kind="color" :bound="boundColumnFor('canvas.background')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
           <StudioColor v-model="config.canvas.background" @update:model-value="(v: string) => onEdit('canvas.background', v)" />
         </BindableRow>
+      </StudioSection>
+
+      <!-- Gradient axis — the simple primitives (Linear / Radial / Conic) each carry
+           a per-layer axis (angle / radius+shape / sweep+closeLoop) that the other
+           six layouts don't have a slot for. -->
+      <StudioSection v-show="onDesign && isSimpleRamp" title="Gradient" :open="true">
+        <template v-if="isRampAngle">
+          <BindableRow control-key="layer.ramp.angle" label="Angle" kind="slider" :min="0" :max="360" :step="1" :bound="boundColumnFor('layer.ramp.angle')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
+            <label class="mb-1 flex justify-between text-xs text-white/60"><span>Angle</span><span class="text-white/40">{{ Math.round(layer.ramp?.angle ?? 90) }}°</span></label>
+            <input :value="layer.ramp?.angle ?? 90" type="range" min="0" max="360" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onRamp('angle', ($event.target as HTMLInputElement).valueAsNumber)" />
+          </BindableRow>
+        </template>
+        <template v-if="isRampRadial">
+          <BindableRow control-key="layer.ramp.radius" label="Radius" kind="slider" :min="0.05" :max="2" :step="0.01" :bound="boundColumnFor('layer.ramp.radius')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
+            <label class="mb-1 flex justify-between text-xs text-white/60"><span>Radius</span><span class="text-white/40">{{ (layer.ramp?.radius ?? 1).toFixed(2) }}</span></label>
+            <input :value="layer.ramp?.radius ?? 1" type="range" min="0.05" max="2" step="0.01" v-studio-reset class="studio-range mb-2 w-full" @input="onRamp('radius', ($event.target as HTMLInputElement).valueAsNumber)" />
+          </BindableRow>
+          <BindableRow control-key="layer.ramp.shape" label="Radial shape" kind="select" :options="['circle', 'ellipse']" :bound="boundColumnFor('layer.ramp.shape')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
+            <label class="mb-1 block text-xs text-white/60">Shape</label>
+            <select :value="layer.ramp?.shape ?? 'circle'" class="mb-2 w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-xs" @change="onRamp('shape', ($event.target as HTMLSelectElement).value)">
+              <option value="circle">Circle</option><option value="ellipse">Ellipse</option>
+            </select>
+          </BindableRow>
+        </template>
+        <template v-if="isConic">
+          <BindableRow control-key="layer.ramp.sweep" label="Sweep" kind="slider" :min="20" :max="360" :step="1" :bound="boundColumnFor('layer.ramp.sweep')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
+            <label class="mb-1 flex justify-between text-xs text-white/60"><span>Sweep</span><span class="text-white/40">{{ Math.round(layer.ramp?.sweep ?? 360) }}°</span></label>
+            <input :value="layer.ramp?.sweep ?? 360" type="range" min="20" max="360" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onRamp('sweep', ($event.target as HTMLInputElement).valueAsNumber)" />
+          </BindableRow>
+          <label class="mb-2 flex items-center gap-2 text-xs text-white/60">
+            <input type="checkbox" class="h-3.5 w-3.5 accent-white/70" :checked="layer.ramp?.closeLoop ?? false" @change="onRamp('closeLoop', ($event.target as HTMLInputElement).checked)" />
+            <span>Close loop</span>
+          </label>
+        </template>
       </StudioSection>
 
       <!-- Flow (domain warp — distorts every layout; the heart of the liquid look) -->
@@ -1247,7 +1311,28 @@ function setShape(s: ShapeKind) { layer.value.shape.type = s }
         </template>
         <BindableRow control-key="layer.color.hueRotate" label="Hue rotate" kind="slider" :min="0" :max="360" :step="1" :bound="boundColumnFor('layer.color.hueRotate')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
           <label class="mb-1 flex justify-between text-xs text-white/60"><span>Hue rotate</span><span class="text-white/40">{{ Math.round(layer.color.hueRotate) }}°</span></label>
-          <input v-model.number="layer.color.hueRotate" type="range" min="0" max="360" step="1" v-studio-reset class="studio-range w-full" @input="onEdit('layer.color.hueRotate', layer.color.hueRotate)" />
+          <input v-model.number="layer.color.hueRotate" type="range" min="0" max="360" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('layer.color.hueRotate', layer.color.hueRotate)" />
+        </BindableRow>
+        <!-- Repeat/falloff — universal (unlike gradientDir/mapping above, not gated
+             behind !isMesh): ensureConfigDefaults backfills both on every layer
+             regardless of layout, so mesh's palette ramp gets a repeat/falloff too. -->
+        <BindableRow control-key="layer.color.repeat" label="Repeat" kind="select" :options="['once', 'mirror', 'tile']" :bound="boundColumnFor('layer.color.repeat')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
+          <label class="mb-1 block text-xs text-white/60">Repeat</label>
+          <select :value="layer.color.repeat ?? 'once'" class="mb-2 w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-xs" @change="onColor('repeat', ($event.target as HTMLSelectElement).value)">
+            <option value="once">Once</option><option value="mirror">Mirror</option><option value="tile">Tile</option>
+          </select>
+        </BindableRow>
+        <template v-if="(layer.color.repeat ?? 'once') === 'tile'">
+          <BindableRow control-key="layer.color.repeatCount" label="Repeat count" kind="slider" :min="2" :max="16" :step="1" :bound="boundColumnFor('layer.color.repeatCount')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
+            <label class="mb-1 flex justify-between text-xs text-white/60"><span>Repeat count</span><span class="text-white/40">{{ layer.color.repeatCount ?? 4 }}</span></label>
+            <input :value="layer.color.repeatCount ?? 4" type="range" min="2" max="16" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onColor('repeatCount', ($event.target as HTMLInputElement).valueAsNumber)" />
+          </BindableRow>
+        </template>
+        <BindableRow control-key="layer.color.falloff" label="Falloff" kind="select" :options="['linear', 'ease', 'smooth']" :bound="boundColumnFor('layer.color.falloff')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
+          <label class="mb-1 block text-xs text-white/60">Falloff</label>
+          <select :value="layer.color.falloff ?? 'linear'" class="mb-2 w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-xs" @change="onColor('falloff', ($event.target as HTMLSelectElement).value)">
+            <option value="linear">Linear</option><option value="ease">Ease</option><option value="smooth">Smooth</option>
+          </select>
         </BindableRow>
       </StudioSection>
 
