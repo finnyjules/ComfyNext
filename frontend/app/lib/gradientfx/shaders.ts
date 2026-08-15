@@ -69,6 +69,13 @@ uniform float u_pivot[LAYER_MAX];      // stack: per-ring center orbit, 0..1
 uniform float u_ringScale[LAYER_MAX];  // stack: disc size multiplier (1 = touches edges, >1 fills frame)
 uniform float u_ringShape[LAYER_MAX];  // stack: 0 circle, 1 diamond, 2 square
 uniform float u_fieldW[LAYER_MAX];     // field texel width per layer (for coord scaling)
+uniform float u_rampAngle[LAYER_MAX];     // simple ramp/conic angle, degrees
+uniform float u_rampRadius[LAYER_MAX];    // simple radial size
+uniform float u_rampShape[LAYER_MAX];     // radial: 1 circle (aspect-corrected), 0 ellipse
+uniform float u_rampSweep[LAYER_MAX];     // conic arc, degrees
+uniform float u_rampCloseLoop[LAYER_MAX]; // conic: 1 wrap seamless
+uniform float u_repeat[LAYER_MAX];        // 0 once, 1 mirror, 2 tile
+uniform float u_repeatCount[LAYER_MAX];   // tile/mirror count
 
 uniform float u_flowAngle;       // degrees — liquid base gradient dir
 uniform float u_flowScale;       // warp noise frequency
@@ -266,6 +273,16 @@ vec3 meshColorAt(vec2 p) {
   return mix(mcol, nearCol, clamp(u_meshContrast, 0.0, 1.0));
 }
 
+// Repeat transform for the gradient ramp coordinate t — verbatim twin of repeat.ts's
+// applyRepeat (TS is authoritative; the two MUST stay behaviourally identical).
+// mode: 0 once, 1 mirror, 2 tile.
+float applyRepeat(float t, float mode, float count) {
+  if (mode < 0.5) return t;                                         // once
+  float n = max(1.0, count);
+  if (mode < 1.5) return 1.0 - abs(fract(t * n * 0.5) * 2.0 - 1.0);  // mirror (reflect)
+  return fract(t * n);                                               // tile
+}
+
 // Returns layer color in .rgb and coverage alpha in .a.
 vec4 computeLayer(int i, vec2 p) {
   float count = max(1.0, u_count[i]);
@@ -274,6 +291,35 @@ vec4 computeLayer(int i, vec2 p) {
   bool mirrorH = u_mirrorH[i] > 0.5;
   bool mirrorV = u_mirrorV[i] > 0.5;
   bool gradHoriz = u_gradHoriz[i] > 0.5;
+
+  // ---- Simple primitives (ramp 6 / radialRamp 7 / conic 8): a clean parametric
+  // t → LUT. Tested ABOVE the existing ladder so indices 6-8 never fall into mesh.
+  if (u_layout > 5.5) {
+    float t;
+    if (u_layout < 6.5) {                    // ramp — angled linear
+      float a = u_rampAngle[i] * PI / 180.0;
+      vec2 dir = vec2(cos(a), sin(a));
+      vec2 pc = p - 0.5; pc.x *= u_aspect;
+      t = dot(pc, dir) + 0.5;
+    } else if (u_layout < 7.5) {             // radialRamp — centre-out
+      vec2 d = p - 0.5 - u_center;
+      if (u_rampShape[i] > 0.5) d.x *= u_aspect;   // circle: aspect-correct
+      float r = length(d) * 2.0 / max(u_rampRadius[i], 0.001);
+      t = (r - u_innerRadius) / max(1.0 - u_innerRadius, 0.001);
+    } else {                                 // conic — angular sweep
+      vec2 d = p - 0.5 - u_center; d.x *= u_aspect;
+      float ang = fract(atan(d.y, d.x) / TAU + 0.5 - u_rampAngle[i] / 360.0);
+      float sweep = clamp(u_rampSweep[i] / 360.0, 0.05, 1.0);
+      t = ang / sweep;
+      if (u_rampCloseLoop[i] > 0.5) t = 1.0 - abs(fract(t) * 2.0 - 1.0); // wrap seamless
+    }
+    t = applyRepeat(t, u_repeat[i], u_repeatCount[i]);
+    t = clamp(t, 0.0, 1.0);
+    t += u_hueDrift[i] / 360.0 * (t - 0.5);  // parity with other branches' drift use
+    t = quantize(t, u_steps[i]);
+    vec3 col = rotateHue(sampleRamp(i, t), u_hueRotate[i]);
+    return vec4(col, 1.0);
+  }
 
   // ---- Mesh: soft point mesh (see meshColorAt). p is already domain-warped, so the
   // warp ripples the blobs for free. The optional post-blur averages the field over a

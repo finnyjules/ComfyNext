@@ -7,8 +7,9 @@ import { MESH_MAX_POINTS, buildMeshPoints, driftedMeshPositions, meshColorRgb } 
 import { applyMotion } from './motion'
 import { buildRampLut } from './ramp'
 import { hexToRgb } from './ramp'
+import { REPEAT_IDX } from './repeat'
 import { BLUR_FS, GRADIENT_FS, GRADIENT_VS } from './shaders'
-import { aspectRatio, canvasCenter, flowConfig, lightVector, reliefLight, resolvePost, LAYER_MAX,
+import { aspectRatio, canvasCenter, flowConfig, lightVector, reliefLight, resolvePost, LAYER_MAX, RAMP_DEFAULTS,
   type Direction, type FocusConfig, type GradientConfig,
   type LayoutKind, type MappingKind } from './types'
 import { BLEND_IDX } from '~/lib/studio/blend'
@@ -40,7 +41,7 @@ void main() {
 
 const DIR_IDX: Record<Direction, number> = { up: 0, right: 1, down: 2, left: 3 }
 const MAP_IDX: Record<MappingKind, number> = { across: 0, perbar: 1, field: 2 }
-const LAYOUT_IDX: Record<LayoutKind, number> = { linear: 0, radial: 1, orbit: 2, stack: 3, liquid: 4, mesh: 5 }
+const LAYOUT_IDX: Record<LayoutKind, number> = { ramp: 6, radialRamp: 7, conic: 8, linear: 0, radial: 1, orbit: 2, stack: 3, liquid: 4, mesh: 5 }
 
 /**
  * Exported so embeds can hold their own instance — two embeds on one page must
@@ -273,12 +274,14 @@ export class GradientFxRenderer {
     const hueRotate: number[] = [], sweep: number[] = [], scrub: number[] = [], blend: number[] = [], opacity: number[] = []
     const crisp: number[] = [], rotStep: number[] = [], pivot: number[] = [], ringScale: number[] = [], ringShape: number[] = []
     const fieldW: number[] = [], enabled: number[] = []
+    const rampAngle: number[] = [], rampRadius: number[] = [], rampShape: number[] = [], rampSweep: number[] = [], rampCloseLoop: number[] = []
+    const repeat: number[] = [], repeatCount: number[] = []
     for (let i = 0; i < layers.length; i++) {
       const L = layers[i] ?? layers[0]!
       const s = L.shape, col = L.color
       const fieldData = buildField(s, c.seed + ':' + i)
       this.uploadField(gl, i, fieldData)
-      this.uploadRamp(gl, i, buildRampLut(col.stops))
+      this.uploadRamp(gl, i, buildRampLut(col.stops, col.falloff ?? 'linear'))
       fieldW.push(fieldData.length)
       crisp.push(s.type === 'bands' ? 1 : 0)
       counts.push(Math.max(1, Math.round(s.count)))
@@ -301,6 +304,14 @@ export class GradientFxRenderer {
       pivot.push(s.pivot ?? 0)
       ringScale.push(s.ringScale ?? 1)
       ringShape.push(s.ringShape === 'square' ? 2 : s.ringShape === 'diamond' ? 1 : 0)
+      const rp = L.ramp ?? RAMP_DEFAULTS
+      rampAngle.push(rp.angle)
+      rampRadius.push(rp.radius)
+      rampShape.push(rp.shape === 'ellipse' ? 0 : 1)
+      rampSweep.push(rp.sweep)
+      rampCloseLoop.push(rp.closeLoop ? 1 : 0)
+      repeat.push(REPEAT_IDX[col.repeat ?? 'once'] ?? 0)
+      repeatCount.push(col.repeatCount ?? 4)
     }
 
     gl.activeTexture(gl.TEXTURE0)
@@ -429,6 +440,13 @@ export class GradientFxRenderer {
     gl.uniform1fv(u('u_ringScale'), arr(ringScale))
     gl.uniform1fv(u('u_ringShape'), arr(ringShape))
     gl.uniform1fv(u('u_fieldW'), arr(fieldW))
+    gl.uniform1fv(u('u_rampAngle'), arr(rampAngle))
+    gl.uniform1fv(u('u_rampRadius'), arr(rampRadius))
+    gl.uniform1fv(u('u_rampShape'), arr(rampShape))
+    gl.uniform1fv(u('u_rampSweep'), arr(rampSweep))
+    gl.uniform1fv(u('u_rampCloseLoop'), arr(rampCloseLoop))
+    gl.uniform1fv(u('u_repeat'), arr(repeat))
+    gl.uniform1fv(u('u_repeatCount'), arr(repeatCount))
 
     gl.viewport(0, 0, width, height)
     gl.disable(gl.BLEND)
