@@ -220,9 +220,126 @@ async function sailorGrainCoverageProbe(opts: { size: number; blur?: number }): 
   return { bgPixels, fgPixels, bgMaxDiff, bgChanged, fgMaxDiff, fgMeanDiff: fgSum / Math.max(1, fgPixels), minAlpha }
 }
 
+/**
+ * Generic layout probe (simple-gradients verification). Renders a base config with
+ * `layout` + `ramp`/`color` overrides applied to layer 0, reads the RGBA back, and
+ * returns spatial statistics that let a differential check assert the branch is
+ * actually reached and the axis controls actually steer:
+ *  - mean luma; rowVar/colVar (which axis carries the gradient — angle test)
+ *  - left/right/top/bottom edge means (radial collapse + conic seam)
+ *  - axisMinima: count of local minima of the mid-row luma (repeat/tile cycles)
+ * Returns a compact stats object AND the mid-row samples for eyeball sanity.
+ */
+function gradientStats(src: TexImageSource, w: number, h: number) {
+  const probe = document.createElement('canvas')
+  probe.width = w; probe.height = h
+  const ctx = probe.getContext('2d')!
+  ctx.drawImage(src as CanvasImageSource, 0, 0)
+  const d = ctx.getImageData(0, 0, w, h).data
+  const L = (x: number, y: number) => {
+    const i = (y * w + x) * 4
+    return 0.299 * d[i]! + 0.587 * d[i + 1]! + 0.114 * d[i + 2]!
+  }
+  let sum = 0
+  const rowMean = new Float64Array(h), colMean = new Float64Array(w)
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const v = L(x, y); sum += v; rowMean[y]! += v / w; colMean[x]! += v / h }
+  const mean = sum / (w * h)
+  const varOf = (a: Float64Array) => { let m = 0; for (const v of a) m += v; m /= a.length; let s = 0; for (const v of a) s += (v - m) * (v - m); return s / a.length }
+  const edge = (xs: number, xe: number, ys: number, ye: number) => { let s = 0, n = 0; for (let y = ys; y < ye; y++) for (let x = xs; x < xe; x++) { s += L(x, y); n++ } return s / n }
+  // mid-row samples + local-minima count (for tile/repeat)
+  const my = h >> 1
+  const row: number[] = []; for (let x = 0; x < w; x++) row.push(L(x, my))
+  let minima = 0
+  for (let x = 2; x < w - 2; x++) if (row[x]! < row[x - 2]! && row[x]! < row[x + 2]!) minima++
+  // Mean up-crossings of the mid row = number of ramp cycles (clean tile-count metric).
+  let upCross = 0
+  for (let x = 1; x < w; x++) if (row[x - 1]! < mean && row[x]! >= mean) upCross++
+  // Angular ring at mid radius: sample the luma around a circle centred in the frame.
+  // maxAngularJump = the largest adjacent step = the conic seam magnitude (0..255).
+  const cx = w / 2, cy = h / 2, rr = Math.min(w, h) * 0.32, N = 180
+  const ring: number[] = []
+  for (let k = 0; k < N; k++) {
+    const a = (k / N) * Math.PI * 2
+    const x = Math.max(0, Math.min(w - 1, Math.round(cx + Math.cos(a) * rr)))
+    const y = Math.max(0, Math.min(h - 1, Math.round(cy + Math.sin(a) * rr)))
+    ring.push(L(x, y))
+  }
+  let maxAngularJump = 0
+  for (let k = 0; k < N; k++) maxAngularJump = Math.max(maxAngularJump, Math.abs(ring[(k + 1) % N]! - ring[k]!))
+  return {
+    mean,
+    rowVar: varOf(rowMean),  // high => gradient runs vertically (varies row-to-row)
+    colVar: varOf(colMean),  // high => gradient runs horizontally (varies col-to-col)
+    left: edge(0, 3, 0, h), right: edge(w - 3, w, 0, h),
+    top: edge(0, w, 0, 3), bottom: edge(0, w, h - 3, h),
+    axisMinima: minima,
+    cycles: upCross,
+    maxAngularJump,
+  }
+}
+
+async function sailorLayoutProbe(opts: {
+  size?: number
+  layout: string
+  ramp?: Record<string, unknown>
+  color?: Record<string, unknown>
+  stops?: { color: string; pos: number }[]
+}) {
+  const size = opts.size ?? 96
+  const cfg = ensureConfigDefaults(defaultConfig(HARNESS_SEED) as GradientConfig)
+  cfg.canvas.layout = opts.layout as GradientConfig['canvas']['layout']
+  const L0: any = cfg.layers[0]
+  if (opts.stops) L0.color.stops = opts.stops
+  if (opts.color) Object.assign(L0.color, opts.color)
+  L0.ramp = { ...(L0.ramp ?? {}), ...(opts.ramp ?? {}) }
+  const out = renderer.render(ensureConfigDefaults(cfg), size, size, 0)
+  return gradientStats(out, size, size)
+}
+
+// Visual grid: render the three new layouts + the three authored presets to
+// on-page canvases so a reviewer can eyeball them. Verification-only.
+async function sailorVisualGrid() {
+  const { buildGradientPreset } = await import('~/lib/gradientfx/presets')
+  const S = 200
+  const items: { label: string; cfg: GradientConfig }[] = []
+  const bw = [{ color: '#5b8def', pos: 0 }, { color: '#ef6ba0', pos: 1 }]
+  const mk = (layout: string, ramp: Record<string, unknown>) => {
+    const c = ensureConfigDefaults(defaultConfig(HARNESS_SEED) as GradientConfig)
+    c.canvas.layout = layout as GradientConfig['canvas']['layout']
+    ;(c.layers[0] as any).color.stops = bw
+    ;(c.layers[0] as any).ramp = { ...(c.layers[0] as any).ramp, ...ramp }
+    return ensureConfigDefaults(c)
+  }
+  items.push({ label: 'Linear (ramp) 45°', cfg: mk('ramp', { angle: 45 }) })
+  items.push({ label: 'Radial (radialRamp)', cfg: mk('radialRamp', { radius: 1, shape: 'circle' }) })
+  items.push({ label: 'Conic closeLoop', cfg: mk('conic', { sweep: 360, closeLoop: true }) })
+  for (const name of ['dawn', 'halo', 'spectrum']) {
+    const cfg = buildGradientPreset(name, HARNESS_SEED)
+    if (cfg) items.push({ label: `preset: ${name}`, cfg })
+  }
+  const host = document.getElementById('visual-grid') || (() => {
+    const d = document.createElement('div'); d.id = 'visual-grid'
+    d.style.cssText = 'position:fixed;inset:0;z-index:99999;display:flex;flex-wrap:wrap;align-content:flex-start;gap:8px;padding:12px;background:#111;overflow:auto'
+    document.body.appendChild(d); return d
+  })()
+  host.innerHTML = ''
+  for (const it of items) {
+    const wrap = document.createElement('div')
+    wrap.style.cssText = 'color:#ddd;font:11px monospace;text-align:center'
+    const cv = document.createElement('canvas'); cv.width = S; cv.height = S
+    cv.getContext('2d')!.drawImage(renderer.render(it.cfg, S, S, 0) as CanvasImageSource, 0, 0)
+    wrap.appendChild(cv)
+    const lbl = document.createElement('div'); lbl.textContent = it.label; wrap.appendChild(lbl)
+    host.appendChild(wrap)
+  }
+  return items.map(i => i.label)
+}
+
 if (import.meta.client) {
   ;(window as any).__sailorPostProbe = sailorPostProbe
   ;(window as any).__sailorPostOrientationProbe = sailorPostOrientationProbe
   ;(window as any).__sailorGrainCoverageProbe = sailorGrainCoverageProbe
+  ;(window as any).__sailorLayoutProbe = sailorLayoutProbe
+  ;(window as any).__sailorVisualGrid = sailorVisualGrid
 }
 </script>
