@@ -59,7 +59,7 @@ export interface GeoShapeConfig {
 export const DEFAULT_CONFIG: GeoShapeConfig = {
   shape: 'hexagon',
   sides: 6,
-  starInner: 50,
+  starInner: 0.45,
   irregularSeed: 1,
   size: 180,
   count: 6,
