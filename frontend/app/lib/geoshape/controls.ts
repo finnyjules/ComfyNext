@@ -33,12 +33,15 @@ export const GEO_SECTIONS = ['Shape', 'Layout', 'Transform', 'Composite', 'Symme
 // files, not a config.ts edit. Keep these in sync with config.ts's
 // SHAPES/LAYOUTS/FILLMODES/OVERLAPMODES/SYMMETRY_AXES/CLIP_MASKS if that
 // file's enums ever grow.
-const SHAPES: BaseShapeKind[] = ['polygon', 'star', 'hexagon', 'irregular']
-const LAYOUTS: GeoLayout[] = ['radial', 'grid', 'linear']
-const FILLMODES: GeoFillMode[] = ['evenodd', 'unite', 'subtract', 'intersect', 'exclude']
-const OVERLAPMODES: GeoOverlapMode[] = ['hole', 'shape']
-const SYMMETRY_AXES: GeoSymmetryAxis[] = ['vertical', 'horizontal']
-const CLIP_MASKS: GeoClipMask[] = ['none', 'circle', 'square', 'hexagon']
+//
+// Exported so randomize.ts (and any other geoshape module) shares this one
+// copy instead of keeping its own verbatim duplicate.
+export const SHAPES: BaseShapeKind[] = ['polygon', 'star', 'hexagon', 'irregular']
+export const LAYOUTS: GeoLayout[] = ['radial', 'grid', 'linear']
+export const FILLMODES: GeoFillMode[] = ['evenodd', 'unite', 'subtract', 'intersect', 'exclude']
+export const OVERLAPMODES: GeoOverlapMode[] = ['hole', 'shape']
+export const SYMMETRY_AXES: GeoSymmetryAxis[] = ['vertical', 'horizontal']
+export const CLIP_MASKS: GeoClipMask[] = ['none', 'circle', 'square', 'hexagon']
 
 // --- visibility gates, mirroring shapefx/controls.ts's isPrimitive/isGem/etc. ---
 // `sides` drives polygon/star/irregular (baseShapePath's o.sides); hexagon is a

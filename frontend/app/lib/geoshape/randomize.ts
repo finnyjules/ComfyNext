@@ -15,10 +15,8 @@
  * the same output. That determinism is load-bearing for the surface's undo
  * stack and for this module's own test.
  */
-import type {
-  GeoShapeConfig, GeoLayout, GeoFillMode, GeoOverlapMode, GeoSymmetryAxis, GeoClipMask,
-} from './config'
-import type { BaseShapeKind } from './shapes'
+import type { GeoShapeConfig } from './config'
+import { SHAPES, LAYOUTS, FILLMODES, OVERLAPMODES, SYMMETRY_AXES, CLIP_MASKS } from './controls'
 
 interface Rng {
   /** Uniform float in [0,1). */
@@ -73,15 +71,8 @@ function nextSeed(prevSeed: number): number {
   return 1 + Math.floor(r.next() * 999998)
 }
 
-// Local mirror of config.ts's own (private) enum lists — see controls.ts's
-// identical note. Keep in sync with config.ts's SHAPES/LAYOUTS/FILLMODES/
-// OVERLAPMODES/SYMMETRY_AXES/CLIP_MASKS if that file's enums ever grow.
-const SHAPES: BaseShapeKind[] = ['polygon', 'star', 'hexagon', 'irregular']
-const LAYOUTS: GeoLayout[] = ['radial', 'grid', 'linear']
-const FILLMODES: GeoFillMode[] = ['evenodd', 'unite', 'subtract', 'intersect', 'exclude']
-const OVERLAPMODES: GeoOverlapMode[] = ['hole', 'shape']
-const SYMMETRY_AXES: GeoSymmetryAxis[] = ['vertical', 'horizontal']
-const CLIP_MASKS: GeoClipMask[] = ['none', 'circle', 'square', 'hexagon']
+// SHAPES/LAYOUTS/FILLMODES/OVERLAPMODES/SYMMETRY_AXES/CLIP_MASKS come from
+// controls.ts (the one shared copy — see that file's note on config.ts).
 
 // One roll group per GEO_SECTIONS entry (controls.ts), minus 'Paint' — colour
 // is curated by the user, never randomized, matching shapefx/randomize.ts's

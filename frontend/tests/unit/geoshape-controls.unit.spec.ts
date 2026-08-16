@@ -129,14 +129,22 @@ describe('geoAgentControls', () => {
 
   it('guidance names only keys that exist in the schema', () => {
     const keys = new Set(GEO_CONTROLS.map((c) => c.key))
-    // Guidance prose references bare identifiers like `shape`, `sides`,
-    // `starInner`; pull anything camelCase/lowercase that looks like a key
-    // reference and make sure it resolves.
-    const named = new Set<string>()
-    for (const m of GEO_GUIDANCE.matchAll(/\b[a-z][a-zA-Z]*\b/g)) {
-      if (keys.has(m[0])) named.add(m[0])
-    }
-    for (const k of named) expect(keys.has(k), k).toBe(true)
+    // Extract candidates INDEPENDENTLY of `keys` — every multi-word control
+    // field GEO_GUIDANCE names is written in camelCase (roundCorners,
+    // starInner, gridCols, angleStep, rotateStep, scaleStart, fillMode,
+    // overlapFill, symmetryAxis, clipMaskSize, strokeWidth, irregularSeed...),
+    // and ordinary prose never coincidentally produces a lowercase-then-
+    // uppercase token. So this regex is a real field-name detector: a typo'd
+    // or dead/renamed field (e.g. "roundCornerz") gets pulled out as a
+    // candidate and fails the membership check below. The old version
+    // filtered candidates through `keys` before ever asserting membership,
+    // so it could never fail no matter what the guidance said.
+    const camelCaseToken = /\b[a-z][a-z0-9]*[A-Z][a-zA-Z0-9]*\b/g
+    const candidates = new Set(GEO_GUIDANCE.match(camelCaseToken) ?? [])
+    // Sanity: the extraction actually found real field references, so an
+    // empty `candidates` (e.g. from a broken regex) can't silently pass.
+    expect(candidates.size).toBeGreaterThan(10)
+    for (const c of candidates) expect(keys.has(c), c).toBe(true)
   })
 })
 
