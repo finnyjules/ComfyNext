@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import { renderShapes, toSvg, contentBounds } from '~/lib/geoshape/render'
 import { DEFAULT_CONFIG } from '~/lib/geoshape/config'
+import { paintToVectorPaint } from '~/lib/paint/toVector'
+import type { ImageFill } from '~/lib/compositor/paint'
+import type { Fill } from '~/lib/spacetype/fillTile'
 
 describe('geoshape render', () => {
   it('produces shapes and an evenodd SVG for the default (geologo) config', async () => {
@@ -75,5 +78,52 @@ describe('geoshape render', () => {
     const svg = await toSvg({ ...DEFAULT_CONFIG, fill: '#123456' })
     expect(svg).toContain('#123456')
     expect(svg).not.toMatch(/<linearGradient|<pattern/)
+  })
+
+  // ── Task 4: image/shader TIER 3 raster embed ────────────────────────────────
+  //
+  // `toSvg`'s own raster step rasterizes via a `<canvas>` (`document.
+  // createElement('canvas')`), which this suite's `environment: 'node'` vitest
+  // config (no jsdom, no `document`) cannot run — `toSvg` itself detects that
+  // and degrades to the pre-Task-4 solid fallback (asserted below). The actual
+  // "does a raster turn into a `<pattern>`-with-`<image>`" logic lives entirely
+  // in `paintToVectorPaint` (`~/lib/paint/toVector.ts`), which is pure — no DOM,
+  // no canvas — so it's exercised DIRECTLY here with a stubbed raster, the way
+  // `toSvg` would call it after rasterizing for real in a browser. Full
+  // image/shader canvas warming + rasterization is browser/GPU-only and is
+  // verified live (Task 5), not here — see task-4-report.md.
+  const TINY_PNG_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
+  const box = { x: -10, y: -10, width: 20, height: 20 }
+
+  it('paintToVectorPaint embeds an ImageFill as a <pattern>-with-<image> when given a raster', () => {
+    const imageFill: ImageFill = { type: 'image', src: 'blob:whatever', fit: 'cover' }
+    // No raster: the pre-Task-4 behaviour — ImageFill has no vector form on its
+    // own, so this stays null (the caller's solid fallback).
+    expect(paintToVectorPaint(imageFill, { units: 'userSpaceOnUse', box })).toBeNull()
+    const vp = paintToVectorPaint(imageFill, { units: 'userSpaceOnUse', box, raster: TINY_PNG_DATA_URL })
+    expect(vp).not.toBeNull()
+    expect((vp as any).type).toBe('pattern')
+    expect((vp as any).image).toBe(TINY_PNG_DATA_URL)
+    expect((vp as any).width).toBe(box.width)
+    expect((vp as any).height).toBe(box.height)
+  })
+
+  it('paintToVectorPaint embeds a shader Fill as a <pattern>-with-<image> when given a raster', () => {
+    const shaderFill: Fill = {
+      type: 'shader', a: '#111111', b: '#eeeeee', textColor: '#000', angle: 0, density: 8,
+      shader: { effectId: 'fbm_warp', params: {}, anchor: 'object', speed: 0, input: '#111111' },
+    }
+    expect(paintToVectorPaint(shaderFill, { units: 'userSpaceOnUse', box })).toBeNull()
+    const vp = paintToVectorPaint(shaderFill, { units: 'userSpaceOnUse', box, raster: TINY_PNG_DATA_URL })
+    expect(vp).not.toBeNull()
+    expect((vp as any).type).toBe('pattern')
+    expect((vp as any).image).toBe(TINY_PNG_DATA_URL)
+  })
+
+  it('toSvg degrades gracefully (solid fallback, no crash) for an ImageFill with no DOM available', async () => {
+    const imageFill: ImageFill = { type: 'image', src: 'blob:whatever', fit: 'cover' }
+    const svg = await toSvg({ ...DEFAULT_CONFIG, fill: imageFill })
+    expect(svg).toContain('<svg')
+    expect(svg).not.toMatch(/<pattern|<image/)
   })
 })

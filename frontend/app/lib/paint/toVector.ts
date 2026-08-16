@@ -26,6 +26,12 @@
  * so rather than to pretend otherwise. Note the raster is passed IN: this module
  * has no canvas and does not acquire one.
  *
+ * `ImageFill` (Task 4) is the same TIER 3 story told a third time: it is
+ * ALREADY pixels — there is no geometry to derive, vector or otherwise — so it
+ * takes the identical `<pattern>`-with-`<image>` arm the moment a caller hands
+ * over a raster, sharing `rasterTile` with the two fill kinds above rather than
+ * growing its own copy.
+ *
  * With no raster to embed, those three return `null` and the caller degrades to
  * a flat colour — the pre-task-6 bridge, still what SSR, a worker and a unit
  * test get. A `null` here is therefore "not without pixels", never "no paint".
@@ -354,10 +360,20 @@ function withTransform(m: Affine | undefined): { transform?: Affine } {
  * path for `solid` and for a gradient.
  */
 export function paintToVectorPaint(paint: Paint | undefined, opts: VectorPaintOptions): VectorPaint | null {
-  // ImageFill has no vector form yet — a real <image>-in-<pattern> embed is a
-  // flagged fast-follow. Return null so the shape exports unfilled rather than
-  // letting the object fall through to the solid-string arm.
-  if (isImageFill(paint)) return null
+  // ImageFill has no vector form AT ALL (see the header's TIER 3 note) — it
+  // only ever comes out as a `<pattern>` holding the raster the caller
+  // rasterized over `box`, sharing `rasterTile` with the shader/ombre/noise
+  // arm below. With no box to anchor to, or no raster in hand (SSR, a worker,
+  // a unit test, `exportTier`'s own no-raster probe), the shape exports
+  // unfilled and the caller degrades to its solid fallback — unchanged from
+  // before this task.
+  if (isImageFill(paint)) {
+    if (!opts.box || !(opts.box.width > 0) || !(opts.box.height > 0) || !opts.raster) return null
+    const inverse = opts.units === 'userSpaceOnUse' && opts.elementTransform
+      ? invertAffine(opts.elementTransform)
+      : null
+    return rasterTile(opts.box, inverse, opts.raster)
+  }
   if (typeof paint === 'string') return paint
   if (isGradient(paint)) {
     return gradientFor(

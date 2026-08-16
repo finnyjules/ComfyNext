@@ -28,13 +28,22 @@ import { arrange } from './arrange'
 import { composite } from './boolean'
 import { resolvePaint } from './paint'
 import type { GeoShapeConfig } from './config'
-import type { Paint } from '~/lib/compositor/paint'
+import { isFill, isImageFill, type Paint } from '~/lib/compositor/paint'
 import { paintToVectorPaint } from '~/lib/paint/toVector'
 // The COMPOSITOR canvas resolver — NOT geoshape/paint.ts's `resolvePaint` (the
 // invert helper, imported above and used for `renderShapes`'s colour-swap
 // step). Aliased to avoid shadowing it; see this module's two very differently
 // shaped `resolvePaint`s in the geoshape Task 2 brief.
-import { resolvePaint as resolvePaintCanvas, type ShaderFieldFrameCtx } from '~/lib/paint/resolve'
+import { resolvePaint as resolvePaintCanvas, OBJECT_SHADER_FIELD_PX, type ShaderFieldFrameCtx } from '~/lib/paint/resolve'
+// Task 4 — image/shader warm pass. `ensureFillBitmaps` mirrors the Compositor's
+// `ensureLayerImages` (useCompositorLayers.ts:596-611, which calls it directly);
+// `withFieldFrame`/`resolveField` mirror `paintLayerStack`'s shader-fill pre-pass
+// (useCompositorLayers.ts:1648-1681) — see `warmPaints`'s own doc below for the
+// one deliberate difference (this host awaits the effect catalog first).
+import { fillIsShader, type ShaderSpec } from '~/lib/spacetype/fillTile'
+import { ensureFillBitmaps } from '~/lib/paint/imageFillCache'
+import { withFieldFrame, resolveField, type FieldRequest } from '~/lib/shaderfill/field'
+import { fetchShaderFxCatalog } from '~/lib/shaderfx/catalog'
 
 /**
  * A `VectorShape` that also carries the AUTHORED `Paint` (gradient/pattern/
@@ -112,12 +121,25 @@ export async function toSvg(cfg: GeoShapeConfig, opts: Partial<SvgDocOptions> = 
   // Convert each shape's authored `paint` (gradient/pattern) into a real
   // `VectorPaint` the SVG writer can turn into a `<linearGradient>`/`<pattern>`
   // — the solid-fallback `.fill` `composite` set is only a placeholder for
-  // this. `null` (image/shader with no raster handed in) keeps that fallback:
-  // Task 4 supplies the raster that would let those export too.
+  // this. `null` (image/shader, TIER 3 — see toVector.ts's header) means
+  // `paintToVectorPaint` has no vector form to offer without a raster; the
+  // block below supplies one.
   const box = { x: b.minX, y: b.minY, width: b.w, height: b.h }
   for (const s of shapes as GeoVectorShape[]) {
     if (s.paint && typeof s.paint !== 'string') {
-      const vp = paintToVectorPaint(s.paint, { units: 'userSpaceOnUse', box })
+      let vp = paintToVectorPaint(s.paint, { units: 'userSpaceOnUse', box })
+      // TIER 3 embed (Task 4 Step 2): rasterize the paint over `box` on an
+      // offscreen canvas — same `resolvePaintCanvas` path `drawToCanvas`/
+      // `warmPaints` use, so the embedded pixels match the live preview —
+      // and ask again with the raster in hand, which the image/shader arms
+      // both turn into a `<pattern>`-with-`<image>` (see `rasterTile` in
+      // toVector.ts). DOM-only (creates a `<canvas>`): under SSR or a
+      // headless unit test (no `document`) this stays skipped and the shape
+      // keeps its solid-fallback `.fill`, exactly like before this task.
+      if (vp === null && typeof document !== 'undefined') {
+        const raster = await rasterizePaint(s.paint, box.width, box.height)
+        if (raster) vp = paintToVectorPaint(s.paint, { units: 'userSpaceOnUse', box, raster })
+      }
       if (vp) s.fill = vp
     }
   }
@@ -168,9 +190,11 @@ const STILL_FIELD: ShaderFieldFrameCtx = { frameW: 1, frameH: 1, t: 0, fps: 30, 
  * Fills go through the SAME `resolvePaint` the Compositor/Vector Type use
  * (aliased `resolvePaintCanvas` here — see this module's header on the two
  * `resolvePaint`s), so gradients/patterns/solid paint for real instead of the
- * old cheap first-stop/mid-gray stand-in. Image/shader paints resolve to a
- * fallback until warmed (a later task); that degrades gracefully, it never
- * throws.
+ * old cheap first-stop/mid-gray stand-in. Image/shader paints resolve to
+ * `FALLBACK_FILL` until their bitmap/field is warmed — this function stays
+ * synchronous on purpose (it is also the bake/hit-test replay), so warming is
+ * the CALLER's job: `warmPaints` below, then call this again. That degrades
+ * gracefully either way; it never throws.
  */
 export function drawToCanvas(shapes: VectorShape[], ctx: CanvasRenderingContext2D, w: number, h: number): void {
   ctx.clearRect(0, 0, w, h)
@@ -196,4 +220,135 @@ export function drawToCanvas(shapes: VectorShape[], ctx: CanvasRenderingContext2
     }
   }
   ctx.restore()
+}
+
+// ── Task 4: image/shader warm pass ──────────────────────────────────────────
+
+/** Every shape's authored `Paint` — the same value `drawToCanvas` reads paint
+ *  from (`.paint ?? .fill`) — for a caller (`ShapeStudioSurface`) that needs to
+ *  know what to warm without re-deriving that fallback itself. */
+export function shapePaints(shapes: VectorShape[]): Paint[] {
+  const out: Paint[] = []
+  for (const s of shapes) {
+    const p = (s as GeoVectorShape).paint ?? s.fill
+    if (p) out.push(p as Paint)
+  }
+  return out
+}
+
+/** True when `paint` is an `ImageFill` or a shader `Fill` — the two `Paint`
+ *  kinds `resolvePaintCanvas`/`resolveField` can only resolve for real AFTER an
+ *  async warm (`getFillBitmap`/`resolveField`'s cache is empty on the first
+ *  ask). Every other `Paint` kind (solid/gradient/procedural pattern) resolves
+ *  synchronously already, so it is deliberately excluded here — warming it
+ *  would just be wasted work with nothing to cache. */
+function isAsyncPaint(paint: Paint | undefined): boolean {
+  return isImageFill(paint) || (isFill(paint) && fillIsShader(paint))
+}
+
+/** Whether ANY of `paints` needs `warmPaints` — the guard `ShapeStudioSurface`
+ *  checks before paying for a second `drawToCanvas` pass; skips it entirely
+ *  for a solid/gradient/pattern-only mark, which already paints for real on
+ *  the first (synchronous) pass. */
+export function hasAsyncPaint(paints: (Paint | undefined)[]): boolean {
+  return paints.some(isAsyncPaint)
+}
+
+/**
+ * Warm the image-bitmap and shader-field caches `resolvePaintCanvas`
+ * (`drawToCanvas` above) and `paintToVectorPaint`'s raster arm (`toSvg` below,
+ * Task 4 Step 2) both read SYNCHRONOUSLY, so a caller that repaints/rasterizes
+ * after this resolves gets the real paint instead of `FALLBACK_FILL`.
+ *
+ * Mirrors the Compositor's own warm-then-paint split, not a new scheme:
+ *  - **images** — `ensureFillBitmaps`, the same call
+ *    `useCompositorLayers.ts:610`'s `ensureLayerImages` makes.
+ *  - **shaders** — `withFieldFrame` + `resolveField`, the same pairing
+ *    `useCompositorLayers.ts:1680`'s `paintLayerStack` makes once per painted
+ *    frame (see `resolveShaderFill`'s "Shader fills on frame primitives" doc
+ *    in `~/lib/paint/resolve.ts` for why a HOST must own one synchronous span
+ *    rather than share `liveKeys` with another host's).
+ *
+ * ONE deliberate difference from the Compositor: this host has no per-frame
+ * render loop of its own (`ShapeStudioSurface`'s preview is event/dirty-driven
+ * — see its own doc), so unlike `paintLayerStack`'s span (which self-heals for
+ * free on the NEXT frame if the shader-effect catalog is still loading), a
+ * cold catalog here would leave the field frozen on its input-fill fallback
+ * forever with nothing to retry it. So this ALSO awaits
+ * `fetchShaderFxCatalog()` first — the same one-shot-host pattern
+ * `VectorTypeSurface.vue`'s `renderFullResBlob`/`exportSvg` use for their own
+ * PNG/SVG exports.
+ *
+ * `box` matches `resolvePaintCanvas`'s own `{ w, h }` convention and sizes a
+ * FRAME-anchored shader request exactly like `useCompositorLayers.ts`'s
+ * `addShaderFieldRequest` does. It plays no part in the common case though:
+ * an OBJECT-anchored field (`resolveShaderFill`'s `OBJECT_SHADER_FIELD_PX`
+ * arm) always renders at that fixed size regardless of `box`, and
+ * `getFillBitmap` keys an image purely on `src`. A frame-anchored shader is
+ * out of scope for THIS host regardless (see `STILL_FIELD`'s doc — paint time
+ * always asks for a 1×1 field), so warming one at `box`'s size builds a cache
+ * entry paint time never actually reads; harmless, just not load-bearing.
+ */
+export async function warmPaints(paints: (Paint | undefined)[], box: { w: number; h: number }): Promise<void> {
+  const imgSrcs = new Set<string>()
+  const shaderSpecs: ShaderSpec[] = []
+  for (const p of paints) {
+    if (isImageFill(p) && p.src) imgSrcs.add(p.src)
+    else if (isFill(p) && fillIsShader(p)) shaderSpecs.push(p.shader)
+  }
+  const jobs: Promise<unknown>[] = []
+  if (imgSrcs.size) jobs.push(ensureFillBitmaps([...imgSrcs]))
+  if (shaderSpecs.length) {
+    jobs.push(
+      fetchShaderFxCatalog()
+        .catch(() => { /* offline/backend down — resolveShaderFill degrades to the input fill, same as before */ })
+        .then(() => {
+          const requests: FieldRequest[] = shaderSpecs.map(spec => ({
+            spec,
+            w: spec.anchor === 'frame' ? Math.max(1, Math.round(box.w)) : OBJECT_SHADER_FIELD_PX,
+            h: spec.anchor === 'frame' ? Math.max(1, Math.round(box.h)) : OBJECT_SHADER_FIELD_PX,
+            t: STILL_FIELD.t, fps: STILL_FIELD.fps, bake: STILL_FIELD.bake,
+          }))
+          // One synchronous span for every shader this warm pass carries — see this
+          // function's own doc on why that has to be true here just like it is in
+          // paintLayerStack. Discards the returned canvases: this call's only job is
+          // to populate resolveField's cache so the NEXT (synchronous) resolve, made
+          // through STILL_FIELD outside any span (token 0 — see its doc), hits it.
+          withFieldFrame(requests, (_frozenCount, token) => {
+            for (const req of requests) resolveField(req, token)
+          })
+        }),
+    )
+  }
+  if (jobs.length) await Promise.all(jobs)
+}
+
+/**
+ * Rasterize `paint` over a `w`×`h` rect to a `data:image/png` URL — the pixel
+ * source `toSvg`'s TIER 3 embed hands `paintToVectorPaint` as `raster`
+ * (`~/lib/paint/toVector.ts`). Warms first (`warmPaints`) so an image/shader
+ * paint isn't captured mid-`FALLBACK_FILL`, then paints through the SAME
+ * `resolvePaintCanvas` path `drawToCanvas` uses, centred the same way, so the
+ * embedded pixels match the live preview rather than being a second, drifting
+ * rasterizer. The tile is corner-origin ([0,0]..[w,h], unclipped — same
+ * convention `rasterTile`'s SVG placement assumes: the `<pattern>` IS the box,
+ * and the referencing shape's own `fill-rule` clips it, not this pixel data).
+ *
+ * DOM-only (creates a `<canvas>`) — `toSvg` only calls this after checking
+ * `document` exists, so this itself does not re-guard.
+ */
+async function rasterizePaint(paint: Paint, w: number, h: number): Promise<string | null> {
+  await warmPaints([paint], { w, h })
+  const cw = Math.max(1, Math.round(w))
+  const ch = Math.max(1, Math.round(h))
+  const off = document.createElement('canvas')
+  off.width = cw
+  off.height = ch
+  const ctx = off.getContext('2d')
+  if (!ctx) return null
+  ctx.translate(cw / 2, ch / 2)
+  const style = resolvePaintCanvas(ctx, paint, { w: cw, h: ch }, STILL_FIELD)
+  ctx.fillStyle = (style as any) ?? FALLBACK_FILL
+  ctx.fillRect(-cw / 2, -ch / 2, cw, ch)
+  return off.toDataURL('image/png')
 }
