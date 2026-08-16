@@ -88,12 +88,12 @@ async function textureControls(node: any): Promise<StudioControlDesc[]> {
 /** Shape Studio: same config the canvas tuner reads (sailor_shapeStudio.config,
  *  falling back to a fresh default config via mergeConfig). */
 async function shapeControls(node: any): Promise<StudioControlDesc[]> {
-  const [{ mergeConfig }, { shapeAgentControls }] = await Promise.all([
-    import('~/lib/shapefx/config'),
-    import('~/lib/shapefx/agentControls'),
+  const [{ mergeConfig }, { geoAgentControls }] = await Promise.all([
+    import('~/lib/geoshape/config'),
+    import('~/lib/geoshape/agentControls'),
   ])
   const config = mergeConfig(node?.data?.properties?.sailor_shapeStudio?.config)
-  return mapAll(shapeAgentControls(config))
+  return mapAll(geoAgentControls(config))
 }
 
 /**

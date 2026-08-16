@@ -1,25 +1,25 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Gem, Pencil } from 'lucide-vue-next'
-import { ShapeEngine } from '~/lib/shapefx/engine'
-import { mergeConfig } from '~/lib/shapefx/config'
-import { detectWebGL } from '~/lib/spacetype/webgl'
-import { fetchShaderFxCatalog } from '~/lib/shaderfx/catalog'
+import { mergeConfig } from '~/lib/geoshape/config'
+import { renderShapes, drawToCanvas } from '~/lib/geoshape/render'
 import { registerStudioBaker, unregisterStudioBaker } from '~/lib/studio/cascade'
 import StudioRenderButton from '~/components/vue-canvas/StudioRenderButton.vue'
 
 // Shape Studio — a frontend-only config node (no backend class_type, never
-// executes). Modeled on GradientStudioNode.vue/TextureStudioNode.vue, but
-// unlike those studios (which render their preview with a cheap headless 2D
-// canvas function), Shape Studio's engine is a full Three.js WebGL scene tied
-// to a live <canvas> (see ShapeStudioSurface.vue / lib/shapefx/engine.ts) —
-// too heavy to mount one LIVE instance per card. So the card shows a still
-// (the last export, or the last Render's bake) rather than an animated preview.
-// It DOES register a studio-cascade baker: `bakeOutput()` spins a short-lived
-// offscreen ShapeEngine, renders one frame at the persisted framing, reads back
-// a PNG, and disposes — the same one-shot pattern Space Type's bake uses. That
-// baker powers the footer StudioRenderButton and pre-run baking. "Edit" opens
-// the full ShapeStudioSurface, which writes config back to
+// executes). Modeled on GradientStudioNode.vue/TextureStudioNode.vue: the
+// engine (lib/geoshape) is a plain 2D-vector "clone and arrange" pipeline —
+// `renderShapes` folds the config into paintable VectorShape[], and
+// `drawToCanvas` rasterizes them onto a 2D canvas context. The card still
+// shows a still (the last export, or the last Render's bake) rather than a
+// live per-frame preview, matching every other studio card's footer-render
+// pattern. It registers a studio-cascade baker: `bakeOutput()` renders the
+// persisted config at the persisted canvas size onto a throwaway offscreen
+// <canvas> and reads back a PNG — the same rasterize-then-toBlob pattern
+// ShapeStudioSurface.vue's own `rasterizePng()` uses for its "As image"
+// export, so the node bake and the in-studio export never drift. That baker
+// powers the footer StudioRenderButton and pre-run baking. "Edit" opens the
+// full ShapeStudioSurface, which writes config back to
 // node.data.properties.sailor_shapeStudio.
 const props = defineProps<{
   id: string
@@ -55,55 +55,34 @@ function onOutput(e: Event) {
   if (filename) lastExportedFile.value = String(filename)
 }
 
-// Default camera framing — keep in sync with ShapeStudioSurface's orbit defaults.
-const DEFAULT_ORBIT = { yaw: 0.6, pitch: 0.32, zoom: 1 }
-
-// Headless full-res bake for the render cascade (generative — no input). Spins a
-// throwaway offscreen ShapeEngine at the persisted output dims + framing, reads
-// back one PNG, and disposes. Also refreshes the card's own still for instant
-// feedback (see bakedThumb).
+// Headless full-res bake for the render cascade (generative — no input).
+// Renders the persisted config onto a throwaway offscreen 2D canvas at the
+// persisted output dims and reads back one PNG — mirrors
+// ShapeStudioSurface.vue's `rasterizePng()` export path exactly, so the node
+// bake and the in-studio "As image" export never drift. Also refreshes the
+// card's own still for instant feedback (see bakedThumb).
 async function bakeOutput(): Promise<Blob | null> {
-  if (!detectWebGL()) return null
-  // Item 2 fix (final review, residual Critical): this builds a THROWAWAY engine and
-  // renders exactly once — unlike the persistent card-preview `engine` (which self-heals
-  // over subsequent rAF frames once field.ts's own catalog fetch lands, per
-  // shaderFieldTexture's doc in ~/lib/spacetype/fills.ts), a one-shot bake gets no second
-  // chance: a shader fill whose effect isn't in the catalog YET at build time fell back to
-  // its input fill and PERSISTED that fallback as the uploaded PNG, forever, with no
-  // retry. Awaiting the catalog before building (cheap — memoized after the first real
-  // fetch on the page) guarantees the effect is resolvable before setConfig ever runs.
-  await fetchShaderFxCatalog().catch(() => { /* offline/backend down — build proceeds and falls back same as before */ })
   const blob = props.data?.properties?.sailor_shapeStudio as
-    { config?: unknown; canvasW?: number; canvasH?: number
-      orbit?: { yaw?: number; pitch?: number; zoom?: number } } | undefined
+    { config?: unknown; canvasW?: number; canvasH?: number } | undefined
   const cfg = mergeConfig(blob?.config)
   const w = typeof blob?.canvasW === 'number' ? blob.canvasW : 1024
   const h = typeof blob?.canvasH === 'number' ? blob.canvasH : 1024
-  const orbit = {
-    yaw: blob?.orbit?.yaw ?? DEFAULT_ORBIT.yaw,
-    pitch: blob?.orbit?.pitch ?? DEFAULT_ORBIT.pitch,
-    zoom: blob?.orbit?.zoom ?? DEFAULT_ORBIT.zoom,
-  }
-  const canvas = document.createElement('canvas')
-  let engine: ShapeEngine | null = null
   try {
-    engine = new ShapeEngine(canvas, w, h)
-    // Important 5 (final review): unclamp any shader fill to this bake's actual output size
-    // instead of the live-preview clamp — setConfig hardcoded `bake: false` until ShapeEngine
-    // grew a setBake() method for exactly this call. This is a throwaway engine (disposed in
-    // the finally below), so there's no live-preview state to restore afterward.
-    engine.setBake(true)
-    engine.setConfig(cfg)
-    engine.render(orbit)
-    const out = await engine.frameToBlob(w, h)
+    const shapes = await renderShapes(cfg)
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.max(1, Math.round(w))
+    canvas.height = Math.max(1, Math.round(h))
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return null
+    drawToCanvas(shapes, ctx, canvas.width, canvas.height)
+    const out = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
+    if (!out) return null
     if (bakedThumb.value) URL.revokeObjectURL(bakedThumb.value)
     bakedThumb.value = URL.createObjectURL(out)
     return out
   } catch (e) {
     console.error('[shape-studio] bake failed', e)
     return null
-  } finally {
-    engine?.dispose()
   }
 }
 

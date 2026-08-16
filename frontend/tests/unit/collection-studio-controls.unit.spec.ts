@@ -32,7 +32,10 @@ describe('ShapeStudio', () => {
     const node: any = { data: { nodeType: 'ShapeStudio', properties: {} } }
     const descs = await controlsForStudio(node)
     expect(descs.length).toBeGreaterThan(0)
-    expect(descs.map((d) => d.key)).toContain('shape.jitter')
+    // geoshape's flat config has no dotted 'shape.jitter' key (that was shapefx's 3D
+    // vocabulary) — 'seed' is its closest analog: "drives irregularSeed-style jitter
+    // and re-roll" (geoshape/controls.ts), and is always visible (no `when` gate).
+    expect(descs.map((d) => d.key)).toContain('seed')
   })
 
   it('is a vars target, so the node renders its VARS input port', async () => {

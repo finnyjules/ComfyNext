@@ -38,8 +38,8 @@ import { buildGradientPreset } from '~/lib/gradientfx/presets'
 import { cloneConfig as cloneGradientConfig, ensureConfigDefaults as ensureGradientConfigDefaults, type GradientConfig } from '~/lib/gradientfx/types'
 import { cloneConfig as cloneShaderConfig, defaultConfig as defaultShaderConfig, hydrateConfig as hydrateShaderConfig, type ShaderStudioConfig } from '~/lib/shaderstudio/types'
 import { shaderAgentControls } from '~/lib/shaderstudio/agentControls'
-import { mergeConfig as mergeShapeConfig } from '~/lib/shapefx/config'
-import { SHAPE_GUIDANCE, shapeAgentControls } from '~/lib/shapefx/agentControls'
+import { mergeConfig as mergeShapeConfig } from '~/lib/geoshape/config'
+import { geoAgentControls as shapeAgentControls, GEO_GUIDANCE as SHAPE_GUIDANCE } from '~/lib/geoshape/agentControls'
 // Vector Type's config + control schema are fontkit-free (controls.ts imports
 // VtAxis TYPE-only, on purpose); only ./font.ts loads the parser, and that one is
 // imported dynamically inside the adapter below.
