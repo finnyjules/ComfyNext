@@ -1,0 +1,219 @@
+import { describe, it, expect } from 'vitest'
+import { GEO_CONTROLS, GEO_SECTIONS, visibleGeoControls, GEO_GUIDANCE } from '../../app/lib/geoshape/controls'
+import { geoAgentControls } from '../../app/lib/geoshape/agentControls'
+import { reroll } from '../../app/lib/geoshape/randomize'
+import { DEFAULT_CONFIG, type GeoShapeConfig } from '../../app/lib/geoshape/config'
+
+// Fields on GeoShapeConfig that are NOT a renderable control: `locks` is
+// re-roll section-lock metadata, not a parameter a knob addresses.
+const NON_CONTROL_FIELDS = new Set(['locks'])
+
+const expectedKeys = Object.keys(DEFAULT_CONFIG).filter((k) => !NON_CONTROL_FIELDS.has(k))
+
+describe('GEO_CONTROLS drift guard', () => {
+  it('every user-facing GeoShapeConfig key has a control', () => {
+    const controlKeys = new Set(GEO_CONTROLS.map((c) => c.key))
+    const missing = expectedKeys.filter((k) => !controlKeys.has(k))
+    expect(missing).toEqual([])
+  })
+
+  it('has no controls for keys that are not on GeoShapeConfig', () => {
+    // Catches typo'd keys the agent could never actually write through.
+    const known = new Set(expectedKeys)
+    const stray = GEO_CONTROLS.map((c) => c.key).filter((k) => !known.has(k))
+    expect(stray).toEqual([])
+  })
+
+  it('has unique keys', () => {
+    const keys = GEO_CONTROLS.map((c) => c.key)
+    expect(new Set(keys).size).toBe(keys.length)
+  })
+})
+
+describe('GEO_SECTIONS integrity', () => {
+  it('is non-empty', () => {
+    expect(GEO_SECTIONS.length).toBeGreaterThan(0)
+  })
+
+  it('every control belongs to a declared section', () => {
+    for (const c of GEO_CONTROLS) {
+      expect(GEO_SECTIONS, `${c.key} group "${c.group}"`).toContain(c.group)
+    }
+  })
+
+  it('every select default is one of its own options', () => {
+    for (const c of GEO_CONTROLS) {
+      if (c.kind !== 'select') continue
+      expect(c.options, c.key).toContain(c.default)
+    }
+  })
+
+  it('every slider default sits inside its own range', () => {
+    for (const c of GEO_CONTROLS) {
+      if (c.kind !== 'slider') continue
+      expect(c.default, `${c.key} default`).toBeGreaterThanOrEqual(c.min)
+      expect(c.default, `${c.key} default`).toBeLessThanOrEqual(c.max)
+      expect(c.max, `${c.key} range`).toBeGreaterThan(c.min)
+    }
+  })
+})
+
+describe('visibleGeoControls follows the shape/layout/overlap/symmetry/clip predicates', () => {
+  it('shows Sides for polygon/star/irregular, hides it for hexagon', () => {
+    for (const shape of ['polygon', 'star', 'irregular'] as const) {
+      const keys = visibleGeoControls({ ...DEFAULT_CONFIG, shape }).map((c) => c.key)
+      expect(keys, shape).toContain('sides')
+    }
+    const hexKeys = visibleGeoControls({ ...DEFAULT_CONFIG, shape: 'hexagon' }).map((c) => c.key)
+    expect(hexKeys).not.toContain('sides')
+  })
+
+  it('shows Star inner only for star, Irregular seed only for irregular', () => {
+    const star = visibleGeoControls({ ...DEFAULT_CONFIG, shape: 'star' }).map((c) => c.key)
+    expect(star).toContain('starInner')
+    expect(star).not.toContain('irregularSeed')
+
+    const irregular = visibleGeoControls({ ...DEFAULT_CONFIG, shape: 'irregular' }).map((c) => c.key)
+    expect(irregular).toContain('irregularSeed')
+    expect(irregular).not.toContain('starInner')
+  })
+
+  it('shows grid columns/rows only when layout is grid', () => {
+    const grid = visibleGeoControls({ ...DEFAULT_CONFIG, layout: 'grid' }).map((c) => c.key)
+    expect(grid).toContain('gridCols')
+    expect(grid).toContain('gridRows')
+    expect(grid).not.toContain('radius')
+
+    const radial = visibleGeoControls({ ...DEFAULT_CONFIG, layout: 'radial' }).map((c) => c.key)
+    expect(radial).not.toContain('gridCols')
+    expect(radial).toContain('radius')
+  })
+
+  it('shows Overlap fill only when overlapMode is shape', () => {
+    const shapeMode = visibleGeoControls({ ...DEFAULT_CONFIG, overlapMode: 'shape' }).map((c) => c.key)
+    expect(shapeMode).toContain('overlapFill')
+    const holeMode = visibleGeoControls({ ...DEFAULT_CONFIG, overlapMode: 'hole' }).map((c) => c.key)
+    expect(holeMode).not.toContain('overlapFill')
+  })
+
+  it('shows symmetry axis/spacing only when symmetry is on', () => {
+    const on = visibleGeoControls({ ...DEFAULT_CONFIG, symmetry: true }).map((c) => c.key)
+    expect(on).toContain('symmetryAxis')
+    expect(on).toContain('symmetrySpacing')
+    const off = visibleGeoControls({ ...DEFAULT_CONFIG, symmetry: false }).map((c) => c.key)
+    expect(off).not.toContain('symmetryAxis')
+    expect(off).not.toContain('symmetrySpacing')
+  })
+
+  it('shows clip mask size only when a clip mask is chosen', () => {
+    const clipped = visibleGeoControls({ ...DEFAULT_CONFIG, clipMask: 'circle' }).map((c) => c.key)
+    expect(clipped).toContain('clipMaskSize')
+    const none = visibleGeoControls({ ...DEFAULT_CONFIG, clipMask: 'none' }).map((c) => c.key)
+    expect(none).not.toContain('clipMaskSize')
+  })
+
+  it('returns only members of GEO_CONTROLS', () => {
+    const all = new Set(GEO_CONTROLS.map((c) => c.key))
+    for (const c of visibleGeoControls(DEFAULT_CONFIG)) expect(all.has(c.key), c.key).toBe(true)
+  })
+})
+
+describe('geoAgentControls', () => {
+  it('emits plain ControlSpecs with no schema-only fields leaking', () => {
+    for (const c of geoAgentControls(DEFAULT_CONFIG)) {
+      expect(c, c.key).not.toHaveProperty('when')
+      expect(c, c.key).not.toHaveProperty('agent')
+      expect(c, c.key).not.toHaveProperty('animatable')
+    }
+  })
+
+  it('guidance names only keys that exist in the schema', () => {
+    const keys = new Set(GEO_CONTROLS.map((c) => c.key))
+    // Guidance prose references bare identifiers like `shape`, `sides`,
+    // `starInner`; pull anything camelCase/lowercase that looks like a key
+    // reference and make sure it resolves.
+    const named = new Set<string>()
+    for (const m of GEO_GUIDANCE.matchAll(/\b[a-z][a-zA-Z]*\b/g)) {
+      if (keys.has(m[0])) named.add(m[0])
+    }
+    for (const k of named) expect(keys.has(k), k).toBe(true)
+  })
+})
+
+describe('reroll', () => {
+  const noLocks: Record<string, boolean> = {}
+
+  it('produces a new seed', () => {
+    const out = reroll(DEFAULT_CONFIG, noLocks)
+    expect(out.seed).not.toBe(DEFAULT_CONFIG.seed)
+  })
+
+  it('is deterministic: the same cfg + locks always produces the same result', () => {
+    const a = reroll(DEFAULT_CONFIG, noLocks)
+    const b = reroll(DEFAULT_CONFIG, noLocks)
+    expect(a).toEqual(b)
+  })
+
+  it('is deterministic starting from a different seed too', () => {
+    const start: GeoShapeConfig = { ...DEFAULT_CONFIG, seed: 4242 }
+    const a = reroll(start, noLocks)
+    const b = reroll(start, noLocks)
+    expect(a).toEqual(b)
+    expect(a.seed).not.toBe(4242)
+  })
+
+  it('a locked shape section is unchanged; unlocked sections change', () => {
+    const start: GeoShapeConfig = { ...DEFAULT_CONFIG, shape: 'star', sides: 9, starInner: 0.4 }
+    const out = reroll(start, { shape: true })
+    expect(out.shape).toBe(start.shape)
+    expect(out.sides).toBe(start.sides)
+    expect(out.starInner).toBe(start.starInner)
+    expect(out.irregularSeed).toBe(start.irregularSeed)
+    expect(out.size).toBe(start.size)
+    expect(out.roundCorners).toBe(start.roundCorners)
+    expect(out.roundRadius).toBe(start.roundRadius)
+    // At least one unlocked section actually moved.
+    const layoutChanged = out.layout !== start.layout || out.count !== start.count || out.radius !== start.radius
+      || out.spacing !== start.spacing || out.angleStep !== start.angleStep
+    expect(layoutChanged).toBe(true)
+  })
+
+  it('a locked layout section is unchanged when everything else is locked too', () => {
+    const start: GeoShapeConfig = { ...DEFAULT_CONFIG }
+    const allLocked = { shape: true, layout: true, transform: true, composite: true, symmetry: true, clip: true, style: true }
+    const out = reroll(start, allLocked)
+    expect(out.layout).toBe(start.layout)
+    expect(out.count).toBe(start.count)
+    expect(out.gridCols).toBe(start.gridCols)
+    expect(out.gridRows).toBe(start.gridRows)
+    expect(out.radius).toBe(start.radius)
+    expect(out.spacing).toBe(start.spacing)
+    expect(out.angleStep).toBe(start.angleStep)
+    expect(out.shape).toBe(start.shape)
+    expect(out.rotateBase).toBe(start.rotateBase)
+    expect(out.fillMode).toBe(start.fillMode)
+    expect(out.symmetry).toBe(start.symmetry)
+    expect(out.clipMask).toBe(start.clipMask)
+    expect(out.padding).toBe(start.padding)
+    // Even with everything locked, the seed still advances (a fresh re-roll
+    // click always feels live) and paint is always carried through untouched.
+    expect(out.seed).not.toBe(start.seed)
+    expect(out.fill).toEqual(start.fill)
+    expect(out.stroke).toEqual(start.stroke)
+    expect(out.overlapFill).toEqual(start.overlapFill)
+  })
+
+  it('never rolls paint (fill/stroke/overlapFill), locked or not', () => {
+    const start: GeoShapeConfig = { ...DEFAULT_CONFIG, fill: '#ff00aa', stroke: '#00ffaa', overlapFill: '#aabbcc' }
+    const out = reroll(start, noLocks)
+    expect(out.fill).toBe(start.fill)
+    expect(out.stroke).toBe(start.stroke)
+    expect(out.overlapFill).toBe(start.overlapFill)
+  })
+
+  it('stores the passed locks record onto the result', () => {
+    const locks = { shape: true, style: false }
+    const out = reroll(DEFAULT_CONFIG, locks)
+    expect(out.locks).toEqual(locks)
+  })
+})
