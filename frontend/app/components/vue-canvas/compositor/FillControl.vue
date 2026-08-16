@@ -22,7 +22,17 @@ import FillImagePicker from '~/components/vue-canvas/compositor/FillImagePicker.
 import { getFillBitmap, ensureFillBitmaps } from '~/lib/paint/imageFillCache'
 import { imageFillRect } from '~/lib/compositor/paint'
 
-const props = withDefaults(defineProps<{ modelValue: Paint | undefined; allowNone?: boolean; nested?: boolean; allowImage?: boolean }>(), { allowNone: false, nested: false, allowImage: false })
+const props = withDefaults(defineProps<{
+  modelValue: Paint | undefined
+  allowNone?: boolean
+  nested?: boolean
+  allowImage?: boolean
+  /** Pass-through to ShaderFillEditor's own `showAnchor` (see its doc). No default here —
+   *  stays `undefined` for every existing caller, so `:show-anchor="undefined"` reaches the
+   *  child and its own `showAnchor: true` default still applies untouched. Only hosts without
+   *  a frame to anchor to (Shape Studio) pass `false`. */
+  showAnchor?: boolean
+}>(), { allowNone: false, nested: false, allowImage: false })
 const emit = defineEmits<{ 'update:modelValue': [Paint] }>()
 
 /** The type list this instance offers. `nested` is set on the fill editor that
@@ -276,7 +286,7 @@ watch(imageFill, drawPreview, { deep: true })
 
       <GradientEditor v-else-if="fill.type === 'gradient'" :model-value="grad" @update:model-value="onGrad" />
 
-      <ShaderFillEditor v-else-if="fill.type === 'shader'" :model-value="fill.shader ?? DEFAULT_SHADER_SPEC" @update:model-value="onShaderSpec" />
+      <ShaderFillEditor v-else-if="fill.type === 'shader'" :model-value="fill.shader ?? DEFAULT_SHADER_SPEC" :show-anchor="showAnchor" @update:model-value="onShaderSpec" />
 
       <div v-else class="flex items-center gap-1.5">
         <span class="text-[9px] uppercase tracking-[0.1em] text-white/35 shrink-0">{{ needsB ? 'A' : 'Color' }}</span>

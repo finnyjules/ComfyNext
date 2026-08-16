@@ -400,10 +400,10 @@ async function exportSvg() {
         @set="setGeoControl"
       >
         <template #control-fill>
-          <FillControl allow-image :model-value="config.fill" @update:model-value="setGeoControl('fill', $event)" />
+          <FillControl allow-image :show-anchor="false" :model-value="config.fill" @update:model-value="setGeoControl('fill', $event)" />
         </template>
         <template #control-overlapFill>
-          <FillControl allow-image :model-value="config.overlapFill" @update:model-value="setGeoControl('overlapFill', $event)" />
+          <FillControl allow-image :show-anchor="false" :model-value="config.overlapFill" @update:model-value="setGeoControl('overlapFill', $event)" />
         </template>
         <template #control-stroke>
           <div class="flex items-center justify-between">
