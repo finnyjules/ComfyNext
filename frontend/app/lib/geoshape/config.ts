@@ -64,7 +64,7 @@ export const DEFAULT_CONFIG: GeoShapeConfig = {
   size: 180,
   count: 6,
   layout: 'radial',
-  radius: 180,
+  radius: 120,
   spacing: 220,
   angleStep: 60,
   rotateBase: 0,

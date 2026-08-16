@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { renderShapes, toSvg } from '~/lib/geoshape/render'
+import { renderShapes, toSvg, contentBounds } from '~/lib/geoshape/render'
 import { DEFAULT_CONFIG } from '~/lib/geoshape/config'
 
 describe('geoshape render', () => {
@@ -37,5 +37,26 @@ describe('geoshape render', () => {
     }
     expect(maxAbsX).toBeGreaterThan(0)
     expect(maxAbsY).toBeGreaterThan(0)
+  })
+
+  it('viewBox contains the actual rendered geometry (regression: static-size cropping)', async () => {
+    const svg = await toSvg(DEFAULT_CONFIG)
+    const match = svg.match(/viewBox="([^"]+)"/)
+    expect(match).not.toBeNull()
+    const [minX, minY, w, h] = match![1]!.split(/\s+/).map(Number)
+    const b = contentBounds(await renderShapes(DEFAULT_CONFIG))
+    // The old static `size + padding*2` formula sized the box without
+    // regard for `arrange`'s actual clone spread — this would fail against
+    // that bug because the real geometry ran well outside it.
+    expect(b.minX).toBeGreaterThanOrEqual(minX!)
+    expect(b.maxX).toBeLessThanOrEqual(minX! + w!)
+    expect(b.minY).toBeGreaterThanOrEqual(minY!)
+    expect(b.maxY).toBeLessThanOrEqual(minY! + h!)
+  })
+
+  it('default config genuinely overlaps (overlapMode shape yields more shapes than hole)', async () => {
+    const hole = await renderShapes({ ...DEFAULT_CONFIG, overlapMode: 'hole' })
+    const shape = await renderShapes({ ...DEFAULT_CONFIG, overlapMode: 'shape' })
+    expect(shape.length).toBeGreaterThan(hole.length)
   })
 })

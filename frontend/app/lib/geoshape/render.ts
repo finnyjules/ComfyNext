@@ -53,21 +53,52 @@ export async function renderShapes(cfg: GeoShapeConfig): Promise<VectorShape[]> 
 }
 
 /**
- * `GeoShapeConfig` -> a standalone SVG document, `size + padding*2` square.
+ * The bounding box of `shapes`' actual path geometry (document space, same
+ * origin-centred convention `composite` builds in) — every command's x/y
+ * args, min and max. `arrange` pushes clones out by `radius`/`spacing`/etc.,
+ * so this is frequently much bigger than `size + padding*2`: that static
+ * formula was `toSvg`'s old (buggy) size source and cropped the mark.
+ */
+export function contentBounds(shapes: VectorShape[]): { minX: number; minY: number; maxX: number; maxY: number; w: number; h: number } {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  for (const s of shapes) {
+    for (const c of s.commands) {
+      const a = c.args
+      for (let i = 0; i + 1 < a.length; i += 2) {
+        const x = a[i]!, y = a[i + 1]!
+        if (x < minX) minX = x
+        if (x > maxX) maxX = x
+        if (y < minY) minY = y
+        if (y > maxY) maxY = y
+      }
+    }
+  }
+  if (!Number.isFinite(minX)) { minX = minY = -1; maxX = maxY = 1 } // empty fallback
+  return { minX, minY, maxX, maxY, w: maxX - minX, h: maxY - minY }
+}
+
+/**
+ * `GeoShapeConfig` -> a standalone SVG document, sized to fit the ACTUAL
+ * rendered geometry plus `padding` on every side.
  *
- * The composed mark is origin-centred (paper's coordinates run through
- * `composite` untranslated), so the viewBox is centred on the origin too —
- * `[-w/2, -h/2, w, h]` — rather than the spine's own `[0,0,w,h]` default,
- * which would crop the negative half of every shape clean off the canvas.
+ * The old formula sized the box from `cfg.size + cfg.padding*2` alone, but
+ * `arrange` pushes clones out by `radius`/`spacing`/etc., so the real
+ * geometry is routinely much bigger than that static box — for
+ * `DEFAULT_CONFIG` the mark was cropped by more than half. Deriving the size
+ * and viewBox from `contentBounds` instead means the box always contains
+ * whatever `renderShapes` actually produced, no matter which knobs pushed it
+ * out.
  */
 export async function toSvg(cfg: GeoShapeConfig, opts: Partial<SvgDocOptions> = {}): Promise<string> {
   const shapes = await renderShapes(cfg)
-  const w = cfg.size + cfg.padding * 2
-  const h = cfg.size + cfg.padding * 2
+  const b = contentBounds(shapes)
+  const pad = Math.max(0, cfg.padding)
+  const w = b.w + pad * 2
+  const h = b.h + pad * 2
   return shapesToSVG(shapes, {
     width: w,
     height: h,
-    viewBox: [-w / 2, -h / 2, w, h],
+    viewBox: [b.minX - pad, b.minY - pad, w, h],
     ...opts,
   })
 }
@@ -91,17 +122,28 @@ function canvasFillStyle(fill: VectorShape['fill']): string | null {
 }
 
 /**
- * Paint `shapes` onto a 2D canvas context, centred at `(w/2, h/2)` — the
- * shapes are origin-centred document-space geometry, so this is the one
- * translate that puts the mark in the middle of the box instead of with its
- * origin pinned at the canvas's own top-left corner.
+ * Paint `shapes` onto a 2D canvas context, fit to the `w`×`h` box.
+ *
+ * The shapes are origin-centred document-space geometry, but their real
+ * extent depends on `arrange`'s knobs (`radius`/`spacing`/etc.), not on the
+ * canvas size — a fixed `translate(w/2,h/2)` with no scale crops the mark
+ * exactly like `toSvg`'s old static-size bug. Fitting `contentBounds` into
+ * the box (90% margin so nothing touches the edge) keeps the preview/bake
+ * replay honest for the same reason `toSvg` now derives its size from
+ * bounds instead of a static formula.
  *
  * Used by both the live preview and the bake path, so there is one canvas
  * replay of this geometry, matching `toSvg`'s one SVG replay.
  */
 export function drawToCanvas(shapes: VectorShape[], ctx: CanvasRenderingContext2D, w: number, h: number): void {
+  ctx.clearRect(0, 0, w, h)
+  const b = contentBounds(shapes)
+  const margin = 0.9
+  const scale = Math.min(w / (b.w || 1), h / (b.h || 1)) * margin
   ctx.save()
   ctx.translate(w / 2, h / 2)
+  ctx.scale(scale, scale)
+  ctx.translate(-(b.minX + b.w / 2), -(b.minY + b.h / 2))
   for (const s of shapes) {
     const path = new Path2D(commandsToPathData(s.commands))
     const fillStyle = canvasFillStyle(s.fill)
