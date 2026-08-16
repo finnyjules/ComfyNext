@@ -102,7 +102,8 @@ export const GEO_CONTROLS: GeoControl[] = [
   slider('gridRows', 'Grid rows', 1, 24, 1, 'Layout', DEFAULT_CONFIG.gridRows, undefined, { when: isGrid }),
   slider('radius', 'Radius', 0, 800, 1, 'Layout', DEFAULT_CONFIG.radius, undefined, { when: isRadial }),
   slider('spacing', 'Spacing', 0, 800, 1, 'Layout', DEFAULT_CONFIG.spacing, undefined, { when: isGridOrLinear }),
-  slider('angleStep', 'Angle step', 0, 360, 1, 'Layout', DEFAULT_CONFIG.angleStep, undefined, { when: isRadial }),
+  switchC('evenAngle', 'Even spacing', DEFAULT_CONFIG.evenAngle, 'Layout', { when: isRadial }),
+  slider('angleStep', 'Angle step', 0, 360, 1, 'Layout', DEFAULT_CONFIG.angleStep, undefined, { when: (c) => isRadial(c) && !c.evenAngle }),
 
   // --- Transform (per-clone ramps in arrange.ts) ----------------------------
   slider('rotateBase', 'Rotate base', -180, 180, 1, 'Transform', DEFAULT_CONFIG.rotateBase),
@@ -162,7 +163,7 @@ export const GEO_GUIDANCE = `This is a PROCEDURAL 2D-VECTOR "clone and arrange" 
 
 BASE SHAPE: "shape" picks the family — polygon (regular N-gon via sides), star (N points via sides + starInner, the inner-vertex radius as a fraction of the outer radius, 0.01=needle-thin points, 0.99=almost a polygon), hexagon (fixed 6-gon, ignores sides), irregular (a polygon jittered per-vertex by irregularSeed — same seed always gives the same silhouette). size is the shape's radius before any clone spread. roundCorners (0=off) gates roundRadius, the corner-rounding fraction.
 
-LAYOUT: count is how many clones to place (grid layout instead uses gridCols × gridRows and ignores count). layout picks the placement curve: "radial" rings the clones around the center at radius, spaced by angleStep degrees, with spin as the ring's starting angle offset. "grid" tiles gridCols × gridRows clones spacing apart. "linear" strings count clones in a row, spacing apart.
+LAYOUT: count is how many clones to place (grid layout instead uses gridCols × gridRows and ignores count). layout picks the placement curve: "radial" rings the clones around the center at radius; by default (evenAngle) they spread evenly (360/count) so any count forms a clean ring, and turning evenAngle off spaces them by angleStep degrees instead (for fans/spirals). spin is the ring's starting angle offset. "grid" tiles gridCols × gridRows clones spacing apart. "linear" strings count clones in a row, spacing apart.
 
 TRANSFORM: rotateBase + i*rotateStep rotates each successive clone (a spiral/fan feel as rotateStep grows). scaleStart→scaleEnd ramps clone size across the sequence (shrink/grow trails). skew shears every clone; spin only matters for radial layout.
 

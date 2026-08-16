@@ -28,6 +28,8 @@ export interface GeoShapeConfig {
   radius: number
   spacing: number
   angleStep: number
+  /** radial only: spread clones evenly (360/count) instead of stepping by angleStep. */
+  evenAngle: boolean
   rotateBase: number
   rotateStep: number
   scaleStart: number
@@ -67,6 +69,7 @@ export const DEFAULT_CONFIG: GeoShapeConfig = {
   radius: 120,
   spacing: 220,
   angleStep: 60,
+  evenAngle: true,
   rotateBase: 0,
   rotateStep: 0,
   scaleStart: 1,
@@ -179,6 +182,7 @@ export function mergeConfig(raw: unknown): GeoShapeConfig {
     radius: num(o.radius, d.radius),
     spacing: num(o.spacing, d.spacing),
     angleStep: num(o.angleStep, d.angleStep),
+    evenAngle: bool(o.evenAngle, d.evenAngle),
     rotateBase: num(o.rotateBase, d.rotateBase),
     rotateStep: num(o.rotateStep, d.rotateStep),
     scaleStart: num(o.scaleStart, d.scaleStart),

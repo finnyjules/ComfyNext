@@ -64,10 +64,13 @@ export function arrange(cfg: GeoShapeConfig): ClonePlacement[] {
     return placements
   }
 
-  // radial (default)
+  // radial (default). `evenAngle` (default) spreads the clones evenly around the
+  // full circle (360/count) so ANY count forms a clean ring; turning it off uses
+  // the raw `angleStep` per clone (for fans/spirals that wrap deliberately).
+  const step = cfg.evenAngle ? 360 / count : cfg.angleStep
   const placements: ClonePlacement[] = []
   for (let i = 0; i < count; i++) {
-    const angle = (cfg.spin + i * cfg.angleStep) * DEG2RAD
+    const angle = (cfg.spin + i * step) * DEG2RAD
     const t = rampT(i, count)
     placements.push({
       x: cfg.radius * Math.cos(angle),
