@@ -22,12 +22,29 @@
  * identical reason — and is left for a future task.
  */
 import type { VectorShape } from '~/lib/vector/svg'
-import { commandsToPathData, shapesToSVG, isVectorGradient, isVectorPattern, type SvgDocOptions } from '~/lib/vector/svg'
+import { commandsToPathData, shapesToSVG, type SvgDocOptions } from '~/lib/vector/svg'
 import { baseShapePath } from './shapes'
 import { arrange } from './arrange'
 import { composite } from './boolean'
 import { resolvePaint } from './paint'
 import type { GeoShapeConfig } from './config'
+import type { Paint } from '~/lib/compositor/paint'
+import { paintToVectorPaint } from '~/lib/paint/toVector'
+// The COMPOSITOR canvas resolver — NOT geoshape/paint.ts's `resolvePaint` (the
+// invert helper, imported above and used for `renderShapes`'s colour-swap
+// step). Aliased to avoid shadowing it; see this module's two very differently
+// shaped `resolvePaint`s in the geoshape Task 2 brief.
+import { resolvePaint as resolvePaintCanvas, type ShaderFieldFrameCtx } from '~/lib/paint/resolve'
+
+/**
+ * A `VectorShape` that also carries the AUTHORED `Paint` (gradient/pattern/
+ * image/shader), not just the solid-string fallback `.fill` every reader
+ * already understands. `boolean.ts`'s `composite` is the one producer; `toSvg`
+ * consumes `.paint` to emit a real paint server, and `drawToCanvas` consumes it
+ * to resolve a canvas fillStyle. `.fill` stays a plain solid-or-null fallback
+ * for any reader that doesn't know about `.paint`.
+ */
+export type GeoVectorShape = VectorShape & { paint?: Paint }
 
 /**
  * `GeoShapeConfig` -> the final composed mark, as paintable `VectorShape[]`
@@ -92,6 +109,18 @@ export function contentBounds(shapes: VectorShape[]): { minX: number; minY: numb
 export async function toSvg(cfg: GeoShapeConfig, opts: Partial<SvgDocOptions> = {}): Promise<string> {
   const shapes = await renderShapes(cfg)
   const b = contentBounds(shapes)
+  // Convert each shape's authored `paint` (gradient/pattern) into a real
+  // `VectorPaint` the SVG writer can turn into a `<linearGradient>`/`<pattern>`
+  // — the solid-fallback `.fill` `composite` set is only a placeholder for
+  // this. `null` (image/shader with no raster handed in) keeps that fallback:
+  // Task 4 supplies the raster that would let those export too.
+  const box = { x: b.minX, y: b.minY, width: b.w, height: b.h }
+  for (const s of shapes as GeoVectorShape[]) {
+    if (s.paint && typeof s.paint !== 'string') {
+      const vp = paintToVectorPaint(s.paint, { units: 'userSpaceOnUse', box })
+      if (vp) s.fill = vp
+    }
+  }
   const pad = Math.max(0, cfg.padding) + cfg.strokeWidth / 2
   const w = b.w + pad * 2
   const h = b.h + pad * 2
@@ -103,23 +132,24 @@ export async function toSvg(cfg: GeoShapeConfig, opts: Partial<SvgDocOptions> = 
   })
 }
 
-/** A fallback colour for a fill this canvas path cannot resolve (a gradient
- *  or pattern paint server): a full gradient-on-canvas replay is optional and
- *  out of scope here — see the module header. Mid-gray reads as "there is a
- *  fill here" without claiming to be the real one. */
+/** A fallback colour for a fill `resolvePaintCanvas` cannot resolve yet (image/
+ *  shader before Task 4 warms them): mid-gray reads as "there is a fill here"
+ *  without claiming to be the real one. Also `resolvePaintCanvas`'s own solid
+ *  arm needs no fallback — a plain string passes straight through. */
 const FALLBACK_FILL = '#808080'
 
-/** Resolve one `VectorShape`'s fill to a `ctx.fillStyle`-able string: a solid
- *  string passes straight through; a gradient's first stop is used as a cheap
- *  stand-in; a pattern (no single representative colour) falls back to the
- *  same mid-gray a gradient without stops would. */
-function canvasFillStyle(fill: VectorShape['fill']): string | null {
-  if (fill === null || fill === undefined) return null
-  if (typeof fill === 'string') return fill
-  if (isVectorGradient(fill)) return fill.stops[0]?.color ?? FALLBACK_FILL
-  if (isVectorPattern(fill)) return FALLBACK_FILL
-  return FALLBACK_FILL
-}
+/**
+ * A still (`t: 0`, not baking) field frame — the minimal `ShaderFieldFrameCtx`
+ * a shader-fill `Paint` needs to resolve on canvas. This host has no separate
+ * "frame" the way the Compositor's paintLayerStack does, so a `frame`-anchored
+ * shader (`field.frameW`/`frameH`) is out of scope here — object-anchored
+ * shaders (the common case, `OBJECT_SHADER_FIELD_PX`) don't read those fields
+ * at all. `token: 0` is `resolveField`'s own "no span open" sentinel (see
+ * `~/lib/shaderfill/field.ts`), so a shader fill here reads the current/frozen
+ * field rather than erroring — exactly the graceful image/shader fallback
+ * this task's brief calls for.
+ */
+const STILL_FIELD: ShaderFieldFrameCtx = { frameW: 1, frameH: 1, t: 0, fps: 30, base: null, bake: false, token: 0 }
 
 /**
  * Paint `shapes` onto a 2D canvas context, fit to the `w`×`h` box.
@@ -134,6 +164,13 @@ function canvasFillStyle(fill: VectorShape['fill']): string | null {
  *
  * Used by both the live preview and the bake path, so there is one canvas
  * replay of this geometry, matching `toSvg`'s one SVG replay.
+ *
+ * Fills go through the SAME `resolvePaint` the Compositor/Vector Type use
+ * (aliased `resolvePaintCanvas` here — see this module's header on the two
+ * `resolvePaint`s), so gradients/patterns/solid paint for real instead of the
+ * old cheap first-stop/mid-gray stand-in. Image/shader paints resolve to a
+ * fallback until warmed (a later task); that degrades gracefully, it never
+ * throws.
  */
 export function drawToCanvas(shapes: VectorShape[], ctx: CanvasRenderingContext2D, w: number, h: number): void {
   ctx.clearRect(0, 0, w, h)
@@ -146,9 +183,10 @@ export function drawToCanvas(shapes: VectorShape[], ctx: CanvasRenderingContext2
   ctx.translate(-(b.minX + b.w / 2), -(b.minY + b.h / 2))
   for (const s of shapes) {
     const path = new Path2D(commandsToPathData(s.commands))
-    const fillStyle = canvasFillStyle(s.fill)
-    if (fillStyle) {
-      ctx.fillStyle = fillStyle
+    const paint = (s as GeoVectorShape).paint ?? s.fill
+    if (paint) {
+      const style = resolvePaintCanvas(ctx, paint as Paint, { w: b.w, h: b.h }, STILL_FIELD)
+      ctx.fillStyle = (style as any) ?? FALLBACK_FILL
       ctx.fill(path, s.fillRule === 'evenodd' ? 'evenodd' : 'nonzero')
     }
     if (s.stroke) {

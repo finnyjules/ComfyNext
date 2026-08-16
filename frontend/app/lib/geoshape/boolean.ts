@@ -15,10 +15,20 @@
  * `project.clear()` in a `finally` so a long session does not grow an
  * unbounded item tree.
  */
-import type { VectorShape } from '~/lib/vector/svg'
 import { paperToCommands } from '~/lib/vectortype/extrudeSolid'
 import type { GeoShapeConfig } from './config'
 import type { ClonePlacement } from './arrange'
+import type { Paint } from '~/lib/compositor/paint'
+// Type-only: `render.ts` also imports `composite` from this module, so a
+// value-level import back would be a cycle. `GeoVectorShape` is a type alias
+// (erased at compile time), so this direction is safe.
+import type { GeoVectorShape } from './render'
+
+/** `Paint`'s solid-string arm passes straight through; a gradient/pattern/
+ *  image/shader has no single representative colour, so `VectorShape.fill`
+ *  (a reader that only understands solids) gets a plain fallback instead —
+ *  the real paint travels on `.paint` (see `GeoVectorShape` in `render.ts`). */
+const solidOf = (p: Paint): string => (typeof p === 'string' ? p : '#808080')
 
 let _paperMod: typeof paper | null = null
 let _scope: paper.PaperScope | null = null
@@ -60,7 +70,7 @@ function hexClipD(r: number): string {
  * even-odd winding rule carve the overlap into negative space itself. Every
  * other `fillMode` maps straight onto a paper.js op and folds normally.
  */
-export async function composite(baseD: string, placements: ClonePlacement[], cfg: GeoShapeConfig): Promise<VectorShape[]> {
+export async function composite(baseD: string, placements: ClonePlacement[], cfg: GeoShapeConfig): Promise<GeoVectorShape[]> {
   const sc = await paperScope()
   try {
     // 1. build a transformed paper path per placement
@@ -178,9 +188,10 @@ export async function composite(baseD: string, placements: ClonePlacement[], cfg
     // 5. paper → VectorShape[]. evenodd sets the fill-rule; shape mode adds
     // the overlap as a second shape painted with `overlapFill`.
     const fillRule: 'evenodd' | 'nonzero' = cfg.fillMode === 'evenodd' ? 'evenodd' : 'nonzero'
-    const out: VectorShape[] = [{
+    const out: GeoVectorShape[] = [{
       commands: paperToCommands(acc),
-      fill: cfg.fill,
+      paint: cfg.fill,
+      fill: solidOf(cfg.fill),
       stroke: cfg.stroke,
       strokeWidth: cfg.strokeWidth || undefined,
       fillRule,
@@ -188,7 +199,8 @@ export async function composite(baseD: string, placements: ClonePlacement[], cfg
     if (overlap) {
       out.push({
         commands: paperToCommands(overlap),
-        fill: cfg.overlapFill,
+        paint: cfg.overlapFill,
+        fill: solidOf(cfg.overlapFill),
         fillRule: 'nonzero',
       })
     }

@@ -55,8 +55,11 @@ describe('geoshape boolean composite', () => {
   })
   it('overlapMode shape: the intersection is emitted as a separate filled shape', async () => {
     const shapes = await composite(SQUARE, twoOverlap, { ...DEFAULT_CONFIG, overlapMode: 'shape', overlapFill: '#ff0000', symmetry: false, clipMask: 'none' })
-    // base + overlap = 2 shapes; the overlap shape carries overlapFill
+    // base + overlap = 2 shapes; the overlap shape carries overlapFill on
+    // `.paint` (the authored Paint) — `.fill` is the solid-string fallback,
+    // which for a solid overlapFill happens to be the same string.
     expect(shapes.length).toBe(2)
+    expect(shapes[1]!.paint).toBe('#ff0000')
     expect(shapes[1]!.fill).toBe('#ff0000')
     // the overlap region is non-empty (has commands)
     expect(shapes[1]!.commands.length).toBeGreaterThan(0)

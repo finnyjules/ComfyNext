@@ -59,4 +59,21 @@ describe('geoshape render', () => {
     const shape = await renderShapes({ ...DEFAULT_CONFIG, overlapMode: 'shape' })
     expect(shape.length).toBeGreaterThan(hole.length)
   })
+
+  it('toSvg emits a real <linearGradient> for a gradient fill', async () => {
+    const grad: any = { type: 'linear', angle: 45, stops: [{ offset: 0, color: '#ff0000' }, { offset: 1, color: '#0000ff' }] }
+    const svg = await toSvg({ ...DEFAULT_CONFIG, fill: grad })
+    expect(svg).toMatch(/<linearGradient/)
+    expect(svg).toContain('#ff0000')
+  })
+  it('toSvg emits a <pattern> for a procedural pattern fill', async () => {
+    const patt: any = { type: 'stripes', a: '#111111', b: '#eeeeee', textColor: '#000', angle: 0, density: 8 }
+    const svg = await toSvg({ ...DEFAULT_CONFIG, fill: patt })
+    expect(svg).toMatch(/<pattern/)
+  })
+  it('a solid fill stays a plain fill attribute (no defs)', async () => {
+    const svg = await toSvg({ ...DEFAULT_CONFIG, fill: '#123456' })
+    expect(svg).toContain('#123456')
+    expect(svg).not.toMatch(/<linearGradient|<pattern/)
+  })
 })

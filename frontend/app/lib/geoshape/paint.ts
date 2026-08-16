@@ -20,13 +20,13 @@
  * negative space, not just recoloring) is a render-stage concern for
  * Task 6 — this stage only resolves colors.
  */
-import type { VectorPaint } from '~/lib/vector/svg'
+import type { Paint } from '~/lib/compositor/paint'
 import type { GeoShapeConfig } from './config'
 
 export interface ResolvedPaint {
-  fill: VectorPaint
+  fill: Paint
   stroke: string | null
-  overlapFill: VectorPaint
+  overlapFill: Paint
   invert: boolean
 }
 
