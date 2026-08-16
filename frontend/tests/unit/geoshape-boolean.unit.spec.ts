@@ -83,4 +83,30 @@ describe('geoshape boolean composite', () => {
     // the SVG actually carries real path data, not an empty mark
     expect(svg).toMatch(/<path d="M-?\d/)
   })
+  it('symmetry with subtract + an asymmetric placement folds first, then mirrors (regression: previously emptied)', async () => {
+    // Clone-level mirror-append (correct for evenodd) is WRONG for subtract: running
+    // mirrored clones through the same subtract fold as the originals is not the
+    // same as mirroring the finished mark, and can empty the geometry entirely.
+    const asymmetric = [
+      { x: -20, y: 0, scale: 1, rotate: 0, skew: 0 },
+      { x: 90, y: 30, scale: 1, rotate: 0, skew: 0 },
+    ]
+    const shapes = await composite(SQUARE, asymmetric, { ...DEFAULT_CONFIG, fillMode: 'subtract', symmetry: true, clipMask: 'none' })
+    expect(shapes[0]!.commands.length).toBeGreaterThan(0)
+    // shapesToSVG's default viewBox is "0 0 0 0" unless the caller supplies one
+    // (it does not derive one from content) — so build a real viewBox from the
+    // resolved mark's own bounds to confirm the geometry is truly non-degenerate,
+    // not just non-empty-array.
+    const sc = await paperScope()
+    try {
+      const p = new sc.CompoundPath(commandsToPathData(shapes[0]!.commands))
+      const b = p.bounds
+      expect(b.width).toBeGreaterThan(0)
+      expect(b.height).toBeGreaterThan(0)
+      const svg = shapesToSVG(shapes, { viewBox: [b.x, b.y, b.width, b.height] })
+      expect(svg).not.toContain('viewBox="0 0 0 0"')
+    } finally {
+      sc.project.clear()
+    }
+  })
 })

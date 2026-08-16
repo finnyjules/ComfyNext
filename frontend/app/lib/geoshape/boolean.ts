@@ -76,12 +76,20 @@ export async function composite(baseD: string, placements: ClonePlacement[], cfg
     })
     if (!clones.length) return []
 
-    // Symmetry is applied at the clone level (mirror every clone and add the copies)
-    // rather than uniting the composited result: uniting a self-overlapping evenodd
-    // compound is undefined in paper's boolean resolver (it ignores fillRule) and
-    // empties the mark. mirror(A∪B) = mirror(A)∪mirror(B), so this is equivalent for
-    // every fillMode and safe for evenodd.
-    if (cfg.symmetry) {
+    const isEvenOdd = cfg.fillMode === 'evenodd'
+
+    // Symmetry for evenodd is applied at the clone level (mirror every clone and
+    // add the copies) rather than uniting the composited result: uniting a
+    // self-overlapping evenodd compound is undefined in paper's boolean resolver
+    // (it ignores fillRule) and empties the mark. mirror(A∪B) = mirror(A)∪mirror(B),
+    // so this is equivalent for evenodd and safe.
+    //
+    // For subtract/exclude/intersect this clone-level approach is WRONG: running
+    // mirrored clones through the same fold chain is not the same as mirroring the
+    // finished mark (e.g. subtract is order-dependent and non-distributive over
+    // mirroring), and it can yield empty geometry. Those modes instead fold the
+    // originals first, then mirror-and-union the resolved result below (step 3.5).
+    if (cfg.symmetry && isEvenOdd) {
       const sm = new sc.Matrix()
       if (cfg.symmetryAxis === 'vertical') sm.scale(-1, 1); else sm.scale(1, -1)
       sm.translate(
@@ -115,7 +123,7 @@ export async function composite(baseD: string, placements: ClonePlacement[], cfg
     // boolean fold, so overlaps stay as overlaps for the winding rule to
     // carve); every other fillMode folds via the matching paper.js op.
     let acc: paper.PathItem
-    if (cfg.fillMode === 'evenodd') {
+    if (isEvenOdd) {
       const cp = new sc.CompoundPath({ children: [] })
       for (const c of clones) {
         // Reparent each clone's own children (a CompoundPath's subpaths, or
@@ -134,6 +142,23 @@ export async function composite(baseD: string, placements: ClonePlacement[], cfg
         const combined = (acc as any)[op](next)
         acc = combined
       }
+    }
+
+    // 3.5. symmetry for subtract/exclude/intersect: fold the originals into the
+    // mark first (step 3, above), THEN union the resolved mark with its mirror.
+    // Mirroring the finished mark is the correct "symmetry" for these ops —
+    // mirroring the inputs and re-running them through the same fold chain (as
+    // evenodd does) is not equivalent for subtract/exclude/intersect and can
+    // empty the geometry.
+    if (cfg.symmetry && !isEvenOdd) {
+      const mirrorItem = (item: any) => {
+        const sm = new sc.Matrix()
+        if (cfg.symmetryAxis === 'vertical') sm.scale(-1, 1); else sm.scale(1, -1)
+        sm.translate(cfg.symmetryAxis === 'vertical' ? cfg.symmetrySpacing : 0, cfg.symmetryAxis === 'horizontal' ? cfg.symmetrySpacing : 0)
+        const mi = item.clone(); mi.transform(sm); return item.unite(mi)
+      }
+      acc = mirrorItem(acc)
+      if (overlap) overlap = mirrorItem(overlap)
     }
 
     // 4. clip mask: intersect the accumulated geometry (and overlap, if any)
