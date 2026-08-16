@@ -86,6 +86,42 @@ export async function composite(baseD: string, placements: ClonePlacement[], cfg
     })
     if (!clones.length) return []
 
+    // PER-SHAPE FILL: each clone is its own filled shape cycling through cfg.fills.
+    // No boolean fold and no even-odd holes (those need the unified single-path
+    // fold); clones simply layer. Symmetry mirrors each clone inheriting its paint;
+    // clip intersects each clone.
+    if (cfg.perShapeFill) {
+      const fills = cfg.fills.length ? cfg.fills : [cfg.fill]
+      let items: { path: paper.PathItem; pi: number }[] = clones.map((c, i) => ({ path: c as paper.PathItem, pi: i % fills.length }))
+      if (cfg.symmetry) {
+        const sm = new sc.Matrix()
+        if (cfg.symmetryAxis === 'vertical') sm.scale(-1, 1); else sm.scale(1, -1)
+        sm.translate(cfg.symmetryAxis === 'vertical' ? cfg.symmetrySpacing : 0, cfg.symmetryAxis === 'horizontal' ? cfg.symmetrySpacing : 0)
+        const mirrored = items.map(({ path, pi }) => { const mc = path.clone(); mc.transform(sm); return { path: mc as paper.PathItem, pi } })
+        items = items.concat(mirrored)
+      }
+      if (cfg.clipMask !== 'none') {
+        const r = cfg.clipMaskSize
+        const clip = cfg.clipMask === 'circle'
+          ? new sc.Path.Circle(new sc.Point(0, 0), r)
+          : cfg.clipMask === 'square'
+            ? new sc.Path.Rectangle(new sc.Rectangle(-r, -r, 2 * r, 2 * r))
+            : new sc.CompoundPath(hexClipD(r))
+        items = items.map(({ path, pi }) => ({ path: (path as any).intersect(clip) as paper.PathItem, pi }))
+        clip.remove()
+      }
+      return items
+        .filter(({ path }) => path && path.bounds && path.bounds.width > 1e-6 && path.bounds.height > 1e-6)
+        .map(({ path, pi }) => ({
+          commands: paperToCommands(path),
+          paint: fills[pi]!,
+          fill: solidOf(fills[pi]!),
+          stroke: cfg.stroke,
+          strokeWidth: cfg.strokeWidth || undefined,
+          fillRule: 'nonzero' as const,
+        }))
+    }
+
     const isEvenOdd = cfg.fillMode === 'evenodd'
 
     // Symmetry for evenodd is applied at the clone level (mirror every clone and

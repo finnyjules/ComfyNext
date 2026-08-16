@@ -112,4 +112,25 @@ describe('geoshape boolean composite', () => {
       sc.project.clear()
     }
   })
+  it('perShapeFill: one shape per clone, cycling fills', async () => {
+    const placements = [
+      { x: -60, y: 0, scale: 1, rotate: 0, skew: 0 },
+      { x: 0, y: 0, scale: 1, rotate: 0, skew: 0 },
+      { x: 60, y: 0, scale: 1, rotate: 0, skew: 0 },
+    ]
+    const shapes = await composite(SQUARE, placements, { ...DEFAULT_CONFIG, perShapeFill: true, fills: ['#ff0000', '#00ff00'], symmetry: false, clipMask: 'none' })
+    expect(shapes).toHaveLength(3)
+    expect(shapes.map(s => s.paint)).toEqual(['#ff0000', '#00ff00', '#ff0000']) // cycle
+    for (const s of shapes) expect(s.fillRule).toBe('nonzero')
+  })
+  it('perShapeFill symmetry mirrors clones AND inherits their paint', async () => {
+    const placements = [{ x: -40, y: 0, scale: 1, rotate: 0, skew: 0 }, { x: 40, y: 0, scale: 1, rotate: 0, skew: 0 }]
+    const shapes = await composite(SQUARE, placements, { ...DEFAULT_CONFIG, perShapeFill: true, fills: ['#f00', '#0f0'], symmetry: true, clipMask: 'none' })
+    expect(shapes).toHaveLength(4) // 2 originals + 2 mirrors
+    expect(shapes.map(s => s.paint)).toEqual(['#f00', '#0f0', '#f00', '#0f0']) // mirror inherits source paint
+  })
+  it('unified mode (perShapeFill off) is unchanged — evenodd hole still there', async () => {
+    const shapes = await composite(SQUARE, [{ x: -20, y: 0, scale: 1, rotate: 0, skew: 0 }, { x: 20, y: 0, scale: 1, rotate: 0, skew: 0 }], { ...DEFAULT_CONFIG, perShapeFill: false })
+    expect(shapes[0]!.fillRule).toBe('evenodd')
+  })
 })

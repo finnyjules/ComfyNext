@@ -126,4 +126,11 @@ describe('geoshape render', () => {
     expect(svg).toContain('<svg')
     expect(svg).not.toMatch(/<pattern|<image/)
   })
+
+  it('toSvg perShapeFill emits each clone as its own path, cycling fills', async () => {
+    const svg = await toSvg({ ...DEFAULT_CONFIG, perShapeFill: true, fills: ['#ff0000', '#0000ff'], count: 4 })
+    expect(svg).toContain('#ff0000')
+    expect(svg).toContain('#0000ff')
+    expect((svg.match(/<path/g) ?? []).length).toBeGreaterThanOrEqual(3)
+  })
 })
