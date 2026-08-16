@@ -170,7 +170,7 @@ export function mergeConfig(raw: unknown): GeoShapeConfig {
   }
   return {
     shape: oneOf(o.shape, SHAPES, d.shape),
-    sides: num(o.sides, d.sides),
+    sides: clampNum(o.sides, d.sides, 3, 24),
     starInner: num(o.starInner, d.starInner),
     irregularSeed: num(o.irregularSeed, d.irregularSeed),
     size: num(o.size, d.size),

@@ -111,6 +111,14 @@ const shapeAgent = useStudioAgent({
 // `when`-gate (control.ts's export) — mirrored into a Set so StudioControlPanel's
 // per-control `visible` callback is an O(1) lookup rather than re-deriving the
 // filtered list on every one of the ~30 controls it asks about.
+//
+// `seed` is deliberately excluded from the array handed to StudioControlPanel: the
+// bespoke Seed + Re-roll row above already displays it, and `cfg.seed` itself is never
+// read by the render pipeline (only the Re-roll button's `reroll`/`nextSeed` path uses
+// it) — an auto-generated slider for it would be a second, dead control for the same
+// field. `seed` stays in GEO_CONTROLS itself (the drift-guard test and the agent's
+// vocabulary both need it there); it is only dropped from this surface's own panel.
+const panelGeoControls = GEO_CONTROLS.filter((c) => c.key !== 'seed')
 const visibleControlSet = computed(() => new Set<GeoControl>(visibleGeoControls(config.value)))
 function controlVisible(c: ControlSpec): boolean {
   return visibleControlSet.value.has(c as GeoControl)
@@ -358,7 +366,7 @@ async function exportSvg() {
            per GEO_SECTIONS. The three paint fields get bespoke slots (below) since they
            can hold a VectorPaint the generic string-only color row can't render. -->
       <StudioControlPanel
-        :controls="GEO_CONTROLS"
+        :controls="panelGeoControls"
         :order="GEO_SECTIONS"
         :value="paramValue"
         :visible="controlVisible"

@@ -85,11 +85,10 @@ export const GEO_CONTROLS: GeoControl[] = [
   select('shape', 'Shape', SHAPES, DEFAULT_CONFIG.shape, 'Shape',
     'polygon/star/irregular use Sides; hexagon is a fixed 6-gon'),
   slider('sides', 'Sides', 3, 24, 1, 'Shape', DEFAULT_CONFIG.sides, undefined, { when: usesSides }),
-  // DEFAULT_CONFIG.starInner is 50, outside starVertices' own [0.01, 0.99]
-  // clamp (polygonGeometry.ts) — a pre-existing mismatch from an earlier
-  // task, out of scope here. Clamped so this control's default sits inside
-  // its own declared range rather than propagating that inconsistency.
-  slider('starInner', 'Star inner', 0.01, 0.99, 0.01, 'Shape', Math.min(0.99, Math.max(0.01, DEFAULT_CONFIG.starInner)), undefined, { when: isStar }),
+  // DEFAULT_CONFIG.starInner is 0.45, already inside starVertices' own
+  // [0.01, 0.99] clamp (polygonGeometry.ts), so this control's default sits
+  // inside its own declared range without needing help.
+  slider('starInner', 'Star inner', 0.01, 0.99, 0.01, 'Shape', DEFAULT_CONFIG.starInner, undefined, { when: isStar }),
   slider('irregularSeed', 'Irregular seed', 1, 9999, 1, 'Shape', DEFAULT_CONFIG.irregularSeed, undefined, { when: isIrregular }),
   slider('size', 'Size', 20, 600, 1, 'Shape', DEFAULT_CONFIG.size),
   slider('roundCorners', 'Round corners', 0, 100, 1, 'Shape', DEFAULT_CONFIG.roundCorners,
@@ -134,7 +133,7 @@ export const GEO_CONTROLS: GeoControl[] = [
   slider('padding', 'Padding', 0, 200, 1, 'Style', DEFAULT_CONFIG.padding),
   slider('strokeWidth', 'Stroke width', 0, 60, 1, 'Style', DEFAULT_CONFIG.strokeWidth),
   slider('seed', 'Seed', 1, 999999, 1, 'Style', DEFAULT_CONFIG.seed,
-    'The re-roll seed. Changing it by hand re-derives every unlocked section deterministically.'),
+    'The random seed behind Re-roll; use Re-roll to generate variations.'),
 
   // --- Paint ---------------------------------------------------------------
   color('fill', 'Fill', paintDefault(DEFAULT_CONFIG.fill), 'Paint'),

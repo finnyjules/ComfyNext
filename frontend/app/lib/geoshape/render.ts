@@ -92,7 +92,7 @@ export function contentBounds(shapes: VectorShape[]): { minX: number; minY: numb
 export async function toSvg(cfg: GeoShapeConfig, opts: Partial<SvgDocOptions> = {}): Promise<string> {
   const shapes = await renderShapes(cfg)
   const b = contentBounds(shapes)
-  const pad = Math.max(0, cfg.padding)
+  const pad = Math.max(0, cfg.padding) + cfg.strokeWidth / 2
   const w = b.w + pad * 2
   const h = b.h + pad * 2
   return shapesToSVG(shapes, {
