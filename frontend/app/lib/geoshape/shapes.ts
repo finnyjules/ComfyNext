@@ -1,6 +1,14 @@
 import { polygonVertices, starVertices, roundedPolygonPath, type Pt } from '~/lib/compositor/polygonGeometry'
 
-export type BaseShapeKind = 'polygon' | 'star' | 'hexagon' | 'irregular'
+export type BaseShapeKind =
+  | 'circle' | 'square' | 'triangle' | 'diamond' | 'pentagon' | 'hexagon'
+  | 'octagon' | 'star' | 'semicircle' | 'cross' | 'leaf' | 'irregular'
+
+/** Canonical order for menus/validation — append, don't reorder. */
+export const BASE_SHAPES: BaseShapeKind[] = [
+  'circle', 'square', 'triangle', 'diamond', 'pentagon', 'hexagon',
+  'octagon', 'star', 'semicircle', 'cross', 'leaf', 'irregular',
+]
 
 export interface BaseShapeOpts {
   sides: number; starInner: number; irregularSeed: number
@@ -24,14 +32,62 @@ function irregularVertices(sides: number, size: number, seed: number): Pt[] {
   return base.map((p) => { const k = 0.7 + r() * 0.6; return { x: p.x * k, y: p.y * k } })
 }
 
-/** One SVG `d` (centered on origin) for the chosen base shape. `roundCorners`
- *  gates rounding (0 = off) and `roundRadius`/100 is the corner-radius fraction. */
+const f = (v: number) => +v.toFixed(3)
+
+/** Axis-aligned square (corners at 45° from the diamond orientation). */
+function squareVertices(size: number): Pt[] {
+  const h = size / 2
+  return [{ x: -h, y: -h }, { x: h, y: -h }, { x: h, y: h }, { x: -h, y: h }]
+}
+
+/** A plus / cross: 12 vertices, arm half-width `w`, reach `a`. Rounding-friendly. */
+function crossVertices(size: number): Pt[] {
+  const a = size / 2, w = size * 0.18
+  return [
+    { x: -w, y: -a }, { x: w, y: -a }, { x: w, y: -w }, { x: a, y: -w },
+    { x: a, y: w }, { x: w, y: w }, { x: w, y: a }, { x: -w, y: a },
+    { x: -w, y: w }, { x: -a, y: w }, { x: -a, y: -w }, { x: -w, y: -w },
+  ]
+}
+
+/** A full circle as two SVG arcs (paper.js parses arcs; the composite converts
+ *  them to bezier commands). */
+function circlePath(size: number): string {
+  const r = size / 2
+  return `M ${f(r)} 0 A ${f(r)} ${f(r)} 0 1 1 ${f(-r)} 0 A ${f(r)} ${f(r)} 0 1 1 ${f(r)} 0 Z`
+}
+
+/** A half-disk, bbox-centred on the origin (flat edge below, dome above). */
+function semicirclePath(size: number): string {
+  const r = size / 2
+  const y = r / 2 // shift so the bbox (dome apex .. flat edge) straddles 0
+  return `M ${f(-r)} ${f(y)} A ${f(r)} ${f(r)} 0 0 1 ${f(r)} ${f(y)} Z`
+}
+
+/** A pointed leaf / vesica: two quadratic arcs meeting at the top and bottom tips. */
+function leafPath(size: number): string {
+  const r = size / 2, w = size * 0.36
+  return `M 0 ${f(-r)} Q ${f(w)} 0 0 ${f(r)} Q ${f(-w)} 0 0 ${f(-r)} Z`
+}
+
+/** One SVG `d` (centred on the origin) for the chosen base shape. `roundCorners`
+ *  gates corner rounding (0 = off) for the polygonal shapes; `roundRadius`/100 is
+ *  the corner-radius fraction. Curved shapes (circle/semicircle/leaf) ignore it. */
 export function baseShapePath(kind: BaseShapeKind, o: BaseShapeOpts): string {
   const cr = o.roundCorners > 0 ? Math.max(0, Math.min(1, o.roundRadius / 100)) : 0
+  const ngon = (n: number) => roundedPolygonPath(polygonVertices(n, o.size, o.size), cr)
   switch (kind) {
-    case 'polygon':   return roundedPolygonPath(polygonVertices(o.sides, o.size, o.size), cr)
-    case 'hexagon':   return roundedPolygonPath(polygonVertices(6, o.size, o.size), cr)
-    case 'star':      return roundedPolygonPath(starVertices(o.sides, o.starInner, o.size, o.size), cr)
-    case 'irregular': return roundedPolygonPath(irregularVertices(o.sides, o.size, o.irregularSeed), cr)
+    case 'circle':     return circlePath(o.size)
+    case 'square':     return roundedPolygonPath(squareVertices(o.size), cr)
+    case 'triangle':   return ngon(3)
+    case 'diamond':    return ngon(4)
+    case 'pentagon':   return ngon(5)
+    case 'hexagon':    return ngon(6)
+    case 'octagon':    return ngon(8)
+    case 'star':       return roundedPolygonPath(starVertices(o.sides, o.starInner, o.size, o.size), cr)
+    case 'semicircle': return semicirclePath(o.size)
+    case 'cross':      return roundedPolygonPath(crossVertices(o.size), cr)
+    case 'leaf':       return leafPath(o.size)
+    case 'irregular':  return roundedPolygonPath(irregularVertices(o.sides, o.size, o.irregularSeed), cr)
   }
 }

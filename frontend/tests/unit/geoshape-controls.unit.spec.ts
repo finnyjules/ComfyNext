@@ -59,13 +59,15 @@ describe('GEO_SECTIONS integrity', () => {
 })
 
 describe('visibleGeoControls follows the shape/layout/overlap/symmetry/clip predicates', () => {
-  it('shows Sides for polygon/star/irregular, hides it for hexagon', () => {
-    for (const shape of ['polygon', 'star', 'irregular'] as const) {
+  it('shows Sides for star/irregular (its meaning: points/vertex-count), hides it for fixed shapes', () => {
+    for (const shape of ['star', 'irregular'] as const) {
       const keys = visibleGeoControls({ ...DEFAULT_CONFIG, shape }).map((c) => c.key)
       expect(keys, shape).toContain('sides')
     }
-    const hexKeys = visibleGeoControls({ ...DEFAULT_CONFIG, shape: 'hexagon' }).map((c) => c.key)
-    expect(hexKeys).not.toContain('sides')
+    for (const shape of ['hexagon', 'triangle', 'octagon', 'circle', 'leaf'] as const) {
+      const keys = visibleGeoControls({ ...DEFAULT_CONFIG, shape }).map((c) => c.key)
+      expect(keys, shape).not.toContain('sides')
+    }
   })
 
   it('shows Star inner only for star, Irregular seed only for irregular', () => {

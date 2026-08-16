@@ -8,7 +8,7 @@ import {
   type GeoSymmetryAxis,
   type GeoClipMask,
 } from './config'
-import type { BaseShapeKind } from './shapes'
+import { BASE_SHAPES, type BaseShapeKind } from './shapes'
 import type { VectorPaint } from '~/lib/vector/svg'
 
 /**
@@ -36,7 +36,7 @@ export const GEO_SECTIONS = ['Shape', 'Layout', 'Transform', 'Composite', 'Symme
 //
 // Exported so randomize.ts (and any other geoshape module) shares this one
 // copy instead of keeping its own verbatim duplicate.
-export const SHAPES: BaseShapeKind[] = ['polygon', 'star', 'hexagon', 'irregular']
+export const SHAPES: BaseShapeKind[] = BASE_SHAPES
 export const LAYOUTS: GeoLayout[] = ['radial', 'grid', 'linear']
 export const FILLMODES: GeoFillMode[] = ['evenodd', 'unite', 'subtract', 'intersect', 'exclude']
 export const OVERLAPMODES: GeoOverlapMode[] = ['hole', 'shape']
@@ -46,7 +46,7 @@ export const CLIP_MASKS: GeoClipMask[] = ['none', 'circle', 'square', 'hexagon']
 // --- visibility gates, mirroring shapefx/controls.ts's isPrimitive/isGem/etc. ---
 // `sides` drives polygon/star/irregular (baseShapePath's o.sides); hexagon is a
 // fixed 6-gon and ignores it (see shapes.ts).
-const usesSides = (c: GeoShapeConfig) => c.shape === 'polygon' || c.shape === 'star' || c.shape === 'irregular'
+const usesSides = (c: GeoShapeConfig) => c.shape === 'star' || c.shape === 'irregular'
 const isStar = (c: GeoShapeConfig) => c.shape === 'star'
 const isIrregular = (c: GeoShapeConfig) => c.shape === 'irregular'
 const hasRoundCorners = (c: GeoShapeConfig) => c.roundCorners > 0

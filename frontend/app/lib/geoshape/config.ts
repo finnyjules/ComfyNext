@@ -5,7 +5,7 @@
  * sits under Shape Studio's dynamic-import chain, same posture as
  * `shapefx/config.ts`, and must not drag in `three` or `paper`.
  */
-import type { BaseShapeKind } from './shapes'
+import { BASE_SHAPES, type BaseShapeKind } from './shapes'
 import type { VectorPaint, VectorGradient, VectorPattern } from '~/lib/vector/svg'
 
 export type GeoLayout = 'radial' | 'grid' | 'linear'
@@ -106,7 +106,7 @@ const bool = (v: unknown, d: boolean): boolean => (typeof v === 'boolean' ? v : 
 const clampNum = (v: unknown, d: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, Math.round(num(v, d))))
 
-const SHAPES = ['polygon', 'star', 'hexagon', 'irregular'] as const
+const SHAPES = BASE_SHAPES
 const LAYOUTS = ['radial', 'grid', 'linear'] as const
 const FILLMODES = ['evenodd', 'unite', 'subtract', 'intersect', 'exclude'] as const
 const OVERLAPMODES = ['hole', 'shape'] as const
