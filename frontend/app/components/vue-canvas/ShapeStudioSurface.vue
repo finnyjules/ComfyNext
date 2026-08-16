@@ -6,11 +6,10 @@
 // image-output path) but the RENDERER is entirely different: this used to be a
 // three.js `ShapeEngine` on a WebGL canvas with an orbit camera and a persistent
 // rAF loop; it is now a plain 2D `<canvas>` painted by `drawToCanvas` off the
-// `geoshape/render.ts` pipeline, re-run on an 80ms-debounced watcher rather than
-// a frame loop — see that watcher's own comment for why (2D is cheap and this is
-// event-driven state, not a continuous animation; a rAF loop that re-reads config
-// every frame is the exact anti-pattern the "per-frame writes stomp event state"
-// lesson warns about).
+// `geoshape/render.ts` pipeline, re-run via an rAF-coalesced demand drain (see the
+// `drainRenders` comment) rather than a persistent frame loop — a slider drag
+// updates the mark live, but an idle studio does zero work (no per-frame re-render
+// of unchanged config, the "per-frame writes stomp event state" anti-pattern).
 //
 // Collection variable-binding (promote/bind/sweep, the pink glyph + var menu every
 // other studio wires) is deliberately NOT wired here — out of scope for this pass.
@@ -157,12 +156,10 @@ const strokeHex = computed<string>({
 })
 
 // ── preview: a plain 2D canvas, event-driven ────────────────────────────────────
-// No requestAnimationFrame loop — geoshape has no animation, so a per-frame render
-// would just re-run an unchanged pipeline forever for no reason. `renderPreview()`
-// is invoked directly on mount and again whenever `config`/canvasW/canvasH change,
-// through a small trailing debounce (matches VectorTypeSurface's solid-union
-// debounce posture: collapse a slider drag's ~200 intermediate `input` events into
-// one render fired after the value settles, not 200 renders mid-drag).
+// `renderPreview()` is invoked directly on mount, and again whenever
+// `config`/canvasW/canvasH change — coalesced to animation frames by
+// `scheduleRender`/`drainRenders` below (NOT a persistent per-frame loop) so a
+// slider drag updates the mark LIVE, self-throttled to the paper composite's cost.
 const canvas = ref<HTMLCanvasElement | null>(null)
 const exporting = ref(false)
 const svgExporting = ref(false)
