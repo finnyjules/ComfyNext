@@ -224,11 +224,33 @@ async function renderPreview() {
   }
 }
 
-const RENDER_DEBOUNCE_MS = 80
-let renderTimer: ReturnType<typeof setTimeout> | null = null
+// Render is coalesced to animation frames so a slider DRAG updates the preview
+// LIVE, not just after it stops (a trailing debounce felt laggy — nothing moved
+// until you let go). scheduleRender marks the preview dirty; one rAF drains it,
+// re-rendering as long as more changes keep arriving. `renderShapes` is async
+// (paper boolean folding), so this self-throttles to the composite's cost —
+// light configs update basically every frame, heavy ones as fast as they can,
+// but always DURING the interaction. This is a demand-driven drain, not a
+// persistent animation loop (geoshape has no animation to run per frame).
+let rafId: number | null = null
+let rendering = false
+let dirty = false
+async function drainRenders() {
+  rafId = null
+  if (rendering) return
+  rendering = true
+  try {
+    while (dirty) { dirty = false; await renderPreview() }
+  } finally {
+    rendering = false
+    // A change can land in the gap between the last `dirty` check and clearing
+    // `rendering`; pick it up rather than stalling until the next input.
+    if (dirty && rafId == null) rafId = requestAnimationFrame(() => { void drainRenders() })
+  }
+}
 function scheduleRender() {
-  if (renderTimer) clearTimeout(renderTimer)
-  renderTimer = setTimeout(() => { renderTimer = null; void renderPreview() }, RENDER_DEBOUNCE_MS)
+  dirty = true
+  if (rafId == null && !rendering) rafId = requestAnimationFrame(() => { void drainRenders() })
 }
 watch(config, scheduleRender, { deep: true })
 watch([canvasW, canvasH], scheduleRender)
@@ -242,7 +264,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   saveConfig()
   window.removeEventListener('resize', onWindowResize)
-  if (renderTimer) clearTimeout(renderTimer)
+  if (rafId != null) cancelAnimationFrame(rafId)
   if (actionErrorTimer) clearTimeout(actionErrorTimer)
 })
 
