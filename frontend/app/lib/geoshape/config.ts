@@ -53,6 +53,10 @@ export interface GeoShapeConfig {
   stroke: string | null
   /** Used only when overlapMode === 'shape'. */
   overlapFill: Paint
+  /** When true, `fills` is cycled across clones instead of the single `fill`. */
+  perShapeFill: boolean
+  /** Cycled fill list for perShapeFill mode. Always non-empty. */
+  fills: Paint[]
   gridCols: number
   gridRows: number
   locks: Record<string, boolean>
@@ -92,6 +96,8 @@ export const DEFAULT_CONFIG: GeoShapeConfig = {
   fill: '#111111',
   stroke: null,
   overlapFill: '#111111',
+  perShapeFill: false,
+  fills: ['#1a1a2e', '#e5484d', '#f5a623'],
   gridCols: 3,
   gridRows: 2,
   locks: {},
@@ -122,15 +128,34 @@ const CLIP_MASKS = ['none', 'circle', 'square', 'hexagon'] as const
 const PAINT_TYPES = new Set(['linear', 'radial', 'image', 'solid', 'gradient', 'ombre', 'grid', 'noise', 'checkerboard', 'stripes', 'qr', 'shader'])
 
 /** Accepts a string as-is, or an object whose `.type` is a known Paint discriminant
- *  (deep-copied so callers can't mutate DEFAULT_CONFIG); else falls back to default.
+ *  (deep-copied so callers can't mutate DEFAULT_CONFIG); else `null`.
  *  Deliberately loose — the FillControl only ever emits valid Paints, this just rejects
  *  non-objects and unknown discriminants. */
-function paint(v: unknown, d: Paint): Paint {
+function paintOrNull(v: unknown): Paint | null {
   if (typeof v === 'string') return v
   if (v && typeof v === 'object' && typeof (v as any).type === 'string' && PAINT_TYPES.has((v as any).type)) {
     return JSON.parse(JSON.stringify(v)) as Paint
   }
-  return d
+  return null
+}
+
+/** Single-fill validator: `paintOrNull`, falling back to `d` for junk. */
+function paint(v: unknown, d: Paint): Paint {
+  return paintOrNull(v) ?? d
+}
+
+/** Cycled fill-list validator: non-array → default; array with some valid entries →
+ *  those entries only; array with no valid entries → default. Always returns non-empty,
+ *  and deep-copies the default so callers can't mutate DEFAULT_CONFIG. */
+function paintList(v: unknown, d: Paint[]): Paint[] {
+  const copyD = () => d.map((p) => (typeof p === 'string' ? p : JSON.parse(JSON.stringify(p))))
+  if (!Array.isArray(v)) return copyD()
+  const out: Paint[] = []
+  for (const e of v) {
+    const p = paintOrNull(e)
+    if (p !== null) out.push(p)
+  }
+  return out.length ? out : copyD()
 }
 
 /** Deep-merge an untrusted parsed value over DEFAULT_CONFIG so partial/old/junk configs stay safe. */
@@ -176,6 +201,8 @@ export function mergeConfig(raw: unknown): GeoShapeConfig {
     fill: paint(o.fill, d.fill),
     stroke: o.stroke === null ? null : (typeof o.stroke === 'string' ? o.stroke : d.stroke),
     overlapFill: paint(o.overlapFill, d.overlapFill),
+    perShapeFill: bool(o.perShapeFill, d.perShapeFill),
+    fills: paintList(o.fills, d.fills),
     gridCols: clampNum(o.gridCols, d.gridCols, 1, 24),
     gridRows: clampNum(o.gridRows, d.gridRows, 1, 24),
     locks,

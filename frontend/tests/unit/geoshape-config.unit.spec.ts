@@ -33,4 +33,14 @@ describe('geoshape config', () => {
   it('a solid string stays a solid string', () => {
     expect(mergeConfig({ ...DEFAULT_CONFIG, fill: '#abcdef' }).fill).toBe('#abcdef')
   })
+  it('perShapeFill + fills round-trip; junk/empty fills → default non-empty', () => {
+    const cfg = mergeConfig({ ...DEFAULT_CONFIG, perShapeFill: true, fills: ['#f00', { type: 'linear', angle: 0, stops: [{ offset: 0, color: '#0f0' }, { offset: 1, color: '#00f' }] }] })
+    expect(cfg.perShapeFill).toBe(true)
+    expect(cfg.fills).toHaveLength(2)
+    expect(cfg.fills[0]).toBe('#f00')
+    // junk/empty → falls back to the default non-empty list
+    expect(mergeConfig({ ...DEFAULT_CONFIG, fills: [] }).fills).toEqual(DEFAULT_CONFIG.fills)
+    expect(mergeConfig({ ...DEFAULT_CONFIG, fills: 'nope' }).fills).toEqual(DEFAULT_CONFIG.fills)
+    expect(mergeConfig({ ...DEFAULT_CONFIG, fills: [42, { type: 'bogus' }] }).fills).toEqual(DEFAULT_CONFIG.fills) // all entries invalid → default
+  })
 })
