@@ -17,8 +17,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Dices } from 'lucide-vue-next'
 import type { ControlSpec } from '~/lib/spacetype/effect'
-import type { VectorPaint } from '~/lib/vector/svg'
-import { DEFAULT_CONFIG, mergeConfig, type GeoShapeConfig } from '~/lib/geoshape/config'
+import { mergeConfig, type GeoShapeConfig } from '~/lib/geoshape/config'
 import { renderShapes, toSvg, drawToCanvas } from '~/lib/geoshape/render'
 import { reroll } from '~/lib/geoshape/randomize'
 import { GEO_CONTROLS, GEO_SECTIONS, visibleGeoControls, type GeoControl } from '~/lib/geoshape/controls'
@@ -30,6 +29,8 @@ import StudioColorField from '~/components/vue-canvas/studio/StudioColorField.vu
 import StudioSwitch from '~/components/vue-canvas/studio/StudioSwitch.vue'
 import StudioSelect from '~/components/vue-canvas/studio/StudioSelect.vue'
 import StudioControlPanel from '~/components/vue-canvas/studio/StudioControlPanel.vue'
+import FillControl from '~/components/vue-canvas/compositor/FillControl.vue'
+import type { Paint } from '~/lib/compositor/paint'
 import { useStudioAgent } from '~/composables/useStudioAgent'
 import { makeConfigParams } from '~/lib/agent/configParams'
 import { useStudioAutosave } from '~/lib/studio/autosave'
@@ -106,8 +107,8 @@ const shapeAgent = useStudioAgent({
 
 // ── StudioControlPanel wiring — GEO_CONTROLS/GEO_SECTIONS is the single source for
 // every slider/select/switch/color below except the three bespoke paint slots (fill/
-// stroke/overlapFill, which can hold a VectorPaint the generic string-only color row
-// can't render) and the seed/re-roll row. `visibleGeoControls` is the schema's own
+// overlapFill, which hold a full `Paint` the generic string-only color row can't
+// render, and stroke, kept solid) and the seed/re-roll row. `visibleGeoControls` is the schema's own
 // `when`-gate (control.ts's export) — mirrored into a Set so StudioControlPanel's
 // per-control `visible` callback is an O(1) lookup rather than re-deriving the
 // filtered list on every one of the ~30 controls it asks about.
@@ -123,7 +124,7 @@ const visibleControlSet = computed(() => new Set<GeoControl>(visibleGeoControls(
 function controlVisible(c: ControlSpec): boolean {
   return visibleControlSet.value.has(c as GeoControl)
 }
-function setGeoControl(key: string, value: string | number | boolean) {
+function setGeoControl(key: string, value: string | number | boolean | Paint) {
   paramsProxy[key] = value as string | number
 }
 function paramValue(key: string): string | number | boolean {
@@ -137,23 +138,12 @@ function paramValue(key: string): string | number | boolean {
 // doesn't surface them yet).
 function rerollConfig() { config.value = reroll(config.value, config.value.locks) }
 
-// ── Paint — fill/stroke/overlapFill reduced to plain hex for THIS editor. `fill`/
-// `overlapFill` are VectorPaint (string | gradient | pattern); a full gradient/
-// pattern editor is out of scope here (geoshape/paint.ts's own header scopes the
-// richer knockout-invert case out the same way) — editing always writes back a
-// solid string, same posture controls.ts's `paintDefault` reduction takes for the
-// agent's view of these same keys. `stroke` is nullable (no stroke drawn at all);
-// the switch mirrors Shape Studio's transparent-background toggle exactly, so
-// turning it off remembers the last color instead of losing it.
-function paintToHex(p: VectorPaint): string { return typeof p === 'string' ? p : DEFAULT_CONFIG.fill as string }
-const fillHex = computed<string>({
-  get: () => paintToHex(config.value.fill),
-  set: (v: string) => setGeoControl('fill', v),
-})
-const overlapFillHex = computed<string>({
-  get: () => paintToHex(config.value.overlapFill),
-  set: (v: string) => setGeoControl('overlapFill', v),
-})
+// ── Paint — fill/overlapFill are full `Paint` (string | gradient | pattern |
+// image) now, edited directly via FillControl in the template (see #control-fill/
+// #control-overlapFill below). `stroke` stays a plain solid string (StudioColorField)
+// — geoshape never draws a patterned stroke. `stroke` is nullable (no stroke drawn
+// at all); the switch mirrors Shape Studio's transparent-background toggle exactly,
+// so turning it off remembers the last color instead of losing it.
 const lastStrokeColor = ref(config.value.stroke ?? '#000000')
 const strokeEnabled = computed<boolean>({
   get: () => config.value.stroke !== null,
@@ -385,8 +375,9 @@ async function exportSvg() {
 
       <!-- Schema-driven inspector: every slider/select/switch declared in GEO_CONTROLS,
            grouped into Shape/Layout/Transform/Composite/Symmetry/Clip/Style/Paint cards
-           per GEO_SECTIONS. The three paint fields get bespoke slots (below) since they
-           can hold a VectorPaint the generic string-only color row can't render. -->
+           per GEO_SECTIONS. The three paint fields get bespoke slots (below): fill/
+           overlapFill hold a full `Paint` the generic string-only color row can't
+           render (FillControl instead); stroke stays solid via StudioColorField. -->
       <StudioControlPanel
         :controls="panelGeoControls"
         :order="GEO_SECTIONS"
@@ -395,10 +386,10 @@ async function exportSvg() {
         @set="setGeoControl"
       >
         <template #control-fill>
-          <StudioColorField label="Fill" v-model="fillHex" />
+          <FillControl allow-image :model-value="config.fill" @update:model-value="setGeoControl('fill', $event)" />
         </template>
         <template #control-overlapFill>
-          <StudioColorField label="Overlap fill" v-model="overlapFillHex" />
+          <FillControl allow-image :model-value="config.overlapFill" @update:model-value="setGeoControl('overlapFill', $event)" />
         </template>
         <template #control-stroke>
           <div class="flex items-center justify-between">

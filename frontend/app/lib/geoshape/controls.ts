@@ -9,7 +9,7 @@ import {
   type GeoClipMask,
 } from './config'
 import { BASE_SHAPES, type BaseShapeKind } from './shapes'
-import type { VectorPaint } from '~/lib/vector/svg'
+import type { Paint } from '~/lib/compositor/paint'
 
 /**
  * The single declarative description of geologo's parameters.
@@ -57,10 +57,12 @@ const isOverlapShape = (c: GeoShapeConfig) => c.overlapMode === 'shape'
 const hasSymmetry = (c: GeoShapeConfig) => c.symmetry === true
 const hasClipMask = (c: GeoShapeConfig) => c.clipMask !== 'none'
 
-/** A `VectorPaint` reduced to a `color`-control default: solids pass through,
- *  gradients/patterns fall back to a plain swatch (the picker for those is a
- *  Task 8 surface concern, out of scope for the schema itself). */
-const paintDefault = (p: VectorPaint): string => (typeof p === 'string' ? p : '#111111')
+/** A `Paint` reduced to a `color`-control default: solids pass through,
+ *  gradients/patterns/images fall back to a plain swatch — the schema's `fill`/
+ *  `overlapFill` controls stay declared as `kind: 'color'` (drift-guard + agent
+ *  vocabulary need them there) even though the surface renders them bespoke via
+ *  FillControl, which can hold the full `Paint`. */
+const paintDefault = (p: Paint): string => (typeof p === 'string' ? p : '#111111')
 
 const slider = (
   key: string, label: string, min: number, max: number, step: number, group: string,
