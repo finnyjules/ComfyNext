@@ -6,7 +6,7 @@
  * `shapefx/config.ts`, and must not drag in `three` or `paper`.
  */
 import { BASE_SHAPES, type BaseShapeKind } from './shapes'
-import type { VectorPaint, VectorGradient, VectorPattern } from '~/lib/vector/svg'
+import type { Paint } from '~/lib/compositor/paint'
 
 export type GeoLayout = 'radial' | 'grid' | 'linear'
 export type GeoFillMode = 'evenodd' | 'unite' | 'subtract' | 'intersect' | 'exclude'
@@ -49,10 +49,10 @@ export interface GeoShapeConfig {
   padding: number
   strokeWidth: number
   seed: number
-  fill: VectorPaint
+  fill: Paint
   stroke: string | null
   /** Used only when overlapMode === 'shape'. */
-  overlapFill: VectorPaint
+  overlapFill: Paint
   gridCols: number
   gridRows: number
   locks: Record<string, boolean>
@@ -113,52 +113,23 @@ const OVERLAPMODES = ['hole', 'shape'] as const
 const SYMMETRY_AXES = ['vertical', 'horizontal'] as const
 const CLIP_MASKS = ['none', 'circle', 'square', 'hexagon'] as const
 
-/** A well-formed gradient stop: finite offset, string colour. */
-function isValidGradientStop(s: unknown): s is { offset: number; color: string; opacity?: number } {
-  if (!s || typeof s !== 'object') return false
-  const o = s as Record<string, unknown>
-  if (typeof o.offset !== 'number' || !Number.isFinite(o.offset)) return false
-  if (typeof o.color !== 'string') return false
-  if (o.opacity !== undefined && (typeof o.opacity !== 'number' || !Number.isFinite(o.opacity))) return false
-  return true
-}
+/** Discriminants of every `Paint` arm: `Gradient` (linear/radial), `ImageFill` (image),
+ *  and `Fill`'s `FillType` union (solid/gradient/ombre/grid/noise/checkerboard/stripes/qr/shader).
+ *  Kept as a local literal set (not imported) so this file's import of `Paint` stays
+ *  type-only — pulling `FILL_TYPES`/`FillType` as a value would drag `fillTile.ts` (and
+ *  transitively `compositor/paint`'s `fillTile`/`imageFillCache` value imports) into
+ *  config's import graph, which the Collection dynamic-import must avoid. */
+const PAINT_TYPES = new Set(['linear', 'radial', 'image', 'solid', 'gradient', 'ombre', 'grid', 'noise', 'checkerboard', 'stripes', 'qr', 'shader'])
 
-/** A well-formed gradient: type + a non-empty array of valid stops. */
-function isValidVectorGradient(v: unknown): v is VectorGradient {
-  if (!v || typeof v !== 'object') return false
-  const o = v as Record<string, unknown>
-  if (o.type !== 'linear' && o.type !== 'radial') return false
-  if (!Array.isArray(o.stops) || o.stops.length === 0) return false
-  return o.stops.every(isValidGradientStop)
-}
-
-/** A well-formed pattern rect: finite geometry, string fill. */
-function isValidPatternRect(r: unknown): r is { x: number; y: number; width: number; height: number; fill: string } {
-  if (!r || typeof r !== 'object') return false
-  const o = r as Record<string, unknown>
-  return typeof o.x === 'number' && Number.isFinite(o.x)
-    && typeof o.y === 'number' && Number.isFinite(o.y)
-    && typeof o.width === 'number' && Number.isFinite(o.width)
-    && typeof o.height === 'number' && Number.isFinite(o.height)
-    && typeof o.fill === 'string'
-}
-
-/** A well-formed pattern: type + finite tile size + a valid rects array. */
-function isValidVectorPattern(v: unknown): v is VectorPattern {
-  if (!v || typeof v !== 'object') return false
-  const o = v as Record<string, unknown>
-  if (o.type !== 'pattern') return false
-  if (typeof o.width !== 'number' || !Number.isFinite(o.width)) return false
-  if (typeof o.height !== 'number' || !Number.isFinite(o.height)) return false
-  if (!Array.isArray(o.rects)) return false
-  return o.rects.every(isValidPatternRect)
-}
-
-/** Accepts a string, or a well-formed gradient/pattern object; else falls back to default. */
-const paint = (v: unknown, d: VectorPaint): VectorPaint => {
+/** Accepts a string as-is, or an object whose `.type` is a known Paint discriminant
+ *  (deep-copied so callers can't mutate DEFAULT_CONFIG); else falls back to default.
+ *  Deliberately loose — the FillControl only ever emits valid Paints, this just rejects
+ *  non-objects and unknown discriminants. */
+function paint(v: unknown, d: Paint): Paint {
   if (typeof v === 'string') return v
-  if (isValidVectorGradient(v)) return v
-  if (isValidVectorPattern(v)) return v
+  if (v && typeof v === 'object' && typeof (v as any).type === 'string' && PAINT_TYPES.has((v as any).type)) {
+    return JSON.parse(JSON.stringify(v)) as Paint
+  }
   return d
 }
 
