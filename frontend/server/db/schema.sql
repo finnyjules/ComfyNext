@@ -80,3 +80,18 @@ CREATE TABLE IF NOT EXISTS provider_usage (
   job_id     text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- Graph-run ownership + settlement state (Stage 5). One row per metered
+-- canvas submission; `outputs` holds outputKey strings ("type:subfolder:filename")
+-- recorded at settlement so /view can gate by ownership.
+CREATE TABLE IF NOT EXISTS graph_runs (
+  prompt_id  text PRIMARY KEY,
+  user_id    text NOT NULL REFERENCES users(id),
+  credits    integer NOT NULL CHECK (credits >= 0),
+  hold_id    bigint,
+  state      text NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'settled', 'voided')),
+  outputs    jsonb NOT NULL DEFAULT '[]',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS graph_runs_user ON graph_runs (user_id, created_at DESC);
