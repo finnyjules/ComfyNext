@@ -168,28 +168,34 @@ export async function composite(baseD: string, placements: ClonePlacement[], cfg
         if (nonEmpty(s)) solo.push({ path: s, cx: s.bounds.center.x, cy: s.bounds.center.y, depth: 1 })
       }
 
-      // 2. overlap depth bands (depth ≥ 2), incremental
-      const bands: (paper.PathItem | null)[] = []
-      for (let k = 0; k < N; k++) {
-        const c = cl[k]
-        let prevCovered: any = null
-        for (const bd of bands) { if (bd) prevCovered = prevCovered ? prevCovered.unite(bd) : (bd as any).clone() }
-        for (let d = bands.length; d >= 1; d--) {
-          const band = bands[d - 1]
-          if (!band) continue
-          const moved = (band as any).intersect(c)
-          if (nonEmpty(moved)) {
-            const rest = (band as any).subtract(c)
-            bands[d - 1] = nonEmpty(rest) ? rest : null
-            bands[d] = bands[d] ? (bands[d] as any).unite(moved) : moved
-          }
+      // 2. overlap depth bands (depth ≥ 2). Build NESTED "covered by ≥ k clones"
+      // sets, then subtract adjacent levels: exact-depth-d = atLeast[d] − atLeast[d+1].
+      // Subtracting nested sets is numerically stable. The old promote/demote chain
+      // (subtract + intersect + unite per clone per depth) let paper.js booleans drift
+      // into heavily OVERLAPPING, non-disjoint bands as overlap depth grew — measured
+      // 40–75% area over-count — so a many-clone mark's deep centre rendered as a
+      // pile of wrong-coloured, mutually-occluding pieces.
+      //
+      // atLeast[k-1] = region covered by ≥ k clones. Adding clone c promotes the
+      // region already at ≥(k-1) that c also covers up to ≥k: atLeast[k] ∪= (≥(k-1)) ∩ c
+      // (≥0 is everywhere, so k=1 folds to c itself). Descend k so each level reads the
+      // pre-clone value of the shallower level it depends on.
+      const atLeast: (paper.PathItem | null)[] = []
+      for (const c of cl) {
+        for (let k = atLeast.length + 1; k >= 1; k--) {
+          const lower = k >= 2 ? atLeast[k - 2] : null
+          if (k >= 2 && !nonEmpty(lower)) continue
+          const add = lower ? (lower as any).intersect(c) : (c as any).clone()
+          if (!nonEmpty(add)) continue
+          atLeast[k - 1] = atLeast[k - 1] ? (atLeast[k - 1] as any).unite(add) : add
         }
-        const fresh = prevCovered ? (c as any).subtract(prevCovered) : (c as any).clone()
-        bands[0] = bands[0] ? (bands[0] as any).unite(fresh) : fresh
       }
       const overlaps: Piece[] = []
-      for (let d = 2; d <= bands.length; d++) {
-        const band = bands[d - 1]
+      for (let d = 2; d <= atLeast.length; d++) {
+        const cur = atLeast[d - 1]
+        if (!nonEmpty(cur)) continue
+        const deeper = atLeast[d]
+        const band = nonEmpty(deeper) ? (cur as any).subtract(deeper) : (cur as any)
         if (nonEmpty(band)) overlaps.push({ path: band as paper.PathItem, cx: (band as any).bounds.center.x, cy: (band as any).bounds.center.y, depth: d })
       }
 

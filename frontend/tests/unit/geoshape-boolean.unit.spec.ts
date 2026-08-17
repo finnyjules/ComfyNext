@@ -224,4 +224,35 @@ describe('geoshape boolean composite', () => {
     const around = await composite(SQUARE, ring, { ...DEFAULT_CONFIG, fillStrategy: 'perClone', fills: ['#f00', '#0f0', '#00f'], fillOrder: 'around', symmetry: false })
     expect(made.map((s) => s.paint)).not.toEqual(around.map((s) => s.paint))
   })
+
+  it('pieces are a DISJOINT partition even at deep overlap (solo + bands sum to the union area)', async () => {
+    // A ring of squares whose bodies pile up at the centre → depth climbs to the
+    // clone count. The returned pieces must PARTITION the covered area: sum of
+    // piece areas == area of the clones' union (no overlaps, no gaps). The old
+    // promote/demote band algorithm over-counted by 40–75% here (bands overlapped),
+    // which is what made a many-clone mark's deep centre render wrong.
+    const count = 9, radius = 40
+    const placements = Array.from({ length: count }, (_, i) => {
+      const a = (i / count) * Math.PI * 2
+      return { x: Math.cos(a) * radius, y: Math.sin(a) * radius, scale: 1, rotate: (i * 360 / count) * 0.5, skew: 0 }
+    })
+    const shapes = await composite(SQUARE, placements, { ...DEFAULT_CONFIG, fillStrategy: 'pieces', fills: ['#f00', '#0f0', '#00f'], overlapFills: ['#fff', '#0ff', '#f0f'], overlapSeparate: true, fillOrder: 'depth', symmetry: false, clipMask: 'none' })
+    const sc = await paperScope()
+    try {
+      let sumPieces = 0
+      for (const s of shapes) { const p = new sc.CompoundPath(commandsToPathData(s.commands)); p.fillRule = 'nonzero'; sumPieces += Math.abs(p.area) }
+      let uni: any = null
+      for (const pl of placements) {
+        const p = new sc.CompoundPath(SQUARE); const m = new sc.Matrix()
+        m.translate(pl.x, pl.y); m.rotate(pl.rotate, new sc.Point(0, 0)); m.scale(pl.scale); p.transform(m)
+        uni = uni ? uni.unite(p) : p
+      }
+      const unionArea = Math.abs(uni.area)
+      // exact partition; allow a hair for boolean rounding
+      expect(sumPieces / unionArea).toBeGreaterThan(0.97)
+      expect(sumPieces / unionArea).toBeLessThan(1.03)
+    } finally {
+      sc.project.clear()
+    }
+  })
 })
