@@ -4,6 +4,8 @@
 
 import { resolveWorkerTarget } from '../utils/workerRoute'
 import { PROXY_PREFIXES } from '../utils/authGuard'
+import { deployMode } from '../utils/deployMode'
+import { isPromptPath, handleMeteredPrompt } from '../utils/meterGraphRun'
 
 // Paths under PROXY_PREFIXES that should be handled by Nitro routes, not proxied
 const NITRO_API_PATHS = ['/api/explain', '/api/pipeline-suggest', '/api/font-suggest', '/api/secrets', '/api/render-template', '/api/lora-preview', '/api/replicate-cover', '/api/google-fonts', '/api/loras-local', '/api/lora-cover', '/api/community-workflow', '/api/voices-local', '/api/voice-preview-file', '/api/vibe', '/api/agent-plan', '/api/agent-review', '/api/image-search', '/api/image-fetch', '/api/copy-assist', '/api/ai-status', '/api/dataset-match', '/api/training-image', '/api/wallet']
@@ -17,6 +19,12 @@ export default defineEventHandler(async (event) => {
   if (NITRO_API_PATHS.some((p) => path === p || path.startsWith(p + '?'))) return
   if (NITRO_API_PREFIXES.some((p) => path === p || path.startsWith(p + '/') || path.startsWith(p + '?'))) return
   if (NITRO_ROUTE_PREFIXES.some((p) => path === p || path.startsWith(p + '?') || path.startsWith(p + '/'))) return
+
+  // Stage 5: hosted graph submissions are METERED — never raw-proxied. Local
+  // mode falls through to the raw proxy below, byte-identical to pre-Stage-5.
+  if (isPromptPath(path) && event.method === 'POST' && deployMode() === 'hosted') {
+    return handleMeteredPrompt(event)
+  }
 
   for (const prefix of PROXY_PREFIXES) {
     // Match /view, /view/, /view?query=..., /view/subpath, etc.
