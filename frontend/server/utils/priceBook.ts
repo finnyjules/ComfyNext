@@ -11,6 +11,8 @@
  */
 import { IMAGE_MODELS } from '~~/app/data/image-models'
 import { ENGINE_USD } from '~~/app/data/engine-prices'
+import { VIDEO_MODEL_USD, LEGACY_VIDEO_MODEL_IDS } from '~~/app/data/video-prices'
+export { VIDEO_MODEL_USD }
 export const PRICE_BOOK_VERSION = 'spike-v4'
 
 const BASE_RENDER_CREDITS = 1
@@ -243,45 +245,15 @@ export const PROVIDER_NODE_CLASSES: string[] = [
   'SwapProductNode', 'TurntableNode',
 ]
 
-/**
- * Per-clip USD for the video registry (app/data/video-models.ts), which prices
- * in a free-form `priceHint` string that money code must not parse. `hint` is
- * pinned to the catalog string by a parity test — if the catalog's hint
- * changes the test fails and the USD figure must be re-derived by hand.
- * Figures are the hint's quoted clip; ranges take the TOP of the range so a
- * long render is never underpriced.
- */
-export const VIDEO_MODEL_USD: Record<string, { usd: number; hint: string }> = {
-  'veo-3.1': { usd: 3.20, hint: '~$3.20 / 8s · ~$1.60 silent' },
-  'veo-3.1-fast': { usd: 1.20, hint: '~$1.20 / 8s · ~$0.80 silent' },
-  'sora-2': { usd: 0.30, hint: '~$0.30 / 5s' },
-  'sora-2-pro': { usd: 0.90, hint: '~$0.90 / 5s' },
-  'flux-3': { usd: 2.00, hint: '~$0.20–0.40 / s' },
-  'runway-gen-4.5': { usd: 0.80, hint: '~$0.80 / 5s' },
-  'kling-v3': { usd: 0.60, hint: '~$0.60 / 10s' },
-  'kling-v2.5-turbo-pro': { usd: 0.50, hint: '~$0.50 / 5s' },
-  'seedance-2.0': { usd: 0.60, hint: '~$0.60 / 5s' },
-  'seedance-2.0-fast': { usd: 0.30, hint: '~$0.30 / 5s' },
-  'hailuo-2.3': { usd: 0.35, hint: '~$0.35 / 6s' },
-  'wan-2.7-t2v': { usd: 0.15, hint: '~$0.15 / 5s' },
-  'wan-2.5-i2v-fast': { usd: 0.06, hint: '~$0.06 / 5s' },
-  'luma-ray-2-720p': { usd: 0.40, hint: '~$0.40 / 5s' },
-  'ltx-video': { usd: 0.04, hint: '~$0.04 / 5s' },
-  'pixverse-v6': { usd: 0.20, hint: '~$0.20 / 5s' },
-  'fabric-1.0': { usd: 0.20, hint: '~$0.20 / 30s' },
-}
-
-// Legacy video-model labels GenerateVideoNode still remaps at execute time
-// (_LEGACY_MODEL_REMAP) — the pricer must price those saved graphs too.
-const LEGACY_VIDEO_MODEL_IDS: Record<string, string> = {
-  'Seedance 2.0': 'seedance-2.0',
-  'Veo 3': 'veo-3.1',
-  'Kling 2.1': 'kling-v2.5-turbo-pro',
-}
-
+// Per-clip video USD (VIDEO_MODEL_USD) and the legacy model-label remap
+// (LEGACY_VIDEO_MODEL_IDS) now live in app/data/video-prices.ts, alongside
+// ENGINE_USD in app/data/engine-prices.ts. Both are pure-data modules so the
+// hosted node cost badge (app/lib/nodeCreditEstimate.ts) can price a picker
+// node from the SAME table the server charges from without importing server/.
+// VIDEO_MODEL_USD is re-exported at the top of this file so existing importers
+// (and the catalog parity test) keep their import path.
+//
 // Engine-picker nodes: the `model` widget names an engine — not a catalog id.
-// ENGINE_USD itself now lives in app/data/engine-prices.ts — a pure-data
-// module the client badge can import without pulling in server/.
 
 // Lazily-built lookups. Never derive these at module top level: a top-level
 // const reading another module's const breaks on import reorder.

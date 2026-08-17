@@ -64,6 +64,14 @@ const { objectInfo } = useVueNodes()
 const route = useRoute()
 const router = useRouter()
 
+// ── Hosted mode ─────────────────────────────────────────────────────────
+// Declared HERE, at the very top of setup, because it now gates seams that
+// execute far earlier in this file than the wallet pill it was introduced for
+// (the health probe's origin at first use, the run flow's bridge section, the
+// engine iframes in the template). A const declared mid-file would be in its
+// temporal dead zone for those.
+const hostedShell = hostedModeEnabled(useRuntimeConfig().public)
+
 // Deep-link: /?train=1 opens (or focuses) the Train tab — used by /dev/style-publisher.
 onMounted(() => {
   if (route.query.train == null) return
@@ -621,8 +629,11 @@ async function runVueWorkflow(
   // Load workflow into that worker's LiteGraph, then queue. Once-only — the
   // hidden iframe only backs dev shadow-parity, so loading the last take's
   // graph is sufficient.
+  // Hosted mounts no engine iframe at all, and its runs never touch one (the
+  // bridge section below is skipped and dispatch is always direct), so a null
+  // here is expected rather than a lost connection.
   const iframe = getWorkerIframe(workerIdx)
-  if (!iframe?.contentWindow) {
+  if (!hostedShell && !iframe?.contentWindow) {
     console.error('[Run] bridge iframe not found or not ready')
     toast.error('ComfyUI not ready', { description: 'Lost the canvas connection — try reloading the page.' })
     return false
@@ -918,7 +929,12 @@ async function runVueWorkflow(
   // graph queued twice and the other's never. Serialize the iframe section per
   // worker; direct-mode queueing (own pre-built ApiPrompt, no iframe read at
   // queue time) stays outside the lock and still overlaps freely.
-  await withKeyedLock(`bridge-run:${workerIdx}`, async () => {
+  //
+  // Hosted skips this whole section: there IS no worker iframe (the template
+  // does not mount one — no engine origin is reachable from a hosted browser),
+  // so sendLoadWorkflow would await a bridge that never becomes ready. Hosted
+  // always runs direct — useDirectExecutionEnabled forces the setting ON.
+  if (!hostedShell) await withKeyedLock(`bridge-run:${workerIdx}`, async () => {
     await sendLoadWorkflow(plainWorkflow, workerIdx)
 
     // Dev-only shadow parity: on EVERY run (direct or bridge), ask the freshly
@@ -935,7 +951,7 @@ async function runVueWorkflow(
     if (!useDirect) {
       await new Promise(r => setTimeout(r, 800))
       console.log('[Run] sending queuePrompt to worker', workerIdx)
-      iframe.contentWindow?.postMessage({ type: 'sailor', action: 'queuePrompt' }, '*')
+      iframe?.contentWindow?.postMessage({ type: 'sailor', action: 'queuePrompt' }, '*')
       // Explicit (non-live) runs get a no-response watchdog. Live-preview runs fire
       // continuously and silently by design, so they're exempt from the toast.
       // Armed inside the lock so queued-behind runs measure from their own
@@ -2083,14 +2099,18 @@ function forceReloadCanvas() {
 // Guard: while a generation is running, a heavy node can block ComfyUI's event
 // loop long enough that the probe times out — a *false* down→up that must NOT
 // reload the canvas (that mid-run reload was the cause of the flickering).
+// Hosted: probe SAME-ORIGIN. useBackendHealth fetches `${origin}/system_stats`,
+// so an empty origin yields the relative `/system_stats` the authed proxy
+// serves. The engine origin itself is not reachable from a hosted browser.
 const { backendUp, start: startHealthPoll, stop: stopHealthPoll } =
-  useBackendHealth(comfyOrigin, {
+  useBackendHealth(hostedShell ? '' : comfyOrigin, {
     onRecovered: () => forceReloadCanvas(),
     suppressRecovery: () => runningCount.value > 0,
   })
 
-// Truly ready = backend HTTP up AND ComfyUI ready inside the iframe.
-const canvasReady = computed(() => backendUp.value && bridgeReady.value)
+// Truly ready = backend HTTP up AND ComfyUI ready inside the iframe. Hosted has
+// no bridge iframe to become ready, so backend-up is the whole condition.
+const canvasReady = computed(() => backendUp.value && (hostedShell || bridgeReady.value))
 const hasBeenReady = ref(false)
 watch(canvasReady, (v) => { if (v) hasBeenReady.value = true })
 
@@ -2822,7 +2842,7 @@ const credits = ref<number | null>(null)
 // credits_update events + purchase modal below) is deliberately KEPT intact
 // — it is what local mode still shows, and hosted may re-use it for Comfy
 // API nodes later.
-const hostedShell = hostedModeEnabled(useRuntimeConfig().public)
+// (`hostedShell` itself is declared at the top of setup — see the note there.)
 const hostedWallet = ref<number | null>(null)
 async function refreshHostedWallet() {
   if (!hostedShell) return
@@ -3456,6 +3476,13 @@ function handleBridgeEvent(data: any, source?: Window | null) {
     }
   } else if (evt === 'execution_complete') {
     if (prompt_id) clearDirectRunWatchdog(prompt_id) // run is done — stop the stall timer
+    // Hosted: drop the wallet pill as soon as the run settles. Settlement is a
+    // separate server step that lags the completion event, so fire again after
+    // it has had time to land — the first refresh often still reads the hold.
+    if (hostedShell) {
+      void refreshHostedWallet()
+      setTimeout(() => { void refreshHostedWallet() }, 3000)
+    }
     // Duration: registered runs carry startedAt on their entry; bridge-path runs
     // read the single-run display bag. Read BEFORE finishRun drops the entry.
     const startEntry = prompt_id ? getRun(prompt_id) : null
@@ -3677,8 +3704,12 @@ function dismissRunResult() {
 
 <template>
   <div class="flex h-screen bg-sidebar">
-    <!-- Hidden bridge iframe: always mounted so credits/auth work on all pages -->
+    <!-- Hidden bridge iframe: mounted so credits/auth work on all pages.
+         NOT in hosted mode — the engine origin isn't reachable from a hosted
+         browser, and mounting it is the exact hole that let the iframe post
+         straight to the engine unmetered. -->
     <iframe
+      v-if="!hostedShell"
       id="sailor-bridge-iframe"
       :src="`${comfyOrigin}/`"
       class="fixed w-[10px] h-[10px] -left-[100px] -top-[100px] opacity-0 pointer-events-none"
@@ -3688,16 +3719,19 @@ function dismissRunResult() {
 
     <!-- Parallel-run prototype: one hidden execution iframe per extra worker
          (index >= 1). Worker 0 is the main comfyui-shared canvas iframe below.
-         Rendered only when the pool is enabled, so single-worker is untouched. -->
-    <iframe
-      v-for="i in (comfyWorkers.length - 1)"
-      :key="`worker-${i}`"
-      :data-worker="i"
-      :src="`${comfyWorkers[i]}/`"
-      class="fixed w-[10px] h-[10px] -left-[300px] -top-[300px] opacity-0 pointer-events-none"
-      aria-hidden="true"
-      tabindex="-1"
-    />
+         Rendered only when the pool is enabled, so single-worker is untouched.
+         Never in hosted mode — same unmetered-engine-access reason as above. -->
+    <template v-if="!hostedShell">
+      <iframe
+        v-for="i in (comfyWorkers.length - 1)"
+        :key="`worker-${i}`"
+        :data-worker="i"
+        :src="`${comfyWorkers[i]}/`"
+        class="fixed w-[10px] h-[10px] -left-[300px] -top-[300px] opacity-0 pointer-events-none"
+        aria-hidden="true"
+        tabindex="-1"
+      />
+    </template>
 
     <!-- Pre-run cost confirm -->
     <div
@@ -4290,9 +4324,11 @@ function dismissRunResult() {
         <!-- Toast notifications (anchored below Run bar) -->
         <Sonner />
 
-        <!-- LiteGraph iframe (always loaded for execution; sidebar panels reused in Vue mode) -->
+        <!-- LiteGraph iframe (worker 0 — loaded for execution; sidebar panels
+             reused in Vue mode). Never in hosted mode: this is the engine
+             origin, and it is the frame bridge.js posts from. -->
         <div
-          v-if="tabs.some((t) => t.type === 'project')"
+          v-if="!hostedShell && tabs.some((t) => t.type === 'project')"
           v-show="(!vueNodesEnabled && activeTab.type === 'project') || (vueNodesEnabled && vueSidebarOpen)"
           data-tab-id="comfyui-shared"
           class="absolute inset-0 overflow-hidden z-30"

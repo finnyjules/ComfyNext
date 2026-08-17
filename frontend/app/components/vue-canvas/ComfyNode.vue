@@ -23,6 +23,9 @@ import { LIVE_PREVIEW_NODE_TYPES } from '~/lib/livePreviewNodes'
 import { allowedAspectRatios, allowedDurations, modelSupportsSeed } from '~/lib/videoModelAdapt'
 import { TOOLBOX_NODE_ICONS } from '~/data/toolbox-items'
 import { getGeneratorIcon } from '~/data/generator-icons'
+import { hostedModeEnabled } from '~/lib/hostedMode'
+import { creditsForUsd } from '~/lib/pricing'
+import { MODEL_PRICED_BADGE_CLASSES, nodeCreditEstimate } from '~/lib/nodeCreditEstimate'
 import TakesStrip from '~/components/vue-canvas/TakesStrip.vue'
 import LightTableModal from '~/components/vue-canvas/LightTableModal.vue'
 import { projectTake, discardOthers, type Take } from '~/composables/useTakes'
@@ -120,16 +123,38 @@ const displayTitle = computed(
   () => NODE_TITLE_OVERRIDES[props.data.nodeType as string] || props.data.title,
 )
 
+// Cost badge. Local mode shows the operator's own provider spend in dollars;
+// hosted mode shows credits, because that is what a hosted user pays in.
+const hostedBadges = hostedModeEnabled(useRuntimeConfig().public)
+
+// The MODEL a picker node is currently set to. Read reactively off
+// widgetsValues so switching models in the gallery re-prices the badge.
+const pricedModelValue = computed(() => {
+  if (!MODEL_PRICED_BADGE_CLASSES.has(props.data.nodeType as string)) return null
+  const idx = widgetIndex('model')
+  return idx >= 0 ? props.data.widgetsValues?.[idx] : null
+})
+
 // Extract the minimum USD price from the price badge expression
 const priceLabel = computed(() => {
+  // Model-priced pickers: the static badge is a fiction — GenerateVideoNode
+  // ships ONE badge figure while its model widget spans an 8× price range. In
+  // hosted mode quote what the server will actually charge for the model that
+  // is selected right now (same catalogs + markup as server/utils/priceBook).
+  if (hostedBadges) {
+    const est = nodeCreditEstimate(props.data.nodeType as string, pricedModelValue.value)
+    if (est != null) return `~${est} cr`
+    // Unknown/missing model → fall through to the static estimate below.
+  }
   const badge = props.data.priceBadge
   if (!badge?.expr) return null
   // Extract all decimal numbers from the expression (prices are typically 0.01-10.0 range)
   const numbers = badge.expr.match(/\d+\.\d+/g)
-  if (!numbers?.length) return '~$?'
+  if (!numbers?.length) return hostedBadges ? '~? cr' : '~$?'
   const prices = numbers.map(Number).filter(n => n > 0 && n < 100)
-  if (!prices.length) return '~$?'
+  if (!prices.length) return hostedBadges ? '~? cr' : '~$?'
   const min = Math.min(...prices)
+  if (hostedBadges) return `~${creditsForUsd(min)} cr`
   // Format: $0.07, $0.12, $1.50
   return min < 0.01 ? '<$0.01' : `~$${min.toFixed(2)}`
 })
