@@ -20,7 +20,7 @@ Legend: **bake** = render/export path · **motion** = animatable · **inspector*
 | Gradient Studio | ✅ | ✅ 30 targets, path-based | ✅ (hand-written) | ✅ descriptor | 2,620 (+ 4 primitives + alpha + per-layer layout) |
 | Shader Studio | ✅ | ✅ path tracks | ✅ (data-driven) | ✅ descriptor | 806 + 63 effects |
 | Texture Studio | ✅ | ❌ | ✅ (data-driven) | ✅ commands | 2,041 |
-| Shape Studio | ✅ | ❌ | ✅ | ❌ | 761 |
+| Shape Studio (geologo) | ✅ PNG + SVG | ❌ | ✅ | ✅ descriptor | ~1,750 (lib/geoshape) |
 | Shot Director | ✅ | ✅ keyframes | ✅ | ❌ | 988 |
 | Smart Layout | ✅ batch export | ❌ | ✅ | ✅ commands | 7,262 (UI) |
 | Lip-Sync Studio | ❌ (server) | ❌ | ✅ | ❌ | 82 |
@@ -30,6 +30,20 @@ Legend: **bake** = render/export path · **motion** = animatable · **inspector*
 | Pose Mannequin | ✅ control img | ❌ | modal | ❌ (excluded) | — |
 | Inpaint / Region | ✅ backend | — | toolbar | ✅ ops | — |
 | Collection (sweeps) | — | — | ✅ | ✅ | backbone |
+
+### Shape Studio → geologo 2D-vector generator + Pieces overprint + Split crossings — LANDED 2026-08-17
+
+The `shape-studio` node was **repurposed** (clean break, no config migration) from the old 3D faceted-gem tool into a flat **2D-vector "clone-and-arrange" logo generator** (`lib/geoshape/`, ~1,750 LOC), inspired by estudiokrill.com.ar/geologo. The distinctive gem look (gem primitive, harmony palette, scatter/ombre, screen-space distortion) moved to **3D Studio** (`lib/scene3d/`). Pipeline: `baseShapePath` (12 shapes) → `arrange` (radial/grid/linear; `evenAngle` = `360/count`) → `composite` (paper.js) → `render.ts` emits real **SVG** (`toSvg`) + canvas PNG. Vector Type Studio's `lib/vector/svg.ts` got its second consumer, as designed. It is agent-legible (`geoAgentControls` + `GEO_GUIDANCE`). Dev harness: `/dev/shape-studio-lab`.
+
+**Fill system.** Each composited region carries its own `Paint` (full FillControl — solid/gradient/pattern/image/shader). `config.ts` keeps `Paint` type-only. A rendering bug found in use: non-solid paints were boxed to the **whole-mark** `contentBounds`, so every clone showed a *slice* of one mark-wide ramp (single mode masked it — one shape ≈ the mark); fixed to box each shape to its OWN bounds in both `toSvg` (per-shape userSpaceOnUse box) and `drawToCanvas` (translate origin to the shape centre + shape-local path). Verified: a red→blue gradient now ramps fully within every hexagon.
+
+**Three fill strategies** (`fillStrategy`, migrated from the older boolean `perShapeFill`): **single** = unified even-odd fold with negative-space holes (original look); **perClone** = each clone its own cycled `fills[i%len]` (now honouring `fillOrder`); **pieces** = overprint. `fillOrder` (`created·depth·leftRight·topBottom·rows·columns·centerOut·around`) is a shared ranking (`order.ts` `rankOrder`) that colours pieces by spatial position; `rows`/`columns` are reading-order (`round(cy/band)*1e6+cx`). Composite fold controls (Fill mode / Overlap mode) are now gated to single mode (they were inert but visible in perClone/pieces).
+
+**Pieces = overprint depth colouring.** The mark is split into solo pieces (`clone−union(others)`) + overlap regions coloured by how many shapes cover them — from `fills` (`overlapSeparate` off → `fills[(d-1)%len]`) or a separate `overlapFills` palette. Two correctness fixes, both caught by driving real deep-overlap configs: (1) the first depth-band algorithm (promote/demote chain) drifted into **40–75% overlapping, non-disjoint bands** as depth grew (deep centre rendered as occluding wrong-colour pieces / "vanished") — replaced with nested `atLeast[k]` sets then `exact-d = atLeast[d]−atLeast[d+1]` (disjoint by construction; guard: sum piece areas ≈ union area). (2) Symmetry over a radial layout collides mirrored clones onto siblings (on-axis clone self-crosses into a star) — a diagnosis, not a code change.
+
+**Split-crossings** (`crossingMode: 'depth' | 'split'`, default depth): `split` breaks each depth band into connected FACES (`splitFaces`) so each crossing is its own piece, coloured through the palette by the order alongside the shapes (a ring's uniform-red crossings become varied). The **final whole-branch review caught a Critical the per-task reviews missed**: `splitFaces` classified outer-vs-hole by each contour's centroid, but an **annular** face (a ring around a deeper island) has its centroid in its own hole → misclassified as a hole and dropped, losing 3–7% of the mark on dense rings (measured partition ratio **0.9321** on an 8-hex ring; a lone annulus was masked by an all-holes fallback). Fixed by classifying from a point on the contour's **own boundary** (a vertex — disjoint siblings never cross), with a dense-ring guard that bites at 0.9321. Live-verified: an 8-hex dense ring in split mode is now a complete, gap-free mandala.
+
+Built subagent-driven TDD across several feature arcs (config migration → geometry → controls → UI → live proof → review), each with per-task + final whole-branch reviews. **95 geoshape unit specs.** Specs/plans under `docs/superpowers/{specs,plans}/2026-08-16-geoshape-*`.
 
 ### Gradient Studio — stackable gradients: alpha + per-layer layout — LANDED 2026-08-16 (`23ddbbf47`..`a830fa908`)
 
