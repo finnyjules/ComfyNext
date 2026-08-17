@@ -65,9 +65,19 @@ const activeLayout = computed(() => effectiveLayout(config.value, activeLayer.va
 const isRadial = computed(() => activeLayout.value === 'radial' || activeLayout.value === 'orbit')
 const isStack = computed(() => activeLayout.value === 'stack')
 // The stripe/band family (linear/radial/orbit/stack) — the ONLY layouts whose render
-// uses the shape field, margin, and 3D relief. The simple primitives (ramp/radialRamp/
-// conic/curve), liquid, and mesh ignore all three, so their sections stay hidden.
+// uses the shape field, margin, and 3D relief. Simple primitives, liquid and mesh
+// ignore them. `isBanded` gates the PER-LAYER Shape section on the active layer.
 const isBanded = computed(() => ['linear', 'radial', 'orbit', 'stack'].includes(activeLayout.value))
+// GLOBAL controls (canvas.margin/innerRadius/center, relief.*) live on the whole
+// gradient, not one layer — they must show whenever ANY layer in the stack uses them,
+// or they'd flicker wrong in a mixed stack (e.g. Relief hiding when you select a curve
+// layer while it's still embossing the stripe base). Relief is layer-0-only in the
+// shader, so it keys off layer 0 specifically.
+const someLayerIs = (kinds: string[]) => config.value.layers.some((_l, i) => kinds.includes(effectiveLayout(config.value, i)))
+const anyBanded = computed(() => someLayerIs(['linear', 'radial', 'orbit', 'stack']))
+const baseBanded = computed(() => ['linear', 'radial', 'orbit', 'stack'].includes(effectiveLayout(config.value, 0)))
+const anyInnerRadius = computed(() => someLayerIs(['radial', 'orbit', 'radialRamp']))   // conic does NOT use innerRadius
+const anyCenter = computed(() => someLayerIs(['radial', 'orbit', 'radialRamp', 'conic']))
 const isLiquid = computed(() => activeLayout.value === 'liquid')
 const isMesh = computed(() => activeLayout.value === 'mesh')
 const isCurve = computed(() => activeLayout.value === 'curve')
@@ -79,7 +89,6 @@ const isRampRadial = computed(() => activeLayout.value === 'radialRamp')
 const isConic = computed(() => activeLayout.value === 'conic')
 // Center + inner radius are used by the stripe polar layouts (radial/orbit) AND the
 // simple radial/conic primitives — NOT plain linear ramp, which has no origin.
-const usesCenter = computed(() => isRadial.value || isRampRadial.value || isConic.value)
 // Layers are named for what they are ("Wave", "Bands"), not their position, so a
 // reorder moves a recognisable name instead of renumbering the whole stack.
 const layerNames = computed(() => layerLabels(config.value))
@@ -986,19 +995,22 @@ function onColor(key: 'repeat' | 'repeatCount' | 'falloff', value: number | stri
                   :class="activeLayout === l ? 'bg-white/20 text-white' : 'bg-white/[0.04] text-white/55 hover:bg-white/10'"
                   @click="setLayout(l)">{{ LAYOUT_LABELS[l] }}</button>
         </div>
-        <!-- Margin only insets the stripe/ring (banded) layouts; simple primitives, liquid
-             and mesh all fill the frame, so it does nothing there. -->
-        <template v-if="isBanded">
+        <!-- GLOBAL controls: show whenever ANY layer in the stack uses them (not just the
+             active one), since they live on the whole gradient. -->
+        <template v-if="anyBanded">
           <BindableRow control-key="canvas.margin" label="Margin" kind="slider" :min="0" :max="0.45" :step="0.01" :bound="boundColumnFor('canvas.margin')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
             <label class="mb-1 flex justify-between text-xs text-white/60"><span>Margin</span><span class="text-white/40">{{ config.canvas.margin.toFixed(2) }}</span></label>
             <input v-model.number="config.canvas.margin" type="range" min="0" max="0.45" step="0.01" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('canvas.margin', config.canvas.margin)" />
           </BindableRow>
         </template>
-        <template v-if="usesCenter">
+        <!-- Inner radius: radial/orbit/radialRamp only (conic never reads it). Center: those + conic. -->
+        <template v-if="anyInnerRadius">
           <BindableRow control-key="canvas.innerRadius" label="Inner radius" kind="slider" :min="0" :max="0.9" :step="0.01" :bound="boundColumnFor('canvas.innerRadius')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
             <label class="mb-1 flex justify-between text-xs text-white/60"><span>Inner radius</span><span class="text-white/40">{{ config.canvas.innerRadius.toFixed(2) }}</span></label>
             <input v-model.number="config.canvas.innerRadius" type="range" min="0" max="0.9" step="0.01" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('canvas.innerRadius', config.canvas.innerRadius)" />
           </BindableRow>
+        </template>
+        <template v-if="anyCenter">
           <BindableRow control-key="canvas.center.x" label="Center X" kind="slider" :min="-0.5" :max="0.5" :step="0.01" :bound="boundColumnFor('canvas.center.x')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
             <label class="mb-1 flex justify-between text-xs text-white/60"><span>Center X</span><span class="text-white/40">{{ centerX.toFixed(2) }}</span></label>
             <input v-model.number="centerX" type="range" min="-0.5" max="0.5" step="0.01" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('canvas.center.x', centerX)" />
@@ -1235,7 +1247,7 @@ function onColor(key: 'repeat' | 'repeatCount' | 'falloff', value: number | stri
            liquid uses flow.depth and mesh has no relief, so this whole section is
            hidden for those layouts. Grain moved to the shared post stack's own Grain
            section (Task 8) — see the schema-driven post panel further down. -->
-      <StudioSection v-show="onDesign && isBanded" title="Relief" :open="false">
+      <StudioSection v-show="onDesign && baseBanded" title="Relief" :open="false">
         <BindableRow control-key="relief.relief" label="Relief" kind="slider" :min="0" :max="1" :step="0.01" :bound="boundColumnFor('relief.relief')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
           <label class="mb-1 flex justify-between text-xs text-white/60"><span>Relief</span><span class="text-white/40">{{ config.relief.relief.toFixed(2) }}</span></label>
           <input v-model.number="config.relief.relief" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('relief.relief', config.relief.relief)" />
