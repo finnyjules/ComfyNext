@@ -2,6 +2,7 @@
 // drawImage() the returned canvas (preview) or toBlob() it (export). A single
 // fragment shader synthesizes the whole image from a GradientConfig.
 
+import { buildCurvePolyline, CURVE_SAMPLES } from './curvePath'
 import { buildField } from './field'
 import { MESH_MAX_POINTS, buildMeshPoints, driftedMeshPositions, meshColorRgb } from './mesh'
 import { applyMotion } from './motion'
@@ -9,7 +10,7 @@ import { buildRampLut } from './ramp'
 import { hexToRgb } from './ramp'
 import { REPEAT_IDX } from './repeat'
 import { BLUR_FS, GRADIENT_FS, GRADIENT_VS } from './shaders'
-import { aspectRatio, canvasCenter, flowConfig, lightVector, reliefLight, resolvePost, LAYER_MAX, RAMP_DEFAULTS,
+import { aspectRatio, canvasCenter, flowConfig, lightVector, reliefLight, resolvePost, LAYER_MAX, RAMP_DEFAULTS, CURVE_DEFAULTS,
   type Direction, type FocusConfig, type GradientConfig,
   type LayoutKind, type MappingKind } from './types'
 import { BLEND_IDX } from '~/lib/studio/blend'
@@ -41,7 +42,7 @@ void main() {
 
 const DIR_IDX: Record<Direction, number> = { up: 0, right: 1, down: 2, left: 3 }
 const MAP_IDX: Record<MappingKind, number> = { across: 0, perbar: 1, field: 2 }
-const LAYOUT_IDX: Record<LayoutKind, number> = { ramp: 6, radialRamp: 7, conic: 8, linear: 0, radial: 1, orbit: 2, stack: 3, liquid: 4, mesh: 5 }
+const LAYOUT_IDX: Record<LayoutKind, number> = { ramp: 6, radialRamp: 7, conic: 8, curve: 9, linear: 0, radial: 1, orbit: 2, stack: 3, liquid: 4, mesh: 5 }
 
 /**
  * Exported so embeds can hold their own instance — two embeds on one page must
@@ -61,6 +62,11 @@ export class GradientFxRenderer {
   // the composite loop reads them as sampler2DArray.
   private fieldArrayTex: WebGLTexture | null = null
   private rampArrayTex: WebGLTexture | null = null
+  // Per-layer curve polyline (RGBA32F, NEAREST — exact texel fetch, no LINEAR
+  // interpolation smearing the geometry). Separate from fieldArrayTex/rampArrayTex
+  // because those are LINEAR-filtered 256-wide via mk(); this one is 40-wide
+  // (CURVE_SAMPLES) and must stay NEAREST, so it is allocated explicitly in ensure().
+  private curveArrayTex: WebGLTexture | null = null
   // Offscreen target for the soft-focus post pass (allocated on first blur; resized with the canvas).
   private fbo: WebGLFramebuffer | null = null
   private sceneTex: WebGLTexture | null = null
@@ -87,6 +93,17 @@ export class GradientFxRenderer {
       }
       this.fieldArrayTex = mk(g.R8)
       this.rampArrayTex = mk(g.RGBA8)
+
+      // Curve polyline array: RGBA32F + NEAREST, width = CURVE_SAMPLES (40), read via
+      // texelFetch in the shader — an exact per-segment lookup, not a filtered LUT.
+      const ct = g.createTexture()
+      g.bindTexture(g.TEXTURE_2D_ARRAY, ct)
+      g.texStorage3D(g.TEXTURE_2D_ARRAY, 1, g.RGBA32F, 40, 1, LAYER_MAX)  // 40 = CURVE_SAMPLES
+      g.texParameteri(g.TEXTURE_2D_ARRAY, g.TEXTURE_MIN_FILTER, g.NEAREST)
+      g.texParameteri(g.TEXTURE_2D_ARRAY, g.TEXTURE_MAG_FILTER, g.NEAREST)
+      g.texParameteri(g.TEXTURE_2D_ARRAY, g.TEXTURE_WRAP_S, g.CLAMP_TO_EDGE)
+      g.texParameteri(g.TEXTURE_2D_ARRAY, g.TEXTURE_WRAP_T, g.CLAMP_TO_EDGE)
+      this.curveArrayTex = ct
     }
     const gl = this.gl
     if (this.canvas!.width !== width || this.canvas!.height !== height) {
@@ -239,6 +256,19 @@ export class GradientFxRenderer {
     gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, layer, lut.length / 4, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, lut)
   }
 
+  private uploadCurve(gl: WebGL2RenderingContext, layer: number, poly: { pts: Float32Array; len: Float32Array; n: number }) {
+    const data = new Float32Array(CURVE_SAMPLES * 4)
+    for (let k = 0; k < CURVE_SAMPLES; k++) {
+      const src = Math.min(k, poly.n - 1)
+      data[k * 4] = poly.pts[src * 2]!
+      data[k * 4 + 1] = 1 - poly.pts[src * 2 + 1]!   // Y flip: editor y=0 top → shader texcoord y=1 top
+      data[k * 4 + 2] = poly.len[src]!
+      data[k * 4 + 3] = 1
+    }
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.curveArrayTex!)
+    gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, layer, CURVE_SAMPLES, 1, 1, gl.RGBA, gl.FLOAT, data)
+  }
+
   /** Render `cfg` at `time` seconds into the shared canvas; returns it. */
   render(cfg: GradientConfig, width: number, height: number, time = 0): HTMLCanvasElement {
     const c = applyMotion(cfg, time)
@@ -276,6 +306,7 @@ export class GradientFxRenderer {
     const fieldW: number[] = [], enabled: number[] = []
     const rampAngle: number[] = [], rampRadius: number[] = [], rampShape: number[] = [], rampSweep: number[] = [], rampCloseLoop: number[] = []
     const repeat: number[] = [], repeatCount: number[] = []
+    const curveN: number[] = [], curveMode: number[] = [], curveWidth: number[] = []
     for (let i = 0; i < layers.length; i++) {
       const L = layers[i] ?? layers[0]!
       const s = L.shape, col = L.color
@@ -312,6 +343,12 @@ export class GradientFxRenderer {
       rampCloseLoop.push(rp.closeLoop ? 1 : 0)
       repeat.push(REPEAT_IDX[col.repeat ?? 'once'] ?? 0)
       repeatCount.push(col.repeatCount ?? 4)
+      const cv = L.curve ?? CURVE_DEFAULTS
+      const poly = buildCurvePolyline(cv)
+      this.uploadCurve(gl, i, poly)
+      curveN.push(poly.n)
+      curveMode.push(cv.mode === 'outward' ? 1 : 0)
+      curveWidth.push(cv.width)
     }
 
     gl.activeTexture(gl.TEXTURE0)
@@ -320,6 +357,9 @@ export class GradientFxRenderer {
     gl.activeTexture(gl.TEXTURE1)
     gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.rampArrayTex)
     gl.uniform1i(u('u_ramps'), 1)
+    gl.activeTexture(gl.TEXTURE2)
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.curveArrayTex)
+    gl.uniform1i(u('u_curves'), 2)
 
     gl.uniform2f(u('u_resolution'), width, height)
     gl.uniform1f(u('u_aspect'), aspectRatio(c.canvas.aspect))
@@ -447,6 +487,9 @@ export class GradientFxRenderer {
     gl.uniform1fv(u('u_rampCloseLoop'), arr(rampCloseLoop))
     gl.uniform1fv(u('u_repeat'), arr(repeat))
     gl.uniform1fv(u('u_repeatCount'), arr(repeatCount))
+    gl.uniform1fv(u('u_curveN'), arr(curveN))
+    gl.uniform1fv(u('u_curveMode'), arr(curveMode))
+    gl.uniform1fv(u('u_curveWidth'), arr(curveWidth))
 
     gl.viewport(0, 0, width, height)
     gl.disable(gl.BLEND)
@@ -521,6 +564,8 @@ export class GradientFxRenderer {
     this.fieldArrayTex = null
     if (this.rampArrayTex) gl.deleteTexture(this.rampArrayTex)
     this.rampArrayTex = null
+    if (this.curveArrayTex) gl.deleteTexture(this.curveArrayTex)
+    this.curveArrayTex = null
 
     if (this.sceneTex) gl.deleteTexture(this.sceneTex)
     this.sceneTex = null

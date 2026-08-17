@@ -17,6 +17,7 @@ void main() {
 
 export const GRADIENT_FS = `#version 300 es
 #define LAYER_MAX 6
+#define CURVE_MAX 40
 precision highp float;
 precision highp sampler2DArray;   // ES 3.00 has no default precision for array samplers
 
@@ -76,6 +77,9 @@ uniform float u_rampSweep[LAYER_MAX];     // conic arc, degrees
 uniform float u_rampCloseLoop[LAYER_MAX]; // conic: 1 wrap seamless
 uniform float u_repeat[LAYER_MAX];        // 0 once, 1 mirror, 2 tile
 uniform float u_repeatCount[LAYER_MAX];   // tile/mirror count
+uniform float u_curveN[LAYER_MAX];      // curve polyline point count
+uniform float u_curveMode[LAYER_MAX];   // 0 along, 1 outward
+uniform float u_curveWidth[LAYER_MAX];  // outward glow reach
 
 uniform float u_flowAngle;       // degrees — liquid base gradient dir
 uniform float u_flowScale;       // warp noise frequency
@@ -110,6 +114,7 @@ uniform float u_meshBlur;        // post-blur radius (screen-space); 0 = sharp
 
 uniform sampler2DArray u_fields;
 uniform sampler2DArray u_ramps;
+uniform sampler2DArray u_curves;   // per-layer curve polyline: RG=xy, B=cumLen
 
 const float PI = 3.14159265359;
 const float TAU = 6.28318530718;
@@ -249,6 +254,8 @@ float sampleField(int i, float x) {
 vec3 sampleRamp(int i, float t) {
   return textureLod(u_ramps, vec3(clamp(t, 0.0, 1.0), 0.5, float(i)), 0.0).rgb;
 }
+// Exact texel fetch of the curve polyline (RGBA32F, NEAREST). texel k of layer i.
+vec4 curveTexel(int i, int k) { return texelFetch(u_curves, ivec3(k, 0, i), 0); }
 
 float quantize(float t, float steps) {
   if (steps < 1.0) return t;
@@ -306,12 +313,33 @@ vec4 computeLayer(int i, vec2 p) {
       if (u_rampShape[i] > 0.5) d.x *= u_aspect;   // circle: aspect-correct
       float r = length(d) * 2.0 / max(u_rampRadius[i], 0.001);
       t = (r - u_innerRadius) / max(1.0 - u_innerRadius, 0.001);
-    } else {                                 // conic — angular sweep
+    } else if (u_layout < 8.5) {             // conic — angular sweep
       vec2 d = p - 0.5 - u_center; d.x *= u_aspect;
       float ang = fract(atan(d.y, d.x) / TAU + 0.5 - u_rampAngle[i] / 360.0);
       float sweep = clamp(u_rampSweep[i] / 360.0, 0.05, 1.0);
       t = ang / sweep;
       if (u_rampCloseLoop[i] > 0.5) t = 1.0 - abs(fract(t) * 2.0 - 1.0); // wrap seamless
+    } else {                                 // curve (9) — gradient follows a bezier
+      // p is v_texCoord (0..1); curve texels are in the SAME space (upload flips Y).
+      int n = int(u_curveN[i] + 0.5);
+      float bestD = 1e9; float bestS = 0.0;
+      vec4 first = curveTexel(i, 0);
+      vec2 prev = first.xy; float prevL = first.z;
+      for (int k = 1; k < CURVE_MAX; k++) {
+        if (k >= n) break;
+        vec4 cur = curveTexel(i, k);
+        vec2 a = prev, b = cur.xy;
+        vec2 ab = b - a; vec2 ap = p - a;
+        float u = clamp(dot(ap, ab) / max(dot(ab, ab), 1e-6), 0.0, 1.0);
+        vec2 proj = a + ab * u;
+        vec2 dd = proj - p; dd.x *= u_aspect;          // aspect-correct the DISTANCE
+        float dist = length(dd);
+        if (dist < bestD) { bestD = dist; bestS = mix(prevL, cur.z, u); }
+        prev = b; prevL = cur.z;
+      }
+      t = (u_curveMode[i] < 0.5)
+        ? bestS                                        // along = arc-length param
+        : clamp(bestD / max(u_curveWidth[i], 1e-3), 0.0, 1.0); // outward = distance
     }
     t = applyRepeat(t, u_repeat[i], u_repeatCount[i]);
     t = clamp(t, 0.0, 1.0);
