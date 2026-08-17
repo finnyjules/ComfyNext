@@ -299,6 +299,34 @@ async function sailorLayoutProbe(opts: {
   return gradientStats(out, size, size)
 }
 
+// Multi-layer probe: render a 2-layer config (layout is canvas-global) with per-layer
+// overrides, return stats + whether the two layers produce distinct pixels. Verifies
+// the "stacked layers all look the same" report.
+function sailorMultiLayerProbe(opts: { layout: string; size?: number; l0: any; l1: any; blend?: string; opacity?: number }) {
+  const size = opts.size ?? 96
+  const cfg = ensureConfigDefaults(defaultConfig(HARNESS_SEED) as GradientConfig)
+  cfg.canvas.layout = opts.layout as GradientConfig['canvas']['layout']
+  const base: any = cfg.layers[0]
+  const applyLayer = (L: any, o: any) => {
+    if (o.stops) L.color.stops = o.stops
+    if (o.curve) L.curve = { ...CURVE_DEFAULTS, start: { ...CURVE_DEFAULTS.start }, end: { ...CURVE_DEFAULTS.end }, ...o.curve }
+    if (o.ramp) L.ramp = { ...(L.ramp ?? {}), ...o.ramp }
+  }
+  applyLayer(base, opts.l0)
+  const top: any = structuredClone(JSON.parse(JSON.stringify(base)))
+  applyLayer(top, opts.l1)
+  top.blend = opts.blend ?? 'normal'
+  top.opacity = opts.opacity ?? 1
+  cfg.layers = [base, top]
+  const twoLayer = gradientStats(renderer.render(ensureConfigDefaults(cfg), size, size, 0), size, size)
+  // Compare: render with ONLY the bottom layer, and ONLY the top layer.
+  const c0 = ensureConfigDefaults(defaultConfig(HARNESS_SEED) as GradientConfig); c0.canvas.layout = cfg.canvas.layout; c0.layers = [structuredClone(JSON.parse(JSON.stringify(base)))]
+  const c1 = ensureConfigDefaults(defaultConfig(HARNESS_SEED) as GradientConfig); c1.canvas.layout = cfg.canvas.layout; c1.layers = [structuredClone(JSON.parse(JSON.stringify(top)))]
+  const bottomOnly = gradientStats(renderer.render(ensureConfigDefaults(c0), size, size, 0), size, size)
+  const twoEqualsTop = Math.abs(twoLayer.mean - gradientStats(renderer.render(ensureConfigDefaults(c1), size, size, 0), size, size).mean) < 1
+  return { twoLayer_mean: Math.round(twoLayer.mean), bottomOnly_mean: Math.round(bottomOnly.mean), twoLayerEqualsTopOnly: twoEqualsTop }
+}
+
 // Visual grid: render the three new layouts + the three authored presets to
 // on-page canvases so a reviewer can eyeball them. Verification-only.
 async function sailorVisualGrid() {
@@ -372,5 +400,35 @@ if (import.meta.client) {
       anyNaN: Array.from(poly.pts).some(Number.isNaN) || Array.from(poly.len).some(Number.isNaN) }
   }
   ;(window as any).__sailorVisualGrid = sailorVisualGrid
+  ;(window as any).__sailorMultiLayerProbe = sailorMultiLayerProbe
+  ;(window as any).__sailorAlphaDemo = () => {
+    const S = 220
+    // Both cards: same blue diagonal Linear bottom; top = orange Linear at 90°. Left top is
+    // opaque (hides the blue), right top fades to transparent (blue shows through) — the fix.
+    const build = (topStops: { color: string; pos: number }[]) => {
+      const c = ensureConfigDefaults(defaultConfig(HARNESS_SEED) as GradientConfig)
+      c.canvas.layout = 'ramp' as any
+      ;(c.layers[0] as any).color.stops = [{ color: '#1e63ff', pos: 0 }, { color: '#08123a', pos: 1 }]
+      ;(c.layers[0] as any).ramp = { ...(c.layers[0] as any).ramp, angle: 20 }
+      const top: any = JSON.parse(JSON.stringify(c.layers[0]))
+      top.color.stops = topStops
+      top.ramp = { ...top.ramp, angle: 110 }
+      top.blend = 'normal'; top.opacity = 1
+      c.layers = [c.layers[0], top]
+      return ensureConfigDefaults(c)
+    }
+    const opaque = build([{ color: '#ff8a2a', pos: 0 }, { color: '#ff2a6a', pos: 1 }])
+    const transp = build([{ color: '#ff8a2aff', pos: 0 }, { color: '#ff2a6a00', pos: 1 }])
+    const host = document.getElementById('alpha-demo') || (() => { const d = document.createElement('div'); d.id = 'alpha-demo'; d.style.cssText = 'position:fixed;inset:0;z-index:99999;background:#111;display:flex;gap:16px;align-items:center;justify-content:center;color:#ddd;font:12px monospace'; document.body.appendChild(d); return d })()
+    host.innerHTML = ''
+    for (const [label, cfg] of [['opaque orange top → hides blue', opaque], ['orange top fades to transparent → blue shows through', transp]] as const) {
+      const wrap = document.createElement('div'); wrap.style.textAlign = 'center'
+      const cv = document.createElement('canvas'); cv.width = S; cv.height = S
+      cv.getContext('2d')!.drawImage(renderer.render(cfg as any, S, S, 0) as CanvasImageSource, 0, 0)
+      wrap.appendChild(cv); const l = document.createElement('div'); l.textContent = label; l.style.marginTop = '6px'; wrap.appendChild(l)
+      host.appendChild(wrap)
+    }
+    return 'drawn'
+  }
 }
 </script>

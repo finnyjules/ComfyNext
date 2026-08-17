@@ -2,13 +2,15 @@
 
 import type { ColorStop, FalloffKind } from './types'
 
-export interface RGB { r: number; g: number; b: number }
+export interface RGB { r: number; g: number; b: number; /** 0..255, defaults 255 (opaque) for 3/6-digit hex. */ a?: number }
 
 export function hexToRgb(hex: string): RGB {
   const h = hex.replace('#', '').trim()
   const full = h.length === 3 ? h.split('').map(c => c + c).join('') : h
   const n = parseInt(full.slice(0, 6) || '000000', 16)
-  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 }
+  // 8-digit #rrggbbaa carries alpha; shorter forms are opaque.
+  const a = full.length >= 8 ? parseInt(full.slice(6, 8), 16) : 255
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255, a: Number.isFinite(a) ? a : 255 }
 }
 
 export function rgbToHex({ r, g, b }: RGB): string {
@@ -84,7 +86,8 @@ export function buildRampLut(stops: ColorStop[], falloff: FalloffKind = 'linear'
     out[o] = ca.r + (cb.r - ca.r) * fc
     out[o + 1] = ca.g + (cb.g - ca.g) * fc
     out[o + 2] = ca.b + (cb.b - ca.b) * fc
-    out[o + 3] = 255
+    const aa = ca.a ?? 255, ab = cb.a ?? 255
+    out[o + 3] = aa + (ab - aa) * fc
   }
   return out
 }

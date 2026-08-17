@@ -254,6 +254,11 @@ float sampleField(int i, float x) {
 vec3 sampleRamp(int i, float t) {
   return textureLod(u_ramps, vec3(clamp(t, 0.0, 1.0), 0.5, float(i)), 0.0).rgb;
 }
+// Per-stop alpha carried in the ramp LUT's A channel (0..1). Layers with transparent
+// stops let the layers/background below show through — so stacked gradients combine.
+float sampleAlpha(int i, float t) {
+  return textureLod(u_ramps, vec3(clamp(t, 0.0, 1.0), 0.5, float(i)), 0.0).a;
+}
 // Exact texel fetch of the curve polyline (RGBA32F, NEAREST). texel k of layer i.
 vec4 curveTexel(int i, int k) { return texelFetch(u_curves, ivec3(k, 0, i), 0); }
 
@@ -346,7 +351,7 @@ vec4 computeLayer(int i, vec2 p) {
     t += u_hueDrift[i] / 360.0 * (t - 0.5);  // parity with other branches' drift use
     t = quantize(t, u_steps[i]);
     vec3 col = rotateHue(sampleRamp(i, t), u_hueRotate[i]);
-    return vec4(col, 1.0);
+    return vec4(col, sampleAlpha(i, t));
   }
 
   // ---- Mesh: soft point mesh (see meshColorAt). p is already domain-warped, so the
@@ -419,9 +424,9 @@ vec4 computeLayer(int i, vec2 p) {
       vec3 cr = sampleRamp(i, clamp(t + disp, 0.0, 1.0));
       vec3 cg = sampleRamp(i, t);
       vec3 cb = sampleRamp(i, clamp(t - disp, 0.0, 1.0));
-      return vec4(rotateHue(vec3(cr.r, cg.g, cb.b), u_hueRotate[i]), 1.0);
+      return vec4(rotateHue(vec3(cr.r, cg.g, cb.b), u_hueRotate[i]), sampleAlpha(i, t));
     }
-    return vec4(rotateHue(sampleRamp(i, t), u_hueRotate[i]), 1.0);
+    return vec4(rotateHue(sampleRamp(i, t), u_hueRotate[i]), sampleAlpha(i, t));
   }
 
   // ---- Stack: N concentric circles of shrinking radius, each filled with the same ramp
@@ -456,7 +461,7 @@ vec4 computeLayer(int i, vec2 p) {
     if (t < 0.0) return vec4(0.0);                      // outside every ring → background
     t = quantize(t, u_steps[i]);
     vec3 col = rotateHue(sampleRamp(i, t), u_hueRotate[i]);
-    return vec4(col, 1.0);
+    return vec4(col, sampleAlpha(i, t));
   }
 
   if (u_layout < 0.5) {
@@ -507,7 +512,7 @@ vec4 computeLayer(int i, vec2 p) {
     t = quantize(t, u_steps[i]);
 
     vec3 col = rotateHue(sampleRamp(i, t), u_hueRotate[i]);
-    return vec4(col, colMask);
+    return vec4(col, colMask * sampleAlpha(i, t));
   }
 
   // ---- Radial / Orbit: the linear band model wrapped into polar coords. The
