@@ -139,16 +139,22 @@ describe('graph price book coverage', () => {
   // Review fix (Stage 5 Task 3): the original badge sweep grepped for the
   // single-line `price_badge=IO.PriceBadge(expr=...)` form only and missed
   // the multi-line `price_badge=IO.PriceBadge(\n  expr=...,\n)` form these
-  // three classes use — they were priced off a false "no badge" premise.
-  // Pinned to the actual badge USD (nodes_replicate.py:1423/1344/1596) run
-  // through the markup policy so a future re-sweep can't silently drift them.
+  // three classes use. Kling is point-priced so its badge stands. Clarity and
+  // Seedance2 are RANGE-priced (Clarity's own description quotes $0.05–0.20
+  // by scale_factor · Seedance2's video_models.py catalog entry tops out at
+  // $0.60/clip) and the SAME slugs are priced at range top via the picker
+  // nodes (UpscaleImageNode "Clarity" row · GenerateVideoNode seedance-2.0),
+  // so a badge-bottom price on the dedicated node would underprice the exact
+  // same call. Review ruling (2026-08-17): price at range top so the
+  // expensive setting is never underpriced — badge divergence ($0.10/$0.50
+  // vs range-top $0.20/$0.60) flagged for the pre-launch invoice sweep.
   it('prices Clarity/Kling/Seedance2 off their multi-line price_badge USD', () => {
-    expect(GRAPH_NODE_CREDITS.ClarityUpscaleRemoteNode).toBe(creditsForUsdServer(0.10))
-    expect(GRAPH_NODE_CREDITS.ClarityUpscaleRemoteNode).toBe(20)
+    expect(GRAPH_NODE_CREDITS.ClarityUpscaleRemoteNode).toBe(creditsForUsdServer(0.20))
+    expect(GRAPH_NODE_CREDITS.ClarityUpscaleRemoteNode).toBe(30)
     expect(GRAPH_NODE_CREDITS.KlingVideoRemoteNode).toBe(creditsForUsdServer(0.35))
     expect(GRAPH_NODE_CREDITS.KlingVideoRemoteNode).toBe(53)
-    expect(GRAPH_NODE_CREDITS.Seedance2RemoteNode).toBe(creditsForUsdServer(0.50))
-    expect(GRAPH_NODE_CREDITS.Seedance2RemoteNode).toBe(75)
+    expect(GRAPH_NODE_CREDITS.Seedance2RemoteNode).toBe(creditsForUsdServer(0.60))
+    expect(GRAPH_NODE_CREDITS.Seedance2RemoteNode).toBe(90)
   })
 })
 

@@ -10,6 +10,7 @@
  * GenerateImageNode was missing from the table.
  */
 import { IMAGE_MODELS } from '~~/app/data/image-models'
+import { ENGINE_USD } from '~~/app/data/engine-prices'
 export const PRICE_BOOK_VERSION = 'spike-v4'
 
 const BASE_RENDER_CREDITS = 1
@@ -124,12 +125,26 @@ export const GRAPH_NODE_CREDITS: Record<string, number> = {
   FixFacesNode: 1,                 // badge $0.005
   RemoveBackgroundRemoteNode: 1,   // badge $0.001
   RemoveBackgroundNode: 1,         // badge $0.001
-  ClarityUpscaleRemoteNode: 20,    // badge $0.10 (nodes_replicate.py:1423) — original sweep missed the multi-line price_badge form
+  // Clarity is RANGE-priced (own description: ~$0.05–0.20/image by
+  // scale_factor) and the same slug is priced at range-top 30cr via the
+  // UpscaleImageNode "Clarity" engine row — a badge-bottom price here would
+  // underprice the exact same call at its expensive setting. Review ruling
+  // (2026-08-17): keep the CONSERVATIVE range-top figure. badge $0.10 vs
+  // range-top $0.20 (nodes_replicate.py:1423) — badge divergence flagged for
+  // the pre-launch invoice sweep.
+  ClarityUpscaleRemoteNode: 30,
 
   // — video —
   Veo3RemoteNode: 900,             // badge $6.00
-  KlingVideoRemoteNode: 53,        // badge $0.35 (nodes_replicate.py:1344) — original sweep missed the multi-line price_badge form
-  Seedance2RemoteNode: 75,         // badge $0.50 (nodes_replicate.py:1596) — original sweep missed the multi-line price_badge form
+  KlingVideoRemoteNode: 53,        // badge $0.35 (nodes_replicate.py:1344) — point-priced so the badge stands as-is
+  // Seedance2 is RANGE-priced (video_models.py catalog tops out at
+  // $0.60/clip) and the same slug is priced at range-top 90cr via the
+  // GenerateVideoNode seedance-2.0 row — a badge-bottom price here would
+  // underprice the exact same call at its expensive setting. Review ruling
+  // (2026-08-17): keep the CONSERVATIVE range-top figure. badge $0.50 vs
+  // range-top $0.60 (nodes_replicate.py:1596) — badge divergence flagged for
+  // the pre-launch invoice sweep.
+  Seedance2RemoteNode: 90,
   EnhanceVideoNode: 150,           // badge $1.00
   LipsyncRemoteNode: 150,          // badge $1.00 / 30s
   LipsyncNode: 150,                // badge $1.00 / 30s
@@ -263,26 +278,9 @@ const LEGACY_VIDEO_MODEL_IDS: Record<string, string> = {
   'Kling 2.1': 'kling-v2.5-turbo-pro',
 }
 
-/**
- * Engine-picker nodes: the `model` widget names an engine, not a catalog id.
- * USD comes from the per-engine ranges in each node's own description in
- * nodes_replicate.py — ranges take the TOP so the expensive setting is never
- * underpriced.
- */
-const ENGINE_USD: Record<string, Record<string, number>> = {
-  UpscaleImageNode: {
-    'Clarity': 0.20,        // description: ~$0.05–0.20
-    'Crystal': 0.04,        // description: ~$0.01–0.04
-    'Real-ESRGAN': 0.002,   // description: ~$0.002
-    'Recraft Crisp': 0.006, // description: ~$0.006
-    'Topaz': 0.05,          // description: ~$0.05+
-  },
-  EnhanceDetailNode: {
-    'Creative': 0.20,          // description: Clarity ~$0.05–0.20
-    'Faithful': 0.05,          // description: Topaz ~$0.05
-    'Diffusion Refine': 0.10,  // description: Magic Refiner ~$0.05–0.10
-  },
-}
+// Engine-picker nodes: the `model` widget names an engine — not a catalog id.
+// ENGINE_USD itself now lives in app/data/engine-prices.ts — a pure-data
+// module the client badge can import without pulling in server/.
 
 // Lazily-built lookups. Never derive these at module top level: a top-level
 // const reading another module's const breaks on import reorder.
@@ -436,12 +434,17 @@ export const MODEL_COSTS: Record<string, ModelCost> = {
   'lucataco/qwen2-vl-7b-instruct': { usd: 0.003, credits: 1, confidence: 'estimate' },
   // — slugs behind graph nodes priced off their own price_badge (Stage 5
   // Task 3 review fix). These three carry a badge in the multi-line
-  // `price_badge=IO.PriceBadge(` form the original sweep missed: kling-v2.1
-  // badge $0.35, seedance-2.0 badge $0.50, clarity-upscaler badge $0.10 (all
-  // in comfy_api_nodes/nodes_replicate.py). USD below matches those badges.
+  // `price_badge=IO.PriceBadge(` form the original sweep missed (all in
+  // comfy_api_nodes/nodes_replicate.py). kling-v2.1 is point-priced so its
+  // badge $0.35 stands. seedance-2.0 and clarity-upscaler are RANGE-priced —
+  // badge $0.50/$0.10 vs range-top $0.60/$0.20 — and the same slugs are
+  // priced at range top via the picker nodes (GenerateVideoNode /
+  // UpscaleImageNode). Review ruling (2026-08-17): keep the CONSERVATIVE
+  // range-top figure so the expensive setting is never underpriced — badge
+  // divergence flagged for the pre-launch invoice sweep.
   'kwaivgi/kling-v2.1': { usd: 0.35, credits: 53, confidence: 'estimate', note: 'per ~5s clip — duration-aware pricing is a hardening rider' },
-  'bytedance/seedance-2.0': { usd: 0.5, credits: 75, confidence: 'estimate', note: 'per ~5s clip — duration-aware pricing is a hardening rider' },
-  'philz1337x/clarity-upscaler': { usd: 0.1, credits: 20, confidence: 'estimate', note: 'badge-quoted price — duration/scale-factor variance is a hardening rider' },
+  'bytedance/seedance-2.0': { usd: 0.6, credits: 90, confidence: 'estimate', note: 'matches the GenerateVideoNode picker row range-top ($0.60); node price_badge quotes $0.50 — duration-aware pricing is a hardening rider' },
+  'philz1337x/clarity-upscaler': { usd: 0.2, credits: 30, confidence: 'estimate', note: 'matches the UpscaleImageNode "Clarity" picker row range-top ($0.20); node price_badge quotes $0.10 — duration/scale-factor variance is a hardening rider' },
   // — training (hardware-billed; matches LoraTrainingNode=600 in the graph table) —
   'ostris/flux-dev-lora-trainer': { usd: 2.5, credits: 600, confidence: 'estimate', note: 'H100 ~15–40min; 600cr keeps parity with graph table' },
   'ostris/sdxl-lora-trainer': { usd: 2, credits: 600, confidence: 'estimate' },
