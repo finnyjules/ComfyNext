@@ -133,4 +133,17 @@ describe('geoshape render', () => {
     expect(svg).toContain('#0000ff')
     expect((svg.match(/<path/g) ?? []).length).toBeGreaterThanOrEqual(3)
   })
+
+  it('toSvg boxes a gradient paint PER-SHAPE, not to the whole mark', async () => {
+    // Two clones 500 apart on x, each filled with the SAME horizontal gradient.
+    // A userSpaceOnUse gradient's x1/x2 = box.x + axis*box.width, so if each
+    // shape is boxed to its OWN bounds the two <linearGradient>s carry different
+    // x1 (each ramp spans its own clone). Boxing to the whole-mark bounds (the
+    // bug) gives every shape the SAME coords — one ramp both shapes slice.
+    const grad = { type: 'linear', angle: 0, stops: [{ offset: 0, color: '#ff0000' }, { offset: 1, color: '#0000ff' }] }
+    const svg = await toSvg({ ...DEFAULT_CONFIG, fillStrategy: 'perClone', fills: [grad as any], layout: 'linear', count: 2, spacing: 500, size: 60, symmetry: false, clipMask: 'none' })
+    const x1s = [...svg.matchAll(/<linearGradient[^>]*\bx1="(-?[\d.]+)"/g)].map((m) => m[1])
+    expect(x1s.length).toBeGreaterThanOrEqual(2)          // one gradient per clone
+    expect(new Set(x1s).size).toBeGreaterThanOrEqual(2)   // each anchored to its OWN box (== 1 under the whole-mark bug)
+  })
 })

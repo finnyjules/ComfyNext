@@ -124,9 +124,16 @@ export async function toSvg(cfg: GeoShapeConfig, opts: Partial<SvgDocOptions> = 
   // this. `null` (image/shader, TIER 3 — see toVector.ts's header) means
   // `paintToVectorPaint` has no vector form to offer without a raster; the
   // block below supplies one.
-  const box = { x: b.minX, y: b.minY, width: b.w, height: b.h }
+  //
+  // The paint is boxed to EACH SHAPE'S OWN bounds, not the whole-mark `b`: a
+  // gradient/ombre/pattern anchors to the object it fills, so every clone/piece
+  // shows the FULL ramp within itself. Boxing to `b` (the old behaviour) made
+  // one mark-wide ramp that each shape only sampled a slice of — correct for
+  // single mode (one shape ≈ the whole mark) but wrong for perClone/pieces.
   for (const s of shapes as GeoVectorShape[]) {
     if (s.paint && typeof s.paint !== 'string') {
+      const sb = contentBounds([s])
+      const box = { x: sb.minX, y: sb.minY, width: sb.w, height: sb.h }
       let vp = paintToVectorPaint(s.paint, { units: 'userSpaceOnUse', box })
       // TIER 3 embed (Task 4 Step 2): rasterize the paint over `box` on an
       // offscreen canvas — same `resolvePaintCanvas` path `drawToCanvas`/
@@ -207,11 +214,31 @@ export function drawToCanvas(shapes: VectorShape[], ctx: CanvasRenderingContext2
   ctx.translate(-(b.minX + b.w / 2), -(b.minY + b.h / 2))
   for (const s of shapes) {
     const path = new Path2D(commandsToPathData(s.commands))
+    const rule: CanvasFillRule = s.fillRule === 'evenodd' ? 'evenodd' : 'nonzero'
     const paint = (s as GeoVectorShape).paint ?? s.fill
     if (paint) {
-      const style = resolvePaintCanvas(ctx, paint as Paint, { w: b.w, h: b.h }, STILL_FIELD)
-      ctx.fillStyle = (style as any) ?? FALLBACK_FILL
-      ctx.fill(path, s.fillRule === 'evenodd' ? 'evenodd' : 'nonzero')
+      if (typeof paint === 'string') {
+        // Solid colour ignores geometry — fill the document-space path directly.
+        ctx.fillStyle = paint
+        ctx.fill(path, rule)
+      } else {
+        // Gradient/ombre/pattern/shader anchors to the OBJECT it fills:
+        // `resolvePaintCanvas` centres the ramp on the drawing origin and spans
+        // the passed `{ w, h }`, so translate the origin to THIS shape's centre
+        // and pass its OWN bounds — otherwise every shape samples a slice of one
+        // mark-wide ramp (the bug). The path is redrawn in that shape-local frame
+        // (document path shifted by -centre) so it lands back at its real spot.
+        const sb = contentBounds([s])
+        const cx = sb.minX + sb.w / 2, cy = sb.minY + sb.h / 2
+        ctx.save()
+        ctx.translate(cx, cy)
+        const style = resolvePaintCanvas(ctx, paint as Paint, { w: sb.w, h: sb.h }, STILL_FIELD)
+        const local = new Path2D()
+        local.addPath(path, new DOMMatrix().translateSelf(-cx, -cy))
+        ctx.fillStyle = (style as any) ?? FALLBACK_FILL
+        ctx.fill(local, rule)
+        ctx.restore()
+      }
     }
     if (s.stroke) {
       ctx.strokeStyle = s.stroke
