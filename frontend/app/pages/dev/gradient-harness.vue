@@ -309,6 +309,7 @@ function sailorMultiLayerProbe(opts: { layout: string; size?: number; l0: any; l
   const base: any = cfg.layers[0]
   const applyLayer = (L: any, o: any) => {
     if (o.stops) L.color.stops = o.stops
+    if (o.layout) L.layout = o.layout   // per-layer layout override
     if (o.curve) L.curve = { ...CURVE_DEFAULTS, start: { ...CURVE_DEFAULTS.start }, end: { ...CURVE_DEFAULTS.end }, ...o.curve }
     if (o.ramp) L.ramp = { ...(L.ramp ?? {}), ...o.ramp }
   }
@@ -401,6 +402,38 @@ if (import.meta.client) {
   }
   ;(window as any).__sailorVisualGrid = sailorVisualGrid
   ;(window as any).__sailorMultiLayerProbe = sailorMultiLayerProbe
+  ;(window as any).__sailorPerLayerDemo = () => {
+    const S = 220
+    // Base blue LINEAR ramp (layer 0) + an orange→transparent layer 1 whose LAYOUT varies.
+    const build = (l1Layout: string, l1Extra: any = {}) => {
+      const c = ensureConfigDefaults(defaultConfig(HARNESS_SEED) as GradientConfig)
+      c.canvas.layout = 'ramp' as any
+      ;(c.layers[0] as any).color.stops = [{ color: '#1e63ff', pos: 0 }, { color: '#08123a', pos: 1 }]
+      ;(c.layers[0] as any).ramp = { ...(c.layers[0] as any).ramp, angle: 20 }
+      const top: any = JSON.parse(JSON.stringify(c.layers[0]))
+      top.layout = l1Layout
+      top.color.stops = [{ color: '#ff8a2aff', pos: 0 }, { color: '#ff2a6a00', pos: 1 }]
+      Object.assign(top, l1Extra)
+      top.blend = 'normal'; top.opacity = 1
+      c.layers = [c.layers[0], top]
+      return ensureConfigDefaults(c)
+    }
+    const cards: [string, GradientConfig][] = [
+      ['L0 linear · L1 radial', build('radialRamp', { ramp: { radius: 0.9, shape: 'circle', angle: 90, sweep: 360, closeLoop: false } })],
+      ['L0 linear · L1 conic', build('conic', { ramp: { angle: 0, sweep: 360, closeLoop: true, radius: 1, shape: 'circle' } })],
+      ['L0 linear · L1 curve', build('curve', { curve: { ...CURVE_DEFAULTS, start: { x: 0.1, y: 0.7 }, end: { x: 0.9, y: 0.3 }, shape: 'arc', curvature: 0.5, mode: 'outward', width: 0.25 } })],
+    ]
+    const host = document.getElementById('alpha-demo') || (() => { const d = document.createElement('div'); d.id = 'alpha-demo'; d.style.cssText = 'position:fixed;inset:0;z-index:99999;background:#111;display:flex;gap:16px;align-items:center;justify-content:center;color:#ddd;font:12px monospace'; document.body.appendChild(d); return d })()
+    host.innerHTML = ''
+    for (const [label, cfg] of cards) {
+      const wrap = document.createElement('div'); wrap.style.textAlign = 'center'
+      const cv = document.createElement('canvas'); cv.width = S; cv.height = S
+      cv.getContext('2d')!.drawImage(renderer.render(cfg, S, S, 0) as CanvasImageSource, 0, 0)
+      wrap.appendChild(cv); const l = document.createElement('div'); l.textContent = label; l.style.marginTop = '6px'; wrap.appendChild(l)
+      host.appendChild(wrap)
+    }
+    return cards.map(c => c[0])
+  }
   ;(window as any).__sailorAlphaDemo = () => {
     const S = 220
     // Both cards: same blue diagonal Linear bottom; top = orange Linear at 90°. Left top is
