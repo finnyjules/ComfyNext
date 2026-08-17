@@ -2,6 +2,12 @@ import tailwindcss from '@tailwindcss/vite'
 import http from 'node:http'
 import { fileURLToPath } from 'node:url'
 
+// Cache for the hosted-mode /ws upgrade auth Clerk client (see the inline WS
+// proxy module below). Module-scope so repeat upgrades don't reconstruct it.
+// Typed loosely — @clerk/backend is dynamically imported, never statically,
+// so config-eval in local mode never pays for (or resolves) this import.
+let wsAuthClerkClient: { authenticateRequest: (req: Request) => Promise<{ toAuth: () => { userId: string | null } | null }> } | null = null
+
 // img-fx bundles an optional React component alongside its framework-agnostic
 // core. We only use the core, so `react` + `react/jsx-runtime` are aliased to a
 // no-op stub — React never installs and never ships. See app/lib/imgfx/react-stub.ts.
@@ -89,64 +95,94 @@ export default defineNuxtConfig({
           // become an unhandled 'error' (ECONNRESET/EPIPE) that crashes dev.
           socket.on('error', () => socket.destroy())
 
-          // Resolve which ComfyUI instance to route to via `?comfyWorker=N`
-          // (N=0-based pool index → port 8189+N; absent/invalid/out-of-range
-          // → main instance :8188). This is an inlined duplicate of the
-          // ~10-line parse in server/utils/workerRoute.ts (resolveWorkerTarget)
-          // — that's the canonical implementation; nuxt.config.ts cannot
-          // import from server/utils at config-eval time, so keep these two
-          // in sync by hand if the rules ever change.
-          let wsPort = 8188
-          let wsPath = req.url ?? '/ws'
-          const qIdx = wsPath.indexOf('?')
-          if (qIdx !== -1) {
-            const params = new URLSearchParams(wsPath.slice(qIdx + 1))
-            if (params.has('comfyWorker')) {
-              const raw = params.get('comfyWorker')
-              const n = raw === null || raw === '' ? NaN : Number(raw)
-              if (Number.isInteger(n) && n >= 0 && n <= 7) wsPort = 8189 + n
-              params.delete('comfyWorker')
-              const rest = params.toString()
-              wsPath = rest ? `${wsPath.slice(0, qIdx)}?${rest}` : wsPath.slice(0, qIdx)
+          const proceed = () => {
+            // Resolve which ComfyUI instance to route to via `?comfyWorker=N`
+            // (N=0-based pool index → port 8189+N; absent/invalid/out-of-range
+            // → main instance :8188). This is an inlined duplicate of the
+            // ~10-line parse in server/utils/workerRoute.ts (resolveWorkerTarget)
+            // — that's the canonical implementation; nuxt.config.ts cannot
+            // import from server/utils at config-eval time, so keep these two
+            // in sync by hand if the rules ever change.
+            let wsPort = 8188
+            let wsPath = req.url ?? '/ws'
+            const qIdx = wsPath.indexOf('?')
+            if (qIdx !== -1) {
+              const params = new URLSearchParams(wsPath.slice(qIdx + 1))
+              if (params.has('comfyWorker')) {
+                const raw = params.get('comfyWorker')
+                const n = raw === null || raw === '' ? NaN : Number(raw)
+                if (Number.isInteger(n) && n >= 0 && n <= 7) wsPort = 8189 + n
+                params.delete('comfyWorker')
+                const rest = params.toString()
+                wsPath = rest ? `${wsPath.slice(0, qIdx)}?${rest}` : wsPath.slice(0, qIdx)
+              }
             }
+            const wsTarget = `127.0.0.1:${wsPort}`
+
+            const proxyReq = http.request({
+              hostname: '127.0.0.1',
+              port: wsPort,
+              path: wsPath,
+              method: 'GET',
+              // Rewrite Origin (and Host) to the ComfyUI origin so its
+              // origin-check middleware sees origin == host and returns 101
+              // instead of 403 — mirrors server/middleware/comfyui-proxy.ts.
+              headers: { ...req.headers, host: wsTarget, origin: `http://${wsTarget}` },
+            })
+
+            proxyReq.on('upgrade', (proxyRes, proxySocket, proxyHead) => {
+              proxySocket.on('error', () => socket.destroy())
+
+              let response = 'HTTP/1.1 101 Switching Protocols\r\n'
+              for (const [key, value] of Object.entries(proxyRes.headers)) {
+                if (value) response += `${key}: ${value}\r\n`
+              }
+              response += '\r\n'
+              socket.write(response)
+              if (proxyHead.length) socket.write(proxyHead)
+              proxySocket.pipe(socket)
+              socket.pipe(proxySocket)
+              // ECONNRESET/EPIPE on either side just tears down the peer — never
+              // an unhandled rejection.
+              proxySocket.on('error', () => socket.destroy())
+              socket.on('error', () => proxySocket.destroy())
+            })
+
+            proxyReq.on('error', (err) => {
+              console.error('[comfy-ws-proxy] upstream error:', (err as Error).message)
+              socket.destroy()
+            })
+
+            proxyReq.end()
           }
-          const wsTarget = `127.0.0.1:${wsPort}`
 
-          const proxyReq = http.request({
-            hostname: '127.0.0.1',
-            port: wsPort,
-            path: wsPath,
-            method: 'GET',
-            // Rewrite Origin (and Host) to the ComfyUI origin so its
-            // origin-check middleware sees origin == host and returns 101
-            // instead of 403 — mirrors server/middleware/comfyui-proxy.ts.
-            headers: { ...req.headers, host: wsTarget, origin: `http://${wsTarget}` },
-          })
-
-          proxyReq.on('upgrade', (proxyRes, proxySocket, proxyHead) => {
-            proxySocket.on('error', () => socket.destroy())
-
-            let response = 'HTTP/1.1 101 Switching Protocols\r\n'
-            for (const [key, value] of Object.entries(proxyRes.headers)) {
-              if (value) response += `${key}: ${value}\r\n`
-            }
-            response += '\r\n'
-            socket.write(response)
-            if (proxyHead.length) socket.write(proxyHead)
-            proxySocket.pipe(socket)
-            socket.pipe(proxySocket)
-            // ECONNRESET/EPIPE on either side just tears down the peer — never
-            // an unhandled rejection.
-            proxySocket.on('error', () => socket.destroy())
-            socket.on('error', () => proxySocket.destroy())
-          })
-
-          proxyReq.on('error', (err) => {
-            console.error('[comfy-ws-proxy] upstream error:', (err as Error).message)
+          // Stage 5: hosted dev servers authenticate the WS upgrade — the
+          // session cookie rides on the upgrade request's headers. Local mode
+          // (no Clerk key) proceeds exactly as before, synchronously, and
+          // never evaluates the @clerk/backend import.
+          const clerkKey = process.env.NUXT_CLERK_SECRET_KEY
+          if (!clerkKey) { proceed(); return }
+          void (async () => {
+            try {
+              if (!wsAuthClerkClient) {
+                const { createClerkClient } = await import('@clerk/backend')
+                wsAuthClerkClient = createClerkClient({
+                  secretKey: clerkKey,
+                  publishableKey: process.env.NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
+                })
+              }
+              const headers = new Headers()
+              for (const [k, v] of Object.entries(req.headers)) {
+                if (typeof v === 'string') headers.set(k, v)
+                else if (Array.isArray(v)) headers.set(k, v.join(', '))
+              }
+              const state = await wsAuthClerkClient.authenticateRequest(
+                new Request(`http://127.0.0.1${req.url}`, { method: 'GET', headers }))
+              if (state.toAuth()?.userId) { proceed(); return }
+            } catch { /* fall through to reject — fail closed */ }
+            socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n')
             socket.destroy()
-          })
-
-          proxyReq.end()
+          })()
         })
         console.log('[comfy-ws-proxy] WebSocket proxy for /ws → ComfyUI:8188 ready')
       })
