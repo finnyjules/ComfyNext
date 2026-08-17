@@ -31,6 +31,13 @@ async function latestVersion(model: string, token: string): Promise<string> {
 /**
  * Create a prediction and poll until it terminates. Returns `output`.
  * Throws a 5xx createError on failure/timeout.
+ *
+ * Metering (Stage 5 Task 2): preflightMeter takes a ledger HOLD before any
+ * provider HTTP call. Every path out of dispatch() that isn't "output in
+ * hand" throws, so a single catch here is the complete release wiring —
+ * model lookup failure, submit rejection, provider-reported failure/cancel,
+ * and poll timeout all give the reservation back. Without this, a failed job
+ * would keep the user's credits reserved until holdSweep's TTL.
  */
 export async function runReplicate(
   model: string,
@@ -39,6 +46,21 @@ export async function runReplicate(
   opts: { timeoutMs?: number; pollMs?: number } = {},
 ): Promise<unknown> {
   const ticket = await preflightMeter(model)
+  try {
+    return await dispatch(model, input, token, opts, ticket)
+  } catch (e) {
+    await ticket?.release()
+    throw e
+  }
+}
+
+async function dispatch(
+  model: string,
+  input: Record<string, unknown>,
+  token: string,
+  opts: { timeoutMs?: number; pollMs?: number },
+  ticket: Awaited<ReturnType<typeof preflightMeter>>,
+): Promise<unknown> {
   const timeoutMs = opts.timeoutMs ?? 90_000
   const pollMs = opts.pollMs ?? 1200
   const version = await latestVersion(model, token)

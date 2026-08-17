@@ -50,12 +50,34 @@ const savedKey = process.env[KEY]
 function setHosted(): void { process.env[KEY] = 'sk_test_hosted' }
 function setLocal(): void { delete process.env[KEY] }
 
-type FakeLedger = { getAvailable: ReturnType<typeof vi.fn>, debit: ReturnType<typeof vi.fn> }
+/**
+ * Stage 5 Task 2: preflight tickets are HOLD-based, so the fake reserves
+ * against a live counter. Training still charges AT START (the hold is
+ * settled the moment Replicate confirms the training was created) — that
+ * policy is unchanged; only the mechanism moved from debit to hold+settle.
+ */
+type FakeLedger = {
+  getAvailable: ReturnType<typeof vi.fn>
+  hold: ReturnType<typeof vi.fn>
+  settleHold: ReturnType<typeof vi.fn>
+  releaseHold: ReturnType<typeof vi.fn>
+  debit: ReturnType<typeof vi.fn>
+  setAvailable(n: number): void
+}
 function makeFakeLedger(opts: { available?: number } = {}): FakeLedger {
-  const available = opts.available ?? 10_000
+  let available = opts.available ?? 10_000
+  let holdSeq = 0
   return {
     getAvailable: vi.fn(async (_userId: string) => available),
+    hold: vi.fn(async (_userId: string, estimate: number, _key: string) => {
+      if (estimate > available) return { ok: false as const, reason: 'insufficient' as const }
+      available -= estimate
+      return { ok: true as const, holdId: ++holdSeq }
+    }),
+    settleHold: vi.fn(async (_holdId: number, _actual: number, _reason: string) => ({ ok: true as const, balance: 0, settled: true })),
+    releaseHold: vi.fn(async (_holdId: number) => {}),
     debit: vi.fn(async (_userId: string, _amount: number, _reason: string, _key: string) => ({ ok: true })),
+    setAvailable(n: number) { available = n },
   }
 }
 
@@ -79,17 +101,20 @@ describe('preflightMeterFor (context-free variant, no ALS)', () => {
     const ticket = await preflightMeterFor('u1', 'ostris/flux-dev-lora-trainer')
     expect(ticket).toBeNull()
     expect(fakeLedger.getAvailable).not.toHaveBeenCalled()
+    expect(fakeLedger.hold).not.toHaveBeenCalled()
   })
 
-  it('hosted, priced model, sufficient balance: returns a ticket; settle debits provider:<model> keyed by the given jobId', async () => {
+  it('hosted, priced model, sufficient balance: returns a ticket; settle settles the hold as provider:<model>', async () => {
     setHosted()
     const ticket = await preflightMeterFor('u1', 'ostris/flux-dev-lora-trainer')
     expect(ticket).not.toBeNull()
-    expect(fakeLedger.getAvailable).toHaveBeenCalledWith('u1')
+    expect(fakeLedger.hold).toHaveBeenCalledWith(
+      'u1', MODEL_COSTS['ostris/flux-dev-lora-trainer'].credits, expect.stringMatching(/^meter:/),
+    )
 
     await ticket!.settle('train:rep_123')
-    expect(fakeLedger.debit).toHaveBeenCalledWith(
-      'u1', MODEL_COSTS['ostris/flux-dev-lora-trainer'].credits, 'provider:ostris/flux-dev-lora-trainer', 'train:rep_123',
+    expect(fakeLedger.settleHold).toHaveBeenCalledWith(
+      1, MODEL_COSTS['ostris/flux-dev-lora-trainer'].credits, 'provider:ostris/flux-dev-lora-trainer',
     )
     // Book parity: 600cr, matching LoraTrainingNode's graph-table price.
     expect(MODEL_COSTS['ostris/flux-dev-lora-trainer'].credits).toBe(600)
@@ -107,7 +132,7 @@ describe('preflightMeterFor (context-free variant, no ALS)', () => {
 
   it('hosted, insufficient balance: throws 402 with {required, available}, never debits', async () => {
     setHosted()
-    fakeLedger.getAvailable.mockResolvedValue(100)
+    fakeLedger.setAvailable(100)
     const required = MODEL_COSTS['ostris/flux-dev-lora-trainer'].credits
     await expect(preflightMeterFor('u1', 'ostris/flux-dev-lora-trainer')).rejects.toMatchObject({
       statusCode: 402,
@@ -192,7 +217,7 @@ describe('trainingProviders.createReplicateProvider().start — debit-at-start m
 
   it('hosted mode, absent userId (legacy/keyless job): refuses BEFORE touching Replicate, never starts the provider', async () => {
     setHosted() // ledger IS reachable — proves the refusal is deployMode-driven, not a ledger failure
-    fakeLedger.getAvailable.mockResolvedValue(10_000)
+    fakeLedger.setAvailable(10_000)
     const fetchSpy = vi.fn(async () => res(200, {}))
     vi.stubGlobal('fetch', fetchSpy)
 
@@ -208,7 +233,7 @@ describe('trainingProviders.createReplicateProvider().start — debit-at-start m
 
   it('hosted mode, explicit-null userId (local-mode-shaped record replayed on a hosted server): same refusal as absent', async () => {
     setHosted()
-    fakeLedger.getAvailable.mockResolvedValue(10_000)
+    fakeLedger.setAvailable(10_000)
     const fetchSpy = vi.fn(async () => res(200, {}))
     vi.stubGlobal('fetch', fetchSpy)
 
@@ -223,49 +248,46 @@ describe('trainingProviders.createReplicateProvider().start — debit-at-start m
 
   it('hosted job with userId, family flux: preflights ostris/flux-dev-lora-trainer at 600cr, settles train:<id> after Replicate confirms the start', async () => {
     setHosted()
-    fakeLedger.getAvailable.mockResolvedValue(10_000)
+    fakeLedger.setAvailable(10_000)
     stubLoraStartFetches('train_flux_1')
 
     const provider = createReplicateProvider(() => 'tok')
     const result = await provider.start(job({ userId: 'u1', params: { family: 'flux' } }))
 
     expect(result.replicateId).toBe('train_flux_1')
-    expect(fakeLedger.getAvailable).toHaveBeenCalledWith('u1')
-    expect(fakeLedger.debit).toHaveBeenCalledWith(
-      'u1', 600, 'provider:ostris/flux-dev-lora-trainer', 'train:train_flux_1',
-    )
+    expect(fakeLedger.hold).toHaveBeenCalledWith('u1', 600, expect.stringMatching(/^meter:/))
+    expect(fakeLedger.settleHold).toHaveBeenCalledWith(1, 600, 'provider:ostris/flux-dev-lora-trainer')
+    expect(fakeLedger.releaseHold).not.toHaveBeenCalled()
   })
 
   it('hosted job with userId, family sdxl_sd15: preflights ostris/sdxl-lora-trainer, still 600cr', async () => {
     setHosted()
-    fakeLedger.getAvailable.mockResolvedValue(10_000)
+    fakeLedger.setAvailable(10_000)
     stubLoraStartFetches('train_sdxl_1')
 
     const provider = createReplicateProvider(() => 'tok')
     await provider.start(job({ userId: 'u1', params: { family: 'sdxl_sd15' } }))
 
-    expect(fakeLedger.debit).toHaveBeenCalledWith(
-      'u1', 600, 'provider:ostris/sdxl-lora-trainer', 'train:train_sdxl_1',
-    )
+    expect(fakeLedger.settleHold).toHaveBeenCalledWith(1, 600, 'provider:ostris/sdxl-lora-trainer')
   })
 
   it('hosted voice job with userId: preflights minimax/voice-cloning, settles train:<prediction id>', async () => {
     setHosted()
-    fakeLedger.getAvailable.mockResolvedValue(10_000)
+    fakeLedger.setAvailable(10_000)
     stubVoiceStartFetches('pred_voice_1')
 
     const provider = createReplicateProvider(() => 'tok')
     const result = await provider.start(job({ kind: 'voice', userId: 'u1', params: {} }))
 
     expect(result.replicateId).toBe('pred_voice_1')
-    expect(fakeLedger.debit).toHaveBeenCalledWith(
-      'u1', MODEL_COSTS['minimax/voice-cloning'].credits, 'provider:minimax/voice-cloning', 'train:pred_voice_1',
+    expect(fakeLedger.settleHold).toHaveBeenCalledWith(
+      1, MODEL_COSTS['minimax/voice-cloning'].credits, 'provider:minimax/voice-cloning',
     )
   })
 
   it('insufficient credits: refuses BEFORE touching Replicate, message carries the required/available numbers (what tickQueue records on the failed job — it only reads err.message)', async () => {
     setHosted()
-    fakeLedger.getAvailable.mockResolvedValue(37)
+    fakeLedger.setAvailable(37)
     const fetchSpy = vi.fn(async () => res(200, {}))
     vi.stubGlobal('fetch', fetchSpy)
 
@@ -278,9 +300,9 @@ describe('trainingProviders.createReplicateProvider().start — debit-at-start m
     expect(fakeLedger.debit).not.toHaveBeenCalled()
   })
 
-  it('Replicate rejects the training creation after a successful preflight: ticket is never settled (no charge for a job that never started)', async () => {
+  it('Replicate rejects the training creation after a successful preflight: hold is RELEASED, never settled (no charge, no locked credits)', async () => {
     setHosted()
-    fakeLedger.getAvailable.mockResolvedValue(10_000)
+    fakeLedger.setAvailable(10_000)
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       if (url.includes('/account')) return res(200, { username: 'jules' })
       if (url.includes('/trainings')) return res(500, 'upstream error') // the actual training-create call fails
@@ -290,8 +312,9 @@ describe('trainingProviders.createReplicateProvider().start — debit-at-start m
     const provider = createReplicateProvider(() => 'tok')
     await expect(provider.start(job({ userId: 'u1' }))).rejects.toThrow()
 
-    expect(fakeLedger.getAvailable).toHaveBeenCalled() // preflight DID run
-    expect(fakeLedger.debit).not.toHaveBeenCalled() // but never charged — start never confirmed
+    expect(fakeLedger.hold).toHaveBeenCalled() // preflight DID reserve
+    expect(fakeLedger.settleHold).not.toHaveBeenCalled() // but never charged — start never confirmed
+    expect(fakeLedger.releaseHold).toHaveBeenCalledWith(1) // and the reservation came back
   })
 })
 

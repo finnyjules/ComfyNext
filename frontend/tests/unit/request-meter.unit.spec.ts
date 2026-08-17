@@ -23,6 +23,7 @@ import {
   clearMeterContext,
   currentMeterContext,
   preflightMeter,
+  preflightMeterFor,
   resolveCredits,
   settleModel,
   setMeterPriceHint,
@@ -39,17 +40,38 @@ function setLocal(): void {
   delete process.env[KEY]
 }
 
+/**
+ * Task 2 (Stage 5): the fake now implements the HOLD-based LedgerLike —
+ * `hold` really reserves against a live available counter, so a test can
+ * reproduce the parallel-preflight leak instead of only asserting call
+ * arguments. `debit` stays on the shape because settleModel/anthropicMeter
+ * keep their debit-only paths.
+ */
 type FakeLedger = {
   getAvailable: ReturnType<typeof vi.fn>
+  hold: ReturnType<typeof vi.fn>
+  settleHold: ReturnType<typeof vi.fn>
+  releaseHold: ReturnType<typeof vi.fn>
   debit: ReturnType<typeof vi.fn>
+  setAvailable(n: number): void
 }
 
-function makeFakeLedger(opts: { available?: number; debitImpl?: () => Promise<{ ok: boolean }> } = {}): FakeLedger {
-  const available = opts.available ?? 1000
-  return {
+function makeFakeLedger(opts: { available?: number } = {}): FakeLedger {
+  let available = opts.available ?? 1000
+  let holdSeq = 0
+  const fake: FakeLedger = {
     getAvailable: vi.fn(async (_userId: string) => available),
-    debit: vi.fn(opts.debitImpl ?? (async (_userId: string, _amount: number, _reason: string, _key: string) => ({ ok: true }))),
+    hold: vi.fn(async (_userId: string, estimate: number, _key: string) => {
+      if (estimate > available) return { ok: false as const, reason: 'insufficient' as const }
+      available -= estimate // a real reservation — the next hold sees less
+      return { ok: true as const, holdId: ++holdSeq }
+    }),
+    settleHold: vi.fn(async (_holdId: number, _actual: number, _reason: string) => ({ ok: true as const, balance: 0, settled: true })),
+    releaseHold: vi.fn(async (_holdId: number) => {}),
+    debit: vi.fn(async (_userId: string, _amount: number, _reason: string, _key: string) => ({ ok: true })),
+    setAvailable(n: number) { available = n },
   }
+  return fake
 }
 
 let fakeLedger: FakeLedger
@@ -170,6 +192,9 @@ describe('preflightMeter', () => {
     const ticket = await preflightMeter('black-forest-labs/flux-dev')
     expect(ticket).toBeNull()
     expect(fakeLedger.getAvailable).not.toHaveBeenCalled()
+    expect(fakeLedger.hold).not.toHaveBeenCalled()
+    expect(fakeLedger.settleHold).not.toHaveBeenCalled()
+    expect(fakeLedger.releaseHold).not.toHaveBeenCalled()
     expect(fakeLedger.debit).not.toHaveBeenCalled()
   })
 
@@ -180,6 +205,7 @@ describe('preflightMeter', () => {
       message: expect.stringContaining('unmetered spend refused'),
     })
     expect(fakeLedger.getAvailable).not.toHaveBeenCalled()
+    expect(fakeLedger.hold).not.toHaveBeenCalled()
   })
 
   it('(b2) the rejection is a MeterRefusalError instance', async () => {
@@ -195,32 +221,37 @@ describe('preflightMeter', () => {
       message: expect.stringContaining('unpriced model refused: black-forest-labs/not-in-book'),
     })
     expect(fakeLedger.getAvailable).not.toHaveBeenCalled()
+    expect(fakeLedger.hold).not.toHaveBeenCalled()
   })
 
-  it('(d) hosted, personal LoRA slug: prices by category, checks available, settle debits correctly', async () => {
+  it('(d) hosted, personal LoRA slug: prices by category, RESERVES via hold, settle settles that hold', async () => {
     setHosted()
     bindMeterContext({ userId: 'u1' })
-    fakeLedger.getAvailable.mockResolvedValue(100)
+    fakeLedger.setAvailable(100)
 
     const ticket = await preflightMeter('finnyjules/jules-jene')
     expect(ticket).not.toBeNull()
-    expect(fakeLedger.getAvailable).toHaveBeenCalledWith('u1')
+    expect(fakeLedger.hold).toHaveBeenCalledWith('u1', LORA_RENDER_CREDITS, expect.stringMatching(/^meter:/))
 
     await ticket!.settle('fal:REQ1')
-    expect(fakeLedger.debit).toHaveBeenCalledWith('u1', LORA_RENDER_CREDITS, 'provider:finnyjules/jules-jene', 'fal:REQ1')
+    expect(fakeLedger.settleHold).toHaveBeenCalledWith(1, LORA_RENDER_CREDITS, 'provider:finnyjules/jules-jene')
+    // The hold IS the charge — no separate debit on the provider path.
+    expect(fakeLedger.debit).not.toHaveBeenCalled()
   })
 
-  it('(e) hosted, priced slug with insufficient available: throws 402 with {required, available}', async () => {
+  it('(e) hosted, priced slug the hold refuses: throws 402 with {required, available} read from getAvailable', async () => {
     setHosted()
     bindMeterContext({ userId: 'u1' })
     const priced = 'black-forest-labs/flux-dev'
     const required = MODEL_COSTS[priced].credits
-    fakeLedger.getAvailable.mockResolvedValue(required - 1)
+    fakeLedger.setAvailable(required - 1)
 
     await expect(preflightMeter(priced)).rejects.toMatchObject({
       statusCode: 402,
       data: { required, available: required - 1 },
     })
+    expect(fakeLedger.hold).toHaveBeenCalledTimes(1)
+    expect(fakeLedger.settleHold).not.toHaveBeenCalled()
     expect(fakeLedger.debit).not.toHaveBeenCalled()
   })
 
@@ -228,27 +259,27 @@ describe('preflightMeter', () => {
     setHosted()
     bindMeterContext({ userId: 'u1' })
     setMeterPriceHint(15)
-    fakeLedger.getAvailable.mockResolvedValue(100)
+    fakeLedger.setAvailable(100)
 
     const ticket = await preflightMeter('black-forest-labs/not-in-book')
     expect(ticket).not.toBeNull()
 
     await ticket!.settle('job-hinted')
-    expect(fakeLedger.debit).toHaveBeenCalledWith('u1', 15, 'provider:black-forest-labs/not-in-book', 'job-hinted')
+    expect(fakeLedger.settleHold).toHaveBeenCalledWith(1, 15, 'provider:black-forest-labs/not-in-book')
   })
 
-  it('(g) settle logs loudly and does not rethrow when the ledger debit throws', async () => {
+  it('(g) settle logs loudly and does not rethrow when settleHold throws', async () => {
     setHosted()
     bindMeterContext({ userId: 'u1' })
-    fakeLedger.getAvailable.mockResolvedValue(100)
-    fakeLedger.debit.mockRejectedValue(new Error('ledger exploded'))
+    fakeLedger.setAvailable(100)
+    fakeLedger.settleHold.mockRejectedValue(new Error('ledger exploded'))
 
     const ticket = await preflightMeter('finnyjules/jules-jene')
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
     try {
       await expect(ticket!.settle('job-boom')).resolves.toBeUndefined()
       expect(spy).toHaveBeenCalledWith(
-        expect.stringContaining('[meter] DEBIT FAILED after successful job'),
+        expect.stringContaining('[meter] SETTLE FAILED after successful job'),
         expect.anything(),
       )
     } finally {
@@ -256,23 +287,95 @@ describe('preflightMeter', () => {
     }
   })
 
-  it('(g2) settle also logs loudly (does not throw) when the ledger resolves ok:false', async () => {
+  it('(g2) settle escalates loudly when the hold was already released (settled:false — output shipped uncharged)', async () => {
     setHosted()
     bindMeterContext({ userId: 'u1' })
-    fakeLedger.getAvailable.mockResolvedValue(100)
-    fakeLedger.debit.mockResolvedValue({ ok: false })
+    fakeLedger.setAvailable(100)
+    fakeLedger.settleHold.mockResolvedValue({ ok: true, balance: 0, settled: false })
 
     const ticket = await preflightMeter('finnyjules/jules-jene')
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
     try {
-      await expect(ticket!.settle('job-insufficient')).resolves.toBeUndefined()
+      await expect(ticket!.settle('job-released')).resolves.toBeUndefined()
       expect(spy).toHaveBeenCalledWith(
-        expect.stringContaining('[meter] DEBIT FAILED after successful job'),
+        expect.stringContaining('[meter] SETTLE ON RELEASED HOLD'),
         expect.anything(),
       )
     } finally {
       spy.mockRestore()
     }
+  })
+
+  /**
+   * THE LEAK REPRODUCTION (Stage 5 Task 2). Under the old debit-only
+   * preflight, every in-flight request checked `getAvailable` against an
+   * untouched balance: N parallel expensive calls all passed the same
+   * preflight and only discovered the shortfall at settle time, when the
+   * provider work had already been paid for. With holds, preflight #1
+   * RESERVES its estimate, so preflight #3 sees only what is left.
+   *
+   * Broken control (observed RED, before requestMeter.ts was converted):
+   *   AssertionError: promise resolved "{ settle: [AsyncFunction settle] }"
+   *   instead of rejecting
+   * — the third preflight sailed through because the old code path never
+   * called `hold` at all (fakeLedger.hold call count was 0).
+   */
+  it('sequential preflights cannot overshoot one balance (hold-based)', async () => {
+    setHosted()
+    const model = 'black-forest-labs/flux-dev'
+    const price = MODEL_COSTS[model].credits // 5cr
+    fakeLedger.setAvailable(price * 2)
+
+    await preflightMeterFor('u1', model) // reserves 5 — ok
+    await preflightMeterFor('u1', model) // reserves 5 — ok, nothing left
+    await expect(preflightMeterFor('u1', model)).rejects.toMatchObject({ statusCode: 402 })
+
+    expect(fakeLedger.hold).toHaveBeenCalledTimes(3)
+    expect(fakeLedger.hold.mock.results[2]).toBeDefined()
+  })
+
+  it('ticket.release releases the hold and never settles it', async () => {
+    setHosted()
+    bindMeterContext({ userId: 'u1' })
+    fakeLedger.setAvailable(100)
+
+    const ticket = await preflightMeter('finnyjules/jules-jene')
+    await ticket!.release()
+
+    expect(fakeLedger.releaseHold).toHaveBeenCalledWith(1)
+    expect(fakeLedger.settleHold).not.toHaveBeenCalled()
+    expect(fakeLedger.debit).not.toHaveBeenCalled()
+  })
+
+  it('ticket.release swallows + logs a releaseHold failure (must never crash a failure path)', async () => {
+    setHosted()
+    bindMeterContext({ userId: 'u1' })
+    fakeLedger.setAvailable(100)
+    fakeLedger.releaseHold.mockRejectedValue(new Error('ledger exploded'))
+
+    const ticket = await preflightMeter('finnyjules/jules-jene')
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      await expect(ticket!.release()).resolves.toBeUndefined()
+      expect(spy).toHaveBeenCalledWith(
+        expect.stringContaining('[meter] HOLD RELEASE FAILED'),
+        expect.anything(),
+      )
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('each preflight gets its own idempotency key (two holds are never deduped into one)', async () => {
+    setHosted()
+    fakeLedger.setAvailable(1000)
+
+    await preflightMeterFor('u1', 'black-forest-labs/flux-dev')
+    await preflightMeterFor('u1', 'black-forest-labs/flux-dev')
+
+    const keys = fakeLedger.hold.mock.calls.map(c => c[2])
+    expect(keys[0]).not.toBe(keys[1])
+    expect(keys[0]).toMatch(/^meter:/)
   })
 })
 
@@ -294,7 +397,7 @@ describe('MeterRefusalError is h3-shaped', () => {
     bindMeterContext({ userId: 'u1' })
     const priced = 'black-forest-labs/flux-dev'
     const required = MODEL_COSTS[priced].credits
-    fakeLedger.getAvailable.mockResolvedValue(required - 1)
+    fakeLedger.setAvailable(required - 1)
 
     try {
       await preflightMeter(priced)

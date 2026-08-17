@@ -63,57 +63,65 @@ export default defineEventHandler(async (event) => {
   // finnyjules/*), so resolveCredits prices it via the LoRA category rather
   // than a MODEL_COSTS row. Gate before dispatch; settle on confirmed success.
   const ticket = await preflightMeter(modelRef)
+  try {
 
-  const headers = { Authorization: `Token ${token}`, 'Content-Type': 'application/json' }
+    const headers = { Authorization: `Token ${token}`, 'Content-Type': 'application/json' }
 
-  // Resolve the model's latest version, then run it (private models 404 on the
-  // model-aliased predictions endpoint, so go straight to versioned /predictions).
-  const mRes = await fetch(`https://api.replicate.com/v1/models/${modelRef}`, { headers })
-  if (!mRes.ok) throw createError({ statusCode: 502, message: `Could not look up ${modelRef}` })
-  const version = ((await mRes.json()) as any).latest_version?.id
-  if (!version) throw createError({ statusCode: 502, message: `${modelRef} has no version` })
+    // Resolve the model's latest version, then run it (private models 404 on the
+    // model-aliased predictions endpoint, so go straight to versioned /predictions).
+    const mRes = await fetch(`https://api.replicate.com/v1/models/${modelRef}`, { headers })
+    if (!mRes.ok) throw createError({ statusCode: 502, message: `Could not look up ${modelRef}` })
+    const version = ((await mRes.json()) as any).latest_version?.id
+    if (!version) throw createError({ statusCode: 502, message: `${modelRef} has no version` })
 
-  const cRes = await fetch('https://api.replicate.com/v1/predictions', {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      version,
-      input: {
-        prompt,
-        aspect_ratio: '1:1',
-        megapixels: '1',
-        num_inference_steps: 22,
-        guidance_scale: 3.5,
-        num_outputs: 1,
-        output_format: 'webp',
-        lora_scale: 1,
-      },
-    }),
-  })
-  if (!cRes.ok) {
-    throw createError({ statusCode: cRes.status, message: `Cover generation failed: ${await cRes.text().catch(() => cRes.statusText)}` })
+    const cRes = await fetch('https://api.replicate.com/v1/predictions', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        version,
+        input: {
+          prompt,
+          aspect_ratio: '1:1',
+          megapixels: '1',
+          num_inference_steps: 22,
+          guidance_scale: 3.5,
+          num_outputs: 1,
+          output_format: 'webp',
+          lora_scale: 1,
+        },
+      }),
+    })
+    if (!cRes.ok) {
+      throw createError({ statusCode: cRes.status, message: `Cover generation failed: ${await cRes.text().catch(() => cRes.statusText)}` })
+    }
+    let pred = await cRes.json() as { id: string, status: string, output?: unknown, error?: unknown }
+
+    const deadline = Date.now() + 120_000
+    while (!['succeeded', 'failed', 'canceled'].includes(pred.status)) {
+      if (Date.now() > deadline) throw createError({ statusCode: 504, message: 'Cover generation timed out' })
+      await new Promise((r) => setTimeout(r, 1500))
+      const pr = await fetch(`https://api.replicate.com/v1/predictions/${pred.id}`, { headers: { Authorization: `Token ${token}` } })
+      if (pr.ok) pred = await pr.json()
+    }
+    if (pred.status !== 'succeeded') {
+      throw createError({ statusCode: 502, message: `Cover generation ${pred.status}: ${String(pred.error ?? '')}` })
+    }
+    await ticket?.settle('rep:' + pred.id)
+
+    const out = pred.output
+    const imgUrl = Array.isArray(out) ? out[0] : (typeof out === 'string' ? out : null)
+    if (!imgUrl) throw createError({ statusCode: 502, message: 'Cover generation returned no image' })
+
+    const dl = await fetch(imgUrl)
+    if (!dl.ok) throw createError({ statusCode: 502, message: `Could not download cover (${dl.status})` })
+    await fs.writeFile(path.join(lorasDir, `${base}.cover.webp`), Buffer.from(await dl.arrayBuffer()))
+
+    return { ok: true, coverUrl: `/api/lora-cover?name=${encodeURIComponent(name)}&v=${Date.now()}` }
+  } catch (e) {
+    // Any throw past the preflight means no output shipped — hand the
+    // reservation back instead of letting it sit until holdSweep's TTL.
+    // (Releasing an already-settled hold is an idempotent no-op.)
+    await ticket?.release()
+    throw e
   }
-  let pred = await cRes.json() as { id: string, status: string, output?: unknown, error?: unknown }
-
-  const deadline = Date.now() + 120_000
-  while (!['succeeded', 'failed', 'canceled'].includes(pred.status)) {
-    if (Date.now() > deadline) throw createError({ statusCode: 504, message: 'Cover generation timed out' })
-    await new Promise((r) => setTimeout(r, 1500))
-    const pr = await fetch(`https://api.replicate.com/v1/predictions/${pred.id}`, { headers: { Authorization: `Token ${token}` } })
-    if (pr.ok) pred = await pr.json()
-  }
-  if (pred.status !== 'succeeded') {
-    throw createError({ statusCode: 502, message: `Cover generation ${pred.status}: ${String(pred.error ?? '')}` })
-  }
-  await ticket?.settle('rep:' + pred.id)
-
-  const out = pred.output
-  const imgUrl = Array.isArray(out) ? out[0] : (typeof out === 'string' ? out : null)
-  if (!imgUrl) throw createError({ statusCode: 502, message: 'Cover generation returned no image' })
-
-  const dl = await fetch(imgUrl)
-  if (!dl.ok) throw createError({ statusCode: 502, message: `Could not download cover (${dl.status})` })
-  await fs.writeFile(path.join(lorasDir, `${base}.cover.webp`), Buffer.from(await dl.arrayBuffer()))
-
-  return { ok: true, coverUrl: `/api/lora-cover?name=${encodeURIComponent(name)}&v=${Date.now()}` }
 })

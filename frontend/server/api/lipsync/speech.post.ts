@@ -25,48 +25,56 @@ export default defineEventHandler(async (event) => {
   // Paid: creates a Replicate prediction on SPEECH_MODEL. Gate before dispatch;
   // settle only once the prediction has actually reached 'succeeded' below.
   const ticket = await preflightMeter(SPEECH_MODEL)
+  try {
 
-  const headers = { Authorization: `Token ${token}`, 'Content-Type': 'application/json' }
+    const headers = { Authorization: `Token ${token}`, 'Content-Type': 'application/json' }
 
-  // Official-model predictions endpoint (no version lookup needed).
-  const createRes = await fetch(`https://api.replicate.com/v1/models/${SPEECH_MODEL}/predictions`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ input: { text, voice_id: voiceId } }),
-  })
-  if (!createRes.ok) {
-    const errText = await createRes.text().catch(() => '')
-    throw createError({ statusCode: createRes.status, message: errText || `speech gen failed: ${createRes.statusText}` })
-  }
-  let pred = await createRes.json() as { id: string, status: string, output?: string | string[], error?: unknown }
-
-  // Poll until terminal (Speech-02-turbo is short, a handful of seconds).
-  const deadline = Date.now() + 60_000
-  while (pred.status !== 'succeeded' && pred.status !== 'failed' && pred.status !== 'canceled') {
-    if (Date.now() > deadline) {
-      throw createError({ statusCode: 504, message: 'Speech generation timed out' })
+    // Official-model predictions endpoint (no version lookup needed).
+    const createRes = await fetch(`https://api.replicate.com/v1/models/${SPEECH_MODEL}/predictions`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ input: { text, voice_id: voiceId } }),
+    })
+    if (!createRes.ok) {
+      const errText = await createRes.text().catch(() => '')
+      throw createError({ statusCode: createRes.status, message: errText || `speech gen failed: ${createRes.statusText}` })
     }
-    await new Promise((r) => setTimeout(r, 1500))
-    const pollRes = await fetch(`https://api.replicate.com/v1/predictions/${pred.id}`, { headers })
-    if (!pollRes.ok) continue
-    pred = await pollRes.json()
+    let pred = await createRes.json() as { id: string, status: string, output?: string | string[], error?: unknown }
+
+    // Poll until terminal (Speech-02-turbo is short, a handful of seconds).
+    const deadline = Date.now() + 60_000
+    while (pred.status !== 'succeeded' && pred.status !== 'failed' && pred.status !== 'canceled') {
+      if (Date.now() > deadline) {
+        throw createError({ statusCode: 504, message: 'Speech generation timed out' })
+      }
+      await new Promise((r) => setTimeout(r, 1500))
+      const pollRes = await fetch(`https://api.replicate.com/v1/predictions/${pred.id}`, { headers })
+      if (!pollRes.ok) continue
+      pred = await pollRes.json()
+    }
+    if (pred.status !== 'succeeded') {
+      throw createError({ statusCode: 502, message: `Speech generation ${pred.status}: ${String(pred.error ?? '')}` })
+    }
+    await ticket?.settle('rep:' + pred.id)
+
+    const url = Array.isArray(pred.output) ? pred.output[0] : pred.output
+    if (!url) throw createError({ statusCode: 502, message: 'speech gen returned no audio' })
+
+    // Download the mp3 and drop it into the ComfyUI input dir.
+    const audioRes = await fetch(url)
+    if (!audioRes.ok) throw createError({ statusCode: 502, message: `could not fetch generated audio: ${audioRes.status}` })
+    const buf = Buffer.from(await audioRes.arrayBuffer())
+    const inputDir = path.resolve(process.cwd(), '..', 'input')
+    await fs.mkdir(inputDir, { recursive: true })
+    const filename = `lipsync-voice_${Date.now()}.mp3`
+    await fs.writeFile(path.join(inputDir, filename), buf)
+
+    return { viewUrl: `/view?${new URLSearchParams({ filename, type: 'input' })}` }
+  } catch (e) {
+    // Any throw past the preflight means no output shipped — hand the
+    // reservation back instead of letting it sit until holdSweep's TTL.
+    // (Releasing an already-settled hold is an idempotent no-op.)
+    await ticket?.release()
+    throw e
   }
-  if (pred.status !== 'succeeded') {
-    throw createError({ statusCode: 502, message: `Speech generation ${pred.status}: ${String(pred.error ?? '')}` })
-  }
-  await ticket?.settle('rep:' + pred.id)
-
-  const url = Array.isArray(pred.output) ? pred.output[0] : pred.output
-  if (!url) throw createError({ statusCode: 502, message: 'speech gen returned no audio' })
-
-  // Download the mp3 and drop it into the ComfyUI input dir.
-  const audioRes = await fetch(url)
-  if (!audioRes.ok) throw createError({ statusCode: 502, message: `could not fetch generated audio: ${audioRes.status}` })
-  const buf = Buffer.from(await audioRes.arrayBuffer())
-  const inputDir = path.resolve(process.cwd(), '..', 'input')
-  await fs.mkdir(inputDir, { recursive: true })
-  const filename = `lipsync-voice_${Date.now()}.mp3`
-  await fs.writeFile(path.join(inputDir, filename), buf)
-
-  return { viewUrl: `/view?${new URLSearchParams({ filename, type: 'input' })}` }
 })

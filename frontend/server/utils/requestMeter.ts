@@ -54,6 +54,7 @@
  * __resetMeterContextForTests).
  */
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { randomUUID } from 'node:crypto'
 import { deployMode } from './deployMode'
 import { costForModel, LORA_RENDER_CREDITS, LORA_SLUG_OWNERS, MODEL_COSTS } from './priceBook'
 import { getLiveLedger } from './ledgerLive'
@@ -178,10 +179,38 @@ export function resolveCredits(model: string, hint?: number): number | null {
   return null
 }
 
-export interface MeterTicket { settle(jobId: string): Promise<void> }
+/**
+ * A reservation on the caller's wallet, taken BEFORE the provider is
+ * dispatched. Exactly one of settle/release must eventually be called:
+ *  - settle(jobId) — the job confirmed success; convert the reservation
+ *    into a real charge.
+ *  - release() — the job never shipped output (submit threw, provider
+ *    reported failure, polling gave up); give the reservation back.
+ * A ticket that is neither settled nor released (crashed process) is swept
+ * by holdSweep.ts after HOLD_TTL_MS rather than locking credits forever.
+ */
+export interface MeterTicket {
+  settle(jobId: string): Promise<void>
+  release(): Promise<void>
+}
 
+/**
+ * Stage 5 Task 2: the provider path moved from debit-only preflight to
+ * ledger HOLDS. The old shape read getAvailable and compared — which meant
+ * N parallel expensive requests each preflighted against the SAME untouched
+ * balance and all passed, then all debited: a real overspend leak. `hold`
+ * reserves inside the ledger's own transaction, so the second request sees
+ * the first request's reservation.
+ *
+ * `debit` stays on this type on purpose — settleModel (async jobs confirmed
+ * on a later request), anthropicMeter's flat-rate assist gate, and the
+ * training providers keep their debit-only paths.
+ */
 export type LedgerLike = {
   getAvailable(userId: string): Promise<number>
+  hold(userId: string, estimate: number, idempotencyKey: string): Promise<{ ok: true; holdId: number } | { ok: false; reason: 'insufficient' }>
+  settleHold(holdId: number, actual: number, reason: string): Promise<{ ok: true; balance: number; settled: boolean }>
+  releaseHold(holdId: number): Promise<void>
   debit(userId: string, amount: number, reason: string, idempotencyKey: string): Promise<{ ok: boolean }>
 }
 
@@ -198,15 +227,34 @@ export function __setLedgerForTests(ledger: LedgerLike | null): void {
  * directly and bypassing that test seam.
  */
 export function getLedger(): LedgerLike {
-  return ledgerOverride ?? getLiveLedger()
+  if (ledgerOverride) return ledgerOverride
+  // Adapter over the real ledger: its hold/settle/release are named for the
+  // ledger's own vocabulary, LedgerLike names them for the meter's. Kept
+  // inline (rather than in ledgerLive.ts) so the shape the test seam has to
+  // satisfy lives next to the code that consumes it.
+  const live = getLiveLedger()
+  return {
+    getAvailable: userId => live.getAvailable(userId),
+    hold: (userId, estimate, idempotencyKey) => live.hold(userId, estimate, idempotencyKey),
+    settleHold: (holdId, actual, reason) => live.settle(holdId, actual, reason),
+    releaseHold: holdId => live.release(holdId),
+    debit: (userId, amount, reason, idempotencyKey) => live.debit(userId, amount, reason, idempotencyKey),
+  }
 }
 
 /**
  * Shared core for both preflightMeter (ALS-bound userId) and preflightMeterFor
  * (explicit userId, for callers with no request/ALS context). Local mode →
  * null (no-op ticket, no ledger touched at all). Hosted mode fails closed at
- * every step: no price or insufficient balance both refuse rather than
- * letting spend through unpriced or unmetered.
+ * every step: no price or a refused hold both refuse rather than letting
+ * spend through unpriced or unmetered.
+ *
+ * The hold's idempotency key is a fresh UUID per preflight — deliberately
+ * NOT derived from (userId, model), because the ledger dedupes holds on
+ * (user_id, idempotency_key): a shared key would silently collapse two
+ * genuinely concurrent renders into ONE reservation and reopen the very leak
+ * this replaces. The key exists only to make a retried hold call idempotent
+ * within a single preflight, which is exactly one call.
  */
 async function preflightForUser(userId: string, model: string, priceHintCredits?: number): Promise<MeterTicket | null> {
   if (deployMode() === 'local') return null
@@ -215,20 +263,35 @@ async function preflightForUser(userId: string, model: string, priceHintCredits?
   if (credits === null) throw new MeterRefusalError(`unpriced model refused: ${model}`, 500)
 
   const ledger = getLedger()
-  const available = await ledger.getAvailable(userId)
-  if (available < credits) {
+  const res = await ledger.hold(userId, credits, `meter:${randomUUID()}`)
+  if (!res.ok) {
+    // The refusal body still quotes a real number for the UI, read after
+    // the refused hold (which reserved nothing, so this is the true figure).
+    const available = await ledger.getAvailable(userId)
     throw new MeterRefusalError('insufficient credits', 402, { required: credits, available })
   }
+  const holdId = res.holdId
 
   return {
     async settle(jobId: string): Promise<void> {
       try {
-        const result = await ledger.debit(userId, credits, `provider:${model}`, jobId)
-        if (!result.ok) {
-          console.error('[meter] DEBIT FAILED after successful job', { userId, model, credits, jobId, result })
+        const r = await ledger.settleHold(holdId, credits, `provider:${model}`)
+        if (!r.settled) {
+          // The hold was already released (sweep, or a double-release on a
+          // failure path) — the provider output shipped and nobody paid.
+          console.error('[meter] SETTLE ON RELEASED HOLD — output shipped uncharged', { userId, model, credits, jobId, holdId })
         }
       } catch (e) {
-        console.error('[meter] DEBIT FAILED after successful job', { userId, model, credits, jobId, error: e })
+        console.error('[meter] SETTLE FAILED after successful job', { userId, model, credits, jobId, holdId, error: e })
+      }
+    },
+    async release(): Promise<void> {
+      // Release runs on failure paths that are already throwing — it must
+      // never replace the caller's real error with a ledger error.
+      try {
+        await ledger.releaseHold(holdId)
+      } catch (e) {
+        console.error('[meter] HOLD RELEASE FAILED', { userId, model, holdId, error: e })
       }
     },
   }

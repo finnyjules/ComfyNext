@@ -26,12 +26,34 @@ interface FalSubmit {
   response_url?: string
 }
 
+/**
+ * Metering (Stage 5 Task 2): preflightMeter takes a ledger HOLD before the
+ * submit. Every non-success exit from dispatch() throws — missing key,
+ * submit rejection, non-retryable 4xx while polling, a terminal non-COMPLETED
+ * status, a failed result fetch, and the poll-deadline timeout — so the
+ * single catch below is the complete release wiring. The hold is settled
+ * only once the result body is actually in hand.
+ */
 export async function runFal<T = unknown>(
   app: string,
   input: Record<string, unknown>,
   opts: FalRunOptions = {},
 ): Promise<T> {
   const ticket = await preflightMeter(app)
+  try {
+    return await dispatch<T>(app, input, opts, ticket)
+  } catch (e) {
+    await ticket?.release()
+    throw e
+  }
+}
+
+async function dispatch<T>(
+  app: string,
+  input: Record<string, unknown>,
+  opts: FalRunOptions,
+  ticket: Awaited<ReturnType<typeof preflightMeter>>,
+): Promise<T> {
   const token = getFalToken()
   if (!token) throw new Error('FAL_KEY is not set (add it to frontend/.env)')
   const headers = { Authorization: `Key ${token}`, 'Content-Type': 'application/json' }
@@ -72,8 +94,11 @@ export async function runFal<T = unknown>(
         const t = await rRes.text().catch(() => '')
         throw new Error(`fal result ${rRes.status}: ${t}`)
       }
+      // Settle only once the output is genuinely in hand — a body that fails
+      // to parse means the caller gets nothing, so it must not be charged.
+      const body = await rRes.json() as T
       if (ticket) await ticket.settle('fal:' + rid)
-      return await rRes.json() as T
+      return body
     }
     logSpend({ provider: 'fal', model: app, ok: false, ms: Date.now() - startedAt })
     throw new Error(`fal request ${rid} ended in ${status.status}: ${JSON.stringify(status)}`)

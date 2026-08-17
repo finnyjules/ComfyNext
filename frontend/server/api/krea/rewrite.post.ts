@@ -45,41 +45,53 @@ export default defineEventHandler(async (event) => {
   // settle only on confirmed 'succeeded' below (the non-fatal failure path
   // returns nulls without ever settling — no debit for an unusable rewrite).
   const ticket = await preflightMeter(MODEL)
+  try {
 
-  const headers = { Authorization: `Token ${token}`, 'Content-Type': 'application/json', Prefer: 'wait' }
-  const createRes = await fetch(`https://api.replicate.com/v1/models/${MODEL}/predictions`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ input: { prompt, max_tokens: 400, temperature: 0.5 } }),
-  })
-  if (!createRes.ok) {
-    throw createError({ statusCode: createRes.status, message: `Rewrite model error: ${await createRes.text().catch(() => createRes.statusText)}` })
-  }
-  let pred = await createRes.json() as { id: string, status: string, output?: unknown }
+    const headers = { Authorization: `Token ${token}`, 'Content-Type': 'application/json', Prefer: 'wait' }
+    const createRes = await fetch(`https://api.replicate.com/v1/models/${MODEL}/predictions`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ input: { prompt, max_tokens: 400, temperature: 0.5 } }),
+    })
+    if (!createRes.ok) {
+      throw createError({ statusCode: createRes.status, message: `Rewrite model error: ${await createRes.text().catch(() => createRes.statusText)}` })
+    }
+    let pred = await createRes.json() as { id: string, status: string, output?: unknown }
 
-  // Prefer: wait usually returns terminal, but poll briefly just in case.
-  const deadline = Date.now() + 30_000
-  while (pred.status !== 'succeeded' && pred.status !== 'failed' && pred.status !== 'canceled') {
-    if (Date.now() > deadline) break
-    await new Promise((r) => setTimeout(r, 1000))
-    const p = await fetch(`https://api.replicate.com/v1/predictions/${pred.id}`, { headers: { Authorization: `Token ${token}` } })
-    if (p.ok) pred = await p.json()
-  }
-  if (pred.status !== 'succeeded') {
-    return { name: null, aesthetic: null } // non-fatal — never settled
-  }
-  await ticket?.settle('rep:' + pred.id)
+    // Prefer: wait usually returns terminal, but poll briefly just in case.
+    const deadline = Date.now() + 30_000
+    while (pred.status !== 'succeeded' && pred.status !== 'failed' && pred.status !== 'canceled') {
+      if (Date.now() > deadline) break
+      await new Promise((r) => setTimeout(r, 1000))
+      const p = await fetch(`https://api.replicate.com/v1/predictions/${pred.id}`, { headers: { Authorization: `Token ${token}` } })
+      if (p.ok) pred = await p.json()
+    }
+    if (pred.status !== 'succeeded') {
+      // Non-fatal: the caller gets nulls and no charge. This is the one exit
+      // that returns instead of throwing, so it needs its own release — the
+      // catch below never sees it.
+      await ticket?.release()
+      return { name: null, aesthetic: null }
+    }
+    await ticket?.settle('rep:' + pred.id)
 
-  const text = Array.isArray(pred.output) ? pred.output.join('') : String(pred.output ?? '')
-  const m = text.match(/\{[\s\S]*\}/)
-  let parsed: any = {}
-  if (m) { try { parsed = JSON.parse(m[0]) } catch { /* leave empty */ } }
+    const text = Array.isArray(pred.output) ? pred.output.join('') : String(pred.output ?? '')
+    const m = text.match(/\{[\s\S]*\}/)
+    let parsed: any = {}
+    if (m) { try { parsed = JSON.parse(m[0]) } catch { /* leave empty */ } }
 
-  const newName = typeof parsed.name === 'string' ? parsed.name.trim().replace(/^["']|["']$/g, '') : ''
-  const newProfile = typeof parsed.aesthetic === 'string' ? parsed.aesthetic.trim() : ''
+    const newName = typeof parsed.name === 'string' ? parsed.name.trim().replace(/^["']|["']$/g, '') : ''
+    const newProfile = typeof parsed.aesthetic === 'string' ? parsed.aesthetic.trim() : ''
 
-  return {
-    name: newName || null,
-    aesthetic: newProfile || null,
+    return {
+      name: newName || null,
+      aesthetic: newProfile || null,
+    }
+  } catch (e) {
+    // Any throw past the preflight means no output shipped — hand the
+    // reservation back instead of letting it sit until holdSweep's TTL.
+    // (Releasing an already-settled hold is an idempotent no-op.)
+    await ticket?.release()
+    throw e
   }
 })

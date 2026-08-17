@@ -355,7 +355,18 @@ async function startWithMetering(job: TrainingJob, token: string): Promise<Provi
     }
   }
 
-  const result = job.kind === 'voice' ? await startVoice(job, token) : await startLora(job, token)
+  // Stage 5 Task 2: the preflight above now RESERVES the credits. A start()
+  // that throws, or one that comes back without a replicateId (nothing
+  // actually started), must hand the reservation back — otherwise 600cr of
+  // training budget stays locked until holdSweep's TTL.
+  let result: ProviderResult
+  try {
+    result = job.kind === 'voice' ? await startVoice(job, token) : await startLora(job, token)
+  } catch (e) {
+    await ticket?.release()
+    throw e
+  }
+  if (ticket && !result.replicateId) await ticket.release()
 
   if (ticket && result.replicateId) {
     // Debit key: train:<training id> — never the reserved settle:/expire:

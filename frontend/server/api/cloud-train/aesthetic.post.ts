@@ -51,59 +51,67 @@ export default defineEventHandler(async (event) => {
 
   // Paid: gate on balance/price before creating the Replicate prediction.
   const ticket = await preflightMeter(QWEN_MODEL)
+  try {
 
-  // Resolve the model's latest version (community model → versioned predictions).
-  const modelRes = await fetch(`https://api.replicate.com/v1/models/${QWEN_MODEL}`, {
-    headers: { Authorization: `Token ${token}` },
-  })
-  if (!modelRes.ok) {
-    throw createError({ statusCode: 502, message: `Could not look up ${QWEN_MODEL}: ${modelRes.statusText}` })
-  }
-  const version = ((await modelRes.json()) as { latest_version?: { id?: string } }).latest_version?.id
-  if (!version) {
-    throw createError({ statusCode: 502, message: `${QWEN_MODEL} has no latest version` })
-  }
-
-  // Create the prediction.
-  const createRes = await fetch('https://api.replicate.com/v1/predictions', {
-    method: 'POST',
-    headers: { Authorization: `Token ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      version,
-      input: { media: imageDataUrl, prompt: PROFILE_PROMPT, max_new_tokens: 220 },
-    }),
-  })
-  if (!createRes.ok) {
-    const text = await createRes.text().catch(() => '')
-    throw createError({ statusCode: createRes.status, message: text || createRes.statusText })
-  }
-  let pred = await createRes.json() as { id: string, status: string, output?: unknown, error?: unknown }
-
-  // Poll until terminal (Qwen2-VL is fast — a handful of seconds).
-  const deadline = Date.now() + 60_000
-  while (pred.status !== 'succeeded' && pred.status !== 'failed' && pred.status !== 'canceled') {
-    if (Date.now() > deadline) {
-      throw createError({ statusCode: 504, message: 'Aesthetic generation timed out' })
-    }
-    await new Promise((r) => setTimeout(r, 1500))
-    const pollRes = await fetch(`https://api.replicate.com/v1/predictions/${pred.id}`, {
+    // Resolve the model's latest version (community model → versioned predictions).
+    const modelRes = await fetch(`https://api.replicate.com/v1/models/${QWEN_MODEL}`, {
       headers: { Authorization: `Token ${token}` },
     })
-    if (!pollRes.ok) continue
-    pred = await pollRes.json()
-  }
+    if (!modelRes.ok) {
+      throw createError({ statusCode: 502, message: `Could not look up ${QWEN_MODEL}: ${modelRes.statusText}` })
+    }
+    const version = ((await modelRes.json()) as { latest_version?: { id?: string } }).latest_version?.id
+    if (!version) {
+      throw createError({ statusCode: 502, message: `${QWEN_MODEL} has no latest version` })
+    }
 
-  if (pred.status !== 'succeeded') {
-    throw createError({ statusCode: 502, message: `Aesthetic generation ${pred.status}: ${String(pred.error ?? '')}` })
-  }
-  await ticket?.settle('rep:' + pred.id)
+    // Create the prediction.
+    const createRes = await fetch('https://api.replicate.com/v1/predictions', {
+      method: 'POST',
+      headers: { Authorization: `Token ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        version,
+        input: { media: imageDataUrl, prompt: PROFILE_PROMPT, max_new_tokens: 220 },
+      }),
+    })
+    if (!createRes.ok) {
+      const text = await createRes.text().catch(() => '')
+      throw createError({ statusCode: createRes.status, message: text || createRes.statusText })
+    }
+    let pred = await createRes.json() as { id: string, status: string, output?: unknown, error?: unknown }
 
-  // Qwen returns the text as an array of token strings (or occasionally a string).
-  const raw = Array.isArray(pred.output) ? pred.output.join('') : String(pred.output ?? '')
-  const { aesthetic, keywords } = parseAestheticOutput(raw)
-  if (!aesthetic) {
-    throw createError({ statusCode: 502, message: 'Aesthetic generation returned empty text' })
-  }
+    // Poll until terminal (Qwen2-VL is fast — a handful of seconds).
+    const deadline = Date.now() + 60_000
+    while (pred.status !== 'succeeded' && pred.status !== 'failed' && pred.status !== 'canceled') {
+      if (Date.now() > deadline) {
+        throw createError({ statusCode: 504, message: 'Aesthetic generation timed out' })
+      }
+      await new Promise((r) => setTimeout(r, 1500))
+      const pollRes = await fetch(`https://api.replicate.com/v1/predictions/${pred.id}`, {
+        headers: { Authorization: `Token ${token}` },
+      })
+      if (!pollRes.ok) continue
+      pred = await pollRes.json()
+    }
 
-  return { aesthetic, keywords }
+    if (pred.status !== 'succeeded') {
+      throw createError({ statusCode: 502, message: `Aesthetic generation ${pred.status}: ${String(pred.error ?? '')}` })
+    }
+    await ticket?.settle('rep:' + pred.id)
+
+    // Qwen returns the text as an array of token strings (or occasionally a string).
+    const raw = Array.isArray(pred.output) ? pred.output.join('') : String(pred.output ?? '')
+    const { aesthetic, keywords } = parseAestheticOutput(raw)
+    if (!aesthetic) {
+      throw createError({ statusCode: 502, message: 'Aesthetic generation returned empty text' })
+    }
+
+    return { aesthetic, keywords }
+  } catch (e) {
+    // Any throw past the preflight means no output shipped — hand the
+    // reservation back instead of letting it sit until holdSweep's TTL.
+    // (Releasing an already-settled hold is an idempotent no-op.)
+    await ticket?.release()
+    throw e
+  }
 })

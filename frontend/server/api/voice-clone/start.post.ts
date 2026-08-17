@@ -37,12 +37,17 @@ export default defineEventHandler(async (event) => {
 
   if (!body.voiceFileUrl) throw createError({ statusCode: 400, message: 'voiceFileUrl is required' })
 
-  // Paid: creates a Replicate prediction on CLONE_MODEL. Preflight-only —
-  // this just gates on balance/price; the ticket is discarded because
-  // settlement happens in status.get.ts on confirmed success (debit-on-
-  // success — the clone is async and can fail after creation, so charging
-  // here would bill a user for a job that never completes).
-  await preflightMeter(CLONE_MODEL)
+  // Paid: creates a Replicate prediction on CLONE_MODEL. Preflight is a GATE
+  // ONLY here — the ticket's hold is released as soon as the prediction is
+  // created (or fails to be), because settlement happens in status.get.ts on
+  // confirmed success via settleModel's own debit (debit-on-success — the
+  // clone is async and can fail after creation, so charging here would bill
+  // a user for a job that never completes). Holding the reservation open
+  // across that window would double-count the same credits (reserved here,
+  // debited there) and, if this process died, lock them until holdSweep's
+  // TTL. Balance-during-the-clone behavior is therefore unchanged from the
+  // pre-hold implementation: gated at start, charged at success.
+  const ticket = await preflightMeter(CLONE_MODEL)
 
   const input: Record<string, any> = {
     voice_file: body.voiceFileUrl,
@@ -52,28 +57,35 @@ export default defineEventHandler(async (event) => {
     need_volume_normalization: !!body.needVolumeNormalization,
   }
 
-  const res = await fetch(
-    `https://api.replicate.com/v1/models/${CLONE_MODEL}/predictions`,
-    {
-      method: 'POST',
-      headers: { Authorization: `Token ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ input }),
-    },
-  )
-  if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    throw createError({ statusCode: res.status, message: text || res.statusText })
+  try {
+    const res = await fetch(
+      `https://api.replicate.com/v1/models/${CLONE_MODEL}/predictions`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Token ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ input }),
+      },
+    )
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      throw createError({ statusCode: res.status, message: text || res.statusText })
+    }
+
+    const pred = await res.json() as { id: string; status: string }
+
+    // Bind this prediction to the user who paid the preflight, so
+    // status.get.ts's debit-on-success settle can verify the poller is the
+    // owner before charging anyone (see voiceCloneOwners.ts's module doc).
+    if (deployMode() === 'hosted') {
+      const userId = currentMeterContext()?.userId
+      if (userId) recordVoiceCloneOwner(pred.id, userId)
+    }
+
+    return { id: pred.id, status: pred.status }
+  } finally {
+    // Success or failure, the gate has done its job — hand the reservation
+    // back rather than holding it across an async clone this request will
+    // never see the end of.
+    await ticket?.release()
   }
-
-  const pred = await res.json() as { id: string; status: string }
-
-  // Bind this prediction to the user who paid the preflight, so
-  // status.get.ts's debit-on-success settle can verify the poller is the
-  // owner before charging anyone (see voiceCloneOwners.ts's module doc).
-  if (deployMode() === 'hosted') {
-    const userId = currentMeterContext()?.userId
-    if (userId) recordVoiceCloneOwner(pred.id, userId)
-  }
-
-  return { id: pred.id, status: pred.status }
 })
