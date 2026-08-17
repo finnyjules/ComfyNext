@@ -11,6 +11,7 @@ import {
 import { toast } from 'vue-sonner'
 import { useDeliverables } from '~/composables/useDeliverables'
 import { peekPendingPromote } from '~/lib/draft/runMeta'
+import { tweenValue, shouldAnimateWalletChange } from '~/lib/countTween'
 import { injectLoraStyleIntoPrompt } from '~/lib/graph/styleInject'
 import { applyPendingPromotes } from '~/lib/draft/promote'
 import { healDanglingLinks, stripVarsLinks, collectKeepSet, collectKeepSetDownstream } from '~/composables/useFilteredPrompt'
@@ -2862,15 +2863,46 @@ async function refreshHostedWallet() {
     hostedWallet.value = w.mode === 'hosted' && typeof w.available === 'number' ? w.available : null
   } catch { hostedWallet.value = null /* signed out or transient — pill shows em dash */ }
 }
+// The pill DISPLAYS this trailing value: on a balance change it counts from
+// the old number to the new one (~700ms, easeOutCubic) instead of snapping,
+// so a debit reads as the meter ticking down. First paint, sign-out, and
+// reduced-motion users jump instantly (shouldAnimateWalletChange + the media
+// query). The tween math is pure (lib/countTween.ts); only the rAF loop lives here.
+const displayedWallet = ref<number | null>(null)
+let walletTweenRaf = 0
+const WALLET_TWEEN_MS = 700
 if (import.meta.client && hostedShell) {
+  watch(hostedWallet, (next, prev) => {
+    cancelAnimationFrame(walletTweenRaf)
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    if (reduced || !shouldAnimateWalletChange(prev ?? null, next ?? null)) {
+      displayedWallet.value = next ?? null
+      return
+    }
+    // Start from wherever the display currently is — a refresh landing
+    // mid-animation retargets smoothly instead of restarting from the old
+    // settled value.
+    const from = displayedWallet.value ?? (prev as number)
+    const to = next as number
+    const start = performance.now()
+    const step = (now: number) => {
+      const t = (now - start) / WALLET_TWEEN_MS
+      displayedWallet.value = tweenValue(from, to, t)
+      if (t < 1) walletTweenRaf = requestAnimationFrame(step)
+    }
+    walletTweenRaf = requestAnimationFrame(step)
+  })
   onMounted(() => {
     refreshHostedWallet()
     window.addEventListener('focus', refreshHostedWallet)
   })
-  onUnmounted(() => window.removeEventListener('focus', refreshHostedWallet))
+  onUnmounted(() => {
+    window.removeEventListener('focus', refreshHostedWallet)
+    cancelAnimationFrame(walletTweenRaf)
+  })
 }
 const creditsPillText = computed(() => {
-  if (hostedShell) return hostedWallet.value !== null ? `${hostedWallet.value.toLocaleString()} credits` : '— credits'
+  if (hostedShell) return hostedWallet.value !== null ? `${(displayedWallet.value ?? hostedWallet.value).toLocaleString()} credits` : '— credits'
   // Local mode: the operator pays providers directly — no credits to show.
   // The comfy.org credits plumbing (credits ref, bridge events, purchase
   // modal via UserPopup) stays dormant but intact in case it's needed again.
