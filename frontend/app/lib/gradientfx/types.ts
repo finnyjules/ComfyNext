@@ -13,7 +13,10 @@ import { DEFAULT_POST, type PostSettings } from '~/lib/studio/post/settings'
 /** Maximum number of stacked layers the render core composites. */
 export const LAYER_MAX = 6
 
-export type LayoutKind = 'ramp' | 'radialRamp' | 'conic' | 'linear' | 'radial' | 'orbit' | 'stack' | 'liquid' | 'mesh'
+export type LayoutKind = 'ramp' | 'radialRamp' | 'conic' | 'curve' | 'linear' | 'radial' | 'orbit' | 'stack' | 'liquid' | 'mesh'
+export type CurveShape = 'line' | 'arc' | 's-curve' | 'wave' | 'loop'
+export type CurveMode = 'along' | 'outward'
+export interface Vec2 { x: number; y: number }
 export type RampShape = 'circle' | 'ellipse'
 export type RepeatKind = 'once' | 'mirror' | 'tile'
 export type FalloffKind = 'linear' | 'ease' | 'smooth'
@@ -103,6 +106,31 @@ export interface RampConfig {
 
 export const RAMP_DEFAULTS: RampConfig = { angle: 90, radius: 1, shape: 'circle', sweep: 360, closeLoop: false }
 
+/** Per-layer parametric curve for the `curve` layout. Optional for back-compat;
+ *  a layer without it uses CURVE_DEFAULTS. Fully parametric — the polyline the
+ *  renderer builds is derived, never stored. Coords normalized 0..1 (0,0 = top-left). */
+export interface CurveConfig {
+  start: Vec2; end: Vec2
+  shape: CurveShape
+  /** Bow amount, 0..1 (0 = straight chord). */
+  curvature: number
+  /** Bow side / rotation, -1..1. */
+  bend: number
+  /** Oscillation count (wave preset), 1..8. */
+  waves: number
+  /** Wave phase, 0..1. */
+  phase: number
+  mode: CurveMode
+  /** Outward glow reach, frame fraction 0.02..1. */
+  width: number
+}
+
+export const CURVE_DEFAULTS: CurveConfig = {
+  start: { x: 0.2, y: 0.5 }, end: { x: 0.8, y: 0.5 },
+  shape: 'arc', curvature: 0.4, bend: 1, waves: 3, phase: 0,
+  mode: 'along', width: 0.35,
+}
+
 export interface ColorConfig {
   stops: ColorStop[]
   /** Gradient ramp axis: vertical (up-down) or horizontal (left-right). */
@@ -154,6 +182,8 @@ export interface LayerConfig {
   mesh?: MeshConfig
   /** Simple-primitive axis (only ramp/radialRamp/conic layouts). */
   ramp?: RampConfig
+  /** Parametric curve (only the `curve` layout). */
+  curve?: CurveConfig
 }
 
 export interface CanvasConfig {
@@ -298,9 +328,9 @@ export interface GradientConfig {
 
 export const ASPECTS = ['14:9', '16:9', '9:16', '1:1', '4:5', '3:2', '21:9'] as const
 export const SHAPE_KINDS: ShapeKind[] = ['bands', 'wave', 'noise', 'pyramid']
-export const LAYOUTS: LayoutKind[] = ['ramp', 'radialRamp', 'conic', 'linear', 'radial', 'orbit', 'stack', 'liquid', 'mesh']
+export const LAYOUTS: LayoutKind[] = ['ramp', 'radialRamp', 'conic', 'curve', 'linear', 'radial', 'orbit', 'stack', 'liquid', 'mesh']
 export const LAYOUT_LABELS: Record<LayoutKind, string> = {
-  ramp: 'Linear', radialRamp: 'Radial', conic: 'Conic',
+  ramp: 'Linear', radialRamp: 'Radial', conic: 'Conic', curve: 'Curve',
   linear: 'Linear stripes', radial: 'Radial stripes',
   orbit: 'Orbit', stack: 'Stack', liquid: 'Liquid', mesh: 'Mesh',
 }
@@ -442,10 +472,11 @@ export function ensureConfigDefaults(cfg: GradientConfig): GradientConfig {
   }
   // Backfill simple-primitive axis + universal repeat/falloff. Defaults reproduce
   // pre-feature behaviour so legacy blobs render byte-identical.
-  const SIMPLE = cfg.canvas.layout === 'ramp' || cfg.canvas.layout === 'radialRamp' || cfg.canvas.layout === 'conic'
+  const SIMPLE = cfg.canvas.layout === 'ramp' || cfg.canvas.layout === 'radialRamp' || cfg.canvas.layout === 'conic' || cfg.canvas.layout === 'curve'
   for (const L of cfg.layers) {
     if (!L) continue
-    if (SIMPLE && !L.ramp) L.ramp = { ...RAMP_DEFAULTS }
+    if (SIMPLE && cfg.canvas.layout !== 'curve' && !L.ramp) L.ramp = { ...RAMP_DEFAULTS }
+    if (cfg.canvas.layout === 'curve' && !L.curve) L.curve = { ...CURVE_DEFAULTS, start: { ...CURVE_DEFAULTS.start }, end: { ...CURVE_DEFAULTS.end } }
     if (L.color) {
       if (L.color.repeat == null) L.color.repeat = 'once'
       if (L.color.repeatCount == null) L.color.repeatCount = 4

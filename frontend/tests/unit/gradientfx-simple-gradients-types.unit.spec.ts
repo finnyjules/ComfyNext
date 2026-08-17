@@ -7,7 +7,7 @@ import { defaultConfig } from '~/lib/gradientfx/randomize'
 
 describe('simple-gradient types', () => {
   it('LAYOUT_LABELS has exactly one label per LayoutKind', () => {
-    const keys: LayoutKind[] = ['ramp','radialRamp','conic','linear','radial','orbit','stack','liquid','mesh']
+    const keys: LayoutKind[] = ['ramp','radialRamp','conic','curve','linear','radial','orbit','stack','liquid','mesh']
     for (const k of keys) expect(LAYOUT_LABELS[k], `label for ${k}`).toBeTruthy()
     expect(Object.keys(LAYOUT_LABELS).sort()).toEqual([...keys].sort())
   })
