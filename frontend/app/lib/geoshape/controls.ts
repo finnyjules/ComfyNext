@@ -58,7 +58,6 @@ const isSingleFill = (c: GeoShapeConfig) => c.fillStrategy === 'single'
 const isOverlapShapeAndSingleFill = (c: GeoShapeConfig) => isOverlapShape(c) && isSingleFill(c)
 const isMultiFill = (c: GeoShapeConfig) => c.fillStrategy !== 'single'
 const isPieces = (c: GeoShapeConfig) => c.fillStrategy === 'pieces'
-const isPiecesAndSeparate = (c: GeoShapeConfig) => c.fillStrategy === 'pieces' && c.overlapSeparate
 const hasSymmetry = (c: GeoShapeConfig) => c.symmetry === true
 const hasClipMask = (c: GeoShapeConfig) => c.clipMask !== 'none'
 
