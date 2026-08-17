@@ -348,7 +348,7 @@ export class GradientFxRenderer {
       this.uploadCurve(gl, i, poly)
       curveN.push(poly.n)
       curveMode.push(cv.mode === 'outward' ? 1 : 0)
-      curveWidth.push(cv.width)
+      curveWidth.push(Number.isFinite(cv.width) ? cv.width : CURVE_DEFAULTS.width)
     }
 
     gl.activeTexture(gl.TEXTURE0)

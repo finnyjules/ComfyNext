@@ -51,6 +51,13 @@ describe('buildCurvePolyline', () => {
     expect(signChanges).toBeLessThanOrEqual(7)
   })
 
+  it('wave endpoints stay pinned to start/end even at phase != 0', () => {
+    const c = mk({ start: { x: 0.1, y: 0.2 }, end: { x: 0.9, y: 0.8 }, shape: 'wave', waves: 3, curvature: 0.6, phase: 0.37 })
+    const p = buildCurvePolyline(c)
+    expect(pt(p, 0).x).toBeCloseTo(0.1, 5); expect(pt(p, 0).y).toBeCloseTo(0.2, 5)
+    expect(pt(p, p.n - 1).x).toBeCloseTo(0.9, 5); expect(pt(p, p.n - 1).y).toBeCloseTo(0.8, 5)
+  })
+
   it('bend sign flips the bow side', () => {
     const base = { start: { x: 0.1, y: 0.5 }, end: { x: 0.9, y: 0.5 }, shape: 'arc' as const, curvature: 0.6 }
     const pos = buildCurvePolyline(mk({ ...base, bend: 1 }))

@@ -91,7 +91,7 @@ export const GRADIENT_CONTROLS: GradientControl[] = [
   slider('layer.curve.waves', 'Waves', 1, 8, 1, 'Curve', undefined, { when: (c) => isCurve(c) && c.layers?.[0]?.curve?.shape === 'wave' }),
   slider('layer.curve.phase', 'Phase', 0, 1, 0.01, 'Curve', undefined, { when: (c) => isCurve(c) && c.layers?.[0]?.curve?.shape === 'wave' }),
   slider('layer.curve.width', 'Width', 0.02, 1, 0.01, 'Curve', 'Outward glow reach', { when: (c) => isCurve(c) && c.layers?.[0]?.curve?.mode === 'outward' }),
-  { key: 'layer.curve.handles', label: 'Curve handles', kind: 'curveHandles', default: '', group: 'Curve', when: isCurve } as GradientControl,
+  { key: 'layer.curve.handles', label: 'Curve handles', kind: 'curveHandles', default: '', group: 'Curve', when: isCurve, agent: false } as GradientControl,
 
   // --- Repeat (simple primitives only — u_repeat is only read in the simple-primitive
   //     shader branch; it's a no-op on the 6 legacy layouts) / Falloff (every layout,

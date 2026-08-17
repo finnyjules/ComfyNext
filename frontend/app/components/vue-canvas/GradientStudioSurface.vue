@@ -1403,11 +1403,11 @@ function onColor(key: 'repeat' | 'repeatCount' | 'falloff', value: number | stri
           <label class="mb-1 flex justify-between text-xs text-white/60"><span>Hue rotate</span><span class="text-white/40">{{ Math.round(layer.color.hueRotate) }}°</span></label>
           <input v-model.number="layer.color.hueRotate" type="range" min="0" max="360" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('layer.color.hueRotate', layer.color.hueRotate)" />
         </BindableRow>
-        <!-- Repeat — only the three simple primitives read u_repeat in the shader; on
-             the 6 legacy layouts (linear/radial/orbit/stack/liquid/mesh) it's a no-op,
-             so gate it behind isSimpleRamp. Falloff stays universal below: it's baked
+        <!-- Repeat — the three simple primitives and curve read u_repeat in the shader; on
+             the other legacy layouts (linear/radial/orbit/stack/liquid/mesh) it's a no-op,
+             so gate it behind isSimpleRamp || isCurve. Falloff stays universal below: it's baked
              into buildRampLut, which every layout's ramp goes through. -->
-        <template v-if="isSimpleRamp">
+        <template v-if="isSimpleRamp || isCurve">
           <BindableRow control-key="layer.color.repeat" label="Repeat" kind="select" :options="['once', 'mirror', 'tile']" :bound="boundColumnFor('layer.color.repeat')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
             <label class="mb-1 block text-xs text-white/60">Repeat</label>
             <select :value="layer.color.repeat ?? 'once'" class="mb-2 w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-xs" @change="onColor('repeat', ($event.target as HTMLSelectElement).value)">

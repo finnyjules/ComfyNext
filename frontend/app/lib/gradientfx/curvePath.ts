@@ -50,7 +50,12 @@ function evalCurve(c: CurveConfig, u: number): Vec2 {
   switch (c.shape) {
     case 'arc':      off = Math.sin(u * Math.PI); break                       // single bow
     case 's-curve':  off = Math.sin(u * Math.PI * 2); break                   // two opposing bows
-    case 'wave':     off = Math.sin((u * Math.max(1, c.waves) + c.phase) * Math.PI * 2); break
+    case 'wave': {
+      const w = Math.max(1, c.waves)
+      const o = (uu: number) => Math.sin((uu * w + c.phase) * Math.PI * 2)
+      off = o(u) - ((1 - u) * o(0) + u * o(1))   // pin endpoints exactly, keep the oscillation
+      break
+    }
     case 'loop':     off = Math.sin(u * Math.PI) * (1 - Math.cos(u * Math.PI * 2)); break
     default:         off = 0
   }
