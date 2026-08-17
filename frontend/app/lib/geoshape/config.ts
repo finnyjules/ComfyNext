@@ -18,6 +18,7 @@ export type GeoSymmetryAxis = 'vertical' | 'horizontal'
 export type GeoClipMask = 'none' | 'circle' | 'square' | 'hexagon'
 export type GeoFillStrategy = 'single' | 'perClone' | 'pieces'
 export type GeoFillOrder = 'created' | 'depth' | 'leftRight' | 'topBottom' | 'rows' | 'columns' | 'centerOut' | 'around'
+export type GeoCrossingMode = 'depth' | 'split'
 
 export interface GeoShapeConfig {
   shape: BaseShapeKind
@@ -67,6 +68,9 @@ export interface GeoShapeConfig {
    *  NOTE: distinct from `overlapFill` (a single Paint used by `overlapMode: 'shape'`
    *  in single mode) — different feature, do not conflate. */
   overlapFills: Paint[]
+  /** pieces mode: 'depth' merges overlaps per depth (one colour per depth level);
+   *  'split' makes each crossing its own face, coloured by `fillOrder`. */
+  crossingMode: GeoCrossingMode
   /** Cycled fill list for perClone mode. Always non-empty. */
   fills: Paint[]
   gridCols: number
@@ -112,6 +116,7 @@ export const DEFAULT_CONFIG: GeoShapeConfig = {
   fillOrder: 'created',
   overlapSeparate: false,
   overlapFills: ['#ffffff'],
+  crossingMode: 'depth',
   fills: ['#1a1a2e', '#e5484d', '#f5a623'],
   gridCols: 3,
   gridRows: 2,
@@ -135,6 +140,7 @@ const SYMMETRY_AXES = ['vertical', 'horizontal'] as const
 const CLIP_MASKS = ['none', 'circle', 'square', 'hexagon'] as const
 const FILL_STRATEGIES = ['single', 'perClone', 'pieces'] as const
 const FILL_ORDERS = ['created', 'depth', 'leftRight', 'topBottom', 'rows', 'columns', 'centerOut', 'around'] as const
+const CROSSING_MODES = ['depth', 'split'] as const
 
 /** Discriminants of every `Paint` arm: `Gradient` (linear/radial), `ImageFill` (image),
  *  and `Fill`'s `FillType` union (solid/gradient/ombre/grid/noise/checkerboard/stripes/qr/shader).
@@ -224,6 +230,7 @@ export function mergeConfig(raw: unknown): GeoShapeConfig {
     fillOrder: oneOf(o.fillOrder, FILL_ORDERS, d.fillOrder),
     overlapSeparate: bool(o.overlapSeparate, d.overlapSeparate),
     overlapFills: paintList(o.overlapFills, d.overlapFills),
+    crossingMode: oneOf(o.crossingMode, CROSSING_MODES, d.crossingMode),
     fills: paintList(o.fills, d.fills),
     gridCols: clampNum(o.gridCols, d.gridCols, 1, 24),
     gridRows: clampNum(o.gridRows, d.gridRows, 1, 24),

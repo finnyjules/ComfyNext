@@ -60,4 +60,9 @@ describe('geoshape config', () => {
     expect(mergeConfig({ fillOrder: 'rows' }).fillOrder).toBe('rows')
     expect(mergeConfig({ fillOrder: 'nope' }).fillOrder).toBe('created')
   })
+  it('crossingMode round-trips and defaults to depth', () => {
+    expect(mergeConfig({}).crossingMode).toBe('depth')
+    expect(mergeConfig({ crossingMode: 'split' }).crossingMode).toBe('split')
+    expect(mergeConfig({ crossingMode: 'nope' }).crossingMode).toBe('depth')
+  })
 })
