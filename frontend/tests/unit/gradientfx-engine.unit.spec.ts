@@ -67,8 +67,10 @@ describe('gradientfx field', () => {
 
 describe('gradientfx ramp', () => {
   it('hex round-trips and parses shorthand', () => {
-    expect(hexToRgb('#ff0000')).toEqual({ r: 255, g: 0, b: 0 })
-    expect(hexToRgb('#f00')).toEqual({ r: 255, g: 0, b: 0 })
+    // hexToRgb now carries an alpha byte (opaque default for 3/6-digit hex — see the
+    // alpha-in-stops fix); rgb parsing is unchanged.
+    expect(hexToRgb('#ff0000')).toEqual({ r: 255, g: 0, b: 0, a: 255 })
+    expect(hexToRgb('#f00')).toEqual({ r: 255, g: 0, b: 0, a: 255 })
   })
   it('hsl<->rgb round-trips approximately', () => {
     const [h, s, l] = rgbToHsl({ r: 120, g: 200, b: 60 })
@@ -224,7 +226,7 @@ describe('gradientfx shader has flow stage', () => {
   it('declares the flow uniforms and warp function', () => {
     expect(GRADIENT_FS).toContain('u_flowIntensity')
     expect(GRADIENT_FS).toContain('vec2 applyFlow')
-    expect(GRADIENT_FS).toContain('u_layout > 3.5')
+    expect(GRADIENT_FS).toContain('u_layout[0] > 3.5')
   })
   it('declares the liquid-surface uniforms (veins/ripple/refract/viscosity)', () => {
     for (const u of ['u_flowVeins', 'u_flowVeinScale', 'u_flowRipple', 'u_flowRefract', 'u_flowViscosity', 'u_flowSwirl']) {

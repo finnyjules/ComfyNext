@@ -163,6 +163,11 @@ export const GRADIENT_CONTROLS: GradientControl[] = [
   slider('relief.relief', 'Relief', 0, 1, 0.01, 'Relief', undefined, { when: isBanded }),
 
   // --- Layer ----------------------------------------------------------------
+  // agent:false — per-layer layout is a picker operation, not agent-driven: the agent
+  // writes to a single active layer and layer 0 is anchored to canvas.layout, so agent
+  // control of a layer's type conflicts with that anchor. The agent controls the base
+  // layout via canvas.layout; this select stays inspector-visible for the user.
+  { key: 'layer.layout', label: 'Layer type', kind: 'select', options: [...LAYOUTS], default: 'ramp', group: 'Layer', hint: "This layer's gradient type — stack different types across layers", agent: false } as GradientControl,
   { key: 'layer.blend', label: 'Blend', kind: 'select', options: [...BLEND_MODES], default: 'normal', group: 'Layer' },
   slider('layer.opacity', 'Opacity', 0, 1, 0.01, 'Layer'),
   slider('layer.color.steps', 'Posterize steps', 0, 24, 1, 'Layer', '0 = smooth; higher = banded'),

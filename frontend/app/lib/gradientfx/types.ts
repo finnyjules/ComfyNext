@@ -480,6 +480,12 @@ export function ensureConfigDefaults(cfg: GradientConfig): GradientConfig {
   }
   // Backfill simple-primitive axis + universal repeat/falloff. Defaults reproduce
   // pre-feature behaviour so legacy blobs render byte-identical.
+  // Per-layer layout (layer.layout) stays OPTIONAL — undefined = inherit canvas.layout
+  // (effectiveLayout resolves it). Deliberately NOT backfilled: backfilling would pin
+  // each layer and break the "canvas.layout drives un-overridden layers" model. The
+  // ramp/curve backfills below key off canvas.layout because a layer with no explicit
+  // layout renders the canvas layout; the renderer's `?? DEFAULTS` fallback covers a
+  // layer that overrides to a different simple type.
   const SIMPLE = cfg.canvas.layout === 'ramp' || cfg.canvas.layout === 'radialRamp' || cfg.canvas.layout === 'conic' || cfg.canvas.layout === 'curve'
   for (const L of cfg.layers) {
     if (!L) continue
