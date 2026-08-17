@@ -29,7 +29,7 @@ uniform float u_aspect;        // canvas w/h
 uniform float u_time;
 uniform float u_seed;
 
-uniform float u_layout;        // 0 linear, 1 radial, 2 orbit
+uniform float u_layout[LAYER_MAX]; // per-layer effective layout index (see LAYOUT_IDX)
 uniform float u_margin;
 uniform float u_innerRadius;
 uniform vec3  u_bg;
@@ -306,19 +306,19 @@ vec4 computeLayer(int i, vec2 p) {
 
   // ---- Simple primitives (ramp 6 / radialRamp 7 / conic 8): a clean parametric
   // t → LUT. Tested ABOVE the existing ladder so indices 6-8 never fall into mesh.
-  if (u_layout > 5.5) {
+  if (u_layout[i] > 5.5) {
     float t;
-    if (u_layout < 6.5) {                    // ramp — angled linear
+    if (u_layout[i] < 6.5) {                    // ramp — angled linear
       float a = u_rampAngle[i] * PI / 180.0;
       vec2 dir = vec2(cos(a), sin(a));
       vec2 pc = p - 0.5; pc.x *= u_aspect;
       t = dot(pc, dir) + 0.5;
-    } else if (u_layout < 7.5) {             // radialRamp — centre-out
+    } else if (u_layout[i] < 7.5) {             // radialRamp — centre-out
       vec2 d = p - 0.5 - u_center;
       if (u_rampShape[i] > 0.5) d.x *= u_aspect;   // circle: aspect-correct
       float r = length(d) * 2.0 / max(u_rampRadius[i], 0.001);
       t = (r - u_innerRadius) / max(1.0 - u_innerRadius, 0.001);
-    } else if (u_layout < 8.5) {             // conic — angular sweep
+    } else if (u_layout[i] < 8.5) {             // conic — angular sweep
       vec2 d = p - 0.5 - u_center; d.x *= u_aspect;
       float ang = fract(atan(d.y, d.x) / TAU + 0.5 - u_rampAngle[i] / 360.0);
       float sweep = clamp(u_rampSweep[i] / 360.0, 0.05, 1.0);
@@ -357,7 +357,7 @@ vec4 computeLayer(int i, vec2 p) {
   // ---- Mesh: soft point mesh (see meshColorAt). p is already domain-warped, so the
   // warp ripples the blobs for free. The optional post-blur averages the field over a
   // two-ring tap pattern for a dreamy wash.
-  if (u_layout > 4.5) {
+  if (u_layout[i] > 4.5) {
     vec3 mcol;
     if (u_meshBlur > 0.0001) {
       // Three rings, each rotated a third of a step off the last, so the taps spiral
@@ -385,7 +385,7 @@ vec4 computeLayer(int i, vec2 p) {
   }
 
   // ---- Liquid: no bars; sample the ramp along the (already-warped) angle gradient.
-  if (u_layout > 3.5) {
+  if (u_layout[i] > 3.5) {
     float a = u_flowAngle * PI / 180.0;
     vec2 dir = vec2(cos(a), sin(a));
     vec2 pc = p - 0.5; pc.x *= u_aspect;
@@ -433,7 +433,7 @@ vec4 computeLayer(int i, vec2 p) {
   // gradient rotated by ring*rotStep. The visible pixel takes the SMALLEST circle that
   // contains it (drawn last/on top). A per-ring center orbit (pivot) makes the off-centre
   // spiral core. The rotating gradient alone fakes the 3D ripple.
-  if (u_layout > 2.5) {
+  if (u_layout[i] > 2.5) {
     int rings = int(count + 0.5);
     vec2 q = p - 0.5; q.x *= u_aspect;
     float maxR = max(0.05, (0.5 - u_margin) * max(0.1, u_ringScale[i]));
@@ -464,7 +464,7 @@ vec4 computeLayer(int i, vec2 p) {
     return vec4(col, sampleAlpha(i, t));
   }
 
-  if (u_layout < 0.5) {
+  if (u_layout[i] < 0.5) {
     // ---- Linear: full-height columns. The field offsets the gradient per band,
     // giving the signature staggered-skyline look (not bars on black). The band
     // axis is always perpendicular to the gradient, so both orientations read as bands.
@@ -518,7 +518,7 @@ vec4 computeLayer(int i, vec2 p) {
   // ---- Radial / Orbit: the linear band model wrapped into polar coords. The
   // field offsets the gradient per band → a circular wave. Radial = angular bands
   // with a radial gradient; Orbit = concentric ring bands with an angular gradient.
-  bool orbit = u_layout > 1.5;
+  bool orbit = u_layout[i] > 1.5;
   vec2 d = p - 0.5 - u_center;
   d.x *= u_aspect;
   float r = length(d) * 2.0;                       // 0 centre .. ~1 edge
@@ -583,7 +583,7 @@ float bandHeight(int i, vec2 q) {
   bool mirrorV = u_mirrorV[i] > 0.5;
   float band;
 
-  if (u_layout < 0.5) {
+  if (u_layout[i] < 0.5) {
     float m = u_margin;
     vec2 uv = (q - m) / max(1.0 - 2.0 * m, 0.001);
     if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 0.0;
@@ -593,7 +593,7 @@ float bandHeight(int i, vec2 q) {
     bool vertBands = (dir == 0 || dir == 2);
     band = vertBands ? uv.x : uv.y;
   } else {
-    bool orbit = u_layout > 1.5;
+    bool orbit = u_layout[i] > 1.5;
     vec2 d = q - 0.5 - u_center;
     d.x *= u_aspect;
     float r = length(d) * 2.0;
@@ -663,7 +663,7 @@ void main() {
   // 3D relief: light the band/ring height-field of layer 0 (the primary structure).
   // Finite-difference normal from bandHeight, Lambert-shaded against u_light. Sidesteps
   // dFdx, which is undefined here because bandHeight early-returns at the mask edges.
-  if (u_relief > 0.001 && u_layout < 3.5 && u_enabled[0] > 0.5) {
+  if (u_relief > 0.001 && u_layout[0] < 3.5 && u_enabled[0] > 0.5) {
     float e = 1.5 / u_resolution.y;            // ~1.5px step in normalized units
     float h  = bandHeight(0, p);
     float hx = bandHeight(0, p + vec2(e, 0.0));
@@ -678,7 +678,7 @@ void main() {
   // Liquid Depth & Light: emboss from the flow fold field (its own light, not u_light).
   // Gated to the liquid layout (4) so it never touches mesh (5). Gloss adds a wet
   // Blinn-Phong sheen on the fold normal for an oily/glossy liquid look.
-  if (u_layout > 3.5 && u_layout < 4.5 && (u_flowDepth > 0.001 || u_flowGloss > 0.001)) {
+  if (u_layout[0] > 3.5 && u_layout[0] < 4.5 && (u_flowDepth > 0.001 || u_flowGloss > 0.001)) {
     float e = 1.5 / u_resolution.y;
     float h  = flowHeight(p);
     float hx = flowHeight(p + vec2(e, 0.0));
@@ -705,7 +705,7 @@ void main() {
 
   // Wet ripples: a thin interference/caustic pattern phase-shifted by the fold field,
   // reading as light dancing on a liquid surface. Liquid-only; animated via the fold churn.
-  if (u_layout > 3.5 && u_layout < 4.5 && u_flowRipple > 0.001) {
+  if (u_layout[0] > 3.5 && u_layout[0] < 4.5 && u_flowRipple > 0.001) {
     vec2 rp = p; rp.x *= u_aspect;
     rp *= (6.0 + u_flowRipple * 14.0);
     float ph = flowHeight(p) * TAU;

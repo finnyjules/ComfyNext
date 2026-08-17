@@ -307,9 +307,11 @@ export class GradientFxRenderer {
     const rampAngle: number[] = [], rampRadius: number[] = [], rampShape: number[] = [], rampSweep: number[] = [], rampCloseLoop: number[] = []
     const repeat: number[] = [], repeatCount: number[] = []
     const curveN: number[] = [], curveMode: number[] = [], curveWidth: number[] = []
+    const layoutIdx: number[] = []
     for (let i = 0; i < layers.length; i++) {
       const L = layers[i] ?? layers[0]!
       const s = L.shape, col = L.color
+      layoutIdx.push(LAYOUT_IDX[L.layout ?? c.canvas.layout] ?? 0)
       const fieldData = buildField(s, c.seed + ':' + i)
       this.uploadField(gl, i, fieldData)
       this.uploadRamp(gl, i, buildRampLut(col.stops, col.falloff ?? 'linear'))
@@ -365,7 +367,6 @@ export class GradientFxRenderer {
     gl.uniform1f(u('u_aspect'), aspectRatio(c.canvas.aspect))
     gl.uniform1f(u('u_time'), time)
     gl.uniform1f(u('u_seed'), (xmur(c.seed) % 10000))
-    gl.uniform1f(u('u_layout'), LAYOUT_IDX[c.canvas.layout] ?? 0)
     gl.uniform1f(u('u_margin'), c.canvas.margin)
     gl.uniform1f(u('u_innerRadius'), c.canvas.innerRadius)
     const bg = hexToRgb(c.canvas.background)
@@ -458,6 +459,7 @@ export class GradientFxRenderer {
     gl.uniform1f(u('u_meshContrast'), meshContrast)
     gl.uniform1f(u('u_meshBlur'), meshBlur)
 
+    gl.uniform1fv(u('u_layout'), arr(layoutIdx))
     gl.uniform1fv(u('u_count'), arr(counts))
     gl.uniform1fv(u('u_dir'), arr(dir))
     gl.uniform1fv(u('u_mirrorH'), arr(mirrorH))
