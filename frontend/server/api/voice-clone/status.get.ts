@@ -14,7 +14,7 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { CLONE_MODEL } from './start.post'
-import { currentMeterContext, settleModel, settleRecordedHold } from '../../utils/requestMeter'
+import { currentMeterContext, releaseRecordedHold, settleModel, settleRecordedHold } from '../../utils/requestMeter'
 import { deployMode } from '../../utils/deployMode'
 import { decideVoiceCloneSettle } from '../../utils/voiceCloneOwners'
 
@@ -126,6 +126,30 @@ export default defineEventHandler(async (event) => {
       } catch (err: any) {
         persistError = err?.message ?? String(err)
       }
+    }
+  } else if (pred.status === 'failed' || pred.status === 'canceled') {
+    // RELEASE ON TERMINAL FAILURE (review fix, Stage 5 Task 2): without
+    // this, a failed/canceled clone left its 450cr hold reserved for the
+    // full 2h sweep TTL even though this very poll already observed the
+    // terminal state — the job will never settle, so the hold should come
+    // back now, not two hours from now. Same ownership gate as the
+    // settle-on-success branch above: only the user who paid
+    // start.post.ts's preflight for this exact prediction id can release
+    // its hold (decideVoiceCloneSettle's name is generic — it just answers
+    // "does this poller own this prediction's hold").
+    const decision = deployMode() === 'hosted'
+      ? decideVoiceCloneSettle(pred.id, currentMeterContext()?.userId)
+      : { settle: true as const, hold: undefined }
+    if (decision.settle && decision.hold) {
+      await releaseRecordedHold(decision.hold, CLONE_MODEL, 'rep:' + pred.id)
+    } else if (decision.settle) {
+      // No hold on the binding: local mode (no ledger at all), or a
+      // binding recorded before holds existed — nothing was reserved, so
+      // there's nothing to give back.
+    } else if (decision.reason === 'unknown-owner') {
+      console.warn('[meter] voice-clone release skipped — ownership unknown (restart?)', { predictionId: pred.id })
+    } else {
+      console.warn('[meter] voice-clone release skipped — poller is not the owner', { predictionId: pred.id })
     }
   }
 

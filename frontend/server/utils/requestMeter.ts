@@ -293,6 +293,30 @@ export async function settleRecordedHold(
 }
 
 /**
+ * Release a hold whose ticket belongs to an EARLIER request, on a terminal
+ * failure/cancel observed later (review fix, Stage 5 Task 2): mirrors
+ * settleRecordedHold's shape and logging discipline, but gives the
+ * reservation back instead of charging it. Before this, a failed/canceled
+ * async job (voice-clone start → status poll observing `failed`) left its
+ * hold open for the full 2h sweep TTL even though the poll already knew the
+ * job would never settle. Never throws — a terminal status must still reach
+ * the poller even if the ledger release itself errors; log loudly instead so
+ * the sweep is the backstop. Callers must do their own ownership check first
+ * — this function trusts the holdId it is given. Local mode: no-op (no
+ * ledger, no holds).
+ */
+export async function releaseRecordedHold(
+  hold: { holdId: number, credits: number }, model: string, jobId: string,
+): Promise<void> {
+  if (deployMode() === 'local') return
+  try {
+    await getLedger().releaseHold(hold.holdId)
+  } catch (e) {
+    console.error('[meter] RELEASE FAILED on terminal failure — hold stays open until sweep', { model, credits: hold.credits, jobId, holdId: hold.holdId, error: e })
+  }
+}
+
+/**
  * Shared core for both preflightMeter (ALS-bound userId) and preflightMeterFor
  * (explicit userId, for callers with no request/ALS context). Local mode →
  * null (no-op ticket, no ledger touched at all). Hosted mode fails closed at

@@ -173,6 +173,30 @@ function makeReplicateMock(opts: { createOk?: boolean } = {}): ReturnType<typeof
   })
 }
 
+/**
+ * Same shape as makeReplicateMock, but the status GET reports a TERMINAL
+ * FAILURE (`failed` or `canceled`) instead of `succeeded` — for the
+ * release-on-terminal-failure coverage below (review finding, Stage 5 Task
+ * 2: the poll observed the terminal state but nothing gave the 450cr hold
+ * back, so a failed/canceled clone sat reserved for the full 2h sweep TTL).
+ */
+function makeReplicateMockTerminal(status: 'failed' | 'canceled'): ReturnType<typeof vi.fn> {
+  let seq = 0
+  return vi.fn(async (url: string) => {
+    if (url.endsWith(`/models/${VOICE_CLONE_MODEL}/predictions`)) {
+      return json({ id: `pred_${++seq}`, status: 'starting' })
+    }
+    if (url.startsWith('https://api.replicate.com/v1/predictions/')) {
+      return json({
+        id: url.split('/').pop(),
+        status,
+        error: status === 'failed' ? 'clone failed upstream' : null,
+      })
+    }
+    throw new Error('unexpected fetch url: ' + url)
+  })
+}
+
 let fakeLedger: FakeLedger
 let errorSpy: ReturnType<typeof vi.spyOn>
 let warnSpy: ReturnType<typeof vi.spyOn>
@@ -294,5 +318,47 @@ describe('voice-clone routes: the hold spans the async clone', () => {
     expect(fakeLedger.debit).toHaveBeenCalledWith(
       'u_owner', CLONE_CREDITS, `provider:${VOICE_CLONE_MODEL}`, 'rep:pred_legacy',
     )
+  })
+
+  it('the owner polling a FAILED clone releases the recorded hold exactly once, no settle, no debit', async () => {
+    bindMeterContext({ userId: 'u_owner' })
+    vi.stubGlobal('fetch', makeReplicateMockTerminal('failed'))
+    const started = await startHandler(startEvent())
+
+    const out = await statusHandler(statusEvent(started.id))
+
+    expect(out.status).toBe('failed')
+    expect(fakeLedger.releaseHold).toHaveBeenCalledTimes(1)
+    expect(fakeLedger.releaseHold).toHaveBeenCalledWith(1)
+    expect(fakeLedger.settleHold).not.toHaveBeenCalled()
+    expect(fakeLedger.debit).not.toHaveBeenCalled()
+  })
+
+  it('the owner polling a CANCELED clone releases the recorded hold exactly once, no settle, no debit', async () => {
+    bindMeterContext({ userId: 'u_owner' })
+    vi.stubGlobal('fetch', makeReplicateMockTerminal('canceled'))
+    const started = await startHandler(startEvent())
+
+    const out = await statusHandler(statusEvent(started.id))
+
+    expect(out.status).toBe('canceled')
+    expect(fakeLedger.releaseHold).toHaveBeenCalledTimes(1)
+    expect(fakeLedger.releaseHold).toHaveBeenCalledWith(1)
+    expect(fakeLedger.settleHold).not.toHaveBeenCalled()
+    expect(fakeLedger.debit).not.toHaveBeenCalled()
+  })
+
+  it('a NON-owner polling a failed clone does NOT release the hold (same ownership gate as settle)', async () => {
+    bindMeterContext({ userId: 'u_owner' })
+    vi.stubGlobal('fetch', makeReplicateMockTerminal('failed'))
+    const started = await startHandler(startEvent())
+
+    bindMeterContext({ userId: 'u_stranger' })
+    const out = await statusHandler(statusEvent(started.id))
+
+    expect(out.status).toBe('failed')
+    expect(fakeLedger.releaseHold).not.toHaveBeenCalled()
+    expect(fakeLedger.settleHold).not.toHaveBeenCalled()
+    expect(fakeLedger.debit).not.toHaveBeenCalled()
   })
 })
