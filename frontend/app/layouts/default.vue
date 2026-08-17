@@ -12,6 +12,7 @@ import { toast } from 'vue-sonner'
 import { useDeliverables } from '~/composables/useDeliverables'
 import { peekPendingPromote } from '~/lib/draft/runMeta'
 import { tweenValue, shouldAnimateWalletChange } from '~/lib/countTween'
+import RollingNumber from '~/components/RollingNumber.vue'
 import { injectLoraStyleIntoPrompt } from '~/lib/graph/styleInject'
 import { applyPendingPromotes } from '~/lib/draft/promote'
 import { healDanglingLinks, stripVarsLinks, collectKeepSet, collectKeepSetDownstream } from '~/composables/useFilteredPrompt'
@@ -2870,7 +2871,7 @@ async function refreshHostedWallet() {
 // query). The tween math is pure (lib/countTween.ts); only the rAF loop lives here.
 const displayedWallet = ref<number | null>(null)
 let walletTweenRaf = 0
-const WALLET_TWEEN_MS = 700
+const WALLET_TWEEN_MS = 900
 if (import.meta.client && hostedShell) {
   watch(hostedWallet, (next, prev) => {
     cancelAnimationFrame(walletTweenRaf)
@@ -4062,7 +4063,12 @@ function dismissRunResult() {
             :class="hostedShell ? 'cursor-pointer hover:bg-[#222]' : 'cursor-default'"
             @click="onCreditsPillClick"
           >
-            <span class="text-xs font-medium text-white/70">{{ creditsPillText }}</span>
+            <span class="text-xs font-medium text-white/70">
+              <template v-if="hostedShell && hostedWallet !== null">
+                <RollingNumber :value="displayedWallet ?? hostedWallet" /> credits
+              </template>
+              <template v-else>{{ creditsPillText }}</template>
+            </span>
           </button>
           <button
             class="flex items-center gap-1.5 bg-[#1a1a1a] rounded-full px-3 py-1.5 border border-[#2a2a2a] cursor-pointer hover:bg-[#222] transition-colors"
