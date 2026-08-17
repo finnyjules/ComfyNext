@@ -1,11 +1,13 @@
 # Fly.io config for Sailor — Nuxt frontend + CPU-only ComfyUI in one machine.
-# Generation runs on Replicate, so no GPU is required.
+# Generation runs on Replicate/fal, so no GPU is required.
 #
-# IMPORTANT: the app name below must match NUXT_PUBLIC_COMFY_ORIGIN's hostname.
-# If you change the app name, update that env var too (and the secret/volume).
+# HOSTING DECISION 2026-08-17 (docs/superpowers/specs/2026-08-17-hosting-decision-fly.md):
+# Fly.io, region sjc, auto-stop-by-default. The app name below is a
+# placeholder from the old scaffold — the original app was deleted; pick the
+# real name at first `flyctl launch` and keep it in sync with any secrets.
 
 app = "vessell"
-primary_region = "cdg"   # Paris. Change to your nearest region if you like.
+primary_region = "sjc"   # San Jose — nearest to Neon (aws-us-west-2, Oregon).
 
 [build]
   dockerfile = "Dockerfile"
@@ -13,25 +15,33 @@ primary_region = "cdg"   # Paris. Change to your nearest region if you like.
 [env]
   HOST = "0.0.0.0"
   PORT = "3000"
-  # DISABLED with Service B below: this origin pointed the canvas iframe at the
-  # publicly exposed ComfyUI port. Restore both only after the engine sits
-  # behind the authenticated Nitro proxy (consumer-product roadmap Stage 5).
-  # NUXT_PUBLIC_COMFY_ORIGIN = "https://vessell.fly.dev:8188"
+  # NUXT_PUBLIC_COMFY_ORIGIN must NEVER be set on hosted deploys (Stage 5
+  # invariant): the hosted client hard-forces engineOrigin to '' and reaches
+  # the engine only through the authenticated same-origin proxy. Setting it
+  # would only mislead readers — the client ignores it in hosted mode.
 
 # Persistent storage for outputs, uploads, and user settings/workflows.
+# Stage 5 deploy precondition: the engine input/ dir must start EMPTY (or
+# input_uploads must be backfilled) — see the Stage 5 verification doc.
 [[mounts]]
   source = "vessell_data"
   destination = "/data"
 
 ###############################################################################
-# Service A — Nuxt frontend (the main https hostname)
+# Service — Nuxt frontend (the ONLY public service).
+#
+# auto_stop_machines: the machine stops when traffic goes quiet and boots on
+# the next request (~15-30s for ComfyUI). An idle month costs volume storage
+# only (~$1-2), not ~$30 of always-on compute — deliberate choice 2026-08-17
+# after exactly that bill. Flip min_machines_running to 1 (and auto_stop to
+# "off") only for the beta window, as an explicit decision.
 ###############################################################################
 [[services]]
   internal_port = 3000
   protocol = "tcp"
-  auto_stop_machines = false
+  auto_stop_machines = "stop"
   auto_start_machines = true
-  min_machines_running = 1
+  min_machines_running = 0
 
   [[services.ports]]
     port = 80
@@ -48,32 +58,18 @@ primary_region = "cdg"   # Paris. Change to your nearest region if you like.
     grace_period = "30s"
 
 ###############################################################################
-# Service B — ComfyUI canvas — DISABLED (security)
+# There is deliberately NO second service for ComfyUI. The old "Service B"
+# exposed unauthenticated :8188 publicly (anyone could queue prompts on the
+# operator's provider keys and read every generated file) and was removed
+# 2026-08-12. Stage 5 (landed 2026-08-17) made it permanently unnecessary:
+# every engine path — HTTP and WebSocket — is served through the
+# authenticated, tenant-gated Nitro proxy on :3000. Never re-expose :8188.
 #
-# This block exposed the UNAUTHENTICATED ComfyUI API on public :8188: anyone
-# who found the hostname could queue prompts on the operator's provider keys
-# and read every generated file. A deploy without this block runs the app UI
-# but not the canvas iframe — acceptable until the engine is reachable only
-# through the authenticated Nitro proxy (consumer-product roadmap Stage 5),
-# at which point the iframe origin becomes a proxied path, not a second port.
-# (Hosting provider is undecided; if Fly is dropped, delete this file.)
+# Deploy-day riders (see the Stage 5 verification doc + hosting decision):
+# production WS auth (the dev-hook auth doesn't exist in built Nitro),
+# SAILOR_ENGINE_ROOT env if processes don't launch from frontend/.
 ###############################################################################
-# [[services]]
-#   internal_port = 8188
-#   protocol = "tcp"
-#   auto_stop_machines = false
-#   auto_start_machines = true
-#   min_machines_running = 1
-#
-#   [[services.ports]]
-#     port = 8188
-#     handlers = ["tls", "http"]
-#
-#   [[services.tcp_checks]]
-#     interval = "15s"
-#     timeout = "2s"
-#     grace_period = "60s"
 
 [[vm]]
-  size = "shared-cpu-2x"
-  memory = "4gb"
+  size = "shared-cpu-4x"
+  memory = "8gb"

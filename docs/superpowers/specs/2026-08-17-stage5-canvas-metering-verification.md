@@ -16,7 +16,7 @@
 
 **Money bugs caught by review before launch:** graph pricing at 1cr for a $3.20 video (62 unpriced classes); hold leaks on thrown forwards; runs shipping uncharged when the ownership insert failed; a no-wallet 500 re-regression; client-chosen `prompt_id` letting an attacker overwrite a victim's output records; 3 rows priced off a misread badge sweep.
 
-## VERIFIED automated (2026-08-20, hosted worktree at a27b45dd7 on :3100)
+## VERIFIED automated (2026-08-17, hosted worktree at a27b45dd7 on :3100)
 
 - Hosted probes 11/11: direct routes, `/api/*` + `/comfyui/*` aliases, `/comfyui/internal/files/output`, unauthed WS upgrade → all 401.
 - Local :3000 regression 4/4: `{"mode":"local"}` wallet, unfiltered history (21.5MB), unscrubbed object_info (1.9MB), ComfyUI's native error shape through the raw proxy.
