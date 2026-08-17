@@ -18,7 +18,7 @@ Legend: **bake** = render/export path · **motion** = animatable · **inspector*
 | Compositor / Frame | ✅ | ✅ motion clips | ✅ | ✅ commands | 1,667 (+1,041 motion) |
 | Timeline (NLE) | ✅ webm/mp4 + server | ✅ native | ✅ | ❌ | shared/timeline |
 | Gradient Studio | ✅ | ✅ 30 targets, path-based | ✅ (hand-written) | ✅ descriptor | 2,620 (+ 4 primitives + alpha + per-layer layout) |
-| Shader Studio | ✅ | ✅ path tracks | ✅ (data-driven) | ✅ descriptor | 806 + 63 effects |
+| Shader Studio | ✅ | ✅ path tracks (+ mask region) | ✅ (data-driven, + per-effect spatial mask) | ✅ descriptor (+ mask) | 806 + 63 effects |
 | Texture Studio | ✅ | ❌ | ✅ (data-driven) | ✅ commands | 2,041 |
 | Shape Studio (geologo) | ✅ PNG + SVG | ❌ | ✅ | ✅ descriptor | ~1,750 (lib/geoshape) |
 | Shot Director | ✅ | ✅ keyframes | ✅ | ❌ | 988 |
