@@ -142,13 +142,15 @@ const controls: ControlSpec[] = [
   { key: 'arc', label: 'Arc', kind: 'slider', min: -1, max: 1, step: 0.02, default: 0, group: 'Ribbon', hint: 'higher = text wraps upward around the vanishing point; lower = downward' },
   { key: 'curveRes', label: 'Curve detail', kind: 'slider', min: 1, max: 12, step: 1, default: 5, group: 'Ribbon', hint: 'higher = smoother curved outlines; lower = more angular' },
   { key: 'extrudeMode', label: 'Mode', kind: 'select', options: ['static', 'tumble', 'zoom', 'punch'], default: 'static', group: 'Ribbon', hint: 'animation style of the 3D letters' },
-  { key: 'tumble', label: 'Tumble', kind: 'slider', min: 0, max: 2, step: 0.05, default: 0.6, group: 'Ribbon', hint: 'higher = stronger rotating tumble effect (in tumble/punch/zoom modes)' },
+  // update() reads `tumble` in static/tumble/punch — NOT zoom (zoom only uses scaleXY + flipX).
+  { key: 'tumble', label: 'Tumble', kind: 'slider', min: 0, max: 2, step: 0.05, default: 0.6, group: 'Ribbon', hint: 'higher = stronger rotating tumble effect (in tumble/punch/zoom modes)', showIf: { key: 'extrudeMode', notEquals: 'zoom' } },
   // Letters tilt up/down (around X) onto cube faces. Alternate = even up / odd down (the
   // iso-cube weave); off = every letter tilts the same way.
   { key: 'cubeFlip', label: 'Cube flip', kind: 'slider', min: 0, max: 90, step: 1, default: 0, group: 'Ribbon', hint: 'higher = letters tilt more onto cube-like faces' },
   { key: 'cubeAlternate', label: 'Alternate flip', kind: 'select', options: ['on', 'off'], default: 'on', group: 'Ribbon', hint: 'on = alternating letters flip up/down for iso-cube weave; off = all tilt the same' },
-  { key: 'punchDistance', label: 'Punch distance', kind: 'slider', min: 0, max: 8, step: 0.1, default: 3, group: 'Ribbon', hint: 'higher = letters blast farther outward (in punch mode)' },
-  { key: 'holdFraction', label: 'Hold fraction', kind: 'slider', min: 0, max: 0.9, step: 0.05, default: 0.35, group: 'Motion', hint: 'higher = animation holds at peak longer before retracting' },
+  { key: 'punchDistance', label: 'Punch distance', kind: 'slider', min: 0, max: 8, step: 0.1, default: 3, group: 'Ribbon', hint: 'higher = letters blast farther outward (in punch mode)', showIf: { key: 'extrudeMode', equals: 'punch' } },
+  // update()'s grow-in/hold/retract envelope only runs when mode !== 'static' (static holds a=1 fixed).
+  { key: 'holdFraction', label: 'Hold fraction', kind: 'slider', min: 0, max: 0.9, step: 0.05, default: 0.35, group: 'Motion', hint: 'higher = animation holds at peak longer before retracting', showIf: { key: 'extrudeMode', notEquals: 'static' } },
   // Transform — defaults give a 3/4 tilt so the extrude reads without touching anything.
   { key: 'scale', label: 'Scale', kind: 'slider', min: 0.4, max: 2.5, step: 0.05, default: 1, group: 'Transform', hint: 'higher = larger overall scene; lower = smaller' },
   { key: 'rotateX', label: 'Scene rotate X', kind: 'slider', min: -1.8, max: 1.8, step: 0.01, default: 0.34, group: 'Transform', hint: 'rotate the entire scene around the X axis' },
@@ -160,25 +162,31 @@ const controls: ControlSpec[] = [
   { key: 'sideMode', label: 'Sides', kind: 'select', options: ['palette', 'gradient', 'ombre', 'rainbow', 'grid', 'noise', 'solid', 'mixed', 'custom'], default: 'palette', group: 'Color', hint: 'how the extrusion sides are colored' },
   // `custom` ⇒ assign a style per letter from this list (cycles if shorter than the text).
   // Tokens are separated by spaces/commas, e.g. "rainbow grid noise solid".
-  { key: 'letterStyles', label: 'Per-letter styles', kind: 'text', default: 'rainbow, grid, noise, solid', group: 'Color' },
+  { key: 'letterStyles', label: 'Per-letter styles', kind: 'text', default: 'rainbow, grid, noise, solid', group: 'Color', showIf: { key: 'sideMode', equals: 'custom' } },
   { key: 'depthBands', label: 'Side bands', kind: 'slider', min: 2, max: 16, step: 1, default: 8, group: 'Color', hint: 'higher = more color bands along the extrusion depth; lower = fewer bands' },
-  { key: 'sideColor', label: 'Side (solid)', kind: 'color', default: '#f26666', group: 'Color', hint: 'color of the sides in solid mode' },
+  { key: 'sideColor', label: 'Side (solid)', kind: 'color', default: '#f26666', group: 'Color', hint: 'color of the sides in solid mode', showIf: { key: 'sideMode', equals: 'solid' } },
   // Grid style: cell fill + line colour. Noise style: the two ends the grain lerps between.
-  { key: 'gridCell', label: 'Grid cell', kind: 'color', default: '#ffffff', group: 'Color', hint: 'cell fill color of the grid pattern on sides' },
-  { key: 'gridLine', label: 'Grid line', kind: 'color', default: '#111111', group: 'Color', hint: 'line color of the grid pattern on sides' },
-  { key: 'noiseColor1', label: 'Noise dark', kind: 'color', default: '#000000', group: 'Color', hint: 'dark end of the noise grain on sides' },
-  { key: 'noiseColor2', label: 'Noise light', kind: 'color', default: '#ffffff', group: 'Color', hint: 'light end of the noise grain on sides' },
-  { key: 'paletteCount', label: 'Palette colors', kind: 'slider', min: 1, max: 6, step: 1, default: 6, group: 'Color', hint: 'how many palette colors to use (1–6)' },
-  { key: 'boostColor1', label: 'Color 1', kind: 'color', default: BOOST_SIDE_COLORS[0]!, group: 'Color', hint: 'first palette color used on sides' },
-  { key: 'boostColor2', label: 'Color 2', kind: 'color', default: BOOST_SIDE_COLORS[1]!, group: 'Color', hint: 'second palette color used on sides' },
-  { key: 'boostColor3', label: 'Color 3', kind: 'color', default: BOOST_SIDE_COLORS[2]!, group: 'Color', hint: 'third palette color used on sides' },
-  { key: 'boostColor4', label: 'Color 4', kind: 'color', default: BOOST_SIDE_COLORS[3]!, group: 'Color', hint: 'fourth palette color used on sides' },
-  { key: 'boostColor5', label: 'Color 5', kind: 'color', default: BOOST_SIDE_COLORS[4]!, group: 'Color', hint: 'fifth palette color used on sides' },
-  { key: 'boostColor6', label: 'Color 6', kind: 'color', default: BOOST_SIDE_COLORS[5]!, group: 'Color', hint: 'sixth palette color used on sides' },
+  { key: 'gridCell', label: 'Grid cell', kind: 'color', default: '#ffffff', group: 'Color', hint: 'cell fill color of the grid pattern on sides', showIf: { key: 'sideMode', equals: 'grid' } },
+  { key: 'gridLine', label: 'Grid line', kind: 'color', default: '#111111', group: 'Color', hint: 'line color of the grid pattern on sides', showIf: { key: 'sideMode', equals: 'grid' } },
+  { key: 'noiseColor1', label: 'Noise dark', kind: 'color', default: '#000000', group: 'Color', hint: 'dark end of the noise grain on sides', showIf: { key: 'sideMode', equals: 'noise' } },
+  { key: 'noiseColor2', label: 'Noise light', kind: 'color', default: '#ffffff', group: 'Color', hint: 'light end of the noise grain on sides', showIf: { key: 'sideMode', equals: 'noise' } },
+  // resolveSide() never indexes palette[2..5] for `ombre` (only palette[0]/[1] feed its dither
+  // texture), so paletteCount — which only matters for choosing among the FULL 1–6 set — stays
+  // out of 'ombre' along with boostColor3..6 below.
+  { key: 'paletteCount', label: 'Palette colors', kind: 'slider', min: 1, max: 6, step: 1, default: 6, group: 'Color', hint: 'how many palette colors to use (1–6)', showIf: { key: 'sideMode', in: ['palette', 'gradient', 'mixed', 'custom'] } },
+  // boostColor1/2: resolveSide()'s `ombre` branch unconditionally reads palette[0], and palette[1]
+  // when paletteCount>1 (default 6), to build its dither texture — so unlike 3..6, these two also
+  // apply to 'ombre' (verified in source; the task brief's literal list omitted this).
+  { key: 'boostColor1', label: 'Color 1', kind: 'color', default: BOOST_SIDE_COLORS[0]!, group: 'Color', hint: 'first palette color used on sides', showIf: { key: 'sideMode', in: ['palette', 'gradient', 'ombre', 'mixed', 'custom'] } },
+  { key: 'boostColor2', label: 'Color 2', kind: 'color', default: BOOST_SIDE_COLORS[1]!, group: 'Color', hint: 'second palette color used on sides', showIf: { key: 'sideMode', in: ['palette', 'gradient', 'ombre', 'mixed', 'custom'] } },
+  { key: 'boostColor3', label: 'Color 3', kind: 'color', default: BOOST_SIDE_COLORS[2]!, group: 'Color', hint: 'third palette color used on sides', showIf: { key: 'sideMode', in: ['palette', 'gradient', 'mixed', 'custom'] } },
+  { key: 'boostColor4', label: 'Color 4', kind: 'color', default: BOOST_SIDE_COLORS[3]!, group: 'Color', hint: 'fourth palette color used on sides', showIf: { key: 'sideMode', in: ['palette', 'gradient', 'mixed', 'custom'] } },
+  { key: 'boostColor5', label: 'Color 5', kind: 'color', default: BOOST_SIDE_COLORS[4]!, group: 'Color', hint: 'fifth palette color used on sides', showIf: { key: 'sideMode', in: ['palette', 'gradient', 'mixed', 'custom'] } },
+  { key: 'boostColor6', label: 'Color 6', kind: 'color', default: BOOST_SIDE_COLORS[5]!, group: 'Color', hint: 'sixth palette color used on sides', showIf: { key: 'sideMode', in: ['palette', 'gradient', 'mixed', 'custom'] } },
   // Stroke (glyph outline along the extrude).
   { key: 'stroke', label: 'Stroke', kind: 'select', options: ['off', 'on'], default: 'off', group: 'Color', hint: 'toggle outline stroke along the letter edges' },
-  { key: 'strokeColor', label: 'Stroke color', kind: 'color', default: '#000000', group: 'Color', hint: 'color of the stroke outline' },
-  { key: 'strokeWidth', label: 'Stroke weight', kind: 'slider', min: 0.005, max: 0.3, step: 0.005, default: 0.03, group: 'Color', hint: 'higher = thicker stroke; lower = thinner' },
+  { key: 'strokeColor', label: 'Stroke color', kind: 'color', default: '#000000', group: 'Color', hint: 'color of the stroke outline', showIf: { key: 'stroke', equals: 'on' } },
+  { key: 'strokeWidth', label: 'Stroke weight', kind: 'slider', min: 0.005, max: 0.3, step: 0.005, default: 0.03, group: 'Color', hint: 'higher = thicker stroke; lower = thinner', showIf: { key: 'stroke', equals: 'on' } },
   { key: 'shadows', label: 'Shading', kind: 'select', options: ['flat', 'lit'], default: 'lit', group: 'Shadow', hint: 'flat = no shading; lit = directional lighting with shadows' },
 ]
 
