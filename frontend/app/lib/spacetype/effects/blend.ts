@@ -34,7 +34,7 @@ const controls: ControlSpec[] = [
   { key: 'spreadY', label: 'Spread Y / step', kind: 'slider', min: -0.3, max: 0.3, step: 0.005, default: 0, group: 'Blend' },
   // Style.
   { key: 'style', label: 'Style', kind: 'select', options: ['outline', 'solid'], default: 'outline', group: 'Style' },
-  { key: 'strokeWidth', label: 'Stroke width', kind: 'slider', min: 0.5, max: 10, step: 0.5, default: 3, group: 'Style' },
+  { key: 'strokeWidth', label: 'Stroke width', kind: 'slider', min: 0.5, max: 10, step: 0.5, default: 3, group: 'Style', showIf: { key: 'style', equals: 'outline' } },
   { key: 'blendMode', label: 'Blend mode', kind: 'select', options: ['additive', 'over'], default: 'additive', group: 'Style' },
   // Colour — primaries of the fills list, cycled or lerped across the steps.
   { key: 'fills', label: 'Fills', kind: 'fillList', default: defaultFillsFor(4, 'blend'), group: 'Color' },

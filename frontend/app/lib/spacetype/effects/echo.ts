@@ -33,8 +33,8 @@ const controls: ControlSpec[] = [
   { key: 'showBox', label: 'Show box', kind: 'select', options: ['off', 'on'], default: 'off', group: 'Occlusion' },
   { key: 'cardPadX', label: 'Card pad X', kind: 'slider', min: 0, max: 4, step: 0.05, default: 0.4, group: 'Occlusion' },
   { key: 'cardPadY', label: 'Card pad Y', kind: 'slider', min: 0, max: 4, step: 0.05, default: 0.15, group: 'Occlusion' },
-  { key: 'cardColor', label: 'Card color', kind: 'color', default: '#000000', group: 'Occlusion' },
-  { key: 'cardOpacity', label: 'Card opacity', kind: 'slider', min: 0, max: 1, step: 0.02, default: 1, group: 'Occlusion' },
+  { key: 'cardColor', label: 'Card color', kind: 'color', default: '#000000', group: 'Occlusion', showIf: { key: 'showBox', equals: 'on' } },
+  { key: 'cardOpacity', label: 'Card opacity', kind: 'slider', min: 0, max: 1, step: 0.02, default: 1, group: 'Occlusion', showIf: { key: 'showBox', equals: 'on' } },
   { key: 'zOrder', label: 'On top', kind: 'select', options: ['base', 'last'], default: 'base', group: 'Occlusion' },
   // Look — base → end ramp (color / opacity / fill↔outline / scale).
   { key: 'baseColor', label: 'Base color', kind: 'color', default: '#ffffff', group: 'Look' },

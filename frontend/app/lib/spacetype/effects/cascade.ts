@@ -52,7 +52,7 @@ const controls: ControlSpec[] = [
   { key: 'rotateZ', label: 'Scene rotate Z', kind: 'slider', min: -1.8, max: 1.8, step: 0.01, default: 0, group: 'Transform' },
   // Colour — per-row fills (stripe solid/gradient/grid/noise + text colour), cycled like STG.
   { key: 'fills', label: 'Fills', kind: 'fillList', default: defaultFillsFor(2, 'cascade'), group: 'Color' },
-  { key: 'gradientMode', label: 'Gradient (across rows)', kind: 'select', options: ['off', 'on'], default: 'off', group: 'Color' },
+  { key: 'gradientMode', label: 'Gradient (across rows)', kind: 'select', options: ['off', 'on'], default: 'off', group: 'Color', showIf: { key: 'noStripes', equals: 'off' } },
 ]
 
 const YFIELD = 700              // internal px height of the cascade field

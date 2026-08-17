@@ -25,7 +25,7 @@ const controls: ControlSpec[] = [
   // fixed = the Panels slider sets the count; per-word = one panel per text repeat (Around),
   // each word centred on its own panel so the panels track the text as you resize.
   { key: 'panelMode', label: 'Panel sizing', kind: 'select', options: ['fixed', 'per-word'], default: 'fixed', group: 'Ribbon' },
-  { key: 'segments', label: 'Panels', kind: 'slider', min: 1, max: 16, step: 1, default: 6, group: 'Ribbon' },
+  { key: 'segments', label: 'Panels', kind: 'slider', min: 1, max: 16, step: 1, default: 6, group: 'Ribbon', showIf: { key: 'panelMode', equals: 'fixed' } },
   { key: 'around', label: 'Around', kind: 'slider', min: 1, max: 20, step: 1, default: 4, group: 'Ribbon' },
   { key: 'rows', label: 'Rows', kind: 'slider', min: 2, max: 28, step: 1, default: 11, group: 'Ribbon' },
   { key: 'axisTilt', label: 'Axis tilt', kind: 'slider', min: -1, max: 1, step: 0.01, default: 0.18, group: 'Ribbon' },
@@ -41,7 +41,7 @@ const controls: ControlSpec[] = [
   { key: 'fills', label: 'Panels', kind: 'fillList', default: defaultFillsFor(6, 'ball'), group: 'Color' },
   // SHADING — flat = uniform panels; lit = directional shading for a round, ball-like read.
   { key: 'shading', label: 'Shading', kind: 'select', options: ['flat', 'lit'], default: 'lit', group: 'Shadow' },
-  { key: 'shadeStrength', label: 'Shade depth', kind: 'slider', min: 0, max: 1, step: 0.05, default: 0.5, group: 'Shadow' },
+  { key: 'shadeStrength', label: 'Shade depth', kind: 'slider', min: 0, max: 1, step: 0.05, default: 0.5, group: 'Shadow', showIf: { key: 'shading', equals: 'lit' } },
 ]
 
 interface BallState { spinGroup: THREE.Group; tiltGroup: THREE.Group }

@@ -6,6 +6,11 @@ import { fieldEffect } from '../../app/lib/spacetype/effects/field'
 import { ribbonEffect } from '../../app/lib/spacetype/effects/ribbon'
 import { boostEffect } from '../../app/lib/spacetype/effects/boost'
 import { sliceGlitchEffect } from '../../app/lib/spacetype/effects/sliceGlitch'
+import { ballEffect } from '../../app/lib/spacetype/effects/ball'
+import { blendEffect } from '../../app/lib/spacetype/effects/blend'
+import { cascadeEffect } from '../../app/lib/spacetype/effects/cascade'
+import { cornerPinEffect } from '../../app/lib/spacetype/effects/cornerPin'
+import { echoEffect } from '../../app/lib/spacetype/effects/echo'
 
 // Real exports are `coilEffect`/`cylinderEffect`/`fieldEffect`/`ribbonEffect` (SpaceTypeEffect
 // objects with a `.controls` array), not bare `coil`/`cylinder`/`field`/`ribbon` — the brief's
@@ -221,6 +226,74 @@ describe('sliceGlitch: mode-specific controls gated', () => {
       const c = byKey(key)
       expect(showIfVisible(c, readWith('doodlesOn', 'off'))).toBe(false)
       expect(showIfVisible(c, readWith('doodlesOn', 'on'))).toBe(true)
+    }
+  })
+})
+
+/**
+ * Task 5a: ball/blend/cascade/cornerPin/echo — mode-specific controls gated per source.
+ *  - ball: panelMode 'per-word' derives its panel count from `around` and never reads
+ *    `segments` (buildScene); shading 'flat' uses MeshBasicMaterial and never reads
+ *    `shadeStrength` (only spent building the 'lit' ambient light).
+ *  - blend: style 'solid' passes strokeWidth 0 into layoutChars regardless of the control
+ *    (outline ? strokeWidth : 0) — the control only matters for 'outline'.
+ *  - cascade: noStripes 'on' skips building any ribbon mesh at all (both the fast-path and
+ *    the split-per-fill-slot path are gated on `!noStripes`), so gradientMode's flag is
+ *    never read when stripes are off.
+ *  - cornerPin: mode 'static' keeps cur=nxt=0, e=0 in update(), so only scene-0's pose
+ *    (built from `skew`) is used; scenes/holdTime/transitionTime/ease/sway/seed never
+ *    reach the render in that branch.
+ *  - echo: showBox 'off' forces the card material to colorWrite=false/opacity=1
+ *    (cardColor/cardOpacity are never applied) in update()'s placeCopy().
+ */
+describe('task-5a: ball/blend/cascade/cornerPin/echo mode-specific controls gated', () => {
+  const byKey = (controls: any[], effectName: string, key: string) => {
+    const c = controls.find(x => x.key === key)
+    expect(c, `${effectName}.${key} exists`).toBeTruthy()
+    expect(c.showIf, `${effectName}.${key} has showIf`).toBeTruthy()
+    return c
+  }
+  const readWith = (key: string, value: unknown) => (k: string) => (k === key ? (value as any) : undefined)
+
+  it('ball: segments shown only for panelMode=fixed', () => {
+    const c = byKey(ballEffect.controls as any[], 'ball', 'segments')
+    expect(showIfVisible(c, readWith('panelMode', 'per-word'))).toBe(false)
+    expect(showIfVisible(c, readWith('panelMode', 'fixed'))).toBe(true)
+  })
+
+  it('ball: shadeStrength shown only for shading=lit', () => {
+    const c = byKey(ballEffect.controls as any[], 'ball', 'shadeStrength')
+    expect(showIfVisible(c, readWith('shading', 'flat'))).toBe(false)
+    expect(showIfVisible(c, readWith('shading', 'lit'))).toBe(true)
+  })
+
+  it('blend: strokeWidth shown only for style=outline', () => {
+    const c = byKey(blendEffect.controls as any[], 'blend', 'strokeWidth')
+    expect(showIfVisible(c, readWith('style', 'solid'))).toBe(false)
+    expect(showIfVisible(c, readWith('style', 'outline'))).toBe(true)
+  })
+
+  it('cascade: gradientMode shown only when noStripes=off', () => {
+    const c = byKey(cascadeEffect.controls as any[], 'cascade', 'gradientMode')
+    expect(showIfVisible(c, readWith('noStripes', 'on'))).toBe(false)
+    expect(showIfVisible(c, readWith('noStripes', 'off'))).toBe(true)
+  })
+
+  it('cornerPin: scenes/holdTime/transitionTime/ease/sway/seed shown only for mode=loop', () => {
+    const controls = cornerPinEffect.controls as any[]
+    for (const key of ['scenes', 'holdTime', 'transitionTime', 'ease', 'sway', 'seed']) {
+      const c = byKey(controls, 'cornerPin', key)
+      expect(showIfVisible(c, readWith('mode', 'static'))).toBe(false)
+      expect(showIfVisible(c, readWith('mode', 'loop'))).toBe(true)
+    }
+  })
+
+  it('echo: cardColor/cardOpacity shown only when showBox=on', () => {
+    const controls = echoEffect.controls as any[]
+    for (const key of ['cardColor', 'cardOpacity']) {
+      const c = byKey(controls, 'echo', key)
+      expect(showIfVisible(c, readWith('showBox', 'off'))).toBe(false)
+      expect(showIfVisible(c, readWith('showBox', 'on'))).toBe(true)
     }
   })
 })
