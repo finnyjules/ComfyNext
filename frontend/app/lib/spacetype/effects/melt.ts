@@ -31,7 +31,8 @@ const controls: ControlSpec[] = [
   { key: 'waveVary', label: 'Wave variation', kind: 'slider', min: 0, max: 1.5, step: 0.05, default: 0.7, group: 'Wave' },
   // Smooth sine snake vs geometric stepped/glitch jogs (right-angle staircase displacement).
   { key: 'waveStyle', label: 'Wave style', kind: 'select', options: ['smooth', 'geometric'], default: 'smooth', group: 'Wave' },
-  { key: 'steps', label: 'Geometric steps', kind: 'slider', min: 3, max: 40, step: 1, default: 12, group: 'Wave' },
+  { key: 'steps', label: 'Geometric steps', kind: 'slider', min: 3, max: 40, step: 1, default: 12, group: 'Wave',
+    showIf: { key: 'waveStyle', equals: 'geometric' } },
   { key: 'speed', label: 'Speed', kind: 'slider', min: 0, max: 4, step: 1, default: 1, group: 'Motion' },
   // Colour — the word's fill (solid/gradient/grid/noise).
   { key: 'fills', label: 'Fills', kind: 'fillList', default: defaultFillsFor(1, 'melt'), group: 'Color' },

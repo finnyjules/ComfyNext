@@ -40,7 +40,8 @@ const controls: ControlSpec[] = [
   { key: 'tumble', label: 'Tumble', kind: 'slider', min: 0, max: 2, step: 0.05, default: 0, group: 'Motion' },
   // animate = grow-in/hold/retract over the loop; static = held at full tumble (no motion).
   { key: 'tumbleMotion', label: 'Tumble motion', kind: 'select', options: ['animate', 'static'], default: 'animate', group: 'Motion' },
-  { key: 'holdFraction', label: 'Hold fraction', kind: 'slider', min: 0, max: 0.9, step: 0.05, default: 0.35, group: 'Motion' },
+  { key: 'holdFraction', label: 'Hold fraction', kind: 'slider', min: 0, max: 0.9, step: 0.05, default: 0.35, group: 'Motion',
+    showIf: { key: 'tumbleMotion', equals: 'animate' } },
   // Scatter each cylinder's position + vary its size randomly (0 = neat grid, uniform size).
   { key: 'posOffset', label: 'Position offset', kind: 'slider', min: 0, max: 5, step: 0.1, default: 0, group: 'Ribbon' },
   { key: 'sizeVary', label: 'Size variation', kind: 'slider', min: 0, max: 0.9, step: 0.02, default: 0, group: 'Ribbon' },

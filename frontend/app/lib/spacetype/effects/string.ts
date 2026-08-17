@@ -34,12 +34,26 @@ const controls: ControlSpec[] = [
   { key: 'outline', label: 'Outlines', kind: 'select', options: ['off', 'on'], default: 'off', group: 'Ribbon' },
   { key: 'speed', label: 'Scroll speed', kind: 'slider', min: 0, max: 8, step: 0.5, default: 2, group: 'Motion' },
   { key: 'speedVary', label: 'Speed variation', kind: 'slider', min: 0, max: 1, step: 0.05, default: 0.3, group: 'Motion' },
-  { key: 'fore', label: 'Foreground', kind: 'color', default: '#ffffff', group: 'Color' },
+  // buildTile()'s per-mode switch (../stringTextures.ts) reads these knots:
+  //  - 'text'    → makeTextTile(fore, bg: knots[0])           → fore, g1
+  //  - 'stripes' → makeStripesTile(fore, knots[0])             → fore, g1
+  //  - 'grad1'   → makeGradient1Tile(knots) (all 5 stops)      → g1, g2, g3, g4, g5
+  //  - 'grad2'   → makeGradient2Tile(knots) (all 5 stops)      → g1, g2, g3, g4, g5
+  // g1 is read by every mode (bg / knot 0 of every gradient), so it is left ungated — always
+  // visible. Mixture modes cycle text/grad1/stripes/grad2 per strip or per string index, so
+  // any of the four tile kinds may appear; both fore's and g2..g5's gates include both
+  // Mixture options rather than trying to predict which indices land on which kind.
+  { key: 'fore', label: 'Foreground', kind: 'color', default: '#ffffff', group: 'Color',
+    showIf: { key: 'textureMode', in: ['Text', 'Stripes', 'Mixture per strip', 'Mixture per string'] } },
   { key: 'g1', label: 'Knot 1', kind: 'color', default: '#2955d9', group: 'Color' },
-  { key: 'g2', label: 'Knot 2', kind: 'color', default: '#2793f2', group: 'Color' },
-  { key: 'g3', label: 'Knot 3', kind: 'color', default: '#f2c12e', group: 'Color' },
-  { key: 'g4', label: 'Knot 4', kind: 'color', default: '#f23e2e', group: 'Color' },
-  { key: 'g5', label: 'Knot 5', kind: 'color', default: '#0d0d0d', group: 'Color' },
+  { key: 'g2', label: 'Knot 2', kind: 'color', default: '#2793f2', group: 'Color',
+    showIf: { key: 'textureMode', in: ['Gradient 1', 'Gradient 2', 'Mixture per strip', 'Mixture per string'] } },
+  { key: 'g3', label: 'Knot 3', kind: 'color', default: '#f2c12e', group: 'Color',
+    showIf: { key: 'textureMode', in: ['Gradient 1', 'Gradient 2', 'Mixture per strip', 'Mixture per string'] } },
+  { key: 'g4', label: 'Knot 4', kind: 'color', default: '#f23e2e', group: 'Color',
+    showIf: { key: 'textureMode', in: ['Gradient 1', 'Gradient 2', 'Mixture per strip', 'Mixture per string'] } },
+  { key: 'g5', label: 'Knot 5', kind: 'color', default: '#0d0d0d', group: 'Color',
+    showIf: { key: 'textureMode', in: ['Gradient 1', 'Gradient 2', 'Mixture per strip', 'Mixture per string'] } },
 ]
 
 function n(p: Params, k: string): number { return Number(p[k]) }

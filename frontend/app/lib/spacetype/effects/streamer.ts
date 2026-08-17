@@ -34,15 +34,23 @@ const controls: ControlSpec[] = [
   { key: 'count', label: 'Streamers', kind: 'slider', min: 1, max: 5, step: 1, default: 1, group: 'Ribbon' },
   { key: 'ribbonHeight', label: 'Ribbon height', kind: 'slider', min: 8, max: 120, step: 1, default: 44, group: 'Ribbon' },
   // Color — front face
-  { key: 'frontMode', label: 'Front mode', kind: 'select', options: ['solid', 'gradient', 'ombre', 'grid', 'noise'], default: 'gradient', group: 'Color' },
-  { key: 'fills', label: 'Front colors', kind: 'fillList', default: defaultFillsFor(4, 'streamer'), group: 'Color' },
+  { key: 'frontMode', label: 'Front mode', kind: 'select', options: ['solid', 'gradient', 'ombre', 'grid', 'noise'], default: 'gradient', group: 'Color',
+    showIf: { key: 'noStripes', equals: 'off' } },
+  { key: 'fills', label: 'Front colors', kind: 'fillList', default: defaultFillsFor(4, 'streamer'), group: 'Color',
+    showIf: { key: 'noStripes', equals: 'off' } },
   { key: 'textColor', label: 'Text color', kind: 'color', default: '#111111', group: 'Color' },
   { key: 'noStripes', label: 'Text only', kind: 'select', options: ['off', 'on'], default: 'off', group: 'Color' },
   // Color — back face
   { key: 'backMode', label: 'Back mode', kind: 'select', options: ['solid', 'gradient', 'ombre', 'grid', 'noise'], default: 'solid', group: 'Color' },
   { key: 'backColorA', label: 'Back color', kind: 'color', default: '#111111', group: 'Color' },
-  { key: 'backColorB', label: 'Back color 2', kind: 'color', default: '#444444', group: 'Color' },
-  { key: 'backDensity', label: 'Back density', kind: 'slider', min: 1, max: 32, step: 1, default: 8, group: 'Color' },
+  { key: 'backColorB', label: 'Back color 2', kind: 'color', default: '#444444', group: 'Color',
+    showIf: { key: 'backMode', notEquals: 'solid' } },
+  // faceTexture()/fillTexture() route density only through gridTex — ombre/noise/gradient ignore
+  // it (see fills.ts: ombreTex(a,b,angle), noiseTex(a,b), gradientRamp(a,b) take no density arg).
+  // A `notEquals: 'solid'` gate (matching backColorB) would leave this visible-but-dead for
+  // gradient/ombre/noise; gated tighter to the one mode that actually reads it.
+  { key: 'backDensity', label: 'Back density', kind: 'slider', min: 1, max: 32, step: 1, default: 8, group: 'Color',
+    showIf: { key: 'backMode', equals: 'grid' } },
   // Stroke (border around all of the band's edges — sides + end caps — per face)
   { key: 'strokeWidth', label: 'Edge stroke', kind: 'slider', min: 0, max: 0.45, step: 0.01, default: 0, group: 'Stroke' },
   { key: 'frontStrokeColor', label: 'Front edge', kind: 'color', default: '#000000', group: 'Stroke' },

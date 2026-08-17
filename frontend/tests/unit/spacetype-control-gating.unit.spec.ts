@@ -11,6 +11,11 @@ import { blendEffect } from '../../app/lib/spacetype/effects/blend'
 import { cascadeEffect } from '../../app/lib/spacetype/effects/cascade'
 import { cornerPinEffect } from '../../app/lib/spacetype/effects/cornerPin'
 import { echoEffect } from '../../app/lib/spacetype/effects/echo'
+import { meltEffect } from '../../app/lib/spacetype/effects/melt'
+import { onionburstEffect } from '../../app/lib/spacetype/effects/onionburst'
+import { shutterEffect } from '../../app/lib/spacetype/effects/shutter'
+import { streamerEffect } from '../../app/lib/spacetype/effects/streamer'
+import { stringEffect } from '../../app/lib/spacetype/effects/string'
 
 // Real exports are `coilEffect`/`cylinderEffect`/`fieldEffect`/`ribbonEffect` (SpaceTypeEffect
 // objects with a `.controls` array), not bare `coil`/`cylinder`/`field`/`ribbon` — the brief's
@@ -294,6 +299,141 @@ describe('task-5a: ball/blend/cascade/cornerPin/echo mode-specific controls gate
       const c = byKey(controls, 'echo', key)
       expect(showIfVisible(c, readWith('showBox', 'off'))).toBe(false)
       expect(showIfVisible(c, readWith('showBox', 'on'))).toBe(true)
+    }
+  })
+})
+
+/**
+ * Task 5b: melt/onionburst/shutter/streamer/string — mode-specific controls gated per source.
+ *  - melt: uGeo (waveStyle==='geometric' ? 1 : 0) only gates uSteps's use in the fragment
+ *    shader — steps is otherwise a dead uniform, so it's shown only for 'geometric'.
+ *  - onionburst: tumbleMotion !== 'static' is the only branch in update() that reads
+ *    holdFraction (via the grow-in/hold/retract envelope); 'static' holds full tumble with
+ *    no envelope at all.
+ *  - shutter: copyColor() in the fragment shader switches on uColorMode — mono reads
+ *    uTextColor, palette reads uPalA/uPalB, fill reads the fill atlas — so textColor/
+ *    paletteA/paletteB/fill are each live in exactly one colorMode. sceneBlend() short-
+ *    circuits to {cur:0,nxt:0,e:0} when mode==='static', and shutterPose(0,...) returns
+ *    early without reading variance/seed — so scenes/variance/holdTime/transitionTime/
+ *    ease/seed are all dead outside mode==='loop'.
+ *  - streamer: the front face's FACE_FRAG only samples `base` (built from frontMode/fills)
+ *    when uNoStripes<=0.5; noStripes==='on' discards or paints solid uTextColor instead, so
+ *    frontMode/fills are dead there. backColorB feeds every non-solid back mode (gradient/
+ *    ombre/grid/noise all read fill.b) but backDensity only reaches gridTex's cell count
+ *    (ombreTex/noiseTex/gradientRamp take no density argument) — so backDensity is gated
+ *    tighter (equals 'grid') than backColorB (notEquals 'solid'), a deliberate deviation
+ *    from the audit's uniform notEquals:'solid' for both, verified against fills.ts.
+ *  - string: buildTile()'s switch (../stringTextures.ts) — 'text' reads fore + knots[0];
+ *    'stripes' reads fore + knots[0]; 'grad1'/'grad2' read all five knots (knots[0..4]).
+ *    g1 (knots[0]) is read by every mode, so it is left ungated. Mixture per strip/string
+ *    cycle text→grad1→stripes→grad2 by index, so any tile kind may appear — both Mixture
+ *    options are included in every gate rather than assumed absent.
+ */
+describe('task-5b: melt/onionburst/shutter/streamer/string mode-specific controls gated', () => {
+  const byKey = (controls: any[], effectName: string, key: string) => {
+    const c = controls.find(x => x.key === key)
+    expect(c, `${effectName}.${key} exists`).toBeTruthy()
+    expect(c.showIf, `${effectName}.${key} has showIf`).toBeTruthy()
+    return c
+  }
+  const readWith = (key: string, value: unknown) => (k: string) => (k === key ? (value as any) : undefined)
+
+  it('melt: steps shown only for waveStyle=geometric', () => {
+    const c = byKey(meltEffect.controls as any[], 'melt', 'steps')
+    expect(showIfVisible(c, readWith('waveStyle', 'smooth'))).toBe(false)
+    expect(showIfVisible(c, readWith('waveStyle', 'geometric'))).toBe(true)
+  })
+
+  it('onionburst: holdFraction shown only for tumbleMotion=animate', () => {
+    const c = byKey(onionburstEffect.controls as any[], 'onionburst', 'holdFraction')
+    expect(showIfVisible(c, readWith('tumbleMotion', 'static'))).toBe(false)
+    expect(showIfVisible(c, readWith('tumbleMotion', 'animate'))).toBe(true)
+  })
+
+  it('shutter: colorMode-gated colour controls each shown only in their own mode', () => {
+    const controls = shutterEffect.controls as any[]
+    const c = byKey(controls, 'shutter', 'textColor')
+    expect(showIfVisible(c, readWith('colorMode', 'mono'))).toBe(true)
+    expect(showIfVisible(c, readWith('colorMode', 'palette'))).toBe(false)
+    expect(showIfVisible(c, readWith('colorMode', 'fill'))).toBe(false)
+
+    for (const key of ['paletteA', 'paletteB']) {
+      const p = byKey(controls, 'shutter', key)
+      expect(showIfVisible(p, readWith('colorMode', 'palette'))).toBe(true)
+      expect(showIfVisible(p, readWith('colorMode', 'mono'))).toBe(false)
+      expect(showIfVisible(p, readWith('colorMode', 'fill'))).toBe(false)
+    }
+
+    const f = byKey(controls, 'shutter', 'fill')
+    expect(showIfVisible(f, readWith('colorMode', 'fill'))).toBe(true)
+    expect(showIfVisible(f, readWith('colorMode', 'mono'))).toBe(false)
+    expect(showIfVisible(f, readWith('colorMode', 'palette'))).toBe(false)
+  })
+
+  it('shutter: scenes/variance/holdTime/transitionTime/ease/seed shown only for mode=loop', () => {
+    const controls = shutterEffect.controls as any[]
+    for (const key of ['scenes', 'variance', 'holdTime', 'transitionTime', 'ease', 'seed']) {
+      const c = byKey(controls, 'shutter', key)
+      expect(showIfVisible(c, readWith('mode', 'static'))).toBe(false)
+      expect(showIfVisible(c, readWith('mode', 'loop'))).toBe(true)
+    }
+  })
+
+  it('streamer: frontMode/fills shown only when noStripes=off', () => {
+    const controls = streamerEffect.controls as any[]
+    for (const key of ['frontMode', 'fills']) {
+      const c = byKey(controls, 'streamer', key)
+      expect(showIfVisible(c, readWith('noStripes', 'on'))).toBe(false)
+      expect(showIfVisible(c, readWith('noStripes', 'off'))).toBe(true)
+    }
+  })
+
+  it('streamer: backColorB hidden only when backMode=solid', () => {
+    const c = byKey(streamerEffect.controls as any[], 'streamer', 'backColorB')
+    expect(showIfVisible(c, readWith('backMode', 'solid'))).toBe(false)
+    for (const mode of ['gradient', 'ombre', 'grid', 'noise']) {
+      expect(showIfVisible(c, readWith('backMode', mode))).toBe(true)
+    }
+  })
+
+  it('streamer: backDensity shown only when backMode=grid (density is dead in ombre/noise/gradient — fills.ts takes no density arg there)', () => {
+    const c = byKey(streamerEffect.controls as any[], 'streamer', 'backDensity')
+    expect(showIfVisible(c, readWith('backMode', 'grid'))).toBe(true)
+    for (const mode of ['solid', 'gradient', 'ombre', 'noise']) {
+      expect(showIfVisible(c, readWith('backMode', mode))).toBe(false)
+    }
+  })
+
+  it('string: fore shown for Text/Stripes/both Mixture modes, hidden for Gradient 1/Gradient 2', () => {
+    const c = byKey(stringEffect.controls as any[], 'string', 'fore')
+    expect(showIfVisible(c, readWith('textureMode', 'Text'))).toBe(true)
+    expect(showIfVisible(c, readWith('textureMode', 'Stripes'))).toBe(true)
+    expect(showIfVisible(c, readWith('textureMode', 'Mixture per strip'))).toBe(true)
+    expect(showIfVisible(c, readWith('textureMode', 'Mixture per string'))).toBe(true)
+    expect(showIfVisible(c, readWith('textureMode', 'Gradient 1'))).toBe(false)
+    expect(showIfVisible(c, readWith('textureMode', 'Gradient 2'))).toBe(false)
+  })
+
+  it('string: g1 is read by every buildTile branch (bg/knot0), so it carries no showIf and is always visible', () => {
+    const controls = stringEffect.controls as any[]
+    const c = controls.find(x => x.key === 'g1')
+    expect(c, 'string.g1 exists').toBeTruthy()
+    expect(c.showIf).toBeFalsy()
+    for (const mode of ['Text', 'Gradient 1', 'Gradient 2', 'Stripes', 'Mixture per strip', 'Mixture per string']) {
+      expect(showIfVisible(c, readWith('textureMode', mode))).toBe(true)
+    }
+  })
+
+  it('string: g2..g5 shown for Gradient 1/Gradient 2/both Mixture modes, hidden for Text/Stripes', () => {
+    const controls = stringEffect.controls as any[]
+    for (const key of ['g2', 'g3', 'g4', 'g5']) {
+      const c = byKey(controls, 'string', key)
+      expect(showIfVisible(c, readWith('textureMode', 'Gradient 1'))).toBe(true)
+      expect(showIfVisible(c, readWith('textureMode', 'Gradient 2'))).toBe(true)
+      expect(showIfVisible(c, readWith('textureMode', 'Mixture per strip'))).toBe(true)
+      expect(showIfVisible(c, readWith('textureMode', 'Mixture per string'))).toBe(true)
+      expect(showIfVisible(c, readWith('textureMode', 'Text'))).toBe(false)
+      expect(showIfVisible(c, readWith('textureMode', 'Stripes'))).toBe(false)
     }
   })
 })
