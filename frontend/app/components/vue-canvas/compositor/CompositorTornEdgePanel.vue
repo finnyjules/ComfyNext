@@ -16,42 +16,70 @@ const reseed = () => emit('update', { seed: Math.floor(Math.abs(Math.sin(v.value
 </script>
 
 <template>
-  <div class="space-y-2">
-    <label class="flex items-center justify-between text-xs">
-      <span>Torn edge</span>
-      <input type="checkbox" :checked="on" @change="emit('toggle', ($event.target as HTMLInputElement).checked)">
-    </label>
+  <div>
+    <div class="flex items-center justify-between mb-1.5">
+      <div class="panel-label">Torn edge</div>
+      <button type="button" class="text-[10px] px-1.5 py-0.5 rounded border border-[#2a2a2a] text-white/60 hover:text-white/90"
+        @click="emit('toggle', !on)">{{ on ? 'Remove' : 'Add' }}</button>
+    </div>
 
     <template v-if="on">
-      <label class="block text-xs">Edge style
-        <select class="w-full" :value="v.style" @change="set({ style: ($event.target as HTMLSelectElement).value as TornEdgeSpec['style'] })">
-          <option v-for="st in TORN_EDGE_STYLES" :key="st" :value="st">{{ st }}</option>
-        </select>
-      </label>
+      <div class="space-y-2">
+        <div>
+          <div class="panel-label mb-1.5">Edge style</div>
+          <select :value="v.style"
+            class="w-full bg-white/[0.04] border border-white/[0.06] rounded px-2 py-1.5 text-xs text-white/90 outline-none cursor-pointer"
+            @change="set({ style: ($event.target as HTMLSelectElement).value as TornEdgeSpec['style'] })">
+            <option v-for="st in TORN_EDGE_STYLES" :key="st" :value="st">{{ st }}</option>
+          </select>
+        </div>
 
-      <label class="block text-xs">Tear depth
-        <input type="range" min="0" max="70" step="1" :value="v.amount" @input="set({ amount: +($event.target as HTMLInputElement).value })">
-      </label>
-      <label class="block text-xs">Roughness
-        <input type="range" min="0" max="100" step="1" :value="Math.round(v.roughness * 100)" @input="set({ roughness: +($event.target as HTMLInputElement).value / 100 })">
-      </label>
-      <label class="block text-xs">Grain
-        <input type="range" min="0" max="18" step="1" :value="v.grain" @input="set({ grain: +($event.target as HTMLInputElement).value })">
-      </label>
-      <label class="block text-xs">Grain texture
-        <input type="range" min="0" max="100" step="1" :value="Math.round(v.grainTexture * 100)" @input="set({ grainTexture: +($event.target as HTMLInputElement).value / 100 })">
-      </label>
-      <label class="block text-xs">Lip width
-        <input type="range" min="0" max="20" step="1" :value="v.lipWidth" @input="set({ lipWidth: +($event.target as HTMLInputElement).value })">
-      </label>
-      <label class="block text-xs">Lip width var
-        <input type="range" min="0" max="100" step="1" :value="Math.round(v.lipVariation * 100)" @input="set({ lipVariation: +($event.target as HTMLInputElement).value / 100 })">
-      </label>
-      <label class="flex items-center justify-between text-xs">Lip color
-        <input type="color" :value="v.lipColor" @input="set({ lipColor: ($event.target as HTMLInputElement).value })">
-      </label>
+        <div>
+          <div class="flex items-center justify-between panel-sublabel mb-1"><span>Tear depth</span><span class="tabular-nums normal-case">{{ v.amount }}</span></div>
+          <input type="range" min="0" max="70" step="1" :value="v.amount" class="w-full accent-white cursor-pointer"
+            @input="set({ amount: +($event.target as HTMLInputElement).value })">
+        </div>
 
-      <button type="button" class="text-xs underline" @click="reseed">New tear</button>
+        <div>
+          <div class="flex items-center justify-between panel-sublabel mb-1"><span>Roughness</span><span class="tabular-nums normal-case">{{ Math.round(v.roughness * 100) }}</span></div>
+          <input type="range" min="0" max="100" step="1" :value="Math.round(v.roughness * 100)" class="w-full accent-white cursor-pointer"
+            @input="set({ roughness: +($event.target as HTMLInputElement).value / 100 })">
+        </div>
+
+        <div>
+          <div class="flex items-center justify-between panel-sublabel mb-1"><span>Grain</span><span class="tabular-nums normal-case">{{ v.grain }}</span></div>
+          <input type="range" min="0" max="18" step="1" :value="v.grain" class="w-full accent-white cursor-pointer"
+            @input="set({ grain: +($event.target as HTMLInputElement).value })">
+        </div>
+
+        <div>
+          <div class="flex items-center justify-between panel-sublabel mb-1"><span>Grain texture</span><span class="tabular-nums normal-case">{{ Math.round(v.grainTexture * 100) }}</span></div>
+          <input type="range" min="0" max="100" step="1" :value="Math.round(v.grainTexture * 100)" class="w-full accent-white cursor-pointer"
+            @input="set({ grainTexture: +($event.target as HTMLInputElement).value / 100 })">
+        </div>
+
+        <div>
+          <div class="flex items-center justify-between panel-sublabel mb-1"><span>Lip width</span><span class="tabular-nums normal-case">{{ v.lipWidth }}</span></div>
+          <input type="range" min="0" max="20" step="1" :value="v.lipWidth" class="w-full accent-white cursor-pointer"
+            @input="set({ lipWidth: +($event.target as HTMLInputElement).value })">
+        </div>
+
+        <div>
+          <div class="flex items-center justify-between panel-sublabel mb-1"><span>Lip width var</span><span class="tabular-nums normal-case">{{ Math.round(v.lipVariation * 100) }}</span></div>
+          <input type="range" min="0" max="100" step="1" :value="Math.round(v.lipVariation * 100)" class="w-full accent-white cursor-pointer"
+            @input="set({ lipVariation: +($event.target as HTMLInputElement).value / 100 })">
+        </div>
+
+        <div class="flex items-center justify-between">
+          <div class="panel-label">Lip color</div>
+          <input type="color" :value="v.lipColor"
+            class="w-8 h-8 rounded bg-transparent border border-[#2a2a2a] cursor-pointer shrink-0"
+            @input="set({ lipColor: ($event.target as HTMLInputElement).value })">
+        </div>
+
+        <button type="button" class="text-[10px] px-1.5 py-0.5 rounded border border-[#2a2a2a] text-white/60 hover:text-white/90"
+          @click="reseed">New tear</button>
+      </div>
     </template>
   </div>
 </template>
