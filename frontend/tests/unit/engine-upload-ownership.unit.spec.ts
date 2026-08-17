@@ -80,7 +80,8 @@ g.proxyRequest = proxyRequest
 
 const { handleHostedUpload, normalizeFieldName, decideOverwrite, MAX_UPLOAD_BYTES }
   = await import('../../server/utils/engineGate')
-const { __setInputUploadsDbForTests } = await import('../../server/utils/inputUploads')
+const { __setInputUploadsDbForTests, __setInputUploadsEngineRootForTests, canonicalUploadKey }
+  = await import('../../server/utils/inputUploads')
 const middleware = (await import('../../server/middleware/comfyui-proxy')).default as any
 
 // ---------------------------------------------------------------- fake tables
@@ -119,6 +120,14 @@ beforeEach(() => {
   owners.clear()
   queries.length = 0
   lastStatus = 0
+  // S2: root resolution also goes through the (mocked) node:fs existsSync,
+  // so without an override every test's engine-root marker check would ride
+  // the SAME existsOnDisk mock as the on-disk file check above — a test that
+  // sets existsOnDisk to false to mean "nothing on disk" would incidentally
+  // also make the root unresolvable. Pin a fake resolved root by default so
+  // these tests keep exercising the on-disk-existence decision they're
+  // named for; the dedicated S2 tests below override this back to null.
+  __setInputUploadsEngineRootForTests('/fake/engine/root')
 })
 
 // ------------------------------------------------------------------- fixtures
@@ -310,6 +319,100 @@ describe('R2 — overwrite is scoped to the owner, not refused outright', () => 
     expect(decideOverwrite('u1', 'u2', false)).toBe(false)
     expect(decideOverwrite('u1', null, false)).toBe(true)
     expect(decideOverwrite('u1', null, true)).toBe(false)
+  })
+
+  // S2: an unresolvable engine root (see engine-root-resolve.unit.spec.ts)
+  // means the disk half of the question is UNKNOWABLE, not "false" — treating
+  // it as false would open every unclaimed name to anyone while the server is
+  // misconfigured. null must fail closed exactly like existsOnDisk === true.
+  it('decideOverwrite fails CLOSED when the disk answer is unknown (root unresolved)', () => {
+    expect(decideOverwrite('u1', null, null)).toBe(false)
+    // Ownership still wins outright — an unresolved root doesn't relitigate
+    // a claim the OWNERSHIP table already answered.
+    expect(decideOverwrite('u1', 'u1', null)).toBe(true)
+    expect(decideOverwrite('u1', 'u2', null)).toBe(false)
+  })
+})
+
+// ------------------------------------------------------------------- S1
+
+describe('S1 — the ownership check and the record key are canonicalized the SAME way', () => {
+  it('canonicalUploadKey folds an unrecognized type to "input", matching engineDirForType', () => {
+    expect(canonicalUploadKey('bogus', '', 'v.png')).toBe(canonicalUploadKey('input', '', 'v.png'))
+    expect(canonicalUploadKey(undefined, '', 'v.png')).toBe(canonicalUploadKey('input', '', 'v.png'))
+    expect(canonicalUploadKey(null, '', 'v.png')).toBe(canonicalUploadKey('input', '', 'v.png'))
+    // output/temp are real engine dirs and must NOT fold into input.
+    expect(canonicalUploadKey('output', '', 'v.png')).not.toBe(canonicalUploadKey('input', '', 'v.png'))
+    expect(canonicalUploadKey('temp', '', 'v.png')).not.toBe(canonicalUploadKey('input', '', 'v.png'))
+  })
+
+  it('canonicalUploadKey folds subfolder "." to "" — same physical directory', () => {
+    expect(canonicalUploadKey('input', '.', 'v.png')).toBe(canonicalUploadKey('input', '', 'v.png'))
+  })
+
+  it('a real subfolder is left alone — not every alias collapses', () => {
+    expect(canonicalUploadKey('input', 'clips', 'v.png')).not.toBe(canonicalUploadKey('input', '', 'v.png'))
+  })
+
+  // The exploit shape this closes: a victim's file is recorded under the
+  // canonical key, and an attacker's overwrite request uses an alias
+  // (type=bogus, or subfolder=".") that the OLD code checked ownership on
+  // verbatim — producing a check-key that matched no row, while
+  // uploadExistsOnDisk's OWN independent normalization happened to still
+  // find the file on disk and deny it. That "protected by luck" chain is
+  // exactly what this closes: existsOnDisk is forced to false/unknown-false
+  // below, so ONLY a correct ownership-key match can produce the deny.
+  for (const alias of [
+    { label: 'type=bogus', fields: { type: 'bogus', overwrite: 'true' } },
+    { label: 'subfolder=.', fields: { type: 'input', subfolder: '.', overwrite: 'true' } },
+  ]) {
+    it(`denies a victim-owned file via the OWNERSHIP check under the ${alias.label} alias, even when disk says "not there"`, async () => {
+      owners.set(canonicalUploadKey('input', '', 'v.png'), 'victim')
+      existsOnDisk.mockReturnValue(false) // disk check alone would say "free"
+      rawBody.mockResolvedValue(upload({ filename: 'v.png', fields: alias.fields }))
+
+      await expect(handleHostedUpload(ev('/upload/image', 'attacker')))
+        .rejects.toMatchObject({ statusCode: 403 })
+      expect(fetchMock, 'the clobber must never reach the engine').not.toHaveBeenCalled()
+    })
+  }
+
+  it('the OWNER themself can still overwrite under an alias — canonicalization is symmetric', async () => {
+    owners.set(canonicalUploadKey('input', '', 'mine.png'), 'u1')
+    rawBody.mockResolvedValue(upload({ filename: 'mine.png', fields: { type: 'bogus', overwrite: 'true' } }))
+
+    await handleHostedUpload(ev('/upload/image', 'u1'))
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('the post-response record is canonicalized too, so a later alias check matches it', async () => {
+    rawBody.mockResolvedValue(upload({ filename: 'fresh.png', fields: { type: 'bogus', overwrite: 'true' } }))
+    fetchMock.mockResolvedValue({ status: 200, text: async () => '{"name":"fresh.png","subfolder":".","type":"input"}' })
+
+    await handleHostedUpload(ev('/upload/image', 'u1'))
+    expect(owners.get(canonicalUploadKey('input', '', 'fresh.png'))).toBe('u1')
+  })
+})
+
+// ------------------------------------------------------------------- S2
+
+describe('S2 — the overwrite path fails CLOSED when the engine root cannot be resolved', () => {
+  it('refuses an overwrite with a 403 naming the misconfiguration, not the generic ownership message', async () => {
+    __setInputUploadsEngineRootForTests(null)
+    rawBody.mockResolvedValue(upload({ filename: 'anything.png', fields: { overwrite: 'true' } }))
+
+    await expect(handleHostedUpload(ev('/upload/image', 'u1')))
+      .rejects.toMatchObject({ statusCode: 403, message: expect.stringMatching(/engine|configur/i) })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('an OWNED file still overwrites fine even with the root unresolved — ownership never needed the disk', async () => {
+    __setInputUploadsEngineRootForTests(null)
+    owners.set(canonicalUploadKey('input', '', 'mine.png'), 'u1')
+    rawBody.mockResolvedValue(upload({ filename: 'mine.png', fields: { overwrite: 'true' } }))
+
+    await handleHostedUpload(ev('/upload/image', 'u1'))
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 })
 

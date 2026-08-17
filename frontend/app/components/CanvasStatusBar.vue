@@ -13,6 +13,8 @@
  */
 import { CheckCircle2, Loader2, AlertCircle, X, Square } from 'lucide-vue-next'
 import { fmtSec, elapsedSince } from '~/lib/canvas/elapsed'
+import { resolveCostDisplay } from '~/lib/canvas/runCostDisplay'
+import { hostedModeEnabled } from '~/lib/hostedMode'
 
 export type RunResult =
   // `cost` is the Comfy-credits delta (used for native nodes that hit Comfy's
@@ -58,6 +60,16 @@ onBeforeUnmount(() => {
 })
 
 const elapsedSec = computed(() => elapsedSince(props.startedAt, now.value))
+
+// Hosted tenants are debited CREDITS via the ledger even for Replicate-billed
+// nodes — lastResult.usd is a raw-dollar figure computed the same way local's
+// is and does not reflect what a hosted user was actually charged, so hosted
+// must never render it (see runCostDisplay.ts). Read the same way sibling
+// components do (SelectionActionChips.vue, ComfyNode.vue, …) rather than
+// prop-drilled from the parent.
+const hosted = hostedModeEnabled(useRuntimeConfig().public)
+const costDisplay = computed(() =>
+  props.lastResult?.kind === 'success' ? resolveCostDisplay(props.lastResult, hosted) : null)
 
 const view = computed<'backend' | 'backend-success' | 'running' | 'success' | 'error' | null>(() => {
   if (props.backendBusy) return 'backend'
@@ -131,21 +143,23 @@ const view = computed<'backend' | 'backend-success' | 'running' | 'success' | 'e
         <span class="text-[12px] text-white/85">
           Done in {{ fmtSec(lastResult.durationMs / 1000) }}
         </span>
-        <!-- Cost. Prefer USD (Replicate BYOK) — the user's Replicate
+        <!-- Cost. Local prefers USD (Replicate BYOK) — the user's Replicate
              balance is dollar-based and doesn't move Comfy's credit balance.
-             Fall back to credits (Comfy native). Both hidden when zero/unknown
-             so local-only runs don't read like "free!" advertising. -->
+             Hosted skips USD entirely (it's fiction there — hosted debits
+             credits, not dollars, for the same nodes) and shows credits
+             instead. Both hidden when zero/unknown so a run doesn't read
+             like "free!" advertising. See runCostDisplay.ts. -->
         <span
-          v-if="typeof lastResult.usd === 'number' && lastResult.usd > 0"
+          v-if="costDisplay?.kind === 'usd'"
           class="text-[11px] text-white/45 tabular-nums shrink-0"
         >
-          · {{ lastResult.usdApproximate ? '~' : '' }}${{ lastResult.usd.toFixed(lastResult.usd >= 1 ? 2 : 3) }}
+          · {{ costDisplay.approximate ? '~' : '' }}${{ costDisplay.value.toFixed(costDisplay.value >= 1 ? 2 : 3) }}
         </span>
         <span
-          v-else-if="typeof lastResult.cost === 'number' && lastResult.cost > 0"
+          v-else-if="costDisplay?.kind === 'credits'"
           class="text-[11px] text-white/45 tabular-nums shrink-0"
         >
-          · −{{ lastResult.cost.toLocaleString() }} credits
+          · −{{ costDisplay.value.toLocaleString() }} credits
         </span>
       </template>
 

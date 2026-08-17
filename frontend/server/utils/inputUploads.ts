@@ -14,6 +14,7 @@
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { connectLedgerDb, type LedgerDbHandle } from './ledgerDb'
+import { isHosted } from './deployMode'
 
 type DbLike = { query(sql: string, params?: unknown[]): Promise<{ rows: any[] }> }
 
@@ -51,14 +52,115 @@ export async function uploadOwner(fileKey: string): Promise<string | null> {
 }
 
 /**
- * The engine directory a `type` resolves to, mirroring server.py's
- * get_dir_by_type(): unknown and absent both mean `input`. folder_paths puts
- * all three beside the ComfyUI root, which is the repo root — one level above
- * the Nuxt cwd, the same resolution moodboardImages.ts uses.
+ * The `type` folder name a request resolves to, mirroring server.py's
+ * get_dir_by_type(): unknown and absent both mean `input`.
  */
-export function engineDirForType(type: string): string {
-  const name = type === 'output' || type === 'temp' ? type : 'input'
-  return path.resolve(process.cwd(), '..', name)
+function engineTypeName(type: string | null | undefined): 'output' | 'temp' | 'input' {
+  return type === 'output' || type === 'temp' ? type : 'input'
+}
+
+/**
+ * The one ownership key both the pre-write CHECK and the post-write RECORD
+ * must build identically (S1). Before this, the check built its key from the
+ * RAW form `type`/`subfolder` while the record used the engine's response
+ * values and `engineDirForType` normalized independently of both — so
+ * `type=bogus` (folds to `input` on disk) produced a check-key like
+ * `bogus::v.png` that no ownership row could ever match, even for a file a
+ * canonical-key upload had already claimed. `subfolder=.` is the same
+ * problem one level down: `path.resolve` treats it as a no-op, so `.` and
+ * `''` name the identical directory on disk but were two different DB keys.
+ * Both normalizations mirror `engineDirForType`/`path.resolve` exactly so
+ * the key always names the same file the disk check and the engine agree on.
+ */
+export function canonicalUploadKey(type: string | null | undefined, subfolder: string | null | undefined, filename: string): string {
+  const t = engineTypeName(type)
+  const s = subfolder === '.' || !subfolder ? '' : subfolder
+  return `${t}:${s}:${filename}`
+}
+
+/**
+ * The ComfyUI checkout marker: `main.py` alongside `input/`. Mirrors
+ * comfyWorkerPool.ts's `resolveRepoRoot` (same `main.py` check, same
+ * override/walk-up shape) but additionally requires `input/` to exist — the
+ * directory this module's disk check actually depends on.
+ */
+function isEngineRoot(dir: string): boolean {
+  return existsSync(path.join(dir, 'main.py')) && existsSync(path.join(dir, 'input'))
+}
+
+/**
+ * Pure resolver (S2): `envOverride` wins when it checks out (validated, not
+ * trusted blind — a broken override should fail closed, not silently defer
+ * to the walk), else walk up from `cwd` for the marker. Returns null rather
+ * than a best-effort guess when nothing is found — the old
+ * `path.resolve(process.cwd(), '..', name)` guessed unconditionally, so a
+ * Nitro process launched from anywhere but `frontend/` silently pointed at a
+ * directory that doesn't exist and `existsSync` missed EVERY disk check,
+ * treating every unclaimed name as free.
+ */
+export function computeEngineRoot(cwd: string, envOverride: string | null | undefined): string | null {
+  if (envOverride) return isEngineRoot(envOverride) ? envOverride : null
+  let dir = cwd
+  for (let i = 0; i < 12; i++) {
+    if (isEngineRoot(dir)) return dir
+    const parent = path.dirname(dir)
+    if (parent === dir) break
+    dir = parent
+  }
+  return null
+}
+
+let engineRootOverride: string | null | undefined // undefined = no override, use real resolution
+
+/** Test-only override — bypasses the real cwd/env walk entirely. */
+export function __setInputUploadsEngineRootForTests(root: string | null | undefined): void {
+  engineRootOverride = root
+}
+
+/** Production wiring: `SAILOR_ENGINE_ROOT` env override, else the cwd walk. */
+export function resolveEngineRoot(): string | null {
+  if (engineRootOverride !== undefined) return engineRootOverride
+  return computeEngineRoot(process.cwd(), process.env.SAILOR_ENGINE_ROOT)
+}
+
+/**
+ * The engine directory a `type` resolves to. Null when the engine root can't
+ * be resolved — callers must treat that as "unknown", not "doesn't exist"
+ * (see `uploadExistsOnDisk`).
+ */
+export function engineDirForType(type: string): string | null {
+  const root = resolveEngineRoot()
+  if (!root) return null
+  return path.join(root, engineTypeName(type))
+}
+
+export interface EngineRootBootDeps {
+  isHosted(): boolean
+  resolveRoot(): string | null
+  logError(msg: string): void
+}
+
+/**
+ * Boot-time loud-failure assert (S2): a misconfigured hosted deploy should
+ * announce itself at startup, not surface only as opaque 403s on the first
+ * upload someone tries to overwrite. Pure + DI'd (the holdSweep.ts style) so
+ * it's unit-testable without a real filesystem walk.
+ */
+export function checkEngineRootOnBootWith(deps: EngineRootBootDeps): boolean {
+  if (!deps.isHosted()) return true
+  if (deps.resolveRoot()) return true
+  deps.logError(
+    '[inputUploads] hosted mode is active but the shared ComfyUI engine root could not be '
+    + 'resolved (checked SAILOR_ENGINE_ROOT, then walked up from cwd for main.py + input/). '
+    + 'Upload overwrite checks will fail CLOSED (refuse every ambiguous overwrite) until this '
+    + 'is fixed — set SAILOR_ENGINE_ROOT or fix the launch cwd.',
+  )
+  return false
+}
+
+/** Production wiring for the Nitro boot plugin. */
+export function checkEngineRootOnBoot(): boolean {
+  return checkEngineRootOnBootWith({ isHosted, resolveRoot: resolveEngineRoot, logError: (m) => console.error(m) })
 }
 
 /**
@@ -87,9 +189,15 @@ export function unsafeUploadTarget(subfolder: string, filename: string): boolean
  * belongs to somebody — every upload that predates this table has no row.
  * Containment is re-checked after resolution so a path that slips past
  * unsafeUploadTarget still cannot address anything outside the type's dir.
+ *
+ * Returns null (S2) rather than false when the engine root can't be
+ * resolved — "the answer is unknown" and "the file doesn't exist" are
+ * different facts, and the caller (`decideOverwrite`) must fail CLOSED on
+ * the former instead of treating an unresolvable root as "nothing's there".
  */
-export function uploadExistsOnDisk(type: string, subfolder: string, filename: string): boolean {
+export function uploadExistsOnDisk(type: string, subfolder: string, filename: string): boolean | null {
   const dir = engineDirForType(type)
+  if (!dir) return null
   const full = path.resolve(dir, subfolder, filename)
   if (full !== dir && !full.startsWith(dir + path.sep)) return true
   return existsSync(full)

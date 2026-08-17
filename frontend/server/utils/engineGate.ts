@@ -10,7 +10,7 @@ import { ownedPromptIds, ownsPrompt, outputKey, pendingRuns } from './graphRuns'
 import { resolveWorkerTarget } from './workerRoute'
 import { settleGraphSuccess } from './meterGraphRun'
 import { parseUploadForm } from './multipart'
-import { recordUpload, unsafeUploadTarget, uploadExistsOnDisk, uploadOwner } from './inputUploads'
+import { canonicalUploadKey, recordUpload, unsafeUploadTarget, uploadExistsOnDisk, uploadOwner } from './inputUploads'
 
 /**
  * Review C2 — an exact mirror of ComfyUI's folder_paths.annotated_filepath().
@@ -267,9 +267,16 @@ export function normalizeFieldName(raw: string): string {
  * A name with no ownership row that already exists on disk is NOT free — every
  * upload that predates the table is unclaimed, and treating unclaimed as free
  * would hand back exactly the cross-tenant clobber this gate exists to stop.
+ *
+ * `existsOnDisk === null` (S2) means the engine root couldn't be resolved —
+ * the disk answer is UNKNOWN, not "nothing's there". Ownership still decides
+ * outright when there's an owner; only the "nobody claims it" branch needs
+ * the disk answer, and an unknown answer there fails CLOSED exactly like a
+ * known `true` would.
  */
-export function decideOverwrite(userId: string, owner: string | null, existsOnDisk: boolean): boolean {
+export function decideOverwrite(userId: string, owner: string | null, existsOnDisk: boolean | null): boolean {
   if (owner !== null) return owner === userId
+  if (existsOnDisk === null) return false
   return !existsOnDisk
 }
 
@@ -331,9 +338,24 @@ export async function handleHostedUpload(event: H3Event): Promise<unknown> {
     if (unsafeUploadTarget(subfolder, filename)) {
       throw createError({ statusCode: 400, message: 'Upload path is not addressable' })
     }
-    const key = outputKey({ filename, subfolder, type })
+    // S1: the same canonicalization the record below uses — a raw `type` or
+    // `subfolder` alias (`bogus`, `.`) must resolve to the identical key an
+    // earlier canonical-form upload was recorded under, or the lookup below
+    // silently misses an owner that actually exists.
+    const key = canonicalUploadKey(type, subfolder, filename)
     const owner = await uploadOwner(key)
-    if (!decideOverwrite(userId, owner, uploadExistsOnDisk(type, subfolder, filename))) {
+    const onDisk = uploadExistsOnDisk(type, subfolder, filename)
+    // S2: no owner AND the disk answer is unknown (engine root unresolved) —
+    // this is a server misconfiguration, not an ownership conflict. Named
+    // separately so the response doesn't lie about why the write was refused.
+    if (owner === null && onDisk === null) {
+      throw createError({
+        statusCode: 403,
+        message: 'Upload refused: the server could not resolve its engine input directory '
+          + '(configuration issue) — this is not an ownership conflict',
+      })
+    }
+    if (!decideOverwrite(userId, owner, onDisk)) {
       throw createError({
         statusCode: 403,
         message: `${filename} already belongs to another account — upload it under a different name`,
@@ -366,11 +388,11 @@ export async function handleHostedUpload(event: H3Event): Promise<unknown> {
       // A failure here is logged, not thrown: the write already happened, and a
       // missing row fails CLOSED (an unclaimed name that exists on disk is
       // refused to everyone) rather than opening the file to the next caller.
-      const key = outputKey({
-        filename: stored.name,
-        subfolder: typeof stored.subfolder === 'string' ? stored.subfolder : '',
-        type: typeof stored.type === 'string' && stored.type ? stored.type : 'input',
-      })
+      const key = canonicalUploadKey(
+        typeof stored.type === 'string' && stored.type ? stored.type : 'input',
+        typeof stored.subfolder === 'string' ? stored.subfolder : '',
+        stored.name,
+      )
       try {
         await recordUpload(userId, key)
       }
