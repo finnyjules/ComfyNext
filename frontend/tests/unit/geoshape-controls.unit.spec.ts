@@ -130,6 +130,12 @@ describe('visibleGeoControls follows the shape/layout/overlap/symmetry/clip pred
     expect(visibleGeoControls({ ...DEFAULT_CONFIG, fillStrategy: 'perClone' }).map(c => c.key)).not.toContain('overlapSeparate')
   })
 
+  it('shows Crossings only for pieces', () => {
+    expect(visibleGeoControls({ ...DEFAULT_CONFIG, fillStrategy: 'pieces' }).map(c => c.key)).toContain('crossingMode')
+    expect(visibleGeoControls({ ...DEFAULT_CONFIG, fillStrategy: 'perClone' }).map(c => c.key)).not.toContain('crossingMode')
+    expect(visibleGeoControls({ ...DEFAULT_CONFIG, fillStrategy: 'single' }).map(c => c.key)).not.toContain('crossingMode')
+  })
+
   it('shows single Fill only for single strategy', () => {
     expect(visibleGeoControls({ ...DEFAULT_CONFIG, fillStrategy: 'single' }).map(c => c.key)).toContain('fill')
     expect(visibleGeoControls({ ...DEFAULT_CONFIG, fillStrategy: 'pieces' }).map(c => c.key)).not.toContain('fill')

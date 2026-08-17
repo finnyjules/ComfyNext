@@ -7,6 +7,7 @@ import {
   type GeoOverlapMode,
   type GeoSymmetryAxis,
   type GeoClipMask,
+  type GeoCrossingMode,
 } from './config'
 import { BASE_SHAPES, type BaseShapeKind } from './shapes'
 import type { Paint } from '~/lib/compositor/paint'
@@ -42,6 +43,7 @@ export const FILLMODES: GeoFillMode[] = ['evenodd', 'unite', 'subtract', 'inters
 export const OVERLAPMODES: GeoOverlapMode[] = ['hole', 'shape']
 export const SYMMETRY_AXES: GeoSymmetryAxis[] = ['vertical', 'horizontal']
 export const CLIP_MASKS: GeoClipMask[] = ['none', 'circle', 'square', 'hexagon']
+export const CROSSING_MODES: GeoCrossingMode[] = ['depth', 'split']
 
 // --- visibility gates, mirroring shapefx/controls.ts's isPrimitive/isGem/etc. ---
 // `sides` drives polygon/star/irregular (baseShapePath's o.sides); hexagon is a
@@ -160,6 +162,8 @@ export const GEO_CONTROLS: GeoControl[] = [
   select('fillOrder', 'Colour order', ['created', 'depth', 'leftRight', 'topBottom', 'rows', 'columns', 'centerOut', 'around'], DEFAULT_CONFIG.fillOrder, 'Paint',
     'order colours are handed out in (rows = reading order; around = colour wheel)', { when: isMultiFill }),
   switchC('overlapSeparate', 'Separate overlap colours', DEFAULT_CONFIG.overlapSeparate, 'Paint', { when: isPieces }),
+  select('crossingMode', 'Crossings', ['depth', 'split'], DEFAULT_CONFIG.crossingMode, 'Paint',
+    'depth = one colour per overlap depth; split = each crossing its own piece, coloured by the colour order', { when: isPieces }),
   color('fill', 'Fill', paintDefault(DEFAULT_CONFIG.fill), 'Paint', { when: isSingleFill }),
   color('stroke', 'Stroke', DEFAULT_CONFIG.stroke ?? '#000000', 'Paint'),
 ]
@@ -196,4 +200,4 @@ SYMMETRY mirrors the whole composed mark across symmetryAxis (vertical/horizonta
 
 STYLE: padding is the margin the SVG export keeps around the mark; strokeWidth is the outline width wherever stroke is set. seed drives irregularSeed-style jitter and re-roll — same seed, same mark.
 
-PAINT: fill colors the mark, stroke outlines it (leave stroke unset for a fill-only flat mark, the common logo case), overlapFill only matters when overlapMode is "shape". fillStrategy switches between one flat fill (single), one colour per clone (per-clone), or per-piece colouring with its own overlap regions (pieces); fillOrder sets the sequence those colours are handed out in (creation order, depth, left-to-right, top-to-bottom, row-by-row, column-by-column, center-out, or around like a colour wheel) whenever fillStrategy isn't single, and overlapSeparate (pieces only) gives crossing regions their own colours instead of reusing the piece colours.`
+PAINT: fill colors the mark, stroke outlines it (leave stroke unset for a fill-only flat mark, the common logo case), overlapFill only matters when overlapMode is "shape". fillStrategy switches between one flat fill (single), one colour per clone (per-clone), or per-piece colouring with its own overlap regions (pieces); fillOrder sets the sequence those colours are handed out in (creation order, depth, left-to-right, top-to-bottom, row-by-row, column-by-column, center-out, or around like a colour wheel) whenever fillStrategy isn't single, and overlapSeparate (pieces only) gives crossing regions their own colours instead of reusing the piece colours. crossingMode (pieces only) picks how those crossings are cut: "depth" gives every overlap depth one shared colour, "split" breaks each crossing into its own piece coloured by fillOrder.`
