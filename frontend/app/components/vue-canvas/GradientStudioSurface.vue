@@ -40,7 +40,7 @@ import type { GradientEmbedConfig } from '~/lib/embed/surfaces/gradient'
 import { clampExportDims } from '~/lib/gradientfx/exportDims'
 import {
   ASPECTS, BLEND_MODES, CURVE_DEFAULTS, DEFAULT_FOCUS, DIRECTIONS, GRADIENT_DIRS, LAYER_MAX, LAYOUTS, LAYOUT_LABELS, MAPPINGS, MIRROR_KINDS, RAMP_DEFAULTS, RING_SHAPES, SHAPE_KINDS,
-  aspectRatio, cloneConfig, ensureConfigDefaults, type GradientConfig, type LayoutKind, type MeshConfig, type ShapeKind,
+  aspectRatio, cloneConfig, effectiveLayout, ensureConfigDefaults, type GradientConfig, type LayoutKind, type MeshConfig, type ShapeKind,
 } from '~/lib/gradientfx/types'
 
 const props = defineProps<{ nodeId: string; nodes: any[]; edges?: any[] }>()
@@ -57,17 +57,22 @@ const config = ref<GradientConfig>(defaultConfig('#default0'))
 const activeLayer = ref(0)
 const layer = computed(() => config.value.layers[activeLayer.value] ?? config.value.layers[0]!)
 const animatable = computed(() => animatableTargets(config.value))
-const isRadial = computed(() => config.value.canvas.layout === 'radial' || config.value.canvas.layout === 'orbit')
-const isStack = computed(() => config.value.canvas.layout === 'stack')
-const isLiquid = computed(() => config.value.canvas.layout === 'liquid')
-const isMesh = computed(() => config.value.canvas.layout === 'mesh')
-const isCurve = computed(() => config.value.canvas.layout === 'curve')
+// The active layer's own layout override, else the canvas default (layer 0 always
+// anchors to canvas.layout — see setLayout). Every layout-gated computed below reads
+// THIS, not config.value.canvas.layout, so the inspector reflects whichever layer is
+// selected in the layer stack, not just layer 0.
+const activeLayout = computed(() => effectiveLayout(config.value, activeLayer.value))
+const isRadial = computed(() => activeLayout.value === 'radial' || activeLayout.value === 'orbit')
+const isStack = computed(() => activeLayout.value === 'stack')
+const isLiquid = computed(() => activeLayout.value === 'liquid')
+const isMesh = computed(() => activeLayout.value === 'mesh')
+const isCurve = computed(() => activeLayout.value === 'curve')
 // Gradient axis block — the three simple primitives share one "Gradient" section;
 // which controls it shows depends on which of the three is active.
-const isSimpleRamp = computed(() => ['ramp', 'radialRamp', 'conic'].includes(config.value.canvas.layout))
-const isRampAngle = computed(() => config.value.canvas.layout === 'ramp' || config.value.canvas.layout === 'conic')
-const isRampRadial = computed(() => config.value.canvas.layout === 'radialRamp')
-const isConic = computed(() => config.value.canvas.layout === 'conic')
+const isSimpleRamp = computed(() => ['ramp', 'radialRamp', 'conic'].includes(activeLayout.value))
+const isRampAngle = computed(() => activeLayout.value === 'ramp' || activeLayout.value === 'conic')
+const isRampRadial = computed(() => activeLayout.value === 'radialRamp')
+const isConic = computed(() => activeLayout.value === 'conic')
 // Center + inner radius are used by the stripe polar layouts (radial/orbit) AND the
 // simple radial/conic primitives — NOT plain linear ramp, which has no origin.
 const usesCenter = computed(() => isRadial.value || isRampRadial.value || isConic.value)
@@ -803,7 +808,15 @@ onBeforeUnmount(() => {
 })
 
 function setLayout(l: LayoutKind) {
-  config.value.canvas.layout = l
+  // Layer 0 has no override of its own — it anchors to canvas.layout, so writing
+  // there (and clearing any stray layers[0].layout) is how layer 0 changes layout.
+  // Layers 1+ get their own per-layer override; canvas.layout is untouched.
+  if (activeLayer.value === 0) {
+    config.value.canvas.layout = l
+    delete config.value.layers[0]!.layout
+  } else {
+    config.value.layers[activeLayer.value]!.layout = l
+  }
   // Backfill stack params so the sliders + render agree the moment you switch to Stack.
   if (l === 'stack') {
     const s = layer.value.shape
@@ -813,7 +826,9 @@ function setLayout(l: LayoutKind) {
     if (s.ringShape == null) s.ringShape = 'circle'
   }
   // Mesh reads layer-0 points; create them (from the current palette) on first switch.
-  if (l === 'mesh') { activeLayer.value = 0; ensureMesh() }
+  // Excluded from the picker on layers 1+ (see LAYOUTS filter below), so this only
+  // ever fires with activeLayer already 0 — the guard just documents that invariant.
+  if (l === 'mesh' && activeLayer.value === 0) { ensureMesh() }
 }
 function setShape(s: ShapeKind) { layer.value.shape.type = s }
 
@@ -963,8 +978,8 @@ function onColor(key: 'repeat' | 'repeatCount' | 'falloff', value: number | stri
           <button class="text-white/30 hover:text-white/70" @click="toggleLock('layout')"><component :is="locked('layout') ? Lock : Unlock" class="h-3 w-3" /></button>
         </label>
         <div class="mb-2 grid grid-cols-3 gap-1">
-          <button v-for="l in LAYOUTS" :key="l" class="rounded px-1 py-1 text-[11px] transition"
-                  :class="config.canvas.layout === l ? 'bg-white/20 text-white' : 'bg-white/[0.04] text-white/55 hover:bg-white/10'"
+          <button v-for="l in (activeLayer > 0 ? LAYOUTS.filter((x) => x !== 'mesh') : LAYOUTS)" :key="l" class="rounded px-1 py-1 text-[11px] transition"
+                  :class="activeLayout === l ? 'bg-white/20 text-white' : 'bg-white/[0.04] text-white/55 hover:bg-white/10'"
                   @click="setLayout(l)">{{ LAYOUT_LABELS[l] }}</button>
         </div>
         <!-- Margin insets the band/ring layouts; the liquid & mesh fields fill the frame, so hide it there. -->
