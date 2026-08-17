@@ -53,6 +53,8 @@ import CompositorMotionTimeline from '~/components/vue-canvas/compositor/Composi
 import MotionLayerEditor from '~/components/vue-canvas/compositor/MotionLayerEditor.vue'
 import AddImageSourcePopover from '~/components/vue-canvas/compositor/AddImageSourcePopover.vue'
 import CompositorClonerPanel from '~/components/vue-canvas/compositor/CompositorClonerPanel.vue'
+import CompositorTornEdgePanel from '~/components/vue-canvas/compositor/CompositorTornEdgePanel.vue'
+import { DEFAULT_TORN_EDGE } from '~/lib/compositor/tornEdge'
 import FillControl from '~/components/vue-canvas/compositor/FillControl.vue'
 import FillSwatch from '~/components/vue-canvas/compositor/FillSwatch.vue'
 import PostEffectsControls from '~/components/vue-canvas/PostEffectsControls.vue'
@@ -2195,6 +2197,17 @@ function toggleBgBlur(l: any) {
   if (!l) return
   if (bgBlur(l)) setLocal(l.id, { effects: (l.effects || []).filter((e: any) => e.type !== 'background_blur') })
   else setBgBlur(l, 0.02)
+}
+
+// ── Torn paper edge ─────────────────────────────────────────────────────────
+function setTornEdge(l: any, patch: Record<string, any>) {
+  if (!l) return
+  const cur = l.tornEdge || { ...DEFAULT_TORN_EDGE }
+  setLocal(l.id, { tornEdge: { ...cur, ...patch } })
+}
+function toggleTornEdge(l: any, on: boolean) {
+  if (!l) return
+  setLocal(l.id, { tornEdge: on ? { ...DEFAULT_TORN_EDGE } : undefined })
 }
 
 // ── Displacement map (this image layer warps everything below it) ───────────
@@ -5233,6 +5246,15 @@ onUnmounted(() => {
                 </div>
               </div>
             </div>
+          </div>
+
+          <!-- Torn paper edge: raggedy, grain-dissolved silhouette boundary -->
+          <div class="mt-3">
+            <CompositorTornEdgePanel
+              :value="(selectedLocal as any).tornEdge"
+              @update="(patch) => setTornEdge(selectedLocal!, patch)"
+              @toggle="(on) => toggleTornEdge(selectedLocal!, on)"
+            />
           </div>
 
           <!-- Cloner: repeat this layer (linear/grid/radial) with falloff -->
