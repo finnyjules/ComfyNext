@@ -177,7 +177,10 @@ export async function handleMeteredPrompt(event: H3Event): Promise<any> {
   return result.body
 }
 
-async function settleGraphSuccess(target: string, promptId: string, holdId: number | null, credits: number): Promise<void> {
+// Exported (Stage 5 Task 5): engineGate.ts's harvestPendingOutputs calls this
+// SAME function for the /view race-window fallback, so there is exactly one
+// settlement implementation rather than a second copy drifting from this one.
+export async function settleGraphSuccess(target: string, promptId: string, holdId: number | null, credits: number): Promise<void> {
   const outputs: string[] = []
   try {
     const r = await fetch(`${target}/history/${promptId}`)

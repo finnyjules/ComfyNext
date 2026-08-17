@@ -2,6 +2,9 @@ import { createHash } from 'node:crypto'
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { deployMode } from '../utils/deployMode'
+import { ownedOutputKeys, outputKey } from '../utils/graphRuns'
+import { harvestPendingOutputs } from '../utils/engineGate'
 
 const COMFY_BACKEND = 'http://127.0.0.1:8188'
 const CACHE_DIR = join(process.cwd(), '.cache', 'images')
@@ -21,6 +24,25 @@ export default defineEventHandler(async (event) => {
 
   if (!filename) {
     throw createError({ statusCode: 400, message: 'Missing filename' })
+  }
+
+  // Stage 5 Task 5: hosted output reads are tenant-scoped. `type` above is
+  // already defaulted to 'output' when the query param is absent, so gating
+  // on the EFFECTIVE type (not the raw query) covers both cases in one
+  // check. type=temp/type=input stay ungated this stage (documented gap).
+  if (deployMode() === 'hosted' && type === 'output') {
+    const userId = event.context.userId
+    if (!userId) throw createError({ statusCode: 401, message: 'Sign in required' })
+    const key = outputKey({ filename, subfolder, type: 'output' })
+    let owned = await ownedOutputKeys(userId)
+    if (!owned.has(key)) {
+      // Race window: the client saw the WS 'executed' event a beat before
+      // the settle watcher recorded outputs. Harvest this user's pending
+      // runs once, then re-check.
+      await harvestPendingOutputs(userId)
+      owned = await ownedOutputKeys(userId)
+      if (!owned.has(key)) throw createError({ statusCode: 404, message: 'Image not found' })
+    }
   }
 
   // Build the backend URL with original query params

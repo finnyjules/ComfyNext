@@ -1,6 +1,9 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { deployMode } from '../../utils/deployMode'
+import { ownedPromptIds } from '../../utils/graphRuns'
+import { filterHistoryPayload } from '../../utils/engineGate'
 
 const COMFY_BACKEND = 'http://127.0.0.1:8188'
 const CACHE_DIR = join(process.cwd(), '.cache')
@@ -27,7 +30,22 @@ async function saveCache(data: Record<string, any>) {
   }
 }
 
-export default defineEventHandler(async () => {
+export default defineEventHandler(async (event) => {
+  // Stage 5 Task 5: hosted history is tenant-scoped. The shared disk cache
+  // below is cross-tenant by construction (one file, every user's runs) —
+  // it must be neither read nor written in hosted mode, so this branch
+  // returns before any cache logic runs.
+  if (deployMode() === 'hosted') {
+    const userId = event.context.userId
+    if (!userId) throw createError({ statusCode: 401, message: 'Sign in required' })
+    try {
+      const res = await fetch(`${COMFY_BACKEND}/history`)
+      if (!res.ok) return {}
+      return filterHistoryPayload(await res.json() as Record<string, any>, await ownedPromptIds(userId))
+    }
+    catch { return {} }
+  }
+
   const cached = await loadCache()
 
   // Try fetching live history from ComfyUI
