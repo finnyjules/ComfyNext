@@ -17,7 +17,7 @@ Legend: **bake** = render/export path · **motion** = animatable · **inspector*
 | Scene3D Studio | ✅ 3-pass + mp4 | ✅ own timeline (groups animate) | ✅ + object tree | ❌ | ~6,300 (+ SVG import) |
 | Compositor / Frame | ✅ | ✅ motion clips | ✅ | ✅ commands | 1,667 (+1,041 motion) |
 | Timeline (NLE) | ✅ webm/mp4 + server | ✅ native | ✅ | ❌ | shared/timeline |
-| Gradient Studio | ✅ | ✅ 30 targets, path-based | ✅ (hand-written) | ✅ descriptor | 2,620 (+ 3 simple primitives) |
+| Gradient Studio | ✅ | ✅ 30 targets, path-based | ✅ (hand-written) | ✅ descriptor | 2,620 (+ 4 simple primitives incl. curve) |
 | Shader Studio | ✅ | ✅ path tracks | ✅ (data-driven) | ✅ descriptor | 806 + 63 effects |
 | Texture Studio | ✅ | ❌ | ✅ (data-driven) | ✅ commands | 2,041 |
 | Shape Studio | ✅ | ❌ | ✅ | ❌ | 761 |
@@ -30,6 +30,14 @@ Legend: **bake** = render/export path · **motion** = animatable · **inspector*
 | Pose Mannequin | ✅ control img | ❌ | modal | ❌ (excluded) | — |
 | Inpaint / Region | ✅ backend | — | toolbar | ✅ ops | — |
 | Collection (sweeps) | — | — | ✅ | ✅ | backbone |
+
+### Gradient Studio — curve-following gradient — LANDED 2026-08-16 (`8c8230084`..`76c4a8b5f`)
+
+A fourth simple primitive: **`curve`** — a gradient that **follows a parametric bezier**, with an **Along ↔ Outward** mode toggle. Along runs the ramp down the curve (a bent linear gradient); Outward fades stops sideways off the curve (a glowing ribbon). Both come from one per-pixel **nearest-segment search** yielding `s` (arc-length → Along) and `d` (distance → Outward). The whole point is **AI control**: the curve is fully parametric (shape preset `line/arc/s-curve/wave/loop` + endpoints + curvature/bend/waves/phase/width — all `ControlSpec`s), so the agent, motion, and inspector derive from one declaration; no opaque bezier blob for the model to guess. An on-preview handle overlay (`CurveHandleEditor.vue` — **not** `CurveEditor.vue`, a pre-existing easing-graph editor) drags start/end/curvature back into the same dials, so the curve stays parametric whoever edits it.
+
+The seam: a pure `buildCurvePolyline` (twin of `buildField`) samples the parametric curve into a 40-point polyline with cumulative arc-length; the renderer uploads it as a **per-layer RGBA32F `TEXTURE_2D_ARRAY` read via `texelFetch`** (NEAREST — 8-bit would stair-step the geometry; the field texture's R8 was too coarse for coordinates), sidestepping the fragment-uniform ceiling that ~40 points × 6 layers would blow. The shader's curve sub-branch sits inside the existing simple-primitive block (conic became `else if <8.5`, curve the trailing `else`) and only sets `t` before the shared `applyRepeat → falloff → quantize → sampleRamp` tail. Repeat/Falloff work here (`curve` joins `isSimple`). `uploadCurve` flips Y once (editor y=0 top ↔ shader texcoord y=1 top).
+
+Built subagent-driven TDD, 6 tasks + review loops. Task 5 **caught a latent plan bug** — `CurveEditor.vue` already existed as an unrelated shared component; the implementer created `CurveHandleEditor.vue` instead of overwriting it. **Live differential verification** (`/dev/gradient-harness` `__sailorLayoutProbe` extended for curve) surfaced the sharpest bug: a **partial curve config** (any missing field, e.g. `bend` undefined from an agent dotted-path write) made `curvature*bend = NaN` → the whole polyline NaN → a **silent all-black render**. Fixed by `normalizeCurve` defaulting undefined/NaN/Infinity against `CURVE_DEFAULTS` at the pure-function boundary (this began as a *probe* bug — the probe built partial configs — but it exposed a real robustness gap). Curve-following proven not by "it looks curved" but by **bend-flip asymmetry**: bow-up gives top 255/bottom 241, bow-down flips to top 241/bottom 255. Final whole-branch review (opus) found 1 Important + 3 Minor, all fixed in one wave: the panel's Repeat row was gated on `isSimpleRamp` (excludes curve) while the agent+shader honored repeat → widened to `isSimpleRamp || isCurve`; a residual NaN path (renderer read `width` un-normalized); `curveHandles` needed `agent: false`; and **wave endpoints drifted at phase≠0** (handles floated off the ribbon) → pinned by subtracting the endpoint offsets' linear trend. 17 curve unit tests green; visual grid confirms arc/s-curve/wave × along/outward all render. Spec: [2026-08-16-gradient-curve-follow-design.md](superpowers/specs/2026-08-16-gradient-curve-follow-design.md) · plan: [2026-08-16-gradient-curve-follow.md](superpowers/plans/2026-08-16-gradient-curve-follow.md).
 
 ### Gradient Studio — simple Linear / Radial / Conic primitives — LANDED 2026-08-14 (`cdf11e4a0`..`dde4bacd0`)
 
