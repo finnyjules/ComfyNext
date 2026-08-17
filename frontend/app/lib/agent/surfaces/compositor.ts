@@ -13,6 +13,7 @@ import type { Command, CommandResult, CommandSpec, SurfaceSnapshot } from '~/lib
 import { contrastRatio, parseColor, type LayoutIssue } from '~/lib/agent/verify'
 import { SWISS_LIMITS } from '~/lib/agent/designPrinciples'
 import { defaultPostEffect, POST_EFFECT_DEFAULTS, POST_FX_PARAM_CLAMP, type PostEffect } from '~/lib/compositor/postEffects'
+import { sanitizeTornEdge, tornEdgeActive } from '~/lib/compositor/tornEdge'
 
 export interface CompositorState {
   layers: LocalLayer[]
@@ -109,6 +110,7 @@ const COMPOSITOR_COMMANDS: CommandSpec[] = [
   { op: 'editImage', hint: 'Edit an existing IMAGE layer from an instruction (Flux Kontext) — "make it brighter", "change the sky". target = image layer id; args: { instruction }.' },
   { op: 'setLayerEffect', hint: 'Add/update/remove a post-processing effect ON ONE LAYER. target = layer id; args: { effect: { type: "adjust"|"bloom"|"grain"|"vignette"|"duotone"|"dof", ...params }, remove? }. adjust (colour grade): brightness/contrast/saturation 0..2 (1 = neutral), hue -180..180. bloom (glow from bright areas): threshold 0..1, radius ~0.02, intensity 0..2. grain (film noise): amount 0..1, size 1..8. vignette (darkened edges): amount/size/softness 0..1. duotone (two-colour map): shadows "#RRGGBB", highlights "#RRGGBB", mix 0..1. dof (depth of field, IMAGE LAYERS ONLY — uses an estimated depth map where BRIGHT = NEAR, so focus 1 is the closest thing and focus 0 the furthest): focus 0..1 picks the plane that stays sharp, range 0..1 widens the sharp band, aperture 0..1 sets blur strength (~0.02-0.05 is a normal lens, 0.1+ is extreme), bladeCount 0..12 shapes the bokeh (6 = hexagonal, under 3 = circular), bladeRotation 0..360, bloomThreshold 0..1 and bloomStrength 0..4 control how much bright defocused points bloom into discs. This is what "blur the background", "shallow depth of field", "make the subject pop" mean. Omitted params keep their current value. remove:true deletes that effect type. This is also what "make the logo glow", "desaturate the photo" mean.' },
   { op: 'setPostEffect', hint: 'Add/update/remove a post-processing effect on the WHOLE FRAME — applied after all layers composite. Same args and effect vocabulary as setLayerEffect (no target), EXCEPT dof, which is per-image-layer only because it needs that image\'s depth map. This is what "make the whole thing warmer", "add film grain", "give it a vignette", "cinematic colour grade" mean.' },
+  { op: 'setLayerTornEdge', hint: 'Give a layer a TORN-PAPER edge (ragged, grain-dissolved boundary with an optional white "lip"). target = layer id; args: { patch: {...}, remove? }. patch keys: style ("ripped"=organic meandering tear | "deckle"=soft handmade-paper edge | "shredded"=aggressive spiky rip), amount (tear depth in px, ~10 subtle … 60 deep), roughness (0..1 fray detail), grain (px, edge crumble/dissolve; 0 = crisp), grainTexture (0..1 paper-fibre texture on the lip only), lipWidth (px white underside band; 0 = no lip), lipVariation (0..1 how uneven the lip width is), lipColor ("#RRGGBB", warm white default), seed (integer; change it for a different random tear). Omitted keys keep their current value. remove:true removes the torn edge. This is what "torn paper edge", "ripped edges", "rough deckle border" mean.' },
 ]
 
 function findLayer(s: CompositorState, id?: string): LocalLayer | undefined {
@@ -124,6 +126,7 @@ export function describeCompositor(state: CompositorState): SurfaceSnapshot {
     if (l.rotation) cur.rotation = l.rotation
     if (l.blend && l.blend !== 'normal') cur.blend = l.blend
     if (l.effects?.length) cur.effects = l.effects.filter(e => e.visible).map(e => e.type).join(', ')
+    if (tornEdgeActive(l.tornEdge)) cur.tornEdge = `${l.tornEdge.style} (amount ${l.tornEdge.amount}, lip ${l.tornEdge.lipWidth})`
     if (l.kind === 'text') {
       cur.text = l.text; cur.fontFamily = l.fontFamily; cur.fontWeight = l.fontWeight
       cur.fontSize = l.fontSize; cur.color = paintLabel(l.color); cur.align = l.align; cur.lineHeight = l.lineHeight
@@ -297,6 +300,14 @@ export function applyCompositorCommand(input: CompositorState, cmd: Command): Co
       const next = sanitizePostEffect(raw, cur)
       if (!next) return { ok: false, reason: 'invalid', detail: 'invalid effect' }
       layer.effects = [...others, next]
+      return { ok: true, template: state, inverse: snapshot() }
+    }
+    case 'setLayerTornEdge': {
+      const layer = findLayer(state, cmd.target)
+      if (!layer) return { ok: false, reason: 'invalid', detail: `no layer '${String(cmd.target)}'` }
+      if (cmd.args?.remove === true) { delete layer.tornEdge; return { ok: true, template: state, inverse: snapshot() } }
+      const patch = (cmd.args?.patch ?? {}) as Record<string, unknown>
+      layer.tornEdge = sanitizeTornEdge(patch, layer.tornEdge)
       return { ok: true, template: state, inverse: snapshot() }
     }
     case 'setPostEffect': {
