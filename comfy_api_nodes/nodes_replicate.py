@@ -1421,7 +1421,7 @@ class ClarityUpscaleRemoteNode(IO.ComfyNode):
             ],
             outputs=[IO.Image.Output()],
             price_badge=IO.PriceBadge(
-                expr='{"type":"usd","usd":0.10,"format":{"approximate":true}}',
+                expr='{"type":"usd","usd":0.20,"format":{"approximate":true}}',
             ),
         )
 
@@ -1594,7 +1594,7 @@ class Seedance2RemoteNode(IO.ComfyNode):
             ],
             outputs=[IO.Video.Output()],
             price_badge=IO.PriceBadge(
-                expr='{"type":"usd","usd":0.50,"format":{"approximate":true}}',
+                expr='{"type":"usd","usd":0.60,"format":{"approximate":true}}',
             ),
         )
 
@@ -2755,7 +2755,7 @@ class EditImageNode(IO.ComfyNode):
                 IO.Combo.Input("output_format", options=["png", "jpg"], default="png", advanced=True),
             ],
             outputs=[IO.Image.Output()],
-            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.05,"format":{"approximate":true}}'),
+            price_badge=IO.PriceBadge(expr='{"type":"usd","usd":0.15,"format":{"approximate":true}}'),
         )
 
     @classmethod
