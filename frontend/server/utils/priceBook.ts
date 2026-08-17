@@ -97,7 +97,9 @@ export const GRAPH_NODE_CREDITS: Record<string, number> = {
   FluxLoRARemoteNode: LORA_RENDER_CREDITS,
   FluxMultiLoRARemoteNode: LORA_RENDER_CREDITS,
   // (GenerateVideoNode 60 and FilmShotNode 160 moved to MODEL_PRICED — their
-  // model widget spans $0.04 to $3.20 per clip, which no flat price can cover.)
+  // model widget spans $0.04 to $3.20 per clip, which no flat price can cover.
+  // FilmShot repriced 160 → 75 (default model) on badge+catalog evidence —
+  // re-verify against a live invoice at the pre-launch estimate-row sweep.)
 
   // — image generation / editing —
   FluxProRemoteNode: 8,            // badge $0.04
@@ -122,12 +124,12 @@ export const GRAPH_NODE_CREDITS: Record<string, number> = {
   FixFacesNode: 1,                 // badge $0.005
   RemoveBackgroundRemoteNode: 1,   // badge $0.001
   RemoveBackgroundNode: 1,         // badge $0.001
-  ClarityUpscaleRemoteNode: 30,    // no badge — Clarity's own range in UpscaleImageNode's description tops out at $0.20
+  ClarityUpscaleRemoteNode: 20,    // badge $0.10 (nodes_replicate.py:1423) — original sweep missed the multi-line price_badge form
 
   // — video —
   Veo3RemoteNode: 900,             // badge $6.00
-  KlingVideoRemoteNode: 75,        // no badge — kling-v2.1; the node's own legacy remap treats it as kling-v2.5-turbo-pro (~$0.50 / 5s)
-  Seedance2RemoteNode: 90,         // no badge — video catalog seedance-2.0 at ~$0.60 / 5s
+  KlingVideoRemoteNode: 53,        // badge $0.35 (nodes_replicate.py:1344) — original sweep missed the multi-line price_badge form
+  Seedance2RemoteNode: 75,         // badge $0.50 (nodes_replicate.py:1596) — original sweep missed the multi-line price_badge form
   EnhanceVideoNode: 150,           // badge $1.00
   LipsyncRemoteNode: 150,          // badge $1.00 / 30s
   LipsyncNode: 150,                // badge $1.00 / 30s
@@ -349,7 +351,7 @@ export function priceGraph(prompt: Record<string, { class_type: string; inputs?:
     }
 
     const flat = GRAPH_NODE_CREDITS[ct]
-    if (flat) { breakdown.push({ action: ct, credits: flat }); continue }
+    if (flat !== undefined) { breakdown.push({ action: ct, credits: flat }); continue }
 
     // Fail closed: a provider node this table cannot price refuses the graph.
     if (isProviderClass(ct) && !(ct in PROVIDER_NODE_EXEMPT)) throw new UnpricedGraphError(ct)
@@ -432,14 +434,14 @@ export const MODEL_COSTS: Record<string, ModelCost> = {
   // — LLM utility (per-token, pennies) —
   'meta/meta-llama-3-8b-instruct': { usd: 0.001, credits: 1, confidence: 'estimate' },
   'lucataco/qwen2-vl-7b-instruct': { usd: 0.003, credits: 1, confidence: 'estimate' },
-  // — slugs behind graph nodes that carry NO price_badge (Stage 5 Task 3).
-  // Derived inside the repo: kling-v2.1 is what GenerateVideoNode's own legacy
-  // remap treats as kling-v2.5-turbo-pro (~$0.50/5s in app/data/video-models.ts);
-  // seedance-2.0 is that catalog's own hint; clarity-upscaler is the top of the
-  // range UpscaleImageNode's description quotes for Clarity.
-  'kwaivgi/kling-v2.1': { usd: 0.5, credits: 75, confidence: 'estimate', note: 'per ~5s clip — duration-aware pricing is a hardening rider' },
-  'bytedance/seedance-2.0': { usd: 0.6, credits: 90, confidence: 'estimate', note: 'per ~5s clip — duration-aware pricing is a hardening rider' },
-  'philz1337x/clarity-upscaler': { usd: 0.2, credits: 30, confidence: 'estimate', note: 'top of the $0.05–0.20 range the node quotes' },
+  // — slugs behind graph nodes priced off their own price_badge (Stage 5
+  // Task 3 review fix). These three carry a badge in the multi-line
+  // `price_badge=IO.PriceBadge(` form the original sweep missed: kling-v2.1
+  // badge $0.35, seedance-2.0 badge $0.50, clarity-upscaler badge $0.10 (all
+  // in comfy_api_nodes/nodes_replicate.py). USD below matches those badges.
+  'kwaivgi/kling-v2.1': { usd: 0.35, credits: 53, confidence: 'estimate', note: 'per ~5s clip — duration-aware pricing is a hardening rider' },
+  'bytedance/seedance-2.0': { usd: 0.5, credits: 75, confidence: 'estimate', note: 'per ~5s clip — duration-aware pricing is a hardening rider' },
+  'philz1337x/clarity-upscaler': { usd: 0.1, credits: 20, confidence: 'estimate', note: 'badge-quoted price — duration/scale-factor variance is a hardening rider' },
   // — training (hardware-billed; matches LoraTrainingNode=600 in the graph table) —
   'ostris/flux-dev-lora-trainer': { usd: 2.5, credits: 600, confidence: 'estimate', note: 'H100 ~15–40min; 600cr keeps parity with graph table' },
   'ostris/sdxl-lora-trainer': { usd: 2, credits: 600, confidence: 'estimate' },

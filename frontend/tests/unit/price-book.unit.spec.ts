@@ -69,6 +69,16 @@ describe('price book: model costs', () => {
       expect(Number.isInteger(c.credits) && c.credits >= 1, model).toBe(true)
     }
   })
+
+  // Review fix (Stage 5 Task 3): these three rows were derived as if their
+  // graph nodes carried no price_badge. They do (nodes_replicate.py:1423
+  // Clarity, :1344 Kling, :1596 Seedance2 — the multi-line price_badge form
+  // the original sweep missed) — usd/credits now match the badge.
+  it('kling/seedance2/clarity match their graph node price_badge USD', () => {
+    expect(MODEL_COSTS['kwaivgi/kling-v2.1']).toMatchObject({ usd: 0.35, credits: 53 })
+    expect(MODEL_COSTS['bytedance/seedance-2.0']).toMatchObject({ usd: 0.5, credits: 75 })
+    expect(MODEL_COSTS['philz1337x/clarity-upscaler']).toMatchObject({ usd: 0.1, credits: 20 })
+  })
 })
 
 describe('price book: coverage of the codebase', () => {

@@ -135,6 +135,21 @@ describe('graph price book coverage', () => {
     expect(GRAPH_NODE_CREDITS.FluxLoRARemoteNode).toBe(8)
     expect(GRAPH_NODE_CREDITS.FluxMultiLoRARemoteNode).toBe(8)
   })
+
+  // Review fix (Stage 5 Task 3): the original badge sweep grepped for the
+  // single-line `price_badge=IO.PriceBadge(expr=...)` form only and missed
+  // the multi-line `price_badge=IO.PriceBadge(\n  expr=...,\n)` form these
+  // three classes use — they were priced off a false "no badge" premise.
+  // Pinned to the actual badge USD (nodes_replicate.py:1423/1344/1596) run
+  // through the markup policy so a future re-sweep can't silently drift them.
+  it('prices Clarity/Kling/Seedance2 off their multi-line price_badge USD', () => {
+    expect(GRAPH_NODE_CREDITS.ClarityUpscaleRemoteNode).toBe(creditsForUsdServer(0.10))
+    expect(GRAPH_NODE_CREDITS.ClarityUpscaleRemoteNode).toBe(20)
+    expect(GRAPH_NODE_CREDITS.KlingVideoRemoteNode).toBe(creditsForUsdServer(0.35))
+    expect(GRAPH_NODE_CREDITS.KlingVideoRemoteNode).toBe(53)
+    expect(GRAPH_NODE_CREDITS.Seedance2RemoteNode).toBe(creditsForUsdServer(0.50))
+    expect(GRAPH_NODE_CREDITS.Seedance2RemoteNode).toBe(75)
+  })
 })
 
 describe('server pricing policy', () => {
