@@ -11,10 +11,7 @@ import { DEFAULT_CONFIG, type GeoShapeConfig } from '../../app/lib/geoshape/conf
 // edited by a bespoke list editor (ShapeStudioSurface's fills-list block,
 // mirroring SpaceTypeSurface's fillList pattern) rather than a single-value
 // control row, so neither has a GEO_CONTROLS entry.
-// `fillOrder` and `overlapSeparate` — controls added in Task 4; the schema
-// fields exist now but the `pieces` mode's ordering/overlap-palette UI is
-// built in that task, so they're excluded here until it lands.
-const NON_CONTROL_FIELDS = new Set(['locks', 'fills', 'overlapFills', 'fillOrder', 'overlapSeparate'])
+const NON_CONTROL_FIELDS = new Set(['locks', 'fills', 'overlapFills'])
 
 const expectedKeys = Object.keys(DEFAULT_CONFIG).filter((k) => !NON_CONTROL_FIELDS.has(k))
 
@@ -120,6 +117,22 @@ describe('visibleGeoControls follows the shape/layout/overlap/symmetry/clip pred
     expect(clipped).toContain('clipMaskSize')
     const none = visibleGeoControls({ ...DEFAULT_CONFIG, clipMask: 'none' }).map((c) => c.key)
     expect(none).not.toContain('clipMaskSize')
+  })
+
+  it('shows Colour order for perClone/pieces, hides for single', () => {
+    expect(visibleGeoControls({ ...DEFAULT_CONFIG, fillStrategy: 'single' }).map(c => c.key)).not.toContain('fillOrder')
+    expect(visibleGeoControls({ ...DEFAULT_CONFIG, fillStrategy: 'perClone' }).map(c => c.key)).toContain('fillOrder')
+    expect(visibleGeoControls({ ...DEFAULT_CONFIG, fillStrategy: 'pieces' }).map(c => c.key)).toContain('fillOrder')
+  })
+
+  it('shows Separate overlap colours only for pieces', () => {
+    expect(visibleGeoControls({ ...DEFAULT_CONFIG, fillStrategy: 'pieces' }).map(c => c.key)).toContain('overlapSeparate')
+    expect(visibleGeoControls({ ...DEFAULT_CONFIG, fillStrategy: 'perClone' }).map(c => c.key)).not.toContain('overlapSeparate')
+  })
+
+  it('shows single Fill only for single strategy', () => {
+    expect(visibleGeoControls({ ...DEFAULT_CONFIG, fillStrategy: 'single' }).map(c => c.key)).toContain('fill')
+    expect(visibleGeoControls({ ...DEFAULT_CONFIG, fillStrategy: 'pieces' }).map(c => c.key)).not.toContain('fill')
   })
 
   it('returns only members of GEO_CONTROLS', () => {

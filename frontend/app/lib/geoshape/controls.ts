@@ -56,6 +56,9 @@ const isGridOrLinear = (c: GeoShapeConfig) => c.layout === 'grid' || c.layout ==
 const isOverlapShape = (c: GeoShapeConfig) => c.overlapMode === 'shape'
 const isSingleFill = (c: GeoShapeConfig) => c.fillStrategy === 'single'
 const isOverlapShapeAndSingleFill = (c: GeoShapeConfig) => isOverlapShape(c) && isSingleFill(c)
+const isMultiFill = (c: GeoShapeConfig) => c.fillStrategy !== 'single'
+const isPieces = (c: GeoShapeConfig) => c.fillStrategy === 'pieces'
+const isPiecesAndSeparate = (c: GeoShapeConfig) => c.fillStrategy === 'pieces' && c.overlapSeparate
 const hasSymmetry = (c: GeoShapeConfig) => c.symmetry === true
 const hasClipMask = (c: GeoShapeConfig) => c.clipMask !== 'none'
 
@@ -142,12 +145,16 @@ export const GEO_CONTROLS: GeoControl[] = [
 
   // --- Paint ---------------------------------------------------------------
   // `fills` and `overlapFills` (the cycled-list counterparts of `fill` and
-  // `overlapFill`) have no control of their own — they're edited by bespoke
-  // list editors (ShapeStudioSurface's fills-list block), not a single-value
-  // row — so they're excluded from the drift guard's expected-key set
-  // alongside `locks` (see that test's NON_CONTROL_FIELDS).
+  // `overlapFill`, the latter feeding `pieces` mode's overlap palette) have
+  // no control of their own — they're edited by bespoke list editors
+  // (ShapeStudioSurface's fills-list block), not a single-value row — so
+  // they're excluded from the drift guard's expected-key set alongside
+  // `locks` (see that test's NON_CONTROL_FIELDS).
   select('fillStrategy', 'Fill', ['single', 'perClone', 'pieces'], DEFAULT_CONFIG.fillStrategy, 'Paint',
     'single = unified holes; perClone = one colour per shape; pieces = colour solo + overlap regions'),
+  select('fillOrder', 'Colour order', ['created', 'depth', 'leftRight', 'topBottom', 'rows', 'columns', 'centerOut', 'around'], DEFAULT_CONFIG.fillOrder, 'Paint',
+    'order colours are handed out in (rows = reading order; around = colour wheel)', { when: isMultiFill }),
+  switchC('overlapSeparate', 'Separate overlap colours', DEFAULT_CONFIG.overlapSeparate, 'Paint', { when: isPieces }),
   color('fill', 'Fill', paintDefault(DEFAULT_CONFIG.fill), 'Paint', { when: isSingleFill }),
   color('stroke', 'Stroke', DEFAULT_CONFIG.stroke ?? '#000000', 'Paint'),
 ]
@@ -184,4 +191,4 @@ SYMMETRY mirrors the whole composed mark across symmetryAxis (vertical/horizonta
 
 STYLE: padding is the margin the SVG export keeps around the mark; strokeWidth is the outline width wherever stroke is set. seed drives irregularSeed-style jitter and re-roll — same seed, same mark.
 
-PAINT: fill colors the mark, stroke outlines it (leave stroke unset for a fill-only flat mark, the common logo case), overlapFill only matters when overlapMode is "shape".`
+PAINT: fill colors the mark, stroke outlines it (leave stroke unset for a fill-only flat mark, the common logo case), overlapFill only matters when overlapMode is "shape". fillStrategy switches between one flat fill (single), one colour per clone (per-clone), or per-piece colouring with its own overlap regions (pieces); fillOrder sets the sequence those colours are handed out in (creation order, depth, left-to-right, top-to-bottom, row-by-row, column-by-column, center-out, or around like a colour wheel) whenever fillStrategy isn't single, and overlapSeparate (pieces only) gives crossing regions their own colours instead of reusing the piece colours.`
