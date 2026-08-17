@@ -124,10 +124,18 @@ describe('geoshape boolean composite', () => {
     for (const s of shapes) expect(s.fillRule).toBe('nonzero')
   })
   it('perShapeFill symmetry mirrors clones AND inherits their paint', async () => {
+    // Asymmetric on purpose: 2 clones + a 3-entry palette. Correct behaviour
+    // (each mirror inherits its SOURCE clone's cycled paint) yields
+    // [f0,f1, f0,f1]. The spec's #1-risk bug — computing the cycle index on the
+    // concatenated (post-mirror) list, i.e. continuing the modulo past the
+    // mirror boundary — would instead yield [f0,f1, f2,f0]. Those diverge only
+    // when fills.length > clone count, so this case actually guards the risk
+    // (a 2-clone/2-fill case produces the same sequence under both and proves
+    // nothing).
     const placements = [{ x: -40, y: 0, scale: 1, rotate: 0, skew: 0 }, { x: 40, y: 0, scale: 1, rotate: 0, skew: 0 }]
-    const shapes = await composite(SQUARE, placements, { ...DEFAULT_CONFIG, perShapeFill: true, fills: ['#f00', '#0f0'], symmetry: true, clipMask: 'none' })
+    const shapes = await composite(SQUARE, placements, { ...DEFAULT_CONFIG, perShapeFill: true, fills: ['#f00', '#0f0', '#00f'], symmetry: true, clipMask: 'none' })
     expect(shapes).toHaveLength(4) // 2 originals + 2 mirrors
-    expect(shapes.map(s => s.paint)).toEqual(['#f00', '#0f0', '#f00', '#0f0']) // mirror inherits source paint
+    expect(shapes.map(s => s.paint)).toEqual(['#f00', '#0f0', '#f00', '#0f0']) // mirror inherits source paint, NOT ['#f00','#0f0','#00f','#f00']
   })
   it('unified mode (perShapeFill off) is unchanged — evenodd hole still there', async () => {
     const shapes = await composite(SQUARE, [{ x: -20, y: 0, scale: 1, rotate: 0, skew: 0 }, { x: 20, y: 0, scale: 1, rotate: 0, skew: 0 }], { ...DEFAULT_CONFIG, perShapeFill: false })

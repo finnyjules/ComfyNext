@@ -42,5 +42,8 @@ describe('geoshape config', () => {
     expect(mergeConfig({ ...DEFAULT_CONFIG, fills: [] }).fills).toEqual(DEFAULT_CONFIG.fills)
     expect(mergeConfig({ ...DEFAULT_CONFIG, fills: 'nope' }).fills).toEqual(DEFAULT_CONFIG.fills)
     expect(mergeConfig({ ...DEFAULT_CONFIG, fills: [42, { type: 'bogus' }] }).fills).toEqual(DEFAULT_CONFIG.fills) // all entries invalid → default
+    // Mixed valid+invalid → keep ONLY the valid entries (must NOT collapse to
+    // the whole default list — the drop-invalid arm, distinct from all-invalid).
+    expect(mergeConfig({ ...DEFAULT_CONFIG, fills: ['#f00', 42, { type: 'bogus' }] }).fills).toEqual(['#f00'])
   })
 })
