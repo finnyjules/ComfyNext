@@ -96,3 +96,36 @@ def test_load_catalog_accepts_valid_enum_default(tmp_path, monkeypatch):
     monkeypatch.setattr(sfx, "_catalog", None)
     catalog = load_catalog(refresh=True)
     assert catalog.effects["foo"].params[0].type == "enum"
+
+
+# ── catalog_payload camelCase round-trip ────────────────────────────────────────
+# The manifest declares camelCase keys (showWhen, maxStops); the loader renames
+# them to snake_case dataclass fields; the payload MUST rename them back, or the
+# browser (which reads p.showWhen / p.maxStops) silently sees `undefined` and the
+# visibility gate never fires. Regression for that serialisation gap.
+
+def test_catalog_payload_camelcases_param_keys():
+    from comfy_extras.nodes_shader_effects import catalog_payload
+
+    payload = catalog_payload()
+    cp = next(e for e in payload["effects"] if e["id"] == "crystal_prism")
+    facet = next(p for p in cp["params"] if p["uniform"] == "u_facetStyle")
+    # showWhen restored to camelCase, snake_case NOT leaked
+    assert "showWhen" in facet, "payload must emit camelCase showWhen"
+    assert "show_when" not in facet, "snake_case show_when must not leak to the client"
+    assert facet["showWhen"] == {"uniform": "u_mode", "equals": 1}
+    # same guarantee for the sibling alias
+    assert "maxStops" in facet and "max_stops" not in facet
+
+
+def test_catalog_payload_omits_gate_key_shape_for_ungated():
+    """An ungated param still round-trips (showWhen present but null), so the
+    key name is camelCase regardless of value."""
+    from comfy_extras.nodes_shader_effects import catalog_payload
+
+    payload = catalog_payload()
+    # u_mode itself (the gate driver) has no showWhen of its own
+    cp = next(e for e in payload["effects"] if e["id"] == "crystal_prism")
+    mode = next(p for p in cp["params"] if p["uniform"] == "u_mode")
+    assert "show_when" not in mode
+    assert mode.get("showWhen") is None

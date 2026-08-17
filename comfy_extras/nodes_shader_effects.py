@@ -16,12 +16,29 @@ from comfy_api.latest import ComfyExtension, IO
 from comfy_extras._live_preview import save_live_preview
 from comfy_extras._shader_effects import (
     ASSETS_DIR,
+    _PARAM_KEY_ALIASES,
     frame_plan,
     load_catalog,
     render_effect,
     resolve_params,
     to_uniforms,
 )
+
+# The loader renames camelCase manifest keys to snake_case dataclass fields
+# (maxStops→max_stops, showWhen→show_when). Serialising a param straight from
+# vars(p) would ship those snake_case names to the browser, which reads the
+# camelCase originals (p.maxStops, p.showWhen) — so the values silently vanish
+# (p.showWhen === undefined → the visibility gate never fires). Invert the alias
+# map to camelCase them back on the way out, keeping parse and serialise
+# symmetric. Effect-level fields (centerParam) are already camelCased by hand
+# below; this closes the same gap for the nested param dicts.
+_PARAM_KEY_TO_MANIFEST = {v: k for k, v in _PARAM_KEY_ALIASES.items()}
+
+
+def _param_payload(param) -> dict:
+    """A catalog param as the frontend expects it: dataclass fields with the
+    manifest's camelCase key names restored."""
+    return {_PARAM_KEY_TO_MANIFEST.get(k, k): v for k, v in vars(param).items()}
 
 
 # All output frames are held in RAM before stacking; cap the count so an extreme
@@ -185,7 +202,7 @@ def catalog_payload() -> dict:
             "generative": eff.generative,
             "centerParam": eff.center_param,
             "textures": [{**t, "v": _texture_version(t["file"])} for t in eff.textures],
-            "params": [vars(p) for p in eff.params],
+            "params": [_param_payload(p) for p in eff.params],
             "source": eff.source,
         })
     return {"version": catalog.version, "effects": effects}
