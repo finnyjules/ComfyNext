@@ -27,12 +27,19 @@ class EffectParam:
     step: float = 0.0
     options: list[dict] | None = None
     max_stops: int = 8
+    # Frontend-only visibility gate ({uniform, equals|in}); the server doesn't
+    # render UI, so it just carries the value through rather than rejecting it.
+    show_when: dict | None = None
 
 
 # Param types whose value is a colour rather than a number. These are NOT
 # animatable: motion targets derive from this same list, and a hex string has no
 # meaningful interpolation in a float sweep.
 COLOR_TYPES = ("color", "gradient")
+
+# Manifest param keys are camelCase; the dataclass fields are snake_case. Only the
+# keys that differ need mapping — everything else passes through unchanged.
+_PARAM_KEY_ALIASES = {"maxStops": "max_stops", "showWhen": "show_when"}
 
 
 def parse_hex(hex_str: str) -> tuple[float, float, float]:
@@ -97,7 +104,7 @@ def load_catalog(refresh: bool = False) -> Catalog:
             raise ValueError(f"shader_effects manifest: missing shader file for {eid!r}")
         with open(frag_path, "r", encoding="utf-8") as f:
             source = f.read()
-        params = [EffectParam(**{("max_stops" if k == "maxStops" else k): v for k, v in p.items()})
+        params = [EffectParam(**{_PARAM_KEY_ALIASES.get(k, k): v for k, v in p.items()})
                   for p in entry["params"]]
         for p in params:
             if p.type == "enum":
