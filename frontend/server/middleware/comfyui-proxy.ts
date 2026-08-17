@@ -5,8 +5,9 @@
 import { resolveWorkerTarget } from '../utils/workerRoute'
 import { PROXY_PREFIXES } from '../utils/authGuard'
 import { deployMode } from '../utils/deployMode'
-import { isPromptPath, handleMeteredPrompt } from '../utils/meterGraphRun'
+import { handleMeteredPrompt } from '../utils/meterGraphRun'
 import { handleHostedQueueGet, handleHostedInterrupt } from '../utils/engineGate'
+import { normalizeEnginePath, hostedEngineDecision } from '../utils/enginePath'
 
 // Paths under PROXY_PREFIXES that should be handled by Nitro routes, not proxied
 const NITRO_API_PATHS = ['/api/explain', '/api/pipeline-suggest', '/api/font-suggest', '/api/secrets', '/api/render-template', '/api/lora-preview', '/api/replicate-cover', '/api/google-fonts', '/api/loras-local', '/api/lora-cover', '/api/community-workflow', '/api/voices-local', '/api/voice-preview-file', '/api/vibe', '/api/agent-plan', '/api/agent-review', '/api/image-search', '/api/image-fetch', '/api/copy-assist', '/api/ai-status', '/api/dataset-match', '/api/training-image', '/api/wallet']
@@ -21,24 +22,24 @@ export default defineEventHandler(async (event) => {
   if (NITRO_API_PREFIXES.some((p) => path === p || path.startsWith(p + '/') || path.startsWith(p + '?'))) return
   if (NITRO_ROUTE_PREFIXES.some((p) => path === p || path.startsWith(p + '?') || path.startsWith(p + '/'))) return
 
-  // Stage 5: hosted graph submissions are METERED — never raw-proxied. Local
-  // mode falls through to the raw proxy below, byte-identical to pre-Stage-5.
-  if (isPromptPath(path) && event.method === 'POST' && deployMode() === 'hosted') {
-    return handleMeteredPrompt(event)
-  }
-
-  // Stage 5 Task 5: hosted /queue and /interrupt are tenant-scoped — a user
-  // may only see or interrupt their own runs. Local mode falls through to
-  // the raw proxy below, byte-identical to pre-Stage-5.
-  if (deployMode() === 'hosted') {
-    if ((path === '/queue' || path.startsWith('/queue?')) && event.method === 'GET') return handleHostedQueueGet(event)
-    if ((path === '/interrupt' || path.startsWith('/interrupt?')) && event.method === 'POST') return handleHostedInterrupt(event)
-    // ComfyUI's clear/delete — one user must never be able to wipe another's
-    // pending queue. No per-user queue management endpoint exists yet, so
-    // this is a hard refusal rather than a partial implementation.
-    if (path === '/queue' && event.method === 'POST') {
-      throw createError({ statusCode: 403, message: 'Queue management is per-user in hosted mode' })
-    }
+  // Stage 5 review C1: ComfyUI serves every route at BOTH `/x` and `/api/x`,
+  // and this proxy strips a leading `/comfyui` — so one endpoint has up to
+  // four spellings. Gating a literal path left the other three as free
+  // bypasses (unmetered /api/prompt, cross-tenant /comfyui/history, …).
+  // Every hosted decision below is taken on the canonical form instead.
+  //
+  // LOCAL MODE: normalization is computed but never consulted — the raw
+  // proxy loop below still sees the ORIGINAL path, so a local install
+  // behaves exactly as it did before Stage 5.
+  if (deployMode() === 'hosted' && PROXY_PREFIXES.some(p => path === p || path.startsWith(p + '/') || path.startsWith(p + '?'))) {
+    const decision = hostedEngineDecision(normalizeEnginePath(path), event.method)
+    if (decision.kind === 'meterPrompt') return handleMeteredPrompt(event)
+    if (decision.kind === 'queueGet') return handleHostedQueueGet(event)
+    if (decision.kind === 'interrupt') return handleHostedInterrupt(event)
+    // Deny by default: an engine path that isn't explicitly allowlisted for
+    // hosted raw proxying is refused, so a route nobody has audited can
+    // never become a cross-tenant surface merely by existing upstream.
+    if (decision.kind === 'forbid') throw createError({ statusCode: 403, message: decision.message })
   }
 
   for (const prefix of PROXY_PREFIXES) {

@@ -27,12 +27,20 @@ export function outputKey(o: { filename: string; subfolder?: string; type?: stri
   return `${o.type || 'output'}:${o.subfolder || ''}:${o.filename}`
 }
 
-export async function createGraphRun(r: { promptId: string; userId: string; credits: number; holdId: number | null }): Promise<void> {
+/**
+ * `target` (review I4) is the engine base URL that actually ran the prompt —
+ * `http://127.0.0.1:8188` for the main instance, `:8189+N` for a pool worker
+ * picked by `?comfyWorker=N`. The /view race-window harvest polls it; without
+ * it, pool-worker runs were polled on the main engine forever and could never
+ * settle. Nullable so pre-existing rows (and any caller that doesn't know)
+ * fall back to the main engine.
+ */
+export async function createGraphRun(r: { promptId: string; userId: string; credits: number; holdId: number | null; target?: string | null }): Promise<void> {
   await db().query(
-    `INSERT INTO graph_runs (prompt_id, user_id, credits, hold_id)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO graph_runs (prompt_id, user_id, credits, hold_id, target)
+     VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (prompt_id) DO NOTHING`,
-    [r.promptId, r.userId, r.credits, r.holdId])
+    [r.promptId, r.userId, r.credits, r.holdId, r.target ?? null])
 }
 
 export async function resolveGraphRun(promptId: string, state: 'settled' | 'voided', outputs: string[] = []): Promise<void> {
@@ -61,8 +69,24 @@ export async function ownedOutputKeys(userId: string): Promise<Set<string>> {
   return out
 }
 
-export async function pendingRuns(userId: string): Promise<{ promptId: string; holdId: number | null; credits: number }[]> {
+/**
+ * Review I3: the harvest caller caps how many pending rows it will poll.
+ * Unordered, that cap selected an ARBITRARY subset — a user carrying a
+ * backlog of stale pendings (a wedged worker, an interrupted run) could have
+ * their just-completed run fall outside the window that settles it, forever.
+ * Newest-first, capped in SQL, riding the existing (user_id, created_at DESC)
+ * index.
+ */
+export async function pendingRuns(userId: string, limit = 20): Promise<{ promptId: string; holdId: number | null; credits: number; target: string | null }[]> {
   const { rows } = await db().query(
-    `SELECT prompt_id, hold_id, credits FROM graph_runs WHERE user_id = $1 AND state = 'pending'`, [userId])
-  return rows.map(r => ({ promptId: String(r.prompt_id), holdId: r.hold_id == null ? null : Number(r.hold_id), credits: Number(r.credits) }))
+    `SELECT prompt_id, hold_id, credits, target FROM graph_runs
+     WHERE user_id = $1 AND state = 'pending'
+     ORDER BY created_at DESC
+     LIMIT $2`, [userId, limit])
+  return rows.map(r => ({
+    promptId: String(r.prompt_id),
+    holdId: r.hold_id == null ? null : Number(r.hold_id),
+    credits: Number(r.credits),
+    target: r.target == null ? null : String(r.target),
+  }))
 }

@@ -141,7 +141,14 @@ export async function handleMeteredPrompt(event: H3Event): Promise<any> {
     hold: (u, credits) => holdWithRefusal(ledger, u, credits),
     getAvailable: u => ledger.getAvailable(u),
     forward: async (b) => {
-      const safe = { ...b, extra_data: stripForeignComfyOrgCreds(b?.extra_data, null) }
+      // Review I2: ComfyUI honours a client-supplied `prompt_id`. Left in
+      // place, an attacker who learns a victim's id can submit their own
+      // graph under it — ComfyUI runs it, and this request's settle watcher
+      // then UPDATEs graph_runs WHERE prompt_id = <victim's>, replacing the
+      // victim's recorded outputs with the attacker's. The engine assigns
+      // ids; clients don't get to.
+      const { prompt_id: _clientChosenPromptId, ...rest } = (b ?? {}) as Record<string, unknown>
+      const safe = { ...rest, extra_data: stripForeignComfyOrgCreds((b as any)?.extra_data, null) }
       const res = await fetch(`${target}/prompt`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', origin: target },
@@ -149,14 +156,17 @@ export async function handleMeteredPrompt(event: H3Event): Promise<any> {
       })
       return { status: res.status, body: await res.json().catch(() => ({})) }
     },
-    registerRun: createGraphRun,
+    // Review I4: record WHICH engine ran this prompt. Without it the /view
+    // race-window harvest always polled :8188, so a run dispatched to a pool
+    // worker (?comfyWorker=N) could never be settled from the harvest path.
+    registerRun: r => createGraphRun({ ...r, target }),
     startSettle: ({ promptId, holdId, credits }) => {
       void settleOnCompletion({
         promptId,
         intervalMs: SETTLE_INTERVAL_MS,
         maxPolls: SETTLE_MAX_POLLS,
         pollHistory: async (id) => {
-          const r = await fetch(`${target}/history/${id}`)
+          const r = await fetch(`${target}/history/${encodeURIComponent(id)}`)
           if (!r.ok) return null
           const hist = await r.json() as Record<string, any>
           return hist[id] ?? null
@@ -183,7 +193,7 @@ export async function handleMeteredPrompt(event: H3Event): Promise<any> {
 export async function settleGraphSuccess(target: string, promptId: string, holdId: number | null, credits: number): Promise<void> {
   const outputs: string[] = []
   try {
-    const r = await fetch(`${target}/history/${promptId}`)
+    const r = await fetch(`${target}/history/${encodeURIComponent(promptId)}`)
     if (r.ok) {
       const hist = await r.json() as Record<string, any>
       const nodeOutputs = hist[promptId]?.outputs ?? {}

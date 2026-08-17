@@ -91,7 +91,14 @@ CREATE TABLE IF NOT EXISTS graph_runs (
   hold_id    bigint,
   state      text NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'settled', 'voided')),
   outputs    jsonb NOT NULL DEFAULT '[]',
+  target     text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- `target` arrived after graph_runs shipped (review I4): the engine base URL
+-- that ran the prompt, so the /view harvest polls the pool worker a run was
+-- actually dispatched to instead of always the main instance. Separate ALTER
+-- so re-running this file upgrades an existing table too.
+ALTER TABLE graph_runs ADD COLUMN IF NOT EXISTS target text;
 
 CREATE INDEX IF NOT EXISTS graph_runs_user ON graph_runs (user_id, created_at DESC);

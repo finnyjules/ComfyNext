@@ -23,7 +23,7 @@ export default defineEventHandler(async (event) => {
 
   // Try live first
   try {
-    const res = await fetch(`${COMFY_BACKEND}/history/${promptId}`)
+    const res = await fetch(`${COMFY_BACKEND}/history/${encodeURIComponent(promptId)}`)
     if (res.ok) {
       const data = await res.json() as Record<string, any>
       // ComfyUI returns {} when the promptId doesn't exist — check it actually has data
