@@ -36,6 +36,16 @@ export default defineEventHandler(async (event) => {
   if (deployMode() === 'hosted') {
     const userId = event.context.userId
     if (!userId) throw createError({ statusCode: 401, message: 'Sign in required' })
+    // Round-2 review F5: `?filename=a.png&filename=b.png` makes getQuery return
+    // an ARRAY, and the `as string` cast above is a lie the gate then trips
+    // over — viewGateDecision calls .startsWith on it and the tenant check dies
+    // with a TypeError, i.e. a 500 instead of a decision. Reject rather than
+    // coerce: String(['a','b']) is "a,b", which is neither what the gate would
+    // check nor what the loop below forwards for a repeated key, so coercion
+    // would let the gate key and the engine request disagree about the file.
+    if (Array.isArray(query.filename) || Array.isArray(query.type) || Array.isArray(query.subfolder)) {
+      throw createError({ statusCode: 400, message: 'invalid filename' })
+    }
     const gate = viewGateDecision({ filename, type, subfolder })
     if (gate.kind === 'reject') throw createError({ statusCode: gate.status, message: gate.message })
     if (gate.kind === 'check') {

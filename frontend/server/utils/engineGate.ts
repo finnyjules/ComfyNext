@@ -5,7 +5,7 @@
  * deployMode() === 'hosted'.
  */
 import type { H3Event } from 'h3'
-import { createError, setResponseStatus } from 'h3'
+import { createError, getRequestHeader, readRawBody, setResponseStatus } from 'h3'
 import { ownedPromptIds, ownsPrompt, outputKey, pendingRuns } from './graphRuns'
 import { resolveWorkerTarget } from './workerRoute'
 import { settleGraphSuccess } from './meterGraphRun'
@@ -114,6 +114,159 @@ export async function handleHostedInterrupt(event: H3Event): Promise<any> {
   // Review M3: `null` makes h3 send an empty body, so a client doing
   // res.json() on a 200 gets a parse error instead of a success.
   return { ok: true }
+}
+
+// ---------------------------------------------------------------------------
+// F2 — /object_info leaks every tenant's uploaded filenames.
+// ---------------------------------------------------------------------------
+
+/**
+ * The option keys ComfyUI marks a file-picker widget with. Verified against a
+ * live catalog (864 nodes): these four are the complete set, and the 11 inputs
+ * carrying them are EXACTLY the 11 that embed real input-directory filenames —
+ * traced by probing the catalog for known uploads, not by reading names.
+ * Model/checkpoint/LoRA combos carry none of them and are shared assets
+ * anyway, so they survive untouched.
+ */
+const UPLOAD_FLAG_KEYS = ['image_upload', 'video_upload', 'audio_upload', 'file_upload']
+
+function declaresUploadWidget(opts: unknown): boolean {
+  if (!opts || typeof opts !== 'object' || Array.isArray(opts)) return false
+  return UPLOAD_FLAG_KEYS.some(k => Boolean((opts as Record<string, unknown>)[k]))
+}
+
+/**
+ * Empty the filename list on one input spec, in place, leaving every other
+ * byte of it alone.
+ *
+ * ComfyUI serves upload widgets in TWO shapes and a hosted scrubber that
+ * knows only the documented one still leaks three node families:
+ *
+ *   legacy  ["<file>", "<file>", …], { image_upload: true }]   LoadImage, …
+ *   v2      ["COMBO", { options: ["<file>", …], audio_upload: true }]
+ *
+ * A third shape carries the flag but no inline list and needs no scrubbing:
+ * Painter is ["STRING", {...}], and LoadImageOutput points the client at
+ * `remote: { route: "/internal/files/output" }` — already a hosted 403.
+ *
+ * The `image_upload` flag itself is PRESERVED: the frontend keys its upload
+ * button off it, and the point is to hide other tenants' filenames, not to
+ * take the widget away.
+ */
+function scrubUploadSpec(spec: unknown[]): void {
+  if (Array.isArray(spec[0])) spec[0] = []
+  const opts = spec[1]
+  if (opts && typeof opts === 'object' && Array.isArray((opts as Record<string, unknown>).options)) {
+    ;(opts as Record<string, unknown>).options = []
+  }
+}
+
+/**
+ * Strip the shared input-directory listing out of an /object_info response.
+ *
+ * Everything else must survive byte-identical — direct execution's
+ * graphToPrompt validates against these schemas client-side, so a scrubber
+ * that drops or reorders node definitions breaks every hosted render.
+ * Mutates a structured clone; key insertion order is preserved by JS for the
+ * non-numeric keys ComfyUI uses.
+ */
+export function scrubObjectInfo(catalog: unknown): unknown {
+  if (!catalog || typeof catalog !== 'object' || Array.isArray(catalog)) return catalog
+  const out = structuredClone(catalog) as Record<string, any>
+  for (const node of Object.values(out)) {
+    const input = node?.input
+    if (!input || typeof input !== 'object' || Array.isArray(input)) continue
+    for (const section of Object.values(input)) {
+      if (!section || typeof section !== 'object' || Array.isArray(section)) continue
+      for (const spec of Object.values(section as Record<string, unknown>)) {
+        if (Array.isArray(spec) && declaresUploadWidget(spec[1])) scrubUploadSpec(spec)
+      }
+    }
+  }
+  return out
+}
+
+/** Resolve the pool worker and rewrite `/comfyui`-prefixed paths, as the raw proxy does. */
+function engineTarget(path: string): { target: string, backendPath: string } {
+  const { port, cleanUrl } = resolveWorkerTarget(path)
+  const target = `http://127.0.0.1:${port}`
+  const backendPath = cleanUrl.startsWith('/comfyui')
+    ? cleanUrl.replace(/^\/comfyui/, '') || '/'
+    : cleanUrl
+  return { target, backendPath }
+}
+
+export async function handleHostedObjectInfo(event: H3Event): Promise<unknown> {
+  const userId = event.context.userId
+  if (!userId) throw createError({ statusCode: 401, message: 'Sign in required' })
+  // `?comfyWorker=N` must keep targeting the pool worker: node availability
+  // differs per worker, so answering from the main instance would hand the
+  // canvas a schema the executing engine does not have.
+  const { target, backendPath } = engineTarget(event.path)
+  const res = await fetch(`${target}${backendPath}`, { headers: { origin: target } })
+  if (!res.ok) throw createError({ statusCode: 502, message: 'Engine object_info unavailable' })
+  return scrubObjectInfo(await res.json())
+}
+
+// ---------------------------------------------------------------------------
+// F4 — cross-tenant overwrite via /upload.
+// ---------------------------------------------------------------------------
+
+/**
+ * Does this multipart body declare an `overwrite` field?
+ *
+ * VERIFIED in ComfyUI's server.py image_upload(): without a truthy `overwrite`
+ * ("true" or "1") the handler loops `while os.path.exists(filepath)` and
+ * auto-suffixes `name (1).png`, `name (2).png`, … so an upload can never
+ * clobber a file it did not write. WITH it, the write is unconditional — and
+ * the input directory is shared across tenants until per-tenant dirs land in
+ * Stage 6, so a guessed filename is another tenant's asset replaced.
+ *
+ * So the mitigation is to refuse the field, not to rewrite it: dropping a part
+ * from a multipart body means re-encoding it (boundary bookkeeping, 100 MB
+ * image buffers) to reach a default the engine already applies for free.
+ *
+ * Matched against the Content-Disposition header line rather than a bare
+ * substring scan, so image BYTES that happen to contain `name="overwrite"`
+ * don't 403 an innocent upload. A false positive here is a refused upload, not
+ * an accepted clobber — the match errs toward closed either way.
+ */
+const OVERWRITE_PART = /content-disposition:[^\r\n]*;\s*name=(?:"overwrite"|overwrite(?![\w-]))/i
+
+export function bodyDeclaresOverwrite(body: Buffer | string | undefined): boolean {
+  if (!body || !body.length) return false
+  const text = typeof body === 'string' ? body : body.toString('latin1')
+  return OVERWRITE_PART.test(text)
+}
+
+export async function handleHostedUpload(event: H3Event): Promise<unknown> {
+  const userId = event.context.userId
+  if (!userId) throw createError({ statusCode: 401, message: 'Sign in required' })
+
+  // Read ONCE, as a Buffer. This is proxy middleware, so the request stream is
+  // still unconsumed here — but it is single-shot, and proxyRequest is no
+  // longer downstream of us to re-read it. The same bytes are forwarded below.
+  const body = await readRawBody(event, false)
+  if (bodyDeclaresOverwrite(body)) {
+    throw createError({ statusCode: 403, message: 'Uploads may not set overwrite in hosted mode' })
+  }
+
+  const { target, backendPath } = engineTarget(event.path)
+  const contentType = getRequestHeader(event, 'content-type')
+  const headers: Record<string, string> = { origin: target }
+  // The multipart boundary lives in this header — forwarding the body without
+  // it makes the engine reject every part.
+  if (contentType) headers['content-type'] = contentType
+
+  const res = await fetch(`${target}${backendPath}`, { method: 'POST', headers, body: body as any })
+  setResponseStatus(event, res.status)
+  const raw = await res.text()
+  try {
+    return JSON.parse(raw)
+  }
+  catch {
+    return raw
+  }
 }
 
 const MAIN_ENGINE = 'http://127.0.0.1:8188'

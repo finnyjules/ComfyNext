@@ -1,0 +1,481 @@
+{
+  "LoadImage": {
+    "input": {
+      "required": {
+        "image": [
+          [
+            "1779351890779_pasted-1779351890779.png",
+            "1779352005782_pasted-1779352005782.png",
+            "1779352030571_pasted-1779352030571.png"
+          ],
+          {
+            "image_upload": true
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "image"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "IMAGE",
+      "MASK"
+    ],
+    "output_is_list": [
+      false,
+      false
+    ],
+    "output_name": [
+      "IMAGE",
+      "MASK"
+    ],
+    "name": "LoadImage",
+    "display_name": "Load Image",
+    "description": "",
+    "python_module": "nodes",
+    "category": "image",
+    "output_node": false,
+    "search_aliases": [
+      "load image",
+      "open image",
+      "import image",
+      "image input",
+      "upload image",
+      "read image",
+      "image loader"
+    ],
+    "essentials_category": "Basics"
+  },
+  "LoadImageMask": {
+    "input": {
+      "required": {
+        "image": [
+          [
+            "1779351890779_pasted-1779351890779.png",
+            "1779352005782_pasted-1779352005782.png",
+            "1779352030571_pasted-1779352030571.png"
+          ],
+          {
+            "image_upload": true
+          }
+        ],
+        "channel": [
+          [
+            "alpha",
+            "red",
+            "green",
+            "blue"
+          ]
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "image",
+        "channel"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "MASK"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "MASK"
+    ],
+    "name": "LoadImageMask",
+    "display_name": "Load Image (as Mask)",
+    "description": "",
+    "python_module": "nodes",
+    "category": "mask",
+    "output_node": false,
+    "search_aliases": [
+      "import mask",
+      "alpha mask",
+      "channel mask"
+    ],
+    "essentials_category": "Image Tools"
+  },
+  "LoadAudio": {
+    "input": {
+      "required": {
+        "audio": [
+          "COMBO",
+          {
+            "multiselect": false,
+            "options": [
+              "A002C012_250805_R2JU.mp4",
+              "A_0002C017_260219_172722_a1CYX.mxf00197359.mp4",
+              "A_0002C023_260219_182431_a1CYX.mxf00279657.mp4"
+            ],
+            "audio_upload": true
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "audio"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "AUDIO"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "AUDIO"
+    ],
+    "output_tooltips": [
+      null
+    ],
+    "output_matchtypes": null,
+    "name": "LoadAudio",
+    "display_name": "Load Audio",
+    "description": "",
+    "python_module": "comfy_extras.nodes_audio",
+    "category": "audio",
+    "output_node": false,
+    "deprecated": false,
+    "experimental": false,
+    "dev_only": false,
+    "api_node": false,
+    "price_badge": null,
+    "search_aliases": [
+      "import audio",
+      "open audio",
+      "audio file"
+    ],
+    "essentials_category": "Audio"
+  },
+  "LoadVideo": {
+    "input": {
+      "required": {
+        "file": [
+          "COMBO",
+          {
+            "multiselect": false,
+            "options": [
+              "A002C012_250805_R2JU.mp4",
+              "A_0002C017_260219_172722_a1CYX.mxf00197359.mp4",
+              "A_0002C023_260219_182431_a1CYX.mxf00279657.mp4"
+            ],
+            "video_upload": true
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "file"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "VIDEO"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "VIDEO"
+    ],
+    "output_tooltips": [
+      null
+    ],
+    "output_matchtypes": null,
+    "name": "LoadVideo",
+    "display_name": "Load Video",
+    "description": "",
+    "python_module": "comfy_extras.nodes_video",
+    "category": "image/video",
+    "output_node": false,
+    "deprecated": false,
+    "experimental": false,
+    "dev_only": false,
+    "api_node": false,
+    "price_badge": null,
+    "search_aliases": [
+      "import video",
+      "open video",
+      "video file"
+    ],
+    "essentials_category": "Basics"
+  },
+  "LoadImageOutput": {
+    "input": {
+      "required": {
+        "image": [
+          "COMBO",
+          {
+            "image_upload": true,
+            "image_folder": "output",
+            "remote": {
+              "route": "/internal/files/output",
+              "refresh_button": true,
+              "control_after_refresh": "first"
+            }
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "image"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "IMAGE",
+      "MASK"
+    ],
+    "output_is_list": [
+      false,
+      false
+    ],
+    "output_name": [
+      "IMAGE",
+      "MASK"
+    ],
+    "name": "LoadImageOutput",
+    "display_name": "Load Image (from Outputs)",
+    "description": "Load an image from the output folder. When the refresh button is clicked, the node will update the image list and automatically select the first image, allowing for easy iteration.",
+    "python_module": "nodes",
+    "category": "image",
+    "output_node": false,
+    "experimental": true,
+    "search_aliases": [
+      "output image",
+      "previous generation"
+    ],
+    "essentials_category": "Basics"
+  },
+  "Painter": {
+    "input": {
+      "required": {
+        "mask": [
+          "STRING",
+          {
+            "widgetType": "PAINTER",
+            "image_upload": true,
+            "default": "",
+            "socketless": true,
+            "multiline": false
+          }
+        ],
+        "width": [
+          "INT",
+          {
+            "hidden": true,
+            "default": 512,
+            "socketless": true,
+            "min": 64,
+            "max": 4096,
+            "step": 64
+          }
+        ],
+        "height": [
+          "INT",
+          {
+            "hidden": true,
+            "default": 512,
+            "socketless": true,
+            "min": 64,
+            "max": 4096,
+            "step": 64
+          }
+        ],
+        "bg_color": [
+          "COLOR",
+          {
+            "default": "#000000",
+            "socketless": true
+          }
+        ]
+      },
+      "optional": {
+        "image": [
+          "IMAGE",
+          {
+            "tooltip": "Optional base image to paint over"
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "mask",
+        "width",
+        "height",
+        "bg_color"
+      ],
+      "optional": [
+        "image"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "IMAGE",
+      "MASK"
+    ],
+    "output_is_list": [
+      false,
+      false
+    ],
+    "output_name": [
+      "IMAGE",
+      "MASK"
+    ],
+    "output_tooltips": [
+      null,
+      null
+    ],
+    "output_matchtypes": null,
+    "name": "Painter",
+    "display_name": "Painter",
+    "description": "",
+    "python_module": "comfy_extras.nodes_painter",
+    "category": "image",
+    "output_node": false,
+    "deprecated": false,
+    "experimental": false,
+    "dev_only": false,
+    "api_node": false,
+    "price_badge": null,
+    "search_aliases": null,
+    "essentials_category": null
+  },
+  "LatentUpscale": {
+    "input": {
+      "required": {
+        "samples": [
+          "LATENT"
+        ],
+        "upscale_method": [
+          [
+            "nearest-exact",
+            "bilinear",
+            "area",
+            "bicubic",
+            "bislerp"
+          ]
+        ],
+        "width": [
+          "INT",
+          {
+            "default": 512,
+            "min": 0,
+            "max": 16384,
+            "step": 8
+          }
+        ],
+        "height": [
+          "INT",
+          {
+            "default": 512,
+            "min": 0,
+            "max": 16384,
+            "step": 8
+          }
+        ],
+        "crop": [
+          [
+            "disabled",
+            "center"
+          ]
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "samples",
+        "upscale_method",
+        "width",
+        "height",
+        "crop"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "LATENT"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "LATENT"
+    ],
+    "name": "LatentUpscale",
+    "display_name": "Upscale Latent",
+    "description": "",
+    "python_module": "nodes",
+    "category": "latent",
+    "output_node": false,
+    "search_aliases": [
+      "enlarge latent",
+      "resize latent"
+    ]
+  },
+  "CLIPTextEncode": {
+    "input": {
+      "required": {
+        "text": [
+          "STRING",
+          {
+            "multiline": true,
+            "dynamicPrompts": true,
+            "tooltip": "The text to be encoded."
+          }
+        ],
+        "clip": [
+          "CLIP",
+          {
+            "tooltip": "The CLIP model used for encoding the text."
+          }
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "text",
+        "clip"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "CONDITIONING"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "CONDITIONING"
+    ],
+    "name": "CLIPTextEncode",
+    "display_name": "CLIP Text Encode (Prompt)",
+    "description": "Encodes a text prompt using a CLIP model into an embedding that can be used to guide the diffusion model towards generating specific images.",
+    "python_module": "nodes",
+    "category": "conditioning",
+    "output_node": false,
+    "output_tooltips": [
+      "A conditioning containing the embedded text used to guide the diffusion model."
+    ],
+    "search_aliases": [
+      "text",
+      "prompt",
+      "text prompt",
+      "positive prompt",
+      "negative prompt",
+      "encode text",
+      "text encoder",
+      "encode prompt"
+    ]
+  }
+}

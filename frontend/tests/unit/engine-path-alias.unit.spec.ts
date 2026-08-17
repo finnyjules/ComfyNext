@@ -50,17 +50,22 @@ vi.mock('../../server/utils/meterGraphRun', () => ({
 
 const handleHostedQueueGet = vi.fn(async () => ({ handler: 'queue' }))
 const handleHostedInterrupt = vi.fn(async () => ({ handler: 'interrupt' }))
+const handleHostedObjectInfo = vi.fn(async () => ({ handler: 'objectInfo' }))
+const handleHostedUpload = vi.fn(async () => ({ handler: 'upload' }))
 vi.mock('../../server/utils/engineGate', () => ({
   handleHostedQueueGet: (...a: any[]) => handleHostedQueueGet(...(a as [])),
   handleHostedInterrupt: (...a: any[]) => handleHostedInterrupt(...(a as [])),
+  handleHostedObjectInfo: (...a: any[]) => handleHostedObjectInfo(...(a as [])),
+  handleHostedUpload: (...a: any[]) => handleHostedUpload(...(a as [])),
 }))
 
 let middleware: (event: any) => Promise<any>
 let normalizeEnginePath: (path: string) => string
+let hostedEngineDecision: (p: string, m: string) => { kind: string, message?: string }
 
 beforeAll(async () => {
   middleware = (await import('../../server/middleware/comfyui-proxy')).default as any
-  ;({ normalizeEnginePath } = await import('../../server/utils/enginePath'))
+  ;({ normalizeEnginePath, hostedEngineDecision } = await import('../../server/utils/enginePath'))
 })
 
 beforeEach(() => {
@@ -68,6 +73,8 @@ beforeEach(() => {
   handleMeteredPrompt.mockClear()
   handleHostedQueueGet.mockClear()
   handleHostedInterrupt.mockClear()
+  handleHostedObjectInfo.mockClear()
+  handleHostedUpload.mockClear()
 })
 afterEach(() => { mode = 'local' })
 
@@ -137,6 +144,58 @@ describe('normalizeEnginePath', () => {
     expect(normalizeEnginePath('/api/viewport')).toBe('/api/viewport')
     expect(normalizeEnginePath('/api/queued')).toBe('/api/queued')
   })
+
+  // F6 — every gate is a PREFIX match, so a dot segment inside an ALLOWED
+  // prefix would carry a refused path past its refusal. Nitro folds these
+  // upstream today, but that is an undocumented invariant of someone else's
+  // router; this makes the guarantee local to the function that depends on it.
+  describe('F6: dot segments are folded before any prefix is matched', () => {
+    it('folds `..` out of an allowlisted prefix', () => {
+      expect(normalizeEnginePath('/extensions/../history')).toBe('/history')
+      expect(normalizeEnginePath('/extensions/../internal/files/output')).toBe('/internal/files/output')
+      expect(normalizeEnginePath('/system_stats/../queue')).toBe('/queue')
+    })
+
+    it('folds percent-encoded dot segments', () => {
+      expect(normalizeEnginePath('/extensions/%2e%2e/history')).toBe('/history')
+      expect(normalizeEnginePath('/extensions/%2E%2E/history')).toBe('/history')
+      expect(normalizeEnginePath('/extensions/%2e/history')).toBe('/extensions/history')
+    })
+
+    it('folds before the alias strips, not after', () => {
+      expect(normalizeEnginePath('/comfyui/extensions/../history')).toBe('/history')
+      expect(normalizeEnginePath('/comfyui/api/extensions/../queue')).toBe('/queue')
+    })
+
+    it('preserves the query string verbatim through canonicalization', () => {
+      // URL.search would re-encode this; callers forward the RAW path, so the
+      // two must not drift.
+      expect(normalizeEnginePath('/extensions/../view?filename=a b.png')).toBe('/view?filename=a b.png')
+    })
+
+    it('leaves an ENCODED separator alone — `..%2f` is one literal segment', () => {
+      // aiohttp reads it the same way, so folding it here would make the gate
+      // and the engine disagree about which path was requested.
+      expect(normalizeEnginePath('/extensions/..%2fhistory')).toBe('/extensions/..%2fhistory')
+    })
+  })
+})
+
+describe('F6: a dot-segment path is REFUSED, not proxied', () => {
+  beforeEach(() => { mode = 'hosted' })
+
+  it('refuses paths that fold onto a gated engine route', async () => {
+    for (const p of ['/extensions/../history', '/extensions/%2e%2e/history', '/comfyui/extensions/../history', '/extensions/../internal/files/output', '/extensions/../gate/resume']) {
+      expect(await status(p), p).toBe(403)
+    }
+    expect(proxyRequest).not.toHaveBeenCalled()
+  })
+
+  it('still gates — not proxies — a dot-segment path that folds onto /queue', async () => {
+    await middleware(ev('/extensions/../queue', 'GET'))
+    expect(handleHostedQueueGet).toHaveBeenCalledTimes(1)
+    expect(proxyRequest).not.toHaveBeenCalled()
+  })
 })
 
 // -------------------------------------------------------------- hosted mode
@@ -203,12 +262,85 @@ describe('hosted mode: alias forms hit the same gates as canonical paths', () =>
     }
   })
 
-  it('still proxies the explicitly allowlisted engine paths', async () => {
-    for (const [p, m] of [['/object_info', 'GET'], ['/comfyui/object_info', 'GET'], ['/system_stats', 'GET'], ['/upload/image', 'POST'], ['/extensions/foo.js', 'GET'], ['/global_subgraphs', 'GET'], ['/sailor/thing', 'GET'], ['/gate/x', 'GET']] as const) {
+  // ROUND 2 — these expectations MOVED, and the move is the lesson.
+  //
+  // This block used to assert that /object_info, /upload and /gate raw-proxy,
+  // which read as a specification of the allowlist but was really just an echo
+  // of it: the test was written from the LIST, not from what the upstream
+  // handlers do. Both of the entries that looked most inert turned out to be
+  // the two worst holes in the tenant boundary (F1, F2).
+  //
+  // So: an allowlist entry is a claim about a HANDLER, and adding one requires
+  // reading that handler in ComfyUI's server.py — what does it read, what does
+  // it write, whose data is in scope? "It's a static GET" is not an audit.
+  it('still raw-proxies the engine paths that survived the round-2 handler audit', async () => {
+    for (const [p, m] of [['/system_stats', 'GET'], ['/extensions/foo.js', 'GET'], ['/global_subgraphs', 'GET'], ['/sailor/thing', 'GET']] as const) {
       proxyRequest.mockClear()
       await middleware(ev(p, m))
       expect(proxyRequest, `${m} ${p} must still proxy`).toHaveBeenCalledTimes(1)
     }
+  })
+
+  // F1: POST /gate/resume takes a client-supplied prompt_id, rebuilds the
+  // STORED graph and re-queues it under a fresh uuid — unmetered arbitrary
+  // re-execution, with no hold, no price and no graph_runs row — while popping
+  // another tenant's paused-gate context. Metered resume is a future task.
+  it('F1: refuses EVERY /gate alias — unmetered re-execution of a stored graph', async () => {
+    for (const p of ['/gate', '/gate/resume', '/comfyui/gate/resume', '/api/gate/resume', '/comfyui/api/gate/resume']) {
+      for (const m of ['POST', 'GET']) {
+        expect(await status(p, m), `${m} ${p}`).toBe(403)
+      }
+    }
+    expect(proxyRequest, '/gate must never reach the engine').not.toHaveBeenCalled()
+  })
+
+  it('F1: the decision itself forbids /gate, canonical and aliased', () => {
+    for (const p of ['/gate/resume', '/comfyui/gate/resume', '/api/gate/resume']) {
+      expect(hostedEngineDecision(normalizeEnginePath(p), 'POST').kind, p).toBe('forbid')
+    }
+  })
+
+  // F2: /object_info embeds the SHARED input-directory listing in every
+  // LoadImage-family combo. The canvas needs the schemas, so it is scrubbed
+  // rather than refused — but it must never raw-proxy.
+  it('F2: routes every GET /object_info alias through the scrubber', async () => {
+    for (const p of ['/object_info', '/object_info/LoadImage', '/comfyui/object_info', '/api/object_info', '/comfyui/api/object_info', '/object_info?comfyWorker=2']) {
+      proxyRequest.mockClear(); handleHostedObjectInfo.mockClear()
+      await middleware(ev(p, 'GET'))
+      expect(handleHostedObjectInfo, `GET ${p} must be scrubbed`).toHaveBeenCalledTimes(1)
+      expect(proxyRequest, `GET ${p} must not raw-proxy`).not.toHaveBeenCalled()
+    }
+  })
+
+  it('F2: refuses non-GET verbs on /object_info', async () => {
+    for (const m of ['POST', 'DELETE', 'PUT']) {
+      expect(await status('/object_info', m), m).toBe(403)
+    }
+  })
+
+  // F4: ComfyUI's image_upload() honours an `overwrite` form field and the
+  // input dir is shared, so the body must be inspected before it is forwarded.
+  it('F4: routes every POST /upload alias through the overwrite gate', async () => {
+    for (const p of ['/upload/image', '/upload/mask', '/comfyui/upload/image', '/api/upload/image', '/comfyui/api/upload/image']) {
+      proxyRequest.mockClear(); handleHostedUpload.mockClear()
+      await middleware(ev(p, 'POST'))
+      expect(handleHostedUpload, `POST ${p} must be gated`).toHaveBeenCalledTimes(1)
+      expect(proxyRequest, `POST ${p} must not raw-proxy`).not.toHaveBeenCalled()
+    }
+  })
+
+  it('F4: refuses non-POST verbs on /upload', async () => {
+    for (const m of ['GET', 'DELETE']) {
+      expect(await status('/upload/image', m), m).toBe(403)
+    }
+  })
+
+  // F8: this 403 used to be handed the /queue message verbatim.
+  it('F8: the non-POST /prompt refusal names /prompt, not the queue', () => {
+    const d = hostedEngineDecision('/prompt', 'GET') as { kind: string, message: string }
+    expect(d.kind).toBe('forbid')
+    expect(d.message).toContain('/prompt')
+    expect(d.message).not.toContain('queue')
   })
 
   it('never diverts Nitro\'s own /api routes into the engine gates', async () => {
@@ -237,6 +369,10 @@ describe('local mode is byte-identical — no gate, no 403, same proxy target', 
     ['/interrupt', 'POST'], ['/api/interrupt', 'POST'], ['/comfyui/interrupt', 'POST'],
     ['/api/history', 'GET'], ['/comfyui/history', 'GET'], ['/api/view?filename=a.png', 'GET'],
     ['/comfyui/internal/files/output', 'GET'], ['/comfyui/settings', 'GET'], ['/object_info', 'GET'],
+    // Round 2: the three prefixes that stopped raw-proxying in HOSTED mode
+    // must still raw-proxy locally — no scrubber, no overwrite sniff, no 403.
+    ['/comfyui/object_info', 'GET'], ['/upload/image', 'POST'], ['/gate/resume', 'POST'],
+    ['/extensions/../history', 'GET'],
   ] as const
 
   it('proxies every path the hosted gates intercept', async () => {

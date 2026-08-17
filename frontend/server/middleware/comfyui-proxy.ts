@@ -6,7 +6,7 @@ import { resolveWorkerTarget } from '../utils/workerRoute'
 import { PROXY_PREFIXES } from '../utils/authGuard'
 import { deployMode } from '../utils/deployMode'
 import { handleMeteredPrompt } from '../utils/meterGraphRun'
-import { handleHostedQueueGet, handleHostedInterrupt } from '../utils/engineGate'
+import { handleHostedQueueGet, handleHostedInterrupt, handleHostedObjectInfo, handleHostedUpload } from '../utils/engineGate'
 import { normalizeEnginePath, hostedEngineDecision } from '../utils/enginePath'
 
 // Paths under PROXY_PREFIXES that should be handled by Nitro routes, not proxied
@@ -28,14 +28,21 @@ export default defineEventHandler(async (event) => {
   // bypasses (unmetered /api/prompt, cross-tenant /comfyui/history, …).
   // Every hosted decision below is taken on the canonical form instead.
   //
-  // LOCAL MODE: normalization is computed but never consulted — the raw
-  // proxy loop below still sees the ORIGINAL path, so a local install
-  // behaves exactly as it did before Stage 5.
+  // LOCAL MODE: this whole block is SHORT-CIRCUITED by the deployMode() check
+  // below — normalizeEnginePath is never even called, and the raw proxy loop
+  // that follows sees the ORIGINAL path. A local install behaves exactly as it
+  // did before Stage 5. (F7: this comment used to claim normalization "is
+  // computed but never consulted", which described code that no longer runs.)
   if (deployMode() === 'hosted' && PROXY_PREFIXES.some(p => path === p || path.startsWith(p + '/') || path.startsWith(p + '?'))) {
     const decision = hostedEngineDecision(normalizeEnginePath(path), event.method)
     if (decision.kind === 'meterPrompt') return handleMeteredPrompt(event)
     if (decision.kind === 'queueGet') return handleHostedQueueGet(event)
     if (decision.kind === 'interrupt') return handleHostedInterrupt(event)
+    // F2: the canvas needs the node schemas, so this passes through a scrubber
+    // that empties the shared input-directory listings instead of 403-ing.
+    if (decision.kind === 'objectInfo') return handleHostedObjectInfo(event)
+    // F4: refuses an `overwrite` field, then forwards the identical bytes.
+    if (decision.kind === 'upload') return handleHostedUpload(event)
     // Deny by default: an engine path that isn't explicitly allowlisted for
     // hosted raw proxying is refused, so a route nobody has audited can
     // never become a cross-tenant surface merely by existing upstream.

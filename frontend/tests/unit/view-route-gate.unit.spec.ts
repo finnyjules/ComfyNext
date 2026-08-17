@@ -73,10 +73,11 @@ beforeEach(() => {
   harvestPendingOutputs.mockClear()
 })
 
-function ev(query: Record<string, string>) {
+type Query = Record<string, string | string[]>
+function ev(query: Query) {
   return { query, context: { userId: 'u1' }, node: { req: {}, res: {} } }
 }
-async function code(query: Record<string, string>): Promise<number | 'served'> {
+async function code(query: Query): Promise<number | 'served'> {
   try {
     await handler(ev(query))
     return 'served'
@@ -119,6 +120,42 @@ describe('hosted /view — annotation resolves the EFFECTIVE type', () => {
 
   it('leaves genuinely-temp reads ungated (documented Stage 5 gap, unchanged)', async () => {
     expect(await code({ type: 'temp', filename: 'scratch.png' })).toBe('served')
+  })
+
+  // Round-2 review F5: a repeated query key makes getQuery return an ARRAY,
+  // and view.get.ts casts it `as string`. The gate then calls .startsWith on
+  // an array and dies with a TypeError — a 500 where a decision belongs, from
+  // a URL any unauthenticated-shaped client can construct.
+  //
+  // Rejecting beats coercing: String(['a','b']) is "a,b", which is neither a
+  // filename the gate would resolve nor what the forward loop sends for a
+  // repeated key, so a coerced gate key and the engine request would disagree
+  // about which file is being served.
+  describe('F5: array-valued query params are a 400, never a 500', () => {
+    it('rejects a repeated filename', async () => {
+      expect(await code({ filename: ['a.png', 'b.png'] })).toBe(400)
+      expect(fetchMock, 'engine must not be asked').not.toHaveBeenCalled()
+    })
+
+    it('rejects a repeated filename even when one element is owned', async () => {
+      // The coercion bug's most dangerous shape: smuggle an owned name
+      // alongside an unowned one and hope the gate reads the wrong element.
+      owned = new Set(['output::mine.png'])
+      expect(await code({ filename: ['mine.png', 'victim.png'] })).toBe(400)
+      expect(await code({ filename: ['victim.png', 'mine.png'] })).toBe(400)
+      expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    it('rejects a repeated type or subfolder', async () => {
+      owned = new Set(['output::mine.png'])
+      expect(await code({ filename: 'mine.png', type: ['output', 'temp'] })).toBe(400)
+      expect(await code({ filename: 'mine.png', subfolder: ['a', 'b'] })).toBe(400)
+    })
+
+    it('still serves the ordinary single-valued form', async () => {
+      owned = new Set(['output::mine.png'])
+      expect(await code({ filename: 'mine.png', type: 'output', subfolder: '' })).toBe('served')
+    })
   })
 
   it('rejects blake3: filenames outright — a second resolution mode the key check cannot model', async () => {
