@@ -31,7 +31,7 @@ import AgentCanvasPromptBar from '~/components/agent/CanvasPromptBar.vue'
 import { ARTIFACT_NODE_FOR_SOURCE, type ActionSource } from '~/data/action-catalog'
 import { estimateUsdForNodes, vueNodesToEstimateInput, type CostEstimate } from '~/lib/costEstimate'
 import { formatCostBadge, formatEstimateBadge, formatEstimateLong } from '~/lib/pricing'
-import { hostedModeEnabled } from '~/lib/hostedMode'
+import { hostedModeEnabled, engineOrigin } from '~/lib/hostedMode'
 import { tallyReplicateUsd } from '~/lib/graph/runCost'
 import { summarizeNodeErrors } from '~/lib/validationErrors'
 import { promoteTempImageInputs } from '~/lib/promoteTempImages'
@@ -2084,10 +2084,16 @@ function resetBridgeReady() {
 // (HMR) often doesn't remount the iframe, so we force it: reset the bridge-ready
 // handshake AND reload the iframe with a cache-bust. Exposed on window so it can
 // be triggered from the console; also wired to the "Reload canvas" control.
-// Public origin the ComfyUI canvas iframe loads from. In production this is set
-// to the app's ComfyUI origin via NUXT_PUBLIC_COMFY_ORIGIN; in dev it falls back
-// to the local ComfyUI server on :8188.
-const comfyOrigin = useRuntimeConfig().public.comfyOrigin || 'http://127.0.0.1:8188'
+// Public origin the ComfyUI canvas iframe loads from. In local mode this is the
+// operator's own ComfyUI on :8188 (or NUXT_PUBLIC_COMFY_ORIGIN if they moved it).
+//
+// F3 rider: hosted has NO engine origin, and that is now a property of this
+// line rather than of the deployment's env. The engine is reachable only
+// through the authed same-origin proxy, where every Stage-5 tenant gate lives —
+// a stray NUXT_PUBLIC_COMFY_ORIGIN in a hosted environment would have pointed
+// the canvas straight at an ungated engine, and the old `|| 127.0.0.1:8188`
+// fallback did it even with the variable unset.
+const comfyOrigin = engineOrigin(useRuntimeConfig().public)
 const comfyIframeSrc = ref(`${comfyOrigin}/`)
 function forceReloadCanvas() {
   resetBridgeReady()

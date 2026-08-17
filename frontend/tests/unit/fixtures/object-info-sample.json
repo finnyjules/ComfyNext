@@ -477,5 +477,176 @@
       "text encoder",
       "encode prompt"
     ]
+  },
+  "AudioWaveform": {
+    "input": {
+      "required": {
+        "audio_file": [
+          "COMBO",
+          {
+            "default": "Happiness.mp3",
+            "multiselect": false,
+            "options": [
+              "Happiness.mp3",
+              "I'm In Love With You.mp3",
+              "lipsync-voice_1783044331749.mp3"
+            ],
+            "audio_upload": true
+          }
+        ],
+        "width": [
+          "INT",
+          {
+            "default": 1280,
+            "min": 64,
+            "max": 4096,
+            "step": 8
+          }
+        ],
+        "height": [
+          "INT",
+          {
+            "default": 720,
+            "min": 64,
+            "max": 4096,
+            "step": 8
+          }
+        ],
+        "fps": [
+          "INT",
+          {
+            "default": 30,
+            "min": 1,
+            "max": 120,
+            "step": 1
+          }
+        ],
+        "frame_count": [
+          "INT",
+          {
+            "default": 180,
+            "min": 1,
+            "max": 10000,
+            "step": 1
+          }
+        ],
+        "style": [
+          "COMBO",
+          {
+            "default": "bars",
+            "multiselect": false,
+            "options": [
+              "bars",
+              "wave",
+              "dots",
+              "radial",
+              "mirrored_bars"
+            ]
+          }
+        ],
+        "bar_count": [
+          "INT",
+          {
+            "tooltip": "Bars/dots/sectors. Ignored for wave style.",
+            "default": 64,
+            "min": 4,
+            "max": 512,
+            "step": 2
+          }
+        ],
+        "color": [
+          "STRING",
+          {
+            "default": "#ffffff",
+            "multiline": false
+          }
+        ],
+        "bg_color": [
+          "STRING",
+          {
+            "default": "#000000",
+            "multiline": false
+          }
+        ],
+        "sensitivity": [
+          "FLOAT",
+          {
+            "tooltip": "How much amplitude scales visually.",
+            "default": 1.5,
+            "min": 0.1,
+            "max": 10.0,
+            "step": 0.05
+          }
+        ],
+        "smoothing": [
+          "FLOAT",
+          {
+            "tooltip": "Temporal smoothing \u2014 higher = more lazy bars.",
+            "default": 0.6,
+            "min": 0.0,
+            "max": 0.95,
+            "step": 0.01
+          }
+        ]
+      },
+      "hidden": {
+        "unique_id": [
+          "UNIQUE_ID"
+        ],
+        "prompt": [
+          "PROMPT"
+        ],
+        "extra_pnginfo": [
+          "EXTRA_PNGINFO"
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "audio_file",
+        "width",
+        "height",
+        "fps",
+        "frame_count",
+        "style",
+        "bar_count",
+        "color",
+        "bg_color",
+        "sensitivity",
+        "smoothing"
+      ],
+      "hidden": [
+        "unique_id",
+        "prompt",
+        "extra_pnginfo"
+      ]
+    },
+    "is_input_list": false,
+    "output": [
+      "IMAGE"
+    ],
+    "output_is_list": [
+      false
+    ],
+    "output_name": [
+      "frames"
+    ],
+    "output_tooltips": [
+      null
+    ],
+    "output_matchtypes": null,
+    "name": "AudioWaveform",
+    "display_name": "Audio Waveform",
+    "description": "Visualize an audio file as a video \u2014 pulsing bars, wave, or radial spectrum.",
+    "python_module": "comfy_extras.nodes_video_pro",
+    "category": "video",
+    "output_node": true,
+    "deprecated": false,
+    "experimental": false,
+    "dev_only": false,
+    "api_node": false,
+    "price_badge": null,
+    "search_aliases": null,
+    "essentials_category": null
   }
 }

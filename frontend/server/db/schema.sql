@@ -102,3 +102,18 @@ CREATE TABLE IF NOT EXISTS graph_runs (
 ALTER TABLE graph_runs ADD COLUMN IF NOT EXISTS target text;
 
 CREATE INDEX IF NOT EXISTS graph_runs_user ON graph_runs (user_id, created_at DESC);
+
+-- Who uploaded which engine input file (Stage 5 round 3). The engine's input
+-- directory is shared across tenants until Stage 6, and ComfyUI's /upload
+-- honours an `overwrite` field that makes the write unconditional — so the
+-- hosted gate forwards an overwrite only for a file the caller owns, or a name
+-- nobody has claimed. `file_key` is graphRuns.outputKey's format,
+-- "type:subfolder:filename", with `type` defaulting to input here.
+-- First writer keeps the name (INSERT … ON CONFLICT DO NOTHING).
+CREATE TABLE IF NOT EXISTS input_uploads (
+  file_key   text PRIMARY KEY,
+  user_id    text NOT NULL REFERENCES users(id),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS input_uploads_user ON input_uploads (user_id);

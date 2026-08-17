@@ -9,6 +9,8 @@ import { createError, getRequestHeader, readRawBody, setResponseStatus } from 'h
 import { ownedPromptIds, ownsPrompt, outputKey, pendingRuns } from './graphRuns'
 import { resolveWorkerTarget } from './workerRoute'
 import { settleGraphSuccess } from './meterGraphRun'
+import { parseUploadForm } from './multipart'
+import { recordUpload, unsafeUploadTarget, uploadExistsOnDisk, uploadOwner } from './inputUploads'
 
 /**
  * Review C2 — an exact mirror of ComfyUI's folder_paths.annotated_filepath().
@@ -159,6 +161,14 @@ function scrubUploadSpec(spec: unknown[]): void {
   if (opts && typeof opts === 'object' && Array.isArray((opts as Record<string, unknown>).options)) {
     ;(opts as Record<string, unknown>).options = []
   }
+  // R3: emptying the list is not enough. ComfyUI seeds `default` with the
+  // FIRST entry of that same directory listing, so AudioWaveform.audio_file
+  // shipped the alphabetically-first filename in the shared input dir to every
+  // tenant with the options stripped. Blanked rather than deleted: the widget
+  // reads it, and a missing key and an empty one render the same.
+  if (opts && typeof opts === 'object' && typeof (opts as Record<string, unknown>).default === 'string') {
+    ;(opts as Record<string, unknown>).default = ''
+  }
 }
 
 /**
@@ -213,46 +223,125 @@ export async function handleHostedObjectInfo(event: H3Event): Promise<unknown> {
 // ---------------------------------------------------------------------------
 
 /**
- * Does this multipart body declare an `overwrite` field?
- *
- * VERIFIED in ComfyUI's server.py image_upload(): without a truthy `overwrite`
- * ("true" or "1") the handler loops `while os.path.exists(filepath)` and
- * auto-suffixes `name (1).png`, `name (2).png`, … so an upload can never
- * clobber a file it did not write. WITH it, the write is unconditional — and
- * the input directory is shared across tenants until per-tenant dirs land in
- * Stage 6, so a guessed filename is another tenant's asset replaced.
- *
- * So the mitigation is to refuse the field, not to rewrite it: dropping a part
- * from a multipart body means re-encoding it (boundary bookkeeping, 100 MB
- * image buffers) to reach a default the engine already applies for free.
- *
- * Matched against the Content-Disposition header line rather than a bare
- * substring scan, so image BYTES that happen to contain `name="overwrite"`
- * don't 403 an innocent upload. A false positive here is a refused upload, not
- * an accepted clobber — the match errs toward closed either way.
+ * The hosted upload body cap (R4). The gate has to hold the whole body to
+ * inspect it and forward the identical bytes, so the size has to be bounded
+ * somewhere — `proxyRequest` used to stream it and never did.
  */
-const OVERWRITE_PART = /content-disposition:[^\r\n]*;\s*name=(?:"overwrite"|overwrite(?![\w-]))/i
+export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 
-export function bodyDeclaresOverwrite(body: Buffer | string | undefined): boolean {
-  if (!body || !body.length) return false
-  const text = typeof body === 'string' ? body : body.toString('latin1')
-  return OVERWRITE_PART.test(text)
+/**
+ * VERIFIED in ComfyUI's server.py image_upload(): without a truthy `overwrite`
+ * the handler loops `while os.path.exists(filepath)` and auto-suffixes
+ * `name (1).png`, `name (2).png`, … so the upload can never clobber a file it
+ * did not write. WITH it the write is unconditional — and the input directory
+ * is shared across tenants until per-tenant dirs land in Stage 6.
+ *
+ * The engine's test is `overwrite == "true" or overwrite == "1"` on the exact
+ * string. Ours trims and lowercases first, so every value the engine honours is
+ * inside the set we gate, plus a few it would ignore. Erring wide here costs at
+ * most a refusal of an upload the engine would have auto-suffixed anyway.
+ */
+export function isOverwriteValue(v: string): boolean {
+  const s = v.trim().toLowerCase()
+  return s === 'true' || s === '1'
 }
 
+/**
+ * Field names as the ENGINE will read them.
+ *
+ * aiohttp un-escapes backslashes inside a quoted Content-Disposition parameter
+ * and undici does not, so `name="over\write"` is the field `over\write` to our
+ * parser and `overwrite` to the engine — a body that parses cleanly on both
+ * sides and still means different things. Un-escaping (plus trim/lowercase,
+ * since aiohttp accepts `NAME=`) collapses that gap. Everything ELSE aiohttp
+ * tolerates and undici refuses never gets this far: the parse fails and the
+ * body is rejected with a 400 rather than forwarded.
+ */
+export function normalizeFieldName(raw: string): string {
+  return raw.replace(/\\(.)/g, '$1').trim().toLowerCase()
+}
+
+/**
+ * The whole overwrite rule: it is yours, or it is nobody's.
+ *
+ * A name with no ownership row that already exists on disk is NOT free — every
+ * upload that predates the table is unclaimed, and treating unclaimed as free
+ * would hand back exactly the cross-tenant clobber this gate exists to stop.
+ */
+export function decideOverwrite(userId: string, owner: string | null, existsOnDisk: boolean): boolean {
+  if (owner !== null) return owner === userId
+  return !existsOnDisk
+}
+
+/**
+ * F4 (round 3) — /upload is ownership-scoped rather than overwrite-free.
+ *
+ * The body is PARSED for inspection and FORWARDED unchanged: the parser decides
+ * whether the request may proceed, the original bytes fly untouched under the
+ * original content-type, so nothing here can corrupt an upload by re-encoding
+ * it. Ownership is then recorded from the ENGINE's response, because the name
+ * the engine stored may be an auto-suffixed `shot (1).png` rather than the one
+ * that was asked for.
+ */
 export async function handleHostedUpload(event: H3Event): Promise<unknown> {
   const userId = event.context.userId
   if (!userId) throw createError({ statusCode: 401, message: 'Sign in required' })
+
+  // Refuse an over-cap upload from its declared length, BEFORE buffering it.
+  // A lying Content-Length is caught again on the buffer below.
+  const declared = Number(getRequestHeader(event, 'content-length'))
+  if (Number.isFinite(declared) && declared > MAX_UPLOAD_BYTES) {
+    throw createError({ statusCode: 413, message: 'Upload exceeds the 100 MB limit' })
+  }
 
   // Read ONCE, as a Buffer. This is proxy middleware, so the request stream is
   // still unconsumed here — but it is single-shot, and proxyRequest is no
   // longer downstream of us to re-read it. The same bytes are forwarded below.
   const body = await readRawBody(event, false)
-  if (bodyDeclaresOverwrite(body)) {
-    throw createError({ statusCode: 403, message: 'Uploads may not set overwrite in hosted mode' })
+  if (body && body.length > MAX_UPLOAD_BYTES) {
+    throw createError({ statusCode: 413, message: 'Upload exceeds the 100 MB limit' })
+  }
+
+  const contentType = getRequestHeader(event, 'content-type')
+  const form = await parseUploadForm(body ?? Buffer.alloc(0), contentType || 'application/octet-stream')
+
+  // A backslash in a part NAME is the last place the two parsers can disagree
+  // about what a body says: undici keeps `sub\folder` as written, aiohttp
+  // un-escapes it to `subfolder` and reads the field we never looked at. That
+  // would let a request pass the gate on one path and be written to another. No
+  // client sends one, so the whole class is refused rather than emulated.
+  if (form.names().some(n => n.includes('\\'))) {
+    throw createError({ statusCode: 400, message: 'Upload field names are not addressable' })
+  }
+
+  // Scan every text part rather than looking one key up: duplicates, casing and
+  // ordering are all decided by the engine's parser, not ours, so ANY part that
+  // reads as a truthy `overwrite` puts the request on the gated path.
+  const overwrite = form.textEntries()
+    .some(([name, value]) => normalizeFieldName(name) === 'overwrite' && isOverwriteValue(value))
+  const subfolder = form.text('subfolder')
+  const type = form.text('type') || 'input'
+
+  if (overwrite) {
+    const file = await form.file('image')
+    const filename = file?.filename || ''
+    if (!filename) {
+      throw createError({ statusCode: 400, message: 'An overwriting upload must carry a named file' })
+    }
+    if (unsafeUploadTarget(subfolder, filename)) {
+      throw createError({ statusCode: 400, message: 'Upload path is not addressable' })
+    }
+    const key = outputKey({ filename, subfolder, type })
+    const owner = await uploadOwner(key)
+    if (!decideOverwrite(userId, owner, uploadExistsOnDisk(type, subfolder, filename))) {
+      throw createError({
+        statusCode: 403,
+        message: `${filename} already belongs to another account — upload it under a different name`,
+      })
+    }
   }
 
   const { target, backendPath } = engineTarget(event.path)
-  const contentType = getRequestHeader(event, 'content-type')
   const headers: Record<string, string> = { origin: target }
   // The multipart boundary lives in this header — forwarding the body without
   // it makes the engine reject every part.
@@ -261,12 +350,36 @@ export async function handleHostedUpload(event: H3Event): Promise<unknown> {
   const res = await fetch(`${target}${backendPath}`, { method: 'POST', headers, body: body as any })
   setResponseStatus(event, res.status)
   const raw = await res.text()
+  let parsed: unknown
   try {
-    return JSON.parse(raw)
+    parsed = JSON.parse(raw)
   }
   catch {
     return raw
   }
+
+  if (res.status >= 200 && res.status < 300) {
+    const stored = parsed as { name?: unknown, subfolder?: unknown, type?: unknown }
+    if (typeof stored?.name === 'string' && stored.name) {
+      // Record what was ACTUALLY stored — the engine auto-suffixes on collision,
+      // and recording the requested name would claim a file we do not hold.
+      // A failure here is logged, not thrown: the write already happened, and a
+      // missing row fails CLOSED (an unclaimed name that exists on disk is
+      // refused to everyone) rather than opening the file to the next caller.
+      const key = outputKey({
+        filename: stored.name,
+        subfolder: typeof stored.subfolder === 'string' ? stored.subfolder : '',
+        type: typeof stored.type === 'string' && stored.type ? stored.type : 'input',
+      })
+      try {
+        await recordUpload(userId, key)
+      }
+      catch (e) {
+        console.error('[engineGate] failed to record upload ownership', { key, error: e })
+      }
+    }
+  }
+  return parsed
 }
 
 const MAIN_ENGINE = 'http://127.0.0.1:8188'
