@@ -569,7 +569,7 @@ vec4 computeLayer(int i, vec2 p) {
   if (tWraps) t = fract(t);
 
   vec3 col = rotateHue(sampleRamp(i, t), u_hueRotate[i]);
-  return vec4(col, colMask);
+  return vec4(col, colMask * sampleAlpha(i, t));
 }
 
 // Height of the embossed band/ring surface at screen point q for layer i, used by

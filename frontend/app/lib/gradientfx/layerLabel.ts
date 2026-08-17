@@ -1,4 +1,4 @@
-import type { GradientConfig } from './types'
+import { effectiveLayout, type GradientConfig } from './types'
 
 /**
  * Human names for a gradient's layers, derived from what each layer actually IS
@@ -23,10 +23,12 @@ const SHAPE_NAMES: Record<string, string> = {
 
 /** The kind of a single layer, before de-duplication. */
 function layerKind(cfg: GradientConfig, i: number): string | null {
+  // Per-layer aware: a layer's kind follows its own effective layout, not the canvas.
+  const eff = effectiveLayout(cfg, i)
   // Liquid renders one continuous surface — shape params don't apply to it at all.
-  if (cfg.canvas?.layout === 'liquid') return 'Liquid'
+  if (eff === 'liquid') return 'Liquid'
   // Mesh only ever lives on layer 0; the rest of the stack is still shape-based.
-  if (cfg.canvas?.layout === 'mesh' && i === 0) return 'Mesh'
+  if (eff === 'mesh' && i === 0) return 'Mesh'
   return SHAPE_NAMES[cfg.layers?.[i]?.shape?.type as string] ?? null
 }
 
