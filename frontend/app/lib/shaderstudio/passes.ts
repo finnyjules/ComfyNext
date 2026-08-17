@@ -8,6 +8,7 @@ import { expandPasses, type ShaderPass, type Uniforms } from '~/lib/shaderfx/ren
 import type { EffectDef } from '~/lib/shaderfx/types'
 import { BLEND_IDX } from '~/lib/studio/blend'
 import { ADJUST_FS, BLOOM_FS, CHROMATIC_FS, DUOTONE_FS, GRADIENT_MAP_FS, LENS_BLUR_FS } from './glsl'
+import { maskUniforms } from './mask'
 import type { ShaderStudioConfig, StudioEffect } from './types'
 
 /** Hex (#rrggbb) → {r,g,b} in 0..1. */
@@ -50,22 +51,31 @@ export function composePasses(
       u_time: t, u_seed: 42, u_hasInput: 1, ...tex.uniforms,
     }
     const needsComposite = layer.blend !== 'normal' || layer.opacity < 0.999
+    const masked = !!layer.mask?.enabled
     const expanded = expandPasses(def.id, def.source, uniforms, tex.sources, def.passes ?? 1)
     // A stacked layer (anything already beneath it) captures its input as u_source,
     // so u_source-sampling effects (bloom/glow/tilt_shift) build on the layer below
     // rather than the original image. The base layer keeps the original source.
     const stacked = out.length > 0
     if (stacked) expanded[0] = { ...expanded[0]!, captureSource: true }
-    if (needsComposite && stacked) {
-      // snapshot the layer input before the effect runs, then composite over it
+    // Snapshot the layer input into the hold buffer before the effect runs when
+    // it will be needed downstream: a mask mixes the effect over its own input;
+    // a stacked composite blends the output over the image beneath. One snapshot
+    // serves both — the mask pass reads the held input without consuming it.
+    if (masked || (needsComposite && stacked)) {
       expanded[0] = { ...expanded[0]!, snapshot: true }
-      out.push(...expanded)
+    }
+    out.push(...expanded)
+    // Mask confines the effect: mix(effectInput, effectOutput, maskValue). Runs
+    // before any blend composite so the masked result is what gets blended below.
+    if (masked) {
+      out.push({ id: 'studio:mask', source: '', uniforms: {}, maskComposite: maskUniforms(layer.mask!) })
+    }
+    if (needsComposite && stacked) {
       out.push({
         id: 'studio:composite', source: '', uniforms: {},
         composite: { blendIdx: BLEND_IDX[layer.blend], opacity: layer.opacity },
       })
-    } else {
-      out.push(...expanded)
     }
   }
 

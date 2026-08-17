@@ -220,8 +220,41 @@ async function sailorPostChangesPixels(effectId: string): Promise<boolean> {
   return false
 }
 
+// Per-effect mask confinement proof. Runs a trivial, unmistakable effect (colour
+// invert) over a solid base, confined by a `studio:mask` pass, and reports the
+// output at the region centre vs. a far corner alongside the untouched base
+// colour. If the mask works: the centre reads the inverted colour (effect
+// applied) while the corner reads the base colour (effect masked out). Isolates
+// the mask/snapshot/GLSL region path from any specific effect's maths.
+async function maskProbe(maskComposite: Record<string, number>): Promise<{
+  base: number[]; center: number[]; corner: number[]
+}> {
+  const W = 128, H = 128
+  const R = 60, G = 120, B = 200
+  const src = document.createElement('canvas'); src.width = W; src.height = H
+  const sctx = src.getContext('2d')!
+  sctx.fillStyle = `rgb(${R},${G},${B})`; sctx.fillRect(0, 0, W, H)
+  const INVERT_FS = `#version 300 es
+precision highp float;
+uniform sampler2D u_image0;
+in vec2 v_texCoord;
+layout(location = 0) out vec4 fragColor0;
+void main() { fragColor0 = vec4(1.0 - texture(u_image0, v_texCoord).rgb, 1.0); }`
+  const passes = [
+    { id: 'mask-probe-invert', source: INVERT_FS, uniforms: { u_pass: 0, u_passCount: 1 }, snapshot: true },
+    { id: 'studio:mask', source: '', uniforms: {}, maskComposite },
+  ]
+  const glCanvas = shaderFx.render(passes as any, await loadImage(src.toDataURL('image/png')), W, H)
+  const probe = document.createElement('canvas'); probe.width = W; probe.height = H
+  const ctx = probe.getContext('2d')!
+  ctx.drawImage(glCanvas, 0, 0)
+  const at = (x: number, y: number) => { const d = ctx.getImageData(x, y, 1, 1).data; return [d[0]!, d[1]!, d[2]!] }
+  return { base: [R, G, B], center: at(W / 2, H / 2), corner: at(6, 6) }
+}
+
 if (import.meta.client) {
   ;(window as any).__renderShaderFx = renderJob
+  ;(window as any).__maskProbe = maskProbe
   ;(window as any).__renderPassesProbe = renderPassesProbe
   ;(window as any).__sailorPostAlphaProbe = sailorPostAlphaProbe
   ;(window as any).__sailorPostGrainGateProbe = sailorPostGrainGateProbe

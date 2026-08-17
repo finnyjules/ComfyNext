@@ -8,6 +8,32 @@ import type { BlendKind } from '~/lib/studio/blend'
 
 export type EasingKind = 'linear' | 'pingpong' | 'easeinout'
 
+/** Spatial mask shape confining an effect to a region. */
+export type MaskShape = 'radius' | 'band' | 'linear'
+
+/**
+ * Per-effect spatial mask. When enabled, the effect is mixed with its own input
+ * by a region factor so it applies only inside (or, inverted, outside) the shape.
+ * Absent/`enabled:false` ⇒ the effect runs full-frame with no extra render pass.
+ * All numeric fields are motion-bindable via dotted paths (e.g. effects.0.mask.size).
+ */
+export interface EffectMask {
+  enabled: boolean
+  shape: MaskShape
+  cx: number       // center x, 0..1 (normalized image space)
+  cy: number       // center y, 0..1
+  size: number     // 0..1: radius | band half-width | linear half-extent
+  aspect: number   // ellipse x/y ratio; 1 = circle. band/linear ignore.
+  angle: number    // radians; rotates band/linear (and ellipse) orientation
+  feather: number  // 0..1 edge softness (fraction of size)
+  invert: boolean  // effect OUTSIDE the region instead of inside
+}
+
+/** A centered circle at half size — the resting state when a mask is first enabled. */
+export function defaultMask(): EffectMask {
+  return { enabled: false, shape: 'radius', cx: 0.5, cy: 0.5, size: 0.4, aspect: 1, angle: 0, feather: 0.3, invert: false }
+}
+
 /** Max number of effect layers stackable in effects[]. */
 export const LAYER_MAX = 6
 
@@ -39,6 +65,8 @@ export interface StudioEffect {
   opacity: number
   /** stable per-layer id (identity for reorder + motion binding); distinct from the catalog `id`. */
   layerId: string
+  /** optional spatial mask confining this effect to a region (undefined ⇒ full-frame). */
+  mask?: EffectMask
 }
 
 export interface StudioDuotone {

@@ -25,6 +25,13 @@ export interface ShaderPass {
   captureSource?: boolean
   /** Composite this pass's output over the held image via blendLayers. */
   composite?: { blendIdx: number; opacity: number }
+  /**
+   * Mask this pass's input (u_image0 = effect output) against the held snapshot
+   * (u_below = effect input) by the analytic mask region: mix(input, output,
+   * maskValue(uv)). Confines the preceding effect to a region. Values are the
+   * flat mask uniforms from shaderstudio/mask.ts `maskUniforms()`.
+   */
+  maskComposite?: Record<string, number>
 }
 
 /** Expand one effect into N ping-pong passes (u_pass / u_passCount set per pass). */
@@ -79,6 +86,47 @@ void main() {
   fragColor = vec4(mix(below, b, clamp(u_opacity, 0.0, 1.0)), 1.0);
 }`
 
+// Mask composite pass: confine the preceding effect to a region by mixing its
+// output (u_image0) with its input (u_below) by an analytic mask factor. The
+// maskValue() body is the GLSL mirror of shaderstudio/mask.ts `sampleMask` —
+// keep the two in sync (rotation in component form, aspect-corrected space).
+const MASK_FS = `#version 300 es
+precision highp float;
+in vec2 v_texCoord; out vec4 fragColor;
+uniform sampler2D u_image0; uniform sampler2D u_below;
+uniform vec2 u_resolution;
+uniform float u_maskShape;
+uniform float u_maskCx, u_maskCy;
+uniform float u_maskSize, u_maskAspect, u_maskAngle, u_maskFeather, u_maskInvert;
+float maskValue(vec2 uv) {
+  float ar = u_resolution.x / max(u_resolution.y, 1.0);
+  float dx = (uv.x - u_maskCx) * ar;
+  float dy = (uv.y - u_maskCy);
+  float ca = cos(u_maskAngle), sa = sin(u_maskAngle);
+  float rx = ca * dx + sa * dy;
+  float ry = -sa * dx + ca * dy;
+  float size = max(u_maskSize, 1e-4);
+  float fw = clamp(u_maskFeather, 1e-4, 1.0);
+  float m;
+  if (u_maskShape < 0.5) {
+    rx /= max(u_maskAspect, 1e-3);
+    float dist = length(vec2(rx, ry)) / size;
+    m = 1.0 - smoothstep(1.0 - fw, 1.0, dist);
+  } else if (u_maskShape < 1.5) {
+    float dist = abs(ry) / size;
+    m = 1.0 - smoothstep(1.0 - fw, 1.0, dist);
+  } else {
+    m = clamp((ry / size) * 0.5 + 0.5, 0.0, 1.0);
+  }
+  m = clamp(m, 0.0, 1.0);
+  return mix(m, 1.0 - m, step(0.5, u_maskInvert));
+}
+void main() {
+  vec3 below = texture(u_below, v_texCoord).rgb;   // effect input
+  vec3 above = texture(u_image0, v_texCoord).rgb;  // effect output
+  fragColor = vec4(mix(below, above, maskValue(v_texCoord)), 1.0);
+}`
+
 /**
  * Exported so embeds can hold their own instance — two embeds on one page must
  * not share a GL context. App code should keep using the `shaderFx` singleton
@@ -90,6 +138,7 @@ export class ShaderFxRenderer {
   private programs = new Map<string, { source: string; prog: WebGLProgram }>()
   private blit: WebGLProgram | null = null
   private composite: WebGLProgram | null = null
+  private mask: WebGLProgram | null = null
   private fboTex: (WebGLTexture | null)[] = [null, null]
   private fbos: (WebGLFramebuffer | null)[] = [null, null]
   // Third off-band buffer: holds the snapshot of a layer's input so a composite
@@ -309,6 +358,37 @@ export class ShaderFxRenderer {
         continue
       }
 
+      // Mask pass: mix the preceding effect's output (readTex) with its input
+      // (holdTex, snapshotted before the effect ran) by the analytic mask factor,
+      // confining the effect to a region. holdTex is left intact so a following
+      // blend composite can still read it.
+      if (pass.maskComposite) {
+        if (!this.mask) this.mask = this.program('__mask__', MASK_FS)
+        gl.useProgram(this.mask)
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbos[i % 2] ?? null)
+        gl.viewport(0, 0, width, height)
+        gl.disable(gl.BLEND)
+        gl.activeTexture(gl.TEXTURE0)
+        gl.bindTexture(gl.TEXTURE_2D, readTex)
+        const aLoc = gl.getUniformLocation(this.mask, 'u_image0')
+        if (aLoc) gl.uniform1i(aLoc, 0)
+        gl.activeTexture(gl.TEXTURE1)
+        gl.bindTexture(gl.TEXTURE_2D, this.holdTex)
+        const bLoc = gl.getUniformLocation(this.mask, 'u_below')
+        if (bLoc) gl.uniform1i(bLoc, 1)
+        const resLoc = gl.getUniformLocation(this.mask, 'u_resolution')
+        if (resLoc) gl.uniform2f(resLoc, width, height)
+        for (const [name, value] of Object.entries(pass.maskComposite)) {
+          const loc = gl.getUniformLocation(this.mask, name)
+          if (loc) gl.uniform1f(loc, value)
+        }
+        gl.clearColor(0, 0, 0, 0)
+        gl.clear(gl.COLOR_BUFFER_BIT)
+        gl.drawArrays(gl.TRIANGLES, 0, 3)
+        readTex = this.fboTex[i % 2]!
+        continue
+      }
+
       const prog = this.program(pass.id, pass.source)
       gl.useProgram(prog)
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbos[i % 2] ?? null)
@@ -393,6 +473,8 @@ export class ShaderFxRenderer {
     this.blit = null
     if (this.composite) gl.deleteProgram(this.composite)
     this.composite = null
+    if (this.mask) gl.deleteProgram(this.mask)
+    this.mask = null
 
     for (let i = 0; i < 2; i++) {
       if (this.fboTex[i]) gl.deleteTexture(this.fboTex[i] ?? null)

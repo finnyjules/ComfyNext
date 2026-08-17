@@ -1,7 +1,8 @@
 // frontend/tests/unit/shaderstudio-passes.unit.spec.ts
 import { describe, expect, it } from 'vitest'
 import { composePasses } from '~/lib/shaderstudio/passes'
-import { defaultConfig } from '~/lib/shaderstudio/types'
+import { defaultConfig, defaultMask } from '~/lib/shaderstudio/types'
+import { MASK_SHAPE_IDX } from '~/lib/shaderstudio/mask'
 import type { EffectDef } from '~/lib/shaderfx/types'
 
 const fakeEffect: EffectDef = {
@@ -140,5 +141,37 @@ describe('composePasses', () => {
     expect(passes.map(p => p.id)).toEqual(['halftone', 'bloom', 'studio:composite'])
     expect(passes[1]!.captureSource).toBe(true)
     expect(passes[1]!.snapshot).toBe(true)
+  })
+
+  it('appends no mask pass when the mask is absent or disabled', () => {
+    const c = defaultConfig()
+    c.effects = [{ layerId: 'L0', id: 'halftone', params: {}, enabled: true, blend: 'normal', opacity: 1, mask: { ...defaultMask(), enabled: false } }]
+    const passes = composePasses(c, () => fakeEffect, 0)
+    expect(passes.map(p => p.id)).toEqual(['halftone'])
+    expect(passes[0]!.snapshot).toBeFalsy()
+  })
+
+  it('appends a studio:mask pass (with the effect snapshotted) on a masked base layer', () => {
+    const c = defaultConfig()
+    c.effects = [{ layerId: 'L0', id: 'halftone', params: {}, enabled: true, blend: 'normal', opacity: 1, mask: { ...defaultMask(), enabled: true, shape: 'band', size: 0.15 } }]
+    const passes = composePasses(c, () => fakeEffect, 0)
+    expect(passes.map(p => p.id)).toEqual(['halftone', 'studio:mask'])
+    expect(passes[0]!.snapshot).toBe(true)                 // effect input captured for the mix
+    const mp = passes[1]!
+    expect(mp.maskComposite).toBeTruthy()
+    expect(mp.maskComposite!.u_maskShape).toBe(MASK_SHAPE_IDX.band)
+    expect(mp.maskComposite!.u_maskSize).toBe(0.15)
+  })
+
+  it('orders masked effect → mask → blend composite when a masked layer also blends', () => {
+    const c = defaultConfig()
+    c.effects = [
+      { layerId: 'L0', id: 'halftone', params: {}, enabled: true, blend: 'normal', opacity: 1 },
+      { layerId: 'L1', id: 'halftone', params: {}, enabled: true, blend: 'screen', opacity: 0.5, mask: { ...defaultMask(), enabled: true } },
+    ]
+    const passes = composePasses(c, () => fakeEffect, 0)
+    expect(passes.map(p => p.id)).toEqual(['halftone', 'halftone', 'studio:mask', 'studio:composite'])
+    expect(passes[1]!.snapshot).toBe(true)   // one snapshot serves both mask and blend
+    expect(passes[1]!.captureSource).toBe(true)
   })
 })

@@ -30,7 +30,7 @@ import { assertEmbeddableSource, exportClock, makeImageSource, makeLiveSource, m
 import { frameSourceEpoch } from '~/lib/studio/frameSource'
 import { loadImage } from '~/lib/shaderstudio/source'
 import { BLEND_MODES } from '~/lib/studio/blend'
-import { cloneConfig, defaultConfig, hydrateConfig, LAYER_MAX, newLayerId, outputDims, type MotionTrack, type ShaderStudioConfig, type StudioEffect } from '~/lib/shaderstudio/types'
+import { cloneConfig, defaultConfig, defaultMask, hydrateConfig, LAYER_MAX, newLayerId, outputDims, type EffectMask, type MaskShape, type MotionTrack, type ShaderStudioConfig, type StudioEffect } from '~/lib/shaderstudio/types'
 import { ensureSpaceTypeBake } from '~/lib/spacetype/bake'
 import { encodeFrames } from '~/lib/engine/encodeVideo'
 import { useStudioAgent } from '~/composables/useStudioAgent'
@@ -672,6 +672,28 @@ onMounted(async () => {
 onBeforeUnmount(() => { saveConfig(); stopPreview(); unregisterStudioParamBaker(props.nodeId) })
 
 function setParam(uniform: string, value: ParamValue) { const e = activeEffectCfg.value; if (e) e.params = { ...e.params, [uniform]: value } }
+
+// ── per-effect mask (spatial region confining the active effect) ─────────────
+const MASK_SHAPE_LABELS: Record<MaskShape, string> = { radius: 'Radius', band: 'Band', linear: 'Linear' }
+const MASK_LABEL_SHAPE: Record<string, MaskShape> = { Radius: 'radius', Band: 'band', Linear: 'linear' }
+/** Lazily attach a default mask to the active effect the first time it's touched. */
+function ensureMask(): EffectMask {
+  const e = activeEffectCfg.value
+  if (!e.mask) e.mask = defaultMask()
+  return e.mask
+}
+function setMask<K extends keyof EffectMask>(k: K, v: EffectMask[K]) { ensureMask()[k] = v }
+const maskOn = computed({
+  get: () => !!activeEffectCfg.value?.mask?.enabled,
+  set: (v: boolean) => { ensureMask().enabled = v },
+})
+const maskCfg = computed<EffectMask>(() => activeEffectCfg.value?.mask ?? defaultMask())
+/** Angle stored in radians; edited in degrees for legibility. */
+const maskAngleDeg = computed({
+  get: () => Math.round((activeEffectCfg.value?.mask?.angle ?? 0) * 180 / Math.PI),
+  set: (d: number) => setMask('angle', d * Math.PI / 180),
+})
+
 /** Narrowing helpers for the template — `effectValues` is a ParamValue union. */
 function numValue(uniform: string): number { const v = effectValues.value[uniform]; return typeof v === 'number' ? v : 0 }
 function stopsValue(uniform: string): GradientStop[] { const v = effectValues.value[uniform]; return Array.isArray(v) ? v : [] }
@@ -843,6 +865,53 @@ function remapEffectTracks(kind: 'move' | 'insert' | 'remove', a: number, b?: nu
             <span>Opacity</span><span class="text-white/40">{{ activeEffectCfg.opacity.toFixed(2) }}</span>
           </label>
           <input v-model.number="activeEffectCfg.opacity" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range w-full" />
+        </template>
+
+        <!-- Mask — confine this effect to a region (radius / band / linear falloff).
+             Off by default; enabling it adds one masked-composite pass. -->
+        <template v-if="effectDef">
+          <div class="mb-1.5 mt-3 flex items-center justify-between border-t border-white/[0.06] pt-2.5">
+            <span class="text-[11px] font-medium text-white/70">Mask</span>
+            <StudioSwitch v-model="maskOn" />
+          </div>
+          <div v-if="maskOn" class="space-y-1.5">
+            <StudioSelect
+              label="Shape"
+              :options="['Radius', 'Band', 'Linear']"
+              :model-value="MASK_SHAPE_LABELS[maskCfg.shape]"
+              @update:model-value="(lbl: string) => setMask('shape', MASK_LABEL_SHAPE[lbl] ?? 'radius')"
+            />
+            <StudioSlider
+              label="Center X" :min="0" :max="1" :step="0.01" :default="0.5" :bindable="false"
+              :model-value="maskCfg.cx" @update:model-value="(v: number) => setMask('cx', v)"
+            />
+            <StudioSlider
+              label="Center Y" :min="0" :max="1" :step="0.01" :default="0.5" :bindable="false"
+              :model-value="maskCfg.cy" @update:model-value="(v: number) => setMask('cy', v)"
+            />
+            <StudioSlider
+              label="Size" :min="0.02" :max="1" :step="0.01" :default="0.4" :bindable="false"
+              :model-value="maskCfg.size" @update:model-value="(v: number) => setMask('size', v)"
+            />
+            <StudioSlider
+              label="Feather" :min="0" :max="1" :step="0.01" :default="0.3" :bindable="false"
+              :model-value="maskCfg.feather" @update:model-value="(v: number) => setMask('feather', v)"
+            />
+            <StudioSlider
+              v-if="maskCfg.shape === 'radius'"
+              label="Aspect" :min="0.25" :max="4" :step="0.01" :default="1" :bindable="false"
+              :model-value="maskCfg.aspect" @update:model-value="(v: number) => setMask('aspect', v)"
+            />
+            <StudioSlider
+              v-if="maskCfg.shape !== 'radius'"
+              label="Angle" :min="-180" :max="180" :step="1" :default="0" :bindable="false"
+              :model-value="maskAngleDeg" @update:model-value="(v: number) => (maskAngleDeg = v)"
+            />
+            <div class="flex items-center justify-between pt-0.5">
+              <span class="text-[11px] text-white/60">Invert</span>
+              <StudioSwitch :model-value="maskCfg.invert" @update:model-value="(v: boolean) => setMask('invert', v)" />
+            </div>
+          </div>
         </template>
       </StudioSection>
 
