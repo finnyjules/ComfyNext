@@ -31,7 +31,7 @@ export type GradientControl = ControlSpec & {
  *  POST_SECTIONS (Bloom, Color, Duotone, ...) is appended so the shared post
  *  stack's sections land after Focus — see the `post` field below. */
 export const GRADIENT_SECTIONS = [
-  'Preset', 'Canvas', 'Gradient', 'Colours', 'Flow', 'Liquid', 'Mesh', 'Shape', 'Relief', 'Layer', 'Focus',
+  'Preset', 'Canvas', 'Gradient', 'Curve', 'Colours', 'Flow', 'Liquid', 'Mesh', 'Shape', 'Relief', 'Layer', 'Focus',
   ...POST_SECTIONS,
 ] as const
 
@@ -39,7 +39,8 @@ const isRadial = (c: GradientConfig) => c.canvas.layout === 'radial' || c.canvas
 const isLiquid = (c: GradientConfig) => c.canvas.layout === 'liquid'
 const isMesh = (c: GradientConfig) => c.canvas.layout === 'mesh'
 const isSimple = (c: GradientConfig) =>
-  c.canvas.layout === 'ramp' || c.canvas.layout === 'radialRamp' || c.canvas.layout === 'conic'
+  c.canvas.layout === 'ramp' || c.canvas.layout === 'radialRamp' || c.canvas.layout === 'conic' || c.canvas.layout === 'curve'
+const isCurve = (c: GradientConfig) => c.canvas.layout === 'curve'
 // Banded = the stripe/ring family only. Was `!isLiquid && !isMesh` (exclusion),
 // which would leak Shape/Relief/Margin onto the flat simple primitives.
 const isBanded = (c: GradientConfig) =>
@@ -77,6 +78,20 @@ export const GRADIENT_CONTROLS: GradientControl[] = [
   { key: 'layer.ramp.shape', label: 'Radial shape', kind: 'select', options: ['circle', 'ellipse'], default: 'circle', group: 'Gradient', when: (c) => c.canvas.layout === 'radialRamp', hint: 'circle = aspect-corrected round; ellipse = stretched to the frame' } as GradientControl,
   slider('layer.ramp.sweep', 'Sweep', 20, 360, 1, 'Gradient', 'Conic arc in degrees', { when: (c) => c.canvas.layout === 'conic' }),
   { key: 'layer.ramp.closeLoop', label: 'Close loop', kind: 'switch', default: false, group: 'Gradient', when: (c) => c.canvas.layout === 'conic', hint: 'Wrap the ramp so the first and last colour meet seamlessly' } as GradientControl,
+
+  // --- Curve (curve layout: a gradient that follows a parametric bezier) -----
+  { key: 'layer.curve.mode', label: 'Mode', kind: 'select', options: ['along', 'outward'], default: 'along', group: 'Curve', when: isCurve, hint: 'along = ramp runs down the curve; outward = ramp fades sideways off it' } as GradientControl,
+  { key: 'layer.curve.shape', label: 'Shape', kind: 'select', options: ['line', 'arc', 's-curve', 'wave', 'loop'], default: 'arc', group: 'Curve', when: isCurve } as GradientControl,
+  slider('layer.curve.start.x', 'Start X', 0, 1, 0.01, 'Curve', undefined, { when: isCurve }),
+  slider('layer.curve.start.y', 'Start Y', 0, 1, 0.01, 'Curve', undefined, { when: isCurve }),
+  slider('layer.curve.end.x', 'End X', 0, 1, 0.01, 'Curve', undefined, { when: isCurve }),
+  slider('layer.curve.end.y', 'End Y', 0, 1, 0.01, 'Curve', undefined, { when: isCurve }),
+  slider('layer.curve.curvature', 'Curvature', 0, 1, 0.01, 'Curve', 'How much the curve bows', { when: (c) => isCurve(c) && c.layers?.[0]?.curve?.shape !== 'line' }),
+  slider('layer.curve.bend', 'Bend', -1, 1, 0.01, 'Curve', 'Which side it bows', { when: (c) => isCurve(c) && c.layers?.[0]?.curve?.shape !== 'line' }),
+  slider('layer.curve.waves', 'Waves', 1, 8, 1, 'Curve', undefined, { when: (c) => isCurve(c) && c.layers?.[0]?.curve?.shape === 'wave' }),
+  slider('layer.curve.phase', 'Phase', 0, 1, 0.01, 'Curve', undefined, { when: (c) => isCurve(c) && c.layers?.[0]?.curve?.shape === 'wave' }),
+  slider('layer.curve.width', 'Width', 0.02, 1, 0.01, 'Curve', 'Outward glow reach', { when: (c) => isCurve(c) && c.layers?.[0]?.curve?.mode === 'outward' }),
+  { key: 'layer.curve.handles', label: 'Curve handles', kind: 'curveHandles', default: '', group: 'Curve', when: isCurve } as GradientControl,
 
   // --- Repeat (simple primitives only — u_repeat is only read in the simple-primitive
   //     shader branch; it's a no-op on the 6 legacy layouts) / Falloff (every layout,

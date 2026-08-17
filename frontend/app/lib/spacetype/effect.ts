@@ -84,6 +84,10 @@ export type ControlSpec = (
   // A rich list of loft "stops" (position + profile params + colour), stored as one JSON string
   // (ParamValue is scalar). The surface renders ProfileStopsEditor; loft.ts parses it with parseStops.
   | { key: string; label: string; kind: 'profileStops'; default: string; group: string }
+  // A parametric-curve handle overlay (Gradient curve layout). Renders CurveEditor.vue,
+  // which drags start/end/curvature handles that write back to layer.curve.* dials.
+  // Carries no value of its own — the curve lives in the numeric dials.
+  | { key: string; label: string; kind: 'curveHandles'; default: string; group: string }
 ) & ControlMeta
 
 /** Build the param object from a control list's declared defaults. */
