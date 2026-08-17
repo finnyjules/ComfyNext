@@ -6,11 +6,15 @@ import { DEFAULT_CONFIG, type GeoShapeConfig } from '../../app/lib/geoshape/conf
 
 // Fields on GeoShapeConfig that are NOT a renderable control: `locks` is
 // re-roll section-lock metadata, not a parameter a knob addresses. `fills`
-// (the cycled-list counterpart of `fill`, used when `perShapeFill` is on) is
+// (the cycled-list counterpart of `fill`, used when `fillStrategy` !== 'single')
+// and `overlapFills` (its `pieces`-mode overlap-palette counterpart) are each
 // edited by a bespoke list editor (ShapeStudioSurface's fills-list block,
 // mirroring SpaceTypeSurface's fillList pattern) rather than a single-value
-// control row, so it has no GEO_CONTROLS entry either.
-const NON_CONTROL_FIELDS = new Set(['locks', 'fills'])
+// control row, so neither has a GEO_CONTROLS entry.
+// `fillOrder` and `overlapSeparate` — controls added in Task 4; the schema
+// fields exist now but the `pieces` mode's ordering/overlap-palette UI is
+// built in that task, so they're excluded here until it lands.
+const NON_CONTROL_FIELDS = new Set(['locks', 'fills', 'overlapFills', 'fillOrder', 'overlapSeparate'])
 
 const expectedKeys = Object.keys(DEFAULT_CONFIG).filter((k) => !NON_CONTROL_FIELDS.has(k))
 

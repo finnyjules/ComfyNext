@@ -90,7 +90,7 @@ export async function composite(baseD: string, placements: ClonePlacement[], cfg
     // No boolean fold and no even-odd holes (those need the unified single-path
     // fold); clones simply layer. Symmetry mirrors each clone inheriting its paint;
     // clip intersects each clone.
-    if (cfg.perShapeFill) {
+    if (cfg.fillStrategy === 'perClone') {
       const fills = cfg.fills.length ? cfg.fills : [cfg.fill]
       let items: { path: paper.PathItem; pi: number }[] = clones.map((c, i) => ({ path: c as paper.PathItem, pi: i % fills.length }))
       if (cfg.symmetry) {

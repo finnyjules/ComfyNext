@@ -54,7 +54,7 @@ const isGrid = (c: GeoShapeConfig) => c.layout === 'grid'
 const isRadial = (c: GeoShapeConfig) => c.layout === 'radial'
 const isGridOrLinear = (c: GeoShapeConfig) => c.layout === 'grid' || c.layout === 'linear'
 const isOverlapShape = (c: GeoShapeConfig) => c.overlapMode === 'shape'
-const isSingleFill = (c: GeoShapeConfig) => !c.perShapeFill
+const isSingleFill = (c: GeoShapeConfig) => c.fillStrategy === 'single'
 const isOverlapShapeAndSingleFill = (c: GeoShapeConfig) => isOverlapShape(c) && isSingleFill(c)
 const hasSymmetry = (c: GeoShapeConfig) => c.symmetry === true
 const hasClipMask = (c: GeoShapeConfig) => c.clipMask !== 'none'
@@ -141,12 +141,13 @@ export const GEO_CONTROLS: GeoControl[] = [
     'The random seed behind Re-roll; use Re-roll to generate variations.'),
 
   // --- Paint ---------------------------------------------------------------
-  // `fills` (the cycled-list counterpart of `fill`) has no control of its own —
-  // it's edited by a bespoke list editor (ShapeStudioSurface's `#control-
-  // perShapeFill` slot), not a single-value row — so it's excluded from the
-  // drift guard's expected-key set alongside `locks` (see that test's
-  // NON_CONTROL_FIELDS).
-  switchC('perShapeFill', 'Per-shape fill', DEFAULT_CONFIG.perShapeFill, 'Paint'),
+  // `fills` and `overlapFills` (the cycled-list counterparts of `fill` and
+  // `overlapFill`) have no control of their own — they're edited by bespoke
+  // list editors (ShapeStudioSurface's fills-list block), not a single-value
+  // row — so they're excluded from the drift guard's expected-key set
+  // alongside `locks` (see that test's NON_CONTROL_FIELDS).
+  select('fillStrategy', 'Fill', ['single', 'perClone', 'pieces'], DEFAULT_CONFIG.fillStrategy, 'Paint',
+    'single = unified holes; perClone = one colour per shape; pieces = colour solo + overlap regions'),
   color('fill', 'Fill', paintDefault(DEFAULT_CONFIG.fill), 'Paint', { when: isSingleFill }),
   color('stroke', 'Stroke', DEFAULT_CONFIG.stroke ?? '#000000', 'Paint'),
 ]

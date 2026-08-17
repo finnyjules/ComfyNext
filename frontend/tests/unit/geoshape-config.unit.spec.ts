@@ -33,9 +33,9 @@ describe('geoshape config', () => {
   it('a solid string stays a solid string', () => {
     expect(mergeConfig({ ...DEFAULT_CONFIG, fill: '#abcdef' }).fill).toBe('#abcdef')
   })
-  it('perShapeFill + fills round-trip; junk/empty fills → default non-empty', () => {
-    const cfg = mergeConfig({ ...DEFAULT_CONFIG, perShapeFill: true, fills: ['#f00', { type: 'linear', angle: 0, stops: [{ offset: 0, color: '#0f0' }, { offset: 1, color: '#00f' }] }] })
-    expect(cfg.perShapeFill).toBe(true)
+  it('fills round-trip; junk/empty fills → default non-empty', () => {
+    const cfg = mergeConfig({ ...DEFAULT_CONFIG, fillStrategy: 'perClone', fills: ['#f00', { type: 'linear', angle: 0, stops: [{ offset: 0, color: '#0f0' }, { offset: 1, color: '#00f' }] }] })
+    expect(cfg.fillStrategy).toBe('perClone')
     expect(cfg.fills).toHaveLength(2)
     expect(cfg.fills[0]).toBe('#f00')
     // junk/empty → falls back to the default non-empty list
@@ -45,5 +45,19 @@ describe('geoshape config', () => {
     // Mixed valid+invalid → keep ONLY the valid entries (must NOT collapse to
     // the whole default list — the drop-invalid arm, distinct from all-invalid).
     expect(mergeConfig({ ...DEFAULT_CONFIG, fills: ['#f00', 42, { type: 'bogus' }] }).fills).toEqual(['#f00'])
+  })
+  it('migrates legacy perShapeFill and honors explicit fillStrategy', () => {
+    // Raw objects built WITHOUT `fillStrategy` (unlike a `{ ...DEFAULT_CONFIG }`
+    // spread, which already carries `fillStrategy: 'single'` post-migration and
+    // would mask `perShapeFill` under the "explicit wins" rule below) — these
+    // stand in for a legacy persisted blob that predates this field.
+    expect(mergeConfig({ perShapeFill: true }).fillStrategy).toBe('perClone')
+    expect(mergeConfig({ perShapeFill: false }).fillStrategy).toBe('single')
+    expect(mergeConfig({}).fillStrategy).toBe('single')
+    expect(mergeConfig({ fillStrategy: 'pieces', perShapeFill: true }).fillStrategy).toBe('pieces')
+    expect(mergeConfig({ fillStrategy: 'bogus' }).fillStrategy).toBe('single')
+    expect(mergeConfig({ overlapFills: [] }).overlapFills).toEqual(DEFAULT_CONFIG.overlapFills)
+    expect(mergeConfig({ fillOrder: 'rows' }).fillOrder).toBe('rows')
+    expect(mergeConfig({ fillOrder: 'nope' }).fillOrder).toBe('created')
   })
 })

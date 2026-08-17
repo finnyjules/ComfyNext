@@ -16,6 +16,8 @@ export type GeoFillMode = 'evenodd' | 'unite' | 'subtract' | 'intersect' | 'excl
 export type GeoOverlapMode = 'hole' | 'shape'
 export type GeoSymmetryAxis = 'vertical' | 'horizontal'
 export type GeoClipMask = 'none' | 'circle' | 'square' | 'hexagon'
+export type GeoFillStrategy = 'single' | 'perClone' | 'pieces'
+export type GeoFillOrder = 'created' | 'depth' | 'leftRight' | 'topBottom' | 'rows' | 'columns' | 'centerOut' | 'around'
 
 export interface GeoShapeConfig {
   shape: BaseShapeKind
@@ -53,9 +55,19 @@ export interface GeoShapeConfig {
   stroke: string | null
   /** Used only when overlapMode === 'shape'. */
   overlapFill: Paint
-  /** When true, `fills` is cycled across clones instead of the single `fill`. */
-  perShapeFill: boolean
-  /** Cycled fill list for perShapeFill mode. Always non-empty. */
+  /** How clones/pieces are coloured. single = unified fold + one `fill`;
+   *  perClone = each clone its own cycled `fills`; pieces = split into solo +
+   *  overlap pieces, coloured by `fillOrder`/`overlapSeparate`/`overlapFills`. */
+  fillStrategy: GeoFillStrategy
+  /** Order colours are handed out in (perClone: over clones; pieces: over solo pieces). */
+  fillOrder: GeoFillOrder
+  /** pieces mode: overlaps use `overlapFills` (true) or the same `fills` (false). */
+  overlapSeparate: boolean
+  /** pieces mode: the SEPARATE overlap palette, coloured by depth. Always non-empty.
+   *  NOTE: distinct from `overlapFill` (a single Paint used by `overlapMode: 'shape'`
+   *  in single mode) — different feature, do not conflate. */
+  overlapFills: Paint[]
+  /** Cycled fill list for perClone mode. Always non-empty. */
   fills: Paint[]
   gridCols: number
   gridRows: number
@@ -96,7 +108,10 @@ export const DEFAULT_CONFIG: GeoShapeConfig = {
   fill: '#111111',
   stroke: null,
   overlapFill: '#111111',
-  perShapeFill: false,
+  fillStrategy: 'single',
+  fillOrder: 'created',
+  overlapSeparate: false,
+  overlapFills: ['#ffffff'],
   fills: ['#1a1a2e', '#e5484d', '#f5a623'],
   gridCols: 3,
   gridRows: 2,
@@ -118,6 +133,8 @@ const FILLMODES = ['evenodd', 'unite', 'subtract', 'intersect', 'exclude'] as co
 const OVERLAPMODES = ['hole', 'shape'] as const
 const SYMMETRY_AXES = ['vertical', 'horizontal'] as const
 const CLIP_MASKS = ['none', 'circle', 'square', 'hexagon'] as const
+const FILL_STRATEGIES = ['single', 'perClone', 'pieces'] as const
+const FILL_ORDERS = ['created', 'depth', 'leftRight', 'topBottom', 'rows', 'columns', 'centerOut', 'around'] as const
 
 /** Discriminants of every `Paint` arm: `Gradient` (linear/radial), `ImageFill` (image),
  *  and `Fill`'s `FillType` union (solid/gradient/ombre/grid/noise/checkerboard/stripes/qr/shader).
@@ -201,7 +218,12 @@ export function mergeConfig(raw: unknown): GeoShapeConfig {
     fill: paint(o.fill, d.fill),
     stroke: o.stroke === null ? null : (typeof o.stroke === 'string' ? o.stroke : d.stroke),
     overlapFill: paint(o.overlapFill, d.overlapFill),
-    perShapeFill: bool(o.perShapeFill, d.perShapeFill),
+    fillStrategy: (typeof o.fillStrategy === 'string' && (FILL_STRATEGIES as readonly string[]).includes(o.fillStrategy))
+      ? (o.fillStrategy as GeoFillStrategy)
+      : (o.perShapeFill === true ? 'perClone' : 'single'),
+    fillOrder: oneOf(o.fillOrder, FILL_ORDERS, d.fillOrder),
+    overlapSeparate: bool(o.overlapSeparate, d.overlapSeparate),
+    overlapFills: paintList(o.overlapFills, d.overlapFills),
     fills: paintList(o.fills, d.fills),
     gridCols: clampNum(o.gridCols, d.gridCols, 1, 24),
     gridRows: clampNum(o.gridRows, d.gridRows, 1, 24),
