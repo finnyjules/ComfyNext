@@ -5,6 +5,7 @@ import { cylinderEffect } from '../../app/lib/spacetype/effects/cylinder'
 import { fieldEffect } from '../../app/lib/spacetype/effects/field'
 import { ribbonEffect } from '../../app/lib/spacetype/effects/ribbon'
 import { boostEffect } from '../../app/lib/spacetype/effects/boost'
+import { sliceGlitchEffect } from '../../app/lib/spacetype/effects/sliceGlitch'
 
 // Real exports are `coilEffect`/`cylinderEffect`/`fieldEffect`/`ribbonEffect` (SpaceTypeEffect
 // objects with a `.controls` array), not bare `coil`/`cylinder`/`field`/`ribbon` — the brief's
@@ -152,6 +153,74 @@ describe('boost: mode-specific controls gated', () => {
       const c = byKey(key)
       expect(showIfVisible(c, readWith('stroke', 'off'))).toBe(false)
       expect(showIfVisible(c, readWith('stroke', 'on'))).toBe(true)
+    }
+  })
+})
+
+/**
+ * sliceGlitch's ~19 mode-specific controls, gated per source (draw()/motion() in
+ * lib/spacetype/effects/sliceGlitch.ts, blockSegments() in ../sliceGlitchLayout.ts):
+ *  - revealMode 'hold' short-circuits motion() to only read glitchAmount; the 'animate'
+ *    branch reads speed/sceneCount/sceneTransition/ease via sceneMotion(), and transitionTear
+ *    only multiplies a nonzero `burst` which sceneMotion (animate-only) ever produces.
+ *  - fontVaryUnit === 'off' sets unitId = -1, so fontJitter() (and therefore weightJitter/
+ *    slantJitter/fontSeed) is never invoked; any other value drives it.
+ *  - blockUnit routes to blockSegments(): only the 'random' branch calls segmentRow(...,
+ *    density, ...), so blockDensity is read only there.
+ *  - doodlesOn is a 'select' (['on','off']), not a switch; draw() gates the whole doodle
+ *    pass behind `String(p.doodlesOn) === 'on'`.
+ */
+describe('sliceGlitch: mode-specific controls gated', () => {
+  const controls = sliceGlitchEffect.controls as any[]
+  const byKey = (key: string) => {
+    const c = controls.find(x => x.key === key)
+    expect(c, `sliceGlitch.${key} exists`).toBeTruthy()
+    expect(c.showIf, `sliceGlitch.${key} has showIf`).toBeTruthy()
+    return c
+  }
+  const readWith = (key: string, value: unknown) => (k: string) => (k === key ? (value as any) : undefined)
+
+  it('revealMode: speed/sceneCount/sceneTransition/transitionTear/ease shown only in animate', () => {
+    for (const key of ['speed', 'sceneCount', 'sceneTransition', 'transitionTear', 'ease']) {
+      const c = byKey(key)
+      expect(showIfVisible(c, readWith('revealMode', 'animate'))).toBe(true)
+      expect(showIfVisible(c, readWith('revealMode', 'hold'))).toBe(false)
+    }
+  })
+
+  it('revealMode: glitchAmount ("Glitch (hold)") shown only in hold', () => {
+    const c = byKey('glitchAmount')
+    expect(showIfVisible(c, readWith('revealMode', 'hold'))).toBe(true)
+    expect(showIfVisible(c, readWith('revealMode', 'animate'))).toBe(false)
+  })
+
+  it('fontVaryUnit: weightJitter/slantJitter/fontSeed hidden only when off', () => {
+    for (const key of ['weightJitter', 'slantJitter', 'fontSeed']) {
+      const c = byKey(key)
+      expect(showIfVisible(c, readWith('fontVaryUnit', 'off'))).toBe(false)
+      expect(showIfVisible(c, readWith('fontVaryUnit', 'line'))).toBe(true)
+      expect(showIfVisible(c, readWith('fontVaryUnit', 'word'))).toBe(true)
+      expect(showIfVisible(c, readWith('fontVaryUnit', 'character'))).toBe(true)
+    }
+  })
+
+  it('blockUnit: blockDensity shown only when random', () => {
+    const c = byKey('blockDensity')
+    expect(showIfVisible(c, readWith('blockUnit', 'random'))).toBe(true)
+    expect(showIfVisible(c, readWith('blockUnit', 'line'))).toBe(false)
+    expect(showIfVisible(c, readWith('blockUnit', 'word'))).toBe(false)
+    expect(showIfVisible(c, readWith('blockUnit', 'character'))).toBe(false)
+  })
+
+  it('doodlesOn: all 9 doodle controls hidden when off, visible when on', () => {
+    const DOODLE_KEYS = [
+      'doodleCount', 'doodleSize', 'doodleSizeJitter', 'doodleAreaW', 'doodleAreaH',
+      'doodleColorMode', 'doodleWidth', 'doodleStroke', 'doodleStrokeColor',
+    ]
+    for (const key of DOODLE_KEYS) {
+      const c = byKey(key)
+      expect(showIfVisible(c, readWith('doodlesOn', 'off'))).toBe(false)
+      expect(showIfVisible(c, readWith('doodlesOn', 'on'))).toBe(true)
     }
   })
 })
