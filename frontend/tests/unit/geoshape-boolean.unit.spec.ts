@@ -301,4 +301,38 @@ describe('geoshape boolean composite', () => {
       sc.project.clear()
     }
   })
+
+  it('split mode keeps an exact partition with ANNULAR crossings (dense ring)', async () => {
+    // A tight ring: deep overlaps near the centre leave a depth-2 band that is a
+    // RING around a deeper island (an annular face). Classifying faces by centroid
+    // put that centroid in the ring's own hole → the ring was dropped and 3–7% of
+    // the mark vanished (partition broken). Boundary-vertex classification fixes it.
+    const count = 8, radius = 80
+    const ring = Array.from({ length: count }, (_, i) => { const a = (i / count) * Math.PI * 2; return { x: Math.cos(a) * radius, y: Math.sin(a) * radius, scale: 1, rotate: 0, skew: 0 } })
+    const shapes = await composite(HEX, ring, { ...DEFAULT_CONFIG, fillStrategy: 'pieces', crossingMode: 'split', fills: ['#f00', '#0f0', '#00f'], overlapSeparate: false, fillOrder: 'rows', symmetry: false, clipMask: 'none' })
+    const sc = await paperScope()
+    try {
+      let sumPieces = 0
+      for (const s of shapes) { const p = new sc.CompoundPath(commandsToPathData(s.commands)); p.fillRule = 'nonzero'; sumPieces += Math.abs(p.area) }
+      let uni: any = null
+      for (const pl of ring) { const p = new sc.CompoundPath(HEX); const m = new sc.Matrix(); m.translate(pl.x, pl.y); m.rotate(pl.rotate, new sc.Point(0, 0)); p.transform(m); uni = uni ? uni.unite(p) : p }
+      const ratio = sumPieces / Math.abs(uni.area)
+      expect(ratio).toBeGreaterThan(0.97)
+      expect(ratio).toBeLessThan(1.03)
+    } finally {
+      sc.project.clear()
+    }
+  })
+
+  it('split + separate overlap + spatial order colours crossings from overlapFills', async () => {
+    // Exercises the split × overlapSeparate × spatial-order colour branch: solo from
+    // `fills` (one colour here), crossings ranked through `overlapFills`.
+    const count = 7, radius = 150
+    const ring = Array.from({ length: count }, (_, i) => { const a = (i / count) * Math.PI * 2; return { x: Math.cos(a) * radius, y: Math.sin(a) * radius, scale: 1, rotate: 0, skew: 0 } })
+    const shapes = await composite(HEX, ring, { ...DEFAULT_CONFIG, fillStrategy: 'pieces', crossingMode: 'split', fills: ['#111111'], overlapFills: ['#ff0000', '#00ff00', '#0000ff'], overlapSeparate: true, fillOrder: 'rows', symmetry: false, clipMask: 'none' })
+    // solo pieces are all #111111 (single shape colour); crossings draw from the
+    // overlapFills palette → at least two distinct overlap hues appear.
+    const overlapHues = new Set(shapes.map((s) => s.paint).filter((p) => p !== '#111111'))
+    expect(overlapHues.size).toBeGreaterThanOrEqual(2)
+  })
 })

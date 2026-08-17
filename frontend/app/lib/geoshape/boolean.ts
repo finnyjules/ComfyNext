@@ -69,13 +69,18 @@ function hexClipD(r: number): string {
 /** Split one exact-depth band into connected FACES, each an outer contour with its
  *  holes re-attached (a hole is a deeper region subtracted out — it belongs to the
  *  deeper piece, so it must stay a hole here or the pieces stop being disjoint).
- *  A child is a hole iff its interior point sits inside an ODD number of sibling
- *  contours (crossings are one level deep; nested holes-in-holes are out of scope). */
+ *  A child is a hole iff a point on ITS OWN BOUNDARY sits inside an ODD number of
+ *  sibling contours (crossings are one level deep; nested holes-in-holes are out of
+ *  scope). We test a boundary VERTEX, not the centroid/interiorPoint: an annular
+ *  outer (a ring around a deeper island) has its centroid in its OWN hole, so a
+ *  centroid test would count the hole contour as containing it and wrongly drop the
+ *  ring. Sibling contours never cross (they only nest), so any boundary vertex of a
+ *  contour is unambiguously strictly inside or outside each sibling. */
 function splitFaces(sc: paper.PaperScope, band: paper.PathItem): paper.PathItem[] {
   const anyBand = band as any
   if (band.className !== 'CompoundPath' || !anyBand.children || anyBand.children.length <= 1) return [band]
   const kids: paper.Path[] = anyBand.children.slice()
-  const pt = (k: any): paper.Point => (k.interiorPoint ?? k.bounds.center)
+  const pt = (k: any): paper.Point => (k.segments && k.segments.length ? k.segments[0].point : k.bounds.center)
   const isHole = (i: number) => {
     let inside = 0
     for (let j = 0; j < kids.length; j++) { if (j !== i && (kids[j] as any).contains(pt(kids[i]))) inside++ }
