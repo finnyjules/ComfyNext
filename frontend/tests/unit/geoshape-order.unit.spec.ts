@@ -32,7 +32,11 @@ describe('rankOrder', () => {
     expect(r).toEqual([0, 1, 2, 3])
   })
   it('around sweeps by angle', () => {
+    // centroid = (100,100). atan2(cy-my, cx-mx) per point:
+    //   0=TL(-100,-100)→-135°(-2.356), 1=TR(100,-100)→-45°(-0.785),
+    //   2=BL(-100,100)→135°(2.356),    3=BR(100,100)→45°(0.785)
+    // ascending angle order: TL(0), TR(1), BR(3), BL(2) → ranks: 0→0,1→1,3→2,2→3
     const r = rankOrder(grid, 'around', 100)
-    expect(new Set(r)).toEqual(new Set([0, 1, 2, 3]))
+    expect(r).toEqual([0, 1, 3, 2])
   })
 })

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { composite } from '~/lib/geoshape/boolean'
 import { DEFAULT_CONFIG } from '~/lib/geoshape/config'
 import { commandsToPathData, shapesToSVG } from '~/lib/vector/svg'
@@ -166,10 +166,57 @@ describe('geoshape boolean composite', () => {
     expect(paints.has('#0f0')).toBe(false)  // shape fills 1/2 NOT used for overlaps
   })
   it('pieces: solo pieces follow fillOrder (leftRight)', async () => {
-    const shapes = await composite(SQUARE, three, pcfg({ fillOrder: 'leftRight', overlapSeparate: true, overlapFills: ['#fff'] }))
-    // solo pieces are the non-#fff shapes; their paints should include ≥2 distinct shape colours ordered by x
+    // Three axis-aligned squares spaced along x with partial neighbour overlap
+    // (each extent is 100 wide, spaced 60 apart → 40 of overlap with each
+    // neighbour, no triple overlap), so each has an unambiguous solo region at
+    // a distinct x. Creation order is deliberately NOT left-to-right (rightmost
+    // first, then leftmost, then middle), so a fillOrder that silently fell back
+    // to creation order would produce a DIFFERENT solo paint sequence than the
+    // correct left-to-right one — this is what makes the test fail if fillOrder
+    // were ignored.
+    const placements = [
+      { x: 60, y: 0, scale: 1, rotate: 0, skew: 0 }, // rightmost, created 1st
+      { x: -60, y: 0, scale: 1, rotate: 0, skew: 0 }, // leftmost, created 2nd
+      { x: 0, y: 0, scale: 1, rotate: 0, skew: 0 }, // middle, created 3rd
+    ]
+    const shapes = await composite(SQUARE, placements, pcfg({ fillOrder: 'leftRight', overlapSeparate: true, overlapFills: ['#fff'] }))
     const solo = shapes.filter((s) => s.paint !== '#fff')
-    expect(new Set(solo.map((s) => s.paint)).size).toBeGreaterThanOrEqual(2)
+    expect(solo.length).toBe(3)
+    const sc = await paperScope()
+    try {
+      const withX = solo.map((s) => {
+        const p = new sc.CompoundPath(commandsToPathData(s.commands))
+        return { paint: s.paint, cx: p.bounds.center.x }
+      })
+      withX.sort((a, b) => a.cx - b.cx)
+      // ascending-x solo pieces must follow fills[0], fills[1], fills[2] in order —
+      // under a creation-order fallback the sequence would instead read
+      // ['#f00', '#0f0', '#00f'] mapped to [rightmost, leftmost, middle], which
+      // sorted by x comes out as ['#0f0', '#00f', '#f00'] — a different sequence.
+      expect(withX.map((w) => w.paint)).toEqual(['#f00', '#0f0', '#00f'])
+    } finally {
+      sc.project.clear()
+    }
+  })
+  it('pieces mode caps the clone count for performance (PIECES_MAX_CLONES)', async () => {
+    // 80 overlapping squares in a tight line (spaced 12 apart, each 100 wide, so
+    // every square overlaps many neighbours) — pieces mode's O(N²) solo/depth-band
+    // folds would be minutes of main-thread work uncapped. The cap should bound
+    // total returned shapes well under 80 and keep the test itself fast.
+    const placements80 = Array.from({ length: 80 }, (_, i) => ({ x: i * 12 - 474, y: 0, scale: 1, rotate: 0, skew: 0 }))
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const start = Date.now()
+    const shapes = await composite(SQUARE, placements80, { ...DEFAULT_CONFIG, fillStrategy: 'pieces', fills: ['#f00', '#0f0', '#00f'], symmetry: false, clipMask: 'none' })
+    const elapsed = Date.now() - start
+    // solo pieces are bounded by PIECES_MAX_CLONES (48); a handful of overlap
+    // depth bands add a small allowance on top — nowhere near the ~80+ shapes an
+    // uncapped fold over this densely-overlapping line would produce.
+    expect(shapes.length).toBeLessThanOrEqual(60)
+    expect(elapsed).toBeLessThan(5000)
+    // mockRestore() also clears recorded calls, so assert on the spy BEFORE
+    // restoring it.
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('geoshape pieces mode: capping'))
+    warnSpy.mockRestore()
   })
   it('perClone honors fillOrder (around changes the cycle vs created)', async () => {
     const ring = Array.from({ length: 6 }, (_, i) => ({ x: Math.cos(i * Math.PI / 3) * 120, y: Math.sin(i * Math.PI / 3) * 120, scale: 1, rotate: 0, skew: 0 }))

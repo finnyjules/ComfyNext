@@ -31,6 +31,13 @@ import type { GeoVectorShape } from './render'
  *  the real paint travels on `.paint` (see `GeoVectorShape` in `render.ts`). */
 const solidOf = (p: Paint): string => (typeof p === 'string' ? p : '#808080')
 
+// Pieces mode runs O(N²) paper.js boolean unions on the main thread (solo-piece
+// subtraction + incremental depth-band folding, both nested loops over the clone
+// set). Left uncapped, a high `count` (up to 200) freezes the tab for tens of
+// seconds to minutes, so the post-symmetry clone set is capped here to keep the
+// render interactive.
+const PIECES_MAX_CLONES = 48
+
 let _paperMod: typeof paper | null = null
 let _scope: paper.PaperScope | null = null
 async function paperScope(): Promise<paper.PaperScope> {
@@ -127,7 +134,6 @@ export async function composite(baseD: string, placements: ClonePlacement[], cfg
 
     if (cfg.fillStrategy === 'pieces') {
       const fills = cfg.fills.length ? cfg.fills : [cfg.fill]
-      const ov = cfg.overlapFills.length ? cfg.overlapFills : fills
       const nonEmpty = (p: any): boolean => !!(p && p.bounds && p.bounds.width > 1e-6 && p.bounds.height > 1e-6)
 
       // Symmetry: mirror the clones BEFORE splitting so the split sees the full set.
@@ -138,6 +144,13 @@ export async function composite(baseD: string, placements: ClonePlacement[], cfg
         sm.translate(cfg.symmetryAxis === 'vertical' ? cfg.symmetrySpacing : 0, cfg.symmetryAxis === 'horizontal' ? cfg.symmetrySpacing : 0)
         const mir = clones.map((c) => { const mc = c.clone(); mc.transform(sm); return mc as paper.PathItem })
         cl = (clones as paper.PathItem[]).concat(mir)
+      }
+      // Soft cap AFTER the (possibly mirror-doubled) clone set is finalized: pieces
+      // mode's solo + depth-band loops below are both O(N²), so bound N before either
+      // runs rather than silently dropping clones without a trace.
+      if (cl.length > PIECES_MAX_CLONES) {
+        console.warn(`geoshape pieces mode: capping ${cl.length} clones to ${PIECES_MAX_CLONES} for performance`)
+        cl = cl.slice(0, PIECES_MAX_CLONES)
       }
       const N = cl.length
 
@@ -189,8 +202,11 @@ export async function composite(baseD: string, placements: ClonePlacement[], cfg
         : rankOrder(solo.map((p, i) => ({ cx: p.cx, cy: p.cy, i })), cfg.fillOrder, bandSize)
       const colored: { path: paper.PathItem; paint: Paint }[] = []
       solo.forEach((p, i) => colored.push({ path: p.path, paint: fills[soloRanks[i]! % fills.length]! }))
+      // `ov` is only meaningful when overlapSeparate is true; compute it lazily so
+      // the non-separate path (the common case) skips the array-length check.
+      const ov = cfg.overlapSeparate ? (cfg.overlapFills.length ? cfg.overlapFills : fills) : null
       overlaps.forEach((p) => {
-        const paint = cfg.overlapSeparate ? ov[(p.depth - 2) % ov.length]! : fills[(p.depth - 1) % fills.length]!
+        const paint = cfg.overlapSeparate ? ov![(p.depth - 2) % ov!.length]! : fills[(p.depth - 1) % fills.length]!
         colored.push({ path: p.path, paint })
       })
 
