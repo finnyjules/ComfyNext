@@ -14,7 +14,7 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { CLONE_MODEL } from './start.post'
-import { currentMeterContext, settleModel } from '../../utils/requestMeter'
+import { currentMeterContext, settleModel, settleRecordedHold } from '../../utils/requestMeter'
 import { deployMode } from '../../utils/deployMode'
 import { decideVoiceCloneSettle } from '../../utils/voiceCloneOwners'
 
@@ -36,10 +36,11 @@ export default defineEventHandler(async (event) => {
   const name = String(query.name ?? '').trim()
   if (!id) throw createError({ statusCode: 400, message: 'Missing id' })
 
-  // SETTLES: this route polls a prediction started (but only preflight-
-  // gated, not charged) by /api/voice-clone/start — debit-on-success means
-  // the actual ledger debit happens here, in the succeeded branch below,
-  // once Replicate confirms the clone actually completed. See settleModel.
+  // SETTLES: this route polls a prediction started by /api/voice-clone/
+  // start, which reserved the credits (a ledger hold) and left that
+  // reservation open. The charge happens here, in the succeeded branch
+  // below, once Replicate confirms the clone completed — by settling that
+  // same hold. See settleRecordedHold / voiceCloneOwners.ts.
   const res = await fetch(`https://api.replicate.com/v1/predictions/${id}`, {
     headers: { Authorization: `Token ${token}` },
   })
@@ -58,9 +59,8 @@ export default defineEventHandler(async (event) => {
   let persistError: string | null = null
 
   if (pred.status === 'succeeded' && pred.output?.voice_id) {
-    // Debit-on-success: settle the flat CLONE_MODEL price now that Replicate
-    // has confirmed the clone actually completed. jobId doubles as the
-    // ledger's idempotency key, so repeated polls after success are a no-op.
+    // Settle-on-success: charge the flat CLONE_MODEL price now that
+    // Replicate has confirmed the clone actually completed.
     //
     // Ownership gate (final-review fix): this route settles for whoever
     // polls it with a prediction id, so without a check user B polling
@@ -68,13 +68,26 @@ export default defineEventHandler(async (event) => {
     // because ledger idempotency is per-user, BOTH could end up charged.
     // Only settle when the polling context user matches the user who paid
     // start.post.ts's preflight for this exact prediction id (see
-    // voiceCloneOwners.ts). Note: this only gates the DEBIT — reading this
+    // voiceCloneOwners.ts). Note: this only gates the CHARGE — reading this
     // route's status/output for a prediction id you don't own is still
     // possible; that's a Stage-5 tenant-isolation rider, not solved here.
     const decision = deployMode() === 'hosted'
       ? decideVoiceCloneSettle(pred.id, currentMeterContext()?.userId)
-      : { settle: true as const }
-    if (decision.settle) {
+      : { settle: true as const, hold: undefined }
+    if (decision.settle && decision.hold) {
+      // The normal hosted path (Stage 5 Task 2 review fix): start.post.ts
+      // left a hold reserving these credits for the whole clone, so the
+      // charge is that hold's settlement — NOT an independent debit, which
+      // would charge on top of a reservation that only the 2h sweep would
+      // ever give back. settleRecordedHold logs loudly (SETTLE ON RELEASED
+      // HOLD) if the hold was already released — i.e. the sweep beat this
+      // poll and the voice shipped uncharged.
+      await settleRecordedHold(decision.hold, CLONE_MODEL, 'rep:' + pred.id)
+    } else if (decision.settle) {
+      // No hold on the binding: local mode (no ledger at all), or a
+      // binding recorded before holds existed. Fall back to the standalone
+      // debit so the charge still lands. jobId doubles as the ledger's
+      // idempotency key here, so repeated polls stay a no-op.
       await settleModel(CLONE_MODEL, 'rep:' + pred.id)
     } else if (decision.reason === 'unknown-owner') {
       console.warn('[meter] voice-clone settle skipped — ownership unknown (restart?)', { predictionId: pred.id })

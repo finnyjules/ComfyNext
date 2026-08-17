@@ -192,6 +192,16 @@ export function resolveCredits(model: string, hint?: number): number | null {
 export interface MeterTicket {
   settle(jobId: string): Promise<void>
   release(): Promise<void>
+  /**
+   * The reservation's ledger id and amount. Exposed so a route whose job
+   * completes on a LATER request (voice-clone: start creates the prediction,
+   * status.get.ts confirms it minutes later) can hand this ticket's identity
+   * to that later request and settle THIS hold there — see
+   * settleRecordedHold and voiceCloneOwners.ts. Everything else should use
+   * settle()/release() and never touch these.
+   */
+  readonly holdId: number
+  readonly credits: number
 }
 
 /**
@@ -243,6 +253,46 @@ export function getLedger(): LedgerLike {
 }
 
 /**
+ * Convert a hold into a real charge, logging every way that can go wrong.
+ * Shared by MeterTicket.settle (same request) and settleRecordedHold (a
+ * later request settling a hold taken by an earlier one) so both report the
+ * two money-losing outcomes identically: a hold that was already released
+ * (the output shipped and nobody paid) and a ledger error after a delivered
+ * job. Never throws — a delivered job is never turned into a user-facing
+ * error by a ledger problem.
+ */
+async function settleHoldOrLog(
+  ledger: LedgerLike, holdId: number, credits: number, model: string, jobId: string, userId?: string,
+): Promise<void> {
+  try {
+    const r = await ledger.settleHold(holdId, credits, `provider:${model}`)
+    if (!r.settled) {
+      // The hold was already released (holdSweep's TTL, or a double-release
+      // on a failure path) — the provider output shipped and nobody paid.
+      console.error('[meter] SETTLE ON RELEASED HOLD — output shipped uncharged', { userId, model, credits, jobId, holdId })
+    }
+  } catch (e) {
+    console.error('[meter] SETTLE FAILED after successful job', { userId, model, credits, jobId, holdId, error: e })
+  }
+}
+
+/**
+ * Settle a hold whose ticket belongs to an EARLIER request. Only for the
+ * async-job shape where the provider call is started by one request and
+ * confirmed by another (voice-clone start → status poll): the starter
+ * records the ticket's `holdId`/`credits` alongside its ownership binding,
+ * and the poll that sees `succeeded` settles that exact reservation. Callers
+ * must do their own ownership check first — this function trusts the holdId
+ * it is given. Local mode: no-op (no ledger, no holds).
+ */
+export async function settleRecordedHold(
+  hold: { holdId: number, credits: number }, model: string, jobId: string,
+): Promise<void> {
+  if (deployMode() === 'local') return
+  await settleHoldOrLog(getLedger(), hold.holdId, hold.credits, model, jobId)
+}
+
+/**
  * Shared core for both preflightMeter (ALS-bound userId) and preflightMeterFor
  * (explicit userId, for callers with no request/ALS context). Local mode →
  * null (no-op ticket, no ledger touched at all). Hosted mode fails closed at
@@ -263,7 +313,22 @@ async function preflightForUser(userId: string, model: string, priceHintCredits?
   if (credits === null) throw new MeterRefusalError(`unpriced model refused: ${model}`, 500)
 
   const ledger = getLedger()
-  const res = await ledger.hold(userId, credits, `meter:${randomUUID()}`)
+  let res: Awaited<ReturnType<LedgerLike['hold']>>
+  try {
+    res = await ledger.hold(userId, credits, `meter:${randomUUID()}`)
+  } catch (e) {
+    // Review fix (Stage 5 Task 2): ledger.hold THROWS a plain Error for a
+    // user with no wallet row ("no wallet for <id> — call ensureUser
+    // first"). A non-h3 error escaping here is stripped by Nitro's prod
+    // handler to an opaque 500, so a user who simply has no wallet saw
+    // "Server Error" instead of a credits refusal. No wallet means zero
+    // credits: that is a refusal, not a server fault. Fail closed — the
+    // spend never happens either way — but say so honestly. `available: 0`
+    // is asserted rather than read back, because getAvailable would throw
+    // for exactly the same reason.
+    console.error('[meter] HOLD FAILED — refusing as insufficient credits', { userId, model, credits, error: e })
+    throw new MeterRefusalError('insufficient credits', 402, { required: credits, available: 0 })
+  }
   if (!res.ok) {
     // The refusal body still quotes a real number for the UI, read after
     // the refused hold (which reserved nothing, so this is the true figure).
@@ -273,17 +338,10 @@ async function preflightForUser(userId: string, model: string, priceHintCredits?
   const holdId = res.holdId
 
   return {
+    holdId,
+    credits,
     async settle(jobId: string): Promise<void> {
-      try {
-        const r = await ledger.settleHold(holdId, credits, `provider:${model}`)
-        if (!r.settled) {
-          // The hold was already released (sweep, or a double-release on a
-          // failure path) — the provider output shipped and nobody paid.
-          console.error('[meter] SETTLE ON RELEASED HOLD — output shipped uncharged', { userId, model, credits, jobId, holdId })
-        }
-      } catch (e) {
-        console.error('[meter] SETTLE FAILED after successful job', { userId, model, credits, jobId, holdId, error: e })
-      }
+      await settleHoldOrLog(ledger, holdId, credits, model, jobId, userId)
     },
     async release(): Promise<void> {
       // Release runs on failure paths that are already throwing — it must

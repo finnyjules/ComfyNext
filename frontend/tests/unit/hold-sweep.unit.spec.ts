@@ -9,6 +9,10 @@
  * All I/O is injected (the settleWatcher.ts DI style) so this is a pure,
  * fast unit — no DATABASE_URL, no timers, no ledger session.
  */
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, relative } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   HOLD_SWEEP_FIRST_RUN_MS,
@@ -142,5 +146,93 @@ describe('startHoldSweeperWith (what the Nitro plugin wires up)', () => {
     expect(HOLD_SWEEP_FIRST_RUN_MS).toBe(60_000)
     expect(HOLD_SWEEP_INTERVAL_MS).toBe(15 * 60_000)
     expect(HOLD_SWEEP_INTERVAL_MS).toBeLessThan(HOLD_TTL_MS)
+  })
+})
+
+/**
+ * Review finding 4: HOLD_TTL_MS and the provider poll deadlines were two
+ * unrelated numbers. If a route ever waits longer for a provider than the
+ * sweep waits before reclaiming a hold, the sweep releases a reservation for
+ * a job that is still running — and when that job finally succeeds, settle
+ * lands on a released hold and the output ships UNCHARGED (requestMeter logs
+ * 'SETTLE ON RELEASED HOLD', which is a report of lost money, not a fix).
+ * This guard reads the deadlines out of the source so raising one without
+ * raising the TTL fails a test instead of quietly leaking revenue.
+ */
+const DEADLINE_IDENTIFIER = /\b(pollDeadlineMs|timeoutMs|deadlineMs|maxWaitMs|pollTimeoutMs)\b/
+const NUMERIC_LITERAL = /\b\d[\d_]*\b/g
+
+interface DeadlineHit { file: string; line: number; ms: number; text: string }
+
+/**
+ * Every line in `dir` that names a deadline option and carries a numeric
+ * literal, paired with the LARGEST literal on that line — which covers both
+ * `{ timeoutMs: 120_000 }` at a call site and `opts.timeoutMs ?? 90_000`
+ * defaults inside the runners.
+ */
+export function scanDeadlines(dir: string): DeadlineHit[] {
+  const files: string[] = []
+  const walk = (d: string): void => {
+    for (const name of readdirSync(d)) {
+      const p = join(d, name)
+      if (statSync(p).isDirectory()) walk(p)
+      else if (p.endsWith('.ts')) files.push(p)
+    }
+  }
+  walk(dir)
+
+  const hits: DeadlineHit[] = []
+  for (const file of files) {
+    readFileSync(file, 'utf8').split('\n').forEach((text, i) => {
+      if (!DEADLINE_IDENTIFIER.test(text)) return
+      const nums = (text.match(NUMERIC_LITERAL) ?? []).map(n => Number(n.replace(/_/g, '')))
+      if (!nums.length) return
+      hits.push({ file: relative(dir, file), line: i + 1, ms: Math.max(...nums), text: text.trim() })
+    })
+  }
+  return hits
+}
+
+describe('poll deadlines vs the hold TTL', () => {
+  const serverRoot = fileURLToPath(new URL('../../server', import.meta.url))
+  const hits = scanDeadlines(serverRoot)
+
+  it('the scan is not vacuous: it finds the real minute-scale provider deadlines', () => {
+    expect(hits.length).toBeGreaterThan(5)
+    // The longest today is scene3d's text-to-3D at 300s; don't pin that exact
+    // number (it may legitimately move), just refuse to pass on an empty scan.
+    expect(Math.max(...hits.map(h => h.ms))).toBeGreaterThanOrEqual(60_000)
+    expect(hits.some(h => h.file.includes('scene3d'))).toBe(true)
+  })
+
+  it('every provider poll deadline in server/ finishes well before the sweep reclaims its hold', () => {
+    const longest = hits.reduce((a, b) => (b.ms > a.ms ? b : a))
+    expect(
+      longest.ms,
+      `${longest.file}:${longest.line} waits ${longest.ms}ms for a provider, but holdSweep ` +
+      `releases holds after ${HOLD_TTL_MS}ms — the sweep would reclaim the reservation while ` +
+      `the job is still running, and the finished job would then ship uncharged.\n  ${longest.text}`,
+    ).toBeLessThan(HOLD_TTL_MS)
+  })
+
+  it('and with real headroom, not by a hair (a job may be queued before it starts polling)', () => {
+    const longestMs = Math.max(...hits.map(h => h.ms))
+    expect(longestMs * 4).toBeLessThan(HOLD_TTL_MS)
+  })
+
+  it('the guard actually catches a 3h deadline (self-test against a synthetic tree)', () => {
+    // Without this, a scanner that silently stopped matching would make the
+    // assertions above vacuously true forever.
+    const dir = mkdtempSync(join(tmpdir(), 'deadline-guard-'))
+    try {
+      writeFileSync(join(dir, 'slow.post.ts'), 'const out = await runFal(app, input, { pollDeadlineMs: 10_800_000 })\n')
+      const found = scanDeadlines(dir)
+
+      expect(found).toHaveLength(1)
+      expect(found[0].ms).toBe(3 * 60 * 60 * 1000)
+      expect(found[0].ms).toBeGreaterThan(HOLD_TTL_MS) // i.e. the real assertion would fail
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

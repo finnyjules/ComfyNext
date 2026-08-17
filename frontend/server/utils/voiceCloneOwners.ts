@@ -20,18 +20,41 @@
  * of the result. Tenant isolation for status reads is a Stage-5 rider.
  */
 
-const owners = new Map<string, string>()
+/**
+ * Stage 5 Task 2 review fix: the binding now also carries the ledger HOLD
+ * start.post.ts took. Voice cloning is the one paid route whose charge lands
+ * on a LATER request, and start.post.ts used to release its reservation the
+ * moment the prediction was created — so N sequential starts all passed the
+ * gate against the same untouched balance and all of them charged when they
+ * finished. The hold now stays open across the clone and the status poll
+ * settles THAT hold (see status.get.ts). `hold` is absent for local-mode
+ * bindings (no ledger at all) and for anything recorded before this change.
+ *
+ * The open hold is bounded by holdSweep's HOLD_TTL_MS (2h). MiniMax voice
+ * cloning finishes in minutes, so a legitimate clone always settles long
+ * before the sweep; a hold that reaches the TTL means the clone (or this
+ * process) died, which is exactly what the sweep exists to clean up.
+ */
+export interface VoiceCloneHold { holdId: number; credits: number }
+interface VoiceCloneBinding { userId: string; hold?: VoiceCloneHold }
 
-export function recordVoiceCloneOwner(predictionId: string, userId: string): void {
-  owners.set(predictionId, userId)
+const owners = new Map<string, VoiceCloneBinding>()
+
+export function recordVoiceCloneOwner(predictionId: string, userId: string, hold?: VoiceCloneHold): void {
+  owners.set(predictionId, { userId, hold })
 }
 
 export function voiceCloneOwner(predictionId: string): string | undefined {
-  return owners.get(predictionId)
+  return owners.get(predictionId)?.userId
+}
+
+/** The reservation start.post.ts left open for this prediction, if any. */
+export function voiceCloneHold(predictionId: string): VoiceCloneHold | undefined {
+  return owners.get(predictionId)?.hold
 }
 
 export type VoiceCloneSettleDecision =
-  | { settle: true }
+  | { settle: true; hold?: VoiceCloneHold }
   | { settle: false; reason: 'unknown-owner' | 'not-owner' }
 
 /**
@@ -41,10 +64,10 @@ export type VoiceCloneSettleDecision =
  * harness needed.
  */
 export function decideVoiceCloneSettle(predictionId: string, currentUserId: string | undefined): VoiceCloneSettleDecision {
-  const owner = voiceCloneOwner(predictionId)
-  if (!owner) return { settle: false, reason: 'unknown-owner' }
-  if (!currentUserId || currentUserId !== owner) return { settle: false, reason: 'not-owner' }
-  return { settle: true }
+  const binding = owners.get(predictionId)
+  if (!binding) return { settle: false, reason: 'unknown-owner' }
+  if (!currentUserId || currentUserId !== binding.userId) return { settle: false, reason: 'not-owner' }
+  return { settle: true, hold: binding.hold }
 }
 
 /** Test-only seam: clears all recorded ownership between tests. */

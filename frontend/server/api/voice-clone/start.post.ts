@@ -37,16 +37,21 @@ export default defineEventHandler(async (event) => {
 
   if (!body.voiceFileUrl) throw createError({ statusCode: 400, message: 'voiceFileUrl is required' })
 
-  // Paid: creates a Replicate prediction on CLONE_MODEL. Preflight is a GATE
-  // ONLY here — the ticket's hold is released as soon as the prediction is
-  // created (or fails to be), because settlement happens in status.get.ts on
-  // confirmed success via settleModel's own debit (debit-on-success — the
-  // clone is async and can fail after creation, so charging here would bill
-  // a user for a job that never completes). Holding the reservation open
-  // across that window would double-count the same credits (reserved here,
-  // debited there) and, if this process died, lock them until holdSweep's
-  // TTL. Balance-during-the-clone behavior is therefore unchanged from the
-  // pre-hold implementation: gated at start, charged at success.
+  // Paid: creates a Replicate prediction on CLONE_MODEL. The ticket's HOLD
+  // STAYS OPEN across the whole clone (review fix, Stage 5 Task 2). The
+  // first cut released it as soon as the prediction was created, on the
+  // theory that status.get.ts's debit-on-success would charge later — but
+  // that leaves the balance untouched for the minutes the clone runs, so N
+  // starts in a row all pass the same gate against the same credits and all
+  // charge on completion. Keeping the reservation open is what makes the
+  // second start see the first one's spend. Nothing double-counts: the
+  // status poll SETTLES this exact hold (voiceCloneOwners.ts carries its
+  // id) instead of posting an independent debit.
+  //
+  // The window is bounded by holdSweep's HOLD_TTL_MS (2h). MiniMax voice
+  // cloning takes minutes, so a real clone settles long before the sweep;
+  // a hold still open at the TTL means the job or this process died, which
+  // is precisely the case the sweep exists for.
   const ticket = await preflightMeter(CLONE_MODEL)
 
   const input: Record<string, any> = {
@@ -73,19 +78,27 @@ export default defineEventHandler(async (event) => {
 
     const pred = await res.json() as { id: string; status: string }
 
-    // Bind this prediction to the user who paid the preflight, so
-    // status.get.ts's debit-on-success settle can verify the poller is the
-    // owner before charging anyone (see voiceCloneOwners.ts's module doc).
-    if (deployMode() === 'hosted') {
-      const userId = currentMeterContext()?.userId
-      if (userId) recordVoiceCloneOwner(pred.id, userId)
+    // Bind this prediction to the user who paid the preflight AND to the
+    // hold now reserving their credits, so status.get.ts can verify the
+    // poller is the owner before charging anyone and can settle this exact
+    // reservation (see voiceCloneOwners.ts's module doc).
+    const userId = currentMeterContext()?.userId
+    if (deployMode() === 'hosted' && userId) {
+      recordVoiceCloneOwner(pred.id, userId, ticket ? { holdId: ticket.holdId, credits: ticket.credits } : undefined)
+    } else if (ticket) {
+      // Unreachable in practice — preflightMeter refuses a hosted request
+      // with no bound user before any ticket exists. If it ever happens,
+      // nobody could settle this hold, so hand it back now rather than
+      // leaving it to the sweep.
+      console.error('[meter] voice-clone: no owner to bind the hold to — releasing', { predictionId: pred.id })
+      await ticket.release()
     }
 
     return { id: pred.id, status: pred.status }
-  } finally {
-    // Success or failure, the gate has done its job — hand the reservation
-    // back rather than holding it across an async clone this request will
-    // never see the end of.
+  } catch (e) {
+    // The prediction never started, so nothing will ever settle this hold —
+    // give the reservation back instead of locking it until the sweep's TTL.
     await ticket?.release()
+    throw e
   }
 })

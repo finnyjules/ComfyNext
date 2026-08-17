@@ -349,7 +349,105 @@ describe('runFal + meter', () => {
  * released locks the user's credits until holdSweep's 2h TTL. So every
  * server file that takes a ticket must also show a release path. A file
  * that deliberately has none carries a `HOLD-EXEMPT:` marker explaining why.
+ *
+ * Review finding 2: the first cut of this guard was `src.includes('.release()')`
+ * — which a COMMENTED-OUT release satisfies. Demonstrated empirically:
+ * commenting out replicate.ts's `await ticket?.release()` left all 11 guard
+ * cases green while five behavioral cases failed, i.e. the guard contributed
+ * nothing the behavior tests weren't already catching. It is now structural:
+ * comments are stripped first (a string-aware stripper, so `https://` in a
+ * URL isn't mistaken for a line comment), and the release has to actually sit
+ * on a failure path — inside a `catch`/`finally` block, or immediately before
+ * a non-success `return` (krea/rewrite.post.ts's early exit is the one such
+ * case in the tree).
  */
+
+/**
+ * Blank out everything that isn't executable code: comment bodies and the
+ * insides of string / template literals. String state is tracked, so a `//`
+ * inside `'https://api.replicate.com'` never starts a comment — a naive
+ * line-comment strip would swallow the rest of that line, including a real
+ * release call. Removed text is replaced with spaces (newlines kept), so
+ * every surviving character keeps its original index and the brace matching
+ * below stays valid.
+ */
+export function stripNonCode(src: string): string {
+  const out: string[] = []
+  let i = 0
+  const blank = (s: string): string => s.replace(/[^\n]/g, ' ')
+  while (i < src.length) {
+    const c = src[i]
+    const next = src[i + 1]
+    if (c === '/' && next === '/') {
+      const end = src.indexOf('\n', i)
+      const stop = end === -1 ? src.length : end
+      out.push(blank(src.slice(i, stop)))
+      i = stop
+    } else if (c === '/' && next === '*') {
+      const end = src.indexOf('*/', i + 2)
+      const stop = end === -1 ? src.length : end + 2
+      out.push(blank(src.slice(i, stop)))
+      i = stop
+    } else if (c === '\'' || c === '"' || c === '`') {
+      const quote = c
+      let j = i + 1
+      while (j < src.length) {
+        if (src[j] === '\\') { j += 2; continue }
+        if (src[j] === quote) { j++; break }
+        if (quote !== '`' && src[j] === '\n') break // unterminated: bail
+        j++
+      }
+      // Keep the quotes, blank the contents: '.release()' written inside a
+      // string is prose, not a release.
+      out.push(c + blank(src.slice(i + 1, Math.max(i + 1, j - 1))) + (j > i + 1 ? src[j - 1] : ''))
+      i = j
+    } else {
+      out.push(c)
+      i++
+    }
+  }
+  return out.join('')
+}
+
+/** Index ranges of every `catch (...) { … }` / `finally { … }` block body. */
+function failurePathRanges(src: string): Array<[number, number]> {
+  const ranges: Array<[number, number]> = []
+  const re = /\b(catch\s*(\([^)]*\)\s*)?|finally\s*)\{/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(src)) !== null) {
+    const open = m.index + m[0].length - 1
+    let depth = 0
+    for (let i = open; i < src.length; i++) {
+      if (src[i] === '{') depth++
+      else if (src[i] === '}') {
+        depth--
+        if (depth === 0) { ranges.push([open, i]); break }
+      }
+    }
+  }
+  return ranges
+}
+
+/**
+ * A release counts as wired when it sits inside a catch/finally body, or
+ * when the very next statement is a `return` (the non-throwing early exit
+ * shape). Anything else — a release on the happy path, or one that only
+ * exists in a comment — does not.
+ */
+export function releaseIsOnAFailurePath(rawSrc: string): boolean {
+  const src = stripNonCode(rawSrc)
+  const ranges = failurePathRanges(src)
+  const re = /\.release\(\)/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(src)) !== null) {
+    const at = m.index
+    if (ranges.some(([open, close]) => at > open && at < close)) return true
+    const after = src.slice(at + m[0].length, at + m[0].length + 200)
+    if (/^[\s;]*return\b/.test(after)) return true
+  }
+  return false
+}
+
 describe('every preflight call site has a release path', () => {
   const serverRoot = fileURLToPath(new URL('../../server', import.meta.url))
 
@@ -364,7 +462,7 @@ describe('every preflight call site has a release path', () => {
 
   const callers = walk(serverRoot).filter((file) => {
     if (file.endsWith('requestMeter.ts')) return false // defines the ticket
-    const src = readFileSync(file, 'utf8')
+    const src = stripNonCode(readFileSync(file, 'utf8'))
     return /\bpreflightMeter(For)?\s*\(/.test(src)
   })
 
@@ -374,14 +472,74 @@ describe('every preflight call site has a release path', () => {
 
   for (const file of callers) {
     const rel = relative(serverRoot, file)
-    it(`${rel} releases its hold on failure (or is HOLD-EXEMPT)`, () => {
-      const src = readFileSync(file, 'utf8')
-      const covered = src.includes('.release()') || src.includes('HOLD-EXEMPT:')
+    it(`${rel} releases its hold on a failure path (or is HOLD-EXEMPT)`, () => {
+      const raw = readFileSync(file, 'utf8')
+      const src = stripNonCode(raw)
+      if (raw.includes('HOLD-EXEMPT:')) return
+
       expect(
-        covered,
-        `${rel} takes a meter ticket but never calls ticket.release() — a failed job ` +
-        'there leaks a ledger hold until holdSweep\'s TTL.',
+        /\.release\(\)/.test(src),
+        `${rel} takes a meter ticket but never calls ticket.release() in live code — a ` +
+        'failed job there leaks a ledger hold until holdSweep\'s TTL. (Commented-out ' +
+        'releases do not count: comments are stripped before this check.)',
+      ).toBe(true)
+
+      expect(
+        /\bcatch\b/.test(src) || /\bfinally\b/.test(src),
+        `${rel} calls .release() but has no catch/finally — nothing runs it on a failure path.`,
+      ).toBe(true)
+
+      expect(
+        releaseIsOnAFailurePath(raw),
+        `${rel} calls .release(), but not from inside a catch/finally block and not ` +
+        'immediately before a non-success return — so a thrown provider error would ' +
+        'still leak the hold.',
       ).toBe(true)
     })
   }
+})
+
+describe('the release guard itself (it must reject the shapes it exists to catch)', () => {
+  it('a // inside a string literal does not start a comment (the URL trap)', () => {
+    const stripped = stripNonCode('const u = "https://api.replicate.com/v1"\nawait t.release()\n')
+    expect(stripped).toContain('release()') // the real call survived
+  })
+
+  it('blanks line and block comment bodies, including ones that mention release()', () => {
+    expect(stripNonCode('x() // await ticket.release()')).not.toContain('release()')
+    expect(stripNonCode('/* await ticket.release() */ const a = 1')).not.toContain('release()')
+    expect(stripNonCode('/* c */ const a = 1')).toContain('const a = 1')
+  })
+
+  it('keeps character indexes stable (brace matching depends on it)', () => {
+    const src = 'try { x() } // c\ncatch (e) { await t.release() }'
+    expect(stripNonCode(src).length).toBe(src.length)
+  })
+
+  it('a COMMENTED-OUT release fails the guard (the exact defect finding 2 reported)', () => {
+    const src = 'const t = await preflightMeter(m)\ntry { go() } catch (e) {\n  // await t.release()\n  throw e\n}'
+    expect(src.includes('.release()')).toBe(true) // the old substring guard passed this
+    expect(releaseIsOnAFailurePath(src)).toBe(false)
+  })
+
+  it('a release on the HAPPY path only fails the guard', () => {
+    const src = 'const t = await preflightMeter(m)\nconst out = await go()\nawait t.release()\nsomethingElse()\ntry { x() } catch (e) { throw e }'
+    expect(releaseIsOnAFailurePath(src)).toBe(false)
+  })
+
+  it('a release inside catch passes', () => {
+    expect(releaseIsOnAFailurePath('try { go() } catch (e) { await ticket?.release(); throw e }')).toBe(true)
+  })
+
+  it('a release inside finally passes', () => {
+    expect(releaseIsOnAFailurePath('try { go() } finally { await ticket?.release() }')).toBe(true)
+  })
+
+  it('a release immediately before a non-success return passes (krea/rewrite\'s early exit)', () => {
+    expect(releaseIsOnAFailurePath('if (pred.status !== \'succeeded\') {\n  await ticket?.release()\n  return { name: null }\n}')).toBe(true)
+  })
+
+  it('a release mentioned only inside a string literal does not count', () => {
+    expect(releaseIsOnAFailurePath('const s = "call .release() on failure"\ntry { x() } catch (e) { throw e }')).toBe(false)
+  })
 })

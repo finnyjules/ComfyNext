@@ -255,6 +255,48 @@ describe('preflightMeter', () => {
     expect(fakeLedger.debit).not.toHaveBeenCalled()
   })
 
+  it('(e2) hosted, the hold THROWS (no wallet row for this user): refuses 402, never a raw 500', async () => {
+    // Review finding 3: ledger.hold throws a plain Error ("no wallet for
+    // <id> — call ensureUser first") for a user with no wallet row. A
+    // non-h3 error is stripped by Nitro's prod handler to a generic 500, so
+    // the user saw "Server Error" instead of "you have no credits". A user
+    // with no wallet has zero credits — that is a refusal, not a fault.
+    setHosted()
+    bindMeterContext({ userId: 'u_no_wallet' })
+    const priced = 'black-forest-labs/flux-dev'
+    const required = MODEL_COSTS[priced].credits
+    fakeLedger.hold.mockRejectedValue(new Error('ledger.hold: no wallet for u_no_wallet — call ensureUser first'))
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    try {
+      const err = await preflightMeter(priced).then(() => null, e => e)
+      expect(err).toBeInstanceOf(MeterRefusalError)
+      expect(err.statusCode).toBe(402)
+      expect(err.message).toBe('insufficient credits')
+      expect(err.data).toEqual({ required, available: 0 })
+      expect(spy).toHaveBeenCalledWith(
+        expect.stringContaining('[meter] HOLD FAILED'),
+        expect.anything(),
+      )
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('(e3) a thrown hold does not fall through to getAvailable (that would throw too)', async () => {
+    setHosted()
+    bindMeterContext({ userId: 'u_no_wallet' })
+    fakeLedger.hold.mockRejectedValue(new Error('ledger.hold: no wallet for u_no_wallet'))
+    fakeLedger.getAvailable.mockRejectedValue(new Error('no wallet for u_no_wallet'))
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    try {
+      await expect(preflightMeter('black-forest-labs/flux-dev')).rejects.toMatchObject({ statusCode: 402 })
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
   it('(f) hint overrides an unpriced slug so preflight succeeds', async () => {
     setHosted()
     bindMeterContext({ userId: 'u1' })
