@@ -12,7 +12,7 @@ export type { ParamValue, Params } from '~~/shared/spacetype/state'
 type ControlMeta = {
   hint?: string
   aiEditable?: boolean
-  showIf?: { key: string; equals?: ParamValue; notEquals?: ParamValue }
+  showIf?: { key: string; equals?: ParamValue; notEquals?: ParamValue; in?: ParamValue[]; notIn?: ParamValue[] }
   /**
    * Set false to declare a control in the schema while withholding it from the
    * agent's vocabulary. Used for controls the agent has never been offered, so

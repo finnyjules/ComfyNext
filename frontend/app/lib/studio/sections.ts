@@ -18,6 +18,8 @@ export function showIfVisible(c: ControlSpec, read: (key: string) => ParamValue 
   const v = read(c.showIf.key)
   if (c.showIf.equals !== undefined) return v === c.showIf.equals
   if (c.showIf.notEquals !== undefined) return v !== c.showIf.notEquals
+  if (c.showIf.in !== undefined) return c.showIf.in.includes(v as ParamValue)
+  if (c.showIf.notIn !== undefined) return !c.showIf.notIn.includes(v as ParamValue)
   return true
 }
 
