@@ -90,4 +90,25 @@ describe('applyTornEdgeToData', () => {
     applyTornEdgeToData(d, W, H, spec, 1)
     expect(d.every(v => v === 0)).toBe(true)
   })
+
+  it('shredded high-roughness tear erodes beyond `amount` px (band not clipped)', () => {
+    const W2 = 160, H2 = 160, PAD2 = 40, amt = 16
+    const d = squareBuffer(W2, H2, PAD2)
+    // seed=118 found by sweeping seeds 1..3000: at this seed the noise pushes
+    // depthMul() high enough in the interior of the top edge (away from the
+    // left/right corners, whose own proximity would erode this row band
+    // regardless of the bug) to erode past the old, too-tight band.
+    applyTornEdgeToData(d, W2, H2,
+      { ...DEFAULT_TORN_EDGE, style: 'shredded', roughness: 1, amount: amt, grain: 0, grainTexture: 0, lipWidth: 0, lipVariation: 0, seed: 118 }, 1)
+    // rows just past `amount` from the top edge: distance-from-edge ≈ (y - PAD2).
+    // Stay clear of the left/right corners (>=30px in) so the count isolates
+    // the top-edge band bound rather than corner-proximity erosion.
+    let deepErased = 0
+    for (let y = PAD2 + amt + 3; y < PAD2 + Math.round(amt * 1.6); y++) {
+      for (let x = PAD2 + 30; x < W2 - PAD2 - 30; x++) if (alphaAt(d, W2, x, y) === 0) deepErased++
+    }
+    expect(deepErased).toBeGreaterThan(0)
+    // deep interior still solid
+    expect(alphaAt(d, W2, 80, 80)).toBe(255)
+  })
 })

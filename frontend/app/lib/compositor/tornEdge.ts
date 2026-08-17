@@ -147,7 +147,10 @@ export function applyTornEdgeToData(
   const rough = Math.max(0, Math.min(1, spec.roughness))
   const tex = Math.max(0, Math.min(1, spec.grainTexture))
   const maxLipDev = lipDev * (1 + lipVar * 1.4)
-  const band = amountDev + maxLipDev + grainDev + 2
+  // Max depth multiplier depthMul() can return, per style — the band must reserve
+  // for it or the interior early-continue clips deep tears (shredded reaches ~1.75).
+  const maxDepthMul = spec.style === 'shredded' ? (0.15 + 0.7 + 0.9 * rough) : 1.0
+  const band = amountDev * maxDepthMul + maxLipDev + grainDev + 2
 
   const x0 = Math.max(0, Math.floor(minx - band)), y0 = Math.max(0, Math.floor(miny - band))
   const x1 = Math.min(W - 1, Math.ceil(maxx + band)), y1 = Math.min(H - 1, Math.ceil(maxy + band))
@@ -175,13 +178,13 @@ export function applyTornEdgeToData(
   }
   const grainField = (x: number, y: number): number => {
     const clump = value2(x * 0.35 / s, y * 0.35 / s)
-    const fine = 0.5 * value2(x * 0.9 / s, y * 0.9 / s) + 0.5 * fineHash(x, y)
+    const fine = 0.5 * value2(x * 0.9 / s, y * 0.9 / s) + 0.5 * fineHash(x / s, y / s)
     return clump * 0.55 + fine * 0.45
   }
   const paperTex = (x: number, y: number): number =>
     0.6 * value2(x * 0.12 / s + 7, y * 0.12 / s + 7)
     + 0.25 * value2(x * 0.5 / s + 3, y * 0.5 / s + 3)
-    + 0.15 * fineHash(x + 11, y + 11)
+    + 0.15 * fineHash(x / s + 11, y / s + 11)
 
   const bw = grainDev > 0 ? grainDev : 0.0001
 
