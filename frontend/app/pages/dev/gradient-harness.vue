@@ -309,6 +309,8 @@ function sailorMultiLayerProbe(opts: { layout: string; size?: number; l0: any; l
   const base: any = cfg.layers[0]
   const applyLayer = (L: any, o: any) => {
     if (o.stops) L.color.stops = o.stops
+    if (o.enabled === false) L.enabled = false
+    if (o.hueRotate != null) L.color.hueRotate = o.hueRotate
     if (o.layout) L.layout = o.layout   // per-layer layout override
     if (o.curve) L.curve = { ...CURVE_DEFAULTS, start: { ...CURVE_DEFAULTS.start }, end: { ...CURVE_DEFAULTS.end }, ...o.curve }
     if (o.ramp) L.ramp = { ...(L.ramp ?? {}), ...o.ramp }
@@ -326,6 +328,31 @@ function sailorMultiLayerProbe(opts: { layout: string; size?: number; l0: any; l
   const bottomOnly = gradientStats(renderer.render(ensureConfigDefaults(c0), size, size, 0), size, size)
   const twoEqualsTop = Math.abs(twoLayer.mean - gradientStats(renderer.render(ensureConfigDefaults(c1), size, size, 0), size, size).mean) < 1
   return { twoLayer_mean: Math.round(twoLayer.mean), bottomOnly_mean: Math.round(bottomOnly.mean), twoLayerEqualsTopOnly: twoEqualsTop }
+}
+
+// Hue-leak probe: does layer 0 pick up a per-layer color transform (hueRotate) from
+// layer 1 when there are multiple layers? Returns the center-pixel RGB so we can SEE green.
+function sailorHueLeakProbe() {
+  const S = 64
+  const bw = [{ color: '#0a1b3a', pos: 0 }, { color: '#3355dd', pos: 0.5 }, { color: '#eaf0ff', pos: 1 }]
+  const mk = (build: (c: GradientConfig) => void) => {
+    const c = ensureConfigDefaults(defaultConfig(HARNESS_SEED) as GradientConfig)
+    c.canvas.layout = 'linear' as any
+    build(c)
+    const out = renderer.render(ensureConfigDefaults(c), S, S, 0)
+    const cv = document.createElement('canvas'); cv.width = S; cv.height = S
+    cv.getContext('2d')!.drawImage(out as CanvasImageSource, 0, 0)
+    const d = cv.getContext('2d')!.getImageData(S / 2, S / 2, 1, 1).data
+    return { r: d[0], g: d[1], b: d[2], isGreen: d[1]! > d[0]! + 20 && d[1]! > d[2]! + 20 }
+  }
+  const one_h0 = mk(c => { (c.layers[0] as any).color.stops = bw; (c.layers[0] as any).color.hueRotate = 0 })
+  const one_h260 = mk(c => { (c.layers[0] as any).color.stops = bw; (c.layers[0] as any).color.hueRotate = 260 })
+  const two_l0h0_l1h260hidden = mk(c => {
+    const L0: any = c.layers[0]; L0.color.stops = bw; L0.color.hueRotate = 0
+    const L1: any = JSON.parse(JSON.stringify(L0)); L1.color.hueRotate = 260; L1.enabled = false
+    c.layers = [L0, L1]
+  })
+  return { one_h0, one_h260, two_l0h0_l1h260hidden }
 }
 
 // Visual grid: render the three new layouts + the three authored presets to
@@ -402,6 +429,7 @@ if (import.meta.client) {
   }
   ;(window as any).__sailorVisualGrid = sailorVisualGrid
   ;(window as any).__sailorMultiLayerProbe = sailorMultiLayerProbe
+  ;(window as any).__sailorHueLeakProbe = sailorHueLeakProbe
   ;(window as any).__sailorPerLayerDemo = () => {
     const S = 220
     // Base blue LINEAR ramp (layer 0) + an orange→transparent layer 1 whose LAYOUT varies.
