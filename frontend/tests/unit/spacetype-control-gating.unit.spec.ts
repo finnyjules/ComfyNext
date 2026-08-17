@@ -95,6 +95,30 @@ describe('boost: mode-specific controls gated', () => {
     }
   })
 
+  // pickStyle() lets `mixed` (random per letter) and `custom` (per-letter list, default
+  // 'rainbow, grid, noise, solid') select solid/grid/noise letters, so their colour controls
+  // must stay visible in those two modes too — not just their own single-style mode.
+  it('sideMode: sideColor/gridCell/gridLine/noiseColor1/noiseColor2 also visible in mixed and custom (pickStyle can select solid/grid/noise there)', () => {
+    for (const key of ['sideColor', 'gridCell', 'gridLine', 'noiseColor1', 'noiseColor2']) {
+      const c = byKey(key)
+      expect(showIfVisible(c, readWith('sideMode', 'mixed'))).toBe(true)
+      expect(showIfVisible(c, readWith('sideMode', 'custom'))).toBe(true)
+    }
+  })
+
+  it('sideMode: sideColor/gridCell/gridLine/noiseColor1/noiseColor2 still visible in their own base mode and still hidden for unrelated single modes', () => {
+    expect(showIfVisible(byKey('sideColor'), readWith('sideMode', 'solid'))).toBe(true)
+    expect(showIfVisible(byKey('sideColor'), readWith('sideMode', 'noise'))).toBe(false)
+    for (const key of ['gridCell', 'gridLine']) {
+      expect(showIfVisible(byKey(key), readWith('sideMode', 'grid'))).toBe(true)
+      expect(showIfVisible(byKey(key), readWith('sideMode', 'solid'))).toBe(false)
+    }
+    for (const key of ['noiseColor1', 'noiseColor2']) {
+      expect(showIfVisible(byKey(key), readWith('sideMode', 'noise'))).toBe(true)
+      expect(showIfVisible(byKey(key), readWith('sideMode', 'grid'))).toBe(false)
+    }
+  })
+
   it('sideMode: letterStyles only in custom mode', () => {
     const c = byKey('letterStyles')
     expect(showIfVisible(c, readWith('sideMode', 'custom'))).toBe(true)

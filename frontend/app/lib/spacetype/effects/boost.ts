@@ -164,12 +164,12 @@ const controls: ControlSpec[] = [
   // Tokens are separated by spaces/commas, e.g. "rainbow grid noise solid".
   { key: 'letterStyles', label: 'Per-letter styles', kind: 'text', default: 'rainbow, grid, noise, solid', group: 'Color', showIf: { key: 'sideMode', equals: 'custom' } },
   { key: 'depthBands', label: 'Side bands', kind: 'slider', min: 2, max: 16, step: 1, default: 8, group: 'Color', hint: 'higher = more color bands along the extrusion depth; lower = fewer bands' },
-  { key: 'sideColor', label: 'Side (solid)', kind: 'color', default: '#f26666', group: 'Color', hint: 'color of the sides in solid mode', showIf: { key: 'sideMode', equals: 'solid' } },
+  { key: 'sideColor', label: 'Side (solid)', kind: 'color', default: '#f26666', group: 'Color', hint: 'color of the sides in solid mode', showIf: { key: 'sideMode', in: ['solid', 'mixed', 'custom'] } },
   // Grid style: cell fill + line colour. Noise style: the two ends the grain lerps between.
-  { key: 'gridCell', label: 'Grid cell', kind: 'color', default: '#ffffff', group: 'Color', hint: 'cell fill color of the grid pattern on sides', showIf: { key: 'sideMode', equals: 'grid' } },
-  { key: 'gridLine', label: 'Grid line', kind: 'color', default: '#111111', group: 'Color', hint: 'line color of the grid pattern on sides', showIf: { key: 'sideMode', equals: 'grid' } },
-  { key: 'noiseColor1', label: 'Noise dark', kind: 'color', default: '#000000', group: 'Color', hint: 'dark end of the noise grain on sides', showIf: { key: 'sideMode', equals: 'noise' } },
-  { key: 'noiseColor2', label: 'Noise light', kind: 'color', default: '#ffffff', group: 'Color', hint: 'light end of the noise grain on sides', showIf: { key: 'sideMode', equals: 'noise' } },
+  { key: 'gridCell', label: 'Grid cell', kind: 'color', default: '#ffffff', group: 'Color', hint: 'cell fill color of the grid pattern on sides', showIf: { key: 'sideMode', in: ['grid', 'mixed', 'custom'] } },
+  { key: 'gridLine', label: 'Grid line', kind: 'color', default: '#111111', group: 'Color', hint: 'line color of the grid pattern on sides', showIf: { key: 'sideMode', in: ['grid', 'mixed', 'custom'] } },
+  { key: 'noiseColor1', label: 'Noise dark', kind: 'color', default: '#000000', group: 'Color', hint: 'dark end of the noise grain on sides', showIf: { key: 'sideMode', in: ['noise', 'mixed', 'custom'] } },
+  { key: 'noiseColor2', label: 'Noise light', kind: 'color', default: '#ffffff', group: 'Color', hint: 'light end of the noise grain on sides', showIf: { key: 'sideMode', in: ['noise', 'mixed', 'custom'] } },
   // resolveSide() never indexes palette[2..5] for `ombre` (only palette[0]/[1] feed its dither
   // texture), so paletteCount — which only matters for choosing among the FULL 1–6 set — stays
   // out of 'ombre' along with boostColor3..6 below.
