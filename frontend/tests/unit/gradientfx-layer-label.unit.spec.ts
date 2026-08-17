@@ -1,73 +1,70 @@
 import { describe, it, expect } from 'vitest'
 import { layerLabels } from '../../app/lib/gradientfx/layerLabel'
 import { defaultConfig } from '../../app/lib/gradientfx/randomize'
-import { ensureConfigDefaults } from '../../app/lib/gradientfx/types'
+import { ensureConfigDefaults, type LayoutKind } from '../../app/lib/gradientfx/types'
 
 const cfg = (): any => ensureConfigDefaults(defaultConfig() as any)
 
-/** Build a config with `n` layers whose shape types are given. */
-function withShapes(...types: string[]): any {
+/** Build a config with `n` layers whose per-layer effective layouts are given.
+ *  A layout matching canvas.layout is left as an inherit (no `layout` field);
+ *  a different one is set as a per-layer override. */
+function withLayouts(canvasLayout: LayoutKind, ...perLayer: LayoutKind[]): any {
   const c = cfg()
+  c.canvas.layout = canvasLayout
   const proto = c.layers[0]
-  c.layers = types.map((t) => {
+  c.layers = perLayer.map((lo) => {
     const l = JSON.parse(JSON.stringify(proto))
-    l.shape.type = t
+    if (lo !== canvasLayout) l.layout = lo
+    else delete l.layout
     return l
   })
   return c
 }
 
-describe('layerLabels', () => {
-  it('names a layer after its shape kind, not its position', () => {
-    expect(layerLabels(withShapes('wave'))).toEqual(['Wave'])
-    expect(layerLabels(withShapes('bands'))).toEqual(['Bands'])
-    expect(layerLabels(withShapes('noise'))).toEqual(['Noise'])
-    expect(layerLabels(withShapes('pyramid'))).toEqual(['Pyramid'])
+describe('layerLabels — named by layout type', () => {
+  it('names a layer after its gradient layout, not its shape or position', () => {
+    expect(layerLabels(withLayouts('ramp', 'ramp'))).toEqual(['Linear'])
+    expect(layerLabels(withLayouts('radialRamp', 'radialRamp'))).toEqual(['Radial'])
+    expect(layerLabels(withLayouts('conic', 'conic'))).toEqual(['Conic'])
+    expect(layerLabels(withLayouts('curve', 'curve'))).toEqual(['Curve'])
+    expect(layerLabels(withLayouts('linear', 'linear'))).toEqual(['Linear stripes'])
   })
 
-  it('gives distinct shapes distinct names', () => {
-    expect(layerLabels(withShapes('wave', 'bands'))).toEqual(['Wave', 'Bands'])
+  it('reflects a per-layer layout override', () => {
+    // canvas is ramp (Linear); layer 1 overrides to radialRamp (Radial)
+    expect(layerLabels(withLayouts('ramp', 'ramp', 'radialRamp'))).toEqual(['Linear', 'Radial'])
+  })
+
+  it('gives distinct layouts distinct names', () => {
+    expect(layerLabels(withLayouts('ramp', 'ramp', 'curve', 'conic'))).toEqual(['Linear', 'Curve', 'Conic'])
   })
 
   it('disambiguates repeats with an ordinal so labels stay unique', () => {
-    // Uniqueness matters: animatableTargets builds motion-dropdown labels from
-    // these, and a duplicate would make two different targets indistinguishable.
-    expect(layerLabels(withShapes('wave', 'wave', 'wave'))).toEqual(['Wave', 'Wave 2', 'Wave 3'])
+    // animatableTargets builds motion-dropdown labels from these — duplicates would
+    // make two different targets indistinguishable.
+    expect(layerLabels(withLayouts('curve', 'curve', 'curve', 'curve'))).toEqual(['Curve', 'Curve 2', 'Curve 3'])
   })
 
-  it('numbers only the kind that repeats', () => {
-    expect(layerLabels(withShapes('wave', 'bands', 'wave'))).toEqual(['Wave', 'Bands', 'Wave 2'])
+  it('numbers only the layout that repeats', () => {
+    expect(layerLabels(withLayouts('ramp', 'ramp', 'radialRamp', 'ramp'))).toEqual(['Linear', 'Radial', 'Linear 2'])
   })
 
-  it('names every layer Liquid in the liquid layout, since shape does not apply', () => {
-    const c = withShapes('wave', 'bands')
-    c.canvas.layout = 'liquid'
-    expect(layerLabels(c)).toEqual(['Liquid', 'Liquid 2'])
+  it('labels liquid and mesh layouts by name', () => {
+    expect(layerLabels(withLayouts('liquid', 'liquid'))).toEqual(['Liquid'])
+    expect(layerLabels(withLayouts('mesh', 'mesh'))).toEqual(['Mesh'])
   })
 
-  it('names layer 0 Mesh in the mesh layout and leaves the rest on their shape', () => {
-    const c = withShapes('wave', 'bands')
-    c.canvas.layout = 'mesh'
-    expect(layerLabels(c)).toEqual(['Mesh', 'Bands'])
-  })
-
-  it('follows the layer when the stack is reordered, unlike a positional name', () => {
-    const c = withShapes('wave', 'noise')
-    expect(layerLabels(c)).toEqual(['Wave', 'Noise'])
+  it('follows the layer when the stack is reordered', () => {
+    const c = withLayouts('ramp', 'ramp', 'curve')
+    expect(layerLabels(c)).toEqual(['Linear', 'Curve'])
     c.layers.reverse()
-    expect(layerLabels(c)).toEqual(['Noise', 'Wave'])
+    expect(layerLabels(c)).toEqual(['Curve', 'Linear'])
   })
 
   it('always returns one label per layer', () => {
     for (const n of [1, 2, 6]) {
-      const c = withShapes(...Array(n).fill('bands'))
+      const c = withLayouts('ramp', ...Array(n).fill('ramp'))
       expect(layerLabels(c)).toHaveLength(n)
     }
-  })
-
-  it('falls back to a positional name when the shape kind is unrecognised', () => {
-    const c = withShapes('wave')
-    delete c.layers[0].shape.type
-    expect(layerLabels(c)).toEqual(['Layer 1'])
   })
 })

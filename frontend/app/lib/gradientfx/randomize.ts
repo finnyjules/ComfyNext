@@ -93,8 +93,12 @@ function randColor(rng: Rng): ColorConfig {
     gradientDir: rng.pick(['vertical', 'vertical', 'horizontal'] as const),
     mapping,
     steps: rng.chance(0.3) ? rng.int(3, 16) : 0,
-    hueDrift: rng.chance(0.35) ? rng.range(-90, 90) : 0,
-    hueRotate: rng.chance(0.3) ? rng.range(0, 360) : 0,
+    // Hue shifts are NOT randomized: the colour-stop swatches show the raw hex and
+    // never apply hueRotate/hueDrift, so a randomized hue made the picker disagree
+    // with the render (blue stops → green output). Kept at 0 so what you pick is what
+    // you see; the user can still set a hue shift by hand.
+    hueDrift: 0,
+    hueRotate: 0,
   }
 }
 

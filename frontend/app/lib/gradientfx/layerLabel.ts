@@ -1,8 +1,13 @@
-import { effectiveLayout, type GradientConfig } from './types'
+import { effectiveLayout, LAYOUT_LABELS, type GradientConfig } from './types'
 
 /**
  * Human names for a gradient's layers, derived from what each layer actually IS
  * rather than where it sits in the stack.
+ *
+ * A layer is named by its GRADIENT LAYOUT (Linear / Radial / Conic / Curve /
+ * Linear stripes / …) — the primary identity now that each layer can be its own
+ * layout type. (Previously named by shape variant, which only made sense when the
+ * whole gradient shared one layout.)
  *
  * Positional names ("Layer 1", "Layer 2") renumber on every reorder, which is
  * confusing on its own and actively misleading now that motion tracks reference
@@ -14,22 +19,9 @@ import { effectiveLayout, type GradientConfig } from './types'
  * labels would make two different targets indistinguishable.
  */
 
-const SHAPE_NAMES: Record<string, string> = {
-  bands: 'Bands',
-  wave: 'Wave',
-  noise: 'Noise',
-  pyramid: 'Pyramid',
-}
-
-/** The kind of a single layer, before de-duplication. */
+/** The kind of a single layer, before de-duplication: its effective layout's label. */
 function layerKind(cfg: GradientConfig, i: number): string | null {
-  // Per-layer aware: a layer's kind follows its own effective layout, not the canvas.
-  const eff = effectiveLayout(cfg, i)
-  // Liquid renders one continuous surface — shape params don't apply to it at all.
-  if (eff === 'liquid') return 'Liquid'
-  // Mesh only ever lives on layer 0; the rest of the stack is still shape-based.
-  if (eff === 'mesh' && i === 0) return 'Mesh'
-  return SHAPE_NAMES[cfg.layers?.[i]?.shape?.type as string] ?? null
+  return LAYOUT_LABELS[effectiveLayout(cfg, i)] ?? null
 }
 
 /**
