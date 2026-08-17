@@ -66,6 +66,33 @@ function hexClipD(r: number): string {
   return d + ' Z'
 }
 
+/** Split one exact-depth band into connected FACES, each an outer contour with its
+ *  holes re-attached (a hole is a deeper region subtracted out — it belongs to the
+ *  deeper piece, so it must stay a hole here or the pieces stop being disjoint).
+ *  A child is a hole iff its interior point sits inside an ODD number of sibling
+ *  contours (crossings are one level deep; nested holes-in-holes are out of scope). */
+function splitFaces(sc: paper.PaperScope, band: paper.PathItem): paper.PathItem[] {
+  const anyBand = band as any
+  if (band.className !== 'CompoundPath' || !anyBand.children || anyBand.children.length <= 1) return [band]
+  const kids: paper.Path[] = anyBand.children.slice()
+  const pt = (k: any): paper.Point => (k.interiorPoint ?? k.bounds.center)
+  const isHole = (i: number) => {
+    let inside = 0
+    for (let j = 0; j < kids.length; j++) { if (j !== i && (kids[j] as any).contains(pt(kids[i]))) inside++ }
+    return inside % 2 === 1
+  }
+  const holeFlags = kids.map((_, i) => isHole(i))
+  const faces: paper.PathItem[] = []
+  kids.forEach((outer, i) => {
+    if (holeFlags[i]) return
+    const face = new sc.CompoundPath({ children: [outer.clone()] })
+    kids.forEach((h, j) => { if (holeFlags[j] && (outer as any).contains(pt(h))) (face as any).addChild(h.clone()) })
+    ;(face as any).fillRule = anyBand.fillRule ?? 'nonzero'
+    faces.push(face as any)
+  })
+  return faces.length ? faces : [band]
+}
+
 /**
  * Fold `placements` clones of `baseD` into the final geologo mark.
  *
@@ -190,13 +217,22 @@ export async function composite(baseD: string, placements: ClonePlacement[], cfg
           atLeast[k - 1] = atLeast[k - 1] ? (atLeast[k - 1] as any).unite(add) : add
         }
       }
-      const overlaps: Piece[] = []
+      // exact-depth bands (depth ≥ 2) from the nested atLeast sets — as today.
+      const depthBands: { path: paper.PathItem; depth: number }[] = []
       for (let d = 2; d <= atLeast.length; d++) {
-        const cur = atLeast[d - 1]
-        if (!nonEmpty(cur)) continue
+        const cur = atLeast[d - 1]; if (!nonEmpty(cur)) continue
         const deeper = atLeast[d]
         const band = nonEmpty(deeper) ? (cur as any).subtract(deeper) : (cur as any)
-        if (nonEmpty(band)) overlaps.push({ path: band as paper.PathItem, cx: (band as any).bounds.center.x, cy: (band as any).bounds.center.y, depth: d })
+        if (nonEmpty(band)) depthBands.push({ path: band as paper.PathItem, depth: d })
+      }
+      // crossings: one Piece per depth band (depth mode) or per connected face (split mode)
+      const overlaps: Piece[] = []
+      for (const { path, depth } of depthBands) {
+        const parts = cfg.crossingMode === 'split' ? splitFaces(sc, path) : [path]
+        for (const p of parts) {
+          if (!nonEmpty(p)) continue
+          overlaps.push({ path: p, cx: (p as any).bounds.center.x, cy: (p as any).bounds.center.y, depth })
+        }
       }
 
       // 3. colouring
@@ -207,14 +243,27 @@ export async function composite(baseD: string, placements: ClonePlacement[], cfg
         ? solo.map(() => 0)
         : rankOrder(solo.map((p, i) => ({ cx: p.cx, cy: p.cy, i })), cfg.fillOrder, bandSize)
       const colored: { path: paper.PathItem; paint: Paint }[] = []
-      solo.forEach((p, i) => colored.push({ path: p.path, paint: fills[soloRanks[i]! % fills.length]! }))
-      // `ov` is only meaningful when overlapSeparate is true; compute it lazily so
-      // the non-separate path (the common case) skips the array-length check.
       const ov = cfg.overlapSeparate ? (cfg.overlapFills.length ? cfg.overlapFills : fills) : null
-      overlaps.forEach((p) => {
-        const paint = cfg.overlapSeparate ? ov![(p.depth - 2) % ov!.length]! : fills[(p.depth - 1) % fills.length]!
-        colored.push({ path: p.path, paint })
-      })
+      const spatial = cfg.fillOrder !== 'depth' && cfg.fillOrder !== 'created'
+      if (cfg.crossingMode === 'split' && !cfg.overlapSeparate && spatial) {
+        // ALL pieces (solo + crossings) flow through `fills` as one ordered sequence.
+        const all = [...solo, ...overlaps]
+        const ranks = rankOrder(all.map((p, i) => ({ cx: p.cx, cy: p.cy, i })), cfg.fillOrder, bandSize)
+        all.forEach((p, i) => colored.push({ path: p.path, paint: fills[ranks[i]! % fills.length]! }))
+      } else {
+        // solo coloured by order (as today)
+        solo.forEach((p, i) => colored.push({ path: p.path, paint: fills[soloRanks[i]! % fills.length]! }))
+        if (cfg.crossingMode === 'split' && cfg.overlapSeparate && spatial) {
+          const ranks = rankOrder(overlaps.map((p, i) => ({ cx: p.cx, cy: p.cy, i })), cfg.fillOrder, bandSize)
+          overlaps.forEach((p, i) => colored.push({ path: p.path, paint: ov![ranks[i]! % ov!.length]! }))
+        } else {
+          // depth-indexed (depth mode, or split with depth/created order)
+          overlaps.forEach((p) => {
+            const paint = cfg.overlapSeparate ? ov![(p.depth - 2) % ov!.length]! : fills[(p.depth - 1) % fills.length]!
+            colored.push({ path: p.path, paint })
+          })
+        }
+      }
 
       // 4. clip mask
       let clipped = colored

@@ -5,6 +5,15 @@ import { commandsToPathData, shapesToSVG } from '~/lib/vector/svg'
 
 // two overlapping squares as the base+placement stand-in
 const SQUARE = 'M -50 -50 L 50 -50 L 50 50 L -50 50 Z'
+// a regular hexagon (radius ~90), for the split-mode ring tests
+const HEX = (() => {
+  let d = ''
+  for (let i = 0; i < 6; i++) {
+    const a = -Math.PI / 2 + (i * Math.PI) / 3
+    d += (i === 0 ? 'M' : 'L') + ` ${90 * Math.cos(a)} ${90 * Math.sin(a)}`
+  }
+  return d + ' Z'
+})()
 const twoOverlap = [
   { x: -20, y: 0, scale: 1, rotate: 0, skew: 0 },
   { x: 20, y: 0, scale: 1, rotate: 0, skew: 0 },
@@ -249,6 +258,43 @@ describe('geoshape boolean composite', () => {
       }
       const unionArea = Math.abs(uni.area)
       // exact partition; allow a hair for boolean rounding
+      expect(sumPieces / unionArea).toBeGreaterThan(0.97)
+      expect(sumPieces / unionArea).toBeLessThan(1.03)
+    } finally {
+      sc.project.clear()
+    }
+  })
+
+  it('crossingMode split makes each crossing its own piece (more pieces, ≥2 hues)', async () => {
+    const count = 7, radius = 150
+    const ring = Array.from({ length: count }, (_, i) => { const a = (i / count) * Math.PI * 2; return { x: Math.cos(a) * radius, y: Math.sin(a) * radius, scale: 1, rotate: 0, skew: 0 } })
+    const base = { ...DEFAULT_CONFIG, shape: 'hexagon' as const, fillStrategy: 'pieces' as const, fills: ['#f00', '#0f0', '#00f'], overlapSeparate: false, fillOrder: 'rows' as const, symmetry: false, clipMask: 'none' as const }
+    const depth = await composite(HEX, ring, { ...base, crossingMode: 'depth' })
+    const split = await composite(HEX, ring, { ...base, crossingMode: 'split' })
+    expect(split.length).toBeGreaterThan(depth.length)
+    // crossings vary in split; in depth all same-depth crossings share one colour
+    const splitPaints = new Set(split.map((s) => s.paint))
+    expect(splitPaints.size).toBeGreaterThanOrEqual(3)
+  })
+
+  it('crossingMode split remains a DISJOINT partition (sum of piece areas ≈ union area)', async () => {
+    const count = 9, radius = 40
+    const placements = Array.from({ length: count }, (_, i) => {
+      const a = (i / count) * Math.PI * 2
+      return { x: Math.cos(a) * radius, y: Math.sin(a) * radius, scale: 1, rotate: (i * 360 / count) * 0.5, skew: 0 }
+    })
+    const shapes = await composite(SQUARE, placements, { ...DEFAULT_CONFIG, fillStrategy: 'pieces', fills: ['#f00', '#0f0', '#00f'], overlapFills: ['#fff', '#0ff', '#f0f'], overlapSeparate: true, fillOrder: 'depth', symmetry: false, clipMask: 'none', crossingMode: 'split' })
+    const sc = await paperScope()
+    try {
+      let sumPieces = 0
+      for (const s of shapes) { const p = new sc.CompoundPath(commandsToPathData(s.commands)); p.fillRule = 'nonzero'; sumPieces += Math.abs(p.area) }
+      let uni: any = null
+      for (const pl of placements) {
+        const p = new sc.CompoundPath(SQUARE); const m = new sc.Matrix()
+        m.translate(pl.x, pl.y); m.rotate(pl.rotate, new sc.Point(0, 0)); m.scale(pl.scale); p.transform(m)
+        uni = uni ? uni.unite(p) : p
+      }
+      const unionArea = Math.abs(uni.area)
       expect(sumPieces / unionArea).toBeGreaterThan(0.97)
       expect(sumPieces / unionArea).toBeLessThan(1.03)
     } finally {
