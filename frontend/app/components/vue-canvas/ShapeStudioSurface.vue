@@ -193,6 +193,18 @@ function fillDrop(i: number) {
 }
 function fillDragEnd() { fillDrag.from = -1; fillDrag.over = -1 }
 
+// ── overlapFills list (pieces mode, overlapSeparate on) — same reassign-whole-
+// array pattern as the fills list above; no drag reorder (kept small: 2-deep,
+// 3-deep, ... rarely needs more than a couple of entries).
+function addOverlapFill() { setGeoControl('overlapFills', [...config.value.overlapFills, '#ffffff']) }
+function removeOverlapFill(i: number) {
+  if (config.value.overlapFills.length <= 1) return
+  setGeoControl('overlapFills', config.value.overlapFills.filter((_, j) => j !== i))
+}
+function updateOverlapFill(i: number, p: Paint) {
+  setGeoControl('overlapFills', config.value.overlapFills.map((x, j) => (j === i ? p : x)))
+}
+
 // ── preview: a plain 2D canvas, event-driven ────────────────────────────────────
 // `renderPreview()` is invoked directly on mount, and again whenever
 // `config`/canvasW/canvasH change — coalesced to animation frames by
@@ -476,7 +488,29 @@ async function exportSvg() {
         </div>
         <button type="button" @click="addFill"
                 class="w-full rounded border border-dashed border-white/15 py-1.5 text-[11px] text-white/50 hover:border-white/30 hover:text-white/80">+ Add fill</button>
-        <p class="text-[10px] leading-relaxed text-white/35">Shapes cycle through these colours.</p>
+        <p class="text-[10px] leading-relaxed text-white/35">Shapes cycle through these colours, in the chosen colour order.</p>
+      </div>
+
+      <!-- Overlap-fills list editor — pieces mode only, when overlapSeparate is on
+           (that switch + fillOrder render generically above via GEO_CONTROLS). Same
+           structure as the fills list but index badges start at 2 (2-deep is the
+           first overlap colour) and no drag reorder — kept small on purpose. -->
+      <div v-if="config.fillStrategy === 'pieces' && config.overlapSeparate" class="mt-3 space-y-2">
+        <p class="text-[10px] font-medium uppercase tracking-wide text-white/40">Overlap colours</p>
+        <div v-for="(f, i) in config.overlapFills" :key="'ov' + i"
+             class="rounded-lg border border-white/[0.07] bg-white/[0.02] p-2.5">
+          <div class="flex items-center gap-1.5">
+            <span class="w-3 shrink-0 text-center text-[10px] tabular-nums text-white/30">{{ i + 2 }}</span>
+            <FillControl class="flex-1" allow-image :show-anchor="false" :model-value="f" @update:model-value="(v: Paint) => updateOverlapFill(i, v)" />
+            <button v-if="config.overlapFills.length > 1" type="button" @click="removeOverlapFill(i)" aria-label="Remove overlap colour"
+                    class="shrink-0 rounded p-1 text-white/30 hover:bg-white/10 hover:text-rose-300">
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></svg>
+            </button>
+          </div>
+        </div>
+        <button type="button" @click="addOverlapFill"
+                class="w-full rounded border border-dashed border-white/15 py-1.5 text-[11px] text-white/50 hover:border-white/30 hover:text-white/80">+ Add overlap colour</button>
+        <p class="text-[10px] leading-relaxed text-white/35">By how many shapes cross — 2-deep, 3-deep, …</p>
       </div>
 
       <!-- Canvas (export dimensions — not part of GeoShapeConfig) -->
