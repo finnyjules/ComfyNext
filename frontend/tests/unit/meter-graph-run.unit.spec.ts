@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { meterGraphSubmit, isPromptPath } from '../../server/utils/meterGraphRun'
+import { meterGraphSubmit, isPromptPath, holdWithRefusal } from '../../server/utils/meterGraphRun'
 import { MeterRefusalError } from '../../server/utils/requestMeter'
 import { UnpricedGraphError } from '../../server/utils/priceBook'
 
@@ -18,8 +18,14 @@ function deps(overrides: Partial<any> = {}) {
 const BODY = { prompt: { '1': { class_type: 'SaveImage', inputs: {} } }, client_id: 'c1' }
 
 describe('meterGraphSubmit', () => {
-  it('refuses without a user (401)', async () => {
-    await expect(meterGraphSubmit(null, BODY, deps())).rejects.toMatchObject({ statusCode: 401 })
+  it('refuses without a user (401), no side effects at all', async () => {
+    const d = deps()
+    await expect(meterGraphSubmit(null, BODY, d)).rejects.toMatchObject({ statusCode: 401 })
+    expect(d.priceGraph).not.toHaveBeenCalled()
+    expect(d.hold).not.toHaveBeenCalled()
+    expect(d.forward).not.toHaveBeenCalled()
+    expect(d.registerRun).not.toHaveBeenCalled()
+    expect(d.startSettle).not.toHaveBeenCalled()
   })
 
   it('rejects a malformed body (no prompt graph)', async () => {
@@ -64,6 +70,74 @@ describe('meterGraphSubmit', () => {
     await meterGraphSubmit('u1', BODY, d)
     expect(d.hold).not.toHaveBeenCalled()
     expect(d.registerRun).toHaveBeenCalledWith({ promptId: 'p1', userId: 'u1', credits: 0, holdId: null })
+  })
+
+  // Finding 2: a thrown forward() (ECONNREFUSED to a wedged pool worker) must
+  // not leave the hold open until the 2h sweep — release it, then propagate
+  // the original error so the caller still sees the real failure.
+  it('forward throwing releases the hold before propagating the error', async () => {
+    const boom = new Error('ECONNREFUSED')
+    const d = deps({ forward: vi.fn(async () => { throw boom }) })
+    await expect(meterGraphSubmit('u1', BODY, d)).rejects.toBe(boom)
+    expect(d.releaseHold).toHaveBeenCalledWith(7)
+  })
+
+  // Minor 4: releaseHold rejecting on the forward-throw path must not mask
+  // the original forward error either.
+  it('forward throwing AND releaseHold rejecting still propagates the original forward error', async () => {
+    const boom = new Error('ECONNREFUSED')
+    const d = deps({
+      forward: vi.fn(async () => { throw boom }),
+      releaseHold: vi.fn(async () => { throw new Error('ledger down') }),
+    })
+    await expect(meterGraphSubmit('u1', BODY, d)).rejects.toBe(boom)
+  })
+
+  // Finding 3: a run that ComfyUI already queued must not ship uncharged just
+  // because the ownership-row insert (Neon transient) failed — settlement
+  // must not depend on registerRun succeeding.
+  it('registerRun throwing still starts settlement and returns the response verbatim', async () => {
+    const d = deps({ registerRun: vi.fn(async () => { throw new Error('Neon transient') }) })
+    const res = await meterGraphSubmit('u1', BODY, d)
+    expect(res).toEqual({ status: 200, body: { prompt_id: 'p1', number: 1, node_errors: {} } })
+    expect(d.startSettle).toHaveBeenCalledWith({ promptId: 'p1', holdId: 7, credits: 5 })
+  })
+
+  // Minor 4: releaseHold rejecting on the 4xx path must not replace ComfyUI's
+  // real 400 {error, node_errors} body with an opaque 500.
+  it('releaseHold rejecting on the 4xx path does not clobber the ComfyUI error response', async () => {
+    const errBody = { error: { message: 'bad' }, node_errors: { '1': {} } }
+    const d = deps({
+      forward: vi.fn(async () => ({ status: 400, body: errBody })),
+      releaseHold: vi.fn(async () => { throw new Error('ledger down') }),
+    })
+    const res = await meterGraphSubmit('u1', BODY, d)
+    expect(res).toEqual({ status: 400, body: errBody })
+  })
+})
+
+describe('holdWithRefusal', () => {
+  // Finding 1: ledger.hold THROWS a plain Error (not a typed refusal) for a
+  // user with no wallet row yet — new signup before lazy sync lands, reachable
+  // on the primary hosted action. Left unwrapped, that throw escapes as an
+  // opaque 500 instead of the 402 credits-refusal every other insufficient-
+  // funds path returns.
+  it('a thrown hold (no wallet row) refuses as insufficient credits, not a 500', async () => {
+    const ledger = { hold: vi.fn(async () => { throw new Error('no wallet for u1 — call ensureUser first') }) }
+    await expect(holdWithRefusal(ledger, 'u1', 5)).rejects.toMatchObject({
+      statusCode: 402,
+      data: { required: 5, available: 0 },
+    })
+  })
+
+  it('passes through a normal ok:true hold unchanged', async () => {
+    const ledger = { hold: vi.fn(async () => ({ ok: true as const, holdId: 42 })) }
+    await expect(holdWithRefusal(ledger, 'u1', 5)).resolves.toEqual({ ok: true, holdId: 42 })
+  })
+
+  it('passes through a normal ok:false hold unchanged', async () => {
+    const ledger = { hold: vi.fn(async () => ({ ok: false as const, reason: 'insufficient' as const })) }
+    await expect(holdWithRefusal(ledger, 'u1', 5)).resolves.toEqual({ ok: false, reason: 'insufficient' })
   })
 })
 

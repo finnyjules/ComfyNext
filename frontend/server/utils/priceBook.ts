@@ -44,9 +44,10 @@ const OUTPUT_CLASS_TYPES = new Set([
 ])
 
 /**
- * Refusal for any provider node class the price book cannot price. Callers
- * (server/api/meter/prompt.post.ts) turn this into a 400 — the graph never
- * reaches the GPU. Never soften this into a default price.
+ * Refusal for any provider node class the price book cannot price. The live
+ * caller — meterGraphRun.ts's meterGraphSubmit — catches this and throws a
+ * 500 MeterRefusalError so the graph never reaches the GPU. Never soften
+ * this into a default price.
  */
 export class UnpricedGraphError extends Error {
   classType: string

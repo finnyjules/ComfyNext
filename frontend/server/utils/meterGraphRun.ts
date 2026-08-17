@@ -23,6 +23,29 @@ export function isPromptPath(path: string): boolean {
   return path === '/prompt' || path.startsWith('/prompt?')
 }
 
+/**
+ * Review fix (Stage 5 Task 4, Finding 1): ledger.hold THROWS a plain Error
+ * for a user with no wallet row ("no wallet for <id> — call ensureUser
+ * first") — reachable on the primary hosted action for a new signup before
+ * lazy sync lands. Left unwrapped, that throw escapes as an opaque 500
+ * instead of the 402 credits-refusal every other insufficient-funds path
+ * returns. Mirrors requestMeter.ts's preflightForUser catch exactly —
+ * `available: 0` is asserted rather than read back, because getAvailable
+ * would throw for the same missing-wallet reason.
+ */
+export async function holdWithRefusal(
+  ledger: { hold(userId: string, credits: number, idempotencyKey: string): Promise<{ ok: true; holdId: number } | { ok: false; reason: 'insufficient' }> },
+  userId: string,
+  credits: number,
+): Promise<{ ok: true; holdId: number } | { ok: false; reason: 'insufficient' }> {
+  try {
+    return await ledger.hold(userId, credits, `graph:${randomUUID()}`)
+  } catch (e) {
+    console.error('[graphMeter] HOLD FAILED — refusing as insufficient credits', { userId, credits, error: e })
+    throw new MeterRefusalError('insufficient credits', 402, { required: credits, available: 0 })
+  }
+}
+
 export interface GraphRunDeps {
   priceGraph: typeof priceGraph
   hold(userId: string, credits: number): Promise<{ ok: true; holdId: number } | { ok: false; reason: 'insufficient' }>
@@ -57,14 +80,41 @@ export async function meterGraphSubmit(userId: string | null, body: any, deps: G
     holdId = res.holdId
   }
 
-  const fwd = await deps.forward(body)
+  // Finding 2: a thrown forward() (e.g. ECONNREFUSED to a wedged pool worker)
+  // must not leave the hold open until the 2h sweep — release it, then
+  // propagate the original error so the caller still sees the real failure.
+  let fwd: { status: number; body: any }
+  try {
+    fwd = await deps.forward(body)
+  } catch (e) {
+    if (holdId !== null) {
+      // Minor 4: a release failure here must not mask the original forward
+      // error — log it and keep propagating what actually broke.
+      await deps.releaseHold(holdId).catch(re => console.error('[graphMeter] release after forward failure failed', { userId, holdId, error: re }))
+    }
+    throw e
+  }
+
   const promptId: string | undefined = fwd.body?.prompt_id
   if (fwd.status !== 200 || !promptId) {
-    if (holdId !== null) await deps.releaseHold(holdId)
+    if (holdId !== null) {
+      // Minor 4: if ledger.release throws here it would replace ComfyUI's
+      // real 4xx {error, node_errors} body with an opaque 500 — log instead.
+      await deps.releaseHold(holdId).catch(e => console.error('[graphMeter] release on refused/errored forward failed', { userId, holdId, error: e }))
+    }
     return fwd // verbatim — clients parse node_errors from this exact shape
   }
 
-  await deps.registerRun({ promptId, userId, credits: price.credits, holdId })
+  // Finding 3: the money path must not depend on the ownership-row insert.
+  // ComfyUI already queued this run — if createGraphRun throws (Neon
+  // transient), settlement still has to run or the hold sits open until the
+  // 2h sweep while the client also gets a spurious 500 for a run that WILL
+  // execute (inviting a double-spend resubmit). Log and keep going.
+  try {
+    await deps.registerRun({ promptId, userId, credits: price.credits, holdId })
+  } catch (e) {
+    console.error('[graphMeter] registerRun failed — run will settle but ownership row is missing', { promptId, userId, holdId, error: e })
+  }
   deps.startSettle({ promptId, holdId, credits: price.credits })
   return fwd
 }
@@ -88,10 +138,7 @@ export async function handleMeteredPrompt(event: H3Event): Promise<any> {
 
   const result = await meterGraphSubmit(userId, body, {
     priceGraph,
-    hold: async (u, credits) => {
-      const r = await ledger.hold(u, credits, `graph:${randomUUID()}`)
-      return r.ok ? { ok: true, holdId: r.holdId } : { ok: false, reason: 'insufficient' }
-    },
+    hold: (u, credits) => holdWithRefusal(ledger, u, credits),
     getAvailable: u => ledger.getAvailable(u),
     forward: async (b) => {
       const safe = { ...b, extra_data: stripForeignComfyOrgCreds(b?.extra_data, null) }
