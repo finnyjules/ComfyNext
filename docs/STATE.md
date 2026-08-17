@@ -12,13 +12,13 @@ Legend: **bake** = render/export path · **motion** = animatable · **inspector*
 
 | Surface | bake | motion | inspector | agent | engine LOC |
 |---|---|---|---|---|---|
-| Space Type | ✅ + clip bake | ✅ timeline clip | ✅ | ✅ descriptor | 11,202 |
+| Space Type | ✅ + clip bake | ✅ timeline clip | ✅ (mode-gated controls) | ✅ descriptor | 11,202 |
 | Vector Type Studio | ✅ PNG + SVG export (9 fill types, 6 as real vector; multi-fill/stroke stack + extrude + skew/arc) | ✅ full incl. stagger, preset gallery, **colour tracks**, and 4 per-glyph effects (blink · axis scatter · grade flicker · draw-on) | ✅ | ✅ descriptor (unverified live) | — |
 | Scene3D Studio | ✅ 3-pass + mp4 | ✅ own timeline (groups animate) | ✅ + object tree | ❌ | ~6,300 (+ SVG import) |
 | Compositor / Frame | ✅ | ✅ motion clips | ✅ | ✅ commands | 1,667 (+1,041 motion) |
 | Timeline (NLE) | ✅ webm/mp4 + server | ✅ native | ✅ | ❌ | shared/timeline |
 | Gradient Studio | ✅ | ✅ 30 targets, path-based | ✅ (hand-written) | ✅ descriptor | 2,620 (+ 4 primitives + alpha + per-layer layout) |
-| Shader Studio | ✅ | ✅ path tracks (+ mask region) | ✅ (data-driven, + per-effect spatial mask) | ✅ descriptor (+ mask) | 806 + 63 effects |
+| Shader Studio | ✅ | ✅ path tracks (+ mask region) | ✅ (data-driven, + per-effect spatial mask, + mode-gated params) | ✅ descriptor (+ mask) | 806 + 63 effects |
 | Texture Studio | ✅ | ❌ | ✅ (data-driven) | ✅ commands | 2,041 |
 | Shape Studio (geologo) | ✅ PNG + SVG | ❌ | ✅ | ✅ descriptor | ~1,750 (lib/geoshape) |
 | Shot Director | ✅ | ✅ keyframes | ✅ | ❌ | 988 |
@@ -30,6 +30,18 @@ Legend: **bake** = render/export path · **motion** = animatable · **inspector*
 | Pose Mannequin | ✅ control img | ❌ | modal | ❌ (excluded) | — |
 | Inpaint / Region | ✅ backend | — | toolbar | ✅ ops | — |
 | Collection (sweeps) | — | — | ✅ | ✅ | backbone |
+
+### Expressive + Shader Studios — control-relevance gating (hide controls the current mode ignores) — LANDED 2026-08-17
+
+A control that does nothing in the effect's active mode is now hidden, across **Space Type** (16 effects) and **Shader Studio** (7 effects). Same idea the Gradient Studio pass shipped; different plumbing per studio.
+
+**Space Type** already had the mechanism — `ControlSpec.showIf: { key, equals?/notEquals? }`, evaluated by `showIfVisible()` and applied by the surface — used by 4 effects (ring/stripes/loft/slitScan). Extended with **`in`/`notIn`** array clauses (for "visible in one of several modes", e.g. boost's colour group across palette/gradient/mixed/custom), then applied to 16 more: the shadow-rig quartet (coil/cylinder/field/ribbon — shadow controls hidden when `shadows:off`), boost, sliceGlitch, ball, blend, cascade, cornerPin, echo, melt, onionburst, shutter, streamer, string. Every gate was traced to source (a control is hidden **only** in modes whose build/draw code genuinely never reads it — over-hiding is a bug). The per-task review caught one Critical (boost `mixed`/`custom` DO render solid/grid/noise letters per-`pickStyle`, so those colours must stay visible there).
+
+**Shader Studio** had no general mechanism (one hardcoded `ascii_dither` check). Added a manifest **`showWhen: { uniform, equals: number | number[] }`** field + a `matchesShowWhen()` helper (`lib/shaderfx/showWhen.ts`) honored in `ShaderStudioSurface.vue` (via `<template v-for>` + inner `v-if` — Vue 3 evaluates `v-if` before `v-for` on the same element, so they can't share a node). Applied to crystal_prism, ascii_dither, blinds, droste, kaleidoscope, block_glitch, and mirror (angle/speed are provably a no-op in Mirror-ball mode — rotation-equivariance derivation, trusted per the design call).
+
+**The whole-branch verification caught a Critical the unit tests and static review missed** ([[graceful-fallback-hides-integration-failure]]): live-curling `/sailor/shader_effects` 500'd, and headless inspection revealed the Python backend's `catalog_payload()` shipped params via raw `vars(p)` — snake_case `show_when`/`max_stops` — while the browser reads camelCase `p.showWhen`/`p.maxStops`. So even with a correct manifest, the gate would have **silently never fired**. Fixed by serialising params through the inverse of the loader's `_PARAM_KEY_ALIASES` (parse/serialise now symmetric). A parallel session had fixed the loader to *accept* `showWhen` but not the *serialisation*. **Note: the running ComfyUI backend must be restarted to serve current code.**
+
+Built subagent-driven TDD (9 planned tasks + 1 unplanned backend fix from verification), each with per-task + final whole-branch reviews. New specs: `spacetype-showif`, `spacetype-control-gating`, `shader-showwhen` unit specs + the Python `catalog_payload` camelCase test. Plan: `docs/superpowers/plans/2026-08-17-studio-control-relevance-gating.md`.
 
 ### Shape Studio → geologo 2D-vector generator + Pieces overprint + Split crossings — LANDED 2026-08-17
 
