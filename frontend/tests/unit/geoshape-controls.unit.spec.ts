@@ -5,8 +5,12 @@ import { reroll } from '../../app/lib/geoshape/randomize'
 import { DEFAULT_CONFIG, type GeoShapeConfig } from '../../app/lib/geoshape/config'
 
 // Fields on GeoShapeConfig that are NOT a renderable control: `locks` is
-// re-roll section-lock metadata, not a parameter a knob addresses.
-const NON_CONTROL_FIELDS = new Set(['locks'])
+// re-roll section-lock metadata, not a parameter a knob addresses. `fills`
+// (the cycled-list counterpart of `fill`, used when `perShapeFill` is on) is
+// edited by a bespoke list editor (ShapeStudioSurface's fills-list block,
+// mirroring SpaceTypeSurface's fillList pattern) rather than a single-value
+// control row, so it has no GEO_CONTROLS entry either.
+const NON_CONTROL_FIELDS = new Set(['locks', 'fills'])
 
 const expectedKeys = Object.keys(DEFAULT_CONFIG).filter((k) => !NON_CONTROL_FIELDS.has(k))
 

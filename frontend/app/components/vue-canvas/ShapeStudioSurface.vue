@@ -13,7 +13,7 @@
 //
 // Collection variable-binding (promote/bind/sweep, the pink glyph + var menu every
 // other studio wires) is deliberately NOT wired here — out of scope for this pass.
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { Dices } from 'lucide-vue-next'
 import type { ControlSpec } from '~/lib/spacetype/effect'
 import { mergeConfig, type GeoShapeConfig } from '~/lib/geoshape/config'
@@ -123,7 +123,7 @@ const visibleControlSet = computed(() => new Set<GeoControl>(visibleGeoControls(
 function controlVisible(c: ControlSpec): boolean {
   return visibleControlSet.value.has(c as GeoControl)
 }
-function setGeoControl(key: string, value: string | number | boolean | Paint) {
+function setGeoControl(key: string, value: string | number | boolean | Paint | Paint[]) {
   paramsProxy[key] = value as string | number
 }
 function paramValue(key: string): string | number | boolean {
@@ -154,6 +154,44 @@ const strokeHex = computed<string>({
   get: () => config.value.stroke ?? lastStrokeColor.value,
   set: (v: string) => { lastStrokeColor.value = v; config.value.stroke = v },
 })
+
+// ── fills list (perShapeFill mode) — mirrors SpaceTypeSurface's fills block
+// STRUCTURE (grip-drag reorder + add/remove-keep-≥1) but operates directly on
+// `config.value.fills` rather than a separate reactive mirror synced by a
+// watcher: every mutation below reassigns `setGeoControl('fills', <new array>)`
+// with a fresh array reference, which both persists through the same
+// paramsProxy write path every other control uses and trips
+// `watch(config, …, { deep: true })` below, so the preview re-renders exactly
+// like a slider drag would.
+function addFill() { setGeoControl('fills', [...config.value.fills, '#4c6ef5']) }
+function removeFill(i: number) {
+  if (config.value.fills.length <= 1) return
+  setGeoControl('fills', config.value.fills.filter((_, j) => j !== i))
+}
+function updateFill(i: number, p: Paint) {
+  setGeoControl('fills', config.value.fills.map((x, j) => (j === i ? p : x)))
+}
+const fillDrag = reactive<{ from: number; over: number }>({ from: -1, over: -1 })
+function fillDragStart(i: number, e: DragEvent) {
+  fillDrag.from = i; fillDrag.over = i
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', String(i)) // Firefox needs some data to start a drag
+    const row = (e.target as HTMLElement).closest('[data-row]') as HTMLElement | null
+    if (row) e.dataTransfer.setDragImage(row, 14, 14)
+  }
+}
+function fillDragOver(i: number, e: DragEvent) { e.preventDefault(); fillDrag.over = i }
+function fillDrop(i: number) {
+  if (fillDrag.from !== i && fillDrag.from >= 0) {
+    const next = [...config.value.fills]
+    const [m] = next.splice(fillDrag.from, 1)
+    next.splice(i, 0, m!)
+    setGeoControl('fills', next)
+  }
+  fillDragEnd()
+}
+function fillDragEnd() { fillDrag.from = -1; fillDrag.over = -1 }
 
 // ── preview: a plain 2D canvas, event-driven ────────────────────────────────────
 // `renderPreview()` is invoked directly on mount, and again whenever
@@ -399,6 +437,37 @@ async function exportSvg() {
         :visible="controlVisible"
         @set="setGeoControl"
       >
+        <template #control-perShapeFill>
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] text-white/55">Per-shape fill</span>
+            <StudioSwitch :model-value="config.perShapeFill" @update:model-value="(v: boolean) => setGeoControl('perShapeFill', v)" />
+          </div>
+          <!-- Fills list editor — mirrors SpaceTypeSurface's fillList block structure
+               (index badge + grip-drag reorder + add/remove-keep-≥1) but each entry is a
+               full `Paint` edited via FillControl, not a Fill-shaped a/b/text swatch set. -->
+          <div v-if="config.perShapeFill" class="mt-2 space-y-2">
+            <div v-for="(f, i) in config.fills" :key="i" data-row
+                 class="rounded-lg border border-white/[0.07] bg-white/[0.02] p-2.5 transition-shadow"
+                 :class="fillDrag.over === i && fillDrag.from !== i ? 'ring-1 ring-white/40' : ''"
+                 @dragover="fillDragOver(i, $event)" @drop="fillDrop(i)">
+              <div class="flex items-center gap-1.5">
+                <span draggable="true" @dragstart="fillDragStart(i, $event)" @dragend="fillDragEnd"
+                      class="shrink-0 cursor-grab text-white/25 hover:text-white/60 active:cursor-grabbing" title="Drag to reorder" aria-label="Drag to reorder">
+                  <svg width="10" height="16" viewBox="0 0 10 16" fill="currentColor"><circle cx="2.5" cy="4" r="1" /><circle cx="7.5" cy="4" r="1" /><circle cx="2.5" cy="8" r="1" /><circle cx="7.5" cy="8" r="1" /><circle cx="2.5" cy="12" r="1" /><circle cx="7.5" cy="12" r="1" /></svg>
+                </span>
+                <span class="w-3 shrink-0 text-center text-[10px] tabular-nums text-white/30">{{ i + 1 }}</span>
+                <FillControl class="flex-1" allow-image :show-anchor="false" :model-value="f" @update:model-value="(v: Paint) => updateFill(i, v)" />
+                <button v-if="config.fills.length > 1" type="button" @click="removeFill(i)" aria-label="Remove fill"
+                        class="shrink-0 rounded p-1 text-white/30 hover:bg-white/10 hover:text-rose-300">
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></svg>
+                </button>
+              </div>
+            </div>
+            <button type="button" @click="addFill"
+                    class="w-full rounded border border-dashed border-white/15 py-1.5 text-[11px] text-white/50 hover:border-white/30 hover:text-white/80">+ Add fill</button>
+            <p class="text-[10px] leading-relaxed text-white/35">Clones cycle through these fills, top to bottom.</p>
+          </div>
+        </template>
         <template #control-fill>
           <FillControl allow-image :show-anchor="false" :model-value="config.fill" @update:model-value="setGeoControl('fill', $event)" />
         </template>
