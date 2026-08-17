@@ -64,6 +64,10 @@ const animatable = computed(() => animatableTargets(config.value))
 const activeLayout = computed(() => effectiveLayout(config.value, activeLayer.value))
 const isRadial = computed(() => activeLayout.value === 'radial' || activeLayout.value === 'orbit')
 const isStack = computed(() => activeLayout.value === 'stack')
+// The stripe/band family (linear/radial/orbit/stack) — the ONLY layouts whose render
+// uses the shape field, margin, and 3D relief. The simple primitives (ramp/radialRamp/
+// conic/curve), liquid, and mesh ignore all three, so their sections stay hidden.
+const isBanded = computed(() => ['linear', 'radial', 'orbit', 'stack'].includes(activeLayout.value))
 const isLiquid = computed(() => activeLayout.value === 'liquid')
 const isMesh = computed(() => activeLayout.value === 'mesh')
 const isCurve = computed(() => activeLayout.value === 'curve')
@@ -982,8 +986,9 @@ function onColor(key: 'repeat' | 'repeatCount' | 'falloff', value: number | stri
                   :class="activeLayout === l ? 'bg-white/20 text-white' : 'bg-white/[0.04] text-white/55 hover:bg-white/10'"
                   @click="setLayout(l)">{{ LAYOUT_LABELS[l] }}</button>
         </div>
-        <!-- Margin insets the band/ring layouts; the liquid & mesh fields fill the frame, so hide it there. -->
-        <template v-if="!isLiquid && !isMesh">
+        <!-- Margin only insets the stripe/ring (banded) layouts; simple primitives, liquid
+             and mesh all fill the frame, so it does nothing there. -->
+        <template v-if="isBanded">
           <BindableRow control-key="canvas.margin" label="Margin" kind="slider" :min="0" :max="0.45" :step="0.01" :bound="boundColumnFor('canvas.margin')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
             <label class="mb-1 flex justify-between text-xs text-white/60"><span>Margin</span><span class="text-white/40">{{ config.canvas.margin.toFixed(2) }}</span></label>
             <input v-model.number="config.canvas.margin" type="range" min="0" max="0.45" step="0.01" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('canvas.margin', config.canvas.margin)" />
@@ -1230,7 +1235,7 @@ function onColor(key: 'repeat' | 'repeatCount' | 'falloff', value: number | stri
            liquid uses flow.depth and mesh has no relief, so this whole section is
            hidden for those layouts. Grain moved to the shared post stack's own Grain
            section (Task 8) — see the schema-driven post panel further down. -->
-      <StudioSection v-show="onDesign && !isLiquid && !isMesh" title="Relief" :open="false">
+      <StudioSection v-show="onDesign && isBanded" title="Relief" :open="false">
         <BindableRow control-key="relief.relief" label="Relief" kind="slider" :min="0" :max="1" :step="0.01" :bound="boundColumnFor('relief.relief')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
           <label class="mb-1 flex justify-between text-xs text-white/60"><span>Relief</span><span class="text-white/40">{{ config.relief.relief.toFixed(2) }}</span></label>
           <input v-model.number="config.relief.relief" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range mb-2 w-full" @input="onEdit('relief.relief', config.relief.relief)" />
@@ -1303,7 +1308,7 @@ function onColor(key: 'repeat' | 'repeatCount' | 'falloff', value: number | stri
       </StudioSection>
 
       <!-- Shape -->
-      <StudioSection v-show="onDesign" v-if="!isLiquid && !isMesh" title="Shape" :badge="layerNames[activeLayer] ?? `Layer ${activeLayer + 1}`">
+      <StudioSection v-show="onDesign" v-if="isBanded" title="Shape" :badge="layerNames[activeLayer] ?? `Layer ${activeLayer + 1}`">
         <div v-if="!isStack" class="mb-2 grid grid-cols-4 gap-1">
           <button v-for="s in SHAPE_KINDS" :key="s" class="rounded px-1 py-1 text-[11px] capitalize transition"
                   :class="layer.shape.type === s ? 'bg-white/20 text-white' : 'bg-white/[0.04] text-white/55 hover:bg-white/10'"
