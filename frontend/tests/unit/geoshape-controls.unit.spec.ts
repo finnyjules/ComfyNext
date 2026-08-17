@@ -134,6 +134,14 @@ describe('visibleGeoControls follows the shape/layout/overlap/symmetry/clip pred
     expect(visibleGeoControls({ ...DEFAULT_CONFIG, fillStrategy: 'single' }).map(c => c.key)).toContain('fill')
     expect(visibleGeoControls({ ...DEFAULT_CONFIG, fillStrategy: 'pieces' }).map(c => c.key)).not.toContain('fill')
   })
+  it('shows Composite fold controls (fillMode/overlapMode) only for single strategy', () => {
+    // perClone/pieces return before the boolean fold, so these are inert there.
+    for (const key of ['fillMode', 'overlapMode'] as const) {
+      expect(visibleGeoControls({ ...DEFAULT_CONFIG, fillStrategy: 'single' }).map(c => c.key)).toContain(key)
+      expect(visibleGeoControls({ ...DEFAULT_CONFIG, fillStrategy: 'perClone' }).map(c => c.key)).not.toContain(key)
+      expect(visibleGeoControls({ ...DEFAULT_CONFIG, fillStrategy: 'pieces' }).map(c => c.key)).not.toContain(key)
+    }
+  })
 
   it('returns only members of GEO_CONTROLS', () => {
     const all = new Set(GEO_CONTROLS.map((c) => c.key))

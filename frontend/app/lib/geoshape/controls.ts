@@ -120,10 +120,16 @@ export const GEO_CONTROLS: GeoControl[] = [
   slider('spin', 'Spin', 0, 360, 1, 'Transform', DEFAULT_CONFIG.spin, undefined, { when: isRadial }),
 
   // --- Composite (boolean.ts's fold + overlap resolution) -------------------
+  // Single-mode only: fillMode/overlapMode govern the unified boolean FOLD.
+  // perClone and pieces return before the fold (each clone drawn separately /
+  // split into pieces), so these have no effect there — hide them so they don't
+  // read as ignored knobs.
   select('fillMode', 'Fill mode', FILLMODES, DEFAULT_CONFIG.fillMode, 'Composite',
-    'How the clones fold together: evenodd cuts holes where they cross, unite/subtract/intersect/exclude are true boolean ops'),
+    'How the clones fold together: evenodd cuts holes where they cross, unite/subtract/intersect/exclude are true boolean ops',
+    { when: isSingleFill }),
   select('overlapMode', 'Overlap mode', OVERLAPMODES, DEFAULT_CONFIG.overlapMode, 'Composite',
-    'hole = crossings read as a cut-through; shape = crossings paint as their own region in Overlap fill'),
+    'hole = crossings read as a cut-through; shape = crossings paint as their own region in Overlap fill',
+    { when: isSingleFill }),
   color('overlapFill', 'Overlap fill', paintDefault(DEFAULT_CONFIG.overlapFill), 'Composite', { when: isOverlapShapeAndSingleFill }),
 
   // --- Symmetry --------------------------------------------------------------
