@@ -8,8 +8,9 @@
 // window function that a Playwright test drives (see
 // tests/studio-post-integration.spec.ts).
 import { GradientFxRenderer } from '~/lib/gradientfx/renderer'
+import { buildCurvePolyline } from '~/lib/gradientfx/curvePath'
 import { defaultConfig } from '~/lib/gradientfx/randomize'
-import { cloneConfig, ensureConfigDefaults, type GradientConfig } from '~/lib/gradientfx/types'
+import { cloneConfig, ensureConfigDefaults, CURVE_DEFAULTS, type GradientConfig } from '~/lib/gradientfx/types'
 import { DEFAULT_POST, type PostSettings } from '~/lib/studio/post/settings'
 import { POST_EFFECTS } from '~/lib/studio/post/manifest'
 
@@ -282,6 +283,7 @@ async function sailorLayoutProbe(opts: {
   size?: number
   layout: string
   ramp?: Record<string, unknown>
+  curve?: Record<string, unknown>
   color?: Record<string, unknown>
   stops?: { color: string; pos: number }[]
 }) {
@@ -292,6 +294,7 @@ async function sailorLayoutProbe(opts: {
   if (opts.stops) L0.color.stops = opts.stops
   if (opts.color) Object.assign(L0.color, opts.color)
   L0.ramp = { ...(L0.ramp ?? {}), ...(opts.ramp ?? {}) }
+  if (opts.curve || opts.layout === 'curve') L0.curve = { ...CURVE_DEFAULTS, start: { ...CURVE_DEFAULTS.start }, end: { ...CURVE_DEFAULTS.end }, ...(opts.curve ?? {}) }
   const out = renderer.render(ensureConfigDefaults(cfg), size, size, 0)
   return gradientStats(out, size, size)
 }
@@ -310,6 +313,17 @@ async function sailorVisualGrid() {
     ;(c.layers[0] as any).ramp = { ...(c.layers[0] as any).ramp, ...ramp }
     return ensureConfigDefaults(c)
   }
+  const mkCurve = (label: string, curve: Record<string, unknown>) => {
+    const c = ensureConfigDefaults(defaultConfig(HARNESS_SEED) as GradientConfig)
+    c.canvas.layout = 'curve' as GradientConfig['canvas']['layout']
+    ;(c.layers[0] as any).color.stops = bw
+    ;(c.layers[0] as any).curve = { ...CURVE_DEFAULTS, start: { ...CURVE_DEFAULTS.start }, end: { ...CURVE_DEFAULTS.end }, ...curve }
+    items.push({ label, cfg: ensureConfigDefaults(c) })
+  }
+  mkCurve('Curve arc · along', { shape: 'arc', curvature: 0.6, mode: 'along', start: { x: 0.12, y: 0.5 }, end: { x: 0.88, y: 0.5 } })
+  mkCurve('Curve arc · outward', { shape: 'arc', curvature: 0.6, mode: 'outward', width: 0.3, start: { x: 0.12, y: 0.5 }, end: { x: 0.88, y: 0.5 } })
+  mkCurve('Curve s-curve · along', { shape: 's-curve', curvature: 0.5, mode: 'along', start: { x: 0.15, y: 0.2 }, end: { x: 0.85, y: 0.8 } })
+  mkCurve('Curve wave · outward', { shape: 'wave', curvature: 0.3, waves: 3, mode: 'outward', width: 0.18, start: { x: 0.1, y: 0.5 }, end: { x: 0.9, y: 0.5 } })
   items.push({ label: 'Linear (ramp) 45°', cfg: mk('ramp', { angle: 45 }) })
   items.push({ label: 'Radial (radialRamp)', cfg: mk('radialRamp', { radius: 1, shape: 'circle' }) })
   items.push({ label: 'Conic closeLoop', cfg: mk('conic', { sweep: 360, closeLoop: true }) })
@@ -340,6 +354,23 @@ if (import.meta.client) {
   ;(window as any).__sailorPostOrientationProbe = sailorPostOrientationProbe
   ;(window as any).__sailorGrainCoverageProbe = sailorGrainCoverageProbe
   ;(window as any).__sailorLayoutProbe = sailorLayoutProbe
+  ;(window as any).__sailorCurveRaw = (curve: any) => {
+    const cfg = ensureConfigDefaults(defaultConfig(HARNESS_SEED) as GradientConfig)
+    cfg.canvas.layout = 'curve' as any
+    ;(cfg.layers[0] as any).color.stops = [{ color: '#000000', pos: 0 }, { color: '#ffffff', pos: 1 }]
+    ;(cfg.layers[0] as any).curve = { ...CURVE_DEFAULTS, start: { ...CURVE_DEFAULTS.start }, end: { ...CURVE_DEFAULTS.end }, ...curve }
+    const out = renderer.render(ensureConfigDefaults(cfg), 64, 64, 0)
+    const cv = document.createElement('canvas'); cv.width = 64; cv.height = 64
+    const ctx = cv.getContext('2d')!
+    ctx.drawImage(out as CanvasImageSource, 0, 0)
+    const d = ctx.getImageData(32, 32, 1, 1).data
+    return { r: d[0], g: d[1], b: d[2], a: d[3] }
+  }
+  ;(window as any).__sailorCurvePoly = (c: any) => {
+    const poly = buildCurvePolyline({ start:{x:0.15,y:0.5}, end:{x:0.85,y:0.5}, shape:'arc', curvature:0.4, bend:1, waves:3, phase:0, mode:'along', width:0.35, ...c })
+    return { n: poly.n, pts: Array.from(poly.pts), len: Array.from(poly.len),
+      anyNaN: Array.from(poly.pts).some(Number.isNaN) || Array.from(poly.len).some(Number.isNaN) }
+  }
   ;(window as any).__sailorVisualGrid = sailorVisualGrid
 }
 </script>

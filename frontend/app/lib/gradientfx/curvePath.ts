@@ -1,12 +1,38 @@
 // Curve Studio: turn a parametric CurveConfig into a flat polyline with cumulative
 // arc-length. Pure + deterministic. The renderer uploads this into a per-layer
 // RGBA32F texture the shader samples (see renderer.uploadCurve).
-import type { CurveConfig, Vec2 } from './types'
+import { CURVE_DEFAULTS, type CurveConfig, type Vec2 } from './types'
 
 export const CURVE_SAMPLES = 40
 export interface CurvePolyline { pts: Float32Array; len: Float32Array; n: number }
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t
+
+/** Finite number or the fallback — coerces undefined/NaN/Infinity. */
+const num = (v: unknown, fallback: number): number =>
+  typeof v === 'number' && Number.isFinite(v) ? v : fallback
+
+/** Coerce a possibly-partial/malformed curve into a complete, finite CurveConfig.
+ *  A partial curve (e.g. an agent dotted-path write that set only some fields) would
+ *  otherwise leave a field undefined → `curvature * bend` = NaN → the whole polyline
+ *  NaN → a silent all-black render. Defaulting at this pure boundary makes any
+ *  partial config degrade gracefully instead. */
+function normalizeCurve(c: CurveConfig): CurveConfig {
+  const d = CURVE_DEFAULTS
+  const s = (c?.start ?? {}) as Partial<Vec2>
+  const e = (c?.end ?? {}) as Partial<Vec2>
+  return {
+    start: { x: num(s.x, d.start.x), y: num(s.y, d.start.y) },
+    end: { x: num(e.x, d.end.x), y: num(e.y, d.end.y) },
+    shape: c?.shape ?? d.shape,
+    curvature: num(c?.curvature, d.curvature),
+    bend: num(c?.bend, d.bend),
+    waves: num(c?.waves, d.waves),
+    phase: num(c?.phase, d.phase),
+    mode: c?.mode ?? d.mode,
+    width: num(c?.width, d.width),
+  }
+}
 
 /** Position on the parametric curve at u ∈ [0,1]. Chord from start→end, with a
  *  perpendicular offset that the shape preset shapes. */
@@ -31,7 +57,8 @@ function evalCurve(c: CurveConfig, u: number): Vec2 {
   return { x: bx + px * off * amp, y: by + py * off * amp }
 }
 
-export function buildCurvePolyline(c: CurveConfig): CurvePolyline {
+export function buildCurvePolyline(cfg: CurveConfig): CurvePolyline {
+  const c = normalizeCurve(cfg)
   const n = CURVE_SAMPLES
   const pts = new Float32Array(n * 2)
   const len = new Float32Array(n)

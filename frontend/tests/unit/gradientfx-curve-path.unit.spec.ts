@@ -60,3 +60,23 @@ describe('buildCurvePolyline', () => {
     expect(Math.sign(midPos - 0.5)).toBe(-Math.sign(midNeg - 0.5))
   })
 })
+
+describe('buildCurvePolyline robustness (partial/NaN config)', () => {
+  it('a partial curve (missing bend) does NOT produce NaN — degrades to defaults', () => {
+    // Regression: a partial config (e.g. an agent patch or dotted-path write that set
+    // only some fields) left `bend` undefined, so `curvature*bend` was NaN, making the
+    // whole polyline NaN and the render silently all-black. buildCurvePolyline must be
+    // defensive at this boundary.
+    const partial = { start: { x: 0.15, y: 0.5 }, end: { x: 0.85, y: 0.5 }, shape: 'arc', curvature: 0.4 } as unknown as CurveConfig
+    const p = buildCurvePolyline(partial)
+    expect(Array.from(p.pts).some(Number.isNaN)).toBe(false)
+    expect(Array.from(p.len).some(Number.isNaN)).toBe(false)
+    expect(p.len[p.n - 1]).toBeCloseTo(1, 6)
+  })
+
+  it('an all-empty curve object still yields a finite polyline', () => {
+    const p = buildCurvePolyline({} as unknown as CurveConfig)
+    expect(Array.from(p.pts).every(Number.isFinite)).toBe(true)
+    expect(Array.from(p.len).every(Number.isFinite)).toBe(true)
+  })
+})
