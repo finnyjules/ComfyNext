@@ -141,4 +141,40 @@ describe('geoshape boolean composite', () => {
     const shapes = await composite(SQUARE, [{ x: -20, y: 0, scale: 1, rotate: 0, skew: 0 }, { x: 20, y: 0, scale: 1, rotate: 0, skew: 0 }], { ...DEFAULT_CONFIG, fillStrategy: 'single' })
     expect(shapes[0]!.fillRule).toBe('evenodd')
   })
+
+  const three = [
+    { x: -40, y: -24, scale: 1, rotate: 45, skew: 0 },
+    { x: 40, y: -24, scale: 1, rotate: 45, skew: 0 },
+    { x: 0, y: 40, scale: 1, rotate: 45, skew: 0 },
+  ]
+  const pcfg = (over: Partial<any>) => ({ ...DEFAULT_CONFIG, fillStrategy: 'pieces', fills: ['#f00', '#0f0', '#00f'], overlapFills: ['#fff', '#000'], symmetry: false, clipMask: 'none', ...over })
+
+  it('pieces: depth order → solo=fills[0], 2-deep=fills[1], 3-deep=fills[2]', async () => {
+    const shapes = await composite(SQUARE, three, pcfg({ fillOrder: 'depth', overlapSeparate: false }))
+    const paints = new Set(shapes.map((s) => s.paint))
+    expect(paints.has('#f00')).toBe(true)   // solo
+    expect(paints.has('#0f0')).toBe(true)   // 2-deep
+    expect(paints.has('#00f')).toBe(true)   // 3-deep (triple center exists for this arrangement)
+    for (const s of shapes) expect(s.fillRule).toBe('nonzero')
+  })
+  it('pieces: overlapSeparate uses overlapFills by depth', async () => {
+    const shapes = await composite(SQUARE, three, pcfg({ fillOrder: 'depth', overlapSeparate: true }))
+    const paints = new Set(shapes.map((s) => s.paint))
+    expect(paints.has('#f00')).toBe(true)   // solo from fills[0]
+    expect(paints.has('#fff')).toBe(true)   // 2-deep from overlapFills[0]
+    expect(paints.has('#000')).toBe(true)   // 3-deep from overlapFills[1]
+    expect(paints.has('#0f0')).toBe(false)  // shape fills 1/2 NOT used for overlaps
+  })
+  it('pieces: solo pieces follow fillOrder (leftRight)', async () => {
+    const shapes = await composite(SQUARE, three, pcfg({ fillOrder: 'leftRight', overlapSeparate: true, overlapFills: ['#fff'] }))
+    // solo pieces are the non-#fff shapes; their paints should include ≥2 distinct shape colours ordered by x
+    const solo = shapes.filter((s) => s.paint !== '#fff')
+    expect(new Set(solo.map((s) => s.paint)).size).toBeGreaterThanOrEqual(2)
+  })
+  it('perClone honors fillOrder (around changes the cycle vs created)', async () => {
+    const ring = Array.from({ length: 6 }, (_, i) => ({ x: Math.cos(i * Math.PI / 3) * 120, y: Math.sin(i * Math.PI / 3) * 120, scale: 1, rotate: 0, skew: 0 }))
+    const made = await composite(SQUARE, ring, { ...DEFAULT_CONFIG, fillStrategy: 'perClone', fills: ['#f00', '#0f0', '#00f'], fillOrder: 'created', symmetry: false })
+    const around = await composite(SQUARE, ring, { ...DEFAULT_CONFIG, fillStrategy: 'perClone', fills: ['#f00', '#0f0', '#00f'], fillOrder: 'around', symmetry: false })
+    expect(made.map((s) => s.paint)).not.toEqual(around.map((s) => s.paint))
+  })
 })

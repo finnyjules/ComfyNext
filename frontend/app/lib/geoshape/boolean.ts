@@ -16,6 +16,7 @@
  * unbounded item tree.
  */
 import { paperToCommands } from '~/lib/vectortype/extrudeSolid'
+import { rankOrder } from './order'
 import type { GeoShapeConfig } from './config'
 import type { ClonePlacement } from './arrange'
 import type { Paint } from '~/lib/compositor/paint'
@@ -92,7 +93,9 @@ export async function composite(baseD: string, placements: ClonePlacement[], cfg
     // clip intersects each clone.
     if (cfg.fillStrategy === 'perClone') {
       const fills = cfg.fills.length ? cfg.fills : [cfg.fill]
-      let items: { path: paper.PathItem; pi: number }[] = clones.map((c, i) => ({ path: c as paper.PathItem, pi: i % fills.length }))
+      const band = Math.max(1, cfg.size)
+      const ranks = rankOrder(placements.map((pl, i) => ({ cx: pl.x, cy: pl.y, i })), cfg.fillOrder, band)
+      let items: { path: paper.PathItem; pi: number }[] = clones.map((c, i) => ({ path: c as paper.PathItem, pi: ranks[i]! % fills.length }))
       if (cfg.symmetry) {
         const sm = new sc.Matrix()
         if (cfg.symmetryAxis === 'vertical') sm.scale(-1, 1); else sm.scale(1, -1)
@@ -116,6 +119,100 @@ export async function composite(baseD: string, placements: ClonePlacement[], cfg
           commands: paperToCommands(path),
           paint: fills[pi]!,
           fill: solidOf(fills[pi]!),
+          stroke: cfg.stroke,
+          strokeWidth: cfg.strokeWidth || undefined,
+          fillRule: 'nonzero' as const,
+        }))
+    }
+
+    if (cfg.fillStrategy === 'pieces') {
+      const fills = cfg.fills.length ? cfg.fills : [cfg.fill]
+      const ov = cfg.overlapFills.length ? cfg.overlapFills : fills
+      const nonEmpty = (p: any): boolean => !!(p && p.bounds && p.bounds.width > 1e-6 && p.bounds.height > 1e-6)
+
+      // Symmetry: mirror the clones BEFORE splitting so the split sees the full set.
+      let cl = clones as paper.PathItem[]
+      if (cfg.symmetry) {
+        const sm = new sc.Matrix()
+        if (cfg.symmetryAxis === 'vertical') sm.scale(-1, 1); else sm.scale(1, -1)
+        sm.translate(cfg.symmetryAxis === 'vertical' ? cfg.symmetrySpacing : 0, cfg.symmetryAxis === 'horizontal' ? cfg.symmetrySpacing : 0)
+        const mir = clones.map((c) => { const mc = c.clone(); mc.transform(sm); return mc as paper.PathItem })
+        cl = (clones as paper.PathItem[]).concat(mir)
+      }
+      const N = cl.length
+
+      type Piece = { path: paper.PathItem; cx: number; cy: number; depth: number }
+
+      // 1. solo pieces: clone_i − union(others)
+      const solo: Piece[] = []
+      for (let i = 0; i < N; i++) {
+        let others: any = null
+        for (let j = 0; j < N; j++) {
+          if (j === i) continue
+          others = others ? others.unite(cl[j]) : (cl[j] as any).clone()
+        }
+        const s = others ? (cl[i] as any).subtract(others) : (cl[i] as any).clone()
+        if (nonEmpty(s)) solo.push({ path: s, cx: s.bounds.center.x, cy: s.bounds.center.y, depth: 1 })
+      }
+
+      // 2. overlap depth bands (depth ≥ 2), incremental
+      const bands: (paper.PathItem | null)[] = []
+      for (let k = 0; k < N; k++) {
+        const c = cl[k]
+        let prevCovered: any = null
+        for (const bd of bands) { if (bd) prevCovered = prevCovered ? prevCovered.unite(bd) : (bd as any).clone() }
+        for (let d = bands.length; d >= 1; d--) {
+          const band = bands[d - 1]
+          if (!band) continue
+          const moved = (band as any).intersect(c)
+          if (nonEmpty(moved)) {
+            const rest = (band as any).subtract(c)
+            bands[d - 1] = nonEmpty(rest) ? rest : null
+            bands[d] = bands[d] ? (bands[d] as any).unite(moved) : moved
+          }
+        }
+        const fresh = prevCovered ? (c as any).subtract(prevCovered) : (c as any).clone()
+        bands[0] = bands[0] ? (bands[0] as any).unite(fresh) : fresh
+      }
+      const overlaps: Piece[] = []
+      for (let d = 2; d <= bands.length; d++) {
+        const band = bands[d - 1]
+        if (nonEmpty(band)) overlaps.push({ path: band as paper.PathItem, cx: (band as any).bounds.center.x, cy: (band as any).bounds.center.y, depth: d })
+      }
+
+      // 3. colouring
+      const bandSize = solo.length
+        ? [...solo].map((p) => Math.max(p.path.bounds.width, p.path.bounds.height)).sort((a, b) => a - b)[Math.floor(solo.length / 2)]!
+        : Math.max(1, cfg.size)
+      const soloRanks = cfg.fillOrder === 'depth'
+        ? solo.map(() => 0)
+        : rankOrder(solo.map((p, i) => ({ cx: p.cx, cy: p.cy, i })), cfg.fillOrder, bandSize)
+      const colored: { path: paper.PathItem; paint: Paint }[] = []
+      solo.forEach((p, i) => colored.push({ path: p.path, paint: fills[soloRanks[i]! % fills.length]! }))
+      overlaps.forEach((p) => {
+        const paint = cfg.overlapSeparate ? ov[(p.depth - 2) % ov.length]! : fills[(p.depth - 1) % fills.length]!
+        colored.push({ path: p.path, paint })
+      })
+
+      // 4. clip mask
+      let clipped = colored
+      if (cfg.clipMask !== 'none') {
+        const r = cfg.clipMaskSize
+        const clip = cfg.clipMask === 'circle'
+          ? new sc.Path.Circle(new sc.Point(0, 0), r)
+          : cfg.clipMask === 'square'
+            ? new sc.Path.Rectangle(new sc.Rectangle(-r, -r, 2 * r, 2 * r))
+            : new sc.CompoundPath(hexClipD(r))
+        clipped = colored.map(({ path, paint }) => ({ path: (path as any).intersect(clip) as paper.PathItem, paint }))
+        clip.remove()
+      }
+
+      return clipped
+        .filter(({ path }) => nonEmpty(path))
+        .map(({ path, paint }) => ({
+          commands: paperToCommands(path),
+          paint,
+          fill: solidOf(paint),
           stroke: cfg.stroke,
           strokeWidth: cfg.strokeWidth || undefined,
           fillRule: 'nonzero' as const,
