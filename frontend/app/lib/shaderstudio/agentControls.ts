@@ -37,6 +37,15 @@ export function shaderAgentControls(cfg: ShaderStudioConfig, effectDef: EffectDe
       if (p.type !== 'float') continue // enum uniforms are structural, not a tune
       out.push(slider(`effects.${activeEffect}.params.${p.uniform}`, p.label, p.min ?? 0, p.max ?? 1, p.step ?? 0.01, 'Effect'))
     }
+    // Mask region — tunable once enabled, so the agent can place/size where the
+    // effect applies ("mask the warp to a band across the middle"). Shape/invert
+    // are structural toggles (like enum uniforms), so not surfaced as sliders.
+    if (active.mask?.enabled) {
+      out.push(slider(`effects.${activeEffect}.mask.cx`, 'Mask center X', 0, 1, 0.01, 'Mask'))
+      out.push(slider(`effects.${activeEffect}.mask.cy`, 'Mask center Y', 0, 1, 0.01, 'Mask'))
+      out.push(slider(`effects.${activeEffect}.mask.size`, 'Mask size', 0.02, 1, 0.01, 'Mask'))
+      out.push(slider(`effects.${activeEffect}.mask.feather`, 'Mask feather', 0, 1, 0.01, 'Mask'))
+    }
   }
 
   // Duotone

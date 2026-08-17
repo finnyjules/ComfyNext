@@ -389,6 +389,14 @@ const animatablePaths = computed(() => [
   ...(effectDef.value?.params ?? [])
     .filter(p => p.type !== 'enum')
     .map(p => ({ path: `effects.${activeEffect.value}.params.${p.uniform}`, label: `Effect · ${p.label}`, min: p.min ?? 0, max: p.max ?? 1 })),
+  // Mask region params — animate the region itself (e.g. sweep the effect across).
+  ...(maskOn.value ? ([
+    { path: `effects.${activeEffect.value}.mask.cx`, label: 'Mask · Center X', min: 0, max: 1 },
+    { path: `effects.${activeEffect.value}.mask.cy`, label: 'Mask · Center Y', min: 0, max: 1 },
+    { path: `effects.${activeEffect.value}.mask.size`, label: 'Mask · Size', min: 0.02, max: 1 },
+    { path: `effects.${activeEffect.value}.mask.feather`, label: 'Mask · Feather', min: 0, max: 1 },
+    { path: `effects.${activeEffect.value}.mask.angle`, label: 'Mask · Angle', min: -3.14159, max: 3.14159 },
+  ]) : []),
 ])
 function addTrack() {
   const a = animatablePaths.value[0]!
