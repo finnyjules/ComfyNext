@@ -184,6 +184,9 @@ export interface LayerConfig {
   ramp?: RampConfig
   /** Parametric curve (only the `curve` layout). */
   curve?: CurveConfig
+  /** Per-layer gradient type. Absent → uses canvas.layout (the default). Layer 0 is
+   *  anchored to canvas.layout; layers 1+ may override to stack different types. */
+  layout?: LayoutKind
 }
 
 export interface CanvasConfig {
@@ -339,6 +342,11 @@ export const MAPPINGS: MappingKind[] = ['across', 'perbar', 'field']
 export const DIRECTIONS: Direction[] = ['up', 'right', 'down', 'left']
 export const MIRROR_KINDS: MirrorKind[] = ['none', 'horizontal', 'vertical', 'both']
 export const GRADIENT_DIRS: GradientDir[] = ['vertical', 'horizontal']
+
+/** The gradient type a given layer renders: its own override, else the canvas default. */
+export function effectiveLayout(cfg: GradientConfig, layerIndex: number): LayoutKind {
+  return cfg.layers?.[layerIndex]?.layout ?? cfg.canvas.layout
+}
 
 export function aspectRatio(a: string): number {
   const [w, h] = a.split(':').map(Number)
