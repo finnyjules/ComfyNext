@@ -1,10 +1,16 @@
 /**
- * Versioned price book + graph pricer (spike). Prices a ComfyUI API-format
- * graph in integer credits (1 credit = $0.01). A flat base_render applies once
- * for any graph with a terminal output node; premium provider nodes add their
- * per-node cost on top. Phase 3 moves this table to the Postgres `price_book`.
+ * Versioned price book + graph pricer. Prices a ComfyUI API-format graph in
+ * integer credits (1 credit = $0.01). A flat base_render applies once for any
+ * graph with a terminal output node; every provider node adds its own cost on
+ * top. Phase 3 moves this table to the Postgres `price_book`.
+ *
+ * FAIL CLOSED (spike-v4): a provider node class this table cannot price throws
+ * UnpricedGraphError and REFUSES the whole graph. It must never fall through
+ * to base_render — a real Flux 2 Pro run once went out at 1 credit because
+ * GenerateImageNode was missing from the table.
  */
-export const PRICE_BOOK_VERSION = 'spike-v3'
+import { IMAGE_MODELS } from '~~/app/data/image-models'
+export const PRICE_BOOK_VERSION = 'spike-v4'
 
 const BASE_RENDER_CREDITS = 1
 
@@ -36,17 +42,286 @@ const OUTPUT_CLASS_TYPES = new Set([
   'SaveImage', 'PreviewImage', 'SaveVideo', 'VHS_VideoCombine', 'SaveAudio',
 ])
 
-// Premium provider actions, from the costs doc. Flat per-node for the spike.
-const PREMIUM_ACTION_CREDITS: Record<string, number> = {
+/**
+ * Refusal for any provider node class the price book cannot price. Callers
+ * (server/api/meter/prompt.post.ts) turn this into a 400 — the graph never
+ * reaches the GPU. Never soften this into a default price.
+ */
+export class UnpricedGraphError extends Error {
+  classType: string
+  detail?: string
+  constructor(classType: string, detail?: string) {
+    super(`unpriced graph node refused: ${classType}${detail ? ` (${detail})` : ''}`)
+    this.name = 'UnpricedGraphError'
+    this.classType = classType
+    this.detail = detail
+  }
+}
+
+/**
+ * Server copy of the markup policy — a deliberate mirror of
+ * app/lib/pricing.ts `creditsForUsd`. server/ must not import app/lib for
+ * money math; price-graph.unit.spec.ts asserts the two agree across a USD
+ * sweep. Policy: 2x on provider cost <= $0.10 and 1.5x above with a floor of
+ * 1 credit.
+ */
+export function creditsForUsdServer(usd: number): number {
+  if (!(usd > 0)) return 0
+  const markup = usd <= 0.10 ? 2 : 1.5
+  return Math.max(1, Math.ceil(usd * 100 * markup))
+}
+
+/**
+ * Flat per-class credits — every provider class that always costs the same.
+ *
+ * Evidence: each class's own `price_badge` USD in comfy_api_nodes/
+ * nodes_replicate.py (or comfy_extras/*.py), run through the markup policy.
+ * That badge is the same figure the run-confirm gate quotes the user, so the
+ * charge matches the quote. Classes with no badge are derived from a sibling
+ * catalog entry and called out in the trailing comment.
+ *
+ * Per-unit actions (video seconds / speech characters / audio minutes) are
+ * priced at the badge's quoted unit — duration-aware pricing is a Phase-3
+ * rider, same as MODEL_COSTS.
+ *
+ * Coverage guard in price-graph.unit.spec.ts forces this table plus
+ * MODEL_PRICED_NODE_CLASSES plus PROVIDER_NODE_EXEMPT to cover every
+ * IO.ComfyNode class in the provider modules.
+ */
+export const GRAPH_NODE_CREDITS: Record<string, number> = {
+  // — spike-v3 hand-set rows: kept verbatim —
   EditImageNode: 23,       // nano-banana-pro edit era: $0.15 observed — was 12 (≈0% margin) and half the direct-route price for the same action
-  GenerateVideoNode: 60,   // mid video / 5s
-  FilmShotNode: 160,       // Seedance 720p / 5s — flagged 4× over policy; re-verify against a live invoice before repricing down
   LipSyncNode: 150,        // observed $1.00/run — was 30 (a 70¢ LOSS per run); 150 ≈ 1.5× on a 6–10s clip
   LoraTrainingNode: 600,
-  // LoRA-family inference — was entirely unpriced (50% of observed spend):
   RestyleWithLoRANode: RESTYLE_LORA_CREDITS,
   FluxLoRARemoteNode: LORA_RENDER_CREDITS,
   FluxMultiLoRARemoteNode: LORA_RENDER_CREDITS,
+  // (GenerateVideoNode 60 and FilmShotNode 160 moved to MODEL_PRICED — their
+  // model widget spans $0.04 to $3.20 per clip, which no flat price can cover.)
+
+  // — image generation / editing —
+  FluxProRemoteNode: 8,            // badge $0.04
+  FluxKontextRemoteNode: 8,        // badge $0.04
+  IdeogramV3TurboNode: 6,          // badge $0.03
+  DevelopImageNode: 10,            // badge $0.05
+  GenerateFromReferencesNode: 12,  // badge $0.06
+  BlendSceneNode: 8,               // badge $0.04
+  RestyleFromImageNode: 10,        // badge $0.05
+  ProductShotNode: 8,              // badge $0.04
+  RotateCameraNode: 8,             // badge $0.04
+  TextEffectNode: 8,               // badge $0.04
+  SketchToImageNode: 8,            // badge $0.04
+  OutpaintImageNode: 10,           // badge $0.05
+  ConsistentFaceNode: 16,          // badge $0.08
+  LayerizeGraphicNode: 16,         // badge $0.08
+  SplitPhotoLayersNode: 2,         // badge $0.01
+  SeedreamLayerizeNode: 51,        // badge $0.34
+  RestorePhotoRemoteNode: 8,       // badge $0.04
+  RestorePhotoNode: 8,             // badge $0.04
+  CodeformerRemoteNode: 1,         // badge $0.005
+  FixFacesNode: 1,                 // badge $0.005
+  RemoveBackgroundRemoteNode: 1,   // badge $0.001
+  RemoveBackgroundNode: 1,         // badge $0.001
+  ClarityUpscaleRemoteNode: 30,    // no badge — Clarity's own range in UpscaleImageNode's description tops out at $0.20
+
+  // — video —
+  Veo3RemoteNode: 900,             // badge $6.00
+  KlingVideoRemoteNode: 75,        // no badge — kling-v2.1; the node's own legacy remap treats it as kling-v2.5-turbo-pro (~$0.50 / 5s)
+  Seedance2RemoteNode: 90,         // no badge — video catalog seedance-2.0 at ~$0.60 / 5s
+  EnhanceVideoNode: 150,           // badge $1.00
+  LipsyncRemoteNode: 150,          // badge $1.00 / 30s
+  LipsyncNode: 150,                // badge $1.00 / 30s
+
+  // — audio / speech —
+  WhisperRemoteNode: 1,            // badge $0.001 / min
+  TranscribeAudioNode: 1,          // badge $0.005 / min
+  MusicGenRemoteNode: 4,           // badge $0.02
+  GenerateMusicNode: 4,            // badge $0.02
+  MiniMaxSpeechRemoteNode: 45,     // badge $0.30 / 1K chars
+  GenerateSpeechNode: 45,          // badge $0.30 / 1K chars
+  CloneSingingVoiceNode: 4,        // badge $0.02 / min
+  IdentifySpeakersNode: 10,        // badge $0.05 / min
+
+  // — 3D —
+  Hunyuan3DRemoteNode: 45,         // badge $0.30
+  Hunyuan3DMultiViewNode: 45,      // badge $0.30
+  Generate3DNode: 45,              // badge $0.30
+
+  // — vision / text utility —
+  DescribeImageRemoteNode: 1,      // badge $0.001
+  DescribeImageNode: 1,            // badge $0.001
+  DescribeVideoNode: 2,            // badge $0.01
+  ExtractTextNode: 1,              // badge $0.005
+  FindObjectsNode: 1,              // badge $0.005
+  ChatLLMNode: 1,                  // badge $0.005
+  ImprovePromptNode: 1,            // badge $0.001
+  SummarizeTextNode: 1,            // badge $0.001
+  TranslateTextNode: 1,            // badge $0.001
+  RewriteToneNode: 1,              // badge $0.002
+  BrainstormIdeasNode: 1,          // badge $0.003
+  ReasonStepByStepNode: 2,         // badge $0.01
+
+  // — comfy_extras wrappers that dispatch through nodes_replicate —
+  RemoveObjectNode: 10,            // badge $0.05
+  TextEditNode: 10,                // badge $0.05
+  RecolorObjectNode: 10,           // badge $0.05
+  PersonSwapNode: 10,              // badge $0.05
+  PoseMannequinNode: 10,           // badge $0.05
+  SwapBackgroundNode: 10,          // badge $0.05
+  SwapProductNode: 10,             // badge $0.05
+  RelightNode: 10,                 // badge $0.05
+  LensReframeNode: 10,             // no badge — same nano-banana-2 edit call as its $0.05 siblings
+  TurntableNode: 75,               // badge $0.50
+}
+
+/**
+ * Classes whose price depends on a model/engine widget in `inputs`. Each one
+ * refuses when the widget value is missing or unknown.
+ */
+export const MODEL_PRICED_NODE_CLASSES = [
+  'GenerateImageNode',
+  'GenerateVideoNode',
+  'FilmShotNode',
+  'UpscaleImageNode',
+  'EnhanceDetailNode',
+]
+
+/**
+ * Classes that are free by design — no provider call in their execute body.
+ * The reason string is documentation and the coverage guard requires one.
+ * Empty today: every class in the provider modules dispatches to a provider.
+ */
+export const PROVIDER_NODE_EXEMPT: Record<string, string> = {}
+
+/**
+ * Runtime list of provider node classes. Checked in as a literal on purpose —
+ * the pricer must never read the Python tree at runtime. A drift guard in
+ * price-graph.unit.spec.ts asserts this equals the grep of nodes_replicate.py
+ * plus the comfy_extras modules that import its dispatch helpers, so adding a
+ * Python node without pricing it fails tests rather than production.
+ */
+export const PROVIDER_NODE_CLASSES: string[] = [
+  'FluxLoRARemoteNode', 'FluxMultiLoRARemoteNode', 'FluxProRemoteNode',
+  'FluxKontextRemoteNode', 'KlingVideoRemoteNode', 'ClarityUpscaleRemoteNode',
+  'IdeogramV3TurboNode', 'Veo3RemoteNode', 'Seedance2RemoteNode',
+  'WhisperRemoteNode', 'MusicGenRemoteNode', 'MiniMaxSpeechRemoteNode',
+  'Hunyuan3DRemoteNode', 'Hunyuan3DMultiViewNode', 'RemoveBackgroundRemoteNode',
+  'RestorePhotoRemoteNode', 'CodeformerRemoteNode', 'DescribeImageRemoteNode',
+  'LipsyncRemoteNode', 'GenerateImageNode', 'EditImageNode', 'DevelopImageNode',
+  'GenerateFromReferencesNode', 'BlendSceneNode', 'RestyleFromImageNode',
+  'RestyleWithLoRANode', 'ProductShotNode', 'RotateCameraNode', 'TextEffectNode',
+  'GenerateVideoNode', 'FilmShotNode', 'UpscaleImageNode', 'EnhanceDetailNode',
+  'RemoveBackgroundNode', 'RestorePhotoNode', 'FixFacesNode', 'LayerizeGraphicNode',
+  'SplitPhotoLayersNode', 'SeedreamLayerizeNode', 'OutpaintImageNode',
+  'DescribeImageNode', 'LipsyncNode', 'LipSyncNode', 'TranscribeAudioNode',
+  'GenerateMusicNode', 'GenerateSpeechNode', 'Generate3DNode', 'SketchToImageNode',
+  'ExtractTextNode', 'FindObjectsNode', 'ConsistentFaceNode', 'EnhanceVideoNode',
+  'DescribeVideoNode', 'CloneSingingVoiceNode', 'IdentifySpeakersNode', 'ChatLLMNode',
+  'ImprovePromptNode', 'SummarizeTextNode', 'TranslateTextNode', 'RewriteToneNode',
+  'BrainstormIdeasNode', 'ReasonStepByStepNode',
+  // comfy_extras wrappers
+  'RemoveObjectNode', 'TextEditNode', 'RecolorObjectNode', 'LensReframeNode',
+  'PersonSwapNode', 'PoseMannequinNode', 'RelightNode', 'SwapBackgroundNode',
+  'SwapProductNode', 'TurntableNode',
+]
+
+/**
+ * Per-clip USD for the video registry (app/data/video-models.ts), which prices
+ * in a free-form `priceHint` string that money code must not parse. `hint` is
+ * pinned to the catalog string by a parity test — if the catalog's hint
+ * changes the test fails and the USD figure must be re-derived by hand.
+ * Figures are the hint's quoted clip; ranges take the TOP of the range so a
+ * long render is never underpriced.
+ */
+export const VIDEO_MODEL_USD: Record<string, { usd: number; hint: string }> = {
+  'veo-3.1': { usd: 3.20, hint: '~$3.20 / 8s · ~$1.60 silent' },
+  'veo-3.1-fast': { usd: 1.20, hint: '~$1.20 / 8s · ~$0.80 silent' },
+  'sora-2': { usd: 0.30, hint: '~$0.30 / 5s' },
+  'sora-2-pro': { usd: 0.90, hint: '~$0.90 / 5s' },
+  'flux-3': { usd: 2.00, hint: '~$0.20–0.40 / s' },
+  'runway-gen-4.5': { usd: 0.80, hint: '~$0.80 / 5s' },
+  'kling-v3': { usd: 0.60, hint: '~$0.60 / 10s' },
+  'kling-v2.5-turbo-pro': { usd: 0.50, hint: '~$0.50 / 5s' },
+  'seedance-2.0': { usd: 0.60, hint: '~$0.60 / 5s' },
+  'seedance-2.0-fast': { usd: 0.30, hint: '~$0.30 / 5s' },
+  'hailuo-2.3': { usd: 0.35, hint: '~$0.35 / 6s' },
+  'wan-2.7-t2v': { usd: 0.15, hint: '~$0.15 / 5s' },
+  'wan-2.5-i2v-fast': { usd: 0.06, hint: '~$0.06 / 5s' },
+  'luma-ray-2-720p': { usd: 0.40, hint: '~$0.40 / 5s' },
+  'ltx-video': { usd: 0.04, hint: '~$0.04 / 5s' },
+  'pixverse-v6': { usd: 0.20, hint: '~$0.20 / 5s' },
+  'fabric-1.0': { usd: 0.20, hint: '~$0.20 / 30s' },
+}
+
+// Legacy video-model labels GenerateVideoNode still remaps at execute time
+// (_LEGACY_MODEL_REMAP) — the pricer must price those saved graphs too.
+const LEGACY_VIDEO_MODEL_IDS: Record<string, string> = {
+  'Seedance 2.0': 'seedance-2.0',
+  'Veo 3': 'veo-3.1',
+  'Kling 2.1': 'kling-v2.5-turbo-pro',
+}
+
+/**
+ * Engine-picker nodes: the `model` widget names an engine, not a catalog id.
+ * USD comes from the per-engine ranges in each node's own description in
+ * nodes_replicate.py — ranges take the TOP so the expensive setting is never
+ * underpriced.
+ */
+const ENGINE_USD: Record<string, Record<string, number>> = {
+  UpscaleImageNode: {
+    'Clarity': 0.20,        // description: ~$0.05–0.20
+    'Crystal': 0.04,        // description: ~$0.01–0.04
+    'Real-ESRGAN': 0.002,   // description: ~$0.002
+    'Recraft Crisp': 0.006, // description: ~$0.006
+    'Topaz': 0.05,          // description: ~$0.05+
+  },
+  EnhanceDetailNode: {
+    'Creative': 0.20,          // description: Clarity ~$0.05–0.20
+    'Faithful': 0.05,          // description: Topaz ~$0.05
+    'Diffusion Refine': 0.10,  // description: Magic Refiner ~$0.05–0.10
+  },
+}
+
+// Lazily-built lookups. Never derive these at module top level: a top-level
+// const reading another module's const breaks on import reorder.
+let _imagePrices: Map<string, number | null> | null = null
+function imagePriceFor(id: string): number | null | undefined {
+  if (!_imagePrices) _imagePrices = new Map(IMAGE_MODELS.map(m => [m.id, m.pricePerImage]))
+  return _imagePrices.get(id)
+}
+
+let _providerClasses: Set<string> | null = null
+function isProviderClass(ct: string): boolean {
+  if (!_providerClasses) _providerClasses = new Set(PROVIDER_NODE_CLASSES)
+  // The suffix rule catches provider nodes added after this list was written:
+  // `*RemoteNode` is the naming convention for every Replicate-backed node.
+  return _providerClasses.has(ct) || ct.endsWith('RemoteNode')
+}
+
+/** Credits for a model-priced class, or a refusal. */
+function graphNodeModelCredits(ct: string, inputs: unknown): number {
+  const picked = (inputs as { model?: unknown } | undefined)?.model
+  const model = typeof picked === 'string' ? picked : ''
+  if (!model) throw new UnpricedGraphError(ct, 'no model selected')
+
+  if (ct === 'GenerateImageNode') {
+    const usd = imagePriceFor(model)
+    if (usd === undefined) throw new UnpricedGraphError(ct, `unknown model id ${model}`)
+    if (usd == null) throw new UnpricedGraphError(ct, `model ${model} has no listed price`)
+    return creditsForUsdServer(usd)
+  }
+
+  if (ct === 'GenerateVideoNode' || ct === 'FilmShotNode') {
+    const id = LEGACY_VIDEO_MODEL_IDS[model] ?? model
+    const row = VIDEO_MODEL_USD[id]
+    if (!row) throw new UnpricedGraphError(ct, `unknown video model id ${model}`)
+    return creditsForUsdServer(row.usd)
+  }
+
+  const engines = ENGINE_USD[ct]
+  const usd = engines?.[model]
+  if (usd == null) throw new UnpricedGraphError(ct, `unknown engine ${model}`)
+  return creditsForUsdServer(usd)
 }
 
 export interface GraphPrice {
@@ -64,8 +339,20 @@ export function priceGraph(prompt: Record<string, { class_type: string; inputs?:
     const ct = prompt[id]?.class_type
     if (!ct) continue
     if (OUTPUT_CLASS_TYPES.has(ct)) hasOutput = true
-    const premium = PREMIUM_ACTION_CREDITS[ct]
-    if (premium) breakdown.push({ action: ct, credits: premium })
+
+    if (MODEL_PRICED_NODE_CLASSES.includes(ct)) {
+      const inputs = prompt[id]?.inputs
+      const credits = graphNodeModelCredits(ct, inputs)
+      const model = (inputs as { model?: unknown } | undefined)?.model
+      breakdown.push({ action: `${ct}:${String(model)}`, credits })
+      continue
+    }
+
+    const flat = GRAPH_NODE_CREDITS[ct]
+    if (flat) { breakdown.push({ action: ct, credits: flat }); continue }
+
+    // Fail closed: a provider node this table cannot price refuses the graph.
+    if (isProviderClass(ct) && !(ct in PROVIDER_NODE_EXEMPT)) throw new UnpricedGraphError(ct)
   }
 
   const out: { action: string; credits: number }[] = []
@@ -145,6 +432,14 @@ export const MODEL_COSTS: Record<string, ModelCost> = {
   // — LLM utility (per-token, pennies) —
   'meta/meta-llama-3-8b-instruct': { usd: 0.001, credits: 1, confidence: 'estimate' },
   'lucataco/qwen2-vl-7b-instruct': { usd: 0.003, credits: 1, confidence: 'estimate' },
+  // — slugs behind graph nodes that carry NO price_badge (Stage 5 Task 3).
+  // Derived inside the repo: kling-v2.1 is what GenerateVideoNode's own legacy
+  // remap treats as kling-v2.5-turbo-pro (~$0.50/5s in app/data/video-models.ts);
+  // seedance-2.0 is that catalog's own hint; clarity-upscaler is the top of the
+  // range UpscaleImageNode's description quotes for Clarity.
+  'kwaivgi/kling-v2.1': { usd: 0.5, credits: 75, confidence: 'estimate', note: 'per ~5s clip — duration-aware pricing is a hardening rider' },
+  'bytedance/seedance-2.0': { usd: 0.6, credits: 90, confidence: 'estimate', note: 'per ~5s clip — duration-aware pricing is a hardening rider' },
+  'philz1337x/clarity-upscaler': { usd: 0.2, credits: 30, confidence: 'estimate', note: 'top of the $0.05–0.20 range the node quotes' },
   // — training (hardware-billed; matches LoraTrainingNode=600 in the graph table) —
   'ostris/flux-dev-lora-trainer': { usd: 2.5, credits: 600, confidence: 'estimate', note: 'H100 ~15–40min; 600cr keeps parity with graph table' },
   'ostris/sdxl-lora-trainer': { usd: 2, credits: 600, confidence: 'estimate' },

@@ -5,12 +5,16 @@ import { describe, expect, it } from 'vitest'
 import { MODEL_COSTS, PRICE_BOOK_VERSION, costForModel, priceGraph } from '../../server/utils/priceBook'
 
 describe('price book: graph pricer (unchanged spike behavior)', () => {
+  // spike-v4 (Stage 5 Task 3): GenerateVideoNode is no longer flat-priced —
+  // its model widget spans $0.04 to $3.20 per clip, so it prices by model and
+  // REFUSES without one. Fixture updated to a still-flat premium class; the
+  // model-priced path is covered in price-graph.unit.spec.ts.
   it('base render + premium node', () => {
     const p = priceGraph({
       1: { class_type: 'SaveImage' },
-      2: { class_type: 'GenerateVideoNode' },
+      2: { class_type: 'Veo3RemoteNode' },
     })
-    expect(p.credits).toBe(61)
+    expect(p.credits).toBe(901)
     expect(p.version).toBe(PRICE_BOOK_VERSION)
   })
 

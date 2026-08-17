@@ -6,7 +6,7 @@
  * ONLY way a graph reaches the engine; see the isolation note in the findings doc.
  */
 import { meterPrompt, MeterError } from '~~/server/utils/meterPrompt'
-import { priceGraph } from '~~/server/utils/priceBook'
+import { priceGraph, UnpricedGraphError } from '~~/server/utils/priceBook'
 import { meterStore } from '~~/server/utils/meterStore'
 import { settleOnCompletion } from '~~/server/utils/settleWatcher'
 import { resolveSpikeUser, stripForeignComfyOrgCreds } from '~~/server/utils/spikeAuth'
@@ -75,6 +75,17 @@ export default defineEventHandler(async (event) => {
     return await meterPrompt(userId, body, deps)
   }
   catch (err) {
+    // The price book refused a provider node it cannot price. Fail closed with
+    // a 400 (never a 500 that reads like a transient fault, and never a run) —
+    // the class name tells us exactly which row to add.
+    if (err instanceof UnpricedGraphError) {
+      console.error('[meter] UNPRICED NODE REFUSED — add it to GRAPH_NODE_CREDITS', { classType: err.classType, detail: err.detail })
+      throw createError({
+        statusCode: 400,
+        message: `This graph contains a node we can't price yet (${err.classType}). It hasn't been run or charged.`,
+        data: { code: 'unpriced', classType: err.classType },
+      })
+    }
     if (err instanceof MeterError) {
       const status = err.code === 'unauthorized' ? 401 : err.code === 'insufficient' ? 402 : 400
       throw createError({ statusCode: status, message: err.message, data: { code: err.code, available: err.available, required: err.required } })
