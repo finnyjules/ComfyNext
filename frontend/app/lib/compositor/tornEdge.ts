@@ -97,20 +97,20 @@ function distanceInside(
   for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) { const i = y * W + x; d[i] = inside[i] ? INF : 0 }
   for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
     const i = y * W + x; if (d[i] === 0) continue
-    let m = d[i]
-    if (x > x0) m = Math.min(m, d[i - 1] + a)
-    if (y > y0) m = Math.min(m, d[i - W] + a)
-    if (x > x0 && y > y0) m = Math.min(m, d[i - W - 1] + b)
-    if (x < x1 && y > y0) m = Math.min(m, d[i - W + 1] + b)
+    let m = d[i]!
+    if (x > x0) m = Math.min(m, d[i - 1]! + a)
+    if (y > y0) m = Math.min(m, d[i - W]! + a)
+    if (x > x0 && y > y0) m = Math.min(m, d[i - W - 1]! + b)
+    if (x < x1 && y > y0) m = Math.min(m, d[i - W + 1]! + b)
     d[i] = m
   }
   for (let y = y1; y >= y0; y--) for (let x = x1; x >= x0; x--) {
     const i = y * W + x; if (d[i] === 0) continue
-    let m = d[i]
-    if (x < x1) m = Math.min(m, d[i + 1] + a)
-    if (y < y1) m = Math.min(m, d[i + W] + a)
-    if (x < x1 && y < y1) m = Math.min(m, d[i + W + 1] + b)
-    if (x > x0 && y < y1) m = Math.min(m, d[i + W - 1] + b)
+    let m = d[i]!
+    if (x < x1) m = Math.min(m, d[i + 1]! + a)
+    if (y < y1) m = Math.min(m, d[i + W]! + a)
+    if (x < x1 && y < y1) m = Math.min(m, d[i + W + 1]! + b)
+    if (x > x0 && y < y1) m = Math.min(m, d[i + W - 1]! + b)
     d[i] = m
   }
   return d
