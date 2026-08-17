@@ -15,6 +15,7 @@ import { layerLabels } from '~/lib/gradientfx/layerLabel'
 import StudioModalShell from '~/components/vue-canvas/StudioModalShell.vue'
 import StudioSection from '~/components/vue-canvas/StudioSection.vue'
 import StudioLayerStack from '~/components/vue-canvas/StudioLayerStack.vue'
+import CurveHandleEditor from '~/components/vue-canvas/CurveHandleEditor.vue'
 import StudioActionsFooter from '~/components/vue-canvas/studio/StudioActionsFooter.vue'
 import StudioColor from '~/components/vue-canvas/studio/StudioColor.vue'
 import BindableRow from '~/components/vue-canvas/studio/BindableRow.vue'
@@ -38,7 +39,7 @@ import { exportEmbedHtml, downloadEmbed } from '~/lib/embed/export'
 import type { GradientEmbedConfig } from '~/lib/embed/surfaces/gradient'
 import { clampExportDims } from '~/lib/gradientfx/exportDims'
 import {
-  ASPECTS, BLEND_MODES, DEFAULT_FOCUS, DIRECTIONS, GRADIENT_DIRS, LAYER_MAX, LAYOUTS, LAYOUT_LABELS, MAPPINGS, MIRROR_KINDS, RAMP_DEFAULTS, RING_SHAPES, SHAPE_KINDS,
+  ASPECTS, BLEND_MODES, CURVE_DEFAULTS, DEFAULT_FOCUS, DIRECTIONS, GRADIENT_DIRS, LAYER_MAX, LAYOUTS, LAYOUT_LABELS, MAPPINGS, MIRROR_KINDS, RAMP_DEFAULTS, RING_SHAPES, SHAPE_KINDS,
   aspectRatio, cloneConfig, ensureConfigDefaults, type GradientConfig, type LayoutKind, type MeshConfig, type ShapeKind,
 } from '~/lib/gradientfx/types'
 
@@ -60,6 +61,7 @@ const isRadial = computed(() => config.value.canvas.layout === 'radial' || confi
 const isStack = computed(() => config.value.canvas.layout === 'stack')
 const isLiquid = computed(() => config.value.canvas.layout === 'liquid')
 const isMesh = computed(() => config.value.canvas.layout === 'mesh')
+const isCurve = computed(() => config.value.canvas.layout === 'curve')
 // Gradient axis block — the three simple primitives share one "Gradient" section;
 // which controls it shows depends on which of the three is active.
 const isSimpleRamp = computed(() => ['ramp', 'radialRamp', 'conic'].includes(config.value.canvas.layout))
@@ -831,6 +833,24 @@ function onRamp(key: 'angle' | 'radius' | 'shape' | 'sweep' | 'closeLoop', value
   ;(L.ramp as any)[key] = value
   if (typeof value !== 'boolean') onEdit(`layer.ramp.${key}`, value)
 }
+// Curve dials (curve layout only). Mirrors onRamp above: `layer.curve` is optional
+// for back-compat and isn't backfilled by setLayout (only ensureConfigDefaults does
+// that, at load — same posture as `layer.ramp`) — seed the FULL CURVE_DEFAULTS, with
+// fresh start/end objects (not shared references), on first touch. Also the sink for
+// CurveHandleEditor's drag emits: `path` arrives as 'layer.curve.start.x',
+// 'layer.curve.mode', etc. — the two Vec2 fields are written component-by-component;
+// everything else writes straight onto the curve object by its remaining key.
+function onCurve(path: string, value: number | string) {
+  const L = layer.value
+  if (!L.curve) L.curve = { ...CURVE_DEFAULTS, start: { ...CURVE_DEFAULTS.start }, end: { ...CURVE_DEFAULTS.end } }
+  const rest = path.replace(/^layer\.curve\./, '')
+  if (rest === 'start.x') L.curve.start.x = value as number
+  else if (rest === 'start.y') L.curve.start.y = value as number
+  else if (rest === 'end.x') L.curve.end.x = value as number
+  else if (rest === 'end.y') L.curve.end.y = value as number
+  else (L.curve as any)[rest] = value
+  onEdit(path, value)
+}
 // Repeat/falloff live on `layer.color`, which is never optional, so — unlike
 // onRamp — there's no container to seed first.
 function onColor(key: 'repeat' | 'repeatCount' | 'falloff', value: number | string) {
@@ -872,6 +892,12 @@ function onColor(key: 'repeat' | 'repeatCount' | 'falloff', value: number | stri
                   :style="{ left: pt.x * 100 + '%', top: pt.y * 100 + '%', background: pt.color }"
                   :title="`Point ${i + 1} — drag to move`"
                   @pointerdown="onHandleDown(i, $event)" /></div>
+        <!-- Curve layout: draggable start/end/curvature handles overlaid on the
+             preview, writing straight into layer.curve.* (see onCurve above). Uses
+             the canvas element directly (same getBoundingClientRect tracking as
+             StringPathEditor/LoftSpineEditor) so it stays aligned through the
+             preview's own pan/zoom CSS transform. -->
+        <CurveHandleEditor v-if="isCurve" class="z-30" :model-value="layer.curve ?? CURVE_DEFAULTS" :canvas="canvas" @edit="onCurve" />
         <!-- Zoom controls (default z: the pointer-events-none mesh-handle overlay
              above lets clicks fall through here, and handles stay grabbable). -->
         <div class="absolute left-1/2 top-3 flex -translate-x-1/2 items-center gap-0.5 rounded-lg border border-white/10 bg-neutral-900/80 p-0.5 shadow-lg backdrop-blur">
@@ -999,6 +1025,67 @@ function onColor(key: 'repeat' | 'repeatCount' | 'falloff', value: number | stri
             <input type="checkbox" class="h-3.5 w-3.5 accent-white/70" :checked="layer.ramp?.closeLoop ?? false" @change="onRamp('closeLoop', ($event.target as HTMLInputElement).checked)" />
             <span>Close loop</span>
           </label>
+        </template>
+      </StudioSection>
+
+      <!-- Curve — the `curve` layout's parametric bezier axis. Start/End/Curvature
+           are also draggable directly on the preview (CurveHandleEditor, mounted
+           over the canvas above) — the sliders here are the precise/bindable twin
+           of those same dials, matching the layer.curve.* ControlSpecs (controls.ts). -->
+      <StudioSection v-show="onDesign && isCurve" title="Curve" :open="true">
+        <BindableRow control-key="layer.curve.mode" label="Mode" kind="select" :options="['along', 'outward']" :bound="boundColumnFor('layer.curve.mode')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
+          <label class="mb-1 block text-xs text-white/60">Mode</label>
+          <select :value="layer.curve?.mode ?? CURVE_DEFAULTS.mode" class="mb-2 w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-xs" @change="onCurve('layer.curve.mode', ($event.target as HTMLSelectElement).value)">
+            <option value="along">Along</option><option value="outward">Outward</option>
+          </select>
+        </BindableRow>
+        <BindableRow control-key="layer.curve.shape" label="Shape" kind="select" :options="['line', 'arc', 's-curve', 'wave', 'loop']" :bound="boundColumnFor('layer.curve.shape')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
+          <label class="mb-1 block text-xs text-white/60">Shape</label>
+          <select :value="layer.curve?.shape ?? CURVE_DEFAULTS.shape" class="mb-2 w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-xs" @change="onCurve('layer.curve.shape', ($event.target as HTMLSelectElement).value)">
+            <option value="line">Line</option><option value="arc">Arc</option><option value="s-curve">S-curve</option><option value="wave">Wave</option><option value="loop">Loop</option>
+          </select>
+        </BindableRow>
+        <BindableRow control-key="layer.curve.start.x" label="Start X" kind="slider" :min="0" :max="1" :step="0.01" :bound="boundColumnFor('layer.curve.start.x')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
+          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Start X</span><span class="text-white/40">{{ (layer.curve?.start.x ?? CURVE_DEFAULTS.start.x).toFixed(2) }}</span></label>
+          <input :value="layer.curve?.start.x ?? CURVE_DEFAULTS.start.x" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range mb-2 w-full" @input="onCurve('layer.curve.start.x', ($event.target as HTMLInputElement).valueAsNumber)" />
+        </BindableRow>
+        <BindableRow control-key="layer.curve.start.y" label="Start Y" kind="slider" :min="0" :max="1" :step="0.01" :bound="boundColumnFor('layer.curve.start.y')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
+          <label class="mb-1 flex justify-between text-xs text-white/60"><span>Start Y</span><span class="text-white/40">{{ (layer.curve?.start.y ?? CURVE_DEFAULTS.start.y).toFixed(2) }}</span></label>
+          <input :value="layer.curve?.start.y ?? CURVE_DEFAULTS.start.y" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range mb-2 w-full" @input="onCurve('layer.curve.start.y', ($event.target as HTMLInputElement).valueAsNumber)" />
+        </BindableRow>
+        <BindableRow control-key="layer.curve.end.x" label="End X" kind="slider" :min="0" :max="1" :step="0.01" :bound="boundColumnFor('layer.curve.end.x')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
+          <label class="mb-1 flex justify-between text-xs text-white/60"><span>End X</span><span class="text-white/40">{{ (layer.curve?.end.x ?? CURVE_DEFAULTS.end.x).toFixed(2) }}</span></label>
+          <input :value="layer.curve?.end.x ?? CURVE_DEFAULTS.end.x" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range mb-2 w-full" @input="onCurve('layer.curve.end.x', ($event.target as HTMLInputElement).valueAsNumber)" />
+        </BindableRow>
+        <BindableRow control-key="layer.curve.end.y" label="End Y" kind="slider" :min="0" :max="1" :step="0.01" :bound="boundColumnFor('layer.curve.end.y')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
+          <label class="mb-1 flex justify-between text-xs text-white/60"><span>End Y</span><span class="text-white/40">{{ (layer.curve?.end.y ?? CURVE_DEFAULTS.end.y).toFixed(2) }}</span></label>
+          <input :value="layer.curve?.end.y ?? CURVE_DEFAULTS.end.y" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range mb-2 w-full" @input="onCurve('layer.curve.end.y', ($event.target as HTMLInputElement).valueAsNumber)" />
+        </BindableRow>
+        <template v-if="(layer.curve?.shape ?? CURVE_DEFAULTS.shape) !== 'line'">
+          <BindableRow control-key="layer.curve.curvature" label="Curvature" kind="slider" :min="0" :max="1" :step="0.01" :bound="boundColumnFor('layer.curve.curvature')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
+            <label class="mb-1 flex justify-between text-xs text-white/60"><span>Curvature</span><span class="text-white/40">{{ (layer.curve?.curvature ?? CURVE_DEFAULTS.curvature).toFixed(2) }}</span></label>
+            <input :value="layer.curve?.curvature ?? CURVE_DEFAULTS.curvature" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range mb-2 w-full" @input="onCurve('layer.curve.curvature', ($event.target as HTMLInputElement).valueAsNumber)" />
+          </BindableRow>
+          <BindableRow control-key="layer.curve.bend" label="Bend" kind="slider" :min="-1" :max="1" :step="0.01" :bound="boundColumnFor('layer.curve.bend')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
+            <label class="mb-1 flex justify-between text-xs text-white/60"><span>Bend</span><span class="text-white/40">{{ (layer.curve?.bend ?? CURVE_DEFAULTS.bend).toFixed(2) }}</span></label>
+            <input :value="layer.curve?.bend ?? CURVE_DEFAULTS.bend" type="range" min="-1" max="1" step="0.01" v-studio-reset class="studio-range mb-2 w-full" @input="onCurve('layer.curve.bend', ($event.target as HTMLInputElement).valueAsNumber)" />
+          </BindableRow>
+        </template>
+        <template v-if="(layer.curve?.shape ?? CURVE_DEFAULTS.shape) === 'wave'">
+          <BindableRow control-key="layer.curve.waves" label="Waves" kind="slider" :min="1" :max="8" :step="1" :bound="boundColumnFor('layer.curve.waves')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
+            <label class="mb-1 flex justify-between text-xs text-white/60"><span>Waves</span><span class="text-white/40">{{ layer.curve?.waves ?? CURVE_DEFAULTS.waves }}</span></label>
+            <input :value="layer.curve?.waves ?? CURVE_DEFAULTS.waves" type="range" min="1" max="8" step="1" v-studio-reset class="studio-range mb-2 w-full" @input="onCurve('layer.curve.waves', ($event.target as HTMLInputElement).valueAsNumber)" />
+          </BindableRow>
+          <BindableRow control-key="layer.curve.phase" label="Phase" kind="slider" :min="0" :max="1" :step="0.01" :bound="boundColumnFor('layer.curve.phase')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
+            <label class="mb-1 flex justify-between text-xs text-white/60"><span>Phase</span><span class="text-white/40">{{ (layer.curve?.phase ?? CURVE_DEFAULTS.phase).toFixed(2) }}</span></label>
+            <input :value="layer.curve?.phase ?? CURVE_DEFAULTS.phase" type="range" min="0" max="1" step="0.01" v-studio-reset class="studio-range mb-2 w-full" @input="onCurve('layer.curve.phase', ($event.target as HTMLInputElement).valueAsNumber)" />
+          </BindableRow>
+        </template>
+        <template v-if="(layer.curve?.mode ?? CURVE_DEFAULTS.mode) === 'outward'">
+          <BindableRow control-key="layer.curve.width" label="Width" kind="slider" :min="0.02" :max="1" :step="0.01" :bound="boundColumnFor('layer.curve.width')" @menu="openVarMenu" @promote="(control) => promote(control, paramsProxy[control.key] as string | number)">
+            <label class="mb-1 flex justify-between text-xs text-white/60"><span>Width</span><span class="text-white/40">{{ (layer.curve?.width ?? CURVE_DEFAULTS.width).toFixed(2) }}</span></label>
+            <input :value="layer.curve?.width ?? CURVE_DEFAULTS.width" type="range" min="0.02" max="1" step="0.01" v-studio-reset class="studio-range mb-2 w-full" @input="onCurve('layer.curve.width', ($event.target as HTMLInputElement).valueAsNumber)" />
+          </BindableRow>
         </template>
       </StudioSection>
 
