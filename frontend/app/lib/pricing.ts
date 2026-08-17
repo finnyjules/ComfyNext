@@ -31,3 +31,24 @@ export function formatCostLong(usd: number, hosted: boolean): string {
   if (!hosted) return `$${usd.toFixed(2)}`
   return `~${creditsForUsd(usd)} credits`
 }
+
+/**
+ * Run-money text for an estimate that may already carry a hosted credits
+ * figure (see costEstimate's `hostedCredits`). That figure is model-aware and
+ * has ALREADY been through creditsForUsd; passing its USD back through the
+ * markup would ceil a second time and quote a different number than the node
+ * badge sitting next to it. Local ignores the credits entirely and shows
+ * dollars, exactly as before.
+ */
+export function formatEstimateLong(usd: number, hostedCredits: number | null | undefined, hosted: boolean): string {
+  if (hosted && hostedCredits != null) return `~${hostedCredits} credits`
+  return formatCostLong(usd, hosted)
+}
+
+/** Short-badge counterpart of formatEstimateLong ("~481 cr" / "~$0.40"). */
+export function formatEstimateBadge(
+  usd: number, hostedCredits: number | null | undefined, approximate: boolean, hosted: boolean,
+): string {
+  if (hosted && hostedCredits != null) return `~${hostedCredits} cr`
+  return formatCostBadge(usd, approximate, hosted)
+}

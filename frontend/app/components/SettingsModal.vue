@@ -2,6 +2,7 @@
 import {
   X, Monitor, Paintbrush, MousePointer2, Zap, FolderOpen, ChevronDown, Sparkles, HardDriveDownload,
 } from 'lucide-vue-next'
+import { hostedModeEnabled } from '~/lib/hostedMode'
 
 const { settingsOpen, closeSettings } = useSettingsModal()
 const { getLocalSetting, setLocalSetting } = useLocalSettings()
@@ -37,6 +38,17 @@ interface SettingDef {
   max?: number
   step?: number
   description?: string
+  // Hosted mode forces this toggle ON in code (see the resolvers in
+  // useVueNodesEnabled / useDirectExecutionEnabled). Showing the stored
+  // localStorage state would then be a lie — and letting it be switched off
+  // would strand the user on a canvas that never mounts. Pinned + disabled
+  // hosted; completely untouched locally.
+  hostedForcedOn?: boolean
+}
+
+const hostedSettings = hostedModeEnabled(useRuntimeConfig().public)
+function isHostedPinned(setting: SettingDef): boolean {
+  return hostedSettings && setting.hostedForcedOn === true
 }
 
 const settingsByCategory: Record<string, SettingDef[]> = {
@@ -77,7 +89,7 @@ const settingsByCategory: Record<string, SettingDef[]> = {
     { id: 'Comfy.EnableWorkflowViewRestore', label: 'Restore canvas position per workflow', type: 'toggle' },
   ],
   appearance: [
-    { id: 'Comfy.VueNodes.Enabled', label: 'Modern node design', type: 'toggle', description: 'Use the new Vue-based node rendering', local: true },
+    { id: 'Comfy.VueNodes.Enabled', label: 'Modern node design', type: 'toggle', description: 'Use the new Vue-based node rendering', local: true, hostedForcedOn: true },
     { id: 'Comfy.Node.Opacity', label: 'Node opacity', type: 'slider', min: 0.1, max: 1, step: 0.05 },
     { id: 'Comfy.Graph.CanvasInfo', label: 'Show canvas info (FPS)', type: 'toggle' },
     { id: 'Comfy.Graph.LinkMarkers', label: 'Link midpoint markers', type: 'select', options: [
@@ -98,7 +110,7 @@ const settingsByCategory: Record<string, SettingDef[]> = {
     { id: 'LiteGraph.Canvas.MaximumFps', label: 'Maximum FPS', type: 'number', min: 15, max: 144 },
   ],
   execution: [
-    { id: 'Comfy.DirectExecution.Enabled', label: 'Direct execution (beta)', type: 'toggle', local: true, description: 'Queue runs directly from the app (bypasses the bridge iframe). Required for parallel runs and Re-roll ×4.' },
+    { id: 'Comfy.DirectExecution.Enabled', label: 'Direct execution (beta)', type: 'toggle', local: true, hostedForcedOn: true, description: 'Queue runs directly from the app (bypasses the bridge iframe). Required for parallel runs and Re-roll ×4.' },
     { id: 'Comfy.Execution.PreviewMethod', label: 'Live preview method', type: 'select', options: [
       { label: 'Auto', value: 'auto' },
       { label: 'TAESD', value: 'taesd' },
@@ -321,18 +333,25 @@ function handleSelectChange(setting: SettingDef, rawValue: string) {
                 <div class="flex-1 min-w-0 pr-4">
                   <div class="text-[13px] text-white/80">{{ setting.label }}</div>
                   <div v-if="setting.description" class="text-[11px] text-white/35 mt-0.5">{{ setting.description }}</div>
+                  <div v-if="isHostedPinned(setting)" class="text-[11px] text-white/35 mt-0.5">Always on in hosted</div>
                 </div>
 
-                <!-- Toggle -->
+                <!-- Toggle. Hosted-pinned toggles read ON and refuse the click:
+                     the app forces them on, so the stored value is not the
+                     truth and switching it off would break the canvas. -->
                 <button
                   v-if="setting.type === 'toggle'"
-                  class="relative w-9 h-5 rounded-full transition-colors cursor-pointer shrink-0"
-                  :class="getSettingValue(setting.id, false) ? 'bg-white/15' : 'bg-[#3a3a3a]'"
-                  @click="handleToggle(setting)"
+                  class="relative w-9 h-5 rounded-full transition-colors shrink-0"
+                  :class="[
+                    isHostedPinned(setting) ? 'cursor-not-allowed opacity-50' : 'cursor-pointer',
+                    (isHostedPinned(setting) || getSettingValue(setting.id, false)) ? 'bg-white/15' : 'bg-[#3a3a3a]',
+                  ]"
+                  :disabled="isHostedPinned(setting)"
+                  @click="isHostedPinned(setting) ? null : handleToggle(setting)"
                 >
                   <div
                     class="absolute top-0.5 size-4 rounded-full bg-white shadow transition-transform"
-                    :class="getSettingValue(setting.id, false) ? 'translate-x-[18px]' : 'translate-x-0.5'"
+                    :class="(isHostedPinned(setting) || getSettingValue(setting.id, false)) ? 'translate-x-[18px]' : 'translate-x-0.5'"
                   />
                 </button>
 

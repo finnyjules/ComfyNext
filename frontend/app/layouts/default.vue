@@ -30,7 +30,7 @@ import CanvasStatusBar, { type RunResult } from '~/components/CanvasStatusBar.vu
 import AgentCanvasPromptBar from '~/components/agent/CanvasPromptBar.vue'
 import { ARTIFACT_NODE_FOR_SOURCE, type ActionSource } from '~/data/action-catalog'
 import { estimateUsdForNodes, vueNodesToEstimateInput, type CostEstimate } from '~/lib/costEstimate'
-import { formatCostBadge, formatCostLong } from '~/lib/pricing'
+import { formatCostBadge, formatEstimateBadge, formatEstimateLong } from '~/lib/pricing'
 import { hostedModeEnabled } from '~/lib/hostedMode'
 import { tallyReplicateUsd } from '~/lib/graph/runCost'
 import { summarizeNodeErrors } from '~/lib/validationErrors'
@@ -681,20 +681,21 @@ async function runVueWorkflow(
         : collectKeepSet({ links: linkView } as any, ids)
       targetSet = new globalThis.Set([...keep].map((id) => String(id)))
     }
-    const estInput = (vnodes as any[])
-      .filter((v: any) => (v.data?.mode ?? 0) !== 2)
-      .filter((v: any) => !targetSet || targetSet.has(String(v.id)))
-      .map((v: any) => ({
-        id: String(v.id),
-        type: String(v.data?.nodeType || ''),
-        title: v.data?.title,
-        badgeExpr: v.data?.priceBadge?.expr ?? null,
-        category: v.data?.category ?? null,
-      }))
-    const single = estimateUsdForNodes(estInput)
+    // Same adapter the Run-button estimate uses (it already drops muted nodes),
+    // so the confirm dialog and the node badges read the same widget values.
+    const estInput = vueNodesToEstimateInput(
+      (vnodes as any[]).filter((v: any) => !targetSet || targetSet.has(String(v.id))),
+    )
+    const single = estimateUsdForNodes(estInput, { hosted: hostedShell })
     if (single) {
       const iterations = Math.max(1, (opts.costConfirmIterations || 1) * takeCount)
-      const est: CostEstimate = { ...single, usd: single.usd * iterations }
+      // Credits scale with iterations exactly as dollars do — each iteration is
+      // its own graph submit, so its own base_render is charged again.
+      const est: CostEstimate = {
+        ...single,
+        usd: single.usd * iterations,
+        ...(single.hostedCredits != null ? { hostedCredits: single.hostedCredits * iterations } : {}),
+      }
       if (est.usd >= costConfirmThresholdUsd() && !(await confirmRunCost(est, iterations))) {
         return false // cancelled at the cost gate — return before acquiring the lock
       }
@@ -2179,7 +2180,11 @@ if (import.meta.client) (globalThis as any).__reloadCanvas = forceReloadCanvas
 // different tabs hit different ComfyUI servers and execute concurrently.
 // ───────────────────────────────────────────────────────────────────────────
 const comfyWorkers = ref<string[]>([comfyOrigin])
-if (import.meta.client) {
+// Never hosted: pool workers are extra ComfyUI servers on the operator's own
+// machine. A hosted browser has no :8189 to probe (and no engine origin at
+// all), so the flag lingering in localStorage would fire a pointless
+// cross-origin fetch on every load.
+if (import.meta.client && !hostedShell) {
   try {
     const raw = localStorage.getItem('sailor:pool')
     let desired: string[] | null = null
@@ -2938,7 +2943,15 @@ function updateRunEstimate() {
     return
   }
   const nodes = vueCanvasRef.value?.getNodes?.() || []
-  runEstimate.value = estimateUsdForNodes(vueNodesToEstimateInput(nodes))
+  runEstimate.value = estimateUsdForNodes(vueNodesToEstimateInput(nodes), { hosted: hostedShell })
+}
+
+/** Per-iteration line in the confirm dialog. Hosted divides the CREDITS figure
+ *  (an exact multiple — the estimate scaled it by the same iteration count)
+ *  rather than re-converting a divided USD, which would ceil a second time. */
+function perIterationCost(est: CostEstimate, iterations: number): string {
+  const credits = est.hostedCredits != null ? Math.round(est.hostedCredits / iterations) : null
+  return formatEstimateLong(est.usd / iterations, credits, hostedShell)
 }
 
 // Credits modal (native Vue — no iframe needed)
@@ -3667,6 +3680,13 @@ function handleBridgeEvent(data: any, source?: Window | null) {
     dropRunState(prompt_id)
   } else if (evt === 'execution_error') {
     if (prompt_id) clearDirectRunWatchdog(prompt_id) // run is terminal — stop the stall timer
+    // Hosted: a failed run releases its hold server-side, so the pill must
+    // recover — same two-step refresh as execution_complete (the first read
+    // often still sees the hold; settlement lags the event).
+    if (hostedShell) {
+      void refreshHostedWallet()
+      setTimeout(() => { void refreshHostedWallet() }, 3000)
+    }
     // Snapshot silent state for THIS run BEFORE finishRun drops the entry
     // (getRun would then go null). Registered → per-run live; bridge → the flag.
     const errWasSilent = isSilentEvent(prompt_id)
@@ -3741,10 +3761,10 @@ function dismissRunResult() {
     >
       <div class="w-[360px] bg-[#1a1a1a] border border-[#2a2a2a] rounded-xl shadow-2xl p-4">
         <div class="text-sm font-semibold text-white mb-1">
-          This run costs {{ formatCostLong(costConfirmHead.estimate.usd, hostedShell) }}
+          This run costs {{ formatEstimateLong(costConfirmHead.estimate.usd, costConfirmHead.estimate.hostedCredits, hostedShell) }}
         </div>
         <div v-if="costConfirmHead.iterations > 1" class="text-[11px] text-white/50 mb-2">
-          {{ costConfirmHead.iterations }} runs × {{ formatCostLong(costConfirmHead.estimate.usd / costConfirmHead.iterations, hostedShell) }} each
+          {{ costConfirmHead.iterations }} runs × {{ perIterationCost(costConfirmHead.estimate, costConfirmHead.iterations) }} each
         </div>
         <div class="max-h-[160px] overflow-y-auto mb-3 space-y-1">
           <div
@@ -4300,7 +4320,7 @@ function dismissRunResult() {
             <Play class="size-3.5 text-white fill-white" />
             <span class="text-sm font-semibold text-white">Run</span>
             <span v-if="runEstimate" class="text-[11px] font-medium text-white/75 tabular-nums">
-              {{ formatCostBadge(runEstimate.usd, true, hostedShell) }}
+              {{ formatEstimateBadge(runEstimate.usd, runEstimate.hostedCredits, true, hostedShell) }}
             </span>
           </button>
           <button
