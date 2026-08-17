@@ -17,7 +17,7 @@ Legend: **bake** = render/export path · **motion** = animatable · **inspector*
 | Scene3D Studio | ✅ 3-pass + mp4 | ✅ own timeline (groups animate) | ✅ + object tree | ❌ | ~6,300 (+ SVG import) |
 | Compositor / Frame | ✅ | ✅ motion clips | ✅ | ✅ commands | 1,667 (+1,041 motion) |
 | Timeline (NLE) | ✅ webm/mp4 + server | ✅ native | ✅ | ❌ | shared/timeline |
-| Gradient Studio | ✅ | ✅ 30 targets, path-based | ✅ (hand-written) | ✅ descriptor | 2,620 (+ 4 simple primitives incl. curve) |
+| Gradient Studio | ✅ | ✅ 30 targets, path-based | ✅ (hand-written) | ✅ descriptor | 2,620 (+ 4 primitives + alpha + per-layer layout) |
 | Shader Studio | ✅ | ✅ path tracks | ✅ (data-driven) | ✅ descriptor | 806 + 63 effects |
 | Texture Studio | ✅ | ❌ | ✅ (data-driven) | ✅ commands | 2,041 |
 | Shape Studio | ✅ | ❌ | ✅ | ❌ | 761 |
@@ -30,6 +30,14 @@ Legend: **bake** = render/export path · **motion** = animatable · **inspector*
 | Pose Mannequin | ✅ control img | ❌ | modal | ❌ (excluded) | — |
 | Inpaint / Region | ✅ backend | — | toolbar | ✅ ops | — |
 | Collection (sweeps) | — | — | ✅ | ✅ | backbone |
+
+### Gradient Studio — stackable gradients: alpha + per-layer layout — LANDED 2026-08-16 (`23ddbbf47`..`a830fa908`)
+
+Bug report: "stacked gradient layers all look the same when I try to make them different; alpha colours don't work." **Root cause was shared: transparency was stripped everywhere.** `hexToRgb` did `slice(0,6)` (dropped the alpha byte), `buildRampLut` hardcoded the LUT A channel to 255, and every ramp-sampling shader branch returned `alpha = 1.0` — so an `#rrggbbaa` stop always rendered opaque, and because the simple-primitive layouts fill the whole frame opaquely, a stacked top layer with normal blend + opacity 1 completely hid everything below (found via a 2-layer differential probe: `twoLayerEqualsTopOnly`). **Fix (`23ddbbf47`):** alpha flows end-to-end — parsed in `hexToRgb` (opaque default for 3/6-digit), interpolated into the LUT A channel, and returned by a new `sampleAlpha()` from every ramp branch (× the stripe coverage mask). The composite loop already blends by per-pixel alpha, so transparent stops now let lower layers + the canvas background show through. The **final whole-branch review caught a Critical the fix missed** — the radial/orbit branch's `return vec4(col, colMask)` (top-level, 2-space indent) escaped the alpha fix's 4-space-anchored `replace_all`, so radial & orbit ignored stop alpha; fixed in `a830fa908`, live-verified that a transparent radial/orbit top now reveals the base.
+
+**Per-layer layout** (`8f4498c93`..`5618f9114`) completes "stack *different* gradients": each layer can now be a different `LayoutKind` (radial over linear over curve…). `LayerConfig.layout?` is optional (`effectiveLayout(cfg,i) = layers[i].layout ?? canvas.layout`); the shader's `u_layout` scalar became a per-layer `u_layout[LAYER_MAX]` array — `computeLayer`/`bandHeight` branch on `u_layout[i]`, the three frame-level gates in `main()` (relief, liquid depth/gloss, liquid ripple) key off `u_layout[0]` (the base layer, which relief already read). The inspector's Layout picker sets the **active** layer (layer 0 → `canvas.layout`; layers 1+ → `layers[i].layout`); an `activeLayout` computed rebases every layout-gated section so selecting a radial layer shows radial controls. Mesh is excluded from the picker on layers 1+ (it's a whole-canvas soft-field). `layer.layout` is a `select` in the inspector but **`agent: false`** — agent control of per-layer layout conflicts with the layer-0-anchor semantics (the agent writes one active layer; it controls the base layout via `canvas.layout`). A mid-task blocker (agent-exposing an optional field broke the agent-integrity test) was resolved by `agent: false` after a backfill approach proved to pin layers and break the "canvas.layout drives un-overridden layers" model.
+
+Built subagent-driven TDD, 5 tasks + review loops. **Live-verified** via the harness multi-layer probe: layer 1 as radialRamp/conic/curve renders its *own* layout (mixed composite ≠ uniform), and with transparent stops the layers blend (visual: linear+radial / linear+conic / linear+curve stacks). Known minor (not fixed): reordering an overridden layer to index 0 transiently sets `layers[0].layout` (self-heals on next layer-0 pick). Spec: [2026-08-16-gradient-per-layer-layout-design.md](superpowers/specs/2026-08-16-gradient-per-layer-layout-design.md) · plan: [2026-08-16-gradient-per-layer-layout.md](superpowers/plans/2026-08-16-gradient-per-layer-layout.md).
 
 ### Gradient Studio — curve-following gradient — LANDED 2026-08-16 (`8c8230084`..`76c4a8b5f`)
 
