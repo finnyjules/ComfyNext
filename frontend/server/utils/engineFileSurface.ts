@@ -24,7 +24,12 @@
  *
  * LOCAL BYTE-IDENTICAL: nothing here runs in local mode — it is consulted only
  * from the hosted meterGraphSubmit / handleMeteredPrompt path.
+ *
+ * Task 7c adds the WRITE-side companion, GRAPH_OUTPUT_WRITERS (below): which
+ * input field carries a class's output path, for the per-user subfolder
+ * injection (injectOutputSubfolder in meterGraphRun.ts).
  */
+import { OUTPUT_CLASS_TYPES } from './priceBook'
 
 /** How a file input carries its filename(s). */
 export type FileRefSemantics = 'input' | 'output' | 'either'
@@ -240,6 +245,47 @@ function collectRendered(parsed: unknown): string[] | null {
     return out
   }
   return null
+}
+
+// ---------------------------------------------------------------------------
+// GRAPH_OUTPUT_WRITERS (Task 7c) — which INPUT FIELD carries a writer node's
+// output path, for the per-user subfolder injection in meterGraphRun.ts.
+//
+// Task 7/7b's injectOutputSubfolder only ever rewrote `filename_prefix`,
+// which is right for every member of OUTPUT_CLASS_TYPES (verified against
+// each handler — nodes.py SaveImage/SaveLatent/PreviewImage, nodes_image.py
+// Image, nodes_video.py SaveWEBM/SaveVideo/Video, nodes_video_effects.py
+// SaveVideoFrames, nodes_audio.py SaveAudio/SaveAudioMP3/SaveAudioOpus/Audio,
+// nodes_hunyuan3d.py SaveGLB, nodes_lora_extract.py LoraSave,
+// nodes_model_merging.py CheckpointSave/CLIPSave/VAESave/ModelSave,
+// nodes_images.py SaveSVGNode/SaveAnimatedWEBP/SaveAnimatedPNG — every one of
+// these calls folder_paths.get_save_image_path(filename_prefix, ...), so the
+// OUTPUT_CLASS_TYPES-derived portion below is built FROM that set, not
+// hand-duplicated: a class added to OUTPUT_CLASS_TYPES is automatically a
+// filename_prefix writer here too.
+//
+// But three write sites place their output through a DIFFERENT field, so the
+// old single-field assumption silently skipped them:
+//   - SaveLoRA (comfy_extras/nodes_train.py) takes `prefix`, not
+//     filename_prefix — routed through the SAME folder_paths.get_save_image_path
+//     containment check as the family above, just a different input name.
+//   - SaveImageDataSetToFolder / SaveImageTextDataSetToFolder / SaveTrainingDataset
+//     (comfy_extras/nodes_dataset.py) take `folder_name`, joined onto
+//     get_output_directory() with `os.path.join` and NO commonpath check
+//     (folder_paths.get_save_image_path is never called) — `folder_name` set
+//     to `../..` writes OUTSIDE the output root entirely (the MOST SERIOUS
+//     Task 7c finding, verified at nodes_dataset.py:237).
+// Preview3D (comfy_extras/nodes_load_3d.py:110-111) writes a random
+// `preview3d_<uuid>.<ext>` filename straight to the output root — there is no
+// client-controllable path field to rewrite, so its entry is `null` (see the
+// matching WRITE_EXEMPT reason in engine-file-surface.unit.spec.ts).
+export const GRAPH_OUTPUT_WRITERS: Record<string, string | null> = {
+  ...Object.fromEntries([...OUTPUT_CLASS_TYPES].map(ct => [ct, 'filename_prefix'])),
+  SaveLoRA: 'prefix',
+  SaveImageDataSetToFolder: 'folder_name',
+  SaveImageTextDataSetToFolder: 'folder_name',
+  SaveTrainingDataset: 'folder_name',
+  Preview3D: null,
 }
 
 /** Timeline edit_state: image-clip file paths under tracks[].clips[].path / .asset_path. */

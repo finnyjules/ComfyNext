@@ -11,7 +11,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { H3Event } from 'h3'
 import { readBody, setResponseStatus } from 'h3'
-import { priceGraph, UnpricedGraphError, OUTPUT_CLASS_TYPES } from './priceBook'
+import { priceGraph, UnpricedGraphError } from './priceBook'
 import { MeterRefusalError } from './requestMeter'
 import { createGraphRun, resolveGraphRun, outputKey, ownedOutputKeys } from './graphRuns'
 import { settleOnCompletion } from './settleWatcher'
@@ -20,7 +20,7 @@ import { resolveWorkerTarget } from './workerRoute'
 import { getLiveLedger } from './ledgerLive'
 import { annotatedFilepath, collectUploadFlaggedInputs } from './engineGate'
 import { canonicalUploadKey, uploadOwner } from './inputUploads'
-import { GRAPH_FILE_READERS, GRAPH_FOLDER_READERS, extractFileRefs, graphFolderOwnedBy, type FileRefSemantics } from './engineFileSurface'
+import { GRAPH_FILE_READERS, GRAPH_FOLDER_READERS, GRAPH_OUTPUT_WRITERS, extractFileRefs, graphFolderOwnedBy, type FileRefSemantics } from './engineFileSurface'
 
 export function isPromptPath(path: string): boolean {
   return path === '/prompt' || path.startsWith('/prompt?')
@@ -41,40 +41,54 @@ export function shortUserHash(userId: string): string {
 }
 
 /**
- * Rewrite a client-supplied `filename_prefix` so every SaveImage-family node
- * writes under the caller's OWN `u_<hash>/` subfolder — outputs land in
- * `output/u_<hash>/...` and can never be written into (or over) another
- * tenant's tree. The engine's get_save_image_path splits the prefix on `/`
- * into subfolder+filename and containment-checks it (folder_paths.py:453-456);
- * we harden the same boundary up front.
+ * Rewrite a client-supplied output-path field so EVERY writer node — not just
+ * the filename_prefix family — writes under the caller's OWN `u_<hash>/`
+ * subfolder. Task 7/7b only ever touched `filename_prefix`; Task 7c
+ * generalizes to GRAPH_OUTPUT_WRITERS (engineFileSurface.ts), a per-class map
+ * of WHICH input field carries that class's output path (`filename_prefix`
+ * for the SaveImage family, `prefix` for SaveLoRA, `folder_name` for the
+ * dataset savers). filename_prefix writers route through
+ * folder_paths.get_save_image_path, which containment-checks the resulting
+ * path (folder_paths.py:453-458) — but SaveImageDataSetToFolder /
+ * SaveImageTextDataSetToFolder / SaveTrainingDataset join `folder_name` onto
+ * get_output_directory() with a bare os.path.join and NO commonpath check
+ * (nodes_dataset.py:237), so a client `folder_name: "../.."` writes OUTSIDE
+ * the output root entirely. We harden the SAME boundary up front for every
+ * declared field, regardless of whether the engine also checks it.
  *
  * The caller's segment is PREPENDED exactly once: any leading `u_<segment>/`
  * runs the client supplied (their own hash repeated, or a forged
  * `u_otherhash/`) are stripped first, then `..`/`.`/empty segments are dropped,
  * so a forged `u_otherhash/evil` becomes `u_<caller>/evil` — replaced, never
- * nested. Returns a CLONE; the input graph is never mutated (no cross-request
- * bleed through a shared body object).
+ * nested — and `../../etc` becomes `u_<caller>/etc` — traversal neutralized.
+ * A class with NO client-controllable path field (Preview3D — a random-uuid
+ * filename, GRAPH_OUTPUT_WRITERS value `null`) is left untouched; there is
+ * nothing to rewrite. Returns a CLONE; the input graph is never mutated (no
+ * cross-request bleed through a shared body object).
  */
 export function injectOutputSubfolder(prompt: Record<string, any>, userId: string): Record<string, any> {
   const hash = shortUserHash(userId)
   const clone = structuredClone(prompt)
   for (const node of Object.values(clone)) {
     if (!node || typeof node !== 'object') continue
-    if (!OUTPUT_CLASS_TYPES.has((node as any).class_type)) continue
+    const field = GRAPH_OUTPUT_WRITERS[(node as any).class_type]
+    if (!field) continue
     const inputs = (node as any).inputs
     if (!inputs || typeof inputs !== 'object' || Array.isArray(inputs)) (node as any).inputs = {}
     const target = (node as any).inputs as Record<string, unknown>
-    const existing = typeof target.filename_prefix === 'string' ? target.filename_prefix : ''
-    target.filename_prefix = `u_${hash}/${sanitizeExistingPrefix(existing)}`
+    const existing = typeof target[field] === 'string' ? target[field] as string : ''
+    target[field] = `u_${hash}/${sanitizeExistingPrefix(existing)}`
   }
   return clone
 }
 
 /**
- * Strip a client prefix down to a contained, foreign-namespace-free suffix:
- * fold backslashes, drop any leading `u_<segment>/` runs (so the caller's own
- * hash is the ONLY per-user segment), then drop `..`/`.`/empty path segments.
- * Falls back to `ComfyUI` when nothing usable remains.
+ * Strip a client-supplied output-path value down to a contained,
+ * foreign-namespace-free suffix: fold backslashes, drop any leading
+ * `u_<segment>/` runs (so the caller's own hash is the ONLY per-user
+ * segment), then drop `..`/`.`/empty path segments. Falls back to `ComfyUI`
+ * when nothing usable remains. Shared by every GRAPH_OUTPUT_WRITERS field —
+ * filename_prefix, prefix, and folder_name alike.
  */
 function sanitizeExistingPrefix(existing: string): string {
   let base = existing.replace(/\\/g, '/').replace(/^(u_[^/]+\/)+/, '')

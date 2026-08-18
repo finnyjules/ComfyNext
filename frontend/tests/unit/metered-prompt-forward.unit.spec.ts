@@ -125,6 +125,31 @@ describe('Stage 6 Task 7 — outputs settle under the per-user subfolder and sta
   })
 })
 
+describe('Stage 6 Task 7c — write-side containment for the remaining writers, end to end through handleMeteredPrompt', () => {
+  it('neutralizes a SaveImageDataSetToFolder ../../etc traversal in the forwarded body', async () => {
+    const hash = shortUserHash('u1')
+    const graph = { '1': { class_type: 'SaveImageDataSetToFolder', inputs: { folder_name: '../../etc', images: ['0', 0] } } }
+    await handleMeteredPrompt(ev({ prompt: graph, client_id: 'c1' }))
+    const sent = forwardedBody()
+    expect(sent.prompt['1'].inputs.folder_name).toBe(`u_${hash}/etc`)
+  })
+
+  it('subfolders SaveLoRA under its prefix field in the forwarded body', async () => {
+    const hash = shortUserHash('u1')
+    const graph = { '1': { class_type: 'SaveLoRA', inputs: { lora: ['0', 0] } } }
+    await handleMeteredPrompt(ev({ prompt: graph, client_id: 'c1' }))
+    const sent = forwardedBody()
+    expect(sent.prompt['1'].inputs.prefix).toBe(`u_${hash}/ComfyUI`)
+  })
+
+  it('a graph with no writer nodes forwards unaffected', async () => {
+    const graph = { '1': { class_type: 'KSampler', inputs: { seed: 5 } } }
+    await handleMeteredPrompt(ev({ prompt: graph, client_id: 'c1' }))
+    const sent = forwardedBody()
+    expect(sent.prompt).toEqual(graph)
+  })
+})
+
 describe('I4 — the run records which engine ran it', () => {
   it('records the main engine for an unrouted submission', async () => {
     await handleMeteredPrompt(ev({ prompt: GRAPH }))

@@ -389,3 +389,54 @@ describe('injectOutputSubfolder', () => {
     expect((src['1'].inputs as any).filename_prefix).toBeUndefined()
   })
 })
+
+describe('injectOutputSubfolder — Task 7c: writers that place their output through a field OTHER than filename_prefix', () => {
+  const hash = shortUserHash('u1')
+
+  it('neutralizes SaveImageDataSetToFolder\'s ../../etc traversal — the MOST SERIOUS Task 7c finding', () => {
+    // nodes_dataset.py:237 joins folder_name onto get_output_directory() with a
+    // bare os.path.join and NO commonpath containment check — unlike
+    // filename_prefix (which routes through folder_paths.get_save_image_path),
+    // this field had NO engine-side protection at all before this fix.
+    const out = injectOutputSubfolder({ '1': { class_type: 'SaveImageDataSetToFolder', inputs: { folder_name: '../../etc' } } }, 'u1')
+    expect(out['1'].inputs.folder_name).toBe(`u_${hash}/etc`)
+    // filename_prefix on the SAME node is untouched — folder_name is the
+    // traversal-relevant field, not the per-file prefix within that folder.
+    expect(out['1'].inputs.filename_prefix).toBeUndefined()
+  })
+
+  it('subfolders SaveImageTextDataSetToFolder and SaveTrainingDataset under folder_name too', () => {
+    for (const ct of ['SaveImageTextDataSetToFolder', 'SaveTrainingDataset']) {
+      const out = injectOutputSubfolder({ '1': { class_type: ct, inputs: { folder_name: 'my-dataset' } } }, 'u1')
+      expect(out['1'].inputs.folder_name, ct).toBe(`u_${hash}/my-dataset`)
+    }
+  })
+
+  it('subfolders SaveLoRA under its own prefix field, defaulting to ComfyUI when absent', () => {
+    const out = injectOutputSubfolder({ '1': { class_type: 'SaveLoRA', inputs: {} } }, 'u1')
+    expect(out['1'].inputs.prefix).toBe(`u_${hash}/ComfyUI`)
+  })
+
+  it('preserves a custom SaveLoRA prefix as the suffix', () => {
+    const out = injectOutputSubfolder({ '1': { class_type: 'SaveLoRA', inputs: { prefix: 'loras/my_run' } } }, 'u1')
+    expect(out['1'].inputs.prefix).toBe(`u_${hash}/loras/my_run`)
+  })
+
+  it('REPLACES a client-supplied foreign per-user segment in a non-filename_prefix field exactly once', () => {
+    const out = injectOutputSubfolder({ '1': { class_type: 'SaveImageDataSetToFolder', inputs: { folder_name: 'u_otherhash/evil' } } }, 'u1')
+    const v = out['1'].inputs.folder_name as string
+    expect(v).toBe(`u_${hash}/evil`)
+    expect(v.match(/u_/g)?.length).toBe(1)
+  })
+
+  it('leaves Preview3D untouched — no client-controllable path field to rewrite', () => {
+    const out = injectOutputSubfolder({ '1': { class_type: 'Preview3D', inputs: { some_other_input: 1 } } }, 'u1')
+    expect(out['1'].inputs).toEqual({ some_other_input: 1 })
+  })
+
+  it('a zero-output graph (no writer class_type present) is left unaffected', () => {
+    const src = { '1': { class_type: 'KSampler', inputs: { seed: 5 } }, '2': { class_type: 'CLIPTextEncode', inputs: { text: 'a cat' } } }
+    const out = injectOutputSubfolder(src, 'u1')
+    expect(out).toEqual(src)
+  })
+})

@@ -27,7 +27,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { GRAPH_FILE_READERS, GRAPH_FOLDER_READERS } from '../../server/utils/engineFileSurface'
+import { GRAPH_FILE_READERS, GRAPH_FOLDER_READERS, GRAPH_OUTPUT_WRITERS } from '../../server/utils/engineFileSurface'
 import { OUTPUT_CLASS_TYPES } from '../../server/utils/priceBook'
 
 const REPO = fileURLToPath(new URL('../../../', import.meta.url))
@@ -101,7 +101,12 @@ const READ_SURFACE_FILES: Record<string, ReadFileEntry> = {
   },
   'comfy_extras/nodes_compositor.py': {
     count: 2, annotated: 1, readers: ['Compositor'],
-    note: 'plus one get_input_directory schema listing (INPUT_TYPES combo).',
+    // Task 7c cosmetic fix: the non-annotated hit is _cleanup_motion_frames
+    // (nodes_compositor.py:581), an aiohttp route handler registered at
+    // POST /sailor/motion/cleanup_frames — NOT a schema listing. It deletes
+    // bare, pattern-matching slate frames from the input/ ROOT only (no
+    // subfolders, no traversal), gated like the rest of /sailor in engineGate.ts.
+    note: 'plus one get_input_directory hit in _cleanup_motion_frames, the POST /sailor/motion/cleanup_frames route handler (not a graph node).',
   },
   'comfy_extras/nodes_kinetic_type.py': { count: 1, annotated: 1, readers: ['KineticType'] },
   'comfy_extras/nodes_pose_mannequin.py': { count: 1, annotated: 1, readers: ['PoseMannequin'] },
@@ -293,12 +298,16 @@ const OUTPUT_DIR_FILES: Record<string, { count: number, writers: string[], note?
  * that lives in an output-dir file. Each carries the reason it is exempt.
  */
 const WRITE_EXEMPT: Record<string, string> = {
-  Preview3D: 'writes a random-uuid filename directly to the output root (no filename_prefix widget); cannot clobber another tenant. Per-user subfoldering would need a save-path rewrite — follow-up.',
-  SaveLoRA: 'writes via a `prefix` input (default loras/ComfyUI_trained_lora), not `filename_prefix`; injectOutputSubfolder rewrites filename_prefix only — prefix-field-aware injection is a follow-up.',
-  SaveImageDataSetToFolder: 'writes into output/<folder_name>/ via a `folder_name` input, not filename_prefix — folder-level per-user containment is a follow-up.',
-  SaveImageTextDataSetToFolder: 'writes into output/<folder_name>/ via a `folder_name` input, not filename_prefix — folder-level per-user containment is a follow-up.',
-  SaveTrainingDataset: 'writes shards into output/<folder_name>/ via a `folder_name` input, not filename_prefix — folder-level per-user containment is a follow-up.',
-  LoadTrainingDataset: 'READER, not a writer: reads shards from output/<folder_name>/ (a folder, not a per-file annotated ref). Folder-level ownership is not modeled by the graph validator — follow-up concern.',
+  Preview3D: 'writes a random-uuid filename directly to the output root (no client-controllable path field); cannot clobber another tenant. GRAPH_OUTPUT_WRITERS.Preview3D is null — nothing to rewrite.',
+  // Task 7c: these three write via a field OTHER than filename_prefix, so they
+  // stay OUT of OUTPUT_CLASS_TYPES (pricing's "what writes a deliverable" set
+  // is unchanged) but are now subfoldered via GRAPH_OUTPUT_WRITERS's own
+  // field entry — SaveLoRA.prefix / *DataSetToFolder+SaveTrainingDataset.folder_name.
+  SaveLoRA: 'writes via a `prefix` input, not `filename_prefix` — now subfoldered through GRAPH_OUTPUT_WRITERS.SaveLoRA = "prefix" (Task 7c), kept out of OUTPUT_CLASS_TYPES since that set is filename_prefix-specific.',
+  SaveImageDataSetToFolder: 'writes into output/<folder_name>/ via a `folder_name` input with NO commonpath containment (nodes_dataset.py:237) — now subfoldered + traversal-neutralized through GRAPH_OUTPUT_WRITERS.SaveImageDataSetToFolder = "folder_name" (Task 7c).',
+  SaveImageTextDataSetToFolder: 'writes into output/<folder_name>/ via a `folder_name` input with NO commonpath containment — now subfoldered + traversal-neutralized through GRAPH_OUTPUT_WRITERS.SaveImageTextDataSetToFolder = "folder_name" (Task 7c).',
+  SaveTrainingDataset: 'writes shards into output/<folder_name>/ via a `folder_name` input with NO commonpath containment — now subfoldered + traversal-neutralized through GRAPH_OUTPUT_WRITERS.SaveTrainingDataset = "folder_name" (Task 7c).',
+  LoadTrainingDataset: 'READER, not a writer: reads shards from output/<folder_name>/ (a folder, not a per-file annotated ref) — modeled in GRAPH_FOLDER_READERS, not GRAPH_OUTPUT_WRITERS. Folder-level ownership on read is unaffected by this task.',
 }
 
 /**
@@ -341,5 +350,52 @@ describe('coverage guard (B) — every engine file-WRITE site is subfoldered or 
     for (const [n, reason] of Object.entries(WRITE_EXEMPT)) {
       expect(reason.length, `${n} exemption needs a reason`).toBeGreaterThan(10)
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// (C) Task 7c — every writer node has a declared OUTPUT-PATH FIELD, not just
+// OUTPUT_CLASS_TYPES membership. GRAPH_OUTPUT_WRITERS is the field-level map
+// injectOutputSubfolder walks; a save node absent from it entirely (not even
+// a documented `null`) would silently skip per-user subfoldering the same way
+// the pre-Task-7c single-field assumption did for SaveLoRA/the dataset savers.
+// ---------------------------------------------------------------------------
+
+describe('coverage guard (C) — every writer node has a GRAPH_OUTPUT_WRITERS field entry', () => {
+  it('every class in OUTPUT_CLASS_TYPES has a GRAPH_OUTPUT_WRITERS entry', () => {
+    for (const ct of OUTPUT_CLASS_TYPES) {
+      expect(ct in GRAPH_OUTPUT_WRITERS, `${ct} (in OUTPUT_CLASS_TYPES) must have a GRAPH_OUTPUT_WRITERS entry`).toBe(true)
+    }
+  })
+
+  it('every writer from OUTPUT_DIR_FILES is declared in GRAPH_OUTPUT_WRITERS (field or documented null)', () => {
+    for (const [file, { writers }] of Object.entries(OUTPUT_DIR_FILES)) {
+      for (const w of writers) {
+        // LoadTrainingDataset is a READER caught by the get_output_directory
+        // grep (it reads shards FROM output/<folder_name>/, not a write site)
+        // — modeled in GRAPH_FOLDER_READERS, out of scope for this map.
+        if (w === 'LoadTrainingDataset') continue
+        expect(w in GRAPH_OUTPUT_WRITERS, `${w} (from ${file}) must be in GRAPH_OUTPUT_WRITERS`).toBe(true)
+      }
+    }
+  })
+
+  it('a GRAPH_OUTPUT_WRITERS entry is either a non-empty field name or a documented-null exemption', () => {
+    for (const [ct, field] of Object.entries(GRAPH_OUTPUT_WRITERS)) {
+      if (field === null) {
+        expect(ct in WRITE_EXEMPT, `${ct} has a null GRAPH_OUTPUT_WRITERS entry and must document why in WRITE_EXEMPT`).toBe(true)
+      }
+      else {
+        expect(typeof field === 'string' && field.length > 0, `${ct}'s GRAPH_OUTPUT_WRITERS field must be a non-empty string or null`).toBe(true)
+      }
+    }
+  })
+
+  it('SaveLoRA / the dataset savers carry their VERIFIED path field (not filename_prefix)', () => {
+    expect(GRAPH_OUTPUT_WRITERS.SaveLoRA).toBe('prefix')
+    expect(GRAPH_OUTPUT_WRITERS.SaveImageDataSetToFolder).toBe('folder_name')
+    expect(GRAPH_OUTPUT_WRITERS.SaveImageTextDataSetToFolder).toBe('folder_name')
+    expect(GRAPH_OUTPUT_WRITERS.SaveTrainingDataset).toBe('folder_name')
+    expect(GRAPH_OUTPUT_WRITERS.Preview3D).toBeNull()
   })
 })

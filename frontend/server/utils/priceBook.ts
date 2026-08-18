@@ -51,12 +51,19 @@ export const RESTYLE_LORA_CREDITS = 18    // ~$0.09 observed median — 2× mark
 // the animated + model-merge savers + …) wrote to the SHARED output root and
 // skipped per-user subfoldering. Every member here rewrites its output path
 // through a `filename_prefix` input, which injectOutputSubfolder prepends the
-// caller's `u_<hash>/` segment onto. Save nodes that write via a DIFFERENT
-// field (SaveLoRA's `prefix`, the dataset savers' `folder_name`) or a fixed/
-// uuid name (Preview3D) are on the write-exempt list in
-// engine-file-surface.unit.spec.ts and tracked as a subfolder-injection
-// follow-up, not silently included here. The coverage guard there fails on
-// drift so a new save node cannot bypass this set unnoticed.
+// caller's `u_<hash>/` segment onto.
+//
+// Stage 6 Task 7c generalized the injection past this one field: save nodes
+// that write via a DIFFERENT field (SaveLoRA's `prefix`, the dataset savers'
+// `folder_name`) are now subfoldered too via GRAPH_OUTPUT_WRITERS
+// (engineFileSurface.ts), a per-class field map that COVERS this set 1:1 plus
+// those non-filename_prefix writers — but stays a separate map deliberately,
+// so this set's meaning ("what writes a deliverable" for pricing) does not
+// widen just because the write-side injection grew. A fixed/uuid name
+// (Preview3D) has no client-controllable field at all — a `null` entry in
+// GRAPH_OUTPUT_WRITERS, still on the write-exempt list in
+// engine-file-surface.unit.spec.ts. The coverage guards there fail on drift
+// so a new save node cannot bypass either set unnoticed.
 export const OUTPUT_CLASS_TYPES = new Set([
   // — Task 7 originals —
   'SaveImage', 'PreviewImage', 'SaveVideo', 'VHS_VideoCombine', 'SaveAudio',
