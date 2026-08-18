@@ -150,6 +150,20 @@ In `engineGate.ts`, `handleHostedSailor(event)`: parse the normalized path; `GET
 
 ---
 
+### Task 3b: cloud-train ownership (legacy direct-training path — found in review)
+
+**Context:** `cloud-train/start.post.ts` + `status.get.ts` are a legacy direct-training path still wired to the frontend (`LoraTrainerSurface.vue`, `useCharacterStudio.ts`, `useSheetGeneration.ts`, `stressFlow.ts`), separate from `training-queue`. `start` IS metered (`preflightMeter`, charges the right wallet) but records no durable owner; `status.get.ts` polls a raw Replicate training id with ZERO ownership check and downloads the trained weights to shared disk — any signed-in hosted user can poll anyone's training and pull their LoRA. Same class as the voice-clone gap Stage 5 closed. Plan-scouting miss (not in the P0 map). Not exploitable today (nothing deployed) but a pre-deploy blocker.
+
+**Files:**
+- Modify: `frontend/server/api/cloud-train/start.post.ts` (record owner), `frontend/server/api/cloud-train/status.get.ts` (gate by owner)
+- Test: `frontend/tests/unit/cloud-train-ownership.unit.spec.ts`
+
+**Interfaces:** Task 1 `recordOwner`/`ownerOf` with kind `'cloud-training'`; the resource id is the Replicate training id (`start` returns it; `status` takes it as the query param). `event.context.userId`, `deployMode`. Mirror `voiceCloneOwners`'s owner-binding intent but DURABLE via `resource_owners` (no in-memory map — this is exactly what durable ownership buys).
+
+- [ ] **Step 1: Failing tests** (drive real handlers, faked Replicate fetch + faked owners db): hosted `start` on 2xx records `recordOwner('cloud-training', <trainingId>, caller)` — read start.post.ts to find where the training id becomes known (after the Replicate create call succeeds); hosted `status` for a training id owned by ANOTHER user → 404, Replicate never polled, no weights downloaded; own id → proceeds; an id with NO owner row (legacy/pre-Task-3b) in hosted → 404 (fail closed — no owner, no access); local byte-identical (both routes unchanged, no registry calls).
+- [ ] **Step 2: RED → implement.** `start`: after the training create succeeds and the id is known, `if (deployMode()==='hosted' && userId) await recordOwner('cloud-training', id, userId)` (the metering already established userId in context — use `event.context.userId`). `status`: at the top of the hosted branch, `const owner = await ownerOf('cloud-training', id); if (owner !== event.context.userId) throw createError({statusCode:404,...})` BEFORE any Replicate poll/download. Keep handlers thin.
+- [ ] **Step 3: GREEN** + re-run `tests/unit/training-meter.unit.spec.ts` and the Task-3 `training-queue-ownership` spec (sibling subsystem). **Step 4: Commit** — `fix(stage6): cloud-train direct path is per-user in hosted mode`.
+
 ### Task 4: App JSON stores per-user — brand kits, moodboards, templates, template fonts
 
 **Files:**
