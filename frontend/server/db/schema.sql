@@ -117,3 +117,17 @@ CREATE TABLE IF NOT EXISTS input_uploads (
 );
 
 CREATE INDEX IF NOT EXISTS input_uploads_user ON input_uploads (user_id);
+
+-- Central ownership registry for user-created resources (Stage 6). One row
+-- per owned record; kinds are the RESOURCE_KINDS list in resourceOwners.ts.
+-- A record with NO row here is curated/global content: readable by all,
+-- mutable by none. First-owner-wins (ON CONFLICT DO NOTHING at write time).
+CREATE TABLE IF NOT EXISTS resource_owners (
+  kind        text NOT NULL,
+  resource_id text NOT NULL,
+  user_id     text NOT NULL REFERENCES users(id),
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (kind, resource_id)
+);
+
+CREATE INDEX IF NOT EXISTS resource_owners_user ON resource_owners (user_id, kind);
